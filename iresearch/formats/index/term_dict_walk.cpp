@@ -90,6 +90,10 @@ class BlockPlan {
     }
     _filter->Run(first, end, [&](uint32_t lo, uint32_t hi) { Extend(lo, hi); });
     Flush();
+    if (!_runs.empty()) {
+      _field->Store().Input().Prefetch(_runs);
+      _runs.clear();
+    }
   }
 
  private:
@@ -106,8 +110,8 @@ class BlockPlan {
       return;
     }
     const uint64_t offset = _field->BlockOffset(_run_begin);
-    file_utils::Hint(_field->Store().Input(), offset,
-                     _field->BlockOffset(_run_end) - offset);
+    _runs.push_back(
+      {.offset = offset, .size = _field->BlockOffset(_run_end) - offset});
     _run_begin = _run_end;
   }
 
@@ -115,6 +119,7 @@ class BlockPlan {
   BlockFilter<A>* _filter;
   uint32_t _run_begin = 0;
   uint32_t _run_end = 0;
+  containers::SmallVector<duckdb::FileRange, 16> _runs;
 };
 
 constexpr uint64_t kMaxWalkPrefetch = uint64_t{256} << 20;

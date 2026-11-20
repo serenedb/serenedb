@@ -54,7 +54,6 @@ class SingleTermReader final : public TermReader {
   bool CoverRange(bytes_view from, bytes_view to,
                   TermVisitor visit) const final;
 
-  std::unique_ptr<IndexInput> ReopenPayload() const final;
   PostingsHandles Handles() const noexcept final;
 
   const FieldMeta& meta() const noexcept final { return _meta; }

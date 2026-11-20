@@ -25,12 +25,13 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <iresearch/analysis/shingle_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
@@ -38,7 +39,6 @@
 #include <iresearch/search/filters/shingle_phrase.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -194,9 +194,8 @@ constexpr Strategy kStrategies[] = {
 
 struct Index {
   const Strategy* strategy;
-  std::unique_ptr<irs::MMapDirectory> dir;
   std::unique_ptr<irs::analysis::Tokenizer> tokenizer;
-  irs::DirectoryReader reader;
+  irs::CompositeReader reader;
 };
 
 std::unique_ptr<irs::analysis::Tokenizer> MakeTokenizer(
@@ -213,16 +212,15 @@ Index BuildIndex(const std::vector<std::string>& docs,
     std::filesystem::temp_directory_path() / "sdb-bench-phrase" / strategy.name;
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
-  Index index{.strategy = &strategy,
-              .dir = std::make_unique<irs::MMapDirectory>(path),
-              .tokenizer = MakeTokenizer(strategy)};
-
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = path.string();
+  tests::IndexDir dir{*db, fs, root};
+  Index index{.strategy = &strategy, .tokenizer = MakeTokenizer(strategy)};
+
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
-  auto writer = tests::IndexWriter::Make(*index.dir, tests::kOmCreate,
-                                         std::move(writer_opts));
+  auto writer =
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(writer_opts));
 
   BenchField field{
     .tokenizer = index.tokenizer.get(),
@@ -242,8 +240,7 @@ Index BuildIndex(const std::vector<std::string>& docs,
                DirSize(path));
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  index.reader = tests::OpenReader(*index.dir, reader_opts);
+  index.reader = tests::OpenReader(dir, reader_opts);
   return index;
 }
 
@@ -357,7 +354,7 @@ irs::Filter::ptr MakePhrase(const Index& index, std::string_view text,
   return MakeLoweredPhrase(std::move(phrase));
 }
 
-uint64_t Count(const irs::DirectoryReader& reader, const irs::Filter& filter) {
+uint64_t Count(const irs::CompositeReader& reader, const irs::Filter& filter) {
   uint64_t hits = 0;
   for (const auto& segment : reader) {
     auto query = filter.PrepareSegment(segment, {});
@@ -371,7 +368,7 @@ uint64_t Count(const irs::DirectoryReader& reader, const irs::Filter& filter) {
   return hits;
 }
 
-double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
+double Scored(const irs::CompositeReader& reader, const irs::Filter& filter,
               uint64_t& hits) {
   static const irs::BM25 kScorer;
   irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};

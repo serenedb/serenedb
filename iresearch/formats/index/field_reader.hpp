@@ -41,19 +41,16 @@
 #include "iresearch/formats/reader_state.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/containers/node_hash_map.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 
 namespace irs::term_dict {
 
 class FieldReader final {
  public:
-  explicit FieldReader(IResourceManager& rm) noexcept : _store{rm} {}
+  FieldReader() = default;
 
   FieldReader(const FieldReader&) = delete;
   FieldReader& operator=(const FieldReader&) = delete;
 
-  uint64_t CountMappedMemory() const;
   void prepare(const ReaderState& state);
 
   std::span<const TermReader* const> fields(field_id id) const;
@@ -65,7 +62,6 @@ class FieldReader final {
   auto&& Store(this Self&& self) noexcept {
     return std::forward<Self>(self)._store;
   }
-  const byte_type* KeepInline(bytes_view bytes);
 
  private:
   struct FieldDicts {
@@ -81,7 +77,6 @@ class FieldReader final {
   std::vector<field_id> _ids;
   PostingsReader _pr;
   BlockStore _store;
-  std::vector<byte_type> _single_inline;
 };
 
 inline TermPostings::ptr TermReaderImpl::PostingsOf(
@@ -99,8 +94,15 @@ inline uint64_t TermReaderImpl::BlockOffset(size_t block) const noexcept {
   return Store().BlockOffset(_first_block + block);
 }
 
-inline const byte_type* TermReaderImpl::Block(size_t block) const noexcept {
-  return _small ? _small : Store().Base() + BlockOffset(block);
+inline const byte_type* TermReaderImpl::Block(size_t block,
+                                              PinnedRange& pinned) const {
+  if (_small) {
+    return _small;
+  }
+  if (const auto* base = Store().Base()) {
+    return base + BlockOffset(block);
+  }
+  return PinBlock(block, pinned);
 }
 
 }  // namespace irs::term_dict

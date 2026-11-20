@@ -1,0 +1,308 @@
+control substitution on
+
+# Segments of a temporary table written when memory was short stay in cache
+# blocks: queries read them there, and VACUUM (PACK_TABLE) packs them with
+# the deletes and updates made since. A segment a background merge replaces
+# while the pack runs is left to the merge.
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+SET sdb_faults = 'IndexWriter::CompactOutOfMemory';
+
+
+statement ok
+CREATE TEMPORARY TABLE packed (id INT PRIMARY KEY, v INT, note TEXT USING COMPRESSION uncompressed)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO packed SELECT i, 0, repeat(chr((65 + i % 26)::INT), (5000 + i)::INT) FROM range(1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) packed;
+
+
+statement count 10
+DELETE FROM packed WHERE id % 100 = 0;
+
+
+statement count 10
+UPDATE packed SET v = 1 WHERE id % 100 = 1;
+
+
+query
+SELECT count(*) AS n, sum(length(note)) AS chars, sum(v) AS v FROM packed;
+----
+n	chars	v
+990	5445000	10
+
+
+query
+SELECT id, v, length(note) AS chars, left(note, 3) AS head FROM packed WHERE id IN (101, 777) ORDER BY id;
+----
+id	v	chars	head
+101	1	5101	XXX
+777	0	5777	XXX
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+VACUUM (PACK_TABLE) packed;
+
+
+query
+SELECT count(*) AS n, sum(length(note)) AS chars, sum(v) AS v FROM packed;
+----
+n	chars	v
+990	5445000	10
+
+
+query
+SELECT id, v, length(note) AS chars, left(note, 3) AS head FROM packed WHERE id IN (100, 101, 777) ORDER BY id;
+----
+id	v	chars	head
+101	1	5101	XXX
+777	0	5777	XXX
+
+
+statement ok
+DROP TABLE packed;
+
+
+statement ok
+SET sdb_faults = 'IndexWriter::CompactOutOfMemory';
+
+
+statement ok
+CREATE TEMPORARY TABLE vectors (pk INTEGER PRIMARY KEY, emb FLOAT[100]) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE INDEX vectors_ivf ON vectors USING inverted(pk, emb ivf (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO vectors
+SELECT i, list_transform(range(100), lambda j: (i * 1000 + j)::FLOAT)::FLOAT[100] FROM range(3000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) vectors;
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT pk FROM vectors_ivf
+ORDER BY emb <-> list_transform(range(100), lambda j: (1234 * 1000 + j + 1)::FLOAT)::FLOAT[100] LIMIT 1;
+----
+pk
+1234
+
+
+statement ok
+VACUUM (PACK_TABLE) vectors;
+
+
+query
+SELECT pk FROM vectors_ivf
+ORDER BY emb <-> list_transform(range(100), lambda j: (2999 * 1000 + j)::FLOAT)::FLOAT[100] LIMIT 1;
+----
+pk
+2999
+
+
+statement ok
+DROP TABLE vectors;
+
+
+statement ok
+COPY (SELECT i AS id, 'fox ' || md5(i::VARCHAR) AS body FROM range(3000) t(i))
+TO '${__TEST_DIR__}/pack_view.parquet' (FORMAT parquet);
+
+
+statement ok
+SET sdb_faults = 'IndexWriter::CompactOutOfMemory';
+
+
+statement ok
+CREATE TEMPORARY VIEW parquet_rows AS SELECT * FROM read_parquet('${__TEST_DIR__}/pack_view.parquet');
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY view_words AS split_text(case := 'lower');
+
+
+statement ok
+CREATE INDEX parquet_rows_idx ON parquet_rows USING inverted(id, body view_words);
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT id, body FROM parquet_rows_idx WHERE body @@ 'c4ca4238a0b923820dcc509a6f75849b';
+----
+id	body
+1	fox c4ca4238a0b923820dcc509a6f75849b
+
+
+statement ok
+DROP INDEX parquet_rows_idx;
+
+
+statement ok
+DROP VIEW parquet_rows;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY view_words;
+
+
+connection owner
+statement ok
+SET sdb_faults = 'IndexWriter::CompactOutOfMemory';
+
+
+connection owner
+statement ok
+CREATE TEMPORARY TABLE raced (id INT, body TEXT) WITH (compaction_interval = 0);
+
+
+connection owner
+statement ok
+CREATE TEXT SEARCH DICTIONARY raced_words AS split_text(case := 'lower');
+
+
+connection owner
+statement ok
+CREATE INDEX raced_body ON raced USING inverted(id, body raced_words);
+
+
+connection owner
+statement ok
+INSERT INTO raced SELECT i, 'fox ' || md5(i::VARCHAR) FROM range(1000) t(i);
+
+
+connection owner
+statement ok
+VACUUM (FLUSH_TABLE) raced;
+
+
+connection owner
+statement ok
+INSERT INTO raced SELECT i, 'fox ' || md5(i::VARCHAR) FROM range(1000, 2000) t(i);
+
+
+connection owner
+statement ok
+VACUUM (FLUSH_TABLE) raced;
+
+
+connection owner
+statement ok
+RESET sdb_faults;
+
+
+connection owner
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish';
+
+
+connection owner
+statement ok
+ALTER TABLE raced SET (compaction_interval = 10);
+
+
+connection observer
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_compact_before_publish:parked';
+
+
+connection owner
+statement ok
+SET sdb_faults = 'pause_pack_before_reopen';
+
+
+connection owner
+statement async ok
+VACUUM (PACK_TABLE) raced;
+
+
+connection observer
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_pack_before_reopen:parked';
+
+
+connection observer
+statement ok
+SET sdb_faults = 'search_compaction_before_selection';
+
+
+connection observer
+statement ok
+SET sdb_faults = 'pause_search_compact_before_publish:release';
+
+
+connection observer
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_compaction_before_selection:parked';
+
+
+connection observer
+statement ok
+SET sdb_faults = 'pause_pack_before_reopen:release';
+
+
+wait
+
+
+connection owner
+statement ok
+ALTER TABLE raced SET (compaction_interval = 0);
+
+
+connection observer
+statement ok
+SET sdb_faults = 'search_compaction_before_selection:release';
+
+
+connection owner
+query
+SELECT count(*) AS n FROM raced_body WHERE body @@ 'fox';
+----
+n
+2000
+
+
+connection owner
+query
+SELECT id FROM raced_body WHERE body @@ 'c4ca4238a0b923820dcc509a6f75849b';
+----
+id
+1
+
+
+connection owner
+statement ok
+RESET sdb_faults;
+
+
+connection owner
+statement ok
+DROP TABLE raced;
+
+
+connection owner
+statement ok
+DROP TEXT SEARCH DICTIONARY raced_words;

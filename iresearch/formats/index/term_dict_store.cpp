@@ -20,51 +20,45 @@
 
 #include "iresearch/formats/index/term_dict_store.hpp"
 
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <limits>
 #include <string_view>
 #include <utility>
 
 namespace irs::term_dict {
 
-BlockStore::~BlockStore() { _rm->DecreaseChecked(_bytes); }
-
-void BlockStore::Open(IndexInput::ptr in) {
-  _in = std::move(in);
-  if (!_in) {
-    return;
-  }
-  const uint64_t length = _in->Length();
-  _base = _in->ReadStable(0, length);
-  if (!_base) {
-    Account(length);
-    _file.resize(length);
-    _in->ReadData(0, _file.data(), length);
-    _base = _file.data();
+BlockStore::~BlockStore() {
+  if (_reserved != 0) {
+    _buffers->FreeReservedMemory(_reserved);
   }
 }
 
-uint64_t BlockStore::CountMappedMemory() const {
-  return _in ? _in->CountMappedMemory() : 0;
+void BlockStore::Open(const duckdb::InputFile* in,
+                      duckdb::BufferManager& buffers) {
+  _in = in;
+  _buffers = &buffers;
+  if (_in) {
+    _base = _in->Data();
+  }
 }
 
 bytes_view BlockStore::Copy(uint64_t offset, uint64_t size) {
   const auto [it, inserted] = _copies.try_emplace(offset);
   auto& copy = it->second;
   if (inserted) {
-    Account(size);
-    copy.resize(size);
-    _pending.push_back({.offset = offset, .size = size, .data = copy.data()});
+    copy = _buffers->GetBufferAllocator().Allocate(size);
+    _pending.push_back({.offset = offset, .size = size, .data = copy.get()});
   }
-  return copy;
+  return {copy.get(), size};
 }
 
 const byte_type* BlockStore::CopyBlock(uint32_t block) {
-  const uint64_t length = _in->Length();
+  const uint64_t length = _in->GetSize();
   const uint64_t offset = BlockOffset(block);
   return Copy(offset, std::min(BlockOffset(block + 1), length) - offset).data();
 }
 
-void BlockStore::FillCopies() {
+void BlockStore::Finish() {
   absl::c_sort(_pending, [](const PendingCopy& lhs, const PendingCopy& rhs) {
     return lhs.offset < rhs.offset;
   });
@@ -76,11 +70,16 @@ void BlockStore::FillCopies() {
     }
     _in->Prefetch(begin, end - begin);
   }
+  duckdb::InputFileReader in{*_in};
   for (const auto& copy : _pending) {
-    _in->ReadData(copy.offset, copy.data, copy.size);
+    in.Seek(copy.offset);
+    in.ReadData(copy.data, copy.size);
   }
   _pending.clear();
   _pending.shrink_to_fit();
+  if (!_base && _block_count != 0) {
+    _in->Prefetch(BlockOffset(0), BlockOffset(_block_count) - BlockOffset(0));
+  }
 }
 
 void BlockStore::Bind(const TermsMeta& terms) {
@@ -88,7 +87,7 @@ void BlockStore::Bind(const TermsMeta& terms) {
   _first_page = terms.first_page;
   _blocks_end = terms.blocks_end;
   const auto blocks = _block_count;
-  if (_blocks_end > _in->Length()) {
+  if (_blocks_end > _in->GetSize()) {
     Corrupted("block directory");
   }
   if (terms.spans.size() > blocks) {

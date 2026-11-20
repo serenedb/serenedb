@@ -27,6 +27,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::ann {
@@ -117,11 +118,7 @@ class VectorChain : public Root {
   }
 
   void Run(Collector& collector) final {
-    if (_width > 0.f) {
-      Scan<true>(collector);
-    } else {
-      Scan<false>(collector);
-    }
+    Resolve(_width > 0.f, [&]<bool Width> { Scan<Width>(collector); });
   }
 
  private:
@@ -256,7 +253,7 @@ ann::Root::ptr KnnVectorQuery::PlanAnn(const ann::Context& ctx) const {
 
 ann::Root::ptr RangeVectorQuery::PlanAnn(const ann::Context& ctx) const {
   const auto [prefilter, routed] = ann::RouteOf(*this, Segment(), ctx);
-  return detail::ResolveBool(Inclusive(), [&]<bool Inclusive>() {
+  return Resolve(Inclusive(), [&]<bool Inclusive>() {
     return detail::MakeVectorScored<ann::Family, detail::RadiusGate<Inclusive>>(
       *this, routed, Threshold(), prefilter);
   });

@@ -25,11 +25,6 @@
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-}
-
 namespace irs {
 
 // The scorer a score-bound-pruning iterator ranks by.
@@ -37,9 +32,7 @@ using ScorerPtr = const Scorer*;
 
 struct IndexReaderOptions {
   ScorerPtr scorer = nullptr;
-  duckdb::DatabaseInstance* db = nullptr;
   HnswBases* hnsw_bases = nullptr;
-  bool index = true;  // Open inverted index
 };
 
 }  // namespace irs

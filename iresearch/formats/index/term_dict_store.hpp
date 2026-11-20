@@ -24,39 +24,40 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/allocator.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <iterator>
 #include <vector>
 
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
-#include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/containers/node_hash_map.hpp"
-#include "iresearch/utils/resource_manager.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
 
 class BlockStore {
  public:
-  explicit BlockStore(IResourceManager& rm) noexcept : _rm{&rm} {}
+  BlockStore() = default;
   ~BlockStore();
 
   BlockStore(const BlockStore&) = delete;
   BlockStore& operator=(const BlockStore&) = delete;
 
-  void Open(IndexInput::ptr in);
+  void Open(const duckdb::InputFile* in, duckdb::BufferManager& buffers);
   void Bind(const TermsMeta& terms);
-  void FillCopies();
+  void Finish();
   void Account(uint64_t bytes) {
     if (bytes != 0) {
-      _rm->Increase(bytes);
-      _bytes += bytes;
+      _buffers->ReserveMemory(bytes);
+      _reserved += bytes;
     }
   }
 
   bool Opened() const noexcept { return _in != nullptr; }
-  uint64_t CountMappedMemory() const;
-  const IndexInput& Input() const noexcept { return *_in; }
+  bool Mapped() const noexcept { return _base; }
+  const duckdb::InputFile& Input() const noexcept { return *_in; }
   const byte_type* Base() const noexcept { return _base; }
 
   uint32_t BlockCount() const noexcept { return _block_count; }
@@ -76,16 +77,15 @@ class BlockStore {
     byte_type* data;
   };
 
-  IResourceManager* _rm;
-  IndexInput::ptr _in;
+  const duckdb::InputFile* _in = nullptr;
+  duckdb::BufferManager* _buffers = nullptr;
   const byte_type* _base = nullptr;
-  bstring _file;
   std::vector<uint32_t> _pages;
-  containers::NodeHashMap<uint64_t, bstring> _copies;
+  containers::FlatHashMap<uint64_t, duckdb::AllocatedData> _copies;
   std::vector<PendingCopy> _pending;
   uint64_t _first_page = 0;
   uint64_t _blocks_end = 0;
-  uint64_t _bytes = 0;
+  uint64_t _reserved = 0;
   uint32_t _block_count = 0;
 };
 

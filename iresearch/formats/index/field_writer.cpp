@@ -22,11 +22,12 @@
 
 #include <algorithm>
 #include <cstring>
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <iterator>
 #include <span>
 
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::term_dict {
@@ -45,12 +46,6 @@ uint32_t PagesFor(const BlockShare& share) noexcept {
 }
 
 }  // namespace
-
-void RecordOutput::WriteDirect(const byte_type*, size_t) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                  ERR_MSG("term dictionary: posting record exceeds ",
-                          kMaxRecordBytes, " bytes"));
-}
 
 bool FieldWriter::OwnsBlock() const noexcept {
   return _first_block != kNoBlock &&
@@ -232,10 +227,6 @@ void FieldWriter::Add(bytes_view term, const PostingMeta& meta) {
   if (_terms++ == 0) {
     _min.assign(term);
     _single = meta;
-    if (meta.inline_size != 0) {
-      std::memcpy(_single_inline.data(), meta.inline_data, meta.inline_size);
-      _single.inline_data = _single_inline.data();
-    }
     return;
   }
   if (_terms == 2) {
@@ -270,10 +261,12 @@ void FieldWriter::CloseRun() {
   if (run.Empty()) {
     return;
   }
-  [[maybe_unused]] const auto size = bytes.size() + run.Bytes();
-  BytesOutput out{bytes};
+  const auto at = bytes.size();
+  const uint64_t size = run.Bytes();
+  bytes.resize(at + size);
+  duckdb::MemoryStream out{bytes.data() + at, size};
   run.Write(out);
-  SDB_ASSERT(bytes.size() == size);
+  SDB_ASSERT(out.GetPosition() == size);
   _records.inline_bytes += run.InlineBytes();
   run.Clear();
 }
@@ -306,9 +299,11 @@ void FieldWriter::Cut() {
     const auto separator =
       first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1);
     const auto shared = CommonPrefixLength(bytes_view{_separator}, separator);
-    StringOutput out{_separators};
-    out.WriteV32(static_cast<uint32_t>(shared));
-    WriteStr(out, separator.substr(shared));
+    const auto suffix = separator.substr(shared);
+    auto out = std::back_inserter(_separators);
+    WriteVarint(static_cast<uint32_t>(shared), out);
+    WriteVarint(static_cast<uint32_t>(suffix.size()), out);
+    _separators.append(ViewCast<char>(suffix));
     _separator.assign(separator);
   }
   _last.assign(_encoder.Key(_encoder.Count() - 1));

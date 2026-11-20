@@ -20,8 +20,8 @@
 
 #include "iresearch/formats/index/term_dict_records.hpp"
 
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs::term_dict {
 namespace {
@@ -349,7 +349,7 @@ uint64_t RecordRun::SizeOf(const Stats& s) const noexcept {
   return size;
 }
 
-void RecordRun::WriteSparse(DataOutput& out, const SparseStats& stats,
+void RecordRun::WriteSparse(duckdb::WriteStream& out, const SparseStats& stats,
                             const SparseColumn& column, uint32_t values) const {
   SDB_ASSERT(column.keys.size() == stats.count);
   WritePacked(out, stats.count, stats.KeyBits(),
@@ -360,58 +360,58 @@ void RecordRun::WriteSparse(DataOutput& out, const SparseStats& stats,
   }
 }
 
-void RecordRun::Write(DataOutput& out) const {
+void RecordRun::Write(duckdb::WriteStream& out) const {
   const auto& s = _stats;
   SDB_ASSERT(s.count != 0);
   const uint32_t singles = s.count - s.multis;
   const uint32_t stored = s.multis - s.inlines;
   const uint32_t extras = PositionValues(_features);
   const auto sparse_header = [&](const SparseStats& stats, uint32_t values) {
-    out.WriteV32(stats.count);
+    out.WriteVarint<uint32_t>(stats.count);
     if (stats.count != 0) {
-      out.WriteByte(static_cast<byte_type>(stats.KeyBits()));
+      out.Write<byte_type>(static_cast<byte_type>(stats.KeyBits()));
       for (uint32_t v = 0; v != values; ++v) {
-        out.WriteByte(static_cast<byte_type>(Bits(stats.max[v])));
+        out.Write<byte_type>(static_cast<byte_type>(Bits(stats.max[v])));
       }
     }
   };
 
-  out.WriteV32(s.count);
-  out.WriteByte(static_cast<byte_type>(
+  out.WriteVarint<uint32_t>(s.count);
+  out.Write<byte_type>(static_cast<byte_type>(
     (singles != 0 ? kRunSingles : 0) | (s.multis != 0 ? kRunMultis : 0) |
     (s.inlines != 0 ? kRunInline : 0) | (stored != 0 ? kRunStored : 0)));
   if (singles != 0) {
-    out.WriteV64(s.singles.min);
-    out.WriteByte(static_cast<byte_type>(s.singles.Bits()));
+    out.WriteVarint<uint64_t>(s.singles.min);
+    out.Write<byte_type>(static_cast<byte_type>(s.singles.Bits()));
   }
   if (s.multis != 0) {
-    out.WriteByte(static_cast<byte_type>(Bits(s.docs)));
+    out.Write<byte_type>(static_cast<byte_type>(Bits(s.docs)));
   }
   if (_features.freq) {
-    out.WriteByte(static_cast<byte_type>(Bits(s.excess)));
+    out.Write<byte_type>(static_cast<byte_type>(Bits(s.excess)));
   }
   if (s.inlines != 0) {
-    out.WriteByte(static_cast<byte_type>(Bits(s.sizes)));
-    out.WriteByte(static_cast<byte_type>(Bits(s.inline_anchor)));
+    out.Write<byte_type>(static_cast<byte_type>(Bits(s.sizes)));
+    out.Write<byte_type>(static_cast<byte_type>(Bits(s.inline_anchor)));
   }
   if (stored != 0) {
-    out.WriteV64(s.starts.min);
-    out.WriteByte(static_cast<byte_type>(s.starts.Bits()));
+    out.WriteVarint<uint64_t>(s.starts.min);
+    out.Write<byte_type>(static_cast<byte_type>(s.starts.Bits()));
     sparse_header(s.big, 1);
   }
   if (_features.pos) {
-    out.WriteV64(s.pos_start);
-    out.WriteV32(s.pos_offset);
+    out.WriteVarint<uint64_t>(s.pos_start);
+    out.WriteVarint<uint32_t>(s.pos_offset);
     if (_features.offs) {
-      out.WriteV64(s.pay_start);
+      out.WriteVarint<uint64_t>(s.pay_start);
     }
-    out.WriteByte(static_cast<byte_type>(Bits(s.freq_anchor)));
+    out.Write<byte_type>(static_cast<byte_type>(Bits(s.freq_anchor)));
     sparse_header(s.crossings, extras);
     sparse_header(s.extents, extras);
   } else if (_features.vec) {
-    out.WriteV64(s.vec_starts.min);
-    out.WriteByte(static_cast<byte_type>(s.vec_starts.Bits()));
-    out.WriteByte(static_cast<byte_type>(Bits(s.lanes)));
+    out.WriteVarint<uint64_t>(s.vec_starts.min);
+    out.Write<byte_type>(static_cast<byte_type>(s.vec_starts.Bits()));
+    out.Write<byte_type>(static_cast<byte_type>(Bits(s.lanes)));
   }
 
   if (singles != 0 && s.multis != 0) {

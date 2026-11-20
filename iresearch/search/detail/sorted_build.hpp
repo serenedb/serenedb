@@ -151,15 +151,15 @@ inline void SortDocs(std::vector<doc_id_t>& docs,
   }
 }
 
-template<typename Term>
+template<typename P = NoPins, typename Term>
 std::vector<doc_id_t> SortedDocsOf(std::span<const Term> terms,
                                    const TermReader* field,
-                                   const IndexInput& doc) {
+                                   const duckdb::InputFile& doc) {
   std::vector<doc_id_t> docs;
   docs.reserve(SumDocs(terms) + 1);
   std::vector<uint32_t> starts;
   starts.reserve(terms.size());
-  ResolveInput(doc, [&]<typename Input> {
+  Resolve<P>(doc, [&]<typename Input> {
     PostingReader<Input> reader{doc};
     AppendDocs sink{docs, starts};
     ReadTerms(terms, field, reader, sink);

@@ -27,7 +27,6 @@
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 
@@ -35,32 +34,34 @@ namespace irs {
 
 inline constexpr size_t kPrefetchedExtents = 64;
 
-using FileRanges = containers::SmallVector<FileRange, kPrefetchedExtents>;
+using FileRanges =
+  containers::SmallVector<duckdb::FileRange, kPrefetchedExtents>;
 
 template<typename Metas>
-void PrefetchDocExtents(const IndexInput& in, Metas&& metas) {
+void PrefetchDocExtents(const duckdb::InputFile& file, Metas&& metas) {
   FileRanges extents;
   for (const PostingMeta& meta : metas) {
     if (const auto extent = DocExtent(meta); extent != 0) {
-      extents.emplace_back(meta.doc_start, meta.doc_start + extent);
+      extents.push_back({.offset = meta.doc_start, .size = extent});
     }
   }
-  absl::c_sort(extents);
-  FileRanges ranges;
-  for (const auto& [from, to] : extents) {
-    AppendRange(ranges, from, to);
-  }
-  HintRanges(in, ranges);
+  absl::c_sort(extents,
+               [](const duckdb::FileRange& lhs, const duckdb::FileRange& rhs) {
+                 return lhs.offset < rhs.offset;
+               });
+  file.Hint(extents);
 }
 
-inline IndexInput::ptr OpenDocInput(const PostingMeta& meta,
-                                    const IndexInput& doc_in) {
+template<typename InputType>
+InputType OpenDocInput(const PostingMeta& meta, const duckdb::InputFile& doc_in,
+                       duckdb::ReadAheadSteps steps,
+                       PostingMeta::InlineBytes& inline_copy) {
   if (meta.inline_size != 0) {
-    return std::make_unique<BytesViewInput>(meta.Inline());
+    return InputType{InlineInput(meta, inline_copy)};
   }
-  auto in = doc_in.Reopen();
-  SDB_ASSERT(in);
-  in->Seek(meta.doc_start);
+  InputType in{doc_in};
+  in.Seek(meta.doc_start);
+  in.ReadAheadUntil(meta.doc_start + DocExtent(meta), steps);
   return in;
 }
 

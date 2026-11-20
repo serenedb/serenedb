@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/hash/hash.h>
 
 #include <array>
 #include <compare>
@@ -64,7 +65,7 @@ TermKey KeyOf(const detail::PostingClause& clause) noexcept {
   if (cookie.inline_size != 0) {
     return {.member = member,
             .kind = TermKey::Kind::Inline,
-            .at = reinterpret_cast<uintptr_t>(cookie.inline_data)};
+            .at = absl::HashOf(ViewCast<char>(cookie.Inline()))};
   }
   return {
     .member = member, .kind = TermKey::Kind::Stored, .at = cookie.doc_start};

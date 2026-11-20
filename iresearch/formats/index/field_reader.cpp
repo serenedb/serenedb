@@ -20,6 +20,7 @@
 
 #include "iresearch/formats/index/field_reader.hpp"
 
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -28,14 +29,11 @@
 
 namespace irs::term_dict {
 
-uint64_t FieldReader::CountMappedMemory() const {
-  return _pr.CountMappedMemory() + _store.CountMappedMemory();
-}
-
 void FieldReader::prepare(const ReaderState& state) {
   SDB_ASSERT(state.idx);
   auto terms = state.idx->TakeTerms();
-  _store.Open(state.idx->ReopenIn());
+  _store.Open(state.idx->File(),
+              duckdb::BufferManager::GetBufferManager(state.db));
   if (!_store.Opened()) {
     SDB_ENSURE(terms.fields.empty(),
                "term dictionary: fields but no `.idx` stream");
@@ -61,14 +59,6 @@ void FieldReader::prepare(const ReaderState& state) {
   }
   _pr.prepare(state, features);
 
-  uint64_t single_inline = 0;
-  for (const auto& head : heads) {
-    single_inline += head.record_inline.size();
-  }
-  if (single_inline != 0) {
-    _single_inline.reserve(single_inline + kSlack);
-    _store.Account(_single_inline.capacity());
-  }
   _by_id.reserve(heads.size());
   _dicts.reserve(heads.size());
   bstring prefix;
@@ -100,18 +90,7 @@ void FieldReader::prepare(const ReaderState& state) {
       _ids.push_back(head.id);
     }
   }
-  if (single_inline != 0) {
-    _single_inline.resize(_single_inline.size() + kSlack);
-  }
-  _store.FillCopies();
-}
-
-const byte_type* FieldReader::KeepInline(bytes_view bytes) {
-  SDB_ASSERT(_single_inline.size() + bytes.size() + kSlack <=
-             _single_inline.capacity());
-  const auto at = _single_inline.size();
-  _single_inline.insert(_single_inline.end(), bytes.begin(), bytes.end());
-  return _single_inline.data() + at;
+  _store.Finish();
 }
 
 std::span<const TermReader* const> FieldReader::fields(field_id id) const {

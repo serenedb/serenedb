@@ -31,7 +31,6 @@
 #include <cstring>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/write_stream.hpp>
-#include <filesystem>
 #include <iresearch/utils/group_commit.hpp>
 #include <memory>
 #include <span>
@@ -53,9 +52,6 @@ class RecordBuffer final : public duckdb::WriteStream {
   RecordBuffer& operator=(RecordBuffer&&) noexcept = default;
   ~RecordBuffer() final;
 
-  void WriteData(duckdb::const_data_ptr_t data, duckdb::idx_t size) final {
-    _writer->Write({reinterpret_cast<const char*>(data), size});
-  }
   [[nodiscard]] duckdb::data_ptr_t Alloc(duckdb::idx_t size) final {
     return _writer->Alloc(size);
   }
@@ -83,6 +79,11 @@ class RecordBuffer final : public duckdb::WriteStream {
     }
   }
 
+ protected:
+  void Overflow(duckdb::const_data_ptr_t data, duckdb::idx_t size) final {
+    _writer->Write({reinterpret_cast<const char*>(data), size});
+  }
+
  private:
   std::unique_ptr<message::Buffer> _buffer;
   std::unique_ptr<message::Writer> _writer;
@@ -108,15 +109,15 @@ class Log {
   static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
 
   static std::string ChunkName(uint64_t number);
-  static bool Exists(const std::filesystem::path& dir);
-  static void Read(duckdb::FileSystem& fs, const std::filesystem::path& dir,
-                   Apply apply);
-  static void Move(const std::filesystem::path& from,
-                   const std::filesystem::path& to);
-  static void Cut(const std::filesystem::path& dir, Lsn end);
-  static bool Remove(const std::filesystem::path& dir);
+  static bool Exists(duckdb::FileSystem& fs, const std::string& dir);
+  static bool IsEarlierFormat(duckdb::FileSystem& fs, const std::string& dir);
+  static void Read(duckdb::FileSystem& fs, const std::string& dir, Apply apply);
+  static void Move(duckdb::FileSystem& fs, const std::string& from,
+                   const std::string& to);
+  static void Cut(duckdb::FileSystem& fs, const std::string& dir, Lsn end);
+  static bool Remove(duckdb::FileSystem& fs, const std::string& dir);
 
-  Log(duckdb::FileSystem& fs, std::filesystem::path dir);
+  Log(duckdb::FileSystem& fs, std::string dir);
 
   void Replay(Apply apply, CatalogPart part);
 
@@ -130,7 +131,7 @@ class Log {
                      CatalogPart part, Compact compact);
   void DropCovered();
 
-  Lsn Link(const std::filesystem::path& dir);
+  Lsn Link(const std::string& dir);
 
   Lsn Covered() const noexcept {
     return _covered.load(std::memory_order_acquire);
@@ -183,7 +184,7 @@ class Log {
 
   static constexpr uint64_t kWrittenRing = uint64_t{1} << 16;
 
-  std::filesystem::path ChunkPath(uint64_t number) const;
+  std::string ChunkPath(uint64_t number) const;
   duckdb::unique_ptr<duckdb::FileHandle> OpenChunk(uint64_t number,
                                                    bool create) const;
   void StartChunk() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
@@ -195,7 +196,7 @@ class Log {
   void SyncTo(Lsn target);
 
   duckdb::FileSystem& _fs;
-  std::filesystem::path _dir;
+  std::string _dir;
   mutable absl::Mutex _mutex;
   absl::btree_map<Lsn, std::shared_ptr<Chunk>> _chunks ABSL_GUARDED_BY(_mutex);
   uint64_t _next_number ABSL_GUARDED_BY(_mutex) = 0;
@@ -220,6 +221,7 @@ class Log {
   std::atomic<uint64_t> _snapshot_bytes{0};
   std::atomic<uint64_t> _history_bytes{0};
   absl::Mutex _files_mutex;
+  uint64_t _snapshot ABSL_GUARDED_BY(_files_mutex) = 0;
   std::vector<std::vector<uint8_t>> _history ABSL_GUARDED_BY(_files_mutex);
 };
 

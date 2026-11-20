@@ -26,13 +26,13 @@
 
 #include <atomic>
 #include <cstdio>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/segment_list.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/directory_cleaner.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -48,14 +48,11 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
                                                  size_t segment_mem_max,
                                                  uint32_t row_group_size,
                                                  uint32_t segment_docs_max) {
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
   writer_opts.reader_options.scorer = scorer_ptr;
   writer_opts.segment_pool_size = segment_pool_size;
   writer_opts.segment_memory_max = segment_mem_max;
   writer_opts.segment_docs_max = segment_docs_max;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
   writer_opts.row_group_size = row_group_size;
   writer_opts.norm_column_id =
     [next = std::make_shared<std::atomic<irs::field_id>>(0)](
@@ -65,26 +62,42 @@ static irs::IndexWriterOptions MakeWriterOptions(irs::ScorerPtr scorer_ptr,
   return writer_opts;
 }
 
+static std::string MakeDirectory(duckdb::FileSystem& fs,
+                                 std::string_view path) {
+  std::string root{path};
+  if (!fs.DirectoryExists(root)) {
+    fs.CreateDirectory(root);
+  }
+  return root;
+}
+
 IndexBuilder::IndexBuilder(std::string_view path,
                            const IndexBuilderOptions& opts,
                            const BenchConfig& config)
-  : _opts{opts}, _scorer{irs::BM25::Make(irs::BM25::Options{})}, _dir{path} {
+  : _opts{opts},
+    _scorer{irs::BM25::Make(irs::BM25::Options{})},
+    _fs{duckdb::FileSystem::GetFileSystem(
+      ::irs::DuckDBEngine::Instance().instance())},
+    _root{MakeDirectory(_fs, path)} {
   auto options =
     MakeWriterOptions(_scorer_ptr, opts.indexer_threads, config.segment_mem_max,
                       opts.row_group_size, opts.segment_docs_max);
   _reader_options = options.reader_options;
-  _writer = irs::IndexWriter::Make(_dir, std::move(options));
+  options.released = _released;
+  _writer = irs::IndexWriter::Make(::irs::DuckDBEngine::Instance().instance(),
+                                   _fs, _root, std::move(options));
 }
 
-irs::DirectoryReader IndexBuilder::GetReader() {
+irs::CompositeReader IndexBuilder::GetReader() {
   std::vector<irs::SegmentReader> readers;
   absl::MutexLock lock{&_mutex};
   readers.reserve(_segments.size());
   for (const auto& meta : _segments) {
-    readers.emplace_back(
-      irs::SegmentReaderImpl::Open(_dir, meta, _reader_options));
+    readers.emplace_back(irs::SegmentReaderImpl::Open(
+      ::irs::DuckDBEngine::Instance().instance(), _fs, _root, meta,
+      _reader_options, _files[meta.name]));
   }
-  return {_dir, _reader_options, std::move(readers), /*stats=*/true};
+  return {std::move(readers), /*stats=*/true};
 }
 
 void IndexBuilder::Remove(const irs::DocRemoval& removal) {
@@ -112,19 +125,8 @@ void IndexBuilder::Add(
   for (const auto& segment : flushed) {
     SDB_ASSERT(segment.docs_mask.Empty());
     _segments.push_back(segment.meta);
+    _files[segment.meta.name] = segment.reader->Files();
   }
-  Repin();
-}
-
-void IndexBuilder::Repin() {
-  irs::FileRefs pins;
-  auto& refs = _dir.attributes().refs();
-  for (const auto& meta : _segments) {
-    for (const auto& file : irs::SegmentFiles(meta.name, meta.kinds)) {
-      pins.emplace_back(refs.add(file));
-    }
-  }
-  _pins = std::move(pins);
 }
 
 void IndexBuilder::Compact(const irs::CompactionPolicy& policy) {
@@ -148,11 +150,12 @@ void IndexBuilder::Compact(const irs::CompactionPolicy& policy) {
       std::erase_if(_segments, [&](const auto& meta) {
         return meta.name == candidate->Meta().name;
       });
+      _files.erase(candidate->Meta().name);
     }
     _segments.push_back(merged.meta);
-    Repin();
+    _files[merged.meta.name] = merged.reader->Files();
   }
-  irs::DirectoryCleaner::clean(_dir);
+  irs::RemoveReleased(_fs, _root, *_released);
 }
 
 void IndexBuilder::WriteSegmentList() {
@@ -166,10 +169,7 @@ void IndexBuilder::WriteSegmentList() {
       irs::AppendSegmentList(text, id, meta.kinds, meta.docs_count);
     }
   }
-  auto out = _dir.create(kSegmentListFile);
-  out->WriteData(reinterpret_cast<const irs::byte_type*>(text.data()),
-                 text.size());
-  _dir.Finish(std::move(out), irs::IOAdvice::RANDOM)->Sync();
+  irs::WriteWhole(_fs, _fs.JoinPath(_root, kSegmentListFile), text, true);
 }
 
 void Batch::Add(std::string_view id, std::string_view text) {
@@ -326,8 +326,10 @@ void IndexBuilder::IndexFrom(LineSource& source, BatchHandlerFactory factory) {
   WriteSegmentList();
 }
 
-bool TextField::Write(irs::DataOutput& out) const {
-  irs::WriteStr(out, text);
+bool TextField::Write(duckdb::WriteStream& out) const {
+  out.WriteVarint<uint32_t>(static_cast<uint32_t>(text.size()));
+  out.WriteData(reinterpret_cast<const irs::byte_type*>(text.data()),
+                text.size());
   return true;
 }
 

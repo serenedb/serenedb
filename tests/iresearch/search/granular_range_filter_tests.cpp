@@ -23,8 +23,8 @@
 
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <limits>
 #include <random>
 
 #include "filter_test_case_base.hpp"
@@ -1866,8 +1866,8 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     while (!irs::doc_limits::eof(docs->Next())) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
-      irs::BytesViewInput in;
-      in.reset(bytes);
+      duckdb::MemoryReader in;
+      in = duckdb::MemoryReader{bytes};
       actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
@@ -1912,8 +1912,8 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     while (!irs::doc_limits::eof(docs->Next())) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
-      irs::BytesViewInput in;
-      in.reset(bytes);
+      duckdb::MemoryReader in;
+      in = duckdb::MemoryReader{bytes};
       actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
@@ -1962,8 +1962,8 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     while (!irs::doc_limits::eof(docs->Next())) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
-      irs::BytesViewInput in;
-      in.reset(bytes);
+      duckdb::MemoryReader in;
+      in = duckdb::MemoryReader{bytes};
       actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
@@ -2008,15 +2008,15 @@ TEST_P(GranularRangeFilterTestCase, by_range_numeric_sequence) {
     while (!irs::doc_limits::eof(docs->Next())) {
       const auto doc = docs->Value();
       const auto bytes = values.Get(doc);
-      irs::BytesViewInput in;
-      in.reset(bytes);
+      duckdb::MemoryReader in;
+      in = duckdb::MemoryReader{bytes};
       actual.emplace(irs::ReadString<std::string>(in));
     }
     ASSERT_EQ(expected, actual);
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(granular_range_filter_test,
                          GranularRangeFilterTestCase,

@@ -148,6 +148,7 @@ void InitOptimizeRules() {
 }
 
 #ifdef SDB_DEV
+
 namespace {
 
 void AssertNoTermChild(Filter::ptr& root) {

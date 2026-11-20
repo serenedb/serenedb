@@ -68,7 +68,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   PrunedPosting(PrunedPosting&&) = delete;
   PrunedPosting& operator=(PrunedPosting&&) = delete;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                IndexFeatures layout, const SubReader& segment,
                const TermReader& field, const irs::detail::ScoreArgs& args) {
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {

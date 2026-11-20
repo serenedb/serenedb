@@ -180,10 +180,8 @@ void PieceTermReader::Add(bytes_view term, const PostingMeta& meta) {
   SDB_ASSERT(_entries.empty() || TermOf(_entries.size() - 1) < term);
   _entries.push_back({.begin = static_cast<uint32_t>(_terms.size()),
                       .size = static_cast<uint32_t>(term.size()),
-                      .inline_at = static_cast<uint32_t>(_inline.size()),
                       .meta = meta});
   _terms.append(term);
-  _inline.append(meta.Inline());
 }
 
 void PieceTermReader::Seal(uint64_t docs, uint64_t total_freq) {
@@ -191,11 +189,6 @@ void PieceTermReader::Seal(uint64_t docs, uint64_t total_freq) {
              "piece: total frequency ", total_freq, " exceeds uint32_t::max");
   _docs = docs;
   _freq.value = static_cast<uint32_t>(total_freq);
-  _inline.append(term_dict::kSlack, 0);
-  for (auto& entry : _entries) {
-    entry.meta.inline_data =
-      entry.meta.inline_size == 0 ? nullptr : _inline.data() + entry.inline_at;
-  }
 }
 
 size_t PieceTermReader::LowerBound(bytes_view term) const noexcept {
@@ -293,10 +286,6 @@ void PieceTermReader::SampleTerms(
     }
     visit({run.data(), n});
   }
-}
-
-std::unique_ptr<IndexInput> PieceTermReader::ReopenPayload() const {
-  return _owner->Postings().ReopenPayload();
 }
 
 PostingsHandles PieceTermReader::Handles() const noexcept {

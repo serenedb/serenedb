@@ -23,6 +23,8 @@
 #include <fsst.h>
 
 #include <cstdint>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <vector>
@@ -34,12 +36,16 @@
 #include "iresearch/formats/index/term_dict_store.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::term_dict {
 
 class FieldReader;
+
+struct PinnedRange {
+  duckdb::FilePin pinned;
+  uint64_t start = std::numeric_limits<uint64_t>::max();
+};
 
 class TermReaderImpl final : public TermReader {
  public:
@@ -65,7 +71,7 @@ class TermReaderImpl final : public TermReader {
   bool CoverRange(bytes_view from, bytes_view to,
                   TermVisitor visit) const final;
 
-  std::unique_ptr<IndexInput> ReopenPayload() const final;
+  bool Prefetch(bytes_view term) const final;
   PostingsHandles Handles() const noexcept final;
 
   const FieldMeta& meta() const noexcept final { return _meta; }
@@ -91,7 +97,7 @@ class TermReaderImpl final : public TermReader {
   uint32_t FirstEntry() const noexcept { return _first_entry; }
   uint32_t FirstRecord() const noexcept { return _first_record; }
   uint32_t LastEntry() const noexcept { return _last_entry; }
-  const byte_type* Block(size_t block) const noexcept;
+  const byte_type* Block(size_t block, PinnedRange& pinned) const;
   void HintBlock(uint32_t block) const noexcept;
   uint64_t BlockOffset(size_t block) const noexcept;
   uint64_t BlocksEnd() const noexcept { return BlockOffset(Blocks()); }
@@ -101,6 +107,7 @@ class TermReaderImpl final : public TermReader {
 
  private:
   bool Excludes(bytes_view term) const noexcept;
+  const byte_type* PinBlock(size_t block, PinnedRange& pinned) const;
 
   const FieldReader* _owner;
   FieldMeta _meta;

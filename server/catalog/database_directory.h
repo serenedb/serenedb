@@ -23,33 +23,37 @@
 #include <absl/functional/any_invocable.h>
 
 #include <atomic>
-#include <duckdb/common/typedefs.hpp>
-#include <filesystem>
+#include <duckdb/common/file_system.hpp>
 #include <memory>
-#include <optional>
+#include <string>
+#include <string_view>
 
 namespace sdb::catalog {
 
-void CreateDirectory(const std::filesystem::path& path);
-bool RemoveDirectory(const std::filesystem::path& path);
+inline constexpr std::string_view kEngineDir = "engine_v1";
+inline constexpr std::string_view kStoreDir = "store";
+
+duckdb::FileSystem& StorageFileSystem();
+void CreateDirectory(const std::string& path);
+void RemoveTreeOrThrow(const std::string& path);
+bool RemoveTree(const std::string& path) noexcept;
 void DeferRemovals() noexcept;
 void ResumeRemovals();
 void BeginStorageWork() noexcept;
 void EndStorageWork(bool tidy) noexcept;
 bool StorageTidy() noexcept;
 
+uint64_t StorageBytes(const std::string& directory);
+
+std::string StoreDirOf(std::string_view tablespace_directory);
+const std::shared_ptr<std::atomic_uint64_t>& SegmentIds();
+void RemoveStorage(absl::AnyInvocable<bool()> remove_files);
+
 class DatabaseDirectory final {
  public:
-  explicit DatabaseDirectory(std::filesystem::path path);
+  explicit DatabaseDirectory(std::string path) : _path{std::move(path)} {}
 
-  const std::filesystem::path& Path() const noexcept { return _path; }
-  std::filesystem::path StoragePath(duckdb::idx_t oid) const;
-
-  std::filesystem::path CreateStorage(duckdb::idx_t oid) const;
-  std::optional<std::filesystem::path> OpenStorage(duckdb::idx_t oid) const;
-  static void RemoveStorage(std::shared_ptr<DatabaseDirectory> directory,
-                            duckdb::idx_t oid,
-                            absl::AnyInvocable<bool()> remove_files);
+  const std::string& Path() const noexcept { return _path; }
 
   void MarkDropped() noexcept {
     _dropped.store(true, std::memory_order_release);
@@ -59,7 +63,7 @@ class DatabaseDirectory final {
   }
 
  private:
-  std::filesystem::path _path;
+  std::string _path;
   std::atomic_bool _dropped{false};
 };
 

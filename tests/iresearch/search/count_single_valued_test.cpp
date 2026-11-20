@@ -540,9 +540,9 @@ TEST_P(CountSingleValuedTest, bitset_fills_skip_what_earlier_clauses_emptied) {
   check(split, 20001, end);
 }
 
-INSTANTIATE_TEST_SUITE_P(count_single_valued_test, CountSingleValuedTest,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         CountSingleValuedTest::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  count_single_valued_test, CountSingleValuedTest,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  CountSingleValuedTest::to_string);
 
 }  // namespace

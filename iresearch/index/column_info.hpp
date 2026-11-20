@@ -33,6 +33,7 @@
 #include <string_view>
 
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -119,6 +120,12 @@ inline constexpr VectorMetric EffectiveQuantMetric(
   VectorMetric metric) noexcept {
   return metric == VectorMetric::Cosine ? VectorMetric::InnerProduct : metric;
 }
+
+struct QuantMetricAxis : Axis<VectorMetric::L2Sqr, VectorMetric::InnerProduct> {
+  static constexpr VectorMetric Of(VectorMetric metric) noexcept {
+    return EffectiveQuantMetric(metric);
+  }
+};
 
 enum class FieldKind : uint8_t {
   None = 0,

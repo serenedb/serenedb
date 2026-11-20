@@ -25,50 +25,11 @@
 #include <climits>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/bit_utils.hpp>
-#include <iresearch/utils/number_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <random>
 #include <vector>
 
 #include "tests_shared.hpp"
-
-TEST(bit_utils_test, zig_zag_32) {
-  using namespace irs;
-
-  const int32_t min = std::numeric_limits<int32_t>::min();
-  const int32_t max = std::numeric_limits<int32_t>::max();
-
-  EXPECT_EQ(min, irs::ZigZagDecode32(irs::ZigZagEncode32(min)));
-  EXPECT_EQ(max, irs::ZigZagDecode32(irs::ZigZagEncode32(max)));
-
-  const int32_t step = 255;
-  const int32_t range_min = -std::numeric_limits<int16_t>::min() / step;
-  const int32_t range_max = std::numeric_limits<int16_t>::max() / step;
-
-  for (int32_t i = range_min; i < range_max; i += step) {
-    EXPECT_EQ(i, irs::ZigZagDecode32(irs::ZigZagEncode32(i)));
-  }
-}
-
-TEST(bit_utils_test, zig_zag_64) {
-  using namespace irs;
-
-  const int64_t min = std::numeric_limits<int64_t>::min();
-  const int64_t max = std::numeric_limits<int64_t>::max();
-
-  EXPECT_EQ(min, irs::ZigZagDecode64(irs::ZigZagEncode64(min)));
-  EXPECT_EQ(max, irs::ZigZagDecode64(irs::ZigZagEncode64(max)));
-
-  const int64_t step = 255;
-  const int64_t range_min =
-    -(std::numeric_limits<int32_t>::min() / uint32_t(step));
-  const int64_t range_max =
-    std::numeric_limits<int32_t>::max() / uint32_t(step);
-
-  for (int64_t i = range_min; i < range_max; i += step) {
-    EXPECT_EQ(i, irs::ZigZagDecode64(irs::ZigZagEncode64(i)));
-  }
-}
 
 TEST(bit_utils_test, set_check_bit) {
   using namespace irs;

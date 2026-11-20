@@ -519,7 +519,7 @@ TEST_P(ByEditDistanceTestCase, bm25) {
         irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
     }
 
-    bool Write(irs::DataOutput&) const noexcept final { return true; }
+    bool Write(duckdb::WriteStream&) const noexcept final { return true; }
 
     irs::analysis::Tokenizer& GetTokens() const final { return *_analyzer; }
 
@@ -1376,7 +1376,7 @@ TEST_P(ByEditDistanceTestCase, max_merge_is_kept_whole_in_a_sum_parent) {
   EXPECT_EQ(flat, should_of(*make(irs::ScoreMergeType::Sum), nullptr));
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(by_edit_distance_test, ByEditDistanceTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

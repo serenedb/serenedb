@@ -86,9 +86,9 @@ class RangeAhead final : public ColdBlocks {
     const uint32_t end = std::max(field.Index().BlockEnd(_to), block + 1);
     const uint64_t offset = field.BlockOffset(block);
     const uint64_t size =
-      std::min(field.BlockOffset(end) - offset, file_utils::kMaxReadahead);
-    if (size > file_utils::kPage) {
-      file_utils::Hint(field.Store().Input(), offset, size);
+      std::min(field.BlockOffset(end) - offset, duckdb::InputFile::MAX_HINT);
+    if (size > duckdb::PageResidency::PAGE_SIZE) {
+      field.Store().Input().Hint(offset, size);
     }
   }
 
@@ -329,11 +329,6 @@ void RangeWriter::Add(bytes_view term, const PostingMeta& meta) {
 void RangeWriter::Keep(RangePosting& posting,
                        const PostingMeta& meta) noexcept {
   posting.meta = meta;
-  if (meta.inline_size != 0) {
-    std::memcpy(posting.inline_bytes.data(), meta.inline_data,
-                meta.inline_size);
-    posting.meta.inline_data = posting.inline_bytes.data();
-  }
 }
 
 void RangeWriter::Push(size_t level, const Child& child) {
@@ -398,14 +393,9 @@ void RangeWriter::Release(size_t level) {
       },
       posting.meta);
     posting.docs_count = posting.meta.docs_count;
-  } else if (posting.meta.inline_size != 0) {
-    posting.meta.inline_data = posting.inline_bytes.data();
   }
   range.starts.append(posting.key);
-  range.inline_at.push_back(static_cast<uint32_t>(range.inlines.size()));
-  range.inlines.append(posting.meta.Inline());
-  auto& meta = range.metas.emplace_back(posting.meta);
-  meta.inline_data = nullptr;
+  range.metas.emplace_back(posting.meta);
   ++range.count;
   if (level + 1 != kMaxRangeLevels) {
     Push(level + 1, {
@@ -438,20 +428,14 @@ RangeWriter::Entry RangeWriter::At(size_t level, uint32_t i) const noexcept {
   const auto& range = _levels[level];
   SDB_ASSERT(i < range.count);
   const size_t width = range.starts.size() / range.count;
-  Entry entry{.key = bytes_view{range.starts}.substr(i * width, width),
-              .meta = range.metas[i]};
-  if (entry.meta.inline_size != 0) {
-    entry.meta.inline_data = range.inlines.data() + range.inline_at[i];
-  }
-  return entry;
+  return {.key = bytes_view{range.starts}.substr(i * width, width),
+          .meta = range.metas[i]};
 }
 
 void RangeWriter::Clear() noexcept {
   for (auto& range : _levels) {
     range.starts.clear();
     range.metas.clear();
-    range.inline_at.clear();
-    range.inlines.clear();
     range.group.docs.clear();
     range.group.docs_count = 0;
     range.held.docs.clear();

@@ -35,15 +35,15 @@
 #include <iresearch/formats/posting_meta.hpp>
 #include <iresearch/formats/reader_state.hpp>
 #include <iresearch/index/field_meta.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/bit_packing.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "formats_test_case_base.hpp"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -64,15 +64,14 @@ class Format10TestCase : public tests::FormatTestCase {
     // write postings for field
     {
       irs::FlushState state{
-        .dir = dir.get(),
-        .name = "segment_name",
+        .tracker = dir->Tracker("segment_name"),
         .doc_count = docs.back().first + 1,
         .index_features = field.index_features,
       };
 
-      auto out = dir->create("attributes");
+      auto out = dir->Create("attributes");
       ASSERT_FALSE(!out);
-      irs::WriteStr(*out, std::string_view("file_header"));
+      tests::WriteStr(*out, std::string_view("file_header"));
 
       // prepare writer
       writer.Prepare(state);
@@ -93,6 +92,7 @@ class Format10TestCase : public tests::FormatTestCase {
       ASSERT_EQ(docs.size(), stats.docs_count);
 
       writer.End();
+      out->Close();
     }
 
     // read postings
@@ -100,19 +100,24 @@ class Format10TestCase : public tests::FormatTestCase {
       irs::SegmentMeta meta;
       meta.name = "segment_name";
 
-      irs::ReaderState state;
-      state.dir = dir.get();
-      state.meta = &meta;
+      const irs::ReaderState state{
+        .db = dir->Db(),
+        .fs = dir->Fs(),
+        .root = dir->Root(),
+        .meta = meta,
+      };
 
-      auto in = dir->open("attributes", irs::IOAdvice::RANDOM);
+      const auto in_file =
+        dir->Open("attributes", duckdb::MappedFileAccess::NORMAL);
+      duckdb::InputFileReader in{*in_file};
       ASSERT_FALSE(!in);
-      const auto tmp = irs::ReadString<std::string>(*in);
+      const auto tmp = irs::ReadString<std::string>(in);
 
       // prepare reader
       irs::PostingsReader reader;
       reader.prepare(state, field.index_features);
 
-      const auto records = tests::ReadRecords(*in);
+      auto records = tests::ReadRecords(in);
       const auto* begin = records.data.get();
 
       // read term attributes
@@ -256,13 +261,12 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
   // write postings
   {
     irs::FlushState state{
-      .dir = &dir(),
-      .name = "segment_name",
+      .tracker = dir().Tracker("segment_name"),
       .doc_count = 100,
       .index_features = field.index_features,
     };
 
-    auto out = dir().create("attributes");
+    auto out = dir().Create("attributes");
     ASSERT_FALSE(!out);
 
     // prepare writer
@@ -314,6 +318,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
     // finish writing
     writer.End();
+    out->Close();
   }
 
   // read postings
@@ -321,18 +326,23 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
     irs::SegmentMeta meta;
     meta.name = "segment_name";
 
-    irs::ReaderState state;
-    state.dir = &dir();
-    state.meta = &meta;
+    const irs::ReaderState state{
+      .db = dir().Db(),
+      .fs = dir().Fs(),
+      .root = dir().Root(),
+      .meta = meta,
+    };
 
-    auto in = dir().open("attributes", irs::IOAdvice::RANDOM);
+    const auto in_file =
+      dir().Open("attributes", duckdb::MappedFileAccess::NORMAL);
+    duckdb::InputFileReader in{*in_file};
     ASSERT_FALSE(!in);
 
     // prepare reader
     irs::PostingsReader reader;
     reader.prepare(state, field.index_features);
 
-    const auto records = tests::ReadRecords(*in);
+    auto records = tests::ReadRecords(in);
     const auto* begin = records.data.get();
 
     // read term0 attributes & postings
@@ -403,18 +413,16 @@ TEST_P(Format10TestCase, postings_read_write) {
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
   irs::PostingsWriter writer;
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
-  irs::bstring inline0, inline1;
 
   // write postings
   {
     irs::FlushState state{
-      .dir = &dir(),
-      .name = "segment_name",
+      .tracker = dir().Tracker("segment_name"),
       .doc_count = 150,
       .index_features = field.index_features,
     };
 
-    auto out = dir().create("attributes");
+    auto out = dir().Create("attributes");
     ASSERT_FALSE(!out);
 
     // prepare writer
@@ -430,8 +438,6 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       tests::WriteRecord(writer, *out, meta0);
-      inline0.assign(meta0.Inline());
-      meta0.inline_data = inline0.data();
     }
     // write postings for term1
     {
@@ -440,8 +446,6 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       tests::WriteRecord(writer, *out, meta1);
-      inline1.assign(meta1.Inline());
-      meta1.inline_data = inline1.data();
     }
 
     ASSERT_NE(0, meta0.inline_size);
@@ -449,6 +453,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // finish writing
     writer.End();
+    out->Close();
   }
 
   // read postings
@@ -456,18 +461,23 @@ TEST_P(Format10TestCase, postings_read_write) {
     irs::SegmentMeta meta;
     meta.name = "segment_name";
 
-    irs::ReaderState state;
-    state.dir = &dir();
-    state.meta = &meta;
+    const irs::ReaderState state{
+      .db = dir().Db(),
+      .fs = dir().Fs(),
+      .root = dir().Root(),
+      .meta = meta,
+    };
 
-    auto in = dir().open("attributes", irs::IOAdvice::RANDOM);
+    const auto in_file =
+      dir().Open("attributes", duckdb::MappedFileAccess::NORMAL);
+    duckdb::InputFileReader in{*in_file};
     ASSERT_FALSE(!in);
 
     // prepare reader
     irs::PostingsReader reader;
     reader.prepare(state, field.index_features);
 
-    const auto records = tests::ReadRecords(*in);
+    auto records = tests::ReadRecords(in);
     const auto* begin = records.data.get();
 
     // cumulative attribute
@@ -549,14 +559,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .dir = &dir(),
-      .name = "0",
+      .tracker = dir().Tracker("0"),
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out =
+      dir().Create(std::string("postings") + std::string{state.tracker.Name()});
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -579,14 +589,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .dir = &dir(),
-      .name = "1",
+      .tracker = dir().Tracker("1"),
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out =
+      dir().Create(std::string("postings") + std::string{state.tracker.Name()});
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -608,14 +618,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .dir = &dir(),
-      .name = "2",
+      .tracker = dir().Tracker("2"),
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out =
+      dir().Create(std::string("postings") + std::string{state.tracker.Name()});
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -637,14 +647,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .dir = &dir(),
-      .name = "3",
+      .tracker = dir().Tracker("3"),
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out =
+      dir().Create(std::string("postings") + std::string{state.tracker.Name()});
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -665,14 +675,14 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .dir = &dir(),
-      .name = "4",
+      .tracker = dir().Tracker("4"),
       .doc_count = 10000,
       // all possible features in segment
       .index_features = field.index_features,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out =
+      dir().Create(std::string("postings") + std::string{state.tracker.Name()});
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -693,12 +703,12 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.index_features = kFeatures;
 
     irs::FlushState state{
-      .dir = &dir(),
-      .name = "5",
+      .tracker = dir().Tracker("5"),
       .doc_count = 10000,
     };
 
-    auto out = dir().create(std::string("postings") + state.name.data());
+    auto out =
+      dir().Create(std::string("postings") + std::string{state.tracker.Name()});
     ASSERT_FALSE(!out);
 
     TestPostings docs(docs0);
@@ -733,8 +743,7 @@ TEST_P(Format10TestCase, ires336) {
     terms.begin(), terms.end(), docs.begin(), docs.end());
 
   irs::FlushState flush_state{
-    .dir = dir.get(),
-    .name = segment_name,
+    .tracker = dir->Tracker(segment_name),
     .doc_count = 10000,
   };
 
@@ -742,7 +751,7 @@ TEST_P(Format10TestCase, ires336) {
   field_meta.id = kFieldId;
   {
     tests::MockTermReader term_reader{trms, field_meta};
-    irs::IdxWriter idx{*dir, segment_name};
+    irs::IdxWriter idx{dir->Tracker(segment_name)};
     irs::term_dict::FieldWriter fw{/*compaction=*/true};
     fw.SetIdxWriter(idx);
     fw.prepare(flush_state, 1);
@@ -754,11 +763,15 @@ TEST_P(Format10TestCase, ires336) {
   irs::SegmentMeta meta;
   meta.name = segment_name;
 
-  irs::IdxReader idx_reader{*dir, segment_name, nullptr};
-  irs::term_dict::FieldReader fr_obj{irs::IResourceManager::gNoop};
+  irs::IdxReader idx_reader{dir->Fs(), dir->Root(), segment_name, true,
+                            nullptr};
+  irs::term_dict::FieldReader fr_obj;
   auto* fr = &fr_obj;
-  fr->prepare(
-    irs::ReaderState{.dir = dir.get(), .meta = &meta, .idx = &idx_reader});
+  fr->prepare(irs::ReaderState{.db = dir->Db(),
+                               .fs = dir->Fs(),
+                               .root = dir->Root(),
+                               .meta = meta,
+                               .idx = &idx_reader});
 
   const auto fields = fr->fields(field_meta.id);
   ASSERT_EQ(1, fields.size());
@@ -929,15 +942,14 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
       // write postings
       {
         irs::FlushState state{
-          .dir = dir.get(),
-          .name = "segment_name",
+          .tracker = dir->Tracker("segment_name"),
           .doc_count = docs.back().first + 1,
           .index_features = field.index_features,
         };
 
-        auto out = dir->create("attributes");
+        auto out = dir->Create("attributes");
         ASSERT_FALSE(!out);
-        irs::WriteStr(*out, std::string_view("file_header"));
+        tests::WriteStr(*out, std::string_view("file_header"));
 
         writer.Prepare(state);
         writer.BeginField(field);
@@ -950,6 +962,7 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
         writer.EndField();
         writer.End();
+        out->Close();
       }
 
       // read postings and test reset
@@ -957,18 +970,23 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
         irs::SegmentMeta meta;
         meta.name = "segment_name";
 
-        irs::ReaderState state;
-        state.dir = dir.get();
-        state.meta = &meta;
+        const irs::ReaderState state{
+          .db = dir->Db(),
+          .fs = dir->Fs(),
+          .root = dir->Root(),
+          .meta = meta,
+        };
 
-        auto in = dir->open("attributes", irs::IOAdvice::RANDOM);
+        const auto in_file =
+          dir->Open("attributes", duckdb::MappedFileAccess::NORMAL);
+        duckdb::InputFileReader in{*in_file};
         ASSERT_FALSE(!in);
-        const auto tmp = irs::ReadString<std::string>(*in);
+        const auto tmp = irs::ReadString<std::string>(in);
 
         irs::PostingsReader reader;
         reader.prepare(state, field.index_features);
 
-        const auto records = tests::ReadRecords(*in);
+        auto records = tests::ReadRecords(in);
         const auto* begin = records.data.get();
 
         irs::PostingMeta read_meta;
@@ -1073,7 +1091,7 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
   const auto prepare = [&](std::string_view name, bool unknown_field) {
     meta.name = name;
     {
-      auto out = dir->create(absl::StrCat(name, ".doc"));
+      auto out = dir->Create(absl::StrCat(name, ".doc"));
       EXPECT_NE(nullptr, out);
       if (unknown_field) {
         irs::format_utils::WriteFooter(
@@ -1083,12 +1101,15 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
       } else {
         irs::format_utils::WriteFooter(*out);
       }
+      out->Close();
     }
     std::string message;
     try {
       irs::PostingsReader reader;
-      reader.prepare(irs::ReaderState{.dir = dir.get(), .meta = &meta},
-                     irs::IndexFeatures::None);
+      reader.prepare(
+        irs::ReaderState{
+          .db = dir->Db(), .fs = dir->Fs(), .root = dir->Root(), .meta = meta},
+        irs::IndexFeatures::None);
     } catch (const irs::SqlException& e) {
       EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
       message = e.what();
@@ -1102,7 +1123,7 @@ TEST_P(Format10TestCase, postings_reject_unknown_footer_field) {
     << message;
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));
 

@@ -33,7 +33,6 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs::term_dict {
@@ -352,7 +351,7 @@ class RecordRun {
   Stats Stage(const PostingMeta& meta) const;
   uint64_t SizeOf(const Stats& stats) const noexcept;
   void Commit(const PostingMeta& meta, const Stats& staged);
-  void Write(DataOutput& out) const;
+  void Write(duckdb::WriteStream& out) const;
 
  private:
   struct SparseColumn {
@@ -373,7 +372,7 @@ class RecordRun {
 
   uint64_t SparseBytes(const SparseStats& stats,
                        uint32_t values) const noexcept;
-  void WriteSparse(DataOutput& out, const SparseStats& stats,
+  void WriteSparse(duckdb::WriteStream& out, const SparseStats& stats,
                    const SparseColumn& column, uint32_t values) const;
 
   PostingFeatures _features;

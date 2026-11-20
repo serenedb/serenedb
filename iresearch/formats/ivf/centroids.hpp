@@ -24,18 +24,18 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <functional>
 #include <span>
 #include <vector>
 
 #include "iresearch/index/vector_distance.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-class IndexOutput;
 class ColumnReader;
 class ReadContext;
 
@@ -43,8 +43,8 @@ struct IVFHeader {
   VectorMetric metric;
   uint32_t d;
 
-  static IVFHeader Deserialize(IndexInput& in);
-  void Serialize(IndexOutput& out) const;
+  static IVFHeader Deserialize(duckdb::InputFileReader& in);
+  void Serialize(duckdb::WriteStream& out) const;
 };
 
 struct CentroidsNodeView {
@@ -55,7 +55,7 @@ struct CentroidsNodeView {
 };
 
 struct LayerBuffers {
-  std::vector<std::vector<float>> centroids;
+  std::vector<duckdb::FilePin> centroids;
   std::vector<std::vector<size_t>> child_offsets;
 };
 
@@ -74,18 +74,19 @@ struct CentroidsNode {
     std::span<const float> centroid;
   };
 
-  static std::vector<CentroidsNode> Deserialize(IndexInput& in, size_t level,
-                                                size_t d,
+  static std::vector<CentroidsNode> Deserialize(duckdb::InputFileReader& in,
+                                                size_t level, size_t d,
                                                 std::span<const size_t> starts,
                                                 std::span<const size_t> sizes);
-  void Serialize(IndexOutput& out) const;
+  void Serialize(duckdb::WriteStream& out) const;
 
   static std::vector<CentroidsNodeView> ReadLayer(
-    IndexInput& in, size_t level, size_t d, std::span<const size_t> starts,
-    std::span<const size_t> sizes, LayerBuffers& bufs, size_t& n_total);
+    duckdb::InputFileReader& in, size_t level, size_t d,
+    std::span<const size_t> starts, std::span<const size_t> sizes,
+    LayerBuffers& bufs, size_t& n_total);
 
   template<VectorMetric Metric>
-  static void Search(std::span<const float> query, IndexInput& in,
+  static void Search(std::span<const float> query, duckdb::InputFileReader& in,
                      uint32_t beam, size_t level,
                      std::span<const CentroidsNodeView> nodes,
                      size_t layer_base, size_t layer_total,
@@ -154,11 +155,12 @@ class CentroidsTree {
   CentroidsTree& operator=(const CentroidsTree&) = delete;
   CentroidsTree& operator=(CentroidsTree&&) = default;
 
-  static CentroidsTree Deserialize(IndexInput& in, uint64_t root_byte_size);
+  static CentroidsTree Deserialize(duckdb::InputFileReader& in,
+                                   uint64_t root_byte_size);
 
-  void Search(std::span<const float> query, IndexInput& in, uint32_t nprobe,
-              std::vector<uint32_t>& out_ids, std::vector<float>* out_centroids,
-              uint32_t beam = 0) const;
+  void Search(std::span<const float> query, duckdb::InputFileReader& in,
+              uint32_t nprobe, std::vector<uint32_t>& out_ids,
+              std::vector<float>* out_centroids, uint32_t beam = 0) const;
 
   size_t Dim() const noexcept { return _head.d; }
   VectorMetric Metric() const noexcept { return _head.metric; }
@@ -178,7 +180,6 @@ class CentroidsTree {
 
 struct CentroidsSpan {
   size_t offset = 0;
-  size_t byte_size = 0;
   size_t root_byte_size = 0;
 };
 
@@ -215,7 +216,7 @@ class CentroidsBuilder {
     std::vector<float> sample, uint32_t d, VectorMetric metric,
     const CentroidsBuildParams& params = {});
 
-  CentroidsSpan Serialize(IndexOutput& out) const;
+  CentroidsSpan Serialize(duckdb::WriteStream& out) const;
 
   AssignedCentroids AssignCentroids(
     std::span<float> data, size_t d,

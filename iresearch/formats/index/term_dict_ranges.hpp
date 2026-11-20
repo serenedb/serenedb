@@ -37,6 +37,10 @@ class RangeWriter final {
     PostingMeta meta;
   };
 
+  RangeWriter() = default;
+  RangeWriter(const RangeWriter&) = delete;
+  RangeWriter& operator=(const RangeWriter&) = delete;
+
   bool Active() const noexcept { return _pw != nullptr; }
   DocTee Tee() noexcept;
   void Begin(PostingsWriter& pw, uint64_t docs) noexcept;
@@ -52,7 +56,6 @@ class RangeWriter final {
     bstring key;
     std::vector<doc_id_t> docs;
     PostingMeta meta;
-    std::array<byte_type, PostingMeta::kInlineBytes> inline_bytes{};
     uint64_t docs_count = 0;
     bool join = false;
   };
@@ -60,8 +63,6 @@ class RangeWriter final {
   struct Level {
     bstring starts;
     std::vector<PostingMeta> metas;
-    std::vector<uint32_t> inline_at;
-    bstring inlines;
     RangePosting group;
     RangePosting held;
     uint32_t count = 0;

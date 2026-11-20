@@ -41,6 +41,7 @@
 #include <unordered_set>
 
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
 
 namespace tests {
 
@@ -49,8 +50,8 @@ struct Records {
   const irs::byte_type* end;
 };
 
-inline Records ReadRecords(irs::IndexInput& in) {
-  const uint64_t size = in.Length() - in.Position();
+inline Records ReadRecords(duckdb::InputFileReader& in) {
+  const uint64_t size = in.File()->GetSize() - in.Position();
   auto data =
     std::make_unique<irs::byte_type[]>(size + irs::block_codec::kInSlack);
   in.ReadData(data.get(), size);
@@ -58,18 +59,18 @@ inline Records ReadRecords(irs::IndexInput& in) {
   return {std::move(data), end};
 }
 
-inline void WriteRecord(irs::PostingsWriter& writer, irs::IndexOutput& out,
+inline void WriteRecord(irs::PostingsWriter& writer, duckdb::WriteStream& out,
                         const irs::PostingMeta& meta) {
   writer.Encode(out, meta);
   if (meta.inline_size != 0) {
-    out.WriteData(meta.inline_data, meta.inline_size);
+    out.WriteData(meta.inline_bytes.data(), meta.inline_size);
   }
 }
 
 inline size_t ReadRecord(const irs::byte_type* in, irs::IndexFeatures features,
                          irs::PostingMeta& meta) {
   const auto size = irs::PostingsReader::decode(in, features, meta);
-  meta.inline_data = in + size;
+  meta.SetInline({in + size, meta.inline_size});
   return size + meta.inline_size;
 }
 
@@ -128,26 +129,24 @@ inline SeekPostings::ptr MakeSeekPostings(const irs::PostingMeta& meta,
                                           irs::IndexFeatures layout,
                                           irs::IndexFeatures required,
                                           bool has_score_bounds) {
-  return irs::detail::ResolveInput(
-    *handles.doc, [&]<typename Input> -> SeekPostings::ptr {
-      if (irs::IndexFeatures::None == (required & irs::IndexFeatures::Pos)) {
-        return irs::memory::make_managed<
-          SeekPostingsImpl<irs::detail::PostingLead<Input>>>(
-          meta, *handles.doc, layout, has_score_bounds);
-      }
-      return irs::detail::ResolveBounds(
-        has_score_bounds, [&]<bool Bounds> -> SeekPostings::ptr {
-          if (irs::IndexFeatures::None !=
-              (required & irs::IndexFeatures::Offs)) {
-            return irs::memory::make_managed<
-              SeekPostingsImpl<irs::detail::PostingPos<Input, Bounds, true>>>(
-              meta, *handles.doc, layout, *handles.pos, handles.pay);
-          }
+  return irs::Resolve(*handles.doc, [&]<typename Input> -> SeekPostings::ptr {
+    if (irs::IndexFeatures::None == (required & irs::IndexFeatures::Pos)) {
+      return irs::memory::make_managed<
+        SeekPostingsImpl<irs::detail::PostingLead<Input>>>(
+        meta, *handles.doc, layout, has_score_bounds);
+    }
+    return irs::Resolve<irs::detail::BoundsAxis>(
+      has_score_bounds, [&]<bool Bounds> -> SeekPostings::ptr {
+        if (irs::IndexFeatures::None != (required & irs::IndexFeatures::Offs)) {
           return irs::memory::make_managed<
-            SeekPostingsImpl<irs::detail::PostingPos<Input, Bounds, false>>>(
+            SeekPostingsImpl<irs::detail::PostingPos<Input, Bounds, true>>>(
             meta, *handles.doc, layout, *handles.pos, handles.pay);
-        });
-    });
+        }
+        return irs::memory::make_managed<
+          SeekPostingsImpl<irs::detail::PostingPos<Input, Bounds, false>>>(
+          meta, *handles.doc, layout, *handles.pos, handles.pay);
+      });
+  });
 }
 
 // Materialized rows over a classic mock TermIterator's postings; batch

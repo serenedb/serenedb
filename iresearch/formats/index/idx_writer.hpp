@@ -21,11 +21,15 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/buffered_file_writer.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -33,18 +37,14 @@
 
 namespace irs {
 
-struct Directory;
-class IndexOutput;
-
 class IdxWriter final {
  public:
-  IdxWriter(Directory& dir, std::string_view segment_name);
-  ~IdxWriter();
+  explicit IdxWriter(FileTracker& tracker);
 
   IdxWriter(const IdxWriter&) = delete;
   IdxWriter& operator=(const IdxWriter&) = delete;
 
-  IndexOutput& BlocksOut();
+  duckdb::WriteStream& BlocksOut();
 
   void AddIvf(field_id id, IvfCentroidMeta meta);
 
@@ -58,8 +58,10 @@ class IdxWriter final {
   void EnsureOut();
   bool Empty() const noexcept;
 
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
+  FileTracker& _tracker;
+  std::string _filename;
+  std::unique_ptr<duckdb::BufferedFileWriter> _out;
+  IdxFooter _footer;
 };
 
 }  // namespace irs

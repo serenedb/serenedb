@@ -33,7 +33,6 @@
 #include <vector>
 
 #include "iresearch/formats/index/term_dict_key.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/string_utils.hpp"
@@ -346,28 +345,28 @@ uint64_t SizeWith(const VarColumns& columns, uint32_t count,
                   ShapeWith(columns, static_cast<uint32_t>(entry.lcp), len));
 }
 
-void WriteValue(DataOutput& out, uint32_t value, uint32_t width) {
+void WriteValue(duckdb::WriteStream& out, uint32_t value, uint32_t width) {
   switch (width) {
     case 1:
-      out.WriteByte(static_cast<byte_type>(value));
+      out.Write<byte_type>(static_cast<byte_type>(value));
       break;
     case 2:
-      out.WriteU16(static_cast<uint16_t>(value));
+      out.Write<uint16_t>(static_cast<uint16_t>(value));
       break;
     default:
-      out.WriteU32(value);
+      out.Write<uint32_t>(value);
       break;
   }
 }
 
-void WriteColumn(DataOutput& out, std::span<const uint32_t> values,
+void WriteColumn(duckdb::WriteStream& out, std::span<const uint32_t> values,
                  uint32_t width) {
   for (const auto value : values) {
     WriteValue(out, value, width);
   }
 }
 
-void WriteHeaders(DataOutput& out, const VarColumns& columns,
+void WriteHeaders(duckdb::WriteStream& out, const VarColumns& columns,
                   const Shape& shape, uint32_t len_bits) {
   const auto count = columns.lcps.size();
   const uint32_t base = shape.packing.base;
@@ -376,13 +375,13 @@ void WriteHeaders(DataOutput& out, const VarColumns& columns,
   };
   for (size_t i = 0; i != count; ++i) {
     const auto stored = StoredAt(columns, i, base);
-    out.WriteByte(escapes(stored)
-                    ? kEscapedHeader
-                    : Pack(stored.lcp - base, stored.len, len_bits));
+    out.Write<byte_type>(escapes(stored)
+                           ? kEscapedHeader
+                           : Pack(stored.lcp - base, stored.len, len_bits));
   }
   for (size_t i = 0; i != count; ++i) {
     if (escapes(StoredAt(columns, i, base))) {
-      out.WriteU16(static_cast<uint16_t>(i));
+      out.Write<uint16_t>(static_cast<uint16_t>(i));
     }
   }
   for (size_t i = 0; i != count; ++i) {
@@ -397,14 +396,16 @@ void WriteHeaders(DataOutput& out, const VarColumns& columns,
   }
 }
 
-void WriteHeads(DataOutput& out, const BlockBuilder& block, size_t step,
-                size_t skip) {
+void WriteHeads(duckdb::WriteStream& out, const BlockBuilder& block,
+                size_t step, size_t skip) {
   for (size_t i = 0; i < block.ends.size(); i += step) {
-    out.WriteU32(static_cast<uint32_t>(HeadAt(KeyAt(block, i), skip) >> 32));
+    out.Write<uint32_t>(
+      static_cast<uint32_t>(HeadAt(KeyAt(block, i), skip) >> 32));
   }
 }
 
-void WriteEfKeys(DataOutput& out, const BlockBuilder& block, EfShape shape) {
+void WriteEfKeys(duckdb::WriteStream& out, const BlockBuilder& block,
+                 EfShape shape) {
   const auto count = block.ends.size();
   const uint64_t base = StrideValue(KeyAt(block, 0), block.prefix);
   const auto value = [&](uint64_t i) {
@@ -415,7 +416,7 @@ void WriteEfKeys(DataOutput& out, const BlockBuilder& block, EfShape shape) {
   };
   for (uint64_t i = 0; i < count; i += kEfSample) {
     SDB_ASSERT(position(i) <= std::numeric_limits<uint16_t>::max());
-    out.WriteU16(static_cast<uint16_t>(position(i)));
+    out.Write<uint16_t>(static_cast<uint16_t>(position(i)));
   }
   const uint64_t words = EfUpperBytes(count, shape.highs) / sizeof(uint64_t);
   uint64_t word = 0;
@@ -423,22 +424,23 @@ void WriteEfKeys(DataOutput& out, const BlockBuilder& block, EfShape shape) {
   for (uint64_t i = 0; i != count; ++i) {
     const uint64_t at = position(i);
     for (; word != at / kEfWordBits; ++word) {
-      out.WriteU64(std::exchange(bits, 0));
+      out.Write<uint64_t>(std::exchange(bits, 0));
     }
     bits |= uint64_t{1} << (at % kEfWordBits);
   }
   for (; word != words; ++word) {
-    out.WriteU64(std::exchange(bits, 0));
+    out.Write<uint64_t>(std::exchange(bits, 0));
   }
   const uint64_t mask = (uint64_t{1} << shape.low_bits) - 1;
   WritePacked(out, count, shape.low_bits,
               [&](uint64_t i) { return value(i) & mask; });
 }
 
-void Serialize(const BlockBuilder& block, bytes_view records, DataOutput& out) {
+void Serialize(const BlockBuilder& block, bytes_view records,
+               duckdb::WriteStream& out) {
   const auto count = static_cast<uint32_t>(block.ends.size());
-  out.WriteByte(static_cast<byte_type>(block.kind));
-  out.WriteV32(count);
+  out.Write<byte_type>(static_cast<byte_type>(block.kind));
+  out.WriteVarint<uint32_t>(count);
   if (block.kind != BlockKind::FixedStride) {
     SDB_ASSERT(block.kind == BlockKind::Var || block.coded == count);
     const auto& columns = block.columns;
@@ -448,21 +450,21 @@ void Serialize(const BlockBuilder& block, bytes_view records, DataOutput& out) {
     const uint32_t len_bits = LenBits(columns.misfits);
     const uint32_t skip = block.head_skip;
     const auto restarts = std::span{columns.restarts};
-    out.WriteV32(static_cast<uint32_t>(restarts.size()));
-    out.WriteByte(static_cast<byte_type>(shape.lcp_width));
-    out.WriteByte(static_cast<byte_type>(shape.len_width));
-    out.WriteV64(columns.suffixes.size() - restarts.size() * skip);
-    out.WriteV32(skip);
+    out.WriteVarint<uint32_t>(static_cast<uint32_t>(restarts.size()));
+    out.Write<byte_type>(static_cast<byte_type>(shape.lcp_width));
+    out.Write<byte_type>(static_cast<byte_type>(shape.len_width));
+    out.WriteVarint<uint64_t>(columns.suffixes.size() - restarts.size() * skip);
+    out.WriteVarint<uint32_t>(skip);
     if (packed) {
-      out.WriteByte(static_cast<byte_type>(len_bits));
-      out.WriteV32(shape.packing.base);
-      out.WriteV32(shape.packing.escaped);
+      out.Write<byte_type>(static_cast<byte_type>(len_bits));
+      out.WriteVarint<uint32_t>(shape.packing.base);
+      out.WriteVarint<uint32_t>(shape.packing.escaped);
     } else {
-      out.WriteByte(kColumnHeaders);
+      out.Write<byte_type>(kColumnHeaders);
     }
     out.WriteData(block.keys.data(), skip);
     for (size_t i = 0; i != restarts.size(); ++i) {
-      out.WriteU16(static_cast<uint16_t>(restarts[i] - i * skip));
+      out.Write<uint16_t>(static_cast<uint16_t>(restarts[i] - i * skip));
     }
     WriteHeads(out, block, kRestartInterval, skip);
     if (packed) {
@@ -480,14 +482,14 @@ void Serialize(const BlockBuilder& block, bytes_view records, DataOutput& out) {
     }
   } else {
     const uint32_t stride = FixedWidth(block) - block.prefix;
-    out.WriteV32(stride);
-    out.WriteV32(block.prefix);
+    out.WriteVarint<uint32_t>(stride);
+    out.WriteVarint<uint32_t>(block.prefix);
     if (PacksKeys(stride)) {
       const auto shape = EfShapeOf(
         count,
         KeyRange(KeyAt(block, 0), KeyAt(block, count - 1), block.prefix));
-      out.WriteByte(static_cast<byte_type>(shape.low_bits));
-      out.WriteV64(shape.highs);
+      out.Write<byte_type>(static_cast<byte_type>(shape.low_bits));
+      out.WriteVarint<uint64_t>(shape.highs);
       out.WriteData(block.keys.data() + block.prefix, stride);
       out.WriteData(block.keys.data(), block.prefix);
       WriteEfKeys(out, block, shape);
@@ -790,7 +792,8 @@ uint64_t BlockEncoder::Seal(uint64_t records) {
   return block.size;
 }
 
-void BlockEncoder::Serialize(DataOutput& out, bytes_view records) const {
+void BlockEncoder::Serialize(duckdb::WriteStream& out,
+                             bytes_view records) const {
   term_dict::Serialize(_block, records, out);
 }
 

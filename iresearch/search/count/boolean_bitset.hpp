@@ -38,7 +38,7 @@ namespace irs::count {
 template<typename Table>
 class BooleanBitset : public Root {
  public:
-  BooleanBitset(detail::BitsetBuckets&& buckets, const IndexInput& doc,
+  BooleanBitset(detail::BitsetBuckets&& buckets, const duckdb::InputFile& doc,
                 doc_id_t docs_count, doc_id_t span, Table table)
     : _buckets{std::move(buckets)},
       _set{span},
@@ -73,7 +73,7 @@ class BooleanBitset : public Root {
 
   detail::BitsetBuckets _buckets;
   detail::BitsetStorage _set;
-  const IndexInput* _doc;
+  const duckdb::InputFile* _doc;
   doc_id_t _docs_count;
   [[no_unique_address]] detail::Narrowing<Table> _table;
 };
@@ -87,15 +87,19 @@ template<>
 inline constexpr FoldEmit kFoldEmit<count::Root::ptr>{0.3, 1.0, false};
 
 template<>
-inline count::Root::ptr MakeBitsetNode<count::Root::ptr>(
-  BitsetBuckets&& buckets, const IndexInput& doc, doc_id_t docs_count,
-  doc_id_t span, TableFilter* table) {
-  if (table != nullptr) {
-    return memory::make_managed<count::BooleanBitset<TableFilter*>>(
-      std::move(buckets), doc, docs_count, span, table);
+struct BitsetNode<count::Root::ptr> {
+  template<typename P>
+  static count::Root::ptr Make(BitsetBuckets&& buckets,
+                               const duckdb::InputFile& doc,
+                               doc_id_t docs_count, doc_id_t span,
+                               TableFilter* table) {
+    if (table != nullptr) {
+      return memory::make_managed<count::BooleanBitset<TableFilter*>>(
+        std::move(buckets), doc, docs_count, span, table);
+    }
+    return memory::make_managed<count::BooleanBitset<utils::Empty>>(
+      std::move(buckets), doc, docs_count, span, utils::Empty{});
   }
-  return memory::make_managed<count::BooleanBitset<utils::Empty>>(
-    std::move(buckets), doc, docs_count, span, utils::Empty{});
-}
+};
 
 }  // namespace irs::detail

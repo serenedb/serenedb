@@ -69,11 +69,12 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
     bool can_login = false;
     bool superuser = false;
   } role;
-  if (!catalog::ReadRole(user, [&](const catalog::RoleCatalogEntry& entry) {
-        role.oid = entry.oid;
-        role.can_login = entry.CanLogin();
-        role.superuser = entry.IsSuperuser();
-      })) {
+  if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
+        user, [&](const catalog::RoleCatalogEntry& entry) {
+          role.oid = entry.oid;
+          role.can_login = entry.CanLogin();
+          role.superuser = entry.IsSuperuser();
+        })) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" does not exist"))};
@@ -123,7 +124,7 @@ void LogRollbackFailure(std::string_view database,
 
 ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
                                      const SessionIdentity& identity)
-  : duckdb::ClientContext{db.shared_from_this()},
+  : duckdb::ClientContext{db.shared_from_this(), identity.temporary},
     _user{identity.user},
     _system_user{identity.system_user},
     _database_name{identity.database},
@@ -172,6 +173,9 @@ ConnectionContext::~ConnectionContext() {
     try {
       Destroy();
     } catch (...) {
+    }
+    if (_progress->client_backend) {
+      client_data->temporary_objects->OnDetach(*this);
     }
   }
   ConsumeNotices([](auto&) {});
@@ -646,7 +650,8 @@ SystemConnection::SystemConnection(const SystemSession& session,
                          .role = session.role,
                          .database = session.database,
                          .database_id = session.database_id,
-                         .backend_pid = session.backend_pid})},
+                         .backend_pid = session.backend_pid,
+                         .temporary = session.temporary})},
     progress{ConnectionContext::Get(*conn->context).ProgressSource()},
     notices{notices} {}
 

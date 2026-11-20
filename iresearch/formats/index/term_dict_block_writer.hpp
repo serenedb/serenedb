@@ -24,6 +24,7 @@
 
 #include <array>
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <limits>
 #include <memory>
 #include <string>
@@ -31,7 +32,6 @@
 
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/index/term_dict_block_format.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
@@ -93,7 +93,7 @@ class BlockEncoder {
 
   bool Append(bytes_view prefix, bytes_view term, uint64_t records, bool codes);
   uint64_t Seal(uint64_t records);
-  void Serialize(DataOutput& out, bytes_view records) const;
+  void Serialize(duckdb::WriteStream& out, bytes_view records) const;
   void Reset() noexcept;
 
  private:

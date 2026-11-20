@@ -28,7 +28,7 @@
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs {
 
@@ -58,7 +58,7 @@ ScoreFunction PrepareLMScorer(const ScoreContext& ctx, const LMStats& stats,
 
   const auto* scale = ScaleOf(ctx);
 
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+  return Resolve(scale != nullptr, [&]<bool HasScale>() {
     return ScoreFunction::Make<Score<HasScale>>(ctx.boost, param, stats, freq,
                                                 norm, scale);
   });

@@ -61,7 +61,6 @@ class PieceTermReader final : public TermReader {
   bool CoverRange(bytes_view from, bytes_view to,
                   TermVisitor visit) const final;
 
-  std::unique_ptr<IndexInput> ReopenPayload() const final;
   PostingsHandles Handles() const noexcept final;
 
   const FieldMeta& meta() const noexcept final { return _meta; }
@@ -89,22 +88,19 @@ class PieceTermReader final : public TermReader {
                                TermPostings::ptr reuse) const;
 
   size_t Bytes() const noexcept {
-    return _terms.capacity() + _inline.capacity() +
-           _entries.capacity() * sizeof(Entry);
+    return _terms.capacity() + _entries.capacity() * sizeof(Entry);
   }
 
  private:
   struct Entry {
     uint32_t begin = 0;
     uint32_t size = 0;
-    uint32_t inline_at = 0;
     PostingMeta meta;
   };
 
   const PieceFields* _owner;
   FieldMeta _meta;
   bstring _terms;
-  bstring _inline;
   std::vector<Entry> _entries;
   uint64_t _docs = 0;
   FreqAttr _freq;

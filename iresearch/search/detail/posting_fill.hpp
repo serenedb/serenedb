@@ -33,7 +33,6 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/search/detail/window.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -56,14 +55,14 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
  public:
   PostingFill() = default;
 
-  PostingFill(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingFill(const PostingMeta& meta, const duckdb::InputFile& doc_in,
               IndexFeatures layout, bool has_score_bounds, bool has_freq,
               bool batches = true)
     : _batches{batches} {
     Prepare(meta, doc_in, layout, has_score_bounds, has_freq);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                IndexFeatures layout, bool has_score_bounds, bool has_freq) {
     this->SetFreqLen(has_freq);
     if (!this->OpenList(meta, doc_in, layout, has_score_bounds)) {

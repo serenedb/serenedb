@@ -27,7 +27,10 @@
 #include <unistd.h>
 
 #include <array>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/page_residency.hpp>
 #include <filesystem>
+#include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/index/field_reader.hpp>
 #include <iresearch/formats/index/field_writer.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
@@ -35,8 +38,7 @@
 #include <iresearch/formats/index/term_dict_cursor.hpp>
 #include <iresearch/formats/index/term_dict_reader.hpp>
 #include <iresearch/index/index_meta.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <memory>
 #include <numeric>
@@ -201,7 +203,7 @@ struct Data {
   std::vector<bstring> hits;
   std::vector<bstring> misses;
   std::vector<std::vector<bstring>> batches;
-  std::unique_ptr<irs::MMapDirectory> dir;
+  std::string root;
   std::unique_ptr<irs::IdxReader> idx;
   std::unique_ptr<irs::term_dict::FieldReader> fields;
   const irs::term_dict::TermReaderImpl* field = nullptr;
@@ -216,13 +218,15 @@ void Write(Data& data) {
   const auto path = BenchPath();
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
-  data.dir = std::make_unique<irs::MMapDirectory>(path);
+  data.root = path.string();
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(db);
+  irs::FileTracker tracker{fs, data.root, "segment"};
   const irs::FlushState state{
-    .dir = data.dir.get(),
-    .name = "segment",
+    .tracker = tracker,
     .doc_count = data.doc_count,
   };
-  irs::IdxWriter idx{*data.dir, "segment"};
+  irs::IdxWriter idx{tracker};
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1);
@@ -239,11 +243,18 @@ void Open(Data& data) {
     meta.name = "segment";
     return meta;
   }()};
-  data.idx = std::make_unique<irs::IdxReader>(*data.dir, "segment", nullptr);
-  data.fields =
-    std::make_unique<irs::term_dict::FieldReader>(irs::IResourceManager::gNoop);
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(db);
+  data.idx =
+    std::make_unique<irs::IdxReader>(fs, data.root, "segment", true, nullptr);
+  data.fields = std::make_unique<irs::term_dict::FieldReader>();
   data.fields->prepare(irs::ReaderState{
-    .dir = data.dir.get(), .meta = &kMeta, .idx = data.idx.get()});
+    .db = db,
+    .fs = fs,
+    .root = data.root,
+    .meta = kMeta,
+    .idx = data.idx.get(),
+  });
   data.field = &static_cast<const irs::term_dict::TermReaderImpl&>(
     *data.fields->fields(1).front());
 }
@@ -351,7 +362,7 @@ void Layout(benchmark::State& state, const Data& data) {
   state.counters["page_bits_per_term"] =
     8.0 * static_cast<double>(field.BlocksEnd() - field.BlockOffset(0)) / terms;
   state.counters["idx_bits_per_term"] =
-    8.0 * static_cast<double>(store.Input().Length()) / terms;
+    8.0 * static_cast<double>(store.Input().GetSize()) / terms;
   state.counters["key_bits_per_term"] =
     8.0 * static_cast<double>(key_bytes) / terms;
   const auto index_bytes = [](const irs::term_dict::TermReaderImpl& dict) {
@@ -497,7 +508,7 @@ class ColdCache {
     const auto page = static_cast<uintptr_t>(::sysconf(_SC_PAGESIZE));
     const auto base = reinterpret_cast<uintptr_t>(owner.Base());
     _begin = base & ~(page - 1);
-    _length = base + owner.Input().Length() - _begin;
+    _length = base + owner.Input().GetSize() - _begin;
     _resident.resize((_length + page - 1) / page);
     for (const auto& entry : std::filesystem::directory_iterator(BenchPath())) {
       _files.push_back(::open(entry.path().c_str(), O_RDONLY));
@@ -515,7 +526,7 @@ class ColdCache {
     for (const int fd : _files) {
       ::posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
     }
-    irs::file_utils::InvalidateResidency();
+    duckdb::PageResidency::Invalidate();
   }
 
   uint64_t Resident() {

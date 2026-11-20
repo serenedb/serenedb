@@ -611,6 +611,11 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
     AddDeferredChecks(state, bind_data.search.deferred);
     BuildDualFilters(state, bind_data.search.duals);
   }
+
+  state.rg_size = bind_data.relation.row_group_size != 0
+                    ? bind_data.relation.row_group_size
+                    : DEFAULT_ROW_GROUP_SIZE;
+  state.remote = bind_data.Storage().Remote();
 }
 
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
@@ -716,19 +721,25 @@ bool IsStoreServed(const ScanBindData& bind,
 }
 
 ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
+  const bool sampled = g.sampling.do_system_sample;
   if (ss.ts_dict.Active()) {
+    if (sampled) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("TABLESAMPLE cannot be combined with ts_dict_agg()"));
+    }
     return ScanShape::TsDict;
   }
   const bool score_filter = absl::c_any_of(
     g.col_filters,
     [](const ScanGlobalState::ColFilter& f) { return f.is_score; });
-  if (!g.has_output_column && !g.needs_lookup && !score_filter) {
+  if (!sampled && !g.has_output_column && !g.needs_lookup && !score_filter) {
     return ScanShape::Count;
   }
-  if (g.top_k && ss.score.vector && ss.score.order) {
+  if (!sampled && g.top_k && ss.score.vector && ss.score.order) {
     return ScanShape::Ann;
   }
-  if (g.top_k && ss.score.text && !g.has_lookup_filter) {
+  if (!sampled && g.top_k && ss.score.text && !g.has_lookup_filter) {
     return ScanShape::TopK;
   }
   if (ss.IsMatchAll() && !ss.offsets.Active() && !ss.score.text &&
@@ -788,7 +799,7 @@ void FetchLocalState::EnsureHitBatcher(const ScanGlobalState& g) {
     hit_batcher = std::make_unique<irs::HitBatcher>(
       g.cs_projections,
       g.needs_lookup ? term_dict::kPKFieldId : irs::field_limits::invalid(),
-      g.ScanScore());
+      g.ScanScore(), g.remote);
   }
 }
 

@@ -26,11 +26,11 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <limits>
 #include <string_view>
 
 #include "iresearch/formats/posting/block_codec.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -44,7 +44,7 @@ constexpr uint64_t PackedBytes(uint64_t count, uint32_t bits) noexcept {
 }
 
 template<typename Value>
-void WritePacked(DataOutput& out, uint64_t count, uint32_t bits,
+void WritePacked(duckdb::WriteStream& out, uint64_t count, uint32_t bits,
                  Value&& value) {
   SDB_ASSERT(bits <= 64);
   if (bits == 0) {
@@ -75,21 +75,23 @@ inline constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
 
 inline constexpr size_t kMaxRecordBytes = 128;
 
-struct RecordBytes {
-  std::array<byte_type, kMaxRecordBytes> bytes;
-};
-
-class RecordOutput final : private RecordBytes, public BufferedOutput {
+class RecordOutput final : public duckdb::WriteStream {
  public:
-  RecordOutput() noexcept
-    : RecordBytes{},
-      BufferedOutput{bytes.data(), bytes.data() + bytes.size()} {}
+  RecordOutput() noexcept { Clear(); }
+  RecordOutput(const RecordOutput&) = delete;
+  RecordOutput& operator=(const RecordOutput&) = delete;
 
-  bytes_view View() const noexcept { return {_buf, Length()}; }
-  void Clear() noexcept { _pos = _buf; }
+  bytes_view View() const noexcept { return {_bytes.data(), WindowSize()}; }
+  void Clear() noexcept { SetWindow(_bytes.data(), _bytes.size()); }
 
  private:
-  void WriteDirect(const byte_type* b, size_t len) final;
+  void Overflow(duckdb::const_data_ptr_t, duckdb::idx_t) final {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
+                    ERR_MSG("term dictionary: posting record exceeds ",
+                            kMaxRecordBytes, " bytes"));
+  }
+
+  std::array<byte_type, kMaxRecordBytes> _bytes;
 };
 
 inline constexpr size_t kMaxRangeLevels = 8;

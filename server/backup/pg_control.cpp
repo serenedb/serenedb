@@ -27,6 +27,7 @@
 #include <absl/time/clock.h>
 #include <fcntl.h>
 #include <openssl/rand.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -34,14 +35,16 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/query_context.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
-#include <system_error>
 
+#include "catalog/database_directory.h"
 #include "pg/version.h"
-#include "utils/file_utils.h"
 
 namespace sdb::backup {
 namespace {
@@ -121,29 +124,23 @@ std::array<uint8_t, kMockNonceLen> NewMockNonce() {
 
 }  // namespace
 
-std::optional<ControlState> ReadPgControl(
-  const std::filesystem::path& data_dir) {
-  const auto path = data_dir / kPgControlFile;
-  const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
-    if (errno == ENOENT) {
-      return std::nullopt;
-    }
-    utils::file_utils::ThrowFileError("open", path.string(), errno);
+std::optional<ControlState> ReadPgControl(const std::string& data_dir) {
+  auto& fs = catalog::StorageFileSystem();
+  const auto path = fs.JoinPath(data_dir, kPgControlFile);
+  const auto handle =
+    fs.OpenFile(path, duckdb::FileFlags::FILE_FLAGS_READ |
+                        duckdb::FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS);
+  if (!handle) {
+    return std::nullopt;
   }
   ControlFileData data{};
-  const auto size = ::read(fd, &data, sizeof(data));
-  const int error = errno;
-  ::close(fd);
-  if (size < 0) {
-    utils::file_utils::ThrowFileError("read", path.string(), error);
-  }
+  const auto size = handle->Read(&data, sizeof(data));
   if (static_cast<size_t>(size) < sizeof(data) ||
       data.pg_control_version != kPgControlVersion ||
       data.crc != ControlCrc(data)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_DATA_CORRUPTED),
-      ERR_MSG("\"", path.string(), "\" is not a valid SereneDB control file"));
+      ERR_MSG("\"", path, "\" is not a valid SereneDB control file"));
   }
   ControlState state{.system_identifier = data.system_identifier,
                      .checkpoint = data.check_point};
@@ -152,45 +149,46 @@ std::optional<ControlState> ReadPgControl(
   return state;
 }
 
-void WritePgControl(const std::filesystem::path& data_dir,
-                    const ControlState& state) {
-  const auto path = data_dir / kPgControlFile;
-  const auto dir = path.parent_path();
-  std::error_code ec;
-  if (std::filesystem::create_directories(dir, ec)) {
-    utils::file_utils::SyncDirectory(dir.parent_path());
-  }
-  if (ec) {
-    utils::file_utils::ThrowFileError("create directory", dir.string(), ec);
-  }
+void WritePgControl(const std::string& data_dir, const ControlState& state) {
+  auto& fs = catalog::StorageFileSystem();
+  const auto path = fs.JoinPath(data_dir, kPgControlFile);
+  fs.CreateDirectoryExtended(
+    fs.JoinPath(path, ".."),
+    {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true});
   std::string buffer(kPgControlFileSize, '\0');
   const auto data = MakeControl(state);
   std::memcpy(buffer.data(), &data, sizeof(data));
-  utils::file_utils::ReplaceFile(path, buffer);
+  irs::WriteWhole(fs, path, buffer, true);
 }
 
-std::filesystem::path PendingPgVersion(const std::filesystem::path& data_dir) {
-  auto path = data_dir / kPendingPgVersionFile;
+std::string PendingPgVersion(const std::string& data_dir) {
+  auto path = duckdb::FileSystem::JoinPath(data_dir, kPendingPgVersionFile);
   const int fd =
     ::open(path.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR);
   if (fd < 0) {
-    utils::file_utils::ThrowFileError("create file", path.string(), errno);
+    const int error = errno;
+    THROW_SQL_ERROR(
+      ERR_CODE(irs::pg::ErrcodeForFileAccess(error)),
+      ERR_MSG("could not create file \"", path, "\": ", std::strerror(error)));
   }
   ::close(fd);
   return path;
 }
 
-void PublishPgVersion(const std::filesystem::path& data_dir) {
-  const auto pending = data_dir / kPendingPgVersionFile;
-  const auto path = data_dir / kPgVersionFile;
-  utils::file_utils::Spit(pending.string(),
-                          absl::StrCat(pg::kPgMajorVersion, "\n"), true);
-  std::error_code ec;
-  std::filesystem::rename(pending, path, ec);
-  if (ec) {
-    utils::file_utils::ThrowFileError("rename", pending.string(), ec);
+void PublishPgVersion(const std::string& data_dir) {
+  auto& fs = catalog::StorageFileSystem();
+  const auto pending = fs.JoinPath(data_dir, kPendingPgVersionFile);
+  {
+    const auto version = absl::StrCat(pg::kPgMajorVersion, "\n");
+    const auto handle =
+      fs.OpenFile(pending, duckdb::FileFlags::FILE_FLAGS_WRITE |
+                             duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+    handle->Write(duckdb::QueryContext{}, const_cast<char*>(version.data()),
+                  version.size(), 0);
+    handle->Sync();
   }
-  utils::file_utils::SyncDirectory(data_dir);
+  fs.MoveFile(pending, fs.JoinPath(data_dir, kPgVersionFile));
+  fs.SyncDirectory(data_dir);
 }
 
 PositionSource& PositionSource::Instance() {
@@ -198,7 +196,7 @@ PositionSource& PositionSource::Instance() {
   return gSource;
 }
 
-void PositionSource::Open(const std::filesystem::path& data_dir) {
+void PositionSource::Open(const std::string& data_dir) {
   absl::MutexLock lock{&_mutex};
   auto state = ReadPgControl(data_dir);
   if (!state) {

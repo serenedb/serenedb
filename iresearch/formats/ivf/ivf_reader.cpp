@@ -34,8 +34,8 @@
 #include "iresearch/search/detail/vector_filter_util.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -60,8 +60,8 @@ uint32_t IvfSearchBeam(uint32_t nprobe, uint32_t min_fanout,
 
 VectorDistanceFn ResolveScoringDistance(VectorMetric metric) {
   VectorDistanceFn fn = nullptr;
-  ResolveEnum<VectorMetric>(
-    metric, [&]<VectorMetric Metric>() { fn = &ComputeDistance<Metric>; });
+  Resolve(metric,
+          [&]<VectorMetric Metric>() { fn = &ComputeDistance<Metric>; });
   return fn;
 }
 
@@ -119,8 +119,8 @@ QueryBuilder::ptr IvfIndex::PrepareKnn(const SubReader& segment,
       ? effort
       : IvfAutoNprobe(segment.docs_count(), opts.posting_size, opts.top_k,
                       _tree.Levels() == 1 ? _tree.RootSize() : 0);
-  if (!PrepareVectorState(_tree, segment, ctx, opts, nprobe, state, inner,
-                          CodebookUse::Search,
+  if (!PrepareVectorState(_tree, _file, segment, ctx, opts, nprobe, state,
+                          inner, CodebookUse::Search,
                           IvfSearchBeam(nprobe, opts.min_search_fanout,
                                         opts.max_search_fanout))) {
     return QueryBuilder::Empty();
@@ -145,7 +145,7 @@ QueryBuilder::ptr IvfIndex::PrepareRange(const SubReader& segment,
                                          AnnQueryCache* /*cache*/) const {
   VectorState state{ctx.memory};
   QueryBuilder::ptr inner;
-  if (!PrepareVectorState(_tree, segment, ctx, opts,
+  if (!PrepareVectorState(_tree, _file, segment, ctx, opts,
                           std::numeric_limits<uint32_t>::max(), state, inner,
                           CodebookUse::Range)) {
     return QueryBuilder::Empty();

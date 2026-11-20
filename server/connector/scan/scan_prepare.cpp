@@ -24,6 +24,7 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/query_profile.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
+#include <iresearch/search/queries/posting_heads.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -39,36 +40,35 @@ irs::QueryBuilder::ptr PrepareSegmentQuery(const ScanGlobalState& g,
   ctx.prefetch = g.shape == ScanShape::Count;
   ctx.profile = g.profile ? &g.profile->Query() : nullptr;
   const auto& segment = (*g.reader)[seg_idx];
+  irs::QueryBuilder::ptr query;
   if (g.vector_scorer != nullptr) {
-    return irs::PrepareFilter(*g.filter, segment, ctx);
+    query = irs::PrepareFilter(*g.filter, segment, ctx);
+  } else {
+    const auto index_only = g.ClaimedIndexOnly();
+    const auto& filter = !UsesColumnForms(g, segment) ? *g.filter
+                         : index_only                 ? *index_only
+                                                      : MatchAllFilter();
+    query = irs::PrepareMasked(filter, segment, ctx);
   }
-  const auto index_only = g.ClaimedIndexOnly();
-  const auto& filter = !UsesColumnForms(g, segment) ? *g.filter
-                       : index_only                 ? *index_only
-                                                    : MatchAllFilter();
-  return irs::PrepareMasked(filter, segment, ctx);
+  if (g.head_prefetch_min != 0) {
+    irs::PrefetchPostingHeads(*query, g.head_prefetch_min);
+  }
+  return query;
 }
 
 }  // namespace
 
 void PrepareSegmentNow(ScanGlobalState& g, uint32_t seg_idx) {
-  g.queries[seg_idx] =
-    PrepareSegmentQuery(g, seg_idx, {.needs_terms = g.needs_terms});
-  g.Segment(seg_idx).prepare.store(SegmentWork::kReady,
-                                   std::memory_order_relaxed);
+  g.Segment(seg_idx).prepare.Call([&] {
+    g.queries[seg_idx] =
+      PrepareSegmentQuery(g, seg_idx, {.needs_terms = g.needs_terms});
+  });
 }
 
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState* l,
                                             uint32_t seg_idx) {
-  auto& work = g.Segment(seg_idx);
-  auto state = work.prepare.load(std::memory_order_acquire);
-  if (state == SegmentWork::kReady) {
-    return *g.queries[seg_idx];
-  }
-  if (state == SegmentWork::kUnprepared &&
-      work.prepare.compare_exchange_strong(state, SegmentWork::kPreparing,
-                                           std::memory_order_acq_rel)) {
+  g.Segment(seg_idx).prepare.Call([&] {
     irs::PrepareCollector* collector = nullptr;
     if (g.collector) {
       SDB_ASSERT(l);
@@ -83,21 +83,7 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                           {.collector = collector,
                            .thread = collector != nullptr ? l->thread_slot : 0,
                            .needs_terms = g.needs_terms});
-    if (work.prepare.exchange(SegmentWork::kReady, std::memory_order_acq_rel) ==
-        SegmentWork::kAwaited) {
-      work.prepare.notify_all();
-    }
-    return *g.queries[seg_idx];
-  }
-  while (state != SegmentWork::kReady) {
-    if (state == SegmentWork::kPreparing &&
-        !work.prepare.compare_exchange_weak(state, SegmentWork::kAwaited,
-                                            std::memory_order_acq_rel)) {
-      continue;
-    }
-    work.prepare.wait(SegmentWork::kAwaited, std::memory_order_acquire);
-    state = work.prepare.load(std::memory_order_acquire);
-  }
+  });
   return *g.queries[seg_idx];
 }
 

@@ -194,7 +194,7 @@ std::vector<Query> Queries() {
   return queries;
 }
 
-std::vector<irs::ScoreDoc> ScoreHits(const irs::DirectoryReader& reader,
+std::vector<irs::ScoreDoc> ScoreHits(const irs::CompositeReader& reader,
                                      const irs::Filter& filter,
                                      const irs::Scorer& scorer, bool masked,
                                      bool prune, size_t k) {
@@ -345,7 +345,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
   }
 
  private:
-  void CheckQueries(const irs::DirectoryReader& reader) {
+  void CheckQueries(const irs::CompositeReader& reader) {
     const auto scorer = irs::BM25::Make(irs::BM25::Options{});
     for (const auto& query : Queries()) {
       SCOPED_TRACE(query.name);
@@ -370,7 +370,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     CheckFlattened(reader, *scorer);
   }
 
-  static void CheckScores(const irs::DirectoryReader& reader,
+  static void CheckScores(const irs::CompositeReader& reader,
                           const irs::Filter& filter, const irs::Scorer& scorer,
                           uint64_t total) {
     const auto unmasked_k = static_cast<size_t>(reader.docs_count()) + 1;
@@ -404,7 +404,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     }
   }
 
-  static void CheckFlattened(const irs::DirectoryReader& reader,
+  static void CheckFlattened(const irs::CompositeReader& reader,
                              const irs::Scorer& scorer) {
     irs::BooleanFilter filter;
     filter.Add(Clause(kThird, "y"), irs::Occur::Should);
@@ -667,9 +667,9 @@ TEST_P(DocsMaskPlanTest, small_segments_clustered) {
   Check(std::nullopt);
 }
 
-INSTANTIATE_TEST_SUITE_P(docs_mask_plan_test, DocsMaskPlanTest,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         DocsMaskPlanTest::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  docs_mask_plan_test, DocsMaskPlanTest,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  DocsMaskPlanTest::to_string);
 
 }  // namespace

@@ -22,13 +22,14 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/page_residency.hpp>
+#include <duckdb/storage/external_file_cache/read_ahead_window.hpp>
 #include <utility>
 
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_block.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_records.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
@@ -39,33 +40,6 @@ enum class Position : uint8_t {
   After,
 };
 
-struct ReadWindow {
-  uint64_t ahead;
-  uint64_t issued;
-  uint64_t size;
-};
-
-struct HintSpan {
-  uint64_t from;
-  uint64_t to;
-};
-
-inline HintSpan Slide(ReadWindow& window, uint64_t at, uint64_t end,
-                      uint64_t max) noexcept {
-  if (at + window.issued / 2 < window.ahead) {
-    return {};
-  }
-  const uint64_t from = std::max(at, window.ahead);
-  const uint64_t to = std::min(end, from + window.size);
-  if (from >= to) {
-    return {};
-  }
-  window.ahead = to;
-  window.issued = to - from;
-  window.size = std::min(2 * window.size, max);
-  return {.from = from, .to = to};
-}
-
 struct ColdBlocks {
   virtual void Reached(uint32_t block) = 0;
 
@@ -75,11 +49,13 @@ struct ColdBlocks {
 
 class BlockStream {
  public:
-  explicit BlockStream(uint32_t blocks) noexcept : _end{blocks} {}
+  explicit BlockStream(uint32_t blocks) noexcept {
+    _blocks_ahead.Until(blocks);
+  }
 
   void ReadaheadUntil(const TermReaderImpl& field, uint32_t end,
                       bool eager) noexcept {
-    _end = std::min(end, field.Blocks());
+    _blocks_ahead.Until(std::min(end, field.Blocks()));
     _eager = eager;
   }
 
@@ -90,17 +66,11 @@ class BlockStream {
       ReadAhead(field, block);
       FetchLines(field, block + 1);
     } else if (from != kNoBlock && block > from) {
-      _blocks_ahead.ahead =
-        std::max<uint64_t>(_blocks_ahead.ahead, uint64_t{block} + 1);
-      _blocks_ahead.size =
-        std::max<uint64_t>(kFirstWindow, _blocks_ahead.size / 2);
+      _blocks_ahead.Halve(kFirstWindow);
     } else {
-      _blocks_ahead = {
-        .ahead = uint64_t{block} + 1,
-        .issued = 0,
-        .size = _eager ? kLastWindow : kFirstWindow,
-      };
-      _epoch = file_utils::ResidencyEpoch();
+      _blocks_ahead.Arm(uint64_t{block} + 1, _blocks_ahead.Stop(),
+                        _eager ? kLastWindow : kFirstWindow);
+      _epoch = duckdb::PageResidency::Epoch();
       if (_eager) {
         ReadAhead(field, block);
       }
@@ -121,7 +91,7 @@ class BlockStream {
   static constexpr uint32_t kWarmBlocks = 32;
   static constexpr uint32_t kFirstWindow = 4;
   static constexpr uint32_t kLastWindow =
-    file_utils::kMaxReadahead / file_utils::kPage;
+    duckdb::InputFile::MAX_HINT / duckdb::PageResidency::PAGE_SIZE;
 
   static void FetchLines(const TermReaderImpl& field, uint32_t block) noexcept {
     constexpr uint64_t kLine = 64;
@@ -130,8 +100,8 @@ class BlockStream {
       return;
     }
     const uint64_t begin = field.BlockOffset(block);
-    const uint64_t end =
-      std::min(field.BlockOffset(block + 1), begin + file_utils::kPage);
+    const uint64_t end = std::min(field.BlockOffset(block + 1),
+                                  begin + duckdb::PageResidency::PAGE_SIZE);
     for (uint64_t at = begin; at < end; at += kLine) {
       __builtin_prefetch(base + at, 0, 2);
     }
@@ -140,9 +110,10 @@ class BlockStream {
   void Watch(const TermReaderImpl& field, uint32_t block) {
     const uint64_t offset = field.BlockOffset(block);
     const uint64_t size = field.BlockOffset(block + 1) - offset;
-    const uint64_t touched = std::min<uint64_t>(size, file_utils::kPage);
+    const uint64_t touched =
+      std::min<uint64_t>(size, duckdb::PageResidency::PAGE_SIZE);
     if (block >= _warm.from && block < _warm.to &&
-        file_utils::ResidencyEpoch() == _warm.epoch) {
+        duckdb::PageResidency::Epoch() == _warm.epoch) {
       _warm.read += touched;
       return;
     }
@@ -151,15 +122,15 @@ class BlockStream {
     const uint64_t window = field.BlockOffset(last) - offset;
     const uint64_t read = std::exchange(_warm.read, 0) + touched;
     _warm.to = _warm.from;
-    if (in.Warm(offset, window) == window && !file_utils::PollResidency(read)) {
+    if (in.Warm(offset, window) == window &&
+        !duckdb::PageResidency::Poll(read)) {
       _warm.from = block;
       _warm.to = last;
-      _warm.epoch = file_utils::ResidencyEpoch();
+      _warm.epoch = duckdb::PageResidency::Epoch();
       return;
     }
-    if (file_utils::Evicted(in, offset, size, _epoch)) {
-      _blocks_ahead.ahead = uint64_t{block} + 1;
-      _blocks_ahead.issued = 0;
+    if (in.Evicted(offset, size, _epoch)) {
+      _blocks_ahead.Restart(uint64_t{block} + 1, kLastWindow);
       ReadAhead(field, block);
     }
     if (_cold && in.Warm(offset, size) != size) {
@@ -169,19 +140,17 @@ class BlockStream {
   }
 
   void ReadAhead(const TermReaderImpl& field, uint32_t block) noexcept {
-    const auto span =
-      Slide(_blocks_ahead, uint64_t{block} + 1, _end, kLastWindow);
-    if (span.from < span.to) {
-      const uint64_t offset = field.BlockOffset(span.from);
-      file_utils::Hint(field.Store().Input(), offset,
-                       field.BlockOffset(span.to) - offset);
+    const auto blocks = _blocks_ahead.Extend(uint64_t{block} + 1, kLastWindow);
+    if (blocks.size != 0) {
+      const uint64_t offset = field.BlockOffset(blocks.offset);
+      field.Store().Input().Hint(
+        offset, field.BlockOffset(blocks.offset + blocks.size) - offset);
     }
   }
 
-  ReadWindow _blocks_ahead{.ahead = 0, .issued = 0, .size = kFirstWindow};
+  duckdb::ReadAheadWindow _blocks_ahead;
   WarmRange _warm;
   ColdBlocks* _cold = nullptr;
-  uint32_t _end;
   uint32_t _epoch = 0;
   bool _eager = false;
 };
@@ -207,7 +176,7 @@ class RecordCursor {
       _decoder.Seek(entry - first, _meta);
     }
     if (_meta.inline_size != 0) {
-      _meta.inline_data = _decoder.InlineData();
+      _meta.SetInline({_decoder.InlineData(), _meta.inline_size});
     }
     _entry = entry;
     return _meta;
@@ -247,9 +216,9 @@ class Cursor {
     _stream.Enter(*_field, _block, block);
     _block = kNoBlock;
     _records.Reset();
-    _entries.Open(_field->Block(block), block + 1 == _field->Blocks()
-                                          ? _field->LastEntry() + 1
-                                          : kNoEntry);
+    _entries.Open(_field->Block(block, _pinned), block + 1 == _field->Blocks()
+                                                   ? _field->LastEntry() + 1
+                                                   : kNoEntry);
     _block = block;
   }
 
@@ -318,6 +287,7 @@ class Cursor {
   BlockStream _stream;
   BlockCursor _entries;
   RecordCursor _records;
+  PinnedRange _pinned;
   PaddedKey _probe;
   uint32_t _block = kNoBlock;
 };

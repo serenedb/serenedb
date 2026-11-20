@@ -110,6 +110,7 @@ struct ScanOrderSpec {
   duckdb::StorageIndex storage;
   duckdb::idx_t skipped_groups = 0;
   duckdb::idx_t skipped_null_groups = 0;
+  duckdb::optional_idx row_limit;
 
   bool Skips() const noexcept {
     return skipped_groups != 0 || skipped_null_groups != 0;
@@ -263,6 +264,7 @@ struct ScanBindData final : duckdb::FunctionData {
   SearchSpec search;
   ScoreSpec score;
   std::optional<ScanOrderSpec> scan_order;
+  std::optional<std::vector<duckdb::idx_t>> partitions_to_scan;
   OffsetsSpec offsets;
   TsDictSpec ts_dict;
   PlanCacheSpec plan_cache;
@@ -277,6 +279,7 @@ struct ScanBindData final : duckdb::FunctionData {
   bool RegistersDataVersions() const final { return true; }
   bool IsPointRead() const final;
 
+  search::Store& Storage() const;
   search::ReadView Read(duckdb::ClientContext& context) const;
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
@@ -370,7 +373,7 @@ struct DeferredBuild {
 
 DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                                   const ScanBindData& scan,
-                                  const irs::DirectoryReader& reader);
+                                  const irs::CompositeReader& reader);
 
 bool RowsOnlySegment(const irs::SubReader& segment);
 

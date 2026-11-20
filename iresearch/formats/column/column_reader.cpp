@@ -43,6 +43,7 @@
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
 #include <duckdb/storage/statistics/array_stats.hpp>
 #include <duckdb/storage/statistics/list_stats.hpp>
@@ -58,9 +59,8 @@
 #include "iresearch/formats/column/list_column_reader.hpp"
 #include "iresearch/formats/column/struct_column_reader.hpp"
 #include "iresearch/formats/column/variant_column_reader.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -68,6 +68,7 @@ namespace irs {
 namespace {
 
 constexpr duckdb::idx_t kMaxFetchHits = 64;
+constexpr size_t kBlocksAhead = 32;
 
 void SerializeColumnBlockMeta(duckdb::BinarySerializer& s,
                               const ColumnBlockMeta& m) {
@@ -340,6 +341,23 @@ BlockWindow ColumnReader::Locate(uint64_t row,
   return BlockWindow{rg, _offsets[rg], _offsets[rg + 1]};
 }
 
+void ColumnReader::CollectBlocks(uint64_t first, uint64_t last,
+                                 std::vector<duckdb::FileRange>& out) const {
+  if (!_segments.empty() && first < _row_count) {
+    const auto from = Locate(first).block;
+    const auto to = Locate(std::min(last, _row_count - 1)).block;
+    for (auto block = from; block <= to; ++block) {
+      const auto& m = _segments[block];
+      if (m.byte_size != 0) {
+        out.push_back({.offset = m.file_offset, .size = m.byte_size});
+      }
+    }
+  }
+  if (_validity) {
+    _validity->CollectBlocks(first, last, out);
+  }
+}
+
 bool ColumnReader::NextSegment(BlockWindow& w) const noexcept {
   const auto next = w.block + 1;
   if (next >= _segments.size()) {
@@ -386,13 +404,13 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
 
 void ColumnReader::Readahead(size_t block, ReadContext& ctx,
                              ScanState* s) const noexcept {
-  if (ctx.RandomAccess()) {
+  const auto* file = ctx.File();
+  if (ctx.RandomAccess() || file == nullptr) {
     return;
   }
-  auto& in = ctx.In();
   const auto& first = _segments[block];
   if (s == nullptr) {
-    in.Prefetch(first.file_offset, first.byte_size);
+    file->Hint(first.file_offset, first.byte_size);
     return;
   }
   const bool sequential = block != 0 && s->opened_block + 1 == block;
@@ -400,21 +418,31 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   if (block < s->advised_end) {
     return;
   }
-  if (in.Resident(first.file_offset, first.byte_size)) {
+  if (file->IsResident(first.file_offset, first.byte_size)) {
     s->advised_end = block + 1;
     return;
   }
-  uint64_t budget = sequential ? file_utils::kMaxReadahead : 0;
+  if (!sequential) {
+    file->Prefetch(first.file_offset, first.byte_size);
+    s->advised_end = block + 1;
+    return;
+  }
+  containers::SmallVector<duckdb::FileRange, kBlocksAhead> ahead;
+  uint64_t budget = duckdb::InputFile::MAX_HINT;
   auto b = block;
   do {
     const auto& m = _segments[b++];
-    in.Prefetch(m.file_offset, m.byte_size);
-    const auto cost = std::max<uint64_t>(m.byte_size, file_utils::kPage);
+    if (m.byte_size != 0) {
+      ahead.push_back({.offset = m.file_offset, .size = m.byte_size});
+    }
+    const auto cost =
+      std::max<uint64_t>(m.byte_size, duckdb::PageResidency::PAGE_SIZE);
     if (budget <= cost) {
       break;
     }
     budget -= cost;
   } while (b < _segments.size());
+  file->Hint(ahead);
   s->advised_end = b;
 }
 

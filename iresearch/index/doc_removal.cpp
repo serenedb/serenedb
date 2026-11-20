@@ -29,7 +29,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/composite_reader.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -130,7 +130,7 @@ DocRemovalBuilder DocRemovalBuilder::Union(std::span<DocRemovalBuilder> parts,
 }
 
 std::shared_ptr<const DocRemoval> DocRemovalBuilder::Finish(
-  const DirectoryReader& reader, ParallelFor parallel) && {
+  const CompositeReader& reader, ParallelFor parallel) && {
   std::erase_if(_groups,
                 [](const auto& group) { return group.second.Empty(); });
   std::vector<std::optional<DocumentMask>> masks(_groups.size());

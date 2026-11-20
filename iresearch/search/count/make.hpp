@@ -39,8 +39,7 @@ Root::ptr MakeConstant(uint64_t count);
 
 Root::ptr MakeAllCount(doc_id_t count);
 
-Root::ptr MakeTermCount(const detail::PostingClause& posting,
-                        const Context& ctx);
+Root::ptr MakeTermCount(const detail::PostingClause& posting, bool partial);
 
 Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs);
 
@@ -52,7 +51,7 @@ Root::ptr MakeTermsSum(std::span<const Term> terms, const TermReader* field,
   std::vector<Root::ptr> counts;
   counts.reserve(terms.size());
   for (const auto& term : terms) {
-    counts.push_back(MakeTermCount(detail::ClauseOf(term, field), ctx));
+    counts.push_back(MakeTermCount(detail::ClauseOf(term, field), ctx.partial));
   }
   return MakeSum(std::move(counts));
 }

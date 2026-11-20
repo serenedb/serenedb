@@ -29,10 +29,10 @@
 namespace irs::detail::builder {
 
 template<typename Family, typename Ctx>
-Result<Family> MakeNegation(std::span<const PostingClause> excludes,
-                            std::span<const QueryBuilder::ptr> exclude_filters,
-                            const SubReader& segment, uint64_t candidates,
-                            const Ctx& ctx) {
+Result<Family> NegationMaker<Family, Ctx>::Make(
+  std::span<const PostingClause> excludes,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  uint64_t candidates, const Ctx& ctx) {
   if constexpr (requires { Family::MakeLiveDocs(segment); }) {
     if (OnlyMask(excludes, exclude_filters)) {
       return Family::MakeLiveDocs(segment);

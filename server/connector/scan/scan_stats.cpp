@@ -51,7 +51,7 @@ bool StoresColumnStats(const ScanBindData& bind, ColumnId col_id) {
 }
 
 const duckdb::BaseStatistics* StoredColumnStats(
-  const ScanBindData& bind, const irs::DirectoryReader& reader,
+  const ScanBindData& bind, const irs::CompositeReader& reader,
   ColumnId col_id) {
   return StoresColumnStats(bind, col_id) ? reader.GetColumnStats(col_id)
                                          : nullptr;
@@ -62,7 +62,7 @@ duckdb::string_t AsStringT(irs::bytes_view bytes) {
           static_cast<uint32_t>(bytes.size())};
 }
 
-uint64_t RowsOnlyDocs(const irs::DirectoryReader& reader) {
+uint64_t RowsOnlyDocs(const irs::CompositeReader& reader) {
   uint64_t docs = 0;
   for (const auto& segment : reader) {
     if (RowsOnlySegment(segment)) {
@@ -93,7 +93,7 @@ bool ExactBounds(const duckdb::BaseStatistics& stats) {
 }
 
 duckdb::unique_ptr<duckdb::BaseStatistics> KeywordBounds(
-  const ScanBindData& bind, const irs::DirectoryReader& reader,
+  const ScanBindData& bind, const irs::CompositeReader& reader,
   duckdb::idx_t column_index, uint64_t& distinct) {
   if (!bind.relation.inverted_config ||
       bind.columns.types[column_index] != duckdb::LogicalType::VARCHAR) {
@@ -130,7 +130,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> KeywordBounds(
 }
 
 uint64_t KeyDistinct(const ScanBindData& bind,
-                     const irs::DirectoryReader& reader, ColumnId column) {
+                     const irs::CompositeReader& reader, ColumnId column) {
   if (!bind.relation.IsSearchTable() || !bind.relation.inverted_config) {
     return 0;
   }
@@ -155,7 +155,7 @@ uint64_t KeyDistinct(const ScanBindData& bind,
 }
 
 duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
-  const ScanBindData& bind, const irs::DirectoryReader& reader,
+  const ScanBindData& bind, const irs::CompositeReader& reader,
   duckdb::idx_t column_index) {
   if (column_index >= bind.columns.ids.size()) {
     return nullptr;
@@ -190,7 +190,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
 
 class ScanPartition final : public duckdb::PartitionRowGroup {
  public:
-  ScanPartition(const ScanBindData& bind, const irs::DirectoryReader& reader)
+  ScanPartition(const ScanBindData& bind, const irs::CompositeReader& reader)
     : _bind{bind}, _reader{reader} {}
 
   duckdb::optionally_owned_ptr<const duckdb::BaseStatistics>
@@ -208,7 +208,7 @@ class ScanPartition final : public duckdb::PartitionRowGroup {
 
  private:
   const ScanBindData& _bind;
-  const irs::DirectoryReader& _reader;
+  const irs::CompositeReader& _reader;
 };
 
 uint64_t DeletedRows(const irs::SubReader& segment, uint64_t begin,
@@ -220,20 +220,84 @@ uint64_t DeletedRows(const irs::SubReader& segment, uint64_t begin,
               : 0;
 }
 
+size_t RowGroupCount(const ScanBindData& bind, const irs::IndexReader& reader) {
+  const auto rg_size = bind.relation.RowGroupSize();
+  size_t row_groups = 0;
+  for (size_t seg = 0; seg < reader.size(); ++seg) {
+    row_groups += SegmentRowGroups{reader[seg], rg_size}.Count();
+  }
+  return row_groups;
+}
+
+template<typename Visit>
+void ForEachPartition(const ScanBindData& bind, const irs::IndexReader& reader,
+                      Visit&& visit) {
+  const auto rg_size = bind.relation.RowGroupSize();
+  for (uint32_t seg = 0; seg < reader.size(); ++seg) {
+    const auto& segment = reader[seg];
+    const SegmentRowGroups groups{segment, rg_size};
+    for (uint32_t rg = 0; rg < groups.Count(); ++rg) {
+      const auto begin = groups.Begin(rg);
+      const auto end = groups.End(rg);
+      const auto deleted = DeletedRows(segment, begin, end);
+      if (deleted != end - begin) {
+        visit(ScanRowGroup{seg, rg}, begin, end, end - begin - deleted);
+      }
+    }
+  }
+}
+
+const irs::ColumnReader* StatsColumn(const ScanBindData& bind,
+                                     const irs::ColReader* columns,
+                                     duckdb::idx_t column_index, uint64_t end) {
+  if (!columns || column_index >= bind.columns.ids.size()) {
+    return nullptr;
+  }
+  const auto col_id = bind.columns.ids[column_index];
+  const auto* column =
+    StoresColumnStats(bind, col_id) ? columns->Column(col_id) : nullptr;
+  if (!column || column->DataRgCount() == 0 || column->RowCount() < end ||
+      column->Type().IsNested() ||
+      column->Type() != bind.columns.types[column_index]) {
+    return nullptr;
+  }
+  return column;
+}
+
+struct CoveringBlocks {
+  CoveringBlocks() = default;
+  CoveringBlocks(const irs::ColumnReader* column_p, uint64_t begin,
+                 uint64_t end)
+    : column{column_p} {
+    if (column) {
+      first = column->Locate(begin);
+      last = column->Locate(end - 1, first);
+    }
+  }
+
+  const duckdb::BaseStatistics& FirstStatistics() const noexcept {
+    return column->RowGroupStatistics(first.block);
+  }
+
+  bool OneBlock() const noexcept { return first.block == last.block; }
+
+  void MergeOthers(duckdb::BaseStatistics& stats) const {
+    for (auto block = first.block + 1; block <= last.block; ++block) {
+      stats.Merge(column->RowGroupStatistics(block));
+    }
+  }
+
+  const irs::ColumnReader* column = nullptr;
+  irs::BlockWindow first;
+  irs::BlockWindow last;
+};
+
 class RowGroupPartition final : public duckdb::PartitionRowGroup {
  public:
   RowGroupPartition(const ScanBindData& bind, const irs::SubReader& segment,
-                    const irs::ColReader* columns, ScanRowGroup position,
                     uint64_t begin, uint64_t end, uint64_t live)
-    : _bind{bind},
-      _segment{segment},
-      _columns{columns},
-      _position{position},
-      _begin{begin},
-      _end{end},
-      _live{live} {}
+    : _bind{bind}, _segment{segment}, _begin{begin}, _end{end}, _live{live} {}
 
-  ScanRowGroup Position() const noexcept { return _position; }
   uint64_t Live() const noexcept { return _live; }
 
   duckdb::optionally_owned_ptr<const duckdb::BaseStatistics>
@@ -245,15 +309,11 @@ class RowGroupPartition final : public duckdb::PartitionRowGroup {
     if (!blocks.column) {
       return {};
     }
-    if (blocks.first.block == blocks.last.block) {
-      return blocks.column->RowGroupStatistics(blocks.first.block);
+    if (blocks.OneBlock()) {
+      return blocks.FirstStatistics();
     }
-    auto merged =
-      blocks.column->RowGroupStatistics(blocks.first.block).ToUnique();
-    for (auto block = blocks.first.block + 1; block <= blocks.last.block;
-         ++block) {
-      merged->Merge(blocks.column->RowGroupStatistics(block));
-    }
+    auto merged = blocks.FirstStatistics().ToUnique();
+    blocks.MergeOthers(*merged);
     return duckdb::unique_ptr<const duckdb::BaseStatistics>(std::move(merged));
   }
 
@@ -269,44 +329,19 @@ class RowGroupPartition final : public duckdb::PartitionRowGroup {
   bool HasPendingWrites() final { return false; }
 
  private:
-  struct CoveringBlocks {
-    const irs::ColumnReader* column = nullptr;
-    irs::BlockWindow first;
-    irs::BlockWindow last;
-  };
-
   const CoveringBlocks& Blocks(duckdb::idx_t storage_index) {
     if (_resolved != storage_index) {
-      _blocks = {.column = Column(ScanColumnOfStorage(_bind, storage_index))};
-      if (_blocks.column) {
-        _blocks.first = _blocks.column->Locate(_begin);
-        _blocks.last = _blocks.column->Locate(_end - 1, _blocks.first);
-      }
+      _blocks = CoveringBlocks{
+        StatsColumn(_bind, _segment.GetColReader(),
+                    ScanColumnOfStorage(_bind, storage_index), _end),
+        _begin, _end};
       _resolved = storage_index;
     }
     return _blocks;
   }
 
-  const irs::ColumnReader* Column(duckdb::idx_t column_index) const {
-    if (column_index >= _bind.columns.ids.size()) {
-      return nullptr;
-    }
-    const auto col_id = _bind.columns.ids[column_index];
-    const auto* column = StoresColumnStats(_bind, col_id) && _columns
-                           ? _columns->Column(col_id)
-                           : nullptr;
-    if (!column || column->DataRgCount() == 0 || column->RowCount() < _end ||
-        column->Type().IsNested() ||
-        column->Type() != _bind.columns.types[column_index]) {
-      return nullptr;
-    }
-    return column;
-  }
-
   const ScanBindData& _bind;
   const irs::SubReader& _segment;
-  const irs::ColReader* _columns;
-  ScanRowGroup _position;
   uint64_t _begin;
   uint64_t _end;
   uint64_t _live;
@@ -318,31 +353,25 @@ struct RowGroupPartitions {
   std::vector<RowGroupPartition> parts;
 };
 
+bool Listed(const std::vector<duckdb::idx_t>& list, size_t& at,
+            duckdb::idx_t partition) {
+  while (at != list.size() && list[at] < partition) {
+    ++at;
+  }
+  return at != list.size() && list[at] == partition;
+}
+
 duckdb::shared_ptr<RowGroupPartitions> BuildRowGroupPartitions(
   const ScanBindData& bind, const irs::IndexReader& reader,
   duckdb::vector<duckdb::PartitionStatistics>& stats) {
   auto holder = duckdb::make_shared_ptr<RowGroupPartitions>();
   auto& parts = holder->parts;
-  const auto rg_size = bind.relation.RowGroupSize();
-  size_t row_groups = 0;
-  for (size_t seg = 0; seg < reader.size(); ++seg) {
-    row_groups += SegmentRowGroups{reader[seg], rg_size}.Count();
-  }
-  parts.reserve(row_groups);
-  for (uint32_t seg = 0; seg < reader.size(); ++seg) {
-    const auto& segment = reader[seg];
-    const SegmentRowGroups groups{segment, rg_size};
-    const auto* columns = segment.GetColReader();
-    for (uint32_t rg = 0; rg < groups.Count(); ++rg) {
-      const auto begin = groups.Begin(rg);
-      const auto end = groups.End(rg);
-      const auto deleted = DeletedRows(segment, begin, end);
-      if (deleted != end - begin) {
-        parts.emplace_back(bind, segment, columns, ScanRowGroup{seg, rg}, begin,
-                           end, end - begin - deleted);
-      }
-    }
-  }
+  parts.reserve(RowGroupCount(bind, reader));
+  ForEachPartition(
+    bind, reader,
+    [&](ScanRowGroup position, uint64_t begin, uint64_t end, uint64_t live) {
+      parts.emplace_back(bind, reader[position.seg], begin, end, live);
+    });
   stats.reserve(parts.size());
   for (auto& part : parts) {
     auto& partition = stats.emplace_back();
@@ -382,23 +411,80 @@ duckdb::vector<duckdb::PartitionStatistics> IResearchScanPartitionStats(
   return result;
 }
 
-std::vector<ScanRowGroup> OffsetSkippedRowGroups(
-  const ScanBindData& bind, const irs::IndexReader& reader) {
+void SelectScannedRowGroups(const ScanBindData& bind,
+                            const irs::IndexReader& reader, bool order_prunes,
+                            bool limit_prunes,
+                            absl::FunctionRef<void(ScanRowGroup)> scan) {
+  const auto* chosen =
+    bind.partitions_to_scan ? &*bind.partitions_to_scan : nullptr;
+  size_t chosen_at = 0;
+  const auto is_chosen = [&](duckdb::idx_t partition) {
+    return !chosen || Listed(*chosen, chosen_at, partition);
+  };
+  if (!order_prunes) {
+    duckdb::idx_t partition = 0;
+    ForEachPartition(bind, reader,
+                     [&](ScanRowGroup position, uint64_t, uint64_t, uint64_t) {
+                       if (is_chosen(partition++)) {
+                         scan(position);
+                       }
+                     });
+    return;
+  }
   SDB_ASSERT(bind.scan_order);
   const auto& order = *bind.scan_order;
-  duckdb::vector<duckdb::PartitionStatistics> stats;
-  const auto holder = BuildRowGroupPartitions(bind, reader, stats);
   const duckdb::RowGroupOrderOptions options{
-    order.storage,        order.order_by,           order.order_type,
-    order.null_order,     order.column_type,        {},
-    order.skipped_groups, order.skipped_null_groups};
-  std::vector<ScanRowGroup> skipped;
-  for (const auto i :
-       duckdb::RowGroupReorderer::GetOffsetPrunedPartitions(options, stats)) {
-    skipped.push_back(holder->parts[i].Position());
+    order.storage,
+    order.order_by,
+    order.order_type,
+    order.null_order,
+    order.column_type,
+    limit_prunes ? order.row_limit : duckdb::optional_idx{},
+    order.skipped_groups,
+    order.skipped_null_groups,
+  };
+  const auto column_index =
+    order.storage.HasChildren()
+      ? duckdb::DConstants::INVALID_INDEX
+      : ScanColumnOfStorage(bind, order.storage.GetPrimaryIndex());
+  struct Partition {
+    ScanRowGroup position;
+    uint64_t rows;
+  };
+  const auto row_groups = RowGroupCount(bind, reader);
+  std::vector<Partition> partitions;
+  std::vector<duckdb::BaseStatistics> merged;
+  duckdb::vector<duckdb::optional_ptr<const duckdb::BaseStatistics>> statistics;
+  partitions.reserve(row_groups);
+  merged.reserve(row_groups);
+  statistics.reserve(row_groups);
+  ForEachPartition(
+    bind, reader,
+    [&](ScanRowGroup position, uint64_t begin, uint64_t end, uint64_t live) {
+      partitions.push_back({position, live});
+      const CoveringBlocks blocks{
+        StatsColumn(bind, reader[position.seg].GetColReader(), column_index,
+                    end),
+        begin, end};
+      if (!blocks.column) {
+        statistics.emplace_back();
+      } else if (blocks.OneBlock()) {
+        statistics.emplace_back(&blocks.FirstStatistics());
+      } else {
+        auto& stats = merged.emplace_back(blocks.FirstStatistics().Copy());
+        blocks.MergeOthers(stats);
+        statistics.emplace_back(&stats);
+      }
+    });
+  auto kept = duckdb::RowGroupReorderer::OrderPartitions(
+    options, statistics,
+    [&](duckdb::idx_t partition) { return partitions[partition].rows; });
+  absl::c_sort(kept);
+  for (const auto partition : kept) {
+    if (is_chosen(partition)) {
+      scan(partitions[partition].position);
+    }
   }
-  absl::c_sort(skipped);
-  return skipped;
 }
 
 duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(

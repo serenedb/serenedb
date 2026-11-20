@@ -27,6 +27,7 @@
 #include <optional>
 #include <ranges>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -40,9 +41,7 @@
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -252,15 +251,16 @@ template<typename Input, typename Sink>
 doc_id_t ReadPosting(Input& in, uint32_t* IRS_RESTRICT enc,
                      uint64_t* IRS_RESTRICT holes, doc_id_t* IRS_RESTRICT docs,
                      bool has_freq, doc_id_t prev, uint32_t left, doc_id_t min,
-                     doc_id_t max, BlockCursor* cursor, const LiveWords* live,
-                     Sink& sink) {
+                     doc_id_t max,
+                     BlockCursor<std::type_identity_t<Input>>* cursor,
+                     const LiveWords* live, Sink& sink) {
   constexpr auto kBlock = doc_limits::kBlockSize;
   SDB_ASSERT(live == nullptr || cursor != nullptr);
 
   [[maybe_unused]] const byte_type* at = nullptr;
   [[maybe_unused]] const byte_type* fetched = nullptr;
   const auto seat = [&] IRS_FORCE_INLINE {
-    if constexpr (Input::kVolatileAlways) {
+    if constexpr (Input::CONTIGUOUS) {
       at = in.Current();
       fetched = at;
     }
@@ -268,7 +268,7 @@ doc_id_t ReadPosting(Input& in, uint32_t* IRS_RESTRICT enc,
   seat();
 
   const auto read_leaf = [&](uint32_t len) IRS_FORCE_INLINE {
-    if constexpr (Input::kVolatileAlways) {
+    if constexpr (Input::CONTIGUOUS) {
       const auto* const from = std::max(fetched, at);
       for (uint64_t offset = 0; offset != kFillPrefetch;
            offset += ABSL_CACHELINE_SIZE) {
@@ -278,12 +278,15 @@ doc_id_t ReadPosting(Input& in, uint32_t* IRS_RESTRICT enc,
       return block_io::FillView(in, at, len, holes, docs, prev,
                                 has_freq && len == kBlock);
     } else {
-      const auto read =
-        block_io::ReadTailForFill(len, in, enc, holes, docs, prev);
+      return block_io::ReadTailForFill(len, in, enc, holes, docs, prev);
+    }
+  };
+
+  const auto skip_freq = [&](uint32_t len) IRS_FORCE_INLINE {
+    if constexpr (!Input::CONTIGUOUS) {
       if (has_freq && len == kBlock) {
         block_io::SkipBlock(in);
       }
-      return read;
     }
   };
 
@@ -334,6 +337,7 @@ doc_id_t ReadPosting(Input& in, uint32_t* IRS_RESTRICT enc,
       } else {
         emit.template operator()<std::dynamic_extent>(leaf, len);
       }
+      skip_freq(len);
       prev = leaf.max;
       continue;
     }
@@ -353,6 +357,7 @@ doc_id_t ReadPosting(Input& in, uint32_t* IRS_RESTRICT enc,
         }
       }
     }
+    skip_freq(len);
     prev = leaf.max;
   }
   return doc_limits::eof();
@@ -361,16 +366,9 @@ doc_id_t ReadPosting(Input& in, uint32_t* IRS_RESTRICT enc,
 template<typename Input>
 class PostingReader {
  public:
-  explicit PostingReader(const IndexInput& doc) noexcept : _doc{&doc} {}
+  explicit PostingReader(const duckdb::InputFile& doc) noexcept : _in{doc} {}
 
-  Input& In() {
-    if (_in == nullptr) [[unlikely]] {
-      _owned = _doc->Reopen();
-      SDB_ASSERT(_owned);
-      _in = &irs::utils::downCast<Input>(*_owned);
-    }
-    return *_in;
-  }
+  const duckdb::InputFile& File() const noexcept { return *_in.File().get(); }
 
   template<typename Sink>
   void Read(const PostingMeta& meta, bool has_score_bounds, bool has_freq,
@@ -386,19 +384,21 @@ class PostingReader {
     SDB_ASSERT(meta.docs_count > 1);
     constexpr auto kStart = doc_limits::invalid();
     if (meta.inline_size != 0) {
-      BytesViewInput in{meta.Inline()};
+      duckdb::MemoryReader in{meta.Inline()};
       SkipScoreBounds(has_score_bounds, in);
       return ReadPosting(in, Enc(), Holes(), Docs(), has_freq, kStart,
                          meta.docs_count, min, max, nullptr, nullptr, sink);
     }
-    auto& in = In();
+    auto& in = _in;
     const bool first = min == doc_limits::min();
     if (first) {
-      PrefetchDocs(in, meta);
+      PrefetchDocs(File(), meta);
     }
+    const auto end = meta.doc_start + DocExtent(meta);
     if (meta.docs_count <= doc_limits::kBlockSize ||
         (first && live == nullptr)) {
       in.Seek(meta.doc_start);
+      in.ReadAheadUntil(end);
       if (meta.docs_count <= doc_limits::kBlockSize) {
         SkipScoreBounds(has_score_bounds, in);
       }
@@ -412,6 +412,7 @@ class PostingReader {
     }
     const auto landing = _cursor.Landing();
     in.Seek(landing.doc_ptr);
+    in.ReadAheadUntil(end);
     return ReadPosting(in, Enc(), Holes(), Docs(), has_freq, landing.doc, left,
                        min, max, &_cursor, live, sink);
   }
@@ -423,10 +424,8 @@ class PostingReader {
 
   doc_id_t* Docs() noexcept { return _buf; }
 
-  const IndexInput* _doc;
-  IndexInput::ptr _owned;
-  Input* _in = nullptr;
-  BlockCursor _cursor;
+  Input _in;
+  BlockCursor<Input> _cursor;
   DocsBuf _buf;
   HoleBuf _holes;
   [[no_unique_address]] NeedEnc<Input> _enc;
@@ -440,7 +439,7 @@ void PrefetchTerms(std::span<const Term> terms, PostingReader<Input>& r) {
     });
   if (absl::c_any_of(
         metas, [](const PostingMeta& meta) { return DocExtent(meta) != 0; })) {
-    PrefetchDocExtents(r.In(), metas);
+    PrefetchDocExtents(r.File(), metas);
   }
 }
 
@@ -555,109 +554,30 @@ struct BitsetBuckets {
   }
 };
 
-inline void FillBitset(BitsetBuckets& buckets, const IndexInput& doc,
-                       doc_id_t docs_count, doc_id_t min, doc_id_t max,
-                       uint64_t* IRS_RESTRICT words) {
-  SDB_ASSERT(!buckets.must.empty() || !buckets.fills.empty());
-  SDB_ASSERT(buckets.fills.empty() || buckets.must.size() <= 1);
-  SDB_ASSERT(min < max);
-  constexpr auto kBits = BitsetStorage::kBits;
-  const auto count =
-    static_cast<uint32_t>((uint64_t{max - min} + kBits - 1) / kBits);
-  const auto seed = buckets.Seed(docs_count);
-  if (buckets.next.empty()) {
-    auto terms = buckets.must_not.size();
-    for (const auto& clause : buckets.must) {
-      terms += clause.size();
-    }
-    buckets.next.assign(terms, doc_limits::invalid());
-  }
-  const auto next_of = [&](size_t clause) {
-    auto* next = buckets.next.data();
-    for (size_t i = 0; i != clause; ++i) {
-      next += buckets.must[i].size();
-    }
-    return next;
-  };
+void FillPostings(BitsetBuckets& buckets, const duckdb::InputFile& doc,
+                  doc_id_t docs_count, doc_id_t min, doc_id_t max,
+                  uint64_t* IRS_RESTRICT words);
 
-  ResolveInput(doc, [&]<typename Input> {
-    PostingReader<Input> reader{doc};
-    if (!buckets.must.empty()) {
-      OrBits or_seed{.words = words, .base = min};
-      FillTerms(std::span<const PostingClause>{buckets.must[seed]},
-                next_of(seed), reader, min, max, nullptr, or_seed);
-    }
-    for (auto& node : buckets.fills) {
-      SDB_ASSERT(node);
-      ReadFill(*node, min, max, nullptr, words);
-    }
-
-    auto& scratch = buckets.scratch;
-    const auto open_scratch = [&]() -> uint64_t* {
-      if (scratch.WordCount() < count) {
-        scratch = BitsetStorage{max - min};
-      } else {
-        std::fill_n(scratch.Words(), count, uint64_t{0});
-      }
-      return scratch.Words();
-    };
-    auto& live = buckets.live;
-    const auto gate = [&] {
-      live.Reset(words, count, min);
-      return &live;
-    };
-
-    for (size_t i = 0, n = buckets.must.size(); i != n; ++i) {
-      if (i == seed) {
-        continue;
-      }
-      const std::span<const PostingClause> clause{buckets.must[i]};
-      SDB_ASSERT(!clause.empty());
-      const auto* const alive = gate();
-      if (AppliedInPlace(clause, docs_count)) {
-        RetainBits retain{.words = words, .base = min};
-        FillTerms(clause, next_of(i), reader, min, max, alive, retain);
-        retain.Finish(count);
-        continue;
-      }
-      auto* const other = open_scratch();
-      OrBits or_clause{.words = other, .base = min};
-      FillTerms(clause, next_of(i), reader, min, max, alive, or_clause);
-      for (uint32_t w = 0; w != count; ++w) {
-        words[w] &= other[w];
-      }
-    }
-
-    if (!buckets.must_not.empty()) {
-      ClearBits clear{.words = words, .base = min};
-      FillTerms(std::span<const PostingClause>{buckets.must_not},
-                next_of(buckets.must.size()), reader, min, max, gate(), clear);
-    }
-    if (!buckets.exclude_fills.empty()) {
-      const auto* const alive = gate();
-      auto* const other = open_scratch();
-      for (auto& node : buckets.exclude_fills) {
-        SDB_ASSERT(node);
-        ReadFill(*node, min, max, alive, other);
-      }
-      for (uint32_t w = 0; w != count; ++w) {
-        words[w] &= ~other[w];
-      }
-    }
-  });
-
-  if (buckets.masked != nullptr) {
-    ResolveDocsMask(*buckets.masked, [&]<DocsMaskType Mask>(Mask mask) {
+template<typename P = NoPins>
+void FillBitset(BitsetBuckets& buckets, const duckdb::InputFile& doc,
+                doc_id_t docs_count, doc_id_t min, doc_id_t max,
+                uint64_t* IRS_RESTRICT words) {
+  FillPostings(buckets, doc, docs_count, min, max, words);
+  if constexpr (P::template Pinned<MaskedAxis>(false)) {
+    SDB_ASSERT(buckets.masked == nullptr);
+  } else if (buckets.masked != nullptr) {
+    ResolveDocsMask<P>(*buckets.masked, [&]<DocsMaskType Mask>(Mask mask) {
       mask.Remove(min, max, words);
     });
   }
 }
 
-inline BitsetStorage BuildBitset(BitsetBuckets& buckets, const IndexInput& doc,
-                                 doc_id_t docs_count) {
+template<typename P = NoPins>
+BitsetStorage BuildBitset(BitsetBuckets& buckets, const duckdb::InputFile& doc,
+                          doc_id_t docs_count) {
   BitsetStorage bits{docs_count};
-  FillBitset(buckets, doc, docs_count, BitsetStorage::kMin, bits.End(),
-             bits.Words());
+  FillBitset<P>(buckets, doc, docs_count, BitsetStorage::kMin, bits.End(),
+                bits.Words());
   bits.Trim();
   return bits;
 }

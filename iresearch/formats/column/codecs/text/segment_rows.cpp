@@ -237,6 +237,7 @@ void SegmentRows::Finish(const EncodedFrames& frames, Shape shape,
   out.nulls = _nulls;
   out.input = _input;
   out.max_len = _max_len;
+  out.shared = frames.shared;
 
   _stats.Clear();
   _entries.clear();

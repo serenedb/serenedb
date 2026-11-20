@@ -143,7 +143,7 @@ class TextEncoder final : public State {
     }
     const auto rest = first.begin + first.rows;
     data.FlushSegment(CodecOf(kShape, kLeaf), std::move(*first.stats),
-                      first.rows, first.bytes.View());
+                      first.rows, first.bytes.View(), first.shared);
     CompressRows(_codec, config, values, rest, target, first, data);
     return true;
   }
@@ -204,7 +204,8 @@ class TextEncoder final : public State {
     const auto seal = [&] {
       state.FinalizeCompress();
       data.FlushSegment(CodecOf(seg.config.shape, seg.config.leaf),
-                        std::move(*seg.stats), seg.rows, seg.bytes.View());
+                        std::move(*seg.stats), seg.rows, seg.bytes.View(),
+                        seg.shared);
     };
     uint64_t row = 0;
     uint64_t first = 0;
@@ -233,7 +234,8 @@ class TextEncoder final : public State {
     for (auto row = begin; row < values.Rows(); row = seg.begin + seg.rows) {
       CutRows(state, config, values, row, target, seg);
       data.FlushSegment(CodecOf(seg.config.shape, seg.config.leaf),
-                        std::move(*seg.stats), seg.rows, seg.bytes.View());
+                        std::move(*seg.stats), seg.rows, seg.bytes.View(),
+                        seg.shared);
     }
   }
 

@@ -39,6 +39,8 @@ void SerializeColumnBlockMeta(duckdb::BinarySerializer& s,
   s.WriteProperty(2, "file_offset", m.file_offset);
   s.WriteProperty(3, "byte_size", m.byte_size);
   s.WriteProperty(4, "statistics", m.statistics);
+  s.WritePropertyWithDefault<uint64_t>(5, "shared_offset", m.shared_offset, 0);
+  s.WritePropertyWithDefault<uint64_t>(6, "shared_size", m.shared_size, 0);
 }
 
 ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
@@ -48,6 +50,10 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
   const auto file_offset = d.ReadProperty<uint64_t>(2, "file_offset");
   const auto byte_size = d.ReadProperty<uint64_t>(3, "byte_size");
   auto stats = d.ReadProperty<duckdb::BaseStatistics>(4, "statistics");
+  const auto shared_offset =
+    d.ReadPropertyWithExplicitDefault<uint64_t>(5, "shared_offset", 0);
+  const auto shared_size =
+    d.ReadPropertyWithExplicitDefault<uint64_t>(6, "shared_size", 0);
   const auto* codec =
     codecs::GetCodec(codecs::CodecType{compression_type}, physical);
   if (!codec || !codec->decompression) [[unlikely]] {
@@ -58,8 +64,9 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
               ", which this release of SereneDB does not have; it was written "
               "by a newer release"));
   }
-  return ColumnBlockMeta{std::move(stats), tuple_count, file_offset, byte_size,
-                         codec};
+  return ColumnBlockMeta{std::move(stats), tuple_count, file_offset,
+                         byte_size,        codec,       shared_offset,
+                         shared_size};
 }
 
 template<typename T, typename Write>

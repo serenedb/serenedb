@@ -142,7 +142,8 @@ void ThrowCorrupted(std::string_view codec, std::string_view what) {
 void ColumnDataCheckpointData::FlushSegment(CodecType codec,
                                             duckdb::BaseStatistics stats,
                                             uint64_t rows,
-                                            std::string_view bytes) {
+                                            std::string_view bytes,
+                                            std::string_view shared_bytes) {
   const auto physical = type.InternalType();
   if (stats.IsConstant() &&
       !disabled.test(std::to_underlying(CodecType::Constant))) {
@@ -153,6 +154,16 @@ void ColumnDataCheckpointData::FlushSegment(CodecType codec,
   }
   const auto* writer = GetCodec(codec, physical);
   SDB_ASSERT(writer);
+  if (!shared_bytes.empty()) {
+    SDB_ASSERT(shared && ctx);
+    if (shared->bytes != shared_bytes) {
+      shared->written = {AppendAligned(ctx->Out(), shared_bytes),
+                         shared_bytes.size()};
+      shared->bytes = shared_bytes;
+      written += shared_bytes.size();
+    }
+    shared->staged = shared->written;
+  }
   written += bytes.size();
   flush(*writer, std::move(stats), rows, bytes);
 }

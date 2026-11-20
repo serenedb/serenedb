@@ -24,6 +24,7 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <optional>
+#include <string_view>
 
 #include "iresearch/formats/column/codecs/text/segment_buffer.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
@@ -41,6 +42,7 @@ struct Segment {
   uint64_t input = 0;
   uint32_t max_len = 0;
   SegmentBuffer bytes;
+  std::string_view shared;
   std::optional<duckdb::BaseStatistics> stats;
 
   uint64_t Size() const noexcept { return bytes.Size(); }

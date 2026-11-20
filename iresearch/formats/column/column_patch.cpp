@@ -175,6 +175,8 @@ std::vector<ColumnBlockMeta> PatchedBlocks(const ColumnReader& base,
       .file_offset = metas[b].file_offset,
       .byte_size = metas[b].byte_size,
       .codec = metas[b].codec,
+      .shared_offset = metas[b].shared_offset,
+      .shared_size = metas[b].shared_size,
     });
     const auto first = base.DataBlockFirstRow(b);
     patch.MergeStats(first, first + metas[b].tuple_count, block.statistics);

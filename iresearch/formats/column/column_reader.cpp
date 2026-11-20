@@ -244,6 +244,8 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(size_t block,
     .count = m.tuple_count,
     .size = m.byte_size,
     .codec = codec.type,
+    .shared_offset = m.shared_offset,
+    .shared_size = m.shared_size,
   });
   if (m.byte_size == 0) {
     if (codec.type != codecs::CodecType::Constant &&

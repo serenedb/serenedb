@@ -73,19 +73,10 @@ codecs::CodecType ForcedBySetting(const duckdb::DBConfig& config) {
   return type == codecs::kNoCodec ? codecs::CodecType::Auto : type;
 }
 
-uint64_t AppendAligned(IndexOutput& out, std::string_view bytes) {
-  constexpr byte_type kZeros[8]{};
-  if (const auto misalign = out.Position() % sizeof(kZeros); misalign != 0) {
-    out.WriteData(kZeros, sizeof(kZeros) - misalign);
-  }
-  const auto offset = out.Position();
-  out.WriteData(reinterpret_cast<const byte_type*>(bytes.data()), bytes.size());
-  return offset;
-}
-
 void CaptureBlock(const codecs::Codec& codec, duckdb::BaseStatistics stats,
                   uint64_t tuple_count, std::string_view bytes,
-                  IndexOutput& blocks, std::vector<ColumnBlockMeta>& sink) {
+                  codecs::SharedBlock shared, IndexOutput& blocks,
+                  std::vector<ColumnBlockMeta>& sink) {
   if (tuple_count == 0) {
     return;
   }
@@ -98,6 +89,8 @@ void CaptureBlock(const codecs::Codec& codec, duckdb::BaseStatistics stats,
     SDB_ASSERT(bytes.size() <= std::numeric_limits<uint32_t>::max());
     m.file_offset = AppendAligned(blocks, bytes);
     m.byte_size = bytes.size();
+    m.shared_offset = shared.offset;
+    m.shared_size = shared.size;
   }
   sink.push_back(std::move(m));
 }
@@ -218,6 +211,7 @@ bool ColumnWriter::Compress(const duckdb::LogicalType& type,
   auto& ctx = WriteCtx();
   bool flushed = false;
   bool needs_validity = false;
+  codecs::SharedBlocks shared;
   const auto flush = [&](const codecs::Codec& codec,
                          duckdb::BaseStatistics stats, uint64_t rows,
                          std::string_view bytes) {
@@ -226,13 +220,15 @@ bool ColumnWriter::Compress(const duckdb::LogicalType& type,
     needs_validity =
       needs_validity || codec.decompression->validity ==
                           codecs::CompressionValidity::RequiresValidity;
-    CaptureBlock(codec, std::move(stats), rows, bytes, ctx.Out(), sink);
+    CaptureBlock(codec, std::move(stats), rows, bytes,
+                 std::exchange(shared.staged, {}), ctx.Out(), sink);
   };
   codecs::ColumnDataCheckpointData data{
     .type = type,
     .chunks = chunks,
     .ctx = &ctx,
     .flush = flush,
+    .shared = &shared,
     .params = _options.codec_params,
     .tuning = tuning,
     .disabled = _disabled,
@@ -734,6 +730,24 @@ void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
     .tuple_count = block.tuple_count,
     .codec = block.codec,
   };
+  if (block.shared_size != 0) {
+    if (_shared_source != &source || _shared_from != block.shared_offset) {
+      const auto* bytes =
+        source.TryReadStable(block.shared_offset, block.shared_size);
+      if (!bytes) {
+        buffer.resize(block.shared_size);
+        source.Read(block.shared_offset, buffer.data(), block.shared_size);
+        bytes = buffer.data();
+      }
+      _shared_to = AppendAligned(
+        WriteCtx().Out(),
+        {reinterpret_cast<const char*>(bytes), block.shared_size});
+      _shared_source = &source;
+      _shared_from = block.shared_offset;
+    }
+    m.shared_offset = _shared_to;
+    m.shared_size = block.shared_size;
+  }
   if (block.byte_size != 0) {
     const auto* bytes =
       source.TryReadStable(block.file_offset, block.byte_size);
@@ -754,6 +768,7 @@ bool ColumnWriter::CopyBlocks(const ColumnReader& column, ReadContext& source,
                               absl::FunctionRef<bool()> progress) {
   SDB_ASSERT(CopyableFrom(column));
   SealRowGroup();
+  _shared_source = nullptr;
   std::vector<byte_type> buffer;
   for (const auto& block : column.DataBlocks()) {
     if (!progress()) {
@@ -838,6 +853,7 @@ void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
   SDB_ASSERT(_row_start + _staged_rows <= start_row);
   SDB_ASSERT(first + count <= column.RowCount());
   PadNullsTo(start_row);
+  _shared_source = nullptr;
   const auto end = first + count;
   auto written = first;
   if (LayoutMatches(column) && _options.distinct == DistinctStats::None &&

@@ -185,6 +185,9 @@ Header SegmentHeader(duckdb::const_data_ptr_t base,
                      const ColumnSegment& segment, Shape shape,
                      ByteCodec codec);
 
+std::string_view SymbolTable(const ColumnSegment& segment, const Header& h,
+                             duckdb::const_data_ptr_t base, std::string& copy);
+
 struct EntryRange {
   uint32_t lo;
   uint32_t hi;

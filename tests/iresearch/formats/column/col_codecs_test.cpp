@@ -1678,6 +1678,103 @@ TEST_F(ColCodecsTest, RowReadsDecodeTheSharedBytesOfEarlierEntries) {
   }
 }
 
+TEST_F(ColCodecsTest, TwelveBitSymbolTablesAreStoredOncePerRowGroup) {
+  constexpr uint64_t kRows = 24000;
+  constexpr uint32_t kRowGroup = 8192;
+  constexpr uint64_t kFirst = 1000;
+  constexpr uint64_t kCount = 20000;
+  constexpr size_t kGroups = (kRows + kRowGroup - 1) / kRowGroup;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 53 == 0) {
+      return std::nullopt;
+    }
+    return absl::StrCat("https://example.org/", g % 977, "/catalog/",
+                        (g * 7919) % 100003, "/item/", g, "?ref=", g % 31);
+  };
+  const irs::ColCodecParams params{.segment_target = 32 * 1024};
+  const auto tables = [](const irs::ColumnReader& col) {
+    std::set<uint64_t> offsets;
+    for (const auto& block : col.DataBlocks()) {
+      if (block.shared_size != 0) {
+        offsets.insert(block.shared_offset);
+      }
+    }
+    return offsets.size();
+  };
+  const auto check = [&](irs::Directory& dir, irs::codecs::CodecType codec) {
+    const bool shares = codec == irs::codecs::CodecType::Fsst12 ||
+                        codec == irs::codecs::CodecType::DictFsst12;
+    Write(dir, codec, params, kRows, kRowGroup, value);
+    Verify(dir, codec, kRows, value);
+    irs::ColReader src{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* source = src.Column(kField);
+    ASSERT_NE(source, nullptr);
+    ASSERT_GT(source->DataBlocks().size(), 2 * kGroups);
+    for (const auto& block : source->DataBlocks()) {
+      EXPECT_EQ(block.shared_size != 0, shares);
+    }
+    EXPECT_EQ(tables(*source), shares ? kGroups : 0);
+    {
+      irs::ColWriter w{dir, "copy", Db(), params.tier};
+      auto& cw = w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
+                              {.row_group_size = kRowGroup,
+                               .compression = codec,
+                               .codec_params = params});
+      ASSERT_TRUE(cw.CopyableFrom(*source));
+      ASSERT_TRUE(cw.CopyBlocks(*source, src.Ctx(), [] { return true; }));
+      cw.CopyRows(kRows, *source, src.Ctx(), kFirst, kCount);
+      ASSERT_TRUE(w.Commit(0));
+    }
+    irs::ColReader dst{dir, "copy", Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* copied = dst.Column(kField);
+    ASSERT_NE(copied, nullptr);
+    ASSERT_EQ(copied->RowCount(), kRows + kCount);
+    for (const auto& block : copied->DataBlocks()) {
+      EXPECT_EQ(block.shared_size != 0, shares);
+    }
+    if (shares) {
+      EXPECT_GE(tables(*copied), 2 * kGroups);
+    }
+    auto state = copied->InitScan(dst.Ctx());
+    for (uint64_t pos = 0; pos < kRows + kCount;) {
+      const auto take =
+        std::min<uint64_t>(kRows + kCount - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      copied->Scan(state, out, take);
+      out.Flatten(take);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        const auto row = pos + k;
+        ExpectRow(out, k, row < kRows ? row : kFirst + (row - kRows), value);
+      }
+      pos += take;
+    }
+    irs::ColumnReader::PointReader cursor{dst, *copied};
+    for (uint32_t row = 5; row < kRows + kCount; row += 997) {
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      cursor.FetchRows(std::span<const uint32_t>{&row, 1}, 0, out, 0);
+      ExpectRow(out, 0, row < kRows ? row : kFirst + (row - kRows), value);
+    }
+  };
+  for (const auto codec :
+       {irs::codecs::CodecType::Fsst12, irs::codecs::CodecType::DictFsst12,
+        irs::codecs::CodecType::Fsst, irs::codecs::CodecType::DictFsst}) {
+    SCOPED_TRACE(Written(codec));
+    {
+      SCOPED_TRACE("memory");
+      irs::MemoryDirectory dir;
+      check(dir, codec);
+    }
+    {
+      SCOPED_TRACE("files");
+      const auto path =
+        test_dir() / absl::StrCat("col_codecs_shared_table_", Written(codec));
+      std::filesystem::create_directories(path);
+      irs::FSDirectory dir{path};
+      check(dir, codec);
+    }
+  }
+}
+
 TEST_F(ColCodecsTest, AutoIsNoLargerThanItsCandidates) {
   using irs::codecs::CodecType;
   const irs::codecs::CodecType candidates[] = {
@@ -3572,21 +3669,16 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
 TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
   struct Case {
     std::string_view name;
-    void (*corrupt)(irs::codecs::Header&, duckdb::data_ptr_t);
+    void (*corrupt)(duckdb::data_ptr_t);
   };
   const Case cases[] = {
     {"version",
-     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
-       duckdb::Store<uint64_t>(0, block + h.off_symtab);
-     }},
+     [](duckdb::data_ptr_t table) { duckdb::Store<uint64_t>(0, table); }},
     {"symbol count",
-     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
-       duckdb::Store<uint16_t>(0xFFFF, block + h.off_symtab + 8);
+     [](duckdb::data_ptr_t table) {
+       duckdb::Store<uint16_t>(0xFFFF, table + 8);
      }},
-    {"symbol length",
-     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
-       block[h.off_symtab + 24] = 9;
-     }},
+    {"symbol length", [](duckdb::data_ptr_t table) { table[24] = 9; }},
   };
   const Value values = [](uint64_t g) -> std::optional<std::string> {
     return "https://example.org/users/" + std::to_string(g % 5000) + "/profile";
@@ -3606,8 +3698,8 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
       irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
-      offset = col->DataBlocks().front().file_offset;
-      size = col->DataBlocks().front().byte_size;
+      offset = col->DataBlocks().front().shared_offset;
+      size = col->DataBlocks().front().shared_size;
       block_codec = col->DataBlocks().front().codec->type;
     }
     const auto file = path / irs::FileName(kSeg);
@@ -3617,12 +3709,9 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
       bytes.assign(std::istreambuf_iterator<char>{in}, {});
     }
     ASSERT_LE(offset + size, bytes.size());
-    auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
-    auto h = irs::codecs::Header::Parse(block, size, block_codec);
     ASSERT_EQ(irs::codecs::LeafOf(block_codec), irs::codecs::ByteCodec::Fsst12);
-    ASSERT_GT(h.symtab_size, 24u);
-    c.corrupt(h, block);
-    duckdb::Store(h, block);
+    ASSERT_GT(size, 24u);
+    c.corrupt(reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset));
     {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));

@@ -92,6 +92,7 @@ struct EncodedFrames {
   std::span<uint32_t> lcps;
   uint32_t max_lcp = 0;
   std::string_view symtab;
+  std::string_view shared;
   uint32_t dictionary_size = 0;
   FrameDictionary flags = FrameDictionary::None;
 };

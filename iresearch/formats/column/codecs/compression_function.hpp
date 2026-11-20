@@ -77,6 +77,8 @@ struct ColumnSegment {
   uint64_t count = 0;
   uint64_t size = 0;
   CodecType codec = CodecType::Uncompressed;
+  uint64_t shared_offset = 0;
+  uint64_t shared_size = 0;
 };
 
 struct SegmentScanState {
@@ -182,9 +184,21 @@ struct State {
   virtual ~State() = default;
 };
 
+struct SharedBlock {
+  uint64_t offset = 0;
+  uint64_t size = 0;
+};
+
+struct SharedBlocks {
+  std::string bytes;
+  SharedBlock written;
+  SharedBlock staged;
+};
+
 struct ColumnDataCheckpointData {
   void FlushSegment(CodecType codec, duckdb::BaseStatistics stats,
-                    uint64_t rows, std::string_view bytes);
+                    uint64_t rows, std::string_view bytes,
+                    std::string_view shared_bytes = {});
 
   template<typename S>
   S& Get() {
@@ -204,6 +218,7 @@ struct ColumnDataCheckpointData {
   std::span<const WriteChunk> chunks;
   WriteContext* ctx = nullptr;
   FlushSegmentFn flush;
+  SharedBlocks* shared = nullptr;
   ColCodecParams params;
   ColumnTuning& tuning;
   const Preferences* preferences = &kNoPreferences;

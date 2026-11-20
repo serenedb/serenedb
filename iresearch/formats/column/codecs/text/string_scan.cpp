@@ -50,6 +50,21 @@ duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
     DictionaryCacheKey(slot.file_id, slot.file_offset));
 }
 
+std::string_view SymbolTable(const ColumnSegment& segment, const Header& h,
+                             duckdb::const_data_ptr_t base, std::string& copy) {
+  if (h.symtab_size != 0 || segment.shared_size == 0) {
+    return {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size};
+  }
+  if (const auto* stable =
+        segment.ctx.TryReadStable(segment.shared_offset, segment.shared_size)) {
+    return {reinterpret_cast<const char*>(stable), segment.shared_size};
+  }
+  copy.resize(segment.shared_size);
+  segment.ctx.Read(segment.shared_offset, duckdb::data_ptr_cast(copy.data()),
+                   segment.shared_size);
+  return copy;
+}
+
 bool HasRoom(const ReadContext::CacheSlot& slot, uint64_t bytes) {
   return slot.touched && slot.cache->GetCurrentMemoryRacy() + bytes <=
                            slot.cache->GetMaxMemoryRacy();

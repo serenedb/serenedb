@@ -21,10 +21,21 @@
 #pragma once
 
 #include <duckdb/storage/buffer_manager.hpp>
+#include <string_view>
 
 #include "iresearch/store/data_output.hpp"
 
 namespace irs {
+
+inline uint64_t AppendAligned(IndexOutput& out, std::string_view bytes) {
+  constexpr byte_type kZeros[8]{};
+  if (const auto misalign = out.Position() % sizeof(kZeros); misalign != 0) {
+    out.WriteData(kZeros, sizeof(kZeros) - misalign);
+  }
+  const auto offset = out.Position();
+  out.WriteData(reinterpret_cast<const byte_type*>(bytes.data()), bytes.size());
+  return offset;
+}
 
 class WriteContext final {
  public:

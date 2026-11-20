@@ -220,13 +220,9 @@ struct Scan {
   template<typename Frames>
   Scan(const ColumnSegment& segment, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
-    SDB_ENSURE(
-      s.header.symtab_size == 0 ||
-        decoder.Import(segment.cache_slot.cache,
-                       std::string_view{reinterpret_cast<const char*>(
-                                          s.base + s.header.off_symtab),
-                                        s.header.symtab_size}),
-      "col codec: corrupted symbol table");
+    const auto table = SymbolTable(segment, s.header, s.base, probe);
+    SDB_ENSURE(table.empty() || decoder.Import(segment.cache_slot.cache, table),
+               "col codec: corrupted symbol table");
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
       return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
     });
@@ -605,7 +601,7 @@ struct Fetch {
             const FrameMeta& f, uint32_t entry, duckdb::Vector& result,
             duckdb::idx_t result_idx, bool) {
     if (groups.Empty()) {
-      Open(segment.cache_slot.cache, h, base);
+      Open(segment, h, base);
     }
     const auto* in = reinterpret_cast<const char*>(base + h.off_data);
     const uint32_t group = (entry - f.first_entry) / kChainRestart;
@@ -618,14 +614,12 @@ struct Fetch {
       duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
   }
 
-  void Open(duckdb::ObjectCache* cache, const Header& h,
+  void Open(const ColumnSegment& segment, const Header& h,
             duckdb::const_data_ptr_t base) {
     decoder.emplace();
+    const auto symbols = SymbolTable(segment, h, base, chain);
     SDB_ENSURE(
-      h.symtab_size == 0 ||
-        decoder->Import(cache, std::string_view{reinterpret_cast<const char*>(
-                                                  base + h.off_symtab),
-                                                h.symtab_size}),
+      symbols.empty() || decoder->Import(segment.cache_slot.cache, symbols),
       "col codec: corrupted symbol table");
     const auto* table = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
@@ -679,11 +673,14 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 |                     Symbol table                     |
 |   +----------------------------------------------+   |
-|   |   FSST symbol table: about 2 KiB at most     |   |
-|   |   with 8-bit codes, 36 KiB with 12-bit ones  |   |
+|   |   FSST symbol table with 8-bit codes, about  |   |
+|   |   2 KiB at most                              |   |
 |   +----------------------------------------------+   |
-|   trained once per row group; each FSST segment      |
-|   stores a copy                                      |
+|   trained once per row group; each segment stores    |
+|   a copy; a table with 12-bit codes, up to 36 KiB,   |
+|   is stored once for the row group, outside its      |
+|   segments: the block's metadata says where, and     |
+|   this section is empty                              |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
@@ -793,11 +790,14 @@ encoded bytes:
 +------------------------------------------------------+
 |                     Symbol table                     |
 |   +----------------------------------------------+   |
-|   |   FSST symbol table: about 2 KiB at most     |   |
-|   |   with 8-bit codes, 36 KiB with 12-bit ones  |   |
+|   |   FSST symbol table with 8-bit codes, about  |   |
+|   |   2 KiB at most                              |   |
 |   +----------------------------------------------+   |
-|   trained once per row group; each FSST segment      |
-|   stores a copy                                      |
+|   trained once per row group; each segment stores    |
+|   a copy; a table with 12-bit codes, up to 36 KiB,   |
+|   is stored once for the row group, outside its      |
+|   segments: the block's metadata says where, and     |
+|   this section is empty                              |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |

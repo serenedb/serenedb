@@ -47,6 +47,7 @@ inline constexpr size_t kPrefixSlack = 31;
 
 struct Fsst8 {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst;
+  static constexpr bool kSharedTable = false;
 
   using Encoding = duckdb_fsst_encoder_t;
   using Table = duckdb_fsst_decoder_t;
@@ -101,6 +102,7 @@ struct Fsst8 {
 
 struct Fsst12 {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst12;
+  static constexpr bool kSharedTable = true;
 
   using Encoding = duckdb_fsst12_encoder_t;
   using Table = duckdb_fsst12_decoder_t;

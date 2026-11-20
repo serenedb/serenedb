@@ -217,6 +217,9 @@ class ColumnWriter final {
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
   uint64_t _row_start = 0;
+  const ReadContext* _shared_source = nullptr;
+  uint64_t _shared_from = 0;
+  uint64_t _shared_to = 0;
   bool _deferred = false;
   duckdb::Vector _distinct_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;

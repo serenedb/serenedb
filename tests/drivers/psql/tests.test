@@ -103,7 +103,8 @@
 > Informational
 >   (options: S = show system objects, x = expanded mode, + = additional detail)
 >   \d[Sx+]                list tables, views, and sequences
->   \d[S+]   NAME          describe table, view, sequence, or index
+>   \d[Sx+]  NAME          describe table, view, sequence, or index
+>                          (x applies only to sequences)
 >   \da[Sx]  [PATTERN]     list aggregates
 >   \dA[x+]  [PATTERN]     list access methods
 >   \dAc[x+] [AMPTRN [TYPEPTRN]]  list operator classes

@@ -33,7 +33,7 @@ if [[ -z "${VANILLA_DUCKDB:-}" ]]; then
 fi
 
 VANILLA_HOME=$(dirname "$VANILLA_DUCKDB")
-HOME="$VANILLA_HOME" "$VANILLA_DUCKDB" -bail :memory: -c "INSTALL quack" >/dev/null || exit 1
+HOME="$VANILLA_HOME" "$VANILLA_DUCKDB" -bail :memory: -c "INSTALL quack; INSTALL httpfs" >/dev/null || exit 1
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/duckdb-interop.XXXXXX")
 quack_pids=()

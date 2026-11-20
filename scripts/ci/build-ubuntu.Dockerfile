@@ -40,7 +40,7 @@ RUN \
       dh-make fakeroot \
       python3 python3-dev python3-pip perl \
       git gcc g++ binutils coreutils bash \
-      postgresql-client-18 \
+      postgresql-client-18=18.7-1.pgdg26.04+2 \
       pgbackrest=2.59.3-1.pgdg26.04+1 \
       systemd \
       nodejs \
@@ -88,7 +88,7 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir --root-user-ac
 ENV SDB_DUCKDB_HOME=/opt/sdb-duckdb
 RUN mkdir -p "$SDB_DUCKDB_HOME" && HOME="$SDB_DUCKDB_HOME" python3 -c 'import duckdb; duckdb.connect().install_extension("tpch")' && \
     chmod -R a+rX "$SDB_DUCKDB_HOME"
-RUN HOME="$(dirname "$VANILLA_DUCKDB")" "$VANILLA_DUCKDB" -bail :memory: -c "INSTALL quack" && \
+RUN HOME="$(dirname "$VANILLA_DUCKDB")" "$VANILLA_DUCKDB" -bail :memory: -c "INSTALL quack; INSTALL httpfs" && \
     chmod -R a+rX "$(dirname "$VANILLA_DUCKDB")"
 
 ENV SDB_SPARK_JAVA_HOME=/usr/lib/jvm/spark-java

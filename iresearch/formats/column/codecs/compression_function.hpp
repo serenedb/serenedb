@@ -98,6 +98,7 @@ struct ColumnScanState {
   uint64_t offset_in_column = 0;
   uint64_t internal_index = 0;
   uint64_t last_offset = 0;
+  bool dynamic_filter = false;
 };
 
 struct ColumnFetchState {

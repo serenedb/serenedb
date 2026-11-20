@@ -210,6 +210,7 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       .extract_type = spec.extract_type,
       .extract = std::move(extract),
     });
+    _cols.back().scan.st.dynamic_filter = spec.is_dynamic;
   }
 }
 
@@ -778,6 +779,7 @@ duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, const uint64_t* in,
 void ColFilterChain::Rewind(irs::ReadContext& ctx) {
   for (auto& f : _cols) {
     f.scan = f.reader->InitScan(ctx);
+    f.scan.st.dynamic_filter = f.is_dynamic;
     if (f.extract) {
       f.extract->Bind(*f.reader, ctx, f.extract_path, *f.extract_type,
                       _context);

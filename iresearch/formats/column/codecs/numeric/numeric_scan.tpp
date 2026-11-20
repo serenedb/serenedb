@@ -340,6 +340,10 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
             const duckdb::TableFilter& /*filter*/,
             duckdb::TableFilterState& filter_state) {
   auto& scan = state.scan_state->Cast<ScanState<R>>();
+  if (state.dynamic_filter) {
+    scan.frame_verdict = {};
+    scan.value_verdict = {};
+  }
   const uint64_t start = state.GetPositionInSegment();
   auto verdict = duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
   if constexpr (std::is_integral_v<typename R::Value>) {
@@ -375,8 +379,9 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
       return;
     }
   } else if constexpr (R::kFiltersEntries) {
-    if (!every_row && FilterEntries(segment, state, scan, vector_count, result,
-                                    sel_count, filter_state)) {
+    if (!every_row && !state.dynamic_filter &&
+        FilterEntries(segment, state, scan, vector_count, result, sel_count,
+                      filter_state)) {
       return;
     }
   }

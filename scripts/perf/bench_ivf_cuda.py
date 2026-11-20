@@ -139,7 +139,7 @@ def trial(args, label, binary, repeat, manifest, client_class, queries, gt_ids, 
     if not phase_rows:
         raise RuntimeError(f"missing IVF build profile in {log}")
     train_us, assign_us, gpu_batches = (sum(map(int, values)) for values in zip(*phase_rows))
-    if bool(gpu_batches) != (label == "cuda"):
+    if bool(gpu_batches) != (label != "cpu"):
         raise RuntimeError(f"unexpected GPU batch count in {log}: {gpu_batches}")
     return {"device": label, "repeat": repeat, "build_seconds": build_seconds,
             "train_segment_seconds": train_us / 1e6, "assign_segment_seconds": assign_us / 1e6,
@@ -150,6 +150,7 @@ def main():
     parser = argparse.ArgumentParser(description="Compare CPU and CUDA IVF builds on VectorBench data")
     for name in ("cpu-bin", "cuda-bin", "vectorbench", "dataset", "out"):
         parser.add_argument(f"--{name}", required=True, type=lambda value: Path(value).resolve())
+    parser.add_argument("--cuda-train-only-bin", type=lambda value: Path(value).resolve())
     parser.add_argument("--query-limit", type=int, default=1000)
     parser.add_argument("--repeats", type=int, default=3)
     args = parser.parse_args()
@@ -157,6 +158,8 @@ def main():
         "cpu": args.cpu_bin,
         "cuda": args.cuda_bin,
     }
+    if args.cuda_train_only_bin is not None:
+        binaries["cuda-train-only"] = args.cuda_train_only_bin
     if args.repeats < 1 or args.query_limit < 1:
         parser.error("--repeats and --query-limit must be positive")
     args.out.mkdir(parents=True, exist_ok=False)
@@ -176,8 +179,13 @@ def main():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     results = []
+    variants = list(binaries.items())
     for repeat in range(1, args.repeats + 1):
-        for label, binary in binaries.items():
+        offset = (repeat - 1) % len(variants) if args.cuda_train_only_bin else 0
+        for label, binary in variants[offset:] + variants[:offset]:
+            with (args.out / f"{label}-{repeat}-load.log").open("w") as load_log:
+                subprocess.run(["top", "-b", "-n", "2", "-d", "1", "-o", "%CPU"],
+                               stdout=load_log, stderr=subprocess.STDOUT, check=True)
             point = trial(args, label, binary, repeat, manifest, module.Client, queries, gt_ids, gt_dists)
             results.append(point)
             print(json.dumps(point), flush=True)

@@ -149,8 +149,7 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
       auto assigned = centroids.AssignCentroids(
         {gather.data(), gathered * d}, d,
         needs_centroid ? std::span{cents.data(), gathered}
-                       : std::span<std::span<const float>>{},
-        assignment.get());
+                       : std::span<std::span<const float>>{});
       if (profile) {
         assignment_time += Clock::now() - start;
       }

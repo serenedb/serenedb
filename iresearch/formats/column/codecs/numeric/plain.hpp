@@ -27,6 +27,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 
@@ -187,19 +188,19 @@ uint64_t SampledForLz4Bytes(ColumnDataCheckpointData& data) {
 }
 
 template<typename T>
-struct Ffor final : State {
-  static constexpr StateId kId = StateId::Ffor;
+struct Bitpacking final : State {
+  static constexpr StateId kId = StateId::Bitpacking;
 
-  explicit Ffor(ColumnDataCheckpointData&) {}
+  explicit Bitpacking(ColumnDataCheckpointData&) {}
 
-  FforBlocks<numeric::Bits<sizeof(T)>> blocks;
+  BitpackingBlocks<numeric::Bits<sizeof(T)>> blocks;
   bool planned = false;
   bool analyzed = false;
 };
 
 template<typename T>
-void PlanFfor(const ColumnDataCheckpointData& data, const Values<T>& values,
-              Ffor<T>& state) {
+void PlanBitpacking(const ColumnDataCheckpointData& data,
+                    const Values<T>& values, Bitpacking<T>& state) {
   if (state.planned) {
     return;
   }
@@ -212,40 +213,40 @@ void PlanFfor(const ColumnDataCheckpointData& data, const Values<T>& values,
                          data.preferences->differences_over_nulls
                            ? std::span<const uint8_t>{}
                            : values.NullBlocks(),
-                         data.preferences->delta_ffor_price);
+                         data.preferences->delta_bitpacking_price);
 }
 
 template<typename T>
-double AnalyzeFfor(ColumnDataCheckpointData& data, double bound) {
+double AnalyzeBitpacking(ColumnDataCheckpointData& data, double bound) {
   auto& values = data.Get<Values<T>>();
   if (!values.Usable()) {
     return kNoScore;
   }
-  auto& state = data.Get<Ffor<T>>();
+  auto& state = data.Get<Bitpacking<T>>();
   state.analyzed = true;
-  PlanFfor(data, values, state);
+  PlanBitpacking(data, values, state);
   return AnalyzeBlocks<T>(data, Shape::Plain,
                           static_cast<uint32_t>(values.Size()),
                           SteppedBytes<T>(state.blocks, values), 0, bound);
 }
 
 template<typename T>
-bool CompressFfor(ColumnDataCheckpointData& data) {
+bool CompressBitpacking(ColumnDataCheckpointData& data) {
   auto& values = data.Get<Values<T>>();
-  auto& state = data.Get<Ffor<T>>();
+  auto& state = data.Get<Bitpacking<T>>();
   if (!values.Usable() || !MayWrite(data, state.analyzed, ByteCodec::None)) {
     return false;
   }
-  PlanFfor(data, values, state);
+  PlanBitpacking(data, values, state);
   return CompressStepped<T>(data, Shape::Plain, state.blocks, state.analyzed,
                             PlainHeader{});
 }
 
 template<typename T>
-inline constexpr CompressionFunction kFfor{
-  .analyze = AnalyzeFfor<T>,
-  .compress = CompressFfor<T>,
-  .codec = CodecType::Ffor,
+inline constexpr CompressionFunction kBitpacking{
+  .analyze = AnalyzeBitpacking<T>,
+  .compress = CompressBitpacking<T>,
+  .codec = CodecType::Bitpacking,
 };
 
 template<typename T>
@@ -262,8 +263,9 @@ class PlainReader final : public FrameReader<T> {
               CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
       _own{duckdb::Load<PlainHeader>(base + OwnHeaderOffset(frames.flags))} {
-    SDB_ENSURE(For() || _own.base == 0,
-               "numeric codec: corrupted segment header");
+    if (!(For() || _own.base == 0)) [[unlikely]] {
+      ThrowCorrupted("numeric", "header is inconsistent");
+    }
   }
 
   void Seek(uint64_t row) {

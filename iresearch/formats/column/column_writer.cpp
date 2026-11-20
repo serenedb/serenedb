@@ -155,7 +155,7 @@ codecs::CodecType CodesCodec(const ListParts& parts, uint64_t rows) noexcept {
   const uint64_t bitpacked = rows * width;
   const uint64_t run_bits = runs * (width + run_width);
   if (run_bits < bitpacked) {
-    return codecs::CodecType::RleFfor;
+    return codecs::CodecType::Rle;
   }
   const uint64_t step_width =
     parts.codes.size() < 2
@@ -163,8 +163,8 @@ codecs::CodecType CodesCodec(const ListParts& parts, uint64_t rows) noexcept {
       : duckdb::BitpackingPrimitives::MinimumBitWidth<uint64_t>(
           static_cast<uint64_t>(largest_step) -
           static_cast<uint64_t>(least_step));
-  return step_width < width ? codecs::CodecType::DeltaFfor
-                            : codecs::CodecType::Ffor;
+  return step_width < width ? codecs::CodecType::Delta
+                            : codecs::CodecType::Bitpacking;
 }
 
 bool SelfContained(const ColumnBlockMeta& block) noexcept {
@@ -357,7 +357,7 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
                    reinterpret_cast<duckdb::data_ptr_t>(parts.ends.data()),
                    parts.ends.size()},
     parts.ends.size()};
-  CompressPlain(duckdb::LogicalType::UBIGINT, codecs::CodecType::DeltaFfor,
+  CompressPlain(duckdb::LogicalType::UBIGINT, codecs::CodecType::Delta,
                 {&end_chunk, parts.ends.empty() ? 0U : 1U}, ends.data);
 }
 

@@ -63,13 +63,13 @@ n	dbl_ok	big_ok	dec38_ok	s1213_ok	flag_ok	flt_ok	nans	fnans
 # around them
 query
 SELECT 's1213_fsst' AS combo, (SELECT bool_and(compression IN ('DICT_FSST', 'FSST')) FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='s1213' AND segment_type='VARCHAR') AS ok
-UNION ALL SELECT 'flag_ffor', (SELECT bool_and(compression = 'FFOR') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='flag' AND segment_type='BOOLEAN')
-UNION ALL SELECT 'big_extremes_still_delta', (SELECT bool_and(compression = 'FFOR') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='big' AND segment_type NOT IN ('VALIDITY'))
+UNION ALL SELECT 'flag_bitpacking', (SELECT bool_and(compression = 'BitPacking') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='flag' AND segment_type='BOOLEAN')
+UNION ALL SELECT 'big_extremes_still_delta', (SELECT bool_and(compression = 'BitPacking') FROM pragma_storage_info('ce.specials', include_segment_info=true) WHERE column_name='big' AND segment_type NOT IN ('VALIDITY'))
 ORDER BY combo;
 ----
 combo	ok
 big_extremes_still_delta	t
-flag_ffor	t
+flag_bitpacking	t
 s1213_fsst	t
 
 

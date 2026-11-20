@@ -30,6 +30,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -254,19 +255,20 @@ inline constexpr auto& kRle =
   kStoredFrames<Shape::Runs, AnalyzeRle<T>, CompressRle<T>, kLeaf, false>;
 
 template<typename T>
-struct RleFfor final : State {
-  static constexpr StateId kId = StateId::RleFfor;
+struct RleBitpacking final : State {
+  static constexpr StateId kId = StateId::RleBitpacking;
 
-  explicit RleFfor(ColumnDataCheckpointData&) {}
+  explicit RleBitpacking(ColumnDataCheckpointData&) {}
 
-  FforBlocks<numeric::Bits<sizeof(T)>> value_blocks;
-  FforBlocks<uint32_t> length_blocks;
+  BitpackingBlocks<numeric::Bits<sizeof(T)>> value_blocks;
+  BitpackingBlocks<uint32_t> length_blocks;
   bool planned = false;
   bool analyzed = false;
 };
 
 template<typename T>
-const Runs<T>* PlanRleFfor(ColumnDataCheckpointData& data, RleFfor<T>& state) {
+const Runs<T>* PlanRleBitpacking(ColumnDataCheckpointData& data,
+                                 RleBitpacking<T>& state) {
   using U = numeric::Bits<sizeof(T)>;
   if (KnownWithoutRuns<T>(data)) {
     return nullptr;
@@ -288,28 +290,28 @@ const Runs<T>* PlanRleFfor(ColumnDataCheckpointData& data, RleFfor<T>& state) {
 }
 
 template<typename T>
-double AnalyzeRleFfor(ColumnDataCheckpointData& data, double bound) {
-  auto& state = data.Get<RleFfor<T>>();
-  const auto* runs = PlanRleFfor(data, state);
+double AnalyzeRleBitpacking(ColumnDataCheckpointData& data, double bound) {
+  auto& state = data.Get<RleBitpacking<T>>();
+  const auto* runs = PlanRleBitpacking(data, state);
   if (!runs) {
     return kNoScore;
   }
   state.analyzed = true;
-  return AnalyzeBlocks<T>(data, Shape::Runs,
-                          static_cast<uint32_t>(runs->rows.size()),
-                          state.value_blocks.StreamBytes(kRleFforFrameRuns) +
-                            state.length_blocks.StreamBytes(kRleFforFrameRuns),
-                          0, bound);
+  return AnalyzeBlocks<T>(
+    data, Shape::Runs, static_cast<uint32_t>(runs->rows.size()),
+    state.value_blocks.StreamBytes(kRleBitpackingFrameRuns) +
+      state.length_blocks.StreamBytes(kRleBitpackingFrameRuns),
+    0, bound);
 }
 
 template<typename T>
-bool CompressRleFfor(ColumnDataCheckpointData& data) {
+bool CompressRleBitpacking(ColumnDataCheckpointData& data) {
   using U = numeric::Bits<sizeof(T)>;
-  auto& state = data.Get<RleFfor<T>>();
+  auto& state = data.Get<RleBitpacking<T>>();
   if (!MayWrite(data, state.analyzed, ByteCodec::None)) {
     return false;
   }
-  const auto* runs = PlanRleFfor(data, state);
+  const auto* runs = PlanRleBitpacking(data, state);
   if (!runs) {
     return false;
   }
@@ -317,12 +319,13 @@ bool CompressRleFfor(ColumnDataCheckpointData& data) {
   const auto count = static_cast<uint32_t>(runs->rows.size());
   const auto geometry =
     PackedGeometry(Shape::Runs, count, 0, sizeof(T), Scaled<T>(data));
-  SegmentWriter<T> writer{Shape::Runs,
-                          geometry,
-                          state.value_blocks.StreamBytes(kRleFforFrameRuns) +
-                            state.length_blocks.StreamBytes(kRleFforFrameRuns),
-                          {},
-                          out};
+  SegmentWriter<T> writer{
+    Shape::Runs,
+    geometry,
+    state.value_blocks.StreamBytes(kRleBitpackingFrameRuns) +
+      state.length_blocks.StreamBytes(kRleBitpackingFrameRuns),
+    {},
+    out};
   for (uint32_t f = 0; f < geometry.frames; ++f) {
     const auto begin = f * geometry.per;
     const auto items = std::min(count - begin, geometry.per);
@@ -352,10 +355,10 @@ bool CompressRleFfor(ColumnDataCheckpointData& data) {
 }
 
 template<typename T>
-inline constexpr CompressionFunction kRleFfor{
-  .analyze = AnalyzeRleFfor<T>,
-  .compress = CompressRleFfor<T>,
-  .codec = CodecType::RleFfor,
+inline constexpr CompressionFunction kRleBitpacking{
+  .analyze = AnalyzeRleBitpacking<T>,
+  .compress = CompressRleBitpacking<T>,
+  .codec = CodecType::Rle,
 };
 
 template<typename T>
@@ -373,9 +376,11 @@ class RunsReader final : public FrameReader<T> {
       _own{this->Packed()
              ? RunsHeader{}
              : duckdb::Load<RunsHeader>(base + OwnHeaderOffset(frames.flags))} {
-    SDB_ENSURE(this->Packed() || (NumericWidth(_own.run_width) &&
-                                  _own.run_width <= sizeof(uint32_t)),
-               "numeric codec: corrupted segment header");
+    if (!(this->Packed() ||
+          (NumericWidth(_own.run_width) && _own.run_width <= sizeof(uint32_t))))
+      [[unlikely]] {
+      ThrowCorrupted("numeric", "header is inconsistent");
+    }
   }
 
   void Seek(uint64_t row) {
@@ -503,8 +508,9 @@ class RunsReader final : public FrameReader<T> {
   void Load(const NumericFrameMeta& m, uint32_t rows, uint32_t frame) {
     const auto* src = this->Inflated(m, nullptr, frame, this->_held);
     const uint32_t item = this->_f.stored + _own.run_width;
-    SDB_ENSURE(m.frame.raw_len % item == 0 && m.frame.raw_len != 0,
-               "numeric codec: corrupted runs");
+    if (!(m.frame.raw_len % item == 0 && m.frame.raw_len != 0)) [[unlikely]] {
+      ThrowCorrupted("numeric", "runs are inconsistent");
+    }
     const uint32_t runs = m.frame.raw_len / item;
     _values.resize(runs);
     _ends.resize(runs);
@@ -517,9 +523,10 @@ class RunsReader final : public FrameReader<T> {
   }
 
   void LoadPacked(const NumericFrameMeta& m, uint32_t rows) {
-    SDB_ENSURE(m.frame.comp_len == m.frame.raw_len && m.base != 0 &&
-                 m.base <= rows && m.base <= kRleFforFrameRuns,
-               "numeric codec: corrupted runs");
+    if (!(m.frame.comp_len == m.frame.raw_len && m.base != 0 &&
+          m.base <= rows && m.base <= kRleBitpackingFrameRuns)) [[unlikely]] {
+      ThrowCorrupted("numeric", "runs are inconsistent");
+    }
     const auto runs = static_cast<uint32_t>(m.base);
     const size_t blocks =
       (runs + numeric::kBlockValues - 1) / numeric::kBlockValues;
@@ -530,7 +537,9 @@ class RunsReader final : public FrameReader<T> {
       this->UnpackStream(src, m.frame.raw_len, 0, runs, _values.data());
     const auto off =
       this->UnpackStream(src, m.frame.raw_len, lengths, runs, _ends.data());
-    SDB_ENSURE(off == m.frame.raw_len, "numeric codec: corrupted runs");
+    if (off != m.frame.raw_len) [[unlikely]] {
+      ThrowCorrupted("numeric", "runs are inconsistent");
+    }
     _length_bound = LengthBound(src + lengths, blocks);
     _values.resize(runs);
     _ends.resize(runs);
@@ -555,11 +564,15 @@ class RunsReader final : public FrameReader<T> {
   void EndRuns(uint32_t rows) {
     uint64_t total = 0;
     for (auto& end : _ends) {
-      SDB_ENSURE(end != 0, "numeric codec: corrupted runs");
+      if (end == 0) [[unlikely]] {
+        ThrowCorrupted("numeric", "runs are inconsistent");
+      }
       total += end;
       end = static_cast<uint32_t>(total);
     }
-    SDB_ENSURE(total == rows, "numeric codec: corrupted runs");
+    if (total != rows) [[unlikely]] {
+      ThrowCorrupted("numeric", "runs are inconsistent");
+    }
     _long_runs = total >= uint64_t{kBurst} * _ends.size();
     _hint = 0;
   }

@@ -54,7 +54,6 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs {
 
@@ -96,8 +95,8 @@ constexpr W WideValue(absl::uint128 key) noexcept {
 }
 
 constexpr bool StoresHalves(CodecType codec) noexcept {
-  return codec == CodecType::Ffor || codec == CodecType::DeltaFfor ||
-         codec == CodecType::RleFfor || codec == CodecType::DictFfor;
+  return codec == CodecType::Bitpacking || codec == CodecType::Delta ||
+         codec == CodecType::Rle || codec == CodecType::Dict;
 }
 
 struct WideSample {
@@ -855,13 +854,15 @@ class WideReader {
 
  private:
   static WideHeader Header(duckdb::const_data_ptr_t base, uint64_t size) {
-    SDB_ENSURE(size >= sizeof(WideHeader),
-               "numeric codec: segment smaller than its header");
+    if (size < sizeof(WideHeader)) [[unlikely]] {
+      ThrowCorrupted("numeric", "segment is smaller than its header");
+    }
     const auto header = duckdb::Load<WideHeader>(base);
-    SDB_ENSURE(header.form == kWideOffsets ||
-                 (header.form == kWideHalves && header.low_size <= size &&
-                  HighOffset(header) <= size),
-               "numeric codec: corrupted segment header");
+    if (!(header.form == kWideOffsets ||
+          (header.form == kWideHalves && header.low_size <= size &&
+           HighOffset(header) <= size))) [[unlikely]] {
+      ThrowCorrupted("numeric", "header is inconsistent");
+    }
     return header;
   }
 

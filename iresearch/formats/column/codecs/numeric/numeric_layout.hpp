@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -33,8 +35,8 @@
 #include <type_traits>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 /*
 Data layout per segment, one block of one column holding a whole row group:
@@ -54,33 +56,33 @@ Data layout per segment, one block of one column holding a whole row group:
 |   +----------------------------------------------+   |
 |   |   the function's own header, 8 or 16 bytes   |   |
 |   +----------------------------------------------+   |
-|   plain and delta: base; runs: base and run          |
-|   width, absent for rle_ffor; dictionary: entry      |
+|   plain and delta: base; runs: base and run width,   |
+|   absent for rle_bitpacking; dictionary: entry       |
 |   count and offset                                   |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
 |   |   NumericFrameMeta frames[frame_count]       |   |
 |   +----------------------------------------------+   |
-|   first row, decoded size and stored range of        |
-|   each frame in Data, its min and max, and a         |
-|   base: delta's previous value, the step that        |
-|   ffor's and delta_ffor's blocks of differences      |
-|   share (one of their smallest differences, the      |
-|   one that packs the frame smallest), rle_ffor's     |
-|   run count;                                         |
-|   a frame of ffor, delta_ffor or dict_ffor takes     |
-|   its offset in Data and, in the value's width,      |
-|   its base, min and max; a frame of rle_ffor its     |
-|   offset in Data, its first row, its run count in    |
-|   two bytes and, in the value's width, its min       |
-|   and max                                            |
+|   first row, decoded size and stored range of each   |
+|   frame in Data, its min and max, and a base:        |
+|   delta's previous value, the step that              |
+|   bitpacking's and delta_bitpacking's blocks of      |
+|   differences share (one of their smallest           |
+|   differences, the one that packs the frame          |
+|   smallest), rle_bitpacking's run count;             |
+|   a frame of bitpacking, delta_bitpacking or         |
+|   dict_bitpacking takes its offset in Data and, in   |
+|   the value's width, its base, min and max; a        |
+|   frame of rle_bitpacking its offset in Data, its    |
+|   first row, its run count in two bytes and, in      |
+|   the value's width, its min and max                 |
 +------------------------------------------------------+
 |                      Dictionary                      |
 |   +----------------------------------------------+   |
 |   |   value dict[dict_count]                     |   |
 |   +----------------------------------------------+   |
-|   dict and dict_ffor only                            |
+|   dict and dict_bitpacking only                      |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
@@ -95,34 +97,35 @@ Data layout per segment, one block of one column holding a whole row group:
 |   then their run lengths                             |
 |   these frames are lz4 or zstd compressed when       |
 |   the leaf makes them smaller                        |
-|   ffor, dict_ffor: 16384 rows per frame, in          |
-|   blocks of 1024 values (dictionary indexes for      |
-|   dict_ffor): the blocks' bases minus the frame's    |
-|   min, in the fewest whole bytes that hold the       |
-|   frame's max minus its min (dict_ffor: the bases    |
-|   themselves, in the bytes that hold the largest     |
-|   index), their width bytes, padding to 8 bytes,     |
-|   then each block's values minus its base,           |
-|   bitpacked; a block of fewer than 1024 values       |
-|   ends with the last word its values reach           |
-|   a block of ffor whose width byte has its top       |
-|   bit set stores differences: its base is its        |
+|   bitpacking, dict_bitpacking: 16384 rows per        |
+|   frame, in blocks of 1024 values (dictionary        |
+|   indexes for dict_bitpacking): the blocks' bases    |
+|   minus the frame's min, in the fewest whole bytes   |
+|   that hold the frame's max minus its min            |
+|   (dict_bitpacking: the bases themselves, in the     |
+|   bytes that hold the largest index), their width    |
+|   bytes, padding to 8 bytes, then each block's       |
+|   values minus its base, bitpacked; a block of       |
+|   fewer than 1024 values ends with the last word     |
+|   its values reach                                   |
+|   a block of bitpacking whose width byte has its     |
+|   top bit set stores differences: its base is its    |
 |   first value, its low six bits the width of the     |
-|   differences minus the frame's step, or minus       |
-|   its own smallest difference, which then starts     |
-|   the block in 8 bytes, when the next bit is set;    |
-|   a frame that is one arithmetic run stores          |
-|   nothing: its first value is the frame's min, or    |
-|   its max when the difference is negative            |
-|   delta_ffor: ffor that stores differences in        |
-|   every block they fit                               |
-|   rle_ffor: 1024 runs per frame, run values and      |
-|   run lengths each as bases in their full width,     |
-|   width bytes, padding to 8 bytes and the packed     |
-|   values minus the base; a block of fewer than       |
-|   1024 runs packs its values 32 at a time, each      |
-|   group in 4 * width bytes; values that need 63      |
-|   bits are stored in 64; a width byte with its       |
+|   differences minus the frame's step, or minus its   |
+|   own smallest difference, which then starts the     |
+|   block in 8 bytes, when the next bit is set; a      |
+|   frame that is one arithmetic run stores nothing:   |
+|   its first value is the frame's min, or its max     |
+|   when the difference is negative                    |
+|   delta_bitpacking: bitpacking that stores           |
+|   differences in every block they fit                |
+|   rle_bitpacking: 1024 runs per frame, run values    |
+|   and run lengths each as bases in their full        |
+|   width, width bytes, padding to 8 bytes and the     |
+|   packed values minus the base; a block of fewer     |
+|   than 1024 runs packs its values 32 at a time,      |
+|   each group in 4 * width bytes; values that need    |
+|   63 bits are stored in 64; a width byte with its    |
 |   top bit set stores differences: the base is the    |
 |   first value, 8 bytes hold the smallest             |
 |   difference and the low six bits are the width of   |
@@ -148,8 +151,8 @@ inline constexpr uint32_t kNumericDictMax = 65536;
 inline constexpr uint8_t kNumericShuffled = 1;
 inline constexpr uint8_t kNumericPacked = 2;
 inline constexpr uint8_t kNumericScaled = 4;
-inline constexpr uint32_t kFforFrameRows = 16384;
-inline constexpr uint8_t kFforFrameLog2 = 18;
+inline constexpr uint32_t kBitpackingFrameRows = 16384;
+inline constexpr uint8_t kBitpackingFrameLog2 = 18;
 
 inline constexpr uint8_t kBlockDelta = 0x80;
 inline constexpr uint8_t kBlockOwnStep = 0x40;
@@ -160,7 +163,7 @@ constexpr size_t BlockMetaBytes(size_t blocks, size_t width) noexcept {
   return (blocks * (width + 1) + 7) / 8 * 8;
 }
 
-inline constexpr uint32_t kRleFforFrameRuns = 1024;
+inline constexpr uint32_t kRleBitpackingFrameRuns = 1024;
 
 constexpr bool NumericWidth(uint64_t w) noexcept {
   return w == 1 || w == 2 || w == 4 || w == 8;
@@ -259,43 +262,47 @@ constexpr std::string_view TransformName(Shape shape,
   const bool packed = f.flags & kNumericPacked;
   switch (shape) {
     case Shape::Plain:
-      return packed ? "ffor" : f.stored == f.width ? "raw" : "for";
+      return packed ? "bitpacking" : f.stored == f.width ? "raw" : "for";
     case Shape::Delta:
-      return packed ? "delta_ffor" : "delta";
+      return packed ? "delta_bitpacking" : "delta";
     case Shape::Runs:
-      return packed ? "rle_ffor" : "rle";
+      return packed ? "rle_bitpacking" : "rle";
     case Shape::Dictionary:
-      return packed ? "dict_ffor" : "dict";
+      return packed ? "dict_bitpacking" : "dict";
   }
   return "raw";
 }
 
 inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,
                                uint64_t rows, CodecType codec) {
-  SDB_ENSURE(size >= kNumericHeaderSize,
-             "numeric codec: segment smaller than its header");
+  if (size < kNumericHeaderSize) [[unlikely]] {
+    ThrowCorrupted("numeric", "segment is smaller than its header");
+  }
   FrameHeader f;
   std::memcpy(&f, p, kNumericHeaderSize);
-  SDB_ENSURE(f.version == kNumericVersion,
-             "numeric codec: unsupported segment version ", f.version);
+  if (f.version != kNumericVersion) [[unlikely]] {
+    ThrowCorrupted("numeric", absl::StrCat("unsupported version ", f.version));
+  }
   const auto shape = ShapeOf(codec);
   const bool packed = f.flags & kNumericPacked;
   const uint64_t own = OwnHeaderOffset(f.flags);
   const uint64_t frames = own + OwnHeaderSize(shape, packed);
-  SDB_ENSURE(
-    size >= frames && NumericWidth(f.width) && NumericWidth(f.stored) &&
-      f.stored <= f.width &&
-      (f.flags & ~(kNumericShuffled | kNumericPacked | kNumericScaled)) == 0 &&
-      (!(f.flags & kNumericShuffled) || f.stored > 1) &&
-      (!packed ||
-       (LeafOf(codec) == ByteCodec::None && !(f.flags & kNumericShuffled) &&
-        f.stored == f.width && f.frame_log2 == kFforFrameLog2)) &&
-      f.frame_log2 >= 10 && f.frame_log2 <= 20 &&
-      rows <= std::numeric_limits<uint32_t>::max() &&
-      (f.frame_count != 0 || rows == 0) &&
-      (!packed || shape == Shape::Runs ||
-       f.frame_count == (rows + kFforFrameRows - 1) / kFforFrameRows),
-    "numeric codec: corrupted segment header");
+  if (!(size >= frames && NumericWidth(f.width) && NumericWidth(f.stored) &&
+        f.stored <= f.width &&
+        (f.flags & ~(kNumericShuffled | kNumericPacked | kNumericScaled)) ==
+          0 &&
+        (!(f.flags & kNumericShuffled) || f.stored > 1) &&
+        (!packed ||
+         (LeafOf(codec) == ByteCodec::None && !(f.flags & kNumericShuffled) &&
+          f.stored == f.width && f.frame_log2 == kBitpackingFrameLog2)) &&
+        f.frame_log2 >= 10 && f.frame_log2 <= 20 &&
+        rows <= std::numeric_limits<uint32_t>::max() &&
+        (f.frame_count != 0 || rows == 0) &&
+        (!packed || shape == Shape::Runs ||
+         f.frame_count == (rows + kBitpackingFrameRows - 1) /
+                            kBitpackingFrameRows))) [[unlikely]] {
+    ThrowCorrupted("numeric", "header is inconsistent");
+  }
   if (f.flags & kNumericScaled) {
     f.scale = duckdb::Load<uint64_t>(p + kNumericHeaderSize);
   }
@@ -307,11 +314,12 @@ inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,
   if (packed) {
     data = duckdb::AlignValue<uint64_t, 8>(data);
   }
-  SDB_ENSURE(
-    data + f.data_size <= size &&
-      (!packed ||
-       (reinterpret_cast<uintptr_t>(p) + data) % sizeof(uint64_t) == 0),
-    "numeric codec: corrupted segment header");
+  if (!(data + f.data_size <= size &&
+        (!packed ||
+         (reinterpret_cast<uintptr_t>(p) + data) % sizeof(uint64_t) == 0)))
+    [[unlikely]] {
+    ThrowCorrupted("numeric", "header is inconsistent");
+  }
   f.row_count = static_cast<uint32_t>(rows);
   f.off_frames = static_cast<uint32_t>(frames);
   f.off_data = static_cast<uint32_t>(data);

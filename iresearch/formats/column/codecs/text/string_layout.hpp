@@ -36,8 +36,8 @@ namespace irs::codecs {
 
 inline constexpr CodecSet kCodesGroup =
   CodecSet{}
-    .set(std::to_underlying(CodecType::Ffor))
-    .set(std::to_underlying(CodecType::RleFfor));
+    .set(std::to_underlying(CodecType::Bitpacking))
+    .set(std::to_underlying(CodecType::Rle));
 
 constexpr bool CodesCodec(CodecType type) noexcept {
   const auto index = std::to_underlying(type);

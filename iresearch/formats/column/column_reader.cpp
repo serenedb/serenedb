@@ -72,8 +72,6 @@ GatherBands BandsFor(codecs::CodecType codec,
   switch (codec) {
     case codecs::CodecType::Constant:
       return {0, 1000};
-    case codecs::CodecType::Rle:
-      return {2, 70};
     case codecs::CodecType::Lz4:
       return {0, 1000};
     default:

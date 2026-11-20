@@ -32,6 +32,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -222,19 +223,19 @@ inline constexpr auto& kDict = kStoredFrames<Shape::Dictionary, AnalyzeDict<T>,
                                              CompressDict<T>, kLeaf, kShuffled>;
 
 template<typename T>
-struct DictFfor final : State {
-  static constexpr StateId kId = StateId::DictFfor;
+struct DictBitpacking final : State {
+  static constexpr StateId kId = StateId::DictBitpacking;
 
-  explicit DictFfor(ColumnDataCheckpointData&) {}
+  explicit DictBitpacking(ColumnDataCheckpointData&) {}
 
-  FforBlocks<uint32_t> blocks;
+  BitpackingBlocks<uint32_t> blocks;
   bool planned = false;
   bool analyzed = false;
 };
 
 template<typename T>
-const Entries<T>* PlanDictFfor(ColumnDataCheckpointData& data,
-                               DictFfor<T>& state, double bound) {
+const Entries<T>* PlanDictBitpacking(ColumnDataCheckpointData& data,
+                                     DictBitpacking<T>& state, double bound) {
   const auto* entries = BuildEntries<T>(data, bound);
   if (entries && !state.planned) {
     state.planned = true;
@@ -245,27 +246,28 @@ const Entries<T>* PlanDictFfor(ColumnDataCheckpointData& data,
 }
 
 template<typename T>
-double AnalyzeDictFfor(ColumnDataCheckpointData& data, double bound) {
-  auto& state = data.Get<DictFfor<T>>();
-  const auto* entries = PlanDictFfor(data, state, bound);
+double AnalyzeDictBitpacking(ColumnDataCheckpointData& data, double bound) {
+  auto& state = data.Get<DictBitpacking<T>>();
+  const auto* entries = PlanDictBitpacking(data, state, bound);
   if (!entries) {
     return kNoScore;
   }
   state.analyzed = true;
   return AnalyzeBlocks<T>(
     data, Shape::Dictionary, static_cast<uint32_t>(entries->codes.size()),
-    state.blocks.Bytes(kFforFrameRows, numeric::BytesFor(static_cast<uint32_t>(
-                                         entries->values.size() - 1))),
+    state.blocks.Bytes(
+      kBitpackingFrameRows,
+      numeric::BytesFor(static_cast<uint32_t>(entries->values.size() - 1))),
     EntryBytes(*entries).size(), bound);
 }
 
 template<typename T>
-bool CompressDictFfor(ColumnDataCheckpointData& data) {
-  auto& state = data.Get<DictFfor<T>>();
+bool CompressDictBitpacking(ColumnDataCheckpointData& data) {
+  auto& state = data.Get<DictBitpacking<T>>();
   if (!MayWrite(data, state.analyzed, ByteCodec::None)) {
     return false;
   }
-  const auto* entries = PlanDictFfor(data, state, kNoScore);
+  const auto* entries = PlanDictBitpacking(data, state, kNoScore);
   if (!entries) {
     return false;
   }
@@ -282,10 +284,10 @@ bool CompressDictFfor(ColumnDataCheckpointData& data) {
 }
 
 template<typename T>
-inline constexpr CompressionFunction kDictFfor{
-  .analyze = AnalyzeDictFfor<T>,
-  .compress = CompressDictFfor<T>,
-  .codec = CodecType::DictFfor,
+inline constexpr CompressionFunction kDictBitpacking{
+  .analyze = AnalyzeDictBitpacking<T>,
+  .compress = CompressDictBitpacking<T>,
+  .codec = CodecType::Dict,
 };
 
 template<typename T>
@@ -299,15 +301,16 @@ class DictionaryReader final : public FrameReader<T> {
     : Base{base, frames, codec, slot},
       _own{
         duckdb::Load<DictionaryHeader>(base + OwnHeaderOffset(frames.flags))} {
-    SDB_ENSURE(
-      _own.count != 0 && _own.count <= kNumericDictMax &&
-        (this->Packed() || frames.stored <= kDictionaryCodeBytes<T>) &&
-        uint64_t{frames.off_frames} +
-            uint64_t{frames.frame_count} *
-              FrameMetaSize(Shape::Dictionary, this->Packed(), sizeof(T)) <=
-          _own.offset &&
-        _own.offset + uint64_t{_own.count} * sizeof(U) <= frames.off_data,
-      "numeric codec: corrupted segment header");
+    if (!(_own.count != 0 && _own.count <= kNumericDictMax &&
+          (this->Packed() || frames.stored <= kDictionaryCodeBytes<T>) &&
+          uint64_t{frames.off_frames} +
+              uint64_t{frames.frame_count} *
+                FrameMetaSize(Shape::Dictionary, this->Packed(), sizeof(T)) <=
+            _own.offset &&
+          _own.offset + uint64_t{_own.count} * sizeof(U) <= frames.off_data))
+      [[unlikely]] {
+      ThrowCorrupted("numeric", "header is inconsistent");
+    }
     this->_code_base_bytes = numeric::BytesFor(_own.count - 1);
   }
 
@@ -426,7 +429,9 @@ class DictionaryReader final : public FrameReader<T> {
 
  private:
   T Entry(uint32_t code) const {
-    SDB_ENSURE(code < _own.count, "numeric codec: corrupted codes");
+    if (code >= _own.count) [[unlikely]] {
+      ThrowCorrupted("numeric", "dictionary code is out of range");
+    }
     return this->Scaled(
       duckdb::Load<U>(this->_base + _own.offset + size_t{code} * sizeof(U)));
   }
@@ -453,7 +458,9 @@ class DictionaryReader final : public FrameReader<T> {
       for (uint32_t i = 0; i < rows; ++i) {
         worst = std::max(worst, duckdb::Load<C>(src + size_t{i} * sizeof(C)));
       }
-      SDB_ENSURE(worst < _own.count, "numeric codec: corrupted codes");
+      if (worst >= _own.count) [[unlikely]] {
+        ThrowCorrupted("numeric", "dictionary code is out of range");
+      }
     }
     const auto* dict = this->_base + _own.offset;
     for (uint32_t i = 0; i < rows; ++i) {

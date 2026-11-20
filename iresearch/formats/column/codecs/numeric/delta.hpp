@@ -110,18 +110,18 @@ inline constexpr auto& kDelta =
                 kShuffled>;
 
 template<typename T>
-struct DeltaFfor final : State {
-  static constexpr StateId kId = StateId::DeltaFfor;
+struct DeltaBitpacking final : State {
+  static constexpr StateId kId = StateId::DeltaBitpacking;
 
-  explicit DeltaFfor(ColumnDataCheckpointData&) {}
+  explicit DeltaBitpacking(ColumnDataCheckpointData&) {}
 
-  FforBlocks<numeric::Bits<sizeof(T)>> blocks;
+  BitpackingBlocks<numeric::Bits<sizeof(T)>> blocks;
   bool planned = false;
   bool analyzed = false;
 };
 
 template<typename T>
-void PlanDeltaFfor(Values<T>& values, DeltaFfor<T>& state) {
+void PlanDeltaBitpacking(Values<T>& values, DeltaBitpacking<T>& state) {
   if (state.planned) {
     return;
   }
@@ -135,20 +135,20 @@ void PlanDeltaFfor(Values<T>& values, DeltaFfor<T>& state) {
 }
 
 template<typename T>
-double AnalyzeDeltaFfor(ColumnDataCheckpointData& data, double bound) {
+double AnalyzeDeltaBitpacking(ColumnDataCheckpointData& data, double bound) {
   using U = numeric::Bits<sizeof(T)>;
   auto& values = data.Get<Values<T>>();
-  auto& state = data.Get<DeltaFfor<T>>();
+  auto& state = data.Get<DeltaBitpacking<T>>();
   if (!values.Usable()) {
     return kNoScore;
   }
   const auto rows = values.Rows();
-  const auto price = data.preferences->delta_ffor_price;
-  if (!state.planned && ScoreOf(FforBlocks<U>::SampledDeltaBytes(rows),
+  const auto price = data.preferences->delta_bitpacking_price;
+  if (!state.planned && ScoreOf(BitpackingBlocks<U>::SampledDeltaBytes(rows),
                                 rows.size(), price) >= bound) {
     return kNoScore;
   }
-  PlanDeltaFfor(values, state);
+  PlanDeltaBitpacking(values, state);
   state.analyzed = true;
   return price * AnalyzeBlocks<T>(
                    data, Shape::Delta, static_cast<uint32_t>(rows.size()),
@@ -156,22 +156,22 @@ double AnalyzeDeltaFfor(ColumnDataCheckpointData& data, double bound) {
 }
 
 template<typename T>
-bool CompressDeltaFfor(ColumnDataCheckpointData& data) {
+bool CompressDeltaBitpacking(ColumnDataCheckpointData& data) {
   auto& values = data.Get<Values<T>>();
-  auto& state = data.Get<DeltaFfor<T>>();
+  auto& state = data.Get<DeltaBitpacking<T>>();
   if (!values.Usable() || !MayWrite(data, state.analyzed, ByteCodec::None)) {
     return false;
   }
-  PlanDeltaFfor(values, state);
+  PlanDeltaBitpacking(values, state);
   return CompressStepped<T>(data, Shape::Delta, state.blocks, state.analyzed,
                             DeltaHeader{});
 }
 
 template<typename T>
-inline constexpr CompressionFunction kDeltaFfor{
-  .analyze = AnalyzeDeltaFfor<T>,
-  .compress = CompressDeltaFfor<T>,
-  .codec = CodecType::DeltaFfor,
+inline constexpr CompressionFunction kDeltaBitpacking{
+  .analyze = AnalyzeDeltaBitpacking<T>,
+  .compress = CompressDeltaBitpacking<T>,
+  .codec = CodecType::Delta,
 };
 
 template<typename T>

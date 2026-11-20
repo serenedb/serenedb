@@ -10,9 +10,7 @@ target_sources(
         column/codecs/constant.cpp
         column/codecs/numeric/alp.cpp
         column/codecs/numeric/alprd.cpp
-        column/codecs/numeric/bitpacking.cpp
         column/codecs/numeric/numeric.cpp
-        column/codecs/numeric/rle.cpp
         column/codecs/registry.cpp
         column/codecs/text/fsst_front.cpp
         column/codecs/text/fsst_plus.cpp

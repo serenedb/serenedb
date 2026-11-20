@@ -92,8 +92,7 @@ struct Fake {
   }
 
   static constexpr CodecType kCodec =
-    kId == 0 ? CodecType::Rle
-             : (kId == 1 ? CodecType::Bitpacking : CodecType::Alp);
+    kId == 0 ? CodecType::Rle : (kId == 1 ? CodecType::Dict : CodecType::Alp);
 };
 
 template<int kId, CodecType kCodec = Fake<kId>::kCodec>
@@ -189,7 +188,7 @@ class ColCompressionFunctionTest : public ::testing::Test {
 TEST_F(ColCompressionFunctionTest, TheSmallestEstimateWins) {
   Fake<1>::probe.estimate = 0.5;
   const CompressionFunction* functions[] = {&kStreamedRle, &kFake<1>};
-  EXPECT_EQ(Compress(functions, irs::WriteTier::Merge), CodecType::Bitpacking);
+  EXPECT_EQ(Compress(functions, irs::WriteTier::Merge), CodecType::Dict);
   EXPECT_EQ(Fake<1>::probe.compressed, 1);
 }
 
@@ -254,7 +253,7 @@ TEST_F(ColCompressionFunctionTest,
   Fake<1>::probe.bytes = kRows / 4;
   Fake<2>::probe.estimate = 0.4;
   const CompressionFunction* functions[] = {&kFake<0>, &kFake<1>, &kFake<2>};
-  EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Bitpacking);
+  EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Dict);
   EXPECT_EQ(Fake<0>::probe.analyzed, 1);
   EXPECT_EQ(Fake<1>::probe.analyzed, 1);
   EXPECT_EQ(Fake<2>::probe.analyzed, 1);
@@ -272,7 +271,7 @@ TEST_F(ColCompressionFunctionTest,
   EXPECT_EQ(Compress(first, irs::WriteTier::Flush), CodecType::Rle);
   EXPECT_EQ(Compress(first, irs::WriteTier::Flush), CodecType::Rle);
   EXPECT_EQ(Fake<0>::probe.analyzed, 2);
-  EXPECT_EQ(Compress(second, irs::WriteTier::Flush), CodecType::Bitpacking);
+  EXPECT_EQ(Compress(second, irs::WriteTier::Flush), CodecType::Dict);
   EXPECT_EQ(Fake<0>::probe.analyzed, 2);
 }
 
@@ -363,7 +362,7 @@ TEST_F(ColCompressionFunctionTest,
        AHeldFunctionIsContestedWhenBitPackingOnOfferUndercutsIt) {
   Fake<0>::probe.estimate = 0.5;
   Fake<0>::probe.bytes = 4 * kRows;
-  const CompressionFunction* functions[] = {&kFake<0, CodecType::Ffor>,
+  const CompressionFunction* functions[] = {&kFake<0, CodecType::Bitpacking>,
                                             &kFake<1>};
   for (int i = 0; i < 3; ++i) {
     EXPECT_EQ(Compress(functions, irs::WriteTier::Flush), CodecType::Rle);

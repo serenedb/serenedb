@@ -100,7 +100,7 @@ BlockBounds<V> BoundsOf(const V* values, size_t count) noexcept {
 }
 
 template<typename V>
-class FforBlocks {
+class BitpackingBlocks {
  public:
   template<bool kSigned>
   void Plan(BlockRows<V> rows) {
@@ -401,7 +401,8 @@ class FforBlocks {
  private:
   using S = std::make_signed_t<V>;
 
-  static constexpr size_t kFrameBlocks = kFforFrameRows / numeric::kBlockValues;
+  static constexpr size_t kFrameBlocks =
+    kBitpackingFrameRows / numeric::kBlockValues;
   static constexpr size_t kSampledSteps = 64;
   static constexpr uint64_t kNoShare = std::numeric_limits<uint64_t>::max();
 

@@ -106,6 +106,17 @@ std::string Written(irs::codecs::CodecType codec) {
   return std::string{magic_enum::enum_name(codec)};
 }
 
+template<typename Read>
+void ExpectCorrupted(Read&& read, std::string_view message) {
+  try {
+    read();
+    ADD_FAILURE() << "a damaged segment was read";
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED) << e.what();
+    EXPECT_EQ(e.message(), message);
+  }
+}
+
 class ColCodecsTest : public TestBase {
  protected:
   duckdb::DatabaseInstance& Db() { return *_db.instance; }
@@ -2839,19 +2850,18 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     {duckdb::CompressionType::COMPRESSION_COL_ONPAIR, "ONPAIR"},
     {duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12, "DICT_FSST12"},
     {duckdb::CompressionType::COMPRESSION_COL_FSST12, "FSST12"},
-    {duckdb::CompressionType::COMPRESSION_COL_FFOR, "FFOR"},
-    {duckdb::CompressionType::COMPRESSION_COL_DELTA_FFOR, "DELTA_FFOR"},
-    {duckdb::CompressionType::COMPRESSION_COL_RLE_FFOR, "RLE_FFOR"},
-    {duckdb::CompressionType::COMPRESSION_COL_DICT_FFOR, "DICT_FFOR"},
+    {duckdb::CompressionType::COMPRESSION_COL_DELTA, "DELTA"},
+    {duckdb::CompressionType::COMPRESSION_COL_DICT, "DICT"},
     {duckdb::CompressionType::COMPRESSION_COL_DELTA_LZ4, "DELTA_LZ4"},
     {duckdb::CompressionType::COMPRESSION_COL_RLE_LZ4, "RLE_LZ4"},
     {duckdb::CompressionType::COMPRESSION_COL_DELTA_ZSTD, "DELTA_ZSTD"},
     {duckdb::CompressionType::COMPRESSION_COL_RLE_ZSTD, "RLE_ZSTD"},
   };
+  constexpr size_t kRetired = 2;
   EXPECT_EQ(
     static_cast<size_t>(duckdb::CompressionType::COMPRESSION_SERENEDB_COUNT) -
       static_cast<size_t>(duckdb::CompressionType::COMPRESSION_DICT_LZ4),
-    std::size(names));
+    std::size(names) + kRetired);
   for (const auto& [type, name] : names) {
     SCOPED_TRACE(name);
     EXPECT_TRUE(duckdb::IsSereneDBCompressionType(type));
@@ -2912,10 +2922,10 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     {"onpair", duckdb::CompressionType::COMPRESSION_COL_ONPAIR},
     {"dict_fsst12", duckdb::CompressionType::COMPRESSION_COL_DICT_FSST12},
     {"fsst12", duckdb::CompressionType::COMPRESSION_COL_FSST12},
-    {"ffor", duckdb::CompressionType::COMPRESSION_COL_FFOR},
-    {"delta_ffor", duckdb::CompressionType::COMPRESSION_COL_DELTA_FFOR},
-    {"rle_ffor", duckdb::CompressionType::COMPRESSION_COL_RLE_FFOR},
-    {"dict_ffor", duckdb::CompressionType::COMPRESSION_COL_DICT_FFOR},
+    {"bitpacking", duckdb::CompressionType::COMPRESSION_BITPACKING},
+    {"delta", duckdb::CompressionType::COMPRESSION_COL_DELTA},
+    {"rle", duckdb::CompressionType::COMPRESSION_RLE},
+    {"dict", duckdb::CompressionType::COMPRESSION_COL_DICT},
     {"delta_lz4", duckdb::CompressionType::COMPRESSION_COL_DELTA_LZ4},
     {"rle_lz4", duckdb::CompressionType::COMPRESSION_COL_RLE_LZ4},
     {"delta_zstd", duckdb::CompressionType::COMPRESSION_COL_DELTA_ZSTD},
@@ -2970,7 +2980,7 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
   const auto frames = irs::codecs::ParseFrames(
     codes, h.off_symtab - h.off_codes, h.row_count, h.codes);
   ASSERT_EQ(irs::codecs::TransformName(irs::codecs::ShapeOf(h.codes), frames),
-            "ffor");
+            "bitpacking");
   auto* bounds = codes + frames.off_frames + sizeof(uint32_t) + frames.width;
   for (auto* bound : {bounds, bounds + frames.width}) {
     uint64_t value = 0;
@@ -3591,7 +3601,7 @@ TEST_F(ColCodecsTest, CodesInShortRunsAreNotRunPacked) {
           kShortCodeRuns);
     Verify(dir, irs::codecs::CodecType::DictLz4, kRows, kShortCodeRuns);
     for (const auto& transform : SegmentInfo(dir, "codes_transform")) {
-      EXPECT_NE(transform, "rle_ffor");
+      EXPECT_NE(transform, "rle_bitpacking");
     }
   }
 }
@@ -3724,6 +3734,11 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
       col->Scan(state, out, STANDARD_VECTOR_SIZE);
     };
+    if (!codes_codec) {
+      ExpectCorrupted(scan,
+                      "Corrupted numeric segment: header is inconsistent");
+      continue;
+    }
 #ifdef SDB_DEV
     GTEST_FLAG_SET(death_test_style, "threadsafe");
     EXPECT_DEATH(scan(), "corrupted");
@@ -3908,7 +3923,6 @@ TEST_F(ColCodecsTest, CorruptedSegmentBodiesAreIndexCorruption) {
   const auto store64 = [](std::string& bytes, uint64_t at, uint64_t v) {
     absl::little_endian::Store64(bytes.data() + at, v);
   };
-  const auto runs = [](int64_t g) { return duckdb::Value::BIGINT(g / 7); };
   const auto sparse = [](int64_t g) {
     return duckdb::Value::BOOLEAN(g % 100 == 0);
   };
@@ -3917,21 +3931,6 @@ TEST_F(ColCodecsTest, CorruptedSegmentBodiesAreIndexCorruption) {
     return duckdb::Value{absl::StrCat("row-", g, "-", long_text)};
   };
   const Case cases[] = {
-    {"rle entry count", duckdb::LogicalType::BIGINT,
-     irs::codecs::CodecType::Rle, runs,
-     [&](std::string& b, uint64_t at, uint64_t) {
-       store32(b, at + 8, std::numeric_limits<uint32_t>::max());
-       b[at + 14] = 0;
-       b[at + 15] = 0;
-     },
-     "Corrupted RLE segment: entry count exceeds the segment capacity"},
-    {"rle misaligned counts", duckdb::LogicalType::BIGINT,
-     irs::codecs::CodecType::Rle, runs,
-     [&](std::string& b, uint64_t at, uint64_t) {
-       store64(b, at, (uint64_t{1} << 63) | 25);
-       b[at + 14] = 0;
-     },
-     "Corrupted RLE segment: rle_count_offset is corrupted"},
     {"roaring metadata offset", duckdb::LogicalType::BOOLEAN,
      irs::codecs::CodecType::Roaring, sparse,
      [&](std::string& b, uint64_t at, uint64_t size) {

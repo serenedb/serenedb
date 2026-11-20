@@ -40,38 +40,36 @@ using duckdb::PhysicalType;
 
 constexpr CodecType kLightweight[] = {
   CodecType::Uncompressed,
-  CodecType::Rle,
-  CodecType::Bitpacking,
   CodecType::Roaring,
 };
 
 constexpr CodecType kBool[] = {
   CodecType::Uncompressed,
-  CodecType::Ffor,
-  CodecType::RleFfor,
+  CodecType::Bitpacking,
+  CodecType::Rle,
   CodecType::Roaring,
 };
 
 constexpr CodecType kIntegerMerge[] = {
-  CodecType::Uncompressed, CodecType::Ffor, CodecType::RleFfor,
-  CodecType::DictFfor,     CodecType::Lz4,  CodecType::RleLz4,
-  CodecType::DictLz4,      CodecType::Zstd, CodecType::RleZstd,
+  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Rle,
+  CodecType::Dict,         CodecType::Lz4,        CodecType::RleLz4,
+  CodecType::DictLz4,      CodecType::Zstd,       CodecType::RleZstd,
   CodecType::DictZstd,
 };
 
 constexpr CodecType kIntegerFlush[] = {
-  CodecType::Uncompressed, CodecType::Ffor, CodecType::RleFfor,
-  CodecType::DictFfor,     CodecType::Lz4,  CodecType::RleLz4,
+  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Rle,
+  CodecType::Dict,         CodecType::Lz4,        CodecType::RleLz4,
   CodecType::DictLz4,
 };
 
 constexpr CodecType kFloat[] = {
-  CodecType::Uncompressed, CodecType::Alp,     CodecType::Alprd,
-  CodecType::Ffor,         CodecType::RleFfor, CodecType::DictFfor,
+  CodecType::Uncompressed, CodecType::Alp, CodecType::Alprd,
+  CodecType::Bitpacking,   CodecType::Rle, CodecType::Dict,
 };
 
 constexpr CodecType kNamedOnly[] = {
-  CodecType::DeltaFfor,
+  CodecType::Delta,
   CodecType::DeltaLz4,
   CodecType::DeltaZstd,
 };
@@ -149,7 +147,7 @@ const CompressionFunction* Held(CompressionFunctions contenders,
 bool PackingUndercutsHeld(CompressionFunctions contenders,
                           ColumnDataCheckpointData& data) {
   if (absl::c_none_of(contenders, [](const CompressionFunction* contender) {
-        return contender->codec == CodecType::Ffor;
+        return contender->codec == CodecType::Bitpacking;
       })) {
     return false;
   }

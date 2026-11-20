@@ -63,10 +63,6 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
       return AutoCodec(physical);
     case CodecType::Uncompressed:
       return UncompressedCodec(physical);
-    case CodecType::Rle:
-      return RleCodec(physical);
-    case CodecType::Bitpacking:
-      return BitpackingCodec(physical);
     case CodecType::Alp:
       return AlpCodec(physical);
     case CodecType::Alprd:

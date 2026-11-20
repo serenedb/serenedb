@@ -55,8 +55,6 @@ const Codec* ConstantCodec(duckdb::PhysicalType physical);
 bool CompressConstant(ColumnDataCheckpointData& data);
 const Codec* EmptyCodec(duckdb::PhysicalType physical);
 const Codec* UncompressedCodec(duckdb::PhysicalType physical);
-const Codec* RleCodec(duckdb::PhysicalType physical);
-const Codec* BitpackingCodec(duckdb::PhysicalType physical);
 const Codec* AlpCodec(duckdb::PhysicalType physical);
 const Codec* AlpRdCodec(duckdb::PhysicalType physical);
 const Codec* RoaringCodec(duckdb::PhysicalType physical);

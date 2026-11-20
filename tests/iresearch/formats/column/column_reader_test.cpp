@@ -4619,7 +4619,7 @@ TEST_F(ColumnReaderTest, UniqueListRowGroupsStoreTheirCodesAsSteps) {
   ASSERT_NE(col, nullptr);
   ASSERT_FALSE(col->DataBlocks().empty());
   for (const auto& block : col->DataBlocks()) {
-    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::DeltaFfor);
+    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Delta);
   }
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
   ExpectGathered(*col, r.Ctx(), expected,
@@ -4642,7 +4642,7 @@ TEST_F(ColumnReaderTest, ListRowGroupsOfRunsRunLengthEncodeTheirCodes) {
   ASSERT_NE(col, nullptr);
   ASSERT_FALSE(col->DataBlocks().empty());
   for (const auto& block : col->DataBlocks()) {
-    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::RleFfor);
+    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Rle);
   }
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
   ExpectGathered(*col, r.Ctx(), expected,

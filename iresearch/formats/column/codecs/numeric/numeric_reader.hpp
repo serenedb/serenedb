@@ -39,13 +39,13 @@
 
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs {
@@ -142,8 +142,8 @@ class FrameReader {
     bool delta = false;
   };
 
-  using FforFrame =
-    std::array<PackedBlock, kFforFrameRows / numeric::kBlockValues>;
+  using BitpackingFrame =
+    std::array<PackedBlock, kBitpackingFrameRows / numeric::kBlockValues>;
 
   struct Item {
     const uint8_t* source = nullptr;
@@ -161,22 +161,26 @@ class FrameReader {
         ShapeOf(codec), frames.flags & kNumericPacked, sizeof(T)))},
       _cache{slot.touched ? slot.cache : nullptr},
       _slot{slot} {
-    SDB_ENSURE(_f.width == sizeof(T), "numeric codec: width mismatch");
+    if (_f.width != sizeof(T)) [[unlikely]] {
+      ThrowCorrupted("numeric", "value width does not match the column");
+    }
     if (Packed()) {
-      _per_frame = _shape == Shape::Runs ? 0 : kFforFrameRows;
+      _per_frame = _shape == Shape::Runs ? 0 : kBitpackingFrameRows;
     } else if (_shape != Shape::Runs) {
       _per_frame = _f.FrameBytes() / _f.stored;
     }
     for (uint32_t f = 0; f < _f.frame_count; ++f) {
       const auto first = FirstRow(f);
-      SDB_ENSURE((f == 0 ? first == 0 : first > FirstRow(f - 1)) &&
-                   (_per_frame == 0 || first == uint64_t{f} * _per_frame) &&
-                   first < _f.row_count,
-                 "numeric codec: corrupted frame table");
+      if (!((f == 0 ? first == 0 : first > FirstRow(f - 1)) &&
+            (_per_frame == 0 || first == uint64_t{f} * _per_frame) &&
+            first < _f.row_count)) [[unlikely]] {
+        ThrowCorrupted("numeric", "frame table is inconsistent");
+      }
     }
-    SDB_ENSURE(
-      _per_frame == 0 || uint64_t{_f.frame_count} * _per_frame >= _f.row_count,
-      "numeric codec: corrupted frame table");
+    if (!(_per_frame == 0 ||
+          uint64_t{_f.frame_count} * _per_frame >= _f.row_count)) [[unlikely]] {
+      ThrowCorrupted("numeric", "frame table is inconsistent");
+    }
   }
 
   bool Packed() const noexcept { return _f.flags & kNumericPacked; }
@@ -216,7 +220,7 @@ class FrameReader {
       return duckdb::Load<uint32_t>(at);
     }
     return _shape == Shape::Runs ? duckdb::Load<uint32_t>(at + sizeof(uint32_t))
-                                 : uint64_t{f} * kFforFrameRows;
+                                 : uint64_t{f} * kBitpackingFrameRows;
   }
 
   uint64_t EndRow(uint32_t f) const noexcept {
@@ -242,7 +246,7 @@ class FrameReader {
       m.base = duckdb::Load<uint16_t>(own + sizeof(uint32_t));
       own += sizeof(uint32_t) + sizeof(uint16_t);
     } else {
-      m.frame.first_entry = f * kFforFrameRows;
+      m.frame.first_entry = f * kBitpackingFrameRows;
       m.base = duckdb::Load<U>(own);
       own += sizeof(U);
     }
@@ -252,16 +256,18 @@ class FrameReader {
   }
 
   NumericFrameMeta Meta(uint32_t f) const {
-    SDB_ENSURE(f < _f.frame_count, "numeric codec: frame out of range");
+    if (f >= _f.frame_count) [[unlikely]] {
+      ThrowCorrupted("numeric", "frame is out of range");
+    }
     const auto m = MetaAt(f);
     const auto rows = EndRow(f) - m.frame.first_entry;
-    SDB_ENSURE(
-      m.frame.raw_len <= _f.FrameBytes() &&
-        uint64_t{m.frame.comp_off} + m.frame.comp_len <= _f.data_size &&
-        (_leaf != ByteCodec::None || m.frame.comp_len == m.frame.raw_len) &&
-        (_shape == Shape::Runs || Packed() ||
-         m.frame.raw_len == rows * _f.stored),
-      "numeric codec: corrupted frame table");
+    if (!(m.frame.raw_len <= _f.FrameBytes() &&
+          uint64_t{m.frame.comp_off} + m.frame.comp_len <= _f.data_size &&
+          (_leaf != ByteCodec::None || m.frame.comp_len == m.frame.raw_len) &&
+          (_shape == Shape::Runs || Packed() ||
+           m.frame.raw_len == rows * _f.stored))) [[unlikely]] {
+      ThrowCorrupted("numeric", "frame table is inconsistent");
+    }
     return m;
   }
 
@@ -329,7 +335,9 @@ class FrameReader {
         : _leaf == ByteCodec::Zstd &&
             (_zstd ? *_zstd : _zstd.emplace())
               .Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
-    SDB_ENSURE(ok, "numeric codec: corrupted frame");
+    if (!ok) [[unlikely]] {
+      ThrowCorrupted("numeric", "frame is inconsistent");
+    }
     if (!admitted.empty()) {
       held = duckdb::make_shared_ptr<DecodedFrame>(std::move(admitted));
       _cache->Put(_key, held);
@@ -350,11 +358,12 @@ class FrameReader {
       if (_raw.size() < m.frame.raw_len) {
         _raw.resize(m.frame.raw_len);
       }
-      SDB_ENSURE(
-        Lz4::Decompressor::DecompressPrefix(
-          reinterpret_cast<const char*>(Data(m)), m.frame.comp_len,
-          reinterpret_cast<char*>(_raw.data()), need, m.frame.raw_len) != 0,
-        "numeric codec: corrupted frame");
+      if (Lz4::Decompressor::DecompressPrefix(
+            reinterpret_cast<const char*>(Data(m)), m.frame.comp_len,
+            reinterpret_cast<char*>(_raw.data()), need, m.frame.raw_len) == 0)
+        [[unlikely]] {
+        ThrowCorrupted("numeric", "frame is inconsistent");
+      }
       _source = _raw.data();
     } else {
       _source = Inflated(m, nullptr, f, _source_held);
@@ -432,11 +441,11 @@ class FrameReader {
 
   template<typename V = U>
   IRS_FORCE_INLINE PackedBlock BlockAt(uint64_t row) {
-    if (const auto f = static_cast<uint32_t>(row / kFforFrameRows);
-        f != _ffor_frame) {
-      OpenFfor<V>(f);
+    if (const auto f = static_cast<uint32_t>(row / kBitpackingFrameRows);
+        f != _bitpacking_frame) {
+      OpenBitpacking<V>(f);
     }
-    return _ffor[row % kFforFrameRows / numeric::kBlockValues];
+    return _bitpacking[row % kBitpackingFrameRows / numeric::kBlockValues];
   }
 
   static bool NearInBlock(uint64_t row, uint64_t next) noexcept {
@@ -530,7 +539,7 @@ class FrameReader {
     if (!self.Packed()) {
       return false;
     }
-    if (const auto f = static_cast<uint32_t>(row / kFforFrameRows);
+    if (const auto f = static_cast<uint32_t>(row / kBitpackingFrameRows);
         f != self._bounds_frame) {
       const auto m = self.MetaAt(f);
       self._bounds_frame = f;
@@ -747,7 +756,9 @@ class FrameReader {
     const auto* bases = src + off;
     const auto* widths = bases + blocks * sizeof(V);
     off += BlockMetaBytes(blocks, sizeof(V));
-    SDB_ENSURE(off <= len, "numeric codec: corrupted blocks");
+    if (off > len) [[unlikely]] {
+      ThrowCorrupted("numeric", "blocks are inconsistent");
+    }
     for (size_t b = 0; b < blocks; ++b) {
       const uint8_t kind = widths[b];
       const size_t count =
@@ -758,13 +769,15 @@ class FrameReader {
       unsigned bits = kind;
       V from = base;
       if (stepped) {
-        SDB_ENSURE(count > 1 && off + sizeof(uint64_t) <= len,
-                   "numeric codec: corrupted blocks");
+        if (!(count > 1 && off + sizeof(uint64_t) <= len)) [[unlikely]] {
+          ThrowCorrupted("numeric", "blocks are inconsistent");
+        }
         from = static_cast<V>(duckdb::Load<uint64_t>(src + off));
         off += sizeof(uint64_t);
         if (kind & kBlockOwnStep) {
-          SDB_ENSURE(kind == kStreamAlternates,
-                     "numeric codec: corrupted blocks");
+          if (kind != kStreamAlternates) [[unlikely]] {
+            ThrowCorrupted("numeric", "blocks are inconsistent");
+          }
           for (size_t i = 0; i < count; ++i) {
             block[i] = static_cast<V>(base + (i % 2 == 0 ? V{0} : from));
           }
@@ -776,8 +789,9 @@ class FrameReader {
         count == numeric::kBlockValues
           ? numeric::PackedBytes(bits)
           : duckdb::BitpackingPrimitives::GetRequiredSize(count, bits);
-      SDB_ENSURE(bits <= numeric::kMaxBits<V> && off + stored <= len,
-                 "numeric codec: corrupted blocks");
+      if (!(bits <= numeric::kMaxBits<V> && off + stored <= len)) [[unlikely]] {
+        ThrowCorrupted("numeric", "blocks are inconsistent");
+      }
       if (count == numeric::kBlockValues) {
         numeric::Unpack<V>(bits, Words<numeric::LaneWord<V>>(src + off), block,
                            from);
@@ -830,10 +844,12 @@ class FrameReader {
 
  private:
   template<typename V>
-  IRS_NO_INLINE void OpenFfor(uint32_t f) {
-    SDB_ENSURE(f < _f.frame_count, "numeric codec: frame out of range");
-    _ffor_frame = kNoFrame;
-    auto& frame = _ffor;
+  IRS_NO_INLINE void OpenBitpacking(uint32_t f) {
+    if (f >= _f.frame_count) [[unlikely]] {
+      ThrowCorrupted("numeric", "frame is out of range");
+    }
+    _bitpacking_frame = kNoFrame;
+    auto& frame = _bitpacking;
     const auto m = Meta(f);
     const auto rows = EndRow(f) - m.frame.first_entry;
     const auto blocks =
@@ -854,7 +870,7 @@ class FrameReader {
         };
         start = static_cast<V>(start + uint64_t{numeric::kBlockValues} * step);
       }
-      _ffor_frame = f;
+      _bitpacking_frame = f;
       return;
     }
     const auto origin = stepped ? static_cast<V>(m.min) : V{0};
@@ -862,10 +878,12 @@ class FrameReader {
       stepped ? numeric::BytesFor(static_cast<V>(m.max - m.min))
               : _code_base_bytes;
     size_t off = BlockMetaBytes(blocks, base_bytes);
-    SDB_ENSURE(m.frame.comp_len == m.frame.raw_len && off <= m.frame.raw_len,
-               "numeric codec: corrupted blocks");
+    if (!(m.frame.comp_len == m.frame.raw_len && off <= m.frame.raw_len))
+      [[unlikely]] {
+      ThrowCorrupted("numeric", "blocks are inconsistent");
+    }
     const auto* widths = src + blocks * base_bytes;
-    V bases[kFforFrameRows / numeric::kBlockValues];
+    V bases[kBitpackingFrameRows / numeric::kBlockValues];
     numeric::WidenAdd<V>(src, blocks, static_cast<uint8_t>(base_bytes), origin,
                          bases);
     for (size_t b = 0; b < blocks; ++b) {
@@ -875,15 +893,17 @@ class FrameReader {
       if (delta) {
         step = m.base;
         if ((bits & kBlockOwnStep) != 0) {
-          SDB_ENSURE(off + sizeof(uint64_t) <= m.frame.raw_len,
-                     "numeric codec: corrupted blocks");
+          if (off + sizeof(uint64_t) > m.frame.raw_len) [[unlikely]] {
+            ThrowCorrupted("numeric", "blocks are inconsistent");
+          }
           step = duckdb::Load<uint64_t>(src + off);
           off += sizeof(uint64_t);
         }
         bits &= kBlockDeltaBits;
       }
-      SDB_ENSURE(bits <= numeric::kMaxBits<V>,
-                 "numeric codec: corrupted blocks");
+      if (bits > numeric::kMaxBits<V>) [[unlikely]] {
+        ThrowCorrupted("numeric", "blocks are inconsistent");
+      }
       frame[b] = {
         .packed = src + off,
         .base = bases[b],
@@ -895,8 +915,10 @@ class FrameReader {
         bits, std::min<uint64_t>(numeric::kBlockValues,
                                  rows - b * numeric::kBlockValues));
     }
-    SDB_ENSURE(off == m.frame.raw_len, "numeric codec: corrupted blocks");
-    _ffor_frame = f;
+    if (off != m.frame.raw_len) [[unlikely]] {
+      ThrowCorrupted("numeric", "blocks are inconsistent");
+    }
+    _bitpacking_frame = f;
   }
 
   duckdb::ObjectCache* _cache;
@@ -909,8 +931,8 @@ class FrameReader {
   ScratchVector<uint8_t> _raw;
   ScratchVector<uint8_t> _shuffled;
   ScratchVector<uint64_t> _words;
-  FforFrame _ffor;
-  uint32_t _ffor_frame = kNoFrame;
+  BitpackingFrame _bitpacking;
+  uint32_t _bitpacking_frame = kNoFrame;
   uint32_t _bounds_frame = kNoFrame;
   U _bounds_limit = 0;
   std::optional<Zstd::Decompressor> _zstd;

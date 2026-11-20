@@ -201,7 +201,7 @@ query
 SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_bitpacking_wide') WHERE column_name = 'v';
 ----
 compression
-Uncompressed
+BitPacking
 
 query
 SELECT count(*) FROM search_forced_bitpacking_wide WHERE v IS DISTINCT FROM CASE WHEN a % 2 = 0 THEN -9223372036854775807 - 1 ELSE 9223372036854775807 END;

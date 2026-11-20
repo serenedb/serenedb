@@ -34,7 +34,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
-#include "iresearch/formats/column/codecs/numeric/ffor_blocks.hpp"
+#include "iresearch/formats/column/codecs/numeric/bitpacking_blocks.hpp"
 #include "iresearch/formats/column/codecs/numeric/leaves.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
@@ -83,12 +83,12 @@ inline Geometry BytesGeometry(Shape shape, ByteCodec leaf, uint32_t items,
 inline Geometry PackedGeometry(Shape shape, uint32_t items, size_t dictionary,
                                size_t width, bool scaled) noexcept {
   const uint32_t per =
-    shape == Shape::Runs ? kRleFforFrameRuns : kFforFrameRows;
+    shape == Shape::Runs ? kRleBitpackingFrameRuns : kBitpackingFrameRows;
   const uint32_t frames = (items + per - 1) / per;
   const auto meta = static_cast<uint32_t>(FrameMetaSize(shape, true, width));
   const auto off_frames = FramesOffset(shape, true, scaled);
   return {
-    .log2 = kFforFrameLog2,
+    .log2 = kBitpackingFrameLog2,
     .per = per,
     .frames = frames,
     .meta = meta,
@@ -507,7 +507,7 @@ double AnalyzeBlocks(ColumnDataCheckpointData& data, Shape shape,
 
 template<typename T, typename V, typename Own>
 bool CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
-                    FforBlocks<V>& blocks, std::span<const V> values,
+                    BitpackingBlocks<V>& blocks, std::span<const V> values,
                     std::span<const uint8_t> dictionary, bool analyzed,
                     const Own& own) {
   auto& out = data.Get<NumericScratch>().out;
@@ -540,7 +540,7 @@ bool CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
 }
 
 template<typename T>
-bool ArithmeticFrame(const FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
+bool ArithmeticFrame(const BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
                      const Values<T>& values, uint32_t begin, uint32_t count) {
   using U = numeric::Bits<sizeof(T)>;
   const size_t first = begin / numeric::kBlockValues;
@@ -576,12 +576,12 @@ BlockBases<numeric::Bits<sizeof(T)>> FrameBases(const Values<T>& values,
 }
 
 template<typename T>
-uint64_t SteppedBytes(const FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
+uint64_t SteppedBytes(const BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
                       const Values<T>& values) {
   uint64_t bytes = 0;
   const auto n = static_cast<uint32_t>(values.Size());
-  for (uint32_t begin = 0; begin < n; begin += kFforFrameRows) {
-    const auto count = std::min(n - begin, kFforFrameRows);
+  for (uint32_t begin = 0; begin < n; begin += kBitpackingFrameRows) {
+    const auto count = std::min(n - begin, kBitpackingFrameRows);
     if (!ArithmeticFrame<T>(blocks, values, begin, count)) {
       bytes += blocks.Bytes(
         begin / numeric::kBlockValues,
@@ -594,7 +594,7 @@ uint64_t SteppedBytes(const FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
 
 template<typename T, typename Own>
 bool CompressStepped(ColumnDataCheckpointData& data, Shape shape,
-                     FforBlocks<numeric::Bits<sizeof(T)>>& blocks,
+                     BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
                      bool analyzed, const Own& own) {
   const auto& values = data.Get<Values<T>>();
   auto& out = data.Get<NumericScratch>().out;

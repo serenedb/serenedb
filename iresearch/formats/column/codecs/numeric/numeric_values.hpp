@@ -38,7 +38,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
-#include "iresearch/formats/column/codecs/numeric/ffor_blocks.hpp"
+#include "iresearch/formats/column/codecs/numeric/bitpacking_blocks.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 
 namespace irs::codecs {

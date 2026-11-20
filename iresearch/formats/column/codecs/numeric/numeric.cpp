@@ -65,7 +65,7 @@ CompressionFunctions PlainContenders() {
     static constexpr const CompressionFunction* kContenders[] = {
       &Of<T, kRaw<Inner<T>, kLeaf, false>>(),
       &Of<T, kFor<Inner<T>, kLeaf, false>>(),
-      &Of<T, kFfor<Inner<T>>>(),
+      &Of<T, kBitpacking<Inner<T>>>(),
     };
     return kContenders;
   } else {
@@ -87,7 +87,7 @@ CompressionFunctions DeltaContenders() {
     return kContenders;
   } else if constexpr (kPacks<T>) {
     static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kDeltaFfor<Inner<T>>>(),
+      &Of<T, kDeltaBitpacking<Inner<T>>>(),
       &Of<T, kDelta<Inner<T>, kLeaf, false>>(),
     };
     return kContenders;
@@ -109,7 +109,7 @@ CompressionFunctions RunsContenders() {
   } else {
     static constexpr const CompressionFunction* kContenders[] = {
       &Of<T, kRle<Inner<T>, kLeaf>>(),
-      &Of<T, kRleFfor<Inner<T>>>(),
+      &Of<T, kRleBitpacking<Inner<T>>>(),
     };
     return kContenders;
   }
@@ -126,7 +126,7 @@ CompressionFunctions DictionaryContenders() {
   } else {
     static constexpr const CompressionFunction* kContenders[] = {
       &Of<T, kDict<Inner<T>, kLeaf, false>>(),
-      &Of<T, kDictFfor<Inner<T>>>(),
+      &Of<T, kDictBitpacking<Inner<T>>>(),
     };
     return kContenders;
   }

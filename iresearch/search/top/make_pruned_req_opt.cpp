@@ -39,7 +39,9 @@ Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
   }
   const auto* const doc =
     irs::detail::DocOf(irs::detail::FieldOf(required, nullptr));
-  SDB_ASSERT(doc != nullptr);
+  if (doc == nullptr || irs::detail::SharedDoc(optional, nullptr) != doc) {
+    return {};
+  }
   const auto size = optional.size() + 1;
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     using Lead = PostingPrunedLead<Input>;

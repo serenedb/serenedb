@@ -57,6 +57,7 @@ ReadContext::ReadContext(const ColReader& reader, bool random_access)
                  /*block_header_size=*/0} {
   _random_access = random_access;
   _in = reader.ReopenIn();
+  _file = &reader.FileOwner();
   ResetMapping();
 }
 
@@ -76,8 +77,25 @@ void ReadContext::Reset(const ColReader& reader) {
              "ReadContext::Reset: Database mismatch");
   SDB_ASSERT(_live_handles == 0, "ReadContext::Reset with live block handles");
   SDB_ASSERT(GetBlockAllocSize() == reader.BlockAllocSize());
+  _files.clear();
   _in = reader.ReopenIn();
+  _file = &reader.FileOwner();
   ResetMapping();
+}
+
+ReadContext& ReadContext::For(const ColReader* file) {
+  if (file == nullptr || file == _file) {
+    return *this;
+  }
+  for (auto& [owner, ctx] : _files) {
+    if (owner == file) {
+      return *ctx;
+    }
+  }
+  return *_files
+            .emplace_back(file,
+                          std::make_unique<ReadContext>(*file, _random_access))
+            .ctx;
 }
 
 void ReadContext::ResetMapping() {

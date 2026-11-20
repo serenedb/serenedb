@@ -422,9 +422,11 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
     };
     std::string segments;
     for (const auto& unit : store.GetTable().State()->units) {
-      SDB_ENSURE(!unit->piece && (!unit->deleted || unit->deleted->Empty()),
+      SDB_ENSURE(!unit->piece && (!unit->deleted || unit->deleted->Empty()) &&
+                   unit->meta.attachments.empty(),
                  "the documentation table ", table_name,
-                 " keeps rows in memory or deletes after settling");
+                 " keeps rows in memory, deletes or attachments after "
+                 "settling");
       absl::c_for_each(irs::SegmentFiles(unit->meta.name, unit->meta.kinds),
                        add);
       irs::AppendSegmentList(segments, unit->id, unit->meta.kinds, unit->docs);

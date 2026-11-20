@@ -85,6 +85,8 @@ An inverted index pins every column it reads, including columns reached only thr
 
 See [Rewrites and concurrent changes](../../statements/alter_table/index.md#rewrites-and-concurrent-changes) in the `ALTER TABLE` reference for how these statements treat concurrent writers.
 
+`CREATE INDEX`, `ADD COLUMN` with a default and `ALTER COLUMN ... TYPE` write only what they add -- the new column's values or the new index's entries -- next to each segment of at least `compaction_floor_segment_bytes`, so on a large table they cost about as much as writing that data and leave the existing columns and indexes on disk as they are. Each such change adds files to the segment (`num_files` in [`sdb_metrics`](#sdb-metrics) grows while `num_segments` stays), and compaction merges them back into ordinary segments. Smaller segments, a segment that already carries eight such additions, changes to a table whose index has an `ivf` or `hnsw` column or keeps a `distinct` count, and adding a `UNIQUE`, `PRIMARY KEY` or `FOREIGN KEY` constraint rewrite the segment in full instead.
+
 ## Performance
 
 Tuning is mostly about the background cadence and segment layout; use only the options that exist:

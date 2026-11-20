@@ -364,6 +364,24 @@ std::shared_ptr<const TableState> InitialState(
   return initial;
 }
 
+irs::SegmentMeta FilesMeta(const irs::Directory& dir, uint64_t id,
+                           uint8_t kinds, irs::doc_id_t rows) {
+  irs::SegmentMeta meta;
+  meta.name = irs::FileName(id);
+  meta.kinds = kinds;
+  meta.docs_count = rows;
+  meta.live_docs_count = rows;
+  for (const auto& file : irs::SegmentFiles(meta.name, kinds)) {
+    uint64_t size = 0;
+    if (!dir.length(size, file)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
+                      ERR_MSG("segment file '", file, "' is missing"));
+    }
+    meta.byte_size += size;
+  }
+  return meta;
+}
+
 bool DeletesAll(const irs::DocumentMask* deleted, const irs::DocumentMask& docs,
                 irs::doc_id_t rows) {
   auto count = docs.Count();
@@ -456,7 +474,7 @@ void SlicePatches(std::span<const irs::FieldPatch> patches, uint64_t first,
 bool Empty(const TableDelta& delta) noexcept {
   return delta.drop.empty() && delta.drop_memory == 0 && delta.add.empty() &&
          delta.rows.empty() && delta.segments.empty() && delta.pieces.empty() &&
-         !delta.manifest;
+         !delta.manifest && delta.attach.empty();
 }
 
 std::shared_ptr<TableUnit> PieceUnit(
@@ -710,6 +728,10 @@ irs::DirectoryReader Table::BuildReader(const TableState& prev,
       added.emplace_back(unit->reader);
       continue;
     }
+    if (it->second->meta.attachments != unit->meta.attachments) {
+      added.emplace_back(unit->reader);
+      continue;
+    }
     if (it->second->reader->PatchTick() != unit->reader->PatchTick()) {
       patched.push_back({
         .before = irs::SegmentReader{it->second->reader},
@@ -752,24 +774,30 @@ std::shared_ptr<TableState> Table::SameUnits() const {
   return std::make_shared<TableState>(*Head().state);
 }
 
-OwnSegment Table::OpenSegment(uint64_t id, uint8_t kinds,
-                              irs::doc_id_t rows) const {
+OwnSegment Table::OpenSegment(
+  uint64_t id, uint8_t kinds, irs::doc_id_t rows,
+  std::span<const irs::SegmentAttachment> attachments) const {
   OwnSegment opened;
-  auto& meta = opened.meta;
-  meta.name = irs::FileName(id);
-  meta.kinds = kinds;
-  meta.docs_count = rows;
-  meta.live_docs_count = rows;
-  for (const auto& file : irs::SegmentFiles(meta.name, kinds)) {
-    uint64_t size = 0;
-    if (!_dir.length(size, file)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                      ERR_MSG("segment file '", file, "' is missing"));
-    }
-    meta.byte_size += size;
+  opened.meta = FilesMeta(_dir, id, kinds, rows);
+  opened.reader = irs::SegmentReaderImpl::Open(_dir, opened.meta, _options);
+  if (attachments.empty()) {
+    return opened;
   }
-  opened.reader = irs::SegmentReaderImpl::Open(_dir, meta, _options);
+  std::vector<std::shared_ptr<const irs::SegmentReaderImpl>> readers;
+  readers.reserve(attachments.size());
+  for (const auto& files : attachments) {
+    readers.push_back(OpenAttachment(files, rows));
+  }
+  opened.meta.attachments.assign(attachments.begin(), attachments.end());
+  opened.reader = opened.reader->WithAttachments(readers);
+  opened.meta.byte_size = opened.reader->Meta().byte_size;
   return opened;
+}
+
+std::shared_ptr<const irs::SegmentReaderImpl> Table::OpenAttachment(
+  const irs::SegmentAttachment& files, irs::doc_id_t rows) const {
+  return irs::SegmentReaderImpl::Open(
+    _dir, FilesMeta(_dir, files.id, files.kinds, rows), _options);
 }
 
 irs::DirectoryReader Table::View(const TableState& state,
@@ -888,6 +916,9 @@ StoreStats Table::Stats() const {
   for (const auto& unit : state->units) {
     if (!unit->piece) {
       stats.numFiles += std::popcount(unit->meta.kinds);
+      for (const auto& attachment : unit->meta.attachments) {
+        stats.numFiles += std::popcount(attachment.kinds);
+      }
     }
   }
   return stats;
@@ -1219,6 +1250,41 @@ std::shared_ptr<TableUnit> Table::SegmentUnit(OwnSegment&& segment) const {
   unit->meta = std::move(segment.meta);
   unit->reader = std::move(segment.reader);
   return unit;
+}
+
+TableDelta Table::PrepareAttach(std::span<const Attachment> attachments) const {
+  absl::MutexLock lock{&_state_mutex};
+  const auto& state = *Head().state;
+  TableDelta delta;
+  for (const auto& attachment : attachments) {
+    const auto* unit = FindUnit(state, attachment.segment);
+    if (unit && !unit->piece) {
+      delta.attach.push_back(
+        {.segment = attachment.segment, .files = attachment.files});
+    }
+  }
+  return delta;
+}
+
+std::shared_ptr<const TableState> Table::Attach(
+  Tick tick, std::span<const Attachment> attachments) {
+  absl::MutexLock lock{&_state_mutex};
+  auto next = std::make_shared<TableState>(*Head().state);
+  auto& units = next->units;
+  for (const auto& attachment : attachments) {
+    const auto i = IndexOf(units, attachment.segment);
+    if (i == units.size() || units[i]->piece) {
+      continue;
+    }
+    auto unit = std::make_shared<TableUnit>(*units[i]);
+    const std::array readers{attachment.reader};
+    unit->reader = unit->reader->WithAttachments(readers);
+    unit->meta.attachments.push_back(attachment.files);
+    unit->meta.byte_size = unit->reader->Meta().byte_size;
+    units[i] = std::move(unit);
+  }
+  Publish(next, tick, tick);
+  return next;
 }
 
 Table::Replacement Table::PrepareReplace(

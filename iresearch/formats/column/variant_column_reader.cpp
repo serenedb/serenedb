@@ -69,6 +69,18 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
   FinishStats(std::move(stats));
 }
 
+void VariantColumnReader::SetOwner(const ColReader* owner) noexcept {
+  ColumnReader::SetOwner(owner);
+  for (const auto& rg : _variant_rgs) {
+    if (rg.unshredded) {
+      rg.unshredded->SetOwner(owner);
+    }
+    if (rg.shredded) {
+      rg.shredded->SetOwner(owner);
+    }
+  }
+}
+
 void VariantColumnReader::NewOutputVector(ScanState& s) const {
   ColumnReader::NewOutputVector(s);
   if (!s.variant) {

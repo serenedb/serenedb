@@ -84,6 +84,9 @@ class SegmentReaderImpl final : public SubReader {
     std::shared_ptr<const DocumentMask> mask) const;
   std::shared_ptr<const SegmentReaderImpl> WithPatches(
     std::span<const FieldPatch> patches) const;
+  std::shared_ptr<const SegmentReaderImpl> WithAttachments(
+    std::span<const std::shared_ptr<const SegmentReaderImpl>> attachments)
+    const;
 
   uint64_t CountMappedMemory() const final;
 
@@ -107,6 +110,11 @@ class SegmentReaderImpl final : public SubReader {
     if (_pieces) {
       return _pieces->fields(id);
     }
+    if (_fields) {
+      const auto it = _fields->by_id.find(id);
+      return it == _fields->by_id.end() ? std::span<const TermReader* const>{}
+                                        : it->second->fields(id);
+    }
     if (!_field_reader) {
       return {};
     }
@@ -116,6 +124,9 @@ class SegmentReaderImpl final : public SubReader {
   std::span<const field_id> field_ids() const final {
     if (_pieces) {
       return _pieces->field_ids();
+    }
+    if (_fields) {
+      return _fields->ids;
     }
     if (!_field_reader) {
       return {};
@@ -137,10 +148,17 @@ class SegmentReaderImpl final : public SubReader {
     std::unique_ptr<ColReader> col_reader;
     std::unique_ptr<IdxReader> idx_reader;
     std::shared_ptr<ColumnData> base;
+    std::vector<std::shared_ptr<const SegmentReaderImpl>> attached;
 
     const IdxReader* Idx() const noexcept {
       return idx_reader ? idx_reader.get() : base ? base->Idx() : nullptr;
     }
+  };
+
+  struct Fields {
+    std::vector<std::shared_ptr<term_dict::FieldReader>> readers;
+    std::vector<field_id> ids;
+    irs::containers::FlatHashMap<field_id, const term_dict::FieldReader*> by_id;
   };
 
   FileRefs _refs;
@@ -151,7 +169,9 @@ class SegmentReaderImpl final : public SubReader {
   uint64_t _patched_docs = 0;
   std::vector<FieldPatch> _patches;
   std::shared_ptr<ColumnData> _data;
+  std::shared_ptr<ColumnData> _root;
   std::shared_ptr<term_dict::FieldReader> _field_reader;
+  std::shared_ptr<const Fields> _fields;
   std::shared_ptr<const PieceFields> _pieces;
 };
 

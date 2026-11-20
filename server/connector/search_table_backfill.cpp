@@ -41,6 +41,7 @@
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/document_mask.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
@@ -95,10 +96,22 @@ struct ColumnPlan {
   std::vector<ColumnId> carried;
 };
 
+ColumnPlan AddedReads(const SearchBackfillTarget& target) {
+  ColumnPlan plan;
+  for (const auto& expression : target.added) {
+    duckdb::ExpressionIterator::VisitExpression<
+      duckdb::BoundReferenceExpression>(
+      *expression, [&](const duckdb::BoundReferenceExpression& reference) {
+        plan.scanned.insert(target.column_ids[reference.Index()]);
+      });
+  }
+  return plan;
+}
+
 ColumnPlan PlanColumns(const SearchSinkInsertBaseImpl& sink,
                        const catalog::InvertedIndexConfig& config,
                        const SearchBackfillTarget& target) {
-  ColumnPlan plan;
+  auto plan = AddedReads(target);
   for (const auto column : target.column_ids) {
     if (!config.AnnFields(column).empty() ||
         config.GetColumnOptions(column).distinct != irs::DistinctStats::None) {
@@ -126,13 +139,6 @@ ColumnPlan PlanColumns(const SearchSinkInsertBaseImpl& sink,
   }
   for (const auto& read : expression_reads) {
     plan.scanned.insert(read.column);
-  }
-  for (const auto& expression : target.added) {
-    duckdb::ExpressionIterator::VisitExpression<
-      duckdb::BoundReferenceExpression>(
-      *expression, [&](const duckdb::BoundReferenceExpression& reference) {
-        plan.scanned.insert(target.column_ids[reference.Index()]);
-      });
   }
   return plan;
 }
@@ -519,6 +525,199 @@ std::shared_ptr<const search::TableState> RebuildGroup(
   return published;
 }
 
+constexpr size_t kMaxAttachments = 8;
+
+struct AttachJob {
+  const irs::SubReader* segment = nullptr;
+  std::shared_ptr<const irs::SegmentReaderImpl> rows;
+  uint64_t begin = 0;
+  uint64_t end = 0;
+  bool index = false;
+  RowSource source;
+  irs::IndexWriter::Transaction trx;
+  std::unique_ptr<SearchSinkInsertBaseImpl> sink;
+  std::span<const irs::IndexWriter::FlushedSegment> flushed;
+};
+
+bool LacksFields(const SearchSinkInsertBaseImpl& sink,
+                 const SearchBackfillTarget& target,
+                 const irs::SubReader& segment) {
+  const auto lacks = [&](irs::field_id field) {
+    return segment.fields(field).empty();
+  };
+  const auto column_lacks = [&](ColumnId column) {
+    return absl::c_any_of(sink.TermFieldsForColumn(column), lacks);
+  };
+  return absl::c_any_of(target.column_ids, column_lacks) ||
+         absl::c_any_of(target.added_ids, column_lacks) ||
+         absl::c_any_of(sink.IndexedExpressions(),
+                        [&](const auto& expression) {
+                          return lacks(expression.field_id);
+                        }) ||
+         absl::c_any_of(sink.ConstraintKeys(), [&](const auto& key) {
+           return lacks(key.Key().field);
+         });
+}
+
+struct FeedAttachTask final : duckdb::BaseExecutorTask {
+  FeedAttachTask(duckdb::TaskExecutor& executor_in,
+                 duckdb::ClientContext& context_in,
+                 const SearchBackfillTarget& target_in, AttachJob& job_in,
+                 pg::ProgressMetrics* progress_in)
+    : BaseExecutorTask{executor_in},
+      context{context_in},
+      target{target_in},
+      job{job_in},
+      progress{progress_in} {}
+
+  void ExecuteTask() final {
+    uint64_t fed = 0;
+    auto& source = job.source;
+    ScanLiveRows(
+      context, *job.rows, job.begin, job.end, source.projections,
+      source.filter_states, source.live, source.chunk,
+      [&](duckdb::DataChunk& chunk, uint64_t, std::span<const duckdb::sel_t>) {
+        WriteChunkToSearchSink(*job.sink, Rewritten(source, chunk),
+                               source.write_ids, target.table_id, context, {},
+                               job.rows.get());
+        fed += chunk.size();
+        return true;
+      });
+    if (progress) {
+      progress->AddTuples(static_cast<int64_t>(fed));
+    }
+    context.InterruptCheck();
+    job.flushed = job.trx.FlushAndFsync();
+  }
+
+  std::string TaskType() const final { return "SearchBackfillAttach"; }
+
+  duckdb::ClientContext& context;
+  const SearchBackfillTarget& target;
+  AttachJob& job;
+  pg::ProgressMetrics* progress;
+};
+
+bool Attachable(const SearchBackfillTarget& target,
+                const catalog::InvertedIndexConfig& config) {
+  return absl::c_none_of(target.column_ids, [&](ColumnId column) {
+    const auto options = config.GetColumnOptions(column);
+    const auto declared = config.declared_compression.find(column);
+    return !config.AnnFields(column).empty() ||
+           options.distinct != irs::DistinctStats::None ||
+           options.compression != (declared == config.declared_compression.end()
+                                     ? duckdb::CompressionType::COMPRESSION_AUTO
+                                     : declared->second);
+  });
+}
+
+std::shared_ptr<const search::TableState> AttachGroup(
+  duckdb::ClientContext& context, const SearchBackfillTarget& target,
+  std::span<const irs::SubReader* const> group, pg::ProgressMetrics* progress) {
+  auto& shard = *target.shard;
+  std::vector<std::unique_ptr<AttachJob>> jobs;
+  std::optional<ColumnPlan> indexed;
+  const auto added = AddedReads(target);
+  const uint64_t threads = duckdb::TaskScheduler::QueryThreads(context);
+  const uint64_t row_group = std::max<uint64_t>(1, shard.RowGroupSize());
+  for (const auto* segment : group) {
+    auto rows = irs::utils::downCast<irs::SegmentReader>(*segment)
+                  .GetImpl()
+                  ->WithDocsMask(nullptr);
+    const uint64_t docs = rows->docs_count();
+    uint64_t step = docs;
+    bool index = false;
+    for (uint64_t begin = 0; begin < docs; begin += step) {
+      auto& job = *jobs.emplace_back(std::make_unique<AttachJob>());
+      job.segment = segment;
+      job.rows = rows;
+      job.begin = begin;
+      job.trx = shard.GetTransaction();
+      job.sink =
+        MakeSearchTableInsertSink(job.trx, shard, *target.catalog, context)
+          .sink;
+      if (begin == 0) {
+        index = LacksFields(*job.sink, target, *rows);
+        if (index) {
+          const auto slices = std::clamp<uint64_t>(
+            (docs + row_group - 1) / row_group, 1, threads);
+          step = ((docs + slices - 1) / slices + row_group - 1) / row_group *
+                 row_group;
+        }
+      }
+      job.end = std::min(docs, begin + step);
+      job.index = index;
+      if (job.index && !indexed) {
+        indexed = PlanColumns(*job.sink, *shard.Config(), target);
+        indexed->copied.clear();
+        indexed->carried.clear();
+      }
+      InitRowSource(context, target, job.source,
+                    job.index ? &*indexed : &added);
+    }
+  }
+  absl::Cleanup abort_jobs = [&] {
+    for (auto& job : jobs) {
+      job->trx.Abort();
+    }
+  };
+  {
+    duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context),
+                                  context.GetSchedulerAccount()};
+    for (auto& job : jobs) {
+      executor.ScheduleTask(duckdb::make_uniq<FeedAttachTask>(
+        executor, context, target, *job, progress));
+    }
+    executor.WorkOnTasks();
+  }
+  SDB_WAIT_ON_FAILURE("pause_search_backfill_before_swap");
+  std::vector<search::Table::Attachment> attachments;
+  attachments.reserve(group.size());
+  std::vector<const irs::IndexWriter::FlushedSegment*> parts;
+  for (size_t first = 0; first < jobs.size();) {
+    const auto& rows = *jobs[first]->rows;
+    parts.clear();
+    auto last = first;
+    for (; last < jobs.size() && jobs[last]->segment == jobs[first]->segment;
+         ++last) {
+      for (const auto& part : jobs[last]->flushed) {
+        parts.push_back(&part);
+      }
+    }
+    first = last;
+    if (parts.empty()) {
+      continue;
+    }
+    auto joined = shard.JoinSegments(parts);
+    if (joined.meta.kinds == 0) {
+      continue;
+    }
+    SDB_ENSURE(joined.meta.docs_count == rows.docs_count(),
+               "index build: segment ", rows.Id(), " holds ", rows.docs_count(),
+               " rows, its attachment ", joined.meta.docs_count);
+    uint64_t id = 0;
+    SDB_ENSURE(irs::ParseSegmentId(joined.meta.name, id),
+               "index build: attachment '", joined.meta.name,
+               "' has no segment id");
+    attachments.push_back({
+      .segment = rows.Id(),
+      .files = {.id = id, .kinds = joined.meta.kinds},
+      .reader = std::move(joined.reader),
+    });
+  }
+  std::shared_ptr<const search::TableState> published;
+  try {
+    published = shard.AttachSegments(attachments);
+  } catch (const std::exception& e) {
+    irs::pg::ThrowWithContext(
+      absl::StrCat("index build: failed to attach the new fields of table ",
+                   target.table_id),
+      e);
+  }
+  SDB_PARK_ONCE_ON_FAILURE("pause_search_backfill_before_publish");
+  return published;
+}
+
 void AddLiveRows(irs::DocRemovalBuilder& positions, size_t index, uint64_t row,
                  uint64_t count, std::span<const duckdb::sel_t> live) {
   const auto add = [&](uint64_t first, uint64_t end) {
@@ -621,6 +820,15 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
            shard.GetTable().LastWrite() > transaction.Snapshot();
   };
   const bool adopt = !target.added.empty() || !newer();
+  const auto config = shard.Config();
+  const bool attachable = Attachable(target, *config);
+  const uint64_t small = shard.InlineRowsMax();
+  const auto lacks_key = [&](const irs::SubReader& sub) {
+    return absl::c_any_of(config->constraint_keys, [&](const auto& key) {
+      return sub.fields(key.field).empty();
+    });
+  };
+  absl::flat_hash_set<uint64_t> attached;
   std::shared_ptr<const search::TableState> rebuilt;
   // One group per pass, and the reader that named it dies with the pass: it
   // references every segment it can see, so holding it across groups would
@@ -629,21 +837,36 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
   // on a later pass as a sub-floor segment; loop until none do.
   for (;;) {
     const auto reader = shard.BuildSnapshot();
+    const auto state = shard.GetTable().State();
+    const auto attachments = [&](uint64_t id) {
+      const auto it = absl::c_find_if(
+        state->units, [&](const auto& unit) { return unit->id == id; });
+      return it == state->units.end() ? kMaxAttachments
+                                      : (*it)->meta.attachments.size();
+    };
     std::vector<const irs::SubReader*> group;
+    std::vector<const irs::SubReader*> attach;
     uint64_t live = 0;
     uint64_t bytes = 0;
     for (const auto& sub : reader) {
-      const auto& segment = irs::utils::downCast<irs::SegmentReader>(sub);
-      if (segment.GetImpl()->Id() > floor.Floor()) {
+      const auto id =
+        irs::utils::downCast<irs::SegmentReader>(sub).GetImpl()->Id();
+      if (id > floor.Floor() || attached.contains(id)) {
         continue;
       }
       live += sub.live_docs_count();
-      if (unlimited || bytes < target.group_bytes) {
+      if (!unlimited && bytes >= target.group_bytes) {
+        continue;
+      }
+      bytes += sub.Meta().byte_size;
+      if (attachable && sub.Meta().byte_size >= small &&
+          attachments(id) < kMaxAttachments && !lacks_key(sub)) {
+        attach.push_back(&sub);
+      } else {
         group.push_back(&sub);
-        bytes += sub.Meta().byte_size;
       }
     }
-    if (group.empty()) {
+    if (group.empty() && attach.empty()) {
       break;
     }
     if (progress && !counted) {
@@ -655,7 +878,16 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
     if (adopt && !rebuilt) {
       transaction.ReleaseVersions(target.shard);
     }
-    rebuilt = RebuildGroup(context, target, group, progress);
+    if (!attach.empty()) {
+      rebuilt = AttachGroup(context, target, attach, progress);
+      for (const auto* sub : attach) {
+        attached.insert(
+          irs::utils::downCast<irs::SegmentReader>(*sub).GetImpl()->Id());
+      }
+    }
+    if (!group.empty()) {
+      rebuilt = RebuildGroup(context, target, group, progress);
+    }
     SDB_IF_FAILURE("crash_after_search_backfill_group") {
       SDB_IMMEDIATE_ABORT();
     }

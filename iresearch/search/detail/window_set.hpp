@@ -115,7 +115,7 @@ bool CollectDense(std::span<const Term> terms,
                   const TermReader* field, const IndexInput*& doc,
                   std::vector<FillNode::ptr>& rest, PlanChild&& plan) {
   if (!terms.empty()) {
-    doc = DocOf(FieldOf(terms.front(), field));
+    doc = SharedDoc(terms, field);
     if (doc == nullptr) {
       return false;
     }

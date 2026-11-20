@@ -49,7 +49,7 @@ bool ExcludeTerms(std::span<const Term> terms,
   if (!filters.empty() || terms.empty()) {
     return false;
   }
-  doc = DocOf(FieldOf(terms.front(), field));
+  doc = SharedDoc(terms, field);
   return doc != nullptr;
 }
 

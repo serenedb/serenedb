@@ -776,9 +776,10 @@ void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
   sink.push_back(std::move(m));
 }
 
-bool ColumnWriter::CopyBlocks(const ColumnReader& column, ReadContext& source,
+bool ColumnWriter::CopyBlocks(const ColumnReader& column, ReadContext& caller,
                               absl::FunctionRef<bool()> progress) {
   SDB_ASSERT(CopyableFrom(column));
+  auto& source = caller.For(column.Owner());
   SealRowGroup();
   std::vector<byte_type> buffer;
   for (const auto& block : column.DataBlocks()) {
@@ -863,9 +864,10 @@ void ColumnWriter::DecodeRows(const ColumnReader& column, ReadContext& source,
 }
 
 void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
-                            ReadContext& source, uint64_t first,
+                            ReadContext& caller, uint64_t first,
                             uint64_t count) {
   SDB_ASSERT(_row_start + _staged_rows <= start_row);
+  auto& source = caller.For(column.Owner());
   SDB_ASSERT(first + count <= column.RowCount());
   PadNullsTo(start_row);
   const auto end = first + count;

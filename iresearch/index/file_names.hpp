@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 
+#include "iresearch/index/index_meta.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -41,6 +42,8 @@ inline constexpr uint8_t kPayFile = 1 << 4;
 uint8_t SegmentFileKinds(std::span<const std::string> files) noexcept;
 
 std::vector<std::string> SegmentFiles(std::string_view segment, uint8_t kinds);
+
+std::vector<std::string> SegmentFiles(const SegmentMeta& meta);
 
 std::string FileName(uint64_t id);
 

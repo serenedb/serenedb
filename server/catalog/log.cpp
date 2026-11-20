@@ -128,7 +128,7 @@ size_t ParseRecords(std::span<uint8_t> bytes, Lsn base, Apply&& apply) {
           View(payload.data(), payload.size()))) != header.crc) {
       break;
     }
-    apply(end, begin + header.size, payload);
+    apply(payload);
     end = begin + header.size;
   }
   return end;
@@ -149,9 +149,8 @@ SnapshotFile ReadSnapshot(duckdb::FileSystem& fs,
   }
   snapshot.bytes = std::move(*bytes);
   const auto parsed = ParseRecords(
-    snapshot.bytes, 0, [&](size_t, size_t, std::span<uint8_t> payload) {
-      snapshot.records.push_back(payload);
-    });
+    snapshot.bytes, 0,
+    [&](std::span<uint8_t> payload) { snapshot.records.push_back(payload); });
   if (parsed != snapshot.bytes.size() || snapshot.records.empty() ||
       snapshot.records.front().size() != sizeof(SnapshotHeader)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
@@ -315,10 +314,9 @@ Scanned ScanLog(duckdb::FileSystem& fs, const std::filesystem::path& dir,
     }
     const auto base = begin + from;
     const auto parsed =
-      from + ParseRecords(std::span{*bytes}.subspan(from), base,
-                          [&](size_t, size_t, std::span<uint8_t> payload) {
-                            log_record(payload);
-                          });
+      from +
+      ParseRecords(std::span{*bytes}.subspan(from), base,
+                   [&](std::span<uint8_t> payload) { log_record(payload); });
     if (!first && parsed == 0) {
       scanned.next = number;
       break;
@@ -429,10 +427,9 @@ void Log::Cut(const std::filesystem::path& dir, Lsn end) {
       ThrowIncomplete(dir, reached, end);
     }
     const auto limit = std::min<size_t>(bytes->size(), end - begin);
-    reached =
-      begin + from +
-      ParseRecords(std::span{*bytes}.subspan(from, limit - from), begin + from,
-                   [](size_t, size_t, std::span<uint8_t>) {});
+    reached = begin + from +
+              ParseRecords(std::span{*bytes}.subspan(from, limit - from),
+                           begin + from, [](std::span<uint8_t>) {});
     if (reached == end) {
       const auto file =
         fs->OpenFile(path.string(), duckdb::FileFlags::FILE_FLAGS_WRITE);
@@ -748,7 +745,7 @@ void Log::SyncTo(Lsn target) {
     absl::MutexLock lock{&_mutex};
     _directory_synced = std::max(_directory_synced, directory_changes);
   }
-  _durable.store(std::max(durable, target), std::memory_order_release);
+  _durable.store(target, std::memory_order_release);
 }
 
 Lsn Log::Append(RecordBuffer record) {
@@ -790,8 +787,8 @@ void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
     }
     std::vector<uint8_t> bytes(static_cast<size_t>(end - from));
     chunk->file->Read(bytes.data(), bytes.size(), from - chunk->begin);
-    const auto parsed = ParseRecords(
-      bytes, from, [&](size_t, size_t, std::span<uint8_t> payload) {
+    const auto parsed =
+      ParseRecords(bytes, from, [&](std::span<uint8_t> payload) {
         if (const auto catalog = part(payload); !catalog.empty()) {
           logged.emplace_back(catalog.begin(), catalog.end());
         }

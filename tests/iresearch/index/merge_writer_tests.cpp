@@ -2376,6 +2376,130 @@ TEST_P(MergeWriterTestCase, refuses_segments_with_different_layouts) {
                    ERRCODE_INDEX_CORRUPTED);
 }
 
+TEST_P(MergeWriterTestCase, test_merge_writer_attachments) {
+  constexpr std::array<std::string_view, 4> kStrings = {"base1", "base2",
+                                                        "base3", "base4"};
+  constexpr std::array<std::string_view, 4> kTexts = {
+    "attached1_longer_than_inline", "attached2_longer_than_inline",
+    "attached3_longer_than_inline", "attached4_longer_than_inline"};
+  irs::MemoryDirectory dir;
+  {
+    auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
+    {
+      auto seg = writer->GetBatch();
+      for (const auto value : kStrings) {
+        auto doc = seg.Insert();
+        tests::StringField field{"doc_string", std::string{value}};
+        field.id = kDocStringId;
+        tests::InsertField(doc, field);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kDocStringId, doc.DocId(),
+                                 field);
+      }
+      seg.Commit();
+      writer->RefreshCommit();
+    }
+    {
+      auto seg = writer->GetBatch();
+      for (size_t i = 0; i < kTexts.size(); ++i) {
+        auto doc = seg.Insert();
+        tests::StringField field{"doc_text", std::string{kTexts[i]}};
+        field.id = kDocTextId;
+        tests::InsertField(doc, field);
+        irs::tests::StoreFieldAt(*doc.GetColWriter(), kDocTextId, doc.DocId(),
+                                 field);
+      }
+      seg.Commit();
+      writer->RefreshCommit();
+    }
+  }
+  auto reader = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(2, reader.size());
+  const auto impl = [&](size_t i) {
+    return irs::utils::downCast<irs::SegmentReader>(reader[i]).GetImpl();
+  };
+  auto base = impl(0);
+  auto attached = impl(1);
+  if (!base->Column(kDocStringId)) {
+    std::swap(base, attached);
+  }
+  ASSERT_EQ(nullptr, base->Column(kDocTextId));
+  ASSERT_EQ(nullptr, base->field(kDocTextId));
+  ASSERT_EQ(nullptr, attached->Column(kDocStringId));
+
+  const auto values = [](const irs::SubReader& segment, irs::field_id id) {
+    std::vector<std::string> out(segment.docs_count());
+    const auto* column = segment.Column(id);
+    EXPECT_NE(nullptr, column);
+    if (!column) {
+      return out;
+    }
+    EXPECT_TRUE(irs::tests::VisitBlobColumn(
+      *segment.GetColReader(), *column,
+      [&](irs::doc_id_t doc, irs::bytes_view payload) {
+        const auto* p = payload.data();
+        const auto len = irs::vread<uint32_t>(p);
+        out[doc - irs::doc_limits::min()] =
+          std::string{reinterpret_cast<const char*>(p), len};
+        return true;
+      }));
+    return out;
+  };
+  const auto ids = [](const irs::SubReader& segment) {
+    return std::vector<irs::field_id>{segment.field_ids().begin(),
+                                      segment.field_ids().end()};
+  };
+  const std::vector<irs::field_id> expected_ids{
+    std::min(kDocStringId, kDocTextId), std::max(kDocStringId, kDocTextId)};
+
+  const std::array attachments{attached};
+  const auto composed = base->WithAttachments(attachments);
+  ASSERT_EQ(4, composed->docs_count());
+  EXPECT_EQ(expected_ids, ids(*composed));
+  ASSERT_NE(nullptr, composed->field(kDocStringId));
+  ASSERT_NE(nullptr, composed->field(kDocTextId));
+  EXPECT_EQ(base->field(kDocStringId), composed->field(kDocStringId));
+  EXPECT_EQ(attached->field(kDocTextId), composed->field(kDocTextId));
+  EXPECT_EQ(4, composed->field(kDocTextId)->docs_count());
+  EXPECT_EQ((std::vector<std::string>{kStrings.begin(), kStrings.end()}),
+            values(*composed, kDocStringId));
+  EXPECT_EQ((std::vector<std::string>{kTexts.begin(), kTexts.end()}),
+            values(*composed, kDocTextId));
+  EXPECT_EQ(base->Meta().byte_size + attached->Meta().byte_size,
+            composed->Meta().byte_size);
+
+  irs::DocumentMaskBuilder deleted;
+  deleted.AddRange(2, 3);
+  const auto masked = composed->WithDocsMask(
+    std::make_shared<const irs::DocumentMask>(std::move(deleted).Finish()));
+  EXPECT_EQ(3, masked->live_docs_count());
+  EXPECT_EQ(expected_ids, ids(*masked));
+
+  std::vector<irs::SegmentReader> segments;
+  segments.emplace_back(masked);
+  const irs::DirectoryReader source{dir, irs::tests::DefaultReaderOptions(),
+                                    std::move(segments), /*stats=*/false};
+  irs::MemoryDirectory out;
+  irs::SegmentMeta merged_meta;
+  irs::MergeWriter merge{out,
+                         irs::SegmentWriterOptions{
+                           .db = &::irs::DuckDBEngine::Instance().instance()}};
+  merge.Reset(source.begin(), source.end());
+  ASSERT_TRUE(irs::GetReady(merge.Flush(merged_meta)));
+  const auto merged = irs::SegmentReaderImpl::Open(
+    out, merged_meta,
+    irs::IndexReaderOptions{.db = &::irs::DuckDBEngine::Instance().instance()});
+  ASSERT_EQ(3, merged->docs_count());
+  EXPECT_EQ(expected_ids, ids(*merged));
+  EXPECT_EQ(3, merged->field(kDocTextId)->docs_count());
+  EXPECT_EQ((std::vector<std::string>{"base1", "base3", "base4"}),
+            values(*merged, kDocStringId));
+  EXPECT_EQ((std::vector<std::string>{"attached1_longer_than_inline",
+                                      "attached3_longer_than_inline",
+                                      "attached4_longer_than_inline"}),
+            values(*merged, kDocTextId));
+}
+
 INSTANTIATE_TEST_SUITE_P(merge_writer_test, MergeWriterTestCase,
                          ::testing::Combine(::testing::Values(
                            &tests::Directory<&tests::MemoryDirectory>)),

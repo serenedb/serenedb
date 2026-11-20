@@ -22,6 +22,7 @@
 
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <memory>
 #include <vector>
 
 #include "iresearch/formats/column/internal/block_manager.hpp"
@@ -51,6 +52,8 @@ class ReadContext final : public BlockManager,
   ReadContext& operator=(ReadContext&&) = delete;
 
   void Reset(const ColReader& reader);
+
+  ReadContext& For(const ColReader* file);
 
   IndexInput& In() noexcept { return *_in; }
   const IndexInput& In() const noexcept { return *_in; }
@@ -92,9 +95,16 @@ class ReadContext final : public BlockManager,
   void ResetMapping();
   bool Maps(uint64_t offset, uint64_t size) const noexcept;
 
+  struct FileContext {
+    const ColReader* file = nullptr;
+    std::unique_ptr<ReadContext> ctx;
+  };
+
   IndexInput::ptr _in;
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
+  const ColReader* _file = nullptr;
+  std::vector<FileContext> _files;
   bool _random_access = false;
   size_t _live_handles = 0;
 };

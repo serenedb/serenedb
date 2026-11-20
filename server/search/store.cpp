@@ -249,7 +249,7 @@ bool Store::CloseFiles() {
   irs::containers::FlatHashSet<std::string> live;
   for (const auto& unit : head->units) {
     if (!unit->piece) {
-      for (auto& file : irs::SegmentFiles(unit->meta.name, unit->meta.kinds)) {
+      for (auto& file : irs::SegmentFiles(unit->meta)) {
         live.insert(std::move(file));
       }
     }
@@ -674,8 +674,10 @@ catalog::RecordBuffer Store::SnapshotRecord(const TableState& state) const {
     const auto deleted =
       unit->deleted && !unit->deleted->Empty() ? unit->deleted : nullptr;
     if (!unit->piece) {
-      delta.add.push_back(
-        {.id = unit->id, .kinds = unit->meta.kinds, .rows = unit->docs});
+      delta.add.push_back({.id = unit->id,
+                           .kinds = unit->meta.kinds,
+                           .rows = unit->docs,
+                           .attachments = unit->meta.attachments});
       if (deleted || !unit->patches.empty()) {
         delta.segments.push_back(
           {.unit = unit->id, .deleted = deleted, .patches = unit->patches});
@@ -1073,6 +1075,52 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
   return published;
 }
 
+OwnSegment Store::JoinSegments(
+  std::span<const irs::IndexWriter::FlushedSegment* const> parts) {
+  SDB_ASSERT(!parts.empty());
+  if (parts.size() == 1) {
+    return {.meta = parts.front()->meta, .reader = parts.front()->reader};
+  }
+  std::vector<irs::SegmentReader> readers;
+  readers.reserve(parts.size());
+  for (const auto* part : parts) {
+    readers.emplace_back(part->reader);
+  }
+  const auto field_options = CompactionOptions();
+  auto joined = irs::GetBlocking(_writer->WriteAsync(
+    irs::DirectoryReader{*_dir, ReaderOptions(), std::move(readers),
+                         /*stats=*/false},
+    _writer->NextSegmentId(), field_options.get(), [] { return true; },
+    &AnnBuildEnv()));
+  SDB_ENSURE(joined.reader, "table ", _id, ": joining ", parts.size(),
+             " parts of an attachment wrote nothing");
+  return {.meta = std::move(joined.meta), .reader = std::move(joined.reader)};
+}
+
+std::shared_ptr<const TableState> Store::AttachSegments(
+  std::span<const Table::Attachment> attachments) {
+  SDB_ASSERT(_table && !_read_only);
+  SyncSegments();
+  std::shared_ptr<const TableState> published;
+  catalog::Transactions::Get().CommitStorage(
+    _table->CommitMutex(),
+    [&] {
+      std::optional<catalog::RecordBuffer> record;
+      const auto delta = _table->PrepareAttach(attachments);
+      if (!_in_memory && !OwnerDropped() && !Empty(delta)) {
+        record = catalog::SearchRecord(_db_id, _id, delta);
+      }
+      return record;
+    },
+    [&](Tick tick) {
+      published = _table->Attach(tick, attachments);
+      _storage_tick.store(tick, std::memory_order_release);
+      QueueReleaseCleanup(shared_from_this(), tick);
+    });
+  _table->Rewritten(published->tick);
+  return published;
+}
+
 void Store::AdvanceVersion(duckdb::ClientContext& context) {
   absl::MutexLockMaybe commits{_table ? &_table->CommitMutex() : nullptr};
   const auto before = _version.fetch_add(1);
@@ -1457,7 +1505,8 @@ void Store::ScheduleRecovery(duckdb::ClientContext& context,
   for (auto& [id, segment] : _replay.Segments()) {
     executor.ScheduleTask(
       duckdb::make_uniq<RecoveryTask>(executor, [this, id, &segment] {
-        segment.opened = _table->OpenSegment(id, segment.kinds, segment.rows);
+        segment.opened = _table->OpenSegment(id, segment.kinds, segment.rows,
+                                             segment.attachments);
       }));
   }
   for (auto& piece : _replay.Cut()) {

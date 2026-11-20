@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -221,9 +223,14 @@ Root::ptr MakeNestedPrunedConjunction(
       return {};
     }
   }
-  const auto* const doc = irs::detail::DocOf(
-    irs::detail::FieldOf(clauses.front().terms.front(), nullptr));
-  SDB_ASSERT(doc != nullptr);
+  const auto* const doc =
+    irs::detail::SharedDoc(clauses.front().terms, nullptr);
+  if (doc == nullptr || absl::c_any_of(clauses, [&](const auto& clause) {
+        return !clause.terms.empty() &&
+               irs::detail::SharedDoc(clause.terms, nullptr) != doc;
+      })) {
+    return {};
+  }
   const bool posting_lead = clauses.front().terms.size() == 1;
   const auto size = clauses.size();
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {

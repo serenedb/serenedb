@@ -251,6 +251,16 @@ void WriteTableDelta(duckdb::BinarySerializer& object,
         segment.WriteProperty<uint64_t>(100, "segment", added.id);
         segment.WriteProperty<uint8_t>(101, "kinds", added.kinds);
         segment.WriteProperty<uint32_t>(102, "rows", added.rows);
+        segment.WriteOptionalList(
+          103, "attachments", added.attachments.size(),
+          [&](duckdb::BinarySerializer::List& files, duckdb::idx_t f) {
+            files.WriteObject([&](duckdb::BinarySerializer& attachment) {
+              attachment.WriteProperty<uint64_t>(100, "attachment",
+                                                 added.attachments[f].id);
+              attachment.WriteProperty<uint8_t>(101, "kinds",
+                                                added.attachments[f].kinds);
+            });
+          });
       });
     });
   object.WriteOptionalList(
@@ -266,6 +276,17 @@ void WriteTableDelta(duckdb::BinarySerializer& object,
     delta.manifest->Write(object);
     object.OnPropertyEnd();
   }
+  object.WriteOptionalList(
+    107, "attach", delta.attach.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      const auto& attached = delta.attach[i];
+      list.WriteObject([&](duckdb::BinarySerializer& attachment) {
+        attachment.WriteProperty<uint64_t>(100, "segment", attached.segment);
+        attachment.WriteProperty<uint64_t>(101, "attachment",
+                                           attached.files.id);
+        attachment.WriteProperty<uint8_t>(102, "kinds", attached.files.kinds);
+      });
+    });
 }
 
 void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
@@ -288,6 +309,15 @@ void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
         added.id = segment.ReadProperty<uint64_t>(100, "segment");
         added.kinds = segment.ReadProperty<uint8_t>(101, "kinds");
         added.rows = segment.ReadProperty<uint32_t>(102, "rows");
+        segment.ReadOptionalList(
+          103, "attachments",
+          [&](duckdb::BinaryDeserializer::List& files, duckdb::idx_t) {
+            files.ReadObject([&](duckdb::BinaryDeserializer& attachment) {
+              auto& file = added.attachments.emplace_back();
+              file.id = attachment.ReadProperty<uint64_t>(100, "attachment");
+              file.kinds = attachment.ReadProperty<uint8_t>(101, "kinds");
+            });
+          });
         if (replay) {
           replay->Add(added);
         }
@@ -353,6 +383,18 @@ void ReplayTableDelta(duckdb::ClientContext& context, TableReplay* replay,
     }
   }
   object.OnOptionalPropertyEnd(has_manifest);
+  object.ReadOptionalList(
+    107, "attach", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& attachment) {
+        const auto segment = attachment.ReadProperty<uint64_t>(100, "segment");
+        irs::SegmentAttachment files;
+        files.id = attachment.ReadProperty<uint64_t>(101, "attachment");
+        files.kinds = attachment.ReadProperty<uint8_t>(102, "kinds");
+        if (replay) {
+          replay->Attach(segment, files);
+        }
+      });
+    });
 }
 
 }  // namespace sdb::search

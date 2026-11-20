@@ -186,7 +186,7 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
         (!groups.should_filters.empty() && groups.should_fills == nullptr)) {
       return {};
     }
-    const auto* const doc = DocOf(FieldOf(groups.should.front(), nullptr));
+    const auto* const doc = SegmentDoc(segment);
     if (doc == nullptr ||
         !TakeBitset<Result>(groups.should, *doc, docs_count)) {
       return {};

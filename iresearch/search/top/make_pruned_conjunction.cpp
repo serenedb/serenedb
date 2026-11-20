@@ -50,9 +50,10 @@ Root::ptr MakePrunedConjunction(
   if (terms.size() < 2 || uniformity != irs::detail::Terms::Bounded) {
     return {};
   }
-  const auto* const doc =
-    irs::detail::DocOf(irs::detail::FieldOf(terms.front(), nullptr));
-  SDB_ASSERT(doc != nullptr);
+  const auto* const doc = irs::detail::SharedDoc(terms, nullptr);
+  if (doc == nullptr) {
+    return {};
+  }
   const auto size = terms.size();
   return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
     using Lead = PostingPrunedLead<Input>;

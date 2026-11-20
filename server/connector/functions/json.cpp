@@ -72,14 +72,6 @@ enum class JsonOutputType {
   TEXT,
 };
 
-simdjson::padded_string_view PadJson(std::string_view json,
-                                     std::string& buffer) {
-  buffer.assign(json);
-  buffer.append(simdjson::SIMDJSON_PADDING, '\0');
-  return simdjson::padded_string_view{buffer.data(), json.size(),
-                                      buffer.size()};
-}
-
 template<typename T>
 T Unwrap(simdjson::simdjson_result<T>&& result) {
   T value;
@@ -156,7 +148,7 @@ class JsonParser {
     _input = json;
     _commas.clear();
     _retried = false;
-    _padded_input = PadJson(json, _buffer);
+    _padded_input = pg::PadJson(json, _buffer);
   }
 
   void Retry() {
@@ -425,7 +417,7 @@ void JsonInFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view sv{input.GetData(), input.GetSize()};
       simdjson::ondemand::document doc;
-      auto ec = parser.iterate(PadJson(sv, buffer)).get(doc);
+      auto ec = parser.iterate(pg::PadJson(sv, buffer)).get(doc);
       if (ec != simdjson::SUCCESS || !ValidateJson(doc)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                         ERR_MSG("Invalid input syntax for type json: ", sv));
@@ -632,7 +624,7 @@ void JsonTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view sv(input.GetData(), input.GetSize());
-      auto doc = parser.iterate(PadJson(sv, buffer));
+      auto doc = parser.iterate(pg::PadJson(sv, buffer));
       auto tp = doc.type();
       std::string_view token;
       if (!tp.error() &&

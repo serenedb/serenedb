@@ -210,19 +210,12 @@ JsonInput::JsonInput() {
 }
 
 simdjson::error_code JsonInput::Check(std::string_view text) {
-  if (const auto size = text.size() + simdjson::SIMDJSON_PADDING;
-      _buffer.size() < size) {
-    _buffer.resize(size);
-  }
-  std::memcpy(_buffer.data(), text.data(), text.size());
+  const auto padded = PadJson(text, _buffer);
   ondemand::document document;
-  if (const auto error = _parser
-                           .iterate(simdjson::padded_string_view{
-                             _buffer.data(), text.size(), _buffer.size()})
-                           .get(document)) {
+  if (const auto error = _parser.iterate(padded).get(document)) {
     return error;
   }
-  return CheckDocument(document, {_buffer.data(), text.size()});
+  return CheckDocument(document, padded);
 }
 
 void ThrowInvalidJson(simdjson::error_code error) {

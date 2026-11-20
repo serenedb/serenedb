@@ -267,7 +267,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       ERR_MSG("ts_offsets() requires an inverted index scan in the same "
               "sub-query"));
   }
-  if (ss.score.explain && !ss.score.text && !ss.score.vector) {
+  if (state->ScanExplain() && !ss.score.text && !ss.score.vector) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("ts_explain() requires a scorer function on the same index in "

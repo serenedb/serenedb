@@ -756,7 +756,6 @@ duckdb::unique_ptr<duckdb::Expression> PushdownExplainCall(
   if (!scan) {
     return nullptr;
   }
-  scan->Bind().score.explain = true;
   auto ref =
     MakeVirtualRef(index, *scan, anchor->Binding().table_index,
                    connector::kInvertedIndexExplainId,

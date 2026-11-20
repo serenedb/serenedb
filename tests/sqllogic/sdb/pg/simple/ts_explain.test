@@ -399,7 +399,7 @@ QUERY PLAN
 │ │ Field: body(string) │                  │
 │ │ Value: fox          │                  │
 │ ╰─────────────────────╯                  │
-│ Score: bm25(k1=1.2, b=0.75), explained   │
+│ Score: bm25(k1=1.2, b=0.75)              │
 │ Top: 1                                   │
 │ Projections: id,                         │
 │              sdb_inverted_index_explain  │
@@ -433,8 +433,7 @@ QUERY PLAN
 ╭─ IRESEARCH_SCAN ────┴────────────────────╮
 │ Index: explain_vec                       │
 │ Lookup: search                           │
-│ Score:                                   │
-│ l2_distance(emb, FLOAT[2]), explained    │
+│ Score: l2_distance(emb, FLOAT[2])        │
 │ Top: 2                                   │
 │ Projections: id,                         │
 │              sdb_inverted_index_explain  │

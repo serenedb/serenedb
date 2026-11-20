@@ -149,7 +149,7 @@ class PgTextCopyBindData final : public CopyToFileBindData {
   std::vector<sdb::pg::VarFormat> _formats;
 };
 
-template<duckdb::CopyTextFormat Format>
+template<duckdb::CopyFormat Format>
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput& input,
   const duckdb::vector<duckdb::Identifier>& names,
@@ -168,7 +168,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
     sql_types, std::move(options), input.query_names, std::move(formats));
 }
 
-template<duckdb::CopyTextFormat Format>
+template<duckdb::CopyFormat Format>
 duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> SelectCopyTo(
   duckdb::CopyToSelectInput& input) {
   const auto options =
@@ -177,7 +177,7 @@ duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> SelectCopyTo(
                       options.rendering);
 }
 
-template<duckdb::CopyTextFormat Format>
+template<duckdb::CopyFormat Format>
 duckdb::unique_ptr<duckdb::FunctionData> BindCopyFrom(
   duckdb::ClientContext& context, duckdb::CopyFromFunctionBindInput& input,
   duckdb::vector<duckdb::Identifier>& expected_names,
@@ -186,7 +186,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindCopyFrom(
                                       expected_types, Format);
 }
 
-template<duckdb::CopyTextFormat Format>
+template<duckdb::CopyFormat Format>
 duckdb::CopyFunction MakeCopyFunction(const char* name) {
   duckdb::CopyFunction function{name};
   function.extension = name;
@@ -202,7 +202,7 @@ duckdb::CopyFunction MakeCopyFunction(const char* name) {
 
 void SetCopyFormat(sdb::pg::SerializationContext& context,
                    const duckdb::CopyFormatOptions& options, size_t columns) {
-  if (options.format == duckdb::CopyTextFormat::CSV) {
+  if (options.format == duckdb::CopyFormat::CSV) {
     sdb::pg::SetCopyCsv(context, options.delimiter, options.quote,
                         options.escape, options.null_str, options.new_line,
                         columns == 1);
@@ -214,7 +214,7 @@ void SetCopyFormat(sdb::pg::SerializationContext& context,
 std::vector<sdb::pg::VarFormat> CopyFieldFormats(
   const duckdb::CopyFormatOptions& options,
   std::span<const std::string> names) {
-  if (options.format == duckdb::CopyTextFormat::TEXT) {
+  if (options.format == duckdb::CopyFormat::TEXT) {
     return std::vector<sdb::pg::VarFormat>(names.size(),
                                            sdb::pg::VarFormat::CopyText);
   }
@@ -233,7 +233,7 @@ std::vector<sdb::pg::VarFormat> CopyFieldFormats(
 void SerializeCopyHeader(sdb::pg::SerializationContext& context,
                          const duckdb::CopyFormatOptions& options,
                          std::span<const duckdb::Identifier> names) {
-  if (options.format == duckdb::CopyTextFormat::CSV) {
+  if (options.format == duckdb::CopyFormat::CSV) {
     sdb::pg::SerializeCopyCsvHeader(context, names);
   } else {
     sdb::pg::SerializeCopyTextHeader(context, names);
@@ -251,13 +251,12 @@ std::vector<std::string> CopyNames(std::span<const duckdb::Identifier> names) {
 
 void RegisterPgTextCopyFunctions(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
-  loader.RegisterFunction(
-    MakeCopyFunction<duckdb::CopyTextFormat::TEXT>("text"));
+  loader.RegisterFunction(MakeCopyFunction<duckdb::CopyFormat::TEXT>("text"));
 
   auto& catalog = duckdb::Catalog::GetSystemCatalog(db);
   auto transaction = duckdb::CatalogTransaction::GetSystemTransaction(db);
   duckdb::CreateCopyFunctionInfo info{
-    MakeCopyFunction<duckdb::CopyTextFormat::CSV>("csv")};
+    MakeCopyFunction<duckdb::CopyFormat::CSV>("csv")};
   info.on_conflict = duckdb::OnCreateConflict::REPLACE_ON_CONFLICT;
   info.SetQualifiedName(duckdb::QualifiedName(info.GetQualifiedName().Catalog(),
                                               *catalog.GetDefaultSchema(),

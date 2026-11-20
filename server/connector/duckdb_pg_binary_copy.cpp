@@ -21,27 +21,23 @@
 #include "connector/duckdb_pg_binary_copy.h"
 
 #include <absl/base/internal/endian.h>
-#include <absl/strings/ascii.h>
 
 #include <array>
 #include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/formats/copy_options.hpp>
 #include <duckdb/function/copy_function.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
-#include <iresearch/utils/pg/errcodes.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "connector/copy_from_batches.h"
-#include "connector/copy_options.h"
 #include "connector/copy_to_file.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "pg/connection_context.h"
@@ -58,45 +54,11 @@ constexpr std::array<uint8_t, 19> kPgCopyHeader{
   'P',  'G', 'C', 'O', 'P', 'Y', '\n', 0xFF, '\r', '\n',
   0x00, 0,   0,   0,   0,   0,   0,    0,    0};
 
-[[noreturn]] void RejectBinaryCopyOption(std::string_view key, bool from) {
-  if (key == "delimiter" || key == "delim" || key == "sep" ||
-      key == "separator") {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                    ERR_MSG("cannot specify DELIMITER in BINARY mode"));
-  }
-  if (key == "null" || key == "nullstr") {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                    ERR_MSG("cannot specify NULL in BINARY mode"));
-  }
-  if (key == "header") {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("cannot specify HEADER in BINARY mode"));
-  }
-  if (key == "ignore_errors" || key == "on_error") {
-    if (!from) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));
-    }
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                    ERR_MSG("only ON_ERROR STOP is allowed in BINARY mode"));
-  }
-  if (key == "rejects_limit" || key == "reject_limit") {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE"));
-  }
-  if (key == "freeze") {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                    ERR_MSG("COPY FREEZE cannot be used with COPY TO"));
-  }
-  if (key == "quote" || key == "escape" || key == "force_quote" ||
-      key == "force_not_null" || key == "force_null") {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("COPY ", absl::AsciiStrToUpper(key), " requires CSV mode"));
-  }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
-                  ERR_MSG("COPY option \"", key, "\" not recognized"));
+void CheckBinaryOptions(const duckdb::CopyInfo& info, bool from) {
+  duckdb::CheckCopyFormatOptions(
+    duckdb::ParseCopyFormatOptions(duckdb::CopyFormat::BINARY, from,
+                                   info.options),
+    from);
 }
 
 sdb::pg::SerializationContext BinaryCopyContext(
@@ -163,7 +125,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindCopyTo(
   duckdb::ClientContext&, duckdb::CopyFunctionBindInput& input,
   const duckdb::vector<duckdb::Identifier>&,
   const duckdb::vector<duckdb::LogicalType>& sql_types) {
-  CheckBinaryCopyOptions(input.info, false);
+  CheckBinaryOptions(input.info, false);
   return duckdb::make_uniq<PgBinaryCopyBindData>(sql_types);
 }
 
@@ -186,7 +148,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindFrom(
   duckdb::ClientContext& context, duckdb::CopyFromFunctionBindInput& input,
   duckdb::vector<duckdb::Identifier>& expected_names,
   duckdb::vector<duckdb::LogicalType>& expected_types) {
-  CheckBinaryCopyOptions(input.info, true);
+  CheckBinaryOptions(input.info, true);
   auto result = duckdb::make_uniq<PgBinaryCopyFromBindData>(
     input.info.GetQualifiedName().Name().GetIdentifierName(), expected_types,
     CopyNames(expected_names), input.info.file_path);
@@ -208,23 +170,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
 }
 
 }  // namespace
-
-void CheckBinaryCopyOptions(const duckdb::CopyInfo& info, bool from) {
-  const auto check = [&](const duckdb::Identifier& key,
-                         const duckdb::vector<duckdb::Value>& values) {
-    if (key == "log_verbosity") {
-      duckdb::ParseCopyLogVerbosity(values);
-      return;
-    }
-    if (key == "freeze" && from) {
-      return;
-    }
-    RejectBinaryCopyOption(key.GetIdentifierName(), from);
-  };
-  for (const auto& [key, values] : info.options) {
-    check(key, values);
-  }
-}
 
 void RegisterPgBinaryCopyFunction(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");

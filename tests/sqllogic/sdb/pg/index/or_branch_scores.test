@@ -1,0 +1,83 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY obs_d AS split_text() WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE obs (id INT PRIMARY KEY, body TEXT, tag TEXT);
+
+
+statement ok
+CREATE INDEX obs_idx ON obs USING inverted (id, body obs_d, tag obs_d);
+
+
+statement ok
+INSERT INTO obs VALUES (1, 'dot zzz', 'dog zzz'), (2, 'zzz', 'cat'), (3, 'dot', 'dog'), (4, 'fig', 'fig');
+
+
+query
+SELECT id, BM25(obs_idx.tableoid) AS score FROM obs_idx
+WHERE body @@ 'zzz'::tsquery::score('constant(1)')
+   OR (tag @@ 'dog'::tsquery::score('constant(1)') AND body @@ 'dot'::tsquery::score('constant(1)'))
+ORDER BY id;
+----
+id	score
+1	3
+2	1
+3	2
+
+
+query
+EXPLAIN SELECT id, BM25(obs_idx.tableoid) AS score FROM obs_idx
+WHERE body @@ 'zzz'::tsquery::score('constant(1)')
+   OR (tag @@ 'dog'::tsquery::score('constant(1)') AND body @@ 'dot'::tsquery::score('constant(1)'));
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Index: obs_idx                                                                                                      │
+│ Lookup: search                                                                                                      │
+│ Index Filter:                                                                                                       │
+│ ╭─ Or ──────────────────────────────╮                                                                               │
+│ ╰─────────────────┬─────────────────╯                                                                               │
+│                   ├──────────────────────────────────────╮                                                          │
+│ ╭─ Terms ─────────┴─────────────────╮  ╭─ And ───────────┴─────────────────╮                                        │
+│ │ Field: body(string)               │  ╰─────────────────┬─────────────────╯                                        │
+│ │ Values: 'zzz' [constant(value=1)] │                    ├──────────────────────────────────────╮                   │
+│ ╰───────────────────────────────────╯  ╭─ Terms ─────────┴─────────────────╮  ╭─ Terms ─────────┴─────────────────╮ │
+│                                        │ Field: body(string)               │  │ Field: tag(string)                │ │
+│                                        │ Values: 'dot' [constant(value=1)] │  │ Values: 'dog' [constant(value=1)] │ │
+│                                        ╰───────────────────────────────────╯  ╰───────────────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                                                                                         │
+│ Projections: id, sdb_inverted_index_score                                                                           │
+│ ~1 row                                                                                                              │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT id, BM25(obs_idx.tableoid) AS score FROM obs_idx
+WHERE (body @@ 'dot'::tsquery::score('constant(1)') AND tag @@ 'dog'::tsquery::score('constant(1)'))
+   OR (body @@ 'dot'::tsquery::score('constant(1)') AND tag @@ 'zzz'::tsquery::score('constant(1)'))
+ORDER BY id;
+----
+id	score
+1	4
+3	2
+
+
+query
+SELECT id, BM25(obs_idx.tableoid) AS score FROM obs_idx
+WHERE (id < 3 AND body @@ 'dot'::tsquery::score('constant(1)'))
+   OR (id < 3 AND tag @@ 'zzz'::tsquery::score('constant(1)'))
+ORDER BY id;
+----
+id	score
+1	4
+
+
+query
+SELECT id FROM obs_idx
+WHERE (body @@ 'dot' AND tag @@ 'dog') OR (body @@ 'dot' AND tag @@ 'zzz')
+ORDER BY id;
+----
+id
+1
+3

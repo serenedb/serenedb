@@ -50,6 +50,7 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_query_codec.h"
+#include "connector/search_filter_builder.hpp"
 
 namespace sdb::connector {
 namespace {
@@ -188,13 +189,17 @@ TSQueryCastData* MinMatchCastData(duckdb::BoundFunctionExpression& cast) {
   return data ? &data->Cast<TSQueryCastData>() : nullptr;
 }
 
-bool MinMatchRewriteBarrier(const duckdb::Expression& parent,
-                            bool parent_frozen) {
-  if (SqlMinMatchOperand(parent)) {
+bool SearchRewriteBarrier(const duckdb::Expression& expr,
+                          duckdb::optional_ptr<const duckdb::Expression> parent,
+                          bool parent_frozen) {
+  if (parent &&
+      (SqlMinMatchOperand(*parent) ||
+       (parent_frozen && duckdb::BoundCastExpression::IsCast(*parent) &&
+        HasGroupModifier(parent->GetReturnType())))) {
     return true;
   }
-  return parent_frozen && duckdb::BoundCastExpression::IsCast(parent) &&
-         HasGroupModifier(parent.GetReturnType());
+  return expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_OR &&
+         ContainsIndexOnlyPredicate(expr);
 }
 
 [[noreturn]] bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&,
@@ -1256,7 +1261,7 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
 void RegisterTSQueryConstantFolding(duckdb::ExtensionLoader& loader) {
   duckdb::OptimizerExtension fold;
   fold.pre_optimize_function = FoldTSQueryConstants;
-  fold.rewrite_barrier = MinMatchRewriteBarrier;
+  fold.rewrite_barrier = SearchRewriteBarrier;
   duckdb::OptimizerExtension::Register(loader.GetDatabaseInstance().config,
                                        std::move(fold));
 }

@@ -110,10 +110,11 @@ class SegmentReaderImpl final : public SubReader {
     if (_pieces) {
       return _pieces->fields(id);
     }
-    if (_fields) {
-      const auto it = _fields->by_id.find(id);
-      return it == _fields->by_id.end() ? std::span<const TermReader* const>{}
-                                        : it->second->fields(id);
+    if (_attached_fields) {
+      const auto it = _attached_fields->by_id.find(id);
+      if (it != _attached_fields->by_id.end()) {
+        return it->second->fields(id);
+      }
     }
     if (!_field_reader) {
       return {};
@@ -125,8 +126,8 @@ class SegmentReaderImpl final : public SubReader {
     if (_pieces) {
       return _pieces->field_ids();
     }
-    if (_fields) {
-      return _fields->ids;
+    if (_attached_fields) {
+      return _attached_fields->ids;
     }
     if (!_field_reader) {
       return {};
@@ -155,7 +156,7 @@ class SegmentReaderImpl final : public SubReader {
     }
   };
 
-  struct Fields {
+  struct AttachedFields {
     std::vector<std::shared_ptr<term_dict::FieldReader>> readers;
     std::vector<field_id> ids;
     irs::containers::FlatHashMap<field_id, const term_dict::FieldReader*> by_id;
@@ -171,7 +172,7 @@ class SegmentReaderImpl final : public SubReader {
   std::shared_ptr<ColumnData> _data;
   std::shared_ptr<ColumnData> _root;
   std::shared_ptr<term_dict::FieldReader> _field_reader;
-  std::shared_ptr<const Fields> _fields;
+  std::shared_ptr<const AttachedFields> _attached_fields;
   std::shared_ptr<const PieceFields> _pieces;
 };
 

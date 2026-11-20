@@ -174,7 +174,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
   reader->_patched_docs = _patched_docs;
   reader->_patches = _patches;
   reader->_field_reader = _field_reader;
-  reader->_fields = _fields;
+  reader->_attached_fields = _attached_fields;
   reader->_pieces = _pieces;
   reader->_data = _data;
   reader->_root = _root;
@@ -190,7 +190,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
   reader->_refs = _refs;
   reader->_id = _id;
   reader->_field_reader = _field_reader;
-  reader->_fields = _fields;
+  reader->_attached_fields = _attached_fields;
   reader->_pieces = _pieces;
   reader->_root = _root;
   const auto& root = _root;
@@ -248,23 +248,23 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithAttachments(
   }
   root->col_reader = std::make_unique<ColReader>(*files->col_reader, columns);
 
-  auto fields = std::make_shared<Fields>();
-  const auto add_fields =
-    [&](const std::shared_ptr<term_dict::FieldReader>& reader) {
-      if (!reader || reader->field_ids().empty()) {
-        return;
-      }
-      fields->readers.push_back(reader);
-      for (const auto id : reader->field_ids()) {
-        fields->by_id.insert_or_assign(id, reader.get());
-      }
-    };
-  add_fields(_field_reader);
+  auto fields = std::make_shared<AttachedFields>();
   for (const auto& attachment : root->attached) {
-    add_fields(attachment->_field_reader);
+    const auto& attached = attachment->_field_reader;
+    if (!attached || attached->field_ids().empty()) {
+      continue;
+    }
+    fields->readers.push_back(attached);
+    for (const auto id : attached->field_ids()) {
+      SDB_ASSERT(!_field_reader || _field_reader->fields(id).empty());
+      const bool ok = fields->by_id.emplace(id, attached.get()).second;
+      SDB_ASSERT(ok);
+    }
   }
-  fields->ids.reserve(fields->by_id.size());
-  for (const auto& [id, reader] : fields->by_id) {
+  if (_field_reader) {
+    absl::c_copy(_field_reader->field_ids(), std::back_inserter(fields->ids));
+  }
+  for (const auto& [id, attached] : fields->by_id) {
     fields->ids.push_back(id);
   }
   absl::c_sort(fields->ids);
@@ -276,7 +276,9 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithAttachments(
   }
   reader->_id = _id;
   reader->_field_reader = _field_reader;
-  reader->_fields = std::move(fields);
+  if (!fields->readers.empty()) {
+    reader->_attached_fields = std::move(fields);
+  }
   reader->_root = root;
   reader->_data = std::move(root);
   if (_patches.empty()) {
@@ -286,14 +288,13 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithAttachments(
 }
 
 uint64_t SegmentReaderImpl::CountMappedMemory() const {
-  if (_fields) {
-    uint64_t bytes = 0;
-    for (const auto& reader : _fields->readers) {
+  uint64_t bytes = _field_reader ? _field_reader->CountMappedMemory() : 0;
+  if (_attached_fields) {
+    for (const auto& reader : _attached_fields->readers) {
       bytes += reader->CountMappedMemory();
     }
-    return bytes;
   }
-  return _field_reader ? _field_reader->CountMappedMemory() : 0;
+  return bytes;
 }
 
 NormReader::ptr SegmentReaderImpl::norms(field_id field) const {

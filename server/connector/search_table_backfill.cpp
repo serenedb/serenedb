@@ -96,7 +96,7 @@ struct ColumnPlan {
   std::vector<ColumnId> carried;
 };
 
-ColumnPlan AddedReads(const SearchBackfillTarget& target) {
+ColumnPlan NewValueInputs(const SearchBackfillTarget& target) {
   ColumnPlan plan;
   for (const auto& expression : target.added) {
     duckdb::ExpressionIterator::VisitExpression<
@@ -111,7 +111,7 @@ ColumnPlan AddedReads(const SearchBackfillTarget& target) {
 ColumnPlan PlanColumns(const SearchSinkInsertBaseImpl& sink,
                        const catalog::InvertedIndexConfig& config,
                        const SearchBackfillTarget& target) {
-  auto plan = AddedReads(target);
+  auto plan = NewValueInputs(target);
   for (const auto column : target.column_ids) {
     if (!config.AnnFields(column).empty() ||
         config.GetColumnOptions(column).distinct != irs::DistinctStats::None) {
@@ -617,7 +617,7 @@ std::shared_ptr<const search::TableState> AttachGroup(
   auto& shard = *target.shard;
   std::vector<std::unique_ptr<AttachJob>> jobs;
   std::optional<ColumnPlan> indexed;
-  const auto added = AddedReads(target);
+  const auto inputs = NewValueInputs(target);
   const uint64_t threads = duckdb::TaskScheduler::QueryThreads(context);
   const uint64_t row_group = std::max<uint64_t>(1, shard.RowGroupSize());
   for (const auto* segment : group) {
@@ -653,7 +653,7 @@ std::shared_ptr<const search::TableState> AttachGroup(
         indexed->carried.clear();
       }
       InitRowSource(context, target, job.source,
-                    job.index ? &*indexed : &added);
+                    job.index ? &*indexed : &inputs);
     }
   }
   absl::Cleanup abort_jobs = [&] {

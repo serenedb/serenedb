@@ -474,7 +474,7 @@ void SlicePatches(std::span<const irs::FieldPatch> patches, uint64_t first,
 bool Empty(const TableDelta& delta) noexcept {
   return delta.drop.empty() && delta.drop_memory == 0 && delta.add.empty() &&
          delta.rows.empty() && delta.segments.empty() && delta.pieces.empty() &&
-         !delta.manifest && delta.attach.empty();
+         !delta.manifest && delta.add_attachments.empty();
 }
 
 std::shared_ptr<TableUnit> PieceUnit(
@@ -1259,7 +1259,7 @@ TableDelta Table::PrepareAttach(std::span<const Attachment> attachments) const {
   for (const auto& attachment : attachments) {
     const auto* unit = FindUnit(state, attachment.segment);
     if (unit && !unit->piece) {
-      delta.attach.push_back(
+      delta.add_attachments.push_back(
         {.segment = attachment.segment, .files = attachment.files});
     }
   }

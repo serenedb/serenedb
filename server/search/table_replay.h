@@ -64,7 +64,7 @@ class TableReplay {
 
   void Drop(std::span<const uint64_t> segments, uint64_t memory_below);
   void Add(const LoggedSegment& segment);
-  void Attach(uint64_t segment, const irs::SegmentAttachment& files);
+  void AddAttachment(uint64_t segment, const irs::SegmentAttachment& files);
   void Append(duckdb::Catalog& catalog, uint64_t first,
               std::shared_ptr<const std::vector<connector::ColumnId>> columns,
               duckdb::unique_ptr<duckdb::DataChunk> rows);

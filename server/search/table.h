@@ -109,7 +109,7 @@ struct LoggedSegment {
   std::vector<irs::SegmentAttachment> attachments;
 };
 
-struct LoggedAttach {
+struct LoggedAttachment {
   uint64_t segment = 0;
   irs::SegmentAttachment files;
 };
@@ -138,7 +138,7 @@ struct TableDelta {
   std::vector<UnitDelta> segments;
   std::vector<UnitDelta> pieces;
   std::shared_ptr<const FileManifest> manifest;
-  std::vector<LoggedAttach> attach;
+  std::vector<LoggedAttachment> add_attachments;
 };
 
 bool Empty(const TableDelta& delta) noexcept;

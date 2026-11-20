@@ -287,10 +287,11 @@ ColReader::ColReader(const ColReader& base,
   for (const auto* file : attached) {
     SDB_ASSERT(file->_db == _db);
     for (const auto* column : file->_columns) {
-      Shadow(*column);
+      Index(*column);
     }
     for (const auto& [id, norm] : file->_norm_by_id) {
-      _norm_by_id.insert_or_assign(id, norm);
+      const bool ok = _norm_by_id.emplace(id, norm).second;
+      SDB_ASSERT(ok);
     }
   }
 }
@@ -301,16 +302,6 @@ void ColReader::Index(const ColumnReader& column) {
   const bool ok = _by_id.emplace(column.Id(), &column).second;
   SDB_ENSURE(ok, "columns: duplicate column field_id ", column.Id());
   _columns.push_back(&column);
-}
-
-void ColReader::Shadow(const ColumnReader& column) {
-  const auto [it, added] = _by_id.try_emplace(column.Id(), &column);
-  if (added) {
-    _columns.push_back(&column);
-    return;
-  }
-  *absl::c_find(_columns, it->second) = &column;
-  it->second = &column;
 }
 
 const ColumnReader* ColReader::Column(field_id id) const noexcept {

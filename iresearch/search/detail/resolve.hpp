@@ -103,18 +103,14 @@ struct PhraseHandles {
 };
 
 inline const IndexInput* SegmentDoc(const SubReader& segment) {
-  const IndexInput* shared = nullptr;
   for (const auto id : segment.field_ids()) {
     for (const auto* reader : segment.fields(id)) {
       if (const auto* doc = reader->Handles().doc) {
-        if (shared && doc != shared) {
-          return nullptr;
-        }
-        shared = doc;
+        return doc;
       }
     }
   }
-  return shared;
+  return nullptr;
 }
 
 inline bool ResolvePhrase(const TermReader* reader, PhraseHandles& out) {

@@ -6,13 +6,17 @@ WITH (frequency, position, norm);
 
 
 statement ok
-CREATE TABLE sat (id INT, n INT, body TEXT)
+CREATE TABLE sat (id INT, n INT, body TEXT, tag TEXT)
 WITH (compaction_interval = 0, compaction_floor_segment_bytes = 1, compaction_max_segments = 1000, row_group_size = 2048);
 
 
 statement ok
+CREATE INDEX sat_tag ON sat USING inverted (tag);
+
+
+statement ok
 INSERT INTO sat
-SELECT i, i % 10, 'w' || (i % 7) || ' x' || i
+SELECT i, i % 10, 'w' || (i % 7) || ' x' || i, 't' || (i % 3)
 FROM generate_series(1, 3000) g(i);
 
 
@@ -22,7 +26,7 @@ VACUUM (FLUSH_TABLE) sat;
 
 statement ok
 INSERT INTO sat
-SELECT i, i % 10, 'w' || (i % 7) || ' x' || i
+SELECT i, i % 10, 'w' || (i % 7) || ' x' || i, 't' || (i % 3)
 FROM generate_series(3001, 5000) g(i);
 
 
@@ -104,6 +108,17 @@ SELECT count(*) AS hits FROM sat WHERE body @@ 'w3';
 ----
 hits
 707
+
+
+query
+SELECT
+  (SELECT count(*) FROM sat WHERE body @@ to_tsquery('w3 OR w4')) AS any_of,
+  (SELECT count(*) FROM sat WHERE body @@ to_tsquery('w3 AND x3')) AS both,
+  (SELECT count(*) FROM sat WHERE body @@ to_tsquery('w3 AND NOT x3')) AS but_not,
+  (SELECT count(*) FROM sat WHERE body @@ 'w3' AND tag = 't0') AS mixed;
+----
+any_of	both	but_not	mixed
+1414	1	706	236
 
 
 query
@@ -215,6 +230,18 @@ SELECT count(*) AS rows, sum(c) AS c, sum(n) AS n FROM sat;
 ----
 rows	c	n
 4950	207900	24500
+
+
+connection checkpointed
+query
+SELECT
+  (SELECT count(*) FROM sat WHERE body @@ to_tsquery('w3 OR w4')) AS any_of,
+  (SELECT count(*) FROM sat WHERE body @@ to_tsquery('w3 AND x3')) AS both,
+  (SELECT count(*) FROM sat WHERE body @@ to_tsquery('w3 AND NOT x3')) AS but_not,
+  (SELECT count(*) FROM sat WHERE body @@ 'w3' AND tag = 't0') AS mixed;
+----
+any_of	both	but_not	mixed
+1414	1	706	236
 
 
 connection checkpointed

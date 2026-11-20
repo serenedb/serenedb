@@ -27,6 +27,7 @@
 
 #include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace duckdb {
 
@@ -53,7 +54,7 @@ class ReadContext final : public BlockManager,
 
   void Reset(const ColReader& reader);
 
-  ReadContext& For(const ColReader* file);
+  ReadContext& For(const ColReader* owner);
 
   IndexInput& In() noexcept { return *_in; }
   const IndexInput& In() const noexcept { return *_in; }
@@ -95,16 +96,12 @@ class ReadContext final : public BlockManager,
   void ResetMapping();
   bool Maps(uint64_t offset, uint64_t size) const noexcept;
 
-  struct FileContext {
-    const ColReader* file = nullptr;
-    std::unique_ptr<ReadContext> ctx;
-  };
-
   IndexInput::ptr _in;
   duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
-  const ColReader* _file = nullptr;
-  std::vector<FileContext> _files;
+  const ColReader* _owner = nullptr;
+  irs::containers::FlatHashMap<const ColReader*, std::unique_ptr<ReadContext>>
+    _attachments;
   bool _random_access = false;
   size_t _live_handles = 0;
 };

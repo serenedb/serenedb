@@ -92,8 +92,8 @@ class ColReader final {
 
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
-  const ColReader& FileOwner() const noexcept {
-    return _base ? _base->FileOwner() : *this;
+  const ColReader& Owner() const noexcept {
+    return _base ? _base->Owner() : *this;
   }
 
   IndexInput::ptr ReopenIn() const {
@@ -112,7 +112,6 @@ class ColReader final {
 
  private:
   void Index(const ColumnReader& column);
-  void Shadow(const ColumnReader& column);
   void Adopt(ColFooter footer);
 
   duckdb::DatabaseInstance* _db;

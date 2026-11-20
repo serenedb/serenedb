@@ -173,12 +173,12 @@ BackendStatus BackendStatusEntry::Read() const noexcept {
   }
 }
 
-void ProgressSource::BeginQuery(std::string query_text, int64_t start_us,
+void ProgressSource::BeginQuery(std::string_view query_text, int64_t start_us,
                                 bool continues) {
   metrics.Reset();
   const auto previous = status.Read();
   absl::MutexLock lock{&mu};
-  query = std::move(query_text);
+  query = query_text;
   status.Write({
     .state = BackendState::Active,
     .xact_start_us = continues && previous.xact_start_us != 0

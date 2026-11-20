@@ -533,11 +533,17 @@ bool PgWireSession<Kind>::SetupConnection() {
   keep_as_default("session_authorization");
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
 
-  const auto apply = [&](const std::string& name, const std::string& value) {
+  const auto set = [&](const std::string& name, const std::string& value) {
     try {
       _connection_ctx->SetSettingChecked(name, value, false);
     } catch (const duckdb::InternalException&) {
       _connection_ctx->SetSetting(name, value, false);
+    }
+    keep_as_default(name);
+  };
+  const auto apply = [&](const std::string& name, const std::string& value) {
+    try {
+      set(name, value);
     } catch (const std::exception& exception) {
       if (name == "client_encoding") {
         _connection_ctx->AddNotice(
@@ -549,7 +555,6 @@ bool PgWireSession<Kind>::SetupConnection() {
       WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
       return false;
     }
-    keep_as_default(name);
     return true;
   };
   std::vector<StartupSetting> settings;
@@ -571,16 +576,12 @@ bool PgWireSession<Kind>::SetupConnection() {
   _conn->context->RunFunctionInTransaction([&] {
     for (const auto& [name, value] : role_settings) {
       try {
-        _connection_ctx->SetSettingChecked(name, value, false);
-      } catch (const duckdb::InternalException&) {
-        _connection_ctx->SetSetting(name, value, false);
+        set(name, value);
       } catch (const std::exception& exception) {
         auto notice = irs::pg::ToSqlError(exception);
         notice.errcode = ERRCODE_WARNING;
         _connection_ctx->AddNotice(std::move(notice));
-        continue;
       }
-      keep_as_default(name);
     }
     for (const auto& [name, value] : settings) {
       if (!apply(name, value)) {
@@ -1399,7 +1400,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
     co_return {};
   }
-  _connection_ctx->ReportQuery(std::string{query});
+  _connection_ctx->ReportQuery(query);
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> parsed;
   for (duckdb::ParseIterator parser{*_conn->context, query}; parser.Peek();) {
     parsed.push_back(parser.GetStatement());
@@ -2042,7 +2043,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // and bound at Execute via RunCopyFromStdin. Everything else binds the
   // already-parsed statement now, so the common path parses once.
   duckdb::vector<duckdb::idx_t> raw_statement_ends;
-  _connection_ctx->ReportQuery(std::string{query});
+  _connection_ctx->ReportQuery(query);
   auto extracted = _conn->ExtractStatements(query, &raw_statement_ends,
                                             /*wrap_multi=*/false);
   if (raw_statement_ends.size() > 1) {

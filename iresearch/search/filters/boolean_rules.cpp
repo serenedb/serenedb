@@ -781,32 +781,23 @@ size_t DriverRank(const Filter& filter) noexcept {
 }
 
 bool MatchesEachWordOnce(std::span<const TermClause> terms,
-                         std::span<const Filter::ptr> filters) {
-  absl::InlinedVector<bytes_view, 8> prefixes;
-  for (const auto& child : filters) {
-    if (child->type() != Type<ByPrefix>::id()) {
-      return false;
-    }
-    prefixes.emplace_back(
-      irs::utils::downCast<ByPrefix>(*child).options().term);
-  }
+                         std::span<bytes_view> prefixes) {
   absl::c_sort(prefixes);
   for (size_t i = 1; i < prefixes.size(); ++i) {
     if (prefixes[i].starts_with(prefixes[i - 1])) {
       return false;
     }
   }
-  absl::InlinedVector<bytes_view, 8> words;
-  for (const auto& term : terms) {
-    words.emplace_back(term.term);
-  }
-  absl::c_sort(words);
-  for (size_t i = 0; i < words.size(); ++i) {
-    if (i != 0 && words[i] == words[i - 1]) {
+  size_t below = 0;
+  for (size_t i = 0; i < terms.size(); ++i) {
+    const bytes_view word = terms[i].term;
+    if (i != 0 && word == bytes_view{terms[i - 1].term}) {
       return false;
     }
-    const auto it = absl::c_upper_bound(prefixes, words[i]);
-    if (it != prefixes.begin() && words[i].starts_with(*std::prev(it))) {
+    while (below < prefixes.size() && prefixes[below] <= word) {
+      ++below;
+    }
+    if (below != 0 && word.starts_with(prefixes[below - 1])) {
       return false;
     }
   }
@@ -908,12 +899,9 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
     return false;
   }
   const bool scores = !ScoreIsIgnored(node, ctx);
+  const bool sums = scores && node.MergeType() == ScoreMergeType::Sum;
   const auto terms = node.Terms(Occur::Should);
   const auto filters = node.Filters(Occur::Should);
-  if (scores && node.MergeType() != ScoreMergeType::Max &&
-      !MatchesEachWordOnce(terms, filters)) {
-    return false;
-  }
 
   field_id field;
   DictRef dict;
@@ -943,6 +931,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
       return false;
     }
   }
+  absl::InlinedVector<bytes_view, 8> prefixes;
   for (const auto& child : filters) {
     const auto info = InfoOf(*child);
     if (!info || info->field != field || info->dict != dict ||
@@ -953,12 +942,23 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
                    (info->merge && *info->merge != node.MergeType()))) {
       return false;
     }
-    seekable += child->type() == Type<ByPrefix>::id();
+    if (child->type() == Type<ByPrefix>::id()) {
+      ++seekable;
+      if (sums) {
+        prefixes.emplace_back(
+          irs::utils::downCast<ByPrefix>(*child).options().term);
+      }
+    } else if (sums) {
+      return false;
+    }
   }
   if (filters.empty()) {
     return false;
   }
   if (seekable == count && !ctx.fuse_seekable_acceptors) {
+    return false;
+  }
+  if (sums && !MatchesEachWordOnce(terms, prefixes)) {
     return false;
   }
 

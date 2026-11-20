@@ -146,9 +146,10 @@ struct DeferredClaimBuilder {
 
   connector::ExpressionGetter Recording(
     const connector::ExpressionGetter& getter) {
-    return [this, &getter](const duckdb::Expression& expr)
-             -> std::optional<connector::SearchColumnInfo> {
-      auto info = getter(expr);
+    return [this, &getter](
+             const duckdb::Expression& expr,
+             bool negated) -> std::optional<connector::SearchColumnInfo> {
+      auto info = getter(expr, negated);
       if (info) {
         used_expr_getter = true;
       }
@@ -457,14 +458,15 @@ bool WithSearchGetters(PlannedScan& scan, duckdb::ClientContext& context,
     return index_field(scan.IdOf(ref.Binding()));
   };
 
-  connector::ExpressionGetter expr_getter = [&](const duckdb::Expression& expr)
-    -> std::optional<connector::SearchColumnInfo> {
+  connector::ExpressionGetter expr_getter =
+    [&](const duckdb::Expression& expr,
+        bool negated) -> std::optional<connector::SearchColumnInfo> {
     if (!config.HasExpressionKeys() ||
         SingleReferencedTableIndex(expr) != table_index) {
       return std::nullopt;
     }
     const auto keys = config.FindExpressionKeys(connector::NormalizedExpression(
-      expr, bind_data.RelationId(), scan.Ids(), context, &config));
+      expr, bind_data.RelationId(), scan.Ids(), context, &config, negated));
     return finish_info(
       ExpressionColumnInfo(
         config, dicts, keys.term,
@@ -557,19 +559,6 @@ irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
   return bind_data.relation.inverted_config->FindFieldIdByExpression(
     connector::NormalizedExpression(col_arg, bind_data.RelationId(), scan.Ids(),
                                     client_context));
-}
-
-bool IsScorerFunctionName(std::string_view name) {
-  using S = catalog::ScorerOptions;
-  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
-    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
-    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
-    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
-    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
-    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
-    S::Constant::Owner::type_name(),
-  };
-  return kScorerNames.contains(name);
 }
 
 struct AnnFunctionInfo {
@@ -1797,32 +1786,19 @@ void TakeColumnConjuncts(
   });
 }
 
-struct ScorerCallFinder final : duckdb::LogicalOperatorVisitor {
-  void VisitExpression(duckdb::unique_ptr<duckdb::Expression>* slot) final {
-    if (found) {
-      return;
-    }
-    const auto& expr = **slot;
-    if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION &&
-        IsScorerFunctionName(expr.Cast<duckdb::BoundFunctionExpression>()
-                               .Function()
-                               .GetName()
-                               .GetIdentifierName())) {
-      found = true;
-      return;
-    }
-    VisitExpressionChildren(**slot);
-  }
-
-  bool found = false;
-};
-
 }  // namespace
 
-bool ReadsScores(duckdb::LogicalOperator& plan) {
-  ScorerCallFinder finder;
-  finder.VisitOperator(plan);
-  return finder.found;
+bool IsScorerFunctionName(std::string_view name) {
+  using S = catalog::ScorerOptions;
+  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
+    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
+    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
+    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
+    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
+    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
+    S::Constant::Owner::type_name(),
+  };
+  return kScorerNames.contains(name);
 }
 
 void IResearchPushdownComplexFilter(

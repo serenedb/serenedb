@@ -101,8 +101,12 @@ class CompositeReader final : public IndexReader {
   void Build();
   void AddTerms(const SubReader& reader, bool keep_sorted);
   void RemoveTerms(const SubReader& reader);
+  using HeldBounds = containers::FlatHashMap<field_id, uint8_t>;
+
   void AddColumns(const SubReader& reader, bool new_docs);
-  void RemoveColumns(const SubReader& reader);
+  void RemoveColumns(const SubReader& reader, HeldBounds& held);
+  void ReleaseBounds(const SubReader& reader, HeldBounds& held) const;
+  void RemergeBounds(const HeldBounds& held);
   void Publish();
 
   std::vector<SegmentReader> _readers;

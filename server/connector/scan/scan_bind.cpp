@@ -826,7 +826,7 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
     return info;
   };
   const ExpressionGetter expr_getter =
-    [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
+    [](const duckdb::Expression&, bool) -> std::optional<SearchColumnInfo> {
     return std::nullopt;
   };
   struct WideColumn {

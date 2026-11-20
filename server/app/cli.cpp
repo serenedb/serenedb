@@ -64,10 +64,16 @@ duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
   }
   auto& db = engine.instance();
   auto& manager = duckdb::DatabaseManager::Get(db);
-  auto conn = engine.CreateConnection();
-  auto& context = *conn->context;
+  duckdb::unique_ptr<duckdb::Connection> conn;
+  const auto run = [&](const auto& work) {
+    if (!conn) {
+      conn = engine.CreateConnection();
+    }
+    auto& context = *conn->context;
+    context.RunFunctionInTransaction([&] { work(context); });
+  };
   if (gShellFile) {
-    context.RunFunctionInTransaction([&] {
+    run([&](duckdb::ClientContext& context) {
       manager.DetachDatabase(context, *gShellFile,
                              duckdb::OnEntryNotFound::RETURN_NULL, true);
     });
@@ -88,7 +94,7 @@ duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
     info.name =
       duckdb::Identifier{absl::StrCat(info.name.GetIdentifierName(), "_db")};
   }
-  context.RunFunctionInTransaction([&] {
+  run([&](duckdb::ClientContext& context) {
     catalog::Attach(context, info, "duckdb",
                     read_only ? duckdb::AccessMode::READ_ONLY
                               : duckdb::AccessMode::READ_WRITE,

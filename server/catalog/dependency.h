@@ -30,7 +30,9 @@
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_expression.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace sdb::catalog {
@@ -81,9 +83,17 @@ void FollowSchemaMove(duckdb::CatalogTransaction transaction,
 bool IsNested(duckdb::CatalogTransaction transaction,
               const duckdb::CatalogEntry& schema);
 
-void RefuseNestedMove(duckdb::CatalogTransaction transaction,
-                      const duckdb::CatalogEntry& subject,
-                      std::span<duckdb::CatalogEntry* const> moving);
+struct NamingDependents {
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
+  std::vector<std::string> lines;
+};
+
+void CollectNamingDependents(duckdb::CatalogTransaction transaction,
+                             duckdb::CatalogEntry& subject,
+                             NamingDependents& dependents);
+
+void RefuseDependents(const duckdb::CatalogEntry& subject,
+                      const NamingDependents& dependents);
 
 void SetDefaults(duckdb::CatalogTransaction transaction,
                  duckdb::Catalog& catalog,

@@ -27,6 +27,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <duckdb/storage/statistics/numeric_stats.hpp>
+#include <duckdb/storage/statistics/string_stats.hpp>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_reader.hpp"
@@ -54,6 +56,39 @@ uint64_t DistinctOfOverlapping(uint64_t terms, uint64_t docs, uint64_t sum) {
     (occupied(mid) < distinct ? low : high) = mid;
   }
   return static_cast<uint64_t>(std::llround(high));
+}
+
+constexpr uint8_t kMinBound = 1;
+constexpr uint8_t kMaxBound = 2;
+constexpr uint8_t kNestedBound = 4;
+
+template<typename Stats>
+uint8_t FlatBoundsOf(const duckdb::BaseStatistics& part,
+                     const duckdb::BaseStatistics& merged) {
+  uint8_t bounds = 0;
+  if (Stats::HasMin(part) && Stats::HasMin(merged) &&
+      Stats::Min(part) == Stats::Min(merged)) {
+    bounds |= kMinBound;
+  }
+  if (Stats::HasMax(part) && Stats::HasMax(merged) &&
+      Stats::Max(part) == Stats::Max(merged)) {
+    bounds |= kMaxBound;
+  }
+  return bounds;
+}
+
+uint8_t BoundsOf(const duckdb::BaseStatistics& part,
+                 const duckdb::BaseStatistics& merged) {
+  switch (part.GetStatsType()) {
+    case duckdb::StatisticsType::NUMERIC_STATS:
+      return FlatBoundsOf<duckdb::NumericStats>(part, merged);
+    case duckdb::StatisticsType::STRING_STATS:
+      return FlatBoundsOf<duckdb::StringStats>(part, merged);
+    case duckdb::StatisticsType::BASE_STATS:
+      return 0;
+    default:
+      return kMinBound | kMaxBound | kNestedBound;
+  }
 }
 
 }  // namespace
@@ -86,7 +121,7 @@ CompositeReader::CompositeReader(const CompositeReader& base,
   for (const auto& reader : added) {
     AddTerms(*reader, /*keep_sorted=*/true);
   }
-  if (!removed.empty()) {
+  if (!removed.empty() && _docs != base._docs) {
     for (const auto& reader : _readers) {
       AddColumns(*reader, /*new_docs=*/true);
     }
@@ -105,8 +140,23 @@ CompositeReader::CompositeReader(const CompositeReader& base,
     AddColumns(*reader, /*new_docs=*/true);
   }
   for (const auto& [before, after] : patched) {
-    RemoveColumns(*before);
     AddColumns(*after, /*new_docs=*/true);
+  }
+  HeldBounds held;
+  for (const auto& [before, after] : patched) {
+    RemoveColumns(*before, held);
+  }
+  for (const auto& reader : removed) {
+    RemoveColumns(*reader, held);
+  }
+  if (!held.empty()) {
+    for (const auto& reader : added) {
+      ReleaseBounds(*reader, held);
+    }
+    for (const auto& [before, after] : patched) {
+      ReleaseBounds(*after, held);
+    }
+    RemergeBounds(held);
   }
   Publish();
 }
@@ -198,7 +248,7 @@ void CompositeReader::AddColumns(const SubReader& reader, bool new_docs) {
   }
 }
 
-void CompositeReader::RemoveColumns(const SubReader& reader) {
+void CompositeReader::RemoveColumns(const SubReader& reader, HeldBounds& held) {
   const auto* col_reader = reader.GetColReader();
   if (!col_reader) {
     return;
@@ -213,7 +263,54 @@ void CompositeReader::RemoveColumns(const SubReader& reader) {
       SDB_ASSERT(stats.distinct);
       stats.distinct->SubtractCounts(*distinct);
     }
+    if (const auto bounds =
+          BoundsOf(column->MergedStatistics(), *stats.merged)) {
+      held[column->Id()] |= bounds;
+    }
   }
+}
+
+void CompositeReader::ReleaseBounds(const SubReader& reader,
+                                    HeldBounds& held) const {
+  const auto* col_reader = reader.GetColReader();
+  if (!col_reader) {
+    return;
+  }
+  for (const auto& column : col_reader->Columns()) {
+    const auto it = held.find(column->Id());
+    if (it != held.end() && !(it->second & kNestedBound)) {
+      it->second &= static_cast<uint8_t>(~BoundsOf(
+        column->MergedStatistics(), *_columns.at(column->Id()).merged));
+    }
+  }
+}
+
+void CompositeReader::RemergeBounds(const HeldBounds& held) {
+  for (const auto& [field, bounds] : held) {
+    if (bounds) {
+      _columns.at(field).merged.reset();
+    }
+  }
+  for (const auto& reader : _readers) {
+    const auto* col_reader = reader->GetColReader();
+    if (!col_reader) {
+      continue;
+    }
+    for (const auto& column : col_reader->Columns()) {
+      const auto it = held.find(column->Id());
+      if (it == held.end() || !it->second) {
+        continue;
+      }
+      auto& merged = _columns.at(column->Id()).merged;
+      if (!merged) {
+        merged = column->MergedStatistics().ToUnique();
+      } else {
+        merged->Merge(column->MergedStatistics());
+      }
+    }
+  }
+  absl::erase_if(_columns,
+                 [](const auto& column) { return !column.second.merged; });
 }
 
 void CompositeReader::Publish() {

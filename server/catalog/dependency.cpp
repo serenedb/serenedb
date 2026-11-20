@@ -1236,39 +1236,17 @@ void DropClosure(duckdb::CatalogTransaction transaction,
   }
 }
 
-void CollectNamingDependents(duckdb::CatalogTransaction transaction,
-                             std::span<duckdb::CatalogEntry* const> subjects,
-                             absl::flat_hash_set<duckdb::idx_t>& seen,
-                             std::vector<std::string>& lines) {
-  for (auto* subject : subjects) {
-    for (const auto& edge : DirectDependents(transaction, *subject)) {
-      if ((edge.part != Part::Owned ||
-           edge.dependent->type == duckdb::CatalogType::TRIGGER_ENTRY) &&
-          seen.insert(edge.dependent->oid).second) {
-        lines.push_back(DependsLine(*edge.dependent, *subject));
-      }
-    }
-  }
-}
-
 void CollectNestedDependents(duckdb::CatalogTransaction transaction,
                              duckdb::CatalogEntry& schema, bool nested,
-                             absl::flat_hash_set<duckdb::idx_t>& seen,
-                             std::vector<std::string>& lines) {
-  std::vector<duckdb::CatalogEntry*> children;
-  std::vector<duckdb::CatalogEntry*> members;
+                             NamingDependents& dependents) {
   schema.Cast<Schema>().ScanMembers(
     transaction, [&](duckdb::CatalogEntry& member) {
       if (member.type == duckdb::CatalogType::SCHEMA_ENTRY) {
-        children.push_back(&member);
+        CollectNestedDependents(transaction, member, true, dependents);
       } else if (nested && !member.internal) {
-        members.push_back(&member);
+        CollectNamingDependents(transaction, member, dependents);
       }
     });
-  CollectNamingDependents(transaction, members, seen, lines);
-  for (auto* child : children) {
-    CollectNestedDependents(transaction, *child, true, seen, lines);
-  }
 }
 
 }  // namespace
@@ -1829,14 +1807,22 @@ bool IsNested(duckdb::CatalogTransaction transaction,
             .empty();
 }
 
-void RefuseNestedMove(duckdb::CatalogTransaction transaction,
-                      const duckdb::CatalogEntry& subject,
-                      std::span<duckdb::CatalogEntry* const> moving) {
-  std::vector<std::string> lines;
-  absl::flat_hash_set<duckdb::idx_t> seen;
-  CollectNamingDependents(transaction, moving, seen, lines);
-  if (!lines.empty()) {
-    ThrowDependents(subject, lines);
+void CollectNamingDependents(duckdb::CatalogTransaction transaction,
+                             duckdb::CatalogEntry& subject,
+                             NamingDependents& dependents) {
+  for (const auto& edge : DirectDependents(transaction, subject)) {
+    if ((edge.part != Part::Owned ||
+         edge.dependent->type == duckdb::CatalogType::TRIGGER_ENTRY) &&
+        dependents.seen.insert(edge.dependent->oid).second) {
+      dependents.lines.push_back(DependsLine(*edge.dependent, subject));
+    }
+  }
+}
+
+void RefuseDependents(const duckdb::CatalogEntry& subject,
+                      const NamingDependents& dependents) {
+  if (!dependents.lines.empty()) {
+    ThrowDependents(subject, dependents.lines);
   }
 }
 
@@ -1844,13 +1830,10 @@ void FollowSchemaRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& schema,
                         const duckdb::Identifier& new_name,
                         std::vector<PendingDefault>& defaults) {
-  std::vector<std::string> lines;
-  absl::flat_hash_set<duckdb::idx_t> seen;
+  NamingDependents dependents;
   CollectNestedDependents(transaction, schema, IsNested(transaction, schema),
-                          seen, lines);
-  if (!lines.empty()) {
-    ThrowDependents(schema, lines);
-  }
+                          dependents);
+  RefuseDependents(schema, dependents);
   std::vector<duckdb::CatalogEntry*> members;
   schema.Cast<Schema>().ScanMembers(
     transaction, [&](duckdb::CatalogEntry& member) {

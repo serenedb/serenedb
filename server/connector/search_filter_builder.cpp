@@ -481,11 +481,7 @@ void CollectNullableMarkers(const FilterContext& ctx,
                             std::vector<NullMarker>& markers) {
   const auto* info = FindIndexedExpressionInfo(ctx, expr);
   if (!info && duckdb::BoundComparisonExpression::IsComparison(expr)) {
-    auto negated = expr.Copy();
-    duckdb::BoundComparisonExpression::SetType(
-      negated->Cast<duckdb::BoundFunctionExpression>(),
-      duckdb::NegateComparisonExpression(expr.GetExpressionType()));
-    info = FindIndexedExpressionInfo(ctx, *negated);
+    info = FindIndexedExpressionInfo(ctx, expr, true);
   }
   if (info) {
     if (info->nullable) {
@@ -2055,7 +2051,11 @@ bool HasScorableLeaf(const irs::Filter& filter) {
   return false;
 }
 
-void ApplyScoreOverride(irs::BooleanFilter& scope, const irs::Scorer* scorer) {
+void ApplyScoreOverride(const FilterContext& ctx, irs::BooleanFilter& scope,
+                        const irs::Scorer* scorer) {
+  if (ctx.negated) {
+    return;
+  }
   const auto scored_clauses =
     scope.Size(irs::Occur::Must) + scope.Size(irs::Occur::Should);
   if (scored_clauses == 1) {
@@ -2182,7 +2182,7 @@ bool TryDispatchScoreCast(BoolTarget parent, const FilterContext& ctx,
   auto scope = OpenScope();
   BuildTSQuery(ScopeTarget(scope), ctx, column_info,
                duckdb::BoundCastExpression::Child(cast_expr));
-  ApplyScoreOverride(*scope, scorer);
+  ApplyScoreOverride(ctx, *scope, scorer);
   CloseScope(parent, std::move(scope));
   return true;
 }
@@ -2269,7 +2269,7 @@ bool TryDispatchSqlScoreCast(BoolTarget filter, const FilterContext& ctx,
     ctx, duckdb::BoundCastExpression::Child(cast_expr), "::score(...)",
     "score is only meaningful inside an inverted-index match. Move it into an "
     "`@@` match or remove it.");
-  ApplyScoreOverride(*scope, scorer);
+  ApplyScoreOverride(ctx, *scope, scorer);
   CloseScope(filter, std::move(scope));
   return true;
 }
@@ -2484,11 +2484,11 @@ absl::Status FromComparisonExpression(
       const duckdb::BoundConstantExpression value{duckdb::Value::BOOLEAN(true)};
       return FromBinaryEq<true>(filter, ctx, cmp, value, false);
     }
-    auto negated = cmp.Copy();
-    duckdb::BoundComparisonExpression::SetType(
-      negated->Cast<duckdb::BoundFunctionExpression>(),
-      duckdb::NegateComparisonExpression(cmp_type));
-    if (FindColumnInfoForExpr(ctx, *negated)) {
+    if (FindColumnInfoForExpr(ctx, cmp, true)) {
+      auto negated = cmp.Copy();
+      duckdb::BoundComparisonExpression::SetType(
+        negated->Cast<duckdb::BoundFunctionExpression>(),
+        duckdb::NegateComparisonExpression(cmp_type));
       const duckdb::BoundConstantExpression value{
         duckdb::Value::BOOLEAN(false)};
       return FromBinaryEq<true>(filter, ctx, *negated, value, false);
@@ -2690,15 +2690,16 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
 }
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
-                                              const duckdb::Expression& expr) {
+                                              const duckdb::Expression& expr,
+                                              bool negated) {
   if (!ComputedFromRowAlone(expr)) {
     return nullptr;
   }
-  return FindIndexedExpressionInfo(ctx, expr);
+  return FindIndexedExpressionInfo(ctx, expr, negated);
 }
 
 const SearchColumnInfo* FindIndexedExpressionInfo(
-  const FilterContext& ctx, const duckdb::Expression& expr) {
+  const FilterContext& ctx, const duckdb::Expression& expr, bool negated) {
   if (const auto* col_ref = TryGetColumnRef(expr)) {
     const auto* info = FindColumnRefInfo(ctx, *col_ref);
     return info && !info->index_fields ? info : nullptr;
@@ -2708,9 +2709,9 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
   std::optional<SearchColumnInfo> info;
   bool matched_unwrapped = false;
   if (ctx.expr_getter) {
-    info = (*ctx.expr_getter)(expr);
+    info = (*ctx.expr_getter)(expr, negated);
     if (!info && unwrapped.expr != &expr) {
-      info = (*ctx.expr_getter)(*unwrapped.expr);
+      info = (*ctx.expr_getter)(*unwrapped.expr, negated);
       matched_unwrapped = static_cast<bool>(info);
     }
   }
@@ -3041,7 +3042,7 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
     return;
   }
   if (scorer) {
-    ApplyScoreOverride(*scope, scorer);
+    ApplyScoreOverride(ctx, *scope, scorer);
   }
   ApplyMerge(*scope, parts->merge);
   CloseScope(parent, std::move(scope));

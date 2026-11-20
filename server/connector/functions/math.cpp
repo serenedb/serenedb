@@ -334,83 +334,53 @@ void LogBaseFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-constexpr double kDegreesToRadians = M_PI / 180.0;
+constexpr double kRadiansPerDegree = M_PI / 180.0;
+constexpr double kDegreesPerRadian = 180.0 / M_PI;
 
-struct DegreeConstants {
-  double sin_30 = 0;
-  double one_minus_cos_60 = 0;
-  double asin_0_5 = 0;
-  double acos_0_5 = 0;
-  double atan_1_0 = 0;
-  double tan_45 = 0;
-  double cot_45 = 0;
+double SinOctant(double x) {
+  if (x == 30.0) {
+    return 0.5;
+  }
+  return x == 45.0 ? M_SQRT1_2 : std::sin(x * kRadiansPerDegree);
+}
+
+double CosOctant(double x) {
+  return x == 45.0 ? M_SQRT1_2 : std::cos(x * kRadiansPerDegree);
+}
+
+double SinQuadrant(double x) {
+  return x <= 45.0 ? SinOctant(x) : CosOctant(90.0 - x);
+}
+
+double CosQuadrant(double x) {
+  return x <= 45.0 ? CosOctant(x) : SinOctant(90.0 - x);
+}
+
+struct ReducedDegrees {
+  double angle = 0;
+  double sin_sign = 1;
+  double cos_sign = 1;
 };
 
-double SinTo30(const DegreeConstants& c, double x) {
-  volatile double sin_x = std::sin(x * kDegreesToRadians);
-  return (sin_x / c.sin_30) / 2.0;
-}
-
-double CosTo60(const DegreeConstants& c, double x) {
-  volatile double one_minus_cos_x = 1.0 - std::cos(x * kDegreesToRadians);
-  return 1.0 - (one_minus_cos_x / c.one_minus_cos_60) / 2.0;
-}
-
-double SinQ1(const DegreeConstants& c, double x) {
-  return x <= 30.0 ? SinTo30(c, x) : CosTo60(c, 90.0 - x);
-}
-
-double CosQ1(const DegreeConstants& c, double x) {
-  return x <= 60.0 ? CosTo60(c, x) : SinTo30(c, 90.0 - x);
-}
-
-double AsinQ1(const DegreeConstants& c, double x) {
-  if (x <= 0.5) {
-    volatile double asin_x = std::asin(x);
-    return (asin_x / c.asin_0_5) * 30.0;
-  }
-  volatile double acos_x = std::acos(x);
-  return 90.0 - (acos_x / c.acos_0_5) * 60.0;
-}
-
-double AcosQ1(const DegreeConstants& c, double x) {
-  if (x <= 0.5) {
-    volatile double asin_x = std::asin(x);
-    return 90.0 - (asin_x / c.asin_0_5) * 30.0;
-  }
-  volatile double acos_x = std::acos(x);
-  return (acos_x / c.acos_0_5) * 60.0;
-}
-
-DegreeConstants MakeDegreeConstants() {
-  volatile double thirty = 30.0;
-  volatile double forty_five = 45.0;
-  volatile double sixty = 60.0;
-  volatile double one_half = 0.5;
-  volatile double one = 1.0;
-  DegreeConstants c{
-    .sin_30 = std::sin(thirty * kDegreesToRadians),
-    .one_minus_cos_60 = 1.0 - std::cos(sixty * kDegreesToRadians),
-    .asin_0_5 = std::asin(one_half),
-    .acos_0_5 = std::acos(one_half),
-    .atan_1_0 = std::atan(one),
-  };
-  c.tan_45 = SinQ1(c, forty_five) / CosQ1(c, forty_five);
-  c.cot_45 = CosQ1(c, forty_five) / SinQ1(c, forty_five);
-  return c;
-}
-
-const DegreeConstants& Degrees() {
-  static const DegreeConstants kDegrees = MakeDegreeConstants();
-  return kDegrees;
-}
-
-double FiniteDegrees(double x) {
+ReducedDegrees ReduceDegrees(double x) {
   if (std::isinf(x)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                     ERR_MSG("input is out of range"));
   }
-  return std::fmod(x, 360.0);
+  ReducedDegrees reduced{.angle = std::fmod(x, 360.0)};
+  if (reduced.angle < 0.0) {
+    reduced.angle = -reduced.angle;
+    reduced.sin_sign = -1;
+  }
+  if (reduced.angle > 180.0) {
+    reduced.angle = 360.0 - reduced.angle;
+    reduced.sin_sign = -reduced.sin_sign;
+  }
+  if (reduced.angle > 90.0) {
+    reduced.angle = 180.0 - reduced.angle;
+    reduced.cos_sign = -1;
+  }
+  return reduced;
 }
 
 double UnitInterval(double x) {
@@ -425,36 +395,16 @@ double SinD(double x) {
   if (std::isnan(x)) {
     return x;
   }
-  x = FiniteDegrees(x);
-  double sign = 1;
-  if (x < 0.0) {
-    x = -x;
-    sign = -sign;
-  }
-  if (x > 180.0) {
-    x = 360.0 - x;
-    sign = -sign;
-  }
-  if (x > 90.0) {
-    x = 180.0 - x;
-  }
-  return sign * SinQ1(Degrees(), x);
+  const auto reduced = ReduceDegrees(x);
+  return reduced.sin_sign * SinQuadrant(reduced.angle);
 }
 
 double CosD(double x) {
   if (std::isnan(x)) {
     return x;
   }
-  x = std::abs(FiniteDegrees(x));
-  double sign = 1;
-  if (x > 180.0) {
-    x = 360.0 - x;
-  }
-  if (x > 90.0) {
-    x = 180.0 - x;
-    sign = -sign;
-  }
-  return sign * CosQ1(Degrees(), x);
+  const auto reduced = ReduceDegrees(x);
+  return reduced.cos_sign * CosQuadrant(reduced.angle);
 }
 
 template<bool Cotangent>
@@ -462,25 +412,28 @@ double TanD(double x) {
   if (std::isnan(x)) {
     return x;
   }
-  x = FiniteDegrees(x);
-  double sign = 1;
-  if (x < 0.0) {
-    x = -x;
-    sign = -sign;
-  }
-  if (x > 180.0) {
-    x = 360.0 - x;
-    sign = -sign;
-  }
-  if (x > 90.0) {
-    x = 180.0 - x;
-    sign = -sign;
-  }
-  const auto& c = Degrees();
-  volatile double ratio =
-    Cotangent ? CosQ1(c, x) / SinQ1(c, x) : SinQ1(c, x) / CosQ1(c, x);
-  const double result = sign * (ratio / (Cotangent ? c.cot_45 : c.tan_45));
+  const auto reduced = ReduceDegrees(x);
+  const double sin_x = SinQuadrant(reduced.angle);
+  const double cos_x = CosQuadrant(reduced.angle);
+  const double result = reduced.sin_sign * reduced.cos_sign *
+                        (Cotangent ? cos_x / sin_x : sin_x / cos_x);
   return result == 0.0 ? 0.0 : result;
+}
+
+double AsinQuadrant(double x) {
+  if (x == 0.5) {
+    return 30.0;
+  }
+  return x < 0.5 ? std::asin(x) * kDegreesPerRadian
+                 : 90.0 - std::acos(x) * kDegreesPerRadian;
+}
+
+double AcosQuadrant(double x) {
+  if (x == 0.5) {
+    return 60.0;
+  }
+  return x < 0.5 ? 90.0 - std::asin(x) * kDegreesPerRadian
+                 : std::acos(x) * kDegreesPerRadian;
 }
 
 double AsinD(double x) {
@@ -488,7 +441,7 @@ double AsinD(double x) {
     return x;
   }
   x = UnitInterval(x);
-  return x >= 0.0 ? AsinQ1(Degrees(), x) : -AsinQ1(Degrees(), -x);
+  return x >= 0.0 ? AsinQuadrant(x) : -AsinQuadrant(-x);
 }
 
 double AcosD(double x) {
@@ -496,15 +449,22 @@ double AcosD(double x) {
     return x;
   }
   x = UnitInterval(x);
-  return x >= 0.0 ? AcosQ1(Degrees(), x) : 90.0 + AsinQ1(Degrees(), -x);
+  return x >= 0.0 ? AcosQuadrant(x) : 90.0 + AsinQuadrant(-x);
+}
+
+double AtanQuadrant(double y, double x) {
+  if (y == x) {
+    return y == 0.0 ? 0.0 : 45.0;
+  }
+  return y < x ? std::atan(y / x) * kDegreesPerRadian
+               : 90.0 - std::atan(x / y) * kDegreesPerRadian;
 }
 
 double AtanD(double x) {
   if (std::isnan(x)) {
     return x;
   }
-  volatile double atan_x = std::atan(x);
-  return (atan_x / Degrees().atan_1_0) * 45.0;
+  return std::copysign(AtanQuadrant(std::abs(x), 1.0), x);
 }
 
 template<double (*F)(double)>
@@ -521,8 +481,8 @@ void Atan2DFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       if (std::isnan(y) || std::isnan(x)) {
         return std::numeric_limits<double>::quiet_NaN();
       }
-      volatile double atan2_yx = std::atan2(y, x);
-      return (atan2_yx / Degrees().atan_1_0) * 45.0;
+      const double angle = AtanQuadrant(std::abs(y), std::abs(x));
+      return std::copysign(std::signbit(x) ? 180.0 - angle : angle, y);
     });
 }
 

@@ -232,7 +232,7 @@ class ConnectionContext final : public duckdb::ClientContext {
     return _progress;
   }
   void ReportIdle();
-  void ReportQuery(std::string query);
+  void ReportQuery(std::string_view query);
   absl::Mutex& SettingWritesMutex() noexcept { return _setting_writes; }
 
   int copy_stdin_open_count = 0;

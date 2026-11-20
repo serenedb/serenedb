@@ -31,6 +31,7 @@
 #include <duckdb/optimizer/optimizer.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -73,8 +74,16 @@ void ClearSource(duckdb::Expression& expr) {
 
 duckdb::unique_ptr<duckdb::Expression> NormalizeBoundExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
-  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context) {
-  auto copy = duckdb::Optimizer::OptimizeExpression(context, expr.Copy());
+  std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
+  bool negated) {
+  auto copy = expr.Copy();
+  if (negated) {
+    auto& comparison = copy->Cast<duckdb::BoundFunctionExpression>();
+    duckdb::BoundComparisonExpression::SetType(
+      comparison,
+      duckdb::NegateComparisonExpression(comparison.GetExpressionType()));
+  }
+  copy = duckdb::Optimizer::OptimizeExpression(context, std::move(copy));
   duckdb::ExpressionIterator::EnumerateExpression(
     copy, [&](duckdb::Expression& e) {
       ClearSource(e);
@@ -159,9 +168,9 @@ void ExpandStoredExpressions(
 std::string NormalizedExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
-  const catalog::InvertedIndexConfig* stored_expressions) {
+  const catalog::InvertedIndexConfig* stored_expressions, bool negated) {
   auto normalized =
-    NormalizeBoundExpression(expr, table_id, col_index_to_id, context);
+    NormalizeBoundExpression(expr, table_id, col_index_to_id, context, negated);
   if (stored_expressions && stored_expressions->StoresExpressions()) {
     ExpandStoredExpressions(normalized, *stored_expressions, context);
   }

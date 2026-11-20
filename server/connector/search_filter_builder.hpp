@@ -85,7 +85,7 @@ using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
 
 using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
-  const duckdb::Expression&) const>;
+  const duckdb::Expression&, bool negated) const>;
 
 struct ColumnRange {
   const duckdb::BoundColumnRefExpression* column = nullptr;
@@ -323,6 +323,8 @@ std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
   const ColumnGetter& column_getter, duckdb::ClientContext& context,
   const ExpressionGetter& expr_getter, FilterScorers* scorers,
   WideRanges wide_ranges);
+
+bool IsIndexOnlyPredicateName(std::string_view name);
 
 // True when the expression tree contains an optimizer-claimed index-only
 // predicate (`@@` or the match sugar) that cannot run as a scalar.

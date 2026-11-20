@@ -34,7 +34,6 @@
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/main/client_context_state.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -191,32 +190,33 @@ TSQueryCastData* MinMatchCastData(duckdb::BoundFunctionExpression& cast) {
   return data ? &data->Cast<TSQueryCastData>() : nullptr;
 }
 
-struct QueryReadsScores final : duckdb::ClientContextState {
-  static QueryReadsScores& Get(duckdb::ClientContext& context) {
-    return *context.registered_state->GetOrCreate<QueryReadsScores>(
-      "sdb_query_reads_scores");
+struct ScoredPredicateData final : duckdb::FunctionData {
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
+    return duckdb::make_uniq<ScoredPredicateData>();
   }
 
-  using duckdb::ClientContextState::QueryEnd;
-
-  void QueryEnd(duckdb::ClientContext&) final { reads = false; }
-
-  bool reads = false;
+  bool Equals(const duckdb::FunctionData&) const final { return true; }
 };
 
-bool SearchRewriteBarrier(duckdb::ClientContext& context,
-                          const duckdb::Expression& expr,
-                          duckdb::optional_ptr<const duckdb::Expression> parent,
-                          bool parent_frozen) {
-  if (parent &&
-      (SqlMinMatchOperand(*parent) ||
-       (parent_frozen && duckdb::BoundCastExpression::IsCast(*parent) &&
-        HasGroupModifier(parent->GetReturnType())))) {
-    return true;
+bool IsScoredPredicate(const duckdb::Expression& expr) {
+  if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
+    return false;
   }
-  return expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_OR &&
-         QueryReadsScores::Get(context).reads &&
-         ContainsIndexOnlyPredicate(expr);
+  const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+  return func.BindInfo() && IsIndexOnlyPredicateName(
+                              func.Function().GetName().GetIdentifierName());
+}
+
+duckdb::RewriteBarrier SearchRewriteBarrier(
+  const duckdb::Expression& expr,
+  duckdb::optional_ptr<const duckdb::Expression> parent, bool parent_frozen) {
+  return {
+    .frozen = parent &&
+              (SqlMinMatchOperand(*parent) ||
+               (parent_frozen && duckdb::BoundCastExpression::IsCast(*parent) &&
+                HasGroupModifier(parent->GetReturnType()))),
+    .scored = IsScoredPredicate(expr),
+  };
 }
 
 [[noreturn]] bool ThrowingScoreCast(duckdb::Vector&, duckdb::Vector&,
@@ -471,15 +471,27 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
   void VisitExpression(duckdb::unique_ptr<duckdb::Expression>* slot) final {
     VisitExpressionChildren(**slot);
     RecordWrittenMinMatchBranches(**slot);
-    const auto& expr = **slot;
+    auto& expr = **slot;
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
       return;
     }
-    const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+    auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+    const auto name = func.Function().GetName().GetIdentifierName();
+    switch (func.GetReturnType().id()) {
+      case duckdb::LogicalTypeId::BOOLEAN:
+        if (IsIndexOnlyPredicateName(name)) {
+          _predicates.push_back(&func);
+        }
+        return;
+      case duckdb::LogicalTypeId::FLOAT:
+        _reads_scores = _reads_scores || optimizer::IsScorerFunctionName(name);
+        return;
+      default:
+        break;
+    }
     if (!IsTSQueryStructType(func.GetReturnType())) {
       return;
     }
-    const auto name = func.Function().GetName().GetIdentifierName();
     const auto op = ClassifyTSQueryFunction(name);
     if (op == TSQueryOp::Unknown || op == TSQueryOp::Boost) {
       return;
@@ -492,15 +504,27 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
       duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*folded));
   }
 
+  void MarkScoredPredicates() {
+    if (!_reads_scores) {
+      return;
+    }
+    for (auto* predicate : _predicates) {
+      predicate->BindInfoMutable() = duckdb::make_uniq<ScoredPredicateData>();
+    }
+  }
+
  private:
   duckdb::ClientContext& _context;
+  std::vector<duckdb::BoundFunctionExpression*> _predicates;
+  bool _reads_scores = false;
 };
 
 void PrepareSearchRewrites(duckdb::OptimizerExtensionInput& input,
                            duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (plan) {
-    TSQueryFoldVisitor{input.context}.VisitOperator(*plan);
-    QueryReadsScores::Get(input.context).reads = optimizer::ReadsScores(*plan);
+    TSQueryFoldVisitor visitor{input.context};
+    visitor.VisitOperator(*plan);
+    visitor.MarkScoredPredicates();
   }
 }
 

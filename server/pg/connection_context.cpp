@@ -531,9 +531,8 @@ void ConnectionContext::ReportIdle() {
   _progress->ReportIdle(pg::IdleState(transaction));
 }
 
-void ConnectionContext::ReportQuery(std::string query) {
-  _progress->BeginQuery(std::move(query),
-                        duckdb::Timestamp::GetCurrentTimestamp().value,
+void ConnectionContext::ReportQuery(std::string_view query) {
+  _progress->BeginQuery(query, duckdb::Timestamp::GetCurrentTimestamp().value,
                         _query_in_transaction);
 }
 

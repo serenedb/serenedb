@@ -91,4 +91,19 @@ std::unique_ptr<IvfCudaIndex> MakeIvfCudaIndex(uint32_t dimensions,
   return std::make_unique<FaissGpuIndex>(dimensions, gpu_batches);
 }
 
+IvfCudaPca::IvfCudaPca(int32_t dimensions, int32_t capacity,
+                       const float* matrix)
+  : _pca{nullptr, sdb_ivf_cuda_pca_destroy} {
+  sdb_ivf_cuda_error error;
+  _pca.reset(sdb_ivf_cuda_pca_create(dimensions, capacity, matrix, &error));
+  CheckCuda(static_cast<bool>(_pca), error);
+}
+
+void IvfCudaPca::Apply(int32_t count, const float* vectors,
+                       float* output) const {
+  sdb_ivf_cuda_error error;
+  CheckCuda(sdb_ivf_cuda_pca_apply(_pca.get(), count, vectors, output, &error),
+            error);
+}
+
 }  // namespace irs

@@ -25,6 +25,7 @@
 
 #include "faiss/Clustering.h"
 #include "faiss/Index.h"
+#include "iresearch/formats/ivf/cuda/bridge.hpp"
 
 namespace irs {
 
@@ -39,5 +40,14 @@ class IvfCudaIndex : public faiss::Index {
 
 std::unique_ptr<IvfCudaIndex> MakeIvfCudaIndex(uint32_t dimensions,
                                                size_t* gpu_batches);
+
+class IvfCudaPca {
+ public:
+  IvfCudaPca(int32_t dimensions, int32_t capacity, const float* matrix);
+  void Apply(int32_t count, const float* vectors, float* output) const;
+
+ private:
+  std::unique_ptr<sdb_ivf_cuda_pca, decltype(&sdb_ivf_cuda_pca_destroy)> _pca;
+};
 
 }  // namespace irs

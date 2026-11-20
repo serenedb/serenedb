@@ -17,6 +17,7 @@
 
 #include "bridge.hpp"
 
+#include <cublas_v2.h>
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
@@ -33,12 +34,24 @@
 
 namespace {
 
-std::shared_ptr<faiss::gpu::GpuResources> MakeResources() {
-  constexpr size_t kMiB = 1024 * 1024;
+constexpr size_t kMiB = 1024 * 1024;
+
+std::shared_ptr<faiss::gpu::GpuResources> MakeResources(
+  size_t temporary = 64 * kMiB, size_t pinned = 16 * kMiB) {
   faiss::gpu::StandardGpuResources resources;
-  resources.setTempMemory(64 * kMiB);
-  resources.setPinnedMemory(16 * kMiB);
+  resources.setTempMemory(temporary);
+  resources.setPinnedMemory(pinned);
   return resources.getResources();
+}
+
+void CheckRuntime(cudaError_t status, const char* operation) {
+  FAISS_THROW_IF_NOT_FMT(status == cudaSuccess, "%s: %s", operation,
+                         cudaGetErrorString(status));
+}
+
+void CheckBlas(cublasStatus_t status, const char* operation) {
+  FAISS_THROW_IF_NOT_FMT(status == CUBLAS_STATUS_SUCCESS, "%s: %s", operation,
+                         cublasGetStatusString(status));
 }
 
 void SetError(sdb_ivf_cuda_error& error, std::string_view message) noexcept {
@@ -102,6 +115,78 @@ struct sdb_ivf_cuda_index {
   faiss::gpu::GpuMemoryReservation training_device;
 };
 
+struct sdb_ivf_cuda_pca {
+  sdb_ivf_cuda_pca(int32_t dimensions, int32_t capacity, const float* rotation)
+    : dimensions{dimensions},
+      capacity{capacity},
+      resources{MakeResources(0, 0)} {
+    FAISS_THROW_IF_NOT(dimensions > 0 && capacity > 0 && rotation);
+    faiss::gpu::DeviceScope scope{kDevice};
+    stream = resources->getDefaultStream(kDevice);
+    handle = resources->getBlasHandle(kDevice);
+    CheckBlas(cublasSetStream(handle, stream), "Setting PCA stream");
+    CheckBlas(cublasSetMathMode(handle, CUBLAS_PEDANTIC_MATH),
+              "Setting PCA FP32 math mode");
+    matrix = Allocate(dimensions);
+    input = Allocate(capacity);
+    output = Allocate(capacity);
+    CheckRuntime(cudaMemcpyAsync(matrix.get(), rotation, Bytes(dimensions),
+                                 cudaMemcpyHostToDevice, stream),
+                 "Uploading PCA matrix");
+    CheckRuntime(cudaStreamSynchronize(stream),
+                 "Waiting for PCA matrix upload");
+  }
+
+  void Apply(int32_t count, const float* vectors, float* result) {
+    FAISS_THROW_IF_NOT(count > 0 && count <= capacity && vectors && result);
+    faiss::gpu::DeviceScope scope{kDevice};
+    const auto bytes = Bytes(count);
+    constexpr float one = 1.f;
+    constexpr float zero = 0.f;
+    CheckRuntime(cudaMemcpyAsync(input.get(), vectors, bytes,
+                                 cudaMemcpyHostToDevice, stream),
+                 "Uploading PCA vectors");
+    try {
+      CheckBlas(
+        cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_N, dimensions, count,
+                    dimensions, &one, static_cast<const float*>(matrix.get()),
+                    dimensions, static_cast<const float*>(input.get()),
+                    dimensions, &zero, static_cast<float*>(output.get()),
+                    dimensions),
+        "Applying PCA rotation");
+      CheckRuntime(cudaMemcpyAsync(result, output.get(), bytes,
+                                   cudaMemcpyDeviceToHost, stream),
+                   "Downloading PCA vectors");
+    } catch (...) {
+      cudaStreamSynchronize(stream);
+      throw;
+    }
+    CheckRuntime(cudaStreamSynchronize(stream), "Waiting for PCA vectors");
+  }
+
+ private:
+  static constexpr int kDevice = 0;
+
+  size_t Bytes(int32_t count) const {
+    return static_cast<size_t>(count) * dimensions * sizeof(float);
+  }
+
+  faiss::gpu::GpuMemoryReservation Allocate(int32_t count) {
+    return resources->allocMemoryHandle({faiss::gpu::AllocType::Other, kDevice,
+                                         faiss::gpu::MemorySpace::Device,
+                                         stream, Bytes(count)});
+  }
+
+  int32_t dimensions;
+  int32_t capacity;
+  std::shared_ptr<faiss::gpu::GpuResources> resources;
+  cudaStream_t stream = nullptr;
+  cublasHandle_t handle = nullptr;
+  faiss::gpu::GpuMemoryReservation matrix;
+  faiss::gpu::GpuMemoryReservation input;
+  faiss::gpu::GpuMemoryReservation output;
+};
+
 sdb_ivf_cuda_index* sdb_ivf_cuda_create(int32_t dimensions,
                                         sdb_ivf_cuda_error* error) {
   return Call(*error, [&] {
@@ -144,6 +229,26 @@ int sdb_ivf_cuda_search(sdb_ivf_cuda_index* index, int64_t count,
   return Call(*error, [&] {
     index->index.search(count, index->SearchVectors(count, vectors), k,
                         distances, labels);
+    return 1;
+  });
+}
+
+sdb_ivf_cuda_pca* sdb_ivf_cuda_pca_create(int32_t dimensions, int32_t capacity,
+                                          const float* matrix,
+                                          sdb_ivf_cuda_error* error) {
+  return Call(*error, [&] {
+    return std::make_unique<sdb_ivf_cuda_pca>(dimensions, capacity, matrix)
+      .release();
+  });
+}
+
+void sdb_ivf_cuda_pca_destroy(sdb_ivf_cuda_pca* pca) { delete pca; }
+
+int sdb_ivf_cuda_pca_apply(sdb_ivf_cuda_pca* pca, int32_t count,
+                           const float* vectors, float* output,
+                           sdb_ivf_cuda_error* error) {
+  return Call(*error, [&] {
+    pca->Apply(count, vectors, output);
     return 1;
   });
 }

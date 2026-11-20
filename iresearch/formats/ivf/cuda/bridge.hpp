@@ -24,6 +24,7 @@ extern "C" {
 #endif
 
 typedef struct sdb_ivf_cuda_index sdb_ivf_cuda_index;
+typedef struct sdb_ivf_cuda_pca sdb_ivf_cuda_pca;
 
 typedef struct {
   char message[512];
@@ -41,6 +42,14 @@ int sdb_ivf_cuda_reset(sdb_ivf_cuda_index* index, sdb_ivf_cuda_error* error);
 int sdb_ivf_cuda_search(sdb_ivf_cuda_index* index, int64_t count,
                         const float* vectors, int64_t k, float* distances,
                         int64_t* labels, sdb_ivf_cuda_error* error);
+
+sdb_ivf_cuda_pca* sdb_ivf_cuda_pca_create(int32_t dimensions, int32_t capacity,
+                                          const float* matrix,
+                                          sdb_ivf_cuda_error* error);
+void sdb_ivf_cuda_pca_destroy(sdb_ivf_cuda_pca* pca);
+int sdb_ivf_cuda_pca_apply(sdb_ivf_cuda_pca* pca, int32_t count,
+                           const float* vectors, float* output,
+                           sdb_ivf_cuda_error* error);
 
 #ifdef __cplusplus
 }

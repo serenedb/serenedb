@@ -230,10 +230,10 @@ class PostingLeaf {
     return Scan(target);
   }
 
-  ScoreInputs Inputs() const noexcept
+  const ScoreInputs* Inputs() const noexcept
     requires(Shape.defer && Shape.gather)
   {
-    return {.recipe = _recipe, .attrs = _provider};
+    return &_provider;
   }
 
  protected:
@@ -372,16 +372,15 @@ class PostingLeaf {
                                   const TermReader& field,
                                   const ScoreArgs& args) noexcept {
     static_assert(Shape.defer);
-    _recipe.segment = &segment;
-    _recipe.field = &field;
-    _recipe.args = args;
+    _provider.recipe = {.segment = &segment, .field = &field, .args = args};
   }
 
   ScoreFunction MakeDeferredScore() {
     static_assert(Shape.defer && Shape.gather);
     _provider.freq.value = _gather.data;
-    SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
-    return PrepareScore(_recipe.args, *_recipe.segment, _recipe.field->meta(),
+    const auto& recipe = _provider.recipe;
+    SDB_ASSERT(recipe.segment != nullptr && recipe.field != nullptr);
+    return PrepareScore(recipe.args, *recipe.segment, recipe.field->meta(),
                         _provider);
   }
 
@@ -631,9 +630,10 @@ class PostingLeaf {
   uint32_t _left_in_list = 0;
   [[no_unique_address]] utils::Need<!Shape.freqs, FreqLen> _freq_len;
   [[no_unique_address]] utils::Need<Shape.scored, LeafScore> _score;
-  [[no_unique_address]] utils::Need<Shape.scored || Shape.defer, LeafProvider>
+  [[no_unique_address]] utils::Need<
+    Shape.scored || Shape.defer,
+    std::conditional_t<Shape.defer, FreqProvider<ScoreInputs>, LeafProvider>>
     _provider;
-  [[no_unique_address]] utils::Need<Shape.defer, LeafRecipe> _recipe;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
   BlockCursor<InputType> _walk;
 };

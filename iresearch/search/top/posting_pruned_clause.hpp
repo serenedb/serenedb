@@ -40,7 +40,6 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
   using Base::_left_in_list;
   using Base::_needs_reposition;
   using Base::_provider;
-  using Base::_recipe;
   using Base::_walk;
   using Base::DecodeLazyFreqs;
   using Base::Matches;
@@ -72,10 +71,11 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
   }
 
   ScoreFunction PrepareScore() {
-    SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
+    const auto& recipe = _provider.recipe;
+    SDB_ASSERT(recipe.segment != nullptr && recipe.field != nullptr);
     _provider.freq.value = _gather;
-    return irs::detail::PrepareScore(_recipe.args, *_recipe.segment,
-                                     _recipe.field->meta(), _provider);
+    return irs::detail::PrepareScore(recipe.args, *recipe.segment,
+                                     recipe.field->meta(), _provider);
   }
 
   IRS_FORCE_INLINE void FetchScoreArgs(uint32_t slot) noexcept {

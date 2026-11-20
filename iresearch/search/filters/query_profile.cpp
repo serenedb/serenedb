@@ -96,9 +96,7 @@ class ProfiledProbe : public QueryProfile::Profiled<probe::Node> {
 
   ScoreFunction PrepareScore() final { return _inner->PrepareScore(); }
 
-  std::optional<detail::ScoreInputs> Inputs() const final {
-    return _inner->Inputs();
-  }
+  const detail::ScoreInputs* Inputs() const final { return _inner->Inputs(); }
 };
 
 class ProfiledFill : public QueryProfile::Profiled<fill::Node> {

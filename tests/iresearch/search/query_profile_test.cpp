@@ -100,12 +100,9 @@ class InputsProbe : public irs::probe::Node {
  public:
   irs::doc_id_t Probe(irs::doc_id_t target) final { return target; }
 
-  std::optional<irs::detail::ScoreInputs> Inputs() const final {
-    return irs::detail::ScoreInputs{.recipe = recipe,
-                                    .attrs = irs::detail::NoAttributes()};
-  }
+  const irs::detail::ScoreInputs* Inputs() const final { return &inputs; }
 
-  irs::detail::LeafRecipe recipe;
+  irs::detail::FreqProvider<irs::detail::ScoreInputs> inputs;
 };
 
 class EvenDocs final : public irs::detail::TableFilter {
@@ -286,9 +283,7 @@ TEST(query_profile, a_profiled_probe_reports_the_score_inputs_of_its_node) {
   const auto* raw = node.get();
   const auto planned = profile.Wrap(irs::probe::Node::ptr{std::move(node)}, 1);
   ASSERT_NE(raw, planned.get());
-  const auto inputs = planned->Inputs();
-  ASSERT_TRUE(inputs);
-  EXPECT_EQ(&raw->recipe, &inputs->recipe);
+  EXPECT_EQ(&raw->inputs, planned->Inputs());
   EXPECT_FALSE(FakeProbe{}.Inputs());
 }
 

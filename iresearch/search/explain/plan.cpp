@@ -185,14 +185,14 @@ class LeafPart {
     out.role = Role::Weight;
     out.value = _score.Score();
     out.scorer = _scorer;
-    if (const auto inputs = _cursor.node->Inputs()) {
+    if (const auto* inputs = _cursor.node->Inputs()) {
       const auto& recipe = inputs->recipe;
       SDB_ASSERT(recipe.args.stats == _args.stats);
       Describe(
         {
           .segment = *recipe.segment,
           .field = recipe.field->meta(),
-          .doc_attrs = inputs->attrs,
+          .doc_attrs = *inputs,
           .fetcher = *recipe.args.fetcher,
           .stats = recipe.args.stats,
           .boost = recipe.args.boost,

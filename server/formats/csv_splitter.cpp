@@ -35,7 +35,7 @@ constexpr size_t kProbeBytes = size_t{1} << 12;
 
 duckdb::RowDialect RowDialectOf(const CsvDialect& dialect) {
   return duckdb::RowDialect::PostgresCsv(dialect.delimiter, dialect.quote,
-                                         dialect.escape);
+                                         dialect.escape, dialect.line_break);
 }
 
 duckdb::RowLexer ProbeLexer(const CsvDialect& dialect) {
@@ -53,8 +53,8 @@ duckdb::RowCursor ProbeCursor(const duckdb::RowLexer& lexer, size_t from,
 }
 
 template<bool kFirst>
-size_t UnquotedLineFeed(std::string_view bytes, size_t from, char quote,
-                        CsvQuoteState& state) {
+size_t UnquotedLineBreak(std::string_view bytes, size_t from,
+                         const CsvDialect& dialect, CsvQuoteState& state) {
   uint64_t inside = state.in_quote ? ~uint64_t{0} : 0;
   size_t found = std::string_view::npos;
   char tail[duckdb::CSV_BLOCK_BYTES];
@@ -67,9 +67,9 @@ size_t UnquotedLineFeed(std::string_view bytes, size_t from, char quote,
       block = tail;
     }
     const duckdb::CsvVector vector{block};
-    const uint64_t quotes = vector.Equal(quote);
+    const uint64_t quotes = vector.Equal(dialect.quote);
     const uint64_t in = (quotes ? duckdb::CsvPrefixXor(quotes) : 0) ^ inside;
-    const uint64_t feeds = vector.Equal('\n') & ~in;
+    const uint64_t feeds = vector.Equal(dialect.line_break) & ~in;
     if (feeds) {
       if constexpr (kFirst) {
         state = {};
@@ -169,7 +169,7 @@ CsvRows CsvSplitter::FillLexed(const duckdb::RowRangeReader& reader,
 size_t CsvRecordEnd(std::string_view bytes, size_t from,
                     const CsvDialect& dialect, CsvQuoteState& state) {
   if (dialect.escape == dialect.quote) {
-    return UnquotedLineFeed<true>(bytes, from, dialect.quote, state);
+    return UnquotedLineBreak<true>(bytes, from, dialect, state);
   }
   const auto lexer = ProbeLexer(dialect);
   auto cursor = ProbeCursor(lexer, from, state);
@@ -189,7 +189,7 @@ size_t CsvRecordEnd(std::string_view bytes, size_t from,
 size_t CsvLastRecordEnd(std::string_view bytes, const CsvDialect& dialect,
                         CsvQuoteState& state) {
   if (dialect.escape == dialect.quote) {
-    return UnquotedLineFeed<false>(bytes, 0, dialect.quote, state);
+    return UnquotedLineBreak<false>(bytes, 0, dialect, state);
   }
   const auto lexer = ProbeLexer(dialect);
   auto cursor = ProbeCursor(lexer, 0, state);
@@ -199,6 +199,42 @@ size_t CsvLastRecordEnd(std::string_view bytes, const CsvDialect& dialect,
   return cursor.last_term == duckdb::DConstants::INVALID_INDEX
            ? std::string_view::npos
            : cursor.last_term;
+}
+
+char DetectLineBreak(std::string_view bytes, bool csv,
+                     const CsvDialect& dialect, bool complete) noexcept {
+  const bool quoted_escape = dialect.escape != dialect.quote;
+  bool in_quote = false;
+  for (size_t i = 0; i < bytes.size(); ++i) {
+    const char c = bytes[i];
+    if (csv && in_quote) {
+      if (quoted_escape && c == dialect.escape && i + 1 < bytes.size() &&
+          (bytes[i + 1] == dialect.quote || bytes[i + 1] == dialect.escape)) {
+        ++i;
+      } else if (c == dialect.quote) {
+        in_quote = false;
+      }
+      continue;
+    }
+    if (csv && c == dialect.quote) {
+      in_quote = true;
+      continue;
+    }
+    if (!csv && c == '\\') {
+      ++i;
+      continue;
+    }
+    if (c == '\n') {
+      return '\n';
+    }
+    if (c == '\r') {
+      if (i + 1 < bytes.size()) {
+        return bytes[i + 1] == '\n' ? '\n' : '\r';
+      }
+      return complete ? '\r' : '\0';
+    }
+  }
+  return complete ? '\n' : '\0';
 }
 
 std::string_view UnquoteCsv(std::string_view raw, const CsvDialect& dialect,

@@ -64,19 +64,20 @@ Result Build(NGramKind<M>, const NGramSimilarityQuery& query, uint64_t, F&& f) {
 }
 
 template<NGramMatch M>
-std::optional<ConstantScore> ConstantOf(NGramKind<M>,
-                                        const NGramSimilarityQuery& query,
-                                        const ScoreArgs& args) {
+std::optional<score_t> ConstantOf(NGramKind<M>,
+                                  const NGramSimilarityQuery& query,
+                                  const ScoreArgs& args) {
   const auto& field = *query.State().reader;
   if constexpr (M == NGramMatch::All) {
-    auto constant = ConstantScoreOf(query.Segment(), field, args);
-    if (constant) {
-      constant->scale = static_cast<score_t>(query.Present()) /
-                        static_cast<score_t>(query.TotalTerms());
+    const auto value = ConstantOf(query.Segment(), field, args);
+    if (!value) {
+      return std::nullopt;
     }
-    return constant;
+    const auto scale = static_cast<score_t>(query.Present()) /
+                       static_cast<score_t>(query.TotalTerms());
+    return scale * *value;
   } else {
-    return ConstantScoreOf(query.Segment(), field, args, true);
+    return ConstantOf(query.Segment(), field, args, true);
   }
 }
 

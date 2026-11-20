@@ -67,16 +67,5 @@ struct ScoreInputs {
   const AttributeProvider& attrs;
 };
 
-struct ConstantScore {
-  score_t value = 0;
-  score_t scale = 1;
-  const TermReader* field = nullptr;
-  uint32_t freq = 0;
-};
-
-inline score_t ScoreOf(const ConstantScore& constant) noexcept {
-  return constant.scale * constant.value;
-}
-
 }  // namespace detail
 }  // namespace irs

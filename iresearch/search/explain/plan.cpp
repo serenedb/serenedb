@@ -34,8 +34,6 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/detail/ngram_of.hpp"
-#include "iresearch/search/detail/phrase_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/explain/names.hpp"
@@ -101,16 +99,35 @@ std::vector<PhrasePosition> WordsOf(const PhraseQuery& query,
   return words;
 }
 
-std::optional<detail::ConstantScore> ConstantOf(
-  const detail::PostingClause& clause, const SubReader& segment,
-  const detail::ScoreArgs& args) {
+struct Constant {
+  const TermReader* field = nullptr;
+  uint32_t freq = 0;
+  score_t scale = 1;
+};
+
+uint32_t ConstantFreq(const SubReader& segment, const TermReader& field,
+                      const detail::ScoreArgs& args) {
+  if (args.scorer->Constant({
+        .segment = segment,
+        .field = field.meta(),
+        .doc_attrs = detail::NoAttributes(),
+        .fetcher = *args.fetcher,
+        .stats = args.stats,
+        .boost = args.boost,
+      })) {
+    return 0;
+  }
+  return 1;
+}
+
+Constant ConstantOf(const detail::PostingClause& clause,
+                    const SubReader& segment, const detail::ScoreArgs& args) {
   const auto& meta = clause.state.cookie;
   const auto& field = *clause.state.reader;
   if (meta.docs_count == 1) {
-    return detail::SingleDocConstant(
-      segment, field, doc_limits::min() + meta.doc_delta, meta.freq, args);
+    return {.field = &field, .freq = detail::FreqOf(field) ? meta.freq : 1};
   }
-  return detail::ConstantScoreOf(segment, field, args);
+  return {.field = &field, .freq = ConstantFreq(segment, field, args)};
 }
 
 using Planner = absl::AnyInvocable<probe::Node::ptr()>;
@@ -137,7 +154,7 @@ class LeafPart {
  public:
   LeafPart(Planner plan, ColumnArgsFetcher& fetcher, const SubReader& segment,
            const detail::ScoreArgs& args, const SlotStats* stats,
-           Subject subject, std::optional<detail::ConstantScore> constant)
+           Subject subject, Constant constant)
     : _cursor{.plan = std::move(plan)},
       _fetcher{fetcher},
       _segment{segment},
@@ -195,28 +212,29 @@ class LeafPart {
   }
 
   void DescribeConstant(Node& out) const {
-    SDB_ASSERT(_constant);
-    const auto& constant = *_constant;
-    uint32_t freq = constant.freq;
+    uint32_t freq = _constant.freq;
     detail::LeafProvider provider;
     provider.freq.value = &freq;
     const AttributeProvider& attrs =
       freq != 0 ? provider : detail::NoAttributes();
     const ScoreContext ctx{
       .segment = _segment,
-      .field = constant.field ? constant.field->meta() : detail::NoField(),
+      .field = _constant.field ? _constant.field->meta() : detail::NoField(),
       .doc_attrs = attrs,
       .fetcher = _fetcher,
       .stats = _args.stats,
       .boost = _args.boost,
     };
-    if (constant.scale == 1) {
+    if (_constant.scale == 1) {
       Describe(ctx, out);
       return;
     }
+    SDB_ASSERT(_constant.field);
+    const auto score = detail::ConstantOf(_segment, *_constant.field, _args);
+    SDB_ASSERT(score);
     out.expression = "scale * score";
-    AddDetail(out, "scale", constant.scale);
-    Describe(ctx, AddDetail(out, "score", constant.value));
+    AddDetail(out, "scale", _constant.scale);
+    Describe(ctx, AddDetail(out, "score", *score));
   }
 
   Cursor _cursor;
@@ -225,7 +243,7 @@ class LeafPart {
   detail::ScoreArgs _args;
   const SlotStats* _stats;
   Subject _subject;
-  std::optional<detail::ConstantScore> _constant;
+  Constant _constant;
   std::string _scorer;
   ScoreFunction _score;
 };
@@ -364,7 +382,7 @@ class Builder {
                     args,
                     stats,
                     std::move(subject),
-                    scored ? ConstantOf(clause, _segment, args) : std::nullopt};
+                    scored ? ConstantOf(clause, _segment, args) : Constant{}};
   }
 
   LeafPart MakeLeaf(const QueryBuilder& query) {
@@ -376,8 +394,9 @@ class Builder {
       .boost = query.Boost(),
     };
     const auto* stats = StatsOf(_stats, record.stats);
+    const bool scored = record.stats != nullptr;
     Subject subject;
-    std::optional<detail::ConstantScore> constant = detail::ConstantScore{};
+    Constant constant;
     switch (query.Kind()) {
       case QueryKind::Phrase: {
         const auto& phrase = utils::downCast<PhraseQuery>(query);
@@ -392,24 +411,28 @@ class Builder {
         } else {
           subject = SubjectOf(stats, &reader);
         }
-        constant =
-          Resolve<detail::PhraseMatchAxis>(phrase, [&]<detail::PhraseMatch M> {
-            return detail::ConstantOf(detail::PhraseKind<M>{}, phrase, args);
-          });
+        if (scored) {
+          constant = {.field = &reader,
+                      .freq = ConstantFreq(_segment, reader, args)};
+        }
       } break;
       case QueryKind::NGram: {
         const auto& ngram = utils::downCast<NGramSimilarityQuery>(query);
-        subject = SubjectOf(stats, ngram.State().reader);
-        constant =
-          Resolve<detail::NGramMatchAxis>(ngram, [&]<detail::NGramMatch M> {
-            return detail::ConstantOf(detail::NGramKind<M>{}, ngram, args);
-          });
+        const auto& reader = *ngram.State().reader;
+        subject = SubjectOf(stats, &reader);
+        if (scored) {
+          constant = {.field = &reader,
+                      .freq = ConstantFreq(_segment, reader, args)};
+          if (ngram.Every()) {
+            constant.scale = static_cast<score_t>(ngram.Present()) /
+                             static_cast<score_t>(ngram.TotalTerms());
+          }
+        }
       } break;
       default:
         subject = SubjectOf(stats, nullptr);
         break;
     }
-    const bool scored = record.stats != nullptr;
     return LeafPart{[&query, scoring = Scoring(), scored] {
                       return query.PlanProbe(
                         scored ? scoring : detail::ScoredCtx{}, 1);

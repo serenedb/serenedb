@@ -80,12 +80,11 @@ inline score_t ConstantTermScore(const SubReader& segment,
   return PrepareScore(args, segment, field.meta(), provider).Score();
 }
 
-inline std::optional<ConstantScore> ConstantScoreOf(const SubReader& segment,
-                                                    const TermReader& field,
-                                                    const ScoreArgs& args) {
-  ConstantScore constant{.field = &field};
+inline std::optional<score_t> ConstantOf(const SubReader& segment,
+                                         const TermReader& field,
+                                         const ScoreArgs& args) {
   if (args.scorer == nullptr || args.stats == nullptr) {
-    return constant;
+    return score_t{0};
   }
   if (const auto value = args.scorer->Constant({
         .segment = segment,
@@ -95,38 +94,26 @@ inline std::optional<ConstantScore> ConstantScoreOf(const SubReader& segment,
         .stats = args.stats,
         .boost = args.boost,
       })) {
-    constant.value = *value;
-    return constant;
+    return value;
   }
   const auto features = field.meta().index_features;
   if (!FeaturesHaveFreq(features) &&
       IndexFeatures::None !=
         (args.scorer->GetIndexFeatures() & IndexFeatures::Freq)) {
     SDB_ASSERT(IndexFeatures::None == (features & IndexFeatures::Norm));
-    constant.value = ConstantTermScore(segment, field, args);
-    constant.freq = 1;
-    return constant;
+    return ConstantTermScore(segment, field, args);
   }
   return std::nullopt;
-}
-
-inline std::optional<ConstantScore> ConstantScoreOf(const SubReader& segment,
-                                                    const TermReader& field,
-                                                    const ScoreArgs& args,
-                                                    bool row_scaled) {
-  if (row_scaled && args.scorer != nullptr && args.stats != nullptr) {
-    return std::nullopt;
-  }
-  return ConstantScoreOf(segment, field, args);
 }
 
 inline std::optional<score_t> ConstantOf(const SubReader& segment,
                                          const TermReader& field,
-                                         const ScoreArgs& args) {
-  if (const auto constant = ConstantScoreOf(segment, field, args)) {
-    return constant->value;
+                                         const ScoreArgs& args,
+                                         bool row_scaled) {
+  if (row_scaled && args.scorer != nullptr && args.stats != nullptr) {
+    return std::nullopt;
   }
-  return std::nullopt;
+  return ConstantOf(segment, field, args);
 }
 
 inline score_t ConstantTermOf(const SubReader& segment, const TermReader& field,
@@ -147,12 +134,11 @@ inline score_t ConstantTermOf(const SubReader& segment, const TermReader& field,
   return ConstantTermScore(segment, field, args);
 }
 
-inline ConstantScore SingleDocConstant(const SubReader& segment,
-                                       const TermReader& field, doc_id_t doc,
-                                       uint32_t freq, const ScoreArgs& args) {
-  ConstantScore constant{.field = &field};
+inline score_t SingleDocScore(const SubReader& segment, const TermReader& field,
+                              doc_id_t doc, uint32_t freq,
+                              const ScoreArgs& args) {
   if (args.stats == nullptr) {
-    return constant;
+    return 0;
   }
   LeafProvider provider;
   if (IndexFeatures::None ==
@@ -162,15 +148,7 @@ inline ConstantScore SingleDocConstant(const SubReader& segment,
   provider.freq.value = &freq;
   auto score = PrepareScore(args, segment, field.meta(), provider);
   args.fetcher->Fetch(doc);
-  constant.value = score.Score();
-  constant.freq = freq;
-  return constant;
-}
-
-inline score_t SingleDocScore(const SubReader& segment, const TermReader& field,
-                              doc_id_t doc, uint32_t freq,
-                              const ScoreArgs& args) {
-  return SingleDocConstant(segment, field, doc, freq, args).value;
+  return score.Score();
 }
 
 }  // namespace irs::detail

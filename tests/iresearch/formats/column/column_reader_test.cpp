@@ -2568,6 +2568,69 @@ TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
   EXPECT_TRUE(absl::c_any_of(prefetched, covers_block));
 }
 
+TEST_F(ColumnReaderTest, ReadsPrefetchTheSharedBlockOfTheirRowGroup) {
+  constexpr uint32_t kRgSize = 4 * STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kRows = 3 * kRgSize;
+  constexpr irs::field_id kS = 1;
+  irs::MemoryDirectory mem;
+  {
+    irs::ColWriter w{mem, "seg", Db(), irs::WriteTier::Merge};
+    auto& cw = w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
+                            {.row_group_size = kRgSize,
+                             .compression = irs::codecs::CodecType::Fsst12,
+                             .codec_params = {.segment_target = 32 * 1024}});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        ds[k] = duckdb::StringVector::AddString(
+          vs, absl::StrCat("https://example.org/", (pos + k) % 977, "/item/",
+                           ((pos + k) * 7919) % 100003, "?ref=", pos + k));
+      }
+      duckdb::FlatVector::SetSize(vs, STANDARD_VECTOR_SIZE);
+      cw.Append(vs, STANDARD_VECTOR_SIZE);
+    }
+    w.Commit(0);
+  }
+
+  ResidencyScript script;
+  PrefetchRecordingDirectory dir{mem, script};
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto& col = *r.Column(kS);
+  const auto blocks = col.DataBlocks();
+  ASSERT_GT(blocks.size(), 6);
+  ASSERT_TRUE(absl::c_all_of(
+    blocks, [](const auto& block) { return block.shared_size != 0; }));
+  ASSERT_NE(blocks.front().shared_offset, blocks.back().shared_offset);
+  ASSERT_EQ(blocks[blocks.size() - 2].shared_offset,
+            blocks.back().shared_offset);
+  const auto prefetches = [&](const irs::ColumnBlockMeta& block) {
+    return absl::c_count_if(script.prefetched, [&](const PrefetchRange& p) {
+      return p.offset <= block.shared_offset &&
+             block.shared_offset + block.shared_size <= p.offset + p.size;
+    });
+  };
+
+  {
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
+    irs::ColumnReader::PointReader reader{r, col};
+    ASSERT_TRUE(reader.FetchRow(kRows - 1, out, 0));
+  }
+  EXPECT_EQ(prefetches(blocks.back()), 1);
+  EXPECT_EQ(prefetches(blocks.front()), 0);
+
+  script.prefetched.clear();
+  auto state = col.InitScan(r.Ctx());
+  for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+    duckdb::Vector result{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    col.Scan(state, result, STANDARD_VECTOR_SIZE);
+  }
+  for (const auto& block : blocks) {
+    EXPECT_NE(prefetches(block), 0);
+  }
+  EXPECT_EQ(prefetches(blocks.back()), 1);
+}
+
 TEST_F(ColumnReaderTest, ScansTrustTheWarmMapBetweenTwoResidentEnds) {
   constexpr uint32_t kRgSize = STANDARD_VECTOR_SIZE;
   constexpr uint64_t kRows = 48 * kRgSize;

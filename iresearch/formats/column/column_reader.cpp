@@ -31,6 +31,7 @@
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <utility>
 
@@ -275,6 +276,9 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   const auto& first = _segments[block];
   if (s == nullptr) {
     file_utils::Hint(in, first.file_offset, first.byte_size);
+    if (first.shared_size != 0) {
+      file_utils::Hint(in, first.shared_offset, first.shared_size);
+    }
     return;
   }
   const bool sequential = block != 0 && s->opened_block + 1 == block;
@@ -310,10 +314,15 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
     file_utils::InvalidateResidency();
   }
   uint64_t budget = sequential ? file_utils::kMaxReadahead : 0;
+  auto shared = std::numeric_limits<uint64_t>::max();
   auto b = block;
   do {
     const auto& m = _segments[b++];
     in.Prefetch(m.file_offset, m.byte_size);
+    if (m.shared_size != 0 && m.shared_offset != shared) {
+      shared = m.shared_offset;
+      in.Prefetch(shared, m.shared_size);
+    }
     const auto cost = std::max<uint64_t>(m.byte_size, file_utils::kPage);
     if (budget <= cost) {
       break;

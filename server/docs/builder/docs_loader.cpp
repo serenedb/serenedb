@@ -30,6 +30,7 @@
 #include <cstddef>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -37,9 +38,9 @@
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <exception>
-#include <filesystem>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/segment_list.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -59,7 +60,6 @@
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "search/store.h"
-#include "utils/file_utils.h"
 
 namespace sdb::docs {
 namespace {
@@ -345,7 +345,7 @@ class Loader {
 std::vector<IndexBlob> BuildImage(std::span<const Doc> docs) {
   std::string name;
   duckdb::idx_t oid = 0;
-  if (!catalog::ReadDatabase(
+  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
         irs::StaticStrings::kDefaultDatabase,
         [&](const catalog::DatabaseCatalogEntry& database) {
           name = database.name.GetIdentifierName();
@@ -414,11 +414,13 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
     }
     auto& store = *table->Storage();
     store.Settle();
-    const auto path = store.Path();
+    const auto& path = store.Path();
+    auto& fs =
+      duckdb::DatabaseInstance::GetDatabase(context).GetInternalFileSystem();
     const auto add = [&](std::string_view file) {
-      image.push_back(
-        {.name = absl::StrCat(table_name, "/", file),
-         .bytes = utils::file_utils::Slurp((path / file).string())});
+      image.push_back({.name = fs.JoinPath(table_name, file),
+                       .bytes = irs::ReadWhole<std::string>(
+                         context, fs, fs.JoinPath(path, file))});
     };
     std::string segments;
     for (const auto& unit : store.GetTable().State()->units) {
@@ -431,44 +433,46 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
                        add);
       irs::AppendSegmentList(segments, unit->id, unit->meta.kinds, unit->docs);
     }
-    image.push_back({.name = absl::StrCat(table_name, "/", kSegmentsFile),
+    image.push_back({.name = fs.JoinPath(table_name, kSegmentsFile),
                      .bytes = std::move(segments)});
-    image.push_back({.name = absl::StrCat(table_name, "/", kLayoutFile),
+    image.push_back({.name = fs.JoinPath(table_name, kLayoutFile),
                      .bytes = DescribeLayout(*table)});
   });
   return image;
 }
 
-bool WriteImage(std::span<const IndexBlob> image,
-                const std::filesystem::path& out) {
+bool WriteImage(std::span<const IndexBlob> image, const std::string& out) {
+  auto& fs = irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
   try {
-    if (std::filesystem::exists(out) && !std::filesystem::is_empty(out)) {
-      SDB_ERROR(STARTUP, "cannot build the docs index: ", out.string(),
+    bool holds = false;
+    fs.ListFiles(out, [&](duckdb::OpenFileInfo&) { holds = true; }, nullptr,
+                 {.strict = true});
+    if (holds) {
+      SDB_ERROR(STARTUP, "cannot build the docs index: ", out,
                 " already exists and is not empty; give docs-index a new or "
                 "empty directory");
       return false;
     }
     size_t bytes = 0;
     for (const auto& blob : image) {
-      const auto path = out / blob.name;
-      std::filesystem::create_directories(path.parent_path());
-      utils::file_utils::Spit(path.string(), blob.bytes);
+      const auto path = fs.JoinPath(out, blob.name);
+      fs.CreateDirectoriesRecursive(fs.JoinPath(path, ".."));
+      irs::WriteWhole(fs, path, blob.bytes, false);
       bytes += blob.bytes.size();
     }
-    SDB_INFO(STARTUP, "docs index written to ", out.string(), ": ",
-             image.size(), " files, ", bytes, " bytes");
+    SDB_INFO(STARTUP, "docs index written to ", out, ": ", image.size(),
+             " files, ", bytes, " bytes");
     return true;
   } catch (const std::exception& e) {
-    SDB_ERROR(STARTUP, "cannot build the docs index: writing ", out.string(),
-              " failed: ", e.what());
+    SDB_ERROR(STARTUP, "cannot build the docs index: writing ", out,
+              " failed: ", duckdb::ErrorData{e}.RawMessage());
     return false;
   }
 }
 
 }  // namespace
 
-bool BuildEmbeddedIndex(const std::filesystem::path& out,
-                        std::span<const Doc> docs) {
+bool BuildEmbeddedIndex(const std::string& out, std::span<const Doc> docs) {
   const auto image = BuildImage(docs);
   return !image.empty() && WriteImage(image, out);
 }

@@ -73,8 +73,9 @@ bool CollectConjunctionBuckets(std::span<const Term> terms,
     });
 }
 
-inline const IndexInput* BucketsDoc(const BitsetBuckets& buckets) noexcept {
-  const IndexInput* doc = nullptr;
+inline const duckdb::InputFile* BucketsDoc(
+  const BitsetBuckets& buckets) noexcept {
+  const duckdb::InputFile* doc = nullptr;
   const auto same = [&](std::span<const PostingClause> clauses) noexcept {
     if (clauses.empty()) {
       return true;
@@ -156,7 +157,7 @@ inline bool PlanExcludeFills(const ExcludeFills& fills, BitsetBuckets& out) {
 inline bool TakeExclusionFold(const BitsetBuckets& buckets,
                               const ExcludeFills& fills, const FoldEmit& emit,
                               const ExcludeCosts<PostingClause>& exclusion,
-                              const IndexInput& doc, doc_id_t docs_count,
+                              const duckdb::InputFile& doc, doc_id_t docs_count,
                               uint64_t candidates) noexcept {
   if (fills.children.empty() && buckets.masked == nullptr &&
       !buckets.NeedsSet() && !buckets.DenseLead(docs_count)) {

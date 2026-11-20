@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/parser/parsed_data/create_replication_origin_info.hpp>
@@ -35,6 +33,7 @@
 #include "catalog/boot.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "catalog/entry/tablespace.h"
 #include "catalog/snapshot.h"
 #include "catalog/transaction.h"
 
@@ -46,8 +45,9 @@ class ClusterCatalog final : public BaseCatalog {
     : BaseCatalog{db, false},
       _layout{std::move(layout)},
       _roles{true, _oids},
-      _databases{true, _oids},
+      _databases{true, _oids, 0, /*members=*/true},
       _origins{true, _oids},
+      _tablespaces{true, _oids},
       _temporary_secrets{true, _oids},
       _persistent_secrets{true, _oids} {}
 
@@ -91,6 +91,20 @@ class ClusterCatalog final : public BaseCatalog {
   void DropReplicationOrigin(duckdb::CatalogTransaction transaction,
                              duckdb::DropInfo& info);
 
+  duckdb::optional_ptr<duckdb::CatalogEntry> CreateTablespace(
+    duckdb::CatalogTransaction transaction,
+    duckdb::CreateTablespaceInfo& info) final;
+  void DropTablespace(duckdb::CatalogTransaction transaction,
+                      duckdb::DropInfo& info) final;
+  TablespaceCatalogEntry& Tablespace(duckdb::CatalogTransaction transaction,
+                                     duckdb::idx_t oid);
+  TablespaceCatalogEntry& Tablespace(duckdb::CatalogTransaction transaction,
+                                     const duckdb::Identifier& name);
+  std::string TablespaceDirectoryOf(duckdb::CatalogTransaction transaction,
+                                    duckdb::idx_t oid);
+  std::vector<std::string> TablespaceDirs(
+    duckdb::CatalogTransaction transaction);
+
   void ReplayCreate(duckdb::ClientContext& context,
                     duckdb::unique_ptr<duckdb::CreateInfo> info) final;
   void ReplayDrop(duckdb::ClientContext& context,
@@ -105,10 +119,14 @@ class ClusterCatalog final : public BaseCatalog {
   }
 
  private:
+  std::shared_ptr<DatabaseDirectory> DatabaseDirectoryOf(
+    duckdb::CatalogTransaction transaction, duckdb::idx_t tablespace);
+
   DataDirectory _layout;
   EntrySet _roles;
   EntrySet _databases;
   EntrySet _origins;
+  EntrySet _tablespaces;
   EntrySet _temporary_secrets;
   EntrySet _persistent_secrets;
   auth::RoleCache _role_cache;
@@ -119,32 +137,17 @@ ClusterCatalog& ClusterOf(duckdb::ClientContext& context);
 ClusterCatalog& ClusterOf(duckdb::DatabaseInstance& db);
 ClusterCatalog& ClusterOf();
 
-inline bool ReadDatabase(
-  std::string_view name,
-  absl::FunctionRef<void(const DatabaseCatalogEntry&)> read) {
+template<typename Entry>
+bool ReadEntry(std::string_view name, const auto& read) {
   auto& cluster = ClusterOf();
   const CommittedView view;
   const auto entry =
-    cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+    cluster.Set(Entry::Type)
       .Get(view.Transaction(cluster.GetDatabase()), duckdb::Identifier{name});
   if (!entry) {
     return false;
   }
-  read(entry->Cast<DatabaseCatalogEntry>());
-  return true;
-}
-
-inline bool ReadRole(std::string_view name,
-                     absl::FunctionRef<void(const RoleCatalogEntry&)> read) {
-  auto& cluster = ClusterOf();
-  const CommittedView view;
-  const auto entry =
-    cluster.Set(duckdb::CatalogType::ROLE_ENTRY)
-      .Get(view.Transaction(cluster.GetDatabase()), duckdb::Identifier{name});
-  if (!entry) {
-    return false;
-  }
-  read(entry->Cast<RoleCatalogEntry>());
+  read(entry->template Cast<Entry>());
   return true;
 }
 

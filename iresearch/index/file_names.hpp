@@ -24,11 +24,9 @@
 #pragma once
 
 #include <cstdint>
-#include <span>
 #include <string>
 #include <vector>
 
-#include "iresearch/index/index_meta.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -39,22 +37,11 @@ inline constexpr uint8_t kDocFile = 1 << 2;
 inline constexpr uint8_t kPosFile = 1 << 3;
 inline constexpr uint8_t kPayFile = 1 << 4;
 
-uint8_t SegmentFileKinds(std::span<const std::string> files) noexcept;
-
 std::vector<std::string> SegmentFiles(std::string_view segment, uint8_t kinds);
-
-std::vector<std::string> SegmentFiles(const SegmentMeta& meta);
 
 std::string FileName(uint64_t id);
 
-// Returns string in the following format : {name}.{ext}
-void FileName(std::string& out, std::string_view name, std::string_view ext);
-
-inline std::string FileName(std::string_view name, std::string_view ext) {
-  std::string result;
-  FileName(result, name, ext);
-  return result;
-}
+std::string FileName(std::string_view name, std::string_view ext);
 
 bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept;
 

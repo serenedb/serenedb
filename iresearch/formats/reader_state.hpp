@@ -22,23 +22,27 @@
 
 #pragma once
 
-#include "iresearch/store/data_input.hpp"
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
+#include <string_view>
 
 namespace irs {
 
-struct Directory;
 class IdxReader;
 struct SegmentMeta;
 
 struct PostingsInputs {
-  IndexInput::ptr doc;
-  IndexInput::ptr pos;
-  IndexInput::ptr pay;
+  duckdb::shared_ptr<duckdb::InputFile> doc;
+  duckdb::shared_ptr<duckdb::InputFile> pos;
+  duckdb::shared_ptr<duckdb::InputFile> pay;
 };
 
 struct ReaderState {
-  const Directory* dir;
-  const SegmentMeta* meta;
+  duckdb::DatabaseInstance& db;
+  duckdb::FileSystem& fs;
+  std::string_view root;
+  const SegmentMeta& meta;
   IdxReader* idx = nullptr;
   PostingsInputs* postings = nullptr;
 };

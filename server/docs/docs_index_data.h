@@ -31,7 +31,7 @@ inline constexpr std::string_view kSegmentsFile = "sdb_docs.segments";
 
 struct IndexFile {
   std::string_view name;
-  std::span<const std::uint8_t> bytes;
+  std::span<std::uint8_t> bytes;
 };
 
 std::span<const IndexFile> GetDocsIndex();

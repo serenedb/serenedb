@@ -30,7 +30,7 @@
 
 namespace irs {
 
-class DirectoryReader;
+class CompositeReader;
 
 }  // namespace irs
 namespace sdb::search {
@@ -49,7 +49,7 @@ struct StoreStats {
   uint64_t avgConsolidationTimeMs = 0;
   // NOLINTEND
 
-  static StoreStats FromReader(const irs::DirectoryReader& reader);
+  static StoreStats FromReader(const irs::CompositeReader& reader);
 };
 
 class MovingAverageMs {

@@ -20,34 +20,38 @@
 
 #pragma once
 
-#include <iresearch/index/directory_reader.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/directory.hpp>
-#include <iresearch/store/directory_attributes.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
+#include <iresearch/store/storage.hpp>
+#include <memory>
 #include <span>
+#include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace examples {
 
 class Segments {
  public:
-  Segments(irs::Directory& dir, const irs::IndexReaderOptions& options)
-    : _dir{dir}, _options{options} {}
+  Segments(duckdb::FileSystem& fs, std::string_view root,
+           std::shared_ptr<irs::ReleasedSegments> released = nullptr)
+    : _fs{fs}, _root{root}, _released{std::move(released)} {}
 
   void Add(std::span<const irs::IndexWriter::FlushedSegment> flushed);
   void Remove(const irs::DocRemoval& removal);
   bool Replace(const irs::IndexWriter::Merged& merged);
-  irs::DirectoryReader Reader() const;
+  irs::CompositeReader Reader() const;
 
  private:
-  void Pin();
-
-  irs::Directory& _dir;
-  irs::IndexReaderOptions _options;
-  std::vector<irs::SegmentMeta> _segments;
-  irs::FileRefs _pins;
+  duckdb::FileSystem& _fs;
+  std::string _root;
+  std::shared_ptr<irs::ReleasedSegments> _released;
+  std::vector<std::shared_ptr<const irs::SegmentReaderImpl>> _segments;
 };
 
 }  // namespace examples

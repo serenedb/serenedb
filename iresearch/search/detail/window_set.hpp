@@ -70,7 +70,7 @@ auto ScoreOf(const Scoring& scoring, score_t absorbed) noexcept {
 }
 
 template<typename Result, typename P = NoPins, typename Scoring, typename Make>
-Result ResolveCountLeaves(const IndexInput& doc, const Scoring& scoring,
+Result ResolveCountLeaves(const duckdb::InputFile& doc, const Scoring& scoring,
                           Make&& make) {
   if constexpr (kScores<Scoring>) {
     return ResolveCountScored<Result, P>(
@@ -112,7 +112,7 @@ inline bool ScoresPerDocTerm(const PostingClause& posting) noexcept {
 template<typename Term, typename PlanChild>
 bool CollectDense(std::span<const Term> terms,
                   std::span<const QueryBuilder::ptr> filters,
-                  const TermReader* field, const IndexInput*& doc,
+                  const TermReader* field, const duckdb::InputFile*& doc,
                   std::vector<FillNode::ptr>& rest, PlanChild&& plan) {
   if (!terms.empty()) {
     doc = SharedDoc(terms, field);
@@ -136,7 +136,7 @@ bool CollectDense(std::span<const Term> terms,
 
 template<typename Plain, typename Term>
 void PreparePlain(Plain& leaf, const Term& term, const TermReader* field,
-                  const IndexInput& doc) {
+                  const duckdb::InputFile& doc) {
   const auto& own = FieldOf(term, field);
   const auto& meta = CookieOf(term);
   leaf.Prepare(meta, doc, LayoutOf(own), meta.docs_count != 1 && BoundsOf(own),
@@ -145,7 +145,7 @@ void PreparePlain(Plain& leaf, const Term& term, const TermReader* field,
 
 template<typename Leaf, typename Term>
 void PrepareScored(Leaf& leaf, const Term& term, const TermReader* field,
-                   const IndexInput& doc, const TermScoring& scoring) {
+                   const duckdb::InputFile& doc, const TermScoring& scoring) {
   const auto clause = ClauseOf(term, field, scoring.scorer, scoring.boost);
   SDB_ASSERT(clause.state.reader != nullptr);
   const auto& meta = clause.state.cookie;
@@ -158,7 +158,7 @@ void PrepareScored(Leaf& leaf, const Term& term, const TermReader* field,
 template<typename Result, typename Leaf, typename Plain, typename Term,
          typename Scoring, typename Make>
 Result BuildWindowTerms(std::span<const Term> terms, const TermReader* field,
-                        const IndexInput* input, const Scoring& scoring,
+                        const duckdb::InputFile* input, const Scoring& scoring,
                         Make&& make) {
   SDB_ASSERT(!terms.empty());
   const auto& doc = *input;
@@ -203,8 +203,9 @@ Result BuildWindowTerms(std::span<const Term> terms, const TermReader* field,
 template<typename Result, typename Leaf, typename Plain, typename Term,
          typename Scoring, typename Make>
 Result BuildWindowMix(std::span<const Term> terms, const TermReader* field,
-                      const IndexInput* input, std::vector<FillNode::ptr>& rest,
-                      const Scoring& scoring, Make&& make) {
+                      const duckdb::InputFile* input,
+                      std::vector<FillNode::ptr>& rest, const Scoring& scoring,
+                      Make&& make) {
   SDB_ASSERT(!terms.empty());
   if (rest.empty()) {
     return BuildWindowTerms<Result, Leaf, Plain>(terms, field, input, scoring,
@@ -263,8 +264,9 @@ fill::Node::ptr ScoredTermOf(const PostingClause& term,
 template<typename Result, typename P = NoPins, typename Term, typename Scoring,
          typename Make>
 Result BuildWindowSet(std::span<const Term> terms, const TermReader* field,
-                      const IndexInput* doc, std::vector<FillNode::ptr>& rest,
-                      const Scoring& scoring, Make&& make) {
+                      const duckdb::InputFile* doc,
+                      std::vector<FillNode::ptr>& rest, const Scoring& scoring,
+                      Make&& make) {
   SDB_ASSERT(!terms.empty() || !rest.empty());
   if (terms.empty()) {
     return make.template operator()<fill::SetLeaves<fill::Erased>>(

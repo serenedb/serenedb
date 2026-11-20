@@ -1,0 +1,33 @@
+control substitution on
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+statement ok
+SET s3_use_ssl = false;
+
+statement ok
+COPY (SELECT i, i % 7 AS k FROM range(2200000) t(i))
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_footer.parquet' (FORMAT parquet, ROW_GROUP_SIZE 2048);
+
+query
+SELECT count(DISTINCT row_group_id) > 1000 AS many_row_groups
+FROM parquet_metadata('s3://${MINIO_BUCKET}/${__DATABASE__}_footer.parquet');
+----
+many_row_groups
+t
+
+query
+SELECT count(*) AS row_count, sum(k) AS k_sum, max(i) AS i_max
+FROM read_parquet('s3://${MINIO_BUCKET}/${__DATABASE__}_footer.parquet');
+----
+row_count	k_sum	i_max
+2200000	6599995	2199999

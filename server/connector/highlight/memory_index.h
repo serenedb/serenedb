@@ -20,15 +20,11 @@
 
 #pragma once
 
+#include <duckdb/common/memory_file_system.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <memory>
+#include <string>
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace sdb::connector::highlight {
 
 class MemoryIndex {
@@ -39,9 +35,7 @@ class MemoryIndex {
   std::shared_ptr<const irs::SubReader> IndexChunk(size_t row_count,
                                                    WriteDocs&& write_docs) {
     irs::IndexWriterOptions opts;
-    opts.db = _db;
-    opts.reader_options.db = _db;
-    auto writer = irs::IndexWriter::Make(_dir, std::move(opts));
+    auto writer = irs::IndexWriter::Make(_db, _fs, _root, std::move(opts));
     auto trx = writer->GetBatch();
     const auto id = writer->NextSegmentId();
     trx.SetHot(id);
@@ -54,8 +48,9 @@ class MemoryIndex {
   }
 
  private:
-  irs::MemoryDirectory _dir;
-  duckdb::DatabaseInstance* _db;
+  duckdb::DatabaseInstance& _db;
+  duckdb::MemoryFileSystem _fs;
+  std::string _root;
 };
 
 }  // namespace sdb::connector::highlight

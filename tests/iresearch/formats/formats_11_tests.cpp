@@ -22,11 +22,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <iresearch/index/norm.hpp>
-#include <iresearch/store/directory_attributes.hpp>
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "formats_test_case_base.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
 
@@ -208,7 +208,7 @@ TEST_P(Format11TestCase, formats_11) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));
 

@@ -102,7 +102,7 @@ Node::ptr MakeWindowDisjunction(std::span<const Term> terms,
                                 const detail::TermScoring& scoring,
                                 const detail::ScoredCtx& ctx,
                                 score_t absorbed) {
-  const IndexInput* doc = nullptr;
+  const duckdb::InputFile* doc = nullptr;
   std::vector<detail::FillNode::ptr> rest;
   if (!detail::CollectDense(terms, filters, field, doc, rest,
                             [&](const QueryBuilder& child) {
@@ -126,7 +126,7 @@ bool TakeTermSetsWindow(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, doc_id_t docs_count,
                         uint64_t interrogations) {
-  const IndexInput* doc = detail::SharedDoc(terms, field);
+  const duckdb::InputFile* doc = detail::SharedDoc(terms, field);
   size_t leaves = terms.size();
   uint64_t docs = detail::SumDocs(terms);
   for (const auto& child : filters) {

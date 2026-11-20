@@ -31,16 +31,16 @@
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/formats/column/hot_column_reader.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/directory_attributes.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/parallel_for.hpp>
 #include <limits>
@@ -215,14 +215,14 @@ struct TableState {
   Tick tick = 0;
   Tick layout = 0;
   uint64_t memory_end = 0;
-  irs::DirectoryReader reader;
+  irs::CompositeReader reader;
 };
 
 struct TableRead {
   std::shared_ptr<const TableState> state;
-  std::optional<irs::DirectoryReader> own;
+  std::optional<irs::CompositeReader> own;
 
-  const irs::DirectoryReader& Reader() const noexcept {
+  const irs::CompositeReader& Reader() const noexcept {
     return own ? *own : state->reader;
   }
 };
@@ -296,7 +296,9 @@ class LiveUnits {
 
 class Table final {
  public:
-  Table(irs::Directory& dir, irs::IndexReaderOptions options,
+  Table(duckdb::FileSystem& fs, std::string root,
+        irs::IndexReaderOptions options,
+        std::shared_ptr<irs::ReleasedSegments> released,
         std::shared_ptr<const catalog::InvertedIndexConfig> config);
   ~Table();
 
@@ -307,16 +309,16 @@ class Table final {
   }
   VersionChain<TableState>& Versions() noexcept { return _versions; }
 
-  static const irs::DirectoryReader& Reader(const TableState& state) noexcept {
+  static const irs::CompositeReader& Reader(const TableState& state) noexcept {
     return state.reader;
   }
-  irs::DirectoryReader View(const TableState& state,
+  irs::CompositeReader View(const TableState& state,
                             const OwnWrites& own) const;
   TableRead Read(const OwnWrites& own) const;
-  irs::DirectoryReader ColdView() const {
+  irs::CompositeReader ColdView() const {
     return Build(*State(), {}, Scope::Cold);
   }
-  irs::DirectoryReader PieceView(
+  irs::CompositeReader PieceView(
     std::span<const std::shared_ptr<const TableUnit>> pieces,
     bool keep_deleted) const;
   StoreStats Stats() const;
@@ -325,8 +327,8 @@ class Table final {
   OwnSegment OpenSegment(
     uint64_t id, uint8_t kinds, irs::doc_id_t rows,
     std::span<const irs::SegmentAttachment> attachments = {}) const;
-  std::shared_ptr<const irs::SegmentReaderImpl> OpenAttachment(
-    const irs::SegmentAttachment& files, irs::doc_id_t rows) const;
+  std::shared_ptr<const irs::SegmentReaderImpl> OpenFiles(
+    const irs::SegmentMeta& meta) const;
 
   struct Memory {
     std::vector<std::shared_ptr<const TableUnit>> pieces;
@@ -385,6 +387,8 @@ class Table final {
   TableDelta PrepareAttach(std::span<const Attachment> attachments) const;
   std::shared_ptr<const TableState> Attach(
     Tick tick, std::span<const Attachment> attachments);
+  void Reopen(Tick tick, std::span<const uint64_t> units)
+    ABSL_LOCKS_EXCLUDED(_state_mutex);
 
   bool Collectable(Tick oldest) const;
   void Collect(Tick tick, Tick oldest);
@@ -413,9 +417,9 @@ class Table final {
 
   const TableVersion& Head() const noexcept { return _versions.Head(); }
 
-  irs::DirectoryReader Build(const TableState& state, const OwnWrites& own,
+  irs::CompositeReader Build(const TableState& state, const OwnWrites& own,
                              Scope scope) const;
-  irs::DirectoryReader BuildReader(const TableState& prev,
+  irs::CompositeReader BuildReader(const TableState& prev,
                                    const TableState& next) const;
   std::shared_ptr<TableState> SameUnits() const
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
@@ -423,8 +427,10 @@ class Table final {
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(_state_mutex);
   void CountPieces(const TableState& state) noexcept;
 
-  irs::Directory& _dir;
+  duckdb::FileSystem& _fs;
+  std::string _root;
   irs::IndexReaderOptions _options;
+  std::shared_ptr<irs::ReleasedSegments> _released;
   mutable absl::Mutex _state_mutex;
   std::shared_ptr<const catalog::InvertedIndexConfig> _config
     ABSL_GUARDED_BY(_state_mutex);

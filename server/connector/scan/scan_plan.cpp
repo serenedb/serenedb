@@ -645,6 +645,11 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
     AddDeferredChecks(state, bind_data.search.deferred);
     BuildDualFilters(state, bind_data.search.duals);
   }
+
+  state.rg_size = bind_data.relation.row_group_size != 0
+                    ? bind_data.relation.row_group_size
+                    : DEFAULT_ROW_GROUP_SIZE;
+  state.remote = bind_data.Storage().Remote();
 }
 
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
@@ -829,7 +834,7 @@ void FetchLocalState::EnsureHitBatcher(const ScanGlobalState& g) {
     hit_batcher = std::make_unique<irs::HitBatcher>(
       g.cs_projections,
       g.needs_lookup ? term_dict::kPKFieldId : irs::field_limits::invalid(),
-      g.ScanScore());
+      g.ScanScore(), g.remote);
   }
 }
 

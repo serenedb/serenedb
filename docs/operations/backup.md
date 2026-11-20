@@ -11,6 +11,7 @@ SereneDB provides PostgreSQL compatible low level backup functions `pg_backup_st
 Differences from PostgreSQL:
 
 - One backup at a time, owned by the session that started it.
+- A backup copies only the data directory: `pg_backup_start` fails while a [tablespace](../sql/statements/create_tablespace/index.md) other than `pg_default` and `pg_global` exists.
 - `fast` and `wait_for_archive` are accepted and ignored: `pg_backup_start` does not start a checkpoint, and there is no WAL archiving.
 - Without WAL archiving, the backup tool must be able to take a backup without it; most tools have a flag for this.
 - `pg_backup_start` waits for the transactions that are committing at that moment to finish, and holds new commits back while it records the backup position.

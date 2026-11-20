@@ -25,7 +25,6 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -42,13 +41,13 @@ class PostingLeadScored : public PostingLeaf<InputType, kCursorScoredShape> {
  public:
   PostingLeadScored() = default;
 
-  PostingLeadScored(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingLeadScored(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                     const SubReader& segment, const TermReader& field,
                     const ScoreArgs& args) {
     Prepare(meta, doc_in, segment, field, args);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const ScoreArgs& args) {
     SDB_ASSERT(FeaturesHaveFreq(field.meta().index_features));

@@ -79,7 +79,7 @@ Result<Family> MakeBitset(const BooleanGroups& groups, const SubReader& segment,
 template<typename Family, typename Excludes, typename P = NoPins,
          typename ExcludesArgs, typename Ctx>
 Result<Family> MakeWindowOfTerms(std::span<const PostingClause> terms,
-                                 const IndexInput& doc, bool batches,
+                                 const duckdb::InputFile& doc, bool batches,
                                  ExcludesArgs&& excludes, const Ctx& ctx) {
   SDB_ASSERT(terms.size() >= 2);
   return Resolve<P>(doc, [&]<typename Input> -> Result<Family> {
@@ -108,7 +108,7 @@ Result<Family> MakeWindowOfTerms(std::span<const PostingClause> terms,
 template<typename Family, typename P = NoPins, typename Term, typename Ctx>
 Result<Family> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
                                             const TermReader* field,
-                                            const IndexInput& doc,
+                                            const duckdb::InputFile& doc,
                                             const Ctx& ctx) {
   SDB_ASSERT(terms.size() > 1);
   return Resolve<P>(doc, [&]<typename Input> -> Result<Family> {
@@ -135,7 +135,7 @@ Result<Family> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
 template<typename Family, typename P = NoPins, typename Term, typename Ctx>
 Result<Family> MakeDisjunctionOfTerms(std::span<const Term> terms,
                                       const TermReader* field,
-                                      const IndexInput& doc,
+                                      const duckdb::InputFile& doc,
                                       doc_id_t docs_count, const Ctx& ctx) {
   SDB_ASSERT(terms.size() > 1);
   if (Family::BitsetSpan(ctx, docs_count) >= docs_count) {
@@ -206,7 +206,7 @@ template<typename Family, typename P = NoPins, typename Term, typename Scoring,
          typename Ctx>
 Result<Family> MakeWindowDisjunction(std::span<const Term> terms,
                                      const TermReader* field,
-                                     const IndexInput* doc,
+                                     const duckdb::InputFile* doc,
                                      std::vector<FillNode::ptr>& rest,
                                      const Scoring& scoring, const Ctx& ctx,
                                      score_t absorbed) {
@@ -305,7 +305,7 @@ Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
       return MakeWindowOfNodes<Family>(terms, filters, segment, ctx);
     }
   }
-  const IndexInput* doc = nullptr;
+  const duckdb::InputFile* doc = nullptr;
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
@@ -426,7 +426,7 @@ Result<Family> MakeWindowExclusion(
           std::forward_as_tuple(), std::forward<decltype(excludes)>(excludes));
       });
   }
-  const IndexInput* doc = nullptr;
+  const duckdb::InputFile* doc = nullptr;
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
@@ -445,7 +445,7 @@ Result<Family> MakeWindowExclusion(
 
 template<typename Family, typename P = NoPins, typename Scoring, typename Ctx>
 Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
-                                   const IndexInput* doc,
+                                   const duckdb::InputFile* doc,
                                    std::vector<FillNode::ptr>& rest,
                                    uint32_t min_match, const Scoring& scoring,
                                    const Ctx& ctx, score_t absorbed) {
@@ -654,7 +654,7 @@ Result<Family> MakeDisjunction(std::span<const Term> terms,
                                const SubReader& segment, const Scoring& scoring,
                                const Ctx& ctx, score_t absorbed) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
-  const IndexInput* doc = nullptr;
+  const duckdb::InputFile* doc = nullptr;
   std::vector<FillNode::ptr> rest;
   if (!CollectDense(terms, filters, field, doc, rest,
                     [&](const QueryBuilder& child) {
@@ -680,7 +680,7 @@ Result<Family> MakeThreshold(std::span<const PostingClause> terms,
                              const Scoring& scoring, const Ctx& ctx,
                              score_t absorbed) {
   SDB_ASSERT(min_match > 1);
-  const IndexInput* doc = nullptr;
+  const duckdb::InputFile* doc = nullptr;
   std::vector<FillNode::ptr> rest;
   if (!CollectDense(terms, filters, nullptr, doc, rest,
                     [&](const QueryBuilder& child) {

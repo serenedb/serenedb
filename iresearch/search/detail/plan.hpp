@@ -101,8 +101,8 @@ const TermReader& FieldOf(const Term& term, const TermReader* field) noexcept {
 }
 
 template<typename Term>
-const IndexInput* SharedDoc(std::span<const Term> terms,
-                            const TermReader* field) noexcept {
+const duckdb::InputFile* SharedDoc(std::span<const Term> terms,
+                                   const TermReader* field) noexcept {
   if (terms.empty()) {
     return nullptr;
   }

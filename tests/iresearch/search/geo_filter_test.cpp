@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/detail/collectors.hpp>
@@ -28,13 +28,13 @@
 #include <iresearch/search/scorers/raw_boost.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/geo/geo_json.hpp>
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "geo_test_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
@@ -122,7 +122,6 @@ struct WithoutColumns final : irs::SubReader {
   explicit WithoutColumns(const irs::SubReader& segment) noexcept
     : segment{segment} {}
 
-  uint64_t CountMappedMemory() const final { return 0; }
   const irs::SegmentInfo& Meta() const final { return segment.Meta(); }
   const irs::DocumentMask* docs_mask() const final {
     return segment.docs_mask();
@@ -264,8 +263,9 @@ TEST(GeoFilterTest, check_reads_the_stored_shape) {
     {"S", R"({"type": "Point", "coordinates": [37.607, 55.709]})", " "},
   };
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
   {
     auto writer = ::tests::IndexWriter::Make(
       dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
@@ -414,8 +414,9 @@ TEST(GeoFilterTest, query) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
 
   // index data
   {
@@ -790,8 +791,9 @@ TEST(GeoFilterTest, checkScorer) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
 
   // index data
   {
@@ -1027,8 +1029,9 @@ TEST(GeoFilterTest, per_node_scorer_override) {
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.75589,  55.798193 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
   {
     auto writer = ::tests::IndexWriter::Make(
       dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());

@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/thread_annotations.h>
 #include <absl/container/btree_map.h>
+#include <absl/container/flat_hash_set.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
@@ -35,17 +36,15 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parser/column_list.hpp>
-#include <filesystem>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/formats/hnsw/hnsw_bases.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
-#include <iresearch/store/directory.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/resource_manager.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -83,7 +82,7 @@ using persistence::InvertedIndexSettings;
 namespace sdb::search {
 
 struct ReadView {
-  const irs::DirectoryReader* reader = nullptr;
+  const irs::CompositeReader* reader = nullptr;
   const TableState* state = nullptr;
   const FileManifest* manifest = nullptr;
 };
@@ -101,16 +100,6 @@ inline const StoreSnapshots* FindSnapshots(
   return it == stores.end() ? nullptr : &*it;
 }
 
-struct StorageDirectory {
-  std::unique_ptr<irs::Directory> directory;
-  bool on_disk = false;
-  bool absent = false;
-};
-
-StorageDirectory OpenStorageDirectory(
-  const catalog::DatabaseDirectory& database, duckdb::idx_t oid, bool is_new,
-  bool in_memory, const irs::ResourceManagementOptions& resources);
-
 enum class TableChange : uint8_t {
   Layout,
   Schema,
@@ -125,12 +114,12 @@ class Store final : public std::enable_shared_from_this<Store>,
   static constexpr duckdb::transaction_t kNoLayoutOwner =
     std::numeric_limits<duckdb::transaction_t>::max();
 
-  Store(std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-        bool read_only, duckdb::idx_t db_id, duckdb::idx_t id,
+  Store(std::shared_ptr<catalog::DatabaseDirectory> directory, std::string path,
+        bool in_memory, bool read_only, duckdb::idx_t db_id, duckdb::idx_t id,
         const catalog::InvertedIndexSettings& options,
         const std::optional<irs::ScorerOptions>& top_k_scorer, bool is_new);
-  Store(std::shared_ptr<catalog::DatabaseDirectory> directory, bool in_memory,
-        bool read_only, duckdb::idx_t db_id, duckdb::idx_t id, bool is_new,
+  Store(std::shared_ptr<catalog::DatabaseDirectory> directory, std::string path,
+        bool in_memory, bool read_only, duckdb::idx_t db_id, duckdb::idx_t id,
         const catalog::SearchTableOptions& options,
         const duckdb::ColumnList& columns);
   ~Store();
@@ -141,16 +130,17 @@ class Store final : public std::enable_shared_from_this<Store>,
   duckdb::idx_t GetId() const noexcept { return _id; }
   // The database whose attachment holds this store's catalog entry.
   duckdb::idx_t GetDatabaseId() const noexcept { return _db_id; }
-  std::filesystem::path Path() const { return _directory->StoragePath(_id); }
-  bool Absent() const noexcept { return _absent; }
-  bool Opened() const noexcept { return _dir != nullptr; }
+  const std::string& Path() const noexcept { return _path; }
+  bool Absent() const;
+  bool Opened() const noexcept { return !_root.empty(); }
+  bool Remote() const noexcept { return _remote; }
   bool ReadOnly() const noexcept { return !_writer; }
 
   void Open();
 
   // A drop commits while readers may still hold this store; the destructor
-  // removes the directory once the last of them lets go. Never set on
-  // shutdown or detach, where the directory must survive.
+  // removes its segment files once the last of them lets go. Never set on
+  // shutdown or detach, where the files must survive.
   void MarkDropped() noexcept {
     if (_writer && !_read_only) {
       _dropped.store(true, std::memory_order_release);
@@ -160,7 +150,7 @@ class Store final : public std::enable_shared_from_this<Store>,
     return _dropped.load(std::memory_order_acquire);
   }
 
-  irs::DirectoryReader BuildSnapshot();
+  irs::CompositeReader BuildSnapshot();
   void PruneVersions(std::span<const Tick> running, Tick published);
   bool FreeVersions();
 
@@ -218,7 +208,7 @@ class Store final : public std::enable_shared_from_this<Store>,
                           const irs::IndexFieldOptions* field_options,
                           const irs::AnnBuildEnv* env)
     -> yaclib::Future<ResultWithTime>;
-  ResultWithTime CleanupUnsafe(bool orphans);
+  ResultWithTime CleanupUnsafe();
   void RequestCleanup() noexcept;
 
   // The field options a background merge encodes against, pinned for it; null
@@ -226,6 +216,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::shared_ptr<const irs::IndexFieldOptions> CompactionOptions();
 
   bool Settle();
+  void Pack();
   [[nodiscard]] absl::Status VacuumCompact(duckdb::ClientContext& context,
                                            uint32_t target_segments);
 
@@ -327,8 +318,10 @@ class Store final : public std::enable_shared_from_this<Store>,
     std::span<const irs::IndexWriter::FlushedSegment* const> parts);
 
   TableReplay* Replay();
+  void CollectFiles(absl::flat_hash_set<std::string>& files) const;
   void ScheduleRecovery(duckdb::ClientContext& context,
-                        duckdb::TaskExecutor& executor, bool orphans);
+                        duckdb::TaskExecutor& replays,
+                        duckdb::TaskExecutor& opens);
   bool FinishReplay();
 
   std::shared_ptr<const TableState> SnapshotState(Tick snapshot,
@@ -390,7 +383,8 @@ class Store final : public std::enable_shared_from_this<Store>,
   void EnsureOpen();
   bool OwnsFiles() const noexcept { return _on_disk && !_read_only; }
   bool CloseFiles();
-  void ClaimColumnOids(const irs::DirectoryReader& reader) const;
+  absl::Status RemoveReleased();
+  void ClaimColumnOids(const irs::CompositeReader& reader) const;
   bool OwnerDropped() const noexcept {
     return Dropped() || _directory->Dropped();
   }
@@ -432,10 +426,13 @@ class Store final : public std::enable_shared_from_this<Store>,
   duckdb::idx_t _id;
   duckdb::idx_t _db_id;
   std::shared_ptr<catalog::DatabaseDirectory> _directory;
+  std::string _path;
+  std::string _root;
+  std::string _piece_root;
+  std::shared_ptr<irs::ReleasedSegments> _released =
+    std::make_shared<irs::ReleasedSegments>();
   bool _in_memory;
   bool _read_only;
-  bool _is_new;
-  bool _absent = false;
   std::atomic<bool> _dropped{false};
   uint64_t _segment_memory_max;
   uint32_t _segment_docs_max = 0;
@@ -443,9 +440,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::unique_ptr<irs::Scorer> _topk_scorer;
   std::unique_ptr<irs::HnswBases> _hnsw_bases =
     std::make_unique<irs::HnswBases>();
-  std::unique_ptr<irs::Directory> _dir;
   std::shared_ptr<irs::IndexWriter> _writer;
-  std::unique_ptr<irs::Directory> _piece_dir;
   std::shared_ptr<irs::IndexWriter> _piece_writer;
   absl::Mutex _write_out_mutex;
   std::atomic<Tick> _storage_tick{0};
@@ -466,6 +461,7 @@ class Store final : public std::enable_shared_from_this<Store>,
   std::atomic<uint64_t> _version{0};
   std::unique_ptr<Table> _table;
   bool _on_disk = false;
+  bool _remote = false;
   std::atomic<uint64_t> _piece_requests{0};
   std::atomic<uint64_t> _cleanup_requests{0};
   std::atomic<uint32_t> _merges{0};

@@ -256,6 +256,20 @@ TEST_F(TextAnalyzerParserTestSuite, test_fail_load_stopwords) {
   ASSERT_ANY_THROW(MakeText({.stopwords_path = "invalid stopwords path"}));
 }
 
+TEST_F(TextAnalyzerParserTestSuite, test_fail_load_stopwords_it_cannot_read) {
+  const auto root = TestEnv::test_results_dir() / "stopwords_it_cannot_read";
+  std::filesystem::remove_all(root);
+  for (const auto* name : {"readable", "looping"}) {
+    std::filesystem::create_directories(root / name);
+    std::filesystem::copy_file(StopwordsFile(), root / name / "stopwords.txt");
+  }
+  std::filesystem::create_symlink("loop", root / "looping" / "loop");
+  ASSERT_NE(nullptr,
+            MakeText({.stopwords_path = (root / "readable").string()}));
+  ASSERT_ANY_THROW(MakeText({.stopwords_path = (root / "looping").string()}));
+  std::filesystem::remove_all(root);
+}
+
 TEST_F(TextAnalyzerParserTestSuite, test_load_stopwords) {
   const std::vector<tests::AnalyzerToken> expected{{"e", 1, 2, 3},
                                                    {"u", 2, 8, 9}};

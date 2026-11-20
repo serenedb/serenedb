@@ -22,11 +22,11 @@
 
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <memory>
 #include <vector>
 
 #include "iresearch/formats/column/internal/block_manager.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace duckdb {
@@ -42,9 +42,9 @@ class ReadContext final : public BlockManager,
                           public duckdb::OverflowStringReader,
                           public duckdb::ColumnStreamReader {
  public:
-  explicit ReadContext(duckdb::DatabaseInstance& db) noexcept;
+  explicit ReadContext(duckdb::DatabaseInstance& db);
   explicit ReadContext(const ColReader& reader, bool random_access = false);
-  ReadContext(duckdb::DatabaseInstance& db, IndexInput::ptr in);
+  ReadContext(duckdb::DatabaseInstance& db, const duckdb::InputFile* file);
   ~ReadContext() final;
 
   ReadContext(const ReadContext&) = delete;
@@ -56,9 +56,7 @@ class ReadContext final : public BlockManager,
 
   ReadContext& For(const ColReader* owner);
 
-  IndexInput& In() noexcept { return *_in; }
-  const IndexInput& In() const noexcept { return *_in; }
-  bool HasIn() const noexcept { return _in != nullptr; }
+  const duckdb::InputFile* File() const noexcept { return _in.File().get(); }
   bool RandomAccess() const noexcept { return _random_access; }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
@@ -93,11 +91,12 @@ class ReadContext final : public BlockManager,
   duckdb::idx_t TotalBlocks() final;
 
  private:
-  void ResetMapping();
+  void ResetFile(const duckdb::InputFile* file);
   bool Maps(uint64_t offset, uint64_t size) const noexcept;
+  bool Wraps(uint64_t offset, uint64_t size) const noexcept;
 
-  IndexInput::ptr _in;
-  duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
+  duckdb::InputFileReader _in;
+  duckdb::MemoryMappedFile* _mapping = nullptr;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
   const ColReader* _owner = nullptr;
   irs::containers::FlatHashMap<const ColReader*, std::unique_ptr<ReadContext>>

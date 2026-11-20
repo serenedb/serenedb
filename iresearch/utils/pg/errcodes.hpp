@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <cerrno>
+
 // SQLSTATE error codes lifted from PostgreSQL
 // (src/backend/utils/errcodes.txt, generated as utils/errcodes.h).
 // MAKE_SQLSTATE / PGSIXBIT come from src/include/utils/elog.h.
@@ -490,3 +492,37 @@
 #define ERRCODE_INTERNAL_ERROR MAKE_SQLSTATE('X', 'X', '0', '0', '0')
 #define ERRCODE_DATA_CORRUPTED MAKE_SQLSTATE('X', 'X', '0', '0', '1')
 #define ERRCODE_INDEX_CORRUPTED MAKE_SQLSTATE('X', 'X', '0', '0', '2')
+
+namespace irs::pg {
+
+constexpr int ErrcodeForFileAccess(int error) noexcept {
+  switch (error) {
+    case EPERM:
+    case EACCES:
+    case EROFS:
+      return ERRCODE_INSUFFICIENT_PRIVILEGE;
+    case ENOENT:
+      return ERRCODE_UNDEFINED_FILE;
+    case EEXIST:
+      return ERRCODE_DUPLICATE_FILE;
+    case ENOTDIR:
+    case EISDIR:
+    case ENOTEMPTY:
+      return ERRCODE_WRONG_OBJECT_TYPE;
+    case ENOSPC:
+      return ERRCODE_DISK_FULL;
+    case ENOMEM:
+      return ERRCODE_OUT_OF_MEMORY;
+    case ENFILE:
+    case EMFILE:
+      return ERRCODE_INSUFFICIENT_RESOURCES;
+    case EIO:
+      return ERRCODE_IO_ERROR;
+    case ENAMETOOLONG:
+      return ERRCODE_FILE_NAME_TOO_LONG;
+    default:
+      return ERRCODE_INTERNAL_ERROR;
+  }
+}
+
+}  // namespace irs::pg

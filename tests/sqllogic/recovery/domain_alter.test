@@ -1,0 +1,116 @@
+control substitution on
+
+statement ok
+CREATE DOMAIN d_alt AS int4;
+
+statement ok
+CREATE TABLE t_alt (id int4, v d_alt);
+
+statement ok
+INSERT INTO t_alt VALUES (1, -1);
+
+statement ok
+ALTER DOMAIN d_alt ADD CHECK (VALUE > 0) NOT VALID;
+
+statement ok
+ALTER DOMAIN d_alt RENAME CONSTRAINT d_alt_check TO d_alt_pos;
+
+statement ok
+ALTER DOMAIN d_alt ADD CHECK (VALUE < 100) NOT VALID;
+
+statement ok
+ALTER DOMAIN d_alt SET DEFAULT 7;
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+statement error
+INSERT INTO t_alt VALUES (2, -2);
+
+connection after_crash
+statement error
+INSERT INTO t_alt VALUES (3, 100);
+
+connection after_crash
+statement ok
+INSERT INTO t_alt (id) VALUES (4);
+
+connection after_crash
+query
+SELECT id, v FROM t_alt ORDER BY id;
+----
+id	v
+1	-1
+4	7
+
+connection after_crash
+statement ok
+ALTER DOMAIN d_alt DROP CONSTRAINT d_alt_check;
+
+connection after_crash
+statement ok
+ALTER DOMAIN d_alt DROP DEFAULT;
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_crash
+query error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_checkpoint
+statement ok
+INSERT INTO t_alt VALUES (5, 100);
+
+connection after_checkpoint
+statement error
+INSERT INTO t_alt VALUES (6, -6);
+
+connection after_checkpoint
+statement ok
+INSERT INTO t_alt (id) VALUES (7);
+
+connection after_checkpoint
+query
+SELECT id, v FROM t_alt ORDER BY id;
+----
+id	v
+1	-1
+4	7
+5	100
+7	NULL
+
+connection after_checkpoint
+statement ok
+ALTER DOMAIN d_alt DROP CONSTRAINT d_alt_pos;
+
+connection after_checkpoint
+statement ok
+INSERT INTO t_alt VALUES (8, -8);

@@ -111,9 +111,18 @@ class UserType {
     return *_base;
   }
 
+  uint32_t BaseTypeOid() const {
+    if (_entry.domain_info) {
+      return CatalogLogical2Pg(_entry.domain_info->base_type).oid;
+    }
+    return Base().oid;
+  }
+
   const BuiltinType& Builtin() const {
     if (!_builtin) {
-      const auto* builtin = FindBuiltinType(Base().oid);
+      const auto oid = _entry.domain_info ? Logical2Pg(_entry.user_type).oid
+                                          : Base().oid;
+      const auto* builtin = FindBuiltinType(oid);
       _builtin = builtin ? builtin : &kNoBuiltin;
     }
     return *_builtin;
@@ -226,10 +235,21 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     Col<"typanalyze">([](const auto& row) { return row.Builtin().analyze; }),
     Col<"typalign">([](const auto& row) { return row.Base().align; }),
     Col<"typstorage">([](const auto& row) { return row.Base().storage; }),
-    Col<"typbasetype">([](const auto& row) { return row.Base().oid; }),
+    Col<"typbasetype">([](const auto& row) { return row.BaseTypeOid(); }),
     Col<"typtypmod">([](const auto& row) { return row.Base().typmod; }),
     Col<"typndims">([](const auto& row) { return row.Base().ndims; }),
-    Col<"typcollation">([](const auto& row) { return row.Base().collation; }));
+    Col<"typcollation">([](const auto& row) { return row.Base().collation; }),
+    Col<"typnotnull">([](const auto& row) {
+      const auto& domain = row.Entry().domain_info;
+      return domain && domain->IsNotNull();
+    }),
+    Col<"typdefault">([](const auto& row) -> std::optional<std::string> {
+      const auto& domain = row.Entry().domain_info;
+      if (!domain || !domain->default_value) {
+        return std::nullopt;
+      }
+      return domain->default_value->ToString();
+    }));
 
   static constexpr auto kRowType = Shape<kSql, const duckdb::CatalogEntry>(
     Col<"oid">([](const auto& relation) { return RowTypeOid(relation.oid); }),
@@ -276,7 +296,10 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
     const UserType type{entry};
     const auto id = entry.user_type.id();
     const auto array = Visible(TypeArrayOid(entry.oid));
-    if (id == duckdb::LogicalTypeId::ENUM) {
+    if (entry.domain_info) {
+      Emit<kDomainType>(type, Visible(entry.oid));
+      Emit<kArrayType>({entry, entry.oid, char{}, &type, _arrays}, array);
+    } else if (id == duckdb::LogicalTypeId::ENUM) {
       Emit<kEnumType>(type, Visible(entry.oid));
       Emit<kArrayType>({entry, entry.oid, 'i', nullptr, _arrays}, array);
     } else if (duckdb::StructType::IsStruct(id)) {

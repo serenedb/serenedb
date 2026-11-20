@@ -1,0 +1,452 @@
+# ALTER DOMAIN changes a domain that columns already use.
+
+# SET DEFAULT applies to a table created before it; DROP DEFAULT removes it; a non-domain is rejected.
+
+statement ok
+CREATE DOMAIN d_sd AS INT4;
+
+statement ok
+CREATE TABLE t_sd(id int, v d_sd NOT NULL);
+
+statement ok
+ALTER DOMAIN d_sd SET DEFAULT 42;
+
+statement ok
+INSERT INTO t_sd (id) VALUES (1);
+
+query
+SELECT v FROM t_sd;
+----
+v
+42
+
+statement ok
+ALTER DOMAIN d_sd DROP DEFAULT;
+
+statement error
+INSERT INTO t_sd (id) VALUES (1);
+
+statement ok
+CREATE TYPE e_not_dom AS ENUM ('a');
+
+statement error
+ALTER DOMAIN e_not_dom SET DEFAULT 'a';
+
+# SET NOT NULL applies to a column created before it; DROP NOT NULL lifts it.
+
+statement ok
+CREATE DOMAIN d_snn AS INT4;
+
+statement ok
+CREATE TABLE t_snn (id int, v d_snn);
+
+# TODO: ALTER DOMAIN ... SET NOT NULL is not supported yet
+# statement ok
+# ALTER DOMAIN d_snn SET NOT NULL;
+
+# statement error db error: ERROR: domain d_snn does not allow null values
+# INSERT INTO t_snn (id) VALUES (0);
+
+statement ok
+ALTER DOMAIN d_snn DROP NOT NULL;
+
+statement ok
+INSERT INTO t_snn (id) VALUES (0);
+
+# ADD CONSTRAINT checks existing rows unless NOT VALID; a taken constraint name is rejected.
+
+statement ok
+CREATE DOMAIN email_add AS text CHECK (VALUE LIKE '%@%');
+
+statement ok
+CREATE TABLE t_email (e email_add);
+
+statement ok
+INSERT INTO t_email VALUES ('a@b.com');
+
+statement error
+ALTER DOMAIN email_add ADD CONSTRAINT c CHECK (length(VALUE) > 10);
+
+statement ok
+ALTER DOMAIN email_add ADD CONSTRAINT c CHECK (length(VALUE) > 10) NOT VALID;
+
+statement error db error: ERROR: value for domain email_add violates check constraint "c"
+INSERT INTO t_email VALUES ('b@a.com');
+
+statement ok
+CREATE DOMAIN d_add AS text
+    CONSTRAINT nonempty
+    NOT NULL
+    CHECK(length(VALUE) > 0);
+
+statement error
+ALTER DOMAIN d_add ADD CONSTRAINT nonempty CHECK (VALUE LIKE '%@%');
+
+# DROP CONSTRAINT, with IF EXISTS and CASCADE, keeps the columns and their data.
+
+statement ok
+CREATE DOMAIN d_drop AS text
+    CONSTRAINT nonempty CHECK(length(VALUE) > 0);
+
+statement error
+ALTER DOMAIN d_drop DROP CONSTRAINT missed;
+
+statement ok
+ALTER DOMAIN d_drop DROP CONSTRAINT IF EXISTS missed;
+
+statement ok
+ALTER DOMAIN d_drop DROP CONSTRAINT nonempty;
+
+statement ok
+CREATE TABLE t_drop (v d_drop);
+
+statement ok
+INSERT INTO t_drop VALUES ('');
+
+statement ok
+CREATE DOMAIN d_dc_cs AS int4 CONSTRAINT pos CHECK (VALUE > 0);
+
+statement ok
+CREATE TABLE t_dc_cs (id int, v d_dc_cs);
+
+statement ok
+INSERT INTO t_dc_cs VALUES (1, 5);
+
+statement ok
+ALTER DOMAIN d_dc_cs DROP CONSTRAINT pos CASCADE;
+
+query
+SELECT id, v FROM t_dc_cs;
+----
+id	v
+1	5
+
+# RENAME CONSTRAINT: the new name works, the old one is gone.
+
+statement ok
+CREATE DOMAIN d_rc AS int4 CONSTRAINT pos CHECK (VALUE > 0);
+
+statement error
+ALTER DOMAIN d_rc RENAME CONSTRAINT pos TO pos;
+
+statement ok
+ALTER DOMAIN d_rc RENAME CONSTRAINT pos TO positive;
+
+statement error
+ALTER DOMAIN d_rc DROP CONSTRAINT pos;
+
+statement ok
+ALTER DOMAIN d_rc DROP CONSTRAINT positive;
+
+statement error
+ALTER DOMAIN d_rc RENAME CONSTRAINT none TO pos;
+
+# VALIDATE CONSTRAINT rejects existing violators and passes once they are fixed.
+
+statement ok
+CREATE DOMAIN positive_money_2 AS INT4 NOT NULL;
+
+statement ok
+CREATE TABLE t_money (amount positive_money_2);
+
+statement ok
+INSERT INTO t_money VALUES (-3);
+
+statement ok
+ALTER DOMAIN positive_money_2 ADD CONSTRAINT c CHECK (VALUE > 0) NOT VALID;
+
+# TODO: ALTER DOMAIN ... VALIDATE CONSTRAINT is not supported yet
+# statement error
+# ALTER DOMAIN positive_money_2 VALIDATE CONSTRAINT c
+
+# statement ok
+# UPDATE t_money SET amount = 10;
+
+# statement ok
+# ALTER DOMAIN positive_money_2 VALIDATE CONSTRAINT c
+
+# RENAME TO: the old name is gone, columns follow the new one.
+
+statement ok
+CREATE DOMAIN d_rn_old AS int4;
+
+statement ok
+ALTER DOMAIN d_rn_old RENAME TO d_rn_new;
+
+statement error
+SELECT 1::d_rn_old;
+
+query
+SELECT 1::d_rn_new;
+----
+d_rn_new
+1
+
+statement ok
+CREATE DOMAIN d_rn_tab AS int4;
+
+statement ok
+CREATE TABLE t_rn (v d_rn_tab);
+
+statement count 1
+INSERT INTO t_rn VALUES (1);
+
+# TODO: ALTER DOMAIN ... RENAME TO is refused while a column uses the domain
+# statement ok
+# ALTER DOMAIN d_rn_tab RENAME TO d_rn_tab2;
+
+# query
+# SELECT pg_typeof(v) FROM t_rn;
+# ----
+# pg_typeof
+# d_rn_tab2
+
+# SET SCHEMA moves the domain; columns follow it.
+
+statement ok
+CREATE SCHEMA ds_ss;
+
+statement ok
+CREATE DOMAIN d_ss AS int4;
+
+statement ok
+CREATE TABLE t_ss (v d_ss);
+
+statement count 1
+INSERT INTO t_ss VALUES (1);
+
+# TODO: ALTER DOMAIN ... SET SCHEMA is not supported yet
+# statement ok
+# ALTER DOMAIN d_ss SET SCHEMA ds_ss;
+
+# query
+# SELECT pg_typeof(v) FROM t_ss;
+# ----
+# pg_typeof
+# ds_ss.d_ss
+
+# statement error
+# SELECT 1::public.d_ss;
+#
+# ALTER DOMAIN on constraints, defaults and names, and prepared statements see the change.
+
+statement ok
+CREATE DOMAIN dom_alt AS int4;
+
+statement ok
+CREATE TABLE dom_alt_t (id int4, v dom_alt);
+
+statement ok
+INSERT INTO dom_alt_t VALUES (1, -1);
+
+statement ok
+ALTER DOMAIN dom_alt ADD CONSTRAINT dom_alt_pos CHECK (VALUE > 0) NOT VALID;
+
+statement error
+SELECT (-5)::dom_alt;
+
+statement error
+INSERT INTO dom_alt_t VALUES (2, -2);
+
+statement ok
+INSERT INTO dom_alt_t VALUES (3, 3);
+
+query
+SELECT id, v FROM dom_alt_t ORDER BY id;
+----
+id	v
+1	-1
+3	3
+
+statement error
+ALTER DOMAIN dom_alt ADD CONSTRAINT dom_alt_pos CHECK (VALUE < 100) NOT VALID;
+
+statement ok
+ALTER DOMAIN dom_alt ADD CHECK (VALUE < 100) NOT VALID;
+
+statement ok
+ALTER DOMAIN dom_alt ADD CHECK (VALUE <> 50) NOT VALID;
+
+statement error
+SELECT 100::dom_alt;
+
+statement error
+SELECT 50::dom_alt;
+
+statement ok
+ALTER DOMAIN dom_alt DROP CONSTRAINT dom_alt_check1;
+
+query
+SELECT 50::dom_alt AS v;
+----
+v
+50
+
+statement ok
+ALTER DOMAIN dom_alt RENAME CONSTRAINT dom_alt_check TO dom_alt_lt;
+
+statement error
+ALTER DOMAIN dom_alt RENAME CONSTRAINT dom_alt_check TO dom_alt_other;
+
+statement error
+ALTER DOMAIN dom_alt RENAME CONSTRAINT dom_alt_lt TO dom_alt_pos;
+
+statement error
+ALTER DOMAIN dom_alt DROP CONSTRAINT dom_alt_check;
+
+statement ok
+ALTER DOMAIN dom_alt DROP CONSTRAINT IF EXISTS dom_alt_check;
+
+statement ok
+ALTER DOMAIN dom_alt DROP CONSTRAINT dom_alt_lt;
+
+query
+SELECT 100::dom_alt AS v;
+----
+v
+100
+
+statement error
+SELECT 0::dom_alt;
+
+statement ok
+ALTER DOMAIN dom_alt DROP CONSTRAINT dom_alt_pos;
+
+query
+SELECT 0::dom_alt AS v;
+----
+v
+0
+
+statement ok
+CREATE DOMAIN dom_alt_def AS int4;
+
+statement ok
+CREATE TABLE dom_alt_def_t (id int4, v dom_alt_def);
+
+statement ok
+ALTER DOMAIN dom_alt_def SET DEFAULT 5;
+
+statement ok
+INSERT INTO dom_alt_def_t (id) VALUES (1);
+
+statement ok
+ALTER DOMAIN dom_alt_def DROP DEFAULT;
+
+statement ok
+INSERT INTO dom_alt_def_t (id) VALUES (2);
+
+query
+SELECT id, v FROM dom_alt_def_t ORDER BY id;
+----
+id	v
+1	5
+2	NULL
+
+statement ok
+CREATE DOMAIN dom_alt_nn AS int4 NOT NULL;
+
+statement error
+SELECT NULL::dom_alt_nn;
+
+statement ok
+ALTER DOMAIN dom_alt_nn DROP NOT NULL;
+
+query
+SELECT NULL::dom_alt_nn IS NULL AS n;
+----
+n
+t
+
+statement ok
+CREATE DOMAIN dom_alt_old AS int4;
+
+statement ok
+ALTER DOMAIN dom_alt_old RENAME TO dom_alt_new;
+
+query
+SELECT 7::dom_alt_new AS v;
+----
+v
+7
+
+statement error
+SELECT 7::dom_alt_old;
+
+statement ok
+CREATE TYPE dom_alt_enum AS ENUM ('a', 'b');
+
+statement error
+ALTER DOMAIN dom_alt_enum DROP DEFAULT;
+
+statement ok
+CREATE DOMAIN dom_alt_prep AS int4;
+
+statement ok
+CREATE TABLE dom_alt_one (x int4);
+
+statement ok
+INSERT INTO dom_alt_one VALUES (1);
+
+statement ok
+PREPARE dom_alt_p1(int8) AS SELECT $1::dom_alt_prep AS v;
+
+statement ok
+PREPARE dom_alt_p2(int8) AS SELECT $1::dom_alt_prep AS v FROM dom_alt_one;
+
+query
+EXECUTE dom_alt_p1(-1);
+----
+v
+-1
+
+query
+EXECUTE dom_alt_p2(-1);
+----
+v
+-1
+
+statement ok
+ALTER DOMAIN dom_alt_prep ADD CONSTRAINT dom_alt_prep_pos CHECK (VALUE > 0) NOT VALID;
+
+statement error
+EXECUTE dom_alt_p1(-1);
+
+statement error
+EXECUTE dom_alt_p2(-1);
+
+statement ok
+DEALLOCATE dom_alt_p1;
+
+statement ok
+DEALLOCATE dom_alt_p2;
+
+statement ok
+CREATE DOMAIN dom_alt_ns AS int4;
+
+onlyif serenedb
+statement error
+ALTER DOMAIN dom_alt_ns ADD CONSTRAINT dom_alt_ns_pos CHECK (VALUE > 0);
+
+skipif serenedb
+statement ok
+ALTER DOMAIN dom_alt_ns ADD CONSTRAINT dom_alt_ns_pos CHECK (VALUE > 0);
+
+onlyif serenedb
+statement error
+ALTER DOMAIN dom_alt_ns SET NOT NULL;
+
+skipif serenedb
+statement ok
+ALTER DOMAIN dom_alt_ns SET NOT NULL;
+
+statement ok
+ALTER DOMAIN dom_alt_ns ADD CONSTRAINT dom_alt_ns_lt CHECK (VALUE < 100) NOT VALID;
+
+onlyif serenedb
+statement error
+ALTER DOMAIN dom_alt_ns VALIDATE CONSTRAINT dom_alt_ns_lt;
+
+skipif serenedb
+statement ok
+ALTER DOMAIN dom_alt_ns VALIDATE CONSTRAINT dom_alt_ns_lt;

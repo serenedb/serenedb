@@ -132,6 +132,8 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       return "ALTER JOB";
     case SET_SCHEMA:
       return TagsOf(info.GetCatalogType(), false).alter;
+    case ALTER_DOMAIN:
+      return "ALTER DOMAIN";
     case ALTER_ROLE: {
       const auto& role = info.Cast<duckdb::AlterRoleInfo>();
       if (role.grant_role.empty()) {

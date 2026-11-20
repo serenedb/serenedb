@@ -1,0 +1,103 @@
+statement ok
+CREATE DOMAIN d_as AS int4;
+
+query
+SELECT pg_typeof(1::d_as);
+----
+pg_typeof
+d_as
+
+statement ok
+CREATE DOMAIN d_noas int4;
+
+query
+SELECT pg_typeof(1::d_noas);
+----
+pg_typeof
+d_noas
+
+# A domain over another domain.
+
+statement ok
+CREATE DOMAIN d_base AS int4;
+
+statement ok
+CREATE DOMAIN d_over AS d_base;
+
+query
+SELECT format_type(typbasetype, typtypmod) FROM pg_type WHERE typname = 'd_over';
+----
+format_type
+d_base
+
+# A domain over a type that does not exist is rejected.
+
+statement error
+CREATE DOMAIN d_missing AS no_such_type;
+
+# A domain name that is already taken is rejected.
+
+statement ok
+CREATE DOMAIN d_dup AS int4;
+
+statement error
+CREATE DOMAIN d_dup AS int4;
+
+# DROP DOMAIN: IF EXISTS, RESTRICT refuses while a column uses it, CASCADE drops that column.
+
+statement error
+DROP DOMAIN d_drp_none;
+
+statement ok
+DROP DOMAIN IF EXISTS d_drp_none;
+
+statement ok
+CREATE DOMAIN d_drp AS int4;
+
+statement ok
+CREATE TABLE t_drp (id int, v d_drp);
+
+statement error
+DROP DOMAIN d_drp RESTRICT;
+
+query
+SELECT * FROM t_drp;
+----
+id	v
+
+query
+SELECT 1::d_drp;
+----
+d_drp
+1
+
+statement ok
+DROP DOMAIN d_drp CASCADE;
+
+query
+SELECT * FROM t_drp;
+----
+id
+
+# A domain as a function parameter and result type is checked on both sides.
+
+statement ok
+CREATE DOMAIN d_fn AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE FUNCTION f_dom_id(x d_fn) RETURNS d_fn LANGUAGE sql AS 'SELECT x';
+
+query
+SELECT f_dom_id(5);
+----
+f_dom_id
+5
+
+statement error
+SELECT f_dom_id(-1);
+
+statement ok
+CREATE FUNCTION f_dom_bad() RETURNS d_fn LANGUAGE sql AS 'SELECT -1';
+
+statement error
+SELECT f_dom_bad();

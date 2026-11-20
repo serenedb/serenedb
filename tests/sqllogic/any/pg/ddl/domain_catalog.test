@@ -1,0 +1,90 @@
+# A domain is a pg_type row of type d over its base type, with NOT NULL in typnotnull.
+
+statement ok
+CREATE DOMAIN d_pgt AS int4 NOT NULL;
+
+query
+SELECT typtype, typbasetype::regtype, typnotnull FROM pg_type WHERE typname = 'd_pgt';
+----
+typtype	typbasetype	typnotnull
+d	integer	t
+
+# information_schema lists the domain, its constraints and the columns that use it.
+
+statement ok
+CREATE DOMAIN d_is AS int4 CONSTRAINT d_is_pos CHECK (VALUE > 0);
+
+statement ok
+CREATE TABLE t_is (v d_is);
+
+query
+SELECT domain_name, data_type FROM information_schema.domains WHERE domain_name = 'd_is';
+----
+domain_name	data_type
+d_is	integer
+
+# TODO: information_schema.domain_constraints does not list domain constraints yet
+# query
+# SELECT constraint_name FROM information_schema.domain_constraints WHERE domain_name = 'd_is';
+# ----
+# constraint_name
+# d_is_pos
+
+query
+SELECT table_name, column_name FROM information_schema.column_domain_usage WHERE domain_name = 'd_is';
+----
+table_name	column_name
+t_is	v
+
+# pg_type, pg_attribute and pg_typeof describe domains, domains over domains and arrays of domains.
+
+statement ok
+CREATE DOMAIN dom_cat AS int4 NOT NULL DEFAULT 42;
+
+statement ok
+CREATE DOMAIN dom_cat_txt AS text COLLATE "C";
+
+statement ok
+CREATE TYPE dom_cat_enum AS ENUM ('x', 'y');
+
+statement ok
+CREATE DOMAIN dom_cat_e AS dom_cat_enum;
+
+statement ok
+CREATE DOMAIN dom_cat_over AS dom_cat;
+
+query
+SELECT typname, typtype, typlen, typbyval, typalign, typstorage, typnotnull, typdefault, format_type(typbasetype, typtypmod) AS base FROM pg_type WHERE typname IN ('dom_cat', 'dom_cat_txt', 'dom_cat_e', 'dom_cat_over') ORDER BY typname;
+----
+typname	typtype	typlen	typbyval	typalign	typstorage	typnotnull	typdefault	base
+dom_cat	d	4	t	i	p	t	42	integer
+dom_cat_e	d	4	t	i	p	f	NULL	dom_cat_enum
+dom_cat_over	d	4	t	i	p	f	42	dom_cat
+dom_cat_txt	d	-1	f	i	x	f	NULL	text
+
+query
+SELECT typname, typoutput, typsend FROM pg_type WHERE typname IN ('dom_cat', 'dom_cat_txt', 'dom_cat_over') ORDER BY typname;
+----
+typname	typoutput	typsend
+dom_cat	int4out	int4send
+dom_cat_over	int4out	int4send
+dom_cat_txt	textout	textsend
+
+statement ok
+CREATE TABLE dom_cat_t (a dom_cat, b dom_cat_txt, c dom_cat[], d dom_cat_e, e dom_cat_over);
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS t, attlen, attalign, attcollation::regcollation AS coll FROM pg_attribute WHERE attrelid = 'dom_cat_t'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	t	attlen	attalign	coll
+a	dom_cat	4	i	-
+b	dom_cat_txt	-1	i	"C"
+c	dom_cat[]	-1	i	-
+d	dom_cat_e	4	i	-
+e	dom_cat_over	4	i	-
+
+query
+SELECT pg_typeof(a) AS a, pg_typeof(b) AS b, pg_typeof(c) AS c, pg_typeof(d) AS d, pg_typeof(e) AS e FROM (SELECT 1::dom_cat AS a, 'q'::dom_cat_txt AS b, ARRAY[1]::dom_cat[] AS c, 'x'::dom_cat_e AS d, 2::dom_cat_over AS e) s;
+----
+a	b	c	d	e
+dom_cat	dom_cat_txt	dom_cat[]	dom_cat_e	dom_cat_over

@@ -24,6 +24,7 @@
 
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/extension_type_info.hpp>
+#include <duckdb/common/type_visitor.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
@@ -179,6 +180,35 @@ std::optional<uint64_t> UserTypeOid(const duckdb::LogicalType& type) {
   return it->second.GetValue<uint64_t>();
 }
 
+duckdb::LogicalType WithoutDomain(const duckdb::LogicalType& type) {
+  auto ext = duckdb::make_uniq<duckdb::ExtensionTypeInfo>(*type.GetExtensionInfo());
+  auto& properties = ext->properties;
+  properties.erase(duckdb::ExtensionTypeInfo::DOMAIN_PROPERTY);
+  if (const auto it =
+        properties.find(duckdb::ExtensionTypeInfo::BASE_OID_PROPERTY);
+      it != properties.end()) {
+    properties[duckdb::ExtensionTypeInfo::CATALOG_OID_PROPERTY] = it->second;
+    properties.erase(it);
+  } else {
+    properties.erase(duckdb::ExtensionTypeInfo::CATALOG_OID_PROPERTY);
+  }
+  return type.WithExtensionInfo(std::move(ext));
+}
+
+bool IsDomainType(const duckdb::LogicalType& type) {
+  return duckdb::ExtensionTypeInfo::IsDomain(type.GetExtensionInfo());
+}
+
+duckdb::LogicalType StripDomains(const duckdb::LogicalType& type) {
+  if (!duckdb::TypeVisitor::Contains(type, IsDomainType)) {
+    return type;
+  }
+  return duckdb::TypeVisitor::VisitReplace(
+    type, [](const duckdb::LogicalType& element) {
+      return IsDomainType(element) ? WithoutDomain(element) : element;
+    });
+}
+
 const BuiltinType* FindAliasedType(const duckdb::LogicalType& type,
                                    auto accept) {
   if (!type.HasAlias()) {
@@ -214,6 +244,20 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
     }
     return {builtin.array, -1, typmod};
   };
+  if (duckdb::ExtensionTypeInfo::IsDomain(type.GetExtensionInfo())) {
+    const auto base = WithoutDomain(type);
+    // PG sends a domain column as its base type, but an array of a domain is its own array type, not a domain,
+    // so it goes out as that type (printtup.c, getBaseTypeAndTypmod)
+    if (wire && !in_array) {
+      return Logical2Pg(base);
+    }
+    const auto oid = static_cast<uint32_t>(*UserTypeOid(type));
+    if (in_array) {
+      return {static_cast<uint32_t>(TypeArrayOid(oid)), -1, -1};
+    }
+    const auto base_info = CatalogLogical2Pg(base);
+    return {oid, base_info.typlen, base_info.typmod};
+  }
   switch (type.id()) {
     using enum TypeId;
     case BOOLEAN:
@@ -522,8 +566,10 @@ duckdb::LogicalType BuiltinLogicalType(const BuiltinType& type) {
 
 ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
   const auto info = CatalogLogical2Pg(type);
+  const auto physical = StripDomains(type);
+  const auto physical_oid = CatalogLogical2Pg(physical).oid;
   int16_t ndims = 0;
-  const auto* element = &type;
+  const auto* element = &physical;
   while (element->id() != TypeId::MAP && IsArrayDimension(*element)) {
     ++ndims;
     element = element->id() == TypeId::LIST
@@ -538,7 +584,7 @@ ColumnType DescribeColumnType(const duckdb::LogicalType& type) {
                     .storage = 'x',
                     .collation = 0,
                     .ndims = ndims};
-  if (const auto* builtin = FindBuiltinType(info.oid)) {
+  if (const auto* builtin = FindBuiltinType(physical_oid)) {
     result.len = builtin->len;
     result.byval = builtin->byval;
     result.align = builtin->align;

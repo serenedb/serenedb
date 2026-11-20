@@ -1854,10 +1854,9 @@ check("SELECT collname FROM pg_catalog.pg_collation WHERE oid IN (100, 950, 951)
 check("SELECT count(*) > 700 AS populated FROM information_schema.sql_features", "catalog_content")
 
 t.statement("CREATE SCHEMA pgonly")
-pgonly("CREATE DOMAIN pgonly.positive_int AS int4 CHECK (VALUE > 0)", 'syntax error at or near "DOMAIN"')
+t.statement("CREATE DOMAIN pgonly.positive_int AS int4 CHECK (VALUE > 0)")
 t.statement("CREATE TABLE pgonly.json_tab (id int4 PRIMARY KEY, doc jsonb)")
-pgonly("CREATE TABLE pgonly.domain_tab (id int4 PRIMARY KEY, qty pgonly.positive_int)",
-       "Type with name positive_int does not exist!")
+t.statement("CREATE TABLE pgonly.domain_tab (id int4 PRIMARY KEY, qty pgonly.positive_int)")
 t.statement("CREATE TABLE pgonly.parent (id int4 PRIMARY KEY)")
 pgonly("CREATE TABLE pgonly.cascade_child (id int4 PRIMARY KEY, parent_id int4 REFERENCES pgonly.parent (id) ON DELETE CASCADE)",
        "FOREIGN KEY constraints cannot use CASCADE, SET NULL or SET DEFAULT")

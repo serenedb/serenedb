@@ -1,0 +1,91 @@
+control substitution on
+
+statement ok
+CREATE DOMAIN d AS int4 DEFAULT 7 NOT NULL CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN d_txt AS text COLLATE "C";
+
+statement ok
+CREATE TABLE t (id int, v d);
+
+statement count 1
+INSERT INTO t VALUES (1, 5);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT id, v, pg_typeof(v) FROM t;
+----
+id	v	pg_typeof
+1	5	d
+
+
+connection after_crash
+statement error
+INSERT INTO t VALUES (2, -1);
+
+connection after_crash
+statement error
+INSERT INTO t VALUES (3, NULL);
+
+connection after_crash
+statement count 1
+INSERT INTO t (id) VALUES (4);
+
+connection after_crash
+query
+SELECT v FROM t WHERE id = 4;
+----
+v
+7
+
+connection after_crash
+query
+SELECT 'a'::d_txt < 'B'::d_txt;
+----
+?column?
+f
+
+connection after_crash
+statement ok
+CREATE DOMAIN d_ckpt AS int4 CHECK (VALUE > 0);
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_crash
+query error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_checkpoint
+statement error
+SELECT (-1)::d_ckpt;

@@ -25,7 +25,7 @@
 #include <atomic>
 #include <bit>
 #include <functional>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
@@ -36,8 +36,8 @@
 #include <iresearch/search/probe/node.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/top/root.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <map>
 #include <span>
@@ -46,6 +46,7 @@
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {
@@ -61,7 +62,7 @@ struct AnalyzedField {
 
   irs::IndexFeatures GetIndexFeatures() const noexcept { return features; }
 
-  bool Write(irs::DataOutput& out) const {
+  bool Write(duckdb::WriteStream& out) const {
     out.WriteData(reinterpret_cast<const irs::byte_type*>(value.data()),
                   value.size());
     return true;
@@ -120,7 +121,7 @@ inline void ExpectFamilies(const Families& expected, const Families& actual) {
 
 class FamilyIndex {
  public:
-  const irs::DirectoryReader& Reader() const noexcept { return _reader; }
+  const irs::CompositeReader& Reader() const noexcept { return _reader; }
 
   std::vector<irs::doc_id_t> Docs(const irs::Filter& filter) const {
     PreparedFilter prepared{filter, _reader};
@@ -280,7 +281,8 @@ class FamilyIndex {
     _reader = OpenReader(_dir, irs::tests::DefaultReaderOptions());
   }
 
-  irs::MemoryDirectory _dir;
+  IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                TestEnv::MemoryRoot()};
 
  private:
   irs::doc_id_t End(size_t segment) const {
@@ -307,7 +309,7 @@ class FamilyIndex {
     }
   }
 
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
 };
 
 }  // namespace tests

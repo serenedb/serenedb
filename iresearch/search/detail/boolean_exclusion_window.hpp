@@ -78,7 +78,7 @@ Result<Family> ExclusionWindowMaker<Family, Ctx, P>::Make(
     } else {
       return {};
     }
-    const IndexInput* doc = nullptr;
+    const duckdb::InputFile* doc = nullptr;
     std::vector<FillNode::ptr> rest;
     if (!CollectDense(terms, filters, nullptr, doc, rest,
                       [&](const QueryBuilder& filter) {

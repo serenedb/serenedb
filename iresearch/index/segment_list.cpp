@@ -30,14 +30,9 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
+namespace {
 
-void AppendSegmentList(std::string& out, uint64_t id, uint8_t kinds,
-                       doc_id_t docs) {
-  absl::StrAppend(&out, id, " ", static_cast<uint32_t>(kinds), " ", docs, "\n");
-}
-
-std::vector<SegmentMeta> ReadSegmentList(const Directory& dir,
-                                         std::string_view text) {
+std::vector<SegmentMeta> ReadSegmentList(std::string_view text) {
   std::vector<SegmentMeta> segments;
   for (const std::string_view line :
        absl::StrSplit(text, '\n', absl::SkipEmpty())) {
@@ -54,22 +49,27 @@ std::vector<SegmentMeta> ReadSegmentList(const Directory& dir,
     meta.name = FileName(id);
     meta.kinds = static_cast<uint8_t>(kinds);
     meta.live_docs_count = meta.docs_count;
-    for (const auto& name : SegmentFiles(meta.name, meta.kinds)) {
-      uint64_t size = 0;
-      dir.length(size, name);
-      meta.byte_size += size;
-    }
   }
   return segments;
 }
 
-DirectoryReader OpenSegmentList(const Directory& dir, std::string_view text,
+}  // namespace
+
+void AppendSegmentList(std::string& out, uint64_t id, uint8_t kinds,
+                       doc_id_t docs) {
+  absl::StrAppend(&out, id, " ", static_cast<uint32_t>(kinds), " ", docs, "\n");
+}
+
+CompositeReader OpenSegmentList(duckdb::DatabaseInstance& db,
+                                duckdb::FileSystem& fs, std::string_view root,
+                                std::string_view text,
                                 const IndexReaderOptions& options) {
   std::vector<SegmentReader> readers;
-  for (const auto& meta : ReadSegmentList(dir, text)) {
-    readers.emplace_back(SegmentReaderImpl::Open(dir, meta, options));
+  for (const auto& meta : ReadSegmentList(text)) {
+    readers.emplace_back(
+      SegmentReaderImpl::Open(db, fs, root, meta, options, nullptr));
   }
-  return {dir, options, std::move(readers), /*stats=*/true};
+  return {std::move(readers), /*stats=*/true};
 }
 
 }  // namespace irs

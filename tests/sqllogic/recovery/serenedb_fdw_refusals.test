@@ -220,3 +220,11 @@ id
 
 statement ok
 DROP SERVER sfx_snap;
+
+system ok
+rm -rf $__TEST_DIR__/sfx_earlier && cp -r $__TEST_DIR__/sfx_snap $__TEST_DIR__/sfx_earlier && touch $__TEST_DIR__/sfx_earlier/engine_v1/wal/snapshot
+
+statement error
+CREATE SERVER sfx_earlier FOREIGN DATA WRAPPER serenedb_fdw OPTIONS (path '${__TEST_DIR__}/sfx_earlier');
+----
+db error: ERROR: "<slt:ignore>/sfx_earlier" was written with an earlier layout of the data directory, which this build cannot read

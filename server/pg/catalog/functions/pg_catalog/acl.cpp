@@ -49,6 +49,7 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "connector/common.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
@@ -740,22 +741,29 @@ struct ForeignDataWrapperPrivileges
 
 struct TablespacePrivileges : ObjectPrivileges<TablespacePrivileges> {
   static constexpr std::string_view kName = "has_tablespace_privilege";
-  static constexpr CatalogType kType = CatalogType::DATABASE_ENTRY;
+  static constexpr CatalogType kType = CatalogType::TABLESPACE_ENTRY;
   static constexpr AclMode kModes = AclMode::Create;
   static constexpr bool kSuperuserFirst = true;
 
-  static uint64_t Resolve(const Session&, std::string_view name) {
-    if (const auto* tablespace = FindSystemObject(kSystemTablespaces, name)) {
+  static uint64_t Resolve(const Session& session, std::string_view name) {
+    auto& cluster = catalog::ClusterOf(*session.context);
+    if (const auto tablespace = cluster.Set(kType).Get(
+          cluster.GetCatalogTransaction(*session.context),
+          duckdb::Identifier{name})) {
       return tablespace->oid;
     }
     ThrowUndefinedObject("tablespace", name);
   }
 
-  static std::optional<ObjectTarget> Find(const Session&, uint64_t oid) {
-    if (!FindSystemObject(kSystemTablespaces, oid)) {
+  static std::optional<ObjectTarget> Find(const Session& session,
+                                          uint64_t oid) {
+    auto& cluster = catalog::ClusterOf(*session.context);
+    const auto tablespace = cluster.FindIn<catalog::TablespaceCatalogEntry>(
+      cluster.GetCatalogTransaction(*session.context), oid);
+    if (!tablespace) {
       return std::nullopt;
     }
-    return ObjectTarget{&kBuiltinPermissions};
+    return ObjectTarget{&PrivilegePermissions(*tablespace)};
   }
 };
 

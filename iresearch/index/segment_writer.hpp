@@ -23,22 +23,22 @@
 
 #pragma once
 
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
+#include <string>
+#include <string_view>
+
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"
-
-namespace duckdb {
-
-class DatabaseInstance;
-}
 
 namespace irs {
 
@@ -52,7 +52,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
  public:
   static std::unique_ptr<SegmentWriter> make(
-    Directory& dir, const SegmentWriterOptions& options);
+    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+    const SegmentWriterOptions& options);
 
   // Begin a batch. Returns first valid doc_id in the batch.
   doc_id_t begin(doc_id_t batch_size = 1);
@@ -123,7 +124,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     _valid = false;
   }
 
-  SegmentInputs flush(SegmentMeta& meta, DocumentMaskBuilder& docs_mask);
+  WrittenSegment flush(SegmentMeta& meta, DocumentMaskBuilder& docs_mask);
 
   std::shared_ptr<const SegmentReaderImpl> SealPiece(uint64_t id);
 
@@ -148,8 +149,9 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     return _batch_first_doc_id;
   }
 
-  SegmentWriter(ConstructToken, Directory& dir,
-                const SegmentWriterOptions& options) noexcept;
+  SegmentWriter(ConstructToken, duckdb::DatabaseInstance& db,
+                duckdb::FileSystem& fs, std::string_view root,
+                const SegmentWriterOptions& options);
 
   NormReader::ptr norms(field_id id) const final {
     if (_col_reader == nullptr) {
@@ -278,7 +280,10 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // keeps.
   void ResetState() noexcept;
 
-  TrackingDirectory _dir;
+  std::shared_ptr<FileTracker> _tracker;
+  duckdb::FileSystem& _fs;
+  std::string _root;
+  std::shared_ptr<ReleasedSegments> _released;
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
   size_t _docs = 0;

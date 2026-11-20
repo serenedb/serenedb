@@ -54,6 +54,8 @@ They can be created using the `CREATE TEMP TABLE` or the `CREATE TEMPORARY TABLE
 
 Temporary tables reside in memory rather than on disk, and their rows stay in memory even when memory becomes constrained.
 
+A temporary table can have [inverted indexes](../create_index/inverted.md). They are kept in memory with the table, are visible only to the session, and are dropped with the table. What a temporary table writes out of its newest rows is packed so that queries read it as fast as a table on a local disk; [`VACUUM (PACK_TABLE)`](../vacuum/index.md#packing-in-memory-tables--pack_table) packs what was written when memory was short. The text search dictionaries of its indexes come from the session's database, and dropping a dictionary that such an index uses makes queries on the index fail. Neither a temporary table nor its indexes can be placed in a [tablespace](../create_tablespace/index.md).
+
 Create a temporary table from a CSV file (automatically detecting column names and types):
 
 <SqlLogicTest id="sql/statements/create_table/index/example_009" />
@@ -103,6 +105,10 @@ Or:
 <SqlLogicTest id="sql/statements/create_table/index/example_017" />
 
 It is not possible to create tables using CTAS statements with constraints (primary keys, check constraints, etc.).
+
+## Tablespace
+
+`TABLESPACE name` puts the files of a table and of its indexes in a [tablespace](../create_tablespace/index.md): after `WITH (...)` and `ON COMMIT`, or before `AS` in a CTAS. Without it, a table goes to the tablespace `default_tablespace` names, else to its database's.
 
 ## Table Options
 

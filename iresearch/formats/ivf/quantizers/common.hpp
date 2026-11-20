@@ -39,7 +39,6 @@
 #endif
 
 #include "iresearch/formats/ivf/quantizer.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/dispatch.hpp"
 
@@ -117,11 +116,6 @@ inline void RotateInto(const float* signs, const float* in, float* out,
   for (uint32_t i = 0; i < rotated_d; ++i) {
     out[i] *= scale;
   }
-}
-
-template<typename H>
-void WritePod(DataOutput& out, const H& h) {
-  out.WriteData(reinterpret_cast<const byte_type*>(&h), sizeof(H));
 }
 
 template<typename H>

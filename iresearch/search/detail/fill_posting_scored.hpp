@@ -30,7 +30,7 @@
 namespace irs::detail {
 
 template<typename Result, typename P = NoPins, typename Make>
-Result ResolveFillScored(const IndexInput& doc, bool per_doc,
+Result ResolveFillScored(const duckdb::InputFile& doc, bool per_doc,
                          ScoreMergeType merge, Make&& make) {
   return Resolve<P>(doc, [&]<typename Input> -> Result {
     using Plain = PlainFillScored<Input>;
@@ -45,7 +45,7 @@ Result ResolveFillScored(const IndexInput& doc, bool per_doc,
 }
 
 template<typename Result, typename P = NoPins, typename Make>
-Result ResolveCountScored(const IndexInput& doc, bool per_doc,
+Result ResolveCountScored(const duckdb::InputFile& doc, bool per_doc,
                           ScoreMergeType merge, Make&& make) {
   return Resolve<P>(doc, [&]<typename Input> -> Result {
     using Plain = PlainCountScored<Input>;

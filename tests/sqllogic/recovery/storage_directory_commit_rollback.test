@@ -18,23 +18,19 @@ CREATE TABLE sdl_oids (name TEXT, oid BIGINT);
 
 
 statement ok
-CREATE MACRO sdl_orphans() AS (
-  SELECT count(DISTINCT regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1))
-  FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-  WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT NOT IN (
-      SELECT table_oid FROM sdb_tables()
-      UNION ALL
-      SELECT index_oid FROM sdb_indexes()));
+CREATE MACRO sdl_unowned() AS (
+  (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
+  - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files'));
 
 
 statement ok
 CREATE MACRO sdl_stored(object) AS (
-  SELECT count(*) > 0 FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-  WHERE file LIKE '%/engine_v1/store/' || (SELECT oid FROM sdl_oids WHERE name = object) || '/%');
+  SELECT coalesce(sum(value), 0) > 0 FROM sdb_metrics
+  WHERE metric = 'num_files' AND relation_id = (SELECT oid FROM sdl_oids WHERE name = object));
 
 
 # ----------------------------------------------------------------------
-# 1. A committed drop removes the directory.
+# 1. A committed drop removes the files.
 # ----------------------------------------------------------------------
 
 statement ok
@@ -94,15 +90,14 @@ DROP INDEX sdl_v_inv;
 
 
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT sdl_stored('sdl_t_inv') AS t_inv, sdl_stored('sdl_s') AS s, sdl_stored('sdl_v_inv') AS v_inv,
-       sdl_orphans() AS orphans;
+SELECT sdl_unowned() AS unowned;
 ----
-t_inv	s	v_inv	orphans
-f	f	f	0
+unowned
+0
 
 
 # ----------------------------------------------------------------------
-# 2. A rolled-back drop keeps the directory and its data.
+# 2. A rolled-back drop keeps the files and their data.
 # ----------------------------------------------------------------------
 
 statement ok
@@ -135,6 +130,10 @@ INSERT INTO sdl_oids
 
 
 statement ok
+VACUUM (FLUSH_TABLE) sdl_keep_s;
+
+
+statement ok
 BEGIN;
 
 
@@ -154,11 +153,11 @@ statement ok
 ROLLBACK;
 
 
-query
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT sdl_stored('sdl_keep_inv') AS t_inv, sdl_stored('sdl_keep_s') AS s,
-       sdl_stored('sdl_keep_v_inv') AS v_inv, sdl_orphans() AS orphans;
+       sdl_stored('sdl_keep_v_inv') AS v_inv, sdl_unowned() AS unowned;
 ----
-t_inv	s	v_inv	orphans
+t_inv	s	v_inv	unowned
 f	t	t	0
 
 
@@ -172,7 +171,7 @@ t_inv	s	v_inv
 
 
 # ----------------------------------------------------------------------
-# 3. A rolled-back create removes the directory it made.
+# 3. A rolled-back create removes the files it wrote.
 # ----------------------------------------------------------------------
 
 statement ok
@@ -204,10 +203,10 @@ ROLLBACK;
 
 
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT sdl_orphans() AS orphans, sdl_stored('sdl_keep_inv') AS kept,
+SELECT sdl_unowned() AS unowned, sdl_stored('sdl_keep_inv') AS kept,
        sdl_stored('sdl_keep_s') AS kept_table;
 ----
-orphans	kept	kept_table
+unowned	kept	kept_table
 0	f	t
 
 
@@ -226,7 +225,7 @@ CREATE INDEX sdl_keep_inv ON public.sdl_t USING inverted (body)
 
 
 # ----------------------------------------------------------------------
-# 4. A create that IF NOT EXISTS skips makes no directory.
+# 4. A create that IF NOT EXISTS skips writes no file.
 # ----------------------------------------------------------------------
 
 statement ok
@@ -241,15 +240,15 @@ statement ok
 CREATE INDEX IF NOT EXISTS sdl_keep_v_inv ON sdl_v USING inverted (id);
 
 
-query
-SELECT sdl_orphans() AS orphans;
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT sdl_unowned() AS unowned;
 ----
-orphans
+unowned
 0
 
 
 # ----------------------------------------------------------------------
-# 5. A committed DROP DATABASE removes the database's whole directory.
+# 5. A committed DROP DATABASE removes the files of all its tables and indexes.
 # ----------------------------------------------------------------------
 
 statement ok
@@ -285,11 +284,6 @@ INSERT INTO sdl_db.public.s VALUES (1, 'alpha');
 
 
 statement ok
-INSERT INTO sdl_oids SELECT 'sdl_db', table_oid FROM sdb_tables() WHERE database_name = 'sdl_db'
-UNION ALL SELECT 'sdl_db', index_oid FROM sdb_indexes() WHERE database_name = 'sdl_db';
-
-
-statement ok
 VACUUM (FLUSH_ALL);
 
 
@@ -297,9 +291,8 @@ statement ok
 CHECKPOINT sdl_db;
 
 
-query
-SELECT count(*) > 0 AS stored FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT IN (SELECT oid FROM sdl_oids WHERE name = 'sdl_db');
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT sdl_unowned() > 0 AS stored;
 ----
 stored
 t
@@ -310,8 +303,7 @@ DROP DATABASE sdl_db;
 
 
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT IN (SELECT oid FROM sdl_oids WHERE name = 'sdl_db');
+SELECT sdl_unowned() AS leftover;
 ----
 leftover
 0

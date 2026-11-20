@@ -17,6 +17,7 @@ add_executable(
     duckdb_wal_block_reuse_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp
+    lifecycle_test.cpp
     meta_transaction_snapshot_test.cpp
     metrics_test.cpp
     network_duck_executor_test.cpp
@@ -82,6 +83,7 @@ target_link_libraries(
         serene_listeners
         gtest
         serene_docs_corpus
+        iresearch-test-object-store
         iresearch-test-writer
 )
 sdb_link_duckdb_extensions(serenedb-tests)

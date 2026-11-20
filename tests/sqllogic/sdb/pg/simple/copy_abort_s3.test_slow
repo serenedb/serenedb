@@ -1,0 +1,33 @@
+control substitution on
+
+# A COPY to an object store that fails part way through, with parts of its
+# upload already sent, leaves no object behind.
+
+statement ok
+CREATE OR REPLACE SECRET minio_${__DATABASE__} (
+  TYPE s3,
+  KEY_ID '${MINIO_ACCESS_KEY}',
+  SECRET '${MINIO_SECRET_KEY}',
+  ENDPOINT '${MINIO_HOST}:${MINIO_PORT}',
+  URL_STYLE 'path',
+  USE_SSL false,
+  SCOPE 's3://${MINIO_BUCKET}/${__DATABASE__}_'
+);
+
+
+statement error
+COPY (SELECT CASE WHEN i = 30000 THEN error('boom') ELSE repeat('x', 1000) END AS v FROM range(40000) t(i))
+TO 's3://${MINIO_BUCKET}/${__DATABASE__}_failed.csv' (FORMAT csv);
+----
+db error: ERROR: boom
+
+
+query
+SELECT count(*) AS n FROM glob('s3://${MINIO_BUCKET}/${__DATABASE__}_failed*');
+----
+n
+0
+
+
+statement ok
+DROP SECRET minio_${__DATABASE__};

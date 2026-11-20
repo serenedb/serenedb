@@ -65,14 +65,14 @@ Result BuildConjunction(std::span<const Term> terms,
     const auto& own = FieldOf(term, field);
     if constexpr (kScored) {
       const auto posting = clause(term);
-      return std::tuple<const PostingMeta&, const IndexInput&, const SubReader&,
-                        const TermReader&, ScoreArgs>{
+      return std::tuple<const PostingMeta&, const duckdb::InputFile&,
+                        const SubReader&, const TermReader&, ScoreArgs>{
         CookieOf(term), *DocOf(own), segment, own,
         scoring.recipe.Args(posting.stats, posting.boost)};
     } else {
-      return std::tuple<const PostingMeta&, const IndexInput&, IndexFeatures,
-                        bool>{CookieOf(term), *DocOf(own), LayoutOf(own),
-                              BoundsOf(own)};
+      return std::tuple<const PostingMeta&, const duckdb::InputFile&,
+                        IndexFeatures, bool>{CookieOf(term), *DocOf(own),
+                                             LayoutOf(own), BoundsOf(own)};
     }
   };
 

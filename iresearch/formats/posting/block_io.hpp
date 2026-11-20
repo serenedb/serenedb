@@ -45,6 +45,7 @@ inline constexpr uint32_t kEncWords =
 inline constexpr uint32_t kStreamAhead = 128;
 inline constexpr uint32_t kHoleWords = 8;
 inline constexpr uint32_t kFreqBias = 1;
+static_assert(kFreqBias < block_codec::kValueBiases);
 static_assert(kBlock == doc_limits::kBlockSize);
 static_assert(kBlock == pos_limits::kBlockSize);
 static_assert(block_codec::kOutSlack <= doc_limits::kDocsSlack);

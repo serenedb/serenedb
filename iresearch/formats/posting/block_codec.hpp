@@ -27,6 +27,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <cstring>
@@ -114,15 +115,18 @@ inline IRS_FORCE_INLINE BitsetView ParseBitset(const byte_type* in) noexcept {
 #define IRS_BLOCK_CODEC_CASES4(V) \
   IRS_BLOCK_CODEC_CASE(V)         \
   IRS_BLOCK_CODEC_CASE(V + 1)     \
-  IRS_BLOCK_CODEC_CASE(V + 2) IRS_BLOCK_CODEC_CASE(V + 3)
+  IRS_BLOCK_CODEC_CASE(V + 2)     \
+  IRS_BLOCK_CODEC_CASE(V + 3)
 #define IRS_BLOCK_CODEC_CASES16(V) \
   IRS_BLOCK_CODEC_CASES4(V)        \
   IRS_BLOCK_CODEC_CASES4(V + 4)    \
-  IRS_BLOCK_CODEC_CASES4(V + 8) IRS_BLOCK_CODEC_CASES4(V + 12)
+  IRS_BLOCK_CODEC_CASES4(V + 8)    \
+  IRS_BLOCK_CODEC_CASES4(V + 12)
 #define IRS_BLOCK_CODEC_CASES64(V) \
   IRS_BLOCK_CODEC_CASES16(V)       \
   IRS_BLOCK_CODEC_CASES16(V + 16)  \
-  IRS_BLOCK_CODEC_CASES16(V + 32) IRS_BLOCK_CODEC_CASES16(V + 48)
+  IRS_BLOCK_CODEC_CASES16(V + 32)  \
+  IRS_BLOCK_CODEC_CASES16(V + 48)
 
 template<uint32_t N, typename = std::make_integer_sequence<uint32_t, N>>
 struct ByteKeys;
@@ -319,15 +323,6 @@ IRS_FORCE_INLINE const byte_type* DecodePacked(const byte_type* in,
   };
   PatchGroups(slots, highs, 1, group);
   return highs + PackedSize(n, high_bits);
-}
-
-template<bool Full>
-consteval bool Inlined(uint32_t token) noexcept {
-  if (token < Code(ValueEncoding::Pack)) {
-    return true;
-  }
-  const auto family = ShapeOf<ValueEncoding>(token).family;
-  return family == Family::Pack || (Full && family == Family::PatchByte);
 }
 
 inline IRS_FORCE_INLINE doc_id_t* MaterializeScalar(doc_id_t offset,
@@ -701,18 +696,24 @@ IRS_NO_INLINE const byte_type* DecodeValuesToken(const byte_type* in,
   return DecodeValuesBody<Token, Add, Full>(in, len, out);
 }
 
+using ValueDecoder = const byte_type* (*)(const byte_type*, uint32_t,
+                                          uint32_t*);
+
 template<uint32_t Add, bool Full>
-const byte_type* DispatchValues(const byte_type* in, uint32_t len,
-                                uint32_t* out) noexcept {
-  return Resolve<ByteAxis<Code(ValueEncoding::End)>>(
-    in[0], [&]<uint32_t Token>() IRS_FORCE_INLINE {
-      if constexpr (Inlined<Full>(Token)) {
-        return DecodeValuesBody<Token, Add, Full>(in, len, out);
-      } else {
-        return DecodeValuesToken<Token, Add, Full>(in, len, out);
-      }
-    });
-}
+inline constexpr auto kValueDecodersOf =
+  []<uint32_t... Token>(std::integer_sequence<uint32_t, Token...>) {
+    return std::array<ValueDecoder, sizeof...(Token)>{
+      &DecodeValuesToken<Token, Add, Full>...};
+  }(std::make_integer_sequence<uint32_t, Code(ValueEncoding::End)>{});
+
+struct ValueDecoders {
+  const ValueDecoder* blocks;
+  const ValueDecoder* tails;
+};
+
+inline constexpr uint32_t kValueBiases = 2;
+
+extern const ValueDecoders kValueDecoders[kValueBiases];
 
 struct BlockCodec {
   IRS_FORCE_INLINE static const byte_type* DecodeDeltaBlock(const byte_type* in,
@@ -743,15 +744,19 @@ struct BlockCodec {
   template<uint32_t Add = 0>
   IRS_FORCE_INLINE static const byte_type* DecodeValuesBlock(
     const byte_type* in, uint32_t* out) {
-    return DispatchValues<Add, true>(in, kBlock, out);
+    static_assert(Add < kValueBiases);
+    SDB_ASSERT(in[0] < Code(ValueEncoding::End));
+    return kValueDecoders[Add].blocks[in[0]](in, kBlock, out);
   }
 
   template<uint32_t Add = 0>
   IRS_FORCE_INLINE static const byte_type* DecodeValuesTail(const byte_type* in,
                                                             uint32_t len,
                                                             uint32_t* out) {
+    static_assert(Add < kValueBiases);
     SDB_ASSERT(1 <= len && len < kBlock);
-    return DispatchValues<Add, false>(in, len, out);
+    SDB_ASSERT(in[0] < Code(ValueEncoding::End));
+    return kValueDecoders[Add].tails[in[0]](in, len, out);
   }
 
   static uint32_t ValuesBlockSize(const byte_type* in) {

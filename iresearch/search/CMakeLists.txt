@@ -8,6 +8,7 @@ target_sources(
         count/make_subtract_conjunction.cpp
         count/make_subtract_disjunction.cpp
         count/make_term_counts.cpp
+        detail/bitset_build.cpp
         detail/collectors.cpp
         detail/compiled_phrase.cpp
         detail/pattern_cache.cpp

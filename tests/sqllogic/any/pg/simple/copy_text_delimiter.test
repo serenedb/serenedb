@@ -352,6 +352,18 @@ COPY ctd_in FROM '${__TEST_DIR__}/ctd_colon.txt' (FORMAT text, DELIMITER E'\n');
 db error: ERROR: COPY delimiter cannot be newline or carriage return
 
 
+onlyif postgres
+statement error
+COPY ctd TO '${__TEST_DIR__}/ctd_bad.csv' (FORMAT csv, DELIMITER E'\r');
+----
+db error: ERROR: COPY delimiter cannot be newline or carriage return
+
+
+skipif postgres
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_bad.csv' (FORMAT csv, DELIMITER E'\r');
+
+
 statement error
 COPY ctd TO '${__TEST_DIR__}/ctd_bad.txt' (FORMAT text, NULL E'n\rl');
 ----
@@ -368,6 +380,96 @@ statement error
 COPY ctd_in FROM '${__TEST_DIR__}/ctd_colon.txt' (FORMAT text, DELIMITER ':', NULL 'x:y');
 ----
 db error: ERROR: COPY delimiter character must not appear in the NULL specification
+
+
+statement ok
+SET TimeZone = 'Asia/Kolkata';
+
+
+statement ok
+COPY (SELECT ARRAY['2024-01-15 12:00:00'::TIMESTAMP] AS a, ROW('2024-01-15 12:00:00+00'::TIMESTAMPTZ) AS r,
+             '2024-01-15 12:00:00+00'::TIMESTAMPTZ AS t, ARRAY['2024-01-15 12:00:00+00'::TIMESTAMPTZ] AS ta)
+TO '${__TEST_DIR__}/ctd_ts_space.txt' (FORMAT text, DELIMITER ' ');
+
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_ts_space.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+{"2024-01-15\\ 12:00:00"} ("2024-01-15\\ 17:30:00+05:30") 2024-01-15\\ 17:30:00+05:30 {"2024-01-15\\ 17:30:00+05:30"}
+
+
+statement ok
+SET TimeZone = 'UTC';
+
+
+statement ok
+COPY (SELECT ROW('2024-01-15 12:00:00+00'::TIMESTAMPTZ) AS r, ARRAY['2024-01-15 12:00:00+00'::TIMESTAMPTZ] AS ta)
+TO '${__TEST_DIR__}/ctd_ts_space_utc.txt' (FORMAT text, DELIMITER ' ');
+
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_ts_space_utc.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+("2024-01-15\\ 12:00:00+00") {"2024-01-15\\ 12:00:00+00"}
+
+
+statement ok
+COPY (SELECT ROW('2024-01-15 12:00:00'::TIMESTAMP, 1) AS r)
+TO '${__TEST_DIR__}/ctd_ts_space_record.txt' (FORMAT text, DELIMITER ' ');
+
+
+statement ok
+COPY ctd_raw FROM '${__TEST_DIR__}/ctd_ts_space_record.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+DELETE FROM ctd_raw RETURNING line;
+----
+line
+("2024-01-15\\ 12:00:00",1)
+
+
+statement ok
+CREATE TABLE ctd_escapes (id INTEGER, v TEXT);
+
+
+statement ok
+COPY (SELECT '1' || chr(9) || '\b\f\v\060\303\251\41\52\66' AS l)
+TO '${__TEST_DIR__}/ctd_escapes.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement ok
+COPY ctd_escapes FROM '${__TEST_DIR__}/ctd_escapes.txt' (FORMAT text);
+
+
+query
+SELECT id, v = chr(8) || chr(12) || chr(11) || '0é!*6' AS same FROM ctd_escapes;
+----
+id	same
+1	t
+
+
+statement ok
+COPY (SELECT '2' || chr(9) || 'a\.b' AS l)
+TO '${__TEST_DIR__}/ctd_marker_inside.txt' (FORMAT csv, DELIMITER E'\x02', QUOTE E'\x01');
+
+
+statement error end-of-copy marker (is not alone on its line|corrupt)
+COPY ctd_escapes FROM '${__TEST_DIR__}/ctd_marker_inside.txt' (FORMAT text);
+
+
+statement ok
+DROP TABLE ctd_escapes;
 
 
 statement ok

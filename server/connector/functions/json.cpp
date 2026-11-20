@@ -57,6 +57,7 @@
 
 #include "connector/common.h"
 #include "connector/functions/function_alias.h"
+#include "pg/types/json.h"
 
 namespace sdb::connector {
 namespace {
@@ -70,12 +71,6 @@ enum class JsonOutputType {
   TEXT,
 };
 
-[[noreturn]] void ThrowInvalidJson(simdjson::error_code error) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                  ERR_MSG("invalid input syntax for type json"),
-                  ERR_DETAIL(simdjson::error_message(error)));
-}
-
 simdjson::ondemand::parser JsonValueParser() {
   simdjson::ondemand::parser parser;
   parser.allow_trailing_commas = true;
@@ -83,20 +78,12 @@ simdjson::ondemand::parser JsonValueParser() {
   return parser;
 }
 
-simdjson::padded_string_view PadJson(std::string_view json,
-                                     std::string& buffer) {
-  buffer.assign(json);
-  buffer.append(simdjson::SIMDJSON_PADDING, '\0');
-  return simdjson::padded_string_view{buffer.data(), json.size(),
-                                      buffer.size()};
-}
-
 template<typename T>
 T Unwrap(simdjson::simdjson_result<T>&& result) {
   T value;
   if (const auto error = std::move(result).get(value);
       error != simdjson::SUCCESS) {
-    ThrowInvalidJson(error);
+    pg::ThrowInvalidJson(error);
   }
   return value;
 }
@@ -104,7 +91,7 @@ T Unwrap(simdjson::simdjson_result<T>&& result) {
 class JsonParser {
  public:
   void PrepareJson(std::string_view json) {
-    _padded_input = PadJson(json, _buffer);
+    _padded_input = pg::PadJson(json, _buffer);
   }
 
   simdjson::ondemand::document GetJsonDocument() {
@@ -299,7 +286,7 @@ void JsonInFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view sv{input.GetData(), input.GetSize()};
       simdjson::ondemand::document doc;
-      auto ec = parser.iterate(PadJson(sv, buffer)).get(doc);
+      auto ec = parser.iterate(pg::PadJson(sv, buffer)).get(doc);
       if (ec != simdjson::SUCCESS || !ValidateJson(doc)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                         ERR_MSG("Invalid input syntax for type json: ", sv));
@@ -502,7 +489,7 @@ void JsonTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view sv(input.GetData(), input.GetSize());
-      auto doc = parser.iterate(PadJson(sv, buffer));
+      auto doc = parser.iterate(pg::PadJson(sv, buffer));
       auto tp = doc.type();
       const char* name = "null";
       if (!tp.error()) {
@@ -593,7 +580,8 @@ void JsonStripNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view sv(input.GetData(), input.GetSize());
       simdjson::ondemand::document doc;
-      if (parser.iterate(PadJson(sv, buffer)).get(doc) != simdjson::SUCCESS) {
+      if (parser.iterate(pg::PadJson(sv, buffer)).get(doc) !=
+          simdjson::SUCCESS) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                         ERR_MSG("invalid JSON"));
       }
@@ -642,7 +630,7 @@ JsonKind KindOf(simdjson::ondemand::json_type type) {
     case simdjson::ondemand::json_type::null:
       return JsonKind::Null;
     case simdjson::ondemand::json_type::unknown:
-      ThrowInvalidJson(simdjson::TAPE_ERROR);
+      pg::ThrowInvalidJson(simdjson::TAPE_ERROR);
   }
   SDB_UNREACHABLE();
 }

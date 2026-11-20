@@ -19,6 +19,16 @@ For example, you can't parse invalid JSON:
 
 Instead, what you probably want here is `SELECT '"quoted"'::JSON`.
 
+The error names the byte of the input where parsing stopped, counted from 0, and the reason:
+
+<SqlLogicTest id="data_import_and_export/json/json_type/example_010" />
+
+Besides standard JSON, the `JSON` type accepts `NaN`, `Infinity` and `-Infinity` as numbers and a trailing comma after the last element of an array or the last member of an object, as the [JSON readers](../../data_import_and_export/json/loading_json.md#parsing-rules) do by default:
+
+<SqlLogicTest id="data_import_and_export/json/json_type/example_011" />
+
+A value of any nesting depth is accepted. A byte order mark at the start of a value is an error: `byte order mark (BOM) is not supported`.
+
 Since the data is stored physically as a `VARCHAR`, whitespace is significant:
 
 <SqlLogicTest id="data_import_and_export/json/json_type/example_003" />

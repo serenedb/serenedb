@@ -50,7 +50,6 @@ using sdb::pg::CopyBatchFormat;
 using sdb::pg::CopyBatchLease;
 using sdb::pg::CopyInBatches;
 using sdb::pg::CopyTake;
-using sdb::pg::kCopyWakeBacklog;
 
 std::string Join(const CopyBatch& batch) {
   std::string out;
@@ -161,6 +160,80 @@ TEST(PgCopyBatchBuilder, JoinedBlankLinesStayWithTheRowsBeforeThem) {
     }
     if (piece < input.size()) {
       EXPECT_EQ(batches.back(), "b\n\n") << "piece=" << piece;
+    }
+  }
+}
+
+TEST(PgCopyBatchBuilder, FirstLineBreakDecidesTheRowEnds) {
+  struct Case {
+    CopyBatchFormat format;
+    std::string input;
+    char line_break;
+  };
+  const std::vector<Case> cases{
+    {CopyBatchFormat::Text, "1\ta\r22\tb\\\rb\r333\tc\r", '\r'},
+    {CopyBatchFormat::Text, "1\ta\r\n2\tb\r\n", '\n'},
+    {CopyBatchFormat::Text, "1\\\na\n2\tb\r", '\n'},
+    {CopyBatchFormat::Csv, "\"x\ny\",1\r\"z\rw\",2\r3,3", '\r'},
+    {CopyBatchFormat::Csv, "\"x\ry\",1\n2,2\n", '\n'},
+    {CopyBatchFormat::Csv, "a,b", '\n'},
+  };
+  for (const auto& [format, input, line_break] : cases) {
+    for (const size_t piece : {1, 2, 3, 5, 64}) {
+      for (const bool stable : {true, false}) {
+        CopyBatchBuilder builder{format, 1};
+        std::string out;
+        const auto take = [&] {
+          const auto batch = builder.Take();
+          EXPECT_EQ(batch->line_break, line_break)
+            << input << " piece=" << piece;
+          out += Join(*batch);
+          return out;
+        };
+        for (size_t pos = 0; pos < input.size(); pos += piece) {
+          builder.Feed(std::string_view{input}.substr(pos, piece), stable);
+          while (builder.Ready()) {
+            EXPECT_EQ(take().back(), line_break) << input << " piece=" << piece;
+          }
+        }
+        builder.Finish();
+        while (builder.HasRows()) {
+          take();
+        }
+        EXPECT_EQ(out, input) << "piece=" << piece << " stable=" << stable;
+      }
+    }
+  }
+}
+
+TEST(PgCopyBatchBuilder, BlankLinesJoinTheBatchBeforeThemInEitherLineBreak) {
+  struct Case {
+    std::string input;
+    std::vector<std::string> batches;
+  };
+  const std::vector<Case> cases{
+    {"1\ta\r\r\r2\tb\r\r3\tc\r", {"1\ta\r\r\r", "2\tb\r\r", "3\tc\r"}},
+    {"1\ta\r\n\r\n2\tb\n\n3\tc\n", {"1\ta\r\n\r\n", "2\tb\n\n", "3\tc\n"}},
+  };
+  for (const auto& [input, expected] : cases) {
+    for (const size_t piece : {1, 2, 3, 64}) {
+      CopyBatchBuilder builder{CopyBatchFormat::Text, 1, true};
+      std::vector<std::string> batches;
+      for (size_t pos = 0; pos < input.size(); pos += piece) {
+        builder.Feed(std::string_view{input}.substr(pos, piece), false);
+        while (builder.Ready()) {
+          batches.push_back(Join(*builder.Take()));
+        }
+      }
+      builder.Finish();
+      while (builder.HasRows()) {
+        batches.push_back(Join(*builder.Take()));
+      }
+      if (piece == 64) {
+        EXPECT_EQ(absl::StrJoin(batches, ""), input);
+        continue;
+      }
+      EXPECT_EQ(batches, expected) << "piece=" << piece;
     }
   }
 }
@@ -377,21 +450,62 @@ struct BlockingInput {
   duckdb::TableFunctionInput input{nullptr, nullptr, nullptr};
 };
 
-TEST(PgCopyInBatches, ParkedTaskWakesOnceBatchesBackUp) {
+TEST(PgCopyInBatches, ParkedTaskWakesOnPush) {
   CopyInBatches queue;
   BlockingInput consumer;
   std::vector<CopyBatchLease> taken;
-  ASSERT_EQ(queue.Take(consumer.input, kCopyWakeBacklog, taken),
-            CopyTake::Blocked);
-  for (size_t i = 0; i < kCopyWakeBacklog; ++i) {
-    queue.Push(MakeBatch(std::to_string(i)), {});
-  }
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
+  queue.Push(MakeBatch("0"), {});
   consumer.signal->Await();
-  ASSERT_EQ(queue.Take(consumer.input, kCopyWakeBacklog, taken),
-            CopyTake::Batches);
-  EXPECT_EQ(taken.size(), kCopyWakeBacklog);
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
+  EXPECT_EQ(taken.size(), 1);
   queue.Finish();
   EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
+}
+
+TEST(PgCopyInBatches, PushWakesOneParkedTaskPerBatch) {
+  CopyInBatches queue;
+  BlockingInput first;
+  BlockingInput second;
+  std::vector<CopyBatchLease> taken;
+  ASSERT_EQ(queue.Take(first.input, 1, taken), CopyTake::Blocked);
+  ASSERT_EQ(queue.Take(second.input, 1, taken), CopyTake::Blocked);
+  queue.Push(MakeBatch("0"), {});
+  auto input = NoInput();
+  ASSERT_EQ(queue.Take(input, 1, taken), CopyTake::Batches);
+  EXPECT_TRUE(queue.Starving());
+  queue.Push(MakeBatch("1"), {});
+  first.signal->Await();
+  second.signal->Await();
+  EXPECT_FALSE(queue.Starving());
+  ASSERT_EQ(queue.Take(input, 1, taken), CopyTake::Batches);
+  ASSERT_EQ(taken.size(), 2);
+  EXPECT_EQ(Join(*taken[0]), "0");
+  EXPECT_EQ(Join(*taken[1]), "1");
+  taken.clear();
+  queue.Finish();
+}
+
+TEST(PgCopyInBatches, ParkingOnAnEmptyQueueSignalsStarvation) {
+  CopyInBatches queue;
+  size_t starved = 0;
+  queue.OnStarve([&] { ++starved; });
+  EXPECT_FALSE(queue.Starving());
+  BlockingInput consumer;
+  std::vector<CopyBatchLease> taken;
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Blocked);
+  EXPECT_EQ(starved, 1);
+  EXPECT_TRUE(queue.Starving());
+  queue.Push(MakeBatch("0"), {});
+  EXPECT_FALSE(queue.Starving());
+  consumer.signal->Await();
+  ASSERT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::Batches);
+  EXPECT_EQ(starved, 1);
+  taken.clear();
+  queue.Finish();
+  EXPECT_FALSE(queue.Starving());
+  EXPECT_EQ(queue.Take(consumer.input, 1, taken), CopyTake::End);
+  EXPECT_EQ(starved, 1);
 }
 
 TEST(PgCopyInBatches, FinishWakesParkedTaskForFewBatches) {

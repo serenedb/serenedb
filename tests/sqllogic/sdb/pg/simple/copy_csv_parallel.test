@@ -1,0 +1,221 @@
+control substitution on
+
+statement ok
+CREATE TABLE cpar_src AS
+SELECT i AS id,
+       CASE i % 6
+         WHEN 0 THEN 'a,b' || repeat('z', i % 37)
+         WHEN 1 THEN 'q"x' || repeat('"', i % 5)
+         WHEN 2 THEN 'l1' || chr(10) || 'l2' || chr(13) || chr(10) || repeat('y', i % 11)
+         WHEN 3 THEN ''
+         WHEN 4 THEN repeat('w', i % 53)
+       END AS t,
+       i * 7 AS n
+FROM generate_series(1, 1500000) g(i);
+
+
+query
+SELECT count(*) AS rows, count(t) AS texts, sum(length(t)) AS chars, sum(n) AS n FROM cpar_src;
+----
+rows	texts	chars	n
+1500000	1250000	15999981	7875005250000
+
+
+statement count 1500000
+COPY cpar_src TO '${__TEST_DIR__}/cpar.csv' (FORMAT csv, HEADER);
+
+
+statement ok
+CREATE TABLE cpar_dst (id INTEGER, t TEXT, n BIGINT);
+
+
+statement count 1500000
+COPY cpar_dst FROM '${__TEST_DIR__}/cpar.csv' (FORMAT csv, HEADER);
+
+
+query
+SELECT count(*) AS rows, count(t) AS texts, sum(length(t)) AS chars, sum(n) AS n,
+       sum(id) FILTER (WHERE t = '') AS empty_ids, sum(id) FILTER (WHERE t IS NULL) AS null_ids
+FROM cpar_dst;
+----
+rows	texts	chars	n	empty_ids	null_ids
+1500000	1250000	15999981	7875005250000	191037514150	187500500000
+
+
+query
+SELECT count(*) AS mismatches FROM cpar_src s JOIN cpar_dst d USING (id) WHERE s.t IS DISTINCT FROM d.t OR s.n <> d.n;
+----
+mismatches
+0
+
+
+statement ok
+TRUNCATE cpar_dst;
+
+
+statement count 1500000
+COPY cpar_src TO '${__TEST_DIR__}/cpar_escape.csv' (FORMAT csv, DELIMITER '|', QUOTE '''', ESCAPE '!');
+
+
+statement count 1500000
+COPY cpar_dst FROM '${__TEST_DIR__}/cpar_escape.csv' (FORMAT csv, DELIMITER '|', QUOTE '''', ESCAPE '!');
+
+
+query
+SELECT count(*) AS mismatches FROM cpar_src s JOIN cpar_dst d USING (id) WHERE s.t IS DISTINCT FROM d.t OR s.n <> d.n;
+----
+mismatches
+0
+
+
+statement ok
+TRUNCATE cpar_dst;
+
+
+statement count 1500000
+COPY cpar_src TO '${__TEST_DIR__}/cpar.csv.gz' (FORMAT csv);
+
+
+statement count 1500000
+COPY cpar_dst FROM '${__TEST_DIR__}/cpar.csv.gz' (FORMAT csv);
+
+
+query
+SELECT count(*) AS rows, sum(length(t)) AS chars FROM cpar_dst;
+----
+rows	chars
+1500000	15999981
+
+
+statement ok
+CREATE TABLE cpar_lines (l TEXT);
+
+
+statement count 3
+COPY (SELECT * FROM (VALUES (1, 'a'), (2, 'b,c'), (3, NULL)) v(i, s) ORDER BY i)
+TO '${__TEST_DIR__}/cpar_array.txt' (FORMAT csv, QUOTE '', ESCAPE '', PREFIX '[', SUFFIX ']', NEW_LINE '|', PRESERVE_ORDER true);
+
+
+statement count 1
+COPY cpar_lines FROM '${__TEST_DIR__}/cpar_array.txt' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM cpar_lines;
+----
+l
+[1,a|2,b,c|3,]
+
+
+statement ok
+TRUNCATE cpar_lines;
+
+
+statement count 2
+COPY (SELECT DATE '2024-03-05' AS d, TIMESTAMP '2024-03-05 06:07:08' AS ts UNION ALL SELECT NULL, NULL)
+TO '${__TEST_DIR__}/cpar_dates.csv' (FORMAT csv, DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%H:%M %d.%m');
+
+
+statement count 2
+COPY cpar_lines FROM '${__TEST_DIR__}/cpar_dates.csv' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM cpar_lines ORDER BY l;
+----
+l
+,
+05/03/2024,06:07 05.03
+
+
+statement error
+COPY cpar_src TO '${__TEST_DIR__}/cpar_bad.csv' (FORMAT csv, PREFIX '[');
+----
+db error: ERROR: COPY ... (FORMAT CSV) must have both PREFIX and SUFFIX, or none at all
+
+
+statement error
+COPY cpar_src TO '${__TEST_DIR__}/cpar_bad.csv' (FORMAT csv, HEADER, PREFIX '[', SUFFIX ']');
+----
+db error: ERROR: COPY ... (FORMAT CSV)'s HEADER cannot be combined with PREFIX/SUFFIX
+
+
+statement count 1500000
+COPY cpar_src TO '${__TEST_DIR__}/cpar_rotated' (FORMAT csv, FILE_SIZE_BYTES '8MB');
+
+
+query
+SELECT count(*) > 1 AS rotated FROM glob('${__TEST_DIR__}/cpar_rotated/*.csv');
+----
+rotated
+t
+
+
+statement ok
+TRUNCATE cpar_dst;
+
+
+statement ok
+CREATE TABLE cpar_union (u UNION(num INTEGER, str VARCHAR));
+
+
+statement ok
+INSERT INTO cpar_union VALUES (union_value(num := 1)), (union_value(str := 'two'));
+
+
+statement count 2
+COPY cpar_union TO '${__TEST_DIR__}/cpar_union.txt' (FORMAT text);
+
+
+statement count 2
+COPY cpar_lines FROM '${__TEST_DIR__}/cpar_union.txt';
+
+
+query
+SELECT l FROM cpar_lines WHERE l IN ('1', 'two') ORDER BY l;
+----
+l
+1
+two
+
+
+statement count 1500000
+COPY (SELECT CASE WHEN i = 1180000 THEN 'x1' WHEN i = 1190000 THEN 'x2' ELSE i::TEXT END AS v FROM generate_series(1, 1500000) g(i) ORDER BY i)
+TO '${__TEST_DIR__}/cpar_two_errors.csv' (FORMAT csv);
+
+
+statement ok
+CREATE TABLE cpar_ints (v INTEGER);
+
+
+statement ok
+SET SESSION debug_physical_table_scan_execution_strategy = 'SYNCHRONOUS';
+
+
+statement error invalid input syntax for type integer: "x[12]"
+COPY cpar_ints FROM '${__TEST_DIR__}/cpar_two_errors.csv' (FORMAT csv);
+
+
+statement ok
+SET SESSION debug_physical_table_scan_execution_strategy = 'DEFAULT';
+
+
+statement ok
+SET threads = 1;
+
+
+statement error
+COPY cpar_ints FROM '${__TEST_DIR__}/cpar_two_errors.csv' (FORMAT csv);
+----
+db error: ERROR: invalid input syntax for type integer: "x1"
+
+
+statement ok
+RESET threads;
+
+
+query
+SELECT count(*) AS n FROM cpar_ints;
+----
+n
+0

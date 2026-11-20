@@ -49,6 +49,8 @@ These functions have the following parameters:
 | `ignore_errors`        | Whether to ignore parse errors (only possible when `format` is `newline_delimited`).                                                                                                                                       | `BOOL`     | `false`         |
 | `maximum_sample_files` | The maximum number of JSON files sampled for auto-detection.                                                                                                                                                               | `BIGINT`   | `32`            |
 | `maximum_object_size`  | The maximum size of a JSON object (in bytes).                                                                                                                                                                              | `UINTEGER` | `16777216`      |
+| `rendering`            | How a value becomes its column's type: `duckdb` converts JSON values as DuckDB does, `postgres` reads the text of every value of a column that is not text, a list, a struct or a map with that type's PostgreSQL input function (a boolean column takes `"on"`, an integer column refuses `1.5`). | `VARCHAR`  | `duckdb`        |
+| `strict`               | Refuse `NaN`, `Infinity` and trailing commas, which are read by default. See [Parsing Rules](#parsing-rules).                                                                                                              | `BOOL`     | `false`         |
 
 The `format` parameter specifies how to read the JSON from a file.
 With `unstructured`, the top-level JSON is read, e.g., for `data.json`:
@@ -101,7 +103,7 @@ SereneDB also supports reading JSON as a table, using the following functions:
 
 ### Parameters
 
-Besides the `maximum_object_size`, `format`, `ignore_errors` and `compression`, these functions have additional parameters:
+Besides the `maximum_object_size`, `format`, `ignore_errors`, `strict` and `compression`, these functions have additional parameters:
 
 | Name                         | Description                                                                                                                                                                                                                                                                                                                         | Type      | Default   |
 | :--------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------- | :-------- |
@@ -178,6 +180,64 @@ You can read the same file with `records` set to `false`, to get a single column
 
 <SqlLogicTest id="data_import_and_export/json/loading_json/example_015" />
 
+## Parsing Rules
+
+The JSON readers read standard JSON and, by default, three extensions to it: `NaN`, `Infinity` and `-Infinity` as numbers, and a trailing comma after the last element of an array or the last member of an object. The [`JSON` type](../../data_import_and_export/json/json_type.md) accepts the same values. Consider this `lenient.json`:
+
+```json
+{"a": NaN, "b": [1, 2,], "c": -Infinity,}
+```
+
+<SqlLogicTest id="data_import_and_export/json/loading_json/example_017" />
+
+`strict = true` refuses the extensions:
+
+<SqlLogicTest id="data_import_and_export/json/loading_json/example_018" />
+
+The `STRICT` option of `COPY ... FROM` does the same for `FORMAT json`:
+
+<SqlLogicTest id="data_import_and_export/json/loading_json/example_019" />
+
+A parse error names the file, the line (the record, for formats other than `newline_delimited`) and the byte in it where parsing stopped, counted from 1.
+
+Documents of any nesting depth are read, such as an array nested 100,000 levels deep:
+
+<SqlLogicTest id="data_import_and_export/json/loading_json/example_020" />
+
+A byte order mark at the start of a file is skipped. At the start of any other JSON value, such as a line of a `newline_delimited` file, it is an error: `byte order mark (BOM) is not supported`.
+
+## Filters While Reading
+
+`read_json` applies the filters of a query's `WHERE` clause while it reads the file, so the other columns of a record are converted only when the record passes. `EXPLAIN` shows such a filter as a `Column Filter` of the `READ_JSON` scan. With this `prices.json`:
+
+```json
+{"name":"apple","price":50}
+{"name":"banana","price":150}
+{"name":"cherry","price":250}
+```
+
+<SqlLogicTest id="data_import_and_export/json/loading_json/example_021" />
+
+A filter on a field of a nested object is applied while reading as well. With this `orders.json`:
+
+```json
+{"id": 1, "customer": {"name": "Ana", "city": "Paris"}}
+{"id": 2, "customer": {"name": "Ben", "city": "Rome"}}
+{"id": 3, "customer": {"name": "Eva", "city": "Paris"}}
+```
+
+<SqlLogicTest id="data_import_and_export/json/loading_json/example_022" />
+
+A value that does not convert to its column type therefore causes no error when the filter removes its record, unless the filter uses its column. In this `readings.json`, the `num` of the second record is not a number:
+
+```json
+{"id":1,"name":"a","num":"10"}
+{"id":2,"name":"b","num":"x"}
+{"id":3,"name":"c","num":"30"}
+```
+
+<SqlLogicTest id="data_import_and_export/json/loading_json/example_023" />
+
 ## Loading with the `COPY` Statement Using `FORMAT json`
 
 `FORMAT json` is supported for `COPY FROM`, `IMPORT DATABASE`, as well as `COPY TO` and `EXPORT DATABASE`. See the [`COPY` statement](../../sql/statements/copy/index.md) and the [`IMPORT` / `EXPORT` clauses](../../sql/statements/export_and_import_database/index.md).
@@ -221,5 +281,7 @@ We can also create a table from the auto-detected schema:
 | `maximum_object_size`         | The maximum size of a JSON object (in bytes)                                                                                                                                                                                       | `UINTEGER` | `16777216`    |
 | `records`                     | Can be one of `auto`, `true`, `false`                                                                                                                                                                                              | `VARCHAR`  | `records`     |
 | `sample_size`                 | Option to define number of sample objects for automatic JSON type detection. Set to -1 to scan the entire input file                                                                                                               | `UBIGINT`  | `20480`       |
+| `rendering`                   | How a value becomes its column's type: `duckdb` converts JSON values as DuckDB does, `postgres` reads the text of every value of a column that is not text, a list, a struct or a map with that type's PostgreSQL input function.                                                                                     | `VARCHAR`  | `duckdb`      |
+| `strict`                      | Refuse `NaN`, `Infinity` and trailing commas, which are read by default. See [Parsing Rules](#parsing-rules).                                                                                                                      | `BOOL`     | `false`       |
 | `timestampformat`             | Specifies the date format to use when parsing timestamps. See [Date Format](../../sql/functions/dateformat.md)                                                                                                                     | `VARCHAR`  | `iso`         |
 | `union_by_name`               | Whether the schemas of multiple JSON files should be [unified](../../data_import_and_export/multiple_files/combining_schemas.md).                                                                                                  | `BOOL`     | `false`       |

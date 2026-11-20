@@ -14,7 +14,9 @@ SereneDB and the libraries below are built into serened. `SELECT * FROM sdb_lice
 * [Apache Thrift](https://thrift.apache.org): `third_party/duckdb/third_party/thrift/thrift/LICENSE`
 * [clickhouse-cpp](https://github.com/ClickHouse/clickhouse-cpp): `third_party/clickhouse-cpp/LICENSE`
 * [FastPFor](https://github.com/lemire/FastPFor): `third_party/duckdb/third_party/fastpforlib/LICENSE`
+* [flatcc](https://github.com/dvidelabs/flatcc): `third_party/nanoarrow/thirdparty/flatcc/LICENSE`
 * [IResearch](https://github.com/iresearch-toolkit/iresearch): `iresearch/LICENSE`
+* [nanoarrow](https://arrow.apache.org/nanoarrow): `third_party/nanoarrow/LICENSE.txt`, `third_party/nanoarrow/NOTICE.txt`
 * [OpenSSL](https://www.openssl.org): `third_party/openssl/LICENSE.txt`
 * [S2 Geometry](https://s2geometry.io): `third_party/s2geometry/LICENSE`, `third_party/s2geometry/NOTICE`
 * [SereneDB](https://github.com/serenedb/serenedb): `LICENSE`, `NOTICE.md`
@@ -98,6 +100,7 @@ SereneDB and the libraries below are built into serened. `SELECT * FROM sdb_lice
 * [duckdb-iceberg](https://github.com/duckdb/duckdb-iceberg): `third_party/duckdb_iceberg/LICENSE`
 * [duckdb-inet](https://github.com/duckdb/duckdb-inet): `third_party/duckdb_inet/LICENSE`
 * [duckdb-markdown](https://github.com/teaguesterling/duckdb_markdown): `third_party/duckdb_markdown/LICENSE`
+* [duckdb-nanoarrow](https://github.com/duckdb/duckdb-nanoarrow): `third_party/duckdb_nanoarrow/LICENSE`
 * [duckdb-postgres](https://github.com/duckdb/duckdb-postgres): `third_party/duckdb_postgres/LICENSE`
 * [duckdb-spatial](https://github.com/duckdb/duckdb-spatial): `third_party/duckdb_spatial/LICENSE`
 * [Faiss](https://github.com/facebookresearch/faiss): `third_party/faiss/LICENSE`
@@ -117,7 +120,6 @@ SereneDB and the libraries below are built into serened. `SELECT * FROM sdb_lice
 * [sse2neon](https://github.com/DLTcollab/sse2neon): `third_party/sse2neon/LICENSE`
 * [vergesort](https://github.com/Morwenn/vergesort): `third_party/duckdb/third_party/vergesort/LICENSE`
 * [YACLib](https://github.com/YACLib/YACLib): `third_party/yaclib/LICENSE`
-* [yyjson](https://github.com/ibireme/yyjson): `third_party/duckdb/third_party/yyjson/LICENSE`
 
 ### MIT AND Unicode-DFS-2015
 

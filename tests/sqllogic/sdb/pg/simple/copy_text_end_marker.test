@@ -325,3 +325,39 @@ statement error
 COPY marker FROM '${__TEST_DIR__}/marker_data_in_next_range.dat';
 ----
 db error: ERROR: end-of-copy marker is followed by data
+
+
+statement ok
+SET threads = 1;
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_data_in_next_range.dat';
+----
+db error: ERROR: end-of-copy marker is followed by data
+
+
+statement ok
+COPY (SELECT (repeat('7' || chr(9) || 'x' || chr(10), 262142) || '7' || chr(9) || 'xx' || chr(10) || '\\.' || chr(10) || repeat('8' || chr(9) || 'y' || chr(10), 1000))::BLOB)
+TO '${__TEST_DIR__}/marker_at_range_end.dat' (FORMAT BLOB);
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_at_range_end.dat';
+----
+db error: ERROR: end-of-copy marker is followed by data
+
+
+statement ok
+COPY (SELECT ('1' || chr(9) || 'six' || chr(10) || '\\.' || chr(10) || repeat(chr(10), 2200000) || '2' || chr(9) || 'seven' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_next_batch.dat.gz' (FORMAT BLOB);
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_next_batch.dat.gz';
+----
+db error: ERROR: end-of-copy marker is followed by data
+
+
+statement ok
+RESET threads;

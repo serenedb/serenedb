@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+COPY (SELECT line FROM (VALUES
+  ('{"id":1,"p":{"x":1.0,"y":2.0},"m":8796814508547,"i":"10.0.0.1"}'),
+  ('{"id":2,"p":"(3,4)","m":"08:00:2b:01:02:03","i":"::1"}'),
+  ('{"id":3,"p":null,"m":null,"i":null}')
+) t(line) ORDER BY line) TO '${__TEST_DIR__}/aliased.ndjson' (FORMAT text);
+
+
+query
+SELECT id, p::text AS p, m::text AS m, i::text AS i
+FROM read_ndjson('${__TEST_DIR__}/aliased.ndjson', columns = {'id': 'int', 'p': 'point', 'm': 'macaddr', 'i': 'inet'})
+ORDER BY id;
+----
+id	p	m	i
+1	(1,2)	08:00:2b:01:02:03	10.0.0.1/32
+2	(3,4)	08:00:2b:01:02:03	::1/128
+3	NULL	NULL	NULL
+
+
+query
+SELECT id, p::text AS p, m::text AS m
+FROM read_ndjson('${__TEST_DIR__}/aliased.ndjson', columns = {'id': 'int', 'p': 'point', 'm': 'macaddr', 'i': 'inet'})
+WHERE id = 2;
+----
+id	p	m
+2	(3,4)	08:00:2b:01:02:03
+
+
+query
+SELECT id, p::text AS p FROM read_json('${__TEST_DIR__}/aliased.ndjson', columns = {'id': 'int', 'p': 'point'}, format = 'unstructured')
+ORDER BY id;
+----
+id	p
+1	(1,2)
+2	(3,4)
+3	NULL
+
+
+statement ok
+COPY (SELECT line FROM (VALUES ('{"p":"nope"}')) t(line)) TO '${__TEST_DIR__}/aliased_bad.ndjson' (FORMAT text);
+
+
+statement error
+SELECT * FROM read_ndjson('${__TEST_DIR__}/aliased_bad.ndjson', columns = {'p': 'point'});
+----
+db error: ERROR: JSON transform error in file "<slt:ignore>", in line 1: invalid input syntax for type point: "nope"
+ If this error occurred during read_json, line/object number information is approximate
+Try setting 'auto_detect' to true, specifying 'format' or 'records' manually, or setting 'ignore_errors' to true.
+
+
+statement ok
+COPY (SELECT line FROM (VALUES ('1|08:00:2b:01:02:03|[1,5)|(3,4),(1,2)'), ('2|||')) t(line)) TO '${__TEST_DIR__}/aliased.csv' (FORMAT text);
+
+
+query
+SELECT id, m::text AS m, r::text AS r, b::text AS b
+FROM read_csv('${__TEST_DIR__}/aliased.csv', columns = {'id': 'int', 'm': 'macaddr', 'r': 'int4range', 'b': 'box'}, delim = '|', header = false, auto_detect = false)
+ORDER BY id;
+----
+id	m	r	b
+1	08:00:2b:01:02:03	[1,5)	(3,4),(1,2)
+2	NULL	NULL	NULL
+
+
+query
+SELECT ARRAY['(3,4),(1,2)'::box, NULL]::VARCHAR AS boxes, ARRAY['[1,5)'::int4range]::VARCHAR AS ranges,
+       ARRAY['::1'::inet, '10.0.0.1/8'::inet]::VARCHAR AS inets, {'b': '(3,4),(1,2)'::box}::VARCHAR AS fields;
+----
+boxes	ranges	inets	fields
+['(3,4),(1,2)', NULL]	['[1,5)']	[::1/128, 10.0.0.1/8]	{'b': '(3,4),(1,2)'}
+
+
+query
+SELECT (ARRAY['(3,4),(1,2)'::box, NULL]::VARCHAR::box[])[1]::text AS b, (ARRAY['[1,5)'::int4range]::VARCHAR::int4range[])[1]::text AS r;
+----
+b	r
+(3,4),(1,2)	[1,5)

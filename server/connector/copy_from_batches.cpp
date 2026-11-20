@@ -20,6 +20,8 @@
 
 #include "connector/copy_from_batches.h"
 
+#include <absl/container/btree_map.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -27,21 +29,25 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/async_memory_governor.hpp>
+#include <duckdb/formats/row_ranges.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parallel/async_result.hpp>
-#include <duckdb/parallel/scan_read_ahead.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/planner/binder.hpp>
+#include <duckdb/planner/expression_binder/constant_binder.hpp>
 #include <exception>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <limits>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
-#include "connector/copy_batch_parse.h"
+#include "formats/copy_decoder.h"
 #include "pg/connection_context.h"
 #include "pg/copy_batch_builder.h"
 
@@ -49,21 +55,39 @@ namespace sdb::connector {
 namespace {
 
 constexpr std::string_view kCopyStdinPath = "/dev/stdin";
-constexpr size_t kOrderedRun = 16;
-constexpr uint64_t kCopyFileRangeBytes = 8 << 20;
+constexpr uint64_t kRangeMinBytes = 1 << 20;
+constexpr uint64_t kTextRangeMaxBytes = 8 << 20;
+constexpr uint64_t kCsvRangeMaxBytes = 2 << 20;
+
+pg::CopyBatchFormat BatchFormatOf(const pg::CopyInTarget& target) {
+  if (target.binary) {
+    return pg::CopyBatchFormat::Binary;
+  }
+  return target.csv ? pg::CopyBatchFormat::Csv : pg::CopyBatchFormat::Text;
+}
+
+formats::CsvDialect CsvDialectOf(const pg::CopyInTarget& target) {
+  return {target.delim, target.quote, target.escape};
+}
 
 class CopyFileReader {
  public:
   CopyFileReader(duckdb::ClientContext& context,
-                 std::unique_ptr<duckdb::FileHandle> file, bool binary)
+                 std::unique_ptr<duckdb::FileHandle> file,
+                 const pg::CopyInTarget& target)
     : _file{std::move(file)},
-      _builder{binary ? pg::CopyBatchFormat::Binary : pg::CopyBatchFormat::Text,
-               pg::kCopyBatchBytes, !binary},
+      _builder{BatchFormatOf(target), pg::kCopyBatchBytes,
+               !target.binary && !target.csv, CsvDialectOf(target)},
+      _batches{duckdb::TaskScheduler::QueryThreads(context) *
+               pg::kCopyBatchesPerThread},
       _memory{context},
-      _fixed_budget{duckdb::TaskScheduler::QueryThreads(context) * kOrderedRun *
-                    pg::kCopyBatchBytes},
+      _fixed_budget{duckdb::TaskScheduler::QueryThreads(context) *
+                    pg::kCopyBatchesPerThread * pg::kCopyBatchBytes},
       _executor{context, duckdb::TaskSchedulerType::ASYNC},
       _chunk(pg::kCopyBatchBytes, '\0') {
+    if (target.encoding != formats::TextEncoding::Utf8) {
+      _decoder.emplace(target.encoding);
+    }
     UpdateBudget();
   }
 
@@ -138,12 +162,22 @@ class CopyFileReader {
         FinishFile();
         return;
       }
-      _builder.Feed({_chunk.data(), got}, false);
+      const std::string_view bytes{_chunk.data(), got};
+      if (_decoder) {
+        _decoded.clear();
+        _decoder->Decode(bytes, _decoded);
+        _builder.Feed(_decoded, false);
+      } else {
+        _builder.Feed(bytes, false);
+      }
     }
     Push(_builder.Take());
   }
 
   void FinishFile() {
+    if (_decoder) {
+      _decoder->Finish();
+    }
     _builder.Finish();
     while (_builder.HasRows()) {
       Push(_builder.Take());
@@ -168,43 +202,235 @@ class CopyFileReader {
   std::atomic_bool _ended{false};
   duckdb::TaskExecutor _executor;
   std::string _chunk;
+  std::optional<formats::Utf8Decoder> _decoder;
+  std::string _decoded;
 };
 
 enum class CopyFromSource : uint8_t {
   Batches,
-  Ranges,
+  Rows,
+};
+
+class FileRowSource final : public duckdb::RowSource {
+ public:
+  FileRowSource(duckdb::FileHandle& file, uint64_t size)
+    : _file{file}, _size{size} {}
+
+  duckdb::idx_t Read(char* data, duckdb::idx_t count,
+                     duckdb::idx_t offset) const final {
+    const auto available = offset < _size ? std::min(count, _size - offset) : 0;
+    if (available != 0) {
+      _file.Read(data, available, offset);
+    }
+    return available;
+  }
+
+ private:
+  duckdb::FileHandle& _file;
+  const uint64_t _size;
+};
+
+char FileLineBreak(duckdb::FileHandle& file, const pg::CopyInTarget& target) {
+  constexpr uint64_t kProbeBytes = uint64_t{64} << 10;
+  const uint64_t size = file.GetFileSize();
+  const formats::CsvDialect csv{target.delim, target.quote, target.escape};
+  std::string head;
+  for (uint64_t want = kProbeBytes;; want *= 2) {
+    head.resize(std::min(want, size));
+    if (!head.empty()) {
+      file.Read(head.data(), head.size(), 0);
+    }
+    const auto found =
+      formats::DetectLineBreak(head, target.csv, csv, head.size() == size);
+    if (found != '\0') {
+      return found;
+    }
+  }
+}
+
+uint64_t RangeBytes(duckdb::ClientContext& context,
+                    const pg::CopyInTarget& target, uint64_t size) {
+  const uint64_t threads =
+    std::max<uint64_t>(duckdb::TaskScheduler::QueryThreads(context), 1);
+  return std::clamp<uint64_t>(
+    size / (threads * 4), kRangeMinBytes,
+    target.csv ? kCsvRangeMaxBytes : kTextRangeMaxBytes);
+}
+
+using Guard = duckdb::annotated_lock_guard<duckdb::annotated_mutex>;
+using Lock = duckdb::annotated_unique_lock<duckdb::annotated_mutex>;
+
+void Wake(const duckdb::vector<duckdb::InterruptState>& waiters) {
+  for (const auto& waiter : waiters) {
+    waiter.Callback();
+  }
+}
+
+class CopyLines {
+ public:
+  CopyLines(ConnectionContext& connection, const pg::CopyInTarget& target)
+    : _connection{connection}, _target{target} {}
+
+  void Finish(uint64_t seq, uint64_t lines,
+              std::vector<formats::CopySkippedRow> skipped) {
+    duckdb::vector<duckdb::InterruptState> waiters;
+    {
+      Guard guard{_waiters.lock};
+      _done.try_emplace(seq, Unit{lines, std::move(skipped)});
+      if (!Advance()) {
+        return;
+      }
+      waiters = _waiters.TakeBlockedTasks();
+    }
+    Wake(waiters);
+  }
+
+  std::optional<uint64_t> Locate(duckdb::TableFunctionInput& input,
+                                 uint64_t seq, uint64_t line) {
+    Lock lock{_waiters.lock};
+    if (seq < _failed) {
+      _failed = seq;
+      auto waiters = _waiters.TakeBlockedTasks();
+      lock.unlock();
+      Wake(waiters);
+      lock.lock();
+    }
+    for (;;) {
+      if (_failed < seq) {
+        return 0;
+      }
+      if (_next == seq) {
+        return _lines + line;
+      }
+      if (pg::CopyInBatches::CanPark(input) &&
+          _waiters.BlockTask(*input.interrupt_state)) {
+        input.async_result = duckdb::AsyncResultType::BLOCKED;
+        return std::nullopt;
+      }
+      auto signal = duckdb::make_shared_ptr<duckdb::InterruptDoneSignalState>();
+      _waiters.BlockTask(duckdb::InterruptState{
+        duckdb::weak_ptr<duckdb::InterruptDoneSignalState>{signal}});
+      lock.unlock();
+      signal->Await();
+      lock.lock();
+    }
+  }
+
+ private:
+  struct Unit {
+    uint64_t lines = 0;
+    std::vector<formats::CopySkippedRow> skipped;
+  };
+
+  bool Advance() DUCKDB_REQUIRES(_waiters.lock) {
+    bool advanced = false;
+    for (auto it = _done.begin(); it != _done.end() && it->first == _next;
+         it = _done.erase(it)) {
+      for (const auto& row : it->second.skipped) {
+        const auto line = _lines + row.line;
+        _connection.AddNotice(SQL_ERROR_DATA(
+          ERR_CODE(ERRCODE_SUCCESSFUL_COMPLETION),
+          ERR_MSG("skipping row due to data type incompatibility at line ",
+                  line, " for column \"", _target.names[row.column], "\": \"",
+                  row.value, "\"")));
+      }
+      _lines += it->second.lines;
+      ++_next;
+      advanced = true;
+    }
+    return advanced;
+  }
+
+  ConnectionContext& _connection;
+  const pg::CopyInTarget& _target;
+  duckdb::StateWithBlockableTasks _waiters;
+  absl::btree_map<uint64_t, Unit> _done DUCKDB_GUARDED_BY(_waiters.lock);
+  uint64_t _next DUCKDB_GUARDED_BY(_waiters.lock) = 0;
+  uint64_t _lines DUCKDB_GUARDED_BY(_waiters.lock) = 0;
+  uint64_t _failed DUCKDB_GUARDED_BY(_waiters.lock) =
+    std::numeric_limits<uint64_t>::max();
 };
 
 struct CopyFromGlobalState : public duckdb::GlobalTableFunctionState {
-  CopyFromGlobalState(CopyFromSource source, pg::CopyInTarget target,
-                      bool ordered)
-    : source{source}, target{std::move(target)}, ordered{ordered} {}
+  CopyFromGlobalState(duckdb::ClientContext& context, CopyFromSource source,
+                      pg::CopyInTarget target, bool ordered)
+    : source{source},
+      target{std::move(target)},
+      ordered{ordered},
+      lines{ConnectionContext::Get(context), this->target} {}
 
   CopyFromSource source;
   pg::CopyInTarget target;
   bool ordered;
-  CopyTextEnd end;
+  formats::CopyTextEnd end;
   std::atomic<uint64_t> rejected{0};
+  CopyLines lines;
+  std::atomic<uint32_t> workers{0};
+  std::atomic_bool summarized{false};
 };
 
 struct CopyFromLocalState : public duckdb::LocalTableFunctionState {
-  std::optional<CopyBatchParser> parser;
+  std::optional<formats::CopyDecoder> parser;
   duckdb::idx_t batch_index = 0;
+  bool finished = false;
 };
+
+formats::CopyDecoder& StartWorker(duckdb::ClientContext& context,
+                                  CopyFromGlobalState& g,
+                                  CopyFromLocalState& l) {
+  if (!l.parser) {
+    l.parser.emplace(context, g.target, g.end, g.rejected);
+    g.workers.fetch_add(1, std::memory_order_relaxed);
+  }
+  return *l.parser;
+}
+
+void FinishWorker(duckdb::ClientContext& context, CopyFromGlobalState& g,
+                  CopyFromLocalState& l) {
+  if (std::exchange(l.finished, true) ||
+      g.workers.fetch_sub(1, std::memory_order_acq_rel) != 1 ||
+      g.summarized.exchange(true, std::memory_order_acq_rel)) {
+    return;
+  }
+  const auto rejected = g.rejected.load(std::memory_order_relaxed);
+  if (rejected == 0 || g.target.log_verbosity == pg::CopyLogVerbosity::Silent) {
+    return;
+  }
+  ConnectionContext::Get(context).AddNotice(
+    SQL_ERROR_DATA(ERR_CODE(ERRCODE_SUCCESSFUL_COMPLETION),
+                   ERR_MSG(rejected, rejected == 1 ? " row was" : " rows were",
+                           " skipped due to data type incompatibility")));
+}
+
+void FinishUnit(CopyFromGlobalState& g, formats::CopyDecoder& parser) {
+  g.lines.Finish(parser.Seq(), parser.Lines(), parser.TakeSkipped());
+  parser.Stop();
+}
+
+void LocateError(CopyFromGlobalState& g, duckdb::TableFunctionInput& input,
+                 const formats::CopyDecoder& parser) {
+  if (const auto line =
+        g.lines.Locate(input, parser.Seq(), parser.FailedLine());
+      line && *line != 0) {
+    parser.ThrowError(*line);
+  }
+}
 
 struct BatchesGlobalState final : public CopyFromGlobalState {
   BatchesGlobalState(duckdb::ClientContext& context, pg::CopyInBatches& queue,
                      pg::CopyInTarget target, bool ordered)
-    : CopyFromGlobalState{CopyFromSource::Batches, std::move(target), ordered},
+    : CopyFromGlobalState{context, CopyFromSource::Batches, std::move(target),
+                          ordered},
       max_threads{duckdb::TaskScheduler::QueryThreads(context)},
       queue{queue} {}
 
   BatchesGlobalState(duckdb::ClientContext& context,
                      std::unique_ptr<duckdb::FileHandle> file,
                      pg::CopyInTarget target, bool ordered)
-    : CopyFromGlobalState{CopyFromSource::Batches, std::move(target), ordered},
+    : CopyFromGlobalState{context, CopyFromSource::Batches, std::move(target),
+                          ordered},
       max_threads{duckdb::TaskScheduler::QueryThreads(context)},
-      reader{std::in_place, context, std::move(file), this->target.binary},
+      reader{std::in_place, context, std::move(file), this->target},
       queue{reader->Batches()} {
     reader->Resume();
   }
@@ -221,37 +447,40 @@ struct BatchesLocalState final : public CopyFromLocalState {
   size_t next = 0;
 };
 
-struct RangeJobState {
-  uint64_t range = 0;
-  std::string buffer;
-};
-
-using RangeJob = duckdb::ScanReadAheadJobWrapper<RangeJobState>;
-
-struct RangesGlobalState final : public CopyFromGlobalState {
-  RangesGlobalState(duckdb::ClientContext& context,
-                    std::unique_ptr<duckdb::FileHandle> file,
-                    pg::CopyInTarget target, bool ordered)
-    : CopyFromGlobalState{CopyFromSource::Ranges, std::move(target), ordered},
-      file{std::move(file)},
-      size{this->file->GetFileSize()},
-      range_count{(size + kCopyFileRangeBytes - 1) / kCopyFileRangeBytes},
-      read_ahead{duckdb::ScanReadAhead::Create(context)} {}
-
-  duckdb::idx_t MaxThreads() const final {
-    return std::max<uint64_t>(range_count, 1);
+struct RowsGlobalState final : public CopyFromGlobalState {
+  RowsGlobalState(duckdb::ClientContext& context,
+                  std::unique_ptr<duckdb::FileHandle> file_p,
+                  pg::CopyInTarget target, bool ordered)
+    : CopyFromGlobalState{context, CopyFromSource::Rows, std::move(target),
+                          ordered},
+      file{std::move(file_p)},
+      size{file->GetFileSize()},
+      source{*file, size},
+      lexer{formats::RowDialectOf(this->target),
+            this->target.types.size(),
+            std::numeric_limits<duckdb::idx_t>::max(),
+            true,
+            false,
+            true},
+      ranges{lexer, source, 0, size, RangeBytes(context, this->target, size),
+             true} {
+    ranges.path = file->GetPath();
   }
+
+  duckdb::idx_t MaxThreads() const final { return ranges.RangeCount(); }
 
   std::unique_ptr<duckdb::FileHandle> file;
   uint64_t size;
-  uint64_t range_count;
-  std::atomic<uint64_t> next{0};
-  duckdb::unique_ptr<duckdb::ScanReadAhead> read_ahead;
+  FileRowSource source;
+  duckdb::RowLexer lexer;
+  duckdb::RowRanges ranges;
 };
 
-struct RangesLocalState final : public CopyFromLocalState {
-  pg::CopyBatch batch;
-  duckdb::unique_ptr<RangeJob> job;
+struct RowsLocalState final : public CopyFromLocalState {
+  std::optional<duckdb::RowRangeReader> reader;
+  duckdb::idx_t range = 0;
+  bool scanning = false;
+  bool decoding = false;
 };
 
 duckdb::OperatorPartitionData CopyFromPartitionData(
@@ -268,10 +497,12 @@ void ScanBatches(duckdb::ClientContext& context,
                  duckdb::TableFunctionInput& input, duckdb::DataChunk& output) {
   auto& g = input.global_state->Cast<BatchesGlobalState>();
   auto& l = input.local_state->Cast<BatchesLocalState>();
-  if (!l.parser) {
-    l.parser.emplace(context, g.target, g.end, g.rejected);
+  auto& parser = StartWorker(context, g, l);
+  if (parser.Failed()) {
+    output.SetChildCardinality(0);
+    LocateError(g, input, parser);
+    return;
   }
-  auto& parser = *l.parser;
   duckdb::idx_t row = 0;
   while (row < STANDARD_VECTOR_SIZE) {
     if (!parser.Active()) {
@@ -282,8 +513,11 @@ void ScanBatches(duckdb::ClientContext& context,
           if (g.ordered || !g.queue.TryTake(1, l.run)) {
             break;
           }
-        } else if (g.queue.Take(input, g.ordered ? kOrderedRun : 1, l.run) !=
-                   pg::CopyTake::Batches) {
+        } else if (const auto take = g.queue.Take(input, 1, l.run);
+                   take != pg::CopyTake::Batches) {
+          if (take == pg::CopyTake::End) {
+            FinishWorker(context, g, l);
+          }
           break;
         }
         l.batch_index = l.run.front()->seq;
@@ -291,8 +525,13 @@ void ScanBatches(duckdb::ClientContext& context,
       parser.Start(*l.run[l.next++]);
     }
     row = parser.Parse(output, row);
+    if (parser.Failed()) {
+      output.SetChildCardinality(0);
+      LocateError(g, input, parser);
+      return;
+    }
     if (parser.Exhausted()) {
-      parser.Stop();
+      FinishUnit(g, parser);
       l.run[l.next - 1].Reset();
       if (g.reader) {
         g.reader->Resume();
@@ -302,191 +541,59 @@ void ScanBatches(duckdb::ClientContext& context,
   output.SetChildCardinality(row);
 }
 
-size_t ReadAt(RangesGlobalState& g, std::string& buffer, uint64_t location,
-              size_t bytes) {
-  bytes = std::min<uint64_t>(bytes, g.size - std::min(location, g.size));
-  const size_t old = buffer.size();
-  buffer.resize(old + bytes);
-  if (bytes != 0) {
-    g.file->Read(buffer.data() + old, bytes, location);
+void ScanRows(duckdb::ClientContext& context, duckdb::TableFunctionInput& input,
+              duckdb::DataChunk& output) {
+  auto& g = input.global_state->Cast<RowsGlobalState>();
+  auto& l = input.local_state->Cast<RowsLocalState>();
+  auto& parser = StartWorker(context, g, l);
+  if (parser.Failed()) {
+    output.SetChildCardinality(0);
+    LocateError(g, input, parser);
+    return;
   }
-  return bytes;
-}
-
-size_t FindCut(std::string_view bytes, size_t from) {
-  for (auto pos = bytes.find('\n', from); pos != std::string_view::npos;
-       pos = bytes.find('\n', pos + 1)) {
-    if (pos == 0 || bytes[pos - 1] != '\\') {
-      return pos;
-    }
+  if (!l.reader) {
+    l.reader.emplace(g.ranges);
   }
-  return std::string_view::npos;
-}
-
-size_t SkipBlankLines(std::string_view bytes, size_t cut) {
-  for (;;) {
-    if (cut + 1 < bytes.size() && bytes[cut + 1] == '\n') {
-      ++cut;
-    } else if (cut + 2 < bytes.size() && bytes[cut + 1] == '\r' &&
-               bytes[cut + 2] == '\n') {
-      cut += 2;
-    } else {
-      return cut;
-    }
-  }
-}
-
-bool BlankRunOpen(std::string_view bytes, size_t cut) {
-  return cut + 1 == bytes.size() ||
-         (cut + 2 == bytes.size() && bytes[cut + 1] == '\r');
-}
-
-uint64_t RangeFrom(uint64_t range) {
-  const uint64_t begin = range * kCopyFileRangeBytes;
-  return begin == 0 ? 0 : begin - 2;
-}
-
-void ReadRange(RangesGlobalState& g, RangeJobState& job) {
-  const uint64_t end =
-    std::min<uint64_t>((job.range + 1) * kCopyFileRangeBytes, g.size);
-  const uint64_t from = RangeFrom(job.range);
-  job.buffer.clear();
-  ReadAt(g, job.buffer, from, end - from);
-}
-
-class RangeReadTask final : public duckdb::AsyncTask {
- public:
-  RangeReadTask(RangesGlobalState& g, RangeJobState& job) : _g{g}, _job{job} {}
-
-  void Execute() final { ReadRange(_g, _job); }
-
-  duckdb::idx_t GetIOSize() const final { return kCopyFileRangeBytes; }
-
- private:
-  RangesGlobalState& _g;
-  RangeJobState& _job;
-};
-
-bool CutRange(RangesGlobalState& g, RangeJobState& job, pg::CopyBatch& batch) {
-  const uint64_t from = RangeFrom(job.range);
-  auto& buffer = job.buffer;
-  if (buffer.empty()) {
-    return false;
-  }
-  size_t first = 0;
-  if (job.range != 0) {
-    auto cut = FindCut(buffer, 1);
-    if (cut == std::string::npos) {
-      return false;
-    }
-    cut = SkipBlankLines(buffer, cut);
-    if (BlankRunOpen(buffer, cut)) {
-      return false;
-    }
-    first = cut + 1;
-  }
-  auto last = FindCut(buffer, buffer.size() - 1);
-  while (last == std::string::npos) {
-    const auto scanned = buffer.size();
-    if (ReadAt(g, buffer, from + scanned, pg::kCopyBatchBytes) == 0) {
-      last = scanned - 1;
-      break;
-    }
-    last = FindCut(buffer, scanned);
-  }
-  for (last = SkipBlankLines(buffer, last);
-       BlankRunOpen(buffer, last) &&
-       ReadAt(g, buffer, from + buffer.size(), pg::kCopyBatchBytes) != 0;
-       last = SkipBlankLines(buffer, last)) {
-  }
-  batch.segments.clear();
-  batch.bytes = 0;
-  batch.seq = job.range;
-  batch.AddView(std::string_view{buffer}.substr(first, last + 1 - first));
-  return true;
-}
-
-duckdb::unique_ptr<RangeJob> ClaimRange(RangesGlobalState& g) {
-  const auto range = g.next.fetch_add(1, std::memory_order_relaxed);
-  if (range >= g.range_count) {
-    return nullptr;
-  }
-  auto job = duckdb::make_uniq<RangeJob>();
-  job->range = range;
-  job->batch_index = range;
-  return job;
-}
-
-bool AcquireRange(duckdb::ClientContext& context,
-                  duckdb::TableFunctionInput& input, RangesGlobalState& g,
-                  RangesLocalState& l) {
-  if (!g.read_ahead) {
-    l.job = ClaimRange(g);
-    if (l.job) {
-      ReadRange(g, *l.job);
-    }
-    return static_cast<bool>(l.job);
-  }
-  duckdb::unique_ptr<duckdb::ScanReadAheadJob> claimed;
-  const auto acquired = g.read_ahead->AcquireJob(
-    context, input,
-    [&](duckdb::vector<duckdb::unique_ptr<duckdb::AsyncTask>>& io_tasks)
-      -> duckdb::unique_ptr<duckdb::ScanReadAheadJob> {
-      auto job = ClaimRange(g);
-      if (job) {
-        io_tasks.emplace_back(duckdb::make_uniq<RangeReadTask>(g, *job));
-      }
-      return job;
-    },
-    claimed);
-  if (acquired == duckdb::ScanReadAheadAcquire::EXHAUSTED) {
-    return false;
-  }
-  l.job = duckdb::unique_ptr_cast<duckdb::ScanReadAheadJob, RangeJob>(
-    std::move(claimed));
-  return acquired == duckdb::ScanReadAheadAcquire::ACQUIRED;
-}
-
-bool NextRange(duckdb::ClientContext& context,
-               duckdb::TableFunctionInput& input, RangesGlobalState& g,
-               RangesLocalState& l) {
-  for (;;) {
-    if (!l.job) {
-      if (!AcquireRange(context, input, g, l)) {
-        return false;
-      }
-    } else if (l.job->io_completion) {
-      g.read_ahead->WaitForJob(*l.job);
-    }
-    if (CutRange(g, *l.job, l.batch)) {
-      l.batch_index = l.job->batch_index;
-      return true;
-    }
-    l.job.reset();
-  }
-}
-
-void ScanRanges(duckdb::ClientContext& context,
-                duckdb::TableFunctionInput& input, duckdb::DataChunk& output) {
-  auto& g = input.global_state->Cast<RangesGlobalState>();
-  auto& l = input.local_state->Cast<RangesLocalState>();
-  if (!l.parser) {
-    l.parser.emplace(context, g.target, g.end, g.rejected);
-  }
-  auto& parser = *l.parser;
+  auto& reader = *l.reader;
   duckdb::idx_t row = 0;
   while (row < STANDARD_VECTOR_SIZE) {
-    if (!parser.Active()) {
-      if (row != 0 || !NextRange(context, input, g, l)) {
+    if (!l.scanning) {
+      if (row != 0) {
         break;
       }
-      parser.Start(l.batch);
+      if (!g.ranges.Claim(l.range)) {
+        FinishWorker(context, g, l);
+        break;
+      }
+      reader.Start(l.range, true, false, false);
+      l.batch_index = l.range;
+      l.scanning = true;
+      l.decoding = false;
     }
-    row = parser.Parse(output, row);
-    if (parser.Exhausted()) {
-      parser.Stop();
-      l.job.reset();
+    const auto result = reader.Advance(STANDARD_VECTOR_SIZE - row);
+    if (result == duckdb::RowReadResult::ROWS ||
+        result == duckdb::RowReadResult::FLUSH) {
+      if (!std::exchange(l.decoding, true)) {
+        parser.StartLexed(l.range);
+      }
+      const auto rows =
+        std::min<duckdb::idx_t>(reader.Ready(), STANDARD_VECTOR_SIZE - row);
+      row = parser.ParseLexed(output, row, reader, rows);
+      reader.Emit(rows);
+      if (parser.Failed()) {
+        output.SetChildCardinality(0);
+        LocateError(g, input, parser);
+        return;
+      }
+      continue;
     }
+    if (l.decoding) {
+      FinishUnit(g, parser);
+    } else {
+      g.lines.Finish(l.range, 0, {});
+    }
+    g.ranges.Finish(l.range);
+    l.scanning = false;
   }
   output.SetChildCardinality(row);
 }
@@ -510,9 +617,33 @@ bool BindCopyFrom(duckdb::ClientContext& context,
   return ordered;
 }
 
+std::shared_ptr<const pg::CopyDefaults> BindCopyDefaults(
+  duckdb::ClientContext& context, const duckdb::CopyInfo& info,
+  std::span<const duckdb::Identifier> names) {
+  auto& table = duckdb::Catalog::GetEntry<duckdb::TableCatalogEntry>(
+    context, info.GetQualifiedName());
+  auto binder =
+    duckdb::Binder::CreateTableBinder(context, table.ParentSchema(context));
+  auto defaults = std::make_shared<pg::CopyDefaults>();
+  defaults->reserve(names.size());
+  for (const auto& name : names) {
+    const auto& column = table.GetColumn(name);
+    if (!column.HasDefaultValue()) {
+      defaults->emplace_back();
+      continue;
+    }
+    auto expr = column.DefaultValue().Copy();
+    duckdb::ConstantBinder default_binder{*binder, context, "DEFAULT value"};
+    default_binder.target_type = column.Type();
+    defaults->push_back(default_binder.Bind(expr));
+  }
+  return defaults;
+}
+
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitCopyFromGlobal(
   duckdb::ClientContext& context, const std::string& path,
-  pg::CopyInTarget target, bool ordered) {
+  pg::CopyInTarget target, bool ordered,
+  const duckdb::FileCompressionType& compression) {
   if (auto* queue =
         ConnectionContext::Get(context).GetSideChannel<pg::CopyInBatches>();
       queue && path == kCopyStdinPath) {
@@ -523,21 +654,23 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitCopyFromGlobal(
     (target.binary ? duckdb::FileFlags::FILE_FLAGS_READ
                    : duckdb::FileFlags::FILE_FLAGS_READ |
                        duckdb::FileFlags::FILE_FLAGS_PARALLEL_ACCESS) |
-    duckdb::FileCompressionType::AUTO_DETECT;
+    compression;
   auto file = duckdb::FileSystem::GetFileSystem(context).OpenFile(path, flags);
-  if (target.binary || !file->CanSeek()) {
+  if (target.binary || target.types.empty() || !file->CanSeek() ||
+      target.encoding != formats::TextEncoding::Utf8) {
     return duckdb::make_uniq<BatchesGlobalState>(context, std::move(file),
                                                  std::move(target), ordered);
   }
-  return duckdb::make_uniq<RangesGlobalState>(context, std::move(file),
-                                              std::move(target), ordered);
+  target.line_break = FileLineBreak(*file, target);
+  return duckdb::make_uniq<RowsGlobalState>(context, std::move(file),
+                                            std::move(target), ordered);
 }
 
 duckdb::unique_ptr<duckdb::LocalTableFunctionState> InitCopyFromLocal(
   duckdb::ExecutionContext&, duckdb::TableFunctionInitInput&,
   duckdb::GlobalTableFunctionState* global) {
-  if (global->Cast<CopyFromGlobalState>().source == CopyFromSource::Ranges) {
-    return duckdb::make_uniq<RangesLocalState>();
+  if (global->Cast<CopyFromGlobalState>().source == CopyFromSource::Rows) {
+    return duckdb::make_uniq<RowsLocalState>();
   }
   return duckdb::make_uniq<BatchesLocalState>();
 }
@@ -546,8 +679,8 @@ void ScanCopyFrom(duckdb::ClientContext& context,
                   duckdb::TableFunctionInput& input,
                   duckdb::DataChunk& output) {
   if (input.global_state->Cast<CopyFromGlobalState>().source ==
-      CopyFromSource::Ranges) {
-    ScanRanges(context, input, output);
+      CopyFromSource::Rows) {
+    ScanRows(context, input, output);
   } else {
     ScanBatches(context, input, output);
   }

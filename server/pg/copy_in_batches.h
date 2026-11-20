@@ -23,10 +23,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <duckdb/formats/value_codecs.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/parallel/interrupt.hpp>
+#include <duckdb/planner/expression.hpp>
 #include <exception>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -34,19 +38,22 @@
 #include <yaclib/algo/one_shot_event.hpp>
 #include <yaclib/exe/executor.hpp>
 
+#include "formats/text_encoding.h"
 #include "server/utils/message_buffer.h"
 
 namespace sdb::pg {
 
-inline constexpr size_t kCopyBatchBytes = 64 << 10;
+inline constexpr size_t kCopyBatchBytes = 1 << 20;
+inline constexpr size_t kCopyBatchesPerThread = 2;
+inline constexpr size_t kCopyStreamBatchesPerThread = 4;
 inline constexpr size_t kCopyBatchesInFlight = 64;
-inline constexpr size_t kCopyWakeBacklog = 4;
 
 struct CopyBatch {
   uint64_t seq = 0;
   std::vector<std::string_view> segments;
   std::deque<std::string> owned;
   size_t bytes = 0;
+  char line_break = '\n';
 
   void AddView(std::string_view rows) {
     segments.emplace_back(rows);
@@ -60,14 +67,36 @@ struct CopyBatch {
   bool Empty() const noexcept { return segments.empty(); }
 };
 
+using CopyDefaults = std::vector<duckdb::unique_ptr<duckdb::Expression>>;
+
+enum class CopyLogVerbosity : uint8_t {
+  Default,
+  Verbose,
+  Silent,
+};
+
 struct CopyInTarget {
+  std::string table;
+  CopyLogVerbosity log_verbosity = CopyLogVerbosity::Default;
+  formats::TextEncoding encoding = formats::TextEncoding::Utf8;
+  duckdb::ValueRendering rendering = duckdb::ValueRendering::POSTGRES;
   bool binary = false;
+  bool csv = false;
   char delim = '\t';
+  char quote = '"';
+  char escape = '"';
+  char line_break = '\n';
   std::string null_str = "\\N";
+  std::optional<std::string> default_str;
   bool header = false;
+  bool header_match = false;
   bool ignore_errors = false;
   uint64_t reject_limit = 0;
   std::vector<duckdb::LogicalType> types;
+  std::vector<std::string> names;
+  std::vector<bool> force_not_null;
+  std::vector<bool> force_null;
+  std::shared_ptr<const CopyDefaults> defaults;
 };
 
 enum class CopyTake : uint8_t {
@@ -85,6 +114,10 @@ class CopyInBatches {
   CopyInBatches(const CopyInBatches&) = delete;
   CopyInBatches& operator=(const CopyInBatches&) = delete;
 
+  void OnStarve(std::function<void()> callback) {
+    _on_starve = std::move(callback);
+  }
+  bool Starving() const;
   bool NeedSpace();
   auto SpaceReady(yaclib::IExecutor& io) noexcept { return _space.AwaitOn(io); }
   void ResetSpace() noexcept { _space.Reset(); }
@@ -103,6 +136,8 @@ class CopyInBatches {
   CopyBatchLease Next();
   void Done(uint64_t seq);
 
+  static bool CanPark(const duckdb::TableFunctionInput& input);
+
  private:
   using Lock = duckdb::annotated_unique_lock<duckdb::annotated_mutex>;
 
@@ -111,14 +146,13 @@ class CopyInBatches {
     message::Chain chunks;
   };
 
-  static bool CanPark(const duckdb::TableFunctionInput& input);
-
   bool Full() const;
   bool TakeReady(size_t max, std::vector<CopyBatchLease>& out);
-  std::vector<duckdb::InterruptState> TakeOneWaiter()
+  std::vector<duckdb::InterruptState> TakeWaiters(uint64_t count)
     DUCKDB_REQUIRES(_waiters.lock);
-  std::vector<duckdb::InterruptState> TakeWaitersIfQueued()
+  std::vector<duckdb::InterruptState> TakeAllWaiters()
     DUCKDB_REQUIRES(_waiters.lock);
+  void Starve() const;
   void ThrowIfFailed(Lock& lock) DUCKDB_NO_THREAD_SAFETY_ANALYSIS;
   void WaitForPush(Lock& lock) DUCKDB_NO_THREAD_SAFETY_ANALYSIS;
 
@@ -131,12 +165,14 @@ class CopyInBatches {
   uint64_t _taken = 0;
   uint64_t _watermark = 0;
   uint64_t _outstanding = 0;
+  uint64_t _parked = 0;
   size_t _retained_bytes = 0;
   std::exception_ptr _error;
   bool _finished = false;
   bool _aborted = false;
   bool _space_waiter = false;
   yaclib::OneShotEvent _space;
+  std::function<void()> _on_starve;
 };
 
 class CopyBatchLease {

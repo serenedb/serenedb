@@ -47,13 +47,47 @@ bool EndsRow(std::string_view bytes, size_t pos,
   return (run == pos ? run + backslashes_before : run) % 2 == 0;
 }
 
-size_t BlankLines(std::string_view rows) noexcept {
+size_t WalkBinaryRows(std::string_view bytes, size_t pos) noexcept {
+  const char* const data = bytes.data();
+  const size_t size = bytes.size();
+  for (;;) {
+    size_t p = pos;
+    if (size - p < sizeof(int16_t)) {
+      return pos;
+    }
+    const auto fields =
+      static_cast<int16_t>(absl::big_endian::Load16(data + p));
+    if (fields < 0) {
+      return pos;
+    }
+    p += sizeof(int16_t);
+    for (int16_t field = 0; field < fields; ++field) {
+      if (size - p < sizeof(int32_t)) {
+        return pos;
+      }
+      const auto length =
+        static_cast<int32_t>(absl::big_endian::Load32(data + p));
+      p += sizeof(int32_t);
+      if (length > 0) {
+        if (size - p < static_cast<size_t>(length)) {
+          return pos;
+        }
+        p += static_cast<size_t>(length);
+      } else if (length < kNullFieldLength) {
+        return pos;
+      }
+    }
+    pos = p;
+  }
+}
+
+size_t BlankLines(std::string_view rows, char line_break) noexcept {
   size_t blank = 0;
   for (;;) {
     const auto rest = rows.substr(blank);
-    if (rest.starts_with('\n')) {
+    if (rest.starts_with(line_break)) {
       blank += 1;
-    } else if (rest.starts_with("\r\n")) {
+    } else if (line_break == '\n' && rest.starts_with("\r\n")) {
       blank += 2;
     } else {
       return blank;
@@ -70,9 +104,9 @@ size_t TrailingBackslashes(std::string_view bytes) noexcept {
 }
 
 size_t FindRowEnd(std::string_view bytes, size_t from,
-                  size_t backslashes_before) noexcept {
-  for (auto pos = bytes.find('\n', from); pos != std::string_view::npos;
-       pos = bytes.find('\n', pos + 1)) {
+                  size_t backslashes_before, char line_break) noexcept {
+  for (auto pos = bytes.find(line_break, from); pos != std::string_view::npos;
+       pos = bytes.find(line_break, pos + 1)) {
     if (EndsRow(bytes, pos, backslashes_before)) {
       return pos;
     }
@@ -80,9 +114,9 @@ size_t FindRowEnd(std::string_view bytes, size_t from,
   return std::string_view::npos;
 }
 
-size_t FindLastRowEnd(std::string_view bytes) noexcept {
+size_t FindLastRowEnd(std::string_view bytes, char line_break) noexcept {
   for (auto end = bytes.size(); end != 0;) {
-    const auto pos = bytes.rfind('\n', end - 1);
+    const auto pos = bytes.rfind(line_break, end - 1);
     if (pos == std::string_view::npos) {
       break;
     }
@@ -97,6 +131,7 @@ size_t FindLastRowEnd(std::string_view bytes) noexcept {
 CopyBatch& CopyBatchBuilder::Current() {
   if (!_batch) {
     _batch = std::make_unique<CopyBatch>();
+    _batch->line_break = _line_break == '\0' ? '\n' : _line_break;
   }
   return *_batch;
 }
@@ -117,7 +152,7 @@ void CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
     }
   };
   if (_join_blank_lines && !_sealed && Full()) {
-    const auto blank = BlankLines(rows);
+    const auto blank = BlankLines(rows, _batch->line_break);
     if (blank != 0) {
       add(*_batch, rows.substr(0, blank));
       rows.remove_prefix(blank);
@@ -132,7 +167,7 @@ void CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
 
 void CopyBatchBuilder::AddRow(std::string row) {
   if (_join_blank_lines && !_sealed && Full()) {
-    if (BlankLines(row) == row.size()) {
+    if (BlankLines(row, _batch->line_break) == row.size()) {
       _batch->AddOwned(std::move(row));
       return;
     }
@@ -149,16 +184,45 @@ void CopyBatchBuilder::Feed(std::string_view bytes, bool stable) {
     case CopyBatchFormat::Binary:
       FeedBinary(bytes, stable);
       break;
+    case CopyBatchFormat::Csv:
+      FeedCsv(bytes, stable);
+      break;
     case CopyBatchFormat::Raw:
       AddRows(bytes, stable);
       break;
   }
 }
 
+bool CopyBatchBuilder::DecideLineBreak(std::string_view bytes, bool complete) {
+  const bool csv = _format == CopyBatchFormat::Csv;
+  if (_partial.empty()) {
+    _line_break = formats::DetectLineBreak(bytes, csv, _csv, complete);
+    if (_line_break == '\0') {
+      _partial.assign(bytes);
+      return false;
+    }
+    _csv.line_break = _line_break;
+    return true;
+  }
+  _partial.append(bytes);
+  _line_break = formats::DetectLineBreak(_partial, csv, _csv, complete);
+  if (_line_break == '\0') {
+    return false;
+  }
+  _csv.line_break = _line_break;
+  const auto head = std::exchange(_partial, {});
+  Feed(head, false);
+  return false;
+}
+
 void CopyBatchBuilder::FeedText(std::string_view bytes, bool stable) {
+  if (_line_break == '\0' && !DecideLineBreak(bytes, false)) {
+    return;
+  }
   while (!bytes.empty()) {
     if (!_partial.empty()) {
-      const auto end = FindRowEnd(bytes, 0, TrailingBackslashes(_partial));
+      const auto end =
+        FindRowEnd(bytes, 0, TrailingBackslashes(_partial), _line_break);
       if (end == std::string_view::npos) {
         _partial.append(bytes);
         return;
@@ -168,7 +232,7 @@ void CopyBatchBuilder::FeedText(std::string_view bytes, bool stable) {
       bytes.remove_prefix(end + 1);
       continue;
     }
-    const auto last = FindLastRowEnd(bytes);
+    const auto last = FindLastRowEnd(bytes, _line_break);
     if (last == std::string_view::npos) {
       _partial.assign(bytes);
       return;
@@ -177,6 +241,29 @@ void CopyBatchBuilder::FeedText(std::string_view bytes, bool stable) {
     _partial.assign(bytes.substr(last + 1));
     return;
   }
+}
+
+void CopyBatchBuilder::FeedCsv(std::string_view bytes, bool stable) {
+  if (_line_break == '\0' && !DecideLineBreak(bytes, false)) {
+    return;
+  }
+  if (!_partial.empty()) {
+    const auto end = formats::CsvRecordEnd(bytes, 0, _csv, _quote_state);
+    if (end == std::string_view::npos) {
+      _partial.append(bytes);
+      return;
+    }
+    _partial.append(bytes.data(), end + 1);
+    AddRow(std::exchange(_partial, {}));
+    bytes.remove_prefix(end + 1);
+  }
+  const auto last = formats::CsvLastRecordEnd(bytes, _csv, _quote_state);
+  if (last == std::string_view::npos) {
+    _partial.assign(bytes);
+    return;
+  }
+  AddRows(bytes.substr(0, last + 1), stable);
+  _partial.assign(bytes.substr(last + 1));
 }
 
 size_t CopyBatchBuilder::FeedHeader(std::string_view bytes) {
@@ -253,6 +340,15 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
   };
   while (pos < bytes.size()) {
     if (!_open) {
+      if (const auto end = WalkBinaryRows(bytes, pos); end != pos) {
+        if (run_begin == kNone) {
+          run_begin = pos;
+        }
+        run_end = end;
+        pos = end;
+        row_begin = pos;
+        continue;
+      }
       _open = true;
       _state = Field::Count;
       _have = 0;
@@ -346,6 +442,9 @@ void CopyBatchBuilder::Finish() {
       ThrowFormat("truncated row");
     }
     return;
+  }
+  if (_line_break == '\0' && _format != CopyBatchFormat::Raw) {
+    DecideLineBreak({}, true);
   }
   if (!_partial.empty()) {
     AddRow(std::exchange(_partial, {}));

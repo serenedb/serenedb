@@ -26,13 +26,16 @@
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <limits>
 #include <memory>
 #include <span>
+#include <string_view>
 #include <tz_calendar.hpp>
+#include <vector>
 
 #include "pg/catalog/utils/session.h"
 #include "query/config.h"
@@ -52,8 +55,10 @@ enum class VarFormat : int16_t {
   // SerializationContext::copy_text, backslash-escapes the field body inline
   // (no int32 length prefix; NULL is emitted as the two bytes \N by the
   // caller's wrapper). Field/row framing (tab between columns, newline per row)
-  // is done by WriteCopyChunk<CopyText>, not the serializer.
+  // is done by ChunkSerializer, not the serializer.
   CopyText = 2,
+  CopyCsv = 3,
+  CopyCsvQuoted = 4,
 };
 
 // TODO: consider optimizing with type-switch + UnifiedVectorFormat per column
@@ -100,6 +105,11 @@ struct SerializationContext {
   bool copy_text = false;
   char copy_delim = '\t';
   std::string copy_null = "\\N";
+  std::string copy_newline = "\n";
+  char csv_quote = '"';
+  char csv_escape = '"';
+  bool csv_single_column = false;
+  std::string csv_scratch;
   // Null means UTC (the default) and keeps the cheap ToString + "+00" path.
   duckdb::unique_ptr<duckdb::TimeZone> time_zone;
   duckdb::shared_ptr<const duckdb::ZoneLUT> zone_lut;
@@ -129,11 +139,72 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
                                        SerializationContext& context);
 
+struct RowShape {
+  char tag = '\0';
+  bool field_count = false;
+  bool delimited = false;
+  std::string_view first;
+  std::string_view before;
+  std::string_view after;
+};
+
+struct ColumnSerializer {
+  using Write = void (*)(SerializationContext& context,
+                         const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                         duckdb::idx_t begin, duckdb::idx_t end,
+                         uint8_t** cursors);
+  using Bound = void (*)(const SerializationContext& context,
+                         const duckdb::RecursiveUnifiedVectorFormat& vdata,
+                         duckdb::idx_t begin, duckdb::idx_t end,
+                         size_t* bounds);
+
+  Write write = nullptr;
+  Bound bound = nullptr;
+  size_t fixed = 0;
+  SerializationFunction field = nullptr;
+};
+
+class ChunkSerializer {
+ public:
+  ChunkSerializer(std::span<const duckdb::LogicalType> types,
+                  std::span<const VarFormat> formats,
+                  SerializationContext& context);
+
+  void Write(message::Buffer& out, SerializationContext& context,
+             const duckdb::DataChunk& chunk, duckdb::idx_t begin,
+             duckdb::idx_t end, const RowShape& shape);
+
+ private:
+  struct ScratchField {
+    message::Chunk* chunk;
+    size_t offset;
+    size_t size;
+  };
+
+  size_t WriteRows(SerializationContext& context, const RowShape& shape,
+                   uint8_t* base, duckdb::idx_t begin, size_t first,
+                   size_t last, size_t count);
+
+  std::vector<ColumnSerializer> _columns;
+  size_t _fixed = 0;
+  std::vector<size_t> _bounds;
+  std::vector<uint8_t*> _cursors;
+  std::vector<ScratchField> _fields;
+  message::Buffer _scratch{1 << 10, 1 << 20};
+};
+
 void SetCopyText(SerializationContext& context, char delim,
                  std::string null_str);
 
 void SerializeCopyTextHeader(SerializationContext& context,
                              std::span<const duckdb::Identifier> names);
+
+void SetCopyCsv(SerializationContext& context, char delim, char quote,
+                char escape, std::string null_str, std::string new_line,
+                bool single_column);
+
+void SerializeCopyCsvHeader(SerializationContext& context,
+                            std::span<const duckdb::Identifier> names);
 
 void ByteaOutHex(char* buf, std::string_view value);
 

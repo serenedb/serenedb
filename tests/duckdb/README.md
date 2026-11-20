@@ -115,6 +115,16 @@ An update is reviewed patchset by patchset. Every fork whose upstream is in the 
 
 Upstream did not move: the boundaries of 2026-10-06 stand, and every fork's tree is its 2026-10-06 head's. Each patchset was rebuilt one commit per concern, and duckdb's ends with one `regen:` commit in place of the sixteen its pull requests had added.
 
+### nanoarrow, added on 2026-11-18
+
+| submodule | upstream | `main` | merged | ext patches | boundary |
+|---|---|---|---|---|---|
+| `third_party/duckdb_nanoarrow` | duckdb/duckdb-nanoarrow | `e390b9b4f8` | none | none | `e390b9b4f8` |
+| `third_party/nanoarrow` | apache/arrow-nanoarrow | `1292ac00d1` | none | none | `1292ac00d1` |
+
+- duckdb-nanoarrow has no release branches, and DuckDB carries no patches for it. Its review PR starts with the next update; nanoarrow is a library like re2, with none.
+- duckdb-nanoarrow's tests read 24 of arrow-testing's IPC integration files through a nested submodule, which our checkout never initializes: our patchset keeps those files in the fork.
+
 ### Our patchset by area (duckdb core)
 
 - **Parser and grammar:** PostgreSQL's surface in the core grammar (CREATE FUNCTION/PROCEDURE, roles and grants, FDW servers, text search dictionaries, subscriptions, REINDEX, LISTEN/NOTIFY, DISCARD, SET/RESET/SHOW scoping, TRUNCATE CASCADE/RESTART, pg_dump's sequence forms, opclass CREATE INDEX, VACUUM options, SELECT INTO, regex/SIMILAR TO/BETWEEN SYMMETRIC/JSON operators, tokenizer operators) and PostgreSQL literals (booleans, digit separators, ISO 8601 durations, `'{...}'` arrays).

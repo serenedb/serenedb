@@ -1,0 +1,1593 @@
+06f57d96c363723e
+	id	v	a
+	1	true	[true, NULL]
+	2	false	[false, NULL]
+	3	NULL	NULL
+0831de024dcb3b32
+	id	v	a
+	1	true	[true,null]
+	2	false	[false,null]
+	3	NULL	NULL
+466e079da5c2a129
+	v	a
+	BOOLEAN	VARCHAR
+71768fa5997b987f
+	v	a
+	BOOLEAN	BOOLEAN[]
+2b7b4d3991a59527
+	id	v	a
+	1	1	[1, NULL]
+	2	-32768	[-32768, NULL]
+	3	NULL	NULL
+993deb262b0b485f
+	id	v	a
+	1	1	[1,null]
+	2	-32768	[-32768,null]
+	3	NULL	NULL
+f4d104a3f3e201e1
+	v	a
+	BIGINT	VARCHAR
+de33cd7c7263ebf3
+	v	a
+	HUGEINT	HUGEINT[]
+1867d0ffa3cc1754
+	id	v	a
+	1	1	[1, NULL]
+	2	-2147483648	[-2147483648, NULL]
+	3	NULL	NULL
+3773e1a26daa94e3
+	id	v	a
+	1	1	[1,null]
+	2	-2147483648	[-2147483648,null]
+	3	NULL	NULL
+31db2f7bf93d80a9
+	v	a
+	BIGINT	VARCHAR
+4c91aedcd484ece2
+	v	a
+	HUGEINT	HUGEINT[]
+e5dc9fabd5d02188
+	id	v	a
+	1	1	[1, NULL]
+	2	-9223372036854775808	[-9223372036854775808, NULL]
+	3	NULL	NULL
+fb6e73314800b0b1
+	id	v	a
+	1	1	[1,null]
+	2	-9223372036854775808	[-9223372036854775808,null]
+	3	NULL	NULL
+46dcd237c0fe98ed
+	v	a
+	BIGINT	VARCHAR
+b70af505829c38bc
+	v	a
+	HUGEINT	HUGEINT[]
+80afa41f1dcd4404
+	id	v	a
+	1	1.5	[1.5, NULL]
+	2	0.1	[0.1, NULL]
+	3	-0	[-0, NULL]
+	4	NaN	[NaN, NULL]
+	5	-Infinity	[-Infinity, NULL]
+	6	NULL	NULL
+5e74357674a0357f
+	id	v	a
+	1	1.5	[1.5,null]
+	2	0.10000000149011612	[0.10000000149011612,null]
+	3	-0.0	[-0.0,null]
+	4	NaN	[NaN,null]
+	5	-Infinity	[-Infinity,null]
+	6	NULL	NULL
+8e8dd761ce81f580
+	v	a
+	DOUBLE	VARCHAR
+7c33a39b170acae8
+	v	a
+	DOUBLE	DOUBLE[]
+56dc26e186fe03a1
+	id	v	a
+	1	1.5	[1.5, NULL]
+	2	0.1	[0.1, NULL]
+	3	-1e+300	[-1e+300, NULL]
+	4	5e-324	[5e-324, NULL]
+	5	Infinity	[Infinity, NULL]
+	6	NaN	[NaN, NULL]
+	7	NULL	NULL
+c8552961465e5a2f
+	id	v	a
+	1	1.5	[1.5,null]
+	2	0.1	[0.1,null]
+	3	-1e300	[-1e300,null]
+	4	5e-324	[5e-324,null]
+	5	Infinity	[Infinity,null]
+	6	NaN	[NaN,null]
+	7	NULL	NULL
+8c216a8d9aae508b
+	v	a
+	DOUBLE	VARCHAR
+618dda2b9a03add0
+	v	a
+	DOUBLE	DOUBLE[]
+acb5899b75adc215
+	id	v	a
+	1	1.5	[1.5, NULL]
+	2	-2.0	[-2.0, NULL]
+	3	NULL	NULL
+42d7398c8e32e9fb
+	id	v	a
+	1	1.5	[1.5,null]
+	2	-2.0	[-2.0,null]
+	3	NULL	NULL
+c60185c3d177794f
+	v	a
+	DOUBLE	VARCHAR
+eaca03e2eb7b51d2
+	v	a
+	DOUBLE	DOUBLE[]
+640b85926bd897ff
+	id	v	a
+	1	1234567.89	[1234567.89, NULL]
+	2	-1.00	[-1.00, NULL]
+	3	NULL	NULL
+923483cf331f77a2
+	id	v	a
+	1	1234567.89	[1234567.89,null]
+	2	-1.0	[-1.0,null]
+	3	NULL	NULL
+395038ecf9d56b8b
+	v	a
+	DOUBLE	VARCHAR
+e9a1496765b66f33
+	v	a
+	DOUBLE	DOUBLE[]
+4643dfc6781ee6fc
+	id	v	a
+	1	1234567890123456.78	[1234567890123456.78, NULL]
+	2	0.50	[0.50, NULL]
+	3	NULL	NULL
+f5dfe554c218aeed
+	id	v	a
+	1	1234567890123456.78	[1234567890123456.78,null]
+	2	0.50	[0.50,null]
+	3	NULL	NULL
+2fe673b34462c48e
+	v	a
+	DOUBLE	VARCHAR
+2ab492174c93eaf8
+	v	a
+	DOUBLE	DOUBLE[]
+c1b32931eaac3ff8
+	id	v	a
+	1	123456789012345678901234567890123456.78	[123456789012345678901234567890123456.78, NULL]
+	2	-0.01	[-0.01, NULL]
+	3	NULL	NULL
+97e67640ce05bedd
+	id	v	a
+	1	123456789012345678901234567890123456.78	[123456789012345678901234567890123456.78,null]
+	2	-0.01	[-0.01,null]
+	3	NULL	NULL
+543baaad660ae037
+	v	a
+	DOUBLE	VARCHAR
+f91386a7cb55e319
+	v	a
+	DOUBLE	DOUBLE[]
+d5b88ca58fcd0545
+	id	v	a
+	1	a,b	['a,b', NULL]
+	2	a"b	['a"b', NULL]
+	3	a\\b	[a\\b, NULL]
+	4	(empty)	['', NULL]
+	5	NULL	['NULL', NULL]
+	6	\\N	[\\N, NULL]
+	7	a\tb	[a\tb, NULL]
+	8	\\.	[\\., NULL]
+	9	NULL	NULL
+055dc5f0e69c5d4c
+	id	v	a
+	1	"a,b"	["a,b",null]
+	2	"a\\"b"	["a\\"b",null]
+	3	"a\\\\b"	["a\\\\b",null]
+	4	""	["",null]
+	5	"NULL"	["NULL",null]
+	6	"\\\\N"	["\\\\N",null]
+	7	"a\\tb"	["a\\tb",null]
+	8	"\\\\."	["\\\\.",null]
+	9	NULL	NULL
+a81430a1f9a0247f
+	id	v	same
+	1	a,b	t
+	2	a"b	t
+	3	a\\b	t
+	4	NULL	f
+	5	NULL	t
+	6	\\N	t
+	7	a\tb	t
+	8	\\.	t
+	9	NULL	t
+e8363932c65c0672
+	id	v	a	same
+	1	a,b	['a,b', NULL]	t
+	2	a"b	['a"b', NULL]	t
+	3	a\\b	[a\\b, NULL]	t
+	4	NULL	['', NULL]	f
+	5	NULL	['NULL', NULL]	t
+	6	\\N	[\\N, NULL]	t
+	7	a\tb	[a\tb, NULL]	t
+	8	\\.	[\\., NULL]	t
+	9	NULL	NULL	t
+f70663f7cad298ed
+	v	a
+	VARCHAR	VARCHAR
+45c12c505fccf993
+	v	a
+	VARCHAR	VARCHAR[]
+dd7ae9e8cfc5664d
+	id	v	a
+	1	a b	[a b, NULL]
+	2	a,b	['a,b', NULL]
+	3	(empty)	['', NULL]
+	4	NULL	NULL
+8e93623cf398b827
+	id	v	a
+	1	"a b"	["a b",null]
+	2	"a,b"	["a,b",null]
+	3	""	["",null]
+	4	NULL	NULL
+d7253c7eb7b2b70c
+	id	v	same
+	1	a b	t
+	2	a,b	t
+	3	NULL	f
+	4	NULL	t
+acb5ba3a83d531f0
+	id	v	a	same
+	1	a b	[a b, NULL]	t
+	2	a,b	['a,b', NULL]	t
+	3	NULL	['', NULL]	f
+	4	NULL	NULL	t
+414758cb30752b64
+	v	a
+	VARCHAR	VARCHAR
+66964b4bd271a0fe
+	v	a
+	VARCHAR	VARCHAR[]
+08a62a3aecfb5296
+	id	v	a
+	1	ab	[ab, NULL]
+	2	a,	['a,', NULL]
+	3	NULL	NULL
+78c75c944d71670d
+	id	v	a
+	1	"ab"	["ab",null]
+	2	"a,"	["a,",null]
+	3	NULL	NULL
+727f42cd490c5dfc
+	v	a
+	VARCHAR	VARCHAR
+d5cb11cbd5150c2b
+	v	a
+	VARCHAR	VARCHAR[]
+ddf8c01e02f71e0e
+	id	v	a
+	1	abc	[abc, NULL]
+	2	a b	[a b, NULL]
+	3	NULL	NULL
+2939adfc04b06422
+	id	v	a
+	1	"abc"	["abc",null]
+	2	"a b"	["a b",null]
+	3	NULL	NULL
+c4b227b8af4c5ab5
+	v	a
+	VARCHAR	VARCHAR
+21043eca4f58d026
+	v	a
+	VARCHAR	VARCHAR[]
+f3bc26da7c081e76
+	id	v	a
+	1	a	[a, NULL]
+	2	,	[',', NULL]
+	3	NULL	NULL
+ce559cb2efbf1c73
+	id	v	a
+	1	"a"	["a",null]
+	2	","	[",",null]
+	3	NULL	NULL
+d57e068266df5bb8
+	v	a
+	VARCHAR	VARCHAR
+495289cad3cb2668
+	v	a
+	VARCHAR	VARCHAR[]
+d5f701400b101276
+	id	v	a
+	1	\\x0102	[\\x0102, NULL]
+	2	\\x	[\\x, NULL]
+	3	\\x612062	[\\x612062, NULL]
+	4	\\x5c27ff	[\\x5c27ff, NULL]
+	5	NULL	NULL
+9e95dde92e54952a
+	id	v	a
+	1	"\\\\x01\\\\x02"	["\\\\x01\\\\x02",null]
+	2	""	["",null]
+	3	"a b"	["a b",null]
+	4	"\\\\x5C\\\\x27\\\\xFF"	["\\\\x5C\\\\x27\\\\xFF",null]
+	5	NULL	NULL
+6f90ba7a12ad304d
+	v	a
+	VARCHAR	VARCHAR
+7e0015901d298dab
+	id	v	a	same
+	1	\\x5c7830315c783032	[\\x5c7830315c783032, NULL]	f
+	2	\\x	[\\x, NULL]	t
+	3	\\x612062	[\\x612062, NULL]	t
+	4	\\x5c7835435c7832375c784646	[\\x5c7835435c7832375c784646, NULL]	f
+	5	NULL	NULL	t
+9a38d235b51bb642
+	id	v	a	same
+	1	\\x5c7830315c783032	[\\x5c7830315c783032, NULL]	f
+	2	\\x	[\\x, NULL]	t
+	3	\\x612062	[\\x612062, NULL]	t
+	4	\\x5c7835435c7832375c784646	[\\x5c7835435c7832375c784646, NULL]	f
+	5	NULL	NULL	t
+277bf251d68ecdb3
+	v	a
+	VARCHAR	VARCHAR[]
+3802c3ce68149b51
+	id	v	a
+	1	2024-01-02	[2024-01-02, NULL]
+	2	infinity	[infinity, NULL]
+	3	NULL	NULL
+6d1a88d4b2d44809
+	id	v	a
+	1	"2024-01-02"	["2024-01-02",null]
+	2	"infinity"	["infinity",null]
+	3	NULL	NULL
+8ed69a156d192f51
+	v	a
+	DATE	VARCHAR
+7a76e59db57d916c
+	v	a
+	DATE	DATE[]
+32a59f3ba6f128ca
+	id	v	a
+	1	01:02:03	['01:02:03', NULL]
+	2	23:59:59.999999	['23:59:59.999999', NULL]
+	3	NULL	NULL
+d75b91108865847e
+	id	v	a
+	1	"01:02:03"	["01:02:03",null]
+	2	"23:59:59.999999"	["23:59:59.999999",null]
+	3	NULL	NULL
+2998467cfb3f1e6a
+	v	a
+	TIME	VARCHAR
+66ea589205ba99d1
+	v	a
+	TIME	TIME[]
+a5de25fc4ebf365c
+	id	v	a
+	1	01:02:03+02	['01:02:03+02', NULL]
+	2	23:00:00-05:30	['23:00:00-05:30', NULL]
+	3	NULL	NULL
+bb11a7cbe8976818
+	id	v	a
+	1	"01:02:03+02"	["01:02:03+02",null]
+	2	"23:00:00-05:30"	["23:00:00-05:30",null]
+	3	NULL	NULL
+26ca80b5faecae0a
+	v	a
+	VARCHAR	VARCHAR
+109e6eeb56d97390
+	v	a
+	VARCHAR	VARCHAR[]
+94f230045df50942
+	id	v	a
+	1	2024-01-02 03:04:05	['2024-01-02 03:04:05', NULL]
+	2	infinity	[infinity, NULL]
+	3	NULL	NULL
+7a4cd74348818103
+	id	v	a
+	1	"2024-01-02 03:04:05"	["2024-01-02 03:04:05",null]
+	2	"infinity"	["infinity",null]
+	3	NULL	NULL
+f5be771105289c19
+	v	a
+	TIMESTAMP WITH TIME ZONE	VARCHAR
+4e42f3f82617983a
+	v	a
+	TIMESTAMP	TIMESTAMP[]
+6d9a836a0ab33b10
+	id	v	a
+	1	2024-01-02 03:04:05+00	['2024-01-02 03:04:05+00', NULL]
+	2	-infinity	[-infinity, NULL]
+	3	NULL	NULL
+a5c089cd9102cc6c
+	id	v	a
+	1	"2024-01-02 03:04:05+00"	["2024-01-02 03:04:05+00",null]
+	2	"-infinity"	["-infinity",null]
+	3	NULL	NULL
+7a8c90c430d04063
+	v	a
+	TIMESTAMP WITH TIME ZONE	VARCHAR
+de9820a85f7acce6
+	v	a
+	TIMESTAMP WITH TIME ZONE	TIMESTAMP WITH TIME ZONE[]
+2544bdab252ff282
+	id	v	a
+	1	1 day 02:00:00	['1 day 02:00:00', NULL]
+	2	-3 mons	[-3 mons, NULL]
+	3	NULL	NULL
+cecdbfa60c0fa8b0
+	id	v	a
+	1	"1 day 02:00:00"	["1 day 02:00:00",null]
+	2	"-3 mons"	["-3 mons",null]
+	3	NULL	NULL
+8f3c56f5f6279c7a
+	v	a
+	VARCHAR	VARCHAR
+a41bc8153ea02747
+	v	a
+	VARCHAR	VARCHAR[]
+b0e3f85cd581b3fd
+	id	v	a
+	1	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	[a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11, NULL]
+	2	NULL	NULL
+50fe864a9f196453
+	id	v	a
+	1	"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"	["a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",null]
+	2	NULL	NULL
+baa81e6c83d484bb
+	v	a
+	VARCHAR	VARCHAR
+addcf260da472518
+	v	a
+	UUID	UUID[]
+dc0ab1755ae76a42
+	id	v	a
+	1	{"a": 1}	[{"a": 1}, NULL]
+	2	[1, 2]	[[1, 2], NULL]
+	3	"s,t"	["s,t", NULL]
+	4	NULL	NULL
+e82e648f2d89841d
+	id	v	a
+	1	{"a":1}	[{"a":1},null]
+	2	[1,2]	[[1,2],null]
+	3	"s,t"	["s,t",null]
+	4	NULL	NULL
+40d2752c24c01c8a	error	db error: ERROR: CSV Error on Line: 2\nOriginal Line: 1,"{""a"": 1}","[{""a"": 1}, NULL]"\nError when converting column "a". Could not convert string "[{"a": 1}, NULL]" to 'JSON[]'\n\nColumn a is being converted as type LIST\nThis type was auto-detected from the CSV file.\nPossible solutions:\n* Override the type for this column manually by setting the type explicitly, e.g., types={'a': 'VARCHAR'}\n* Set the sample size to a larger value to enable the auto-detection to scan more values, e.g., sample_size=-1\n* Use a COPY statement to automatically derive types from an existing table.\n* Check whether the null string value is set correctly (e.g., nullstr = 'N/A')\n\n  file = <slt:ignore>/dfm_23.csv\n  delimiter = , (Auto-Detected)\n  quote = " (Auto-Detected)\n  escape = " (Auto-Detected)\n  new_line = \\n (Auto-Detected)\n  header = true (Set By User)\n  skip_rows = 0 (Auto-Detected)\n  comment = (empty) (Auto-Detected)\n  strict_mode = true (Auto-Detected)\n  date_format =  (Auto-Detected)\n  timestamp_format =  (Auto-Detected)\n  null_padding = 0\n  sample_size = 20480\n  ignore_errors = false\n  all_varchar = 0
+24b224253e89d283	error	db error: ERROR: CSV Error on Line: 2\nOriginal Line: 1,"{""a"": 1}","[{""a"": 1}, NULL]"\nError when converting column "a". Could not convert string "[{"a": 1}, NULL]" to 'JSON[]'\n\nColumn a is being converted as type LIST\nThis type was auto-detected from the CSV file.\nPossible solutions:\n* Override the type for this column manually by setting the type explicitly, e.g., types={'a': 'VARCHAR'}\n* Set the sample size to a larger value to enable the auto-detection to scan more values, e.g., sample_size=-1\n* Use a COPY statement to automatically derive types from an existing table.\n* Check whether the null string value is set correctly (e.g., nullstr = 'N/A')\n\n  file = <slt:ignore>/dfm_23.csv\n  delimiter = , (Auto-Detected)\n  quote = " (Auto-Detected)\n  escape = " (Auto-Detected)\n  new_line = \\n (Auto-Detected)\n  header = true (Set By User)\n  skip_rows = 0 (Auto-Detected)\n  comment = (empty) (Auto-Detected)\n  strict_mode = true (Auto-Detected)\n  date_format =  (Auto-Detected)\n  timestamp_format =  (Auto-Detected)\n  null_padding = 0\n  sample_size = 20480\n  ignore_errors = false\n  all_varchar = 0
+40779de57f35f129
+	v	a
+	VARCHAR	VARCHAR
+106ce394948290a5
+	id	v	a	same
+	1	{"a":1}	[{"a":1}, NULL]	f
+	2	[1,2]	[[1,2], NULL]	f
+	3	"s,t"	["s,t", NULL]	t
+	4	NULL	NULL	t
+8ea0dec9ff56e666
+	id	v	a	same
+	1	{"a":1}	[{"a":1}, NULL]	f
+	2	[1,2]	[[1,2], NULL]	f
+	3	"s,t"	["s,t", NULL]	t
+	4	NULL	NULL	t
+7275055ee704ade3
+	v	a
+	JSON	JSON[]
+27de31ee256b9c62
+	id	v	a
+	1	{"a": 1}	[{"a": 1}, NULL]
+	2	[1, "x"]	[[1, "x"], NULL]
+	3	NULL	NULL
+a952a848514c62f2
+	id	v	a
+	1	{"a":1}	[{"a":1},null]
+	2	[1,"x"]	[[1,"x"],null]
+	3	NULL	NULL
+c0275767ef7af542	error	db error: ERROR: CSV Error on Line: 2\nOriginal Line: 1,"{""a"": 1}","[{""a"": 1}, NULL]"\nError when converting column "a". Could not convert string "[{"a": 1}, NULL]" to 'JSON[]'\n\nColumn a is being converted as type LIST\nThis type was auto-detected from the CSV file.\nPossible solutions:\n* Override the type for this column manually by setting the type explicitly, e.g., types={'a': 'VARCHAR'}\n* Set the sample size to a larger value to enable the auto-detection to scan more values, e.g., sample_size=-1\n* Use a COPY statement to automatically derive types from an existing table.\n* Check whether the null string value is set correctly (e.g., nullstr = 'N/A')\n\n  file = <slt:ignore>/dfm_24.csv\n  delimiter = , (Auto-Detected)\n  quote = " (Auto-Detected)\n  escape = " (Auto-Detected)\n  new_line = \\n (Auto-Detected)\n  header = true (Set By User)\n  skip_rows = 0 (Auto-Detected)\n  comment = (empty) (Auto-Detected)\n  strict_mode = true (Auto-Detected)\n  date_format =  (Auto-Detected)\n  timestamp_format =  (Auto-Detected)\n  null_padding = 0\n  sample_size = 20480\n  ignore_errors = false\n  all_varchar = 0
+896fde535c7a08d6	error	db error: ERROR: CSV Error on Line: 2\nOriginal Line: 1,"{""a"": 1}","[{""a"": 1}, NULL]"\nError when converting column "a". Could not convert string "[{"a": 1}, NULL]" to 'JSON[]'\n\nColumn a is being converted as type LIST\nThis type was auto-detected from the CSV file.\nPossible solutions:\n* Override the type for this column manually by setting the type explicitly, e.g., types={'a': 'VARCHAR'}\n* Set the sample size to a larger value to enable the auto-detection to scan more values, e.g., sample_size=-1\n* Use a COPY statement to automatically derive types from an existing table.\n* Check whether the null string value is set correctly (e.g., nullstr = 'N/A')\n\n  file = <slt:ignore>/dfm_24.csv\n  delimiter = , (Auto-Detected)\n  quote = " (Auto-Detected)\n  escape = " (Auto-Detected)\n  new_line = \\n (Auto-Detected)\n  header = true (Set By User)\n  skip_rows = 0 (Auto-Detected)\n  comment = (empty) (Auto-Detected)\n  strict_mode = true (Auto-Detected)\n  date_format =  (Auto-Detected)\n  timestamp_format =  (Auto-Detected)\n  null_padding = 0\n  sample_size = 20480\n  ignore_errors = false\n  all_varchar = 0
+24168ff30dfe4a7d
+	v	a
+	VARCHAR	VARCHAR
+effc9b8cb1f6dae8
+	id	v	a	same
+	1	{"a":1}	[{"a":1}, NULL]	f
+	2	[1,"x"]	[[1,"x"], NULL]	f
+	3	NULL	NULL	t
+bfd561e4fda04209
+	id	v	a	same
+	1	{"a":1}	[{"a":1}, NULL]	f
+	2	[1,"x"]	[[1,"x"], NULL]	f
+	3	NULL	NULL	t
+2045e0c77984b3de
+	v	a
+	JSON	JSON[]
+986820c9308e2c2e
+	id	v	a
+	1	101	[101, NULL]
+	2	000	[000, NULL]
+	3	NULL	NULL
+5907a4ff9021b3fd
+	id	v	a
+	1	"101"	["101",null]
+	2	"000"	["000",null]
+	3	NULL	NULL
+dbfb43056cfe1378
+	v	a
+	VARCHAR	VARCHAR
+08fb7de1630d874a
+	v	a
+	VARCHAR	VARCHAR[]
+62f9b610a2ac8898
+	id	v	a
+	1	1	[1, NULL]
+	2	0110	[0110, NULL]
+	3	NULL	NULL
+aad427e4f6e68ea1
+	id	v	a
+	1	"1"	["1",null]
+	2	"0110"	["0110",null]
+	3	NULL	NULL
+150e4195e0268acb
+	v	a
+	VARCHAR	VARCHAR
+6965c6dacc6094c8
+	v	a
+	VARCHAR	VARCHAR[]
+305e724670be8c20
+	id	v	a
+	1	192.168.0.1/32	[192.168.0.1/32, NULL]
+	2	::1/128	[::1/128, NULL]
+	3	10.1.2.3/8	[10.1.2.3/8, NULL]
+	4	NULL	NULL
+9ef5f2a576975344
+	id	v	a
+	1	"192.168.0.1"	["192.168.0.1",null]
+	2	"::1"	["::1",null]
+	3	"10.1.2.3/8"	["10.1.2.3/8",null]
+	4	NULL	NULL
+2f9112069dc12687
+	v	a
+	VARCHAR	VARCHAR
+0a069872421f124c
+	v	a
+	VARCHAR	VARCHAR[]
+08ad1ab3ed0031de
+	id	v	a
+	1	10.0.0.0/8	[10.0.0.0/8, NULL]
+	2	::/0	[::/0, NULL]
+	3	NULL	NULL
+5303ff1bc471fadd
+	id	v	a
+	1	"10.0.0.0/8"	["10.0.0.0/8",null]
+	2	"::/0"	["::/0",null]
+	3	NULL	NULL
+e40145f94b2b6290
+	v	a
+	VARCHAR	VARCHAR
+5110dfd4e6f811a2
+	v	a
+	VARCHAR	VARCHAR[]
+7b071d0ed7b5b536
+	id	v	a
+	1	08:00:2b:01:02:03	['08:00:2b:01:02:03', NULL]
+	2	NULL	NULL
+d10014ab02bd61a1
+	id	v	a
+	1	8796814508547	[8796814508547,null]
+	2	NULL	NULL
+1eb4db78f014b954
+	v	a
+	VARCHAR	VARCHAR
+1da3c24682a0b7fd
+	v	a
+	BIGINT	BIGINT[]
+8a0472ca54ef2509
+	id	v	a
+	1	08:00:2b:01:02:03:04:05	['08:00:2b:01:02:03:04:05', NULL]
+	2	NULL	NULL
+05334b4e75e0f8b5
+	id	v	a
+	1	576508035632137221	[576508035632137221,null]
+	2	NULL	NULL
+07ed2d3b8a97a017
+	v	a
+	VARCHAR	VARCHAR
+6ef5dc19ff655ca3
+	v	a
+	BIGINT	BIGINT[]
+00139ed85b04cfed
+	id	v	a
+	1	$12.34	[$12.34, NULL]
+	2	-$1.00	[-$1.00, NULL]
+	3	-$1,234.56	['-$1,234.56', NULL]
+	4	NULL	NULL
+333a1be11652f0df
+	id	v	a
+	1	12.34	[12.34,null]
+	2	-1.00	[-1.00,null]
+	3	-1234.56	[-1234.56,null]
+	4	NULL	NULL
+bfe047b6fe6ce693
+	v	a
+	VARCHAR	VARCHAR
+0671271983de8c15
+	v	a
+	DOUBLE	DOUBLE[]
+e944536c38f478ac
+	id	v	a
+	1	(1,2)	['(1,2)', NULL]
+	2	(-1.5,0)	['(-1.5,0)', NULL]
+	3	NULL	NULL
+f345ba218c73ee50
+	id	v	a
+	1	{"x":1.0,"y":2.0}	[{"x":1.0,"y":2.0},null]
+	2	{"x":-1.5,"y":0.0}	[{"x":-1.5,"y":0.0},null]
+	3	NULL	NULL
+c9c7ece6058f55b6
+	v	a
+	VARCHAR	VARCHAR
+fd2347225927b368
+	v	a
+	STRUCT(x DOUBLE, y DOUBLE)	STRUCT(x DOUBLE, y DOUBLE)[]
+6672af587a8eae37
+	id	v	a
+	1	{1,2,3}	['{1,2,3}', NULL]
+	2	NULL	NULL
+f4585a8e72a5150b
+	id	v	a
+	1	{"a":1.0,"b":2.0,"c":3.0}	[{"a":1.0,"b":2.0,"c":3.0},null]
+	2	NULL	NULL
+97a9292cdb4793a0
+	v	a
+	VARCHAR	VARCHAR
+e83f214502010747
+	v	a
+	STRUCT(a DOUBLE, b DOUBLE, c DOUBLE)	STRUCT(a DOUBLE, b DOUBLE, c DOUBLE)[]
+36923db2efc8f1af
+	id	v	a
+	1	[(1,2),(3,4)]	['[(1,2),(3,4)]', NULL]
+	2	NULL	NULL
+db8bd7e6680fd5fa
+	id	v	a
+	1	{"x1":1.0,"y1":2.0,"x2":3.0,"y2":4.0}	[{"x1":1.0,"y1":2.0,"x2":3.0,"y2":4.0},null]
+	2	NULL	NULL
+2483eaa47889473c
+	v	a
+	VARCHAR	VARCHAR
+f9cbb04a008fd5ec
+	v	a
+	STRUCT(x1 DOUBLE, y1 DOUBLE, x2 DOUBLE, y2 DOUBLE)	STRUCT(x1 DOUBLE, y1 DOUBLE, x2 DOUBLE, y2 DOUBLE)[]
+0154e04f61ddb62d
+	id	v	a
+	1	(3,4),(1,2)	['(3,4),(1,2)', NULL]
+	2	NULL	NULL
+bbad29ed3941ed79
+	id	v	a
+	1	{"high_x":3.0,"high_y":4.0,"low_x":1.0,"low_y":2.0}	[{"high_x":3.0,"high_y":4.0,"low_x":1.0,"low_y":2.0},null]
+	2	NULL	NULL
+094019e09eefa79d
+	v	a
+	VARCHAR	VARCHAR
+dfdcc8d78e48a9bd
+	v	a
+	STRUCT(high_x DOUBLE, high_y DOUBLE, low_x DOUBLE, low_y DOUBLE)	STRUCT(high_x DOUBLE, high_y DOUBLE, low_x DOUBLE, low_y DOUBLE)[]
+3c67fdef3923ebf9
+	id	v	a
+	1	[(1,2),(3,4)]	['[(1,2),(3,4)]', NULL]
+	2	((0,0),(1,1))	['((0,0),(1,1))', NULL]
+	3	NULL	NULL
+de357ec8f584ec9d
+	id	v	a
+	1	{"closed":false,"points":[{"x":1.0,"y":2.0},{"x":3.0,"y":4.0}]}	[{"closed":false,"points":[{"x":1.0,"y":2.0},{"x":3.0,"y":4.0}]},null]
+	2	{"closed":true,"points":[{"x":0.0,"y":0.0},{"x":1.0,"y":1.0}]}	[{"closed":true,"points":[{"x":0.0,"y":0.0},{"x":1.0,"y":1.0}]},null]
+	3	NULL	NULL
+352d6c4c561b51d9
+	v	a
+	VARCHAR	VARCHAR
+d08bd3ecf75fd97c
+	v	a
+	STRUCT(closed BOOLEAN, points STRUCT(x DOUBLE, y DOUBLE)[])	STRUCT(closed BOOLEAN, points STRUCT(x DOUBLE, y DOUBLE)[])[]
+8e3b5ba7d22af4d7
+	id	v	a
+	1	((0,0),(1,0),(1,1))	['((0,0),(1,0),(1,1))', NULL]
+	2	NULL	NULL
+85b8a6a430c76943
+	id	v	a
+	1	{"points":[{"x":0.0,"y":0.0},{"x":1.0,"y":0.0},{"x":1.0,"y":1.0}]}	[{"points":[{"x":0.0,"y":0.0},{"x":1.0,"y":0.0},{"x":1.0,"y":1.0}]},null]
+	2	NULL	NULL
+9aede60a23e84cba
+	v	a
+	VARCHAR	VARCHAR
+d702f58d4998abe5
+	v	a
+	STRUCT(points STRUCT(x DOUBLE, y DOUBLE)[])	STRUCT(points STRUCT(x DOUBLE, y DOUBLE)[])[]
+2a2f5b9303f623f6
+	id	v	a
+	1	<(1,2),3>	['<(1,2),3>', NULL]
+	2	NULL	NULL
+5db924b2a0b76f2c
+	id	v	a
+	1	{"x":1.0,"y":2.0,"radius":3.0}	[{"x":1.0,"y":2.0,"radius":3.0},null]
+	2	NULL	NULL
+b0b746719b8e09b4
+	v	a
+	VARCHAR	VARCHAR
+076441daa6f7becb
+	v	a
+	STRUCT(x DOUBLE, y DOUBLE, radius DOUBLE)	STRUCT(x DOUBLE, y DOUBLE, radius DOUBLE)[]
+d699162eeef135b8
+	id	v	a
+	1	[1,5)	['[1,5)', NULL]
+	2	empty	[empty, NULL]
+	3	NULL	NULL
+8cb3d0ac4247d33f
+	id	v	a
+	1	{"nonempty":true,"lower_finite":true,"lower":1,"lower_exclusive":false,"upper_infinite":false,"upper":5,"upper_inclusive":false}	[{"nonempty":true,"lower_finite":true,"lower":1,"lower_exclusive":false,"upper_infinite":false,"upper":5,"upper_inclusive":false},null]
+	2	{"nonempty":false,"lower_finite":false,"lower":0,"lower_exclusive":false,"upper_infinite":false,"upper":0,"upper_inclusive":false}	[{"nonempty":false,"lower_finite":false,"lower":0,"lower_exclusive":false,"upper_infinite":false,"upper":0,"upper_inclusive":false},null]
+	3	NULL	NULL
+192f99e57e6a1634
+	v	a
+	VARCHAR	VARCHAR
+c42a2cc5371cd302
+	v	a
+	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower BIGINT, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper BIGINT, upper_inclusive BOOLEAN)	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower BIGINT, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper BIGINT, upper_inclusive BOOLEAN)[]
+6b92d3127ead055b
+	id	v	a
+	1	[1,5)	['[1,5)', NULL]
+	2	(,11)	['(,11)', NULL]
+	3	NULL	NULL
+5e5d5ff62575cef2
+	id	v	a
+	1	{"nonempty":true,"lower_finite":true,"lower":1,"lower_exclusive":false,"upper_infinite":false,"upper":5,"upper_inclusive":false}	[{"nonempty":true,"lower_finite":true,"lower":1,"lower_exclusive":false,"upper_infinite":false,"upper":5,"upper_inclusive":false},null]
+	2	{"nonempty":true,"lower_finite":false,"lower":0,"lower_exclusive":false,"upper_infinite":false,"upper":11,"upper_inclusive":false}	[{"nonempty":true,"lower_finite":false,"lower":0,"lower_exclusive":false,"upper_infinite":false,"upper":11,"upper_inclusive":false},null]
+	3	NULL	NULL
+f41ec5fb33d2e408
+	v	a
+	VARCHAR	VARCHAR
+d6f73f0d77c4ada6
+	v	a
+	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower BIGINT, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper BIGINT, upper_inclusive BOOLEAN)	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower BIGINT, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper BIGINT, upper_inclusive BOOLEAN)[]
+ccf518f00318ce6e
+	id	v	a
+	1	[1.500,2.500]	['[1.500,2.500]', NULL]
+	2	empty	[empty, NULL]
+	3	NULL	NULL
+983f113ebd40d662
+	id	v	a
+	1	{"nonempty":true,"lower_finite":true,"lower":1.500,"lower_exclusive":false,"upper_infinite":false,"upper":2.500,"upper_inclusive":true}	[{"nonempty":true,"lower_finite":true,"lower":1.500,"lower_exclusive":false,"upper_infinite":false,"upper":2.500,"upper_inclusive":true},null]
+	2	{"nonempty":false,"lower_finite":false,"lower":0.000,"lower_exclusive":false,"upper_infinite":false,"upper":0.000,"upper_inclusive":false}	[{"nonempty":false,"lower_finite":false,"lower":0.000,"lower_exclusive":false,"upper_infinite":false,"upper":0.000,"upper_inclusive":false},null]
+	3	NULL	NULL
+93e3f2bd67382388
+	v	a
+	VARCHAR	VARCHAR
+b45a5201076ed6d9
+	v	a
+	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower DOUBLE, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper DOUBLE, upper_inclusive BOOLEAN)	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower DOUBLE, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper DOUBLE, upper_inclusive BOOLEAN)[]
+a9d21892d6dfa9f7
+	id	v	a
+	1	[2024-01-01,2024-02-01)	['[2024-01-01,2024-02-01)', NULL]
+	2	NULL	NULL
+e450526a8c904728
+	id	v	a
+	1	{"nonempty":true,"lower_finite":true,"lower":"2024-01-01","lower_exclusive":false,"upper_infinite":false,"upper":"2024-02-01","upper_inclusive":false}	[{"nonempty":true,"lower_finite":true,"lower":"2024-01-01","lower_exclusive":false,"upper_infinite":false,"upper":"2024-02-01","upper_inclusive":false},null]
+	2	NULL	NULL
+a072da9de953caa3
+	v	a
+	VARCHAR	VARCHAR
+5bcf3cf6f2332666
+	v	a
+	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower DATE, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper DATE, upper_inclusive BOOLEAN)	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower DATE, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper DATE, upper_inclusive BOOLEAN)[]
+7bdc2fe4078646f6
+	id	v	a
+	1	["2024-01-01 00:00:00","2024-01-02 00:00:00")	['["2024-01-01 00:00:00","2024-01-02 00:00:00")', NULL]
+	2	NULL	NULL
+109d7a7348c2c22b
+	id	v	a
+	1	{"nonempty":true,"lower_finite":true,"lower":"2024-01-01 00:00:00","lower_exclusive":false,"upper_infinite":false,"upper":"2024-01-02 00:00:00","upper_inclusive":false}	[{"nonempty":true,"lower_finite":true,"lower":"2024-01-01 00:00:00","lower_exclusive":false,"upper_infinite":false,"upper":"2024-01-02 00:00:00","upper_inclusive":false},null]
+	2	NULL	NULL
+a857ad89ba6d64f2
+	v	a
+	VARCHAR	VARCHAR
+ae6b1ae944760a58
+	v	a
+	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower TIMESTAMP, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper TIMESTAMP, upper_inclusive BOOLEAN)	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower TIMESTAMP, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper TIMESTAMP, upper_inclusive BOOLEAN)[]
+b68b295a654b9149
+	id	v	a
+	1	["2024-01-01 00:00:00+00",)	['["2024-01-01 00:00:00+00",)', NULL]
+	2	NULL	NULL
+ab2578c654ff4e79
+	id	v	a
+	1	{"nonempty":true,"lower_finite":true,"lower":"2024-01-01 00:00:00+00","lower_exclusive":false,"upper_infinite":true,"upper":"1970-01-01 00:00:00+00","upper_inclusive":false}	[{"nonempty":true,"lower_finite":true,"lower":"2024-01-01 00:00:00+00","lower_exclusive":false,"upper_infinite":true,"upper":"1970-01-01 00:00:00+00","upper_inclusive":false},null]
+	2	NULL	NULL
+5b819e4125cd6d02
+	v	a
+	VARCHAR	VARCHAR
+80f003145c983f52
+	v	a
+	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower TIMESTAMP WITH TIME ZONE, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper TIMESTAMP WITH TIME ZONE, upper_inclusive BOOLEAN)	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower TIMESTAMP WITH TIME ZONE, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper TIMESTAMP WITH TIME ZONE, upper_inclusive BOOLEAN)[]
+7fbb93a08a89aecf
+	id	v	a
+	1	{[1,3),[5,7)}	['{[1,3),[5,7)}', NULL]
+	2	{}	['{}', NULL]
+	3	NULL	NULL
+cd6e2bf17ca61780
+	id	v	a
+	1	[{"nonempty":true,"lower_finite":true,"lower":1,"lower_exclusive":false,"upper_infinite":false,"upper":3,"upper_inclusive":false},{"nonempty":true,"lower_finite":true,"lower":5,"lower_exclusive":false,"upper_infinite":false,"upper":7,"upper_inclusive":false}]	[[{"nonempty":true,"lower_finite":true,"lower":1,"lower_exclusive":false,"upper_infinite":false,"upper":3,"upper_inclusive":false},{"nonempty":true,"lower_finite":true,"lower":5,"lower_exclusive":false,"upper_infinite":false,"upper":7,"upper_inclusive":false}],null]
+	2	[]	[[],null]
+	3	NULL	NULL
+0e957bd6a692f3ee
+	v	a
+	VARCHAR	VARCHAR
+e1810f0c0749e523
+	v	a
+	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower BIGINT, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper BIGINT, upper_inclusive BOOLEAN)[]	STRUCT(nonempty BOOLEAN, lower_finite BOOLEAN, lower BIGINT, lower_exclusive BOOLEAN, upper_infinite BOOLEAN, upper BIGINT, upper_inclusive BOOLEAN)[][]
+5e8ab5952c0b3402
+	id	v	a
+	1	(1,2)	['(1,2)', NULL]
+	2	NULL	NULL
+ef353423a09b9677
+	id	v	a
+	1	65538	[65538,null]
+	2	NULL	NULL
+1e898d3fb84502e8
+	v	a
+	VARCHAR	VARCHAR
+584ebcbde3185231
+	v	a
+	BIGINT	BIGINT[]
+d8ac5035fe3e46c6
+	id	v	a
+	1	16/B374D848	[16/B374D848, NULL]
+	2	NULL	NULL
+d9801bcb6691686e
+	id	v	a
+	1	97500059720	[97500059720,null]
+	2	NULL	NULL
+6f8ecbb82457bbf3
+	v	a
+	VARCHAR	VARCHAR
+04845e1a791bde52
+	v	a
+	BIGINT	BIGINT[]
+c1b7ede516c5225a
+	id	v	a
+	1	1	[1, NULL]
+	2	4294967295	[4294967295, NULL]
+	3	NULL	NULL
+52a3763e8db2f81e
+	id	v	a
+	1	1	[1,null]
+	2	4294967295	[4294967295,null]
+	3	NULL	NULL
+bb6a9cba10eed4e9
+	v	a
+	BIGINT	VARCHAR
+31d968756f3c5ef3
+	v	a
+	BIGINT	BIGINT[]
+a50c64ffffd0c357
+	id	v	a
+	1	1	[1, NULL]
+	2	4294967295	[4294967295, NULL]
+	3	NULL	NULL
+bcd8c29bd64d3615
+	id	v	a
+	1	1	[1,null]
+	2	4294967295	[4294967295,null]
+	3	NULL	NULL
+0dd498585a92d20d
+	v	a
+	BIGINT	VARCHAR
+c613367d535a691f
+	v	a
+	BIGINT	BIGINT[]
+668acb610f9abd3f
+	id	v	a
+	1	1	[1, NULL]
+	2	18446744073709551615	[18446744073709551615, NULL]
+	3	NULL	NULL
+95e839012b68f525
+	id	v	a
+	1	1	[1,null]
+	2	18446744073709551615	[18446744073709551615,null]
+	3	NULL	NULL
+d827d486a1f40a7c
+	v	a
+	HUGEINT	VARCHAR
+0ce46045a12ebcf4
+	v	a
+	HUGEINT	HUGEINT[]
+a00a639b4b57530b
+	id	v	a
+	1	1	[1, NULL]
+	2	4294967295	[4294967295, NULL]
+	3	NULL	NULL
+370675fbec9249dd
+	id	v	a
+	1	1	[1,null]
+	2	4294967295	[4294967295,null]
+	3	NULL	NULL
+40f1fa4c9f3ac89f
+	v	a
+	BIGINT	VARCHAR
+ec5bf4df4b331135
+	v	a
+	BIGINT	BIGINT[]
+069a8953e12f0127
+	id	v	a
+	1	<a>1</a>	[<a>1</a>, NULL]
+	2	<b x="1,2"/>	['<b x="1,2"/>', NULL]
+	3	NULL	NULL
+cbcb161c0a761225
+	id	v	a
+	1	"<a>1</a>"	["<a>1</a>",null]
+	2	"<b x=\\"1,2\\"/>"	["<b x=\\"1,2\\"/>",null]
+	3	NULL	NULL
+35d651f247871746
+	v	a
+	VARCHAR	VARCHAR
+393a96d768d0aad8
+	v	a
+	VARCHAR	VARCHAR[]
+5d9c1873a2f67397
+	id	v	a
+	1	sad	[sad, NULL]
+	2	happy	[happy, NULL]
+	3	NULL	NULL
+ee675d6ec116e57f
+	id	v	a
+	1	"sad"	["sad",null]
+	2	"happy"	["happy",null]
+	3	NULL	NULL
+1221dfb61336ead1
+	v	a
+	VARCHAR	VARCHAR
+3cfc8acbad5cda7e
+	v	a
+	VARCHAR	VARCHAR[]
+9362ca2cc3f89d32
+	id	v	a
+	1	{'x': 1, 'y': a b}	[{'x': 1, 'y': a b}, NULL]
+	2	{'x': NULL, 'y': 'x,y'}	[{'x': NULL, 'y': 'x,y'}, NULL]
+	3	NULL	NULL
+2af733590804cba1
+	id	v	a
+	1	{"x":1,"y":"a b"}	[{"x":1,"y":"a b"},null]
+	2	{"x":null,"y":"x,y"}	[{"x":null,"y":"x,y"},null]
+	3	NULL	NULL
+04863a83bbbdfd6c
+	v	a
+	VARCHAR	VARCHAR
+9167dba1f2da68a4
+	v	a
+	STRUCT(x BIGINT, y VARCHAR)	STRUCT(x BIGINT, y VARCHAR)[]
+8ff7ff34e3d8ea08
+	id	v	a
+	1	1 2	[1 2, NULL]
+	2	3	[3, NULL]
+	3	NULL	NULL
+73293b88a932011c
+	id	v	a
+	1	[1,2]	[[1,2],null]
+	2	[3]	[[3],null]
+	3	NULL	NULL
+d41d845be2a3b18b
+	v	a
+	VARCHAR	VARCHAR
+caf3e5fab20210f5
+	v	a
+	BIGINT[]	BIGINT[][]
+e448644f61d28668
+	id	v	a
+	1	3 4	[3 4, NULL]
+	2	5	[5, NULL]
+	3	NULL	NULL
+f112a1ead5fbbee3
+	id	v	a
+	1	[3,4]	[[3,4],null]
+	2	[5]	[[5],null]
+	3	NULL	NULL
+056107013da338da
+	v	a
+	VARCHAR	VARCHAR
+51295c7635fcf887
+	v	a
+	BIGINT[]	BIGINT[][]
+f27a4890845bbb2e
+	id	v	a
+	1	a & b	[a & b, NULL]
+	2	c	[c, NULL]
+	3	NULL	NULL
+9b8964ac41837d28
+	id	v	a
+	1	{"text":"a & b","tokenizer":"","boost":1.0,"slop":0,"scorer":null,"merge":0,"min_match":0}	[{"text":"a & b","tokenizer":"","boost":1.0,"slop":0,"scorer":null,"merge":0,"min_match":0},null]
+	2	{"text":"c","tokenizer":"","boost":1.0,"slop":0,"scorer":null,"merge":0,"min_match":0}	[{"text":"c","tokenizer":"","boost":1.0,"slop":0,"scorer":null,"merge":0,"min_match":0},null]
+	3	NULL	NULL
+c5317ae7dfa7286b
+	v	a
+	VARCHAR	VARCHAR
+84ca3290787c5aee
+	v	a
+	STRUCT("text" VARCHAR, tokenizer VARCHAR, boost DOUBLE, slop BIGINT, scorer "NULL", "merge" BIGINT, min_match BIGINT)	STRUCT("text" VARCHAR, tokenizer VARCHAR, boost DOUBLE, slop BIGINT, scorer "NULL", "merge" BIGINT, min_match BIGINT)[]
+c2f002e319ae4564
+	id	v	a
+	1	pg_class	[pg_class, NULL]
+	2	-	[-, NULL]
+	3	NULL	NULL
+eaaedeb043bf78d1
+	id	v	a
+	1	1259	[1259,null]
+	2	0	[0,null]
+	3	NULL	NULL
+ab3d1b4ba1edf6b9
+	v	a
+	VARCHAR	VARCHAR
+893d4078d838f252
+	v	a
+	BIGINT	BIGINT[]
+04bec1ab1e73c043
+	id	v	a
+	1	integer	[integer, NULL]
+	2	-	[-, NULL]
+	3	NULL	NULL
+9e923c9e8dae1994
+	id	v	a
+	1	23	[23,null]
+	2	0	[0,null]
+	3	NULL	NULL
+e0da17f2098eb197
+	v	a
+	VARCHAR	VARCHAR
+d7edb2a928080bc0
+	v	a
+	BIGINT	BIGINT[]
+f703c0aad59b23a1
+	id	v	a
+	1	now	[now, NULL]
+	2	-	[-, NULL]
+	3	NULL	NULL
+b5ac9c4d8968b1f4
+	id	v	a
+	1	1299	[1299,null]
+	2	0	[0,null]
+	3	NULL	NULL
+ed26a5771f4acb5c
+	v	a
+	VARCHAR	VARCHAR
+f0d321f6248bcb88
+	v	a
+	BIGINT	BIGINT[]
+806e476f413b568d
+	id	v	a
+	1	now()	['now()', NULL]
+	2	-	[-, NULL]
+	3	NULL	NULL
+787241bdf8f286c4
+	id	v	a
+	1	1299	[1299,null]
+	2	0	[0,null]
+	3	NULL	NULL
+1fa44d521f43c8b2
+	v	a
+	VARCHAR	VARCHAR
+a5934b46d1868a03
+	v	a
+	BIGINT	BIGINT[]
+f7dcf55e7fe72377
+	id	v	a
+	1	public	[public, NULL]
+	2	-	[-, NULL]
+	3	NULL	NULL
+8d1e7529006f5679
+	id	v	a
+	1	2200	[2200,null]
+	2	0	[0,null]
+	3	NULL	NULL
+972b0e0fc47de2ea
+	v	a
+	VARCHAR	VARCHAR
+91f1efef4d5b3e1d
+	v	a
+	BIGINT	BIGINT[]
+5529804f7be5e88f
+	id	v	a
+	1	postgres	[postgres, NULL]
+	2	-	[-, NULL]
+	3	NULL	NULL
+bdd50b409844943f
+	id	v	a
+	1	16384	[16384,null]
+	2	0	[0,null]
+	3	NULL	NULL
+d50423f745346738
+	v	a
+	VARCHAR	VARCHAR
+e5ffb6eb7168b1be
+	v	a
+	BIGINT	BIGINT[]
+f36307fcdae463e2
+	id	v	a
+	1	"C"	['"C"', NULL]
+	2	-	[-, NULL]
+	3	NULL	NULL
+c6db58602f8e82cd
+	id	v	a
+	1	950	[950,null]
+	2	0	[0,null]
+	3	NULL	NULL
+961d34c4217bcaf5
+	v	a
+	VARCHAR	VARCHAR
+40853aa36cbbf08d
+	v	a
+	BIGINT	BIGINT[]
+a29afb92303c057d
+	id	v	a
+	1	-	[-, NULL]
+	2	NULL	NULL
+7dce1c3656d98226
+	id	v	a
+	1	0	[0,null]
+	2	NULL	NULL
+bab3a9bf58cc2e95
+	v	a
+	VARCHAR	VARCHAR
+3fd9457dcaf3033a
+	v	a
+	BIGINT	BIGINT[]
+877ab970ca515836
+	id	v	a
+	1	-	[-, NULL]
+	2	NULL	NULL
+9d301b5bbf6008c0
+	id	v	a
+	1	0	[0,null]
+	2	NULL	NULL
+ce62d6a712ea5891
+	v	a
+	VARCHAR	VARCHAR
+fe9c0c68588ee027
+	v	a
+	BIGINT	BIGINT[]
+afd8018a99db918b
+	id	v	a
+	1	0	[0, NULL]
+	2	NULL	NULL
+4b8ed013ed441252
+	id	v	a
+	1	0	[0,null]
+	2	NULL	NULL
+46441a0cd3322daa
+	v	a
+	BIGINT	VARCHAR
+33bfd5efa335f587
+	v	a
+	BIGINT	BIGINT[]
+a1a79550d09fa594
+	id	v	a
+	1	0	[0, NULL]
+	2	NULL	NULL
+0531beb4326ba2cf
+	id	v	a
+	1	0	[0,null]
+	2	NULL	NULL
+ea26ccf0ba04e7f9
+	v	a
+	BIGINT	VARCHAR
+2a227f09dd7e09d1
+	v	a
+	BIGINT	BIGINT[]
+94896e4288bc9582
+	id	v	a
+	1	1	[1, NULL]
+	2	-128	[-128, NULL]
+	3	NULL	NULL
+4dc920910208266c
+	id	v	a
+	1	1	[1,null]
+	2	-128	[-128,null]
+	3	NULL	NULL
+ad7d9a2a6a087c65
+	v	a
+	BIGINT	VARCHAR
+6d44958600be5121
+	v	a
+	HUGEINT	HUGEINT[]
+1916e302921b78fc
+	id	v	a
+	1	0	[0, NULL]
+	2	255	[255, NULL]
+	3	NULL	NULL
+e8d23228a60bf6df
+	id	v	a
+	1	0	[0,null]
+	2	255	[255,null]
+	3	NULL	NULL
+9ebce44fd516b15f
+	v	a
+	BIGINT	VARCHAR
+3336cf818088a756
+	v	a
+	BIGINT	BIGINT[]
+4e10c8c067d54cb8
+	id	v	a
+	1	0	[0, NULL]
+	2	65535	[65535, NULL]
+	3	NULL	NULL
+f41441a7c8493369
+	id	v	a
+	1	0	[0,null]
+	2	65535	[65535,null]
+	3	NULL	NULL
+36751a270057559c
+	v	a
+	BIGINT	VARCHAR
+b99280f9be1410eb
+	v	a
+	BIGINT	BIGINT[]
+1eec1d7a0b75b33a
+	id	v	a
+	1	0	[0, NULL]
+	2	4294967295	[4294967295, NULL]
+	3	NULL	NULL
+c2c4494993f6cc18
+	id	v	a
+	1	0	[0,null]
+	2	4294967295	[4294967295,null]
+	3	NULL	NULL
+81639349e80f1cbb
+	v	a
+	BIGINT	VARCHAR
+ef70a6ae91b31b71
+	v	a
+	BIGINT	BIGINT[]
+1cd164fe0160dea0
+	id	v	a
+	1	0	[0, NULL]
+	2	18446744073709551615	[18446744073709551615, NULL]
+	3	NULL	NULL
+96793ab38a03fe3a
+	id	v	a
+	1	0	[0,null]
+	2	18446744073709551615	[18446744073709551615,null]
+	3	NULL	NULL
+466fc574ba95554e
+	v	a
+	HUGEINT	VARCHAR
+d2ff7637505bf511
+	v	a
+	HUGEINT	HUGEINT[]
+bbe550c364977a8f
+	id	v	a
+	1	1	[1, NULL]
+	2	-170141183460469231731687303715884105728	[-170141183460469231731687303715884105728, NULL]
+	3	170141183460469231731687303715884105727	[170141183460469231731687303715884105727, NULL]
+	4	NULL	NULL
+dd90a54fa273680d
+	id	v	a
+	1	1	[1,null]
+	2	-170141183460469231731687303715884105728	[-170141183460469231731687303715884105728,null]
+	3	170141183460469231731687303715884105727	[170141183460469231731687303715884105727,null]
+	4	NULL	NULL
+4a9f97ab0e918cbf
+	v	a
+	HUGEINT	VARCHAR
+3a4d56ef2787c560
+	v	a
+	DOUBLE	DOUBLE[]
+12439414325f2bff
+	id	v	a
+	1	0	[0, NULL]
+	2	340282366920938463463374607431768211455	[340282366920938463463374607431768211455, NULL]
+	3	NULL	NULL
+6ca53ce6ee4bbd72
+	id	v	a
+	1	0	[0,null]
+	2	340282366920938463463374607431768211455	[340282366920938463463374607431768211455,null]
+	3	NULL	NULL
+6c8893c188293dcd
+	v	a
+	BIGNUM	VARCHAR
+47600c1f7cdef7fc
+	v	a
+	DOUBLE	DOUBLE[]
+4f6b9148f64852e3
+	id	v	a
+	1	1	[1, NULL]
+	2	-123456789012345678901234567890123456789012345678901234567890	[-123456789012345678901234567890123456789012345678901234567890, NULL]
+	3	NULL	NULL
+d8ae139b22187a86
+	id	v	a
+	1	1	[1,null]
+	2	-123456789012345678901234567890123456789012345678901234567890	[-123456789012345678901234567890123456789012345678901234567890,null]
+	3	NULL	NULL
+7b37b0de3966c4e8
+	v	a
+	BIGNUM	VARCHAR
+ed5ef71709524420
+	v	a
+	DOUBLE	DOUBLE[]
+c091cd76f7c4d99d
+	id	v	a
+	1	é日本😀	[é日本😀, NULL]
+	2	a\r\nb	[a\r\nb, NULL]
+	3	[1, 2]	['[1, 2]', NULL]
+	4	{a: 1}	['{a: 1}', NULL]
+	5	 lead	[' lead', NULL]
+	6	trail 	['trail ', NULL]
+	7	'	['\\'', NULL]
+	8	null	['null', NULL]
+	9	a=b:c	['a=b:c', NULL]
+	10	\\'	['\\\\\\'', NULL]
+	11	NULL	NULL
+2ae765c4a5a9030d
+	id	v	a
+	1	"é日本😀"	["é日本😀",null]
+	2	"a\\r\\nb"	["a\\r\\nb",null]
+	3	"[1, 2]"	["[1, 2]",null]
+	4	"{a: 1}"	["{a: 1}",null]
+	5	" lead"	[" lead",null]
+	6	"trail "	["trail ",null]
+	7	"'"	["'",null]
+	8	"null"	["null",null]
+	9	"a=b:c"	["a=b:c",null]
+	10	"\\\\'"	["\\\\'",null]
+	11	NULL	NULL
+24d2099022e7c38f
+	v	a
+	VARCHAR	VARCHAR
+2e84ed1ed74fb8a2
+	v	a
+	VARCHAR	VARCHAR[]
+7c1ddcc6e9a2a076
+	id	v	a
+	1	01:02:03.123456789	['01:02:03.123456789', NULL]
+	2	23:59:59.999999999	['23:59:59.999999999', NULL]
+	3	NULL	NULL
+6a60d325e710a723
+	id	v	a
+	1	"01:02:03.123456789"	["01:02:03.123456789",null]
+	2	"23:59:59.999999999"	["23:59:59.999999999",null]
+	3	NULL	NULL
+abe20f03f3d67014
+	v	a
+	TIME	VARCHAR
+f48d77084c34d072
+	v	a
+	TIME	TIME[]
+373aaf2315adcc84
+	id	v	a
+	1	2024-01-02 03:04:05	['2024-01-02 03:04:05', NULL]
+	2	infinity	[infinity, NULL]
+	3	NULL	NULL
+94d8bc879b428a8d
+	id	v	a
+	1	"2024-01-02 03:04:05"	["2024-01-02 03:04:05",null]
+	2	"infinity"	["infinity",null]
+	3	NULL	NULL
+dd968d381677d0e5
+	v	a
+	TIMESTAMP WITH TIME ZONE	VARCHAR
+978c0cd81114cee3
+	v	a
+	TIMESTAMP	TIMESTAMP[]
+313d0152937ea12a
+	id	v	a
+	1	2024-01-02 03:04:05.123	['2024-01-02 03:04:05.123', NULL]
+	2	-infinity	[-infinity, NULL]
+	3	NULL	NULL
+9163d8f8b2765227
+	id	v	a
+	1	"2024-01-02 03:04:05.123"	["2024-01-02 03:04:05.123",null]
+	2	"-infinity"	["-infinity",null]
+	3	NULL	NULL
+2eef9c0266b7670a
+	v	a
+	TIMESTAMP WITH TIME ZONE	VARCHAR
+6d47061d4f0b0c1d
+	v	a
+	TIMESTAMP	TIMESTAMP[]
+4703abe8a0f3f546
+	id	v	a
+	1	2024-01-02 03:04:05.123456789	['2024-01-02 03:04:05.123456789', NULL]
+	2	infinity	[infinity, NULL]
+	3	NULL	NULL
+343f49369d7a4c8b
+	id	v	a
+	1	"2024-01-02 03:04:05.123456789"	["2024-01-02 03:04:05.123456789",null]
+	2	"infinity"	["infinity",null]
+	3	NULL	NULL
+2077834aa910a7bd
+	v	a
+	TIMESTAMP WITH TIME ZONE	VARCHAR
+590a74a8de7574c7
+	v	a
+	VARCHAR	VARCHAR[]
+3da2ec47170d682d
+	id	v	a
+	1	2024-01-02 03:04:05.123456789+00	['2024-01-02 03:04:05.123456789+00', NULL]
+	2	-infinity	[-infinity, NULL]
+	3	NULL	NULL
+dd499eccd1a44aff
+	id	v	a
+	1	"2024-01-02 03:04:05.123456789+00"	["2024-01-02 03:04:05.123456789+00",null]
+	2	"-infinity"	["-infinity",null]
+	3	NULL	NULL
+c0979a9901177d76
+	v	a
+	TIMESTAMP WITH TIME ZONE	VARCHAR
+8471833295758de3
+	v	a
+	TIMESTAMP WITH TIME ZONE	TIMESTAMP WITH TIME ZONE[]
+8eff1aec730c0597
+	id	v	a
+	1	[1, 2, NULL]	[[1, 2, NULL], NULL]
+	2	[]	[[], NULL]
+	3	NULL	NULL
+bb584e6476137453
+	id	v	a
+	1	[1,2,null]	[[1,2,null],null]
+	2	[]	[[],null]
+	3	NULL	NULL
+5a1abc6bae41efc2
+	v	a
+	VARCHAR	VARCHAR
+165de782232e3cea
+	v	a
+	BIGINT[]	BIGINT[][]
+b0d5966fee63614e
+	id	v	a
+	1	['a,b', 'NULL', NULL]	[['a,b', 'NULL', NULL], NULL]
+	2	['']	[[''], NULL]
+	3	NULL	NULL
+decc60f22eef8136
+	id	v	a
+	1	["a,b","NULL",null]	[["a,b","NULL",null],null]
+	2	[""]	[[""],null]
+	3	NULL	NULL
+4e14b4e510e464a3
+	v	a
+	VARCHAR	VARCHAR
+36cd891bdacbffcc
+	v	a
+	VARCHAR[]	VARCHAR[][]
+4fee5360eaf01b84
+	id	v	a
+	1	[[1, 2], [], NULL]	[[[1, 2], [], NULL], NULL]
+	2	NULL	NULL
+dc88240a13e5df0e
+	id	v	a
+	1	[[1,2],[],null]	[[[1,2],[],null],null]
+	2	NULL	NULL
+8685cb1fca02dcc6
+	v	a
+	VARCHAR	VARCHAR
+e06a129081a405ad
+	v	a
+	BIGINT[][]	BIGINT[][][]
+4ccc88731a84f365
+	id	v	a
+	1	{'a': 1, 'b': x}	[{'a': 1, 'b': x}, NULL]
+	2	{'a': NULL, 'b': 'a,b'}	[{'a': NULL, 'b': 'a,b'}, NULL]
+	3	NULL	NULL
+61eee645a7d41a11
+	id	v	a
+	1	{"a":1,"b":"x"}	[{"a":1,"b":"x"},null]
+	2	{"a":null,"b":"a,b"}	[{"a":null,"b":"a,b"},null]
+	3	NULL	NULL
+a6359849f8a670f3
+	v	a
+	VARCHAR	VARCHAR
+d284b958754864fa
+	v	a
+	STRUCT(a BIGINT, b VARCHAR)	STRUCT(a BIGINT, b VARCHAR)[]
+d0e06c9b59721720
+	id	v	a
+	1	{'k': '[1]', 'l': [1, NULL]}	[{'k': '[1]', 'l': [1, NULL]}, NULL]
+	2	NULL	NULL
+b861b8a606023bb5
+	id	v	a
+	1	{"k":"[1]","l":[1,null]}	[{"k":"[1]","l":[1,null]},null]
+	2	NULL	NULL
+2eaefcf4251110e1
+	v	a
+	VARCHAR	VARCHAR
+8aad397be822ea35
+	v	a
+	STRUCT(k VARCHAR, l BIGINT[])	STRUCT(k VARCHAR, l BIGINT[])[]
+87c961a0081772e3
+	id	v	a
+	1	{a=1, b=NULL}	[{a=1, b=NULL}, NULL]
+	2	{}	[{}, NULL]
+	3	NULL	NULL
+6c9eadce27a2206b
+	id	v	a
+	1	{"a":1,"b":null}	[{"a":1,"b":null},null]
+	2	{}	[{},null]
+	3	NULL	NULL
+2fa1c807e0e3d6ae
+	v	a
+	VARCHAR	VARCHAR
+ad4c779103cc2f79
+	v	a
+	STRUCT(a BIGINT, b "NULL")	STRUCT(a BIGINT, b "NULL")[]
+0bf76f9749fbb824
+	id	v	a
+	1	{'k=1'='a,b', x y=''}	[{'k=1'='a,b', x y=''}, NULL]
+	2	NULL	NULL
+411f784a7bc8a888
+	id	v	a
+	1	{"k=1":"a,b","x y":""}	[{"k=1":"a,b","x y":""},null]
+	2	NULL	NULL
+555508511400d678
+	v	a
+	VARCHAR	VARCHAR
+e1b99b9448fbbac7
+	v	a
+	STRUCT("k=1" VARCHAR, "x y" VARCHAR)	STRUCT("k=1" VARCHAR, "x y" VARCHAR)[]
+91c8eb45fc2d1ebd
+	id	v	a
+	1	[1, 2]	[[1, 2], NULL]
+	2	[NULL, 3]	[[NULL, 3], NULL]
+	3	NULL	NULL
+63024887e9fd7883
+	id	v	a
+	1	[1,2]	[[1,2],null]
+	2	[null,3]	[[null,3],null]
+	3	NULL	NULL
+1dc01334ee6bfa3b
+	v	a
+	VARCHAR	VARCHAR
+5c5da86cba4cf325
+	v	a
+	BIGINT[]	BIGINT[][]
+d39f4dc28b267c86
+	id	v	a
+	1	42	[42, NULL]
+	2	a,b	[a,b, NULL]
+	3	NULL	NULL
+4004a0f0f119a08c
+	id	v	a
+	1	{"num":42}	[{"num":42},null]
+	2	{"str":"a,b"}	[{"str":"a,b"},null]
+	3	NULL	NULL
+ba02c964984800d6
+	id	v	same
+	1	42	f
+	2	a,b	t
+	3	NULL	f
+c33ad076f2640a83
+	id	a	same
+	1	[42, NULL]	f
+	2	[a, b, NULL]	f
+	3	NULL	t
+0331b9b3354ceb6c
+	id	v	a	same
+	1	42	[42, NULL]	f
+	2	a,b	[a, b, NULL]	f
+	3	NULL	NULL	f
+060a9c9fbd42506b
+	v	a
+	VARCHAR	VARCHAR
+0c38929c2dd6ea81
+	v	a
+	STRUCT(num BIGINT, str VARCHAR)	STRUCT(num BIGINT, str VARCHAR)[]
+2d7fd96a3a3fee7f
+	id	v	a
+	1	POINT (1 2)	['POINT (1 2)', NULL]
+	2	LINESTRING (0 0, 1 1)	['LINESTRING (0 0, 1 1)', NULL]
+	3	NULL	NULL
+caef543a00445d4b
+	id	v	a
+	1	"POINT (1 2)"	["POINT (1 2)",null]
+	2	"LINESTRING (0 0, 1 1)"	["LINESTRING (0 0, 1 1)",null]
+	3	NULL	NULL
+61ade55d788d8fe3
+	v	a
+	VARCHAR	VARCHAR
+8b8db0f1f6cb23a1
+	v	a
+	VARCHAR	VARCHAR[]

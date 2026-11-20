@@ -112,3 +112,24 @@ COPY (SELECT * FROM (VALUES ('Maria', '1990-01-01'), ('Pedro', 'The 90s')) AS t(
 
 statement error Could not convert string "The 90s" to 'DATE'
 FROM read_csv('${__TEST_DIR__}/reading_faulty_csv_files_example_008_people.csv', columns = {'name': 'VARCHAR', 'birth_date': 'DATE'});
+
+
+# DOCS_TEST: example_009
+
+statement ok
+COPY (SELECT * FROM (VALUES ('Pedro', '31'), ('Oogie Boogie', ' three')) AS t(a, b)) TO '${__TEST_DIR__}/reading_faulty_csv_files_example_009_faulty.csv' (FORMAT CSV, HEADER false, DELIMITER ',');
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_csv('faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'})
+#| WHERE name = 'Pedro';
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_csv('${__TEST_DIR__}/reading_faulty_csv_files_example_009_faulty.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER'})
+WHERE name = 'Pedro';
+----
+name	age
+Pedro	31

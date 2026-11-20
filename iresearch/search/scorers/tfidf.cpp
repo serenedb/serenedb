@@ -40,9 +40,9 @@
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
@@ -111,8 +111,8 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
 
   const uint32_t* norm = _normalize ? FieldNormsOf(ctx) : nullptr;
 
-  return ResolveBool(norm, [&]<bool HasNorms>() {
-    return ResolveBool(scale, [&]<bool HasScale>() {
+  return Resolve(norm, [&]<bool HasNorms>() {
+    return Resolve(scale, [&]<bool HasScale>() {
       const auto* stats = stats_cast(ctx.stats);
       return ScoreFunction::Make<TfIdfScore<HasNorms, HasScale>>(
         norm, ctx.boost, *stats, freq, scale);

@@ -22,18 +22,22 @@
 
 #include <cstdint>
 #include <duckdb.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <initializer_list>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/index/segment_reader.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
 #include <roaring/roaring.hh>
 #include <set>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -86,8 +90,6 @@ class ReindexRemovesTest : public ::testing::Test {
  protected:
   void SetUp() override {
     irs::IndexWriterOptions options;
-    options.db = &EngineDb();
-    options.reader_options.db = &EngineDb();
     options.column_options = [](irs::field_id) { return irs::ColumnOptions{}; };
     options.row_group_size = kRowGroupSize;
     _writer =
@@ -192,7 +194,7 @@ class ReindexRemovesTest : public ::testing::Test {
     return static_cast<irs::doc_id_t>(irs::doc_limits::min() + index);
   }
 
-  irs::MemoryDirectory _dir;
+  ::tests::IndexDir _dir{EngineDb(), test::MemoryRoot("reindex_removes")};
   ::tests::IndexWriter::ptr _writer;
 };
 

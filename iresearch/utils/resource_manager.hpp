@@ -65,16 +65,6 @@ struct IResourceManager {
   }
 };
 
-struct ResourceManagementOptions {
-  static ResourceManagementOptions gDefault;
-
-  IResourceManager* transactions{&IResourceManager::gNoop};
-  IResourceManager* readers{&IResourceManager::gNoop};
-  IResourceManager* compactions{&IResourceManager::gNoop};
-  IResourceManager* file_descriptors{&IResourceManager::gNoop};
-  IResourceManager* cached_columns{&IResourceManager::gNoop};
-};
-
 // TODO(mbkkt) rename to ManagedStdAllocator
 template<typename T>
 struct ManagedTypedAllocator

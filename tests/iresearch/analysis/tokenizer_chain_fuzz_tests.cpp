@@ -47,10 +47,7 @@ using irs::analysis::Tokenizer;
 using irs::analysis::TokenizerConfig;
 using irs::analysis::UnionTokenizer;
 
-duckdb::ClientContext& Context() {
-  static duckdb::Connection conn{tests::Database()};
-  return *conn.context;
-}
+duckdb::ClientContext& Context() { return tests::EngineContext(); }
 
 Tokenizer::ptr Build(TokenizerConfig config) {
   auto tokenizer =

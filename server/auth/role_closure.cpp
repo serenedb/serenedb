@@ -27,6 +27,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <memory>
 #include <span>
 #include <vector>

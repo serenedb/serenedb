@@ -19,11 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_format.h>
 #include <gtest/gtest.h>
 #include <unistd.h>
 
 #include <cstdint>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/local_file_system.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -59,6 +62,42 @@ std::vector<std::vector<uint8_t>> Keep(
   }
   return kept;
 }
+
+class FailingFileSystem final : public duckdb::LocalFileSystem {
+ public:
+  bool fail_listing = false;
+  bool fail_writes = false;
+  bool fail_removal = false;
+
+  void Write(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
+             duckdb::idx_t location) final {
+    if (fail_writes) {
+      throw duckdb::IOException("the disk refused the write");
+    }
+    LocalFileSystem::Write(handle, buffer, nr_bytes, location);
+  }
+
+  bool TryRemoveFile(const std::string& filename,
+                     duckdb::optional_ptr<duckdb::FileOpener> opener) final {
+    if (fail_removal) {
+      throw duckdb::IOException("the disk refused the removal");
+    }
+    return LocalFileSystem::TryRemoveFile(filename, opener);
+  }
+
+ protected:
+  bool ListFilesExtended(
+    const std::string& directory,
+    const std::function<void(duckdb::OpenFileInfo& info)>& callback,
+    duckdb::optional_ptr<duckdb::FileOpener> opener,
+    const duckdb::ListFilesOptions& options) final {
+    if (fail_listing) {
+      throw duckdb::IOException("the disk refused the listing");
+    }
+    return LocalFileSystem::ListFilesExtended(directory, callback, opener,
+                                              options);
+  }
+};
 
 class LogTest : public ::testing::Test {
  protected:
@@ -102,6 +141,10 @@ class LogTest : public ::testing::Test {
     return _dir / Log::ChunkName(number);
   }
 
+  std::filesystem::path SnapshotFile(uint64_t sequence) const {
+    return _dir / absl::StrFormat("%016x.snapshot", sequence);
+  }
+
   void Overwrite(uint64_t number, uint64_t at, const std::string& bytes) const {
     std::fstream file{Chunk(number),
                       std::ios::in | std::ios::out | std::ios::binary};
@@ -123,7 +166,13 @@ class LogTest : public ::testing::Test {
     return bytes;
   }
 
-  std::unique_ptr<duckdb::FileSystem> _fs = duckdb::FileSystem::CreateLocal();
+  static void Damage(const std::filesystem::path& file,
+                     const std::string& bytes) {
+    std::ofstream{file, std::ios::binary | std::ios::trunc} << bytes;
+  }
+
+  std::unique_ptr<FailingFileSystem> _fs =
+    std::make_unique<FailingFileSystem>();
   std::filesystem::path _dir;
   std::vector<std::string> _records;
 };
@@ -218,6 +267,152 @@ TEST_F(LogTest, ASnapshotOfTheWholeLogKeepsTheCurrentChunk) {
   Open();
   EXPECT_EQ(_records, (std::vector{Half('A'), Half('B'), Payload('C')}));
   EXPECT_FALSE(std::filesystem::exists(Chunk(2)));
+}
+
+TEST_F(LogTest, EachSnapshotIsWrittenOnceUnderItsOwnNumber) {
+  {
+    auto log = Open();
+    const auto a = log->Append(Bytes(Payload('A')));
+    Snapshot(*log, a);
+    EXPECT_TRUE(std::filesystem::exists(SnapshotFile(1)));
+    const auto b = log->Append(Bytes(Payload('B')));
+    Snapshot(*log, b);
+    EXPECT_FALSE(std::filesystem::exists(SnapshotFile(1)));
+    EXPECT_TRUE(std::filesystem::exists(SnapshotFile(2)));
+    log->Append(Bytes(Payload('C')));
+  }
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B'), Payload('C')}));
+}
+
+TEST_F(LogTest, ASnapshotThePointerDoesNotNameYetIsRemoved) {
+  {
+    auto log = Open();
+    const auto a = log->Append(Bytes(Payload('A')));
+    Snapshot(*log, a);
+    log->Append(Bytes(Payload('B')));
+  }
+  std::ofstream{SnapshotFile(2)} << "cut short by a crash";
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+  EXPECT_FALSE(std::filesystem::exists(SnapshotFile(2)));
+  EXPECT_TRUE(std::filesystem::exists(SnapshotFile(1)));
+}
+
+TEST_F(LogTest, TheSnapshotThePointerMovedFromIsRemoved) {
+  {
+    auto log = Open();
+    const auto a = log->Append(Bytes(Payload('A')));
+    Snapshot(*log, a);
+    const auto b = log->Append(Bytes(Payload('B')));
+    Snapshot(*log, b);
+  }
+  std::ofstream{SnapshotFile(1)} << "left by a crash";
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+  EXPECT_FALSE(std::filesystem::exists(SnapshotFile(1)));
+  EXPECT_TRUE(std::filesystem::exists(SnapshotFile(2)));
+}
+
+TEST_F(LogTest, ADamagedSnapshotPointerIsRefused) {
+  {
+    auto log = Open();
+    const auto a = log->Append(Bytes(Payload('A')));
+    Snapshot(*log, a);
+  }
+  {
+    std::fstream pointer{_dir / "current_snapshot",
+                         std::ios::in | std::ios::out | std::ios::binary};
+    pointer.seekp(8);
+    pointer.put('\x7f');
+  }
+  EXPECT_THROW(Open(), irs::SqlException);
+}
+
+TEST_F(LogTest, AMissingSnapshotIsRefused) {
+  {
+    auto log = Open();
+    const auto a = log->Append(Bytes(Payload('A')));
+    Snapshot(*log, a);
+  }
+  std::filesystem::remove(SnapshotFile(1));
+  EXPECT_THROW(Open(), irs::SqlException);
+}
+
+TEST_F(LogTest, ADamagedSnapshotIsRefused) {
+  {
+    auto log = Open();
+    const auto a = log->Append(Bytes(Payload('A')));
+    Snapshot(*log, a);
+  }
+  Damage(SnapshotFile(1), "cut short");
+  EXPECT_THROW(Open(), irs::SqlException);
+}
+
+TEST_F(LogTest, ACutBeforeTheSnapshotIsRefused) {
+  Lsn a = 0;
+  {
+    auto log = Open();
+    a = log->Append(Bytes(Payload('A')));
+    const auto b = log->Append(Bytes(Payload('B')));
+    Snapshot(*log, b);
+  }
+  EXPECT_THROW(Log::Cut(*_fs, _dir.string(), a), irs::SqlException);
+}
+
+TEST_F(LogTest, AnEmptyLogIsCutAtItsStart) {
+  std::filesystem::create_directories(_dir);
+  Log::Cut(*_fs, _dir.string(), 0);
+  EXPECT_TRUE(std::filesystem::is_empty(_dir));
+}
+
+TEST_F(LogTest, ALogDirectoryWithForeignFilesIsKept) {
+  {
+    Open()->Append(Bytes(Payload('A')));
+  }
+  std::filesystem::create_directory(_dir / "foreign");
+  EXPECT_FALSE(Log::Remove(*_fs, _dir.string()));
+  EXPECT_FALSE(std::filesystem::exists(Chunk(0)));
+  EXPECT_TRUE(std::filesystem::exists(_dir / "foreign"));
+}
+
+TEST_F(LogTest, ALogThatCannotBeListedIsKept) {
+  {
+    Open()->Append(Bytes(Payload('A')));
+  }
+  _fs->fail_listing = true;
+  EXPECT_FALSE(Log::Remove(*_fs, _dir.string()));
+  EXPECT_TRUE(std::filesystem::exists(Chunk(0)));
+}
+
+TEST_F(LogTest, ANextChunkThatCannotBeWrittenIsNotUsed) {
+  {
+    auto log = Open();
+    log->Append(Bytes(Payload('A')));
+    _fs->fail_writes = true;
+    _fs->fail_removal = true;
+    EXPECT_THROW(log->PrepareNext(), duckdb::IOException);
+    EXPECT_FALSE(log->HasNext());
+    _fs->fail_writes = false;
+    _fs->fail_removal = false;
+    log->Append(Bytes(Payload('B')));
+  }
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+}
+
+TEST_F(LogTest, ALinkOverAnExistingFileIsRefused) {
+  const auto copy = _dir.string() + "_copy";
+  std::filesystem::remove_all(copy);
+  {
+    auto log = Open();
+    const auto a = log->Append(Bytes(Payload('A')));
+    Snapshot(*log, a);
+    log->Append(Bytes(Payload('B')));
+    EXPECT_EQ(log->Link(copy), log->Durable());
+    EXPECT_THROW(log->Link(copy), irs::SqlException);
+  }
+  std::filesystem::remove_all(copy);
 }
 
 TEST_F(LogTest, ARecordOverTheSizeLimitIsRefused) {

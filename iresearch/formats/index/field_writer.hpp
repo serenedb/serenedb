@@ -133,7 +133,7 @@ class FieldWriter final : public FieldSink {
   PostingMeta _single;
   std::array<byte_type, PostingMeta::kInlineBytes> _single_inline{};
   IdxWriter* _idx = nullptr;
-  IndexOutput* _out = nullptr;
+  duckdb::WriteStream* _out = nullptr;
   uint64_t _docs = 0;
   uint64_t _terms = 0;
   uint64_t _first_page = 0;

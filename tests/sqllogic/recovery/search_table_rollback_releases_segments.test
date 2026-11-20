@@ -22,7 +22,7 @@ CHECKPOINT;
 
 
 statement ok
-SET VARIABLE rrs_own_dir = '${SDB_DATADIR}/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_own') || '/*';
+SET VARIABLE rrs_own_dir = '${SDB_DATADIR}/engine_v1/store/*';
 
 
 statement ok
@@ -114,16 +114,11 @@ CHECKPOINT;
 
 
 statement ok
-SET VARIABLE rrs_re_dir = '${SDB_DATADIR}/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_re') || '/*';
-
-
-statement ok
 CREATE MACRO rrs_re_stale() AS (
   (SELECT count(DISTINCT regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1))
-   FROM glob(getvariable('rrs_re_dir'))
+   FROM glob('${SDB_DATADIR}/engine_v1/store/*')
    WHERE regexp_extract(file, '/([0-9a-f]{16})\.[^/]*$', 1) <> '')
-  - (SELECT value FROM sdb_metrics
-     WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'rrs_re') AND metric = 'num_segments'));
+  - (SELECT sum(value) FROM sdb_metrics WHERE metric = 'num_segments'));
 
 
 query
@@ -211,7 +206,7 @@ CHECKPOINT;
 
 
 statement ok
-SET VARIABLE rrs_bk_dir = '${SDB_DATADIR}/engine_v1/store/' || (SELECT oid FROM pg_class WHERE relname = 'rrs_bk') || '/*';
+SET VARIABLE rrs_bk_dir = '${SDB_DATADIR}/engine_v1/store/*';
 
 
 statement ok

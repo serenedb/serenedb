@@ -21,20 +21,23 @@
 #include "catalog/database_directory.h"
 
 #include <absl/functional/any_invocable.h>
-#include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 
-#include <cerrno>
-#include <cstring>
+#include <atomic>
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
-#include <system_error>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 #include <vector>
 
 #include "runtime/runtime.h"
 #include "server/utils/lifecycle.h"
-#include "utils/file_utils.h"
 
 namespace sdb::catalog {
 namespace {
@@ -60,16 +63,6 @@ struct StorageWork {
 StorageWork& Work() {
   static StorageWork gWork;
   return gWork;
-}
-
-bool RemoveEmptyDirectory(const std::filesystem::path& path) {
-  std::error_code ec;
-  std::filesystem::remove(path, ec);
-  if (ec) {
-    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
-    return false;
-  }
-  return true;
 }
 
 void RunRemoval(Removal&& removal) {
@@ -131,60 +124,68 @@ void ResumeRemovals() {
   }
 }
 
-void CreateDirectory(const std::filesystem::path& path) {
-  std::error_code ec;
-  if (!std::filesystem::create_directory(path, ec)) {
-    utils::file_utils::ThrowFileError("create directory", path.string(),
-                                      ec ? ec.value() : EEXIST);
+void CreateDirectory(const std::string& path) {
+  if (!StorageFileSystem().CreateDirectoryExtended(
+        path, {.mode = duckdb::CreateDirectoryMode::RECURSIVE, .sync = true})) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_IO_ERROR),
+      ERR_MSG("could not create directory \"", path, "\": it already exists"));
   }
-  utils::file_utils::SyncDirectory(path.parent_path());
 }
 
-bool RemoveDirectory(const std::filesystem::path& path) {
-  std::error_code ec;
-  std::filesystem::remove_all(path, ec);
-  if (ec) {
-    SDB_WARN(GENERAL, "could not remove '", path.string(), "': ", ec.message());
+void RemoveTreeOrThrow(const std::string& path) {
+  duckdb::TaskScheduler::BlockingScope blocking;
+  auto& fs = StorageFileSystem();
+  fs.RemoveDirectoryExtended(
+    path, {.mode = duckdb::RemoveDirectoryMode::RECURSIVE, .strict = true});
+  if (fs.DirectoryExists(path)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_IO_ERROR),
+      ERR_MSG("could not remove directory \"", path, "\": it is still there"));
+  }
+}
+
+bool RemoveTree(const std::string& path) noexcept {
+  try {
+    RemoveTreeOrThrow(path);
+    return true;
+  } catch (const std::exception& e) {
+    SDB_WARN(GENERAL, "could not remove '", path,
+             "': ", duckdb::ErrorData{e}.RawMessage());
     return false;
   }
-  return true;
 }
 
-DatabaseDirectory::DatabaseDirectory(std::filesystem::path path)
-  : _path{std::move(path)} {}
-
-std::filesystem::path DatabaseDirectory::StoragePath(duckdb::idx_t oid) const {
-  return _path / absl::StrCat(oid);
+duckdb::FileSystem& StorageFileSystem() {
+  return irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
 }
 
-std::filesystem::path DatabaseDirectory::CreateStorage(
-  duckdb::idx_t oid) const {
-  auto path = StoragePath(oid);
-  CreateDirectory(path);
-  return path;
+uint64_t StorageBytes(const std::string& directory) {
+  uint64_t size = 0;
+  StorageFileSystem().ListFiles(
+    directory,
+    [&](duckdb::OpenFileInfo& info) {
+      duckdb::idx_t bytes = 0;
+      if (info.extended_info &&
+          info.extended_info->TryGetOption("file_size", bytes)) {
+        size += bytes;
+      }
+    },
+    nullptr, {.recursive = true, .strict = true});
+  return size;
 }
 
-std::optional<std::filesystem::path> DatabaseDirectory::OpenStorage(
-  duckdb::idx_t oid) const {
-  auto path = StoragePath(oid);
-  std::error_code ec;
-  if (std::filesystem::is_directory(path, ec)) {
-    return path;
-  }
-  if (ec && ec != std::errc::no_such_file_or_directory) {
-    utils::file_utils::ThrowFileError("open directory", path.string(), ec);
-  }
-  return std::nullopt;
+std::string StoreDirOf(std::string_view tablespace_directory) {
+  return duckdb::FileSystem::JoinPath(tablespace_directory, kStoreDir);
 }
 
-void DatabaseDirectory::RemoveStorage(
-  std::shared_ptr<DatabaseDirectory> directory, duckdb::idx_t oid,
-  absl::AnyInvocable<bool()> remove_files) {
-  BeginStorageWork();
-  RunRemoval([directory = std::move(directory), oid,
-              remove_files = std::move(remove_files)]() mutable {
-    return remove_files() && RemoveEmptyDirectory(directory->StoragePath(oid));
-  });
+const std::shared_ptr<std::atomic_uint64_t>& SegmentIds() {
+  static const auto gIds = std::make_shared<std::atomic_uint64_t>(0);
+  return gIds;
+}
+
+void RemoveStorage(absl::AnyInvocable<bool()> remove_files) {
+  RunRemoval(std::move(remove_files));
 }
 
 }  // namespace sdb::catalog

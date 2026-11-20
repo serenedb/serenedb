@@ -27,11 +27,8 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/storage/storage_extension.hpp>
 #include <duckdb/transaction/transaction_manager.hpp>
-#include <filesystem>
 #include <string>
 #include <string_view>
-#include <utility>
-#include <vector>
 
 namespace duckdb {
 
@@ -48,12 +45,11 @@ struct DataDirectory {
   explicit DataDirectory(std::string directory);
 
   bool InMemory() const noexcept { return directory.empty(); }
-  std::filesystem::path EngineDir() const;
-  std::filesystem::path LogDir() const;
-  std::filesystem::path StoreDir() const;
-  std::filesystem::path StorageDir(duckdb::idx_t oid) const;
+  std::string LogDir() const;
+  std::string StoreDir() const;
 
   std::string directory;
+  std::string engine;
 };
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
@@ -66,9 +62,6 @@ duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
 
 duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
                                               const DataDirectory& layout);
-
-std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
-  const std::filesystem::path& directory);
 
 void InitCatalog(bool default_database, bool initialized);
 

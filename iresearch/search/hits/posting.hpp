@@ -35,7 +35,6 @@
 #include "iresearch/search/lead/posting_scored.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -50,7 +49,7 @@ class BoostTerm {
   BoostTerm(BoostTerm&&) = delete;
   BoostTerm& operator=(BoostTerm&&) = delete;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args) {
     _leaf.Prepare(meta, doc_in, segment, field, args);
@@ -141,7 +140,7 @@ class Posting : public Root, public irs::detail::PostingBatch<InputType, true> {
   Posting(Posting&&) = delete;
   Posting& operator=(Posting&&) = delete;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args, IndexFeatures layout,
                bool bounds) {

@@ -136,7 +136,7 @@ To inspect how much remote data is transferred for a query, [`EXPLAIN ANALYZE`](
 
 ### Caching
 
-Starting with version 1.3.0, SereneDB supports caching remote data. To inspect the content of the external file cache, run:
+Starting with version 1.3.0, SereneDB supports caching remote data. A remote file that fits in one request (`external_file_cache_remote_max_block_size`, 4 MiB by default) is fetched whole by its first read, so reads of its other parts make no request. To inspect the content of the external file cache, run:
 
 <SqlLogicTest id="cookbook/performance/how_to_tune_workloads/example_004" />
 

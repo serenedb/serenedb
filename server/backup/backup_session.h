@@ -28,7 +28,6 @@
 #include <duckdb/common/unique_ptr.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -40,14 +39,8 @@ namespace sdb::backup {
 
 inline constexpr std::string_view kBackupDir = "backup";
 
-struct StoreCut {
-  duckdb::idx_t oid = 0;
-};
-
 struct Cut {
-  std::filesystem::path log_link;
   uint64_t log_size = 0;
-  std::vector<StoreCut> stores;
 };
 
 struct BackupOwner {
@@ -77,9 +70,7 @@ class BackupSession final {
   bool _active ABSL_GUARDED_BY(_mutex) = false;
   utils::DrainGate::Closed _checkpoints ABSL_GUARDED_BY(_mutex);
   utils::DrainGate::Closed _maintenance ABSL_GUARDED_BY(_mutex);
-  std::vector<duckdb::shared_ptr<duckdb::AttachedDatabase>> _pins
-    ABSL_GUARDED_BY(_mutex);
-  std::filesystem::path _backup_dir ABSL_GUARDED_BY(_mutex);
+  std::string _backup_dir ABSL_GUARDED_BY(_mutex);
   BackupOwner _owner ABSL_GUARDED_BY(_mutex);
   std::string _label_file ABSL_GUARDED_BY(_mutex);
 };

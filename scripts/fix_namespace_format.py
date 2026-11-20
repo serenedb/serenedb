@@ -7,9 +7,23 @@ from pathlib import Path
 
 NS_OPEN = re.compile(r"^\s*(?:inline\s+)?namespace(?:\s+[\w:]+)?\s*\{\s*$")
 NS_CLOSE = re.compile(r"^\s*\}\s*//\s*namespace")
+COMMENT_END = re.compile(r"^\s*//|\*/\s*$")
+
+
+def needs_blank_before(prev_line: str | None) -> bool:
+    return (prev_line is not None and prev_line != "" and not NS_OPEN.match(prev_line)
+            and not NS_CLOSE.match(prev_line) and not COMMENT_END.search(prev_line))
 
 
 def fix(lines: list[str]) -> list[str]:
+    # Pass 0: ensure blank line before NS_OPEN, but NOT after another namespace line or a comment
+    result = []
+    for line in lines:
+        if NS_OPEN.match(line) and needs_blank_before(result[-1] if result else None):
+            result.append("")
+        result.append(line)
+    lines = result
+
     # Pass 1: ensure blank line after NS_OPEN, but NOT before another NS_OPEN or NS_CLOSE
     result = []
     for i, line in enumerate(lines):

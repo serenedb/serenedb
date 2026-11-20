@@ -22,11 +22,13 @@
 
 #include <absl/functional/overload.h>
 
+#include <memory>
 #include <tuple>
 #include <utility>
 #include <variant>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/nested_slots.hpp"
 #include "iresearch/search/queries/nested_query.hpp"
 
@@ -87,6 +89,43 @@ typename Family::Result PlanNestedDocs(const ByNestedQuery& query,
         std::piecewise_construct, std::move(parent),
         std::forward_as_tuple(std::move(child)), std::move(rule));
     });
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const ByNestedQuery& query, const Ctx& ctx) {
+  if constexpr (!kScoredPlan<Family, Ctx>) {
+    return PlanNestedDocs<Family>(
+      query, [&]<typename Node>(auto&&... args) -> typename Family::Result {
+        return Family::template Docs<Node>(
+          ctx, std::forward<decltype(args)>(args)...);
+      });
+  } else {
+    if (!query.ScoresChildren()) {
+      return PlanNestedDocs<Family>(
+        query, [&]<typename Node>(auto&&... args) -> typename Family::Result {
+          return Family::template Constant<Node>(
+            ctx, query.Constant(), std::forward<decltype(args)>(args)...);
+        });
+    }
+    auto fetcher = std::make_unique<ColumnArgsFetcher>();
+    ScoredCtx scoring = Family::Scoring(ctx);
+    scoring.fetcher = fetcher.get();
+    auto child = query.Child().PlanLead(scoring);
+    if (!child) {
+      return {};
+    }
+    auto parent = query.Parents();
+    const auto merge = query.Merge();
+    return ResolveRule<false>(
+      query.Segment(), query.MatchKind(),
+      [&]<typename Rule>(Rule rule) -> typename Family::Result {
+        using Node = NestedScored<NestedSlots<ScoredChild, Rule>>;
+        return Family::template Scored<Node>(
+          ctx, std::piecewise_construct, std::move(parent),
+          std::forward_as_tuple(std::move(child), std::move(fetcher), merge),
+          std::move(rule));
+      });
+  }
 }
 
 }  // namespace irs::detail

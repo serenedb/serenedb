@@ -24,6 +24,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <span>
 
 #include "iresearch/index/field_meta.hpp"
@@ -33,15 +34,13 @@
 
 namespace irs {
 
-class IndexOutput;
-
 struct TermPayloadWriter {
   virtual ~TermPayloadWriter() = default;
 
-  virtual void WriteTermPayload(IndexOutput& out,
+  virtual void WriteTermPayload(duckdb::WriteStream& out,
                                 std::span<const doc_id_t> docs) = 0;
 
-  virtual void Finish(IndexOutput& out) = 0;
+  virtual void Finish(duckdb::WriteStream& out) = 0;
 
   virtual uint32_t PendingLanes() const noexcept { return 0; }
 

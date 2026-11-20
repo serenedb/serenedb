@@ -25,7 +25,6 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -49,12 +48,12 @@ class PostingProbe : public PostingLeaf<InputType, kProbeShape> {
  public:
   PostingProbe() = default;
 
-  PostingProbe(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingProbe(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                IndexFeatures layout, bool bounds) {
     Prepare(meta, doc_in, layout, bounds);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                IndexFeatures layout, bool bounds) {
     this->SetFreqLen(FeaturesHaveFreq(layout));
     if (!this->OpenList(meta, doc_in, layout, bounds)) {

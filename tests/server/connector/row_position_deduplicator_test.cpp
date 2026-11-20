@@ -40,8 +40,6 @@ class Segment final : public irs::SubReader {
  public:
   explicit Segment(irs::doc_id_t docs) { _meta.docs_count = docs; }
 
-  uint64_t CountMappedMemory() const final { return 0; }
-
   const irs::SegmentInfo& Meta() const final { return _meta; }
 
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
@@ -69,8 +67,6 @@ class View final : public irs::IndexReader {
       _docs += count;
     }
   }
-
-  uint64_t CountMappedMemory() const final { return 0; }
 
   uint64_t live_docs_count() const final { return _docs; }
 

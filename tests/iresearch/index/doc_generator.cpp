@@ -33,8 +33,6 @@
 #include <iresearch/analysis/numeric_terms.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <numeric>
 #include <sstream>
@@ -182,7 +180,7 @@ bool LongField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
                        });
 }
 
-bool LongField::Write(irs::DataOutput& out) const {
+bool LongField::Write(duckdb::WriteStream& out) const {
   irs::WriteZV64(out, _value);
   return true;
 }
@@ -199,7 +197,7 @@ bool IntField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
                        });
 }
 
-bool IntField::Write(irs::DataOutput& out) const {
+bool IntField::Write(duckdb::WriteStream& out) const {
   irs::WriteZV32(out, _value);
   return true;
 }
@@ -216,7 +214,7 @@ bool DoubleField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
                        });
 }
 
-bool DoubleField::Write(irs::DataOutput& out) const {
+bool DoubleField::Write(duckdb::WriteStream& out) const {
   tests::WriteZvdouble(out, _value);
   return true;
 }
@@ -233,15 +231,15 @@ bool FloatField::InsertBlockInto(const irs::IndexWriter::Document& doc) const {
                        });
 }
 
-bool FloatField::Write(irs::DataOutput& out) const {
+bool FloatField::Write(duckdb::WriteStream& out) const {
   tests::WriteZvfloat(out, _value);
   return true;
 }
 
 irs::analysis::Tokenizer& BinaryField::GetTokens() const { return _stream; }
 
-bool BinaryField::Write(irs::DataOutput& out) const {
-  irs::WriteStr(out, _value);
+bool BinaryField::Write(duckdb::WriteStream& out) const {
+  tests::WriteStr(out, _value);
   return true;
 }
 
@@ -522,8 +520,8 @@ void StringField::value(std::string_view str) {
   _value.assign(begin, end);
 }
 
-bool StringField::Write(irs::DataOutput& out) const {
-  irs::WriteStr(out, _value);
+bool StringField::Write(duckdb::WriteStream& out) const {
+  tests::WriteStr(out, _value);
   return true;
 }
 
@@ -550,8 +548,8 @@ void StringViewField::value(std::string_view str) {
   _value = std::string_view(str.data(), max_len);
 }
 
-bool StringViewField::Write(irs::DataOutput& out) const {
-  irs::WriteStr(out, _value);
+bool StringViewField::Write(duckdb::WriteStream& out) const {
+  tests::WriteStr(out, _value);
   return true;
 }
 
@@ -754,7 +752,7 @@ void NormStringJsonFieldFactory(Document& doc, const std::string& name,
 }
 
 std::shared_ptr<const irs::DocRemoval> RemovalOf(
-  const irs::DirectoryReader& reader, const Terms& terms) {
+  const irs::CompositeReader& reader, const Terms& terms) {
   irs::DocRemovalBuilder removal;
   for (uint32_t index = 0; index != reader.size(); ++index) {
     const auto& segment = reader[index];

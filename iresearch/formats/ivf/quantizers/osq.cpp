@@ -443,7 +443,7 @@ class OsqQuantizerWriter final : public QuantizerWriter {
     return {.group_size = 1, .record_size = _lay.record_size};
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(duckdb::WriteStream& out, const float* vecs, size_t n) final {
     _row.resize(_lay.record_size);
     for (size_t r = 0; r < n; ++r) {
       EncodeRow(vecs + r * _lay.d, _row.data());
@@ -465,16 +465,16 @@ class OsqQuantizerWriter final : public QuantizerWriter {
     return out;
   }
 
-  void Finish(IndexOutput& /*out*/) final {}
+  void Finish(duckdb::WriteStream& /*out*/) final {}
 
-  void Serialize(DataOutput& out) const final {
-    out.WriteU64(sizeof(OsqStatsHeader));
-    WritePod(out,
-             OsqStatsHeader{.layout = kOsqLayout,
-                            .bits = static_cast<uint8_t>(_lay.bits),
-                            .query_bits = static_cast<uint8_t>(_lay.query_bits),
-                            .reserved = 0,
-                            .d = _lay.d});
+  void Serialize(duckdb::WriteStream& out) const final {
+    out.Write<uint64_t>(sizeof(OsqStatsHeader));
+    out.Write(
+      OsqStatsHeader{.layout = kOsqLayout,
+                     .bits = static_cast<uint8_t>(_lay.bits),
+                     .query_bits = static_cast<uint8_t>(_lay.query_bits),
+                     .reserved = 0,
+                     .d = _lay.d});
   }
 
   VectorQuantization Kind() const noexcept final {

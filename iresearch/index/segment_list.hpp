@@ -21,23 +21,22 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <string>
 #include <string_view>
-#include <vector>
 
-#include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/composite_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/index/index_reader_options.hpp"
 
 namespace irs {
 
 void AppendSegmentList(std::string& out, uint64_t id, uint8_t kinds,
                        doc_id_t docs);
 
-std::vector<SegmentMeta> ReadSegmentList(const Directory& dir,
-                                         std::string_view text);
-
-DirectoryReader OpenSegmentList(const Directory& dir, std::string_view text,
+CompositeReader OpenSegmentList(duckdb::DatabaseInstance& db,
+                                duckdb::FileSystem& fs, std::string_view root,
+                                std::string_view text,
                                 const IndexReaderOptions& options);
 
 }  // namespace irs

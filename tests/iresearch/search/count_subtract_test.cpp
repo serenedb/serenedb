@@ -238,9 +238,9 @@ TEST_P(CountSubtractTest, conjunctions_count_on_both_sides_of_the_gate) {
   CheckIntersection("rare", "rarer");
 }
 
-INSTANTIATE_TEST_SUITE_P(count_subtract_test, CountSubtractTest,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         CountSubtractTest::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  count_subtract_test, CountSubtractTest,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  CountSubtractTest::to_string);
 
 }  // namespace

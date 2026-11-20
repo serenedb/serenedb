@@ -1174,3 +1174,92 @@ db error: ERROR: No function matches the given name and argument types 'ts_offse
 
 statement ok
 DROP TEXT SEARCH DICTIONARY standalone_dict
+
+
+# --- ts_offsets of an n-gram field: each matched n-gram is a span ---
+statement ok
+CREATE TEXT SEARCH DICTIONARY ngram_offs AS
+    generate_ngrams(2, 2, preserve_original := false)
+    WITH (frequency, position, offset);
+
+
+statement ok
+CREATE TABLE ngram_docs (id INTEGER, body VARCHAR);
+
+
+statement ok
+INSERT INTO ngram_docs VALUES (1, 'quick fox'), (2, 'fox'), (3, 'box of foxes'), (4, 'quack');
+
+
+statement ok
+CREATE INDEX ngram_docs_idx ON ngram_docs USING inverted(id, body ngram_offs);
+
+
+statement ok
+CREATE TABLE ngram_top (id INTEGER, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
+
+statement ok
+INSERT INTO ngram_top SELECT * FROM ngram_docs;
+
+
+statement ok
+CREATE INDEX ngram_top_idx ON ngram_top USING inverted(id, body ngram_offs);
+
+
+# Every n-gram of the query matches: one span over all of them
+query
+SELECT id, ts_offsets(body) FROM ngram_docs_idx WHERE body @@ ts_ngram('fox', 1.0) ORDER BY id;
+----
+id	ts_offsets
+1	{6,9}
+2	{0,3}
+3	{7,10}
+
+
+# Half of them match: a span for each matched n-gram
+query
+SELECT id, ts_offsets(body) FROM ngram_docs_idx WHERE body @@ ts_ngram('fox', 0.5) ORDER BY id;
+----
+id	ts_offsets
+1	{6,8,7,9}
+2	{0,2,1,3}
+3	{1,3,7,9,8,10}
+
+
+query
+SELECT id, ts_offsets(body, 1) FROM ngram_docs_idx WHERE body @@ ts_ngram('quick', 0.5) ORDER BY id;
+----
+id	ts_offsets
+1	{0,5}
+4	{0,5}
+
+
+query
+SELECT id, ts_offsets(body) FROM ngram_top_idx WHERE body @@ ts_ngram('fox', 1.0) ORDER BY id;
+----
+id	ts_offsets
+1	{6,9}
+2	{0,3}
+3	{7,10}
+
+
+query
+SELECT id, ts_offsets(body) FROM ngram_top_idx WHERE body @@ ts_ngram('fox', 0.5) ORDER BY id;
+----
+id	ts_offsets
+1	{6,8,7,9}
+2	{0,2,1,3}
+3	{1,3,7,9,8,10}
+
+
+statement ok
+DROP TABLE ngram_top;
+
+
+statement ok
+DROP TABLE ngram_docs;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ngram_offs;

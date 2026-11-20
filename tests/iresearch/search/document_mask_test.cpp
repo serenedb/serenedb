@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/search/count/live_count.hpp>
@@ -135,13 +136,10 @@ std::string FrozenBlob(const irs::DocumentMask& mask) {
 }
 
 irs::DocumentMask ReadFrozen(std::string_view blob) {
-  static constexpr std::align_val_t kAlignment{32};
-  std::shared_ptr<irs::byte_type> frozen{
-    static_cast<irs::byte_type*>(
-      ::operator new(std::max<size_t>(blob.size(), 1), kAlignment)),
-    [](irs::byte_type* bytes) { ::operator delete(bytes, kAlignment); }};
-  std::memcpy(frozen.get(), blob.data(), blob.size());
-  return irs::DocumentMask{std::move(frozen), blob.size()};
+  duckdb::MemoryStream in{
+    reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(blob.data())),
+    blob.size()};
+  return irs::DocumentMask::ReadFrozen(in, blob.size());
 }
 
 irs::DocumentMask RoundTrip(const irs::DocumentMask& mask) {

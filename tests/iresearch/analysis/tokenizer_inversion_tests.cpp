@@ -28,11 +28,12 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/fields_inverter.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <map>
 #include <mutex>
@@ -42,6 +43,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
+#include "index_dir.hpp"
 #include "postings_cursor.hpp"
 #include "tests_shared.hpp"
 #include "tokenizer_fuzz_checks.hpp"
@@ -289,7 +291,7 @@ class StoreCollector final : public StoreSink {
 
 class IndexUnderTest {
  public:
-  MemoryDirectory& dir() noexcept { return _dir; }
+  ::tests::IndexDir& dir() noexcept { return _dir; }
 
   ::tests::IndexWriter::ptr Open() {
     auto options = irs::tests::DefaultWriterOptions();
@@ -300,12 +302,13 @@ class IndexUnderTest {
                                       std::move(options));
   }
 
-  DirectoryReader Read() {
+  CompositeReader Read() {
     return ::tests::OpenReader(_dir, irs::tests::DefaultReaderOptions());
   }
 
  private:
-  MemoryDirectory _dir;
+  ::tests::IndexDir _dir{DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
 };
 
 void WriteBlock(::tests::IndexWriter::Transaction& trx,
@@ -678,7 +681,7 @@ bool FillDocument(const IndexWriter::Document& doc,
   return true;
 }
 
-std::shared_ptr<const DocRemoval> ByKey(const DirectoryReader& snapshot,
+std::shared_ptr<const DocRemoval> ByKey(const CompositeReader& snapshot,
                                         std::string_view key) {
   return ::tests::RemovalOf(snapshot, {kKey, {std::string{key}}});
 }

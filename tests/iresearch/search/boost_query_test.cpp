@@ -56,8 +56,8 @@ class SpaceField : public tests::FieldBase {
 
   std::string_view Value() const final { return _value; }
 
-  bool Write(irs::DataOutput& o) const final {
-    o.WriteByte(1);
+  bool Write(duckdb::WriteStream& o) const final {
+    o.Write<irs::byte_type>(1);
     return true;
   }
 
@@ -69,7 +69,7 @@ class SpaceField : public tests::FieldBase {
 class BoostQueryTestCase : public tests::IndexTestBase {
  protected:
   // Collect all (score, doc_id) results sorted by score descending.
-  std::vector<irs::ScoreDoc> CollectAll(const irs::DirectoryReader& reader,
+  std::vector<irs::ScoreDoc> CollectAll(const irs::CompositeReader& reader,
                                         const irs::Filter& filter) {
     constexpr size_t kK = 1024;
     irs::TFIDF scorer{/*normalize=*/false};
@@ -139,7 +139,7 @@ class BoostQueryTestCase : public tests::IndexTestBase {
   //   doc B - "open source"           (required + 1 optional)
   //   doc C - "open source software"  (required + 2 optionals)
   //   doc D - "source software"       (no required term -> must be excluded)
-  irs::DirectoryReader CreateIndex() {
+  irs::CompositeReader CreateIndex() {
     auto writer = open_writer(tests::kOmCreate);
 
     auto insert = [&](std::string_view content) {
@@ -332,7 +332,7 @@ TEST_P(BoostQueryTestCase, OptimizerPreservesMixedDistinct) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(boost_query_test, BoostQueryTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

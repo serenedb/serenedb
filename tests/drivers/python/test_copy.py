@@ -162,6 +162,32 @@ def test_copy_from_stdin_json_compression(conn: psycopg.Connection,
         _drop(conn, table_name)
 
 
+@pytest.mark.parametrize(
+    "fmt, payload, expected",
+    [
+        ("text", b"1\tone\r2\ttw\\\ro\r\\.\r",
+         [(1, "one"), (2, "tw\ro")]),
+        ("text", b"1\tone\r\n2\ttwo\r\n\\.\r\n", [(1, "one"), (2, "two")]),
+        ("csv", b'1,"o\rne"\r2,"tw\no"\r3,\r',
+         [(1, "o\rne"), (2, "tw\no"), (3, None)]),
+    ],
+)
+def test_copy_from_stdin_reads_carriage_return_lines(
+        conn: psycopg.Connection, table_name: str, fmt: str, payload: bytes,
+        expected: list) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                          f"(FORMAT {fmt})") as cp:
+                for piece in range(0, len(payload), 3):
+                    cp.write(payload[piece:piece + 3])
+            cur.execute(f'SELECT x, label FROM public."{table_name}" ORDER BY x')
+            assert cur.fetchall() == expected
+    finally:
+        _drop(conn, table_name)
+
+
 @pytest.mark.parametrize("encoding,codec", [("utf-8", "utf-8"),
                                             ("latin-1", "latin-1")])
 def test_copy_from_stdin_csv_reader_option_and_encoding(

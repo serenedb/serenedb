@@ -335,6 +335,12 @@ db error: ERROR: FORCE_QUOTE expects a column list or * as parameter
 
 
 statement error
-EXPORT DATABASE '${__TEST_DIR__}/beast_export_default' (FORMAT csv, DEFAULT);
+EXPORT DATABASE '${__TEST_DIR__}/beast_export_default' (FORMAT csv, DEFAULT 'x');
 ----
 db error: ERROR: COPY DEFAULT cannot be used with COPY TO
+
+
+statement error
+EXPORT DATABASE '${__TEST_DIR__}/beast_export_default' (FORMAT csv, DEFAULT);
+----
+db error: ERROR: default requires a parameter

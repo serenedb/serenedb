@@ -35,6 +35,7 @@ struct CsvDialect {
   char delimiter = ',';
   char quote = '"';
   char escape = '"';
+  char line_break = '\n';
 };
 
 inline constexpr uint8_t kCsvQuoted = 1;
@@ -91,6 +92,9 @@ size_t CsvRecordEnd(std::string_view bytes, size_t from,
 
 size_t CsvLastRecordEnd(std::string_view bytes, const CsvDialect& dialect,
                         CsvQuoteState& state);
+
+char DetectLineBreak(std::string_view bytes, bool csv,
+                     const CsvDialect& dialect, bool complete) noexcept;
 
 std::string_view UnquoteCsv(std::string_view raw, const CsvDialect& dialect,
                             char* out);

@@ -164,6 +164,48 @@ TEST(PgCopyBatchBuilder, JoinedBlankLinesStayWithTheRowsBeforeThem) {
   }
 }
 
+TEST(PgCopyBatchBuilder, FirstLineBreakDecidesTheRowEnds) {
+  struct Case {
+    CopyBatchFormat format;
+    std::string input;
+    char line_break;
+  };
+  const std::vector<Case> cases{
+    {CopyBatchFormat::Text, "1\ta\r22\tb\\\rb\r333\tc\r", '\r'},
+    {CopyBatchFormat::Text, "1\ta\r\n2\tb\r\n", '\n'},
+    {CopyBatchFormat::Text, "1\\\na\n2\tb\r", '\n'},
+    {CopyBatchFormat::Csv, "\"x\ny\",1\r\"z\rw\",2\r3,3", '\r'},
+    {CopyBatchFormat::Csv, "\"x\ry\",1\n2,2\n", '\n'},
+    {CopyBatchFormat::Csv, "a,b", '\n'},
+  };
+  for (const auto& [format, input, line_break] : cases) {
+    for (const size_t piece : {1, 2, 3, 5, 64}) {
+      for (const bool stable : {true, false}) {
+        CopyBatchBuilder builder{format, 1};
+        std::string out;
+        const auto take = [&] {
+          const auto batch = builder.Take();
+          EXPECT_EQ(batch->line_break, line_break)
+            << input << " piece=" << piece;
+          out += Join(*batch);
+          return out;
+        };
+        for (size_t pos = 0; pos < input.size(); pos += piece) {
+          builder.Feed(std::string_view{input}.substr(pos, piece), stable);
+          while (builder.Ready()) {
+            EXPECT_EQ(take().back(), line_break) << input << " piece=" << piece;
+          }
+        }
+        builder.Finish();
+        while (builder.HasRows()) {
+          take();
+        }
+        EXPECT_EQ(out, input) << "piece=" << piece << " stable=" << stable;
+      }
+    }
+  }
+}
+
 TEST(PgCopyBatchBuilder, TextBatchesEndOnRowBoundaries) {
   const std::string input = "aa\nbbb\ncccc\nd\n";
   CopyBatchBuilder builder{CopyBatchFormat::Text, 1};

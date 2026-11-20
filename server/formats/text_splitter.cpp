@@ -32,8 +32,8 @@ namespace sdb::formats {
 namespace {
 
 RowError BadRow(std::string_view bytes, size_t row_start, size_t fields,
-                size_t columns) {
-  const auto end = pg::FindRowEnd(bytes, row_start);
+                size_t columns, char line_break) {
+  const auto end = pg::FindRowEnd(bytes, row_start, 0, line_break);
   const auto line = bytes.substr(
     row_start, end == std::string_view::npos ? end : end - row_start);
   for (size_t i = 0; i < line.size(); ++i) {
@@ -83,7 +83,8 @@ TextRows TextSplitter::FillLexed(const duckdb::RowRangeReader& reader,
       return result;
     }
     if (count != _columns) {
-      result.error = BadRow(bytes, row_start, count, _columns);
+      result.error =
+        BadRow(bytes, row_start, count, _columns, reader.dialect.line_break);
       result.fields = count;
       result.row_start = row_start;
       return result;

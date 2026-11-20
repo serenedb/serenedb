@@ -35,8 +35,9 @@ namespace sdb::pg {
 size_t TrailingBackslashes(std::string_view bytes) noexcept;
 
 size_t FindRowEnd(std::string_view bytes, size_t from,
-                  size_t backslashes_before = 0) noexcept;
-size_t FindLastRowEnd(std::string_view bytes) noexcept;
+                  size_t backslashes_before = 0,
+                  char line_break = '\n') noexcept;
+size_t FindLastRowEnd(std::string_view bytes, char line_break = '\n') noexcept;
 
 enum class CopyBatchFormat : uint8_t {
   Text,
@@ -79,6 +80,7 @@ class CopyBatchBuilder {
   CopyBatch& Current();
   void AddRows(std::string_view rows, bool stable);
   void AddRow(std::string row);
+  bool DecideLineBreak(std::string_view bytes, bool complete);
   void FeedText(std::string_view bytes, bool stable);
   void FeedCsv(std::string_view bytes, bool stable);
   void FeedBinary(std::string_view bytes, bool stable);
@@ -88,7 +90,8 @@ class CopyBatchBuilder {
   const CopyBatchFormat _format;
   const size_t _target;
   const bool _join_blank_lines;
-  const formats::CsvDialect _csv;
+  formats::CsvDialect _csv;
+  char _line_break = '\0';
   formats::CsvQuoteState _quote_state;
   std::unique_ptr<CopyBatch> _batch;
   std::unique_ptr<CopyBatch> _sealed;

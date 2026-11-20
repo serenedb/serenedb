@@ -24,11 +24,12 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/formats/value_codecs.hpp>
 #include <duckdb/function/copy_function.hpp>
+#include <duckdb/function/encoding_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <memory>
+#include <optional>
 #include <string_view>
 
-#include "formats/text_encoding.h"
 #include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
@@ -51,9 +52,7 @@ class CopyToFileBindData : public duckdb::FunctionData {
     return duckdb::FileCompressionType::AUTO_DETECT;
   }
   virtual std::string_view RowSeparator() const { return {}; }
-  virtual formats::TextEncoding Encoding() const {
-    return formats::TextEncoding::Utf8;
-  }
+  virtual std::optional<duckdb::TextEncoding> Encoding() const { return {}; }
 };
 
 void SetCopyToFileCallbacks(duckdb::CopyFunction& function);

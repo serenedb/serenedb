@@ -42,6 +42,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -228,6 +229,24 @@ class FileRowSource final : public duckdb::RowSource {
   duckdb::FileHandle& _file;
   const uint64_t _size;
 };
+
+char FileLineBreak(duckdb::FileHandle& file, const pg::CopyInTarget& target) {
+  constexpr uint64_t kProbeBytes = uint64_t{64} << 10;
+  const uint64_t size = file.GetFileSize();
+  const formats::CsvDialect csv{target.delim, target.quote, target.escape};
+  std::string head;
+  for (uint64_t want = kProbeBytes;; want *= 2) {
+    head.resize(std::min(want, size));
+    if (!head.empty()) {
+      file.Read(head.data(), head.size(), 0);
+    }
+    const auto found =
+      formats::DetectLineBreak(head, target.csv, csv, head.size() == size);
+    if (found != '\0') {
+      return found;
+    }
+  }
+}
 
 uint64_t RangeBytes(duckdb::ClientContext& context,
                     const pg::CopyInTarget& target, uint64_t size) {
@@ -642,6 +661,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitCopyFromGlobal(
     return duckdb::make_uniq<BatchesGlobalState>(context, std::move(file),
                                                  std::move(target), ordered);
   }
+  target.line_break = FileLineBreak(*file, target);
   return duckdb::make_uniq<RowsGlobalState>(context, std::move(file),
                                             std::move(target), ordered);
 }

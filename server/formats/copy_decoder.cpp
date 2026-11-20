@@ -113,7 +113,8 @@ size_t RowAfter(const duckdb::RowRangeReader& reader, size_t row) {
   if (after < window.size && window.data[after] == '\r') {
     ++after;
   }
-  if (after < window.size && window.data[after] == '\n') {
+  if (reader.dialect.line_break == '\n' && after < window.size &&
+      window.data[after] == '\n') {
     ++after;
   }
   return after;
@@ -135,9 +136,10 @@ size_t FirstSet(const uint64_t* words, size_t count) {
 }  // namespace
 
 duckdb::RowDialect RowDialectOf(const pg::CopyInTarget& target) {
-  return target.csv ? duckdb::RowDialect::PostgresCsv(
-                        target.delim, target.quote, target.escape)
-                    : duckdb::RowDialect::PostgresText(target.delim);
+  return target.csv
+           ? duckdb::RowDialect::PostgresCsv(target.delim, target.quote,
+                                             target.escape, target.line_break)
+           : duckdb::RowDialect::PostgresText(target.delim, target.line_break);
 }
 
 CopyDecoder::CopyDecoder(duckdb::ClientContext& context,
@@ -272,6 +274,10 @@ void CopyDecoder::StartLexed(uint64_t seq) {
 }
 
 void CopyDecoder::Start(const pg::CopyBatch& batch) {
+  if (!_target.binary && batch.line_break != _target.line_break) {
+    _target.line_break = batch.line_break;
+    _unit.emplace(RowDialectOf(_target), _target.types.size());
+  }
   _batch = &batch;
   _seq = batch.seq;
   _segment = 0;
@@ -382,11 +388,12 @@ uint64_t CopyDecoder::UnitLine(size_t row) const {
   const size_t start = offsets[row];
   const size_t end = row + 1 < _split_rows ? offsets[row + 1] : _pos;
   const auto record = _split_data.substr(start, end - start);
-  const bool terminated =
-    record.ends_with('\n') && !(_split_unterminated && row + 1 == _split_rows);
+  const char line_break = _target.line_break;
+  const bool terminated = record.ends_with(line_break) &&
+                          !(_split_unterminated && row + 1 == _split_rows);
   const auto before = static_cast<uint64_t>(absl::c_count(
-    _split_data.substr(_split_start, start - _split_start), '\n'));
-  const auto inside = static_cast<uint64_t>(absl::c_count(record, '\n'));
+    _split_data.substr(_split_start, start - _split_start), line_break));
+  const auto inside = static_cast<uint64_t>(absl::c_count(record, line_break));
   return _lines + before + inside - (terminated ? 1 : 0) + 1;
 }
 
@@ -455,8 +462,9 @@ void CopyDecoder::LexedHeader(const duckdb::RowRangeReader& reader) {
   const std::string_view data{window.data, window.size};
   const size_t start = RowStart(reader, 0);
   const auto record = data.substr(start, RowAfter(reader, 0) - start);
-  const auto newlines = static_cast<uint64_t>(absl::c_count(record, '\n'));
-  const bool terminated = record.ends_with('\n');
+  const auto newlines =
+    static_cast<uint64_t>(absl::c_count(record, _target.line_break));
+  const bool terminated = record.ends_with(_target.line_break);
   const auto header_line =
     _lines + 1 + (_csv ? newlines - (terminated ? 1 : 0) : 0);
   _lines += _csv ? newlines : 1;
@@ -540,8 +548,9 @@ duckdb::idx_t CopyDecoder::ParseLexedText(duckdb::DataChunk& output,
   auto invalid = FindInvalidUtf8(data.substr(start, end - start));
   if (invalid != std::string_view::npos) {
     invalid += start;
-    rows = std::min(rows, static_cast<size_t>(absl::c_count(
-                            data.substr(start, invalid - start), '\n')));
+    rows = std::min(
+      rows, static_cast<size_t>(absl::c_count(
+              data.substr(start, invalid - start), _target.line_break)));
   }
   if (rows != 0) {
     ResolveText(rows);
@@ -635,7 +644,7 @@ duckdb::idx_t CopyDecoder::ParseLexedCsv(duckdb::DataChunk& output,
     return row;
   }
   _lines += static_cast<uint64_t>(
-    absl::c_count(data.substr(start, _pos - start), '\n'));
+    absl::c_count(data.substr(start, _pos - start), _target.line_break));
   return row;
 }
 

@@ -53,6 +53,7 @@ struct CopyBatch {
   std::vector<std::string_view> segments;
   std::deque<std::string> owned;
   size_t bytes = 0;
+  char line_break = '\n';
 
   void AddView(std::string_view rows) {
     segments.emplace_back(rows);
@@ -84,6 +85,7 @@ struct CopyInTarget {
   char delim = '\t';
   char quote = '"';
   char escape = '"';
+  char line_break = '\n';
   std::string null_str = "\\N";
   std::optional<std::string> default_str;
   bool header = false;

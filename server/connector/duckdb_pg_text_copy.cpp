@@ -27,6 +27,7 @@
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <duckdb/formats/copy_encoding.hpp>
 #include <duckdb/formats/copy_from.hpp>
 #include <duckdb/function/copy_function.hpp>
 #include <duckdb/function/table/read_csv.hpp>
@@ -34,12 +35,12 @@
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/parser/parsed_data/create_copy_function_info.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "connector/copy_to_file.h"
-#include "formats/text_encoding.h"
 #include "pg/connection_context.h"
 #include "server/utils/message_buffer.h"
 
@@ -138,8 +139,8 @@ class PgTextCopyBindData final : public CopyToFileBindData {
     return _options.suffix.empty() ? std::string_view{} : _options.new_line;
   }
 
-  formats::TextEncoding Encoding() const final {
-    return formats::ParseTextEncoding(_options.encoding);
+  std::optional<duckdb::TextEncoding> Encoding() const final {
+    return duckdb::CopyOutputEncoding(_options.encoding);
   }
 
  private:

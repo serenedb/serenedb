@@ -352,6 +352,18 @@ COPY ctd_in FROM '${__TEST_DIR__}/ctd_colon.txt' (FORMAT text, DELIMITER E'\n');
 db error: ERROR: COPY delimiter cannot be newline or carriage return
 
 
+onlyif postgres
+statement error
+COPY ctd TO '${__TEST_DIR__}/ctd_bad.csv' (FORMAT csv, DELIMITER E'\r');
+----
+db error: ERROR: COPY delimiter cannot be newline or carriage return
+
+
+skipif postgres
+statement ok
+COPY ctd TO '${__TEST_DIR__}/ctd_bad.csv' (FORMAT csv, DELIMITER E'\r');
+
+
 statement error
 COPY ctd TO '${__TEST_DIR__}/ctd_bad.txt' (FORMAT text, NULL E'n\rl');
 ----

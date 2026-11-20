@@ -215,7 +215,11 @@ void ApplyOption(PgCopyOptions& out, const duckdb::Identifier& key,
   } else if (key == "header") {
     ParseHeader(out, values);
   } else if (key == "default") {
-    out.default_str = values.empty() ? std::string{} : OptionString(values[0]);
+    if (values.empty()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
+                      ERR_MSG("default requires a parameter"));
+    }
+    out.default_str = OptionString(values[0]);
   } else if (key == "ignore_errors") {
     out.ignore_errors = ParseBoolOption(values, "ON_ERROR");
   } else if (key == "rejects_limit" || key == "reject_limit") {

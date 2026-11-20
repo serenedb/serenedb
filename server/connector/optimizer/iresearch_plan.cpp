@@ -1797,7 +1797,33 @@ void TakeColumnConjuncts(
   });
 }
 
+struct ScorerCallFinder final : duckdb::LogicalOperatorVisitor {
+  void VisitExpression(duckdb::unique_ptr<duckdb::Expression>* slot) final {
+    if (found) {
+      return;
+    }
+    const auto& expr = **slot;
+    if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION &&
+        IsScorerFunctionName(expr.Cast<duckdb::BoundFunctionExpression>()
+                               .Function()
+                               .GetName()
+                               .GetIdentifierName())) {
+      found = true;
+      return;
+    }
+    VisitExpressionChildren(**slot);
+  }
+
+  bool found = false;
+};
+
 }  // namespace
+
+bool ReadsScores(duckdb::LogicalOperator& plan) {
+  ScorerCallFinder finder;
+  finder.VisitOperator(plan);
+  return finder.found;
+}
 
 void IResearchPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,

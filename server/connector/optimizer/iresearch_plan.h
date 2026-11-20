@@ -23,6 +23,7 @@
 #include <duckdb/common/vector.hpp>
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/logical_operator.hpp>
 #include <optional>
 
 #include "connector/scan/scan_bind.h"
@@ -44,6 +45,8 @@ void IResearchPushdownComplexFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters);
 
 void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db);
+
+bool ReadsScores(duckdb::LogicalOperator& plan);
 
 duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
   duckdb::unique_ptr<duckdb::Expression> expr, bool with_values);

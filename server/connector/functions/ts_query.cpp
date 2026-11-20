@@ -34,6 +34,7 @@
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_context_state.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -50,6 +51,7 @@
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
 #include "connector/functions/ts_query_codec.h"
+#include "connector/optimizer/iresearch_plan.h"
 #include "connector/search_filter_builder.hpp"
 
 namespace sdb::connector {
@@ -189,7 +191,21 @@ TSQueryCastData* MinMatchCastData(duckdb::BoundFunctionExpression& cast) {
   return data ? &data->Cast<TSQueryCastData>() : nullptr;
 }
 
-bool SearchRewriteBarrier(const duckdb::Expression& expr,
+struct QueryReadsScores final : duckdb::ClientContextState {
+  static QueryReadsScores& Get(duckdb::ClientContext& context) {
+    return *context.registered_state->GetOrCreate<QueryReadsScores>(
+      "sdb_query_reads_scores");
+  }
+
+  using duckdb::ClientContextState::QueryEnd;
+
+  void QueryEnd(duckdb::ClientContext&) final { reads = false; }
+
+  bool reads = false;
+};
+
+bool SearchRewriteBarrier(duckdb::ClientContext& context,
+                          const duckdb::Expression& expr,
                           duckdb::optional_ptr<const duckdb::Expression> parent,
                           bool parent_frozen) {
   if (parent &&
@@ -199,6 +215,7 @@ bool SearchRewriteBarrier(const duckdb::Expression& expr,
     return true;
   }
   return expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_OR &&
+         QueryReadsScores::Get(context).reads &&
          ContainsIndexOnlyPredicate(expr);
 }
 
@@ -479,10 +496,11 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
   duckdb::ClientContext& _context;
 };
 
-void FoldTSQueryConstants(duckdb::OptimizerExtensionInput& input,
-                          duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
+void PrepareSearchRewrites(duckdb::OptimizerExtensionInput& input,
+                           duckdb::unique_ptr<duckdb::LogicalOperator>& plan) {
   if (plan) {
     TSQueryFoldVisitor{input.context}.VisitOperator(*plan);
+    QueryReadsScores::Get(input.context).reads = optimizer::ReadsScores(*plan);
   }
 }
 
@@ -1260,7 +1278,7 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
 
 void RegisterTSQueryConstantFolding(duckdb::ExtensionLoader& loader) {
   duckdb::OptimizerExtension fold;
-  fold.pre_optimize_function = FoldTSQueryConstants;
+  fold.pre_optimize_function = PrepareSearchRewrites;
   fold.rewrite_barrier = SearchRewriteBarrier;
   duckdb::OptimizerExtension::Register(loader.GetDatabaseInstance().config,
                                        std::move(fold));

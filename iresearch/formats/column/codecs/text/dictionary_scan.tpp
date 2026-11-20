@@ -364,9 +364,8 @@ struct DictionaryScan final : SegmentScanState {
     }
   }
 
-  void EnsureCodes(const duckdb::SelectionVector& codes, idx_t count,
-                   idx_t span) {
-    const auto entry_at = [&](idx_t i) { return codes.get_index(i); };
+  template<typename Entry>
+  void EnsureEntries(idx_t count, idx_t span, Entry entry_at) {
     if constexpr (requires(Leaf& leaf) {
                     leaf.EnsureRow(entries, uint32_t{}, uint32_t{});
                   }) {
@@ -379,6 +378,11 @@ struct DictionaryScan final : SegmentScanState {
       }
     }
     EnsureEach(count, entry_at);
+  }
+
+  void EnsureCodes(const duckdb::SelectionVector& codes, idx_t count,
+                   idx_t span) {
+    EnsureEntries(count, span, [&](idx_t i) { return codes.get_index(i); });
   }
 
   template<typename Before>
@@ -597,11 +601,11 @@ struct DictionaryScan final : SegmentScanState {
     }
     const auto& codes = Codes(start, vector_count);
     if (verdicts.Lazy()) {
-      FilterTouchedEntries(codes, sel, sel_count, filter_state);
+      FilterTouchedEntries(codes, vector_count, sel, sel_count, filter_state);
     } else if (verdicts.Matches() != dict_count) {
       sel_count = verdicts.KeepAccepted(codes, sel, sel_count);
     }
-    if (!full && verdicts.Matches() * 4 >= dict_count) {
+    if (!full && (room || dense) && verdicts.Matches() * 4 >= dict_count) {
       EnsureDictionary();
     }
     if (full) {
@@ -614,8 +618,8 @@ struct DictionaryScan final : SegmentScanState {
   void ScanFiltered(duckdb::Vector& result,
                     const duckdb::SelectionVector& codes, idx_t count,
                     const duckdb::SelectionVector& rows, idx_t row_count) {
-    EnsureEach(row_count,
-               [&](idx_t i) { return codes.get_index(rows.get_index(i)); });
+    EnsureEntries(row_count, count,
+                  [&](idx_t i) { return codes.get_index(rows.get_index(i)); });
     entries.ReferenceHeap(result);
     auto writer = duckdb::FlatVector::Writer<string_t>(result, count);
     idx_t next = 0;
@@ -642,12 +646,12 @@ struct DictionaryScan final : SegmentScanState {
     verdicts.Accept(dict_sel, filter_count, dict_count);
   }
 
-  void FilterTouchedEntries(const duckdb::SelectionVector& codes,
+  void FilterTouchedEntries(const duckdb::SelectionVector& codes, idx_t span,
                             duckdb::SelectionVector& rows, idx_t& count,
                             duckdb::TableFilterState& filter_state) {
     if (const auto pending = verdicts.Unfiltered(codes, rows, count);
         !pending.empty()) {
-      EnsureEach(pending.size(), [&](idx_t i) { return pending[i]; });
+      EnsureEntries(pending.size(), span, [&](idx_t i) { return pending[i]; });
       duckdb::Vector candidates{entries.type, pending.size()};
       duckdb::StringVector::AddHeapReference(candidates,
                                              entries.dictionary->data);

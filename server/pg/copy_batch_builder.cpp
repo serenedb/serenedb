@@ -28,13 +28,10 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
 
+#include "pg/copy_binary.h"
+
 namespace sdb::pg {
 namespace {
-
-constexpr std::string_view kSignature{"PGCOPY\n\xFF\r\n\0", 11};
-constexpr size_t kHeaderBytes = 19;
-constexpr int16_t kTrailerFieldCount = -1;
-constexpr int32_t kNullFieldLength = -1;
 
 [[noreturn]] void ThrowFormat(std::string_view message) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_BAD_COPY_FILE_FORMAT),
@@ -67,7 +64,7 @@ size_t WalkBinaryRows(std::string_view bytes, size_t pos) noexcept {
           return pos;
         }
         p += static_cast<size_t>(length);
-      } else if (length < kNullFieldLength) {
+      } else if (length < kPgCopyNull) {
         return pos;
       }
     }
@@ -109,13 +106,14 @@ void CopyBatchBuilder::Feed(std::string_view bytes, bool stable) {
 
 size_t CopyBatchBuilder::FeedHeader(std::string_view bytes) {
   size_t pos = 0;
-  if (_header.size() < kHeaderBytes) {
-    pos = std::min(kHeaderBytes - _header.size(), bytes.size());
+  if (_header.size() < kPgCopyHeader.size()) {
+    pos = std::min(kPgCopyHeader.size() - _header.size(), bytes.size());
     _header.append(bytes.data(), pos);
-    if (_header.size() < kHeaderBytes) {
+    if (_header.size() < kPgCopyHeader.size()) {
       return pos;
     }
-    if (std::string_view{_header}.substr(0, kSignature.size()) != kSignature) {
+    if (std::string_view{_header}.substr(0, kPgCopySignature.size()) !=
+        kPgCopySignature) {
       ThrowFormat("invalid PGCOPY signature");
     }
     const auto flags = absl::big_endian::Load32(_header.data() + 11);
@@ -202,7 +200,7 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
         }
         const auto fields =
           static_cast<int16_t>(absl::big_endian::Load16(_scratch.data()));
-        if (fields == kTrailerFieldCount) {
+        if (fields == kPgCopyTrailer) {
           if (pos != bytes.size()) {
             ThrowFormat("received copy data after EOF marker");
           }
@@ -233,7 +231,7 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
         const auto length =
           static_cast<int32_t>(absl::big_endian::Load32(_scratch.data()));
         _have = 0;
-        if (length == kNullFieldLength || length == 0) {
+        if (length == kPgCopyNull || length == 0) {
           if (++_field == _fields) {
             complete();
           }

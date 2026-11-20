@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "pg/command_tag.h"
+#include "pg/copy_binary.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
 #include "pg/types/mapping.h"
@@ -48,14 +49,6 @@ constexpr size_t kFrameTag = 1;  // leading message-type byte
 constexpr size_t kInt16 = 2;     // a big-endian int16 wire field
 constexpr size_t kInt32 = 4;     // a big-endian int32 wire field
 constexpr size_t kFrameHeader = kFrameTag + kInt32;  // type byte + length
-
-// PGCOPY header: 11-byte signature, int32 flags (0), int32 header-extension
-// length (0).
-constexpr std::string_view kPgCopyHeader{
-  "PGCOPY\n\xFF\r\n\0"
-  "\0\0\0\0"
-  "\0\0\0\0",
-  19};
 
 void WriteNoticeField(message::Writer& w, char tag, std::string_view value) {
   w.Write({&tag, 1});
@@ -84,7 +77,7 @@ void WriteCopyChunk(message::Buffer& out, const duckdb::DataChunk& chunk,
       {
         .tag = PQ_MSG_COPY_DATA,
         .field_count = true,
-        .first = binary_header ? kPgCopyHeader : std::string_view{},
+        .first = binary_header ? sdb::pg::kPgCopyHeader : std::string_view{},
       });
   } else {
     static_assert(Encoding == RowEncoding::CopyText,
@@ -135,10 +128,10 @@ void WriteCopyBinaryHeader(message::Buffer& out, message::Chain& first) {
   message::Writer w{out};
   auto* prefix = w.Alloc(kFrameHeader);
   prefix[0] = PQ_MSG_COPY_DATA;
-  absl::big_endian::Store32(
-    prefix + kFrameTag,
-    absl::big_endian::Load32(frame + kFrameTag) + kPgCopyHeader.size());
-  w.Write(kPgCopyHeader);
+  absl::big_endian::Store32(prefix + kFrameTag,
+                            absl::big_endian::Load32(frame + kFrameTag) +
+                              sdb::pg::kPgCopyHeader.size());
+  w.Write(sdb::pg::kPgCopyHeader);
   w.Commit(false);
   head.SetBegin(head.GetBegin() + kFrameHeader);
   first.bytes -= kFrameHeader;
@@ -168,9 +161,9 @@ void WriteCopyBinaryFooter(message::Buffer& out, bool binary_header) {
   const auto start = w.Written();
   auto* prefix = w.Alloc(kFrameHeader);
   if (binary_header) {
-    w.Write(kPgCopyHeader);
+    w.Write(sdb::pg::kPgCopyHeader);
   }
-  absl::big_endian::Store16(w.Alloc(kInt16), static_cast<int16_t>(-1));
+  absl::big_endian::Store16(w.Alloc(kInt16), sdb::pg::kPgCopyTrailer);
   prefix[0] = PQ_MSG_COPY_DATA;
   absl::big_endian::Store32(
     prefix + kFrameTag, static_cast<int32_t>(w.Written() - start - kFrameTag));

@@ -22,7 +22,6 @@
 
 #include <absl/base/internal/endian.h>
 
-#include <array>
 #include <cstdint>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -41,18 +40,13 @@
 #include "connector/copy_to_file.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "pg/connection_context.h"
+#include "pg/copy_binary.h"
 #include "pg/serialize.h"
 #include "pg/types/logical.h"
 #include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
 namespace {
-
-// PGCOPY header: 11-byte signature, int32 flags (0), int32 header-extension
-// (0).
-constexpr std::array<uint8_t, 19> kPgCopyHeader{
-  'P',  'G', 'C', 'O', 'P', 'Y', '\n', 0xFF, '\r', '\n',
-  0x00, 0,   0,   0,   0,   0,   0,    0,    0};
 
 void CheckBinaryOptions(const duckdb::CopyInfo& info, bool from) {
   duckdb::CheckCopyFormatOptions(
@@ -106,14 +100,14 @@ class PgBinaryCopyBindData final : public CopyToFileBindData {
 
   void WriteHeader(duckdb::ClientContext&, message::Buffer& out) const final {
     message::Writer writer{out};
-    writer.Write({reinterpret_cast<const char*>(kPgCopyHeader.data()),
-                  kPgCopyHeader.size()});
+    writer.Write(sdb::pg::kPgCopyHeader);
     writer.Commit(false);
   }
 
   void WriteTrailer(message::Buffer& out) const final {
     message::Writer writer{out};
-    absl::big_endian::Store16(writer.Alloc(2), static_cast<int16_t>(-1));
+    absl::big_endian::Store16(writer.Alloc(sizeof(sdb::pg::kPgCopyTrailer)),
+                              sdb::pg::kPgCopyTrailer);
     writer.Commit(false);
   }
 

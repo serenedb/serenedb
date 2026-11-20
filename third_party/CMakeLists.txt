@@ -707,7 +707,7 @@ else()
         FORCE
     )
     set(STATICALLY_LINK_EXTENSIONS
-        "core_functions;parquet;${SDB_TPC_EXTENSION_NAMES}json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner"
+        "core_functions;parquet;${SDB_TPC_EXTENSION_NAMES}json;httpfs;avro;iceberg;postgres_scanner;autocomplete;icu;inet;azure;spatial;markdown;clickhouse_scanner;quack"
         CACHE STRING
         ""
         FORCE
@@ -718,6 +718,7 @@ else()
     set(DUCKDB_EXTENSION_CONFIGS
         "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_clickhouse/extension_config.cmake"
         "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_markdown/extension_config.cmake"
+        "${CMAKE_CURRENT_SOURCE_DIR}/duckdb_quack/extension_config.cmake"
         CACHE STRING
         ""
         FORCE
@@ -733,6 +734,7 @@ sdb_update_module(
     postgres
     duckdb_inet
     duckdb_markdown
+    duckdb_quack
     duckdb_spatial
     database-connector
 )

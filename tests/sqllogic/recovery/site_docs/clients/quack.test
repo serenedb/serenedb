@@ -1,0 +1,16 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+statement ok
+ATTACH 'quack:127.0.0.1:${SDB_QUACK_PORT}' AS self (TOKEN 'postgres:');
+
+# DOCS_TEST_BODY
+
+query
+SELECT connection_id, state, query
+FROM quack_active_connections()
+ORDER BY query_started_at;
+----
+connection_id	state	query
+<slt:ignore>

@@ -37,6 +37,7 @@ DUCKDB_FAULTS = frozenset(
         "slow_expression_bind",
         "slow_expression_rewrite",
         "slow_statistics_propagation",
+        "transaction_end_fails",
     }
 )
 DUCKDB_PARK_FAULTS = frozenset(

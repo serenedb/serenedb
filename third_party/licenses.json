@@ -179,6 +179,13 @@
       "paths": ["third_party/duckdb_postgres"]
     },
     {
+      "name": "duckdb-quack",
+      "url": "https://github.com/duckdb/duckdb-quack",
+      "license": "MIT",
+      "files": ["third_party/duckdb_quack/LICENSE"],
+      "paths": ["third_party/duckdb_quack"]
+    },
+    {
       "name": "duckdb-spatial",
       "url": "https://github.com/duckdb/duckdb-spatial",
       "license": "MIT",

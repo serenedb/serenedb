@@ -45,6 +45,15 @@ Elasticsearch clients and tools connect over HTTP to the subset of the Elasticse
 |---|---|---|---|
 | `elasticsearch` (Python) | 8.19, 9.5 | Partial | [Guide](./elasticsearch-api.md) |
 
+## Quack clients
+
+Another SereneDB server, `serenedb shell` and DuckDB attach a SereneDB server over HTTP with Quack, DuckDB's client/server protocol.
+
+| Client | Version | Support | Guide |
+|---|---|---|---|
+| SereneDB, `serenedb shell` | bundled | Partial | [Guide](./quack.md) |
+| DuckDB with the `quack` extension | 2.0 | Partial | [Guide](./quack.md#duckdb-clients) |
+
 ## Tools
 
 SereneDB also ships its own command-line clients inside the `serenedb` binary: [`serenedb psql`](./serened-psql.md), a PostgreSQL-compatible client for a running server, and [`serenedb shell`](./serened-shell.md), a local shell for querying database files directly.

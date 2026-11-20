@@ -56,8 +56,10 @@
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
 #include "connector/iresearch_replacement_scan.h"
+#include "connector/quack.h"
 #include "connector/scan/scan_function.h"
 #include "docs/docs_functions.h"
+#include "network/http/quack/functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
@@ -217,6 +219,9 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   pg::RegisterSystemTableScanFunction(db);
 
   connector::RegisterSereneDBOptimizers(db);
+
+  connector::RestrictQuackClient(db);
+  network::http::quack::RegisterFunctions(db);
 
   duckdb::IndexType inverted;
   inverted.name = catalog::kInvertedIndexTypeName;

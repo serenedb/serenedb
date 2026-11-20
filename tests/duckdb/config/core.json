@@ -56,6 +56,18 @@
       "paths": [
         "test/sql/function/operator/test_division_by_zero.test"
       ]
+    },
+    {
+      "reason": "Not skipped, run in another suite: the quack suite (tests/duckdb/quack/run.sh) runs the files below, each against a serened of its own that QUACK_SERVER names. The core suite has no quack server for them to attach.",
+      "paths": [
+        "test/sql/attach/attach_to_external_resource.test",
+        "test/sql/attach/external_resource_lifecycle.test",
+        "test/sql/attach/external_resource_logging.test",
+        "test/sql/catalog/comment_on_column_remote_catalog.test",
+        "test/sql/connect/concurrent_connect_detach.test",
+        "test/sql/connect/connect_passthrough_quack.test",
+        "test/sql/connect/connect_quack.test"
+      ]
     }
   ]
 }

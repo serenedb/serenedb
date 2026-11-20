@@ -48,7 +48,7 @@ Every request needs an `Authorization` header, from the local machine too. A req
 | `Bearer` | a static token | `--auth_bearer_token=<token>` |
 | `ApiKey` | base64 of a static `<id>:<key>` pair | `--auth_api_key=<id>:<key>` |
 
-A role without a password, such as `postgres` on a fresh server, is accepted only from a loopback address. That is why the examples on this page use `-u postgres:`. From any other address such a role gets `401`.
+A Basic login follows the server's [client authentication rules](../security/client_authentication.md), as a `psql` login does: with the default rules `postgres` is trusted from a loopback address, which is why the examples on this page use `-u postgres:`, and every other role needs its password. A role that does not exist or has no `LOGIN`, a role whose `VALID UNTIL` has passed, or a login a rule rejects, gets `401`.
 
 Bearer and ApiKey answer `401` until their flag is set. They have no role of their own: requests that use them act as the `postgres` superuser.
 

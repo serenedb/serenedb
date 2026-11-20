@@ -1,0 +1,111 @@
+control substitution on
+
+statement ok
+CREATE TABLE postgres.public.orders (id INT, total DECIMAL(10, 2));
+
+statement ok
+INSERT INTO postgres.public.orders VALUES (1, 50.00), (2, 120.00), (3, 300.50);
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| ATTACH 'quack:10.0.0.5:9494' AS remote (TOKEN 'alice:secret');
+#|
+#| SELECT o.id, o.total
+#| FROM remote.public.orders AS o
+#| WHERE o.total > 100
+#| ORDER BY o.id;
+
+# DOCS_TEST_BODY
+
+statement ok
+ATTACH 'quack:127.0.0.1:${SDB_QUACK_PORT}' AS remote (TOKEN 'postgres:');
+
+query
+SELECT o.id, o.total
+FROM remote.public.orders AS o
+WHERE o.total > 100
+ORDER BY o.id;
+----
+id	total
+2	120.00
+3	300.50
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| CREATE SECRET orders_server (
+#|     TYPE quack,
+#|     TOKEN 'alice:secret',
+#|     SCOPE 'quack:10.0.0.5:9494'
+#| );
+#|
+#| ATTACH 'quack:10.0.0.5:9494' AS remote;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE SECRET orders_server (
+    TYPE quack,
+    TOKEN 'postgres:',
+    SCOPE 'quack:127.0.0.1:${SDB_QUACK_PORT}'
+);
+
+statement ok
+ATTACH 'quack:127.0.0.1:${SDB_QUACK_PORT}' AS by_secret;
+
+query
+SELECT count(*) AS n
+FROM by_secret.public.orders;
+----
+n
+3
+
+# DOCS_TEST: example_003
+
+statement ok
+CREATE TABLE postgres.public.created_later (x INT);
+
+statement error
+SELECT count(*) FROM remote.public.created_later;
+----
+<slt:ignore>created_later<slt:ignore>
+
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT *
+FROM quack_clear_cache();
+
+query
+SELECT count(*) AS n
+FROM remote.public.created_later;
+----
+n
+0
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM quack_query('quack:10.0.0.5:9494', 'SELECT count(*) FROM orders', token := 'alice:secret');
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM quack_query('quack:127.0.0.1:${SDB_QUACK_PORT}', 'SELECT count(*) FROM orders', token := 'postgres:');
+----
+count
+3
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT quack_connection_id('remote') AS connection_id;
+----
+connection_id
+<slt:ignore>

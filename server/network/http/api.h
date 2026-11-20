@@ -26,6 +26,7 @@
 #include <string_view>
 
 #include "network/http/handler.h"
+#include "network/listen_protocol.h"
 #include "network/listen_spec.h"
 #include "server/utils/registry.h"
 
@@ -42,7 +43,10 @@ struct Api {
 
   std::span<const Route> routes;
   uint64_t max_body_bytes = 0;
-  void (*start)(const ListenSpec& spec) = nullptr;
+  // Runs once a listener serving the API has its database. The listener keeps
+  // what it returns alive, such as a service the API's listeners share.
+  std::shared_ptr<void> (*start)(const ListenContext& context,
+                                 const ListenSpec& spec) = nullptr;
 };
 
 }  // namespace sdb::network::http

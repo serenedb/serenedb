@@ -101,6 +101,55 @@ dfi	3	0
 dfi chi_squared	3	0
 dfi saturated	3	0
 
+query
+SELECT a.scorer, a.score = b.score AS same
+FROM (
+    SELECT 'lm_jm' AS scorer, lm_jm(phrase_idx.tableoid) AS score FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+    UNION ALL
+    SELECT 'lm_dirichlet', lm_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+    UNION ALL
+    SELECT 'indri_dirichlet', indri_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+    UNION ALL
+    SELECT 'dfi', dfi(phrase_idx.tableoid) FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+    UNION ALL
+    SELECT 'dfi saturated', dfi(phrase_idx.tableoid, 'saturated') FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+    UNION ALL
+    SELECT 'dfi chi_squared', dfi(phrase_idx.tableoid, 'chi_squared') FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+) a
+JOIN (
+    SELECT 'lm_jm' AS scorer, lm_jm(phrase_idx.tableoid) AS score FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'lm_dirichlet', lm_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'indri_dirichlet', indri_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'dfi', dfi(phrase_idx.tableoid) FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'dfi saturated', dfi(phrase_idx.tableoid, 'saturated') FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'dfi chi_squared', dfi(phrase_idx.tableoid, 'chi_squared') FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+) b ON a.scorer = b.scorer
+ORDER BY a.scorer;
+----
+scorer	same
+dfi	t
+dfi chi_squared	t
+dfi saturated	t
+indri_dirichlet	t
+lm_dirichlet	t
+lm_jm	t
+
+query
+SELECT id,
+       round(indri_dirichlet(phrase_idx.tableoid, 10), 4) AS score,
+       round(ln((1.0 / 3 + 10.0 * 3 / 13) / 15) + ln((1.0 / 3 + 10.0 * 2 / 13) / 15), 4) AS sum_of_terms
+FROM phrase_idx
+WHERE body @@ ts_phrase('fox dog', slop := 2)
+ORDER BY id;
+----
+id	score	sum_of_terms
+3	-3.818	-3.818
+
 statement ok
 CREATE TABLE long_docs (id INTEGER PRIMARY KEY, body VARCHAR);
 

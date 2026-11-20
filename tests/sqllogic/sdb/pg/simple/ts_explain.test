@@ -342,13 +342,15 @@ lucene
 query
 SELECT ts_explain_json(v) AS lucene
 FROM (VALUES
-    ({'column': 'body', 'phrase': [{'min': -1::BIGINT, 'max': 2::BIGINT}], 'value': 1.5::FLOAT}::VARIANT),
+    ({'column': 'body', 'phrase': [{'min': -1::BIGINT, 'max': 2::BIGINT}], 'slop': 'none', 'value': 1.5::FLOAT}::VARIANT),
     ({'value': 'inf'::FLOAT}::VARIANT),
+    ({'value': 2.25::DOUBLE}::VARIANT),
     (NULL::VARIANT)) t(v)
 ORDER BY lucene NULLS LAST;
 ----
 lucene
 {"value":1.5,"description":"unexplained(body:\\"?{0,2}\\")","details":[]}
+{"value":2.25,"description":"unexplained","details":[]}
 {"value":null,"description":"unexplained","details":[]}
 NULL
 

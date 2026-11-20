@@ -36,6 +36,27 @@ SELECT a FROM ctie;
 a
 1
 
+
+statement count 1
+COPY ctie TO '${__TEST_DIR__}/ctie.bin' (FORMAT binary);
+
+
+statement count 1
+COPY ctie FROM '${__TEST_DIR__}/ctie.bin' (FORMAT binary, IGNORE_ERRORS false);
+
+
+statement error
+COPY ctie FROM '${__TEST_DIR__}/ctie.bin' (FORMAT binary, IGNORE_ERRORS);
+----
+db error: ERROR: only ON_ERROR STOP is allowed in BINARY mode
+
+
+query
+SELECT a, count(*) AS n FROM ctie GROUP BY a;
+----
+a	n
+1	2
+
 statement ok
 CREATE TABLE ctie_array (a INTEGER[3], b INTEGER);
 

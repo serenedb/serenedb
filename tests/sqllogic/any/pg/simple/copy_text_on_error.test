@@ -217,6 +217,12 @@ COPY cto_ints TO '${__TEST_DIR__}/cto_out.bin' (FORMAT binary, HEADER);
 db error: ERROR: cannot specify HEADER in BINARY mode
 
 
+statement error
+COPY cto_ints FROM '${__TEST_DIR__}/cto_mixed.txt' (FORMAT binary, DEFAULT 'x');
+----
+db error: ERROR: cannot specify DEFAULT in BINARY mode
+
+
 statement count 1500000
 COPY (SELECT CASE WHEN g = 1180000 THEN 'x1' WHEN g = 1190000 THEN 'x2' ELSE g::TEXT END AS v FROM generate_series(1, 1500000) g ORDER BY g)
 TO '${__TEST_DIR__}/cto_two_errors.txt' (FORMAT text);

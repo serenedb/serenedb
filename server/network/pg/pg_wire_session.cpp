@@ -35,6 +35,7 @@
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/formats/copy_options.hpp>
 #include <duckdb/formats/row_stream.hpp>
 #include <duckdb/formats/value_codecs.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -55,7 +56,6 @@
 #include "auth/role_closure.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
-#include "connector/duckdb_pg_binary_copy.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
@@ -357,6 +357,15 @@ inline bool ScansCopyStream(const duckdb::CopyInfo& info) {
 inline bool IsNativeCopyFormat(CopyFormat format) {
   return format == CopyFormat::Binary || format == CopyFormat::Text ||
          format == CopyFormat::Csv;
+}
+
+duckdb::CopyFormat NativeCopyFormat(CopyFormat format) {
+  SDB_ASSERT(IsNativeCopyFormat(format));
+  if (format == CopyFormat::Binary) {
+    return duckdb::CopyFormat::BINARY;
+  }
+  return format == CopyFormat::Csv ? duckdb::CopyFormat::CSV
+                                   : duckdb::CopyFormat::TEXT;
 }
 
 // The pg-wire CopyResponse overall-format byte (1 = binary, 0 = text): binary
@@ -1642,14 +1651,10 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   const auto& copy_info = *statement->Cast<duckdb::CopyStatement>().info;
   const auto bound_info =
     sdb::connector::BindCopyOptions(*_connection_ctx, copy_info);
-  if (format == CopyFormat::Binary) {
-    sdb::connector::CheckBinaryCopyOptions(*bound_info, true);
-  } else if (format == CopyFormat::Text || format == CopyFormat::Csv) {
+  if (IsNativeCopyFormat(format)) {
     duckdb::CheckCopyFormatOptions(
-      duckdb::ParseCopyFormatOptions(format == CopyFormat::Csv
-                                       ? duckdb::CopyTextFormat::CSV
-                                       : duckdb::CopyTextFormat::TEXT,
-                                     true, bound_info->options),
+      duckdb::ParseCopyFormatOptions(NativeCopyFormat(format), true,
+                                     bound_info->options),
       true);
   }
   auto copy_columns = static_cast<int16_t>(copy_info.select_list.size());
@@ -1731,18 +1736,11 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   // the PG text formats.
   const bool binary = format == CopyFormat::Binary;
   auto& copy = statement->Cast<duckdb::CopyStatement>();
-  duckdb::CopyFormatOptions options;
   const auto bound_info =
     sdb::connector::BindCopyOptions(*_connection_ctx, *copy.info);
-  if (binary) {
-    sdb::connector::CheckBinaryCopyOptions(*bound_info, false);
-  } else {
-    options = duckdb::ParseCopyFormatOptions(format == CopyFormat::Csv
-                                               ? duckdb::CopyTextFormat::CSV
-                                               : duckdb::CopyTextFormat::TEXT,
-                                             false, bound_info->options);
-    duckdb::CheckCopyFormatOptions(options, false);
-  }
+  const auto options = duckdb::ParseCopyFormatOptions(
+    NativeCopyFormat(format), false, bound_info->options);
+  duckdb::CheckCopyFormatOptions(options, false);
   auto inner = ExtractCopyToQuery(copy);
   auto prepared = PrepareInternal(std::move(inner));
   ThrowIfError(*prepared);

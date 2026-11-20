@@ -52,6 +52,7 @@
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/hash_utils.hpp"
+#include "iresearch/utils/parallel_for.hpp"
 
 namespace irs {
 
@@ -67,6 +68,7 @@ struct PrepareContext {
   uint32_t thread = 0;
   bool needs_terms = false;
   QueryProfile* profile = nullptr;
+  ParallelFor parallel = SerialFor;
 
   void Boost(score_t b) noexcept { boost *= b; }
 

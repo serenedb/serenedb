@@ -25,6 +25,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/serializer/serialization_traits.hpp>
 
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/store/data_input.hpp"
@@ -33,6 +34,9 @@
 namespace irs::format_utils {
 
 inline constexpr uint64_t kTrailerLen = 2 * sizeof(uint32_t);
+
+inline constexpr duckdb::field_id_t kMetaFieldPacked =
+  duckdb::MESSAGE_TERMINATOR_FIELD_ID - 1;
 
 struct Footer {
   uint64_t data_len = 0;

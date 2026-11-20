@@ -50,5 +50,7 @@ inline constexpr std::string_view kWalRetrieveRetryIntervalSetting =
 inline constexpr std::string_view kMaxSyncWorkersPerSubscriptionSetting =
   "max_sync_workers_per_subscription";
 inline constexpr std::string_view kMaxWalSizeSetting = "max_wal_size";
+inline constexpr std::string_view kLogCompressionSetting =
+  "sdb_log_compression";
 
 }  // namespace sdb

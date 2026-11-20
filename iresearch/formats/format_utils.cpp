@@ -26,6 +26,7 @@
 
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -34,6 +35,7 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/store_utils.hpp"
+#include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/crc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string_utils.hpp"
@@ -44,6 +46,43 @@ namespace {
 constexpr duckdb::field_id_t kFieldDataCrc32c = 0;
 constexpr duckdb::field_id_t kFieldMeta = 1;
 
+void WritePackedMeta(duckdb::BinarySerializer& meta, FooterWriter write) {
+  duckdb::MemoryStream raw;
+  duckdb::BinarySerializer serializer{raw};
+  serializer.Begin();
+  write(serializer);
+  serializer.End();
+  const auto packed = compression::Compress(compression::kLz4,
+                                            {raw.GetData(), raw.GetPosition()});
+  if (!compression::Pays(packed)) {
+    write(meta);
+    return;
+  }
+  meta.WriteObject(kMetaFieldPacked, "packed",
+                   [&](duckdb::BinarySerializer& object) {
+                     compression::WritePacked(object, packed);
+                   });
+}
+
+void ReadMeta(duckdb::BinaryDeserializer& meta, duckdb::MemoryStream& stream,
+              FooterReader read, uint64_t data_len) {
+  compression::Packed packed;
+  const auto present = meta.ReadOptionalObject(
+    kMetaFieldPacked, "packed", [&](duckdb::BinaryDeserializer& object) {
+      packed = compression::ReadPacked(object, stream);
+    });
+  if (!present) {
+    read(meta, data_len);
+    return;
+  }
+  const auto raw = compression::Decompress(packed);
+  duckdb::MemoryStream unpacked{raw.get(), packed.frames.raw_bytes};
+  duckdb::BinaryDeserializer deserializer{unpacked};
+  deserializer.Begin();
+  read(deserializer, data_len);
+  deserializer.End();
+}
+
 void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
   const uint32_t data_crc32c = out.Checksum();
   duckdb::MemoryStream footer;
@@ -52,7 +91,14 @@ void WriteFooterImpl(IndexOutput& out, const FooterWriter* write) {
   serializer.WritePropertyWithDefault<uint32_t>(kFieldDataCrc32c, "data_crc32c",
                                                 data_crc32c, 0);
   if (write != nullptr) {
-    serializer.WriteObject(kFieldMeta, "meta", *write);
+    serializer.WriteObject(kFieldMeta, "meta",
+                           [&](duckdb::BinarySerializer& meta) {
+                             SDB_IF_FAILURE("irs::FooterMetaUnpacked") {
+                               (*write)(meta);
+                               return;
+                             }
+                             WritePackedMeta(meta, *write);
+                           });
   }
   serializer.End();
   const auto size = footer.GetPosition();
@@ -107,7 +153,7 @@ Footer ReadFooterImpl(IndexInput& in, std::string_view name,
     if (read != nullptr) {
       deserializer.ReadObject(kFieldMeta, "meta",
                               [&](duckdb::BinaryDeserializer& meta) {
-                                (*read)(meta, footer.data_len);
+                                ReadMeta(meta, stream, *read, footer.data_len);
                               });
     }
     deserializer.End();

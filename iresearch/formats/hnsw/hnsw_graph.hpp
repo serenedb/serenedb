@@ -36,10 +36,12 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
+#include "iresearch/utils/parallel_for.hpp"
 namespace irs {
 
 class DataOutput;
@@ -52,7 +54,6 @@ inline constexpr uint32_t kHnswDefaultEfConstruction = 200;
 inline constexpr uint32_t kHnswDefaultEfSearch = 64;
 inline constexpr uint32_t kHnswSerialWarmup = 256;
 inline constexpr size_t kHnswMinRowsPerWorker = 1024;
-inline constexpr uint32_t kHnswMaxWorkers = 64;
 inline constexpr size_t kHnswInsertGranule = 256;
 inline constexpr uint64_t kHnswTrainSample = 262144;
 inline constexpr uint32_t kHnswMaxLevel = std::numeric_limits<uint8_t>::max();
@@ -294,7 +295,11 @@ class HnswGraph {
   }
 
   void Serialize(DataOutput& out) const;
+  HnswGraphFrames SerializePacked(DataOutput& out, ParallelFor parallel) const;
   static HnswGraph Deserialize(IndexInput& in);
+  static HnswGraph DeserializePacked(IndexInput& in,
+                                     const HnswGraphFrames& frames,
+                                     ParallelFor parallel);
 
  private:
   friend class HnswGraphWriter;
@@ -372,6 +377,9 @@ class HnswGraphWriter {
   }
 
   void Serialize(DataOutput& out) const { _graph.Serialize(out); }
+  HnswGraphFrames SerializePacked(DataOutput& out, ParallelFor parallel) const {
+    return _graph.SerializePacked(out, parallel);
+  }
 
  private:
   HnswGraph _graph;

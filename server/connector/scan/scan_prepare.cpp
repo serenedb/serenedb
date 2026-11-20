@@ -29,6 +29,7 @@
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
+#include "search/parallel.h"
 
 namespace sdb::connector {
 
@@ -53,11 +54,13 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
       collector = g.collector->Get();
     }
     const auto& segment = (*g.reader)[seg_idx];
+    const auto parallel = search::ParallelOn(*g.client_context);
     const irs::PrepareContext ctx{
       .collector = collector,
       .thread = collector != nullptr ? l->thread_slot : 0,
       .needs_terms = g.needs_terms,
-      .profile = g.profile ? &g.profile->Query() : nullptr};
+      .profile = g.profile ? &g.profile->Query() : nullptr,
+      .parallel = parallel};
     const auto index_only = g.ClaimedIndexOnly();
     const auto& filter = !UsesColumnForms(g, segment) ? *g.filter
                          : index_only                 ? *index_only

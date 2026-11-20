@@ -819,10 +819,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
                         const std::shared_ptr<Store>& store,
                         irs::DocRemovalBuilder&& positions) {
   const auto& reader = PinnedReader(context, *store);
-  auto removal = std::move(positions).Finish(
-    reader, [&](size_t count, absl::FunctionRef<void(size_t)> body) {
-      ParallelFor(context, count, body);
-    });
+  auto removal = std::move(positions).Finish(reader, ParallelOn(context));
   auto& w = EnsureStoreWrites(store);
   std::vector<StoreWrites::RemovedKeys> removed;
   duckdb::StringHeap heap;
@@ -1988,6 +1985,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
   for (const auto& [store_id, w] : _writes) {
     CheckChanged(w, w.changed);
   }
+  const auto parallel = ParallelOn(context);
   for (auto& [store_id, w] : _writes) {
     auto& changes = w.changes;
     if (!w.owner ||
@@ -2033,6 +2031,9 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
                        removed](ChunkVisit visit) {
           ForEachLiveChunk(*collection, removed.get(), visit);
         };
+        if (catalog::Transactions::Get().LogCompression()) {
+          PackRows(w.rows, kLogFrameBytes, parallel);
+        }
       }
       const auto docs = PieceDocs(piece.trx);
       if (docs != 0) {
@@ -2046,8 +2047,11 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
       CarryUnitPatches(changes.patches, rows_id, sealed);
       changes.ClearBufferedRows();
     }
-    ParallelFor(context, changes.patches.size(),
-                [&](size_t p) { UniteRows(changes.patches[p]); });
+    parallel(changes.patches.size(),
+             [&](size_t p) { UniteRows(changes.patches[p]); });
+    if (Logged(w) && catalog::Transactions::Get().LogCompression()) {
+      PackPatches(changes.patches, kLogFrameBytes, parallel);
+    }
     if (!w.own_segments.empty()) {
       w.store->SyncSegments();
     }
@@ -2097,6 +2101,9 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
     }
     if (!w.changes.patches.empty()) {
       w.changes.patches = table.Resolve(std::move(w.changes.patches));
+      if (Logged(w) && catalog::Transactions::Get().LogCompression()) {
+        PackPatches(w.changes.patches, kLogFrameBytes, ParallelOn(context));
+      }
     }
   }
   for (auto& [store_id, w] : _writes) {

@@ -81,6 +81,7 @@ add_bench(packed_key_agg)
 add_bench(order_keys)
 add_bench(http_codecs)
 add_bench(http_compression)
+add_bench(read_once_codecs)
 set_property(
     SOURCE http_compression.cpp
     APPEND

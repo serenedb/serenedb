@@ -18,11 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
+#include <absl/functional/function_ref.h>
 #include <absl/random/distributions.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <cmath>
 #include <duckdb.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
@@ -39,6 +44,8 @@
 #include <iresearch/utils/index_utils.hpp>
 #include <numeric>
 #include <random>
+#include <string_view>
+#include <thread>
 #include <tuple>
 #include <vector>
 #include <yaclib/runtime/fair_thread_pool.hpp>
@@ -625,6 +632,108 @@ TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
   EXPECT_EQ(built.rotated, header.rotated);
 }
 
+constexpr std::string_view kRawGraph = "irs::HnswRawGraph";
+
+void ThreadsFor(size_t count, absl::FunctionRef<void(size_t)> body) {
+  std::vector<std::thread> threads;
+  threads.reserve(count);
+  for (size_t i = 0; i != count; ++i) {
+    threads.emplace_back([body, i] { body(i); });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+}
+
+struct WideGraph {
+  irs::DirectoryReader reader;
+  uint64_t idx_bytes = 0;
+};
+
+WideGraph BuildWideGraph(irs::Directory& dir,
+                         const std::vector<std::vector<float>>& vecs,
+                         const irs::AnnBuildEnv& env) {
+  auto opts = irs::tests::DefaultWriterOptions();
+  SetAnn(opts, irs::AnnInfo{
+                 .kind = irs::AnnKind::Hnsw,
+                 .index_id = kVec,
+                 .column_id = kVec,
+                 .d = static_cast<int>(kDim),
+                 .metric = irs::VectorMetric::L2Sqr,
+                 .quant = {.kind = irs::VectorQuantization::None},
+                 .m = 2048,
+                 .ef_construction = 2048,
+               });
+  opts.ann_env = &env;
+  auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate, opts);
+  EXPECT_NE(nullptr, writer);
+  {
+    auto trx = writer->GetBatch();
+    for (const auto& vec : vecs) {
+      auto doc = trx.Insert();
+      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vec);
+    }
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+  WideGraph built{.reader = writer->GetSnapshot()};
+  EXPECT_TRUE(dir.length(
+    built.idx_bytes,
+    absl::StrCat(built.reader[0].Meta().name, ".", irs::kIdxFormatExt)));
+  return built;
+}
+
+TEST(HnswGraphFormatTest, PackedGraphLoadsAsTheRawGraph) {
+  if (!duckdb::FaultPoints::Arm(kRawGraph)) {
+    GTEST_SKIP() << "this build has no fault injection";
+  }
+  absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
+  auto pool = yaclib::MakeFairThreadPool(4);
+  absl::Cleanup stop = [&] {
+    pool->SoftStop();
+    pool->Wait();
+  };
+  std::atomic<uint32_t> held{0};
+  const auto acquire = [&](uint32_t want, uint32_t) {
+    held.fetch_add(want);
+    return want;
+  };
+  const auto release = [&](uint32_t n) { held.fetch_sub(n); };
+  const irs::AnnBuildEnv env{
+    .executor = pool.Get(), .acquire = acquire, .release = release};
+  const auto vecs = MakeVectors(2000, 29);
+  irs::MemoryDirectory raw_dir;
+  const auto raw = BuildWideGraph(raw_dir, vecs, env);
+  duckdb::FaultPoints::Disarm(kRawGraph);
+  irs::MemoryDirectory packed_dir;
+  const auto packed = BuildWideGraph(packed_dir, vecs, env);
+  EXPECT_LT(packed.idx_bytes * 4, raw.idx_bytes);
+  EXPECT_EQ(held.load(), 0U);
+
+  const auto load = [](const irs::DirectoryReader& reader) {
+    const auto& segment = reader[0];
+    return static_cast<const irs::HnswIndex&>(*segment.Ann(kVec))
+      .Load(segment, ThreadsFor);
+  };
+  const auto from_raw = load(raw.reader);
+  const auto from_packed = load(packed.reader);
+  ASSERT_TRUE(from_raw && from_packed);
+  const auto& expected = from_raw->graph;
+  const auto& actual = from_packed->graph;
+  ASSERT_EQ(expected.Size(), vecs.size());
+  ASSERT_EQ(actual.Size(), expected.Size());
+  EXPECT_EQ(actual.M(), expected.M());
+  EXPECT_EQ(actual.EntryPoint(), expected.EntryPoint());
+  ASSERT_TRUE(absl::c_equal(actual.Levels(), expected.Levels()));
+  for (uint32_t node = 0; node != expected.Size(); ++node) {
+    for (uint32_t level = 0; level != expected.LevelOf(node); ++level) {
+      ASSERT_TRUE(absl::c_equal(actual.Neighbors(node, level),
+                                expected.Neighbors(node, level)))
+        << "node " << node << " level " << level;
+    }
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(
   metrics, HnswIndexTest,
   ::testing::Combine(
@@ -790,7 +899,7 @@ std::vector<std::shared_ptr<const std::vector<float>>> SegmentBases(
   std::vector<std::shared_ptr<const std::vector<float>>> out;
   for (const auto& segment : reader) {
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    out.push_back(ann->Load(segment)->rotation);
+    out.push_back(ann->Load(segment, irs::SerialFor)->rotation);
   }
   return out;
 }
@@ -1026,7 +1135,7 @@ TEST(HnswPanoramaBasisTest, Sq8CodesRotateIntoTheSharedBasis) {
   EXPECT_EQ(flushed[0], flushed[1]);
   for (const auto& segment : writer->GetSnapshot()) {
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    EXPECT_EQ(ann->Load(segment)->tails.size(),
+    EXPECT_EQ(ann->Load(segment, irs::SerialFor)->tails.size(),
               size_t{kBatch} * irs::HnswCodeTails(kD));
   }
 
@@ -1626,7 +1735,7 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
     EXPECT_EQ(1U, reader.size());
     const auto& segment = (reader)[0];
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    const auto data = ann->Load(segment);
+    const auto data = ann->Load(segment, irs::SerialFor);
     const auto& graph = data->graph;
     size_t links = 0;
     size_t near = 0;

@@ -34,6 +34,25 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
+namespace {
+
+void WriteGraphFrames(duckdb::BinarySerializer& graph,
+                      const HnswGraphFrames& frames) {
+  graph.WriteObject(kHnswGraphLevels, "levels",
+                    [&](duckdb::BinarySerializer& object) {
+                      compression::WriteFrames(object, frames.levels);
+                    });
+  graph.WriteObject(kHnswGraphBase, "base",
+                    [&](duckdb::BinarySerializer& object) {
+                      compression::WriteFrames(object, frames.base);
+                    });
+  graph.WriteObject(kHnswGraphUpper, "upper",
+                    [&](duckdb::BinarySerializer& object) {
+                      compression::WriteFrames(object, frames.upper);
+                    });
+}
+
+}  // namespace
 
 struct IdxWriter::Impl {
   Directory* dir;
@@ -122,6 +141,11 @@ std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
           obj.WriteProperty<uint32_t>(7, "record_size", h.record_size);
           obj.WriteProperty<uint64_t>(8, "rows", h.rows);
           obj.WriteProperty<bool>(9, "rotated", h.rotated);
+          obj.WriteOptionalObject(kHnswMetaGraph, "graph",
+                                  e.meta.graph.Packed(),
+                                  [&](duckdb::BinarySerializer& graph) {
+                                    WriteGraphFrames(graph, e.meta.graph);
+                                  });
         });
       });
     footer.WriteOptionalObject(kIdxFieldTerms, "terms",

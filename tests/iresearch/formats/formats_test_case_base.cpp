@@ -23,8 +23,11 @@
 
 #include "formats_test_case_base.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <algorithm>
 #include <cstddef>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -579,6 +582,87 @@ TEST_P(FormatTestCase, format_utils_footer) {
 
   write("no_data", {});
   read("no_data", {});
+}
+
+TEST_P(FormatTestCase, format_utils_footer_packs_its_meta) {
+  constexpr uint32_t kValues = 10000;
+  const auto write = [&](std::string_view name) {
+    auto stream = dir().create(name);
+    ASSERT_NE(nullptr, stream);
+    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
+      meta.WriteList(
+        0, "values", kValues,
+        [](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteElement<uint32_t>(static_cast<uint32_t>(i % 100));
+        });
+    });
+  };
+  const auto read = [&](std::string_view name) -> uint64_t {
+    auto stream = dir().open(name, irs::IOAdvice::RANDOM);
+    EXPECT_NE(nullptr, stream);
+    std::vector<uint32_t> values;
+    irs::format_utils::ReadFooter(
+      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t) {
+        meta.ReadList(
+          0, "values",
+          [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+            values.push_back(list.ReadElement<uint32_t>());
+          });
+      });
+    EXPECT_EQ(values.size(), kValues);
+    for (uint32_t i = 0; i != values.size(); ++i) {
+      EXPECT_EQ(values[i], i % 100) << name << " value " << i;
+    }
+    return stream->Length();
+  };
+
+  write("packed");
+  const auto packed = read("packed");
+
+  constexpr std::string_view kUnpacked = "irs::FooterMetaUnpacked";
+  if (!duckdb::FaultPoints::Arm(kUnpacked)) {
+    GTEST_SKIP() << "this build has no fault injection";
+  }
+  {
+    absl::Cleanup disarm = [&] { duckdb::FaultPoints::Disarm(kUnpacked); };
+    write("unpacked");
+  }
+  const auto unpacked = read("unpacked");
+  EXPECT_LT(packed * 4, unpacked);
+}
+
+TEST_P(FormatTestCase, format_utils_footer_keeps_a_small_meta_plain) {
+  const auto write = [&](std::string_view name) {
+    auto stream = dir().create(name);
+    ASSERT_NE(nullptr, stream);
+    irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
+      meta.WriteProperty<uint32_t>(0, "value", 42);
+    });
+  };
+  const auto read = [&](std::string_view name) -> uint64_t {
+    auto stream = dir().open(name, irs::IOAdvice::RANDOM);
+    EXPECT_NE(nullptr, stream);
+    uint32_t value = 0;
+    irs::format_utils::ReadFooter(
+      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t) {
+        value = meta.ReadProperty<uint32_t>(0, "value");
+      });
+    EXPECT_EQ(value, 42U);
+    return stream->Length();
+  };
+
+  write("small");
+  const auto small = read("small");
+
+  constexpr std::string_view kUnpacked = "irs::FooterMetaUnpacked";
+  if (!duckdb::FaultPoints::Arm(kUnpacked)) {
+    GTEST_SKIP() << "this build has no fault injection";
+  }
+  {
+    absl::Cleanup disarm = [&] { duckdb::FaultPoints::Disarm(kUnpacked); };
+    write("unpacked");
+  }
+  EXPECT_EQ(small, read("unpacked"));
 }
 
 TEST_P(FormatTestCase, format_utils_footer_damaged) {

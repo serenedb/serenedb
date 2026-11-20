@@ -43,6 +43,32 @@
 
 namespace irs {
 
+#ifndef IRESEARCH_NO_VECTOR
+namespace {
+
+void ReadGraphFrames(duckdb::BinaryDeserializer& graph,
+                     std::string_view filename, HnswGraphFrames& frames) {
+  graph.ReadObject(kHnswGraphLevels, "levels",
+                   [&](duckdb::BinaryDeserializer& object) {
+                     frames.levels = compression::ReadFrames(object);
+                   });
+  graph.ReadObject(kHnswGraphBase, "base",
+                   [&](duckdb::BinaryDeserializer& object) {
+                     frames.base = compression::ReadFrames(object);
+                   });
+  graph.ReadObject(kHnswGraphUpper, "upper",
+                   [&](duckdb::BinaryDeserializer& object) {
+                     frames.upper = compression::ReadFrames(object);
+                   });
+  if (!frames.Packed()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                    ERR_MSG("HNSW graph in ", filename, " has no levels"));
+  }
+}
+
+}  // namespace
+#endif
+
 struct IdxReader::Impl {
   IndexInput::ptr in;
   std::vector<std::pair<field_id, std::unique_ptr<AnnIndex>>> ann_entries;
@@ -96,7 +122,7 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
         kIdxFieldHnsw, "hnsw",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            footer.hnsw.push_back({
+            auto& entry = footer.hnsw.emplace_back(HnswEntry{
               .id = obj.ReadProperty<uint64_t>(0, "id"),
               .meta =
                 {
@@ -118,6 +144,10 @@ IdxReader::IdxReader(const Directory& dir, std::string_view segment_name,
                     },
                 },
             });
+            obj.ReadOptionalObject(
+              kHnswMetaGraph, "graph", [&](duckdb::BinaryDeserializer& graph) {
+                ReadGraphFrames(graph, filename, entry.meta.graph);
+              });
           });
         });
 #endif
@@ -152,11 +182,11 @@ void IdxReader::Adopt(IdxFooter footer, HnswBases* hnsw_bases) {
     _impl->ann_entries.emplace_back(
       id, std::make_unique<IvfIndex>(std::move(entry)));
   }
-  for (const auto& [id, meta] : footer.hnsw) {
+  for (auto& [id, meta] : footer.hnsw) {
     _impl->ann_ends.push_back(meta.offset + meta.byte_size);
     _impl->ann_by_id.emplace(id, _impl->ann_entries.size());
     _impl->ann_entries.emplace_back(
-      id, std::make_unique<HnswIndex>(meta, id, hnsw_bases));
+      id, std::make_unique<HnswIndex>(std::move(meta), id, hnsw_bases));
   }
 #else
   SDB_ASSERT(footer.ivf.empty() && footer.hnsw.empty());

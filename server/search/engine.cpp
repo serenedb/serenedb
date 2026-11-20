@@ -73,7 +73,10 @@ SearchEngine::SearchEngine(Runtime& runtime)
              .release = AnnReleaseWorkers},
     _manual_ann_env{.executor = &runtime.Background(),
                     .acquire = AnnAcquireAllWorkers,
-                    .release = AnnReleaseWorkers} {
+                    .release = AnnReleaseWorkers},
+    _snapshot_env{.executor = &runtime.Background(),
+                  .acquire = SnapshotAcquireWorkers,
+                  .release = SnapshotReleaseWorkers} {
   gInstance = this;
 }
 

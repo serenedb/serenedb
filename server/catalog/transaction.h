@@ -223,8 +223,18 @@ class Transactions final {
     _max_log_bytes.store(bytes, std::memory_order_relaxed);
   }
 
+  static constexpr bool kDefaultLogCompression = true;
+
+  void SetLogCompression(bool compress) noexcept {
+    _log_compression.store(compress, std::memory_order_relaxed);
+  }
+  bool LogCompression() const noexcept {
+    return _log_compression.load(std::memory_order_relaxed);
+  }
+
   absl::Status TruncateLog(
-    duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT);
+    duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT,
+    duckdb::ClientContext* context = nullptr);
   void SettleLog();
   [[nodiscard]] utils::DrainGate::Closed CloseCheckpoints(
     duckdb::ClientContext& context) {
@@ -330,6 +340,7 @@ class Transactions final {
   std::unique_ptr<Log> _log;
   bool _replaying = false;
   std::atomic<uint64_t> _max_log_bytes{kDefaultMaxLogBytes};
+  std::atomic<bool> _log_compression{kDefaultLogCompression};
   std::atomic<bool> _truncating{false};
   std::atomic<bool> _preparing_next{false};
   absl::Mutex _truncate_mutex;

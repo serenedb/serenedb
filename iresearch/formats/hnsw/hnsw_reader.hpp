@@ -32,6 +32,7 @@
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
+#include "iresearch/utils/parallel_for.hpp"
 
 namespace irs {
 
@@ -57,7 +58,7 @@ struct HnswSearchLimits {
 class HnswIndex final : public AnnIndex {
  public:
   HnswIndex(HnswMeta meta, field_id field, HnswBases* bases) noexcept
-    : _meta{meta}, _field{field}, _bases{bases} {}
+    : _meta{std::move(meta)}, _field{field}, _bases{bases} {}
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
 
@@ -81,10 +82,12 @@ class HnswIndex final : public AnnIndex {
                                  AnnQueryCache* cache) const final;
 
   AnnExactCodes PrepareExact(const SubReader& segment,
+                             const PrepareContext& ctx,
                              std::span<const float> query,
                              VectorMetric metric) const final;
 
-  std::shared_ptr<const HnswData> Load(const SubReader& segment) const;
+  std::shared_ptr<const HnswData> Load(const SubReader& segment,
+                                       ParallelFor parallel) const;
 
   const HnswHeader& Header() const noexcept { return _meta.header; }
 

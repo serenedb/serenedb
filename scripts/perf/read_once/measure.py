@@ -7,6 +7,7 @@ import json
 import mmap
 import os
 import platform
+import re
 import shutil
 import signal
 import statistics
@@ -14,6 +15,7 @@ import struct
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import psycopg
@@ -38,6 +40,9 @@ LOG_METRICS = (
     "catalog_history_bytes",
 )
 HITS_INDEXED = ("URL", "Title", "SearchPhrase", "Referer", "UserID", "CounterID")
+LOGGED_AT = re.compile(r"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:\.\d+)?)\+00")
+LOGGED_START = "starting SereneDB"
+LOGGED_READY = "ready for business"
 PAGE = os.sysconf("SC_PAGE_SIZE")
 
 LIBC = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
@@ -148,6 +153,22 @@ def proc_peak_rss_bytes(pid):
     raise RuntimeError(f"/proc/{pid}/status has no VmHWM")
 
 
+def logged_ready_s(log_path, timeout):
+    begin = time.monotonic()
+    while True:
+        start = ready = None
+        for line in log_path.read_text(errors="replace").splitlines():
+            if start is None and LOGGED_START in line:
+                start = datetime.fromisoformat(LOGGED_AT.search(line).group(1))
+            elif ready is None and LOGGED_READY in line:
+                ready = datetime.fromisoformat(LOGGED_AT.search(line).group(1))
+        if start and ready:
+            return (ready - start).total_seconds()
+        if time.monotonic() - begin > timeout:
+            raise RuntimeError(f"{log_path} has no '{LOGGED_START}' and '{LOGGED_READY}' lines")
+        time.sleep(0.001)
+
+
 def latency(samples):
     ms = sorted(s * 1000 for s in samples)
     if not ms:
@@ -200,9 +221,10 @@ class Server:
             except psycopg.OperationalError:
                 if time.monotonic() - begin > self.timeout:
                     raise RuntimeError(f"serened did not accept connections in {self.timeout}s, see {log_path}")
-                time.sleep(0.01)
+                time.sleep(0.001)
         return {
             "ready_s": time.monotonic() - begin,
+            "server_ready_s": logged_ready_s(log_path, self.timeout),
             "cpu_s": proc_cpu_seconds(self.proc.pid),
             "read_bytes": self.read_bytes(),
             "peak_rss_bytes": proc_peak_rss_bytes(self.proc.pid),
@@ -720,6 +742,7 @@ SUMMARY = [
     ("log: catalog part bytes", "log.wal_after_crash.log.catalog_bytes"),
     ("log: chunk file bytes", "log.wal_after_crash.log.chunk_file_bytes"),
     ("recovery: ready s", "log.recovery.ready_s"),
+    ("recovery: server ready s", "log.recovery.server_ready_s"),
     ("recovery: cpu s", "log.recovery.cpu_s"),
     ("recovery: read bytes", "log.recovery.read_bytes"),
     ("recovery: peak RSS bytes", "log.recovery.peak_rss_bytes"),
@@ -730,6 +753,7 @@ SUMMARY = [
     ("snapshot: table record bytes", "log.wal_after_checkpoint.snapshot.tables.framed_bytes"),
     ("snapshot: history bytes", "log.wal_after_checkpoint.snapshot.history.framed_bytes"),
     ("snapshot start: ready s", "log.snapshot_start.ready_s"),
+    ("snapshot start: server ready s", "log.snapshot_start.server_ready_s"),
     ("snapshot start: cpu s", "log.snapshot_start.cpu_s"),
     ("snapshot start: read bytes", "log.snapshot_start.read_bytes"),
     ("snapshot start: peak RSS bytes", "log.snapshot_start.peak_rss_bytes"),
@@ -740,6 +764,7 @@ SUMMARY = [
     ("update: bytes per delete commit", "update.delete_commits.log_bytes_per_commit"),
     ("update: delete commit p50 ms", "update.delete_commits.latency.p50_ms"),
     ("update: recovery ready s", "update.recovery.ready_s"),
+    ("update: recovery server ready s", "update.recovery.server_ready_s"),
     ("update: recovery cpu s", "update.recovery.cpu_s"),
     ("update: recovery read bytes", "update.recovery.read_bytes"),
     ("bulk: parquet resident bytes", "bulk.hits_warmed.resident_bytes"),
@@ -755,6 +780,7 @@ SUMMARY = [
     ("bulk: .idx bytes", "bulk.files.hits.idx.bytes"),
     ("bulk: .idx footer bytes", "bulk.files.hits.idx.footer_bytes"),
     ("bulk: cold ready s", "bulk.open.ready_s"),
+    ("bulk: cold server ready s", "bulk.open.server_ready_s"),
     ("bulk: cold ready cpu s", "bulk.open.cpu_s"),
     ("bulk: cold ready read bytes", "bulk.open.read_bytes"),
     ("bulk: cold ready peak RSS bytes", "bulk.open.peak_rss_bytes"),
@@ -771,6 +797,7 @@ SUMMARY = [
     ("hnsw: graph upper links bytes", "hnsw.graph.upper_bytes"),
     ("hnsw: graph empty level-0 slots", "hnsw.graph.base_empty_slots"),
     ("hnsw: cold ready s", "hnsw.open.ready_s"),
+    ("hnsw: cold server ready s", "hnsw.open.server_ready_s"),
     ("hnsw: cold ready cpu s", "hnsw.open.cpu_s"),
     ("hnsw: cold ready peak RSS bytes", "hnsw.open.peak_rss_bytes"),
     ("hnsw: cold first ANN s", "hnsw.open.first_ann.s"),

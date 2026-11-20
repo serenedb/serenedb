@@ -48,12 +48,12 @@
 #include <duckdb/execution/execution_context.hpp>
 #include <duckdb/execution/operator/helper/physical_reset.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
-#include <duckdb/parallel/thread_context.hpp>
 #include <duckdb/function/create_sort_key.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/settings.hpp>
+#include <duckdb/parallel/thread_context.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>

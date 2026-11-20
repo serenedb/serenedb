@@ -233,6 +233,8 @@ FROM (
 
 # DOCS_TEST: export
 
+control substitution on
+
 # DOCS_TEST_RAW
 #| COPY (
 #|     SELECT q.text AS user_input,

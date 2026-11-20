@@ -182,8 +182,9 @@ uint64_t Build(irs::FileTracker& tracker, Corpus corpus, const Arm& arm,
     pos += take;
   }
   w.Commit(rows);
+  const auto reader = w.TakeReader();
   uint64_t bytes = 0;
-  for (const auto& block : cw.Meta().data) {
+  for (const auto& block : reader->Column(kField)->DataBlocks()) {
     bytes += block.byte_size;
   }
   return bytes;

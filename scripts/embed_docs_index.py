@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import mmap
+import os
 import pathlib
 import struct
+import subprocess
 import sys
 from typing import BinaryIO
 
@@ -36,17 +38,45 @@ def human_size(size: int) -> str:
     return f"{size / (1024 * 1024):.1f} MiB"
 
 
-def pack(indexes: list[list[tuple[pathlib.Path, bytes]]]) -> bytes:
-    out = bytearray()
-    for files in indexes:
-        out += struct.pack("<I", len(files))
-        for path, data in files:
-            name = path.name.encode()
-            out += struct.pack("<I", len(name)) + name
-            out += struct.pack("<Q", len(data))
-            out += bytes(-len(out) % ALIGNMENT)
-            out += data
-    return bytes(out)
+def unpack(image: bytes) -> list[list[tuple[str, int]]]:
+    indexes = []
+    offset = 0
+    try:
+        for index in INDEXES:
+            (count,) = struct.unpack_from("<I", image, offset)
+            offset += 4
+            files = []
+            for _ in range(count):
+                (length,) = struct.unpack_from("<I", image, offset)
+                offset += 4
+                name = image[offset:offset + length].decode()
+                offset += length
+                (size,) = struct.unpack_from("<Q", image, offset)
+                offset += 8 + (-(offset + 8) % ALIGNMENT) + size
+                files.append((name, size))
+            if not files:
+                raise EmbedError(f"the image holds no {index} index files")
+            indexes.append(files)
+    except struct.error as error:
+        raise EmbedError(f"the image is truncated: {error}") from error
+    if offset != len(image):
+        raise EmbedError(f"the image holds {len(image)} bytes, its files "
+                         f"end at {offset}")
+    return indexes
+
+
+def build_image(binary: pathlib.Path, corpus: pathlib.Path) -> bytes:
+    read, write = os.pipe()
+    with os.fdopen(read, "rb") as pipe:
+        process = subprocess.Popen(
+            [str(binary), "docs-index", str(corpus), f"/dev/fd/{write}"],
+            pass_fds=(write,))
+        os.close(write)
+        image = pipe.read()
+    if process.wait() != 0:
+        raise EmbedError(f"{binary} docs-index failed with exit code "
+                         f"{process.returncode}")
+    return image
 
 
 def grow_section(file: BinaryIO, image: bytes) -> None:
@@ -150,55 +180,45 @@ def main() -> int:
                     "binary's .sdb_docs section grows to fit it exactly, a "
                     "Mach-O binary's fixed region "
                     "(server/docs/docs_index_image.cpp) is filled in place.")
-    parser.add_argument("directory", type=pathlib.Path,
-                        help="directory holding the docs/ and objects/ "
-                             "iresearch directories")
     parser.add_argument("binary", type=pathlib.Path)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--corpus", type=pathlib.Path,
+                        help="build the index from this corpus with the "
+                             "binary's docs-index command, in memory")
+    source.add_argument("--image", type=pathlib.Path,
+                        help="embed this image, as docs-index writes it")
+    parser.add_argument("--builder", type=pathlib.Path,
+                        help="the serenedb binary that builds the index from "
+                             "--corpus (default: the binary itself)")
     args = parser.parse_args()
 
-    indexes: list[list[tuple[pathlib.Path, bytes]]] = []
-    for name in INDEXES:
-        directory = args.directory / name
-        files = (
-            [
-                (path, path.read_bytes())
-                for path in sorted(directory.iterdir())
-                if path.is_file()
-            ]
-            if directory.is_dir()
-            else []
-        )
-        if not files:
-            print(f"no index files under {str(directory)!r}", file=sys.stderr)
-            return 1
-        indexes.append(files)
-    image = pack(indexes)
-
-    with args.binary.open("r+b") as file:
-        magic = file.read(len(ELF_MAGIC))
-        try:
+    try:
+        image = (build_image(args.builder or args.binary, args.corpus)
+                 if args.corpus else args.image.read_bytes())
+        indexes = unpack(image)
+        with args.binary.open("r+b") as file:
+            magic = file.read(len(ELF_MAGIC))
             if magic == ELF_MAGIC:
                 grow_section(file, image)
             elif magic == MACHO_MAGIC:
                 fill_region(file, image)
             else:
                 raise EmbedError("expected an ELF or a Mach-O binary")
-        except EmbedError as error:
-            print(f"{args.binary}: {error}", file=sys.stderr)
-            return 1
+    except (EmbedError, OSError) as error:
+        print(f"{args.binary}: {error}", file=sys.stderr)
+        return 1
 
     listed = [
-        (f"{name}/{path.name}", data)
+        (f"{name}/{file}", size)
         for name, files in zip(INDEXES, indexes)
-        for path, data in files
+        for file, size in files
     ]
-    total = sum(len(data) for _, data in listed)
+    total = sum(size for _, size in listed)
     print(f"embedded docs index: {len(listed)} files, {human_size(total)} "
           f"({total} bytes) -> {args.binary}")
     width = max(len(name) for name, _ in listed)
-    for name, data in sorted(listed, key=lambda item: len(item[1]),
-                             reverse=True):
-        print(f"  {name:<{width}}  {human_size(len(data)):>10}")
+    for name, size in sorted(listed, key=lambda item: item[1], reverse=True):
+        print(f"  {name:<{width}}  {human_size(size):>10}")
     return 0
 
 

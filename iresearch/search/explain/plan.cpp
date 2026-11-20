@@ -47,16 +47,21 @@ namespace {
 
 using Outcome = Part::Outcome;
 
+const SlotStats* StatsOf(const StatsIndex& index, const byte_type* slot) {
+  const auto it = index.find(slot);
+  return it == index.end() ? nullptr : &it->second;
+}
+
 void Describe(const Scorer& scorer, std::string_view name,
               const ScoreContext& ctx, const StatsIndex& index, Node& out) {
-  scorer.Explain(ctx, index.Find(ctx.stats), out);
+  scorer.Explain(ctx, StatsOf(index, ctx.stats), out);
   out.scorer = name;
 }
 
 Subject SubjectOf(const StatsIndex& index, const byte_type* slot,
                   const TermReader* field) {
   const auto dict = field ? field->meta().dict : DictRef{};
-  if (const auto* stats = index.Find(slot)) {
+  if (const auto* stats = StatsOf(index, slot)) {
     Subject subject{.field = stats->field, .dict = dict};
     for (const auto& term : stats->terms) {
       if (!term.term.empty()) {
@@ -105,12 +110,13 @@ struct Cursor {
     const bool planned = !node || doc < last;
     if (planned) {
       node = plan();
+      SDB_ASSERT(node);
     }
     last = doc;
     return planned;
   }
 
-  bool Matches(doc_id_t doc) { return node && node->Probe(doc) == doc; }
+  bool Matches(doc_id_t doc) { return node->Probe(doc) == doc; }
 
   Planner plan;
   probe::Node::ptr node;
@@ -129,8 +135,8 @@ class LeafPart final : public Part {
 
   Outcome Explain(doc_id_t doc, Node& out) final {
     if (_cursor.Seek(doc)) {
-      _score = Scored() && _cursor.node ? _cursor.node->PrepareScore()
-                                        : ScoreFunction::Default();
+      _score =
+        Scored() ? _cursor.node->PrepareScore() : ScoreFunction::Default();
     }
     if (!_cursor.Matches(doc)) {
       return Outcome::None;
@@ -222,9 +228,8 @@ class GroupPart final : public Part {
     : _cursor{.plan = std::move(plan)}, _max{max}, _absorbed{absorbed} {}
 
   void Add(std::unique_ptr<Part> part) {
-    if (part) {
-      _parts.push_back(std::move(part));
-    }
+    SDB_ASSERT(part);
+    _parts.push_back(std::move(part));
   }
 
   Outcome Explain(doc_id_t doc, Node& out) final {
@@ -302,23 +307,24 @@ class Builder {
 
   std::unique_ptr<Part> MakeClause(const SubReader& segment,
                                    const detail::PostingClause& clause) {
-    const auto* const field = clause.state.reader;
+    SDB_ASSERT(clause.state.reader);
+    const auto& field = *clause.state.reader;
     const bool scored = clause.stats.stats != nullptr;
     const auto& meta = clause.state.cookie;
-    const bool with_freq = field && detail::FreqOf(*field);
+    const bool with_freq = detail::FreqOf(field);
     const bool per_doc =
       meta.docs_count > 1 && with_freq && ScoresPerDoc(clause.stats.scorer);
     Fallback fallback{
       .segment = &segment,
-      .field = field && !per_doc ? &field->meta() : nullptr,
+      .field = per_doc ? nullptr : &field.meta(),
       .args = clause.Args(&_fetcher),
     };
     if (meta.docs_count == 1 && with_freq) {
       fallback.freq = meta.freq;
     }
-    auto subject = SubjectOf(_stats, clause.stats.stats, field);
-    if (subject.terms.empty() && field) {
-      if (const auto* name = _names.Find(*field, meta)) {
+    auto subject = SubjectOf(_stats, clause.stats.stats, &field);
+    if (subject.terms.empty()) {
+      if (const auto* name = _names.Find(field, meta)) {
         subject.terms.push_back(*name);
       }
     }
@@ -437,15 +443,10 @@ Plan::Plan(const QueryBuilder& query, const Scorer& scorer,
   : _root{Builder{scorer, stats, names, _fetcher}.Make(query)} {}
 
 Node Plan::Explain(doc_id_t doc, std::optional<score_t> executed) {
+  SDB_ASSERT(_root);
   Node root;
-  const auto outcome = _root ? _root->Explain(doc, root) : Outcome::None;
-  if (outcome == Outcome::None) {
-    return {
-      .key = "unexplained",
-      .value = executed ? *executed : score_t{0},
-      .note = "the row matches, but its match could not be traced",
-    };
-  }
+  [[maybe_unused]] const auto outcome = _root->Explain(doc, root);
+  SDB_ASSERT(outcome != Outcome::None);
   if (executed) {
     root.value = *executed;
   }

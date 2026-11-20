@@ -44,21 +44,6 @@ struct SlotStats {
   bool blended = false;
 };
 
-class StatsIndex {
- public:
-  void Add(const byte_type* slot, SlotStats stats) {
-    if (slot != nullptr) {
-      _slots.insert_or_assign(slot, std::move(stats));
-    }
-  }
-
-  const SlotStats* Find(const byte_type* slot) const noexcept {
-    const auto it = _slots.find(slot);
-    return it == _slots.end() ? nullptr : &it->second;
-  }
-
- private:
-  containers::FlatHashMap<const byte_type*, SlotStats> _slots;
-};
+using StatsIndex = containers::FlatHashMap<const byte_type*, SlotStats>;
 
 }  // namespace irs::explain

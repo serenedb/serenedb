@@ -73,10 +73,9 @@ PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer,
 
 void ByTerm::ExplainStats(const PrepareCollector* collector,
                           explain::StatsIndex& out) const {
-  if (collector != nullptr) {
-    explain::DescribeTerm(utils::downCast<ByTermsCollector>(*collector), 0,
-                          field_id(), options().term, out);
-  }
+  SDB_ASSERT(collector);
+  explain::DescribeTerm(utils::downCast<ByTermsCollector>(*collector), 0,
+                        field_id(), options().term, out);
 }
 
 TermPredicate::ptr ByTerm::CompileTermPredicate() const {

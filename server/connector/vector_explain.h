@@ -51,7 +51,7 @@ class DistanceExplainer final : public irs::explain::Explainer {
 
   const VectorScorerOptions& _vs;
   std::string _column;
-  std::optional<irs::detail::RawVectorReader> _reader;
+  irs::detail::RawVectorReader _reader;
   std::optional<irs::ColumnReader::PointReader> _validity;
   duckdb::Vector _scratch{duckdb::LogicalType::BOOLEAN, 1};
 };

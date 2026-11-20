@@ -724,7 +724,7 @@ void ByPhrase::ExplainStats(const PrepareCollector* collector,
       stats.terms.push_back(explain::TermOf(term, counts));
     });
   }
-  out.Add(slots.Record().stats, std::move(stats));
+  out.insert_or_assign(slots.Record().stats, std::move(stats));
 }
 
 void ByPhrase::ExplainTerms(const SubReader& segment,

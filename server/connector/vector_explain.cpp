@@ -111,6 +111,19 @@ void AddSearchParameters(const VectorScorerOptions& vs,
   }
 }
 
+irs::detail::RawRecipe StoredVectors(const irs::SubReader& segment,
+                                     const VectorScorerOptions& vs) {
+  const irs::detail::RawRecipe recipe{
+    .column = segment.Column(vs.field_id),
+    .reader = segment.GetColReader(),
+    .query = vs.query_vector,
+    .d = vs.dims,
+    .metric = vs.metric,
+  };
+  SDB_ASSERT(recipe.column && recipe.reader);
+  return recipe;
+}
+
 }  // namespace
 
 irs::explain::Node ExplainDistance(const VectorScorerOptions& vs,
@@ -143,16 +156,10 @@ irs::explain::Node ExplainDistance(const VectorScorerOptions& vs,
 DistanceExplainer::DistanceExplainer(const irs::SubReader& segment,
                                      const VectorScorerOptions& vs,
                                      std::string column)
-  : _vs{vs}, _column{std::move(column)} {
-  const auto* stored = segment.Column(vs.field_id);
-  const auto* columns = segment.GetColReader();
-  if (!stored || !columns) {
-    return;
-  }
-  _reader.emplace(*stored, *columns, vs.dims);
-  _reader->SetQuery(vs.query_vector, vs.metric);
-  if (irs::detail::MayHaveNullRows(*stored)) {
-    _validity.emplace(*columns, *stored);
+  : _vs{vs}, _column{std::move(column)}, _reader{StoredVectors(segment, vs)} {
+  const auto& stored = *segment.Column(vs.field_id);
+  if (irs::detail::MayHaveNullRows(stored)) {
+    _validity.emplace(*segment.GetColReader(), stored);
   }
 }
 
@@ -162,15 +169,12 @@ irs::explain::Node DistanceExplainer::Explain(
 }
 
 std::optional<irs::score_t> DistanceExplainer::Stored(irs::doc_id_t doc) {
-  if (!_reader) {
-    return std::nullopt;
-  }
   if (_validity &&
       !_validity->ValidRow(static_cast<uint64_t>(doc) - irs::doc_limits::min(),
                            _scratch)) {
     return std::nullopt;
   }
-  return _reader->ComputeDistance(doc, nullptr);
+  return _reader.ComputeDistance(doc, nullptr);
 }
 
 }  // namespace sdb::connector

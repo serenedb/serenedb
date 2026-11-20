@@ -49,13 +49,13 @@ void DescribeTerm(const ByTermsCollector& collector, size_t i, field_id field,
                   bytes_view term, StatsIndex& out) {
   auto stats = FieldStats(collector, field);
   stats.terms.push_back(TermOf(term, collector.TermTotal(i)));
-  out.Add(collector.Record(i).stats, std::move(stats));
+  out.insert_or_assign(collector.Record(i).stats, std::move(stats));
 }
 
 void DescribeSlot(const PrepareCollector* collector, field_id field,
                   StatsIndex& out) {
   if (collector != nullptr) {
-    out.Add(collector->Record().stats, {.field = field});
+    out.insert_or_assign(collector->Record().stats, SlotStats{.field = field});
   }
 }
 
@@ -74,7 +74,7 @@ void DescribeMultiTerm(const PrepareCollector* collector, field_id field,
     [&](bytes_view term, const TermCollector& counts, const byte_type* slot) {
       auto stats = base;
       stats.terms.push_back(TermOf(term, counts));
-      out.Add(slot, std::move(stats));
+      out.insert_or_assign(slot, std::move(stats));
     });
 }
 
@@ -87,7 +87,7 @@ void DescribeBlended(const PrepareCollector* collector, field_id field,
   auto stats = FieldStats(terms, field);
   stats.blended = true;
   stats.terms.push_back(TermOf({}, terms.Blended()));
-  out.Add(terms.Record().stats, std::move(stats));
+  out.insert_or_assign(terms.Record().stats, std::move(stats));
 }
 
 }  // namespace irs::explain

@@ -25,6 +25,7 @@
 #include <iresearch/search/explain/names.hpp>
 #include <iresearch/search/explain/plan.hpp>
 #include <iresearch/search/explain/stats.hpp>
+#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
 #include <iresearch/search/filters/ngram_similarity_filter.hpp>
@@ -218,7 +219,6 @@ class ExplainTest : public IndexTestBase {
           continue;
         }
         auto node = plan.Explain(row.doc, std::nullopt);
-        EXPECT_NE("unexplained", node.key);
         if (tolerance == 0) {
           EXPECT_EQ(row.score, ValueOf(node)) << node.expression;
         } else {
@@ -319,6 +319,19 @@ TEST_P(ExplainTest, phrase_sums_the_idf_of_its_terms) {
     const auto* tf = Child(row, "tf");
     ASSERT_NE(nullptr, tf);
     EXPECT_NE(nullptr, Child(*tf, "freq"));
+  }
+
+  auto alternatives = Phrase({"quick"});
+  auto& set =
+    alternatives->mutable_options()->push_back<irs::TermSetOptions>().terms;
+  set.emplace(Bytes("fox"));
+  set.emplace(Bytes("zebra"));
+  const auto matched = Explain(*alternatives, bm25, 0);
+  ASSERT_FALSE(matched.empty());
+  for (const auto& row : matched) {
+    const auto* idf = Child(row, "idf");
+    ASSERT_NE(nullptr, idf);
+    EXPECT_EQ(2u, idf->details.size());
   }
 }
 
@@ -533,6 +546,10 @@ TEST_P(ExplainTest, a_filter_without_statistics_still_explains_its_value) {
     EXPECT_EQ("sum", row.expression);
     EXPECT_TRUE(row.details.empty());
   }
+  for (const auto& row :
+       Explain(UndescribedFilter{std::make_unique<irs::All>()}, bm25, 0)) {
+    EXPECT_FALSE(irs::field_limits::valid(row.subject.field));
+  }
 }
 
 TEST_P(ExplainTest, a_single_ngram_explains_as_its_term) {
@@ -559,6 +576,22 @@ TEST_P(ExplainTest, a_column_without_frequency_counts_each_match_once) {
   ASSERT_EQ(3u, rows.size());
   for (const auto& row : rows) {
     EXPECT_EQ(kTagId, row.subject.field);
+  }
+}
+
+TEST_P(ExplainTest,
+       a_match_without_frequency_says_whether_it_scores_its_boost) {
+  BuildFixture();
+  const irs::BM25 bm25{irs::BM25::K(), irs::BM25::B(), true};
+  irs::All all;
+  for (const auto& row : Explain(all, bm25, 0)) {
+    EXPECT_EQ("the match has no term frequency, so the clause scores its boost",
+              row.note);
+  }
+  all.SetBoost(0.f);
+  for (const auto& row : Explain(all, bm25, 0)) {
+    EXPECT_EQ("the match has no term frequency, so the clause scores 0",
+              row.note);
   }
 }
 

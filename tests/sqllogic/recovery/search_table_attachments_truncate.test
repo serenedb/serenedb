@@ -1,0 +1,79 @@
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE satt (id INT, body TEXT)
+WITH (compaction_interval = 0, compaction_floor_segment_bytes = 1, compaction_max_segments = 1000);
+
+
+statement ok
+INSERT INTO satt
+SELECT i, 'w' || (i % 7)
+FROM generate_series(1, 3000) g(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) satt;
+
+
+statement ok
+SET sdb_faults = 'pause_search_backfill_before_swap';
+
+
+connection builder
+statement async ok
+CREATE INDEX satt_idx ON satt USING inverted (body);
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT tuples_done FROM pg_stat_progress_create_index
+WHERE relid = 'satt'::regclass;
+----
+tuples_done
+3000
+
+
+connection truncater
+statement async ok
+TRUNCATE satt;
+
+
+connection default
+query ok retry 40 backoff 250ms
+SELECT count(*) AS left FROM satt;
+----
+left
+0
+
+
+statement ok
+SET sdb_faults = '-pause_search_backfill_before_swap';
+
+
+connection builder
+wait
+
+
+connection truncater
+wait
+
+
+connection default
+query
+SELECT count(*) AS hits FROM satt WHERE body @@ 'w3';
+----
+hits
+0
+
+
+statement ok
+INSERT INTO satt VALUES (1, 'w3');
+
+
+query
+SELECT id FROM satt WHERE body @@ 'w3';
+----
+id
+1

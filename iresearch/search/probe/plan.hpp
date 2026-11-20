@@ -126,7 +126,9 @@ bool TakeTermSetsWindow(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, doc_id_t docs_count,
                         uint64_t interrogations) {
-  const duckdb::InputFile* doc = detail::SharedDoc(terms, field);
+  const duckdb::InputFile* doc =
+    terms.empty() ? nullptr
+                  : detail::DocOf(detail::FieldOf(terms.front(), field));
   size_t leaves = terms.size();
   uint64_t docs = detail::SumDocs(terms);
   for (const auto& child : filters) {
@@ -167,7 +169,8 @@ Node::ptr MakeDisjunction(std::span<const Term> terms,
     }
   }
   if (filters.empty() && !terms.empty()) {
-    const auto* const doc = detail::SharedDoc(terms, field);
+    const auto* const doc =
+      detail::DocOf(detail::FieldOf(terms.front(), field));
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
     if (doc != nullptr &&
         detail::TakeProbeBitset(terms, *doc, docs_count, interrogations)) {

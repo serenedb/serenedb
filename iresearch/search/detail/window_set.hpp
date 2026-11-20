@@ -115,7 +115,7 @@ bool CollectDense(std::span<const Term> terms,
                   const TermReader* field, const duckdb::InputFile*& doc,
                   std::vector<FillNode::ptr>& rest, PlanChild&& plan) {
   if (!terms.empty()) {
-    doc = SharedDoc(terms, field);
+    doc = DocOf(FieldOf(terms.front(), field));
     if (doc == nullptr) {
       return false;
     }

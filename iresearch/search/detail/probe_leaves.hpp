@@ -82,7 +82,7 @@ bool ConcreteClauses(std::span<const Term> terms,
       }
     }
   }
-  doc = SharedDoc(terms, field);
+  doc = DocOf(FieldOf(terms.front(), field));
   return doc != nullptr;
 }
 

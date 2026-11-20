@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <limits>
 #include <span>
 #include <utility>
@@ -75,24 +77,17 @@ bool CollectConjunctionBuckets(std::span<const Term> terms,
 
 inline const duckdb::InputFile* BucketsDoc(
   const BitsetBuckets& buckets) noexcept {
-  const duckdb::InputFile* doc = nullptr;
-  const auto same = [&](std::span<const PostingClause> clauses) noexcept {
-    if (clauses.empty()) {
-      return true;
-    }
-    const auto* const own = SharedDoc(clauses, nullptr);
-    if (!own || (doc && own != doc)) {
-      return false;
-    }
-    doc = own;
-    return true;
-  };
-  for (const auto& clause : buckets.must) {
-    if (!same(clause)) {
-      return nullptr;
-    }
-  }
-  return same(buckets.must_not) ? doc : nullptr;
+  SDB_ASSERT(!buckets.must.empty() && !buckets.must.front().empty());
+  const auto* const doc = DocOf(*buckets.must.front().front().state.reader);
+  SDB_ASSERT(absl::c_all_of(buckets.must, [&](const auto& clause) {
+    return absl::c_all_of(clause, [&](const PostingClause& term) {
+      return DocOf(*term.state.reader) == doc;
+    });
+  }));
+  SDB_ASSERT(absl::c_all_of(buckets.must_not, [&](const PostingClause& term) {
+    return DocOf(*term.state.reader) == doc;
+  }));
+  return doc;
 }
 
 template<typename Result, typename P = NoPins, typename Term>
@@ -106,7 +101,7 @@ Result MakeConjunctionBitset(std::span<const Term> terms,
     return {};
   }
   const auto* const doc = BucketsDoc(buckets);
-  if (!doc) {
+  if (doc == nullptr) {
     return {};
   }
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
@@ -208,8 +203,12 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
         (!groups.should_filters.empty() && groups.should_fills == nullptr)) {
       return {};
     }
-    const auto* const doc = SharedDoc(groups.should, nullptr);
-    if (!doc || !TakeBitset<Result>(groups.should, *doc, docs_count)) {
+    const auto* const doc = DocOf(FieldOf(groups.should.front(), nullptr));
+    SDB_ASSERT(absl::c_all_of(groups.should, [&](const PostingClause& term) {
+      return DocOf(*term.state.reader) == doc;
+    }));
+    if (doc == nullptr ||
+        !TakeBitset<Result>(groups.should, *doc, docs_count)) {
       return {};
     }
     auto buckets = DisjunctionBuckets(groups.should, nullptr);
@@ -230,7 +229,7 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
     return {};
   }
   const auto* const doc = BucketsDoc(buckets);
-  if (!doc) {
+  if (doc == nullptr) {
     return {};
   }
   if (groups.must_not.empty() && groups.must_not_filters.empty()) {
@@ -247,9 +246,7 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
   ExcludeFills fills;
   CollectExcludeBuckets(groups.must_not, split.rest, nullptr, docs_count,
                         buckets, fills);
-  if (BucketsDoc(buckets) != doc) {
-    return {};
-  }
+  SDB_ASSERT(BucketsDoc(buckets) == doc);
   if (split.masked) {
     buckets.masked = &segment;
     fills.cost += MaskClauseCost(segment, docs_count).fill;

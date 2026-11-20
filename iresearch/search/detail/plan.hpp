@@ -100,23 +100,6 @@ const TermReader& FieldOf(const Term& term, const TermReader* field) noexcept {
   }
 }
 
-template<typename Term>
-const duckdb::InputFile* SharedDoc(std::span<const Term> terms,
-                                   const TermReader* field) noexcept {
-  if (terms.empty()) {
-    return nullptr;
-  }
-  const auto* const doc = DocOf(FieldOf(terms.front(), field));
-  if constexpr (std::same_as<Term, PostingClause>) {
-    for (const auto& term : terms.subspan(1)) {
-      if (DocOf(FieldOf(term, field)) != doc) {
-        return nullptr;
-      }
-    }
-  }
-  return doc;
-}
-
 template<typename Term, typename TermCb, typename QueryCb>
 bool VisitOrderedOf(std::span<const Term> terms,
                     std::span<const QueryBuilder::ptr> filters, bool ascending,

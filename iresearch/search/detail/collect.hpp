@@ -156,7 +156,7 @@ bool WindowTerms(std::span<const Term> terms,
   if (terms.empty() || !filters.empty()) {
     return false;
   }
-  doc = SharedDoc(terms, field);
+  doc = DocOf(FieldOf(terms.front(), field));
   return doc != nullptr;
 }
 

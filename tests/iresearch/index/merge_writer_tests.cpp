@@ -2503,6 +2503,14 @@ TEST_P(MergeWriterTestCase, test_merge_writer_attachments) {
                                       "attached3_longer_than_inline",
                                       "attached4_longer_than_inline"}),
             values(*merged, kDocTextId));
+
+  irs::SegmentMeta plain;
+  plain.name = "segment";
+  plain.kinds = irs::kColFile;
+  auto attached_meta = plain;
+  EXPECT_EQ(plain, attached_meta);
+  attached_meta.attachments.push_back({.id = 5, .kinds = irs::kColFile});
+  EXPECT_NE(plain, attached_meta);
 }
 
 INSTANTIATE_TEST_SUITE_P(

@@ -57,6 +57,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <map>
 #include <memory>
@@ -471,7 +472,14 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
     in->ReadData(file.data(), file.size());
     uint64_t hash = 0xcbf29ce484222325ULL;
     const auto mix = [&](const auto& blocks) {
+      auto shared = std::numeric_limits<uint64_t>::max();
       for (const auto& block : blocks) {
+        if (block.shared_size != 0 && block.shared_offset != shared) {
+          shared = block.shared_offset;
+          for (uint64_t i = 0; i < block.shared_size; ++i) {
+            hash = (hash ^ file[shared + i]) * 0x100000001b3ULL;
+          }
+        }
         for (uint64_t i = 0; i < block.byte_size; ++i) {
           hash = (hash ^ file[block.file_offset + i]) * 0x100000001b3ULL;
         }
@@ -483,8 +491,13 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
                  static_cast<unsigned long long>(hash));
   }
   Built built;
+  auto shared = std::numeric_limits<uint64_t>::max();
   for (const auto& block : data_blocks) {
     built.bytes += block.byte_size;
+    if (block.shared_size != 0 && block.shared_offset != shared) {
+      shared = block.shared_offset;
+      built.bytes += block.shared_size;
+    }
     if (block.codec && irs::codecs::IsNumeric(block.codec->type)) {
       built.ours += block.tuple_count;
     }

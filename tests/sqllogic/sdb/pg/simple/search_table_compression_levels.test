@@ -70,6 +70,28 @@ zstd_tbl	ZSTD
 zxc_1	ZXC
 zxc_7	ZXC
 
+# The 12-bit FSST codecs keep the symbol table of a row group in a block of its own, which their segments name
+query
+SELECT column_name
+FROM pragma_storage_info('lvl_columns', include_segment_info = true)
+WHERE segment_info LIKE '%shared_size: %'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name
+dfsst12
+fsst12_col
+
+query
+SELECT column_name,
+       bool_and(regexp_matches(segment_info, '^byte_size: \d+, shared_offset: \d+, shared_size: \d+, ')) AS every_segment_names_one
+FROM pragma_storage_info('lvl_columns', include_segment_info = true)
+WHERE column_name IN ('dfsst12', 'fsst12_col') AND segment_type <> 'VALIDITY'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	every_segment_names_one
+dfsst12	t
+fsst12_col	t
+
 query
 SELECT count(*) AS mismatches FROM lvl_columns
 WHERE lz4_1 IS DISTINCT FROM repeat('p' || a, 8)

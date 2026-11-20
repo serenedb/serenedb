@@ -69,8 +69,7 @@ class DictIndex {
     return Small() ? 0 : static_cast<uint32_t>(_root.Find(key));
   }
   uint32_t BlockFrom(uint32_t last, Probe key, SeparatorBuffer& buffer) const {
-    if (last + 1 == _blocks ||
-        KeyOf(key) < _root.Separator(last + 1, buffer)) {
+    if (last + 1 == _blocks || KeyOf(key) < _root.Separator(last + 1, buffer)) {
       return last;
     }
     return static_cast<uint32_t>(_root.FindFrom(last + 1, key, buffer));

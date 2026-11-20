@@ -425,8 +425,8 @@ void Cover(benchmark::State& state, Variant variant, size_t span, bool docs) {
     uint64_t sum = 0;
     data.field->CoverRange(ranges[i].first, ranges[i].second,
                            [&](bytes_view, const irs::PostingMeta& meta) {
-                             sum += docs ? SumDocs(data, meta)
-                                         : meta.docs_count;
+                             sum +=
+                               docs ? SumDocs(data, meta) : meta.docs_count;
                              ++postings;
                              return true;
                            });
@@ -591,8 +591,8 @@ void ColdCover(benchmark::State& state, Variant variant, size_t span,
     uint64_t sum = 0;
     data.field->CoverRange(ranges[i].first, ranges[i].second,
                            [&](bytes_view, const irs::PostingMeta& meta) {
-                             sum += docs ? SumDocs(data, meta)
-                                         : meta.docs_count;
+                             sum +=
+                               docs ? SumDocs(data, meta) : meta.docs_count;
                              return true;
                            });
     return sum;
@@ -610,10 +610,10 @@ void ColdLookup(benchmark::State& state, Variant variant, bool docs) {
 
 void Register(Variant v) {
   const auto shape = kShapeNames[static_cast<size_t>(v.shape)];
-  const auto name = v.lists == Lists::Singles
-                      ? std::string{shape}
-                      : absl::StrCat(
-                          kListsNames[static_cast<size_t>(v.lists)], "/", shape);
+  const auto name =
+    v.lists == Lists::Singles
+      ? std::string{shape}
+      : absl::StrCat(kListsNames[static_cast<size_t>(v.lists)], "/", shape);
   const auto add = [&](std::string_view bench, auto run) {
     return benchmark::RegisterBenchmark(absl::StrCat(bench, "/", name),
                                         std::move(run));
@@ -636,8 +636,7 @@ void Register(Variant v) {
     ColdCover(state, v, kTerms / 10, false);
   });
   add("lookup_hit", [v](benchmark::State& state) { Lookup(state, v, true); });
-  add("lookup_miss",
-      [v](benchmark::State& state) { Lookup(state, v, false); });
+  add("lookup_miss", [v](benchmark::State& state) { Lookup(state, v, false); });
   add("lookup_docs", [v](benchmark::State& state) { LookupDocs(state, v); });
   cold("cold_lookup",
        [v](benchmark::State& state) { ColdLookup(state, v, false); });

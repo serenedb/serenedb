@@ -39,9 +39,9 @@ void FinishRoot(CountLocalState& l) {
 }
 
 void Emit(ScanGlobalState& g, CountLocalState& l, duckdb::DataChunk& output) {
-  const auto batch = g.row_count_only ? l.local_count
-                                      : std::min<uint64_t>(l.local_count,
-                                                           STANDARD_VECTOR_SIZE);
+  const auto batch =
+    g.row_count_only ? l.local_count
+                     : std::min<uint64_t>(l.local_count, STANDARD_VECTOR_SIZE);
   l.local_count -= batch;
   if (batch != 0) {
     WriteVirtualColumns(g, batch, nullptr, output);

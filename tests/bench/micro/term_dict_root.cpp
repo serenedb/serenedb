@@ -344,7 +344,9 @@ void Seek(benchmark::State& state, const std::string& base) {
 bytes_view WordOf(bytes_view key) {
   constexpr size_t kMinWord = 5;
   constexpr size_t kMaxWord = 12;
-  const auto lower = [&](size_t at) { return key[at] >= 'a' && key[at] <= 'z'; };
+  const auto lower = [&](size_t at) {
+    return key[at] >= 'a' && key[at] <= 'z';
+  };
   for (size_t begin = 0; begin != key.size();) {
     if (!lower(begin)) {
       ++begin;

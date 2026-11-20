@@ -51,7 +51,8 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
   if (size_t{head.first_block} + blocks > separators.offsets.size()) {
     Corrupted("separators", head.id);
   }
-  _root = Root{Slice(separators, head.first_block, blocks - 1), head.width != 0};
+  _root =
+    Root{Slice(separators, head.first_block, blocks - 1), head.width != 0};
   if (!_gated) {
     return;
   }

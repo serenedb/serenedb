@@ -79,8 +79,8 @@ uint64_t VarBytes(uint64_t count, uint64_t head_skip, uint64_t suffixes,
   const uint64_t restarts = (count + kRestartInterval - 1) / kRestartInterval;
   SDB_ASSERT(suffixes >= restarts * head_skip);
   const uint64_t stored = suffixes - restarts * head_skip;
-  return 4 + VSize(count) + VSize(restarts) + VSize(stored) +
-         VSize(head_skip) + head_skip + (kVarRestart + kHeadBytes) * restarts +
+  return 4 + VSize(count) + VSize(restarts) + VSize(stored) + VSize(head_skip) +
+         head_skip + (kVarRestart + kHeadBytes) * restarts +
          std::min(HeaderBytes(count, shape), ColumnBytes(count, shape)) +
          stored + records + kSlack;
 }

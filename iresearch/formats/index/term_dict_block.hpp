@@ -1056,8 +1056,9 @@ class BlockCursor {
       return reject(sp, header, false, entry);
     }
     const uint32_t skip = header.lcp - _view.prefix;
-    return reject(sp + skip, Header{.lcp = header.lcp, .len = header.len - skip},
-                  true, entry);
+    return reject(sp + skip,
+                  Header{.lcp = header.lcp, .len = header.len - skip}, true,
+                  entry);
   }
 
   size_t RestartMismatch(const byte_type* rest, size_t limit) const noexcept {
@@ -1068,8 +1069,7 @@ class BlockCursor {
     if (common != head || limit <= prefix) {
       return common;
     }
-    return prefix +
-           PaddedMismatch(_key.data() + prefix, rest, limit - prefix);
+    return prefix + PaddedMismatch(_key.data() + prefix, rest, limit - prefix);
   }
 
   size_t Common(Probe probe) const noexcept {
@@ -1242,10 +1242,10 @@ class BlockCursor {
   uint32_t Restart(bytes_view rest, uint32_t lcp) {
     const size_t prefix = _view.prefix;
     const size_t size = prefix + rest.size();
-    const auto shared =
-      lcp != kNoSkip ? lcp
-                     : static_cast<uint32_t>(RestartMismatch(
-                         rest.data(), std::min<size_t>(_mat, size)));
+    const auto shared = lcp != kNoSkip
+                          ? lcp
+                          : static_cast<uint32_t>(RestartMismatch(
+                              rest.data(), std::min<size_t>(_mat, size)));
     _pending.count = 0;
     const auto from = static_cast<uint32_t>(std::min<size_t>(shared, _mat));
     RestartBytes(_view, rest.data(), from, static_cast<uint32_t>(size),

@@ -2359,9 +2359,8 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
       t.ordinal_bytes = 1;
     },
     ERRCODE_INDEX_CORRUPTED);
-  refused(
-    [](Terms& t) { t.blocks_end = std::numeric_limits<uint64_t>::max(); },
-    ERRCODE_INDEX_CORRUPTED);
+  refused([](Terms& t) { t.blocks_end = std::numeric_limits<uint64_t>::max(); },
+          ERRCODE_INDEX_CORRUPTED);
   ASSERT_FALSE(terms.separators.empty());
   refused([](Terms& t) { t.separators.pop_back(); }, ERRCODE_INDEX_CORRUPTED);
   refused([](Terms& t) { t.separators.push_back('\x01'); },
@@ -2990,8 +2989,8 @@ TEST_P(TermDictTest, walks_match_in_and_across_the_block_prefix) {
   for (size_t site = 0; site != 24; ++site) {
     const auto host = absl::StrCat("https://", word(5), ".", word(3), "/");
     for (size_t i = 0; i != 400; ++i) {
-      keys.push_back(Bytes(absl::StrCat(host, word(1 + rng() % 3), "/",
-                                        word(2 + rng() % 12))));
+      keys.push_back(Bytes(
+        absl::StrCat(host, word(1 + rng() % 3), "/", word(2 + rng() % 12))));
     }
   }
   const auto entries = MakeEntries(keys);
@@ -3002,8 +3001,8 @@ TEST_P(TermDictTest, walks_match_in_and_across_the_block_prefix) {
   Write(fields);
   std::vector<std::string> patterns;
   for (size_t i = 0; i != 6; ++i) {
-    const auto key = irs::ViewCast<char>(
-      irs::bytes_view{entries[rng() % entries.size()].key});
+    const auto key =
+      irs::ViewCast<char>(irs::bytes_view{entries[rng() % entries.size()].key});
     const size_t host_end = key.find('/', 8) + 1;
     const size_t size = 3 + rng() % 8;
     const size_t at = rng() % (key.size() - size + 1);
@@ -3022,16 +3021,16 @@ TEST_P(TermDictTest, walks_match_in_and_across_the_block_prefix) {
     cursor.First();
     size_t prefixed = 0;
     do {
-      prefixed += cursor.Entries().Entry() == 0 &&
-                  cursor.Entries().View().prefix > 8;
+      prefixed +=
+        cursor.Entries().Entry() == 0 && cursor.Entries().View().prefix > 8;
     } while (cursor.Advance());
     ASSERT_GT(prefixed, impl.Blocks() / 2);
     for (const auto& pattern : patterns) {
       SCOPED_TRACE(testing::Message("pattern ") << pattern);
       AssertWalk(*reader, field.entries,
-                 irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
-                                     irs::ViewCast<irs::byte_type>(
-                                       std::string_view{pattern})});
+                 irs::RegexpAcceptor{
+                   irs::RegexpAcceptor::WildcardTag{},
+                   irs::ViewCast<irs::byte_type>(std::string_view{pattern})});
     }
   }
 }
@@ -4557,8 +4556,7 @@ struct PruneRank {
 };
 
 bool PrunedBefore(PruneRank lhs, PruneRank rhs) {
-  return lhs.level != rhs.level ? lhs.level > rhs.level
-                                : lhs.count < rhs.count;
+  return lhs.level != rhs.level ? lhs.level > rhs.level : lhs.count < rhs.count;
 }
 
 void AssertTrie(std::vector<irs::bstring> terms) {
@@ -4919,7 +4917,8 @@ TEST(TermDictPrefixTrieTest, refuses_corrupt_encodings) {
   const auto spanning = DecodeTrie(
     "\x02\x01\x01\x00"
     "ab\x00\x00\x00"sv);
-  ASSERT_EQ(irs::term_dict::kTrieBelow, spanning.Child(spanning.Root(), 'b').node);
+  ASSERT_EQ(irs::term_dict::kTrieBelow,
+            spanning.Child(spanning.Root(), 'b').node);
   ASSERT_EQ(0, spanning.Child(spanning.Root(), 'b').lo);
   ASSERT_EQ(1, spanning.Child(spanning.Root(), 'b').hi);
   for (const auto encoded : {""sv,

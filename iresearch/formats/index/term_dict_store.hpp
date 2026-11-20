@@ -61,7 +61,8 @@ class BlockStore {
 
   uint32_t BlockCount() const noexcept { return _block_count; }
   uint64_t BlockOffset(size_t block) const noexcept {
-    const uint64_t page = _first_page + (_pages.empty() ? block : _pages[block]);
+    const uint64_t page =
+      _first_page + (_pages.empty() ? block : _pages[block]);
     return std::min(page * kPage, _blocks_end);
   }
 

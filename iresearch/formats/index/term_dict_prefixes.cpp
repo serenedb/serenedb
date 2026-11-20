@@ -108,8 +108,8 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
       const bool last = slot + 1 == fanout;
       const bool exact_hi = last && range.exact;
       const uint64_t lo = node.BlockAt(slot, range.lo);
-      const uint64_t hi = last ? uint64_t{range.hi}
-                               : uint64_t{node.BlockAt(slot + 1, range.lo)};
+      const uint64_t hi =
+        last ? uint64_t{range.hi} : uint64_t{node.BlockAt(slot + 1, range.lo)};
       if (lo < range.lo || hi > range.hi || lo > hi ||
           (slot == 0 && lo > range.lo + 1)) {
         corrupted();
@@ -271,9 +271,9 @@ void PrefixTrieBuilder::CloseTo(size_t depth) {
     if (_pending.size() == frame.begin ||
         Drops({.level = frame.level, .count = frame.count})) {
       SDB_ASSERT(_carry == kLeaf);
-      SDB_ASSERT(absl::c_all_of(
-        std::span{_pending}.subspan(frame.begin),
-        [](const Child& child) { return child.node == kLeaf; }));
+      SDB_ASSERT(
+        absl::c_all_of(std::span{_pending}.subspan(frame.begin),
+                       [](const Child& child) { return child.node == kLeaf; }));
       _pending.resize(frame.begin);
       _pending.push_back(slot);
       continue;
@@ -361,8 +361,7 @@ void PrefixTrieBuilder::Prune(uint64_t target) {
   for (size_t at = 0; at != _frames.size(); ++at) {
     const size_t end =
       at + 1 != _frames.size() ? _frames[at + 1].begin : _pending.size();
-    attach(_frames[at].begin, end,
-           _frames[at].level + uint32_t{Branches(at)});
+    attach(_frames[at].begin, end, _frames[at].level + uint32_t{Branches(at)});
   }
   for (size_t i = _built.size(); i-- != 0;) {
     const auto& node = _built[i];
@@ -383,8 +382,7 @@ void PrefixTrieBuilder::Prune(uint64_t target) {
     if (Prunable(node)) {
       candidates.push_back({
         .rank = {.level = levels[i], .count = node.count},
-        .bytes = BytesOf(node, EdgeSize(node), 0) +
-                 4 * uint64_t{counted[i]},
+        .bytes = BytesOf(node, EdgeSize(node), 0) + 4 * uint64_t{counted[i]},
       });
     }
   }
@@ -413,8 +411,7 @@ void PrefixTrieBuilder::Prune(uint64_t target) {
     const auto node = _built[i];
     const auto edge = bytes_view{_edges}.substr(edge_at, EdgeSize(node));
     edge_at += edge.size();
-    if (Prunable(node) &&
-        Drops({.level = levels[i], .count = node.count})) {
+    if (Prunable(node) && Drops({.level = levels[i], .count = node.count})) {
       ids[i] = kLeaf;
       continue;
     }

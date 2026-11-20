@@ -180,9 +180,8 @@ class PrefixTrie {
     }
     const auto node = NodeOf(cursor);
     const uint32_t lo = node.BlockAt(slot, cursor.lo);
-    const uint32_t hi = slot + 1 == node.fanout
-                          ? cursor.hi
-                          : node.BlockAt(slot + 1, cursor.lo);
+    const uint32_t hi =
+      slot + 1 == node.fanout ? cursor.hi : node.BlockAt(slot + 1, cursor.lo);
     if (node.KindAt(slot) == TrieKind::Inner) {
       return At(node.ChildAt(slot), lo, hi);
     }

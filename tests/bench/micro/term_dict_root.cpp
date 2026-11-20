@@ -37,6 +37,7 @@
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <memory>
+#include <random>
 #include <span>
 #include <string>
 #include <string_view>
@@ -364,13 +365,8 @@ bytes_view WordOf(bytes_view key) {
   return {};
 }
 
-void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance) {
+std::vector<bstring> TargetsOf(const Data& data) {
   constexpr size_t kTargets = 32;
-  const auto& data = Load(base);
-  if (!data.error.empty()) {
-    state.SkipWithError(data.error);
-    return;
-  }
   std::vector<bstring> targets;
   targets.emplace_back(
     irs::ViewCast<irs::byte_type>(std::string_view{"election"}));
@@ -382,6 +378,69 @@ void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance) {
       targets.emplace_back(word);
     }
   }
+  return targets;
+}
+
+void ReportWalks(benchmark::State& state, size_t terms, size_t per_iteration) {
+  benchmark::DoNotOptimize(terms);
+  const auto walks = static_cast<double>(state.iterations() * per_iteration);
+  state.counters["terms_per_walk"] = static_cast<double>(terms) / walks;
+  state.counters["us_per_walk"] = benchmark::Counter(
+    walks / 1e6, benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+}
+
+void Patterns(benchmark::State& state, const std::string& base) {
+  const auto& data = Load(base);
+  if (!data.error.empty()) {
+    state.SkipWithError(data.error);
+    return;
+  }
+  std::vector<std::unique_ptr<const irs::RegexpAcceptor>> acceptors;
+  for (const auto& target : TargetsOf(data)) {
+    const auto word = irs::ViewCast<char>(bytes_view{target});
+    acceptors.push_back(std::make_unique<const irs::RegexpAcceptor>(
+      irs::ViewCast<irs::byte_type>(std::string_view{
+        absl::StrCat(word.substr(0, 1), ".", word.substr(2), ".*")})));
+  }
+  size_t terms = 0;
+  for (auto _ : state) {
+    for (const auto& acceptor : acceptors) {
+      auto it = data.field->iterator(*acceptor);
+      while (it->next()) {
+        ++terms;
+      }
+    }
+  }
+  ReportWalks(state, terms, acceptors.size());
+}
+
+std::vector<bstring> TyposOf(const Data& data) {
+  constexpr size_t kTargets = 32;
+  std::vector<bstring> targets;
+  std::mt19937 rng{11};
+  while (targets.size() != kTargets) {
+    bstring key = data.keys[rng() % data.keys.size()];
+    if (key.size() < 4 || key.size() > 48) {
+      continue;
+    }
+    const size_t at = rng() % key.size();
+    if (key[at] >= 0x80) {
+      continue;
+    }
+    key[at] = static_cast<irs::byte_type>('a' + rng() % 26);
+    targets.push_back(std::move(key));
+  }
+  return targets;
+}
+
+void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance,
+           bool typos) {
+  const auto& data = Load(base);
+  if (!data.error.empty()) {
+    state.SkipWithError(data.error);
+    return;
+  }
+  const auto targets = typos ? TyposOf(data) : TargetsOf(data);
   state.counters["targets"] = static_cast<double>(targets.size());
   const auto& description = irs::DefaultPDP(distance, false);
   std::vector<std::shared_ptr<const irs::LevenshteinAcceptor>> fuzzy;
@@ -401,11 +460,7 @@ void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance) {
       }
     }
   }
-  benchmark::DoNotOptimize(terms);
-  const auto walks = static_cast<double>(state.iterations() * targets.size());
-  state.counters["terms_per_walk"] = static_cast<double>(terms) / walks;
-  state.counters["us_per_walk"] = benchmark::Counter(
-    walks / 1e6, benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+  ReportWalks(state, terms, targets.size());
 }
 
 constexpr std::string_view kInfixes[] = {"%ild%", "%onp%", "%ion%", "%elect%"};
@@ -433,11 +488,7 @@ void Wildcards(benchmark::State& state, const std::string& base,
       }
     }
   }
-  benchmark::DoNotOptimize(terms);
-  const auto walks = static_cast<double>(state.iterations() * acceptors.size());
-  state.counters["terms_per_walk"] = static_cast<double>(terms) / walks;
-  state.counters["us_per_walk"] = benchmark::Counter(
-    walks / 1e6, benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+  ReportWalks(state, terms, acceptors.size());
 }
 
 std::vector<std::string> Bases() {
@@ -483,9 +534,15 @@ int Main(int argc, char** argv) {
     for (const uint8_t distance : {1, 2}) {
       benchmark::RegisterBenchmark(absl::StrCat("fuzzy", distance, "/", base),
                                    [base, distance](benchmark::State& state) {
-                                     Fuzzy(state, base, distance);
+                                     Fuzzy(state, base, distance, false);
                                    });
     }
+    benchmark::RegisterBenchmark(
+      absl::StrCat("typo1/", base),
+      [base](benchmark::State& state) { Fuzzy(state, base, 1, true); });
+    benchmark::RegisterBenchmark(
+      absl::StrCat("pattern/", base),
+      [base](benchmark::State& state) { Patterns(state, base); });
     benchmark::RegisterBenchmark(
       absl::StrCat("infix/", base),
       [base](benchmark::State& state) { Wildcards(state, base, kInfixes); });

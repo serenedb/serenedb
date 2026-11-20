@@ -74,8 +74,8 @@ bool MatchesByLiteral(const A& a) noexcept {
 template<typename A>
 class BlockPlan {
  public:
-  BlockPlan(const TermReaderImpl& field, const A& a) noexcept
-    : _field{&field}, _matcher{field.Index(), a, MatchesByLiteral(a)} {}
+  BlockPlan(const TermReaderImpl& field, BlockFilter<A>& filter) noexcept
+    : _field{&field}, _filter{&filter} {}
 
   void Run(uint32_t block, uint32_t end, uint64_t budget) {
     const uint64_t limit = _field->BlockOffset(block) + budget;
@@ -88,7 +88,7 @@ class BlockPlan {
         end = mid;
       }
     }
-    _matcher.Run(first, end, [&](uint32_t lo, uint32_t hi) { Extend(lo, hi); });
+    _filter->Run(first, end, [&](uint32_t lo, uint32_t hi) { Extend(lo, hi); });
     Flush();
   }
 
@@ -112,7 +112,7 @@ class BlockPlan {
   }
 
   const TermReaderImpl* _field;
-  BlockMatcher<A> _matcher;
+  BlockFilter<A>* _filter;
   uint32_t _run_begin = 0;
   uint32_t _run_end = 0;
 };
@@ -122,21 +122,21 @@ constexpr uint64_t kMaxWalkPrefetch = uint64_t{256} << 20;
 template<typename A>
 class ColdPlan final : public ColdBlocks {
  public:
-  ColdPlan(const TermReaderImpl& field, const A& a) noexcept
-    : _field{&field}, _a{&a} {}
+  ColdPlan(const TermReaderImpl& field, BlockFilter<A>& filter) noexcept
+    : _field{&field}, _filter{&filter} {}
 
   void Arm(uint32_t end) noexcept { _end = end; }
 
   void Reached(uint32_t block) final {
     if (block < _end) {
-      BlockPlan<A>{*_field, *_a}.Run(block, _end, kMaxWalkPrefetch);
+      BlockPlan<A>{*_field, *_filter}.Run(block, _end, kMaxWalkPrefetch);
     }
     _end = 0;
   }
 
  private:
   const TermReaderImpl* _field;
-  const A* _a;
+  BlockFilter<A>* _filter;
   uint32_t _end = 0;
 };
 
@@ -164,12 +164,12 @@ class AcceptorIterator : public SeekTermIterator {
 
   AcceptorIterator(const TermReaderImpl& field, const A& a)
     : _a{&a},
-      _need{NeedOf(field.Index(), a)},
       _k{field.KeyPrefix().size()},
       _valid{_k},
       _by_literal{MatchesByLiteral(a)},
       _cursor{field},
-      _plan{field, a},
+      _blocks{field.Index(), a},
+      _plan{field, _blocks},
       _filter{MakeFilter(a)},
       _targets{field.Index(), a} {
     if constexpr (A::kHasPayload) {
@@ -258,8 +258,20 @@ class AcceptorIterator : public SeekTermIterator {
     return Land(field.Index().BlockOf(_targets.View()), valid);
   }
 
+  bool InBlock(bytes_view target) {
+    const auto& index = _cursor.Field().Index();
+    const auto block = _cursor.BlockIndex();
+    if (block != _bound_block) {
+      _last_block = block + 1 == index.Blocks();
+      _bound = _last_block ? index.MaxKey() : index.Separator(block + 1);
+      _bound_block = block;
+    }
+    return _last_block ? target <= _bound : target < _bound;
+  }
+
   bool Hop(size_t depth) {
-    if (_cursor.Entries().SeekAhead(_targets.View(), depth)) {
+    if (InBlock(_targets.Key()) &&
+        _cursor.Entries().SeekAhead(_targets.View(), depth)) {
       _filter.Restart();
       _check = true;
       _valid = std::min(depth, _cursor.Entries().Shared());
@@ -269,57 +281,69 @@ class AcceptorIterator : public SeekTermIterator {
   }
 
   bool Jump(size_t valid) {
-    const auto& field = _cursor.Field();
-    if (_targets.Key() > field.Index().MaxKey()) {
+    const auto& index = _cursor.Field().Index();
+    if (_targets.Key() > index.MaxKey()) {
       return false;
     }
-    return Land(std::max(_cursor.BlockIndex() + 1,
-                         field.Index().BlockOf(_targets.View())),
-                valid);
-  }
-
-  uint32_t Holding(uint32_t block) const noexcept {
-    const auto& field = _cursor.Field();
-    return _need ? field.Index().Holding(block, field.Blocks(), *_need) : block;
+    return Land(index.BlockFrom(_cursor.BlockIndex(), _targets.View()), valid);
   }
 
   bool Land(uint32_t block, size_t valid) {
-    SDB_ASSERT(block < _cursor.Field().Blocks());
+    const auto& index = _cursor.Field().Index();
+    const uint32_t blocks = index.Blocks();
     _filter.Restart();
     _check = true;
-    if (const auto held = Holding(block); held != block) {
-      return Enter(held, valid);
+    for (;;) {
+      const auto prefix = index.BlockPrefix(block);
+      const size_t shared = CommonPrefixLength(_targets.Key(), prefix);
+      const size_t base = std::min(valid, shared);
+      size_t depth = _targets.StepAlong(prefix, base);
+      if (depth != prefix.size()) {
+        if (block + 1 == blocks || !_targets.NextTarget(prefix, depth) ||
+            _targets.Key() > index.MaxKey()) {
+          return false;
+        }
+        valid = depth;
+        block = index.FindFrom(block + 1, _targets.View());
+        continue;
+      }
+      if (_blocks.Live(block)) {
+        if (_cursor.BlockIndex() != block) {
+          _cursor.Load(block);
+        }
+        if (_cursor.Entries().LowerBound(_targets.View())) {
+          _valid = prefix.size();
+          if (shared == prefix.size()) {
+            _valid = std::min(std::max(valid, prefix.size()),
+                              _cursor.Entries().Shared());
+          }
+          return true;
+        }
+      }
+      if (++block == blocks) {
+        return false;
+      }
+      const auto separator = index.Separator(block);
+      valid = std::min(base, CommonPrefixLength(_targets.Key(), separator));
+      if (!_targets.TargetFrom(separator, valid) ||
+          _targets.Key() > index.MaxKey()) {
+        return false;
+      }
+      block = index.FindFrom(block, _targets.View());
     }
-    if (_cursor.BlockIndex() != block) {
-      _cursor.Load(block);
-    }
-    if (_cursor.Entries().LowerBound(_targets.View())) {
-      _valid = std::min(valid, _cursor.Entries().Shared());
-      return true;
-    }
-    return Enter(Holding(block + 1), valid);
-  }
-
-  bool Enter(uint32_t block, size_t valid) {
-    if (block >= _cursor.Field().Blocks()) {
-      return false;
-    }
-    _cursor.Load(block);
-    _cursor.Entries().Next();
-    _valid = std::min(
-      valid, CommonPrefixLength(_targets.Key(), _cursor.Entries().Key()));
-    return true;
   }
 
   IRS_NO_INLINE bool NextBlock() {
-    const auto& field = _cursor.Field();
-    const auto next = Holding(_cursor.BlockIndex() + 1);
-    if (next >= field.Blocks()) {
+    const auto& index = _cursor.Field().Index();
+    const uint32_t blocks = index.Blocks();
+    const auto next = _cursor.BlockIndex() + 1;
+    if (next >= blocks) {
       return false;
     }
     if (_by_literal) {
-      for (auto block = next;; block = Holding(block + 1)) {
-        if (block >= field.Blocks()) {
+      for (auto block = _blocks.Next(next, blocks);;
+           block = _blocks.Next(block + 1, blocks)) {
+        if (block >= blocks) {
           return false;
         }
         _cursor.Load(block);
@@ -328,13 +352,19 @@ class AcceptorIterator : public SeekTermIterator {
         }
       }
       _valid = _k;
-    } else {
-      _cursor.Load(next);
-      _valid = std::min<size_t>(_valid, _cursor.Entries().Next());
+      _filter.Restart();
+      _check = true;
+      return true;
     }
-    _filter.Restart();
-    _check = true;
-    return true;
+    _cursor.Entries().Materialize();
+    const auto separator = index.Separator(next);
+    size_t valid =
+      std::min(_valid, CommonPrefixLength(_cursor.Entries().Key(), separator));
+    if (!_targets.TargetFrom(separator, valid) ||
+        _targets.Key() > index.MaxKey()) {
+      return false;
+    }
+    return Land(index.FindFrom(next, _targets.View()), valid);
   }
 
   IRS_FORCE_INLINE bool Advance() {
@@ -411,7 +441,6 @@ class AcceptorIterator : public SeekTermIterator {
   }
 
   const A* _a;
-  const ByteSet* _need;
   size_t _k;
   size_t _valid;
   bool _by_literal;
@@ -420,10 +449,14 @@ class AcceptorIterator : public SeekTermIterator {
   TermAttr _term;
   typename A::PayloadType _payload{};
   mutable Cursor _cursor;
+  BlockFilter<A> _blocks;
   ColdPlan<A> _plan;
   PayAttr _pay;
   KeyFilter _filter;
   Targeter<A> _targets;
+  bytes_view _bound;
+  uint32_t _bound_block = kNoBlock;
+  bool _last_block = false;
 };
 
 template<typename A>

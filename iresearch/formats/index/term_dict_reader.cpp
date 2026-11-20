@@ -272,7 +272,6 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   containers::SmallVector<byte_type, kBatchKeyBytes> keys;
   containers::SmallVector<FileRange, kBatchTerms> blocks;
   const auto prefix = KeyPrefix();
-  SeparatorBuffer separators;
   uint32_t last = kNoBlock;
   size_t visited = 0;
   bytes_view last_term;
@@ -303,9 +302,8 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
     }
     std::memset(key + size, 0, kKeyPad);
     const Probe probe{key, size};
-    const uint32_t block = last == kNoBlock
-                             ? _index.BlockOf(probe)
-                             : _index.BlockFrom(last, probe, separators);
+    const uint32_t block =
+      last == kNoBlock ? _index.BlockOf(probe) : _index.BlockFrom(last, probe);
     if (!Small() && block != last) {
       ++visited;
       AppendRange(blocks, BlockOffset(block), BlockOffset(block + 1));

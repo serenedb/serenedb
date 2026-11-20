@@ -2615,6 +2615,109 @@ TEST_F(RegexpUtilsTest, required_bytes_hold_in_every_match) {
   }
 }
 
+TEST_F(RegexpUtilsTest, dead_bytes) {
+  struct Dead {
+    std::string ascii;
+    uint32_t high = 0;
+    bool operator==(const Dead&) const = default;
+  };
+  const auto dead = [](const irs::ByteSet& set) {
+    Dead out;
+    for (uint32_t b = 0; b != 256; ++b) {
+      if (set.Contains(static_cast<irs::byte_type>(b))) {
+        if (b < 0x80) {
+          out.ascii.push_back(static_cast<char>(b));
+        } else {
+          ++out.high;
+        }
+      }
+    }
+    return out;
+  };
+  const auto ascii_but = [](std::string_view kept) {
+    std::string out;
+    for (uint32_t b = 0; b != 0x80; ++b) {
+      if (!kept.contains(static_cast<char>(b))) {
+        out.push_back(static_cast<char>(b));
+      }
+    }
+    return out;
+  };
+  constexpr uint32_t kLeads = 0xF4 - 0xC2 + 1;
+  const auto perl = [&](std::string_view pattern) {
+    return dead(FromPerl(pattern).DeadBytes());
+  };
+  const auto wildcard = [&](std::string_view pattern) {
+    return dead(irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
+                                    ToBytesView(pattern)}
+                  .DeadBytes());
+  };
+  const auto bytes = [&](std::string_view pattern) {
+    const irs::RegexpAcceptor::Part parts[]{
+      {irs::RegexpAcceptor::PartKind::WildcardBytes, ToBytesView(pattern)}};
+    return dead(irs::RegexpAcceptor{parts}.DeadBytes());
+  };
+  EXPECT_EQ(Dead{}, wildcard("%tion"));
+  EXPECT_EQ(Dead{}, wildcard("%nnec%"));
+  EXPECT_EQ(Dead{}, wildcard("%a_b%"));
+  EXPECT_EQ(Dead{}, wildcard("%tion_"));
+  EXPECT_EQ(Dead{}, wildcard("%"));
+  EXPECT_EQ((Dead{ascii_but(""), kLeads}), wildcard("conn%"));
+  EXPECT_EQ(Dead{}, perl("(?s).*tion"));
+  EXPECT_EQ(Dead{}, perl("(?s).*(card|visa).*"));
+  EXPECT_EQ(Dead{"\n"}, perl(".*tion"));
+  EXPECT_EQ((Dead{ascii_but("abcdefghijklmnopqrstuvwxyz"), kLeads}),
+            perl("[a-z]+ms"));
+  EXPECT_EQ((Dead{ascii_but(""), kLeads}), perl("c.che"));
+  EXPECT_EQ(Dead{}, bytes("%tion"));
+  EXPECT_EQ((Dead{ascii_but(""), 128}), bytes("ab%"));
+
+  const auto conjunction = [&](std::string_view l, std::string_view r) {
+    const std::shared_ptr<const irs::RegexpAcceptor> patterns[]{
+      std::make_shared<const irs::RegexpAcceptor>(ToBytesView(l)),
+      std::make_shared<const irs::RegexpAcceptor>(ToBytesView(r)),
+    };
+    return dead(irs::RegexpConjunction{patterns}.DeadBytes());
+  };
+  EXPECT_EQ(Dead{}, conjunction("(?s).*a.*", "(?s).*b"));
+  EXPECT_EQ(Dead{"\n"}, conjunction(".*a.*", "(?s).*b"));
+  EXPECT_EQ((Dead{ascii_but("b"), kLeads}),
+            conjunction("(?s).*a.*", "(?s)b.*"));
+}
+
+TEST_F(RegexpUtilsTest, an_automaton_dies_only_on_its_dead_bytes) {
+  constexpr std::string_view kAlphabet[]{"a", "b", "x", "0", "\n", "\xD0\xB4"};
+  std::vector<std::string> terms{""};
+  for (size_t from = 0, length = 0; length != 5; ++length) {
+    const size_t to = terms.size();
+    for (size_t i = from; i != to; ++i) {
+      for (const auto c : kAlphabet) {
+        terms.push_back(absl::StrCat(terms[i], c));
+      }
+    }
+    from = to;
+  }
+  for (const std::string_view pattern :
+       {".*a.*", "(?s).*ab", "a.*", "(a|b)+0", ".*x?\xD0\xB4", "[^0]*",
+        "(?s)(x\xD0\xB4)*.*", "^a|b$", "a\\b.*", "(?s).*\\bx", "[a-z]+0"}) {
+    const auto a = FromPerl(pattern);
+    ASSERT_TRUE(a.ok()) << pattern;
+    const auto& dead = a.DeadBytes();
+    for (const auto& term : terms) {
+      auto state = a.Start();
+      for (const char c : term) {
+        const auto b = static_cast<irs::byte_type>(c);
+        const auto next = a.Step(state, b);
+        if (!irs::RegexpAcceptor::Alive(next)) {
+          EXPECT_TRUE(dead.Contains(b)) << pattern << " " << term;
+          break;
+        }
+        state = next;
+      }
+    }
+  }
+}
+
 TEST_F(RegexpUtilsTest, finite_language) {
   const auto literals = [](std::string_view pattern) {
     const auto a = FromPerl(pattern);

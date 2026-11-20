@@ -292,7 +292,7 @@ bool FieldWriter::Append(bytes_view term, const PostingMeta& meta) {
 void FieldWriter::FeedIndex() {
   const auto prefix = _key_prefix.size();
   const auto first = _first_block == _blocks ? _first_entry : 0;
-  _index.Add(_blocks - _first_block, _encoder.Count() - first, [&](uint32_t i) {
+  _index.Add(_encoder.Count() - first, [&](uint32_t i) {
     return _encoder.Key(first + i).substr(prefix);
   });
 }

@@ -33,7 +33,6 @@
 namespace {
 
 constexpr uint64_t kTerms = uint64_t{1} << 20;
-constexpr size_t kBlockTerms = 297;
 
 std::string Hex(uint64_t id) {
   std::mt19937_64 rng{id};
@@ -79,8 +78,8 @@ const std::vector<irs::bstring>& Hexes() {
 void Build(benchmark::State& state, const std::vector<irs::bstring>& terms) {
   irs::term_dict::PrefixTrieBuilder builder;
   for (auto _ : state) {
-    for (size_t i = 0; i != terms.size(); ++i) {
-      builder.Add(terms[i], static_cast<uint32_t>(i / kBlockTerms));
+    for (const auto& term : terms) {
+      builder.Add(term);
     }
     benchmark::DoNotOptimize(builder.Finish());
     builder.Reset();

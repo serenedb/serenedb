@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-
 #include <array>
 #include <cstring>
 #include <limits>
@@ -33,6 +31,8 @@
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
+
+inline constexpr uint32_t kDeadNode = kNoNode - 1;
 
 struct LabelRange {
   uint32_t lo;
@@ -46,127 +46,88 @@ LabelRange LiveRangeOf(const A& a, const typename A::State& state) {
   return range;
 }
 
-inline constexpr size_t kMaxTail = 32;
 inline constexpr size_t kMaxGuess = 4;
+inline constexpr size_t kDeadEnd = std::numeric_limits<size_t>::max();
+
+using Tail = std::array<byte_type, kMaxGuess>;
+
+inline bool Gated(const PrefixTrie* trie, uint32_t node) noexcept {
+  return trie && node < kDeadNode && !trie->Open(node);
+}
+
+inline uint32_t ChildNode(const PrefixTrie* trie, uint32_t node,
+                          byte_type label) noexcept {
+  if (!trie || node >= kDeadNode) {
+    return node;
+  }
+  if (trie->Open(node)) {
+    return kNoNode;
+  }
+  const auto child = trie->ChildOf(node, label);
+  return child == kNoNode ? kDeadNode : child;
+}
 
 template<typename A>
 struct Live {
   uint32_t label;
   typename A::State next;
-  TrieCursor child;
+  uint32_t node;
 };
 
 template<typename A>
-Live<A> FirstLive(const PrefixTrie& trie, TrieCursor head, const A& a,
+Live<A> FirstLive(const A& a, const PrefixTrie* trie, uint32_t node,
                   const typename A::State& state, uint32_t from,
                   LabelRange range) {
-  const auto lo = std::max(from, range.lo);
-  if (!PrefixTrie::Gates(head)) {
-    for (auto label = lo; label <= range.hi; ++label) {
-      const auto next = a.Step(state, static_cast<byte_type>(label));
-      if (A::Alive(next)) {
-        return {.label = label, .next = next, .child = head};
-      }
-    }
-    return {.label = kNoLabel, .next = {}, .child = head};
+  if (node == kDeadNode) {
+    return {.label = kNoLabel, .next = {}, .node = kNoNode};
   }
-  const auto labels = trie.Labels(head);
-  for (auto it = absl::c_lower_bound(labels, lo);
-       it != labels.end() && *it <= range.hi; ++it) {
-    const auto next = a.Step(state, *it);
-    if (A::Alive(next)) {
-      return {
-        .label = *it,
-        .next = next,
-        .child = trie.ChildAt(head, static_cast<uint32_t>(it - labels.begin())),
-      };
-    }
-  }
-  return {.label = kNoLabel, .next = {}, .child = head};
-}
-
-enum class EdgeStep : uint8_t {
-  Live,
-  Dead,
-  Unknown,
-};
-
-template<typename A>
-EdgeStep StepEdge(const A& a, typename A::State& state, bytes_view edge) {
-  for (size_t i = 0; i != edge.size(); ++i) {
-    if constexpr (A::kCheapRuns) {
-      typename A::State next{};
-      i += a.StepRun(state, edge.data() + i, edge.size() - i, next);
-      if (i == edge.size()) {
+  const bool gated = Gated(trie, node);
+  for (auto label = std::max(from, range.lo); label <= range.hi;) {
+    uint32_t child = kNoNode;
+    if (gated) {
+      const auto next = trie->NextChild(node, label);
+      if (next.label > range.hi) {
         break;
       }
-      state = next;
-    } else {
-      state = a.Step(state, edge[i]);
+      label = next.label;
+      child = next.node;
     }
-    if (!A::Alive(state)) {
-      return EdgeStep::Dead;
+    const auto next = a.Step(state, static_cast<byte_type>(label));
+    if (A::Alive(next)) {
+      return {.label = label, .next = next, .node = child};
     }
-    if constexpr (A::kMayBeUnknown) {
-      if (A::Unknown(state)) {
-        return EdgeStep::Unknown;
-      }
-    }
+    ++label;
   }
-  return EdgeStep::Live;
+  return {.label = kNoLabel, .next = {}, .node = kNoNode};
 }
 
-inline constexpr size_t kDeadEnd = std::numeric_limits<size_t>::max();
-
-using Tail = std::array<byte_type, kMaxTail>;
-
 template<typename A>
-size_t Continuation(const PrefixTrie& trie, TrieCursor head, const A& a,
-                    typename A::State state, std::span<byte_type> tail) {
+size_t Continuation(const A& a, const PrefixTrie* trie, uint32_t node,
+                    const typename A::State& state, std::span<byte_type> tail) {
   if constexpr (A::kMayBeUnknown) {
     if (A::Unknown(state)) {
       return 0;
     }
   }
-  const bool gated = PrefixTrie::Gates(head);
-  if (!gated) {
-    tail = tail.first(std::min(tail.size(), kMaxGuess));
-  }
-  size_t extra = 0;
-  if (const auto edge = trie.Edge(head); !edge.empty()) {
-    extra = std::min(edge.size(), tail.size());
-    absl::c_copy(edge.substr(0, extra), tail.begin());
-    switch (StepEdge(a, state, edge)) {
-      case EdgeStep::Dead:
-        return kDeadEnd;
-      case EdgeStep::Unknown:
-        return extra;
-      case EdgeStep::Live:
-        break;
-    }
-    head.matched += static_cast<uint32_t>(edge.size());
-    tail = extra == edge.size() ? tail.subspan(extra) : std::span<byte_type>{};
-  }
   typename A::PayloadType payload{};
-  if (trie.MayEnd(head) && a.Accept(state, payload)) {
-    return extra;
+  if (tail.empty() || a.Accept(state, payload)) {
+    return 0;
   }
+  const bool gated = Gated(trie, node) || node == kDeadNode;
   const auto range = LiveRangeOf(a, state);
-  if (tail.empty()) {
-    return gated && FirstLive(trie, head, a, state, 0, range).label == kNoLabel
-             ? kDeadEnd
-             : extra;
-  }
   for (uint32_t from = 0;;) {
-    const auto live = FirstLive(trie, head, a, state, from, range);
+    const auto live = FirstLive(a, trie, node, state, from, range);
     if (live.label == kNoLabel) {
-      return gated ? kDeadEnd : extra;
+      return gated ? kDeadEnd : 0;
+    }
+    if (live.label == 0) {
+      return 0;
     }
     const size_t rest =
-      Continuation(trie, live.child, a, live.next, tail.subspan(1));
+      Continuation(a, trie, live.node, live.next, tail.subspan(1));
     if (rest != kDeadEnd) {
       tail[0] = static_cast<byte_type>(live.label);
-      return extra + 1 + rest;
+      return rest + 1;
     }
     from = live.label + 1;
   }
@@ -179,96 +140,33 @@ struct Branch {
 };
 
 template<typename A>
-Branch NextBranch(const PrefixTrie& trie, TrieCursor head, const A& a,
+Branch NextBranch(const A& a, const PrefixTrie* trie, uint32_t node,
                   const typename A::State& state, uint32_t from,
                   LabelRange range) {
   Branch branch{.label = kNoLabel, .extra = 0, .tail = {}};
   for (;; from = branch.label + 1) {
-    const auto live = FirstLive(trie, head, a, state, from, range);
+    const auto live = FirstLive(a, trie, node, state, from, range);
     branch.label = live.label;
     if (live.label == kNoLabel) {
       return branch;
     }
-    branch.extra = Continuation(trie, live.child, a, live.next, branch.tail);
+    branch.extra = Continuation(a, trie, live.node, live.next, branch.tail);
     if (branch.extra != kDeadEnd) {
       return branch;
     }
   }
 }
 
-class TrieHeads {
- public:
-  TrieHeads(const PrefixTrie& trie, TrieCursor root, size_t k)
-    : _trie{&trie}, _k{k} {
-    _heads.push_back(root);
+template<typename A>
+bool UsesPrefixes(const DictIndex& index, const A& a) noexcept {
+  if (index.Trie().Empty()) {
+    return false;
   }
-
-  TrieCursor operator[](size_t depth) const noexcept {
-    SDB_ASSERT(depth >= _k);
-    const size_t at = depth - _k;
-    SDB_ASSERT(at < _heads.size() || !PrefixTrie::Gates(_heads.back()));
-    return at < _heads.size() ? _heads[at] : _heads.back();
+  if constexpr (requires { a.DeadBytes(); }) {
+    return index.MayHoldAny(a.DeadBytes());
   }
-
-  size_t Extend(bytes_view path, size_t depth) {
-    SDB_ASSERT(_k <= depth && depth <= path.size());
-    if (!PrefixTrie::Gates(_heads.front())) {
-      return depth;
-    }
-    size_t at = CommonPrefixLength(bytes_view{_path}, path.substr(_k));
-    _path.resize(at);
-    _heads.resize(at + 1);
-    const auto want = path.substr(_k, depth - _k);
-    while (at < want.size() && PrefixTrie::Gates(_heads.back())) {
-      const auto head = _heads.back();
-      if (const auto edge = _trie->Edge(head); !edge.empty()) {
-        const auto matched = CommonPrefixLength(edge, want.substr(at));
-        for (size_t i = 1; i <= matched; ++i) {
-          auto next = head;
-          next.matched += static_cast<uint32_t>(i);
-          _heads.push_back(next);
-        }
-        _path.append(want.substr(at, matched));
-        at += matched;
-        if (matched != edge.size() && at != want.size()) {
-          return _k + at;
-        }
-        continue;
-      }
-      const auto child = _trie->Child(head, want[at]);
-      if (child.node == kTrieMissing) {
-        return _k + at;
-      }
-      _heads.push_back(child);
-      _path.push_back(want[at]);
-      ++at;
-    }
-    return depth;
-  }
-
-  bool Branchable(bytes_view path, size_t& depth) const noexcept {
-    if (!PrefixTrie::Gates(_heads.front())) {
-      return true;
-    }
-    for (;;) {
-      const auto head = (*this)[depth];
-      const auto edge = _trie->Edge(head);
-      if (edge.empty() || edge.front() > path[depth]) {
-        return true;
-      }
-      if (depth == _k + head.matched) {
-        return false;
-      }
-      depth -= head.matched + 1;
-    }
-  }
-
- private:
-  const PrefixTrie* _trie;
-  containers::SmallVector<TrieCursor, 16> _heads;
-  bstring _path;
-  size_t _k;
-};
+  return true;
+}
 
 template<typename A>
 class Targeter {
@@ -276,16 +174,16 @@ class Targeter {
   using State = typename A::State;
 
   Targeter(const DictIndex& index, const A& a)
-    : _trie{&index.Trie()},
-      _a{&a},
-      _k{index.KeyPrefix().size()},
-      _heads{index.Trie(), index.TrieRoot(), _k} {}
+    : _a{&a},
+      _trie{UsesPrefixes(index, a) ? &index.Trie() : nullptr},
+      _k{index.KeyPrefix().size()} {}
 
   void Start() {
     if (_states.empty()) {
       _states.assign(_k + 1, _a->Start());
       _ranges.resize(_k + 1);
       _ranged = 0;
+      _nodes.assign(1, PrefixTrie::kRoot);
     }
   }
 
@@ -345,14 +243,11 @@ class Targeter {
   }
 
   bool NextTarget(bytes_view path, size_t& depth) {
-    SDB_ASSERT(depth >= _k);
-    depth = _heads.Extend(path, depth);
+    SDB_ASSERT(depth >= _k && depth < path.size());
     for (;;) {
-      if (!_heads.Branchable(path, depth)) {
-        return false;
-      }
-      const auto branch = NextBranch(*_trie, _heads[depth], *_a, _states[depth],
-                                     path[depth] + 1u, LiveRange(depth));
+      const auto branch =
+        NextBranch(*_a, _trie, NodeAt(path, depth), _states[depth],
+                   path[depth] + 1u, LiveRange(depth));
       if (branch.label != kNoLabel) {
         auto* target = Retarget(path, depth, 1 + branch.extra);
         target[0] = static_cast<byte_type>(branch.label);
@@ -367,11 +262,19 @@ class Targeter {
   }
 
   bool TargetFrom(bytes_view key, size_t& valid) {
-    size_t depth = _heads.Extend(key, StepAlong(key, valid));
+    size_t depth = StepAlong(key, valid);
+    if (_trie) {
+      for (size_t at = valid; at < depth; ++at) {
+        if (NodeAt(key, at + 1) == kDeadNode) {
+          depth = at;
+          break;
+        }
+      }
+    }
     if (depth == key.size()) {
       Tail tail;
       const size_t extra =
-        Continuation(*_trie, _heads[depth], *_a, _states[depth], tail);
+        Continuation(*_a, _trie, NodeAt(key, depth), _states[depth], tail);
       if (extra != kDeadEnd) {
         std::memcpy(Retarget(key, key.size(), extra), tail.data(), extra);
         valid = depth;
@@ -392,6 +295,21 @@ class Targeter {
  private:
   static constexpr uint32_t kUnranged = std::numeric_limits<uint32_t>::max();
 
+  uint32_t NodeAt(bytes_view path, size_t depth) {
+    if (!_trie) {
+      return kNoNode;
+    }
+    const auto term = path.substr(_k, depth - _k);
+    size_t have = CommonPrefixLength(bytes_view{_node_path}, term);
+    _node_path.resize(have);
+    _nodes.resize(have + 1);
+    for (; have != term.size(); ++have) {
+      _nodes.push_back(ChildNode(_trie, _nodes.back(), term[have]));
+      _node_path.push_back(term[have]);
+    }
+    return _nodes.back();
+  }
+
   byte_type* Retarget(bytes_view path, size_t keep, size_t extra) {
     const bool own = path.data() == _target.Data();
     auto* target = _target.Resize(keep + extra);
@@ -401,14 +319,15 @@ class Targeter {
     return target + keep;
   }
 
-  const PrefixTrie* _trie;
   const A* _a;
+  const PrefixTrie* _trie;
   size_t _k;
   size_t _ranged = 0;
   containers::SmallVector<State, 64> _states;
   containers::SmallVector<LabelRange, 64> _ranges;
+  containers::SmallVector<uint32_t, 64> _nodes;
+  bstring _node_path;
   PaddedKey _target;
-  TrieHeads _heads;
 };
 
 template<typename A>
@@ -419,124 +338,127 @@ const ByteSet* NeedOf(const DictIndex& index, const A& a) noexcept {
 }
 
 template<typename A>
-class BlockMatcher {
+class BlockFilter {
  public:
   using State = typename A::State;
 
-  BlockMatcher(const DictIndex& index, const A& a, bool whole) noexcept
-    : _index{&index}, _a{&a}, _need{NeedOf(index, a)}, _whole{whole} {}
+  BlockFilter(const DictIndex& index, const A& a) noexcept
+    : _index{&index},
+      _a{&a},
+      _need{NeedOf(index, a)},
+      _trie{UsesPrefixes(index, a) ? &index.Trie() : nullptr} {}
+
+  bool Live(uint32_t block) {
+    if (_need && !_index->Holds(block, *_need)) {
+      return false;
+    }
+    if (!_trie || _index->Small()) {
+      return true;
+    }
+    if (block != _last) {
+      _last = block;
+      _live = Compute(block);
+    }
+    return _live;
+  }
+
+  uint32_t Next(uint32_t block, uint32_t end) {
+    while (block < end && !Live(block)) {
+      ++block;
+    }
+    return std::min(block, end);
+  }
 
   template<typename Emit>
   void Run(uint32_t first, uint32_t end, Emit&& emit) {
-    _first = first;
-    _seen = 0;
-    _end = end;
-    if (_first == _end) {
-      return;
-    }
-    if (const auto root = _index->TrieRoot();
-        PrefixTrie::Gates(root) && !_whole) {
-      Visit(root, _a->Start(), 0, emit);
-    } else {
-      Add(_first, _end - 1, emit);
+    for (auto block = Next(first, end); block < end;
+         block = Next(block + 1, end)) {
+      emit(block, block + 1);
     }
   }
 
  private:
-  static constexpr size_t kMaxDepth = 64;
-
-  template<typename Emit>
-  bool Visit(TrieCursor cursor, State state, size_t depth, Emit& emit) {
-    if (cursor.hi < _first || cursor.hi < _seen) {
+  bool Compute(uint32_t block) {
+    const auto& index = *_index;
+    const size_t k = index.KeyPrefix().size();
+    const bool last = block + 1 == index.Blocks();
+    const bytes_view lower =
+      block == 0 ? index.MinKey() : index.Separator(block);
+    const bytes_view upper = last ? index.MaxKey() : index.Separator(block + 1);
+    const size_t shared = CommonPrefixLength(lower, upper);
+    const auto prefix = lower.substr(k, shared - k);
+    if (_states.empty()) {
+      _states.assign(1, _a->Start());
+      _nodes.assign(1, PrefixTrie::kRoot);
+    }
+    const size_t reuse = CommonPrefixLength(bytes_view{_path}, prefix);
+    _path.resize(reuse);
+    _states.resize(reuse + 1);
+    _nodes.resize(reuse + 1);
+    for (size_t at = reuse; at != prefix.size(); ++at) {
+      const auto next = _a->Step(_states.back(), prefix[at]);
+      if (!A::Alive(next)) {
+        return false;
+      }
+      _nodes.push_back(ChildNode(_trie, _nodes.back(), prefix[at]));
+      _states.push_back(next);
+      _path.push_back(prefix[at]);
+    }
+    const uint32_t node = _nodes.back();
+    if (!Gated(_trie, node)) {
       return true;
     }
-    if (cursor.lo >= _end) {
+    return Explore(node, _states.back(), lower.substr(shared),
+                   upper.substr(shared), true, true, last);
+  }
+
+  bool Explore(uint32_t node, const State& state, bytes_view lo, bytes_view hi,
+               bool lo_on, bool hi_on, bool inclusive) const {
+    const auto& trie = *_trie;
+    if (trie.Terminal(node) && (!lo_on || lo.empty()) &&
+        (!hi_on || !hi.empty() || inclusive)) {
+      return true;
+    }
+    if (trie.Open(node)) {
+      return true;
+    }
+    if (hi_on && hi.empty()) {
       return false;
     }
-    if constexpr (A::kMayBeUnknown) {
-      if (A::Unknown(state)) {
-        Add(cursor.lo, cursor.hi, emit);
+    const auto range = LiveRangeOf(*_a, state);
+    uint32_t from = range.lo;
+    uint32_t to = range.hi;
+    if (lo_on && !lo.empty()) {
+      from = std::max<uint32_t>(from, lo[0]);
+    }
+    if (hi_on) {
+      to = std::min<uint32_t>(to, hi[0]);
+    }
+    for (auto child = trie.NextChild(node, from); child.label <= to;
+         child = trie.NextChild(node, child.label + 1)) {
+      const auto next = _a->Step(state, static_cast<byte_type>(child.label));
+      if (!A::Alive(next)) {
+        continue;
+      }
+      const bool low = lo_on && !lo.empty() && child.label == lo[0];
+      const bool high = hi_on && child.label == hi[0];
+      if (Explore(child.node, next, low ? lo.substr(1) : bytes_view{},
+                  high ? hi.substr(1) : bytes_view{}, low, high, inclusive)) {
         return true;
       }
     }
-    const auto& trie = _index->Trie();
-    if (cursor.lo == cursor.hi || cursor.node == kTrieBelow ||
-        depth == kMaxDepth) {
-      Tail tail;
-      if (Continuation(trie, cursor, *_a, state,
-                       std::span{tail}.first(kMaxGuess)) != kDeadEnd) {
-        Add(cursor.lo, cursor.hi, emit);
-      }
-      return true;
-    }
-    if (const auto edge = trie.Edge(cursor); !edge.empty()) {
-      switch (StepEdge(*_a, state, edge)) {
-        case EdgeStep::Dead:
-          return true;
-        case EdgeStep::Unknown:
-          Add(cursor.lo, cursor.hi, emit);
-          return true;
-        case EdgeStep::Live:
-          break;
-      }
-      cursor.matched += static_cast<uint32_t>(edge.size());
-    }
-    if (trie.MayEnd(cursor)) {
-      typename A::PayloadType payload{};
-      if (_a->Accept(state, payload)) {
-        Add(cursor.lo, cursor.lo, emit);
-      }
-    }
-    const auto labels = trie.Labels(cursor);
-    const auto range = LiveRangeOf(*_a, state);
-    uint32_t reach = 0;
-    for (auto slot = static_cast<uint32_t>(
-           absl::c_lower_bound(labels, range.lo) - labels.begin());
-         slot < labels.size(); ++slot) {
-      if (const uint32_t from = std::max(_first, _seen); from != reach) {
-        reach = from;
-        slot = trie.SlotReaching(cursor, slot, reach);
-        if (slot == labels.size()) {
-          break;
-        }
-      }
-      if (labels[slot] > range.hi) {
-        break;
-      }
-      const auto next = _a->Step(state, labels[slot]);
-      if (A::Alive(next) &&
-          !Visit(trie.ChildAt(cursor, slot), next, depth + 1, emit)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  template<typename Emit>
-  void Add(uint32_t lo, uint32_t hi, Emit& emit) {
-    lo = std::max(lo, _first);
-    const uint32_t end = std::min(hi + 1, _end);
-    if (lo >= end) {
-      return;
-    }
-    _seen = std::max(_seen, end);
-    if (!_need) {
-      emit(lo, end);
-      return;
-    }
-    for (auto block = _index->Holding(lo, end, *_need); block < end;
-         block = _index->Holding(block + 1, end, *_need)) {
-      emit(block, block + 1);
-    }
+    return false;
   }
 
   const DictIndex* _index;
   const A* _a;
   const ByteSet* _need;
-  uint32_t _first = 0;
-  uint32_t _end = 0;
-  uint32_t _seen = 0;
-  bool _whole;
+  const PrefixTrie* _trie;
+  uint32_t _last = std::numeric_limits<uint32_t>::max();
+  bool _live = false;
+  bstring _path;
+  containers::SmallVector<State, 32> _states;
+  containers::SmallVector<uint32_t, 32> _nodes;
 };
 
 }  // namespace irs::term_dict

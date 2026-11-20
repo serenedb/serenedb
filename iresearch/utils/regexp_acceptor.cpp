@@ -897,6 +897,54 @@ re2::Regexp* AnyCodePoint() {
   return re2::Regexp::AlternateNoFactor(alts, 4, kWildcardFlags);
 }
 
+enum class Utf8At : uint8_t {
+  Boundary,
+  Tail1,
+  Tail2,
+  Tail2E0,
+  Tail2ED,
+  Tail3,
+  Tail3F0,
+  Tail3F4,
+  Broken,
+};
+
+constexpr Utf8At Utf8After(Utf8At at, byte_type b) noexcept {
+  const auto tail = [b](uint32_t lo, uint32_t hi, Utf8At next) {
+    return b >= lo && b <= hi ? next : Utf8At::Broken;
+  };
+  switch (at) {
+    case Utf8At::Boundary:
+      return b < 0x80    ? Utf8At::Boundary
+             : b < 0xC2  ? Utf8At::Broken
+             : b < 0xE0  ? Utf8At::Tail1
+             : b == 0xE0 ? Utf8At::Tail2E0
+             : b == 0xED ? Utf8At::Tail2ED
+             : b < 0xF0  ? Utf8At::Tail2
+             : b == 0xF0 ? Utf8At::Tail3F0
+             : b < 0xF4  ? Utf8At::Tail3
+             : b == 0xF4 ? Utf8At::Tail3F4
+                         : Utf8At::Broken;
+    case Utf8At::Tail1:
+      return tail(0x80, 0xBF, Utf8At::Boundary);
+    case Utf8At::Tail2:
+      return tail(0x80, 0xBF, Utf8At::Tail1);
+    case Utf8At::Tail2E0:
+      return tail(0xA0, 0xBF, Utf8At::Tail1);
+    case Utf8At::Tail2ED:
+      return tail(0x80, 0x9F, Utf8At::Tail1);
+    case Utf8At::Tail3:
+      return tail(0x80, 0xBF, Utf8At::Tail2);
+    case Utf8At::Tail3F0:
+      return tail(0x90, 0xBF, Utf8At::Tail2);
+    case Utf8At::Tail3F4:
+      return tail(0x80, 0x8F, Utf8At::Tail2);
+    case Utf8At::Broken:
+      break;
+  }
+  return Utf8At::Broken;
+}
+
 re2::Regexp* WildcardTree(bytes_view pattern, bool bytes) {
   const auto any = [bytes] {
     return bytes ? ByteClass(0x00, RegexpAcceptor::kMaxLabel) : AnyCodePoint();
@@ -1101,12 +1149,15 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
         break;
       case PartKind::WildcardBytes:
         re = WildcardTree(part.pattern, true);
+        _text = false;
         break;
       case PartKind::PerlBytes:
         re = RegexpTree(part.pattern, RegexpSyntax::Perl, true, _error);
+        _text = false;
         break;
       case PartKind::PosixEreBytes:
         re = RegexpTree(part.pattern, RegexpSyntax::PosixEre, true, _error);
+        _text = false;
         break;
     }
     if (!re) {
@@ -1283,6 +1334,13 @@ void RegexpAcceptor::Setup() {
         }
       }
     }
+    if (absl::c_all_of(pending, [](const Row* row) {
+          return row->built.load(std::memory_order_relaxed);
+        })) {
+      _dead_bytes = DeadBytesLocked();
+    } else {
+      _dead_bytes.words.fill(~uint64_t{0});
+    }
   }
 
   for (State state = _start; _lower.size() != kMaxBoundLength;) {
@@ -1297,6 +1355,46 @@ void RegexpAcceptor::Setup() {
     _lower.push_back(static_cast<byte_type>(lo));
     state = Step(state, static_cast<byte_type>(lo));
   }
+}
+
+ByteSet RegexpAcceptor::DeadBytesLocked() const {
+  struct At {
+    const Row* row;
+    Utf8At utf8;
+  };
+  ByteSet dead;
+  std::vector<At> pending;
+  absl::flat_hash_map<const Row*, uint32_t> seen;
+  const auto visit = [&](const Row* row, Utf8At utf8) {
+    if (row->dead || row->unknown) {
+      return;
+    }
+    const auto bit = uint32_t{1} << static_cast<uint32_t>(utf8);
+    if (auto& at = seen[row]; (at & bit) == 0) {
+      at |= bit;
+      pending.push_back({.row = row, .utf8 = utf8});
+    }
+  };
+  visit(_start, Utf8At::Boundary);
+  while (!pending.empty()) {
+    const auto [row, utf8] = pending.back();
+    pending.pop_back();
+    for (uint32_t label = 0; label <= kMaxLabel; ++label) {
+      const auto b = static_cast<byte_type>(label);
+      const auto next_utf8 = _text ? Utf8After(utf8, b) : Utf8At::Boundary;
+      if (next_utf8 == Utf8At::Broken) {
+        continue;
+      }
+      const auto* next =
+        row->Next()[_bytemap[label]].load(std::memory_order_relaxed);
+      if (next->dead) {
+        dead.Add(b);
+      } else {
+        visit(next, next_utf8);
+      }
+    }
+  }
+  return dead;
 }
 
 RegexpAcceptor::State RegexpAcceptor::StepSlow(State from, uint8_t c) const {

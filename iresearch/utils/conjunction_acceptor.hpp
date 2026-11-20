@@ -107,6 +107,8 @@ class RegexpConjunction {
 
   const ByteSet& RequiredBytes() const noexcept { return _required; }
 
+  const ByteSet& DeadBytes() const noexcept { return _dead_bytes; }
+
   static bool Alive(State state) noexcept { return !state->dead; }
 
   static bool Unknown(State state) noexcept { return state->unknown; }
@@ -162,6 +164,7 @@ class RegexpConjunction {
   std::span<const bstring> _suffixes;
   bytes_view _infix;
   ByteSet _required;
+  ByteSet _dead_bytes;
   size_t _max_mem;
   mutable std::mutex _mutex;
   mutable absl::flat_hash_map<Parts, Row*> _rows;

@@ -133,6 +133,9 @@ RegexpConjunction::RegexpConjunction(
   : _size{patterns.size()}, _max_mem{max_mem} {
   Parts start{};
   Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _required);
+  for (size_t i = 0; i != _size; ++i) {
+    AddAll(_dead_bytes, _patterns[i]->DeadBytes());
+  }
   _classes =
     Refine([&](uint32_t label) { return PatternsKey(patterns, label); },
            _bytemap, _representative);

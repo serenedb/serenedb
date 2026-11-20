@@ -41,7 +41,7 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
     Corrupted("record", head.id);
   }
   if (blocks == 1 || !_gated) {
-    if (!head.prefix_trie.empty() || !head.block_masks.empty()) {
+    if (!head.block_prefixes.empty() || !head.block_masks.empty()) {
       Corrupted("record", head.id);
     }
   }
@@ -56,11 +56,11 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
   if (!_gated) {
     return;
   }
-  _trie = PrefixTrie{ViewCast<byte_type>(std::string_view{head.prefix_trie}),
-                     head.id};
-  if (_trie.Blocks() != blocks) {
-    Corrupted("prefix trie", head.id);
+  if (head.block_prefixes.empty()) {
+    Corrupted("block prefixes", head.id);
   }
+  _trie = PrefixTrie{ViewCast<byte_type>(std::string_view{head.block_prefixes}),
+                     head.id};
   const auto& masks = head.block_masks;
   if (masks.empty()) {
     return;
@@ -69,11 +69,13 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
     Corrupted("block masks", head.id);
   }
   _masks.resize(blocks);
+  _held = {};
   const auto* at = masks.data();
   for (auto& mask : _masks) {
-    for (auto& word : mask) {
-      word = absl::little_endian::Load64(at);
-      at += sizeof(word);
+    for (size_t i = 0; i != kBlockMaskWords; ++i) {
+      mask[i] = absl::little_endian::Load64(at);
+      _held[i] |= mask[i];
+      at += sizeof(uint64_t);
     }
   }
 }
@@ -100,7 +102,7 @@ void DictIndexBuilder::AppendMask(const ByteSet& seen) {
 }
 
 void DictIndexBuilder::Finish(FieldHead& head) {
-  head.prefix_trie = _trie.Finish();
+  head.block_prefixes = _trie.Finish();
   head.block_masks = std::move(_masks);
   _masks.clear();
 }

@@ -134,6 +134,8 @@ class RegexpAcceptor {
 
   const ByteSet& RequiredBytes() const noexcept { return _required; }
 
+  const ByteSet& DeadBytes() const noexcept { return _dead_bytes; }
+
   bool Finite() const noexcept { return _finite; }
 
   std::span<const bstring> Literals() const noexcept { return _literals; }
@@ -231,6 +233,7 @@ class RegexpAcceptor {
   }
 
   State StepSlow(State from, uint8_t c) const;
+  ByteSet DeadBytesLocked() const;
   void Build(Row* row) const;
   void BuildLocked(Row* row) const;
   State InternLocked(const std::vector<int>& queue, uint32_t context) const;
@@ -255,8 +258,10 @@ class RegexpAcceptor {
   bstring _contained;
   std::vector<bstring> _literals;
   ByteSet _required;
+  ByteSet _dead_bytes;
   std::string _error;
   bool _finite{false};
+  bool _text{true};
   size_t _max_dfa_mem{kDefaultMaxDfaMem};
 
   mutable std::mutex _mutex;

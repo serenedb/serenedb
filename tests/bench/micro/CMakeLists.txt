@@ -58,7 +58,7 @@ add_bench(term_enumeration)
 add_bench(term_dict_root)
 add_bench(term_dict_numeric)
 add_bench(numeric_ranges)
-add_bench(prefix_trie)
+add_bench(block_prefixes)
 add_bench(top_term_selector)
 add_bench(random)
 set_property(

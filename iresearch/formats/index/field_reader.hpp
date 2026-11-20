@@ -73,6 +73,7 @@ class FieldReader final {
     uint32_t count = 0;
   };
 
+  Separators _separators;
   std::deque<TermReaderImpl> _keyed;
   std::deque<SingleTermReader> _singles;
   std::vector<const TermReader*> _dicts;

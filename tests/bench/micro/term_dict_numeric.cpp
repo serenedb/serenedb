@@ -354,24 +354,22 @@ void Layout(benchmark::State& state, const Data& data) {
     8.0 * static_cast<double>(store.Input().Length()) / terms;
   state.counters["key_bits_per_term"] =
     8.0 * static_cast<double>(key_bytes) / terms;
-  const auto trie_bytes = [](const irs::term_dict::TermReaderImpl& dict) {
-    return dict.Index().Trie().Blocks() == 0
-             ? 0
-             : dict.Index().Trie().MemoryBytes();
+  const auto index_bytes = [](const irs::term_dict::TermReaderImpl& dict) {
+    return dict.Index().MemoryBytes();
   };
   const auto levels = field.RangeLevels();
-  uint64_t level_trie_bytes = 0;
+  uint64_t level_index_bytes = 0;
   uint64_t level_blocks = 0;
   for (const auto* level : levels) {
-    level_trie_bytes += trie_bytes(*level);
+    level_index_bytes += index_bytes(*level);
     level_blocks += level->Blocks();
   }
   state.counters["levels"] = static_cast<double>(levels.size());
   state.counters["level0_entries"] =
     static_cast<double>(levels.empty() ? 0 : levels.front()->size());
   state.counters["level_blocks"] = static_cast<double>(level_blocks);
-  state.counters["trie_bytes"] = static_cast<double>(trie_bytes(field));
-  state.counters["level_trie_bytes"] = static_cast<double>(level_trie_bytes);
+  state.counters["index_bytes"] = static_cast<double>(index_bytes(field));
+  state.counters["level_index_bytes"] = static_cast<double>(level_index_bytes);
 }
 
 template<typename Probe>

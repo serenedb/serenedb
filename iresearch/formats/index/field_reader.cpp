@@ -43,12 +43,13 @@ void FieldReader::prepare(const ReaderState& state) {
   }
 
   const auto& heads = terms.fields;
-  Separators separators;
+  auto& separators = _separators;
   if (!heads.empty()) {
     _store.Bind(terms);
     if (const auto blocks = _store.BlockCount(); blocks != 0) {
       separators = DecodeSeparators(
         ViewCast<byte_type>(std::string_view{terms.separators}), blocks - 1);
+      _store.Account(SeparatorBytes(separators));
     } else if (!terms.separators.empty()) {
       Corrupted("separators");
     }

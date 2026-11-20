@@ -68,18 +68,27 @@ class DictIndex {
   uint32_t BlockOf(Probe key) const noexcept {
     return Small() ? 0 : static_cast<uint32_t>(_root.Find(key));
   }
-  uint32_t BlockFrom(uint32_t last, Probe key, SeparatorBuffer& buffer) const {
-    if (last + 1 == _blocks || KeyOf(key) < _root.Separator(last + 1, buffer)) {
-      return last;
-    }
-    return static_cast<uint32_t>(_root.FindFrom(last + 1, key, buffer));
+  uint32_t BlockFrom(uint32_t block, Probe key) const noexcept {
+    return block + 1 < _blocks && _root.NotAfter(block + 1, key)
+             ? static_cast<uint32_t>(_root.FindFrom(block + 1, key))
+             : block;
+  }
+  uint32_t FindFrom(uint32_t block, Probe key) const noexcept {
+    return static_cast<uint32_t>(_root.FindFrom(block, key));
+  }
+  bytes_view Separator(uint32_t block) const noexcept {
+    return _root.Separator(block);
+  }
+  bytes_view BlockPrefix(uint32_t block) const noexcept {
+    const bytes_view lower =
+      block == 0 ? bytes_view{_min_key} : _root.Separator(block);
+    const bytes_view upper =
+      block + 1 == _blocks ? bytes_view{_max_key} : _root.Separator(block + 1);
+    return lower.substr(0, CommonPrefixLength(lower, upper));
   }
   uint32_t BlockEnd(bytes_view upper) const;
 
   const PrefixTrie& Trie() const noexcept { return _trie; }
-  TrieCursor TrieRoot() const noexcept {
-    return _gated ? _trie.Root() : kTrieUngated;
-  }
 
   bool Masked() const noexcept { return !_masks.empty(); }
   bool Holds(uint32_t block, const ByteSet& need) const noexcept {
@@ -94,6 +103,10 @@ class DictIndex {
     }
     return block;
   }
+  bool MayHoldAny(const ByteSet& bytes) const noexcept {
+    return ((bytes.words[0] & _held[0]) | (bytes.words[1] & _held[1]) |
+            bytes.words[2] | bytes.words[3]) != 0;
+  }
 
  private:
   bstring _min_key;
@@ -101,6 +114,7 @@ class DictIndex {
   Root _root;
   PrefixTrie _trie;
   std::vector<BlockMask> _masks;
+  BlockMask _held{~uint64_t{0}, ~uint64_t{0}};
   uint32_t _prefix_size;
   uint32_t _blocks;
   bool _gated;
@@ -115,7 +129,7 @@ class DictIndexBuilder {
   }
 
   template<typename TermAt>
-  void Add(uint32_t block, uint32_t count, TermAt&& term_at) {
+  void Add(uint32_t count, TermAt&& term_at) {
     SDB_ASSERT(count != 0);
     if (!_gated) {
       return;
@@ -123,7 +137,7 @@ class DictIndexBuilder {
     ByteSet seen;
     for (uint32_t i = 0; i != count; ++i) {
       const bytes_view term = term_at(i);
-      _trie.Add(term, block);
+      _trie.Add(term);
       AddBytes(seen, term);
     }
     AppendMask(seen);

@@ -86,9 +86,9 @@ constexpr duckdb::field_id_t kDictLastEntry = 12;
 constexpr duckdb::field_id_t kDictText = 15;
 constexpr duckdb::field_id_t kDictSingleValued = 17;
 constexpr duckdb::field_id_t kDictFsst = 18;
-constexpr duckdb::field_id_t kDictPrefixTrie = 19;
 constexpr duckdb::field_id_t kDictLevels = 20;
 constexpr duckdb::field_id_t kDictBlockMasks = 21;
+constexpr duckdb::field_id_t kDictBlockPrefixes = 22;
 
 constexpr duckdb::field_id_t kTextTotalFreq = 0;
 constexpr duckdb::field_id_t kTextScoreBounds = 1;
@@ -172,8 +172,6 @@ void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
   }
   SDB_ASSERT(head.term_count != 1 || head.fsst_table.empty());
   WriteOptionalBytes(out, kDictFsst, "fsst_table", head.fsst_table);
-  SDB_ASSERT(head.term_count != 1 || head.prefix_trie.empty());
-  WriteOptionalBytes(out, kDictPrefixTrie, "prefix_trie", head.prefix_trie);
   SDB_ASSERT(
     head.levels.empty() ||
     (IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0));
@@ -187,6 +185,9 @@ void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
     });
   SDB_ASSERT(head.term_count != 1 || head.block_masks.empty());
   WriteOptionalBytes(out, kDictBlockMasks, "block_masks", head.block_masks);
+  SDB_ASSERT(head.term_count != 1 || head.block_prefixes.empty());
+  WriteOptionalBytes(out, kDictBlockPrefixes, "block_prefixes",
+                     head.block_prefixes);
 }
 
 void WriteField(duckdb::BinarySerializer& out,
@@ -280,8 +281,6 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
   if (head.term_count == 1 && !head.fsst_table.empty()) {
     Corrupted("FSST table", head.id);
   }
-  head.prefix_trie =
-    in.ReadPropertyWithDefault<std::string>(kDictPrefixTrie, "prefix_trie");
   in.ReadOptionalList(
     kDictLevels, "levels",
     [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
@@ -299,12 +298,14 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
     });
   head.block_masks =
     in.ReadPropertyWithDefault<std::string>(kDictBlockMasks, "block_masks");
+  head.block_prefixes = in.ReadPropertyWithDefault<std::string>(
+    kDictBlockPrefixes, "block_prefixes");
   const bool ranged =
     IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0;
   if ((!head.levels.empty() && (!ranged || head.term_count == 1 ||
                                 head.member != DictMember::Numbers)) ||
       (head.term_count == 1 &&
-       (!head.prefix_trie.empty() || !head.block_masks.empty())) ||
+       (!head.block_prefixes.empty() || !head.block_masks.empty())) ||
       (field_limits::valid(head.text.norm) &&
        !IsSubsetOf(IndexFeatures::Norm, head.features))) {
     Corrupted("dictionary", head.id);

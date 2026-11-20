@@ -41,11 +41,16 @@ constexpr bool PacksKeys(uint64_t stride) noexcept {
 inline constexpr uint32_t kEfSample = 64;
 inline constexpr uint32_t kEfSampleBytes = sizeof(uint16_t);
 inline constexpr uint32_t kEfWordBits = 64;
+inline constexpr uint64_t kEfMaxBits = uint64_t{1} << (8 * kEfSampleBytes);
 
 struct EfShape {
   uint32_t low_bits;
   uint64_t highs;
 };
+
+constexpr bool EfFits(uint64_t count, EfShape shape) noexcept {
+  return shape.highs + count <= kEfMaxBits;
+}
 
 constexpr uint64_t EfSamples(uint64_t count) noexcept {
   return (count + kEfSample - 1) / kEfSample;

@@ -676,7 +676,9 @@ bool BlockEncoder::AppendFixedKey(bytes_view key, uint64_t records) {
   const uint64_t universe =
     count == 0 ? 0 : KeyRange(KeyAt(block, 0), key, prefix);
   const uint64_t size = FixedBytes(count + 1, records, width, prefix, universe);
-  if (count != 0 && size > Budget()) {
+  if (count != 0 && (size > Budget() ||
+                     (PacksKeys(width - prefix) &&
+                      !EfFits(count + 1, EfShapeOf(count + 1, universe))))) {
     return false;
   }
   block.size = size;

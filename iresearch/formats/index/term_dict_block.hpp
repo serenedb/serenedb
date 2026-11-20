@@ -292,7 +292,8 @@ inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
     ef.highs = vread<uint64_t>(p);
     const uint64_t max = ~uint64_t{0} >> (8 * (sizeof(uint64_t) - view.stride));
     if (ef.count == 0 || ef.highs > max >> ef.low_bits ||
-        ef.highs + ef.count > 8 * uint64_t{kPage}) [[unlikely]] {
+        !EfFits(ef.count, {.low_bits = ef.low_bits, .highs = ef.highs}))
+      [[unlikely]] {
       corrupted("key high bits", ef.highs);
     }
     ef.low_mask = (uint64_t{1} << ef.low_bits) - 1;

@@ -1096,6 +1096,74 @@ TEST_P(TermDictTest, fixed_keys_split_low_and_high_bits) {
   }
 }
 
+TEST_P(TermDictTest, fixed_keys_fill_multi_page_blocks) {
+  constexpr uint64_t kInlined = 40000;
+  constexpr uint64_t kSingles = 100000;
+  constexpr irs::doc_id_t kSpread = 300;
+  constexpr irs::doc_id_t kListDocs = 16;
+  const auto key = [](uint64_t value) {
+    irs::bstring key(sizeof(uint64_t), irs::byte_type{0});
+    absl::big_endian::Store64(key.data(), value);
+    return key;
+  };
+  std::vector<Entry> entries;
+  entries.reserve(kInlined + kSingles);
+  for (uint64_t i = 0; i != kInlined; ++i) {
+    Docs docs;
+    for (irs::doc_id_t j = 0; j != kListDocs; ++j) {
+      docs.emplace_back(irs::doc_limits::min() + j * kSpread +
+                          static_cast<irs::doc_id_t>(i % kSpread),
+                        1);
+    }
+    entries.push_back({.key = key(i), .docs = std::move(docs)});
+  }
+  for (uint64_t i = 0; i != kSingles; ++i) {
+    const auto doc = irs::doc_limits::min() +
+                     static_cast<irs::doc_id_t>(i % (kListDocs * kSpread));
+    entries.push_back({.key = key(kInlined + i), .docs = {{doc, 1}}});
+  }
+  const Field field{.id = 1, .entries = std::move(entries)};
+  Write({&field, 1});
+  const auto& impl = Blocks(*Get(field));
+  uint64_t widest = 0;
+  for (uint32_t block = 0; block != impl.Blocks(); ++block) {
+    widest =
+      std::max(widest, impl.BlockOffset(block + 1) - impl.BlockOffset(block));
+  }
+  ASSERT_GT(widest, 8 * uint64_t{irs::term_dict::kPage});
+  AssertField(impl, field.entries);
+}
+
+TEST_P(TermDictTest, fixed_keys_stay_within_their_samples_reach) {
+  constexpr uint64_t kInlined = 40000;
+  constexpr uint64_t kShared = 200000;
+  constexpr irs::doc_id_t kSpread = 300;
+  constexpr irs::doc_id_t kListDocs = 16;
+  const auto key = [](uint64_t value) {
+    irs::bstring key(sizeof(uint64_t), irs::byte_type{0});
+    absl::big_endian::Store64(key.data(), value);
+    return key;
+  };
+  std::vector<Entry> entries;
+  entries.reserve(kInlined + kShared);
+  for (uint64_t i = 0; i != kInlined; ++i) {
+    Docs docs;
+    for (irs::doc_id_t j = 0; j != kListDocs; ++j) {
+      docs.emplace_back(irs::doc_limits::min() + j * kSpread +
+                          static_cast<irs::doc_id_t>(i % kSpread),
+                        1);
+    }
+    entries.push_back({.key = key(i), .docs = std::move(docs)});
+  }
+  for (uint64_t i = 0; i != kShared; ++i) {
+    entries.push_back(
+      {.key = key(kInlined + i), .docs = {{irs::doc_limits::min(), 1}}});
+  }
+  const Field field{.id = 1, .entries = std::move(entries)};
+  Write({&field, 1});
+  AssertField(Blocks(*Get(field)), field.entries);
+}
+
 TEST_P(TermDictTest, one_term_dictionaries_live_in_the_footer) {
   const irs::bstring slot_term{irs::kSlotTerm};
   const Field fields[]{

@@ -684,7 +684,7 @@ class PhraseMatcher {
   }
 
   template<bool Ordered = false>
-  uint32_t NextPositionOptimized() {
+  [[gnu::aligned(4096)]] uint32_t NextPositionOptimized() {
     if constexpr (!Ordered) {
       OrderByDocFreq();
     }

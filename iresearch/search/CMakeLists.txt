@@ -131,7 +131,6 @@ sdb_instantiation_axis(
     "phrase_variadic TYPE=VariadicPhraseQuery,PhraseQuery MAKE=iresearch/search/detail/phrase_of.hpp"
     "term TYPE=TermQuery MAKE=iresearch/search/detail/make_term.hpp HEADER=iresearch/search/queries/term_query.hpp"
     "token_phrase TYPE=TokenPhraseQuery MAKE=iresearch/search/detail/token_phrase_of.hpp"
-    "wildcard_ngram TYPE=WildcardNGramQuery MAKE=iresearch/search/detail/wildcard_ngram_of.hpp"
 )
 
 sdb_instantiate(
@@ -349,6 +348,16 @@ sdb_instantiate(
         iresearch/search/detail/make_term.hpp
         iresearch/search/queries/multiterm_query.hpp
     CALL "template class QueryBuilderImpl<MultiTermQuery>;"
+)
+sdb_instantiate(
+    iresearch
+    DIR search/query
+    PREFIX wildcard_ngram
+    NAMESPACE irs
+    INCLUDE
+        iresearch/search/queries/query_builder_impl.tpp
+        iresearch/search/detail/wildcard_ngram_of.hpp
+    CALL "template class QueryBuilderImpl<WildcardNGramQuery>;"
 )
 
 if(IRESEARCH_BENCH)

@@ -424,6 +424,20 @@ TEST(Compression, CorruptStripFramesAreRejected) {
   ASSERT_SQL_ERROR(
     compression::Decompress(compressed.frames, View(wrong_width), decoded),
     ERRCODE_DATA_CORRUPTED);
+
+  Bytes count_over(stored.begin(), stored.end());
+  std::fill_n(count_over.begin() + sizeof(uint32_t) + sizeof(uint8_t),
+              sizeof(uint32_t), irs::byte_type{0xFF});
+  ASSERT_SQL_ERROR(
+    compression::Decompress(compressed.frames, View(count_over), decoded),
+    ERRCODE_DATA_CORRUPTED);
+
+  Bytes trailing(stored.begin(), stored.end());
+  trailing.push_back(0);
+  auto longer = compressed.frames;
+  ++longer.sizes[0];
+  ASSERT_SQL_ERROR(compression::Decompress(longer, View(trailing), decoded),
+                   ERRCODE_DATA_CORRUPTED);
 }
 
 TEST(Compression, TruncatedFrameIsCorrupted) {

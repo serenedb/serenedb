@@ -28,12 +28,14 @@
 #include <zstd.h>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstring>
 #include <magic_enum/magic_enum.hpp>
 #include <string_view>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bit_packing.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::compression {
@@ -64,72 +66,98 @@ size_t FrameCount(uint64_t raw_bytes, uint32_t frame_bytes) noexcept {
 }
 
 constexpr size_t kStripHeaderBytes = sizeof(uint32_t) + sizeof(uint8_t);
+constexpr uint32_t kStripBlock = packed::kBlockSize32;
 
-class BitWriter {
+uint64_t StripBlockBytes(uint64_t values, uint32_t width) noexcept {
+  return (values + kStripBlock - 1) / kStripBlock * width * sizeof(uint32_t);
+}
+
+class StripWriter {
  public:
-  explicit BitWriter(byte_type* at) noexcept : _at{at} {}
+  StripWriter(byte_type* at, uint32_t width) noexcept
+    : _at{at}, _width{width} {}
 
-  void Put(uint32_t value, uint32_t width) noexcept {
-    _bits |= uint64_t{value} << _filled;
-    _filled += width;
-    if (_filled >= 32) {
-      absl::little_endian::Store32(_at, static_cast<uint32_t>(_bits));
-      _at += sizeof(uint32_t);
-      _bits >>= 32;
-      _filled -= 32;
+  void Append(const byte_type* values, uint32_t count) noexcept {
+    while (count != 0) {
+      const auto take = std::min(count, kStripBlock - _size);
+      std::memcpy(_values.data() + _size, values, take * sizeof(uint32_t));
+      values += take * sizeof(uint32_t);
+      count -= take;
+      _size += take;
+      if (_size == kStripBlock) {
+        Flush();
+      }
     }
   }
 
   byte_type* Finish() noexcept {
-    for (; _filled > 0; _filled -= std::min<uint32_t>(_filled, 8)) {
-      *_at++ = static_cast<byte_type>(_bits);
-      _bits >>= 8;
+    if (_size != 0) {
+      std::fill(_values.begin() + _size, _values.end(), 0);
+      Flush();
     }
     return _at;
   }
 
  private:
-  byte_type* _at;
-  uint64_t _bits = 0;
-  uint32_t _filled = 0;
-};
-
-class BitReader {
- public:
-  explicit BitReader(bytes_view in) noexcept : _in{in} {}
-
-  uint32_t Get(uint32_t width) noexcept {
-    if (_available < width) {
-      uint32_t word = 0;
-      const auto left = _in.size() - _at;
-      if (left >= sizeof(word)) {
-        word = absl::little_endian::Load32(_in.data() + _at);
-        _at += sizeof(word);
-      } else {
-        for (size_t i = 0; i != left; ++i) {
-          word |= uint32_t{_in[_at + i]} << (8 * i);
-        }
-        _at = _in.size();
-      }
-      _bits |= uint64_t{word} << _available;
-      _available += 32;
+  void Flush() noexcept {
+    std::array<uint32_t, kStripBlock> words{};
+    packed::PackBlock(_values.data(), words.data(), _width);
+    for (uint32_t word = 0; word != _width; ++word) {
+      absl::little_endian::Store32(_at, words[word]);
+      _at += sizeof(uint32_t);
     }
-    const auto value =
-      static_cast<uint32_t>(_bits & ((uint64_t{1} << width) - 1));
-    _bits >>= width;
-    _available -= width;
-    _read += width;
-    return value;
+    _size = 0;
   }
 
-  uint64_t Read() const noexcept { return _read; }
+  byte_type* _at;
+  uint32_t _width;
+  uint32_t _size = 0;
+  std::array<uint32_t, kStripBlock> _values{};
+};
+
+class StripReader {
+ public:
+  StripReader(bytes_view in, uint32_t width) noexcept
+    : _in{in}, _width{width} {}
+
+  bool Copy(byte_type* out, uint32_t count) noexcept {
+    while (count != 0) {
+      if (_used == kStripBlock && !Refill()) {
+        return false;
+      }
+      const auto take = std::min(count, kStripBlock - _used);
+      std::memcpy(out, _values.data() + _used, take * sizeof(uint32_t));
+      out += take * sizeof(uint32_t);
+      count -= take;
+      _used += take;
+    }
+    return true;
+  }
+
+  bool AtEnd() const noexcept { return _at == _in.size(); }
 
  private:
+  bool Refill() noexcept {
+    const auto bytes = size_t{_width} * sizeof(uint32_t);
+    if (_in.size() - _at < bytes) {
+      return false;
+    }
+    std::array<uint32_t, kStripBlock> words{};
+    for (uint32_t word = 0; word != _width; ++word) {
+      words[word] =
+        absl::little_endian::Load32(_in.data() + _at + word * sizeof(uint32_t));
+    }
+    _at += bytes;
+    packed::UnpackBlock(words.data(), _values.data(), _width);
+    _used = 0;
+    return true;
+  }
+
   bytes_view _in;
+  uint32_t _width;
   size_t _at = 0;
-  uint64_t _bits = 0;
-  uint32_t _available = 0;
-  uint64_t _read = 0;
+  uint32_t _used = kStripBlock;
+  std::array<uint32_t, kStripBlock> _values{};
 };
 
 uint32_t LoadId(const byte_type* at) noexcept {
@@ -145,7 +173,13 @@ size_t EncodeStrip(uint32_t slots, bytes_view in, byte_type* out,
     return 0;
   }
   const auto lists = in.size() / list_bytes;
+  const auto count_width = static_cast<uint32_t>(std::bit_width(slots));
+  const auto counts_bytes = StripBlockBytes(lists, count_width);
+  if (kStripHeaderBytes + counts_bytes > capacity) {
+    return 0;
+  }
   const auto* ids = in.data();
+  StripWriter counts{out + kStripHeaderBytes, count_width};
   uint32_t max_id = 0;
   uint64_t kept = 0;
   for (size_t list = 0; list != lists; ++list) {
@@ -163,30 +197,25 @@ size_t EncodeStrip(uint32_t slots, bytes_view in, byte_type* out,
         return 0;
       }
     }
+    counts.Append(reinterpret_cast<const byte_type*>(&count), 1);
     kept += count;
   }
+  counts.Finish();
   const auto width =
     std::max<uint32_t>(1, static_cast<uint32_t>(std::bit_width(max_id)));
-  const auto count_width = static_cast<uint32_t>(std::bit_width(slots));
-  const auto bits = uint64_t{lists} * count_width + kept * width;
-  const auto size = kStripHeaderBytes + (bits + 7) / 8;
+  const auto size =
+    kStripHeaderBytes + counts_bytes + StripBlockBytes(kept, width);
   if (size > capacity) {
     return 0;
   }
   absl::little_endian::Store32(out, slots);
   out[sizeof(slots)] = static_cast<byte_type>(width);
-  BitWriter writer{out + kStripHeaderBytes};
+  StripReader written{{out + kStripHeaderBytes, counts_bytes}, count_width};
+  StripWriter writer{out + kStripHeaderBytes + counts_bytes, width};
   for (size_t list = 0; list != lists; ++list) {
-    const auto* slot = ids + list * list_bytes;
     uint32_t count = 0;
-    while (count != slots &&
-           LoadId(slot + uint64_t{count} * sizeof(uint32_t)) != kStripPadding) {
-      ++count;
-    }
-    writer.Put(count, count_width);
-    for (uint32_t i = 0; i != count; ++i) {
-      writer.Put(LoadId(slot + uint64_t{i} * sizeof(uint32_t)), width);
-    }
+    written.Copy(reinterpret_cast<byte_type*>(&count), 1);
+    writer.Append(ids + list * list_bytes, count);
   }
   [[maybe_unused]] const auto* end = writer.Finish();
   SDB_ASSERT(static_cast<size_t>(end - out) == size);
@@ -203,22 +232,29 @@ bool DecodeStrip(bytes_view in, std::span<byte_type> out) noexcept {
   if (slots == 0 || width == 0 || width > 32 || out.size() % list_bytes != 0) {
     return false;
   }
+  const auto lists = out.size() / list_bytes;
   const auto count_width = static_cast<uint32_t>(std::bit_width(slots));
-  BitReader reader{in.substr(kStripHeaderBytes)};
+  const auto counts_bytes = StripBlockBytes(lists, count_width);
+  if (in.size() - kStripHeaderBytes < counts_bytes) {
+    return false;
+  }
+  StripReader counts{in.substr(kStripHeaderBytes, counts_bytes), count_width};
+  StripReader ids{in.substr(kStripHeaderBytes + counts_bytes), width};
+  constexpr uint32_t kPadding = kStripPadding;
   auto* at = out.data();
-  for (size_t list = 0, lists = out.size() / list_bytes; list != lists;
-       ++list) {
-    const auto count = reader.Get(count_width);
-    if (count > slots) {
+  for (size_t list = 0; list != lists; ++list) {
+    uint32_t count = 0;
+    if (!counts.Copy(reinterpret_cast<byte_type*>(&count), 1) ||
+        count > slots || !ids.Copy(at, count)) {
       return false;
     }
-    for (uint32_t slot = 0; slot != slots; ++slot) {
-      const auto id = slot < count ? reader.Get(width) : kStripPadding;
-      std::memcpy(at, &id, sizeof(id));
-      at += sizeof(id);
+    for (auto slot = count; slot != slots; ++slot) {
+      std::memcpy(at + uint64_t{slot} * sizeof(uint32_t), &kPadding,
+                  sizeof(kPadding));
     }
+    at += list_bytes;
   }
-  return (reader.Read() + 7) / 8 == in.size() - kStripHeaderBytes;
+  return ids.AtEnd();
 }
 
 size_t Encode(Method method, bytes_view in, byte_type* out) noexcept {

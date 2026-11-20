@@ -492,9 +492,9 @@ TEST_P(BooleanWindowTest, sifting_leaves_the_next_window_intact) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(boolean_window_test, BooleanWindowTest,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         BooleanWindowTest::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  boolean_window_test, BooleanWindowTest,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  BooleanWindowTest::to_string);
 
 }  // namespace

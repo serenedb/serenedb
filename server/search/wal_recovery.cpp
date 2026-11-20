@@ -90,8 +90,7 @@ std::vector<std::shared_ptr<Store>> DurableStores() {
 
 bool RecoverSearchStorages(
   duckdb::ClientContext& context,
-  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached,
-  bool orphans) {
+  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached) {
   const auto begin = std::chrono::steady_clock::now();
   std::vector<std::shared_ptr<Store>> tables;
   for (const auto& db : attached) {
@@ -104,26 +103,29 @@ bool RecoverSearchStorages(
         tables.push_back(index.Storage());
       });
   }
-  auto& scheduler = duckdb::TaskScheduler::GetScheduler(
-    irs::DuckDBEngine::Instance().instance());
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(db);
   context.RunFunctionInTransaction([&] {
-    duckdb::TaskExecutor recovery{scheduler};
+    duckdb::TaskExecutor replays{scheduler};
+    duckdb::TaskExecutor remote_opens{scheduler,
+                                      duckdb::TaskSchedulerType::ASYNC};
     for (auto& table : tables) {
-      table->ScheduleRecovery(context, recovery, orphans);
+      table->ScheduleRecovery(context, replays,
+                              table->Remote() ? remote_opens : replays);
     }
-    recovery.WorkOnTasks();
+    remote_opens.WorkOnTasks();
+    replays.WorkOnTasks();
   });
   duckdb::TaskExecutor executor{scheduler};
   std::atomic_size_t replayed_tables{0};
   std::atomic_bool cleaned{true};
   for (auto& table : tables) {
     executor.ScheduleTask(duckdb::make_uniq<FinishReplayTask>(
-      executor, [&replayed_tables, &cleaned, orphans, table] {
+      executor, [&replayed_tables, &cleaned, table] {
         if (table->FinishReplay()) {
           replayed_tables.fetch_add(1, std::memory_order_relaxed);
         }
-        if (const auto status = table->CleanupUnsafe(orphans).res;
-            !status.ok()) {
+        if (const auto status = table->CleanupUnsafe().res; !status.ok()) {
           cleaned.store(false, std::memory_order_relaxed);
           SDB_WARN(SEARCH, "cleanup of table '", table->GetId(),
                    "' after log replay failed: ", status.message());

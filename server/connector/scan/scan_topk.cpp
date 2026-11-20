@@ -64,9 +64,12 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
     l.root = std::move(plan);
     l.root_seg = unit.seg;
   }
-  irs::utils::downCast<irs::top::Root>(l.root.get())
-    ->Run(range.begin, range.end, collector);
+  l.root->Run(range.begin, range.end, collector);
   l.root_end = range.end;
+  if (g.remote) {
+    l.root.reset();
+    l.root_seg = std::numeric_limits<uint32_t>::max();
+  }
 }
 
 void PublishHits(ScanGlobalState& g, TopKLocalState& l) {
@@ -82,7 +85,7 @@ void PublishHits(ScanGlobalState& g, TopKLocalState& l) {
                              std::memory_order_release);
 }
 
-void Merge(ScanGlobalState& g) {
+void Merge(ScanGlobalState& g, TopKLocalState& l) {
   auto& t = g.topk;
   size_t total = 0;
   for (uint32_t w = 0; w < g.workers; ++w) {
@@ -99,7 +102,7 @@ void Merge(ScanGlobalState& g) {
     all = all.first(want);
   }
   t.answer.assign(all.begin(), all.end());
-  PlanFetch(g);
+  PlanFetch(g, l);
 }
 
 void CopyFetched(const ScanGlobalState& g, const duckdb::DataChunk& from,
@@ -407,12 +410,42 @@ std::vector<ScanGlobalState::TopKState::FetchUnit> FetchUnitsOf(
   return units;
 }
 
-void PlanFetch(ScanGlobalState& g) {
+void PrefetchColumns(
+  const ScanGlobalState& g, FetchLocalState& l,
+  std::span<const irs::ScoreDoc> hits,
+  std::span<const ScanGlobalState::TopKState::FetchUnit> units) {
+  if (!g.remote) {
+    return;
+  }
+  l.EnsureHitBatcher(g);
+  const auto& batcher = *l.hit_batcher;
+  std::vector<duckdb::FileRange> extents;
+  for (size_t u = 0; u < units.size();) {
+    const auto seg = units[u].seg;
+    const auto* col_reader = (*g.reader)[seg].GetColReader();
+    extents.clear();
+    for (; u < units.size() && units[u].seg == seg; ++u) {
+      const auto& unit = units[u];
+      if (col_reader) {
+        batcher.CollectBlocks(
+          *col_reader, hits[unit.first].doc - irs::doc_limits::min(),
+          hits[unit.first + unit.count - 1].doc - irs::doc_limits::min(),
+          extents);
+      }
+    }
+    if (!extents.empty()) {
+      col_reader->File()->Prefetch(extents);
+    }
+  }
+}
+
+void PlanFetch(ScanGlobalState& g, FetchLocalState& l) {
   auto& t = g.topk;
   SortByAddress(t.answer);
   t.fetch_units = FetchUnitsOf(g, t.answer);
   t.fetched.resize(t.fetch_units.size());
   t.fetched_pk.resize(t.fetch_units.size());
+  PrefetchColumns(g, l, t.answer, t.fetch_units);
 }
 
 void CollectRanked(ScanGlobalState& g, RankedLocalState& l,
@@ -484,7 +517,7 @@ void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,
     return;
   }
   CollectRanked(g, l, [&] { CollectUnit(g, l); }, [&] { PublishHits(g, l); });
-  RunAnswerStages(ctx, g, l, output, [&] { Merge(g); });
+  RunAnswerStages(ctx, g, l, output, [&] { Merge(g, l); });
 }
 
 }  // namespace sdb::connector

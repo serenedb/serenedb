@@ -81,6 +81,19 @@ id	name
 5	mom
 
 
+# No rows and no header: the object is written empty
+statement count 0
+COPY (SELECT * FROM clickclack WHERE id < 0) TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_empty.csv'
+WITH (FORMAT csv, HEADER false);
+
+
+query
+SELECT count(*) AS n FROM glob('s3://${MINIO_BUCKET}/${__DATABASE__}_s3_empty*');
+----
+n
+1
+
+
 statement count 5
 COPY clickclack TO 's3://${MINIO_BUCKET}/${__DATABASE__}_s3_clickclack.tsv'
 WITH (FORMAT csv, DELIMITER '	');

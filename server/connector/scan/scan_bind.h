@@ -280,6 +280,7 @@ struct ScanBindData final : duckdb::FunctionData {
   bool RegistersDataVersions() const final { return true; }
   bool IsPointRead() const final;
 
+  search::Store& Storage() const;
   search::ReadView Read(duckdb::ClientContext& context) const;
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
@@ -379,7 +380,7 @@ struct DeferredBuild {
 
 DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                                   const ScanBindData& scan,
-                                  const irs::DirectoryReader& reader);
+                                  const irs::CompositeReader& reader);
 
 bool RowsOnlySegment(const irs::SubReader& segment);
 

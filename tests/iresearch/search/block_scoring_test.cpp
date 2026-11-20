@@ -133,9 +133,9 @@ class DelimitedField : public tests::FieldBase {
 
   std::string_view Value() const final { return _value; }
 
-  bool Write(irs::DataOutput& o) const final {
+  bool Write(duckdb::WriteStream& o) const final {
     // TODO(gnusi): fix
-    o.WriteByte(1);
+    o.Write<irs::byte_type>(1);
     return true;
   }
 
@@ -223,7 +223,7 @@ class BlockScoringTestCase : public IndexTestBase {
   }
 
   // Helper to verify a doc has expected value in any segment (for multi-seg)
-  bool VerifyDocValueInAnySegment(const irs::DirectoryReader& reader, auto& doc,
+  bool VerifyDocValueInAnySegment(const irs::CompositeReader& reader, auto& doc,
                                   std::string_view column_name,
                                   std::string_view expected_value) {
     if (!IsValidDoc(doc)) {
@@ -1583,7 +1583,7 @@ TEST_P(BlockScoringTestCase, Bm25DisjunctionThreeTermsSameField) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(BlockScoringTest, BlockScoringTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

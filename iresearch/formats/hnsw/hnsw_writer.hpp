@@ -73,7 +73,6 @@ class HnswWriter final : public AnnWriter {
   std::vector<float> _norms;
   std::vector<float> _tails;
   bstring _codes;
-  bstring _stats_blob;
   std::unique_ptr<QuantizerWriter> _qw;
   std::vector<float> _centroid;
   uint32_t _d = 0;

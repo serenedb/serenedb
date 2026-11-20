@@ -41,6 +41,7 @@
 #include <unordered_set>
 
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
 
 namespace tests {
 
@@ -49,8 +50,8 @@ struct Records {
   const irs::byte_type* end;
 };
 
-inline Records ReadRecords(irs::IndexInput& in) {
-  const uint64_t size = in.Length() - in.Position();
+inline Records ReadRecords(duckdb::InputFileReader& in) {
+  const uint64_t size = in.File()->GetSize() - in.Position();
   auto data =
     std::make_unique<irs::byte_type[]>(size + irs::block_codec::kInSlack);
   in.ReadData(data.get(), size);
@@ -58,7 +59,7 @@ inline Records ReadRecords(irs::IndexInput& in) {
   return {std::move(data), end};
 }
 
-inline void WriteRecord(irs::PostingsWriter& writer, irs::IndexOutput& out,
+inline void WriteRecord(irs::PostingsWriter& writer, duckdb::WriteStream& out,
                         const irs::PostingMeta& meta) {
   writer.Encode(out, meta);
   if (meta.inline_size != 0) {

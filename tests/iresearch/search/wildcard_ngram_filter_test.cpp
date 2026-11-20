@@ -20,15 +20,16 @@
 
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <span>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
@@ -42,7 +43,7 @@ struct WildcardField final {
 
   std::string_view Value() const noexcept { return value; }
 
-  bool Write(irs::DataOutput& out) const {
+  bool Write(duckdb::WriteStream& out) const {
     irs::ValueAnalyzer value_analyzer;
     irs::ValueTokens tokens;
     if (value_analyzer.Analyze(*analyzer, tests::ToStringT(value), tokens) &&
@@ -311,7 +312,8 @@ TEST(WildcardNGramFilterTest, query) {
 
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
   {
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
@@ -432,7 +434,8 @@ TEST(WildcardNGramFilterTest, without_matcher_returns_candidates) {
   static constexpr irs::doc_id_t kBase = irs::doc_limits::min();
 
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   {
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
@@ -688,7 +691,8 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
 
   for (const auto n : {size_t{2}, size_t{3}}) {
     irs::analysis::WildcardTokenizer analyzer{nullptr, n};
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
     {
       auto writer = tests::IndexWriter::Make(
         dir, tests::kOmCreate, irs::tests::DefaultWriterOptions());

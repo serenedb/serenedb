@@ -239,6 +239,9 @@ std::optional<ScorerOptions> TopKScorer(
   duckdb::ClientContext& context,
   const duckdb::case_insensitive_map_t<duckdb::Value>& options);
 
+duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
+  duckdb::ClientContext& context, duckdb::Catalog& catalog);
+
 class IndexTokenizers {
  public:
   using Bound = irs::containers::FlatHashMap<irs::field_id, ColumnTokenizer>;
@@ -324,6 +327,7 @@ class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
   const auto& Storage() const noexcept { return _storage; }
   const auto& SearchStore() const noexcept { return _search_table; }
   const auto& Config() const noexcept { return _config; }
+  duckdb::idx_t Tablespace() const noexcept { return _tablespace; }
   IndexTokenizers ResolveTokenizers(duckdb::ClientContext& context) const {
     return {context, catalog, *_config};
   }
@@ -349,6 +353,7 @@ class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
   std::shared_ptr<search::Store> _search_table;
   std::shared_ptr<const InvertedIndexConfig> _config;
   duckdb::Identifier _relation_name;
+  duckdb::idx_t _tablespace;
   bool _retired = false;
 };
 

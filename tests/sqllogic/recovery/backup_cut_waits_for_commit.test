@@ -58,7 +58,7 @@ CREATE TEMP TABLE bcut_label AS SELECT labelfile FROM pg_backup_stop();
 
 connection starter
 query
-SELECT regexp_extract(labelfile, 'SERENEDB LOG: \S+ (\d+)', 1)::BIGINT > 0 AS logged
+SELECT regexp_extract(labelfile, 'SERENEDB LOG: (\d+)', 1)::BIGINT > 0 AS logged
 FROM bcut_label;
 ----
 logged

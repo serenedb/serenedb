@@ -113,7 +113,7 @@ void ForEachSubject(
     subject(version.Cast<duckdb::IndexCatalogEntry>().table_oid, nullptr);
   }
   for (const auto& dependency :
-       version.Cast<duckdb::StandardEntry>().dependencies.Set()) {
+       version.Cast<duckdb::InCatalogEntry>().dependencies.Set()) {
     subject(dependency.oid, &dependency);
   }
   if (IsSearchTable(version)) {
@@ -437,9 +437,13 @@ void OidIndex::CheckCreated(const duckdb::SnapshotView& view,
                               const duckdb::LogicalDependency* dependency) {
     auto* index = this;
     duckdb::shared_ptr<duckdb::AttachedDatabase> database;
-    if (dependency && !dependency->catalog.empty() &&
-        dependency->catalog.GetIdentifierName() !=
-          _database.GetName().GetIdentifierName()) {
+    if (auto& cluster = ClusterOf();
+        dependency && dependency->catalog.GetIdentifierName() ==
+                        cluster.GetName().GetIdentifierName()) {
+      index = &cluster.Oids();
+    } else if (dependency && !dependency->catalog.empty() &&
+               dependency->catalog.GetIdentifierName() !=
+                 _database.GetName().GetIdentifierName()) {
       database = duckdb::DatabaseManager::Get(_database.GetDatabase())
                    .GetDatabase(dependency->catalog);
       if (!database) {

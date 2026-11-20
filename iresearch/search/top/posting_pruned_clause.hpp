@@ -54,7 +54,7 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
 
   PostingPrunedClause() = default;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                IndexFeatures layout, const SubReader& segment,
                const TermReader& field, const detail::ScoreArgs& args) {
     _leaf.Single();
@@ -65,7 +65,7 @@ class PostingPrunedClause : public PrunedProbeBase<InputType> {
     }
   }
 
-  PostingPrunedClause(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingPrunedClause(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                       IndexFeatures layout, const SubReader& segment,
                       const TermReader& field, const detail::ScoreArgs& args) {
     Prepare(meta, doc_in, layout, segment, field, args);

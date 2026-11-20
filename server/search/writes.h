@@ -34,7 +34,7 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector_size.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -78,11 +78,11 @@ struct StoreWrites {
   uint64_t revision = 0;
   struct Pin {
     const TableState* state = nullptr;
-    std::optional<irs::DirectoryReader> own;
+    std::optional<irs::CompositeReader> own;
     const FileManifest* manifest = nullptr;
     uint64_t revision = 0;
 
-    const irs::DirectoryReader& Reader() const noexcept {
+    const irs::CompositeReader& Reader() const noexcept {
       return own ? *own : state->reader;
     }
   };
@@ -184,7 +184,7 @@ class ConflictArbiter {
   };
 
   ConflictArbiter(duckdb::ClientContext& context, const StoreWrites& w,
-                  const irs::DirectoryReader& reader,
+                  const irs::CompositeReader& reader,
                   std::span<const irs::field_id> fields);
 
   duckdb::idx_t Admit(duckdb::DataChunk& chunk,
@@ -262,7 +262,7 @@ class Writes {
                     feed);
   void TakeIndexedPatches(
     duckdb::ClientContext& context, Store& store,
-    absl::FunctionRef<void(const irs::DirectoryReader&, size_t,
+    absl::FunctionRef<void(const irs::CompositeReader&, size_t,
                            const irs::DocumentMask&)>
       feed);
 
@@ -304,7 +304,7 @@ class Writes {
   ReadView Read(duckdb::ClientContext& context, Store& store);
   Tick PlanVersion(const Store& store);
   Tick LayoutVersion(const Store& store);
-  const irs::DirectoryReader& PinnedReader(duckdb::ClientContext& context,
+  const irs::CompositeReader& PinnedReader(duckdb::ClientContext& context,
                                            Store& store);
   void ResetPins(bool all) noexcept;
   TableRead LatestView(duckdb::ClientContext& context, Store& store);

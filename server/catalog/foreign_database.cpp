@@ -70,7 +70,7 @@ void OpenForeignStore(search::Store& store, const duckdb::CatalogEntry& entry) {
   }
   if (store.Absent()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                    ERR_MSG("the directory \"", store.Path().string(), "\" of ",
+                    ERR_MSG("the directory \"", store.Path(), "\" of ",
                             entry.name.GetIdentifierName(), " (oid ", entry.oid,
                             ") is missing"));
   }
@@ -83,17 +83,17 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
   const duckdb::AttachInfo& info, duckdb::AttachOptions& options) {
   const auto name = DatabaseName(options);
   std::error_code ec;
-  const auto root = std::filesystem::canonical(info.path, ec);
+  const auto root = std::filesystem::canonical(info.path, ec).string();
   if (ec) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
                     ERR_MSG("could not open data directory \"", info.path,
                             "\": ", ec.message()));
   }
-  const DataDirectory layout{root.string()};
-  auto lock = FileLock::Take((root / backup::kPgVersionFile).string(),
+  auto& fs = duckdb::FileSystem::GetFileSystem(context);
+  const DataDirectory layout{root};
+  auto lock = FileLock::Take(fs.JoinPath(root, backup::kPgVersionFile),
                              FileLock::Mode::Shared);
-  if (!std::filesystem::is_directory(layout.LogDir(), ec) ||
-      absl::IsNotFound(lock.status())) {
+  if (!fs.DirectoryExists(layout.LogDir()) || absl::IsNotFound(lock.status())) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_FILE),
       ERR_MSG("\"", info.path, "\" is not a SereneDB data directory"));
@@ -105,7 +105,13 @@ duckdb::unique_ptr<duckdb::Catalog> AttachForeignDatabase(
       ERR_MSG("could not attach \"", info.path,
               "\": ", lock.status().message()));
   }
-  auto& fs = duckdb::FileSystem::GetFileSystem(context);
+  if (Log::IsEarlierFormat(fs, layout.LogDir())) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("\"", info.path,
+              "\" was written with an earlier layout of the data directory, "
+              "which this build cannot read"));
+  }
   ForeignLog foreign{
     .dir = layout.LogDir(),
     .lock = std::move(*lock),
@@ -143,7 +149,7 @@ void ReplayForeignDatabase(duckdb::ClientContext& context,
                            const duckdb::CatalogEntry& entry) {
     OpenForeignStore(store, entry);
     duckdb::TaskExecutor executor{duckdb::TaskScheduler::GetScheduler(context)};
-    store.ScheduleRecovery(context, executor, /*orphans=*/false);
+    store.ScheduleRecovery(context, executor, executor);
     executor.WorkOnTasks();
     store.FinishReplay();
   };

@@ -67,6 +67,7 @@ enum class Scope : uint8_t {
 enum class Action : uint8_t {
   Compact,
   Flush,
+  Pack,
 };
 
 struct Verb {
@@ -86,6 +87,7 @@ std::optional<Verb> ParseOption(std::string_view option) {
     {"flush_table", {Action::Flush, Scope::Table}},
     {"flush_index", {Action::Flush, Scope::Index}},
     {"flush_all", {Action::Flush, Scope::All}},
+    {"pack_table", {Action::Pack, Scope::Table}},
   };
   for (const auto& [name, verb] : kVerbs) {
     if (option == name) {
@@ -153,6 +155,18 @@ struct ResolvedName {
   std::string object;
 };
 
+duckdb::optional_ptr<duckdb::CatalogEntry> FindEntry(
+  duckdb::ClientContext& context, duckdb::CatalogType type,
+  const ResolvedName& target) {
+  return duckdb::Catalog::GetEntry(
+    context,
+    duckdb::EntryLookupInfo{
+      type, duckdb::QualifiedName{duckdb::Identifier{target.database},
+                                  duckdb::Identifier{target.schema},
+                                  duckdb::Identifier{target.object}}},
+    duckdb::OnEntryNotFound::RETURN_NULL);
+}
+
 ResolvedName ResolveName(duckdb::ClientContext& context,
                          const VacuumBindData& bind, Scope scope) {
   ResolvedName out;
@@ -182,6 +196,15 @@ ResolvedName ResolveName(duckdb::ClientContext& context,
       out.database = catalog.GetIdentifierName();
       out.schema = schema.GetIdentifierName();
       out.object = bind.name;
+      if (out.database.empty()) {
+        if (const auto entry = FindEntry(context,
+                                         scope == Scope::Table
+                                           ? duckdb::CatalogType::TABLE_ENTRY
+                                           : duckdb::CatalogType::INDEX_ENTRY,
+                                         out)) {
+          out.database = entry->ParentCatalog().GetName().GetIdentifierName();
+        }
+      }
     } break;
     case Scope::All:
       break;
@@ -203,18 +226,6 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
   return *found;
-}
-
-duckdb::optional_ptr<duckdb::CatalogEntry> FindEntry(
-  duckdb::ClientContext& context, duckdb::CatalogType type,
-  const ResolvedName& target) {
-  return duckdb::Catalog::GetEntry(
-    context,
-    duckdb::EntryLookupInfo{
-      type, duckdb::QualifiedName{duckdb::Identifier{target.database},
-                                  duckdb::Identifier{target.schema},
-                                  duckdb::Identifier{target.object}}},
-    duckdb::OnEntryNotFound::RETURN_NULL);
 }
 
 void CompactInvertedStorage(search::Store& inverted,
@@ -389,7 +400,9 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
                     pg::ProgressMetrics& progress) {
   std::vector<InvertedStep> steps;
 
-  const std::string_view verb = action == Action::Flush ? "flush" : "compact";
+  const std::string_view verb = action == Action::Flush     ? "flush"
+                                : action == Action::Compact ? "compact"
+                                                            : "pack";
   if (scope == Scope::Index) {
     auto entry = FindEntry(context, duckdb::CatalogType::INDEX_ENTRY, target);
     duckdb::optional_ptr<duckdb::IndexCatalogEntry> index;
@@ -420,6 +433,13 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     }
   } else {
     ForEachTable(context, scope, target, [&](duckdb::TableCatalogEntry& table) {
+      if (action == Action::Pack && !table.catalog.InMemory()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
+          ERR_MSG("\"", table.name.GetIdentifierName(),
+                  "\" is not an in-memory table"),
+          ERR_DETAIL("VACUUM (PACK_TABLE) applies to temporary tables."));
+      }
       if (MayMaintain(conn_ctx, table.permissions,
                       table.name.GetIdentifierName(), verb)) {
         CollectInvertedSteps(context, table, steps);
@@ -436,6 +456,8 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
       if (step.search_data) {
         step.search_data->Settle();
       }
+    } else if (action == Action::Pack) {
+      (step.storage ? step.storage : step.search_data)->Pack();
     } else if (step.storage) {
       CompactInvertedStorage(*step.storage, *step.field_options, context,
                              progress);

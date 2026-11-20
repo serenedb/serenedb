@@ -29,6 +29,7 @@
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
 #include "search/store.h"
+
 namespace duckdb {
 
 class ClientContext;

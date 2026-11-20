@@ -22,16 +22,16 @@
 
 #include <duckdb.hpp>
 #include <duckdb/storage/shared_object_cache.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 
 namespace tests {
 
-inline duckdb::DuckDB& Database() {
-  static duckdb::DuckDB gDb{nullptr};
-  return gDb;
+inline duckdb::DatabaseInstance& Database() {
+  return irs::DuckDBEngine::Instance().instance();
 }
 
 inline duckdb::SharedObjectCache& Cache() {
-  return Database().instance->GetSharedObjectCache();
+  return Database().GetSharedObjectCache();
 }
 
 duckdb::ClientContext& EngineContext();

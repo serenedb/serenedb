@@ -6,7 +6,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB implements the SQL dialect of PostgreSQL. Not every PostgreSQL statement parses, and not all underlying functionality is implemented. Among the statements that fail to parse are `SAVEPOINT`, `DECLARE ... CURSOR` and `FETCH`, `SELECT ... FOR UPDATE`, `FETCH FIRST ... WITH TIES`, identity columns, `CREATE DOMAIN`, unlogged tables, materialized views, `CREATE EXTENSION`, `CREATE INDEX CONCURRENTLY` and PL/pgSQL function bodies; SQL-language functions work. `LISTEN`, `NOTIFY` and `UNLISTEN` parse and answer that they are not supported.
+SereneDB implements the SQL dialect of PostgreSQL. Not every PostgreSQL statement parses, and not all underlying functionality is implemented. Among the statements that fail to parse are `SAVEPOINT`, `DECLARE ... CURSOR` and `FETCH`, `SELECT ... FOR UPDATE`, `FETCH FIRST ... WITH TIES`, identity columns, unlogged tables, materialized views, `CREATE EXTENSION`, `CREATE INDEX CONCURRENTLY` and PL/pgSQL function bodies; SQL-language functions work. `LISTEN`, `NOTIFY` and `UNLISTEN` parse and answer that they are not supported.
 
 This page gives a non-exhaustive overview of supported core SQL functionality, followed by the [behavioral differences](#behavioral-differences-from-postgresql) where SereneDB intentionally diverges from PostgreSQL.
 

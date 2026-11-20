@@ -1,0 +1,224 @@
+# NOT NULL rejects NULL on insert and on cast; NULL together with NOT NULL is rejected.
+
+statement ok
+CREATE DOMAIN d_nn as INT4 NOT NULL;
+
+statement ok
+CREATE TABLE t_nn_check (v d_nn);
+
+statement error db error: ERROR: domain d_nn does not allow null values
+INSERT INTO t_nn_check VALUES (NULL);
+
+statement error
+SELECT NULL::d_nn;
+
+statement ok
+CREATE DOMAIN d_null AS int4 NULL;
+
+query
+SELECT typnotnull FROM pg_type WHERE typname = 'd_null';
+----
+typnotnull
+f
+
+statement error
+CREATE DOMAIN d_null AS int4 NULL NOT NULL;
+
+# CHECK over VALUE rejects a row whose value violates it.
+
+statement ok
+CREATE DOMAIN email AS text
+    CHECK (VALUE ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$');
+
+statement ok
+CREATE DOMAIN positive_money AS numeric(12,2)
+    CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN postal_code AS char(6)
+    CHECK (VALUE ~ '^\d{6}$');
+
+statement ok
+CREATE TABLE receipts (login email, amount positive_money, address postal_code);
+
+statement error db error: ERROR: value for domain email violates check constraint "email_check"
+INSERT INTO receipts VALUES (42, 60, 123456);
+
+statement error db error: ERROR: value for domain positive_money violates check constraint "positive_money_check"
+INSERT INTO receipts VALUES ('test@gmail.com', -60, 123456);
+
+statement error db error: ERROR: value for domain postal_code violates check constraint "postal_code_check"
+INSERT INTO receipts VALUES ('test@gmail.com', 60, 0);
+
+statement ok
+INSERT INTO receipts VALUES ('test@gmail.com', 60, 123456)
+
+# Named and unnamed constraints, and every clause in one domain.
+
+statement ok
+CREATE DOMAIN d_cn AS INT4
+    CONSTRAINT positive CHECK (VALUE > 0)
+    CONSTRAINT must_have NOT NULL
+    CHECK (VALUE < 100);
+
+# TODO: pg_constraint does not list domain constraints yet
+#
+# query
+# SELECT conname FROM pg_constraint WHERE contypid = 'd_cn'::regtype ORDER BY conname;
+# ----
+# conname
+# d_cn_check
+# must_have
+# positive
+
+statement ok
+CREATE DOMAIN d_full AS text COLLATE "C" DEFAULT 'x'
+    CONSTRAINT nonempty
+    NOT NULL
+    CHECK(length(VALUE) > 0);
+
+# TODO: typdefault renders a text default as 'x' instead of 'x'::text
+# query
+# SELECT typcollation::regcollation, typdefault, typnotnull FROM pg_type WHERE typname = 'd_full';
+# ----
+# typcollation	typdefault	typnotnull
+# "C"	'x'::text	t
+#
+# A domain over a base type value checks it on every cast, including casts the optimizer pushes into a scan.
+
+statement ok
+CREATE DOMAIN dom_nn AS int4 NOT NULL;
+
+statement ok
+CREATE TABLE dom_base (id int4, v int4);
+
+statement ok
+INSERT INTO dom_base VALUES (1, NULL), (2, 2);
+
+statement error
+SELECT v::dom_nn FROM dom_base WHERE id = 1;
+
+statement error
+SELECT NULL::dom_nn;
+
+statement error
+SELECT CAST(NULL AS dom_nn);
+
+statement ok
+CREATE TABLE dom_nulls (v int4);
+
+statement ok
+INSERT INTO dom_nulls VALUES (NULL), (NULL);
+
+statement error
+SELECT v::dom_nn FROM dom_nulls;
+
+statement error
+SELECT count(*) FROM dom_base WHERE v::dom_nn IS NOT NULL;
+
+statement error
+SELECT count(*) FROM dom_base WHERE v::dom_nn IS NULL;
+
+statement error
+SELECT count(*) FROM dom_base WHERE v::dom_nn > 0;
+
+statement error
+SELECT id FROM (SELECT id, v::dom_nn AS n FROM dom_base) s WHERE n > 0;
+
+query
+SELECT id, v::dom_nn FROM dom_base WHERE id = 2;
+----
+id	v
+2	2
+
+query
+SELECT count(*) FROM dom_base WHERE v::dom_nn > 0 AND id = 2;
+----
+count
+1
+
+# A domain in another schema checks its values the same way.
+
+statement ok
+CREATE SCHEMA dom_s;
+
+statement ok
+CREATE DOMAIN dom_s.dom_s_nn AS int4 NOT NULL;
+
+statement ok
+CREATE TABLE dom_s_t (id int4, n dom_s.dom_s_nn);
+
+statement ok
+INSERT INTO dom_s_t VALUES (1, 1);
+
+statement error
+INSERT INTO dom_s_t VALUES (2, NULL);
+
+statement error
+SELECT NULL::dom_s.dom_s_nn;
+
+statement error
+SELECT v::dom_s.dom_s_nn FROM dom_base WHERE id = 1;
+
+statement ok
+CREATE TABLE dom_s.dom_s_t2 (id int4, n dom_s.dom_s_nn);
+
+statement error
+INSERT INTO dom_s.dom_s_t2 VALUES (1, NULL);
+
+statement ok
+SET search_path TO dom_s, public;
+
+statement error
+SELECT NULL::dom_s_nn;
+
+statement error
+INSERT INTO dom_s_t2 VALUES (2, NULL);
+
+statement ok
+RESET search_path;
+
+query
+SELECT id, n FROM dom_s_t ORDER BY id;
+----
+id	n
+1	1
+
+# CHECK runs on casts, array elements and TRY_CAST.
+
+statement ok
+CREATE DOMAIN dom_pos AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN dom_upper AS text CHECK (upper(VALUE) = VALUE);
+
+statement error
+SELECT (-1)::dom_pos;
+
+statement error
+SELECT 'abc'::dom_upper;
+
+query
+SELECT 'ABC'::dom_upper AS u, 5::dom_pos AS p;
+----
+u	p
+ABC	5
+
+statement error
+SELECT ARRAY[1, NULL]::dom_nn[];
+
+statement error
+SELECT ARRAY[1, -1]::dom_pos[];
+
+query
+SELECT sum(x) AS a FROM unnest(ARRAY[1, 2]::dom_pos[]) AS u(x);
+----
+a
+3
+
+onlyif serenedb
+query
+SELECT TRY_CAST(NULL AS dom_nn) IS NULL AS a, TRY_CAST(-1 AS dom_pos) IS NULL AS b, TRY_CAST(5 AS dom_pos) AS c;
+----
+a	b	c
+t	t	5

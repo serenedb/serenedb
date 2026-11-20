@@ -1,0 +1,132 @@
+# DOCS_TEST: example_001
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE DOMAIN positive_int AS INTEGER CHECK (VALUE > 0);
+
+statement ok
+CREATE TABLE orders (id INTEGER, qty positive_int);
+
+statement ok
+INSERT INTO orders VALUES (1, 5);
+
+statement error db error: ERROR: value for domain positive_int violates check constraint "positive_int_check"
+INSERT INTO orders VALUES (2, -1);
+
+statement error db error: ERROR: value for domain positive_int violates check constraint "positive_int_check"
+SELECT (-1)::positive_int;
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE DOMAIN status AS TEXT NOT NULL DEFAULT 'new';
+
+statement ok
+CREATE TABLE tickets (id INTEGER, state status);
+
+statement ok
+INSERT INTO tickets (id) VALUES (1);
+
+query
+SELECT id, state
+FROM tickets;
+----
+id	state
+1	new
+
+statement error db error: ERROR: domain status does not allow null values
+INSERT INTO tickets VALUES (2, NULL);
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE DOMAIN small_positive_int AS positive_int CHECK (VALUE < 100);
+
+query
+SELECT 42::small_positive_int AS v;
+----
+v
+42
+
+statement error db error: ERROR: value for domain positive_int violates check constraint "positive_int_check"
+SELECT 0::small_positive_int;
+
+statement error db error: ERROR: value for domain small_positive_int violates check constraint "small_positive_int_check"
+SELECT 100::small_positive_int;
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_BODY
+
+query
+SELECT TRY_CAST(-1 AS positive_int) AS v;
+----
+v
+NULL
+
+# DOCS_TEST: example_005
+
+statement ok
+CREATE DOMAIN quantity AS INTEGER;
+
+statement ok
+CREATE TABLE stock (item TEXT, qty quantity);
+
+statement ok
+INSERT INTO stock VALUES ('legacy', -3);
+
+# DOCS_TEST_BODY
+
+statement ok
+ALTER DOMAIN quantity ADD CONSTRAINT quantity_positive CHECK (VALUE > 0) NOT VALID;
+
+statement error db error: ERROR: value for domain quantity violates check constraint "quantity_positive"
+INSERT INTO stock VALUES ('new', -1);
+
+query
+SELECT item, qty
+FROM stock;
+----
+item	qty
+legacy	-3
+
+statement ok
+ALTER DOMAIN quantity RENAME CONSTRAINT quantity_positive TO quantity_above_zero;
+
+statement ok
+ALTER DOMAIN quantity DROP CONSTRAINT quantity_above_zero;
+
+statement ok
+ALTER DOMAIN quantity SET DEFAULT 1;
+
+statement ok
+ALTER DOMAIN quantity RENAME TO item_quantity;
+
+# DOCS_TEST: example_006
+
+statement ok
+CREATE DOMAIN code AS TEXT;
+
+statement ok
+CREATE TABLE products (id INTEGER, sku code);
+
+# DOCS_TEST_BODY
+
+statement error
+DROP DOMAIN code;
+
+statement ok
+DROP DOMAIN code CASCADE;
+
+query
+SELECT column_name
+FROM information_schema.columns
+WHERE table_name = 'products';
+----
+column_name
+id

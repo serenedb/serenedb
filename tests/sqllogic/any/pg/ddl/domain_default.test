@@ -1,0 +1,145 @@
+# DEFAULT fills an omitted column, must cast to the base type, and yields to a column default.
+
+statement ok
+CREATE DOMAIN d_def as INT4 DEFAULT 42;
+
+query
+SELECT typdefault FROM pg_type WHERE typname = 'd_def';
+----
+typdefault
+42
+
+statement ok
+CREATE TABLE t_def_check (id int, v d_def);
+
+statement ok
+INSERT INTO t_def_check (id) VALUES (1);
+
+query
+SELECT v from t_def_check;
+----
+v
+42
+
+statement error
+CREATE DOMAIN d_def_str AS INT4 DEFAULT 'abc';
+
+statement ok
+CREATE TABLE t_def_col (id INT, v d_def DEFAULT 7);
+
+statement ok
+INSERT INTO t_def_col (id) VALUES (1);
+
+query
+select v from t_def_col;
+----
+v
+7
+
+# A domain default fills omitted columns, DEFAULT, UPDATE ... SET DEFAULT and ADD COLUMN, and is checked.
+
+statement ok
+CREATE DOMAIN dom_nn AS int4 NOT NULL;
+
+statement ok
+CREATE DOMAIN dom_def AS int4 DEFAULT 42;
+
+statement ok
+CREATE TABLE dom_def_t (id int4, v dom_def, c dom_def DEFAULT 7);
+
+statement ok
+INSERT INTO dom_def_t (id) VALUES (1);
+
+statement ok
+INSERT INTO dom_def_t VALUES (2, DEFAULT, DEFAULT);
+
+statement ok
+INSERT INTO dom_def_t VALUES (3, 3, 3);
+
+statement ok
+UPDATE dom_def_t SET v = DEFAULT, c = DEFAULT WHERE id = 3;
+
+query
+SELECT id, v, c FROM dom_def_t ORDER BY id;
+----
+id	v	c
+1	42	7
+2	42	7
+3	42	7
+
+statement ok
+ALTER TABLE dom_def_t ADD COLUMN w dom_def;
+
+query
+SELECT id, w FROM dom_def_t ORDER BY id;
+----
+id	w
+1	42
+2	42
+3	42
+
+statement ok
+CREATE DOMAIN dom_def_over AS dom_def;
+
+statement ok
+CREATE TABLE dom_def_over_t (id int4, v dom_def_over);
+
+statement ok
+INSERT INTO dom_def_over_t (id) VALUES (1);
+
+query
+SELECT id, v FROM dom_def_over_t;
+----
+id	v
+1	42
+
+statement ok
+CREATE DOMAIN dom_def_bad AS int4 DEFAULT -1 CHECK (VALUE > 0);
+
+statement ok
+CREATE TABLE dom_def_bad_t (id int4, v dom_def_bad);
+
+statement error
+INSERT INTO dom_def_bad_t (id) VALUES (1);
+
+statement ok
+INSERT INTO dom_def_bad_t VALUES (2, 5);
+
+statement ok
+CREATE TABLE dom_nn_def_t (id int4, n dom_nn);
+
+statement error
+INSERT INTO dom_nn_def_t (id) VALUES (1);
+
+statement error
+INSERT INTO dom_nn_def_t VALUES (2, DEFAULT);
+
+statement ok
+INSERT INTO dom_nn_def_t VALUES (3, 3);
+
+statement ok
+UPDATE dom_nn_def_t SET id = 4;
+
+statement error
+UPDATE dom_nn_def_t SET n = DEFAULT;
+
+statement ok
+CREATE TABLE dom_nn_empty_t (id int4);
+
+statement ok
+ALTER TABLE dom_nn_empty_t ADD COLUMN n dom_nn;
+
+statement ok
+CREATE TABLE dom_nn_rows_t (id int4);
+
+statement ok
+INSERT INTO dom_nn_rows_t VALUES (1);
+
+statement error
+ALTER TABLE dom_nn_rows_t ADD COLUMN n dom_nn;
+
+query
+SELECT id, n FROM dom_nn_def_t;
+----
+id	n
+4	3

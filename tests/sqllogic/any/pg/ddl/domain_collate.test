@@ -1,0 +1,101 @@
+# COLLATE is stored and drives comparisons; a base type without collations rejects it.
+
+statement ok
+CREATE DOMAIN d_coll AS text COLLATE "C";
+
+query
+SELECT typcollation::regcollation FROM pg_type WHERE typname = 'd_coll';
+----
+typcollation
+"C"
+
+query
+SELECT 'a'::d_coll < 'B'::d_coll;
+----
+?column?
+f
+
+statement error
+CREATE DOMAIN d_coll_int as INT4 COLLATE "C";
+
+# A domain collation drives ordering and grouping, and a domain over a domain keeps the base CHECK.
+
+statement ok
+CREATE DOMAIN dom_upper AS text CHECK (upper(VALUE) = VALUE);
+
+statement ok
+CREATE DOMAIN dom_c AS text COLLATE "C";
+
+query
+SELECT typcollation::regcollation AS c FROM pg_type WHERE typname = 'dom_c';
+----
+c
+"C"
+
+query
+SELECT 'a'::dom_c < 'B'::dom_c AS lt;
+----
+lt
+f
+
+statement ok
+CREATE TABLE dom_c_t (s dom_c);
+
+statement ok
+INSERT INTO dom_c_t VALUES ('b'), ('B'), ('a'), ('A');
+
+query
+SELECT s FROM dom_c_t ORDER BY s;
+----
+s
+A
+B
+a
+b
+
+statement ok
+CREATE DOMAIN dom_c_over AS dom_upper COLLATE "C";
+
+query
+SELECT typcollation::regcollation AS c FROM pg_type WHERE typname = 'dom_c_over';
+----
+c
+"C"
+
+query
+SELECT 'ABC'::dom_c_over AS v;
+----
+v
+ABC
+
+statement error
+SELECT 'abc'::dom_c_over;
+
+statement error
+CREATE DOMAIN dom_c_int AS int4 COLLATE "C";
+
+onlyif serenedb
+statement ok
+CREATE DOMAIN dom_nocase AS text COLLATE NOCASE;
+
+onlyif serenedb
+query
+SELECT 'a'::dom_nocase = 'A'::dom_nocase AS eq;
+----
+eq
+t
+
+onlyif serenedb
+statement ok
+CREATE TABLE dom_nocase_t (s dom_nocase);
+
+onlyif serenedb
+statement ok
+INSERT INTO dom_nocase_t VALUES ('b'), ('A'), ('a'), ('B');
+
+onlyif serenedb
+query
+SELECT count(*) AS c FROM (SELECT s FROM dom_nocase_t GROUP BY s) g;
+----
+c
+2

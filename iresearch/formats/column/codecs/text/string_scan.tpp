@@ -178,6 +178,23 @@ struct EntryFrames {
   }
 
   template<typename Entry>
+  void EnsureRows(idx_t count, Entry entry_at) {
+    uint32_t f = kNoFrame;
+    for (idx_t i = 0; i < count; ++i) {
+      const auto e = static_cast<uint32_t>(entry_at(i));
+      if (e < kFirstEntry) {
+        continue;
+      }
+      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
+        f = FrameOf(e);
+      }
+      if (!decoded[f]) {
+        leaf->EnsureRow(*this, e, f);
+      }
+    }
+  }
+
+  template<typename Entry>
   void EnsureSparse(idx_t count, Entry entry_at, uint32_t window_first,
                     uint32_t window_end) {
     if (Complete()) {

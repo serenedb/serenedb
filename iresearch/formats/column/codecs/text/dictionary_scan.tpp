@@ -106,7 +106,7 @@ struct DictionaryFetch final : SegmentScanState {
   void Reset(const ColumnSegment& segment) {
     code_frames.reset();
     frames.decoded = CachedDictionary(segment.cache_slot);
-    kept = HasRoom(segment.cache_slot, DictionaryBytes(frames.header));
+    room = HasRoom(segment.cache_slot, DictionaryBytes(frames.header));
   }
 
   void Read(data_ptr_t base, const idx_t* rows, idx_t count,
@@ -160,7 +160,7 @@ struct DictionaryFetch final : SegmentScanState {
       return l.entry > r.entry;
     });
     const auto& h = frames.header;
-    if (!kept) {
+    if (!room) {
       if constexpr (Sorted(Leaf::kCodec)) {
         return 2 * (frames.leaf.Walked() +
                     DistinctEntries(order) * kMeanChainWalk) >=
@@ -175,7 +175,7 @@ struct DictionaryFetch final : SegmentScanState {
 
   bool Whole() const noexcept {
     if constexpr (!Sorted(Leaf::kCodec)) {
-      if (!kept && Distinct()) {
+      if (!room && Distinct()) {
         return false;
       }
     }
@@ -188,7 +188,7 @@ struct DictionaryFetch final : SegmentScanState {
   }
 
   FetchFrames<Leaf> frames;
-  bool kept = false;
+  bool room = false;
   std::optional<RowCodes> code_frames;
 };
 
@@ -296,6 +296,7 @@ struct DictionaryScan final : SegmentScanState {
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
     : entries{segment, std::move(handle), !cached},
       cache_slot{segment.cache_slot},
+      room{HasRoom(segment.cache_slot, DictionaryBytes(entries.header))},
       code_frames{entries.base, entries.header} {
     if (cached) {
       AdoptDictionary(*cached);
@@ -363,8 +364,21 @@ struct DictionaryScan final : SegmentScanState {
     }
   }
 
-  void EnsureCodes(const duckdb::SelectionVector& codes, idx_t count) {
-    EnsureEach(count, [&](idx_t i) { return codes.get_index(i); });
+  void EnsureCodes(const duckdb::SelectionVector& codes, idx_t count,
+                   idx_t span) {
+    const auto entry_at = [&](idx_t i) { return codes.get_index(i); };
+    if constexpr (requires(Leaf& leaf) {
+                    leaf.EnsureRow(entries, uint32_t{}, uint32_t{});
+                  }) {
+      const auto& h = entries.header;
+      if (!full && !room &&
+          uint64_t{count} * h.row_count * kMeanChainWalk <=
+            uint64_t{span} * h.entry_count) {
+        entries.EnsureRows(count, entry_at);
+        return;
+      }
+    }
+    EnsureEach(count, entry_at);
   }
 
   template<typename Before>
@@ -529,7 +543,7 @@ struct DictionaryScan final : SegmentScanState {
       if (count * 2 >= STANDARD_VECTOR_SIZE) {
         EnsureDictionary();
       } else {
-        EnsureCodes(codes, count);
+        EnsureCodes(codes, count, count);
       }
     }
     WriteCodes(result, result_offset, codes, count);
@@ -550,7 +564,7 @@ struct DictionaryScan final : SegmentScanState {
     if (scan_type == duckdb::ScanVectorType::SCAN_FLAT_VECTOR ||
         (!full && sel_count * 4 < vector_count)) {
       const auto& codes = Codes(start, vector_count, sel, sel_count);
-      EnsureCodes(codes, sel_count);
+      EnsureCodes(codes, sel_count, vector_count);
       WriteCodes(result, result_offset, codes, sel_count);
       return;
     }
@@ -677,6 +691,7 @@ struct DictionaryScan final : SegmentScanState {
 
   EntryFrames<Shape::Dictionary, Leaf> entries;
   ReadContext::CacheSlot cache_slot;
+  bool room;
   bool full = false;
   duckdb::buffer_ptr<duckdb::SelectionVector> code_sel;
   idx_t code_sel_size = 0;

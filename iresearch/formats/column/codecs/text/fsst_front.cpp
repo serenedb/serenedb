@@ -222,6 +222,12 @@ struct Scan {
     }
   }
 
+  template<typename Frames>
+  void EnsureRow(Frames& s, uint32_t e, uint32_t f) {
+    const auto at = e - s.frames[f].first_entry;
+    EnsureRows(s, f, at / kChainRestart, uint32_t{1} << at % kChainRestart);
+  }
+
   template<typename Frames, typename Entry>
   void Ensure(Frames& s, duckdb::idx_t count, Entry entry_at,
               uint32_t window_first, uint32_t window_end) {

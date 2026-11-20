@@ -1509,6 +1509,65 @@ TEST_F(ColCodecsTest, BatchedPointReadsCopyTheirValuesWhenTheCacheHasNoRoom) {
   }
 }
 
+TEST_F(ColCodecsTest,
+       SelectionsReadADictionaryOfDistinctValuesWithoutCacheRoom) {
+  constexpr uint64_t kRows = 40000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 97 == 0) {
+      return std::nullopt;
+    }
+    return absl::StrCat("https://example.org/catalog/", (g * 7919) % 100003,
+                        "/item/", g, "/reviews");
+  };
+  auto& cache = Db().GetObjectCache();
+  const auto room = cache.GetMaxMemory();
+  const absl::Cleanup restore = [&] { cache.SetMaxMemory(room); };
+  for (const auto codec :
+       {irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictFsst12,
+        irs::codecs::CodecType::DictLz4}) {
+    SCOPED_TRACE(Written(codec));
+    irs::MemoryDirectory dir;
+    Write(dir, codec, {}, kRows, 8192, value);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    cache.SetMaxMemory(cache.GetCurrentMemory());
+    const auto gather = [&](const std::vector<uint64_t>& picked) {
+      auto state = col->InitScan(r.Ctx());
+      size_t i = 0;
+      while (i < picked.size()) {
+        const auto take =
+          std::min<size_t>(picked.size() - i, STANDARD_VECTOR_SIZE);
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        duckdb::FlatVector::ValidityMutable(out).Reset(STANDARD_VECTOR_SIZE);
+        irs::column_internal::GatherRows(*col, state, Rows2{&picked[i], take},
+                                         out, 0, /*whole_output=*/true);
+        out.Flatten(take);
+        for (size_t k = 0; k < take; ++k) {
+          ExpectRow(out, k, picked[i + k], value);
+        }
+        i += take;
+      }
+    };
+    std::vector<uint64_t> every_tenth;
+    for (uint64_t g = 1; g < kRows; g += 10) {
+      every_tenth.push_back(g);
+    }
+    gather(every_tenth);
+    std::vector<uint64_t> sparse_then_dense;
+    for (uint64_t g = 1; g < kRows; g += g < 3000 ? 10 : 1) {
+      sparse_then_dense.push_back(g);
+    }
+    gather(sparse_then_dense);
+    std::vector<uint64_t> sparse_then_sparser;
+    for (uint64_t g = 1; g < kRows; g += g % 20000 < 5000 ? 10 : 53) {
+      sparse_then_sparser.push_back(g);
+    }
+    gather(sparse_then_sparser);
+    cache.SetMaxMemory(room);
+  }
+}
+
 TEST_F(ColCodecsTest, AutoIsNoLargerThanItsCandidates) {
   using irs::codecs::CodecType;
   const irs::codecs::CodecType candidates[] = {

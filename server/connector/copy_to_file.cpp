@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
+#include <duckdb/formats/copy_encoding.hpp>
 #include <duckdb/function/function_binder.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -46,7 +47,7 @@ constexpr duckdb::idx_t kBatchRows = 64 * STANDARD_VECTOR_SIZE;
 
 struct CopyToFileGlobal final : public duckdb::GlobalFunctionData {
   duckdb::unique_ptr<duckdb::FileHandle> handle;
-  formats::TextEncoding encoding = formats::TextEncoding::Utf8;
+  std::optional<duckdb::TextEncoding> encoding;
   size_t strip = 0;
   bool started = false;
   std::atomic<uint64_t> offset{0};
@@ -90,8 +91,8 @@ void WriteOut(duckdb::ClientContext& context, CopyToFileGlobal& g,
       }
     }
   };
-  if (g.encoding != formats::TextEncoding::Utf8) {
-    formats::Utf8Encoder encoder{g.encoding};
+  if (g.encoding) {
+    duckdb::CopyEncoder encoder{*g.encoding};
     std::string converted;
     write([&](uint8_t* data, duckdb::idx_t size) {
       encoder.Encode({reinterpret_cast<const char*>(data), size}, converted);

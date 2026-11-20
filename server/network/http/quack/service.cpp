@@ -560,6 +560,8 @@ duckdb::unique_ptr<duckdb::QuackMessage> Service::Decode(Request& request) {
   }
   request.start_time = duckdb::QuackNowMillis();
   duckdb::BinaryDeserializer deserializer{request.body};
+  deserializer.SetChecks(
+    duckdb::QuackPeerDataChecks(_db, duckdb::DeserializationChecks::VALUES));
   request.header = duckdb::QuackMessage::DeserializeHeader(deserializer);
   switch (request.header.type) {
     case duckdb::MessageType::CONNECTION_REQUEST:
@@ -1086,7 +1088,7 @@ duckdb::unique_ptr<duckdb::QuackMessage> Service::Fetch(Request& request) {
 namespace {
 
 // Code that trusts its values reads a client's batch, so it has exactly the
-// stream's column types and only values they allow.
+// stream's column types; the deserializer checked its values.
 void ValidateClientBatch(
   const duckdb::QuackInsertStream& stream,
   const duckdb::vector<duckdb::unique_ptr<duckdb::DataChunk>>& chunks) {
@@ -1100,9 +1102,6 @@ void ValidateClientBatch(
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
                       ERR_MSG("A batch chunk holds ", chunk->size(),
                               " rows, more than ", STANDARD_VECTOR_SIZE));
-    }
-    for (auto& column : chunk->data) {
-      column.Validate();
     }
   }
 }

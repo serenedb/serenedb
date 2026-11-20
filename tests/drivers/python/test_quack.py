@@ -533,6 +533,7 @@ def test_server_settings_need_superuser(servers) -> None:
                         "quack_result_ttl = 1",
                         "quack_cache_max_rows = 0",
                         "quack_server_stream_buffer_bytes = 0",
+                        "quack_check_peer_data = false",
                         "quack_enable_reconnects = true",
                         "quack_prepare_inline_rows = 1",
                         "quack_default_client_id = 'abcd'"):
@@ -1030,10 +1031,6 @@ def _forged_batches() -> list:
          w.chunk(1, [w.enum_type(huge_enum)],
                  [w.fixed_vector((70000).to_bytes(4, "little"))]),
          "ENUM index 70000 is outside its 70000 values"),
-        ("a union with two members set", "UNION(i BIGINT, s VARCHAR)",
-         union(w.fixed_vector(b"\x00"), w.fixed_vector(seven),
-               w.string_vector([1], b"x")),
-         "A UNION value has more than one member set"),
         ("a union tag past the union's members", "UNION(i BIGINT, s VARCHAR)",
          union(w.fixed_vector(b"\x05"), w.fixed_vector(seven),
                w.string_vector([1], b"x", null=True)),
@@ -1042,11 +1039,14 @@ def _forged_batches() -> list:
          union(w.fixed_vector(b"\x00", null=True), w.fixed_vector(seven),
                w.string_vector([1], b"x", null=True)),
          "A UNION value has a NULL tag"),
-        ("a union tag naming the member that is not set",
+        ("a union whose tags are the same for every row",
          "UNION(i BIGINT, s VARCHAR)",
-         union(w.fixed_vector(b"\x01"), w.fixed_vector(seven),
+         union(w.constant_vector(w.fixed_vector(b"\x07")), w.fixed_vector(seven),
                w.string_vector([1], b"x", null=True)),
-         "A UNION tag names a member other than the one set"),
+         "A UNION tag is outside its 2 members"),
+        ("a string that turns bad past the first block", "VARCHAR",
+         w.chunk(1, [varchar], [w.string_vector([5000], b"a" * 4999 + b"\xff")]),
+         "Invalid UTF-8"),
         ("a type whose values cannot be checked", "BIT",
          w.chunk(1, [w.logical_type(w.BIT)], [w.string_vector([2], b"\x00\x01")]),
          "from an untrusted peer are not supported"),
@@ -1076,6 +1076,22 @@ def test_send_data_refuses_a_forged_batch(servers, forger, column_type: str,
     assert message_type == quack_wire.ERROR_RESPONSE
     assert error in message
     assert conn_b.execute("SELECT 1").fetchone() == (1,)
+
+
+def test_send_data_checks_turn_off(servers) -> None:
+    _, conn_b, quack_b, _ = servers
+    w = quack_wire
+    batch = w.chunk(1, [w.logical_type(w.BOOLEAN)], [w.fixed_vector(b"\x02")])
+    session = w.Session(quack_b, BEARER)
+    conn_b.execute("SET GLOBAL quack_check_peer_data = false")
+    try:
+        session.prepare("SELECT * FROM scan_data_from_quack_client('unchecked', "
+                        "NULL::STRUCT(a BOOLEAN))", 1)
+        message_type, message = session.send_data("unchecked", batch)
+        assert message_type != w.ERROR_RESPONSE, message
+    finally:
+        conn_b.execute("SET GLOBAL quack_check_peer_data = true")
+        session.close()
 
 
 def test_connect_agrees_on_a_storage_version(servers) -> None:

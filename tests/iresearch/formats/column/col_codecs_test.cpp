@@ -1579,6 +1579,101 @@ TEST_F(ColCodecsTest,
   }
 }
 
+TEST_F(ColCodecsTest, RowReadsDecodeTheSharedBytesOfEarlierEntries) {
+  constexpr uint32_t kRows = 12000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 97 == 0) {
+      return std::nullopt;
+    }
+    std::string v = absl::StrCat(
+      "https://example.org/",
+      absl::Hex((g / 5) * 2654435761 % 4294967291, absl::kZeroPad8), "/");
+    for (uint64_t k = 0; k < 3 + g % 7 * 11; ++k) {
+      v.push_back(static_cast<char>(0xC2 + (g * 31 + k * 17) % 30));
+      v.push_back(static_cast<char>(0x80 + (g * 7 + k * 13) % 64));
+    }
+    absl::StrAppend(&v, "/item/", g);
+    v.append(g % 13 * 40, static_cast<char>('a' + g % 5));
+    return v;
+  };
+  auto& cache = Db().GetObjectCache();
+  const auto room = cache.GetMaxMemory();
+  const absl::Cleanup restore = [&] { cache.SetMaxMemory(room); };
+  for (const auto codec :
+       {irs::codecs::CodecType::Fsst, irs::codecs::CodecType::Fsst12,
+        irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictFsst12}) {
+    SCOPED_TRACE(Written(codec));
+    irs::MemoryDirectory dir;
+    Write(dir, codec, {}, kRows, 8192, value);
+    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    cache.SetMaxMemory(cache.GetCurrentMemory());
+    {
+      irs::ColumnReader::PointReader cursor{r, *col};
+      for (uint32_t g = 3; g < kRows; g += 41) {
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        cursor.FetchRows(std::span<const uint32_t>{&g, 1}, 0, out, 0);
+        ExpectRow(out, 0, g, value);
+      }
+    }
+    {
+      irs::ColumnReader::PointReader cursor{r, *col};
+      std::vector<uint32_t> rows;
+      const auto fetch = [&] {
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        cursor.FetchRows(rows, 0, out, 0);
+        for (size_t k = 0; k < rows.size(); ++k) {
+          ExpectRow(out, k, rows[k], value);
+        }
+        rows.clear();
+      };
+      for (uint32_t g = 1; g < kRows; g += g % 16 < 4 ? 1 : 23) {
+        rows.push_back(g);
+        if (rows.size() == 48) {
+          fetch();
+        }
+      }
+      fetch();
+    }
+    const auto gather = [&](const std::vector<uint64_t>& picked) {
+      auto state = col->InitScan(r.Ctx());
+      size_t i = 0;
+      while (i < picked.size()) {
+        const auto take =
+          std::min<size_t>(picked.size() - i, STANDARD_VECTOR_SIZE);
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        duckdb::FlatVector::ValidityMutable(out).Reset(STANDARD_VECTOR_SIZE);
+        irs::column_internal::GatherRows(*col, state, Rows2{&picked[i], take},
+                                         out, 0, /*whole_output=*/true);
+        out.Flatten(take);
+        for (size_t k = 0; k < take; ++k) {
+          ExpectRow(out, k, picked[i + k], value);
+        }
+        i += take;
+      }
+    };
+    std::vector<uint64_t> three_of_sixteen;
+    for (uint64_t g = 0; g < kRows; ++g) {
+      if (g % 16 == 5 || g % 16 == 6 || g % 16 == 11) {
+        three_of_sixteen.push_back(g);
+      }
+    }
+    gather(three_of_sixteen);
+    std::vector<uint64_t> every_tenth;
+    for (uint64_t g = 4; g < kRows; g += 10) {
+      every_tenth.push_back(g);
+    }
+    gather(every_tenth);
+    std::vector<uint64_t> few;
+    for (uint64_t g = 9; g < kRows; g += 211) {
+      few.push_back(g);
+    }
+    gather(few);
+    cache.SetMaxMemory(room);
+  }
+}
+
 TEST_F(ColCodecsTest, AutoIsNoLargerThanItsCandidates) {
   using irs::codecs::CodecType;
   const irs::codecs::CodecType candidates[] = {

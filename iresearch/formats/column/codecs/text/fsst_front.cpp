@@ -55,6 +55,17 @@ namespace irs::codecs::text::fsst_front {
 
 constexpr uint64_t kChainGroupCost = 180;
 constexpr uint64_t kChainMinRowBytes = 8;
+constexpr uint64_t kCopyChunk = 16;
+static_assert(kCopyChunk > fsst::kPrefixSlack);
+
+IRS_FORCE_INLINE void CopyChunks(char* to, const char* from,
+                                 uint64_t bytes) noexcept {
+  for (uint64_t at = 0; at < bytes; at += kCopyChunk) {
+    char chunk[kCopyChunk];
+    std::memcpy(chunk, from + at, kCopyChunk);
+    std::memcpy(to + at, chunk, kCopyChunk);
+  }
+}
 
 struct ChainEnd {
   uint64_t written;
@@ -81,6 +92,17 @@ uint64_t DecodeSuffix(const fsst::Decoder<Impl>& fsst, const char* in,
   return lcp + dec;
 }
 
+template<typename Impl>
+uint64_t DecodeShared(const fsst::Decoder<Impl>& fsst, const char* in,
+                      uint64_t enc, uint64_t lcp, uint64_t shared, char* out) {
+  SDB_ASSERT(lcp < shared);
+  const auto bytes = shared - lcp;
+  const auto dec = fsst.DecodePrefix(in, enc, out + lcp, bytes);
+  SDB_ENSURE(dec >= bytes && dec - bytes <= fsst::kPrefixSlack,
+             "col codec: corrupted front coding");
+  return lcp + dec;
+}
+
 template<typename Impl, typename Visit>
 ChainEnd WalkChain(const fsst::Decoder<Impl>& fsst, const char* in,
                    PackedReader& lengths, PackedReader& lcps, uint32_t first,
@@ -95,12 +117,21 @@ ChainEnd WalkChain(const fsst::Decoder<Impl>& fsst, const char* in,
     SDB_ENSURE(
       lcp <= prev_len && enc_off + enc <= enc_end && off + lcp <= capacity,
       "col codec: corrupted front coding");
-    if (lcp != 0) {
-      std::memcpy(out + off, out + prev_off, lcp);
-    }
     const auto room = capacity - (off + lcp);
-    const auto dec =
-      enc == 0 ? 0 : fsst.Decode(in + enc_off, enc, out + off + lcp, room);
+    size_t dec = 0;
+    if (enc * fsst::kMaxExpansion + kCopyChunk <= room) {
+      CopyChunks(out + off, out + prev_off, lcp);
+      if (enc != 0) {
+        dec = fsst.DecodePrefix(in + enc_off, enc, out + off + lcp, room);
+      }
+    } else {
+      if (lcp != 0) {
+        std::memcpy(out + off, out + prev_off, lcp);
+      }
+      if (enc != 0) {
+        dec = fsst.Decode(in + enc_off, enc, out + off + lcp, room);
+      }
+    }
     SDB_ENSURE(dec <= room, "col codec: corrupted entry");
     const std::string_view value{out + off, lcp + dec};
     visit(e, value);
@@ -161,12 +192,18 @@ std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
     }
   }
   uint64_t len = 0;
-  while (count != 0) {
+  while (count > 1) {
     const auto i = used[--count];
+    const uint64_t shared = lcp[used[count - 1]];
     SDB_ENSURE(lcp[i] <= len, "col codec: corrupted front coding");
-    len = DecodeSuffix(fsst, in + off[i], off[i + 1] - off[i], lcp[i], buf);
+    len = DecodeShared(fsst, in + off[i], off[i + 1] - off[i], lcp[i], shared,
+                       Reserve(buf, shared + fsst::kPrefixSlack));
     ++walked;
   }
+  SDB_ENSURE(lcp[n - 1] <= len, "col codec: corrupted front coding");
+  len =
+    DecodeSuffix(fsst, in + off[n - 1], off[n] - off[n - 1], lcp[n - 1], buf);
+  ++walked;
   return {buf.data(), len};
 }
 
@@ -342,13 +379,11 @@ struct Scan {
               }
               rows |= uint32_t{1} << at % kChainRestart;
             }
-            DecodeRows(s, f, group, rows, 0, arena,
-                       [&](uint32_t row, std::string_view v) {
-                         if ((rows >> row & 1) != 0) {
-                           writer.WriteStringRef(duckdb::string_t{
-                             v.data(), static_cast<uint32_t>(v.size())});
-                         }
-                       });
+            DecodeRows(
+              s, f, group, rows, 0, arena, [&](uint32_t, std::string_view v) {
+                writer.WriteStringRef(
+                  duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())});
+              });
           }
           continue;
         }
@@ -380,21 +415,20 @@ struct Scan {
       return;
     }
     const auto restart = s.frames[f].first_entry + g * kChainRestart;
-    const auto used =
-      DecodeRows(s, f, g, rows, kept,
-                 duckdb::StringVector::GetStringAllocator(s.dictionary->data),
-                 [&](uint32_t row, std::string_view v) {
-                   s.Keep(restart + row, v);
-                   group_heap_bytes += v.size();
-                 });
-    group_rows[index] = static_cast<uint16_t>(kept | used);
+    DecodeRows(s, f, g, rows, kept,
+               duckdb::StringVector::GetStringAllocator(s.dictionary->data),
+               [&](uint32_t row, std::string_view v) {
+                 s.Keep(restart + row, v);
+                 group_heap_bytes += v.size();
+               });
+    group_rows[index] = static_cast<uint16_t>(kept | rows);
   }
 
   template<typename Frames, typename Visit>
-  IRS_FORCE_INLINE uint32_t DecodeRows(Frames& s, uint32_t f, uint32_t g,
-                                       uint32_t rows, uint32_t kept,
-                                       duckdb::ArenaAllocator& arena,
-                                       Visit&& visit) {
+  IRS_FORCE_INLINE void DecodeRows(Frames& s, uint32_t f, uint32_t g,
+                                   uint32_t rows, uint32_t kept,
+                                   duckdb::ArenaAllocator& arena,
+                                   Visit&& visit) {
     const auto restart = s.frames[f].first_entry + g * kChainRestart;
     const uint32_t n = std::bit_width(rows);
     SDB_ASSERT(n != 0 && n <= kChainRestart && restart + n <= s.FrameEnd(f));
@@ -410,32 +444,52 @@ struct Scan {
     }
     SDB_ENSURE(off[n] <= s.header.data_size,
                "col codec: corrupted front coding");
-    uint32_t used = 0;
+    std::array<uint32_t, kChainRestart> shared;
+    uint32_t whole = 0;
+    uint32_t heads = 0;
     uint32_t sources = 0;
     uint64_t need = 0;
     uint64_t capacity = 0;
     for (uint32_t i = n; i-- > 0;) {
-      const uint32_t wanted = (rows >> i & 1) | uint32_t{lcp[i] < need};
+      const uint32_t row = rows >> i & 1;
+      const uint32_t wanted = row | uint32_t{lcp[i] < need};
       const uint32_t source = wanted & (kept >> i);
       const uint32_t decode = wanted ^ source;
       sources |= source << i;
-      used |= decode << i;
+      whole |= (decode & row) << i;
+      heads |= (decode & (row ^ 1)) << i;
+      shared[i] = static_cast<uint32_t>(need);
       need = wanted != 0 ? (source != 0 ? 0 : lcp[i]) : need;
-      capacity += decode * (lcp[i] + uint64_t{enc[i]} * fsst::kMaxExpansion);
+      capacity +=
+        (decode & row) * (lcp[i] + uint64_t{enc[i]} * fsst::kMaxExpansion);
     }
     auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
     uint64_t written = 0;
     const char* prev = nullptr;
     uint64_t prev_len = 0;
-    for (auto left = used | sources; left != 0; left &= left - 1) {
+    bool chained = false;
+    for (auto left = whole | heads | sources; left != 0; left &= left - 1) {
       const auto i = static_cast<uint32_t>(std::countr_zero(left));
       if ((sources >> i & 1) != 0) {
         const auto value = View(s.values[restart + i]);
         prev = value.data();
         prev_len = value.size();
+        chained = false;
         continue;
       }
       SDB_ENSURE(lcp[i] <= prev_len, "col codec: corrupted front coding");
+      if ((heads >> i & 1) != 0) {
+        auto* head = Reserve(chain, shared[i] + fsst::kPrefixSlack);
+        if (!chained && lcp[i] != 0) {
+          std::memcpy(head, prev, lcp[i]);
+        }
+        prev_len = DecodeShared(decoder, s.Data() + off[i], enc[i], lcp[i],
+                                shared[i], head);
+        prev = head;
+        chained = true;
+        continue;
+      }
+      chained = false;
       auto* at = out + written;
       if (lcp[i] != 0) {
         std::memcpy(at, prev, lcp[i]);
@@ -451,7 +505,6 @@ struct Scan {
       visit(i, std::string_view{at, prev_len});
     }
     arena.ShrinkHead(capacity - written);
-    return used;
   }
 
   template<typename Frames>
@@ -529,6 +582,7 @@ struct Scan {
   uint64_t group_heap_bytes = 0;
   uint32_t group_frame = kNoFrame;
   std::string probe;
+  std::string chain;
 };
 
 template<typename Impl>

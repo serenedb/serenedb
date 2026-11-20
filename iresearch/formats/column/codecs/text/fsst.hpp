@@ -43,6 +43,7 @@
 namespace irs::codecs::text::fsst {
 
 inline constexpr size_t kMaxExpansion = 8;
+inline constexpr size_t kPrefixSlack = 15;
 
 struct Fsst8 {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst;
@@ -88,6 +89,13 @@ struct Fsst8 {
                            size_t capacity) noexcept {
     return duckdb_fsst_decompress(const_cast<Table*>(&imported), size, in,
                                   capacity, out);
+  }
+
+  static size_t DecompressPrefix(const Imported& imported,
+                                 const unsigned char* in, size_t size,
+                                 unsigned char* out, size_t bytes) noexcept {
+    return duckdb_fsst_decompress_prefix(const_cast<Table*>(&imported), size,
+                                         in, bytes, out);
   }
 };
 
@@ -145,6 +153,14 @@ struct Fsst12 {
                            size_t capacity) noexcept {
     return imported ? duckdb_fsst12_decompress(&imported->Table().decoder, size,
                                                in, capacity, out)
+                    : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
+  }
+
+  static size_t DecompressPrefix(const Imported& imported,
+                                 const unsigned char* in, size_t size,
+                                 unsigned char* out, size_t bytes) noexcept {
+    return imported ? duckdb_fsst12_decompress_prefix(
+                        &imported->Table().decoder, size, in, bytes, out)
                     : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
   }
 };
@@ -233,6 +249,13 @@ class Decoder {
     return Impl::Decompress(
       _imported, reinterpret_cast<const unsigned char*>(in), in_length,
       reinterpret_cast<unsigned char*>(out), capacity);
+  }
+
+  size_t DecodePrefix(const char* in, size_t in_length, char* out,
+                      size_t bytes) const noexcept {
+    return Impl::DecompressPrefix(
+      _imported, reinterpret_cast<const unsigned char*>(in), in_length,
+      reinterpret_cast<unsigned char*>(out), bytes);
   }
 
  private:

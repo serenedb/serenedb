@@ -302,17 +302,26 @@ struct FetchFrames {
                              uint32_t entry, duckdb::Vector& result, idx_t at,
                              bool batched) {
     SDB_ENSURE(header.frame_count != 0, "col codec: corrupted row codes");
-    const auto* table = base + header.off_frames;
-    const auto lo = FrameOfEntry(table, header.frame_count, entry);
-    const auto f = FrameAt(table, lo);
-    SDB_ENSURE(f.first_entry <= entry && f.raw_len <= header.raw_bytes &&
-                 uint64_t{f.comp_off} + f.comp_len <= header.data_size,
-               "col codec: corrupted frame table");
-    leaf.Emit(segment, header, base, lengths, lo, f, entry, result, at,
-              batched);
+    if (entry < frame.first_entry || entry >= frame_end) {
+      const auto* table = base + header.off_frames;
+      frame_index = FrameOfEntry(table, header.frame_count, entry);
+      frame = FrameAt(table, frame_index);
+      frame_end = frame_index + 1 < header.frame_count
+                    ? FrameAt(table, frame_index + 1).first_entry
+                    : header.entry_count;
+      SDB_ENSURE(
+        frame.first_entry <= entry && frame.raw_len <= header.raw_bytes &&
+          uint64_t{frame.comp_off} + frame.comp_len <= header.data_size,
+        "col codec: corrupted frame table");
+    }
+    leaf.Emit(segment, header, base, lengths, frame_index, frame, entry, result,
+              at, batched);
   }
 
   bool switched = false;
+  uint32_t frame_index = 0;
+  uint32_t frame_end = 0;
+  FrameMeta frame{};
   Header header;
   PackedReader lengths{nullptr, 0};
   ScratchVector<EntryAt> order;

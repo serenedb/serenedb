@@ -569,7 +569,7 @@ json_transform
 query error
 SELECT json_transform_strict(j, '{"family": "TINYINT", "coolness": "DOUBLE"}') FROM example;
 ----
-db error: ERROR: Failed to cast value to numerical: "gas_giant"
+db error: ERROR: Failed to cast value to numerical: "terrestrial"
 
 
 # DOCS_TEST: example_048

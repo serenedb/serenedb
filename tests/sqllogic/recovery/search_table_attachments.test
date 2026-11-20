@@ -125,6 +125,34 @@ id	n	c
 
 
 statement ok
+SET threads = 1;
+
+
+query
+SELECT count(*) AS hits FROM sat WHERE body @@ 'w3' AND NOT tag = 't0';
+----
+hits
+471
+
+
+query
+SELECT id
+FROM sat
+WHERE body @@ ts_phrase('w3') AND tag = 't0'
+ORDER BY BM25(sat.tableoid) DESC, id
+LIMIT 3;
+----
+id
+3
+24
+45
+
+
+statement ok
+RESET threads;
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 

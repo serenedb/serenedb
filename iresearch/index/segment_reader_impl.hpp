@@ -112,9 +112,7 @@ class SegmentReaderImpl final : public SubReader {
   }
   std::span<const std::shared_ptr<const SegmentReaderImpl>> Attachments()
     const noexcept {
-    if (!_root) {
-      return {};
-    }
+    SDB_ASSERT(_root);
     return _root->attached;
   }
   std::span<const FieldPatch> Patches() const noexcept { return _patches; }

@@ -45,6 +45,7 @@ Session::Session(Service& service, std::string connection_id,
                       &_cancel, _task->Account());
   _ctx = &ConnectionContext::Get(*_conn->context);
   _ctx->lists_system_schemas = false;
+  duckdb::ClientConfig::GetConfig(*_ctx).default_system_object_names = true;
   _ctx->registered_state->Insert(
     duckdb::QuackSessionState::KEY,
     duckdb::make_shared_ptr<duckdb::QuackSessionState>(_connection_id));

@@ -24,13 +24,11 @@ namespace irs::explain {
 
 PostingKey::PostingKey(const TermReader& reader,
                        const PostingMeta& meta) noexcept
-  : reader{&reader},
-    doc_start{meta.doc_start},
-    inline_data{meta.inline_size != 0 ? meta.inline_data : nullptr},
-    pos_start{meta.pos_start},
-    doc_delta{meta.doc_delta},
-    freq{meta.freq},
-    pos_offset{meta.pos_offset} {}
+  : reader{&reader}, meta{meta} {
+  if (meta.inline_size == 0) {
+    this->meta.inline_data = nullptr;
+  }
+}
 
 void TermNames::Add(const TermReader& reader, const PostingMeta& meta,
                     bytes_view term) {

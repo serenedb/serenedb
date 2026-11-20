@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <cstdint>
 #include <utility>
 
 #include "iresearch/formats/posting_meta.hpp"
@@ -37,19 +36,15 @@ struct PostingKey {
   bool operator==(const PostingKey&) const noexcept = default;
 
   const TermReader* reader;
-  uint64_t doc_start;
-  const byte_type* inline_data;
-  uint64_t pos_start;
-  uint32_t doc_delta;
-  uint32_t freq;
-  uint16_t pos_offset;
+  PostingMeta meta;
 };
 
 template<typename H>
 H AbslHashValue(H state, const PostingKey& key) {
-  return H::combine(std::move(state), key.reader, key.doc_start,
-                    key.inline_data, key.pos_start, key.doc_delta, key.freq,
-                    key.pos_offset);
+  const auto& meta = key.meta;
+  return H::combine(std::move(state), key.reader, meta.doc_start,
+                    meta.doc_delta, meta.pos_start, meta.pos_offset,
+                    meta.inline_data);
 }
 
 class TermNames {

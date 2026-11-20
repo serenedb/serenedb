@@ -601,3 +601,33 @@ ORDER BY distance, id;
 id	distance	why
 1	0.2	{"column":"emb","expression":"sqrt(sum((emb[i] - query[i])^2))","inputs":{"dims":{"value":2}},"note":"computed from the row's stored vector","scorer":"l2_distance","value":0.2}
 2	NULL	{"column":"emb","note":"emb is NULL in the row","scorer":"l2_distance","value":null}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY explain_counts AS split_text(case := 'lower') WITH (frequency);
+
+statement ok
+CREATE TABLE explain_rare (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX explain_rare_idx ON explain_rare USING inverted (id, body explain_counts);
+
+statement ok
+INSERT INTO explain_rare VALUES (1, 'zebra zulu'), (2, 'apple');
+
+query
+SELECT id, ts_explain(explain_rare_idx.tableoid) AS why
+FROM explain_rare_idx
+WHERE body @@ ts_starts_with('z')
+ORDER BY BM25(explain_rare_idx.tableoid) DESC, id;
+----
+id	why
+1	{"clauses":[{"column":"body","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","value":1},{"column":"body","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","value":1}],"expression":"max","value":1}
+
+query
+SELECT id, ts_explain(explain_rare_idx.tableoid) AS why
+FROM explain_rare_idx
+WHERE body @@ ts_starts_with('ze')
+ORDER BY BM25(explain_rare_idx.tableoid) DESC, id;
+----
+id	why
+1	{"column":"body","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"zebra","value":1}

@@ -148,8 +148,8 @@ bool TakeTermSetsWindow(std::span<const Term> terms,
     return false;
   }
   return detail::TakeFold(
-    detail::FoldProbeIsFaster(interrogations, leaves, docs, docs_count), leaves,
-    *doc, docs_count);
+    detail::FoldProbeIsFaster(interrogations, leaves, docs, docs_count),
+    docs_count);
 }
 
 template<typename Term, typename Scoring>

@@ -107,11 +107,10 @@ typename Family::Result MakeConstantBitset(
     return {};
   }
   if constexpr (kProbePlan<Family>) {
-    if (!TakeProbeBitset(terms, *doc, docs_count,
-                         Family::Interrogations(ctx))) {
+    if (!TakeProbeBitset(terms, docs_count, Family::Interrogations(ctx))) {
       return {};
     }
-  } else if (!TakeBitset<Result>(terms, *doc, docs_count)) {
+  } else if (!TakeBitset<Result>(terms, docs_count)) {
     return {};
   }
   return MakeConstantBitsetNode<Result>(

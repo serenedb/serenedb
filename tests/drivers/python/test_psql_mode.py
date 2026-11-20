@@ -1604,6 +1604,54 @@ def test_terminal_recalls_a_backslash_command_from_the_history(tmp_path: Path) -
         terminal.close()
 
 
+def test_terminal_recalls_a_query_with_a_backslash_line_from_the_history(
+        tmp_path: Path) -> None:
+    (tmp_path / ".sdb_history").write_text("SELECT upper('recall\n\\x\n') AS v;\n")
+    terminal = _Terminal(tmp_path, 160)
+    try:
+        terminal.send("\x1b[A", until="AS v;")
+        terminal.send("\r", until="RECALL")
+    finally:
+        terminal.close()
+
+
+def test_terminal_blank_lines_comments_bail_and_auto_format(terminal) -> None:
+    terminal.send("   \r", until="   ")
+    terminal.send("SELECT upper('after_blank') AS s;\r", until="AFTER_BLANK")
+    os.write(terminal._fd, b"# a note\t")
+    time.sleep(0.3)
+    os.write(terminal._fd, b"\x15")
+    terminal.send(".bail on\r", until=".bail on")
+    terminal.send("SELECT * FROM missing_bail_table;\r", until="missing_bail_table")
+    terminal.send("SELECT upper('still_running') AS s;\r", until="STILL_RUNNING")
+    terminal.send(".auto_format on\r", until=".auto_format on")
+    terminal.send(".singleline\r", until=".singleline")
+    terminal.send(".print dotted\r", until="\ndotted")
+    terminal.send("# a comment\r", until="# a comment")
+    terminal.send("\\echo slashed\r", until="\nslashed")
+    terminal.send("SELECT upper('form' || 'atted') AS s;\r", until="FORMATTED")
+
+
+def test_terminal_psql_pager_for_wide_and_long_results(terminal, tmp_path: Path) -> None:
+    terminal.send("\\pset format aligned\r", until="Output format is aligned.")
+    out = terminal.send("SELECT repeat('x', 200) AS a, 1 AS b;\r", until="(1 row)")
+    assert "PAGER_USED" in out
+    terminal.send("\\x on\r", until="Expanded display is on.")
+    out = terminal.send("SELECT i FROM range(60) t(i);\r", until="i | 59")
+    assert "PAGER_USED" in out
+    out = terminal.send("SELECT repeat('y', 300) AS a;\r", until="-[ RECORD 1 ]")
+    assert "PAGER_USED" in out
+    target = tmp_path / "auto.txt"
+    terminal.send("\\x auto\r", until="Expanded display is used automatically.")
+    terminal.send(f"\\o '{target.as_posix()}'\r", until="auto.txt'")
+    terminal.send("SELECT repeat('z', 200) AS a, 2 AS b;\r", until="AS b;")
+    terminal.send("\\o\r", until="\\o")
+    terminal.send("SELECT upper('done') AS s;\r", until="DONE")
+    written = target.read_text()
+    assert "(1 row)" in written, written
+    assert "RECORD" not in written, written
+
+
 def test_docs_number_without_a_list_fails() -> None:
     r = _docs_shell("2")
     assert r.returncode != 0

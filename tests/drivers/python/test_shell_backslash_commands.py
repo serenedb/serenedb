@@ -1,5 +1,7 @@
 # fmt: off
 
+from pathlib import Path
+
 import pytest
 
 from shell_harness import ShellTest, requires_serenedb, shell  # noqa: F401
@@ -373,3 +375,181 @@ def test_safe_mode_keeps_backslash_commands_away_from_files(shell, tmp_path):
     result.check_stderr("\\copy cannot access files in -safe mode")
     result.check_stderr("\\g cannot write to a file in -safe mode")
     assert not target.exists()
+
+
+def test_pset_option_names_and_values(shell):
+    result = run_script(
+        shell,
+        ".mode psql",
+        "\\pset format wrapped",
+        "\\pset x",
+        "\\pset vertical off",
+        "\\x on",
+        "\\x off",
+        "\\pset t on",
+        "\\pset t off",
+        "\\pset fieldsep '::'",
+        "\\pset fieldsep",
+        "\\pset border",
+        "\\pset footer",
+        "\\pset footer t",
+        "\\pset footer n",
+        "\\pset footer yes",
+        "\\pset footer f",
+        "\\pset footer 1",
+        "\\pset footer 0",
+    )
+    result.check_stdout("\n".join([
+        "Output format is aligned.",
+        "Expanded display is on.",
+        "Expanded display is off.",
+        "Expanded display is on.",
+        "Expanded display is off.",
+        "Tuples only is on.",
+        "Tuples only is off.",
+        'Field separator is "::".',
+        'Field separator is "::".',
+        "Border style is 1.",
+        "Default footer is off.",
+        "Default footer is on.",
+        "Default footer is off.",
+        "Default footer is on.",
+        "Default footer is off.",
+        "Default footer is on.",
+        "Default footer is off.",
+    ]))
+
+
+def test_pset_boolean_shorter_than_its_prefix(shell):
+    result = run_script(shell, "\\pset footer o")
+    result.check_stderr('\\pset: unrecognized value "o" for "footer": Boolean expected')
+
+
+def test_pset_csv_fieldsep_refuses_line_breaks(shell):
+    result = run_script(shell, "\\pset csv_fieldsep '\\n'", "\\pset csv_fieldsep '\\r'")
+    message = "\\pset: csv_fieldsep cannot be a double quote, a newline, or a carriage return"
+    assert result.stderr.count(message) == 2, result.stderr
+
+
+def test_toggles_and_null_in_duckdb_mode(shell):
+    result = run_script(shell, "\\x off", "\\t off", "\\pset null")
+    result.check_stdout('Expanded display is off.\nTuples only is off.\nNull display is "')
+
+
+def test_pset_listing_in_duckdb_mode_and_pager_values(shell):
+    result = run_script(shell, "\\pset", "\\pset pager off", "\\pset", "\\pset pager always", "\\pset")
+    result.check_stdout("format".ljust(24) + " duckbox")
+    result.check_stdout("pager".ljust(24) + " 0")
+    result.check_stdout("pager".ljust(24) + " 2")
+
+
+def test_help_shows_the_settings_that_are_on(shell):
+    result = run_script(shell, "\\t on", "\\timing on", "\\?")
+    result.check_stdout("show only rows (currently on)")
+    result.check_stdout("toggle timing of commands (currently on)")
+
+
+def test_quiet_timing(shell):
+    result = ShellTest(shell).add_argument("-q").run_raw("\\timing on\nSELECT 1 AS one;\n")
+    result.check_stdout("Run Time")
+    result.check_not_exist("Timing is on.")
+
+
+def test_command_aliases(shell, tmp_path):
+    target = tmp_path / "out.txt"
+    result = run_script(
+        shell,
+        f"\\out '{target.as_posix()}'",
+        "SELECT 'to file' AS s;",
+        "\\out",
+        "\\l+",
+        "\\list",
+        "\\list+",
+        "\\quit",
+        "SELECT 'after' AS s;",
+    )
+    assert result.status_code == 0, result.stderr
+    assert "to file" in target.read_text()
+    assert result.stdout.count("database_name") == 3, result.stdout
+    assert "after" not in result.stdout
+
+
+def test_lone_backslash_is_an_invalid_command(shell):
+    result = run_script(shell, "\\", "SELECT 'still running' AS s;")
+    result.check_stderr("invalid command \\")
+    assert "still running" in result.stdout
+
+
+def test_commands_and_arguments_without_spaces(shell):
+    result = run_script(shell, "\\a\\t", "\\echo one\\echo two")
+    result.check_stdout("Output format is aligned.\nTuples only is on.\none\ntwo")
+
+
+def test_echo_quotes_ending_the_line(shell):
+    result = run_script(
+        shell,
+        "\\echo 'open",
+        "\\echo \"dq",
+        "\\echo 'tail\\",
+        "\\echo 'hex\\x",
+        "\\echo 'a\\x4",
+        "\\echo 'o\\10",
+        "\\echo '\\x!'",
+    )
+    assert result.status_code == 0, result.stderr
+    assert result.stdout == "open\n\"dq\ntail\\\nhexx\na\x04\no\x08\nx!", repr(result.stdout)
+
+
+def test_backslash_copy_argument_shapes(shell):
+    result = run_script(
+        shell,
+        "CREATE TABLE t(i INTEGER);",
+        "INSERT INTO t VALUES (7);",
+        "\\copy \"t\" to stdout",
+        "\\copy t to stdout;",
+        "\\copy (SELECT 'a'||'b' AS\"v\") to stdout",
+        "\\copy (SELECT 'open) to stdout",
+        "\\copy t 'x'",
+        "\\copy t extra to stdout",
+        "\\copy t) to stdout",
+    )
+    assert result.stdout.splitlines()[:3] == ["7", "7", "ab"], result.stdout
+    assert result.stderr.count("\\copy: parse error at end of line") == 2, result.stderr
+
+
+@pytest.mark.skipif(not Path("/dev/full").exists(), reason="needs /dev/full")
+def test_backslash_copy_failing_query_to_a_full_device(shell):
+    result = run_script(
+        shell,
+        "\\copy (SELECT ('x' || i)::INTEGER AS v FROM range(3) t(i)) to '/dev/full' (format binary)",
+    )
+    assert "x0" in result.stderr, result.stderr
+    assert "/dev/full: No space left on device" not in result.stderr, result.stderr
+
+
+def test_extra_sql_argument_runs(shell):
+    result = ShellTest(shell).add_argument(":memory:", "SELECT 'extra sql' AS s").run()
+    result.check_stdout("extra sql")
+
+
+def test_cmd_quit_skips_stdin(shell):
+    result = ShellTest(shell).add_argument("-cmd", "\\q").run_raw("SELECT 'from stdin' AS s;\n")
+    assert result.status_code == 0, result.stderr
+    assert "from stdin" not in result.stdout
+
+
+def test_cmd_without_bail_keeps_going(shell):
+    result = ShellTest(shell).add_argument(
+        "-cmd", ".bail off", "-cmd", "\\nosuch", "-c", "SELECT 'after' AS s"
+    ).run()
+    result.check_stderr("invalid command \\nosuch")
+    assert "after" in result.stdout, result.stdout
+
+
+def test_error_in_a_script_file_stops_it(shell, tmp_path):
+    script = tmp_path / "bail.sql"
+    script.write_text("SELECT * FROM missing_bail_table;\nSELECT 'after' AS s;\n")
+    result = ShellTest(shell).add_argument("-f", script.as_posix()).run()
+    assert result.status_code != 0, result.stdout
+    assert "after" not in result.stdout
+    result.check_stderr("missing_bail_table")

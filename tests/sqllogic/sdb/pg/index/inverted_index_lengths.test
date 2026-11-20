@@ -1,0 +1,153 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY ibl_words AS split_text(case := 'lower') WITH (frequency)
+
+
+statement ok
+CREATE TABLE ibl (id INTEGER PRIMARY KEY, body TEXT, raw BYTEA, extra TEXT)
+
+
+statement ok
+INSERT INTO ibl
+SELECT i,
+       CASE WHEN i % 4 = 0 THEN NULL ELSE 'quick ' || repeat('é', i % 7) END,
+       CASE WHEN i % 5 = 0 THEN NULL ELSE decode(repeat('ab', i % 6), 'hex') END,
+       'x' || i
+FROM range(100) t(i)
+
+
+statement ok
+CREATE INDEX ibl_idx ON ibl USING inverted (id, body ibl_words) INCLUDE (body, raw)
+
+
+query
+SELECT sum(octet_length(body)) AS body_bytes, count(octet_length(body)) AS bodies, sum(octet_length(raw)) AS raw_bytes
+FROM ibl;
+----
+body_bytes	bodies	raw_bytes
+894	75	196
+
+
+query
+SELECT sum(bm25(tableoid)) AS score, sum(octet_length(body)) AS body_bytes, count(octet_length(body)) AS bodies,
+       sum(octet_length(raw)) AS raw_bytes
+FROM ibl_idx;
+----
+score	body_bytes	bodies	raw_bytes
+0	894	75	196
+
+
+query
+SELECT sum(octet_length(body)) AS body_bytes FROM ibl WHERE body > 'quick é';
+----
+body_bytes
+740
+
+
+# The length of an indexed expression the index stores is the length of its stored values, not of the column it is
+# computed from: lower() of 'İ' is 'i', one byte shorter
+statement ok
+CREATE TABLE ibl_lower (id INTEGER PRIMARY KEY, body TEXT)
+
+
+statement ok
+INSERT INTO ibl_lower VALUES (1, 'İİİ'), (2, 'abc')
+
+
+statement ok
+CREATE INDEX ibl_lower_idx ON ibl_lower USING inverted (id, (lower(body)) included())
+
+
+query
+SELECT id, octet_length(lower(body)) AS lower_bytes, octet_length(body) AS body_bytes FROM ibl_lower ORDER BY id;
+----
+id	lower_bytes	body_bytes
+1	3	6
+2	3	3
+
+
+query
+SELECT sum(octet_length(lower(body))) AS lower_bytes FROM ibl_lower_idx;
+----
+lower_bytes
+6
+
+
+statement ok
+CREATE TYPE ibl_pair AS (f TEXT, g INTEGER)
+
+
+statement ok
+CREATE TABLE ibl_struct (name TEXT PRIMARY KEY, st ibl_pair)
+
+
+statement ok
+INSERT INTO ibl_struct SELECT 'n' || i, ROW('f' || repeat('x', i % 5), i)::ibl_pair FROM range(50) t(i)
+
+
+statement ok
+CREATE INDEX ibl_struct_idx ON ibl_struct USING inverted (name) INCLUDE (st)
+
+
+query
+SELECT sum(octet_length((st).f)) AS field_bytes, sum(octet_length(name)) AS name_bytes FROM ibl_struct_idx;
+----
+field_bytes	name_bytes
+150	140
+
+
+# A nearest-neighbour search checks the length filter on each row it walks to
+statement ok
+CREATE TABLE ibl_hnsw (pk INTEGER PRIMARY KEY, emb FLOAT[8], url VARCHAR, note VARCHAR)
+
+
+statement ok
+CREATE INDEX ibl_hnsw_idx ON ibl_hnsw
+  USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'))
+  INCLUDE (url included (compression = 'dict_fsst'), note)
+
+
+statement ok
+INSERT INTO ibl_hnsw
+SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], 'https://example.org/p/' || i,
+       CASE WHEN i % 2 = 0 THEN NULL ELSE repeat('n', i % 4) END
+FROM range(5000) t(i)
+
+
+statement ok
+SET sdb_hnsw_filter_mode = 'walk'
+
+
+statement ok
+SET sdb_hnsw_column_filter = 'read'
+
+
+query
+SELECT pk FROM ibl_hnsw_idx WHERE octet_length(url) = 25
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+999
+998
+997
+996
+995
+
+
+query
+SELECT pk FROM ibl_hnsw_idx WHERE octet_length(note) > 1
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2499
+2503
+2495
+2507
+2491
+
+
+statement ok
+RESET sdb_hnsw_filter_mode
+
+
+statement ok
+RESET sdb_hnsw_column_filter

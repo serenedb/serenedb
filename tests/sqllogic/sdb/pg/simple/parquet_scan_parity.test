@@ -128,6 +128,76 @@ n	lo	hi
 
 
 query
+SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp.parquet') WHERE s <> '';
+----
+n
+26666
+
+
+query
+SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp.parquet') WHERE length(s) = 0;
+----
+n
+13334
+
+
+query
+SELECT count(*) AS n FROM read_parquet(['${__TEST_DIR__}/psp.parquet', '${__TEST_DIR__}/psp_high.parquet'])
+WHERE octet_length(s) > 4;
+----
+n
+58000
+
+
+query
+SELECT sum(strlen(s)) AS bytes FROM read_parquet(['${__TEST_DIR__}/psp.parquet', '${__TEST_DIR__}/psp_high.parquet']);
+----
+bytes
+344592
+
+
+query
+SELECT sum(strlen(s)) AS bytes FROM read_parquet(['${__TEST_DIR__}/psp.parquet', '${__TEST_DIR__}/psp_high.parquet'])
+WHERE s <> '';
+----
+bytes
+344592
+
+
+query
+SELECT id, s FROM read_parquet('${__TEST_DIR__}/psp.parquet') WHERE s <> '' ORDER BY id LIMIT 3;
+----
+id	s
+1	v1
+2	v2
+4	v4
+
+
+query
+SELECT id FROM read_parquet('${__TEST_DIR__}/psp.parquet') WHERE s <> '' ORDER BY id LIMIT 3;
+----
+id
+1
+2
+4
+
+
+query
+EXPLAIN SELECT count(*) FROM read_parquet('${__TEST_DIR__}/psp.parquet') WHERE s <> '';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ READ_PARQUET ───────────╮
+│ Function: READ_PARQUET   │
+│ Column Filter: s > 0     │
+│ ~8,000 rows              │
+╰──────────────────────────╯
+
+
+query
 SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp.parquet') USING SAMPLE 10% (system, 7);
 ----
 n

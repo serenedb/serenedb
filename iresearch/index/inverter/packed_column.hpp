@@ -137,7 +137,7 @@ class PackedU32Column : util::Noncopyable {
       }
       const auto* src = reinterpret_cast<const byte_type*>(blk.data);
       const block_codec::U32x8 base = block_codec::U32x8{} + blk.base;
-      block_codec::ResolveByte<block_codec::kMaxWidth + 1>(
+      Resolve<block_codec::ByteAxis<block_codec::kMaxWidth + 1>>(
         blk.bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
           for (size_t at = 0; at != kBlockValues; at += kSimdValues) {
             block_codec::VerticalRows<B>(
@@ -213,7 +213,7 @@ class PackedU32Column : util::Noncopyable {
         _staging[i] -= mn;
       }
       auto* dst = reinterpret_cast<byte_type*>(buf);
-      block_codec::ResolveByte<block_codec::kMaxWidth + 1>(
+      Resolve<block_codec::ByteAxis<block_codec::kMaxWidth + 1>>(
         bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
           for (size_t at = 0; at != kBlockValues; at += kSimdValues) {
             block_codec::PackVertical<B, false>(_staging + at, dst);

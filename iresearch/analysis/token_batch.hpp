@@ -26,6 +26,7 @@
 #include <span>
 #include <utility>
 
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -55,19 +56,26 @@ enum class TokenLayout : uint8_t {
   TermsPosOffs = 2,
 };
 
-template<typename Visitor>
-IRS_FORCE_INLINE constexpr decltype(auto) ResolveLayout(TokenLayout layout,
-                                                        Visitor&& visit) {
-  switch (layout) {
-    case TokenLayout::Terms:
-      return visit.template operator()<TokenLayout::Terms>();
-    case TokenLayout::TermsPos:
-      return visit.template operator()<TokenLayout::TermsPos>();
-    case TokenLayout::TermsPosOffs:
-      return visit.template operator()<TokenLayout::TermsPosOffs>();
+struct LayoutAxis : EnumAxis<TokenLayout> {
+  template<typename Visitor>
+  IRS_FORCE_INLINE static constexpr decltype(auto) Dispatch(TokenLayout layout,
+                                                            Visitor&& visit) {
+    switch (layout) {
+      case TokenLayout::Terms:
+        return visit.template operator()<TokenLayout::Terms>();
+      case TokenLayout::TermsPos:
+        return visit.template operator()<TokenLayout::TermsPos>();
+      case TokenLayout::TermsPosOffs:
+        return visit.template operator()<TokenLayout::TermsPosOffs>();
+    }
+    std::unreachable();
   }
-  std::unreachable();
-}
+};
+
+template<>
+struct AxisFor<TokenLayout> {
+  using Type = LayoutAxis;
+};
 
 struct BlockTraits {
   bool ascii = false;

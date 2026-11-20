@@ -23,6 +23,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -38,8 +39,8 @@
 #include "iresearch/search/detail/stats_arena.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 
@@ -60,7 +61,6 @@ struct ShareStats {
   score_t* shares;
   score_t share;
   uint32_t terms;
-  uint32_t capacity;
 };
 
 inline std::span<const score_t> SharesOf(const ShareStats& stats) noexcept {
@@ -75,15 +75,13 @@ inline void CollectShare(ShareStats& stats, const FieldCollector* field,
     stats.terms = 1;
     return;
   }
-  const uint32_t capacity = stats.shares ? stats.capacity : 1;
-  if (stats.terms == capacity) {
-    const auto grown = std::max<uint32_t>(4, 2 * capacity);
+  if (stats.terms == 1 ||
+      (stats.terms >= 4 && std::has_single_bit(stats.terms))) {
+    const auto grown = std::max<uint32_t>(4, 2 * stats.terms);
     auto* shares =
       reinterpret_cast<score_t*>(arena.Allocate(grown * sizeof(score_t)));
-    std::memcpy(shares, stats.shares ? stats.shares : &stats.share,
-                stats.terms * sizeof(score_t));
+    std::memcpy(shares, SharesOf(stats).data(), stats.terms * sizeof(score_t));
     stats.shares = shares;
-    stats.capacity = grown;
   }
   stats.shares[stats.terms++] = share;
 }
@@ -134,21 +132,10 @@ struct FreqScore : public ScoreOperatorOf<FreqScore<HasScale, Formula>> {
 template<typename Formula>
 ScoreFunction MakeFreqScore(Formula formula, const FreqBlockAttr* freq,
                             const uint32_t* norm, const score_t* scale) {
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+  return Resolve(scale != nullptr, [&]<bool HasScale>() {
     return ScoreFunction::Make<FreqScore<HasScale, Formula>>(std::move(formula),
                                                              freq, norm, scale);
   });
-}
-
-template<typename MakeTerm, typename MakeTerms>
-ScoreFunction MakeShareScore(std::span<const score_t> shares,
-                             MakeTerm make_term, MakeTerms make_terms,
-                             const FreqBlockAttr* freq, const uint32_t* norm,
-                             const score_t* scale) {
-  if (shares.size() == 1) {
-    return MakeFreqScore(make_term(shares.front()), freq, norm, scale);
-  }
-  return MakeFreqScore(make_terms(shares), freq, norm, scale);
 }
 
 inline const score_t* ScaleOf(const ScoreContext& ctx) noexcept {
@@ -160,13 +147,28 @@ inline const uint32_t* FieldNormsOf(const ScoreContext& ctx) {
   if (const auto* attr = irs::get<Norm>(ctx.doc_attrs)) {
     return &attr->value;
   }
-  return ctx.fetcher.AddNorms(ctx.field.norm,
-                              ctx.segment.norms(ctx.field.norm));
+  return ctx.fetcher.AddNorms(ctx.segment, ctx.field.norm);
 }
 
 inline const uint32_t* NormsOf(const ScoreContext& ctx) {
   const auto* norm = FieldNormsOf(ctx);
   return norm ? norm : kNorms.data();
+}
+
+template<typename MakeTerm, typename MakeTerms>
+ScoreFunction PrepareShareScorer(const ScoreContext& ctx,
+                                 const ShareStats& stats, MakeTerm make_term,
+                                 MakeTerms make_terms) {
+  const auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
+  const auto shares = SharesOf(stats);
+  if (!freq || shares.empty()) {
+    return ScoreFunction::Default();
+  }
+  if (shares.size() == 1) {
+    return MakeFreqScore(make_term(shares.front()), freq, NormsOf(ctx),
+                         ScaleOf(ctx));
+  }
+  return MakeFreqScore(make_terms(shares), freq, NormsOf(ctx), ScaleOf(ctx));
 }
 
 }  // namespace irs

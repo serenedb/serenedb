@@ -173,7 +173,7 @@ std::vector<irs::doc_id_t> BruteForceTopK(
   scored.reserve(vecs.size());
   for (size_t i = 0; i < vecs.size(); ++i) {
     float s = 0;
-    irs::ResolveEnum<irs::VectorMetric>(metric, [&]<irs::VectorMetric M>() {
+    irs::Resolve(metric, [&]<irs::VectorMetric M>() {
       s = irs::ComputeDistance<M>(query.data(), vecs[i].data(),
                                   static_cast<uint16_t>(query.size()));
     });

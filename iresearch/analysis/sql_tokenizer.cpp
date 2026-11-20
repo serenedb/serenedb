@@ -439,8 +439,8 @@ bool SqlTokenizer::Fill(const duckdb::string_t& value, TokenSink& sink,
   if (!rows.Valid(0)) {
     return false;
   }
-  ResolveLayout(ctx.layout,
-                [&]<TokenLayout Layout>() { rows.Emit<Layout>(0, sink); });
+  Resolve(ctx.layout, [&]<TokenLayout Layout>()
+                        IRS_FORCE_INLINE { rows.Emit<Layout>(0, sink); });
   return true;
 }
 
@@ -451,7 +451,7 @@ void SqlTokenizer::Fill(const duckdb::UnifiedVectorFormat& fmt, uint32_t count,
   auto& call = *_call;
   const auto* data =
     duckdb::UnifiedVectorFormat::GetData<duckdb::string_t>(fmt);
-  ResolveLayout(ctx.layout, [&]<TokenLayout Layout>() {
+  Resolve(ctx.layout, [&]<TokenLayout Layout>() IRS_FORCE_INLINE {
     for (uint32_t base = 0; base < count; base += kBatch) {
       uint32_t staged = 0;
       ForEachValidRow(fmt, duckdb::idx_t{base}, std::min(kBatch, count - base),

@@ -20,31 +20,15 @@
 
 #pragma once
 
-#include <cstdint>
-#include <span>
-
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 
 using LMStats = ShareStats;
-
-template<typename MakeTerm, typename MakeTerms>
-ScoreFunction PrepareLMScorer(const ScoreContext& ctx, const LMStats& stats,
-                              MakeTerm make_term, MakeTerms make_terms) {
-  auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  const auto shares = SharesOf(stats);
-  if (!freq || shares.empty()) {
-    return ScoreFunction::Default();
-  }
-  return MakeShareScore(shares, make_term, make_terms, freq, NormsOf(ctx),
-                        ScaleOf(ctx));
-}
 
 }  // namespace irs

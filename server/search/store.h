@@ -44,6 +44,7 @@
 #include <iresearch/search/scorers/scorer_options.hpp>
 #include <iresearch/store/directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/resource_manager.hpp>
 #include <limits>
 #include <memory>

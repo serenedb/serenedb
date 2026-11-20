@@ -8,6 +8,7 @@ target_sources(
         count/make_subtract_conjunction.cpp
         count/make_subtract_disjunction.cpp
         count/make_term_counts.cpp
+        detail/bitset_build.cpp
         detail/collectors.cpp
         detail/compiled_phrase.cpp
         detail/pattern_cache.cpp
@@ -52,150 +53,6 @@ target_sources(
         lead/make_all_docs.cpp
         lead/make_all_scored.cpp
         lead/make_posting.cpp
-        make/boolean/count.cpp
-        make/boolean/count_exclusion.cpp
-        make/boolean/count_exclusion_window.cpp
-        make/boolean/docs.cpp
-        make/boolean/docs_exclusion.cpp
-        make/boolean/docs_exclusion_window.cpp
-        make/boolean/docs_negation.cpp
-        make/boolean/fill_docs.cpp
-        make/boolean/fill_exclusion_docs.cpp
-        make/boolean/fill_exclusion_scored.cpp
-        make/boolean/fill_exclusion_window.cpp
-        make/boolean/fill_negation.cpp
-        make/boolean/fill_scored.cpp
-        make/boolean/hits.cpp
-        make/boolean/hits_exclusion.cpp
-        make/boolean/hits_exclusion_window.cpp
-        make/boolean/lead_docs.cpp
-        make/boolean/lead_exclusion_docs.cpp
-        make/boolean/lead_exclusion_scored.cpp
-        make/boolean/lead_exclusion_window.cpp
-        make/boolean/lead_negation.cpp
-        make/boolean/lead_scored.cpp
-        make/boolean/probe_docs.cpp
-        make/boolean/probe_exclusion_docs.cpp
-        make/boolean/probe_exclusion_scored.cpp
-        make/boolean/probe_optional_docs.cpp
-        make/boolean/probe_optional_scored.cpp
-        make/boolean/probe_scored.cpp
-        make/boolean/top.cpp
-        make/boolean/top_exclusion.cpp
-        make/boolean/top_exclusion_window.cpp
-        make/ngram/count_all.cpp
-        make/ngram/count_threshold.cpp
-        make/ngram/docs_all.cpp
-        make/ngram/docs_threshold.cpp
-        make/ngram/fill_all_docs.cpp
-        make/ngram/fill_all_scored.cpp
-        make/ngram/fill_threshold_docs.cpp
-        make/ngram/fill_threshold_scored.cpp
-        make/ngram/hits_all.cpp
-        make/ngram/hits_threshold.cpp
-        make/ngram/lead_all_docs.cpp
-        make/ngram/lead_all_scored.cpp
-        make/ngram/lead_threshold_docs.cpp
-        make/ngram/lead_threshold_scored.cpp
-        make/ngram/probe_all_docs.cpp
-        make/ngram/probe_all_scored.cpp
-        make/ngram/probe_threshold_docs.cpp
-        make/ngram/probe_threshold_scored.cpp
-        make/ngram/top_all.cpp
-        make/ngram/top_threshold.cpp
-        make/phrase/count_fixed.cpp
-        make/phrase/count_fixed_intervals.cpp
-        make/phrase/count_fixed_slop.cpp
-        make/phrase/count_variadic.cpp
-        make/phrase/count_variadic_intervals.cpp
-        make/phrase/count_variadic_slop.cpp
-        make/phrase/docs_fixed.cpp
-        make/phrase/docs_fixed_intervals.cpp
-        make/phrase/docs_fixed_slop.cpp
-        make/phrase/docs_variadic.cpp
-        make/phrase/docs_variadic_intervals.cpp
-        make/phrase/docs_variadic_slop.cpp
-        make/phrase/fill_fixed_docs.cpp
-        make/phrase/fill_fixed_intervals_docs.cpp
-        make/phrase/fill_fixed_intervals_scored.cpp
-        make/phrase/fill_fixed_scored.cpp
-        make/phrase/fill_fixed_slop_docs.cpp
-        make/phrase/fill_fixed_slop_scored.cpp
-        make/phrase/fill_variadic_docs.cpp
-        make/phrase/fill_variadic_intervals_docs.cpp
-        make/phrase/fill_variadic_intervals_scored.cpp
-        make/phrase/fill_variadic_scored.cpp
-        make/phrase/fill_variadic_slop_docs.cpp
-        make/phrase/fill_variadic_slop_scored.cpp
-        make/phrase/hits_fixed.cpp
-        make/phrase/hits_fixed_intervals.cpp
-        make/phrase/hits_fixed_slop.cpp
-        make/phrase/hits_variadic.cpp
-        make/phrase/hits_variadic_intervals.cpp
-        make/phrase/hits_variadic_slop.cpp
-        make/phrase/lead_fixed_docs.cpp
-        make/phrase/lead_fixed_intervals_docs.cpp
-        make/phrase/lead_fixed_intervals_scored.cpp
-        make/phrase/lead_fixed_scored.cpp
-        make/phrase/lead_fixed_slop_docs.cpp
-        make/phrase/lead_fixed_slop_scored.cpp
-        make/phrase/lead_variadic_docs.cpp
-        make/phrase/lead_variadic_intervals_docs.cpp
-        make/phrase/lead_variadic_intervals_scored.cpp
-        make/phrase/lead_variadic_scored.cpp
-        make/phrase/lead_variadic_slop_docs.cpp
-        make/phrase/lead_variadic_slop_scored.cpp
-        make/phrase/probe_fixed_docs.cpp
-        make/phrase/probe_fixed_intervals_docs.cpp
-        make/phrase/probe_fixed_intervals_scored.cpp
-        make/phrase/probe_fixed_scored.cpp
-        make/phrase/probe_fixed_slop_docs.cpp
-        make/phrase/probe_fixed_slop_scored.cpp
-        make/phrase/probe_variadic_docs.cpp
-        make/phrase/probe_variadic_intervals_docs.cpp
-        make/phrase/probe_variadic_intervals_scored.cpp
-        make/phrase/probe_variadic_scored.cpp
-        make/phrase/probe_variadic_slop_docs.cpp
-        make/phrase/probe_variadic_slop_scored.cpp
-        make/phrase/top_fixed.cpp
-        make/phrase/top_fixed_intervals.cpp
-        make/phrase/top_fixed_intervals_pruned.cpp
-        make/phrase/top_fixed_pruned.cpp
-        make/phrase/top_fixed_slop.cpp
-        make/phrase/top_variadic.cpp
-        make/phrase/top_variadic_intervals.cpp
-        make/phrase/top_variadic_intervals_pruned.cpp
-        make/phrase/top_variadic_pruned.cpp
-        make/phrase/top_variadic_slop.cpp
-        make/query/all.cpp
-        make/query/approx.cpp
-        make/query/boolean.cpp
-        make/query/multi_term.cpp
-        make/query/ngram_similarity.cpp
-        make/query/phrase.cpp
-        make/query/term.cpp
-        make/query/token_phrase.cpp
-        make/query/wildcard_ngram.cpp
-        make/token_phrase/count.cpp
-        make/token_phrase/docs.cpp
-        make/token_phrase/fill_docs.cpp
-        make/token_phrase/fill_scored.cpp
-        make/token_phrase/hits.cpp
-        make/token_phrase/lead_docs.cpp
-        make/token_phrase/lead_scored.cpp
-        make/token_phrase/probe_docs.cpp
-        make/token_phrase/probe_scored.cpp
-        make/token_phrase/top.cpp
-        make/wildcard_ngram/count.cpp
-        make/wildcard_ngram/docs.cpp
-        make/wildcard_ngram/fill_docs.cpp
-        make/wildcard_ngram/fill_scored.cpp
-        make/wildcard_ngram/hits.cpp
-        make/wildcard_ngram/lead_docs.cpp
-        make/wildcard_ngram/lead_scored.cpp
-        make/wildcard_ngram/probe_docs.cpp
-        make/wildcard_ngram/probe_scored.cpp
-        make/wildcard_ngram/top.cpp
         probe/make_all_docs.cpp
         probe/make_all_scored.cpp
         probe/make_posting.cpp
@@ -215,12 +72,296 @@ target_sources(
         top/make_all.cpp
         top/make_posting.cpp
         top/make_pruned.cpp
-        top/make_pruned_conjunction.cpp
-        top/make_pruned_conjunction_nested.cpp
-        top/make_pruned_disjunction.cpp
         top/make_pruned_posting.cpp
         top/make_pruned_req_opt.cpp
         top/make_token_phrase.cpp
+)
+
+sdb_instantiation_axis(
+    IRS_PLANS
+    "count FAMILY=count::Family CTX=count::Context MAKER=DocsMaker INCLUDE=iresearch/search/count/family.hpp"
+    "docs FAMILY=docs::Family CTX=docs::Context MAKER=DocsMaker INCLUDE=iresearch/search/docs/family.hpp"
+    "fill_docs FAMILY=fill::Family CTX=utils::Empty MAKER=DocsMaker INCLUDE=iresearch/search/fill/family.hpp"
+    "fill_scored FAMILY=fill::Family CTX=fill::Family::ScoredContext MAKER=ScoredMaker INCLUDE=iresearch/search/fill/family.hpp"
+    "hits FAMILY=hits::Family CTX=hits::Context MAKER=ScoredMaker INCLUDE=iresearch/search/hits/family.hpp"
+    "lead_docs FAMILY=lead::Family CTX=utils::Empty MAKER=DocsMaker INCLUDE=iresearch/search/lead/family.hpp"
+    "lead_scored FAMILY=lead::Family CTX=ScoredCtx MAKER=ScoredMaker INCLUDE=iresearch/search/lead/family.hpp"
+    "probe_docs FAMILY=probe::Family CTX=probe::Family::DocsContext MAKER=DocsMaker INCLUDE=iresearch/search/probe/family.hpp PLANNER=iresearch/search/probe/boolean_planner.hpp"
+    "probe_scored FAMILY=probe::Family CTX=probe::Family::ScoredContext MAKER=ScoredMaker INCLUDE=iresearch/search/probe/family.hpp PLANNER=iresearch/search/probe/boolean_planner.hpp"
+    "top FAMILY=top::Family CTX=top::Context MAKER=ScoredMaker INCLUDE=iresearch/search/top/family.hpp"
+)
+sdb_instantiation_axis(
+    IRS_MASK_SLICES
+    "unmasked PIN=irs::Pin<irs::detail::MaskedAxis,false>"
+    "bitsets PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Bitsets>"
+    "arrays PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Arrays>"
+    "runs PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Runs>"
+    "mixed PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Mixed>"
+    "bitset PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Bitset>"
+    "array PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Array>"
+    "run PIN=irs::Pin<irs::detail::MaskedAxis,true>,irs::Pin<irs::DocsMaskAxis,irs::MaskKind::Run>"
+)
+sdb_instantiation_axis(
+    IRS_INPUTS
+    "mapped PIN=irs::Pin<irs::InputAxis,irs::InputKey::Mapped>"
+    "stream PIN=irs::Pin<irs::InputAxis,irs::InputKey::Stream>"
+)
+set(irs_slice "irs::Pins<@MASK.PIN@,@INPUT.PIN@>")
+set(irs_input_slice "irs::Pins<@INPUT.PIN@>")
+sdb_instantiation_axis(
+    IRS_SCORING
+    "docs SCORING=detail::NoScoring"
+    "scored SCORING=detail::TermScoring"
+)
+sdb_instantiation_axis(
+    IRS_PHRASES
+    "fixed QUERY=FixedPhraseQuery"
+    "variadic QUERY=VariadicPhraseQuery"
+)
+sdb_instantiation_axis(
+    IRS_PHRASE_MATCHES
+    "plain MATCH=Plain"
+    "intervals MATCH=Intervals"
+    "slop MATCH=Slop"
+)
+sdb_instantiation_axis(IRS_NGRAM_MATCHES "all MATCH=All" "threshold MATCH=Threshold")
+sdb_instantiation_axis(
+    IRS_QUERY_BUILDERS
+    "all TYPE=AllQuery MAKE=iresearch/search/detail/all_of.hpp"
+    "approx TYPE=ApproxQuery MAKE=iresearch/search/detail/approx_of.hpp"
+    "boolean TYPE=BooleanQuery MAKE=iresearch/search/detail/make_query.hpp HEADER=iresearch/search/queries/boolean_query.hpp"
+    "ngram_similarity TYPE=NGramSimilarityQuery MAKE=iresearch/search/detail/ngram_of.hpp"
+    "phrase TYPE=FixedPhraseQuery,PhraseQuery MAKE=iresearch/search/detail/phrase_of.hpp"
+    "phrase_variadic TYPE=VariadicPhraseQuery,PhraseQuery MAKE=iresearch/search/detail/phrase_of.hpp"
+    "term TYPE=TermQuery MAKE=iresearch/search/detail/make_term.hpp HEADER=iresearch/search/queries/term_query.hpp"
+    "token_phrase TYPE=TokenPhraseQuery MAKE=iresearch/search/detail/token_phrase_of.hpp"
+)
+
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX boolean
+    NAMESPACE irs::detail
+    INCLUDE
+        iresearch/search/detail/boolean_planner.hpp
+        @PLAN.INCLUDE@
+        @PLAN.PLANNER@
+    CALL "template struct BooleanMaker<@PLAN.FAMILY@, @PLAN.CTX@>;"
+    EXPAND PLAN=IRS_PLANS
+)
+set(irs_required_call
+    "template struct RequiredMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_input_slice}>;"
+)
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX required
+    NAMESPACE irs::detail::builder
+    INCLUDE iresearch/search/detail/boolean_required.hpp @PLAN.INCLUDE@
+    CALL "${irs_required_call}"
+    AXES PLAN=IRS_PLANS INPUT=IRS_INPUTS
+    SKIP count docs fill_docs lead_docs probe_docs probe_scored
+)
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX required
+    NAMESPACE irs::detail::builder
+    INCLUDE iresearch/search/detail/boolean_required.hpp @PLAN.INCLUDE@
+    CALL "${irs_required_call}"
+    AXES PLAN=IRS_PLANS
+    EXPAND INPUT=IRS_INPUTS
+    SKIP fill_scored hits lead_scored top probe_docs probe_scored
+)
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX exclusion
+    NAMESPACE irs::detail::builder
+    INCLUDE
+        iresearch/search/detail/boolean_exclusion.hpp
+        @PLAN.INCLUDE@
+    CALL
+        "template struct ExclusionMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_slice}>;"
+    AXES PLAN=IRS_PLANS MASK=IRS_MASK_SLICES
+    EXPAND INPUT=IRS_INPUTS
+    SKIP probe_docs probe_scored
+)
+set(irs_exclusion_window_call
+    "template struct ExclusionWindowMaker<@PLAN.FAMILY@, @PLAN.CTX@, ${irs_slice}>;"
+)
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX exclusion_window
+    NAMESPACE irs::detail::builder
+    INCLUDE iresearch/search/detail/boolean_exclusion_window.hpp @PLAN.INCLUDE@
+    CALL "${irs_exclusion_window_call}"
+    AXES PLAN=IRS_PLANS MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
+    SKIP count docs fill_docs fill_scored lead_docs lead_scored probe_docs
+         probe_scored
+)
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX exclusion_window
+    NAMESPACE irs::detail::builder
+    INCLUDE iresearch/search/detail/boolean_exclusion_window.hpp @PLAN.INCLUDE@
+    CALL "${irs_exclusion_window_call}"
+    AXES PLAN=IRS_PLANS MASK=IRS_MASK_SLICES
+    EXPAND INPUT=IRS_INPUTS
+    SKIP fill_scored hits lead_scored top probe_docs probe_scored
+)
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX negation
+    NAMESPACE irs::detail::builder
+    INCLUDE
+        iresearch/search/detail/boolean_negation.hpp
+        @PLAN.INCLUDE@
+    CALL "template struct NegationMaker<@PLAN.FAMILY@, @PLAN.CTX@>;"
+    EXPAND PLAN=IRS_PLANS
+    SKIP count fill_scored hits lead_scored probe_docs probe_scored top
+)
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX probe_exclusion
+    NAMESPACE irs::probe
+    INCLUDE iresearch/search/probe/boolean_exclusion.hpp
+    CALL "template struct ExclusionMaker<@SCORING.SCORING@, ${irs_slice}>;"
+    AXES SCORING=IRS_SCORING MASK=IRS_MASK_SLICES
+    EXPAND INPUT=IRS_INPUTS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/boolean
+    PREFIX probe_optional
+    NAMESPACE irs::probe
+    INCLUDE iresearch/search/probe/boolean_optional.hpp
+    CALL "template struct OptionalMaker<@SCORING.SCORING@>;"
+    EXPAND SCORING=IRS_SCORING
+)
+sdb_instantiate(
+    iresearch
+    DIR search/top
+    PREFIX pruned_conjunction
+    NAMESPACE irs::top
+    INCLUDE iresearch/search/top/make_pruned_conjunction.hpp
+    CALL "template struct PrunedConjunctionMaker<${irs_slice}>;"
+    AXES MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/top
+    PREFIX pruned_conjunction_nested
+    NAMESPACE irs::top
+    INCLUDE iresearch/search/top/make_pruned_conjunction_nested.hpp
+    CALL "template struct NestedPrunedConjunctionMaker<${irs_slice}>;"
+    AXES MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/top
+    PREFIX pruned_disjunction
+    NAMESPACE irs::top
+    INCLUDE iresearch/search/top/make_pruned_disjunction.hpp
+    CALL
+        "template struct PrunedDisjunctionMaker<true, irs::detail::PostingClause, ${irs_slice}>;"
+    AXES MASK=IRS_MASK_SLICES INPUT=IRS_INPUTS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/top
+    PREFIX pruned_phrase
+    NAMESPACE irs::top
+    INCLUDE iresearch/search/top/make_phrase_pruned.hpp
+    CALL
+        "template struct PhraseMaker<irs::detail::PhraseMatch::@MATCH.MATCH@, @PHRASE.QUERY@>;"
+    AXES PHRASE=IRS_PHRASES MATCH=IRS_PHRASE_MATCHES
+    SKIP slop
+)
+sdb_instantiate(
+    iresearch
+    DIR search/phrase
+    NAMESPACE irs::detail
+    INCLUDE
+        iresearch/search/detail/make_impl.hpp
+        iresearch/search/detail/phrase_of.hpp
+        @PLAN.INCLUDE@
+    CALL
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, PhraseKind<PhraseMatch::@MATCH.MATCH@>, @PHRASE.QUERY@>;"
+    AXES PLAN=IRS_PLANS PHRASE=IRS_PHRASES MATCH=IRS_PHRASE_MATCHES
+)
+sdb_instantiate(
+    iresearch
+    DIR search/ngram
+    NAMESPACE irs::detail
+    INCLUDE
+        iresearch/search/detail/make_impl.hpp
+        iresearch/search/detail/ngram_of.hpp
+        @PLAN.INCLUDE@
+    CALL
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, NGramKind<NGramMatch::@MATCH.MATCH@>, NGramSimilarityQuery>;"
+    AXES PLAN=IRS_PLANS MATCH=IRS_NGRAM_MATCHES
+)
+sdb_instantiate(
+    iresearch
+    DIR search/token_phrase
+    NAMESPACE irs::detail
+    INCLUDE
+        iresearch/search/detail/make_impl.hpp
+        iresearch/search/detail/token_phrase_of.hpp
+        @PLAN.INCLUDE@
+    CALL
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, TokenPhraseKind, TokenPhraseQuery>;"
+    AXES PLAN=IRS_PLANS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/wildcard_ngram
+    NAMESPACE irs::detail
+    INCLUDE
+        iresearch/search/detail/make_impl.hpp
+        iresearch/search/detail/wildcard_ngram_of.hpp
+        @PLAN.INCLUDE@
+    CALL
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, WildcardNGramKind, WildcardNGramQuery>;"
+    AXES PLAN=IRS_PLANS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/query
+    PREFIX builders
+    NAMESPACE irs
+    INCLUDE
+        iresearch/search/queries/query_builder_impl.tpp
+        @QUERY.MAKE@
+        @QUERY.HEADER@
+    CALL "template class QueryBuilderImpl<@QUERY.TYPE@>;"
+    EXPAND QUERY=IRS_QUERY_BUILDERS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/query
+    PREFIX multi_term
+    NAMESPACE irs
+    INCLUDE
+        iresearch/search/queries/query_builder_impl.tpp
+        iresearch/search/detail/make_term.hpp
+        iresearch/search/queries/multiterm_query.hpp
+    CALL "template class QueryBuilderImpl<MultiTermQuery>;"
+)
+sdb_instantiate(
+    iresearch
+    DIR search/query
+    PREFIX wildcard_ngram
+    NAMESPACE irs
+    INCLUDE
+        iresearch/search/queries/query_builder_impl.tpp
+        iresearch/search/detail/wildcard_ngram_of.hpp
+    CALL "template class QueryBuilderImpl<WildcardNGramQuery>;"
 )
 
 if(IRESEARCH_BENCH)
@@ -250,59 +391,6 @@ target_sources(
         hits/make_ivf.cpp
         lead/make_hnsw.cpp
         lead/make_ivf.cpp
-        make/geo/count_contains.cpp
-        make/geo/count_distance.cpp
-        make/geo/count_intersects.cpp
-        make/geo/count_is_contained.cpp
-        make/geo/docs_contains.cpp
-        make/geo/docs_distance.cpp
-        make/geo/docs_intersects.cpp
-        make/geo/docs_is_contained.cpp
-        make/geo/fill_contains_docs.cpp
-        make/geo/fill_contains_scored.cpp
-        make/geo/fill_distance_docs.cpp
-        make/geo/fill_distance_scored.cpp
-        make/geo/fill_intersects_docs.cpp
-        make/geo/fill_intersects_scored.cpp
-        make/geo/fill_is_contained_docs.cpp
-        make/geo/fill_is_contained_scored.cpp
-        make/geo/hits_contains.cpp
-        make/geo/hits_distance.cpp
-        make/geo/hits_intersects.cpp
-        make/geo/hits_is_contained.cpp
-        make/geo/lead_contains_docs.cpp
-        make/geo/lead_contains_scored.cpp
-        make/geo/lead_distance_docs.cpp
-        make/geo/lead_distance_scored.cpp
-        make/geo/lead_intersects_docs.cpp
-        make/geo/lead_intersects_scored.cpp
-        make/geo/lead_is_contained_docs.cpp
-        make/geo/lead_is_contained_scored.cpp
-        make/geo/probe_contains_docs.cpp
-        make/geo/probe_contains_scored.cpp
-        make/geo/probe_distance_docs.cpp
-        make/geo/probe_distance_scored.cpp
-        make/geo/probe_intersects_docs.cpp
-        make/geo/probe_intersects_scored.cpp
-        make/geo/probe_is_contained_docs.cpp
-        make/geo/probe_is_contained_scored.cpp
-        make/geo/top_contains.cpp
-        make/geo/top_distance.cpp
-        make/geo/top_intersects.cpp
-        make/geo/top_is_contained.cpp
-        make/query/exact_vector.cpp
-        make/query/hnsw.cpp
-        make/query/knn_vector.cpp
-        make/query/nested.cpp
-        make/query/range_vector.cpp
-        make/ngram/offsets_all.cpp
-        make/ngram/offsets_threshold.cpp
-        make/phrase/offsets_fixed.cpp
-        make/phrase/offsets_fixed_intervals.cpp
-        make/phrase/offsets_fixed_slop.cpp
-        make/phrase/offsets_variadic.cpp
-        make/phrase/offsets_variadic_intervals.cpp
-        make/phrase/offsets_variadic_slop.cpp
         offsets/make.cpp
         offsets/make_posting.cpp
         queries/hnsw_query.cpp
@@ -318,4 +406,100 @@ target_sources(
         scorers/raw_tf.cpp
         scorers/tfidf.cpp
         scorers/vector_similarity_scorer.cpp
+)
+
+sdb_instantiation_axis(
+    IRS_GEO_ACCEPTORS
+    "contains ACCEPTOR=GeoContainsAcceptor"
+    "intersects ACCEPTOR=GeoIntersectsAcceptor"
+    "is_contained ACCEPTOR=GeoIsContainedAcceptor"
+)
+sdb_instantiation_axis(
+    IRS_GEO_PARSERS
+    "json PARSER=SourceJsonParser"
+    "wkb PARSER=SourceWkbParser"
+    "point PARSER=SourcePointParser"
+    "s2_shape PARSER=S2ShapeParser"
+    "s2_point PARSER=S2PointParser"
+)
+sdb_instantiation_axis(
+    IRS_GEO_DISTANCE_ACCEPTORS
+    "exclusive ACCEPTOR=GeoDistanceAcceptor<false>"
+    "inclusive ACCEPTOR=GeoDistanceAcceptor<true>"
+    "range_open ACCEPTOR=GeoDistanceRangeAcceptor<false,false>"
+    "range_max_inclusive ACCEPTOR=GeoDistanceRangeAcceptor<false,true>"
+    "range_min_inclusive ACCEPTOR=GeoDistanceRangeAcceptor<true,false>"
+    "range_closed ACCEPTOR=GeoDistanceRangeAcceptor<true,true>"
+)
+sdb_instantiation_axis(
+    IRS_FULL_QUERY_BUILDERS
+    "exact_vector TYPE=ExactVectorQuery MAKE=iresearch/search/detail/make_query.hpp HEADER=iresearch/search/queries/vector_exact_query.hpp"
+    "hnsw TYPE=HnswQuery MAKE=iresearch/search/detail/make_query.hpp HEADER=iresearch/search/queries/hnsw_query.hpp"
+    "knn_vector TYPE=KnnVectorQuery MAKE=iresearch/search/detail/make_query.hpp HEADER=iresearch/search/queries/vector_similarity_query.hpp"
+    "nested TYPE=ByNestedQuery MAKE=iresearch/search/detail/nested_of.hpp"
+    "range_vector TYPE=RangeVectorQuery MAKE=iresearch/search/detail/vector_of.hpp"
+)
+
+sdb_instantiate(
+    iresearch
+    DIR search/geo
+    NAMESPACE irs::detail
+    INCLUDE
+        iresearch/search/detail/geo_of.hpp
+        iresearch/search/detail/geo_parsers.hpp
+        iresearch/search/filters/geo_filter.hpp
+        iresearch/search/queries/geo_query.hpp
+        iresearch/search/detail/make_impl.hpp
+        @PLAN.INCLUDE@
+    CALL
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, GeoKind, GeoQuery<@PARSER.PARSER@, @ACCEPTOR.ACCEPTOR@>>;"
+    AXES PLAN=IRS_PLANS ACCEPTOR=IRS_GEO_ACCEPTORS
+    EXPAND PARSER=IRS_GEO_PARSERS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/geo
+    PREFIX distance
+    NAMESPACE irs::detail
+    INCLUDE
+        iresearch/search/detail/geo_of.hpp
+        iresearch/search/detail/geo_parsers.hpp
+        iresearch/search/filters/geo_filter.hpp
+        iresearch/search/queries/geo_query.hpp
+        iresearch/search/detail/make_impl.hpp
+        @PLAN.INCLUDE@
+    CALL
+        "template struct @PLAN.MAKER@<@PLAN.FAMILY@, GeoKind, GeoQuery<@PARSER.PARSER@, @ACCEPTOR.ACCEPTOR@>>;"
+    AXES PLAN=IRS_PLANS
+    EXPAND PARSER=IRS_GEO_PARSERS ACCEPTOR=IRS_GEO_DISTANCE_ACCEPTORS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/query
+    NAMESPACE irs
+    INCLUDE
+        iresearch/search/queries/query_builder_impl.tpp
+        @QUERY.MAKE@
+        @QUERY.HEADER@
+    CALL "template class QueryBuilderImpl<@QUERY.TYPE@>;"
+    AXES QUERY=IRS_FULL_QUERY_BUILDERS
+)
+sdb_instantiate(
+    iresearch
+    DIR search/offsets
+    PREFIX phrase
+    NAMESPACE irs::offsets
+    INCLUDE iresearch/search/offsets/make_impl.hpp
+    CALL
+        "template struct PhraseMaker<detail::PhraseMatch::@MATCH.MATCH@, @PHRASE.QUERY@>;"
+    AXES PHRASE=IRS_PHRASES MATCH=IRS_PHRASE_MATCHES
+)
+sdb_instantiate(
+    iresearch
+    DIR search/offsets
+    PREFIX ngram
+    NAMESPACE irs::offsets
+    INCLUDE iresearch/search/offsets/make_impl.hpp
+    CALL "template struct NGramMaker<detail::NGramMatch::@MATCH.MATCH@>;"
+    AXES MATCH=IRS_NGRAM_MATCHES
 )

@@ -41,6 +41,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/math_utils.hpp"
 
@@ -173,15 +174,6 @@ struct Scorer {
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 };
-
-template<typename Visitor>
-IRS_FORCE_INLINE auto ResolveMergeType(ScoreMergeType type, Visitor&& visitor) {
-  SDB_ASSERT(type != ScoreMergeType::Noop);
-  if (type == ScoreMergeType::Max) {
-    return visitor.template operator()<ScoreMergeType::Max>();
-  }
-  return visitor.template operator()<ScoreMergeType::Sum>();
-}
 
 inline bool ScoresPerDoc(const Scorer* scorer) noexcept {
   return scorer != nullptr && scorer->ScoresPerDoc();

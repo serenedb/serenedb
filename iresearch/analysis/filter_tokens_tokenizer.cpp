@@ -27,6 +27,7 @@
 
 #include "iresearch/analysis/sql_tokenizer.hpp"
 #include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::analysis {
 
@@ -111,8 +112,9 @@ bool FilterTokensTokenizer::ProcessTokens(TokenBatch& batch, BatchCtx& ctx) {
   SDB_ASSERT(ctx.valid);
   bool all_kept = true;
   if (_by_length) {
-    all_kept = ctx.traits.ascii ? DropByLength<true>(batch, ctx.valid)
-                                : DropByLength<false>(batch, ctx.valid);
+    all_kept = Resolve(ctx.traits.ascii, [&]<bool Ascii> IRS_FORCE_INLINE {
+      return DropByLength<Ascii>(batch, ctx.valid);
+    });
   }
   if (_predicate) {
     all_kept &= _predicate->Apply(batch.terms, batch.count, ctx.valid);

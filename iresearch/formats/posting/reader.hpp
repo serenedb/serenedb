@@ -256,14 +256,6 @@ auto PostingsReader::IteratorImpl(IndexFeatures field_features,
   }
 }
 
-auto ResolveInputType(DataInput::Type type, auto&& f) {
-  if (type == DataInput::Type::BytesViewInput) {
-    return f.template operator()<BytesViewInput>();
-  } else {
-    return f.template operator()<IndexInput>();
-  }
-}
-
 inline TermPostings::ptr PostingsReader::Postings(
   IndexFeatures field_features, IndexFeatures required_features,
   const PostingMeta& meta, bool has_score_bounds,
@@ -275,17 +267,16 @@ inline TermPostings::ptr PostingsReader::Postings(
   return IteratorImpl(
     field_features, required_features,
     [&]<typename IteratorTraits, typename FieldTraits> -> TermPostings::ptr {
-      return ResolveInputType(
-        _doc_in->GetType(), [&]<typename InputType> -> TermPostings::ptr {
-          using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
-          if (!reuse) {
-            reuse = memory::make_managed<Stream>();
-          }
-          SDB_ASSERT(dynamic_cast<Stream*>(reuse.get()) != nullptr);
-          static_cast<Stream&>(*reuse).Prepare(meta, *_doc_in, _pos_in.get(),
-                                               _pay_in.get(), has_score_bounds);
-          return std::move(reuse);
-        });
+      return Resolve(*_doc_in, [&]<typename InputType> -> TermPostings::ptr {
+        using Stream = PostingsStream<IteratorTraits, FieldTraits, InputType>;
+        if (!reuse) {
+          reuse = memory::make_managed<Stream>();
+        }
+        SDB_ASSERT(dynamic_cast<Stream*>(reuse.get()) != nullptr);
+        static_cast<Stream&>(*reuse).Prepare(meta, *_doc_in, _pos_in.get(),
+                                             _pay_in.get(), has_score_bounds);
+        return std::move(reuse);
+      });
     });
 }
 

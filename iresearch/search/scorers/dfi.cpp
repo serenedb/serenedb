@@ -41,9 +41,9 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
 #include "iresearch/store/data_output.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -105,19 +105,6 @@ struct Measure<DFIMeasure::ChiSquared> {
     return 1 + diff * diff * inverse;
   }
 };
-
-template<typename F>
-decltype(auto) WithMeasure(DFIMeasure measure, F&& f) {
-  switch (measure) {
-    case DFIMeasure::Standardized:
-      return f.template operator()<DFIMeasure::Standardized>();
-    case DFIMeasure::Saturated:
-      return f.template operator()<DFIMeasure::Saturated>();
-    case DFIMeasure::ChiSquared:
-      return f.template operator()<DFIMeasure::ChiSquared>();
-  }
-  SDB_UNREACHABLE();
-}
 
 template<DFIMeasure M>
 struct DFIFormula {
@@ -183,23 +170,13 @@ void DFI::collect(byte_type* stats_buf, const FieldCollector* field,
 }
 
 ScoreFunction DFI::PrepareScorer(const ScoreContext& ctx) const {
-  auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  const auto ratios = SharesOf(*stats_cast(ctx.stats));
-  if (!freq || ratios.empty()) {
-    return ScoreFunction::Default();
-  }
-
-  const uint32_t* norm = NormsOf(ctx);
-
-  const auto* scale = ScaleOf(ctx);
-
-  return WithMeasure(_measure, [&]<DFIMeasure M> {
-    return MakeShareScore(
-      ratios, [&](score_t ratio) { return DFIFormula<M>{ctx.boost, ratio}; },
-      [&](std::span<const score_t> shares) {
-        return DFITermsOf<M>(ctx.boost, shares);
-      },
-      freq, norm, scale);
+  return Resolve(_measure, [&]<DFIMeasure M> {
+    return PrepareShareScorer(
+      ctx, *stats_cast(ctx.stats),
+      [&](score_t ratio) { return DFIFormula<M>{ctx.boost, ratio}; },
+      [&](std::span<const score_t> ratios) {
+        return DFITermsOf<M>(ctx.boost, ratios);
+      });
   });
 }
 
@@ -211,7 +188,7 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     return;
   }
   const auto kernel =
-    WithMeasure(_measure, []<DFIMeasure M> { return Measure<M>::kKernel; });
+    Resolve(_measure, []<DFIMeasure M> { return Measure<M>::kKernel; });
   const auto describe = [&](explain::Node& node, score_t ratio) {
     explain::AddBoost(node, ctx.boost);
     const auto freq = explain::AddFreq(node, ctx);
@@ -224,7 +201,7 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     } else {
       node.note = "the term occurs no more often than expected, so it scores 0";
     }
-    return WithMeasure(_measure, [&]<DFIMeasure M> {
+    return Resolve(_measure, [&]<DFIMeasure M> {
       return DFIFormula<M>{ctx.boost, ratio}(freq, length);
     });
   };
@@ -245,7 +222,7 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
 std::string DFI::ToString() const {
   return absl::StrCat(
     "dfi(measure=",
-    WithMeasure(_measure, []<DFIMeasure M> { return Measure<M>::kName; }), ")");
+    Resolve(_measure, []<DFIMeasure M> { return Measure<M>::kName; }), ")");
 }
 
 bool DFI::equals(const Scorer& other) const noexcept {

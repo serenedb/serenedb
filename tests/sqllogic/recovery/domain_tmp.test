@@ -1,0 +1,103 @@
+control substitution on
+
+statement ok
+CREATE DOMAIN d_base AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN d_over AS d_base NOT NULL;
+
+statement ok
+CREATE TABLE t_over (id int4, v d_over);
+
+statement count 1
+INSERT INTO t_over VALUES (1, 5);
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+query error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+query
+SELECT id, v FROM t_over;
+----
+id	v
+1	5
+
+connection after_crash
+statement count 1
+INSERT INTO t_over VALUES (2, 7);
+
+connection after_crash
+statement error
+INSERT INTO t_over VALUES (3, NULL);
+
+connection after_crash
+statement error
+SELECT NULL::d_over;
+
+connection after_crash
+query
+SELECT 3::d_over, 4::d_base;
+----
+d_over	d_base
+3	4
+
+connection after_crash
+statement ok
+CHECKPOINT;
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+connection after_crash
+query error connection closed
+SELECT 1;
+
+
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_checkpoint
+query
+SELECT id, v FROM t_over ORDER BY id;
+----
+id	v
+1	5
+2	7
+
+connection after_checkpoint
+statement error
+INSERT INTO t_over VALUES (4, NULL);
+
+connection after_checkpoint
+statement error
+SELECT NULL::d_over;
+
+connection after_checkpoint
+statement error
+SELECT (-1)::d_base;
+
+connection after_checkpoint
+statement error
+SELECT (-1)::d_over;
+
+connection after_checkpoint
+statement error
+INSERT INTO t_over VALUES (5, -1);

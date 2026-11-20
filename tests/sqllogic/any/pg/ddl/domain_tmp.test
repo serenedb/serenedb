@@ -1,0 +1,585 @@
+statement ok
+CREATE DOMAIN tmp_nn AS int4 NOT NULL;
+
+statement ok
+CREATE TABLE tmp_base (id int4, v int4);
+
+statement ok
+INSERT INTO tmp_base VALUES (1, NULL), (2, 2);
+
+statement error
+SELECT v::tmp_nn FROM tmp_base WHERE id = 1;
+
+
+statement error
+SELECT NULL::tmp_nn;
+
+statement error
+SELECT CAST(NULL AS tmp_nn);
+
+statement ok
+CREATE TABLE tmp_nulls (v int4);
+
+statement ok
+INSERT INTO tmp_nulls VALUES (NULL), (NULL);
+
+statement error
+SELECT v::tmp_nn FROM tmp_nulls;
+
+statement error
+SELECT count(*) FROM tmp_base WHERE v::tmp_nn IS NOT NULL;
+
+statement error
+SELECT count(*) FROM tmp_base WHERE v::tmp_nn IS NULL;
+
+statement error
+SELECT count(*) FROM tmp_base WHERE v::tmp_nn > 0;
+
+statement error
+SELECT id FROM (SELECT id, v::tmp_nn AS n FROM tmp_base) s WHERE n > 0;
+
+query
+SELECT id, v::tmp_nn FROM tmp_base WHERE id = 2;
+----
+id	v
+2	2
+
+query
+SELECT count(*) FROM tmp_base WHERE v::tmp_nn > 0 AND id = 2;
+----
+count
+1
+
+statement ok
+CREATE SCHEMA tmp_s;
+
+statement ok
+CREATE DOMAIN tmp_s.tmp_s_nn AS int4 NOT NULL;
+
+statement ok
+CREATE TABLE tmp_s_t (id int4, n tmp_s.tmp_s_nn);
+
+statement ok
+INSERT INTO tmp_s_t VALUES (1, 1);
+
+statement error
+INSERT INTO tmp_s_t VALUES (2, NULL);
+
+statement error
+SELECT NULL::tmp_s.tmp_s_nn;
+
+statement error
+SELECT v::tmp_s.tmp_s_nn FROM tmp_base WHERE id = 1;
+
+statement ok
+CREATE TABLE tmp_s.tmp_s_t2 (id int4, n tmp_s.tmp_s_nn);
+
+statement error
+INSERT INTO tmp_s.tmp_s_t2 VALUES (1, NULL);
+
+statement ok
+SET search_path TO tmp_s, public;
+
+statement error
+SELECT NULL::tmp_s_nn;
+
+statement error
+INSERT INTO tmp_s_t2 VALUES (2, NULL);
+
+statement ok
+RESET search_path;
+
+query
+SELECT id, n FROM tmp_s_t ORDER BY id;
+----
+id	n
+1	1
+
+statement ok
+CREATE DOMAIN tmp_pos AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN tmp_upper AS text CHECK (upper(VALUE) = VALUE);
+
+statement error
+SELECT (-1)::tmp_pos;
+
+statement error
+SELECT 'abc'::tmp_upper;
+
+query
+SELECT 'ABC'::tmp_upper AS u, 5::tmp_pos AS p;
+----
+u	p
+ABC	5
+
+statement error
+SELECT ARRAY[1, NULL]::tmp_nn[];
+
+statement error
+SELECT ARRAY[1, -1]::tmp_pos[];
+
+query
+SELECT sum(x) AS a FROM unnest(ARRAY[1, 2]::tmp_pos[]) AS u(x);
+----
+a
+3
+
+onlyif serenedb
+query
+SELECT TRY_CAST(NULL AS tmp_nn) IS NULL AS a, TRY_CAST(-1 AS tmp_pos) IS NULL AS b, TRY_CAST(5 AS tmp_pos) AS c;
+----
+a	b	c
+t	t	5
+
+statement ok
+CREATE DOMAIN tmp_c AS text COLLATE "C";
+
+query
+SELECT typcollation::regcollation AS c FROM pg_type WHERE typname = 'tmp_c';
+----
+c
+"C"
+
+query
+SELECT 'a'::tmp_c < 'B'::tmp_c AS lt;
+----
+lt
+f
+
+statement ok
+CREATE TABLE tmp_c_t (s tmp_c);
+
+statement ok
+INSERT INTO tmp_c_t VALUES ('b'), ('B'), ('a'), ('A');
+
+query
+SELECT s FROM tmp_c_t ORDER BY s;
+----
+s
+A
+B
+a
+b
+
+statement ok
+CREATE DOMAIN tmp_c_over AS tmp_upper COLLATE "C";
+
+query
+SELECT typcollation::regcollation AS c FROM pg_type WHERE typname = 'tmp_c_over';
+----
+c
+"C"
+
+query
+SELECT 'ABC'::tmp_c_over AS v;
+----
+v
+ABC
+
+statement error
+SELECT 'abc'::tmp_c_over;
+
+statement error
+CREATE DOMAIN tmp_c_int AS int4 COLLATE "C";
+
+onlyif serenedb
+statement ok
+CREATE DOMAIN tmp_nocase AS text COLLATE NOCASE;
+
+onlyif serenedb
+query
+SELECT 'a'::tmp_nocase = 'A'::tmp_nocase AS eq;
+----
+eq
+t
+
+onlyif serenedb
+statement ok
+CREATE TABLE tmp_nocase_t (s tmp_nocase);
+
+onlyif serenedb
+statement ok
+INSERT INTO tmp_nocase_t VALUES ('b'), ('A'), ('a'), ('B');
+
+onlyif serenedb
+query
+SELECT count(*) AS c FROM (SELECT s FROM tmp_nocase_t GROUP BY s) g;
+----
+c
+2
+
+statement ok
+CREATE DOMAIN tmp_def AS int4 DEFAULT 42;
+
+statement ok
+CREATE TABLE tmp_def_t (id int4, v tmp_def, c tmp_def DEFAULT 7);
+
+statement ok
+INSERT INTO tmp_def_t (id) VALUES (1);
+
+statement ok
+INSERT INTO tmp_def_t VALUES (2, DEFAULT, DEFAULT);
+
+statement ok
+INSERT INTO tmp_def_t VALUES (3, 3, 3);
+
+statement ok
+UPDATE tmp_def_t SET v = DEFAULT, c = DEFAULT WHERE id = 3;
+
+query
+SELECT id, v, c FROM tmp_def_t ORDER BY id;
+----
+id	v	c
+1	42	7
+2	42	7
+3	42	7
+
+statement ok
+ALTER TABLE tmp_def_t ADD COLUMN w tmp_def;
+
+query
+SELECT id, w FROM tmp_def_t ORDER BY id;
+----
+id	w
+1	42
+2	42
+3	42
+
+statement ok
+CREATE DOMAIN tmp_def_over AS tmp_def;
+
+statement ok
+CREATE TABLE tmp_def_over_t (id int4, v tmp_def_over);
+
+statement ok
+INSERT INTO tmp_def_over_t (id) VALUES (1);
+
+query
+SELECT id, v FROM tmp_def_over_t;
+----
+id	v
+1	42
+
+statement ok
+CREATE DOMAIN tmp_def_bad AS int4 DEFAULT -1 CHECK (VALUE > 0);
+
+statement ok
+CREATE TABLE tmp_def_bad_t (id int4, v tmp_def_bad);
+
+statement error
+INSERT INTO tmp_def_bad_t (id) VALUES (1);
+
+statement ok
+INSERT INTO tmp_def_bad_t VALUES (2, 5);
+
+statement ok
+CREATE TABLE tmp_nn_def_t (id int4, n tmp_nn);
+
+statement error
+INSERT INTO tmp_nn_def_t (id) VALUES (1);
+
+statement error
+INSERT INTO tmp_nn_def_t VALUES (2, DEFAULT);
+
+statement ok
+INSERT INTO tmp_nn_def_t VALUES (3, 3);
+
+statement ok
+UPDATE tmp_nn_def_t SET id = 4;
+
+statement error
+UPDATE tmp_nn_def_t SET n = DEFAULT;
+
+statement ok
+CREATE TABLE tmp_nn_empty_t (id int4);
+
+statement ok
+ALTER TABLE tmp_nn_empty_t ADD COLUMN n tmp_nn;
+
+statement ok
+CREATE TABLE tmp_nn_rows_t (id int4);
+
+statement ok
+INSERT INTO tmp_nn_rows_t VALUES (1);
+
+statement error
+ALTER TABLE tmp_nn_rows_t ADD COLUMN n tmp_nn;
+
+query
+SELECT id, n FROM tmp_nn_def_t;
+----
+id	n
+4	3
+
+statement ok
+CREATE DOMAIN tmp_alt AS int4;
+
+statement ok
+CREATE TABLE tmp_alt_t (id int4, v tmp_alt);
+
+statement ok
+INSERT INTO tmp_alt_t VALUES (1, -1);
+
+statement ok
+ALTER DOMAIN tmp_alt ADD CONSTRAINT tmp_alt_pos CHECK (VALUE > 0) NOT VALID;
+
+statement error
+SELECT (-5)::tmp_alt;
+
+statement error
+INSERT INTO tmp_alt_t VALUES (2, -2);
+
+statement ok
+INSERT INTO tmp_alt_t VALUES (3, 3);
+
+query
+SELECT id, v FROM tmp_alt_t ORDER BY id;
+----
+id	v
+1	-1
+3	3
+
+statement error
+ALTER DOMAIN tmp_alt ADD CONSTRAINT tmp_alt_pos CHECK (VALUE < 100) NOT VALID;
+
+statement ok
+ALTER DOMAIN tmp_alt ADD CHECK (VALUE < 100) NOT VALID;
+
+statement ok
+ALTER DOMAIN tmp_alt ADD CHECK (VALUE <> 50) NOT VALID;
+
+statement error
+SELECT 100::tmp_alt;
+
+statement error
+SELECT 50::tmp_alt;
+
+statement ok
+ALTER DOMAIN tmp_alt DROP CONSTRAINT tmp_alt_check1;
+
+query
+SELECT 50::tmp_alt AS v;
+----
+v
+50
+
+statement ok
+ALTER DOMAIN tmp_alt RENAME CONSTRAINT tmp_alt_check TO tmp_alt_lt;
+
+statement error
+ALTER DOMAIN tmp_alt RENAME CONSTRAINT tmp_alt_check TO tmp_alt_other;
+
+statement error
+ALTER DOMAIN tmp_alt RENAME CONSTRAINT tmp_alt_lt TO tmp_alt_pos;
+
+statement error
+ALTER DOMAIN tmp_alt DROP CONSTRAINT tmp_alt_check;
+
+statement ok
+ALTER DOMAIN tmp_alt DROP CONSTRAINT IF EXISTS tmp_alt_check;
+
+statement ok
+ALTER DOMAIN tmp_alt DROP CONSTRAINT tmp_alt_lt;
+
+query
+SELECT 100::tmp_alt AS v;
+----
+v
+100
+
+statement error
+SELECT 0::tmp_alt;
+
+statement ok
+ALTER DOMAIN tmp_alt DROP CONSTRAINT tmp_alt_pos;
+
+query
+SELECT 0::tmp_alt AS v;
+----
+v
+0
+
+statement ok
+CREATE DOMAIN tmp_alt_def AS int4;
+
+statement ok
+CREATE TABLE tmp_alt_def_t (id int4, v tmp_alt_def);
+
+statement ok
+ALTER DOMAIN tmp_alt_def SET DEFAULT 5;
+
+statement ok
+INSERT INTO tmp_alt_def_t (id) VALUES (1);
+
+statement ok
+ALTER DOMAIN tmp_alt_def DROP DEFAULT;
+
+statement ok
+INSERT INTO tmp_alt_def_t (id) VALUES (2);
+
+query
+SELECT id, v FROM tmp_alt_def_t ORDER BY id;
+----
+id	v
+1	5
+2	NULL
+
+statement ok
+CREATE DOMAIN tmp_alt_nn AS int4 NOT NULL;
+
+statement error
+SELECT NULL::tmp_alt_nn;
+
+statement ok
+ALTER DOMAIN tmp_alt_nn DROP NOT NULL;
+
+query
+SELECT NULL::tmp_alt_nn IS NULL AS n;
+----
+n
+t
+
+statement ok
+CREATE DOMAIN tmp_alt_old AS int4;
+
+statement ok
+ALTER DOMAIN tmp_alt_old RENAME TO tmp_alt_new;
+
+query
+SELECT 7::tmp_alt_new AS v;
+----
+v
+7
+
+statement error
+SELECT 7::tmp_alt_old;
+
+statement ok
+CREATE TYPE tmp_alt_enum AS ENUM ('a', 'b');
+
+statement error
+ALTER DOMAIN tmp_alt_enum DROP DEFAULT;
+
+statement ok
+CREATE DOMAIN tmp_alt_prep AS int4;
+
+statement ok
+CREATE TABLE tmp_alt_one (x int4);
+
+statement ok
+INSERT INTO tmp_alt_one VALUES (1);
+
+statement ok
+PREPARE tmp_alt_p1(int8) AS SELECT $1::tmp_alt_prep AS v;
+
+statement ok
+PREPARE tmp_alt_p2(int8) AS SELECT $1::tmp_alt_prep AS v FROM tmp_alt_one;
+
+query
+EXECUTE tmp_alt_p1(-1);
+----
+v
+-1
+
+query
+EXECUTE tmp_alt_p2(-1);
+----
+v
+-1
+
+statement ok
+ALTER DOMAIN tmp_alt_prep ADD CONSTRAINT tmp_alt_prep_pos CHECK (VALUE > 0) NOT VALID;
+
+statement error
+EXECUTE tmp_alt_p1(-1);
+
+statement error
+EXECUTE tmp_alt_p2(-1);
+
+statement ok
+DEALLOCATE tmp_alt_p1;
+
+statement ok
+DEALLOCATE tmp_alt_p2;
+
+statement ok
+CREATE DOMAIN tmp_alt_ns AS int4;
+
+onlyif serenedb
+statement error
+ALTER DOMAIN tmp_alt_ns ADD CONSTRAINT tmp_alt_ns_pos CHECK (VALUE > 0);
+
+skipif serenedb
+statement ok
+ALTER DOMAIN tmp_alt_ns ADD CONSTRAINT tmp_alt_ns_pos CHECK (VALUE > 0);
+
+onlyif serenedb
+statement error
+ALTER DOMAIN tmp_alt_ns SET NOT NULL;
+
+skipif serenedb
+statement ok
+ALTER DOMAIN tmp_alt_ns SET NOT NULL;
+
+statement ok
+ALTER DOMAIN tmp_alt_ns ADD CONSTRAINT tmp_alt_ns_lt CHECK (VALUE < 100) NOT VALID;
+
+onlyif serenedb
+statement error
+ALTER DOMAIN tmp_alt_ns VALIDATE CONSTRAINT tmp_alt_ns_lt;
+
+skipif serenedb
+statement ok
+ALTER DOMAIN tmp_alt_ns VALIDATE CONSTRAINT tmp_alt_ns_lt;
+
+statement ok
+CREATE DOMAIN tmp_cat AS int4 NOT NULL DEFAULT 42;
+
+statement ok
+CREATE DOMAIN tmp_cat_txt AS text COLLATE "C";
+
+statement ok
+CREATE TYPE tmp_cat_enum AS ENUM ('x', 'y');
+
+statement ok
+CREATE DOMAIN tmp_cat_e AS tmp_cat_enum;
+
+statement ok
+CREATE DOMAIN tmp_cat_over AS tmp_cat;
+
+query
+SELECT typname, typtype, typlen, typbyval, typalign, typstorage, typnotnull, typdefault, format_type(typbasetype, typtypmod) AS base FROM pg_type WHERE typname IN ('tmp_cat', 'tmp_cat_txt', 'tmp_cat_e', 'tmp_cat_over') ORDER BY typname;
+----
+typname	typtype	typlen	typbyval	typalign	typstorage	typnotnull	typdefault	base
+tmp_cat	d	4	t	i	p	t	42	integer
+tmp_cat_e	d	4	t	i	p	f	NULL	tmp_cat_enum
+tmp_cat_over	d	4	t	i	p	f	42	tmp_cat
+tmp_cat_txt	d	-1	f	i	x	f	NULL	text
+
+query
+SELECT typname, typoutput, typsend FROM pg_type WHERE typname IN ('tmp_cat', 'tmp_cat_txt', 'tmp_cat_over') ORDER BY typname;
+----
+typname	typoutput	typsend
+tmp_cat	int4out	int4send
+tmp_cat_over	int4out	int4send
+tmp_cat_txt	textout	textsend
+
+statement ok
+CREATE TABLE tmp_cat_t (a tmp_cat, b tmp_cat_txt, c tmp_cat[], d tmp_cat_e, e tmp_cat_over);
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS t, attlen, attalign, attcollation::regcollation AS coll FROM pg_attribute WHERE attrelid = 'tmp_cat_t'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	t	attlen	attalign	coll
+a	tmp_cat	4	i	-
+b	tmp_cat_txt	-1	i	"C"
+c	tmp_cat[]	-1	i	-
+d	tmp_cat_e	4	i	-
+e	tmp_cat_over	4	i	-
+
+query
+SELECT pg_typeof(a) AS a, pg_typeof(b) AS b, pg_typeof(c) AS c, pg_typeof(d) AS d, pg_typeof(e) AS e FROM (SELECT 1::tmp_cat AS a, 'q'::tmp_cat_txt AS b, ARRAY[1]::tmp_cat[] AS c, 'x'::tmp_cat_e AS d, 2::tmp_cat_over AS e) s;
+----
+a	b	c	d	e
+tmp_cat	tmp_cat_txt	tmp_cat[]	tmp_cat_e	tmp_cat_over

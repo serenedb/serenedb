@@ -59,6 +59,7 @@ sdb::pg::SerializationContext CloneProto(
   context.csv_quote = proto.csv_quote;
   context.csv_escape = proto.csv_escape;
   context.csv_single_column = proto.csv_single_column;
+  context.csv_specials = proto.csv_specials;
   return context;
 }
 

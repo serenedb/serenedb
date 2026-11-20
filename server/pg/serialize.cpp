@@ -53,7 +53,6 @@
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/types/uuid.hpp>
-#include <duckdb/formats/csv_simd.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <icu-helpers.hpp>
 #include <icu-zone-lut.hpp>
@@ -2299,70 +2298,20 @@ bool CsvScanNeeded(const SerializationContext& context) {
          kAlphabet.contains(context.csv_quote);
 }
 
-bool HasCsvSpecial(std::string_view field, char delim, char quote) {
-  const auto special = [&](const duckdb::CsvVector& block) {
-    return block.Equal(delim) | block.Equal(quote) | block.Equal('\n') |
-           block.Equal('\r');
-  };
-  constexpr size_t kBlock = duckdb::CSV_BLOCK_BYTES;
-  size_t i = 0;
-  for (; i + kBlock <= field.size(); i += kBlock) {
-    if (special(duckdb::CsvVector{field.data() + i})) {
-      return true;
-    }
-  }
-  if (i == field.size()) {
-    return false;
-  }
-  char padded[kBlock] = {};
-  std::memcpy(padded, field.data() + i, field.size() - i);
-  const uint64_t valid = (uint64_t{1} << (field.size() - i)) - 1;
-  return (special(duckdb::CsvVector{padded}) & valid) != 0;
-}
-
 bool CsvNeedsQuotes(const SerializationContext& ctx, std::string_view field) {
   return field == ctx.copy_null || (ctx.csv_single_column && field == "\\.") ||
-         HasCsvSpecial(field, ctx.copy_delim, ctx.csv_quote);
-}
-
-bool IsCsvSpecial(uint8_t c, char quote, char escape) {
-  return escape != '\0' && (c == static_cast<uint8_t>(quote) ||
-                            c == static_cast<uint8_t>(escape));
-}
-
-size_t QuoteCsvInPlace(uint8_t* data, size_t size, char quote, char escape) {
-  size_t escapes = 0;
-  for (size_t i = 0; i < size; ++i) {
-    escapes += IsCsvSpecial(data[i], quote, escape);
-  }
-  auto* in = data + size;
-  auto* out = in + escapes + 1;
-  *out = static_cast<uint8_t>(quote);
-  while (in != data) {
-    const auto c = *--in;
-    *--out = c;
-    if (IsCsvSpecial(c, quote, escape)) {
-      *--out = static_cast<uint8_t>(escape);
-    }
-  }
-  *--out = static_cast<uint8_t>(quote);
-  return size + escapes + 2;
+         ctx.csv_specials.In(field);
 }
 
 void WriteCsvQuoted(message::Writer& writer, std::string_view field, char quote,
                     char escape) {
-  writer.Write({&quote, 1});
-  size_t start = 0;
-  for (size_t i = 0; i < field.size(); ++i) {
-    if (IsCsvSpecial(static_cast<uint8_t>(field[i]), quote, escape)) {
-      CheckMessageSize(writer.Written() + i - start + 1);
-      writer.Write(field.substr(start, i - start));
-      writer.Write({&escape, 1});
-      start = i;
-    }
-  }
-  writer.Write(field.substr(start));
-  writer.Write({&quote, 1});
+  const size_t size =
+    field.size() + duckdb::CsvEscapes(field, quote, escape) + 2;
+  CheckMessageSize(writer.Written() + size);
+  writer.Write(size, [&](uint8_t* out) {
+    return duckdb::CsvWriteQuoted(reinterpret_cast<char*>(out), field, quote,
+                                  escape);
+  });
 }
 
 void FinishCsvField(SerializationContext& ctx,
@@ -2413,7 +2362,9 @@ IRS_FORCE_INLINE void RenderCsvValue(SerializationContext& ctx, const RUVF& v,
       } else if constexpr (F == Framing::CsvField) {
         quote = CsvNeedsQuotes(ctx, field);
       }
-      return quote ? QuoteCsvInPlace(d, n, ctx.csv_quote, ctx.csv_escape) : n;
+      return quote ? duckdb::CsvQuoteInPlace(reinterpret_cast<char*>(d), n,
+                                             ctx.csv_quote, ctx.csv_escape)
+                   : n;
     });
   } else {
     const auto mark = ctx.writer->Position();
@@ -2969,8 +2920,9 @@ IRS_FORCE_INLINE uint8_t* FinishField(const SerializationContext& ctx,
     } else if constexpr (F == Framing::CsvField) {
       quote = CsvNeedsQuotes(ctx, field);
     }
-    return d +
-           (quote ? QuoteCsvInPlace(d, n, ctx.csv_quote, ctx.csv_escape) : n);
+    return d + (quote ? duckdb::CsvQuoteInPlace(reinterpret_cast<char*>(d), n,
+                                                ctx.csv_quote, ctx.csv_escape)
+                      : n);
   } else {
     return d + n;
   }
@@ -3771,6 +3723,11 @@ void SetCopyCsv(SerializationContext& context, char delim, char quote,
   context.csv_quote = quote;
   context.csv_escape = escape;
   context.csv_single_column = single_column;
+  context.csv_specials = {};
+  context.csv_specials.Add(delim);
+  context.csv_specials.Add(quote);
+  context.csv_specials.Add('\n');
+  context.csv_specials.Add('\r');
 }
 
 void SerializeCopyCsvHeader(SerializationContext& context,

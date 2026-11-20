@@ -767,6 +767,28 @@ def test_copy_to_stdout_csv_header_flag(conn: psycopg.Connection,
         _drop(conn, table_name)
 
 
+def test_copy_to_stdout_csv_quotes_special_fields(conn: psycopg.Connection,
+                                                   table_name: str) -> None:
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'INSERT INTO public."{table_name}" VALUES '
+                "(1, 'a,b'), (2, 'x\"y'), (3, E'line\\nbreak'), (4, ''), "
+                "(5, NULL), (6, 'plain')")
+            out = b""
+            with cur.copy(
+                f'COPY (SELECT * FROM public."{table_name}" ORDER BY x) '
+                'TO STDOUT (FORMAT CSV)'
+            ) as cp:
+                for chunk in cp:
+                    out += bytes(chunk)
+        assert out == (b'1,"a,b"\n2,"x""y"\n3,"line\nbreak"\n4,""\n5,\n'
+                       b'6,plain\n'), f"unexpected output: {out!r}"
+    finally:
+        _drop(conn, table_name)
+
+
 @pytest.mark.parametrize("header_opt", ["HEADER true", "HEADER false"])
 def test_copy_from_stdin_csv_header_flag(conn: psycopg.Connection,
                                            table_name: str,

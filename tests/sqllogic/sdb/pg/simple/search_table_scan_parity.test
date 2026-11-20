@@ -92,6 +92,76 @@ row_groups_scanned
 10
 
 
+# The statistics of strings bound no lengths compared with another column: such a filter is checked on the rows
+query
+SELECT count(*) AS n FROM ssp WHERE octet_length(s) < k;
+----
+n
+39996
+
+
+query
+SELECT sum(strlen(s)) AS bytes, sum(octet_length(t)) AS t_bytes FROM ssp;
+----
+bytes	t_bytes
+152592	240000
+
+
+query
+SELECT count(*) AS n FROM ssp WHERE s <> '';
+----
+n
+26666
+
+
+query
+SELECT count(*) AS n FROM ssp WHERE length(s) = 0;
+----
+n
+13334
+
+
+query
+SELECT id, s FROM ssp WHERE s <> '' ORDER BY id LIMIT 3;
+----
+id	s
+1	v1
+2	v2
+4	v4
+
+
+query
+SELECT id FROM ssp WHERE s <> '' ORDER BY id LIMIT 3;
+----
+id
+1
+2
+4
+
+
+query
+SELECT count(*) AS n FROM ssp WHERE char_length(s) >= 1 AND octet_length(t) = 6;
+----
+n
+26666
+
+
+query
+EXPLAIN SELECT count(*) FROM ssp WHERE s <> '';
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────────────╮
+│ Aggregates: count_star()           │
+│ ~1 row                             │
+╰──────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ─┴─────────────────╮
+│ Table: ssp                         │
+│ Output: row-count only             │
+│ Column Filter: octet_length(s) > 0 │
+│ ~8,000 rows                        │
+╰────────────────────────────────────╯
+
+
 query
 SELECT count(*) AS n, min(k) AS lo, max(k) AS hi FROM ssp WHERE k > 20500;
 ----
@@ -437,6 +507,46 @@ SELECT k FROM ssd ORDER BY k LIMIT 2 OFFSET 2500;
 k
 4548
 4549
+
+
+statement ok
+CREATE TABLE ssn (id BIGINT PRIMARY KEY, k INTEGER, u TEXT)
+  WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+INSERT INTO ssn
+SELECT i, i % 7, CASE WHEN i % 4 = 0 THEN NULL WHEN i % 4 = 1 THEN '' ELSE 'u' || i::VARCHAR END
+FROM range(10000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssn;
+
+
+statement ok
+SET threads = 4
+
+
+query
+SELECT count(strlen(u)) AS n, sum(strlen(u)) AS bytes FROM ssn;
+----
+n	bytes
+7500	24446
+
+
+query
+SELECT sum(strlen(u)) AS bytes FROM ssn WHERE k = 3;
+----
+bytes
+3494
+
+
+query
+SELECT sum(k::BIGINT) AS s FROM ssn;
+----
+s
+29994
 
 
 # A caller's filter that can throw enters the scan of a secure view's table behind the view's own filter only: the

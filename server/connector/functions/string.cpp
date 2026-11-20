@@ -386,16 +386,6 @@ void QuoteIdentFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
   duckdb::StringVector::AddHeapReference(result, args.data[0]);
 }
 
-// octet_length(text) -> int: byte length (DuckDB has it for BLOB/BIT, not
-// VARCHAR)
-void OctetLengthFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                         duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, int64_t>(
-    args.data[0], result, args.size(), [](duckdb::string_t input) -> int64_t {
-      return static_cast<int64_t>(input.GetSize());
-    });
-}
-
 // string_to_array(text, delimiter, null_string) -> text[]
 // 3-arg form: splits then replaces null_string matches with NULL.
 // When null_string is NULL, behaves like 2-arg form (no NULL replacement).
@@ -1719,12 +1709,6 @@ void RegisterPgStringFunctions(duckdb::DatabaseInstance& db) {
     DecodeFunction};
   decode.SetFallible();
   loader.RegisterFunction(std::move(decode));
-
-  // octet_length(varchar) -> bigint
-  loader.RegisterFunction(duckdb::ScalarFunction{"octet_length",
-                                                 {duckdb::LogicalType::VARCHAR},
-                                                 duckdb::LogicalType::BIGINT,
-                                                 OctetLengthFunction});
 
   // to_bin(int32), to_bin(int64)
   loader.RegisterFunction(duckdb::ScalarFunction{"to_bin",

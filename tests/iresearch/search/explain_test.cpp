@@ -231,7 +231,7 @@ class ExplainTest : public IndexTestBase {
 
  private:
   struct ExplainRun {
-    irs::DirectoryReader index;
+    irs::CompositeReader index;
     MaxMemoryCounter counter;
     std::optional<tests::PreparedFilter> prepared;
     irs::explain::StatsIndex stats;
@@ -629,7 +629,7 @@ TEST_P(ExplainTest, rows_in_any_order_are_explained) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(explain_test, ExplainTest,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

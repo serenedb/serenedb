@@ -218,8 +218,8 @@ id	product	priority	team
 # DOCS_TEST_RAW
 #| CREATE SECRET (
 #|     TYPE s3,
-#|     KEY_ID '⟨AKIAIOSFODNN7EXAMPLE⟩',
-#|     SECRET '⟨wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY⟩',
+#|     KEY_ID '⟨your-access-key-id⟩',
+#|     SECRET '⟨your-secret-access-key⟩',
 #|     REGION '⟨us-east-1⟩',
 #|     SCOPE 's3://⟨my-bucket⟩'
 #| );
@@ -229,8 +229,8 @@ id	product	priority	team
 statement ok
 CREATE OR REPLACE SECRET read_parquet_file_${__DATABASE__} (
     TYPE s3,
-    KEY_ID 'AKIAIOSFODNN7EXAMPLE',
-    SECRET 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    KEY_ID 'my_access_key_id',
+    SECRET 'my_secret_access_key',
     REGION 'us-east-1',
     SCOPE 's3://my-bucket'
 );

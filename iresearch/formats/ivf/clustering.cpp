@@ -35,7 +35,7 @@
 
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/types.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 extern "C" {
 
@@ -311,7 +311,7 @@ void AssignNearestT(const float* data, size_t n, const float* centroids,
 void AssignNearest(VectorMetric metric, const float* data, size_t n,
                    const float* centroids, uint32_t k, uint32_t d,
                    std::vector<uint32_t>& out) {
-  ResolveEnum<VectorMetric>(metric, [&]<VectorMetric Metric>() {
+  Resolve(metric, [&]<VectorMetric Metric>() {
     AssignNearestT<Metric>(data, n, centroids, k, d, out);
   });
 }

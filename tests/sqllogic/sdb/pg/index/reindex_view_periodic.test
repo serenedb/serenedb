@@ -248,7 +248,7 @@ count
 # B9: source temporarily BROKEN -- the glob matches nothing, ticks fail,
 # the loop survives (the index keeps serving its last state).
 system ok
-mkdir -p $__TEST_DIR__/rvp_hold && mv $__TEST_DIR__/rvp_glob/f*.parquet $__TEST_DIR__/rvp_hold/
+mv $__TEST_DIR__/rvp_glob $__TEST_DIR__/rvp_hold && mkdir $__TEST_DIR__/rvp_glob
 
 statement ok
 CREATE OR REPLACE TEMP TABLE rvp_runs AS SELECT run_count, failure_count FROM sdb_jobs() WHERE database_name = current_database() AND job_name = 'rvp_idx';
@@ -267,7 +267,7 @@ count
 
 # B10: source restored -> the next tick recovers by itself.
 system ok
-mv $__TEST_DIR__/rvp_hold/f*.parquet $__TEST_DIR__/rvp_glob/
+rmdir $__TEST_DIR__/rvp_glob && mv $__TEST_DIR__/rvp_hold $__TEST_DIR__/rvp_glob
 
 query ok retry 400 backoff 250ms
 SELECT count(*) FROM rvp_idx WHERE body @@ ts_phrase('sibling');

@@ -21,30 +21,11 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/std.hpp>
 
 #include "tests_shared.hpp"
 
 using namespace irs;
-
-class OutputBuf final : public std::streambuf {
- public:
-  explicit OutputBuf(IndexOutput& out) noexcept : _out{out} {}
-
-  std::streamsize xsputn(const char_type* c, std::streamsize size) final {
-    _out.WriteData(reinterpret_cast<const byte_type*>(c), size);
-    return size;
-  }
-
-  int_type overflow(int_type c) final {
-    _out.WriteByte(traits_type::to_char_type(c));
-    return c;
-  }
-
- private:
-  IndexOutput& _out;
-};
 
 TEST(std_test, head_for_each_if) {
   /* usual case */

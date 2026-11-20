@@ -23,6 +23,10 @@
 
 #pragma once
 
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
+#include <string>
+#include <string_view>
 #include <vector>
 #include <yaclib/async/future.hpp>
 
@@ -37,14 +41,7 @@
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-}
-
 namespace irs {
-
-struct TrackingDirectory;
 
 struct DocRemap {
   explicit DocRemap(IResourceManager& rm) noexcept : id_map{{rm}} {}
@@ -79,17 +76,16 @@ class MergeWriter : public util::Noncopyable {
     DocRemap remap;
   };
 
-  explicit MergeWriter(Directory& dir,
-                       const SegmentWriterOptions& options) noexcept
-    : _dir{dir},
-      _readers{{options.resource_manager}},
+  MergeWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+              std::string_view root, const SegmentWriterOptions& options)
+    : _fs{fs},
+      _root{root},
+      _readers{{IResourceManager::gNoop}},
       _scorer{options.scorer},
-      _db{[db = options.db] -> duckdb::DatabaseInstance& {
-        SDB_ASSERT(db);
-        return *db;
-      }()},
+      _db{db},
       _field_options{options.field_options},
-      _hnsw_bases{options.hnsw_bases} {}
+      _hnsw_bases{options.hnsw_bases},
+      _released{options.released} {}
   MergeWriter(MergeWriter&&) = default;
   MergeWriter& operator=(MergeWriter&&) = delete;
 
@@ -103,7 +99,8 @@ class MergeWriter : public util::Noncopyable {
 
   // Flush all added readers into a single segment.
   auto Flush(SegmentMeta& segment, const FlushProgress& progress = {},
-             const AnnBuildEnv* env = nullptr) -> yaclib::Future<bool>;
+             const AnnBuildEnv* env = nullptr)
+    -> yaclib::Future<std::shared_ptr<const FileTracker>>;
 
   std::shared_ptr<const SegmentReaderImpl> FlushPiece(SegmentMeta& segment,
                                                       uint64_t id);
@@ -116,13 +113,15 @@ class MergeWriter : public util::Noncopyable {
   }
 
  private:
-  Directory& _dir;
+  duckdb::FileSystem& _fs;
+  std::string _root;
   ManagedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;
   // Non-owning; the caller pins it for the whole merge.
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
+  std::shared_ptr<ReleasedSegments> _released;
   SegmentInputs _inputs;
 };
 

@@ -50,6 +50,16 @@ owner_usage	owner_create
 t	t
 
 
+# A role named by its name and a schema by its oid answer the same.
+query
+SELECT
+  has_schema_privilege('osh_vedernikoff', 'osh_mop'::regnamespace::oid, 'USAGE') AS usage_priv,
+  has_schema_privilege('postgres', 'osh_mop'::regnamespace::oid, 'CREATE') AS owner_create;
+----
+usage_priv	owner_create
+f	t
+
+
 statement ok
 CREATE SCHEMA "Osh_Mixed";
 

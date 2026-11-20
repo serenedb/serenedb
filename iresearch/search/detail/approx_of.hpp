@@ -22,6 +22,7 @@
 
 #include <utility>
 
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/queries/approx_query.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
@@ -33,6 +34,15 @@ typename Family::Result MakeApprox(const ApproxQuery& query,
                                    const typename Family::ScoredContext& ctx) {
   return PlanConstant<Family>(query.Approx(),
                               AllDocsScoreOf(query, Family::Scoring(ctx)), ctx);
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const ApproxQuery& query, const Ctx& ctx) {
+  if constexpr (kScoredPlan<Family, Ctx>) {
+    return MakeApprox<Family>(query, ctx);
+  } else {
+    return Family::PlanChild(query.Approx(), ctx, ScoreMergeType::Noop);
+  }
 }
 
 }  // namespace irs::detail

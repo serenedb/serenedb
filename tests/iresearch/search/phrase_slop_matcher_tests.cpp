@@ -94,7 +94,7 @@ struct OffsetMatch {
 
 template<typename PhraseQueryT>
 std::vector<OffsetMatch> CollectOffsets(const tests::PreparedFilter& prepared,
-                                        const irs::DirectoryReader& rdr) {
+                                        const irs::CompositeReader& rdr) {
   std::vector<OffsetMatch> out;
   size_t i = 0;
   for (auto sub = rdr.begin(); sub != rdr.end(); ++sub, ++i) {
@@ -557,7 +557,7 @@ TEST_P(PhraseSlopMatcherTestCase, variadic_slot_stats_merge_by_term) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(phrase_slop_matcher_test, PhraseSlopMatcherTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

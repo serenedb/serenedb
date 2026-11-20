@@ -53,7 +53,7 @@ uint32_t IndexOf(uint64_t id) {
   return sdb::test::IndexOf(OneRowSegments(), id);
 }
 
-class SearchTableChangesRows : public ::testing::Test {
+class SearchTableChangesRows : public sdb::test::OneRowSegmentsTest {
  protected:
   uint64_t AppendRows(LocalTableChangesEntry& changes, duckdb::idx_t count) {
     duckdb::DataChunk chunk;
@@ -181,13 +181,15 @@ TEST_F(SearchTableChangesRows, TruncateRemovesWhatItsSnapshotSees) {
   EXPECT_EQ(Positions(*changes.removals.front()), positions);
 }
 
-TEST(SearchTableChanges, EmptyDeleteLeavesNothingPending) {
+class SearchTableChanges : public sdb::test::OneRowSegmentsTest {};
+
+TEST_F(SearchTableChanges, EmptyDeleteLeavesNothingPending) {
   irs::DocRemovalBuilder positions;
   AppendDeletes(positions, {});
   EXPECT_TRUE(positions.Empty());
 }
 
-TEST(SearchTableChanges, DeleteChunksJoin) {
+TEST_F(SearchTableChanges, DeleteChunksJoin) {
   irs::DocRemovalBuilder positions;
   const std::vector<uint64_t> first{11, 12, 20};
   const std::vector<uint64_t> second{13, 14, 12};
@@ -196,7 +198,7 @@ TEST(SearchTableChanges, DeleteChunksJoin) {
   EXPECT_EQ(Pending(positions), (std::vector<uint64_t>{11, 12, 13, 14, 20}));
 }
 
-TEST(SearchTableChanges, PositionsKeepTheirSegments) {
+TEST_F(SearchTableChanges, PositionsKeepTheirSegments) {
   const auto last = irs::doc_limits::eof() - 1;
   const std::vector<uint64_t> positions{
     MakeRowPosition(3, last - 1), MakeRowPosition(3, last),
@@ -214,7 +216,7 @@ TEST(SearchTableChanges, PositionsKeepTheirSegments) {
                            MakeRowPosition(4, irs::doc_limits::min())}));
 }
 
-TEST(SearchTableChanges, AMillionRowDeleteFreezesToAFewBytes) {
+TEST_F(SearchTableChanges, AMillionRowDeleteFreezesToAFewBytes) {
   irs::DocRemovalBuilder positions;
   std::vector<uint64_t> chunk(STANDARD_VECTOR_SIZE);
   uint64_t next = MakeRowPosition(5, irs::doc_limits::min());
@@ -230,7 +232,7 @@ TEST(SearchTableChanges, AMillionRowDeleteFreezesToAFewBytes) {
   EXPECT_GT(1024, removal->groups[0].docs.FrozenSize());
 }
 
-TEST(SearchTableChanges, DeletesReadConstantVectors) {
+TEST_F(SearchTableChanges, DeletesReadConstantVectors) {
   irs::DocRemovalBuilder positions;
   const auto position = MakeRowPosition(1, 5);
   const duckdb::Vector values{
@@ -239,7 +241,7 @@ TEST(SearchTableChanges, DeletesReadConstantVectors) {
   EXPECT_EQ(Pending(positions), (std::vector<uint64_t>{position}));
 }
 
-TEST(SearchTableChanges, DeletesReadDictionaryVectors) {
+TEST_F(SearchTableChanges, DeletesReadDictionaryVectors) {
   irs::DocRemovalBuilder positions;
   std::vector<uint64_t> places;
   for (uint32_t i = 0; i < 10; ++i) {
@@ -257,7 +259,7 @@ TEST(SearchTableChanges, DeletesReadDictionaryVectors) {
     (std::vector<uint64_t>{MakeRowPosition(2, 4), MakeRowPosition(2, 10)}));
 }
 
-TEST(SearchTableChanges, DeletesReadFilledPositions) {
+TEST_F(SearchTableChanges, DeletesReadFilledPositions) {
   irs::DocRemovalBuilder positions;
   duckdb::Vector values{duckdb::LogicalType::ROW_TYPE};
   FillRowPositions(6, 20, nullptr, 4, values);

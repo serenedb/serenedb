@@ -72,8 +72,6 @@ add_library(
     build_info.cpp
     ${CMAKE_CURRENT_BINARY_DIR}/credits.cpp
     drain_gate.cpp
-    file_utils.cpp
-    files.cpp
     init.cpp
     lifecycle.cpp
     lockfile.cpp

@@ -28,7 +28,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/masked_leaf.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -50,13 +49,13 @@ class PostingProbeScored : public PostingLeaf<InputType, kProbeScoredShape> {
  public:
   PostingProbeScored() = default;
 
-  PostingProbeScored(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingProbeScored(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                      const SubReader& segment, const TermReader& field,
                      const ScoreArgs& args) {
     Prepare(meta, doc_in, segment, field, args);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const ScoreArgs& args) {
     SDB_ASSERT(FeaturesHaveFreq(field.meta().index_features));

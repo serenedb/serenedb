@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
@@ -44,7 +45,7 @@
 #include <iresearch/search/hits/root.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <stdexcept>
 #include <tuple>
@@ -83,15 +84,12 @@ bool StripSuffix(std::string_view& name, std::string_view suffix) {
 
 }  // namespace
 
-irs::DirectoryReader OpenIndex(const irs::Directory& dir,
+irs::CompositeReader OpenIndex(duckdb::DatabaseInstance& db,
+                               duckdb::FileSystem& fs, std::string_view root,
                                const irs::IndexReaderOptions& options) {
-  const auto in = dir.open(kSegmentListFile, irs::IOAdvice::SEQUENTIAL);
-  if (!in) {
-    throw std::runtime_error{"the index has no segment list"};
-  }
-  std::string text(in->Length(), '\0');
-  in->ReadData(0, reinterpret_cast<irs::byte_type*>(text.data()), text.size());
-  return irs::OpenSegmentList(dir, text, options);
+  const auto text = irs::ReadWhole<std::string>(
+    duckdb::QueryContext{}, fs, fs.JoinPath(root, kSegmentListFile));
+  return irs::OpenSegmentList(db, fs, root, text, options);
 }
 
 Command ParseCommand(std::string_view name) {
@@ -143,12 +141,12 @@ Executor::Executor(std::string_view path)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _tokenizer{irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{})},
-    _dir{std::in_place, path},
-    _reader{
-      OpenIndex(*_dir, {.scorer = _scorer_ptr,
-                        .db = &::irs::DuckDBEngine::Instance().instance()})} {}
+    _reader{OpenIndex(::irs::DuckDBEngine::Instance().instance(),
+                      duckdb::FileSystem::GetFileSystem(
+                        ::irs::DuckDBEngine::Instance().instance()),
+                      path, {.scorer = _scorer_ptr})} {}
 
-Executor::Executor(irs::DirectoryReader reader)
+Executor::Executor(irs::CompositeReader reader)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _tokenizer{irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{})},

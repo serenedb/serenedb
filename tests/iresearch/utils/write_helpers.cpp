@@ -30,98 +30,50 @@ int32_t Ftoi32(float v) {
   return bits ^ ((bits >> 31) & INT32_C(0x7FFFFFFF));
 }
 
-float I32tof(int32_t v) {
-  return std::bit_cast<float>(v ^ ((v >> 31) & INT32_C(0x7FFFFFFF)));
-}
-
 int64_t Dtoi64(double v) {
   const auto bits = std::bit_cast<int64_t>(v);
   return bits ^ ((bits >> 63) & INT64_C(0x7FFFFFFFFFFFFFFF));
 }
 
-double I64tod(int64_t v) {
-  return std::bit_cast<double>(v ^ ((v >> 63) & INT64_C(0x7FFFFFFFFFFFFFFF)));
-}
-
 }  // namespace
 
-void WriteZvfloat(irs::DataOutput& out, float v) {
+void WriteZvfloat(duckdb::WriteStream& out, float v) {
   const int32_t iv = Ftoi32(v);
 
   if (iv >= -1 && iv <= 125) {
     // small signed values between [-1 and 125]
-    out.WriteByte(static_cast<irs::byte_type>(0x80 | (1 + iv)));
+    out.Write<irs::byte_type>(static_cast<irs::byte_type>(0x80 | (1 + iv)));
   } else if (!std::signbit(v)) {
     // positive value
-    out.WriteU32(std::byteswap(iv));
+    out.Write<uint32_t>(std::byteswap(iv));
   } else {
     // negative value
-    out.WriteByte(0xFF);
-    out.WriteU32(iv);
+    out.Write<irs::byte_type>(0xFF);
+    out.Write<uint32_t>(iv);
   }
 };
 
-float ReadZvfloat(irs::DataInput& in) {
-  const uint32_t b = in.ReadByte();
-
-  if (0xFF == b) {
-    // negative value
-    return I32tof(in.ReadI32());
-  } else if (0 != (b & 0x80)) {
-    // small signed value
-    return float((b & 0x7F) - 1);
-  }
-
-  // positive float (ensure read order)
-  const auto part = uint16_t(in.ReadI16());
-
-  return I32tof((b << 24) | (std::byteswap(part) << 8) |
-                uint32_t(in.ReadByte()));
-}
-
-void WriteZvdouble(irs::DataOutput& out, double v) {
+void WriteZvdouble(duckdb::WriteStream& out, double v) {
   const int64_t lv = Dtoi64(v);
 
   if (lv > -1 && lv <= 124) {
     // small signed values between [-1 and 124]
-    out.WriteByte(static_cast<irs::byte_type>(0x80 | (1 + lv)));
+    out.Write<irs::byte_type>(static_cast<irs::byte_type>(0x80 | (1 + lv)));
   } else {
     const float fv = static_cast<float>(v);
 
     if (static_cast<double>(fv) == v) {
-      out.WriteByte(0xFE);
-      out.WriteU32(Ftoi32(fv));
+      out.Write<irs::byte_type>(0xFE);
+      out.Write<uint32_t>(Ftoi32(fv));
     } else if (!std::signbit(v)) {
       // positive value
-      out.WriteU64(std::byteswap(lv));
+      out.Write<uint64_t>(std::byteswap(lv));
     } else {
       // negative value
-      out.WriteByte(0xFF);
-      out.WriteU64(lv);
+      out.Write<irs::byte_type>(0xFF);
+      out.Write<uint64_t>(lv);
     }
   }
-}
-
-double ReadZvdouble(irs::DataInput& in) {
-  const uint64_t b = in.ReadByte();
-
-  if (0xFF == b) {
-    // negative value
-    return I64tod(in.ReadI64());
-  } else if (0xFE == b) {
-    // float value
-    return static_cast<double>(I32tof(in.ReadI32()));
-  } else if (0 != (b & 0x80)) {
-    // small signed value
-    return double((b & 0x7F) - 1);
-  }
-
-  // positive double (ensure read order)
-  const auto part1 = uint64_t(std::byteswap(uint32_t(in.ReadI32())));
-  const auto part2 = uint64_t(std::byteswap(uint16_t(in.ReadI16())));
-
-  return I64tod((b << 56) | (part1 << 24) | (part2 << 8) |
-                uint64_t(in.ReadByte()));
 }
 
 }  // namespace tests

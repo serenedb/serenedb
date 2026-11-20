@@ -1,0 +1,117 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <span>
+#include <tuple>
+#include <utility>
+#include <vector>
+
+#include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/exclusion_of.hpp"
+#include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
+#include "iresearch/search/top/make.hpp"
+#include "iresearch/search/top/posting_pruned_clause.hpp"
+#include "iresearch/search/top/posting_pruned_lead.hpp"
+#include "iresearch/search/top/pruned_conjunction.hpp"
+#include "iresearch/search/top/pruned_leaves.hpp"
+#include "iresearch/utils/empty.hpp"
+
+namespace irs::top {
+
+template<typename P>
+Root::ptr PrunedConjunctionMaker<P>::Make(
+  std::span<const irs::detail::PostingClause> terms,
+  std::span<const QueryBuilder::ptr> filters, irs::detail::Terms uniformity,
+  std::span<const irs::detail::PostingClause> excludes,
+  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
+  const Context& ctx, ScoreMergeType merge) {
+  if (merge != ScoreMergeType::Sum) {
+    return {};
+  }
+  if (!filters.empty()) {
+    return NestedPrunedConjunctionMaker<P>::Make(
+      terms, filters, excludes, exclude_filters, segment, ctx, merge);
+  }
+  if (terms.size() < 2 || uniformity != irs::detail::Terms::Bounded) {
+    return {};
+  }
+  const auto* const doc =
+    irs::detail::DocOf(irs::detail::FieldOf(terms.front(), nullptr));
+  SDB_ASSERT(doc != nullptr);
+  const auto size = terms.size();
+  return Resolve<P>(*doc, [&]<typename Input> -> Root::ptr {
+    using Lead = PostingPrunedLead<Input>;
+    using Clause = PostingPrunedClause<Input>;
+    const auto init = [&](auto& leaf, size_t i) {
+      const auto& posting = terms[i];
+      const auto& own = *posting.state.reader;
+      SDB_ASSERT(irs::detail::DocOf(own) == doc);
+      leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
+                   segment, own, posting.Args(&ctx.fetcher));
+    };
+    const auto docs = static_cast<doc_id_t>(segment.docs_count());
+    std::vector<size_t> joined;
+    joined.reserve(size - 1);
+    for (size_t i = 1; i != size; ++i) {
+      if (!irs::detail::DensePosting(terms[i].state.cookie.docs_count, docs)) {
+        joined.push_back(i);
+      }
+    }
+    const auto prepare_joined = [&](irs::detail::PostingFill<Input>& leaf,
+                                    size_t i) {
+      irs::detail::PreparePlain(leaf, terms[joined[i]], nullptr, *doc);
+    };
+    const auto make = [&]<typename Others, typename Joined>(
+                        const auto& joined_args) -> Root::ptr {
+      if (excludes.empty() && exclude_filters.empty()) {
+        return MakeShape<PrunedConjunction, Lead, Others, Joined, utils::Empty>(
+          ctx, ctx.fetcher, !PruneByBounds(ctx), size, init, joined_args,
+          std::forward_as_tuple());
+      }
+      const uint64_t lead = terms.front().state.cookie.docs_count;
+      return irs::detail::BuildBlockExcludes<Root::ptr, P>(
+        excludes, exclude_filters, nullptr, segment, lead, lead,
+        [&]<typename Exclude>(auto&& negated) -> Root::ptr {
+          return MakeShape<PrunedConjunction, Lead, Others, Joined, Exclude>(
+            ctx, ctx.fetcher, !PruneByBounds(ctx), size, init, joined_args,
+            std::forward<decltype(negated)>(negated));
+        });
+    };
+    using Fill = irs::detail::PostingFill<Input>;
+    const bool windowed =
+      !joined.empty() && irs::detail::DenseConjunction(terms, docs);
+    const auto shape = [&]<size_t N>() -> Root::ptr {
+      if (windowed) {
+        return make.template
+        operator()<PrunedLeaves<Clause, N>, fill::AndLeaves<Fill, N>>(
+          std::forward_as_tuple(joined.size(), prepare_joined));
+      }
+      return make.template operator()<PrunedLeaves<Clause, N>, utils::Empty>(
+        std::tuple<>{});
+    };
+    return size == 2 ? shape.template operator()<1>()
+                     : shape.template operator()<0>();
+  });
+}
+
+}  // namespace irs::top

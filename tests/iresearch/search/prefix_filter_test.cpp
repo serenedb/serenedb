@@ -192,7 +192,6 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     irs::BM25 bm25;
     irs::Scorer* score = &bm25;
     irs::IndexWriterOptions opts;
-    opts.reader_options.db = &::irs::DuckDBEngine::Instance().instance();
     if (score_prune) {
       opts.reader_options.scorer = score;
     }
@@ -797,7 +796,7 @@ TEST_P(PrefixFilterTestCase, seek_ge_after_seek_ge_lands_on_the_lower_bound) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(prefix_filter_test, PrefixFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

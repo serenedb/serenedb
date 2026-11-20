@@ -18,7 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/scorers/score_inputs.hpp"
+#include "iresearch/search/scorers/lm_similarity.hpp"
 
 namespace irs {
 

@@ -20,123 +20,15 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
-#include <algorithm>
-#include <bit>
-#include <cmath>
 #include <cstdint>
-#include <cstring>
-#include <limits>
-#include <span>
-#include <utility>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
-#include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
-#include "iresearch/search/detail/stats_arena.hpp"
-#include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/dispatch.hpp"
-#include "iresearch/utils/empty.hpp"
 
 namespace irs {
-
-inline score_t CollectionShareOf(uint64_t term_ttf,
-                                 uint64_t field_ttf) noexcept {
-  const double num = static_cast<double>(term_ttf) + 1.0;
-  const double den = static_cast<double>(field_ttf) + 1.0;
-  return static_cast<score_t>(num / den);
-}
-
-inline score_t CollectionShareOf(const FieldCollector* field,
-                                 const TermCollector* term) noexcept {
-  return CollectionShareOf(term ? term->total_term_freq : 0,
-                           field ? field->total_term_freq : 0);
-}
-
-struct ShareStats {
-  score_t* shares;
-  score_t share;
-  uint32_t terms;
-};
-
-inline std::span<const score_t> SharesOf(const ShareStats& stats) noexcept {
-  return {stats.shares ? stats.shares : &stats.share, stats.terms};
-}
-
-inline void CollectShare(ShareStats& stats, const FieldCollector* field,
-                         const TermCollector* term, StatsArena& arena) {
-  const auto share = CollectionShareOf(field, term);
-  if (stats.terms == 0) {
-    stats.share = share;
-    stats.terms = 1;
-    return;
-  }
-  if (stats.terms == 1 ||
-      (stats.terms >= 4 && std::has_single_bit(stats.terms))) {
-    const auto grown = std::max<uint32_t>(4, 2 * stats.terms);
-    auto* shares =
-      reinterpret_cast<score_t*>(arena.Allocate(grown * sizeof(score_t)));
-    std::memcpy(shares, SharesOf(stats).data(), stats.terms * sizeof(score_t));
-    stats.shares = shares;
-  }
-  stats.shares[stats.terms++] = share;
-}
-
-double LogOfProductInChunks(size_t n,
-                            absl::FunctionRef<double(size_t)> factor) noexcept;
-
-template<typename Factor>
-IRS_FORCE_INLINE double LogOfProduct(size_t n, Factor factor) noexcept {
-  double product = 1;
-  for (size_t i = 0; i != n; ++i) {
-    product *= factor(i);
-  }
-  if (product >= std::numeric_limits<double>::min() &&
-      product <= std::numeric_limits<double>::max()) [[likely]] {
-    return std::log(product);
-  }
-  return LogOfProductInChunks(n, factor);
-}
-
-template<bool HasScale, typename Formula>
-struct FreqScore : public ScoreOperatorOf<FreqScore<HasScale, Formula>> {
-  FreqScore(Formula formula, const FreqBlockAttr* freq, const uint32_t* norm,
-            const score_t* scale) noexcept
-    : freq{freq}, norm{norm}, scale{scale}, formula{std::move(formula)} {}
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    if constexpr (requires {
-                    formula.template ScoreBlock<MergeType, HasScale>(
-                      res, n, freq->value, norm, TryGetValue(scale));
-                  }) {
-      formula.template ScoreBlock<MergeType, HasScale>(
-        res, n, freq->value, norm, TryGetValue(scale));
-    } else {
-      ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
-                                      TryGetValue(scale), formula);
-    }
-  }
-
-  const FreqBlockAttr* freq;
-  const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  Formula formula;
-};
-
-template<typename Formula>
-ScoreFunction MakeFreqScore(Formula formula, const FreqBlockAttr* freq,
-                            const uint32_t* norm, const score_t* scale) {
-  return Resolve(scale != nullptr, [&]<bool HasScale>() {
-    return ScoreFunction::Make<FreqScore<HasScale, Formula>>(std::move(formula),
-                                                             freq, norm, scale);
-  });
-}
 
 inline const score_t* ScaleOf(const ScoreContext& ctx) noexcept {
   const auto* attr = irs::get<ScaleBlockAttr>(ctx.doc_attrs);
@@ -153,22 +45,6 @@ inline const uint32_t* FieldNormsOf(const ScoreContext& ctx) {
 inline const uint32_t* NormsOf(const ScoreContext& ctx) {
   const auto* norm = FieldNormsOf(ctx);
   return norm ? norm : kNorms.data();
-}
-
-template<typename MakeTerm, typename MakeTerms>
-ScoreFunction PrepareShareScorer(const ScoreContext& ctx,
-                                 const ShareStats& stats, MakeTerm make_term,
-                                 MakeTerms make_terms) {
-  const auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);
-  const auto shares = SharesOf(stats);
-  if (!freq || shares.empty()) {
-    return ScoreFunction::Default();
-  }
-  if (shares.size() == 1) {
-    return MakeFreqScore(make_term(shares.front()), freq, NormsOf(ctx),
-                         ScaleOf(ctx));
-  }
-  return MakeFreqScore(make_terms(shares), freq, NormsOf(ctx), ScaleOf(ctx));
 }
 
 }  // namespace irs

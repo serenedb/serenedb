@@ -68,7 +68,6 @@ target_sources(
         scorers/make_window.cpp
         scorers/root_window.cpp
         scorers/score_function.cpp
-        scorers/score_inputs.cpp
         top/make.cpp
         top/make_all.cpp
         top/make_posting.cpp
@@ -402,6 +401,7 @@ target_sources(
         scorers/indri_dirichlet.cpp
         scorers/lm_dirichlet.cpp
         scorers/lm_jelinek_mercer.cpp
+        scorers/lm_similarity.cpp
         scorers/raw_boost.cpp
         scorers/raw_dl.cpp
         scorers/raw_tf.cpp

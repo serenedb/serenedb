@@ -23,7 +23,7 @@
 #include <cstdint>
 
 #include "iresearch/index/field_meta.hpp"
-#include "iresearch/search/scorers/score_inputs.hpp"
+#include "iresearch/search/scorers/lm_similarity.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 

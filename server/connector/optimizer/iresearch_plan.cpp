@@ -865,7 +865,6 @@ duckdb::unique_ptr<duckdb::Expression> PushdownDistanceCall(
       .kind = ann_info->kind,
       .ef_construction = ann_info->ef_construction,
       .posting_size = ann_info->posting_size,
-      .norm = info.is_norm,
     };
     connector::RefreshVectorKnobs(*ss.score.vector, context);
     ss.score.order = info.order;

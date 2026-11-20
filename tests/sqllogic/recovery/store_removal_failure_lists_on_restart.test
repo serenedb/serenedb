@@ -18,6 +18,10 @@ CHECKPOINT;
 
 
 statement ok
+CREATE TABLE srf_files AS SELECT file FROM glob('${SDB_DATADIR}/engine_v1/store/*');
+
+
+statement ok
 CREATE TABLE srf_keep (id INT PRIMARY KEY, body TEXT);
 
 
@@ -33,16 +37,9 @@ statement ok
 CHECKPOINT;
 
 
-statement ok
-CREATE TABLE srf_paths AS SELECT '${SDB_DATADIR}/engine_v1/store/' || oid AS dir FROM pg_class WHERE relname = 'srf';
-
-
-statement ok
-SET VARIABLE srf_dir = (SELECT dir FROM srf_paths);
-
-
 query
-SELECT count(*) > 0 AS present FROM glob(getvariable('srf_dir') || '/*');
+SELECT count(*) > 0 AS present FROM glob('${SDB_DATADIR}/engine_v1/store/*')
+WHERE file IN (SELECT file FROM srf_files);
 ----
 present
 t
@@ -65,7 +62,8 @@ CHECKPOINT;
 
 
 query
-SELECT count(*) > 0 AS present FROM glob(getvariable('srf_dir') || '/*');
+SELECT count(*) > 0 AS present FROM glob('${SDB_DATADIR}/engine_v1/store/*')
+WHERE file IN (SELECT file FROM srf_files);
 ----
 present
 t
@@ -85,13 +83,9 @@ SELECT 1;
 
 
 connection after_restart
-statement ok
-SET VARIABLE srf_dir = (SELECT dir FROM srf_paths);
-
-
-connection after_restart
 query
-SELECT count(*) AS left_over FROM glob(getvariable('srf_dir') || '/*');
+SELECT count(*) AS left_over FROM glob('${SDB_DATADIR}/engine_v1/store/*')
+WHERE file IN (SELECT file FROM srf_files);
 ----
 left_over
 0

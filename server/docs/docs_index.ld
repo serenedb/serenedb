@@ -1,5 +1,5 @@
 SECTIONS
 {
-  .sdb_docs : { KEEP(*(.sdb_docs)) }
+  .sdb_docs : { sdb_docs_region = .; KEEP(*(.sdb_docs)) }
 }
 INSERT AFTER .bss;

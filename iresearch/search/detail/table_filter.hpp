@@ -25,6 +25,7 @@
 
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -65,12 +66,17 @@ struct TableFilter {
   }
 };
 
-template<typename Make>
+struct TableAxis : BoolAxis {};
+
+template<typename P = NoPins, typename Make>
 auto WithTable(TableFilter* table, Make&& make) {
-  if (table != nullptr) {
-    return make(table);
-  }
-  return make(utils::Empty{});
+  return Resolve<TableAxis, P>(table != nullptr, [&]<bool HasTable> {
+    if constexpr (HasTable) {
+      return make(table);
+    } else {
+      return make(utils::Empty{});
+    }
+  });
 }
 
 template<typename Table>

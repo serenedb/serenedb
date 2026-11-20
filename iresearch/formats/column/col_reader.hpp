@@ -23,8 +23,10 @@
 #include <absl/strings/str_cat.h>
 
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -36,8 +38,6 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/store/data_input.hpp"
-#include "iresearch/store/directory.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
@@ -61,14 +61,17 @@ struct ColFooter {
 
 class ColReader final {
  public:
-  ColReader(const Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db, IOAdvice advice);
-  ColReader(duckdb::DatabaseInstance& db, IndexInput::ptr in, ColFooter footer);
+  ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+            std::string_view root, std::string_view segment_name, bool present,
+            duckdb::MappedFileAccess access);
+  ColReader(duckdb::DatabaseInstance& db,
+            duckdb::shared_ptr<duckdb::InputFile> file, ColFooter footer);
   ColReader(duckdb::DatabaseInstance& db,
             std::vector<std::unique_ptr<ColumnReader>> columns);
   ColReader(duckdb::DatabaseInstance& db,
             std::vector<std::unique_ptr<ColumnReader>> columns,
-            IndexInput::ptr norms_in, std::vector<NormColumnSpec> norms);
+            duckdb::shared_ptr<duckdb::InputFile> norms_file,
+            std::vector<NormColumnSpec> norms);
   ColReader(const ColReader& base,
             std::vector<std::shared_ptr<const ColumnReader>> replaced);
   ~ColReader();
@@ -85,11 +88,8 @@ class ColReader final {
   const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
 
-  IndexInput::ptr ReopenIn() const {
-    if (_base) {
-      return _base->ReopenIn();
-    }
-    return _ctx.HasIn() ? _ctx.In().Reopen() : nullptr;
+  const duckdb::InputFile* File() const noexcept {
+    return _base ? _base->File() : _file.get();
   }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
   std::span<const uint64_t> RowGroupStarts() const noexcept {
@@ -101,6 +101,7 @@ class ColReader final {
   void Adopt(ColFooter footer);
 
   duckdb::DatabaseInstance* _db;
+  duckdb::shared_ptr<duckdb::InputFile> _file;
   ReadContext _ctx;
   const ColReader* _base = nullptr;
   std::vector<std::unique_ptr<ColumnReader>> _owned;

@@ -24,18 +24,18 @@
 #include <absl/flags/flag.h>
 
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
 #include <exception>
-#include <filesystem>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
-#include <system_error>
+#include <string>
 #include <utility>
 
 #include "backup/pg_control.h"
 #include "catalog/boot.h"
 #include "network/pg/hba.h"
 #include "runtime/runtime.h"
-#include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 
 ABSL_FLAG(std::string, server_directory, "serenedb-data",
@@ -48,17 +48,24 @@ ABSL_FLAG(std::string, hba_config, "",
           "against the data directory.");
 
 namespace sdb {
+namespace {
+
+duckdb::FileSystem& DataFileSystem() {
+  return irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
+}
+
+}  // namespace
 
 StorageConfig ReadStorageConfig() {
+  auto& fs = DataFileSystem();
   StorageConfig config{.directory = lifecycle::ResolveDataDir(
                          absl::GetFlag(FLAGS_server_directory))};
   if (const std::string hba = absl::GetFlag(FLAGS_hba_config); hba.empty()) {
-    config.hba_config =
-      utils::file_utils::BuildFilename(config.directory, "pg_hba.conf");
-  } else if (std::filesystem::path{hba}.is_absolute()) {
+    config.hba_config = fs.JoinPath(config.directory, "pg_hba.conf");
+  } else if (fs.IsPathAbsolute(hba)) {
     config.hba_config = hba;
   } else {
-    config.hba_config = utils::file_utils::BuildFilename(config.directory, hba);
+    config.hba_config = fs.JoinPath(config.directory, hba);
   }
   return config;
 }
@@ -82,26 +89,27 @@ Storage::Storage(Runtime& runtime, const StorageConfig& config)
 Storage::~Storage() { Close(); }
 
 bool Storage::Lock(const std::string& directory) {
-  std::error_code ec;
-  if (!std::filesystem::is_directory(directory, ec)) {
-    std::filesystem::create_directories(directory, ec);
-    if (!ec) {
+  auto& fs = DataFileSystem();
+  try {
+    if (fs.CreateDirectoryExtended(
+          directory, {.mode = duckdb::CreateDirectoryMode::RECURSIVE})) {
       SDB_INFO(STARTUP, "Created database directory: ", directory);
-    } else {
-      SDB_FATAL(GENERAL, "Unable to create database directory '", directory,
-                "': ", ec.message());
     }
+  } catch (const std::exception& e) {
+    SDB_FATAL(GENERAL, "Unable to create database directory '", directory,
+              "': ", duckdb::ErrorData{e}.RawMessage());
   }
-  const std::filesystem::path data_dir{directory};
-  const auto version = data_dir / backup::kPgVersionFile;
-  const bool initialized = std::filesystem::exists(version, ec);
-  if (ec) {
-    SDB_FATAL(GENERAL, "Unable to check '", version.string(),
-              "': ", ec.message());
+  const auto version = fs.JoinPath(directory, backup::kPgVersionFile);
+  bool initialized = false;
+  std::string locked;
+  try {
+    initialized = fs.FileExists(version);
+    locked = initialized ? version : backup::PendingPgVersion(directory);
+  } catch (const std::exception& e) {
+    SDB_FATAL(GENERAL, "Unable to check '", version,
+              "': ", duckdb::ErrorData{e}.RawMessage());
   }
-  auto lock = FileLock::Take(
-    (initialized ? version : backup::PendingPgVersion(data_dir)).string(),
-    FileLock::Mode::Exclusive);
+  auto lock = FileLock::Take(locked, FileLock::Mode::Exclusive);
   if (!lock.ok()) {
     SDB_FATAL(GENERAL, lock.status().message());
   }

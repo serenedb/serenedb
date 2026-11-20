@@ -59,16 +59,24 @@ inline auto ScoredClauseOf(const SubReader& segment,
 }
 
 template<typename Scoring>
+struct OptionalMaker {
+  static Node::ptr Make(std::span<const detail::PostingClause> should,
+                        std::span<const QueryBuilder::ptr> should_filters,
+                        uint32_t min_match, const SubReader& segment,
+                        uint64_t interrogations, const Scoring& scoring,
+                        const detail::ScoredCtx& ctx, score_t absorbed);
+};
+
+template<typename Scoring>
 Node::ptr MakeOptional(std::span<const detail::PostingClause> should,
                        std::span<const QueryBuilder::ptr> should_filters,
                        uint32_t min_match, const SubReader& segment,
                        uint64_t interrogations, const Scoring& scoring,
-                       const detail::ScoredCtx& ctx, score_t absorbed);
-
-template<typename Scoring>
-Node::ptr MakeExclusion(const BooleanQuery& query, uint64_t interrogations,
-                        const Scoring& scoring, const detail::ScoredCtx& ctx,
-                        score_t absorbed);
+                       const detail::ScoredCtx& ctx, score_t absorbed) {
+  return OptionalMaker<Scoring>::Make(should, should_filters, min_match,
+                                      segment, interrogations, scoring, ctx,
+                                      absorbed);
+}
 
 template<typename Scoring>
 Node::ptr MakeBoolean(const BooleanQuery& query, uint64_t interrogations,

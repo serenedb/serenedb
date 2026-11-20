@@ -24,8 +24,10 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <duckdb/common/file_system.hpp>
 #include <memory>
 #include <span>
+#include <string_view>
 #include <vector>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -36,8 +38,8 @@
 #include "iresearch/formats/reader_state.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 
 namespace irs {
@@ -50,7 +52,10 @@ struct SegmentInputs {
   PostingsInputs postings;
 };
 
-std::vector<IndexInput::ptr> WrittenFiles(const SegmentInputs& inputs);
+struct WrittenSegment {
+  std::shared_ptr<const FileTracker> files;
+  SegmentInputs inputs;
+};
 
 class SegmentReaderImpl final : public SubReader {
   struct PrivateTag final {
@@ -66,12 +71,14 @@ class SegmentReaderImpl final : public SubReader {
   }
 
   static std::shared_ptr<const SegmentReaderImpl> Open(
-    const Directory& dir, const SegmentMeta& meta,
-    const IndexReaderOptions& options);
+    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+    const SegmentMeta& meta, const IndexReaderOptions& options,
+    std::shared_ptr<const FileTracker> files);
 
   static std::shared_ptr<const SegmentReaderImpl> Open(
-    const Directory& dir, const SegmentMeta& meta,
-    const IndexReaderOptions& options, SegmentInputs inputs);
+    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+    const SegmentMeta& meta, const IndexReaderOptions& options,
+    std::shared_ptr<const FileTracker> files, SegmentInputs inputs);
 
   static std::shared_ptr<const SegmentReaderImpl> OpenInMemory(
     const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns);
@@ -85,8 +92,6 @@ class SegmentReaderImpl final : public SubReader {
   std::shared_ptr<const SegmentReaderImpl> WithPatches(
     std::span<const FieldPatch> patches) const;
 
-  uint64_t CountMappedMemory() const final;
-
   const SegmentInfo& Meta() const final { return _info; }
 
   const DocumentMask* docs_mask() const final { return _docs_mask.get(); }
@@ -99,6 +104,9 @@ class SegmentReaderImpl final : public SubReader {
 
   uint64_t Id() const noexcept { return _id; }
   uint64_t PatchTick() const noexcept { return _patch_tick; }
+  const std::shared_ptr<const FileTracker>& Files() const noexcept {
+    return _files;
+  }
   std::span<const FieldPatch> Patches() const noexcept { return _patches; }
 
   lead::Node::ptr docs_iterator() const final;
@@ -127,30 +135,29 @@ class SegmentReaderImpl final : public SubReader {
 
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;
-  IndexInput::ptr ReopenAnn() const final;
   const ColReader* GetColReader() const final {
-    return _data ? _data->col_reader.get() : nullptr;
+    return _readers ? _readers->col_reader.get() : nullptr;
   }
 
  private:
-  struct ColumnData {
+  struct Readers {
     std::unique_ptr<ColReader> col_reader;
     std::unique_ptr<IdxReader> idx_reader;
-    std::shared_ptr<ColumnData> base;
+    std::shared_ptr<Readers> base;
 
     const IdxReader* Idx() const noexcept {
       return idx_reader ? idx_reader.get() : base ? base->Idx() : nullptr;
     }
   };
 
-  FileRefs _refs;
+  std::shared_ptr<const FileTracker> _files;
   SegmentInfo _info;
   std::shared_ptr<const DocumentMask> _docs_mask;
   uint64_t _id = 0;
   uint64_t _patch_tick = 0;
   uint64_t _patched_docs = 0;
   std::vector<FieldPatch> _patches;
-  std::shared_ptr<ColumnData> _data;
+  std::shared_ptr<Readers> _readers;
   std::shared_ptr<term_dict::FieldReader> _field_reader;
   std::shared_ptr<const PieceFields> _pieces;
 };

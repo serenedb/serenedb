@@ -26,6 +26,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <duckdb.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/memory_file_system.hpp>
+#include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <filesystem>
 #include <iresearch/formats/column/codecs/text/fsst.hpp>
@@ -35,8 +38,7 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <map>
 #include <memory>
@@ -75,6 +77,7 @@ uint32_t SegmentTarget() {
 
 constexpr irs::field_id kField = 0;
 constexpr std::string_view kSeg = "bench_seg";
+constexpr std::string_view kRoot = "memory://bench";
 
 duckdb::DatabaseInstance& CsDb() {
   return irs::DuckDBEngine::Instance().instance();
@@ -145,26 +148,25 @@ const std::filesystem::path& SegRoot() {
   return root;
 }
 
-std::unique_ptr<irs::Directory> MakeSegDirectory(Corpus corpus, size_t arm) {
+std::string MakeSegDirectory(Corpus corpus, size_t arm) {
   const auto path =
     SegRoot() / ("col_codecs_" + std::to_string(static_cast<int>(corpus)) +
                  "_" + std::to_string(arm));
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
-  return std::make_unique<irs::MMapDirectory>(path);
+  return path.string();
 }
 
 struct Seg {
-  std::unique_ptr<irs::Directory> dir;
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
   uint64_t rows = 0;
   uint64_t bytes = 0;
 };
 
-uint64_t Build(irs::Directory& dir, Corpus corpus, const Arm& arm,
+uint64_t Build(irs::FileTracker& tracker, Corpus corpus, const Arm& arm,
                uint64_t rows) {
-  irs::ColWriter w{dir, kSeg, CsDb(), irs::WriteTier::Merge};
+  irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
   auto& cw = w.OpenColumn(
     kField, duckdb::LogicalType::VARCHAR,
     {.compression = arm.codec,
@@ -193,10 +195,12 @@ const Seg& GetSeg(Corpus corpus, size_t arm) {
   if (!slot) {
     slot = std::make_unique<Seg>();
     slot->rows = Rows();
-    slot->dir = MakeSegDirectory(corpus, arm);
-    slot->bytes = Build(*slot->dir, corpus, kArms[arm], slot->rows);
+    auto& fs = duckdb::FileSystem::GetFileSystem(CsDb());
+    const auto root = MakeSegDirectory(corpus, arm);
+    irs::FileTracker tracker{fs, root, kSeg};
+    slot->bytes = Build(tracker, corpus, kArms[arm], slot->rows);
     slot->reader = std::make_unique<irs::ColReader>(
-      *slot->dir, std::string{kSeg}, CsDb(), irs::IOAdvice::RANDOM);
+      CsDb(), fs, root, kSeg, true, duckdb::MappedFileAccess::RANDOM);
     slot->col = slot->reader->Column(kField);
     if (slot->col == nullptr) {
       std::fprintf(stderr, "col_codecs: column missing\n");
@@ -228,9 +232,10 @@ void Seal(benchmark::State& state, Corpus corpus, size_t arm) {
   const uint64_t n = Rows();
   uint64_t bytes = 0;
   for (auto _ : state) {
-    irs::MemoryDirectory dir{};
-    bytes = Build(dir, corpus, kArms[arm], n);
-    benchmark::DoNotOptimize(&dir);
+    duckdb::MemoryFileSystem fs;
+    irs::FileTracker tracker{fs, kRoot, kSeg};
+    bytes = Build(tracker, corpus, kArms[arm], n);
+    benchmark::DoNotOptimize(&fs);
   }
   state.counters["bytes"] = static_cast<double>(bytes);
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *

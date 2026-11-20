@@ -37,4 +37,9 @@ const DeltaDecoders kDeltaDecoders = [] {
   return kDeltaDecodersOf<false>;
 }();
 
+constinit const ValueDecoders kValueDecoders[kValueBiases]{
+  {kValueDecodersOf<0, true>.data(), kValueDecodersOf<0, false>.data()},
+  {kValueDecodersOf<1, true>.data(), kValueDecodersOf<1, false>.data()},
+};
+
 }  // namespace irs::block_codec

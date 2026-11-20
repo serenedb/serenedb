@@ -83,6 +83,14 @@ simdjson::ondemand::parser JsonValueParser() {
   return parser;
 }
 
+simdjson::padded_string_view PadJson(std::string_view json,
+                                     std::string& buffer) {
+  buffer.assign(json);
+  buffer.append(simdjson::SIMDJSON_PADDING, '\0');
+  return simdjson::padded_string_view{buffer.data(), json.size(),
+                                      buffer.size()};
+}
+
 template<typename T>
 T Unwrap(simdjson::simdjson_result<T>&& result) {
   T value;
@@ -96,7 +104,7 @@ T Unwrap(simdjson::simdjson_result<T>&& result) {
 class JsonParser {
  public:
   void PrepareJson(std::string_view json) {
-    _padded_input = simdjson::padded_string{json};
+    _padded_input = PadJson(json, _buffer);
   }
 
   simdjson::ondemand::document GetJsonDocument() {
@@ -223,7 +231,8 @@ class JsonParser {
   }
 
   simdjson::ondemand::parser _parser = JsonValueParser();
-  simdjson::padded_string _padded_input;
+  std::string _buffer;
+  simdjson::padded_string_view _padded_input;
 };
 
 // ---------------------------------------------------------------------------
@@ -283,14 +292,14 @@ bool ValidateJson(T& value) {
 
 void JsonInFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                     duckdb::Vector& result) {
+  simdjson::ondemand::parser parser;
+  std::string buffer;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view sv{input.GetData(), input.GetSize()};
-      simdjson::ondemand::parser parser;
-      simdjson::padded_string padded{sv};
       simdjson::ondemand::document doc;
-      auto ec = parser.iterate(padded).get(doc);
+      auto ec = parser.iterate(PadJson(sv, buffer)).get(doc);
       if (ec != simdjson::SUCCESS || !ValidateJson(doc)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                         ERR_MSG("Invalid input syntax for type json: ", sv));
@@ -306,11 +315,11 @@ void JsonInFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 // json -> int  (returns JSON)
 void JsonExtractIndexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
+  JsonParser parser;
   duckdb::BinaryExecutor::Execute<duckdb::string_t, int64_t, duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json,
         int64_t index) -> duckdb::optional<duckdb::string_t> {
-      JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByIndex<JsonOutputType::JSON>(index);
       if (str.empty() && !str.data()) {
@@ -323,12 +332,12 @@ void JsonExtractIndexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 // json -> text  (returns JSON)
 void JsonExtractFieldFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                               duckdb::Vector& result) {
+  JsonParser parser;
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json,
         duckdb::string_t field) -> duckdb::optional<duckdb::string_t> {
-      JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByField<JsonOutputType::JSON>(
         {field.GetData(), field.GetSize()});
@@ -347,11 +356,11 @@ void JsonExtractFieldFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 void JsonExtractIndexTextFunction(duckdb::DataChunk& args,
                                   duckdb::ExpressionState&,
                                   duckdb::Vector& result) {
+  JsonParser parser;
   duckdb::BinaryExecutor::Execute<duckdb::string_t, int64_t, duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json,
         int64_t index) -> duckdb::optional<duckdb::string_t> {
-      JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByIndex<JsonOutputType::TEXT>(index);
       if (str.empty() && !str.data()) {
@@ -365,12 +374,12 @@ void JsonExtractIndexTextFunction(duckdb::DataChunk& args,
 void JsonExtractFieldTextFunction(duckdb::DataChunk& args,
                                   duckdb::ExpressionState&,
                                   duckdb::Vector& result) {
+  JsonParser parser;
   duckdb::BinaryExecutor::Execute<duckdb::string_t, duckdb::string_t,
                                   duckdb::string_t>(
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json,
         duckdb::string_t field) -> duckdb::optional<duckdb::string_t> {
-      JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByField<JsonOutputType::TEXT>(
         {field.GetData(), field.GetSize()});
@@ -406,6 +415,8 @@ void JsonExtractPathImpl(duckdb::DataChunk& args, duckdb::ExpressionState&,
       .ToUnifiedFormat(duckdb::ListVector::GetListSize(args.data[1]),
                        child_data);
   }
+
+  JsonParser parser;
 
   for (duckdb::idx_t row = 0; row < count; row++) {
     auto json_idx = vdata[0].sel->get_index(row);
@@ -454,7 +465,6 @@ void JsonExtractPathImpl(duckdb::DataChunk& args, duckdb::ExpressionState&,
     }
 
     {
-      JsonParser parser;
       parser.PrepareJson({json.GetData(), json.GetSize()});
       auto str = parser.ExtractByPath<Output>(path);
       if (str.empty() && !str.data()) {
@@ -486,13 +496,13 @@ void JsonExtractPathTextFunction(duckdb::DataChunk& args,
 
 void JsonTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                         duckdb::Vector& result) {
+  auto parser = JsonValueParser();
+  std::string buffer;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view sv(input.GetData(), input.GetSize());
-      auto parser = JsonValueParser();
-      simdjson::padded_string padded(sv);
-      auto doc = parser.iterate(padded);
+      auto doc = parser.iterate(PadJson(sv, buffer));
       auto tp = doc.type();
       const char* name = "null";
       if (!tp.error()) {
@@ -576,14 +586,14 @@ void WriteValue(simdjson::ondemand::value val, std::string& out) {
 
 void JsonStripNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                             duckdb::Vector& result) {
+  auto parser = JsonValueParser();
+  std::string buffer;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
       std::string_view sv(input.GetData(), input.GetSize());
-      auto parser = JsonValueParser();
-      simdjson::padded_string padded(sv);
       simdjson::ondemand::document doc;
-      if (parser.iterate(padded).get(doc) != simdjson::SUCCESS) {
+      if (parser.iterate(PadJson(sv, buffer)).get(doc) != simdjson::SUCCESS) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
                         ERR_MSG("invalid JSON"));
       }

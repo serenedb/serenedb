@@ -39,7 +39,7 @@
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
 #include <span>
@@ -64,7 +64,7 @@ struct BoundCreateTableInfo;
 }  // namespace duckdb
 namespace irs {
 
-class DirectoryReader;
+class CompositeReader;
 
 }  // namespace irs
 namespace sdb::search {
@@ -142,7 +142,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::vector<duckdb::ColumnSegmentInfo>& result) final;
 
   static duckdb::vector<duckdb::ColumnSegmentInfo> ColumnSegmentRows(
-    const duckdb::QueryContext& context, const irs::DirectoryReader& reader,
+    const duckdb::QueryContext& context, const irs::CompositeReader& reader,
     const duckdb::TableCatalogEntry& table, duckdb::column_t key_column,
     bool segment_info);
 
@@ -200,6 +200,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   ReferencingTables(duckdb::ClientContext& context) final;
 
   const auto& Storage() const noexcept { return _storage; }
+  duckdb::idx_t Tablespace() const noexcept { return _tablespace; }
   void RequireCurrentSchema() const;
   const std::vector<search::KeySpec>& KeySpecs() const noexcept {
     return _keys;
@@ -279,6 +280,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   std::shared_ptr<search::Store> _storage;
   std::shared_ptr<EntrySet> _triggers;
   SearchTableOptions _options;
+  duckdb::idx_t _tablespace;
   uint64_t _schema_epoch = 0;
   std::vector<search::KeySpec> _keys;
   std::vector<std::shared_ptr<const search::Referencing>> _referencing;

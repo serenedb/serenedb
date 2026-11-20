@@ -22,6 +22,8 @@
 
 #include <cstdint>
 
+#include "iresearch/utils/dispatch.hpp"
+
 namespace irs::detail {
 
 enum class PhraseMatch : uint8_t {
@@ -38,17 +40,24 @@ PhraseMatch MatchOf(const Query& query) noexcept {
   return query.has_intervals ? PhraseMatch::Intervals : PhraseMatch::Plain;
 }
 
-template<typename Query, typename F>
-auto ResolveMatch(const Query& query, F&& f) {
-  switch (MatchOf(query)) {
-    case PhraseMatch::Slop:
-      return f.template operator()<PhraseMatch::Slop>();
-    case PhraseMatch::Intervals:
-      return f.template operator()<PhraseMatch::Intervals>();
-    case PhraseMatch::Plain:
-      break;
+struct PhraseMatchAxis : EnumAxis<PhraseMatch> {
+  template<typename Query>
+  static PhraseMatch Of(const Query& query) noexcept {
+    return MatchOf(query);
   }
-  return f.template operator()<PhraseMatch::Plain>();
-}
+
+  template<typename F>
+  IRS_FORCE_INLINE static decltype(auto) Dispatch(PhraseMatch match, F&& f) {
+    switch (match) {
+      case PhraseMatch::Slop:
+        return f.template operator()<PhraseMatch::Slop>();
+      case PhraseMatch::Intervals:
+        return f.template operator()<PhraseMatch::Intervals>();
+      case PhraseMatch::Plain:
+        break;
+    }
+    return f.template operator()<PhraseMatch::Plain>();
+  }
+};
 
 }  // namespace irs::detail

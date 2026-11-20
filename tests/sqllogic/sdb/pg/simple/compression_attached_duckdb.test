@@ -58,7 +58,7 @@ db error: ERROR: Failed to commit: Cannot write SET_COLUMN_COMPRESSION to a data
 
 
 query
-SELECT sql FROM duckdb_tables() WHERE database_name = 'codecs_v13_${__DATABASE__}' AND table_name = 't_zstd';
+SELECT sql FROM sdb_tables() WHERE database_name = 'codecs_v13_${__DATABASE__}' AND table_name = 't_zstd';
 ----
 sql
 CREATE TABLE t_zstd(v VARCHAR USING COMPRESSION ZSTD);

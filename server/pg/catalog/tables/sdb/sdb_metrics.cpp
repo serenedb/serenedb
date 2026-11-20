@@ -21,6 +21,11 @@
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database.hpp>
+#include <duckdb/main/database_file_opener.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <string_view>
 #include <vector>
 
@@ -106,6 +111,37 @@ SystemRows<Metric> LoadMetrics(SystemScan& scan) {
   rows.emplace_back("catalog_history_bytes",
                     log ? static_cast<int64_t>(log->HistoryBytes()) : 0,
                     "bytes of catalog changes the catalog wal snapshot keeps");
+  const auto add = [&](std::string_view metric, uint64_t value,
+                       std::string_view description) {
+    rows.emplace_back(metric, static_cast<int64_t>(value), description);
+  };
+  auto& db = *scan.Context().db;
+  const auto stats = db.GetExternalFileCache().GetStatistics();
+  add("external_file_cache_capacity_bytes",
+      duckdb::BufferManager::GetBufferManager(db).GetMaxMemory(),
+      "memory the cache of remote and in-memory index files may use, in "
+      "bytes");
+  add("external_file_cache_used_bytes", stats.used,
+      "memory the cache of remote and in-memory index files uses, in bytes");
+  add("external_file_cache_misses", stats.misses,
+      "block reads that went to storage since start");
+  add("external_file_cache_fetches", stats.fetches,
+      "storage reads that filled the cache since start");
+  add("external_file_cache_fetched_bytes", stats.fetched_bytes,
+      "bytes read from storage into the cache since start");
+  add("external_file_cache_evictions", stats.evictions,
+      "blocks evicted from memory since start");
+  add("external_file_cache_spilled_blocks", stats.spilled,
+      "evicted blocks written to the temporary directory since start");
+  add("external_file_cache_spill_reads", stats.spill_reads,
+      "blocks read back from the temporary directory since start");
+  const auto uploads = duckdb::DatabaseFileSystem::GetPendingUploads();
+  add("index_uploads_pending", uploads.files,
+      "index files being written to an object store whose upload has not "
+      "completed");
+  add("index_upload_pending_bytes", uploads.bytes,
+      "bytes written to index files on an object store whose upload has not "
+      "completed");
   return rows;
 }
 

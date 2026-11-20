@@ -18,12 +18,11 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <absl/base/internal/endian.h>
-
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <duckdb/common/helper.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/null_value.hpp>
@@ -36,7 +35,6 @@
 #include <limits>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -49,16 +47,14 @@ using duckdb::data_ptr_t;
 using duckdb::idx_t;
 using duckdb::validity_t;
 
-duckdb::block_id_t WriteOverflowString(IndexOutput& out,
+duckdb::block_id_t WriteOverflowString(duckdb::WriteStream& out,
                                        duckdb::string_t string) {
   const auto size = string.GetSize();
   SDB_ENSURE(size <= std::numeric_limits<uint32_t>::max(),
              "string too long for overflow format");
-  byte_type length[sizeof(uint32_t)];
-  absl::little_endian::Store32(length, static_cast<uint32_t>(size));
   const auto block = static_cast<duckdb::block_id_t>(out.Position());
-  out.WriteData(length, sizeof(length));
-  out.WriteData(reinterpret_cast<const byte_type*>(string.GetData()), size);
+  out.Write<uint32_t>(static_cast<uint32_t>(size));
+  out.WriteData(duckdb::const_data_ptr_cast(string.GetData()), size);
   return block;
 }
 

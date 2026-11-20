@@ -92,6 +92,9 @@ class VariantColumnReader final : public ColumnReader {
     return VariantRgSpan(row).end;
   }
 
+  void CollectBlocks(uint64_t first, uint64_t last,
+                     std::vector<duckdb::FileRange>& out) const final;
+
   BlockWindow VariantRgSpan(uint64_t row) const {
     const auto it = absl::c_upper_bound(_variant_offsets, row);
     const auto rg = static_cast<size_t>(it - _variant_offsets.begin()) - 1;

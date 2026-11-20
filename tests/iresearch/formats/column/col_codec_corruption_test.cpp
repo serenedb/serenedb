@@ -42,7 +42,6 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_info.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <magic_enum/magic_enum.hpp>
@@ -50,7 +49,9 @@
 #include <string>
 #include <vector>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "gtest/gtest.h"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -111,9 +112,9 @@ class ColCodecCorruptionTest : public TestBase {
 
   void Write(const std::filesystem::path& path, const Case& c, uint64_t& offset,
              uint64_t& size) {
-    irs::MMapDirectory dir{path};
+    tests::IndexDir dir{Db(), path.string()};
     {
-      irs::ColWriter w{dir, kSeg, Db(), irs::WriteTier::Flush};
+      irs::ColWriter w{Db(), dir.Tracker(kSeg), irs::WriteTier::Flush};
       auto& cw = w.OpenColumn(
         kField, c.type, {.row_group_size = kRgSize, .compression = c.codec});
       for (uint64_t pos = 0; pos < c.rows;) {
@@ -129,7 +130,7 @@ class ColCodecCorruptionTest : public TestBase {
       }
       ASSERT_TRUE(w.Commit(0));
     }
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     const irs::ColumnReader* target = col;
@@ -159,8 +160,8 @@ class ColCodecCorruptionTest : public TestBase {
 
   void Read(const std::filesystem::path& path, const Case& c,
             const Value& probe, std::set<std::string>& messages) {
-    irs::MMapDirectory dir{path};
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    tests::IndexDir dir{Db(), path.string()};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     Guarded(messages, [&] {

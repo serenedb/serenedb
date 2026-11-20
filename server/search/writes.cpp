@@ -171,7 +171,7 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
     projections.push_back({.output_slot = i, .column_id = column_ids[i]});
   }
   irs::ColFilterStateCache filter_states;
-  connector::FullScanner scanner{*columns, projections,   {},
+  connector::FullScanner scanner{*columns, projections,   {},   {},
                                  &context, filter_states, false};
   duckdb::DataChunk chunk;
   chunk.Initialize(duckdb::Allocator::Get(context), types);
@@ -670,7 +670,7 @@ void Writes::RewriteOwn(
 
 void Writes::TakeIndexedPatches(
   duckdb::ClientContext& context, Store& store,
-  absl::FunctionRef<void(const irs::DirectoryReader&, size_t,
+  absl::FunctionRef<void(const irs::CompositeReader&, size_t,
                          const irs::DocumentMask&)>
     feed) {
   auto* w = FindStoreWrites(store.GetId());
@@ -797,7 +797,7 @@ Tick Writes::LayoutVersion(const Store& store) {
            : store.GetTable().VersionAt(Snapshot(), _walks).state->layout;
 }
 
-const irs::DirectoryReader& Writes::PinnedReader(duckdb::ClientContext& context,
+const irs::CompositeReader& Writes::PinnedReader(duckdb::ClientContext& context,
                                                  Store& store) {
   auto* w = FindStoreWrites(store.GetId());
   SDB_ENSURE(w, "table ", store.GetId(),
@@ -1476,7 +1476,7 @@ std::unique_ptr<ConflictArbiter> Writes::ArbitrateConflicts(
 
 ConflictArbiter::ConflictArbiter(duckdb::ClientContext& context,
                                  const StoreWrites& w,
-                                 const irs::DirectoryReader& reader,
+                                 const irs::CompositeReader& reader,
                                  std::span<const irs::field_id> fields)
   : _context{context}, _w{w} {
   _arbiters.reserve(fields.size());

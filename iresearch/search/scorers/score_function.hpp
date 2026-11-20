@@ -25,6 +25,8 @@
 #include <limits>
 
 #include "iresearch/types.hpp"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -46,6 +48,14 @@ enum class ScoreMergeType {
   Sum,
 
   Max,
+};
+
+using MergeAxis =
+  ArrayAxis<std::array{ScoreMergeType::Max, ScoreMergeType::Sum}>;
+
+template<>
+struct AxisFor<ScoreMergeType> {
+  using Type = MergeAxis;
 };
 
 struct ScoreOperator : memory::Managed {

@@ -29,6 +29,8 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <duckdb/common/error_data.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <iterator>
@@ -41,11 +43,10 @@
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer.hpp"
-#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/group_commit.hpp"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -69,48 +70,53 @@ std::vector<DocMap> MergeMaps(CompactionView candidates,
   return maps;
 }
 
-struct SyncFile {
-  const IndexInput* file;
-  std::string_view segment;
+struct SyncFiles {
+  duckdb::FileSystem* fs;
+  duckdb::vector<std::string> paths;
 };
 
-using SyncFiles = std::vector<SyncFile>;
-
-void AddSyncFiles(SyncFiles& out, std::span<const IndexInput::ptr> files,
+void AddSyncFiles(SyncFiles& out, std::string_view root,
                   const SegmentMeta& meta) {
-  SDB_ASSERT(files.size() == static_cast<size_t>(std::popcount(meta.kinds)));
-  for (const auto& file : files) {
-    out.push_back({.file = file.get(), .segment = meta.name});
-  }
-}
-
-void StartWriteback(const SyncFiles& files) {
-  for (const auto& [file, segment] : files) {
-    file->StartWriteback();
-  }
-}
-
-void FinishSync(const SyncFiles& files) {
-  for (const auto& [file, segment] : files) {
-    if (!file->Sync()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                      ERR_MSG("Failed to sync segment '", segment, "'"));
-    }
+  for (const auto& name : SegmentFiles(meta.name, meta.kinds)) {
+    out.paths.push_back(out.fs->JoinPath(root, name));
   }
 }
 
 void SyncBatch(GroupCommit<SyncFiles>::Batch batch) {
+  std::vector<SyncFiles> by_fs;
   for (const auto* files : batch) {
-    StartWriteback(*files);
+    auto it = absl::c_find_if(
+      by_fs, [&](const SyncFiles& same) { return same.fs == files->fs; });
+    if (it == by_fs.end()) {
+      it = by_fs.insert(by_fs.end(), SyncFiles{.fs = files->fs});
+    }
+    it->paths.insert(it->paths.end(), files->paths.begin(), files->paths.end());
   }
-  for (const auto* files : batch) {
-    FinishSync(*files);
+  for (const auto& [fs, paths] : by_fs) {
+    fs->SyncFiles(paths);
   }
 }
 
 GroupCommit<SyncFiles>& FlushSyncs() {
   static GroupCommit<SyncFiles> syncs;
   return syncs;
+}
+
+void CompactFiles(duckdb::FileSystem& fs, std::string_view root,
+                  const SegmentMeta& meta) {
+  duckdb::vector<std::string> paths;
+  for (const auto& name : SegmentFiles(meta.name, meta.kinds)) {
+    paths.push_back(fs.JoinPath(root, name));
+  }
+  try {
+    SDB_IF_FAILURE("IndexWriter::CompactOutOfMemory") {
+      throw duckdb::OutOfMemoryException("intentional debug error");
+    }
+    fs.Compact(paths);
+  } catch (const duckdb::OutOfMemoryException& e) {
+    SDB_DEBUG(IRESEARCH, "Keeping segment '", meta.name,
+              "' in blocks: ", duckdb::ErrorData{e}.RawMessage());
+  }
 }
 
 }  // namespace
@@ -142,9 +148,9 @@ IndexWriter::Transaction::FlushSegments(bool sync) {
   if (!sync) {
     return flushed;
   }
-  SyncFiles files;
+  SyncFiles files{.fs = &_writer->_fs};
   for (const auto& entry : flushed) {
-    AddSyncFiles(files, entry.files, entry.meta);
+    AddSyncFiles(files, _writer->_root, entry.meta);
   }
   duckdb::TaskScheduler::BlockingScope blocking;
   FlushSyncs().Submit(files, SyncBatch);
@@ -216,20 +222,15 @@ bool IndexWriter::FlushRequired(const SegmentWriter& segment,
          _segment_limits.Docs() < segment.buffered_docs() + batch_size;
 }
 
-IndexWriter::SegmentContext::SegmentContext(Directory& dir,
+IndexWriter::SegmentContext::SegmentContext(IndexWriter& owner,
                                             const SegmentWriterOptions& options)
-  : dir{dir},
-    flushed{{options.resource_manager}},
-    writer{SegmentWriter::make(this->dir, options)},
-    reader_options{
-      .scorer = options.scorer,
-      .db = options.db,
-      .hnsw_bases = options.hnsw_bases,
-    } {}
+  : owner{owner},
+    flushed{{IResourceManager::gNoop}},
+    writer{SegmentWriter::make(owner._db, owner._fs, owner._root, options)} {}
 
 IndexWriter::SegmentContext::ptr IndexWriter::SegmentContext::make(
-  Directory& dir, const SegmentWriterOptions& options) {
-  return std::make_unique<SegmentContext>(dir, options);
+  IndexWriter& owner, const SegmentWriterOptions& options) {
+  return std::make_unique<SegmentContext>(owner, options);
 }
 
 void IndexWriter::SegmentContext::Flush() {
@@ -248,17 +249,16 @@ void IndexWriter::SegmentContext::Flush() {
   SDB_IF_FAILURE("IndexWriter::Flush") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  auto inputs = writer->flush(writer_meta, docs_mask);
+  auto written = writer->flush(writer_meta, docs_mask);
   if (writer_meta.live_docs_count == 0) {
+    writer_meta = {};
     return;
   }
   SDB_ASSERT(writer_meta.kinds != 0);
   SDB_ASSERT(writer_meta.live_docs_count <= writer_meta.docs_count);
-  auto files = WrittenFiles(inputs);
-  auto reader = SegmentReaderImpl::Open(dir, writer_meta, reader_options,
-                                        std::move(inputs));
+  auto reader = owner.OpenWritten(writer_meta, std::move(written));
   flushed.emplace_back(std::move(writer_meta), std::move(docs_mask),
-                       std::move(reader), std::move(files));
+                       std::move(reader));
 }
 
 void IndexWriter::SegmentContext::Prepare(uint64_t segment_id) {
@@ -273,35 +273,40 @@ void IndexWriter::SegmentContext::Reset() noexcept {
   if (writer->initialized()) {
     writer->reset();
   }
-  dir.clear_refs();
 }
 
-IndexWriter::IndexWriter(ConstructToken, Directory& dir,
+IndexWriter::IndexWriter(ConstructToken, duckdb::DatabaseInstance& db,
+                         duckdb::FileSystem& fs, std::string_view root,
                          size_t segment_pool_size,
                          const SegmentOptions& segment_limits,
                          const IndexReaderOptions& reader_options)
   : _topk_scorer{reader_options.scorer},
-    _dir{dir},
+    _db{db},
+    _fs{fs},
+    _root{root},
     _reader_options{reader_options},
     _segment_limits{segment_limits},
     _segment_writer_pool{segment_pool_size} {}
 
-IndexWriter::ptr IndexWriter::Make(Directory& dir, IndexWriterOptions options) {
-  SDB_ENSURE(options.db != nullptr,
-             "IndexWriterOptions::db must be set; iresearch indexes require a "
-             "duckdb::DatabaseInstance");
-
+IndexWriter::ptr IndexWriter::Make(duckdb::DatabaseInstance& db,
+                                   duckdb::FileSystem& fs,
+                                   std::string_view root,
+                                   IndexWriterOptions options) {
   std::unique_ptr<HnswBases> hnsw_bases;
   if (!options.reader_options.hnsw_bases) {
     hnsw_bases = std::make_unique<HnswBases>();
     options.reader_options.hnsw_bases = hnsw_bases.get();
   }
   auto writer = std::make_shared<IndexWriter>(
-    ConstructToken{}, dir, options.segment_pool_size, SegmentOptions{options},
-    options.reader_options);
-  writer->_db = options.db;
+    ConstructToken{}, db, fs, root, options.segment_pool_size,
+    SegmentOptions{options}, options.reader_options);
   writer->_ann_env = options.ann_env;
   writer->_hnsw_bases = std::move(hnsw_bases);
+  writer->_released = std::move(options.released);
+  writer->_pack = options.pack;
+  writer->_seg_counter = options.segment_ids
+                           ? std::move(options.segment_ids)
+                           : std::make_shared<std::atomic_uint64_t>(0);
   if (options.column_options || options.norm_column_id) {
     writer->_field_options = std::make_shared<const FunctionFieldOptions>(
       std::move(options.column_options), std::move(options.norm_column_id),
@@ -311,18 +316,22 @@ IndexWriter::ptr IndexWriter::Make(Directory& dir, IndexWriterOptions options) {
 }
 
 uint64_t IndexWriter::NextSegmentId() noexcept {
-  return _seg_counter.fetch_add(1, std::memory_order_relaxed) + 1;
+  return _seg_counter->fetch_add(1, std::memory_order_relaxed) + 1;
 }
 
 uint64_t IndexWriter::CurrentSegmentId() const noexcept {
-  return _seg_counter.load(std::memory_order_relaxed);
+  return _seg_counter->load(std::memory_order_relaxed);
+}
+
+void ReserveSegmentId(std::atomic_uint64_t& ids, uint64_t id) noexcept {
+  for (auto current = ids.load(std::memory_order_relaxed);
+       current < id &&
+       !ids.compare_exchange_weak(current, id, std::memory_order_relaxed);) {
+  }
 }
 
 void IndexWriter::ReserveSegmentId(uint64_t id) noexcept {
-  for (auto current = _seg_counter.load(std::memory_order_relaxed);
-       current < id && !_seg_counter.compare_exchange_weak(
-                         current, id, std::memory_order_relaxed);) {
-  }
+  irs::ReserveSegmentId(*_seg_counter, id);
 }
 
 void IndexWriter::MergeClaim::Release() noexcept {
@@ -338,7 +347,7 @@ void IndexWriter::MergeClaim::Release() noexcept {
 }
 
 auto IndexWriter::MergeAsync(const CompactionPolicy& policy,
-                             DirectoryReader source,
+                             CompositeReader source,
                              const IndexFieldOptions* field_options,
                              const MergeWriter::FlushProgress& progress,
                              const AnnBuildEnv* env) -> yaclib::Future<Merged> {
@@ -393,7 +402,7 @@ auto IndexWriter::MergeAsync(const CompactionPolicy& policy,
                                 field_options, progress, env);
 }
 
-auto IndexWriter::WriteAsync(DirectoryReader source, uint64_t id,
+auto IndexWriter::WriteAsync(CompositeReader source, uint64_t id,
                              const IndexFieldOptions* field_options,
                              const MergeWriter::FlushProgress& progress,
                              const AnnBuildEnv* env) -> yaclib::Future<Merged> {
@@ -412,7 +421,7 @@ auto IndexWriter::WriteAsync(DirectoryReader source, uint64_t id,
 }
 
 IndexWriter::Merged IndexWriter::MergePieces(
-  DirectoryReader source, uint64_t id, const IndexFieldOptions* field_options) {
+  CompositeReader source, uint64_t id, const IndexFieldOptions* field_options) {
   Merged merged;
   merged.source = std::move(source);
   auto& candidates = merged.claim.candidates;
@@ -424,7 +433,8 @@ IndexWriter::Merged IndexWriter::MergePieces(
   }
   SegmentMeta meta;
   meta.name = FileName(id);
-  MergeWriter merger{_dir, GetSegmentWriterOptions(true, field_options)};
+  MergeWriter merger{_db, _fs, _root,
+                     GetSegmentWriterOptions(true, field_options)};
   merger.Reset(candidates.begin(), candidates.end());
   merged.reader = merger.FlushPiece(meta, id);
   if (merged.reader) {
@@ -440,27 +450,34 @@ auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
   const auto& candidates = merged.claim.candidates;
   SegmentMeta meta;
   meta.name = FileName(id);
-  RefTrackingDirectory dir{_dir};
-  MergeWriter merger{dir, GetSegmentWriterOptions(true, field_options)};
+  MergeWriter merger{_db, _fs, _root,
+                     GetSegmentWriterOptions(true, field_options)};
   merger.Reset(candidates.begin(), candidates.end());
-  if (!(co_await merger.Flush(meta, progress, env))) {
+  auto files = co_await merger.Flush(meta, progress, env);
+  if (!files) {
     co_return merged;
   }
-  auto inputs = merger.TakeInputs();
-  const auto files = WrittenFiles(inputs);
-  merged.reader = SegmentReaderImpl::Open(_dir, meta, merged.source.Options(),
-                                          std::move(inputs));
+  merged.reader = OpenWritten(
+    meta, {.files = std::move(files), .inputs = merger.TakeInputs()});
   merged.maps = MergeMaps(candidates, merger, *merged.reader);
-  SyncFiles sync;
-  AddSyncFiles(sync, files, meta);
-  {
-    duckdb::TaskScheduler::BlockingScope blocking;
-    StartWriteback(sync);
-    FinishSync(sync);
-  }
-  merged.refs = dir.GetRefs();
+  SyncFiles sync{.fs = &_fs};
+  AddSyncFiles(sync, _root, meta);
+  _fs.SyncFiles(sync.paths);
   merged.meta = std::move(meta);
   co_return merged;
+}
+
+std::shared_ptr<const SegmentReaderImpl> IndexWriter::OpenWritten(
+  const SegmentMeta& meta, WrittenSegment written) {
+  if (!_pack) {
+    return SegmentReaderImpl::Open(_db, _fs, _root, meta, _reader_options,
+                                   std::move(written.files),
+                                   std::move(written.inputs));
+  }
+  written.inputs = {};
+  CompactFiles(_fs, _root, meta);
+  return SegmentReaderImpl::Open(_db, _fs, _root, meta, _reader_options,
+                                 std::move(written.files));
 }
 
 void IndexWriter::CompactionFloorGuard::Release() noexcept {
@@ -503,9 +520,9 @@ std::shared_ptr<IndexWriter::SegmentContext> IndexWriter::GetSegmentContext() {
   const auto options =
     GetSegmentWriterOptions(false, /*field_options=*/nullptr);
   std::shared_ptr<SegmentContext> segment =
-    _segment_writer_pool.emplace(_dir, options);
+    _segment_writer_pool.emplace(*this, options);
   if (_segment_limits.Memory() < segment->writer->memory_reserved()) {
-    segment->writer = SegmentWriter::make(segment->dir, options);
+    segment->writer = SegmentWriter::make(_db, _fs, _root, options);
   }
   return segment;
 }
@@ -516,12 +533,10 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
   // later via SetFieldOptions, so non-owning here.
   return {
     .scorer = _topk_scorer,
-    .resource_manager = compaction ? *_dir.ResourceManager().compactions
-                                   : *_dir.ResourceManager().transactions,
-    .db = _db,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
     .hnsw_bases = _reader_options.hnsw_bases,
+    .released = _released,
   };
 }
 

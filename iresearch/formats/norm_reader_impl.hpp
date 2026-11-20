@@ -35,7 +35,6 @@
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -125,7 +124,8 @@ class NormReaderBase : public NormReader {
   static constexpr size_t kCalls = 16;
   static constexpr size_t kMaxProbe = 64;
   static constexpr size_t kProbePages =
-    ((kMaxProbe << kNormWindowShift) * sizeof(uint32_t)) / file_utils::kPage +
+    ((kMaxProbe << kNormWindowShift) * sizeof(uint32_t)) /
+      duckdb::PageResidency::PAGE_SIZE +
     1;
   static constexpr uint64_t kMaxSpanPerPage = 2;
   static constexpr uint64_t kMaxGapPages = 2;
@@ -133,7 +133,7 @@ class NormReaderBase : public NormReader {
     uint64_t{kPostingBlock} * ABSL_CACHELINE_SIZE;
   static constexpr size_t kBits = BitsRequired<uint64_t>();
   static constexpr uint32_t kPageShift =
-    static_cast<uint32_t>(std::countr_zero(file_utils::kPage));
+    static_cast<uint32_t>(std::countr_zero(duckdb::PageResidency::PAGE_SIZE));
 
   IRS_FORCE_INLINE const byte_type* At(doc_id_t doc) const noexcept {
     return _region->base + uint64_t{doc} * _bytes;
@@ -157,6 +157,7 @@ class NormReaderBase : public NormReader {
   }
 
   IRS_FORCE_INLINE void Touched(const doc_id_t* docs, size_t n) noexcept {
+    SDB_ASSERT(docs[0] >= _region->first_doc && docs[n - 1] < _region->end_doc);
     if (_bytes == 0) {
       return;
     }
@@ -173,9 +174,9 @@ class NormReaderBase : public NormReader {
     if (_seen.empty()) {
       Init();
     }
-    const auto epoch = file_utils::ResidencyEpoch();
+    const auto epoch = duckdb::PageResidency::Epoch();
     const bool valid = _column->Residency().Valid(epoch);
-    if (_verified && valid) {
+    if (valid) {
       if (docs[n - 1] < _window_end) {
         const auto span = _column->Window(_window);
         if (AllWarm(PageAt(span.data()),
@@ -225,8 +226,7 @@ class NormReaderBase : public NormReader {
       last = std::max(last, end);
       if (spread && !(valid && AllWarm(begin, end))) {
         const auto* from = At(docs[i]);
-        file_utils::Prefetch(from,
-                             static_cast<size_t>(End(docs[j - 1]) - from));
+        _column->Prefetch(from, static_cast<size_t>(End(docs[j - 1]) - from));
       }
       i = j;
     }
@@ -249,8 +249,7 @@ class NormReaderBase : public NormReader {
     _dense = true;
     const auto span = _column->Window(_window);
     const auto* at = At(docs[0]);
-    file_utils::Prefetch(at,
-                         static_cast<size_t>(span.data() + span.size() - at));
+    _column->Prefetch(at, static_cast<size_t>(span.data() + span.size() - at));
     Done(_window);
     Ahead(_window + 1);
   }
@@ -267,11 +266,10 @@ class NormReaderBase : public NormReader {
   bool Probe(const doc_id_t* docs, size_t n, uint32_t epoch,
              bool valid) noexcept {
     Set(_probed_at + _window);
-    _verified = true;
     _probe = _window == _probe_end ? std::min(_probe * 2, kMaxProbe) : 1;
     auto last = _window + _probe - 1;
     if (n > 1 && (uint64_t{docs[n - 1] - docs[0]} + 1) * _bytes <=
-                   uint64_t{n} * file_utils::kPage) {
+                   uint64_t{n} * duckdb::PageResidency::PAGE_SIZE) {
       last = std::max<size_t>(
         last, _region->window +
                 ((docs[n - 1] - _region->first_doc) >> kNormWindowShift));
@@ -282,8 +280,8 @@ class NormReaderBase : public NormReader {
     const auto tail = _column->Window(last);
     const auto* end = tail.data() + tail.size();
     std::array<unsigned char, kProbePages> pages;
-    const auto page =
-      file_utils::Residency(begin, static_cast<size_t>(end - begin), pages);
+    const auto page = duckdb::PageResidency::Query(
+      begin, static_cast<size_t>(end - begin), pages);
     if (page == 0) {
       return false;
     }
@@ -311,7 +309,7 @@ class NormReaderBase : public NormReader {
       }
     }
     if (stale) {
-      file_utils::InvalidateResidency();
+      duckdb::PageResidency::Invalidate();
     }
     const auto* at = At(docs[0]);
     if (resident(at, end)) {
@@ -334,7 +332,7 @@ class NormReaderBase : public NormReader {
 
   void Ahead(size_t window) noexcept {
     SDB_ASSERT(_dense);
-    uint64_t budget = file_utils::kMaxReadahead;
+    uint64_t budget = duckdb::InputFile::MAX_HINT;
     for (const auto count = _column->WindowCount();
          window < count && budget != 0; ++window) {
       const auto span = _column->Window(window);
@@ -342,8 +340,8 @@ class NormReaderBase : public NormReader {
       if (Test(window)) {
         continue;
       }
-      if (!file_utils::IsResident(span.data(), span.size())) {
-        file_utils::Prefetch(span.data(), span.size());
+      if (!duckdb::PageResidency::IsResident(span.data(), span.size())) {
+        _column->Prefetch(span.data(), span.size());
       }
       Done(window);
     }
@@ -363,7 +361,8 @@ class NormReaderBase : public NormReader {
   }
 
   void Init() {
-    file_utils::SyncResidency();
+    duckdb::PageResidency::Poll(_column->PageCount() *
+                                duckdb::PageResidency::PAGE_SIZE);
     const auto windows = _column->WindowCount();
     _probed_at = (windows + kBits - 1) / kBits * kBits;
     _seen_at = 2 * _probed_at;
@@ -445,7 +444,6 @@ class NormReaderBase : public NormReader {
   uint32_t _bytes = 0;
   bool _window_done = false;
   bool _dense = false;
-  bool _verified = false;
   doc_id_t _window_first = 0;
   doc_id_t _window_end = 0;
   size_t _window = 0;
@@ -459,12 +457,13 @@ class NormReaderBase : public NormReader {
   score_t _avg;
 };
 
-template<bool Multi>
+template<bool Multi, bool Paged>
 class PersistedNormReader : public NormReaderBase {
  public:
   explicit PersistedNormReader(const NormColumnReader& column) noexcept
     : NormReaderBase{column} {
     SDB_ASSERT(Multi || column.RegionCount() == 1);
+    SDB_ASSERT(Paged == column.Paged());
     Position(column.Region(0));
   }
 
@@ -483,7 +482,7 @@ class PersistedNormReader : public NormReaderBase {
         Position(_column->Locate(doc));
       }
     }
-    Touched(&doc, 1);
+    Track(&doc, 1);
     return ReadOne(doc);
   }
 
@@ -508,6 +507,12 @@ class PersistedNormReader : public NormReaderBase {
   }
 
  private:
+  IRS_FORCE_INLINE void Track(const doc_id_t* docs, size_t n) noexcept {
+    if constexpr (Paged) {
+      Touched(docs, n);
+    }
+  }
+
   IRS_FORCE_INLINE void Fetch(const doc_id_t* docs, uint32_t* values,
                               size_t n) {
     SDB_ASSERT(std::is_sorted(docs, docs + n));
@@ -518,7 +523,7 @@ class PersistedNormReader : public NormReaderBase {
         return;
       }
     }
-    Touched(docs, n);
+    Track(docs, n);
     Read(docs, values, n);
   }
 
@@ -532,7 +537,7 @@ class PersistedNormReader : public NormReaderBase {
       while (j != n && docs[j] < _region->end_doc) {
         ++j;
       }
-      Touched(docs + i, j - i);
+      Track(docs + i, j - i);
       Read(docs + i, values + i, j - i);
       i = j;
     }
@@ -542,10 +547,14 @@ class PersistedNormReader : public NormReaderBase {
 inline memory::managed_ptr<NormReader> MakePersistedNormReader(
   const NormColumnReader& column) {
   SDB_ASSERT(column.RegionCount() > 0);
-  if (column.RegionCount() == 1) {
-    return memory::make_managed<PersistedNormReader<false>>(column);
-  }
-  return memory::make_managed<PersistedNormReader<true>>(column);
+  const auto make = [&]<bool Paged> -> memory::managed_ptr<NormReader> {
+    if (column.RegionCount() == 1) {
+      return memory::make_managed<PersistedNormReader<false, Paged>>(column);
+    }
+    return memory::make_managed<PersistedNormReader<true, Paged>>(column);
+  };
+  return column.Paged() ? make.template operator()<true>()
+                        : make.template operator()<false>();
 }
 
 }  // namespace irs

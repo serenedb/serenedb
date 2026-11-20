@@ -23,6 +23,7 @@
 #include "iresearch/search/detail/boolean_groups.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/verified_slots.hpp"
 #include "iresearch/search/fill/all_docs.hpp"
@@ -104,7 +105,7 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
     kind == QueryKind::Term ? &AsTerm(ngrams).cookie : nullptr;
 
   if (single != nullptr) {
-    return ResolveInput(*DocOf(*field), [&]<typename Input> -> Result {
+    return Resolve(*DocOf(*field), [&]<typename Input> -> Result {
       if constexpr (kProbed) {
         using Leaf = PostingProbe<Input>;
         return make.template operator()<Leaf>(
@@ -120,7 +121,7 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
   const auto& terms = AsTerms(ngrams).Terms();
   SDB_ASSERT(terms.size() > 1);
   if constexpr (kProbed) {
-    return ResolveInput(*DocOf(*field), [&]<typename Input> -> Result {
+    return Resolve(*DocOf(*field), [&]<typename Input> -> Result {
       using Leaf = PostingProbe<Input>;
       return make.template operator()<probe::OrLeaves<Leaf>>(
         terms.size(), [&](Leaf& leaf, size_t i) {
@@ -129,7 +130,7 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
         });
     });
   } else {
-    return ResolveInput(*DocOf(*field), [&]<typename Input> -> Result {
+    return Resolve(*DocOf(*field), [&]<typename Input> -> Result {
       using Leaf = PostingFill<Input>;
       using Optional = OrGroup<fill::SetLeaves<Leaf>>;
       using Node =
@@ -146,6 +147,12 @@ Result Build(WildcardNGramKind, const WildcardNGramQuery& query,
         std::forward_as_tuple());
     });
   }
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const WildcardNGramQuery& query,
+                                  const Ctx& ctx) {
+  return MakeKind<Family, WildcardNGramKind>(query, ctx);
 }
 
 }  // namespace irs::detail

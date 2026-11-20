@@ -20,10 +20,11 @@
 
 #include <benchmark/benchmark.h>
 
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/formats/term_reader.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/term_acceptor.hpp>
@@ -33,7 +34,6 @@
 #include <iresearch/search/filters/range_filter.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/regexp_utils.hpp>
@@ -65,7 +65,7 @@ struct KeywordField {
     return irs::IndexFeatures::Freq;
   }
 
-  bool Write(irs::DataOutput&) const { return true; }
+  bool Write(duckdb::WriteStream&) const { return true; }
 
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
@@ -82,8 +82,7 @@ std::string TermAt(size_t i) {
 
 struct CachedIndex {
   std::filesystem::path path;
-  std::unique_ptr<irs::MMapDirectory> dir;
-  irs::DirectoryReader reader;
+  irs::CompositeReader reader;
   std::vector<std::string> terms;
 };
 
@@ -99,22 +98,22 @@ const CachedIndex& IndexOf(size_t num_terms) {
                 absl::StrFormat("serenedb-bench-term-enum-%d", num_terms);
   std::filesystem::remove_all(cached.path);
   std::filesystem::create_directories(cached.path);
-  cached.dir = std::make_unique<irs::MMapDirectory>(cached.path);
+  auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = cached.path.string();
+  tests::IndexDir dir{*db, fs, root};
 
   cached.terms.reserve(num_terms);
   for (size_t i = 0; i < num_terms; ++i) {
     cached.terms.push_back(TermAt(i));
   }
 
-  auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
   writer_opts.column_options = [](irs::field_id) -> irs::ColumnOptions {
     return {};
   };
-  auto writer = tests::IndexWriter::Make(*cached.dir, tests::kOmCreate,
-                                         std::move(writer_opts));
+  auto writer =
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(writer_opts));
 
   KeywordField field{.id = kKwFieldId};
   {
@@ -128,8 +127,7 @@ const CachedIndex& IndexOf(size_t num_terms) {
   }
   writer->RefreshCommit();
 
-  cached.reader =
-    tests::OpenReader(*cached.dir, irs::IndexReaderOptions{.db = db});
+  cached.reader = tests::OpenReader(dir, irs::IndexReaderOptions{});
   return cached;
 }
 

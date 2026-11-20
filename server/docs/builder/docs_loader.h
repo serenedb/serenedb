@@ -20,14 +20,13 @@
 
 #pragma once
 
-#include <filesystem>
 #include <span>
+#include <string>
 
 #include "docs/builder/docs_data.h"
 
 namespace sdb::docs {
 
-bool BuildEmbeddedIndex(const std::filesystem::path& out,
-                        std::span<const Doc> docs);
+bool BuildEmbeddedIndex(const std::string& out, std::span<const Doc> docs);
 
 }  // namespace sdb::docs

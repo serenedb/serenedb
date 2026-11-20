@@ -24,8 +24,10 @@
 #include "iresearch/index/segment_writer.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <duckdb/storage/buffer_manager.hpp>
+#include <utility>
 
 #include "index_meta.hpp"
 #include "iresearch/analysis/token_attributes.hpp"
@@ -38,8 +40,9 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
-#include "iresearch/store/store_utils.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/index_utils.hpp"
@@ -49,14 +52,6 @@
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
-namespace {
-
-duckdb::DatabaseInstance& DerefDb(duckdb::DatabaseInstance* db) {
-  SDB_ASSERT(db != nullptr);
-  return *db;
-}
-
-}  // namespace
 
 doc_id_t SegmentWriter::begin(doc_id_t batch_size) {
   SDB_ASSERT(batch_size > 0);
@@ -71,8 +66,10 @@ doc_id_t SegmentWriter::begin(doc_id_t batch_size) {
 }
 
 std::unique_ptr<SegmentWriter> SegmentWriter::make(
-  Directory& dir, const SegmentWriterOptions& options) {
-  return std::make_unique<SegmentWriter>(ConstructToken{}, dir, options);
+  duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+  const SegmentWriterOptions& options) {
+  return std::make_unique<SegmentWriter>(ConstructToken{}, db, fs, root,
+                                         options);
 }
 
 size_t SegmentWriter::memory_active() const noexcept {
@@ -94,15 +91,17 @@ bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
   return _docs_mask.Add(doc_id);
 }
 
-SegmentWriter::SegmentWriter(ConstructToken, Directory& dir,
-                             const SegmentWriterOptions& options) noexcept
-  : _dir{dir},
+SegmentWriter::SegmentWriter(ConstructToken, duckdb::DatabaseInstance& db,
+                             duckdb::FileSystem& fs, std::string_view root,
+                             const SegmentWriterOptions& options)
+  : _fs{fs},
+    _root{root},
+    _released{options.released},
     _scorer{options.scorer},
     _fields{InverterMemory{
-      duckdb::BufferManager::GetBufferManager(DerefDb(options.db))
-        .GetBufferAllocator(),
-      options.resource_manager}},
-    _db{DerefDb(options.db)},
+      duckdb::BufferManager::GetBufferManager(db).GetBufferAllocator(),
+      IResourceManager::gNoop}},
+    _db{db},
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},
     _hnsw_bases{options.hnsw_bases} {}
@@ -119,17 +118,17 @@ void SegmentWriter::FlushFields(FlushState& state,
   }
 }
 
-SegmentInputs SegmentWriter::flush(SegmentMeta& meta,
-                                   DocumentMaskBuilder& docs_mask) {
+WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
+                                    DocumentMaskBuilder& docs_mask) {
+  SDB_ASSERT(_tracker);
   FlushState state{
-    .dir = &_dir,
+    .tracker = *_tracker,
     .norms = this,
-    .name = _seg_name,
     .scorer = _scorer,
     .doc_count = buffered_docs(),
   };
 
-  IdxWriter idx{_dir, _seg_name};
+  IdxWriter idx{*_tracker};
 
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
@@ -176,8 +175,9 @@ SegmentInputs SegmentWriter::flush(SegmentMeta& meta,
   meta.docs_count = state.doc_count;
   meta.live_docs_count =
     meta.docs_count - static_cast<doc_id_t>(docs_mask.Count());
-  meta.kinds = SegmentFileKinds(_dir.FlushTracked(meta.byte_size));
-  return inputs;
+  meta.byte_size = _tracker->Bytes();
+  meta.kinds = _tracker->Kinds();
+  return {.files = std::move(_tracker), .inputs = std::move(inputs)};
 }
 
 void SegmentWriter::CopyRows(const ColReader& source,
@@ -228,7 +228,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   SDB_ASSERT(docs != 0);
   SDB_ASSERT(_copied_rows.empty());
   std::vector<std::unique_ptr<ColumnReader>> columns;
-  SealedNorms norms;
+  std::vector<NormColumnSpec> norms;
   size_t column_bytes = 0;
   if (_col_writer) {
     _fields.FinalizeNorms();
@@ -241,7 +241,8 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
     }
   }
   auto fields = std::make_shared<PieceFields>();
-  FlushState state{.dir = &_dir, .name = _seg_name, .doc_count = docs};
+  SDB_ASSERT(_tracker);
+  FlushState state{.tracker = *_tracker, .doc_count = docs};
   PieceFieldWriter field_writer{*fields, /*compaction=*/false};
   _fields.Flush(field_writer, state, {});
   SegmentMeta meta;
@@ -252,23 +253,28 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
       DocumentMaskBuilder{_docs_mask}.Finish());
   }
   meta.live_docs_count = meta.docs_count - RemovalCount(meta);
-  const auto files = _dir.FlushTracked(meta.byte_size);
-  meta.byte_size += column_bytes + fields->Bytes();
+  const absl::Cleanup remove = [&] { _tracker->Remove(); };
+  duckdb::shared_ptr<duckdb::InputFile> col_file;
+  if (!norms.empty()) {
+    col_file = _fs.OpenInputFile(_fs.JoinPath(_root, FileName(_seg_name)),
+                                 duckdb::MappedFileAccess::RANDOM);
+  }
+  meta.byte_size = _tracker->Bytes() + column_bytes + fields->Bytes() +
+                   (col_file ? col_file->GetSize() : 0);
   auto postings = field_writer.TakePostings();
   fields->Open(
     ReaderState{
-      .dir = &_dir,
-      .meta = &meta,
+      .db = _db,
+      .fs = _fs,
+      .root = _root,
+      .meta = meta,
       .postings = postings.doc ? &postings : nullptr,
     },
     field_writer.Features());
-  for (const auto& file : files) {
-    _dir.remove(file);
-  }
   return SegmentReaderImpl::OpenPiece(
     meta, id,
-    std::make_unique<ColReader>(_db, std::move(columns), std::move(norms.in),
-                                std::move(norms.columns)),
+    std::make_unique<ColReader>(_db, std::move(columns), std::move(col_file),
+                                std::move(norms)),
     std::move(fields));
 }
 
@@ -302,7 +308,10 @@ void SegmentWriter::ResetState() noexcept {
   }
   _copied_columns.clear();
   _copied_rows.clear();
-  _dir.RemoveTracked();
+  if (_tracker) {
+    _tracker->Remove();
+    _tracker.reset();
+  }
 }
 
 void SegmentWriter::reset() noexcept {
@@ -326,7 +335,8 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   }
 
   const auto* active = ActiveFieldOptions();
-  _col_writer = std::make_unique<ColWriter>(_dir, meta.name, _db);
+  _tracker = std::make_shared<FileTracker>(_fs, _root, meta.name, 0, _released);
+  _col_writer = std::make_unique<ColWriter>(_db, *_tracker);
   _col_writer->SetDeferredSeal(_deferred_columns);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);

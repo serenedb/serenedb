@@ -85,7 +85,7 @@ struct Family : irs::detail::ScoredRootFamily<Context> {
   template<typename Input, typename Exclude, typename ExcludeArgs>
   static Result MakeExcludedPosting(const Context&, ExcludeArgs&& negated,
                                     const irs::detail::PostingClause& posting,
-                                    const IndexInput& doc,
+                                    const duckdb::InputFile& doc,
                                     const SubReader& segment,
                                     const TermReader& own,
                                     const irs::detail::ScoreRecipe& recipe) {

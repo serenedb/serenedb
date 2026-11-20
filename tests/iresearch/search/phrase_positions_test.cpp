@@ -18,19 +18,22 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <absl/strings/str_split.h>
 
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <iresearch/analysis/text/term_view.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/phrase_slop_matcher.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/string.hpp>
 #include <random>
@@ -40,6 +43,7 @@
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "phrase_families.hpp"
 #include "phrase_slop_run.hpp"
@@ -256,7 +260,8 @@ Outcome Run(const irs::ByPhraseOptions& phrase, const Doc& doc, bool dense) {
   WhitespaceTokenizer whitespace;
   ExplicitTokenizer explicit_positions;
   const auto value = dense ? doc.Text() : doc.Explicit();
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   {
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
@@ -612,6 +617,52 @@ TEST(PhrasePositionsTest, interval_phrase_scale_agrees_with_reference) {
       EXPECT_FLOAT_EQ(expected.scale, out.scale);
     }
   }
+}
+
+TEST(PhrasePositionsTest, positions_left_in_cache_blocks) {
+  if (!TestEnv::ArmFaultPoint("IndexWriter::CompactOutOfMemory")) {
+    GTEST_SKIP() << "built without fault injection";
+  }
+  absl::Cleanup clear = [] { TestEnv::ClearFaultPoints(); };
+  constexpr uint32_t kPairs = 1 << 20;
+  std::string text;
+  for (uint32_t i = 0; i != kPairs; ++i) {
+    text += "quick fox ";
+    for (uint32_t gap = 0; gap != i % 7; ++gap) {
+      text += "x ";
+    }
+  }
+  WhitespaceTokenizer whitespace;
+  const tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                            TestEnv::MemoryRoot()};
+  {
+    auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    Field field{.tokenizer = &whitespace, .value = text};
+    auto ctx = writer->GetBatch();
+    {
+      auto inserted = ctx.Insert();
+      ASSERT_TRUE(tests::InsertField(inserted, field));
+    }
+    ctx.Commit();
+    writer->RefreshCommit();
+  }
+  TestEnv::ClearFaultPoints();
+  const auto reader =
+    tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(1, reader.size());
+  const auto handles = reader[0].field(kField)->Handles();
+  ASSERT_FALSE(handles.doc->IsMapped());
+  ASSERT_FALSE(handles.pos->IsMapped());
+  ASSERT_LT(4 * duckdb::ExternalFileCache::DEFAULT_BLOCK_SIZE,
+            handles.pos->GetSize());
+
+  irs::ByPhrase filter;
+  *filter.mutable_field_id() = kField;
+  *filter.mutable_options() = Phrase("quick fox");
+  EXPECT_EQ(std::vector<irs::score_t>{kPairs},
+            Scores<tests::sort::FrequencyScore>(filter, reader));
 }
 
 TEST(PhrasePositionsTest, stacked_document_tokens) {

@@ -24,6 +24,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/buffered_file_writer.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <memory>
 #include <span>
@@ -39,25 +41,19 @@
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
 
-struct SealedNorms {
-  std::vector<NormColumnSpec> columns;
-  IndexInput::ptr in;
-};
-
 class ColWriter final {
  public:
-  ColWriter(Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db, WriteTier tier = WriteTier::Flush);
+  ColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
+            WriteTier tier = WriteTier::Flush);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
@@ -80,7 +76,7 @@ class ColWriter final {
   uint64_t RowGroupRows(uint64_t row, uint64_t uniform) const noexcept;
 
   std::vector<StagedColumn> Snapshot(uint64_t rows) const;
-  SealedNorms SealNorms(uint64_t rows);
+  std::vector<NormColumnSpec> SealNorms(uint64_t rows);
   size_t StagedBytes() const noexcept;
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
@@ -114,6 +110,7 @@ class ColWriter final {
   void Rollback() noexcept;
 
   WriteContext& WriteCtx() const noexcept { return *_write_ctx; }
+  duckdb::WriteStream& Out() const noexcept { return *_out; }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
 
  private:
@@ -134,13 +131,13 @@ class ColWriter final {
   NormColumnWriter& AddNormColumn(field_id id, uint32_t row_group_size);
   bool Empty() const noexcept;
 
-  Directory* _dir;
-  std::string _segment_name;
+  FileTracker& _tracker;
+  std::string _filename;
   duckdb::DatabaseInstance* _db;
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
-  IndexOutput::ptr _out;
+  std::unique_ptr<duckdb::BufferedFileWriter> _out;
   std::unique_ptr<ColReader> _reader;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<ColumnEntry> _columns;

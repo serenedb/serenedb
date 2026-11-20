@@ -22,6 +22,7 @@
 
 #include <cstdint>
 #include <duckdb.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -32,7 +33,6 @@
 #include <iresearch/formats/column/internal/write_context.hpp>
 #include <iresearch/formats/column/list_ingest.hpp>
 #include <iresearch/index/column_info.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <span>
@@ -137,8 +137,8 @@ class ColCompressionFunctionTest : public ::testing::Test {
 
   CodecType Compress(irs::codecs::CompressionFunctions contenders,
                      irs::WriteTier tier, irs::codecs::CodecSet disabled = {}) {
-    auto out = _dir.create("blocks");
-    irs::WriteContext ctx{_db.instance->GetBufferManager(), *out};
+    duckdb::MemoryStream out;
+    irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
     CodecType flushed = CodecType::Auto;
     const auto flush = [&](const irs::codecs::Codec& codec,
                            duckdb::BaseStatistics, uint64_t,
@@ -159,8 +159,8 @@ class ColCompressionFunctionTest : public ::testing::Test {
 
   CodecType CompressAs(CodecType method, irs::WriteTier tier,
                        irs::codecs::CodecSet disabled = {}) {
-    auto out = _dir.create("blocks");
-    irs::WriteContext ctx{_db.instance->GetBufferManager(), *out};
+    duckdb::MemoryStream out;
+    irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
     CodecType flushed = CodecType::Auto;
     const auto flush = [&](const irs::codecs::Codec& codec,
                            duckdb::BaseStatistics, uint64_t,
@@ -179,7 +179,6 @@ class ColCompressionFunctionTest : public ::testing::Test {
   }
 
   duckdb::DuckDB _db;
-  irs::MemoryDirectory _dir;
   duckdb::Vector _values{duckdb::LogicalType::BIGINT, kRows};
   std::vector<irs::WriteChunk> _chunks;
   irs::codecs::ColumnTuning _tuning;
@@ -315,8 +314,8 @@ TEST_F(ColCompressionFunctionTest, ALayoutFunctionWritesItsOwnLayout) {
   ASSERT_GE(layouts.size(), 3U);
   const auto& raw = layouts[0];
   const auto& narrowed = layouts[2];
-  auto out = _dir.create("blocks");
-  irs::WriteContext ctx{_db.instance->GetBufferManager(), *out};
+  duckdb::MemoryStream out;
+  irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
   std::string written;
   const auto flush = [&](const irs::codecs::Codec&, duckdb::BaseStatistics,
                          uint64_t, std::string_view bytes) { written = bytes; };
@@ -404,8 +403,8 @@ TEST_F(ColCompressionFunctionTest, OnlyTheFrameOptionThatBidWritesText) {
   duckdb::FlatVector::SetSize(strings, kStrings);
   std::vector<irs::WriteChunk> chunks;
   chunks.push_back(irs::RefChunk(strings, kStrings));
-  auto out = _dir.create("blocks");
-  irs::WriteContext ctx{_db.instance->GetBufferManager(), *out};
+  duckdb::MemoryStream out;
+  irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
   uint64_t segments = 0;
   const auto flush = [&](const irs::codecs::Codec& codec,
                          duckdb::BaseStatistics, uint64_t, std::string_view) {

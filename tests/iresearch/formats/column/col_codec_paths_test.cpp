@@ -47,7 +47,6 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_info.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>
@@ -55,7 +54,9 @@
 #include <string>
 #include <vector>
 
+#include "formats/column/test_cs_helpers.hpp"
 #include "gtest/gtest.h"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -153,9 +154,9 @@ class ColCodecPathsTest : public TestBase {
     return rows;
   }
 
-  void Write(irs::Directory& dir, const Case& c,
+  void Write(const tests::IndexDir& dir, const Case& c,
              const std::vector<Value>& rows) {
-    irs::ColWriter w{dir, kSeg, Db(), c.tier};
+    irs::ColWriter w{Db(), dir.Tracker(kSeg), c.tier};
     auto& cw = w.OpenColumn(
       kField, c.type, {.row_group_size = c.rg_size, .compression = c.codec});
     for (uint64_t pos = 0; pos < c.rows;) {
@@ -561,9 +562,9 @@ class ColCodecPathsTest : public TestBase {
   void Check(const Case& c) {
     SCOPED_TRACE(c.name);
     const auto rows = Expected(c);
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     ASSERT_NO_FATAL_FAILURE(Write(dir, c, rows));
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     ASSERT_EQ(col->RowCount(), c.rows);

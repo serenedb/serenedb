@@ -25,13 +25,13 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/main/database.hpp>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "iresearch/formats/column/internal/block_manager.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
@@ -40,9 +40,9 @@ class ColReader;
 
 class ReadContext final : public BlockManager {
  public:
-  explicit ReadContext(duckdb::DatabaseInstance& db) noexcept;
+  explicit ReadContext(duckdb::DatabaseInstance& db);
   explicit ReadContext(const ColReader& reader, bool random_access = false);
-  ReadContext(duckdb::DatabaseInstance& db, IndexInput::ptr in);
+  ReadContext(duckdb::DatabaseInstance& db, const duckdb::InputFile* file);
   ~ReadContext() final;
 
   ReadContext(const ReadContext&) = delete;
@@ -52,9 +52,7 @@ class ReadContext final : public BlockManager {
 
   void Reset(const ColReader& reader);
 
-  IndexInput& In() noexcept { return *_in; }
-  const IndexInput& In() const noexcept { return *_in; }
-  bool HasIn() const noexcept { return _in != nullptr; }
+  const duckdb::InputFile* File() const noexcept { return _in.File().get(); }
   bool RandomAccess() const noexcept { return _random_access; }
   duckdb::ObjectCache* Cache() const noexcept { return _cache; }
 
@@ -96,11 +94,12 @@ class ReadContext final : public BlockManager {
   duckdb::idx_t TotalBlocks() final;
 
  private:
-  void ResetMapping();
+  void ResetFile(const duckdb::InputFile* file);
   bool Maps(uint64_t offset, uint64_t size) const noexcept;
+  bool Wraps(uint64_t offset, uint64_t size) const noexcept;
 
-  IndexInput::ptr _in;
-  duckdb::unique_ptr<duckdb::MemoryMappedFile> _mapping;
+  duckdb::InputFileReader _in;
+  duckdb::MemoryMappedFile* _mapping = nullptr;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
   bool _random_access = false;
   duckdb::ObjectCache* _cache;

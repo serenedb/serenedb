@@ -100,8 +100,8 @@ class ExactScanner {
     if (!_threshold) {
       return true;
     }
-    return _inclusive ? RadiusGate<true>::Inside(distance, *_threshold)
-                      : RadiusGate<false>::Inside(distance, *_threshold);
+    const auto edge = *_threshold;
+    return (distance > edge) | (_inclusive & (distance == edge));
   }
 
   uint32_t NextDocs(doc_id_t* docs) {

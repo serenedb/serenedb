@@ -136,19 +136,6 @@ class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
   ABSL_CACHELINE_ALIGNED mutable score_t _scratch[kScoreBlock];
 };
 
-template<bool HasConst>
-ScoreFunction Resolve(ScoreMergeType inner, ScoreFunction&& required,
-                      std::vector<ScoreFunction>&& probed, ScoreMask* held,
-                      score_t constant) {
-  if (inner == ScoreMergeType::Max) {
-    return ScoreFunction::Make<ProbeScore<ScoreMergeType::Max, HasConst>>(
-      std::move(required), std::move(probed), held, constant);
-  }
-  SDB_ASSERT(inner == ScoreMergeType::Sum);
-  return ScoreFunction::Make<ProbeScore<ScoreMergeType::Sum, HasConst>>(
-    std::move(required), std::move(probed), held, constant);
-}
-
 bool AnyProbed(const std::vector<ScoreFunction>& probed) noexcept {
   return absl::c_any_of(probed,
                         [](const ScoreFunction& s) { return !s.IsDefault(); });
@@ -168,12 +155,12 @@ ScoreFunction MakeProbeScore(ScoreMergeType inner, ScoreFunction&& required,
       return ScoreFunction::Constant(constant);
     }
   }
-  if (constant != 0) {
-    return Resolve<true>(inner, std::move(required), std::move(probed), held,
-                         constant);
-  }
-  return Resolve<false>(inner, std::move(required), std::move(probed), held,
-                        constant);
+  return Resolve(constant != 0, [&]<bool HasConst> {
+    return Resolve(inner, [&]<ScoreMergeType M> {
+      return ScoreFunction::Make<ProbeScore<M, HasConst>>(
+        std::move(required), std::move(probed), held, constant);
+    });
+  });
 }
 
 }  // namespace irs::detail

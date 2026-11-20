@@ -36,8 +36,6 @@
 #include "iresearch/search/detail/posting_leaf.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/store/data_input.hpp"
-#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -183,7 +181,6 @@ class PostingBatch
 
  protected:
   using Base::_freqs;
-  using Base::_hint;
   using Base::_in;
   using Base::_last;
   using Base::_left_in_list;
@@ -200,7 +197,7 @@ class PostingBatch
   using Base::SkipFreqs;
 
   IRS_FORCE_INLINE void ReadDocs(doc_id_t* IRS_RESTRICT dest, uint32_t len) {
-    _hint.Advance(In(), In().Position());
+    In().Advance();
     block_io::ReadTailDeltaAt(len, In(), Enc(), dest, _last);
     _last = dest[len - 1];
     _left_in_list -= len;

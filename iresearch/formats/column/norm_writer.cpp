@@ -162,22 +162,22 @@ void NormColumnWriter::CloseRegion() {
     region.table_offset = _blocks->Position();
     _bases.resize(NormBuckets(region), static_cast<uint32_t>(_direct.size()));
     for (const auto base : _bases) {
-      _blocks->WriteU32(base);
+      _blocks->Write<uint32_t>(base);
     }
     for (const auto row : _overflow_rows) {
-      _blocks->WriteU32(row);
+      _blocks->Write<uint32_t>(row);
     }
     for (const auto v : _overflow_values) {
-      _blocks->WriteU32(v);
+      _blocks->Write<uint32_t>(v);
     }
     for (const auto v : _direct) {
       if (region.exception_bytes == 2) {
-        _blocks->WriteU16(static_cast<uint16_t>(v));
+        _blocks->Write<uint16_t>(static_cast<uint16_t>(v));
       } else {
-        _blocks->WriteU32(v);
+        _blocks->Write<uint32_t>(v);
       }
     }
-    _blocks->WriteU32(0);
+    _blocks->Write<uint32_t>(0);
     SDB_ASSERT(_blocks->Position() - region.table_offset ==
                NormTableSize(region));
   }

@@ -42,8 +42,10 @@ void OpenScanner(ScanGlobalState& g, ColScanLocalState& l) {
     const auto* col_reader = reader[l.unit.seg].GetColReader();
     SDB_ENSURE(col_reader != nullptr,
                "bulk cs scan: segment has no columnstore reader");
+    std::vector<MultiColumnCheck> multi;
+    BuildMultiColumnChecks(g, *col_reader, multi);
     slot = std::make_unique<FullScanner>(
-      *col_reader, g.cs_projections, l.seg_cls.active, g.client_context,
+      *col_reader, g.cs_projections, l.seg_cls.active, multi, g.client_context,
       l.filter_states, g.Bind().share_payloads);
   }
   l.scanner = slot.get();
@@ -77,6 +79,9 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
       l.doc_cursor = std::min<uint64_t>(dead_end, l.doc_end);
       continue;
     }
+    if (l.doc_cursor >= l.ahead_check) [[unlikely]] {
+      MoveReadAhead(g, l, l.doc_cursor);
+    }
     const auto take = static_cast<duckdb::idx_t>(
       std::min<uint64_t>(STANDARD_VECTOR_SIZE, l.doc_end - l.doc_cursor));
     if (sampled && g.sampling.is_percentage &&
@@ -86,31 +91,38 @@ duckdb::idx_t EmitFromUnit(ScanGlobalState& g, ColScanLocalState& l,
     }
     const auto first =
       irs::doc_limits::min() + static_cast<irs::doc_id_t>(l.doc_cursor);
-    duckdb::idx_t live = take;
+    const duckdb::SelectionVector* live = nullptr;
+    duckdb::idx_t live_count = take;
     if (l.has_mask) {
       l.live_sel.Initialize(l.live_sel_data);
-      live =
+      live_count =
         l.mask.FillLive(first, static_cast<uint32_t>(take), l.live_sel.data());
+      live = &l.live_sel;
     }
     if (sample_rows) {
-      live = SampleRows(g, l, take, live);
-      if (live == 0) {
+      live_count = SampleRows(g, l, take, live_count);
+      if (live_count == 0) {
         l.doc_cursor += take;
         continue;
       }
+      live = &l.live_sel;
     }
     const auto produced =
-      live == take
-        ? scanner.Scan(l.doc_cursor, take, output)
-        : scanner.Scan(l.doc_cursor, take, output, &l.live_sel, live);
-    l.doc_cursor += take;
-    if (produced != 0) {
-      WriteRowPositions(g, l.unit.seg, first, scanner.Selection(), produced,
-                        output);
-      WriteVirtualColumns(g, produced, nullptr, output);
-      return produced;
+      scanner.Filter(l.doc_cursor, take, output, live, live_count);
+    if (produced == 0) {
+      l.doc_cursor += take;
+      output.Reset();
+      continue;
     }
-    output.Reset();
+    if (l.doc_cursor >= l.projected_until) [[unlikely]] {
+      DeclareProjected(g, l, l.doc_cursor);
+    }
+    scanner.Project(l.doc_cursor, take, produced, output);
+    l.doc_cursor += take;
+    WriteRowPositions(g, l.unit.seg, first, scanner.Selection(), produced,
+                      output);
+    WriteVirtualColumns(g, produced, nullptr, output);
+    return produced;
   }
   return 0;
 }

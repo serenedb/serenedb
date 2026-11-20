@@ -37,6 +37,7 @@
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -85,9 +86,12 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
 
 }  // namespace
 
-ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db, WriteTier tier)
-  : _dir{&dir}, _segment_name{segment_name}, _db{&db}, _tier{tier} {}
+ColWriter::ColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
+                     WriteTier tier)
+  : _tracker{tracker},
+    _filename{FileName(tracker.Name())},
+    _db{&db},
+    _tier{tier} {}
 
 ColWriter::~ColWriter() {
   if (_out && !_committed) {
@@ -99,7 +103,8 @@ void ColWriter::EnsureOut() {
   if (_out) {
     return;
   }
-  _out = _dir->create(FileName(_segment_name));
+  _out = format_utils::OpenOutput(_tracker.Fs(), _tracker.Root(), _filename);
+  _tracker.Add(kColFile);
   _write_ctx = std::make_unique<WriteContext>(_db->GetBufferManager(), *_out);
 }
 
@@ -166,7 +171,7 @@ void ColWriter::Close(ColumnEntry& entry) {
 NormColumnWriter& ColWriter::AddNormColumn(field_id id,
                                            uint32_t row_group_size) {
   auto& writer = *_norms.emplace_back(std::make_unique<NormColumnWriter>(
-    id, row_group_size, [this]() -> IndexOutput& {
+    id, row_group_size, [this]() -> duckdb::WriteStream& {
       EnsureOut();
       return *_out;
     }));
@@ -264,25 +269,25 @@ std::vector<StagedColumn> ColWriter::Snapshot(uint64_t rows) const {
   return columns;
 }
 
-SealedNorms ColWriter::SealNorms(uint64_t rows) {
-  SealedNorms sealed;
-  sealed.columns.reserve(_norms.size());
+std::vector<NormColumnSpec> ColWriter::SealNorms(uint64_t rows) {
+  std::vector<NormColumnSpec> norms;
+  norms.reserve(_norms.size());
   for (auto& writer : _norms) {
     if (writer->RowCount() < rows) {
       writer->PadTo(rows);
     }
     writer->Finalize();
     if (!writer->Meta().regions.empty()) {
-      sealed.columns.push_back({.id = writer->Id(), .meta = writer->Meta()});
+      norms.push_back({.id = writer->Id(), .meta = writer->Meta()});
     }
   }
-  if (!sealed.columns.empty()) {
+  if (!norms.empty()) {
     EnsureOut();
-    sealed.in = _dir->Finish(std::move(_out), IOAdvice::RANDOM);
-  } else if (_out) {
+  }
+  if (_out) {
     _out->Flush();
   }
-  return sealed;
+  return norms;
 }
 
 size_t ColWriter::StagedBytes() const noexcept {
@@ -376,8 +381,11 @@ bool ColWriter::Commit(uint64_t target_row,
         list.WriteElement(footer.row_group_starts[i]);
       });
   });
-  _reader = std::make_unique<ColReader>(
-    *_db, _dir->Finish(std::move(_out), IOAdvice::RANDOM), std::move(footer));
+  _tracker.Written(_out->Position());
+  auto file = format_utils::CloseOutput(*_out);
+  _out.reset();
+  _reader =
+    std::make_unique<ColReader>(*_db, std::move(file), std::move(footer));
   _committed = true;
   return true;
 }

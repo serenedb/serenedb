@@ -41,8 +41,7 @@ struct TableSnapshot {
 
 bool RecoverSearchStorages(
   duckdb::ClientContext& context,
-  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached,
-  bool orphans);
+  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> attached);
 void StartSearchStorageTasks();
 std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view);
 std::vector<catalog::RecordBuffer> SnapshotRecords(

@@ -26,6 +26,7 @@
 #include <utility>
 
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/token_phrase_slots.hpp"
@@ -53,7 +54,7 @@ Result Build(TokenPhraseKind, const TokenPhraseQuery& query,
                                         query, Scored);
   };
   if constexpr (Scored) {
-    return ResolveBool(IsSloppy(query), make);
+    return Resolve(IsSloppy(query), make);
   } else {
     return make.template operator()<false>();
   }
@@ -68,6 +69,12 @@ inline std::optional<score_t> ConstantOf(TokenPhraseKind,
 inline const TermReader& FieldOf(TokenPhraseKind,
                                  const TokenPhraseQuery& query) {
   return query.Reader();
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const TokenPhraseQuery& query,
+                                  const Ctx& ctx) {
+  return MakeKind<Family, TokenPhraseKind>(query, ctx);
 }
 
 }  // namespace irs::detail

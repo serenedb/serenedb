@@ -33,6 +33,8 @@
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/memory_mapped_file.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
@@ -71,8 +73,6 @@
 #include <iresearch/formats/column/list_ingest.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_info.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <limits>
@@ -88,6 +88,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "gtest/gtest.h"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -134,10 +135,10 @@ class ColCodecsTest : public TestBase {
     return keys;
   }
 
-  void Write(irs::Directory& dir, irs::codecs::CodecType codec,
+  void Write(const tests::IndexDir& dir, irs::codecs::CodecType codec,
              irs::ColCodecParams params, uint64_t rows, uint32_t rg_size,
              const Value& value) {
-    irs::ColWriter w{dir, kSeg, Db(), params.tier};
+    irs::ColWriter w{Db(), dir.Tracker(kSeg), params.tier};
     auto& cw = w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
                             {.row_group_size = rg_size,
                              .compression = codec,
@@ -181,9 +182,9 @@ class ColCodecsTest : public TestBase {
     EXPECT_EQ(s.GetString(), *expected) << "row " << g;
   }
 
-  void Verify(irs::Directory& dir, irs::codecs::CodecType codec, uint64_t rows,
-              const Value& value) {
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  void Verify(const tests::IndexDir& dir, irs::codecs::CodecType codec,
+              uint64_t rows, const Value& value) {
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     ASSERT_EQ(col->RowCount(), rows);
@@ -295,13 +296,13 @@ class ColCodecsTest : public TestBase {
 
   void RoundTrip(irs::codecs::CodecType codec, irs::ColCodecParams params,
                  uint64_t rows, uint32_t rg_size, const Value& value) {
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, params, rows, rg_size, value);
     Verify(dir, codec, rows, value);
   }
 
-  uint64_t ColumnBytes(irs::Directory& dir) {
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  uint64_t ColumnBytes(const tests::IndexDir& dir) {
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
     uint64_t bytes = 0;
@@ -317,8 +318,8 @@ class ColCodecsTest : public TestBase {
   }
 
   std::vector<std::pair<irs::codecs::CodecType, std::string>> BlockLevels(
-    irs::Directory& dir) {
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    const tests::IndexDir& dir) {
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
     std::vector<std::pair<irs::codecs::CodecType, std::string>> levels;
@@ -340,9 +341,9 @@ class ColCodecsTest : public TestBase {
     return levels;
   }
 
-  std::vector<std::string> SegmentInfo(irs::Directory& dir,
+  std::vector<std::string> SegmentInfo(const tests::IndexDir& dir,
                                        const std::string& key) {
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
     std::vector<std::string> values;
@@ -716,10 +717,10 @@ TEST_F(ColCodecsTest, PlainSparseGatherThenScan) {
        {irs::codecs::CodecType::Lz4, irs::codecs::CodecType::Fsst,
         irs::codecs::CodecType::FsstPlus, irs::codecs::CodecType::Onpair,
         irs::codecs::CodecType::Fsst12, irs::codecs::CodecType::Zxc}) {
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {.segment_target = 64 * 1024}, 6000, 2048,
           kLongTextWithNulls);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     auto state = col->InitScan(r.Ctx());
@@ -775,10 +776,9 @@ TEST_F(ColCodecsTest, EveryCodecEveryShapeEveryLevel) {
             params.segment_target = target;
           }
           const uint64_t rows = value == &kOneHugeString ? 400 : 2500;
-          irs::MemoryDirectory dir{};
+          tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
           Write(dir, arm.codec, params, rows, 1024, *value);
-          irs::ColReader r{dir, std::string{kSeg}, Db(),
-                           irs::IOAdvice::SEQUENTIAL};
+          irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
           const auto* col = r.Column(kField);
           ASSERT_NE(col, nullptr);
           ASSERT_EQ(col->RowCount(), rows);
@@ -811,8 +811,8 @@ TEST_F(ColCodecsTest, EveryCodecEveryShapeEveryLevel) {
 }
 
 TEST_F(ColCodecsTest, ColumnLevelOverridesTableLevel) {
-  const auto level_of = [&](irs::Directory& dir) {
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto level_of = [&](const tests::IndexDir& dir) {
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     EXPECT_NE(col, nullptr);
     irs::ReadContext ctx{r};
@@ -833,9 +833,9 @@ TEST_F(ColCodecsTest, ColumnLevelOverridesTableLevel) {
       1024,
       {}};
     options.codec_params = irs::ColCodecParams{.compression_level = 2};
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{dir, kSeg, Db()};
+      irs::ColWriter w{Db(), dir.Tracker(kSeg)};
       w.SetFieldOptions(&options);
       auto& cw = w.OpenColumn(kField, duckdb::LogicalType::VARCHAR);
       duckdb::Vector vec{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
@@ -857,13 +857,13 @@ TEST_F(ColCodecsTest, PlainLz4Hc) {
 }
 
 TEST_F(ColCodecsTest, SegmentsExceedTheBlock) {
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   const Value value = [](uint64_t g) -> std::optional<std::string> {
     return Pseudo(g, 1500);
   };
   Write(dir, irs::codecs::CodecType::Lz4, {}, 4096, DEFAULT_ROW_GROUP_SIZE,
         value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   uint64_t largest = 0;
@@ -875,10 +875,10 @@ TEST_F(ColCodecsTest, SegmentsExceedTheBlock) {
 }
 
 TEST_F(ColCodecsTest, SegmentTargetCutsRowGroups) {
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {.segment_target = 16 * 1024},
         30000, DEFAULT_ROW_GROUP_SIZE, kUniqueShort);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   EXPECT_GT(col->DataBlocks().size(), 4U);
@@ -909,7 +909,7 @@ TEST_F(ColCodecsTest, LaterFramesUseTheFirstFrameAsDictionary) {
     for (const uint8_t level : {uint8_t{0}, uint8_t{9}}) {
       SCOPED_TRACE(testing::Message() << static_cast<int>(codec) << " level "
                                       << static_cast<int>(level));
-      irs::MemoryDirectory dir{};
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
       Write(dir, codec,
             {.compression_level = level, .tier = irs::WriteTier::Flush}, kRows,
             DEFAULT_ROW_GROUP_SIZE, value);
@@ -919,7 +919,7 @@ TEST_F(ColCodecsTest, LaterFramesUseTheFirstFrameAsDictionary) {
         dictionaries.end());
       Verify(dir, codec, kRows, value);
 
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       irs::ColumnReader::PointReader cursor{r, *col};
@@ -960,7 +960,7 @@ TEST_F(ColCodecsTest, CompactionsTrainADictionaryPerSegment) {
       SCOPED_TRACE(
         absl::StrCat(magic_enum::enum_name(codec),
                      tier == irs::WriteTier::Merge ? " merge" : " flush"));
-      irs::MemoryDirectory dir{};
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
       Write(dir, codec, {.compression_level = 3, .tier = tier}, kRows,
             kRowGroup, value);
       const auto dictionaries = SegmentInfo(dir, "dictionary");
@@ -986,7 +986,7 @@ TEST_F(ColCodecsTest, CompactionsDropADictionaryThatDoesNotPay) {
        {irs::codecs::CodecType::Lz4, irs::codecs::CodecType::Zstd,
         irs::codecs::CodecType::Zxc}) {
     SCOPED_TRACE(magic_enum::enum_name(codec));
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
     const auto dictionaries = SegmentInfo(dir, "dictionary");
     EXPECT_EQ(absl::c_count(dictionaries, "local"), 0)
@@ -1006,7 +1006,7 @@ TEST_F(ColCodecsTest, SegmentsTooSmallToTrainUseTheFirstFrame) {
        {irs::codecs::CodecType::Lz4, irs::codecs::CodecType::Zstd,
         irs::codecs::CodecType::Zxc}) {
     SCOPED_TRACE(magic_enum::enum_name(codec));
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
     EXPECT_EQ(SegmentInfo(dir, "dictionary"),
               std::vector<std::string>{"first_frame"});
@@ -1026,7 +1026,7 @@ TEST_F(ColCodecsTest, AnEmptyFirstFrameIsNoDictionary) {
        {irs::codecs::CodecType::Lz4, irs::codecs::CodecType::Zstd,
         irs::codecs::CodecType::Zxc}) {
     SCOPED_TRACE(magic_enum::enum_name(codec));
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
     EXPECT_EQ(SegmentInfo(dir, "dictionary"), std::vector<std::string>{""});
     Verify(dir, codec, kRows, value);
@@ -1046,7 +1046,7 @@ TEST_F(ColCodecsTest, AutoTrainsADictionaryWhereItPays) {
   };
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     SCOPED_TRACE(tier == irs::WriteTier::Merge ? "merge" : "flush");
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, irs::codecs::CodecType::Auto, {.tier = tier}, kRows,
           DEFAULT_ROW_GROUP_SIZE, value);
     const auto dictionaries = SegmentInfo(dir, "dictionary");
@@ -1142,9 +1142,8 @@ std::vector<irs::codecs::CodecType> SealAuto(
   duckdb::DatabaseInstance& db, std::span<const irs::WriteChunk> chunks,
   const irs::ColCodecParams& params, irs::codecs::ColumnTuning& tuning,
   const irs::codecs::CodecSet& disabled = {}) {
-  irs::MemoryDirectory dir;
-  auto out = dir.create("blocks");
-  irs::WriteContext ctx{db.GetBufferManager(), *out};
+  duckdb::MemoryStream out;
+  irs::WriteContext ctx{db.GetBufferManager(), out};
   std::vector<irs::codecs::CodecType> types;
   const auto flush = [&](const irs::codecs::Codec& codec,
                          duckdb::BaseStatistics, uint64_t,
@@ -1224,9 +1223,8 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
   };
   const auto chunks = Chunks(20000, kWordSoup);
   const auto write_chunks = WriteChunks(chunks);
-  irs::MemoryDirectory dir;
-  auto out = dir.create("blocks");
-  irs::WriteContext ctx{Db().GetBufferManager(), *out};
+  duckdb::MemoryStream out;
+  irs::WriteContext ctx{Db().GetBufferManager(), out};
   for (const auto choice : choices) {
     irs::codecs::ColumnTuning tuning;
     uint64_t segments = 0;
@@ -1360,9 +1358,9 @@ TEST_F(ColCodecsTest, PointReadsAlternateBlocksOfDifferentCodecs) {
     }
     return absl::StrCat("unique-", g * 7919, "-", g);
   };
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::Auto, {}, kRows, 1024, value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   absl::flat_hash_set<irs::codecs::CodecType> codecs;
@@ -1389,9 +1387,9 @@ TEST_F(ColCodecsTest, BatchedPointReadsKeepTheStringsOfEveryBlock) {
   };
   for (const auto codec :
        {irs::codecs::CodecType::Uncompressed, irs::codecs::CodecType::Lz4}) {
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, 1024, value);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     ASSERT_GT(col->DataBlocks().size(), 4u);
@@ -1420,9 +1418,9 @@ TEST_F(ColCodecsTest, PointReadsUseTheCachedDictionary) {
     }
     return absl::StrCat("dictionary-entry-", g % 97);
   };
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, 8192, value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   ASSERT_GT(col->DataBlocks().size(), 1u);
@@ -1495,9 +1493,9 @@ TEST_F(ColCodecsTest, BatchedPointReadsCopyTheirValuesWhenTheCacheHasNoRoom) {
       SCOPED_TRACE(absl::StrCat(Written(codec), value == &distinct
                                                   ? ", distinct values"
                                                   : ", repeating values"));
-      irs::MemoryDirectory dir;
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
       Write(dir, codec, {}, kRows, 8192, *value);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       ASSERT_EQ(col->DataBlocks().size(), 1u);
@@ -1541,9 +1539,9 @@ TEST_F(ColCodecsTest,
        {irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictFsst12,
         irs::codecs::CodecType::DictLz4}) {
     SCOPED_TRACE(Written(codec));
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, 8192, value);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     cache.SetMaxMemory(cache.GetCurrentMemory());
@@ -1607,9 +1605,9 @@ TEST_F(ColCodecsTest, RowReadsDecodeTheSharedBytesOfEarlierEntries) {
        {irs::codecs::CodecType::Fsst, irs::codecs::CodecType::Fsst12,
         irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictFsst12}) {
     SCOPED_TRACE(Written(codec));
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, 8192, value);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     cache.SetMaxMemory(cache.GetCurrentMemory());
@@ -1701,12 +1699,13 @@ TEST_F(ColCodecsTest, TwelveBitSymbolTablesAreStoredOncePerRowGroup) {
     }
     return offsets.size();
   };
-  const auto check = [&](irs::Directory& dir, irs::codecs::CodecType codec) {
+  const auto check = [&](const tests::IndexDir& dir,
+                         irs::codecs::CodecType codec) {
     const bool shares = codec == irs::codecs::CodecType::Fsst12 ||
                         codec == irs::codecs::CodecType::DictFsst12;
     Write(dir, codec, params, kRows, kRowGroup, value);
     Verify(dir, codec, kRows, value);
-    irs::ColReader src{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader src = irs::tests::OpenColReader(dir, kSeg);
     const auto* source = src.Column(kField);
     ASSERT_NE(source, nullptr);
     ASSERT_GT(source->DataBlocks().size(), 2 * kGroups);
@@ -1715,7 +1714,7 @@ TEST_F(ColCodecsTest, TwelveBitSymbolTablesAreStoredOncePerRowGroup) {
     }
     EXPECT_EQ(tables(*source), shares ? kGroups : 0);
     {
-      irs::ColWriter w{dir, "copy", Db(), params.tier};
+      irs::ColWriter w{Db(), dir.Tracker("copy"), params.tier};
       auto& cw = w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
                               {.row_group_size = kRowGroup,
                                .compression = codec,
@@ -1725,7 +1724,7 @@ TEST_F(ColCodecsTest, TwelveBitSymbolTablesAreStoredOncePerRowGroup) {
       cw.CopyRows(kRows, *source, src.Ctx(), kFirst, kCount);
       ASSERT_TRUE(w.Commit(0));
     }
-    irs::ColReader dst{dir, "copy", Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader dst = irs::tests::OpenColReader(dir, "copy");
     const auto* copied = dst.Column(kField);
     ASSERT_NE(copied, nullptr);
     ASSERT_EQ(copied->RowCount(), kRows + kCount);
@@ -1761,7 +1760,7 @@ TEST_F(ColCodecsTest, TwelveBitSymbolTablesAreStoredOncePerRowGroup) {
     SCOPED_TRACE(Written(codec));
     {
       SCOPED_TRACE("memory");
-      irs::MemoryDirectory dir;
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
       check(dir, codec);
     }
     {
@@ -1769,7 +1768,7 @@ TEST_F(ColCodecsTest, TwelveBitSymbolTablesAreStoredOncePerRowGroup) {
       const auto path =
         test_dir() / absl::StrCat("col_codecs_shared_table_", Written(codec));
       std::filesystem::create_directories(path);
-      irs::FSDirectory dir{path};
+      tests::IndexDir dir{Db(), path.string()};
       check(dir, codec);
     }
   }
@@ -1793,13 +1792,13 @@ TEST_F(ColCodecsTest, AutoIsNoLargerThanItsCandidates) {
     {"long-text", &kLongTextWithNulls, 3000},
   };
   for (const auto& corpus : corpora) {
-    irs::MemoryDirectory auto_dir{};
+    tests::IndexDir auto_dir{Db(), TestEnv::MemoryRoot()};
     Write(auto_dir, irs::codecs::CodecType::Auto, {}, corpus.rows, 16384,
           *corpus.value);
     const auto auto_bytes = ColumnBytes(auto_dir);
     auto best = std::numeric_limits<uint64_t>::max();
     for (const auto codec : candidates) {
-      irs::MemoryDirectory dir{};
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
       Write(dir, codec, {}, corpus.rows, 16384, *corpus.value);
       best = std::min(best, ColumnBytes(dir));
     }
@@ -1829,11 +1828,11 @@ TEST_F(ColCodecsTest, SampledPricesDoNotLoseToTheCandidatesTheyPrice) {
      0},
   };
   for (const auto& arm : arms) {
-    irs::MemoryDirectory auto_dir{};
+    tests::IndexDir auto_dir{Db(), TestEnv::MemoryRoot()};
     Write(auto_dir, irs::codecs::CodecType::Auto,
           {.segment_target = arm.segment_target}, arm.rows,
           DEFAULT_ROW_GROUP_SIZE, *arm.value);
-    irs::MemoryDirectory named_dir{};
+    tests::IndexDir named_dir{Db(), TestEnv::MemoryRoot()};
     Write(
       named_dir, arm.named,
       {.compression_level = arm.level, .segment_target = arm.segment_target},
@@ -1856,7 +1855,7 @@ TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
     {"long-text", &kLongTextWithNulls},
   };
   for (const auto& [name, value] : corpora) {
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, irs::codecs::CodecType::Auto, {.segment_target = 16 * 1024},
           6000, 2048, *value);
     for (const auto& [type, level] : BlockLevels(dir)) {
@@ -1889,7 +1888,7 @@ TEST_F(ColCodecsTest, AutoLevelsComeFromTheLadders) {
 TEST_F(ColCodecsTest, AutoLevelsFollowTheData) {
   using irs::codecs::CodecType;
   const auto levels = [&](const Value& value, uint64_t rows) {
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, irs::codecs::CodecType::Auto, {.segment_target = 64 * 1024},
           rows, DEFAULT_ROW_GROUP_SIZE, value);
     std::set<std::string> out;
@@ -1987,10 +1986,10 @@ TEST_F(ColCodecsTest, AutoPicksColumnstoreLeaves) {
     {"long-text", &kLongTextWithNulls, 3000},
   };
   for (const auto& corpus : corpora) {
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, irs::codecs::CodecType::Auto, {}, corpus.rows, 16384,
           *corpus.value);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     for (const auto& block : col->DataBlocks()) {
@@ -2016,10 +2015,10 @@ TEST_F(ColCodecsTest, TransactionalCodecsLeaveTextToTheColumnstore) {
     for (const auto& corpus : corpora) {
       SCOPED_TRACE(
         absl::StrCat(magic_enum::enum_name(forced), " ", corpus.name));
-      irs::MemoryDirectory dir{};
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
       Write(dir, forced, {}, corpus.rows, 16384, *corpus.value);
       Verify(dir, irs::codecs::CodecType::Auto, corpus.rows, *corpus.value);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       for (const auto& block : col->DataBlocks()) {
@@ -2036,9 +2035,9 @@ TEST_F(ColCodecsTest, AScanStartsEveryRowGroupWithADictionaryVector) {
   };
   constexpr uint32_t kRowGroup = 2 * STANDARD_VECTOR_SIZE;
   constexpr uint32_t kRows = 3 * kRowGroup;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, kRowGroup, value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->DataBlocks().size(), 3u);
@@ -2059,10 +2058,10 @@ TEST_F(ColCodecsTest, AScanStartsEveryRowGroupWithADictionaryVector) {
 TEST_F(ColCodecsTest, CachedDictionaryKeepsNoScanContext) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint32_t kRows = 10 * STANDARD_VECTOR_SIZE;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, kRows, value);
   auto& cache = Db().GetObjectCache();
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   const auto keys = CacheKeys(r, *col);
@@ -2109,7 +2108,7 @@ TEST_F(ColCodecsTest, FetchedStringsOutliveTheReader) {
     return Pseudo(g % 3001, 40 + g % 23);
   };
   constexpr uint32_t kRows = 30000;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, kRows, value);
   std::vector<uint32_t> rows;
   for (uint64_t g = 0; g < kRows; g += 3) {
@@ -2117,7 +2116,7 @@ TEST_F(ColCodecsTest, FetchedStringsOutliveTheReader) {
   }
   std::vector<std::unique_ptr<duckdb::Vector>> outs;
   {
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     irs::ColumnReader::PointReader cursor{r, *col};
@@ -2143,7 +2142,7 @@ TEST_F(ColCodecsTest, FetchedStringsOutliveTheReader) {
 TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint64_t kRows = 20000;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, 8192, value);
   auto& cache = Db().GetObjectCache();
   EXPECT_EQ(cache.GetMaxMemory(),
@@ -2168,7 +2167,7 @@ TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
     }
   };
   {
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     ASSERT_GT(col->DataBlocks().size(), 1u);
@@ -2192,8 +2191,7 @@ TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
       for (const auto& key : keys) {
         cache.Delete(key);
       }
-      irs::ColReader other{dir, std::string{kSeg}, Db(),
-                           irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader other = irs::tests::OpenColReader(dir, kSeg);
       scan_all(other, *other.Column(kField));
       out.Flatten(STANDARD_VECTOR_SIZE);
       for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
@@ -2238,8 +2236,7 @@ TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
       EXPECT_TRUE(cached(key)) << key;
     }
   }
-  irs::ColReader reopened{dir, std::string{kSeg}, Db(),
-                          irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader reopened = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = reopened.Column(kField);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->DataBlocks().size(), keys.size());
@@ -2249,10 +2246,10 @@ TEST_F(ColCodecsTest, DecodedDictionaryIsCachedAcrossScans) {
 TEST_F(ColCodecsTest, ScanAdoptsTheDictionaryCachedAfterItOpenedTheBlock) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint64_t kRows = 20000;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, 8192, value);
   auto& cache = Db().GetObjectCache();
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   const auto key = CacheKeys(r, *col).front();
@@ -2296,10 +2293,10 @@ TEST_F(ColCodecsTest, ScanAdoptsTheDictionaryCachedAfterItOpenedTheBlock) {
 TEST_F(ColCodecsTest, DictionaryCompletedByPartialScansIsCached) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint64_t kRows = 20000;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictFsst, {}, kRows, 8192, value);
   auto& cache = Db().GetObjectCache();
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   ASSERT_GT(col->DataBlocks().size(), 1u);
@@ -2334,9 +2331,9 @@ TEST_F(ColCodecsTest, DictionaryCompletedByPartialScansIsCached) {
 TEST_F(ColCodecsTest, GatherFilterReleasesPassedSegments) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint64_t kRows = 40000;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, 4096, value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   ASSERT_GT(col->DataBlocks().size(), 4u);
@@ -2387,9 +2384,9 @@ TEST_F(ColCodecsTest, SortedDictionaryFiltersMatchTheValues) {
         irs::codecs::CodecType::DictOnpair,
         irs::codecs::CodecType::DictFsst12}) {
     SCOPED_TRACE(magic_enum::enum_name(codec));
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, 8192, value);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     duckdb::Connection con{_db};
@@ -2467,9 +2464,9 @@ TEST_F(ColCodecsTest, SparseSelectionsFilterOnlyTheirEntries) {
     return std::string{buf};
   };
   constexpr uint64_t kRows = 60000;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, 65536, value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   duckdb::Connection con{_db};
@@ -2533,9 +2530,9 @@ TEST_F(ColCodecsTest,
                         "/reviews");
   };
   constexpr uint64_t kRows = 60000;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictFsst, {}, kRows, 65536, value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   std::vector<uint64_t> segment_ends;
@@ -2646,9 +2643,9 @@ TEST_F(ColCodecsTest, DenseSelectionsAfterSparseOnesFilterOnTheDictionary) {
     return std::string{buf};
   };
   constexpr uint64_t kRows = 60000;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, 65536, value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   duckdb::Connection con{_db};
@@ -2726,11 +2723,11 @@ TEST_F(ColCodecsTest, SelectionsOfLz4FramesMatchTheValues) {
     for (const auto& shape : shapes) {
       SCOPED_TRACE(testing::Message()
                    << shape.name << " tier " << static_cast<int>(tier));
-      irs::MemoryDirectory dir{};
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
       Write(dir, irs::codecs::CodecType::Lz4, {.tier = tier}, shape.rows, 16384,
             shape.value);
       trained += absl::c_count(SegmentInfo(dir, "dictionary"), "local");
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       for (const uint64_t stride : {2, 3, 7, 41, 250, 1000}) {
@@ -2787,7 +2784,7 @@ TEST_F(ColCodecsTest, ZxcFramesAfterAnOversizedEntryCanBeEmpty) {
   };
   for (const auto codec :
        {irs::codecs::CodecType::Zxc, irs::codecs::CodecType::DictZxc}) {
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, 5000, 2048, value);
     Verify(dir, codec, 5000, value);
   }
@@ -2807,9 +2804,9 @@ TEST_F(ColCodecsTest, DictionarySegmentsCountEveryRowInTotalStringLength) {
   }
   for (const auto codec :
        {irs::codecs::CodecType::DictLz4, irs::codecs::CodecType::DictFsst}) {
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, 4096, value);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     uint64_t total = 0;
@@ -2826,7 +2823,7 @@ TEST_F(ColCodecsTest, DictionarySegmentsCountEveryRowInTotalStringLength) {
 TEST_F(ColCodecsTest, MappedFileAlignedBlocks) {
   const auto path = test_dir() / "col_codecs_mmap";
   std::filesystem::create_directories(path);
-  irs::MMapDirectory dir{path};
+  tests::IndexDir dir{Db(), path.string()};
   struct Arm {
     irs::codecs::CodecType codec;
     const Value* value;
@@ -2844,7 +2841,7 @@ TEST_F(ColCodecsTest, MappedFileAlignedBlocks) {
   for (const auto& arm : arms) {
     Write(dir, arm.codec, {}, 5000, 2048, *arm.value);
     {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       for (const auto& block : col->DataBlocks()) {
@@ -2853,21 +2850,21 @@ TEST_F(ColCodecsTest, MappedFileAlignedBlocks) {
       }
     }
     Verify(dir, arm.codec, 5000, *arm.value);
-    dir.remove(irs::FileName(kSeg));
+    dir.Remove(irs::FileName(kSeg));
   }
 }
 
 TEST_F(ColCodecsTest, MappedFileNumericCodecs) {
   const auto path = test_dir() / "col_codecs_mmap_numeric";
   std::filesystem::create_directories(path);
-  irs::MMapDirectory dir{path};
+  tests::IndexDir dir{Db(), path.string()};
   constexpr uint64_t kRows = 20000;
   constexpr irs::field_id kRle = 1;
   constexpr irs::field_id kBitpacking = 2;
   constexpr irs::field_id kAlp = 3;
   constexpr irs::field_id kBool = 4;
   {
-    irs::ColWriter w{dir, kSeg, Db()};
+    irs::ColWriter w{Db(), dir.Tracker(kSeg)};
     auto& rle = w.OpenColumn(
       kRle, duckdb::LogicalType::BIGINT,
       {.row_group_size = 4096, .compression = irs::codecs::CodecType::Rle});
@@ -2915,7 +2912,7 @@ TEST_F(ColCodecsTest, MappedFileNumericCodecs) {
     }
     ASSERT_TRUE(w.Commit(0));
   }
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* c_rle = r.Column(kRle);
   const auto* c_bp = r.Column(kBitpacking);
   const auto* c_alp = r.Column(kAlp);
@@ -2995,9 +2992,9 @@ TEST_F(ColCodecsTest, RleLookupsInEveryOrder) {
     return static_cast<int64_t>(1'700'000'000'000'000LL + (g / 4) * 1000 +
                                 (g / 4) * 2654435761ULL % 3 * 100);
   };
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, kSeg, Db()};
+    irs::ColWriter w{Db(), dir.Tracker(kSeg)};
     auto& rle = w.OpenColumn(
       kRle, duckdb::LogicalType::BIGINT,
       {.row_group_size = 4096, .compression = irs::codecs::CodecType::Rle});
@@ -3021,7 +3018,7 @@ TEST_F(ColCodecsTest, RleLookupsInEveryOrder) {
     }
     ASSERT_TRUE(w.Commit(0));
   }
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* c_rle = r.Column(kRle);
   const auto* c_num = r.Column(kNumeric);
   ASSERT_NE(c_rle, nullptr);
@@ -3090,9 +3087,9 @@ TEST_F(ColCodecsTest, CachedDictionariesUnderConcurrentReadersAndEviction) {
     return absl::StrCat("https://example.org/item/", (g * 7919) % 3001,
                         "/page");
   };
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, 8192, value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   const auto keys = CacheKeys(r, *col);
@@ -3274,9 +3271,9 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
   uint64_t size = 0;
   irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
   {
-    irs::MMapDirectory dir{path};
+    tests::IndexDir dir{Db(), path.string()};
     Write(dir, irs::codecs::CodecType::DictLz4, {}, 5000, 2048, random_codes);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     ASSERT_FALSE(col->DataBlocks().empty());
@@ -3310,9 +3307,9 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
     std::ofstream out{file, std::ios::binary | std::ios::trunc};
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
-  irs::MMapDirectory dir{path};
+  tests::IndexDir dir{Db(), path.string()};
   const auto scan = [&] {
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     auto state = col->InitScan(r.Ctx());
     duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
@@ -3357,9 +3354,9 @@ TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
     uint64_t size = 0;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
-      irs::MMapDirectory dir{path};
+      tests::IndexDir dir{Db(), path.string()};
       Write(dir, irs::codecs::CodecType::DictLz4, {}, 5000, 2048, values);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
@@ -3381,9 +3378,9 @@ TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    irs::MMapDirectory dir{path};
+    tests::IndexDir dir{Db(), path.string()};
     const auto scan = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       auto state = col->InitScan(r.Ctx());
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
@@ -3433,10 +3430,10 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
     uint64_t size = 0;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
-      irs::MMapDirectory dir{path};
+      tests::IndexDir dir{Db(), path.string()};
       Write(dir, irs::codecs::CodecType::Lz4, {}, 20000, DEFAULT_ROW_GROUP_SIZE,
             values);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
@@ -3459,16 +3456,17 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    irs::MMapDirectory dir{path};
+    tests::IndexDir dir{Db(), path.string()};
     const auto scan = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       auto state = col->InitScan(r.Ctx());
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
       col->Scan(state, out, STANDARD_VECTOR_SIZE);
     };
     const auto fetch = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::RANDOM};
+      irs::ColReader r{Db(), dir.Fs(), dir.Root(),
+                       kSeg, true,     duckdb::MappedFileAccess::RANDOM};
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -3524,10 +3522,10 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
     uint64_t size = 0;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
-      irs::MMapDirectory dir{path};
+      tests::IndexDir dir{Db(), path.string()};
       Write(dir, irs::codecs::CodecType::FsstPlus, {}, 20000,
             DEFAULT_ROW_GROUP_SIZE, values);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
@@ -3552,16 +3550,17 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    irs::MMapDirectory dir{path};
+    tests::IndexDir dir{Db(), path.string()};
     const auto scan = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       auto state = col->InitScan(r.Ctx());
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
       col->Scan(state, out, STANDARD_VECTOR_SIZE);
     };
     const auto fetch = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::RANDOM};
+      irs::ColReader r{Db(), dir.Fs(), dir.Root(),
+                       kSeg, true,     duckdb::MappedFileAccess::RANDOM};
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -3614,10 +3613,10 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
     uint64_t size = 0;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
-      irs::MMapDirectory dir{path};
+      tests::IndexDir dir{Db(), path.string()};
       Write(dir, irs::codecs::CodecType::Onpair, {}, 20000,
             DEFAULT_ROW_GROUP_SIZE, values);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
@@ -3640,16 +3639,17 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    irs::MMapDirectory dir{path};
+    tests::IndexDir dir{Db(), path.string()};
     const auto scan = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       auto state = col->InitScan(r.Ctx());
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
       col->Scan(state, out, STANDARD_VECTOR_SIZE);
     };
     const auto fetch = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::RANDOM};
+      irs::ColReader r{Db(), dir.Fs(), dir.Root(),
+                       kSeg, true,     duckdb::MappedFileAccess::RANDOM};
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -3692,10 +3692,10 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
     uint64_t size = 0;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
-      irs::MMapDirectory dir{path};
+      tests::IndexDir dir{Db(), path.string()};
       Write(dir, irs::codecs::CodecType::Fsst12, {}, 20000,
             DEFAULT_ROW_GROUP_SIZE, values);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().shared_offset;
@@ -3716,16 +3716,17 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    irs::MMapDirectory dir{path};
+    tests::IndexDir dir{Db(), path.string()};
     const auto scan = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       auto state = col->InitScan(r.Ctx());
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
       col->Scan(state, out, STANDARD_VECTOR_SIZE);
     };
     const auto fetch = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::RANDOM};
+      irs::ColReader r{Db(), dir.Fs(), dir.Root(),
+                       kSeg, true,     duckdb::MappedFileAccess::RANDOM};
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -3759,9 +3760,9 @@ TEST_F(ColCodecsTest, CorruptedFrameRangesAreRejectedByPointReads) {
     uint64_t size = 0;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
-      irs::MMapDirectory dir{path};
+      tests::IndexDir dir{Db(), path.string()};
       Write(dir, codec, {}, 20000, DEFAULT_ROW_GROUP_SIZE, values);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       const auto& block = col->DataBlocks().front();
@@ -3792,9 +3793,10 @@ TEST_F(ColCodecsTest, CorruptedFrameRangesAreRejectedByPointReads) {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    irs::MMapDirectory dir{path};
+    tests::IndexDir dir{Db(), path.string()};
     const auto fetch = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::RANDOM};
+      irs::ColReader r{Db(), dir.Fs(), dir.Root(),
+                       kSeg, true,     duckdb::MappedFileAccess::RANDOM};
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -3838,9 +3840,9 @@ TEST_F(ColCodecsTest, CorruptedSegmentCountsAreRejectedByPointReads) {
     uint64_t size = 0;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
-      irs::MMapDirectory dir{path};
+      tests::IndexDir dir{Db(), path.string()};
       Write(dir, c.codec, {}, 5000, 2048, values);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
@@ -3862,9 +3864,9 @@ TEST_F(ColCodecsTest, CorruptedSegmentCountsAreRejectedByPointReads) {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    irs::MMapDirectory dir{path};
+    tests::IndexDir dir{Db(), path.string()};
     const auto fetch = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       irs::ColumnReader::PointReader cursor{r, *col};
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
@@ -3888,7 +3890,7 @@ TEST_F(ColCodecsTest, DictionaryCodesUseTheNumericCodec) {
        {irs::codecs::CodecType::Auto, irs::codecs::CodecType::DictFsst,
         irs::codecs::CodecType::DictLz4}) {
     SCOPED_TRACE(magic_enum::enum_name(codec));
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, 60000, 16384, kTripledValues);
     Verify(dir, codec, 60000, kTripledValues);
     const auto transforms = SegmentInfo(dir, "codes_transform");
@@ -3906,7 +3908,7 @@ TEST_F(ColCodecsTest, CodesInShortRunsAreNotRunPacked) {
   constexpr uint64_t kRows = 60000;
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     SCOPED_TRACE(static_cast<int>(tier));
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, irs::codecs::CodecType::DictLz4, {.tier = tier}, kRows, 16384,
           kShortCodeRuns);
     Verify(dir, irs::codecs::CodecType::DictLz4, kRows, kShortCodeRuns);
@@ -3923,12 +3925,12 @@ TEST_F(ColCodecsTest, CodesThatTurnIntoRunsAreRunPacked) {
     const auto key = g < kSwitch ? g : g / 128;
     return "v" + std::to_string(std::mt19937_64{key}() % 1000);
   };
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {.segment_target = 16 * 1024},
         kRows, 65536, value);
   Verify(dir, irs::codecs::CodecType::DictLz4, kRows, value);
   const auto transforms = SegmentInfo(dir, "codes_transform");
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->DataBlocks().size(), transforms.size());
@@ -3947,9 +3949,9 @@ TEST_F(ColCodecsTest, CodesThatTurnIntoRunsAreRunPacked) {
 
 TEST_F(ColCodecsTest, NumericCodesFilterTheValues) {
   constexpr uint64_t kRows = 30000;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {}, kRows, 8192, kTripledValues);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   duckdb::Connection con{_db};
@@ -4004,10 +4006,10 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
     uint64_t size = 0;
     irs::codecs::CodecType block_codec = irs::codecs::CodecType::Auto;
     {
-      irs::MMapDirectory dir{path};
+      tests::IndexDir dir{Db(), path.string()};
       Write(dir, irs::codecs::CodecType::DictLz4, {}, 30000, 30000,
             kTripledValues);
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       offset = col->DataBlocks().front().file_offset;
@@ -4036,9 +4038,9 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    irs::MMapDirectory dir{path};
+    tests::IndexDir dir{Db(), path.string()};
     const auto scan = [&] {
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       auto state = col->InitScan(r.Ctx());
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
@@ -4085,9 +4087,9 @@ TEST_F(ColCodecsTest, AlpRdSplitsDoublesWhereTheFewestBitsRemain) {
     std::mt19937_64 random{42};
     std::vector<double> expected;
     expected.reserve(kRows);
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{dir, kSeg, Db()};
+      irs::ColWriter w{Db(), dir.Tracker(kSeg)};
       auto& cw = w.OpenColumn(kField, duckdb::LogicalType::DOUBLE,
                               {.compression = irs::codecs::CodecType::Alprd});
       for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
@@ -4109,7 +4111,7 @@ TEST_F(ColCodecsTest, AlpRdSplitsDoublesWhereTheFewestBitsRemain) {
       }
       ASSERT_TRUE(w.Commit(0));
     }
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     uint64_t stored = 0;
@@ -4164,8 +4166,8 @@ TEST_F(ColCodecsTest, CorruptedSegmentHeadersAreIndexCorruption) {
     uint64_t offset = 0;
     uint64_t size = 0;
     {
-      irs::MMapDirectory dir{path};
-      irs::ColWriter w{dir, kSeg, Db()};
+      tests::IndexDir dir{Db(), path.string()};
+      irs::ColWriter w{Db(), dir.Tracker(kSeg)};
       auto& cw = w.OpenColumn(kField, c.type,
                               {.row_group_size = 4096, .compression = c.codec});
       for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
@@ -4181,7 +4183,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentHeadersAreIndexCorruption) {
         cw.Append(v, take);
       }
       ASSERT_TRUE(w.Commit(0));
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       const auto& block = col->DataBlocks().front();
@@ -4203,8 +4205,8 @@ TEST_F(ColCodecsTest, CorruptedSegmentHeadersAreIndexCorruption) {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    irs::MMapDirectory dir{path};
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    tests::IndexDir dir{Db(), path.string()};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     try {
@@ -4278,8 +4280,8 @@ TEST_F(ColCodecsTest, CorruptedSegmentBodiesAreIndexCorruption) {
     uint64_t offset = 0;
     uint64_t size = 0;
     {
-      irs::MMapDirectory dir{path};
-      irs::ColWriter w{dir, kSeg, Db()};
+      tests::IndexDir dir{Db(), path.string()};
+      irs::ColWriter w{Db(), dir.Tracker(kSeg)};
       auto& cw = w.OpenColumn(kField, c.type,
                               {.row_group_size = 4096, .compression = c.codec});
       for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
@@ -4291,7 +4293,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentBodiesAreIndexCorruption) {
         cw.Append(v, STANDARD_VECTOR_SIZE);
       }
       ASSERT_TRUE(w.Commit(0));
-      irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
       const auto* col = r.Column(kField);
       ASSERT_NE(col, nullptr);
       const auto& block = col->DataBlocks().front();
@@ -4312,8 +4314,8 @@ TEST_F(ColCodecsTest, CorruptedSegmentBodiesAreIndexCorruption) {
       std::ofstream out{file, std::ios::binary | std::ios::trunc};
       out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     }
-    irs::MMapDirectory dir{path};
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    tests::IndexDir dir{Db(), path.string()};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     try {
@@ -4343,9 +4345,8 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
   };
   const auto seal = [&](std::span<const uint64_t> chunk_ends,
                         const auto& value) {
-    irs::MemoryDirectory dir;
-    auto out = dir.create("blocks");
-    irs::WriteContext ctx{Db().GetBufferManager(), *out};
+    duckdb::MemoryStream out;
+    irs::WriteContext ctx{Db().GetBufferManager(), out};
     std::vector<duckdb::Vector> chunks;
     uint64_t pos = 0;
     for (const auto end : chunk_ends) {
@@ -4433,10 +4434,10 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
 
 TEST_F(ColCodecsTest, WideRowsStayNearTheSegmentTarget) {
   constexpr uint32_t kTarget = 16384;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::Lz4, {.segment_target = kTarget}, 3000,
         4096, kLongTextWithNulls);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   ASSERT_GT(col->DataBlocks().size(), 10u);
@@ -4452,10 +4453,10 @@ TEST_F(ColCodecsTest, CodesHeavyDictionarySegmentsStayNearTheSegmentTarget) {
   const Value value = [](uint64_t g) -> std::optional<std::string> {
     return "v" + std::to_string(std::mt19937_64{g}() % 200);
   };
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::DictLz4, {.segment_target = kTarget},
         kRows, DEFAULT_ROW_GROUP_SIZE, value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   for (const auto& block : col->DataBlocks()) {
@@ -4560,9 +4561,9 @@ TEST_F(ColCodecsTest, AutoFollowsAChangeBetweenRowGroups) {
     return Pseudo(g, 300);
   };
   const uint64_t rows = kSteady + 3 * kRowGroup;
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::Auto, {}, rows, kRowGroup, value);
-  irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   uint64_t row = 0;
@@ -4595,9 +4596,8 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
   const auto chunks = WriteChunks(vectors);
   irs::codecs::ColumnTuning tuning;
   std::vector<uint64_t> sizes;
-  irs::MemoryDirectory dir;
-  auto out = dir.create("blocks");
-  irs::WriteContext ctx{Db().GetBufferManager(), *out};
+  duckdb::MemoryStream out;
+  irs::WriteContext ctx{Db().GetBufferManager(), out};
   const auto flush = [&](const irs::codecs::Codec&, duckdb::BaseStatistics,
                          uint64_t, std::string_view bytes) {
     sizes.push_back(bytes.size());
@@ -4626,9 +4626,9 @@ TEST_F(ColCodecsTest, TheWritersTierDecidesOverTheColumnsParams) {
   };
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     {
-      irs::ColWriter w{dir, kSeg, Db(), tier};
+      irs::ColWriter w{Db(), dir.Tracker(kSeg), tier};
       auto& cw =
         w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
                      {.compression = irs::codecs::CodecType::Auto,
@@ -4656,7 +4656,7 @@ TEST_F(ColCodecsTest, RefreshMeasuresOnlyTheCheapLeaves) {
            "ms with status 200 and payload size " +
            std::to_string((g * 13) % 65536) + " bytes";
   };
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::Auto, {.tier = irs::WriteTier::Flush},
         kRows, 8192, value);
   const auto codecs = SegmentInfo(dir, "codec");
@@ -4681,10 +4681,10 @@ TEST_F(ColCodecsTest, AutoKeepsTheDictionaryForTextThatIsMostlyNull) {
   };
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     SCOPED_TRACE(tier == irs::WriteTier::Merge ? "merge" : "flush");
-    irs::MemoryDirectory dir{};
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, irs::codecs::CodecType::Auto, {.tier = tier}, kRows, 4096,
           value);
-    irs::ColReader r{dir, std::string{kSeg}, Db(), irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
     const auto* col = r.Column(kField);
     ASSERT_NE(col, nullptr);
     EXPECT_FALSE(col->HasValidity());
@@ -4708,7 +4708,7 @@ TEST_F(ColCodecsTest, CompactionsPreferFsstForTextThatSeldomRepeats) {
            std::to_string((h >> 20) % 5000) + " in section " +
            std::to_string((h >> 40) % 300);
   };
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   Write(dir, irs::codecs::CodecType::Auto, {.tier = irs::WriteTier::Merge},
         kRows, DEFAULT_ROW_GROUP_SIZE, value);
   const auto codecs = SegmentInfo(dir, "codec");
@@ -4724,9 +4724,9 @@ TEST_F(ColCodecsTest, SealedRowGroupsReleaseTheirInputs) {
   const Value value = [](uint64_t g) -> std::optional<std::string> {
     return Pseudo(g % kHalf, 40);
   };
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, kSeg, Db()};
+    irs::ColWriter w{Db(), dir.Tracker(kSeg)};
     auto& cw = w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
                             {.row_group_size = static_cast<uint32_t>(2 * kHalf),
                              .compression = irs::codecs::CodecType::Lz4});

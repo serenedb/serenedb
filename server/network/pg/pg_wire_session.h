@@ -76,7 +76,6 @@
 #include "catalog/catalog.h"
 #include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_pg_text_copy.h"
-#include "formats/csv_splitter.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
 #include "network/cpu_resumer.h"
@@ -357,9 +356,7 @@ class PgWireSession
   yaclib::Task<> RunCopyToStdoutViaFormat(
     duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format);
   yaclib::Task<> RunCopyInFeeder(sdb::pg::CopyInBatches& batches,
-                                 CopyFormat format,
-                                 sdb::formats::CsvDialect dialect,
-                                 sdb::formats::TextEncoding encoding);
+                                 CopyFormat format);
   yaclib::Task<> WaitCopyInput();
   void HandleParse(std::string_view payload);
   void HandleBind(std::string_view payload);

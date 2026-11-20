@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <duckdb/formats/row_stream.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <span>
 
@@ -162,6 +163,19 @@ void CopyInStream::Release(duckdb::idx_t position) {
 duckdb::optional_idx CopyInStream::End() const {
   absl::MutexLock lock{&_lock};
   return _finished ? duckdb::optional_idx{_pulled} : duckdb::optional_idx{};
+}
+
+CopyInStreamOffer::CopyInStreamOffer(duckdb::ClientContext& context,
+                                     const std::string& path,
+                                     CopyInBatches& batches, size_t window)
+  : _context{context}, _key{duckdb::RowStreamKey(path)} {
+  _context.registered_state->Insert(
+    _key, duckdb::make_shared_ptr<duckdb::RowStreamState>(
+            duckdb::make_shared_ptr<CopyInStream>(batches, window)));
+}
+
+CopyInStreamOffer::~CopyInStreamOffer() {
+  _context.registered_state->Remove(_key);
 }
 
 }  // namespace sdb::pg

@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -41,19 +40,6 @@ enum class TextEncoding : uint8_t {
 TextEncoding ParseTextEncoding(std::string_view name);
 
 std::string_view TextEncodingName(TextEncoding encoding);
-
-class Utf8Decoder {
- public:
-  explicit Utf8Decoder(TextEncoding encoding) : _encoding{encoding} {}
-
-  void Decode(std::string_view input, std::string& out);
-  void Finish() const;
-
- private:
-  TextEncoding _encoding;
-  std::array<char, 4> _carry{};
-  size_t _carry_size = 0;
-};
 
 class Utf8Encoder {
  public:

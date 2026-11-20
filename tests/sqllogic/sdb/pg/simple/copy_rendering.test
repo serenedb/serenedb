@@ -84,7 +84,7 @@ COPY (SELECT ('1' || chr(9) || 'x' || chr(10) || '\\N' || chr(9) || 'y' || chr(1
 TO '${__TEST_DIR__}/rendered_ints.txt' (FORMAT BLOB);
 
 
-statement error (Could not convert string 'abc' to INT32|invalid input syntax for type integer: "abc")
+statement error (Could not convert string "abc" to 'INTEGER'|invalid input syntax for type integer: "abc")
 COPY rendered_ints FROM '${__TEST_DIR__}/rendered_ints.txt' (FORMAT text, RENDERING duckdb);
 
 

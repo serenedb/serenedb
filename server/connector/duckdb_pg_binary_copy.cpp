@@ -201,20 +201,19 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
     context, bind.file_path,
     pg::CopyInTarget{
       .table = bind.table,
-      .binary = true,
       .types = {bind.sql_types.begin(), bind.sql_types.end()},
       .names = bind.names,
     },
-    bind.ordered, duckdb::FileCompressionType::AUTO_DETECT);
+    bind.ordered);
 }
 
 }  // namespace
 
 void CheckBinaryCopyOptions(const duckdb::CopyInfo& info, bool from) {
   const auto check = [&](const duckdb::Identifier& key,
-                         std::span<const duckdb::Value> values) {
+                         const duckdb::vector<duckdb::Value>& values) {
     if (key == "log_verbosity") {
-      ParseLogVerbosity(values);
+      duckdb::ParseCopyLogVerbosity(values);
       return;
     }
     if (key == "freeze" && from) {

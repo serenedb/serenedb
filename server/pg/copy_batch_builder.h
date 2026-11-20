@@ -27,45 +27,25 @@
 #include <string>
 #include <string_view>
 
-#include "formats/csv_splitter.h"
 #include "pg/copy_in_batches.h"
 
 namespace sdb::pg {
 
-size_t TrailingBackslashes(std::string_view bytes) noexcept;
-
-size_t FindRowEnd(std::string_view bytes, size_t from,
-                  size_t backslashes_before = 0,
-                  char line_break = '\n') noexcept;
-size_t FindLastRowEnd(std::string_view bytes, char line_break = '\n') noexcept;
-
 enum class CopyBatchFormat : uint8_t {
-  Text,
   Binary,
-  Csv,
   Raw,
 };
 
 class CopyBatchBuilder {
  public:
   explicit CopyBatchBuilder(CopyBatchFormat format,
-                            size_t target_bytes = kCopyBatchBytes,
-                            bool join_blank_lines = false,
-                            formats::CsvDialect csv = {})
-    : _format{format},
-      _target{target_bytes},
-      _join_blank_lines{join_blank_lines},
-      _csv{csv} {}
+                            size_t target_bytes = kCopyBatchBytes)
+    : _format{format}, _target{target_bytes} {}
 
   void Feed(std::string_view bytes, bool stable);
   void Finish();
-
-  bool Ready() const noexcept {
-    return _sealed || (!_join_blank_lines && Full());
-  }
-  bool HasRows() const noexcept {
-    return _sealed || (_batch && !_batch->Empty());
-  }
+  bool Ready() const noexcept { return Full(); }
+  bool HasRows() const noexcept { return _batch && !_batch->Empty(); }
   bool Ended() const noexcept { return _ended; }
   std::unique_ptr<CopyBatch> Take();
 
@@ -79,22 +59,13 @@ class CopyBatchBuilder {
   bool Full() const noexcept { return _batch && _batch->bytes >= _target; }
   CopyBatch& Current();
   void AddRows(std::string_view rows, bool stable);
-  void AddRow(std::string row);
-  bool DecideLineBreak(std::string_view bytes, bool complete);
-  void FeedText(std::string_view bytes, bool stable);
-  void FeedCsv(std::string_view bytes, bool stable);
   void FeedBinary(std::string_view bytes, bool stable);
   size_t FeedHeader(std::string_view bytes);
   bool Gather(std::string_view bytes, size_t& pos, size_t need);
 
   const CopyBatchFormat _format;
   const size_t _target;
-  const bool _join_blank_lines;
-  formats::CsvDialect _csv;
-  char _line_break = '\0';
-  formats::CsvQuoteState _quote_state;
   std::unique_ptr<CopyBatch> _batch;
-  std::unique_ptr<CopyBatch> _sealed;
   std::string _partial;
   std::string _header;
   std::array<char, 4> _scratch{};

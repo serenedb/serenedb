@@ -27,7 +27,9 @@
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/optional_idx.hpp>
 #include <duckdb/formats/row_ranges.hpp>
+#include <duckdb/main/client_context.hpp>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -70,6 +72,20 @@ class CopyInStream final : public duckdb::RowSource {
   mutable duckdb::idx_t _pulled ABSL_GUARDED_BY(_lock) = 0;
   mutable bool _pulling ABSL_GUARDED_BY(_lock) = false;
   mutable bool _finished ABSL_GUARDED_BY(_lock) = false;
+};
+
+class CopyInStreamOffer {
+ public:
+  CopyInStreamOffer(duckdb::ClientContext& context, const std::string& path,
+                    CopyInBatches& batches, size_t window);
+  ~CopyInStreamOffer();
+
+  CopyInStreamOffer(const CopyInStreamOffer&) = delete;
+  CopyInStreamOffer& operator=(const CopyInStreamOffer&) = delete;
+
+ private:
+  duckdb::ClientContext& _context;
+  std::string _key;
 };
 
 }  // namespace sdb::pg

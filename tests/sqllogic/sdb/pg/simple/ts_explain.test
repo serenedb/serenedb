@@ -325,6 +325,33 @@ SELECT ts_explain_json('{"value":2,"scorer":"best","expression":"max","inputs":{
 lucene
 {"value":2,"description":"weight [best], max of:","details":[{"value":2,"description":"a","details":[]},{"value":1,"description":"b, length normalization parameter","details":[]}]}
 
+query
+SELECT ts_explain_json({
+    'column': 'body',
+    'phrase': [{'min': 1::UTINYINT, 'max': 2::USMALLINT, 'x': 0}],
+    'slop': 3::UINTEGER,
+    'scorer': 1,
+    'extra': true,
+    'value': -4::TINYINT,
+    'inputs': {'a': {'value': 5::SMALLINT}, 'b': {'value': 6::INTEGER}}
+}::VARIANT) AS lucene;
+----
+lucene
+{"value":-4,"description":"unexplained(body:\\"?{1,2}\\"~3)","details":[{"value":5,"description":"a","details":[]},{"value":6,"description":"b, length normalization parameter","details":[]}]}
+
+query
+SELECT ts_explain_json(v) AS lucene
+FROM (VALUES
+    ({'column': 'body', 'phrase': [{'min': -1::BIGINT, 'max': 2::BIGINT}], 'value': 1.5::FLOAT}::VARIANT),
+    ({'value': 'inf'::FLOAT}::VARIANT),
+    (NULL::VARIANT)) t(v)
+ORDER BY lucene NULLS LAST;
+----
+lucene
+{"value":1.5,"description":"unexplained(body:\\"?{0,2}\\")","details":[]}
+{"value":null,"description":"unexplained","details":[]}
+NULL
+
 statement error
 SELECT ts_explain_json('[1]'::JSON::VARIANT);
 ----
@@ -546,6 +573,25 @@ ORDER BY BM25(explain_gaps_idx.tableoid) DESC, id;
 id	why
 1	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":2}},"value":0.18232156},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":4},"N":{"value":2}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.082873434},{"column":"tag","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":1},"df":{"value":1}},"value":0.2876821},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":1},"N":{"value":1}},"value":1},"b":{"value":0.75},"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"animal","value":0.13076459}],"expression":"sum","value":0.21363802}
 2	{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":2}},"value":0.18232156},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":4},"N":{"value":2}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.082873434}
+
+query
+SELECT id, ts_explain(explain_gaps_idx.tableoid) AS why
+FROM explain_gaps_idx
+WHERE body @@ ts_phrase('grey fox') OR tag @@ 'animal' OR tag @@ ts_starts_with('ani')
+ORDER BY BM25(explain_gaps_idx.tableoid) DESC, id;
+----
+id	why
+1	{"clauses":[{"column":"tag","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":1},"df":{"value":1}},"value":0.2876821},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":1},"N":{"value":1}},"value":1},"b":{"value":0.75},"dl":{"note":"the column records no lengths, so every row counts as 1","value":1},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"scorer":"bm25(k1=1.2, b=0.75)","term":"animal","value":0.13076459},{"column":"tag","expression":"boost * value","inputs":{"value":{"value":1}},"scorer":"constant(value=1)","term":"animal","value":1}],"expression":"sum","value":1.1307646}
+2	{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"sum","parts":[{"column":"body","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":1}},"term":"grey","value":0.6931472},{"column":"body","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":2},"df":{"value":2}},"term":"fox","value":0.18232156}],"value":0.87546873},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":4},"N":{"value":2}},"value":2},"b":{"value":0.75},"dl":{"value":2},"freq":{"value":1},"k1":{"value":1.2}},"value":0.45454544}},"phrase":["grey","fox"],"scorer":"bm25(k1=1.2, b=0.75)","value":0.39794034}
+
+query
+SELECT id, ts_explain(explain_idx.tableoid) AS why
+FROM explain_idx
+WHERE body @@ ts_phrase('quick brown') AND NOT body @@ 'dog' AND NOT body @@ ts_phrase('lazy dog')
+ORDER BY BM25(explain_idx.tableoid) DESC, id;
+----
+id	why
+1	{"clauses":[{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"sum","parts":[{"column":"body","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":5},"df":{"value":2}},"term":"quick","value":0.87546873},{"column":"body","expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":5},"df":{"value":2}},"term":"brown","value":0.87546873}],"value":1.7509375},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":29},"N":{"value":5}},"value":5.8},"b":{"value":0.75},"dl":{"value":4},"freq":{"value":1},"k1":{"value":1.2}},"value":0.52064633}},"phrase":["quick","brown"],"scorer":"bm25(k1=1.2, b=0.75)","value":0.9116191}],"expression":"sum","value":0.9116191}
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY explain_bytes AS generate_ngrams(2, 2, input_type := 'binary') WITH (frequency, position);

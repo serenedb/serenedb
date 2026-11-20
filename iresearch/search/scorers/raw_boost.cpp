@@ -38,7 +38,7 @@ ScoreFunction RawBoost::PrepareScorer(const ScoreContext& ctx) const {
 void RawBoost::Explain(const ScoreContext& ctx, const explain::SlotStats*,
                        explain::Node& out) const {
   explain::AddDetail(out, "boost", ctx.boost);
-  explain::AddScale(out, ctx, "boost");
+  explain::AddScale(out, ctx, "boost", "scale * boost");
 }
 
 }  // namespace irs

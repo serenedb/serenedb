@@ -32,6 +32,7 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/stats_arena.hpp"
+#include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -167,6 +168,7 @@ class CompoundCollector;
 class PrepareCollector {
  public:
   using ptr = std::unique_ptr<PrepareCollector>;
+  using TermAt = absl::FunctionRef<bytes_view(size_t i)>;
 
   explicit PrepareCollector(const Scorer* scorer) noexcept : _scorer{scorer} {
     SDB_ASSERT(_scorer);
@@ -175,6 +177,9 @@ class PrepareCollector {
   virtual ~PrepareCollector() = default;
 
   virtual void Finish(StatsArena& stats) = 0;
+
+  virtual void Describe(field_id field, TermAt term,
+                        explain::StatsIndex& out) const = 0;
 
   virtual CompoundCollector* AsCompound() noexcept { return nullptr; }
 
@@ -235,6 +240,9 @@ class ByTermsCollector final : public FieldPrepareCollector {
 
   void Finish(StatsArena& stats) final;
 
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const final;
+
  private:
   size_t _size;
   size_t _slot;
@@ -251,6 +259,9 @@ class SlotsCollector : public FieldPrepareCollector {
   }
 
   void Finish(StatsArena& stats) override;
+
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const override;
 };
 
 class ExpandedSlotsCollector final : public SlotsCollector {
@@ -275,6 +286,9 @@ class ExpandedSlotsCollector final : public SlotsCollector {
 
   void Finish(StatsArena& stats) final;
 
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const final;
+
  private:
   template<typename Visitor>
   void WalkExpanded(Visitor&& visitor) const;
@@ -291,6 +305,9 @@ class AllCollector final : public PrepareCollector {
   }
 
   void Finish(StatsArena& stats) final;
+
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const final;
 };
 
 class CompoundCollector final : public PrepareCollector {
@@ -311,6 +328,8 @@ class CompoundCollector final : public PrepareCollector {
   auto Size() const noexcept { return _children.size(); }
 
   void Finish(StatsArena& stats) final;
+
+  void Describe(field_id, TermAt, explain::StatsIndex&) const final {}
 
  private:
   std::vector<PrepareCollector::ptr> _children;

@@ -186,7 +186,7 @@ void ExplainBm25Idf(const ScoreContext& ctx, score_t idf,
                     const explain::SlotStats* stats, explain::Node& out) {
   explain::AddBoost(out, ctx.boost);
   explain::AddIdf(out, idf, stats, kIdfExpression, &Bm25Idf);
-  explain::AddScale(out, ctx, "boost * idf");
+  explain::AddScale(out, ctx, "boost * idf", "scale * boost * idf");
 }
 
 void BM25::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,

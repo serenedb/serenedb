@@ -22,7 +22,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <iresearch/search/explain/explanation.hpp>
-#include <iresearch/search/explain/names.hpp>
 #include <iresearch/search/explain/plan.hpp>
 #include <iresearch/search/explain/stats.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
@@ -45,6 +44,7 @@
 #include <iresearch/search/scorers/tfidf.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -56,6 +56,7 @@
 namespace {
 
 using namespace tests;
+using irs::explain::Role;
 
 inline constexpr irs::field_id kBodyId = 1;
 inline constexpr irs::field_id kTagId = 2;
@@ -195,15 +196,14 @@ class ExplainTest : public IndexTestBase {
     return rows;
   }
 
-  std::vector<irs::explain::Node> Explain(const irs::Filter& filter,
-                                          const irs::Scorer& scorer,
-                                          float tolerance) {
-    auto index = open_reader();
-    MaxMemoryCounter counter;
-    tests::PreparedFilter prepared{filter, index, &scorer, counter};
-    irs::explain::StatsIndex stats;
-    filter.ExplainStats(prepared.Collector(), stats);
-    std::vector<irs::explain::Node> explained;
+  const std::vector<irs::explain::Node>& Explain(const irs::Filter& filter,
+                                                 const irs::Scorer& scorer,
+                                                 float tolerance) {
+    auto& run = *_runs.emplace_back(std::make_unique<ExplainRun>());
+    run.index = open_reader();
+    const auto& prepared =
+      run.prepared.emplace(filter, run.index, &scorer, run.counter);
+    filter.ExplainStats(prepared.Collector(), run.stats);
     const auto rows = Execute(prepared);
     EXPECT_FALSE(rows.empty());
     for (size_t segment = 0; segment != prepared.size(); ++segment) {
@@ -211,24 +211,35 @@ class ExplainTest : public IndexTestBase {
       if (!query) {
         continue;
       }
-      irs::explain::TermNames names;
-      filter.ExplainTerms(query->Segment(), names);
-      const auto plan = irs::explain::MakePlan(*query, scorer, stats, names);
+      auto& plan = *run.plans.emplace_back(
+        irs::explain::MakePlan(*query, scorer, run.stats, filter));
       for (const auto& row : rows) {
         if (row.segment != segment) {
           continue;
         }
-        auto node = plan->Explain(row.doc, std::nullopt);
+        auto node = plan.Explain(row.doc, std::nullopt);
         if (tolerance == 0) {
           EXPECT_EQ(row.score, ValueOf(node)) << node.expression;
         } else {
           EXPECT_NEAR(row.score, ValueOf(node), tolerance) << node.expression;
         }
-        explained.push_back(std::move(node));
+        run.rows.push_back(std::move(node));
       }
     }
-    return explained;
+    return run.rows;
   }
+
+ private:
+  struct ExplainRun {
+    irs::DirectoryReader index;
+    MaxMemoryCounter counter;
+    std::optional<tests::PreparedFilter> prepared;
+    irs::explain::StatsIndex stats;
+    std::vector<std::unique_ptr<irs::explain::Explainer>> plans;
+    std::vector<irs::explain::Node> rows;
+  };
+
+  std::vector<std::unique_ptr<ExplainRun>> _runs;
 };
 
 TEST_P(ExplainTest, bm25_term_breaks_down_into_idf_and_tf) {
@@ -238,7 +249,7 @@ TEST_P(ExplainTest, bm25_term_breaks_down_into_idf_and_tf) {
   const auto rows = Explain(*filter, bm25, 0);
   ASSERT_EQ(5u, rows.size());
   for (const auto& row : rows) {
-    EXPECT_EQ("weight", row.key);
+    EXPECT_EQ(Role::Weight, row.role);
     EXPECT_EQ(kBodyId, row.subject.field);
     ASSERT_EQ(1u, row.subject.terms.size());
     EXPECT_EQ(Bytes("fox"), row.subject.terms.front());
@@ -267,10 +278,10 @@ TEST_P(ExplainTest, boolean_lists_matched_clauses_and_adds_them_up) {
   {
     const auto filter = AnyOf({"quick", "dog", "cat"});
     for (const auto& row : Explain(*filter, bm25, 1e-5f)) {
-      EXPECT_EQ("sum", row.key);
+      EXPECT_EQ(Role::Sum, row.role);
       irs::score_t total = 0;
       for (const auto& clause : row.details) {
-        EXPECT_EQ("weight", clause.key);
+        EXPECT_EQ(Role::Weight, clause.role);
         total += ValueOf(clause);
       }
       EXPECT_NEAR(ValueOf(row), total, 1e-5f);
@@ -280,7 +291,7 @@ TEST_P(ExplainTest, boolean_lists_matched_clauses_and_adds_them_up) {
     auto filter = AnyOf({"quick", "fox"});
     filter->SetMergeType(irs::ScoreMergeType::Max);
     for (const auto& row : Explain(*filter, bm25, 1e-5f)) {
-      EXPECT_EQ("max", row.key);
+      EXPECT_EQ(Role::Max, row.role);
     }
   }
   {
@@ -306,7 +317,7 @@ TEST_P(ExplainTest, phrase_sums_the_idf_of_its_terms) {
   const auto rows = Explain(*filter, bm25, 0);
   ASSERT_FALSE(rows.empty());
   for (const auto& row : rows) {
-    EXPECT_EQ("weight", row.key);
+    EXPECT_EQ(Role::Weight, row.role);
     EXPECT_EQ(2u, row.subject.phrase.size());
     const auto* idf = Child(row, "idf");
     ASSERT_NE(nullptr, idf);
@@ -338,13 +349,12 @@ TEST_P(ExplainTest, phrase_sums_the_idf_of_its_terms) {
 TEST_P(ExplainTest, prefix_names_each_expanded_term) {
   BuildFixture();
   irs::BM25 bm25;
-  const auto expanded = [&](const irs::ByPrefix& filter,
-                            std::string_view merge) {
+  const auto expanded = [&](const irs::ByPrefix& filter, Role merge) {
     const auto rows = Explain(filter, bm25, 1e-5f);
     EXPECT_EQ(1u, rows.size());
     std::vector<irs::bstring> terms;
     for (const auto& row : rows) {
-      EXPECT_EQ(merge, row.key);
+      EXPECT_EQ(merge, row.role);
       for (const auto& leaf : row.details) {
         EXPECT_EQ(kBodyId, leaf.subject.field);
         EXPECT_EQ(1u, leaf.subject.terms.size());
@@ -359,16 +369,16 @@ TEST_P(ExplainTest, prefix_names_each_expanded_term) {
   irs::ByPrefix constant;
   *constant.mutable_field_id() = kBodyId;
   constant.mutable_options()->term = Bytes("a");
-  EXPECT_EQ(expected, expanded(constant, "max"));
+  EXPECT_EQ(expected, expanded(constant, Role::Max));
 
   irs::ByPrefix scored;
   *scored.mutable_field_id() = kBodyId;
   scored.mutable_options()->term = Bytes("a");
   scored.SetScorer(&bm25);
-  EXPECT_EQ(expected, expanded(scored, "max"));
+  EXPECT_EQ(expected, expanded(scored, Role::Max));
 
   scored.mutable_options()->merge = irs::ScoreMergeType::Sum;
-  EXPECT_EQ(expected, expanded(scored, "sum"));
+  EXPECT_EQ(expected, expanded(scored, Role::Sum));
 }
 
 TEST_P(ExplainTest, an_unscored_clause_names_its_terms) {
@@ -388,7 +398,7 @@ TEST_P(ExplainTest, an_unscored_clause_names_its_terms) {
   std::vector<std::string> named;
   const auto collect = [&](this const auto& self,
                            const irs::explain::Node& node) -> void {
-    if (node.key != "match") {
+    if (node.role != Role::Match) {
       for (const auto& child : node.details) {
         self(child);
       }
@@ -431,7 +441,7 @@ TEST_P(ExplainTest, a_fuzzy_match_names_the_term_it_matched) {
   const auto rows = Explain(*filter, bm25, 1e-5f);
   ASSERT_EQ(3u, rows.size());
   for (const auto& row : rows) {
-    const auto& leaf = row.key == "sum" ? row.details.front() : row;
+    const auto& leaf = row.role == Role::Sum ? row.details.front() : row;
     ASSERT_EQ(1u, leaf.subject.terms.size());
     EXPECT_EQ(Bytes("quick"), leaf.subject.terms.front());
     const auto* idf = Child(leaf, "idf");
@@ -466,7 +476,7 @@ TEST_P(ExplainTest, every_scorer_matches_execution) {
     SCOPED_TRACE(scorer->ToString());
     const auto term = Term("fox");
     for (const auto& row : Explain(*term, *scorer, 0)) {
-      EXPECT_EQ("weight", row.key);
+      EXPECT_EQ(Role::Weight, row.role);
       EXPECT_EQ(scorer->ToString(), row.scorer);
     }
     const auto any = AnyOf({"quick", "lazy", "brown"});
@@ -495,8 +505,8 @@ TEST_P(ExplainTest, a_branch_keeps_its_own_scorer_or_none) {
   bool saw_raw_boost = false;
   for (const auto& row : Explain(filter, bm25, 1e-5f)) {
     for (const auto& clause :
-         row.key == "sum" ? row.details : std::vector{row}) {
-      if (clause.key == "match") {
+         row.role == Role::Sum ? row.details : std::vector{row}) {
+      if (clause.role == Role::Match) {
         saw_match = true;
         EXPECT_EQ(0.f, ValueOf(clause));
       } else if (clause.scorer.find("raw_boost") != std::string::npos) {
@@ -515,7 +525,7 @@ TEST_P(ExplainTest, a_scorer_without_a_breakdown_still_explains_its_value) {
   const auto rows = Explain(*filter, boost, 0);
   ASSERT_EQ(5u, rows.size());
   for (const auto& row : rows) {
-    EXPECT_EQ("weight", row.key);
+    EXPECT_EQ(Role::Weight, row.role);
     EXPECT_EQ(boost.ToString(), row.scorer);
     EXPECT_TRUE(row.expression.empty());
     EXPECT_TRUE(row.details.empty());
@@ -606,10 +616,8 @@ TEST_P(ExplainTest, rows_in_any_order_are_explained) {
   filter->ExplainStats(prepared.Collector(), stats);
   const auto rows = Execute(prepared);
   for (size_t segment = 0; segment != prepared.size(); ++segment) {
-    irs::explain::TermNames names;
-    filter->ExplainTerms(prepared.Query(segment)->Segment(), names);
     const auto plan =
-      irs::explain::MakePlan(*prepared.Query(segment), bm25, stats, names);
+      irs::explain::MakePlan(*prepared.Query(segment), bm25, stats, *filter);
     for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
       if (it->segment != segment) {
         continue;

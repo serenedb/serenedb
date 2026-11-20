@@ -46,7 +46,7 @@ void ConstantScore::Explain(const ScoreContext& ctx, const explain::SlotStats*,
                             explain::Node& out) const {
   explain::AddBoost(out, ctx.boost);
   explain::AddDetail(out, "value", _value);
-  explain::AddScale(out, ctx, "boost * value");
+  explain::AddScale(out, ctx, "boost * value", "scale * boost * value");
 }
 
 bool ConstantScore::equals(const Scorer& other) const noexcept {

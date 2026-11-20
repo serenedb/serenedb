@@ -22,7 +22,7 @@
 
 #include <cstdint>
 #include <optional>
-#include <string>
+#include <span>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -36,10 +36,27 @@ namespace irs::explain {
 
 using Value = std::variant<score_t, uint64_t>;
 
+enum class Role : uint8_t {
+  Input,
+  Part,
+  Weight,
+  Match,
+  Sum,
+  Max,
+};
+
 struct PhrasePosition {
   uint32_t gap_min = 0;
   uint32_t gap_max = 0;
   std::vector<bstring> terms;
+};
+
+struct SubjectView {
+  field_id field = field_limits::invalid();
+  DictRef dict;
+  std::span<const bstring> terms;
+  std::span<const PhrasePosition> phrase;
+  uint32_t slop = 0;
 };
 
 struct Subject {
@@ -50,13 +67,24 @@ struct Subject {
   uint32_t slop = 0;
 };
 
+inline SubjectView ViewOf(const Subject& subject) noexcept {
+  return {
+    .field = subject.field,
+    .dict = subject.dict,
+    .terms = subject.terms,
+    .phrase = subject.phrase,
+    .slop = subject.slop,
+  };
+}
+
 struct Node {
+  Role role = Role::Input;
   std::string_view key;
   Value value = score_t{0};
-  std::string expression;
-  std::string note;
-  std::string scorer;
-  Subject subject;
+  std::string_view expression;
+  std::string_view note;
+  std::string_view scorer;
+  SubjectView subject;
   std::vector<Node> details;
 };
 
@@ -65,11 +93,16 @@ inline bool HasSubject(const Node& node) noexcept {
 }
 
 inline bool IsGroup(const Node& node) noexcept {
-  return node.key == "sum" || node.key == "max";
+  return node.role == Role::Sum || node.role == Role::Max;
 }
 
 inline Node& AddDetail(Node& parent, std::string_view key, Value value) {
   return parent.details.emplace_back(Node{.key = key, .value = value});
+}
+
+inline Node& AddPart(Node& parent, SubjectView subject) {
+  return parent.details.emplace_back(
+    Node{.role = Role::Part, .subject = subject});
 }
 
 class Explainer {

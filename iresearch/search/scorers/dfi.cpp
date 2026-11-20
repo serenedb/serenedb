@@ -57,8 +57,8 @@ struct Measure;
 template<>
 struct Measure<DFIMeasure::Standardized> {
   static constexpr std::string_view kName = "standardized";
-  static constexpr std::string_view kKernel =
-    "(freq - expected) / sqrt(expected)";
+  static constexpr std::string_view kExpression =
+    "boost * log2(1 + (freq - expected) / sqrt(expected))";
 
   IRS_FORCE_INLINE static score_t Kernel(score_t diff,
                                          score_t expected) noexcept {
@@ -75,7 +75,8 @@ struct Measure<DFIMeasure::Standardized> {
 template<>
 struct Measure<DFIMeasure::Saturated> {
   static constexpr std::string_view kName = "saturated";
-  static constexpr std::string_view kKernel = "(freq - expected) / expected";
+  static constexpr std::string_view kExpression =
+    "boost * log2(1 + (freq - expected) / expected)";
 
   IRS_FORCE_INLINE static score_t Kernel(score_t diff,
                                          score_t expected) noexcept {
@@ -92,7 +93,8 @@ struct Measure<DFIMeasure::Saturated> {
 template<>
 struct Measure<DFIMeasure::ChiSquared> {
   static constexpr std::string_view kName = "chi_squared";
-  static constexpr std::string_view kKernel = "(freq - expected)^2 / expected";
+  static constexpr std::string_view kExpression =
+    "boost * log2(1 + (freq - expected)^2 / expected)";
 
   IRS_FORCE_INLINE static score_t Kernel(score_t diff,
                                          score_t expected) noexcept {
@@ -187,8 +189,8 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     explain::ExplainNoFreq(ctx, false, out);
     return;
   }
-  const auto kernel =
-    Resolve(_measure, []<DFIMeasure M> { return Measure<M>::kKernel; });
+  const auto expression =
+    Resolve(_measure, []<DFIMeasure M> { return Measure<M>::kExpression; });
   const auto describe = [&](explain::Node& node, score_t ratio) {
     explain::AddBoost(node, ctx.boost);
     const auto freq = explain::AddFreq(node, ctx);
@@ -197,7 +199,7 @@ void DFI::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
     const auto length = TermCountToScore(explain::AddLength(expected, ctx));
     expected.value = ratio * length;
     if (freq > ratio * length) {
-      node.expression = absl::StrCat("boost * log2(1 + ", kernel, ")");
+      node.expression = expression;
     } else {
       node.note = "the term occurs no more often than expected, so it scores 0";
     }

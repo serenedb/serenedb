@@ -152,9 +152,6 @@ class GeoFilter final : public FilterWithField<GeoFilterOptions> {
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,
                                           uint32_t threads) const final;
-
-  void ExplainStats(const PrepareCollector* collector,
-                    explain::StatsIndex& out) const final;
 };
 
 class GeoDistanceFilter;
@@ -179,9 +176,6 @@ class GeoDistanceFilter final
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,
                                           uint32_t threads) const final;
-
-  void ExplainStats(const PrepareCollector* collector,
-                    explain::StatsIndex& out) const final;
 };
 
 std::shared_ptr<const GeoPlan> PlanGeo(const GeoFilterOptions& options);

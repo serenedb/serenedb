@@ -126,25 +126,35 @@ irs::detail::RawRecipe StoredVectors(const irs::SubReader& segment,
 
 }  // namespace
 
+DistanceText DistanceTextOf(const VectorScorerOptions& vs,
+                            std::string_view column) {
+  const auto function = DistanceFunctionOf(vs);
+  return {
+    .function = function.name,
+    .expression = absl::Substitute(function.expression, column),
+    .method = Method(vs),
+    .missing = absl::StrCat(column, " is NULL in the row"),
+  };
+}
+
 irs::explain::Node ExplainDistance(const VectorScorerOptions& vs,
-                                   std::string_view column,
+                                   const DistanceText& text,
                                    std::optional<irs::score_t> returned,
                                    std::optional<irs::score_t> stored) {
-  const auto function = DistanceFunctionOf(vs);
   irs::explain::Node out{
-    .key = "distance",
-    .scorer = std::string{function.name},
+    .role = irs::explain::Role::Weight,
+    .scorer = text.function,
     .subject = {.field = vs.field_id},
   };
   if (!stored) {
     out.value = std::numeric_limits<irs::score_t>::quiet_NaN();
-    out.note = absl::StrCat(column, " is NULL in the row");
+    out.note = text.missing;
     return out;
   }
   const auto exact = ApplyScoreEmit(vs.score_emit, *stored);
   out.value = returned ? ApplyScoreEmit(vs.score_emit, *returned) : exact;
-  out.expression = absl::Substitute(function.expression, column);
-  out.note = Method(vs);
+  out.expression = text.expression;
+  out.note = text.method;
   if (!vs.exact) {
     irs::explain::AddDetail(out, "exact", exact);
   }
@@ -155,8 +165,10 @@ irs::explain::Node ExplainDistance(const VectorScorerOptions& vs,
 
 DistanceExplainer::DistanceExplainer(const irs::SubReader& segment,
                                      const VectorScorerOptions& vs,
-                                     std::string column)
-  : _vs{vs}, _column{std::move(column)}, _reader{StoredVectors(segment, vs)} {
+                                     std::string_view column)
+  : _vs{vs},
+    _text{DistanceTextOf(vs, column)},
+    _reader{StoredVectors(segment, vs)} {
   const auto& stored = *segment.Column(vs.field_id);
   if (irs::detail::MayHaveNullRows(stored)) {
     _validity.emplace(*segment.GetColReader(), stored);
@@ -165,7 +177,7 @@ DistanceExplainer::DistanceExplainer(const irs::SubReader& segment,
 
 irs::explain::Node DistanceExplainer::Explain(
   irs::doc_id_t doc, std::optional<irs::score_t> returned) {
-  return ExplainDistance(_vs, _column, returned, Stored(doc));
+  return ExplainDistance(_vs, _text, returned, Stored(doc));
 }
 
 std::optional<irs::score_t> DistanceExplainer::Stored(irs::doc_id_t doc) {

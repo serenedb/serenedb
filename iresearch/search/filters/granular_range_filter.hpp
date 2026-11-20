@@ -66,9 +66,6 @@ class ByGranularRange : public FilterWithField<ByGranularRangeOptions> {
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,
                                           uint32_t threads) const final;
-
-  void ExplainStats(const PrepareCollector* collector,
-                    explain::StatsIndex& out) const final;
 };
 
 }  // namespace irs

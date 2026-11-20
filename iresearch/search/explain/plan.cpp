@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -35,6 +36,7 @@
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
+#include "iresearch/search/explain/names.hpp"
 #include "iresearch/search/probe/family.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -60,16 +62,9 @@ const SlotStats* StatsOf(const StatsIndex& index, const byte_type* slot) {
   return it == index.end() ? nullptr : &it->second;
 }
 
-void Describe(const Scorer& scorer, std::string_view name,
-              const ScoreContext& ctx, const StatsIndex& index, Node& out) {
-  scorer.Explain(ctx, StatsOf(index, ctx.stats), out);
-  out.scorer = name;
-}
-
-Subject SubjectOf(const StatsIndex& index, const byte_type* slot,
-                  const TermReader* field) {
+Subject SubjectOf(const SlotStats* stats, const TermReader* field) {
   const auto dict = field ? field->meta().dict : DictRef{};
-  if (const auto* stats = StatsOf(index, slot)) {
+  if (stats) {
     Subject subject{.field = stats->field, .dict = dict};
     for (const auto& term : stats->terms) {
       if (!term.term.empty()) {
@@ -133,14 +128,18 @@ struct Cursor {
 
 class LeafPart {
  public:
-  LeafPart(Planner plan, ColumnArgsFetcher& fetcher, const StatsIndex& stats,
+  LeafPart(Planner plan, ColumnArgsFetcher& fetcher, const SlotStats* stats,
            Subject subject, Fallback fallback)
     : _cursor{.plan = std::move(plan)},
       _fetcher{fetcher},
       _stats{stats},
       _subject{std::move(subject)},
       _fallback{std::move(fallback)} {
-    if (Scored() && _fallback.field) {
+    if (!Scored()) {
+      return;
+    }
+    _scorer = _fallback.args.scorer->ToString();
+    if (_fallback.field) {
       _fetcher.AddNorms(*_fallback.segment, _fallback.field->norm);
     }
   }
@@ -153,27 +152,29 @@ class LeafPart {
     if (!_cursor.Matches(doc)) {
       return Outcome::None;
     }
-    out.subject = _subject;
+    out.subject = ViewOf(_subject);
     if (!Scored()) {
-      out.key = "match";
+      out.role = Role::Match;
       return Outcome::Matched;
     }
     _cursor.node->FetchScoreArgs(0);
     _fetcher.Fetch(doc);
-    out.key = "weight";
+    out.role = Role::Weight;
     out.value = _score.Score();
     if (const auto inputs = _cursor.node->Inputs()) {
       const auto& recipe = inputs->recipe;
-      Describe(*recipe.args.scorer, ScorerName(*recipe.args.scorer),
-               {
-                 .segment = *recipe.segment,
-                 .field = recipe.field->meta(),
-                 .doc_attrs = inputs->attrs,
-                 .fetcher = *recipe.args.fetcher,
-                 .stats = recipe.args.stats,
-                 .boost = recipe.args.boost,
-               },
-               _stats, out);
+      SDB_ASSERT(recipe.args.stats == _fallback.args.stats);
+      SDB_ASSERT(recipe.args.scorer == _fallback.args.scorer);
+      Describe(
+        {
+          .segment = *recipe.segment,
+          .field = recipe.field->meta(),
+          .doc_attrs = inputs->attrs,
+          .fetcher = *recipe.args.fetcher,
+          .stats = recipe.args.stats,
+          .boost = recipe.args.boost,
+        },
+        out);
     } else {
       DescribeConstant(out);
     }
@@ -183,47 +184,44 @@ class LeafPart {
  private:
   bool Scored() const noexcept { return _fallback.args.stats != nullptr; }
 
-  std::string_view ScorerName(const Scorer& scorer) {
-    if (_scorer.empty()) {
-      _scorer = scorer.ToString();
-    }
-    return _scorer;
+  void Describe(const ScoreContext& ctx, Node& out) const {
+    _fallback.args.scorer->Explain(ctx, _stats, out);
+    out.scorer = _scorer;
   }
 
-  void DescribeConstant(Node& out) {
+  void DescribeConstant(Node& out) const {
     const auto& args = _fallback.args;
     if (!_fallback.field) {
-      Describe(*args.scorer, ScorerName(*args.scorer),
-               {
-                 .segment = *_fallback.segment,
-                 .field = detail::NoField(),
-                 .doc_attrs = detail::NoAttributes(),
-                 .fetcher = _fetcher,
-                 .stats = args.stats,
-                 .boost = args.boost,
-               },
-               _stats, out);
+      Describe(
+        {
+          .segment = *_fallback.segment,
+          .field = detail::NoField(),
+          .doc_attrs = detail::NoAttributes(),
+          .fetcher = _fetcher,
+          .stats = args.stats,
+          .boost = args.boost,
+        },
+        out);
       return;
     }
-    const auto& field = *_fallback.field;
     uint32_t freq = _fallback.freq;
     detail::LeafProvider provider;
     provider.freq.value = &freq;
-    Describe(*args.scorer, ScorerName(*args.scorer),
-             {
-               .segment = *_fallback.segment,
-               .field = field,
-               .doc_attrs = provider,
-               .fetcher = _fetcher,
-               .stats = args.stats,
-               .boost = args.boost,
-             },
-             _stats, out);
+    Describe(
+      {
+        .segment = *_fallback.segment,
+        .field = *_fallback.field,
+        .doc_attrs = provider,
+        .fetcher = _fetcher,
+        .stats = args.stats,
+        .boost = args.boost,
+      },
+      out);
   }
 
   Cursor _cursor;
   ColumnArgsFetcher& _fetcher;
-  const StatsIndex& _stats;
+  const SlotStats* _stats;
   Subject _subject;
   Fallback _fallback;
   std::string _scorer;
@@ -264,8 +262,8 @@ Outcome GroupPart::Explain(doc_id_t doc, Node& out) {
       return Outcome::None;
     }
   }
-  out.key = _max ? "max" : "sum";
-  out.expression = out.key;
+  out.role = _max ? Role::Max : Role::Sum;
+  out.expression = _max ? "max" : "sum";
   bool scored = false;
   score_t total = 0;
   const auto add = [&](Node&& child, Outcome outcome) {
@@ -295,12 +293,17 @@ Outcome GroupPart::Explain(doc_id_t doc, Node& out) {
 
 class Builder {
  public:
-  Builder(const Scorer& scorer, const StatsIndex& stats, const TermNames& names,
-          ColumnArgsFetcher& fetcher) noexcept
-    : _scorer{scorer}, _stats{stats}, _names{names}, _fetcher{fetcher} {}
+  Builder(const Scorer& scorer, const StatsIndex& stats, const Filter& filter,
+          const SubReader& segment, ColumnArgsFetcher& fetcher) noexcept
+    : _scorer{scorer},
+      _stats{stats},
+      _filter{filter},
+      _segment{segment},
+      _fetcher{fetcher} {}
 
   Part Make(const QueryBuilder& query) {
     SDB_ASSERT(!QueryBuilder::IsEmpty(query));
+    SDB_ASSERT(&query.Segment() == &_segment);
     switch (query.Kind()) {
       case QueryKind::Boolean:
         return MakeBoolean(utils::downCast<BooleanQuery>(query));
@@ -308,8 +311,7 @@ class Builder {
         return MakeTerms(utils::downCast<MultiTermQuery>(query));
       case QueryKind::Term: {
         const auto& term = utils::downCast<TermQuery>(query);
-        return MakeClause(query.Segment(),
-                          {term.State(), term.Boost(), term.Stats(Scoring())});
+        return MakeClause({term.State(), term.Boost(), term.Stats(Scoring())});
       }
       default:
         return MakeLeaf(query);
@@ -321,8 +323,15 @@ class Builder {
     return {.scorer = &_scorer, .fetcher = &_fetcher};
   }
 
-  LeafPart MakeClause(const SubReader& segment,
-                      const detail::PostingClause& clause) {
+  const TermNames& Names() {
+    if (!_names) {
+      _names.emplace();
+      _filter.ExplainTerms(_segment, *_names);
+    }
+    return *_names;
+  }
+
+  LeafPart MakeClause(const detail::PostingClause& clause) {
     SDB_ASSERT(clause.state.reader);
     const auto& field = *clause.state.reader;
     const bool scored = clause.stats.stats != nullptr;
@@ -331,20 +340,21 @@ class Builder {
     const bool per_doc =
       meta.docs_count > 1 && with_freq && ScoresPerDoc(clause.stats.scorer);
     Fallback fallback{
-      .segment = &segment,
+      .segment = &_segment,
       .field = per_doc ? nullptr : &field.meta(),
       .args = clause.Args(&_fetcher),
     };
     if (meta.docs_count == 1 && with_freq) {
       fallback.freq = meta.freq;
     }
-    auto subject = SubjectOf(_stats, clause.stats.stats, &field);
+    const auto* stats = StatsOf(_stats, clause.stats.stats);
+    auto subject = SubjectOf(stats, &field);
     if (subject.terms.empty()) {
-      if (const auto* name = _names.Find(field, meta)) {
+      if (const auto* name = Names().Find(field, meta)) {
         subject.terms.push_back(*name);
       }
     }
-    return LeafPart{[clause, segment = &segment, scoring = Scoring(),
+    return LeafPart{[clause, segment = &_segment, scoring = Scoring(),
                      scored]() -> probe::Node::ptr {
                       if (scored) {
                         return probe::Family::MakePosting(
@@ -358,18 +368,19 @@ class Builder {
                         probe::Family::DocsContext{.interrogations = 1},
                         ScoreMergeType::Noop);
                     },
-                    _fetcher, _stats, std::move(subject), std::move(fallback)};
+                    _fetcher, stats, std::move(subject), std::move(fallback)};
   }
 
   LeafPart MakeLeaf(const QueryBuilder& query) {
     const auto record = query.Stats(Scoring());
+    const auto* stats = StatsOf(_stats, record.stats);
     const TermReader* reader = nullptr;
     Subject subject;
     switch (query.Kind()) {
       case QueryKind::Phrase: {
         const auto& phrase = utils::downCast<PhraseQuery>(query);
         reader = phrase.state.reader;
-        if (auto words = WordsOf(phrase, _names); !words.empty()) {
+        if (auto words = WordsOf(phrase, Names()); !words.empty()) {
           subject = {
             .field = reader->meta().id,
             .dict = reader->meta().dict,
@@ -377,24 +388,24 @@ class Builder {
             .slop = phrase.slop,
           };
         } else {
-          subject = SubjectOf(_stats, record.stats, reader);
+          subject = SubjectOf(stats, reader);
         }
       } break;
       case QueryKind::NGram:
         reader = utils::downCast<NGramSimilarityQuery>(query).State().reader;
-        subject = SubjectOf(_stats, record.stats, reader);
+        subject = SubjectOf(stats, reader);
         break;
       default:
-        subject = SubjectOf(_stats, record.stats, nullptr);
+        subject = SubjectOf(stats, nullptr);
         break;
     }
     return LeafPart{
       [&query, scoring = Scoring(), scored = record.stats != nullptr] {
         return query.PlanProbe(scored ? scoring : detail::ScoredCtx{}, 1);
       },
-      _fetcher, _stats, std::move(subject),
+      _fetcher, stats, std::move(subject),
       Fallback{
-        .segment = &query.Segment(),
+        .segment = &_segment,
         .field =
           reader && !ScoresPerDoc(record.scorer) ? &reader->meta() : nullptr,
         .args =
@@ -414,7 +425,6 @@ class Builder {
     const auto* const scorer = query.Stats(Scoring()).scorer;
     for (const auto& entry : state.Terms()) {
       group.Add(MakeClause(
-        query.Segment(),
         detail::ClauseOf(entry, state.Reader(), scorer, query.Boost())));
     }
     return group;
@@ -437,7 +447,7 @@ class Builder {
     for (const auto occur : {Occur::Must, Occur::Should}) {
       const auto& bucket = query.Bucket(occur);
       for (const auto& clause : bucket.postings) {
-        group.Add(MakeClause(query.Segment(), clause));
+        group.Add(MakeClause(clause));
       }
       for (const auto& child : bucket.filters) {
         group.Add(Make(*child));
@@ -448,16 +458,19 @@ class Builder {
 
   const Scorer& _scorer;
   const StatsIndex& _stats;
-  const TermNames& _names;
+  const Filter& _filter;
+  const SubReader& _segment;
   ColumnArgsFetcher& _fetcher;
+  std::optional<TermNames> _names;
 };
 
 class Plan final : public Explainer {
  public:
   Plan(const QueryBuilder& query, const Scorer& scorer, const StatsIndex& stats,
-       const TermNames& names) {
+       const Filter& filter) {
     if (!QueryBuilder::IsEmpty(query)) {
-      _root.emplace(Builder{scorer, stats, names, _fetcher}.Make(query));
+      _root.emplace(
+        Builder{scorer, stats, filter, query.Segment(), _fetcher}.Make(query));
     }
   }
 
@@ -485,8 +498,8 @@ class Plan final : public Explainer {
 std::unique_ptr<Explainer> MakePlan(const QueryBuilder& query,
                                     const Scorer& scorer,
                                     const StatsIndex& stats,
-                                    const TermNames& names) {
-  return std::make_unique<Plan>(query, scorer, stats, names);
+                                    const Filter& filter) {
+  return std::make_unique<Plan>(query, scorer, stats, filter);
 }
 
 }  // namespace irs::explain

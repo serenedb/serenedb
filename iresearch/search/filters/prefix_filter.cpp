@@ -33,7 +33,6 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
-#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
@@ -154,11 +153,6 @@ PrepareCollector::ptr ByPrefix::MakeCollectorImpl(const Scorer* scorer,
   return MakeMultiTermCollector(scorer, stats, threads);
 }
 
-void ByPrefix::ExplainStats(const PrepareCollector* collector,
-                            explain::StatsIndex& out) const {
-  explain::DescribeMultiTerm(collector, field_id(), out);
-}
-
 void ByPrefix::visit(const SubReader& segment, const TermReader& reader,
                      const ByPrefixOptions& options, FilterVisitor& visitor) {
   ByPrefixIterator terms{reader, options.term};
@@ -202,11 +196,6 @@ PrepareCollector::ptr ByPrefixes::MakeCollectorImpl(const Scorer* scorer,
                                                     StatsArena& stats,
                                                     uint32_t threads) const {
   return MakeMultiTermCollector(scorer, stats, threads);
-}
-
-void ByPrefixes::ExplainStats(const PrepareCollector* collector,
-                              explain::StatsIndex& out) const {
-  explain::DescribeMultiTerm(collector, field_id(), out);
 }
 
 TermPredicate::ptr ByPrefixes::CompileTermPredicate() const {

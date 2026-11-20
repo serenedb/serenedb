@@ -80,7 +80,7 @@ void RawDL::Explain(const ScoreContext& ctx, const explain::SlotStats*,
   }
   explain::AddBoost(out, ctx.boost);
   explain::AddLength(out, ctx);
-  explain::AddScale(out, ctx, "boost * dl");
+  explain::AddScale(out, ctx, "boost * dl", "scale * boost * dl");
 }
 
 ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {

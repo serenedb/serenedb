@@ -79,8 +79,9 @@ TEST(vector_explain, names_the_function_the_query_ranks_by) {
     SCOPED_TRACE(name);
     auto vs = Options(metric, emit);
     vs.exact = true;
-    const auto node = ExplainDistance(vs, "emb", -1.f, -1.f);
-    EXPECT_EQ("distance", node.key);
+    const auto text = DistanceTextOf(vs, "emb");
+    const auto node = ExplainDistance(vs, text, -1.f, -1.f);
+    EXPECT_EQ(irs::explain::Role::Weight, node.role);
     EXPECT_EQ(name, node.scorer);
     EXPECT_EQ(1u, node.subject.field);
     EXPECT_EQ(ApplyScoreEmit(emit, -1.f), ValueOf(node));
@@ -91,22 +92,24 @@ TEST(vector_explain, a_norm_names_no_query_vector) {
   auto l2 = Options(L2Sqr, SqrtNeg);
   l2.query_vector = {0.f, 0.f};
   l2.exact = true;
-  EXPECT_EQ("l2_distance", ExplainDistance(l2, "emb", -4.f, -4.f).scorer);
+  EXPECT_EQ("l2_distance", DistanceTextOf(l2, "emb").function);
   l2.norm = true;
-  const auto node = ExplainDistance(l2, "emb", -4.f, -4.f);
+  const auto text = DistanceTextOf(l2, "emb");
+  const auto node = ExplainDistance(l2, text, -4.f, -4.f);
   EXPECT_EQ("l2_norm", node.scorer);
   EXPECT_EQ("sqrt(sum(emb[i]^2))", node.expression);
   auto l1 = Options(L1, ZeroMinus);
   l1.query_vector = {0.f, 0.f};
   l1.exact = true;
   l1.norm = true;
-  EXPECT_EQ("l1_norm", ExplainDistance(l1, "emb", -3.f, -3.f).scorer);
+  EXPECT_EQ("l1_norm", DistanceTextOf(l1, "emb").function);
 }
 
 TEST(vector_explain, an_exact_distance_lists_only_the_dimensions) {
   auto vs = Options(L2Sqr, SqrtNeg);
   vs.exact = true;
-  const auto node = ExplainDistance(vs, "emb", -0.25f, -0.25f);
+  const auto text = DistanceTextOf(vs, "emb");
+  const auto node = ExplainDistance(vs, text, -0.25f, -0.25f);
   EXPECT_EQ(0.5f, ValueOf(node));
   EXPECT_EQ("sqrt(sum((emb[i] - query[i])^2))", node.expression);
   EXPECT_EQ("computed from the row's stored vector", node.note);
@@ -120,7 +123,8 @@ TEST(vector_explain, a_search_shows_the_exact_distance_and_its_parameters) {
   vs.quant = irs::VectorQuantization::SQ8;
   vs.top_k = 3;
   vs.rescore_width = 2.f;
-  auto node = ExplainDistance(vs, "emb", -0.36f, -0.25f);
+  auto text = DistanceTextOf(vs, "emb");
+  auto node = ExplainDistance(vs, text, -0.36f, -0.25f);
   EXPECT_EQ("found by an ivf search over sq8 codes", node.note);
   EXPECT_EQ(std::sqrt(0.36f), ValueOf(node));
   ASSERT_NE(nullptr, Detail(node, "exact"));
@@ -132,18 +136,19 @@ TEST(vector_explain, a_search_shows_the_exact_distance_and_its_parameters) {
   EXPECT_EQ(nullptr, Detail(node, "nprobe"));
 
   vs.nprobe = 8;
-  node = ExplainDistance(vs, "emb", -0.36f, -0.25f);
+  node = ExplainDistance(vs, text, -0.36f, -0.25f);
   ASSERT_NE(nullptr, Detail(node, "nprobe"));
   EXPECT_EQ(8u, std::get<uint64_t>(Detail(node, "nprobe")->value));
 
   vs.rescore_all = true;
-  EXPECT_EQ(nullptr, Detail(ExplainDistance(vs, "emb", -0.36f, -0.25f),
-                            "rescore_width"));
+  EXPECT_EQ(nullptr,
+            Detail(ExplainDistance(vs, text, -0.36f, -0.25f), "rescore_width"));
 
   vs.kind = irs::AnnKind::Hnsw;
   vs.quant = irs::VectorQuantization::None;
   vs.ef_search = 40;
-  node = ExplainDistance(vs, "emb", -0.25f, -0.25f);
+  text = DistanceTextOf(vs, "emb");
+  node = ExplainDistance(vs, text, -0.25f, -0.25f);
   EXPECT_EQ("found by an hnsw search", node.note);
   ASSERT_NE(nullptr, Detail(node, "ef_search"));
   EXPECT_EQ(40u, std::get<uint64_t>(Detail(node, "ef_search")->value));
@@ -155,7 +160,8 @@ TEST(vector_explain, a_range_search_shows_its_radius) {
   auto vs = Options(L2Sqr, SqrtNeg);
   vs.radius = 0.9f;
   vs.nprobe = 8;
-  auto node = ExplainDistance(vs, "emb", std::nullopt, -0.25f);
+  const auto text = DistanceTextOf(vs, "emb");
+  auto node = ExplainDistance(vs, text, std::nullopt, -0.25f);
   EXPECT_EQ(0.5f, ValueOf(node));
   ASSERT_NE(nullptr, Detail(node, "radius"));
   EXPECT_EQ(0.9f, ValueOf(*Detail(node, "radius")));
@@ -165,7 +171,7 @@ TEST(vector_explain, a_range_search_shows_its_radius) {
   EXPECT_EQ(nullptr, Detail(node, "k"));
 
   vs.radius_inclusive = true;
-  node = ExplainDistance(vs, "emb", std::nullopt, -0.25f);
+  node = ExplainDistance(vs, text, std::nullopt, -0.25f);
   EXPECT_EQ("the largest distance the search returns",
             Detail(node, "radius")->note);
 }
@@ -173,8 +179,9 @@ TEST(vector_explain, a_range_search_shows_its_radius) {
 TEST(vector_explain, a_row_without_a_vector_has_no_distance) {
   auto vs = Options(Cosine, OneMinus);
   vs.exact = true;
+  const auto text = DistanceTextOf(vs, "emb");
   const auto node = ExplainDistance(
-    vs, "emb", std::numeric_limits<irs::score_t>::quiet_NaN(), std::nullopt);
+    vs, text, std::numeric_limits<irs::score_t>::quiet_NaN(), std::nullopt);
   EXPECT_TRUE(std::isnan(ValueOf(node)));
   EXPECT_EQ("cosine_distance", node.scorer);
   EXPECT_EQ("emb is NULL in the row", node.note);

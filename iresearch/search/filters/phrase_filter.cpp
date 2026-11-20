@@ -39,7 +39,6 @@
 #include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
-#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
@@ -695,36 +694,22 @@ void ByPhrase::ExplainStats(const PrepareCollector* collector,
   if (collector == nullptr) {
     return;
   }
-  const auto& slots = utils::downCast<SlotsCollector>(*collector);
-  auto stats = explain::FieldStats(slots, field_id());
-  size_t i = 0;
-  const auto add = [&](bytes_view term) {
-    const auto counts = slots.TermTotal(i++);
-    if (counts.docs_with_term != 0) {
-      stats.terms.push_back(explain::TermOf(term, counts));
-    }
-  };
+  std::vector<bytes_view> terms;
   for (const auto& word : options()) {
     switch (ByPhraseOptions::KindOf(word.part)) {
       case SlotKind::Term:
-        add(ByPhraseOptions::TermOf(word.part));
+        terms.push_back(ByPhraseOptions::TermOf(word.part));
         break;
       case SlotKind::Set:
         for (const auto& term : std::get<TermSetOptions>(word.part).terms) {
-          add(term);
+          terms.push_back(term);
         }
         break;
       case SlotKind::Expansion:
         break;
     }
   }
-  if (CountSlots(options()).expanded != 0) {
-    const auto& expanded = utils::downCast<ExpandedSlotsCollector>(*collector);
-    expanded.VisitExpanded([&](bytes_view term, const TermCollector& counts) {
-      stats.terms.push_back(explain::TermOf(term, counts));
-    });
-  }
-  out.insert_or_assign(slots.Record().stats, std::move(stats));
+  collector->Describe(field_id(), [&](size_t i) { return terms[i]; }, out);
 }
 
 void ByPhrase::ExplainTerms(const SubReader& segment,

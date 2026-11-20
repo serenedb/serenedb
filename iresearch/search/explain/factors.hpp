@@ -38,7 +38,8 @@ const uint32_t* FreqOf(const ScoreContext& ctx) noexcept;
 
 void AddBoost(Node& out, score_t boost);
 
-void AddScale(Node& out, const ScoreContext& ctx, std::string_view product);
+void AddScale(Node& out, const ScoreContext& ctx, std::string_view product,
+              std::string_view scaled);
 
 score_t AddFreq(Node& out, const ScoreContext& ctx);
 

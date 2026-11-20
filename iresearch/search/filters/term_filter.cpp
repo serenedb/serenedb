@@ -29,7 +29,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
-#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
@@ -74,8 +73,8 @@ PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer,
 void ByTerm::ExplainStats(const PrepareCollector* collector,
                           explain::StatsIndex& out) const {
   SDB_ASSERT(collector);
-  explain::DescribeTerm(utils::downCast<ByTermsCollector>(*collector), 0,
-                        field_id(), options().term, out);
+  const bytes_view term = options().term;
+  collector->Describe(field_id(), [&](size_t) { return term; }, out);
 }
 
 TermPredicate::ptr ByTerm::CompileTermPredicate() const {

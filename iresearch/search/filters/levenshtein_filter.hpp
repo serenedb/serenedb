@@ -143,9 +143,6 @@ class LevenshteinAutomatonFilter final
                                           StatsArena& stats,
                                           uint32_t threads) const final;
 
-  void ExplainStats(const PrepareCollector* collector,
-                    explain::StatsIndex& out) const final;
-
   TermPredicate::ptr CompileTermPredicate() const final;
 
   TermIterator::ptr CompileTermIterator(const TermReader& reader) const final;

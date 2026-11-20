@@ -24,7 +24,6 @@
 #include <absl/container/inlined_vector.h>
 #include <absl/functional/overload.h>
 #include <absl/strings/str_cat.h>
-#include <absl/strings/str_join.h>
 #include <fast_float/fast_float.h>
 #include <simdjson.h>
 #include <simdutf.h>
@@ -32,17 +31,15 @@
 #include <array>
 #include <cmath>
 #include <duckdb/common/types/variant/variant_builder.hpp>
+#include <duckdb/common/types/variant_iterator.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
-#include <duckdb/common/vector/string_vector.hpp>
-#include <duckdb/common/vector_operations/unary_executor.hpp>
-#include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
 #include <system_error>
 #include <variant>
-#include <vector>
 
 #include "connector/functions/vector.h"
 #include "connector/search_filter_printer.hpp"
@@ -53,7 +50,9 @@ namespace {
 
 using Builder = simdjson::builder::string_builder;
 using duckdb::VariantLogicalType;
+using duckdb::VariantNode;
 using irs::explain::Node;
+using irs::explain::Role;
 
 enum class Field : uint8_t {
   Clauses,
@@ -80,11 +79,6 @@ duckdb::string_t Key(std::string_view key) noexcept {
   return {key.data(), static_cast<uint32_t>(key.size())};
 }
 
-bool IsInput(const Node& parent, const Node& child) noexcept {
-  return irs::explain::IsGroup(parent) ? child.key == "constant"
-                                       : !irs::explain::HasSubject(child);
-}
-
 class Emitter {
  public:
   Emitter(std::span<const Node> rows, const ScanBindData& bind) noexcept
@@ -101,7 +95,7 @@ class Emitter {
     absl::InlinedVector<const Node*, 8> parts;
     absl::InlinedVector<const Node*, 8> inputs;
     for (const auto& child : node.details) {
-      (IsInput(node, child) ? inputs : parts).push_back(&child);
+      (child.role == Role::Input ? inputs : parts).push_back(&child);
     }
     absl::c_sort(inputs, [](const Node* lhs, const Node* rhs) {
       return lhs->key < rhs->key;
@@ -123,7 +117,7 @@ class Emitter {
     add(Field::Note, !node.note.empty());
     add(Field::Parts, !group && !parts.empty());
     add(Field::Phrase, labeled && !subject.phrase.empty());
-    add(Field::Scored, node.key == "match");
+    add(Field::Scored, node.role == Role::Match);
     add(Field::Scorer, !node.scorer.empty());
     add(Field::Slop, labeled && !subject.phrase.empty() && subject.slop != 0);
     add(Field::Term,
@@ -184,7 +178,7 @@ class Emitter {
       });
   }
 
-  void Phrase(const irs::explain::Subject& subject) {
+  void Phrase(const irs::explain::SubjectView& subject) {
     struct Element {
       const irs::explain::PhrasePosition* position;
       bool gap;
@@ -270,14 +264,13 @@ class Emitter {
     return it->second;
   }
 
-  void Term(const irs::explain::Subject& subject, irs::bytes_view term) {
+  void Term(const irs::explain::SubjectView& subject, irs::bytes_view term) {
     auto [it, added] =
       _types.try_emplace(std::pair{subject.field, subject.dict});
     if (added) {
       it->second = _bind.FieldType(subject.field, subject.dict);
     }
-    const std::string_view text{reinterpret_cast<const char*>(term.data()),
-                                term.size()};
+    const auto text = irs::ViewCast<char>(term);
     if (it->second.id() == duckdb::LogicalTypeId::VARCHAR &&
         simdutf::validate_utf8(text.data(), text.size())) {
       String(text);
@@ -343,108 +336,227 @@ bool IsDistance(std::string_view scorer) {
     scorer);
 }
 
-std::string_view StringOf(simdjson::dom::object node, std::string_view key) {
-  std::string_view value;
-  if (node[key].get_string().get(value) != simdjson::SUCCESS) {
-    return {};
-  }
-  return value;
+std::string_view View(const duckdb::string_t& text) noexcept {
+  return {text.GetData(), text.GetSize()};
 }
 
-std::string Words(simdjson::dom::array array) {
-  std::vector<std::string_view> words;
-  for (const auto element : array) {
-    std::string_view word;
-    if (element.get_string().get(word) == simdjson::SUCCESS) {
-      words.push_back(word);
+bool Is(const VariantNode& node, VariantLogicalType type) {
+  return node.GetTypeId() == type;
+}
+
+duckdb::string_t StringOf(const VariantNode& node) {
+  return Is(node, VariantLogicalType::VARCHAR) ? node.GetString()
+                                               : duckdb::string_t{};
+}
+
+std::optional<uint64_t> UnsignedOf(const VariantNode& node) {
+  switch (node.GetTypeId()) {
+    case VariantLogicalType::UINT8:
+      return node.GetData<uint8_t>();
+    case VariantLogicalType::UINT16:
+      return node.GetData<uint16_t>();
+    case VariantLogicalType::UINT32:
+      return node.GetData<uint32_t>();
+    case VariantLogicalType::UINT64:
+      return node.GetData<uint64_t>();
+    default:
+      return std::nullopt;
+  }
+}
+
+std::optional<int64_t> SignedOf(const VariantNode& node) {
+  switch (node.GetTypeId()) {
+    case VariantLogicalType::INT8:
+      return node.GetData<int8_t>();
+    case VariantLogicalType::INT16:
+      return node.GetData<int16_t>();
+    case VariantLogicalType::INT32:
+      return node.GetData<int32_t>();
+    case VariantLogicalType::INT64:
+      return node.GetData<int64_t>();
+    default:
+      return std::nullopt;
+  }
+}
+
+uint64_t WholeOf(const VariantNode& node) {
+  if (const auto value = UnsignedOf(node)) {
+    return *value;
+  }
+  const auto value = SignedOf(node);
+  return value && *value > 0 ? static_cast<uint64_t>(*value) : 0;
+}
+
+struct Fields {
+  VariantNode value;
+  VariantNode clauses;
+  VariantNode parts;
+  VariantNode inputs;
+  VariantNode phrase;
+  VariantNode terms;
+  duckdb::string_t column{};
+  duckdb::string_t expression{};
+  duckdb::string_t note{};
+  duckdb::string_t scorer{};
+  duckdb::string_t term{};
+  uint64_t slop = 0;
+  bool unscored = false;
+};
+
+Fields FieldsOf(const VariantNode& node) {
+  Fields fields;
+  for (const auto& entry : node.GetObjectChildren()) {
+    const auto it = absl::c_find(kFieldNames, View(entry.key));
+    if (it == kFieldNames.end()) {
+      continue;
+    }
+    const auto& value = entry.value;
+    switch (static_cast<Field>(it - kFieldNames.begin())) {
+      case Field::Clauses:
+        fields.clauses = value;
+        break;
+      case Field::Column:
+        fields.column = StringOf(value);
+        break;
+      case Field::Expression:
+        fields.expression = StringOf(value);
+        break;
+      case Field::Inputs:
+        fields.inputs = value;
+        break;
+      case Field::Note:
+        fields.note = StringOf(value);
+        break;
+      case Field::Parts:
+        fields.parts = value;
+        break;
+      case Field::Phrase:
+        fields.phrase = value;
+        break;
+      case Field::Scored:
+        fields.unscored = Is(value, VariantLogicalType::BOOL_FALSE);
+        break;
+      case Field::Scorer:
+        fields.scorer = StringOf(value);
+        break;
+      case Field::Slop:
+        fields.slop = WholeOf(value);
+        break;
+      case Field::Term:
+        fields.term = StringOf(value);
+        break;
+      case Field::Terms:
+        fields.terms = value;
+        break;
+      case Field::Value:
+        fields.value = value;
+        break;
     }
   }
-  return absl::StrJoin(words, " ");
+  return fields;
 }
 
-uint64_t WholeOf(simdjson::dom::object node, std::string_view key) {
-  uint64_t value = 0;
-  if (node[key].get_uint64().get(value) != simdjson::SUCCESS) {
-    return 0;
+void AppendWords(std::string& text, const VariantNode& array) {
+  bool first = true;
+  for (const auto element : array.GetArrayChildren()) {
+    if (!Is(element, VariantLogicalType::VARCHAR)) {
+      continue;
+    }
+    const auto word = element.GetString();
+    absl::StrAppend(&text, first ? "" : " ", View(word));
+    first = false;
   }
-  return value;
 }
 
-std::string PhraseText(simdjson::dom::array phrase) {
-  std::vector<std::string> words;
-  for (const auto element : phrase) {
-    std::string_view word;
-    simdjson::dom::array alternatives;
-    simdjson::dom::object gap;
-    if (element.get_string().get(word) == simdjson::SUCCESS) {
-      words.emplace_back(word);
-    } else if (element.get_array().get(alternatives) == simdjson::SUCCESS) {
-      words.push_back(absl::StrCat("(", Words(alternatives), ")"));
-    } else if (element.get_object().get(gap) == simdjson::SUCCESS) {
-      words.push_back(
-        absl::StrCat("?{", WholeOf(gap, "min"), ",", WholeOf(gap, "max"), "}"));
-    } else {
-      words.emplace_back("?");
+void AppendPhrase(std::string& text, const VariantNode& phrase) {
+  bool first = true;
+  for (const auto element : phrase.GetArrayChildren()) {
+    if (!first) {
+      text += ' ';
+    }
+    first = false;
+    switch (element.GetTypeId()) {
+      case VariantLogicalType::VARCHAR: {
+        const auto word = element.GetString();
+        text += View(word);
+      } break;
+      case VariantLogicalType::ARRAY:
+        text += '(';
+        AppendWords(text, element);
+        text += ')';
+        break;
+      case VariantLogicalType::OBJECT: {
+        uint64_t min = 0;
+        uint64_t max = 0;
+        for (const auto& entry : element.GetObjectChildren()) {
+          const auto key = View(entry.key);
+          if (key == "min") {
+            min = WholeOf(entry.value);
+          } else if (key == "max") {
+            max = WholeOf(entry.value);
+          }
+        }
+        absl::StrAppend(&text, "?{", min, ",", max, "}");
+      } break;
+      default:
+        text += '?';
+        break;
     }
   }
-  return absl::StrJoin(words, " ");
 }
 
-std::string Label(simdjson::dom::object node) {
-  const auto column = StringOf(node, "column");
+std::string Label(const Fields& node) {
+  const auto column = View(node.column);
   if (column.empty()) {
     return {};
   }
-  if (const auto term = StringOf(node, "term"); !term.empty()) {
+  if (const auto term = View(node.term); !term.empty()) {
     return absl::StrCat(column, ":", term);
   }
-  simdjson::dom::array array;
-  if (node["phrase"].get_array().get(array) == simdjson::SUCCESS) {
-    auto text = absl::StrCat(column, ":\"", PhraseText(array), "\"");
-    if (const auto slop = WholeOf(node, "slop"); slop != 0) {
-      absl::StrAppend(&text, "~", slop);
+  std::string text{column};
+  if (Is(node.phrase, VariantLogicalType::ARRAY)) {
+    text += ":\"";
+    AppendPhrase(text, node.phrase);
+    text += '"';
+    if (node.slop != 0) {
+      absl::StrAppend(&text, "~", node.slop);
     }
-    return text;
+  } else if (Is(node.terms, VariantLogicalType::ARRAY)) {
+    text += ":(";
+    AppendWords(text, node.terms);
+    text += ')';
   }
-  if (node["terms"].get_array().get(array) == simdjson::SUCCESS) {
-    return absl::StrCat(column, ":(", Words(array), ")");
-  }
-  return std::string{column};
+  return text;
 }
 
-bool Has(simdjson::dom::object node, std::string_view key) {
-  return node[key].error() == simdjson::SUCCESS;
-}
-
-std::string_view ClauseKey(simdjson::dom::object node) {
-  if (Has(node, "clauses")) {
-    return StringOf(node, "expression");
+std::string_view ClauseKey(const Fields& node) {
+  if (Is(node.clauses, VariantLogicalType::ARRAY)) {
+    return View(node.expression);
   }
-  bool scored = true;
-  if (node["scored"].get_bool().get(scored) == simdjson::SUCCESS && !scored) {
+  if (node.unscored) {
     return "match";
   }
-  const auto scorer = StringOf(node, "scorer");
+  const auto scorer = View(node.scorer);
   if (IsDistance(scorer)) {
     return "distance";
   }
   return scorer.empty() ? "unexplained" : "weight";
 }
 
-std::string LuceneDescription(simdjson::dom::object node, std::string_view key,
+std::string LuceneDescription(const Fields& node, std::string_view key,
                               bool has_details) {
-  const auto expression = StringOf(node, "expression");
-  if (Has(node, "clauses")) {
+  const auto expression = View(node.expression);
+  if (Is(node.clauses, VariantLogicalType::ARRAY)) {
     return absl::StrCat(expression, " of:");
   }
   std::string text{key};
   if (const auto label = Label(node); !label.empty()) {
     absl::StrAppend(&text, "(", label, ")");
   }
-  if (const auto scorer = StringOf(node, "scorer"); !scorer.empty()) {
+  if (const auto scorer = View(node.scorer); !scorer.empty()) {
     absl::StrAppend(&text, " [", scorer, "]");
   }
-  if (const auto note = StringOf(node, "note"); !note.empty()) {
+  if (const auto note = View(node.note); !note.empty()) {
     absl::StrAppend(&text, ", ", note);
   } else if (const auto meaning = MeaningOf(key); !meaning.empty()) {
     absl::StrAppend(&text, ", ", meaning);
@@ -458,54 +570,67 @@ std::string LuceneDescription(simdjson::dom::object node, std::string_view key,
   return text;
 }
 
-void AppendLucene(Builder& out, simdjson::dom::object node,
-                  std::string_view key) {
-  simdjson::dom::array clauses;
-  simdjson::dom::array parts;
-  simdjson::dom::object inputs;
-  const bool has_clauses =
-    node["clauses"].get_array().get(clauses) == simdjson::SUCCESS;
-  const bool has_parts =
-    node["parts"].get_array().get(parts) == simdjson::SUCCESS;
-  const bool has_inputs =
-    node["inputs"].get_object().get(inputs) == simdjson::SUCCESS;
-  out.append_raw(R"({"value":)");
-  simdjson::dom::element value;
-  if (node["value"].get(value) == simdjson::SUCCESS) {
-    out.append_raw(simdjson::minify(value));
+template<typename T>
+void AppendReal(Builder& out, T value) {
+  if (!std::isfinite(value)) {
+    out.append_null();
+    return;
+  }
+  char buffer[pg::kNumberStrMaxLen];
+  const auto* end = pg::WriteShortestFloat(value, buffer);
+  out.append_raw(std::string_view{buffer, static_cast<size_t>(end - buffer)});
+}
+
+void AppendNumber(Builder& out, const VariantNode& node) {
+  if (Is(node, VariantLogicalType::FLOAT)) {
+    AppendReal(out, node.GetData<float>());
+  } else if (Is(node, VariantLogicalType::DOUBLE)) {
+    AppendReal(out, node.GetData<double>());
+  } else if (const auto value = UnsignedOf(node)) {
+    out.append_raw(absl::AlphaNum(*value).Piece());
+  } else if (const auto value = SignedOf(node)) {
+    out.append_raw(absl::AlphaNum(*value).Piece());
   } else {
     out.append_null();
   }
+}
+
+void AppendLucene(Builder& out, const Fields& node, std::string_view key) {
+  const bool has_clauses = Is(node.clauses, VariantLogicalType::ARRAY);
+  const bool has_parts = Is(node.parts, VariantLogicalType::ARRAY);
+  const bool has_inputs = Is(node.inputs, VariantLogicalType::OBJECT);
+  out.append_raw(R"({"value":)");
+  AppendNumber(out, node.value);
   out.append_raw(R"(,"description":)");
   out.escape_and_append_with_quotes(
     LuceneDescription(node, key, has_clauses || has_parts || has_inputs));
   out.append_raw(R"(,"details":[)");
   bool first = true;
-  const auto append = [&](simdjson::dom::element element,
+  const auto append = [&](const VariantNode& element,
                           std::string_view child_key) {
-    simdjson::dom::object child;
-    if (element.get_object().get(child) != simdjson::SUCCESS) {
+    if (!Is(element, VariantLogicalType::OBJECT)) {
       return;
     }
     if (!first) {
       out.append(',');
     }
     first = false;
+    const auto child = FieldsOf(element);
     AppendLucene(out, child, child_key.empty() ? ClauseKey(child) : child_key);
   };
   if (has_clauses) {
-    for (const auto clause : clauses) {
+    for (const auto clause : node.clauses.GetArrayChildren()) {
       append(clause, {});
     }
   }
   if (has_parts) {
-    for (const auto part : parts) {
+    for (const auto part : node.parts.GetArrayChildren()) {
       append(part, key);
     }
   }
   if (has_inputs) {
-    for (const auto [input, child] : inputs) {
-      append(child, input);
+    for (const auto& entry : node.inputs.GetObjectChildren()) {
+      append(entry.value, View(entry.key));
     }
   }
   out.append_raw("]}");
@@ -519,28 +644,30 @@ void WriteExplanations(std::span<const Node> rows, const ScanBindData& bind,
   duckdb::BuildVariant(emitter, rows.size(), out);
 }
 
-void ExplainJsonFunction(duckdb::DataChunk& args,
-                         duckdb::ExpressionState& state,
+void ExplainJsonFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                          duckdb::Vector& result) {
   const auto count = args.size();
-  duckdb::Vector tree{duckdb::LogicalType::JSON(), count};
-  duckdb::VectorOperations::Cast(state.GetContext(), args.data[0], tree, count);
-  simdjson::dom::parser parser;
+  const duckdb::VariantIterator variants{args.data[0]};
+  auto writer = duckdb::FlatVector::Writer<duckdb::string_t>(result, count);
   Builder builder;
-  duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
-    tree, result, count, [&](duckdb::string_t text) {
-      simdjson::dom::object root;
-      if (parser.parse(text.GetData(), text.GetSize()).get_object().get(root) !=
-          simdjson::SUCCESS) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                        ERR_MSG("ts_explain_json() takes the result of "
-                                "ts_explain()"));
-      }
-      builder.clear();
-      AppendLucene(builder, root, ClauseKey(root));
-      const std::string_view json{builder.view().value()};
-      return duckdb::StringVector::AddString(result, json.data(), json.size());
-    });
+  for (duckdb::idx_t row = 0; row != count; ++row) {
+    if (!variants.RowIsValid(row)) {
+      writer.WriteNull();
+      continue;
+    }
+    const auto root = variants.Root(row);
+    if (!Is(root, VariantLogicalType::OBJECT)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_explain_json() takes the result of "
+                              "ts_explain()"));
+    }
+    const auto fields = FieldsOf(root);
+    builder.clear();
+    AppendLucene(builder, fields, ClauseKey(fields));
+    const std::string_view json{builder.view().value()};
+    writer.WriteValue(
+      duckdb::string_t{json.data(), static_cast<uint32_t>(json.size())});
+  }
 }
 
 }  // namespace sdb::connector

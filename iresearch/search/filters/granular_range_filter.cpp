@@ -26,7 +26,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
-#include "iresearch/search/explain/describe.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 
 namespace irs {
@@ -71,11 +70,6 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
 PrepareCollector::ptr ByGranularRange::MakeCollectorImpl(
   const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
   return MakeMultiTermCollector(scorer, stats, threads);
-}
-
-void ByGranularRange::ExplainStats(const PrepareCollector* collector,
-                                   explain::StatsIndex& out) const {
-  explain::DescribeMultiTerm(collector, field_id(), out);
 }
 
 }  // namespace irs

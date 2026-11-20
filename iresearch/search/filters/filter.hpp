@@ -320,6 +320,13 @@ class FilterWithField : public FilterWithOptions<Options> {
   DictRef dict() const noexcept { return _dict; }
   DictRef* mutable_dict() noexcept { return &_dict; }
 
+  void ExplainStats(const PrepareCollector* collector,
+                    explain::StatsIndex& out) const override {
+    if (collector) {
+      collector->Describe(_field_id, [](size_t) { return bytes_view{}; }, out);
+    }
+  }
+
   void ExplainTerms(const SubReader& segment,
                     explain::TermNames& out) const override {
     const auto* reader = segment.field(_field_id, _dict);

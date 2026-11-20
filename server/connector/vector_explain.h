@@ -33,15 +33,25 @@
 
 namespace sdb::connector {
 
+struct DistanceText {
+  std::string_view function;
+  std::string expression;
+  std::string method;
+  std::string missing;
+};
+
+DistanceText DistanceTextOf(const VectorScorerOptions& vs,
+                            std::string_view column);
+
 irs::explain::Node ExplainDistance(const VectorScorerOptions& vs,
-                                   std::string_view column,
+                                   const DistanceText& text,
                                    std::optional<irs::score_t> returned,
                                    std::optional<irs::score_t> stored);
 
 class DistanceExplainer final : public irs::explain::Explainer {
  public:
   DistanceExplainer(const irs::SubReader& segment,
-                    const VectorScorerOptions& vs, std::string column);
+                    const VectorScorerOptions& vs, std::string_view column);
 
   irs::explain::Node Explain(irs::doc_id_t doc,
                              std::optional<irs::score_t> returned) final;
@@ -50,7 +60,7 @@ class DistanceExplainer final : public irs::explain::Explainer {
   std::optional<irs::score_t> Stored(irs::doc_id_t doc);
 
   const VectorScorerOptions& _vs;
-  std::string _column;
+  DistanceText _text;
   irs::detail::RawVectorReader _reader;
   std::optional<irs::ColumnReader::PointReader> _validity;
   duckdb::Vector _scratch{duckdb::LogicalType::BOOLEAN, 1};

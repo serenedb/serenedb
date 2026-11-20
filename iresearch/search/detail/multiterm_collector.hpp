@@ -86,6 +86,9 @@ class MultiTermCollector final : public FieldPrepareCollector {
     }
   }
 
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const final;
+
   template<typename Visitor>
   void VisitTerms(Visitor&& visitor) const {
     TermMap<TermCollector> merged;
@@ -146,6 +149,9 @@ class BlendedTermsCollector final : public FieldPrepareCollector {
     const auto blended = Blended();
     _scorer->collect(const_cast<byte_type*>(_stats), &field, &blended, stats);
   }
+
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const final;
 
   TermCollector Blended() const {
     Terms merged;

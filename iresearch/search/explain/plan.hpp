@@ -23,7 +23,6 @@
 #include <memory>
 
 #include "iresearch/search/explain/explanation.hpp"
-#include "iresearch/search/explain/names.hpp"
 #include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -33,6 +32,6 @@ namespace irs::explain {
 std::unique_ptr<Explainer> MakePlan(const QueryBuilder& query,
                                     const Scorer& scorer,
                                     const StatsIndex& stats,
-                                    const TermNames& names);
+                                    const Filter& filter);
 
 }  // namespace irs::explain

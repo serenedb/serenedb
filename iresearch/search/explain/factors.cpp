@@ -20,8 +20,6 @@
 
 #include "iresearch/search/explain/factors.hpp"
 
-#include <absl/strings/str_cat.h>
-
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
@@ -39,10 +37,11 @@ void AddBoost(Node& out, score_t boost) {
   }
 }
 
-void AddScale(Node& out, const ScoreContext& ctx, std::string_view product) {
+void AddScale(Node& out, const ScoreContext& ctx, std::string_view product,
+              std::string_view scaled) {
   if (const auto* scale = ScaleOf(ctx)) {
     AddDetail(out, "scale", scale[0]);
-    out.expression = absl::StrCat("scale * ", product);
+    out.expression = scaled;
   } else {
     out.expression = product;
   }
@@ -107,10 +106,10 @@ void AddIdf(Node& out, score_t idf, const SlotStats* stats,
   }
   node.expression = "sum";
   for (const auto& term : stats->terms) {
-    auto& one = AddDetail(
-      node, "idf", per_term(stats->docs_with_field, term.docs_with_term));
+    auto& one =
+      AddPart(node, {.field = stats->field, .terms = std::span{&term.term, 1}});
+    one.value = per_term(stats->docs_with_field, term.docs_with_term);
     one.expression = expression;
-    one.subject = {.field = stats->field, .terms = {term.term}};
     add_counts(one, term);
   }
 }
@@ -145,8 +144,8 @@ void ExplainParts(const SlotStats* stats, Node& out, ExplainPart describe) {
     return;
   }
   for (const auto& term : stats->terms) {
-    auto& part = AddDetail(out, out.key, score_t{0});
-    part.subject = {.field = stats->field, .terms = {term.term}};
+    auto& part =
+      AddPart(out, {.field = stats->field, .terms = std::span{&term.term, 1}});
     describe(part, term,
              CollectionShareOf(term.total_term_freq, stats->total_term_freq));
   }

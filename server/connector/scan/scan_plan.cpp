@@ -881,10 +881,8 @@ std::unique_ptr<irs::explain::Explainer> MakeExplainer(const ScanGlobalState& g,
   }
   const auto& seg_query = g.queries[seg];
   SDB_ASSERT(seg_query && g.scorer_obj);
-  irs::explain::TermNames names;
-  g.filter->ExplainTerms(seg_query->Segment(), names);
   return irs::explain::MakePlan(*seg_query, *g.scorer_obj, g.explain_stats,
-                                names);
+                                *g.filter);
 }
 
 void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
@@ -894,13 +892,13 @@ void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
   if (!g.ScanExplain()) {
     return;
   }
+  f.explain_rows.clear();
   if (seg != f.explain_seg) {
     f.explainer = MakeExplainer(g, seg);
     f.explain_seg = seg;
   }
   const auto* returned =
     scores ? duckdb::FlatVector::GetData<irs::score_t>(*scores) : nullptr;
-  f.explain_rows.clear();
   for (size_t i = 0; i < docs.size(); ++i) {
     f.explain_rows.push_back(f.explainer->Explain(
       docs[i],

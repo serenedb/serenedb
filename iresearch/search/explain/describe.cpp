@@ -18,17 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/search/explain/describe.hpp"
-
 #include <utility>
 
+#include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
-#include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/down_cast.hpp"
 
-namespace irs::explain {
+namespace irs {
+namespace {
 
-SlotStats FieldStats(const FieldPrepareCollector& collector, field_id field) {
+explain::SlotStats FieldTotalOf(const FieldPrepareCollector& collector,
+                                field_id field) {
   const auto total = collector.FieldTotal();
   return {
     .field = field,
@@ -37,7 +36,7 @@ SlotStats FieldStats(const FieldPrepareCollector& collector, field_id field) {
   };
 }
 
-TermStats TermOf(bytes_view term, const TermCollector& counts) {
+explain::TermStats TermOf(bytes_view term, const TermCollector& counts) {
   return {
     .term = bstring{term},
     .docs_with_term = counts.docs_with_term,
@@ -45,32 +44,48 @@ TermStats TermOf(bytes_view term, const TermCollector& counts) {
   };
 }
 
-void DescribeTerm(const ByTermsCollector& collector, size_t i, field_id field,
-                  bytes_view term, StatsIndex& out) {
-  auto stats = FieldStats(collector, field);
-  stats.terms.push_back(TermOf(term, collector.TermTotal(i)));
-  out.insert_or_assign(collector.Record(i).stats, std::move(stats));
+}  // namespace
+
+void ByTermsCollector::Describe(field_id field, TermAt term,
+                                explain::StatsIndex& out) const {
+  const auto base = FieldTotalOf(*this, field);
+  for (size_t i = 0; i != _size; ++i) {
+    auto stats = base;
+    stats.terms.push_back(TermOf(term(i), TermTotal(i)));
+    out.insert_or_assign(Record(i).stats, std::move(stats));
+  }
 }
 
-void DescribeSlot(const PrepareCollector* collector, field_id field,
-                  StatsIndex& out) {
-  if (collector != nullptr) {
-    out.insert_or_assign(collector->Record().stats, SlotStats{.field = field});
+void SlotsCollector::Describe(field_id field, TermAt term,
+                              explain::StatsIndex& out) const {
+  auto stats = FieldTotalOf(*this, field);
+  for (size_t i = 0; i != _counters.Terms(); ++i) {
+    const auto counts = TermTotal(i);
+    if (counts.docs_with_term != 0) {
+      stats.terms.push_back(TermOf(term(i), counts));
+    }
   }
+  out.insert_or_assign(Record().stats, std::move(stats));
 }
 
-void DescribeMultiTerm(const PrepareCollector* collector, field_id field,
-                       StatsIndex& out) {
-  if (collector == nullptr) {
-    return;
-  }
-  if (!ScoresPerDoc(collector->GetScorer())) {
-    DescribeSlot(collector, field, out);
-    return;
-  }
-  const auto& terms = utils::downCast<MultiTermCollector>(*collector);
-  const auto base = FieldStats(terms, field);
-  terms.VisitTerms(
+void ExpandedSlotsCollector::Describe(field_id field, TermAt term,
+                                      explain::StatsIndex& out) const {
+  SlotsCollector::Describe(field, term, out);
+  auto& terms = out[Record().stats].terms;
+  VisitExpanded([&](bytes_view expanded, const TermCollector& counts) {
+    terms.push_back(TermOf(expanded, counts));
+  });
+}
+
+void AllCollector::Describe(field_id field, TermAt,
+                            explain::StatsIndex& out) const {
+  out.insert_or_assign(Record().stats, explain::SlotStats{.field = field});
+}
+
+void MultiTermCollector::Describe(field_id field, TermAt,
+                                  explain::StatsIndex& out) const {
+  const auto base = FieldTotalOf(*this, field);
+  VisitTerms(
     [&](bytes_view term, const TermCollector& counts, const byte_type* slot) {
       auto stats = base;
       stats.terms.push_back(TermOf(term, counts));
@@ -78,16 +93,12 @@ void DescribeMultiTerm(const PrepareCollector* collector, field_id field,
     });
 }
 
-void DescribeBlended(const PrepareCollector* collector, field_id field,
-                     StatsIndex& out) {
-  if (collector == nullptr) {
-    return;
-  }
-  const auto& terms = utils::downCast<BlendedTermsCollector>(*collector);
-  auto stats = FieldStats(terms, field);
+void BlendedTermsCollector::Describe(field_id field, TermAt,
+                                     explain::StatsIndex& out) const {
+  auto stats = FieldTotalOf(*this, field);
   stats.blended = true;
-  stats.terms.push_back(TermOf({}, terms.Blended()));
-  out.insert_or_assign(terms.Record().stats, std::move(stats));
+  stats.terms.push_back(TermOf({}, Blended()));
+  out.insert_or_assign(Record().stats, std::move(stats));
 }
 
-}  // namespace irs::explain
+}  // namespace irs

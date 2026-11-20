@@ -67,8 +67,9 @@ irs::DocRange ScanGlobalState::RangeOf(const ScanUnit& unit) const noexcept {
 }
 
 irs::doc_id_t ScanGlobalState::UnitSpan(const ScanUnit& unit) const noexcept {
-  if (unit.whole || (unit.rg_begin == 0 && !ordered &&
-                     segments[unit.seg].rg_count <= fold_rgs)) {
+  if (unit.whole ||
+      (unit.rg_begin == 0 && !ordered && !segments[unit.seg].skips &&
+       segments[unit.seg].rg_count <= fold_rgs)) {
     return 0;
   }
   return static_cast<irs::doc_id_t>(rg_size);
@@ -125,9 +126,6 @@ duckdb::RowGroupOrderKey RowGroupKey(const ScanGlobalState& g,
 duckdb::shared_ptr<duckdb::DynamicFilterData> FindOrderDynamicFilter(
   const ScanGlobalState& g) {
   const auto& order = *g.Bind().scan_order;
-  if (order.column_type != duckdb::OrderByColumnType::NUMERIC) {
-    return nullptr;
-  }
   const bool descending = order.order_type == duckdb::OrderType::DESCENDING;
   for (const auto& cf : g.col_filters) {
     if (!cf.is_dynamic || cf.field != order.column) {
@@ -221,12 +219,8 @@ std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
   std::vector<ScanOrderKey> rgs;
   rgs.reserve(work.LiveCount());
   irs::BlockWindow w;
-  auto skipped = work.skipped_rgs.begin();
-  for (uint32_t rg = 0; rg < work.rg_count; ++rg) {
-    if (skipped != work.skipped_rgs.end() && *skipped == rg) {
-      ++skipped;
-      continue;
-    }
+  for (uint32_t unit = 0; unit != work.LiveCount(); ++unit) {
+    const auto rg = work.UnitRowGroup(unit);
     rgs.push_back({
       .key = column ? RowGroupKey(g, *column, work.groups.Begin(rg),
                                   work.groups.End(rg), w)
@@ -252,8 +246,10 @@ void BuildOrderedHeap(ScanGlobalState& g) {
   g.order_dynamic_filter = FindOrderDynamicFilter(g);
   if (g.order_dynamic_filter) {
     const auto cmp = g.order_dynamic_filter->comparison_type;
-    g.order_strict = cmp == duckdb::ExpressionType::COMPARE_LESSTHAN ||
-                     cmp == duckdb::ExpressionType::COMPARE_GREATERTHAN;
+    g.order_strict =
+      g.Bind().scan_order->column_type == duckdb::OrderByColumnType::NUMERIC &&
+      (cmp == duckdb::ExpressionType::COMPARE_LESSTHAN ||
+       cmp == duckdb::ExpressionType::COMPARE_GREATERTHAN);
   }
   g.ordered = true;
   auto& heap = g.ordered_heap;
@@ -381,9 +377,10 @@ bool ClaimOwned(ScanGlobalState& g, ScanLocalState& l) {
     if (own.compare_exchange_weak(range, PackRange(next + 1, end),
                                   std::memory_order_relaxed,
                                   std::memory_order_relaxed)) {
-      const auto base = g.Segment(l.owned_seg).base;
+      const auto& work = g.Segment(l.owned_seg);
       l.claimed_end = next + 1;
-      TakeUnit(l, UnitOf(l.owned_seg, next - base, next + 1 - base));
+      const auto rg = work.UnitRowGroup(next - work.base);
+      TakeUnit(l, UnitOf(l.owned_seg, rg, rg + 1));
       return true;
     }
   }
@@ -600,6 +597,24 @@ bool ClaimStart(ScanGlobalState& g, ScanLocalState& l) {
   return false;
 }
 
+bool EveryRowQualifies(const ScanGlobalState& g) {
+  if (!g.Bind().ReadsEveryRow()) {
+    return false;
+  }
+  if (!g.pushed_filters) {
+    return true;
+  }
+  if (!g.pushed_filters->GetMultiColumnFilters().empty()) {
+    return false;
+  }
+  for (const auto& entry : *g.pushed_filters) {
+    if (!duckdb::ExpressionFilter::IsRootOptionalFilter(entry.Filter())) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
@@ -616,12 +631,52 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     static_cast<uint64_t>(duckdb::TaskScheduler::QueryThreads(context));
 
   g.segments = std::make_unique<SegmentWork[]>(g.total_segments);
-  g.live_segments = static_cast<uint32_t>(g.segment_order.size());
-  if (ordered && bind.scan_order->Skips()) {
-    for (const auto [seg, rg] : OffsetSkippedRowGroups(bind, *g.reader)) {
-      g.Segment(seg).skipped_rgs.push_back(rg);
-    }
+  size_t row_groups = 0;
+  for (uint32_t seg = 0; seg != g.total_segments; ++seg) {
+    auto& work = g.Segment(seg);
+    work.groups = SegmentRowGroups{(*g.reader)[seg], g.rg_size};
+    work.rg_count = work.groups.Count();
+    row_groups += work.rg_count;
   }
+  const bool limit_prunes =
+    ordered && bind.scan_order->row_limit.IsValid() && EveryRowQualifies(g);
+  const bool order_prunes =
+    ordered && (bind.scan_order->Skips() || limit_prunes);
+  if (order_prunes || bind.partitions_to_scan) {
+    auto& live = g.live_row_groups;
+    live.reserve(row_groups);
+    for (uint32_t seg = 0; seg != g.total_segments; ++seg) {
+      g.Segment(seg).skips = true;
+    }
+    auto open = g.total_segments;
+    size_t open_begin = 0;
+    const auto close = [&] {
+      if (open == g.total_segments) {
+        return;
+      }
+      auto& work = g.Segment(open);
+      const auto count = live.size() - open_begin;
+      if (count == work.rg_count) {
+        live.resize(open_begin);
+        work.skips = false;
+      } else {
+        work.live_rgs = {live.data() + open_begin, count};
+      }
+    };
+    SelectScannedRowGroups(bind, *g.reader, order_prunes, limit_prunes,
+                           [&](ScanRowGroup position) {
+                             if (position.seg != open) {
+                               close();
+                               open = position.seg;
+                               open_begin = live.size();
+                             }
+                             live.push_back(position.rg);
+                           });
+    close();
+  }
+  std::erase_if(g.segment_order,
+                [&](uint32_t seg) { return g.Segment(seg).LiveCount() == 0; });
+  g.live_segments = static_cast<uint32_t>(g.segment_order.size());
 
   if (!ordered) {
     const auto& reader = *g.reader;
@@ -647,14 +702,14 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     const auto seg = g.segment_order[i];
     auto& work = g.Segment(seg);
     const auto& sub = (*g.reader)[seg];
-    work.groups = SegmentRowGroups{sub, g.rg_size};
-    work.rg_count = work.groups.Count();
-    const bool split =
-      g.splittable && work.rg_count > 1 &&
-      !(constant_count && sub.live_docs_count() == sub.docs_count());
-    SDB_ASSERT(split || work.LiveCount() == 0 || work.skipped_rgs.empty());
-    work.done_rgs.store(static_cast<uint32_t>(work.skipped_rgs.size()),
-                        std::memory_order_relaxed);
+    const bool split = g.splittable && work.rg_count > 1 &&
+                       !(constant_count && !work.skips &&
+                         sub.live_docs_count() == sub.docs_count());
+    SDB_ASSERT(split || !work.skips || !bind.partitions_to_scan);
+    work.done_rgs.store(
+      work.skips ? work.rg_count - static_cast<uint32_t>(work.live_rgs.size())
+                 : 0,
+      std::memory_order_relaxed);
     work.claim.store(split ? SegmentWork::kSplit : SegmentWork::kWhole,
                      std::memory_order_relaxed);
     if (split) {
@@ -702,6 +757,10 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   }
   g.workers = static_cast<uint32_t>(std::clamp<uint64_t>(
     std::min(threads, parallel), 1, std::numeric_limits<uint32_t>::max()));
+  if (g.sampling.do_system_sample && g.sampling.is_percentage &&
+      g.sample_seed.IsValid()) {
+    g.workers = 1;
+  }
   g.ranges = std::make_unique<ScanGlobalState::RangeSlot[]>(g.workers);
   if (!ordered) {
     CutStarts(g, positions);
@@ -767,6 +826,7 @@ namespace {
 void BuildRowGroupChecks(const ScanGlobalState& g, ScanLocalState& l,
                          uint32_t seg) {
   l.rg_checks.clear();
+  l.multi_checks.clear();
   l.checked_seg = seg;
   const auto* col_reader = (*g.reader)[seg].GetColReader();
   if (!col_reader) {
@@ -791,6 +851,60 @@ void BuildRowGroupChecks(const ScanGlobalState& g, ScanLocalState& l,
       .window = {},
     });
   }
+  if (!g.pushed_filters) {
+    return;
+  }
+  const auto& bind = g.Bind();
+  for (const auto& filter : g.pushed_filters->GetMultiColumnFilters()) {
+    const auto& expression = filter->Cast<duckdb::ExpressionFilter>();
+    MultiColumnCheck check{.filter = &expression};
+    for (const auto projection : expression.column_indexes) {
+      const auto proj = projection.GetIndex();
+      const auto bind_col = proj < g.projected_columns.size()
+                              ? g.projected_columns[proj]
+                              : duckdb::DConstants::INVALID_INDEX;
+      const auto* column = bind_col == duckdb::DConstants::INVALID_INDEX
+                             ? nullptr
+                             : col_reader->Column(bind.columns.ids[bind_col]);
+      if (!column || column->Type().IsNested() ||
+          column->Type() != g.projected_types[proj]) {
+        check.readers.clear();
+        break;
+      }
+      check.readers.push_back(column);
+    }
+    if (check.readers.size() == expression.column_indexes.size()) {
+      l.multi_checks.push_back(std::move(check));
+    }
+  }
+}
+
+bool MultiColumnDead(const ScanGlobalState& g, ScanLocalState& l,
+                     uint64_t begin, uint64_t end) {
+  for (const auto& check : l.multi_checks) {
+    l.multi_stats.clear();
+    for (const auto* reader : check.readers) {
+      irs::BlockWindow window;
+      bool first = true;
+      for (auto row = begin; row < end; row = window.end) {
+        window = reader->Locate(row, window);
+        const auto& block = reader->RowGroupStatistics(window.block);
+        if (first) {
+          l.multi_stats.push_back(block.Copy());
+          first = false;
+        } else {
+          l.multi_stats.back().Merge(block);
+        }
+      }
+    }
+    if (irs::ZoneDead(duckdb::ExpressionFilter::CheckExpressionStatistics(
+          *g.client_context, *check.filter->expr,
+          duckdb::array_ptr<const duckdb::BaseStatistics>(
+            l.multi_stats.data(), l.multi_stats.size())))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool RowGroupDead(RowGroupCheck& check, uint64_t begin, uint64_t end) {
@@ -822,7 +936,7 @@ bool TrimDeadRowGroups(ScanGlobalState& g, ScanLocalState& l) {
   if (l.checked_seg != unit.seg) {
     BuildRowGroupChecks(g, l, unit.seg);
   }
-  if (l.rg_checks.empty()) {
+  if (l.rg_checks.empty() && l.multi_checks.empty()) {
     return true;
   }
   const auto& groups = g.Segment(unit.seg).groups;
@@ -838,6 +952,9 @@ bool TrimDeadRowGroups(ScanGlobalState& g, ScanLocalState& l) {
         dead = true;
         break;
       }
+    }
+    if (!dead && MultiColumnDead(g, l, begin, end)) {
+      dead = true;
     }
     if (!dead) {
       ++live;

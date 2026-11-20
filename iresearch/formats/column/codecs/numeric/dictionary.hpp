@@ -230,7 +230,6 @@ struct DictBitpacking final : State {
 
   BitpackingBlocks<uint32_t> blocks;
   bool planned = false;
-  bool analyzed = false;
 };
 
 template<typename T>
@@ -252,7 +251,6 @@ double AnalyzeDictBitpacking(ColumnDataCheckpointData& data, double bound) {
   if (!entries) {
     return kNoScore;
   }
-  state.analyzed = true;
   return AnalyzeBlocks<T>(
     data, Shape::Dictionary, static_cast<uint32_t>(entries->codes.size()),
     state.blocks.Bytes(
@@ -264,7 +262,8 @@ double AnalyzeDictBitpacking(ColumnDataCheckpointData& data, double bound) {
 template<typename T>
 bool CompressDictBitpacking(ColumnDataCheckpointData& data) {
   auto& state = data.Get<DictBitpacking<T>>();
-  if (!MayWrite(data, state.analyzed, ByteCodec::None)) {
+  const bool analyzed = state.planned;
+  if (!MayWrite(data, analyzed, ByteCodec::None)) {
     return false;
   }
   const auto* entries = PlanDictBitpacking(data, state, kNoScore);
@@ -275,7 +274,7 @@ bool CompressDictBitpacking(ColumnDataCheckpointData& data) {
   const auto n = static_cast<uint32_t>(entries->codes.size());
   return CompressBlocks<T>(
     data, Shape::Dictionary, state.blocks,
-    std::span<const uint32_t>{entries->codes}, dictionary, state.analyzed,
+    std::span<const uint32_t>{entries->codes}, dictionary, analyzed,
     DictionaryHeader{
       .count = static_cast<uint32_t>(entries->values.size()),
       .offset = FrameTableEnd(PackedGeometry(

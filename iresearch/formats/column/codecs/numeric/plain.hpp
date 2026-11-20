@@ -195,7 +195,6 @@ struct Bitpacking final : State {
 
   BitpackingBlocks<numeric::Bits<sizeof(T)>> blocks;
   bool planned = false;
-  bool analyzed = false;
 };
 
 template<typename T>
@@ -223,7 +222,6 @@ double AnalyzeBitpacking(ColumnDataCheckpointData& data, double bound) {
     return kNoScore;
   }
   auto& state = data.Get<Bitpacking<T>>();
-  state.analyzed = true;
   PlanBitpacking(data, values, state);
   return AnalyzeBlocks<T>(data, Shape::Plain,
                           static_cast<uint32_t>(values.Size()),
@@ -234,11 +232,12 @@ template<typename T>
 bool CompressBitpacking(ColumnDataCheckpointData& data) {
   auto& values = data.Get<Values<T>>();
   auto& state = data.Get<Bitpacking<T>>();
-  if (!values.Usable() || !MayWrite(data, state.analyzed, ByteCodec::None)) {
+  const bool analyzed = state.planned;
+  if (!values.Usable() || !MayWrite(data, analyzed, ByteCodec::None)) {
     return false;
   }
   PlanBitpacking(data, values, state);
-  return CompressStepped<T>(data, Shape::Plain, state.blocks, state.analyzed,
+  return CompressStepped<T>(data, Shape::Plain, state.blocks, analyzed,
                             PlainHeader{});
 }
 

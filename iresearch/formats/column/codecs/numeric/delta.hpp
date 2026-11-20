@@ -117,7 +117,6 @@ struct DeltaBitpacking final : State {
 
   BitpackingBlocks<numeric::Bits<sizeof(T)>> blocks;
   bool planned = false;
-  bool analyzed = false;
 };
 
 template<typename T>
@@ -149,7 +148,6 @@ double AnalyzeDeltaBitpacking(ColumnDataCheckpointData& data, double bound) {
     return kNoScore;
   }
   PlanDeltaBitpacking(values, state);
-  state.analyzed = true;
   return price * AnalyzeBlocks<T>(
                    data, Shape::Delta, static_cast<uint32_t>(rows.size()),
                    SteppedBytes<T>(state.blocks, values), 0, bound / price);
@@ -159,11 +157,12 @@ template<typename T>
 bool CompressDeltaBitpacking(ColumnDataCheckpointData& data) {
   auto& values = data.Get<Values<T>>();
   auto& state = data.Get<DeltaBitpacking<T>>();
-  if (!values.Usable() || !MayWrite(data, state.analyzed, ByteCodec::None)) {
+  const bool analyzed = state.planned;
+  if (!values.Usable() || !MayWrite(data, analyzed, ByteCodec::None)) {
     return false;
   }
   PlanDeltaBitpacking(values, state);
-  return CompressStepped<T>(data, Shape::Delta, state.blocks, state.analyzed,
+  return CompressStepped<T>(data, Shape::Delta, state.blocks, analyzed,
                             DeltaHeader{});
 }
 

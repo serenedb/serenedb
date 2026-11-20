@@ -263,7 +263,6 @@ struct RleBitpacking final : State {
   BitpackingBlocks<numeric::Bits<sizeof(T)>> value_blocks;
   BitpackingBlocks<uint32_t> length_blocks;
   bool planned = false;
-  bool analyzed = false;
 };
 
 template<typename T>
@@ -296,7 +295,6 @@ double AnalyzeRleBitpacking(ColumnDataCheckpointData& data, double bound) {
   if (!runs) {
     return kNoScore;
   }
-  state.analyzed = true;
   return AnalyzeBlocks<T>(
     data, Shape::Runs, static_cast<uint32_t>(runs->rows.size()),
     state.value_blocks.StreamBytes(kRleBitpackingFrameRuns) +
@@ -308,7 +306,8 @@ template<typename T>
 bool CompressRleBitpacking(ColumnDataCheckpointData& data) {
   using U = numeric::Bits<sizeof(T)>;
   auto& state = data.Get<RleBitpacking<T>>();
-  if (!MayWrite(data, state.analyzed, ByteCodec::None)) {
+  const bool analyzed = state.planned;
+  if (!MayWrite(data, analyzed, ByteCodec::None)) {
     return false;
   }
   const auto* runs = PlanRleBitpacking(data, state);
@@ -351,7 +350,7 @@ bool CompressRleBitpacking(ColumnDataCheckpointData& data) {
       return BoundsOf<Values<T>::kSigned>(
         runs->values.data() + begin, std::min(count - begin, geometry.per));
     });
-  return FlushNumeric<T>(data, Shape::Runs, ByteCodec::None, state.analyzed);
+  return FlushNumeric<T>(data, Shape::Runs, ByteCodec::None, analyzed);
 }
 
 template<typename T>

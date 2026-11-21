@@ -27,6 +27,7 @@
 
 #include "filter.hpp"
 #include "iresearch/search/detail/term_acceptor.hpp"
+#include "iresearch/search/filters/field_target.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
@@ -156,5 +157,8 @@ class LevenshteinAutomatonFilter final
 
 Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
                              const ByEditDistanceOptions& opts, score_t boost);
+
+Filter::ptr LowerExactLevenshtein(const FieldTarget& target,
+                                  const ByEditDistanceOptions& opts);
 
 }  // namespace irs

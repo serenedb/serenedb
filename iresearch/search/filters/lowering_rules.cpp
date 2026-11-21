@@ -130,12 +130,7 @@ bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
   if (opts.max_distance != 0) {
     return false;
   }
-  bstring whole;
-  whole.reserve(opts.prefix.size() + opts.term.size());
-  whole += opts.prefix;
-  whole += opts.term;
-  const auto target = TargetOf(node);
-  slot = opts.starts_with ? target.Prefix(whole) : target.Term(whole);
+  slot = LowerExactLevenshtein(TargetOf(node), opts);
   return true;
 }
 

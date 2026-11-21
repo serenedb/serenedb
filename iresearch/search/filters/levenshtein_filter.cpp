@@ -410,20 +410,7 @@ Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
   return ExecuteLevenshtein(
     opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
     opts.term, [] -> Filter::ptr { return std::make_unique<Empty>(); },
-    [&] -> Filter::ptr {
-      bstring whole;
-      whole.reserve(opts.prefix.size() + opts.term.size());
-      whole += opts.prefix;
-      whole += opts.term;
-      if (opts.starts_with) {
-        auto filter = target.Make<ByPrefix>();
-        filter->mutable_options()->term = std::move(whole);
-        return filter;
-      }
-      auto filter = target.Make<ByTerm>();
-      filter->mutable_options()->term = std::move(whole);
-      return filter;
-    },
+    [&] { return LowerExactLevenshtein(target, opts); },
     [&](const ParametricDescription& d, const bytes_view prefix,
         const bytes_view term) -> Filter::ptr {
       auto filter = target.Make<LevenshteinAutomatonFilter>();
@@ -433,6 +420,24 @@ Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
       filter->mutable_options()->merge = target.merge;
       return filter;
     });
+}
+
+Filter::ptr LowerExactLevenshtein(const FieldTarget& target,
+                                  const ByEditDistanceOptions& opts) {
+  const auto fill = [&](bstring& term) {
+    term.reserve(opts.prefix.size() + opts.term.size());
+    term += opts.prefix;
+    term += opts.term;
+  };
+  if (opts.starts_with) {
+    auto filter = target.Make<ByPrefix>();
+    fill(filter->mutable_options()->term);
+    filter->mutable_options()->merge = target.merge;
+    return filter;
+  }
+  auto filter = target.Make<ByTerm>();
+  fill(filter->mutable_options()->term);
+  return filter;
 }
 
 TermPredicate::ptr LevenshteinAutomatonFilter::CompileTermPredicate() const {

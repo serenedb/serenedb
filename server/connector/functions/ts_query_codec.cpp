@@ -36,6 +36,7 @@
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/expression/type_expression.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -91,22 +92,6 @@ std::optional<std::string> RenderTSQueryExpression(
 std::optional<std::string> RenderTSQueryCall(
   duckdb::ClientContext& context, std::string_view name,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> children);
-
-constexpr std::string_view kPhraseArguments[] = {"slop"};
-constexpr std::string_view kFuzzyArguments[] = {"transpositions", "prefix",
-                                                "starts_with"};
-
-constexpr std::span<const std::string_view> NamedArgumentsOf(
-  TSQueryOp op) noexcept {
-  switch (op) {
-    case TSQueryOp::Phrase:
-      return kPhraseArguments;
-    case TSQueryOp::Fuzzy:
-      return kFuzzyArguments;
-    default:
-      return {};
-  }
-}
 
 bool IsTSQueryFamilyTypeName(std::string_view name) {
   return absl::EqualsIgnoreCase(name, kTSQueryTypeName) ||
@@ -179,13 +164,6 @@ bool WhitelistWalk(const duckdb::ParsedExpression& expr, size_t depth,
         return false;
       }
       return absl::c_all_of(func.GetArguments(), [&](const auto& arg) {
-        if (arg.HasName() &&
-            !absl::c_any_of(NamedArgumentsOf(op), [&](std::string_view name) {
-              return absl::EqualsIgnoreCase(arg.GetName().GetIdentifierName(),
-                                            name);
-            })) {
-          return false;
-        }
         return WhitelistWalk(arg.GetExpression(), depth + 1, nodes);
       });
     }
@@ -492,6 +470,12 @@ std::optional<std::string> RenderJoinedArgs(
     if (i != 0) {
       out += ", ";
     }
+    if (const auto& alias = children[i]->GetAlias(); !alias.empty()) {
+      absl::StrAppend(
+        &out,
+        duckdb::KeywordHelper::WriteOptionallyQuoted(alias.GetIdentifierName()),
+        " := ");
+    }
     out += *rendered;
   }
   out += close;
@@ -569,31 +553,6 @@ std::optional<std::string> RenderTSQueryCall(
   switch (const auto op = ClassifyTSQueryFunction(name); op) {
     case TSQueryOp::Unknown:
       return std::nullopt;
-    case TSQueryOp::Phrase:
-    case TSQueryOp::Fuzzy: {
-      const auto names = NamedArgumentsOf(op);
-      std::string out = absl::StrCat(name, "(");
-      for (size_t i = 0; i < children.size(); ++i) {
-        auto rendered = RenderTSQueryExpression(context, *children[i]);
-        if (!rendered) {
-          return std::nullopt;
-        }
-        if (i != 0) {
-          out += ", ";
-        }
-        if (const auto& alias = children[i]->GetAlias(); !alias.empty()) {
-          const auto named = absl::c_find_if(
-            names, [&](std::string_view name) { return alias == name; });
-          if (named == names.end()) {
-            return std::nullopt;
-          }
-          absl::StrAppend(&out, *named, " := ");
-        }
-        out += std::move(*rendered);
-      }
-      out += ")";
-      return out;
-    }
     case TSQueryOp::Boost: {
       if (children.size() != 2) {
         return std::nullopt;

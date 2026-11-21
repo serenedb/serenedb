@@ -334,6 +334,14 @@ a
 1
 2
 
+# A misspelled name there is an error, rather than the text searched as words.
+query error
+EXECUTE lev_match('ts_levenshtein(''le'', 1, perfix := ''app'')')
+----
+db error: ERROR: ts_levenshtein has no argument named perfix
+HINT: Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 (0-3 with transpositions). `transpositions := false` counts swapping two adjacent characters as two edits, `prefix` must match exactly, and `starts_with := true` matches the terms that start within the distance of the text; `transpositions` and `prefix` may also follow the distance by position. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6).
+
+
 statement ok
 DEALLOCATE lev_match
 

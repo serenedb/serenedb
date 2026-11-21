@@ -339,6 +339,23 @@ inline IRS_AVX512 uint32_t* MaterializeWords16(
 }
 #endif
 
+inline uint16_t* MaterializePositions(const uint64_t* IRS_RESTRICT words,
+                                      size_t count,
+                                      uint16_t* IRS_RESTRICT out) noexcept {
+  const auto capacity = BitsRequired<uint64_t>(count);
+#ifdef __AVX2__
+  if (HasRoaringAvx512()) {
+    return out + roaring::internal::bitset_extract_setbits_avx512_uint16(
+                   words, count, out, capacity, 0);
+  }
+  return out + roaring::internal::bitset_extract_setbits_sse_uint16(
+                 words, count, out, capacity, 0);
+#else
+  return out +
+         roaring::internal::bitset_extract_setbits_uint16(words, count, out, 0);
+#endif
+}
+
 inline uint32_t* MaterializeWords(uint32_t offset,
                                   const uint64_t* IRS_RESTRICT words,
                                   size_t count,

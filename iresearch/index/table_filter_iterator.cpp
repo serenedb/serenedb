@@ -753,11 +753,7 @@ duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, const uint64_t* in,
     // Only the computed-score filter is bound, and it has already cleared its
     // own bits; what is left is the answer.
     SDB_ASSERT(in == out);
-    duckdb::idx_t total = 0;
-    for (duckdb::idx_t w = 0; w != words; ++w) {
-      total += static_cast<duckdb::idx_t>(std::popcount(in[w]));
-    }
-    return total;
+    return CountBits(in, words);
   }
   if (_dense && AllWordsSet(in, words)) {
     return DenseMask<true>(base, in, words, out);

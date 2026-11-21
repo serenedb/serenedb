@@ -131,8 +131,8 @@ class DocsMaskBase {
     std::fill_n(dead, count, uint64_t{0});
     Self().template Apply<false>(min, max, dead);
     if constexpr (kPadTail) {
-      if (const auto rest = (max - min) % 64; rest != 0) {
-        dead[count - 1] |= ~uint64_t{0} << rest;
+      if ((max - min) % 64 != 0) {
+        dead[count - 1] |= HeadMask(max - min);
       }
     }
     return count;

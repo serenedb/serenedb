@@ -139,15 +139,6 @@ inline doc_id_t FindSet(const uint64_t* IRS_RESTRICT mask,
   }
 }
 
-inline IRS_FORCE_INLINE uint32_t Cardinality(const uint64_t* IRS_RESTRICT src,
-                                             size_t words) noexcept {
-  uint32_t card = 0;
-  for (size_t w = 0; w != words; ++w) {
-    card += static_cast<uint32_t>(std::popcount(src[w]));
-  }
-  return card;
-}
-
 inline IRS_FORCE_INLINE uint32_t CountAndClear(uint64_t* IRS_RESTRICT dst,
                                                size_t words) noexcept {
   uint32_t card = 0;

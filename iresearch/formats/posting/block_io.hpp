@@ -250,8 +250,8 @@ inline uint64_t HolesToBitset(const byte_type* in, uint32_t len,
     return 0;
   }
   std::fill_n(bitset, words, ~uint64_t{0});
-  if (const auto rest = span % kBits; rest != 0) {
-    bitset[words - 1] = ~uint64_t{0} >> (kBits - rest);
+  if (span % kBits != 0) {
+    bitset[words - 1] = TailMask(span);
   }
   uint64_t before = 0;
   for (uint32_t i = 0; i != n; ++i) {

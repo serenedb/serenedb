@@ -30,6 +30,7 @@
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::count {
@@ -62,9 +63,8 @@ class BooleanBitset : public Root {
       auto* const words = _set.Words();
       const auto first = static_cast<uint32_t>(lo / kBits);
       const auto last = static_cast<uint32_t>((hi - 1) / kBits);
-      const auto head = ~uint64_t{0} << (lo % kBits);
-      const auto tail =
-        hi % kBits != 0 ? (uint64_t{1} << (hi % kBits)) - 1 : ~uint64_t{0};
+      const auto head = HeadMask(lo);
+      const auto tail = TailMask(hi);
       if (first == last) {
         uint64_t edge = words[first] & head & tail;
         return _table.Count(kMin + first * kBits, &edge, 1);

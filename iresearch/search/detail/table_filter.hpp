@@ -25,6 +25,7 @@
 
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -159,7 +160,7 @@ class Narrowing {
     if constexpr (kTable) {
       return _table->CountAndClear(base, mask, words);
     } else {
-      return Cardinality(mask, words);
+      return static_cast<uint32_t>(CountBits(mask, words));
     }
   }
 

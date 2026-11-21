@@ -30,6 +30,7 @@
 #include "iresearch/search/ann/collector.hpp"
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -151,7 +152,7 @@ class ProfiledFill : public QueryProfile::Profiled<fill::Node> {
   detail::BitsetStorage* Folded() noexcept final {
     auto* folded = _inner->Folded();
     if (folded) {
-      _counter.Docs(detail::CountBits(*folded));
+      _counter.Docs(CountBits(folded->Words(), folded->WordCount()));
     }
     return folded;
   }
@@ -273,8 +274,7 @@ class ProfiledChecks final : public detail::TableFilter {
 
  private:
   static uint64_t CountWords(const uint64_t* words, uint32_t count) noexcept {
-    return count == 0 ? 0
-                      : detail::CountBitRange(words, 0, uint64_t{count} * 64);
+    return count == 0 ? 0 : CountBitRange(words, 0, uint64_t{count} * 64);
   }
 
   void Add(uint64_t checked, uint64_t kept) noexcept {
@@ -366,7 +366,7 @@ std::vector<QueryProfile::ExecutedNode> QueryProfile::Slots() const {
 
 uint64_t QueryProfile::WindowDocs(const uint64_t* mask, doc_id_t min,
                                   doc_id_t max) noexcept {
-  return max > min ? detail::CountBitRange(mask, 0, max - min) : 0;
+  return max > min ? CountBitRange(mask, 0, max - min) : 0;
 }
 
 std::unique_ptr<detail::TableFilter> QueryProfile::WrapChecks(

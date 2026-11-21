@@ -34,6 +34,7 @@
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 
 namespace irs {
 namespace {
@@ -326,20 +327,14 @@ duckdb::idx_t ColFilterChain::DenseMask(
       std::fill_n(chunk, chunk_words, uint64_t{0});
     } else if (z == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
       f.reader->Skip(f.scan, n);
-      if (const auto tail = n % 64; tail != 0) {
-        chunk[chunk_words - 1] &= (uint64_t{1} << tail) - 1;
-      }
-      for (duckdb::idx_t w = 0; w < chunk_words; ++w) {
-        kept += static_cast<duckdb::idx_t>(std::popcount(chunk[w]));
-      }
+      chunk[chunk_words - 1] &= TailMask(n);
+      kept = CountBits(chunk, chunk_words);
     } else {
       auto& values = f.scratch->Reset();
       f.reader->Scan(f.scan, values, n);
       values.Flatten(n);
       _dense->FilterMask(values, n, chunk);
-      for (duckdb::idx_t w = 0; w < chunk_words; ++w) {
-        kept += static_cast<duckdb::idx_t>(std::popcount(chunk[w]));
-      }
+      kept = CountBits(chunk, chunk_words);
     }
     if constexpr (!Keep) {
       std::fill_n(chunk, chunk_words, uint64_t{0});
@@ -758,11 +753,7 @@ duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, const uint64_t* in,
     // Only the computed-score filter is bound, and it has already cleared its
     // own bits; what is left is the answer.
     SDB_ASSERT(in == out);
-    duckdb::idx_t total = 0;
-    for (duckdb::idx_t w = 0; w != words; ++w) {
-      total += static_cast<duckdb::idx_t>(std::popcount(in[w]));
-    }
-    return total;
+    return CountBits(in, words);
   }
   if (_dense && AllWordsSet(in, words)) {
     return DenseMask<true>(base, in, words, out);
@@ -860,12 +851,11 @@ duckdb::idx_t ColFilterChain::FilterMaskScores(
     }
     const auto base = static_cast<uint64_t>(w) * 64;
     duckdb::idx_t run = 0;
-    for (auto scan = word; scan != 0; scan &= scan - 1) {
-      const auto bit = static_cast<uint64_t>(std::countr_zero(scan));
+    ForEachSetBit(word, [&](uint32_t bit) IRS_FORCE_INLINE {
       offs[run] = static_cast<uint8_t>(bit);
       vals[run] = scores[base + bit];
       ++run;
-    }
+    });
     duckdb::Vector svec{duckdb::LogicalType::FLOAT,
                         reinterpret_cast<duckdb::data_ptr_t>(vals.data()), run};
     duckdb::SelectionVector sel;

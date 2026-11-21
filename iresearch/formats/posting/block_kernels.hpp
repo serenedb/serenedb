@@ -46,7 +46,6 @@ inline constexpr uint32_t kMaxWidth = 31;
 using U32x8 = uint32_t __attribute__((vector_size(32)));
 using I32x8 = int32_t __attribute__((vector_size(32)));
 using U64x4 = uint64_t __attribute__((vector_size(32)));
-using U32x4 = uint32_t __attribute__((vector_size(16)));
 
 static_assert(std::endian::native == std::endian::little,
               "vector loads and stores read the on-disk words natively");
@@ -60,22 +59,6 @@ consteval uint32_t LowMask() {
 IRS_FORCE_INLINE constexpr uint32_t PackedSize(uint32_t len,
                                                uint32_t bits) noexcept {
   return (len * bits + 7) / 8;
-}
-
-template<typename Vector>
-IRS_FORCE_INLINE Vector Opaque(Vector v) noexcept {
-#if defined(__x86_64__)
-  asm("" : "+x"(v));
-#elif defined(__aarch64__)
-  struct Halves {
-    U32x4 lo;
-    U32x4 hi;
-  };
-  auto halves = std::bit_cast<Halves>(v);
-  asm("" : "+w"(halves.lo), "+w"(halves.hi));
-  v = std::bit_cast<Vector>(halves);
-#endif
-  return v;
 }
 
 template<uint32_t B, bool Mask, uint32_t S>

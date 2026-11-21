@@ -34,6 +34,7 @@
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -65,7 +66,7 @@ class BitsetChunk {
 
   IRS_FORCE_INLINE uint32_t NextUnset(uint32_t low) const noexcept {
     uint32_t w = low / 64;
-    auto zeros = ~_bits->words[w] & (~uint64_t{0} << (low % 64));
+    auto zeros = ~_bits->words[w] & HeadMask(low);
     while (zeros == 0) {
       if (++w == kChunkWords) {
         return static_cast<uint32_t>(kChunkDocs);
@@ -101,14 +102,13 @@ class BitsetChunk {
     const auto last = static_cast<uint32_t>(hi - base);
     const auto shift = static_cast<uint32_t>(base - min);
     auto w = first / 64;
-    auto head = ~uint64_t{0} << (first % 64);
+    auto head = HeadMask(first);
     for (const auto stop = last / 64; w < stop; ++w) {
       out = LiveWord(shift + w * 64, ~words[w] & head, out);
       head = ~uint64_t{0};
     }
-    if (const auto rest = last % 64; rest != 0) {
-      out = LiveWord(shift + w * 64,
-                     ~words[w] & head & (~uint64_t{0} >> (64 - rest)), out);
+    if (last % 64 != 0) {
+      out = LiveWord(shift + w * 64, ~words[w] & head & TailMask(last), out);
     }
     return out;
   }

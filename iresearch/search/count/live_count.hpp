@@ -187,10 +187,9 @@ class LiveTermCount : public Root,
   }
 
   uint32_t Find(doc_id_t doc, uint32_t from, uint32_t to) const noexcept {
+    const auto* const block = _block.data();
     return static_cast<uint32_t>(
-      BranchlessPartitionPoint(_block.data() + from, to - from,
-                               [doc](doc_id_t d) noexcept { return d < doc; }) -
-      _block.data());
+      LeafLowerBound<kBlock>(block + from, block + to, doc) - block);
   }
 
   uint32_t CountAlive(uint32_t from, uint32_t to) {

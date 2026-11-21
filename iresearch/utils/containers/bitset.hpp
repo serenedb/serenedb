@@ -223,14 +223,14 @@ class DynamicBitset {
   }
 
   // counts bits set
-  size_t count() const noexcept { return math::Popcount(begin(), end()); }
+  size_t count() const noexcept { return CountBits(data(), _words); }
 
   size_t count(size_t first_word, size_t end_word) const noexcept {
     if (first_word >= end_word) {
       return 0;
     }
     SDB_ASSERT(end_word <= _words);
-    return math::Popcount(begin() + first_word, begin() + end_word);
+    return CountBits(data() + first_word, end_word - first_word);
   }
 
   Alloc& get_allocator() { return _data.get_deleter().alloc(); }

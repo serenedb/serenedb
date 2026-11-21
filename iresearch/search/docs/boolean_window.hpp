@@ -33,6 +33,7 @@
 #include "iresearch/search/docs/emit.hpp"
 #include "iresearch/search/docs/root.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::docs {
@@ -107,7 +108,7 @@ class BooleanWindow : public Root,
       auto at = _at;
       if (at != size && found[at] < begin) [[unlikely]] {
         at = static_cast<uint32_t>(
-          std::lower_bound(found + at, found + size, begin) - found);
+          ScanNotBelow(found + at, found + size, begin) - found);
       }
       auto copied =
         std::min(detail::CopyBelow16(found + at, end, out + n), size - at);

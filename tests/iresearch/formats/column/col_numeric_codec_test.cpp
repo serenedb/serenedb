@@ -3138,6 +3138,7 @@ TEST_F(ColNumericCodecTest, RunAndDictionaryFiltersMatchTheValues) {
   shapes.push_back({"small_values", [](uint64_t g) {
                       return static_cast<int64_t>(Mix(g) % 200) + 1000;
                     }});
+  shapes.push_back({"one_value", [](uint64_t) { return int64_t{42}; }});
   for (const auto codec :
        {CodecType::Auto, CodecType::Bitpacking, CodecType::Rle,
         CodecType::RleZstd, CodecType::Dict, CodecType::DictZstd}) {

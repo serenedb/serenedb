@@ -1,0 +1,93 @@
+statement ok
+CREATE TABLE ct_s (a INTEGER PRIMARY KEY,
+                   e TEXT,
+                   w TEXT,
+                   m TEXT,
+                   n TEXT,
+                   d TEXT USING COMPRESSION dict_fsst)
+  WITH (compaction_interval = 0, row_group_size = 16384);
+
+statement ok
+SET threads = 1;
+
+statement ok
+INSERT INTO ct_s SELECT a,
+  '',
+  'one rather long value that every row holds',
+  CASE WHEN a < 32768 THEN 'first' ELSE 'v-' || (a % 100) END,
+  CASE WHEN a % 5 = 0 THEN NULL ELSE 'same' END,
+  'named'
+  FROM range(49152) t(a);
+
+statement ok
+RESET threads;
+
+statement ok
+VACUUM (FLUSH_TABLE) ct_s;
+
+query
+SELECT column_name,
+       count(*) FILTER (WHERE compression = 'Constant') AS constant,
+       count(*) FILTER (WHERE compression <> 'Constant') AS other
+FROM pragma_storage_info('ct_s')
+WHERE column_name IN ('e', 'w', 'm', 'n', 'd') AND segment_type <> 'VALIDITY'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	constant	other
+d	0	3
+e	3	0
+m	2	1
+n	0	3
+w	3	0
+
+query
+SELECT count(*) AS rows, count(*) FILTER (WHERE e = '') AS empty, count(*) FILTER (WHERE e <> '') AS filled,
+       sum(length(w)) AS w_bytes, count(DISTINCT w) AS w_values, min(w) AS w_value
+FROM ct_s;
+----
+rows	empty	filled	w_bytes	w_values	w_value
+49152	49152	0	2064384	1	one rather long value that every row holds
+
+query
+SELECT count(*) FILTER (WHERE m = 'first') AS first, count(*) FILTER (WHERE m <> 'first') AS rest,
+       count(*) FILTER (WHERE m LIKE 'v-7%') AS sevens, count(DISTINCT m) AS m_values
+FROM ct_s;
+----
+first	rest	sevens	m_values
+32768	16384	1804	101
+
+query
+SELECT count(*) FILTER (WHERE n IS NULL) AS nulls, count(n) AS filled, count(DISTINCT n) AS n_values FROM ct_s;
+----
+nulls	filled	n_values
+9831	39321	1
+
+query
+SELECT a, e, w, m FROM ct_s WHERE a IN (0, 16383, 16384, 32767, 32768, 49151) ORDER BY a;
+----
+a	e	w	m
+0	(empty)	one rather long value that every row holds	first
+16383	(empty)	one rather long value that every row holds	first
+16384	(empty)	one rather long value that every row holds	first
+32767	(empty)	one rather long value that every row holds	first
+32768	(empty)	one rather long value that every row holds	v-68
+49151	(empty)	one rather long value that every row holds	v-51
+
+query
+SELECT m, count(*) AS rows FROM ct_s WHERE w LIKE 'one rather%' AND e = '' GROUP BY m ORDER BY rows DESC, m LIMIT 2;
+----
+m	rows
+first	32768
+v-0	164
+
+query
+SELECT (SELECT count(*) FROM ct_s WHERE e = '') AS e_eq, (SELECT count(*) FROM ct_s WHERE e <> '') AS e_ne,
+       (SELECT count(*) FROM ct_s WHERE w = 'one rather long value that every row holds') AS w_eq,
+       (SELECT count(*) FROM ct_s WHERE w < 'one rather') AS w_lt,
+       (SELECT count(*) FROM ct_s WHERE m = 'first') AS m_eq, (SELECT count(*) FROM ct_s WHERE m > 'first') AS m_gt;
+----
+e_eq	e_ne	w_eq	w_lt	m_eq	m_gt
+49152	0	49152	0	32768	16384
+
+statement ok
+DROP TABLE ct_s;

@@ -67,8 +67,8 @@ constexpr CodecType kFloat[] = {
 };
 
 constexpr CodecType kText[] = {
-  CodecType::Uncompressed, CodecType::DictFsst, CodecType::DictLz4,
-  CodecType::Fsst,         CodecType::Lz4,
+  CodecType::Constant, CodecType::Uncompressed, CodecType::DictFsst,
+  CodecType::DictLz4,  CodecType::Fsst,         CodecType::Lz4,
 };
 
 constexpr CodecType kNamedOnly[] = {

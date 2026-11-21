@@ -329,9 +329,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
 
   void RowType(const duckdb::CatalogEntry& relation) {
     const auto row = RowTypeOid(relation);
-    if (row == kInvalidOid) {
-      return;
-    }
+    SDB_ASSERT(row != kInvalidOid);
     Depend(kPgTypeTable, row, 0, kPgClassTable, relation.oid, 0, 'i');
     Depend(kPgTypeTable, TypeArrayOid(row), 0, kPgTypeTable, row, 0, 'i');
   }

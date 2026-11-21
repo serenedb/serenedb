@@ -293,9 +293,7 @@ class PgType final : public SystemTableScan<kPgTypeSql> {
              std::is_same_v<Relation, duckdb::ViewCatalogEntry>
   void Row(const Relation& relation) {
     const auto oid = relation.row_type_oid;
-    if (oid == kInvalidOid) {
-      return;
-    }
+    SDB_ASSERT(oid != kInvalidOid);
     Emit<kRowType>(relation, Visible(oid));
     Emit<kArrayType>({relation, oid, kComposite.align, nullptr, _arrays},
                      Visible(TypeArrayOid(oid)));

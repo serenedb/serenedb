@@ -711,7 +711,7 @@ std::optional<duckdb::Value> TryFoldTSQueryCall(
   duckdb::ClientContext& context, std::string_view name,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> children) {
   auto rendered = RenderTSQueryCall(context, name, children);
-  if (!rendered || rendered->size() > kMaxTSQueryStructuredTextSize) {
+  if (!rendered || !ParseWhitelisted(*rendered)) {
     return std::nullopt;
   }
   return MakeTSQueryValue(MakeTSQueryType(), *rendered);

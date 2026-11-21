@@ -25,10 +25,17 @@
 
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
+#include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 
 namespace irs {
+
+constexpr uint64_t KeyedDictsOf(IndexFeatures features) noexcept {
+  return IsSubsetOf(IndexFeatures::Ranges, features)
+           ? 1 + term_dict::kMaxRangeLevels
+           : 1;
+}
 
 struct FieldSink {
   virtual ~FieldSink() = default;

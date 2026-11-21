@@ -241,6 +241,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::optional<size_t> top_k;
   size_t top_offset = 0;
   bool empty_answer = false;
+  bool row_count_only = false;
   std::optional<VectorScorerOptions> owned_vector_scorer;
   duckdb::ScanSamplingInfo sampling;
   duckdb::optional_idx sample_seed;
@@ -590,6 +591,7 @@ struct AnnLocalState final : public RankedLocalState {
 
 struct TsDictLocalState;
 
+void PrepareSegmentNow(ScanGlobalState& g, uint32_t seg_idx);
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState* l,
                                             uint32_t seg_idx);

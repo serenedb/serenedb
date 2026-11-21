@@ -19,7 +19,7 @@ paths:
 
 - Reuse DuckDB's code paths. Where we write our own, it mirrors DuckDB's design unless a divergence was agreed, and is never slower, more allocating or more copying than the native path.
 - A gap in something DuckDB implements is fixed by patching DuckDB's code, and our parallel version is deleted.
-- Vectors: one `Vector` per batch holds data and validity; a vector carries its size (no separate `count`; a writer sets child cardinality); a vector reused across calls is reset first; a table function emits at most `STANDARD_VECTOR_SIZE` rows per call, straight into its output; never `Flatten` or per-cell `GetValue` on hot paths, read through `UnifiedVectorFormat`; JSON is `VARCHAR` with the `JSON` alias, so dispatch on the full type.
+- Vectors: one `Vector` per batch holds data and validity; a vector carries its size (no separate `count`; a writer sets child cardinality); a vector reused across calls is reset first; a table function emits at most `STANDARD_VECTOR_SIZE` rows per call, straight into its output, except chunks of constant vectors when its init input sets `row_count_only`; never `Flatten` or per-cell `GetValue` on hot paths, read through `UnifiedVectorFormat`; JSON is `VARCHAR` with the `JSON` alias, so dispatch on the full type.
 - Internal bulk reads consume vectors inside the pipeline (a table function), never materialize and `Fetch`.
 - DuckDB-level targets (`unittest`, extensions) build on upstream's own dependencies: cut a serenedb-only edge instead of making serenedb work their prerequisite.
 

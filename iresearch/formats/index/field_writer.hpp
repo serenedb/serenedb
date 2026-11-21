@@ -20,9 +20,6 @@
 
 #pragma once
 
-#include <fsst.h>
-
-#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -34,42 +31,26 @@
 #include "iresearch/formats/field_sink.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/index/term_dict_block_writer.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
+#include "iresearch/formats/index/term_dict_index.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_ranges.hpp"
+#include "iresearch/formats/index/term_dict_records.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 
 namespace irs::term_dict {
 
-struct FsstEncoderDelete {
-  void operator()(duckdb_fsst_encoder_t* encoder) const noexcept;
+struct BlockRecords {
+  RecordRun run;
+  bstring bytes;
+  uint64_t inline_bytes = 0;
 };
 
-using FsstEncoder = std::unique_ptr<duckdb_fsst_encoder_t, FsstEncoderDelete>;
-
-struct VarColumns {
-  std::vector<uint32_t> lcps;
-  std::vector<uint32_t> lens;
-  bstring suffixes;
-  std::vector<uint16_t> restarts;
-  uint32_t max = 0;
-};
-
-struct BlockBuilder {
-  bstring keys;
-  std::vector<uint32_t> ends;
-  bstring records;
-  std::vector<uint16_t> record_starts;
-  VarColumns raw;
-  VarColumns coded;
-  uint64_t size = 0;
-  uint64_t coded_size = std::numeric_limits<uint64_t>::max();
-  uint32_t width = 0;
-  uint32_t prefix = 0;
-  uint32_t head_skip = 0;
-  BlockKind kind = BlockKind::Var;
-  bool all_coded = true;
+struct BlockShare {
+  uint64_t bytes = 0;
+  uint64_t inline_bytes = 0;
 };
 
 class FieldWriter final : public FieldSink {
@@ -93,52 +74,41 @@ class FieldWriter final : public FieldSink {
   void Begin(field_id id, DictRef dict) noexcept;
   void BeginSlot(field_id id, DictRef dict);
   void EndSlot(field_id id, const PostingMeta& meta);
-  void SampleFsst(const BasicTermReader& reader);
-  void TrainFsst();
-  bytes_view EncodeSuffix(bytes_view suffix);
+  bool OwnsBlock() const noexcept;
   void Add(bytes_view term, const PostingMeta& meta);
   void Commit(bytes_view term, const PostingMeta& meta);
+  void FeedIndex();
   bool Append(bytes_view term, const PostingMeta& meta);
-  bool AppendFixedKey(bytes_view key, uint64_t records);
-  bool AppendVarKey(bytes_view key, uint64_t records);
-  void AppendVarColumns(uint32_t index, bytes_view key);
-  void Seal();
+  void CloseRun();
   void Cut();
-  void WriteBlock();
+  void WriteBlock(uint64_t size);
   void EndField(field_id id, const FieldProperties& props, uint64_t total_freq,
-                uint64_t first_inline);
+                uint64_t docs_sum);
+  void EndKeyed(FieldHead& head);
+  void WriteLevels(FieldHead& head);
   void ResetField() noexcept;
   void Reset() noexcept;
+  void StartBlocks() noexcept;
 
   PostingsWriter _pw;
-  RecordOutput _record;
-  BlockBuilder _block;
+  BlockEncoder _encoder;
+  BlockRecords _records;
+  BlockShare _share;
   RangeWriter _ranges;
-  bstring _inline;
-  FsstEncoder _fsst;
-  std::string _fsst_table;
-  bstring _samples;
-  std::vector<size_t> _sample_lengths;
-  bstring _coded;
   std::vector<SpanningBlock> _spans;
-  std::string _separators;
-  bstring _separator;
-  bstring _last;
-  std::string _inline_starts;
-  bstring _range_regions;
   std::vector<FieldHead> _heads;
-  std::vector<uint32_t> _prefixes;
+  DictIndexBuilder _index;
   bstring _key_prefix;
   bstring _min;
+  bstring _last;
+  bstring _separator;
+  std::string _separators;
   PostingMeta _single;
-  std::array<byte_type, PostingMeta::kInlineBytes> _single_inline{};
   IdxWriter* _idx = nullptr;
   duckdb::WriteStream* _out = nullptr;
   uint64_t _docs = 0;
   uint64_t _terms = 0;
   uint64_t _first_page = 0;
-  uint64_t _inline_start = 0;
-  uint64_t _inline_last = 0;
   uint32_t _blocks = 0;
   uint32_t _width = 0;
   uint32_t _ordinal = 0;
@@ -148,8 +118,6 @@ class FieldWriter final : public FieldSink {
   uint32_t _first_block = 0;
   uint32_t _first_entry = 0;
   uint32_t _first_record = 0;
-  bool _encode = true;
-  bool _group_inline = false;
   const bool _compaction;
 };
 

@@ -49,6 +49,32 @@
 
 namespace irs {
 
+struct PostingFeatures {
+  PostingFeatures() = default;
+  explicit PostingFeatures(IndexFeatures features) noexcept
+    : freq{IsSubsetOf(IndexFeatures::Freq, features)},
+      pos{IsSubsetOf(IndexFeatures::Pos, features)},
+      offs{IsSubsetOf(IndexFeatures::Offs, features)},
+      vec{IsSubsetOf(IndexFeatures::Vec, features)} {}
+
+  bool freq = false;
+  bool pos = false;
+  bool offs = false;
+  bool vec = false;
+};
+
+struct RecordLayout {
+  uint32_t follows;
+  uint32_t payload;
+};
+
+constexpr RecordLayout RecordLayoutOf(bool freq, bool pos) noexcept {
+  return {
+    .follows = 1 + uint32_t{freq},
+    .payload = 1 + uint32_t{freq} + uint32_t{pos},
+  };
+}
+
 struct BlockLanding {
   // pointer to the beginning of document block
   uint64_t doc_ptr = 0;
@@ -121,8 +147,12 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
   }
 }
 
-inline bytes_view InlineInput(const PostingMeta& meta) noexcept {
-  return {meta.inline_data, meta.inline_size + block_codec::kInSlack};
+static_assert(block_codec::kInSlack <= PostingMeta::kInlineSlack);
+
+inline bytes_view InlineInput(const PostingMeta& meta,
+                              PostingMeta::InlineBytes& copy) noexcept {
+  copy = meta.inline_bytes;
+  return {copy.data(), meta.inline_size + block_codec::kInSlack};
 }
 
 inline uint64_t DocExtent(const PostingMeta& meta) noexcept {

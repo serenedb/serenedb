@@ -26,85 +26,16 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <span>
 #include <variant>
 #include <vector>
 
+#include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
-
-inline constexpr size_t kKeyPad = 2 * sizeof(uint64_t);
-inline constexpr size_t kInlineKeyBytes = 256;
-
-struct Probe {
-  const byte_type* data;
-  size_t size;
-};
-
-inline bytes_view KeyOf(Probe probe) noexcept {
-  return {probe.data, probe.size};
-}
-
-class PaddedKey {
- public:
-  PaddedKey() : _bytes(kKeyPad, byte_type{0}) {}
-  explicit PaddedKey(bytes_view key) { Assign(key); }
-  PaddedKey(const PaddedKey&) = delete;
-  PaddedKey& operator=(const PaddedKey&) = delete;
-
-  byte_type* Resize(size_t size) {
-    _bytes.resize(size + kKeyPad, boost::container::default_init);
-    std::memset(_bytes.data() + size, 0, kKeyPad);
-    return _bytes.data();
-  }
-
-  Probe Assign(bytes_view key) {
-    auto* data = Resize(key.size());
-    if (!key.empty()) {
-      std::memcpy(data, key.data(), key.size());
-    }
-    return View();
-  }
-
-  Probe Assign(bytes_view prefix, bytes_view key) {
-    auto* data = Resize(prefix.size() + key.size());
-    std::memcpy(data, prefix.data(), prefix.size());
-    if (!key.empty()) {
-      std::memcpy(data + prefix.size(), key.data(), key.size());
-    }
-    return View();
-  }
-
-  const byte_type* Data() const noexcept { return _bytes.data(); }
-  Probe View() const noexcept { return {_bytes.data(), Size()}; }
-  bytes_view Key() const noexcept { return {_bytes.data(), Size()}; }
-
- private:
-  size_t Size() const noexcept { return _bytes.size() - kKeyPad; }
-
-  containers::SmallVector<byte_type, kInlineKeyBytes> _bytes;
-};
-
-IRS_FORCE_INLINE inline size_t PaddedMismatch(const byte_type* lhs,
-                                              const byte_type* rhs,
-                                              size_t size) noexcept {
-  for (size_t i = 0; i < size; i += sizeof(uint64_t)) {
-    uint64_t diff = absl::little_endian::Load64(lhs + i) ^
-                    absl::little_endian::Load64(rhs + i);
-    if (const size_t left = size - i; left < sizeof(uint64_t)) {
-      diff &= (uint64_t{1} << (8 * left)) - 1;
-    }
-    if (diff != 0) {
-      return i + std::countr_zero(diff) / 8;
-    }
-  }
-  return size;
-}
-
-uint64_t HeadAt(bytes_view key, size_t skip) noexcept;
 
 struct Separators {
   bstring arena;

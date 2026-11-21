@@ -281,7 +281,8 @@ class PostingLeaf {
                                   scans ? duckdb::ReadAheadSteps::SCANNING
                                   : Shape.reads == LeafReads::Grows
                                     ? duckdb::ReadAheadSteps::SKIPPING
-                                    : duckdb::ReadAheadSteps::NONE);
+                                    : duckdb::ReadAheadSteps::NONE,
+                                  _inline_copy);
     auto& in = In();
     if constexpr (Shape.reads == LeafReads::Whole) {
       PrefetchDocs(doc_in, meta);
@@ -619,6 +620,7 @@ class PostingLeaf {
   [[no_unique_address]] utils::Need<Shape.gather, GatherBuf> _gather;
   [[no_unique_address]] utils::Need<Shape.docs, DocsBuf> _docs;
   InputType _in;
+  PostingMeta::InlineBytes _inline_copy;
   doc_id_t _doc = doc_limits::invalid();
   doc_id_t _last = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;

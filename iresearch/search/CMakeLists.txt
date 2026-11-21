@@ -5,6 +5,7 @@ target_sources(
         count/make_boolean.cpp
         count/make_boolean_negation.cpp
         count/make_constant.cpp
+        count/make_disjoint.cpp
         count/make_subtract_conjunction.cpp
         count/make_subtract_disjunction.cpp
         count/make_term_counts.cpp

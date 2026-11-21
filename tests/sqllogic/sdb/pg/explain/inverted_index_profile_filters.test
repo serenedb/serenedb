@@ -118,13 +118,13 @@ QUERY PLAN
 │ Total: 0µs                   │
 │ Rows: 6,667                  │
 │                              │
-│ ╭─ count::BooleanBitset ─╮   │
-│ │ Plans: 1               │   │
-│ │ Calls: 3               │   │
-│ │ Plan: 0µs              │   │
-│ │ Time: 0µs              │   │
-│ │ Rows: 6,667            │   │
-│ ╰────────────────────────╯   │
+│ ╭─ count::WholeCount ─╮      │
+│ │ Plans: 1            │      │
+│ │ Calls: 3            │      │
+│ │ Plan: 0µs           │      │
+│ │ Time: 0µs           │      │
+│ │ Rows: 6,667         │      │
+│ ╰─────────────────────╯      │
 │                              │
 ├──────────────────────────────┤
 │ 6,667 rows               0µs │
@@ -170,13 +170,13 @@ QUERY PLAN
 │ Total: 0µs                   │
 │ Rows: 666                    │
 │                              │
-│ ╭─ count::BooleanBitset ─╮   │
-│ │ Plans: 1               │   │
-│ │ Calls: 3               │   │
-│ │ Plan: 0µs              │   │
-│ │ Time: 0µs              │   │
-│ │ Rows: 666              │   │
-│ ╰────────────────────────╯   │
+│ ╭─ count::WholeCount ─╮      │
+│ │ Plans: 1            │      │
+│ │ Calls: 3            │      │
+│ │ Plan: 0µs           │      │
+│ │ Time: 0µs           │      │
+│ │ Rows: 666           │      │
+│ ╰─────────────────────╯      │
 │                              │
 ├──────────────────────────────┤
 │ 666 rows                 0µs │
@@ -291,13 +291,13 @@ QUERY PLAN
 │ Total: 0µs                       │
 │ Rows: 2,000                      │
 │                                  │
-│ ╭─ count::BooleanBitset ─╮       │
-│ │ Plans: 1               │       │
-│ │ Calls: 3               │       │
-│ │ Plan: 0µs              │       │
-│ │ Time: 0µs              │       │
-│ │ Rows: 2,000            │       │
-│ ╰────────────────────────╯       │
+│ ╭─ count::WholeCount ─╮          │
+│ │ Plans: 1            │          │
+│ │ Calls: 3            │          │
+│ │ Plan: 0µs           │          │
+│ │ Time: 0µs           │          │
+│ │ Rows: 2,000         │          │
+│ ╰─────────────────────╯          │
 │                                  │
 ├──────────────────────────────────┤
 │ 2,000 rows                   0µs │
@@ -538,7 +538,7 @@ QUERY PLAN
 │ Total: 0µs                   │
 │ Rows: 997                    │
 │                              │
-│ ╭─ count::BooleanBitset ─╮   │
+│ ╭─ count::BooleanWindow ─╮   │
 │ │ Plans: 1               │   │
 │ │ Calls: 3               │   │
 │ │ Plan: 0µs              │   │
@@ -602,7 +602,7 @@ QUERY PLAN
 │ Total: 0µs                 │
 │ Rows: 111                  │
 │                            │
-│ ╭─ count::BooleanBitset ─╮ │
+│ ╭─ count::BooleanWindow ─╮ │
 │ │ Plans: 1               │ │
 │ │ Calls: 3               │ │
 │ │ Plan: 0µs              │ │
@@ -667,13 +667,13 @@ QUERY PLAN
 │ Total: 0µs                 │
 │ Rows: 600                  │
 │                            │
-│ ╭─ count::BooleanBitset ─╮ │
-│ │ Plans: 1               │ │
-│ │ Calls: 3               │ │
-│ │ Plan: 0µs              │ │
-│ │ Time: 0µs              │ │
-│ │ Rows: 600              │ │
-│ ╰────────────────────────╯ │
+│ ╭─ count::WholeCount ─╮    │
+│ │ Plans: 1            │    │
+│ │ Calls: 3            │    │
+│ │ Plan: 0µs           │    │
+│ │ Time: 0µs           │    │
+│ │ Rows: 600           │    │
+│ ╰─────────────────────╯    │
 │                            │
 ├────────────────────────────┤
 │ 600 rows               0µs │
@@ -719,13 +719,13 @@ QUERY PLAN
 │ Total: 0µs                   │
 │ Rows: 2,000                  │
 │                              │
-│ ╭─ count::BooleanBitset ─╮   │
-│ │ Plans: 1               │   │
-│ │ Calls: 3               │   │
-│ │ Plan: 0µs              │   │
-│ │ Time: 0µs              │   │
-│ │ Rows: 2,000            │   │
-│ ╰────────────────────────╯   │
+│ ╭─ count::WholeCount ─╮      │
+│ │ Plans: 1            │      │
+│ │ Calls: 3            │      │
+│ │ Plan: 0µs           │      │
+│ │ Time: 0µs           │      │
+│ │ Rows: 2,000         │      │
+│ ╰─────────────────────╯      │
 │                              │
 ├──────────────────────────────┤
 │ 2,000 rows               0µs │

@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/filters/boolean_filter.hpp"
@@ -48,6 +49,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
     ManagedVector<detail::AllDocsClause> all_docs;
     Filters filters;
     detail::Terms uniformity = detail::Terms::Mixed;
+    bool disjoint = false;
 
     explicit PreparedBucket(IResourceManager& memory)
       : postings{{memory}}, all_docs{{memory}}, filters{{memory}} {}
@@ -76,7 +78,11 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
     _estimate_matches = estimate_matches;
     _postings = 0;
     _leaves = 0;
+    const uint64_t words =
+      (segment.docs_count() + (detail::BitsetStorage::kBits - 1)) /
+      detail::BitsetStorage::kBits;
     for (const auto& bucket : _clauses) {
+      _postings += bucket.all_docs.size() * kPostingsPerFoldedWord * words;
       for (const auto& posting : bucket.postings) {
         _postings += posting.state.cookie.docs_count;
       }
@@ -133,6 +139,8 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
   }
 
  private:
+  static constexpr uint64_t kPostingsPerFoldedWord = 4;
+
   Clauses _clauses;
   uint32_t _declared_msm;
   uint32_t _min_should_match;
@@ -158,7 +166,6 @@ class BooleanBuilder {
       _msm{min_should_match},
       _boost{boost},
       _merge_type{merge_type},
-      _collects{collector != nullptr},
       _needs_terms{needs_terms} {}
 
   void Add(QueryBuilder::ptr query, Occur occur);
@@ -172,18 +179,19 @@ class BooleanBuilder {
 
  private:
   void Push(BooleanQuery::PreparedBucket& bucket, const TermReader* reader,
-            const PostingMeta& meta, score_t boost, detail::StatsRecord stats);
+            const PostingMeta& meta, score_t boost, detail::StatsRecord stats,
+            uint32_t group);
 
   bool Absorb(QueryKind kind, Occur occur);
 
-  bool KeepsTerms() const noexcept { return _collects || _needs_terms; }
+  bool KeepsTerms() const noexcept { return _collector || _needs_terms; }
 
   bool SplicesTerms(Occur occur) const noexcept {
     return occur == Occur::MustNot || (occur == Occur::Should && _msm == 1);
   }
 
   bool Scores(const QueryBuilder& child, Occur occur) const noexcept {
-    return _collects && occur != Occur::MustNot && child.Scores();
+    return _collector && occur != Occur::MustNot && child.Scores();
   }
 
   const BooleanQuery* Dissolves(const QueryBuilder& child,
@@ -213,7 +221,7 @@ class BooleanBuilder {
   uint32_t _msm;
   score_t _boost;
   ScoreMergeType _merge_type;
-  bool _collects = false;
+  uint32_t _groups = 0;
   bool _needs_terms = false;
   bool _empty = false;
 };

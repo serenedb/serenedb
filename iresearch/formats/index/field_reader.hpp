@@ -23,21 +23,20 @@
 #include <absl/algorithm/container.h>
 #include <fsst.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <deque>
-#include <duckdb/common/allocator.hpp>
-#include <duckdb/storage/buffer_manager.hpp>
 #include <iterator>
 #include <memory>
 #include <span>
 #include <vector>
 
 #include "iresearch/formats/index/term_dict_format.hpp"
-#include "iresearch/formats/index/term_dict_inline.hpp"
+#include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_reader.hpp"
-#include "iresearch/formats/index/term_dict_root.hpp"
 #include "iresearch/formats/index/term_dict_single.hpp"
+#include "iresearch/formats/index/term_dict_store.hpp"
 #include "iresearch/formats/posting/reader.hpp"
 #include "iresearch/formats/reader_state.hpp"
 #include "iresearch/formats/term_reader.hpp"
@@ -48,7 +47,6 @@ namespace irs::term_dict {
 class FieldReader final {
  public:
   FieldReader() = default;
-  ~FieldReader();
 
   FieldReader(const FieldReader&) = delete;
   FieldReader& operator=(const FieldReader&) = delete;
@@ -60,80 +58,26 @@ class FieldReader final {
   size_t size() const noexcept { return _dicts.size(); }
 
   const PostingsReader& Postings() const noexcept { return _pr; }
-  const duckdb::InputFile& Input() const noexcept { return *_in; }
-  const byte_type* Base() const noexcept { return _base; }
-  const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
-  uint32_t BlockCount() const noexcept { return _block_count; }
-  uint64_t PageOffset(size_t block) const noexcept {
-    uint64_t page = _first_page + block;
-    if (!_spans.empty()) [[unlikely]] {
-      const auto it = absl::c_lower_bound(
-        _spans, block, [](const SpanningBlock& span, size_t b) noexcept {
-          return span.block < b;
-        });
-      if (it != _spans.begin()) {
-        page += std::prev(it)->extra;
-      }
-    }
-    return page * kPage;
+  template<typename Self>
+  auto&& Store(this Self&& self) noexcept {
+    return std::forward<Self>(self)._store;
   }
-  uint64_t InlineBegin() const noexcept { return _inline_offset; }
-  uint64_t InlineEnd() const noexcept { return _inline_offset + _inline_size; }
-  const byte_type* InlineRegion() const noexcept { return _inline_region; }
-  InlinePages::Span InlineSpan(uint32_t block) const noexcept {
-    return _inline_pages.Of(block);
-  }
-  uint64_t RangesBegin() const noexcept { return InlineEnd(); }
-  uint64_t RangesSize() const noexcept { return _ranges_size; }
-  bytes_view Load(uint64_t offset, uint64_t size);
-  bytes_view Copy(uint64_t offset, uint64_t size);
-  const byte_type* CopyBlock(uint32_t block, uint64_t length);
-  const byte_type* KeepInline(bytes_view bytes);
 
  private:
-  struct PendingCopy {
-    uint64_t offset;
-    uint64_t size;
-    byte_type* data;
-  };
-
   struct FieldDicts {
     uint32_t first = 0;
     uint32_t count = 0;
   };
 
-  void Bind(const TermsMeta& terms);
-  void FillCopies();
-  uint64_t DecodedBytes() const noexcept;
-
+  Separators _separators;
   std::deque<TermReaderImpl> _keyed;
   std::deque<SingleTermReader> _singles;
   std::vector<const TermReader*> _dicts;
   containers::FlatHashMap<field_id, FieldDicts> _by_id;
   std::vector<field_id> _ids;
   PostingsReader _pr;
-  const duckdb::InputFile* _in = nullptr;
-  const byte_type* _base = nullptr;
-  std::vector<SpanningBlock> _spans;
-  Separators _separators;
-  InlinePages _inline_pages;
-  duckdb::BufferManager* _buffers = nullptr;
-  containers::FlatHashMap<uint64_t, duckdb::AllocatedData> _copies;
-  std::vector<byte_type> _single_inline;
-  std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
-  const byte_type* _inline_region = nullptr;
-  uint64_t _first_page = 0;
-  uint64_t _inline_offset = 0;
-  uint64_t _inline_size = 0;
-  uint64_t _ranges_size = 0;
-  uint64_t _reserved = 0;
-  uint32_t _block_count = 0;
-  std::vector<PendingCopy> _pending;
+  BlockStore _store;
 };
-
-inline const duckdb_fsst_decoder_t* TermReaderImpl::Fsst() const noexcept {
-  return _owner->Fsst();
-}
 
 inline TermPostings::ptr TermReaderImpl::PostingsOf(
   IndexFeatures features, const PostingMeta& meta,
@@ -142,37 +86,23 @@ inline TermPostings::ptr TermReaderImpl::PostingsOf(
                                      _has_score_bounds, std::move(reuse));
 }
 
+inline const BlockStore& TermReaderImpl::Store() const noexcept {
+  return _owner->Store();
+}
+
 inline uint64_t TermReaderImpl::BlockOffset(size_t block) const noexcept {
-  return _owner->PageOffset(_first_block + block);
+  return Store().BlockOffset(_first_block + block);
 }
 
-inline InlinePages::Span TermReaderImpl::InlineSpan(
-  uint32_t block) const noexcept {
-  return _owner->InlineSpan(_first_block + block);
-}
-
-inline uint64_t TermReaderImpl::InlineBegin() const noexcept {
-  return _owner->InlineBegin();
-}
-
-inline uint64_t TermReaderImpl::InlineEnd() const noexcept {
-  return _owner->InlineEnd();
-}
-
-inline const byte_type* TermReaderImpl::ResolveInline(uint64_t end,
-                                                      uint8_t size) const {
-  const byte_type* base = _owner->InlineRegion();
-  uint64_t begin = 0;
-  uint64_t limit = InlineEnd() - InlineBegin();
-  if (Small()) {
-    base = _small_inline.data();
-    begin = _inline_base;
-    limit = _inline_base + _small_inline.size();
+inline const byte_type* TermReaderImpl::Block(size_t block,
+                                              PinnedRange& pinned) const {
+  if (_small) {
+    return _small;
   }
-  if (end < begin + size || end > limit) [[unlikely]] {
-    Corrupted("inline postings", _meta.id);
+  if (const auto* base = Store().Base()) {
+    return base + BlockOffset(block);
   }
-  return base + (end - size - begin);
+  return PinBlock(block, pinned);
 }
 
 }  // namespace irs::term_dict

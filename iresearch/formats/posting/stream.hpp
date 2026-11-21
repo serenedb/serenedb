@@ -63,7 +63,7 @@ class PostingsStream : public TermPostings {
       _max_in_leaf = doc;
     } else {
       if (meta.inline_size != 0) {
-        _inline_in = InputType{InlineInput(meta)};
+        _inline_in = InputType{InlineInput(meta, _inline_copy)};
         _doc_in = &_inline_in;
       } else {
         if (!_file_in) {
@@ -170,6 +170,7 @@ class PostingsStream : public TermPostings {
   InputType _file_in;
   InputType _inline_in;
   InputType* _doc_in = nullptr;
+  PostingMeta::InlineBytes _inline_copy;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;

@@ -127,6 +127,7 @@ SingleTermReader::SingleTermReader(FieldReader& owner, const FieldHead& head)
   _meta.norm = head.text.norm;
   _meta.dict = {.layout = head.layout, .member = head.member};
   key_width = head.width;
+  single_valued = true;
   SDB_ENSURE(head.text.total_freq <= std::numeric_limits<uint32_t>::max(),
              "term dictionary: total frequency ", head.text.total_freq,
              " exceeds uint32_t::max");
@@ -143,10 +144,7 @@ SingleTermReader::SingleTermReader(FieldReader& owner, const FieldHead& head)
       head.record_inline.size() != _single.inline_size) {
     corrupted();
   }
-  if (_single.inline_size != 0) {
-    _single.inline_data = owner.KeepInline(
-      ViewCast<byte_type>(std::string_view{head.record_inline}));
-  }
+  _single.SetInline(ViewCast<byte_type>(std::string_view{head.record_inline}));
 }
 
 SeekTermIterator::ptr SingleTermReader::iterator() const {
@@ -182,11 +180,12 @@ void SingleTermReader::LookupBatch(size_t count, TermAt term,
   }
 }
 
-void SingleTermReader::VisitRange(bytes_view from, bytes_view to,
-                                  RangeVisitor visit) const {
+bool SingleTermReader::CoverRange(bytes_view from, bytes_view to,
+                                  TermVisitor visit) const {
   if ((from.empty() || from <= min()) && (to.empty() || min() < to)) {
     visit(min(), _single);
   }
+  return false;
 }
 
 PostingsHandles SingleTermReader::Handles() const noexcept {

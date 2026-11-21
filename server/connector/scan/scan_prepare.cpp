@@ -32,6 +32,38 @@
 #include "connector/scan/scan_state.h"
 
 namespace sdb::connector {
+namespace {
+
+irs::QueryBuilder::ptr PrepareSegmentQuery(const ScanGlobalState& g,
+                                           uint32_t seg_idx,
+                                           irs::PrepareContext ctx) {
+  ctx.prefetch = g.shape == ScanShape::Count;
+  ctx.profile = g.profile ? &g.profile->Query() : nullptr;
+  const auto& segment = (*g.reader)[seg_idx];
+  irs::QueryBuilder::ptr query;
+  if (g.vector_scorer != nullptr) {
+    query = irs::PrepareFilter(*g.filter, segment, ctx);
+  } else {
+    const auto index_only = g.ClaimedIndexOnly();
+    const auto& filter = !UsesColumnForms(g, segment) ? *g.filter
+                         : index_only                 ? *index_only
+                                                      : MatchAllFilter();
+    query = irs::PrepareMasked(filter, segment, ctx);
+  }
+  if (g.head_prefetch_min != 0) {
+    irs::PrefetchPostingHeads(*query, g.head_prefetch_min);
+  }
+  return query;
+}
+
+}  // namespace
+
+void PrepareSegmentNow(ScanGlobalState& g, uint32_t seg_idx) {
+  g.Segment(seg_idx).prepare.Call([&] {
+    g.queries[seg_idx] =
+      PrepareSegmentQuery(g, seg_idx, {.needs_terms = g.needs_terms});
+  });
+}
 
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState* l,
@@ -46,22 +78,11 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
       }
       collector = g.collector->Get();
     }
-    const auto& segment = (*g.reader)[seg_idx];
-    const irs::PrepareContext ctx{
-      .collector = collector,
-      .thread = collector != nullptr ? l->thread_slot : 0,
-      .needs_terms = g.needs_terms,
-      .profile = g.profile ? &g.profile->Query() : nullptr};
-    const auto index_only = g.ClaimedIndexOnly();
-    const auto& filter = !UsesColumnForms(g, segment) ? *g.filter
-                         : index_only                 ? *index_only
-                                                      : MatchAllFilter();
-    g.queries[seg_idx] = g.vector_scorer == nullptr
-                           ? irs::PrepareMasked(filter, segment, ctx)
-                           : irs::PrepareFilter(*g.filter, segment, ctx);
-    if (g.head_prefetch_min != 0) {
-      irs::PrefetchPostingHeads(*g.queries[seg_idx], g.head_prefetch_min);
-    }
+    g.queries[seg_idx] =
+      PrepareSegmentQuery(g, seg_idx,
+                          {.collector = collector,
+                           .thread = collector != nullptr ? l->thread_slot : 0,
+                           .needs_terms = g.needs_terms});
   });
   return *g.queries[seg_idx];
 }

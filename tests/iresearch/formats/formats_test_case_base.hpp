@@ -63,14 +63,14 @@ inline void WriteRecord(irs::PostingsWriter& writer, duckdb::WriteStream& out,
                         const irs::PostingMeta& meta) {
   writer.Encode(out, meta);
   if (meta.inline_size != 0) {
-    out.WriteData(meta.inline_data, meta.inline_size);
+    out.WriteData(meta.inline_bytes.data(), meta.inline_size);
   }
 }
 
 inline size_t ReadRecord(const irs::byte_type* in, irs::IndexFeatures features,
                          irs::PostingMeta& meta) {
   const auto size = irs::PostingsReader::decode(in, features, meta);
-  meta.inline_data = in + size;
+  meta.SetInline({in + size, meta.inline_size});
   return size + meta.inline_size;
 }
 

@@ -564,16 +564,16 @@ HnswQuery::HnswQuery(const SubReader& segment,
                      std::shared_ptr<const HnswData> data,
                      const VectorFilterOptions& opts, uint32_t record_size,
                      HnswSearchLimits limits, score_t boost,
-                     QueryBuilder::ptr&& inner, QueryBuilder::ptr&& index_only,
+                     QueryBuilder::ptr&& inner, QueryBuilder::ptr&& index_part,
                      AnnQueryCache* cache)
   : QueryBuilderImpl{segment, static_cast<uint32_t>(segment.docs_count()),
                      QueryKind::Ann},
     _data{std::move(data)},
     _cache{cache},
     _inner{std::move(inner)},
-    _index_only{std::move(index_only)},
-    _index_only_postings{opts.index_only && _index_only
-                           ? _index_only->Postings()
+    _index_part{std::move(index_part)},
+    _index_part_postings{opts.index_part && _index_part
+                           ? _index_part->Postings()
                            : segment.docs_count() - segment.live_docs_count()},
     _exact{segment.Column(opts.column_id)},
     _query{opts.query.size(),
@@ -589,7 +589,7 @@ HnswQuery::HnswQuery(const SubReader& segment,
     _boost{boost},
     _filter_mode{opts.hnsw_filter_mode},
     _column_filter{opts.hnsw_column_filter},
-    _dual{opts.dual},
+    _has_column_part{opts.has_column_part},
     _inclusive{limits.inclusive} {
   if (_metric == VectorMetric::Cosine) {
     duckdb::L2NormalizeOp::Operation(_query.data(), _query.data(), _d);
@@ -630,7 +630,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                                      record, _ef, estimate, columns);
     return plan.ask_per_hop &&
            (_column_filter == HnswColumnFilter::Read ||
-            plan.read_cost + static_cast<double>(_index_only_postings) <
+            plan.read_cost + static_cast<double>(_index_part_postings) <
               static_cast<double>(_inner->Postings()));
   };
   const auto expected = [rest = table ? table->Share() : 1.0](uint64_t count) {
@@ -647,7 +647,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
       most = _inner->EstimateMax();
-      inner = _index_only.get();
+      inner = _index_part.get();
       table = columns;
     }
   }
@@ -835,7 +835,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(
   if (table && !table->Foldable()) {
     table = nullptr;
   }
-  if (!_dual || (columns && !columns->Foldable())) {
+  if (!_has_column_part || (columns && !columns->Foldable())) {
     columns = nullptr;
   }
   if (!table && ScansByColumn()) {

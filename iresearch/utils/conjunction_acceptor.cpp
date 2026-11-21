@@ -24,7 +24,6 @@
 #include <new>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/bitset.hpp"
 
 namespace irs {
 namespace {
@@ -84,7 +83,8 @@ uint64_t PatternsKey(
 void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
              std::span<std::shared_ptr<const RegexpAcceptor>> owned,
              RegexpConjunction::Parts& start, bytes_view& lower,
-             std::span<const bstring>& suffixes, bytes_view& infix) {
+             std::span<const bstring>& suffixes, bytes_view& infix,
+             ByteSet& required) {
   SDB_ASSERT(patterns.size() <= owned.size());
   const auto shortest = [](std::span<const bstring> set) {
     size_t size = set.empty() ? 0 : std::numeric_limits<size_t>::max();
@@ -106,6 +106,7 @@ void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
     if (pattern.RequiredInfix().size() > infix.size()) {
       infix = pattern.RequiredInfix();
     }
+    AddAll(required, pattern.RequiredBytes());
   }
 }
 
@@ -131,7 +132,10 @@ RegexpConjunction::RegexpConjunction(
   size_t max_mem)
   : _size{patterns.size()}, _max_mem{max_mem} {
   Parts start{};
-  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _required);
+  for (size_t i = 0; i != _size; ++i) {
+    AddAll(_dead_bytes, _patterns[i]->DeadBytes());
+  }
   _classes =
     Refine([&](uint32_t label) { return PatternsKey(patterns, label); },
            _bytemap, _representative);
@@ -145,7 +149,7 @@ RegexpConjunction::RegexpConjunction(
   _unknown->unknown = true;
   _unknown->lo = 0;
   _unknown->hi = RegexpAcceptor::kMaxLabel;
-  _unknown->loop.fill(~bitset::word_t{0});
+  _unknown->loop.words.fill(~uint64_t{0});
   Loop(_unknown, _classes);
   _unknown->built.store(true, std::memory_order_relaxed);
   _start = InternLocked(start);
@@ -201,7 +205,7 @@ void RegexpConjunction::BuildLocked(Row* row) const {
     }
     hi = static_cast<uint8_t>(label);
     if (target == row) {
-      row->loop[bitset::word(label)] |= bitset::word_t{1} << bitset::bit(label);
+      row->loop.Add(static_cast<byte_type>(label));
     }
   }
   row->lo = lo;
@@ -241,7 +245,8 @@ FuzzyConjunction::FuzzyConjunction(
   SDB_ASSERT(_fuzzy);
   Parts start{};
   _lower = _fuzzy->LowerBound();
-  Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
+  _required = _fuzzy->RequiredBytes();
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _required);
   const auto fuzzy_bytemap = _fuzzy->Bytemap();
   if (patterns.empty()) {
     _bytemap = fuzzy_bytemap;

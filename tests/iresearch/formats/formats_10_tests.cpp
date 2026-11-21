@@ -413,7 +413,6 @@ TEST_P(Format10TestCase, postings_read_write) {
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
   irs::PostingsWriter writer;
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
-  irs::bstring inline0, inline1;
 
   // write postings
   {
@@ -439,8 +438,6 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       tests::WriteRecord(writer, *out, meta0);
-      inline0.assign(meta0.Inline());
-      meta0.inline_data = inline0.data();
     }
     // write postings for term1
     {
@@ -449,8 +446,6 @@ TEST_P(Format10TestCase, postings_read_write) {
 
       // write attributes to out
       tests::WriteRecord(writer, *out, meta1);
-      inline1.assign(meta1.Inline());
-      meta1.inline_data = inline1.data();
     }
 
     ASSERT_NE(0, meta0.inline_size);

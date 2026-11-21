@@ -22,6 +22,7 @@
 
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/count/disjoint.hpp"
 #include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/live_count.hpp"
 #include "iresearch/search/count/make.hpp"
@@ -43,6 +44,12 @@ bool FewRuns(const detail::PostingClause& term,
 }
 
 Root::ptr MakeShortcut(const BooleanQuery& query, const Context& ctx) {
+  if (ShouldSums(query, ctx)) {
+    const auto terms = query.Terms(Occur::Should);
+    return MakeWholeCount(SumOf(terms), ctx, [terms, ctx] {
+      return MakeTermsSum(terms, nullptr, ctx);
+    });
+  }
   const auto& segment = query.Segment();
   const auto must_terms = query.Terms(Occur::Must);
   const auto must_filters = query.Queries(Occur::Must);

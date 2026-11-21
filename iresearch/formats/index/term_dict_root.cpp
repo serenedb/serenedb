@@ -27,6 +27,7 @@
 #include <array>
 #include <bit>
 #include <cstring>
+#include <iterator>
 #include <limits>
 
 #include "iresearch/utils/assert.hpp"
@@ -169,11 +170,6 @@ bytes_view SharedPrefix(SeparatorsView separators) noexcept {
 }
 
 }  // namespace
-
-uint64_t HeadAt(bytes_view key, size_t skip) noexcept {
-  return skip >= key.size() ? 0
-                            : LoadHead(key.data() + skip, key.size() - skip);
-}
 
 Separators DecodeSeparators(bytes_view encoded, size_t count) {
   const auto corrupted = [] {

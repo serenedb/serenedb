@@ -30,6 +30,7 @@
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/empty.hpp"
 
 namespace irs::count {
@@ -38,47 +39,32 @@ template<typename Table>
 class BooleanBitset : public Root {
  public:
   BooleanBitset(detail::BitsetBuckets&& buckets, const duckdb::InputFile& doc,
-                doc_id_t docs_count, Table table) noexcept
+                doc_id_t docs_count, doc_id_t span, Table table)
     : _buckets{std::move(buckets)},
+      _set{span},
       _doc{&doc},
       _docs_count{docs_count},
       _table{table} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
-    constexpr auto kMin = detail::BitsetStorage::kMin;
     constexpr auto kBits = detail::BitsetStorage::kBits;
-    if (!_built) {
-      _set = detail::BuildBitset(_buckets, *_doc, _docs_count);
-      _built = true;
-    }
-    const auto bits = uint64_t{_set.WordCount()} * kBits;
-    const auto lo = uint64_t{min} - kMin;
-    const auto hi =
-      std::min<uint64_t>(doc_limits::eof(max) ? bits : max - kMin, bits);
-    if (lo >= hi) {
+    max = std::min<doc_id_t>(max, detail::BitsetStorage::kMin + _docs_count);
+    if (min >= max) {
       return 0;
     }
+    const auto docs = max - min;
+    const auto count = static_cast<uint32_t>((docs + kBits - 1) / kBits);
+    SDB_ASSERT(count <= _set.WordCount());
+    auto* const words = _set.Words();
+    std::fill_n(words, count, uint64_t{0});
+    detail::FillBitset(_buckets, *_doc, _docs_count, min, max, words);
+    if (const auto tail = docs % kBits; tail != 0) {
+      words[count - 1] &= (uint64_t{1} << tail) - 1;
+    }
     if constexpr (kTable) {
-      auto* const words = _set.Words();
-      const auto first = static_cast<uint32_t>(lo / kBits);
-      const auto last = static_cast<uint32_t>((hi - 1) / kBits);
-      const auto head = ~uint64_t{0} << (lo % kBits);
-      const auto tail =
-        hi % kBits != 0 ? (uint64_t{1} << (hi % kBits)) - 1 : ~uint64_t{0};
-      if (first == last) {
-        uint64_t edge = words[first] & head & tail;
-        return _table.Count(kMin + first * kBits, &edge, 1);
-      }
-      uint64_t edge = words[first] & head;
-      auto total = _table.Count(kMin + first * kBits, &edge, 1);
-      if (last - first > 1) {
-        total += _table.Count(kMin + (first + 1) * kBits, words + first + 1,
-                              last - first - 1);
-      }
-      edge = words[last] & tail;
-      return total + _table.Count(kMin + last * kBits, &edge, 1);
+      return _table.Count(min, words, count);
     } else {
-      return detail::CountBitRange(_set.Words(), lo, hi);
+      return detail::CountBitRange(words, 0, docs);
     }
   }
 
@@ -87,7 +73,6 @@ class BooleanBitset : public Root {
 
   detail::BitsetBuckets _buckets;
   detail::BitsetStorage _set;
-  bool _built = false;
   const duckdb::InputFile* _doc;
   doc_id_t _docs_count;
   [[no_unique_address]] detail::Narrowing<Table> _table;
@@ -97,7 +82,7 @@ class BooleanBitset : public Root {
 namespace irs::detail {
 
 template<>
-inline constexpr uint64_t kFoldPostings<count::Root::ptr> = 4;
+inline constexpr bool kRangeBitset<count::Root::ptr> = true;
 template<>
 inline constexpr FoldEmit kFoldEmit<count::Root::ptr>{0.3, 1.0, false};
 
@@ -106,13 +91,14 @@ struct BitsetNode<count::Root::ptr> {
   template<typename P>
   static count::Root::ptr Make(BitsetBuckets&& buckets,
                                const duckdb::InputFile& doc,
-                               doc_id_t docs_count, TableFilter* table) {
+                               doc_id_t docs_count, doc_id_t span,
+                               TableFilter* table) {
     if (table != nullptr) {
       return memory::make_managed<count::BooleanBitset<TableFilter*>>(
-        std::move(buckets), doc, docs_count, table);
+        std::move(buckets), doc, docs_count, span, table);
     }
     return memory::make_managed<count::BooleanBitset<utils::Empty>>(
-      std::move(buckets), doc, docs_count, utils::Empty{});
+      std::move(buckets), doc, docs_count, span, utils::Empty{});
   }
 };
 

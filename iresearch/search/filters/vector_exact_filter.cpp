@@ -31,8 +31,9 @@ namespace irs {
 QueryBuilder::ptr PrepareExactVectors(
   const SubReader& segment, const PrepareContext& ctx, field_id column_id,
   std::span<const float> query, field_id ann_id, VectorMetric metric,
-  const std::shared_ptr<const Filter>& inner_filter, float radius,
-  bool inclusive, score_t boost) {
+  const std::shared_ptr<const Filter>& inner_filter,
+  const std::shared_ptr<const Filter>& index_part, bool has_column_part,
+  float radius, bool inclusive, score_t boost) {
   const auto* column = segment.Column(column_id);
   const auto* columns = segment.GetColReader();
   if (!column || !columns || !column->Child() ||
@@ -54,7 +55,8 @@ QueryBuilder::ptr PrepareExactVectors(
   auto built = memory::make_tracked<ExactVectorQuery>(
     ctx.memory, segment, *column, *columns,
     std::vector<float>{query.begin(), query.end()}, metric, ctx.boost * boost,
-    std::move(inner), std::move(codes), threshold, inclusive);
+    PrefilterOf(std::move(inner), index_part, has_column_part, segment, ctx),
+    std::move(codes), threshold, inclusive);
   built->SetStats(ctx.Record());
   return built;
 }
@@ -63,8 +65,9 @@ QueryBuilder::ptr ByVectorExact::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   const auto& opts = options();
   return PrepareExactVectors(segment, ctx, field_id(), opts.query, opts.ann_id,
-                             opts.metric, opts.inner, opts.radius,
-                             opts.inclusive, GetBoost());
+                             opts.metric, opts.inner, opts.index_part,
+                             opts.has_column_part, opts.radius, opts.inclusive,
+                             GetBoost());
 }
 
 PrepareCollector::ptr ByVectorExact::MakeCollectorImpl(const Scorer* scorer,

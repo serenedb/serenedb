@@ -66,7 +66,7 @@ class RegexpConjunction {
   using Parts = std::array<RegexpAcceptor::State, kMaxPatterns>;
 
   struct Row {
-    RegexpAcceptor::Mask loop{};
+    RegexpAcceptor::Mask loop;
     Parts parts{};
     std::atomic_bool built{false};
     bool accept{false};
@@ -104,6 +104,10 @@ class RegexpConjunction {
   }
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
+
+  const ByteSet& RequiredBytes() const noexcept { return _required; }
+
+  const ByteSet& DeadBytes() const noexcept { return _dead_bytes; }
 
   static bool Alive(State state) noexcept { return !state->dead; }
 
@@ -159,6 +163,8 @@ class RegexpConjunction {
   bytes_view _lower;
   std::span<const bstring> _suffixes;
   bytes_view _infix;
+  ByteSet _required;
+  ByteSet _dead_bytes;
   size_t _max_mem;
   mutable std::mutex _mutex;
   mutable absl::flat_hash_map<Parts, Row*> _rows;
@@ -220,6 +226,8 @@ class FuzzyConjunction {
   }
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
+
+  const ByteSet& RequiredBytes() const noexcept { return _required; }
 
   static bool Alive(State state) noexcept { return !state->dead; }
 
@@ -290,6 +298,7 @@ class FuzzyConjunction {
   bytes_view _lower;
   std::span<const bstring> _suffixes;
   bytes_view _infix;
+  ByteSet _required;
   size_t _max_mem;
   mutable std::mutex _mutex;
   mutable absl::flat_hash_map<Key, Row*> _rows;

@@ -194,7 +194,6 @@ struct DeferredColumn {
 
 struct DeferredClaim {
   std::vector<std::shared_ptr<const duckdb::Expression>> conjuncts;
-  std::vector<std::shared_ptr<const duckdb::Expression>> ranges;
   std::shared_ptr<const std::map<BindingKey, DeferredColumn>> columns;
   std::set<irs::field_id> analyzed_fields;
 };
@@ -288,8 +287,9 @@ struct ScanBindData final : duckdb::FunctionData {
     return offsets.requests.empty() && !score.vector;
   }
   bool KeepsColumnForms() const noexcept {
-    return score.vector && score.vector->kind == irs::AnnKind::Hnsw &&
-           score.vector->radius == std::numeric_limits<float>::max();
+    return score.vector &&
+           (score.vector->exact || score.vector->kind == irs::AnnKind::Ivf ||
+            score.vector->radius == std::numeric_limits<float>::max());
   }
   bool ReadsRowsOnlySegments() const noexcept {
     return relation.kind != ScanEntryKind::InvertedIndex && !score.vector;
@@ -357,12 +357,6 @@ uint32_t ClampCandidates(double pool, double k, uint64_t live) noexcept;
 void RefreshVectorKnobs(VectorScorerOptions& vs,
                         duckdb::ClientContext& context);
 
-struct DeferredColumnFilter {
-  ColumnId column;
-  duckdb::LogicalType type;
-  duckdb::unique_ptr<duckdb::TableFilter> filter;
-};
-
 struct DeferredRowFilter {
   std::vector<ColumnId> columns;
   std::vector<duckdb::LogicalType> types;
@@ -373,7 +367,6 @@ struct DeferredBuild {
   std::shared_ptr<const irs::Filter> filter;
   std::shared_ptr<const irs::Filter> index_only;
   std::vector<std::shared_ptr<irs::Scorer>> scorers;
-  std::vector<DeferredColumnFilter> column_filters;
   std::vector<DeferredRowFilter> dual_filters;
   std::vector<DeferredCheck> checks;
 };

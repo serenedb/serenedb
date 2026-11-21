@@ -36,14 +36,6 @@ struct TextHead {
   uint64_t total_freq = 0;
   field_id norm = field_limits::invalid();
   bool has_score_bounds = false;
-  std::string prefixes;
-};
-
-struct RangesHead {
-  uint64_t offset = 0;
-  uint64_t size = 0;
-  uint32_t prefix = 0;
-  std::vector<uint64_t> counts;
 };
 
 struct FieldHead {
@@ -63,10 +55,12 @@ struct FieldHead {
   uint32_t first_record = 0;
   uint32_t last_block = 0;
   uint32_t last_entry = 0;
-  uint64_t inline_base = 0;
-  uint64_t inline_size = 0;
+  std::string fsst_table;
+  std::string block_masks;
+  std::string block_prefixes;
   TextHead text;
-  RangesHead ranges;
+  std::vector<FieldHead> levels;
+  bool single_valued = false;
 };
 
 struct SpanningBlock {
@@ -78,13 +72,9 @@ struct TermsMeta {
   uint32_t blocks = 0;
   uint64_t first_page = 0;
   std::vector<SpanningBlock> spans;
-  std::string separators;
-  std::string fsst_table;
-  uint64_t inline_offset = 0;
-  uint64_t inline_size = 0;
-  uint64_t ranges_size = 0;
+  uint64_t blocks_end = 0;
   std::vector<FieldHead> fields;
-  std::string inline_starts;
+  std::string separators;
   uint32_t ordinal_bytes = 1;
 };
 

@@ -679,13 +679,14 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
     }
     const PhraseGap gap = i > 0 ? seq.gaps[i - 1] : PhraseGap{};
 
-    TSQueryOp leaf_op;
+    TSQueryOp leaf_op = TSQueryOp::Term;
     const duckdb::BoundFunctionExpression* f = nullptr;
     std::string bare_text;
-    if (part_expr_ref.GetExpressionClass() ==
-        duckdb::ExpressionClass::BOUND_CONSTANT) {
+    duckdb::unique_ptr<duckdb::Expression> structured;
+    const duckdb::Expression* part = &part_expr_ref;
+    if (part->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
       const auto& val =
-        part_expr_ref.Cast<duckdb::BoundConstantExpression>().GetValue();
+        part->Cast<duckdb::BoundConstantExpression>().GetValue();
       if (auto parts = TryGetTSQueryParts(val)) {
         if (parts->boost != irs::kNoBoost || !parts->tokenizer.empty()) {
           THROW_SQL_ERROR(
@@ -693,7 +694,14 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
             ERR_MSG("## part must not carry boost or tokenize modifiers"),
             ERR_HINT(kSyntaxHint));
         }
-        bare_text = std::move(parts->text);
+        structured =
+          TryParseStructuredTSQueryText(parts->text, ctx.client_context);
+        if (structured && UnwrapTSQueryCast(*structured).GetExpressionClass() ==
+                            duckdb::ExpressionClass::BOUND_FUNCTION) {
+          part = &UnwrapTSQueryCast(*structured);
+        } else {
+          bare_text = std::move(parts->text);
+        }
       } else if (!val.IsNull() &&
                  (val.type().id() == duckdb::LogicalTypeId::VARCHAR ||
                   val.type().id() == duckdb::LogicalTypeId::BLOB)) {
@@ -703,18 +711,17 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                         ERR_MSG("## part must be a VARCHAR constant"),
                         ERR_HINT(kSyntaxHint));
       }
-      leaf_op = TSQueryOp::Term;
-    } else if (part_expr_ref.GetExpressionClass() ==
-               duckdb::ExpressionClass::BOUND_FUNCTION) {
-      f = &part_expr_ref.Cast<duckdb::BoundFunctionExpression>();
+    }
+    if (part->GetExpressionClass() == duckdb::ExpressionClass::BOUND_FUNCTION) {
+      f = &part->Cast<duckdb::BoundFunctionExpression>();
       leaf_op =
         ClassifyTSQueryFunction(f->Function().GetName().GetIdentifierName());
-    } else {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-        ERR_MSG("## part expression class: ",
-                static_cast<int>(part_expr_ref.GetExpressionClass())),
-        ERR_HINT(kSyntaxHint));
+    } else if (part->GetExpressionClass() !=
+               duckdb::ExpressionClass::BOUND_CONSTANT) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("## part expression class: ",
+                              static_cast<int>(part->GetExpressionClass())),
+                      ERR_HINT(kSyntaxHint));
     }
 
     auto get_text_arg = [&] {

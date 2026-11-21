@@ -846,8 +846,10 @@ TEST(ObjectStoreIndexTest,
   irs::detail::HoleBuf holes;
   irs::DocsBuf docs;
   LeafSink sink{.in = &in};
-  irs::detail::ReadPosting(meta, in, enc.data, holes.data, docs,
-                           /*has_score_bounds=*/false, /*has_freq=*/true, sink);
+  irs::detail::ReadPosting(in, enc.data, holes.data, docs, /*has_freq=*/true,
+                           irs::doc_limits::invalid(), meta.docs_count,
+                           irs::doc_limits::min(), irs::doc_limits::eof(),
+                           nullptr, nullptr, sink);
 
   auto expected = sparse;
   expected.insert(expected.end(), dense.begin(), dense.end());

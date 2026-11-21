@@ -284,6 +284,7 @@ void WriteCatalogPart(RecordBuffer& out, bool present, const Write& write) {
   }
   const auto written = PartSize(out.PayloadBytes() - begin);
   std::memcpy(size, &written, sizeof(written));
+  out.MarkCatalog(begin, written);
 }
 
 void NoField(duckdb::BinarySerializer&, size_t) {}

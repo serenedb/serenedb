@@ -60,6 +60,30 @@ class RecordBuffer final : public duckdb::WriteStream {
     return _writer->Written() - kFrameBytes;
   }
 
+  void MarkCatalog(size_t begin, size_t size) noexcept {
+    _catalog_begin = begin;
+    _catalog_size = size;
+  }
+
+  size_t CatalogBytes() const noexcept { return _catalog_size; }
+
+  std::vector<uint8_t> CopyCatalog() const {
+    std::vector<uint8_t> out;
+    out.reserve(_catalog_size);
+    const auto end = _catalog_begin + _catalog_size;
+    size_t offset = 0;
+    ForEachPayload([&](std::span<const uint8_t> part) {
+      const auto from = std::max(offset, _catalog_begin);
+      const auto to = std::min(offset + part.size(), end);
+      if (from < to) {
+        out.insert(out.end(), part.begin() + (from - offset),
+                   part.begin() + (to - offset));
+      }
+      offset += part.size();
+    });
+    return out;
+  }
+
   void SetFrame(std::span<const uint8_t, kFrameBytes> frame) noexcept {
     std::memcpy(_frame, frame.data(), kFrameBytes);
   }
@@ -88,6 +112,8 @@ class RecordBuffer final : public duckdb::WriteStream {
   std::unique_ptr<message::Buffer> _buffer;
   std::unique_ptr<message::Writer> _writer;
   uint8_t* _frame = nullptr;
+  size_t _catalog_begin = 0;
+  size_t _catalog_size = 0;
 };
 
 class Log {
@@ -130,6 +156,13 @@ class Log {
   void WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
                      CatalogPart part, Compact compact);
   void DropCovered();
+
+  static constexpr uint64_t kTailBytes = uint64_t{16} << 20;
+
+  uint64_t TailBytes() const noexcept {
+    return _tail_bytes.load(std::memory_order_relaxed);
+  }
+  void FoldTail(Lsn bound, CatalogPart part, Compact compact);
 
   Lsn Link(const std::string& dir);
 
@@ -182,6 +215,11 @@ class Log {
     std::atomic<Lsn> end{0};
   };
 
+  struct TailPart {
+    Lsn end = 0;
+    std::vector<uint8_t> bytes;
+  };
+
   static constexpr uint64_t kWrittenRing = uint64_t{1} << 16;
 
   std::string ChunkPath(uint64_t number) const;
@@ -194,6 +232,8 @@ class Log {
   void SyncDirectory() const;
   void AdvanceWritten() noexcept;
   void SyncTo(Lsn target);
+  void AddTail(Lsn begin, Lsn end, std::vector<uint8_t> bytes);
+  std::vector<std::vector<uint8_t>> TakeTail(Lsn bound);
 
   duckdb::FileSystem& _fs;
   std::string _dir;
@@ -223,6 +263,9 @@ class Log {
   absl::Mutex _files_mutex;
   uint64_t _snapshot ABSL_GUARDED_BY(_files_mutex) = 0;
   std::vector<std::vector<uint8_t>> _history ABSL_GUARDED_BY(_files_mutex);
+  absl::Mutex _tail_mutex;
+  absl::btree_map<Lsn, TailPart> _tail ABSL_GUARDED_BY(_tail_mutex);
+  std::atomic<uint64_t> _tail_bytes{0};
 };
 
 }  // namespace sdb::catalog

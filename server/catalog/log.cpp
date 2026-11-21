@@ -355,8 +355,10 @@ struct Scanned {
   size_t torn_to = 0;
 };
 
+using ApplyAt = absl::FunctionRef<void(Lsn, Lsn, std::span<uint8_t>)>;
+
 Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
-                Log::Apply snapshot_record, Log::Apply log_record) {
+                Log::Apply snapshot_record, ApplyAt log_record) {
   auto past = ReadSnapshot(fs, dir);
   for (const auto record : past.records) {
     snapshot_record(record);
@@ -388,8 +390,10 @@ Scanned ScanLog(duckdb::FileSystem& fs, const std::string& dir,
     const auto base = begin + from;
     const auto parsed =
       from + ParseRecords(std::span{*bytes}.subspan(from), base,
-                          [&](size_t, size_t, std::span<uint8_t> payload) {
-                            log_record(payload);
+                          [&](size_t record_begin, size_t record_end,
+                              std::span<uint8_t> payload) {
+                            log_record(base + record_begin, base + record_end,
+                                       payload);
                           });
     if (!first && parsed == 0) {
       scanned.next = number;
@@ -425,7 +429,8 @@ bool Log::IsEarlierFormat(duckdb::FileSystem& fs, const std::string& dir) {
 }
 
 void Log::Read(duckdb::FileSystem& fs, const std::string& dir, Apply apply) {
-  ScanLog(fs, dir, apply, apply);
+  ScanLog(fs, dir, apply,
+          [&](Lsn, Lsn, std::span<uint8_t> payload) { apply(payload); });
 }
 
 void Log::Move(duckdb::FileSystem& fs, const std::string& from,
@@ -531,7 +536,12 @@ void Log::Replay(Apply apply, CatalogPart part) {
         history.emplace_back(payload.begin(), payload.end());
       }
     },
-    apply);
+    [&](Lsn begin, Lsn end, std::span<uint8_t> payload) {
+      apply(payload);
+      if (const auto catalog = part(payload); !catalog.empty()) {
+        AddTail(begin, end, {catalog.begin(), catalog.end()});
+      }
+    });
   bool removed = false;
   for (auto number = scanned.first;
        number != 0 && _fs.TryRemoveFile(ChunkPath(number - 1)); --number) {
@@ -723,6 +733,9 @@ void Log::Write(const Range& range, RecordBuffer& record) {
               "': a committed record could not be written: ",
               duckdb::ErrorData{e}.RawMessage());
   }
+  if (record.CatalogBytes() != 0) {
+    AddTail(range.begin, range.end, record.CopyCatalog());
+  }
   auto& slot = _written_ring[range.seq % kWrittenRing];
   slot.end.store(range.end, std::memory_order_relaxed);
   slot.seq.store(range.seq + 1, std::memory_order_seq_cst);
@@ -819,47 +832,63 @@ Lsn Log::Append(RecordBuffer record) {
   return range.end;
 }
 
+void Log::AddTail(Lsn begin, Lsn end, std::vector<uint8_t> bytes) {
+  const auto size = bytes.size();
+  {
+    absl::MutexLock tail{&_tail_mutex};
+    _tail.emplace(begin, TailPart{.end = end, .bytes = std::move(bytes)});
+  }
+  _tail_bytes.fetch_add(size, std::memory_order_relaxed);
+}
+
+std::vector<std::vector<uint8_t>> Log::TakeTail(Lsn bound) {
+  std::vector<std::vector<uint8_t>> taken;
+  uint64_t bytes = 0;
+  absl::MutexLock tail{&_tail_mutex};
+  auto it = _tail.begin();
+  for (; it != _tail.end() && it->second.end <= bound; ++it) {
+    bytes += it->second.bytes.size();
+    taken.push_back(std::move(it->second.bytes));
+  }
+  SDB_ASSERT(it == _tail.end() || it->first >= bound);
+  _tail.erase(_tail.begin(), it);
+  _tail_bytes.fetch_sub(bytes, std::memory_order_relaxed);
+  return taken;
+}
+
+void Log::FoldTail(Lsn bound, CatalogPart part, Compact compact) {
+  absl::MutexLock files{&_files_mutex};
+  auto folded =
+    TakeTail(std::min(bound, _written.load(std::memory_order_acquire)));
+  if (folded.empty()) {
+    return;
+  }
+  std::vector<std::span<uint8_t>> parts;
+  parts.reserve(_history.size() + folded.size());
+  for (auto& payload : _history) {
+    parts.push_back(part(payload));
+  }
+  for (auto& catalog : folded) {
+    parts.emplace_back(catalog);
+  }
+  _history = compact(parts);
+  _history_bytes.store(TotalBytes(_history), std::memory_order_relaxed);
+}
+
 void Log::WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
                         CatalogPart part, Compact compact) {
-  struct Scan {
-    std::shared_ptr<Chunk> chunk;
-    Lsn end = 0;
-  };
   absl::MutexLock files{&_files_mutex};
-  std::vector<Scan> scans;
   SnapshotHeader header{.covered = covered};
   {
     absl::MutexLock lock{&_mutex};
     SDB_ASSERT(covered <= _durable.load(std::memory_order_acquire));
     for (auto it = _chunks.begin(); it != _chunks.end() && it->first <= covered;
          ++it) {
-      const auto next = std::next(it);
       header.number = it->second->number;
       header.begin = it->first;
-      scans.push_back({.chunk = it->second,
-                       .end = next == _chunks.end()
-                                ? covered
-                                : std::min(next->first, covered)});
     }
   }
-  const auto past = _covered.load(std::memory_order_acquire);
-  std::vector<std::vector<uint8_t>> logged;
-  for (const auto& [chunk, end] : scans) {
-    const auto from = std::max(chunk->begin, past);
-    if (end <= from) {
-      continue;
-    }
-    std::vector<uint8_t> bytes(static_cast<size_t>(end - from));
-    chunk->file->Read(bytes.data(), bytes.size(), from - chunk->begin);
-    const auto parsed = ParseRecords(
-      bytes, from, [&](size_t, size_t, std::span<uint8_t> payload) {
-        if (const auto catalog = part(payload); !catalog.empty()) {
-          logged.emplace_back(catalog.begin(), catalog.end());
-        }
-      });
-    SDB_ENSURE(parsed == bytes.size(), "log '", _dir, "': chunk ",
-               chunk->number, " ends early");
-  }
+  auto logged = TakeTail(covered);
   std::vector<std::span<uint8_t>> parts;
   parts.reserve(_history.size() + logged.size());
   for (auto& payload : _history) {

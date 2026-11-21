@@ -91,6 +91,17 @@ std::optional<std::string> RenderTSQueryCall(
   duckdb::ClientContext& context, std::string_view name,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> children);
 
+constexpr std::string_view NamedArgumentOf(TSQueryOp op) noexcept {
+  switch (op) {
+    case TSQueryOp::Phrase:
+      return "slop";
+    case TSQueryOp::Fuzzy:
+      return "starts_with";
+    default:
+      return {};
+  }
+}
+
 bool IsTSQueryFamilyTypeName(std::string_view name) {
   return absl::EqualsIgnoreCase(name, kTSQueryTypeName) ||
          absl::EqualsIgnoreCase(name, kTokenizerTypeName) ||
@@ -162,9 +173,9 @@ bool WhitelistWalk(const duckdb::ParsedExpression& expr, size_t depth,
         return false;
       }
       return absl::c_all_of(func.GetArguments(), [&](const auto& arg) {
-        if (arg.HasName() && (op != TSQueryOp::Phrase ||
-                              !absl::EqualsIgnoreCase(
-                                arg.GetName().GetIdentifierName(), "slop"))) {
+        if (arg.HasName() &&
+            !absl::EqualsIgnoreCase(arg.GetName().GetIdentifierName(),
+                                    NamedArgumentOf(op))) {
           return false;
         }
         return WhitelistWalk(arg.GetExpression(), depth + 1, nodes);
@@ -547,10 +558,12 @@ std::optional<std::string> RenderTSQueryCall(
   if (name == "list_value" || name == "array_value") {
     return RenderJoinedArgs(context, children, "[", "]");
   }
-  switch (ClassifyTSQueryFunction(name)) {
+  switch (const auto op = ClassifyTSQueryFunction(name); op) {
     case TSQueryOp::Unknown:
       return std::nullopt;
-    case TSQueryOp::Phrase: {
+    case TSQueryOp::Phrase:
+    case TSQueryOp::Fuzzy: {
+      const auto named = NamedArgumentOf(op);
       std::string out = absl::StrCat(name, "(");
       for (size_t i = 0; i < children.size(); ++i) {
         auto rendered = RenderTSQueryExpression(context, *children[i]);
@@ -560,8 +573,11 @@ std::optional<std::string> RenderTSQueryCall(
         if (i != 0) {
           out += ", ";
         }
-        if (children[i]->GetAlias() == "slop") {
-          out += "slop := ";
+        if (const auto& alias = children[i]->GetAlias(); !alias.empty()) {
+          if (!(alias == named)) {
+            return std::nullopt;
+          }
+          absl::StrAppend(&out, named, " := ");
         }
         out += std::move(*rendered);
       }

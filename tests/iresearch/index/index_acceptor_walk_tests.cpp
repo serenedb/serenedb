@@ -332,6 +332,92 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
                                   term.size());
   }
 
+  static size_t PrefixDistance(irs::bytes_view term,
+                               std::span<const uint32_t> target,
+                               bool transpositions) {
+    auto valid = term.size();
+    while (!IsUtf8(term.substr(0, valid))) {
+      --valid;
+    }
+    irs::containers::SmallVector<uint32_t, 16> chars;
+    irs::utf8_utils::ToUTF32<false>(term.substr(0, valid),
+                                    std::back_inserter(chars));
+    const size_t width = target.size() + 1;
+    std::vector<size_t> d((chars.size() + 1) * width);
+    const auto at = [&](size_t i, size_t j) -> size_t& {
+      return d[i * width + j];
+    };
+    for (size_t j = 0; j <= target.size(); ++j) {
+      at(0, j) = j;
+    }
+    size_t best = at(0, target.size());
+    for (size_t i = 1; i <= chars.size(); ++i) {
+      at(i, 0) = i;
+      for (size_t j = 1; j <= target.size(); ++j) {
+        at(i, j) =
+          std::min({at(i - 1, j) + 1, at(i, j - 1) + 1,
+                    at(i - 1, j - 1) + (chars[i - 1] != target[j - 1])});
+        if (transpositions && i > 1 && j > 1 && chars[i - 1] == target[j - 2] &&
+            chars[i - 2] == target[j - 1]) {
+          at(i, j) = std::min(at(i, j), at(i - 2, j - 2) + 1);
+        }
+      }
+      best = std::min(best, at(i, target.size()));
+    }
+    return best;
+  }
+
+  void AssertPrefixDistanceOracle(const irs::IndexReader& reader,
+                                  const irs::ParametricDescription& description,
+                                  bool transpositions, std::string_view prefix,
+                                  std::string_view target, bool check_source) {
+    const auto fuzzy = std::make_shared<const irs::LevenshteinAcceptor>(
+      description, irs::ViewCast<irs::byte_type>(prefix),
+      irs::ViewCast<irs::byte_type>(target));
+    const irs::LevenshteinPrefixAcceptor acceptor{fuzzy};
+    const auto prefix_bytes = irs::ViewCast<irs::byte_type>(prefix);
+    irs::containers::SmallVector<uint32_t, 16> target_chars;
+    irs::utf8_utils::ToUTF32<false>(irs::ViewCast<irs::byte_type>(target),
+                                    std::back_inserter(target_chars));
+
+    for (auto& segment : reader) {
+      for (auto field_id : segment.field_ids()) {
+        const auto* field = StringsOf(segment, field_id);
+        if (!field) {
+          continue;
+        }
+        SCOPED_TRACE(testing::Message("Field: ") << field_id);
+
+        std::vector<std::pair<irs::bstring, irs::byte_type>> expected;
+        for (auto terms = field->iterator(); terms->next();) {
+          const auto term = terms->value();
+          if (!term.starts_with(prefix_bytes)) {
+            continue;
+          }
+          const auto distance = PrefixDistance(
+            term.substr(prefix_bytes.size()),
+            {target_chars.data(), target_chars.size()}, transpositions);
+          if (distance <= description.max_distance()) {
+            expected.emplace_back(term, static_cast<irs::byte_type>(distance));
+          }
+        }
+        for (const auto& [term, distance] : expected) {
+          irs::byte_type payload{};
+          EXPECT_TRUE(acceptor.Matches(term, payload));
+          EXPECT_EQ(distance, payload);
+        }
+        auto walk = field->iterator(acceptor);
+        ASSERT_NE(nullptr, walk);
+        AssertSameWalk(expected, *walk, true);
+      }
+    }
+    if (check_source) {
+      const auto source = irs::MakeFuzzyPrefixSource(fuzzy);
+      ASSERT_NE(nullptr, source);
+      AssertSourceMatchesWalk(reader, acceptor, *source);
+    }
+  }
+
   static std::string LikeRegex(std::string_view pattern) {
     static constexpr std::string_view kMeta = "\\[](){}.*+?|^$";
     std::string regex = "\\A";
@@ -920,6 +1006,95 @@ TEST_P(AcceptorWalkIndexTestCase, fuzzy_source_walks_the_parametric_language) {
       }
     }
     EXPECT_NE(0, total);
+  }
+}
+
+TEST_P(AcceptorWalkIndexTestCase, levenshtein_prefix_walk_is_the_prefix_set) {
+  struct Case {
+    std::string_view prefix;
+    std::string_view target;
+  };
+  constexpr Case kCases[]{
+    {"", "atlsa"},     {"", "burden"}, {"", "del"},    {"", "parlm"},
+    {"", "survenius"}, {"", ""},       {"bu", "rdne"}, {"a", ""},
+  };
+
+  AddEuroparl();
+
+  auto reader = open_reader();
+
+  for (const auto distance : {uint8_t{1}, uint8_t{2}}) {
+    for (const bool transpositions : {false, true}) {
+      const auto description =
+        irs::MakeParametricDescription(distance, transpositions);
+      for (const auto& [prefix, target] : kCases) {
+        SCOPED_TRACE(testing::Message("Prefix: '")
+                     << prefix << "', target: '" << target
+                     << "', distance: " << size_t{distance}
+                     << ", transpositions: " << transpositions);
+        AssertPrefixDistanceOracle(reader, description, transpositions, prefix,
+                                   target, false);
+      }
+    }
+  }
+}
+
+TEST_P(AcceptorWalkIndexTestCase, levenshtein_prefix_multibyte_terms) {
+  constexpr std::string_view kChars[]{
+    "a",
+    "\xC3\xA9",
+    "\xD0\xB2",
+    "\xD0\xB1",
+    "\xE4\xB8\xAD",
+    "\xE4\xBA\xAC",
+    "\xF0\x9F\x98\x80",
+    "\xF0\x9F\x99\x82",
+  };
+  std::vector<std::string> terms;
+  for (const auto a : kChars) {
+    terms.emplace_back(a);
+    for (const auto b : kChars) {
+      terms.emplace_back(std::string{a}.append(b));
+      terms.emplace_back(std::string{a}.append(b).append("\xC3"));
+      for (const auto c : kChars) {
+        terms.emplace_back(std::string{a}.append(b).append(c));
+        terms.emplace_back(std::string{a}.append(b).append(c).append("\xFF"));
+      }
+    }
+  }
+  const std::vector<std::string_view> views{terms.begin(), terms.end()};
+  AddTerms(views);
+
+  auto reader = open_reader();
+
+  struct Case {
+    std::string_view prefix;
+    std::string_view target;
+  };
+  constexpr Case kCases[]{
+    {"", "\xD0\xB2"},
+    {"", "\xD0\xB2\xD0\xB1"},
+    {"", "\xE4\xB8\xAD\xE4\xBA\xAC"},
+    {"",
+     "\xF0\x9F\x98\x80"
+     "a"},
+    {"", "a\xC3\xA9\xF0\x9F\x99\x82"},
+    {"\xD0\xB2", "\xE4\xB8\xAD"},
+    {"a", "\xD0\xB1\xF0\x9F\x98\x80"},
+  };
+  for (const auto distance : {uint8_t{1}, uint8_t{2}}) {
+    for (const bool transpositions : {false, true}) {
+      const auto description =
+        irs::MakeParametricDescription(distance, transpositions);
+      for (const auto& [prefix, target] : kCases) {
+        SCOPED_TRACE(testing::Message("Prefix: '")
+                     << prefix << "', target: '" << target
+                     << "', distance: " << size_t{distance}
+                     << ", transpositions: " << transpositions);
+        AssertPrefixDistanceOracle(reader, description, transpositions, prefix,
+                                   target, true);
+      }
+    }
   }
 }
 

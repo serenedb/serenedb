@@ -115,7 +115,7 @@ Elasticsearch suggesters read a field's terms to complete and correct what a use
 
 | Elasticsearch | SereneDB | Notes |
 |---|:---:|---|
-| [`completion` suggester](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters#completion-suggester) | ✅ | prefix match over the dictionary, ranked by document frequency ([Autocomplete](../../../cookbook/search/autocomplete.md)) |
+| [`completion` suggester](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters#completion-suggester) | ✅ | prefix match over the dictionary, ranked by document frequency; `fuzzy` is [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein) with `starts_with := true` ([Autocomplete](../../../cookbook/search/autocomplete.md)) |
 | [`term` suggester](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters#term-suggester) | ✅ | [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein) over the dictionary, ranked by [`ts_dict_score`](../../functions/search/term-dictionary.md) ([Spell Correction](../../../cookbook/search/spell-correction.md)) |
 | [`phrase` suggester](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters#phrase-suggester) | ⚠️ | correct each term with [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein); no whole-phrase language model ([Spell Correction](../../../cookbook/search/spell-correction.md)) |
 | [context suggester](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters#context-suggester) | ✅ | autocomplete with a `WHERE` filter on another indexed column |

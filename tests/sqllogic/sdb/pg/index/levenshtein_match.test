@@ -224,3 +224,27 @@ SELECT a FROM test_levenshtein_prefix_idx WHERE b @@ ts_levenshtein('le', 4, tru
 
 statement ok
 DROP TABLE test_levenshtein_prefix;
+
+# Two fuzzy matches that differ only in their literal prefix are different
+# predicates: OR keeps both.
+statement ok
+CREATE TABLE test_levenshtein_prefix_or (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX test_levenshtein_prefix_or_idx ON test_levenshtein_prefix_or USING inverted(a, b test_english);
+
+statement ok
+INSERT INTO test_levenshtein_prefix_or VALUES (1, 'abx'), (2, 'cdx');
+
+query
+SELECT a
+FROM test_levenshtein_prefix_or_idx
+WHERE b @@ (ts_levenshtein('x', 1, true, 'ab') || ts_levenshtein('x', 1, true, 'cd'))
+ORDER BY a;
+----
+a
+1
+2
+
+statement ok
+DROP TABLE test_levenshtein_prefix_or;

@@ -1,0 +1,442 @@
+hash-threshold 100
+
+# ts_levenshtein(..., starts_with := true) matches a term when one of its
+# prefixes is within the distance of the text; the similarity is the one of
+# the closest prefix.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY sw_words AS
+    split_text(case := 'lower') WITH (frequency, position)
+
+statement ok
+CREATE TABLE sw(id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR) WITH (compaction_interval = 0)
+
+statement ok
+CREATE INDEX sw_idx ON sw USING inverted(id, title, body sw_words)
+
+statement ok
+INSERT INTO sw VALUES
+  (1, 'New York City', 'the quick brown fox'),
+  (2, 'New York Times', 'quickly and quietly'),
+  (3, 'New Yorker', 'a quiet evening')
+
+statement ok
+VACUUM (FLUSH_TABLE) sw;
+
+statement ok
+INSERT INTO sw VALUES
+  (4, 'Newark', 'quilt patterns'),
+  (5, 'New York City', 'quick thinking'),
+  (6, 'Nowhere Man', 'question time'),
+  (7, 'News at Ten', 'the queen'),
+  (8, 'Straßenbahn', 'a tram')
+
+# Typo-tolerant completion over a keyword column: 'New Y' is one transposition
+# from 'Nwe Y'. Counts merge across the two segments.
+query
+SELECT unnest(ts_dict_agg(title))   AS suggestion,
+       unnest(ts_dict_score(title)) AS similarity,
+       unnest(ts_dict_count(title)) AS docs
+FROM sw_idx
+WHERE title @@ ts_levenshtein('Nwe Y', 1, starts_with := true)
+ORDER BY similarity DESC, docs DESC, suggestion
+----
+suggestion	similarity	docs
+New York City	0.8	2
+New York Times	0.8	1
+New Yorker	0.8	1
+
+# The whole value is far from 'Nwe Y', so the whole-term match finds nothing.
+query
+SELECT unnest(ts_dict_agg(title)) AS suggestion
+FROM sw_idx
+WHERE title @@ ts_levenshtein('Nwe Y', 1)
+----
+suggestion
+
+query
+SELECT unnest(ts_dict_agg(title)) AS suggestion
+FROM sw_idx
+WHERE title @@ ts_levenshtein('Nwe Y', 1, starts_with := false)
+----
+suggestion
+
+# Without transpositions the swap costs two edits.
+query
+SELECT unnest(ts_dict_agg(title)) AS suggestion
+FROM sw_idx
+WHERE title @@ ts_levenshtein('Nwe Y', 1, false, starts_with := true)
+----
+suggestion
+
+query
+SELECT unnest(ts_dict_agg(title))   AS suggestion,
+       unnest(ts_dict_score(title)) AS similarity
+FROM sw_idx
+WHERE title @@ ts_levenshtein('Nwe Y', 2, false, starts_with := true)
+ORDER BY suggestion
+----
+suggestion	similarity
+New York City	0.6
+New York Times	0.6
+New Yorker	0.6
+
+# The literal prefix still has to match exactly; only the rest is fuzzy.
+query
+SELECT unnest(ts_dict_agg(title))   AS suggestion,
+       unnest(ts_dict_score(title)) AS similarity
+FROM sw_idx
+WHERE title @@ ts_levenshtein('w Yo', 1, true, 'Ne', starts_with := true)
+ORDER BY suggestion
+----
+suggestion	similarity
+New York City	1
+New York Times	1
+New Yorker	1
+
+# Distance 0 is an exact prefix match.
+query
+SELECT unnest(ts_dict_agg(title))   AS suggestion,
+       unnest(ts_dict_score(title)) AS similarity
+FROM sw_idx
+WHERE title @@ ts_levenshtein('New Y', 0, starts_with := true)
+ORDER BY suggestion
+----
+suggestion	similarity
+New York City	1
+New York Times	1
+New Yorker	1
+
+query
+SELECT unnest(ts_dict_agg(title))   AS suggestion,
+       unnest(ts_dict_score(title)) AS similarity
+FROM sw_idx
+WHERE title @@ ts_levenshtein('Stras', 1, starts_with := true)
+----
+suggestion	similarity
+Straßenbahn	0.8
+
+# Another acceptor on the same field is checked per term.
+query
+SELECT unnest(ts_dict_agg(title)) AS suggestion
+FROM sw_idx
+WHERE title @@ ts_levenshtein('Nwe Y', 1, starts_with := true)
+  AND title LIKE '%Times'
+----
+suggestion
+New York Times
+
+# Documents: a word that starts within one edit of 'quik' matches.
+query
+SELECT id
+FROM sw_idx
+WHERE body @@ ts_levenshtein('quik', 1, starts_with := true)
+ORDER BY id
+----
+id
+1
+2
+3
+4
+5
+
+query
+SELECT id
+FROM sw_idx
+WHERE body @@ ts_levenshtein('quik', 1)
+ORDER BY id
+----
+id
+1
+5
+
+# Term enumeration over a tokenized column.
+query
+SELECT t AS term, s AS similarity
+FROM (SELECT unnest(ts_dict_agg(body))   AS t,
+             unnest(ts_dict_score(body)) AS s
+      FROM sw_idx) sub
+WHERE t @@ ts_levenshtein('quic', 2, starts_with := true)
+ORDER BY s DESC, t
+----
+term	similarity
+quick	1
+quickly	1
+quiet	0.75
+quietly	0.75
+quilt	0.75
+queen	0.5
+question	0.5
+
+# A phrase part.
+query
+SELECT id
+FROM sw_idx
+WHERE body @@ ('a' ## ts_levenshtein('quei', 1, starts_with := true))
+ORDER BY id
+----
+id
+3
+
+query
+SELECT id
+FROM sw_idx
+WHERE body @@ ('the' ## ts_levenshtein('qu', 0, starts_with := true))
+ORDER BY id
+----
+id
+1
+7
+
+# Deleted documents drop out of the counts and the terms.
+statement ok
+DELETE FROM sw WHERE id IN (3, 5)
+
+query
+SELECT unnest(ts_dict_agg(title))   AS suggestion,
+       unnest(ts_dict_count(title)) AS docs
+FROM sw_idx
+WHERE title @@ ts_levenshtein('Nwe Y', 1, starts_with := true)
+ORDER BY suggestion
+----
+suggestion	docs
+New York City	1
+New York Times	1
+
+# Parameters.
+statement ok
+PREPARE sw_complete AS
+SELECT unnest(ts_dict_agg(title)) AS suggestion
+FROM sw_idx
+WHERE title @@ ts_levenshtein($1, 1, starts_with := $2)
+
+query rowsort
+EXECUTE sw_complete('Nwe Y', true)
+----
+suggestion
+New York City
+New York Times
+
+query rowsort
+EXECUTE sw_complete('Nwe Y', false)
+----
+suggestion
+
+statement ok
+DEALLOCATE sw_complete
+
+# A phrase checked against the column's text: no positions in the dictionary.
+statement ok
+CREATE TEXT SEARCH DICTIONARY sw_nopos AS
+    split_text(case := 'lower') WITH (frequency)
+
+statement ok
+CREATE TABLE swt(id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX swt_idx ON swt USING inverted(id, body sw_nopos) INCLUDE (body)
+
+statement ok
+INSERT INTO swt VALUES (1, 'a quiet evening'), (2, 'a tram'), (3, 'a quilt')
+
+query
+SELECT id
+FROM swt_idx
+WHERE body @@ ('a' ## ts_levenshtein('quei', 1, starts_with := true))
+ORDER BY id
+----
+id
+1
+3
+
+# Top-k by similarity keeps only the terms that can still reach the first k.
+statement ok
+CREATE TABLE swk(id INTEGER PRIMARY KEY, kw VARCHAR)
+
+statement ok
+CREATE INDEX swk_idx ON swk USING inverted(id, kw)
+
+statement ok
+INSERT INTO swk VALUES (1, 'abcx'), (2, 'abxy'), (3, 'abzz'), (4, 'acdz'), (5, 'bcde')
+
+query
+SELECT unnest(ts_dict_agg(kw))   AS t,
+       unnest(ts_dict_score(kw)) AS s
+FROM swk_idx
+WHERE kw @@ ts_levenshtein('abcd', 2, starts_with := true)
+ORDER BY s DESC, t
+----
+t	s
+abcx	0.75
+acdz	0.75
+bcde	0.75
+abxy	0.5
+abzz	0.5
+
+query
+SELECT unnest(ts_dict_agg(kw))   AS t,
+       unnest(ts_dict_score(kw)) AS s
+FROM swk_idx
+WHERE kw @@ ts_levenshtein('abcd', 2, starts_with := true)
+ORDER BY s DESC, t
+LIMIT 2
+----
+t	s
+abcx	0.75
+acdz	0.75
+
+# The expansion cap keeps the closest terms.
+statement ok
+SET sdb_levenshtein_max_terms = 2
+
+query
+SELECT id
+FROM swk_idx
+WHERE kw @@ ts_levenshtein('abcd', 2, starts_with := true)
+ORDER BY id
+----
+id
+1
+4
+
+statement ok
+RESET sdb_levenshtein_max_terms
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(kw))   AS t,
+               unnest(ts_dict_score(kw)) AS s
+FROM swk_idx
+WHERE kw @@ ts_levenshtein('abcd', 2, starts_with := true)
+ORDER BY s DESC, t
+LIMIT 2
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────╮
+│ Top: 2                            │
+│ Order By: s DESC, t ASC           │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ HASH_GROUP_BY ─┴─────────────────╮
+│ Groups: #0                        │
+│ Aggregates: max(#1)               │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: swk_idx                    │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Levenshtein ─────╮             │
+│ │ Field: kw(string) │             │
+│ │ Target: abcd      │             │
+│ │ Starts With: true │             │
+│ │ Max Terms: 2      │             │
+│ ╰───────────────────╯             │
+│ TsDict: kw                        │
+│ Projections:                      │
+│ sdb_inverted_index_term$kw,       │
+│ sdb_inverted_index_term_score$kw  │
+│ ~1 row                            │
+╰───────────────────────────────────╯
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(title)) AS suggestion
+FROM sw_idx
+WHERE title @@ ts_levenshtein('Nwe Y', 1, starts_with := true)
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ────────────────╮
+│ Groups: #0                     │
+│ ~0 rows                        │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: sw_idx                  │
+│ Lookup: search                 │
+│ Index Filter:                  │
+│ ╭─ Levenshtein ────────╮       │
+│ │ Field: title(string) │       │
+│ │ Target: Nwe Y        │       │
+│ │ Starts With: true    │       │
+│ │ Max Terms: 0         │       │
+│ ╰──────────────────────╯       │
+│ TsDict: title                  │
+│ Projections:                   │
+│ sdb_inverted_index_term$title  │
+│ ~1 row                         │
+╰────────────────────────────────╯
+
+query
+EXPLAIN SELECT id
+FROM sw_idx
+WHERE title @@ ts_levenshtein('New Y', 0, starts_with := true)
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────╮
+│ Index: sw_idx            │
+│ Lookup: search           │
+│ Index Filter:            │
+│ ╭─ Starts With ────────╮ │
+│ │ Field: title(string) │ │
+│ │ Prefix: New Y        │ │
+│ ╰──────────────────────╯ │
+│ Projections: id          │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT id
+FROM sw_idx
+WHERE body @@ ('the' ## ts_levenshtein('quik', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────╮
+│ Index: sw_idx                                                   │
+│ Lookup: search                                                  │
+│ Index Filter:                                                   │
+│ ╭─ Phrase ────────────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                         │ │
+│ │ Parts:                                                      │ │
+│ │ Term:the(0, 0); LevenshteinAutomatonStartsWith:quik(1, 1);  │ │
+│ ╰─────────────────────────────────────────────────────────────╯ │
+│ Projections: id                                                 │
+│ ~1 row                                                          │
+╰─────────────────────────────────────────────────────────────────╯
+
+# A TSQUERY parameter written as text keeps the named argument.
+statement ok
+PREPARE sw_match AS SELECT id FROM sw_idx WHERE body @@ $1 ORDER BY id
+
+query
+EXECUTE sw_match('ts_levenshtein(''quik'', 1, starts_with := true)')
+----
+id
+1
+2
+4
+
+query
+EXECUTE sw_match('ts_levenshtein(''quik'', 1)')
+----
+id
+1
+
+statement ok
+DEALLOCATE sw_match
+
+# A NULL argument makes the whole match NULL, which no row satisfies.
+query
+SELECT id FROM sw_idx WHERE body @@ ts_levenshtein('quik', 1, starts_with := NULL)
+----
+id
+
+statement error
+SELECT id FROM sw_idx WHERE body @@ ts_levenshtein('quik', 1, starts_with := 'maybe')
+----
+db error: ERROR: ts_levenshtein starts_with must be a BOOLEAN constant
+HINT: Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 (0-3 with transpositions). Optional `prefix` matches exactly. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6). `starts_with := true` matches the terms that start within the distance of the text.
+
+
+statement error
+SELECT id FROM sw_idx WHERE body @@ ts_levenshtein('quik', 1, startswith := true)
+----
+db error: ERROR: ts_levenshtein has no argument named startswith
+HINT: Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 (0-3 with transpositions). Optional `prefix` matches exactly. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6). `starts_with := true` matches the terms that start within the distance of the text.

@@ -315,6 +315,7 @@ struct LevenshteinArgs {
   // Literal prefix that must match exactly; only the suffix beyond it
   // participates in edit-distance computation. Empty by default.
   std::string prefix;
+  bool starts_with = false;
 };
 LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func);

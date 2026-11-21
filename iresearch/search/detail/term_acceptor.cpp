@@ -295,6 +295,12 @@ TermAcceptorSource::ptr MakeFuzzySource(
   return std::make_shared<const FuzzySource>(std::move(fuzzy));
 }
 
+TermAcceptorSource::ptr MakeFuzzyPrefixSource(
+  std::shared_ptr<const LevenshteinAcceptor> fuzzy) {
+  return std::make_shared<const WalkSource<LevenshteinPrefixAcceptor>>(
+    std::make_shared<const LevenshteinPrefixAcceptor>(std::move(fuzzy)));
+}
+
 TermAcceptorSource::ptr MakeJointSource(
   std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
   std::shared_ptr<const LevenshteinAcceptor> fuzzy) {

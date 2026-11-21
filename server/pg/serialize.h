@@ -22,6 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <array>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/typedefs.hpp>
@@ -89,15 +90,15 @@ struct SerializationCaches {
   std::unique_ptr<const Session> session;
 };
 
-struct SerializationContext {
-  message::Writer* writer = nullptr;
+std::array<duckdb::CsvSpecials, 4> TextEscapes(bool copy_text, char delim);
+
+struct SerializationSettings {
   int8_t extra_float_digits = 0;
   ByteaOutput bytea_output;
   // The session a regclass / regnamespace rendering resolves through.
   duckdb::ClientContext* client = nullptr;
   std::string_view quote_seq = "\"";  // can be mixed with backslashes
   uint32_t backslash_count = 1;
-  bool in_record = false;
   // PG COPY text mode: EmitEscaped additionally backslash-escapes the COPY
   // control bytes (\b \f \n \r \t \v). Set together with backslash_count = 2
   // (the COPY base, so a literal backslash becomes \\ and array/record depth
@@ -111,10 +112,16 @@ struct SerializationContext {
   char csv_escape = '"';
   bool csv_single_column = false;
   duckdb::CsvSpecials csv_specials;
-  std::string csv_scratch;
+  std::array<duckdb::CsvSpecials, 4> text_escapes = TextEscapes(false, '\t');
   // Null means UTC (the default) and keeps the cheap ToString + "+00" path.
-  duckdb::unique_ptr<duckdb::TimeZone> time_zone;
+  duckdb::shared_ptr<const duckdb::TimeZone> time_zone;
   duckdb::shared_ptr<const duckdb::ZoneLUT> zone_lut;
+};
+
+struct SerializationContext : SerializationSettings {
+  message::Writer* writer = nullptr;
+  bool in_record = false;
+  std::string csv_scratch;
   std::unique_ptr<SerializationCaches> caches;
   std::vector<duckdb::RecursiveUnifiedVectorFormat> decoded;
 };

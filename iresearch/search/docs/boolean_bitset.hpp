@@ -82,6 +82,9 @@ template<>
 inline constexpr FoldEmit kFoldEmit<docs::Root::ptr>{0.0, 1.0, true};
 
 template<>
+inline constexpr bool kFoldWhenDense<docs::Root::ptr> = true;
+
+template<>
 struct BitsetNode<docs::Root::ptr> {
   template<typename P>
   static docs::Root::ptr Make(BitsetBuckets&& buckets,

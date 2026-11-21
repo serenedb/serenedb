@@ -290,6 +290,14 @@ template<typename Result>
 inline constexpr bool kRangeBitset = false;
 
 template<typename Result>
+inline constexpr bool kFoldWhenDense = false;
+
+template<>
+inline constexpr bool kFoldWhenDense<FillNode::ptr> = true;
+
+inline constexpr uint64_t kFoldPostings = 4;
+
+template<typename Result>
 inline constexpr FoldEmit kFoldEmit{0.0, 1.0, true};
 
 template<>
@@ -318,10 +326,23 @@ inline bool TakeFold(bool faster, doc_id_t docs_count) noexcept {
   return faster && FoldReachesSegment(docs_count);
 }
 
+inline bool FoldIsFaster(size_t terms, uint64_t docs,
+                         doc_id_t docs_count) noexcept {
+  const uint64_t windows = docs_count / kWindowDocs + 1;
+  return terms * docs >= kFoldPostings * windows;
+}
+
 template<typename Result, typename Terms>
 bool TakeBitset(Terms terms, doc_id_t docs_count) {
-  return terms.size() >= kWindowWords &&
-         (kRangeBitset<Result> || FoldReachesSegment(docs_count));
+  if (terms.size() >= kWindowWords) {
+    return kRangeBitset<Result> || FoldReachesSegment(docs_count);
+  }
+  if constexpr (kFoldWhenDense<Result>) {
+    return terms.size() > 1 &&
+           TakeFold(FoldIsFaster(terms.size(), SumDocs(terms), docs_count),
+                    docs_count);
+  }
+  return false;
 }
 
 inline bool FoldProbeIsFaster(uint64_t interrogations, size_t terms,

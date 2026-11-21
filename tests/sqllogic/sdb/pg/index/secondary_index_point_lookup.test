@@ -116,7 +116,7 @@ QUERY PLAN
 │ Total: 0µs                    │
 │ Rows: 60,000                  │
 │                               │
-│ ╭─ docs::BooleanWindow ─╮     │
+│ ╭─ docs::BooleanBitset ─╮     │
 │ │ Plans: 1              │     │
 │ │ Calls: 49             │     │
 │ │ Plan: 0µs             │     │

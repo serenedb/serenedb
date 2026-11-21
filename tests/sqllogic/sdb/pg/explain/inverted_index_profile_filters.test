@@ -742,57 +742,57 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ──────────────────────────────────────────────────────────────╮
-│ Index: filters_kw_idx                                                     │
-│ Lookup: search                                                            │
-│ Projections: id                                                           │
-│                                                                           │
-├─ Index Filter Prepare ────────────────────────────────────────────────────┤
-│                                                                           │
-│ Total: 0µs                                                                │
-│ Snapshot: 0µs                                                             │
-│ Segments: 1 of 1                                                          │
-│                                                                           │
-│ ╭─ And ────────────────────╮                                              │
-│ │ Estimated Matches: 67    │                                              │
-│ │ Total: 0µs               │                                              │
-│ │ Time: 0µs                │                                              │
-│ ╰─────────────┬────────────╯                                              │
-│               ├─────────────────────────────╮                             │
-│ ╭─ Automaton ─┴────────────╮  ╭─ Starts With ────────────╮                │
-│ │ Field: msg(string)       │  │ Field: code(string)      │                │
-│ │ Pattern: user-1[0-9]-abc │  │ Prefix: code00           │                │
-│ │ Posting Lists: 10        │  │ Posting Lists: 100       │                │
-│ │ Estimated Matches: 666   │  │ Estimated Matches: 2,000 │                │
-│ │ Postings: 666            │  │ Postings: 2,000          │                │
-│ │ Time: 0µs                │  │ Time: 0µs                │                │
-│ ╰──────────────────────────╯  ╰──────────────────────────╯                │
-│                                                                           │
-├─ Index Filter Execute ────────────────────────────────────────────────────┤
-│                                                                           │
-│ Total: 0µs                                                                │
-│ Rows: 66                                                                  │
-│                                                                           │
-│ ╭─ docs::BooleanWindow ─────────────╮                                     │
-│ │ Plans: 1                          │                                     │
-│ │ Calls: 18                         │                                     │
-│ │ Plan: 0µs                         │                                     │
-│ │ Total: 0µs                        │                                     │
-│ │ Time: 0µs                         │                                     │
-│ │ Rows: 66                          │                                     │
-│ ╰─────────────────┬─────────────────╯                                     │
-│                   ├─────────────────────────────────────╮                 │
-│ ╭─ fill::Impl<fill::BooleanWindow> ─╮  ╭─ fill::Impl<fill::BitsetDocs> ─╮ │
-│ │ Filter: Automaton                 │  │ Filter: Starts With            │ │
-│ │ Plans: 1                          │  │ Plans: 1                       │ │
-│ │ Calls: 5                          │  │ Calls: 5                       │ │
-│ │ Time: 0µs                         │  │ Time: 0µs                      │ │
-│ │ Rows: 612                         │  │ Rows: 1,992                    │ │
-│ ╰───────────────────────────────────╯  ╰────────────────────────────────╯ │
-│                                                                           │
-├───────────────────────────────────────────────────────────────────────────┤
-│ 66 rows                                                               0µs │
-╰───────────────────────────────────────────────────────────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────────────────────────────────────╮
+│ Index: filters_kw_idx                                                  │
+│ Lookup: search                                                         │
+│ Projections: id                                                        │
+│                                                                        │
+├─ Index Filter Prepare ─────────────────────────────────────────────────┤
+│                                                                        │
+│ Total: 0µs                                                             │
+│ Snapshot: 0µs                                                          │
+│ Segments: 1 of 1                                                       │
+│                                                                        │
+│ ╭─ And ────────────────────╮                                           │
+│ │ Estimated Matches: 67    │                                           │
+│ │ Total: 0µs               │                                           │
+│ │ Time: 0µs                │                                           │
+│ ╰─────────────┬────────────╯                                           │
+│               ├─────────────────────────────╮                          │
+│ ╭─ Automaton ─┴────────────╮  ╭─ Starts With ────────────╮             │
+│ │ Field: msg(string)       │  │ Field: code(string)      │             │
+│ │ Pattern: user-1[0-9]-abc │  │ Prefix: code00           │             │
+│ │ Posting Lists: 10        │  │ Posting Lists: 100       │             │
+│ │ Estimated Matches: 666   │  │ Estimated Matches: 2,000 │             │
+│ │ Postings: 666            │  │ Postings: 2,000          │             │
+│ │ Time: 0µs                │  │ Time: 0µs                │             │
+│ ╰──────────────────────────╯  ╰──────────────────────────╯             │
+│                                                                        │
+├─ Index Filter Execute ─────────────────────────────────────────────────┤
+│                                                                        │
+│ Total: 0µs                                                             │
+│ Rows: 66                                                               │
+│                                                                        │
+│ ╭─ docs::BooleanWindow ──────────╮                                     │
+│ │ Plans: 1                       │                                     │
+│ │ Calls: 18                      │                                     │
+│ │ Plan: 0µs                      │                                     │
+│ │ Total: 0µs                     │                                     │
+│ │ Time: 0µs                      │                                     │
+│ │ Rows: 66                       │                                     │
+│ ╰────────────────┬───────────────╯                                     │
+│                  ├───────────────────────────────────╮                 │
+│ ╭─ fill::Impl<fill::BitsetDocs> ─╮  ╭─ fill::Impl<fill::BitsetDocs> ─╮ │
+│ │ Filter: Automaton              │  │ Filter: Starts With            │ │
+│ │ Plans: 1                       │  │ Plans: 1                       │ │
+│ │ Calls: 5                       │  │ Calls: 5                       │ │
+│ │ Time: 0µs                      │  │ Time: 0µs                      │ │
+│ │ Rows: 612                      │  │ Rows: 1,992                    │ │
+│ ╰────────────────────────────────╯  ╰────────────────────────────────╯ │
+│                                                                        │
+├────────────────────────────────────────────────────────────────────────┤
+│ 66 rows                                                            0µs │
+╰────────────────────────────────────────────────────────────────────────╯
 
 
 statement ok

@@ -41,6 +41,9 @@ struct RawBoost final : ScorerBase<RawBoost, void> {
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
+  void Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+               explain::Node& out) const final;
+
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::None;
   }

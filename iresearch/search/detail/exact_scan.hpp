@@ -27,6 +27,7 @@
 #include <span>
 
 #include "iresearch/search/detail/vector_of.hpp"
+#include "iresearch/search/detail/vector_slots.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/queries/vector_exact_query.hpp"
@@ -52,9 +53,7 @@ class ExactScanner {
     if (const auto* inner = query.Inner()) {
       _matches = docs::MakeRoot(*inner, {});
     }
-    if (const auto& column = query.Column();
-        (column.HasValidity() || column.InMemory()) &&
-        column.MergedStatistics().CanHaveNull()) {
+    if (const auto& column = query.Column(); MayHaveNullRows(column)) {
       _validity.emplace(query.Columns(), column);
     }
   }

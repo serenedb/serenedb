@@ -91,6 +91,9 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
           if (g.profile) {
             g.profile->AddStats(ElapsedTicks(start));
           }
+          if (g.ScanExplain()) {
+            g.filter->ExplainStats(g.collector->Get(), g.explain_stats);
+          }
         }
         g.stats_barrier.Release(input);
       }

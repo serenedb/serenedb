@@ -74,6 +74,7 @@ add_executable(
     connector/search_filter_printer_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
+    connector/vector_explain_test.cpp
 )
 
 target_link_libraries(

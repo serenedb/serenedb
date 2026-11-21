@@ -116,4 +116,14 @@ PrepareCollector::ptr ByNGramSimilarity::MakeCollectorImpl(
   return std::make_unique<SlotsCollector>(scorer, terms_count, stats, threads);
 }
 
+void ByNGramSimilarity::ExplainStats(const PrepareCollector* collector,
+                                     explain::StatsIndex& out) const {
+  if (collector == nullptr) {
+    return;
+  }
+  const auto& ngrams = options().ngrams;
+  collector->Describe(
+    field_id(), [&](size_t i) { return bytes_view{ngrams[i]}; }, out);
+}
+
 }  // namespace irs

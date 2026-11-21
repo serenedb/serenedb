@@ -22,6 +22,7 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -62,6 +63,17 @@ struct RawTfScore : public ScoreOperatorOf<RawTfScore<HasScale>> {
 };
 
 }  // namespace
+
+void RawTF::Explain(const ScoreContext& ctx, const explain::SlotStats*,
+                    explain::Node& out) const {
+  if (!explain::FreqOf(ctx)) {
+    explain::ExplainNoFreq(ctx, false, out);
+    return;
+  }
+  explain::AddBoost(out, ctx.boost);
+  explain::AddFreq(out, ctx);
+  out.expression = "boost * freq";
+}
 
 ScoreFunction RawTF::PrepareScorer(const ScoreContext& ctx) const {
   auto* freq = irs::get<FreqBlockAttr>(ctx.doc_attrs);

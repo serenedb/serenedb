@@ -703,6 +703,37 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
     scorer, counts.terms, counts.expanded, stats, threads);
 }
 
+void ByPhrase::ExplainStats(const PrepareCollector* collector,
+                            explain::StatsIndex& out) const {
+  if (collector == nullptr) {
+    return;
+  }
+  std::vector<bytes_view> terms;
+  for (const auto& word : options()) {
+    switch (ByPhraseOptions::KindOf(word.part)) {
+      case SlotKind::Term:
+        terms.push_back(ByPhraseOptions::TermOf(word.part));
+        break;
+      case SlotKind::Set:
+        for (const auto& term : std::get<TermSetOptions>(word.part).terms) {
+          terms.push_back(term);
+        }
+        break;
+      case SlotKind::Expansion:
+        break;
+    }
+  }
+  collector->Describe(field_id(), [&](size_t i) { return terms[i]; }, out);
+}
+
+void ByPhrase::ExplainTerms(const SubReader& segment,
+                            explain::TermNames& out) const {
+  for (const auto& word : options()) {
+    PartFilter(field_id(), dict(), word.part, false)
+      ->ExplainTerms(segment, out);
+  }
+}
+
 Filter::ptr PartFilter(field_id field, DictRef dict,
                        ByPhraseOptions::PhrasePart part, bool max_synonyms) {
   return std::visit(

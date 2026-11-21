@@ -1237,13 +1237,13 @@ void DropClosure(duckdb::CatalogTransaction transaction,
 }
 
 void CollectNestedDependents(duckdb::CatalogTransaction transaction,
-                             duckdb::CatalogEntry& schema, bool nested,
+                             duckdb::CatalogEntry& schema,
                              NamingDependents& dependents) {
   schema.Cast<Schema>().ScanMembers(
     transaction, [&](duckdb::CatalogEntry& member) {
       if (member.type == duckdb::CatalogType::SCHEMA_ENTRY) {
-        CollectNestedDependents(transaction, member, true, dependents);
-      } else if (nested && !member.internal) {
+        CollectNestedDependents(transaction, member, dependents);
+      } else if (!member.internal) {
         CollectNamingDependents(transaction, member, dependents);
       }
     });
@@ -1830,18 +1830,21 @@ void FollowSchemaRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& schema,
                         const duckdb::Identifier& new_name,
                         std::vector<PendingDefault>& defaults) {
+  const bool nested = IsNested(transaction, schema);
   NamingDependents dependents;
-  CollectNestedDependents(transaction, schema, IsNested(transaction, schema),
-                          dependents);
-  RefuseDependents(schema, dependents);
   std::vector<duckdb::CatalogEntry*> members;
   schema.Cast<Schema>().ScanMembers(
     transaction, [&](duckdb::CatalogEntry& member) {
-      if (!member.internal &&
-          member.type != duckdb::CatalogType::SCHEMA_ENTRY) {
+      if (member.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+        CollectNestedDependents(transaction, member, dependents);
+      } else if (!member.internal) {
+        if (nested) {
+          CollectNamingDependents(transaction, member, dependents);
+        }
         members.push_back(&member);
       }
     });
+  RefuseDependents(schema, dependents);
   for (auto* member : members) {
     Follow(transaction, *member, new_name, member->name, defaults);
   }

@@ -64,7 +64,7 @@ query
 SELECT generic_plans, custom_plans FROM pg_prepared_statements WHERE name = 'pgp_q';
 ----
 generic_plans	custom_plans
-5	0
+4	1
 
 
 statement ok
@@ -137,7 +137,7 @@ query
 SELECT generic_plans, custom_plans FROM pg_prepared_statements WHERE name = 'pgp_class';
 ----
 generic_plans	custom_plans
-3	0
+2	1
 
 
 statement ok

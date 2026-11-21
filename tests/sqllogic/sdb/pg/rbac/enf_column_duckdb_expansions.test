@@ -85,7 +85,7 @@ INSERT INTO ecde_kv VALUES (1, 10, 'one');
 
 
 statement ok
-GRANT INSERT ON ecde_kv TO ecde_reader;
+GRANT INSERT, SELECT (id) ON ecde_kv TO ecde_reader;
 
 
 connection c_ecde user=ecde_reader password=ecde_pw
@@ -125,6 +125,17 @@ SELECT id, v, note FROM ecde_kv;
 ----
 id v note
 1 12 uno
+
+
+statement ok
+REVOKE SELECT (id) ON ecde_kv FROM ecde_reader;
+
+
+connection c_ecde user=ecde_reader password=ecde_pw
+statement error
+INSERT OR REPLACE INTO ecde_kv VALUES (1, 13, 'uno');
+----
+db error: ERROR: permission denied for table ecde_kv
 
 
 statement ok

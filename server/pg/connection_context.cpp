@@ -536,12 +536,10 @@ void ConnectionContext::OnSettingChange(const std::string& name,
     return;
   }
   MarkSettingsChanged();
-  const bool is_local = scope == duckdb::SetScope::LOCAL;
-  if ((!is_local && !IsExplicitTransaction()) ||
-      IsNonTransactionalSetting(name)) {
+  if (IsNonTransactionalSetting(name)) {
     return;
   }
-  OnSet(name, is_local, previous);
+  OnSet(name, scope == duckdb::SetScope::LOCAL, previous);
 }
 
 void ConnectionContext::OnQueryBegin() {

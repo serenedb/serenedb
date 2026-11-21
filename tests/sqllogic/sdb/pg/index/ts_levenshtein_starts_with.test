@@ -822,6 +822,29 @@ t	s
 abcx	0.75
 acdz	0.75
 
+# A text no longer than the distance matches every term: the empty beginning is
+# already within the distance.
+query
+SELECT unnest(ts_dict_agg(kw))   AS t,
+       unnest(ts_dict_score(kw)) AS s
+FROM swk_idx
+WHERE kw @@ ts_levenshtein('qq', 2, starts_with := true)
+ORDER BY t
+----
+t	s
+abcx	0
+abxy	0
+abzz	0
+acdz	0
+bcde	0
+
+query
+SELECT unnest(ts_dict_agg(kw)) AS t
+FROM swk_idx
+WHERE kw @@ ts_levenshtein('qq', 1, starts_with := true)
+----
+t
+
 # The expansion cap keeps the closest terms.
 statement ok
 SET sdb_levenshtein_max_terms = 2

@@ -134,7 +134,13 @@ const RegistryEntry kRegistry[] = {
     .glob_pk_spec = PkSpec::FileIndexPlusDuckDBRowId,
     .supports_filters = true,
   },
-  // TODO: read_avro, postgres_scan / postgres_query.
+  {
+    .function_name = "read_avro",
+    .single_pk_spec = PkSpec::FileOffset,
+    .glob_pk_spec = PkSpec::FileIndexPlusOffset,
+    .supports_filters = true,
+  },
+  // TODO: postgres_scan / postgres_query.
 };
 
 constexpr struct {

@@ -1300,6 +1300,134 @@ QUERY PLAN
 statement ok
 RESET sdb_levenshtein_max_terms
 
+# In an AND the clause that covers another one is redundant: every term
+# starting with 'runing' is at distance 0 from 'runin', so the prefix remains.
+query
+SELECT unnest(ts_dict_agg(kw)) AS t
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runing') && ts_levenshtein('runin', 1, starts_with := true))
+ORDER BY t
+----
+t
+runing
+runing shoes
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(kw)) AS t
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runing') && ts_levenshtein('runin', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────────────╮
+│ Groups: #0                              │
+│ ~0 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
+│ Index: swo_idx                          │
+│ Lookup: search                          │
+│ Index Filter:                           │
+│ ╭─ Starts With ─────╮                   │
+│ │ Field: kw(string) │                   │
+│ │ Prefix: runing    │                   │
+│ ╰───────────────────╯                   │
+│ TsDict: kw                              │
+│ Projections: sdb_inverted_index_term$kw │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+# A literal prefix keeps a fuzzy match under it, so an OR with a
+# ts_starts_with of that prefix is the prefix alone.
+query
+SELECT unnest(ts_dict_agg(kw)) AS t
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('ru') || ts_levenshtein('nin', 1, prefix := 'run'))
+ORDER BY t
+----
+t
+ruin
+runin
+runing
+runing shoes
+running
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(kw)) AS t
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('ru') || ts_levenshtein('nin', 1, prefix := 'run'))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────────────╮
+│ Groups: #0                              │
+│ ~0 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
+│ Index: swo_idx                          │
+│ Lookup: search                          │
+│ Index Filter:                           │
+│ ╭─ Starts With ─────╮                   │
+│ │ Field: kw(string) │                   │
+│ │ Prefix: ru        │                   │
+│ ╰───────────────────╯                   │
+│ TsDict: kw                              │
+│ Projections: sdb_inverted_index_term$kw │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+# Excluding a match that covers a required one leaves nothing to match.
+query
+SELECT id
+FROM swo_idx
+WHERE kw @@ (ts_levenshtein('nin', 1, prefix := 'run') && !!ts_starts_with('ru'))
+ORDER BY id
+----
+id
+
+query
+EXPLAIN SELECT id
+FROM swo_idx
+WHERE kw @@ (ts_levenshtein('nin', 1, prefix := 'run') && !!ts_starts_with('ru'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─╮
+│ Index: swo_idx   │
+│ Lookup: search   │
+│ Index Filter:    │
+│ ╭─ Empty ─╮      │
+│ ╰─────────╯      │
+│ Projections: id  │
+│ ~0 rows          │
+╰──────────────────╯
+
+statement ok
+SET sdb_levenshtein_max_terms = 0
+
+query
+SELECT id
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runing') && !!ts_levenshtein('runin', 1, starts_with := true))
+ORDER BY id
+----
+id
+
+query
+EXPLAIN SELECT id
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runing') && !!ts_levenshtein('runin', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─╮
+│ Index: swo_idx   │
+│ Lookup: search   │
+│ Index Filter:    │
+│ ╭─ Empty ─╮      │
+│ ╰─────────╯      │
+│ Projections: id  │
+│ ~0 rows          │
+╰──────────────────╯
+
+statement ok
+RESET sdb_levenshtein_max_terms
+
 # A NULL argument makes the whole match NULL, which no row satisfies.
 query
 SELECT id FROM sw_idx WHERE body @@ ts_levenshtein('quik', 1, starts_with := NULL)

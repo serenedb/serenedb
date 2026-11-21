@@ -209,26 +209,6 @@ bool MergeComplementaryRanges(BooleanFilter& node, const OptimizeContext& ctx) {
   return true;
 }
 
-size_t EraseFilters(std::vector<Filter::ptr>& filters, auto predicate) {
-  auto tail = filters.begin();
-  for (auto it = tail, end = filters.end(); it != end; ++it) {
-    if (!predicate(**it)) {
-      if (tail != it) {
-        std::iter_swap(tail, it);
-      }
-      ++tail;
-    }
-  }
-  const auto erased = static_cast<size_t>(std::distance(tail, filters.end()));
-  filters.erase(tail, filters.end());
-  return erased;
-}
-
-bool AnyFilter(std::span<const Filter::ptr> filters, auto predicate) {
-  return absl::c_any_of(
-    filters, [&](const Filter::ptr& child) { return predicate(*child); });
-}
-
 bool Accepts(const ByRangeOptions& options, bytes_view term) noexcept {
   return RangeMinAcceptor{&options.range}(term) &&
          RangeMaxAcceptor{&options.range}(term);
@@ -246,11 +226,19 @@ const ByRangeOptions* AsRange(const Filter& child) noexcept {
            : nullptr;
 }
 
+bool IsFuzzy(const Filter& child) noexcept {
+  return child.type() == Type<ByEditDistance>::id();
+}
+
+const ByEditDistanceOptions& FuzzyOptions(const Filter& child) noexcept {
+  return irs::utils::downCast<ByEditDistance>(child).options();
+}
+
 const ByEditDistanceOptions* AsUncappedFuzzy(const Filter& child) noexcept {
-  if (child.type() != Type<ByEditDistance>::id()) {
+  if (!IsFuzzy(child)) {
     return nullptr;
   }
-  const auto& options = irs::utils::downCast<ByEditDistance>(child).options();
+  const auto& options = FuzzyOptions(child);
   return options.max_terms == 0 ? &options : nullptr;
 }
 
@@ -280,7 +268,7 @@ FieldKey KeyOf(const Filter& child) noexcept {
     const auto& range = irs::utils::downCast<ByRange>(child);
     return {.field = range.field_id(), .dict = range.dict()};
   }
-  if (child.type() == Type<ByEditDistance>::id()) {
+  if (IsFuzzy(child)) {
     const auto& fuzzy = irs::utils::downCast<ByEditDistance>(child);
     return {.field = fuzzy.field_id(), .dict = fuzzy.dict()};
   }
@@ -301,41 +289,55 @@ bool CoversTerm(const Filter& child, const TermClause& clause) noexcept {
   return range != nullptr && Accepts(*range, clause.term);
 }
 
-bool CoversFilter(const ByEditDistanceOptions& wider,
-                  const Filter& narrower) noexcept {
-  if (const auto* prefix = AsPrefix(narrower); prefix != nullptr) {
-    return wider.starts_with && AtDistanceZero(wider, prefix->term);
-  }
-  if (narrower.type() != Type<ByEditDistance>::id()) {
+bool Covers(const Filter& wider, const Filter& narrower) noexcept {
+  if (KeyOf(wider) != KeyOf(narrower)) {
     return false;
   }
-  const auto& other = irs::utils::downCast<ByEditDistance>(narrower).options();
-  return other.term == wider.term && other.prefix == wider.prefix &&
-         other.provider == wider.provider &&
-         other.with_transpositions == wider.with_transpositions &&
-         other.max_distance <= wider.max_distance &&
-         (wider.starts_with || !other.starts_with);
+  if (const auto* fuzzy = AsUncappedFuzzy(wider); fuzzy != nullptr) {
+    if (const auto* prefix = AsPrefix(narrower); prefix != nullptr) {
+      return fuzzy->starts_with && AtDistanceZero(*fuzzy, prefix->term);
+    }
+    if (!IsFuzzy(narrower)) {
+      return false;
+    }
+    const auto& other = FuzzyOptions(narrower);
+    return other.term == fuzzy->term && other.prefix == fuzzy->prefix &&
+           other.provider == fuzzy->provider &&
+           other.with_transpositions == fuzzy->with_transpositions &&
+           other.max_distance <= fuzzy->max_distance &&
+           (fuzzy->starts_with || !other.starts_with);
+  }
+  const auto* prefix = AsPrefix(wider);
+  return prefix != nullptr && IsFuzzy(narrower) &&
+         bytes_view{FuzzyOptions(narrower).prefix}.starts_with(prefix->term);
 }
 
-size_t DropCoveredFilters(std::vector<Filter::ptr>& filters) {
-  std::vector<const Filter*> covering;
+size_t DropRedundant(std::vector<Filter::ptr>& filters, bool required) {
+  std::vector<const Filter*> fuzzies;
   for (const auto& child : filters) {
-    if (AsUncappedFuzzy(*child) != nullptr) {
-      covering.push_back(child.get());
+    if (IsFuzzy(*child)) {
+      fuzzies.push_back(child.get());
     }
   }
-  if (covering.empty()) {
+  if (fuzzies.empty()) {
     return 0;
   }
+  std::vector<const Filter*> live;
+  live.reserve(filters.size());
+  for (const auto& child : filters) {
+    live.push_back(child.get());
+  }
   return EraseFilters(filters, [&](const Filter& child) {
-    const bool covered = absl::c_any_of(covering, [&](const Filter* wider) {
-      return wider != &child && KeyOf(*wider) == KeyOf(child) &&
-             CoversFilter(*AsUncappedFuzzy(*wider), child);
-    });
-    if (covered) {
-      std::erase(covering, &child);
+    const bool redundant =
+      absl::c_any_of(IsFuzzy(child) ? live : fuzzies, [&](const Filter* other) {
+        return other != &child &&
+               (required ? Covers(child, *other) : Covers(*other, child));
+      });
+    if (redundant) {
+      std::erase(live, &child);
+      std::erase(fuzzies, &child);
     }
-    return covered;
+    return redundant;
   });
 }
 
@@ -422,14 +424,14 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
   bool changed = false;
   auto& excluded = node.Bucket(Occur::MustNot);
   PrefixIndex excluded_index;
-  const bool has_excluded = excluded_index.Build(excluded.filters, 1);
+  const bool has_excluded = excluded_index.Build(excluded.filters, 1) ||
+                            AnyFilter(excluded.filters, IsFuzzy);
   for (const auto occur : {Occur::Must, Occur::Should, Occur::MustNot}) {
     if (occur == Occur::Should && node.MinShouldMatch() > 1) {
       continue;
     }
     auto& bucket = node.Bucket(occur);
     const bool required = occur == Occur::Must;
-    const bool optional = occur == Occur::Should;
 
     if (occur != Occur::MustNot) {
       const auto before = bucket.terms.size();
@@ -445,7 +447,10 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
       }
       if (has_excluded &&
           EraseFilters(bucket.filters, [&](const Filter& child) {
-            return excluded_index.Covers(child);
+            return excluded_index.Covers(child) ||
+                   AnyFilter(excluded.filters, [&](const Filter& wider) {
+                     return Covers(wider, child);
+                   });
           }) != 0) {
         if (required) {
           empty_node = true;
@@ -475,9 +480,7 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
                    return index.Subsumed(child, required);
                  }) != 0;
     }
-    if (optional) {
-      changed |= DropCoveredFilters(bucket.filters) != 0;
-    }
+    changed |= DropRedundant(bucket.filters, required) != 0;
   }
   return changed;
 }

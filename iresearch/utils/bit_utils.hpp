@@ -249,15 +249,19 @@ inline IRS_FORCE_INLINE __m256i LeftPackControl(uint32_t mask) noexcept {
 }
 #endif
 
-inline IRS_FORCE_INLINE uint32_t* MaterializeBits(uint32_t offset,
-                                                  uint64_t word,
-                                                  uint32_t* IRS_RESTRICT out) {
-#ifdef __AVX2__
+IRS_FORCE_INLINE constexpr uint64_t BytePrefixes(uint64_t word) noexcept {
   uint64_t counts = word - ((word >> 1) & 0x5555555555555555ULL);
   counts =
     (counts & 0x3333333333333333ULL) + ((counts >> 2) & 0x3333333333333333ULL);
   counts = (counts + (counts >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
-  const uint64_t prefix = (counts * 0x0101010101010101ULL) << 8;
+  return (counts * 0x0101010101010101ULL) << 8;
+}
+
+inline IRS_FORCE_INLINE uint32_t* MaterializeBits(uint32_t offset,
+                                                  uint64_t word,
+                                                  uint32_t* IRS_RESTRICT out) {
+#ifdef __AVX2__
+  const auto prefix = BytePrefixes(word);
   for (uint32_t b = 0; b != 8; ++b) {
     _mm256_storeu_si256(
       reinterpret_cast<__m256i*>(out + ((prefix >> (b * 8)) & 0xFF)),
@@ -356,11 +360,7 @@ inline IRS_FORCE_INLINE uint16_t* MaterializePositions(
     const auto base = static_cast<uint16_t>(BitsRequired<uint64_t>(w));
 #ifdef __AVX2__
     if (static_cast<uint32_t>(std::popcount(word)) > kSparseWordBits) {
-      uint64_t counts = word - ((word >> 1) & 0x5555555555555555ULL);
-      counts = (counts & 0x3333333333333333ULL) +
-               ((counts >> 2) & 0x3333333333333333ULL);
-      counts = (counts + (counts >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
-      const uint64_t prefix = (counts * 0x0101010101010101ULL) << 8;
+      const auto prefix = BytePrefixes(word);
       for (uint32_t b = 0; b != 8; ++b) {
         const auto mask = static_cast<uint32_t>(word >> (b * 8)) & 0xFF;
         _mm_storeu_si128(

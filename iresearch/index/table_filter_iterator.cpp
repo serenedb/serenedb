@@ -316,7 +316,7 @@ duckdb::idx_t ColFilterChain::DenseMask(
     const auto chunk_words = (n + 63) / 64;
     if (row >= f.checked.end || row < f.checked.begin) {
       f.checked = f.reader->Locate(row, f.checked);
-      const auto& stats = f.reader->RowGroupStatistics(f.checked.block);
+      const auto& stats = f.reader->DataBlocks()[f.checked.block].statistics;
       f.verdict = f.expr->CheckStatistics(stats, *f.state);
     }
     const auto z = row + n <= f.checked.end
@@ -376,7 +376,7 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
     // one-window-stale verdict merely under-prunes, never drops a live row.
     if (!f.nested && (anchor >= f.checked.end || anchor < f.checked.begin)) {
       f.checked = f.reader->Locate(anchor, f.checked);
-      const auto& stats = f.reader->RowGroupStatistics(f.checked.block);
+      const auto& stats = f.reader->DataBlocks()[f.checked.block].statistics;
       f.verdict = f.expr->CheckStatistics(stats, *f.state);
     }
     // A window crossing the block boundary cannot use the block's verdict.
@@ -805,7 +805,7 @@ uint64_t ColFilterChain::DeadUntil(uint64_t row) {
       if (stale) {
         f.checked = f.reader->Locate(row, f.checked);
       }
-      const auto& stats = f.reader->RowGroupStatistics(f.checked.block);
+      const auto& stats = f.reader->DataBlocks()[f.checked.block].statistics;
       f.verdict = f.expr->CheckStatistics(stats, *f.state);
     }
     if (ZoneDead(f.verdict)) {

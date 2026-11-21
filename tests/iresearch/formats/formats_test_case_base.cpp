@@ -1384,8 +1384,8 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     EXPECT_EQ(col_int->RowCount(), kRgRowCount);
     EXPECT_EQ(col_str->RowCount(), kRgRowCount);
     // Multiple data row groups expected at this scale (4 of 512).
-    EXPECT_GE(col_int->DataRgCount(), 2u);
-    EXPECT_GE(col_str->DataRgCount(), 2u);
+    EXPECT_GE(col_int->DataBlocks().size(), 2u);
+    EXPECT_GE(col_str->DataBlocks().size(), 2u);
 
     // Fetch at row-group boundaries; each probe on a fresh reader.
     const std::vector<uint64_t> boundary_rows = {
@@ -1578,7 +1578,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
     EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
-    EXPECT_GE(col->DataRgCount(), 2u);  // at least 2 row groups
+    EXPECT_GE(col->DataBlocks().size(), 2u);  // at least 2 row groups
 
     // Probes spanning row-group boundaries (511/512/513 etc).
     const std::vector<uint64_t> boundary_rows = {
@@ -1744,7 +1744,7 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Probes at row-group boundaries.
     const std::vector<uint64_t> boundary_rows = {
@@ -1943,7 +1943,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Probes at row-group boundaries.
     const std::vector<uint64_t> boundary_rows = {
@@ -2133,8 +2133,8 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     ASSERT_NE(name_col, nullptr);
     EXPECT_EQ(id_col->RowCount(), kBigRows);
     EXPECT_EQ(name_col->RowCount(), kBigRows);
-    EXPECT_GE(id_col->DataRgCount(), 2u);
-    EXPECT_GE(name_col->DataRgCount(), 2u);
+    EXPECT_GE(id_col->DataBlocks().size(), 2u);
+    EXPECT_GE(name_col->DataBlocks().size(), 2u);
     // Sample probes at row-group boundaries on both columns.
     const std::vector<uint64_t> boundary_rows = {
       0, 1, 511, 512, 513, 1023, 1024, 1025, 1535, 1536, 1537, kBigRows - 1};
@@ -2328,8 +2328,8 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
     ASSERT_NE(name_col, nullptr);
     EXPECT_EQ(id_col->RowCount(), kBigRows);
     EXPECT_EQ(name_col->RowCount(), kBigRows);
-    EXPECT_GE(id_col->DataRgCount(), 2u);
-    EXPECT_GE(name_col->DataRgCount(), 2u);
+    EXPECT_GE(id_col->DataBlocks().size(), 2u);
+    EXPECT_GE(name_col->DataBlocks().size(), 2u);
 
     // Probes at row-group boundaries on both columns.
     const std::vector<uint64_t> boundary_rows = {
@@ -2508,7 +2508,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
     EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Per-row check across the rg-boundary gap.
     {
@@ -2757,8 +2757,8 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
     ASSERT_NE(sparse_col, nullptr);
     EXPECT_EQ(dense_col->RowCount(), kBigRows);
     EXPECT_EQ(sparse_col->RowCount(), kBigRows);
-    EXPECT_GE(dense_col->DataRgCount(), 2u);
-    EXPECT_GE(sparse_col->DataRgCount(), 2u);
+    EXPECT_GE(dense_col->DataBlocks().size(), 2u);
+    EXPECT_GE(sparse_col->DataBlocks().size(), 2u);
 
     // Dense column at boundaries.
     const std::vector<uint64_t> boundary_rows = {
@@ -2940,7 +2940,7 @@ TEST_P(FormatTestCase, columns_issue700) {
     const auto* col = r.Column(kBigColId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Probes at row-group + vector-size boundaries.
     const std::vector<uint64_t> boundary_rows = {0,

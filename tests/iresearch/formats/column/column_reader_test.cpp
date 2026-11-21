@@ -888,7 +888,7 @@ void ExpectConcatReadsItsParts(
     const auto blocks = concat->DataBlocks();
     for (size_t i = 0; i < blocks.size(); ++i) {
       const auto first = concat->DataBlockFirstRow(i);
-      const auto& block = concat->RowGroupStatistics(i);
+      const auto& block = concat->DataBlocks()[i].statistics;
       for (uint64_t row = first; row < first + blocks[i].tuple_count; ++row) {
         if (expected[row].IsNull()) {
           EXPECT_TRUE(block.CanHaveNull()) << "row " << row;
@@ -1891,7 +1891,7 @@ TEST_F(ColumnReaderTest, PatchedColumnsReadTheirPatchedValues) {
           continue;
         }
         const auto block = patched.Locate(g).block;
-        const auto& rg = patched.RowGroupStatistics(block);
+        const auto& rg = patched.DataBlocks()[block].statistics;
         const duckdb::ExpressionFilter eq{
           duckdb::BoundComparisonExpression::Create(
             duckdb::ExpressionType::COMPARE_EQUAL,
@@ -3432,7 +3432,7 @@ TEST_F(ColumnReaderTest, SkipLandsOnItsRowFromAnywhere) {
   irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
-  ASSERT_GT(col->DataRgCount(), 8U);
+  ASSERT_GT(col->DataBlocks().size(), 8U);
   const auto row_at = [&](irs::ColumnReader::ScanState& state) {
     duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     col->Scan(state, out, 1);
@@ -3499,7 +3499,7 @@ TEST_F(ColumnReaderTest, VectorReadsInRandomOrderLandOnTheirRows) {
   irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
-  ASSERT_GT(col->Child()->DataRgCount(), 4U);
+  ASSERT_GT(col->Child()->DataBlocks().size(), 4U);
   irs::ReadContext ctx{r, /*random_access=*/true};
   irs::IvfVectorReader reader{*col, ctx};
   std::vector<uint64_t> rows(kRows);

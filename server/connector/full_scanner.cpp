@@ -201,7 +201,7 @@ uint64_t FullScanner::MultiDeadUntil(uint64_t row) {
       multi.windows[i] = reader->Locate(row, multi.windows[i]);
       end = std::min<uint64_t>(end, multi.windows[i].end);
       _multi_stats.push_back(
-        reader->RowGroupStatistics(multi.windows[i].block).Copy());
+        reader->DataBlocks()[multi.windows[i].block].statistics.Copy());
     }
     if (_multi_stats.size() != multi.readers.size()) {
       continue;

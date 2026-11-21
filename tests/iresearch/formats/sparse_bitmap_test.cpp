@@ -237,7 +237,7 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   // reached docs in the hundreds of thousands; the cs equivalent
   // must still fragment across many rgs to exercise cross-rg
   // bookkeeping.)
-  EXPECT_GE(col->DataRgCount(), 8u);
+  EXPECT_GE(col->DataBlocks().size(), 8u);
 
   // ---------- Pass 1: full per-row walk, fresh reader. -----------
   // Legacy iterator walks every "row" (= every doc index in
@@ -811,7 +811,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   // Sanity check the scale-down: row count divided by row-group size
   // must produce many row groups, otherwise this test isn't testing
   // cross-row-group seeks at all.
-  EXPECT_GE(col->DataRgCount(),
+  EXPECT_GE(col->DataBlocks().size(),
             static_cast<size_t>(kStepCount));  // (4194304 / 4096 >= 64)
 
   // Pass 1: point-fetch each valid doc with one warm reader.

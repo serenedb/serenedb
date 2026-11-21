@@ -83,14 +83,6 @@
 	path = third_party/curl
 	url = https://github.com/serenedb/curl.git
 	shallow = true
-[submodule "third_party/jansson"]
-	path = third_party/jansson
-	url = https://github.com/serenedb/jansson.git
-	shallow = true
-[submodule "third_party/avro"]
-	path = third_party/avro
-	url = https://github.com/serenedb/avro.git
-	shallow = true
 [submodule "third_party/duckdb"]
 	path = third_party/duckdb
 	url = https://github.com/serenedb/duckdb.git

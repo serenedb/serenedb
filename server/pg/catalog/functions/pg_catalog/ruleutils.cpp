@@ -212,7 +212,13 @@ Definition ViewDefinition(const Session& session, int64_t oid) {
   return absl::StrCat(ViewQuery(session, *view), ";");
 }
 
-Definition RuleDefinition(const Session& session, int64_t oid, bool pretty) {
+Definition RuleDefinition(const Session& session, int64_t rule_oid,
+                          bool pretty) {
+  const auto rule = static_cast<uint64_t>(rule_oid);
+  if (!(rule & kRewriteRuleOidBit)) {
+    return std::nullopt;
+  }
+  const auto oid = RewriteRuleView(rule);
   std::string relation;
   std::string query;
   if (const auto* system = FindSystemView(oid)) {

@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/inlined_vector.h>
+#include <absl/functional/function_ref.h>
 #include <absl/hash/hash.h>
 
 #include <bitset>
@@ -1170,13 +1171,14 @@ std::vector<duckdb::string_t> OwnKeys(const StoreWrites& w, irs::field_id field,
   return keys;
 }
 
-void CheckVerifiedKeys(duckdb::ClientContext& context, const StoreWrites& w) {
+void CheckVerifiedKeys(duckdb::ClientContext& context, const StoreWrites& w,
+                       absl::FunctionRef<bool(const KeySpec&)> enforced) {
   if (w.verified_keys.empty()) {
     return;
   }
   const LiveUnits now{w.store->GetTable().State(), w.changes.removals};
   for (const auto& verified : w.verified_keys) {
-    if (verified.state == now.State()) {
+    if (verified.state == now.State() || !enforced(verified.spec)) {
       continue;
     }
     const LiveUnits seen{verified.state, {}};
@@ -1863,7 +1865,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       fresh.AddLive(now(), w.checked && !spec.deferred && i < known
                              ? &*w.checked
                              : nullptr);
-      if (fresh.Empty() && !spec.deferred) {
+      if (fresh.Empty() && !spec.deferred && i < known) {
         continue;
       }
       if (auto duplicate = FindDuplicate(context, spec, segments, {}, fresh)) {
@@ -2103,7 +2105,10 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
     if (w.prepared) {
       CatchUpKeys(context, w);
     }
-    CheckVerifiedKeys(context, w);
+    CheckVerifiedKeys(context, w, [&](const KeySpec& spec) {
+      return !w.dropping &&
+             (!w.table || IndexKeySpec(*w.table, spec.key, Latest(*w.table)));
+    });
   }
   const auto latest = [&](const ReferenceCheck& check) {
     const auto* parent =

@@ -579,7 +579,7 @@ void WriteValue(simdjson::ondemand::value val, std::string& out) {
       WriteArray(Unwrap(val.get_array()), out);
       break;
     default:
-      out += val.raw_json_token();
+      out += absl::StripTrailingAsciiWhitespace(val.raw_json_token());
       break;
   }
 }
@@ -606,7 +606,8 @@ void JsonStripNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
           WriteArray(Unwrap(doc.get_array()), out);
           break;
         default:
-          out += Unwrap(doc.raw_json_token());
+          out +=
+            absl::StripTrailingAsciiWhitespace(Unwrap(doc.raw_json_token()));
           break;
       }
       return duckdb::StringVector::AddString(result, out);

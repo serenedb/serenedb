@@ -75,8 +75,6 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
         irs::IndexFeatures::Pos,
       bytes,
     };
-    SDB_ASSERT(
-      irs::field_limits::valid(column_info.tokenizer.tokenizer_column));
     opts->store_field_id = column_info.tokenizer.tokenizer_column;
     return;
   }

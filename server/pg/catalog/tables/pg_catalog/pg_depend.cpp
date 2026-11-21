@@ -52,7 +52,9 @@ namespace {
 bool NamesSequence(const duckdb::ParsedExpression& expression,
                    const duckdb::Identifier& sequence) {
   if (const auto argument = NextvalArgument(expression)) {
-    return duckdb::QualifiedName::Parse(*argument).Name() == sequence;
+    return duckdb::QualifiedName::Parse(*argument,
+                                        duckdb::IdentifierCaseMode::LOWERCASE)
+             .Name() == sequence;
   }
   bool named = false;
   duckdb::ParsedExpressionIterator::EnumerateChildren(
@@ -198,7 +200,8 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
 
   void Row(duckdb::ViewCatalogEntry& view) {
     Namespace(view);
-    Depend(kPgRewriteTable, view.oid, 0, kPgClassTable, view.oid, 0, 'i');
+    Depend(kPgRewriteTable, RewriteRuleOid(view.oid), 0, kPgClassTable,
+           view.oid, 0, 'i');
     RowType(view.oid);
     if (!Allows<"deptype">('n')) {
       return;
@@ -212,7 +215,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
           object.type == duckdb::CatalogType::VIEW_ENTRY) {
         relations.push_back(&object);
       } else {
-        Reference(kPgRewriteTable, view.oid, object, 'n');
+        Reference(kPgRewriteTable, RewriteRuleOid(view.oid), object, 'n');
       }
     });
     for (auto* relation : relations) {
@@ -459,8 +462,8 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     bool any = false;
     const auto depend = [&](int32_t attnum) {
       any = true;
-      Depend(kPgRewriteTable, view.oid, 0, kPgClassTable, relation.oid, attnum,
-             'n');
+      Depend(kPgRewriteTable, RewriteRuleOid(view.oid), 0, kPgClassTable,
+             relation.oid, attnum, 'n');
     };
     if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
       for (const auto& column :
@@ -478,7 +481,8 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
       }
     }
     if (!any) {
-      Depend(kPgRewriteTable, view.oid, 0, kPgClassTable, relation.oid, 0, 'n');
+      Depend(kPgRewriteTable, RewriteRuleOid(view.oid), 0, kPgClassTable,
+             relation.oid, 0, 'n');
     }
   }
 

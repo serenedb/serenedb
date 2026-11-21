@@ -373,6 +373,16 @@ inline constexpr auto kReportParams = std::to_array<std::string_view>({
   "TimeZone",
 });
 
+duckdb::Value NeutralValue(const duckdb::LogicalType& type) {
+  if (type.IsNumeric()) {
+    return duckdb::Value::Numeric(type, 0);
+  }
+  if (type.id() == duckdb::LogicalTypeId::VARCHAR) {
+    return duckdb::Value{"0"};
+  }
+  return duckdb::Value{type};
+}
+
 }  // namespace
 
 // Startup-phase frames: RecvLoop is both byte producer and frame consumer,
@@ -523,11 +533,17 @@ bool PgWireSession<Kind>::SetupConnection() {
   keep_as_default("session_authorization");
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
 
-  const auto apply = [&](const std::string& name, const std::string& value) {
+  const auto set = [&](const std::string& name, const std::string& value) {
     try {
       _connection_ctx->SetSettingChecked(name, value, false);
     } catch (const duckdb::InternalException&) {
       _connection_ctx->SetSetting(name, value, false);
+    }
+    keep_as_default(name);
+  };
+  const auto apply = [&](const std::string& name, const std::string& value) {
+    try {
+      set(name, value);
     } catch (const std::exception& exception) {
       if (name == "client_encoding") {
         _connection_ctx->AddNotice(
@@ -539,7 +555,6 @@ bool PgWireSession<Kind>::SetupConnection() {
       WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
       return false;
     }
-    keep_as_default(name);
     return true;
   };
   std::vector<StartupSetting> settings;
@@ -549,8 +564,26 @@ bool PgWireSession<Kind>::SetupConnection() {
       return false;
     }
   }
+  std::vector<StartupSetting> role_settings;
+  catalog::ReadEntry<catalog::RoleCatalogEntry>(
+    user, [&](const catalog::RoleCatalogEntry& entry) {
+      for (const std::string_view item : entry.Config()) {
+        const auto eq = item.find('=');
+        role_settings.push_back({.name = std::string{item.substr(0, eq)},
+                                 .value = std::string{item.substr(eq + 1)}});
+      }
+    });
   bool applied = true;
   _conn->context->RunFunctionInTransaction([&] {
+    for (const auto& [name, value] : role_settings) {
+      try {
+        set(name, value);
+      } catch (const std::exception& exception) {
+        auto notice = irs::pg::ToSqlError(exception);
+        notice.errcode = ERRCODE_WARNING;
+        _connection_ctx->AddNotice(std::move(notice));
+      }
+    }
     for (const auto& [name, value] : settings) {
       if (!apply(name, value)) {
         applied = false;
@@ -1368,6 +1401,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
     co_return {};
   }
+  _received_query = query;
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> parsed;
   for (duckdb::ParseIterator parser{*_conn->context, query}; parser.Peek();) {
     parsed.push_back(parser.GetStatement());
@@ -1566,12 +1600,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   duckdb::unique_ptr<duckdb::SQLStatement> statement) {
   const auto format =
     statement ? ClassifyCopy(*statement).format : CopyFormat::Other;
-  // Consume the command frame early so the feeder starts past it, and hand
-  // the recv-consumer role over BEFORE the client can send CopyData.
-  if (_dispatch_consume) {
-    this->_recv.Consume(_dispatch_consume);
-    _dispatch_consume = 0;
-  }
   // parquet needs a seekable file (footer at EOF); it cannot be read from a
   // non-seekable STDIN pipe. Reject here -- before CopyInResponse -- so the
   // client gets a clear error instead of a deep filesystem failure mid-COPY.
@@ -1596,6 +1624,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
       copy_columns =
         static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
     }
+  }
+  // Consume the command frame early so the feeder starts past it, and hand
+  // the recv-consumer role over BEFORE the client can send CopyData.
+  if (_dispatch_consume) {
+    this->_recv.Consume(_dispatch_consume);
+    _dispatch_consume = 0;
+    _received_query = {};
   }
   sdb::pg::CopyInBatches batches;
   _connection_ctx->SetSideChannel(&batches);
@@ -2010,6 +2045,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // and bound at Execute via RunCopyFromStdin. Everything else binds the
   // already-parsed statement now, so the common path parses once.
   duckdb::vector<duckdb::idx_t> raw_statement_ends;
+  _received_query = query;
   auto extracted = _conn->ExtractStatements(query, &raw_statement_ends,
                                             /*wrap_multi=*/false);
   if (raw_statement_ends.size() > 1) {
@@ -2312,6 +2348,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
 
   auto& slot = FindStatement(statement_name);
   auto& statement = *slot;
+  _received_statement = &statement;
   if (!statement.Bound()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
                     ERR_MSG("unnamed prepared statement does not exist"));
@@ -2381,7 +2418,8 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
       _txn_state->StatusByte() == 'E') {
     ThrowAbortedTransaction();
   }
-  stmt.MarkDescribed(prepared);
+  auto shape = DescribedShape(stmt, prepared, {});
+  stmt.MarkDescribed(shape.types, shape.names);
   const auto param_count = prepared.GetNamedParameterMap().size();
   const auto& client_oids = stmt.ParamOids();
   std::vector<uint64_t> oids;
@@ -2400,8 +2438,8 @@ void PgWireSession<Kind>::DescribeStatement(Statement& stmt) {
     WriteEmptyFrame(this->_send, PQ_MSG_NO_DATA);
     return;
   }
-  WriteRowDescription(this->_send, *_connection_ctx, prepared.GetTypes(),
-                      prepared.GetNames(), {});
+  WriteRowDescription(this->_send, *_connection_ctx, shape.types, shape.names,
+                      {});
 }
 
 template<SocketKind Kind>
@@ -2425,9 +2463,38 @@ void PgWireSession<Kind>::DescribePortal(Portal& portal) {
   }
   // The client now knows this portal's shape, so rows from this plan are no
   // longer ones it would decode against a descriptor it never saw.
-  portal.stmt->MarkDescribed(prepared);
-  WriteRowDescription(this->_send, *_connection_ctx, prepared.GetTypes(),
-                      prepared.GetNames(), portal.bind_info.output_formats);
+  auto shape =
+    DescribedShape(*portal.stmt, prepared, portal.bind_info.param_values);
+  portal.stmt->MarkDescribed(shape.types, shape.names);
+  WriteRowDescription(this->_send, *_connection_ctx, shape.types, shape.names,
+                      portal.bind_info.output_formats);
+}
+
+template<SocketKind Kind>
+duckdb::StatementSignature PgWireSession<Kind>::DescribedShape(
+  Statement& stmt, duckdb::PreparedStatement& plan,
+  std::span<const duckdb::Value> values) {
+  if (plan.GetStatementProperties().bound_all_parameters || !stmt.Source()) {
+    return {.names = plan.GetNames(), .types = plan.GetTypes()};
+  }
+  const auto& hints = stmt.TypeHints();
+  duckdb::identifier_map_t<duckdb::BoundParameterData> args;
+  const auto param_count = plan.GetNamedParameterMap().size();
+  for (uint16_t i = 0; i < param_count; ++i) {
+    args.emplace(
+      duckdb::Identifier{absl::AlphaNum(i + 1).Piece()},
+      duckdb::BoundParameterData{
+        i < values.size() ? values[i]
+                          : NeutralValue(ResolveExpectedType(plan, hints, i))});
+  }
+  try {
+    return _conn->context->BindStatement(stmt.Source()->Copy(), &hints, &args);
+  } catch (const duckdb::Exception&) {
+    if (!values.empty()) {
+      throw;
+    }
+    return {.names = plan.GetNames(), .types = plan.GetTypes()};
+  }
 }
 
 template<SocketKind Kind>
@@ -2527,6 +2594,7 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
                     ERR_MSG("portal \"", portal_name, "\" does not exist"));
   }
+  _received_statement = portal.stmt.get();
   const auto kind = portal.stmt->GetKind();
   if (_txn_state->StatusByte() == 'E' && kind != Statement::Kind::Empty &&
       !portal.bound_after_abort) {
@@ -3166,6 +3234,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
     }
 
     _dispatch_consume = frame.recv_consume;
+    const auto queries_begun = _connection_ctx->QueriesBegun();
     try {
       switch (type) {
         case PQ_MSG_QUERY:
@@ -3214,8 +3283,17 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
           co_return {};
       }
     } catch (const std::exception& exception) {
+      if (_connection_ctx->QueriesBegun() == queries_begun) {
+        const auto query =
+          _received_statement ? _received_statement->Query() : _received_query;
+        if (!query.empty()) {
+          _connection_ctx->ReportQuery(query);
+        }
+      }
       discard = FunnelError(exception, type);
     }
+    _received_query = {};
+    _received_statement = nullptr;
     DrainNotices();
     // GUC ParameterStatus is reported only at ReadyForQuery (in
     // CommitAndReportReady), as PG does -- not after each dispatched message --

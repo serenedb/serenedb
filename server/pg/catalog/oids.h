@@ -132,8 +132,17 @@ constexpr const T* FindSystemObject(const std::array<T, N>& objects,
 inline constexpr duckdb::idx_t kFirstCollation = 32768;
 inline constexpr duckdb::idx_t kFirstBuiltinFunction = 65536;
 
+inline constexpr uint64_t kRewriteRuleOidBit = uint64_t{1} << 29;
 inline constexpr uint64_t kRowTypeOidBit = uint64_t{1} << 30;
 inline constexpr uint64_t kRowArrayTypeOidBit = uint64_t{1} << 31;
+
+constexpr uint64_t RewriteRuleOid(uint64_t view_oid) {
+  return view_oid | kRewriteRuleOidBit;
+}
+
+constexpr uint64_t RewriteRuleView(uint64_t rule_oid) {
+  return rule_oid & ~kRewriteRuleOidBit;
+}
 
 constexpr uint64_t TypeArrayOid(uint64_t element_oid) {
   return element_oid & kRowTypeOidBit ? element_oid | kRowArrayTypeOidBit

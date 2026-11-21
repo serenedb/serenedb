@@ -274,6 +274,8 @@ WHERE  (body @@ 'fox' OR body @@ 'cat')::merge('max');
 
 Under the default `sum`, a document containing both `fox` and `cat` collects both contributions and outranks a document that matched one branch strongly. Under `max` it is scored once, on its best branch.
 
+**A `max` starts at 0**, the score of a branch a row doesn't match, so it takes the best of 0 and its branches: with [`indri_dirichlet`](#indri_dirichlet), whose scores are negative, a `max` group scores 0.
+
 **The synonym case.** This is what makes `max` worth reaching for. Expanding a user's `car` into `car OR automobile` creates two branches that mean one thing, so summing them rewards a document for happening to use both spellings:
 
 ```sql
@@ -315,6 +317,8 @@ Rows that match only through the unscored branch come back with `0`, and the res
 :::note Zero is a real score
 An unscored branch makes `0` a legitimate score, which matters for `ORDER BY <scorer> DESC LIMIT k`. The top-k collector admits zero-scoring hits, so those rows are returned rather than dropped.
 :::
+
+A negation keeps every row except its matches, and each row it keeps scores what the query's scorer gives a row that matches every document: `0` for `BM25` in `NOT body @@ 'fox'`. A scorer inside the negation belongs to the matches it excludes, so `NOT body @@ 'fox'::score('constant(1)')` scores the same. A scorer given to the negation itself, as in `(NOT body @@ 'fox')::score('constant(2)')`, scores its constant on every row the negation keeps.
 
 ### Combining the two {#combining}
 

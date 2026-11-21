@@ -68,6 +68,12 @@ Run the I/O of one transaction's queries without async tasks:
 
 <SqlLogicTest id="sql/statements/set/index/example_012" />
 
+### Time Zone
+
+`SET TIME ZONE` sets the `TimeZone` option. It takes a zone name such as `'Europe/Berlin'` or `'UTC'`, a number of hours east of Greenwich such as `5` or `-3.5`, or `INTERVAL '+05:30' HOUR TO MINUTE` for a fixed offset east of Greenwich. A zone name written as an offset, such as `'+05:00'`, counts hours west of Greenwich, as POSIX time zone names do. A zone the server does not know is an error.
+
+<SqlLogicTest id="sql/statements/set/index/time_zone" />
+
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram1" />

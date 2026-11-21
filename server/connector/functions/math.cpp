@@ -334,23 +334,136 @@ void LogBaseFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     });
 }
 
-// cotd(x) -> double -- PG-compatible, ported from Velox PgCotD
-constexpr double kDegreesToRadians = M_PI / 180.0;
+constexpr double kRadiansPerDegree = M_PI / 180.0;
+constexpr double kDegreesPerRadian = 180.0 / M_PI;
 
-void CotDFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                  duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<double, double>(
-    args.data[0], result, args.size(), [](double x) -> double {
-      if (std::isinf(x)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                        ERR_MSG("input is out of range"));
-      }
-      if (x == 0.0) {
-        return std::numeric_limits<double>::infinity();
-      }
-      return 1.0 / std::tan(x * kDegreesToRadians);
-    });
+[[noreturn]] void ThrowOutOfRange() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                  ERR_MSG("input is out of range"));
 }
+
+struct Degrees {
+  double angle;
+  bool negative_sin = false;
+  bool negative_cos = false;
+};
+
+Degrees ReduceDegrees(double x) {
+  if (std::isinf(x)) {
+    ThrowOutOfRange();
+  }
+  Degrees degrees{.angle = x};
+  if (degrees.angle < 0.0) {
+    degrees.angle = -degrees.angle;
+    degrees.negative_sin = true;
+  }
+  if (degrees.angle >= 360.0) {
+    degrees.angle = std::fmod(degrees.angle, 360.0);
+  }
+  if (degrees.angle > 180.0) {
+    degrees.angle = 360.0 - degrees.angle;
+    degrees.negative_sin = !degrees.negative_sin;
+  }
+  if (degrees.angle > 90.0) {
+    degrees.angle = 180.0 - degrees.angle;
+    degrees.negative_cos = true;
+  }
+  return degrees;
+}
+
+double SinFirstQuadrant(double x) {
+  if (x < 45.0) {
+    return x == 30.0 ? 0.5 : std::sin(x * kRadiansPerDegree);
+  }
+  return x == 45.0 ? M_SQRT1_2 : std::cos((90.0 - x) * kRadiansPerDegree);
+}
+
+double TanFirstQuadrant(double x) {
+  if (x < 45.0) {
+    return std::tan(x * kRadiansPerDegree);
+  }
+  return x == 45.0 ? 1.0 : 1.0 / std::tan((90.0 - x) * kRadiansPerDegree);
+}
+
+double AsinFirstQuadrant(double x) {
+  if (x < 0.5) {
+    return std::asin(x) * kDegreesPerRadian;
+  }
+  return x == 0.5 ? 30.0 : 90.0 - std::acos(x) * kDegreesPerRadian;
+}
+
+double AcosFirstQuadrant(double x) {
+  if (x < 0.5) {
+    return 90.0 - std::asin(x) * kDegreesPerRadian;
+  }
+  return x == 0.5 ? 60.0 : std::acos(x) * kDegreesPerRadian;
+}
+
+struct SinDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    const auto degrees = ReduceDegrees(x);
+    const double sin = SinFirstQuadrant(degrees.angle);
+    return degrees.negative_sin ? -sin : sin;
+  }
+};
+
+struct CosDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    const auto degrees = ReduceDegrees(x);
+    const double cos = SinFirstQuadrant(90.0 - degrees.angle);
+    return degrees.negative_cos ? -cos : cos;
+  }
+};
+
+template<bool Cotangent>
+struct TanDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    const auto degrees = ReduceDegrees(x);
+    const double tan =
+      TanFirstQuadrant(Cotangent ? 90.0 - degrees.angle : degrees.angle);
+    if (tan == 0.0) {
+      return 0.0;
+    }
+    return degrees.negative_sin != degrees.negative_cos ? -tan : tan;
+  }
+};
+
+struct AsinDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    if (x < -1.0 || x > 1.0) {
+      ThrowOutOfRange();
+    }
+    return x < 0.0 ? -AsinFirstQuadrant(-x) : AsinFirstQuadrant(x);
+  }
+};
+
+struct AcosDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    if (x < -1.0 || x > 1.0) {
+      ThrowOutOfRange();
+    }
+    return x < 0.0 ? 90.0 + AsinFirstQuadrant(-x) : AcosFirstQuadrant(x);
+  }
+};
+
+struct AtanDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    return std::atan(x) / M_PI_4 * 45.0;
+  }
+};
+
+struct Atan2DOperator {
+  template<typename A, typename B, typename R>
+  static R Operation(A y, B x) {
+    return std::atan2(y, x) / M_PI_4 * 45.0;
+  }
+};
 
 // make_timestamp(year, month, day, hour, min, sec) -> timestamp
 // PG-compatible, ported from Velox PgMakeTimestamp
@@ -420,10 +533,13 @@ void MakeTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 duckdb::unique_ptr<duckdb::FunctionData> BindDateBin(
   duckdb::BindScalarFunctionInput& input) {
   const auto stride = input.TryGetConstant(0);
-  if (!stride) {
+  const auto interval =
+    stride ? stride->DefaultTryCastAs(duckdb::LogicalType::INTERVAL)
+           : std::optional<duckdb::Value>{};
+  if (!interval) {
     input.GetBoundFunction().SetFallible();
-  } else if (!stride->IsNull()) {
-    const auto value = stride->GetValue<duckdb::interval_t>();
+  } else if (!interval->IsNull()) {
+    const auto value = interval->GetValue<duckdb::interval_t>();
     if (value.months != 0 ||
         value.micros + static_cast<int64_t>(value.days) * 86400'000'000LL <=
           0) {
@@ -1235,13 +1351,51 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     loader.RegisterFunction(log_set);
   }
 
-  // cotd(x) -> double
-  duckdb::ScalarFunction cotd{"cotd",
-                              {duckdb::LogicalType::DOUBLE},
-                              duckdb::LogicalType::DOUBLE,
-                              CotDFunction};
-  cotd.SetFallible();
-  loader.RegisterFunction(std::move(cotd));
+  struct Degree {
+    std::string_view name;
+    duckdb::scalar_function_t function;
+    bool fallible;
+  };
+  using duckdb::ScalarFunction;
+  for (const auto& [name, function, fallible] : {
+         Degree{"sind",
+                ScalarFunction::UnaryFunction<double, double, SinDOperator>,
+                true},
+         Degree{"cosd",
+                ScalarFunction::UnaryFunction<double, double, CosDOperator>,
+                true},
+         Degree{
+           "tand",
+           ScalarFunction::UnaryFunction<double, double, TanDOperator<false>>,
+           true},
+         Degree{
+           "cotd",
+           ScalarFunction::UnaryFunction<double, double, TanDOperator<true>>,
+           true},
+         Degree{"asind",
+                ScalarFunction::UnaryFunction<double, double, AsinDOperator>,
+                true},
+         Degree{"acosd",
+                ScalarFunction::UnaryFunction<double, double, AcosDOperator>,
+                true},
+         Degree{"atand",
+                ScalarFunction::UnaryFunction<double, double, AtanDOperator>,
+                false},
+       }) {
+    duckdb::ScalarFunction degree{duckdb::Identifier{name},
+                                  {duckdb::LogicalType::DOUBLE},
+                                  duckdb::LogicalType::DOUBLE,
+                                  function};
+    if (fallible) {
+      degree.SetFallible();
+    }
+    loader.RegisterFunction(std::move(degree));
+  }
+  loader.RegisterFunction(duckdb::ScalarFunction{
+    duckdb::Identifier{"atan2d"},
+    {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE},
+    duckdb::LogicalType::DOUBLE,
+    ScalarFunction::BinaryFunction<double, double, double, Atan2DOperator>});
 
   // make_timestamp(year, month, day, hour, min, sec) -> timestamp
   duckdb::ScalarFunction make_timestamp{

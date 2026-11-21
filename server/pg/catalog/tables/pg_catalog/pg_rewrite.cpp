@@ -65,13 +65,15 @@ class PgRewrite final : public SystemTableScan<kPgRewriteSql> {
     ArraySource<SystemObject>{&LoadNativeViews, {}, {}}};
 
   static constexpr auto kRule = Shape<kSql, const duckdb::ViewCatalogEntry>(
-    kReturnRule, Col<"oid">(&duckdb::CatalogEntry::oid),
+    kReturnRule,
+    Col<"oid">([](const auto& view) { return RewriteRuleOid(view.oid); }),
     Col<"ev_class">(&duckdb::CatalogEntry::oid),
     Col<"ev_action">([](const auto& view) { return view.query->ToString(); }));
 
-  static constexpr auto kNativeRule =
-    Shape<kSql, const SystemObject>(kReturnRule, Col<"oid">(&SystemObject::oid),
-                                    Col<"ev_class">(&SystemObject::oid));
+  static constexpr auto kNativeRule = Shape<kSql, const SystemObject>(
+    kReturnRule,
+    Col<"oid">([](const auto& view) { return RewriteRuleOid(view.oid); }),
+    Col<"ev_class">(&SystemObject::oid));
 
   void Row(const duckdb::ViewCatalogEntry& view) { Emit<kRule>(view); }
   void Row(const SystemObject& view) { Emit<kNativeRule>(view); }

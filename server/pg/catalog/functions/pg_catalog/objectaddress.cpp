@@ -319,7 +319,11 @@ ObjectIdentity IdentifyDefault(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyRule(const Session& session, uint64_t oid) {
-  const auto relation = RelationByOid(session, oid);
+  if (!(oid & kRewriteRuleOidBit)) {
+    return Missing("rule");
+  }
+  const auto view_oid = RewriteRuleView(oid);
+  const auto relation = RelationByOid(session, view_oid);
   if (!relation || RelationKind(*relation) != "view") {
     return Missing("rule");
   }
@@ -327,7 +331,7 @@ ObjectIdentity IdentifyRule(const Session& session, uint64_t oid) {
   return ObjectIdentity{
     .type = "rule",
     .description = absl::StrCat("rule _RETURN on view ",
-                                RegOut(session, RegKind::Class, oid)),
+                                RegOut(session, RegKind::Class, view_oid)),
     .identity = absl::StrCat(QuoteIdentifier("_RETURN"), " on ",
                              QualifiedOutName(schema, name))};
 }

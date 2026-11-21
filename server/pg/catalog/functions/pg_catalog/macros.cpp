@@ -287,28 +287,6 @@ constexpr SystemMacro kMacros[] = {
 
   // PG math functions missing from DuckDB
 
-  // Degree-based trigonometric functions
-  {"pg_catalog","sind",
-   R"((x) AS sin(radians(x)))"},
-
-  {"pg_catalog","cosd",
-   R"((x) AS cos(radians(x)))"},
-
-  {"pg_catalog","tand",
-   R"((x) AS tan(radians(x)))"},
-
-  {"pg_catalog","asind",
-   R"((x) AS degrees(asin(x)))"},
-
-  {"pg_catalog","acosd",
-   R"((x) AS degrees(acos(x)))"},
-
-  {"pg_catalog","atand",
-   R"((x) AS degrees(atan(x)))"},
-
-  {"pg_catalog","atan2d",
-   R"((y, x) AS degrees(atan2(y, x)))"},
-
   {"pg_catalog", "int4inc", "(x INTEGER) AS x + 1"},
   {"pg_catalog", "int8_sum",
    R"((running_sum, value BIGINT) AS

@@ -1263,3 +1263,68 @@ DROP TABLE ngram_docs;
 
 statement ok
 DROP TEXT SEARCH DICTIONARY ngram_offs;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY absent_stored AS split_text(case := 'lower') WITH (frequency, position, offset);
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY absent_scalar AS split_text(case := 'lower') WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE absent_docs (id INT PRIMARY KEY, body VARCHAR, body2 VARCHAR);
+
+
+statement ok
+CREATE INDEX absent_idx ON absent_docs USING inverted (id, body absent_stored, body2 absent_scalar);
+
+
+statement ok
+INSERT INTO absent_docs VALUES (1, 'red fox jumps', 'red fox jumps');
+
+
+query
+SELECT id, ts_offsets(absent_idx.body2) FROM absent_idx
+WHERE body2 @@ (ts_tokenize('fox') || (ts_tokenize('red') && ts_tokenize('blue')));
+----
+id	ts_offsets
+1	{0,3,4,7}
+
+
+query
+SELECT id, ts_offsets(absent_idx.body) FROM absent_idx
+WHERE body @@ (ts_tokenize('fox') || (ts_tokenize('red') && ts_tokenize('blue')));
+----
+id	ts_offsets
+1	{0,3,4,7}
+
+
+statement ok
+INSERT INTO absent_docs VALUES (2, 'blue sky', 'blue sky');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) absent_docs;
+
+
+query
+SELECT id, ts_offsets(absent_idx.body) FROM absent_idx
+WHERE body @@ (ts_tokenize('fox') || (ts_tokenize('red') && ts_tokenize('blue')))
+ORDER BY id;
+----
+id	ts_offsets
+1	{0,3,4,7}
+
+
+statement ok
+DROP TABLE absent_docs;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY absent_stored;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY absent_scalar;

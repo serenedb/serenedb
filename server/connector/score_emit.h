@@ -89,6 +89,7 @@ struct VectorScorerOptions {
   irs::HnswFilterMode hnsw_filter_mode = irs::HnswFilterMode::Auto;
   irs::HnswColumnFilter hnsw_column_filter = irs::HnswColumnFilter::Auto;
   bool exact = false;
+  bool exact_for_bound = false;
   float radius = std::numeric_limits<float>::max();
   bool radius_inclusive = false;
 

@@ -53,31 +53,18 @@ class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
 
   score_t ScoreOne() const noexcept {
     score_t res = 0;
-    bool covered = false;
     if (!_required.IsDefault()) {
-      res = _required.Score();
-      covered = true;
+      irs::Merge<Inner>(res, _required.Score());
     }
     for (size_t i = 0, count = _probed.size(); i != count; ++i) {
       const auto held = _held[i];
       _held[i] = 0;
-      if (!CheckBit(held, 0)) {
-        continue;
-      }
-      const auto one = _probed[i].Score();
-      if (covered) {
-        irs::Merge<Inner>(res, one);
-      } else {
-        res = one;
-        covered = true;
+      if (CheckBit(held, 0)) {
+        irs::Merge<Inner>(res, _probed[i].Score());
       }
     }
     if constexpr (HasConst) {
-      if (covered) {
-        irs::Merge<Inner>(res, _constant);
-      } else {
-        res = _constant;
-      }
+      irs::Merge<Inner>(res, _constant);
     }
     return res;
   }
@@ -89,6 +76,9 @@ class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
     ScoreMask covered = 0;
     if (!_required.IsDefault()) {
       _required.Score(_gathered, n);
+      for (scores_size_t i = 0; i != n; ++i) {
+        _gathered[i] = FromDefault(_gathered[i]);
+      }
       covered = ~ScoreMask{0};
     }
     for (size_t i = 0, count = _probed.size(); i != count; ++i) {
@@ -104,7 +94,7 @@ class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
       while (fresh != 0) {
         const auto slot = static_cast<uint32_t>(std::countr_zero(fresh));
         fresh = PopBit(fresh);
-        _gathered[slot] = _scratch[slot];
+        _gathered[slot] = FromDefault(_scratch[slot]);
       }
       while (again != 0) {
         const auto slot = static_cast<uint32_t>(std::countr_zero(again));
@@ -128,6 +118,14 @@ class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
   }
 
  private:
+  IRS_FORCE_INLINE static score_t FromDefault(score_t score) noexcept {
+    if constexpr (Inner == ScoreMergeType::Max) {
+      return std::max(score_t{0}, score);
+    } else {
+      return score;
+    }
+  }
+
   ScoreFunction _required;
   containers::Fixed<ScoreFunction> _probed;
   ScoreMask* IRS_RESTRICT _held;

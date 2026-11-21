@@ -24,6 +24,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/hive_partitioning.hpp>
+#include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -199,15 +200,18 @@ void NativeIndexSource::BindFiles(
     absl::c_sort(files, [](const auto* a, const auto* b) {
       return a->file_id < b->file_id;
     });
+    const auto file_type = duckdb::LogicalType::STRUCT(
+      {{duckdb::Identifier{duckdb::MultiFileReader::FILE_PATH_FIELD},
+        duckdb::LogicalType::VARCHAR}});
     duckdb::vector<duckdb::Value> paths;
     paths.reserve(files.size());
     for (const auto* file : files) {
       _file_positions.emplace(file->file_id, _paths.size());
       _paths.push_back(file->path);
-      paths.emplace_back(file->path);
+      paths.push_back(
+        duckdb::Value::STRUCT(file_type, {duckdb::Value{file->path}}));
     }
-    fast_path.args = {
-      duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(paths))};
+    fast_path.args = {duckdb::Value::LIST(file_type, std::move(paths))};
     fast_path.is_glob = false;
     if (fast_path.function_name == "iceberg_scan") {
       if (fast_path.catalog_ref) {

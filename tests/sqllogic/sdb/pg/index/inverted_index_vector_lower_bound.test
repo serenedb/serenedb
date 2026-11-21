@@ -1,0 +1,233 @@
+control substitution on
+
+statement ok
+CREATE TABLE vlb (pk INTEGER PRIMARY KEY, emb FLOAT[2], grp INTEGER);
+
+
+statement ok
+INSERT INTO vlb
+SELECT i, [i, 0]::FLOAT[2], CASE WHEN i >= 900 THEN 1 ELSE 0 END FROM range(1000) t(i);
+
+
+query
+SELECT pk FROM vlb
+WHERE emb <-> [0, 0]::FLOAT[2] > 500
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+----
+pk
+501
+502
+503
+
+
+statement ok
+CREATE INDEX vlb_hnsw ON vlb
+    USING inverted (pk, emb hnsw (metric = 'l2', quant = 'none')) INCLUDE (grp);
+
+
+query
+SELECT pk FROM vlb_hnsw
+WHERE emb <-> [0, 0]::FLOAT[2] > 500
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+----
+pk
+501
+502
+503
+
+
+query
+SELECT pk FROM vlb_hnsw
+WHERE emb <-> [0, 0]::FLOAT[2] >= 500 AND emb <-> [0, 0]::FLOAT[2] < 600
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+----
+pk
+500
+501
+502
+
+
+query
+SELECT pk FROM vlb_hnsw
+WHERE emb <-> [0, 0]::FLOAT[2] BETWEEN 500 AND 600
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+----
+pk
+500
+501
+502
+
+
+query
+EXPLAIN SELECT pk FROM vlb_hnsw
+WHERE emb <-> [0, 0]::FLOAT[2] BETWEEN 500 AND 600
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────╮
+│ Index: vlb_hnsw                                                         │
+│ Lookup: search                                                          │
+│ Score: l2_distance(emb, FLOAT[2])                                       │
+│ Exact:                                                                  │
+│ brute force over the stored vectors                                     │
+│ Top: 3                                                                  │
+│ Projections: pk                                                         │
+│ Column Filter:                                                          │
+│ (sdb_inverted_index_score >= 500) AND (sdb_inverted_index_score <= 600) │
+│ ~200 rows                                                               │
+╰─────────────────────────────────────────────────────────────────────────╯
+
+
+statement ok
+PREPARE vlb_beyond(DOUBLE) AS
+SELECT pk FROM vlb_hnsw
+WHERE emb <-> [0, 0]::FLOAT[2] > $1
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+
+
+query rowsort
+EXECUTE vlb_beyond(700);
+----
+pk
+701
+702
+703
+
+
+statement ok
+DEALLOCATE vlb_beyond;
+
+
+statement ok
+PREPARE vlb_beyond_left(DOUBLE) AS
+SELECT pk FROM vlb_hnsw
+WHERE $1 < emb <-> [0, 0]::FLOAT[2]
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+
+
+query rowsort
+EXECUTE vlb_beyond_left(700);
+----
+pk
+701
+702
+703
+
+
+statement ok
+DEALLOCATE vlb_beyond_left;
+
+
+query
+SELECT pk FROM vlb_hnsw
+WHERE grp = 1 AND emb <-> [0, 0]::FLOAT[2] > 0.5
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+----
+pk
+900
+901
+902
+
+
+query
+SELECT pk FROM vlb_hnsw
+WHERE emb <-> [0, 0]::FLOAT[2] < 2
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+----
+pk
+0
+1
+
+
+statement ok
+CREATE TABLE vlb_segments (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+
+statement ok
+CREATE INDEX vlb_segments_hnsw ON vlb_segments
+    USING inverted (pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO vlb_segments SELECT i, [i, 0]::FLOAT[2] FROM range(0, 2048) t(i);
+
+
+statement ok
+INSERT INTO vlb_segments SELECT i, [i, 0]::FLOAT[2] FROM range(2048, 4096) t(i);
+
+
+query
+SELECT pk FROM vlb_segments
+WHERE emb <-> [0, 0]::FLOAT[2] > 500
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+----
+pk
+501
+502
+503
+
+
+statement ok
+CREATE TABLE vlb_ivf (pk INTEGER PRIMARY KEY, emb FLOAT[2]);
+
+
+statement ok
+CREATE INDEX vlb_ivf_idx ON vlb_ivf
+    USING inverted (pk, emb ivf (metric = 'l2', quant = 'none'));
+
+
+statement ok
+INSERT INTO vlb_ivf SELECT i, [i, 0]::FLOAT[2] FROM range(0, 2048) t(i);
+
+
+statement ok
+INSERT INTO vlb_ivf SELECT i, [i, 0]::FLOAT[2] FROM range(2048, 4096) t(i);
+
+
+query
+SELECT pk FROM vlb_ivf
+WHERE emb <-> [0, 0]::FLOAT[2] > 500
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+----
+pk
+501
+502
+503
+
+
+statement ok
+COPY (SELECT i AS pk, [i, 0]::FLOAT[] AS emb FROM range(1000) t(i))
+TO '${__TEST_DIR__}/vlb.parquet' (FORMAT parquet);
+
+
+statement ok
+CREATE VIEW vlb_view AS
+    SELECT pk, emb::FLOAT[2] AS emb FROM read_parquet('${__TEST_DIR__}/vlb.parquet');
+
+
+statement ok
+CREATE INDEX vlb_view_hnsw ON vlb_view
+    USING inverted (pk, emb hnsw (metric = 'l2'));
+
+
+query
+SELECT pk FROM vlb_view_hnsw
+WHERE emb <-> [0, 0]::FLOAT[2] > 500
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+----
+pk
+501
+502
+503

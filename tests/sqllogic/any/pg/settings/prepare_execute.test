@@ -477,11 +477,20 @@ statement ok
 PREPARE prep_typmod_num(numeric(5,2)) AS SELECT $1 AS r;
 
 
+skipif serenedb
 query
 EXECUTE prep_typmod_num(1234.567);
 ----
 r
 1234.567
+
+
+onlyif serenedb
+query
+EXECUTE prep_typmod_num(1234.567);
+----
+r
+1234.5670000000
 
 
 statement ok

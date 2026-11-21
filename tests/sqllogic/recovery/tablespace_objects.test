@@ -245,14 +245,55 @@ DROP TABLESPACE obj_b_${__DATABASE__};
 statement error
 ALTER TABLE docs_renamed SET TABLESPACE obj_a_${__DATABASE__};
 ----
-db error: ERROR: syntax error at or near "TABLESPACE"
+db error: ERROR: SET TABLESPACE is not supported
 
 
 statement error
 ALTER INDEX events_msg SET TABLESPACE obj_a_${__DATABASE__};
 ----
-db error: ERROR: syntax error at or near "TABLESPACE"
+db error: ERROR: SET TABLESPACE is not supported
 
+
+statement ok
+CREATE TABLE keyed (id INT PRIMARY KEY, code INT UNIQUE, body TEXT) TABLESPACE obj_a_${__DATABASE__};
+
+statement ok
+CREATE INDEX keyed_body ON keyed USING inverted (body);
+
+statement error
+CREATE INDEX keyed_own ON keyed USING inverted (body) TABLESPACE obj_a_${__DATABASE__};
+----
+db error: ERROR: an index on a table is stored with the table and cannot be placed in a tablespace
+
+
+statement error
+CREATE INDEX keyed_default ON keyed USING inverted (body) TABLESPACE pg_default;
+----
+db error: ERROR: an index on a table is stored with the table and cannot be placed in a tablespace
+
+
+query
+SELECT c.relname, replace(t.spcname, '_${__DATABASE__}', '') AS tablespace
+FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relname IN ('keyed', 'keyed_body', 'keyed_pkey', 'keyed_code_key') ORDER BY c.relname;
+----
+relname	tablespace
+keyed	obj_a
+keyed_body	obj_a
+keyed_code_key	obj_a
+keyed_pkey	obj_a
+
+query
+SELECT indexname, replace(tablespace, '_${__DATABASE__}', '') AS tablespace FROM pg_indexes
+WHERE tablename = 'keyed' ORDER BY indexname;
+----
+indexname	tablespace
+keyed_body	obj_a
+keyed_code_key	obj_a
+keyed_pkey	obj_a
+
+statement ok
+DROP TABLE keyed;
 
 statement ok
 DROP INDEX events_kind;

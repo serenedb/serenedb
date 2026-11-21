@@ -1,0 +1,47 @@
+statement ok
+CREATE TABLE timetz_min_max (i INT, t TIMETZ)
+
+
+statement ok
+INSERT INTO timetz_min_max VALUES (1, '04:00:00-05'), (2, '06:00:00+00'), (3, '10:00:00+05')
+
+
+query
+SELECT min(t), max(t) FROM timetz_min_max
+----
+min	max
+10:00:00+05	04:00:00-05
+
+
+query
+SELECT i, min(t) OVER () AS lo, max(t) OVER () AS hi FROM timetz_min_max ORDER BY i
+----
+i	lo	hi
+1	10:00:00+05	04:00:00-05
+2	10:00:00+05	04:00:00-05
+3	10:00:00+05	04:00:00-05
+
+
+statement ok
+INSERT INTO timetz_min_max SELECT 4, '19:00:00+15' FROM generate_series(1, 3)
+
+
+query
+SELECT min(t), max(t) FROM timetz_min_max
+----
+min	max
+19:00:00+15	04:00:00-05
+
+
+query
+SELECT t, count(*) FROM timetz_min_max GROUP BY t ORDER BY t
+----
+t	count
+19:00:00+15	3
+10:00:00+05	1
+06:00:00+00	1
+04:00:00-05	1
+
+
+statement ok
+DROP TABLE timetz_min_max

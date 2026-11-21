@@ -135,6 +135,7 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
     _login_role_id{identity.role},
     _session_role_id{identity.role},
     _effective_role_id{identity.role},
+    _owns_temporary_objects{!identity.temporary},
     _progress{std::make_shared<pg::ProgressSource>()},
     _slot{catalog::Transactions::Get().Join()} {
   session_user = _user;
@@ -174,7 +175,7 @@ ConnectionContext::~ConnectionContext() {
       Destroy();
     } catch (...) {
     }
-    if (_progress->client_backend) {
+    if (_owns_temporary_objects) {
       client_data->temporary_objects->OnDetach(*this);
     }
   }
@@ -493,8 +494,14 @@ void ConnectionContext::OnQueryBegin() {
   if (_internal_statements != 0) {
     return;
   }
-  _query_in_transaction = true;
-  _progress->BeginQuery(GetCurrentQuery());
+  ++_queries_begun;
+  const bool continues = std::exchange(_query_in_transaction, true);
+  _progress->BeginQuery(
+    GetCurrentQuery(),
+    continues || !transaction.HasActiveTransaction()
+      ? duckdb::Timestamp::GetCurrentTimestamp().value
+      : transaction.ActiveTransaction().start_timestamp.value,
+    continues);
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = _progress->metrics;
     metrics.SetCommand(pending_copy_command);
@@ -524,6 +531,11 @@ void ConnectionContext::OnQueryEnd() {
 
 void ConnectionContext::ReportIdle() {
   _progress->ReportIdle(pg::IdleState(transaction));
+}
+
+void ConnectionContext::ReportQuery(std::string_view query) {
+  _progress->BeginQuery(query, duckdb::Timestamp::GetCurrentTimestamp().value,
+                        _query_in_transaction);
 }
 
 void ConnectionContext::OnTransactionPreCommit(duckdb::MetaTransaction& meta) {

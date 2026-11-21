@@ -780,6 +780,25 @@ size_t DriverRank(const Filter& filter) noexcept {
   return kRangeRank + 1;
 }
 
+bool MatchesWordTwice(std::span<const TermClause> terms,
+                      std::span<bytes_view> prefixes) {
+  absl::c_sort(prefixes);
+  auto term = terms.begin();
+  for (size_t i = 0; i != prefixes.size(); ++i) {
+    const auto prefix = prefixes[i];
+    if (i + 1 != prefixes.size() && prefixes[i + 1].starts_with(prefix)) {
+      return true;
+    }
+    while (term != terms.end() && bytes_view{term->term} < prefix) {
+      ++term;
+    }
+    if (term != terms.end() && bytes_view{term->term}.starts_with(prefix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 std::optional<OrAcceptorFusionRule::AcceptorInfo> OrAcceptorFusionRule::InfoOf(
@@ -875,6 +894,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
     return false;
   }
   const bool scores = !ScoreIsIgnored(node, ctx);
+  const bool sums = scores && node.MergeType() == ScoreMergeType::Sum;
   const auto terms = node.Terms(Occur::Should);
   const auto filters = node.Filters(Occur::Should);
 
@@ -906,6 +926,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
       return false;
     }
   }
+  absl::InlinedVector<bytes_view, 8> prefixes;
   for (const auto& child : filters) {
     const auto info = InfoOf(*child);
     if (!info || info->field != field || info->dict != dict ||
@@ -916,12 +937,23 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
                    (info->merge && *info->merge != node.MergeType()))) {
       return false;
     }
-    seekable += child->type() == Type<ByPrefix>::id();
+    if (child->type() == Type<ByPrefix>::id()) {
+      ++seekable;
+      if (sums) {
+        prefixes.emplace_back(
+          irs::utils::downCast<ByPrefix>(*child).options().term);
+      }
+    } else if (sums) {
+      return false;
+    }
   }
   if (filters.empty()) {
     return false;
   }
   if (seekable == count && !ctx.fuse_seekable_acceptors) {
+    return false;
+  }
+  if (sums && MatchesWordTwice(terms, prefixes)) {
     return false;
   }
 

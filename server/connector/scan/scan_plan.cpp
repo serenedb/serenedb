@@ -44,6 +44,7 @@
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/search/explain/plan.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -863,10 +864,16 @@ void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
     for (auto& entry : f.offsets_entries) {
       entry.state.Clear();
     }
+    f.offsets_leaves.clear();
+    irs::PreparePositiveLeaves(*g.filter, (*g.reader)[seg],
+                               {.needs_terms = true},
+                               [&](irs::QueryBuilder::ptr query) {
+                                 f.offsets_leaves.push_back(std::move(query));
+                               });
     OffsetsCollector visitor{f.offsets_entries};
-    const auto& seg_query = g.queries[seg];
-    SDB_ASSERT(seg_query);
-    seg_query->Visit(visitor, irs::kNoBoost);
+    for (const auto& query : f.offsets_leaves) {
+      query->Visit(visitor, irs::kNoBoost);
+    }
     f.offsets_prepped_seg = seg;
   }
   for (size_t i = 0; i < docs.size(); ++i) {

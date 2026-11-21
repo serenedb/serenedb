@@ -246,6 +246,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::optional<VectorScorerOptions> owned_vector_scorer;
   duckdb::ScanSamplingInfo sampling;
   duckdb::optional_idx sample_seed;
+  std::vector<uint64_t> sample_row_bases;
 
   std::vector<duckdb::idx_t> projected_columns;
   std::vector<duckdb::LogicalType> projected_types;
@@ -513,6 +514,7 @@ struct FetchLocalState {
   std::unique_ptr<irs::HitBatcher> hit_batcher;
   std::vector<FieldEntry> offsets_entries;
   std::vector<highlight::HitRange> offsets_doc_scratch;
+  std::vector<irs::QueryBuilder::ptr> offsets_leaves;
   uint32_t offsets_prepped_seg = std::numeric_limits<uint32_t>::max();
   std::unique_ptr<irs::explain::Explainer> explainer;
   std::vector<irs::explain::Node> explain_rows;

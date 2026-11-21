@@ -35,6 +35,7 @@
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
@@ -56,7 +57,9 @@
 #include <string>
 
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/dependency.h"
+#include "catalog/entry/database.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
@@ -331,15 +334,35 @@ duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
   return catalog;
 }
 
+namespace {
+
+duckdb::optional_ptr<duckdb::Catalog> DatabaseCatalog(
+  duckdb::ClientContext& context, duckdb::idx_t oid) {
+  auto& cluster = ClusterOf(context);
+  const auto database = cluster.FindIn<DatabaseCatalogEntry>(
+    cluster.GetCatalogTransaction(context), oid);
+  if (!database) {
+    return nullptr;
+  }
+  auto attached =
+    duckdb::DatabaseManager::Get(context).GetDatabase(context, database->name);
+  return attached && attached->oid == oid ? &attached->GetCatalog() : nullptr;
+}
+
+}  // namespace
+
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
                                  duckdb::Catalog& catalog,
                                  const InvertedIndexConfig& config)
   : _context{&context} {
   const bool temporary = catalog.GetAttached().IsTemporary();
-  auto dictionaries = DictionaryCatalog(context, catalog);
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
+      auto dictionaries =
+        field.text_dictionary_database
+          ? DatabaseCatalog(context, field.text_dictionary_database)
+          : DictionaryCatalog(context, catalog);
       const auto dict =
         dictionaries
           ? dictionaries->Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(

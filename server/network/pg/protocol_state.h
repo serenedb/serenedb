@@ -141,6 +141,17 @@ class Statement {
     return _source.get();
   }
 
+  std::string_view Query() const {
+    if (_prepared) {
+      return _prepared->GetQuery();
+    }
+    if (_source) {
+      return _source->query;
+    }
+    return _statements.empty() ? std::string_view{}
+                               : std::string_view{_statements.front()->query};
+  }
+
   // The statement a re-plan re-binds. Cached on first use because from then on
   // the plan is released before its replacement is bound, so the plan cannot
   // stay the only place the statement text lives. Null when there is nothing
@@ -207,17 +218,18 @@ class Statement {
   // The result descriptor the client was last told (PG's
   // plansource->resultDesc). The extended protocol sends RowDescription only
   // in reply to a Describe, so this is what it will decode rows against.
-  void MarkDescribed(duckdb::PreparedStatement& plan) {
+  void MarkDescribed(duckdb::vector<duckdb::LogicalType> types,
+                     duckdb::vector<duckdb::Identifier> names) {
     _described = true;
-    _described_types = plan.GetTypes();
-    _described_names = plan.GetNames();
+    _described_types = std::move(types);
+    _described_names = std::move(names);
   }
 
   // Would this plan's rows still fit the descriptor the client holds? PG's
   // fixed_result check, which a protocol-level prepared statement fails with
   // "cached plan must not change result type".
   bool DescribedShapeMatches(duckdb::PreparedStatement& plan) const {
-    return !_described ||
+    return !_described || !plan.GetStatementProperties().bound_all_parameters ||
            (absl::c_equal(plan.GetTypes(), _described_types, SameColumnType) &&
             plan.GetNames() == _described_names);
   }

@@ -624,7 +624,10 @@ std::vector<FormatPiece> ParseFormat(std::string_view fmt,
                         ERR_MSG("unterminated format() conversion specifier"));
       }
       piece.type = fmt[i++];
-      piece.argument = has_position ? position : next_arg++;
+      if (has_position) {
+        next_arg = position;
+      }
+      piece.argument = next_arg++;
       if (piece.type != 's' && piece.type != 'I' && piece.type != 'L') {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("unrecognized format() type specifier \"",

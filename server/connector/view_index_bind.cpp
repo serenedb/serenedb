@@ -154,6 +154,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
   if (fp) {
     leaf = &LeafScan(*plan);
     EnableIcebergSort(leaf->bind_data.get());
+    if (IsGlobPK(fp->pk_spec)) {
+      leaf->bind_data->Cast<duckdb::MultiFileBindData>().stable_file_indexes =
+        true;
+    }
     const auto vcols = BackfillPkVirtualColumns(*fp);
     pk_refs.reserve(vcols.size());
     for (size_t i = 0; i < vcols.size(); ++i) {

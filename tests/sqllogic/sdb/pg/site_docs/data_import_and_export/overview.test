@@ -355,3 +355,67 @@ title	level
 Project	1
 Install	2
 Usage	2
+
+# DOCS_TEST: example_018
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_018_1_test_avro.avro' (FORMAT avro);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM 'test.avro'
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM '${__TEST_DIR__}/data_import_and_export_overview_example_018_1_test_avro.avro'
+ORDER BY id;
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_019
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (1, 'alpha', 10),
+    (2, 'beta', 20)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_019_1_test_avro.avro' (FORMAT avro);
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM read_avro('test.avro')
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM read_avro('${__TEST_DIR__}/data_import_and_export_overview_example_019_1_test_avro.avro')
+ORDER BY id;
+----
+id	name	value
+1	alpha	10
+2	beta	20
+
+# DOCS_TEST: example_020
+
+statement ok
+COPY (SELECT * FROM (VALUES
+    (3, 'gamma', 30),
+    (4, 'delta', 40)
+) AS t("id", "name", "value")) TO '${__TEST_DIR__}/data_import_and_export_overview_example_020_1_test_avro.avro' (FORMAT avro);
+
+# DOCS_TEST_RAW
+#| COPY test FROM 'test.avro';
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY test FROM '${__TEST_DIR__}/data_import_and_export_overview_example_020_1_test_avro.avro';

@@ -1,0 +1,470 @@
+control substitution on
+
+# DOCS_TEST: example_001
+
+# DOCS_TEST_RAW
+#| CREATE TABLE fruit (name TEXT, variety TEXT, weight DOUBLE);
+#|
+#| INSERT INTO fruit VALUES
+#|     ('apple', 'gala', 134.2),
+#|     ('orange', 'navel', 142.1),
+#|     ('apple', 'fuji', NULL);
+#|
+#| COPY fruit TO 'fruit.avro';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE fruit (name TEXT, variety TEXT, weight DOUBLE);
+
+statement ok
+INSERT INTO fruit VALUES
+    ('apple', 'gala', 134.2),
+    ('orange', 'navel', 142.1),
+    ('apple', 'fuji', NULL);
+
+statement ok
+COPY fruit TO '${__TEST_DIR__}/fruit.avro';
+
+# DOCS_TEST: example_002
+
+# DOCS_TEST_RAW
+#| COPY (SELECT * FROM fruit WHERE weight > 140) TO 'heavy.avro' (CODEC 'zstandard');
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT * FROM fruit WHERE weight > 140) TO '${__TEST_DIR__}/heavy.avro' (CODEC 'zstandard');
+
+# DOCS_TEST: example_003
+
+# DOCS_TEST_RAW
+#| SELECT *
+#| FROM 'fruit.avro'
+#| ORDER BY variety;
+
+# DOCS_TEST_BODY
+
+query
+SELECT *
+FROM '${__TEST_DIR__}/fruit.avro'
+ORDER BY variety;
+----
+name	variety	weight
+apple	fuji	NULL
+apple	gala	134.2
+orange	navel	142.1
+
+# DOCS_TEST: example_004
+
+# DOCS_TEST_RAW
+#| SELECT variety, weight
+#| FROM read_avro('heavy.avro');
+
+# DOCS_TEST_BODY
+
+query
+SELECT variety, weight
+FROM read_avro('${__TEST_DIR__}/heavy.avro');
+----
+variety	weight
+navel	142.1
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_RAW
+#| SELECT count(*) AS n
+#| FROM read_avro(['fruit.avro', 'heavy.avro']);
+
+# DOCS_TEST_BODY
+
+query
+SELECT count(*) AS n
+FROM read_avro(['${__TEST_DIR__}/fruit.avro', '${__TEST_DIR__}/heavy.avro']);
+----
+n
+4
+
+# DOCS_TEST: example_006
+
+# DOCS_TEST_RAW
+#| CREATE TABLE fruit_copy (name TEXT, variety TEXT, weight DOUBLE);
+#|
+#| COPY fruit_copy FROM 'heavy.avro';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE fruit_copy (name TEXT, variety TEXT, weight DOUBLE);
+
+statement ok
+COPY fruit_copy FROM '${__TEST_DIR__}/heavy.avro';
+
+# DOCS_TEST_END
+
+query
+SELECT name, variety, weight
+FROM fruit_copy;
+----
+name	variety	weight
+orange	navel	142.1
+
+# DOCS_TEST: example_007
+
+# DOCS_TEST_RAW
+#| SELECT value AS codec
+#| FROM avro_metadata('heavy.avro')
+#| WHERE key = 'avro.codec';
+
+# DOCS_TEST_BODY
+
+query
+SELECT value AS codec
+FROM avro_metadata('${__TEST_DIR__}/heavy.avro')
+WHERE key = 'avro.codec';
+----
+codec
+zstandard
+
+# DOCS_TEST: union_by_name
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 'apple' AS name, 'pink lady' AS variety) TO 'varieties.avro';
+#|
+#| COPY (SELECT 'orange' AS name, 12 AS stock) TO 'stock.avro';
+#|
+#| SELECT *
+#| FROM read_avro(['varieties.avro', 'stock.avro'], union_by_name = true)
+#| ORDER BY name;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT 'apple' AS name, 'pink lady' AS variety) TO '${__TEST_DIR__}/varieties.avro';
+
+statement ok
+COPY (SELECT 'orange' AS name, 12 AS stock) TO '${__TEST_DIR__}/stock.avro';
+
+query
+SELECT *
+FROM read_avro(['${__TEST_DIR__}/varieties.avro', '${__TEST_DIR__}/stock.avro'], union_by_name = true)
+ORDER BY name;
+----
+name	variety	stock
+apple	pink lady	NULL
+orange	NULL	12
+
+# DOCS_TEST: file_row_number
+
+# DOCS_TEST_RAW
+#| COPY (SELECT * FROM fruit ORDER BY weight DESC NULLS LAST) TO 'by_weight.avro';
+#|
+#| SELECT variety, weight
+#| FROM read_avro('by_weight.avro')
+#| ORDER BY file_row_number;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT * FROM fruit ORDER BY weight DESC NULLS LAST) TO '${__TEST_DIR__}/by_weight.avro';
+
+query
+SELECT variety, weight
+FROM read_avro('${__TEST_DIR__}/by_weight.avro')
+ORDER BY file_row_number;
+----
+variety	weight
+navel	142.1
+gala	134.2
+fuji	NULL
+
+# DOCS_TEST: copy_from_glob
+
+# DOCS_TEST_RAW
+#| COPY (SELECT * FROM fruit WHERE name = 'apple') TO 'harvest_apples.avro';
+#|
+#| COPY (SELECT * FROM fruit WHERE name = 'orange') TO 'harvest_oranges.avro';
+#|
+#| CREATE TABLE harvest (name TEXT, variety TEXT, weight DOUBLE);
+#|
+#| COPY harvest FROM 'harvest_*.avro';
+#|
+#| SELECT name, count(*) AS n
+#| FROM harvest
+#| GROUP BY name
+#| ORDER BY name;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT * FROM fruit WHERE name = 'apple') TO '${__TEST_DIR__}/harvest_apples.avro';
+
+statement ok
+COPY (SELECT * FROM fruit WHERE name = 'orange') TO '${__TEST_DIR__}/harvest_oranges.avro';
+
+statement ok
+CREATE TABLE harvest (name TEXT, variety TEXT, weight DOUBLE);
+
+statement ok
+COPY harvest FROM '${__TEST_DIR__}/harvest_*.avro';
+
+query
+SELECT name, count(*) AS n
+FROM harvest
+GROUP BY name
+ORDER BY name;
+----
+name	n
+apple	2
+orange	1
+
+# DOCS_TEST: union_types
+
+statement ok
+COPY (SELECT unhex('4f626a0104166176726f2e736368656d61ce047b2274797065223a227265636f7264222c226e616d65223a226576656e74222c226669656c6473223a5b7b226e616d65223a226964222c2274797065223a226c6f6e67227d2c7b226e616d65223a226b696e64222c2274797065223a7b2274797065223a22656e756d222c226e616d65223a226b696e64222c2273796d626f6c73223a5b22636c69636b222c2276696577225d7d7d2c7b226e616d65223a226e6f7465222c2274797065223a5b226e756c6c222c22737472696e67225d7d2c7b226e616d65223a2276616c7565222c2274797065223a5b226e756c6c222c22696e74222c22737472696e67225d7d2c7b226e616d65223a226174747273222c2274797065223a7b2274797065223a226d6170222c2276616c756573223a226c6f6e67227d7d5d7d146176726f2e636f646563086e756c6c005d4e1ac0ffee7a1b2c3d4e5f60718293065a0200020a6669727374020e0202780200040200040a736576656e000600020a74686972640004027804027906005d4e1ac0ffee7a1b2c3d4e5f60718293'))
+    TO '${__TEST_DIR__}/events.avro' (FORMAT blob);
+
+# DOCS_TEST_RAW
+#| SELECT column_name, column_type
+#| FROM (DESCRIBE SELECT * FROM read_avro('events.avro'));
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM read_avro('${__TEST_DIR__}/events.avro'));
+----
+column_name	column_type
+id	BIGINT
+kind	ENUM('click', 'view')
+note	VARCHAR
+value	UNION(u1 INTEGER, u2 VARCHAR)
+attrs	MAP(VARCHAR, BIGINT)
+
+# DOCS_TEST: union_values
+
+# DOCS_TEST_RAW
+#| SELECT id, kind, note, value, union_tag(value) AS branch, attrs
+#| FROM read_avro('events.avro')
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, kind, note, value, union_tag(value) AS branch, attrs
+FROM read_avro('${__TEST_DIR__}/events.avro')
+ORDER BY id;
+----
+id	kind	note	value	branch	attrs
+1	click	first	7	u1	{"(x,1)"}
+2	view	NULL	seven	u2	{}
+3	click	third	NULL	NULL	{"(x,2)","(y,3)"}
+
+# DOCS_TEST: write_types
+
+# DOCS_TEST_RAW
+#| COPY (
+#|     SELECT
+#|         true AS flag,
+#|         42 AS quantity,
+#|         42::BIGINT AS total,
+#|         1.5::REAL AS ratio,
+#|         2.5::DOUBLE AS score,
+#|         'pear' AS label,
+#|         '\xAA'::BLOB AS payload,
+#|         DATE '2024-05-01' AS born,
+#|         TIME '12:30:00' AS opens,
+#|         TIMESTAMP '2024-05-01 12:30:00' AS created,
+#|         TIMESTAMPTZ '2024-05-01 12:30:00+00' AS seen,
+#|         'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::UUID AS ref,
+#|         12.50::DECIMAL(9, 2) AS price,
+#|         {'x': 1, 'y': 2} AS point,
+#|         [1, 2, 3] AS scores,
+#|         MAP {'color': 'red'} AS tags
+#| ) TO 'types.avro';
+#|
+#| SELECT column_name, column_type
+#| FROM (DESCRIBE SELECT * FROM read_avro('types.avro'));
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (
+    SELECT
+        true AS flag,
+        42 AS quantity,
+        42::BIGINT AS total,
+        1.5::REAL AS ratio,
+        2.5::DOUBLE AS score,
+        'pear' AS label,
+        '\xAA'::BLOB AS payload,
+        DATE '2024-05-01' AS born,
+        TIME '12:30:00' AS opens,
+        TIMESTAMP '2024-05-01 12:30:00' AS created,
+        TIMESTAMPTZ '2024-05-01 12:30:00+00' AS seen,
+        'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::UUID AS ref,
+        12.50::DECIMAL(9, 2) AS price,
+        {'x': 1, 'y': 2} AS point,
+        [1, 2, 3] AS scores,
+        MAP {'color': 'red'} AS tags
+) TO '${__TEST_DIR__}/types.avro';
+
+query
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM read_avro('${__TEST_DIR__}/types.avro'));
+----
+column_name	column_type
+flag	BOOLEAN
+quantity	INTEGER
+total	BIGINT
+ratio	FLOAT
+score	DOUBLE
+label	VARCHAR
+payload	BLOB
+born	DATE
+opens	TIME
+created	TIMESTAMP
+seen	TIMESTAMP WITH TIME ZONE
+ref	UUID
+price	DECIMAL(9,2)
+point	STRUCT(x INTEGER, y INTEGER)
+scores	INTEGER[]
+tags	MAP(VARCHAR, VARCHAR)
+
+# DOCS_TEST: enum_error
+
+# DOCS_TEST_RAW
+#| CREATE TYPE mood AS ENUM ('happy', 'sad');
+#|
+#| COPY (SELECT 'happy'::mood AS feeling) TO 'mood.avro';
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TYPE mood AS ENUM ('happy', 'sad');
+
+statement error
+COPY (SELECT 'happy'::mood AS feeling) TO '${__TEST_DIR__}/mood.avro';
+----
+db error: ERROR: Can't convert logical type 'mood' to Avro type
+
+
+# DOCS_TEST: enum_text
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 'happy'::mood::TEXT AS feeling) TO 'mood.avro';
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT 'happy'::mood::TEXT AS feeling) TO '${__TEST_DIR__}/mood.avro';
+
+# DOCS_TEST: codec_error
+
+# DOCS_TEST_RAW
+#| COPY fruit TO 'fruit_bzip2.avro' (CODEC 'bzip2');
+
+# DOCS_TEST_BODY
+
+statement error
+COPY fruit TO '${__TEST_DIR__}/fruit_bzip2.avro' (CODEC 'bzip2');
+----
+db error: ERROR: Unknown codec bzip2, the supported codecs are null, deflate, snappy and zstandard
+
+
+# DOCS_TEST: name_error
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 12 AS "unit price") TO 'prices.avro';
+
+# DOCS_TEST_BODY
+
+statement error
+COPY (SELECT 12 AS "unit price") TO '${__TEST_DIR__}/prices.avro';
+----
+db error: ERROR: Invalid Avro identifier
+
+
+# DOCS_TEST: sanitize_field_names
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 12 AS "unit price") TO 'prices.avro' (SANITIZE_FIELD_NAMES true);
+#|
+#| SELECT *
+#| FROM read_avro('prices.avro');
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT 12 AS "unit price") TO '${__TEST_DIR__}/prices.avro' (SANITIZE_FIELD_NAMES true);
+
+query
+SELECT *
+FROM read_avro('${__TEST_DIR__}/prices.avro');
+----
+unit_x20price
+12
+
+# DOCS_TEST: field_ids
+
+# DOCS_TEST_RAW
+#| COPY (SELECT 1 AS id, 'gala' AS variety)
+#|     TO 'ids.avro' (ROOT_NAME 'fruit', FIELD_IDS {id: {__duckdb_field_id: 1, __duckdb_nullable: false}, variety: 2});
+#|
+#| SELECT value AS schema
+#| FROM avro_metadata('ids.avro')
+#| WHERE key = 'avro.schema';
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT 1 AS id, 'gala' AS variety)
+    TO '${__TEST_DIR__}/ids.avro' (ROOT_NAME 'fruit', FIELD_IDS {id: {__duckdb_field_id: 1, __duckdb_nullable: false}, variety: 2});
+
+query
+SELECT value AS schema
+FROM avro_metadata('${__TEST_DIR__}/ids.avro')
+WHERE key = 'avro.schema';
+----
+schema
+{"type":"record","name":"fruit","fields":[{"name":"id","type":"int","field-id":1},{"name":"variety","type":["null","string"],"field-id":2}]}
+
+# DOCS_TEST: field_ids_null
+
+# DOCS_TEST_RAW
+#| COPY (SELECT NULL::INTEGER AS id)
+#|     TO 'ids_null.avro' (FIELD_IDS {id: {__duckdb_field_id: 1, __duckdb_nullable: false}});
+
+# DOCS_TEST_BODY
+
+statement error
+COPY (SELECT NULL::INTEGER AS id)
+    TO '${__TEST_DIR__}/ids_null.avro' (FIELD_IDS {id: {__duckdb_field_id: 1, __duckdb_nullable: false}});
+----
+db error: ERROR: Cannot insert NULL to non-nullable field of type INTEGER
+
+
+# DOCS_TEST: metadata
+
+# DOCS_TEST_RAW
+#| COPY fruit TO 'fruit_meta.avro' (METADATA {'source': 'orchard', 'season': 'autumn'});
+#|
+#| SELECT key, value
+#| FROM avro_metadata('fruit_meta.avro')
+#| WHERE key NOT LIKE 'avro.%'
+#| ORDER BY key;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY fruit TO '${__TEST_DIR__}/fruit_meta.avro' (METADATA {'source': 'orchard', 'season': 'autumn'});
+
+query
+SELECT key, value
+FROM avro_metadata('${__TEST_DIR__}/fruit_meta.avro')
+WHERE key NOT LIKE 'avro.%'
+ORDER BY key;
+----
+key	value
+season	autumn
+source	orchard

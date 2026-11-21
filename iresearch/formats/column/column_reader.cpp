@@ -58,7 +58,7 @@ using column_internal::BorrowsBlockStrings;
 using column_internal::FetchSegmentRows;
 
 constexpr duckdb::idx_t kMaxFetchHits = 64;
-constexpr uint64_t kTrustedRunBytes = 32 * duckdb::PageResidency::PAGE_SIZE;
+constexpr uint64_t kTrustedRunBytes = 256 * duckdb::PageResidency::PAGE_SIZE;
 constexpr size_t kBlocksAhead = 32;
 
 bool BytesInMemory(const duckdb::InputFile& file, uint64_t offset,
@@ -316,13 +316,12 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   if (block < s->advised_end || first.byte_size == 0) {
     return;
   }
-  if (BytesInMemory(*file, first.file_offset, first.byte_size)) {
-    if (first.byte_size <= kTrustedRunBytes) {
-      file->MarkWarm(first.file_offset, first.byte_size);
-    }
+  if (first.byte_size <= kTrustedRunBytes &&
+      file->Warm(first.file_offset, first.byte_size) == first.byte_size) {
     auto end = block + 1;
     auto tail = block;
-    for (uint64_t budget = kTrustedRunBytes; end < _segments.size(); ++end) {
+    for (auto budget = kTrustedRunBytes - first.byte_size;
+         end < _segments.size(); ++end) {
       const auto& next = _segments[end];
       if (next.byte_size > budget ||
           file->Warm(next.file_offset, next.byte_size) != next.byte_size) {
@@ -333,14 +332,19 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
         tail = end;
       }
     }
-    if (tail != block && !BytesInMemory(*file, _segments[tail].file_offset,
-                                        _segments[tail].byte_size)) {
-      if (file->IsPaged()) {
-        duckdb::PageResidency::Invalidate();
-      }
-      end = block + 1;
+    const auto& last = _segments[tail];
+    if (BytesInMemory(*file, first.file_offset, 1) &&
+        BytesInMemory(*file, last.file_offset + last.byte_size - 1, 1)) {
+      s->advised_end = end;
+      return;
     }
-    s->advised_end = end;
+    if (file->IsPaged()) {
+      duckdb::PageResidency::Invalidate();
+    }
+  }
+  if (BytesInMemory(*file, first.file_offset, first.byte_size)) {
+    file->MarkWarm(first.file_offset, first.byte_size);
+    s->advised_end = block + 1;
     return;
   }
   if (file->IsPaged() &&

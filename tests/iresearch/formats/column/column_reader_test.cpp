@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/hash/hash.h>
 #include <absl/strings/str_cat.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -2441,6 +2442,14 @@ class ScriptedMapping final : public duckdb::MemoryMappedFile {
   }
   void Evict(duckdb::idx_t /*location*/, duckdb::idx_t /*nr_bytes*/) final {}
 
+  void Drop(uint64_t offset, uint64_t length) {
+    const auto first = offset / Page();
+    const auto end = Pages(std::min<uint64_t>(offset + length, size));
+    ASSERT_EQ(
+      ::madvise(data + first * Page(), (end - first) * Page(), MADV_DONTNEED),
+      0);
+  }
+
   void KeepUntil(uint64_t end) {
     const auto all = Pages(size);
     const auto kept = Pages(std::min<uint64_t>(end, size));
@@ -2623,8 +2632,8 @@ TEST_F(ColumnReaderTest, ReadsPrefetchTheSharedBlockOfTheirRowGroup) {
 
 TEST_F(ColumnReaderTest, ScansTrustTheWarmMapBetweenTwoResidentEnds) {
   constexpr uint32_t kRgSize = STANDARD_VECTOR_SIZE;
-  constexpr uint64_t kRows = 48 * kRgSize;
-  constexpr uint64_t kRun = 32 * duckdb::PageResidency::PAGE_SIZE;
+  constexpr uint64_t kRows = 640 * kRgSize;
+  constexpr uint64_t kRun = 256 * duckdb::PageResidency::PAGE_SIZE;
   constexpr uint64_t kEverything = std::numeric_limits<uint64_t>::max();
   constexpr irs::field_id kPlain = 1;
   constexpr irs::field_id kRuns = 2;
@@ -2711,6 +2720,7 @@ TEST_F(ColumnReaderTest, ScansTrustTheWarmMapBetweenTwoResidentEnds) {
     };
 
     ASSERT_NO_FATAL_FAILURE(mapping.KeepUntil(kEverything));
+    duckdb::PageResidency::Invalidate();
     auto epoch = duckdb::PageResidency::Epoch();
     ASSERT_NO_FATAL_FAILURE(scan());
     EXPECT_EQ(duckdb::PageResidency::Epoch(), epoch);
@@ -2724,11 +2734,16 @@ TEST_F(ColumnReaderTest, ScansTrustTheWarmMapBetweenTwoResidentEnds) {
     EXPECT_LT(static_cast<size_t>(absl::c_count(asked, true)),
               blocks.size() / 2);
     EXPECT_TRUE(asked.front());
-    uint64_t trusted = 0;
+    uint64_t run = 0;
     for (size_t b = 0; b != blocks.size(); ++b) {
-      trusted = asked[b] ? 0 : trusted + blocks[b].size;
-      EXPECT_LE(trusted, kRun);
+      run = asked[b] ? blocks[b].size : run + blocks[b].size;
+      EXPECT_LE(run, kRun);
     }
+    size_t tail = 0;
+    for (size_t b = 1; b != blocks.size() && !asked[b]; ++b) {
+      tail = b;
+    }
+    ASSERT_GT(tail, 0);
 
     const auto half = blocks.size() / 2 + 1;
     ASSERT_NO_FATAL_FAILURE(
@@ -2754,9 +2769,105 @@ TEST_F(ColumnReaderTest, ScansTrustTheWarmMapBetweenTwoResidentEnds) {
     ASSERT_NO_FATAL_FAILURE(scan());
     EXPECT_EQ(duckdb::PageResidency::Epoch(), epoch);
     EXPECT_TRUE(absl::c_all_of(blocks, prefetched));
+
+    ASSERT_NO_FATAL_FAILURE(mapping.KeepUntil(kEverything));
+    ASSERT_NO_FATAL_FAILURE(scan());
+    epoch = duckdb::PageResidency::Epoch();
+    ASSERT_NO_FATAL_FAILURE(mapping.Drop(blocks.front().offset, 1));
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_NE(duckdb::PageResidency::Epoch(), epoch);
+    EXPECT_TRUE(prefetched(blocks.front()));
+
+    ASSERT_NO_FATAL_FAILURE(mapping.KeepUntil(kEverything));
+    ASSERT_NO_FATAL_FAILURE(scan());
+    epoch = duckdb::PageResidency::Epoch();
+    ASSERT_NO_FATAL_FAILURE(
+      mapping.Drop(blocks[tail].offset + blocks[tail].size - 1, 1));
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_NE(duckdb::PageResidency::Epoch(), epoch);
+    EXPECT_TRUE(prefetched(blocks[tail]));
+
+    ASSERT_NO_FATAL_FAILURE(mapping.KeepUntil(kEverything));
+    ASSERT_NO_FATAL_FAILURE(scan());
+    ASSERT_NO_FATAL_FAILURE(
+      mapping.KeepUntil(blocks[half - 1].offset + blocks[half - 1].size));
+    ASSERT_NO_FATAL_FAILURE(scan());
+    ASSERT_TRUE(resident(blocks[half + 1]));
+    ASSERT_NO_FATAL_FAILURE(
+      mapping.Drop(blocks[half + 1].offset + blocks[half + 1].size / 2, 1));
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_TRUE(prefetched(blocks[half + 1]));
   };
   ASSERT_NO_FATAL_FAILURE(check(kPlain, plain));
   ASSERT_NO_FATAL_FAILURE(check(kRuns, runs));
+}
+
+TEST_F(ColumnReaderTest, ScansAskAboutABlockLargerThanARunInFull) {
+  constexpr uint32_t kRgSize = 128 * STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kRows = 3 * kRgSize;
+  constexpr uint64_t kRun = 256 * duckdb::PageResidency::PAGE_SIZE;
+  constexpr irs::field_id kWide = 1;
+  const auto value = [](uint64_t row) {
+    return static_cast<int64_t>(absl::HashOf(row));
+  };
+  tests::IndexDir mem{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), mem.Tracker("seg"), irs::WriteTier::Merge};
+    auto& writer =
+      w.OpenColumn(kWide, duckdb::LogicalType::BIGINT,
+                   {.row_group_size = kRgSize,
+                    .compression = irs::codecs::CodecType::Bitpacking});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector values{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+      auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(values);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        data[k] = value(pos + k);
+      }
+      duckdb::FlatVector::SetSize(values, STANDARD_VECTOR_SIZE);
+      writer.Append(values, STANDARD_VECTOR_SIZE);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+
+  ScriptedFileSystem fs{mem.Fs()};
+  irs::ColReader r{Db(),  fs,   mem.Root(),
+                   "seg", true, duckdb::MappedFileAccess::SEQUENTIAL};
+  ASSERT_NE(fs.mapped, nullptr);
+  auto& mapping = *fs.mapped;
+  const auto& col = *r.Column(kWide);
+  const auto blocks = col.DataBlocks();
+  ASSERT_EQ(blocks.size(), 3);
+  ASSERT_TRUE(absl::c_all_of(
+    blocks, [&](const auto& block) { return block.byte_size > kRun; }));
+  const auto scan = [&] {
+    mapping.prefetched.clear();
+    auto state = col.InitScan(r.Ctx());
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector result{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+      col.Scan(state, result, STANDARD_VECTOR_SIZE);
+      result.Flatten(STANDARD_VECTOR_SIZE);
+      const auto* values = duckdb::FlatVector::GetData<int64_t>(result);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        ASSERT_EQ(values[k], value(pos + k)) << "row " << pos + k;
+      }
+    }
+  };
+  const auto prefetched = [&](const irs::ColumnBlockMeta& block) {
+    return absl::c_any_of(mapping.prefetched, [&](const PrefetchRange& p) {
+      return p.offset <= block.file_offset &&
+             block.file_offset + block.byte_size <= p.offset + p.size;
+    });
+  };
+
+  ASSERT_NO_FATAL_FAILURE(scan());
+  ASSERT_NO_FATAL_FAILURE(scan());
+  EXPECT_TRUE(mapping.prefetched.empty());
+
+  ASSERT_NO_FATAL_FAILURE(
+    mapping.Drop(blocks[1].file_offset + blocks[1].byte_size / 2, 1));
+  ASSERT_NO_FATAL_FAILURE(scan());
+  EXPECT_TRUE(prefetched(blocks[1]));
+  EXPECT_FALSE(prefetched(blocks[0]));
 }
 
 TEST_F(ColumnReaderTest, PointReaderReopensBlocksItClosed) {

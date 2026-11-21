@@ -769,7 +769,7 @@ Sugar that rewrites to `@@` at bind time. Each takes the indexed column as its f
 | :--- | :--- |
 | [`phrase_matches(column, text[, text, ...])`](#phrase_matches) | Equivalent to `column @@ ts_phrase(...)`. |
 | [`ngram_matches(column, text[, threshold])`](#ngram_matches) | Equivalent to `column @@ ts_ngram(...)`. |
-| [`levenshtein_matches(column, text, distance[, transpositions[, prefix]])`](#levenshtein_matches) | Equivalent to `column @@ ts_levenshtein(...)`. |
+| [`levenshtein_matches(column, text, distance[, transpositions[, prefix]][, starts_with := false])`](#levenshtein_matches) | Equivalent to `column @@ ts_levenshtein(...)`. |
 | [`has_all_tokens(column, list)`](#has_all_tokens) | Equivalent to `column @@ ts_all(list)`. |
 | [`has_any_tokens(column, list[, min_match])`](#has_any_tokens) | Equivalent to `column @@ ts_any(list[, min_match])`. |
 
@@ -812,7 +812,7 @@ N-gram-match sugar for `column @@ ts_ngram(text[, threshold])`.
 
 <SqlLogicTest id="sql/functions/full_text_search/ngram_matches" />
 
-#### `levenshtein_matches(column, text, distance[, transpositions[, prefix]])` {#levenshtein_matches}
+#### `levenshtein_matches(column, text, distance[, transpositions[, prefix]][, starts_with := false])` {#levenshtein_matches}
 
 Fuzzy-match sugar for `column @@ ts_levenshtein(...)`.
 

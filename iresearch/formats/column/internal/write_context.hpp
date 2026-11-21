@@ -27,13 +27,17 @@
 
 namespace irs {
 
-inline uint64_t AppendAligned(duckdb::WriteStream& out,
-                              std::string_view bytes) {
+inline uint64_t AlignedPosition(duckdb::WriteStream& out) {
   constexpr duckdb::data_t kZeros[8]{};
   if (const auto misalign = out.Position() % sizeof(kZeros); misalign != 0) {
     out.WriteData(kZeros, sizeof(kZeros) - misalign);
   }
-  const auto offset = out.Position();
+  return out.Position();
+}
+
+inline uint64_t AppendAligned(duckdb::WriteStream& out,
+                              std::string_view bytes) {
+  const auto offset = AlignedPosition(out);
   out.WriteData(duckdb::const_data_ptr_cast(bytes.data()), bytes.size());
   return offset;
 }

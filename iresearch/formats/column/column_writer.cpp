@@ -796,16 +796,9 @@ void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
     .codec = block.codec,
   };
   auto& out = WriteCtx().Out();
-  const auto aligned = [&] {
-    static constexpr duckdb::data_t kPad[8]{};
-    if (const uint64_t misalign = out.Position() % 8; misalign != 0) {
-      out.WriteData(kPad, 8 - misalign);
-    }
-    return out.Position();
-  };
   if (block.shared_size != 0) {
     if (_shared_source != &source || _shared_from != block.shared_offset) {
-      _shared_to = aligned();
+      _shared_to = AlignedPosition(out);
       WriteBytes(source, block.shared_offset, block.shared_size, out);
       _shared_source = &source;
       _shared_from = block.shared_offset;
@@ -814,7 +807,7 @@ void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
     m.shared_size = block.shared_size;
   }
   if (block.byte_size != 0) {
-    m.file_offset = aligned();
+    m.file_offset = AlignedPosition(out);
     m.byte_size = block.byte_size;
     WriteBytes(source, block.file_offset, block.byte_size, out);
   }

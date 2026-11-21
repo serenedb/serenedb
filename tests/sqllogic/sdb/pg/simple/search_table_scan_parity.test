@@ -471,3 +471,196 @@ statement error
 SELECT count(*) FROM notes WHERE note::INTEGER >= 100;
 ----
 db error: ERROR: Could not convert string 'secret <slt:ignore>
+
+
+statement ok
+CREATE TABLE ssp_ties (id BIGINT PRIMARY KEY, a INTEGER)
+  WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+INSERT INTO ssp_ties VALUES (1, 1);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_ties;
+
+
+statement ok
+INSERT INTO ssp_ties VALUES (2, 1), (3, 3);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_ties;
+
+
+statement ok
+INSERT INTO ssp_ties VALUES (4, 2);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_ties;
+
+
+query
+SELECT a FROM ssp_ties ORDER BY a LIMIT 3;
+----
+a
+1
+1
+2
+
+
+statement ok
+CREATE TABLE ssp_topn_del (id BIGINT PRIMARY KEY, a INTEGER)
+  WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+INSERT INTO ssp_topn_del VALUES (1, 1), (2, 1000);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_topn_del;
+
+
+statement ok
+INSERT INTO ssp_topn_del VALUES (3, 5), (4, 6);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_topn_del;
+
+
+statement ok
+DELETE FROM ssp_topn_del WHERE id = 1;
+
+
+query
+SELECT a FROM ssp_topn_del ORDER BY a LIMIT 1;
+----
+a
+5
+
+
+statement ok
+CREATE TABLE ssp_topn_upd (id BIGINT PRIMARY KEY, a INTEGER)
+  WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+INSERT INTO ssp_topn_upd VALUES (1, 1), (2, 1000);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_topn_upd;
+
+
+statement ok
+INSERT INTO ssp_topn_upd VALUES (3, 5), (4, 6);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_topn_upd;
+
+
+statement ok
+UPDATE ssp_topn_upd SET a = 2000 WHERE id = 1;
+
+
+query
+SELECT a FROM ssp_topn_upd ORDER BY a LIMIT 1;
+----
+a
+5
+
+
+statement ok
+CREATE TABLE ssp_sample_segs (id BIGINT PRIMARY KEY, v INTEGER) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(0, 100) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(100, 200) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(200, 300) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(300, 400) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(400, 500) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(500, 600) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(600, 700) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(700, 800) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(800, 900) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(900, 1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+query
+SELECT count(*) AS n FROM ssp_sample_segs USING SAMPLE 1 ROWS (system, 1);
+----
+n
+1

@@ -101,6 +101,41 @@ T Unwrap(simdjson::simdjson_result<T>&& result) {
   return value;
 }
 
+bool KeyIs(simdjson::ondemand::field& field, std::string_view name) {
+  const auto raw = field.escaped_key();
+  const auto literal = std::min(raw.size(), name.size());
+  size_t i = 0;
+  while (i != literal && raw[i] == name[i] && raw[i] != '\\') {
+    ++i;
+  }
+  if (i == raw.size()) {
+    return i == name.size();
+  }
+  if (raw[i] != '\\') {
+    return false;
+  }
+  std::string_view key;
+  return !field.unescaped_key().get(key) && key == name;
+}
+
+bool FindField(simdjson::ondemand::value& value, std::string_view name) {
+  simdjson::ondemand::object object;
+  if (value.get_object().get(object)) {
+    return false;
+  }
+  for (auto result : object) {
+    simdjson::ondemand::field field;
+    if (std::move(result).get(field)) {
+      return false;
+    }
+    if (KeyIs(field, name)) {
+      value = field.value();
+      return true;
+    }
+  }
+  return false;
+}
+
 class JsonParser {
  public:
   void PrepareJson(std::string_view json) {
@@ -165,11 +200,8 @@ class JsonParser {
     if (doc.get_value().get(value)) {
       return {};
     }
-    if (Unwrap(value.type()) != simdjson::ondemand::json_type::object) {
-      return {};
-    }
-    auto res = value.find_field(field);
-    if (res.get(value)) {
+    if (Unwrap(value.type()) != simdjson::ondemand::json_type::object ||
+        !FindField(value, field)) {
       return {};
     }
     return ProcessOutput<Output>(value);
@@ -200,8 +232,7 @@ class JsonParser {
           return {};
         }
       } else if (type == simdjson::ondemand::json_type::object) {
-        auto res = value.find_field(key);
-        if (res.get(value)) {
+        if (!FindField(value, key)) {
           return {};
         }
       } else {
@@ -579,7 +610,7 @@ void WriteValue(simdjson::ondemand::value val, std::string& out) {
       WriteArray(Unwrap(val.get_array()), out);
       break;
     default:
-      out += val.raw_json_token();
+      out += absl::StripTrailingAsciiWhitespace(val.raw_json_token());
       break;
   }
 }
@@ -606,7 +637,8 @@ void JsonStripNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
           WriteArray(Unwrap(doc.get_array()), out);
           break;
         default:
-          out += Unwrap(doc.raw_json_token());
+          out +=
+            absl::StripTrailingAsciiWhitespace(Unwrap(doc.raw_json_token()));
           break;
       }
       return duckdb::StringVector::AddString(result, out);

@@ -245,25 +245,26 @@ void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
   if (!tablespace) {
     return;
   }
-  if (tablespace->oid == pg::kPgGlobalTablespace) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("only shared relations can be placed in pg_global tablespace"));
-  }
-  duckdb::idx_t own = pg::kPgDefaultTablespace;
   if (InMemory()) {
     refusal = "temporary objects cannot be placed in a tablespace";
-  } else if (const auto database = cluster.LookupOid(at, GetAttached().oid)) {
-    own = database->Cast<DatabaseCatalogEntry>().Tablespace();
-  }
-  if (tablespace->oid == own) {
-    return;
   }
   if (!refusal.empty()) {
     if (!named) {
       return;
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), ERR_MSG(refusal));
+  }
+  if (tablespace->oid == pg::kPgGlobalTablespace) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("only shared relations can be placed in pg_global tablespace"));
+  }
+  duckdb::idx_t own = pg::kPgDefaultTablespace;
+  if (const auto database = cluster.LookupOid(at, GetAttached().oid)) {
+    own = database->Cast<DatabaseCatalogEntry>().Tablespace();
+  }
+  if (tablespace->oid == own) {
+    return;
   }
   auth::RequireTablespaceCreate(context, *tablespace);
   info.dependencies.AddDependency(*tablespace);

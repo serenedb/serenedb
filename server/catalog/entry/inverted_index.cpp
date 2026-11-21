@@ -336,10 +336,15 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
                                  const InvertedIndexConfig& config)
   : _context{&context} {
   const bool temporary = catalog.GetAttached().IsTemporary();
-  auto dictionaries = DictionaryCatalog(context, catalog);
+  const auto session_dictionaries = DictionaryCatalog(context, catalog);
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
+      const auto database =
+        temporary ? field.text_dictionary_database.lock() : nullptr;
+      auto dictionaries =
+        database ? duckdb::optional_ptr<duckdb::Catalog>{database->GetCatalog()}
+                 : session_dictionaries;
       const auto dict =
         dictionaries
           ? dictionaries->Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(

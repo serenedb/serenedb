@@ -1265,6 +1265,8 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
   irs::containers::FlatHashMap<connector::ColumnId, irs::field_id> term_fields;
   irs::containers::FlatHashMap<irs::field_id, size_t> field_keys;
   auto& db_manager = duckdb::DatabaseManager::Get(context);
+  auto dictionaries =
+    catalog::DictionaryCatalog(context, relation.ParentCatalog());
 
   for (size_t i = 0; i < count; ++i) {
     InvertedIndexKey record;
@@ -1371,6 +1373,10 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
     }
     if (dict) {
       field.text_dictionary = dict->oid;
+      if (dictionaries) {
+        field.text_dictionary_database =
+          dictionaries->GetAttached().shared_from_this();
+      }
     }
     ApplyOpclassToEntry(context,
                         entry.ParentSchema(context).name.GetIdentifierName(),

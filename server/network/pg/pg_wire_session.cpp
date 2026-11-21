@@ -565,13 +565,14 @@ bool PgWireSession<Kind>::SetupConnection() {
     }
   }
   std::vector<StartupSetting> role_settings;
-  catalog::ReadRole(user, [&](const catalog::RoleCatalogEntry& entry) {
-    for (const std::string_view item : entry.Config()) {
-      const auto eq = item.find('=');
-      role_settings.push_back({.name = std::string{item.substr(0, eq)},
-                               .value = std::string{item.substr(eq + 1)}});
-    }
-  });
+  catalog::ReadEntry<catalog::RoleCatalogEntry>(
+    user, [&](const catalog::RoleCatalogEntry& entry) {
+      for (const std::string_view item : entry.Config()) {
+        const auto eq = item.find('=');
+        role_settings.push_back({.name = std::string{item.substr(0, eq)},
+                                 .value = std::string{item.substr(eq + 1)}});
+      }
+    });
   bool applied = true;
   _conn->context->RunFunctionInTransaction([&] {
     for (const auto& [name, value] : role_settings) {

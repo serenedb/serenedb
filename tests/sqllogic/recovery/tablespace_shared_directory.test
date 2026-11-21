@@ -1,0 +1,76 @@
+control substitution on
+
+system ok
+rm -rf $__TEST_DIR__/shared_real $__TEST_DIR__/shared_link $__TEST_DIR__/shared_twin && mkdir -p $__TEST_DIR__/shared_real && ln -s $__TEST_DIR__/shared_real $__TEST_DIR__/shared_link
+
+statement ok
+CREATE TABLESPACE shared_real LOCATION '${__TEST_DIR__}/shared_real';
+
+statement ok
+CREATE TABLE shared_kept (id INT, body TEXT) TABLESPACE shared_real;
+
+statement ok
+INSERT INTO shared_kept SELECT i, 'fox ' || i FROM range(1000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) shared_kept;
+
+statement error
+CREATE TABLESPACE shared_link LOCATION '${__TEST_DIR__}/shared_link';
+----
+db error: ERROR: directory "<slt:ignore>" already in use as a tablespace
+
+
+system ok
+cp -r $__TEST_DIR__/shared_real $__TEST_DIR__/shared_twin
+
+statement error
+CREATE TABLESPACE shared_twin LOCATION '${__TEST_DIR__}/shared_twin';
+----
+db error: ERROR: directory "<slt:ignore>" already in use as a tablespace
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+connection after_crash
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+connection after_restart
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE body = 'fox 500') AS hit FROM shared_kept;
+----
+n	hit
+1000	1
+
+connection after_restart
+statement ok
+DROP TABLE shared_kept;
+
+connection after_restart
+statement ok
+DROP TABLESPACE shared_real;
+
+connection after_restart
+statement ok
+CREATE TABLESPACE shared_again LOCATION '${__TEST_DIR__}/shared_link';
+
+connection after_restart
+statement ok
+DROP TABLESPACE shared_again;

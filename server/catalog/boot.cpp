@@ -21,7 +21,6 @@
 #include "catalog/boot.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
@@ -114,16 +113,15 @@ std::vector<StoreListing> ListStores(std::vector<std::string> directories) {
 
 bool RemoveOrphans(std::span<const StoreListing> listings,
                    std::span<const LiveStorage> live) {
-  absl::flat_hash_map<std::string_view, absl::flat_hash_set<std::string>> owned;
+  absl::flat_hash_set<std::string> owned;
   for (const auto& one : live) {
-    one.storage->CollectFiles(owned[one.storage->Path()]);
+    one.storage->CollectFiles(owned);
   }
   bool removed = true;
   for (const auto& listing : listings) {
-    const auto& keep = owned[listing.directory];
     std::vector<std::string> orphans;
     for (const auto& file : listing.files) {
-      if (!keep.contains(file)) {
+      if (!owned.contains(file)) {
         orphans.push_back(file);
       }
     }

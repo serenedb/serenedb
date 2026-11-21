@@ -46,6 +46,7 @@
 #include <duckdb/parser/parsed_data/create_role_info.hpp>
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -297,6 +298,19 @@ std::string TablespaceDirectory(std::string_view location) {
   return duckdb::FileSystem::JoinPath(SystemDirectory(location), kEngineDir);
 }
 
+std::string TablespaceFile(std::string_view directory) {
+  return duckdb::FileSystem::JoinPath(directory, kTablespaceFile);
+}
+
+void RequireUnusedDirectory(std::string_view location) {
+  const auto directory = TablespaceDirectory(location);
+  if (StorageFileSystem().FileExists(TablespaceFile(directory))) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OBJECT_IN_USE),
+      ERR_MSG("directory \"", directory, "\" already in use as a tablespace"));
+  }
+}
+
 void CreateTablespaceDirectory(const std::string& location) {
   auto& fs = StorageFileSystem();
   const auto store = StoreDirOf(TablespaceDirectory(location));
@@ -324,12 +338,12 @@ class BuiltinTablespaces final : public duckdb::DefaultGenerator {
     info.SetName(name);
     info.internal = true;
     info.permissions.owner = pg::kRootUser;
-    if (name == kDefault) {
+    if (name.GetIdentifierName() == kDefault) {
       info.oid = pg::kPgDefaultTablespace;
       return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, info,
                                                        _default_directory);
     }
-    if (name == kGlobal) {
+    if (name.GetIdentifierName() == kGlobal) {
       info.oid = pg::kPgGlobalTablespace;
       return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, info,
                                                        std::string{});
@@ -436,6 +450,7 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context,
     info.permissions.owner = pg::kRootUser;
     CreateDatabase(transaction, info);
   }
+  _tablespaces.CreateDefaults(transaction);
 }
 
 void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
@@ -668,6 +683,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
                     ERR_MSG("tablespace location \"", info.location,
                             "\" is already used by tablespace \"", user, "\""));
   }
+  RequireUnusedDirectory(info.location);
   AssignObjectOid(*this, info);
   auto entry = duckdb::make_uniq<TablespaceCatalogEntry>(
     *this, info, TablespaceDirectory(info.location));
@@ -676,6 +692,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateTablespace(
     exists();
   }
   CreateTablespaceDirectory(info.location);
+  SessionOf(transaction.GetContext(), *this)
+    .DeferToCommit([directory = tablespace.Directory()] {
+      auto& fs = StorageFileSystem();
+      irs::WriteWhole(fs, TablespaceFile(directory), {}, false);
+      fs.SyncDirectory(directory);
+    });
   return &tablespace;
 }
 
@@ -706,6 +728,13 @@ void ClusterCatalog::DropTablespace(duckdb::CatalogTransaction transaction,
       ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
       ERR_MSG("tablespace \"", name.GetIdentifierName(), "\" is not empty"));
   }
+  SessionOf(transaction.GetContext(), *this)
+    .DeferToCommit([directory = tablespace.Directory()] {
+      auto& fs = StorageFileSystem();
+      if (fs.TryRemoveFile(TablespaceFile(directory))) {
+        fs.SyncDirectory(directory);
+      }
+    });
   _tablespaces.Drop(transaction, name);
 }
 

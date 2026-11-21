@@ -49,7 +49,13 @@ A location is kept in normal form, with backslashes read as slashes, repeated an
 ERROR:  tablespace location "/mnt/nvme/serenedb" is already used by tablespace "fast"
 ```
 
-The directory is created when it does not exist, on an object store as an empty object named after the location with a trailing slash, and with it `<system identifier>/engine_v1/store` inside it, the directory that holds the index files of everything placed in the tablespace. A flush into a tablespace whose `store` directory was removed fails until the directory is there again. The server reads and writes nothing above the location, so a secret whose scope is the location is enough; `CREATE TABLESPACE` fails when the store cannot be reached or the credentials do not allow reading, listing and writing the location. A location with an `engine_v1` directory in its path, such as one inside the files of another tablespace or of the data directory, is refused:
+A tablespace marks its directory with a file named `tablespace` in `<system identifier>/engine_v1`, and a location whose directory holds that file is refused, whatever path names it: the directory of another tablespace reached through a symbolic link, another mount or another URL scheme, or the location a server restored from a backup of this one shares with it, since the restored server keeps the system identifier:
+
+```text
+ERROR:  directory "/mnt/nvme/serenedb/7432185146390183459/engine_v1" already in use as a tablespace
+```
+
+The directory is created when it does not exist, on an object store as an empty object named after the location with a trailing slash, and with it `<system identifier>/engine_v1/store` inside it, the directory that holds the index files of everything placed in the tablespace, and the `tablespace` file beside it. A flush into a tablespace whose `store` directory was removed fails until the directory is there again. The server reads and writes nothing above the location, so a secret whose scope is the location is enough; `CREATE TABLESPACE` fails when the store cannot be reached or the credentials do not allow reading, listing and writing the location. A location with an `engine_v1` directory in its path, such as one inside the files of another tablespace or of the data directory, is refused:
 
 ```text
 ERROR:  tablespace location "/mnt/nvme/serenedb/engine_v1/inside" is inside the files of a tablespace
@@ -157,7 +163,7 @@ DROP TABLESPACE [ IF EXISTS ] name
 
 Only the owner of a tablespace, or a superuser, can drop it, and only when it is empty: no database was created in it and no table or inverted index is placed in it.
 
-Dropping a tablespace removes no files: each object that was in it removed its own files when it was dropped, once the transactions that began before that drop ended. Empty directories stay at the location, on an object store as the empty objects that stand for them, and a new tablespace can use the location at once. `DROP TABLESPACE` cannot run inside a transaction block.
+Dropping a tablespace removes its `tablespace` file and no other: each object that was in it removed its own files when it was dropped, once the transactions that began before that drop ended. Empty directories stay at the location, on an object store as the empty objects that stand for them, and a new tablespace can use the location at once. `DROP TABLESPACE` cannot run inside a transaction block.
 
 When one transaction places an object in a tablespace while another drops the tablespace, the one that commits second fails, as with any object that another depends on. A drop fails with `tablespace "name" is not empty` when the placement committed before the drop began, and with `Could not commit DROP of "name" because a dependency was created after the transaction started` when it commits later; a placement that commits after the drop fails with `Could not commit creation of dependency, subject "name" has been deleted`; the files of an object that fails this way are removed.
 

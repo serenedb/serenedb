@@ -28,6 +28,7 @@
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
+#include <duckdb/main/attached_database.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/search/scorers/scorer_options.hpp>
@@ -73,6 +74,8 @@ struct ColumnTokenizer {
 };
 
 struct InvertedIndexField : persistence::FieldRecord {
+  duckdb::weak_ptr<duckdb::AttachedDatabase> text_dictionary_database;
+
   bool HasTextDictionary() const noexcept { return text_dictionary != 0; }
   // For a JSON value: whether its leaves are indexed one by one.
   bool HasJsonLeafFields() const noexcept {

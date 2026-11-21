@@ -295,6 +295,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   const duckdb::idx_t _login_role_id;
   duckdb::idx_t _session_role_id;
   duckdb::idx_t _effective_role_id;
+  const bool _owns_temporary_objects;
   SideChannel _side_channel;
   bool _in_transaction_block = false;
   std::atomic<NoticeNode*> _notices{nullptr};

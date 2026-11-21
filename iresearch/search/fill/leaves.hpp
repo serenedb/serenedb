@@ -49,7 +49,7 @@ class AndLeaves {
   doc_id_t Restrict(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     const auto words = detail::WindowWords(min, max);
     doc_id_t next = 0;
-    auto card = detail::Cardinality(mask, words);
+    auto card = static_cast<uint32_t>(CountBits(mask, words));
     detail::Scratch own;
     for (size_t i = 0, last = _leaves.size() - 1;; ++i) {
       if (card == 0) {

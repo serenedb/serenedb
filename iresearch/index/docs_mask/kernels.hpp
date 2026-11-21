@@ -104,11 +104,10 @@ inline void ApplyWords(const uint64_t* IRS_RESTRICT src, uint32_t src_words,
     }
   }
   if (last > full) {
-    const uint32_t rest = (max - min) % 64;
     Apply<kAndNot>(
       dst[full],
       detail::WordAt(src, src_words, offset + static_cast<int64_t>(full) * 64) &
-        (~uint64_t{0} >> (64 - rest)));
+        TailMask(max - min));
   }
 }
 

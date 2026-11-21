@@ -33,6 +33,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -236,8 +237,7 @@ class DocsMask<K> final : public docs_mask::Chunked<DocsMask<K>, K> {
       return doc < begin ? begin : doc_limits::eof();
     }
     const auto low = offset & docs_mask::kChunkLow;
-    const auto rest =
-      _layout.At(chunk).Words()[low / 64] & (~uint64_t{0} << (low % 64));
+    const auto rest = _layout.At(chunk).Words()[low / 64] & HeadMask(low);
     const auto found =
       uint64_t{doc} - low % 64 + static_cast<uint64_t>(std::countr_zero(rest));
     return static_cast<doc_id_t>(std::min<uint64_t>(found, doc_limits::eof()));

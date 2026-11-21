@@ -78,3 +78,30 @@ SELECT count(*) FROM stmar_nulls WHERE x IS NULL
 ----
 count
 2
+
+statement ok
+CREATE TABLE stmar_added (id BIGINT) WITH (compaction_interval = 0)
+
+statement ok
+INSERT INTO stmar_added VALUES (1), (2)
+
+statement ok
+ALTER TABLE stmar_added ADD COLUMN x BIGINT
+
+statement ok
+ALTER TABLE stmar_added ADD COLUMN y BIGINT DEFAULT 5
+
+statement ok
+INSERT INTO stmar_added VALUES (3, 7, 7), (4, 9, 9)
+
+query
+SELECT min(x), max(x), min(y), max(y) FROM stmar_added
+----
+min	max	min	max
+7	9	5	9
+
+query
+SELECT count(*) FROM stmar_added WHERE x IS NULL
+----
+count
+2

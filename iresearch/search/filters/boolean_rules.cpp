@@ -782,12 +782,6 @@ size_t DriverRank(const Filter& filter) noexcept {
 
 bool MatchesWordTwice(std::span<const TermClause> terms,
                       std::span<bytes_view> prefixes) {
-  if (absl::c_adjacent_find(
-        terms, [](const TermClause& lhs, const TermClause& rhs) {
-          return bytes_view{lhs.term} == bytes_view{rhs.term};
-        }) != terms.end()) {
-    return true;
-  }
   absl::c_sort(prefixes);
   auto term = terms.begin();
   for (size_t i = 0; i != prefixes.size(); ++i) {

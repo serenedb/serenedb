@@ -480,6 +480,7 @@ class LevenshteinPrefixAcceptor {
   static constexpr bool kHasPayload = true;
   static constexpr bool kCheapRuns = false;
   static constexpr bool kMayBeUnknown = false;
+  static constexpr PayloadType kNone = std::numeric_limits<PayloadType>::max();
 
   struct State {
     LevenshteinAcceptor::State inner;
@@ -490,7 +491,11 @@ class LevenshteinPrefixAcceptor {
     std::shared_ptr<const LevenshteinAcceptor> inner) noexcept
     : _inner{std::move(inner)} {}
 
-  State Start() const noexcept { return Settle({_inner->Start(), kNone}); }
+  const std::shared_ptr<const LevenshteinAcceptor>& Inner() const noexcept {
+    return _inner;
+  }
+
+  State Start() const noexcept { return StartOf(*_inner); }
 
   bytes_view LowerBound() const noexcept { return _inner->LowerBound(); }
 
@@ -499,54 +504,74 @@ class LevenshteinPrefixAcceptor {
   }
 
   State Step(const State& state, byte_type label) const noexcept {
-    if (Settled(state)) {
-      return state;
-    }
-    return Settle({_inner->Step(state.inner, label), state.best});
+    return StepOf(*_inner, state, label);
   }
 
-  bool Accept(const State& state, PayloadType& payload) const noexcept {
+  static bool Accept(const State& state, PayloadType& payload) noexcept {
     payload = state.best;
     return state.best != kNone;
   }
 
   bool Matches(bytes_view term) const noexcept {
     PayloadType payload{};
-    return Matches(term, payload);
+    return Matches(*_inner, term, payload);
   }
 
   bool Matches(bytes_view term, PayloadType& payload) const noexcept {
-    auto state = Start();
-    for (const auto label : term) {
-      if (Settled(state)) {
-        break;
-      }
-      state = Step(state, label);
-    }
-    return Accept(state, payload);
+    return Matches(*_inner, term, payload);
   }
 
   bool LiveRange(const State& state, uint32_t& lo,
                  uint32_t& hi) const noexcept {
+    return LiveRangeOf(*_inner, state, lo, hi);
+  }
+
+  static State StartOf(const LevenshteinAcceptor& inner) noexcept {
+    return Settle(inner, {inner.Start(), kNone});
+  }
+
+  static State StepOf(const LevenshteinAcceptor& inner, const State& state,
+                      byte_type label) noexcept {
+    if (Settled(state)) {
+      return state;
+    }
+    return Settle(inner, {inner.Step(state.inner, label), state.best});
+  }
+
+  static bool LiveRangeOf(const LevenshteinAcceptor& inner, const State& state,
+                          uint32_t& lo, uint32_t& hi) noexcept {
     if (state.best != kNone) {
       lo = 0;
       hi = std::numeric_limits<byte_type>::max();
       return true;
     }
-    return _inner->LiveRange(state.inner, lo, hi);
+    return inner.LiveRange(state.inner, lo, hi);
+  }
+
+  static bool Matches(const LevenshteinAcceptor& inner, bytes_view term,
+                      PayloadType& payload) noexcept {
+    auto state = StartOf(inner);
+    for (const auto label : term) {
+      if (Settled(state)) {
+        break;
+      }
+      state = StepOf(inner, state, label);
+    }
+    return Accept(state, payload);
   }
 
  private:
-  static constexpr PayloadType kNone = std::numeric_limits<PayloadType>::max();
-
   static bool Settled(const State& state) noexcept {
     return state.best == 0 || !LevenshteinAcceptor::Alive(state.inner);
   }
 
-  State Settle(State state) const noexcept {
+  static State Settle(const LevenshteinAcceptor& inner, State state) noexcept {
     PayloadType distance{};
-    if (_inner->Accept(state.inner, distance) && distance < state.best) {
+    if (inner.Accept(state.inner, distance) && distance < state.best) {
       state.best = distance;
+    }
+    if (Settled(state)) {
+      state.inner = {};
     }
     return state;
   }

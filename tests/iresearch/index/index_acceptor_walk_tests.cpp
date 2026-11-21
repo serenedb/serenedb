@@ -376,6 +376,10 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
       description, irs::ViewCast<irs::byte_type>(prefix),
       irs::ViewCast<irs::byte_type>(target));
     const irs::LevenshteinPrefixAcceptor acceptor{fuzzy};
+    const auto dfa = irs::FuzzyConjunction::MakePrefix(fuzzy);
+    ASSERT_NE(nullptr, dfa);
+    const irs::FuzzyConjunction small{{}, fuzzy, 16384, true};
+    const irs::FuzzyConjunction none{{}, fuzzy, 0, true};
     const auto prefix_bytes = irs::ViewCast<irs::byte_type>(prefix);
     irs::containers::SmallVector<uint32_t, 16> target_chars;
     irs::utf8_utils::ToUTF32<false>(irs::ViewCast<irs::byte_type>(target),
@@ -402,14 +406,20 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
             expected.emplace_back(term, static_cast<irs::byte_type>(distance));
           }
         }
-        for (const auto& [term, distance] : expected) {
-          irs::byte_type payload{};
-          EXPECT_TRUE(acceptor.Matches(term, payload));
-          EXPECT_EQ(distance, payload);
-        }
-        auto walk = field->iterator(acceptor);
-        ASSERT_NE(nullptr, walk);
-        AssertSameWalk(expected, *walk, true);
+        const auto check = [&](const auto& a) {
+          for (const auto& [term, distance] : expected) {
+            irs::byte_type payload{};
+            EXPECT_TRUE(a.Matches(term, payload));
+            EXPECT_EQ(distance, payload);
+          }
+          auto walk = field->iterator(a);
+          ASSERT_NE(nullptr, walk);
+          AssertSameWalk(expected, *walk, true);
+        };
+        check(acceptor);
+        check(*dfa);
+        check(small);
+        check(none);
       }
     }
     if (check_source) {
@@ -990,6 +1000,61 @@ TEST_P(AcceptorWalkIndexTestCase, fuzzy_source_walks_the_parametric_language) {
         }
         std::vector<std::pair<irs::bstring, irs::byte_type>> walked;
         auto walk = field->iterator(*fuzzy);
+        const auto* walk_payload = irs::get<irs::PayAttr>(*walk);
+        ASSERT_NE(nullptr, walk_payload);
+        while (walk->next()) {
+          walked.emplace_back(walk->value(), walk_payload->value[0]);
+        }
+        std::vector<std::pair<irs::bstring, irs::byte_type>> sourced;
+        auto it = source->Iterator(*field);
+        const auto* payload = irs::get<irs::PayAttr>(*it);
+        ASSERT_NE(nullptr, payload);
+        while (it->next()) {
+          sourced.emplace_back(it->value(), payload->value[0]);
+        }
+        EXPECT_EQ(walked, sourced);
+        total += walked.size();
+      }
+    }
+    EXPECT_NE(0, total);
+  }
+}
+
+TEST_P(AcceptorWalkIndexTestCase,
+       fuzzy_prefix_source_walks_the_prefix_language) {
+  AddEuroparl();
+
+  auto reader = open_reader();
+
+  const auto narrow = irs::MakeParametricDescription(1, false);
+  const auto small = std::make_shared<const irs::LevenshteinAcceptor>(
+    narrow, irs::kEmptyStringView<irs::byte_type>,
+    irs::ViewCast<irs::byte_type>("burden"sv));
+  EXPECT_NE(nullptr, irs::FuzzyConjunction::MakePrefix(small));
+  EXPECT_EQ(nullptr, irs::FuzzyConjunction::MakePrefix(small, 4096));
+  const auto prefixed = std::make_shared<const irs::LevenshteinAcceptor>(
+    narrow, irs::ViewCast<irs::byte_type>("bu"sv),
+    irs::ViewCast<irs::byte_type>("rden"sv));
+
+  const auto wide = irs::MakeParametricDescription(4, false);
+  const auto large = std::make_shared<const irs::LevenshteinAcceptor>(
+    wide, irs::kEmptyStringView<irs::byte_type>,
+    irs::ViewCast<irs::byte_type>("parliamentarians"sv));
+  EXPECT_EQ(nullptr, irs::FuzzyConjunction::MakePrefix(large));
+
+  for (const auto& fuzzy : {small, prefixed, large}) {
+    const irs::LevenshteinPrefixAcceptor acceptor{fuzzy};
+    const auto source = irs::MakeFuzzyPrefixSource(fuzzy);
+    ASSERT_NE(nullptr, source);
+    size_t total = 0;
+    for (auto& segment : reader) {
+      for (auto field_id : segment.field_ids()) {
+        const auto* field = StringsOf(segment, field_id);
+        if (!field) {
+          continue;
+        }
+        std::vector<std::pair<irs::bstring, irs::byte_type>> walked;
+        auto walk = field->iterator(acceptor);
         const auto* walk_payload = irs::get<irs::PayAttr>(*walk);
         ASSERT_NE(nullptr, walk_payload);
         while (walk->next()) {

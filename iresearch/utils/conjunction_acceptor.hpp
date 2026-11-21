@@ -199,11 +199,16 @@ class FuzzyConjunction {
   FuzzyConjunction(
     std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
     std::shared_ptr<const LevenshteinAcceptor> fuzzy,
-    size_t max_mem = RegexpAcceptor::kDefaultMaxDfaMem);
+    size_t max_mem = RegexpAcceptor::kDefaultMaxDfaMem,
+    bool starts_with = false);
   FuzzyConjunction(const FuzzyConjunction&) = delete;
   FuzzyConjunction& operator=(const FuzzyConjunction&) = delete;
 
   static std::shared_ptr<const FuzzyConjunction> Make(
+    std::shared_ptr<const LevenshteinAcceptor> fuzzy,
+    size_t max_mem = RegexpAcceptor::kDefaultMaxDfaMem);
+
+  static std::shared_ptr<const FuzzyConjunction> MakePrefix(
     std::shared_ptr<const LevenshteinAcceptor> fuzzy,
     size_t max_mem = RegexpAcceptor::kDefaultMaxDfaMem);
 
@@ -268,22 +273,56 @@ class FuzzyConjunction {
     }
   };
 
+  struct PrefixKey {
+    Key key;
+    PayloadType best;
+
+    bool operator==(const PrefixKey&) const = default;
+
+    template<typename H>
+    friend H AbslHashValue(H h, const PrefixKey& key) {
+      return H::combine(std::move(h), key.key, key.best);
+    }
+  };
+
   static constexpr uint32_t kRanged = uint32_t{1} << 16;
 
   static constexpr uint32_t PackRange(uint32_t lo, uint32_t hi) noexcept {
     return kRanged | (lo << 8) | hi;
   }
 
+  static Key KeyOf(const Parts& parts,
+                   const LevenshteinAcceptor::State& fuzzy) noexcept {
+    return {parts, {fuzzy.pstate, fuzzy.offset, fuzzy.acc, fuzzy.phase}};
+  }
+
+  static LevenshteinPrefixAcceptor::State PrefixStateOf(
+    const Row& row) noexcept {
+    return {row.fuzzy,
+            row.accept ? row.distance : LevenshteinPrefixAcceptor::kNone};
+  }
+
+  static std::shared_ptr<const FuzzyConjunction> MakeWith(
+    std::shared_ptr<const LevenshteinAcceptor> fuzzy, size_t max_mem,
+    bool starts_with);
+
   State StepSlow(State from, uint8_t c) const;
+  template<bool kPrefix>
+  IRS_FORCE_INLINE State StepSlowOf(State from, uint8_t c) const;
   uint32_t Range(Row& row) const;
+  template<typename Rows, typename Fill>
+  State InternRowLocked(Rows& rows, typename Rows::key_type key,
+                        Fill&& fill) const;
   State InternLocked(const Parts& parts,
                      const LevenshteinAcceptor::State& fuzzy) const;
+  State InternPrefixLocked(const LevenshteinPrefixAcceptor::State& state) const;
 
   std::array<std::shared_ptr<const RegexpAcceptor>,
              RegexpConjunction::kMaxPatterns>
     _patterns;
   size_t _size;
   std::shared_ptr<const LevenshteinAcceptor> _fuzzy;
+  bool _starts_with;
   std::array<uint8_t, RegexpAcceptor::kMaxLabel + 1> _bytemap{};
   std::array<uint8_t, RegexpAcceptor::kMaxLabel + 1> _representative{};
   uint32_t _classes{0};
@@ -293,6 +332,7 @@ class FuzzyConjunction {
   size_t _max_mem;
   mutable std::mutex _mutex;
   mutable absl::flat_hash_map<Key, Row*> _rows;
+  mutable absl::flat_hash_map<PrefixKey, Row*> _prefix_rows;
   mutable RowArena _arena;
   Row* _dead{nullptr};
   Row* _unknown{nullptr};

@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cstring>
 #include <duckdb/formats/row_stream.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <span>
 
@@ -44,17 +45,17 @@ duckdb::idx_t CopyInStream::Read(char* data, duckdb::idx_t count,
   };
   const auto end = offset + count;
   absl::InlinedVector<Covering, 4> covering;
+  const auto readable = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_lock) {
+    return _pulled >= end || _finished ||
+           (_pulled > offset && !_batches.Pending());
+  };
+  const auto ready = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_lock) {
+    return !_pulling || readable();
+  };
   for (;;) {
+    bool wait = false;
     {
       absl::MutexLock lock{&_lock};
-      const auto readable = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_lock) {
-        return _pulled >= end || _finished ||
-               (_pulled > offset && !_batches.Pending());
-      };
-      const auto ready = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_lock) {
-        return !_pulling || readable();
-      };
-      _lock.Await(absl::Condition(&ready));
       if (readable()) {
         SDB_ASSERT(offset >=
                    (_units.empty() ? _pulled : _units.front().offset));
@@ -69,10 +70,14 @@ duckdb::idx_t CopyInStream::Read(char* data, duckdb::idx_t count,
         }
         break;
       }
-      if (_pulling) {
-        continue;
-      }
+      wait = _pulling;
       _pulling = true;
+    }
+    if (wait) {
+      duckdb::TaskScheduler::BlockingScope blocking;
+      absl::MutexLock lock{&_lock};
+      _lock.Await(absl::Condition(&ready));
+      continue;
     }
     Pull(offset, end);
   }

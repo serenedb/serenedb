@@ -2011,20 +2011,25 @@ def test_copy_feeder_error_ends_the_copy(conn):
 
 @pytest.mark.faults
 @pytest.mark.usefixtures("own_server")
-def test_copy_takes_rows_while_the_client_waits(conn):
+@pytest.mark.parametrize(
+    "options,data",
+    [("", b"1\n2\n"), ("(format json, array false)", b'{"a":1}\n{"a":2}\n')],
+    ids=["text", "json"],
+)
+def test_copy_takes_rows_while_the_client_waits(conn, options, data):
     conn.run_ok("set sdb_faults='pause_copy_take_blocked'")
     c = WireConn()
     try:
         conn.run_ok("drop table if exists t_copy_taken")
         conn.run_ok("create table t_copy_taken(a int)")
-        c.send("Q", _cstr("copy t_copy_taken from stdin"))
+        c.send("Q", _cstr(f"copy t_copy_taken from stdin {options}"))
         assert c.read_msg()[0] == "G"
         deadline = time.time() + 10
         while "E" in types(conn.run("set sdb_faults='-pause_copy_take_blocked:parked'")):
             assert time.time() < deadline, "the COPY never waited for data"
             time.sleep(0.05)
         conn.run_ok("set sdb_faults='pause_copy_take_blocked:release'")
-        c.send("d", b"1\n2\n")
+        c.send("d", data)
         await_copied(conn, "t_copy_taken", 2)
         c.send("c")
         m = c.drain_to_ready()

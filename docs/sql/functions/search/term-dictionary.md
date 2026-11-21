@@ -76,6 +76,8 @@ An unfiltered enumeration answers from term metadata and costs one dictionary wa
 
 :::note Scores follow the driver
 `ts_dict_score` reflects the driving acceptor only, so scores need a term-driving acceptor — a comparison or a matcher on a keyword column, not a `@@ ts_*` document filter over a tokenized column. In `cat @@ ts_starts_with('p') AND cat @@ ts_levenshtein('phon', 2)` the prefix drives, so every score is `1`; swap the query so the fuzzy matcher drives and the scores become similarities.
+
+Some ORs score like the `ts_levenshtein` alone and take the top-*k* bound below: those that pair a `ts_levenshtein` with exact matches it already accepts at distance 0. That is its own text, and with `starts_with := true` also a `ts_starts_with` whose text starts with it. So `cat @@ (ts_starts_with('phon') || ts_levenshtein('phon', 1, starts_with := true))` ranks the exact completions first, at `1`. Any other OR scores every term `1`.
 :::
 
 :::note The fuzzy expansion cap follows the field

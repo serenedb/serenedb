@@ -36,6 +36,7 @@
 #include "iresearch/search/filters/common.hpp"
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/granular_range_filter.hpp"
+#include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
@@ -245,12 +246,33 @@ const ByRangeOptions* AsRange(const Filter& child) noexcept {
            : nullptr;
 }
 
+const ByEditDistanceOptions* AsUncappedFuzzy(const Filter& child) noexcept {
+  if (child.type() != Type<ByEditDistance>::id()) {
+    return nullptr;
+  }
+  const auto& options = irs::utils::downCast<ByEditDistance>(child).options();
+  return options.max_terms == 0 ? &options : nullptr;
+}
+
+bool AtDistanceZero(const ByEditDistanceOptions& options,
+                    bytes_view term) noexcept {
+  if (!term.starts_with(options.prefix)) {
+    return false;
+  }
+  term.remove_prefix(options.prefix.size());
+  return options.starts_with ? term.starts_with(options.term)
+                             : term == bytes_view{options.term};
+}
+
 field_id FieldOf(const Filter& child) noexcept {
   if (AsPrefix(child) != nullptr) {
     return irs::utils::downCast<ByPrefix>(child).field_id();
   }
   if (AsRange(child) != nullptr) {
     return irs::utils::downCast<ByRange>(child).field_id();
+  }
+  if (child.type() == Type<ByEditDistance>::id()) {
+    return irs::utils::downCast<ByEditDistance>(child).field_id();
   }
   return field_limits::invalid();
 }
@@ -262,6 +284,9 @@ DictRef DictOf(const Filter& child) noexcept {
   if (AsRange(child) != nullptr) {
     return irs::utils::downCast<ByRange>(child).dict();
   }
+  if (child.type() == Type<ByEditDistance>::id()) {
+    return irs::utils::downCast<ByEditDistance>(child).dict();
+  }
   return {};
 }
 
@@ -272,8 +297,50 @@ bool CoversTerm(const Filter& child, const TermClause& clause) noexcept {
   if (const auto* prefix = AsPrefix(child); prefix != nullptr) {
     return bytes_view{clause.term}.starts_with(prefix->term);
   }
+  if (const auto* fuzzy = AsUncappedFuzzy(child); fuzzy != nullptr) {
+    return AtDistanceZero(*fuzzy, clause.term);
+  }
   const auto* range = AsRange(child);
   return range != nullptr && Accepts(*range, clause.term);
+}
+
+bool CoversFilter(const ByEditDistanceOptions& wider,
+                  const Filter& narrower) noexcept {
+  if (const auto* prefix = AsPrefix(narrower); prefix != nullptr) {
+    return wider.starts_with && AtDistanceZero(wider, prefix->term);
+  }
+  if (narrower.type() != Type<ByEditDistance>::id()) {
+    return false;
+  }
+  const auto& other = irs::utils::downCast<ByEditDistance>(narrower).options();
+  return other.term == wider.term && other.prefix == wider.prefix &&
+         other.provider == wider.provider &&
+         other.with_transpositions == wider.with_transpositions &&
+         other.max_distance <= wider.max_distance &&
+         (wider.starts_with || !other.starts_with);
+}
+
+size_t DropCoveredFilters(std::vector<Filter::ptr>& filters) {
+  std::vector<const Filter*> covering;
+  for (const auto& child : filters) {
+    if (AsUncappedFuzzy(*child) != nullptr) {
+      covering.push_back(child.get());
+    }
+  }
+  if (covering.empty()) {
+    return 0;
+  }
+  return EraseFilters(filters, [&](const Filter& child) {
+    const bool covered = absl::c_any_of(covering, [&](const Filter* wider) {
+      return wider != &child && FieldOf(*wider) == FieldOf(child) &&
+             DictOf(*wider) == DictOf(child) &&
+             CoversFilter(*AsUncappedFuzzy(*wider), child);
+    });
+    if (covered) {
+      std::erase(covering, &child);
+    }
+    return covered;
+  });
 }
 
 bool CoveredTerm(std::span<const Filter::ptr> filters,
@@ -413,12 +480,7 @@ bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,
                  }) != 0;
     }
     if (optional) {
-      auto& must = node.Bucket(Occur::Must);
-      const auto before = bucket.terms.size();
-      std::erase_if(bucket.terms, [&](const TermClause& clause) {
-        return CoveredTerm(must.filters, clause);
-      });
-      changed |= bucket.terms.size() != before;
+      changed |= DropCoveredFilters(bucket.filters) != 0;
     }
   }
   return changed;

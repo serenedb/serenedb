@@ -1022,6 +1022,252 @@ QUERY PLAN
 │ ~1 row                │
 ╰───────────────────────╯
 
+# Without the expansion cap, an OR with exact matches the fuzzy match already
+# accepts at distance 0 is the fuzzy match alone: one walk, and enumeration
+# keeps the similarities.
+statement ok
+CREATE TABLE swo(id INTEGER PRIMARY KEY, kw VARCHAR)
+
+statement ok
+CREATE INDEX swo_idx ON swo USING inverted(id, kw)
+
+statement ok
+INSERT INTO swo VALUES (1, 'runin'), (2, 'runing'), (3, 'runing shoes'), (4, 'running'), (5, 'ruin'), (6, 'banana')
+
+query
+SELECT unnest(ts_dict_agg(kw))   AS t,
+       unnest(ts_dict_score(kw)) AS s
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runin') || ts_levenshtein('runin', 1, starts_with := true))
+ORDER BY s DESC, t
+----
+t	s
+runin	1
+runing	1
+runing shoes	1
+running	0.8
+ruin	0.75
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(kw))   AS t,
+               unnest(ts_dict_score(kw)) AS s
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runin') || ts_levenshtein('runin', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ───────────────────╮
+│ Groups: #0                        │
+│ Aggregates: max(#1)               │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: swo_idx                    │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Levenshtein ─────╮             │
+│ │ Field: kw(string) │             │
+│ │ Target: runin     │             │
+│ │ Starts With: true │             │
+│ │ Max Terms: 0      │             │
+│ ╰───────────────────╯             │
+│ TsDict: kw                        │
+│ Projections:                      │
+│ sdb_inverted_index_term$kw,       │
+│ sdb_inverted_index_term_score$kw  │
+│ ~1 row                            │
+╰───────────────────────────────────╯
+
+query
+SELECT unnest(ts_dict_agg(kw))   AS t,
+       unnest(ts_dict_score(kw)) AS s
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runin') || ts_levenshtein('runin', 1, starts_with := true))
+ORDER BY s DESC, t
+LIMIT 2
+----
+t	s
+runin	1
+runing	1
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(kw))   AS t,
+               unnest(ts_dict_score(kw)) AS s
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runin') || ts_levenshtein('runin', 1, starts_with := true))
+ORDER BY s DESC, t
+LIMIT 2
+----
+QUERY PLAN
+╭─ TOP_N ───────────────────────────╮
+│ Top: 2                            │
+│ Order By: s DESC, t ASC           │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ HASH_GROUP_BY ─┴─────────────────╮
+│ Groups: #0                        │
+│ Aggregates: max(#1)               │
+│ ~0 rows                           │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Index: swo_idx                    │
+│ Lookup: search                    │
+│ Index Filter:                     │
+│ ╭─ Levenshtein ─────╮             │
+│ │ Field: kw(string) │             │
+│ │ Target: runin     │             │
+│ │ Starts With: true │             │
+│ │ Max Terms: 2      │             │
+│ ╰───────────────────╯             │
+│ TsDict: kw                        │
+│ Projections:                      │
+│ sdb_inverted_index_term$kw,       │
+│ sdb_inverted_index_term_score$kw  │
+│ ~1 row                            │
+╰───────────────────────────────────╯
+
+# 'run' reaches terms the fuzzy match scores below 1, so the OR stays.
+query
+EXPLAIN SELECT unnest(ts_dict_agg(kw)) AS t
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('run') || ts_levenshtein('runin', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────────────────────────╮
+│ Groups: #0                                   │
+│ ~0 rows                                      │
+╰───────────────────────┬──────────────────────╯
+╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
+│ Index: swo_idx                               │
+│ Lookup: search                               │
+│ Index Filter:                                │
+│ ╭─ Or ──────────────╮                        │
+│ ╰─────────┬─────────╯                        │
+│           ├──────────────────────╮           │
+│ ╭─ Starts With ─────╮  ╭─ Levenshtein ─────╮ │
+│ │ Field: kw(string) │  │ Field: kw(string) │ │
+│ │ Prefix: run       │  │ Target: runin     │ │
+│ ╰───────────────────╯  │ Starts With: true │ │
+│                        │ Max Terms: 0      │ │
+│                        ╰───────────────────╯ │
+│ TsDict: kw                                   │
+│ Projections: sdb_inverted_index_term$kw      │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
+
+# A whole-term fuzzy match accepts only its own text at distance 0.
+query
+SELECT unnest(ts_dict_agg(kw))   AS t,
+       unnest(ts_dict_score(kw)) AS s
+FROM swo_idx
+WHERE kw @@ (ts_any(['runin']) || ts_levenshtein('runin', 1))
+ORDER BY s DESC, t
+----
+t	s
+runin	1
+runing	0.8
+ruin	0.75
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(kw)) AS t
+FROM swo_idx
+WHERE kw @@ (ts_any(['runin']) || ts_levenshtein('runin', 1))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ─────────────────────────╮
+│ Groups: #0                              │
+│ ~0 rows                                 │
+╰────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
+│ Index: swo_idx                          │
+│ Lookup: search                          │
+│ Index Filter:                           │
+│ ╭─ Levenshtein ─────╮                   │
+│ │ Field: kw(string) │                   │
+│ │ Target: runin     │                   │
+│ │ Max Terms: 0      │                   │
+│ ╰───────────────────╯                   │
+│ TsDict: kw                              │
+│ Projections: sdb_inverted_index_term$kw │
+│ ~1 row                                  │
+╰─────────────────────────────────────────╯
+
+# Matching documents, the capped fuzzy match keeps only its closest terms,
+# while the exact prefix keeps all of its own: the OR stays.
+query
+SELECT id
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runin') || ts_levenshtein('runin', 1, starts_with := true))
+ORDER BY id
+----
+id
+1
+2
+3
+4
+5
+
+query
+EXPLAIN SELECT id
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runin') || ts_levenshtein('runin', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: swo_idx                               │
+│ Lookup: search                               │
+│ Index Filter:                                │
+│ ╭─ Or ──────────────╮                        │
+│ ╰─────────┬─────────╯                        │
+│           ├──────────────────────╮           │
+│ ╭─ Starts With ─────╮  ╭─ Levenshtein ─────╮ │
+│ │ Field: kw(string) │  │ Field: kw(string) │ │
+│ │ Prefix: runin     │  │ Target: runin     │ │
+│ ╰───────────────────╯  │ Starts With: true │ │
+│                        │ Max Terms: 50     │ │
+│                        ╰───────────────────╯ │
+│ Projections: id                              │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
+
+statement ok
+SET sdb_levenshtein_max_terms = 0
+
+query
+SELECT id
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runin') || ts_levenshtein('runin', 1, starts_with := true))
+ORDER BY id
+----
+id
+1
+2
+3
+4
+5
+
+query
+EXPLAIN SELECT id
+FROM swo_idx
+WHERE kw @@ (ts_starts_with('runin') || ts_levenshtein('runin', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: swo_idx        │
+│ Lookup: search        │
+│ Index Filter:         │
+│ ╭─ Levenshtein ─────╮ │
+│ │ Field: kw(string) │ │
+│ │ Target: runin     │ │
+│ │ Starts With: true │ │
+│ │ Max Terms: 0      │ │
+│ ╰───────────────────╯ │
+│ Projections: id       │
+│ ~1 row                │
+╰───────────────────────╯
+
+statement ok
+RESET sdb_levenshtein_max_terms
+
 # A NULL argument makes the whole match NULL, which no row satisfies.
 query
 SELECT id FROM sw_idx WHERE body @@ ts_levenshtein('quik', 1, starts_with := NULL)

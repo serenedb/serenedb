@@ -812,16 +812,20 @@ bool ByPhraseOptions::LowerParts() {
         e->max_distance, e->provider, e->with_transpositions, e->prefix,
         e->term, [] -> PhrasePart { return TermSetOptions{}; },
         [&] -> PhrasePart {
-          ByTermOptions opts;
-          opts.term.reserve(e->prefix.size() + e->term.size());
-          opts.term += e->prefix;
-          opts.term += e->term;
-          return opts;
+          bstring whole;
+          whole.reserve(e->prefix.size() + e->term.size());
+          whole += e->prefix;
+          whole += e->term;
+          if (e->starts_with) {
+            return ByPrefixOptions{{std::move(whole)}};
+          }
+          return ByTermOptions{std::move(whole)};
         },
         [e, max_terms](const ParametricDescription& d, bytes_view prefix,
                        bytes_view term) -> PhrasePart {
           return LevenshteinAutomatonOptions{
-            d, e->provider, e->with_transpositions, prefix, term, max_terms};
+            d,    e->provider, e->with_transpositions, e->starts_with, prefix,
+            term, max_terms};
         });
       changed = true;
     }

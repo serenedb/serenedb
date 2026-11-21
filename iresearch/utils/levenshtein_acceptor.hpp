@@ -25,6 +25,7 @@
 #include <atomic>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -471,6 +472,86 @@ class LevenshteinAcceptor {
   uint32_t _chi_size;
   uint64_t _mask;
   byte_type _no_distance;
+};
+
+class LevenshteinPrefixAcceptor {
+ public:
+  using PayloadType = LevenshteinAcceptor::PayloadType;
+  static constexpr bool kHasPayload = true;
+  static constexpr bool kCheapRuns = false;
+  static constexpr bool kMayBeUnknown = false;
+
+  struct State {
+    LevenshteinAcceptor::State inner;
+    PayloadType best;
+  };
+
+  explicit LevenshteinPrefixAcceptor(
+    std::shared_ptr<const LevenshteinAcceptor> inner) noexcept
+    : _inner{std::move(inner)} {}
+
+  State Start() const noexcept { return Settle({_inner->Start(), kNone}); }
+
+  bytes_view LowerBound() const noexcept { return _inner->LowerBound(); }
+
+  static bool Alive(const State& state) noexcept {
+    return state.best != kNone || LevenshteinAcceptor::Alive(state.inner);
+  }
+
+  State Step(const State& state, byte_type label) const noexcept {
+    if (Settled(state)) {
+      return state;
+    }
+    return Settle({_inner->Step(state.inner, label), state.best});
+  }
+
+  bool Accept(const State& state, PayloadType& payload) const noexcept {
+    payload = state.best;
+    return state.best != kNone;
+  }
+
+  bool Matches(bytes_view term) const noexcept {
+    PayloadType payload{};
+    return Matches(term, payload);
+  }
+
+  bool Matches(bytes_view term, PayloadType& payload) const noexcept {
+    auto state = Start();
+    for (const auto label : term) {
+      if (Settled(state)) {
+        break;
+      }
+      state = Step(state, label);
+    }
+    return Accept(state, payload);
+  }
+
+  bool LiveRange(const State& state, uint32_t& lo,
+                 uint32_t& hi) const noexcept {
+    if (state.best != kNone) {
+      lo = 0;
+      hi = std::numeric_limits<byte_type>::max();
+      return true;
+    }
+    return _inner->LiveRange(state.inner, lo, hi);
+  }
+
+ private:
+  static constexpr PayloadType kNone = std::numeric_limits<PayloadType>::max();
+
+  static bool Settled(const State& state) noexcept {
+    return state.best == 0 || !LevenshteinAcceptor::Alive(state.inner);
+  }
+
+  State Settle(State state) const noexcept {
+    PayloadType distance{};
+    if (_inner->Accept(state.inner, distance) && distance < state.best) {
+      state.best = distance;
+    }
+    return state;
+  }
+
+  std::shared_ptr<const LevenshteinAcceptor> _inner;
 };
 
 }  // namespace irs

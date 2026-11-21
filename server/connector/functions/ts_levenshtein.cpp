@@ -24,6 +24,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/string.hpp>
+#include <span>
 
 #include "ts_common.hpp"
 
@@ -36,13 +37,29 @@ LevenshteinArgs ParseLevenshteinArgs(
     "(0-3 with transpositions). Optional `prefix` matches exactly. "
     "If distance is omitted (ts_levenshtein('test')), it is picked "
     "automatically from the term length (0 for <=2 chars, 1 for 3-5, "
-    "2 for >=6).";
-  SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 4);
+    "2 for >=6). `starts_with := true` matches the terms that start "
+    "within the distance of the text.";
+  const auto& children = func.GetChildren();
+  size_t positional = 0;
+  while (positional != children.size() &&
+         children[positional]->GetAlias().empty()) {
+    ++positional;
+  }
+  SDB_ASSERT(positional >= 1 && positional <= 4);
   LevenshteinArgs out;
-  GetVarcharArg(*func.GetChildren()[0], out.text,
-                {"ts_levenshtein text", kSyntaxHint});
-  if (func.GetChildren().size() >= 2) {
-    GetIntArg(*func.GetChildren()[1], out.distance,
+  GetVarcharArg(*children[0], out.text, {"ts_levenshtein text", kSyntaxHint});
+  for (const auto& named : std::span{children}.subspan(positional)) {
+    if (!(named->GetAlias() == "starts_with")) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_levenshtein has no argument named ",
+                              named->GetAlias().GetIdentifierName()),
+                      ERR_HINT(kSyntaxHint));
+    }
+    GetBoolArg(*named, out.starts_with,
+               {"ts_levenshtein starts_with", kSyntaxHint});
+  }
+  if (positional >= 2) {
+    GetIntArg(*children[1], out.distance,
               {"ts_levenshtein distance", kSyntaxHint});
   } else {
     // No explicit distance: pick by term length. Keeps short queries from
@@ -57,8 +74,8 @@ LevenshteinArgs ParseLevenshteinArgs(
               out.distance),
       ERR_HINT(kSyntaxHint));
   }
-  if (func.GetChildren().size() >= 3) {
-    GetBoolArg(*func.GetChildren()[2], out.with_transpositions,
+  if (positional >= 3) {
+    GetBoolArg(*children[2], out.with_transpositions,
                {"ts_levenshtein transpositions", kSyntaxHint});
   }
   if (out.with_transpositions && out.distance > 3) {
@@ -69,8 +86,8 @@ LevenshteinArgs ParseLevenshteinArgs(
               out.distance),
       ERR_HINT(kSyntaxHint));
   }
-  if (func.GetChildren().size() >= 4) {
-    GetVarcharArg(*func.GetChildren()[3], out.prefix,
+  if (positional >= 4) {
+    GetVarcharArg(*children[3], out.prefix,
                   {"ts_levenshtein prefix", kSyntaxHint});
   }
   return out;
@@ -84,6 +101,7 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
     irs::ViewCast<irs::byte_type>(std::string_view{args.prefix}));
   out.max_distance = static_cast<uint8_t>(args.distance);
   out.with_transpositions = args.with_transpositions;
+  out.starts_with = args.starts_with;
   out.max_terms = max_terms;
 }
 

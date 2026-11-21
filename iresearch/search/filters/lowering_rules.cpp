@@ -130,12 +130,12 @@ bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
   if (opts.max_distance != 0) {
     return false;
   }
-  auto filter = TargetOf(node).Make<ByTerm>();
-  auto& term = filter->mutable_options()->term;
-  term.reserve(opts.prefix.size() + opts.term.size());
-  term += opts.prefix;
-  term += opts.term;
-  slot = std::move(filter);
+  bstring whole;
+  whole.reserve(opts.prefix.size() + opts.term.size());
+  whole += opts.prefix;
+  whole += opts.term;
+  const auto target = TargetOf(node);
+  slot = opts.starts_with ? target.Prefix(whole) : target.Term(whole);
   return true;
 }
 

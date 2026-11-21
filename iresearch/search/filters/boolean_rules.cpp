@@ -1013,7 +1013,7 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
     const auto& filter =
       irs::utils::downCast<LevenshteinAutomatonFilter>(child);
     const auto& options = filter.options();
-    if (!options.parametric) {
+    if (!options.parametric || options.starts_with) {
       return std::nullopt;
     }
     auto pattern = options.target;

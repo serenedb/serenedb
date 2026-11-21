@@ -57,7 +57,7 @@ Each returns a [`TSQUERY`](../../data_types/tsquery.md). A bare string literal i
 | [`ts_like(pattern)`](#ts_like) | Match tokens against a SQL `LIKE` pattern. |
 | [`ts_starts_with(prefix)`](#ts_starts_with) | Match tokens beginning with `prefix`. |
 | [`ts_regexp(pattern[, syntax])`](#ts_regexp) | Match tokens against a regular expression. |
-| [`ts_levenshtein(text[, distance[, transpositions[, prefix]]])`](#ts_levenshtein) | Match tokens within an edit distance of `text`. |
+| [`ts_levenshtein(text[, distance[, transpositions[, prefix]]][, starts_with := false])`](#ts_levenshtein) | Match tokens within an edit distance of `text`, or tokens that start within it. |
 | [`ts_ngram(text[, threshold])`](#ts_ngram) | Match by n-gram similarity. |
 | [`ts_between(min, max, min_incl, max_incl)`](#ts_between) | Range match between two bounds. |
 | [`ts_lt(value)`](#ts_lt) | Match values less than `value`. |
@@ -202,7 +202,7 @@ In a [`##`](../../indexes/inverted/full-text-search.md#phrase-parts) phrase, `ts
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_regexp_phrase" />
 
-#### `ts_levenshtein(text[, distance[, transpositions[, prefix]]])` {#ts_levenshtein}
+#### `ts_levenshtein(text[, distance[, transpositions[, prefix]]][, starts_with := false])` {#ts_levenshtein}
 
 Fuzzy match: find tokens within a bounded edit distance of `text` — the standard tolerance for typos.
 
@@ -212,12 +212,14 @@ Fuzzy match: find tokens within a bounded edit distance of `text` — the standa
 | `distance` | `INTEGER` | auto by length: `0` for ≤ 2 chars, `1` for 3–5, `2` for ≥ 6 | Maximum edit distance (insertions, deletions, substitutions). Allowed range `0`–`4` (capped at `3` when `transpositions` is `true`). |
 | `transpositions` | `BOOLEAN` | `true` | When `true`, swapping two adjacent characters counts as **one** edit (Damerau–Levenshtein); when `false`, it counts as two. |
 | `prefix` | `VARCHAR` | `''` (empty) | A literal leading substring that must match **exactly**. The term actually matched is `prefix \|\| text`; only the `text` portion spends the edit budget. |
+| `starts_with` | `BOOLEAN` | `false` | Named argument. When `true`, a term matches when it *starts* within `distance` edits of the query, whatever follows. |
 
 **How it works.** A term matches when its edit distance from the query is at most `distance`. The knobs around that rule:
 
 - **Auto distance.** The one-argument form picks the distance from the query length: `0` for two characters or fewer, `1` for three to five, `2` from six up. Short queries tolerate fewer edits, which keeps them from drifting into unrelated tokens.
 - **Transpositions.** On by default, so a single adjacent-character swap costs one edit instead of two: `quikc` reaches `quick` at distance 1, where strict Levenshtein needs distance 2.
 - **Prefix.** Anchors an exact leading substring and fuzzy-matches only the rest, which both narrows the candidate set and speeds the scan. `ts_levenshtein('X', 1, true, 'quic')` requires the literal `quic`, then allows one edit on `X`, reaching `quick`.
+- **Starts with.** `starts_with := true` compares the query with the beginning of each term instead of the whole term, which is what completing a word the user is still typing needs. `ts_levenshtein('trutl', 1, starts_with := true)` reaches `turtle`, because its first five letters `turtl` are one transposition from `trutl`, where the whole word is two edits away. The similarity that [`ts_dict_score`](./term-dictionary.md) reports is that of the closest beginning, and distance `0` matches exactly like [`ts_starts_with`](#ts_starts_with). It combines with `transpositions` and `prefix`, and the expansion cap below applies to it.
 - **Expansion cap.** [`sdb_levenshtein_max_terms`](../../indexes/inverted/maintenance.md#session-settings) (default `50`) bounds how many dictionary terms the predicate expands to. The terms closest to the query survive; the rest neither match nor score. Set it to `0` to match every term within the edit distance, or narrow the candidate set with `prefix`. The cap applies per index segment, so a wide predicate can match more terms while they sit in separate segments than after a merge.
 - **Term enumeration.** A predicate on the column that a [`ts_dict_*`](./term-dictionary.md) query enumerates is exempt from the cap, because there the terms are the result rather than a means to one. Other predicates in the same query keep it, and since enumeration only sees matching documents, capping one of those narrows the returned terms too.
 
@@ -227,12 +229,17 @@ Fuzzy match: find tokens within a bounded edit distance of `text` — the standa
 | `body @@ ts_levenshtein('quikc', 1, true)` | `1`, `2` | The `kc`↔`ck` transposition is a single edit. |
 | `body @@ ts_levenshtein('quikc', 1, false)` | *(none)* | Without transpositions, `quikc` → `quick` is 2 edits. |
 | `body @@ ts_levenshtein('X', 1, true, 'quic')` | `1`, `2` | Exact prefix `quic` plus one edit (`X` → `k`) reaches `quick`. |
+| `body @@ ts_levenshtein('trutl', 1, starts_with := true)` | `3` | `turtle` starts with `turtl`, one transposition from `trutl`. |
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_levenshtein" />
 
 Combine a fixed `prefix` with a small fuzzy suffix to keep typo-tolerance fast and focused — only terms beginning with `quic` are considered:
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_levenshtein_prefix" />
+
+Set `starts_with` to match what the user has typed so far, typos included:
+
+<SqlLogicTest id="sql/functions/full_text_search/ts_levenshtein_starts_with" />
 
 #### `ts_ngram(text[, threshold])` {#ts_ngram}
 
@@ -636,6 +643,7 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `a*` | Prefix (wildcard) match. |
 | `a?c` · `a*c` | Wildcard match: `?` is exactly one character, `*` any run of characters. Every other character matches itself, `%` and `_` included, and `\` makes the next character literal. |
 | `a~N` | Fuzzy match within edit distance `N`. |
+| `a*~N` | Fuzzy prefix: tokens that start within edit distance `N` of `a`, as [`ts_levenshtein`](#ts_levenshtein) with `starts_with := true`. A bare `~` allows two edits. Also a phrase part, `"a b*~N"`; write `"a b\*\~N"` to search those characters instead, as the column's dictionary analyzes them. |
 | `"a b"` | Phrase match. |
 | `"a b"~N` | Proximity phrase: `a` and `b` within `N` positions. |
 | `(a b)` | Grouping. |
@@ -662,6 +670,7 @@ A prefix on a group applies to every term inside it, so `title:(fox OR dog)` sea
 | `body @@ to_tsquery('+fox -red')` | `1` | Has `fox`, excludes `red`. |
 | `body @@ to_tsquery('qui*')` | `1`, `2` | Prefix `qui` matches `quick`. |
 | `body @@ to_tsquery('quikc~2')` | `1`, `2` | Fuzzy match within 2 edits of `quick`. |
+| `body @@ to_tsquery('trutl*~1')` | `3` | `turtle` starts with `turtl`, one transposition from `trutl`. |
 | `body @@ to_tsquery('"quick brown"~3')` | `1` | `quick` and `brown` within three positions. |
 | `body @@ to_tsquery('xyzzy')` | *(none)* | Term not present. |
 
@@ -670,6 +679,10 @@ A prefix on a group applies to every term inside it, so `title:(fox OR dog)` sea
 The `+` (required) and `-` (excluded) operators, grouping and the others combine freely — for example, match rows containing `fox` but not `red`:
 
 <SqlLogicTest id="sql/functions/full_text_search/to_tsquery_lucene" />
+
+A fuzzy prefix tolerates a typo in what has been typed so far:
+
+<SqlLogicTest id="sql/functions/full_text_search/to_tsquery_fuzzy_prefix" />
 
 Wildcard, fuzzy and proximity operators compose too — a prefix on one term plus a fuzzy match on another:
 

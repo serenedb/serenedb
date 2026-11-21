@@ -16,7 +16,7 @@ paths:
 
 ## Containers
 
-- Every container, network and volume a CI job or a test runner starts carries the label `serenedb.owner=$SDB_DOCKER_OWNER` when that variable is set: `labels: *owner` in compose files, and a service that starts more through the docker socket gets `SDB_DOCKER_OWNER` in its environment. Each job removes its owner's leftovers before checkout and at its end; an unlabelled one outlives a cancelled job and keeps writing into the next job's workspace.
+- Every container, network and volume a CI job or a test runner starts carries the label `serenedb.owner=$SDB_DOCKER_OWNER` when that variable is set: `labels: *owner` in compose files, and a service that starts more through the docker socket gets `SDB_DOCKER_OWNER` in its environment. Each job removes its owner's leftovers before checkout and at its end; an unlabelled one outlives a cancelled job and keeps writing into the next job's workspace. Before checkout a job also deletes the git locks under the workspace's `.git`: a job cancelled mid-fetch leaves them, and actions/checkout deletes only the top-level repository's `index.lock` and `shallow.lock`, not a submodule's.
 
 ## What a run covers
 

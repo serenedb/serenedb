@@ -494,13 +494,9 @@ class LevenshteinPrefixAcceptor {
 
   bytes_view LowerBound() const noexcept { return _inner->LowerBound(); }
 
-  uint32_t MaxDistance() const noexcept { return _inner->MaxDistance(); }
-
   static bool Alive(const State& state) noexcept {
     return state.best != kNone || LevenshteinAcceptor::Alive(state.inner);
   }
-
-  static bool Unknown(const State&) noexcept { return false; }
 
   State Step(const State& state, byte_type label) const noexcept {
     if (Settled(state)) {

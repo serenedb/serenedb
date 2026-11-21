@@ -161,6 +161,14 @@ TEST(by_edit_distance_test, equal) {
 
 TEST(by_edit_distance_test, starts_with_lowering) {
   auto opts = MakeFilter("field", "ar", 0, 0, true, "b").options();
+  {
+    const auto lowered =
+      irs::LowerLevenshtein(kFieldId, {}, opts, irs::kNoBoost);
+    ASSERT_NE(nullptr, lowered);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), lowered->type());
+    ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}),
+              irs::utils::downCast<irs::ByTerm>(*lowered).options().term);
+  }
   opts.starts_with = true;
   {
     const auto lowered =

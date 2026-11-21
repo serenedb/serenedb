@@ -643,7 +643,7 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `a*` | Prefix (wildcard) match. |
 | `a?c` · `a*c` | Wildcard match: `?` is exactly one character, `*` any run of characters. Every other character matches itself, `%` and `_` included, and `\` makes the next character literal. |
 | `a~N` | Fuzzy match within edit distance `N`. |
-| `a*~N` | Fuzzy prefix: tokens that start within edit distance `N` of `a`, as [`ts_levenshtein`](#ts_levenshtein) with `starts_with := true`. A bare `~` allows two edits. Also a phrase part, `"a b*~N"`. |
+| `a*~N` | Fuzzy prefix: tokens that start within edit distance `N` of `a`, as [`ts_levenshtein`](#ts_levenshtein) with `starts_with := true`. A bare `~` allows two edits. Also a phrase part, `"a b*~N"`; write `"a b\*\~N"` to search those characters instead, as the column's dictionary analyzes them. |
 | `"a b"` | Phrase match. |
 | `"a b"~N` | Proximity phrase: `a` and `b` within `N` positions. |
 | `(a b)` | Grouping. |

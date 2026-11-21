@@ -22,56 +22,12 @@
 
 #include <absl/base/optimization.h>
 
-#include <algorithm>
-
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::detail {
 namespace {
-
-using Children = containers::Fixed<ScoreFunction>;
-
-template<ScoreMergeType Inner>
-score_t ScoreChildren(const Children& children) noexcept {
-  score_t res = 0;
-  for (const auto& child : children) {
-    irs::Merge<Inner>(res, child.Score());
-  }
-  return res;
-}
-
-template<ScoreMergeType Inner>
-IRS_FORCE_INLINE void GatherChildren(const Children& children,
-                                     score_t* IRS_RESTRICT dst,
-                                     scores_size_t n) noexcept {
-  auto child = children.begin();
-  if constexpr (Inner == ScoreMergeType::Max) {
-    std::fill_n(dst, n, score_t{0});
-  } else {
-    child->Score(dst, n);
-    ++child;
-  }
-  for (const auto end = children.end(); child != end; ++child) {
-    child->Score<Inner>(dst, n);
-  }
-}
-
-template<ScoreMergeType Inner>
-IRS_FORCE_INLINE void GatherChildrenBlock(const Children& children,
-                                          score_t* IRS_RESTRICT dst) noexcept {
-  auto child = children.begin();
-  if constexpr (Inner == ScoreMergeType::Max) {
-    std::fill_n(dst, kScoreBlock, score_t{0});
-  } else {
-    child->ScoreBlock(dst);
-    ++child;
-  }
-  for (const auto end = children.end(); child != end; ++child) {
-    child->ScoreBlock<Inner>(dst);
-  }
-}
 
 template<ScoreMergeType Inner>
 class ConjunctionScore
@@ -86,39 +42,52 @@ class ConjunctionScore
     SDB_ASSERT(_children.size() > 1);
   }
 
-  score_t ScoreOne() const noexcept { return ScoreChildren<Inner>(_children); }
+  score_t ScoreOne() const noexcept {
+    auto child = _children.begin();
+    const auto end = _children.end();
+
+    auto res = child->Score();
+    for (++child; child != end; ++child) {
+      irs::Merge<Inner>(res, child->Score());
+    }
+    return res;
+  }
 
   template<ScoreMergeType Outer = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    if constexpr (Outer == Inner) {
-      for (const auto& child : _children) {
-        child.Score<Inner>(res, n);
-      }
-    } else if constexpr (Outer == ScoreMergeType::Noop) {
-      GatherChildren<Inner>(_children, res, n);
-    } else {
-      GatherChildren<Inner>(_children, _scratch, n);
+    if constexpr (Outer != ScoreMergeType::Noop && Outer != Inner) {
+      ScoreImpl(_scratch, n);
       irs::Merge<Outer>(res, _scratch, n);
+    } else {
+      auto child = _children.begin();
+      const auto end = _children.end();
+
+      child->Score<Outer>(res, n);
+      for (++child; child != end; ++child) {
+        child->Score<Inner>(res, n);
+      }
     }
   }
 
   template<ScoreMergeType Outer>
   IRS_FORCE_INLINE void ScoreBlockImpl(score_t* res) const noexcept {
-    if constexpr (Outer == Inner) {
-      for (const auto& child : _children) {
-        child.ScoreBlock<Inner>(res);
-      }
-    } else if constexpr (Outer == ScoreMergeType::Noop) {
-      GatherChildrenBlock<Inner>(_children, res);
-    } else {
-      GatherChildrenBlock<Inner>(_children, _scratch);
+    if constexpr (Outer != ScoreMergeType::Noop && Outer != Inner) {
+      ScoreBlockImpl<ScoreMergeType::Noop>(_scratch);
       irs::Merge<Outer>(res, _scratch, kScoreBlock);
+    } else {
+      auto child = _children.begin();
+      const auto end = _children.end();
+
+      child->ScoreBlock<Outer>(res);
+      for (++child; child != end; ++child) {
+        child->ScoreBlock<Inner>(res);
+      }
     }
   }
 
  private:
-  Children _children;
+  containers::Fixed<ScoreFunction> _children;
   ABSL_CACHELINE_ALIGNED mutable score_t _scratch[kScoreBlock];
 };
 
@@ -139,7 +108,13 @@ class ConjunctionConstScore
   }
 
   score_t ScoreOne() const noexcept {
-    auto res = ScoreChildren<Inner>(_children);
+    auto child = _children.begin();
+    const auto end = _children.end();
+
+    auto res = child->Score();
+    for (++child; child != end; ++child) {
+      irs::Merge<Inner>(res, child->Score());
+    }
     irs::Merge<Inner>(res, _constant);
     return res;
   }
@@ -148,7 +123,7 @@ class ConjunctionConstScore
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
     if constexpr (Outer == ScoreMergeType::Noop) {
-      GatherChildren<Inner>(_children, res, n);
+      Gather(res, n);
       for (scores_size_t i = 0; i != n; ++i) {
         irs::Merge<Inner>(res[i], _constant);
       }
@@ -158,10 +133,20 @@ class ConjunctionConstScore
   }
 
  private:
+  IRS_FORCE_INLINE void Gather(score_t* dst, scores_size_t n) const noexcept {
+    auto child = _children.begin();
+    const auto end = _children.end();
+
+    child->Score(dst, n);
+    for (++child; child != end; ++child) {
+      child->Score<Inner>(dst, n);
+    }
+  }
+
   template<ScoreMergeType Outer>
   IRS_FORCE_INLINE void Settle(score_t* IRS_RESTRICT res,
                                scores_size_t n) const noexcept {
-    GatherChildren<Inner>(_children, _scratch, n);
+    Gather(_scratch, n);
     for (scores_size_t i = 0; i != n; ++i) {
       auto value = _scratch[i];
       irs::Merge<Inner>(value, _constant);
@@ -169,7 +154,7 @@ class ConjunctionConstScore
     }
   }
 
-  Children _children;
+  containers::Fixed<ScoreFunction> _children;
   score_t _constant;
   ABSL_CACHELINE_ALIGNED mutable score_t _scratch[kScoreBlock];
 };

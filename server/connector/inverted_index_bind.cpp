@@ -1371,10 +1371,6 @@ std::shared_ptr<InvertedIndexConfig> DeriveKeys(
     }
     if (dict) {
       field.text_dictionary = dict->oid;
-      if (&dict->ParentCatalog() != &relation.ParentCatalog()) {
-        field.text_dictionary_database =
-          dict->ParentCatalog().GetAttached().oid;
-      }
     }
     ApplyOpclassToEntry(context,
                         entry.ParentSchema(context).name.GetIdentifierName(),

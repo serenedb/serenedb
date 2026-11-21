@@ -48,7 +48,9 @@ id	group_value	adds_up
 
 query
 SELECT id,
-       ts_explain(mgs_two_idx.tableoid).clauses[2].value AS group_value,
+       abs(ts_explain(mgs_two_idx.tableoid).clauses[2].value::DOUBLE
+           - greatest(ts_explain(mgs_two_idx.tableoid).clauses[2].clauses[1].value::DOUBLE,
+                      ts_explain(mgs_two_idx.tableoid).clauses[2].clauses[2].value::DOUBLE)) < 1e-5 AS best_clause,
        abs(ts_explain(mgs_two_idx.tableoid).clauses[1].value::DOUBLE
            + ts_explain(mgs_two_idx.tableoid).clauses[2].value::DOUBLE
            - indri_dirichlet(mgs_two_idx.tableoid)) < 1e-5 AS adds_up
@@ -56,17 +58,21 @@ FROM mgs_two_idx
 WHERE body @@ 'red' AND (body @@ 'fox' AND tag @@ 'king')::merge('max')
 ORDER BY id;
 ----
-id	group_value	adds_up
-1	0	t
+id	best_clause	adds_up
+1	t	t
 
 query
-SELECT id, indri_dirichlet(mgs_two_idx.tableoid) AS score
+SELECT id,
+       abs(indri_dirichlet(mgs_two_idx.tableoid)
+           - greatest(ts_explain(mgs_two_idx.tableoid).clauses[1].value::DOUBLE,
+                      ts_explain(mgs_two_idx.tableoid).clauses[2].value::DOUBLE)) < 1e-5 AS best_clause,
+       indri_dirichlet(mgs_two_idx.tableoid) < 0 AS negative
 FROM mgs_two_idx
 WHERE (body @@ 'red' AND tag @@ 'king')::merge('max')
 ORDER BY id;
 ----
-id	score
-1	0
+id	best_clause	negative
+1	t	t
 
 query
 SELECT id,

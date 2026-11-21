@@ -57,9 +57,7 @@
 #include <string>
 
 #include "catalog/catalog.h"
-#include "catalog/cluster.h"
 #include "catalog/dependency.h"
-#include "catalog/entry/database.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/persistence/blob.h"
@@ -336,17 +334,26 @@ duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
 
 namespace {
 
-duckdb::optional_ptr<duckdb::Catalog> DatabaseCatalog(
-  duckdb::ClientContext& context, duckdb::idx_t oid) {
-  auto& cluster = ClusterOf(context);
-  const auto database = cluster.FindIn<DatabaseCatalogEntry>(
-    cluster.GetCatalogTransaction(context), oid);
-  if (!database) {
-    return nullptr;
+duckdb::optional_ptr<TokenizerCatalogEntry> FindDictionary(
+  duckdb::ClientContext& context, duckdb::Catalog& catalog, duckdb::idx_t oid) {
+  const auto find = [&](duckdb::Catalog& in) {
+    return in.Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(
+      in.GetCatalogTransaction(context), oid);
+  };
+  if (!catalog.GetAttached().IsTemporary()) {
+    return find(catalog);
   }
-  auto attached =
-    duckdb::DatabaseManager::Get(context).GetDatabase(context, database->name);
-  return attached && attached->oid == oid ? &attached->GetCatalog() : nullptr;
+  for (const auto& database :
+       duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
+    auto& in = database->GetCatalog();
+    if (database->IsTemporary() || !IsSereneDB(in)) {
+      continue;
+    }
+    if (const auto dict = find(in)) {
+      return dict;
+    }
+  }
+  return nullptr;
 }
 
 }  // namespace
@@ -359,16 +366,7 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
-      auto dictionaries =
-        field.text_dictionary_database
-          ? DatabaseCatalog(context, field.text_dictionary_database)
-          : DictionaryCatalog(context, catalog);
-      const auto dict =
-        dictionaries
-          ? dictionaries->Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(
-              dictionaries->GetCatalogTransaction(context),
-              field.text_dictionary)
-          : nullptr;
+      const auto dict = FindDictionary(context, catalog, field.text_dictionary);
       if (!dict && temporary) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                         ERR_MSG("text search dictionary with OID ",

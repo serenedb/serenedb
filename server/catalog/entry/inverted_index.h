@@ -73,8 +73,6 @@ struct ColumnTokenizer {
 };
 
 struct InvertedIndexField : persistence::FieldRecord {
-  duckdb::idx_t text_dictionary_database = 0;
-
   bool HasTextDictionary() const noexcept { return text_dictionary != 0; }
   // For a JSON value: whether its leaves are indexed one by one.
   bool HasJsonLeafFields() const noexcept {

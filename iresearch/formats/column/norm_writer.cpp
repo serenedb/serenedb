@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <utility>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -98,10 +99,12 @@ void NormColumnWriter::Append(uint64_t target_row, uint32_t value) {
 
 void NormColumnWriter::PadTo(uint64_t target) {
   while (RowCount() < target) {
-    SDB_ENSURE(_row_group_size != 0, "NormColumnWriter: streamed column ", _id,
-               " holds ", RowCount(), " rows, cannot pad to ", target);
-    const auto chunk =
-      std::min<uint64_t>(target - RowCount(), _row_group_size - _values.size());
+    SDB_ENSURE(_row_group_size != 0 || _meta.row_count == 0,
+               "NormColumnWriter: streamed column ", _id, " holds ", RowCount(),
+               " rows, cannot pad to ", target);
+    const auto room = _row_group_size == 0 ? target - RowCount()
+                                           : _row_group_size - _values.size();
+    const auto chunk = std::min<uint64_t>(target - RowCount(), room);
     _values.insert(_values.end(), chunk, 0);
     if (_values.size() == _row_group_size) {
       FlushRowGroup();
@@ -110,15 +113,20 @@ void NormColumnWriter::PadTo(uint64_t target) {
 }
 
 void NormColumnWriter::FlushRowGroup() {
-  if (_values.empty()) {
+  EncodeRowGroup(_values);
+  _values.clear();
+}
+
+void NormColumnWriter::EncodeRowGroup(std::span<const uint32_t> values) {
+  if (values.empty()) {
     return;
   }
   NormStats stats;
-  stats.Add(_values);
-  Begin(PickNormLayout(stats), stats.rows, stats.max);
-  Encode(_values);
-  End();
-  _values.clear();
+  stats.Add(values);
+  Begin(stats);
+  _region.stats = stats;
+  EncodeValues(values, 0);
+  CloseRegion();
 }
 
 void NormColumnWriter::OpenRegion(const NormStats& planned) {
@@ -126,39 +134,72 @@ void NormColumnWriter::OpenRegion(const NormStats& planned) {
   if (planned.rows == 0) {
     return;
   }
-  Begin(PickNormLayout(planned), planned.rows, planned.max);
+  Begin(planned);
 }
 
 void NormColumnWriter::Write(std::span<const uint32_t> values) {
   SDB_ASSERT(_open_region || values.empty());
-  if (!values.empty()) {
-    Encode(values);
-  }
+  const uint64_t first_row = _region.stats.rows;
+  _region.stats.Add(values);
+  EncodeValues(values, first_row);
 }
 
 void NormColumnWriter::CloseRegion() {
-  if (_open_region) {
-    End();
+  _open_region = false;
+  auto region = std::exchange(_region, {});
+  if (region.stats.rows == 0) {
+    return;
   }
+  const auto exceptions = _direct.size() + _overflow_rows.size();
+  if (exceptions == 0) {
+    region.shift = 0;
+    region.exception_bytes = 0;
+  } else {
+    SDB_ENSURE(exceptions <= std::numeric_limits<uint32_t>::max(),
+               "norm column ", _id, " has ", exceptions, " exceptions");
+    region.exceptions = static_cast<uint32_t>(exceptions);
+    region.overflow = static_cast<uint32_t>(_overflow_rows.size());
+    region.table_offset = _blocks->Position();
+    _bases.resize(NormBuckets(region), static_cast<uint32_t>(_direct.size()));
+    for (const auto base : _bases) {
+      _blocks->Write<uint32_t>(base);
+    }
+    for (const auto row : _overflow_rows) {
+      _blocks->Write<uint32_t>(row);
+    }
+    for (const auto v : _overflow_values) {
+      _blocks->Write<uint32_t>(v);
+    }
+    for (const auto v : _direct) {
+      if (region.exception_bytes == 2) {
+        _blocks->Write<uint16_t>(static_cast<uint16_t>(v));
+      } else {
+        _blocks->Write<uint32_t>(v);
+      }
+    }
+    _blocks->Write<uint32_t>(0);
+    SDB_ASSERT(_blocks->Position() - region.table_offset ==
+               NormTableSize(region));
+  }
+  _meta.row_count += region.stats.rows;
+  _meta.regions.push_back(region);
 }
 
-void NormColumnWriter::Begin(const NormLayout& layout, uint64_t rows,
-                             uint32_t max) {
-  if (layout.bits != 0 && _out == nullptr) {
-    _out = &_open();
+void NormColumnWriter::Begin(const NormStats& planned) {
+  const auto layout = PickNormLayout(planned);
+  if (layout.bits != 0 && !_blocks) {
+    _blocks = &_open();
   }
   _open_region = true;
   _region = {};
   _region.bits = static_cast<uint8_t>(layout.bits);
   _region.value = layout.value;
-  _region.file_offset = layout.bits == 0 ? 0 : _out->Position();
+  _region.file_offset = layout.bits == 0 ? 0 : _blocks->Position();
   if (layout.exceptions != 0) {
-    _region.shift = PickShift(rows, layout.exceptions);
+    _region.shift = PickShift(planned.rows, layout.exceptions);
     _region.exception_bytes =
-      max <= std::numeric_limits<uint16_t>::max() ? 2 : 4;
+      planned.max <= std::numeric_limits<uint16_t>::max() ? 2 : 4;
   }
-  _bucket = 0;
-  _local = 0;
   _bases.clear();
   _direct.clear();
   _overflow_rows.clear();
@@ -167,18 +208,17 @@ void NormColumnWriter::Begin(const NormLayout& layout, uint64_t rows,
 
 uint32_t NormColumnWriter::Escape(uint64_t row, uint32_t value) {
   const uint64_t bucket = row >> _region.shift;
-  if (_bases.empty() || bucket != _bucket) {
+  if (bucket >= _bases.size()) {
     _bases.resize(bucket + 1, static_cast<uint32_t>(_direct.size()));
-    _bucket = bucket;
-    _local = 0;
   }
-  if (_local == kNormDirect) {
+  const auto local = static_cast<uint32_t>(_direct.size()) - _bases.back();
+  if (local == kNormDirect) {
     _overflow_rows.push_back(static_cast<uint32_t>(row));
     _overflow_values.push_back(value);
     return NormOverflowCode(_region.bits);
   }
   _direct.push_back(value);
-  return NormFirstCode(_region.bits) + _local++;
+  return NormFirstCode(_region.bits) + local;
 }
 
 template<size_t Bytes>
@@ -189,7 +229,10 @@ void NormColumnWriter::EncodeSlots(std::span<const uint32_t> values,
   for (size_t at = 0; at < values.size(); at += kStagingRows) {
     const auto chunk =
       values.subspan(at, std::min(kStagingRows, values.size() - at));
-    _staging.resize(chunk.size() * Bytes);
+    const auto bytes = chunk.size() * Bytes;
+    if (_staging.size() < bytes) {
+      _staging.resize(bytes);
+    }
     auto* out = _staging.data();
     for (size_t i = 0; i != chunk.size(); ++i) {
       auto v = chunk[i];
@@ -205,13 +248,12 @@ void NormColumnWriter::EncodeSlots(std::span<const uint32_t> values,
         absl::little_endian::Store32(out + i * 4, v);
       }
     }
-    _out->WriteData(_staging.data(), _staging.size());
+    _blocks->WriteData(out, bytes);
   }
 }
 
-void NormColumnWriter::Encode(std::span<const uint32_t> values) {
-  const uint64_t first_row = _region.stats.rows;
-  _region.stats.Add(values);
+void NormColumnWriter::EncodeValues(std::span<const uint32_t> values,
+                                    uint64_t first_row) {
   switch (_region.bits) {
     case 0:
       SDB_ASSERT(std::all_of(values.begin(), values.end(),
@@ -226,53 +268,10 @@ void NormColumnWriter::Encode(std::span<const uint32_t> values) {
   }
 }
 
-void NormColumnWriter::End() {
-  _open_region = false;
-  auto& region = _region;
-  if (region.stats.rows == 0) {
-    region = {};
-    return;
-  }
-  const auto exceptions = _direct.size() + _overflow_rows.size();
-  if (exceptions == 0) {
-    region.shift = 0;
-    region.exception_bytes = 0;
-  } else {
-    SDB_ENSURE(exceptions <= std::numeric_limits<uint32_t>::max(),
-               "norm column ", _id, " has ", exceptions, " exceptions");
-    region.exceptions = static_cast<uint32_t>(exceptions);
-    region.overflow = static_cast<uint32_t>(_overflow_rows.size());
-    region.table_offset = _out->Position();
-    _bases.resize(NormBuckets(region), static_cast<uint32_t>(_direct.size()));
-    for (const auto base : _bases) {
-      _out->Write<uint32_t>(base);
-    }
-    for (const auto row : _overflow_rows) {
-      _out->Write<uint32_t>(row);
-    }
-    for (const auto v : _overflow_values) {
-      _out->Write<uint32_t>(v);
-    }
-    for (const auto v : _direct) {
-      if (region.exception_bytes == 2) {
-        _out->Write<uint16_t>(static_cast<uint16_t>(v));
-      } else {
-        _out->Write<uint32_t>(v);
-      }
-    }
-    _out->Write<uint32_t>(0);
-  }
-  _meta.row_count += region.stats.rows;
-  _meta.regions.push_back(region);
-  region = {};
-}
-
 void NormColumnWriter::Finalize() {
   SDB_ASSERT(!_open_region);
-  if (_row_group_size != 0) {
-    FlushRowGroup();
-    _values = {};
-  }
+  FlushRowGroup();
+  _values = {};
   _bases = {};
   _direct = {};
   _overflow_rows = {};

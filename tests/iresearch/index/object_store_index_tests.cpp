@@ -294,12 +294,14 @@ TEST(ObjectStoreIndexTest, collected_column_blocks_serve_gathers) {
   const tests::IndexDir dir{Db(), Root()};
   {
     irs::ColWriter writer{Db(), dir.Tracker("seg")};
-    auto& plain = writer.OpenColumn(kPlain, duckdb::LogicalType::BIGINT,
-                                    /*skip_validity=*/false, kRgSize);
+    auto& plain =
+      writer.OpenColumn(kPlain, duckdb::LogicalType::BIGINT,
+                        {.row_group_size = kRgSize,
+                         .compression = irs::codecs::CodecType::Uncompressed});
     auto& structs =
-      writer.OpenColumn(kStruct, stype, /*skip_validity=*/false, kRgSize);
+      writer.OpenColumn(kStruct, stype, {.row_group_size = kRgSize});
     auto& arrays =
-      writer.OpenColumn(kArray, atype, /*skip_validity=*/false, kRgSize);
+      writer.OpenColumn(kArray, atype, {.row_group_size = kRgSize});
     for (uint64_t pos = 0; pos != kRows; pos += STANDARD_VECTOR_SIZE) {
       duckdb::Vector p{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
       duckdb::Vector s{stype, STANDARD_VECTOR_SIZE};
@@ -417,8 +419,9 @@ int64_t Mixed(uint64_t row) {
 void WriteMixedColumn(const tests::IndexDir& dir, irs::field_id id,
                       uint32_t rg_size, uint64_t rows) {
   irs::ColWriter writer{Db(), dir.Tracker("seg")};
-  auto& plain = writer.OpenColumn(id, duckdb::LogicalType::BIGINT,
-                                  /*skip_validity=*/true, rg_size);
+  auto& plain =
+    writer.OpenColumn(id, duckdb::LogicalType::BIGINT,
+                      {.skip_validity = true, .row_group_size = rg_size});
   for (uint64_t pos = 0; pos != rows; pos += STANDARD_VECTOR_SIZE) {
     duckdb::Vector p{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* pd = duckdb::FlatVector::GetDataMutable<int64_t>(p);
@@ -560,7 +563,7 @@ TEST(ObjectStoreIndexTest, collected_variant_blocks_serve_gathers) {
   {
     irs::ColWriter writer{Db(), dir.Tracker("seg")};
     auto& variants = writer.OpenColumn(kVariant, duckdb::LogicalType::VARIANT(),
-                                       /*skip_validity=*/false, kRgSize);
+                                       {.row_group_size = kRgSize});
     duckdb::Connection con{Db()};
     auto result = con.Query(
       absl::StrCat("SELECT CASE WHEN i % 7 = 0 THEN NULL ELSE "

@@ -1,0 +1,476 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <absl/algorithm/container.h>
+
+#include <algorithm>
+#include <duckdb/common/types/selection_vector.hpp>
+#include <duckdb/common/types/vector.hpp>
+#include <duckdb/common/vector/dictionary_vector.hpp>
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/common/vector/immutable_strings.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
+#include <duckdb/common/vector/vector_writer.hpp>
+#include <duckdb/planner/table_filter.hpp>
+#include <duckdb/planner/table_filter_state.hpp>
+#include <duckdb/storage/buffer/buffer_handle.hpp>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include "iresearch/formats/column/codecs/dictionary_cache.hpp"
+#include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/formats/column/codecs/text/string_layout.hpp"
+#include "iresearch/formats/column/codecs/text/string_scan.hpp"
+#include "iresearch/formats/column/codecs/text/text_encoder.hpp"
+#include "iresearch/formats/column/immutable_payloads.hpp"
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/shared.hpp"
+
+namespace irs::codecs::text {
+
+using duckdb::const_data_ptr_t;
+using duckdb::data_ptr_t;
+using duckdb::idx_t;
+using duckdb::string_t;
+
+template<Shape S, typename Leaf>
+struct EntryFrames {
+  static constexpr bool kDedup = S == Shape::Dictionary;
+  static constexpr uint32_t kFirstEntry = kDedup ? 1 : 0;
+
+  EntryFrames(const ColumnSegment& segment, duckdb::BufferHandle handle_p,
+              bool load)
+    : handle{std::move(handle_p)},
+      base{handle.GetDataMutable()},
+      header{SegmentHeader(base, segment, S, Leaf::kCodec)},
+      type{segment.type},
+      length_reader{base + header.off_lengths, header.length_width} {
+    if (!load) {
+      return;
+    }
+    LoadFrames();
+    if constexpr (kDedup) {
+      dictionary = duckdb::DictionaryVector::CreateReusableDictionary(
+        type, header.entry_count);
+    } else {
+      dictionary = duckdb::make_buffer<duckdb::DictionaryEntry>(
+        duckdb::Vector{type, header.entry_count});
+      duckdb::FlatVector::SetSize(dictionary->data, header.entry_count);
+    }
+    auto& dict_data = dictionary->data;
+    values = duckdb::FlatVector::GetDataMutable<string_t>(dict_data);
+    heap = duckdb::char_ptr_cast(
+      duckdb::StringVector::GetStringAllocator(dict_data).Allocate(
+        header.raw_bytes));
+    duckdb::StringVector::AddAuxiliaryData(
+      dict_data, duckdb::make_uniq<ImmutablePayloads>());
+    leaf.emplace(segment, *this);
+  }
+
+  void LoadFrames() {
+    frames.resize(header.frame_count);
+    frame_off.resize(header.frame_count);
+    decoded.assign(header.frame_count, 0);
+    uint64_t raw = 0;
+    for (uint32_t i = 0; i < header.frame_count; ++i) {
+      const auto f = FrameAt(base + header.off_frames, i);
+      SDB_ENSURE(
+        (i == 0 ? f.first_entry == kFirstEntry
+                : f.first_entry > frames[i - 1].first_entry) &&
+          f.first_entry < header.entry_count &&
+          static_cast<uint64_t>(f.comp_off) + f.comp_len <= header.data_size &&
+          raw + f.raw_len <= header.raw_bytes,
+        "col codec: corrupted frame table");
+      frames[i] = f;
+      frame_off[i] = raw;
+      raw += f.raw_len;
+    }
+    SDB_ENSURE(raw == header.raw_bytes &&
+                 (header.frame_count != 0 || header.entry_count == kFirstEntry),
+               "col codec: corrupted frame table");
+  }
+
+  uint32_t FrameEnd(uint32_t f) const noexcept {
+    return f + 1 < frames.size() ? frames[f + 1].first_entry
+                                 : header.entry_count;
+  }
+
+  uint32_t FrameOf(uint32_t entry) const noexcept {
+    const auto it = absl::c_upper_bound(
+      frames, entry,
+      [](uint32_t e, const FrameMeta& m) { return e < m.first_entry; });
+    SDB_ASSERT(it != frames.begin());
+    return static_cast<uint32_t>(it - frames.begin()) - 1;
+  }
+
+  bool Complete() const noexcept { return decoded_count == frames.size(); }
+
+  void DecodeAll() {
+    for (uint32_t f = 0; f < frames.size(); ++f) {
+      if (!decoded[f]) {
+        DecodeFrame(f);
+      }
+    }
+  }
+
+  IRS_NO_INLINE void DecodeFrame(uint32_t f) {
+    SDB_ASSERT(!decoded[f]);
+    leaf->DecodeFrame(*this, f, FrameOut(f));
+    decoded[f] = 1;
+    ++decoded_count;
+  }
+
+  char* FrameOut(uint32_t f) noexcept { return heap + frame_off[f]; }
+
+  IRS_FORCE_INLINE void EnsureEntry(uint32_t e, uint32_t& f, bool sparse) {
+    if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
+      f = FrameOf(e);
+    }
+    if (decoded[f]) {
+      return;
+    }
+    if constexpr (Sorted(Leaf::kCodec)) {
+      if (sparse) {
+        leaf->EnsureEntry(*this, e, f);
+        return;
+      }
+    }
+    DecodeFrame(f);
+  }
+
+  template<typename Entry>
+  void EnsureEach(idx_t count, Entry entry_at) {
+    if (Complete()) {
+      return;
+    }
+    const bool sparse = count <= kSparseEntries;
+    uint32_t f = kNoFrame;
+    for (idx_t i = 0; i < count; ++i) {
+      const auto e = static_cast<uint32_t>(entry_at(i));
+      if (e >= kFirstEntry) {
+        EnsureEntry(e, f, sparse);
+      }
+    }
+  }
+
+  template<typename Entry>
+  void EnsureRows(idx_t count, Entry entry_at) {
+    uint32_t f = kNoFrame;
+    for (idx_t i = 0; i < count; ++i) {
+      const auto e = static_cast<uint32_t>(entry_at(i));
+      if (e < kFirstEntry) {
+        continue;
+      }
+      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
+        f = FrameOf(e);
+      }
+      if (!decoded[f]) {
+        leaf->EnsureRow(*this, e, f);
+      }
+    }
+  }
+
+  template<typename Entry>
+  void EnsureSparse(idx_t count, Entry entry_at, uint32_t window_first,
+                    uint32_t window_end) {
+    if (Complete()) {
+      return;
+    }
+    auto f = sparse_frame;
+    for (idx_t i = 0; i < count;) {
+      const auto e = static_cast<uint32_t>(entry_at(i));
+      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
+        f = FrameOf(e);
+      }
+      const auto first = frames[f].first_entry;
+      const auto end = FrameEnd(f);
+      auto last = e;
+      uint64_t distinct = 1;
+      auto j = i + 1;
+      for (; j < count; ++j) {
+        const auto next = static_cast<uint32_t>(entry_at(j));
+        if (next < first || next >= end) {
+          break;
+        }
+        distinct += next != last;
+        last = next;
+      }
+      if (!decoded[f]) {
+        const auto lo = std::max(window_first, first);
+        const auto hi = std::min(window_end, end);
+        SDB_ASSERT(lo < hi);
+        const uint64_t range = hi - lo;
+        const uint64_t entry_bytes = frames[f].raw_len / (end - first);
+        if ((distinct <= kSparseEntries && range < end - first) ||
+            distinct * (entry_bytes + entry_bytes / 8 + kSingleRowCost) <=
+              range * (entry_bytes + kFrameRowCost)) {
+          for (auto k = i; k < j; ++k) {
+            leaf->EnsureEntry(*this, static_cast<uint32_t>(entry_at(k)), f);
+          }
+        } else {
+          DecodeFrame(f);
+        }
+      }
+      i = j;
+    }
+    sparse_frame = f;
+  }
+
+  template<typename Entry>
+  IRS_FORCE_INLINE void WriteRefs(duckdb::Vector& result, idx_t result_offset,
+                                  idx_t count, Entry entry_at) {
+    ReferenceHeap(result);
+    auto writer =
+      duckdb::FlatVector::Writer<string_t>(result, count, result_offset);
+    for (idx_t i = 0; i < count; ++i) {
+      writer.WriteStringRef(values[entry_at(i)]);
+    }
+  }
+
+  const char* Data() const noexcept {
+    return reinterpret_cast<const char*>(base + header.off_data);
+  }
+
+  void Keep(uint32_t e, std::string_view v) noexcept {
+    std::construct_at(values + e, v.data(), static_cast<uint32_t>(v.size()));
+  }
+
+  uint64_t CacheBytes() const noexcept {
+    return DictionaryBytes(header) + (leaf ? leaf->HeapBytes() : 0);
+  }
+
+  void ReferenceHeap(duckdb::Vector& result) {
+    ReferenceOnce(heap_reference, dictionary->data, result);
+  }
+
+  HeapReference heap_reference;
+  duckdb::BufferHandle handle;
+  data_ptr_t base;
+  Header header;
+  duckdb::LogicalType type;
+  PackedReader length_reader;
+  duckdb::buffer_ptr<duckdb::DictionaryEntry> dictionary;
+  string_t* values = nullptr;
+  char* heap = nullptr;
+  std::vector<FrameMeta> frames;
+  std::vector<uint64_t> frame_off;
+  std::vector<uint8_t> decoded;
+  size_t decoded_count = 0;
+  uint32_t sparse_frame = kNoFrame;
+  std::optional<Leaf> leaf;
+};
+
+template<typename Leaf>
+struct FetchFrames {
+  bool Switch(const ColumnSegment& segment, data_ptr_t base, Shape shape) {
+    if (switched) {
+      return false;
+    }
+    header = SegmentHeader(base, segment, shape, Leaf::kCodec);
+    switched = true;
+    lengths = PackedReader{base + header.off_lengths, header.length_width};
+    leaf.Reset(header, base);
+    decoded.reset();
+    return true;
+  }
+
+  IRS_FORCE_INLINE void Emit(const ColumnSegment& segment, data_ptr_t base,
+                             uint32_t entry, duckdb::Vector& result, idx_t at,
+                             bool batched) {
+    SDB_ENSURE(header.frame_count != 0, "col codec: corrupted row codes");
+    if (entry < frame.first_entry || entry >= frame_end) {
+      const auto* table = base + header.off_frames;
+      frame_index = FrameOfEntry(table, header.frame_count, entry);
+      frame = FrameAt(table, frame_index);
+      frame_end = frame_index + 1 < header.frame_count
+                    ? FrameAt(table, frame_index + 1).first_entry
+                    : header.entry_count;
+      SDB_ENSURE(
+        frame.first_entry <= entry && frame.raw_len <= header.raw_bytes &&
+          uint64_t{frame.comp_off} + frame.comp_len <= header.data_size,
+        "col codec: corrupted frame table");
+    }
+    leaf.Emit(segment, header, base, lengths, frame_index, frame, entry, result,
+              at, batched);
+  }
+
+  bool switched = false;
+  uint32_t frame_index = 0;
+  uint32_t frame_end = 0;
+  FrameMeta frame{};
+  Header header;
+  PackedReader lengths{nullptr, 0};
+  ScratchVector<EntryAt> order;
+  duckdb::shared_ptr<DecodedDictionary> decoded;
+  HeapReference heap_reference;
+  typename Leaf::Fetch leaf;
+};
+
+template<typename Scan>
+std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
+  return std::make_unique<Scan>(segment, segment.Pin());
+}
+
+template<typename Scan>
+void ScanVector(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
+                duckdb::Vector& result, idx_t result_offset,
+                duckdb::ScanVectorType scan_type) {
+  auto& scan = state.scan_state->Cast<Scan>();
+  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    scan.ScanVector(result, state.GetPositionInSegment(), scan_count);
+    return;
+  }
+  scan.ScanFlat(result, result_offset, state.GetPositionInSegment(),
+                scan_count);
+}
+
+template<typename Scan>
+void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
+            duckdb::Vector& result, idx_t result_offset,
+            const duckdb::SelectionVector& sel, idx_t sel_count,
+            duckdb::ScanVectorType scan_type) {
+  state.scan_state->Cast<Scan>().Select(
+    result, result_offset, state.GetPositionInSegment(), vector_count, sel,
+    sel_count, scan_type);
+}
+
+template<typename Scan>
+void Filter(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
+            duckdb::Vector& result, duckdb::SelectionVector& sel,
+            idx_t& sel_count, const duckdb::TableFilter& filter,
+            duckdb::TableFilterState& filter_state) {
+  state.scan_state->Cast<Scan>().Filter(result, state.GetPositionInSegment(),
+                                        vector_count, sel, sel_count, filter,
+                                        filter_state);
+}
+
+template<typename Scan>
+duckdb::shared_ptr<DecodedDictionary> DecodeWhole(
+  const ColumnSegment& segment) {
+  Scan scan{segment, segment.Pin()};
+  scan.EnsureDictionary();
+  const auto bytes = scan.entries.CacheBytes();
+  return duckdb::make_shared_ptr<DecodedDictionary>(
+    std::move(scan.entries.dictionary), bytes);
+}
+
+template<typename Scan>
+void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
+               const idx_t* rows, idx_t count, duckdb::Vector& result,
+               const duckdb::SelectionVector& result_sel, idx_t result_offset) {
+  using Fetch = typename Scan::Fetch;
+  auto& handle = state.GetOrInsertHandle(segment);
+  auto* base = handle.GetDataMutable();
+  auto& fetch = state.GetOrCreateSegmentState<Fetch>(
+    [] { return std::make_unique<Fetch>(); });
+  auto& frames = fetch.frames;
+  if (frames.Switch(segment, base, Scan::kShape)) {
+    fetch.Reset(segment);
+  }
+  if (count == 1) {
+    const auto at = result_offset + result_sel.get_index(0);
+    const auto entry = fetch.ReadOne(base, rows[0]);
+    if (Scan::kShape == Shape::Dictionary && entry == 0) {
+      duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
+      return;
+    }
+    if (!frames.decoded && fetch.Whole()) {
+      frames.decoded = DecodeWhole<Scan>(segment);
+    }
+    if (frames.decoded) {
+      const EntryAt one{.entry = entry, .at = at};
+      EmitDecoded(*frames.decoded, std::span<const EntryAt>{&one, 1}, result,
+                  frames.heap_reference);
+      return;
+    }
+    frames.Emit(segment, base, entry, result, at, false);
+    if (fetch.Whole()) {
+      frames.decoded = DecodeWhole<Scan>(segment);
+    }
+    return;
+  }
+  fetch.Read(base, rows, count, result, result_sel, result_offset);
+  auto& order = frames.order;
+  if (!frames.decoded && fetch.Whole()) {
+    frames.decoded = DecodeWhole<Scan>(segment);
+  }
+  if (frames.decoded) {
+    EmitDecoded(*frames.decoded, order, result, frames.heap_reference);
+    return;
+  }
+  const bool batched = order.size() > 1;
+  if (batched && fetch.PlanBatch(base)) {
+    frames.decoded = DecodeWhole<Scan>(segment);
+    EmitDecoded(*frames.decoded, order, result, frames.heap_reference);
+    return;
+  }
+  auto* strings = duckdb::FlatVector::GetDataMutable<string_t>(result);
+  for (size_t i = 0; i < order.size(); ++i) {
+    if (i != 0 && order[i].entry == order[i - 1].entry) {
+      strings[order[i].at] = strings[order[i - 1].at];
+      continue;
+    }
+    frames.Emit(segment, base, order[i].entry, result, order[i].at, batched);
+    if (fetch.Whole()) {
+      frames.decoded = DecodeWhole<Scan>(segment);
+      EmitDecoded(*frames.decoded,
+                  std::span<const EntryAt>{order}.subspan(i + 1), result,
+                  frames.heap_reference);
+      return;
+    }
+  }
+}
+
+template<typename Scan>
+inline constexpr DecompressionFunction kStringDecompression = [] consteval {
+  DecompressionFunction f{
+    .init_scan = InitScan<Scan>,
+    .scan = ScanVector<Scan>,
+    .select = Select<Scan>,
+    .fetch_rows = FetchRows<Scan>,
+    .get_segment_info = SegmentInfo,
+    .validity = Scan::kValidity,
+  };
+  if constexpr (Scan::kShape == Shape::Dictionary) {
+    f.filter = Filter<Scan>;
+  }
+  return f;
+}();
+
+template<typename Scan, typename Compression>
+consteval Codec StringCodec() {
+  static_assert(Compression::kCodec == Scan::kCodec);
+  static_assert(Compression::kShape == Scan::kShape);
+  return {
+    .type = CodecOf(Scan::kShape, Scan::kCodec),
+    .compression = &kNamedTextFunction<Compression>,
+    .decompression = &kStringDecompression<Scan>,
+  };
+}
+
+}  // namespace irs::codecs::text

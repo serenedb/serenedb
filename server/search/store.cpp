@@ -42,6 +42,7 @@
 #include <duckdb/storage/storage_manager.hpp>
 #include <duckdb/transaction/duck_transaction_manager.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/file_names.hpp>
@@ -87,9 +88,13 @@ catalog::CompressionByColumn DeclaredCompression(
   const duckdb::ColumnList& columns) {
   catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
-    if (column.CompressionType() != duckdb::CompressionType::COMPRESSION_AUTO) {
-      compression.emplace(connector::TableColumnId(column),
-                          column.CompressionType());
+    const auto type = irs::codecs::FindCodec(column.CompressionType());
+    SDB_ASSERT(type != irs::codecs::kNoCodec);
+    if (type != irs::codecs::CodecType::Auto) {
+      compression.emplace(
+        connector::TableColumnId(column),
+        catalog::DeclaredCodec{.type = type,
+                               .compression_level = column.CompressionLevel()});
     }
   }
   return compression;
@@ -1157,7 +1162,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> Store::MergeConfigs(
   merged->pk = catalog::PkColumnKind::None;
   merged->top_k_scorer = _topk_options;
   merged->row_group_size = _row_group_size;
-  merged->block_size = _block_size;
+  merged->codec_params.segment_target = 2 * _block_size;
   merged->declared_compression = _compression;
   merged->table_columns = *_table_columns;
   merged->constraint_keys = std::move(constraint_keys);

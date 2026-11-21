@@ -47,6 +47,11 @@ class StructColumnReader final : public ColumnReader {
     FinishStats(std::move(stats));
   }
 
+  uint64_t RowGroupEnd(uint64_t row) const noexcept final {
+    return _children.empty() ? _validity->RowGroupEnd(row)
+                             : _children.front()->RowGroupEnd(row);
+  }
+
   uint64_t GatherCursor(const ScanState& s) const noexcept final {
     SDB_ASSERT(_validity || (!_children.empty() && s.child_states.size() > 1));
     const uint64_t row =

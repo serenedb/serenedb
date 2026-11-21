@@ -27,6 +27,7 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/hot_column_reader.hpp"
 #include "iresearch/utils/assert.hpp"
 
@@ -177,6 +178,8 @@ std::vector<ColumnBlockMeta> PatchedBlocks(const ColumnReader& base,
       .file_offset = metas[b].file_offset,
       .byte_size = metas[b].byte_size,
       .codec = metas[b].codec,
+      .shared_offset = metas[b].shared_offset,
+      .shared_size = metas[b].shared_size,
     });
     const auto first = base.DataBlockFirstRow(b);
     patch.MergeStats(first, first + metas[b].tuple_count, block.statistics);
@@ -184,11 +187,10 @@ std::vector<ColumnBlockMeta> PatchedBlocks(const ColumnReader& base,
   return blocks;
 }
 
-std::vector<ColumnBlockMeta> NullBlocks(duckdb::DatabaseInstance& db,
-                                        const duckdb::LogicalType& type,
+std::vector<ColumnBlockMeta> NullBlocks(const duckdb::LogicalType& type,
                                         uint64_t rows) {
-  const auto codec = duckdb::DBConfig::GetConfig(db).TryGetCompressionFunction(
-    duckdb::CompressionType::COMPRESSION_UNCOMPRESSED, type.InternalType());
+  const auto* codec =
+    codecs::GetCodec(codecs::CodecType::Uncompressed, type.InternalType());
   SDB_ASSERT(codec);
   auto stats = duckdb::BaseStatistics::CreateEmpty(type);
   stats.SetHasNull();
@@ -196,7 +198,7 @@ std::vector<ColumnBlockMeta> NullBlocks(duckdb::DatabaseInstance& db,
   blocks.push_back(ColumnBlockMeta{
     .statistics = std::move(stats),
     .tuple_count = rows,
-    .codec = codec.get(),
+    .codec = codec,
   });
   return blocks;
 }
@@ -575,7 +577,7 @@ void ColumnPatch::MergeStats(uint64_t first, uint64_t last,
 NullColumnReader::NullColumnReader(duckdb::DatabaseInstance& db, field_id id,
                                    const duckdb::LogicalType& type,
                                    uint64_t rows)
-  : ColumnReader{id, type, NullBlocks(db, type, rows), nullptr, {}} {
+  : ColumnReader{id, type, NullBlocks(type, rows), nullptr, {}} {
   _in_memory = true;
 }
 
@@ -644,6 +646,7 @@ PatchedColumnReader::PatchedColumnReader(
   _stats = stats.ToUnique();
   _distinct = SharedDistinct(base);
   _array_size = base.ArraySize();
+  _file_id = base.FileId();
   _in_memory = base.InMemory();
   _patched = true;
 }

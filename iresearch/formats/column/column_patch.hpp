@@ -223,16 +223,12 @@ class PatchedColumnReader final : public ColumnReader {
   PatchedColumnReader(std::unique_ptr<const ColumnReader> base,
                       std::shared_ptr<const ColumnPatch> patch);
 
-  const ColumnReader& Base() const noexcept { return _base; }
-  const std::shared_ptr<const ColumnPatch>& Patch() const noexcept {
-    return _patch;
-  }
-
   uint64_t RowGroupEnd(uint64_t row) const noexcept final {
     return _base.RowGroupEnd(row);
   }
-  ScanState InitScan(ReadContext& ctx) const final {
-    return _base.InitScan(ctx);
+  using ColumnReader::InitScan;
+  ScanState InitScan(std::shared_ptr<ReadContext> ctx) const final {
+    return _base.InitScan(std::move(ctx));
   }
   uint64_t GatherCursor(const ScanState& s) const noexcept final {
     return _base.GatherCursor(s);

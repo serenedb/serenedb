@@ -117,7 +117,7 @@ connection after_crash
 query
 SELECT 'wal_flip_dict_fsst' AS combo, (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('w.wal_flip', include_segment_info=true) WHERE column_name='v' AND segment_type='VARCHAR') AS ok
 UNION ALL SELECT 'nested_child_dict_fsst', (SELECT bool_or(compression = 'DICT_FSST') FROM pragma_storage_info('w.nested', include_segment_info=true) WHERE column_name='l' AND segment_type='VARCHAR')
-UNION ALL SELECT 'nested_offsets_bitpack', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('w.nested', include_segment_info=true) WHERE column_name='l' AND segment_type='VARCHAR[]')
+UNION ALL SELECT 'nested_offsets_delta', (SELECT bool_and(compression = 'DELTA') FROM pragma_storage_info('w.nested', include_segment_info=true) WHERE column_name='l' AND segment_type='VARCHAR[]')
 UNION ALL SELECT 'timestamp_bitpacks', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('w.temporal', include_segment_info=true) WHERE column_name='ts' AND segment_type NOT IN ('VALIDITY'))
 UNION ALL SELECT 'date_bitpacks', (SELECT bool_or(compression = 'BitPacking') FROM pragma_storage_info('w.temporal', include_segment_info=true) WHERE column_name='d' AND segment_type NOT IN ('VALIDITY'))
 ORDER BY combo;
@@ -125,7 +125,7 @@ ORDER BY combo;
 combo	ok
 date_bitpacks	t
 nested_child_dict_fsst	t
-nested_offsets_bitpack	t
+nested_offsets_delta	t
 timestamp_bitpacks	t
 wal_flip_dict_fsst	t
 

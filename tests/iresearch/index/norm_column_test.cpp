@@ -21,12 +21,6 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-// The legacy `irs::BufferedColumn` is being removed (task #6). The four
-// tests here keep the name+shape but exercise the surviving norm-column
-// write path (`irs::NormColumnWriter` via `Writer::Open
-// NormColumn`) -- BufferedColumn's role was to stage per-doc norm bytes
-// before flush, and the new NormColumnWriter replaces it.
-
 #include <gtest/gtest.h>
 
 #include <duckdb/common/types/vector.hpp>
@@ -44,7 +38,7 @@
 
 namespace {
 
-class BufferedColumnTestCase : public ::testing::TestWithParam<bool> {
+class NormColumnTest : public ::testing::Test {
  protected:
   duckdb::DatabaseInstance& Db() {
     return ::irs::DuckDBEngine::Instance().instance();
@@ -134,10 +128,8 @@ void AssertNormReads(const irs::NormColumnReader& col,
 
 }  // namespace
 
-TEST_P(BufferedColumnTestCase, Ctor) {
+TEST_F(NormColumnTest, Ctor) {
   // Fresh writer + fresh norm column => Id matches, RowCount == 0.
-  // Mirrors the legacy `Empty()`/`Size()` checks on a default-constructed
-  // BufferedColumn.
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{Db(), dir.Tracker("ctor_seg")};
@@ -159,11 +151,7 @@ TEST_P(BufferedColumnTestCase, Ctor) {
   EXPECT_FALSE(HasCsFile(dir, "ctor_seg"));
 }
 
-TEST_P(BufferedColumnTestCase, FlushEmpty) {
-  // BufferedColumn::Flush on an empty buffer was a no-op + the segment's
-  // column meta wasn't written. New cs analogue: open the norm column,
-  // append nothing, Rollback() the writer => no .col file appears.
-
+TEST_F(NormColumnTest, FlushEmpty) {
   // --- (1) Rollback path on a norm-only writer ----------------------------
   {
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
@@ -203,7 +191,7 @@ TEST_P(BufferedColumnTestCase, FlushEmpty) {
   }
 }
 
-TEST_P(BufferedColumnTestCase, InsertDuplicates) {
+TEST_F(NormColumnTest, InsertDuplicates) {
   // Three sub-scenarios.
   //
   // (1) All-zero stream: NonZeroCount must be 0 and Sum() = 0 even though
@@ -301,7 +289,7 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
   }
 }
 
-TEST_P(BufferedColumnTestCase, RareLargeValues) {
+TEST_F(NormColumnTest, RareLargeValues) {
   constexpr uint32_t kRowGroupSize = 1024;
   constexpr uint64_t kRowCount = 3000;
   std::vector<uint32_t> expected(kRowCount);
@@ -338,7 +326,7 @@ TEST_P(BufferedColumnTestCase, RareLargeValues) {
   AssertNormReads(*col, expected);
 }
 
-TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
+TEST_F(NormColumnTest, RareLargeValuesEveryRowGroup) {
   constexpr uint64_t kRowCount = 2048;
   std::vector<uint32_t> expected(kRowCount);
   for (uint64_t i = 0; i < kRowCount; ++i) {
@@ -372,7 +360,7 @@ TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
   }
 }
 
-TEST_P(BufferedColumnTestCase, CrowdedBucketOverflows) {
+TEST_F(NormColumnTest, CrowdedBucketOverflows) {
   constexpr uint64_t kRowCount = 8192;
   std::vector<uint32_t> expected(kRowCount);
   for (uint64_t i = 0; i < kRowCount; ++i) {
@@ -404,7 +392,7 @@ TEST_P(BufferedColumnTestCase, CrowdedBucketOverflows) {
   AssertNormReads(*col, expected);
 }
 
-TEST_P(BufferedColumnTestCase, WideRegions) {
+TEST_F(NormColumnTest, WideRegions) {
   constexpr uint64_t kRowCount = 4096;
   std::vector<uint32_t> expected(kRowCount);
   for (uint64_t i = 0; i < 2048; ++i) {
@@ -438,7 +426,7 @@ TEST_P(BufferedColumnTestCase, WideRegions) {
   AssertNormReads(*col, expected);
 }
 
-TEST_P(BufferedColumnTestCase, StreamedRegions) {
+TEST_F(NormColumnTest, StreamedRegions) {
   const auto value = [](uint64_t i) -> uint32_t {
     if (i < 3000) {
       return i == 1500 ? 4000 : static_cast<uint32_t>(1 + i % 100);
@@ -527,12 +515,3 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   std::array<uint32_t, 2> values{};
   EXPECT_ANY_THROW(reader->Get(docs, values));
 }
-
-TEST_P(BufferedColumnTestCase, Sort) {
-  GTEST_SKIP()
-    << "BufferedColumn::Sort backed sorted-index inserts on the "
-       "legacy subsystem; sorted-index isn't supported on the new cs.";
-}
-
-INSTANTIATE_TEST_SUITE_P(BufferedColumnTest, BufferedColumnTestCase,
-                         ::testing::Values(false, true));

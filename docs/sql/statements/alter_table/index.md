@@ -229,6 +229,14 @@ The `ADD CONSTRAINT` clause adds a `CHECK`, `UNIQUE`, `PRIMARY KEY` or `FOREIGN 
 
 The rows already in the table are checked against the new constraint: a duplicate key fails the statement with `could not create unique index "⟨name⟩"`, and a foreign key value missing from the referenced table with the error an `INSERT` of that row would raise.
 
+## `ALTER COLUMN ... SET COMPRESSION`
+
+`SET COMPRESSION codec`, optionally with `(compression_level = N)`, changes the codec a column is written with, as `USING COMPRESSION` sets it in `CREATE TABLE`; `SET COMPRESSION DEFAULT` returns the column to automatic selection. The same codecs and levels are accepted as at creation (see [Columnstore Storage & Compression](../../indexes/inverted/columnstore.md#choosing-a-codec)): the codec has to store the column's type, and only a codec that has levels takes one. A generated column takes a codec only when it is `STORED`.
+
+<SqlLogicTest id="sql/statements/alter_table/index/example_038" />
+
+The change applies to the segments written after it and is undone if its transaction rolls back; an older segment keeps its codec until a compaction includes it, which rewrites the column with the named codec and level. A codec that an inverted index names for the column through `INCLUDE` keeps precedence while that index exists. In a database file with a DuckDB storage version it fails at commit, because DuckDB cannot read the change back from the file's log (see [DuckDB files](../attach/duckdb.md)).
+
 ## `ENABLE` / `DISABLE TRIGGER`
 
 `DISABLE TRIGGER name` stops a trigger of the table from firing, and `ENABLE TRIGGER name` lets it fire again. With `ALL` or `USER` instead of a name the change applies to every trigger of the table. Like in PostgreSQL, a trigger can also be enabled for a [replication role](../../../configuration/overview.md): `ENABLE REPLICA TRIGGER` makes it fire only in sessions where `session_replication_role` is `replica`, such as the apply worker of a [subscription](../create_subscription/index.md), and `ENABLE ALWAYS TRIGGER` makes it fire in every session. A plain `ENABLE TRIGGER` trigger fires when the role is `origin` (the default) or `local`. `pg_trigger.tgenabled` shows the state as `O`, `D`, `R` or `A`. The change is transactional.

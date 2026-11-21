@@ -16,6 +16,13 @@ target_include_directories(
     serenedb-bench-micro
     PRIVATE ${CMAKE_SOURCE_DIR}/tests/iresearch
 )
+target_include_directories(
+    serenedb-bench-micro
+    SYSTEM
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fsst
+        ${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/fastpforlib
+)
 
 function(add_bench name)
     target_sources(serenedb-bench-micro PRIVATE ${name}.cpp)
@@ -33,6 +40,8 @@ function(add_bench name)
 endfunction()
 
 add_bench(bm25_byte_norm)
+add_bench(col_codecs)
+add_bench(col_codecs_real)
 add_bench(numeric_term_encoding)
 add_bench(ascii_probe)
 add_bench(vector_access)
@@ -101,6 +110,7 @@ add_bench(ci_compare)
 add_bench(socket_write)
 add_bench(duckdb_collector)
 add_bench(columnstore_vs_duckdb)
+add_bench(nested_columns)
 add_bench(column_point_read)
 add_bench(select_thresholds)
 add_bench(clustering)

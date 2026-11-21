@@ -423,7 +423,7 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
       }
     }
     if (check_source) {
-      const auto source = irs::MakeFuzzyPrefixSource(fuzzy);
+      const auto source = irs::MakeFuzzySource(fuzzy, true);
       ASSERT_NE(nullptr, source);
       AssertSourceMatchesWalk(reader, acceptor, *source);
     }
@@ -667,6 +667,38 @@ TEST_P(AcceptorWalkIndexTestCase, regexp_walk_past_the_row_budget) {
       }
     }
   }
+}
+
+TEST_P(AcceptorWalkIndexTestCase, fuzzy_conjunction_past_a_pattern_row_budget) {
+  AddEuroparl();
+
+  auto reader = open_reader();
+
+  const auto pattern = [](std::string_view text, size_t budget) {
+    auto acceptor = std::make_shared<const irs::RegexpAcceptor>(
+      irs::ViewCast<irs::byte_type>(text), irs::RegexpSyntax::Perl,
+      irs::RegexpAcceptor::kDefaultMaxMem, budget);
+    EXPECT_TRUE(acceptor->ok());
+    return acceptor;
+  };
+  const std::shared_ptr<const irs::RegexpAcceptor> patterns[]{
+    pattern(".*r.*", 1),
+    pattern("b.*", irs::RegexpAcceptor::kDefaultMaxDfaMem),
+  };
+  const auto fuzzy = std::make_shared<const irs::LevenshteinAcceptor>(
+    irs::MakeParametricDescription(2, true),
+    irs::kEmptyStringView<irs::byte_type>,
+    irs::ViewCast<irs::byte_type>("burden"sv));
+  const irs::FuzzyConjunction conjunction{patterns, fuzzy};
+  ASSERT_TRUE(irs::FuzzyConjunction::Unknown(conjunction.Start()));
+  AssertWalk(reader, conjunction, true);
+  AssertOracle(
+    reader, conjunction, [](irs::bytes_view) { return true; },
+    [&](std::string_view term) {
+      const auto bytes = irs::ViewCast<irs::byte_type>(term);
+      return patterns[0]->Matches(bytes) && patterns[1]->Matches(bytes) &&
+             fuzzy->Matches(bytes);
+    });
 }
 
 TEST_P(AcceptorWalkIndexTestCase, walk_selects_multibyte_terms) {
@@ -989,7 +1021,7 @@ TEST_P(AcceptorWalkIndexTestCase, fuzzy_source_walks_the_parametric_language) {
   EXPECT_EQ(nullptr, irs::FuzzyConjunction::Make(large));
 
   for (const auto& fuzzy : {small, prefixed, large}) {
-    const auto source = irs::MakeFuzzySource(fuzzy);
+    const auto source = irs::MakeFuzzySource(fuzzy, false);
     ASSERT_NE(nullptr, source);
     size_t total = 0;
     for (auto& segment : reader) {
@@ -1044,7 +1076,7 @@ TEST_P(AcceptorWalkIndexTestCase,
 
   for (const auto& fuzzy : {small, prefixed, large}) {
     const irs::LevenshteinPrefixAcceptor acceptor{fuzzy};
-    const auto source = irs::MakeFuzzyPrefixSource(fuzzy);
+    const auto source = irs::MakeFuzzySource(fuzzy, true);
     ASSERT_NE(nullptr, source);
     size_t total = 0;
     for (auto& segment : reader) {

@@ -27,6 +27,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -578,5 +579,20 @@ class LevenshteinPrefixAcceptor {
 
   std::shared_ptr<const LevenshteinAcceptor> _inner;
 };
+
+template<bool kStartsWith>
+using LevenshteinAcceptorFor =
+  std::conditional_t<kStartsWith, LevenshteinPrefixAcceptor,
+                     LevenshteinAcceptor>;
+
+template<bool kStartsWith>
+std::shared_ptr<const LevenshteinAcceptorFor<kStartsWith>> AcceptorFor(
+  std::shared_ptr<const LevenshteinAcceptor> fuzzy) {
+  if constexpr (kStartsWith) {
+    return std::make_shared<const LevenshteinPrefixAcceptor>(std::move(fuzzy));
+  } else {
+    return fuzzy;
+  }
+}
 
 }  // namespace irs

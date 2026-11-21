@@ -22,13 +22,13 @@
 
 #include <algorithm>
 #include <span>
-#include <type_traits>
 #include <utility>
 
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/blocking_once.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/errcodes.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
@@ -170,11 +170,11 @@ class WalkSource final : public TermAcceptorSource {
   std::shared_ptr<const A> _acceptor;
 };
 
-template<typename A>
+template<bool kStartsWith>
 class FuzzySource final : public TermAcceptorSource {
  public:
-  explicit FuzzySource(std::shared_ptr<const A> acceptor) noexcept
-    : _acceptor{std::move(acceptor)} {}
+  explicit FuzzySource(std::shared_ptr<const LevenshteinAcceptor> fuzzy)
+    : _acceptor{AcceptorFor<kStartsWith>(std::move(fuzzy))} {}
 
   bool ok() const noexcept final { return true; }
 
@@ -183,7 +183,7 @@ class FuzzySource final : public TermAcceptorSource {
       if (!_acceptor->LowerBound().empty()) {
         return;
       }
-      if constexpr (std::is_same_v<A, LevenshteinPrefixAcceptor>) {
+      if constexpr (kStartsWith) {
         _dfa = FuzzyConjunction::MakePrefix(_acceptor->Inner());
       } else {
         _dfa = FuzzyConjunction::Make(_acceptor);
@@ -202,7 +202,7 @@ class FuzzySource final : public TermAcceptorSource {
   }
 
  private:
-  std::shared_ptr<const A> _acceptor;
+  std::shared_ptr<const LevenshteinAcceptorFor<kStartsWith>> _acceptor;
   mutable BlockingOnce _once;
   mutable std::shared_ptr<const FuzzyConjunction> _dfa;
 };
@@ -298,15 +298,10 @@ TermAcceptorSource::ptr MakePatternSource(bytes_view pattern,
 }
 
 TermAcceptorSource::ptr MakeFuzzySource(
-  std::shared_ptr<const LevenshteinAcceptor> fuzzy) {
-  return std::make_shared<const FuzzySource<LevenshteinAcceptor>>(
-    std::move(fuzzy));
-}
-
-TermAcceptorSource::ptr MakeFuzzyPrefixSource(
-  std::shared_ptr<const LevenshteinAcceptor> fuzzy) {
-  return std::make_shared<const FuzzySource<LevenshteinPrefixAcceptor>>(
-    std::make_shared<const LevenshteinPrefixAcceptor>(std::move(fuzzy)));
+  std::shared_ptr<const LevenshteinAcceptor> fuzzy, bool starts_with) {
+  return Resolve(starts_with, [&]<bool kStartsWith> -> TermAcceptorSource::ptr {
+    return std::make_shared<const FuzzySource<kStartsWith>>(std::move(fuzzy));
+  });
 }
 
 TermAcceptorSource::ptr MakeJointSource(

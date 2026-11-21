@@ -786,6 +786,15 @@ WHERE kw @@ ts_levenshtein('Nwoh', 1, starts_with := true)
 suggestion	similarity
 Nowhere Man	0.75
 
+query
+SELECT unnest(ts_dict_agg(kw))   AS suggestion,
+       unnest(ts_dict_score(kw)) AS similarity
+FROM sws_idx
+WHERE kw @@ ts_levenshtein('woh', 1, prefix := 'N', starts_with := true)
+----
+suggestion	similarity
+Nowhere Man	0.75
+
 # Top-k by similarity keeps only the terms that can still reach the first k.
 statement ok
 CREATE TABLE swk(id INTEGER PRIMARY KEY, kw VARCHAR)

@@ -25,6 +25,7 @@
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs {
 namespace {
@@ -364,10 +365,9 @@ IRS_FORCE_INLINE FuzzyConjunction::State FuzzyConjunction::StepSlowOf(
 
 FuzzyConjunction::State FuzzyConjunction::StepSlow(State from,
                                                    uint8_t c) const {
-  if (_starts_with) {
-    return StepSlowOf<true>(from, c);
-  }
-  return StepSlowOf<false>(from, c);
+  return Resolve(_starts_with, [&]<bool kPrefix> IRS_FORCE_INLINE {
+    return StepSlowOf<kPrefix>(from, c);
+  });
 }
 
 uint32_t FuzzyConjunction::Range(Row& row) const {
@@ -438,10 +438,7 @@ FuzzyConjunction::State FuzzyConjunction::InternPrefixLocked(
       uint32_t lo = 1;
       uint32_t hi = 0;
       LevenshteinPrefixAcceptor::LiveRangeOf(*_fuzzy, state, lo, hi);
-      if (lo > hi) {
-        lo = 1;
-        hi = 0;
-      }
+      SDB_ASSERT(lo <= hi);
       row.range.store(PackRange(lo, hi), std::memory_order_relaxed);
     });
 }

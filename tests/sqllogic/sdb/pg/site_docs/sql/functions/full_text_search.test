@@ -353,6 +353,14 @@ SELECT id FROM docs_idx WHERE body @@ to_tsquery('+fox -red') ORDER BY id;
 id
 1
 
+# DOCS_TEST: to_tsquery_fuzzy_prefix
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ to_tsquery('trutl*~1') ORDER BY id;
+----
+id
+3
+
 # DOCS_TEST: plainto_tsquery
 # DOCS_TEST_BODY
 query

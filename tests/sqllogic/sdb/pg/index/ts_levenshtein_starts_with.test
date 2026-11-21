@@ -310,6 +310,109 @@ WHERE title @@ ts_levenshtein('Fxo N', 1, starts_with := true)
 title	docs	similarity
 Fox News	1	0.8
 
+# to_tsquery spells a fuzzy prefix `term*~N`: `brwn*` finds no word, `brwn~1`
+# the whole words within an edit, `brwn*~1` also 'bronze'.
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('brwn*')
+ORDER BY id
+----
+id
+
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('brwn~1')
+ORDER BY id
+----
+id
+1
+2
+4
+5
+
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('brwn*~1')
+ORDER BY id
+----
+id
+1
+2
+3
+4
+5
+
+# The boost may come before or after the fuzziness.
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('brwn*^2~1')
+ORDER BY id
+----
+id
+1
+2
+3
+4
+5
+
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('brwn*~1^2')
+ORDER BY id
+----
+id
+1
+2
+3
+4
+5
+
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('"quick brwn*~1"')
+ORDER BY id
+----
+id
+1
+2
+3
+5
+
+query
+SELECT unnest(ts_dict_agg(title))   AS title,
+       unnest(ts_dict_count(title)) AS docs
+FROM swp_idx
+WHERE body @@ to_tsquery('"quick brwn*~1"')
+ORDER BY docs DESC, title
+----
+title	docs
+Fox News	2
+Dog Days	1
+New York Times	1
+
+query
+SELECT unnest(ts_dict_agg(title))   AS title,
+       unnest(ts_dict_score(title)) AS similarity,
+       unnest(ts_dict_count(title)) AS docs
+FROM swp_idx
+WHERE title @@ to_tsquery('Fxo\ N*~1')
+----
+title	similarity	docs
+Fox News	0.8	2
+
+statement error
+SELECT id FROM swp_idx WHERE body @@ to_tsquery('brwn~1*')
+----
+db error: ERROR: field existence queries (`field:*`) are not supported
+HINT: A `*` on its own asks whether the field exists. A prefix is `term*`, a fuzzy prefix `term*~N`.
+
+
 # The same phrase checked against the column's text inside the enumeration.
 statement ok
 CREATE TABLE swq(id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR)

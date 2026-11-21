@@ -643,6 +643,7 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `a*` | Prefix (wildcard) match. |
 | `a?c` · `a*c` | Wildcard match: `?` is exactly one character, `*` any run of characters. Every other character matches itself, `%` and `_` included, and `\` makes the next character literal. |
 | `a~N` | Fuzzy match within edit distance `N`. |
+| `a*~N` | Fuzzy prefix: tokens that start within edit distance `N` of `a`, as [`ts_levenshtein`](#ts_levenshtein) with `starts_with := true`. A bare `~` allows two edits. Also a phrase part, `"a b*~N"`. |
 | `"a b"` | Phrase match. |
 | `"a b"~N` | Proximity phrase: `a` and `b` within `N` positions. |
 | `(a b)` | Grouping. |
@@ -669,6 +670,7 @@ A prefix on a group applies to every term inside it, so `title:(fox OR dog)` sea
 | `body @@ to_tsquery('+fox -red')` | `1` | Has `fox`, excludes `red`. |
 | `body @@ to_tsquery('qui*')` | `1`, `2` | Prefix `qui` matches `quick`. |
 | `body @@ to_tsquery('quikc~2')` | `1`, `2` | Fuzzy match within 2 edits of `quick`. |
+| `body @@ to_tsquery('trutl*~1')` | `3` | `turtle` starts with `turtl`, one transposition from `trutl`. |
 | `body @@ to_tsquery('"quick brown"~3')` | `1` | `quick` and `brown` within three positions. |
 | `body @@ to_tsquery('xyzzy')` | *(none)* | Term not present. |
 
@@ -677,6 +679,10 @@ A prefix on a group applies to every term inside it, so `title:(fox OR dog)` sea
 The `+` (required) and `-` (excluded) operators, grouping and the others combine freely — for example, match rows containing `fox` but not `red`:
 
 <SqlLogicTest id="sql/functions/full_text_search/to_tsquery_lucene" />
+
+A fuzzy prefix tolerates a typo in what has been typed so far:
+
+<SqlLogicTest id="sql/functions/full_text_search/to_tsquery_fuzzy_prefix" />
 
 Wildcard, fuzzy and proximity operators compose too — a prefix on one term plus a fuzzy match on another:
 

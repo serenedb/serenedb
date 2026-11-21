@@ -113,6 +113,15 @@ void AssertFuzzy(const irs::Filter& f, irs::field_id field,
   }
 }
 
+void AssertFuzzyPrefix(const irs::Filter& f, irs::field_id field,
+                       std::string_view value, int distance,
+                       float boost = 0.0f) {
+  AssertFuzzy(f, field, value, distance, boost);
+  const auto& fuzzy = irs::utils::downCast<irs::ByEditDistance>(f);
+  EXPECT_TRUE(fuzzy.options().starts_with);
+  EXPECT_TRUE(fuzzy.options().with_transpositions);
+}
+
 void AssertRange(const irs::Filter& f, irs::field_id field,
                  std::string_view min, irs::BoundType min_type,
                  std::string_view max, irs::BoundType max_type,
@@ -380,6 +389,71 @@ TEST_F(LuceneParserTest, FuzzyTermLimitFromContext) {
   const auto& fuzzy =
     irs::utils::downCast<irs::ByEditDistance>(*Optional().filters[0]);
   EXPECT_EQ(7, fuzzy.options().max_terms);
+}
+
+TEST_F(LuceneParserTest, FuzzyTermMatchesWholeTerms) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "hello~1"));
+  ASSERT_EQ(1, Optional().filters.size());
+  EXPECT_FALSE(irs::utils::downCast<irs::ByEditDistance>(*Optional().filters[0])
+                 .options()
+                 .starts_with);
+}
+
+TEST_F(LuceneParserTest, FuzzyPrefix) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "hel*~1"));
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzyPrefix(*Optional().filters[0], kFieldId, "hel", 1);
+}
+
+TEST_F(LuceneParserTest, FuzzyPrefixBareTilde) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "hel*~"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzyPrefix(*Optional().filters[0], kFieldId, "hel", 2);
+}
+
+TEST_F(LuceneParserTest, FuzzyPrefixSimilarity) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "hell*~0.5"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzyPrefix(*Optional().filters[0], kFieldId, "hell", 2);
+}
+
+TEST_F(LuceneParserTest, FuzzyPrefixThenBoost) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "hel*~1^2"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzyPrefix(*Optional().filters[0], kFieldId, "hel", 1, 2.0f);
+}
+
+TEST_F(LuceneParserTest, BoostThenFuzzyPrefix) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "hel*^2~1"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzyPrefix(*Optional().filters[0], kFieldId, "hel", 1, 2.0f);
+}
+
+TEST_F(LuceneParserTest, FuzzyPrefixInPhrase) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"hello wor*~1\""));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(2, phrase.options().size());
+  const auto* part = std::get_if<irs::ByEditDistanceOptions>(
+    &std::next(phrase.options().begin())->part);
+  ASSERT_NE(nullptr, part);
+  EXPECT_EQ("wor", irs::ViewCast<char>(irs::bytes_view{part->term}));
+  EXPECT_EQ(1, part->max_distance);
+  EXPECT_TRUE(part->starts_with);
+}
+
+TEST_F(LuceneParserTest, FuzzyPrefixInPhraseBareTilde) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "\"hello wor*~\""));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  const auto* part = std::get_if<irs::ByEditDistanceOptions>(
+    &std::next(phrase.options().begin())->part);
+  ASSERT_NE(nullptr, part);
+  EXPECT_EQ(2, part->max_distance);
+  EXPECT_TRUE(part->starts_with);
 }
 
 TEST_F(LuceneParserTest, RangeInclusive) {

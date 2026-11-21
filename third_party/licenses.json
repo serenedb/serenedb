@@ -25,13 +25,6 @@
       "files": ["third_party/duckdb/src/include/duckdb/storage/compression/alp/algorithm/LICENSE"]
     },
     {
-      "name": "Apache Avro C",
-      "url": "https://avro.apache.org",
-      "license": "Apache-2.0",
-      "files": ["third_party/avro/lang/c/LICENSE", "third_party/avro/lang/c/NOTICE"],
-      "paths": ["third_party/avro"]
-    },
-    {
       "name": "Apache Parquet",
       "url": "https://parquet.apache.org",
       "license": "Apache-2.0",
@@ -281,13 +274,6 @@
       "url": "https://github.com/iresearch-toolkit/iresearch",
       "license": "Apache-2.0",
       "files": ["iresearch/LICENSE"]
-    },
-    {
-      "name": "Jansson",
-      "url": "https://github.com/akheron/jansson",
-      "license": "MIT",
-      "files": ["third_party/jansson/LICENSE"],
-      "paths": ["third_party/jansson"]
     },
     {
       "name": "Jaro-Winkler",

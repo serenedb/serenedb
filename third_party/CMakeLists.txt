@@ -592,26 +592,6 @@ endif()
 sdb_add_module(fmt)
 
 ################################################################################
-## jansson
-################################################################################
-
-set(JANSSON_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(JANSSON_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(JANSSON_WITHOUT_TESTS ON CACHE BOOL "" FORCE)
-set(JANSSON_INSTALL OFF CACHE BOOL "" FORCE)
-sdb_add_module(jansson)
-
-################################################################################
-## AVRO
-################################################################################
-
-set(ZLIB_FOUND ON CACHE BOOL "" FORCE)
-set(SNAPPY_FOUND ON CACHE BOOL "" FORCE)
-set(JANSSON_FOUND ON CACHE BOOL "" FORCE)
-set(THREADSAFE ON CACHE BOOL "" FORCE)
-sdb_add_module(avro DIR avro/lang/c NO_WARNINGS)
-
-################################################################################
 ## nanoarrow
 ################################################################################
 

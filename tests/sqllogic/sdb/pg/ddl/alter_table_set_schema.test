@@ -263,7 +263,7 @@ drops_log	feastables.drops
 
 
 query
-SELECT schema_name, table_name FROM duckdb_triggers() WHERE trigger_name = 'drops_log';
+SELECT schema_name, table_name FROM sdb_triggers() WHERE trigger_name = 'drops_log';
 ----
 schema_name	table_name
 feastables	drops
@@ -294,7 +294,7 @@ drop
 
 
 query
-SELECT schema_name, table_name, sql FROM duckdb_triggers() WHERE trigger_name = 'tally_log';
+SELECT schema_name, table_name, sql FROM sdb_triggers() WHERE trigger_name = 'tally_log';
 ----
 schema_name	table_name	sql
 feastables	tally	CREATE TRIGGER tally_log AFTER INSERT ON feastables.tally FOR EACH STATEMENT INSERT INTO mrbeast.drop_log SELECT CAST(count_star() AS text) FROM feastables.tally;

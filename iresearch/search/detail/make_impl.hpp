@@ -28,8 +28,8 @@
 namespace irs::detail {
 
 template<typename Family, typename Kind, typename Query>
-typename Family::Result MakeDocs(const Query& query,
-                                 const typename Family::DocsContext& ctx) {
+typename Family::Result DocsMaker<Family, Kind, Query>::Make(
+  const Query& query, const typename Family::DocsContext& ctx) {
   return Build<typename Family::Result, false>(
     Kind{}, query, Family::Interrogations(ctx),
     [&]<typename Slots>(auto&&... args) -> typename Family::Result {
@@ -53,8 +53,8 @@ typename Family::Result MakeConstant(const Query& query,
 }
 
 template<typename Family, typename Kind, typename Query>
-typename Family::Result MakeScored(const Query& query,
-                                   const typename Family::ScoredContext& ctx) {
+typename Family::Result ScoredMaker<Family, Kind, Query>::Make(
+  const Query& query, const typename Family::ScoredContext& ctx) {
   const auto& scoring = Family::Scoring(ctx);
   if constexpr (Kind::kConstant) {
     return MakeConstant<Family, Kind>(query, ctx,

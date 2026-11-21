@@ -148,7 +148,7 @@ cafv_r4
 
 connection after_crash
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'cafv_refused_db';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'cafv_refused_db';
 ----
 n
 0

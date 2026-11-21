@@ -69,10 +69,10 @@
 		"v1.5.5": 68,
 		"v1.5.6": 68,
 		"v2.0.0": 69,
-		"serenedb_v1": 1
+		"sdb_v1": 1
 	},
 	"default": 69,
-	"serenedb_readable_from": "serenedb_v1"
+	"sdb_readable_from": "sdb_v1"
 },
 "serialization": {
 	"values": {

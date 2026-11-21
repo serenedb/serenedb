@@ -295,10 +295,6 @@ void PieceTermReader::SampleTerms(
   }
 }
 
-std::unique_ptr<IndexInput> PieceTermReader::ReopenPayload() const {
-  return _owner->Postings().ReopenPayload();
-}
-
 PostingsHandles PieceTermReader::Handles() const noexcept {
   return _owner->Postings().Handles();
 }

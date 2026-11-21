@@ -27,6 +27,8 @@
 #include <cstdlib>
 #include <string>
 
+#include "server/utils/build_info.h"
+
 namespace sdb::app {
 namespace {
 
@@ -52,6 +54,11 @@ int RunCommand(int argc, char* argv[]) {
   const std::string_view name{argv[1]};
   if (name == "--help" || name == "-h") {
     std::fputs(Usage().c_str(), stdout);
+    return EXIT_SUCCESS;
+  }
+  if (name == "--version") {
+    std::fputs(absl::StrCat(build::VersionLine("serenedb"), "\n").c_str(),
+               stdout);
     return EXIT_SUCCESS;
   }
   const auto* command = Commands::Find(name);

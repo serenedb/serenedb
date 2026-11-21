@@ -20,17 +20,15 @@
 
 #include "iresearch/formats/index/idx_writer.hpp"
 
-#include <absl/strings/str_cat.h>
-
 #include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/common/types.hpp>
 #include <utility>
 #include <vector>
 
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/store/directory.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -54,60 +52,48 @@ void WriteGraphFrames(duckdb::BinarySerializer& graph,
 
 }  // namespace
 
-struct IdxWriter::Impl {
-  Directory* dir;
-  std::string filename;
-  IndexOutput::ptr out;
-  IdxFooter footer;
-};
-
-IdxWriter::IdxWriter(Directory& dir, std::string_view segment_name)
-  : _impl{std::make_unique<Impl>()} {
-  _impl->dir = &dir;
-  _impl->filename = absl::StrCat(segment_name, ".", kIdxFormatExt);
-}
-
-IdxWriter::~IdxWriter() = default;
+IdxWriter::IdxWriter(FileTracker& tracker)
+  : _tracker{tracker}, _filename{FileName(tracker.Name(), kIdxFormatExt)} {}
 
 void IdxWriter::EnsureOut() {
-  if (_impl->out) {
+  if (_out) {
     return;
   }
-  _impl->out = _impl->dir->create(_impl->filename);
+  _out = format_utils::OpenOutput(_tracker.Fs(), _tracker.Root(), _filename);
+  _tracker.Add(kIdxFile);
 }
 
-IndexOutput& IdxWriter::BlocksOut() {
+duckdb::WriteStream& IdxWriter::BlocksOut() {
   EnsureOut();
-  return *_impl->out;
+  return *_out;
 }
 
 void IdxWriter::AddIvf(field_id id, IvfCentroidMeta meta) {
-  _impl->footer.ivf.push_back(
-    IvfCentroidEntry{.id = id, .meta = std::move(meta)});
+  _footer.ivf.push_back(IvfCentroidEntry{.id = id, .meta = std::move(meta)});
 }
 
 void IdxWriter::AddHnsw(field_id id, HnswMeta meta) {
-  _impl->footer.hnsw.push_back(HnswEntry{.id = id, .meta = std::move(meta)});
+  _footer.hnsw.push_back(HnswEntry{.id = id, .meta = std::move(meta)});
 }
 
 void IdxWriter::SetTerms(term_dict::TermsMeta terms) noexcept {
-  _impl->footer.terms = std::move(terms);
+  _footer.terms = std::move(terms);
 }
 
 bool IdxWriter::Empty() const noexcept {
-  return _impl->footer.ivf.empty() && _impl->footer.hnsw.empty() &&
-         _impl->footer.terms.fields.empty();
+  return _footer.ivf.empty() && _footer.hnsw.empty() &&
+         _footer.terms.fields.empty();
 }
 
 std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
-  if (Empty() && !_impl->out) {
+  if (Empty() && !_out) {
     return std::make_unique<IdxReader>(nullptr, IdxFooter{}, hnsw_bases);
   }
 
   EnsureOut();
 
-  const auto& written = _impl->footer;
-  format_utils::WriteFooter(*_impl->out, [&](duckdb::BinarySerializer& footer) {
+  const auto& written = _footer;
+  format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& footer) {
     footer.WriteOptionalList(
       kIdxFieldIvf, "ivf", written.ivf.size(),
       [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
@@ -115,11 +101,7 @@ std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
         list.WriteObject([&](duckdb::BinarySerializer& obj) {
           obj.WriteProperty<uint64_t>(0, "id", e.id);
           obj.WriteProperty<uint64_t>(1, "tree_offset", e.meta.tree_offset);
-          obj.WriteProperty<uint64_t>(2, "tree_byte_size",
-                                      e.meta.tree_byte_size);
           obj.WriteProperty<uint64_t>(3, "stats_offset", e.meta.stats_offset);
-          obj.WriteProperty<uint64_t>(4, "stats_byte_size",
-                                      e.meta.stats_byte_size);
           obj.WriteProperty<uint64_t>(5, "root_byte_size",
                                       e.meta.root_byte_size);
         });
@@ -131,7 +113,6 @@ std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
         list.WriteObject([&](duckdb::BinarySerializer& obj) {
           obj.WriteProperty<uint64_t>(0, "id", e.id);
           obj.WriteProperty<uint64_t>(1, "offset", e.meta.offset);
-          obj.WriteProperty<uint64_t>(2, "byte_size", e.meta.byte_size);
           const auto& h = e.meta.header;
           obj.WriteProperty<uint32_t>(3, "d", h.d);
           obj.WriteProperty<uint8_t>(4, "metric",
@@ -154,9 +135,11 @@ std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
                                  term_dict::WriteTerms(terms, written.terms);
                                });
   });
-  return std::make_unique<IdxReader>(
-    _impl->dir->Finish(std::move(_impl->out), IOAdvice::RANDOM),
-    std::move(_impl->footer), hnsw_bases);
+  _tracker.Written(_out->Position());
+  auto file = format_utils::CloseOutput(*_out);
+  _out.reset();
+  return std::make_unique<IdxReader>(std::move(file), std::move(_footer),
+                                     hnsw_bases);
 }
 
 }  // namespace irs

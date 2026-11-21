@@ -46,16 +46,28 @@ statement ok
 CREATE TABLE dlc_oids AS
   SELECT 'db' AS name, oid FROM pg_database WHERE datname = 'dlc_db'
   UNION ALL
-  SELECT table_name, table_oid FROM duckdb_tables()
+  SELECT table_name, table_oid FROM sdb_tables()
   WHERE database_name = 'dlc_db' AND table_name IN ('st', 'tt')
   UNION ALL
-  SELECT index_name, index_oid FROM duckdb_indexes()
+  SELECT index_name, index_oid FROM sdb_indexes()
   WHERE database_name = 'dlc_db' AND index_name IN ('tt_inv', 'tv_inv');
 
 
+# The files in the store, and those the tables and indexes of this database
+# own: the rest belong to another database or to no object at all.
+statement ok
+CREATE MACRO dlc_files() AS (
+  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'));
+
+
+statement ok
+CREATE MACRO dlc_owned() AS (
+  SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files');
+
+
 query
-SELECT name, (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-              WHERE file LIKE '%/engine_v1/store/' || o.oid || '/%') > 0 AS stored
+SELECT name, (SELECT coalesce(sum(value), 0) FROM dlc_db.pg_catalog.sdb_metrics m
+              WHERE m.metric = 'num_files' AND m.relation_id = o.oid) > 0 AS stored
 FROM dlc_oids o WHERE name <> 'db' ORDER BY name;
 ----
 name	stored
@@ -75,7 +87,7 @@ DROP INDEX dlc_db.public.tt_inv;
 
 connection after_index_drop
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS indexes FROM duckdb_indexes() WHERE database_name = 'dlc_db';
+SELECT count(*) AS indexes FROM sdb_indexes() WHERE database_name = 'dlc_db';
 ----
 indexes
 1
@@ -93,7 +105,7 @@ DROP TABLE dlc_db.public.st;
 
 connection after_table_drop
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS tables FROM duckdb_tables() WHERE database_name = 'dlc_db' AND table_name = 'st';
+SELECT count(*) AS tables FROM sdb_tables() WHERE database_name = 'dlc_db' AND table_name = 'st';
 ----
 tables
 0
@@ -101,15 +113,15 @@ tables
 
 connection after_table_drop
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-WHERE file LIKE '%/engine_v1/store/' || (SELECT oid FROM dlc_oids WHERE name = 'st') || '/%';
+SELECT dlc_files() - dlc_owned()
+       - (SELECT coalesce(sum(value), 0) FROM dlc_db.pg_catalog.sdb_metrics WHERE metric = 'num_files') AS leftover;
 ----
 leftover
 0
 
 
-# A search table whose CREATE crashed before its commit: its directory was
-# made, but nothing owns it after the boot.
+# A search table whose CREATE crashed before its commit: nothing owns what it
+# wrote after the boot.
 connection after_table_drop
 statement ok
 SET sdb_faults = 'crash_before_catalog_commit';
@@ -123,7 +135,7 @@ CREATE TABLE dlc_db.public.lost(id BIGINT PRIMARY KEY, v INTEGER)
 
 connection after_lost_create
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS tables FROM duckdb_tables() WHERE database_name = 'dlc_db' AND table_name = 'lost';
+SELECT count(*) AS tables FROM sdb_tables() WHERE database_name = 'dlc_db' AND table_name = 'lost';
 ----
 tables
 0
@@ -131,20 +143,15 @@ tables
 
 connection after_lost_create
 query
-SELECT list_sort(list(DISTINCT regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT))
-       = list_sort([(SELECT oid FROM dlc_oids WHERE name = 'tt'), (SELECT oid FROM dlc_oids WHERE name = 'tv_inv')]) AS only_live_relations
-FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT NOT IN (
-  SELECT table_oid FROM duckdb_tables() WHERE database_name <> 'dlc_db'
-  UNION ALL
-  SELECT index_oid FROM duckdb_indexes() WHERE database_name <> 'dlc_db');
+SELECT dlc_files() - dlc_owned()
+       - (SELECT coalesce(sum(value), 0) FROM dlc_db.pg_catalog.sdb_metrics WHERE metric = 'num_files') AS leftover;
 ----
-only_live_relations
-t
+leftover
+0
 
 
 # A DROP INDEX left open while the database is dropped: the database commits
-# first, the index's transaction fails, and the whole directory goes.
+# first, the index's transaction fails, and all the database's files go.
 connection racer
 statement ok
 BEGIN;
@@ -163,8 +170,7 @@ DROP DATABASE dlc_db;
 # The racer still holds the database, so its files stay until it lets go.
 connection dropper
 query
-SELECT count(*) > 0 AS held FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT IN (SELECT oid FROM dlc_oids WHERE name <> 'db');
+SELECT dlc_files() - dlc_owned() > 0 AS held;
 ----
 held
 t
@@ -179,8 +185,7 @@ db error: ERROR: database "dlc_db" was dropped by another transaction
 
 connection dropper
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT IN (SELECT oid FROM dlc_oids WHERE name <> 'db');
+SELECT dlc_files() - dlc_owned() AS leftover;
 ----
 leftover
 0
@@ -209,8 +214,11 @@ VACUUM (FLUSH_TABLE) dlc_db2.public.st;
 
 
 connection dropper
-statement ok
-INSERT INTO dlc_oids SELECT 'st2', table_oid FROM duckdb_tables() WHERE database_name = 'dlc_db2' AND table_name = 'st';
+query
+SELECT dlc_files() - dlc_owned() > 0 AS stored;
+----
+stored
+t
 
 
 connection dropper
@@ -233,8 +241,7 @@ databases
 
 connection after_database_drop
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-WHERE file LIKE '%/engine_v1/store/' || (SELECT oid FROM dlc_oids WHERE name = 'st2') || '/%';
+SELECT dlc_files() - dlc_owned() AS leftover;
 ----
 leftover
 0

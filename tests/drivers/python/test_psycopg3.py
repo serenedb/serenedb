@@ -537,6 +537,27 @@ def test_job_error_sqlstates():
         c.close()
 
 
+def test_file_error_sqlstates():
+    """A failed file operation reports the SQLSTATE PostgreSQL gives its cause
+    (undefined_file for a missing directory), and an I/O error without one is
+    io_error (58030), never connection_exception (08000).
+    """
+    missing = f"/serenedb_missing_{os.getpid()}/x.csv"
+    c = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        with c.cursor() as cur:
+            cases = [
+                (f"COPY (SELECT 1) TO '{missing}'", "58P01"),
+                (f"SELECT * FROM read_csv('{missing}')", "58030"),
+            ]
+            for sql, code in cases:
+                with pytest.raises(psycopg.Error) as ei:
+                    cur.execute(sql)
+                assert ei.value.sqlstate == code, f"{sql}: {ei.value.sqlstate}"
+    finally:
+        c.close()
+
+
 def test_array_csv_roundtrip():
     # Arrays survive a CSV copy round-trip: csv-out emits no spurious header
     # (PG default), and the input cast accepts both PG {..} and DuckDB [..].
@@ -1003,7 +1024,7 @@ def test_reindex_forwards_the_notices_of_its_scan(tmp_path):
                 "COPY (SELECT i AS id, 'row ' || i AS body "
                 f"FROM range(3, 5) t(i)) TO '{tmp_path}/{name}_2.parquet'")
             notices.clear()
-            cur.execute(f"SELECT * FROM serenedb_reindex('{name}_idx')")
+            cur.execute(f"SELECT * FROM sdb_reindex('{name}_idx')")
             assert cur.fetchall() == [("delta", 1, 0, 0, 0)]
         assert notices == ["PID -1 is not a PostgreSQL backend process"] * 2, notices
     finally:

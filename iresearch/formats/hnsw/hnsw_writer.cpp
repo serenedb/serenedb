@@ -30,6 +30,7 @@
 #include <core_functions/array_kernels.hpp>
 #include <cstring>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -51,12 +52,10 @@
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/bytes_output.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/log.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/topic.hpp"
 
@@ -152,7 +151,7 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
                       .alive = src.alive_count};
   }
   if (best.index != nullptr) {
-    auto data = best.index->Load(*best.reader, AnnParallelFor(env));
+    auto data = best.index->Load(AnnParallelFor(env));
     if (!data || data->graph.Empty() || data->graph.M() != m) {
       return {};
     }
@@ -760,7 +759,7 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
                          uint32_t ef_construction, uint64_t seed,
                          const MergeDonor& donor, const AnnBuildEnv* env)
   -> yaclib::Future<bool> {
-  auto data = donor.index->Load(*donor.reader, AnnParallelFor(env));
+  auto data = donor.index->Load(AnnParallelFor(env));
   SDB_ASSERT(data);
   const auto& src_graph = data->graph;
   const auto src_rows = src_graph.Size();
@@ -1119,7 +1118,7 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
     basis = bases->Find(field);
   }
   if (!basis && donor.index) {
-    if (auto data = donor.index->Load(*donor.reader, AnnParallelFor(env))) {
+    if (auto data = donor.index->Load(AnnParallelFor(env))) {
       basis = data->rotation;
     }
   }
@@ -1162,11 +1161,13 @@ HnswWriter::HnswWriter(AnnInfo info, HnswBases* bases)
 HnswWriter::~HnswWriter() = default;
 
 std::shared_ptr<const QuantizerStats> HnswWriter::SerializeStats() {
-  BytesOutput blob_out{_stats_blob};
-  _qw->Serialize(blob_out);
+  duckdb::MemoryStream blob;
+  _qw->Serialize(blob);
   return MakeQuantizerStats(
     _info.quant.kind, _d,
-    std::span<const byte_type>{_stats_blob}.subspan(sizeof(uint64_t)),
+    std::span<const byte_type>{
+      irs::bytes_view{blob.GetData(), blob.GetPosition()}}
+      .subspan(sizeof(uint64_t)),
     EffectiveQuantMetric(_info.metric), /*row_major=*/true);
 }
 
@@ -1347,12 +1348,11 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   }
   const float* base = raw_build ? build_vectors.data() : _vectors.data();
   yaclib::Future<> built;
-  ResolveEnum<VectorMetric>(
-    EffectiveQuantMetric(_info.metric), [&]<VectorMetric M>() {
-      HnswRawDistFactory<M> factory{.base = base, .d = _d};
-      built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed,
-                            donor, env, HnswOriginals{}, _d);
-    });
+  Resolve(EffectiveQuantMetric(_info.metric), [&]<VectorMetric M>() {
+    HnswRawDistFactory<M> factory{.base = base, .d = _d};
+    built = BuildDispatch(_graph, factory, valid, m, ef, kHnswBuildSeed, donor,
+                          env, HnswOriginals{}, _d);
+  });
   SDB_ASSERT(built.Valid());
   co_await std::move(built);
   co_return {};
@@ -1404,7 +1404,6 @@ void HnswWriter::Flush() {
 
   _idx->AddHnsw(_info.index_id, HnswMeta{
                                   .offset = offset,
-                                  .byte_size = out.Position() - offset,
                                   .header = header,
                                   .graph = std::move(graph),
                                 });
@@ -1419,8 +1418,6 @@ void HnswWriter::Flush() {
   _tails.shrink_to_fit();
   _codes.clear();
   _codes.shrink_to_fit();
-  _stats_blob.clear();
-  _stats_blob.shrink_to_fit();
 }
 
 }  // namespace irs

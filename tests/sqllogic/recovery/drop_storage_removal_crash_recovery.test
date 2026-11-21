@@ -1,11 +1,11 @@
 control substitution on
 
-# A dropped search table, inverted index or database has its directory removed
+# A dropped search table, inverted index or database has its files removed
 # in the background after the commit. A crash in the middle of that removal
 # must leave a data directory that boots without the dropped object and with
 # everything else intact.
 #
-# The fault point stops a removal once it deleted one file of the directory, and
+# The fault point stops a removal once it deleted one file of the object, and
 # parks it there; the crash comes while it is parked.
 
 
@@ -25,18 +25,18 @@ statement ok
 CREATE TABLE dsr_oids (name TEXT, oid BIGINT);
 
 
-# The files left in the directory of a dropped object of this database, and of
-# a dropped database.
+# Whether a live object has files, and the files no live object of this
+# database owns: those left by a dropped object or a dropped database.
 statement ok
-CREATE MACRO dsr_leftover(object) AS (
-  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-  WHERE file LIKE '%/engine_v1/store/' || (SELECT oid FROM dsr_oids WHERE name = object) || '/%');
+CREATE MACRO dsr_stored(object) AS (
+  SELECT coalesce(sum(value), 0) > 0 FROM sdb_metrics
+  WHERE metric = 'num_files' AND relation_id = (SELECT oid FROM dsr_oids WHERE name = object));
 
 
 statement ok
-CREATE MACRO dsr_database_leftover(object) AS (
-  SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-  WHERE regexp_extract(file, '/engine_v1/store/([0-9]+)/', 1)::BIGINT IN (SELECT oid FROM dsr_oids WHERE name = object));
+CREATE MACRO dsr_leftover() AS (
+  (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
+  - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files'));
 
 
 # ----------------------------------------------------------------------
@@ -60,12 +60,12 @@ CHECKPOINT;
 
 
 statement ok
-INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
+INSERT INTO dsr_oids SELECT table_name, table_oid FROM sdb_tables()
 WHERE database_name = current_database() AND table_name = 'dsr_s';
 
 
 query
-SELECT dsr_leftover('dsr_s') > 0 AS stored;
+SELECT dsr_stored('dsr_s') AS stored;
 ----
 stored
 t
@@ -112,7 +112,7 @@ n
 
 connection after_table
 query
-SELECT dsr_leftover('dsr_s') AS leftover;
+SELECT dsr_leftover() AS leftover;
 ----
 leftover
 0
@@ -152,7 +152,7 @@ VACUUM (FLUSH_TABLE) dsr_db.public.s;
 
 connection after_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_db', table_oid FROM duckdb_tables() WHERE database_name = 'dsr_db';
+INSERT INTO dsr_oids SELECT 'dsr_db', table_oid FROM sdb_tables() WHERE database_name = 'dsr_db';
 
 
 connection after_index
@@ -200,7 +200,7 @@ n
 
 connection after_database
 query
-SELECT dsr_database_leftover('dsr_db') AS leftover;
+SELECT dsr_leftover() AS leftover;
 ----
 leftover
 0
@@ -235,7 +235,7 @@ VACUUM (FLUSH_TABLE) dsr_r;
 
 connection after_database
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_r_old', table_oid FROM duckdb_tables()
+INSERT INTO dsr_oids SELECT 'dsr_r_old', table_oid FROM sdb_tables()
 WHERE database_name = current_database() AND table_name = 'dsr_r';
 
 
@@ -299,7 +299,7 @@ id	body	extra
 
 connection after_replace
 query
-SELECT dsr_leftover('dsr_r_old') AS leftover;
+SELECT dsr_leftover() AS leftover;
 ----
 leftover
 0
@@ -339,7 +339,7 @@ VACUUM (FLUSH_TABLE) dsr_si;
 
 connection after_replace
 statement ok
-INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
+INSERT INTO dsr_oids SELECT table_name, table_oid FROM sdb_tables()
 WHERE database_name = current_database() AND table_name = 'dsr_si';
 
 
@@ -388,7 +388,7 @@ n
 
 connection after_search_index
 query
-SELECT dsr_leftover('dsr_si') AS leftover, (SELECT count(*) FROM dsr_keep) AS kept;
+SELECT dsr_leftover() AS leftover, (SELECT count(*) FROM dsr_keep) AS kept;
 ----
 leftover	kept
 0	1
@@ -420,7 +420,7 @@ CREATE INDEX dsr_ri ON dsr_rv USING inverted (body);
 
 connection after_search_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_ri_old', index_oid FROM duckdb_indexes()
+INSERT INTO dsr_oids SELECT 'dsr_ri_old', index_oid FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'dsr_ri';
 
 
@@ -461,7 +461,7 @@ SET sdb_faults = 'crash_on_packet';
 
 connection after_index_replace
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT regexp_replace(sql, ' WITH \(.*', '') AS def FROM duckdb_indexes()
+SELECT regexp_replace(sql, ' WITH \(.*', '') AS def FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'dsr_ri';
 ----
 def
@@ -478,7 +478,7 @@ n
 
 connection after_index_replace
 query
-SELECT dsr_leftover('dsr_ri_old') AS leftover;
+SELECT dsr_leftover() AS leftover;
 ----
 leftover
 0
@@ -500,13 +500,13 @@ CREATE INDEX dsr_v_idx ON dsr_v USING inverted (body);
 
 connection after_index_replace
 statement ok
-INSERT INTO dsr_oids SELECT index_name, index_oid FROM duckdb_indexes()
+INSERT INTO dsr_oids SELECT index_name, index_oid FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'dsr_v_idx';
 
 
 connection after_index_replace
 query
-SELECT dsr_leftover('dsr_v_idx') > 0 AS stored;
+SELECT dsr_stored('dsr_v_idx') AS stored;
 ----
 stored
 t
@@ -557,7 +557,7 @@ n
 
 connection after_view_index
 query
-SELECT dsr_leftover('dsr_v_idx') AS leftover, (SELECT count(*) FROM dsr_v) AS rows;
+SELECT dsr_leftover() AS leftover, (SELECT count(*) FROM dsr_v) AS rows;
 ----
 leftover	rows
 0	2
@@ -589,7 +589,7 @@ CREATE INDEX dsr_ri ON dsr_t2 USING inverted (body);
 
 connection after_view_index
 statement ok
-INSERT INTO dsr_oids SELECT table_name, table_oid FROM duckdb_tables()
+INSERT INTO dsr_oids SELECT table_name, table_oid FROM sdb_tables()
 WHERE database_name = current_database() AND table_name = 'dsr_t2';
 
 
@@ -638,7 +638,7 @@ n
 
 connection after_table_with_index
 query
-SELECT dsr_leftover('dsr_t2') AS leftover;
+SELECT dsr_leftover() AS leftover;
 ----
 leftover
 0
@@ -700,8 +700,8 @@ VACUUM (FLUSH_TABLE) dsr_all.public.s;
 
 connection after_table_with_index
 statement ok
-INSERT INTO dsr_oids SELECT 'dsr_all', table_oid FROM duckdb_tables() WHERE database_name = 'dsr_all'
-UNION ALL SELECT 'dsr_all', index_oid FROM duckdb_indexes() WHERE database_name = 'dsr_all';
+INSERT INTO dsr_oids SELECT 'dsr_all', table_oid FROM sdb_tables() WHERE database_name = 'dsr_all'
+UNION ALL SELECT 'dsr_all', index_oid FROM sdb_indexes() WHERE database_name = 'dsr_all';
 
 
 connection after_table_with_index
@@ -749,7 +749,7 @@ n
 
 connection after_full_database
 query
-SELECT dsr_database_leftover('dsr_all') AS leftover, (SELECT count(*) FROM dsr_keep) AS kept;
+SELECT dsr_leftover() AS leftover, (SELECT count(*) FROM dsr_keep) AS kept;
 ----
 leftover	kept
 0	1

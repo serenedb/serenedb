@@ -55,7 +55,6 @@ The following metadata functions are available:
 | [`sdb_coordinate_systems()`](#sdb_coordinate_systems) | Available coordinate reference systems (CRS) |
 | [`sdb_databases()`](#sdb_databases) | Databases accessible from the current process |
 | [`sdb_dependencies()`](#sdb_dependencies) | Dependencies between database objects |
-| [`sdb_extensions()`](#sdb_extensions) | Capability modules compiled into the instance |
 | [`sdb_functions()`](#sdb_functions) | Functions and macros |
 | [`sdb_indexes()`](#sdb_indexes) | Secondary indexes |
 | [`sdb_job_runs()`](#sdb_job_runs) | Most recent runs of scheduled jobs |
@@ -188,24 +187,6 @@ The `sdb_dependencies()` function provides metadata about the dependencies avail
 | `refobjid`    | The internal id of the dependent object.                     | `BIGINT`  |
 | `refobjsubid` | Always 0                                                     | `INTEGER` |
 | `deptype`     | The type of dependency. Either regular (n) or automatic (a). | `VARCHAR` |
-
-## `sdb_extensions`
-
-The `sdb_extensions()` function provides metadata about the optional capability modules compiled into the SereneDB instance.
-
-<SqlLogicTest id="sql/functions/metadata/example_010" />
-
-| Column              | Description                                                                                                                                         | Type        |
-| :------------------ | :-------------------------------------------------------------------------------------------------------------------------------------------------- | :---------- |
-| `extension_name`    | The name of the capability module.                                                                                                                  | `VARCHAR`   |
-| `loaded`            | `true` if the capability module is active, `false` otherwise.                                                                                       | `BOOLEAN`   |
-| `installed`         | `true` if the capability module is present, `false` otherwise.                                                                                      | `BOOLEAN`   |
-| `install_path`      | `(BUILT-IN)` for modules compiled into the server, otherwise the filesystem path where the binary that implements the module resides.               | `VARCHAR`   |
-| `description`       | Human readable text that describes the capability module's functionality.                                                                           | `VARCHAR`   |
-| `aliases`           | List of alternative names for this capability module.                                                                                               | `VARCHAR[]` |
-| `extension_version` | The version of the capability module (`vX.Y.Z` for stable versions and 6-character hash for unstable versions).                                     | `VARCHAR`   |
-| `install_mode`      | The mode that was used to provide the module: `UNKNOWN`, `REPOSITORY`, `CUSTOM_PATH`, `STATICALLY_LINKED`, `NOT_INSTALLED`, `NULL`.                  | `VARCHAR`   |
-| `installed_from`    | Name of the repository the module was provided from, e.g., `community` or `core_nightly`. The empty string denotes the `core` repository.           | `VARCHAR`   |
 
 ## `sdb_functions`
 

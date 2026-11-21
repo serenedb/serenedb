@@ -52,5 +52,7 @@ inline constexpr std::string_view kMaxSyncWorkersPerSubscriptionSetting =
 inline constexpr std::string_view kMaxWalSizeSetting = "max_wal_size";
 inline constexpr std::string_view kLogCompressionSetting =
   "sdb_log_compression";
+inline constexpr std::string_view kDefaultTablespaceSetting =
+  "default_tablespace";
 
 }  // namespace sdb

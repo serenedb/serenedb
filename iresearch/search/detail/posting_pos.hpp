@@ -31,7 +31,6 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/enc_buf.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -44,7 +43,6 @@ class PostingPos : public PostingLeaf<InputType, kPosShape> {
   using Base::_doc;
   using Base::_docs;
   using Base::_freqs;
-  using Base::_hint;
   using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
@@ -55,21 +53,21 @@ class PostingPos : public PostingLeaf<InputType, kPosShape> {
 
  public:
   using PosTraits = IteratorTraitsImpl<true, true, Offs>;
-  using Position = PositionImpl<PosTraits>;
+  using Position = PositionImpl<PosTraits, InputType>;
 
   static constexpr bool kOffsets = Offs;
 
   PostingPos() = default;
 
-  explicit PostingPos(const PostingMeta& meta, const IndexInput& doc_in,
-                      IndexFeatures layout, const IndexInput& pos_in,
-                      const IndexInput* pay_in) {
+  explicit PostingPos(const PostingMeta& meta, const duckdb::InputFile& doc_in,
+                      IndexFeatures layout, const duckdb::InputFile& pos_in,
+                      const duckdb::InputFile* pay_in) {
     Prepare(meta, doc_in, layout, pos_in, pay_in);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
-               IndexFeatures layout, const IndexInput& pos_in,
-               const IndexInput* pay_in) {
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
+               IndexFeatures layout, const duckdb::InputFile& pos_in,
+               const duckdb::InputFile* pay_in) {
     SDB_ASSERT(IsSubsetOf(IndexFeatures::Pos, layout));
     SDB_ASSERT(!Offs || IsSubsetOf(IndexFeatures::Offs, layout));
     _docs_count = meta.docs_count;
@@ -80,14 +78,15 @@ class PostingPos : public PostingLeaf<InputType, kPosShape> {
   }
 
   void PreparePositions(Position& pos, const PostingMeta& meta,
-                        const IndexInput& pos_in, const IndexInput* pay_in) {
+                        const duckdb::InputFile& pos_in,
+                        const duckdb::InputFile* pay_in) {
     const DocState state{
       .pos_in = &pos_in,
       .pay_in = pay_in,
       .term_state = &meta,
       .enc_buf = Enc(),
     };
-    pos.template Prepare<InputType>(state);
+    pos.Prepare(state);
   }
 
   doc_id_t Value() const noexcept { return _doc; }

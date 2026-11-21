@@ -26,7 +26,7 @@
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/directory_cleaner.hpp>
+#include <iresearch/store/storage.hpp>
 #include <memory>
 #include <utility>
 
@@ -34,27 +34,25 @@ namespace examples {
 
 void Segments::Add(std::span<const irs::IndexWriter::FlushedSegment> flushed) {
   for (const auto& segment : flushed) {
-    _segments.push_back(segment.meta);
+    _segments.push_back(segment.reader);
   }
-  Pin();
 }
 
 void Segments::Remove(const irs::DocRemoval& removal) {
   for (const auto& group : removal.groups) {
     const auto name = irs::FileName(group.segment);
-    const auto it = absl::c_find_if(
-      _segments,
-      [&](const irs::SegmentMeta& meta) { return meta.name == name; });
+    const auto it = absl::c_find_if(_segments, [&](const auto& reader) {
+      return reader->Meta().name == name;
+    });
     if (it == _segments.end()) {
       continue;
     }
     irs::DocumentMaskBuilder docs{group.docs};
-    if (it->docs_mask) {
-      docs.Merge(*it->docs_mask);
+    if (const auto* removed = (*it)->docs_mask()) {
+      docs.Merge(*removed);
     }
-    it->docs_mask =
-      std::make_shared<const irs::DocumentMask>(std::move(docs).Finish());
-    it->live_docs_count = it->docs_count - irs::RemovalCount(*it);
+    *it = (*it)->WithDocsMask(
+      std::make_shared<const irs::DocumentMask>(std::move(docs).Finish()));
   }
 }
 
@@ -63,34 +61,24 @@ bool Segments::Replace(const irs::IndexWriter::Merged& merged) {
     return false;
   }
   for (const auto* candidate : merged.claim.candidates) {
-    std::erase_if(_segments, [&](const irs::SegmentMeta& meta) {
-      return meta.name == candidate->Meta().name;
+    std::erase_if(_segments, [&](const auto& reader) {
+      return reader->Meta().name == candidate->Meta().name;
     });
   }
-  _segments.push_back(merged.meta);
-  Pin();
-  irs::DirectoryCleaner::clean(_dir);
+  _segments.push_back(merged.reader);
+  if (_released) {
+    irs::RemoveReleased(_fs, _root, *_released);
+  }
   return true;
 }
 
-irs::DirectoryReader Segments::Reader() const {
+irs::CompositeReader Segments::Reader() const {
   std::vector<irs::SegmentReader> readers;
   readers.reserve(_segments.size());
-  for (const auto& meta : _segments) {
-    readers.emplace_back(irs::SegmentReaderImpl::Open(_dir, meta, _options));
+  for (const auto& segment : _segments) {
+    readers.emplace_back(segment);
   }
-  return {_dir, _options, std::move(readers), /*stats=*/true};
-}
-
-void Segments::Pin() {
-  irs::FileRefs pins;
-  auto& refs = _dir.attributes().refs();
-  for (const auto& meta : _segments) {
-    for (const auto& file : irs::SegmentFiles(meta.name, meta.kinds)) {
-      pins.emplace_back(refs.add(file));
-    }
-  }
-  _pins = std::move(pins);
+  return {std::move(readers), true};
 }
 
 }  // namespace examples

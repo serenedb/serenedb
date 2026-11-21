@@ -55,7 +55,7 @@ wait
 connection default
 query
 SELECT index_name, table_name, regexp_extract(regexp_replace(sql, ' WITH \(.*|;$', ''), 'USING inverted \((.*)\)$', 1) AS keys
-FROM duckdb_indexes()
+FROM sdb_indexes()
 WHERE database_name = current_database() AND table_name IN ('cb', 'cbv') AND index_name <> 'cb_pkey'
 ORDER BY index_name;
 ----

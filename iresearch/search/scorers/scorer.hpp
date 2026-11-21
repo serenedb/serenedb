@@ -27,22 +27,28 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <limits>
 #include <optional>
+#include <span>
 #include <type_traits>
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/search/detail/stats_arena.hpp"
+#include "iresearch/search/explain/explanation.hpp"
+#include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/math_utils.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-class DataOutput;
 struct IndexReader;
 struct SubReader;
 struct ScorerOptions;
@@ -85,7 +91,7 @@ struct TermCollector;
 struct ScoreBoundSource : AttributeProvider {
   using ptr = std::unique_ptr<ScoreBoundSource>;
 
-  virtual void Read(DataInput& in, size_t size) = 0;
+  virtual void Read(bytes_view bytes) = 0;
 
   virtual void Set(uint32_t freq, uint32_t norm) = 0;
 };
@@ -103,7 +109,7 @@ struct ScoreBoundWriter {
   virtual void Update(std::span<const doc_id_t> docs,
                       const uint32_t* freqs) = 0;
 
-  virtual void WriteRoot(DataOutput& out) = 0;
+  virtual void WriteRoot(duckdb::WriteStream& out) = 0;
   virtual void Take(size_t level, uint32_t* out) = 0;
 
   virtual byte_type SizeRoot() const = 0;
@@ -124,11 +130,14 @@ struct Scorer {
   virtual ~Scorer() = default;
 
   virtual void collect(byte_type* stats, const FieldCollector* field,
-                       const TermCollector* term) const = 0;
+                       const TermCollector* term, StatsArena& arena) const = 0;
 
   virtual IndexFeatures GetIndexFeatures() const = 0;
 
   virtual ScoreFunction PrepareScorer(const ScoreContext& ctx) const = 0;
+
+  virtual void Explain(const ScoreContext&, const explain::SlotStats*,
+                       explain::Node&) const {}
 
   virtual bool ScoresPerDoc() const noexcept { return true; }
 
@@ -167,15 +176,6 @@ struct Scorer {
   virtual TypeInfo::type_id type() const noexcept = 0;
 };
 
-template<typename Visitor>
-IRS_FORCE_INLINE auto ResolveMergeType(ScoreMergeType type, Visitor&& visitor) {
-  SDB_ASSERT(type != ScoreMergeType::Noop);
-  if (type == ScoreMergeType::Max) {
-    return visitor.template operator()<ScoreMergeType::Max>();
-  }
-  return visitor.template operator()<ScoreMergeType::Sum>();
-}
-
 inline bool ScoresPerDoc(const Scorer* scorer) noexcept {
   return scorer != nullptr && scorer->ScoresPerDoc();
 }
@@ -202,8 +202,8 @@ class ScorerBase : public Scorer {
     return irs::Type<Impl>::id();
   }
 
-  void collect(byte_type*, const FieldCollector*,
-               const TermCollector*) const override {}
+  void collect(byte_type*, const FieldCollector*, const TermCollector*,
+               StatsArena&) const override {}
 
   IRS_FORCE_INLINE static const StatsType* stats_cast(
     const byte_type* buf) noexcept {

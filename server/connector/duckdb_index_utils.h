@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "connector/duckdb_sink_writer_base.h"
+
 namespace sdb::connector {
 
 // One indexed base column of a feed chunk: its position in the chunk and the

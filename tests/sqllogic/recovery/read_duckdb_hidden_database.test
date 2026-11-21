@@ -56,7 +56,7 @@ SET sdb_faults = 'catalog_all_schemas_listed';
 
 connection rdh_lister
 query async
-SELECT count(*) > 0 AS listed FROM duckdb_tables();
+SELECT count(*) > 0 AS listed FROM sdb_tables();
 ----
 listed
 t
@@ -100,7 +100,7 @@ SET sdb_faults = 'duckdb_databases_listed';
 
 connection rdh_lister
 query async
-SELECT count(*) > 0 AS listed FROM duckdb_databases();
+SELECT count(*) > 0 AS listed FROM sdb_databases();
 ----
 listed
 t

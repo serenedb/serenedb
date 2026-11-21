@@ -27,6 +27,7 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/make.hpp"
+#include "iresearch/search/detail/make_query.hpp"
 #include "iresearch/search/detail/ngram_all_slots.hpp"
 #include "iresearch/search/detail/ngram_slots.hpp"
 #include "iresearch/search/detail/plan.hpp"
@@ -41,22 +42,23 @@ Result Build(NGramKind<M>, const NGramSimilarityQuery& query, uint64_t, F&& f) {
   const auto& state = query.State();
   const auto& h = state.handles;
   const std::span metas{state.metas.data(), state.metas.size()};
-  return ResolveBounds(h.bounds, [&]<bool Bounds> {
-    return ResolveInput(*h.doc, [&]<typename Input> {
+  return Resolve<BoundsAxis>(h.bounds, [&]<bool Bounds> {
+    return Resolve(*h.doc, [&]<typename Input> {
       using Leaf = PostingPos<Input, Bounds>;
-      return ResolveArity<kSlotArity, kSlotFloor>(metas.size(), [&]<size_t N> {
-        if constexpr (M == NGramMatch::All) {
-          return f.template operator()<NGramAllSlots<Leaf, N, Scored>>(
-            metas, *h.doc, h.Layout(), *h.pos, h.pay, query.TotalTerms());
-        } else {
-          return f.template operator()<NGramSlots<Leaf, Scored, false, N>>(
-            metas.size(),
-            [&](Leaf& leaf, size_t i) {
-              leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
-            },
-            static_cast<uint32_t>(query.MinMatchCount()), query.TotalTerms());
-        }
-      });
+      return Resolve<ArityAxis<kSlotArity, kSlotFloor>>(
+        metas.size(), [&]<size_t N> {
+          if constexpr (M == NGramMatch::All) {
+            return f.template operator()<NGramAllSlots<Leaf, N, Scored>>(
+              metas, *h.doc, h.Layout(), *h.pos, h.pay, query.TotalTerms());
+          } else {
+            return f.template operator()<NGramSlots<Leaf, Scored, false, N>>(
+              metas.size(),
+              [&](Leaf& leaf, size_t i) {
+                leaf.Prepare(metas[i], *h.doc, h.Layout(), *h.pos, h.pay);
+              },
+              static_cast<uint32_t>(query.MinMatchCount()), query.TotalTerms());
+          }
+        });
     });
   });
 }
@@ -82,6 +84,14 @@ std::optional<score_t> ConstantOf(NGramKind<M>,
 template<NGramMatch M>
 const TermReader& FieldOf(NGramKind<M>, const NGramSimilarityQuery& query) {
   return *query.State().reader;
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const NGramSimilarityQuery& query,
+                                  const Ctx& ctx) {
+  return Resolve<NGramMatchAxis>(query, [&]<NGramMatch M> {
+    return MakeKind<Family, NGramKind<M>>(query, ctx);
+  });
 }
 
 }  // namespace irs::detail

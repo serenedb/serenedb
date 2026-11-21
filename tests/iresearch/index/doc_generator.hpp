@@ -25,13 +25,13 @@
 
 #include <atomic>
 #include <boost/iterator/iterator_facade.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/iterator.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -43,7 +43,6 @@
 
 namespace irs {
 
-class DataOutput;
 class Tokenizer;
 
 }  // namespace irs
@@ -237,7 +236,7 @@ struct Ifield {
   virtual irs::field_id Id() const = 0;
   virtual irs::DictRef Dict() const { return irs::StringLayout::kStrings; }
   virtual std::string_view Name() const = 0;
-  virtual bool Write(irs::DataOutput& out) const = 0;
+  virtual bool Write(duckdb::WriteStream& out) const = 0;
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -282,7 +281,7 @@ class LongField : public FieldBase {
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
   irs::DictRef Dict() const noexcept final {
     return irs::NumericLayout::kNumbers;
   }
@@ -312,7 +311,7 @@ class IntField : public FieldBase {
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
   irs::DictRef Dict() const noexcept final {
     return irs::NumericLayout::kNumbers;
   }
@@ -335,7 +334,7 @@ class DoubleField : public FieldBase {
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
   irs::DictRef Dict() const noexcept final {
     return irs::NumericLayout::kNumbers;
   }
@@ -358,7 +357,7 @@ class FloatField : public FieldBase {
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
   irs::DictRef Dict() const noexcept final {
     return irs::NumericLayout::kNumbers;
   }
@@ -388,7 +387,7 @@ class BinaryField : public FieldBase {
     _value = bytes(first, last);
   }
 
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
 
  private:
   mutable irs::KeywordTokenizer _stream;
@@ -847,7 +846,7 @@ class TextField : public tests::FieldBase {
   std::string_view Value() const final { return _value; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   irs::analysis::Tokenizer::ptr _token_stream;
   T _value;
@@ -867,7 +866,7 @@ class StringField : public tests::FieldBase {
 
   irs::analysis::Tokenizer& GetTokens() const final;
   std::string_view Value() const final { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
 
  private:
   mutable irs::KeywordTokenizer _stream;
@@ -889,7 +888,7 @@ class StringViewField : public tests::FieldBase {
 
   irs::analysis::Tokenizer& GetTokens() const final;
   std::string_view Value() const final { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
 
  private:
   mutable irs::KeywordTokenizer _stream;
@@ -1002,7 +1001,7 @@ struct Terms {
 };
 
 std::shared_ptr<const irs::DocRemoval> RemovalOf(
-  const irs::DirectoryReader& reader, const Terms& terms);
+  const irs::CompositeReader& reader, const Terms& terms);
 
 inline std::shared_ptr<const irs::DocRemoval> RemovalOf(
   const tests::IndexWriter& writer, const Terms& terms) {
@@ -1010,7 +1009,7 @@ inline std::shared_ptr<const irs::DocRemoval> RemovalOf(
 }
 
 inline LazyRemoval RemovalOfTerms(Terms terms) {
-  return [terms = std::move(terms)](const irs::DirectoryReader& reader) {
+  return [terms = std::move(terms)](const irs::CompositeReader& reader) {
     return RemovalOf(reader, terms);
   };
 }

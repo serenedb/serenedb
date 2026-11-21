@@ -38,6 +38,7 @@
 #include <duckdb/main/settings.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <duckdb/storage/table/column_data_checkpointer.hpp>
 #include <duckdb/storage/table/variant_column_data.hpp>
 #include <limits>
@@ -50,6 +51,59 @@
 
 namespace irs {
 namespace {
+
+void WriteBytes(ReadContext& source, uint64_t offset, uint64_t size,
+                duckdb::WriteStream& out) {
+  if (const auto* bytes = source.TryReadStable(offset, size)) {
+    out.WriteData(bytes, size);
+    return;
+  }
+  const auto* file = source.File();
+  SDB_ASSERT(file != nullptr);
+  const auto& blocks = file->Blocks();
+  for (const auto end = offset + size; offset != end;) {
+    const auto piece =
+      std::min<uint64_t>(end, blocks.BlockStart(blocks.BlockOf(offset) + 1)) -
+      offset;
+    const auto pin = file->Pin(offset, piece);
+    out.WriteData(pin.Ptr(), piece);
+    offset += piece;
+  }
+}
+
+class BlockReadAhead {
+ public:
+  BlockReadAhead(const ReadContext& source,
+                 std::span<const ColumnBlockMeta> blocks) noexcept
+    : _file{source.File()}, _blocks{blocks} {}
+
+  void At(size_t block) {
+    if (_file == nullptr || block < _next || _end == _blocks.size()) {
+      return;
+    }
+    std::vector<duckdb::FileRange> ranges;
+    uint64_t bytes = 0;
+    const auto from = std::max(block, _end);
+    auto end = from;
+    for (; end != _blocks.size() && bytes < kWindow; ++end) {
+      if (const auto& m = _blocks[end]; m.byte_size != 0) {
+        ranges.push_back({.offset = m.file_offset, .size = m.byte_size});
+        bytes += m.byte_size;
+      }
+    }
+    _next = from + (end - from) / 2;
+    _end = end;
+    _file->Prefetch(ranges);
+  }
+
+ private:
+  static constexpr uint64_t kWindow = duckdb::ExternalFileCache::MAX_READ_AHEAD;
+
+  const duckdb::InputFile* _file;
+  std::span<const ColumnBlockMeta> _blocks;
+  size_t _next = 0;
+  size_t _end = 0;
+};
 
 void ZeroNullArrays(duckdb::Vector& arrays, duckdb::idx_t from,
                     duckdb::idx_t count) {
@@ -70,7 +124,7 @@ void ZeroNullArrays(duckdb::Vector& arrays, duckdb::idx_t from,
 }
 
 void CaptureSegment(duckdb::ColumnSegment& segment, duckdb::idx_t segment_size,
-                    const uint8_t* bytes, IndexOutput& out,
+                    const uint8_t* bytes, duckdb::WriteStream& out,
                     std::vector<ColumnBlockMeta>& sink) {
   const auto tuple_count = segment.count.load();
   if (tuple_count == 0) {
@@ -191,7 +245,9 @@ WriteContext& ColumnWriter::WriteCtx() const noexcept {
   return _owner->WriteCtx();
 }
 
-IndexOutput& ColumnWriter::Out() const noexcept { return _owner->Out(); }
+duckdb::WriteStream& ColumnWriter::Out() const noexcept {
+  return _owner->Out();
+}
 
 duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
   const duckdb::LogicalType& codec_type, std::span<WriteChunk> chunks,
@@ -213,8 +269,8 @@ duckdb::optional_ptr<const duckdb::CompressionFunction> ColumnWriter::PickCodec(
     });
   }
 
-  duckdb::CompressionAnalyzeContext actx{
-    ctx, db, duckdb::StorageVersion::SERENEDB_LATEST};
+  duckdb::CompressionAnalyzeContext actx{ctx, db,
+                                         duckdb::StorageVersion::SDB_LATEST};
   std::vector<duckdb::unique_ptr<duckdb::AnalyzeState>> states(
     candidates.size());
   for (size_t i = 0; i < candidates.size(); ++i) {
@@ -334,7 +390,7 @@ void ColumnWriter::Compress(const duckdb::CompressionFunction& picked,
   duckdb::ColumnDataCheckpointData ckp{
     codec_type,
     db,
-    duckdb::StorageVersion::SERENEDB_LATEST,
+    duckdb::StorageVersion::SDB_LATEST,
     overflow_writer,
     stream_writer,
     std::move(flush_fn),
@@ -751,8 +807,7 @@ bool ColumnWriter::CopyableFrom(const ColumnReader& column) const {
 }
 
 void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
-                             std::vector<ColumnBlockMeta>& sink,
-                             std::vector<byte_type>& buffer) {
+                             std::vector<ColumnBlockMeta>& sink) {
   ColumnBlockMeta m{block.statistics.Copy()};
   m.tuple_count = block.tuple_count;
   m.codec = block.codec;
@@ -764,14 +819,7 @@ void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
     }
     m.file_offset = out.Position();
     m.byte_size = block.byte_size;
-    const auto* bytes =
-      source.TryReadStable(block.file_offset, block.byte_size);
-    if (!bytes) {
-      buffer.resize(block.byte_size);
-      source.Read(block.file_offset, buffer.data(), block.byte_size);
-      bytes = buffer.data();
-    }
-    out.WriteData(reinterpret_cast<const byte_type*>(bytes), block.byte_size);
+    WriteBytes(source, block.file_offset, block.byte_size, out);
   }
   sink.push_back(std::move(m));
 }
@@ -780,14 +828,16 @@ bool ColumnWriter::CopyBlocks(const ColumnReader& column, ReadContext& source,
                               absl::FunctionRef<bool()> progress) {
   SDB_ASSERT(CopyableFrom(column));
   SealRowGroup();
-  std::vector<byte_type> buffer;
-  for (const auto& block : column.DataBlocks()) {
+  const auto blocks = column.DataBlocks();
+  BlockReadAhead ahead{source, blocks};
+  for (size_t b = 0; b != blocks.size(); ++b) {
     if (!progress()) {
       return false;
     }
-    CopyBlock(block, source, _meta.data, buffer);
+    ahead.At(b);
+    CopyBlock(blocks[b], source, _meta.data);
   }
-  CopyValidity(column, source, 0, column.RowCount(), buffer);
+  CopyValidity(column, source, 0, column.RowCount());
   _row_start += column.RowCount();
   OpenRowGroup();
   return true;
@@ -815,8 +865,7 @@ bool ColumnWriter::ValidityCopyable(const ColumnReader& column, uint64_t first,
 }
 
 void ColumnWriter::CopyValidity(const ColumnReader& column, ReadContext& source,
-                                uint64_t first, uint64_t end,
-                                std::vector<byte_type>& buffer) {
+                                uint64_t first, uint64_t end) {
   if (_skip_validity) {
     return;
   }
@@ -828,14 +877,18 @@ void ColumnWriter::CopyValidity(const ColumnReader& column, ReadContext& source,
     return;
   }
   const auto blocks = validity->DataBlocks();
-  for (auto v = validity->Locate(first).block; v < blocks.size(); ++v) {
+  const auto begin = validity->Locate(first).block;
+  auto stop = begin;
+  while (stop < blocks.size() && validity->DataBlockFirstRow(stop) < end) {
+    ++stop;
+  }
+  BlockReadAhead ahead{source, blocks.subspan(begin, stop - begin)};
+  for (auto v = begin; v < stop; ++v) {
+    ahead.At(v - begin);
     const auto v_first = validity->DataBlockFirstRow(v);
-    if (v_first >= end) {
-      break;
-    }
     const auto v_end = v_first + blocks[v].tuple_count;
     if (v_first >= first && v_end <= end) {
-      CopyBlock(blocks[v], source, _meta.validity, buffer);
+      CopyBlock(blocks[v], source, _meta.validity);
     } else {
       SDB_ASSERT(EmptyValidity(blocks[v]));
       EmitEmptyValidity(validity_type,
@@ -874,7 +927,6 @@ void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
       !_owner->HasAnn(_id)) {
     const auto forced = ForcedCodec();
     const auto blocks = column.DataBlocks();
-    std::vector<byte_type> buffer;
     for (auto b = column.Locate(first).block; b < blocks.size(); ++b) {
       const auto block_first = column.DataBlockFirstRow(b);
       const auto block_end = block_first + blocks[b].tuple_count;
@@ -894,8 +946,8 @@ void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
         continue;
       }
       SealRowGroup();
-      CopyBlock(blocks[b], source, _meta.data, buffer);
-      CopyValidity(column, source, block_first, block_end, buffer);
+      CopyBlock(blocks[b], source, _meta.data);
+      CopyValidity(column, source, block_first, block_end);
       _row_start += blocks[b].tuple_count;
       OpenRowGroup();
       written = block_end;

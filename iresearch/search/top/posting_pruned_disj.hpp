@@ -59,7 +59,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
 
   PostingPrunedDisj() = default;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                IndexFeatures layout, const SubReader& segment,
                const TermReader& field, const detail::ScoreArgs& args) {
     _masked = false;
@@ -70,7 +70,7 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     }
   }
 
-  PostingPrunedDisj(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingPrunedDisj(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                     IndexFeatures layout, const SubReader& segment,
                     const TermReader& field, const detail::ScoreArgs& args) {
     Prepare(meta, doc_in, layout, segment, field, args);
@@ -229,8 +229,8 @@ class PostingPrunedDisj : public PrunedProbeBase<InputType> {
     }
     const auto len = _leaf.Len();
     if (_last != _masked_max) {
-      _leaf.template Materialize<!InputType::kVolatileAlways>(
-        _base, std::end(_docs) - len);
+      _leaf.template Materialize<!InputType::CONTIGUOUS>(_base,
+                                                         std::end(_docs) - len);
       DecodeLazyFreqs();
       _len = len;
       _scored = false;

@@ -46,7 +46,7 @@ constexpr SystemMacro kMacros[] = {
                      WHEN bool_or(keyword_category = 'type_function') THEN 'T'
                      ELSE 'C'
                    END::"char" AS catcode
-            FROM duckdb_keywords()
+            FROM sdb_keywords()
             GROUP BY keyword_name)
       ORDER BY word)"},
 
@@ -345,7 +345,6 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(node_text AS TEXT)"},
   {"pg_catalog", "pg_get_expr",
    "(node_text, rel_oid, pretty_bool) AS CAST(node_text AS TEXT)"},
-  {"pg_catalog", "pg_tablespace_location", "(oid) AS CAST('' AS TEXT)"},
 
   {"pg_catalog", "oidvectortypes",
    R"((v) AS array_to_string(

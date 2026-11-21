@@ -126,7 +126,7 @@ if has setup; then
 		qa "SELECT version()"
 	} >>"$CHECKS"
 	prepare_server
-	check "settings" "SELECT name, value FROM duckdb_settings() WHERE name IN ('preserve_insertion_order', 'threads', 'memory_limit', 'checkpoint_threshold', 'segment_memory_max', 'default_transaction_isolation', 'transaction_isolation') ORDER BY name"
+	check "settings" "SELECT name, value FROM sdb_settings() WHERE name IN ('preserve_insertion_order', 'threads', 'memory_limit', 'checkpoint_threshold', 'segment_memory_max', 'default_transaction_isolation', 'transaction_isolation') ORDER BY name"
 fi
 
 if has bulk; then

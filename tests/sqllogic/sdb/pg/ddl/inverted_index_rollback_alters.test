@@ -72,7 +72,7 @@ ROLLBACK;
 
 
 query
-SELECT comment FROM duckdb_indexes() WHERE index_name = 'ixiv_idx';
+SELECT comment FROM sdb_indexes() WHERE index_name = 'ixiv_idx';
 ----
 comment
 kept

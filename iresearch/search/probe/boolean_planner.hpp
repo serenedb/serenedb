@@ -32,6 +32,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/detail/window_set.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/probe/boolean_sparse.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/leaves.hpp"
@@ -51,33 +52,7 @@ Scoring WithUniformity(Scoring scoring, detail::Terms uniformity) noexcept {
   return scoring;
 }
 
-template<typename Scoring>
-Node::ptr MakeOptional(std::span<const detail::PostingClause> should,
-                       std::span<const QueryBuilder::ptr> should_filters,
-                       uint32_t min_match, const SubReader& segment,
-                       uint64_t interrogations, const Scoring& scoring,
-                       const detail::ScoredCtx& ctx, score_t absorbed) {
-  SDB_ASSERT(min_match != 0);
-  return min_match == 1
-           ? MakeDisjunction(should, should_filters, nullptr, segment,
-                             interrogations, scoring, ctx, absorbed)
-           : MakeSparseThreshold(should, should_filters, segment, min_match,
-                                 interrogations, scoring, ctx, absorbed);
-}
-
-extern template Node::ptr MakeOptional(std::span<const detail::PostingClause>,
-                                       std::span<const QueryBuilder::ptr>,
-                                       uint32_t, const SubReader&, uint64_t,
-                                       const detail::NoScoring&,
-                                       const detail::ScoredCtx&, score_t);
-
-extern template Node::ptr MakeOptional(std::span<const detail::PostingClause>,
-                                       std::span<const QueryBuilder::ptr>,
-                                       uint32_t, const SubReader&, uint64_t,
-                                       const detail::TermScoring&,
-                                       const detail::ScoredCtx&, score_t);
-
-template<typename Scoring, typename Make>
+template<typename P = NoPins, typename Scoring, typename Make>
 Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
                      std::span<const QueryBuilder::ptr> filters,
                      const SubReader& segment, uint64_t interrogations,
@@ -92,7 +67,7 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
         if (detail::ScoresPerDocTerm(posting)) {
           const auto& own = *posting.state.reader;
           const auto& doc = *detail::DocOf(own);
-          return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+          return Resolve<P>(doc, [&]<typename Input> -> Node::ptr {
             return make.template operator()<detail::PostingProbeScored<Input>>(
               std::forward_as_tuple(
                 posting.state.cookie, doc, segment, own,
@@ -100,7 +75,7 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
           });
         }
       } else {
-        return ResolvePostingDocs<Node::ptr>(
+        return ResolvePostingDocs<Node::ptr, P>(
           posting, [&]<typename Leaf>(auto&&... args) -> Node::ptr {
             return make.template operator()<Leaf>(
               std::forward_as_tuple(std::forward<decltype(args)>(args)...));
@@ -117,11 +92,11 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
     return make.template operator()<Erased>(
       std::forward_as_tuple(std::move(node)));
   }
-  return detail::BuildProbeLeaves<Node::ptr>(
+  return detail::BuildProbeLeaves<Node::ptr, P>(
     terms, filters, nullptr, segment, interrogations,
     detail::ProbeOrder::Narrowest, scoring, clause,
     [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-      return detail::ResolveArity<detail::kRunArity, detail::kRunFloor>(
+      return Resolve<detail::ArityAxis<detail::kRunArity, detail::kRunFloor>>(
         size, [&]<size_t N> -> Node::ptr {
           return make.template operator()<AndLeaves<Leaf, N>>(
             std::forward_as_tuple(size, std::forward<decltype(init)>(init)));
@@ -129,7 +104,7 @@ Node::ptr BuildMusts(std::span<const detail::PostingClause> terms,
     });
 }
 
-template<typename Scoring>
+template<typename P = NoPins, typename Scoring>
 Node::ptr MakeConjunction(std::span<const detail::PostingClause> terms,
                           std::span<const QueryBuilder::ptr> filters,
                           const SubReader& segment, uint64_t interrogations,
@@ -150,16 +125,16 @@ Node::ptr MakeConjunction(std::span<const detail::PostingClause> terms,
              : clause(detail::PostingClause{TermState{nullptr, {}}},
                       filters.front().get(), interrogations);
   }
-  return BuildMusts(terms, filters, segment, interrogations, scoring, ctx,
-                    [&]<typename Musts>(auto&& musts) -> Node::ptr {
-                      return MakeSparse<Musts, utils::Empty, utils::Empty>(
-                        detail::ScoreOf(scoring, absorbed),
-                        std::forward<decltype(musts)>(musts),
-                        std::forward_as_tuple(), std::forward_as_tuple());
-                    });
+  return BuildMusts<P>(terms, filters, segment, interrogations, scoring, ctx,
+                       [&]<typename Musts>(auto&& musts) -> Node::ptr {
+                         return MakeSparse<Musts, utils::Empty, utils::Empty>(
+                           detail::ScoreOf(scoring, absorbed),
+                           std::forward<decltype(musts)>(musts),
+                           std::forward_as_tuple(), std::forward_as_tuple());
+                       });
 }
 
-template<typename Scoring>
+template<typename P = NoPins, typename Scoring>
 Node::ptr MakeRequired(const BooleanQuery& query, uint64_t interrogations,
                        const Scoring& scoring, const detail::ScoredCtx& ctx,
                        score_t absorbed) {
@@ -172,8 +147,8 @@ Node::ptr MakeRequired(const BooleanQuery& query, uint64_t interrogations,
   const auto must_scoring =
     WithUniformity(scoring, query.Uniformity(Occur::Must));
   if (min_match == 0) {
-    return MakeConjunction(must, must_filters, segment, interrogations,
-                           must_scoring, ctx, absorbed);
+    return MakeConjunction<P>(must, must_filters, segment, interrogations,
+                              must_scoring, ctx, absorbed);
   }
   const auto should_scoring =
     WithUniformity(scoring, query.Uniformity(Occur::Should));
@@ -189,19 +164,20 @@ Node::ptr MakeRequired(const BooleanQuery& query, uint64_t interrogations,
   if (!held) {
     return {};
   }
-  return BuildMusts(must, must_filters, segment, interrogations, must_scoring,
-                    ctx, [&]<typename Musts>(auto&& musts) -> Node::ptr {
-                      return MakeSparse<Musts, Erased, utils::Empty>(
-                        detail::ScoreOf(scoring, absorbed),
-                        std::forward<decltype(musts)>(musts),
-                        std::forward_as_tuple(std::move(held)),
-                        std::forward_as_tuple());
-                    });
+  return BuildMusts<P>(
+    must, must_filters, segment, interrogations, must_scoring, ctx,
+    [&]<typename Musts>(auto&& musts) -> Node::ptr {
+      return MakeSparse<Musts, Erased, utils::Empty>(
+        detail::ScoreOf(scoring, absorbed),
+        std::forward<decltype(musts)>(musts),
+        std::forward_as_tuple(std::move(held)), std::forward_as_tuple());
+    });
 }
 
-inline Node::ptr MakeBoost(const BooleanQuery& query, uint64_t interrogations,
-                           const detail::TermScoring& scoring,
-                           const detail::ScoredCtx& ctx, score_t absorbed) {
+template<typename P = NoPins>
+Node::ptr MakeBoost(const BooleanQuery& query, uint64_t interrogations,
+                    const detail::TermScoring& scoring,
+                    const detail::ScoredCtx& ctx, score_t absorbed) {
   const auto& segment = query.Segment();
   const std::span must = query.Terms(Occur::Must);
   const std::span must_filters = query.Queries(Occur::Must);
@@ -214,7 +190,7 @@ inline Node::ptr MakeBoost(const BooleanQuery& query, uint64_t interrogations,
   const auto must_scoring =
     WithUniformity(scoring, query.Uniformity(Occur::Must));
   const auto build = [&]<typename Head>(auto&& head) -> Node::ptr {
-    return detail::BuildProbeLeaves<Node::ptr>(
+    return detail::BuildProbeLeaves<Node::ptr, P>(
       should, should_filters, nullptr, segment,
       no_must ? interrogations
               : std::min(interrogations, detail::IncludeCandidates(
@@ -222,7 +198,8 @@ inline Node::ptr MakeBoost(const BooleanQuery& query, uint64_t interrogations,
       detail::ProbeOrder::Densest, should_scoring,
       ClauseFor(segment, ctx, should_scoring),
       [&]<typename Leaf>(size_t size, auto&& init) -> Node::ptr {
-        return detail::ResolveArity<detail::kTailArity, detail::kTailFloor>(
+        return Resolve<
+          detail::ArityAxis<detail::kTailArity, detail::kTailFloor>>(
           size, [&]<size_t N> -> Node::ptr {
             return MakeSparse<Head, BoostLeaves<Leaf, N>, utils::Empty>(
               detail::Scored{scoring.merge, absorbed},
@@ -236,14 +213,15 @@ inline Node::ptr MakeBoost(const BooleanQuery& query, uint64_t interrogations,
     return build.template operator()<utils::Empty>(std::forward_as_tuple());
   }
   if (must.size() + must_filters.size() == 1) {
-    return BuildMusts(must, must_filters, segment, interrogations, must_scoring,
-                      ctx, [&]<typename Head>(auto&& head) -> Node::ptr {
-                        return build.template operator()<Head>(
-                          std::forward<decltype(head)>(head));
-                      });
+    return BuildMusts<P>(must, must_filters, segment, interrogations,
+                         must_scoring, ctx,
+                         [&]<typename Head>(auto&& head) -> Node::ptr {
+                           return build.template operator()<Head>(
+                             std::forward<decltype(head)>(head));
+                         });
   }
-  auto head = MakeConjunction(must, must_filters, segment, interrogations,
-                              must_scoring, ctx, score_t{0});
+  auto head = MakeConjunction<P>(must, must_filters, segment, interrogations,
+                                 must_scoring, ctx, score_t{0});
   if (!head) {
     return {};
   }
@@ -251,7 +229,7 @@ inline Node::ptr MakeBoost(const BooleanQuery& query, uint64_t interrogations,
     std::forward_as_tuple(std::move(head)));
 }
 
-template<typename Scoring>
+template<typename P = NoPins, typename Scoring>
 Node::ptr MakeIncluded(const BooleanQuery& query, uint64_t interrogations,
                        const Scoring& scoring, const detail::ScoredCtx& ctx,
                        score_t absorbed) {
@@ -259,10 +237,29 @@ Node::ptr MakeIncluded(const BooleanQuery& query, uint64_t interrogations,
     if (query.MinShouldMatch() == 0 &&
         (!query.Terms(Occur::Should).empty() ||
          !query.Queries(Occur::Should).empty())) {
-      return MakeBoost(query, interrogations, scoring, ctx, absorbed);
+      return MakeBoost<P>(query, interrogations, scoring, ctx, absorbed);
     }
   }
-  return MakeRequired(query, interrogations, scoring, ctx, absorbed);
+  return MakeRequired<P>(query, interrogations, scoring, ctx, absorbed);
+}
+
+template<typename Scoring, typename P>
+struct ExclusionMaker {
+  static Node::ptr Make(const BooleanQuery& query, uint64_t interrogations,
+                        const Scoring& scoring, const detail::ScoredCtx& ctx,
+                        score_t absorbed);
+};
+
+template<typename Scoring>
+Node::ptr MakeExclusion(const BooleanQuery& query, uint64_t interrogations,
+                        const Scoring& scoring, const detail::ScoredCtx& ctx,
+                        score_t absorbed) {
+  return detail::ResolveExcludePins(
+    query.Queries(Occur::MustNot), query.Segment(),
+    [&]<typename P> -> Node::ptr {
+      return ExclusionMaker<Scoring, P>::Make(query, interrogations, scoring,
+                                              ctx, absorbed);
+    });
 }
 
 template<typename Scoring>

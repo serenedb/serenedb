@@ -39,6 +39,7 @@
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/scale_score.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -51,6 +52,9 @@
 
 namespace irs {
 namespace {
+
+constexpr std::string_view kIdfExpression =
+  "log(1 + (N - df + 0.5) / (df + 0.5))";
 
 struct Bm15Formula {
   IRS_FORCE_INLINE score_t operator()(score_t tf) const noexcept {
@@ -120,16 +124,14 @@ struct Bm25Score : public ScoreOperatorOf<Bm25Score<HasScale>> {
 }  // namespace
 
 void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
-                   const irs::TermCollector* term) const {
+                   const irs::TermCollector* term, StatsArena&) const {
   auto* stats = stats_cast(stats_buf);
 
   const auto docs_with_field = field ? field->docs_with_field : 0;
   const auto docs_with_term = term ? term->docs_with_term : 0;
   const auto total_term_freq = field ? field->total_term_freq : 0;
 
-  stats->idf += score_t(
-    std::log1p((static_cast<double>(docs_with_field - docs_with_term) + 0.5) /
-               (static_cast<double>(docs_with_term) + 0.5)));
+  stats->idf += Bm25Idf(docs_with_field, docs_with_term);
   SDB_ASSERT(stats->idf >= 0.f);
 
   if (!NeedsNorm()) {
@@ -167,7 +169,7 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
   auto* stats = stats_cast(ctx.stats);
   const auto* scale = ScaleOf(ctx);
 
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+  return Resolve(scale != nullptr, [&]<bool HasScale>() {
     if (IsBM15()) {
       return ScoreFunction::Make<Bm15Score<HasScale>>(ctx.boost, *stats, freq,
                                                       scale);
@@ -178,6 +180,43 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Make<Bm25Score<HasScale>>(ctx.boost, *stats, freq,
                                                     norm, scale);
   });
+}
+
+void ExplainBm25Idf(const ScoreContext& ctx, score_t idf,
+                    const explain::SlotStats* stats, explain::Node& out) {
+  explain::AddBoost(out, ctx.boost);
+  explain::AddIdf(out, idf, stats, kIdfExpression, &Bm25Idf);
+  explain::AddScale(out, ctx, "boost * idf", "scale * boost * idf");
+}
+
+void BM25::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+                   explain::Node& out) const {
+  const auto& own = *stats_cast(ctx.stats);
+  if (IsBM1()) {
+    ExplainBm25Idf(ctx, own.idf, stats, out);
+    return;
+  }
+  if (!explain::FreqOf(ctx)) {
+    explain::ExplainNoFreq(ctx, _boost_as_score, out);
+    return;
+  }
+  explain::AddBoost(out, ctx.boost);
+  explain::AddIdf(out, own.idf, stats, kIdfExpression, &Bm25Idf);
+  auto& tf = explain::AddDetail(out, "tf", score_t{0});
+  const auto freq = explain::AddFreq(tf, ctx);
+  explain::AddDetail(tf, "k1", _k);
+  if (IsBM15()) {
+    tf.value = freq / (freq + own.norm_const);
+    tf.expression = "freq / (freq + k1)";
+  } else {
+    explain::AddDetail(tf, "b", _b);
+    const auto length = TermCountToScore(explain::AddLength(tf, ctx));
+    explain::AddAverageLength(tf, _k * _b / own.norm_length, stats);
+    const auto c1 = own.norm_const + own.norm_length * length;
+    tf.value = freq / (freq + c1);
+    tf.expression = "freq / (freq + k1 * (1 - b + b * dl / avgdl))";
+  }
+  out.expression = "boost * idf * tf";
 }
 
 ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter() const {

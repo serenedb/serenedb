@@ -43,8 +43,8 @@
 
 namespace irs::detail {
 
-template<typename Result, typename Term, typename Scoring, typename ProbeClause,
-         typename LeadClause, typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Scoring,
+         typename ProbeClause, typename LeadClause, typename Make>
 Result BuildConjunction(std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
@@ -65,14 +65,14 @@ Result BuildConjunction(std::span<const Term> terms,
     const auto& own = FieldOf(term, field);
     if constexpr (kScored) {
       const auto posting = clause(term);
-      return std::tuple<const PostingMeta&, const IndexInput&, const SubReader&,
-                        const TermReader&, ScoreArgs>{
+      return std::tuple<const PostingMeta&, const duckdb::InputFile&,
+                        const SubReader&, const TermReader&, ScoreArgs>{
         CookieOf(term), *DocOf(own), segment, own,
         scoring.recipe.Args(posting.stats, posting.boost)};
     } else {
-      return std::tuple<const PostingMeta&, const IndexInput&, IndexFeatures,
-                        bool>{CookieOf(term), *DocOf(own), LayoutOf(own),
-                              BoundsOf(own)};
+      return std::tuple<const PostingMeta&, const duckdb::InputFile&,
+                        IndexFeatures, bool>{CookieOf(term), *DocOf(own),
+                                             LayoutOf(own), BoundsOf(own)};
     }
   };
 
@@ -88,12 +88,12 @@ Result BuildConjunction(std::span<const Term> terms,
     [&]<typename Input, typename Head>(auto&& head) -> Result {
     using Probe = std::conditional_t<kScored, PostingProbeScored<Input>,
                                      PostingProbe<Input>>;
-    return ResolveArity<kTailArity, kTailFloor>(
+    return Resolve<ArityAxis<kTailArity, kTailFloor>>(
       rest.size(), [&]<size_t N> -> Result {
         if constexpr (N == 1) {
           return make.template operator()<Head, Probe>(
             std::forward<decltype(head)>(head), probe_args(rest.front()));
-        } else if constexpr (N != 0) {
+        } else if constexpr (N != kAnyArity) {
           return [&]<size_t... I>(std::index_sequence<I...>) {
             return make.template operator()<Head, probe::AndLeaves<Probe, N>>(
               std::forward<decltype(head)>(head),
@@ -148,13 +148,13 @@ Result BuildConjunction(std::span<const Term> terms,
         std::forward<decltype(head)>(head),
         std::forward_as_tuple(std::move(probes.front())));
     } else {
-      return ResolveArity<kTailArity, kTailFloor>(
+      return Resolve<ArityAxis<kTailArity, kTailFloor>>(
         probes.size(), [&]<size_t N> -> Result {
           if constexpr (N == 1) {
             return make.template operator()<Head, probe::Erased>(
               std::forward<decltype(head)>(head),
               std::forward_as_tuple(std::move(probes.front())));
-          } else if constexpr (N != 0) {
+          } else if constexpr (N != kAnyArity) {
             return [&]<size_t... I>(std::index_sequence<I...>) {
               return make
                 .template operator()<Head, probe::AndLeaves<probe::Erased, N>>(
@@ -196,7 +196,7 @@ Result BuildConjunction(std::span<const Term> terms,
       return build_opaque.template operator()<lead::Erased>(
         std::forward_as_tuple(std::move(node)));
     }
-    return ResolveInput(
+    return Resolve<P>(
       *DocOf(FieldOf(rest.front(), field)), [&]<typename Input> -> Result {
         return build_concrete.template operator()<Input, lead::Erased>(
           std::forward_as_tuple(std::move(node)));
@@ -213,14 +213,14 @@ Result BuildConjunction(std::span<const Term> terms,
       return build_erased_lead(
         lead::MakePostingScored(posting, segment, scoring.recipe));
     }
-    return ResolveInput(*DocOf(own), [&]<typename Input> -> Result {
+    return Resolve<P>(*DocOf(own), [&]<typename Input> -> Result {
       return build.template operator()<Input, PostingLeadScored<Input>>(
         std::forward_as_tuple(
           CookieOf(terms.front()), *DocOf(own), segment, own,
           scoring.recipe.Args(posting.stats, posting.boost)));
     });
   } else {
-    return ResolveInput(*DocOf(own), [&]<typename Input> -> Result {
+    return Resolve<P>(*DocOf(own), [&]<typename Input> -> Result {
       return build.template operator()<Input, PostingLead<Input>>(
         std::forward_as_tuple(CookieOf(terms.front()), *DocOf(own),
                               LayoutOf(own), BoundsOf(own)));

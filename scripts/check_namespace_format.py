@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """
 Check namespace formatting rules:
+  - blank line required before 'namespace ... {' unless the previous line is another namespace or a comment
   - blank line required after 'namespace ... {' only if next line is not another namespace
   - blank line required before '}  // namespace' only if previous line is not another '}'
   - no blank line between '}  // namespace' and next 'namespace ... {'
   - no blank line between 'namespace ... {' and next 'namespace ... {'
 """
 
-import re
 import sys
 
-from fix_namespace_format import fix_file
-
-NS_OPEN = re.compile(r"^\s*(?:inline\s+)?namespace(?:\s+[\w:]+)?\s*\{\s*$")
-NS_CLOSE = re.compile(r"^\s*\}\s*//\s*namespace")
+from fix_namespace_format import NS_CLOSE, NS_OPEN, fix_file, needs_blank_before
 
 EXCEPTIONS = set()
 
@@ -29,6 +26,9 @@ def check_file(path: str) -> list[str]:
         lineno = i + 1
         next_line = lines[i + 1] if i + 1 < len(lines) else None
         prev_line = lines[i - 1] if i > 0 else None
+
+        if NS_OPEN.match(line) and needs_blank_before(prev_line):
+            errors.append(f"line {lineno}: blank line required before '{line.strip()}'")
 
         if NS_OPEN.match(line):
             # No blank line before next namespace open or close

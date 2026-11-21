@@ -56,7 +56,7 @@ Uncompressed	2047	BitPacking
 
 
 statement error option "storage_version" not recognized
-CREATE DATABASE bad_db WITH (STORAGE_VERSION = 'serenedb_v1');
+CREATE DATABASE bad_db WITH (STORAGE_VERSION = 'sdb_v1');
 
 
 statement error CREATE DATABASE option "row_group_size" must be a constant

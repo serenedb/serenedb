@@ -66,7 +66,7 @@ statement count 1
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.recat_t VALUES (4, 'techies mines the jungle');
 
 query
-SELECT * FROM serenedb_reindex('recat_idx');
+SELECT * FROM sdb_reindex('recat_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -80,7 +80,7 @@ id
 # Unchanged snapshot: up_to_date.
 
 query
-SELECT * FROM serenedb_reindex('recat_idx');
+SELECT * FROM sdb_reindex('recat_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -92,7 +92,7 @@ statement count 1
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.recat_t WHERE id = 2;
 
 query
-SELECT action, files_added, files_changed FROM serenedb_reindex('recat_idx');
+SELECT action, files_added, files_changed FROM sdb_reindex('recat_idx');
 ----
 action	files_added	files_changed
 delta	0	1
@@ -111,7 +111,7 @@ statement count 1
 UPDATE srv_${__DATABASE__}.${__DATABASE__}.recat_t SET body = 'pudge rewritten mid' WHERE id = 1;
 
 query
-SELECT action FROM serenedb_reindex('recat_idx');
+SELECT action FROM sdb_reindex('recat_idx');
 ----
 action
 delta
@@ -174,7 +174,7 @@ statement count 1
 INSERT INTO recatw_${__DATABASE__}.${__DATABASE__}.recat_ext_t VALUES (2, 'committed by another writer');
 
 query
-SELECT action, files_added FROM serenedb_reindex('recat_ext_idx');
+SELECT action, files_added FROM sdb_reindex('recat_ext_idx');
 ----
 action	files_added
 delta	1

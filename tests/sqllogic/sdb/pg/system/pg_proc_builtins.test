@@ -4,7 +4,7 @@
 # It now also carries one row per overload of every built-in, and pg_aggregate
 # carries one row per aggregate overload keyed on the same oid.
 #
-# Counts are asserted against duckdb_functions() rather than pinned, so adding
+# Counts are asserted against sdb_functions() rather than pinned, so adding
 # or removing a built-in does not churn this file.
 
 statement ok
@@ -15,12 +15,12 @@ CREATE MACRO ppb_macro(a) AS a + 1
 
 
 # Every engine function reaches pg_proc.
-# pg_proc is per-database like PostgreSQL's, while duckdb_functions() spans
+# pg_proc is per-database like PostgreSQL's, while sdb_functions() spans
 # every attached database, so the comparison is scoped to the two catalogs
 # pg_proc draws from.
 
 query
-SELECT count(*) AS missing FROM duckdb_functions() f
+SELECT count(*) AS missing FROM sdb_functions() f
 WHERE f.database_name IN ('system', current_database())
   AND NOT EXISTS (SELECT 1 FROM pg_proc p WHERE p.proname = f.function_name)
 ----
@@ -30,10 +30,10 @@ missing
 query
 SELECT
   (SELECT count(*) FROM pg_proc)
-    - (SELECT count(*) FROM duckdb_functions()
+    - (SELECT count(*) FROM sdb_functions()
          WHERE database_name IN ('system', current_database()))
     = (SELECT count(*) FROM pg_proc p
-         WHERE NOT EXISTS (SELECT 1 FROM duckdb_functions() f
+         WHERE NOT EXISTS (SELECT 1 FROM sdb_functions() f
                            WHERE f.database_name IN ('system', current_database())
                              AND f.function_name = p.proname))
     AS counts_match
@@ -68,7 +68,7 @@ t	t	t	t
 
 query
 SELECT
-  (SELECT bool_and(proretset) FROM pg_proc WHERE proname = 'duckdb_tables') AS table_fn,
+  (SELECT bool_and(proretset) FROM pg_proc WHERE proname = 'sdb_tables') AS table_fn,
   (SELECT bool_or(proretset) FROM pg_proc WHERE proname = 'upper') AS scalar_fn
 ----
 table_fn	scalar_fn

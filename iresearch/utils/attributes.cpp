@@ -24,6 +24,7 @@
 #include "attributes.hpp"
 
 #include "absl/strings/str_cat.h"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/register.hpp"
 #include "iresearch/utils/string.hpp"
 

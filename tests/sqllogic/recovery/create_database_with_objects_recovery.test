@@ -82,7 +82,7 @@ DETAIL: Key (id)=(1) already exists.
 
 connection after_crash
 query
-SELECT count(*) AS n FROM duckdb_indexes() WHERE index_name = 'cdo_body';
+SELECT count(*) AS n FROM sdb_indexes() WHERE index_name = 'cdo_body';
 ----
 n
 1

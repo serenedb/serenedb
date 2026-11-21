@@ -97,7 +97,7 @@ _FLAG_ENTRY = re.compile(
 
 def _command_description(command: str) -> str:
     if " shell " in command:
-        return "Open the embedded DuckDB shell without starting the SereneDB server."
+        return "Open the embedded SQL shell without starting the SereneDB server."
     if " psql " in command:
         return "Open the psql-compatible shell subcommand without starting the SereneDB server."
     return "Start the SereneDB pg-wire server, using the optional data directory and flags."

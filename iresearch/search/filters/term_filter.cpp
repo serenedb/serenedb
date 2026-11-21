@@ -64,10 +64,22 @@ QueryBuilder::ptr ByTerm::PrepareSegment(const SubReader& segment,
   return MakeTermQuery(ctx.memory, segment, reader, meta, ctx.boost);
 }
 
+bool ByTerm::Prefetch(const SubReader& segment) const {
+  const auto* reader = segment.field(field_id());
+  return reader && reader->Prefetch(options().term);
+}
+
 PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer,
                                                 StatsArena& stats,
                                                 uint32_t threads) const {
   return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
+}
+
+void ByTerm::ExplainStats(const PrepareCollector* collector,
+                          explain::StatsIndex& out) const {
+  SDB_ASSERT(collector);
+  const bytes_view term = options().term;
+  collector->Describe(field_id(), [&](size_t) { return term; }, out);
 }
 
 TermPredicate::ptr ByTerm::CompileTermPredicate() const {

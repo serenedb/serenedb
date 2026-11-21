@@ -31,8 +31,8 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/string.hpp>
 #include <memory>
-#include <new>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -43,8 +43,6 @@
 
 namespace sdb::search {
 namespace {
-
-constexpr std::align_val_t kFrozenAlignment{32};
 
 [[noreturn]] void Corrupted(std::string_view what) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
@@ -67,11 +65,8 @@ std::shared_ptr<const irs::DocumentMask> ReadMask(
   if (size == 0) {
     Corrupted("an empty mask");
   }
-  std::shared_ptr<irs::byte_type> frozen{
-    static_cast<irs::byte_type*>(::operator new(size, kFrozenAlignment)),
-    [](irs::byte_type* data) { ::operator delete(data, kFrozenAlignment); }};
-  object.GetStream().ReadData(frozen.get(), size);
-  return std::make_shared<const irs::DocumentMask>(std::move(frozen), size);
+  return std::make_shared<const irs::DocumentMask>(
+    irs::DocumentMask::ReadFrozen(object.GetStream(), size));
 }
 
 void WriteValues(duckdb::BinarySerializer& values,

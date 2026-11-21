@@ -21,10 +21,10 @@
 #include "catalog/entry/database.h"
 
 #include <duckdb/catalog/catalog.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <utility>
 
-#include "catalog/boot.h"
-#include "catalog/cluster.h"
+#include "pg/catalog/oids.h"
 #include "pg/progress_registry.h"
 
 namespace sdb::catalog {
@@ -35,12 +35,12 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
   : duckdb::InCatalogEntry{duckdb::CatalogType::DATABASE_ENTRY, catalog,
                            info.GetQualifiedName().Name(), info.oid},
     _options{info.options},
-    _directory{directory
-                 ? std::move(directory)
-                 : std::make_shared<DatabaseDirectory>(
-                     catalog.Cast<ClusterCatalog>().Layout().StoreDir())} {
+    _tablespace{info.tablespace_oid == 0 ? pg::kPgDefaultTablespace
+                                         : info.tablespace_oid},
+    _directory{std::move(directory)} {
   comment = info.comment;
   tags = info.tags;
+  dependencies = info.dependencies;
   permissions = info.permissions;
 }
 
@@ -52,6 +52,9 @@ duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {
   info->comment = comment;
   info->tags = tags;
   info->options = _options;
+  info->tablespace_oid = _tablespace;
+  SDB_IF_FAILURE("database_without_tablespace") { info->tablespace_oid = 0; }
+  info->dependencies = dependencies;
   return std::move(info);
 }
 

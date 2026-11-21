@@ -65,35 +65,35 @@ db error: ERROR: No secret by the name of '<slt:ignore>' could be found, conside
 
 # Listings leave out what they cannot read and list everything else.
 query
-SELECT count(*) AS n FROM duckdb_tables() WHERE database_name = 'clu_cat_${__DATABASE__}';
+SELECT count(*) AS n FROM sdb_tables() WHERE database_name = 'clu_cat_${__DATABASE__}';
 ----
 n
 0
 
 
 query
-SELECT count(*) AS n FROM duckdb_schemas() WHERE database_name = 'clu_cat_${__DATABASE__}';
+SELECT count(*) AS n FROM sdb_schemas() WHERE database_name = 'clu_cat_${__DATABASE__}';
 ----
 n
 0
 
 
 query
-SELECT count(*) > 0 AS listed FROM duckdb_tables();
+SELECT count(*) > 0 AS listed FROM sdb_tables();
 ----
 listed
 t
 
 
 query
-SELECT count(*) > 0 AS listed FROM duckdb_columns();
+SELECT count(*) > 0 AS listed FROM sdb_columns();
 ----
 listed
 t
 
 
 query
-SELECT count(*) > 0 AS listed FROM duckdb_tables() WHERE database_name = current_database();
+SELECT count(*) > 0 AS listed FROM sdb_tables() WHERE database_name = current_database();
 ----
 listed
 t

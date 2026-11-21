@@ -31,12 +31,13 @@
 #include <duckdb/common/types/data_chunk.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/hot_column_reader.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/segment_writer.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <utility>
@@ -676,10 +677,14 @@ const LiveUnits::Unit* LiveUnits::Find(uint64_t id) const noexcept {
   return it != _units.end() && it->unit->id == id ? &*it : nullptr;
 }
 
-Table::Table(irs::Directory& dir, irs::IndexReaderOptions options,
+Table::Table(duckdb::FileSystem& fs, std::string root,
+             irs::IndexReaderOptions options,
+             std::shared_ptr<irs::ReleasedSegments> released,
              std::shared_ptr<const catalog::InvertedIndexConfig> config)
-  : _dir{dir},
+  : _fs{fs},
+    _root{std::move(root)},
     _options{std::move(options)},
+    _released{std::move(released)},
     _config{config},
     _versions{InitialState(std::move(config))} {}
 
@@ -698,7 +703,7 @@ void Table::Publish(std::shared_ptr<TableState> state, Tick tick, Tick layout) {
   _versions.Publish(std::move(state), tick);
 }
 
-irs::DirectoryReader Table::BuildReader(const TableState& prev,
+irs::CompositeReader Table::BuildReader(const TableState& prev,
                                         const TableState& next) const {
   std::vector<irs::SegmentReader> readers;
   readers.reserve(next.units.size());
@@ -706,7 +711,7 @@ irs::DirectoryReader Table::BuildReader(const TableState& prev,
     readers.emplace_back(unit->reader);
   }
   if (prev.units.empty()) {
-    return {_dir, _options, std::move(readers), /*stats=*/true};
+    return {std::move(readers), /*stats=*/true};
   }
   irs::containers::FlatHashMap<uint64_t, const TableUnit*> before;
   before.reserve(prev.units.size());
@@ -771,19 +776,15 @@ OwnSegment Table::OpenSegment(uint64_t id, uint8_t kinds,
   meta.kinds = kinds;
   meta.docs_count = rows;
   meta.live_docs_count = rows;
-  for (const auto& file : irs::SegmentFiles(meta.name, kinds)) {
-    uint64_t size = 0;
-    if (!_dir.length(size, file)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                      ERR_MSG("segment file '", file, "' is missing"));
-    }
-    meta.byte_size += size;
-  }
-  opened.reader = irs::SegmentReaderImpl::Open(_dir, meta, _options);
+  opened.reader = irs::SegmentReaderImpl::Open(
+    irs::DuckDBEngine::Instance().instance(), _fs, _root, meta, _options,
+    std::make_shared<const irs::FileTracker>(_fs, _root, meta.name, kinds,
+                                             _released));
+  meta.byte_size = opened.reader->Meta().byte_size;
   return opened;
 }
 
-irs::DirectoryReader Table::View(const TableState& state,
+irs::CompositeReader Table::View(const TableState& state,
                                  const OwnWrites& own) const {
   SDB_ASSERT(HasOwn(own));
   return Build(state, own, Scope::All);
@@ -797,9 +798,8 @@ TableRead Table::Read(const OwnWrites& own) const {
   return read;
 }
 
-irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
+irs::CompositeReader Table::Build(const TableState& state, const OwnWrites& own,
                                   Scope scope) const {
-  auto& db = *_options.db;
   Mapped own_removed;
   for (const auto& removal : own.removals) {
     for (const auto& group : removal->groups) {
@@ -877,15 +877,16 @@ irs::DirectoryReader Table::Build(const TableState& state, const OwnWrites& own,
     auto reader = with_patches(
       own.rows_id, {},
       with_own(own.rows_id, nullptr,
-               OwnRowsReader(db, own.rows_id, *own.rows, own.row_columns)));
+               OwnRowsReader(irs::DuckDBEngine::Instance().instance(),
+                             own.rows_id, *own.rows, own.row_columns)));
     added.emplace_back(reader);
     add(std::move(reader));
   }
   if (scope == Scope::Cold) {
-    return {_dir, _options, std::move(readers), /*stats=*/false};
+    return {std::move(readers), /*stats=*/false};
   }
   if (state.units.empty()) {
-    return {_dir, _options, std::move(readers), /*stats=*/true};
+    return {std::move(readers), /*stats=*/true};
   }
   return {state.reader, std::move(readers), added, patched, {}};
 }
@@ -920,7 +921,7 @@ uint64_t Table::ByteSize() const {
   return bytes;
 }
 
-irs::DirectoryReader Table::PieceView(
+irs::CompositeReader Table::PieceView(
   std::span<const std::shared_ptr<const TableUnit>> pieces,
   bool keep_deleted) const {
   std::vector<irs::SegmentReader> readers;
@@ -930,7 +931,7 @@ irs::DirectoryReader Table::PieceView(
                            ? piece->reader->WithDocsMask(nullptr)
                            : piece->reader);
   }
-  return {_dir, _options, std::move(readers), /*stats=*/false};
+  return {std::move(readers), /*stats=*/false};
 }
 
 Table::Memory Table::InMemory() const {
@@ -1376,6 +1377,43 @@ std::shared_ptr<const TableState> Table::Replace(Tick tick,
   LeaveDead(*next, tick);
   Publish(next, tick, tick);
   return next;
+}
+
+void Table::Reopen(Tick tick, std::span<const uint64_t> units) {
+  absl::MutexLock lock{&_state_mutex};
+  auto next = SameUnits();
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  bool reopened = false;
+  for (const auto id : units) {
+    const auto i = IndexOf(next->units, id);
+    if (i == next->units.size()) {
+      continue;
+    }
+    auto unit = std::make_shared<TableUnit>(*next->units[i]);
+    irs::SegmentMeta meta;
+    meta.name = irs::FileName(id);
+    meta.kinds = unit->meta.kinds;
+    meta.docs_count = unit->docs;
+    meta.live_docs_count = unit->docs;
+    unit->reader = irs::SegmentReaderImpl::Open(db, _fs, _root, meta, _options,
+                                                unit->reader->Files());
+    if (unit->deleted) {
+      unit->reader = unit->reader->WithDocsMask(unit->deleted);
+    }
+    if (!unit->patches.empty()) {
+      unit->reader = unit->reader->WithPatches(unit->patches);
+    }
+    next->units[i] = std::move(unit);
+    reopened = true;
+  }
+  if (!reopened) {
+    return;
+  }
+  next->tick = tick;
+  next->config = _config;
+  CountPieces(*next);
+  next->reader = BuildReader(TableState{}, *next);
+  _versions.Publish(std::move(next), tick);
 }
 
 bool Table::Collectable(Tick oldest) const {

@@ -37,7 +37,7 @@ statement ok
 ALTER TABLE rcik_gen RENAME COLUMN v TO w;
 
 query
-SELECT index_name, expressions, regexp_extract(sql, ' WHERE (.*);$', 1) AS predicate FROM duckdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'rcik%' ORDER BY index_name;
+SELECT index_name, expressions, regexp_extract(sql, ' WHERE (.*);$', 1) AS predicate FROM sdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'rcik%' ORDER BY index_name;
 ----
 index_name	expressions	predicate
 rcik_art_idx	[a]	(c > 5)
@@ -106,7 +106,7 @@ id	w
 
 connection after_crash
 query
-SELECT index_name, expressions, regexp_extract(sql, ' WHERE (.*);$', 1) AS predicate FROM duckdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'rcik%' ORDER BY index_name;
+SELECT index_name, expressions, regexp_extract(sql, ' WHERE (.*);$', 1) AS predicate FROM sdb_indexes() WHERE database_name = current_database() AND index_name LIKE 'rcik%' ORDER BY index_name;
 ----
 index_name	expressions	predicate
 rcik_art_idx	[a]	(c > 5)

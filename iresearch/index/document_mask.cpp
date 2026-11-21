@@ -25,6 +25,7 @@
 #include <roaring/containers/containers.h>
 
 #include <algorithm>
+#include <cstring>
 #include <new>
 #include <roaring/roaring.hh>
 #include <utility>
@@ -293,11 +294,11 @@ bool operator==(const DocumentMask& lhs, const DocumentMask& rhs) {
          roaring::api::roaring_bitmap_equals(&lhs._set, &rhs._set);
 }
 
-DocumentMask DocumentMask::ReadFrozen(IndexInput& in, uint64_t size) {
+DocumentMask DocumentMask::ReadFrozen(duckdb::ReadStream& in, uint64_t size) {
   std::shared_ptr<byte_type> frozen{
     static_cast<byte_type*>(::operator new(size, kFrozenAlignment)),
     FrozenFree{}};
-  in.ReadData(0, frozen.get(), size);
+  in.ReadData(frozen.get(), size);
   return DocumentMask{std::move(frozen), size};
 }
 

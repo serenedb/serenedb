@@ -51,6 +51,7 @@
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/search/scorers/constant_score.hpp"
 #include "iresearch/utils/conjunction_acceptor.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/system_compiler.hpp"

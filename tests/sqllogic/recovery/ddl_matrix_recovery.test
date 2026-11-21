@@ -364,7 +364,7 @@ dm.uq	uq_code_key	u
 
 
 query
-SELECT index_name, table_name FROM duckdb_indexes() WHERE schema_name = 'dm' ORDER BY 1;
+SELECT index_name, table_name FROM sdb_indexes() WHERE schema_name = 'dm' ORDER BY 1;
 ----
 index_name	table_name
 dm_inv_body	inv
@@ -485,7 +485,7 @@ dm.uq	uq_code_key	u
 
 connection after_crash
 query
-SELECT index_name, table_name FROM duckdb_indexes() WHERE schema_name = 'dm' ORDER BY 1;
+SELECT index_name, table_name FROM sdb_indexes() WHERE schema_name = 'dm' ORDER BY 1;
 ----
 index_name	table_name
 dm_inv_body	inv
@@ -688,7 +688,7 @@ dm.uq	uq_code_key	u
 
 connection after_restart
 query
-SELECT index_name, table_name FROM duckdb_indexes() WHERE schema_name = 'dm' ORDER BY 1;
+SELECT index_name, table_name FROM sdb_indexes() WHERE schema_name = 'dm' ORDER BY 1;
 ----
 index_name	table_name
 dm_inv_body	inv

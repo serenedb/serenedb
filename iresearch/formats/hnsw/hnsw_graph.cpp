@@ -24,11 +24,11 @@
 #include <absl/random/distributions.h>
 
 #include <cmath>
+#include <duckdb/common/serializer/write_stream.hpp>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <iterator>
 #include <string_view>
 
-#include "iresearch/store/data_input.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -36,8 +36,8 @@ namespace irs {
 namespace {
 
 template<typename T, typename A>
-void WriteArray(DataOutput& out, const std::vector<T, A>& v) {
-  out.WriteU64(v.size());
+void WriteArray(duckdb::WriteStream& out, const std::vector<T, A>& v) {
+  out.Write<uint64_t>(v.size());
   if (!v.empty()) {
     out.WriteData(reinterpret_cast<const byte_type*>(v.data()),
                   sizeof(T) * v.size());
@@ -45,11 +45,11 @@ void WriteArray(DataOutput& out, const std::vector<T, A>& v) {
 }
 
 template<typename T, typename A>
-void ReadArray(IndexInput& in, std::vector<T, A>& v) {
-  const auto size = static_cast<size_t>(in.ReadI64());
+void ReadArray(duckdb::InputFileReader& in, std::vector<T, A>& v) {
+  const size_t size = in.Read<uint64_t>();
   v.resize(size);
   if (size != 0) {
-    ReadOnce(in, reinterpret_cast<byte_type*>(v.data()), sizeof(T) * size);
+    in.ReadOnce(reinterpret_cast<byte_type*>(v.data()), sizeof(T) * size);
   }
 }
 
@@ -74,8 +74,9 @@ uint64_t PackBatchBytes(bytes_view raw, uint32_t frame_bytes) noexcept {
     std::max<uint64_t>(1, kPackBatchBytes / frame_bytes) * frame_bytes);
 }
 
-compression::Frames WritePacked(DataOutput& out, compression::Method method,
-                                bytes_view raw, uint32_t frame_bytes,
+compression::Frames WritePacked(duckdb::WriteStream& out,
+                                compression::Method method, bytes_view raw,
+                                uint32_t frame_bytes,
                                 std::span<byte_type> slots,
                                 ParallelFor parallel) {
   compression::Frames frames{
@@ -98,7 +99,7 @@ compression::Frames WritePacked(DataOutput& out, compression::Method method,
 }
 
 template<typename T, typename A>
-void ReadPacked(IndexInput& in, const compression::Frames& frames,
+void ReadPacked(duckdb::InputFileReader& in, const compression::Frames& frames,
                 std::vector<T, A>& v, ParallelFor parallel) {
   if (frames.raw_bytes % sizeof(T) != 0) {
     Corrupted("an array size that is not a whole number of elements");
@@ -121,7 +122,7 @@ void ReadPacked(IndexInput& in, const compression::Frames& frames,
       stored = std::make_unique_for_overwrite<byte_type[]>(size);
       capacity = size;
     }
-    ReadOnce(in, stored.get(), size);
+    in.ReadOnce(stored.get(), size);
     compression::Decompress(
       frames, first, last, {stored.get(), size},
       raw.subspan(starts[first].raw, starts[last].raw - starts[first].raw),
@@ -171,20 +172,20 @@ void HnswGraphWriter::AllocateLinks() {
   _processed.assign(slots, 0);
 }
 
-void HnswGraph::Serialize(DataOutput& out) const {
-  out.WriteU32(_m);
-  out.WriteU32(_entry);
-  out.WriteU32(_max_level);
+void HnswGraph::Serialize(duckdb::WriteStream& out) const {
+  out.Write<uint32_t>(_m);
+  out.Write<uint32_t>(_entry);
+  out.Write<uint32_t>(_max_level);
   WriteArray(out, _levels);
   WriteArray(out, _base);
   WriteArray(out, _upper);
 }
 
-HnswGraphFrames HnswGraph::SerializePacked(DataOutput& out,
+HnswGraphFrames HnswGraph::SerializePacked(duckdb::WriteStream& out,
                                            ParallelFor parallel) const {
-  out.WriteU32(_m);
-  out.WriteU32(_entry);
-  out.WriteU32(_max_level);
+  out.Write<uint32_t>(_m);
+  out.Write<uint32_t>(_entry);
+  out.Write<uint32_t>(_max_level);
   const auto levels = Bytes(_levels);
   const auto base = Bytes(_base);
   const auto upper = Bytes(_upper);
@@ -207,12 +208,12 @@ HnswGraphFrames HnswGraph::SerializePacked(DataOutput& out,
   return frames;
 }
 
-HnswGraph HnswGraph::Deserialize(IndexInput& in) {
+HnswGraph HnswGraph::Deserialize(duckdb::InputFileReader& in) {
   HnswGraph g;
-  g._m = static_cast<uint32_t>(in.ReadI32());
+  g._m = in.Read<uint32_t>();
   g._m0 = 2 * g._m;
-  g._entry = static_cast<uint32_t>(in.ReadI32());
-  g._max_level = static_cast<uint32_t>(in.ReadI32());
+  g._entry = in.Read<uint32_t>();
+  g._max_level = in.Read<uint32_t>();
   ReadArray(in, g._levels);
   g.ComputeOffsets();
   ReadArray(in, g._base);
@@ -220,14 +221,14 @@ HnswGraph HnswGraph::Deserialize(IndexInput& in) {
   return g;
 }
 
-HnswGraph HnswGraph::DeserializePacked(IndexInput& in,
+HnswGraph HnswGraph::DeserializePacked(duckdb::InputFileReader& in,
                                        const HnswGraphFrames& frames,
                                        ParallelFor parallel) {
   HnswGraph g;
-  g._m = static_cast<uint32_t>(in.ReadI32());
+  g._m = in.Read<uint32_t>();
   g._m0 = 2 * g._m;
-  g._entry = static_cast<uint32_t>(in.ReadI32());
-  g._max_level = static_cast<uint32_t>(in.ReadI32());
+  g._entry = in.Read<uint32_t>();
+  g._max_level = in.Read<uint32_t>();
   ReadPacked(in, frames.levels, g._levels, parallel);
   const auto upper = g.ComputeOffsets();
   if (frames.base.raw_bytes !=

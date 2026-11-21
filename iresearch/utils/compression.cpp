@@ -31,11 +31,11 @@
 #include <array>
 #include <bit>
 #include <cstring>
+#include <duckdb/common/bitpacking.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <string_view>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/bit_packing.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::compression {
@@ -66,7 +66,8 @@ size_t FrameCount(uint64_t raw_bytes, uint32_t frame_bytes) noexcept {
 }
 
 constexpr size_t kStripHeaderBytes = sizeof(uint32_t) + sizeof(uint8_t);
-constexpr uint32_t kStripBlock = packed::kBlockSize32;
+constexpr uint32_t kStripBlock = static_cast<uint32_t>(
+  duckdb::BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE);
 
 uint64_t StripBlockBytes(uint64_t values, uint32_t width) noexcept {
   return (values + kStripBlock - 1) / kStripBlock * width * sizeof(uint32_t);
@@ -101,11 +102,12 @@ class StripWriter {
  private:
   void Flush() noexcept {
     std::array<uint32_t, kStripBlock> words{};
-    packed::PackBlock(_values.data(), words.data(), _width);
-    for (uint32_t word = 0; word != _width; ++word) {
-      absl::little_endian::Store32(_at, words[word]);
-      _at += sizeof(uint32_t);
-    }
+    duckdb::BitpackingPrimitives::PackBlock<uint32_t>(
+      reinterpret_cast<duckdb::data_ptr_t>(words.data()), _values.data(),
+      static_cast<duckdb::bitpacking_width_t>(_width));
+    const auto bytes = size_t{_width} * sizeof(uint32_t);
+    std::memcpy(_at, words.data(), bytes);
+    _at += bytes;
     _size = 0;
   }
 
@@ -143,12 +145,12 @@ class StripReader {
       return false;
     }
     std::array<uint32_t, kStripBlock> words{};
-    for (uint32_t word = 0; word != _width; ++word) {
-      words[word] =
-        absl::little_endian::Load32(_in.data() + _at + word * sizeof(uint32_t));
-    }
+    std::memcpy(words.data(), _in.data() + _at, bytes);
     _at += bytes;
-    packed::UnpackBlock(words.data(), _values.data(), _width);
+    duckdb::BitpackingPrimitives::UnPackBlock<uint32_t>(
+      reinterpret_cast<duckdb::data_ptr_t>(_values.data()),
+      reinterpret_cast<duckdb::const_data_ptr_t>(words.data()),
+      static_cast<duckdb::bitpacking_width_t>(_width));
     _used = 0;
     return true;
   }
@@ -475,11 +477,12 @@ void EncodePlans(Method method, std::span<Plan> plans, ParallelFor parallel) {
 
 class CountingStream final : public duckdb::WriteStream {
  public:
-  void WriteData(duckdb::const_data_ptr_t, duckdb::idx_t size) final {
+  uint64_t Bytes() const noexcept { return _bytes; }
+
+ protected:
+  void Overflow(duckdb::const_data_ptr_t, duckdb::idx_t size) final {
     _bytes += size;
   }
-
-  uint64_t Bytes() const noexcept { return _bytes; }
 
  private:
   uint64_t _bytes = 0;
@@ -490,6 +493,18 @@ void SplitFrames(bytes_view raw, uint32_t frame_bytes,
   for (size_t at = 0; at < raw.size(); at += frame_bytes) {
     visit(raw.substr(at, frame_bytes));
   }
+}
+
+uint64_t ReadStoredSize(duckdb::BinaryDeserializer& object, Frames& frames) {
+  object.ReadObject(
+    kPackedFrames.id, kPackedFrames.tag,
+    [&](duckdb::BinaryDeserializer& in) { frames = ReadFrames(in); });
+  object.OnPropertyBegin(kPackedBytes.id, kPackedBytes.tag);
+  const auto size = object.ReadUnsignedInt64();
+  if (size != StoredBytes(frames)) {
+    Corrupted("its bytes do not match its frames");
+  }
+  return size;
 }
 
 }  // namespace
@@ -511,7 +526,7 @@ void FrameWriter::AddPiece(uint64_t size) {
   });
 }
 
-void FrameWriter::WriteData(duckdb::const_data_ptr_t data, duckdb::idx_t size) {
+void FrameWriter::Overflow(duckdb::const_data_ptr_t data, duckdb::idx_t size) {
   if (const auto head = std::min<uint64_t>(size, Room())) {
     std::memcpy(Alloc(head), data, head);
     data += head;
@@ -710,18 +725,27 @@ bool IsPlain(const Compressed& packed) noexcept {
 Packed ReadPacked(duckdb::BinaryDeserializer& object,
                   duckdb::MemoryStream& stream) {
   Packed packed;
-  object.ReadObject(kPackedFrames.id, kPackedFrames.tag,
-                    [&](duckdb::BinaryDeserializer& frames) {
-                      packed.frames = ReadFrames(frames);
-                    });
-  object.OnPropertyBegin(kPackedBytes.id, kPackedBytes.tag);
-  const auto size = object.ReadUnsignedInt64();
+  const auto size = ReadStoredSize(object, packed.frames);
   const auto at = stream.GetPosition();
-  if (size != StoredBytes(packed.frames) || size > stream.GetCapacity() - at) {
+  if (size > stream.GetCapacity() - at) {
     Corrupted("its bytes do not match its frames");
   }
   packed.stored = {stream.GetData() + at, size};
   stream.SetPosition(at + size);
+  object.OnPropertyEnd();
+  return packed;
+}
+
+Packed ReadPacked(duckdb::BinaryDeserializer& object,
+                  duckdb::InputFileReader& stream) {
+  Packed packed;
+  const auto size = ReadStoredSize(object, packed.frames);
+  const auto* at = stream.Peek(size);
+  if (!at) {
+    Corrupted("its bytes do not match its frames");
+  }
+  packed.stored = {at, size};
+  stream.Consume(size);
   object.OnPropertyEnd();
   return packed;
 }

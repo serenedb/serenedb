@@ -24,6 +24,7 @@
 
 #include <array>
 #include <iresearch/formats/posting/block_codec.hpp>
+#include <iresearch/formats/posting/block_encode.hpp>
 #include <iresearch/formats/posting/block_io.hpp>
 #include <iresearch/formats/posting/common.hpp>
 #include <iresearch/search/detail/bitset_build.hpp>
@@ -37,6 +38,7 @@ namespace {
 namespace bc = irs::block_codec;
 
 using Codec = bc::BlockCodec;
+using Encoder = bc::BlockEncoder;
 
 constexpr uint32_t kBlock = bc::kBlock;
 constexpr uint32_t kSlack = 64;
@@ -81,8 +83,8 @@ void CheckDocsBlock(Guards& guards, const std::vector<irs::doc_id_t>& docs,
   const bool full = len == kBlock;
   auto* encoded = guards.encoded.Bytes(bc::kMaxBlockBytes);
   const auto size =
-    full ? Codec::EncodeDeltaBlock(docs.data(), prev, encoded, options)
-         : Codec::EncodeDeltaTail(docs.data(), len, prev, encoded, options);
+    full ? Encoder::EncodeDeltaBlock(docs.data(), prev, encoded, options)
+         : Encoder::EncodeDeltaTail(docs.data(), len, prev, encoded, options);
   SDB_VERIFY(size == (full ? Codec::DeltaBlockSize(encoded)
                            : Codec::DeltaTailSize(encoded, len)),
              "docs size, len ", len);
@@ -109,8 +111,8 @@ void CheckValuesBlock(Guards& guards, const std::vector<uint32_t>& values,
   const bool full = len == kBlock;
   auto* encoded = guards.encoded.Bytes(bc::kMaxBlockBytes);
   const auto size =
-    full ? Codec::EncodeValuesBlock(values.data(), encoded, options)
-         : Codec::EncodeValuesTail(values.data(), len, encoded, options);
+    full ? Encoder::EncodeValuesBlock(values.data(), encoded, options)
+         : Encoder::EncodeValuesTail(values.data(), len, encoded, options);
   SDB_VERIFY(size == (full ? Codec::ValuesBlockSize(encoded)
                            : Codec::ValuesTailSize(encoded, len)),
              "values size, len ", len);
@@ -425,7 +427,7 @@ irs::bstring EncodeDocs(const std::vector<irs::doc_id_t>& docs) {
     const auto* first = docs.data() + b * kBlock;
     prev = ListPrev(b, prev);
     bytes.append(block.data(),
-                 Codec::EncodeDeltaBlock(first, prev, block.data()));
+                 Encoder::EncodeDeltaBlock(first, prev, block.data()));
     prev = first[kBlock - 1];
   }
   bytes.append(kSlack, 0);
@@ -454,8 +456,8 @@ irs::bstring EncodeValues(const std::vector<uint32_t>& values,
     for (uint32_t i = 0; i != kBlock; ++i) {
       stored[i] = values[b * kBlock + i] - Add;
     }
-    bytes.append(block.data(), Codec::EncodeValuesBlock(stored.data(),
-                                                        block.data(), options));
+    bytes.append(block.data(), Encoder::EncodeValuesBlock(
+                                 stored.data(), block.data(), options));
   }
   bytes.append(kSlack, 0);
   const auto* p = bytes.data();
@@ -644,7 +646,7 @@ void BmEncodeDocs(benchmark::State& state) {
     for (uint32_t b = 0; b != kEncodeValues / kBlock; ++b) {
       const auto* first = docs.data() + b * kBlock;
       benchmark::DoNotOptimize(
-        Codec::EncodeDeltaBlock(first, prev, out.data()));
+        Encoder::EncodeDeltaBlock(first, prev, out.data()));
       prev = first[kBlock - 1];
     }
   }
@@ -657,7 +659,7 @@ void EncodeValueBlocks(benchmark::State& state,
   std::vector<irs::byte_type> out(bc::kMaxBlockBytes + kSlack);
   for (auto _ : state) {
     for (uint32_t b = 0; b != kEncodeValues / kBlock; ++b) {
-      benchmark::DoNotOptimize(Codec::EncodeValuesBlock(
+      benchmark::DoNotOptimize(Encoder::EncodeValuesBlock(
         values.data() + b * kBlock, out.data(), options));
     }
   }
@@ -712,8 +714,8 @@ void DecodeTailDocs(benchmark::State& state) {
   irs::bstring bytes;
   std::array<irs::byte_type, bc::kMaxBlockBytes> block;
   for (uint32_t t = 0; t != kTails; ++t) {
-    bytes.append(block.data(), Codec::EncodeDeltaTail(docs.data() + t * len,
-                                                      len, 0, block.data()));
+    bytes.append(block.data(), Encoder::EncodeDeltaTail(docs.data() + t * len,
+                                                        len, 0, block.data()));
   }
   const auto size = bytes.size();
   bytes.append(kSlack, 0);
@@ -756,8 +758,8 @@ void BmTailValues(benchmark::State& state) {
   irs::bstring bytes;
   std::array<irs::byte_type, bc::kMaxBlockBytes> block;
   for (uint32_t t = 0; t != kTails; ++t) {
-    bytes.append(block.data(), Codec::EncodeValuesTail(values.data() + t * len,
-                                                       len, block.data()));
+    bytes.append(block.data(), Encoder::EncodeValuesTail(
+                                 values.data() + t * len, len, block.data()));
   }
   const auto size = bytes.size();
   bytes.append(kSlack, 0);
@@ -787,7 +789,7 @@ void BmEncodeTailDocs(benchmark::State& state) {
   for (auto _ : state) {
     for (uint32_t t = 0; t != kTails; ++t) {
       benchmark::DoNotOptimize(
-        Codec::EncodeDeltaTail(docs.data() + t * len, len, 0, block.data()));
+        Encoder::EncodeDeltaTail(docs.data() + t * len, len, 0, block.data()));
     }
   }
   state.SetItemsProcessed(state.iterations() * kTails * len);
@@ -801,7 +803,7 @@ void BmEncodeTailValues(benchmark::State& state) {
   for (auto _ : state) {
     for (uint32_t t = 0; t != kTails; ++t) {
       benchmark::DoNotOptimize(
-        Codec::EncodeValuesTail(values.data() + t * len, len, block.data()));
+        Encoder::EncodeValuesTail(values.data() + t * len, len, block.data()));
     }
   }
   state.SetItemsProcessed(state.iterations() * kTails * len);
@@ -864,8 +866,8 @@ const irs::bstring& CachedBias(GapShape shape, uint32_t mean_x10) {
   std::array<irs::byte_type, bc::kMaxBlockBytes> block;
   irs::doc_id_t prev = 0;
   for (uint32_t b = 0; b != kBiasDocs / kBlock; ++b) {
-    bytes.append(block.data(), Codec::EncodeDeltaBlock(docs.data() + b * kBlock,
-                                                       prev, block.data()));
+    bytes.append(block.data(), Encoder::EncodeDeltaBlock(
+                                 docs.data() + b * kBlock, prev, block.data()));
     prev = docs[b * kBlock + kBlock - 1];
   }
   bytes.append(kSlack, 0);
@@ -917,7 +919,7 @@ void BmBiasSink(benchmark::State& state) {
   irs::detail::HoleBuf holes;
   irs::DocsBuf buf;
   for (auto _ : state) {
-    irs::BytesViewInput in{
+    duckdb::MemoryReader in{
       irs::bytes_view{encoded.data(), encoded.size() - kSlack}};
     Sink sink{words.data()};
     irs::detail::ReadPosting(meta, in, nullptr, holes.data, buf.data(), false,

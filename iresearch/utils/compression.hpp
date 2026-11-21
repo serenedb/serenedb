@@ -27,6 +27,7 @@
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -82,13 +83,17 @@ struct Packed {
 class FrameWriter final : public duckdb::WriteStream {
  public:
   explicit FrameWriter(uint32_t frame_bytes);
+  FrameWriter(FrameWriter&&) noexcept = default;
+  FrameWriter& operator=(FrameWriter&&) noexcept = default;
 
-  void WriteData(duckdb::const_data_ptr_t data, duckdb::idx_t size) final;
   duckdb::data_ptr_t Alloc(duckdb::idx_t size) final;
 
   uint32_t FrameBytes() const noexcept { return _frame_bytes; }
   uint64_t RawBytes() const noexcept { return _raw_bytes; }
   void ForEachFrame(absl::FunctionRef<void(bytes_view)> visit) const;
+
+ protected:
+  void Overflow(duckdb::const_data_ptr_t data, duckdb::idx_t size) final;
 
  private:
   struct Piece {
@@ -154,5 +159,8 @@ bool IsPlain(const Compressed& packed) noexcept;
 
 Packed ReadPacked(duckdb::BinaryDeserializer& object,
                   duckdb::MemoryStream& stream);
+
+Packed ReadPacked(duckdb::BinaryDeserializer& object,
+                  duckdb::InputFileReader& stream);
 
 }  // namespace irs::compression

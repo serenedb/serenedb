@@ -53,7 +53,7 @@ RELATIONS = [
     "otherdb.public.regin_t", "", '""', '"unterminated', ".regin_t", "regin_t.", "regin_t x",
     "  regin_t  ", "public . regin_t", "pg_class", "pg_catalog.pg_class",
     "information_schema.tables", "nosuchschema.t", "0", "-", "1259", "00001259", "4294967295",
-    "4294967296", "18446744073709551616", "duckdb_tables", "sqlite_master",
+    "4294967296", "18446744073709551616", "sdb_tables", "sqlite_master",
 ]
 
 PROCS = [

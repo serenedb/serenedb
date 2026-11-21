@@ -65,7 +65,7 @@ SELECT 1;
 
 connection after_crash
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'db131';
+SELECT count(*) FROM sdb_databases() WHERE database_name = 'db131';
 ----
 count
 0

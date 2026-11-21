@@ -55,6 +55,7 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "catalog/transaction.h"
+#include "iresearch/utils/log.hpp"
 #include "jobs/scheduler.h"
 #include "pg/connection_context.h"
 #include "pg/types/xml.h"
@@ -375,6 +376,23 @@ const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
                     ERR_MSG("role \"", name, "\" does not exist"));
   }
   return entry->Cast<catalog::RoleCatalogEntry>();
+}
+
+void SetDefaultTablespace(duckdb::ClientContext& ctx, duckdb::SetScope,
+                          duckdb::Value& value) {
+  const auto name = value.ToString();
+  if (name.empty()) {
+    return;
+  }
+  auto& cluster = catalog::ClusterOf(ctx);
+  if (!cluster.Set(duckdb::CatalogType::TABLESPACE_ENTRY)
+         .Get(cluster.GetCatalogTransaction(ctx), duckdb::Identifier{name})) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("invalid value for parameter "
+                            "\"default_tablespace\": \"",
+                            name, "\""),
+                    ERR_DETAIL("Tablespace \"", name, "\" does not exist."));
+  }
 }
 
 void RefreshSuperuser(ConnectionContext& conn) {
@@ -790,7 +808,7 @@ constexpr std::pair<std::string_view, VariableDescription>
       "debug_verification",
       {
         LogicalTypeId::BOOLEAN,
-        "Toggle DuckDB's debug Verify() calls. SET debug_verification = "
+        "Toggle the engine's debug Verify() calls. SET debug_verification = "
         "false to disable verification projections in EXPLAIN and speed "
         "up tests in debug builds. Default: false.",
         [] { return duckdb::Value::BOOLEAN(false); },
@@ -1469,15 +1487,6 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      "default_tablespace",
-      {
-        LogicalTypeId::VARCHAR,
-        "Not used. Added for PostgreSQL compatibility only.",
-        [] { return duckdb::Value{""}; },
-        NoOverwrite<"default_tablespace">,
-      },
-    },
-    {
       "default_table_access_method",
       {
         LogicalTypeId::VARCHAR,
@@ -1588,6 +1597,16 @@ constexpr std::pair<std::string_view, VariableDescription>
         .set_callback = SetRoleCallback,
         .reset_callback = ResetRoleCallback,
         .no_reset_all = true,
+      },
+    },
+    {
+      kDefaultTablespaceSetting,
+      {
+        LogicalTypeId::VARCHAR,
+        "The tablespace tables and inverted indexes on views are created in "
+        "when CREATE names none. Default: '' (the database's own tablespace).",
+        [] { return duckdb::Value{""}; },
+        SetDefaultTablespace,
       },
     },
     {

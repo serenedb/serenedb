@@ -21,13 +21,19 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/strings/str_cat.h>
+
+#include <filesystem>
 #include <iresearch/index/index_features.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/directory_utils.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <thread>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "hook_file_system.hpp"
+#include "index_dir.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
@@ -45,8 +51,6 @@ inline constexpr irs::field_id kNameId = tests::FieldIdFor("name");
 // file. Tests only use these to address the term reader for a known JSON
 // field name; the on-disk index keys fields by id.
 inline constexpr irs::field_id kSameId = tests::FieldIdFor("same");
-inline constexpr irs::field_id kSameAnlPayId =
-  tests::FieldIdFor("same_anl_pay");
 
 tests::Terms MakeByTerm(irs::field_id field_id, std::string_view value) {
   return {field_id, {std::string{value}}};
@@ -74,139 +78,47 @@ bool InsertWithName(tests::IndexWriter& writer, const tests::Document& doc) {
   return true;
 }
 
-class FailingDirectory : public tests::FinishHookDirectory {
+class FailingFileSystem final : public tests::HookFileSystem {
  public:
   enum class Failure : size_t {
     CREATE = 0,
-    EXISTS,
-    LENGTH,
-    MTIME,
     OPEN,
-    RENAME,
     REMOVE,
     SYNC,
-    REOPEN,
-    DUP,
+    CLOSE,
   };
 
- private:
-  class FailingIndexInput final : public tests::ForwardingIndexInput {
-   public:
-    explicit FailingIndexInput(IndexInput::ptr&& impl, std::string_view name,
-                               const FailingDirectory& dir)
-      : ForwardingIndexInput(std::move(impl)), _dir(&dir), _name(name) {}
+  FailingFileSystem() : FailingFileSystem{tests::DatabaseFileSystem()} {}
 
-    ptr Dup() const final {
-      if (_dir->ShouldFail(Failure::DUP, _name)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                        ERR_MSG("injected dup failure: ", _name));
-      }
-
-      return std::make_unique<FailingIndexInput>(ForwardingIndexInput::Dup(),
-                                                 this->_name, *this->_dir);
-    }
-    ptr Reopen() const final {
-      if (_dir->ShouldFail(Failure::REOPEN, _name)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                        ERR_MSG("injected reopen failure: ", _name));
-      }
-
-      return std::make_unique<FailingIndexInput>(ForwardingIndexInput::Reopen(),
-                                                 this->_name, *this->_dir);
-    }
-    bool Sync() const noexcept final {
-      return !_dir->ShouldFail(Failure::SYNC, _name) &&
-             ForwardingIndexInput::Sync();
-    }
-
-   private:
-    const FailingDirectory* _dir;
-    std::string _name;
-  };
-
- public:
-  explicit FailingDirectory(irs::Directory& impl) noexcept
-    : tests::FinishHookDirectory(impl) {}
+  explicit FailingFileSystem(duckdb::FileSystem& inner) noexcept
+    : tests::HookFileSystem{inner} {}
 
   bool RegisterFailure(Failure type, const std::string& name) {
     return _failures.emplace(name, type).second;
   }
 
-  void ClearFailures() noexcept { _failures.clear(); }
-
   size_t NumFailures() const noexcept { return _failures.size(); }
 
   bool NoFailures() const noexcept { return _failures.empty(); }
 
-  irs::IndexOutput::ptr create(std::string_view name) final {
-    if (ShouldFail(Failure::CREATE, name)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                      ERR_MSG("injected create failure: ", name));
-    }
-
-    return tests::FinishHookDirectory::create(name);
-  }
-  bool exists(bool& result, std::string_view name) const noexcept final {
-    if (ShouldFail(Failure::EXISTS, name)) {
-      return false;
-    }
-
-    return tests::DirectoryMock::exists(result, name);
-  }
-  bool length(uint64_t& result, std::string_view name) const noexcept final {
-    if (ShouldFail(Failure::LENGTH, name)) {
-      return false;
-    }
-
-    return tests::DirectoryMock::length(result, name);
-  }
-  bool mtime(std::time_t& result, std::string_view name) const noexcept final {
-    if (ShouldFail(Failure::MTIME, name)) {
-      return false;
-    }
-
-    return tests::DirectoryMock::mtime(result, name);
-  }
-  irs::IndexInput::ptr open(std::string_view name,
-                            irs::IOAdvice advice) const final {
-    if (ShouldFail(Failure::OPEN, name)) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                      ERR_MSG("injected open failure: ", name));
-    }
-
-    return std::make_unique<FailingIndexInput>(
-      tests::DirectoryMock::open(name, advice), name, *this);
-  }
-  bool remove(std::string_view name) noexcept final {
-    if (ShouldFail(Failure::REMOVE, name)) {
-      return false;
-    }
-
-    return tests::DirectoryMock::remove(name);
-  }
-  bool rename(std::string_view src, std::string_view dst) noexcept final {
-    if (ShouldFail(Failure::RENAME, src)) {
-      return false;
-    }
-
-    return tests::DirectoryMock::rename(src, dst);
-  }
+  void OnCreate(std::string_view name) final { Inject(Failure::CREATE, name); }
+  void OnOpen(std::string_view name) final { Inject(Failure::OPEN, name); }
+  void OnRemove(std::string_view name) final { Inject(Failure::REMOVE, name); }
+  void OnSync(std::string_view name) final { Inject(Failure::SYNC, name); }
+  void OnClose(std::string_view name) final { Inject(Failure::CLOSE, name); }
 
  private:
-  irs::IndexInput::ptr Finished(irs::IndexInput::ptr in,
-                                std::string_view name) const final {
-    return std::make_unique<FailingIndexInput>(std::move(in), name, *this);
-  }
-
-  bool ShouldFail(Failure type, std::string_view name) const {
+  void Inject(Failure type, std::string_view name) {
     auto it = _failures.find(std::make_pair(std::string{name}, type));
 
-    if (_failures.end() != it) {
-      _failures.erase(it);
-      return true;
+    if (_failures.end() == it) {
+      return;
     }
 
-    return false;
+    _failures.erase(it);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_IO_ERROR),
+      ERR_MSG("injected ", magic_enum::enum_name(type), " failure: ", name));
   }
 
   typedef std::pair<std::string, Failure> FailT;
@@ -221,10 +133,27 @@ class FailingDirectory : public tests::FinishHookDirectory {
     }
   };
 
-  mutable std::set<FailT, FailLess> _failures;
+  std::set<FailT, FailLess> _failures;
 };
 
-void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
+class IndexDeathTest : public TestBase {
+ protected:
+  tests::IndexDir LocalFiles(duckdb::FileSystem& fs) {
+    const auto path = test_dir() / absl::StrCat("index", ++_roots);
+    std::filesystem::create_directories(path);
+    return tests::IndexDir{irs::DuckDBEngine::Instance().instance(), fs,
+                           path.string()};
+  }
+
+  void OpenReader(
+    std::function<void(FailingFileSystem& fs)> failure_registerer);
+
+ private:
+  size_t _roots = 0;
+};
+
+void IndexDeathTest::OpenReader(
+  std::function<void(FailingFileSystem& fs)> failure_registerer) {
   constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
                                               irs::IndexFeatures::Pos |
                                               irs::IndexFeatures::Offs;
@@ -236,8 +165,8 @@ void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
   auto query_doc2 = MakeByTerm(kNameId, "B");
 
   // create source segment
-  irs::MemoryDirectory impl;
-  FailingDirectory dir(impl);
+  FailingFileSystem fs;
+  const auto dir = LocalFiles(fs);
 
   // write index
   {
@@ -257,9 +186,9 @@ void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
       tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
   }
 
-  failure_registerer(dir);
+  failure_registerer(fs);
 
-  while (!dir.NoFailures()) {
+  while (!fs.NoFailures()) {
     ASSERT_SQL_ERROR(
       (tests::OpenReader(dir, irs::tests::DefaultReaderOptions())),
       ERRCODE_IO_ERROR);
@@ -304,180 +233,28 @@ void OpenReader(std::function<void(FailingDirectory& dir)> failure_registerer) {
   ASSERT_TRUE(irs::doc_limits::eof(live_docs->Next()));
 }
 
+using index_death_test_formats_15 = IndexDeathTest;
+
 }  // namespace
 
-TEST(index_death_test_formats_15, open_reader) {
-  ::OpenReader([](FailingDirectory& dir) {
+TEST_F(index_death_test_formats_15, open_reader) {
+  OpenReader([](FailingFileSystem& fs) {
     // postings list (documents)
-    dir.RegisterFailure(FailingDirectory::Failure::OPEN,
-                        "0000000000000001.doc");
+    fs.RegisterFailure(FailingFileSystem::Failure::OPEN,
+                       "0000000000000001.doc");
     // columnstore
-    dir.RegisterFailure(FailingDirectory::Failure::OPEN,
-                        "0000000000000001.col");
+    fs.RegisterFailure(FailingFileSystem::Failure::OPEN,
+                       "0000000000000001.col");
     // term dictionary (.idx: term index + term data)
-    dir.RegisterFailure(FailingDirectory::Failure::OPEN,
-                        "0000000000000001.idx");
+    fs.RegisterFailure(FailingFileSystem::Failure::OPEN,
+                       "0000000000000001.idx");
     // postings list (positions)
-    dir.RegisterFailure(FailingDirectory::Failure::OPEN,
-                        "0000000000000001.pos");
+    fs.RegisterFailure(FailingFileSystem::Failure::OPEN,
+                       "0000000000000001.pos");
     // postings list (offset + payload)
-    dir.RegisterFailure(FailingDirectory::Failure::OPEN,
-                        "0000000000000001.pay");
+    fs.RegisterFailure(FailingFileSystem::Failure::OPEN,
+                       "0000000000000001.pay");
   });
-}
-
-TEST(index_death_test_formats_15, postings_doc_reopen_fail) {
-  constexpr size_t kDocs = 2 * irs::doc_limits::kBlockSize;
-  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
-                              &tests::PayloadedJsonFieldFactory);
-  const auto* doc = gen.next();
-
-  irs::MemoryDirectory impl;
-  FailingDirectory dir(impl);
-  {
-    auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
-                                           irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-    for (size_t i = 0; i != kDocs; ++i) {
-      ASSERT_TRUE(InsertWithName(*writer, *doc));
-    }
-    ASSERT_TRUE(writer->RefreshCommit());
-  }
-
-  auto reader = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader.size());
-  auto& segment = reader[0];
-  auto terms = segment.field(kSameAnlPayId);
-  ASSERT_NE(nullptr, terms);
-  auto term_itr = terms->iterator();
-  ASSERT_NE(nullptr, term_itr);
-  ASSERT_TRUE(term_itr->next());
-  ASSERT_EQ(kDocs, term_itr->cookie().docs_count);
-
-  dir.RegisterFailure(FailingDirectory::Failure::REOPEN,
-                      "0000000000000001.doc");
-  ASSERT_SQL_ERROR((void)term_itr->postings(irs::IndexFeatures::None),
-                   ERRCODE_IO_ERROR);
-  ASSERT_TRUE(dir.NoFailures());
-
-  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-  size_t count = 0;
-  while (!irs::doc_limits::eof(docs_itr->Next())) {
-    ++count;
-  }
-  ASSERT_EQ(kDocs, count);
-}
-
-TEST(index_death_test_formats_15, postings_reopen_fail) {
-  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
-                                              irs::IndexFeatures::Pos |
-                                              irs::IndexFeatures::Offs;
-
-  constexpr irs::IndexFeatures kPositions =
-    irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
-
-  constexpr irs::IndexFeatures kPositionsOffsets = irs::IndexFeatures::Freq |
-                                                   irs::IndexFeatures::Pos |
-                                                   irs::IndexFeatures::Offs;
-
-  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
-                              &tests::PayloadedJsonFieldFactory);
-  const auto* doc1 = gen.next();
-  const auto* doc2 = gen.next();
-  auto query_doc2 = MakeByTerm(kNameId, "B");
-
-  // create source segment
-  irs::MemoryDirectory impl;
-  FailingDirectory dir(impl);
-
-  // write index
-  {
-    auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
-                                           irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(InsertWithName(*writer, *doc1));
-
-    ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->RefreshCommit());
-
-    tests::Remove(*writer, query_doc2);
-
-    ASSERT_TRUE(writer->RefreshCommit());
-    tests::AssertSnapshotEquality(
-      writer->GetSnapshot(),
-      tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
-  }
-
-  // check data
-  auto reader = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(2, reader.docs_count());
-  ASSERT_EQ(1, reader.live_docs_count());
-
-  // validate index
-  tests::index_t expected_index;
-  expected_index.emplace_back();
-  expected_index.back().insert(*doc1);
-  expected_index.back().insert(*doc2);
-  tests::AssertIndex(reader, expected_index, kAllFeatures);
-
-  // validate columnstore
-  auto& segment = reader[0];
-  const auto* column = segment.Column(kNameId);
-  ASSERT_NE(nullptr, column);
-  irs::tests::BlobPointReader values{segment, *column};
-  ASSERT_EQ(2, segment.docs_count());
-  ASSERT_EQ(1, segment.live_docs_count());
-  auto terms = segment.field(kSameAnlPayId);
-  ASSERT_NE(nullptr, terms);
-
-  auto term_itr = terms->iterator();  // successful attempt
-  ASSERT_NE(nullptr, term_itr);
-  ASSERT_TRUE(term_itr->next());
-
-  // regiseter reopen failure in positions
-  dir.RegisterFailure(FailingDirectory::Failure::REOPEN,
-                      "0000000000000001.pos");
-  // can't reopen position input
-  ASSERT_SQL_ERROR((void)term_itr->postings(kPositions), ERRCODE_IO_ERROR);
-  // regiseter reopen failure in payload
-  dir.RegisterFailure(FailingDirectory::Failure::REOPEN,
-                      "0000000000000001.pay");
-  // can't reopen offset input
-  ASSERT_SQL_ERROR((void)term_itr->postings(kPositionsOffsets),
-                   ERRCODE_IO_ERROR);
-  // regiseter reopen failure in payload
-  // can't reopen offset input
-  dir.RegisterFailure(FailingDirectory::Failure::REOPEN,
-                      "0000000000000001.pay");
-  ASSERT_SQL_ERROR((void)term_itr->postings(kPositionsOffsets),
-                   ERRCODE_IO_ERROR);
-
-  // regiseter reopen failure in positions
-  dir.RegisterFailure(FailingDirectory::Failure::REOPEN,
-                      "0000000000000001.pos");
-  // regiseter reopen failure in payload
-  dir.RegisterFailure(FailingDirectory::Failure::REOPEN,
-                      "0000000000000001.pay");
-  ASSERT_SQL_ERROR((void)term_itr->postings(kAllFeatures), ERRCODE_IO_ERROR);
-  ASSERT_SQL_ERROR((void)term_itr->postings(kAllFeatures), ERRCODE_IO_ERROR);
-
-  ASSERT_TRUE(dir.NoFailures());
-  // successful attempt
-  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-  ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-  ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                   values, docs_itr->Value()));
-  ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-  ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                   values, docs_itr->Value()));
-  ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-
-  // validate live docs
-  auto live_docs = segment.docs_iterator();
-  ASSERT_EQ(1, live_docs->Next());
-  ASSERT_TRUE(irs::doc_limits::eof(live_docs->Next()));
 }
 
 // =======================================================================
@@ -488,28 +265,28 @@ TEST(index_death_test_formats_15, postings_reopen_fail) {
 // per-segment columnstore failures register against `_N.col`.
 // =======================================================================
 
-TEST(index_death_test_formats_15,
-     segment_columnstore_creation_failure_1st_phase_flush) {
+TEST_F(index_death_test_formats_15,
+       segment_columnstore_creation_failure_1st_phase_flush) {
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
                               &tests::PayloadedJsonFieldFactory);
   const auto* doc1 = gen.next();
   const auto* doc2 = gen.next();
 
   // Phase 1: columnstore creation fails on the very first segment.
-  // SegmentWriter::reset(meta) wires the columnstore Writer via
-  // `dir.create("0000000000000001.col")` and throws on failure.
+  // SegmentWriter::reset(meta) wires the columnstore Writer, which creates
+  // `0000000000000001.col` and throws on failure.
   {
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000001.col");
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000001.col");
 
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
     // First insert triggers segment_writer::reset(meta) -> cs Writer
-    // constructor -> dir.create("0000000000000001.col") -> throw.
+    // constructor -> creating `0000000000000001.col` -> throw.
     ASSERT_SQL_ERROR(InsertWithName(*writer, *doc1), ERRCODE_IO_ERROR);
 
     ASSERT_FALSE(writer->RefreshBegin());
@@ -530,10 +307,10 @@ TEST(index_death_test_formats_15,
                                                 irs::IndexFeatures::Pos |
                                                 irs::IndexFeatures::Offs;
 
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000001.col");
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000001.col");
 
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
@@ -581,10 +358,10 @@ TEST(index_death_test_formats_15,
                                                 irs::IndexFeatures::Pos |
                                                 irs::IndexFeatures::Offs;
 
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000002.col");
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000002.col");
 
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
@@ -655,11 +432,11 @@ TEST(index_death_test_formats_15,
   }
 }
 
-TEST(index_death_test_formats_15,
-     segment_components_creation_failure_1st_phase_flush) {
+TEST_F(index_death_test_formats_15,
+       segment_components_creation_failure_1st_phase_flush) {
   // Per-segment file creation order (verified empirically): `_N.col` is
   // created at *insert* time (SegmentWriter::reset(meta) -> cs Writer
-  // ctor -> dir.create), then at Begin() the segment flush creates
+  // ctor), then at Begin() the segment flush creates
   // `_N.idx` -> `_N.doc` -> `_N.pos` -> `_N.pay` -> `_N.0.sm` ->
   // `pending_segments_M`. We exercise CREATE failures one per attempt
   // across consecutive segment ids; each retry sees the failure either
@@ -674,10 +451,10 @@ TEST(index_death_test_formats_15,
   // Helper that drives one round: register one failure, try
   // insert+insert+remove+Begin, expect *some* throw to consume the
   // failure. Returns when the failure budget is empty.
-  auto DriveCreateFailures = [&](FailingDirectory& dir,
+  auto DriveCreateFailures = [&](FailingFileSystem& fs,
                                  tests::IndexWriter& writer) {
-    while (!dir.NoFailures()) {
-      const auto failures_before = dir.NumFailures();
+    while (!fs.NoFailures()) {
+      const auto failures_before = fs.NumFailures();
       bool inserts_ok = true;
       try {
         if (!InsertWithName(writer, *doc1)) {
@@ -688,40 +465,40 @@ TEST(index_death_test_formats_15,
       } catch (const irs::SqlException& e) {
         ASSERT_EQ(e.error().errcode, ERRCODE_IO_ERROR) << e.message();
         // cs CREATE on `_N.col` threw at insert-time.
-        ASSERT_LT(dir.NumFailures(), failures_before);
+        ASSERT_LT(fs.NumFailures(), failures_before);
         continue;
       }
       if (inserts_ok) {
         tests::Remove(writer, query_doc2);
         ASSERT_SQL_ERROR(writer.RefreshBegin(), ERRCODE_IO_ERROR);
-        ASSERT_LT(dir.NumFailures(), failures_before);
+        ASSERT_LT(fs.NumFailures(), failures_before);
       }
     }
   };
 
   {
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
     // One failure per per-segment file. Each retry's segment id
     // advances, so the failing file is on a different segment. Five
     // syncable files per segment: cs -> idx -> doc -> pos -> pay.
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000001.col");  // cs (insert-time)
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000002.idx");  // term index + data (merged)
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000003.doc");  // postings list (documents)
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000004.pos");  // postings list (positions)
-    dir.RegisterFailure(
-      FailingDirectory::Failure::CREATE,
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000001.col");  // cs (insert-time)
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000002.idx");  // term index + data (merged)
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000003.doc");  // postings list (documents)
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000004.pos");  // postings list (positions)
+    fs.RegisterFailure(
+      FailingFileSystem::Failure::CREATE,
       "0000000000000005.pay");  // postings list (offset + payload)
 
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
-    DriveCreateFailures(dir, *writer);
+    DriveCreateFailures(fs, *writer);
 
     auto reader = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_EQ(0, reader.size());
@@ -735,24 +512,24 @@ TEST(index_death_test_formats_15,
                                                 irs::IndexFeatures::Pos |
                                                 irs::IndexFeatures::Offs;
 
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000001.col");
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000002.idx");
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000003.doc");
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000004.pos");
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000005.pay");
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000001.col");
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000002.idx");
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000003.doc");
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000004.pos");
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000005.pay");
 
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
-    DriveCreateFailures(dir, *writer);
+    DriveCreateFailures(fs, *writer);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
@@ -790,8 +567,42 @@ TEST(index_death_test_formats_15,
   }
 }
 
-TEST(index_death_test_formats_15,
-     segment_components_sync_failure_1st_phase_flush) {
+TEST_F(index_death_test_formats_15,
+       segment_components_close_failure_1st_phase_flush) {
+  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
+                              &tests::PayloadedJsonFieldFactory);
+  const auto* doc = gen.next();
+
+  {
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
+    for (const auto* name : {"0000000000000001.col", "0000000000000002.doc",
+                             "0000000000000003.pos", "0000000000000004.idx",
+                             "0000000000000005.pay"}) {
+      fs.RegisterFailure(FailingFileSystem::Failure::CLOSE, name);
+    }
+    auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
+    ASSERT_NE(nullptr, writer);
+    while (!fs.NoFailures()) {
+      const auto failures_before = fs.NumFailures();
+      ASSERT_TRUE(InsertWithName(*writer, *doc));
+      ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
+      ASSERT_LT(fs.NumFailures(), failures_before);
+    }
+    ASSERT_TRUE(InsertWithName(*writer, *doc));
+    ASSERT_TRUE(writer->RefreshBegin());
+    ASSERT_FALSE(writer->RefreshCommit());
+
+    auto reader = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+    ASSERT_EQ(1, reader.size());
+    ASSERT_EQ(1, reader.docs_count());
+    ASSERT_EQ(1, reader.live_docs_count());
+  }
+}
+
+TEST_F(index_death_test_formats_15,
+       segment_components_sync_failure_1st_phase_flush) {
   // SYNC failures on each per-segment file. Each retry advances the
   // segment id.
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
@@ -804,38 +615,38 @@ TEST(index_death_test_formats_15,
   // failure to throw on Begin. Each retry advances the segment id.
   // Do not use Remove() here: the doc_mask sync surface would obscure
   // which per-file sync failure was actually triggered.
-  auto DriveSyncFailures = [&](FailingDirectory& dir,
+  auto DriveSyncFailures = [&](FailingFileSystem& fs,
                                tests::IndexWriter& writer) {
-    while (!dir.NoFailures()) {
-      const auto failures_before = dir.NumFailures();
+    while (!fs.NoFailures()) {
+      const auto failures_before = fs.NumFailures();
       ASSERT_TRUE(InsertWithName(writer, *doc1));
       ASSERT_SQL_ERROR(writer.RefreshBegin(), ERRCODE_IO_ERROR);
-      ASSERT_LT(dir.NumFailures(), failures_before);
+      ASSERT_LT(fs.NumFailures(), failures_before);
     }
   };
   (void)doc2;
   (void)query_doc2;
 
   {
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000001.col");  // columnstore
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000002.doc");  // postings list (documents)
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000003.pos");  // postings list (positions)
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000004.idx");  // term index + data (merged)
-    dir.RegisterFailure(
-      FailingDirectory::Failure::SYNC,
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000001.col");  // columnstore
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000002.doc");  // postings list (documents)
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000003.pos");  // postings list (positions)
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000004.idx");  // term index + data (merged)
+    fs.RegisterFailure(
+      FailingFileSystem::Failure::SYNC,
       "0000000000000005.pay");  // postings list (offset + payload)
 
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
-    DriveSyncFailures(dir, *writer);
+    DriveSyncFailures(fs, *writer);
 
     ASSERT_FALSE(writer->RefreshBegin());
     ASSERT_FALSE(writer->RefreshCommit());
@@ -855,24 +666,24 @@ TEST(index_death_test_formats_15,
                                                 irs::IndexFeatures::Pos |
                                                 irs::IndexFeatures::Offs;
 
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000001.col");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000002.doc");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000003.pos");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000004.idx");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000005.pay");
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000001.col");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000002.doc");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000003.pos");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000004.idx");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000005.pay");
 
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
-    DriveSyncFailures(dir, *writer);
+    DriveSyncFailures(fs, *writer);
 
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
 
@@ -910,7 +721,7 @@ TEST(index_death_test_formats_15,
   }
 }
 
-TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
+TEST_F(index_death_test_formats_15, segment_components_write_fail_compaction) {
   // Register CREATE failures on every per-segment component
   // (`_N.col`, `_N.idx`, `_N.doc`, `_N.pos`, `_N.pay`).
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
@@ -923,8 +734,8 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
                                                 irs::IndexFeatures::Pos |
                                                 irs::IndexFeatures::Offs;
 
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
 
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
@@ -951,22 +762,22 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
     // matches the order files are created during MergeWriter::Flush:
     // cs writer is opened first (in OpenColumnstoreContexts), then
     // postings, then term index/data, etc.
-    dir.RegisterFailure(
-      FailingDirectory::Failure::CREATE,
+    fs.RegisterFailure(
+      FailingFileSystem::Failure::CREATE,
       "0000000000000003.col");  // columnstore for compacted seg
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000004.idx");  // term index + data (merged)
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000005.doc");  // postings list (documents)
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000006.pos");  // postings list (positions)
-    dir.RegisterFailure(
-      FailingDirectory::Failure::CREATE,
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000004.idx");  // term index + data (merged)
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000005.doc");  // postings list (documents)
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000006.pos");  // postings list (positions)
+    fs.RegisterFailure(
+      FailingFileSystem::Failure::CREATE,
       "0000000000000007.pay");  // postings list (offset + payload)
 
     const irs::index_utils::CompactionCount compact_all;
 
-    while (!dir.NoFailures()) {
+    while (!fs.NoFailures()) {
       ASSERT_SQL_ERROR(
         writer->Compact(irs::index_utils::MakePolicy(compact_all)),
         ERRCODE_IO_ERROR);
@@ -1018,7 +829,7 @@ TEST(index_death_test_formats_15, segment_components_write_fail_compaction) {
   }
 }
 
-TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
+TEST_F(index_death_test_formats_15, segment_components_sync_fail_compaction) {
   // Like the *_write_fail_compaction* test but with SYNC failures
   // (compaction creates the files, then sync fails at Begin()).
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
@@ -1031,8 +842,8 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
                                                 irs::IndexFeatures::Pos |
                                                 irs::IndexFeatures::Offs;
 
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
 
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
@@ -1051,22 +862,22 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
       tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
 
     // Each iteration consumes one failure; segment id advances each retry.
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000003.col");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000004.doc");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000005.idx");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000006.idx");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000007.pos");
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000008.pay");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000003.col");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000004.doc");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000005.idx");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000006.idx");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000007.pos");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000008.pay");
 
     const irs::index_utils::CompactionCount compact_all;
 
-    while (!dir.NoFailures()) {
+    while (!fs.NoFailures()) {
       ASSERT_SQL_ERROR(
         writer->Compact(irs::index_utils::MakePolicy(compact_all)),
         ERRCODE_IO_ERROR);
@@ -1118,8 +929,8 @@ TEST(index_death_test_formats_15, segment_components_sync_fail_compaction) {
   }
 }
 
-TEST(index_death_test_formats_15,
-     columnstore_creation_fail_implicit_segment_flush) {
+TEST_F(index_death_test_formats_15,
+       columnstore_creation_fail_implicit_segment_flush) {
   // With `segment_docs_max=1`, every Insert flushes the previous
   // segment and opens a new one -- so CREATE failures on consecutive
   // `_N.col` files fire at the Insert that allocates the new segment.
@@ -1129,8 +940,8 @@ TEST(index_death_test_formats_15,
   const auto* doc2 = gen.next();
 
   {
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
 
     auto opts = irs::tests::DefaultWriterOptions();
     opts.segment_docs_max = 1;
@@ -1140,12 +951,12 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, writer);
 
     // CREATE failure on the very first segment's cs file: insert
-    // throws because cs Writer construction calls
-    // `dir.create("0000000000000001.col")` which returns nullptr.
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000001.col");
+    // throws because cs Writer construction fails to create
+    // `0000000000000001.col`.
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000001.col");
     ASSERT_SQL_ERROR(InsertWithName(*writer, *doc1), ERRCODE_IO_ERROR);
-    ASSERT_TRUE(dir.NoFailures());
+    ASSERT_TRUE(fs.NoFailures());
 
     // After the failure clears, Insert + Commit proceed normally.
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
@@ -1176,8 +987,8 @@ TEST(index_death_test_formats_15,
   }
 }
 
-TEST(index_death_test_formats_15,
-     columnstore_creation_sync_fail_implicit_segment_flush) {
+TEST_F(index_death_test_formats_15,
+       columnstore_creation_sync_fail_implicit_segment_flush) {
   // Register both `CREATE` and `SYNC` failures on `_N.col` across
   // multiple per-segment columnstore files.
   tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
@@ -1186,8 +997,8 @@ TEST(index_death_test_formats_15,
   const auto* doc2 = gen.next();
 
   {
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
 
     auto opts = irs::tests::DefaultWriterOptions();
     opts.segment_docs_max = 1;
@@ -1197,19 +1008,19 @@ TEST(index_death_test_formats_15,
     ASSERT_NE(nullptr, writer);
 
     // 1) CREATE failure on `_1.col` -> first insert throws.
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000001.col");
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000001.col");
     ASSERT_SQL_ERROR(InsertWithName(*writer, *doc1), ERRCODE_IO_ERROR);
-    ASSERT_TRUE(dir.NoFailures());
+    ASSERT_TRUE(fs.NoFailures());
 
     // 2) Insert succeeds (allocates `_2.col`), but SYNC fails on it
     // during Begin(). Begin() throws; the failed flush leaves the index
     // empty.
     ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000002.col");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000002.col");
     ASSERT_SQL_ERROR(writer->RefreshBegin(), ERRCODE_IO_ERROR);
-    ASSERT_TRUE(dir.NoFailures());
+    ASSERT_TRUE(fs.NoFailures());
 
     auto reader = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
     ASSERT_EQ(0, reader.size());
@@ -1220,7 +1031,7 @@ TEST(index_death_test_formats_15,
   }
 }
 
-TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
+TEST_F(index_death_test_formats_15, fails_in_compact_with_removals) {
   // Mixed failures around CREATE/SYNC/REMOVE on `.col` files driven by
   // a sequence of inserts, commits, and a compact. Each failing
   // step is followed by a successful retry; final index has the full
@@ -1235,16 +1046,16 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
                                               irs::IndexFeatures::Offs;
 
   {
-    irs::MemoryDirectory impl;
-    FailingDirectory dir(impl);
+    FailingFileSystem fs;
+    const auto dir = LocalFiles(fs);
 
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
 
     // Insert fails because `.col` creation fails for the new segment.
-    dir.RegisterFailure(FailingDirectory::Failure::CREATE,
-                        "0000000000000001.col");
+    fs.RegisterFailure(FailingFileSystem::Failure::CREATE,
+                       "0000000000000001.col");
     ASSERT_SQL_ERROR(InsertWithName(*writer, *doc1), ERRCODE_IO_ERROR);
     ASSERT_FALSE(writer->RefreshCommit());  // nothing to commit
     tests::AssertSnapshotEquality(
@@ -1255,8 +1066,8 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
     ASSERT_TRUE(InsertWithName(*writer, *doc2));
 
     // SYNC fails on segment 0's `.col` -> Commit throws.
-    dir.RegisterFailure(FailingDirectory::Failure::SYNC,
-                        "0000000000000002.col");
+    fs.RegisterFailure(FailingFileSystem::Failure::SYNC,
+                       "0000000000000002.col");
     ASSERT_SQL_ERROR(writer->RefreshCommit(), ERRCODE_IO_ERROR);
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
@@ -1286,14 +1097,15 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
       writer->GetSnapshot(),
       tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
 
-    // Register REMOVE failures on superseded segment `.col` files; the
-    // DirectoryCleaner should tolerate the failures (leave stale
+    // Register REMOVE failures on superseded segment `.col` files; removing
+    // the released segments should tolerate the failures (leave stale
     // files) and let the next commit observe the empty mask.
-    dir.RegisterFailure(FailingDirectory::Failure::REMOVE,
-                        "0000000000000003.col");
-    dir.RegisterFailure(FailingDirectory::Failure::REMOVE,
-                        "0000000000000005.col");
-    irs::DirectoryCleaner::clean(dir);
+    fs.RegisterFailure(FailingFileSystem::Failure::REMOVE,
+                       "0000000000000003.col");
+    fs.RegisterFailure(FailingFileSystem::Failure::REMOVE,
+                       "0000000000000005.col");
+    dir.RemoveReleased();
+    dir.RemoveReleased();
     ASSERT_FALSE(writer->RefreshCommit());  // nothing changed
     tests::AssertSnapshotEquality(
       writer->GetSnapshot(),
@@ -1327,88 +1139,4 @@ TEST(index_death_test_formats_15, fails_in_compact_with_removals) {
                      values, docs_itr->Value()));
     ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
   }
-}
-
-TEST(index_death_test_formats_15, columnstore_reopen_fail) {
-  constexpr irs::IndexFeatures kAllFeatures = irs::IndexFeatures::Freq |
-                                              irs::IndexFeatures::Pos |
-                                              irs::IndexFeatures::Offs;
-
-  tests::JsonDocGenerator gen(TestBase::resource("simple_sequential.json"),
-                              &tests::PayloadedJsonFieldFactory);
-  const auto* doc1 = gen.next();
-  const auto* doc2 = gen.next();
-  auto query_doc2 = MakeByTerm(kNameId, "B");
-
-  irs::MemoryDirectory impl;
-  FailingDirectory dir(impl);
-
-  {
-    auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
-                                           irs::tests::DefaultWriterOptions());
-    ASSERT_NE(nullptr, writer);
-
-    ASSERT_TRUE(InsertWithName(*writer, *doc1));
-    ASSERT_TRUE(InsertWithName(*writer, *doc2));
-    ASSERT_TRUE(writer->RefreshCommit());
-    tests::Remove(*writer, query_doc2);
-
-    ASSERT_TRUE(writer->RefreshCommit());
-    tests::AssertSnapshotEquality(
-      writer->GetSnapshot(),
-      tests::OpenReader(dir, irs::tests::DefaultReaderOptions()));
-  }
-
-  // OPEN failure on `_1.col` -- DirectoryReader throws.
-  dir.RegisterFailure(FailingDirectory::Failure::OPEN, "0000000000000001.col");
-  ASSERT_SQL_ERROR((tests::OpenReader(dir, irs::tests::DefaultReaderOptions())),
-                   ERRCODE_IO_ERROR);
-
-  // Read succeeds once the failure clears.
-  auto reader = tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, reader.size());
-  ASSERT_EQ(2, reader.docs_count());
-  ASSERT_EQ(1, reader.live_docs_count());
-
-  tests::index_t expected_index;
-  expected_index.emplace_back();
-  expected_index.back().insert(*doc1);
-  expected_index.back().insert(*doc2);
-  tests::AssertIndex(reader, expected_index, kAllFeatures);
-
-  auto& segment = reader[0];
-  const auto* column = segment.Column(kNameId);
-  ASSERT_NE(nullptr, column);
-
-  // Normal data readback.
-  irs::tests::BlobPointReader values{segment, *column};
-  ASSERT_EQ(2, segment.docs_count());
-  ASSERT_EQ(1, segment.live_docs_count());
-  auto terms = segment.field(kSameId);
-  ASSERT_NE(nullptr, terms);
-  auto term_itr = terms->iterator();
-  ASSERT_TRUE(term_itr->next());
-  auto docs_itr = tests::Docs(term_itr->postings(irs::IndexFeatures::None));
-  ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-  ASSERT_EQ("A", irs::tests::ReadStoredStr<std::string_view>(
-                   values, docs_itr->Value()));
-  ASSERT_TRUE(!irs::doc_limits::eof(docs_itr->Next()));
-  ASSERT_EQ("B", irs::tests::ReadStoredStr<std::string_view>(
-                   values, docs_itr->Value()));
-  ASSERT_FALSE(!irs::doc_limits::eof(docs_itr->Next()));
-
-  // live docs
-  auto live_docs = segment.docs_iterator();
-  ASSERT_EQ(1, live_docs->Next());
-  ASSERT_TRUE(irs::doc_limits::eof(live_docs->Next()));
-}
-
-TEST(index_death_test_formats_15, fails_in_dup) {
-  // The cs Reader doesn't go through `IndexInput::Dup()`. It keeps a
-  // single IndexInput and per-read `ReadContext` calls
-  // `Reader::ReopenIn()` -> `IndexInput::Reopen()`. DUP-fail injection
-  // on `_1.col` is therefore a no-op; skip until a Dup path appears
-  // (e.g. parallel column readers).
-  GTEST_SKIP() << "cs Reader uses Reopen(), not Dup(); DUP-fail injection "
-                  "is a no-op on `_N.col`.";
 }

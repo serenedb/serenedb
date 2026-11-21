@@ -47,7 +47,7 @@ count
 1
 
 query
-SELECT * FROM serenedb_reindex('reindex_s3_idx');
+SELECT * FROM sdb_reindex('reindex_s3_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -66,7 +66,7 @@ count
 1
 
 query
-SELECT * FROM serenedb_reindex('reindex_s3_idx');
+SELECT * FROM sdb_reindex('reindex_s3_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 rebuild	0	1	0	1
@@ -124,7 +124,7 @@ count
 2
 
 query
-SELECT * FROM serenedb_reindex('reindex_s3_glob_idx');
+SELECT * FROM sdb_reindex('reindex_s3_glob_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -152,7 +152,7 @@ COPY (SELECT 3 AS id, 'pudge plays support' AS body
 TO 's3://${MINIO_BUCKET}/${__DATABASE__}_glob_b.parquet' (FORMAT parquet);
 
 query
-SELECT * FROM serenedb_reindex('reindex_s3_glob_idx');
+SELECT * FROM sdb_reindex('reindex_s3_glob_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	1	0	1
@@ -178,7 +178,7 @@ count
 0
 
 query
-SELECT * FROM serenedb_reindex('reindex_s3_glob_idx');
+SELECT * FROM sdb_reindex('reindex_s3_glob_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

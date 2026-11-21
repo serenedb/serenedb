@@ -25,12 +25,12 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
 
@@ -62,11 +62,12 @@ auto StoreName() {
 
 }  // namespace
 
-TEST(directory_reader_test, term_ranges_span_segments) {
+TEST(composite_reader_test, term_ranges_span_segments) {
   constexpr irs::field_id kBoth = 7;
   constexpr irs::field_id kFirst = 8;
   constexpr irs::field_id kAbsent = 9;
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                          irs::tests::DefaultWriterOptions());
   const auto add = [&](std::string_view both, std::string_view first) {
@@ -111,7 +112,7 @@ TEST(directory_reader_test, term_ranges_span_segments) {
   EXPECT_FALSE(reader.GetTermRange(kBoth, irs::StringLayout::kNulls));
 }
 
-TEST(directory_reader_test, open) {
+TEST(composite_reader_test, open) {
   tests::JsonDocGenerator gen(
     TestBase::resource("simple_sequential.json"),
     [](tests::Document& doc, const std::string& name,
@@ -133,7 +134,8 @@ TEST(directory_reader_test, open) {
   const tests::Document* doc8 = gen.next();
   const tests::Document* doc9 = gen.next();
 
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
   // create index
   {
@@ -326,7 +328,8 @@ TEST(directory_reader_test, open) {
 }
 
 TEST(segment_reader_test, open_invalid_segment) {
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
   /* open invalid segment */
   {
@@ -334,9 +337,7 @@ TEST(segment_reader_test, open_invalid_segment) {
     meta.name = "invalid_segment_name";
 
     auto rdr = irs::SegmentReaderImpl::Open(
-      dir, meta,
-      irs::IndexReaderOptions{.db =
-                                &::irs::DuckDBEngine::Instance().instance()});
+      dir.Db(), dir.Fs(), dir.Root(), meta, irs::IndexReaderOptions{}, nullptr);
     ASSERT_NE(nullptr, rdr);
     ASSERT_EQ(0, rdr->docs_count());
   }
@@ -351,8 +352,9 @@ TEST(segment_reader_test, open) {
   const tests::Document* doc4 = gen.next();
   const tests::Document* doc5 = gen.next();
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader writer_snapshot;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  irs::CompositeReader writer_snapshot;
   {
     // open writer
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
@@ -419,9 +421,11 @@ TEST(segment_reader_test, open) {
     meta.docs_count = 5;
     meta.live_docs_count = 5;
     meta.name = irs::FileName(1);
+    meta.kinds = dir.Committed().front().kinds;
 
-    auto rdr = irs::SegmentReaderImpl::Open(dir, meta,
-                                            irs::tests::DefaultReaderOptions());
+    auto rdr =
+      irs::SegmentReaderImpl::Open(dir.Db(), dir.Fs(), dir.Root(), meta,
+                                   irs::tests::DefaultReaderOptions(), nullptr);
     ASSERT_FALSE(!rdr);
     ASSERT_EQ(1, rdr->size());
     ASSERT_EQ(meta.docs_count, rdr->docs_count());

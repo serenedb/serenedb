@@ -70,7 +70,7 @@ count
 1
 
 query
-SELECT * FROM serenedb_reindex('reice_idx');
+SELECT * FROM sdb_reindex('reice_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -88,7 +88,7 @@ count
 1
 
 query
-SELECT action, files_changed, files_removed FROM serenedb_reindex('reice_idx');
+SELECT action, files_changed, files_removed FROM sdb_reindex('reice_idx');
 ----
 action	files_changed	files_removed
 delta	0	0
@@ -112,7 +112,7 @@ statement ok
 DELETE FROM reice_t WHERE id = 2;
 
 query
-SELECT action, files_added, files_removed FROM serenedb_reindex('reice_idx');
+SELECT action, files_added, files_removed FROM sdb_reindex('reice_idx');
 ----
 action	files_added	files_removed
 delta	0	0
@@ -130,7 +130,7 @@ count
 2
 
 query
-SELECT action FROM serenedb_reindex('reice_idx');
+SELECT action FROM sdb_reindex('reice_idx');
 ----
 action
 up_to_date
@@ -141,7 +141,7 @@ statement count 1
 INSERT INTO reice_t VALUES (6, 'vedernikoff appends after deletes');
 
 query
-SELECT action, files_changed, files_removed FROM serenedb_reindex('reice_idx');
+SELECT action, files_changed, files_removed FROM sdb_reindex('reice_idx');
 ----
 action	files_changed	files_removed
 delta	0	0
@@ -160,7 +160,7 @@ statement ok
 DELETE FROM reice_t WHERE id = 1;
 
 query
-SELECT action, files_added, files_removed FROM serenedb_reindex('reice_idx');
+SELECT action, files_added, files_removed FROM sdb_reindex('reice_idx');
 ----
 action	files_added	files_removed
 delta	0	0
@@ -177,7 +177,7 @@ statement ok
 DELETE FROM reice_t WHERE id IN (3, 4);
 
 query
-SELECT action, files_changed FROM serenedb_reindex('reice_idx');
+SELECT action, files_changed FROM sdb_reindex('reice_idx');
 ----
 action	files_changed
 delta	2
@@ -200,7 +200,7 @@ statement ok
 UPDATE reice_t SET body = 'pudge returns mid' WHERE id = 6;
 
 query
-SELECT * FROM serenedb_reindex('reice_idx');
+SELECT * FROM sdb_reindex('reice_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	1	0	0
@@ -240,7 +240,7 @@ statement ok
 DELETE FROM reice1_t WHERE id = 2;
 
 query
-SELECT * FROM serenedb_reindex('reice1_idx');
+SELECT * FROM sdb_reindex('reice1_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	1	0	0
@@ -286,7 +286,7 @@ statement ok
 DELETE FROM reice3_t WHERE id = 2;
 
 query
-SELECT action, files_added, files_removed FROM serenedb_reindex('reice3_idx');
+SELECT action, files_added, files_removed FROM sdb_reindex('reice3_idx');
 ----
 action	files_added	files_removed
 delta	0	0
@@ -310,7 +310,7 @@ statement ok
 DELETE FROM reice3_t WHERE id = 1;
 
 query
-SELECT action, files_added, files_removed FROM serenedb_reindex('reice3_idx');
+SELECT action, files_added, files_removed FROM sdb_reindex('reice3_idx');
 ----
 action	files_added	files_removed
 delta	0	0

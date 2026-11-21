@@ -168,7 +168,6 @@ struct SegmentReaderMock final : irs::SubReader {
     _meta.docs_count = docs_count;
     _meta.live_docs_count = docs_count;
   }
-  uint64_t CountMappedMemory() const final { return 0; }
   const irs::SegmentInfo& Meta() const final { return _meta; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
   irs::lead::Node::ptr docs_iterator() const final { return {}; }
@@ -386,7 +385,7 @@ class FillScored : public irs::fill::Node {
       .boost = _boost,
     });
     const auto value = score.Score();
-    irs::ResolveMergeType(_merge, [&]<irs::ScoreMergeType Merge> {
+    irs::Resolve(_merge, [&]<irs::ScoreMergeType Merge> {
       for (size_t w = 0; w != words; ++w) {
         auto word = _own[w];
         mask[w] |= word;
@@ -5492,7 +5491,7 @@ TEST_P(BooleanFilterTestCase, excluded_only_child_is_discarded) {
   EXPECT_TRUE(CollectDocs(root, rdr, nullptr).empty());
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(boolean_filter_test, BooleanFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

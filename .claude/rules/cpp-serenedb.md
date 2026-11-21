@@ -65,7 +65,8 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 - SereneDB is a fast, good analytical database first and PostgreSQL-compatible second. PostgreSQL is the default direction where nothing else decides: our own errors and the semantics PostgreSQL defines (how a foreign key meets a trigger) follow it. It is never a spec to copy, nor an argument against a feature it lacks. We differ on purpose where its choice is worse, where following it would slow down paths unrelated to the PostgreSQL-only behavior, where the code lives in a dependency, or where matching it costs more than it gives; and we keep designs it doesn't share, such as optimistic MVCC.
 - SQL the server issues itself is built with DuckDB's C++ API, not as text. Client SQL is the parser's job: never match or rewrite it as text; patch the parser or transformer.
 - Internal work uses the `ClientContext` already in play, passed as the first parameter; never a new `duckdb::Connection`.
-- A new cap or limit is a `SET` variable read through the `Get*Setting` functions of `query/config.h`, named `sdb_<name>` when SereneDB-only.
+- A new cap or limit is a `SET` variable read through the `Get*Setting` functions of `query/config.h`.
+- A name a user sees that SereneDB adds starts with `sdb_`/`SDB_`: a setting, function, system table, storage version, environment variable or file. DuckDB's own system objects take the same prefix (`system_object_prefix`). A name that mirrors one of PostgreSQL's takes its form instead: `POSTGRES`, `postgres` and `PostgreSQL` become `SERENEDB`, `serenedb` and `SereneDB`; `PG` and `pg` become `SDB` and `sdb` (`SERENEDB_HOST_AUTH_METHOD`, `serenedb (SereneDB) 26.11.0`). User-facing text names DuckDB only where it means DuckDB: its database files and storage versions, `read_duckdb`, its extensions.
 - Production headers carry no test-only accessors.
 
 ## Tests and benchmarks
@@ -76,6 +77,8 @@ Naming is in `.clang-tidy` (clangd shows it), formatting and include order in `.
 ## When you change ...
 
 - **A new C++ file:** add it to its target in the nearest `CMakeLists.txt` (`scripts/find_unused_sources.py` lists the files nothing builds).
+- **A new template instantiation** (a query kind, phrase match, input type, deletion-mask kind, codec): add a value to its `sdb_instantiation_axis`, or a new `sdb_instantiate` over the axes it varies on, in its target's `CMakeLists.txt` (`cmake/SereneDBUtils.cmake`); never a hand-written `.cpp` per instantiation or a macro list.
+- **A runtime choice between template arguments:** `Resolve(value, f)` over an axis from `iresearch/utils/dispatch.hpp` (a `bool`, an enum, or your own axis with `Of` and `Call`); never a hand-written switch or if-chain that calls a template. The lambda is `IRS_FORCE_INLINE` where it runs during execution (per block, doc, batch or value), plain in one-time paths such as plan building and factories.
 - **A setting:** define it in `server/query/config_variables.cpp` and document it in the table in `docs/configuration/overview.md`.
 - **A serened flag:** `python3 tests/drivers/python/cli_help.py override --bin <build>/bin/serened` regenerates the CLI reference the docs render.
 - **What pg_catalog and information_schema support:** update `docs/compatibility/system-table-compatibility.md`; a test generated from it checks its claims.

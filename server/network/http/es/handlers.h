@@ -50,6 +50,7 @@ enum class Endpoint : uint8_t {
   GetSource,
   Mget,
   Count,
+  Explain,
   Search,
   Scroll,
   ClearScroll,

@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/count/make.hpp>
+#include <utility>
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
@@ -28,38 +29,32 @@
 namespace sdb::connector {
 namespace {
 
+constexpr uint64_t kEmitSlice = 64 * STANDARD_VECTOR_SIZE;
+
 void FinishRoot(CountLocalState& l) {
   if (l.root) {
-    l.local_count +=
-      irs::utils::downCast<irs::count::Root>(l.root.get())->Finish();
+    l.local_count += l.root->Finish();
     l.root.reset();
     l.root_seg = std::numeric_limits<uint32_t>::max();
   }
 }
 
-void Emit(ScanGlobalState& g, CountLocalState& l, duckdb::DataChunk& output) {
-  const auto batch = std::min<uint64_t>(l.local_count, STANDARD_VECTOR_SIZE);
-  l.local_count -= batch;
-  if (batch != 0) {
-    WriteVirtualColumns(g, batch, nullptr, output);
-  }
-  output.SetChildCardinality(batch);
+uint64_t ClaimCounted(ScanGlobalState& g) {
+  auto counted = g.counted.load(std::memory_order_relaxed);
+  uint64_t take = 0;
+  do {
+    take = std::min(counted, std::max(kEmitSlice, counted / g.workers));
+  } while (take != 0 && !g.counted.compare_exchange_weak(
+                          counted, counted - take, std::memory_order_relaxed));
+  return take;
 }
 
 }  // namespace
 
 void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output) {
-  for (;;) {
-    if (l.whole_backlog && l.local_count >= STANDARD_VECTOR_SIZE) {
-      Emit(g, l, output);
-      return;
-    }
-    if (!NextLiveUnit(g, l)) {
-      break;
-    }
+  while (NextLiveUnit(g, l)) {
     const auto& unit = l.unit;
-    l.whole_backlog = unit.whole;
     const auto& sub = (*g.reader)[unit.seg];
     if (unit.whole && l.seg_cls.active.empty() && !g.ClaimedWhere() &&
         !g.vector_scorer) {
@@ -77,15 +72,26 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
         l.root = std::move(plan);
         l.root_seg = unit.seg;
       }
-      auto& root = *irs::utils::downCast<irs::count::Root>(l.root.get());
-      l.local_count += root.Run(range.begin, range.end);
-      l.local_count += root.Finish();
+      l.local_count += l.root->Run(range.begin, range.end);
+      l.local_count += l.root->Finish();
       l.root_end = range.end;
     }
     FinishUnit(g, l);
   }
   FinishRoot(l);
-  Emit(g, l, output);
+  if (l.local_count != 0) {
+    g.counted.fetch_add(std::exchange(l.local_count, 0),
+                        std::memory_order_relaxed);
+  }
+  if (l.to_emit == 0) {
+    l.to_emit = ClaimCounted(g);
+  }
+  const auto batch = std::min<uint64_t>(l.to_emit, STANDARD_VECTOR_SIZE);
+  l.to_emit -= batch;
+  if (batch != 0) {
+    WriteVirtualColumns(g, batch, nullptr, output);
+  }
+  output.SetChildCardinality(batch);
 }
 
 }  // namespace sdb::connector

@@ -95,7 +95,7 @@ COMMIT;
 
 
 query
-SELECT comment FROM duckdb_tables() WHERE table_name = 'ccd_comment';
+SELECT comment FROM sdb_tables() WHERE table_name = 'ccd_comment';
 ----
 comment
 kept

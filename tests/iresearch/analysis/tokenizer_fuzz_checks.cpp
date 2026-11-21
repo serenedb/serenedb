@@ -250,7 +250,7 @@ Result AnalyzeValue(irs::analysis::Tokenizer& tokenizer, std::string_view value,
                     irs::TokenLayout layout, irs::BlockTraits hint) {
   Result out;
   const auto handle = Handle(value);
-  irs::ResolveLayout(layout, [&]<irs::TokenLayout L>() {
+  irs::Resolve(layout, [&]<irs::TokenLayout L>() {
     irs::ValueAnalyzer analyzer;
     auto tokens = [&] {
       if constexpr (L == irs::TokenLayout::Terms) {

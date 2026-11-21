@@ -92,8 +92,7 @@ struct AnnIndex {
                                          uint32_t effort,
                                          AnnQueryCache* cache) const = 0;
 
-  virtual AnnExactCodes PrepareExact(const SubReader& /*segment*/,
-                                     const PrepareContext& /*ctx*/,
+  virtual AnnExactCodes PrepareExact(const PrepareContext& /*ctx*/,
                                      std::span<const float> /*query*/,
                                      VectorMetric /*metric*/) const {
     return {};

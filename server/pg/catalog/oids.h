@@ -55,11 +55,13 @@ inline constexpr duckdb::idx_t kPgOpclassIvf = kMinSystem + 200;
 inline constexpr duckdb::idx_t kPgOpclassIncluded = kMinSystem + 201;
 inline constexpr duckdb::idx_t kPgOpclassHnsw = kMinSystem + 202;
 
-inline constexpr duckdb::idx_t kSdbSettingsTable = kMinSystem + 400;
+inline constexpr duckdb::idx_t kSdbFlagsTable = kMinSystem + 400;
 inline constexpr duckdb::idx_t kSdbMetricsTable = kMinSystem + 401;
 inline constexpr duckdb::idx_t kSdbProgressTable = kMinSystem + 402;
 inline constexpr duckdb::idx_t kPgStatProgressCreateTableAsView =
   kMinSystem + 403;
+inline constexpr duckdb::idx_t kSdbLicensesTable = kMinSystem + 404;
+inline constexpr duckdb::idx_t kSdbContributorsTable = kMinSystem + 405;
 
 struct SystemObject {
   duckdb::idx_t oid;
@@ -77,11 +79,6 @@ inline constexpr std::array kForeignDataWrappers{
 inline constexpr std::array kSystemNamespaces{
   SystemObject{kPgCatalogSchema, irs::StaticStrings::kPgCatalogSchema},
   SystemObject{kPgInformationSchema, irs::StaticStrings::kInformationSchema},
-};
-
-inline constexpr std::array kSystemTablespaces{
-  SystemObject{kPgDefaultTablespace, "pg_default"},
-  SystemObject{kPgGlobalTablespace, "pg_global"},
 };
 
 struct SystemLanguage {

@@ -29,6 +29,8 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <limits>
 #include <mutex>
 #include <new>
@@ -42,10 +44,8 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
 #include "iresearch/utils/parallel_for.hpp"
-namespace irs {
 
-class DataOutput;
-class IndexInput;
+namespace irs {
 
 inline constexpr uint32_t kHnswInvalidNode =
   std::numeric_limits<uint32_t>::max();
@@ -294,10 +294,11 @@ class HnswGraph {
     return {_upper.data() + Upper(node, level), _m};
   }
 
-  void Serialize(DataOutput& out) const;
-  HnswGraphFrames SerializePacked(DataOutput& out, ParallelFor parallel) const;
-  static HnswGraph Deserialize(IndexInput& in);
-  static HnswGraph DeserializePacked(IndexInput& in,
+  void Serialize(duckdb::WriteStream& out) const;
+  HnswGraphFrames SerializePacked(duckdb::WriteStream& out,
+                                  ParallelFor parallel) const;
+  static HnswGraph Deserialize(duckdb::InputFileReader& in);
+  static HnswGraph DeserializePacked(duckdb::InputFileReader& in,
                                      const HnswGraphFrames& frames,
                                      ParallelFor parallel);
 
@@ -376,8 +377,9 @@ class HnswGraphWriter {
     return _graph.Neighbors(node, level);
   }
 
-  void Serialize(DataOutput& out) const { _graph.Serialize(out); }
-  HnswGraphFrames SerializePacked(DataOutput& out, ParallelFor parallel) const {
+  void Serialize(duckdb::WriteStream& out) const { _graph.Serialize(out); }
+  HnswGraphFrames SerializePacked(duckdb::WriteStream& out,
+                                  ParallelFor parallel) const {
     return _graph.SerializePacked(out, parallel);
   }
 

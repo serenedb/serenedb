@@ -33,6 +33,7 @@ The same applies to data that lives in another **database** rather than in files
 | Parquet | `read_parquet` / `parquet_scan` | Single file or glob; `file_row_number` PK |
 | CSV | `read_csv` / `read_csv_auto` | Byte-offset PK; full reader-option support |
 | JSON / NDJSON | `read_json` / `read_ndjson` (`*_auto`) | Byte-offset PK |
+| Avro | `read_avro` | Single file or glob; `file_row_number` PK |
 | Iceberg | Catalog table via [`CREATE SERVER`](../../statements/create_server/index.md) (recommended) / `iceberg_scan(...)` | Snapshot at build time; name catalog tables in full — see [Referencing the source](./views.md#referencing-the-source) |
 | Attached DuckDB | `ATTACH … ; SELECT … FROM db.schema.t` | Read through the live attachment |
 | Attached PostgreSQL | `ATTACH` / [`CREATE SERVER`](../../statements/create_server/index.md) | Keyed on the remote `ctid`; see [External databases](#external-databases) |

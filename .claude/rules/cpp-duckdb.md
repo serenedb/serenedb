@@ -3,12 +3,11 @@ paths:
   - "third_party/duckdb/**"
   - "third_party/duckdb_*/**"
   - "third_party/database-connector/**"
-  - "third_party/avro/**"
 ---
 
 # The DuckDB family
 
-`third_party/duckdb`, the `duckdb_*` extensions, `database-connector`, and `avro` (Apache's avro-c with DuckDB's changes, so it has both upstreams), patched heavily. Write it like our code ([cpp-serenedb.md](cpp-serenedb.md)), using DuckDB's own types where its APIs take them, and know what our fork changed:
+`third_party/duckdb`, the `duckdb_*` extensions and `database-connector`, patched heavily. Write it like our code ([cpp-serenedb.md](cpp-serenedb.md)), using DuckDB's own types where its APIs take them, and know what our fork changed:
 
 - `unordered_map`/`unordered_set` are `absl::node_hash_map`/`node_hash_set`, and so is everything built on them (`case_insensitive_map_t`, ...): look up with the `string_view` you have, never a temporary string.
 - `duckdb::mutex` is `absl::Mutex`: wait with `Await`/`LockWhen`, never a condition variable or a yield loop.

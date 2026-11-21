@@ -260,8 +260,9 @@ Over the PostgreSQL wire protocol, `COPY ... FROM STDIN` reads the data from the
 | `parquet`               | no                    | yes                  |
 | `arrow`                 | no                    | yes                  |
 | `arrows`                | yes                   | yes                  |
+| `avro`                  | yes                   | yes                  |
 
-In the `json` format, `COPY ... TO STDOUT` sends one JSON object per line, as `COPY ... TO` writes it to a file. A Parquet file and an Arrow IPC file (`arrow`) reach the client whole, ready to be saved as a file. A Parquet file keeps the description of its contents in a footer at the end, which a reader needs before it can read any row, so it loads only from a file, not from `STDIN`:
+In the `json` format, `COPY ... TO STDOUT` sends one JSON object per line, as `COPY ... TO` writes it to a file. A Parquet file, an Arrow IPC file (`arrow`) and an Avro file reach the client whole, ready to be saved as a file. An Avro file has no footer, so it also loads from `STDIN`, read as it arrives. A Parquet file keeps the description of its contents in a footer at the end, which a reader needs before it can read any row, so it loads only from a file, not from `STDIN`:
 
 <SqlLogicTest id="sql/statements/copy/index/stdin_parquet" />
 

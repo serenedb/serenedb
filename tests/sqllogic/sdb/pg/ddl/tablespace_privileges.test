@@ -108,12 +108,14 @@ statement error
 REVOKE GRANT OPTION FOR CREATE ON TABLESPACE priv_ts_${__DATABASE__} FROM priv_other_${__DATABASE__};
 ----
 db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 statement error
 REVOKE CREATE ON TABLESPACE priv_ts_${__DATABASE__} FROM priv_other_${__DATABASE__};
 ----
 db error: ERROR: dependent privileges exist
+HINT: Use CASCADE to revoke them too.
 
 
 statement ok

@@ -167,11 +167,8 @@ db error: ERROR: <slt:ignore>
 
 
 connection default
-skipif pg-wire-extended
-statement error
+statement ok
 SET LOCAL threads = 1;
-----
-db error: ERROR: SET LOCAL can only be used in transaction blocks
 
 
 connection default

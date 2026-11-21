@@ -1,21 +1,7 @@
-# serenedb-only (needs a second session interleaved with an open role DDL):
-# the shared role graph is cached per generation and filled from a COMMITTED
-# read, so the generation may only move once the write it describes is visible.
-#
-# A statement-time bump broke that. The window: session s1 opens a transaction
-# and writes a role, the bump fires immediately, s2 asks any privilege question
-# and fills the cache from a committed read that cannot see the write yet, and
-# the fill is stamped with the already-bumped generation. s1's commit then moved
-# nothing, so the pre-write graph stayed authoritative until unrelated role DDL
-# happened to bump again.
-#
-# Three symptoms, all of them wrong answers: an acl item rendered the grantee's
-# raw oid instead of its name, pg_has_role reported a committed role as
-# non-existent, and -- the reason this is not cosmetic -- a REVOKEd membership
-# kept granting SELECT. The bump now rides the commit.
+# serenedb-only (needs a second session interleaved with an open role DDL).
 #
 # Runner note: s2 must be a distinct connection, and it must ask its question
-# while s1's transaction is still open; that read is what fills the cache.
+# while s1's transaction is still open.
 
 statement ok
 DROP TABLE IF EXISTS xgen_ledger;
@@ -45,7 +31,6 @@ statement ok
 CREATE ROLE xgen_reader;
 
 
-# The fill: a committed read that predates the CREATE ROLE above.
 connection s2
 query
 SELECT count(*) AS n FROM xgen_ledger;
@@ -63,7 +48,7 @@ statement ok
 GRANT SELECT ON xgen_ledger TO xgen_reader;
 
 
-# The grantee renders as a name. A stale graph printed its oid here.
+# The grantee renders as a name.
 connection s2
 query
 SELECT array_to_string(relacl, '|') AS acl

@@ -1,0 +1,147 @@
+statement ok
+DROP DATABASE IF EXISTS gao_db;
+
+
+statement ok
+DROP SERVER IF EXISTS gao_srv;
+
+
+onlyif postgres
+statement ok
+DROP FOREIGN DATA WRAPPER IF EXISTS gao_fdw;
+
+
+statement ok
+DROP VIEW IF EXISTS gao_v;
+
+
+statement ok
+DROP ROLE IF EXISTS gao_r;
+
+
+statement ok
+CREATE ROLE gao_r;
+
+
+statement ok
+CREATE DATABASE gao_db;
+
+
+statement ok
+GRANT CONNECT ON DATABASE gao_db TO gao_r;
+
+
+query
+SELECT array_to_string(pg_get_acl('pg_database'::regclass, oid, 0), ',') AS acl,
+       pg_get_acl('pg_database'::regclass, oid, 0) IS NOT DISTINCT FROM datacl AS same
+FROM pg_database WHERE datname = 'gao_db';
+----
+acl	same
+=Tc/postgres,postgres=CTc/postgres,gao_r=c/postgres	t
+
+
+onlyif postgres
+statement ok
+CREATE FOREIGN DATA WRAPPER gao_fdw;
+
+
+onlyif postgres
+statement ok
+CREATE SERVER gao_srv FOREIGN DATA WRAPPER gao_fdw;
+
+
+skipif postgres
+statement ok
+CREATE SERVER gao_srv FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path ':memory:');
+
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER gao_srv TO gao_r;
+
+
+query
+SELECT array_to_string(pg_get_acl('pg_foreign_server'::regclass, oid, 0), ',') AS acl,
+       pg_get_acl('pg_foreign_server'::regclass, oid, 0) IS NOT DISTINCT FROM srvacl AS same
+FROM pg_foreign_server WHERE srvname = 'gao_srv';
+----
+acl	same
+postgres=U/postgres,gao_r=U/postgres	t
+
+
+onlyif postgres
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER gao_fdw TO gao_r;
+
+
+skipif postgres
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER duckdb_fdw TO gao_r;
+
+
+query
+SELECT array_to_string(pg_get_acl('pg_foreign_data_wrapper'::regclass, oid, 0), ',') AS acl,
+       pg_get_acl('pg_foreign_data_wrapper'::regclass, oid, 0) IS NOT DISTINCT FROM fdwacl AS same
+FROM pg_foreign_data_wrapper WHERE array_to_string(fdwacl, ',') LIKE '%gao_r=%';
+----
+acl	same
+postgres=U/postgres,gao_r=U/postgres	t
+
+
+query
+SELECT pg_get_acl('pg_language'::regclass, oid, 0) IS NOT DISTINCT FROM lanacl AS same
+FROM pg_language WHERE lanname = 'sql';
+----
+same
+t
+
+
+statement ok
+CREATE VIEW gao_v AS SELECT 1 AS a, 2 AS b;
+
+
+statement ok
+GRANT SELECT (b) ON gao_v TO gao_r;
+
+
+query
+SELECT attname, array_to_string(pg_get_acl('pg_class'::regclass, attrelid, attnum), ',') AS acl,
+       pg_get_acl('pg_class'::regclass, attrelid, attnum) IS NOT DISTINCT FROM attacl AS same
+FROM pg_attribute WHERE attrelid = 'gao_v'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	acl	same
+a	NULL	t
+b	gao_r=r/postgres	t
+
+
+query
+SELECT count(*) AS differing FROM pg_tablespace
+WHERE pg_get_acl('pg_tablespace'::regclass, oid, 0) IS DISTINCT FROM spcacl;
+----
+differing
+0
+
+
+statement ok
+DROP VIEW gao_v;
+
+
+skipif postgres
+statement ok
+REVOKE USAGE ON FOREIGN DATA WRAPPER duckdb_fdw FROM gao_r;
+
+
+statement ok
+DROP SERVER gao_srv;
+
+
+onlyif postgres
+statement ok
+DROP FOREIGN DATA WRAPPER gao_fdw;
+
+
+statement ok
+DROP DATABASE gao_db;
+
+
+statement ok
+DROP ROLE gao_r;

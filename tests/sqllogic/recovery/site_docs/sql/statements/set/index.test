@@ -117,3 +117,35 @@ async_threads
 
 statement ok
 COMMIT;
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+query
+SELECT set_config('app.tenant', 'acme', false) AS tenant;
+----
+tenant
+acme
+
+statement ok
+BEGIN TRANSACTION;
+
+statement ok
+SET LOCAL app.tenant = 'globex';
+
+query
+SHOW app.tenant;
+----
+app.tenant
+globex
+
+statement ok
+COMMIT;
+
+query
+SELECT current_setting('app.tenant') AS tenant,
+       current_setting('app.region', true) IS NULL AS region_unset;
+----
+tenant	region_unset
+acme	t

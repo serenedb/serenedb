@@ -1,0 +1,32 @@
+statement error
+SET sdb_ivf_sample_factor = 0;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_sample_factor": "0"
+
+
+statement error
+SET sdb_ivf_sample_factor = 1.5;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_sample_factor": "1.5"
+
+
+statement ok
+SET sdb_ivf_sample_factor = 0.5;
+
+
+statement ok
+RESET sdb_ivf_sample_factor;
+
+
+statement error
+SET sdb_ivf_posting_size = 0;
+----
+db error: ERROR: invalid value for parameter "sdb_ivf_posting_size": "0"
+
+
+statement ok
+SET sdb_ivf_posting_size = 16;
+
+
+statement ok
+RESET sdb_ivf_posting_size;

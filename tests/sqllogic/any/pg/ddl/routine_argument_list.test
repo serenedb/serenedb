@@ -1,0 +1,74 @@
+statement ok
+CREATE FUNCTION ral_f(x integer) RETURNS integer LANGUAGE sql AS 'SELECT x';
+
+
+statement ok
+CREATE FUNCTION ral_f(x character varying) RETURNS integer LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION ral_f(x double precision) RETURNS integer LANGUAGE sql AS 'SELECT 2';
+
+
+statement ok
+CREATE PROCEDURE ral_p(x integer) LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+COMMENT ON FUNCTION ral_f(character varying) IS 'varying';
+
+
+statement ok
+COMMENT ON FUNCTION ral_f(y double precision) IS 'double';
+
+
+query
+SELECT obj_description(oid, 'pg_proc') AS comment FROM pg_proc WHERE proname = 'ral_f' ORDER BY 1;
+----
+comment
+double
+varying
+NULL
+
+
+statement error
+DROP FUNCTION ral_f;
+----
+db error: ERROR: function name "ral_f" is not unique<slt:ignore>
+
+
+onlyif postgres
+statement error
+DROP FUNCTION ral_f(boolean);
+----
+db error: ERROR: function ral_f(boolean) does not exist
+
+
+skipif postgres
+statement error
+DROP FUNCTION ral_f(boolean);
+----
+db error: ERROR: function ral_f(BOOLEAN) does not exist
+
+
+statement ok
+DROP FUNCTION IF EXISTS ral_f(boolean);
+
+
+statement ok
+DROP FUNCTION ral_f(IN character varying);
+
+
+statement ok
+DROP FUNCTION ral_f(y double precision), ral_f(x integer);
+
+
+statement ok
+DROP PROCEDURE ral_p(IN x integer);
+
+
+query
+SELECT count(*) AS remaining FROM pg_proc WHERE proname IN ('ral_f', 'ral_p');
+----
+remaining
+0

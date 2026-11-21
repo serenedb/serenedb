@@ -1,0 +1,25 @@
+statement error
+SELECT * FROM aclexplode(ARRAY[NULL::aclitem, 'postgres=r/postgres'::aclitem])
+----
+db error: ERROR: ACL arrays must not contain null values
+
+
+query
+SELECT count(*) AS n FROM aclexplode(NULL::aclitem[])
+----
+n
+0
+
+
+query
+SELECT acldefault('rr', 'postgres'::regrole::oid) = acldefault('r', 'postgres'::regrole::oid) AS relation,
+       acldefault('nX', 'postgres'::regrole::oid) = acldefault('n', 'postgres'::regrole::oid) AS schema
+----
+relation	schema
+t	t
+
+
+statement error
+SELECT acldefault('x', 'postgres'::regrole::oid)
+----
+db error: ERROR: unrecognized object type abbreviation: x

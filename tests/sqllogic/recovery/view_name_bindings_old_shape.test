@@ -1,0 +1,56 @@
+control substitution on
+
+statement ok
+CREATE SCHEMA vnbo_quas;
+
+
+statement ok
+CREATE TABLE public.vnbo_iceberg AS SELECT 1 AS a;
+
+
+statement ok
+CREATE TABLE vnbo_quas.vnbo_elsewhere AS SELECT 2 AS a;
+
+
+statement ok
+SET search_path = vnbo_quas, public;
+
+
+statement ok
+SET sdb_faults = 'view_without_name_bindings';
+
+
+statement ok
+CREATE VIEW public.vnbo_clickclack AS SELECT (SELECT a FROM vnbo_iceberg) AS own_schema, lower('A') AS builtin;
+
+
+statement ok
+CREATE VIEW public.vnbo_mop AS SELECT a FROM vnbo_elsewhere;
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT own_schema, builtin FROM public.vnbo_clickclack;
+----
+own_schema	builtin
+1	a
+
+
+connection after_crash
+statement error
+SELECT a FROM public.vnbo_mop;
+----
+db error: ERROR: Table with name vnbo_elsewhere does not exist!
+Did you mean "vnbo_quas.vnbo_elsewhere"?

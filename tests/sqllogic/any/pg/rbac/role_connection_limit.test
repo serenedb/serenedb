@@ -1,0 +1,76 @@
+statement ok
+DROP ROLE IF EXISTS rcl_vedernikoff;
+
+
+statement ok
+DROP ROLE IF EXISTS rcl_super;
+
+
+statement ok
+CREATE ROLE rcl_vedernikoff LOGIN PASSWORD 'rcl_pw' CONNECTION LIMIT 1;
+
+
+statement ok
+CREATE ROLE rcl_super SUPERUSER LOGIN PASSWORD 'rcl_pw' CONNECTION LIMIT 0;
+
+
+connection c_first user=rcl_vedernikoff password=rcl_pw
+query
+SELECT current_user;
+----
+current_user
+rcl_vedernikoff
+
+
+connection c_second user=rcl_vedernikoff password=rcl_pw
+statement error
+SELECT 1;
+----
+db error: FATAL: too many connections for role "rcl_vedernikoff"
+
+
+statement ok
+ALTER ROLE rcl_vedernikoff CONNECTION LIMIT 2;
+
+
+connection c_third user=rcl_vedernikoff password=rcl_pw
+query
+SELECT current_user;
+----
+current_user
+rcl_vedernikoff
+
+
+connection c_fourth user=rcl_vedernikoff password=rcl_pw
+statement error
+SELECT 1;
+----
+db error: FATAL: too many connections for role "rcl_vedernikoff"
+
+
+statement ok
+ALTER ROLE rcl_vedernikoff CONNECTION LIMIT -1;
+
+
+connection c_fifth user=rcl_vedernikoff password=rcl_pw
+query
+SELECT rolconnlimit FROM pg_roles WHERE rolname = 'rcl_vedernikoff';
+----
+rolconnlimit
+-1
+
+
+connection c_super user=rcl_super password=rcl_pw
+query
+SELECT current_user;
+----
+current_user
+rcl_super
+
+
+statement ok
+DROP ROLE rcl_super;
+
+
+statement ok
+DROP ROLE rcl_vedernikoff;

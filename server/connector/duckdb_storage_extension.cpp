@@ -22,6 +22,7 @@
 
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/attach_info.hpp>
 #include <duckdb/planner/planner_extension.hpp>
 #include <duckdb/storage/storage_extension.hpp>
@@ -32,6 +33,7 @@
 
 #include "catalog/boot.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/foreign_database.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/optimizer/wrap_unsupported_types.h"
@@ -86,6 +88,22 @@ void RegisterSereneDBOptimizers(duckdb::DatabaseInstance& db) {
       .get_sql_value_function = &pg::SystemUserValueFunction,
     });
   optimizer::RegisterIResearchPlanOptimizer(db);
+}
+
+void RequireDatabaseNotBeingCreated(duckdb::ClientContext& context,
+                                    const duckdb::Identifier& name) {
+  auto database = duckdb::DatabaseManager::Get(context).GetDatabase(name);
+  if (!database || !catalog::IsSereneDB(database->GetCatalog()) ||
+      database->IsReadOnly()) {
+    return;
+  }
+  auto& cluster = catalog::ClusterOf(context);
+  if (!cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+         .Get(cluster.GetCatalogTransaction(context), name)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_DATABASE),
+                    ERR_MSG("database \"", name.GetIdentifierName(),
+                            "\" is being created by another transaction"));
+  }
 }
 
 }  // namespace sdb::connector

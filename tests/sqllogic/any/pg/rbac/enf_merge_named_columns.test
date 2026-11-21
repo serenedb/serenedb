@@ -1,0 +1,86 @@
+statement ok
+DROP TABLE IF EXISTS emnc_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS emnc_vedernikoff;
+
+
+statement ok
+CREATE ROLE emnc_vedernikoff;
+
+
+statement ok
+CREATE TABLE emnc_ledger (id integer PRIMARY KEY, amount integer, note text);
+
+
+statement ok
+INSERT INTO emnc_ledger VALUES (1, 10, 'one');
+
+
+statement ok
+GRANT SELECT (id), UPDATE (amount), INSERT (id, amount) ON emnc_ledger TO emnc_vedernikoff;
+
+
+statement ok
+SET ROLE emnc_vedernikoff;
+
+
+statement ok
+MERGE INTO emnc_ledger t USING (SELECT 1 AS id, 20 AS amount) s ON t.id = s.id
+WHEN MATCHED THEN UPDATE SET amount = s.amount;
+
+
+statement ok
+MERGE INTO emnc_ledger t USING (SELECT 2 AS id, 30 AS amount) s ON t.id = s.id
+WHEN NOT MATCHED THEN INSERT (id, amount) VALUES (s.id, s.amount);
+
+
+statement ok
+INSERT INTO emnc_ledger (id, amount) VALUES (3, 40) ON CONFLICT (id) DO UPDATE SET amount = 45;
+
+
+statement ok
+INSERT INTO emnc_ledger (id, amount) VALUES (3, 40) ON CONFLICT (id) DO UPDATE SET amount = 50;
+
+
+statement error
+MERGE INTO emnc_ledger t USING (SELECT 1 AS id) s ON t.id = s.id
+WHEN MATCHED THEN UPDATE SET note = 'x';
+----
+db error: ERROR: permission denied for table emnc_ledger
+
+
+statement error
+MERGE INTO emnc_ledger t USING (SELECT 4 AS id) s ON t.id = s.id
+WHEN NOT MATCHED THEN INSERT (id, note) VALUES (s.id, 'four');
+----
+db error: ERROR: permission denied for table emnc_ledger
+
+
+statement error
+MERGE INTO emnc_ledger t USING (SELECT 1 AS id) s ON t.id = s.id
+WHEN MATCHED THEN DELETE;
+----
+db error: ERROR: permission denied for table emnc_ledger
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT id, amount, note FROM emnc_ledger ORDER BY id;
+----
+id	amount	note
+1	20	one
+2	30	NULL
+3	50	NULL
+
+
+statement ok
+DROP TABLE emnc_ledger;
+
+
+statement ok
+DROP ROLE emnc_vedernikoff;

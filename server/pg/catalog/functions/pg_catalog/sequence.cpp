@@ -28,7 +28,6 @@
 #include <memory>
 #include <optional>
 
-#include "auth/role_closure.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/utils/lookup.h"
@@ -53,20 +52,12 @@ SequenceProgress ProgressOf(const duckdb::SequenceData& data) {
   return {.last_value = data.counter, .is_called = false};
 }
 
-bool Allows(const std::shared_ptr<const auth::RoleClosure>& closure,
-            const duckdb::Permissions& permissions, CatalogType type,
-            AclMode modes) {
-  return closure->CanAny(type, permissions, modes);
-}
-
 const duckdb::SequenceCatalogEntry* ReadableSequence(
-  const Session& session,
-  const std::shared_ptr<const auth::RoleClosure>& closure, int64_t oid,
+  const Session& session, const duckdb::RoleAccess& role, int64_t oid,
   AclMode modes) {
   const auto entry = EntryByOid(session, static_cast<uint64_t>(oid));
   if (!entry || entry->type != CatalogType::SEQUENCE_ENTRY ||
-      !Allows(closure, entry->permissions, CatalogType::SEQUENCE_ENTRY,
-              modes)) {
+      !role.CanAny(CatalogType::SEQUENCE_ENTRY, entry->permissions, modes)) {
     return nullptr;
   }
   return &entry->Cast<duckdb::SequenceCatalogEntry>();
@@ -76,7 +67,7 @@ void PgSequenceLastValueFunction(duckdb::DataChunk& args,
                                  duckdb::ExpressionState& state,
                                  duckdb::Vector& result) {
   const auto& session = SessionOf(state);
-  const auto access = auth::SessionClosure(state.GetContext());
+  const auto role = CallerAccess(state);
   const auto oids = args.data[0].Values<int64_t>();
   auto writer = duckdb::FlatVector::Writer<int64_t>(result, args.size());
   for (duckdb::idx_t row = 0; row < args.size(); ++row) {
@@ -96,8 +87,8 @@ void PgSequenceLastValueFunction(duckdb::DataChunk& args,
         ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
         ERR_MSG("\"", entry->name.GetIdentifierName(), "\" is not a sequence"));
     }
-    if (!Allows(access, entry->permissions, CatalogType::SEQUENCE_ENTRY,
-                AclMode::Select | AclMode::Usage)) {
+    if (!role.CanAny(CatalogType::SEQUENCE_ENTRY, entry->permissions,
+                     AclMode::Select | AclMode::Usage)) {
       writer.WriteNull();
       continue;
     }
@@ -115,7 +106,7 @@ void PgGetSequenceDataFunction(duckdb::DataChunk& args,
                                duckdb::ExpressionState& state,
                                duckdb::Vector& result) {
   const auto& session = SessionOf(state);
-  const auto access = auth::SessionClosure(state.GetContext());
+  const auto role = CallerAccess(state);
   const auto oids = args.data[0].Values<int64_t>();
   auto writer =
     duckdb::FlatVector::Writer<duckdb::VectorStructType<int64_t, bool>>(
@@ -127,7 +118,7 @@ void PgGetSequenceDataFunction(duckdb::DataChunk& args,
       continue;
     }
     const auto* sequence =
-      ReadableSequence(session, access, oid.GetValue(), AclMode::Select);
+      ReadableSequence(session, role, oid.GetValue(), AclMode::Select);
     writer.WriteValue([&](auto& last_value, auto& is_called) {
       if (!sequence) {
         last_value.WriteNull();
@@ -145,7 +136,7 @@ void PgSequenceParametersFunction(duckdb::DataChunk& args,
                                   duckdb::ExpressionState& state,
                                   duckdb::Vector& result) {
   const auto& session = SessionOf(state);
-  const auto access = auth::SessionClosure(state.GetContext());
+  const auto role = CallerAccess(state);
   const auto oids = args.data[0].Values<int64_t>();
   auto writer = duckdb::FlatVector::Writer<duckdb::VectorStructType<
     int64_t, int64_t, int64_t, int64_t, bool, int64_t, int64_t>>(result,
@@ -165,8 +156,8 @@ void PgSequenceParametersFunction(duckdb::DataChunk& args,
     }
     const auto type =
       relation->entry ? relation->entry->type : CatalogType::TABLE_ENTRY;
-    if (!Allows(access, *relation->permissions, type,
-                AclMode::Select | AclMode::Update | AclMode::Usage)) {
+    if (!role.CanAny(type, *relation->permissions,
+                     AclMode::Select | AclMode::Update | AclMode::Usage)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied for sequence ",
                               NameOf(*session.transaction, *relation).name));
@@ -219,12 +210,8 @@ void LastvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     ERR_MSG("lastval is not yet defined in this session"));
   }
-  if (!Allows(auth::SessionClosure(context), entry->permissions,
-              CatalogType::SEQUENCE_ENTRY, AclMode::Select | AclMode::Usage)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                    ERR_MSG("permission denied for sequence ",
-                            entry->name.GetIdentifierName()));
-  }
+  duckdb::RequireEntryPrivilege(CallerAccess(state), *entry,
+                                AclMode::Select | AclMode::Usage);
   result.Reference(duckdb::Value::BIGINT(last->value),
                    duckdb::count_t(args.size()));
 }

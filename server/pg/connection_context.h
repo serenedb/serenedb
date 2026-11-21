@@ -26,6 +26,7 @@
 #include <atomic>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/client_data.hpp>
 #include <duckdb/main/connection.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/pg/sql_error.hpp>
@@ -73,12 +74,12 @@ class CopyInBatches;
 
 struct LoginCheck {
   duckdb::idx_t role;
+  duckdb::idx_t database = 0;
   bool superuser = false;
   irs::pg::SqlErrorData error;
 };
 
-LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const duckdb::Permissions& perm);
+LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname);
 
 }  // namespace sdb::pg
 namespace sdb::network {
@@ -119,29 +120,37 @@ class ConnectionContext final : public duckdb::ClientContext {
 
   const std::string& user() const { return _user; }
   const std::string& SystemUser() const { return _system_user; }
-  const std::string& GetDatabase() const { return _database_name; }
+  const std::string& GetDatabase() const {
+    return client_data->default_database.GetIdentifierName();
+  }
   duckdb::idx_t GetDatabaseId() const { return _database_id; }
   int32_t GetBackendPid() const { return _backend_pid; }
 
   auto* GetCancelRegistry() const { return _cancel_registry; }
 
-  duckdb::idx_t GetRoleId() const { return _effective_role_id; }
+  duckdb::idx_t GetRoleId() const { return current_role_id; }
   duckdb::idx_t GetLoginRoleId() const { return _login_role_id; }
-  duckdb::idx_t GetSessionRoleId() const { return _session_role_id; }
+  duckdb::idx_t GetSessionRoleId() const { return session_role; }
 
   std::string EffectiveUserName();
   std::string SessionUserName();
 
   void SetEffectiveRole(duckdb::idx_t role) {
-    if (std::exchange(_effective_role_id, role) != role) {
+    if (current_role_id != role) {
       BumpBindingGeneration();
     }
+    SetCurrentRole(role);
+    session_user = EffectiveUserName();
   }
   void SetSessionRole(duckdb::idx_t role) {
-    _session_role_id = role;
+    session_role = role;
     SetEffectiveRole(role);
   }
-  void ResetIdentity() { SetSessionRole(_login_role_id); }
+  void ResetIdentity() {
+    session_role = _login_role_id;
+    SetEffectiveRole(_login_role_id);
+  }
+  void ApplyRoleSettings();
 
   auto* GetSendBuffer() const { return _send_buffer; }
 
@@ -155,10 +164,10 @@ class ConnectionContext final : public duckdb::ClientContext {
     return _side_channel.Get<T>();
   }
 
-  bool InTransactionBlock() const noexcept { return _in_transaction_block; }
   void SetInTransactionBlock(bool value) noexcept {
     _in_transaction_block = value;
   }
+  void PreventInTransactionBlock(std::string_view statement) const;
 
   void AddNotice(irs::pg::SqlErrorData notice) {
     auto* node = new NoticeNode{std::move(notice), nullptr};
@@ -204,8 +213,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   std::optional<std::string> Get(std::string_view key);
 
   void SetSetting(std::string_view key, std::string value, bool);
-  void SetSettingChecked(std::string_view key, std::string value,
-                         bool is_local);
+  void SetSettingChecked(std::string_view key, std::string value);
 
   uint64_t SettingsVersion() const noexcept { return _settings_version; }
   void MarkSettingsChanged() noexcept { ++_settings_version; }
@@ -248,7 +256,6 @@ class ConnectionContext final : public duckdb::ClientContext {
 
   void ValidateIsolationLevel(duckdb::TransactionIsolationLevel level) final;
   bool EmitWarning(const char* message) final;
-  bool IsSettingVisible(const std::string& name) final;
   void OnSettingChange(const std::string& name, duckdb::SetScope scope,
                        const duckdb::Value& previous) final;
   void OnQueryBegin() final;
@@ -285,14 +292,11 @@ class ConnectionContext final : public duckdb::ClientContext {
 
   const std::string _user;
   const std::string _system_user;
-  const std::string _database_name;
   const duckdb::idx_t _database_id;
   const int32_t _backend_pid;
   network::CancelRegistry* const _cancel_registry;
   message::Buffer* const _send_buffer;
   const duckdb::idx_t _login_role_id;
-  duckdb::idx_t _session_role_id;
-  duckdb::idx_t _effective_role_id;
   SideChannel _side_channel;
   bool _in_transaction_block = false;
   std::atomic<NoticeNode*> _notices{nullptr};

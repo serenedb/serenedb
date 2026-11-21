@@ -125,7 +125,11 @@ CREATE SCHEMA tesr_own;
 
 
 statement ok
-CREATE FUNCTION tesr_own.lower(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT ''own''';
+CREATE FUNCTION tesr_own.tesr_low(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT ''own''';
+
+
+statement ok
+CREATE FUNCTION public.tesr_low(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT ''public''';
 
 
 statement ok
@@ -133,7 +137,7 @@ SET search_path = tesr_own, public;
 
 
 statement ok
-CREATE TABLE tesr_own.tesr_dc (s TEXT CHECK (lower(s) = 'own'), d TEXT DEFAULT lower('ABC'));
+CREATE TABLE tesr_own.tesr_dc (s TEXT CHECK (tesr_low(s) = 'own'), d TEXT DEFAULT tesr_low('ABC'));
 
 
 statement ok

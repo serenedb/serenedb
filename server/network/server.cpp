@@ -41,6 +41,7 @@
 #include "backup/pg_control.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "network/credentials.h"
 #include "network/listen_protocol.h"
@@ -85,23 +86,20 @@ ABSL_FLAG(uint64_t, max_connections, 0,
 namespace sdb {
 namespace {
 
-// Per-role credential source: looks the connecting user up in the catalog and,
-// if the role carries a stored SCRAM verifier (rolpassword), returns it so the
-// connection must authenticate. A role with no stored password returns nullopt
-// -> the pg-wire/http layer treats that as trust (logs in without a password),
-// matching PostgreSQL's "no password set" behaviour.
 class CatalogCredentialProvider final : public network::CredentialProvider {
  public:
   std::optional<network::Credential> LookupCredential(
     std::string_view username) const final {
     std::string stored;
+    network::Credential credential;
     catalog::ReadEntry<catalog::RoleCatalogEntry>(
-      username,
-      [&](const catalog::RoleCatalogEntry& role) { stored = role.Password(); });
+      username, [&](const catalog::RoleCatalogEntry& role) {
+        stored = role.Password();
+        credential.valid_until = role.ValidUntil();
+      });
     if (stored.empty()) {
       return std::nullopt;
     }
-    network::Credential credential;
     if (auto verifier = network::ParseScramVerifier(stored)) {
       credential.scram = std::move(*verifier);
     } else if (network::IsMd5Verifier(stored)) {

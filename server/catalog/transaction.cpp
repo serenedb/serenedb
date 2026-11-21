@@ -631,6 +631,7 @@ void Transactions::Commit(SessionTransaction& transaction,
       catalogs.push_back(catalog);
     }
   }
+  SDB_PARK_ONCE_ON_FAILURE("pause_commit_before_on_commit");
   for (auto* catalog : catalogs) {
     catalog->OnCommit();
   }
@@ -823,7 +824,7 @@ void Transactions::Publish(duckdb::transaction_t commit, bool catalog,
                                  version, next, std::memory_order_release,
                                  std::memory_order_relaxed)) {
       }
-      SDB_PARK_ONCE_ON_FAILURE("pause_catalog_version_ahead_of_commit");
+      SDB_PARK_ONCE_ON_FAILURE("pause_publish_after_catalog_version");
     }
     if (_last_commit.compare_exchange_weak(published, next,
                                            std::memory_order_seq_cst)) {
@@ -897,17 +898,27 @@ void SessionTransaction::Release() noexcept {
 }
 
 void SessionTransaction::Commit(duckdb::ClientContext& context) {
-  absl::Cleanup rollback = [this] { Rollback(); };
+  absl::Cleanup rollback = [this, &context] { Rollback(&context); };
   Transactions::Get().Commit(*this, context);
   std::move(rollback).Cancel();
   _state = SessionState::Committed;
   absl::Cleanup release = [this] { Release(); };
+  std::vector<duckdb::reference<duckdb::AttachedDatabase>> attached;
+  {
+    absl::MutexLock lock{&_mutex};
+    attached.swap(_attached);
+  }
+  for (auto& db : attached) {
+    duckdb::DatabaseManager::Get(db.get().GetDatabase())
+      .CommitAttach(&context, db.get());
+  }
   for (auto& action : _on_commit) {
     action();
   }
 }
 
-void SessionTransaction::Rollback() noexcept {
+void SessionTransaction::Rollback(
+  duckdb::optional_ptr<duckdb::ClientContext> context) noexcept {
   for (auto it = _changes.rbegin(); it != _changes.rend(); ++it) {
     it->set->Undo(*it->version, it->kind);
   }
@@ -921,12 +932,8 @@ void SessionTransaction::Rollback() noexcept {
     attached.swap(_attached);
   }
   for (auto& db : attached) {
-    auto& manager = duckdb::DatabaseManager::Get(db.get().GetDatabase());
-    if (auto detached = manager.DetachInternal(db.get().name)) {
-      if (auto deleter = detached->ExtractDeleter()) {
-        manager.AddPendingTeardown(std::move(deleter));
-      }
-    }
+    duckdb::DatabaseManager::Get(db.get().GetDatabase())
+      .RollbackAttach(context, db.get());
   }
   _state = SessionState::RolledBack;
 }
@@ -981,11 +988,11 @@ void TransactionManager::RollbackTransaction(duckdb::Transaction& transaction) {
   if (session.State() != SessionState::Active) {
     return;
   }
-  if (auto context = transaction.context.lock();
-      context && context->transaction.HasActiveTransaction()) {
+  const auto context = transaction.context.lock();
+  if (context && context->transaction.HasActiveTransaction()) {
     return;
   }
-  session.Rollback();
+  session.Rollback(context.get());
 }
 
 void TransactionManager::PushAttach(duckdb::Transaction& transaction,

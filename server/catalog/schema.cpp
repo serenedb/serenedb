@@ -38,6 +38,7 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -117,24 +118,139 @@ bool ChangesReturnType(const duckdb::CatalogEntry& current,
                         });
 }
 
+[[noreturn]] void ThrowFunctionExists(const Schema& schema,
+                                      const duckdb::Identifier& name,
+                                      const duckdb::MacroFunction& overload) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_DUPLICATE_FUNCTION),
+    ERR_MSG(
+      "function ", name.GetIdentifierName(), "(",
+      duckdb::MacroFunction::ParameterTypesToString(overload.ParameterTypes()),
+      ") already exists in schema \"", schema.name.GetIdentifierName(), "\""));
+}
+
+bool IsMacro(const duckdb::CatalogEntry& entry) {
+  return entry.type == duckdb::CatalogType::MACRO_ENTRY ||
+         entry.type == duckdb::CatalogType::TABLE_MACRO_ENTRY;
+}
+
+const duckdb::MacroFunction& RenamedOverload(
+  const duckdb::MacroCatalogEntry& function,
+  const duckdb::RenameScalarFunctionInfo& info) {
+  const auto overload =
+    absl::c_find_if(function.macros, [&](const auto& macro) {
+      return function.OverloadOid(*macro) == info.overload_oid;
+    });
+  return overload == function.macros.end() ? *function.macros.front()
+                                           : **overload;
+}
+
+bool MoveOverload(Schema& schema, Schema& target_schema,
+                  duckdb::CatalogTransaction transaction,
+                  duckdb::CatalogEntry& entry, duckdb::idx_t overload_oid,
+                  const duckdb::Identifier& new_name) {
+  if (!overload_oid || !IsMacro(entry)) {
+    return false;
+  }
+  const auto& function = entry.Cast<duckdb::MacroCatalogEntry>();
+  auto target = target_schema.Set(entry.type).Get(transaction, new_name);
+  if (function.macros.size() == 1 && !target) {
+    return false;
+  }
+  if (target && target->type != entry.type) {
+    ThrowEntryExists(entry.type, new_name);
+  }
+  auto source = function.GetSerializedInfo();
+  auto& source_macros = source->Cast<duckdb::CreateMacroInfo>().macros;
+  const auto source_it = absl::c_find_if(source_macros, [&](const auto& macro) {
+    return function.OverloadOid(*macro) == overload_oid;
+  });
+  if (source_it == source_macros.end()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
+      ERR_MSG("function with OID ", overload_oid, " does not exist"));
+  }
+  auto moved = std::move(*source_it);
+  source_macros.erase(source_it);
+  moved->permissions = function.OverloadPermissions(*moved);
+  moved->comment = function.OverloadComment(*moved);
+  moved->oid = 0;
+  duckdb::unique_ptr<duckdb::CreateInfo> destination;
+  if (target) {
+    destination = target->GetSerializedInfo();
+    auto& macros = destination->Cast<duckdb::CreateMacroInfo>().macros;
+    const auto types = moved->ParameterTypes();
+    if (absl::c_any_of(macros, [&](const auto& macro) {
+          return macro->HasParameterTypes(types);
+        })) {
+      ThrowFunctionExists(target_schema, new_name, *moved);
+    }
+    macros.push_back(std::move(moved));
+    destination->on_conflict = duckdb::OnCreateConflict::ALTER_ON_CONFLICT;
+  } else {
+    destination = function.GetInfo();
+    auto& macro_info = destination->Cast<duckdb::CreateMacroInfo>();
+    macro_info.SetQualifiedName(target_schema.GetQualifiedName(new_name));
+    macro_info.permissions = moved->permissions;
+    macro_info.comment = moved->comment;
+    moved->permissions = duckdb::Permissions{};
+    moved->comment = duckdb::Value{};
+    macro_info.macros.clear();
+    macro_info.macros.push_back(std::move(moved));
+  }
+  if (source_macros.empty()) {
+    schema.Drop(transaction, entry);
+  } else {
+    source->on_conflict = duckdb::OnCreateConflict::ALTER_ON_CONFLICT;
+    schema.CreateFunction(transaction,
+                          source->Cast<duckdb::CreateFunctionInfo>());
+  }
+  target_schema.CreateFunction(transaction,
+                               destination->Cast<duckdb::CreateFunctionInfo>());
+  return true;
+}
+
 void AlterAllInSchema(Schema& schema, duckdb::CatalogTransaction transaction,
                       duckdb::AlterPermissionsInfo& info) {
   const auto kind = info.entry_catalog_type;
-  std::vector<duckdb::reference<duckdb::CatalogEntry>> entries;
-  schema.Set(kind).Scan(transaction, [&](duckdb::CatalogEntry& entry) {
-    if (!entry.internal && InKind(entry, kind)) {
-      entries.emplace_back(entry);
+  struct Target {
+    duckdb::reference<duckdb::CatalogEntry> entry;
+    duckdb::idx_t overload_oid;
+  };
+  std::vector<Target> targets;
+  const auto collect = [&](duckdb::CatalogEntry& entry) {
+    if (entry.internal || !InKind(entry, kind)) {
+      return;
     }
-  });
+    if (entry.type != duckdb::CatalogType::MACRO_ENTRY &&
+        entry.type != duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+      targets.push_back({entry, 0});
+      return;
+    }
+    const auto& macro = entry.Cast<duckdb::MacroCatalogEntry>();
+    for (const auto& overload : macro.macros) {
+      if (overload->is_procedure ? info.include_procedures
+                                 : info.include_functions) {
+        targets.push_back({entry, macro.OverloadOid(*overload)});
+      }
+    }
+  };
+  schema.Set(kind).Scan(transaction, collect);
+  if (kind == duckdb::CatalogType::MACRO_ENTRY) {
+    schema.Set(duckdb::CatalogType::TABLE_MACRO_ENTRY)
+      .Scan(transaction, collect);
+  }
   info.all_in_schema = false;
-  for (auto& entry : entries) {
-    info.entry_catalog_type =
-      entry.get().type == duckdb::CatalogType::VIEW_ENTRY
-        ? duckdb::CatalogType::TABLE_ENTRY
-        : entry.get().type;
-    info.SetQualifiedName(schema.GetQualifiedName(entry.get().name));
+  for (const auto& target : targets) {
+    const auto& entry = target.entry.get();
+    info.entry_catalog_type = entry.type == duckdb::CatalogType::VIEW_ENTRY
+                                ? duckdb::CatalogType::TABLE_ENTRY
+                                : entry.type;
+    info.SetQualifiedName(schema.GetQualifiedName(entry.name));
+    info.overload_oid = target.overload_oid;
     schema.Alter(transaction, info);
   }
+  info.overload_oid = 0;
 }
 
 void ReownSequences(duckdb::CatalogTransaction transaction,
@@ -281,7 +397,7 @@ SchemaSets::SchemaSets(bool case_sensitive, OidIndex& oids)
     types{case_sensitive, oids, 0, true},
     tokenizers{case_sensitive, oids, 0, true},
     jobs{case_sensitive, oids, 0, true},
-    schemas{case_sensitive, oids} {}
+    schemas{case_sensitive, oids, 0, true} {}
 
 Schema::Schema(duckdb::Catalog& catalog, duckdb::CreateSchemaInfo& info,
                duckdb::optional_ptr<duckdb::SchemaCatalogEntry> parent,
@@ -416,6 +532,41 @@ void Schema::CheckRelationName(duckdb::CatalogTransaction transaction,
   }
 }
 
+void Schema::CheckRoutineName(
+  duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+  const duckdb::Identifier& name,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::MacroFunction>>& overloads) {
+  using enum duckdb::CatalogType;
+  if (!catalog.IsCaseSensitive() ||
+      (type != MACRO_ENTRY && type != TABLE_MACRO_ENTRY)) {
+    return;
+  }
+  auto& sibling = Set(type == MACRO_ENTRY ? TABLE_MACRO_ENTRY : MACRO_ENTRY);
+  sibling.CheckNameWritable(transaction, name);
+  const auto taken = sibling.Get(transaction, name);
+  if (!taken) {
+    return;
+  }
+  const auto& routine = taken->Cast<duckdb::MacroCatalogEntry>();
+  for (const auto& overload : overloads) {
+    const auto types = overload->ParameterTypes();
+    if (absl::c_any_of(routine.macros, [&](const auto& other) {
+          return other->HasParameterTypes(types);
+        })) {
+      ThrowFunctionExists(*this, name, *overload);
+    }
+  }
+}
+
+void Schema::CheckRoutineName(duckdb::CatalogTransaction transaction,
+                              const duckdb::CatalogEntry& entry,
+                              const duckdb::Identifier& name) {
+  if (IsMacro(entry)) {
+    CheckRoutineName(transaction, entry.type, name,
+                     entry.Cast<duckdb::MacroCatalogEntry>().macros);
+  }
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> Schema::Add(
   duckdb::CatalogTransaction transaction,
   duckdb::unique_ptr<duckdb::CatalogEntry> entry,
@@ -454,6 +605,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> Schema::Add(
     }
   }
   CheckRelationName(transaction, type, entry_name);
+  CheckRoutineName(transaction, *entry, entry_name);
   ResolveDependencyOids(transaction, catalog, *entry);
   auto* result = entry.get();
   if (!set.Create(transaction, std::move(entry))) {
@@ -493,6 +645,10 @@ bool Schema::AlterExisting(duckdb::CatalogTransaction transaction,
       transaction, *current, [&](const duckdb::CatalogEntry& dependent) {
         return retyped || dependent.type == duckdb::CatalogType::INDEX_ENTRY;
       });
+  }
+  if (IsMacro(*current)) {
+    CheckRoutineName(transaction, info.type, entry_name,
+                     info.Cast<duckdb::CreateMacroInfo>().macros);
   }
   auto alter = info.GetAlterInfo();
   Alter(transaction, *alter);
@@ -858,7 +1014,7 @@ void Schema::DropEntry(duckdb::ClientContext& context, duckdb::DropInfo& info) {
       return;
     }
   }
-  DropDependents(transaction, *entry, info.cascade);
+  DropDependents(transaction, *entry, info.cascade, info.dropped_together);
   Drop(transaction, *entry);
 }
 
@@ -894,6 +1050,17 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
       ERR_MSG("Cannot alter entry \"", entry->name.GetIdentifierName(),
               "\" because it is an internal system entry"));
   }
+  const bool rename_function =
+    info.type == duckdb::AlterType::ALTER_SCALAR_FUNCTION &&
+    info.Cast<duckdb::AlterScalarFunctionInfo>().alter_scalar_function_type ==
+      duckdb::AlterScalarFunctionType::RENAME_SCALAR_FUNCTION;
+  if (rename_function) {
+    const auto& rename = info.Cast<duckdb::RenameScalarFunctionInfo>();
+    if (MoveOverload(*this, *this, transaction, *entry, rename.overload_oid,
+                     rename.new_name)) {
+      return;
+    }
+  }
   if (const auto new_schema = info.GetNewSchema()) {
     if (type == duckdb::CatalogType::VIEW_ENTRY &&
         entry->type != duckdb::CatalogType::VIEW_ENTRY) {
@@ -924,7 +1091,11 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
     }
     DeclareModified(transaction, catalog,
                     duckdb::DatabaseModificationType::ALTER_TABLE);
-    Move(transaction, set, type, *entry, target->Cast<Schema>(), info);
+    if (!MoveOverload(*this, target->Cast<Schema>(), transaction, *entry,
+                      info.Cast<duckdb::SetSchemaInfo>().overload_oid,
+                      entry->name)) {
+      Move(transaction, set, type, *entry, target->Cast<Schema>(), info);
+    }
     return;
   }
   if (entry->type == duckdb::CatalogType::TABLE_ENTRY &&
@@ -941,10 +1112,18 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
   const auto new_name = info.GetNewName();
   if (new_name) {
     if (new_name->GetIdentifierName() == entry->name.GetIdentifierName()) {
+      if (rename_function && IsMacro(*entry)) {
+        const auto& function = entry->Cast<duckdb::MacroCatalogEntry>();
+        ThrowFunctionExists(
+          *this, *new_name,
+          RenamedOverload(function,
+                          info.Cast<duckdb::RenameScalarFunctionInfo>()));
+      }
       ThrowEntryExists(entry->type, *new_name);
     }
     if (!set.SameName(*new_name, entry->name)) {
       CheckRelationName(transaction, type, *new_name);
+      CheckRoutineName(transaction, *entry, *new_name);
       if (!replay) {
         FollowRename(transaction, *entry, *new_name, defaults);
       }
@@ -1027,6 +1206,7 @@ void Schema::Move(duckdb::CatalogTransaction transaction, EntrySet& set,
   std::vector<duckdb::idx_t> oids;
   for (const auto& item : std::views::reverse(moving)) {
     target.CheckRelationName(transaction, item.type, item.entry.name);
+    target.CheckRoutineName(transaction, item.entry, item.entry.name);
     oids.push_back(item.entry.oid);
   }
   std::vector<PendingDefault> defaults;

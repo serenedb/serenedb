@@ -10,10 +10,6 @@
 # Byte-identical to PostgreSQL's pg_class.relacl / pg_attribute.attacl rendering
 # and ExecCheckOneRelPerms enforcement.
 #
-# SCOPED OUT: the column-list form `GRANT ALL (a) ON t TO r` (which on real PG
-# expands to attacl <slt:ignore>r=arwx/postgres<slt:ignore>) is a syntax error on serened -- the ALL
-# keyword is not accepted with a column list -- so it is not exercised here.
-#
 # Lore: vedernikoff gets the column-scoped grants over clickclack/babsky.
 
 
@@ -160,6 +156,19 @@ statement error
 SELECT clickclack FROM cac_iceberg;
 ----
 db error: ERROR: permission denied for table cac_iceberg<slt:ignore>
+
+
+statement ok
+GRANT ALL (babsky) ON cac_iceberg TO cac_mop;
+
+
+query
+SELECT a.attacl::text AS acl
+FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+WHERE c.relname = 'cac_iceberg' AND a.attname = 'babsky';
+----
+acl
+<slt:ignore>cac_mop=arwx/postgres<slt:ignore>
 
 
 statement ok

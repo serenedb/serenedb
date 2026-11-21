@@ -1,0 +1,72 @@
+statement ok
+DROP DATABASE IF EXISTS sfr_noconn;
+
+
+statement ok
+DROP ROLE IF EXISTS sfr_stats;
+
+
+statement ok
+DROP ROLE IF EXISTS sfr_plain;
+
+
+statement ok
+CREATE ROLE sfr_stats LOGIN PASSWORD 'sfr_pw';
+
+
+statement ok
+CREATE ROLE sfr_plain LOGIN PASSWORD 'sfr_pw';
+
+
+statement ok
+GRANT pg_read_all_stats TO sfr_stats;
+
+
+statement ok
+CREATE DATABASE sfr_noconn;
+
+
+statement ok
+REVOKE CONNECT ON DATABASE sfr_noconn FROM PUBLIC;
+
+
+connection c_stats user=sfr_stats password=sfr_pw
+query
+SELECT pg_database_size('sfr_noconn') >= 0 AS sized;
+----
+sized
+t
+
+
+connection c_plain user=sfr_plain password=sfr_pw
+statement error
+SELECT pg_database_size('sfr_noconn');
+----
+db error: ERROR: permission denied for database sfr_noconn
+
+
+connection c_stats user=sfr_stats password=sfr_pw
+query
+SELECT pg_tablespace_size('pg_global') > 0 AS sized;
+----
+sized
+t
+
+
+connection c_plain user=sfr_plain password=sfr_pw
+statement error
+SELECT pg_tablespace_size('pg_global');
+----
+db error: ERROR: permission denied for tablespace pg_global
+
+
+statement ok
+DROP DATABASE sfr_noconn;
+
+
+statement ok
+DROP ROLE sfr_stats;
+
+
+statement ok
+DROP ROLE sfr_plain;

@@ -45,7 +45,6 @@
 #include <type_traits>
 #include <vector>
 
-#include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/database_directory.h"
@@ -251,6 +250,10 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database ", KeyText(key), " does not exist"));
       }
+      const auto& role = context.CurrentRole();
+      if (!role.Has(duckdb::RoleCapability::ReadAllStats)) {
+        duckdb::RequireEntryPrivilege(role, *entry, duckdb::AclMode::Connect);
+      }
       return static_cast<int64_t>(
         DatabaseStorageSize(context, *database, {}).bytes);
     });
@@ -301,11 +304,12 @@ int64_t TablespaceBytes(const Session& session,
                         const catalog::TablespaceCatalogEntry& tablespace) {
   auto& context = *session.context;
   if (tablespace.oid != SessionTablespace(session)) {
-    if (const auto closure = auth::SessionClosure(context);
-        closure && !closure->Owns(kRootUser) &&
-        !closure->CanAny(duckdb::CatalogType::TABLESPACE_ENTRY,
-                         PrivilegePermissions(tablespace),
-                         duckdb::AclMode::Create)) {
+    if (const auto& role = context.CurrentRole();
+        !role.Has(duckdb::RoleCapability::ReadAllStats) &&
+        !role.Owns(kRootUser) &&
+        !role.CanAny(duckdb::CatalogType::TABLESPACE_ENTRY,
+                     PrivilegePermissions(tablespace),
+                     duckdb::AclMode::Create)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied for tablespace ",
                               tablespace.name.GetIdentifierName()));

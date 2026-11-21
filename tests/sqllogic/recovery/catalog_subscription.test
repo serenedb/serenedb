@@ -81,14 +81,47 @@ t	local	1/2	sub_rec_owner
 onlyif serenedb
 connection after_crash
 statement ok
-DROP SUBSCRIPTION sub_rec_kept;
+FORCE CHECKPOINT;
 
 onlyif serenedb
 connection after_crash
 statement ok
-DROP SUBSCRIPTION sub_rec_renamed;
+SET sdb_faults = 'crash_on_packet';
 
 onlyif serenedb
 connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+onlyif serenedb
+connection after_checkpoint
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT subname, subenabled, subbinary, suborigin, subpublications FROM pg_subscription ORDER BY subname;
+----
+subname	subenabled	subbinary	suborigin	subpublications
+sub_rec_kept	f	t	none	{pub_a,pub_b}
+sub_rec_renamed	f	f	any	{pub_a,pub_c}
+
+onlyif serenedb
+connection after_checkpoint
+query
+SELECT s.subdisableonerr, s.subsynccommit, s.subskiplsn, r.rolname FROM pg_subscription s JOIN pg_roles r ON r.oid = s.subowner WHERE s.subname = 'sub_rec_renamed';
+----
+subdisableonerr	subsynccommit	subskiplsn	rolname
+t	local	1/2	sub_rec_owner
+
+onlyif serenedb
+connection after_checkpoint
+statement ok
+DROP SUBSCRIPTION sub_rec_kept;
+
+onlyif serenedb
+connection after_checkpoint
+statement ok
+DROP SUBSCRIPTION sub_rec_renamed;
+
+onlyif serenedb
+connection after_checkpoint
 statement ok
 DROP ROLE sub_rec_owner;

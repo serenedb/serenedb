@@ -1,0 +1,104 @@
+statement ok
+DROP TABLE IF EXISTS esfm_tickets;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS esfm_setter;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS esfm_counter;
+
+
+statement ok
+DROP ROLE IF EXISTS esfm_vedernikoff;
+
+
+statement ok
+CREATE ROLE esfm_vedernikoff LOGIN PASSWORD 'esfm_pw';
+
+
+statement ok
+CREATE SEQUENCE esfm_setter;
+
+
+statement ok
+CREATE SEQUENCE esfm_counter;
+
+
+statement ok
+GRANT UPDATE ON SEQUENCE esfm_setter TO esfm_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE esfm_counter TO esfm_vedernikoff;
+
+
+connection c_esfm user=esfm_vedernikoff password=esfm_pw
+query
+SELECT setval('esfm_setter', 5) AS s, nextval('esfm_counter') AS n;
+----
+s	n
+5	1
+
+
+connection c_esfm user=esfm_vedernikoff password=esfm_pw
+statement error
+SELECT setval('esfm_counter', 5);
+----
+db error: ERROR: permission denied for sequence esfm_counter
+
+
+connection c_esfm user=esfm_vedernikoff password=esfm_pw
+query
+SELECT nextval('esfm_setter') AS n;
+----
+n
+6
+
+
+statement ok
+CREATE TABLE esfm_tickets (id serial, note text);
+
+
+statement ok
+GRANT INSERT ON esfm_tickets TO esfm_vedernikoff;
+
+
+connection c_esfm user=esfm_vedernikoff password=esfm_pw
+statement error
+INSERT INTO esfm_tickets (note) VALUES ('first');
+----
+db error: ERROR: permission denied for sequence esfm_tickets_id_seq
+
+
+statement ok
+GRANT USAGE ON SEQUENCE esfm_tickets_id_seq TO esfm_vedernikoff;
+
+
+connection c_esfm user=esfm_vedernikoff password=esfm_pw
+statement ok
+INSERT INTO esfm_tickets (note) VALUES ('first');
+
+
+query
+SELECT id, note FROM esfm_tickets;
+----
+id	note
+1	first
+
+
+statement ok
+DROP TABLE esfm_tickets;
+
+
+statement ok
+DROP SEQUENCE esfm_setter;
+
+
+statement ok
+DROP SEQUENCE esfm_counter;
+
+
+statement ok
+DROP ROLE esfm_vedernikoff;

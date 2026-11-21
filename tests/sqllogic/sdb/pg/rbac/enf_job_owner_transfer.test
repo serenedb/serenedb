@@ -1,0 +1,66 @@
+statement ok
+DROP ROLE IF EXISTS ejo_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS ejo_target;
+
+
+statement ok
+DROP TABLE IF EXISTS ejo_log;
+
+
+statement ok
+CREATE ROLE ejo_owner LOGIN PASSWORD 'ejo_pw';
+
+
+statement ok
+CREATE ROLE ejo_target SUPERUSER;
+
+
+statement ok
+CREATE TABLE ejo_log (v integer, by_user text);
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO ejo_owner;
+
+
+connection c_ejo user=ejo_owner password=ejo_pw
+statement ok
+CREATE JOB ejo_job AFTER 1 HOUR AS INSERT INTO ejo_log VALUES (1, current_user);
+
+
+connection c_ejo user=ejo_owner password=ejo_pw
+statement error
+ALTER JOB ejo_job OWNER TO ejo_target;
+----
+db error: ERROR: must be able to SET ROLE "ejo_target"
+
+
+connection c_ejo user=ejo_owner password=ejo_pw
+statement error
+ALTER JOB ejo_job OWNER TO postgres;
+----
+db error: ERROR: must be able to SET ROLE "postgres"
+
+
+connection c_ejo user=ejo_owner password=ejo_pw
+statement ok
+DROP JOB ejo_job;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM ejo_owner;
+
+
+statement ok
+DROP TABLE ejo_log;
+
+
+statement ok
+DROP ROLE ejo_owner;
+
+
+statement ok
+DROP ROLE ejo_target;

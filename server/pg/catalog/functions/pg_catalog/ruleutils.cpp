@@ -36,6 +36,7 @@
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
@@ -577,11 +578,12 @@ Definition FunctionResult(const Session& session,
 }
 
 Definition FunctionDefinition(const Session& session, int64_t oid) {
-  const auto* entry = FindMacro(session, static_cast<uint64_t>(oid));
-  if (!entry) {
+  const auto found = FindMacro(session, static_cast<uint64_t>(oid));
+  if (!found.entry) {
     return std::nullopt;
   }
-  const auto& macro = *entry->macros.front();
+  const auto* entry = found.entry;
+  const auto& macro = *found.macro;
   const bool typed =
     absl::c_none_of(macro.types, [](const duckdb::LogicalType& type) {
       return type.id() == duckdb::LogicalTypeId::UNKNOWN;
@@ -610,10 +612,16 @@ Definition FunctionDefinition(const Session& session, int64_t oid) {
     case duckdb::FunctionStability::VOLATILE:
       break;
   }
-  const auto options = absl::StrCat(volatility, macro.strict ? " STRICT" : "");
+  const auto options =
+    absl::StrCat(volatility, macro.strict ? " STRICT" : "",
+                 macro.security_definer ? " SECURITY DEFINER" : "");
   absl::StrAppend(&definition, " LANGUAGE sql\n", options,
-                  options.empty() ? "" : "\n", "AS ", tag, MacroBody(macro),
-                  tag, "\n");
+                  options.empty() ? "" : "\n");
+  for (const auto& entry : macro.config) {
+    absl::StrAppend(&definition, " SET ", duckdb::Settings::ConfigToSQL(entry),
+                    "\n");
+  }
+  absl::StrAppend(&definition, "AS ", tag, MacroBody(macro), tag, "\n");
   return definition;
 }
 
@@ -650,9 +658,9 @@ duckdb::scalar_function_t FunctionInfo(MacroRenderer macro_renderer,
     duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
       args.data[0], result, args.size(), [&](int64_t oid) {
         Definition definition;
-        if (const auto* macro =
-              FindMacro(session, static_cast<uint64_t>(oid))) {
-          definition = macro_renderer(session, *macro->macros.front());
+        if (const auto found = FindMacro(session, static_cast<uint64_t>(oid));
+            found.entry) {
+          definition = macro_renderer(session, *found.macro);
         } else if (oid > 0) {
           if (!builtins) {
             builtins = GetBuiltinFunctions(state.GetContext());
@@ -669,11 +677,11 @@ duckdb::scalar_function_t FunctionInfo(MacroRenderer macro_renderer,
 
 Definition FunctionArgDefault(const Session& session, int64_t oid,
                               int64_t argument) {
-  const auto* entry = FindMacro(session, static_cast<uint64_t>(oid));
-  if (!entry || argument < 1) {
+  const auto found = FindMacro(session, static_cast<uint64_t>(oid));
+  if (!found.entry || argument < 1) {
     return std::nullopt;
   }
-  const auto& macro = *entry->macros.front();
+  const auto& macro = *found.macro;
   auto index = static_cast<duckdb::idx_t>(argument - 1);
   if (const auto& modes = macro.parameter_modes; !modes.empty()) {
     if (index >= modes.size() || modes[index] == 'o') {

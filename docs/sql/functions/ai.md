@@ -55,7 +55,7 @@ The runnable examples on this page use a local Ollama server with the `all-minil
 | `model` | Model name. Defaults to `jev-latest`, which Kev also answers to. |
 | `path` | Path of the System One endpoint, if it differs from `/v1/systemone`, for example behind a gateway. |
 
-A `base_url` that starts with `http://` sends the text and the API key unencrypted. The functions therefore refuse a secret whose `base_url` uses `http://` for a host other than `localhost`, `127.0.0.0/8` or `::1`. To use such an endpoint, for example a model server on your private network, run `SET sdb_ai_allow_insecure_endpoint = true`.
+A `base_url` that starts with `http://` sends the text and the API key unencrypted. The functions therefore refuse a secret whose `base_url` uses `http://` for a host other than `localhost`, `127.0.0.0/8` or `::1`. To use such an endpoint, for example a model server on your private network, a superuser runs `SET GLOBAL sdb_ai_allow_insecure_endpoint = true` (or `SET` for a single session).
 
 ### Endpoint URLs {#endpoint-urls}
 
@@ -342,7 +342,7 @@ These settings apply to every AI function:
 | `sdb_ai_max_output_tokens_per_query` | `0` | Maximum output tokens a query may consume, as reported by the provider. The check happens before each request, so requests already in flight can go over it. 0 = unlimited. |
 | `sdb_ai_throw_on_quota_exceeded` | `true` | When `false`, rows after a quota is exhausted return `NULL` instead of failing the query. |
 | `sdb_ai_embedding_max_batch_size` | `100` | Maximum texts per embeddings request. |
-| `sdb_ai_allow_insecure_endpoint` | `false` | Allow `http://` endpoints on hosts other than localhost. See [Providers](#providers). |
+| `sdb_ai_allow_insecure_endpoint` | `false` | Allow `http://` endpoints on hosts other than localhost. Only a superuser can change it. See [Providers](#providers). |
 
 There is no input-token quota: the number of input tokens is only known to the provider.
 

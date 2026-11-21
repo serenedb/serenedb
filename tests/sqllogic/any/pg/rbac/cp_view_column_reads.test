@@ -5,22 +5,6 @@
 # per column (pg_attribute.attacl), and a grant on the VIEW does not leak onto
 # the base table -- a role holding only a view grant is still refused on t.
 #
-# SCOPED OUT -- SereneDB diverges from PostgreSQL on view privilege semantics
-# (probed against real PG 18 and SereneDB on 2026-06-19):
-#   1. Owner-rights vs invoker-rights. In PG a view runs with the view OWNER's
-#      rights, so a role with SELECT on the view (and none on the base table)
-#      reads the view fine. SereneDB enforces the base table for the CALLER:
-#      the same read is refused ("permission denied for table vcr_iceberg").
-#   2. No-grant view read wording. PG reports "permission denied for view
-#      vcr_clickclack"; SereneDB reports "permission denied for table
-#      vcr_iceberg" (it resolves through to the base relation).
-#   3. Column GRANT on a VIEW. PG accepts GRANT SELECT (a) ON <view>; SereneDB
-#      rejects it ("relation \"vcr_clickclack\" does not exist"). Only the
-#      table-level GRANT ... ON <view> is accepted.
-# Those three cases are therefore NOT asserted here. The "view grant does not
-# leak the base table" property is still asserted, via the byte-identical
-# direction: a table-level view grant does not let the holder read t directly.
-#
 # Lore: vedernikoff/babsky read; mop has nothing. iceberg is the base table,
 # clickclack the view.
 

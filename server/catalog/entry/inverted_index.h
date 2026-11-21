@@ -24,6 +24,7 @@
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/duck_catalog.hpp>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/identifier.hpp>
 #include <duckdb/common/types.hpp>
@@ -38,6 +39,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -206,6 +208,7 @@ class InvertedIndexConfig final : public irs::IndexFieldOptions {
   CompressionByColumn declared_compression;
   irs::containers::FlatHashSet<irs::field_id> table_columns;
   std::vector<ConstraintKey> constraint_keys;
+  std::vector<duckdb::FunctionCall> calls;
 
  private:
   static constexpr uint32_t kNoKey = std::numeric_limits<uint32_t>::max();
@@ -298,6 +301,13 @@ class InvertedIndexEntry final : public duckdb::IndexCatalogEntry {
 
   duckdb::optional_ptr<duckdb::CatalogEntry> GetRelation(
     duckdb::CatalogTransaction transaction) const final;
+
+  std::span<const duckdb::FunctionCall> GetFunctionCalls() const final {
+    if (!_config) {
+      return {};
+    }
+    return _config->calls;
+  }
 
   duckdb::Identifier GetSchemaName() const final { return ParentSchemaName(); }
 

@@ -500,7 +500,7 @@ CREATE SCHEMA tesp_own;
 
 
 statement ok
-CREATE FUNCTION tesp_own.lower(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT ''own''';
+CREATE FUNCTION tesp_own.tesp_low(x TEXT) RETURNS TEXT LANGUAGE sql IMMUTABLE AS 'SELECT ''own''';
 
 
 statement ok
@@ -508,7 +508,7 @@ SET search_path = tesp_own, public;
 
 
 statement ok
-CREATE TABLE tesp_own.tesp_l (s TEXT, g TEXT GENERATED ALWAYS AS (lower(s)));
+CREATE TABLE tesp_own.tesp_l (s TEXT, g TEXT GENERATED ALWAYS AS (tesp_low(s)));
 
 
 statement ok
@@ -531,7 +531,7 @@ SET search_path = tesp_own, public;
 
 
 statement ok
-CREATE TABLE tesp_own.tesp_dc (s TEXT CHECK (lower(s) = 'own'), d TEXT DEFAULT lower('ABC'));
+CREATE TABLE tesp_own.tesp_dc (s TEXT CHECK (tesp_low(s) = 'own'), d TEXT DEFAULT tesp_low('ABC'));
 
 
 statement ok
@@ -559,14 +559,14 @@ query
 SELECT pg_get_expr(adbin, adrelid) AS def FROM pg_attrdef WHERE adrelid = 'tesp_own.tesp_dc'::regclass;
 ----
 def
-tesp_own.lower('ABC')
+tesp_low('ABC')
 
 
 query
 SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'tesp_own.tesp_dc'::regclass AND contype = 'c';
 ----
 def
-CHECK ((tesp_own.lower(s) = 'own'))
+CHECK ((tesp_low(s) = 'own'))
 
 
 statement ok

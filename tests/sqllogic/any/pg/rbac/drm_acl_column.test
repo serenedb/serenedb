@@ -5,9 +5,7 @@
 # REVOKE <priv> (col), REVOKE ALL (col), a table-level REVOKE ALL that also
 # sweeps column grants, ALTER TABLE DROP COLUMN, or DROP TABLE.
 #
-# All outcomes below were validated against the PostgreSQL 19 oracle. The
-# DETAIL line PG emits ("privileges for column <c> of table <t>") differs in
-# wording across engines, so it is swallowed with <slt:ignore>.
+# All outcomes below were validated against the PostgreSQL 19 oracle.
 
 statement ok
 DROP TABLE IF EXISTS dacl_iceberg;
@@ -36,18 +34,11 @@ statement ok
 GRANT SELECT (payload) ON dacl_iceberg TO dacl_vedernikoff;
 
 
-skipif serenedb
 statement error
 DROP ROLE dacl_vedernikoff;
 ----
-db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
-
-
-onlyif serenedb
-statement error
-DROP ROLE dacl_vedernikoff;
-----
-db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
+db error: ERROR: role "dacl_vedernikoff" cannot be dropped because some objects depend on it
+DETAIL: privileges for column payload of table dacl_iceberg
 
 
 statement ok

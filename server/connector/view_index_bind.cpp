@@ -20,6 +20,8 @@
 
 #include "connector/view_index_bind.h"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
 #include <duckdb/common/multi_file/multi_file_states.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
@@ -292,6 +294,9 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
         dependencies.AddDependency(entry);
       }
     };
+  duckdb::vector<duckdb::FunctionCall> calls;
+  binder.RecordCalls(&calls);
+  absl::Cleanup stop_recording = [&] { binder.RecordCalls(nullptr); };
   duckdb::IndexBinder index_binder(binder, context, &table, info.get());
   index_binder.SetCatalogLookupCallback(lookup_callback);
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> expressions;
@@ -322,6 +327,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
     auto where_copy = info->where_clause->Copy();
     where_binder.BindKey(where_copy);
   }
+  std::move(stop_recording).Invoke();
 
   auto& get = plan->Cast<duckdb::LogicalGet>();
   for (const auto& column_id : get.GetColumnIds()) {
@@ -339,6 +345,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   plan = duckdb::make_uniq<duckdb::LogicalEmptyResult>(std::move(plan));
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
     std::move(info), std::move(expressions), table, nullptr);
+  result->function_calls = std::move(calls);
   result->children.emplace_back(std::move(plan));
   return std::move(result);
 }

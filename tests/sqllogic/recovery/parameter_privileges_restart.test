@@ -1,0 +1,119 @@
+control substitution on
+
+statement ok
+CREATE ROLE ppr_vedernikoff LOGIN PASSWORD 'ppr_pw';
+
+
+connection c_ved user=ppr_vedernikoff password=ppr_pw
+statement error
+SET GLOBAL sdb_job_history_size = 5;
+----
+db error: ERROR: permission denied to set parameter "sdb_job_history_size"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+statement ok
+GRANT ALTER SYSTEM ON PARAMETER sdb_job_history_size TO ppr_vedernikoff;
+
+
+statement ok
+GRANT SET ON PARAMETER session_replication_role TO ppr_vedernikoff;
+
+
+connection c_ved user=ppr_vedernikoff password=ppr_pw
+statement ok
+SET GLOBAL sdb_job_history_size = 5;
+
+
+query
+SELECT current_setting('sdb_job_history_size') AS size;
+----
+size
+5
+
+
+statement ok
+ALTER ROLE postgres CONNECTION LIMIT -1;
+
+
+query
+SELECT parname FROM pg_parameter_acl ORDER BY parname;
+----
+parname
+sdb_job_history_size
+session_replication_role
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE ROLE ppr_compaction;
+
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT parname, array_to_string(paracl, ',') AS acl FROM pg_parameter_acl ORDER BY parname;
+----
+parname	acl
+sdb_job_history_size	postgres=sA/postgres,ppr_vedernikoff=A/postgres
+session_replication_role	postgres=sA/postgres,ppr_vedernikoff=s/postgres
+
+
+connection c_ved_after user=ppr_vedernikoff password=ppr_pw
+statement ok
+SET session_replication_role = replica;
+
+
+connection c_ved_after user=ppr_vedernikoff password=ppr_pw
+statement ok
+SET GLOBAL sdb_job_history_size = 6;
+
+
+connection after_crash
+statement ok
+DROP OWNED BY ppr_vedernikoff;
+
+
+connection after_crash
+query
+SELECT count(*) AS grants FROM pg_parameter_acl;
+----
+grants
+0
+
+
+connection c_ved_after user=ppr_vedernikoff password=ppr_pw
+statement error
+SET GLOBAL sdb_job_history_size = 7;
+----
+db error: ERROR: permission denied to set parameter "sdb_job_history_size"
+DETAIL: Only roles with the SUPERUSER attribute may change the server-wide value of a parameter.
+
+
+connection after_crash
+statement ok
+DROP ROLE ppr_vedernikoff;
+
+
+connection after_crash
+statement ok
+DROP ROLE ppr_compaction;

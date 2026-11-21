@@ -1,0 +1,86 @@
+statement ok
+DROP SCHEMA IF EXISTS spu_hidden CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS spu_items;
+
+
+statement ok
+DROP ROLE IF EXISTS spu_vedernikoff;
+
+
+statement ok
+CREATE ROLE spu_vedernikoff LOGIN PASSWORD 'spu_pw';
+
+
+statement ok
+CREATE SCHEMA spu_hidden;
+
+
+statement ok
+CREATE TABLE spu_hidden.spu_items (a integer);
+
+
+statement ok
+INSERT INTO spu_hidden.spu_items VALUES (1);
+
+
+statement ok
+CREATE TABLE spu_items (a integer);
+
+
+statement ok
+INSERT INTO spu_items VALUES (2);
+
+
+statement ok
+GRANT SELECT ON spu_hidden.spu_items TO spu_vedernikoff;
+
+
+statement ok
+GRANT SELECT ON spu_items TO spu_vedernikoff;
+
+
+connection c_spu user=spu_vedernikoff password=spu_pw
+statement ok
+SET search_path = spu_hidden, public;
+
+
+connection c_spu user=spu_vedernikoff password=spu_pw
+query
+SELECT a FROM spu_items;
+----
+a
+2
+
+
+connection c_spu user=spu_vedernikoff password=spu_pw
+statement error
+SELECT a FROM spu_hidden.spu_items;
+----
+db error: ERROR: permission denied for schema spu_hidden
+
+
+statement ok
+GRANT USAGE ON SCHEMA spu_hidden TO spu_vedernikoff;
+
+
+connection c_spu user=spu_vedernikoff password=spu_pw
+query
+SELECT a FROM spu_items;
+----
+a
+1
+
+
+statement ok
+DROP SCHEMA spu_hidden CASCADE;
+
+
+statement ok
+DROP TABLE spu_items;
+
+
+statement ok
+DROP ROLE spu_vedernikoff;

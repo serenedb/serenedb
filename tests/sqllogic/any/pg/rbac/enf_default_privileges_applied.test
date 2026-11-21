@@ -1,0 +1,91 @@
+statement ok
+DROP TABLE IF EXISTS dpa_before;
+
+
+statement ok
+DROP TABLE IF EXISTS dpa_after;
+
+
+statement ok
+DROP ROLE IF EXISTS dpa_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS dpa_vedernikoff;
+
+
+statement ok
+CREATE ROLE dpa_kostya LOGIN PASSWORD 'dpa_pw';
+
+
+statement ok
+CREATE ROLE dpa_vedernikoff LOGIN PASSWORD 'dpa_pw2';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO dpa_kostya;
+
+
+connection c_dpa_owner user=dpa_kostya password=dpa_pw
+statement ok
+CREATE TABLE dpa_before (a integer);
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpa_kostya GRANT SELECT ON TABLES TO dpa_vedernikoff;
+
+
+connection c_dpa_owner user=dpa_kostya password=dpa_pw
+statement ok
+CREATE TABLE dpa_after (a integer);
+
+
+connection c_dpa_owner user=dpa_kostya password=dpa_pw
+statement ok
+INSERT INTO dpa_after VALUES (1);
+
+
+connection c_dpa_reader user=dpa_vedernikoff password=dpa_pw2
+query
+SELECT a FROM dpa_after;
+----
+a
+1
+
+
+connection c_dpa_reader user=dpa_vedernikoff password=dpa_pw2
+statement error
+SELECT a FROM dpa_before;
+----
+db error: ERROR: permission denied for table dpa_before
+
+
+query
+SELECT has_table_privilege('dpa_vedernikoff', 'dpa_after', 'SELECT') AS after_granted, has_table_privilege('dpa_vedernikoff', 'dpa_before', 'SELECT') AS before_granted;
+----
+after_granted	before_granted
+t	f
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpa_kostya REVOKE SELECT ON TABLES FROM dpa_vedernikoff;
+
+
+statement ok
+DROP TABLE dpa_before;
+
+
+statement ok
+DROP TABLE dpa_after;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM dpa_kostya;
+
+
+statement ok
+DROP ROLE dpa_vedernikoff;
+
+
+statement ok
+DROP ROLE dpa_kostya;

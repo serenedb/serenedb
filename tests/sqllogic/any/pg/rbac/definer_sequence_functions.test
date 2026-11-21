@@ -1,0 +1,94 @@
+statement ok
+DROP ROLE IF EXISTS dsf_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS dsf_user;
+
+
+statement ok
+CREATE ROLE dsf_owner LOGIN PASSWORD 'dsf_pw';
+
+
+statement ok
+CREATE ROLE dsf_user LOGIN PASSWORD 'dsf_pw';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO dsf_owner, dsf_user;
+
+
+connection c_owner user=dsf_owner password=dsf_pw
+statement ok
+CREATE SEQUENCE dsf_seq;
+
+
+connection c_owner user=dsf_owner password=dsf_pw
+query
+SELECT nextval('dsf_seq') AS n;
+----
+n
+1
+
+
+connection c_owner user=dsf_owner password=dsf_pw
+statement ok
+CREATE FUNCTION dsf_last_value() RETURNS bigint LANGUAGE sql SECURITY DEFINER AS 'SELECT pg_sequence_last_value(''dsf_seq''::regclass)';
+
+
+connection c_owner user=dsf_owner password=dsf_pw
+statement ok
+CREATE FUNCTION dsf_lastval() RETURNS bigint LANGUAGE sql SECURITY DEFINER AS 'SELECT lastval()';
+
+
+connection c_user user=dsf_user password=dsf_pw
+query
+SELECT pg_sequence_last_value('dsf_seq'::regclass) AS invoker, dsf_last_value() AS definer;
+----
+invoker	definer
+NULL	1
+
+
+connection c_user user=dsf_user password=dsf_pw
+statement ok
+CREATE SEQUENCE dsf_user_seq;
+
+
+connection c_user user=dsf_user password=dsf_pw
+query
+SELECT nextval('dsf_user_seq') AS n;
+----
+n
+1
+
+
+connection c_user user=dsf_user password=dsf_pw
+query
+SELECT lastval() AS invoker;
+----
+invoker
+1
+
+
+connection c_user user=dsf_user password=dsf_pw
+statement error
+SELECT dsf_lastval();
+----
+db error: ERROR: permission denied for sequence dsf_user_seq
+
+
+connection c_user user=dsf_user password=dsf_pw
+statement ok
+DROP SEQUENCE dsf_user_seq;
+
+
+statement ok
+DROP OWNED BY dsf_owner, dsf_user;
+
+
+statement ok
+DROP ROLE dsf_owner;
+
+
+statement ok
+DROP ROLE dsf_user;

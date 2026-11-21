@@ -1,0 +1,67 @@
+statement ok
+DROP SEQUENCE IF EXISTS eslv_ledger_seq;
+
+
+statement ok
+DROP ROLE IF EXISTS eslv_vedernikoff;
+
+
+statement ok
+CREATE ROLE eslv_vedernikoff;
+
+
+statement ok
+CREATE SEQUENCE eslv_ledger_seq;
+
+
+query
+SELECT nextval('eslv_ledger_seq') AS n;
+----
+n
+1
+
+
+statement ok
+GRANT UPDATE ON SEQUENCE eslv_ledger_seq TO eslv_vedernikoff;
+
+
+statement ok
+SET ROLE eslv_vedernikoff;
+
+
+query
+SELECT sequencename, last_value FROM pg_sequences WHERE sequencename = 'eslv_ledger_seq';
+----
+sequencename	last_value
+eslv_ledger_seq	NULL
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+GRANT SELECT ON SEQUENCE eslv_ledger_seq TO eslv_vedernikoff;
+
+
+statement ok
+SET ROLE eslv_vedernikoff;
+
+
+query
+SELECT sequencename, last_value FROM pg_sequences WHERE sequencename = 'eslv_ledger_seq';
+----
+sequencename	last_value
+eslv_ledger_seq	1
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP SEQUENCE eslv_ledger_seq;
+
+
+statement ok
+DROP ROLE eslv_vedernikoff;

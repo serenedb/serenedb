@@ -25,6 +25,8 @@
 #include <deque>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
+#include <duckdb/catalog/permissions.hpp>
+#include <duckdb/common/optional_idx.hpp>
 #include <duckdb/function/function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -58,6 +60,7 @@ inline constexpr size_t kRegOutLimit = 4096;
 
 struct Session {
   duckdb::ClientContext* context;
+  duckdb::RoleAccess role;
   catalog::SereneDBCatalog* database;
   std::optional<duckdb::CatalogTransaction> transaction;
   std::vector<SessionSchema> search_path;
@@ -69,11 +72,13 @@ struct Session {
   mutable std::array<RegOutRecent, 64> reg_out_recent;
 };
 
-Session MakeSession(duckdb::ClientContext* context);
+Session MakeSession(duckdb::ClientContext* context,
+                    duckdb::optional_idx caller = {});
 
 struct SessionState final : duckdb::FunctionLocalState {
-  explicit SessionState(duckdb::ClientContext* context)
-    : session{MakeSession(context)} {}
+  explicit SessionState(duckdb::ClientContext* context,
+                        duckdb::optional_idx caller = {})
+    : session{MakeSession(context, caller)} {}
 
   Session session;
 };

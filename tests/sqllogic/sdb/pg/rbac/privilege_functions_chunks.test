@@ -1,0 +1,201 @@
+statement ok
+DROP ROLE IF EXISTS pfc_vedernikoff;
+
+
+statement ok
+CREATE ROLE pfc_vedernikoff LOGIN PASSWORD 'pfc_pw';
+
+
+statement ok
+CREATE TABLE pfc_granted (a integer);
+
+
+statement ok
+CREATE INDEX pfc_granted_i ON pfc_granted (a);
+
+
+statement ok
+CREATE TABLE pfc_hidden (a integer);
+
+
+statement ok
+GRANT SELECT ON pfc_granted TO pfc_vedernikoff;
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied,
+  count(*) FILTER (WHERE allowed IS NULL) AS unknown
+FROM (
+  SELECT has_table_privilege(o, 'SELECT') AS allowed
+  FROM unnest([
+    'pfc_granted'::regclass::oid,
+    NULL,
+    'pfc_hidden'::regclass::oid,
+    'pfc_granted_i'::regclass::oid,
+    'pfc_granted'::regclass::oid,
+    0::oid
+  ]) AS u(o), range(1000)
+);
+----
+allowed	denied	unknown
+2000	2000	2000
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied
+FROM (
+  SELECT has_table_privilege('pfc_vedernikoff', o, 'SELECT') AS allowed
+  FROM unnest([
+    'pfc_hidden'::regclass::oid,
+    'pfc_granted'::regclass::oid
+  ]) AS u(o), range(3000)
+);
+----
+allowed	denied
+3000	3000
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied,
+  count(*) FILTER (WHERE allowed IS NULL) AS unknown
+FROM (
+  SELECT has_table_privilege(o, CASE WHEN i % 3 = 0 THEN NULL ELSE 'SELECT' END) AS allowed
+  FROM unnest([
+    'pfc_granted'::regclass::oid,
+    'pfc_hidden'::regclass::oid
+  ]) AS u(o), range(3000) AS r(i)
+);
+----
+allowed	denied	unknown
+2000	2000	2000
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT relname, has_table_privilege(oid, 'SELECT') AS allowed
+FROM pg_class
+WHERE relname LIKE 'pfc\_%'
+ORDER BY relname;
+----
+relname	allowed
+pfc_granted	t
+pfc_granted_i	f
+pfc_hidden	f
+
+
+statement ok
+CREATE TYPE pfc_open AS ENUM ('a');
+
+
+statement ok
+CREATE TYPE pfc_closed AS ENUM ('a');
+
+
+statement ok
+REVOKE USAGE ON TYPE pfc_closed FROM PUBLIC;
+
+
+statement ok
+CREATE FUNCTION pfc_open_fn(x int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+statement ok
+CREATE FUNCTION pfc_closed_fn(x int) RETURNS int LANGUAGE sql AS 'SELECT $1 + 1';
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION pfc_closed_fn FROM PUBLIC;
+
+
+statement ok
+CREATE TABLE pfc_objects AS
+SELECT 'type' AS kind, oid AS o FROM pg_type WHERE typname IN ('pfc_open', 'pfc_closed')
+UNION ALL
+SELECT 'function' AS kind, oid AS o FROM pg_proc WHERE proname IN ('pfc_open_fn', 'pfc_closed_fn');
+
+
+statement ok
+GRANT SELECT ON pfc_objects TO pfc_vedernikoff;
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied
+FROM (
+  SELECT has_table_privilege('pfc_granted'::regclass::oid, CASE WHEN i % 2 = 0 THEN 'SELECT' ELSE 'INSERT' END) AS allowed
+  FROM range(3000) AS r(i)
+);
+----
+allowed	denied
+1500	1500
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied
+FROM (
+  SELECT has_type_privilege(list_extract(objects.oids, i % 2 + 1), 'USAGE') AS allowed
+  FROM range(3000) AS r(i), (SELECT list(o) AS oids FROM pfc_objects WHERE kind = 'type') AS objects
+);
+----
+allowed	denied
+1500	1500
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied
+FROM (
+  SELECT has_function_privilege(list_extract(objects.oids, i % 2 + 1), 'EXECUTE') AS allowed
+  FROM range(3000) AS r(i), (SELECT list(o) AS oids FROM pfc_objects WHERE kind = 'function') AS objects
+);
+----
+allowed	denied
+1500	1500
+
+
+statement ok
+DROP TABLE pfc_objects;
+
+
+statement ok
+DROP FUNCTION pfc_open_fn;
+
+
+statement ok
+DROP FUNCTION pfc_closed_fn;
+
+
+statement ok
+DROP TYPE pfc_open;
+
+
+statement ok
+DROP TYPE pfc_closed;
+
+
+statement ok
+DROP TABLE pfc_granted;
+
+
+statement ok
+DROP TABLE pfc_hidden;
+
+
+statement ok
+DROP ROLE pfc_vedernikoff;

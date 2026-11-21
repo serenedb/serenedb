@@ -18,6 +18,7 @@ GRANT_SELECT = re.compile(r'GRANT SELECT ON (?:TABLE )?(\w+) TO PUBLIC', re.I)
 GRANT_COLUMNS = re.compile(r'GRANT SELECT \(([^)]*)\)\s+ON (\w+) TO public',
                            re.I)
 REVOKE_EXECUTE = re.compile(r'REVOKE EXECUTE ON FUNCTION (\w+)\(', re.I)
+GRANT_ROLE = re.compile(r'^GRANT (\w+) TO (\w+);$', re.M)
 CAST_COLUMN = re.compile(r'^CAST\s*\(.*\s+AS\s+(\w+)\)\s+AS\s+(\w+)$', re.S)
 
 SQL_TYPES = {
@@ -138,6 +139,7 @@ class Initdb:
             for columns, table in GRANT_COLUMNS.findall(system_views)}
         self.revoked_functions = set(
             REVOKE_EXECUTE.findall(system_views + system_functions))
+        self.role_grants = GRANT_ROLE.findall(system_views + system_functions)
 
     def allocate(self, count):
         oid = self.next_oid

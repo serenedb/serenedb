@@ -26,25 +26,35 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/strip.h>
 
+#include <array>
 #include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/keyword_helper.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <ranges>
+#include <span>
 #include <tuple>
 
-#include "auth/role_closure.h"
 #include "catalog/base_catalog.h"
+#include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/schema.h"
+#include "pg/catalog/functions/pg_catalog/objectaddress.h"
+#include "pg/catalog/utils/columns.h"
+#include "pg/catalog/utils/lookup.h"
 
 namespace sdb::pg {
 namespace {
 
 constexpr auto kAclModes = [] {
-  std::array<char, kAclPrivileges.size()> modes{};
+  std::array<char, std::size(duckdb::ACL_PRIVILEGES)> modes{};
   for (size_t i = 0; i < modes.size(); ++i) {
-    modes[i] = kAclPrivileges[i].chr;
+    modes[i] = duckdb::ACL_PRIVILEGES[i].letter;
   }
   return modes;
 }();
@@ -86,10 +96,10 @@ irs::pg::SqlErrorData AclSyntaxError(std::string message,
 }
 
 std::optional<duckdb::idx_t> AclRole(
-  const auth::RoleGraph& roles, std::string_view name, bool oids,
+  const duckdb::SecuritySnapshot& roles, std::string_view name, bool oids,
   std::optional<irs::pg::SqlErrorData>& error) {
-  if (const auto* role = roles.FindByName(name)) {
-    return role->first;
+  if (const auto role = roles.FindByName(name); role.IsValid()) {
+    return role.GetIndex();
   }
   if (duckdb::idx_t oid = 0; oids && absl::SimpleAtoi(name, &oid)) {
     return oid;
@@ -110,7 +120,7 @@ void PutId(std::string& out, std::string_view name) {
 }
 
 void PutRole(std::string& out, duckdb::idx_t role,
-             const auth::RoleGraph& roles) {
+             const duckdb::SecuritySnapshot& roles) {
   if (const auto name = roles.NameOf(role); !name.empty()) {
     PutId(out, name);
     return;
@@ -118,17 +128,32 @@ void PutRole(std::string& out, duckdb::idx_t role,
   absl::StrAppend(&out, role);
 }
 
+std::string_view DefaultAclObjects(duckdb::CatalogType type) {
+  switch (type) {
+    case duckdb::CatalogType::SEQUENCE_ENTRY:
+      return "sequences";
+    case duckdb::CatalogType::MACRO_ENTRY:
+      return "functions";
+    case duckdb::CatalogType::TYPE_ENTRY:
+      return "types";
+    case duckdb::CatalogType::SCHEMA_ENTRY:
+      return "schemas";
+    default:
+      return "relations";
+  }
+}
+
 }  // namespace
 
 void AppendAcl(std::string& out, const duckdb::AclItem& item,
-               const auth::RoleGraph& roles) {
+               const duckdb::SecuritySnapshot& roles) {
   if (item.grantee != kPublicGrantee) {
     PutRole(out, item.grantee, roles);
   }
   out.push_back('=');
-  for (const auto& p : kAclPrivileges) {
+  for (const auto& p : duckdb::ACL_PRIVILEGES) {
     if ((item.privs & p.mode) != duckdb::AclMode::NoRights) {
-      out.push_back(p.chr);
+      out.push_back(p.letter);
       if ((item.grant_option & p.mode) != duckdb::AclMode::NoRights) {
         out.push_back('*');
       }
@@ -138,10 +163,9 @@ void AppendAcl(std::string& out, const duckdb::AclItem& item,
   PutRole(out, item.grantor, roles);
 }
 
-std::optional<irs::pg::SqlErrorData> ParseAcl(std::string_view text,
-                                              const auth::RoleGraph& roles,
-                                              bool oids,
-                                              duckdb::AclItem& item) {
+std::optional<irs::pg::SqlErrorData> ParseAcl(
+  std::string_view text, const duckdb::SecuritySnapshot& roles, bool oids,
+  duckdb::AclItem& item) {
   auto grantee = ReadAclName(text);
   if (!text.starts_with('=')) {
     if (grantee != "group" && grantee != "user") {
@@ -171,10 +195,10 @@ std::optional<irs::pg::SqlErrorData> ParseAcl(std::string_view text,
       item.grant_option |= read;
       continue;
     }
-    const auto it = absl::c_find_if(kAclPrivileges, [&](const auto& privilege) {
-      return privilege.chr == text.front();
-    });
-    if (it == kAclPrivileges.end()) {
+    const auto it = absl::c_find_if(
+      duckdb::ACL_PRIVILEGES,
+      [&](const auto& privilege) { return privilege.letter == text.front(); });
+    if (it == std::end(duckdb::ACL_PRIVILEGES)) {
       return AclSyntaxError(absl::StrCat(
         "invalid mode character: must be one of \"",
         std::string_view{kAclModes.data(), kAclModes.size()}, "\""));
@@ -225,6 +249,143 @@ void VisitDefaultAcls(
     ++oid;
     if (row.scope == kInvalidOid || catalog.LookupOid(transaction, row.scope)) {
       visitor(oid, row);
+    }
+  }
+}
+
+void VisitRoleReferences(
+  duckdb::ClientContext& context, duckdb::idx_t role,
+  absl::FunctionRef<void(const RoleReference& reference,
+                         absl::FunctionRef<std::string()> describe)>
+    visitor) {
+  using enum duckdb::CatalogType;
+  const auto names = [&](std::span<const duckdb::AclItem> acl) {
+    return absl::c_any_of(acl, [&](const duckdb::AclItem& item) {
+      return item.grantee == role || item.grantor == role;
+    });
+  };
+  const auto use = [&](const duckdb::Permissions& permissions) -> char {
+    if (permissions.owner == role) {
+      return 'o';
+    }
+    return names(permissions.acl) ? 'a' : '\0';
+  };
+  auto& cluster = catalog::ClusterOf(context);
+  const auto cluster_transaction = cluster.GetCatalogTransaction(context);
+  for (const auto& db :
+       catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+    auto& database = db->GetCatalog().Cast<catalog::SereneDBCatalog>();
+    const auto transaction = database.GetCatalogTransaction(context);
+    const auto entry = [&](duckdb::CatalogEntry& object) {
+      if (object.type == INDEX_ENTRY || object.type == ROLE_ENTRY) {
+        return;
+      }
+      if (object.type == MACRO_ENTRY || object.type == TABLE_MACRO_ENTRY) {
+        const auto& macro = object.Cast<duckdb::MacroCatalogEntry>();
+        for (const auto& overload : macro.macros) {
+          if (const auto deptype = use(macro.OverloadPermissions(*overload))) {
+            const auto oid = macro.OverloadOid(*overload);
+            visitor({db->oid, kPgProcTable, oid, 0, deptype}, [&] {
+              return DescribeObject(context, kPgProcTable, oid, 0);
+            });
+          }
+        }
+        return;
+      }
+      const auto classid = duckdb::ObjectKindOf(object.type).pg_class;
+      if (const auto deptype = use(object.permissions)) {
+        visitor({db->oid, classid, object.oid, 0, deptype},
+                [&] { return DescribeObject(context, object); });
+        if (deptype == 'o') {
+          return;
+        }
+      }
+      const auto column = [&](int32_t attnum) {
+        visitor({db->oid, classid, object.oid, attnum, 'a'}, [&] {
+          return DescribeObject(context, classid, object.oid, attnum);
+        });
+      };
+      if (object.type == VIEW_ENTRY) {
+        auto& view = object.Cast<duckdb::ViewCatalogEntry>();
+        for (const auto& acl : view.column_acls) {
+          if (!names(acl.acl)) {
+            continue;
+          }
+          if (const auto attnum = ViewAttnum(context, view, acl.column)) {
+            column(attnum);
+          }
+        }
+      } else if (object.type == TABLE_ENTRY) {
+        for (const auto& definition :
+             object.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
+          if (names(definition.Acl())) {
+            column(Attnum(definition));
+          }
+        }
+      }
+    };
+    database.ScanEntries(transaction, entry);
+    const auto record =
+      cluster.Set(DATABASE_ENTRY).Get(cluster_transaction, db->GetName());
+    if (!record) {
+      continue;
+    }
+    VisitDefaultAcls(
+      context, *record, [&](duckdb::idx_t oid, const duckdb::DefaultAcl& row) {
+        const char deptype = row.role == role ? 'o' : names(row.acl) ? 'a' : 0;
+        if (!deptype) {
+          return;
+        }
+        visitor({record->oid, kPgDefaultAclTable, oid, 0, deptype}, [&] {
+          auto object =
+            absl::StrCat("default privileges on new ",
+                         DefaultAclObjects(row.objtype), " belonging to role ",
+                         catalog::RolesOf(&context)->NameOf(row.role));
+          if (row.scope != kInvalidOid) {
+            absl::StrAppend(&object, " in schema ",
+                            database.LookupOid(transaction, row.scope)
+                              ->name.GetIdentifierName());
+          }
+          return object;
+        });
+      });
+    for (const auto& row : record->permissions.Rows().rows) {
+      if (!names(row.acl)) {
+        continue;
+      }
+      const auto classid = duckdb::ObjectKindOf(row.kind).pg_class;
+      visitor({record->oid, classid, row.oid, 0, 'a'},
+              [&] { return DescribeObject(context, classid, row.oid, 0); });
+    }
+  }
+  cluster.Set(DATABASE_ENTRY)
+    .Scan(cluster_transaction, [&](duckdb::CatalogEntry& database) {
+      if (const auto deptype = use(database.permissions)) {
+        visitor({kInvalidOid, kPgDatabaseTable, database.oid, 0, deptype}, [&] {
+          return absl::StrCat("database ", database.name.GetIdentifierName());
+        });
+      }
+    });
+  cluster.Set(TABLESPACE_ENTRY)
+    .Scan(cluster_transaction, [&](duckdb::CatalogEntry& tablespace) {
+      if (const auto deptype = use(tablespace.permissions)) {
+        visitor({kInvalidOid, kPgTablespaceTable, tablespace.oid, 0, deptype},
+                [&] {
+                  return absl::StrCat("tablespace ",
+                                      tablespace.name.GetIdentifierName());
+                });
+      }
+    });
+  const auto holder = cluster.LookupOid(cluster_transaction, kRootUser);
+  if (!holder) {
+    return;
+  }
+  duckdb::idx_t oid = 0;
+  for (const auto& row : holder->permissions.Rows().OfKind(PARAMETER_ENTRY)) {
+    ++oid;
+    if (names(row.acl)) {
+      visitor({kInvalidOid, kPgParameterAclTable, oid, 0, 'a'},
+              [&] { return absl::StrCat("parameter ", row.name); });
     }
   }
 }

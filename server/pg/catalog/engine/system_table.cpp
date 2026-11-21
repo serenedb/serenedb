@@ -29,6 +29,7 @@
 #include <duckdb/planner/table_filter_set.hpp>
 #include <iresearch/utils/assert.hpp>
 
+#include "catalog/cluster.h"
 #include "connector/column_id.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/registry.h"
@@ -134,7 +135,7 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
       _slots[column] = place;
       _needed |= uint64_t{1} << column;
       if (!_roles && _table.Sql().columns[column].type == kAclitemArray) {
-        _roles = auth::RolesOf(&context);
+        _roles = catalog::RolesOf(&context);
       }
     }
   }

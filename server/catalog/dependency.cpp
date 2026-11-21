@@ -32,6 +32,7 @@
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/function/scalar_macro_function.hpp>
@@ -358,6 +359,8 @@ std::optional<Kind> KindOf(duckdb::CatalogType type) {
       return Kind::Sequence;
     case duckdb::CatalogType::MACRO_ENTRY:
     case duckdb::CatalogType::TABLE_MACRO_ENTRY:
+    case duckdb::CatalogType::SCALAR_FUNCTION_ENTRY:
+    case duckdb::CatalogType::TABLE_FUNCTION_ENTRY:
       return Kind::Function;
     case duckdb::CatalogType::TYPE_ENTRY:
       return Kind::Type;
@@ -389,6 +392,19 @@ duckdb::optional_ptr<duckdb::CatalogEntry> Resolve(
                                               name.Parent()},
                       duckdb::OnEntryNotFound::RETURN_NULL)
         .get());
+  }
+  if (dependent.type == duckdb::CatalogType::VIEW_ENTRY) {
+    for (const auto& binding :
+         dependent.Cast<duckdb::ViewCatalogEntry>().name_bindings) {
+      if (KindOf(binding.type) == KindOf(type) &&
+          equals(binding.name, name.Name())) {
+        return Resolve(
+          transaction, dependent, type,
+          duckdb::QualifiedName::FromCatalogSchema(
+            binding.catalog.empty() ? catalog.GetName() : binding.catalog,
+            binding.schema_path, binding.name));
+      }
+    }
   }
   if (auto found = in(&dependent.ParentSchema(transaction))) {
     return found;
@@ -429,7 +445,8 @@ class Rewriter {
       _equals{subject.ParentCatalog().IsCaseSensitive()},
       _new_schema{new_schema},
       _new_name{new_name},
-      _qualify{qualify} {}
+      _qualify{qualify ||
+               Resolve(transaction, dependent, subject.type, new_name)} {}
 
   bool changed = false;
 
@@ -450,6 +467,25 @@ class Rewriter {
         Visit(*child);
       },
       [&](duckdb::TableRef& ref) { VisitRef(ref); });
+  }
+
+  void Rename(duckdb::vector<duckdb::NameBinding>& bindings) {
+    std::erase_if(bindings, [&](duckdb::NameBinding& binding) {
+      if (KindOf(binding.type) != _kind ||
+          !_equals(binding.name, _subject.name)) {
+        return false;
+      }
+      const auto found =
+        Resolve(_transaction, _dependent, _subject.type, binding.name);
+      if (!found || found->oid != _subject.oid) {
+        return false;
+      }
+      if (_qualify) {
+        return true;
+      }
+      binding.name = _new_name;
+      return false;
+    });
   }
 
   void Visit(duckdb::ParsedExpression& expr) {
@@ -988,8 +1024,10 @@ void Rewrite(duckdb::CatalogTransaction transaction, const Edge& edge,
   auto& schema = dependent.ParentSchema(transaction).Cast<Schema>();
   if (dependent.type == duckdb::CatalogType::VIEW_ENTRY) {
     auto info = dependent.GetInfo();
-    rewriter.Visit(*info->Cast<duckdb::CreateViewInfo>().query->node);
+    auto& view = info->Cast<duckdb::CreateViewInfo>();
+    rewriter.Visit(*view.query->node);
     if (rewriter.changed) {
+      rewriter.Rename(view.name_bindings);
       schema.Alter(transaction, *info->GetAlterInfo());
     }
     return;
@@ -1240,7 +1278,7 @@ void DropClosure(duckdb::CatalogTransaction transaction,
 
 void ScanSubjects(duckdb::CatalogTransaction transaction,
                   duckdb::CatalogEntry& dependent, EdgeVisitor visit) {
-  if (dependent.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+  if (!IsStandardEntry(dependent)) {
     return;
   }
   auto& catalog = dependent.ParentCatalog().Cast<BaseCatalog>();
@@ -1282,8 +1320,12 @@ void ScanDependents(duckdb::CatalogTransaction transaction,
 }
 
 void DropDependents(duckdb::CatalogTransaction transaction,
-                    duckdb::CatalogEntry& entry, bool cascade) {
-  const Closure closure{transaction, entry};
+                    duckdb::CatalogEntry& entry, bool cascade,
+                    std::span<const duckdb::idx_t> together) {
+  Closure closure{transaction, entry};
+  std::erase_if(closure.edges, [&](const Edge& edge) {
+    return absl::c_linear_search(together, edge.dependent->oid);
+  });
   DropClosure(transaction, entry, closure, cascade,
               pg::DescribeObject(transaction.GetContext(), entry));
 }
@@ -1386,6 +1428,39 @@ void RefuseDependents(
   if (!lines.empty()) {
     ThrowDependents(entry, lines);
   }
+}
+
+void RefuseDroppingTogether(duckdb::CatalogTransaction transaction,
+                            const duckdb::catalog_entry_vector_t& entries) {
+  auto& context = transaction.GetContext();
+  const auto listed = [&](const duckdb::CatalogEntry& entry) {
+    return absl::c_any_of(entries, [&](const auto& candidate) {
+      return candidate.get().oid == entry.oid;
+    });
+  };
+  std::vector<std::string> lines;
+  for (auto& entry : entries) {
+    const Closure closure{transaction, entry};
+    for (const auto& edge : closure.edges) {
+      if (listed(*edge.dependent)) {
+        continue;
+      }
+      auto line = absl::StrCat(DescribeDependent(context, edge), " depends on ",
+                               pg::DescribeObject(context, *edge.subject));
+      if (!absl::c_linear_search(lines, line)) {
+        lines.push_back(std::move(line));
+      }
+    }
+  }
+  if (lines.empty()) {
+    return;
+  }
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+    ERR_MSG(
+      "cannot drop desired object(s) because other objects depend on them"),
+    ERR_DETAIL(absl::StrJoin(lines, "\n")),
+    ERR_HINT("Use DROP ... CASCADE to drop the dependent objects too."));
 }
 
 void FollowRename(duckdb::CatalogTransaction transaction,

@@ -20,7 +20,9 @@
 
 #pragma once
 
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/constants.hpp>
+#include <duckdb/common/enums/role_capability.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <memory>
@@ -44,6 +46,7 @@ struct BuiltinFunction {
   bool strict;
   char volatility;
   std::string_view src;
+  duckdb::RoleCapability capability = duckdb::RoleCapability::None;
 };
 
 class BuiltinFunctions {
@@ -70,5 +73,8 @@ class BuiltinFunctions {
 
 std::shared_ptr<const BuiltinFunctions> GetBuiltinFunctions(
   duckdb::ClientContext& context);
+
+const duckdb::Permissions& BuiltinFunctionPermissions(
+  const BuiltinFunction& function);
 
 }  // namespace sdb::pg

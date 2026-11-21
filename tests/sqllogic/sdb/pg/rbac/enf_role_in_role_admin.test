@@ -24,7 +24,7 @@ statement error
 CREATE ROLE rir_sneaky LOGIN IN ROLE postgres;
 ----
 db error: ERROR: permission denied to grant role "postgres"
-DETAIL: Only roles with the ADMIN option on role "postgres" may grant this role.
+DETAIL: Only roles with the SUPERUSER attribute may grant roles with the SUPERUSER attribute.
 
 
 statement ok

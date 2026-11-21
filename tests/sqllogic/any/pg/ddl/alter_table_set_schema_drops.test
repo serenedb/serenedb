@@ -1,0 +1,64 @@
+statement ok
+DROP SCHEMA IF EXISTS atssd_from CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS atssd_to CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS atssd_role;
+
+
+statement ok
+CREATE SCHEMA atssd_from;
+
+
+statement ok
+CREATE SCHEMA atssd_to;
+
+
+statement ok
+CREATE TABLE atssd_from.ledger (id SERIAL, note TEXT);
+
+
+statement ok
+ALTER TABLE atssd_from.ledger SET SCHEMA atssd_to;
+
+
+statement ok
+DROP SCHEMA atssd_from;
+
+
+query
+SELECT n.nspname, c.relname
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname IN ('atssd_from', 'atssd_to')
+ORDER BY c.relname;
+----
+nspname	relname
+atssd_to	ledger
+atssd_to	ledger_id_seq
+
+
+statement ok
+DROP SCHEMA atssd_to CASCADE;
+
+
+query
+SELECT count(*) AS relations
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname IN ('atssd_from', 'atssd_to');
+----
+relations
+0
+
+
+statement ok
+CREATE ROLE atssd_role;
+
+
+statement ok
+DROP ROLE atssd_role;

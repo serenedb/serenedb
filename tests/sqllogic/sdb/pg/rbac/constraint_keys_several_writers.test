@@ -1,0 +1,119 @@
+statement ok
+DROP TABLE IF EXISTS cksw_rows;
+
+
+statement ok
+DROP ROLE IF EXISTS cksw_reader;
+
+
+statement ok
+DROP ROLE IF EXISTS cksw_writer;
+
+
+statement ok
+CREATE TABLE cksw_rows (a int, b int, UNIQUE (a, b) DEFERRED);
+
+
+statement ok
+INSERT INTO cksw_rows VALUES (1, 4242), (2, 4242);
+
+
+statement ok
+CREATE ROLE cksw_reader;
+
+
+statement ok
+CREATE ROLE cksw_writer;
+
+
+statement ok
+GRANT SELECT, UPDATE ON cksw_rows TO cksw_reader;
+
+
+statement ok
+GRANT UPDATE (a) ON cksw_rows TO cksw_writer;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET ROLE cksw_reader;
+
+
+statement ok
+UPDATE cksw_rows SET a = 3 WHERE a = 2;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE cksw_writer;
+
+
+statement ok
+UPDATE cksw_rows SET a = 1;
+
+
+statement ok
+RESET ROLE;
+
+
+statement error
+COMMIT;
+----
+db error: ERROR: duplicate key value violates unique constraint "cksw_rows_a_b_key"
+
+
+statement ok
+GRANT SELECT ON cksw_rows TO PUBLIC;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+SET ROLE cksw_reader;
+
+
+statement ok
+UPDATE cksw_rows SET a = 3 WHERE a = 2;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE cksw_writer;
+
+
+statement ok
+UPDATE cksw_rows SET a = 1;
+
+
+statement ok
+RESET ROLE;
+
+
+statement error
+COMMIT;
+----
+db error: ERROR: duplicate key value violates unique constraint "cksw_rows_a_b_key"
+DETAIL: Key (a, b)=(1, 4242) already exists.
+
+
+statement ok
+DROP TABLE cksw_rows;
+
+
+statement ok
+DROP ROLE cksw_reader;
+
+
+statement ok
+DROP ROLE cksw_writer;

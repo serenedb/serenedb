@@ -5,9 +5,6 @@
 # on a database; this file covers the full database privilege set, partial
 # revoke, the REVOKE ALL sweep, and the WITH GRANT OPTION pin.
 #
-# Database OWNER dependency is not exercised: CREATE DATABASE ... OWNER is not
-# supported by serenedb.
-#
 # Lore: vedernikoff is the grantee.
 #
 # Every statement here writes one object -- the `postgres` database entry --

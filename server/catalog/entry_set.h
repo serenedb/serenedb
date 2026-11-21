@@ -49,6 +49,11 @@ enum class ChangeKind : uint8_t {
 class EntrySet;
 class OidIndex;
 
+inline bool IsStandardEntry(const duckdb::CatalogEntry& entry) {
+  return entry.type != duckdb::CatalogType::SCHEMA_ENTRY &&
+         entry.ParentSchemaOid() != 0;
+}
+
 void ForEachSubject(const duckdb::CatalogEntry& version,
                     absl::FunctionRef<void(duckdb::idx_t)> visit);
 

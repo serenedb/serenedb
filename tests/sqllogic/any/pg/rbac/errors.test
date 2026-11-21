@@ -93,11 +93,18 @@ GRANT SELECT ON err_tbl TO no_such_role;
 db error: ERROR: role "no_such_role" does not exist
 
 
-# GRANT on a missing relation: the relation cache reports "relation".
+onlyif postgres
 statement error
 GRANT SELECT ON no_such_table TO err_role;
 ----
 db error: ERROR: relation "no_such_table" does not exist
+
+
+skipif postgres
+statement error
+GRANT SELECT ON no_such_table TO err_role;
+----
+db error: ERROR: Table with name no_such_table does not exist!
 
 
 # A privilege keyword that is not valid for a relation names the object class.

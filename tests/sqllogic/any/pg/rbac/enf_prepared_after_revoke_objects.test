@@ -1,0 +1,99 @@
+statement ok
+DROP SEQUENCE IF EXISTS epo_counter;
+
+
+statement ok
+DROP FUNCTION IF EXISTS epo_double(integer);
+
+
+statement ok
+DROP ROLE IF EXISTS epo_vedernikoff;
+
+
+statement ok
+CREATE ROLE epo_vedernikoff LOGIN PASSWORD 'epo_pw';
+
+
+statement ok
+CREATE SEQUENCE epo_counter;
+
+
+statement ok
+CREATE FUNCTION epo_double(x integer) RETURNS integer LANGUAGE sql AS 'SELECT $1 * 2';
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION epo_double(integer) FROM PUBLIC;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION epo_double(integer) TO epo_vedernikoff;
+
+
+statement ok
+GRANT USAGE ON SEQUENCE epo_counter TO epo_vedernikoff;
+
+
+connection c_epo user=epo_vedernikoff password=epo_pw
+statement ok
+PREPARE epo_seq_q AS SELECT nextval('epo_counter') AS n;
+
+
+connection c_epo user=epo_vedernikoff password=epo_pw
+statement ok
+PREPARE epo_fn_q AS SELECT epo_double(21) AS d;
+
+
+connection c_epo user=epo_vedernikoff password=epo_pw
+query
+EXECUTE epo_seq_q;
+----
+n
+1
+
+
+connection c_epo user=epo_vedernikoff password=epo_pw
+query
+EXECUTE epo_fn_q;
+----
+d
+42
+
+
+statement ok
+REVOKE USAGE ON SEQUENCE epo_counter FROM epo_vedernikoff;
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION epo_double(integer) FROM epo_vedernikoff;
+
+
+connection c_epo user=epo_vedernikoff password=epo_pw
+statement error
+EXECUTE epo_seq_q;
+----
+db error: ERROR: permission denied for sequence epo_counter
+
+
+connection c_epo user=epo_vedernikoff password=epo_pw
+statement error
+EXECUTE epo_fn_q;
+----
+db error: ERROR: permission denied for function epo_double<slt:ignore>
+
+
+connection c_epo user=epo_vedernikoff password=epo_pw
+statement ok
+DEALLOCATE ALL;
+
+
+statement ok
+DROP SEQUENCE epo_counter;
+
+
+statement ok
+DROP FUNCTION epo_double(integer);
+
+
+statement ok
+DROP ROLE epo_vedernikoff;

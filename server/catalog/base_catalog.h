@@ -55,7 +55,7 @@ class BaseCatalog : public duckdb::Catalog {
   BaseCatalog(duckdb::AttachedDatabase& db, bool case_sensitive)
     : duckdb::Catalog{db},
       _oids{db, SharedDependents(db)},
-      _schemas{case_sensitive, _oids} {}
+      _schemas{case_sensitive, _oids, 0, true} {}
 
   using duckdb::Catalog::CreateSchema;
   using duckdb::Catalog::Initialize;
@@ -120,6 +120,22 @@ class BaseCatalog : public duckdb::Catalog {
   duckdb::optional_ptr<duckdb::CatalogEntry> OwnerOf(
     duckdb::CatalogTransaction transaction, duckdb::CatalogEntry& owned) final;
 
+  void ScanTopLevelEntries(
+    duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+    const std::function<void(duckdb::CatalogEntry&)>& callback) final;
+
+  duckdb::optional_ptr<duckdb::CatalogEntry> LookupTopLevelEntry(
+    duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+    const duckdb::Identifier& name) final;
+
+  duckdb::catalog_entry_vector_t DropOrder(
+    duckdb::CatalogTransaction transaction,
+    const duckdb::catalog_entry_vector_t& entries) final;
+
+  void RefuseDroppingTogether(
+    duckdb::CatalogTransaction transaction,
+    const duckdb::catalog_entry_vector_t& entries) final;
+
   virtual duckdb::unique_ptr<duckdb::CatalogEntry> MakeTable(
     duckdb::CatalogTransaction transaction, Schema& schema,
     duckdb::BoundCreateTableInfo& info);
@@ -143,7 +159,8 @@ class BaseCatalog : public duckdb::Catalog {
   duckdb::optional_ptr<duckdb::CatalogEntry> FindRelation(
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
 
-  virtual EntrySet& Set(duckdb::CatalogType type);
+  EntrySet& Set(duckdb::CatalogType type);
+  virtual EntrySet* FindSet(duckdb::CatalogType type);
 
   EntrySet& SchemaSet(duckdb::CatalogTransaction transaction,
                       const duckdb::SchemaCatalogEntry& schema);
@@ -154,7 +171,7 @@ class BaseCatalog : public duckdb::Catalog {
     duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> LookupOwner(
-    duckdb::CatalogTransaction transaction, duckdb::idx_t oid);
+    duckdb::CatalogTransaction transaction, duckdb::idx_t oid) final;
 
   template<typename T>
   duckdb::optional_ptr<T> FindIn(duckdb::CatalogTransaction transaction,
@@ -172,6 +189,14 @@ class BaseCatalog : public duckdb::Catalog {
 
   bool DropFrom(EntrySet& set, duckdb::CatalogTransaction transaction,
                 duckdb::CatalogType type, duckdb::DropInfo& info);
+
+  struct AlteredEntry {
+    duckdb::optional_ptr<duckdb::CatalogEntry> before;
+    duckdb::optional_ptr<duckdb::CatalogEntry> after;
+  };
+
+  AlteredEntry AlterIn(EntrySet& set, duckdb::CatalogTransaction transaction,
+                       duckdb::AlterInfo& info);
 
   OidIndex _oids;
   EntrySet _schemas;

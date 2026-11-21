@@ -128,6 +128,175 @@ DROP FUNCTION drop_mismatch_func();
 
 
 statement ok
+CREATE FUNCTION kind_mismatch_func() RETURNS INTEGER AS $$ SELECT 1 $$ LANGUAGE sql;
+
+
+statement ok
+CREATE PROCEDURE kind_mismatch_proc() AS $$ SELECT 1 $$ LANGUAGE sql;
+
+
+statement error
+ALTER PROCEDURE kind_mismatch_func() RENAME TO kind_mismatch_renamed;
+----
+db error: ERROR: kind_mismatch_func() is not a procedure
+
+
+statement error
+ALTER FUNCTION kind_mismatch_proc() RENAME TO kind_mismatch_renamed;
+----
+db error: ERROR: kind_mismatch_proc() is not a function
+
+
+statement error
+ALTER PROCEDURE kind_mismatch_func() SECURITY DEFINER;
+----
+db error: ERROR: kind_mismatch_func() is not a procedure
+
+
+statement error
+ALTER PROCEDURE kind_mismatch_func() OWNER TO CURRENT_USER;
+----
+db error: ERROR: kind_mismatch_func() is not a procedure
+
+
+statement error
+ALTER PROCEDURE kind_mismatch_func() SET SCHEMA public;
+----
+db error: ERROR: kind_mismatch_func() is not a procedure
+
+
+statement error
+COMMENT ON PROCEDURE kind_mismatch_func() IS 'x';
+----
+db error: ERROR: kind_mismatch_func() is not a procedure
+
+
+statement error
+COMMENT ON FUNCTION kind_mismatch_proc() IS 'x';
+----
+db error: ERROR: kind_mismatch_proc() is not a function
+
+
+statement error
+GRANT EXECUTE ON PROCEDURE kind_mismatch_func() TO PUBLIC;
+----
+db error: ERROR: kind_mismatch_func() is not a procedure
+
+
+statement error
+GRANT EXECUTE ON FUNCTION kind_mismatch_proc() TO PUBLIC;
+----
+db error: ERROR: kind_mismatch_proc() is not a function
+
+
+statement ok
+ALTER ROUTINE kind_mismatch_func() RENAME TO kind_mismatch_renamed;
+
+
+statement ok
+DROP FUNCTION kind_mismatch_renamed();
+
+
+statement ok
+DROP PROCEDURE kind_mismatch_proc();
+
+
+statement error
+DROP PROCEDURE kind_missing();
+----
+db error: ERROR: procedure kind_missing() does not exist
+
+
+statement error
+COMMENT ON PROCEDURE kind_missing() IS 'x';
+----
+db error: ERROR: procedure kind_missing() does not exist
+
+
+statement error
+GRANT EXECUTE ON PROCEDURE kind_missing() TO PUBLIC;
+----
+db error: ERROR: procedure kind_missing() does not exist
+
+
+statement error
+ALTER PROCEDURE kind_missing RENAME TO kind_missing_renamed;
+----
+db error: ERROR: could not find a procedure named "kind_missing"
+
+
+statement error
+ALTER FUNCTION kind_missing() STABLE;
+----
+db error: ERROR: function kind_missing() does not exist
+
+
+statement ok
+CREATE PROCEDURE mixed_kind() AS $$ SELECT 1 $$ LANGUAGE sql;
+
+
+statement ok
+CREATE FUNCTION mixed_kind(a TEXT) RETURNS SETOF INTEGER AS $$ SELECT 2 $$ LANGUAGE sql;
+
+
+query
+SELECT oid::regprocedure::text AS routine, prokind FROM pg_proc WHERE proname = 'mixed_kind' ORDER BY 1;
+----
+routine	prokind
+mixed_kind()	p
+mixed_kind(text)	f
+
+
+statement ok
+CALL mixed_kind();
+
+
+query
+SELECT mixed_kind('x'::text) AS v;
+----
+v
+2
+
+
+statement error
+SELECT * FROM mixed_kind();
+----
+db error: ERROR: mixed_kind() is a procedure
+HINT: To call a procedure, use CALL.
+
+
+onlyif postgres
+statement error
+CALL mixed_kind('x'::text);
+----
+db error: ERROR: mixed_kind(text) is not a procedure
+HINT: To call a function, use SELECT.
+
+
+skipif postgres
+statement error
+CALL mixed_kind('x'::text);
+----
+db error: ERROR: mixed_kind() is not a procedure
+HINT: To call a function, use SELECT.
+
+
+statement error
+CREATE OR REPLACE FUNCTION mixed_kind() RETURNS SETOF INTEGER AS $$ SELECT 3 $$ LANGUAGE sql;
+----
+db error: ERROR: cannot change routine kind
+DETAIL: "mixed_kind" is a procedure.
+
+
+statement ok
+DROP PROCEDURE mixed_kind();
+
+
+statement ok
+DROP FUNCTION mixed_kind(text);
+
+
+statement ok
 CREATE FUNCTION drop_signature(x INTEGER) RETURNS INTEGER AS $$ SELECT x $$ LANGUAGE sql;
 
 

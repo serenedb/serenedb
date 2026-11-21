@@ -195,6 +195,17 @@ r
 true
 
 
+statement ok
+SET search_path TO 'a,b', 'c';
+
+
+query
+SHOW search_path;
+----
+search_path
+"a,b", c
+
+
 # Empty string literal -> empty search_path (no entries).
 statement ok
 SET search_path TO '';

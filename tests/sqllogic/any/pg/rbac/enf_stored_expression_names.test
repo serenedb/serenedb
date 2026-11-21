@@ -1,0 +1,157 @@
+statement ok
+DROP TABLE IF EXISTS esen_with_default;
+
+
+statement ok
+DROP TABLE IF EXISTS esen_with_check;
+
+
+statement ok
+DROP TABLE IF EXISTS esen_generated;
+
+
+statement ok
+DROP SCHEMA IF EXISTS esen_hidden CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS esen_vedernikoff;
+
+
+statement ok
+CREATE ROLE esen_vedernikoff LOGIN PASSWORD 'esen_pw';
+
+
+statement ok
+CREATE SCHEMA esen_hidden;
+
+
+statement ok
+CREATE SEQUENCE esen_hidden.esen_ids;
+
+
+statement ok
+CREATE FUNCTION esen_hidden.esen_positive(x integer) RETURNS boolean LANGUAGE sql AS 'SELECT x > 0';
+
+
+statement ok
+GRANT USAGE ON SEQUENCE esen_hidden.esen_ids TO esen_vedernikoff;
+
+
+statement ok
+CREATE TABLE esen_with_default (id bigint DEFAULT nextval('esen_hidden.esen_ids'), a integer);
+
+
+statement ok
+CREATE TABLE esen_with_check (a integer CHECK (esen_hidden.esen_positive(a)));
+
+
+statement ok
+CREATE FUNCTION esen_hidden.esen_double(x integer) RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT x * 2';
+
+
+statement ok
+CREATE TABLE esen_generated (a integer, b integer GENERATED ALWAYS AS (esen_hidden.esen_double(a)) STORED);
+
+
+statement ok
+GRANT SELECT, INSERT ON esen_with_default TO esen_vedernikoff;
+
+
+statement ok
+GRANT SELECT, INSERT ON esen_with_check TO esen_vedernikoff;
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE ON esen_generated TO esen_vedernikoff;
+
+
+connection c_ved user=esen_vedernikoff password=esen_pw
+statement ok
+INSERT INTO esen_generated (a) VALUES (2);
+
+
+connection c_ved user=esen_vedernikoff password=esen_pw
+statement ok
+UPDATE esen_generated SET a = 3;
+
+
+connection c_ved user=esen_vedernikoff password=esen_pw
+query
+SELECT a, b FROM esen_generated;
+----
+a	b
+3	6
+
+
+connection c_ved user=esen_vedernikoff password=esen_pw
+statement ok
+INSERT INTO esen_with_default (a) VALUES (1);
+
+
+connection c_ved user=esen_vedernikoff password=esen_pw
+statement ok
+INSERT INTO esen_with_check VALUES (1);
+
+
+onlyif postgres
+connection c_ved user=esen_vedernikoff password=esen_pw
+statement error
+INSERT INTO esen_with_check VALUES (-1);
+----
+db error: ERROR: new row for relation "esen_with_check" violates check constraint "esen_with_check_a_check"
+DETAIL: Failing row contains (-1).
+
+
+skipif postgres
+connection c_ved user=esen_vedernikoff password=esen_pw
+statement error
+INSERT INTO esen_with_check VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "esen_with_check" with expression CHECK(esen_hidden.esen_positive(a))
+
+
+connection c_ved user=esen_vedernikoff password=esen_pw
+statement error
+SELECT nextval('esen_hidden.esen_ids');
+----
+db error: ERROR: permission denied for schema esen_hidden
+
+
+connection c_ved user=esen_vedernikoff password=esen_pw
+query
+SELECT id, a FROM esen_with_default ORDER BY id;
+----
+id	a
+1	1
+
+
+statement ok
+REVOKE USAGE ON SEQUENCE esen_hidden.esen_ids FROM esen_vedernikoff;
+
+
+connection c_ved user=esen_vedernikoff password=esen_pw
+statement error
+INSERT INTO esen_with_default (a) VALUES (2);
+----
+db error: ERROR: permission denied for sequence esen_ids
+
+
+statement ok
+DROP TABLE esen_with_default;
+
+
+statement ok
+DROP TABLE esen_with_check;
+
+
+statement ok
+DROP TABLE esen_generated;
+
+
+statement ok
+DROP SCHEMA esen_hidden CASCADE;
+
+
+statement ok
+DROP ROLE esen_vedernikoff;

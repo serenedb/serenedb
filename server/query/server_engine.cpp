@@ -39,7 +39,6 @@
 #include "connector/duckdb_physical_create_index.h"
 #include "connector/duckdb_reindex_function.h"
 #include "connector/duckdb_storage_extension.h"
-#include "connector/duckdb_subscription.h"
 #include "connector/duckdb_vacuum_function.h"
 #include "connector/functions/ai/ai.h"
 #include "connector/functions/array.h"
@@ -63,6 +62,7 @@
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
+#include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/types/register.h"
 #include "query/config.h"
@@ -99,18 +99,37 @@ void ConfigureEngineDBConfig(duckdb::DBConfig& config,
   config.options.product_version = SERENEDB_VERSION;
   config.options.product_source_id = build::Commit();
   config.options.manage_extensions = false;
+  for (const std::string_view name : {
+         "duckdb_api",
+         "allow_community_extensions",
+         "allow_extension_repositories",
+         "allow_extensions_metadata_mismatch",
+         "allow_unsigned_extensions",
+         "autoinstall_extension_repository",
+         "autoinstall_known_extensions",
+         "autoload_known_extensions",
+         "custom_extension_repository",
+         "extension_directories",
+         "extension_directory",
+         "extension_repository_directory",
+       }) {
+    config.hidden_settings.emplace(name);
+  }
   config.create_internal_catalog =
     [layout = catalog::DataDirectory{datadir}](duckdb::AttachedDatabase& db) {
       return catalog::CreateInternalCatalog(db, layout);
     };
   config.create_client_context = CreateClientContext;
   config.create_secret_storage = catalog::CreateSecretStorage;
+  config.bootstrap_role = pg::kRootUser;
+  config.database_owner_role = pg::kPgDatabaseOwnerRole;
   connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
   config.AddExtensionOption(
     duckdb::Identifier{"data_directory"}, "Shows the data directory.",
     duckdb::LogicalType::VARCHAR, duckdb::Value{datadir}, nullptr, nullptr,
-    duckdb::SetScope::AUTOMATIC, true);
+    duckdb::SetScope::AUTOMATIC, true, false,
+    duckdb::SettingAccess{duckdb::SettingContext::INTERNAL, true});
   connector::RegisterIResearchReplacementScan(config);
 }
 
@@ -149,9 +168,9 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   // parallelism by one and make `threads`/`cpu_threads` resolve to N-1 internal
   // workers; zero makes the count exact and `threads=1` a true single worker.
   // Sessions run as tasks on that pool, so it must never be left empty; the
-  // value is refused for the lifetime of the process (IsUnchangeableSetting),
-  // which is what keeps `threads -
-  // external_threads` from ever resolving to zero internal workers.
+  // setting is declared internal, so no client can change it, which is what
+  // keeps `threads - external_threads` from ever resolving to zero internal
+  // workers.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
 }
 
@@ -187,8 +206,6 @@ void RegisterEngineModules(duckdb::DatabaseInstance& db) {
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   RegisterEngineModules(db);
-
-  connector::RegisterSubscriptionPragma(db);
 
   pg::RegisterFunctions(db);
 
@@ -231,6 +248,21 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   pg::InitSystemTables();
   pg::InitSystemFunctions(db, parser);
   pg::InitSystemViews(parser);
+  auto& config = duckdb::DBConfig::GetConfig(db);
+  pg::VisitSystemTables("pg_catalog", [&](const pg::SystemTable& table) {
+    config.builtin_relations.emplace(table.Sql().name);
+  });
+  pg::VisitSystemViews("pg_catalog", [&](const pg::StaticView& view) {
+    config.builtin_relations.emplace(view.name);
+  });
+  for (const auto& wrapper : pg::kForeignDataWrappers) {
+    config.foreign_data_wrappers.emplace(
+      wrapper.name, duckdb::ForeignDataWrapper{.oid = wrapper.oid});
+  }
+  for (const auto& language : pg::kSystemLanguages) {
+    config.languages.emplace(language.name,
+                             duckdb::Language{.oid = language.oid});
+  }
 }
 
 }  // namespace sdb::server::query

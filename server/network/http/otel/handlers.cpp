@@ -83,6 +83,7 @@ inline constexpr std::string_view kProtobufContentType =
 // google.rpc.Code, the enum google.rpc.Status carries:
 // https://github.com/googleapis/googleapis/blob/master/google/rpc/code.proto
 inline constexpr int32_t kCodeInvalidArgument = 3;
+inline constexpr int32_t kCodePermissionDenied = 7;
 inline constexpr int32_t kCodeInternal = 13;
 inline constexpr int32_t kCodeUnavailable = 14;
 
@@ -182,6 +183,10 @@ InsertOutcome Failed(const duckdb::ErrorData& error) {
     return {HttpStatus::ServiceUnavailable, kCodeUnavailable,
             std::move(sql.errmsg)};
   }
+  if (sql.errcode == ERRCODE_INSUFFICIENT_PRIVILEGE) {
+    return {HttpStatus::Forbidden, kCodePermissionDenied,
+            std::move(sql.errmsg)};
+  }
   char state[pg::kSqlStateSize];
   pg::UnpackSqlState(state, sql.errcode);
   const std::string_view sql_class{state, 2};
@@ -199,8 +204,10 @@ InsertOutcome Failed(const duckdb::ErrorData& error) {
 
 InsertOutcome NotPrepared(const duckdb::ErrorData& error) {
   auto outcome = Failed(error);
-  outcome.status = HttpStatus::ServiceUnavailable;
-  outcome.code = kCodeUnavailable;
+  if (outcome.code != kCodePermissionDenied) {
+    outcome.status = HttpStatus::ServiceUnavailable;
+    outcome.code = kCodeUnavailable;
+  }
   return outcome;
 }
 

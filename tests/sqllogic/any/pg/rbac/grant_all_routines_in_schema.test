@@ -1,0 +1,95 @@
+statement ok
+DROP SCHEMA IF EXISTS garis CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS garis_vedernikoff;
+
+
+statement ok
+CREATE ROLE garis_vedernikoff;
+
+
+statement ok
+CREATE SCHEMA garis;
+
+
+statement ok
+CREATE PROCEDURE garis.p() LANGUAGE SQL AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION garis.f() RETURNS int LANGUAGE SQL AS 'SELECT 1';
+
+
+statement ok
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA garis FROM PUBLIC;
+
+
+query
+SELECT proname, has_function_privilege('public', p.oid, 'EXECUTE') AS public_execute
+FROM pg_proc p
+WHERE pronamespace = 'garis'::regnamespace
+ORDER BY proname;
+----
+proname	public_execute
+f	f
+p	t
+
+
+statement ok
+GRANT EXECUTE ON ALL PROCEDURES IN SCHEMA garis TO garis_vedernikoff;
+
+
+query
+SELECT proname, has_function_privilege('garis_vedernikoff', p.oid, 'EXECUTE') AS granted
+FROM pg_proc p
+WHERE pronamespace = 'garis'::regnamespace
+ORDER BY proname;
+----
+proname	granted
+f	f
+p	t
+
+
+statement ok
+REVOKE EXECUTE ON ALL PROCEDURES IN SCHEMA garis FROM PUBLIC;
+
+
+statement ok
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA garis TO garis_vedernikoff;
+
+
+query
+SELECT proname, has_function_privilege('garis_vedernikoff', p.oid, 'EXECUTE') AS granted,
+       has_function_privilege('public', p.oid, 'EXECUTE') AS public_execute
+FROM pg_proc p
+WHERE pronamespace = 'garis'::regnamespace
+ORDER BY proname;
+----
+proname	granted	public_execute
+f	t	f
+p	t	f
+
+
+statement ok
+REVOKE EXECUTE ON ALL ROUTINES IN SCHEMA garis FROM garis_vedernikoff;
+
+
+query
+SELECT proname, has_function_privilege('garis_vedernikoff', p.oid, 'EXECUTE') AS granted
+FROM pg_proc p
+WHERE pronamespace = 'garis'::regnamespace
+ORDER BY proname;
+----
+proname	granted
+f	f
+p	f
+
+
+statement ok
+DROP SCHEMA garis CASCADE;
+
+
+statement ok
+DROP ROLE garis_vedernikoff;

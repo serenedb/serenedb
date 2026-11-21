@@ -28,6 +28,7 @@ Examples demonstrating SereneDB's full-text search capabilities using inverted i
 | [Pinned Results](./pinned-results.md) | Promote chosen results to the top of an organic ranking |
 | [Reciprocal Rank Fusion](./reciprocal-rank-fusion.md) | Combine results from multiple ranked queries into one |
 | [Semantic and Hybrid Search](./hybrid-search.md) | Rank by vector meaning and fuse it with keyword search |
+| [RAG Evaluation](./rag-evaluation.md) | Score retrieval against labelled queries with recall@k, MRR and nDCG |
 | [Finding Similar Documents](./similar-documents.md) | Find near matches by vector distance or MinHash signatures |
 | [Faceted Search](./faceted-search.md) | Count how many results sit behind each category or brand from the index |
 | [Tag Cloud](./tag-cloud.md) | Rank a text column's vocabulary by how often each term is written |

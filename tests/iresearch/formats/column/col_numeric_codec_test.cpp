@@ -2040,6 +2040,52 @@ TEST_F(ColNumericCodecTest, ShortRunsOfUnevenLengthsReadBack) {
   }
 }
 
+TEST_F(ColNumericCodecTest, RunsOfMixedLengthsReadBackInEveryWidth) {
+  constexpr uint64_t kRows = 40000;
+  struct Lengths {
+    const char* name;
+    std::function<uint64_t(uint64_t)> of;
+  };
+  const Lengths mixes[] = {
+    {"short with a tail",
+     [](uint64_t run) {
+       return Mix(run) % 16 == 0 ? 9 + Mix(run * 7) % 40 : 1 + Mix(run) % 3;
+     }},
+    {"uneven", [](uint64_t run) { return 1 + Mix(run) % 40; }},
+    {"long with short ones",
+     [](uint64_t run) {
+       return Mix(run) % 4 == 0 ? 1 + Mix(run * 7) % 5 : 60 + Mix(run) % 400;
+     }},
+  };
+  for (const auto& mix : mixes) {
+    SCOPED_TRACE(mix.name);
+    std::vector<int64_t> values;
+    values.reserve(kRows);
+    for (uint64_t run = 0; values.size() < kRows; ++run) {
+      const auto v = static_cast<int64_t>(run % 2 * 50 + Mix(run) % 50);
+      for (uint64_t i = mix.of(run); i != 0 && values.size() < kRows; --i) {
+        values.push_back(v);
+      }
+    }
+    const Gen gen = [&](uint64_t g) -> std::optional<int64_t> {
+      return values[g];
+    };
+    for (const duckdb::LogicalType type :
+         {duckdb::LogicalType::TINYINT, duckdb::LogicalType::UTINYINT,
+          duckdb::LogicalType::SMALLINT, duckdb::LogicalType::INTEGER,
+          duckdb::LogicalType::BIGINT, duckdb::LogicalType::FLOAT,
+          duckdb::LogicalType::DOUBLE}) {
+      SCOPED_TRACE(type.ToString());
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      Write(dir, type, {}, kRows, 16384, gen, irs::codecs::CodecType::Rle);
+      Verify(dir, type, kRows, gen);
+      for (const auto& transform : Transforms(dir)) {
+        EXPECT_TRUE(transform.starts_with("rle")) << transform;
+      }
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, RunsOfTwoValuesStoreNoValueBits) {
   constexpr uint64_t kRows = 200000;
   const auto type = duckdb::LogicalType::SMALLINT;
@@ -3663,6 +3709,85 @@ TEST(ColNumericKernelsTest, PrefixSumOfEveryWidthAndLength) {
   };
   check.template operator()<uint64_t>();
   check.template operator()<uint32_t>();
+}
+
+TEST(ColNumericKernelsTest, ExpandsRunsOfEveryWidthAndLength) {
+  const auto check = []<typename U, typename T>() {
+    for (const uint64_t one_in : {0, 1, 2, 5, 23}) {
+      for (size_t rows = 0; rows <= 70; ++rows) {
+        SCOPED_TRACE(testing::Message()
+                     << sizeof(U) << " " << one_in << " " << rows);
+        std::vector<uint8_t> ended(rows);
+        std::vector<U> runs{static_cast<U>(Mix(rows + one_in))};
+        std::vector<U> expected;
+        for (size_t i = 0; i != rows; ++i) {
+          expected.push_back(runs.back());
+          if (one_in != 0 && Mix(i * 131 + rows + one_in) % one_in == 0) {
+            ended[i] = 0xFF;
+            runs.push_back(static_cast<U>(Mix(runs.size() * 977 + rows)));
+          }
+        }
+        runs.resize(runs.size() + irs::codecs::numeric::kRunPad);
+        expected.push_back(U{0x5a});
+        std::vector<T> out(rows + 1, std::bit_cast<T>(U{0x5a}));
+        irs::codecs::numeric::ExpandMarkedRuns(ended.data(), runs.data(), rows,
+                                               out.data());
+        ASSERT_EQ(
+          std::memcmp(out.data(), expected.data(), expected.size() * sizeof(U)),
+          0);
+      }
+    }
+  };
+  check.template operator()<uint8_t, int8_t>();
+  check.template operator()<uint16_t, uint16_t>();
+  check.template operator()<uint32_t, int32_t>();
+  check.template operator()<uint32_t, float>();
+  check.template operator()<uint64_t, uint64_t>();
+  check.template operator()<uint64_t, double>();
+}
+
+TEST(ColNumericKernelsTest, ExpandsRunsFromAnyRowOverAnyCount) {
+  constexpr uint32_t kRows = 3 * irs::codecs::numeric::kExpandedRows + 77;
+  const auto check = []<typename U>() {
+    std::vector<uint32_t> ends;
+    std::vector<U> values;
+    std::vector<U> rows;
+    std::vector<uint32_t> run_of;
+    while (rows.size() < kRows) {
+      const auto run = static_cast<uint32_t>(ends.size());
+      const auto length =
+        Mix(run) % 7 == 0 ? 20 + Mix(run * 31) % 3000 : 1 + Mix(run * 31) % 4;
+      values.push_back(static_cast<U>(Mix(run * 977 + sizeof(U))));
+      for (uint64_t i = 0; i != length && rows.size() < kRows; ++i) {
+        rows.push_back(values.back());
+        run_of.push_back(run);
+      }
+      ends.push_back(static_cast<uint32_t>(rows.size()));
+    }
+    const auto runs = static_cast<uint32_t>(ends.size());
+    run_of.push_back(runs);
+    values.resize(values.size() + irs::codecs::numeric::kRunPad);
+    for (const uint32_t row : {0U, 1U, 7U, 2047U, 2048U, 2049U, 3001U, 6000U}) {
+      for (const uint32_t count :
+           {0U, 1U, 15U, 16U, 17U, 2047U, 2048U, 2049U, 4096U, kRows}) {
+        const auto take = std::min(count, kRows - row);
+        SCOPED_TRACE(testing::Message()
+                     << sizeof(U) << " " << row << " " << take);
+        std::vector<U> out(size_t{take} + 1, U{0x5a});
+        const auto next = irs::codecs::numeric::ExpandRuns(
+          std::span<const uint32_t>{ends}, values.data(), run_of[row], row,
+          take, out.data());
+        EXPECT_EQ(next, run_of[row + take]);
+        EXPECT_EQ(out[take], U{0x5a});
+        ASSERT_EQ(std::memcmp(out.data(), rows.data() + row, take * sizeof(U)),
+                  0);
+      }
+    }
+  };
+  check.template operator()<uint8_t>();
+  check.template operator()<uint16_t>();
+  check.template operator()<uint32_t>();
+  check.template operator()<uint64_t>();
 }
 
 TEST(ColNumericKernelsTest, PacksEveryWidthOfEveryType) {

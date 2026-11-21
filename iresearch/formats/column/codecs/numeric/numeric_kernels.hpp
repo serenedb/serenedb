@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/helper.hpp>
+#include <span>
 #include <type_traits>
 #include <utility>
 
@@ -440,6 +441,40 @@ size_t WidenPrefixSumLanes(const uint8_t* in, size_t n, uint64_t& acc,
   acc = static_cast<uint64_t>(_mm256_extract_epi64(carry, 0));
   return i;
 }
+
+template<typename S>
+__m256i WidenHalfLanes(const uint8_t* in) noexcept {
+  if constexpr (sizeof(S) == 4) {
+    return _mm256_loadu_si256(reinterpret_cast<const __m256i*>(in));
+  } else if constexpr (sizeof(S) == 2) {
+    return _mm256_cvtepu16_epi32(
+      _mm_loadu_si128(reinterpret_cast<const __m128i*>(in)));
+  } else {
+    return _mm256_cvtepu8_epi32(
+      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(in)));
+  }
+}
+
+template<typename S>
+size_t WidenPrefixSumLanes(const uint8_t* in, size_t n, uint32_t& acc,
+                           uint32_t offset, uint32_t* out) noexcept {
+  const auto off = _mm256_set1_epi32(static_cast<int32_t>(offset));
+  const auto last = _mm256_set1_epi32(7);
+  auto carry = _mm256_set1_epi32(static_cast<int32_t>(acc));
+  size_t i = 0;
+  for (; i + 8 <= n; i += 8) {
+    auto x = _mm256_add_epi32(WidenHalfLanes<S>(in + i * sizeof(S)), off);
+    x = _mm256_add_epi32(x, _mm256_slli_si256(x, 4));
+    x = _mm256_add_epi32(x, _mm256_slli_si256(x, 8));
+    x = _mm256_add_epi32(
+      x, _mm256_shuffle_epi32(_mm256_permute2x128_si256(x, x, 0x08), 0xFF));
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + i),
+                        _mm256_add_epi32(x, carry));
+    carry = _mm256_add_epi32(carry, _mm256_permutevar8x32_epi32(x, last));
+  }
+  acc = static_cast<uint32_t>(_mm256_extract_epi32(carry, 0));
+  return i;
+}
 #endif
 
 template<typename U, typename S, bool kWrite>
@@ -447,7 +482,7 @@ U WidenPrefixSumAs(const uint8_t* in, size_t n, U acc, U offset,
                    U* out) noexcept {
   size_t i = 0;
 #ifdef __AVX2__
-  if constexpr (kWrite && sizeof(U) == sizeof(uint64_t)) {
+  if constexpr (kWrite && sizeof(U) >= sizeof(uint32_t)) {
     i = WidenPrefixSumLanes<S>(in, n, acc, offset, out);
   }
 #endif
@@ -506,6 +541,145 @@ void MultiplyBy(U* v, size_t n, U factor) noexcept {
   for (size_t i = 0; i < n; ++i) {
     v[i] = static_cast<U>(static_cast<W>(v[i]) * static_cast<W>(factor));
   }
+}
+
+inline constexpr size_t kRunPad = 8;
+
+#ifdef __AVX2__
+inline constexpr bool kExpandsRuns = true;
+
+inline constexpr auto kRunPicks = [] {
+  std::array<uint64_t, 256> picks{};
+  for (uint32_t ended = 0; ended < picks.size(); ++ended) {
+    uint64_t run = 0;
+    for (uint32_t row = 0; row < 8; ++row) {
+      picks[ended] |= run << (8 * row);
+      run += (ended >> row) & 1;
+    }
+  }
+  return picks;
+}();
+
+inline constexpr auto kRunWordPicks = [] {
+  std::array<std::array<uint8_t, 16>, 256> picks{};
+  for (uint32_t ended = 0; ended < picks.size(); ++ended) {
+    uint8_t run = 0;
+    for (uint32_t row = 0; row < 8; ++row) {
+      picks[ended][2 * row] = static_cast<uint8_t>(2 * run);
+      picks[ended][2 * row + 1] = static_cast<uint8_t>(2 * run + 1);
+      run += (ended >> row) & 1;
+    }
+  }
+  return picks;
+}();
+
+inline constexpr auto kRunWidePicks = [] {
+  std::array<uint64_t, 16> picks{};
+  for (uint32_t ended = 0; ended < picks.size(); ++ended) {
+    uint64_t run = 0;
+    for (uint32_t row = 0; row < 4; ++row) {
+      picks[ended] |= (2 * run) << (16 * row);
+      picks[ended] |= (2 * run + 1) << (16 * row + 8);
+      run += (ended >> row) & 1;
+    }
+  }
+  return picks;
+}();
+
+template<typename U>
+IRS_FORCE_INLINE void ExpandRunRows(const U* runs, uint32_t ended,
+                                    void* out) noexcept {
+  if constexpr (sizeof(U) == 8) {
+    const auto low = ended & 15;
+    _mm256_storeu_si256(
+      static_cast<__m256i*>(out),
+      _mm256_permutevar8x32_epi32(
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(runs)),
+        _mm256_cvtepu8_epi32(_mm_loadl_epi64(
+          reinterpret_cast<const __m128i*>(&kRunWidePicks[low])))));
+    _mm256_storeu_si256(
+      static_cast<__m256i*>(out) + 1,
+      _mm256_permutevar8x32_epi32(
+        _mm256_loadu_si256(
+          reinterpret_cast<const __m256i*>(runs + std::popcount(low))),
+        _mm256_cvtepu8_epi32(_mm_loadl_epi64(
+          reinterpret_cast<const __m128i*>(&kRunWidePicks[ended >> 4])))));
+  } else if constexpr (sizeof(U) == 4) {
+    _mm256_storeu_si256(
+      static_cast<__m256i*>(out),
+      _mm256_permutevar8x32_epi32(
+        _mm256_loadu_si256(reinterpret_cast<const __m256i*>(runs)),
+        _mm256_cvtepu8_epi32(_mm_loadl_epi64(
+          reinterpret_cast<const __m128i*>(&kRunPicks[ended])))));
+  } else if constexpr (sizeof(U) == 2) {
+    _mm_storeu_si128(
+      static_cast<__m128i*>(out),
+      _mm_shuffle_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(runs)),
+                       _mm_loadu_si128(reinterpret_cast<const __m128i*>(
+                         kRunWordPicks[ended].data()))));
+  } else {
+    _mm_storel_epi64(
+      static_cast<__m128i*>(out),
+      _mm_shuffle_epi8(
+        _mm_loadl_epi64(reinterpret_cast<const __m128i*>(runs)),
+        _mm_loadl_epi64(reinterpret_cast<const __m128i*>(&kRunPicks[ended]))));
+  }
+}
+#else
+inline constexpr bool kExpandsRuns = false;
+#endif
+
+template<typename U, typename T>
+void ExpandMarkedRuns(const uint8_t* ended, const U* runs, size_t rows,
+                      T* out) noexcept {
+  size_t i = 0;
+#ifdef __AVX2__
+  for (; i + 16 <= rows; i += 16) {
+    const auto mask = static_cast<uint32_t>(_mm_movemask_epi8(
+      _mm_loadu_si128(reinterpret_cast<const __m128i*>(ended + i))));
+    const auto low = mask & 0xFF;
+    const auto* next = runs + std::popcount(low);
+    ExpandRunRows(runs, low, out + i);
+    ExpandRunRows(next, mask >> 8, out + i + 8);
+    runs = next + std::popcount(mask >> 8);
+  }
+  if (i + 8 <= rows) {
+    const auto mask = static_cast<uint32_t>(_mm_movemask_epi8(
+      _mm_loadl_epi64(reinterpret_cast<const __m128i*>(ended + i))));
+    ExpandRunRows(runs, mask, out + i);
+    runs += std::popcount(mask);
+    i += 8;
+  }
+#endif
+  for (; i < rows; ++i) {
+    out[i] = std::bit_cast<T>(*runs);
+    runs += ended[i] & 1;
+  }
+}
+
+inline constexpr uint32_t kExpandedRows = 2048;
+
+template<typename U, typename T>
+uint32_t ExpandRuns(std::span<const uint32_t> ends, const U* values,
+                    uint32_t run, uint32_t row, uint64_t count,
+                    T* out) noexcept {
+  uint8_t ended[kExpandedRows];
+  while (count != 0) {
+    const auto rows =
+      static_cast<uint32_t>(std::min<uint64_t>(count, kExpandedRows));
+    const auto stop = row + rows;
+    std::memset(ended, 0, rows);
+    auto next = run;
+    for (; next < ends.size() && ends[next] <= stop; ++next) {
+      ended[ends[next] - row - 1] = 0xFF;
+    }
+    ExpandMarkedRuns(ended, values + run, rows, out);
+    run = next;
+    row = stop;
+    out += rows;
+    count -= rows;
+  }
+  return run;
 }
 
 inline constexpr size_t kBlockValues = 1024;

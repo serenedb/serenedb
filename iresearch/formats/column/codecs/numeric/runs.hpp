@@ -362,6 +362,8 @@ class RunsReader final : public FrameReader<T> {
   using typename Base::U;
   static constexpr uint32_t kBurst = 32 / sizeof(T);
   static constexpr uint32_t kLongBurst = 128 / sizeof(T);
+  static constexpr uint32_t kExpandedRunRows =
+    sizeof(T) < sizeof(uint32_t) ? 8 * sizeof(T) : 64;
   static constexpr size_t kNearRuns = 32;
 
  public:
@@ -405,6 +407,10 @@ class RunsReader final : public FrameReader<T> {
 
   void Copy(uint64_t row, uint64_t count, T* out) noexcept {
     const auto pos = static_cast<uint32_t>(row - this->_begin);
+    if (_short_runs) {
+      ExpandRuns(pos, count, out);
+      return;
+    }
     Resolve<BoolAxis>(_long_runs, [&]<bool Long>() IRS_FORCE_INLINE {
       CopyRuns<Long ? kLongBurst : kBurst>(pos, count, out);
     });
@@ -473,29 +479,57 @@ class RunsReader final : public FrameReader<T> {
  private:
   template<uint32_t kSize>
   void CopyRuns(uint32_t pos, uint64_t count, T* out) noexcept {
+    const auto* ends = _ends.data();
+    const auto* values = _values.data();
     const auto end = pos + static_cast<uint32_t>(count);
     auto r = RunOf(pos);
-    const uint64_t burst_limit = count >= kSize ? count - kSize + 1 : 0;
-    uint64_t done = 0;
-    while (pos < end) {
-      const auto stop = std::min(_ends[r], end);
-      const auto v = std::bit_cast<T>(_values[r]);
+    const auto* burst_end = out + (count >= kSize ? count - kSize + 1 : 0);
+    while (out < burst_end && ends[r] < end) {
+      const auto stop = ends[r];
+      const auto v = std::bit_cast<T>(values[r]);
       const auto n = stop - pos;
-      if (done < burst_limit) {
-        for (uint32_t i = 0; i < kSize; ++i) {
-          out[done + i] = v;
-        }
-        if (n > kSize) {
-          std::fill_n(out + done + kSize, n - kSize, v);
-        }
-      } else {
-        std::fill_n(out + done, n, v);
+      for (uint32_t i = 0; i < kSize; ++i) {
+        out[i] = v;
       }
-      done += n;
+      if (n > kSize) [[unlikely]] {
+        FillAfter<kSize>(out + kSize, n - kSize, v);
+      }
+      out += n;
+      pos = stop;
+      ++r;
+    }
+    while (pos < end) {
+      const auto stop = std::min(ends[r], end);
+      Fill(out, stop - pos, std::bit_cast<T>(values[r]));
+      out += stop - pos;
       pos = stop;
       ++r;
     }
     _hint = r - 1;
+  }
+
+  IRS_NO_INLINE static void Fill(T* out, uint32_t n, T value) noexcept {
+    std::fill_n(out, n, value);
+  }
+
+  template<uint32_t kSize>
+  IRS_NO_INLINE static void FillAfter(T* out, uint32_t n, T value) noexcept {
+    auto* const end = out + n;
+    for (; out + kSize < end; out += kSize) {
+      for (uint32_t i = 0; i < kSize; ++i) {
+        out[i] = value;
+      }
+    }
+    out = end - kSize;
+    for (uint32_t i = 0; i < kSize; ++i) {
+      out[i] = value;
+    }
+  }
+
+  void ExpandRuns(uint32_t pos, uint64_t count, T* out) noexcept {
+    const auto next =
+      numeric::ExpandRuns(_ends, _values.data(), RunOf(pos), pos, count, out);
+    _hint = std::min(next, static_cast<uint32_t>(_ends.size()) - 1);
   }
 
   void Load(const NumericFrameMeta& m, uint32_t rows, uint32_t frame) {
@@ -505,7 +539,7 @@ class RunsReader final : public FrameReader<T> {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
     const uint32_t runs = m.frame.raw_len / item;
-    _values.resize(runs);
+    _values.resize(size_t{runs} + numeric::kRunPad);
     _ends.resize(runs);
     numeric::WidenAdd(src, runs, this->_f.stored, static_cast<U>(_own.base),
                       _values.data());
@@ -523,7 +557,7 @@ class RunsReader final : public FrameReader<T> {
     const auto runs = static_cast<uint32_t>(m.base);
     const size_t blocks =
       (runs + numeric::kBlockValues - 1) / numeric::kBlockValues;
-    _values.resize(blocks * numeric::kBlockValues);
+    _values.resize(blocks * numeric::kBlockValues + numeric::kRunPad);
     _ends.resize(blocks * numeric::kBlockValues);
     const auto* src = this->Data(m);
     const auto lengths =
@@ -534,7 +568,7 @@ class RunsReader final : public FrameReader<T> {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
     _length_bound = LengthBound(src + lengths, blocks);
-    _values.resize(runs);
+    _values.resize(size_t{runs} + numeric::kRunPad);
     _ends.resize(runs);
     EndRuns(rows);
   }
@@ -556,17 +590,20 @@ class RunsReader final : public FrameReader<T> {
 
   void EndRuns(uint32_t rows) {
     uint64_t total = 0;
-    for (auto& end : _ends) {
-      if (end == 0) [[unlikely]] {
-        ThrowCorrupted("numeric", "runs are inconsistent");
-      }
-      total += end;
-      end = static_cast<uint32_t>(total);
+    bool empty = false;
+    for (const auto length : _ends) {
+      total += length;
+      empty |= length == 0;
     }
-    if (total != rows) [[unlikely]] {
+    if (empty || total != rows) [[unlikely]] {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
+    numeric::WidenPrefixSumAs<uint32_t, uint32_t, true>(
+      reinterpret_cast<const uint8_t*>(_ends.data()), _ends.size(), 0, 0,
+      _ends.data());
     _long_runs = total >= uint64_t{kBurst} * _ends.size();
+    _short_runs = numeric::kExpandsRuns &&
+                  total < uint64_t{kExpandedRunRows} * _ends.size();
     _hint = 0;
   }
 
@@ -605,6 +642,7 @@ class RunsReader final : public FrameReader<T> {
   uint64_t _length_bound = 0;
   uint32_t _hint = 0;
   bool _long_runs = false;
+  bool _short_runs = false;
 };
 
 }  // namespace irs::codecs

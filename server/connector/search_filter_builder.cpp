@@ -476,14 +476,32 @@ void AddNegated(BoolTarget parent, const SearchColumnInfo& info,
 
 namespace {
 
+struct IndexedPredicate {
+  const SearchColumnInfo* info = nullptr;
+  bool negated = false;
+};
+
+IndexedPredicate FindIndexedPredicate(const FilterContext& ctx,
+                                      const duckdb::Expression& expr) {
+  if (const auto* info = FindIndexedExpressionInfo(ctx, expr)) {
+    return {.info = info};
+  }
+  if (!ctx.expr_getter ||
+      !duckdb::BoundComparisonExpression::IsComparison(expr)) {
+    return {};
+  }
+  auto negated = expr.Copy();
+  auto& comparison = negated->Cast<duckdb::BoundFunctionExpression>();
+  duckdb::BoundComparisonExpression::SetType(
+    comparison,
+    duckdb::NegateComparisonExpression(comparison.GetExpressionType()));
+  return {.info = FindIndexedExpressionInfo(ctx, *negated), .negated = true};
+}
+
 void CollectNullableMarkers(const FilterContext& ctx,
                             const duckdb::Expression& expr,
                             std::vector<NullMarker>& markers) {
-  const auto* info = FindIndexedExpressionInfo(ctx, expr);
-  if (!info && duckdb::BoundComparisonExpression::IsComparison(expr)) {
-    info = FindIndexedExpressionInfo(ctx, expr, true);
-  }
-  if (info) {
+  if (const auto* info = FindIndexedPredicate(ctx, expr).info) {
     if (info->nullable) {
       markers.push_back(NullMarkerOf(*info));
     }
@@ -916,6 +934,44 @@ absl::Status FromKeyLookup(BoolTarget filter, const FilterContext& ctx,
 }
 
 template<bool GenericVersion>
+absl::Status FromIndexedValue(BoolTarget filter, const FilterContext& ctx,
+                              const SearchColumnInfo& column_info,
+                              const duckdb::Value& value, bool not_equal) {
+  if (auto s = RequireLeafValues(column_info); !s.ok()) {
+    return s;
+  }
+
+  if (value.IsNull()) {
+    // foo == NULL is always false and foo != NULL is false too.
+    AddFilter<irs::Empty>(filter);
+    return absl::OkStatus();
+  }
+  if (LooksUpKey(column_info)) {
+    const duckdb::Value* values[] = {&value};
+    return FromKeyLookup(filter, ctx, column_info, values,
+                         ctx.negated != not_equal);
+  }
+  if constexpr (GenericVersion) {
+    if (auto s =
+          RequireKeywordAnalyzed(column_info,
+                                 "Use `col @@ 'value'` (tokenised) or `col @@ "
+                                 "'value'::tokenize('keyword')` (raw).");
+        !s.ok()) {
+      return s;
+    }
+  }
+
+  irs::TermClause clause{.scorer = LeafScorer(column_info), .boost = ctx.boost};
+  if (auto s = SetupTermClause(clause, column_info, value); !s.ok()) {
+    return s;
+  }
+  const auto target =
+    (ctx.negated != not_equal) ? NegateScoped(filter, column_info) : filter;
+  target.Add(std::move(clause));
+  return absl::OkStatus();
+}
+
+template<bool GenericVersion>
 absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
                           const duckdb::Expression& left_expr,
                           const duckdb::Expression& right_expr,
@@ -945,38 +1001,8 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
       "Expected indexed column reference on the left and constant on "
       "the right");
   }
-  if (auto s = RequireLeafValues(*column_info); !s.ok()) {
-    return s;
-  }
-
-  if (const_val->IsNull()) {
-    // foo == NULL is always false and foo != NULL is false too.
-    AddFilter<irs::Empty>(filter);
-    return absl::OkStatus();
-  }
-  if (LooksUpKey(*column_info)) {
-    return FromKeyLookup(filter, ctx, *column_info, {&const_val, 1},
-                         ctx.negated != not_equal);
-  }
-  if constexpr (GenericVersion) {
-    if (auto s =
-          RequireKeywordAnalyzed(*column_info,
-                                 "Use `col @@ 'value'` (tokenised) or `col @@ "
-                                 "'value'::tokenize('keyword')` (raw).");
-        !s.ok()) {
-      return s;
-    }
-  }
-
-  irs::TermClause clause{.scorer = LeafScorer(*column_info),
-                         .boost = ctx.boost};
-  if (auto s = SetupTermClause(clause, *column_info, *const_val); !s.ok()) {
-    return s;
-  }
-  const auto target =
-    (ctx.negated != not_equal) ? NegateScoped(filter, *column_info) : filter;
-  target.Add(std::move(clause));
-  return absl::OkStatus();
+  return FromIndexedValue<GenericVersion>(filter, ctx, *column_info, *const_val,
+                                          not_equal);
 }
 
 inline constexpr double kMaxIndexRangeShare = 1.0 / 32;
@@ -2479,19 +2505,12 @@ absl::Status FromComparisonExpression(
   const auto& left = duckdb::BoundComparisonExpression::Left(cmp);
   const auto& right = duckdb::BoundComparisonExpression::Right(cmp);
   const auto cmp_type = cmp.GetExpressionType();
-  if (ctx.expr_getter && !TryGetConstant(left) && !TryGetConstant(right)) {
-    if (FindColumnInfoForExpr(ctx, cmp)) {
-      const duckdb::BoundConstantExpression value{duckdb::Value::BOOLEAN(true)};
-      return FromBinaryEq<true>(filter, ctx, cmp, value, false);
-    }
-    if (FindColumnInfoForExpr(ctx, cmp, true)) {
-      auto negated = cmp.Copy();
-      duckdb::BoundComparisonExpression::SetType(
-        negated->Cast<duckdb::BoundFunctionExpression>(),
-        duckdb::NegateComparisonExpression(cmp_type));
-      const duckdb::BoundConstantExpression value{
-        duckdb::Value::BOOLEAN(false)};
-      return FromBinaryEq<true>(filter, ctx, *negated, value, false);
+  if (ctx.expr_getter && !TryGetConstant(left) && !TryGetConstant(right) &&
+      ComputedFromRowAlone(cmp)) {
+    if (const auto predicate = FindIndexedPredicate(ctx, cmp); predicate.info) {
+      return FromIndexedValue<true>(filter, ctx, *predicate.info,
+                                    duckdb::Value::BOOLEAN(!predicate.negated),
+                                    false);
     }
   }
   switch (cmp_type) {
@@ -2690,16 +2709,15 @@ UnwrappedField UnwrapFieldCast(const duckdb::Expression& expr) {
 }
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
-                                              const duckdb::Expression& expr,
-                                              bool negated) {
+                                              const duckdb::Expression& expr) {
   if (!ComputedFromRowAlone(expr)) {
     return nullptr;
   }
-  return FindIndexedExpressionInfo(ctx, expr, negated);
+  return FindIndexedExpressionInfo(ctx, expr);
 }
 
 const SearchColumnInfo* FindIndexedExpressionInfo(
-  const FilterContext& ctx, const duckdb::Expression& expr, bool negated) {
+  const FilterContext& ctx, const duckdb::Expression& expr) {
   if (const auto* col_ref = TryGetColumnRef(expr)) {
     const auto* info = FindColumnRefInfo(ctx, *col_ref);
     return info && !info->index_fields ? info : nullptr;
@@ -2709,9 +2727,9 @@ const SearchColumnInfo* FindIndexedExpressionInfo(
   std::optional<SearchColumnInfo> info;
   bool matched_unwrapped = false;
   if (ctx.expr_getter) {
-    info = (*ctx.expr_getter)(expr, negated);
+    info = (*ctx.expr_getter)(expr);
     if (!info && unwrapped.expr != &expr) {
-      info = (*ctx.expr_getter)(*unwrapped.expr, negated);
+      info = (*ctx.expr_getter)(*unwrapped.expr);
       matched_unwrapped = static_cast<bool>(info);
     }
   }

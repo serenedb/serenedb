@@ -69,8 +69,7 @@ class EvaluatedExpression {
 std::string NormalizedExpression(
   const duckdb::Expression& expr, duckdb::idx_t table_id,
   std::span<const ColumnId> col_index_to_id, duckdb::ClientContext& context,
-  const catalog::InvertedIndexConfig* stored_expressions = nullptr,
-  bool negated = false);
+  const catalog::InvertedIndexConfig* stored_expressions = nullptr);
 
 bool ComputedFromRowAlone(const duckdb::Expression& expr);
 

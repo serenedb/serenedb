@@ -176,7 +176,7 @@ id	body
 query
 SELECT (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/*/engine_v1/store/*')) AS parent_files,
        (SELECT count(*) > 0 FROM glob('${__TEST_DIR__}/loc/base/child/*/engine_v1/store/*')) AS child_files,
-       (SELECT count(*) FROM glob('${__TEST_DIR__}/loc/base/*/engine_v1/store/**')) AS base_files;
+       (SELECT count(*) FROM glob('${__TEST_DIR__}/loc/base/*/engine_v1/**')) AS base_files;
 ----
 parent_files	child_files	base_files
 t	t	0

@@ -47,8 +47,8 @@ left
 0
 
 query ok retry 240 backoff 250ms
-SELECT (SELECT count(*) FROM glob('${__TEST_DIR__}/tx/ts/*/engine_v1/store/**')) AS ts_files,
-       (SELECT count(*) FROM glob('${__TEST_DIR__}/tx/other/*/engine_v1/store/**')) AS other_files;
+SELECT (SELECT count(*) FROM glob('${__TEST_DIR__}/tx/ts/*/engine_v1/**')) AS ts_files,
+       (SELECT count(*) FROM glob('${__TEST_DIR__}/tx/other/*/engine_v1/**')) AS other_files;
 ----
 ts_files	other_files
 0	0

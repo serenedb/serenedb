@@ -288,11 +288,9 @@ void AddTokenGroups(BoolTarget parent, irs::field_id field, irs::DictRef dict,
                     const irs::Scorer* scorer = nullptr);
 
 const SearchColumnInfo* FindColumnInfoForExpr(const FilterContext& ctx,
-                                              const duckdb::Expression& expr,
-                                              bool negated = false);
+                                              const duckdb::Expression& expr);
 const SearchColumnInfo* FindIndexedExpressionInfo(
-  const FilterContext& ctx, const duckdb::Expression& expr,
-  bool negated = false);
+  const FilterContext& ctx, const duckdb::Expression& expr);
 
 // Pointers reference constants in the bound expression tree;
 // nullptr means an unbounded side (NULL).

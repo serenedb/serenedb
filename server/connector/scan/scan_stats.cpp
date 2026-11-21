@@ -154,17 +154,40 @@ uint64_t KeyDistinct(const ScanBindData& bind,
   return 0;
 }
 
-duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
+duckdb::unique_ptr<duckdb::BaseStatistics> SegmentColumnStats(
   const ScanBindData& bind, const irs::CompositeReader& reader,
-  duckdb::idx_t column_index) {
-  if (column_index >= bind.columns.ids.size()) {
+  ColumnId column) {
+  if (!StoresColumnStats(bind, column)) {
     return nullptr;
   }
+  duckdb::unique_ptr<duckdb::BaseStatistics> merged;
+  uint64_t docs = 0;
+  for (const auto& segment : reader) {
+    const auto* columns = segment.GetColReader();
+    const auto* values = columns ? columns->Column(column) : nullptr;
+    if (!values) {
+      continue;
+    }
+    if (merged) {
+      merged->Merge(values->MergedStatistics());
+    } else {
+      merged = values->MergedStatistics().ToUnique();
+    }
+    docs += segment.docs_count();
+  }
+  if (merged && docs < reader.docs_count()) {
+    merged->SetHasNull();
+  }
+  return merged;
+}
+
+duckdb::unique_ptr<duckdb::BaseStatistics> WithKeywordStats(
+  const ScanBindData& bind, const irs::CompositeReader& reader,
+  duckdb::idx_t column_index,
+  duckdb::unique_ptr<duckdb::BaseStatistics> stats) {
   const auto column = bind.columns.ids[column_index];
-  const auto* stored = StoredColumnStats(bind, reader, column);
   uint64_t term_distinct = 0;
   const auto bounds = KeywordBounds(bind, reader, column_index, term_distinct);
-  auto stats = stored ? stored->ToUnique() : nullptr;
   if (bounds) {
     if (!stats) {
       stats = duckdb::StringStats::CreateUnknown(duckdb::LogicalType::VARCHAR)
@@ -188,6 +211,18 @@ duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
   return stats;
 }
 
+duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
+  const ScanBindData& bind, const irs::CompositeReader& reader,
+  duckdb::idx_t column_index) {
+  if (column_index >= bind.columns.ids.size()) {
+    return nullptr;
+  }
+  const auto* stored =
+    StoredColumnStats(bind, reader, bind.columns.ids[column_index]);
+  return WithKeywordStats(bind, reader, column_index,
+                          stored ? stored->ToUnique() : nullptr);
+}
+
 class ScanPartition final : public duckdb::PartitionRowGroup {
  public:
   ScanPartition(const ScanBindData& bind, const irs::CompositeReader& reader)
@@ -198,8 +233,14 @@ class ScanPartition final : public duckdb::PartitionRowGroup {
     if (index.HasChildren()) {
       return {};
     }
-    return duckdb::unique_ptr<const duckdb::BaseStatistics>(ColumnStats(
-      _bind, _reader, ScanColumnOfStorage(_bind, index.GetPrimaryIndex())));
+    const auto column_index =
+      ScanColumnOfStorage(_bind, index.GetPrimaryIndex());
+    if (column_index >= _bind.columns.ids.size()) {
+      return {};
+    }
+    return duckdb::unique_ptr<const duckdb::BaseStatistics>(WithKeywordStats(
+      _bind, _reader, column_index,
+      SegmentColumnStats(_bind, _reader, _bind.columns.ids[column_index])));
   }
 
   bool MinMaxIsExact(const duckdb::StorageIndex&) final { return true; }

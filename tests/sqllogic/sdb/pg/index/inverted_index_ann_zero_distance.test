@@ -116,6 +116,8 @@ QUERY PLAN
 │ Index: zl1_idx                         │
 │ Lookup: search                         │
 │ Score: l1_distance(emb, FLOAT[4])      │
+│ Exact:                                 │
+│ brute force over the stored vectors    │
 │ Top: 4                                 │
 │ Projections: pk,                       │
 │              sdb_inverted_index_score  │

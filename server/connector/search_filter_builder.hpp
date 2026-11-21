@@ -85,7 +85,7 @@ using ColumnGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
   const duckdb::BoundColumnRefExpression&) const>;
 
 using ExpressionGetter = absl::AnyInvocable<std::optional<SearchColumnInfo>(
-  const duckdb::Expression&, bool negated) const>;
+  const duckdb::Expression&) const>;
 
 struct ColumnRange {
   const duckdb::BoundColumnRefExpression* column = nullptr;

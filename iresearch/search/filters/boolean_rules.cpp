@@ -780,28 +780,29 @@ size_t DriverRank(const Filter& filter) noexcept {
   return kRangeRank + 1;
 }
 
-bool MatchesEachWordOnce(std::span<const TermClause> terms,
-                         std::span<bytes_view> prefixes) {
+bool MatchesWordTwice(std::span<const TermClause> terms,
+                      std::span<bytes_view> prefixes) {
+  if (absl::c_adjacent_find(
+        terms, [](const TermClause& lhs, const TermClause& rhs) {
+          return bytes_view{lhs.term} == bytes_view{rhs.term};
+        }) != terms.end()) {
+    return true;
+  }
   absl::c_sort(prefixes);
-  for (size_t i = 1; i < prefixes.size(); ++i) {
-    if (prefixes[i].starts_with(prefixes[i - 1])) {
-      return false;
+  auto term = terms.begin();
+  for (size_t i = 0; i != prefixes.size(); ++i) {
+    const auto prefix = prefixes[i];
+    if (i + 1 != prefixes.size() && prefixes[i + 1].starts_with(prefix)) {
+      return true;
+    }
+    while (term != terms.end() && bytes_view{term->term} < prefix) {
+      ++term;
+    }
+    if (term != terms.end() && bytes_view{term->term}.starts_with(prefix)) {
+      return true;
     }
   }
-  size_t below = 0;
-  for (size_t i = 0; i < terms.size(); ++i) {
-    const bytes_view word = terms[i].term;
-    if (i != 0 && word == bytes_view{terms[i - 1].term}) {
-      return false;
-    }
-    while (below < prefixes.size() && prefixes[below] <= word) {
-      ++below;
-    }
-    if (below != 0 && word.starts_with(prefixes[below - 1])) {
-      return false;
-    }
-  }
-  return true;
+  return false;
 }
 
 }  // namespace
@@ -958,7 +959,7 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
   if (seekable == count && !ctx.fuse_seekable_acceptors) {
     return false;
   }
-  if (sums && !MatchesEachWordOnce(terms, prefixes)) {
+  if (sums && MatchesWordTwice(terms, prefixes)) {
     return false;
   }
 

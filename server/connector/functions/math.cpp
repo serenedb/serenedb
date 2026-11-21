@@ -337,154 +337,133 @@ void LogBaseFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 constexpr double kRadiansPerDegree = M_PI / 180.0;
 constexpr double kDegreesPerRadian = 180.0 / M_PI;
 
-double SinOctant(double x) {
-  if (x == 30.0) {
-    return 0.5;
-  }
-  return x == 45.0 ? M_SQRT1_2 : std::sin(x * kRadiansPerDegree);
+[[noreturn]] void ThrowOutOfRange() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                  ERR_MSG("input is out of range"));
 }
 
-double CosOctant(double x) {
-  return x == 45.0 ? M_SQRT1_2 : std::cos(x * kRadiansPerDegree);
-}
-
-double SinQuadrant(double x) {
-  return x <= 45.0 ? SinOctant(x) : CosOctant(90.0 - x);
-}
-
-double CosQuadrant(double x) {
-  return x <= 45.0 ? CosOctant(x) : SinOctant(90.0 - x);
-}
-
-struct ReducedDegrees {
-  double angle = 0;
-  double sin_sign = 1;
-  double cos_sign = 1;
+struct Degrees {
+  double angle;
+  bool negative_sin = false;
+  bool negative_cos = false;
 };
 
-ReducedDegrees ReduceDegrees(double x) {
+Degrees ReduceDegrees(double x) {
   if (std::isinf(x)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                    ERR_MSG("input is out of range"));
+    ThrowOutOfRange();
   }
-  ReducedDegrees reduced{.angle = std::fmod(x, 360.0)};
-  if (reduced.angle < 0.0) {
-    reduced.angle = -reduced.angle;
-    reduced.sin_sign = -1;
+  Degrees degrees{.angle = x};
+  if (degrees.angle < 0.0) {
+    degrees.angle = -degrees.angle;
+    degrees.negative_sin = true;
   }
-  if (reduced.angle > 180.0) {
-    reduced.angle = 360.0 - reduced.angle;
-    reduced.sin_sign = -reduced.sin_sign;
+  if (degrees.angle >= 360.0) {
+    degrees.angle = std::fmod(degrees.angle, 360.0);
   }
-  if (reduced.angle > 90.0) {
-    reduced.angle = 180.0 - reduced.angle;
-    reduced.cos_sign = -1;
+  if (degrees.angle > 180.0) {
+    degrees.angle = 360.0 - degrees.angle;
+    degrees.negative_sin = !degrees.negative_sin;
   }
-  return reduced;
+  if (degrees.angle > 90.0) {
+    degrees.angle = 180.0 - degrees.angle;
+    degrees.negative_cos = true;
+  }
+  return degrees;
 }
 
-double UnitInterval(double x) {
-  if (x < -1.0 || x > 1.0) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                    ERR_MSG("input is out of range"));
+double SinFirstQuadrant(double x) {
+  if (x < 45.0) {
+    return x == 30.0 ? 0.5 : std::sin(x * kRadiansPerDegree);
   }
-  return x;
+  return x == 45.0 ? M_SQRT1_2 : std::cos((90.0 - x) * kRadiansPerDegree);
 }
 
-double SinD(double x) {
-  if (std::isnan(x)) {
-    return x;
+double TanFirstQuadrant(double x) {
+  if (x < 45.0) {
+    return std::tan(x * kRadiansPerDegree);
   }
-  const auto reduced = ReduceDegrees(x);
-  return reduced.sin_sign * SinQuadrant(reduced.angle);
+  return x == 45.0 ? 1.0 : 1.0 / std::tan((90.0 - x) * kRadiansPerDegree);
 }
 
-double CosD(double x) {
-  if (std::isnan(x)) {
-    return x;
+double AsinFirstQuadrant(double x) {
+  if (x < 0.5) {
+    return std::asin(x) * kDegreesPerRadian;
   }
-  const auto reduced = ReduceDegrees(x);
-  return reduced.cos_sign * CosQuadrant(reduced.angle);
+  return x == 0.5 ? 30.0 : 90.0 - std::acos(x) * kDegreesPerRadian;
 }
+
+double AcosFirstQuadrant(double x) {
+  if (x < 0.5) {
+    return 90.0 - std::asin(x) * kDegreesPerRadian;
+  }
+  return x == 0.5 ? 60.0 : std::acos(x) * kDegreesPerRadian;
+}
+
+struct SinDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    const auto degrees = ReduceDegrees(x);
+    const double sin = SinFirstQuadrant(degrees.angle);
+    return degrees.negative_sin ? -sin : sin;
+  }
+};
+
+struct CosDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    const auto degrees = ReduceDegrees(x);
+    const double cos = SinFirstQuadrant(90.0 - degrees.angle);
+    return degrees.negative_cos ? -cos : cos;
+  }
+};
 
 template<bool Cotangent>
-double TanD(double x) {
-  if (std::isnan(x)) {
-    return x;
+struct TanDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    const auto degrees = ReduceDegrees(x);
+    const double tan =
+      TanFirstQuadrant(Cotangent ? 90.0 - degrees.angle : degrees.angle);
+    if (tan == 0.0) {
+      return 0.0;
+    }
+    return degrees.negative_sin != degrees.negative_cos ? -tan : tan;
   }
-  const auto reduced = ReduceDegrees(x);
-  const double sin_x = SinQuadrant(reduced.angle);
-  const double cos_x = CosQuadrant(reduced.angle);
-  const double result = reduced.sin_sign * reduced.cos_sign *
-                        (Cotangent ? cos_x / sin_x : sin_x / cos_x);
-  return result == 0.0 ? 0.0 : result;
-}
+};
 
-double AsinQuadrant(double x) {
-  if (x == 0.5) {
-    return 30.0;
+struct AsinDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    if (x < -1.0 || x > 1.0) {
+      ThrowOutOfRange();
+    }
+    return x < 0.0 ? -AsinFirstQuadrant(-x) : AsinFirstQuadrant(x);
   }
-  return x < 0.5 ? std::asin(x) * kDegreesPerRadian
-                 : 90.0 - std::acos(x) * kDegreesPerRadian;
-}
+};
 
-double AcosQuadrant(double x) {
-  if (x == 0.5) {
-    return 60.0;
+struct AcosDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    if (x < -1.0 || x > 1.0) {
+      ThrowOutOfRange();
+    }
+    return x < 0.0 ? 90.0 + AsinFirstQuadrant(-x) : AcosFirstQuadrant(x);
   }
-  return x < 0.5 ? 90.0 - std::asin(x) * kDegreesPerRadian
-                 : std::acos(x) * kDegreesPerRadian;
-}
+};
 
-double AsinD(double x) {
-  if (std::isnan(x)) {
-    return x;
+struct AtanDOperator {
+  template<typename T, typename R>
+  static R Operation(T x) {
+    return std::atan(x) / M_PI_4 * 45.0;
   }
-  x = UnitInterval(x);
-  return x >= 0.0 ? AsinQuadrant(x) : -AsinQuadrant(-x);
-}
+};
 
-double AcosD(double x) {
-  if (std::isnan(x)) {
-    return x;
+struct Atan2DOperator {
+  template<typename A, typename B, typename R>
+  static R Operation(A y, B x) {
+    return std::atan2(y, x) / M_PI_4 * 45.0;
   }
-  x = UnitInterval(x);
-  return x >= 0.0 ? AcosQuadrant(x) : 90.0 + AsinQuadrant(-x);
-}
-
-double AtanQuadrant(double y, double x) {
-  if (y == x) {
-    return y == 0.0 ? 0.0 : 45.0;
-  }
-  return y < x ? std::atan(y / x) * kDegreesPerRadian
-               : 90.0 - std::atan(x / y) * kDegreesPerRadian;
-}
-
-double AtanD(double x) {
-  if (std::isnan(x)) {
-    return x;
-  }
-  return std::copysign(AtanQuadrant(std::abs(x), 1.0), x);
-}
-
-template<double (*F)(double)>
-void DegreeFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                    duckdb::Vector& result) {
-  duckdb::UnaryExecutor::Execute<double, double>(args.data[0], result,
-                                                 args.size(), F);
-}
-
-void Atan2DFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
-                    duckdb::Vector& result) {
-  duckdb::BinaryExecutor::Execute<double, double, double>(
-    args.data[0], args.data[1], result, args.size(), [](double y, double x) {
-      if (std::isnan(y) || std::isnan(x)) {
-        return std::numeric_limits<double>::quiet_NaN();
-      }
-      const double angle = AtanQuadrant(std::abs(y), std::abs(x));
-      return std::copysign(std::signbit(x) ? 180.0 - angle : angle, y);
-    });
-}
+};
 
 // make_timestamp(year, month, day, hour, min, sec) -> timestamp
 // PG-compatible, ported from Velox PgMakeTimestamp
@@ -1377,14 +1356,31 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     duckdb::scalar_function_t function;
     bool fallible;
   };
+  using duckdb::ScalarFunction;
   for (const auto& [name, function, fallible] : {
-         Degree{"sind", DegreeFunction<SinD>, true},
-         Degree{"cosd", DegreeFunction<CosD>, true},
-         Degree{"tand", DegreeFunction<TanD<false>>, true},
-         Degree{"cotd", DegreeFunction<TanD<true>>, true},
-         Degree{"asind", DegreeFunction<AsinD>, true},
-         Degree{"acosd", DegreeFunction<AcosD>, true},
-         Degree{"atand", DegreeFunction<AtanD>, false},
+         Degree{"sind",
+                ScalarFunction::UnaryFunction<double, double, SinDOperator>,
+                true},
+         Degree{"cosd",
+                ScalarFunction::UnaryFunction<double, double, CosDOperator>,
+                true},
+         Degree{
+           "tand",
+           ScalarFunction::UnaryFunction<double, double, TanDOperator<false>>,
+           true},
+         Degree{
+           "cotd",
+           ScalarFunction::UnaryFunction<double, double, TanDOperator<true>>,
+           true},
+         Degree{"asind",
+                ScalarFunction::UnaryFunction<double, double, AsinDOperator>,
+                true},
+         Degree{"acosd",
+                ScalarFunction::UnaryFunction<double, double, AcosDOperator>,
+                true},
+         Degree{"atand",
+                ScalarFunction::UnaryFunction<double, double, AtanDOperator>,
+                false},
        }) {
     duckdb::ScalarFunction degree{duckdb::Identifier{name},
                                   {duckdb::LogicalType::DOUBLE},
@@ -1399,7 +1395,7 @@ void RegisterPgMathFunctions(duckdb::DatabaseInstance& db) {
     duckdb::Identifier{"atan2d"},
     {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::DOUBLE},
     duckdb::LogicalType::DOUBLE,
-    Atan2DFunction});
+    ScalarFunction::BinaryFunction<double, double, double, Atan2DOperator>});
 
   // make_timestamp(year, month, day, hour, min, sec) -> timestamp
   duckdb::ScalarFunction make_timestamp{

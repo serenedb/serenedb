@@ -450,6 +450,29 @@ def test_typed_value_dependent_parameters_are_described(conn):
     ]
 
 
+def test_file_path_parameter_is_described_with_the_file_columns(conn, tmp_path):
+    path = str(tmp_path / "tickets.parquet")
+    conn.run_ok(
+        "COPY (SELECT 1 AS id, 'high' AS priority, 'search' AS product) "
+        f"TO '{path}' (FORMAT parquet)"
+    )
+    conn.parse(
+        "file_path_parameter",
+        "SELECT id, priority FROM read_parquet($1) WHERE product = $2 ORDER BY id",
+    )
+    conn.bind("", "file_path_parameter", params=(path.encode(), b"search"))
+    conn.describe("P", "")
+    conn.execute("")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert [(n, oid) for n, oid, _ in row_description(msgs)] == [
+        ("id", 23),
+        ("priority", 25),
+    ]
+    assert all_fields(msgs) == [b"1", b"high"]
+
+
 def test_text_parameters_take_postgres_input_forms(conn):
     conn.parse(
         "input_forms",

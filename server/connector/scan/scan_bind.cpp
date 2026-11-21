@@ -485,7 +485,8 @@ void RefreshVectorKnobs(VectorScorerOptions& vs,
   vs.hnsw_filter_mode = mode("sdb_hnsw_filter_mode", irs::HnswFilterMode::Auto);
   vs.hnsw_column_filter =
     mode("sdb_hnsw_column_filter", irs::HnswColumnFilter::Auto);
-  vs.exact = GetBoolSetting(context, "sdb_ann_force_exact");
+  vs.exact =
+    vs.exact_for_bound || GetBoolSetting(context, "sdb_ann_force_exact");
   vs.rescore_width = AnnRescoreWidth(context, vs);
 }
 
@@ -826,7 +827,7 @@ DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
     return info;
   };
   const ExpressionGetter expr_getter =
-    [](const duckdb::Expression&, bool) -> std::optional<SearchColumnInfo> {
+    [](const duckdb::Expression&) -> std::optional<SearchColumnInfo> {
     return std::nullopt;
   };
   struct WideColumn {

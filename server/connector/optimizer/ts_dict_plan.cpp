@@ -1901,16 +1901,15 @@ class TsDictFilterClaim {
       _term_getter{[this](const duckdb::BoundColumnRefExpression& ref) {
         return TermInfo(ref, false);
       }},
-      _term_expr_getter{[this](const duckdb::Expression& expr, bool negated) {
-        return RawTerms(_getters.expr_getter(expr, negated), false);
+      _term_expr_getter{[this](const duckdb::Expression& expr) {
+        return RawTerms(_getters.expr_getter(expr), false);
       }},
       _acceptor_getter{[this](const duckdb::BoundColumnRefExpression& ref) {
         return TermInfo(ref, true);
       }},
-      _acceptor_expr_getter{
-        [this](const duckdb::Expression& expr, bool negated) {
-          return RawTerms(_getters.expr_getter(expr, negated), true);
-        }},
+      _acceptor_expr_getter{[this](const duckdb::Expression& expr) {
+        return RawTerms(_getters.expr_getter(expr), true);
+      }},
       _routes(filters.size(), TsDictRoute::Rejected),
       _multi_term(filters.size(), false),
       _row_origin(filters.size(), false),
@@ -1943,8 +1942,8 @@ class TsDictFilterClaim {
 
   template<typename Getter>
   auto Uncapping(const Getter& getter) const {
-    return [this, &getter](const auto&... args) {
-      auto info = getter(args...);
+    return [this, &getter](const auto& expr) {
+      auto info = getter(expr);
       if (info && Enumerated(info->field_id)) {
         info->levenshtein_max_terms = 0;
       }

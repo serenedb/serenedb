@@ -49,6 +49,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <span>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -91,12 +92,17 @@ std::optional<std::string> RenderTSQueryCall(
   duckdb::ClientContext& context, std::string_view name,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> children);
 
-constexpr std::string_view NamedArgumentOf(TSQueryOp op) noexcept {
+constexpr std::string_view kPhraseArguments[] = {"slop"};
+constexpr std::string_view kFuzzyArguments[] = {"transpositions", "prefix",
+                                                "starts_with"};
+
+constexpr std::span<const std::string_view> NamedArgumentsOf(
+  TSQueryOp op) noexcept {
   switch (op) {
     case TSQueryOp::Phrase:
-      return "slop";
+      return kPhraseArguments;
     case TSQueryOp::Fuzzy:
-      return "starts_with";
+      return kFuzzyArguments;
     default:
       return {};
   }
@@ -174,8 +180,10 @@ bool WhitelistWalk(const duckdb::ParsedExpression& expr, size_t depth,
       }
       return absl::c_all_of(func.GetArguments(), [&](const auto& arg) {
         if (arg.HasName() &&
-            !absl::EqualsIgnoreCase(arg.GetName().GetIdentifierName(),
-                                    NamedArgumentOf(op))) {
+            !absl::c_any_of(NamedArgumentsOf(op), [&](std::string_view name) {
+              return absl::EqualsIgnoreCase(arg.GetName().GetIdentifierName(),
+                                            name);
+            })) {
           return false;
         }
         return WhitelistWalk(arg.GetExpression(), depth + 1, nodes);
@@ -563,7 +571,7 @@ std::optional<std::string> RenderTSQueryCall(
       return std::nullopt;
     case TSQueryOp::Phrase:
     case TSQueryOp::Fuzzy: {
-      const auto named = NamedArgumentOf(op);
+      const auto names = NamedArgumentsOf(op);
       std::string out = absl::StrCat(name, "(");
       for (size_t i = 0; i < children.size(); ++i) {
         auto rendered = RenderTSQueryExpression(context, *children[i]);
@@ -574,10 +582,12 @@ std::optional<std::string> RenderTSQueryCall(
           out += ", ";
         }
         if (const auto& alias = children[i]->GetAlias(); !alias.empty()) {
-          if (!(alias == named)) {
+          const auto named = absl::c_find_if(
+            names, [&](std::string_view name) { return alias == name; });
+          if (named == names.end()) {
             return std::nullopt;
           }
-          absl::StrAppend(&out, named, " := ");
+          absl::StrAppend(&out, *named, " := ");
         }
         out += std::move(*rendered);
       }

@@ -29,16 +29,29 @@
 #include "ts_common.hpp"
 
 namespace sdb::connector {
+namespace {
+
+constexpr std::string_view kSyntaxHint =
+  "Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 "
+  "(0-3 with transpositions). `transpositions := false` counts swapping two "
+  "adjacent characters as two edits, `prefix` must match exactly, and "
+  "`starts_with := true` matches the terms that start within the distance "
+  "of the text; `transpositions` and `prefix` may also follow the distance "
+  "by position. If distance is omitted (ts_levenshtein('test')), it is "
+  "picked automatically from the term length (0 for <=2 chars, 1 for 3-5, "
+  "2 for >=6).";
+
+[[noreturn]] void ThrowGivenTwice(std::string_view name) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+    ERR_MSG("ts_levenshtein ", name, " is given both by position and by name"),
+    ERR_HINT(kSyntaxHint));
+}
+
+}  // namespace
 
 LevenshteinArgs ParseLevenshteinArgs(
   const duckdb::BoundFunctionExpression& func) {
-  static constexpr std::string_view kSyntaxHint =
-    "Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 "
-    "(0-3 with transpositions). Optional `prefix` matches exactly. "
-    "If distance is omitted (ts_levenshtein('test')), it is picked "
-    "automatically from the term length (0 for <=2 chars, 1 for 3-5, "
-    "2 for >=6). `starts_with := true` matches the terms that start "
-    "within the distance of the text.";
   const auto& children = func.GetChildren();
   size_t positional = 0;
   while (positional != children.size() &&
@@ -48,16 +61,6 @@ LevenshteinArgs ParseLevenshteinArgs(
   SDB_ASSERT(positional >= 1 && positional <= 4);
   LevenshteinArgs out;
   GetVarcharArg(*children[0], out.text, {"ts_levenshtein text", kSyntaxHint});
-  for (const auto& named : std::span{children}.subspan(positional)) {
-    if (!(named->GetAlias() == "starts_with")) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("ts_levenshtein has no argument named ",
-                              named->GetAlias().GetIdentifierName()),
-                      ERR_HINT(kSyntaxHint));
-    }
-    GetBoolArg(*named, out.starts_with,
-               {"ts_levenshtein starts_with", kSyntaxHint});
-  }
   if (positional >= 2) {
     GetIntArg(*children[1], out.distance,
               {"ts_levenshtein distance", kSyntaxHint});
@@ -67,16 +70,43 @@ LevenshteinArgs ParseLevenshteinArgs(
     const auto n = out.text.size();
     out.distance = (n <= 2) ? 0 : (n <= 5) ? 1 : 2;
   }
+  if (positional >= 3) {
+    GetBoolArg(*children[2], out.with_transpositions,
+               {"ts_levenshtein transpositions", kSyntaxHint});
+  }
+  if (positional >= 4) {
+    GetVarcharArg(*children[3], out.prefix,
+                  {"ts_levenshtein prefix", kSyntaxHint});
+  }
+  for (const auto& named : std::span{children}.subspan(positional)) {
+    const auto& alias = named->GetAlias();
+    if (alias == "transpositions") {
+      if (positional >= 3) {
+        ThrowGivenTwice("transpositions");
+      }
+      GetBoolArg(*named, out.with_transpositions,
+                 {"ts_levenshtein transpositions", kSyntaxHint});
+    } else if (alias == "prefix") {
+      if (positional >= 4) {
+        ThrowGivenTwice("prefix");
+      }
+      GetVarcharArg(*named, out.prefix, {"ts_levenshtein prefix", kSyntaxHint});
+    } else if (alias == "starts_with") {
+      GetBoolArg(*named, out.starts_with,
+                 {"ts_levenshtein starts_with", kSyntaxHint});
+    } else {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_levenshtein has no argument named ",
+                              alias.GetIdentifierName()),
+                      ERR_HINT(kSyntaxHint));
+    }
+  }
   if (out.distance < 0 || out.distance > 4) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_levenshtein distance must be between 0 and 4, got ",
               out.distance),
       ERR_HINT(kSyntaxHint));
-  }
-  if (positional >= 3) {
-    GetBoolArg(*children[2], out.with_transpositions,
-               {"ts_levenshtein transpositions", kSyntaxHint});
   }
   if (out.with_transpositions && out.distance > 3) {
     THROW_SQL_ERROR(
@@ -85,10 +115,6 @@ LevenshteinArgs ParseLevenshteinArgs(
               "transpositions is true, got ",
               out.distance),
       ERR_HINT(kSyntaxHint));
-  }
-  if (positional >= 4) {
-    GetVarcharArg(*children[3], out.prefix,
-                  {"ts_levenshtein prefix", kSyntaxHint});
   }
   return out;
 }
@@ -105,20 +131,9 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
   out.max_terms = max_terms;
 }
 
-// Tokenises `text` via the column analyzer and pushes ByTermOptions
-// parts into `options`. The FIRST token gets `base_gap` -- the gap
-// from the previous phrase part. Subsequent tokens are strictly
-// adjacent ({1, 1}). Errors if the analyzer produces no tokens. Shared
-// between BuildFtsPhrase (called with PhraseGap{}) and EmitPhraseSeq's
 void FromLevenshtein(BoolTarget filter, const FilterContext& ctx,
                      const SearchColumnInfo& column_info,
                      const duckdb::BoundFunctionExpression& func) {
-  static constexpr std::string_view kSyntaxHint =
-    "Example: ts_levenshtein('test', 1, true, 'pre'). Distance must be 0-4 "
-    "(0-3 with transpositions). Optional `prefix` matches exactly. "
-    "If distance is omitted (ts_levenshtein('test')), it is picked "
-    "automatically from the term length (0 for <=2 chars, 1 for 3-5, "
-    "2 for >=6).";
   if (column_info.logical_type.id() != duckdb::LogicalTypeId::VARCHAR &&
       column_info.logical_type.id() != duckdb::LogicalTypeId::BLOB) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),

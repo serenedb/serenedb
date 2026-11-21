@@ -1132,7 +1132,7 @@ id
 query
 SELECT id
 FROM docs_idx
-WHERE body @@ ts_levenshtein('X', 1, true, 'quic')
+WHERE body @@ ts_levenshtein('X', 1, prefix := 'quic')
 ORDER BY id;
 ----
 id

@@ -210,15 +210,15 @@ Fuzzy match: find tokens within a bounded edit distance of `text` — the standa
 | :--- | :--- | :--- | :--- |
 | `text` | `VARCHAR`/`BLOB` | — | The term to match approximately. When `prefix` is given, this is only the *suffix* that is fuzzy-matched (see below). |
 | `distance` | `INTEGER` | auto by length: `0` for ≤ 2 chars, `1` for 3–5, `2` for ≥ 6 | Maximum edit distance (insertions, deletions, substitutions). Allowed range `0`–`4` (capped at `3` when `transpositions` is `true`). |
-| `transpositions` | `BOOLEAN` | `true` | When `true`, swapping two adjacent characters counts as **one** edit (Damerau–Levenshtein); when `false`, it counts as two. |
-| `prefix` | `VARCHAR` | `''` (empty) | A literal leading substring that must match **exactly**. The term actually matched is `prefix \|\| text`; only the `text` portion spends the edit budget. |
+| `transpositions` | `BOOLEAN` | `true` | When `true`, swapping two adjacent characters counts as **one** edit (Damerau–Levenshtein); when `false`, it counts as two. Also by name: `transpositions := false`. |
+| `prefix` | `VARCHAR` | `''` (empty) | A literal leading substring that must match **exactly**. The term actually matched is `prefix \|\| text`; only the `text` portion spends the edit budget. Also by name, which leaves `transpositions` at its default: `prefix := 'quic'`. |
 | `starts_with` | `BOOLEAN` | `false` | Named argument. When `true`, a term matches when it *starts* within `distance` edits of the query, whatever follows. |
 
 **How it works.** A term matches when its edit distance from the query is at most `distance`. The knobs around that rule:
 
 - **Auto distance.** The one-argument form picks the distance from the query length: `0` for two characters or fewer, `1` for three to five, `2` from six up. Short queries tolerate fewer edits, which keeps them from drifting into unrelated tokens.
 - **Transpositions.** On by default, so a single adjacent-character swap costs one edit instead of two: `quikc` reaches `quick` at distance 1, where strict Levenshtein needs distance 2.
-- **Prefix.** Anchors an exact leading substring and fuzzy-matches only the rest, which both narrows the candidate set and speeds the scan. `ts_levenshtein('X', 1, true, 'quic')` requires the literal `quic`, then allows one edit on `X`, reaching `quick`.
+- **Prefix.** Anchors an exact leading substring and fuzzy-matches only the rest, which both narrows the candidate set and speeds the scan. `ts_levenshtein('X', 1, prefix := 'quic')` requires the literal `quic`, then allows one edit on `X`, reaching `quick`.
 - **Starts with.** `starts_with := true` compares the query with the beginning of each term instead of the whole term, which is what completing a word the user is still typing needs. `ts_levenshtein('trutl', 1, starts_with := true)` reaches `turtle`, because its first five letters `turtl` are one transposition from `trutl`, where the whole word is two edits away. The similarity that [`ts_dict_score`](./term-dictionary.md) reports is that of the closest beginning, and distance `0` matches exactly like [`ts_starts_with`](#ts_starts_with). It combines with `transpositions` and `prefix`, and the expansion cap below applies to it.
 - **Expansion cap.** [`sdb_levenshtein_max_terms`](../../indexes/inverted/maintenance.md#session-settings) (default `50`) bounds how many dictionary terms the predicate expands to. The terms closest to the query survive; the rest neither match nor score. Set it to `0` to match every term within the edit distance, or narrow the candidate set with `prefix`. The cap applies per index segment, so a wide predicate can match more terms while they sit in separate segments than after a merge.
 - **Term enumeration.** A predicate on the column that a [`ts_dict_*`](./term-dictionary.md) query enumerates is exempt from the cap, because there the terms are the result rather than a means to one. Other predicates in the same query keep it, and since enumeration only sees matching documents, capping one of those narrows the returned terms too.
@@ -228,7 +228,7 @@ Fuzzy match: find tokens within a bounded edit distance of `text` — the standa
 | `body @@ ts_levenshtein('quikc', 2)` | `1`, `2` | `quikc` → `quick` is within 2 edits. |
 | `body @@ ts_levenshtein('quikc', 1, true)` | `1`, `2` | The `kc`↔`ck` transposition is a single edit. |
 | `body @@ ts_levenshtein('quikc', 1, false)` | *(none)* | Without transpositions, `quikc` → `quick` is 2 edits. |
-| `body @@ ts_levenshtein('X', 1, true, 'quic')` | `1`, `2` | Exact prefix `quic` plus one edit (`X` → `k`) reaches `quick`. |
+| `body @@ ts_levenshtein('X', 1, prefix := 'quic')` | `1`, `2` | Exact prefix `quic` plus one edit (`X` → `k`) reaches `quick`. |
 | `body @@ ts_levenshtein('trutl', 1, starts_with := true)` | `3` | `turtle` starts with `turtl`, one transposition from `trutl`. |
 
 <SqlLogicTest id="sql/functions/full_text_search/ts_levenshtein" />
@@ -821,10 +821,11 @@ Fuzzy-match sugar for `column @@ ts_levenshtein(...)`.
 | `column` | any indexed column | — | The column to match. |
 | `text` | `VARCHAR`/`BLOB` | — | Term to match approximately. |
 | `distance` | `INTEGER` | — *(required here)* | Maximum edit distance. Unlike [`ts_levenshtein`](#ts_levenshtein), the predicate has no auto-distance form, so `distance` is required. |
-| `transpositions` | `BOOLEAN` | `true` | Whether an adjacent-character swap counts as one edit. |
-| `prefix` | `VARCHAR` | `''` | Exact leading substring; only the suffix spends the edit budget. |
+| `transpositions` | `BOOLEAN` | `true` | Whether an adjacent-character swap counts as one edit. Also by name. |
+| `prefix` | `VARCHAR` | `''` | Exact leading substring; only the suffix spends the edit budget. Also by name. |
+| `starts_with` | `BOOLEAN` | `false` | Named argument: match the terms that start within `distance` edits of `text`. |
 
-**How it works.** Rewrites to `column @@ ts_levenshtein(text, distance[, transpositions[, prefix]])`. See [`ts_levenshtein`](#ts_levenshtein) for the edit-distance and prefix semantics.
+**How it works.** Rewrites to `column @@ ts_levenshtein(text, distance, ...)` with the same positional and named arguments. See [`ts_levenshtein`](#ts_levenshtein) for the edit-distance, prefix and starts-with semantics.
 
 | Query | Matches `id` | Why |
 | :--- | :--- | :--- |

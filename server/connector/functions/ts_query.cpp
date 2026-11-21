@@ -915,6 +915,7 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
   }
 
   // LEVENSHTEIN(term [, distance [, transpositions [, prefix]]]
+  // [, transpositions := BOOLEAN] [, prefix := VARCHAR]
   // [, starts_with := BOOLEAN]) -- raw fuzzy match. The optional `prefix` is
   // a literal leading substring that must match exactly; only the suffix
   // after `prefix` participates in edit-distance computation. The 1-arg form
@@ -1213,19 +1214,19 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
 
   {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{kLevenshteinMatches}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::INTEGER},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN,
-       duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
+    const auto add = [&](duckdb::vector<duckdb::LogicalType> args) {
+      duckdb::ScalarFunction fn(std::move(args), duckdb::LogicalType::BOOLEAN,
+                                SearchStubFn);
+      fn.GetSignature().AddKwargs("kwargs", duckdb::LogicalType::ANY);
+      set.AddFunction(std::move(fn));
+    };
+    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
+         duckdb::LogicalType::INTEGER});
+    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
+         duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN});
+    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
+         duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN,
+         duckdb::LogicalType::VARCHAR});
     loader.RegisterFunction(std::move(set));
   }
 

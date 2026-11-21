@@ -29,7 +29,7 @@ db error: ERROR: VARIANT exceeds maximum recursion depth of 128
 
 statement ok
 CREATE TABLE vnd_explain AS
-SELECT (repeat('{"inputs":{"a":', 10000) || '{}' || repeat('}}', 10000))::JSON AS doc;
+SELECT (repeat('{"inputs":{"a":', 200000) || '{}' || repeat('}}', 200000))::JSON AS doc;
 
 statement error
 SELECT ts_explain_json(doc::VARIANT) FROM vnd_explain;

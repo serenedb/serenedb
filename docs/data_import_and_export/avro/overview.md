@@ -150,7 +150,9 @@ A union of `null` and one other type reads as that type, with `NULL` for the val
 | `SANITIZE_FIELD_NAMES` | Whether to make the names of columns and nested fields valid Avro names: a leading digit `d` becomes `_d`, and every other byte that an Avro name cannot hold becomes `_x` and its value in hexadecimal, so that `unit price` becomes `unit_x20price`. | `BOOL`    | `false` |
 | `METADATA`             | Key-value metadata to write into the header of the file, as a struct: `METADATA {'source': 'orchard'}`.                                                                                                                                                | `STRUCT`  | (none)  |
 
-Every column, and every value nested in one, is written as a union of `null` and its type, so that it can hold `NULL`, unless [`FIELD_IDS`](#field-ids) writes it as not nullable.
+Every column, and every value nested in one, is written as a union of `null` and its type, so that it can hold `NULL`, unless [`FIELD_IDS`](#field-ids) writes it as not nullable. A column of type `NULL` is written as the Avro type `null`.
+
+Over the PostgreSQL wire protocol, `COPY ... TO STDOUT (FORMAT avro)` sends the file to the client and `COPY ... FROM STDIN (FORMAT avro)` loads one from it: see [`STDIN` and `STDOUT`](../../sql/statements/copy/index.md#stdin-and-stdout).
 
 These column types are written: `BOOLEAN`, `INTEGER`, `BIGINT`, `FLOAT`, `DOUBLE`, `VARCHAR`, `BLOB`, `DATE`, `TIME`, `TIMESTAMP`, `TIMESTAMP_MS`, `TIMESTAMP_NS`, `TIMESTAMP WITH TIME ZONE`, `UUID` and `DECIMAL`, and `STRUCT`, `LIST` and `MAP` of them. A `STRUCT` is written as a record, a `LIST` as an array, and a `MAP` as an array of key-value records with the logical type `map`, so that its keys can be of any type. The temporal types, `UUID` and `DECIMAL` are written with their logical types, and `read_avro` reads each column back as the type it was written from, a `TIMESTAMP_MS` as a `TIMESTAMP`:
 

@@ -382,7 +382,7 @@ db error: ERROR: Unknown codec bzip2, the supported codecs are null, deflate, sn
 statement error
 COPY (SELECT 12 AS "unit price") TO '${__TEST_DIR__}/prices.avro';
 ----
-db error: ERROR: Invalid Avro identifier
+db error: ERROR: Invalid Avro identifier "unit price": field names have to match the regex [A-Za-z_][A-Za-z0-9_]*, or set SANITIZE_FIELD_NAMES
 
 
 # DOCS_TEST: sanitize_field_names

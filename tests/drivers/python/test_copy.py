@@ -676,6 +676,44 @@ def test_copy_arrows_round_trip(conn: psycopg.Connection,
         _drop(conn, dest)
 
 
+@pytest.mark.parametrize("codec", ["null", "deflate", "zstandard"])
+def test_copy_avro_round_trip(conn: psycopg.Connection, table_name: str,
+                              codec: str) -> None:
+    dest = f"{table_name}_dst"
+    _create_int_varchar(conn, table_name)
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{dest}"(x INT, label VARCHAR)')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'INSERT INTO public."{table_name}" SELECT i, CASE WHEN i % 7 = 0 '
+                f"THEN NULL ELSE 'label ' || i END FROM generate_series(1, 20000) i")
+            blob = b""
+            with cur.copy(
+                f'COPY public."{table_name}" TO STDOUT '
+                f"(FORMAT avro, CODEC '{codec}')"
+            ) as cp:
+                assert cur.pgresult.binary_tuples == psycopg.pq.Format.BINARY
+                for chunk in cp:
+                    blob += bytes(chunk)
+            assert blob.startswith(b"Obj\x01"), blob[:8]
+            with cur.copy(
+                f'COPY public."{dest}" FROM STDIN (FORMAT avro)'
+            ) as cp:
+                assert cur.pgresult.binary_tuples == psycopg.pq.Format.BINARY
+                for i in range(0, len(blob), 4096):
+                    cp.write(blob[i:i + 4096])
+            cur.execute(
+                f'SELECT count(*) FROM (SELECT * FROM public."{table_name}" '
+                f'EXCEPT ALL SELECT * FROM public."{dest}")')
+            assert cur.fetchone() == (0,)
+            cur.execute(f'SELECT count(*), count(label) FROM public."{dest}"')
+            assert cur.fetchone() == (20000, 20000 - 20000 // 7)
+    finally:
+        _drop(conn, table_name)
+        _drop(conn, dest)
+
+
 def test_copy_to_stdout_arrow_file_is_binary_blob(conn: psycopg.Connection,
                                                    shared_path: Path) -> None:
     with conn.cursor() as cur:

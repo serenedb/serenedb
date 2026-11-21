@@ -53,6 +53,11 @@ bool CopyInBatches::Starving() const {
   return _parked != 0 && _taken == _pushed && !_finished && !_aborted;
 }
 
+bool CopyInBatches::Pending() const {
+  Guard guard{_waiters.lock};
+  return _taken != _pushed || _finished || _aborted || _error;
+}
+
 bool CopyInBatches::NeedSpace() {
   std::vector<duckdb::InterruptState> waiters;
   {
@@ -293,6 +298,7 @@ void CopyInBatches::WaitForPush(Lock& lock) {
   ++_parked;
   lock.unlock();
   Starve();
+  SDB_PARK_ONCE_ON_FAILURE("pause_copy_take_blocked");
   signal->Await();
   lock.lock();
 }

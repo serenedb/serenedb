@@ -47,11 +47,15 @@ duckdb::idx_t CopyInStream::Read(char* data, duckdb::idx_t count,
   for (;;) {
     {
       absl::MutexLock lock{&_lock};
+      const auto readable = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_lock) {
+        return _pulled >= end || _finished ||
+               (_pulled > offset && !_batches.Pending());
+      };
       const auto ready = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_lock) {
-        return !_pulling || _pulled >= end || _finished;
+        return !_pulling || readable();
       };
       _lock.Await(absl::Condition(&ready));
-      if (_pulled >= end || _finished) {
+      if (readable()) {
         SDB_ASSERT(offset >=
                    (_units.empty() ? _pulled : _units.front().offset));
         for (const auto& unit : _units) {
@@ -67,7 +71,7 @@ duckdb::idx_t CopyInStream::Read(char* data, duckdb::idx_t count,
       }
       _pulling = true;
     }
-    Pull(end);
+    Pull(offset, end);
   }
   duckdb::idx_t copied = 0;
   for (const auto& [unit_offset, bytes] : covering) {
@@ -115,7 +119,7 @@ void CopyInStream::Spill() const {
   --_leased;
 }
 
-void CopyInStream::Pull(duckdb::idx_t end) const {
+void CopyInStream::Pull(duckdb::idx_t offset, duckdb::idx_t end) const {
   absl::Cleanup done = [this] {
     absl::MutexLock lock{&_lock};
     _pulling = false;
@@ -123,6 +127,9 @@ void CopyInStream::Pull(duckdb::idx_t end) const {
   for (;;) {
     {
       absl::MutexLock lock{&_lock};
+      if (_pulled > offset && !_batches.Pending()) {
+        return;
+      }
       while (_leased > 0 && _leased + 1 >= _window) {
         Spill();
       }
@@ -163,6 +170,11 @@ void CopyInStream::Release(duckdb::idx_t position) {
 duckdb::optional_idx CopyInStream::End() const {
   absl::MutexLock lock{&_lock};
   return _finished ? duckdb::optional_idx{_pulled} : duckdb::optional_idx{};
+}
+
+bool CopyInStream::Available(duckdb::idx_t offset) const {
+  absl::MutexLock lock{&_lock};
+  return _pulled > offset || _finished || _batches.Pending();
 }
 
 CopyInStreamOffer::CopyInStreamOffer(duckdb::ClientContext& context,

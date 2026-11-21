@@ -151,12 +151,47 @@ TEST(by_edit_distance_test, equal) {
     ASSERT_NE(q, rhs);
   }
   {
+    auto rhs = MakeFilter("field", "bar", 1, 0, true);
+    rhs.mutable_options()->merge = irs::ScoreMergeType::Sum;
+    ASSERT_NE(q, rhs);
+  }
+  {
     irs::ByPrefix rhs;
     *rhs.mutable_field_id() = kFieldId;
     rhs.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar"));
     ASSERT_NE(q, rhs);
   }
+}
+
+TEST(levenshtein_automaton_filter_test, equal) {
+  const irs::LevenshteinAutomatonOptions base{
+    irs::DefaultPDP(1, true),
+    nullptr,
+    true,
+    false,
+    irs::ViewCast<irs::byte_type>(std::string_view{"b"}),
+    irs::ViewCast<irs::byte_type>(std::string_view{"ar"}),
+    0};
+  ASSERT_TRUE(base == base);
+  const auto differs = [&](auto&& change) {
+    auto rhs = base;
+    change(rhs);
+    return !(base == rhs);
+  };
+  EXPECT_TRUE(differs([](auto& o) { o.target += irs::byte_type{'x'}; }));
+  EXPECT_TRUE(differs([](auto& o) { ++o.utf8_target_size; }));
+  EXPECT_TRUE(differs([](auto& o) { ++o.no_distance; }));
+  EXPECT_TRUE(differs([](auto& o) { o.with_transpositions = false; }));
+  EXPECT_TRUE(differs([](auto& o) { o.starts_with = true; }));
+  EXPECT_TRUE(differs([](auto& o) { o.with_ties = true; }));
+  EXPECT_TRUE(differs([](auto& o) { o.max_terms = 7; }));
+  EXPECT_TRUE(differs([](auto& o) { o.merge = irs::ScoreMergeType::Sum; }));
+}
+
+TEST(levenshtein_automaton_filter_test, no_acceptor_no_predicate) {
+  const irs::LevenshteinAutomatonFilter filter;
+  ASSERT_EQ(nullptr, filter.CompileTermPredicate());
 }
 
 TEST(by_edit_distance_test, starts_with_lowering) {

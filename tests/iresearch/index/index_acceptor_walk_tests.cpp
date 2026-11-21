@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <iresearch/analysis/token_attributes.hpp>
+#include <iresearch/formats/empty_term_reader.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/term_acceptor.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
@@ -1096,6 +1097,18 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_prefix_multibyte_terms) {
       }
     }
   }
+}
+
+TEST(empty_term_reader_test, prefix_walk_is_empty) {
+  const irs::EmptyTermReader reader{0};
+  const auto description = irs::MakeParametricDescription(1, false);
+  const irs::LevenshteinPrefixAcceptor acceptor{
+    std::make_shared<const irs::LevenshteinAcceptor>(
+      description, irs::kEmptyStringView<irs::byte_type>,
+      irs::ViewCast<irs::byte_type>("abc"sv))};
+  const auto walk = reader.iterator(acceptor);
+  ASSERT_NE(nullptr, walk);
+  ASSERT_FALSE(walk->next());
 }
 
 constexpr std::string_view kRe2Terms[]{

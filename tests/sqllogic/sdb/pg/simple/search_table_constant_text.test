@@ -4,6 +4,7 @@ CREATE TABLE ct_s (a INTEGER PRIMARY KEY,
                    w TEXT,
                    m TEXT,
                    n TEXT,
+                   z TEXT,
                    d TEXT USING COMPRESSION dict_fsst)
   WITH (compaction_interval = 0, row_group_size = 16384);
 
@@ -16,6 +17,7 @@ INSERT INTO ct_s SELECT a,
   'one rather long value that every row holds',
   CASE WHEN a < 32768 THEN 'first' ELSE 'v-' || (a % 100) END,
   CASE WHEN a % 5 = 0 THEN NULL ELSE 'same' END,
+  NULL,
   'named'
   FROM range(49152) t(a);
 
@@ -30,15 +32,16 @@ SELECT column_name,
        count(*) FILTER (WHERE compression = 'Constant') AS constant,
        count(*) FILTER (WHERE compression <> 'Constant') AS other
 FROM pragma_storage_info('ct_s')
-WHERE column_name IN ('e', 'w', 'm', 'n', 'd') AND segment_type <> 'VALIDITY'
+WHERE column_name IN ('e', 'w', 'm', 'n', 'z', 'd') AND segment_type <> 'VALIDITY'
 GROUP BY column_name ORDER BY column_name;
 ----
 column_name	constant	other
-d	0	3
+d	3	0
 e	3	0
 m	2	1
-n	0	3
+n	3	0
 w	3	0
+z	3	0
 
 query
 SELECT count(*) AS rows, count(*) FILTER (WHERE e = '') AS empty, count(*) FILTER (WHERE e <> '') AS filled,
@@ -61,6 +64,26 @@ SELECT count(*) FILTER (WHERE n IS NULL) AS nulls, count(n) AS filled, count(DIS
 ----
 nulls	filled	n_values
 9831	39321	1
+
+query
+SELECT (SELECT count(*) FROM ct_s WHERE n = 'same') AS n_eq, (SELECT count(*) FROM ct_s WHERE n <> 'same') AS n_ne,
+       (SELECT count(*) FROM ct_s WHERE n IS NOT NULL AND a % 5 = 0) AS n_wrong,
+       count(z) AS z_filled, count(*) FILTER (WHERE z IS NULL) AS z_nulls, count(DISTINCT d) AS d_values, min(d) AS d_value
+FROM ct_s;
+----
+n_eq	n_ne	n_wrong	z_filled	z_nulls	d_values	d_value
+39321	0	0	0	49152	1	named
+
+query
+SELECT a, n, z, d FROM ct_s WHERE a IN (0, 1, 16384, 16385, 49150, 49151) ORDER BY a;
+----
+a	n	z	d
+0	NULL	NULL	named
+1	same	NULL	named
+16384	same	NULL	named
+16385	NULL	NULL	named
+49150	NULL	NULL	named
+49151	same	NULL	named
 
 query
 SELECT a, e, w, m FROM ct_s WHERE a IN (0, 16383, 16384, 32767, 32768, 49151) ORDER BY a;

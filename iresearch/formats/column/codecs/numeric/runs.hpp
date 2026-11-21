@@ -192,7 +192,7 @@ Items RleItems(ColumnDataCheckpointData& data, FrameStore store) {
   }
   auto& rle = data.Get<Rle<T>>();
   if (rle.run_width == 0) {
-    rle.stored = data.Get<Values<T>>().GetFacts().for_stored;
+    rle.stored = data.Get<Values<T>>().GetReference().stored;
     rle.run_width = numeric::BytesFor(std::ranges::max(runs->lengths));
   }
   return {
@@ -214,7 +214,7 @@ auto RleFrames(ColumnDataCheckpointData& data) {
     numeric::Narrow<sizeof(T)>(
       count, rle.stored, scratch.data(),
       [v = runs.values.data() + begin,
-       lo = data.Get<Values<T>>().GetFacts().lo](size_t r) {
+       lo = data.Get<Values<T>>().GetReference().lo](size_t r) {
         return static_cast<numeric::Bits<sizeof(T)>>(v[r] - lo);
       });
     numeric::Narrow<sizeof(uint32_t)>(
@@ -234,7 +234,8 @@ double AnalyzeRle(ColumnDataCheckpointData& data, double bound,
 }
 
 template<typename T>
-bool CompressRle(ColumnDataCheckpointData& data, FrameStore store) {
+bool CompressRle(const Codec& codec, ColumnDataCheckpointData& data,
+                 FrameStore store) {
   const auto items = RleItems<T>(data, store);
   if (!Offered(items)) {
     return false;
@@ -242,8 +243,8 @@ bool CompressRle(ColumnDataCheckpointData& data, FrameStore store) {
   auto& rle = data.Get<Rle<T>>();
   const auto& rows = data.Get<Runs<T>>().rows;
   return CompressFrames<T>(
-    data, items, rle.analysis,
-    RunsHeader{.base = data.Get<Values<T>>().GetFacts().lo,
+    codec, data, items, rle.analysis,
+    RunsHeader{.base = data.Get<Values<T>>().GetReference().lo,
                .run_width = rle.run_width},
     RleFrames<T>(data), [&](NumericFrameMeta& m, uint32_t begin) {
       m.frame.first_entry = rows[begin];
@@ -303,7 +304,7 @@ double AnalyzeRleBitpacking(ColumnDataCheckpointData& data, double) {
 }
 
 template<typename T>
-bool CompressRleBitpacking(ColumnDataCheckpointData& data) {
+bool CompressRleBitpacking(const Codec& codec, ColumnDataCheckpointData& data) {
   using U = numeric::Bits<sizeof(T)>;
   auto& state = data.Get<RleBitpacking<T>>();
   const auto* runs = PlanRleBitpacking(data, state);
@@ -346,7 +347,7 @@ bool CompressRleBitpacking(ColumnDataCheckpointData& data) {
       return BoundsOf<Values<T>::kSigned>(
         runs->values.data() + begin, std::min(count - begin, geometry.per));
     });
-  FlushNumeric<T>(data, Shape::Runs, ByteCodec::None);
+  FlushNumeric<T>(codec, data);
   return true;
 }
 

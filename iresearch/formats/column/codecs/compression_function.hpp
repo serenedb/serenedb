@@ -115,20 +115,21 @@ struct ColumnFetchState {
   std::unique_ptr<SegmentScanState> segment_state;
 };
 
-using FlushSegmentFn =
-  absl::FunctionRef<void(const Codec& codec, duckdb::BaseStatistics stats,
-                         uint64_t rows, std::string_view bytes)>;
+using FlushSegmentFn = absl::FunctionRef<void(
+  const Codec& codec, duckdb::BaseStatistics stats, uint64_t rows,
+  std::string_view bytes, std::string_view shared)>;
 
 enum class StateId : uint8_t {
   NumericValues,
   NumericLz4,
   NumericZstd,
   NumericScratch,
-  Constant,
+  NumericFacts,
   WideValues,
   Raw,
   For,
   Bitpacking,
+  Steps,
   Delta,
   DeltaBitpacking,
   Runs,
@@ -139,6 +140,7 @@ enum class StateId : uint8_t {
   DictBitpacking,
   RoaringContainers,
   TextValues,
+  TextContest,
   TextLz4,
   TextZstd,
   TextFsst,
@@ -156,6 +158,7 @@ enum class StateId : uint8_t {
   FsstEncoder,
   FsstPlusEncoder,
   Fsst12Encoder,
+  TextLz4Tuner,
 };
 
 constexpr StateId TextState(Shape shape, ByteCodec leaf) noexcept {
@@ -185,22 +188,7 @@ struct State {
   virtual ~State() = default;
 };
 
-struct SharedBlock {
-  uint64_t offset = 0;
-  uint64_t size = 0;
-};
-
-struct SharedBlocks {
-  std::string bytes;
-  SharedBlock written;
-  SharedBlock staged;
-};
-
 struct ColumnDataCheckpointData {
-  void FlushSegment(CodecType codec, duckdb::BaseStatistics stats,
-                    uint64_t rows, std::string_view bytes,
-                    std::string_view shared_bytes = {});
-
   template<typename S>
   S& Get() {
     auto& state = states[std::to_underlying(S::kId)];
@@ -219,7 +207,6 @@ struct ColumnDataCheckpointData {
   std::span<const WriteChunk> chunks;
   WriteContext* ctx = nullptr;
   FlushSegmentFn flush;
-  SharedBlocks* shared = nullptr;
   ColCodecParams params;
   ColumnTuning& tuning;
   CodecSet disabled;
@@ -227,14 +214,13 @@ struct ColumnDataCheckpointData {
   uint32_t min_packed_run = 1;
   double run_price = 1.0;
   uint64_t rows = 0;
-  uint64_t raw_input = 0;
-  uint64_t written = 0;
   std::array<std::unique_ptr<State>, magic_enum::enum_count<StateId>()> states;
 };
 
 struct CompressionFunction {
   double (*analyze)(ColumnDataCheckpointData& data, double bound) = nullptr;
-  bool (*compress)(ColumnDataCheckpointData& data) = nullptr;
+  bool (*compress)(const Codec& codec,
+                   ColumnDataCheckpointData& data) = nullptr;
 };
 
 using CompressionFunctions = std::span<const CompressionFunction* const>;
@@ -243,7 +229,7 @@ inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;
 
 class CompressedSegment {
  public:
-  CompressedSegment(CodecType codec, const duckdb::LogicalType& type);
+  CompressedSegment(const Codec& codec, const duckdb::LogicalType& type);
 
   void Reset();
 
@@ -252,10 +238,11 @@ class CompressedSegment {
   void Flush(ColumnDataCheckpointData& checkpoint_data, uint64_t size);
 
   uint64_t count = 0;
+  uint64_t stored = 0;
   duckdb::BaseStatistics stats;
 
  private:
-  CodecType _codec;
+  const Codec& _codec;
   duckdb::LogicalType _type;
   std::unique_ptr<duckdb::data_t[]> _buffer;
 };
@@ -291,13 +278,11 @@ struct DecompressionFunction {
 
 struct Codec {
   CodecType type = CodecType::Uncompressed;
-  const CompressionFunction* compression = nullptr;
-  const DecompressionFunction* decompression = nullptr;
+  const CompressionFunction& compression;
+  const DecompressionFunction& decompression;
 };
 
 duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;
-
-uint64_t RawInput(ColumnDataCheckpointData& data);
 
 bool HasRows(std::span<const WriteChunk> chunks) noexcept;
 
@@ -315,13 +300,13 @@ struct Streamed {
     }
   }
 
-  static bool Compress(ColumnDataCheckpointData& data) {
+  static bool Compress(const Codec& codec, ColumnDataCheckpointData& data) {
     if constexpr (kAccepts != nullptr) {
       if (!kAccepts(data.chunks)) {
         return false;
       }
     }
-    kCompress(data, data.chunks);
+    kCompress(codec, data, data.chunks);
     return true;
   }
 };
@@ -333,8 +318,9 @@ inline constexpr CompressionFunction kStreamed{
   .compress = Streamed<kType, kAnalyze, kCompress, kAccepts>::Compress,
 };
 
-const CompressionFunction& UncompressedCompression(
-  duckdb::PhysicalType physical);
+bool CompressAuto(ColumnDataCheckpointData& data);
+
+void CompressUncompressed(ColumnDataCheckpointData& data);
 
 void Compress(CodecType method, ColumnDataCheckpointData& data);
 

@@ -126,7 +126,7 @@ Entries<T>* BuildEntries(ColumnDataCheckpointData& data, double bound) {
   if (!values.Usable()) {
     return nullptr;
   }
-  const auto stored = values.GetFacts().for_stored;
+  const auto stored = values.GetReference().stored;
   if (data.contested && stored < kLeastDictionaryValueBytes) {
     return nullptr;
   }
@@ -204,13 +204,14 @@ double AnalyzeDict(ColumnDataCheckpointData& data, double bound,
 }
 
 template<typename T>
-bool CompressDict(ColumnDataCheckpointData& data, FrameStore store) {
+bool CompressDict(const Codec& codec, ColumnDataCheckpointData& data,
+                  FrameStore store) {
   const auto items = DictItems<T>(data, store, kNoScore);
   if (!Offered(items)) {
     return false;
   }
   return CompressFrames<T>(
-    data, items, data.Get<Dict<T>>().analysis[store.shuffled],
+    codec, data, items, data.Get<Dict<T>>().analysis[store.shuffled],
     DictionaryHeader{
       .count = static_cast<uint32_t>(items.dictionary.size() / sizeof(T)),
       .offset = FrameTableEnd(GeometryOf(items, Scaled<T>(data))),
@@ -260,7 +261,8 @@ double AnalyzeDictBitpacking(ColumnDataCheckpointData& data, double bound) {
 }
 
 template<typename T>
-bool CompressDictBitpacking(ColumnDataCheckpointData& data) {
+bool CompressDictBitpacking(const Codec& codec,
+                            ColumnDataCheckpointData& data) {
   auto& state = data.Get<DictBitpacking<T>>();
   const auto* entries = PlanDictBitpacking(data, state, kNoScore);
   if (!entries) {
@@ -269,7 +271,7 @@ bool CompressDictBitpacking(ColumnDataCheckpointData& data) {
   const auto dictionary = EntryBytes(*entries);
   const auto n = static_cast<uint32_t>(entries->codes.size());
   CompressBlocks<T>(
-    data, Shape::Dictionary, state.blocks,
+    codec, data, Shape::Dictionary, state.blocks,
     std::span<const uint32_t>{entries->codes}, dictionary,
     DictionaryHeader{
       .count = static_cast<uint32_t>(entries->values.size()),

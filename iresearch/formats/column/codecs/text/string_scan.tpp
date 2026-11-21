@@ -44,7 +44,7 @@
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
-#include "iresearch/formats/column/codecs/text/text_encoder.hpp"
+#include "iresearch/formats/column/codecs/text/text_function.hpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
@@ -469,8 +469,8 @@ consteval Codec StringCodec() {
   static_assert(Compression::kShape == Scan::kShape);
   return {
     .type = CodecOf(Scan::kShape, Scan::kCodec),
-    .compression = &kFunction,
-    .decompression = &kStringDecompression<Scan>,
+    .compression = kFunction,
+    .decompression = kStringDecompression<Scan>,
   };
 }
 

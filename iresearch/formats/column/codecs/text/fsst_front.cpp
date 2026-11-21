@@ -38,13 +38,13 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
-#include "iresearch/formats/column/codecs/text/text_encoder.hpp"
+#include "iresearch/formats/column/codecs/text/text_function.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/lower_bound.hpp"

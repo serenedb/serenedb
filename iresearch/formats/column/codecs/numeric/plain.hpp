@@ -69,8 +69,9 @@ double AnalyzeRaw(ColumnDataCheckpointData& data, double bound,
 }
 
 template<typename T>
-bool CompressRaw(ColumnDataCheckpointData& data, FrameStore store) {
-  return CompressFrames<T>(data, RawItems<T>(data, store),
+bool CompressRaw(const Codec& codec, ColumnDataCheckpointData& data,
+                 FrameStore store) {
+  return CompressFrames<T>(codec, data, RawItems<T>(data, store),
                            data.Get<Raw<T>>().analysis[store.shuffled],
                            PlainHeader{}, RawFrames<T>(data));
 }
@@ -94,8 +95,8 @@ Items ForItems(ColumnDataCheckpointData& data, FrameStore store) {
   auto& values = data.Get<Values<T>>();
   uint8_t stored = 0;
   if constexpr (sizeof(T) > 1) {
-    if (values.Usable() && values.GetFacts().for_stored < sizeof(T)) {
-      stored = values.GetFacts().for_stored;
+    if (values.Usable() && values.GetReference().stored < sizeof(T)) {
+      stored = values.GetReference().stored;
     }
   }
   return {
@@ -113,11 +114,11 @@ const uint8_t* Narrowed(ColumnDataCheckpointData& data) {
     if (narrowed.empty()) {
       auto& values = data.Get<Values<T>>();
       const auto rows = values.Get();
-      const auto& facts = values.GetFacts();
-      narrowed.resize(rows.size() * facts.for_stored);
+      const auto reference = values.GetReference();
+      narrowed.resize(rows.size() * reference.stored);
       numeric::Narrow<sizeof(T) / 2>(
-        rows.size(), facts.for_stored, narrowed.data(),
-        [v = rows.data(), lo = facts.lo](size_t i) {
+        rows.size(), reference.stored, narrowed.data(),
+        [v = rows.data(), lo = reference.lo](size_t i) {
           return static_cast<numeric::Bits<sizeof(T)>>(v[i] - lo);
         });
     }
@@ -135,14 +136,15 @@ double AnalyzeFor(ColumnDataCheckpointData& data, double bound,
 }
 
 template<typename T>
-bool CompressFor(ColumnDataCheckpointData& data, FrameStore store) {
+bool CompressFor(const Codec& codec, ColumnDataCheckpointData& data,
+                 FrameStore store) {
   const auto items = ForItems<T>(data, store);
   if (!Offered(items)) {
     return false;
   }
   return CompressFrames<T>(
-    data, items, data.Get<For<T>>().analysis[store.shuffled],
-    PlainHeader{.base = data.Get<Values<T>>().GetFacts().lo},
+    codec, data, items, data.Get<For<T>>().analysis[store.shuffled],
+    PlainHeader{.base = data.Get<Values<T>>().GetReference().lo},
     Slices(items.stored, [&] { return Narrowed<T>(data); }));
 }
 
@@ -191,14 +193,14 @@ double AnalyzeBitpacking(ColumnDataCheckpointData& data, double) {
 }
 
 template<typename T>
-bool CompressBitpacking(ColumnDataCheckpointData& data) {
+bool CompressBitpacking(const Codec& codec, ColumnDataCheckpointData& data) {
   auto& values = data.Get<Values<T>>();
   if (!values.Usable()) {
     return false;
   }
   auto& state = data.Get<Bitpacking<T>>();
   PlanBitpacking(data, values, state);
-  CompressStepped<T>(data, Shape::Plain, state.blocks, PlainHeader{});
+  CompressStepped<T>(codec, data, Shape::Plain, state.blocks, PlainHeader{});
   return true;
 }
 

@@ -30,6 +30,7 @@
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -38,32 +39,9 @@
 namespace irs::codecs {
 namespace {
 
-uint64_t StringBytes(std::span<const WriteChunk> chunks) {
-  uint64_t bytes = 0;
-  for (const auto& chunk : chunks) {
-    const auto& input = chunk.data;
-    if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR) {
-      for (const auto value : input.Values<duckdb::string_t>()) {
-        if (value.IsValid()) {
-          bytes += value.GetValueUnsafe().GetSize();
-        }
-      }
-      continue;
-    }
-    const auto* values = duckdb::FlatVector::GetData<duckdb::string_t>(input);
-    const auto& validity = duckdb::FlatVector::Validity(input);
-    const auto count = input.size();
-    if (validity.CannotHaveNull()) {
-      for (duckdb::idx_t i = 0; i < count; ++i) {
-        bytes += values[i].GetSize();
-      }
-    } else {
-      for (duckdb::idx_t i = 0; i < count; ++i) {
-        bytes += validity.RowIsValid(i) ? values[i].GetSize() : 0;
-      }
-    }
-  }
-  return bytes;
+bool CompressAs(CodecType type, ColumnDataCheckpointData& data) {
+  const auto* codec = GetCodec(type, data.type.InternalType());
+  return codec && codec->compression.compress(*codec, data);
 }
 
 }  // namespace
@@ -89,48 +67,32 @@ duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept {
   return rows;
 }
 
-uint64_t RawInput(ColumnDataCheckpointData& data) {
-  if (data.raw_input == 0) {
-    const auto physical = data.type.InternalType();
-    const auto bytes =
-      physical == duckdb::PhysicalType::VARCHAR
-        ? StringBytes(data.chunks)
-        : data.rows * std::max<uint64_t>(duckdb::GetTypeIdSize(physical), 1);
-    data.raw_input = std::max<uint64_t>(bytes, 1);
-  }
-  return data.raw_input;
-}
-
 bool HasRows(std::span<const WriteChunk> chunks) noexcept {
   return absl::c_any_of(
     chunks, [](const WriteChunk& chunk) { return chunk.data.size() != 0; });
 }
 
-const CompressionFunction& UncompressedCompression(
-  duckdb::PhysicalType physical) {
-  const auto* codec = GetCodec(CodecType::Uncompressed, physical);
-  SDB_ENSURE(codec && codec->compression,
+void CompressUncompressed(ColumnDataCheckpointData& data) {
+  SDB_ENSURE(CompressAs(CodecType::Uncompressed, data),
              "column writer: no codec writes the physical type ",
-             duckdb::TypeIdToString(physical));
-  return *codec->compression;
+             duckdb::TypeIdToString(data.type.InternalType()));
 }
 
 void Compress(CodecType method, ColumnDataCheckpointData& data) {
-  const auto physical = data.type.InternalType();
   data.rows = CountRows(data.chunks);
-  const auto* codec = GetCodec(method, physical);
-  SDB_ASSERT(codec && codec->compression);
-  if (!codec->compression->compress(data)) {
-    UncompressedCompression(physical).compress(data);
+  if (CompressAs(CodecType::Empty, data) ||
+      (!data.disabled.test(std::to_underlying(CodecType::Constant)) &&
+       CompressAs(CodecType::Constant, data)) ||
+      (method == CodecType::Auto ? CompressAuto(data)
+                                 : CompressAs(method, data))) {
+    return;
   }
+  CompressUncompressed(data);
 }
 
 bool Writes(CodecType type, duckdb::PhysicalType physical) noexcept {
-  if (type == CodecType::Auto || type == CodecType::Constant) {
-    return false;
-  }
-  const auto* codec = GetCodec(type, physical);
-  return codec && codec->compression;
+  return type != CodecType::Constant && type != CodecType::Empty &&
+         GetCodec(type, physical);
 }
 
 void ThrowCorrupted(std::string_view codec, std::string_view what) {
@@ -138,41 +100,7 @@ void ThrowCorrupted(std::string_view codec, std::string_view what) {
                   ERR_MSG("Corrupted ", codec, " segment: ", what));
 }
 
-void ColumnDataCheckpointData::FlushSegment(CodecType codec,
-                                            duckdb::BaseStatistics stats,
-                                            uint64_t rows,
-                                            std::string_view bytes,
-                                            std::string_view shared_bytes) {
-  const auto physical = type.InternalType();
-  if (type.id() == duckdb::LogicalTypeId::VALIDITY && !stats.CanHaveNull()) {
-    flush(*GetCodec(CodecType::Empty, physical),
-          duckdb::BaseStatistics::CreateEmpty(type), rows, {});
-    return;
-  }
-  if (stats.IsConstant() &&
-      !disabled.test(std::to_underlying(CodecType::Constant))) {
-    if (const auto* constant = GetCodec(CodecType::Constant, physical)) {
-      flush(*constant, std::move(stats), rows, {});
-      return;
-    }
-  }
-  const auto* writer = GetCodec(codec, physical);
-  SDB_ASSERT(writer);
-  if (!shared_bytes.empty()) {
-    SDB_ASSERT(shared && ctx);
-    if (shared->bytes != shared_bytes) {
-      shared->written = {AppendAligned(ctx->Out(), shared_bytes),
-                         shared_bytes.size()};
-      shared->bytes = shared_bytes;
-      written += shared_bytes.size();
-    }
-    shared->staged = shared->written;
-  }
-  written += bytes.size();
-  flush(*writer, std::move(stats), rows, bytes);
-}
-
-CompressedSegment::CompressedSegment(CodecType codec,
+CompressedSegment::CompressedSegment(const Codec& codec,
                                      const duckdb::LogicalType& type)
   : stats{duckdb::BaseStatistics::CreateEmpty(type)},
     _codec{codec},
@@ -188,9 +116,20 @@ void CompressedSegment::Reset() {
 void CompressedSegment::Flush(ColumnDataCheckpointData& checkpoint_data,
                               uint64_t size) {
   SDB_ASSERT(size <= kBlockSize);
-  checkpoint_data.FlushSegment(
-    _codec, std::move(stats), count,
-    {reinterpret_cast<const char*>(_buffer.get()), size});
+  const auto physical = _type.InternalType();
+  const auto* constant = ConstantCodec(physical);
+  if (_type.id() == duckdb::LogicalTypeId::VALIDITY && !stats.CanHaveNull()) {
+    checkpoint_data.flush(*EmptyCodec(physical),
+                          duckdb::BaseStatistics::CreateEmpty(_type), count, {},
+                          {});
+  } else if (constant && stats.IsConstant()) {
+    checkpoint_data.flush(*constant, std::move(stats), count, {}, {});
+  } else {
+    stored += size;
+    checkpoint_data.flush(_codec, std::move(stats), count,
+                          {reinterpret_cast<const char*>(_buffer.get()), size},
+                          {});
+  }
   Reset();
 }
 

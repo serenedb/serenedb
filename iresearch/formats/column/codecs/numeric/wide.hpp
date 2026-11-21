@@ -141,7 +141,7 @@ inline unsigned SampledBits(std::span<const absl::uint128> block,
 struct WidePart {
   struct Keep {
     void operator()(const Codec&, duckdb::BaseStatistics, uint64_t,
-                    std::string_view segment) const {
+                    std::string_view segment, std::string_view) const {
       part->bytes = segment;
       part->flushed = true;
     }
@@ -157,18 +157,15 @@ struct WidePart {
       data{
         .type = type,
         .chunks = {&chunk, 1},
-        .ctx = outer.ctx,
         .flush = keep,
         .params = outer.params,
         .tuning = tuning,
-        .disabled = outer.disabled,
         .contested = outer.contested,
         .min_packed_run = outer.min_packed_run,
         .run_price = outer.run_price,
         .rows = values.size(),
       } {
     duckdb::FlatVector::SetSize(chunk.data, values.size());
-    data.disabled.set(std::to_underlying(CodecType::Constant));
   }
 
   duckdb::LogicalType type{duckdb::LogicalTypeId::UBIGINT};
@@ -627,16 +624,17 @@ double AnalyzeWide(ColumnDataCheckpointData& data, double bound) {
   return score < limit ? score : kNoScore;
 }
 
-inline bool CompressPart(const CompressionFunction& inner, WidePart& part) {
+inline bool CompressPart(const CompressionFunction& inner, const Codec& codec,
+                         WidePart& part) {
   part.flushed = false;
-  return inner.compress(part.data) && part.flushed;
+  return inner.compress(codec, part.data) && part.flushed;
 }
 
 template<typename W, CodecType kCodec, const CompressionFunction& kInner>
-bool CompressWide(ColumnDataCheckpointData& data) {
+bool CompressWide(const Codec& codec, ColumnDataCheckpointData& data) {
   auto& wide = data.Get<WideValues<W>>();
   if (!wide.Offers(StoresHalves(kCodec), ShapeOf(kCodec), data) ||
-      !CompressPart(kInner, *wide.low)) {
+      !CompressPart(kInner, codec, *wide.low)) {
     return false;
   }
   WideHeader header{
@@ -650,7 +648,7 @@ bool CompressWide(ColumnDataCheckpointData& data) {
     out.resize(sizeof(WideHeader));
     out.append(low);
   } else {
-    if (!CompressPart(kInner, *wide.high)) {
+    if (!CompressPart(kInner, codec, *wide.high)) {
       return false;
     }
     header = {.form = kWideHalves, .low_size = low.size()};
@@ -660,7 +658,7 @@ bool CompressWide(ColumnDataCheckpointData& data) {
     out.append(wide.high->bytes);
   }
   std::memcpy(out.data(), &header, sizeof(WideHeader));
-  data.FlushSegment(kCodec, wide.Stats(data.type), data.rows, out);
+  data.flush(codec, wide.Stats(data.type), data.rows, out, {});
   return true;
 }
 

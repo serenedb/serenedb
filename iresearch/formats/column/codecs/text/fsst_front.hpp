@@ -49,8 +49,7 @@ class CompressionState final : public SortedCompressionState<Rows> {
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
     : Base{kCodec, data.type, dedup, data.tuning.strings,
            data.params.segment_target},
-      _codec{data.Get<fsst::SharedEncoder<Impl>>().encoder},
-      _shares{Impl::kSharedTable && data.shared} {}
+      _codec{data.Get<fsst::SharedEncoder<Impl>>().encoder} {}
 
   void FinalizeCompress();
 
@@ -64,7 +63,6 @@ class CompressionState final : public SortedCompressionState<Rows> {
   static constexpr uint64_t kEncodeSlack = 8;
 
   fsst::Encoder<Impl>& _codec;
-  bool _shares;
   std::vector<uint32_t> _lcp_stream;
 };
 
@@ -139,7 +137,7 @@ void CompressionState<Impl, Rows>::FinalizeCompress() {
     duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
     0);
   const auto table = _codec.SymbolTable();
-  const auto symtab = _shares ? std::string_view{} : table;
+  const auto symtab = Impl::kSharedTable ? std::string_view{} : table;
   RecordRatio(this->History(), rows.raw, data.Size() + symtab.size(), _target);
   _rows.Write(
     {
@@ -149,7 +147,7 @@ void CompressionState<Impl, Rows>::FinalizeCompress() {
       .lcps = _lcp_stream,
       .max_lcp = max_lcp,
       .symtab = symtab,
-      .shared = _shares ? table : std::string_view{},
+      .shared = Impl::kSharedTable ? table : std::string_view{},
     },
     *_out);
 }

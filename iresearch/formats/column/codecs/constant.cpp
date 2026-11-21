@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/string_type.hpp>
@@ -32,8 +34,8 @@
 #include <duckdb/storage/table/column_segment.hpp>
 #include <type_traits>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/numeric_axis.hpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs {
@@ -198,9 +200,26 @@ constexpr DecompressionFunction kValidityDecompression{
   .fetch_rows = FetchRowsValidity,
 };
 
+bool CompressValidity(const Codec& codec, ColumnDataCheckpointData& data) {
+  if (data.rows == 0 ||
+      absl::c_any_of(data.chunks, [](const WriteChunk& chunk) {
+        return duckdb::FlatVector::Validity(chunk.data)
+                 .CountValid(chunk.data.size()) != 0;
+      })) {
+    return false;
+  }
+  auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);
+  stats.SetHasNullFast();
+  data.flush(codec, std::move(stats), data.rows, {}, {});
+  return true;
+}
+
+constexpr CompressionFunction kValidityFunction{.compress = CompressValidity};
+
 constexpr Codec kValidity{
   .type = CodecType::Constant,
-  .decompression = &kValidityDecompression,
+  .compression = kValidityFunction,
+  .decompression = kValidityDecompression,
 };
 
 template<typename T>
@@ -212,7 +231,8 @@ bool EveryValueIsEqual(std::span<const WriteChunk> chunks,
     for (const auto& chunk : chunks) {
       for (const auto entry : chunk.data.Values<T>()) {
         if (!entry.IsValid()) {
-          return false;
+          writer.SetHasNull();
+          continue;
         }
         const auto& value = entry.GetValueUnsafe();
         if (!first) {
@@ -225,9 +245,10 @@ bool EveryValueIsEqual(std::span<const WriteChunk> chunks,
         }
       }
     }
-    SDB_ASSERT(first);
     writer.Merge(stats);
-    bytes = {first->GetData(), first->GetSize()};
+    if (first) {
+      bytes = {first->GetData(), first->GetSize()};
+    }
     return true;
   } else {
     if (stats.GetStatsType() != duckdb::StatisticsType::NUMERIC_STATS) {
@@ -250,48 +271,33 @@ bool EveryValueIsEqual(std::span<const WriteChunk> chunks,
   }
 }
 
-struct Rows final : State {
-  static constexpr StateId kId = StateId::Constant;
-
-  explicit Rows(ColumnDataCheckpointData& data)
-    : stats{duckdb::BaseStatistics::CreateEmpty(data.type)} {
-    if (data.rows == 0) {
-      return;
-    }
-    const auto physical = data.type.InternalType();
-    constant =
-      physical == duckdb::PhysicalType::VARCHAR
-        ? EveryValueIsEqual<duckdb::string_t>(data.chunks, stats, bytes)
-        : Resolve<NumericAxis>(physical, [&]<typename T>() {
-            return EveryValueIsEqual<T>(data.chunks, stats, bytes);
-          });
+bool CompressRows(const Codec& codec, ColumnDataCheckpointData& data) {
+  if (data.rows == 0) {
+    return false;
   }
-
-  duckdb::BaseStatistics stats;
+  auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);
   std::string_view bytes;
-  bool constant = false;
-};
+  const auto physical = data.type.InternalType();
+  const bool constant =
+    physical == duckdb::PhysicalType::VARCHAR
+      ? EveryValueIsEqual<duckdb::string_t>(data.chunks, stats, bytes)
+      : Resolve<NumericAxis>(physical, [&]<typename T>() {
+          return EveryValueIsEqual<T>(data.chunks, stats, bytes);
+        });
+  if (!constant) {
+    return false;
+  }
+  data.flush(codec, std::move(stats), data.rows, bytes, {});
+  return true;
+}
 
-constexpr CompressionFunction kFunction{
-  .analyze = [](ColumnDataCheckpointData& data,
-                double) { return data.Get<Rows>().constant ? 0.0 : kNoScore; },
-  .compress =
-    [](ColumnDataCheckpointData& data) {
-      auto& rows = data.Get<Rows>();
-      if (!rows.constant) {
-        return false;
-      }
-      data.FlushSegment(CodecType::Constant, std::move(rows.stats), data.rows,
-                        rows.bytes);
-      return true;
-    },
-};
+constexpr CompressionFunction kFunction{.compress = CompressRows};
 
 template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Constant,
-  .compression = &kFunction,
-  .decompression = &kDecompression<T>,
+  .compression = kFunction,
+  .decompression = kDecompression<T>,
 };
 
 }  // namespace

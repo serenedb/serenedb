@@ -39,7 +39,7 @@
 #include <variant>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -787,7 +787,8 @@ void Reset(ContainerCompressionState& state) {
 }
 
 struct RoaringCompressState {
-  RoaringCompressState(ColumnDataCheckpointData& checkpoint_data,
+  RoaringCompressState(const Codec& codec,
+                       ColumnDataCheckpointData& checkpoint_data,
                        const RoaringAnalyzeState& analyze_state);
 
   ColumnDataCheckpointData& checkpoint_data;
@@ -952,11 +953,11 @@ void Finalize(RoaringCompressState& state) {
 }
 
 RoaringCompressState::RoaringCompressState(
-  ColumnDataCheckpointData& checkpoint_data,
+  const Codec& codec, ColumnDataCheckpointData& checkpoint_data,
   const RoaringAnalyzeState& analyze_state)
   : checkpoint_data{checkpoint_data},
     analyze_state{analyze_state},
-    segment{CodecType::Roaring, checkpoint_data.type} {
+    segment{codec, checkpoint_data.type} {
   CreateEmptySegment(*this);
   InitializeContainer(*this);
 }
@@ -1663,10 +1664,10 @@ void CountContainers(RoaringAnalyzeState& state,
 }
 
 template<duckdb::PhysicalType kPhysical>
-void EncodeChunks(ColumnDataCheckpointData& checkpoint_data,
+void EncodeChunks(const Codec& codec, ColumnDataCheckpointData& checkpoint_data,
                   std::span<const WriteChunk> chunks,
                   const RoaringAnalyzeState& analyze_state) {
-  RoaringCompressState state{checkpoint_data, analyze_state};
+  RoaringCompressState state{codec, checkpoint_data, analyze_state};
   for (const auto& chunk : chunks) {
     const auto count = chunk.data.size();
     duckdb::UnifiedVectorFormat unified;
@@ -1719,8 +1720,8 @@ constexpr CompressionFunction kFunction{
         });
     },
   .compress =
-    [](ColumnDataCheckpointData& data) {
-      EncodeChunks<kPhysical>(data, data.chunks,
+    [](const Codec& codec, ColumnDataCheckpointData& data) {
+      EncodeChunks<kPhysical>(codec, data, data.chunks,
                               data.Get<Containers<kPhysical>>().state);
       return true;
     },
@@ -1794,8 +1795,8 @@ constexpr DecompressionFunction kValidityDecompression{
 
 constexpr Codec kValidity{
   .type = CodecType::Roaring,
-  .compression = &kFunction<duckdb::PhysicalType::BIT>,
-  .decompression = &kValidityDecompression,
+  .compression = kFunction<duckdb::PhysicalType::BIT>,
+  .decompression = kValidityDecompression,
 };
 
 constexpr DecompressionFunction kBooleanDecompression{
@@ -1806,8 +1807,8 @@ constexpr DecompressionFunction kBooleanDecompression{
 
 constexpr Codec kBoolean{
   .type = CodecType::Roaring,
-  .compression = &kFunction<duckdb::PhysicalType::BOOL>,
-  .decompression = &kBooleanDecompression,
+  .compression = kFunction<duckdb::PhysicalType::BOOL>,
+  .decompression = kBooleanDecompression,
 };
 
 }  // namespace

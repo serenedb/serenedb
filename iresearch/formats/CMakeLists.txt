@@ -18,7 +18,6 @@ target_sources(
         column/codecs/text/onpair.cpp
         column/codecs/text/segment_buffer.cpp
         column/codecs/text/segment_rows.cpp
-        column/codecs/text/shape.cpp
         column/codecs/text/string_scan.cpp
         column/codecs/text/values.cpp
         column/codecs/text/zstd.cpp

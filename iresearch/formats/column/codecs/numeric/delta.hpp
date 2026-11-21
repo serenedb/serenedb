@@ -23,8 +23,10 @@
 #include <absl/numeric/int128.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <string>
 #include <type_traits>
@@ -36,6 +38,54 @@
 namespace irs::codecs {
 
 inline constexpr double kDeltaPrice = 1.25;
+
+template<typename T>
+struct Steps final : State {
+  static constexpr StateId kId = StateId::Steps;
+
+  using U = numeric::Bits<sizeof(T)>;
+
+  explicit Steps(ColumnDataCheckpointData& data) {
+    const auto& values = data.Get<Values<T>>();
+    if (values.Sequence()) {
+      offset = values.Step();
+      stored = numeric::BytesFor(U{0});
+      return;
+    }
+    using S = std::make_signed_t<U>;
+    S lo = std::numeric_limits<S>::max();
+    S hi = std::numeric_limits<S>::min();
+    const auto fold = [&](U step) {
+      lo = std::min(lo, static_cast<S>(step));
+      hi = std::max(hi, static_cast<S>(step));
+    };
+    const auto rows = values.Rows();
+    U last = 0;
+    for (size_t b = 0; b < rows.Blocks(); ++b) {
+      const U* block = rows.Block(b);
+      const size_t count = rows.BlockSize(b);
+      if (b != 0) {
+        fold(static_cast<U>(block[0] - last));
+      }
+      for (size_t i = 1; i < count; ++i) {
+        fold(static_cast<U>(block[i] - block[i - 1]));
+      }
+      last = block[count - 1];
+    }
+    if (values.Size() < 2) {
+      lo = 0;
+      hi = 0;
+    }
+    offset = static_cast<U>(lo);
+    const auto range = static_cast<U>(static_cast<U>(hi) - offset);
+    stored = numeric::BytesFor(range);
+    bits = static_cast<uint8_t>(std::bit_width(range));
+  }
+
+  U offset = 0;
+  uint8_t stored = 0;
+  uint8_t bits = 0;
+};
 
 template<typename T>
 struct Delta final : State {
@@ -53,7 +103,7 @@ Items DeltaItems(ColumnDataCheckpointData& data, FrameStore store) {
   return {
     .shape = Shape::Delta,
     .store = store,
-    .stored = values.Usable() ? values.GetSteps().stored : uint8_t{0},
+    .stored = values.Usable() ? data.Get<Steps<T>>().stored : uint8_t{0},
     .count = static_cast<uint32_t>(values.Size()),
   };
 }
@@ -64,7 +114,7 @@ const uint8_t* Deltas(ColumnDataCheckpointData& data) {
   if (deltas.empty()) {
     auto& values = data.Get<Values<T>>();
     const auto rows = values.Get();
-    const auto& steps = values.GetSteps();
+    const auto& steps = data.Get<Steps<T>>();
     deltas.resize(rows.size() * steps.stored);
     std::memset(deltas.data(), 0, steps.stored);
     numeric::Narrow<sizeof(T)>(
@@ -88,7 +138,8 @@ double AnalyzeDelta(ColumnDataCheckpointData& data, double bound,
 }
 
 template<typename T>
-bool CompressDelta(ColumnDataCheckpointData& data, FrameStore store) {
+bool CompressDelta(const Codec& codec, ColumnDataCheckpointData& data,
+                   FrameStore store) {
   using U = numeric::Bits<sizeof(T)>;
   const auto items = DeltaItems<T>(data, store);
   if (!Offered(items)) {
@@ -96,9 +147,9 @@ bool CompressDelta(ColumnDataCheckpointData& data, FrameStore store) {
   }
   auto& values = data.Get<Values<T>>();
   const auto rows = values.Get();
-  const auto offset = values.GetSteps().offset;
+  const auto offset = data.Get<Steps<T>>().offset;
   return CompressFrames<T>(
-    data, items, data.Get<Delta<T>>().analysis[store.shuffled],
+    codec, data, items, data.Get<Delta<T>>().analysis[store.shuffled],
     DeltaHeader{.base = offset},
     Slices(items.stored, [&] { return Deltas<T>(data); }),
     [&](NumericFrameMeta& m, uint32_t begin) {
@@ -121,13 +172,14 @@ struct DeltaBitpacking final : State {
 };
 
 template<typename T>
-void PlanDeltaBitpacking(Values<T>& values, DeltaBitpacking<T>& state) {
+void PlanDeltaBitpacking(ColumnDataCheckpointData& data,
+                         const Values<T>& values, DeltaBitpacking<T>& state) {
   if (state.planned) {
     return;
   }
   state.planned = true;
   const auto rows = values.Rows();
-  if (const auto& steps = values.GetSteps(); steps.bits == 0) {
+  if (const auto& steps = data.Get<Steps<T>>(); steps.bits == 0) {
     state.blocks.PlanEqualSteps(rows, steps.offset);
   } else {
     state.blocks.template PlanDeltas<Values<T>::kSigned>(rows);
@@ -148,21 +200,22 @@ double AnalyzeDeltaBitpacking(ColumnDataCheckpointData& data, double bound) {
                                 rows.size(), price) >= bound) {
     return kNoScore;
   }
-  PlanDeltaBitpacking(values, state);
+  PlanDeltaBitpacking(data, values, state);
   return price * AnalyzeBlocks<T>(data, Shape::Delta,
                                   static_cast<uint32_t>(rows.size()),
                                   SteppedBytes<T>(state.blocks, values), 0);
 }
 
 template<typename T>
-bool CompressDeltaBitpacking(ColumnDataCheckpointData& data) {
+bool CompressDeltaBitpacking(const Codec& codec,
+                             ColumnDataCheckpointData& data) {
   auto& values = data.Get<Values<T>>();
   if (!values.Usable()) {
     return false;
   }
   auto& state = data.Get<DeltaBitpacking<T>>();
-  PlanDeltaBitpacking(values, state);
-  CompressStepped<T>(data, Shape::Delta, state.blocks, DeltaHeader{});
+  PlanDeltaBitpacking(data, values, state);
+  CompressStepped<T>(codec, data, Shape::Delta, state.blocks, DeltaHeader{});
   return true;
 }
 

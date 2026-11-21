@@ -134,9 +134,14 @@ codecs::CodecType ForcedBySetting(const duckdb::DBConfig& config) {
   return type == codecs::kNoCodec ? codecs::CodecType::Auto : type;
 }
 
+struct SharedBlock {
+  uint64_t offset = 0;
+  uint64_t size = 0;
+};
+
 void CaptureBlock(const codecs::Codec& codec, duckdb::BaseStatistics stats,
                   uint64_t tuple_count, std::string_view bytes,
-                  codecs::SharedBlock shared, duckdb::WriteStream& blocks,
+                  SharedBlock shared, duckdb::WriteStream& blocks,
                   std::vector<ColumnBlockMeta>& sink) {
   if (tuple_count == 0) {
     return;
@@ -232,7 +237,8 @@ bool EmptyValidity(const ColumnBlockMeta& block) noexcept {
 }
 
 bool InCodec(codecs::CodecType forced, const ColumnBlockMeta& block) noexcept {
-  return forced == codecs::CodecType::Auto || block.codec->type == forced;
+  return forced == codecs::CodecType::Auto || block.codec->type == forced ||
+         block.codec->type == codecs::CodecType::Constant;
 }
 
 void RestartLists(ColumnWriteState& state) noexcept {
@@ -272,24 +278,28 @@ bool ColumnWriter::Compress(const duckdb::LogicalType& type,
   auto& ctx = WriteCtx();
   bool flushed = false;
   bool needs_validity = false;
-  codecs::SharedBlocks shared;
-  const auto flush = [&](const codecs::Codec& codec,
-                         duckdb::BaseStatistics stats, uint64_t rows,
-                         std::string_view bytes) {
-    SDB_ASSERT(codec.decompression);
-    flushed = true;
-    needs_validity =
-      needs_validity || codec.decompression->validity ==
-                          codecs::CompressionValidity::RequiresValidity;
-    CaptureBlock(codec, std::move(stats), rows, bytes,
-                 std::exchange(shared.staged, {}), ctx.Out(), sink);
-  };
+  std::string shared;
+  SharedBlock staged;
+  const auto flush =
+    [&](const codecs::Codec& codec, duckdb::BaseStatistics stats, uint64_t rows,
+        std::string_view bytes, std::string_view shared_bytes) {
+      flushed = true;
+      needs_validity =
+        needs_validity || codec.decompression.validity ==
+                            codecs::CompressionValidity::RequiresValidity;
+      if (!shared_bytes.empty() && shared != shared_bytes) {
+        staged = {AppendAligned(ctx.Out(), shared_bytes), shared_bytes.size()};
+        shared = shared_bytes;
+      }
+      CaptureBlock(codec, std::move(stats), rows, bytes,
+                   shared_bytes.empty() ? SharedBlock{} : staged, ctx.Out(),
+                   sink);
+    };
   codecs::ColumnDataCheckpointData data{
     .type = type,
     .chunks = chunks,
     .ctx = &ctx,
     .flush = flush,
-    .shared = &shared,
     .params = _options.codec_params,
     .tuning = tuning,
     .disabled = _disabled,
@@ -308,11 +318,7 @@ bool ColumnWriter::Enabled(codecs::CodecType method,
 void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,
                                 uint64_t row_count,
                                 std::vector<ColumnBlockMeta>& sink) {
-  uint64_t valid = 0;
-  for (auto& c : chunks) {
-    valid += duckdb::FlatVector::Validity(c.data).CountValid(c.count);
-  }
-  if (valid == row_count) {
+  if (row_count == 0) {
     EmitEmptyValidity(row_count, sink);
     return;
   }
@@ -771,8 +777,7 @@ codecs::CodecType ColumnWriter::ForcedCodec() const {
       forced != codecs::CodecType::Uncompressed) {
     return codecs::IsText(forced) ? forced : codecs::CodecType::Auto;
   }
-  const auto* codec = codecs::GetCodec(forced, physical);
-  return codec && codec->compression ? forced : codecs::CodecType::Auto;
+  return codecs::GetCodec(forced, physical) ? forced : codecs::CodecType::Auto;
 }
 
 bool ColumnWriter::CopyableFrom(const ColumnReader& column) const {

@@ -512,10 +512,10 @@ void AppendIResearchBlockRows(
                       ", shared_size: ", meta.shared_size);
     }
     if (read && meta.byte_size != 0 && meta.codec &&
-        meta.codec->decompression->get_segment_info) {
+        meta.codec->decompression.get_segment_info) {
       const auto opened = node.OpenSegment(block, *read);
       for (const auto& [mode, count] :
-           meta.codec->decompression->get_segment_info(*opened)) {
+           meta.codec->decompression.get_segment_info(*opened)) {
         absl::StrAppend(&info.segment_info, ", ", mode, ": ", count);
       }
     }

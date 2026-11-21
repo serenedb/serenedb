@@ -30,6 +30,7 @@
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
 #include "iresearch/formats/column/codecs/bytes/zxc.hpp"
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs {
@@ -43,32 +44,33 @@ constexpr CodecType kLightweight[] = {
 };
 
 constexpr CodecType kBool[] = {
-  CodecType::Constant, CodecType::Uncompressed, CodecType::Bitpacking,
-  CodecType::Rle,      CodecType::Roaring,
+  CodecType::Uncompressed,
+  CodecType::Bitpacking,
+  CodecType::Rle,
+  CodecType::Roaring,
 };
 
 constexpr CodecType kInteger[] = {
-  CodecType::Constant, CodecType::Uncompressed, CodecType::Bitpacking,
-  CodecType::Rle,      CodecType::Dict,         CodecType::Lz4,
-  CodecType::RleLz4,   CodecType::DictLz4,      CodecType::Zstd,
-  CodecType::RleZstd,  CodecType::DictZstd,
+  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Rle,
+  CodecType::Dict,         CodecType::Lz4,        CodecType::RleLz4,
+  CodecType::DictLz4,      CodecType::Zstd,       CodecType::RleZstd,
+  CodecType::DictZstd,
 };
 
 constexpr CodecType kFreshInteger[] = {
-  CodecType::Constant, CodecType::Uncompressed, CodecType::Bitpacking,
-  CodecType::Rle,      CodecType::Dict,         CodecType::Lz4,
-  CodecType::RleLz4,   CodecType::DictLz4,
+  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Rle,
+  CodecType::Dict,         CodecType::Lz4,        CodecType::RleLz4,
+  CodecType::DictLz4,
 };
 
 constexpr CodecType kFloat[] = {
-  CodecType::Constant, CodecType::Uncompressed, CodecType::Alp,
-  CodecType::Alprd,    CodecType::Bitpacking,   CodecType::Rle,
-  CodecType::Dict,
+  CodecType::Uncompressed, CodecType::Alp, CodecType::Alprd,
+  CodecType::Bitpacking,   CodecType::Rle, CodecType::Dict,
 };
 
 constexpr CodecType kText[] = {
-  CodecType::Constant, CodecType::Uncompressed, CodecType::DictFsst,
-  CodecType::DictLz4,  CodecType::Fsst,         CodecType::Lz4,
+  CodecType::Uncompressed, CodecType::DictFsst, CodecType::DictLz4,
+  CodecType::Fsst,         CodecType::Lz4,
 };
 
 constexpr CodecType kNamedOnly[] = {
@@ -91,6 +93,7 @@ static_assert([] {
   }
   for (const auto type : magic_enum::enum_values<CodecType>()) {
     const bool numeric = type != CodecType::Auto && type != CodecType::Empty &&
+                         type != CodecType::Constant &&
                          (!IsText(type) || IsNumeric(type));
     if (listed[std::to_underlying(type)] != numeric) {
       return false;
@@ -124,7 +127,7 @@ const Codec* TextCodecOf(CodecType type) {
 const Codec* GetCodec(CodecType type, PhysicalType physical) {
   switch (type) {
     case CodecType::Auto:
-      return AutoCodec(physical);
+      return nullptr;
     case CodecType::Uncompressed:
       return UncompressedCodec(physical);
     case CodecType::Alp:

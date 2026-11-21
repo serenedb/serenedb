@@ -32,7 +32,6 @@
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
 #include <numeric>
-#include <optional>
 #include <span>
 #include <type_traits>
 #include <vector>
@@ -64,15 +63,9 @@ class Values final : public State {
 
   using U = numeric::Bits<sizeof(T)>;
 
-  struct Facts {
+  struct Reference {
     U lo = 0;
-    uint8_t for_stored = 0;
-  };
-
-  struct Steps {
-    U offset = 0;
     uint8_t stored = 0;
-    uint8_t bits = 0;
   };
 
   explicit Values(ColumnDataCheckpointData& data) : _chunks{data.chunks} {
@@ -220,57 +213,13 @@ class Values final : public State {
     return stats;
   }
 
-  Facts GetFacts() const noexcept {
+  Reference GetReference() const noexcept {
     const auto bounds = Divided(BlockBounds<U>{_lo, _hi});
     const auto range = static_cast<U>(bounds.hi - bounds.lo);
     return {
       .lo = bounds.lo,
-      .for_stored = numeric::BytesFor(range),
-    };
-  }
-
-  const Steps& GetSteps() {
-    if (_steps) {
-      return *_steps;
-    }
-    if (_sequence) {
-      return _steps.emplace(Steps{
-        .offset = Step(),
-        .stored = numeric::BytesFor(U{0}),
-        .bits = 0,
-      });
-    }
-    using S = std::make_signed_t<U>;
-    S lo = std::numeric_limits<S>::max();
-    S hi = std::numeric_limits<S>::min();
-    const auto fold = [&](U step) {
-      lo = std::min(lo, static_cast<S>(step));
-      hi = std::max(hi, static_cast<S>(step));
-    };
-    const auto rows = Rows();
-    U last = 0;
-    for (size_t b = 0; b < rows.Blocks(); ++b) {
-      const U* values = rows.Block(b);
-      const size_t count = rows.BlockSize(b);
-      if (b != 0) {
-        fold(static_cast<U>(values[0] - last));
-      }
-      for (size_t i = 1; i < count; ++i) {
-        fold(static_cast<U>(values[i] - values[i - 1]));
-      }
-      last = values[count - 1];
-    }
-    if (_size < 2) {
-      lo = 0;
-      hi = 0;
-    }
-    const auto offset = static_cast<U>(lo);
-    const auto range = static_cast<U>(static_cast<U>(hi) - offset);
-    return _steps.emplace(Steps{
-      .offset = offset,
       .stored = numeric::BytesFor(range),
-      .bits = static_cast<uint8_t>(std::bit_width(range)),
-    });
+    };
   }
 
  private:
@@ -683,7 +632,6 @@ class Values final : public State {
   ScratchVector<U> _owned;
   mutable ScratchVector<U> _divided;
   std::span<const U> _values;
-  std::optional<Steps> _steps;
   size_t _size = 0;
   U _lo = 0;
   U _hi = 0;

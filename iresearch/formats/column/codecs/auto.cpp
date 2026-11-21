@@ -24,6 +24,7 @@
 #include <duckdb/common/types.hpp>
 #include <utility>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 
@@ -31,6 +32,8 @@ namespace irs::codecs {
 namespace {
 
 constexpr size_t kMostCandidates = 16;
+
+}  // namespace
 
 bool CompressAuto(ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
@@ -41,8 +44,7 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
     if (data.disabled.test(std::to_underlying(type))) {
       continue;
     }
-    if (const auto* codec = GetCodec(type, physical);
-        codec && codec->compression) {
+    if (const auto* codec = GetCodec(type, physical)) {
       candidates.push_back(codec);
     }
   }
@@ -54,29 +56,21 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
     return remembered(a) < remembered(b);
   });
   auto best = kNoScore;
-  const CompressionFunction* winner = nullptr;
+  const Codec* winner = nullptr;
   for (const auto* codec : candidates) {
-    if (const auto score = codec->compression->analyze(data, best);
+    if (const auto score = codec->compression.analyze(data, best);
         score < best) {
       best = score;
-      winner = codec->compression;
+      winner = codec;
       if (best == 0) {
         break;
       }
     }
   }
-  if (!winner || !winner->compress(data)) {
-    UncompressedCompression(physical).compress(data);
+  if (!winner || !winner->compression.compress(*winner, data)) {
+    CompressUncompressed(data);
   }
   return true;
 }
-
-constexpr CompressionFunction kAuto{.compress = CompressAuto};
-
-constexpr Codec kAutoCodec{.type = CodecType::Auto, .compression = &kAuto};
-
-}  // namespace
-
-const Codec* AutoCodec(duckdb::PhysicalType) { return &kAutoCodec; }
 
 }  // namespace irs::codecs

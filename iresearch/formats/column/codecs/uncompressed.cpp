@@ -34,8 +34,8 @@
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/numeric_axis.hpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -60,9 +60,10 @@ duckdb::block_id_t WriteOverflowString(duckdb::WriteStream& out,
 }
 
 template<typename Appender>
-void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
+void CompressChunks(const Codec& codec,
+                    ColumnDataCheckpointData& checkpoint_data,
                     std::span<const WriteChunk> chunks) {
-  CompressedSegment segment{CodecType::Uncompressed, checkpoint_data.type};
+  CompressedSegment segment{codec, checkpoint_data.type};
   Appender::Begin(segment);
   for (const auto& chunk : chunks) {
     duckdb::UnifiedVectorFormat data;
@@ -225,9 +226,9 @@ constexpr DecompressionFunction kFixedSizeDecompression{
 template<typename T, bool kStats = true>
 constexpr Codec kFixedSize{
   .type = CodecType::Uncompressed,
-  .compression = &kStreamed<CodecType::Uncompressed, FixedSizeAnalyze<T>,
-                            CompressChunks<FixedSizeAppender<T, kStats>>>,
-  .decompression = &kFixedSizeDecompression<T>,
+  .compression = kStreamed<CodecType::Uncompressed, FixedSizeAnalyze<T>,
+                           CompressChunks<FixedSizeAppender<T, kStats>>>,
+  .decompression = kFixedSizeDecompression<T>,
 };
 
 constexpr idx_t kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
@@ -353,9 +354,9 @@ constexpr DecompressionFunction kValidityDecompression{
 
 constexpr Codec kValidity{
   .type = CodecType::Uncompressed,
-  .compression = &kStreamed<CodecType::Uncompressed, ValidityAnalyze,
-                            CompressChunks<ValidityAppender>>,
-  .decompression = &kValidityDecompression,
+  .compression = kStreamed<CodecType::Uncompressed, ValidityAnalyze,
+                           CompressChunks<ValidityAppender>>,
+  .decompression = kValidityDecompression,
 };
 
 constexpr uint32_t kDictionaryHeaderSize = 2 * sizeof(uint32_t);
@@ -590,9 +591,9 @@ constexpr DecompressionFunction kStringDecompression{
 
 constexpr Codec kString{
   .type = CodecType::Uncompressed,
-  .compression = &kStreamed<CodecType::Uncompressed, nullptr,
-                            CompressChunks<StringAppender>>,
-  .decompression = &kStringDecompression,
+  .compression =
+    kStreamed<CodecType::Uncompressed, nullptr, CompressChunks<StringAppender>>,
+  .decompression = kStringDecompression,
 };
 
 }  // namespace

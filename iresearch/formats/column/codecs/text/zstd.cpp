@@ -20,11 +20,11 @@
 
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
 
-#include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/text/blob.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
-#include "iresearch/formats/column/codecs/text/text_encoder.hpp"
+#include "iresearch/formats/column/codecs/text/text_function.hpp"
 
 /*
 zstd frames in Data (string_layout.hpp draws the segments): frame 0 holds up
@@ -35,13 +35,19 @@ frame of its own.
 */
 
 namespace irs::codecs {
+namespace {
+
+template<typename Rows>
+using Builder = text::blob::CompressionState<Zstd, Rows>;
+
+}  // namespace
 
 constinit const Codec kZstdCodec =
   text::StringCodec<text::PlainScan<text::blob::Scan<Zstd>>,
-                    text::blob::CompressionState<Zstd, text::PlainRows>>();
+                    Builder<text::PlainRows>>();
 
-constinit const Codec kDictZstdCodec =
-  text::StringCodec<text::DictionaryScan<text::blob::Scan<Zstd>>,
-                    text::blob::CompressionState<Zstd, text::DictionaryRows>>();
+constinit const Codec kDictZstdCodec = text::StringCodec<
+  text::DictionaryScan<text::blob::Scan<Zstd>>, Builder<text::DictionaryRows>,
+  text::blob::kFrameFunction<Builder<text::DictionaryRows>>>();
 
 }  // namespace irs::codecs

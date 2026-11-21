@@ -46,29 +46,9 @@ namespace {
 
 using irs::codecs::CodecType;
 using irs::codecs::ColumnDataCheckpointData;
-using irs::codecs::CompressionFunction;
 
 constexpr uint64_t kRows = 100;
 constexpr uint64_t kManyRows = 16384;
-
-duckdb::BaseStatistics StatsOf(const ColumnDataCheckpointData& data,
-                               int64_t min, int64_t max) {
-  auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);
-  stats.SetHasNoNullFast();
-  stats.UpdateNumericStats<int64_t>(min);
-  stats.UpdateNumericStats<int64_t>(max);
-  return stats;
-}
-
-uint64_t StreamedAnalyze(std::span<const irs::WriteChunk>) { return kRows; }
-
-void ConstantCompress(ColumnDataCheckpointData& data,
-                      std::span<const irs::WriteChunk>) {
-  data.FlushSegment(CodecType::Rle, StatsOf(data, 7, 7), data.rows, {});
-}
-
-constexpr const CompressionFunction& kConstantRle =
-  irs::codecs::kStreamed<CodecType::Rle, StreamedAnalyze, ConstantCompress>;
 
 class ColCompressionFunctionTest : public ::testing::Test {
  protected:
@@ -90,34 +70,50 @@ class ColCompressionFunctionTest : public ::testing::Test {
     _chunks.push_back(irs::RefChunk(*_values, rows));
   }
 
-  template<typename Write>
-  CodecType Flushed(irs::WriteTier tier, irs::codecs::CodecSet disabled,
-                    Write&& write) {
+  template<typename Valid>
+  void FillValidity(uint64_t rows, Valid&& valid) {
+    _values =
+      std::make_unique<duckdb::Vector>(duckdb::LogicalType::TINYINT, rows);
+    _values->SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+    auto& validity = duckdb::FlatVector::ValidityMutable(*_values);
+    validity.Reset(rows);
+    for (uint64_t i = 0; i < rows; ++i) {
+      if (!valid(i)) {
+        validity.SetInvalid(i);
+      }
+    }
+    duckdb::FlatVector::SetSize(*_values, rows);
+    _chunks.clear();
+    _chunks.push_back(irs::RefChunk(*_values, rows));
+  }
+
+  std::vector<CodecType> Blocks(const duckdb::LogicalType& type,
+                                CodecType method, irs::WriteTier tier,
+                                irs::codecs::CodecSet disabled = {}) {
     duckdb::MemoryStream out;
     irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
-    CodecType flushed = CodecType::Auto;
+    std::vector<CodecType> blocks;
     const auto flush = [&](const irs::codecs::Codec& codec,
-                           duckdb::BaseStatistics, uint64_t,
-                           std::string_view) { flushed = codec.type; };
+                           duckdb::BaseStatistics, uint64_t, std::string_view,
+                           std::string_view) { blocks.push_back(codec.type); };
     ColumnDataCheckpointData data{
-      .type = duckdb::LogicalType::BIGINT,
+      .type = type,
       .chunks = _chunks,
       .ctx = &ctx,
       .flush = flush,
       .params = {.tier = tier},
       .tuning = _tuning,
       .disabled = disabled,
-      .rows = irs::codecs::CountRows(_chunks),
     };
-    write(data);
-    return flushed;
+    irs::codecs::Compress(method, data);
+    return blocks;
   }
 
   CodecType CompressAs(CodecType method, irs::WriteTier tier,
                        irs::codecs::CodecSet disabled = {}) {
-    return Flushed(tier, disabled, [&](ColumnDataCheckpointData& data) {
-      irs::codecs::Compress(method, data);
-    });
+    const auto blocks =
+      Blocks(duckdb::LogicalType::BIGINT, method, tier, disabled);
+    return blocks.empty() ? CodecType::Auto : blocks.back();
   }
 
   const irs::codecs::Hint& HintOf(CodecType type) const noexcept {
@@ -130,23 +126,63 @@ class ColCompressionFunctionTest : public ::testing::Test {
   irs::codecs::ColumnTuning _tuning;
 };
 
-TEST_F(ColCompressionFunctionTest, ASegmentWithConstantStatsIsStoredConstant) {
-  EXPECT_EQ(Flushed(irs::WriteTier::Flush, {},
-                    [](ColumnDataCheckpointData& data) {
-                      kConstantRle.compress(data);
-                    }),
-            CodecType::Constant);
+TEST_F(ColCompressionFunctionTest,
+       ANamedCodecStoresARowGroupOfOneValueConstant) {
+  Fill(kManyRows, [](uint64_t) { return int64_t{42}; });
+  for (const auto named : {CodecType::Rle, CodecType::Uncompressed}) {
+    EXPECT_EQ(CompressAs(named, irs::WriteTier::Flush), CodecType::Constant);
+  }
+  irs::codecs::CodecSet disabled;
+  disabled.set(std::to_underlying(CodecType::Constant));
+  EXPECT_EQ(CompressAs(CodecType::Rle, irs::WriteTier::Flush, disabled),
+            CodecType::Rle);
 }
 
 TEST_F(ColCompressionFunctionTest,
-       ASegmentWithConstantStatsKeepsItsCodecWhenConstantIsDisabled) {
-  irs::codecs::CodecSet disabled;
-  disabled.set(std::to_underlying(CodecType::Constant));
-  EXPECT_EQ(Flushed(irs::WriteTier::Flush, disabled,
-                    [](ColumnDataCheckpointData& data) {
-                      kConstantRle.compress(data);
-                    }),
-            CodecType::Rle);
+       ABlockOfOneValueIsStoredConstantInARowGroupThatIsNot) {
+  constexpr uint64_t kBlockRows = irs::codecs::kBlockSize / sizeof(int64_t);
+  Fill(2 * kBlockRows, [](uint64_t i) {
+    return i < kBlockRows ? int64_t{7} : static_cast<int64_t>(i);
+  });
+  EXPECT_EQ(Blocks(duckdb::LogicalType::BIGINT, CodecType::Uncompressed,
+                   irs::WriteTier::Flush),
+            (std::vector{CodecType::Constant, CodecType::Uncompressed}));
+}
+
+TEST_F(ColCompressionFunctionTest, AValidityRowGroupWithoutNullsIsStoredEmpty) {
+  const duckdb::LogicalType type{duckdb::LogicalTypeId::VALIDITY};
+  FillValidity(kManyRows, [](uint64_t) { return true; });
+  for (const auto method :
+       {CodecType::Auto, CodecType::Roaring, CodecType::Uncompressed}) {
+    EXPECT_EQ(Blocks(type, method, irs::WriteTier::Flush),
+              std::vector{CodecType::Empty});
+  }
+  EXPECT_FALSE(irs::codecs::Writes(CodecType::Empty, type.InternalType()));
+}
+
+TEST_F(ColCompressionFunctionTest, AValidityRowGroupOfNullsIsStoredConstant) {
+  const duckdb::LogicalType type{duckdb::LogicalTypeId::VALIDITY};
+  FillValidity(kManyRows, [](uint64_t) { return false; });
+  for (const auto method :
+       {CodecType::Auto, CodecType::Roaring, CodecType::Uncompressed}) {
+    EXPECT_EQ(Blocks(type, method, irs::WriteTier::Flush),
+              std::vector{CodecType::Constant});
+  }
+  FillValidity(kManyRows, [](uint64_t i) { return i == kManyRows / 2; });
+  EXPECT_EQ(Blocks(type, CodecType::Roaring, irs::WriteTier::Flush),
+            std::vector{CodecType::Roaring});
+}
+
+TEST_F(ColCompressionFunctionTest,
+       AValidityBlockWithoutNullsIsStoredEmptyBesideOneWithNulls) {
+  constexpr uint64_t kBlockRows = irs::codecs::kBlockSize * 8;
+  const duckdb::LogicalType type{duckdb::LogicalTypeId::VALIDITY};
+  FillValidity(2 * kBlockRows, [](uint64_t i) { return i != kBlockRows + 5; });
+  EXPECT_EQ(Blocks(type, CodecType::Uncompressed, irs::WriteTier::Flush),
+            (std::vector{CodecType::Empty, CodecType::Uncompressed}));
+  FillValidity(2 * kBlockRows, [](uint64_t i) { return i < kBlockRows; });
+  EXPECT_EQ(Blocks(type, CodecType::Uncompressed, irs::WriteTier::Flush),
+            (std::vector{CodecType::Empty, CodecType::Constant}));
 }
 
 TEST_F(ColCompressionFunctionTest, AutoStoresAConstantRowGroupConstant) {

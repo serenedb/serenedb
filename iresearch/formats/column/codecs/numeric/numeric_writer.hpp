@@ -137,8 +137,6 @@ struct NumericScratch final : State {
   ScratchVector<uint8_t> frame;
   ScratchVector<uint8_t> shuffled;
   std::string out;
-  Facts facts{};
-  bool measured = false;
 };
 
 struct FrameStore {
@@ -327,35 +325,40 @@ class SegmentWriter {
 };
 
 template<typename T>
-void FlushNumeric(ColumnDataCheckpointData& data, Shape shape, ByteCodec leaf) {
+void FlushNumeric(const Codec& codec, ColumnDataCheckpointData& data) {
   const auto& values = data.Get<Values<T>>();
-  data.FlushSegment(CodecOf(shape, leaf), values.Stats(data.type),
-                    values.Size(), data.Get<NumericScratch>().out);
+  data.flush(codec, values.Stats(data.type), values.Size(),
+             data.Get<NumericScratch>().out, {});
 }
 
 template<typename T>
+struct NumericFacts final : State {
+  static constexpr StateId kId = StateId::NumericFacts;
+
+  explicit NumericFacts(ColumnDataCheckpointData& data) {
+    const auto& values = data.Get<Values<T>>();
+    if (!values.Usable()) {
+      return;
+    }
+    uint64_t bits = 0;
+    const auto bounds = values.Bounds();
+    for (const auto& block : bounds) {
+      bits += std::bit_width(
+        static_cast<numeric::Bits<sizeof(T)>>(block.hi - block.lo));
+    }
+    facts = {
+      static_cast<float>(bits) / static_cast<float>(bounds.size()),
+      static_cast<float>(values.RunCount()) / static_cast<float>(values.Size()),
+      static_cast<float>(values.GetReference().stored),
+    };
+  }
+
+  Facts facts{};
+};
+
+template<typename T>
 const Facts& FactsOf(ColumnDataCheckpointData& data) {
-  auto& scratch = data.Get<NumericScratch>();
-  if (scratch.measured) {
-    return scratch.facts;
-  }
-  scratch.measured = true;
-  const auto& values = data.Get<Values<T>>();
-  if (!values.Usable()) {
-    return scratch.facts;
-  }
-  uint64_t bits = 0;
-  const auto bounds = values.Bounds();
-  for (const auto& block : bounds) {
-    bits += std::bit_width(
-      static_cast<numeric::Bits<sizeof(T)>>(block.hi - block.lo));
-  }
-  scratch.facts = {
-    static_cast<float>(bits) / static_cast<float>(bounds.size()),
-    static_cast<float>(values.RunCount()) / static_cast<float>(values.Size()),
-    static_cast<float>(values.GetFacts().for_stored),
-  };
-  return scratch.facts;
+  return data.Get<NumericFacts<T>>().facts;
 }
 
 struct Items {
@@ -377,42 +380,6 @@ inline Geometry GeometryOf(const Items& items, bool scaled) noexcept {
                        uint32_t{items.stored} + items.run_width,
                        items.dictionary.size(), scaled);
 }
-
-template<typename T, CodecType kCodec, auto kAnalyze, auto kCompress>
-struct Sampled {
-  using Chunks = Streamed<kCodec, kAnalyze, kCompress, HasRows>;
-
-  static double Analyze(ColumnDataCheckpointData& data, double bound) {
-    auto& hint = data.tuning.hints[std::to_underlying(kCodec)];
-    const auto& facts = FactsOf<T>(data);
-    if (!Forgotten(hint) && Shift(facts, hint.facts) < kFactsMove) {
-      ++hint.age;
-      return hint.score;
-    }
-    hint.score = Chunks::Analyze(data, bound);
-    hint.facts = facts;
-    hint.age = 0;
-    hint.known = true;
-    return hint.score;
-  }
-
-  static bool Compress(ColumnDataCheckpointData& data) {
-    const auto written = data.written;
-    if (!Chunks::Compress(data)) {
-      return false;
-    }
-    data.tuning.hints[std::to_underlying(kCodec)].score =
-      static_cast<double>(data.written - written) /
-      static_cast<double>(std::max<uint64_t>(data.rows, 1));
-    return true;
-  }
-};
-
-template<typename T, CodecType kCodec, auto kAnalyze, auto kCompress>
-inline constexpr CompressionFunction kSampled{
-  .analyze = Sampled<T, kCodec, kAnalyze, kCompress>::Analyze,
-  .compress = Sampled<T, kCodec, kAnalyze, kCompress>::Compress,
-};
 
 template<typename T>
 bool Scaled(ColumnDataCheckpointData& data) {
@@ -483,9 +450,9 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, const Items& items,
 }
 
 template<typename T, typename Own, typename Frame, typename Start = SameFrame>
-bool CompressFrames(ColumnDataCheckpointData& data, const Items& items,
-                    const Analysis& analysis, const Own& own, Frame&& frame,
-                    Start&& start = {}) {
+bool CompressFrames(const Codec& codec, ColumnDataCheckpointData& data,
+                    const Items& items, const Analysis& analysis,
+                    const Own& own, Frame&& frame, Start&& start = {}) {
   const auto leaf = items.store.leaf;
   if (!Offered(items)) {
     return false;
@@ -531,7 +498,7 @@ bool CompressFrames(ColumnDataCheckpointData& data, const Items& items,
       .flags = items.store.shuffled ? kNumericShuffled : uint8_t{0},
     },
     own, data.Get<Values<T>>());
-  FlushNumeric<T>(data, items.shape, leaf);
+  FlushNumeric<T>(codec, data);
   return true;
 }
 
@@ -542,8 +509,8 @@ inline constexpr CompressionFunction kStoredFrames{
       return kAnalyze(data, bound, FrameStore{kLeaf, kShuffled});
     },
   .compress =
-    [](ColumnDataCheckpointData& data) {
-      return kCompress(data, FrameStore{kLeaf, kShuffled});
+    [](const Codec& codec, ColumnDataCheckpointData& data) {
+      return kCompress(codec, data, FrameStore{kLeaf, kShuffled});
     },
 };
 
@@ -558,8 +525,9 @@ double AnalyzeBlocks(ColumnDataCheckpointData& data, Shape shape,
 }
 
 template<typename T, typename V, typename Own>
-void CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
-                    BitpackingBlocks<V>& blocks, std::span<const V> values,
+void CompressBlocks(const Codec& codec, ColumnDataCheckpointData& data,
+                    Shape shape, BitpackingBlocks<V>& blocks,
+                    std::span<const V> values,
                     std::span<const uint8_t> dictionary, const Own& own) {
   auto& out = data.Get<NumericScratch>().out;
   const auto n = static_cast<uint32_t>(values.size());
@@ -587,7 +555,7 @@ void CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
       .flags = kNumericPacked,
     },
     own, data.Get<Values<T>>());
-  FlushNumeric<T>(data, shape, ByteCodec::None);
+  FlushNumeric<T>(codec, data);
 }
 
 template<typename T>
@@ -644,7 +612,8 @@ uint64_t SteppedBytes(const BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
 }
 
 template<typename T, typename Own>
-void CompressStepped(ColumnDataCheckpointData& data, Shape shape,
+void CompressStepped(const Codec& codec, ColumnDataCheckpointData& data,
+                     Shape shape,
                      BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
                      const Own& own) {
   const auto& values = data.Get<Values<T>>();
@@ -673,7 +642,7 @@ void CompressStepped(ColumnDataCheckpointData& data, Shape shape,
       .flags = kNumericPacked,
     },
     own, values);
-  FlushNumeric<T>(data, shape, ByteCodec::None);
+  FlushNumeric<T>(codec, data);
 }
 
 }  // namespace irs::codecs

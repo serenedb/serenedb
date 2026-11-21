@@ -48,6 +48,7 @@
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/text/text_function.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -346,6 +347,55 @@ class CompressionState {
   FrameSpans _spans;
   std::vector<size_t> _sizes;
   std::vector<FrameMeta> _frames;
+};
+
+template<typename Compression>
+Config NamedOrder(Config config, ColumnDataCheckpointData& data) {
+  auto& state = data.Get<CodecState<Compression>>();
+  const auto& values = data.Get<Values>();
+  auto& order =
+    data.tuning.strings.order[std::to_underlying(Compression::kCodec)];
+  if (values.Rows() != 0 &&
+      (!order.tuned || values.raw >= order.tuned_on * kOrderRetuneGrowth)) {
+    auto& contest = data.Get<Contest>();
+    const auto target = data.params.segment_target;
+    const auto& first = Trial(state, config, values, contest, target);
+    const auto arrival = first.Size();
+    const bool matters = static_cast<double>(first.entries * first.max_len) >=
+                         static_cast<double>(arrival) * kSortedGain;
+    config.sorted = true;
+    order = {
+      .tuned = true,
+      .sorted =
+        matters && static_cast<double>(
+                     Trial(state, config, values, contest, target).Size()) <
+                     static_cast<double>(arrival) * (1.0 - kSortedGain),
+      .tuned_on = values.raw,
+    };
+  }
+  config.sorted = order.sorted;
+  return config;
+}
+
+template<typename Compression>
+bool CompressFrames(const codecs::Codec& codec,
+                    ColumnDataCheckpointData& data) {
+  if (data.contested) {
+    return CompressContested<Compression>(codec, data);
+  }
+  auto config =
+    NamedConfig(Compression::kShape, Compression::kCodec, data.params);
+  if constexpr (Compression::kShape == Shape::Dictionary) {
+    config = NamedOrder<Compression>(config, data);
+  }
+  CompressAs<Compression>(config, codec, data);
+  return true;
+}
+
+template<typename Compression>
+inline constexpr CompressionFunction kFrameFunction{
+  .analyze = AnalyzeTrial<Compression>,
+  .compress = CompressFrames<Compression>,
 };
 
 template<typename Codec>

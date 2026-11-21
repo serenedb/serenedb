@@ -119,7 +119,7 @@ bool ScatterWins(const ColumnBlockMeta& block, const duckdb::LogicalType& type,
 bool SelectsNatively(const ColumnBlockMeta& block,
                      const duckdb::LogicalType& type, duckdb::idx_t hits,
                      duckdb::idx_t span) noexcept {
-  return block.codec->decompression->select &&
+  return block.codec->decompression.select &&
          hits * 1000 <= BandsFor(block.codec->type, type).native * span;
 }
 
@@ -269,7 +269,7 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(size_t block,
   const auto& m = _segments[block];
   const auto& codec = *m.codec;
   auto segment = std::make_unique<codecs::ColumnSegment>(codecs::ColumnSegment{
-    .function = *codec.decompression,
+    .function = codec.decompression,
     .type = m.statistics.GetType(),
     .stats = m.statistics,
     .ctx = ctx,
@@ -828,7 +828,7 @@ bool ColumnReader::SelectNative(ScanState& s,
   BeginScanVector(s);
   const bool within = RowsLeft(s) >= span;
   const auto& codec = *_segments[s.window.block].codec;
-  const auto& function = *codec.decompression;
+  const auto& function = codec.decompression;
   if (hits * 1000 > BandsFor(codec.type, _type).native * span ||
       !function.select || (!within && !SelectsAcross(s, span))) {
     return false;
@@ -839,7 +839,7 @@ bool ColumnReader::SelectNative(ScanState& s,
     auto& vs = s.child_states[0];
     _validity->BeginScanVector(vs);
     if (RowsLeft(vs) < span ||
-        !_validity->_segments[vs.window.block].codec->decompression->select) {
+        !_validity->_segments[vs.window.block].codec->decompression.select) {
       return false;
     }
   }
@@ -890,7 +890,7 @@ bool ColumnReader::FiltersByBlock(const ScanState& s, uint64_t anchor,
     return true;
   }
   for (size_t block = s.window.block; _offsets[block] < end; ++block) {
-    if (_segments[block].codec->decompression->filter) {
+    if (_segments[block].codec->decompression.filter) {
       return true;
     }
   }

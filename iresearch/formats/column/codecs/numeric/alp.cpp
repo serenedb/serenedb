@@ -48,11 +48,11 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/formats/column/codecs/numeric_axis.hpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -695,10 +695,10 @@ idx_t AlpAnalyzeChunks(std::span<const WriteChunk> chunks) {
 template<typename T>
 class AlpCompressionState {
  public:
-  AlpCompressionState(ColumnDataCheckpointData& checkpoint_data,
+  AlpCompressionState(const Codec& codec,
+                      ColumnDataCheckpointData& checkpoint_data,
                       AlpAnalyzeState<T>& analyze_state)
-    : _checkpoint_data{checkpoint_data},
-      _segment{CodecType::Alp, checkpoint_data.type} {
+    : _checkpoint_data{checkpoint_data}, _segment{codec, checkpoint_data.type} {
     _compression_data.best_k_combinations =
       std::move(analyze_state.compression_data.best_k_combinations);
   }
@@ -739,6 +739,8 @@ class AlpCompressionState {
     }
     FlushSegment();
   }
+
+  uint64_t Stored() const noexcept { return _segment.stored; }
 
  private:
   idx_t UsedSpace() const noexcept {
@@ -883,13 +885,16 @@ class AlpCompressionState {
 };
 
 template<typename T>
-void AlpCompressChunks(ColumnDataCheckpointData& checkpoint_data,
-                       std::span<const WriteChunk> chunks) {
-  AlpCompressionState<T> state{checkpoint_data, *AlpSampleRowGroup<T>(chunks)};
+uint64_t AlpCompressChunks(const Codec& codec,
+                           ColumnDataCheckpointData& checkpoint_data,
+                           std::span<const WriteChunk> chunks) {
+  AlpCompressionState<T> state{codec, checkpoint_data,
+                               *AlpSampleRowGroup<T>(chunks)};
   for (const auto& chunk : chunks) {
     state.Append(chunk.data);
   }
   state.Finalize();
+  return state.Stored();
 }
 
 template<typename T>
@@ -1204,8 +1209,8 @@ template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Alp,
   .compression =
-    &kSampled<T, CodecType::Alp, AlpAnalyzeChunks<T>, AlpCompressChunks<T>>,
-  .decompression = &kDecompression<T>,
+    kSampled<T, CodecType::Alp, AlpAnalyzeChunks<T>, AlpCompressChunks<T>>,
+  .decompression = kDecompression<T>,
 };
 
 }  // namespace

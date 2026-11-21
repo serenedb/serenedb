@@ -18,7 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/registry.hpp"
+#include <absl/algorithm/container.h>
+
+#include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/storage/statistics/base_statistics.hpp>
+
+#include "iresearch/formats/column/codecs/codecs.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -46,9 +51,24 @@ constexpr DecompressionFunction kDecompression{
   .fetch_rows = FetchRows,
 };
 
+bool Compress(const Codec& codec, ColumnDataCheckpointData& data) {
+  if (absl::c_any_of(data.chunks, [](const WriteChunk& chunk) {
+        return !duckdb::FlatVector::Validity(chunk.data)
+                  .CheckAllValid(chunk.data.size());
+      })) {
+    return false;
+  }
+  data.flush(codec, duckdb::BaseStatistics::CreateEmpty(data.type), data.rows,
+             {}, {});
+  return true;
+}
+
+constexpr CompressionFunction kFunction{.compress = Compress};
+
 constexpr Codec kCodec{
   .type = CodecType::Empty,
-  .decompression = &kDecompression,
+  .compression = kFunction,
+  .decompression = kDecompression,
 };
 
 }  // namespace

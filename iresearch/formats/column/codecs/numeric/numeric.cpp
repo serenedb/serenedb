@@ -23,6 +23,7 @@
 #include <type_traits>
 #include <utility>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/numeric/delta.hpp"
 #include "iresearch/formats/column/codecs/numeric/dictionary.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_scan.tpp"
@@ -30,7 +31,6 @@
 #include "iresearch/formats/column/codecs/numeric/runs.hpp"
 #include "iresearch/formats/column/codecs/numeric/wide.hpp"
 #include "iresearch/formats/column/codecs/numeric_axis.hpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -162,12 +162,12 @@ constexpr auto ReaderType() {
 }
 
 template<typename T, Shape kShape>
-constexpr const DecompressionFunction* DecompressionOf() noexcept {
+constexpr const DecompressionFunction& DecompressionOf() noexcept {
   using Reader = typename decltype(ReaderType<T, kShape>())::type;
   if constexpr (kIsWide<T>) {
-    return &kWideDecompression<WideReader<T, Reader>>;
+    return kWideDecompression<WideReader<T, Reader>>;
   } else {
-    return &numeric::kDecompression<Reader>;
+    return numeric::kDecompression<Reader>;
   }
 }
 
@@ -211,14 +211,14 @@ double AnalyzeShape(ColumnDataCheckpointData& data, double bound) {
 }
 
 template<typename T, Shape kShape, ByteCodec kLeaf>
-bool CompressShape(ColumnDataCheckpointData& data) {
+bool CompressShape(const Codec& codec, ColumnDataCheckpointData& data) {
   if (!data.contested) {
     AnalyzeShape<T, kShape, kLeaf>(data, kNoScore);
   }
   const auto& hint =
     data.tuning.hints[std::to_underlying(CodecOf(kShape, kLeaf))];
   return hint.score < kNoScore &&
-         ContendersOf<T, kShape, kLeaf>()[hint.form]->compress(data);
+         ContendersOf<T, kShape, kLeaf>()[hint.form]->compress(codec, data);
 }
 
 template<typename T, Shape kShape, ByteCodec kLeaf>
@@ -230,7 +230,7 @@ constexpr CompressionFunction kForms{
 template<typename T, Shape kShape, ByteCodec kLeaf>
 constexpr Codec kCodec{
   .type = CodecOf(kShape, kLeaf),
-  .compression = &kForms<T, kShape, kLeaf>,
+  .compression = kForms<T, kShape, kLeaf>,
   .decompression = DecompressionOf<T, kShape>(),
 };
 

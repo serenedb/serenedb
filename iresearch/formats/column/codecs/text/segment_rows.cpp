@@ -122,9 +122,11 @@ void CompressCodes(
                    codes.size()},
     codes.size()};
   ColumnTuning column;
+  uint64_t written = 0;
   const auto flush = [&](const Codec& codec, duckdb::BaseStatistics, uint64_t,
-                         std::string_view bytes) {
+                         std::string_view bytes, std::string_view) {
     SDB_ASSERT(CodesCodec(codec.type));
+    written += bytes.size();
     write(codec.type, bytes);
   };
   ColumnDataCheckpointData data{
@@ -137,7 +139,7 @@ void CompressCodes(
     .run_price = kCodeRunPrice,
   };
   Compress(CodecType::Auto, data);
-  ratio = static_cast<double>(data.written) /
+  ratio = static_cast<double>(written) /
           static_cast<double>(codes.size() * sizeof(uint32_t));
 }
 

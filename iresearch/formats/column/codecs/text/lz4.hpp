@@ -42,6 +42,7 @@
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/text/text_function.hpp"
 #include "iresearch/formats/column/codecs/text/values.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
@@ -143,35 +144,39 @@ class SizeEstimator {
   std::vector<size_t> _sizes;
 };
 
-template<typename Rows>
-class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
+class Lz4Tuner final : public State {
  public:
-  using CompressionState<Lz4, Rows>::kShape;
+  static constexpr StateId kId = StateId::TextLz4Tuner;
+
+  template<typename Rows>
+  using Candidate = CodecState<CompressionState<Lz4, Rows>>;
 
   struct Measured {
     Config config;
     uint64_t bytes = 0;
   };
 
-  Lz4CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : CompressionState<Lz4, Rows>{data, dedup}, _tuning{data.tuning.strings} {}
+  explicit Lz4Tuner(ColumnDataCheckpointData& data)
+    : _values{data.Get<Values>()},
+      _contest{data.Get<Contest>()},
+      _params{data.params},
+      _tuning{data.tuning.strings} {}
 
-  template<typename Encoder, typename Score>
-  Measured Measure(Encoder& encoder, Values& values, WriteTier tier,
-                   double bound, Score&& score) {
+  template<typename Rows, typename Score>
+  Measured Measure(Candidate<Rows>& state, double bound, Score&& score) {
+    constexpr auto kShape = Rows::kShape;
     auto& tuning = _tuning.lz4[std::to_underlying(kShape)];
+    const auto tier = _params.tier;
     const auto levels = Levels(tier);
-    const auto held = Tuned(tier);
-    const auto size = [&](const Config& config) {
-      return Size(encoder, values, config);
-    };
+    const auto held = Tuned<Rows>(tier);
+    const auto size = [&](const Config& config) { return Size(state, config); };
     Measured measured{.config = held};
-    const auto input = values.trial.input;
+    const auto input = _contest.trial.input;
     if ((tuning.tuned && input < tuning.tuned_on * kLz4RetuneGrowth) ||
-        values.TrialEntries() < kLz4TuneMinEntries) {
+        TrialEntries() < kLz4TuneMinEntries) {
       measured.bytes = size(held);
     } else {
-      measured = Tune(levels, tier != WriteTier::Flush, size);
+      measured = Tune<Rows>(levels, tier != WriteTier::Flush, size);
       tuning = {
         .tuned = true,
         .level = measured.config.level,
@@ -183,52 +188,75 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
           measured.config.sorted;
       }
     }
-    if (!encoder.Find(measured.config)) {
+    if (!Find(state, measured.config)) {
       const auto priced = score(measured.bytes);
       if (measured.config.level <= kLz4Fast
             ? priced <= bound * (1.0 + kLz4EstimateSlack)
             : priced < bound) {
-        measured.bytes = encoder.Trial(measured.config, values).Size();
+        measured.bytes = Trial(state, measured.config, _values, _contest,
+                               _params.segment_target)
+                           .Size();
       }
     }
     return measured;
   }
 
-  template<typename Encoder>
-  uint64_t Size(Encoder& encoder, Values& values, const Config& config) {
-    if (const auto* trial = encoder.Find(config)) {
+  template<typename Rows>
+  uint64_t Size(Candidate<Rows>& state, const Config& config) {
+    constexpr auto kShape = Rows::kShape;
+    if (const auto* trial = Find(state, config)) {
       return trial->Size();
     }
     if (Lz4::HighCompression(config.level)) {
-      return Estimate(values, config);
+      return Estimate(kShape, config);
     }
-    const auto& trial = values.trial;
+    const auto& trial = _contest.trial;
     SDB_ASSERT(config.shape == kShape);
     const auto raw =
       kShape == Shape::Dictionary
-        ? std::min<uint64_t>(trial.input, values.TrialEntries() * trial.max_len)
+        ? std::min<uint64_t>(trial.input, TrialEntries() * trial.max_len)
         : trial.input;
     if (raw <= kLz4TrialRawBytes) {
-      return encoder.Trial(config, values).Size();
+      return Trial(state, config, _values, _contest, _params.segment_target)
+        .Size();
     }
-    return Estimate(values, config);
+    return Estimate(kShape, config);
   }
 
-  template<typename Encoder>
-  uint64_t Estimated(Encoder& encoder, Values& values, const Config& config) {
-    if (const auto* trial = encoder.Find(config)) {
+  template<typename Rows>
+  uint64_t Estimated(const Candidate<Rows>& state, const Config& config) {
+    if (const auto* trial = Find(state, config)) {
       return trial->Size();
     }
-    return Estimate(values, config);
+    return Estimate(Rows::kShape, config);
   }
 
  private:
+  struct Spans {
+    FrameShape frame;
+    FrameSpans spans;
+  };
+
+  struct ShapeRows {
+    bool done = false;
+    bool assembled = false;
+    bool coded = false;
+    Profile profile;
+    std::vector<uint32_t> codes;
+    ScratchVector<uint32_t> locals;
+    uint64_t codes_bytes = 0;
+    std::string bytes;
+    std::vector<Spans> spans;
+  };
+
   static std::span<const uint8_t> Levels(WriteTier tier) noexcept {
     return tier == WriteTier::Flush ? std::span<const uint8_t>{kLz4FlushLevels}
                                     : std::span<const uint8_t>{kLz4MergeLevels};
   }
 
+  template<typename Rows>
   Config Tuned(WriteTier tier) const noexcept {
+    constexpr auto kShape = Rows::kShape;
     const auto& tuning = _tuning.lz4[std::to_underlying(kShape)];
     const auto levels = Levels(tier);
     return {
@@ -242,9 +270,10 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
     };
   }
 
-  template<typename Size>
+  template<typename Rows, typename Size>
   static Measured Tune(std::span<const uint8_t> levels, bool local,
                        Size&& size) {
+    constexpr auto kShape = Rows::kShape;
     Config config{.shape = kShape, .leaf = ByteCodec::Lz4};
     uint64_t sizes[kLz4MaxLevels];
     auto smallest = std::numeric_limits<uint64_t>::max();
@@ -284,19 +313,28 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
     return tuned;
   }
 
-  uint64_t Estimate(Values& values, const Config& config) {
-    auto& rows = config.sorted ? values.SortedRows() : values.TrialRows(kShape);
-    const auto whole = config.layout == FrameDictionary::Local
-                         ? Values::Bytes(rows)
-                         : std::string_view{};
-    return _estimator.EstimateSize(
-      rows.profile, whole,
-      Values::Split(rows, FrameShapeOf<Lz4>(config.layout)),
-      values.CodesSize(rows), config.level, config.layout);
-  }
+  ShapeRows& TrialRows(Shape shape);
 
+  ShapeRows& SortedRows();
+
+  uint64_t TrialEntries() { return TrialRows(Shape::Dictionary).codes.size(); }
+
+  uint64_t CodesSize(ShapeRows& rows);
+
+  static std::string_view Bytes(ShapeRows& rows);
+
+  static const FrameSpans& Split(ShapeRows& rows, FrameShape frame);
+
+  uint64_t Estimate(Shape shape, const Config& config);
+
+  const Values& _values;
+  Contest& _contest;
+  const ColCodecParams& _params;
   StringTuning& _tuning;
-  SizeEstimator<Lz4> _estimator;
+  DedupScratch _dedup;
+  ShapeRows _rows[kTextShapeCount];
+  ShapeRows _sorted;
+  SizeEstimator<Lz4> _estimator[kTextShapeCount];
 };
 
 struct Lz4Scan final : Scan<Lz4> {

@@ -30,9 +30,49 @@
 #include <duckdb/storage/storage_info.hpp>
 #include <type_traits>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 
+namespace irs::codecs {
+
+template<typename T, CodecType kCodec, auto kAnalyze, auto kCompress>
+struct Sampled {
+  using Chunks = Streamed<kCodec, kAnalyze, kCompress, HasRows>;
+
+  static double Analyze(ColumnDataCheckpointData& data, double bound) {
+    auto& hint = data.tuning.hints[std::to_underlying(kCodec)];
+    const auto& facts = FactsOf<T>(data);
+    if (!Forgotten(hint) && Shift(facts, hint.facts) < kFactsMove) {
+      ++hint.age;
+      return hint.score;
+    }
+    hint.score = Chunks::Analyze(data, bound);
+    hint.facts = facts;
+    hint.age = 0;
+    hint.known = true;
+    return hint.score;
+  }
+
+  static bool Compress(const Codec& codec, ColumnDataCheckpointData& data) {
+    if (!HasRows(data.chunks)) {
+      return false;
+    }
+    data.tuning.hints[std::to_underlying(kCodec)].score =
+      static_cast<double>(kCompress(codec, data, data.chunks)) /
+      static_cast<double>(std::max<uint64_t>(data.rows, 1));
+    return true;
+  }
+};
+
+template<typename T, CodecType kCodec, auto kAnalyze, auto kCompress>
+inline constexpr CompressionFunction kSampled{
+  .analyze = Sampled<T, kCodec, kAnalyze, kCompress>::Analyze,
+  .compress = Sampled<T, kCodec, kAnalyze, kCompress>::Compress,
+};
+
+}  // namespace irs::codecs
 namespace irs::codecs::alp {
 
 inline constexpr uint32_t kVectorSize = 1024;

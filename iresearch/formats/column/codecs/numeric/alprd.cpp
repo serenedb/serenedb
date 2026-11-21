@@ -43,11 +43,11 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/formats/column/codecs/numeric_axis.hpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -387,10 +387,11 @@ class AlpRdCompressionState {
  public:
   using Exact = alp::ExactType<T>;
 
-  AlpRdCompressionState(ColumnDataCheckpointData& checkpoint_data,
+  AlpRdCompressionState(const Codec& codec,
+                        ColumnDataCheckpointData& checkpoint_data,
                         AlpRdAnalyzeState<T>& analyze_state)
     : _checkpoint_data{checkpoint_data},
-      _segment{CodecType::Alprd, checkpoint_data.type},
+      _segment{codec, checkpoint_data.type},
       _dictionary{std::move(analyze_state.dictionary)},
       _actual_dictionary_size_bytes{_dictionary.actual_dictionary_size *
                                     kDictionaryElementSize},
@@ -434,6 +435,8 @@ class AlpRdCompressionState {
     }
     FlushSegment();
   }
+
+  uint64_t Stored() const noexcept { return _segment.stored; }
 
  private:
   idx_t UsedSpace() const noexcept {
@@ -626,19 +629,21 @@ class AlpRdCompressionState {
 };
 
 template<typename T>
-void AlpRdCompressChunks(ColumnDataCheckpointData& checkpoint_data,
-                         std::span<const WriteChunk> chunks) {
+uint64_t AlpRdCompressChunks(const Codec& codec,
+                             ColumnDataCheckpointData& checkpoint_data,
+                             std::span<const WriteChunk> chunks) {
   AlpRdAnalyzeState<T> analyze_state;
   for (const auto& chunk : chunks) {
     AlpRdSample(analyze_state, chunk.data);
   }
   FindBestDictionary<T>(analyze_state.rowgroup_sample,
                         analyze_state.dictionary);
-  AlpRdCompressionState<T> state{checkpoint_data, analyze_state};
+  AlpRdCompressionState<T> state{codec, checkpoint_data, analyze_state};
   for (const auto& chunk : chunks) {
     state.Append(chunk.data);
   }
   state.Finalize();
+  return state.Stored();
 }
 
 template<typename T>
@@ -892,9 +897,9 @@ constexpr DecompressionFunction kDecompression{
 template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Alprd,
-  .compression = &kSampled<T, CodecType::Alprd, AlpRdAnalyzeChunks<T>,
-                           AlpRdCompressChunks<T>>,
-  .decompression = &kDecompression<T>,
+  .compression = kSampled<T, CodecType::Alprd, AlpRdAnalyzeChunks<T>,
+                          AlpRdCompressChunks<T>>,
+  .decompression = kDecompression<T>,
 };
 
 }  // namespace

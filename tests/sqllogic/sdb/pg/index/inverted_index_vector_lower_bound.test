@@ -104,6 +104,27 @@ statement ok
 DEALLOCATE vlb_beyond;
 
 
+statement ok
+PREPARE vlb_beyond_left(DOUBLE) AS
+SELECT pk FROM vlb_hnsw
+WHERE $1 < emb <-> [0, 0]::FLOAT[2]
+ORDER BY emb <-> [0, 0]::FLOAT[2]
+LIMIT 3;
+
+
+query rowsort
+EXECUTE vlb_beyond_left(700);
+----
+pk
+701
+702
+703
+
+
+statement ok
+DEALLOCATE vlb_beyond_left;
+
+
 query
 SELECT pk FROM vlb_hnsw
 WHERE grp = 1 AND emb <-> [0, 0]::FLOAT[2] > 0.5

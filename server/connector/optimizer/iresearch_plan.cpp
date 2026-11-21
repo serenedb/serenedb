@@ -1326,15 +1326,8 @@ bool TryClaimAnnRange(
     }
     return ScoreBound{.op = op, .radius = radius};
   };
-  const auto bounds_of = [&](this const auto& self, duckdb::Expression& expr,
-                             std::vector<ScoreBound>& out) -> void {
-    if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
-      for (const auto& child :
-           expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
-        self(*child, out);
-      }
-      return;
-    }
+  const auto bounds_of = [&](duckdb::Expression& expr,
+                             std::vector<ScoreBound>& out) {
     if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
       return;
     }
@@ -1388,10 +1381,8 @@ bool TryClaimAnnRange(
       vector.exact = true;
       continue;
     }
-    if (bounds.size() != 1 ||
-        !duckdb::BoundComparisonExpression::IsComparison(expr) ||
-        !bounds.front().radius || !ascending || radius_filter ||
-        vector.radius != std::numeric_limits<float>::max()) {
+    if (bounds.size() != 1 || !bounds.front().radius || !ascending ||
+        radius_filter || vector.radius != std::numeric_limits<float>::max()) {
       continue;
     }
     vector.radius = *bounds.front().radius;

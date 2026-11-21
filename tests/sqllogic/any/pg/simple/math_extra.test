@@ -235,6 +235,13 @@ s270	s210	c270	c240	t225	t315	ct225
 -1	-0.5	0	-0.5	1	-1	1
 
 
+query
+SELECT tand(0) AS t0, tand(180) AS t180, cotd(90) AS ct90, cotd(270) AS ct270, tand(30) BETWEEN 0.5773502691 AND 0.5773502692 AS t30, asind(0.25) BETWEEN 14.4775121859 AND 14.477512186 AS as25, acosd(0.25) BETWEEN 75.522487814 AND 75.5224878141 AS ac25;
+----
+t0	t180	ct90	ct270	t30	as25	ac25
+0	0	0	0	t	t	t
+
+
 statement error
 SELECT sind('Infinity'::float8);
 ----
@@ -243,6 +250,12 @@ db error: ERROR: input is out of range
 
 statement error
 SELECT asind(1.5);
+----
+db error: ERROR: input is out of range
+
+
+statement error
+SELECT acosd(-1.5);
 ----
 db error: ERROR: input is out of range
 

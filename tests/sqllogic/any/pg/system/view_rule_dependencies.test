@@ -175,5 +175,12 @@ type	schema	name	identity
 rule	NULL	NULL	NULL
 
 
+query
+SELECT type, schema, name, identity FROM pg_identify_object('pg_rewrite'::regclass, 'vrd.vn'::regclass, 0);
+----
+type	schema	name	identity
+rule	NULL	NULL	NULL
+
+
 statement ok
 DROP SCHEMA vrd CASCADE;

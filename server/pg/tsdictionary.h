@@ -35,8 +35,7 @@ void CompileTokenizer(duckdb::ClientContext& context,
 using TokenizerConfigs =
   std::vector<std::unique_ptr<irs::analysis::TokenizerConfig>>;
 
-irs::analysis::TokenizerConfig BuildStage(duckdb::ClientContext& context,
-                                          std::string_view type,
+irs::analysis::TokenizerConfig BuildStage(std::string_view type,
                                           Options options,
                                           TokenizerConfigs children,
                                           std::string_view operation);

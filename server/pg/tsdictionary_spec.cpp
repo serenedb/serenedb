@@ -299,15 +299,9 @@ void RejectNestedAnalyzers(const duckdb::ParsedExpression& expr) {
     });
 }
 
-struct BuildContext {
-  duckdb::ClientContext& context;
-};
+irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain);
 
-irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain,
-                                                const BuildContext& ctx);
-
-irs::analysis::TokenizerConfig BuildStageConfig(const Stage& stage,
-                                                const BuildContext& ctx) {
+irs::analysis::TokenizerConfig BuildStageConfig(const Stage& stage) {
   Options options;
   const auto put = [&](std::string_view name, duckdb::Value value) {
     options.try_emplace(name,
@@ -330,27 +324,24 @@ irs::analysis::TokenizerConfig BuildStageConfig(const Stage& stage,
       break;
   }
   auto children = stage.children |
-                  std::views::transform([&](const Chain& child) {
+                  std::views::transform([](const Chain& child) {
                     return std::make_unique<irs::analysis::TokenizerConfig>(
-                      BuildChainConfig(child, ctx));
+                      BuildChainConfig(child));
                   }) |
                   std::ranges::to<TokenizerConfigs>();
-  return BuildStage(ctx.context, type, std::move(options), std::move(children),
-                    kOperation);
+  return BuildStage(type, std::move(options), std::move(children), kOperation);
 }
 
-irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain,
-                                                const BuildContext& ctx) {
+irs::analysis::TokenizerConfig BuildChainConfig(const Chain& chain) {
   if (chain.size() == 1) {
-    return BuildStageConfig(chain.front(), ctx);
+    return BuildStageConfig(chain.front());
   }
-  auto children = chain | std::views::transform([&](const Stage& stage) {
+  auto children = chain | std::views::transform([](const Stage& stage) {
                     return std::make_unique<irs::analysis::TokenizerConfig>(
-                      BuildStageConfig(stage, ctx));
+                      BuildStageConfig(stage));
                   }) |
                   std::ranges::to<TokenizerConfigs>();
-  return BuildStage(ctx.context, kPipelineName, {}, std::move(children),
-                    kOperation);
+  return BuildStage(kPipelineName, {}, std::move(children), kOperation);
 }
 
 std::string RenderOption(const OptionGroup& group, std::string_view name,
@@ -406,7 +397,7 @@ class SpecCompiler {
 
   CompiledTSDictionary Compile(std::string_view spec) {
     const auto chain = CompileChain(*Parse(spec));
-    return {.config = BuildChainConfig(chain, {_context}),
+    return {.config = BuildChainConfig(chain),
             .definition = RenderChain(chain)};
   }
 

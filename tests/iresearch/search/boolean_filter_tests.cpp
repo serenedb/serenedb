@@ -3450,11 +3450,20 @@ TEST(OrAcceptorFusion_test, scored_sum_fuses_only_when_each_word_matches_once) {
   constexpr std::string_view kNested[] = {"ax", "bana", "ban"};
   constexpr std::string_view kUnderPrefix[] = {"axle"};
   constexpr std::string_view kBesidePrefixes[] = {"kiwi"};
+  constexpr std::string_view kAroundPrefixes[] = {"apple", "kiwi"};
+  constexpr std::string_view kUnderLaterPrefix[] = {"apple", "banana"};
+  constexpr std::string_view kRepeated[] = {"kiwi", "kiwi"};
   EXPECT_NE(nullptr, FusedOf(optimized(irs::ScoreMergeType::Sum, kDisjoint,
                                        kBesidePrefixes)));
+  EXPECT_NE(nullptr, FusedOf(optimized(irs::ScoreMergeType::Sum, kDisjoint,
+                                       kAroundPrefixes)));
   EXPECT_EQ(nullptr, FusedOf(optimized(irs::ScoreMergeType::Sum, kNested, {})));
   EXPECT_EQ(nullptr, FusedOf(optimized(irs::ScoreMergeType::Sum, kDisjoint,
                                        kUnderPrefix)));
+  EXPECT_EQ(nullptr, FusedOf(optimized(irs::ScoreMergeType::Sum, kDisjoint,
+                                       kUnderLaterPrefix)));
+  EXPECT_EQ(nullptr,
+            FusedOf(optimized(irs::ScoreMergeType::Sum, kDisjoint, kRepeated)));
   EXPECT_NE(nullptr, FusedOf(optimized(irs::ScoreMergeType::Max, kDisjoint,
                                        kUnderPrefix)));
 }

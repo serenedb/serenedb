@@ -57,3 +57,24 @@ SELECT min(x), max(x) FROM stmar_default
 ----
 min	max
 2	999
+
+statement ok
+CREATE TABLE stmar_nulls (id BIGINT, x BIGINT) WITH (compaction_interval = 0)
+
+statement ok
+INSERT INTO stmar_nulls VALUES (1, NULL), (2, NULL)
+
+statement ok
+INSERT INTO stmar_nulls VALUES (3, 7), (4, 9)
+
+query
+SELECT min(x), max(x) FROM stmar_nulls
+----
+min	max
+7	9
+
+query
+SELECT count(*) FROM stmar_nulls WHERE x IS NULL
+----
+count
+2

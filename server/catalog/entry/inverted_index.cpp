@@ -35,6 +35,7 @@
 #include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/expression/columnref_expression.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_job_info.hpp>
@@ -331,21 +332,41 @@ duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
   return catalog;
 }
 
+namespace {
+
+duckdb::optional_ptr<TokenizerCatalogEntry> FindDictionary(
+  duckdb::ClientContext& context, duckdb::Catalog& catalog, duckdb::idx_t oid) {
+  const auto find = [&](duckdb::Catalog& in) {
+    return in.Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(
+      in.GetCatalogTransaction(context), oid);
+  };
+  if (!catalog.GetAttached().IsTemporary()) {
+    return find(catalog);
+  }
+  for (const auto& database :
+       duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
+    auto& in = database->GetCatalog();
+    if (database->IsTemporary() || !IsSereneDB(in)) {
+      continue;
+    }
+    if (const auto dict = find(in)) {
+      return dict;
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
                                  duckdb::Catalog& catalog,
                                  const InvertedIndexConfig& config)
   : _context{&context} {
   const bool temporary = catalog.GetAttached().IsTemporary();
-  auto dictionaries = DictionaryCatalog(context, catalog);
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
-      const auto dict =
-        dictionaries
-          ? dictionaries->Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(
-              dictionaries->GetCatalogTransaction(context),
-              field.text_dictionary)
-          : nullptr;
+      const auto dict = FindDictionary(context, catalog, field.text_dictionary);
       if (!dict && temporary) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                         ERR_MSG("text search dictionary with OID ",

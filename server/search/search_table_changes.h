@@ -94,6 +94,19 @@ inline void ForEachUnitRows(
   }
 }
 
+inline void AppendRows(std::unique_ptr<duckdb::ColumnDataCollection>& into,
+                       std::unique_ptr<duckdb::ColumnDataCollection> rows) {
+  if (!into) {
+    into = std::move(rows);
+  } else if (rows->Count() < STANDARD_VECTOR_SIZE) {
+    for (auto& chunk : rows->Chunks()) {
+      into->Append(chunk);
+    }
+  } else {
+    into->Combine(*rows);
+  }
+}
+
 // Per-search-table, per-transaction write buffer.
 struct LocalTableChangesEntry {
   std::unique_ptr<duckdb::ColumnDataCollection> collection;
@@ -117,14 +130,8 @@ struct LocalTableChangesEntry {
     if (collection == nullptr) {
       column_ids.assign(cols.begin(), cols.end());
       catalog = &cat;
-      collection = std::move(rows);
-    } else if (rows->Count() < STANDARD_VECTOR_SIZE) {
-      for (auto& chunk : rows->Chunks()) {
-        collection->Append(chunk);
-      }
-    } else {
-      collection->Combine(*rows);
     }
+    AppendRows(collection, std::move(rows));
   }
 
   void AppendTruncate(std::shared_ptr<const irs::DocRemoval> visible) {

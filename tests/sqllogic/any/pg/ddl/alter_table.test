@@ -317,3 +317,39 @@ constraints
 
 statement ok
 DROP TABLE selfref;
+
+
+statement ok
+CREATE TABLE tablespace_t (id INT);
+
+
+statement ok
+CREATE INDEX tablespace_t_id ON tablespace_t (id);
+
+
+onlyif postgres
+statement ok
+ALTER TABLE tablespace_t SET TABLESPACE pg_default;
+
+
+skipif postgres
+statement error
+ALTER TABLE tablespace_t SET TABLESPACE pg_default;
+----
+db error: ERROR: SET TABLESPACE is not supported
+
+
+onlyif postgres
+statement ok
+ALTER INDEX tablespace_t_id SET TABLESPACE pg_default;
+
+
+skipif postgres
+statement error
+ALTER INDEX tablespace_t_id SET TABLESPACE pg_default;
+----
+db error: ERROR: SET TABLESPACE is not supported
+
+
+statement ok
+DROP TABLE tablespace_t;

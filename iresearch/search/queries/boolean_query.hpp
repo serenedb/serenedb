@@ -193,7 +193,7 @@ class BooleanBuilder {
 
   void Merge(const BooleanQuery& nested, Occur to);
 
-  void MergeBucket(BooleanQuery::PreparedBucket& from, Occur to, score_t boost);
+  void MergeBucket(BooleanQuery::PreparedBucket& from, Occur to);
 
   void Order(BooleanQuery::PreparedBucket& bucket, bool ascending);
 

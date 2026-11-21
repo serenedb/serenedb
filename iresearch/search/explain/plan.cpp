@@ -251,8 +251,12 @@ using Part = std::variant<LeafPart, GroupPart>;
 
 class GroupPart {
  public:
-  GroupPart(Planner plan, bool max, std::optional<score_t> absorbed)
-    : _cursor{.plan = std::move(plan)}, _max{max}, _absorbed{absorbed} {}
+  GroupPart(Planner plan, bool max, bool optional,
+            std::optional<score_t> absorbed)
+    : _cursor{.plan = std::move(plan)},
+      _max{max},
+      _optional{optional},
+      _absorbed{absorbed} {}
 
   void Add(Part part);
 
@@ -262,6 +266,7 @@ class GroupPart {
   Cursor _cursor;
   std::vector<Part> _parts;
   bool _max;
+  bool _optional;
   std::optional<score_t> _absorbed;
 };
 
@@ -286,7 +291,9 @@ Outcome GroupPart::Explain(doc_id_t doc, Node& out) {
   const auto add = [&](Node&& child, Outcome outcome) {
     if (outcome == Outcome::Scored) {
       const auto value = std::get<score_t>(child.value);
-      total = _max ? std::max(total, value) : total + value;
+      total = !_max                 ? total + value
+              : scored || _optional ? std::max(total, value)
+                                    : value;
       scored = true;
     }
     out.details.push_back(std::move(child));
@@ -441,7 +448,7 @@ class Builder {
 
   GroupPart MakeTerms(const MultiTermQuery& query) {
     const auto& state = query.State();
-    GroupPart group{Planner{}, query.MergeType() == ScoreMergeType::Max,
+    GroupPart group{Planner{}, query.MergeType() == ScoreMergeType::Max, true,
                     std::nullopt};
     const auto* const scorer = query.Stats(Scoring()).scorer;
     for (const auto& entry : state.Terms()) {
@@ -462,9 +469,11 @@ class Builder {
         scores_all(query.Bucket(Occur::Should))) {
       absorbed = query.Absorbed(_fetcher);
     }
+    const auto& should = query.Bucket(Occur::Should);
     GroupPart group{
       [&query] { return query.PlanProbe(detail::ScoredCtx{}, 1); },
-      query.MergeType() == ScoreMergeType::Max, absorbed};
+      query.MergeType() == ScoreMergeType::Max,
+      !should.postings.empty() || !should.filters.empty(), absorbed};
     for (const auto occur : {Occur::Must, Occur::Should}) {
       const auto& bucket = query.Bucket(occur);
       for (const auto& clause : bucket.postings) {

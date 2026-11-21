@@ -406,6 +406,248 @@ def test_startup_utf8_client_encoding_no_warning():
         )
 
 
+def test_value_dependent_result_types_are_described(conn):
+    conn.parse(
+        "value_dependent",
+        "SELECT round(1.2345::numeric, $1) AS r, "
+        "percentile_cont($2::float8) WITHIN GROUP (ORDER BY x) AS p "
+        "FROM (VALUES (1), (2)) t(x)",
+    )
+    conn.describe("S", "value_dependent")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert [(n, oid) for n, oid, _ in row_description(msgs)] == [
+        ("r", 1700),
+        ("p", 701),
+    ]
+    conn.bind("", "value_dependent", params=(b"2", b"0.25"))
+    conn.describe("P", "")
+    conn.execute("")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert [(n, oid) for n, oid, _ in row_description(msgs)] == [
+        ("r", 1700),
+        ("p", 701),
+    ]
+    assert all_fields(msgs) == [b"1.23", b"1.25"]
+
+
+def test_typed_value_dependent_parameters_are_described(conn):
+    conn.parse(
+        "typed_value_dependent",
+        "SELECT round(1.2345::numeric, $1) AS r, $2 AS d",
+        oids=(23, 1082),
+    )
+    conn.describe("S", "typed_value_dependent")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert [(n, oid) for n, oid, _ in row_description(msgs)] == [
+        ("r", 1700),
+        ("d", 1082),
+    ]
+
+
+def test_file_path_parameter_is_described_with_the_file_columns(conn, tmp_path):
+    path = str(tmp_path / "tickets.parquet")
+    conn.run_ok(
+        "COPY (SELECT 1 AS id, 'high' AS priority, 'search' AS product) "
+        f"TO '{path}' (FORMAT parquet)"
+    )
+    conn.parse(
+        "file_path_parameter",
+        "SELECT id, priority FROM read_parquet($1) WHERE product = $2 ORDER BY id",
+    )
+    conn.bind("", "file_path_parameter", params=(path.encode(), b"search"))
+    conn.describe("P", "")
+    conn.execute("")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert [(n, oid) for n, oid, _ in row_description(msgs)] == [
+        ("id", 23),
+        ("priority", 25),
+    ]
+    assert all_fields(msgs) == [b"1", b"high"]
+
+
+def test_text_parameters_take_postgres_input_forms(conn):
+    conn.parse(
+        "input_forms",
+        "SELECT $1::bool, $2::bool, $3::date, $4::date, $5::time, "
+        "$6::timestamptz::text",
+    )
+    conn.bind(
+        "",
+        "input_forms",
+        params=(
+            b"TRUE",
+            b" on ",
+            b"2004-02-01 00:00:00",
+            b"20240102",
+            b"07:08:09+00",
+            b"2026-10-10 09:55:01.123 +00:00",
+        ),
+    )
+    conn.execute("")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert all_fields(msgs) == [
+        b"t",
+        b"t",
+        b"2004-02-01",
+        b"2024-01-02",
+        b"07:08:09",
+        b"2026-10-10 09:55:01.123+00",
+    ]
+
+
+def _run_with(conn, query: str, params=()):
+    conn.parse("", query)
+    conn.bind("", "", params=params)
+    conn.execute("")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), (query, errors(msgs))
+    return msgs
+
+
+def _simple(conn, query: str):
+    conn.send("Q", _cstr(query))
+    return conn.drain_to_ready()
+
+
+def test_xact_start_is_the_start_of_each_statements_transaction(conn):
+    activity = ("FROM pg_stat_activity WHERE pid = pg_backend_pid()")
+    assert not errors(_simple(conn, "BEGIN"))
+    assert not errors(_simple(conn, "SELECT pg_sleep(0.3)"))
+    msgs = _simple(conn, "COMMIT; SELECT now() = xact_start AS current " + activity)
+    assert not errors(msgs), errors(msgs)
+    assert all_fields(msgs) == [b"t"]
+    assert not errors(_simple(conn, "BEGIN"))
+    assert errors(_simple(conn, "SELECT 1/0"))
+    msgs = _simple(
+        conn, "ROLLBACK; SELECT state, now() = xact_start AS current " + activity)
+    assert not errors(msgs), errors(msgs)
+    assert all_fields(msgs) == [b"active", b"t"]
+
+
+def test_activity_shows_a_statement_refused_before_it_runs(conn):
+    observer = WireConn()
+    try:
+        pid = first_field(conn.run_ok("SELECT pg_backend_pid()")).decode()
+        query = "SELECT $1 + 1 AS refused_activity"
+
+        def activity():
+            return all_fields(observer.run_ok(
+                f"SELECT state, query FROM pg_stat_activity WHERE pid = {pid}"))
+
+        conn.parse("refused_activity", query, oids=(23,))
+        conn.sync()
+        assert not errors(conn.drain_to_ready())
+        conn.run_ok("SELECT 1")
+        conn.bind("", "refused_activity", params=(b"x",))
+        conn.sync()
+        assert sqlstates(conn.drain_to_ready()) == ["22P02"]
+        assert activity() == [b"idle", query.encode()]
+
+        conn.run_ok("DROP TABLE IF EXISTS refused_copy")
+        conn.run_ok("CREATE TABLE refused_copy (i INT)")
+        copy = "COPY refused_copy FROM STDIN (FORMAT parquet)"
+        assert sqlstates(_simple(conn, copy)) == ["0A000"]
+        assert activity() == [b"idle", copy.encode()]
+        conn.run_ok("SELECT 1")
+        conn.parse("", copy)
+        conn.bind("", "")
+        conn.execute("")
+        conn.sync()
+        assert sqlstates(conn.drain_to_ready()) == ["0A000"]
+        assert activity() == [b"idle", copy.encode()]
+        conn.run_ok("DROP TABLE refused_copy")
+
+        assert not errors(_simple(conn, "BEGIN"))
+        conn.bind("refused_portal", "refused_activity", params=(b"1",))
+        conn.sync()
+        assert statuses(conn.drain_to_ready()) == ["T"]
+        assert errors(_simple(conn, "SELECT 1/0"))
+        conn.bind("", "refused_activity", params=(b"1",))
+        conn.sync()
+        assert sqlstates(conn.drain_to_ready()) == ["25P02"]
+        assert activity() == [b"idle in transaction (aborted)", query.encode()]
+
+        assert sqlstates(_simple(conn, "SELECT 2")) == ["25P02"]
+        assert activity() == [b"idle in transaction (aborted)", b"SELECT 2"]
+        conn.execute("refused_portal")
+        conn.sync()
+        assert sqlstates(conn.drain_to_ready()) == ["25P02"]
+        assert activity() == [b"idle in transaction (aborted)", query.encode()]
+        assert not errors(_simple(conn, "ROLLBACK"))
+    finally:
+        observer.close()
+
+
+def test_untyped_parameters_keep_their_numeric_value(conn):
+    conn.run_ok("DROP TABLE IF EXISTS untyped_price")
+    conn.run_ok("CREATE TABLE untyped_price (price NUMERIC(5,2))")
+    conn.run_ok("INSERT INTO untyped_price VALUES (100.00)")
+    assert all_fields(_run_with(
+        conn, "SELECT price * $1 = 15 FROM untyped_price", (b"0.15",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price + $1 = 1100.255 FROM untyped_price",
+        (b"1000.255",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT 1.5 + $1 = 1001.75", (b"1000.25",))) == [b"t"]
+    _run_with(conn, "UPDATE untyped_price SET price = price * $1", (b"1.10",))
+    assert first_field(conn.run_ok("SELECT price FROM untyped_price")) == b"110.00"
+    conn.run_ok("DROP TABLE untyped_price")
+
+
+def test_execute_in_a_named_statement_runs_the_statement_as_it_is_now(conn):
+    conn.run_ok("DROP TABLE IF EXISTS named_exec_kv")
+    conn.run_ok("CREATE TABLE named_exec_kv (k INT PRIMARY KEY, v TEXT)")
+    conn.run_ok("INSERT INTO named_exec_kv VALUES (1, 'one'), (2, 'two')")
+    conn.run_ok(
+        "PREPARE named_exec_byk(INT) AS SELECT v FROM named_exec_kv WHERE k = $1")
+    conn.parse("named_exec_s1", "EXECUTE named_exec_byk(1)")
+    conn.sync()
+    assert not errors(conn.drain_to_ready())
+
+    def run_named():
+        conn.bind("", "named_exec_s1")
+        conn.execute("")
+        conn.sync()
+        msgs = conn.drain_to_ready()
+        assert not errors(msgs), errors(msgs)
+        return all_fields(msgs)
+
+    def executions(name: str) -> bytes:
+        return first_field(conn.run_ok(
+            "SELECT generic_plans + custom_plans FROM pg_prepared_statements "
+            f"WHERE name = '{name}'"))
+
+    assert run_named() == [b"one"]
+    conn.run_ok("EXECUTE named_exec_byk(2)")
+    assert run_named() == [b"one"]
+    assert executions("named_exec_byk") == b"3"
+    conn.run_ok("DEALLOCATE named_exec_byk")
+    conn.run_ok(
+        "PREPARE named_exec_byk(INT) AS "
+        "SELECT upper(v) FROM named_exec_kv WHERE k = $1")
+    assert run_named() == [b"ONE"]
+    assert run_named() == [b"ONE"]
+    assert executions("named_exec_byk") == b"2"
+
+    conn.run_ok("PREPARE named_exec_now AS SELECT now() IS NOT NULL AS ok")
+    assert all_fields(_run_with(conn, "EXECUTE named_exec_now")) == [b"t"]
+    assert all_fields(_run_with(conn, "EXECUTE named_exec_now")) == [b"t"]
+    assert executions("named_exec_now") == b"2"
+    conn.run_ok("DEALLOCATE ALL")
+    conn.run_ok("DROP TABLE named_exec_kv")
+
+
 def test_empty_query_extended(conn):
     conn.parse("", "")
     conn.bind("", "")

@@ -38,7 +38,6 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
-#include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/columns.h"
@@ -81,15 +80,6 @@ std::optional<std::vector<std::string>> Reloptions(
   return NonEmpty(std::move(result));
 }
 
-uint64_t RelationRowType(const duckdb::CatalogEntry& relation) {
-  if (const auto* row = relation.oid < kMaxSystem
-                          ? FindBuiltinRowType(relation.oid)
-                          : nullptr) {
-    return row->oid;
-  }
-  return relation.internal ? kInvalidOid : RowTypeOid(relation.oid);
-}
-
 constexpr std::tuple kRelationBase{
   Col<"oid">(&duckdb::CatalogEntry::oid),
   Col<"relname">(&duckdb::CatalogEntry::name),
@@ -118,6 +108,7 @@ struct Ordinary {
 struct KeyIndex {
   const duckdb::TableCatalogEntry& table;
   const duckdb::UniqueConstraint& key;
+  const catalog::SearchTableEntry* search;
 };
 
 struct Index {
@@ -174,7 +165,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       return entry.Table().Sql().shared ? kPgGlobalTablespace
                                         : duckdb::idx_t{0};
     }),
-    Col<"reltype">(&RelationRowType),
+    Col<"reltype">(&RowTypeOid),
     Col<"relacl">([](const auto& relation) -> const auto& {
       return relation.permissions.acl;
     }));
@@ -193,7 +184,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       return row.table.GetColumns().LogicalColumnCount();
     }),
     Col<"relreplident">([](const auto&) { return 'd'; }),
-    Col<"reltype">([](const auto& row) { return RelationRowType(row.table); }),
+    Col<"reltype">([](const auto& row) { return RowTypeOid(row.table); }),
     Col<"reloptions">([](const auto& row) {
       return row.search ? Reloptions(*row.search) : std::nullopt;
     }),
@@ -243,6 +234,9 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relam">([](const auto&) { return kPgAmInverted; }),
     Col<"relnatts">([](const auto& row) {
       return KeyAttnums(row.table.GetColumns(), row.key).size();
+    }),
+    Col<"reltablespace">([](const auto& row) {
+      return row.search ? row.search->Tablespace() : duckdb::idx_t{0};
     }));
 
   static constexpr auto kIndex = Shape<kSql, const Index>(
@@ -275,7 +269,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
   static constexpr auto kView = Shape<kSql, duckdb::ViewCatalogEntry>(
     kRelation<'v'>, Col<"relhasrules">([](const auto&) { return true; }),
     Col<"reltuples">([](const auto&) { return -1.0F; }),
-    Col<"reltype">(&RelationRowType),
+    Col<"reltype">(&RowTypeOid),
     Col<"relnatts">([](auto& view, SystemScan& scan) {
       const auto columns = ViewColumns(scan.Context(), view);
       return columns ? columns->types.size() : 0;
@@ -333,7 +327,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
         _tables.emplace(table.oid, &table);
       }
       for (const auto& key : KeyIndexes(table)) {
-        Emit<kKeyIndex>({table, key}, Shown(*this, table, key.constraint_name));
+        Emit<kKeyIndex>({table, key, search},
+                        Shown(*this, table, key.constraint_name));
       }
     }
   }

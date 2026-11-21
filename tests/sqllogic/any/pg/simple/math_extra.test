@@ -200,6 +200,66 @@ atan2d
 90
 
 
+query
+SELECT sind(30) AS s30, cosd(60) AS c60, tand(45) AS t45, cotd(45) AS ct45, sind(180) AS s180, cosd(90) AS c90, tand(90) AS t90, cotd(180) AS ct180, cotd(360) AS ct360, asind(0.5) AS as05, acosd(0.5) AS ac05;
+----
+s30	c60	t45	ct45	s180	c90	t90	ct180	ct360	as05	ac05
+0.5	0.5	1	1	0	0	Infinity	-Infinity	Infinity	30	60
+
+
+query
+SELECT sind(-30) AS s, cosd(-120) AS c, tand(-45) AS t, asind(-0.5) AS a, acosd(-0.5) AS ac, atand(-1) AS at, atan2d(1, 1) AS at2;
+----
+s	c	t	a	ac	at	at2
+-0.5	-0.5	-1	-30	120	-45	45
+
+
+query
+SELECT sind('NaN'::float8) AS s, acosd('NaN'::float8) AS a, atan2d('NaN'::float8, 1) AS t;
+----
+s	a	t
+NaN	NaN	NaN
+
+
+query
+SELECT cosd('NaN'::float8) AS c, asind('NaN'::float8) AS a, atand('NaN'::float8) AS t;
+----
+c	a	t
+NaN	NaN	NaN
+
+
+query
+SELECT sind(270) AS s270, sind(210) AS s210, cosd(270) AS c270, cosd(240) AS c240, tand(225) AS t225, tand(315) AS t315, cotd(225) AS ct225;
+----
+s270	s210	c270	c240	t225	t315	ct225
+-1	-0.5	0	-0.5	1	-1	1
+
+
+query
+SELECT tand(0) AS t0, tand(180) AS t180, cotd(90) AS ct90, cotd(270) AS ct270, tand(30) BETWEEN 0.5773502691 AND 0.5773502692 AS t30, asind(0.25) BETWEEN 14.4775121859 AND 14.477512186 AS as25, acosd(0.25) BETWEEN 75.522487814 AND 75.5224878141 AS ac25;
+----
+t0	t180	ct90	ct270	t30	as25	ac25
+0	0	0	0	t	t	t
+
+
+statement error
+SELECT sind('Infinity'::float8);
+----
+db error: ERROR: input is out of range
+
+
+statement error
+SELECT asind(1.5);
+----
+db error: ERROR: input is out of range
+
+
+statement error
+SELECT acosd(-1.5);
+----
+db error: ERROR: input is out of range
+
+
 # erf / erfc
 
 query

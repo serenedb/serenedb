@@ -324,6 +324,8 @@ std::unique_ptr<irs::BooleanFilter> MakeConjunctFilter(
   const ExpressionGetter& expr_getter, FilterScorers* scorers,
   WideRanges wide_ranges);
 
+bool IsIndexOnlyPredicateName(std::string_view name);
+
 // True when the expression tree contains an optimizer-claimed index-only
 // predicate (`@@` or the match sugar) that cannot run as a scalar.
 bool ContainsIndexOnlyPredicate(const duckdb::Expression& expr);

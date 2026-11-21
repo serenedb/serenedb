@@ -24,6 +24,7 @@
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <optional>
+#include <string_view>
 
 #include "connector/scan/scan_bind.h"
 #include "connector/search_filter_builder.hpp"
@@ -44,6 +45,8 @@ void IResearchPushdownComplexFilter(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters);
 
 void RegisterIResearchPlanOptimizer(duckdb::DatabaseInstance& db);
+
+bool IsScorerFunctionName(std::string_view name);
 
 duckdb::unique_ptr<duckdb::Expression> SubstituteParameters(
   duckdb::unique_ptr<duckdb::Expression> expr, bool with_values);

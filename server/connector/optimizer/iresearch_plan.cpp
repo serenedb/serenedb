@@ -559,19 +559,6 @@ irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
                                     client_context));
 }
 
-bool IsScorerFunctionName(std::string_view name) {
-  using S = catalog::ScorerOptions;
-  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
-    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
-    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
-    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
-    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
-    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
-    S::Constant::Owner::type_name(),
-  };
-  return kScorerNames.contains(name);
-}
-
 struct AnnFunctionInfo {
   irs::VectorMetric metric;
   duckdb::OrderType order;
@@ -1290,87 +1277,124 @@ bool TryClaimAnnRange(
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>& filters,
   const PlannedScan& planned, duckdb::ClientContext& context) {
   auto& scan = planned.Bind();
-  if (!scan.score.vector ||
-      scan.score.vector->natural_order != duckdb::OrderType::ASCENDING ||
-      scan.score.vector->radius != std::numeric_limits<float>::max()) {
+  if (!scan.score.vector) {
     return false;
   }
-
-  for (duckdb::idx_t i = 0; i < filters.size(); ++i) {
-    auto& expr = *filters[i];
-    if (!duckdb::BoundComparisonExpression::IsComparison(expr)) {
-      continue;
+  auto& vector = *scan.score.vector;
+  const bool ascending = vector.natural_order == duckdb::OrderType::ASCENDING;
+  struct ScoreBound {
+    duckdb::ExpressionType op;
+    std::optional<float> radius;
+  };
+  const auto is_score = [&](const duckdb::Expression* side, bool& negated) {
+    negated = false;
+    const auto binding = ScoreSideBinding(side, negated);
+    return binding &&
+           planned.IdOf(*binding) == connector::kInvertedIndexScoreId;
+  };
+  const auto fold = [&](duckdb::Expression& side) -> std::optional<float> {
+    duckdb::Value value;
+    if (!TryFoldExpression(context, side, value)) {
+      return std::nullopt;
     }
-    auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
-    auto op = cmp.GetExpressionType();
+    std::optional<float> bound;
+    switch (value.type().id()) {
+      case duckdb::LogicalTypeId::FLOAT:
+        bound = value.GetValue<float>();
+        break;
+      case duckdb::LogicalTypeId::DOUBLE:
+        bound = static_cast<float>(value.GetValue<double>());
+        break;
+      default:
+        break;
+    }
+    if (!bound || std::isnan(*bound)) {
+      return std::nullopt;
+    }
+    return bound;
+  };
+  // Normalize to `score <op> radius` (score = the raw vector distance): put
+  // the score on the left, then fold away a `-(score)` wrapper. A radius is
+  // an upper bound on the distance.
+  const auto normalized = [](duckdb::ExpressionType op, bool negated,
+                             std::optional<float> radius) {
+    if (negated) {
+      op = duckdb::FlipComparisonExpression(op);
+      if (radius) {
+        *radius = -*radius;
+      }
+    }
+    return ScoreBound{.op = op, .radius = radius};
+  };
+  const auto bounds_of = [&](duckdb::Expression& expr,
+                             std::vector<ScoreBound>& out) {
+    if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
+      return;
+    }
+    auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
+    bool negated = false;
+    if (expr.GetExpressionType() == duckdb::ExpressionType::COMPARE_BETWEEN) {
+      if (!is_score(&duckdb::BoundBetweenExpression::Input(func), negated)) {
+        return;
+      }
+      out.push_back(normalized(
+        duckdb::BoundBetweenExpression::LowerComparisonType(func), negated,
+        fold(*duckdb::BoundBetweenExpression::LowerBoundMutable(func))));
+      out.push_back(normalized(
+        duckdb::BoundBetweenExpression::UpperComparisonType(func), negated,
+        fold(*duckdb::BoundBetweenExpression::UpperBoundMutable(func))));
+      return;
+    }
+    if (!duckdb::BoundComparisonExpression::IsComparison(expr)) {
+      return;
+    }
+    auto op = func.GetExpressionType();
     if (op != duckdb::ExpressionType::COMPARE_LESSTHAN &&
         op != duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO &&
         op != duckdb::ExpressionType::COMPARE_GREATERTHAN &&
         op != duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) {
+      return;
+    }
+    auto& left = *duckdb::BoundComparisonExpression::LeftMutable(func);
+    auto& right = *duckdb::BoundComparisonExpression::RightMutable(func);
+    if (is_score(&left, negated)) {
+      out.push_back(normalized(op, negated, fold(right)));
+    } else if (is_score(&right, negated)) {
+      out.push_back(
+        normalized(duckdb::FlipComparisonExpression(op), negated, fold(left)));
+    }
+  };
+  const auto excludes_best = [&](const ScoreBound& bound) {
+    const bool upper =
+      bound.op == duckdb::ExpressionType::COMPARE_LESSTHAN ||
+      bound.op == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO;
+    return upper != ascending;
+  };
+  std::optional<duckdb::idx_t> radius_filter;
+  std::vector<ScoreBound> bounds;
+  for (duckdb::idx_t i = 0; i < filters.size(); ++i) {
+    auto& expr = *filters[i];
+    bounds.clear();
+    bounds_of(expr, bounds);
+    if (absl::c_any_of(bounds, excludes_best)) {
+      vector.exact_for_bound = true;
+      vector.exact = true;
       continue;
     }
-    auto& cmp_left = duckdb::BoundComparisonExpression::LeftMutable(cmp);
-    auto& cmp_right = duckdb::BoundComparisonExpression::RightMutable(cmp);
-
-    // Find the side that resolves to the score column (bare or `-(score)`); the
-    // other side is the bound.
-    const auto is_score = [&](const std::optional<duckdb::ColumnBinding>& b) {
-      return b && planned.IdOf(*b) == connector::kInvertedIndexScoreId;
-    };
-    bool negated = false;
-    bool score_on_left = true;
-    duckdb::Expression* const_side = cmp_right.get();
-    auto binding = ScoreSideBinding(cmp_left.get(), negated);
-    if (!is_score(binding)) {
-      score_on_left = false;
-      const_side = cmp_left.get();
-      binding = ScoreSideBinding(cmp_right.get(), negated);
-      if (!is_score(binding)) {
-        continue;
-      }
-    }
-
-    duckdb::Value bound_value;
-    if (!TryFoldExpression(context, *const_side, bound_value)) {
+    if (bounds.size() != 1 || !bounds.front().radius || !ascending ||
+        radius_filter || vector.radius != std::numeric_limits<float>::max()) {
       continue;
     }
-    const auto bound = [&] -> std::optional<float> {
-      switch (bound_value.type().id()) {
-        case duckdb::LogicalTypeId::FLOAT:
-          return bound_value.GetValue<float>();
-        case duckdb::LogicalTypeId::DOUBLE:
-          return static_cast<float>(bound_value.GetValue<double>());
-        default:
-          return std::nullopt;
-      }
-    }();
-    if (!bound || std::isnan(*bound)) {
-      continue;
-    }
-
-    // Normalize to `score <op> radius` (score = the raw vector distance): put
-    // the score on the left, then fold away a `-(score)` wrapper. A radius is
-    // an upper bound on the distance; a lower bound stays a residual filter
-    // (the scan evaluates it in user-facing space).
-    float radius = *bound;
-    if (!score_on_left) {
-      op = duckdb::FlipComparisonExpression(op);
-    }
-    if (negated) {
-      op = duckdb::FlipComparisonExpression(op);
-      radius = -radius;
-    }
-    const bool inclusive =
-      op == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO;
-    if (op != duckdb::ExpressionType::COMPARE_LESSTHAN && !inclusive) {
-      continue;
-    }
-    scan.score.vector->radius = radius;
-    scan.score.vector->radius_inclusive = inclusive;
-    filters.erase(filters.begin() + i);
-    return true;
+    vector.radius = *bounds.front().radius;
+    vector.radius_inclusive =
+      bounds.front().op == duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO;
+    radius_filter = i;
   }
-  return false;
+  if (!radius_filter) {
+    return false;
+  }
+  filters.erase(filters.begin() + *radius_filter);
+  return true;
 }
 
 std::map<const duckdb::Expression*, connector::WideRanges> DecideColumnRanges(
@@ -1798,6 +1822,19 @@ void TakeColumnConjuncts(
 }
 
 }  // namespace
+
+bool IsScorerFunctionName(std::string_view name) {
+  using S = catalog::ScorerOptions;
+  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
+    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
+    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
+    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
+    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
+    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
+    S::Constant::Owner::type_name(),
+  };
+  return kScorerNames.contains(name);
+}
 
 void IResearchPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,

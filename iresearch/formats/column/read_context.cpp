@@ -100,6 +100,7 @@ void ReadContext::ResetFile(const duckdb::InputFile* file) {
   _in = file ? duckdb::InputFileReader{*file} : duckdb::InputFileReader{};
   _mapping = file ? file->Mapping().get() : nullptr;
   _ranges.clear();
+  _free_ids.clear();
 }
 
 duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,
@@ -135,8 +136,15 @@ void ReadContext::Read(duckdb::idx_t position, duckdb::data_ptr_t target,
 
 duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   uint64_t offset, uint64_t size) {
-  const auto id = static_cast<duckdb::block_id_t>(_ranges.size());
-  _ranges.emplace_back(offset, size);
+  duckdb::block_id_t id;
+  if (_free_ids.empty()) {
+    id = static_cast<duckdb::block_id_t>(_ranges.size());
+    _ranges.emplace_back(offset, size);
+  } else {
+    id = _free_ids.back();
+    _free_ids.pop_back();
+    _ranges[static_cast<size_t>(id)] = {offset, size};
+  }
   ++_live_handles;
   auto handle = RegisterBlock(id);
   handle->GetMemory().SetMemoryUsage(0);
@@ -159,8 +167,10 @@ bool ReadContext::Wraps(uint64_t offset, uint64_t size) const noexcept {
 
 void ReadContext::UnregisterBlock(duckdb::block_id_t id) {
   SDB_ASSERT(_live_handles != 0);
+  SDB_ASSERT(static_cast<size_t>(id) < _ranges.size());
   --_live_handles;
   duckdb::BlockManager::UnregisterBlock(id);
+  _free_ids.push_back(id);
 }
 
 duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(

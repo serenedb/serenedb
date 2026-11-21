@@ -1,0 +1,32 @@
+statement ok
+CREATE TABLE iinen (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, w INTEGER)
+
+statement ok
+CREATE INDEX iinen_idx ON iinen USING inverted (id, w, (a > b))
+
+statement ok
+INSERT INTO iinen VALUES (1, NULL, 5, 3), (2, 1, 5, 3), (3, 9, 5, 3)
+
+query
+SELECT id FROM iinen WHERE NOT ((a <= b) OR w = 1) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM iinen WHERE NOT ((a <= b)::boost(2) OR w = 1) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM iinen WHERE NOT ((a <= b)::boost(2) OR id < 0) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM iinen WHERE NOT ((a <= b OR w = 1)::min_match(1) OR id < 0) ORDER BY id
+----
+id
+3

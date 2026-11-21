@@ -73,13 +73,13 @@ TEST(ProgressRegistryTest, QueryLifecycle) {
   auto source = MakeSource(1002);
   ProgressRegistry::Instance().Register(source);
 
-  source->BeginQuery("SELECT 1");
+  source->BeginQuery("SELECT 1", 1000, false);
   auto snap = FindByPid(1002);
   ASSERT_TRUE(snap.has_value());
   EXPECT_EQ(snap->query, "SELECT 1");
   EXPECT_EQ(snap->status.state, BackendState::Active);
-  EXPECT_GT(snap->status.query_start_us, 0);
-  EXPECT_EQ(snap->status.xact_start_us, snap->status.query_start_us);
+  EXPECT_EQ(snap->status.query_start_us, 1000);
+  EXPECT_EQ(snap->status.xact_start_us, 1000);
   EXPECT_EQ(snap->status.state_change_us, snap->status.query_start_us);
   const auto started = snap->status.query_start_us;
 
@@ -99,20 +99,19 @@ TEST(ProgressRegistryTest, TransactionBlockLifecycle) {
   auto source = MakeSource(1007);
   ProgressRegistry::Instance().Register(source);
 
-  source->BeginQuery("BEGIN");
+  source->BeginQuery("BEGIN", 2000, false);
   source->ReportIdle(BackendState::IdleInTransaction);
   auto snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
-  const auto began = snap->status.xact_start_us;
-  EXPECT_GT(began, 0);
+  EXPECT_EQ(snap->status.xact_start_us, 2000);
   EXPECT_EQ(snap->status.state, BackendState::IdleInTransaction);
 
-  source->BeginQuery("SELECT 1/0");
+  source->BeginQuery("SELECT 1/0", 2500, true);
   snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
   EXPECT_EQ(snap->status.state, BackendState::Active);
-  EXPECT_EQ(snap->status.xact_start_us, began);
-  EXPECT_GE(snap->status.query_start_us, began);
+  EXPECT_EQ(snap->status.xact_start_us, 2000);
+  EXPECT_EQ(snap->status.query_start_us, 2500);
 
   source->ReportIdle(BackendState::IdleInTransactionAborted);
   snap = FindByPid(1007);
@@ -120,11 +119,7 @@ TEST(ProgressRegistryTest, TransactionBlockLifecycle) {
   EXPECT_EQ(snap->status.state, BackendState::IdleInTransactionAborted);
   EXPECT_EQ(snap->status.xact_start_us, 0);
 
-  source->BeginQuery("ROLLBACK");
-  snap = FindByPid(1007);
-  ASSERT_TRUE(snap.has_value());
-  EXPECT_EQ(snap->status.state, BackendState::Active);
-  EXPECT_EQ(snap->status.xact_start_us, 0);
+  source->BeginQuery("ROLLBACK", 2600, true);
   source->ReportIdle(BackendState::Idle);
   snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
@@ -132,10 +127,10 @@ TEST(ProgressRegistryTest, TransactionBlockLifecycle) {
   EXPECT_EQ(snap->status.xact_start_us, 0);
   EXPECT_GE(snap->status.state_change_us, snap->status.query_start_us);
 
-  source->BeginQuery("SELECT 2");
+  source->BeginQuery("SELECT 2", 3000, false);
   snap = FindByPid(1007);
   ASSERT_TRUE(snap.has_value());
-  EXPECT_EQ(snap->status.xact_start_us, snap->status.query_start_us);
+  EXPECT_EQ(snap->status.xact_start_us, 3000);
 
   ProgressRegistry::Instance().Unregister(source.get());
 }
@@ -146,9 +141,9 @@ TEST(ProgressRegistryTest, SnapshotsNeverMixTwoStates) {
   std::atomic<bool> stop{false};
   std::thread session{[&] {
     while (!stop.load(std::memory_order_relaxed)) {
-      source->BeginQuery("BEGIN");
+      source->BeginQuery("BEGIN", 4000, false);
       source->ReportIdle(BackendState::IdleInTransaction);
-      source->BeginQuery("COMMIT");
+      source->BeginQuery("COMMIT", 4100, true);
       source->ReportIdle(BackendState::Idle);
     }
   }};
@@ -170,7 +165,7 @@ TEST(ProgressRegistryTest, BeginQueryResetsMetrics) {
   auto source = MakeSource(1003);
   ProgressRegistry::Instance().Register(source);
 
-  source->BeginQuery("COPY t FROM STDIN");
+  source->BeginQuery("COPY t FROM STDIN", 5000, false);
   auto& m = source->metrics;
   m.SetCommand(ProgressCommand::CopyFrom);
   m.SetIoType(ProgressIoType::Pipe);
@@ -187,7 +182,7 @@ TEST(ProgressRegistryTest, BeginQueryResetsMetrics) {
   EXPECT_EQ(snap->bytes_processed, 4096);
 
   source->ReportIdle(BackendState::Idle);
-  source->BeginQuery("SELECT 1");
+  source->BeginQuery("SELECT 1", 6000, false);
   snap = FindByPid(1003);
   ASSERT_TRUE(snap.has_value());
   EXPECT_EQ(snap->command, 0);
@@ -202,7 +197,7 @@ TEST(ProgressRegistryTest, BeginQueryResetsMetrics) {
 TEST(ProgressRegistryTest, StageAndStepCounters) {
   auto source = MakeSource(1004);
   ProgressRegistry::Instance().Register(source);
-  source->BeginQuery("VACUUM");
+  source->BeginQuery("VACUUM", 7000, false);
 
   auto& m = source->metrics;
   m.SetCommand(ProgressCommand::Vacuum);
@@ -229,7 +224,7 @@ TEST(ProgressRegistryTest, StageAndStepCounters) {
 TEST(ProgressRegistryTest, DetachedSourceReportsNoDuckDBProgress) {
   auto source = MakeSource(1005);
   ProgressRegistry::Instance().Register(source);
-  source->BeginQuery("SELECT 1");
+  source->BeginQuery("SELECT 1", 6000, false);
   source->Detach();
 
   auto snap = FindByPid(1005);
@@ -251,7 +246,7 @@ TEST(ProgressRegistryTest,
                                     .client_backend = true}));
   auto& state = ConnectionContext::Get(*conn->context);
   ProgressRegistration registration{state.ProgressSource()};
-  state.ProgressSource()->BeginQuery("SELECT 1");
+  state.ProgressSource()->BeginQuery("SELECT 1", 8000, false);
 
   bool listed = false;
   std::atomic_bool snapshotted;

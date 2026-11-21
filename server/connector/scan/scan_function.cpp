@@ -283,6 +283,15 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     state->sampling = duckdb::ScanSamplingInfo::FromOptions(
       *input.sample_options, state->reader->live_docs_count());
     state->sample_seed = input.sample_options->seed;
+    if (!state->sampling.is_percentage) {
+      const auto& reader = *state->reader;
+      state->sample_row_bases.reserve(reader.size());
+      uint64_t rows = 0;
+      for (size_t seg = 0; seg != reader.size(); ++seg) {
+        state->sample_row_bases.push_back(rows);
+        rows += reader[seg].docs_count();
+      }
+    }
   }
   if (ss.score.text && ss.relation.kind == ScanEntryKind::SearchTable &&
       !state->ClaimedWhere()) {

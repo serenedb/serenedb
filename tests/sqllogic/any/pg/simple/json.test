@@ -241,3 +241,45 @@ SELECT json_strip_nulls('{"a":[1,null,{"b":null}]}'::json) AS nested, json_strip
 ----
 nested	scalar
 {"a":[1,null,{}]}	5
+
+query
+SELECT json_strip_nulls('{"a": 1 , "b": null}'::json) AS object, json_strip_nulls('[1 , 2 ]'::json) AS array,
+       length(json_strip_nulls(' 5 '::json)::text) AS scalar_length;
+----
+object	array	scalar_length
+{"a":1}	[1,2]	1
+
+query
+SELECT replace(json_strip_nulls(('{' || chr(10) || '  "a": 1,' || chr(10) || '  "c": 2' || chr(10) || '}')::json)::text, chr(10), '<LF>') AS v;
+----
+v
+{"a":1,"c":2}
+
+query
+SELECT '{"caf\u00e9": 1}'::json ->> 'café' AS text_value, '{"caf\u00e9": 1}'::json -> 'café' AS json_value,
+       '{"a": {"caf\u00e9": 2}}'::json #>> '{a,café}' AS path_value,
+       json_extract_path_text('{"caf\u00e9": 1}', 'café') AS extracted;
+----
+text_value	json_value	path_value	extracted
+1	1	2	1
+
+query
+SELECT '{"C:\\temp": 1}'::json ->> 'C:\temp' AS decoded, '{"C:\\temp": 1}'::json ->> 'C:\\temp' AS escaped,
+       '{"a\"b": 3}'::json ->> 'a"b' AS quote;
+----
+decoded	escaped	quote
+1	NULL	3
+
+skipif postgres
+query
+SELECT '{"ab": 4, "a\u0062": 5}'::json ->> 'ab' AS duplicate;
+----
+duplicate
+4
+
+onlyif postgres
+query
+SELECT '{"ab": 4, "a\u0062": 5}'::json ->> 'ab' AS duplicate;
+----
+duplicate
+5

@@ -193,7 +193,7 @@ class Socket final {
 
   // The ALPN protocol negotiated during the TLS handshake (empty if none) --
   // lets the HTTP session pick H1 vs a future H2 codec.
-  [[nodiscard]] std::string_view AlpnProtocol() const
+  [[nodiscard]] std::string_view AlpnProtocol()
     requires(kSslBacked)
   {
     const unsigned char* data = nullptr;

@@ -78,7 +78,8 @@ enum class KeyKinds : uint8_t {
 
 bool OfKinds(const search::KeySpec& spec, KeyKinds kinds) {
   return catalog::IsSingleColumnKey(spec.key) &&
-         (kinds == KeyKinds::All || spec.kind == search::KeyKind::Unique);
+         (kinds == KeyKinds::All ||
+          (spec.kind == search::KeyKind::Unique && !spec.deferred));
 }
 
 FieldSet KeyTermFields(const ScanBindData& bind, KeyKinds kinds) {
@@ -484,7 +485,8 @@ void RefreshVectorKnobs(VectorScorerOptions& vs,
   vs.hnsw_filter_mode = mode("sdb_hnsw_filter_mode", irs::HnswFilterMode::Auto);
   vs.hnsw_column_filter =
     mode("sdb_hnsw_column_filter", irs::HnswColumnFilter::Auto);
-  vs.exact = GetBoolSetting(context, "sdb_ann_force_exact");
+  vs.exact =
+    vs.exact_for_bound || GetBoolSetting(context, "sdb_ann_force_exact");
   vs.rescore_width = AnnRescoreWidth(context, vs);
 }
 
@@ -649,6 +651,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
     filter ? EstimateFilterMatchCount(*filter, live,
                                       KeyTermFields(*this, KeyKinds::Unique))
            : live;
+  if (IsPointRead()) {
+    return duckdb::make_uniq<duckdb::NodeStatistics>(estimate);
+  }
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, live);
 }
 

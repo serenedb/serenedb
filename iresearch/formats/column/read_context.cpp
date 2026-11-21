@@ -149,7 +149,7 @@ duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   uint64_t offset, uint64_t size) {
   const auto id = static_cast<duckdb::block_id_t>(_ranges.size());
   _ranges.emplace_back(offset, size);
-  auto handle = RegisterBlock(id, SectorAligned(size));
+  auto handle = RegisterBlock(id);
   handle->GetMemory().SetMemoryUsage(0);
   return handle;
 }

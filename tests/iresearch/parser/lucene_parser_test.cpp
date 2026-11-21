@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -34,6 +35,7 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iterator>
 #include <string>
@@ -394,6 +396,16 @@ TEST_F(LuceneParserTest, FuzzyTermLimitFromContext) {
 TEST_F(LuceneParserTest, FuzzyTermMatchesWholeTerms) {
   ASSERT_TRUE(irs::ParseQuery(ctx, "hello~1"));
   ASSERT_EQ(1, Optional().filters.size());
+  EXPECT_FALSE(irs::utils::downCast<irs::ByEditDistance>(*Optional().filters[0])
+                 .options()
+                 .starts_with);
+}
+
+TEST_F(LuceneParserTest, BoostThenFuzzyTerm) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "hello^2~1"));
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzy(*Optional().filters[0], kFieldId, "hello", 1, 2.0f);
   EXPECT_FALSE(irs::utils::downCast<irs::ByEditDistance>(*Optional().filters[0])
                  .options()
                  .starts_with);
@@ -1720,6 +1732,13 @@ TEST_F(LuceneParserTest, StandaloneNumber) {
   AssertTerm(Optional().terms[0], kFieldId, "123");
 }
 
+TEST_F(LuceneParserTest, StandaloneFloat) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "1.5"));
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().terms.size());
+  AssertTerm(Optional().terms[0], kFieldId, "1.5");
+}
+
 TEST_F(LuceneParserTest, ParseError_EmptyQuery) {
   ASSERT_FALSE(irs::ParseQuery(ctx, ""));
 }
@@ -2217,6 +2236,14 @@ TEST_F(LuceneParserTest, ComparisonGreaterOrEqual) {
               irs::BoundType::Inclusive, "", irs::BoundType::Unbounded);
 }
 
+TEST_F(LuceneParserTest, ComparisonWithAStarIsUnbounded) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "title<*"));
+  ASSERT_EQ(1, Optional().size());
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertRange(*Optional().filters[0], kFieldId, "", irs::BoundType::Unbounded,
+              "", irs::BoundType::Unbounded);
+}
+
 TEST_F(LuceneParserTest, FnOrIsADisjunction) {
   ASSERT_TRUE(irs::ParseQuery(ctx, "fn:or(Alpha beta)"));
   ASSERT_EQ(1, Optional().size());
@@ -2273,6 +2300,28 @@ TEST_F(LuceneParserTest, FnWithoutAnAlgebraIsRefused) {
 
 TEST_F(LuceneParserTest, FnOverANonTermIsRefused) {
   EXPECT_ANY_THROW(irs::ParseQuery(ctx, "fn:ordered(alpha \"beta gamma\")"));
+}
+
+TEST_F(LuceneParserTest, FnRefusalNamesTheSource) {
+  const auto refusal = [&](std::string_view query) -> std::string {
+    try {
+      irs::ParseQuery(ctx, query);
+    } catch (const irs::SqlException& e) {
+      return e.message();
+    }
+    return {};
+  };
+  constexpr std::string_view kWhy =
+    " is not supported: it would ask where the matches lie, and only terms "
+    "can be answered for here";
+  EXPECT_EQ(absl::StrCat("`fn:or` over a prefix", kWhy),
+            refusal("fn:or(alp* beta)"));
+  EXPECT_EQ(absl::StrCat("`fn:or` over a wildcard", kWhy),
+            refusal("fn:or(al?ha beta)"));
+  EXPECT_EQ(absl::StrCat("`fn:or` over a regular expression", kWhy),
+            refusal("fn:or(/al.ha/ beta)"));
+  EXPECT_EQ(absl::StrCat("`fn:or` over a function", kWhy),
+            refusal("fn:or(fn:fuzzyTerm(alpha) beta)"));
 }
 
 TEST_F(LuceneParserTest, MaxGapsOverMoreThanAPairIsRefused) {

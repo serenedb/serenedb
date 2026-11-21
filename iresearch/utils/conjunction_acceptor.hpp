@@ -26,12 +26,14 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <span>
 #include <utility>
 #include <vector>
 
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/string.hpp"
@@ -273,17 +275,9 @@ class FuzzyConjunction {
     }
   };
 
-  struct PrefixKey {
-    Key key;
-    PayloadType best;
-
-    bool operator==(const PrefixKey&) const = default;
-
-    template<typename H>
-    friend H AbslHashValue(H h, const PrefixKey& key) {
-      return H::combine(std::move(h), key.key, key.best);
-    }
-  };
+  static constexpr uint32_t kBestShift =
+    std::numeric_limits<uint32_t>::digits -
+    std::numeric_limits<PayloadType>::digits;
 
   static constexpr uint32_t kRanged = uint32_t{1} << 16;
 
@@ -291,9 +285,12 @@ class FuzzyConjunction {
     return kRanged | (lo << 8) | hi;
   }
 
-  static Key KeyOf(const Parts& parts,
-                   const LevenshteinAcceptor::State& fuzzy) noexcept {
-    return {parts, {fuzzy.pstate, fuzzy.offset, fuzzy.acc, fuzzy.phase}};
+  static Key KeyOf(const Parts& parts, const LevenshteinAcceptor::State& fuzzy,
+                   PayloadType best = 0) noexcept {
+    SDB_ASSERT(fuzzy.pstate >> kBestShift == 0);
+    return {parts,
+            {fuzzy.pstate | (uint32_t{best} << kBestShift), fuzzy.offset,
+             fuzzy.acc, fuzzy.phase}};
   }
 
   static LevenshteinPrefixAcceptor::State PrefixStateOf(
@@ -310,9 +307,8 @@ class FuzzyConjunction {
   template<bool kPrefix>
   IRS_FORCE_INLINE State StepSlowOf(State from, uint8_t c) const;
   uint32_t Range(Row& row) const;
-  template<typename Rows, typename Fill>
-  State InternRowLocked(Rows& rows, typename Rows::key_type key,
-                        Fill&& fill) const;
+  template<typename Fill>
+  State InternRowLocked(const Key& key, Fill&& fill) const;
   State InternLocked(const Parts& parts,
                      const LevenshteinAcceptor::State& fuzzy) const;
   State InternPrefixLocked(const LevenshteinPrefixAcceptor::State& state) const;
@@ -332,7 +328,6 @@ class FuzzyConjunction {
   size_t _max_mem;
   mutable std::mutex _mutex;
   mutable absl::flat_hash_map<Key, Row*> _rows;
-  mutable absl::flat_hash_map<PrefixKey, Row*> _prefix_rows;
   mutable RowArena _arena;
   Row* _dead{nullptr};
   Row* _unknown{nullptr};

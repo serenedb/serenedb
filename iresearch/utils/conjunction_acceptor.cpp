@@ -390,15 +390,15 @@ uint32_t FuzzyConjunction::Range(Row& row) const {
   return range;
 }
 
-template<typename Rows, typename Fill>
-FuzzyConjunction::State FuzzyConjunction::InternRowLocked(
-  Rows& rows, typename Rows::key_type key, Fill&& fill) const {
-  const auto [it, inserted] = rows.try_emplace(std::move(key), nullptr);
+template<typename Fill>
+FuzzyConjunction::State FuzzyConjunction::InternRowLocked(const Key& key,
+                                                          Fill&& fill) const {
+  const auto [it, inserted] = _rows.try_emplace(key, nullptr);
   if (!inserted) {
     return it->second;
   }
   if (_arena.Size() + RowBytes<Row>(_classes) > _max_mem) {
-    rows.erase(it);
+    _rows.erase(it);
     return _unknown;
   }
   Row* row = NewRow<Row>(_arena, _classes);
@@ -417,7 +417,7 @@ FuzzyConjunction::State FuzzyConjunction::InternLocked(
       return _dead;
     }
   }
-  return InternRowLocked(_rows, KeyOf(parts, fuzzy), [&](Row& row) {
+  return InternRowLocked(KeyOf(parts, fuzzy), [&](Row& row) {
     row.parts = parts;
     row.fuzzy = fuzzy;
     row.accept = _fuzzy->Accept(fuzzy, row.distance);
@@ -431,16 +431,15 @@ FuzzyConjunction::State FuzzyConjunction::InternLocked(
 FuzzyConjunction::State FuzzyConjunction::InternPrefixLocked(
   const LevenshteinPrefixAcceptor::State& state) const {
   SDB_ASSERT(_size == 0);
-  return InternRowLocked(
-    _prefix_rows, PrefixKey{KeyOf({}, state.inner), state.best}, [&](Row& row) {
-      row.fuzzy = state.inner;
-      row.accept = LevenshteinPrefixAcceptor::Accept(state, row.distance);
-      uint32_t lo = 1;
-      uint32_t hi = 0;
-      LevenshteinPrefixAcceptor::LiveRangeOf(*_fuzzy, state, lo, hi);
-      SDB_ASSERT(lo <= hi);
-      row.range.store(PackRange(lo, hi), std::memory_order_relaxed);
-    });
+  return InternRowLocked(KeyOf({}, state.inner, state.best), [&](Row& row) {
+    row.fuzzy = state.inner;
+    row.accept = LevenshteinPrefixAcceptor::Accept(state, row.distance);
+    uint32_t lo = 1;
+    uint32_t hi = 0;
+    LevenshteinPrefixAcceptor::LiveRangeOf(*_fuzzy, state, lo, hi);
+    SDB_ASSERT(lo <= hi);
+    row.range.store(PackRange(lo, hi), std::memory_order_relaxed);
+  });
 }
 
 }  // namespace irs

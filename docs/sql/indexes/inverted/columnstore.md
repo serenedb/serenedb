@@ -10,7 +10,7 @@ Tables and the `INCLUDE`d columns of an inverted index keep their values in a **
 
 ## Segments and row groups
 
-A stored column is written in **row groups** of `row_group_size` rows (122,880 by default, see [row-group size](./maintenance.md#performance)). Each row group is compressed into one or more **segments**; a segment is the unit a scan decodes and a filter prunes with its zonemap. A text segment is as long as its codec needs, so a long string makes its segment longer instead of splitting it; a row group's text is cut into segments of about twice the table's [`block_size`](./maintenance.md#performance), 512 KB by default.
+A stored column is written in **row groups** of `row_group_size` rows (122,880 by default, see [row-group size](./maintenance.md#performance)). Each row group is compressed into one or more **segments**; a segment is the unit a scan decodes and a filter prunes with its zonemap. A text segment is as long as its codec needs, so a long string makes its segment longer instead of splitting it; a row group's text is cut into segments of about twice the table's [`block_size`](./maintenance.md#performance), 512 KB by default. A segment of a dictionary codec that holds at least 8,192 rows ends on a multiple of 2,048 rows, so a scan reads it in whole vectors.
 
 A list or map column stores each distinct value of a row group once. Columns whose values repeat, such as attribute maps shared by every record of the same resource, shrink by their repeat factor, and an expression over such a column runs once per distinct value.
 

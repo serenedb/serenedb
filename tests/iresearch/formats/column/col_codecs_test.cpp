@@ -2489,6 +2489,51 @@ TEST_F(ColCodecsTest, AFrameDictionaryIsSortedWhenThatMakesItSmaller) {
   }
 }
 
+TEST_F(ColCodecsTest, ADictionarySegmentEndsOnAVectorBoundary) {
+  using irs::codecs::CodecType;
+  constexpr uint32_t kRowGroup = 75 * STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kRows = 2 * kRowGroup;
+  const Value repeating = [](uint64_t g) -> std::optional<std::string> {
+    return Pseudo(Scattered(g, 500), 24);
+  };
+  const Value long_pairs = [](uint64_t g) -> std::optional<std::string> {
+    return Pseudo(g / 2, 600);
+  };
+  const irs::ColCodecParams params{.segment_target = 64 * 1024};
+  for (const auto codec :
+       {CodecType::DictLz4, CodecType::DictZstd, CodecType::DictZxc,
+        CodecType::DictFsst, CodecType::DictFsstPlus, CodecType::DictOnpair,
+        CodecType::DictFsst12}) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    {
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      Write(dir, codec, params, kRows, kRowGroup, repeating);
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      ASSERT_GT(col->DataBlocks().size(), 2 * kRows / kRowGroup);
+      uint64_t row = 0;
+      for (const auto& block : col->DataBlocks()) {
+        row += block.tuple_count;
+        EXPECT_EQ(row % STANDARD_VECTOR_SIZE, 0U) << row;
+      }
+      Verify(dir, codec, kRows, repeating);
+    }
+    {
+      constexpr uint64_t kLongRows = 6 * STANDARD_VECTOR_SIZE;
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      Write(dir, codec, params, kLongRows, kLongRows, long_pairs);
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      for (const auto& block : col->DataBlocks()) {
+        EXPECT_LT(block.tuple_count, STANDARD_VECTOR_SIZE);
+      }
+      Verify(dir, codec, kLongRows, long_pairs);
+    }
+  }
+}
+
 TEST_F(ColCodecsTest, AutoMeasuresTheSortedOrderOfAnLz4Dictionary) {
   using irs::codecs::CodecType;
   irs::codecs::CodecSet no_fsst;

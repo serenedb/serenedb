@@ -201,13 +201,24 @@ class TextEncoder final : public State {
     const std::span<const uint32_t> codes = values.codes;
     const std::span<const duckdb::string_t* const> distinct = values.distinct;
     state.InitCompression(config, begin, distinct.size(), seg);
+    bool full = false;
     for (auto row = begin; row < codes.size();) {
       state.Compress(codes[row++], distinct);
-      if (state.Full(target)) {
+      full = full || state.Full(target);
+      if (full && EndsSegment(begin, row)) {
         break;
       }
     }
     state.FinalizeCompress();
+  }
+
+  static bool EndsSegment(uint64_t begin, uint64_t end) noexcept {
+    if constexpr (kShape == Shape::Dictionary) {
+      return end % STANDARD_VECTOR_SIZE == 0 ||
+             end - begin < kVectorAlignedRows;
+    } else {
+      return true;
+    }
   }
 
   IRS_NO_INLINE static void SealRows(Compression& state, const Config& config,

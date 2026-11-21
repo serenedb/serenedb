@@ -52,6 +52,7 @@ namespace irs::codecs::text {
 inline constexpr uint64_t kEstimateEvery = 64;
 inline constexpr uint64_t kEstimateSteps = 16;
 inline constexpr uint64_t kDriftMinFraction = 4;
+inline constexpr uint64_t kVectorAlignedRows = 4 * STANDARD_VECTOR_SIZE;
 
 struct SegmentEntries {
   std::span<const duckdb::string_t> entries;

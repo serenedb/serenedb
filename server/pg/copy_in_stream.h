@@ -46,6 +46,8 @@ class CopyInStream final : public duckdb::RowSource {
                      duckdb::idx_t offset) const final;
   void Release(duckdb::idx_t position) final;
   duckdb::optional_idx End() const final;
+  bool Live() const final { return true; }
+  bool Available(duckdb::idx_t offset) const final;
 
  private:
   struct UnitBytes {
@@ -60,7 +62,7 @@ class CopyInStream final : public duckdb::RowSource {
     std::shared_ptr<UnitBytes> bytes;
   };
 
-  void Pull(duckdb::idx_t end) const;
+  void Pull(duckdb::idx_t offset, duckdb::idx_t end) const;
   void Spill() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_lock);
 
   CopyInBatches& _batches;

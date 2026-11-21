@@ -48,6 +48,13 @@ auto& Lz4Of(ColumnDataCheckpointData& data) {
   return data.Get<TextEncoder<blob::Lz4CompressionState<Rows>>>();
 }
 
+template<typename Rows>
+double FastSize(ColumnDataCheckpointData& data, Values& values) {
+  auto& encoder = Lz4Of<Rows>(data);
+  return static_cast<double>(
+    encoder.Codec().Estimated(encoder, values, Fast(Rows::kShape)));
+}
+
 void MeasureShapes(ColumnDataCheckpointData& data, Values& values) {
   auto& dictionary = values.contends[std::to_underlying(Shape::Dictionary)];
   auto& plain = values.contends[std::to_underlying(Shape::Plain)];
@@ -59,21 +66,26 @@ void MeasureShapes(ColumnDataCheckpointData& data, Values& values) {
   if (values.trial.rows == 0) {
     Lz4Of<DictionaryRows>(data).Trial(Fast(Shape::Dictionary), values);
   }
-  const auto dictionary_cost = static_cast<double>(
-    Lz4Of<DictionaryRows>(data).Size(Fast(Shape::Dictionary), values));
   const auto& trial = values.trial;
-  const auto least =
+  const auto least = ShapeCost(
+    Shape::Plain, true,
     static_cast<double>(kHeaderSize + Packed(trial.rows, trial.max_len) +
-                        trial.input / kLz4MaxRatio);
-  if (ShapeCost(Shape::Plain, true, least) >=
-      dictionary_cost * (1.0 + kShapeSlack)) {
+                        trial.input / kLz4MaxRatio));
+  const auto out_of_reach = [&](double dictionary_cost) {
+    return least >= dictionary_cost * (1.0 + kShapeSlack);
+  };
+  const auto built = values.built[std::to_underlying(Shape::Dictionary)];
+  if (built != 0 && out_of_reach(static_cast<double>(built))) {
+    plain = false;
+    return;
+  }
+  const auto dictionary_cost = FastSize<DictionaryRows>(data, values);
+  if (out_of_reach(dictionary_cost)) {
     plain = false;
     return;
   }
   const auto plain_cost =
-    ShapeCost(Shape::Plain, true,
-              static_cast<double>(
-                Lz4Of<PlainRows>(data).Size(Fast(Shape::Plain), values)));
+    ShapeCost(Shape::Plain, true, FastSize<PlainRows>(data, values));
   plain = plain_cost < dictionary_cost * (1.0 + kShapeSlack);
   dictionary = dictionary_cost * (1.0 - kShapeSlack) <= plain_cost;
 }

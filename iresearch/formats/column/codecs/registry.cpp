@@ -22,8 +22,10 @@
 
 #include <absl/strings/match.h>
 
+#include <array>
 #include <iterator>
 #include <magic_enum/magic_enum.hpp>
+#include <utility>
 
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
@@ -34,6 +36,68 @@ namespace irs::codecs {
 namespace {
 
 using duckdb::PhysicalType;
+
+constexpr CodecType kLightweight[] = {
+  CodecType::Uncompressed,
+  CodecType::Roaring,
+};
+
+constexpr CodecType kBool[] = {
+  CodecType::Constant, CodecType::Uncompressed, CodecType::Bitpacking,
+  CodecType::Rle,      CodecType::Roaring,
+};
+
+constexpr CodecType kInteger[] = {
+  CodecType::Constant, CodecType::Uncompressed, CodecType::Bitpacking,
+  CodecType::Rle,      CodecType::Dict,         CodecType::Lz4,
+  CodecType::RleLz4,   CodecType::DictLz4,      CodecType::Zstd,
+  CodecType::RleZstd,  CodecType::DictZstd,
+};
+
+constexpr CodecType kFreshInteger[] = {
+  CodecType::Constant, CodecType::Uncompressed, CodecType::Bitpacking,
+  CodecType::Rle,      CodecType::Dict,         CodecType::Lz4,
+  CodecType::RleLz4,   CodecType::DictLz4,
+};
+
+constexpr CodecType kFloat[] = {
+  CodecType::Constant, CodecType::Uncompressed, CodecType::Alp,
+  CodecType::Alprd,    CodecType::Bitpacking,   CodecType::Rle,
+  CodecType::Dict,
+};
+
+constexpr CodecType kText[] = {
+  CodecType::Uncompressed, CodecType::DictFsst, CodecType::DictLz4,
+  CodecType::Fsst,         CodecType::Lz4,
+};
+
+constexpr CodecType kNamedOnly[] = {
+  CodecType::Delta,
+  CodecType::DeltaLz4,
+  CodecType::DeltaZstd,
+};
+
+static_assert([] {
+  std::array<bool, magic_enum::enum_count<CodecType>()> listed{};
+  for (const std::span<const CodecType> list :
+       {std::span<const CodecType>{kLightweight},
+        std::span<const CodecType>{kBool}, std::span<const CodecType>{kInteger},
+        std::span<const CodecType>{kFreshInteger},
+        std::span<const CodecType>{kFloat},
+        std::span<const CodecType>{kNamedOnly}}) {
+    for (const auto type : list) {
+      listed[std::to_underlying(type)] = true;
+    }
+  }
+  for (const auto type : magic_enum::enum_values<CodecType>()) {
+    const bool numeric = type != CodecType::Auto && type != CodecType::Empty &&
+                         (!IsText(type) || IsNumeric(type));
+    if (listed[std::to_underlying(type)] != numeric) {
+      return false;
+    }
+  }
+  return true;
+}());
 
 const Codec* TextCodecOf(CodecType type) {
   static constexpr const Codec* kText[] = {
@@ -84,24 +148,34 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
                          : nullptr;
 }
 
-CompressionFunctions Contenders(CodecType type, PhysicalType physical) {
-  if (!IsForm(type)) {
-    return {};
+std::span<const CodecType> Candidates(PhysicalType physical,
+                                      WriteTier tier) noexcept {
+  switch (physical) {
+    case PhysicalType::VARCHAR:
+      return kText;
+    case PhysicalType::FLOAT:
+    case PhysicalType::DOUBLE:
+      return kFloat;
+    case PhysicalType::BOOL:
+      return kBool;
+    case PhysicalType::INT8:
+    case PhysicalType::INT16:
+    case PhysicalType::INT32:
+    case PhysicalType::INT64:
+    case PhysicalType::UINT8:
+    case PhysicalType::UINT16:
+    case PhysicalType::UINT32:
+    case PhysicalType::UINT64:
+    case PhysicalType::INT128:
+    case PhysicalType::UINT128:
+    case PhysicalType::LIST:
+      if (tier == WriteTier::Flush) {
+        return kFreshInteger;
+      }
+      return kInteger;
+    default:
+      return kLightweight;
   }
-  if (physical == PhysicalType::VARCHAR) {
-    switch (LeafOf(type)) {
-      case ByteCodec::Lz4:
-        return Lz4TextContenders(ShapeOf(type));
-      case ByteCodec::Fsst:
-        return FsstTextContenders(ShapeOf(type));
-      default:
-        return {};
-    }
-  }
-  if (!IsNumeric(type)) {
-    return {};
-  }
-  return NumericContenders(ShapeOf(type), LeafOf(type), physical);
 }
 
 CodecType FindCodec(std::string_view name) {

@@ -67,7 +67,6 @@ class Values final : public State {
   struct Facts {
     U lo = 0;
     uint8_t for_stored = 0;
-    uint8_t for_bits = 0;
   };
 
   struct Steps {
@@ -213,10 +212,6 @@ class Values final : public State {
     return Divided(bounds);
   }
 
-  uint64_t PackedBytes() const noexcept {
-    return _any_valid ? (uint64_t{_size} * GetFacts().for_bits + 7) / 8 : 0;
-  }
-
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
     auto stats = duckdb::BaseStatistics::CreateEmpty(type);
     if (stats.GetStatsType() == duckdb::StatisticsType::NUMERIC_STATS) {
@@ -231,7 +226,6 @@ class Values final : public State {
     return {
       .lo = bounds.lo,
       .for_stored = numeric::BytesFor(range),
-      .for_bits = static_cast<uint8_t>(std::bit_width(range)),
     };
   }
 

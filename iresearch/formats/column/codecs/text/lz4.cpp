@@ -40,99 +40,48 @@ frame of its own.
 namespace irs::codecs {
 namespace {
 
+constexpr double kReadPrice = 1.05;
+
 using PlainLz4 = text::blob::Lz4CompressionState<text::PlainRows>;
 using DictLz4 = text::blob::Lz4CompressionState<text::DictionaryRows>;
 
-template<typename Compression, FrameDictionary kFrames>
-double AnalyzeFrames(ColumnDataCheckpointData& data, double bound) {
-  auto& encoder = data.Get<text::TextEncoder<Compression>>();
-  auto& lz4 = encoder.Codec();
-  const auto score = lz4.AnalyzedOnce([&] {
-    auto& values = data.Get<text::Values>();
-    if (!values.Repeats() || !encoder.Contests(data)) {
-      return kNoScore;
-    }
-    const auto price =
-      data.preferences->text_lz4_price[std::to_underlying(Compression::kShape)];
-    const auto priced = [&](uint64_t bytes) {
-      return text::Score(values, Compression::kShape, price, bytes);
-    };
-    const auto measured =
-      lz4.Measure(encoder, values, data.params.tier, bound, priced);
-    encoder.Contest(measured.config);
-    return priced(measured.bytes);
-  });
-  return encoder.Contested().layout == kFrames ? score : kNoScore;
-}
-
-template<typename Compression, FrameDictionary kFrames>
-bool CompressFrames(ColumnDataCheckpointData& data) {
-  auto& encoder = data.Get<text::TextEncoder<Compression>>();
-  auto& values = data.Get<text::Values>();
-  const auto* config = encoder.Chosen(values);
-  return values.Repeats() && config && config->layout == kFrames &&
-         encoder.Compress(data);
-}
-
-template<FrameDictionary kFrames>
+template<typename Compression>
 double AnalyzeLz4(ColumnDataCheckpointData& data, double bound) {
-  return AnalyzeFrames<PlainLz4, kFrames>(data, bound);
+  return text::AnalyzeHinted<Compression>(
+    data, bound,
+    [&](text::TextEncoder<Compression>& encoder, text::Values& values,
+        bool moved) {
+      if (!values.Repeats() || !encoder.Contests(data, moved)) {
+        return kNoScore;
+      }
+      const auto price = data.params.tier == WriteTier::Merge &&
+                             Compression::kShape == Shape::Dictionary
+                           ? 1.0
+                           : kReadPrice;
+      const auto priced = [&](uint64_t bytes) {
+        return text::Score(values, Compression::kShape, price, bytes);
+      };
+      const auto measured = encoder.Codec().Measure(
+        encoder, values, data.params.tier, bound, priced);
+      encoder.Contest(measured.config);
+      return priced(measured.bytes);
+    });
 }
 
-template<FrameDictionary kFrames>
-bool CompressLz4(ColumnDataCheckpointData& data) {
-  return CompressFrames<PlainLz4, kFrames>(data);
-}
-
-template<FrameDictionary kFrames>
-double AnalyzeDictLz4(ColumnDataCheckpointData& data, double bound) {
-  return AnalyzeFrames<DictLz4, kFrames>(data, bound);
-}
-
-template<FrameDictionary kFrames>
-bool CompressDictLz4(ColumnDataCheckpointData& data) {
-  return CompressFrames<DictLz4, kFrames>(data);
-}
-
-template<FrameDictionary kFrames>
-constexpr CompressionFunction kLz4{
-  .analyze = AnalyzeLz4<kFrames>,
-  .compress = CompressLz4<kFrames>,
-  .codec = CodecType::Lz4,
-};
-
-template<FrameDictionary kFrames>
-constexpr CompressionFunction kDictLz4{
-  .analyze = AnalyzeDictLz4<kFrames>,
-  .compress = CompressDictLz4<kFrames>,
-  .codec = CodecType::DictLz4,
-};
-
-constexpr const CompressionFunction* kLz4Contenders[] = {
-  &kLz4<FrameDictionary::FirstFrame>,
-  &kLz4<FrameDictionary::Local>,
-  &kLz4<FrameDictionary::None>,
-};
-
-constexpr const CompressionFunction* kDictLz4Contenders[] = {
-  &kDictLz4<FrameDictionary::FirstFrame>,
-  &kDictLz4<FrameDictionary::Local>,
-  &kDictLz4<FrameDictionary::None>,
+template<typename Compression>
+constexpr CompressionFunction kFunction{
+  .analyze = AnalyzeLz4<Compression>,
+  .compress = text::CompressText<Compression>,
 };
 
 }  // namespace
 
-CompressionFunctions Lz4TextContenders(Shape shape) {
-  if (shape == Shape::Plain) {
-    return kLz4Contenders;
-  }
-  return kDictLz4Contenders;
-}
-
 constinit const Codec kLz4Codec =
-  text::StringCodec<text::PlainScan<text::blob::Lz4Scan>, PlainLz4>();
+  text::StringCodec<text::PlainScan<text::blob::Lz4Scan>, PlainLz4,
+                    kFunction<PlainLz4>>();
 
 constinit const Codec kDictLz4Codec =
-  text::StringCodec<text::DictionaryScan<text::blob::Lz4Scan>, DictLz4>();
+  text::StringCodec<text::DictionaryScan<text::blob::Lz4Scan>, DictLz4,
+                    kFunction<DictLz4>>();
 
 }  // namespace irs::codecs

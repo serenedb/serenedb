@@ -370,8 +370,7 @@ irs::codecs::CodecType CheckColumnCodec(
     return codec;
   }
   const auto compresses = [&](duckdb::PhysicalType physical) {
-    const auto* written = irs::codecs::GetCodec(codec, physical);
-    return written && written->compression;
+    return irs::codecs::Writes(codec, physical);
   };
   const auto physical = column_type.InternalType();
   if (compresses(physical)) {

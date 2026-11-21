@@ -48,7 +48,6 @@
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_scan.tpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_values.hpp"
-#include "iresearch/formats/column/codecs/preferences.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/read_context.hpp"
@@ -64,6 +63,7 @@ inline constexpr size_t kWideSampledBlocks = 16;
 inline constexpr size_t kWideSampledRows = 64;
 inline constexpr unsigned kWideHalvesBits = 113;
 inline constexpr size_t kWideRunRows = 8;
+inline constexpr uint32_t kMostWideDictionaryEntries = 2048;
 
 struct WideHeader {
   uint8_t form = 0;
@@ -154,7 +154,6 @@ struct WidePart {
                            reinterpret_cast<duckdb::data_ptr_t>(values.data()),
                            values.size()},
             values.size()},
-      preferences{*outer.preferences},
       data{
         .type = type,
         .chunks = {&chunk, 1},
@@ -162,20 +161,18 @@ struct WidePart {
         .flush = keep,
         .params = outer.params,
         .tuning = tuning,
-        .preferences = &preferences,
         .disabled = outer.disabled,
+        .contested = outer.contested,
         .min_packed_run = outer.min_packed_run,
         .rows = values.size(),
       } {
     duckdb::FlatVector::SetSize(chunk.data, values.size());
-    preferences.contest_grown = false;
     data.disabled.set(std::to_underlying(CodecType::Constant));
   }
 
   duckdb::LogicalType type{duckdb::LogicalTypeId::UBIGINT};
   WriteChunk chunk;
   ColumnTuning tuning;
-  Preferences preferences;
   std::string_view bytes;
   bool flushed = false;
   Keep keep{this};
@@ -222,7 +219,6 @@ struct WideValues final : State {
   bool usable = false;
   bool narrow = false;
   bool has_null = false;
-  bool contested = false;
   bool started = false;
   bool read = false;
   bool sampled = false;
@@ -292,7 +288,9 @@ struct WideValues final : State {
           }
           const auto most = std::min(
             static_cast<double>(data.rows) / 2,
-            static_cast<double>(data.preferences->max_wide_dictionary_entries));
+            static_cast<double>(data.contested
+                                  ? kMostWideDictionaryEntries
+                                  : std::numeric_limits<uint32_t>::max()));
           sample_few =
             static_cast<double>(distinct.size()) <=
             most * -std::expm1(-static_cast<double>(sample.size()) / most);
@@ -608,11 +606,10 @@ struct WideValues final : State {
   }
 };
 
-template<typename W, const CompressionFunction& kInner>
+template<typename W, CodecType kCodec, const CompressionFunction& kInner>
 double AnalyzeWide(ColumnDataCheckpointData& data, double bound) {
   auto& wide = data.Get<WideValues<W>>();
-  wide.contested = true;
-  if (!wide.Offers(StoresHalves(kInner.codec), ShapeOf(kInner.codec), data)) {
+  if (!wide.Offers(StoresHalves(kCodec), ShapeOf(kCodec), data)) {
     return kNoScore;
   }
   if (wide.narrow) {
@@ -634,10 +631,10 @@ inline bool CompressPart(const CompressionFunction& inner, WidePart& part) {
   return inner.compress(part.data) && part.flushed;
 }
 
-template<typename W, const CompressionFunction& kInner>
+template<typename W, CodecType kCodec, const CompressionFunction& kInner>
 bool CompressWide(ColumnDataCheckpointData& data) {
   auto& wide = data.Get<WideValues<W>>();
-  if (!wide.Offers(StoresHalves(kInner.codec), ShapeOf(kInner.codec), data) ||
+  if (!wide.Offers(StoresHalves(kCodec), ShapeOf(kCodec), data) ||
       !CompressPart(kInner, *wide.low)) {
     return false;
   }
@@ -662,20 +659,14 @@ bool CompressWide(ColumnDataCheckpointData& data) {
     out.append(wide.high->bytes);
   }
   std::memcpy(out.data(), &header, sizeof(WideHeader));
-  if (!wide.contested && data.preferences->contest_grown &&
-      data.tuning.reuse.Grew(static_cast<double>(out.size()),
-                             static_cast<double>(RawInput(data)))) {
-    return false;
-  }
-  data.FlushSegment(kInner.codec, wide.Stats(data.type), data.rows, out);
+  data.FlushSegment(kCodec, wide.Stats(data.type), data.rows, out);
   return true;
 }
 
-template<typename W, const CompressionFunction& kInner>
+template<typename W, CodecType kCodec, const CompressionFunction& kInner>
 inline constexpr CompressionFunction kWide{
-  .analyze = AnalyzeWide<W, kInner>,
-  .compress = CompressWide<W, kInner>,
-  .codec = kInner.codec,
+  .analyze = AnalyzeWide<W, kCodec, kInner>,
+  .compress = CompressWide<W, kCodec, kInner>,
 };
 
 template<typename W, typename R>

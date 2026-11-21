@@ -24,7 +24,6 @@
 #include <optional>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
-#include "iresearch/formats/column/codecs/reuse_policy.hpp"
 
 namespace irs::codecs {
 
@@ -59,20 +58,6 @@ struct Config {
 
 }  // namespace text
 
-struct TextStatistics {
-  double value_bytes = 0;
-  double distinct_share = 0;
-};
-
-constexpr bool Moved(const TextStatistics& now, const TextStatistics& then,
-                     double factor) noexcept {
-  const auto moved = [&](double a, double b) {
-    return a > b * factor || a * factor < b;
-  };
-  return moved(now.value_bytes, then.value_bytes) ||
-         moved(now.distinct_share, then.distinct_share);
-}
-
 struct Lz4Tuning {
   bool tuned = false;
   uint8_t level = 0;
@@ -82,10 +67,9 @@ struct Lz4Tuning {
 
 struct StringTuning {
   std::optional<text::Config> config;
-  TextStatistics contested_on;
   Lz4Tuning lz4[kTextShapeCount];
   RatioHistory history[kByteCodecCount][kShapeCount]{};
-  ReusePolicy codes;
+  double codes_ratio = 0;
   uint64_t last_distinct = 0;
 };
 

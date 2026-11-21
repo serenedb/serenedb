@@ -620,7 +620,7 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecCompressesAtTheColumnsLevel) {
   }
 }
 
-TEST_F(ColNumericCodecTest, ANamedLeafCodecHoldsItsLayoutUntilItsBytesGrow) {
+TEST_F(ColNumericCodecTest, ANamedLeafCodecMovesToABetterLayoutWithItsValues) {
   constexpr uint32_t kRowGroup = 4096;
   constexpr uint64_t kSwitch = 8 * kRowGroup;
   constexpr uint64_t kRows = 2 * kSwitch;
@@ -652,8 +652,48 @@ TEST_F(ColNumericCodecTest, ANamedLeafCodecHoldsItsLayoutUntilItsBytesGrow) {
   EXPECT_TRUE(std::all_of(layouts.begin(), first,
                           [](const auto& l) { return l == "1/false"; }))
     << ::testing::PrintToString(layouts);
-  EXPECT_EQ(*first, "4/false") << ::testing::PrintToString(layouts);
-  EXPECT_TRUE(std::all_of(first + 1, layouts.end(),
+  EXPECT_TRUE(std::all_of(first, layouts.end(),
+                          [](const auto& l) { return l.ends_with("/true"); }))
+    << ::testing::PrintToString(layouts);
+}
+
+TEST_F(ColNumericCodecTest,
+       ACodecKeepsItsLayoutWhileItsValuesNeedTheSameBytes) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kSwitch = 4 * kRowGroup;
+  constexpr uint64_t kRefresh = irs::codecs::kOldHint + 1;
+  constexpr uint64_t kRows = (kRefresh + 4) * kRowGroup;
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    if (g < kSwitch) {
+      return static_cast<int64_t>(Mix(g / 8) & 0xFFFFFFFF);
+    }
+    return static_cast<int64_t>(Mix(g) & 0xFF) |
+           static_cast<int64_t>(Mix(g / 64) & 0xFF) << 24;
+  };
+  const auto type = duckdb::LogicalType::BIGINT;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  Write(dir, type, {}, kRows, kRowGroup, gen, irs::codecs::CodecType::Zstd);
+  Verify(dir, type, kRows, gen);
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  irs::ReadContext ctx{r};
+  irs::BlockWindow window{};
+  uint64_t row = 0;
+  std::vector<std::string> layouts;
+  for (const auto& block : col->DataBlocks()) {
+    window = col->Locate(row, window);
+    auto seg = col->OpenSegment(window.block, ctx);
+    auto info = seg->function.get_segment_info(*seg);
+    layouts.push_back(info["stored"] + "/" + info["shuffled"]);
+    row += block.tuple_count;
+  }
+  ASSERT_EQ(layouts.size(), kRows / kRowGroup);
+  const auto refreshed = layouts.begin() + kRefresh;
+  EXPECT_TRUE(std::all_of(layouts.begin(), refreshed,
+                          [](const auto& l) { return l == "4/false"; }))
+    << ::testing::PrintToString(layouts);
+  EXPECT_TRUE(std::all_of(refreshed, layouts.end(),
                           [](const auto& l) { return l.ends_with("/true"); }))
     << ::testing::PrintToString(layouts);
 }
@@ -2257,12 +2297,10 @@ TEST_F(ColNumericCodecTest,
   EXPECT_GT(changed, 0u);
 }
 
-TEST_F(ColNumericCodecTest,
-       AHeldCodecWaitsForItsContestWhenBitPackingIsDisabled) {
+TEST_F(ColNumericCodecTest, AutoFollowsTheValuesWhenBitPackingIsDisabled) {
   constexpr uint32_t kRowGroup = 2048;
   constexpr uint64_t kRandom = 40 * kRowGroup;
   constexpr uint64_t kRows = kRandom + 32 * kRowGroup;
-  constexpr uint64_t kMaxLag = 16 * kRowGroup;
   const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
     if (g < kRandom) {
       return static_cast<int64_t>(Mix(g));
@@ -2294,8 +2332,7 @@ TEST_F(ColNumericCodecTest,
     row += block.tuple_count;
   }
   ASSERT_TRUE(back.has_value());
-  EXPECT_GT(*back, kRandom);
-  EXPECT_LE(*back, kRandom + kMaxLag);
+  EXPECT_EQ(*back, kRandom);
 }
 
 TEST_F(ColNumericCodecTest, ForcedRleLeavesRowGroupsWithoutRepeatsPlain) {

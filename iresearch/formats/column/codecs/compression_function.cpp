@@ -125,9 +125,8 @@ void Compress(CodecType method, ColumnDataCheckpointData& data) {
   }
 }
 
-bool Writes(CodecType type, duckdb::PhysicalType physical,
-            const CodecSet& disabled) noexcept {
-  if (type == CodecType::Auto || disabled.test(std::to_underlying(type))) {
+bool Writes(CodecType type, duckdb::PhysicalType physical) noexcept {
+  if (type == CodecType::Auto || type == CodecType::Constant) {
     return false;
   }
   const auto* codec = GetCodec(type, physical);

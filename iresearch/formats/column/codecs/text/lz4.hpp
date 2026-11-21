@@ -167,8 +167,8 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
     };
     Measured measured{.config = held};
     const auto input = values.trial.input;
-    if (values.TrialEntries() < kLz4TuneMinEntries ||
-        (tuning.tuned && input < tuning.tuned_on * kLz4RetuneGrowth)) {
+    if ((tuning.tuned && input < tuning.tuned_on * kLz4RetuneGrowth) ||
+        values.TrialEntries() < kLz4TuneMinEntries) {
       measured.bytes = size(held);
     } else {
       measured = Tune(levels, tier != WriteTier::Flush, size);
@@ -190,15 +190,6 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
     return measured;
   }
 
-  template<typename Analyze>
-  double AnalyzedOnce(Analyze&& analyze) {
-    if (!_analyzed) {
-      _analyzed = true;
-      _score = analyze();
-    }
-    return _score;
-  }
-
   template<typename Encoder>
   uint64_t Size(Encoder& encoder, Values& values, const Config& config) {
     if (const auto* trial = encoder.Find(config)) {
@@ -215,6 +206,14 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
         : trial.input;
     if (raw <= kLz4TrialRawBytes) {
       return encoder.Trial(config, values).Size();
+    }
+    return Estimate(values, config);
+  }
+
+  template<typename Encoder>
+  uint64_t Estimated(Encoder& encoder, Values& values, const Config& config) {
+    if (const auto* trial = encoder.Find(config)) {
+      return trial->Size();
     }
     return Estimate(values, config);
   }
@@ -284,8 +283,6 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
 
   StringTuning& _tuning;
   SizeEstimator<Lz4> _estimator;
-  bool _analyzed = false;
-  double _score = kNoScore;
 };
 
 struct Lz4Scan final : Scan<Lz4> {

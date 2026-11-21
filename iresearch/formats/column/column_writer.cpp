@@ -294,11 +294,15 @@ bool ColumnWriter::Compress(const duckdb::LogicalType& type,
     .tuning = tuning,
     .disabled = _disabled,
   };
-  codecs::Compress(codecs::Writes(method, type.InternalType(), _disabled)
-                     ? method
-                     : codecs::CodecType::Auto,
+  codecs::Compress(Enabled(method, type) ? method : codecs::CodecType::Auto,
                    data);
   return flushed && !needs_validity;
+}
+
+bool ColumnWriter::Enabled(codecs::CodecType method,
+                           const duckdb::LogicalType& type) const noexcept {
+  return !_disabled.test(std::to_underlying(method)) &&
+         codecs::Writes(method, type.InternalType());
 }
 
 void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,
@@ -423,10 +427,7 @@ void ColumnWriter::CompressPlain(const duckdb::LogicalType& type,
                                  std::span<WriteChunk> chunks,
                                  std::vector<ColumnBlockMeta>& sink) {
   codecs::ColumnTuning tuning;
-  Compress(type, chunks,
-           codecs::Writes(_global_method, type.InternalType(), _disabled)
-             ? _global_method
-             : codec,
+  Compress(type, chunks, Enabled(_global_method, type) ? _global_method : codec,
            tuning, sink);
 }
 

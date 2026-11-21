@@ -35,6 +35,8 @@
 
 namespace irs::codecs {
 
+inline constexpr double kDeltaPrice = 1.25;
+
 template<typename T>
 struct Delta final : State {
   static constexpr StateId kId = StateId::Delta;
@@ -78,7 +80,7 @@ template<typename T>
 double AnalyzeDelta(ColumnDataCheckpointData& data, double bound,
                     FrameStore store) {
   const auto items = DeltaItems<T>(data, store);
-  const auto price = data.preferences->delta_price;
+  const auto price = data.contested ? kDeltaPrice : 1.0;
   return price * AnalyzeFrames<T>(
                    data, items, data.Get<Delta<T>>().analysis[store.shuffled],
                    bound / price,
@@ -106,8 +108,7 @@ bool CompressDelta(ColumnDataCheckpointData& data, FrameStore store) {
 
 template<typename T, ByteCodec kLeaf, bool kShuffled>
 inline constexpr auto& kDelta =
-  kStoredFrames<Shape::Delta, AnalyzeDelta<T>, CompressDelta<T>, kLeaf,
-                kShuffled>;
+  kStoredFrames<AnalyzeDelta<T>, CompressDelta<T>, kLeaf, kShuffled>;
 
 template<typename T>
 struct DeltaBitpacking final : State {
@@ -142,35 +143,33 @@ double AnalyzeDeltaBitpacking(ColumnDataCheckpointData& data, double bound) {
     return kNoScore;
   }
   const auto rows = values.Rows();
-  const auto price = data.preferences->delta_bitpacking_price;
+  const auto price = data.contested ? kDeltaBlocksPrice : 1.0;
   if (!state.planned && ScoreOf(BitpackingBlocks<U>::SampledDeltaBytes(rows),
                                 rows.size(), price) >= bound) {
     return kNoScore;
   }
   PlanDeltaBitpacking(values, state);
-  return price * AnalyzeBlocks<T>(
-                   data, Shape::Delta, static_cast<uint32_t>(rows.size()),
-                   SteppedBytes<T>(state.blocks, values), 0, bound / price);
+  return price * AnalyzeBlocks<T>(data, Shape::Delta,
+                                  static_cast<uint32_t>(rows.size()),
+                                  SteppedBytes<T>(state.blocks, values), 0);
 }
 
 template<typename T>
 bool CompressDeltaBitpacking(ColumnDataCheckpointData& data) {
   auto& values = data.Get<Values<T>>();
-  auto& state = data.Get<DeltaBitpacking<T>>();
-  const bool analyzed = state.planned;
-  if (!values.Usable() || !MayWrite(data, analyzed, ByteCodec::None)) {
+  if (!values.Usable()) {
     return false;
   }
+  auto& state = data.Get<DeltaBitpacking<T>>();
   PlanDeltaBitpacking(values, state);
-  return CompressStepped<T>(data, Shape::Delta, state.blocks, analyzed,
-                            DeltaHeader{});
+  CompressStepped<T>(data, Shape::Delta, state.blocks, DeltaHeader{});
+  return true;
 }
 
 template<typename T>
 inline constexpr CompressionFunction kDeltaBitpacking{
   .analyze = AnalyzeDeltaBitpacking<T>,
   .compress = CompressDeltaBitpacking<T>,
-  .codec = CodecType::Delta,
 };
 
 template<typename T>

@@ -39,6 +39,9 @@
 
 namespace irs::codecs {
 
+inline constexpr uint8_t kLeastDictionaryValueBytes = 2;
+inline constexpr uint32_t kMostNarrowDictionaryEntries = 256;
+
 template<typename T>
 inline constexpr size_t kDictionaryCodeBytes =
   std::min<size_t>(sizeof(T) / 2, numeric::BytesFor(kNumericDictMax - 1));
@@ -51,7 +54,6 @@ struct Entries final : State {
   explicit Entries(ColumnDataCheckpointData&) {}
 
   std::vector<numeric::Bits<sizeof(T)>> values;
-  std::vector<uint32_t> ranks;
   containers::FlatHashMap<numeric::Bits<sizeof(T)>, uint32_t> index;
   ScratchVector<uint32_t> codes;
   bool built = false;
@@ -66,12 +68,13 @@ std::span<const uint8_t> EntryBytes(const Entries<T>& entries) noexcept {
 
 template<typename T>
 bool CollectEntries(BlockRows<numeric::Bits<sizeof(T)>> rows, uint32_t cap,
-                    Entries<T>& entries) {
+                    uint32_t expected, Entries<T>& entries) {
   using U = numeric::Bits<sizeof(T)>;
   const auto n = static_cast<uint32_t>(rows.size());
   auto& values = entries.values;
   auto& codes = entries.codes;
   codes.resize(n);
+  entries.index.reserve(std::min(cap, expected));
   uint32_t entry = 0;
   uint32_t row = 0;
   U previous = 0;
@@ -97,20 +100,22 @@ bool CollectEntries(BlockRows<numeric::Bits<sizeof(T)>> rows, uint32_t cap,
   if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) {
     std::span keys{reinterpret_cast<std::make_signed_t<U>*>(values.data()),
                    values.size()};
-    if (!absl::c_is_sorted(keys)) {
-      absl::c_sort(keys);
+    if (absl::c_is_sorted(keys)) {
+      return true;
     }
+    absl::c_sort(keys);
   } else {
-    if (!absl::c_is_sorted(values)) {
-      absl::c_sort(values);
+    if (absl::c_is_sorted(values)) {
+      return true;
     }
+    absl::c_sort(values);
   }
-  entries.ranks.resize(values.size());
+  ScratchVector<uint32_t> ranks(values.size());
   for (uint32_t k = 0; k < values.size(); ++k) {
-    entries.ranks[entries.index.find(values[k])->second] = k;
+    ranks[entries.index.find(values[k])->second] = k;
   }
   for (uint32_t i = 0; i < n; ++i) {
-    codes[i] = entries.ranks[codes[i]];
+    codes[i] = ranks[codes[i]];
   }
   return true;
 }
@@ -122,25 +127,24 @@ Entries<T>* BuildEntries(ColumnDataCheckpointData& data, double bound) {
     return nullptr;
   }
   const auto stored = values.GetFacts().for_stored;
-  const auto& preferences = *data.preferences;
-  if (stored < preferences.min_dictionary_value_bytes) {
+  if (data.contested && stored < kLeastDictionaryValueBytes) {
     return nullptr;
   }
   auto& entries = data.Get<Entries<T>>();
   if (!entries.built) {
     entries.built = true;
     const auto rows = values.Raw();
-    auto cap =
-      stored >= 4
-        ? kNumericDictMax
-        : std::min(kNumericDictMax, preferences.max_narrow_dictionary_entries);
+    auto cap = stored >= 4 || !data.contested ? kNumericDictMax
+                                              : kMostNarrowDictionaryEntries;
     if (const auto affordable =
           bound * static_cast<double>(rows.size()) / sizeof(T);
         affordable <= static_cast<double>(cap)) {
       cap =
         affordable > 1 ? static_cast<uint32_t>(std::ceil(affordable)) - 1 : 0;
     }
-    entries.fits = CollectEntries<T>(rows, cap, entries);
+    auto& expected = data.tuning.dictionary_entries;
+    entries.fits = CollectEntries<T>(rows, cap, expected, entries);
+    expected = static_cast<uint32_t>(entries.index.size());
     if (const auto scale = values.Scale(); entries.fits && scale > 1) {
       numeric::DivideExact<Values<T>::kSigned>(entries.values.data(),
                                                entries.values.size(), scale,
@@ -201,16 +205,12 @@ double AnalyzeDict(ColumnDataCheckpointData& data, double bound,
 
 template<typename T>
 bool CompressDict(ColumnDataCheckpointData& data, FrameStore store) {
-  auto& analysis = data.Get<Dict<T>>().analysis[store.shuffled];
-  if (!MayWrite(data, analysis.done, store.leaf)) {
-    return false;
-  }
   const auto items = DictItems<T>(data, store, kNoScore);
   if (!Offered(items)) {
     return false;
   }
   return CompressFrames<T>(
-    data, items, analysis,
+    data, items, data.Get<Dict<T>>().analysis[store.shuffled],
     DictionaryHeader{
       .count = static_cast<uint32_t>(items.dictionary.size() / sizeof(T)),
       .offset = FrameTableEnd(GeometryOf(items, Scaled<T>(data))),
@@ -219,8 +219,8 @@ bool CompressDict(ColumnDataCheckpointData& data, FrameStore store) {
 }
 
 template<typename T, ByteCodec kLeaf, bool kShuffled>
-inline constexpr auto& kDict = kStoredFrames<Shape::Dictionary, AnalyzeDict<T>,
-                                             CompressDict<T>, kLeaf, kShuffled>;
+inline constexpr auto& kDict =
+  kStoredFrames<AnalyzeDict<T>, CompressDict<T>, kLeaf, kShuffled>;
 
 template<typename T>
 struct DictBitpacking final : State {
@@ -256,37 +256,33 @@ double AnalyzeDictBitpacking(ColumnDataCheckpointData& data, double bound) {
     state.blocks.Bytes(
       kBitpackingFrameRows,
       numeric::BytesFor(static_cast<uint32_t>(entries->values.size() - 1))),
-    EntryBytes(*entries).size(), bound);
+    EntryBytes(*entries).size());
 }
 
 template<typename T>
 bool CompressDictBitpacking(ColumnDataCheckpointData& data) {
   auto& state = data.Get<DictBitpacking<T>>();
-  const bool analyzed = state.planned;
-  if (!MayWrite(data, analyzed, ByteCodec::None)) {
-    return false;
-  }
   const auto* entries = PlanDictBitpacking(data, state, kNoScore);
   if (!entries) {
     return false;
   }
   const auto dictionary = EntryBytes(*entries);
   const auto n = static_cast<uint32_t>(entries->codes.size());
-  return CompressBlocks<T>(
+  CompressBlocks<T>(
     data, Shape::Dictionary, state.blocks,
-    std::span<const uint32_t>{entries->codes}, dictionary, analyzed,
+    std::span<const uint32_t>{entries->codes}, dictionary,
     DictionaryHeader{
       .count = static_cast<uint32_t>(entries->values.size()),
       .offset = FrameTableEnd(PackedGeometry(
         Shape::Dictionary, n, dictionary.size(), sizeof(T), Scaled<T>(data))),
     });
+  return true;
 }
 
 template<typename T>
 inline constexpr CompressionFunction kDictBitpacking{
   .analyze = AnalyzeDictBitpacking<T>,
   .compress = CompressDictBitpacking<T>,
-  .codec = CodecType::Dict,
 };
 
 template<typename T>

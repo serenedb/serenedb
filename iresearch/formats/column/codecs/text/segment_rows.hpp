@@ -112,10 +112,10 @@ inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
 }
 
 uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
-                    const ReusePolicy& reuse) noexcept;
+                    double ratio) noexcept;
 
 void CompressCodes(
-  std::span<uint32_t> codes, ReusePolicy& reuse,
+  std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write);
 
 uint64_t EstimateEntries(const SegmentEntries& rows,
@@ -242,8 +242,8 @@ class DictionaryRows final : public SegmentRows {
   static constexpr Shape kShape = Shape::Dictionary;
 
   DictionaryRows(const duckdb::LogicalType& type, DedupScratch& dedup,
-                 ReusePolicy& codes_tuning)
-    : SegmentRows{type, 1}, _dedup{dedup}, _codes_tuning{codes_tuning} {}
+                 double& codes_ratio)
+    : SegmentRows{type, 1}, _dedup{dedup}, _codes_ratio{codes_ratio} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t distinct) {
     SegmentRows::Begin(config, first_row);
@@ -284,15 +284,15 @@ class DictionaryRows final : public SegmentRows {
 
  private:
   DedupScratch& _dedup;
-  ReusePolicy& _codes_tuning;
+  double& _codes_ratio;
   ScratchVector<uint32_t> _codes;
 };
 
 template<typename Rows>
 Rows MakeRows(const duckdb::LogicalType& type, DedupScratch& dedup,
-              ReusePolicy& codes_tuning) {
+              double& codes_ratio) {
   if constexpr (Rows::kShape == Shape::Dictionary) {
-    return Rows{type, dedup, codes_tuning};
+    return Rows{type, dedup, codes_ratio};
   } else {
     return Rows{type};
   }
@@ -306,7 +306,7 @@ class SortedCompressionState {
   SortedCompressionState(ByteCodec codec, const duckdb::LogicalType& type,
                          DedupScratch& dedup, StringTuning& tuning,
                          uint32_t target)
-    : _rows{MakeRows<Rows>(type, dedup, tuning.codes)},
+    : _rows{MakeRows<Rows>(type, dedup, tuning.codes_ratio)},
       _history{tuning.history[static_cast<size_t>(codec)]},
       _target{target} {}
 

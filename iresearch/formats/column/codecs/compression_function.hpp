@@ -44,7 +44,6 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
-#include "iresearch/formats/column/codecs/preferences.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
@@ -125,6 +124,7 @@ enum class StateId : uint8_t {
   NumericLz4,
   NumericZstd,
   NumericScratch,
+  Constant,
   WideValues,
   Raw,
   For,
@@ -222,8 +222,8 @@ struct ColumnDataCheckpointData {
   SharedBlocks* shared = nullptr;
   ColCodecParams params;
   ColumnTuning& tuning;
-  const Preferences* preferences = &kNoPreferences;
   CodecSet disabled;
+  bool contested = false;
   uint32_t min_packed_run = 1;
   uint64_t rows = 0;
   uint64_t raw_input = 0;
@@ -231,12 +231,9 @@ struct ColumnDataCheckpointData {
   std::array<std::unique_ptr<State>, magic_enum::enum_count<StateId>()> states;
 };
 
-inline constexpr double kNoScore = std::numeric_limits<double>::infinity();
-
 struct CompressionFunction {
   double (*analyze)(ColumnDataCheckpointData& data, double bound) = nullptr;
   bool (*compress)(ColumnDataCheckpointData& data) = nullptr;
-  CodecType codec = CodecType::Auto;
 };
 
 using CompressionFunctions = std::span<const CompressionFunction* const>;
@@ -301,10 +298,6 @@ duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;
 
 uint64_t RawInput(ColumnDataCheckpointData& data);
 
-uint64_t PackedBytes(ColumnDataCheckpointData& data);
-
-uint64_t SampledLz4Bytes(ColumnDataCheckpointData& data);
-
 bool HasRows(std::span<const WriteChunk> chunks) noexcept;
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
@@ -337,10 +330,7 @@ template<CodecType kType, auto kAnalyze, auto kCompress,
 inline constexpr CompressionFunction kStreamed{
   .analyze = Streamed<kType, kAnalyze, kCompress, kAccepts>::Analyze,
   .compress = Streamed<kType, kAnalyze, kCompress, kAccepts>::Compress,
-  .codec = kType,
 };
-
-void Contest(CompressionFunctions contenders, ColumnDataCheckpointData& data);
 
 const CompressionFunction& UncompressedCompression(
   duckdb::PhysicalType physical);

@@ -2369,83 +2369,106 @@ TEST_F(ColCodecsTest, GatherFilterReleasesPassedSegments) {
 }
 
 TEST_F(ColCodecsTest, SortedDictionaryFiltersMatchTheValues) {
-  const Value value = [](uint64_t g) -> std::optional<std::string> {
-    if (g % 13 == 0) {
-      return std::nullopt;
-    }
-    char buf[48];
-    std::snprintf(buf, sizeof buf, "tenant-%05llu/item",
-                  static_cast<unsigned long long>((g * 7919) % 3000));
-    return std::string{buf};
+  struct Case {
+    Value value;
+    std::vector<std::string> keys;
+  };
+  const Case cases[] = {
+    {[](uint64_t g) -> std::optional<std::string> {
+       if (g % 13 == 0) {
+         return std::nullopt;
+       }
+       char buf[48];
+       std::snprintf(buf, sizeof buf, "tenant-%05llu/item",
+                     static_cast<unsigned long long>((g * 7919) % 3000));
+       return std::string{buf};
+     },
+     {"tenant-00000/item", "tenant-01499/item", "tenant-01499/itex",
+      "tenant-02999/item", "a", "z"}},
+    {[](uint64_t g) -> std::optional<std::string> {
+       if (g % 13 == 0) {
+         return std::nullopt;
+       }
+       const auto k = (g * 7919) % 600;
+       std::string nested(k % 40, 'a');
+       nested.append(k % 3, '\0');
+       if (k % 5 == 0) {
+         nested.append("tail-").append(std::to_string(k % 7));
+       }
+       return nested;
+     },
+     {"", "a", std::string(8, 'a'), std::string(9, 'a'),
+      std::string(16, 'a') + std::string(1, '\0'),
+      std::string(8, 'a') + std::string(2, '\0'), "aaaaaaaatail-3", "b"}},
   };
   constexpr uint64_t kRows = 30000;
-  for (const auto codec :
-       {irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictFsstPlus,
-        irs::codecs::CodecType::DictOnpair,
-        irs::codecs::CodecType::DictFsst12}) {
-    SCOPED_TRACE(magic_enum::enum_name(codec));
-    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-    Write(dir, codec, {}, kRows, 8192, value);
-    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
-    const auto* col = r.Column(kField);
-    ASSERT_NE(col, nullptr);
-    duckdb::Connection con{_db};
-    using Cmp = duckdb::ExpressionType;
-    const auto holds = [](Cmp cmp, std::string_view v, std::string_view key) {
-      switch (cmp) {
-        case Cmp::COMPARE_EQUAL:
-          return v == key;
-        case Cmp::COMPARE_NOTEQUAL:
-          return v != key;
-        case Cmp::COMPARE_LESSTHAN:
-          return v < key;
-        case Cmp::COMPARE_LESSTHANOREQUALTO:
-          return v <= key;
-        case Cmp::COMPARE_GREATERTHAN:
-          return v > key;
-        default:
-          return v >= key;
-      }
-    };
-    for (const std::string key :
-         {"tenant-00000/item", "tenant-01499/item", "tenant-01499/itex",
-          "tenant-02999/item", "a", "z"}) {
-      for (const auto cmp :
-           {Cmp::COMPARE_EQUAL, Cmp::COMPARE_NOTEQUAL, Cmp::COMPARE_LESSTHAN,
-            Cmp::COMPARE_LESSTHANOREQUALTO, Cmp::COMPARE_GREATERTHAN,
-            Cmp::COMPARE_GREATERTHANOREQUALTO}) {
-        const duckdb::ExpressionFilter filter{
-          duckdb::BoundComparisonExpression::Create(
-            cmp,
-            duckdb::make_uniq<duckdb::BoundReferenceExpression>(
-              duckdb::LogicalType::VARCHAR, 0),
-            duckdb::make_uniq<duckdb::BoundConstantExpression>(
-              duckdb::Value{key}))};
-        auto filter_state =
-          duckdb::TableFilterState::Initialize(*con.context, filter);
-        auto state = col->InitScan(r.Ctx());
-        for (uint64_t anchor = 0; anchor < kRows;
-             anchor += STANDARD_VECTOR_SIZE) {
-          const auto span =
-            std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
-          duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-          for (duckdb::idx_t i = 0; i < span; ++i) {
-            sel.set_index(i, i);
-          }
-          duckdb::Vector out{duckdb::LogicalType::VARCHAR,
-                             STANDARD_VECTOR_SIZE};
-          const auto kept =
-            col->GatherFilter(state, anchor, span, sel, span, filter,
-                              *filter_state, irs::NullCheckKind::None, out);
-          duckdb::idx_t next = 0;
-          for (duckdb::idx_t i = 0; i < span; ++i) {
-            const auto v = value(anchor + i);
-            const bool expected = v && holds(cmp, *v, key);
-            const bool got = next < kept && sel.get_index(next) == i;
-            next += got ? 1 : 0;
-            ASSERT_EQ(got, expected)
-              << "row " << anchor + i << " key " << key << " cmp "
-              << duckdb::EnumUtil::ToString(cmp);
+  for (const auto& [value, keys] : cases) {
+    for (const auto codec : {irs::codecs::CodecType::DictFsst,
+                             irs::codecs::CodecType::DictFsstPlus,
+                             irs::codecs::CodecType::DictOnpair,
+                             irs::codecs::CodecType::DictFsst12}) {
+      SCOPED_TRACE(magic_enum::enum_name(codec));
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      Write(dir, codec, {}, kRows, 8192, value);
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      duckdb::Connection con{_db};
+      using Cmp = duckdb::ExpressionType;
+      const auto holds = [](Cmp cmp, std::string_view v, std::string_view key) {
+        switch (cmp) {
+          case Cmp::COMPARE_EQUAL:
+            return v == key;
+          case Cmp::COMPARE_NOTEQUAL:
+            return v != key;
+          case Cmp::COMPARE_LESSTHAN:
+            return v < key;
+          case Cmp::COMPARE_LESSTHANOREQUALTO:
+            return v <= key;
+          case Cmp::COMPARE_GREATERTHAN:
+            return v > key;
+          default:
+            return v >= key;
+        }
+      };
+      for (const std::string& key : keys) {
+        for (const auto cmp :
+             {Cmp::COMPARE_EQUAL, Cmp::COMPARE_NOTEQUAL, Cmp::COMPARE_LESSTHAN,
+              Cmp::COMPARE_LESSTHANOREQUALTO, Cmp::COMPARE_GREATERTHAN,
+              Cmp::COMPARE_GREATERTHANOREQUALTO}) {
+          const duckdb::ExpressionFilter filter{
+            duckdb::BoundComparisonExpression::Create(
+              cmp,
+              duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+                duckdb::LogicalType::VARCHAR, 0),
+              duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                duckdb::Value{key}))};
+          auto filter_state =
+            duckdb::TableFilterState::Initialize(*con.context, filter);
+          auto state = col->InitScan(r.Ctx());
+          for (uint64_t anchor = 0; anchor < kRows;
+               anchor += STANDARD_VECTOR_SIZE) {
+            const auto span =
+              std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+            duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+            for (duckdb::idx_t i = 0; i < span; ++i) {
+              sel.set_index(i, i);
+            }
+            duckdb::Vector out{duckdb::LogicalType::VARCHAR,
+                               STANDARD_VECTOR_SIZE};
+            const auto kept =
+              col->GatherFilter(state, anchor, span, sel, span, filter,
+                                *filter_state, irs::NullCheckKind::None, out);
+            duckdb::idx_t next = 0;
+            for (duckdb::idx_t i = 0; i < span; ++i) {
+              const auto v = value(anchor + i);
+              const bool expected = v && holds(cmp, *v, key);
+              const bool got = next < kept && sel.get_index(next) == i;
+              next += got ? 1 : 0;
+              ASSERT_EQ(got, expected)
+                << "row " << anchor + i << " key " << key << " cmp "
+                << duckdb::EnumUtil::ToString(cmp);
+            }
           }
         }
       }
@@ -4490,18 +4513,21 @@ TEST_F(ColCodecsTest, AutoTunesLz4AgainWhenTheValuesChange) {
   ASSERT_TRUE(lz4.tuned);
   const auto first = lz4.tuned_on;
   EXPECT_GT(first, 0u);
-  const auto brief_bytes = tuning.strings.contested_on.value_bytes;
+  const auto& hint =
+    tuning.hints[std::to_underlying(irs::codecs::CodecType::DictLz4)];
+  ASSERT_TRUE(hint.known);
+  const auto brief_bytes = hint.facts[0];
   for (int rg = 0; rg < 4; ++rg) {
     seal(alike, tuning);
     EXPECT_EQ(lz4.tuned_on, first);
   }
-  EXPECT_GT(tuning.reuse.gap, 1u);
   seal(large, tuning);
   EXPECT_GE(lz4.tuned_on, 4 * first);
-  EXPECT_GT(tuning.strings.contested_on.value_bytes, 2 * brief_bytes);
+  EXPECT_GT(hint.facts[0], 2 * brief_bytes);
 }
 
-TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
+TEST_F(ColCodecsTest, AutoMeasuresATextCandidateAgainOnlyWhenItMayWin) {
+  using irs::codecs::CodecType;
   using irs::codecs::Shape;
   const auto seal = [&](const std::vector<std::unique_ptr<duckdb::Vector>>& in,
                         irs::codecs::ColumnTuning& tuning) {
@@ -4513,21 +4539,19 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   };
   const auto steady = Chunks(4096, urls);
   irs::codecs::ColumnTuning tuning;
-  const auto& reuse = tuning.reuse;
   const auto& config = tuning.strings.config;
-  std::vector<uint32_t> gaps;
-  for (int rg = 0; rg < 32; ++rg) {
+  const auto& dictionary =
+    tuning.hints[std::to_underlying(CodecType::DictFsst)];
+  for (unsigned rg = 0; rg < 8; ++rg) {
     seal(steady, tuning);
-    gaps.push_back(reuse.gap);
+    ASSERT_TRUE(dictionary.known);
+    EXPECT_EQ(dictionary.age, rg);
   }
-  std::vector<uint32_t> expected{1};
-  expected.resize(3, 2);
-  expected.resize(7, 4);
-  expected.resize(15, 8);
-  expected.resize(32, 16);
-  EXPECT_EQ(gaps, expected);
   ASSERT_TRUE(config);
   EXPECT_EQ(config->shape, Shape::Plain);
+  const auto& plain = tuning.hints[std::to_underlying(
+    irs::codecs::CodecOf(config->shape, config->leaf))];
+  EXPECT_EQ(plain.age, 0);
 
   const Value repeated = [](uint64_t g) -> std::optional<std::string> {
     std::mt19937_64 rng{g + 1};
@@ -4535,18 +4559,11 @@ TEST_F(ColCodecsTest, AutoMeasuresLessOftenWhileItsCodecHolds) {
   };
   const auto changed = Chunks(4096, repeated);
   seal(changed, tuning);
-  EXPECT_EQ(reuse.gap, 1u);
   ASSERT_TRUE(config);
   EXPECT_EQ(config->shape, Shape::Dictionary);
-  gaps.clear();
-  for (int rg = 0; rg < 4; ++rg) {
-    seal(changed, tuning);
-    gaps.push_back(reuse.gap);
-  }
-  EXPECT_EQ(gaps, (std::vector<uint32_t>{1, 2, 2, 4}));
+  EXPECT_EQ(dictionary.age, 0);
 
   seal(steady, tuning);
-  EXPECT_EQ(reuse.gap, 1u);
   ASSERT_TRUE(config);
   EXPECT_EQ(config->shape, Shape::Plain);
 }

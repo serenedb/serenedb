@@ -160,6 +160,9 @@ class ColumnWriter final {
                 codecs::ColumnTuning& tuning,
                 std::vector<ColumnBlockMeta>& sink);
 
+  bool Enabled(codecs::CodecType method,
+               const duckdb::LogicalType& type) const noexcept;
+
   void CompressPlain(const duckdb::LogicalType& type, codecs::CodecType codec,
                      std::span<WriteChunk> chunks,
                      std::vector<ColumnBlockMeta>& sink);

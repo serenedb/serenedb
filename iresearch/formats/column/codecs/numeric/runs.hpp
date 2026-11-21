@@ -39,6 +39,7 @@
 namespace irs::codecs {
 
 inline constexpr uint32_t kSparseRunRows = 16;
+inline constexpr double kMostRunsPerRow = 0.5;
 
 template<typename T>
 bool EveryRowDiffers(std::span<const WriteChunk> chunks) {
@@ -147,8 +148,8 @@ Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
   const auto n = static_cast<uint32_t>(values.Size());
   const auto count = values.RunCount();
   if (count == n ||
-      static_cast<double>(count) >
-        static_cast<double>(n) * data.preferences->max_runs_per_row) {
+      (data.contested &&
+       static_cast<double>(count) > static_cast<double>(n) * kMostRunsPerRow)) {
     return nullptr;
   }
   auto& runs = data.Get<Runs<T>>();
@@ -227,20 +228,17 @@ template<typename T>
 double AnalyzeRle(ColumnDataCheckpointData& data, double bound,
                   FrameStore store) {
   const auto items = RleItems<T>(data, store);
-  auto& rle = data.Get<Rle<T>>();
-  return AnalyzeFrames<T>(data, items, rle.analysis, bound, RleFrames<T>(data));
+  return AnalyzeFrames<T>(data, items, data.Get<Rle<T>>().analysis, bound,
+                          RleFrames<T>(data));
 }
 
 template<typename T>
 bool CompressRle(ColumnDataCheckpointData& data, FrameStore store) {
-  auto& rle = data.Get<Rle<T>>();
-  if (!MayWrite(data, rle.analysis.done, store.leaf)) {
-    return false;
-  }
   const auto items = RleItems<T>(data, store);
   if (!Offered(items)) {
     return false;
   }
+  auto& rle = data.Get<Rle<T>>();
   const auto& rows = data.Get<Runs<T>>().rows;
   return CompressFrames<T>(
     data, items, rle.analysis,
@@ -253,7 +251,7 @@ bool CompressRle(ColumnDataCheckpointData& data, FrameStore store) {
 
 template<typename T, ByteCodec kLeaf>
 inline constexpr auto& kRle =
-  kStoredFrames<Shape::Runs, AnalyzeRle<T>, CompressRle<T>, kLeaf, false>;
+  kStoredFrames<AnalyzeRle<T>, CompressRle<T>, kLeaf, false>;
 
 template<typename T>
 struct RleBitpacking final : State {
@@ -290,7 +288,7 @@ const Runs<T>* PlanRleBitpacking(ColumnDataCheckpointData& data,
 }
 
 template<typename T>
-double AnalyzeRleBitpacking(ColumnDataCheckpointData& data, double bound) {
+double AnalyzeRleBitpacking(ColumnDataCheckpointData& data, double) {
   auto& state = data.Get<RleBitpacking<T>>();
   const auto* runs = PlanRleBitpacking(data, state);
   if (!runs) {
@@ -300,17 +298,13 @@ double AnalyzeRleBitpacking(ColumnDataCheckpointData& data, double bound) {
     data, Shape::Runs, static_cast<uint32_t>(runs->rows.size()),
     state.value_blocks.StreamBytes(kRleBitpackingFrameRuns) +
       state.length_blocks.StreamBytes(kRleBitpackingFrameRuns),
-    0, bound);
+    0);
 }
 
 template<typename T>
 bool CompressRleBitpacking(ColumnDataCheckpointData& data) {
   using U = numeric::Bits<sizeof(T)>;
   auto& state = data.Get<RleBitpacking<T>>();
-  const bool analyzed = state.planned;
-  if (!MayWrite(data, analyzed, ByteCodec::None)) {
-    return false;
-  }
   const auto* runs = PlanRleBitpacking(data, state);
   if (!runs) {
     return false;
@@ -351,14 +345,14 @@ bool CompressRleBitpacking(ColumnDataCheckpointData& data) {
       return BoundsOf<Values<T>::kSigned>(
         runs->values.data() + begin, std::min(count - begin, geometry.per));
     });
-  return FlushNumeric<T>(data, Shape::Runs, ByteCodec::None, analyzed);
+  FlushNumeric<T>(data, Shape::Runs, ByteCodec::None);
+  return true;
 }
 
 template<typename T>
 inline constexpr CompressionFunction kRleBitpacking{
   .analyze = AnalyzeRleBitpacking<T>,
   .compress = CompressRleBitpacking<T>,
-  .codec = CodecType::Rle,
 };
 
 template<typename T>

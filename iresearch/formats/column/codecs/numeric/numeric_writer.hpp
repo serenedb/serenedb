@@ -23,6 +23,7 @@
 #include <absl/numeric/int128.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/helper.hpp>
@@ -46,6 +47,11 @@
 namespace irs::codecs {
 
 inline constexpr size_t kSampleFrames = 4;
+inline constexpr uint32_t kSampleOrder[kSampleFrames] = {0, 2, 1, 3};
+inline constexpr double kLeafPrice[kNumericLeafCount] = {1.0, 1.05, 1.15};
+inline constexpr double kDeltaBlocksPrice = 1.05;
+inline constexpr double kUnlikelyMargin = 0.5;
+inline constexpr uint32_t kLeastFramesToStop = 2;
 
 struct Geometry {
   uint8_t log2 = 0;
@@ -120,7 +126,6 @@ struct Analysis {
   ByteCodec leaf = ByteCodec::None;
   ScratchVector<uint8_t> copies[kSampleFrames];
   uint32_t copied = 0;
-  bool done = false;
 };
 
 struct NumericScratch final : State {
@@ -132,6 +137,8 @@ struct NumericScratch final : State {
   ScratchVector<uint8_t> frame;
   ScratchVector<uint8_t> shuffled;
   std::string out;
+  Facts facts{};
+  bool measured = false;
 };
 
 struct FrameStore {
@@ -139,46 +146,46 @@ struct FrameStore {
   bool shuffled = false;
 };
 
-template<typename Raw, typename Beaten>
+template<typename Raw, typename Unlikely>
 uint64_t EstimateLeaf(const Geometry& geometry, uint32_t items,
                       uint32_t item_bytes, ColumnDataCheckpointData& data,
                       FrameStore store, LeafSamples& samples, Raw&& raw,
-                      Beaten&& beaten) {
+                      Unlikely&& unlikely) {
   const uint64_t total = uint64_t{items} * item_bytes;
   const auto count = std::min<uint32_t>(geometry.frames, kSampleFrames);
-  const auto frame = [&](uint32_t k) {
-    return static_cast<uint32_t>(uint64_t{k} * geometry.frames / count);
-  };
-  uint64_t sampled = 0;
-  for (uint32_t k = 0; k < count; ++k) {
-    sampled +=
-      uint64_t{std::min(items - frame(k) * geometry.per, geometry.per)} *
-      item_bytes;
-  }
-  SDB_ASSERT(sampled != 0);
-  samples.frames.clear();
+  samples.frames.resize(count);
   samples.bytes.resize(count);
-  uint64_t compressed = 0;
   for (uint32_t k = 0; k < count; ++k) {
-    const std::span<const uint8_t> bytes = raw(k, frame(k));
-    SDB_ASSERT(
-      bytes.size() ==
-      uint64_t{std::min(items - frame(k) * geometry.per, geometry.per)} *
-        item_bytes);
+    samples.frames[k] =
+      static_cast<uint32_t>(uint64_t{k} * geometry.frames / count);
+  }
+  uint64_t compressed = 0;
+  uint64_t read = 0;
+  uint64_t projected = 0;
+  uint32_t done = 0;
+  for (const auto k : kSampleOrder) {
+    if (k >= count) {
+      continue;
+    }
+    const auto frame = samples.frames[k];
+    const std::span<const uint8_t> bytes = raw(k, frame);
+    SDB_ASSERT(bytes.size() ==
+               uint64_t{std::min(items - frame * geometry.per, geometry.per)} *
+                 item_bytes);
     const auto stored = CompressLeaf(store.leaf, data, bytes);
     compressed += std::min(stored.size(), bytes.size());
-    samples.frames.push_back(frame(k));
+    read += bytes.size();
     if (stored.size() < bytes.size()) {
       samples.bytes[k].assign(stored.data(), stored.size());
     } else {
       samples.bytes[k].clear();
     }
-    if (const auto least = geometry.off_data + total * compressed / sampled;
-        beaten(least)) {
-      return least;
+    projected = geometry.off_data + total * compressed / read;
+    if (++done < count && unlikely(projected, done)) {
+      break;
     }
   }
-  return geometry.off_data + total * compressed / sampled;
+  return projected;
 }
 
 template<typename T>
@@ -319,24 +326,36 @@ class SegmentWriter {
   size_t _sample = 0;
 };
 
-inline bool MayWrite(const ColumnDataCheckpointData& data, bool analyzed,
-                     ByteCodec leaf) noexcept {
-  return analyzed || leaf != ByteCodec::None || data.preferences->hold_leafless;
+template<typename T>
+void FlushNumeric(ColumnDataCheckpointData& data, Shape shape, ByteCodec leaf) {
+  const auto& values = data.Get<Values<T>>();
+  data.FlushSegment(CodecOf(shape, leaf), values.Stats(data.type),
+                    values.Size(), data.Get<NumericScratch>().out);
 }
 
 template<typename T>
-bool FlushNumeric(ColumnDataCheckpointData& data, Shape shape, ByteCodec leaf,
-                  bool analyzed) {
-  const auto& values = data.Get<Values<T>>();
-  const auto& out = data.Get<NumericScratch>().out;
-  if (!analyzed && data.preferences->contest_grown &&
-      data.tuning.reuse.Grew(static_cast<double>(out.size()),
-                             static_cast<double>(RawInput(data)))) {
-    return false;
+const Facts& FactsOf(ColumnDataCheckpointData& data) {
+  auto& scratch = data.Get<NumericScratch>();
+  if (scratch.measured) {
+    return scratch.facts;
   }
-  data.FlushSegment(CodecOf(shape, leaf), values.Stats(data.type),
-                    values.Size(), out);
-  return true;
+  scratch.measured = true;
+  const auto& values = data.Get<Values<T>>();
+  if (!values.Usable()) {
+    return scratch.facts;
+  }
+  uint64_t bits = 0;
+  const auto bounds = values.Bounds();
+  for (const auto& block : bounds) {
+    bits += std::bit_width(
+      static_cast<numeric::Bits<sizeof(T)>>(block.hi - block.lo));
+  }
+  scratch.facts = {
+    static_cast<float>(bits) / static_cast<float>(bounds.size()),
+    static_cast<float>(values.RunCount()) / static_cast<float>(values.Size()),
+    static_cast<float>(values.GetFacts().for_stored),
+  };
+  return scratch.facts;
 }
 
 struct Items {
@@ -358,6 +377,42 @@ inline Geometry GeometryOf(const Items& items, bool scaled) noexcept {
                        uint32_t{items.stored} + items.run_width,
                        items.dictionary.size(), scaled);
 }
+
+template<typename T, CodecType kCodec, auto kAnalyze, auto kCompress>
+struct Sampled {
+  using Chunks = Streamed<kCodec, kAnalyze, kCompress, HasRows>;
+
+  static double Analyze(ColumnDataCheckpointData& data, double bound) {
+    auto& hint = data.tuning.hints[std::to_underlying(kCodec)];
+    const auto& facts = FactsOf<T>(data);
+    if (!Forgotten(hint) && Shift(facts, hint.facts) < kFactsMove) {
+      ++hint.age;
+      return hint.score;
+    }
+    hint.score = Chunks::Analyze(data, bound);
+    hint.facts = facts;
+    hint.age = 0;
+    hint.known = true;
+    return hint.score;
+  }
+
+  static bool Compress(ColumnDataCheckpointData& data) {
+    const auto written = data.written;
+    if (!Chunks::Compress(data)) {
+      return false;
+    }
+    data.tuning.hints[std::to_underlying(kCodec)].score =
+      static_cast<double>(data.written - written) /
+      static_cast<double>(std::max<uint64_t>(data.rows, 1));
+    return true;
+  }
+};
+
+template<typename T, CodecType kCodec, auto kAnalyze, auto kCompress>
+inline constexpr CompressionFunction kSampled{
+  .analyze = Sampled<T, kCodec, kAnalyze, kCompress>::Analyze,
+  .compress = Sampled<T, kCodec, kAnalyze, kCompress>::Compress,
+};
 
 template<typename T>
 bool Scaled(ColumnDataCheckpointData& data) {
@@ -383,23 +438,22 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, const Items& items,
   if (!Offered(items)) {
     return kNoScore;
   }
-  analysis.done = true;
   const auto leaf = items.store.leaf;
   const auto rows = data.Get<Values<T>>().Size();
   const uint32_t item = uint32_t{items.stored} + items.run_width;
   const auto geometry = GeometryOf(items, Scaled<T>(data));
-  const auto price = data.preferences->leaf_price[std::to_underlying(leaf)];
+  const auto price =
+    data.contested ? kLeafPrice[std::to_underlying(leaf)] : 1.0;
+  const uint64_t stream = uint64_t{items.count} * item;
   if (leaf == ByteCodec::None) {
-    const auto score =
-      ScoreOf(geometry.off_data + uint64_t{items.count} * item, rows, price);
-    return score < bound ? score : kNoScore;
+    return ScoreOf(geometry.off_data + stream, rows, price);
   }
   auto& samples = data.Get<NumericScratch>().samples;
   const auto size = EstimateLeaf(
     geometry, items.count, item, data, items.store, samples,
     [&](uint32_t sample, uint32_t f) -> std::span<const uint8_t> {
       auto& copy = analysis.copies[sample];
-      if (sample < analysis.copied) {
+      if ((analysis.copied >> sample & 1) != 0) {
         return copy;
       }
       const auto begin = f * geometry.per;
@@ -412,17 +466,19 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, const Items& items,
       } else if (raw.data() != copy.data()) {
         return raw;
       }
-      SDB_ASSERT(sample == analysis.copied);
-      analysis.copied = sample + 1;
+      analysis.copied |= 1U << sample;
       return copy;
     },
-    [&](uint64_t least) { return ScoreOf(least, rows, price) >= bound; });
+    [&](uint64_t projected, uint32_t frames) {
+      return frames >= kLeastFramesToStop &&
+             ScoreOf(projected, rows, price) >=
+               bound * (1.0 + kUnlikelyMargin / frames);
+    });
   const auto score = ScoreOf(size, rows, price);
-  if (!(score < bound)) {
-    return kNoScore;
+  if (score < bound) {
+    std::swap(samples, analysis.samples);
+    analysis.leaf = leaf;
   }
-  std::swap(samples, analysis.samples);
-  analysis.leaf = leaf;
   return score;
 }
 
@@ -431,7 +487,7 @@ bool CompressFrames(ColumnDataCheckpointData& data, const Items& items,
                     const Analysis& analysis, const Own& own, Frame&& frame,
                     Start&& start = {}) {
   const auto leaf = items.store.leaf;
-  if (!Offered(items) || !MayWrite(data, analysis.done, leaf)) {
+  if (!Offered(items)) {
     return false;
   }
   auto& scratch = data.Get<NumericScratch>();
@@ -475,11 +531,11 @@ bool CompressFrames(ColumnDataCheckpointData& data, const Items& items,
       .flags = items.store.shuffled ? kNumericShuffled : uint8_t{0},
     },
     own, data.Get<Values<T>>());
-  return FlushNumeric<T>(data, items.shape, leaf, analysis.done);
+  FlushNumeric<T>(data, items.shape, leaf);
+  return true;
 }
 
-template<Shape kShape, auto kAnalyze, auto kCompress, ByteCodec kLeaf,
-         bool kShuffled>
+template<auto kAnalyze, auto kCompress, ByteCodec kLeaf, bool kShuffled>
 inline constexpr CompressionFunction kStoredFrames{
   .analyze =
     [](ColumnDataCheckpointData& data, double bound) {
@@ -489,27 +545,22 @@ inline constexpr CompressionFunction kStoredFrames{
     [](ColumnDataCheckpointData& data) {
       return kCompress(data, FrameStore{kLeaf, kShuffled});
     },
-  .codec = CodecOf(kShape, kLeaf),
 };
 
 template<typename T>
 double AnalyzeBlocks(ColumnDataCheckpointData& data, Shape shape,
-                     uint32_t items, uint64_t packed, size_t dictionary,
-                     double bound) {
-  const auto score =
-    ScoreOf(PackedGeometry(shape, items, dictionary, sizeof(T), Scaled<T>(data))
-                .off_data +
-              packed,
-            data.Get<Values<T>>().Size(),
-            data.preferences->leaf_price[std::to_underlying(ByteCodec::None)]);
-  return score < bound ? score : kNoScore;
+                     uint32_t items, uint64_t packed, size_t dictionary) {
+  return ScoreOf(
+    PackedGeometry(shape, items, dictionary, sizeof(T), Scaled<T>(data))
+        .off_data +
+      packed,
+    data.Get<Values<T>>().Size(), 1.0);
 }
 
 template<typename T, typename V, typename Own>
-bool CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
+void CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
                     BitpackingBlocks<V>& blocks, std::span<const V> values,
-                    std::span<const uint8_t> dictionary, bool analyzed,
-                    const Own& own) {
+                    std::span<const uint8_t> dictionary, const Own& own) {
   auto& out = data.Get<NumericScratch>().out;
   const auto n = static_cast<uint32_t>(values.size());
   const auto geometry =
@@ -536,7 +587,7 @@ bool CompressBlocks(ColumnDataCheckpointData& data, Shape shape,
       .flags = kNumericPacked,
     },
     own, data.Get<Values<T>>());
-  return FlushNumeric<T>(data, shape, ByteCodec::None, analyzed);
+  FlushNumeric<T>(data, shape, ByteCodec::None);
 }
 
 template<typename T>
@@ -593,9 +644,9 @@ uint64_t SteppedBytes(const BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
 }
 
 template<typename T, typename Own>
-bool CompressStepped(ColumnDataCheckpointData& data, Shape shape,
+void CompressStepped(ColumnDataCheckpointData& data, Shape shape,
                      BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
-                     bool analyzed, const Own& own) {
+                     const Own& own) {
   const auto& values = data.Get<Values<T>>();
   auto& out = data.Get<NumericScratch>().out;
   const auto n = static_cast<uint32_t>(values.Size());
@@ -622,7 +673,7 @@ bool CompressStepped(ColumnDataCheckpointData& data, Shape shape,
       .flags = kNumericPacked,
     },
     own, values);
-  return FlushNumeric<T>(data, shape, ByteCodec::None, analyzed);
+  FlushNumeric<T>(data, shape, ByteCodec::None);
 }
 
 }  // namespace irs::codecs

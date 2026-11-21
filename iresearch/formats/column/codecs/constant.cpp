@@ -151,47 +151,61 @@ constexpr DecompressionFunction kDecompression{
   .fetch_rows = FetchRows<T>,
 };
 
+struct Rows final : State {
+  static constexpr StateId kId = StateId::Constant;
+
+  explicit Rows(ColumnDataCheckpointData& data)
+    : stats{duckdb::BaseStatistics::CreateEmpty(data.type)} {
+    if (data.rows == 0 ||
+        stats.GetStatsType() != duckdb::StatisticsType::NUMERIC_STATS) {
+      return;
+    }
+    constant =
+      Resolve<NumericAxis>(data.type.InternalType(), [&]<typename T>() {
+        for (const auto& chunk : data.chunks) {
+          for (const auto value : chunk.data.Values<T>()) {
+            if (!value.IsValid()) {
+              stats.SetHasNullFast();
+              continue;
+            }
+            stats.SetHasNoNullFast();
+            stats.UpdateNumericStats<T>(value.GetValue());
+          }
+          if (!duckdb::NumericStats::IsConstant(stats)) {
+            return false;
+          }
+        }
+        return true;
+      });
+  }
+
+  duckdb::BaseStatistics stats;
+  bool constant = false;
+};
+
+constexpr CompressionFunction kFunction{
+  .analyze = [](ColumnDataCheckpointData& data,
+                double) { return data.Get<Rows>().constant ? 0.0 : kNoScore; },
+  .compress =
+    [](ColumnDataCheckpointData& data) {
+      auto& rows = data.Get<Rows>();
+      if (!rows.constant) {
+        return false;
+      }
+      data.FlushSegment(CodecType::Constant, std::move(rows.stats), data.rows,
+                        {});
+      return true;
+    },
+};
+
 template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Constant,
+  .compression = &kFunction,
   .decompression = &kDecompression<T>,
 };
 
 }  // namespace
-
-bool CompressConstant(ColumnDataCheckpointData& data) {
-  const auto physical = data.type.InternalType();
-  if (data.rows == 0 ||
-      data.disabled.test(std::to_underlying(CodecType::Constant)) ||
-      !GetCodec(CodecType::Constant, physical)) {
-    return false;
-  }
-  auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);
-  if (stats.GetStatsType() != duckdb::StatisticsType::NUMERIC_STATS) {
-    return false;
-  }
-  const bool constant = Resolve<NumericAxis>(physical, [&]<typename T>() {
-    for (const auto& chunk : data.chunks) {
-      for (const auto value : chunk.data.Values<T>()) {
-        if (!value.IsValid()) {
-          stats.SetHasNullFast();
-          continue;
-        }
-        stats.SetHasNoNullFast();
-        stats.UpdateNumericStats<T>(value.GetValue());
-      }
-      if (!duckdb::NumericStats::IsConstant(stats)) {
-        return false;
-      }
-    }
-    return true;
-  });
-  if (!constant) {
-    return false;
-  }
-  data.FlushSegment(CodecType::Constant, std::move(stats), data.rows, {});
-  return true;
-}
 
 const Codec* ConstantCodec(duckdb::PhysicalType physical) {
   if (physical == duckdb::PhysicalType::BIT) {

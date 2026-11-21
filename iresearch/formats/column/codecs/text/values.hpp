@@ -81,12 +81,13 @@ class Values final : public State {
 
   uint64_t Rows() const noexcept { return codes.size(); }
 
-  TextStatistics Statistics() const noexcept {
+  Facts Statistics() const noexcept {
     const auto valid =
-      static_cast<double>(std::max<uint64_t>(Rows() - null_count, 1));
+      static_cast<float>(std::max<uint64_t>(Rows() - null_count, 1));
     return {
-      .value_bytes = static_cast<double>(raw) / valid,
-      .distinct_share = static_cast<double>(distinct.size()) / valid,
+      static_cast<float>(raw) / valid,
+      static_cast<float>(distinct.size()) / valid,
+      0.F,
     };
   }
 
@@ -106,6 +107,7 @@ class Values final : public State {
   static const blob::FrameSpans& Split(ShapeRows& rows, blob::FrameShape frame);
 
   Trial trial;
+  uint64_t built[kTextShapeCount] = {};
   bool shapes_measured = false;
   bool contends[kTextShapeCount] = {};
   uint64_t null_count = 0;
@@ -154,7 +156,6 @@ class Values final : public State {
 
   containers::FlatHashSet<uint32_t, Hash, Eq> _codes{0, Hash{&distinct},
                                                      Eq{&distinct}};
-  const ReusePolicy& _codes_tuning;
   DedupScratch _dedup;
   ShapeRows _rows[kTextShapeCount];
   uint32_t _last_code = 0;

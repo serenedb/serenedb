@@ -77,7 +77,7 @@ bool CompressRaw(ColumnDataCheckpointData& data, FrameStore store) {
 
 template<typename T, ByteCodec kLeaf, bool kShuffled>
 inline constexpr auto& kRaw =
-  kStoredFrames<Shape::Plain, AnalyzeRaw<T>, CompressRaw<T>, kLeaf, kShuffled>;
+  kStoredFrames<AnalyzeRaw<T>, CompressRaw<T>, kLeaf, kShuffled>;
 
 template<typename T>
 struct For final : State {
@@ -148,44 +148,7 @@ bool CompressFor(ColumnDataCheckpointData& data, FrameStore store) {
 
 template<typename T, ByteCodec kLeaf, bool kShuffled>
 inline constexpr auto& kFor =
-  kStoredFrames<Shape::Plain, AnalyzeFor<T>, CompressFor<T>, kLeaf, kShuffled>;
-
-template<typename T>
-uint64_t SampledForLz4Bytes(ColumnDataCheckpointData& data) {
-  using U = numeric::Bits<sizeof(T)>;
-  constexpr size_t kSamples = 2;
-  auto& values = data.Get<Values<T>>();
-  if (!values.Usable()) {
-    return 0;
-  }
-  const auto rows = values.Rows();
-  const auto& facts = values.GetFacts();
-  const size_t stored = facts.for_stored;
-  auto& scratch = data.Get<NumericScratch>();
-  uint64_t sampled = 0;
-  uint64_t compressed = 0;
-  for (size_t k = 0; k < kSamples; ++k) {
-    const size_t block =
-      rows.size() * (2 * k + 1) / (2 * kSamples) / numeric::kBlockValues;
-    const size_t count = rows.BlockSize(block);
-    scratch.frame.resize(count * stored);
-    numeric::Narrow<sizeof(T)>(
-      count, facts.for_stored, scratch.frame.data(),
-      [v = rows.Block(block), lo = facts.lo](size_t i) {
-        return static_cast<U>(v[i] - lo);
-      });
-    std::span<const uint8_t> bytes{scratch.frame.data(), count * stored};
-    if (stored > 1) {
-      scratch.shuffled.resize(bytes.size());
-      numeric::Shuffle(bytes.data(), count, facts.for_stored,
-                       scratch.shuffled.data());
-      bytes = {scratch.shuffled.data(), bytes.size()};
-    }
-    sampled += bytes.size();
-    compressed += std::min(CompressLeaf<Lz4>(data, bytes).size(), bytes.size());
-  }
-  return sampled == 0 ? 0 : rows.size() * stored * compressed / sampled;
-}
+  kStoredFrames<AnalyzeFor<T>, CompressFor<T>, kLeaf, kShuffled>;
 
 template<typename T>
 struct Bitpacking final : State {
@@ -208,15 +171,14 @@ void PlanBitpacking(const ColumnDataCheckpointData& data,
     state.blocks.PlanEqualSteps(values.Size(), values.Bounds(), values.Step());
     return;
   }
-  state.blocks.PlanMixed(values.Rows(), values.Bounds(),
-                         data.preferences->differences_over_nulls
-                           ? std::span<const uint8_t>{}
-                           : values.NullBlocks(),
-                         data.preferences->delta_bitpacking_price);
+  state.blocks.PlanMixed(
+    values.Rows(), values.Bounds(),
+    data.contested ? std::span<const uint8_t>{} : values.NullBlocks(),
+    data.contested ? kDeltaBlocksPrice : 1.0);
 }
 
 template<typename T>
-double AnalyzeBitpacking(ColumnDataCheckpointData& data, double bound) {
+double AnalyzeBitpacking(ColumnDataCheckpointData& data, double) {
   auto& values = data.Get<Values<T>>();
   if (!values.Usable()) {
     return kNoScore;
@@ -225,27 +187,25 @@ double AnalyzeBitpacking(ColumnDataCheckpointData& data, double bound) {
   PlanBitpacking(data, values, state);
   return AnalyzeBlocks<T>(data, Shape::Plain,
                           static_cast<uint32_t>(values.Size()),
-                          SteppedBytes<T>(state.blocks, values), 0, bound);
+                          SteppedBytes<T>(state.blocks, values), 0);
 }
 
 template<typename T>
 bool CompressBitpacking(ColumnDataCheckpointData& data) {
   auto& values = data.Get<Values<T>>();
-  auto& state = data.Get<Bitpacking<T>>();
-  const bool analyzed = state.planned;
-  if (!values.Usable() || !MayWrite(data, analyzed, ByteCodec::None)) {
+  if (!values.Usable()) {
     return false;
   }
+  auto& state = data.Get<Bitpacking<T>>();
   PlanBitpacking(data, values, state);
-  return CompressStepped<T>(data, Shape::Plain, state.blocks, analyzed,
-                            PlainHeader{});
+  CompressStepped<T>(data, Shape::Plain, state.blocks, PlainHeader{});
+  return true;
 }
 
 template<typename T>
 inline constexpr CompressionFunction kBitpacking{
   .analyze = AnalyzeBitpacking<T>,
   .compress = CompressBitpacking<T>,
-  .codec = CodecType::Bitpacking,
 };
 
 template<typename T>

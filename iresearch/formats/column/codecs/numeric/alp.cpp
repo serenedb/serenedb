@@ -50,6 +50,7 @@
 
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -1202,8 +1203,8 @@ constexpr DecompressionFunction kDecompression{
 template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Alp,
-  .compression = &kStreamed<CodecType::Alp, AlpAnalyzeChunks<T>,
-                            AlpCompressChunks<T>, HasRows>,
+  .compression =
+    &kSampled<T, CodecType::Alp, AlpAnalyzeChunks<T>, AlpCompressChunks<T>>,
   .decompression = &kDecompression<T>,
 };
 

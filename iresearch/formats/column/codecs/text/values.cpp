@@ -35,8 +35,7 @@ using duckdb::string_t;
 
 }  // namespace
 
-Values::Values(ColumnDataCheckpointData& data)
-  : _codes_tuning{data.tuning.strings.codes} {
+Values::Values(ColumnDataCheckpointData& data) {
   auto& last_distinct = data.tuning.strings.last_distinct;
   const uint64_t rows = CountRows(data.chunks);
   codes.reserve(rows);
@@ -101,8 +100,8 @@ uint64_t Values::CodesSize(ShapeRows& rows) {
   }
   if (!rows.coded) {
     rows.coded = true;
-    auto tuning = _codes_tuning;
-    CompressCodes(rows.locals, tuning, [&](CodecType, std::string_view bytes) {
+    double ratio = 0;
+    CompressCodes(rows.locals, ratio, [&](CodecType, std::string_view bytes) {
       rows.codes_bytes = bytes.size();
     });
   }

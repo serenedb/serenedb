@@ -101,7 +101,7 @@ class CompressionState {
   static_assert(!Sorted(kCodec));
 
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : _rows{MakeRows<Rows>(data.type, dedup, data.tuning.strings.codes)},
+    : _rows{MakeRows<Rows>(data.type, dedup, data.tuning.strings.codes_ratio)},
       _history{data.tuning.strings.history[static_cast<size_t>(kCodec)]} {}
 
   void InitCompression(const Config& config, uint64_t first_row,

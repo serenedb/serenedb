@@ -178,6 +178,10 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
         .layout = measured.config.layout,
         .tuned_on = input,
       };
+      if constexpr (kShape == Shape::Dictionary) {
+        _tuning.order[std::to_underlying(ByteCodec::Lz4)].sorted =
+          measured.config.sorted;
+      }
     }
     if (!encoder.Find(measured.config)) {
       const auto priced = score(measured.bytes);
@@ -233,6 +237,8 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
       .level = absl::c_linear_search(levels, tuning.level) ? tuning.level
                                                            : levels.front(),
       .layout = tuning.layout,
+      .sorted = kShape == Shape::Dictionary &&
+                _tuning.order[std::to_underlying(ByteCodec::Lz4)].sorted,
     };
   }
 
@@ -254,14 +260,22 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
     }
     config.level = levels[level];
     Measured tuned{.config = config, .bytes = sizes[level]};
-    const auto measure_layout = [&](FrameDictionary layout, double min_gain) {
-      auto candidate = tuned.config;
-      candidate.layout = layout;
+    const auto measure = [&](const Config& candidate, double min_gain) {
       const auto bytes = size(candidate);
       if (static_cast<double>(bytes) <
           static_cast<double>(tuned.bytes) * (1.0 - min_gain)) {
         tuned = {.config = candidate, .bytes = bytes};
       }
+    };
+    if constexpr (kShape == Shape::Dictionary) {
+      auto candidate = tuned.config;
+      candidate.sorted = true;
+      measure(candidate, kSortedGain);
+    }
+    const auto measure_layout = [&](FrameDictionary layout, double min_gain) {
+      auto candidate = tuned.config;
+      candidate.layout = layout;
+      measure(candidate, min_gain);
     };
     if (local) {
       measure_layout(FrameDictionary::Local, 0.0);
@@ -271,7 +285,7 @@ class Lz4CompressionState final : public CompressionState<Lz4, Rows> {
   }
 
   uint64_t Estimate(Values& values, const Config& config) {
-    auto& rows = values.TrialRows(kShape);
+    auto& rows = config.sorted ? values.SortedRows() : values.TrialRows(kShape);
     const auto whole = config.layout == FrameDictionary::Local
                          ? Values::Bytes(rows)
                          : std::string_view{};

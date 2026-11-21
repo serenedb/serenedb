@@ -118,6 +118,9 @@ void CompressCodes(
   std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write);
 
+void SortEntries(std::span<const duckdb::string_t> entries,
+                 SortScratch& scratch);
+
 uint64_t EstimateEntries(const SegmentEntries& rows,
                          const RatioHistory& hist) noexcept;
 
@@ -161,6 +164,7 @@ class SegmentRows {
   void Begin(const Config& config, uint64_t first_row) {
     _level = config.level;
     _layout = config.layout;
+    _ordered = config.sorted;
     _next = first_row;
     _estimated_raw = _raw;
   }
@@ -178,7 +182,7 @@ class SegmentRows {
   }
 
   void Assemble(const EncodedFrames& frames, CodecType codes_codec,
-                std::string_view codes, Segment& out);
+                std::string_view codes, bool sorted, Segment& out);
 
   void Finish(const EncodedFrames& frames, Shape shape, Segment& out);
 
@@ -187,6 +191,7 @@ class SegmentRows {
   uint32_t _first_entry;
   uint8_t _level = 0;
   FrameDictionary _layout = FrameDictionary::FirstFrame;
+  bool _ordered = false;
   uint64_t _next = 0;
 
   std::vector<duckdb::string_t> _entries;
@@ -286,6 +291,7 @@ class DictionaryRows final : public SegmentRows {
   DedupScratch& _dedup;
   double& _codes_ratio;
   ScratchVector<uint32_t> _codes;
+  bool _sorted = false;
 };
 
 template<typename Rows>

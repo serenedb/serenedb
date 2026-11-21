@@ -47,11 +47,15 @@ constexpr double Ratio(const RatioHistory& hist, double empty) noexcept {
 
 namespace text {
 
+inline constexpr double kSortedGain = 0.03;
+inline constexpr uint64_t kOrderRetuneGrowth = 4;
+
 struct Config {
   Shape shape = Shape::Dictionary;
   ByteCodec leaf = ByteCodec::Lz4;
   uint8_t level = 0;
   FrameDictionary layout = FrameDictionary::FirstFrame;
+  bool sorted = false;
 
   bool operator==(const Config&) const = default;
 };
@@ -65,9 +69,16 @@ struct Lz4Tuning {
   uint64_t tuned_on = 0;
 };
 
+struct OrderTuning {
+  bool tuned = false;
+  bool sorted = false;
+  uint64_t tuned_on = 0;
+};
+
 struct StringTuning {
   std::optional<text::Config> config;
   Lz4Tuning lz4[kTextShapeCount];
+  OrderTuning order[kByteCodecCount];
   RatioHistory history[kByteCodecCount][kShapeCount]{};
   double codes_ratio = 0;
   uint64_t last_distinct = 0;

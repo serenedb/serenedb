@@ -405,7 +405,11 @@ struct DictionaryScan final : SegmentScanState {
   template<typename Before>
   uint32_t Bound(Before before) {
     if (!full) {
-      return entries.leaf->Bound(entries, before);
+      if constexpr (requires { entries.leaf->Bound(entries, before); }) {
+        return entries.leaf->Bound(entries, before);
+      } else {
+        EnsureDictionary();
+      }
     }
     return static_cast<uint32_t>(PartitionIndex(
       1, entries.header.entry_count,
@@ -442,12 +446,9 @@ struct DictionaryScan final : SegmentScanState {
         return true;
       }
       case duckdb::ExpressionClass::BOUND_FUNCTION:
-        if constexpr (Sorted(Leaf::kCodec)) {
-          return ResolveComparison(expr.Cast<duckdb::BoundFunctionExpression>(),
-                                   out);
-        } else {
-          return false;
-        }
+        return entries.header.sorted != 0 &&
+               ResolveComparison(expr.Cast<duckdb::BoundFunctionExpression>(),
+                                 out);
       case duckdb::ExpressionClass::BOUND_CONJUNCTION: {
         const auto& conjunction =
           expr.Cast<duckdb::BoundConjunctionExpression>();

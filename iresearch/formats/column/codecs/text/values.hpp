@@ -93,6 +93,8 @@ class Values final : public State {
 
   ShapeRows& TrialRows(Shape shape);
 
+  ShapeRows& SortedRows();
+
   uint64_t TrialEntries() { return TrialRows(Shape::Dictionary).codes.size(); }
 
   bool Repeats() const noexcept {
@@ -158,6 +160,7 @@ class Values final : public State {
                                                      Eq{&distinct}};
   DedupScratch _dedup;
   ShapeRows _rows[kTextShapeCount];
+  ShapeRows _sorted;
   uint32_t _last_code = 0;
   const duckdb::string_t* _last = nullptr;
 };

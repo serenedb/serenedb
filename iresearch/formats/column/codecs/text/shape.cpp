@@ -51,8 +51,12 @@ auto& Lz4Of(ColumnDataCheckpointData& data) {
 template<typename Rows>
 double FastSize(ColumnDataCheckpointData& data, Values& values) {
   auto& encoder = Lz4Of<Rows>(data);
+  auto config = Fast(Rows::kShape);
+  config.sorted =
+    Rows::kShape == Shape::Dictionary &&
+    data.tuning.strings.order[std::to_underlying(ByteCodec::Lz4)].sorted;
   return static_cast<double>(
-    encoder.Codec().Estimated(encoder, values, Fast(Rows::kShape)));
+    encoder.Codec().Estimated(encoder, values, config));
 }
 
 void MeasureShapes(ColumnDataCheckpointData& data, Values& values) {

@@ -109,8 +109,16 @@ class TextEncoder final : public State {
     if constexpr (kShape == Shape::Plain) {
       SealRows(_codec, config, data, target, _segment);
     } else {
-      CompressRows(_codec, config, data.Get<Values>(), 0, target, _segment,
-                   data);
+      auto& values = data.Get<Values>();
+      const auto ordered = Ordered(config, values);
+      uint64_t begin = 0;
+      if (Find(ordered)) {
+        auto& first = Trial(ordered, values);
+        data.FlushSegment(CodecOf(kShape, kLeaf), std::move(*first.stats),
+                          first.rows, first.bytes.View(), first.shared);
+        begin = first.begin + first.rows;
+      }
+      CompressRows(_codec, ordered, values, begin, target, _segment, data);
     }
   }
 
@@ -163,6 +171,30 @@ class TextEncoder final : public State {
   }
 
  private:
+  Config Ordered(Config config, Values& values) {
+    if constexpr (kShape == Shape::Dictionary && !Sorted(kLeaf)) {
+      auto& order = _tuning.order[std::to_underlying(kLeaf)];
+      if (values.Rows() != 0 &&
+          (!order.tuned || values.raw >= order.tuned_on * kOrderRetuneGrowth)) {
+        const auto& first = Trial(config, values);
+        const auto arrival = first.Size();
+        const bool matters =
+          static_cast<double>(first.entries * first.max_len) >=
+          static_cast<double>(arrival) * kSortedGain;
+        config.sorted = true;
+        order = {
+          .tuned = true,
+          .sorted =
+            matters && static_cast<double>(Trial(config, values).Size()) <
+                         static_cast<double>(arrival) * (1.0 - kSortedGain),
+          .tuned_on = values.raw,
+        };
+      }
+      config.sorted = order.sorted;
+    }
+    return config;
+  }
+
   IRS_NO_INLINE static void CutRows(Compression& state, const Config& config,
                                     const Values& values, uint64_t begin,
                                     uint32_t target, Segment& seg) {

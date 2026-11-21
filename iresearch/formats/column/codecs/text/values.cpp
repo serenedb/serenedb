@@ -94,6 +94,33 @@ Values::ShapeRows& Values::TrialRows(Shape shape) {
   return rows;
 }
 
+Values::ShapeRows& Values::SortedRows() {
+  auto& rows = _sorted;
+  if (rows.done) {
+    return rows;
+  }
+  rows.done = true;
+  const auto& arrival = TrialRows(Shape::Dictionary);
+  std::vector<string_t> entries;
+  entries.reserve(arrival.codes.size());
+  for (const auto code : arrival.codes) {
+    entries.emplace_back(*distinct[code - 1]);
+  }
+  SortScratch scratch;
+  SortEntries(entries, scratch);
+  rows.codes.resize(arrival.codes.size());
+  for (size_t at = 0; at < rows.codes.size(); ++at) {
+    rows.codes[at] = arrival.codes[scratch.order[at].entry];
+  }
+  rows.locals.resize(arrival.locals.size());
+  for (size_t row = 0; row < rows.locals.size(); ++row) {
+    rows.locals[row] = scratch.remap[arrival.locals[row]];
+  }
+  rows.profile = arrival.profile;
+  rows.profile.codes = rows.codes;
+  return rows;
+}
+
 uint64_t Values::CodesSize(ShapeRows& rows) {
   if (rows.profile.shape != Shape::Dictionary) {
     return 0;

@@ -172,34 +172,39 @@ uint64_t DictionaryRows::Estimate() const noexcept {
          CodesBytes(kShape, _rows, _entries.size(), _codes_ratio);
 }
 
-void DictionaryRows::Sort(SortScratch& scratch) {
-  const auto n = static_cast<uint32_t>(_entries.size());
-  uint32_t common = _entries.empty() ? 0 : _entries[0].GetSize();
+void SortEntries(std::span<const string_t> entries, SortScratch& scratch) {
+  const auto n = static_cast<uint32_t>(entries.size());
+  uint32_t common = entries.empty() ? 0 : entries[0].GetSize();
   for (uint32_t i = 1; i < n && common != 0; ++i) {
-    common = std::min(common, CommonPrefix(_entries[0], _entries[i]));
+    common = std::min(common, CommonPrefix(entries[0], entries[i]));
   }
   auto& order = scratch.order;
   order.resize(n);
   for (uint32_t i = 0; i < n; ++i) {
-    order[i] = {PrefixKey(_entries[i], common), i};
+    order[i] = {PrefixKey(entries[i], common), i};
   }
-  SortByBytes(order, _entries, common);
+  SortByBytes(order, entries, common);
   auto& remap = scratch.remap;
   auto& sorted = scratch.sorted;
   remap.assign(n + 1, 0);
   sorted.resize(n);
   for (uint32_t pos = 0; pos < n; ++pos) {
     remap[order[pos].entry + 1] = pos + 1;
-    sorted[pos] = _entries[order[pos].entry];
-  }
-  _entries.swap(sorted);
-  for (auto& code : _codes) {
-    code = remap[code];
+    sorted[pos] = entries[order[pos].entry];
   }
 }
 
+void DictionaryRows::Sort(SortScratch& scratch) {
+  SortEntries(_entries, scratch);
+  _entries.swap(scratch.sorted);
+  for (auto& code : _codes) {
+    code = scratch.remap[code];
+  }
+  _sorted = true;
+}
+
 void SegmentRows::Assemble(const EncodedFrames& frames, CodecType codes_codec,
-                           std::string_view codes, Segment& out) {
+                           std::string_view codes, bool sorted, Segment& out) {
   const auto entry_count = EntryCount();
   const auto data_size = out.bytes.Size();
   SDB_ENSURE(_rows <= std::numeric_limits<uint32_t>::max() &&
@@ -209,6 +214,7 @@ void SegmentRows::Assemble(const EncodedFrames& frames, CodecType codes_codec,
   Header h{
     .codes = codes_codec,
     .level = _level,
+    .sorted = sorted,
     .length_width =
       BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length),
     .row_count = static_cast<uint32_t>(_rows),
@@ -259,6 +265,7 @@ void SegmentRows::Finish(const EncodedFrames& frames, Shape shape,
     .leaf = frames.codec,
     .level = _level,
     .layout = _layout,
+    .sorted = _ordered,
   };
   out.begin = _next - _rows;
   out.rows = _rows;
@@ -278,17 +285,18 @@ void SegmentRows::Finish(const EncodedFrames& frames, Shape shape,
 }
 
 void PlainRows::Write(const EncodedFrames& frames, Segment& out) {
-  Assemble(frames, CodecType::Auto, {}, out);
+  Assemble(frames, CodecType::Auto, {}, false, out);
   Finish(frames, kShape, out);
 }
 
 void DictionaryRows::Write(const EncodedFrames& frames, Segment& out) {
   CompressCodes(_codes, _codes_ratio,
                 [&](CodecType codec, std::string_view codes) {
-                  Assemble(frames, codec, codes, out);
+                  Assemble(frames, codec, codes, _sorted, out);
                 });
   Finish(frames, kShape, out);
   _codes.clear();
+  _sorted = false;
 }
 
 }  // namespace irs::codecs::text

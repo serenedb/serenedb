@@ -375,6 +375,17 @@ std::string Pseudo(uint64_t g, size_t len) {
   return s;
 }
 
+std::string Clustered(uint64_t k) {
+  return absl::StrCat(Pseudo(k / 4, 200), "/", k % 4);
+}
+
+uint64_t Scattered(uint64_t g, uint64_t distinct) {
+  uint64_t z = g + 0x9E3779B97F4A7C15ULL;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+  return (z ^ (z >> 31)) % distinct;
+}
+
 const Value kLowCardinalityWithNulls =
   [](uint64_t g) -> std::optional<std::string> {
   if (g % 9 == 0) {
@@ -945,17 +956,27 @@ TEST_F(ColCodecsTest, CompactionsTrainADictionaryPerSegment) {
   for (uint64_t t = 0; t < 200; ++t) {
     templates.emplace_back(Pseudo(t, 100));
   }
-  const Value value = [&](uint64_t g) -> std::optional<std::string> {
+  const Value spread = [&](uint64_t g) -> std::optional<std::string> {
     if (g % 211 == 0) {
       return std::nullopt;
     }
     return templates[(g * 0x9E3779B97F4A7C15ULL >> 40) % templates.size()] +
            std::to_string(g);
   };
+  const Value apart = [&](uint64_t g) -> std::optional<std::string> {
+    if (g % 211 == 0) {
+      return std::nullopt;
+    }
+    return std::to_string(g) +
+           templates[(g * 0x9E3779B97F4A7C15ULL >> 40) % templates.size()];
+  };
   for (const auto codec :
        {irs::codecs::CodecType::DictLz4, irs::codecs::CodecType::Lz4,
         irs::codecs::CodecType::DictZstd, irs::codecs::CodecType::Zstd,
         irs::codecs::CodecType::DictZxc, irs::codecs::CodecType::Zxc}) {
+    const auto& value =
+      irs::codecs::ShapeOf(codec) == irs::codecs::Shape::Dictionary ? apart
+                                                                    : spread;
     for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
       SCOPED_TRACE(
         absl::StrCat(magic_enum::enum_name(codec),
@@ -2433,7 +2454,74 @@ TEST_F(ColCodecsTest, GatherFilterReleasesPassedSegments) {
   EXPECT_EQ(kept, expected);
 }
 
-TEST_F(ColCodecsTest, SortedDictionaryFiltersMatchTheValues) {
+TEST_F(ColCodecsTest, AFrameDictionaryIsSortedWhenThatMakesItSmaller) {
+  const Value clustered = [](uint64_t g) -> std::optional<std::string> {
+    return Clustered(Scattered(g, 4000));
+  };
+  const Value repeating = [](uint64_t g) -> std::optional<std::string> {
+    return absl::StrCat("tenant-", (g * 7919) % 3000, "/item");
+  };
+  const Value few = [](uint64_t g) -> std::optional<std::string> {
+    return absl::StrCat("status-", (g * 7919) % 40);
+  };
+  constexpr uint64_t kRows = 30000;
+  for (const auto codec :
+       {irs::codecs::CodecType::DictLz4, irs::codecs::CodecType::DictZstd,
+        irs::codecs::CodecType::DictZxc}) {
+    for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+      SCOPED_TRACE(
+        absl::StrCat(magic_enum::enum_name(codec),
+                     tier == irs::WriteTier::Merge ? " merge" : " flush"));
+      for (const auto& [value, sorted] :
+           {std::pair<const Value&, std::string_view>{clustered, "true"},
+            std::pair<const Value&, std::string_view>{repeating, "false"},
+            std::pair<const Value&, std::string_view>{few, "false"}}) {
+        tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+        Write(dir, codec, {.tier = tier}, kRows, kRows, value);
+        Verify(dir, codec, kRows, value);
+        const auto flags = SegmentInfo(dir, "sorted");
+        ASSERT_FALSE(flags.empty());
+        EXPECT_TRUE(absl::c_all_of(
+          flags, [&](const std::string& flag) { return flag == sorted; }))
+          << ::testing::PrintToString(flags);
+      }
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, AutoMeasuresTheSortedOrderOfAnLz4Dictionary) {
+  using irs::codecs::CodecType;
+  irs::codecs::CodecSet no_fsst;
+  for (const auto type : {CodecType::Fsst, CodecType::DictFsst}) {
+    no_fsst.set(std::to_underlying(type));
+  }
+  const auto sorted = [&](const Value& value, irs::WriteTier tier) {
+    const auto chunks = Chunks(30000, value);
+    irs::codecs::ColumnTuning tuning;
+    const auto types =
+      SealAuto(Db(), WriteChunks(chunks), {.tier = tier}, tuning, no_fsst);
+    EXPECT_TRUE(absl::c_all_of(
+      types, [](CodecType type) { return type == CodecType::DictLz4; }))
+      << ::testing::PrintToString(types);
+    return tuning.strings.order[std::to_underlying(irs::codecs::ByteCodec::Lz4)]
+      .sorted;
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Merge ? "merge" : "flush");
+    EXPECT_TRUE(sorted(
+      [](uint64_t g) -> std::optional<std::string> {
+        return Clustered(Scattered(g, 4000));
+      },
+      tier));
+    EXPECT_FALSE(sorted(
+      [](uint64_t g) -> std::optional<std::string> {
+        return absl::StrCat("tenant-", (g * 7919) % 3000, "/item");
+      },
+      tier));
+  }
+}
+
+TEST_F(ColCodecsTest, DictionaryFiltersMatchTheValues) {
   struct Case {
     Value value;
     std::vector<std::string> keys;
@@ -2465,13 +2553,30 @@ TEST_F(ColCodecsTest, SortedDictionaryFiltersMatchTheValues) {
      {"", "a", std::string(8, 'a'), std::string(9, 'a'),
       std::string(16, 'a') + std::string(1, '\0'),
       std::string(8, 'a') + std::string(2, '\0'), "aaaaaaaatail-3", "b"}},
+    {[](uint64_t g) -> std::optional<std::string> {
+       if (g % 13 == 0) {
+         return std::nullopt;
+       }
+       return absl::StrCat("status-", (g * 7919) % 40);
+     },
+     {"status-0", "status-17", "status-39", "status-4", "status-40", "", "z"}},
+    {[](uint64_t g) -> std::optional<std::string> {
+       if (g % 13 == 0) {
+         return std::nullopt;
+       }
+       return Clustered(Scattered(g, 4000));
+     },
+     {Clustered(0), Clustered(1), Clustered(2001), Clustered(3999),
+      Clustered(0) + "x", Pseudo(7, 200), "", "~"}},
   };
   constexpr uint64_t kRows = 30000;
   for (const auto& [value, keys] : cases) {
-    for (const auto codec : {irs::codecs::CodecType::DictFsst,
-                             irs::codecs::CodecType::DictFsstPlus,
-                             irs::codecs::CodecType::DictOnpair,
-                             irs::codecs::CodecType::DictFsst12}) {
+    for (const auto codec :
+         {irs::codecs::CodecType::DictFsst,
+          irs::codecs::CodecType::DictFsstPlus,
+          irs::codecs::CodecType::DictOnpair,
+          irs::codecs::CodecType::DictFsst12, irs::codecs::CodecType::DictLz4,
+          irs::codecs::CodecType::DictZstd, irs::codecs::CodecType::DictZxc}) {
       SCOPED_TRACE(magic_enum::enum_name(codec));
       tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
       Write(dir, codec, {}, kRows, 8192, value);

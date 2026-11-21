@@ -133,7 +133,8 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   |   bitpacked length[entry_count]              |   |
 |   +----------------------------------------------+   |
-|   entry 0 is NULL, then each distinct value in       |
+|   entry 0 is NULL, then each distinct value: in      |
+|   byte order when the header says sorted, else in    |
 |   the order the rows first use it                    |
 +------------------------------------------------------+
 |                      Row codes                       |
@@ -166,7 +167,7 @@ struct Header {
   CodecType codes = CodecType::Auto;
   uint8_t reserved2 = 0;
   uint8_t level = 0;
-  uint8_t reserved0 = 0;
+  uint8_t sorted = 0;
   uint8_t length_width = 0;
   uint8_t reserved1[2] = {};
   uint32_t row_count = 0;
@@ -199,7 +200,7 @@ struct Header {
     SDB_ENSURE(
       (ShapeOf(codec) == Shape::Dictionary ? CodesCodec(h.codes)
                                            : h.codes == CodecType::Auto) &&
-        h.length_width <= 32 && h.lcp_width <= 32 &&
+        h.length_width <= 32 && h.lcp_width <= 32 && h.sorted <= 1 &&
         (h.flags == FrameDictionary::None ||
          (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
           !Sorted(leaf)) ||
@@ -230,7 +231,7 @@ static_assert(offsetof(Header, version) == 0);
 static_assert(offsetof(Header, codes) == 1);
 static_assert(offsetof(Header, reserved2) == 2);
 static_assert(offsetof(Header, level) == 3);
-static_assert(offsetof(Header, reserved0) == 4);
+static_assert(offsetof(Header, sorted) == 4);
 static_assert(offsetof(Header, length_width) == 5);
 static_assert(offsetof(Header, reserved1) == 6);
 static_assert(offsetof(Header, row_count) == 8);

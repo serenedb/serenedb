@@ -108,6 +108,7 @@ class CompressionState {
                        size_t distinct, Segment& out) {
     _rows.Begin(config, first_row, distinct);
     Configure(config.level, config.layout);
+    _sorted = config.sorted;
     _frame.clear();
     _out = &out;
     out.bytes.Truncate(0);
@@ -122,9 +123,13 @@ class CompressionState {
 
   IRS_FORCE_INLINE void Compress(
     uint32_t code, std::span<const duckdb::string_t* const> values) {
-    _rows.AddCode(
-      code, values,
-      [&](const duckdb::string_t& entry, uint32_t id) { Append(entry, id); });
+    if constexpr (kShape == Shape::Dictionary) {
+      _rows.AddCode(code, values, [](const duckdb::string_t&, uint32_t) {});
+    } else {
+      _rows.AddCode(
+        code, values,
+        [&](const duckdb::string_t& entry, uint32_t id) { Append(entry, id); });
+    }
   }
 
   IRS_FORCE_INLINE bool Full(uint32_t target) {
@@ -132,6 +137,9 @@ class CompressionState {
   }
 
   void FinalizeCompress() {
+    if constexpr (kShape == Shape::Dictionary) {
+      AppendEntries();
+    }
     const auto rows = _rows.View();
     SDB_ASSERT(_packed + _frame.size() == rows.raw);
     const auto lengths = _rows.Lengths();
@@ -175,15 +183,49 @@ class CompressionState {
     _frame.append(value.GetData(), size);
   }
 
-  uint64_t Estimate() const noexcept {
-    const auto raw = _rows.View().raw;
-    return (_spans.size() + 1) * kFrameMetaSize + Written() +
-           (_layout == FrameDictionary::Local
-              ? SegmentDictionaryBytes(raw, Codec::kDictionaryCap) /
-                  kLocalDictionaryPacking
-              : 0) +
-           static_cast<uint64_t>(static_cast<double>(raw - _packed) *
-                                 Ratio(History(), 1.0));
+  void AppendEntries() {
+    if (_sorted) {
+      _rows.Sort(_sort);
+    }
+    const auto rows = _rows.View();
+    for (size_t i = 0; i < rows.entries.size(); ++i) {
+      Append(rows.entries[i], rows.first_entry + static_cast<uint32_t>(i));
+    }
+  }
+
+  void Seed(const SegmentEntries& rows) {
+    auto& hist = History();
+    const auto frame = _spans.Shape().frame;
+    if (hist.raw != 0 || rows.raw < frame) {
+      return;
+    }
+    _frame.clear();
+    for (size_t i = 0; i < rows.entries.size() && _frame.size() < frame; ++i) {
+      _frame.append(rows.entries[i].GetData(), rows.entries[i].GetSize());
+    }
+    hist.raw += _frame.size();
+    hist.comp += blob::CompressedSize<Codec>(_frame, _scratch, *_codec);
+    _frame.clear();
+  }
+
+  uint64_t Estimate() {
+    const auto rows = _rows.View();
+    const auto dictionary =
+      _layout == FrameDictionary::Local
+        ? SegmentDictionaryBytes(rows.raw, Codec::kDictionaryCap) /
+            kLocalDictionaryPacking
+        : 0;
+    if constexpr (kShape == Shape::Dictionary) {
+      Seed(rows);
+      return (rows.raw / _spans.Shape().frame + 2) * kFrameMetaSize +
+             dictionary +
+             static_cast<uint64_t>(static_cast<double>(rows.raw) *
+                                   Ratio(History(), 1.0));
+    } else {
+      return (_spans.size() + 1) * kFrameMetaSize + Written() + dictionary +
+             static_cast<uint64_t>(static_cast<double>(rows.raw - _packed) *
+                                   Ratio(History(), 1.0));
+    }
   }
 
   RatioHistory& History() const noexcept {
@@ -286,12 +328,14 @@ class CompressionState {
   }
 
   Rows _rows;
+  SortScratch _sort;
   RatioHistory* _history;
   std::optional<typename Codec::Compressor> _codec;
   std::optional<typename Codec::Compressor> _probe;
   uint8_t _level = 0;
   uint8_t _probe_level = 0;
   FrameDictionary _layout = FrameDictionary::FirstFrame;
+  bool _sorted = false;
   bool _trained = false;
   bool _first_frame = false;
   size_t _counted = 0;

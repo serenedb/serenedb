@@ -444,6 +444,20 @@ TEST_F(LuceneParserTest, FuzzyPrefixInPhrase) {
   EXPECT_TRUE(part->starts_with);
 }
 
+TEST_F(LuceneParserTest, FuzzyPrefixInFnPhrase) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "fn:phrase(hel*~1 world)"));
+  ASSERT_EQ(1, Optional().filters.size());
+  const auto& phrase =
+    irs::utils::downCast<irs::ByPhrase>(*Optional().filters[0]);
+  ASSERT_EQ(2, phrase.options().size());
+  const auto* part =
+    std::get_if<irs::ByEditDistanceOptions>(&phrase.options().begin()->part);
+  ASSERT_NE(nullptr, part);
+  EXPECT_EQ("hel", irs::ViewCast<char>(irs::bytes_view{part->term}));
+  EXPECT_EQ(1, part->max_distance);
+  EXPECT_TRUE(part->starts_with);
+}
+
 TEST_F(LuceneParserTest, FuzzyPrefixInPhraseBareTilde) {
   ASSERT_TRUE(irs::ParseQuery(ctx, "\"hello wor*~\""));
   ASSERT_EQ(1, Optional().filters.size());

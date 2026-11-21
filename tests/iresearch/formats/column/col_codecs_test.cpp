@@ -2055,6 +2055,71 @@ TEST_F(ColCodecsTest, AScanStartsEveryRowGroupWithADictionaryVector) {
   }
 }
 
+TEST_F(ColCodecsTest, ADictionaryVectorHoldsANullOnlyWhenItsSegmentHasNulls) {
+  constexpr uint32_t kRows = 6 * STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kDistinct = 300;
+  const auto text = [](uint64_t k) {
+    return absl::StrCat("tenant-", k, "/item");
+  };
+  absl::flat_hash_set<std::string> held;
+  for (uint64_t k = 0; k < kDistinct; ++k) {
+    held.emplace(text(k));
+  }
+  for (const bool nulls : {false, true}) {
+    const Value value = [&](uint64_t g) -> std::optional<std::string> {
+      if (nulls && g % 13 == 0) {
+        return std::nullopt;
+      }
+      return text((g * 7919) % kDistinct);
+    };
+    for (const auto codec :
+         {irs::codecs::CodecType::DictFsst,
+          irs::codecs::CodecType::DictFsstPlus,
+          irs::codecs::CodecType::DictOnpair,
+          irs::codecs::CodecType::DictFsst12, irs::codecs::CodecType::DictLz4,
+          irs::codecs::CodecType::DictZstd, irs::codecs::CodecType::DictZxc}) {
+      SCOPED_TRACE(absl::StrCat(magic_enum::enum_name(codec),
+                                nulls ? " with NULLs" : " without NULLs"));
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      Write(dir, codec, {}, kRows, kRows, value);
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      for (int pass = 0; pass < 3; ++pass) {
+        auto state = col->InitScan(r.Ctx());
+        for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+          duckdb::Vector out{duckdb::LogicalType::VARCHAR,
+                             STANDARD_VECTOR_SIZE};
+          ASSERT_EQ(col->Scan(state, out, STANDARD_VECTOR_SIZE),
+                    duckdb::idx_t{STANDARD_VECTOR_SIZE});
+          ASSERT_EQ(out.GetVectorType(), duckdb::VectorType::DICTIONARY_VECTOR);
+          const auto& entries = duckdb::DictionaryVector::Child(out);
+          EXPECT_EQ(duckdb::FlatVector::Validity(entries).CanHaveNull(), nulls)
+            << "pass " << pass << " row " << pos;
+          const auto entry_count =
+            duckdb::DictionaryVector::DictionarySize(out).GetIndex();
+          ASSERT_EQ(entry_count, kDistinct + 1);
+          for (duckdb::idx_t e = 0; e < entry_count; ++e) {
+            const auto entry = entries.GetValue(e);
+            ASSERT_EQ(entry.IsNull(), nulls && e == 0) << "entry " << e;
+            if (!entry.IsNull()) {
+              EXPECT_TRUE(held.contains(entry.ToString())) << "entry " << e;
+            }
+          }
+          for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; i += 97) {
+            const auto expected = value(pos + i);
+            const auto got = out.GetValue(i);
+            ASSERT_EQ(got.IsNull(), !expected) << "row " << pos + i;
+            if (expected) {
+              EXPECT_EQ(got.ToString(), *expected) << "row " << pos + i;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 TEST_F(ColCodecsTest, CachedDictionaryKeepsNoScanContext) {
   const auto& value = kLowCardinalityWithNulls;
   constexpr uint32_t kRows = 10 * STANDARD_VECTOR_SIZE;

@@ -287,6 +287,35 @@ a	k	l	p
 59999	k-2999	l-499	row 59999 of the plain column
 
 statement ok
+CREATE TABLE df_n (a INTEGER PRIMARY KEY,
+                   k TEXT USING COMPRESSION dict_fsst,
+                   z TEXT USING COMPRESSION dict_lz4)
+  WITH (compaction_interval = 0, row_group_size = 16384);
+
+statement ok
+INSERT INTO df_n SELECT a, (100 + a * 7919 % 300)::TEXT, (100 + a * 7919 % 300)::TEXT FROM range(60000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) df_n;
+
+query
+SELECT (SELECT count(*) FROM df_n WHERE k::INTEGER > 250) AS k,
+       (SELECT count(*) FROM df_n WHERE z::INTEGER > 250) AS z,
+       (SELECT count(*) FROM range(60000) t(a) WHERE 100 + a * 7919 % 300 > 250) AS expected;
+----
+k	z	expected
+29800	29800	29800
+
+query
+SELECT count(*) AS n, count(k) AS k, count(z) AS z, min(k::INTEGER) AS low, max(z::INTEGER) AS high FROM df_n;
+----
+n	k	z	low	high
+60000	60000	60000	100	399
+
+statement ok
+DROP TABLE df_n;
+
+statement ok
 DROP TABLE df_s;
 
 statement ok

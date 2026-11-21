@@ -292,6 +292,9 @@ struct DictionaryScan final : SegmentScanState {
   static constexpr Shape kShape = Shape::Dictionary;
   static constexpr ByteCodec kCodec = Leaf::kCodec;
   static constexpr auto kValidity = CompressionValidity::NoValidityRequired;
+  static constexpr uint32_t kNullEntry = 0;
+  static constexpr uint32_t kFirstEntry =
+    EntryFrames<Shape::Dictionary, Leaf>::kFirstEntry;
 
   DictionaryScan(const ColumnSegment& segment, duckdb::BufferHandle handle)
     : DictionaryScan{segment, std::move(handle),
@@ -300,6 +303,7 @@ struct DictionaryScan final : SegmentScanState {
   DictionaryScan(const ColumnSegment& segment, duckdb::BufferHandle handle,
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
     : entries{segment, std::move(handle), !cached},
+      nullable{segment.stats.CanHaveNull()},
       cache_slot{segment.cache_slot},
       room{HasRoom(segment.cache_slot, DictionaryBytes(entries.header))},
       code_frames{entries.base, entries.header} {
@@ -307,8 +311,11 @@ struct DictionaryScan final : SegmentScanState {
       AdoptDictionary(*cached);
       return;
     }
-    entries.values[0] = string_t{};
-    duckdb::FlatVector::ValidityMutable(entries.dictionary->data).SetInvalid(0);
+    entries.values[kNullEntry] = string_t{};
+    if (nullable) {
+      duckdb::FlatVector::ValidityMutable(entries.dictionary->data)
+        .SetInvalid(kNullEntry);
+    }
     full = entries.frames.empty();
   }
 
@@ -317,9 +324,11 @@ struct DictionaryScan final : SegmentScanState {
     const auto count = entries.header.entry_count;
     duckdb::Vector view{entries.type,
                         duckdb::FlatVector::GetDataMutable(owner->data), count};
-    auto& validity = duckdb::FlatVector::ValidityMutable(view);
-    validity.Initialize(count);
-    validity.SetInvalid(0);
+    if (nullable) {
+      auto& validity = duckdb::FlatVector::ValidityMutable(view);
+      validity.Initialize(count);
+      validity.SetInvalid(kNullEntry);
+    }
     duckdb::StringVector::AddAuxiliaryData(
       view, duckdb::make_uniq<duckdb::VectorBufferHolder>(
               owner->data.GetBufferRef()));
@@ -347,6 +356,9 @@ struct DictionaryScan final : SegmentScanState {
 
   void Admit() {
     full = true;
+    if (!nullable && entries.header.entry_count > kFirstEntry) {
+      entries.values[kNullEntry] = entries.values[kFirstEntry];
+    }
     if (!cache_slot.touched || !SecondTouch(cache_slot)) {
       return;
     }
@@ -699,6 +711,7 @@ struct DictionaryScan final : SegmentScanState {
   }
 
   EntryFrames<Shape::Dictionary, Leaf> entries;
+  bool nullable;
   ReadContext::CacheSlot cache_slot;
   bool room;
   bool full = false;

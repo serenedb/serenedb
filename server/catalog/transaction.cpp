@@ -692,6 +692,24 @@ void Transactions::MaintainLog(Lsn end) {
       })
       .Detach();
   }
+  auto tail_limit = Log::kTailBytes;
+  SDB_IF_FAILURE("fold_log_tail") { tail_limit = 0; }
+  if (_log->TailBytes() > tail_limit &&
+      !_folding_tail.exchange(true, std::memory_order_acq_rel)) {
+    Runtime::Get()
+      .Run([this] {
+        absl::Cleanup done = [this] {
+          _folding_tail.store(false, std::memory_order_release);
+        };
+        Lsn bound = 0;
+        {
+          const CommittedView view;
+          bound = CommitEnd(view.Snapshot()).value_or(0);
+        }
+        _log->FoldTail(bound, &CatalogPart, &CompactHistory);
+      })
+      .Detach();
+  }
   const auto covered = _log->Covered();
   if (end <= covered ||
       end - covered <=

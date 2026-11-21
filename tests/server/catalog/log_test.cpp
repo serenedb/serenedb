@@ -51,6 +51,7 @@ RecordBuffer Bytes(const std::string& payload) {
   RecordBuffer record;
   record.WriteData(reinterpret_cast<const uint8_t*>(payload.data()),
                    payload.size());
+  record.MarkCatalog(0, payload.size());
   return record;
 }
 
@@ -66,8 +67,17 @@ std::vector<std::vector<uint8_t>> Keep(
 class FailingFileSystem final : public duckdb::LocalFileSystem {
  public:
   bool fail_listing = false;
+  bool fail_reads = false;
   bool fail_writes = false;
   bool fail_removal = false;
+
+  void Read(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
+            duckdb::idx_t location) final {
+    if (fail_reads) {
+      throw duckdb::IOException("the disk refused the read");
+    }
+    LocalFileSystem::Read(handle, buffer, nr_bytes, location);
+  }
 
   void Write(duckdb::FileHandle& handle, void* buffer, int64_t nr_bytes,
              duckdb::idx_t location) final {
@@ -437,6 +447,83 @@ TEST_F(LogTest, ARecordCopiedToAnotherLsnIsNotReplayed) {
   Overwrite(0, b, ReadBytes(0, a, b - a));
   Open();
   EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+}
+
+TEST_F(LogTest, ASnapshotReadsNoLogFile) {
+  {
+    auto log = Open();
+    log->Append(Bytes(Payload('A')));
+    const auto end = log->Append(Bytes(Payload('B')));
+    _fs->fail_reads = true;
+    Snapshot(*log, end);
+    _fs->fail_reads = false;
+    EXPECT_EQ(log->TailBytes(), 0);
+  }
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+}
+
+TEST_F(LogTest, ARestartKeepsTheCatalogPartsPastTheSnapshot) {
+  Lsn end = 0;
+  {
+    auto log = Open();
+    log->Append(Bytes(Payload('A')));
+    end = log->Append(Bytes(Payload('B')));
+  }
+  {
+    auto log = Open();
+    EXPECT_EQ(log->TailBytes(), 2 * kPayload);
+    _fs->fail_reads = true;
+    Snapshot(*log, end);
+    _fs->fail_reads = false;
+  }
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
+}
+
+TEST_F(LogTest, AFoldedTailReachesTheNextSnapshot) {
+  {
+    auto log = Open();
+    log->Append(Bytes(Payload('A')));
+    const auto middle = log->Append(Bytes(Payload('B')));
+    const auto end = log->Append(Bytes(Payload('C')));
+    log->FoldTail(
+      middle, [](std::span<uint8_t> payload) { return payload; }, &Keep);
+    EXPECT_EQ(log->TailBytes(), kPayload);
+    EXPECT_EQ(log->HistoryBytes(), 2 * kPayload);
+    Snapshot(*log, end);
+    EXPECT_EQ(log->TailBytes(), 0);
+  }
+  Open();
+  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B'), Payload('C')}));
+}
+
+TEST_F(LogTest, ARecordWithoutACatalogPartIsNotKept) {
+  auto log = Open();
+  const auto payload = Payload('A');
+  RecordBuffer record;
+  record.WriteData(reinterpret_cast<const uint8_t*>(payload.data()),
+                   payload.size());
+  log->Append(std::move(record));
+  EXPECT_EQ(log->TailBytes(), 0);
+}
+
+TEST(RecordBufferTest, CopyCatalogSpansThePiecesOfTheBuffer) {
+  std::string payload(size_t{4} << 20, '\0');
+  for (size_t i = 0; i != payload.size(); ++i) {
+    payload[i] = static_cast<char>(i * 7);
+  }
+  RecordBuffer record;
+  record.WriteData(reinterpret_cast<const uint8_t*>(payload.data()),
+                   payload.size());
+  const size_t begin = 3;
+  const size_t size = payload.size() - 10;
+  record.MarkCatalog(begin, size);
+  const auto copy = record.CopyCatalog();
+  EXPECT_EQ(std::string(copy.begin(), copy.end()), payload.substr(begin, size));
+  size_t pieces = 0;
+  record.ForEachPayload([&](std::span<const uint8_t>) { ++pieces; });
+  EXPECT_GT(pieces, 1);
 }
 
 }  // namespace

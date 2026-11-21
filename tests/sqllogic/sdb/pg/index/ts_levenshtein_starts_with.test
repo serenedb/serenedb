@@ -258,6 +258,156 @@ id
 1
 3
 
+# Term enumeration over the documents a phrase with a fuzzy-prefix part
+# selects: 'bronze' starts within an edit of 'brwn', the whole word does not.
+statement ok
+CREATE TABLE swp(id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR)
+
+statement ok
+CREATE INDEX swp_idx ON swp USING inverted(id, title, body sw_words)
+
+statement ok
+INSERT INTO swp VALUES
+  (1, 'Fox News', 'the quick brown fox'),
+  (2, 'Fox News', 'a quick brown dog'),
+  (3, 'Dog Days', 'the quick bronze statue'),
+  (4, 'Cat Tales', 'a slow brown cat'),
+  (5, 'New York Times', 'quick brawn here')
+
+query
+SELECT unnest(ts_dict_agg(title))   AS title,
+       unnest(ts_dict_count(title)) AS docs
+FROM swp_idx
+WHERE body @@ ('quick' ## ts_levenshtein('brwn', 1, starts_with := true))
+ORDER BY docs DESC, title
+----
+title	docs
+Fox News	2
+Dog Days	1
+New York Times	1
+
+query
+SELECT unnest(ts_dict_agg(title))   AS title,
+       unnest(ts_dict_count(title)) AS docs
+FROM swp_idx
+WHERE body @@ ('quick' ## ts_levenshtein('brwn', 1))
+ORDER BY docs DESC, title
+----
+title	docs
+Fox News	2
+New York Times	1
+
+# The fuzzy prefix drives the enumeration, the phrase restricts the documents
+# it counts.
+query
+SELECT unnest(ts_dict_agg(title))   AS title,
+       unnest(ts_dict_count(title)) AS docs,
+       unnest(ts_dict_score(title)) AS similarity
+FROM swp_idx
+WHERE title @@ ts_levenshtein('Fxo N', 1, starts_with := true)
+  AND body @@ ts_phrase('the quick')
+----
+title	docs	similarity
+Fox News	1	0.8
+
+# The same phrase checked against the column's text inside the enumeration.
+statement ok
+CREATE TABLE swq(id INTEGER PRIMARY KEY, title VARCHAR, body VARCHAR)
+
+statement ok
+CREATE INDEX swq_idx ON swq USING inverted(id, title, body sw_nopos) INCLUDE (body)
+
+statement ok
+INSERT INTO swq SELECT id, title, body FROM swp
+
+query
+SELECT unnest(ts_dict_agg(title))   AS title,
+       unnest(ts_dict_count(title)) AS docs
+FROM swq_idx
+WHERE body @@ ('quick' ## ts_levenshtein('brwn', 1, starts_with := true))
+ORDER BY docs DESC, title
+----
+title	docs
+Fox News	2
+Dog Days	1
+New York Times	1
+
+query
+EXPLAIN SELECT unnest(ts_dict_agg(title)) AS title
+FROM swq_idx
+WHERE body @@ ('quick' ## ts_levenshtein('brwn', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ───────────────────────────────────────────────────╮
+│ Groups: #0                                                        │
+│ ~2 rows                                                           │
+╰─────────────────────────────────┬─────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────┴─────────────────────────────────╮
+│ Index: swq_idx                                                    │
+│ Lookup: search                                                    │
+│ Index Filter:                                                     │
+│ ╭─ Phrase ──────────────────────────────────────────────────────╮ │
+│ │ Field: body(string)                                           │ │
+│ │ Parts:                                                        │ │
+│ │ Term:quick(0, 0); LevenshteinAutomatonStartsWith:brwn(1, 1);  │ │
+│ │ Verify: inline                                                │ │
+│ ╰───────────────────────────────────────────────────────────────╯ │
+│ TsDict: title                                                     │
+│ Projections:                                                      │
+│ sdb_inverted_index_term$title                                     │
+│ ~4 rows                                                           │
+╰───────────────────────────────────────────────────────────────────╯
+
+# Phrases are terms of a shingle column: a fuzzy prefix completes them, with
+# the documents that hold each phrase.
+statement ok
+CREATE TEXT SEARCH DICTIONARY sw_shingles AS
+    generate_shingles(split_text_csv(' ') | normalize_tokens(case := 'lower'), 2, 3)
+    WITH (frequency, position)
+
+statement ok
+CREATE TABLE swg(id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX swg_idx ON swg USING inverted(id, body sw_shingles)
+
+statement ok
+INSERT INTO swg VALUES
+  (1, 'new york city marathon'),
+  (2, 'new york times best sellers'),
+  (3, 'new yorker magazine'),
+  (4, 'newark airport'),
+  (5, 'the new york city ballet')
+
+query
+SELECT t AS phrase, c AS docs, s AS similarity
+FROM (SELECT unnest(ts_dict_agg(body))   AS t,
+             unnest(ts_dict_count(body)) AS c,
+             unnest(ts_dict_score(body)) AS s
+      FROM swg_idx) sub
+WHERE t @@ ts_levenshtein('nwe y', 1, starts_with := true)
+ORDER BY docs DESC, phrase
+----
+phrase	docs	similarity
+new york	3	0.8
+new york city	2	0.8
+new york times	1	0.8
+new yorker	1	0.8
+new yorker magazine	1	0.8
+
+# In a phrase over a shingle column the part matches words, not shingles.
+query
+SELECT id
+FROM swg_idx
+WHERE body @@ ('new' ## ts_levenshtein('yrok', 1, starts_with := true))
+ORDER BY id
+----
+id
+1
+2
+3
+5
+
 # A segment whose field holds a single term.
 statement ok
 CREATE TABLE sws(id INTEGER PRIMARY KEY, kw VARCHAR) WITH (compaction_interval = 0)

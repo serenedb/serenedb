@@ -180,7 +180,7 @@ IRS_AVX512 size_t ExtractCompress(const uint64_t* words, size_t n,
 
 size_t ExtractWords(const uint64_t* words, size_t n, uint32_t offset,
                     uint32_t* out) {
-  return static_cast<size_t>(irs::MaterializeWords(offset, words, n, out) -
+  return static_cast<size_t>(irs::MaterializeRange(offset, words, n, out) -
                              out);
 }
 

@@ -278,7 +278,7 @@ IRS_FORCE_INLINE void MergeAtBits(score_t* IRS_RESTRICT res,
   SDB_ASSERT(words <= BitsRequired<uint64_t>());
   uint16_t at[BitsRequired<uint64_t>() * BitsRequired<uint64_t>() +
               BitsRequired<uint8_t>()];
-  const auto* const end = MaterializePositions(bits, words, at);
+  const auto* const end = MaterializeWords(uint16_t{0}, bits, words, at);
   for (const auto* it = at; it != end; ++it) {
     Merge<MergeType>(res[*it], arg);
   }

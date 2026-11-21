@@ -74,7 +74,7 @@ class Emit {
       std::min<uint64_t>(_words_end, avail / detail::kWindowBits));
     if (_word < limit) {
       n = static_cast<uint32_t>(
-        MaterializeWords(Next(), _words + _word, limit - _word, out + n) - out);
+        MaterializeRange(Next(), _words + _word, limit - _word, out + n) - out);
       std::fill(_words + _word, _words + limit, uint64_t{0});
       _word = limit;
     }

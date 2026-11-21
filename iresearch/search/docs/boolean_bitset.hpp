@@ -57,7 +57,7 @@ class BooleanBitset : public Root {
         MaterializeWord(kMin + first * kBits, head & TailMask(hi), out) - out);
     }
     auto* end = MaterializeWord(kMin + first * kBits, head, out);
-    end = MaterializeWords(kMin + (first + 1) * kBits, words + first + 1,
+    end = MaterializeRange(kMin + (first + 1) * kBits, words + first + 1,
                            last - first - 1, end);
     end = MaterializeWord(kMin + last * kBits, words[last] & TailMask(hi), end);
     return static_cast<uint32_t>(end - out);

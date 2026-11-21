@@ -704,8 +704,7 @@ using DictFsst = text::fsst_front::CompressionState<Impl, text::DictionaryRows>;
 
 constinit const Codec kFsstFrontCodec =
   text::StringCodec<text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst8>>,
-                    PlainFsst<text::fsst::Fsst8>,
-                    text::kTrialTextFunction<PlainFsst<text::fsst::Fsst8>>>();
+                    PlainFsst<text::fsst::Fsst8>>();
 
 constinit const Codec kFsst12FrontCodec =
   text::StringCodec<text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst12>>,
@@ -774,8 +773,7 @@ Sections start at 8-byte boundaries.
 
 constinit const Codec kDictFsstFrontCodec = text::StringCodec<
   text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst8>>,
-  DictFsst<text::fsst::Fsst8>,
-  text::kTrialTextFunction<DictFsst<text::fsst::Fsst8>>>();
+  DictFsst<text::fsst::Fsst8>>();
 
 constinit const Codec kDictFsst12FrontCodec = text::StringCodec<
   text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst12>>,

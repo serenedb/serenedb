@@ -82,8 +82,9 @@ class TextEncoder final : public State {
     : _params{data.params},
       _tuning{data.tuning.strings},
       _buffers{data.ctx->BufferManager()},
+      _type{data.type},
       _codec{data, _dedup},
-      _segment{_buffers} {}
+      _segment{_buffers, _type} {}
 
   Compression& Codec() noexcept { return _codec; }
 
@@ -114,7 +115,7 @@ class TextEncoder final : public State {
       uint64_t begin = 0;
       if (Find(ordered)) {
         auto& first = Trial(ordered, values);
-        data.FlushSegment(CodecOf(kShape, kLeaf), std::move(*first.stats),
+        data.FlushSegment(CodecOf(kShape, kLeaf), std::move(first.stats),
                           first.rows, first.bytes.View(), first.shared);
         begin = first.begin + first.rows;
       }
@@ -131,7 +132,7 @@ class TextEncoder final : public State {
       return false;
     }
     const auto rest = first.begin + first.rows;
-    data.FlushSegment(CodecOf(kShape, kLeaf), std::move(*first.stats),
+    data.FlushSegment(CodecOf(kShape, kLeaf), std::move(first.stats),
                       first.rows, first.bytes.View(), first.shared);
     CompressRows(_codec, _config, values, rest, _params.segment_target, first,
                  data);
@@ -153,7 +154,8 @@ class TextEncoder final : public State {
         return *trial;
       }
     }
-    auto& seg = *_trials.emplace_back(std::make_unique<Segment>(_buffers));
+    auto& seg =
+      *_trials.emplace_back(std::make_unique<Segment>(_buffers, _type));
     if (values.trial.rows != 0) {
       CompressRange(_codec, config, values, 0, values.trial.rows, seg);
     } else {
@@ -227,7 +229,7 @@ class TextEncoder final : public State {
     const auto seal = [&] {
       state.FinalizeCompress();
       data.FlushSegment(CodecOf(seg.config.shape, seg.config.leaf),
-                        std::move(*seg.stats), seg.rows, seg.bytes.View(),
+                        std::move(seg.stats), seg.rows, seg.bytes.View(),
                         seg.shared);
     };
     uint64_t row = 0;
@@ -257,7 +259,7 @@ class TextEncoder final : public State {
     for (auto row = begin; row < values.Rows(); row = seg.begin + seg.rows) {
       CutRows(state, config, values, row, target, seg);
       data.FlushSegment(CodecOf(seg.config.shape, seg.config.leaf),
-                        std::move(*seg.stats), seg.rows, seg.bytes.View(),
+                        std::move(seg.stats), seg.rows, seg.bytes.View(),
                         seg.shared);
     }
   }
@@ -278,6 +280,7 @@ class TextEncoder final : public State {
   const ColCodecParams& _params;
   StringTuning& _tuning;
   duckdb::BufferManager& _buffers;
+  const duckdb::LogicalType& _type;
   DedupScratch _dedup;
   Compression _codec;
   Segment _segment;
@@ -326,12 +329,7 @@ bool CompressText(ColumnDataCheckpointData& data) {
 }
 
 template<typename Compression>
-inline constexpr CompressionFunction kNamedTextFunction{
-  .compress = CompressNamed<Compression>,
-};
-
-template<typename Compression>
-inline constexpr CompressionFunction kTrialTextFunction{
+inline constexpr CompressionFunction kTextFunction{
   .analyze = AnalyzeTrial<Compression>,
   .compress = CompressText<Compression>,
 };

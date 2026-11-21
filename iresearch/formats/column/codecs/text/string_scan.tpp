@@ -463,7 +463,7 @@ inline constexpr DecompressionFunction kStringDecompression = [] consteval {
 }();
 
 template<typename Scan, typename Compression,
-         const CompressionFunction& kFunction = kNamedTextFunction<Compression>>
+         const CompressionFunction& kFunction = kTextFunction<Compression>>
 consteval Codec StringCodec() {
   static_assert(Compression::kCodec == Scan::kCodec);
   static_assert(Compression::kShape == Scan::kShape);

@@ -23,7 +23,6 @@
 #include <cstdint>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
-#include <optional>
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/text/segment_buffer.hpp"
@@ -32,7 +31,8 @@
 namespace irs::codecs::text {
 
 struct Segment {
-  explicit Segment(duckdb::BufferManager& buffers) noexcept : bytes{buffers} {}
+  Segment(duckdb::BufferManager& buffers, const duckdb::LogicalType& type)
+    : bytes{buffers}, stats{duckdb::BaseStatistics::CreateEmpty(type)} {}
 
   Config config;
   uint64_t begin = 0;
@@ -43,7 +43,7 @@ struct Segment {
   uint32_t max_len = 0;
   SegmentBuffer bytes;
   std::string_view shared;
-  std::optional<duckdb::BaseStatistics> stats;
+  duckdb::BaseStatistics stats;
 
   uint64_t Size() const noexcept { return bytes.Size(); }
 };

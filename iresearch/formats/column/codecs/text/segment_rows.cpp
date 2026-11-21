@@ -261,7 +261,8 @@ void SegmentRows::Assemble(const EncodedFrames& frames, CodecType codes_codec,
 
 void SegmentRows::Finish(const EncodedFrames& frames, Shape shape,
                          Segment& out) {
-  _stats.Merge(out.stats.emplace(duckdb::BaseStatistics::CreateEmpty(_type)));
+  out.stats = duckdb::BaseStatistics::CreateEmpty(_type);
+  _stats.Merge(out.stats);
   out.config = {
     .shape = shape,
     .leaf = frames.codec,

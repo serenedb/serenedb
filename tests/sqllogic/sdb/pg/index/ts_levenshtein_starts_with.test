@@ -959,6 +959,69 @@ id
 statement ok
 DEALLOCATE sw_match
 
+# An exact prefix that the text starts with joins the fuzzy prefix into one
+# match: a typo inside that prefix ('aopel') still fails the exact prefix.
+statement ok
+CREATE TABLE swf(id INTEGER PRIMARY KEY, kw VARCHAR)
+
+statement ok
+CREATE INDEX swf_idx ON swf USING inverted(id, kw)
+
+statement ok
+INSERT INTO swf VALUES (1, 'apple pie'), (2, 'apply'), (3, 'appel'), (4, 'aopel'), (5, 'banana')
+
+query
+SELECT id FROM swf_idx WHERE kw @@ ts_levenshtein('appel', 1, starts_with := true) ORDER BY id
+----
+id
+1
+2
+3
+4
+
+query
+SELECT id
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('app') && ts_levenshtein('appel', 1, starts_with := true))
+ORDER BY id
+----
+id
+1
+2
+3
+
+query
+SELECT unnest(ts_dict_agg(kw))   AS t,
+       unnest(ts_dict_score(kw)) AS s
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('app') && ts_levenshtein('appel', 1, starts_with := true))
+ORDER BY t
+----
+t	s
+appel	1
+apple pie	0.8
+apply	0.8
+
+query
+EXPLAIN SELECT id
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('app') && ts_levenshtein('appel', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: swf_idx        │
+│ Lookup: search        │
+│ Index Filter:         │
+│ ╭─ Levenshtein ─────╮ │
+│ │ Field: kw(string) │ │
+│ │ Target: appel     │ │
+│ │ Starts With: true │ │
+│ │ Max Terms: 50     │ │
+│ ╰───────────────────╯ │
+│ Projections: id       │
+│ ~1 row                │
+╰───────────────────────╯
+
 # A NULL argument makes the whole match NULL, which no row satisfies.
 query
 SELECT id FROM sw_idx WHERE body @@ ts_levenshtein('quik', 1, starts_with := NULL)

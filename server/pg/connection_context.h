@@ -233,6 +233,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   }
   void ReportIdle();
   void ReportQuery(std::string_view query);
+  uint64_t QueriesBegun() const noexcept { return _queries_begun; }
   absl::Mutex& SettingWritesMutex() noexcept { return _setting_writes; }
 
   int copy_stdin_open_count = 0;
@@ -310,6 +311,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   duckdb::transaction_t _transaction_owner = duckdb::MAX_TRANSACTION_ID;
   utils::DrainGate::Pass _commit_pass;
   uint32_t _internal_statements = 0;
+  uint64_t _queries_begun = 0;
   bool _query_in_transaction = false;
   bool _had_query_in_transaction = false;
 };

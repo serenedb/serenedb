@@ -512,6 +512,60 @@ def test_xact_start_is_the_start_of_each_statements_transaction(conn):
     assert all_fields(msgs) == [b"active", b"t"]
 
 
+def test_activity_shows_a_statement_refused_before_it_runs(conn):
+    observer = WireConn()
+    try:
+        pid = first_field(conn.run_ok("SELECT pg_backend_pid()")).decode()
+        query = "SELECT $1 + 1 AS refused_activity"
+
+        def activity():
+            return all_fields(observer.run_ok(
+                f"SELECT state, query FROM pg_stat_activity WHERE pid = {pid}"))
+
+        conn.parse("refused_activity", query, oids=(23,))
+        conn.sync()
+        assert not errors(conn.drain_to_ready())
+        conn.run_ok("SELECT 1")
+        conn.bind("", "refused_activity", params=(b"x",))
+        conn.sync()
+        assert sqlstates(conn.drain_to_ready()) == ["22P02"]
+        assert activity() == [b"idle", query.encode()]
+
+        conn.run_ok("DROP TABLE IF EXISTS refused_copy")
+        conn.run_ok("CREATE TABLE refused_copy (i INT)")
+        copy = "COPY refused_copy FROM STDIN (FORMAT parquet)"
+        assert sqlstates(_simple(conn, copy)) == ["0A000"]
+        assert activity() == [b"idle", copy.encode()]
+        conn.run_ok("SELECT 1")
+        conn.parse("", copy)
+        conn.bind("", "")
+        conn.execute("")
+        conn.sync()
+        assert sqlstates(conn.drain_to_ready()) == ["0A000"]
+        assert activity() == [b"idle", copy.encode()]
+        conn.run_ok("DROP TABLE refused_copy")
+
+        assert not errors(_simple(conn, "BEGIN"))
+        conn.bind("refused_portal", "refused_activity", params=(b"1",))
+        conn.sync()
+        assert statuses(conn.drain_to_ready()) == ["T"]
+        assert errors(_simple(conn, "SELECT 1/0"))
+        conn.bind("", "refused_activity", params=(b"1",))
+        conn.sync()
+        assert sqlstates(conn.drain_to_ready()) == ["25P02"]
+        assert activity() == [b"idle in transaction (aborted)", query.encode()]
+
+        assert sqlstates(_simple(conn, "SELECT 2")) == ["25P02"]
+        assert activity() == [b"idle in transaction (aborted)", b"SELECT 2"]
+        conn.execute("refused_portal")
+        conn.sync()
+        assert sqlstates(conn.drain_to_ready()) == ["25P02"]
+        assert activity() == [b"idle in transaction (aborted)", query.encode()]
+        assert not errors(_simple(conn, "ROLLBACK"))
+    finally:
+        observer.close()
+
+
 def test_untyped_parameters_keep_their_numeric_value(conn):
     conn.run_ok("DROP TABLE IF EXISTS untyped_price")
     conn.run_ok("CREATE TABLE untyped_price (price NUMERIC(5,2))")

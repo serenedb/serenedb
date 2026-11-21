@@ -141,6 +141,17 @@ class Statement {
     return _source.get();
   }
 
+  std::string_view Query() const {
+    if (_prepared) {
+      return _prepared->GetQuery();
+    }
+    if (_source) {
+      return _source->query;
+    }
+    return _statements.empty() ? std::string_view{}
+                               : std::string_view{_statements.front()->query};
+  }
+
   // The statement a re-plan re-binds. Cached on first use because from then on
   // the plan is released before its replacement is bound, so the plan cannot
   // stay the only place the statement text lives. Null when there is nothing

@@ -462,6 +462,8 @@ class PgWireSession
   // loop applies it after the handler; COPY FROM STDIN consumes it early (so
   // the feeder reads past it) and zeroes this.
   size_t _dispatch_consume = 0;
+  std::string_view _received_query;
+  const Statement* _received_statement = nullptr;
   irs::containers::FlatHashMap<std::string, std::string> _params;
   irs::containers::FlatHashMap<std::string, std::string> _reported_params;
   // Connection settings version last reflected into _reported_params; gates the

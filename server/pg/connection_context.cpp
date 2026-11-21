@@ -494,6 +494,7 @@ void ConnectionContext::OnQueryBegin() {
   if (_internal_statements != 0) {
     return;
   }
+  ++_queries_begun;
   const bool continues = std::exchange(_query_in_transaction, true);
   _progress->BeginQuery(
     GetCurrentQuery(),

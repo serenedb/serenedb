@@ -1401,7 +1401,7 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
     co_return {};
   }
-  _connection_ctx->ReportQuery(query);
+  _received_query = query;
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> parsed;
   for (duckdb::ParseIterator parser{*_conn->context, query}; parser.Peek();) {
     parsed.push_back(parser.GetStatement());
@@ -1600,12 +1600,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   duckdb::unique_ptr<duckdb::SQLStatement> statement) {
   const auto format =
     statement ? ClassifyCopy(*statement).format : CopyFormat::Other;
-  // Consume the command frame early so the feeder starts past it, and hand
-  // the recv-consumer role over BEFORE the client can send CopyData.
-  if (_dispatch_consume) {
-    this->_recv.Consume(_dispatch_consume);
-    _dispatch_consume = 0;
-  }
   // parquet needs a seekable file (footer at EOF); it cannot be read from a
   // non-seekable STDIN pipe. Reject here -- before CopyInResponse -- so the
   // client gets a clear error instead of a deep filesystem failure mid-COPY.
@@ -1630,6 +1624,13 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
       copy_columns =
         static_cast<int16_t>(table->GetColumns().LogicalColumnCount());
     }
+  }
+  // Consume the command frame early so the feeder starts past it, and hand
+  // the recv-consumer role over BEFORE the client can send CopyData.
+  if (_dispatch_consume) {
+    this->_recv.Consume(_dispatch_consume);
+    _dispatch_consume = 0;
+    _received_query = {};
   }
   sdb::pg::CopyInBatches batches;
   _connection_ctx->SetSideChannel(&batches);
@@ -2044,7 +2045,7 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
   // and bound at Execute via RunCopyFromStdin. Everything else binds the
   // already-parsed statement now, so the common path parses once.
   duckdb::vector<duckdb::idx_t> raw_statement_ends;
-  _connection_ctx->ReportQuery(query);
+  _received_query = query;
   auto extracted = _conn->ExtractStatements(query, &raw_statement_ends,
                                             /*wrap_multi=*/false);
   if (raw_statement_ends.size() > 1) {
@@ -2347,6 +2348,7 @@ void PgWireSession<Kind>::HandleBind(std::string_view payload) {
 
   auto& slot = FindStatement(statement_name);
   auto& statement = *slot;
+  _received_statement = &statement;
   if (!statement.Bound()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_SQL_STATEMENT_NAME),
                     ERR_MSG("unnamed prepared statement does not exist"));
@@ -2592,6 +2594,7 @@ yaclib::Task<> PgWireSession<Kind>::HandleExecute(std::string_view payload) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_CURSOR_NAME),
                     ERR_MSG("portal \"", portal_name, "\" does not exist"));
   }
+  _received_statement = portal.stmt.get();
   const auto kind = portal.stmt->GetKind();
   if (_txn_state->StatusByte() == 'E' && kind != Statement::Kind::Empty &&
       !portal.bound_after_abort) {
@@ -3231,6 +3234,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
     }
 
     _dispatch_consume = frame.recv_consume;
+    const auto queries_begun = _connection_ctx->QueriesBegun();
     try {
       switch (type) {
         case PQ_MSG_QUERY:
@@ -3279,8 +3283,17 @@ yaclib::Task<> PgWireSession<Kind>::RunCommandLoop() {
           co_return {};
       }
     } catch (const std::exception& exception) {
+      if (_connection_ctx->QueriesBegun() == queries_begun) {
+        const auto query =
+          _received_statement ? _received_statement->Query() : _received_query;
+        if (!query.empty()) {
+          _connection_ctx->ReportQuery(query);
+        }
+      }
       discard = FunnelError(exception, type);
     }
+    _received_query = {};
+    _received_statement = nullptr;
     DrainNotices();
     // GUC ParameterStatus is reported only at ReadyForQuery (in
     // CommitAndReportReady), as PG does -- not after each dispatched message --

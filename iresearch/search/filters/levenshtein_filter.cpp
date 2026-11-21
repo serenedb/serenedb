@@ -24,6 +24,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
@@ -52,11 +53,10 @@ namespace irs {
 namespace {
 
 IRS_FORCE_INLINE score_t Similarity(uint32_t distance, uint32_t size) noexcept {
-  SDB_ASSERT(size);
-
   static_assert(sizeof(score_t) == sizeof(uint32_t));
 
-  return 1.f - static_cast<score_t>(distance) / static_cast<score_t>(size);
+  return 1.f - static_cast<score_t>(distance) /
+                 static_cast<score_t>(std::max(size, uint32_t{1}));
 }
 
 struct AggregatedStatsVisitor : util::Noncopyable {

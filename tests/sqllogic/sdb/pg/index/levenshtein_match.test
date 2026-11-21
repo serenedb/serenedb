@@ -248,3 +248,93 @@ a
 
 statement ok
 DROP TABLE test_levenshtein_prefix_or;
+
+# An empty string, stored or searched for, scores like a one-character term.
+statement ok
+CREATE TABLE test_levenshtein_empty (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX test_levenshtein_empty_idx ON test_levenshtein_empty USING inverted(a, b);
+
+statement ok
+INSERT INTO test_levenshtein_empty VALUES (1, ''), (2, 'r'), (3, 'run'), (4, 'apple');
+
+query
+SELECT a FROM test_levenshtein_empty_idx WHERE b @@ ts_levenshtein('r', 1) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT unnest(ts_dict_agg(b))   AS t,
+       unnest(ts_dict_score(b)) AS s
+FROM test_levenshtein_empty_idx
+WHERE b @@ ts_levenshtein('r', 1)
+ORDER BY t
+----
+t	s
+(empty)	0
+r	1
+
+query
+SELECT unnest(ts_dict_agg(b))   AS t,
+       unnest(ts_dict_score(b)) AS s
+FROM test_levenshtein_empty_idx
+WHERE b @@ ts_levenshtein('', 1)
+ORDER BY t
+----
+t	s
+(empty)	1
+r	0
+
+query
+SELECT unnest(ts_dict_agg(b))   AS t,
+       unnest(ts_dict_score(b)) AS s
+FROM test_levenshtein_empty_idx
+WHERE b @@ ts_levenshtein('', 1, starts_with := true)
+ORDER BY t
+----
+t	s
+(empty)	1
+apple	1
+r	1
+run	1
+
+query
+SELECT unnest(ts_dict_agg(b))   AS t,
+       unnest(ts_dict_score(b)) AS s
+FROM test_levenshtein_empty_idx
+WHERE b @@ ts_levenshtein('', 1)
+ORDER BY s DESC, t
+LIMIT 1
+----
+t	s
+(empty)	1
+
+query
+SELECT unnest(ts_dict_agg(b))   AS t,
+       unnest(ts_dict_score(b)) AS s
+FROM test_levenshtein_empty_idx
+WHERE b @@ ts_levenshtein('', 1, starts_with := true)
+ORDER BY s DESC, t
+LIMIT 2
+----
+t	s
+(empty)	1
+apple	1
+
+statement ok
+SET sdb_levenshtein_max_terms = 1
+
+query
+SELECT a FROM test_levenshtein_empty_idx WHERE b @@ ts_levenshtein('r', 1) ORDER BY a;
+----
+a
+2
+
+statement ok
+RESET sdb_levenshtein_max_terms
+
+statement ok
+DROP TABLE test_levenshtein_empty;

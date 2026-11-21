@@ -264,34 +264,31 @@ bool AtDistanceZero(const ByEditDistanceOptions& options,
                              : term == bytes_view{options.term};
 }
 
-field_id FieldOf(const Filter& child) noexcept {
-  if (AsPrefix(child) != nullptr) {
-    return irs::utils::downCast<ByPrefix>(child).field_id();
-  }
-  if (AsRange(child) != nullptr) {
-    return irs::utils::downCast<ByRange>(child).field_id();
-  }
-  if (child.type() == Type<ByEditDistance>::id()) {
-    return irs::utils::downCast<ByEditDistance>(child).field_id();
-  }
-  return field_limits::invalid();
-}
+struct FieldKey {
+  field_id field = field_limits::invalid();
+  DictRef dict;
 
-DictRef DictOf(const Filter& child) noexcept {
+  bool operator==(const FieldKey&) const = default;
+};
+
+FieldKey KeyOf(const Filter& child) noexcept {
   if (AsPrefix(child) != nullptr) {
-    return irs::utils::downCast<ByPrefix>(child).dict();
+    const auto& prefix = irs::utils::downCast<ByPrefix>(child);
+    return {.field = prefix.field_id(), .dict = prefix.dict()};
   }
   if (AsRange(child) != nullptr) {
-    return irs::utils::downCast<ByRange>(child).dict();
+    const auto& range = irs::utils::downCast<ByRange>(child);
+    return {.field = range.field_id(), .dict = range.dict()};
   }
   if (child.type() == Type<ByEditDistance>::id()) {
-    return irs::utils::downCast<ByEditDistance>(child).dict();
+    const auto& fuzzy = irs::utils::downCast<ByEditDistance>(child);
+    return {.field = fuzzy.field_id(), .dict = fuzzy.dict()};
   }
   return {};
 }
 
 bool CoversTerm(const Filter& child, const TermClause& clause) noexcept {
-  if (FieldOf(child) != clause.field || DictOf(child) != clause.dict) {
+  if (KeyOf(child) != FieldKey{.field = clause.field, .dict = clause.dict}) {
     return false;
   }
   if (const auto* prefix = AsPrefix(child); prefix != nullptr) {
@@ -332,8 +329,7 @@ size_t DropCoveredFilters(std::vector<Filter::ptr>& filters) {
   }
   return EraseFilters(filters, [&](const Filter& child) {
     const bool covered = absl::c_any_of(covering, [&](const Filter* wider) {
-      return wider != &child && FieldOf(*wider) == FieldOf(child) &&
-             DictOf(*wider) == DictOf(child) &&
+      return wider != &child && KeyOf(*wider) == KeyOf(child) &&
              CoversFilter(*AsUncappedFuzzy(*wider), child);
     });
     if (covered) {
@@ -362,8 +358,8 @@ class PrefixIndex {
     _map.reserve(count);
     for (const auto& child : filters) {
       if (const auto* prefix = AsPrefix(*child); prefix != nullptr) {
-        _map.try_emplace(Key{FieldOf(*child), DictOf(*child), prefix->term},
-                         Entry{child.get()});
+        const auto [field, dict] = KeyOf(*child);
+        _map.try_emplace(Key{field, dict, prefix->term}, Entry{child.get()});
       }
     }
     for (auto& [key, entry] : _map) {
@@ -384,7 +380,8 @@ class PrefixIndex {
     if (prefix == nullptr) {
       return false;
     }
-    const auto it = _map.find(Key{FieldOf(child), DictOf(child), prefix->term});
+    const auto [field, dict] = KeyOf(child);
+    const auto it = _map.find(Key{field, dict, prefix->term});
     SDB_ASSERT(it != _map.end());
     const auto& entry = it->second;
     return entry.first != &child ||
@@ -397,8 +394,7 @@ class PrefixIndex {
       return false;
     }
     const bytes_view term{prefix->term};
-    const auto field = FieldOf(child);
-    const auto dict = DictOf(child);
+    const auto [field, dict] = KeyOf(child);
     for (size_t size = 0; size <= term.size(); ++size) {
       if (_map.contains(Key{field, dict, term.substr(0, size)})) {
         return true;

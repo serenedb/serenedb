@@ -3170,13 +3170,31 @@ TEST(OrSubsume_test, uncapped_fuzzy_keeps_what_another_field_or_dict_holds) {
   *AddPrefix(*root, irs::Occur::Should, kFieldTestField, "runing")
      .mutable_dict() = irs::DictRef{.member = irs::DictMember::Numbers};
   AddRange(*root, irs::Occur::Should, kFieldTestField);
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField,
+                          "runin_%");
   AddFuzzy(*root, irs::Occur::Should, "runin", 1, true, 0);
   root->SetMinShouldMatch(1);
 
   irs::Filter::ptr filter = std::move(root);
   irs::Optimize(filter, {});
 
-  EXPECT_EQ(4, OptionalFilters(filter));
+  EXPECT_EQ(5, OptionalFilters(filter));
+}
+
+TEST(OrSubsume_test, uncapped_whole_term_fuzzy_drops_a_narrower_one) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, false, 50);
+  AddFuzzy(*root, irs::Occur::Should, "runin", 2, false, 0);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), filter->type());
+  const auto& options =
+    irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*filter).options();
+  EXPECT_FALSE(options.starts_with);
+  EXPECT_EQ(3, options.no_distance);
 }
 
 TEST(CrossSubsume_test, excluded_uncapped_fuzzy_kills_a_required_term) {

@@ -339,21 +339,57 @@ inline IRS_AVX512 uint32_t* MaterializeWords16(
 }
 #endif
 
-inline uint16_t* MaterializePositions(const uint64_t* IRS_RESTRICT words,
-                                      size_t count,
-                                      uint16_t* IRS_RESTRICT out) noexcept {
-  const auto capacity = BitsRequired<uint64_t>(count);
-#ifdef __AVX2__
-  if (HasRoaringAvx512()) {
-    return out + roaring::internal::bitset_extract_setbits_avx512_uint16(
-                   words, count, out, capacity, 0);
+inline constexpr uint32_t kSparseWordBits = 8;
+inline constexpr uint32_t kUnrolledBits = 4;
+
+inline IRS_FORCE_INLINE uint16_t* MaterializePositions(
+  const uint64_t* IRS_RESTRICT words, size_t count,
+  uint16_t* IRS_RESTRICT out) noexcept {
+  SDB_ASSERT(count <= BitsRequired<uint64_t>());
+  uint64_t held = 0;
+  for (size_t w = 0; w != count; ++w) {
+    held |= uint64_t{words[w] != 0} << w;
   }
-  return out + roaring::internal::bitset_extract_setbits_sse_uint16(
-                 words, count, out, capacity, 0);
-#else
-  return out +
-         roaring::internal::bitset_extract_setbits_uint16(words, count, out, 0);
+  for (; held != 0; held = PopBit(held)) {
+    const auto w = static_cast<uint32_t>(std::countr_zero(held));
+    const auto word = words[w];
+    const auto base = static_cast<uint16_t>(BitsRequired<uint64_t>(w));
+#ifdef __AVX2__
+    if (static_cast<uint32_t>(std::popcount(word)) > kSparseWordBits) {
+      uint64_t counts = word - ((word >> 1) & 0x5555555555555555ULL);
+      counts = (counts & 0x3333333333333333ULL) +
+               ((counts >> 2) & 0x3333333333333333ULL);
+      counts = (counts + (counts >> 4)) & 0x0F0F0F0F0F0F0F0FULL;
+      const uint64_t prefix = (counts * 0x0101010101010101ULL) << 8;
+      for (uint32_t b = 0; b != 8; ++b) {
+        const auto mask = static_cast<uint32_t>(word >> (b * 8)) & 0xFF;
+        _mm_storeu_si128(
+          reinterpret_cast<__m128i*>(out + ((prefix >> (b * 8)) & 0xFF)),
+          _mm_add_epi16(
+            _mm_set1_epi16(static_cast<int16_t>(base + b * 8)),
+            _mm_cvtepu8_epi16(_mm_loadl_epi64(reinterpret_cast<const __m128i*>(
+              kBitsetByteTable[mask].data())))));
+      }
+      out += std::popcount(word);
+      continue;
+    }
 #endif
+    const auto bits = static_cast<uint32_t>(std::popcount(word));
+    auto rest = word;
+    for (uint32_t k = 0; k != kUnrolledBits; ++k) {
+      out[k] = static_cast<uint16_t>(base + std::countr_zero(rest));
+      rest &= rest - 1;
+    }
+    if (bits > kUnrolledBits) [[unlikely]] {
+      out += kUnrolledBits;
+      ForEachSetBit(rest, [&](uint32_t bit) IRS_FORCE_INLINE {
+        *out++ = static_cast<uint16_t>(base + bit);
+      });
+    } else {
+      out += bits;
+    }
+  }
+  return out;
 }
 
 inline uint32_t* MaterializeWords(uint32_t offset,

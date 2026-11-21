@@ -44,22 +44,7 @@ namespace {
 sdb::pg::SerializationContext CloneProto(
   const sdb::pg::SerializationContext& proto) {
   sdb::pg::SerializationContext context;
-  context.extra_float_digits = proto.extra_float_digits;
-  context.bytea_output = proto.bytea_output;
-  if (proto.time_zone) {
-    context.time_zone = proto.time_zone->Copy();
-  }
-  context.client = proto.client;
-  context.quote_seq = proto.quote_seq;
-  context.backslash_count = proto.backslash_count;
-  context.copy_text = proto.copy_text;
-  context.copy_delim = proto.copy_delim;
-  context.copy_null = proto.copy_null;
-  context.copy_newline = proto.copy_newline;
-  context.csv_quote = proto.csv_quote;
-  context.csv_escape = proto.csv_escape;
-  context.csv_single_column = proto.csv_single_column;
-  context.csv_specials = proto.csv_specials;
+  static_cast<sdb::pg::SerializationSettings&>(context) = proto;
   return context;
 }
 

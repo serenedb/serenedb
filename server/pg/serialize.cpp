@@ -33,15 +33,11 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cctype>
 #include <cfloat>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#ifdef __AVX2__
-#include <immintrin.h>
-#endif
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/operator/string_cast.hpp>
@@ -138,57 +134,6 @@ ArraySlice GetArraySlice(const duckdb::RecursiveUnifiedVectorFormat& vdata,
   return GetSliceResolved(vdata, vdata.unified.sel->get_index(row));
 }
 
-IRS_FORCE_INLINE size_t NextEscape(const char* p, size_t from, size_t n,
-                                   bool escape_quote, bool escape_backslash,
-                                   bool copy_text, char copy_delim) {
-  size_t i = from;
-#ifdef __AVX2__
-  const __m256i vq = _mm256_set1_epi8('"');
-  const __m256i vb = _mm256_set1_epi8('\\');
-  const __m256i v8 = _mm256_set1_epi8(8);
-  const __m256i v5 = _mm256_set1_epi8(5);
-  const __m256i vd = _mm256_set1_epi8(copy_delim);
-  const auto escapes = [&](const char* at) {
-    const __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(at));
-    __m256i m = _mm256_setzero_si256();
-    if (escape_quote) {
-      m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, vq));
-    }
-    if (escape_backslash) {
-      m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, vb));
-    }
-    if (copy_text) {
-      const __m256i lo = _mm256_sub_epi8(v, v8);
-      m = _mm256_or_si256(m, _mm256_cmpeq_epi8(_mm256_max_epu8(lo, v5), v5));
-      m = _mm256_or_si256(m, _mm256_cmpeq_epi8(v, vd));
-    }
-    return static_cast<uint32_t>(_mm256_movemask_epi8(m));
-  };
-  for (; i + 32 <= n; i += 32) {
-    if (const auto bits = escapes(p + i); bits != 0) {
-      return i + static_cast<size_t>(std::countr_zero(bits));
-    }
-  }
-  if (i < n) {
-    alignas(32) char tail[32] = {};
-    std::memcpy(tail, p + i, n - i);
-    const auto bits = escapes(tail) & ((uint32_t{1} << (n - i)) - 1);
-    return bits != 0 ? i + static_cast<size_t>(std::countr_zero(bits)) : n;
-  }
-  return n;
-#else
-  for (; i < n; ++i) {
-    const auto c = static_cast<unsigned char>(p[i]);
-    if ((escape_quote && c == '"') || (escape_backslash && c == '\\') ||
-        (copy_text && (static_cast<unsigned char>(c - 8) <= 5 ||
-                       c == static_cast<unsigned char>(copy_delim)))) {
-      return i;
-    }
-  }
-  return n;
-#endif
-}
-
 IRS_FORCE_INLINE bool EscapesNothing(const SerializationContext& ctx) {
   return !ctx.copy_text && ctx.quote_seq.size() == 1 &&
          ctx.backslash_count == 1;
@@ -221,13 +166,12 @@ IRS_FORCE_INLINE void EscapeTo(const SerializationContext& ctx,
                                std::string_view s, Sink& sink) {
   const auto quote_seq_size = ctx.quote_seq.size();
   const auto backslash_count = ctx.backslash_count;
-  const bool copy_text = ctx.copy_text;
-  const char copy_delim = ctx.copy_delim;
+  const auto& escapes = ctx.text_escapes[(quote_seq_size != 1 ? 2 : 0) +
+                                         (backslash_count != 1 ? 1 : 0)];
   const char* p = s.data();
   const size_t n = s.size();
   size_t start = 0;
-  size_t i = NextEscape(p, 0, n, quote_seq_size != 1, backslash_count != 1,
-                        copy_text, copy_delim);
+  size_t i = escapes.Find(s, 0);
   while (i < n) {
     const char c = p[i];
     const size_t run = i - start;
@@ -269,8 +213,7 @@ IRS_FORCE_INLINE void EscapeTo(const SerializationContext& ctx,
       }
     }
     start = i + 1;
-    i = NextEscape(p, start, n, quote_seq_size != 1, backslash_count != 1,
-                   copy_text, copy_delim);
+    i = escapes.Find(s, start);
   }
   sink.Write(s.substr(start));
 }
@@ -3690,6 +3633,26 @@ void FillContext(duckdb::ClientContext& client, SerializationContext& context) {
   context.caches.reset();
 }
 
+std::array<duckdb::CsvSpecials, 4> TextEscapes(bool copy_text, char delim) {
+  std::array<duckdb::CsvSpecials, 4> escapes;
+  for (size_t i = 0; i < escapes.size(); ++i) {
+    auto& set = escapes[i];
+    if (i & 1) {
+      set.Add('\\');
+    }
+    if (i & 2) {
+      set.Add('"');
+    }
+    if (copy_text) {
+      for (char c = '\b'; c <= '\r'; ++c) {
+        set.Add(c);
+      }
+      set.Add(delim);
+    }
+  }
+  return escapes;
+}
+
 void SetCopyText(SerializationContext& context, char delim,
                  std::string null_str) {
   context.copy_text = true;
@@ -3697,6 +3660,7 @@ void SetCopyText(SerializationContext& context, char delim,
   context.quote_seq = delim == '"' ? "\\\"" : "\"";
   context.copy_delim = delim;
   context.copy_null = std::move(null_str);
+  context.text_escapes = TextEscapes(true, delim);
 }
 
 void SerializeCopyTextHeader(SerializationContext& context,
@@ -3718,6 +3682,7 @@ void SetCopyCsv(SerializationContext& context, char delim, char quote,
   context.backslash_count = 1;
   context.quote_seq = "\"";
   context.copy_delim = delim;
+  context.text_escapes = TextEscapes(false, delim);
   context.copy_null = std::move(null_str);
   context.copy_newline = std::move(new_line);
   context.csv_quote = quote;

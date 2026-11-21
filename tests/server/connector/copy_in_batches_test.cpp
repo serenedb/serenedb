@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -41,6 +42,7 @@
 
 #include "pg/copy_batch_builder.h"
 #include "pg/copy_in_batches.h"
+#include "pg/copy_in_stream.h"
 
 namespace {
 
@@ -562,6 +564,62 @@ TEST(PgCopyInBatches, ParallelConsumersSeeEveryBatchOnce) {
     for (size_t i = 0; i < kBatches; ++i) {
       ASSERT_EQ(count[i], 1) << "batch " << i << " round " << round;
     }
+  }
+}
+
+yaclib::Future<> ProduceStream(CopyInBatches& queue, yaclib::IExecutor& io,
+                               std::string_view data, uint64_t seed) {
+  co_await yaclib::On(io);
+  std::mt19937_64 rng{seed};
+  for (size_t at = 0; at < data.size();) {
+    if (queue.NeedSpace()) {
+      co_await queue.SpaceReady(io);
+      queue.ResetSpace();
+    }
+    const auto size = std::min<size_t>(1 + rng() % 512, data.size() - at);
+    queue.Push(MakeBatch(std::string{data.substr(at, size)}), {});
+    at += size;
+    std::this_thread::yield();
+  }
+  queue.Finish();
+  co_return {};
+}
+
+TEST(PgCopyInStream, ConcurrentReadersSeeTheStreamInOrder) {
+  constexpr size_t kReaders = 16;
+  std::string data(2 << 20, '\0');
+  for (size_t i = 0; i < data.size(); ++i) {
+    data[i] = static_cast<char>((i * 2654435761U) >> 24);
+  }
+  const size_t region = data.size() / kReaders;
+  for (uint64_t round = 0; round < 20; ++round) {
+    CopyInBatches queue{8};
+    sdb::pg::CopyInStream stream{queue, 4};
+    yaclib::FairThreadPool io{1};
+    std::vector<std::thread> readers;
+    for (size_t r = 0; r < kReaders; ++r) {
+      readers.emplace_back([&, r] {
+        std::mt19937_64 rng{round * kReaders + r};
+        std::string buffer(1 << 16, '\0');
+        for (size_t offset = r * region; offset < (r + 1) * region;) {
+          const auto want = std::min<size_t>(1 + rng() % buffer.size(),
+                                             (r + 1) * region - offset);
+          const auto got = stream.Read(buffer.data(), want, offset);
+          ASSERT_GT(got, 0) << "offset " << offset;
+          ASSERT_LE(got, want);
+          ASSERT_EQ(std::string_view(buffer.data(), got),
+                    std::string_view(data).substr(offset, got))
+            << "offset " << offset << " round " << round;
+          offset += got;
+        }
+      });
+    }
+    std::ignore = ProduceStream(queue, io, data, round).Get();
+    for (auto& reader : readers) {
+      reader.join();
+    }
+    io.Stop();
+    io.Wait();
   }
 }
 

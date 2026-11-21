@@ -69,6 +69,9 @@ duckdb::idx_t CopyInStream::Read(char* data, duckdb::idx_t count,
         }
         break;
       }
+      if (_pulling) {
+        continue;
+      }
       _pulling = true;
     }
     Pull(offset, end);

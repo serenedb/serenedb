@@ -145,6 +145,7 @@ enum class CopyFormat : uint8_t {
   Parquet,
   Arrow,
   Arrows,
+  Avro,
 };
 
 // COPY direction over a stdin/stdout pipe. The patched parser rewrites STDIN /

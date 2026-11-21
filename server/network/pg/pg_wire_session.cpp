@@ -240,6 +240,8 @@ inline CopyKind ClassifyCopy(duckdb::SQLStatement& statement) {
     format = CopyFormat::Arrow;
   } else if (info.format == "arrows") {
     format = CopyFormat::Arrows;
+  } else if (info.format == "avro") {
+    format = CopyFormat::Avro;
   }
   // The CSV header default is not decided here: this runs before binding, so it
   // cannot see the format of a target that only resolves later (COPY TO $1).
@@ -329,7 +331,8 @@ inline bool IsTemporaryCreate(const duckdb::SQLStatement& statement) {
 // STDIN through the batch queue. The other formats (json/parquet/...) go
 // through DuckDB's own CopyFunction instead.
 inline bool ScansCopyStream(const duckdb::CopyInfo& info) {
-  if (info.format != "csv" && info.format != "text" && info.format != "json") {
+  if (info.format != "csv" && info.format != "text" && info.format != "json" &&
+      info.format != "avro") {
     return false;
   }
   for (const auto& [name, values] : info.options) {
@@ -368,7 +371,8 @@ duckdb::CopyFormat NativeCopyFormat(CopyFormat format) {
 // `== Parquet` tests.
 inline bool IsBinaryWireFormat(CopyFormat format) {
   return format == CopyFormat::Binary || format == CopyFormat::Parquet ||
-         format == CopyFormat::Arrow || format == CopyFormat::Arrows;
+         format == CopyFormat::Arrow || format == CopyFormat::Arrows ||
+         format == CopyFormat::Avro;
 }
 
 // The runnable inner query for a COPY ... TO. `select_statement` is the parsed

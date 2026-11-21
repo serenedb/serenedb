@@ -75,10 +75,6 @@ constexpr std::array<std::string_view, 13> kFieldNames{
   "scored",  "scorer", "slop",       "term",   "terms", "value",
 };
 
-duckdb::string_t Key(std::string_view key) noexcept {
-  return {key.data(), static_cast<uint32_t>(key.size())};
-}
-
 class Emitter {
  public:
   Emitter(std::span<const Node> rows, const ScanBindData& bind) noexcept
@@ -127,7 +123,7 @@ class Emitter {
     _builder->EmitObject(
       size,
       [&](duckdb::idx_t i) {
-        return Key(kFieldNames[static_cast<size_t>(fields[i])]);
+        return duckdb::string_t{kFieldNames[static_cast<size_t>(fields[i])]};
       },
       [&](duckdb::idx_t i) {
         switch (fields[i]) {
@@ -145,7 +141,7 @@ class Emitter {
           case Field::Inputs:
             _builder->EmitObject(
               inputs.size(),
-              [&](duckdb::idx_t j) { return Key(inputs[j]->key); },
+              [&](duckdb::idx_t j) { return duckdb::string_t{inputs[j]->key}; },
               [&](duckdb::idx_t j) { Tree(*inputs[j]); });
             break;
           case Field::Note:
@@ -198,7 +194,10 @@ class Emitter {
         _builder->EmitNull();
       } else if (gap) {
         _builder->EmitObject(
-          2, [](duckdb::idx_t j) { return Key(j == 0 ? "max" : "min"); },
+          2,
+          [](duckdb::idx_t j) {
+            return duckdb::string_t{j == 0 ? "max" : "min"};
+          },
           [&](duckdb::idx_t j) {
             Whole(j == 0 ? position->gap_max : position->gap_min);
           });
@@ -213,9 +212,7 @@ class Emitter {
   }
 
   void String(std::string_view text) {
-    _builder->EmitString(
-      VariantLogicalType::VARCHAR,
-      duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())});
+    _builder->EmitString(VariantLogicalType::VARCHAR, duckdb::string_t{text});
   }
 
   void Whole(uint64_t value) {
@@ -665,9 +662,7 @@ void ExplainJsonFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     const auto fields = FieldsOf(root);
     builder.clear();
     AppendLucene(builder, fields, ClauseKey(fields));
-    const std::string_view json{builder.view().value()};
-    writer.WriteValue(
-      duckdb::string_t{json.data(), static_cast<uint32_t>(json.size())});
+    writer.WriteValue(duckdb::string_t{builder.view().value()});
   }
 }
 

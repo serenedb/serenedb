@@ -179,7 +179,7 @@ class PrepareCollector {
   virtual void Finish(StatsArena& stats) = 0;
 
   virtual void Describe(field_id field, TermAt term,
-                        explain::StatsIndex& out) const = 0;
+                        explain::StatsIndex& out) const;
 
   virtual CompoundCollector* AsCompound() noexcept { return nullptr; }
 
@@ -305,9 +305,6 @@ class AllCollector final : public PrepareCollector {
   }
 
   void Finish(StatsArena& stats) final;
-
-  void Describe(field_id field, TermAt term,
-                explain::StatsIndex& out) const final;
 };
 
 class CompoundCollector final : public PrepareCollector {
@@ -328,8 +325,6 @@ class CompoundCollector final : public PrepareCollector {
   auto Size() const noexcept { return _children.size(); }
 
   void Finish(StatsArena& stats) final;
-
-  void Describe(field_id, TermAt, explain::StatsIndex&) const final {}
 
  private:
   std::vector<PrepareCollector::ptr> _children;

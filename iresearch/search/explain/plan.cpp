@@ -152,11 +152,10 @@ struct Cursor {
 
 class LeafPart {
  public:
-  LeafPart(Planner plan, ColumnArgsFetcher& fetcher, const SubReader& segment,
+  LeafPart(Planner plan, const SubReader& segment,
            const detail::ScoreArgs& args, const SlotStats* stats,
            Subject subject, Constant constant)
     : _cursor{.plan = std::move(plan)},
-      _fetcher{fetcher},
       _segment{segment},
       _args{args},
       _stats{stats},
@@ -168,9 +167,8 @@ class LeafPart {
   }
 
   Outcome Explain(doc_id_t doc, Node& out) {
-    if (_cursor.Seek(doc)) {
-      _score =
-        Scored() ? _cursor.node->PrepareScore() : ScoreFunction::Default();
+    if (_cursor.Seek(doc) && Scored()) {
+      _score = _cursor.node->PrepareScore();
     }
     if (!_cursor.Matches(doc)) {
       return Outcome::None;
@@ -181,7 +179,7 @@ class LeafPart {
       return Outcome::Matched;
     }
     _cursor.node->FetchScoreArgs(0);
-    _fetcher.Fetch(doc);
+    _args.fetcher->Fetch(doc);
     out.role = Role::Weight;
     out.value = _score.Score();
     out.scorer = _scorer;
@@ -221,7 +219,7 @@ class LeafPart {
       .segment = _segment,
       .field = _constant.field ? _constant.field->meta() : detail::NoField(),
       .doc_attrs = attrs,
-      .fetcher = _fetcher,
+      .fetcher = *_args.fetcher,
       .stats = _args.stats,
       .boost = _args.boost,
     };
@@ -238,7 +236,6 @@ class LeafPart {
   }
 
   Cursor _cursor;
-  ColumnArgsFetcher& _fetcher;
   const SubReader& _segment;
   detail::ScoreArgs _args;
   const SlotStats* _stats;
@@ -377,7 +374,6 @@ class Builder {
                         probe::Family::DocsContext{.interrogations = 1},
                         ScoreMergeType::Noop);
                     },
-                    _fetcher,
                     _segment,
                     args,
                     stats,
@@ -395,49 +391,47 @@ class Builder {
     };
     const auto* stats = StatsOf(_stats, record.stats);
     const bool scored = record.stats != nullptr;
+    const TermReader* reader = nullptr;
+    score_t scale = 1;
     Subject subject;
-    Constant constant;
     switch (query.Kind()) {
       case QueryKind::Phrase: {
         const auto& phrase = utils::downCast<PhraseQuery>(query);
-        const auto& reader = *phrase.state.reader;
+        reader = phrase.state.reader;
         if (auto words = WordsOf(phrase, Names()); !words.empty()) {
           subject = {
-            .field = reader.meta().id,
-            .dict = reader.meta().dict,
+            .field = reader->meta().id,
+            .dict = reader->meta().dict,
             .phrase = std::move(words),
             .slop = phrase.slop,
           };
         } else {
-          subject = SubjectOf(stats, &reader);
-        }
-        if (scored) {
-          constant = {.field = &reader,
-                      .freq = ConstantFreq(_segment, reader, args)};
+          subject = SubjectOf(stats, reader);
         }
       } break;
       case QueryKind::NGram: {
         const auto& ngram = utils::downCast<NGramSimilarityQuery>(query);
-        const auto& reader = *ngram.State().reader;
-        subject = SubjectOf(stats, &reader);
-        if (scored) {
-          constant = {.field = &reader,
-                      .freq = ConstantFreq(_segment, reader, args)};
-          if (ngram.Every()) {
-            constant.scale = static_cast<score_t>(ngram.Present()) /
-                             static_cast<score_t>(ngram.TotalTerms());
-          }
+        reader = ngram.State().reader;
+        subject = SubjectOf(stats, reader);
+        if (ngram.Every()) {
+          scale = static_cast<score_t>(ngram.Present()) /
+                  static_cast<score_t>(ngram.TotalTerms());
         }
       } break;
       default:
         subject = SubjectOf(stats, nullptr);
         break;
     }
+    Constant constant;
+    if (scored && reader) {
+      constant = {.field = reader,
+                  .freq = ConstantFreq(_segment, *reader, args),
+                  .scale = scale};
+    }
     return LeafPart{[&query, scoring = Scoring(), scored] {
                       return query.PlanProbe(
                         scored ? scoring : detail::ScoredCtx{}, 1);
                     },
-                    _fetcher,
                     _segment,
                     args,
                     stats,

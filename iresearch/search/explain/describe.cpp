@@ -77,8 +77,8 @@ void ExpandedSlotsCollector::Describe(field_id field, TermAt term,
   });
 }
 
-void AllCollector::Describe(field_id field, TermAt,
-                            explain::StatsIndex& out) const {
+void PrepareCollector::Describe(field_id field, TermAt,
+                                explain::StatsIndex& out) const {
   out.insert_or_assign(Record().stats, explain::SlotStats{.field = field});
 }
 

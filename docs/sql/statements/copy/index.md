@@ -53,7 +53,7 @@ Copy only the schema (catalog elements) but not any data:
 
 ## Overview
 
-`COPY` moves data between SereneDB and external files. `COPY ... FROM` imports data into SereneDB from an external file. `COPY ... TO` writes data from SereneDB to an external file. The `COPY` command reads and writes the `text`, `csv` and `binary` formats of PostgreSQL, JSON, Parquet, and [Arrow IPC](../../../data_import_and_export/arrow/overview.md) files (`arrow`) and streams (`arrows`), and writes `BLOB` files. Over the PostgreSQL wire protocol, `COPY` also exchanges the data with the client: see [`STDIN` and `STDOUT`](#stdin-and-stdout).
+`COPY` moves data between SereneDB and external files. `COPY ... FROM` imports data into SereneDB from an external file. `COPY ... TO` writes data from SereneDB to an external file. The `COPY` command reads and writes the `text`, `csv` and `binary` formats of PostgreSQL, JSON, Parquet, [Avro](../../../data_import_and_export/avro/overview.md), and [Arrow IPC](../../../data_import_and_export/arrow/overview.md) files (`arrow`) and streams (`arrows`), and writes `BLOB` files. Over the PostgreSQL wire protocol, `COPY` also exchanges the data with the client: see [`STDIN` and `STDOUT`](#stdin-and-stdout).
 
 ## `COPY ... FROM`
 
@@ -224,7 +224,7 @@ With few exceptions, the below options are applicable to all formats written wit
 
 | Name                      | Description                                                                                                                                                                                                                                                                                                                                                                                                                                 | Type                  | Default |
 | :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :-------------------- | :------ |
-| `FORMAT`                  | Specifies the copy function to use. The default is selected from the file extension (e.g., `.parquet` results in a Parquet file being written/read). If the file extension names no format, or the file has none, `TEXT` is selected. SereneDB provides the `TEXT`, `BINARY`, `CSV`, `PARQUET`, `JSON`, `ARROW`, `ARROWS` and `BLOB` copy functions. The name is case-insensitive, quoted or not: `FORMAT 'CSV'` is `FORMAT csv`. | `VARCHAR`             | `auto`  |
+| `FORMAT`                  | Specifies the copy function to use. The default is selected from the file extension (e.g., `.parquet` results in a Parquet file being written/read). If the file extension names no format, or the file has none, `TEXT` is selected. SereneDB provides the `TEXT`, `BINARY`, `CSV`, `PARQUET`, `JSON`, `ARROW`, `ARROWS`, `AVRO` and `BLOB` copy functions. The name is case-insensitive, quoted or not: `FORMAT 'CSV'` is `FORMAT csv`. | `VARCHAR`             | `auto`  |
 | `USE_TMP_FILE`            | Whether or not to write to a temporary file first if the original file exists (`target.csv.tmp`). This prevents overwriting an existing file with a broken file in case the writing is cancelled.                                                                                                                                                                                                                                           | `BOOL`                | `auto`  |
 | `OVERWRITE_OR_IGNORE`     | Whether or not to allow overwriting files if they already exist. Only has an effect when used with `PARTITION_BY`.                                                                                                                                                                                                                                                                                                                          | `BOOL`                | `false` |
 | `OVERWRITE`               | When `true`, all existing files inside targeted directories will be removed (not supported on remote filesystems). Only has an effect when used with `PARTITION_BY`.                                                                                                                                                                                                                                                                        | `BOOL`                | `false` |
@@ -260,8 +260,9 @@ Over the PostgreSQL wire protocol, `COPY ... FROM STDIN` reads the data from the
 | `parquet`               | no                    | yes                  |
 | `arrow`                 | no                    | yes                  |
 | `arrows`                | yes                   | yes                  |
+| `avro`                  | yes                   | yes                  |
 
-In the `json` format, `COPY ... TO STDOUT` sends one JSON object per line, as `COPY ... TO` writes it to a file. A Parquet file and an Arrow IPC file (`arrow`) reach the client whole, ready to be saved as a file. A Parquet file keeps the description of its contents in a footer at the end, which a reader needs before it can read any row, so it loads only from a file, not from `STDIN`:
+In the `json` format, `COPY ... TO STDOUT` sends one JSON object per line, as `COPY ... TO` writes it to a file. A Parquet file, an Arrow IPC file (`arrow`) and an Avro file reach the client whole, ready to be saved as a file. An Avro file has no footer, so it also loads from `STDIN`, read as it arrives. A Parquet file keeps the description of its contents in a footer at the end, which a reader needs before it can read any row, so it loads only from a file, not from `STDIN`:
 
 <SqlLogicTest id="sql/statements/copy/index/stdin_parquet" />
 
@@ -469,6 +470,10 @@ Sets all values of single rows to be returned as non-nested arrays to `array_fal
 ### Arrow Options
 
 The `arrow` format writes an Arrow IPC file, which ends with a footer through which a reader can go to any record batch. The `arrows` format writes an Arrow IPC stream, which has no footer and is read from start to end, so it can be sent through a pipe or over `STDIN`. `COPY ... FROM` and `read_arrow` read both. Their options, such as `COMPRESSION` and `ROW_GROUP_SIZE`, are listed under [Writing Arrow Files](../../../data_import_and_export/arrow/overview.md#writing-arrow-files).
+
+### Avro Options
+
+The `avro` format reads and writes Avro object container files. The options for writing them, such as `CODEC` and `FIELD_IDS`, are listed under [Writing Avro Files](../../../data_import_and_export/avro/overview.md#writing-avro-files).
 
 ### BLOB Options
 

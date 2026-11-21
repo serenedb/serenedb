@@ -9,7 +9,6 @@ SereneDB and the libraries below are built into serened. `SELECT * FROM sdb_lice
 ### Apache-2.0
 
 * [Abseil](https://abseil.io): `third_party/abseil-cpp/LICENSE`
-* [Apache Avro C](https://avro.apache.org): `third_party/avro/lang/c/LICENSE`, `third_party/avro/lang/c/NOTICE`
 * [Apache Parquet](https://parquet.apache.org): `third_party/duckdb/third_party/parquet/LICENSE`
 * [Apache Thrift](https://thrift.apache.org): `third_party/duckdb/third_party/thrift/thrift/LICENSE`
 * [clickhouse-cpp](https://github.com/ClickHouse/clickhouse-cpp): `third_party/clickhouse-cpp/LICENSE`
@@ -109,7 +108,6 @@ SereneDB and the libraries below are built into serened. `SELECT * FROM sdb_lice
 * [FSST](https://github.com/cwida/fsst): `third_party/duckdb/third_party/fsst/LICENSE`
 * [GeographicLib](https://geographiclib.sourceforge.io): `third_party/geographiclib-c/LICENSE.txt`
 * [HyperLogLog](https://github.com/duckdb/duckdb/tree/main/third_party/hyperloglog): `third_party/duckdb/third_party/hyperloglog/LICENSE`
-* [Jansson](https://github.com/akheron/jansson): `third_party/jansson/LICENSE`
 * [Jaro-Winkler](https://github.com/maxbachmann/jarowinkler-cpp): `third_party/duckdb/third_party/jaro_winkler/LICENSE`
 * [libxml2](https://gitlab.gnome.org/GNOME/libxml2): `third_party/libxml2/Copyright`
 * [llhttp](https://github.com/nodejs/llhttp): `third_party/llhttp/LICENSE`

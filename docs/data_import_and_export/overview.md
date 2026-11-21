@@ -116,6 +116,22 @@ Or use the [`COPY` statement](../sql/statements/copy/index.md#copy--from):
 
 For more details, see the [page on Arrow](../data_import_and_export/arrow/overview.md).
 
+### Avro Loading
+
+Avro files can be loaded and queried using their filename:
+
+<SqlLogicTest id="data_import_and_export/overview/example_018" />
+
+Alternatively, use the [`read_avro` function](../data_import_and_export/avro/overview.md#reading-avro-files):
+
+<SqlLogicTest id="data_import_and_export/overview/example_019" />
+
+Or use the [`COPY` statement](../sql/statements/copy/index.md#copy--from):
+
+<SqlLogicTest id="data_import_and_export/overview/example_020" />
+
+For more details, see the [page on Avro](../data_import_and_export/avro/overview.md).
+
 ### Markdown Loading
 
 Markdown files are read a row per file, per section or per block, for example the headings of a file:
@@ -126,6 +142,6 @@ For more details, see the [page on Markdown files](../data_import_and_export/mar
 
 ### Returning the Filename
 
-In SereneDB the CSV, JSON, Parquet and Arrow readers support the `filename` virtual column:
+In SereneDB the CSV, JSON, Parquet, Arrow and Avro readers support the `filename` virtual column:
 
 <SqlLogicTest id="data_import_and_export/overview/example_013" />

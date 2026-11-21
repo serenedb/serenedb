@@ -1,0 +1,82 @@
+control substitution on
+
+# A view-backed inverted index over Avro files: the index keys each row by
+# its block's offset and its index in the block, and fetches matching rows
+# back through read_avro's lookups. Strings longer than 12 bytes borrow the
+# reader's block buffers, nested values come from the same blocks, and the
+# compressed files decompress the block a lookup needs.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ivavro_en AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE ivavro_src AS SELECT * FROM (VALUES
+  (1, 'pudge goes mid with a long enough body', [1, 2], {'a': 1, 'b': 'first nested string value'}, 12.50::DECIMAL(9,2), TIMESTAMP '2024-01-01 10:00:00'),
+  (2, 'anchin reads manga', [], {'a': 2, 'b': 'y'}, -0.01::DECIMAL(9,2), TIMESTAMP '1970-01-01 00:00:00'),
+  (3, 'pudge stays home', NULL, NULL, NULL, NULL),
+  (4, 'lina burns pudge again and again', [4, NULL], {'a': NULL, 'b': NULL}, 99999.99::DECIMAL(9,2), TIMESTAMP '9999-12-31 23:59:59')) t(id, body, l, r, d, ts);
+
+statement ok
+COPY ivavro_src TO '${__TEST_DIR__}/ivavro.avro' (FORMAT avro);
+
+statement ok
+CREATE VIEW ivavro_v AS SELECT * FROM read_avro('${__TEST_DIR__}/ivavro.avro');
+
+statement ok
+CREATE INDEX ivavro_idx ON ivavro_v USING inverted(id, body ivavro_en);
+
+query
+SELECT count(*) FROM ivavro_idx WHERE body @@ ts_phrase('pudge');
+----
+count
+3
+
+query
+SELECT id, body, l, r, d, ts FROM ivavro_idx WHERE body @@ ts_phrase('pudge') ORDER BY id;
+----
+id	body	l	r	d	ts
+1	pudge goes mid with a long enough body	{1,2}	(1,"first nested string value")	12.50	2024-01-01 10:00:00
+3	pudge stays home	NULL	NULL	NULL	NULL
+4	lina burns pudge again and again	{4,NULL}	(,)	99999.99	9999-12-31 23:59:59
+
+query
+SELECT count(*) FROM ((SELECT * FROM ivavro_v EXCEPT SELECT * FROM ivavro_idx)
+                      UNION ALL (SELECT * FROM ivavro_idx EXCEPT SELECT * FROM ivavro_v));
+----
+count
+0
+
+# Many blocks per file and every codec: the lookups land in different blocks.
+
+statement ok
+CREATE TABLE ivavro_many AS
+  SELECT i AS id, CASE WHEN i % 997 = 0 THEN 'pudge row ' || i ELSE 'creep row ' || i END AS body,
+         [i, i + 1] AS l
+  FROM generate_series(1, 200000) t(i);
+
+statement ok
+COPY ivavro_many TO '${__TEST_DIR__}/ivavro_deflate.avro' (FORMAT avro, CODEC 'deflate');
+
+statement ok
+COPY ivavro_many TO '${__TEST_DIR__}/ivavro_zstandard.avro' (FORMAT avro, CODEC 'zstandard');
+
+statement ok
+CREATE VIEW ivavro_codecs_v AS SELECT * FROM read_avro('${__TEST_DIR__}/ivavro_*.avro');
+
+statement ok
+CREATE INDEX ivavro_codecs_idx ON ivavro_codecs_v USING inverted(id, body ivavro_en);
+
+query
+SELECT count(*), sum(id), sum(l[2] - l[1]) FROM ivavro_codecs_idx WHERE body @@ ts_phrase('pudge');
+----
+count	sum	sum
+400	40079400	400
+
+query
+SELECT id, body, l FROM ivavro_codecs_idx WHERE body @@ ts_phrase('pudge') AND id > 199000 ORDER BY id;
+----
+id	body	l
+199400	pudge row 199400	{199400,199401}
+199400	pudge row 199400	{199400,199401}

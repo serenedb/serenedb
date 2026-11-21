@@ -274,6 +274,8 @@ WHERE  (body @@ 'fox' OR body @@ 'cat')::merge('max');
 
 Under the default `sum`, a document containing both `fox` and `cat` collects both contributions and outranks a document that matched one branch strongly. Under `max` it is scored once, on its best branch.
 
+**A `max` starts at 0**, the score of a branch a row doesn't match, so it takes the best of 0 and its branches: with [`indri_dirichlet`](#indri_dirichlet), whose scores are negative, a `max` group scores 0.
+
 **The synonym case.** This is what makes `max` worth reaching for. Expanding a user's `car` into `car OR automobile` creates two branches that mean one thing, so summing them rewards a document for happening to use both spellings:
 
 ```sql

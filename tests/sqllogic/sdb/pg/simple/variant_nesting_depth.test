@@ -1,0 +1,50 @@
+statement ok
+CREATE TABLE vnd_one AS
+SELECT (repeat('{"a":', 100000) || '1' || repeat('}', 100000))::JSON AS doc;
+
+query
+SELECT doc::VARIANT IS NULL AS is_null FROM vnd_one;
+----
+is_null
+f
+
+statement ok
+CREATE TABLE vnd_two AS
+SELECT (repeat('[', 100000) || '1' || repeat(']', 100000))::JSON AS doc
+UNION ALL
+SELECT '[1]'::JSON;
+
+query
+SELECT doc::VARIANT IS NULL AS is_null FROM vnd_two ORDER BY length(doc::VARCHAR);
+----
+is_null
+f
+f
+
+statement error
+SELECT (repeat('{"a":', 20000) || '1' || repeat('}', 20000))::JSON::VARIANT::VARCHAR IS NULL;
+----
+db error: ERROR: VARIANT exceeds maximum recursion depth of 128
+
+
+statement ok
+CREATE TABLE vnd_explain AS
+SELECT (repeat('{"inputs":{"a":', 10000) || '{}' || repeat('}}', 10000))::JSON AS doc;
+
+statement error
+SELECT ts_explain_json(doc::VARIANT) FROM vnd_explain;
+----
+db error: ERROR: stack depth limit exceeded
+
+
+query
+SELECT length(ts_explain_json((repeat('{"inputs":{"a":', 100) || '{}' || repeat('}}', 100))::JSON::VARIANT)::VARCHAR) > 0 AS rendered;
+----
+rendered
+t
+
+query
+SELECT 1 AS alive;
+----
+alive
+1

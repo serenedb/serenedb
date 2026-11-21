@@ -88,6 +88,7 @@ class CopyInBatches {
     _on_starve = std::move(callback);
   }
   bool Starving() const;
+  bool Pending() const;
   bool NeedSpace();
   auto SpaceReady(yaclib::IExecutor& io) noexcept { return _space.AwaitOn(io); }
   void ResetSpace() noexcept { _space.Reset(); }

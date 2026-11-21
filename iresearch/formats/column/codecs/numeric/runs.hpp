@@ -228,8 +228,9 @@ template<typename T>
 double AnalyzeRle(ColumnDataCheckpointData& data, double bound,
                   FrameStore store) {
   const auto items = RleItems<T>(data, store);
-  return AnalyzeFrames<T>(data, items, data.Get<Rle<T>>().analysis, bound,
-                          RleFrames<T>(data));
+  return data.run_price *
+         AnalyzeFrames<T>(data, items, data.Get<Rle<T>>().analysis,
+                          bound / data.run_price, RleFrames<T>(data));
 }
 
 template<typename T>

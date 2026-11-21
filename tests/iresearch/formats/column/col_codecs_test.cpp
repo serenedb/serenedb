@@ -4111,6 +4111,29 @@ TEST_F(ColCodecsTest, CodesInShortRunsAreNotRunPacked) {
   }
 }
 
+TEST_F(ColCodecsTest, CodesAreRunLengthCodedOnlyWhenThatIsClearlySmaller) {
+  constexpr uint64_t kRows = 60000;
+  for (const auto codec :
+       {irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictLz4}) {
+    for (const auto& [run, coded] : {std::pair<uint64_t, bool>{2, false},
+                                     std::pair<uint64_t, bool>{8, true}}) {
+      SCOPED_TRACE(
+        absl::StrCat(magic_enum::enum_name(codec), " runs of ", run));
+      const Value value = [run](uint64_t g) -> std::optional<std::string> {
+        return "v" + std::to_string(std::mt19937_64{g / run}() % 10000);
+      };
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      Write(dir, codec, {}, kRows, 16384, value);
+      Verify(dir, codec, kRows, value);
+      const auto transforms = SegmentInfo(dir, "codes_transform");
+      ASSERT_FALSE(transforms.empty());
+      for (const auto& transform : transforms) {
+        EXPECT_EQ(transform.starts_with("rle"), coded) << transform;
+      }
+    }
+  }
+}
+
 TEST_F(ColCodecsTest, CodesThatTurnIntoRunsAreRunPacked) {
   constexpr uint64_t kSwitch = 400000;
   constexpr uint64_t kRows = 600000;

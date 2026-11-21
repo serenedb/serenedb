@@ -225,6 +225,7 @@ struct ColumnDataCheckpointData {
   CodecSet disabled;
   bool contested = false;
   uint32_t min_packed_run = 1;
+  double run_price = 1.0;
   uint64_t rows = 0;
   uint64_t raw_input = 0;
   uint64_t written = 0;

@@ -164,6 +164,7 @@ struct WidePart {
         .disabled = outer.disabled,
         .contested = outer.contested,
         .min_packed_run = outer.min_packed_run,
+        .run_price = outer.run_price,
         .rows = values.size(),
       } {
     duckdb::FlatVector::SetSize(chunk.data, values.size());

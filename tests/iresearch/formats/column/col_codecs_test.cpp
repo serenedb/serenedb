@@ -2584,56 +2584,22 @@ TEST_F(ColCodecsTest, ACompactionCopiesConstantRowGroupsUnderANamedCodec) {
   }
 }
 
-TEST_F(ColCodecsTest, ATextRowGroupOfOneValueAndNullsIsStoredConstant) {
+TEST_F(ColCodecsTest, ARowGroupWithANullOrASecondTextValueIsNotConstant) {
   using irs::codecs::CodecType;
   constexpr uint32_t kRowGroup = 4096;
-  constexpr uint64_t kRows = 2 * kRowGroup;
-  const std::string text = "the one value of a row group that has NULLs";
-  const Value with_nulls = [&](uint64_t g) -> std::optional<std::string> {
-    if (g % 7 == 3 || g == 0 || g == kRows - 1) {
+  const Value with_null = [](uint64_t g) -> std::optional<std::string> {
+    if (g == 100) {
       return std::nullopt;
     }
-    return text;
+    return "same";
+  };
+  const Value with_other = [](uint64_t g) -> std::optional<std::string> {
+    return g == 4000 ? "other" : "same";
   };
   const Value every_null = [](uint64_t) -> std::optional<std::string> {
     return std::nullopt;
   };
-  for (const auto codec :
-       {CodecType::Auto, CodecType::DictLz4, CodecType::Fsst}) {
-    SCOPED_TRACE(magic_enum::enum_name(codec));
-    for (const bool nulls_only : {false, true}) {
-      const auto& value = nulls_only ? every_null : with_nulls;
-      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-      Write(dir, codec, {}, kRows, kRowGroup, value);
-      {
-        irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
-        const auto* col = r.Column(kField);
-        ASSERT_NE(col, nullptr);
-        ASSERT_EQ(col->DataBlocks().size(), kRows / kRowGroup);
-        for (const auto& block : col->DataBlocks()) {
-          EXPECT_EQ(block.codec->type, CodecType::Constant);
-          EXPECT_EQ(block.byte_size, nulls_only ? 0 : text.size());
-        }
-      }
-      Verify(dir, codec, kRows, value);
-    }
-  }
-}
-
-TEST_F(ColCodecsTest, ARowGroupWithASecondTextValueIsNotConstant) {
-  using irs::codecs::CodecType;
-  constexpr uint32_t kRowGroup = 4096;
-  const Value with_other = [](uint64_t g) -> std::optional<std::string> {
-    return g == 4000 ? "other" : "same";
-  };
-  const Value with_other_and_null =
-    [](uint64_t g) -> std::optional<std::string> {
-    if (g == 100) {
-      return std::nullopt;
-    }
-    return g == 4000 ? "other" : "same";
-  };
-  for (const auto& value : {with_other, with_other_and_null}) {
+  for (const auto& value : {with_null, with_other, every_null}) {
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, CodecType::Auto, {}, kRowGroup, kRowGroup, value);
     {

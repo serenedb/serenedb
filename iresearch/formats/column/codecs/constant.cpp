@@ -231,8 +231,7 @@ bool EveryValueIsEqual(std::span<const WriteChunk> chunks,
     for (const auto& chunk : chunks) {
       for (const auto entry : chunk.data.Values<T>()) {
         if (!entry.IsValid()) {
-          writer.SetHasNull();
-          continue;
+          return false;
         }
         const auto& value = entry.GetValueUnsafe();
         if (!first) {
@@ -245,10 +244,9 @@ bool EveryValueIsEqual(std::span<const WriteChunk> chunks,
         }
       }
     }
+    SDB_ASSERT(first);
     writer.Merge(stats);
-    if (first) {
-      bytes = {first->GetData(), first->GetSize()};
-    }
+    bytes = {first->GetData(), first->GetSize()};
     return true;
   } else {
     if (stats.GetStatsType() != duckdb::StatisticsType::NUMERIC_STATS) {

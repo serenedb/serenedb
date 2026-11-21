@@ -39,9 +39,9 @@ column_name	constant	other
 d	3	0
 e	3	0
 m	2	1
-n	3	0
+n	0	3
 w	3	0
-z	3	0
+z	0	3
 
 query
 SELECT count(*) AS rows, count(*) FILTER (WHERE e = '') AS empty, count(*) FILTER (WHERE e <> '') AS filled,

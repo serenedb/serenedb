@@ -175,7 +175,9 @@ TEST_F(ColCompressionFunctionTest, AValidityRowGroupOfNullsIsStoredConstant) {
 
 TEST_F(ColCompressionFunctionTest,
        AValidityBlockWithoutNullsIsStoredEmptyBesideOneWithNulls) {
-  constexpr uint64_t kBlockRows = irs::codecs::kBlockSize * 8;
+  constexpr uint64_t kBlockRows = irs::codecs::kBlockSize /
+                                  duckdb::ValidityMask::STANDARD_MASK_SIZE *
+                                  STANDARD_VECTOR_SIZE;
   const duckdb::LogicalType type{duckdb::LogicalTypeId::VALIDITY};
   FillValidity(2 * kBlockRows, [](uint64_t i) { return i != kBlockRows + 5; });
   EXPECT_EQ(Blocks(type, CodecType::Uncompressed, irs::WriteTier::Flush),

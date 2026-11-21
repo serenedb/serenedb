@@ -1,0 +1,78 @@
+control substitution on
+
+
+statement ok
+SET sdb_faults = 'fold_log_tail';
+
+
+statement ok
+CREATE TABLE ctfr_dropped (id INT);
+
+
+statement ok
+CREATE SEQUENCE ctfr_seq;
+
+
+query
+SELECT nextval('ctfr_seq') AS a, nextval('ctfr_seq') AS b;
+----
+a	b
+1	2
+
+
+statement ok
+CREATE TABLE ctfr_kept (id INT);
+
+
+statement ok
+INSERT INTO ctfr_kept VALUES (1), (2);
+
+
+statement ok
+DROP TABLE ctfr_dropped;
+
+
+statement ok
+ALTER TABLE ctfr_kept RENAME TO ctfr_renamed;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+CREATE TABLE ctfr_after (id INT);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT relname FROM pg_class WHERE relname LIKE 'ctfr_%' ORDER BY relname;
+----
+relname
+ctfr_after
+ctfr_renamed
+ctfr_seq
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM ctfr_renamed;
+----
+n
+2
+
+
+connection after_crash
+query
+SELECT nextval('ctfr_seq') > 2 AS above;
+----
+above
+t

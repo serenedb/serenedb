@@ -332,6 +332,7 @@ class Transactions final {
   std::atomic<uint64_t> _max_log_bytes{kDefaultMaxLogBytes};
   std::atomic<bool> _truncating{false};
   std::atomic<bool> _preparing_next{false};
+  std::atomic<bool> _folding_tail{false};
   absl::Mutex _truncate_mutex;
   utils::DrainGate _checkpoints;
 };

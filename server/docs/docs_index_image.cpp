@@ -35,9 +35,7 @@ extern "C" std::uint8_t sdb_docs_region[];
 
 namespace {
 
-constexpr std::size_t kAlignment = 64;
-
-struct alignas(kAlignment) Header {
+struct alignas(kIndexAlignment) Header {
   char tag[16] = {'s', 'd', 'b', '-', 'd', 'o', 'c', 's',
                   '-', 'i', 'n', 'd', 'e', 'x', '-', '1'};
   std::uint64_t capacity = 0;
@@ -80,7 +78,8 @@ class Cursor {
   }
 
   void Align() {
-    _offset = (_offset + kAlignment - 1) / kAlignment * kAlignment;
+    _offset =
+      (_offset + kIndexAlignment - 1) / kIndexAlignment * kIndexAlignment;
   }
 
  private:

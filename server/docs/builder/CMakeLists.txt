@@ -18,12 +18,6 @@ set(SDB_DOCS_CORPUS
     CACHE INTERNAL
     ""
 )
-set(SDB_DOCS_INDEX_WORK
-    ${CMAKE_CURRENT_BINARY_DIR}/docs_index
-    CACHE INTERNAL
-    ""
-)
-
 file(
     GLOB_RECURSE SDB_DOCS_SOURCES
     CONFIGURE_DEPENDS
@@ -78,14 +72,15 @@ add_library(
 )
 target_include_directories(serene_docs_index PRIVATE ${CMAKE_SOURCE_DIR}/server)
 
-function(sdb_embed_docs_index TARGET)
+function(sdb_embed_docs_index TARGET BUILDER)
     add_custom_command(
         TARGET ${TARGET}
         POST_BUILD
         COMMAND
             ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/scripts/embed_docs_index.py
-            ${SDB_DOCS_INDEX_WORK}/index $<TARGET_FILE:${TARGET}>
+            $<TARGET_FILE:${TARGET}> --corpus ${SDB_DOCS_CORPUS} --builder
+            $<TARGET_FILE:${BUILDER}>
         VERBATIM
     )
     if(APPLE)
@@ -109,14 +104,5 @@ function(sdb_build_docs_index TARGET)
         APPEND
         PROPERTY LINK_DEPENDS ${SDB_DOCS_CORPUS}
     )
-    add_custom_command(
-        TARGET ${TARGET}
-        POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E rm -rf ${SDB_DOCS_INDEX_WORK}
-        COMMAND
-            $<TARGET_FILE:${TARGET}> docs-index ${SDB_DOCS_CORPUS}
-            ${SDB_DOCS_INDEX_WORK}/index
-        VERBATIM
-    )
-    sdb_embed_docs_index(${TARGET})
+    sdb_embed_docs_index(${TARGET} ${TARGET})
 endfunction()

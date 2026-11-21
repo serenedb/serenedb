@@ -33,14 +33,19 @@ constexpr SystemIndex kRewriteIndexes[] = {
   {kPgRewriteSql["ev_class"], SystemLookup::Object},
 };
 
-SystemRows<SystemObject> LoadNativeViews(SystemScan&) {
+struct NativeView {
+  duckdb::idx_t oid;
+  duckdb::idx_t rule;
+};
+
+SystemRows<NativeView> LoadNativeViews(SystemScan&) {
   static const auto kViews = [] {
-    std::vector<SystemObject> views;
+    std::vector<NativeView> views;
     for (const auto schema : {irs::StaticStrings::kPgCatalogSchema,
                               irs::StaticStrings::kInformationSchema}) {
       VisitSystemTables(schema, [&](const SystemTable& table) {
         if (table.Sql().relkind == 'v') {
-          views.emplace_back(table.Sql().oid, table.Sql().name);
+          views.emplace_back(table.Sql().oid, table.Sql().rule);
         }
       });
     }
@@ -62,21 +67,19 @@ class PgRewrite final : public SystemTableScan<kPgRewriteSql> {
 
   static constexpr std::tuple kSources{
     CatalogSource{kViewTypes, SystemSchemas::Visit, kRewriteIndexes},
-    ArraySource<SystemObject>{&LoadNativeViews, {}, {}}};
+    ArraySource<NativeView>{&LoadNativeViews, {}, {}}};
 
   static constexpr auto kRule = Shape<kSql, const duckdb::ViewCatalogEntry>(
-    kReturnRule,
-    Col<"oid">([](const auto& view) { return RewriteRuleOid(view.oid); }),
+    kReturnRule, Col<"oid">(&duckdb::ViewCatalogEntry::rule_oid),
     Col<"ev_class">(&duckdb::CatalogEntry::oid),
     Col<"ev_action">([](const auto& view) { return view.query->ToString(); }));
 
-  static constexpr auto kNativeRule = Shape<kSql, const SystemObject>(
-    kReturnRule,
-    Col<"oid">([](const auto& view) { return RewriteRuleOid(view.oid); }),
-    Col<"ev_class">(&SystemObject::oid));
+  static constexpr auto kNativeRule =
+    Shape<kSql, const NativeView>(kReturnRule, Col<"oid">(&NativeView::rule),
+                                  Col<"ev_class">(&NativeView::oid));
 
   void Row(const duckdb::ViewCatalogEntry& view) { Emit<kRule>(view); }
-  void Row(const SystemObject& view) { Emit<kNativeRule>(view); }
+  void Row(const NativeView& view) { Emit<kNativeRule>(view); }
 };
 
 }  // namespace

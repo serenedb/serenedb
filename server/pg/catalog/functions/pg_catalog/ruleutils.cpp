@@ -214,11 +214,10 @@ Definition ViewDefinition(const Session& session, int64_t oid) {
 
 Definition RuleDefinition(const Session& session, int64_t rule_oid,
                           bool pretty) {
-  const auto rule = static_cast<uint64_t>(rule_oid);
-  if (!(rule & kRewriteRuleOidBit)) {
+  const auto oid = RuleRelation(session, static_cast<uint64_t>(rule_oid));
+  if (oid == kInvalidOid) {
     return std::nullopt;
   }
-  const auto oid = RewriteRuleView(rule);
   std::string relation;
   std::string query;
   if (const auto* system = FindSystemView(oid)) {

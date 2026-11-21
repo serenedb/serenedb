@@ -62,6 +62,8 @@ inline constexpr duckdb::idx_t kPgStatProgressCreateTableAsView =
   kMinSystem + 403;
 inline constexpr duckdb::idx_t kSdbLicensesTable = kMinSystem + 404;
 inline constexpr duckdb::idx_t kSdbContributorsTable = kMinSystem + 405;
+inline constexpr duckdb::idx_t kPgStatProgressCreateTableAsRule =
+  kMinSystem + 406;
 
 struct SystemObject {
   duckdb::idx_t oid;
@@ -132,34 +134,10 @@ constexpr const T* FindSystemObject(const std::array<T, N>& objects,
 inline constexpr duckdb::idx_t kFirstCollation = 32768;
 inline constexpr duckdb::idx_t kFirstBuiltinFunction = 65536;
 
-inline constexpr uint64_t kRewriteRuleOidBit = uint64_t{1} << 29;
-inline constexpr uint64_t kRowTypeOidBit = uint64_t{1} << 30;
-inline constexpr uint64_t kRowArrayTypeOidBit = uint64_t{1} << 31;
-
-constexpr uint64_t RewriteRuleOid(uint64_t view_oid) {
-  return view_oid | kRewriteRuleOidBit;
-}
-
-constexpr uint64_t RewriteRuleView(uint64_t rule_oid) {
-  return rule_oid & ~kRewriteRuleOidBit;
-}
-
 constexpr uint64_t TypeArrayOid(uint64_t element_oid) {
-  return element_oid & kRowTypeOidBit ? element_oid | kRowArrayTypeOidBit
-                                      : element_oid - 1;
+  return element_oid - 1;
 }
 
-constexpr uint64_t TypeElementOid(uint64_t array_oid) {
-  return array_oid & kRowTypeOidBit ? array_oid & ~kRowArrayTypeOidBit
-                                    : array_oid + 1;
-}
-
-constexpr uint64_t RowTypeOid(uint64_t relation_oid) {
-  return relation_oid | kRowTypeOidBit;
-}
-
-constexpr uint64_t RowTypeRelation(uint64_t oid) {
-  return oid & ~(kRowTypeOidBit | kRowArrayTypeOidBit);
-}
+constexpr uint64_t TypeElementOid(uint64_t array_oid) { return array_oid + 1; }
 
 }  // namespace sdb::pg

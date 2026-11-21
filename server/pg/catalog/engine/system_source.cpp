@@ -433,8 +433,10 @@ std::vector<duckdb::SchemaCatalogEntry*> SystemScan::Schemas(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SystemScan::FindOwned(
   duckdb::idx_t oid, SystemSchemas system) const {
-  oid = RewriteRuleView(oid);
   if (system == SystemSchemas::Visit) {
+    if (const auto relation = SystemRuleRelation(oid)) {
+      oid = relation;
+    }
     if (const auto* schema = FindSystemObject(kSystemNamespaces, oid)) {
       return FindSchema(schema->name, system).get();
     }
@@ -453,13 +455,12 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SystemScan::FindOwned(
       return member(view->schema, view->name);
     }
   }
-  if (oid & kRowTypeOidBit) {
-    oid = RowTypeRelation(oid);
-  }
   auto owner = FindOwner(oid);
   if (!owner) {
-    owner = FindOwner(TypeElementOid(oid));
-    if (owner && owner->type != duckdb::CatalogType::TYPE_ENTRY) {
+    const auto element = TypeElementOid(oid);
+    owner = FindOwner(element);
+    if (owner && owner->type != duckdb::CatalogType::TYPE_ENTRY &&
+        RowTypeOid(*owner) != element) {
       return nullptr;
     }
   }

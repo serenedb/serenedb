@@ -237,13 +237,11 @@ ObjectIdentity IdentifyType(const Session& session, uint64_t oid) {
   if (const auto object = TypeObject(session, oid)) {
     identity.schema = std::string{object->schema};
     identity.name = std::string{object->name};
-  } else if (const auto element = ArrayElementOid(session, oid);
-             element != kInvalidOid) {
-    if (const auto entry = EntryByOid(session, element)) {
-      identity.schema =
-        std::string{NameOf(*session.transaction, *entry).schema};
-      identity.name = ArrayTypeName(*session.transaction, *entry);
-    }
+  } else if (const auto element = ArrayElementEntry(session, oid)) {
+    identity.schema = std::string{
+      NameOf(*session.transaction, Relation{element, nullptr, nullptr, nullptr})
+        .schema};
+    identity.name = ArrayTypeName(*session.transaction, *element);
   }
   return identity;
 }
@@ -319,10 +317,10 @@ ObjectIdentity IdentifyDefault(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyRule(const Session& session, uint64_t oid) {
-  if (!(oid & kRewriteRuleOidBit)) {
+  const auto view_oid = RuleRelation(session, oid);
+  if (view_oid == kInvalidOid) {
     return Missing("rule");
   }
-  const auto view_oid = RewriteRuleView(oid);
   const auto relation = RelationByOid(session, view_oid);
   if (!relation || RelationKind(*relation) != "view") {
     return Missing("rule");

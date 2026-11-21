@@ -201,7 +201,8 @@ constexpr bool IsText(CodecType type) noexcept {
 }
 
 constexpr bool IsNumeric(CodecType type) noexcept {
-  return IsForm(type) && std::to_underlying(LeafOf(type)) < kNumericLeafCount;
+  return IsForm(type) && std::to_underlying(ShapeOf(type)) < kShapeCount &&
+         std::to_underlying(LeafOf(type)) < kNumericLeafCount;
 }
 
 constexpr bool Sorted(ByteCodec leaf) noexcept {

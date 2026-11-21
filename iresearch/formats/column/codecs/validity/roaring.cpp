@@ -41,6 +41,7 @@
 
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs {
@@ -449,11 +450,10 @@ void PackBooleans(ValidityMask& packed,
                   const duckdb::UnifiedVectorFormat& input, idx_t count) {
   packed.EnsureWritable();
   auto* dst = reinterpret_cast<data_ptr_t>(packed.GetData());
-  if (input.validity.CannotHaveNull()) {
-    BitPackBooleans<true>(dst, input, count);
-  } else {
-    BitPackBooleans<false>(dst, input, count);
-  }
+  Resolve<BoolAxis>(input.validity.CannotHaveNull(),
+                    [&]<bool AllValid>() IRS_FORCE_INLINE {
+                      BitPackBooleans<AllValid>(dst, input, count);
+                    });
 }
 
 struct RoaringAnalyzeState {

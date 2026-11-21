@@ -28,6 +28,7 @@
 #include "iresearch/formats/column/codecs/numeric/plain.hpp"
 #include "iresearch/formats/column/codecs/numeric/runs.hpp"
 #include "iresearch/formats/column/codecs/numeric/wide.hpp"
+#include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 
 namespace irs::codecs {
@@ -192,96 +193,79 @@ constexpr const Codec* kCodecs[] = {
   &kCodec<T, kShape, ByteCodec::Zstd>,
 };
 
+struct NumericLeafAxis
+  : Axis<ByteCodec::None, ByteCodec::Lz4, ByteCodec::Zstd> {
+  static constexpr ByteCodec Of(ByteCodec leaf) noexcept { return leaf; }
+};
+
 template<typename T, Shape kShape>
 CompressionFunctions LeafContenders(ByteCodec leaf) {
-  switch (leaf) {
-    case ByteCodec::None:
-      return ContendersOf<T, kShape, ByteCodec::None>();
-    case ByteCodec::Lz4:
-      return ContendersOf<T, kShape, ByteCodec::Lz4>();
-    case ByteCodec::Zstd:
-      return ContendersOf<T, kShape, ByteCodec::Zstd>();
-    default:
-      return {};
+  if (std::to_underlying(leaf) >= kNumericLeafCount) {
+    return {};
   }
+  return Resolve<NumericLeafAxis>(
+    leaf, [&]<ByteCodec L>() { return ContendersOf<T, kShape, L>(); });
 }
 
 template<typename T>
 CompressionFunctions ShapeContenders(Shape shape, ByteCodec leaf) {
-  switch (shape) {
-    case Shape::Plain:
-      return LeafContenders<T, Shape::Plain>(leaf);
-    case Shape::Delta:
-      return LeafContenders<T, Shape::Delta>(leaf);
-    case Shape::Runs:
-      return LeafContenders<T, Shape::Runs>(leaf);
-    case Shape::Dictionary:
-      if constexpr (sizeof(T) > 1) {
-        return LeafContenders<T, Shape::Dictionary>(leaf);
+  return Resolve<EnumAxis<Shape>>(
+    shape, [&]<Shape S>() -> CompressionFunctions {
+      if constexpr (S == Shape::Dictionary && sizeof(T) == 1) {
+        return {};
+      } else {
+        return LeafContenders<T, S>(leaf);
       }
-      break;
-  }
-  return {};
+    });
 }
 
 template<typename T>
 const Codec* FormCodec(Shape shape, ByteCodec leaf) {
   const auto index = std::to_underlying(leaf);
   SDB_ASSERT(index < kNumericLeafCount);
-  switch (shape) {
-    case Shape::Plain:
-      return kCodecs<T, Shape::Plain>[index];
-    case Shape::Delta:
-      return kCodecs<T, Shape::Delta>[index];
-    case Shape::Runs:
-      return kCodecs<T, Shape::Runs>[index];
-    case Shape::Dictionary:
-      if constexpr (sizeof(T) > 1) {
-        return kCodecs<T, Shape::Dictionary>[index];
-      }
-      break;
-  }
-  return nullptr;
+  return Resolve<EnumAxis<Shape>>(shape, [&]<Shape S>() -> const Codec* {
+    if constexpr (S == Shape::Dictionary && sizeof(T) == 1) {
+      return nullptr;
+    } else {
+      return kCodecs<T, S>[index];
+    }
+  });
 }
 
 }  // namespace
 
 uint64_t PackedBytes(ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
-  return WithNumericType(physical,
-                         [&]<typename T>(std::type_identity<T>) -> uint64_t {
-                           if constexpr (std::is_integral_v<T>) {
-                             return data.Get<Values<T>>().PackedBytes();
-                           } else {
-                             return 0;
-                           }
-                         });
+  return Resolve<NumericAxis>(physical, [&]<typename T>() -> uint64_t {
+    if constexpr (std::is_integral_v<T>) {
+      return data.Get<Values<T>>().PackedBytes();
+    } else {
+      return 0;
+    }
+  });
 }
 
 uint64_t SampledLz4Bytes(ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
-  return WithNumericType(physical,
-                         [&]<typename T>(std::type_identity<T>) -> uint64_t {
-                           if constexpr (std::is_integral_v<T>) {
-                             return SampledForLz4Bytes<T>(data);
-                           } else {
-                             return 0;
-                           }
-                         });
+  return Resolve<NumericAxis>(physical, [&]<typename T>() -> uint64_t {
+    if constexpr (std::is_integral_v<T>) {
+      return SampledForLz4Bytes<T>(data);
+    } else {
+      return 0;
+    }
+  });
 }
 
 CompressionFunctions NumericContenders(Shape shape, ByteCodec leaf,
                                        duckdb::PhysicalType physical) {
-  return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
-    return ShapeContenders<T>(shape, leaf);
-  });
+  return Resolve<NumericAxis>(
+    physical, [&]<typename T>() { return ShapeContenders<T>(shape, leaf); });
 }
 
 const Codec* NumericCodecOf(Shape shape, ByteCodec leaf,
                             duckdb::PhysicalType physical) {
-  return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
-    return FormCodec<T>(shape, leaf);
-  });
+  return Resolve<NumericAxis>(
+    physical, [&]<typename T>() { return FormCodec<T>(shape, leaf); });
 }
 
 }  // namespace irs::codecs

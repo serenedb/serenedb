@@ -34,6 +34,7 @@
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
 
+#include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -599,31 +600,6 @@ constexpr Codec kString{
 const Codec* UncompressedCodec(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
-    case BOOL:
-    case INT8:
-      return &kFixedSize<int8_t>;
-    case INT16:
-      return &kFixedSize<int16_t>;
-    case INT32:
-      return &kFixedSize<int32_t>;
-    case INT64:
-      return &kFixedSize<int64_t>;
-    case UINT8:
-      return &kFixedSize<uint8_t>;
-    case UINT16:
-      return &kFixedSize<uint16_t>;
-    case UINT32:
-      return &kFixedSize<uint32_t>;
-    case UINT64:
-      return &kFixedSize<uint64_t>;
-    case INT128:
-      return &kFixedSize<duckdb::hugeint_t>;
-    case UINT128:
-      return &kFixedSize<duckdb::uhugeint_t>;
-    case FLOAT:
-      return &kFixedSize<float>;
-    case DOUBLE:
-      return &kFixedSize<double>;
     case INTERVAL:
       return &kFixedSize<duckdb::interval_t>;
     case LIST:
@@ -633,7 +609,8 @@ const Codec* UncompressedCodec(duckdb::PhysicalType physical) {
     case VARCHAR:
       return &kString;
     default:
-      return nullptr;
+      return Resolve<NumericAxis>(
+        physical, [&]<typename T>() -> const Codec* { return &kFixedSize<T>; });
   }
 }
 

@@ -39,11 +39,13 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
+#include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -897,14 +899,13 @@ constexpr Codec kCodec{
 }  // namespace
 
 const Codec* AlpRdCodec(duckdb::PhysicalType physical) {
-  switch (physical) {
-    case duckdb::PhysicalType::FLOAT:
-      return &kCodec<float>;
-    case duckdb::PhysicalType::DOUBLE:
-      return &kCodec<double>;
-    default:
+  return Resolve<NumericAxis>(physical, [&]<typename T>() -> const Codec* {
+    if constexpr (std::is_floating_point_v<T>) {
+      return &kCodec<T>;
+    } else {
       return nullptr;
-  }
+    }
+  });
 }
 
 }  // namespace irs::codecs

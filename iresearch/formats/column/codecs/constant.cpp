@@ -26,6 +26,7 @@
 #include <duckdb/storage/compression/roaring/roaring.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 
+#include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 
@@ -169,23 +170,22 @@ bool CompressConstant(ColumnDataCheckpointData& data) {
   if (stats.GetStatsType() != duckdb::StatisticsType::NUMERIC_STATS) {
     return false;
   }
-  const bool constant =
-    WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
-      for (const auto& chunk : data.chunks) {
-        for (const auto value : chunk.data.Values<T>()) {
-          if (!value.IsValid()) {
-            stats.SetHasNullFast();
-            continue;
-          }
-          stats.SetHasNoNullFast();
-          stats.UpdateNumericStats<T>(value.GetValue());
+  const bool constant = Resolve<NumericAxis>(physical, [&]<typename T>() {
+    for (const auto& chunk : data.chunks) {
+      for (const auto value : chunk.data.Values<T>()) {
+        if (!value.IsValid()) {
+          stats.SetHasNullFast();
+          continue;
         }
-        if (!duckdb::NumericStats::IsConstant(stats)) {
-          return false;
-        }
+        stats.SetHasNoNullFast();
+        stats.UpdateNumericStats<T>(value.GetValue());
       }
-      return true;
-    });
+      if (!duckdb::NumericStats::IsConstant(stats)) {
+        return false;
+      }
+    }
+    return true;
+  });
   if (!constant) {
     return false;
   }
@@ -194,38 +194,14 @@ bool CompressConstant(ColumnDataCheckpointData& data) {
 }
 
 const Codec* ConstantCodec(duckdb::PhysicalType physical) {
-  using enum duckdb::PhysicalType;
-  switch (physical) {
-    case BIT:
-      return &kValidity;
-    case BOOL:
-    case INT8:
-      return &kCodec<int8_t>;
-    case INT16:
-      return &kCodec<int16_t>;
-    case INT32:
-      return &kCodec<int32_t>;
-    case INT64:
-      return &kCodec<int64_t>;
-    case UINT8:
-      return &kCodec<uint8_t>;
-    case UINT16:
-      return &kCodec<uint16_t>;
-    case UINT32:
-      return &kCodec<uint32_t>;
-    case UINT64:
-      return &kCodec<uint64_t>;
-    case INT128:
-      return &kCodec<duckdb::hugeint_t>;
-    case UINT128:
-      return &kCodec<duckdb::uhugeint_t>;
-    case FLOAT:
-      return &kCodec<float>;
-    case DOUBLE:
-      return &kCodec<double>;
-    default:
-      return nullptr;
+  if (physical == duckdb::PhysicalType::BIT) {
+    return &kValidity;
   }
+  if (physical == duckdb::PhysicalType::LIST) {
+    return nullptr;
+  }
+  return Resolve<NumericAxis>(
+    physical, [&]<typename T>() -> const Codec* { return &kCodec<T>; });
 }
 
 }  // namespace irs::codecs

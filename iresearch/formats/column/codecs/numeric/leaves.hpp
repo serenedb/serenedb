@@ -22,12 +22,15 @@
 
 #include <cstdint>
 #include <span>
+#include <type_traits>
+#include <utility>
 
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::codecs {
 
@@ -63,12 +66,22 @@ std::span<const char> CompressLeaf(ColumnDataCheckpointData& data,
   return {leaf.out.data(), n};
 }
 
+struct LeafAxis : Axis<ByteCodec::Lz4, ByteCodec::Zstd> {
+  static constexpr ByteCodec Of(ByteCodec leaf) noexcept { return leaf; }
+
+  template<ByteCodec K, typename F>
+  IRS_FORCE_INLINE static decltype(auto) Call(F&& f) {
+    return std::forward<F>(f).template
+    operator()<std::conditional_t<K == ByteCodec::Lz4, Lz4, Zstd>>();
+  }
+};
+
 inline std::span<const char> CompressLeaf(ByteCodec leaf,
                                           ColumnDataCheckpointData& data,
                                           std::span<const uint8_t> raw) {
-  SDB_ASSERT(leaf == ByteCodec::Lz4 || leaf == ByteCodec::Zstd);
-  return leaf == ByteCodec::Lz4 ? CompressLeaf<Lz4>(data, raw)
-                                : CompressLeaf<Zstd>(data, raw);
+  return Resolve<LeafAxis>(leaf, [&]<typename Codec>() IRS_FORCE_INLINE {
+    return CompressLeaf<Codec>(data, raw);
+  });
 }
 
 }  // namespace irs::codecs

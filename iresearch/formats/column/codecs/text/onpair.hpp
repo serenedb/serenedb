@@ -38,6 +38,8 @@
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
+#include "iresearch/utils/dispatch.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::text::onpair {
 
@@ -58,10 +60,10 @@ class Table {
 
   uint64_t Decode(const uint8_t* stream, uint64_t first, uint64_t count,
                   char* out, uint64_t capacity) const {
-    if (count * kMaxToken <= capacity) {
-      return Copy<false>(stream, first, count, out, capacity);
-    }
-    return Copy<true>(stream, first, count, out, capacity);
+    return Resolve<BoolAxis>(
+      count * kMaxToken > capacity, [&]<bool Tail>() IRS_FORCE_INLINE {
+        return Copy<Tail>(stream, first, count, out, capacity);
+      });
   }
 
  private:

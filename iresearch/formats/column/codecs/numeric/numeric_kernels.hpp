@@ -25,6 +25,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -34,6 +35,7 @@
 #include <utility>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::numeric {
@@ -58,20 +60,22 @@ constexpr uint8_t BytesFor(U max) noexcept {
   return 8;
 }
 
-template<size_t kMax, typename F>
-IRS_FORCE_INLINE decltype(auto) ResolveStored(uint8_t stored, F&& f) {
-  SDB_ASSERT(stored <= kMax);
-  switch (stored) {
-    case 1:
-      return f.template operator()<uint8_t>();
-    case 2:
-      return f.template operator()<Bits<std::min<size_t>(kMax, 2)>>();
-    case 4:
-      return f.template operator()<Bits<std::min<size_t>(kMax, 4)>>();
-    default:
-      return f.template operator()<Bits<kMax>>();
+template<size_t kMax>
+constexpr auto StoredWidths() noexcept {
+  std::array<uint8_t, std::bit_width(kMax)> widths{};
+  for (size_t i = 0; i != widths.size(); ++i) {
+    widths[i] = static_cast<uint8_t>(size_t{1} << i);
   }
+  return widths;
 }
+
+template<size_t kMax>
+struct StoredAxis : ArrayAxis<StoredWidths<kMax>()> {
+  template<uint8_t K, typename F>
+  IRS_FORCE_INLINE static decltype(auto) Call(F&& f) {
+    return std::forward<F>(f).template operator()<Bits<K>>();
+  }
+};
 
 template<typename S, typename F>
 void NarrowAs(size_t n, uint8_t* out, F value) noexcept {
@@ -82,7 +86,8 @@ void NarrowAs(size_t n, uint8_t* out, F value) noexcept {
 
 template<size_t kMax, typename F>
 void Narrow(size_t n, uint8_t stored, uint8_t* out, F value) noexcept {
-  ResolveStored<kMax>(stored, [&]<typename S> { NarrowAs<S>(n, out, value); });
+  Resolve<StoredAxis<kMax>>(
+    stored, [&]<typename S>() IRS_FORCE_INLINE { NarrowAs<S>(n, out, value); });
 }
 
 template<typename U, typename S>
@@ -94,8 +99,8 @@ void WidenAs(const uint8_t* in, size_t n, U* out) noexcept {
 
 template<typename U>
 void Widen(const uint8_t* in, size_t n, uint8_t stored, U* out) noexcept {
-  ResolveStored<sizeof(U)>(stored,
-                           [&]<typename S> { WidenAs<U, S>(in, n, out); });
+  Resolve<StoredAxis<sizeof(U)>>(
+    stored, [&]<typename S>() IRS_FORCE_INLINE { WidenAs<U, S>(in, n, out); });
 }
 
 inline uint64_t ShuffledItem(const uint8_t* in, size_t n, uint8_t stored,
@@ -338,8 +343,9 @@ void WidenAddAs(const uint8_t* in, size_t n, U base, U* out) noexcept {
 template<typename U>
 void WidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
               U* out) noexcept {
-  ResolveStored<sizeof(U)>(
-    stored, [&]<typename S> { WidenAddAs<U, S>(in, n, base, out); });
+  Resolve<StoredAxis<sizeof(U)>>(stored, [&]<typename S>() IRS_FORCE_INLINE {
+    WidenAddAs<U, S>(in, n, base, out);
+  });
 }
 
 template<typename U, typename S>
@@ -458,9 +464,10 @@ U WidenPrefixSumAs(const uint8_t* in, size_t n, U acc, U offset,
 template<bool kWrite, typename U>
 U WidenPrefixSum(const uint8_t* in, size_t n, uint8_t stored, U acc, U offset,
                  U* out) noexcept {
-  return ResolveStored<sizeof(U)>(stored, [&]<typename S> {
-    return WidenPrefixSumAs<U, S, kWrite>(in, n, acc, offset, out);
-  });
+  return Resolve<StoredAxis<sizeof(U)>>(
+    stored, [&]<typename S>() IRS_FORCE_INLINE {
+      return WidenPrefixSumAs<U, S, kWrite>(in, n, acc, offset, out);
+    });
 }
 
 template<typename U>

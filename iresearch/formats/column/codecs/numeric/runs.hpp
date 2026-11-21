@@ -33,6 +33,7 @@
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 
 namespace irs::codecs {
@@ -409,11 +410,9 @@ class RunsReader final : public FrameReader<T> {
 
   void Copy(uint64_t row, uint64_t count, T* out) noexcept {
     const auto pos = static_cast<uint32_t>(row - this->_begin);
-    if (_long_runs) {
-      CopyRuns<kLongBurst>(pos, count, out);
-    } else {
-      CopyRuns<kBurst>(pos, count, out);
-    }
+    Resolve<BoolAxis>(_long_runs, [&]<bool Long>() IRS_FORCE_INLINE {
+      CopyRuns<Long ? kLongBurst : kBurst>(pos, count, out);
+    });
   }
 
   uint64_t DecodeDirect(uint64_t, uint64_t, U*) const noexcept { return 0; }

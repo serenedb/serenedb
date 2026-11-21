@@ -445,8 +445,9 @@ class DictionaryReader final : public FrameReader<T> {
   }
 
   void DecodeCodes(const uint8_t* src, uint32_t rows, U* out) const {
-    numeric::ResolveStored<kDictionaryCodeBytes<T>>(
-      this->_f.stored, [&]<typename C> { Gather<C>(src, rows, out); });
+    Resolve<numeric::StoredAxis<kDictionaryCodeBytes<T>>>(
+      this->_f.stored,
+      [&]<typename C>() IRS_FORCE_INLINE { Gather<C>(src, rows, out); });
   }
 
   template<typename C>

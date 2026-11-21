@@ -55,6 +55,7 @@
 #include "iresearch/formats/column/codecs/text/string_scan.tpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -69,32 +70,36 @@ class RowCodes {
     const auto frames =
       ParseFrames(codes, h.off_symtab - h.off_codes, h.row_count, h.codes);
     _shape = ShapeOf(h.codes);
-    switch (_shape) {
-      case Shape::Plain:
+    Resolve<CodesAxis>(_shape, [&]<Shape S>() {
+      if constexpr (S == Shape::Plain) {
         _plain.emplace(codes, frames, h.codes);
-        break;
-      case Shape::Delta:
+      } else if constexpr (S == Shape::Delta) {
         _delta.emplace(codes, frames, h.codes);
-        break;
-      default:
+      } else {
         _runs.emplace(codes, frames, h.codes);
-        break;
-    }
+      }
+    });
   }
 
   template<typename F>
   IRS_FORCE_INLINE decltype(auto) Visit(F&& f) {
-    switch (_shape) {
-      case Shape::Plain:
-        return f(*_plain);
-      case Shape::Delta:
-        return f(*_delta);
-      default:
-        return f(*_runs);
-    }
+    return Resolve<CodesAxis>(
+      _shape, [&]<Shape S>() IRS_FORCE_INLINE -> decltype(auto) {
+        if constexpr (S == Shape::Plain) {
+          return f(*_plain);
+        } else if constexpr (S == Shape::Delta) {
+          return f(*_delta);
+        } else {
+          return f(*_runs);
+        }
+      });
   }
 
  private:
+  struct CodesAxis : Axis<Shape::Plain, Shape::Delta, Shape::Runs> {
+    static constexpr Shape Of(Shape shape) noexcept { return shape; }
+  };
+
   Shape _shape = Shape::Plain;
   std::optional<PlainReader<uint32_t>> _plain;
   std::optional<DeltaReader<uint32_t>> _delta;

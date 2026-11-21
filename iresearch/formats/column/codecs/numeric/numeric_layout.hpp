@@ -326,39 +326,4 @@ inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,
   return f;
 }
 
-template<typename F>
-std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
-  duckdb::PhysicalType physical, F&& f) {
-  switch (physical) {
-    case duckdb::PhysicalType::BOOL:
-    case duckdb::PhysicalType::INT8:
-      return f(std::type_identity<int8_t>{});
-    case duckdb::PhysicalType::INT16:
-      return f(std::type_identity<int16_t>{});
-    case duckdb::PhysicalType::INT32:
-      return f(std::type_identity<int32_t>{});
-    case duckdb::PhysicalType::INT64:
-      return f(std::type_identity<int64_t>{});
-    case duckdb::PhysicalType::UINT8:
-      return f(std::type_identity<uint8_t>{});
-    case duckdb::PhysicalType::UINT16:
-      return f(std::type_identity<uint16_t>{});
-    case duckdb::PhysicalType::UINT32:
-      return f(std::type_identity<uint32_t>{});
-    case duckdb::PhysicalType::UINT64:
-    case duckdb::PhysicalType::LIST:
-      return f(std::type_identity<uint64_t>{});
-    case duckdb::PhysicalType::INT128:
-      return f(std::type_identity<duckdb::hugeint_t>{});
-    case duckdb::PhysicalType::UINT128:
-      return f(std::type_identity<duckdb::uhugeint_t>{});
-    case duckdb::PhysicalType::FLOAT:
-      return f(std::type_identity<float>{});
-    case duckdb::PhysicalType::DOUBLE:
-      return f(std::type_identity<double>{});
-    default:
-      return {};
-  }
-}
-
 }  // namespace irs::codecs

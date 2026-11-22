@@ -40,9 +40,8 @@ Root::ptr PlanTerms(const MultiTermQuery& query, const Context& ctx) {
   const auto& state = query.State();
   const auto* const field = state.Reader();
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (ctx.table == nullptr &&
-      SubtractsPair(terms,
-                    static_cast<doc_id_t>(query.Segment().docs_count()))) {
+  if (!ctx.table && SubtractsPair(terms, static_cast<doc_id_t>(
+                                           query.Segment().docs_count()))) {
     if (auto subtracted = MakeSubtractDisjunction(
           detail::ClauseOf(terms.front(), field),
           detail::ClauseOf(terms.back(), field), query.Segment(), ctx)) {
@@ -68,7 +67,7 @@ Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
   const auto* const field = query.State().Reader();
   SDB_ASSERT(field);
   const auto& segment = query.Segment();
-  if (ctx.table == nullptr && field->single_valued &&
+  if (!ctx.table && field->single_valued &&
       segment.live_docs_count() == segment.docs_count()) {
     return MakeWholeCount(query.Postings(), ctx, [&query, field, ctx] {
       return MakeTermsSum(std::span{query.State().Terms()}, field, ctx);

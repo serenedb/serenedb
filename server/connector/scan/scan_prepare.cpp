@@ -41,7 +41,7 @@ irs::QueryBuilder::ptr PrepareSegmentQuery(const ScanGlobalState& g,
   ctx.profile = g.profile ? &g.profile->Query() : nullptr;
   const auto& segment = (*g.reader)[seg_idx];
   irs::QueryBuilder::ptr query;
-  if (g.vector_scorer != nullptr) {
+  if (g.vector_scorer) {
     query = irs::PrepareFilter(*g.filter, segment, ctx);
   } else {
     const auto index_only = g.ClaimedIndexOnly();
@@ -81,7 +81,7 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
     g.queries[seg_idx] =
       PrepareSegmentQuery(g, seg_idx,
                           {.collector = collector,
-                           .thread = collector != nullptr ? l->thread_slot : 0,
+                           .thread = collector ? l->thread_slot : 0,
                            .needs_terms = g.needs_terms});
   });
   return *g.queries[seg_idx];

@@ -20,15 +20,13 @@
 
 #include "iresearch/formats/index/term_dict_records.hpp"
 
+#include <bit>
+
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs::term_dict {
 namespace {
-
-uint64_t VSize(uint64_t value) noexcept {
-  return bytes_io<uint64_t, sizeof(uint64_t)>::vsize(value);
-}
 
 uint32_t Bits(uint64_t max) noexcept {
   const auto bits = static_cast<uint32_t>(std::bit_width(max));
@@ -82,6 +80,10 @@ RunView ParseRun(const byte_type* p, PostingFeatures features) {
   }
   if (inlines) {
     view.sizes.bits = bits();
+    if (view.sizes.bits > std::bit_width(PostingMeta::kInlineBytes - 1))
+      [[unlikely]] {
+      Corrupted("posting run width");
+    }
     view.inline_anchors.bits = bits();
   }
   if (stored) {

@@ -180,8 +180,6 @@ inline const duckdb::vector<duckdb::Value>& ListOrArrayChildren(
 
 const duckdb::Expression& UnwrapTSQueryCast(const duckdb::Expression& expr);
 
-// For ts_* callers, where an unfilterable column type is a user error:
-// throws THROW_SQL_ERROR("Unsupported type id ... for filter").
 struct ArgError {
   std::string_view label;
   std::string_view hint;
@@ -193,8 +191,6 @@ void GetIntArg(const duckdb::Expression& expr, int64_t& out, ArgError err);
 void GetBoolArg(const duckdb::Expression& expr, bool& out, ArgError err);
 void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
 
-// The rows of a numeric column between `min` and `max`, a null bound being
-// unbounded; the bounds compare as the table compares them.
 void AddNumericRange(BoolTarget target, const FilterContext& ctx,
                      const SearchColumnInfo& info, const duckdb::Value* min,
                      bool min_strict, const duckdb::Value* max,

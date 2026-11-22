@@ -326,11 +326,6 @@ void RangeWriter::Add(bytes_view term, const PostingMeta& meta) {
           });
 }
 
-void RangeWriter::Keep(RangePosting& posting,
-                       const PostingMeta& meta) noexcept {
-  posting.meta = meta;
-}
-
 void RangeWriter::Push(size_t level, const Child& child) {
   auto& range = _levels[level];
   if (child.docs_count >= _heavy) {
@@ -349,7 +344,7 @@ void RangeWriter::Push(size_t level, const Child& child) {
   auto& group = range.group;
   if (range.children == 0) {
     group.key.assign(child.key);
-    Keep(group, child.meta);
+    group.meta = child.meta;
   }
   if (level != 0) {
     group.docs.insert(group.docs.end(), child.docs.begin(), child.docs.end());

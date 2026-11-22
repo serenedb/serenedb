@@ -59,12 +59,6 @@ struct UnsignedKeyOf {
 };
 
 template<>
-struct NumericEncodeOf<int8_t> : SignedKeyOf<int8_t> {};
-
-template<>
-struct NumericEncodeOf<int16_t> : SignedKeyOf<int16_t> {};
-
-template<>
 struct NumericEncodeOf<int32_t> : SignedKeyOf<int32_t> {};
 
 template<>

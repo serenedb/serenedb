@@ -23,7 +23,6 @@
 #include "iresearch/formats/index/term_dict_block_filter.hpp"
 #include "iresearch/formats/index/term_dict_cursor.hpp"
 #include "iresearch/formats/index/term_dict_index_walk.hpp"
-#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
@@ -60,6 +59,12 @@ bstring UpperBound(const A& a) {
     ++upper.back();
   }
   return upper;
+}
+
+bool Resident(const TermReaderImpl& field, uint32_t block) noexcept {
+  const uint64_t offset = field.BlockOffset(block);
+  const uint64_t size = field.BlockOffset(block + 1) - offset;
+  return field.Store().Input().Warm(offset, size) == size;
 }
 
 template<typename A>
@@ -102,7 +107,7 @@ class BlockPlan {
       Flush();
       _run_begin = lo;
     }
-    _run_end = std::max(_run_end, end);
+    _run_end = end;
   }
 
   void Flush() {
@@ -250,9 +255,8 @@ class AcceptorIterator : public SeekTermIterator {
   }
 
   bool Seek(bytes_view target, size_t valid) {
-    _targets.Start();
     const auto& field = _cursor.Field();
-    if (field.size() == 0 || target > field.max()) {
+    if (target > field.max()) {
       return false;
     }
     _targets.Assign(field.KeyPrefix(), target);
@@ -267,8 +271,9 @@ class AcceptorIterator : public SeekTermIterator {
     const auto& index = _cursor.Field().Index();
     const auto block = _cursor.BlockIndex();
     if (block != _bound_block) {
-      _last_block = block + 1 == index.Blocks();
-      _bound = _last_block ? index.MaxKey() : index.Separator(block + 1);
+      const auto bounds = index.Bounds(block);
+      _last_block = bounds.last;
+      _bound = bounds.upper;
       _bound_block = block;
     }
     return _last_block ? target <= _bound : target < _bound;
@@ -304,7 +309,8 @@ class AcceptorIterator : public SeekTermIterator {
       const size_t base = std::min(valid, shared);
       size_t depth = _targets.StepAlong(prefix, base);
       if (depth != prefix.size()) {
-        if (block + 1 == blocks || !_targets.NextTarget(prefix, depth) ||
+        if (block + 1 == blocks ||
+            !_targets.NextTarget(prefix, depth, Targeter<A>::kNoGate) ||
             _targets.Key() > index.MaxKey()) {
           return false;
         }
@@ -312,9 +318,13 @@ class AcceptorIterator : public SeekTermIterator {
         block = index.FindFrom(block + 1, _targets.View());
         continue;
       }
-      if (_blocks.LiveAt(block, [&](size_t at) -> const State& {
-            return _targets.StateAt(_k + at);
-          })) {
+      const bool live =
+        _blocks.Holds(block) &&
+        (!_blocks.Explores() || Resident(_cursor.Field(), block) ||
+         _blocks.LiveAt(block, [&](size_t at) -> const State& {
+           return _targets.StateAt(_k + at);
+         }));
+      if (live) {
         if (_cursor.BlockIndex() != block) {
           _cursor.Load(block);
         }
@@ -330,14 +340,23 @@ class AcceptorIterator : public SeekTermIterator {
       if (++block == blocks) {
         return false;
       }
-      const auto separator = index.Separator(block);
-      valid = std::min(base, CommonPrefixLength(_targets.Key(), separator));
-      if (!_targets.TargetFrom(separator, valid) ||
-          _targets.Key() > index.MaxKey()) {
+      valid = std::min(
+        base, CommonPrefixLength(_targets.Key(), index.Separator(block)));
+      if (!TargetBlock(block, valid)) {
         return false;
       }
       block = index.FindFrom(block, _targets.View());
     }
+  }
+
+  bool TargetBlock(uint32_t block, size_t& valid) {
+    const auto& index = _cursor.Field().Index();
+    return _targets.TargetFrom(index.Separator(block), valid) &&
+           _targets.Key() <= index.MaxKey();
+  }
+
+  size_t Gate() const noexcept {
+    return _targets.GateOf(_cursor.Field().Index(), _cursor.BlockIndex());
   }
 
   IRS_NO_INLINE bool NextBlock() {
@@ -364,11 +383,9 @@ class AcceptorIterator : public SeekTermIterator {
       return true;
     }
     _cursor.Entries().Materialize();
-    const auto separator = index.Separator(next);
-    size_t valid =
-      std::min(_valid, CommonPrefixLength(_cursor.Entries().Key(), separator));
-    if (!_targets.TargetFrom(separator, valid) ||
-        _targets.Key() > index.MaxKey()) {
+    size_t valid = std::min(_valid, CommonPrefixLength(_cursor.Entries().Key(),
+                                                       index.Separator(next)));
+    if (!TargetBlock(next, valid)) {
       return false;
     }
     return Land(index.FindFrom(next, _targets.View()), valid);
@@ -396,7 +413,7 @@ class AcceptorIterator : public SeekTermIterator {
               static_cast<uint32_t>(label) > range.hi) {
             _cursor.Entries().Materialize();
             size_t depth = _valid;
-            if (!_targets.NextTarget(_cursor.Entries().Key(), depth) ||
+            if (!_targets.NextTarget(_cursor.Entries().Key(), depth, Gate()) ||
                 !Hop(depth)) {
               return End();
             }
@@ -418,7 +435,7 @@ class AcceptorIterator : public SeekTermIterator {
       size_t depth = _targets.StepAlong(key, _valid);
       _valid = depth;
       if (depth != key.size()) {
-        if (!_targets.NextTarget(key, depth) || !Hop(depth)) {
+        if (!_targets.NextTarget(key, depth, Gate()) || !Hop(depth)) {
           return End();
         }
         continue;

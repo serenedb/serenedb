@@ -107,7 +107,7 @@ Root::ptr Family::MakeNegation(const BooleanQuery& query,
   };
   auto excluded =
     exclude_filters.empty() && query.Bucket(Occur::MustNot).disjoint
-      ? MakeWholeCount(SumOf(exclude_terms), ctx,
+      ? MakeWholeCount(detail::SumDocs(exclude_terms), ctx,
                        [exclude_terms, ctx] {
                          return MakeTermsSum(exclude_terms, nullptr, ctx);
                        })

@@ -50,7 +50,7 @@ struct VarColumns {
   std::vector<uint32_t> lcps;
   std::vector<uint32_t> lens;
   bstring suffixes;
-  std::vector<uint16_t> restarts;
+  std::vector<uint32_t> restarts;
   Misfits misfits{};
   uint32_t base = kNoBase;
   uint32_t max_lcp = 0;

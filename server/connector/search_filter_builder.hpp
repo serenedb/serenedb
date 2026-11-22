@@ -276,9 +276,6 @@ bool ContainsIndexOnlyPredicate(const duckdb::Expression& expr);
 // functions, excluding the index-only match sugar.
 bool IsStrictComparisonShape(const duckdb::Expression& expr);
 
-// The term a query for `value` on this column would look up. Declines a type
-// the term dictionary does not carry; false when the column's type can't hold
-// the value exactly, so no row equals it.
 absl::StatusOr<bool> SetupTermClause(irs::TermClause& clause,
                                      const SearchColumnInfo& column_info,
                                      const duckdb::Value& value);

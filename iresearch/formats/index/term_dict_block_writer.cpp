@@ -44,10 +44,6 @@ constexpr uint64_t kFsstSampleBytes = 32 << 10;
 constexpr uint64_t kFsstMinRatioPct = 115;
 constexpr byte_type kZeros[kSlack]{};
 
-uint64_t VSize(uint64_t value) noexcept {
-  return bytes_io<uint64_t, sizeof(uint64_t)>::vsize(value);
-}
-
 struct Packing {
   uint32_t base;
   uint32_t escaped;
@@ -317,7 +313,7 @@ bool Compresses(duckdb_fsst_encoder_t* encoder, bstring& arena,
 void AppendEntry(VarColumns& columns, bool restart, size_t lcp,
                  bytes_view suffix) {
   if (restart) {
-    columns.restarts.push_back(static_cast<uint16_t>(columns.suffixes.size()));
+    columns.restarts.push_back(static_cast<uint32_t>(columns.suffixes.size()));
   }
   const auto len = static_cast<uint32_t>(suffix.size() - (restart ? lcp : 0));
   columns.max_lcp = std::max(columns.max_lcp, static_cast<uint32_t>(lcp));
@@ -464,6 +460,8 @@ void Serialize(const BlockBuilder& block, bytes_view records,
     }
     out.WriteData(block.keys.data(), skip);
     for (size_t i = 0; i != restarts.size(); ++i) {
+      SDB_ASSERT(restarts[i] - i * skip <=
+                 std::numeric_limits<uint16_t>::max());
       out.Write<uint16_t>(static_cast<uint16_t>(restarts[i] - i * skip));
     }
     WriteHeads(out, block, kRestartInterval, skip);

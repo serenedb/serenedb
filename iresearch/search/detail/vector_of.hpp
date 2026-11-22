@@ -149,7 +149,7 @@ typename Family::Result MakeVectorScored(
   const QueryBuilder* prefilter) {
   using Result = typename Family::Result;
   auto inner = InnerProbe(query, prefilter);
-  if (prefilter != nullptr && !inner) {
+  if (prefilter && !inner) {
     return {};
   }
   const auto& scoring = Family::Scoring(ctx);

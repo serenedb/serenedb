@@ -25,12 +25,13 @@
 #include <utility>
 
 #include "iresearch/formats/index/term_dict_format.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs::term_dict {
 namespace {
 
-constexpr size_t kWindow = kTrieSpan + 1;
+constexpr size_t kWindow = kTrieMaxSpan + 1;
 
 }  // namespace
 
@@ -38,6 +39,12 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
   const auto corrupted = [&] { Corrupted("prefix trie", id); };
   const auto* p = encoded.data();
   const auto* const end = p + encoded.size();
+  const auto chain = ReadVarint<uint32_t>(p, end);
+  if (!chain || *chain > static_cast<size_t>(end - p)) {
+    corrupted();
+  }
+  _chain.assign(p, *chain);
+  p += *chain;
   const auto count = ReadVarint<uint32_t>(p, end);
   if (!count || *count == 0 || *count > encoded.size()) {
     corrupted();
@@ -56,7 +63,8 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
     const auto children = ReadVarint<uint32_t>(p, end);
     if (!children || (flag & ~(kTrieTerminal | kTrieOpen)) != 0 ||
         *children > static_cast<size_t>(end - p) || *children > nodes - next ||
-        ((flag & kTrieOpen) != 0 && *children != 0)) {
+        ((flag & kTrieOpen) != 0 && *children != 0) ||
+        (*children != 0 && depths[node] >= kTrieDepth)) {
       corrupted();
     }
     flags[node] = flag;
@@ -118,7 +126,7 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
     _inner_rank[word] = rank;
     rank += static_cast<uint32_t>(std::popcount(_inner[word]));
   }
-  _terminal.assign((size_t{nodes} + 63) / 64, 0);
+  _terminal.assign((size_t{nodes} + _chain.size() + 63) / 64, 0);
   _open.assign(_terminal.size(), 0);
   for (uint32_t node = 0; node != nodes; ++node) {
     if ((flags[node] & kTrieTerminal) != 0) {
@@ -131,6 +139,8 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
 }
 
 uint32_t PrefixTrieBuilder::AppendChild(uint32_t parent, byte_type label) {
+  SDB_ASSERT(_nodes[parent].last == kNoNode ||
+             _nodes[_nodes[parent].last].label < label);
   const auto child = static_cast<uint32_t>(_nodes.size());
   _nodes.push_back({
     .depth = _nodes[parent].depth + 1,
@@ -146,18 +156,19 @@ uint32_t PrefixTrieBuilder::AppendChild(uint32_t parent, byte_type label) {
   return child;
 }
 
-void PrefixTrieBuilder::Expand(uint32_t node, size_t from) {
+void PrefixTrieBuilder::Expand(uint32_t node, size_t from, size_t to) {
+  SDB_ASSERT(from <= to && to - from <= kWindow);
   _nodes[node].expanded = true;
   const size_t depth = _nodes[node].depth;
   uint32_t child = kNoNode;
   size_t child_from = 0;
-  const auto close = [&] {
-    if (child != kNoNode && _nodes[child].count > kTrieSpan &&
-        _nodes[child].depth < kTrieDepth) {
-      Expand(child, child_from);
+  const auto close = [&](size_t child_to) {
+    if (child != kNoNode && _nodes[child].count > _span &&
+        _nodes[child].depth < _origin + kTrieDepth) {
+      Expand(child, child_from, child_to);
     }
   };
-  for (size_t i = from; i != _added; ++i) {
+  for (size_t i = from; i != to; ++i) {
     const bytes_view term = _window[i % kWindow];
     if (term.size() == depth) {
       _nodes[node].terminal = true;
@@ -165,7 +176,7 @@ void PrefixTrieBuilder::Expand(uint32_t node, size_t from) {
     }
     const byte_type label = term[depth];
     if (child == kNoNode || _nodes[child].label != label) {
-      close();
+      close(i);
       child = AppendChild(node, label);
       child_from = i;
     }
@@ -174,7 +185,7 @@ void PrefixTrieBuilder::Expand(uint32_t node, size_t from) {
       _nodes[child].terminal = true;
     }
   }
-  close();
+  close(to);
 }
 
 void PrefixTrieBuilder::Descend(bytes_view term) {
@@ -206,6 +217,10 @@ void PrefixTrieBuilder::Add(bytes_view term) {
   size_t lcp = 0;
   if (_added != 0) {
     lcp = CommonPrefixLength(bytes_view{_window[(_added - 1) % kWindow]}, term);
+    _origin = std::min(_origin, CommonPrefixLength(bytes_view{_first}, term));
+  } else {
+    _first.assign(term);
+    _origin = term.size();
   }
   _window[_added % kWindow].assign(term);
   ++_added;
@@ -214,8 +229,9 @@ void PrefixTrieBuilder::Add(bytes_view term) {
   for (size_t at = 0; at != _open.size(); ++at) {
     auto& node = _nodes[_open[at]];
     ++node.count;
-    if (!Expands(node) && node.count > kTrieSpan && node.depth < kTrieDepth) {
-      Expand(_open[at], _added - node.count);
+    if (!Expands(node) && node.count > _span &&
+        node.depth < _origin + kTrieDepth) {
+      Expand(_open[at], _added - node.count, _added);
       _open.resize(at + 1);
       Descend(term);
       break;
@@ -228,17 +244,42 @@ std::string PrefixTrieBuilder::Finish() {
   if (_nodes.empty()) {
     return out;
   }
-  auto it = std::back_inserter(out);
-  WriteVarint(static_cast<uint32_t>(_nodes.size()), it);
-  std::vector<uint32_t> queue{0};
+  const auto chain = bytes_view{_first}.substr(0, _origin);
+  uint32_t root = 0;
+  for (const auto label : chain) {
+    root = _nodes[root].first;
+    SDB_ASSERT(root != kNoNode && _nodes[root].label == label &&
+               _nodes[root].next == kNoNode);
+  }
+  const auto inner = [&](const Node& node) {
+    const size_t depth = node.depth - chain.size();
+    return node.first != kNoNode &&
+           (depth < kTrieFull ||
+            (node.count > kTrieSpan && depth < kTrieDepth));
+  };
+  std::vector<uint32_t> queue{root};
   queue.reserve(_nodes.size());
   for (size_t at = 0; at != queue.size(); ++at) {
     const auto& node = _nodes[queue[at]];
+    if (inner(node)) {
+      for (auto child = node.first; child != kNoNode;
+           child = _nodes[child].next) {
+        queue.push_back(child);
+      }
+    }
+  }
+  auto it = std::back_inserter(out);
+  WriteVarint(static_cast<uint32_t>(chain.size()), it);
+  out.append(ViewCast<char>(chain));
+  WriteVarint(static_cast<uint32_t>(queue.size()), it);
+  for (const auto id : queue) {
+    const auto& node = _nodes[id];
     uint32_t children = 0;
-    for (auto child = node.first; child != kNoNode;
-         child = _nodes[child].next) {
-      queue.push_back(child);
-      ++children;
+    if (inner(node)) {
+      for (auto child = node.first; child != kNoNode;
+           child = _nodes[child].next) {
+        ++children;
+      }
     }
     byte_type flags = node.terminal ? kTrieTerminal : 0;
     if (children == 0 && node.count > (node.terminal ? 1U : 0U)) {
@@ -246,9 +287,11 @@ std::string PrefixTrieBuilder::Finish() {
     }
     out.push_back(static_cast<char>(flags));
     WriteVarint(children, it);
-    for (auto child = node.first; child != kNoNode;
-         child = _nodes[child].next) {
-      out.push_back(static_cast<char>(_nodes[child].label));
+    if (children != 0) {
+      for (auto child = node.first; child != kNoNode;
+           child = _nodes[child].next) {
+        out.push_back(static_cast<char>(_nodes[child].label));
+      }
     }
   }
   Reset();
@@ -259,6 +302,8 @@ void PrefixTrieBuilder::Reset() noexcept {
   _nodes.clear();
   _open.clear();
   _window.clear();
+  _first.clear();
+  _origin = 0;
   _added = 0;
 }
 

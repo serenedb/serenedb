@@ -757,6 +757,8 @@ void Wide(benchmark::State& state, const Shape& shape, Ladder ladder,
 }
 
 int Main(int argc, char** argv) {
+  irs::DuckDBEngine::Instance().Initialize();
+
   for (const auto& shape : kShapes) {
     for (size_t l = 0; l != std::size(kLadders); ++l) {
       const auto ladder = static_cast<Ladder>(l);

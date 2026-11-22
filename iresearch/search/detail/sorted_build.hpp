@@ -74,8 +74,6 @@ struct AppendDocs {
   IRS_FORCE_INLINE void Doc(size_t doc) {
     docs.push_back(static_cast<doc_id_t>(doc));
   }
-
-  IRS_FORCE_INLINE void Finish(uint32_t) noexcept {}
 };
 
 struct DocsRun {

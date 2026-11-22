@@ -27,6 +27,7 @@
 
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/search/ann/family.hpp"
+#include "iresearch/search/ann/route.hpp"
 #include "iresearch/search/detail/exact_scan.hpp"
 #include "iresearch/search/scorers/all_docs_score.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
@@ -35,55 +36,47 @@
 namespace irs::ann {
 namespace {
 
-inline constexpr double kVectorDecodeFloats = 1024;
-inline constexpr double kExactSkipCost = 0.5;
+constexpr double kVectorDecodeFloats = 1024;
+constexpr double kExactSkipCost = 0.5;
 
 double ScanCost(const QueryBuilder* prefilter, double docs,
                 double rows_per_decode) noexcept {
-  if (prefilter == nullptr || docs == 0) {
-    return docs;
-  }
-  const auto share =
-    std::min(1.0, static_cast<double>(prefilter->EstimateMatches()) / docs);
+  const auto share = ShareOf(prefilter, docs);
   return docs * (1.0 - std::pow(1.0 - share, rows_per_decode) +
                  kExactSkipCost * share * (1.0 - share));
 }
 
-struct ExactRoute {
-  const QueryBuilder* prefilter;
-  irs::detail::TableFilter* table;
-};
-
-ExactRoute RouteOf(const ExactVectorQuery& query, const Context& ctx) {
-  const auto* inner = query.Inner();
-  if (inner == nullptr || !query.HasColumnPart() || ctx.columns == nullptr) {
-    return {inner, ctx.table};
-  }
-  const auto docs = static_cast<double>(query.Segment().docs_count());
-  const auto rows_per_decode = std::max(
-    1.0, kVectorDecodeFloats / static_cast<double>(query.Column().ArraySize()));
-  if (ScanCost(inner, docs, rows_per_decode) <=
-      ScanCost(query.IndexPart(), docs, rows_per_decode)) {
-    return {inner, ctx.table};
-  }
-  SDB_IF_FAILURE("irs::ExactReadsColumns") {
-    THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-  }
-  return {query.IndexPart(), ctx.columns};
+Route ExactRouteOf(const ExactVectorQuery& query, const Context& ctx) {
+  return RouteOf(query, ctx,
+                 [&](const QueryBuilder& inner, const QueryBuilder* index_part) {
+                   const auto docs =
+                     static_cast<double>(query.Segment().docs_count());
+                   const auto rows_per_decode = std::max(
+                     1.0, kVectorDecodeFloats /
+                            static_cast<double>(query.Column().ArraySize()));
+                   if (ScanCost(&inner, docs, rows_per_decode) <=
+                       ScanCost(index_part, docs, rows_per_decode)) {
+                     return false;
+                   }
+                   SDB_IF_FAILURE("irs::ExactReadsColumns") {
+                     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+                   }
+                   return true;
+                 });
 }
 
 class ExactChain : public Root {
  public:
-  ExactChain(const ExactVectorQuery& query, const Context& ctx,
-             const irs::detail::ScoreArgs& score, const ExactRoute& route)
+  ExactChain(const ExactVectorQuery& query, const irs::detail::ScoreArgs& score,
+             const Route& route)
     : _scanner{query, route.prefilter, false},
       _codes{query.Codes()},
-      _fetcher{ctx.fetcher},
-      _table{route.table},
+      _fetcher{route.ctx.fetcher},
+      _table{route.ctx.table},
       _boost{score.boost},
-      _k{ctx.k},
-      _ranked{_codes.bound && !route.table && score.boost > 0.f && ctx.k != 0 &&
-              ctx.k < query.Segment().live_docs_count()} {
+      _k{route.ctx.k},
+      _ranked{_codes.bound && !_table && score.boost > 0.f && _k != 0 &&
+              _k < query.Segment().live_docs_count()} {
     _score = irs::detail::PrepareBlockScorer(
       score, query.Segment(), irs::detail::NoField(), _provider, _block);
   }
@@ -222,8 +215,8 @@ ann::Root::ptr ExactVectorQuery::PlanAnn(const ann::Context& ctx) const {
                                 .stats = record.stats,
                                 .fetcher = &ctx.fetcher,
                                 .boost = Boost()};
-  return memory::make_managed<ann::ExactChain>(*this, ctx, score,
-                                               ann::RouteOf(*this, ctx));
+  return memory::make_managed<ann::ExactChain>(*this, score,
+                                               ann::ExactRouteOf(*this, ctx));
 }
 
 }  // namespace irs

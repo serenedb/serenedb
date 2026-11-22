@@ -254,7 +254,7 @@ class Cursor {
 
   SeekResult SeekGe(bytes_view key) {
     const auto& field = *_field;
-    if (field.size() == 0 || key > field.max()) {
+    if (key > field.max()) {
       return SeekResult::End;
     }
     const auto probe = _probe.Assign(field.KeyPrefix(), key);

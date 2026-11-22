@@ -23,6 +23,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <concepts>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
@@ -152,7 +153,7 @@ std::array<size_t, 3> BlockKinds(const irs::term_dict::TermReaderImpl& reader) {
   std::array<size_t, 3> kinds{};
   irs::term_dict::PinnedRange pinned;
   for (uint32_t block = 0; block != reader.Blocks(); ++block) {
-    ++kinds.at(*reader.Block(block, pinned));
+    ++kinds.at(reader.Block(block, pinned).front());
   }
   return kinds;
 }
@@ -1088,9 +1089,9 @@ TEST_P(TermDictTest, fixed_keys_split_low_and_high_bits) {
       static_cast<const irs::term_dict::TermReaderImpl&>(*reader);
     irs::term_dict::PinnedRange pinned;
     for (uint32_t block = 0; block != impl.Blocks(); ++block) {
-      ASSERT_EQ(
-        irs::term_dict::BlockKind::FixedStride,
-        static_cast<irs::term_dict::BlockKind>(*impl.Block(block, pinned)));
+      ASSERT_EQ(irs::term_dict::BlockKind::FixedStride,
+                static_cast<irs::term_dict::BlockKind>(
+                  impl.Block(block, pinned).front()));
     }
     AssertField(*reader, field.entries);
   }
@@ -1212,6 +1213,27 @@ TEST_P(TermDictTest, one_term_dictionaries_live_in_the_footer) {
             }));
 }
 
+TEST_P(TermDictTest, long_shared_prefixes_round_trip) {
+  const auto shared = Bytes(std::string(2048, 'p'));
+  std::vector<irs::bstring> keys;
+  for (size_t i = 0; i != 5000; ++i) {
+    auto key = shared;
+    key += Bytes(absl::StrCat("word", i * 7919 % 100003));
+    keys.push_back(std::move(key));
+  }
+  const Field fields[]{
+    {.id = 1, .entries = MakeEntries(keys), .sample = false},
+    {.id = 2, .entries = MakeEntries(std::move(keys))},
+  };
+  Write(fields);
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    const auto* reader = Get(field);
+    ASSERT_NE(nullptr, reader);
+    AssertField(*reader, field.entries);
+  }
+}
+
 TEST_P(TermDictTest, fsst_on_and_off) {
   auto keys = Words(30000, 3);
   for (size_t i = 0; i < keys.size(); i += 97) {
@@ -1274,7 +1296,8 @@ TEST_P(TermDictTest, fsst_codes_only_overflowing_blocks_a_dictionary_owns) {
   const auto kind_of = [](const irs::term_dict::TermReaderImpl& reader,
                           uint32_t block) {
     irs::term_dict::PinnedRange pinned;
-    return static_cast<irs::term_dict::BlockKind>(*reader.Block(block, pinned));
+    return static_cast<irs::term_dict::BlockKind>(
+      reader.Block(block, pinned).front());
   };
   for (const auto id : {1, 3}) {
     SCOPED_TRACE(testing::Message("field ") << id);
@@ -1685,7 +1708,7 @@ TEST_P(TermDictTest, small_fields_are_copied_at_open) {
     const auto& impl = Blocks(*Get(field));
     ASSERT_EQ(field.id != 2, impl.Small());
     irs::term_dict::PinnedRange pinned;
-    const auto* block = impl.Block(0, pinned);
+    const auto* block = impl.Block(0, pinned).data();
     ASSERT_EQ(impl.Small(), block < begin || end <= block);
     AssertField(impl, field.entries);
   }
@@ -1797,9 +1820,7 @@ TEST_P(TermDictTest, inline_postings_live_in_their_block) {
       ++inlined;
       const uint32_t block = cursor.BlockIndex();
       irs::term_dict::PinnedRange pinned;
-      const std::span<const irs::byte_type> bytes{
-        impl.Block(block, pinned),
-        impl.BlockOffset(block + 1) - impl.BlockOffset(block)};
+      const auto bytes = impl.Block(block, pinned);
       const auto inline_bytes = meta.Inline();
       ASSERT_NE(bytes.end(), absl::c_search(bytes, inline_bytes));
     } while (cursor.Advance());
@@ -1946,7 +1967,10 @@ TEST(TermDictBlockTest, block_headers_decode_and_refuse_corruption) {
     0, 0, 4, 0x2C, 0x01, 4, 0,
   };
   for (const auto* block : {&packed, &columns}) {
-    const auto view = irs::term_dict::Parse(block->data(), nullptr);
+    auto padded = *block;
+    padded.resize(block->size() + irs::term_dict::kSlack);
+    const auto view =
+      irs::term_dict::Parse({padded.data(), padded.size()}, nullptr);
     ASSERT_EQ(2, view.count);
     ASSERT_EQ(block == &packed, static_cast<bool>(view.headers.codes));
     ASSERT_EQ(block == &packed ? 1 : 0, view.headers.escaped);
@@ -1956,14 +1980,21 @@ TEST(TermDictBlockTest, block_headers_decode_and_refuse_corruption) {
     const auto second = irs::term_dict::HeaderAt(view, 1);
     ASSERT_EQ(4, second.lcp);
     ASSERT_EQ(4, second.len);
-    ASSERT_EQ(block->data() + block->size(), view.suffixes);
+    ASSERT_EQ(padded.data() + block->size(), view.suffixes);
+    for (size_t size = 0; size != padded.size(); ++size) {
+      SCOPED_TRACE(testing::Message("truncated to ") << size);
+      ASSERT_SQL_ERROR(irs::term_dict::Parse({padded.data(), size}, nullptr),
+                       ERRCODE_INDEX_CORRUPTED);
+    }
   }
 
   const auto refused = [&](size_t at, irs::byte_type value) {
     auto corrupt = packed;
     corrupt[at] = value;
-    ASSERT_SQL_ERROR(irs::term_dict::Parse(corrupt.data(), nullptr),
-                     ERRCODE_INDEX_CORRUPTED);
+    corrupt.resize(corrupt.size() + irs::term_dict::kSlack);
+    ASSERT_SQL_ERROR(
+      irs::term_dict::Parse({corrupt.data(), corrupt.size()}, nullptr),
+      ERRCODE_INDEX_CORRUPTED);
   };
   refused(0, 7);
   refused(3, 3);
@@ -1976,7 +2007,8 @@ TEST(TermDictBlockTest, fixed_keys_decode_and_refuse_corruption) {
     1, 2, 1, 0, 0, 3, 0x10, 0, 0, 0x11, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0,    0, 0, 0,    0, 0, 0, 0, 0, 0, 0,
   };
-  const auto view = irs::term_dict::Parse(block.data(), nullptr);
+  const auto view =
+    irs::term_dict::Parse({block.data(), block.size()}, nullptr);
   ASSERT_TRUE(view.fixed);
   ASSERT_EQ(2, view.count);
   ASSERT_EQ(1, view.stride);
@@ -2000,11 +2032,20 @@ TEST(TermDictBlockTest, fixed_keys_decode_and_refuse_corruption) {
     }
   }
 
+  const size_t whole =
+    static_cast<size_t>(view.records - block.data()) + irs::term_dict::kSlack;
+  for (size_t size = 0; size != whole; ++size) {
+    SCOPED_TRACE(testing::Message("truncated to ") << size);
+    ASSERT_SQL_ERROR(irs::term_dict::Parse({block.data(), size}, nullptr),
+                     ERRCODE_INDEX_CORRUPTED);
+  }
+
   const auto refused = [&](size_t at, irs::byte_type value) {
     auto corrupt = block;
     corrupt[at] = value;
-    ASSERT_SQL_ERROR(irs::term_dict::Parse(corrupt.data(), nullptr),
-                     ERRCODE_INDEX_CORRUPTED);
+    ASSERT_SQL_ERROR(
+      irs::term_dict::Parse({corrupt.data(), corrupt.size()}, nullptr),
+      ERRCODE_INDEX_CORRUPTED);
   };
   refused(1, 0);
   refused(4, 8);
@@ -2199,7 +2240,6 @@ TEST(TermDictRecordsTest, runs_decode_every_record_in_any_order) {
 
     irs::term_dict::RecordDecoder decoder{shape.features};
     decoder.Reset(bytes.data());
-    ASSERT_EQ(records.size(), decoder.Count());
     irs::PostingMeta meta;
     for (uint32_t i = 0; i != records.size(); ++i) {
       if (i == 0) {
@@ -2220,7 +2260,7 @@ TEST(TermDictRecordsTest, runs_decode_every_record_in_any_order) {
         ASSERT_NO_FATAL_FAILURE(ExpectRecord(records[i + 1], decoder, meta));
       }
     }
-    ASSERT_SQL_ERROR(decoder.Seek(decoder.Count(), meta),
+    ASSERT_SQL_ERROR(decoder.Seek(static_cast<uint32_t>(records.size()), meta),
                      ERRCODE_INDEX_CORRUPTED);
   }
 }
@@ -2254,6 +2294,31 @@ TEST(TermDictRecordsTest, runs_refuse_corruption) {
   refused(1, irs::term_dict::kRunSingles | irs::term_dict::kRunMultis);
   refused(1, 0x10 | bytes[1]);
   refused(3, irs::term_dict::kMaxRecordBits + 1);
+}
+
+TEST(TermDictRecordsTest, runs_refuse_inline_sizes_past_the_limit) {
+  const irs::PostingFeatures features{irs::IndexFeatures::None};
+  irs::term_dict::RecordRun run;
+  run.Start(irs::IndexFeatures::None);
+  const irs::bstring data(irs::PostingMeta::kInlineBytes, irs::byte_type{7});
+  irs::PostingMeta meta;
+  meta.docs_count = 2;
+  meta.inline_size = static_cast<uint8_t>(data.size());
+  meta.SetInline(data);
+  run.Commit(meta, run.Stage(meta));
+  duckdb::MemoryStream out;
+  run.Write(out);
+  irs::bstring bytes{out.GetData(), out.GetPosition()};
+  bytes.resize(bytes.size() + irs::term_dict::kSlack);
+  ASSERT_EQ(irs::term_dict::kRunMultis | irs::term_dict::kRunInline, bytes[1]);
+  ASSERT_EQ(1, irs::term_dict::ParseRun(bytes.data(), features).count);
+  constexpr auto kSizeBits = 3;
+  ASSERT_EQ(std::bit_width(irs::PostingMeta::kInlineBytes - 1),
+            bytes[kSizeBits]);
+  bytes[kSizeBits] = static_cast<irs::byte_type>(
+    std::bit_width(irs::PostingMeta::kInlineBytes - 1) + 1);
+  ASSERT_SQL_ERROR(irs::term_dict::ParseRun(bytes.data(), features),
+                   ERRCODE_INDEX_CORRUPTED);
 }
 
 TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
@@ -2314,6 +2379,8 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
   refused([](Terms& t) { t.separators.pop_back(); }, ERRCODE_INDEX_CORRUPTED);
   refused([](Terms& t) { t.separators.push_back('\x01'); },
           ERRCODE_INDEX_CORRUPTED);
+  ASSERT_LT(2, terms.separators.size());
+  refused([](Terms& t) { t.separators[2] = '\xFF'; }, ERRCODE_INDEX_CORRUPTED);
   refused([](Terms& t) { t.fields[1].fsst_table = "garbage"; },
           ERRCODE_INDEX_CORRUPTED);
   ASSERT_FALSE(terms.fields[1].block_prefixes.empty());
@@ -2321,13 +2388,31 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
           ERRCODE_INDEX_CORRUPTED);
   refused([](Terms& t) { t.fields[1].block_prefixes.push_back('\0'); },
           ERRCODE_INDEX_CORRUPTED);
+  ASSERT_FALSE(terms.fields[0].levels.empty());
+  {
+    auto copy = terms;
+    auto& levels = copy.fields[0].levels;
+    while (levels.size() <= irs::term_dict::kMaxRangeLevels) {
+      levels.push_back(levels.back());
+    }
+    duckdb::MemoryStream stream;
+    duckdb::BinarySerializer serializer{stream};
+    serializer.Begin();
+    irs::term_dict::WriteTerms(serializer, copy);
+    serializer.End();
+    stream.Rewind();
+    duckdb::BinaryDeserializer deserializer{stream};
+    deserializer.Begin();
+    ASSERT_SQL_ERROR(irs::term_dict::ReadTerms(deserializer, copy.blocks_end),
+                     ERRCODE_INDEX_CORRUPTED);
+  }
 
   const auto refused_field = [&](auto&& write_field,
                                  int code = ERRCODE_INDEX_CORRUPTED) {
     RewriteTermsWith([&](duckdb::BinarySerializer& object) {
       object.WriteProperty<uint32_t>(0, "restart_interval",
                                      irs::term_dict::kRestartInterval);
-      object.WriteList(7, "fields", 1,
+      object.WriteList(5, "fields", 1,
                        [&](duckdb::BinarySerializer::List& list,
                            duckdb::idx_t) { list.WriteObject(write_field); });
     });
@@ -2337,7 +2422,7 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
     dict.WriteProperty(5, "record", std::string{"r"});
   };
   const auto levels = [](duckdb::BinarySerializer& dict) {
-    dict.WriteList(20, "levels", 1,
+    dict.WriteList(16, "levels", 1,
                    [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
                      list.WriteObject([](duckdb::BinarySerializer& level) {
                        level.WriteProperty(5, "record", std::string{"r"});
@@ -2345,7 +2430,7 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
                    });
   };
   const auto text = [](duckdb::BinarySerializer& dict) {
-    dict.WriteObject(15, "text", [](duckdb::BinarySerializer& object) {
+    dict.WriteObject(13, "text", [](duckdb::BinarySerializer& object) {
       object.WriteProperty<uint64_t>(2, "norm", 7);
     });
   };
@@ -2426,14 +2511,14 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
     field.WriteProperty<uint64_t>(0, "id", 1);
     member(field, 0, "string", [&](duckdb::BinarySerializer& dict) {
       single_record(dict);
-      dict.WriteProperty(18, "fsst_table", std::string{"table"});
+      dict.WriteProperty(15, "fsst_table", std::string{"table"});
     });
   });
   refused_field([&](duckdb::BinarySerializer& field) {
     field.WriteProperty<uint64_t>(0, "id", 1);
     member(field, 0, "string", [&](duckdb::BinarySerializer& dict) {
       single_record(dict);
-      dict.WriteProperty(22, "block_prefixes",
+      dict.WriteProperty(18, "block_prefixes",
                          std::string{"\x00\x00\x01\x00\x00\x00", 6});
     });
   });
@@ -2444,6 +2529,16 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
       member(field, 0, "string", single_record);
     },
     ERRCODE_FEATURE_NOT_SUPPORTED);
+  for (const uint32_t size : {0U, irs::PostingMeta::kInlineBytes + 1}) {
+    refused_field([&](duckdb::BinarySerializer& field) {
+      field.WriteProperty<uint64_t>(0, "id", 1);
+      member(field, 0, "string", [&](duckdb::BinarySerializer& dict) {
+        dict.WriteProperty(5, "record",
+                           std::string{'\x0A', static_cast<char>(size)});
+        dict.WriteProperty(6, "record_inline", std::string(size, 'x'));
+      });
+    });
+  }
 
   RewriteTerms(terms);
   Open(dir());
@@ -3092,7 +3187,6 @@ TEST_P(TermDictTest, walks_skip_blocks_missing_required_bytes) {
   const auto* reader = Get(fields[0]);
   ASSERT_NE(nullptr, reader);
   const auto& impl = Blocks(*reader);
-  ASSERT_TRUE(impl.Index().Masked());
   const auto& entries = fields[0].entries;
   for (const std::string_view pattern :
        {".*q.*", ".*tion", "[0-9]+7", "ing(q|x).*", "(?i)ZQ.*",
@@ -3105,8 +3199,9 @@ TEST_P(TermDictTest, walks_skip_blocks_missing_required_bytes) {
   const irs::RegexpAcceptor rare{
     irs::ViewCast<irs::byte_type>(std::string_view{".*q.*"})};
   uint32_t holding = 0;
+  const auto need = impl.Index().NeedOf(rare.RequiredBytes());
   for (uint32_t block = 0; block != impl.Blocks(); ++block) {
-    holding += impl.Index().Holds(block, rare.RequiredBytes());
+    holding += impl.Index().Holds(block, need);
   }
   ASSERT_LT(4 * holding, impl.Blocks());
   size_t found = 0;
@@ -3878,7 +3973,8 @@ size_t TermsWith(const std::vector<irs::bstring>& terms,
 
 size_t AssertTrieNode(const irs::term_dict::PrefixTrie& trie, uint32_t node,
                       irs::bstring& path,
-                      const std::vector<irs::bstring>& terms) {
+                      const std::vector<irs::bstring>& terms,
+                      size_t span = irs::term_dict::kTrieSpan) {
   using namespace irs::term_dict;
   SCOPED_TRACE(testing::Message("depth ") << path.size());
   const size_t count = TermsWith(terms, path);
@@ -3886,25 +3982,27 @@ size_t AssertTrieNode(const irs::term_dict::PrefixTrie& trie, uint32_t node,
   const bool terminal = absl::c_binary_search(terms, path);
   EXPECT_EQ(terminal, trie.Terminal(node));
   const size_t continuations = count - (terminal ? 1 : 0);
+  const size_t depth = path.size() - std::min(path.size(), trie.Chain().size());
   if (trie.Leaf(node)) {
     EXPECT_EQ(continuations != 0, trie.Open(node));
-    if (path.size() >= kTrieFull && path.size() < kTrieDepth) {
-      EXPECT_LE(count, kTrieSpan);
+    if (depth >= kTrieFull && depth < kTrieDepth) {
+      EXPECT_LE(count, span);
     }
-    EXPECT_TRUE(path.size() >= kTrieFull || continuations == 0);
+    EXPECT_TRUE(depth >= kTrieFull || continuations == 0);
     return count;
   }
   EXPECT_FALSE(trie.Open(node));
-  if (path.size() >= kTrieFull) {
+  EXPECT_LT(depth, kTrieDepth);
+  if (depth >= kTrieFull) {
     EXPECT_LT(kTrieSpan, count);
   }
   size_t below = 0;
-  for (auto child = trie.NextChild(node, 0); child.label != kNoLabel;
-       child = trie.NextChild(node, child.label + 1)) {
-    EXPECT_EQ(child.node,
-              trie.ChildOf(node, static_cast<irs::byte_type>(child.label)));
-    path.push_back(static_cast<irs::byte_type>(child.label));
-    below += AssertTrieNode(trie, child.node, path, terms);
+  for (auto child = trie.ChildrenOf(node, 0); child.Label() != kNoLabel;
+       child.Next()) {
+    const auto label = static_cast<irs::byte_type>(child.Label());
+    EXPECT_EQ(child.Node(), trie.ChildOf(node, label));
+    path.push_back(label);
+    below += AssertTrieNode(trie, child.Node(), path, terms, span);
     path.pop_back();
   }
   EXPECT_EQ(continuations, below);
@@ -3925,7 +4023,7 @@ void AssertLinks(const Prefixed& dict) {
       block + 1 == blocks ? irs::bytes_view{dict.terms.back()}
                           : irs::term_dict::SeparatorAt(separators, block);
     const auto prefix = lower.substr(0, irs::CommonPrefixLength(lower, upper));
-    uint32_t node = irs::term_dict::PrefixTrie::kRoot;
+    uint32_t node = trie.Root();
     uint32_t depth = 0;
     while (depth != prefix.size() && !trie.Open(node) && !trie.Leaf(node)) {
       const auto child = trie.ChildOf(node, prefix[depth]);
@@ -3948,10 +4046,13 @@ void AssertTrie(std::vector<irs::bstring> terms, size_t block_size,
   const auto& trie = dict->index->Trie();
   if (dict->blocks.back() != 0) {
     ASSERT_FALSE(trie.Empty());
+    const irs::bytes_view first = dict->terms.front();
+    const irs::bytes_view last = dict->terms.back();
+    ASSERT_EQ(first.substr(0, irs::CommonPrefixLength(first, last)),
+              trie.Chain());
     irs::bstring path;
     ASSERT_EQ(dict->terms.size(),
-              AssertTrieNode(trie, irs::term_dict::PrefixTrie::kRoot, path,
-                             dict->terms));
+              AssertTrieNode(trie, trie.Root(), path, dict->terms));
     AssertLinks(*dict);
   }
   const auto check = [&](const auto& a) {
@@ -4016,6 +4117,14 @@ TEST(TermDictPrefixTrieTest, trie_matches_terms_and_filter_keeps_matches) {
   assert_all(RandomTerms(rng, kEdgeBytes, 5000, 0, 6), 5);
   assert_all(RandomTerms(rng, "abxyz019", 5000, 1, 8, "https://www."), 3);
   assert_all(RandomTerms(rng, "abxyz019", 5000, 1, 8, "https://www."), 400);
+  auto narrowing = RandomTerms(rng, "abxyz019", 3000, 1, 8, "https://web.");
+  for (auto& term : RandomTerms(rng, "abxyz019", 3000, 1, 8, "https://www.")) {
+    narrowing.push_back(std::move(term));
+  }
+  narrowing.push_back(Bytes("z"));
+  assert_all(narrowing, 3);
+  narrowing.pop_back();
+  assert_all(std::move(narrowing), 40);
   assert_all(RandomTerms(rng, "ab", 20000, 10, 20), 50);
   assert_all({Bytes("a"), Bytes("b")}, 1);
   assert_all({irs::bstring{}, Bytes("x")}, 1);
@@ -4162,7 +4271,9 @@ TEST(TermDictRootTest, root_matches_upper_bound) {
 
 TEST(TermDictPrefixTrieTest, refuses_corrupt_encodings) {
   using namespace std::string_view_literals;
-  constexpr auto kValid =
+  using irs::term_dict::kNoLabel;
+  using irs::term_dict::kNoNode;
+  constexpr auto kNodes =
     "\x04"
     "\x00\x02"
     "ab"
@@ -4170,57 +4281,251 @@ TEST(TermDictPrefixTrieTest, refuses_corrupt_encodings) {
     "c"
     "\x02\x00"
     "\x01\x00"sv;
-  const auto valid = DecodeTrie(kValid);
+  const auto valid = DecodeTrie(absl::StrCat("\x00"sv, kNodes));
   ASSERT_EQ(4U, valid.Nodes());
-  const auto a = valid.ChildOf(irs::term_dict::PrefixTrie::kRoot, 'a');
-  const auto b = valid.ChildOf(irs::term_dict::PrefixTrie::kRoot, 'b');
-  ASSERT_NE(irs::term_dict::kNoNode, a);
-  ASSERT_NE(irs::term_dict::kNoNode, b);
-  ASSERT_EQ(irs::term_dict::kNoNode,
-            valid.ChildOf(irs::term_dict::PrefixTrie::kRoot, 'c'));
+  ASSERT_TRUE(valid.Chain().empty());
+  ASSERT_EQ(0U, valid.Root());
+  const auto a = valid.ChildOf(valid.Root(), 'a');
+  const auto b = valid.ChildOf(valid.Root(), 'b');
+  ASSERT_NE(kNoNode, a);
+  ASSERT_NE(kNoNode, b);
+  ASSERT_EQ(kNoNode, valid.ChildOf(valid.Root(), 'c'));
   ASSERT_TRUE(valid.Terminal(a));
   ASSERT_FALSE(valid.Open(a));
   ASSERT_TRUE(valid.Open(b));
   ASSERT_TRUE(valid.Leaf(b));
   const auto ac = valid.ChildOf(a, 'c');
   ASSERT_TRUE(valid.Terminal(ac));
-  ASSERT_EQ('b', valid.NextChild(irs::term_dict::PrefixTrie::kRoot, 'b').label);
-  ASSERT_EQ(irs::term_dict::kNoLabel,
-            valid.NextChild(irs::term_dict::PrefixTrie::kRoot, 'c').label);
+  auto children = valid.ChildrenOf(valid.Root(), 0);
+  ASSERT_EQ('a', children.Label());
+  ASSERT_EQ(a, children.Node());
+  children.Next();
+  ASSERT_EQ('b', children.Label());
+  ASSERT_EQ(b, children.Node());
+  children.Next();
+  ASSERT_EQ(kNoLabel, children.Label());
+  ASSERT_EQ('b', valid.ChildrenOf(valid.Root(), 'b').Label());
+  ASSERT_EQ(kNoLabel, valid.ChildrenOf(valid.Root(), 'c').Label());
+  ASSERT_EQ(kNoLabel, valid.ChildrenOf(b, 0).Label());
+
+  const auto chained = DecodeTrie(absl::StrCat("\x02xy"sv, kNodes));
+  ASSERT_EQ(4U, chained.Nodes());
+  ASSERT_EQ(irs::ViewCast<irs::byte_type>("xy"sv), chained.Chain());
+  const auto x = chained.Root();
+  ASSERT_FALSE(chained.Leaf(x));
+  ASSERT_FALSE(chained.Open(x));
+  ASSERT_FALSE(chained.Terminal(x));
+  ASSERT_EQ(kNoNode, chained.ChildOf(x, 'y'));
+  ASSERT_EQ(kNoLabel, chained.ChildrenOf(x, 'y').Label());
+  const auto y = chained.ChildOf(x, 'x');
+  ASSERT_NE(kNoNode, y);
+  ASSERT_FALSE(chained.Leaf(y));
+  children = chained.ChildrenOf(y, 0);
+  ASSERT_EQ('y', children.Label());
+  ASSERT_EQ(0U, children.Node());
+  children.Next();
+  ASSERT_EQ(kNoLabel, children.Label());
+  ASSERT_EQ(a, chained.ChildOf(chained.ChildOf(y, 'y'), 'a'));
+
   for (const auto encoded : {
          ""sv,
          "\x00"sv,
-         "\x02\x00\x01"sv,
-         "\x02\x00\x01"
+         "\x00\x00"sv,
+         "\x03xy"sv,
+         "\x02xy"sv,
+         "\x00\x02\x00\x01"sv,
+         "\x00\x02\x00\x01"
          "a"sv,
-         "\x02\x00\x01"
+         "\x00\x02\x00\x01"
          "a"
          "\x04\x00"sv,
-         "\x02\x02\x01"
+         "\x00\x02\x02\x01"
          "a"
          "\x01\x00"sv,
-         "\x03\x00\x02"
+         "\x00\x03\x00\x02"
          "ba"
          "\x01\x00"
          "\x01\x00"sv,
-         "\x03\x00\x02"
+         "\x00\x03\x00\x02"
          "aa"
          "\x01\x00"
          "\x01\x00"sv,
-         "\x02\x00\x02"
+         "\x00\x02\x00\x02"
          "ab"
          "\x01\x00"sv,
-         "\x02\x00\x01"
+         "\x00\x02\x00\x01"
          "a"
          "\x01\x00"
          "\x00"sv,
-         "\x03\x00\x01"
+         "\x00\x03\x00\x01"
          "a"
          "\x01\x00"
          "\x01\x00"sv,
        }) {
     ASSERT_SQL_ERROR(DecodeTrie(encoded), ERRCODE_INDEX_CORRUPTED);
   }
+}
+
+TEST(TermDictPrefixTrieTest, refuses_paths_deeper_than_the_trie) {
+  const auto path = [](uint32_t depth) {
+    std::string encoded{'\x00', static_cast<char>(depth + 1)};
+    for (uint32_t node = 0; node != depth; ++node) {
+      encoded.append({'\x00', '\x01', 'a'});
+    }
+    encoded.append({static_cast<char>(irs::term_dict::kTrieTerminal), '\x00'});
+    return encoded;
+  };
+  ASSERT_EQ(irs::term_dict::kTrieDepth + 1,
+            DecodeTrie(path(irs::term_dict::kTrieDepth)).Nodes());
+  ASSERT_SQL_ERROR(DecodeTrie(path(irs::term_dict::kTrieDepth + 1)),
+                   ERRCODE_INDEX_CORRUPTED);
+}
+
+void AssertSpans(std::vector<irs::bstring> terms, std::span<const size_t> runs,
+                 std::span<const uint32_t> spans) {
+  absl::c_sort(terms);
+  terms.erase(std::unique(terms.begin(), terms.end()), terms.end());
+  irs::term_dict::PrefixTrieBuilder builder;
+  size_t at = 0;
+  for (size_t run = 0; at != terms.size(); ++run) {
+    builder.SetSpan(spans[run % spans.size()]);
+    const size_t end = std::min(terms.size(), at + runs[run % runs.size()]);
+    for (; at != end; ++at) {
+      builder.Add(terms[at]);
+    }
+  }
+  const auto trie = DecodeTrie(builder.Finish());
+  irs::bstring path;
+  ASSERT_EQ(terms.size(), AssertTrieNode(trie, trie.Root(), path, terms,
+                                         *absl::c_max_element(spans)));
+}
+
+TEST(TermDictPrefixTrieTest, trie_follows_the_span_of_each_run) {
+  std::mt19937 rng{5};
+  constexpr size_t kRuns[] = {30, 900, 61, 400, 2000, 48, 1};
+  constexpr uint32_t kSpans[] = {48, 900, 61, 400, 1024, 48, 48};
+  AssertSpans(RandomTerms(rng, "abcdefghijklmnopqrstuvwxyz", 50000, 3, 10),
+              kRuns, kSpans);
+  AssertSpans(RandomTerms(rng, "ab", 20000, 8, 16), kRuns, kSpans);
+}
+
+TEST(TermDictPrefixTrieTest, split_children_keep_their_own_terms) {
+  std::vector<irs::bstring> terms{Bytes("0")};
+  for (const char child : {'b', 'c'}) {
+    for (char x = 'a'; x != 'k'; ++x) {
+      for (char y = 'a'; y != 'k'; ++y) {
+        terms.push_back(Bytes(std::string{"aaaa"} + child + x + y));
+      }
+    }
+  }
+  terms.push_back(Bytes("aaaadaa"));
+  constexpr size_t kRuns[] = {200, 1};
+  constexpr uint32_t kSpans[] = {1024, 48};
+  AssertSpans(std::move(terms), kRuns, kSpans);
+}
+
+struct MaskedIndex {
+  irs::term_dict::FieldHead head;
+  irs::term_dict::Separators separators;
+  std::unique_ptr<irs::term_dict::DictIndex> index;
+};
+
+std::unique_ptr<MaskedIndex> IndexBlocks(
+  const std::vector<std::vector<irs::bstring>>& blocks) {
+  auto out = std::make_unique<MaskedIndex>();
+  irs::term_dict::DictIndexBuilder builder;
+  builder.Reset(true);
+  size_t terms = 0;
+  for (size_t block = 0; block != blocks.size(); ++block) {
+    const auto& run = blocks[block];
+    builder.Add(static_cast<uint32_t>(run.size()),
+                [&](uint32_t i) { return irs::bytes_view{run[i]}; });
+    if (block != 0) {
+      out->separators.arena.append(run.front());
+      out->separators.offsets.push_back(
+        static_cast<uint32_t>(out->separators.arena.size()));
+    }
+    terms += run.size();
+  }
+  auto& head = out->head;
+  head.id = 7;
+  head.term_count = terms;
+  head.min = irs::ViewCast<char>(irs::bytes_view{blocks.front().front()});
+  head.max = irs::ViewCast<char>(irs::bytes_view{blocks.back().back()});
+  builder.Finish(head);
+  out->index = std::make_unique<irs::term_dict::DictIndex>(
+    head, irs::bytes_view{}, static_cast<uint32_t>(blocks.size()),
+    out->separators);
+  return out;
+}
+
+std::vector<uint32_t> HoldingBlocks(const irs::term_dict::DictIndex& index,
+                                    std::string_view bytes) {
+  irs::ByteSet need;
+  irs::AddBytes(need, irs::ViewCast<irs::byte_type>(bytes));
+  const auto masks = index.NeedOf(need);
+  std::vector<uint32_t> holding;
+  for (uint32_t block = 0; block != index.Blocks(); ++block) {
+    if (index.Holds(block, masks)) {
+      holding.push_back(block);
+    }
+  }
+  return holding;
+}
+
+TEST(TermDictIndexTest, masks_keep_the_bytes_that_reject_blocks) {
+  using Blocks = std::vector<uint32_t>;
+  const auto small = IndexBlocks({
+    {Bytes("aa0"), Bytes("ab0")},
+    {Bytes("ba1"), Bytes("bb1")},
+    {Bytes("ca2"), Bytes("cc2")},
+  });
+  const auto& index = *small->index;
+  EXPECT_EQ((Blocks{0, 1, 2}), HoldingBlocks(index, "a"));
+  EXPECT_EQ((Blocks{0, 1}), HoldingBlocks(index, "b"));
+  EXPECT_EQ((Blocks{2}), HoldingBlocks(index, "c"));
+  EXPECT_EQ((Blocks{0}), HoldingBlocks(index, "b0"));
+  EXPECT_EQ((Blocks{}), HoldingBlocks(index, "c0"));
+  EXPECT_EQ((Blocks{}), HoldingBlocks(index, "z"));
+  EXPECT_TRUE(index.MayHoldAny(irs::ByteSet{.words = {uint64_t{1} << '0'}}));
+  EXPECT_FALSE(
+    index.MayHoldAny(irs::ByteSet{.words = {0, uint64_t{1} << ('z' - 64)}}));
+
+  const auto uniform = IndexBlocks({
+    {Bytes("ab"), Bytes("ba")},
+    {Bytes("bab"), Bytes("bb")},
+  });
+  EXPECT_EQ((Blocks{0, 1}), HoldingBlocks(*uniform->index, "ab"));
+  EXPECT_EQ((Blocks{}), HoldingBlocks(*uniform->index, "az"));
+  EXPECT_FALSE(
+    uniform->index->MayHoldAny(irs::ByteSet{.words = {uint64_t{1} << '\n'}}));
+
+  std::vector<std::vector<irs::bstring>> wide;
+  for (uint32_t b = 128; b != 128 + 70; ++b) {
+    wide.push_back(
+      {irs::bstring{irs::byte_type{'m'}, static_cast<irs::byte_type>(b)}});
+  }
+  const auto many = IndexBlocks(wide);
+  std::string selected{"\x82"};
+  EXPECT_EQ((Blocks{2}), HoldingBlocks(*many->index, selected));
+  Blocks all(wide.size());
+  absl::c_iota(all, 0);
+  std::string dropped{"\xC3"};
+  EXPECT_EQ(all, HoldingBlocks(*many->index, dropped));
+  EXPECT_EQ(all, HoldingBlocks(*many->index, "m"));
+}
+
+TEST(TermDictPrefixTrieTest, refuses_chain_outside_block_bounds) {
+  using namespace std::string_literals;
+  const auto dict =
+    MakePrefixed({Bytes("aa"), Bytes("ab"), Bytes("ba"), Bytes("bb")}, 2);
+  const uint32_t blocks = dict->blocks.back() + 1;
+  ASSERT_EQ(2U, blocks);
+  auto head = dict->head;
+  head.block_prefixes = "\x02zz\x01\x00\x00"s;
+  ASSERT_SQL_ERROR(
+    (irs::term_dict::DictIndex{head, {}, blocks, dict->separators}),
+    ERRCODE_INDEX_CORRUPTED);
 }
 
 }  // namespace

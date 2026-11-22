@@ -33,6 +33,7 @@
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -41,6 +42,9 @@ namespace irs::term_dict {
 inline constexpr uint32_t kPage = 4096;
 constexpr uint64_t PackedBytes(uint64_t count, uint32_t bits) noexcept {
   return (count * bits + 7) / 8;
+}
+inline uint64_t VSize(uint64_t value) noexcept {
+  return bytes_io<uint64_t>::vsize(value);
 }
 
 template<typename Value>

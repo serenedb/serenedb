@@ -992,22 +992,20 @@ re2::Regexp* BytesTree(bytes_view bytes, bool any_tail) {
   return re2::Regexp::Concat(parts, count, kWildcardFlags);
 }
 
-bstring ContainedLiteral(bytes_view pattern) {
+bool IsContainedLiteral(bytes_view pattern) {
   if (pattern.size() < 3 || pattern.front() != WildcardMatch::kAnyStr ||
       pattern.back() != WildcardMatch::kAnyStr) {
-    return {};
+    return false;
   }
   const auto literal = pattern.substr(1, pattern.size() - 2);
-  const bool plain = !absl::c_any_of(literal, [](byte_type c) {
-    return c == WildcardMatch::kAnyStr || c == WildcardMatch::kAnyChr ||
-           c == WildcardMatch::kEscape;
-  });
-  if (!plain ||
-      !simdutf::validate_utf8(reinterpret_cast<const char*>(literal.data()),
-                              literal.size())) {
-    return {};
-  }
-  return bstring{literal};
+  return !absl::c_any_of(literal,
+                         [](byte_type c) {
+                           return c == WildcardMatch::kAnyStr ||
+                                  c == WildcardMatch::kAnyChr ||
+                                  c == WildcardMatch::kEscape;
+                         }) &&
+         simdutf::validate_utf8(reinterpret_cast<const char*>(literal.data()),
+                                literal.size());
 }
 
 constexpr std::string_view kTooComplex = "regular expression is too complex";
@@ -1114,7 +1112,7 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
     if (!_prog) {
       _error = kTooComplex;
     } else if (wildcard) {
-      _contained = ContainedLiteral(pattern);
+      _contained = IsContainedLiteral(pattern);
     }
   }
   Setup();

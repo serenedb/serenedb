@@ -519,6 +519,8 @@ std::vector<std::string> Bases() {
 }
 
 int Main(int argc, char** argv) {
+  irs::DuckDBEngine::Instance().Initialize();
+
   for (const auto& base : Bases()) {
     benchmark::RegisterBenchmark(
       absl::StrCat("lookup_hit/", base),

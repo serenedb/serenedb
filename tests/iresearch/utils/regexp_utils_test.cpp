@@ -2152,6 +2152,24 @@ TEST_F(RegexpUtilsTest, step_run_stops_at_the_first_moving_byte) {
   }
 }
 
+TEST_F(RegexpUtilsTest, step_run_stops_at_every_position) {
+  const auto a = FromPerl("[ab]*c");
+  ASSERT_TRUE(a.ok());
+  for (size_t size = 0; size <= 40; ++size) {
+    for (size_t at = 0; at <= size; ++at) {
+      SCOPED_TRACE(testing::Message("size ") << size << " at " << at);
+      std::string run(size, 'b');
+      if (at != size) {
+        run[at] = 'c';
+      }
+      const auto* p = ToBytesView(run).data();
+      irs::RegexpAcceptor::State out{};
+      ASSERT_EQ(at, a.StepRun(a.Start(), p, run.size(), out));
+      ASSERT_EQ(at == size ? a.Start() : a.Step(a.Start(), 'c'), out);
+    }
+  }
+}
+
 TEST_F(RegexpUtilsTest, live_range_hulls_the_live_labels) {
   const auto a = FromPerl("[ab]*c");
   ASSERT_TRUE(a.ok());

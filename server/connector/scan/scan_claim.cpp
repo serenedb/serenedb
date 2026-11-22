@@ -764,7 +764,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   const auto where = g.ClaimedWhere();
   const bool eager =
     !ordered && (g.shape == ScanShape::Count || g.shape == ScanShape::Stream) &&
-    !g.scorer_obj && g.vector_scorer == nullptr && g.splittable &&
+    !g.scorer_obj && !g.vector_scorer && g.splittable &&
     g.live_segments < threads && CheapToPrepare(*g.filter);
   const bool constant_count = !eager && g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&

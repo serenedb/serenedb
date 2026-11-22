@@ -44,9 +44,9 @@ constexpr duckdb::field_id_t kTermsBlocks = 1;
 constexpr duckdb::field_id_t kTermsFirstPage = 2;
 constexpr duckdb::field_id_t kTermsSpans = 3;
 constexpr duckdb::field_id_t kTermsBlocksEnd = 4;
-constexpr duckdb::field_id_t kTermsFields = 7;
-constexpr duckdb::field_id_t kTermsOrdinalBytes = 9;
-constexpr duckdb::field_id_t kTermsSeparators = 10;
+constexpr duckdb::field_id_t kTermsFields = 5;
+constexpr duckdb::field_id_t kTermsOrdinalBytes = 6;
+constexpr duckdb::field_id_t kTermsSeparators = 7;
 
 constexpr duckdb::field_id_t kSpanBlock = 0;
 constexpr duckdb::field_id_t kSpanExtraPages = 1;
@@ -83,12 +83,13 @@ constexpr duckdb::field_id_t kDictFirstEntry = 9;
 constexpr duckdb::field_id_t kDictFirstRecord = 10;
 constexpr duckdb::field_id_t kDictLastBlock = 11;
 constexpr duckdb::field_id_t kDictLastEntry = 12;
-constexpr duckdb::field_id_t kDictText = 15;
-constexpr duckdb::field_id_t kDictSingleValued = 17;
-constexpr duckdb::field_id_t kDictFsst = 18;
-constexpr duckdb::field_id_t kDictLevels = 20;
-constexpr duckdb::field_id_t kDictBlockMasks = 21;
-constexpr duckdb::field_id_t kDictBlockPrefixes = 22;
+constexpr duckdb::field_id_t kDictText = 13;
+constexpr duckdb::field_id_t kDictSingleValued = 14;
+constexpr duckdb::field_id_t kDictFsst = 15;
+constexpr duckdb::field_id_t kDictLevels = 16;
+constexpr duckdb::field_id_t kDictBlockMasks = 17;
+constexpr duckdb::field_id_t kDictBlockPrefixes = 18;
+constexpr duckdb::field_id_t kDictBlockMaskBytes = 19;
 
 constexpr duckdb::field_id_t kTextTotalFreq = 0;
 constexpr duckdb::field_id_t kTextScoreBounds = 1;
@@ -188,6 +189,9 @@ void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
   SDB_ASSERT(head.term_count != 1 || head.block_prefixes.empty());
   WriteOptionalBytes(out, kDictBlockPrefixes, "block_prefixes",
                      head.block_prefixes);
+  SDB_ASSERT(head.term_count != 1 || head.block_mask_bytes.empty());
+  WriteOptionalBytes(out, kDictBlockMaskBytes, "block_mask_bytes",
+                     head.block_mask_bytes);
 }
 
 void WriteField(duckdb::BinarySerializer& out,
@@ -285,6 +289,9 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
     kDictLevels, "levels",
     [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
       list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        if (head.levels.size() == kMaxRangeLevels) {
+          Corrupted("range level", head.id);
+        }
         auto& level = head.levels.emplace_back();
         level.id = head.id;
         level.layout = head.layout;
@@ -300,12 +307,15 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
     in.ReadPropertyWithDefault<std::string>(kDictBlockMasks, "block_masks");
   head.block_prefixes = in.ReadPropertyWithDefault<std::string>(
     kDictBlockPrefixes, "block_prefixes");
+  head.block_mask_bytes = in.ReadPropertyWithDefault<std::string>(
+    kDictBlockMaskBytes, "block_mask_bytes");
   const bool ranged =
     IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0;
   if ((!head.levels.empty() && (!ranged || head.term_count == 1 ||
                                 head.member != DictMember::Numbers)) ||
       (head.term_count == 1 &&
-       (!head.block_prefixes.empty() || !head.block_masks.empty())) ||
+       (!head.block_prefixes.empty() || !head.block_masks.empty() ||
+        !head.block_mask_bytes.empty())) ||
       (field_limits::valid(head.text.norm) &&
        !IsSubsetOf(IndexFeatures::Norm, head.features))) {
     Corrupted("dictionary", head.id);

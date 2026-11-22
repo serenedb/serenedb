@@ -35,9 +35,13 @@
 
 namespace irs::term_dict {
 
-inline constexpr size_t kBlockMaskWords = 2;
-inline constexpr size_t kBlockMaskBytes = kBlockMaskWords * sizeof(uint64_t);
-using BlockMask = std::array<uint64_t, kBlockMaskWords>;
+inline constexpr size_t kMaskBits = 64;
+inline constexpr size_t kMaskUnionBytes = sizeof(ByteSet::words);
+
+struct BlockNeed {
+  uint64_t bits = 0;
+  bool impossible = false;
+};
 
 constexpr bool GatesTerms(DictMember member, uint32_t width) noexcept {
   return width == 0 && member == DictMember::Strings;
@@ -79,12 +83,23 @@ class DictIndex {
   bytes_view Separator(uint32_t block) const noexcept {
     return _root.Separator(block);
   }
+  struct BlockBounds {
+    bytes_view lower;
+    bytes_view upper;
+    bool last;
+  };
+  BlockBounds Bounds(uint32_t block) const noexcept {
+    const bool last = block + 1 == _blocks;
+    return {
+      .lower = block == 0 ? bytes_view{_min_key} : _root.Separator(block),
+      .upper = last ? bytes_view{_max_key} : _root.Separator(block + 1),
+      .last = last,
+    };
+  }
   bytes_view BlockPrefix(uint32_t block) const noexcept {
-    const bytes_view lower =
-      block == 0 ? bytes_view{_min_key} : _root.Separator(block);
-    const bytes_view upper =
-      block + 1 == _blocks ? bytes_view{_max_key} : _root.Separator(block + 1);
-    return lower.substr(0, CommonPrefixLength(lower, upper));
+    const auto bounds = Bounds(block);
+    return bounds.lower.substr(0,
+                               CommonPrefixLength(bounds.lower, bounds.upper));
   }
   uint32_t BlockEnd(bytes_view upper) const;
 
@@ -95,25 +110,23 @@ class DictIndex {
     uint32_t depth;
   };
   BlockLink Link(uint32_t block) const noexcept {
-    return {.node = _link_nodes[block], .depth = _link_depths[block]};
+    return {.node = _link_nodes[block],
+            .depth = _link_depths[block] +
+                     static_cast<uint32_t>(_trie.Chain().size())};
   }
 
-  bool Masked() const noexcept { return !_masks.empty(); }
-  bool Holds(uint32_t block, const ByteSet& need) const noexcept {
-    const auto& mask = _masks[block];
-    return (mask[0] & need.words[0]) == need.words[0] &&
-           (mask[1] & need.words[1]) == need.words[1];
-  }
-  uint32_t Holding(uint32_t block, uint32_t end,
-                   const ByteSet& need) const noexcept {
-    SDB_ASSERT(end <= _masks.size());
-    for (; block < end && !Holds(block, need); ++block) {
+  BlockNeed NeedOf(const ByteSet& bytes) const noexcept;
+  bool Holds(uint32_t block, BlockNeed need) const noexcept {
+    if (need.bits == 0) {
+      return !need.impossible;
     }
-    return block;
+    return (_masks[block] & need.bits) == need.bits;
   }
   bool MayHoldAny(const ByteSet& bytes) const noexcept {
-    return ((bytes.words[0] & _held[0]) | (bytes.words[1] & _held[1]) |
-            bytes.words[2] | bytes.words[3]) != 0;
+    return ((bytes.words[0] & _held.words[0]) |
+            (bytes.words[1] & _held.words[1]) |
+            (bytes.words[2] & _held.words[2]) |
+            (bytes.words[3] & _held.words[3])) != 0;
   }
 
  private:
@@ -123,8 +136,11 @@ class DictIndex {
   PrefixTrie _trie;
   std::vector<uint32_t> _link_nodes;
   std::vector<uint8_t> _link_depths;
-  std::vector<BlockMask> _masks;
-  BlockMask _held{~uint64_t{0}, ~uint64_t{0}};
+  std::vector<uint64_t> _masks;
+  ByteSet _held{
+    .words = {~uint64_t{0}, ~uint64_t{0}, ~uint64_t{0}, ~uint64_t{0}}};
+  ByteSet _masked;
+  std::array<uint8_t, 256> _bits{};
   uint32_t _prefix_size;
   uint32_t _blocks;
   bool _gated;
@@ -134,7 +150,8 @@ class DictIndexBuilder {
  public:
   void Reset(bool gated) noexcept {
     _trie.Reset();
-    _masks.clear();
+    _seen.clear();
+    _terms = 0;
     _gated = gated;
   }
 
@@ -144,22 +161,25 @@ class DictIndexBuilder {
     if (!_gated) {
       return;
     }
-    ByteSet seen;
+    auto& seen = _seen.emplace_back();
+    _terms += count;
+    _trie.SetSpan(static_cast<uint32_t>(std::clamp<uint64_t>(
+      _terms / _seen.size() / 2, kTrieSpan, kTrieMaxSpan)));
     for (uint32_t i = 0; i != count; ++i) {
       const bytes_view term = term_at(i);
       _trie.Add(term);
       AddBytes(seen, term);
     }
-    AppendMask(seen);
   }
 
   void Finish(FieldHead& head);
 
  private:
-  void AppendMask(const ByteSet& seen);
+  void FinishMasks(FieldHead& head) const;
 
   PrefixTrieBuilder _trie;
-  std::string _masks;
+  std::vector<ByteSet> _seen;
+  uint64_t _terms = 0;
   bool _gated = false;
 };
 

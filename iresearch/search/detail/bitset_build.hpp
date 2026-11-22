@@ -24,7 +24,6 @@
 
 #include <algorithm>
 #include <bit>
-#include <optional>
 #include <ranges>
 #include <span>
 #include <type_traits>
@@ -255,7 +254,7 @@ doc_id_t ReadPosting(Input& in, uint32_t* IRS_RESTRICT enc,
                      BlockCursor<std::type_identity_t<Input>>* cursor,
                      const LiveWords* live, Sink& sink) {
   constexpr auto kBlock = doc_limits::kBlockSize;
-  SDB_ASSERT(live == nullptr || cursor != nullptr);
+  SDB_ASSERT(!live || cursor);
 
   [[maybe_unused]] const byte_type* at = nullptr;
   [[maybe_unused]] const byte_type* fetched = nullptr;
@@ -310,7 +309,7 @@ doc_id_t ReadPosting(Input& in, uint32_t* IRS_RESTRICT enc,
   };
 
   while (left != 0) {
-    if (live != nullptr) {
+    if (live) {
       const auto want = live->Next(std::max<doc_id_t>(prev + 1, min));
       if (want >= max) {
         return max;
@@ -395,8 +394,7 @@ class PostingReader {
       PrefetchDocs(File(), meta);
     }
     const auto end = meta.doc_start + DocExtent(meta);
-    if (meta.docs_count <= doc_limits::kBlockSize ||
-        (first && live == nullptr)) {
+    if (meta.docs_count <= doc_limits::kBlockSize || (first && !live)) {
       in.Seek(meta.doc_start);
       in.ReadAheadUntil(end);
       if (meta.docs_count <= doc_limits::kBlockSize) {
@@ -475,9 +473,7 @@ void ReadTerms(std::span<const Term> terms, const TermReader* field,
                PostingReader<Input>& r, Sink& sink) {
   PrefetchTerms(terms, r);
   for (size_t i = 0; i != terms.size(); ++i) {
-    if constexpr (requires { sink.Term(); }) {
-      sink.Term();
-    }
+    sink.Term();
     const auto& meta = CookieOf(terms[i]);
     SDB_ASSERT(meta.docs_count != 0);
     if (meta.docs_count == 1) {
@@ -493,7 +489,7 @@ inline void ReadFill(FillNode& node, doc_id_t min, doc_id_t max,
                      const LiveWords* live, uint64_t* IRS_RESTRICT words) {
   constexpr auto kBits = BitsetStorage::kBits;
   for (auto at = min; at < max;) {
-    if (live != nullptr) {
+    if (live) {
       const auto want = live->Next(at);
       if (want >= max) {
         return;

@@ -353,14 +353,19 @@ void Layout(benchmark::State& state, const Data& data) {
   uint64_t key_bytes = 0;
   for (uint32_t block = 0; block != field.Blocks(); ++block) {
     const auto* begin = store.Base() + field.BlockOffset(block);
-    const auto view = irs::term_dict::Parse(begin, field.Fsst());
+    const auto view = irs::term_dict::Parse(
+      {begin, field.BlockOffset(block + 1) - field.BlockOffset(block)},
+      field.Fsst());
     key_bytes += static_cast<uint64_t>(view.records - begin);
   }
   const auto terms = static_cast<double>(field.size());
   state.counters["blocks"] = static_cast<double>(field.Blocks());
   state.counters["terms_per_block"] = terms / field.Blocks();
   state.counters["page_bits_per_term"] =
-    8.0 * static_cast<double>(field.BlocksEnd() - field.BlockOffset(0)) / terms;
+    8.0 *
+    static_cast<double>(field.BlockOffset(field.Blocks()) -
+                        field.BlockOffset(0)) /
+    terms;
   state.counters["idx_bits_per_term"] =
     8.0 * static_cast<double>(store.Input().GetSize()) / terms;
   state.counters["key_bits_per_term"] =
@@ -658,6 +663,8 @@ void Register(Variant v) {
 }
 
 int Main(int argc, char** argv) {
+  irs::DuckDBEngine::Instance().Initialize();
+
   for (const auto lists : {Lists::Singles, Lists::Clustered}) {
     for (size_t s = 0; s != std::size(kShapeNames); ++s) {
       Register({.shape = static_cast<Shape>(s), .lists = lists});

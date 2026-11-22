@@ -58,13 +58,9 @@ class PostingsReader final {
   static size_t decode(const byte_type* in, IndexFeatures field_features,
                        PostingMeta& state);
 
-  template<bool Freq, bool Pos, bool Padded = false>
+  template<bool Freq, bool Pos>
   static size_t DecodeAs(const byte_type* in, IndexFeatures field_features,
                          PostingMeta& state);
-
-  template<typename Visitor>
-  static decltype(auto) WithRecordLayout(IndexFeatures field_features,
-                                         Visitor&& visitor);
 
   TermPostings::ptr Postings(IndexFeatures field_features,
                              IndexFeatures required_features,
@@ -116,27 +112,20 @@ inline void PostingsReader::prepare(const ReaderState& state,
   }
 }
 
-template<typename Visitor>
-inline decltype(auto) PostingsReader::WithRecordLayout(IndexFeatures features,
-                                                       Visitor&& visitor) {
-  const bool freq = IndexFeatures::None != (features & IndexFeatures::Freq);
-  if (IndexFeatures::None != (features & IndexFeatures::Pos)) {
-    return freq ? visitor.template operator()<true, true>()
-                : visitor.template operator()<false, true>();
-  }
-  return freq ? visitor.template operator()<true, false>()
-              : visitor.template operator()<false, false>();
-}
-
 inline size_t PostingsReader::decode(const byte_type* in,
                                      IndexFeatures features,
                                      PostingMeta& posting_meta) {
-  return WithRecordLayout(features, [&]<bool Freq, bool Pos> {
-    return DecodeAs<Freq, Pos>(in, features, posting_meta);
-  });
+  return Resolve(IndexFeatures::None != (features & IndexFeatures::Freq),
+                 [&]<bool Freq> IRS_FORCE_INLINE {
+                   return Resolve(
+                     IndexFeatures::None != (features & IndexFeatures::Pos),
+                     [&]<bool Pos> IRS_FORCE_INLINE {
+                       return DecodeAs<Freq, Pos>(in, features, posting_meta);
+                     });
+                 });
 }
 
-template<bool Freq, bool Pos, bool Padded>
+template<bool Freq, bool Pos>
 inline IRS_FORCE_INLINE size_t PostingsReader::DecodeAs(
   const byte_type* in, IndexFeatures features, PostingMeta& posting_meta) {
   const auto* p = in;
@@ -149,7 +138,7 @@ inline IRS_FORCE_INLINE size_t PostingsReader::DecodeAs(
 
   const uint64_t next = uint64_t{posting_meta.pos_offset} + posting_meta.freq;
   constexpr auto layout = RecordLayoutOf(Freq, Pos);
-  const auto head = Padded ? ReadPaddedVarint(p) : vread<uint64_t>(p);
+  const auto head = vread<uint64_t>(p);
   const bool single = (head & 1) != 0;
   const bool follows = Pos && (head >> layout.follows & 1) != 0;
   const auto payload = head >> layout.payload;
@@ -166,7 +155,9 @@ inline IRS_FORCE_INLINE size_t PostingsReader::DecodeAs(
 
   if (!single && (payload & 1) != 0) {
     const auto size = *p++;
-    SDB_ASSERT(size != 0 && size <= PostingMeta::kInlineBytes);
+    if (size == 0 || size > PostingMeta::kInlineBytes) [[unlikely]] {
+      return 0;
+    }
     posting_meta.inline_size = size;
   } else {
     posting_meta.inline_size = 0;

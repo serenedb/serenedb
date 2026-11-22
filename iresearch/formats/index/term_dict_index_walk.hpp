@@ -74,29 +74,44 @@ struct Live {
   uint32_t node;
 };
 
-template<typename A>
-Live<A> FirstLive(const A& a, const PrefixTrie* trie, uint32_t node,
-                  const typename A::State& state, uint32_t from,
-                  LabelRange range) {
-  if (node == kDeadNode) {
-    return {.label = kNoLabel, .next = {}, .node = kNoNode};
+class ChildLabels {
+ public:
+  ChildLabels(const PrefixTrie* trie, uint32_t node, uint32_t from) noexcept
+    : _gated{Gated(trie, node)} {
+    if (_gated) {
+      _children = trie->ChildrenOf(node, from);
+    } else if (node != kDeadNode) {
+      _label = from;
+    }
   }
-  const bool gated = Gated(trie, node);
-  for (auto label = std::max(from, range.lo); label <= range.hi;) {
-    uint32_t child = kNoNode;
-    if (gated) {
-      const auto next = trie->NextChild(node, label);
-      if (next.label > range.hi) {
-        break;
-      }
-      label = next.label;
-      child = next.node;
+
+  uint32_t Label() const noexcept {
+    return _gated ? _children.Label() : _label;
+  }
+  uint32_t Node() const noexcept { return _gated ? _children.Node() : kNoNode; }
+
+  void Next() noexcept {
+    if (_gated) {
+      _children.Next();
+    } else {
+      ++_label;
     }
-    const auto next = a.Step(state, static_cast<byte_type>(label));
+  }
+
+ private:
+  PrefixTrie::Children _children;
+  uint32_t _label = kNoLabel;
+  bool _gated;
+};
+
+template<typename A>
+Live<A> NextLive(const A& a, ChildLabels& labels,
+                 const typename A::State& state, uint32_t hi) {
+  for (; labels.Label() <= hi; labels.Next()) {
+    const auto next = a.Step(state, static_cast<byte_type>(labels.Label()));
     if (A::Alive(next)) {
-      return {.label = label, .next = next, .node = child};
+      return {.label = labels.Label(), .next = next, .node = labels.Node()};
     }
-    ++label;
   }
   return {.label = kNoLabel, .next = {}, .node = kNoNode};
 }
@@ -115,8 +130,8 @@ size_t Continuation(const A& a, const PrefixTrie* trie, uint32_t node,
   }
   const bool gated = Gated(trie, node) || node == kDeadNode;
   const auto range = LiveRangeOf(a, state);
-  for (uint32_t from = 0;;) {
-    const auto live = FirstLive(a, trie, node, state, from, range);
+  for (ChildLabels labels{trie, node, range.lo};; labels.Next()) {
+    const auto live = NextLive(a, labels, state, range.hi);
     if (live.label == kNoLabel) {
       return gated ? kDeadEnd : 0;
     }
@@ -129,7 +144,6 @@ size_t Continuation(const A& a, const PrefixTrie* trie, uint32_t node,
       tail[0] = static_cast<byte_type>(live.label);
       return rest + 1;
     }
-    from = live.label + 1;
   }
 }
 
@@ -144,8 +158,9 @@ Branch NextBranch(const A& a, const PrefixTrie* trie, uint32_t node,
                   const typename A::State& state, uint32_t from,
                   LabelRange range) {
   Branch branch{.label = kNoLabel, .extra = 0, .tail = {}};
-  for (;; from = branch.label + 1) {
-    const auto live = FirstLive(a, trie, node, state, from, range);
+  for (ChildLabels labels{trie, node, std::max(from, range.lo)};;
+       labels.Next()) {
+    const auto live = NextLive(a, labels, state, range.hi);
     branch.label = live.label;
     if (live.label == kNoLabel) {
       return branch;
@@ -173,23 +188,23 @@ class Targeter {
  public:
   using State = typename A::State;
 
+  static constexpr size_t kNoGate = std::numeric_limits<size_t>::max();
+
   Targeter(const DictIndex& index, const A& a)
     : _a{&a},
       _trie{UsesPrefixes(index, a) ? &index.Trie() : nullptr},
-      _k{index.KeyPrefix().size()} {}
+      _k{index.KeyPrefix().size()},
+      _states(_k + 1, a.Start()),
+      _ranges(_k + 1),
+      _nodes(1, _trie ? _trie->Root() : 0) {}
 
-  void Start() {
-    if (_states.empty()) {
-      _states.assign(_k + 1, _a->Start());
-      _ranges.resize(_k + 1);
-      _ranged = 0;
-      _nodes.assign(1, PrefixTrie::kRoot);
-    }
+  size_t GateOf(const DictIndex& index, uint32_t block) const noexcept {
+    return _trie ? _k + index.Link(block).depth : kNoGate;
   }
 
   const State& StateAt(size_t depth) const noexcept { return _states[depth]; }
-  Probe Assign(bytes_view prefix, bytes_view key) {
-    return _target.Assign(prefix, key);
+  void Assign(bytes_view prefix, bytes_view key) {
+    _target.Assign(prefix, key);
   }
   bytes_view Key() const noexcept { return _target.Key(); }
   Probe View() const noexcept { return _target.View(); }
@@ -242,11 +257,11 @@ class Targeter {
     return depth;
   }
 
-  bool NextTarget(bytes_view path, size_t& depth) {
+  bool NextTarget(bytes_view path, size_t& depth, size_t gate) {
     SDB_ASSERT(depth >= _k && depth < path.size());
     for (;;) {
       const auto branch =
-        NextBranch(*_a, _trie, NodeAt(path, depth), _states[depth],
+        NextBranch(*_a, _trie, NodeAt(path, depth, gate), _states[depth],
                    path[depth] + 1u, LiveRange(depth));
       if (branch.label != kNoLabel) {
         auto* target = Retarget(path, depth, 1 + branch.extra);
@@ -265,7 +280,7 @@ class Targeter {
     size_t depth = StepAlong(key, valid);
     if (_trie) {
       for (size_t at = valid; at < depth; ++at) {
-        if (NodeAt(key, at + 1) == kDeadNode) {
+        if (NodeAt(key, at + 1, kNoGate) == kDeadNode) {
           depth = at;
           break;
         }
@@ -273,8 +288,8 @@ class Targeter {
     }
     if (depth == key.size()) {
       Tail tail;
-      const size_t extra =
-        Continuation(*_a, _trie, NodeAt(key, depth), _states[depth], tail);
+      const size_t extra = Continuation(*_a, _trie, NodeAt(key, depth, kNoGate),
+                                        _states[depth], tail);
       if (extra != kDeadEnd) {
         std::memcpy(Retarget(key, key.size(), extra), tail.data(), extra);
         valid = depth;
@@ -285,7 +300,7 @@ class Targeter {
       }
       --depth;
     }
-    if (!NextTarget(key, depth)) {
+    if (!NextTarget(key, depth, kNoGate)) {
       return false;
     }
     valid = depth;
@@ -295,8 +310,8 @@ class Targeter {
  private:
   static constexpr uint32_t kUnranged = std::numeric_limits<uint32_t>::max();
 
-  uint32_t NodeAt(bytes_view path, size_t depth) {
-    if (!_trie) {
+  uint32_t NodeAt(bytes_view path, size_t depth, size_t gate) {
+    if (!_trie || depth > gate) {
       return kNoNode;
     }
     const auto term = path.substr(_k, depth - _k);
@@ -331,13 +346,6 @@ class Targeter {
 };
 
 template<typename A>
-const ByteSet* NeedOf(const DictIndex& index, const A& a) noexcept {
-  const auto& need = a.RequiredBytes();
-  return index.Masked() && (need.words[0] | need.words[1]) != 0 ? &need
-                                                                : nullptr;
-}
-
-template<typename A>
 class BlockFilter {
  public:
   using State = typename A::State;
@@ -345,14 +353,14 @@ class BlockFilter {
   BlockFilter(const DictIndex& index, const A& a) noexcept
     : _index{&index},
       _a{&a},
-      _need{NeedOf(index, a)},
-      _trie{UsesPrefixes(index, a) ? &index.Trie() : nullptr} {}
+      _trie{UsesPrefixes(index, a) ? &index.Trie() : nullptr},
+      _states(1, a.Start()) {}
 
   bool Live(uint32_t block) {
-    if (_need && !_index->Holds(block, *_need)) {
+    if (!Holds(block)) {
       return false;
     }
-    if (!_trie || _index->Small()) {
+    if (_index->Small()) {
       return true;
     }
     if (block != _last) {
@@ -362,12 +370,21 @@ class BlockFilter {
     return _live;
   }
 
+  bool Explores() const noexcept { return _trie && !_index->Small(); }
+  bool Holds(uint32_t block) noexcept {
+    if (!_needed) [[unlikely]] {
+      _need = _index->NeedOf(_a->RequiredBytes());
+      _needed = true;
+    }
+    return _index->Holds(block, _need);
+  }
+
   template<typename StateAt>
   bool LiveAt(uint32_t block, StateAt&& state_at) {
-    if (_need && !_index->Holds(block, *_need)) {
+    if (!Holds(block)) {
       return false;
     }
-    if (!_trie || _index->Small()) {
+    if (!Explores()) {
       return true;
     }
     if (block != _last) {
@@ -382,7 +399,7 @@ class BlockFilter {
     while (block < end && !Live(block)) {
       ++block;
     }
-    return std::min(block, end);
+    return block;
   }
 
   template<typename Emit>
@@ -395,16 +412,8 @@ class BlockFilter {
 
  private:
   bool Compute(uint32_t block) {
-    const auto& index = *_index;
-    const size_t k = index.KeyPrefix().size();
-    const bytes_view lower =
-      block == 0 ? index.MinKey() : index.Separator(block);
-    const bytes_view upper =
-      block + 1 == index.Blocks() ? index.MaxKey() : index.Separator(block + 1);
-    const auto prefix = lower.substr(k, CommonPrefixLength(lower, upper) - k);
-    if (_states.empty()) {
-      _states.assign(1, _a->Start());
-    }
+    const auto prefix =
+      _index->BlockPrefix(block).substr(_index->KeyPrefix().size());
     const size_t reuse = CommonPrefixLength(bytes_view{_path}, prefix);
     _path.resize(reuse);
     _states.resize(reuse + 1);
@@ -416,34 +425,41 @@ class BlockFilter {
       _states.push_back(next);
       _path.push_back(prefix[at]);
     }
-    const auto link = index.Link(block);
+    if (!_trie) {
+      return true;
+    }
+    const auto link = _index->Link(block);
     return ExploreBlock(block, link, _states[link.depth]);
   }
 
   bool ExploreBlock(uint32_t block, DictIndex::BlockLink link,
                     const State& state) const {
-    const auto& index = *_index;
-    const size_t skip = index.KeyPrefix().size() + link.depth;
-    const bool last = block + 1 == index.Blocks();
-    const bytes_view lower =
-      block == 0 ? index.MinKey() : index.Separator(block);
-    const bytes_view upper = last ? index.MaxKey() : index.Separator(block + 1);
-    return Explore(link.node, state, lower.substr(skip), upper.substr(skip),
-                   true, true, last);
+    const size_t skip = _index->KeyPrefix().size() + link.depth;
+    const auto bounds = _index->Bounds(block);
+    return Explore(link.node, state, bounds.lower.substr(skip),
+                   bounds.upper.substr(skip), true, true, bounds.last);
+  }
+
+  bool Accepts(const State& state) const {
+    if constexpr (A::kMayBeUnknown) {
+      if (A::Unknown(state)) {
+        return true;
+      }
+    }
+    typename A::PayloadType payload{};
+    return _a->Accept(state, payload);
   }
 
   bool Explore(uint32_t node, const State& state, bytes_view lo, bytes_view hi,
                bool lo_on, bool hi_on, bool inclusive) const {
     const auto& trie = *_trie;
-    if (trie.Terminal(node) && (!lo_on || lo.empty()) &&
-        (!hi_on || !hi.empty() || inclusive)) {
-      return true;
-    }
-    if (trie.Open(node)) {
-      return true;
-    }
+    const bool term =
+      trie.Terminal(node) && (!lo_on || lo.empty()) && Accepts(state);
     if (hi_on && hi.empty()) {
-      return false;
+      return inclusive && term;
+    }
+    if (term || trie.Open(node)) {
+      return true;
     }
     const auto range = LiveRangeOf(*_a, state);
     uint32_t from = range.lo;
@@ -454,15 +470,16 @@ class BlockFilter {
     if (hi_on) {
       to = std::min<uint32_t>(to, hi[0]);
     }
-    for (auto child = trie.NextChild(node, from); child.label <= to;
-         child = trie.NextChild(node, child.label + 1)) {
-      const auto next = _a->Step(state, static_cast<byte_type>(child.label));
+    for (auto child = trie.ChildrenOf(node, from); child.Label() <= to;
+         child.Next()) {
+      const uint32_t label = child.Label();
+      const auto next = _a->Step(state, static_cast<byte_type>(label));
       if (!A::Alive(next)) {
         continue;
       }
-      const bool low = lo_on && !lo.empty() && child.label == lo[0];
-      const bool high = hi_on && child.label == hi[0];
-      if (Explore(child.node, next, low ? lo.substr(1) : bytes_view{},
+      const bool low = lo_on && !lo.empty() && label == lo[0];
+      const bool high = hi_on && label == hi[0];
+      if (Explore(child.Node(), next, low ? lo.substr(1) : bytes_view{},
                   high ? hi.substr(1) : bytes_view{}, low, high, inclusive)) {
         return true;
       }
@@ -472,9 +489,10 @@ class BlockFilter {
 
   const DictIndex* _index;
   const A* _a;
-  const ByteSet* _need;
   const PrefixTrie* _trie;
+  BlockNeed _need;
   uint32_t _last = std::numeric_limits<uint32_t>::max();
+  bool _needed = false;
   bool _live = false;
   bstring _path;
   containers::SmallVector<State, 32> _states;

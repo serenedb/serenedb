@@ -34,7 +34,6 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/plan.hpp"
-#include "iresearch/search/detail/posting_fill.hpp"
 #include "iresearch/search/fill/bitset_docs.hpp"
 #include "iresearch/search/lead/bitset_docs.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"

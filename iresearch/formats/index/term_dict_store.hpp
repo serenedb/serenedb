@@ -55,7 +55,7 @@ class BlockStore {
     }
   }
 
-  bool Opened() const noexcept { return _in != nullptr; }
+  bool Opened() const noexcept { return _in; }
   bool Mapped() const noexcept { return _base; }
   const duckdb::InputFile& Input() const noexcept { return *_in; }
   const byte_type* Base() const noexcept { return _base; }

@@ -20,9 +20,11 @@
 
 #include "iresearch/formats/index/term_dict_index.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #include <algorithm>
+#include <bit>
 #include <string_view>
 #include <vector>
 
@@ -43,7 +45,8 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
     Corrupted("record", head.id);
   }
   if (blocks == 1 || !_gated) {
-    if (!head.block_prefixes.empty() || !head.block_masks.empty()) {
+    if (!head.block_prefixes.empty() || !head.block_masks.empty() ||
+        !head.block_mask_bytes.empty()) {
       Corrupted("record", head.id);
     }
   }
@@ -55,6 +58,14 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
   }
   _root =
     Root{Slice(separators, head.first_block, blocks - 1), head.width != 0};
+  for (uint32_t block = 0; block != blocks; ++block) {
+    const auto bounds = Bounds(block);
+    if ((bounds.last ? bounds.upper < bounds.lower
+                     : bounds.upper <= bounds.lower) ||
+        CommonPrefixLength(bounds.lower, bounds.upper) < prefix.size()) {
+      Corrupted("separators", head.id);
+    }
+  }
   if (!_gated) {
     return;
   }
@@ -65,15 +76,11 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
                      head.id};
   _link_nodes.reserve(blocks);
   _link_depths.reserve(blocks);
-  std::vector<uint32_t> path{PrefixTrie::kRoot};
+  const size_t chain = _trie.Chain().size();
+  std::vector<uint32_t> path{_trie.Root()};
   bstring previous;
   for (uint32_t block = 0; block != blocks; ++block) {
-    const bytes_view lower =
-      block == 0 ? bytes_view{_min_key} : _root.Separator(block);
-    const bytes_view upper =
-      block + 1 == blocks ? bytes_view{_max_key} : _root.Separator(block + 1);
-    const auto term = lower.substr(
-      prefix.size(), CommonPrefixLength(lower, upper) - prefix.size());
+    const auto term = BlockPrefix(block).substr(prefix.size());
     const size_t keep =
       std::min(CommonPrefixLength(bytes_view{previous}, term), path.size() - 1);
     path.resize(keep + 1);
@@ -88,33 +95,85 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
       }
       path.push_back(child);
     }
+    if (path.size() <= chain) {
+      Corrupted("block prefixes", head.id);
+    }
     previous.assign(term);
     _link_nodes.push_back(path.back());
-    _link_depths.push_back(static_cast<uint8_t>(path.size() - 1));
+    _link_depths.push_back(static_cast<uint8_t>(path.size() - 1 - chain));
   }
   const auto& masks = head.block_masks;
-  if (masks.empty()) {
+  const auto& bytes = head.block_mask_bytes;
+  if (masks.empty() && bytes.empty()) {
     return;
   }
-  if (masks.size() != size_t{blocks} * kBlockMaskBytes) {
+  if (bytes.size() < kMaskUnionBytes ||
+      bytes.size() > kMaskUnionBytes + kMaskBits) {
     Corrupted("block masks", head.id);
   }
+  ByteSet held;
+  for (size_t i = 0; i != held.words.size(); ++i) {
+    held.words[i] =
+      absl::little_endian::Load64(bytes.data() + i * sizeof(uint64_t));
+  }
+  const auto selected =
+    ViewCast<byte_type>(std::string_view{bytes}).substr(kMaskUnionBytes);
+  if (masks.size() !=
+      (selected.empty() ? 0 : size_t{blocks} * sizeof(uint64_t))) {
+    Corrupted("block masks", head.id);
+  }
+  _held = held;
+  if (selected.empty()) {
+    return;
+  }
+  uint64_t valid = 0;
+  for (size_t bit = 0; bit != selected.size(); ++bit) {
+    const byte_type b = selected[bit];
+    if ((bit != 0 && b <= selected[bit - 1]) || !held.Contains(b)) {
+      Corrupted("block masks", head.id);
+    }
+    _bits[b] = static_cast<uint8_t>(bit);
+    _masked.Add(b);
+    valid |= uint64_t{1} << bit;
+  }
   _masks.resize(blocks);
-  _held = {};
-  const auto* at = masks.data();
-  for (auto& mask : _masks) {
-    for (size_t i = 0; i != kBlockMaskWords; ++i) {
-      mask[i] = absl::little_endian::Load64(at);
-      _held[i] |= mask[i];
-      at += sizeof(uint64_t);
+  for (uint32_t block = 0; block != blocks; ++block) {
+    _masks[block] = absl::little_endian::Load64(
+      masks.data() + size_t{block} * sizeof(uint64_t));
+    if ((_masks[block] & ~valid) != 0) {
+      Corrupted("block masks", head.id);
     }
   }
+}
+
+BlockNeed DictIndex::NeedOf(const ByteSet& bytes) const noexcept {
+  uint64_t missing = 0;
+  uint64_t masked = 0;
+  for (size_t i = 0; i != bytes.words.size(); ++i) {
+    missing |= bytes.words[i] & ~_held.words[i];
+    masked |= bytes.words[i] & _masked.words[i];
+  }
+  if (missing != 0) {
+    return {.bits = 0, .impossible = true};
+  }
+  BlockNeed need;
+  if (masked == 0) {
+    return need;
+  }
+  for (size_t i = 0; i != bytes.words.size(); ++i) {
+    for (uint64_t word = bytes.words[i] & _masked.words[i]; word != 0;
+         word &= word - 1) {
+      const auto b = i * 64 + static_cast<size_t>(std::countr_zero(word));
+      need.bits |= uint64_t{1} << _bits[b];
+    }
+  }
+  return need;
 }
 
 size_t DictIndex::MemoryBytes() const noexcept {
   return (Small() ? 0 : _root.MemoryBytes() + _trie.MemoryBytes()) +
          _link_nodes.capacity() * sizeof(uint32_t) + _link_depths.capacity() +
-         _masks.capacity() * sizeof(BlockMask);
+         _masks.capacity() * sizeof(uint64_t);
 }
 
 uint32_t DictIndex::BlockEnd(bytes_view upper) const {
@@ -125,18 +184,58 @@ uint32_t DictIndex::BlockEnd(bytes_view upper) const {
   return BlockOf(key.Assign(KeyPrefix(), upper)) + 1;
 }
 
-void DictIndexBuilder::AppendMask(const ByteSet& seen) {
-  for (size_t i = 0; i != kBlockMaskWords; ++i) {
-    char bytes[sizeof(uint64_t)];
-    absl::little_endian::Store64(bytes, seen.words[i]);
-    _masks.append(bytes, sizeof(bytes));
+void DictIndexBuilder::FinishMasks(FieldHead& head) const {
+  if (_seen.empty()) {
+    return;
+  }
+  ByteSet held;
+  std::array<uint64_t, 256> present{};
+  for (const auto& seen : _seen) {
+    AddAll(held, seen);
+    for (size_t i = 0; i != seen.words.size(); ++i) {
+      for (uint64_t word = seen.words[i]; word != 0; word &= word - 1) {
+        ++present[i * 64 + static_cast<size_t>(std::countr_zero(word))];
+      }
+    }
+  }
+  std::vector<byte_type> selected;
+  for (size_t b = 0; b != present.size(); ++b) {
+    if (present[b] != 0 && present[b] != _seen.size()) {
+      selected.push_back(static_cast<byte_type>(b));
+    }
+  }
+  absl::c_stable_sort(selected, [&](byte_type lhs, byte_type rhs) {
+    return present[lhs] < present[rhs];
+  });
+  selected.resize(std::min(selected.size(), kMaskBits));
+  absl::c_sort(selected);
+  head.block_mask_bytes.resize(kMaskUnionBytes);
+  for (size_t i = 0; i != held.words.size(); ++i) {
+    absl::little_endian::Store64(
+      head.block_mask_bytes.data() + i * sizeof(uint64_t), held.words[i]);
+  }
+  head.block_mask_bytes.append(
+    ViewCast<char>(bytes_view{selected.data(), selected.size()}));
+  if (selected.empty()) {
+    return;
+  }
+  head.block_masks.resize(_seen.size() * sizeof(uint64_t));
+  for (size_t block = 0; block != _seen.size(); ++block) {
+    uint64_t mask = 0;
+    for (size_t bit = 0; bit != selected.size(); ++bit) {
+      if (_seen[block].Contains(selected[bit])) {
+        mask |= uint64_t{1} << bit;
+      }
+    }
+    absl::little_endian::Store64(
+      head.block_masks.data() + block * sizeof(uint64_t), mask);
   }
 }
 
 void DictIndexBuilder::Finish(FieldHead& head) {
   head.block_prefixes = _trie.Finish();
-  head.block_masks = std::move(_masks);
-  _masks.clear();
+  FinishMasks(head);
+  _seen.clear();
 }
 
 }  // namespace irs::term_dict

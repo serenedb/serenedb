@@ -132,16 +132,8 @@ bool Disjoint(std::span<const detail::PostingClause> clauses) {
   return DistinctTerms(clauses);
 }
 
-uint64_t SumOf(std::span<const detail::PostingClause> clauses) noexcept {
-  uint64_t sum = 0;
-  for (const auto& clause : clauses) {
-    sum += clause.state.cookie.docs_count;
-  }
-  return sum;
-}
-
 bool ShouldSums(const BooleanQuery& query, const Context& ctx) {
-  return ctx.table == nullptr && query.MinShouldMatch() == 1 &&
+  return !ctx.table && query.MinShouldMatch() == 1 &&
          query.Bucket(Occur::Must).empty() &&
          query.Bucket(Occur::MustNot).empty() &&
          query.Queries(Occur::Should).empty() &&

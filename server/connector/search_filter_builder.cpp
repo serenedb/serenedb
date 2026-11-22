@@ -2683,7 +2683,7 @@ bool IsTextConstant(const duckdb::Value& value) {
 
 bool IsExactNumber(const duckdb::LogicalType& type) {
   return type.id() == duckdb::LogicalTypeId::DECIMAL ||
-         IntegerKindOf(type.id()).has_value();
+         IntegerKindOf(type.id());
 }
 
 struct DecimalText {

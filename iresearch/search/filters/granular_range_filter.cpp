@@ -61,7 +61,7 @@ QueryBuilder::ptr Complement(const SubReader& segment,
   }
   const auto* nulls = segment.field(
     meta.id, {.layout = meta.dict.layout, .member = DictMember::Nulls});
-  const uint64_t null_docs = nulls != nullptr ? nulls->docs_count() : 0;
+  const uint64_t null_docs = nulls ? nulls->docs_count() : 0;
   const uint64_t values = reader.docs_count();
   if (values + null_docs != segment.docs_count()) {
     return nullptr;

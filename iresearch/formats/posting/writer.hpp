@@ -201,7 +201,7 @@ class PostingsWriter final {
   }
 
   FieldStats EndField() {
-    if (_features.vec && _term_pay != nullptr) {
+    if (_features.vec && _term_pay) {
       SDB_ASSERT(_pay_out);
       _term_pay->Finish(*_pay_out);
     }

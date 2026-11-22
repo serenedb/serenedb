@@ -35,6 +35,7 @@ namespace {
 
 constexpr byte_type kZeros[kPage]{};
 constexpr uint64_t kMaxBlockPages = 16;
+static_assert(kPage * kMaxBlockPages <= uint64_t{1} << (8 * kVarRestart));
 
 uint32_t PagesFor(const BlockShare& share) noexcept {
   const uint64_t keyed = share.bytes - share.inline_bytes;
@@ -266,7 +267,8 @@ void FieldWriter::CloseRun() {
   bytes.resize(at + size);
   duckdb::MemoryStream out{bytes.data() + at, size};
   run.Write(out);
-  SDB_ASSERT(out.GetPosition() == size);
+  SDB_ENSURE(out.GetPosition() == size, "term dictionary: posting run of ",
+             out.GetPosition(), " bytes, sized as ", size);
   _records.inline_bytes += run.InlineBytes();
   run.Clear();
 }
@@ -337,7 +339,9 @@ void FieldWriter::WriteBlock(uint64_t size) {
     _spans.push_back({.block = _blocks, .extra = pages - 1});
   }
   _encoder.Serialize(*_out, _records.bytes);
-  SDB_ASSERT(_out->Position() == position + pad + size);
+  SDB_ENSURE(_out->Position() == position + pad + size,
+             "term dictionary: block of ", _out->Position() - position - pad,
+             " bytes, sized as ", size);
   ++_blocks;
 }
 

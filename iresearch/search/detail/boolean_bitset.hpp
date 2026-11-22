@@ -82,7 +82,7 @@ Result MakeConjunctionBitset(std::span<const Term> terms,
                              TableFilter* table) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   const auto* const doc = SegmentDoc(segment);
-  if (doc == nullptr) {
+  if (!doc) {
     return {};
   }
   BitsetBuckets buckets;
@@ -200,7 +200,7 @@ Result MakeNegationBitset(const BooleanGroups& groups, const SubReader& segment,
   SDB_ASSERT(!groups.must_not.empty() || !groups.must_not_filters.empty());
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
   const auto* const doc = SegmentDoc(segment);
-  if (doc == nullptr) {
+  if (!doc) {
     return {};
   }
   BitsetBuckets buckets;
@@ -239,7 +239,7 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
       return {};
     }
     const auto* const doc = DocOf(FieldOf(groups.should.front(), nullptr));
-    if (doc == nullptr || !TakeBitset<Result>(groups.should, docs_count)) {
+    if (!doc || !TakeBitset<Result>(groups.should, docs_count)) {
       return {};
     }
     auto buckets = DisjunctionBuckets(groups.should, nullptr);
@@ -255,7 +255,7 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
   SDB_ASSERT(groups.must.size() + groups.must_filters.size() > 1 ||
              !groups.must_not.empty() || !groups.must_not_filters.empty());
   const auto* const doc = SegmentDoc(segment);
-  if (doc == nullptr) {
+  if (!doc) {
     return {};
   }
   BitsetBuckets buckets;

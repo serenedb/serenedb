@@ -46,7 +46,7 @@ bool FewRuns(const detail::PostingClause& term,
 Root::ptr MakeShortcut(const BooleanQuery& query, const Context& ctx) {
   if (ShouldSums(query, ctx)) {
     const auto terms = query.Terms(Occur::Should);
-    return MakeWholeCount(SumOf(terms), ctx, [terms, ctx] {
+    return MakeWholeCount(detail::SumDocs(terms), ctx, [terms, ctx] {
       return MakeTermsSum(terms, nullptr, ctx);
     });
   }

@@ -122,7 +122,7 @@ class RegexpAcceptor {
 
   bytes_view LowerBound() const noexcept { return _lower; }
 
-  bool MatchesByLiteral() const noexcept { return !_contained.empty(); }
+  bool MatchesByLiteral() const noexcept { return _contained; }
 
   std::span<const bstring> RequiredSuffixes() const noexcept {
     return _suffixes;
@@ -165,7 +165,10 @@ class RegexpAcceptor {
   static size_t Stay(const Mask& loop, const byte_type* p, size_t n) noexcept {
     constexpr size_t kBlock = 16;
     constexpr uint32_t kAll = (uint32_t{1} << kBlock) - 1;
-    size_t i = 0;
+    if (n == 0 || !loop.Contains(p[0])) {
+      return 0;
+    }
+    size_t i = 1;
     for (; i + kBlock <= n; i += kBlock) {
       const auto stays = ClassifyByteSet16(p + i, loop);
       if (stays != kAll) {
@@ -255,13 +258,13 @@ class RegexpAcceptor {
   std::vector<bstring> _suffixes;
   std::vector<ExemptKey> _exempt;
   bstring _infix;
-  bstring _contained;
   std::vector<bstring> _literals;
   ByteSet _required;
   ByteSet _dead_bytes;
   std::string _error;
   bool _finite{false};
   bool _text{true};
+  bool _contained{false};
   size_t _max_dfa_mem{kDefaultMaxDfaMem};
 
   mutable std::mutex _mutex;

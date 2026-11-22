@@ -53,9 +53,8 @@ bytes_view BlockStore::Copy(uint64_t offset, uint64_t size) {
 }
 
 const byte_type* BlockStore::CopyBlock(uint32_t block) {
-  const uint64_t length = _in->GetSize();
   const uint64_t offset = BlockOffset(block);
-  return Copy(offset, std::min(BlockOffset(block + 1), length) - offset).data();
+  return Copy(offset, BlockOffset(block + 1) - offset).data();
 }
 
 void BlockStore::Finish() {

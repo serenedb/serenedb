@@ -171,7 +171,6 @@ class RecordDecoder {
 
   void Reset(const byte_type* run) { _view = ParseRun(run, _features); }
 
-  uint32_t Count() const noexcept { return _view.count; }
   const byte_type* InlineData() const noexcept {
     return _view.inline_area + _bytes;
   }

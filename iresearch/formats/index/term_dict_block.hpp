@@ -37,7 +37,6 @@
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
@@ -208,107 +207,135 @@ inline bytes_view FixedKey(const BlockView& view, uint32_t entry, uint32_t at,
   return {buffer.data(), view.stride};
 }
 
-inline BlockView Parse(const byte_type* p, const duckdb_fsst_decoder_t* fsst) {
+inline byte_type BlockByte(const byte_type*& p, const byte_type* end) {
+  if (p == end) [[unlikely]] {
+    Corrupted("block header");
+  }
+  return *p++;
+}
+
+template<typename T>
+T BlockVarint(const byte_type*& p, const byte_type* end) {
+  const auto value = ReadVarint<T>(p, end);
+  if (!value) [[unlikely]] {
+    Corrupted("block header");
+  }
+  return *value;
+}
+
+inline const byte_type* BlockSection(const byte_type* at, const byte_type* end,
+                                     uint64_t bytes) {
+  if (bytes > static_cast<uint64_t>(end - at)) [[unlikely]] {
+    Corrupted("block size");
+  }
+  return at + bytes;
+}
+
+inline BlockView Parse(bytes_view block, const duckdb_fsst_decoder_t* fsst) {
+  const auto* p = block.data();
+  const auto* const end = p + block.size();
   BlockView view{};
-  const auto kind = static_cast<BlockKind>(*p++);
+  const auto kind = static_cast<BlockKind>(BlockByte(p, end));
   view.fixed = kind == BlockKind::FixedStride;
   view.coded = kind == BlockKind::VarFsst;
   if (view.coded && !fsst) [[unlikely]] {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG("term dictionary: FSST-coded block in a segment "
-                            "without an FSST table"));
+    Corrupted("FSST-coded block without an FSST table");
   }
-  view.count = vread<uint32_t>(p);
-  const auto corrupted = [](std::string_view what, uint64_t value) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG("term dictionary: block ", what, " ", value));
-  };
+  view.count = BlockVarint<uint32_t>(p, end);
   if (kind == BlockKind::Var || kind == BlockKind::VarFsst) {
-    view.restarts = vread<uint32_t>(p);
+    view.restarts = BlockVarint<uint32_t>(p, end);
     if (view.restarts != (uint64_t{view.count} + kRestartInterval - 1) /
                            kRestartInterval) [[unlikely]] {
-      corrupted("restart count", view.restarts);
+      Corrupted("block restart count");
     }
     const auto width = [&] {
-      const uint32_t width = *p++;
+      const uint32_t width = BlockByte(p, end);
       if (width != 1 && width != 2 && width != 4) [[unlikely]] {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                        ERR_MSG("term dictionary: column width ", width));
+        Corrupted("block column width");
       }
       return width;
     };
     view.lcps.width = width();
     view.lens.width = width();
-    const auto suffixes = vread<uint64_t>(p);
-    view.prefix = vread<uint32_t>(p);
-    const uint32_t layout = *p++;
+    const auto suffixes = BlockVarint<uint64_t>(p, end);
+    view.prefix = BlockVarint<uint32_t>(p, end);
+    const uint32_t layout = BlockByte(p, end);
     const bool packed = layout != kColumnHeaders;
     auto& headers = view.headers;
     uint32_t columns = view.count;
     if (packed) {
       if (layout > kHeaderBits) [[unlikely]] {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                        ERR_MSG("term dictionary: header layout ", layout));
+        Corrupted("block header layout");
       }
       headers.len_bits = layout;
-      headers.lcp_base = vread<uint32_t>(p);
-      headers.escaped = vread<uint32_t>(p);
+      headers.lcp_base = BlockVarint<uint32_t>(p, end);
+      headers.escaped = BlockVarint<uint32_t>(p, end);
       if (headers.escaped > view.count) [[unlikely]] {
-        corrupted("escaped headers", headers.escaped);
+        Corrupted("block escaped headers");
       }
       columns = headers.escaped;
     }
-    view.table = p + view.prefix;
-    view.heads = view.table + kVarRestart * view.restarts;
-    view.lcps.data = view.heads + kHeadBytes * view.restarts;
+    view.table = BlockSection(p, end, view.prefix);
+    view.heads =
+      BlockSection(view.table, end, uint64_t{kVarRestart} * view.restarts);
+    view.lcps.data =
+      BlockSection(view.heads, end, uint64_t{kHeadBytes} * view.restarts);
     if (packed) {
       headers.codes = view.lcps.data;
-      headers.escaped_entries = headers.codes + view.count;
-      view.lcps.data =
-        headers.escaped_entries + kEscapedEntry * headers.escaped;
+      headers.escaped_entries = BlockSection(headers.codes, end, view.count);
+      view.lcps.data = BlockSection(headers.escaped_entries, end,
+                                    uint64_t{kEscapedEntry} * headers.escaped);
     }
-    view.lens.data = view.lcps.data + uint64_t{columns} * view.lcps.width;
-    view.suffixes = view.lens.data + uint64_t{columns} * view.lens.width;
-    view.records = view.suffixes + suffixes;
+    view.lens.data =
+      BlockSection(view.lcps.data, end, uint64_t{columns} * view.lcps.width);
+    view.suffixes =
+      BlockSection(view.lens.data, end, uint64_t{columns} * view.lens.width);
+    view.records = BlockSection(view.suffixes, end, suffixes);
+    BlockSection(view.records, end, kSlack);
     return view;
   }
   if (view.fixed) {
-    view.stride = vread<uint32_t>(p);
-    view.prefix = vread<uint32_t>(p);
+    view.stride = BlockVarint<uint32_t>(p, end);
+    view.prefix = BlockVarint<uint32_t>(p, end);
     if (!PacksKeys(view.stride)) {
-      view.table = p + view.prefix;
+      view.table = BlockSection(p, end, view.prefix);
       view.restarts = static_cast<uint32_t>(FixedHeads(view.count));
       view.heads = view.table;
-      view.keys = view.heads + kHeadBytes * view.restarts;
-      view.records = view.keys + uint64_t{view.count} * view.stride;
+      view.keys =
+        BlockSection(view.heads, end, uint64_t{kHeadBytes} * view.restarts);
+      view.records =
+        BlockSection(view.keys, end, uint64_t{view.count} * view.stride);
+      BlockSection(view.records, end, kSlack);
       return view;
     }
     auto& ef = view.ef;
     ef.count = view.count;
-    ef.low_bits = *p++;
+    ef.low_bits = BlockByte(p, end);
     if (ef.low_bits >= 8 * view.stride) [[unlikely]] {
-      corrupted("key low bits", ef.low_bits);
+      Corrupted("block key low bits");
     }
-    ef.highs = vread<uint64_t>(p);
+    ef.highs = BlockVarint<uint64_t>(p, end);
     const uint64_t max = ~uint64_t{0} >> (8 * (sizeof(uint64_t) - view.stride));
     if (ef.count == 0 || ef.highs > max >> ef.low_bits ||
         !EfFits(ef.count, {.low_bits = ef.low_bits, .highs = ef.highs}))
       [[unlikely]] {
-      corrupted("key high bits", ef.highs);
+      Corrupted("block key high bits");
     }
     ef.low_mask = (uint64_t{1} << ef.low_bits) - 1;
-    ef.base = LoadStride(p, view.stride);
-    p += view.stride;
-    view.table = p + view.prefix;
+    const auto* const base = p;
+    p = BlockSection(p, end, view.stride);
+    ef.base = LoadStride(base, view.stride);
+    view.table = BlockSection(p, end, view.prefix);
     ef.samples = view.table;
-    ef.upper = ef.samples + kEfSampleBytes * EfSamples(ef.count);
-    ef.lows = ef.upper + EfUpperBytes(ef.count, ef.highs);
-    view.records = ef.lows + PackedBytes(ef.count, ef.low_bits);
+    ef.upper = BlockSection(ef.samples, end,
+                            uint64_t{kEfSampleBytes} * EfSamples(ef.count));
+    ef.lows = BlockSection(ef.upper, end, EfUpperBytes(ef.count, ef.highs));
+    view.records =
+      BlockSection(ef.lows, end, PackedBytes(ef.count, ef.low_bits));
+    BlockSection(view.records, end, kSlack);
     return view;
   }
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                  ERR_MSG("term dictionary: unknown block kind ",
-                          static_cast<uint32_t>(kind)));
+  Corrupted("block kind");
 }
 
 struct Header {
@@ -399,17 +426,6 @@ inline size_t DecodeInto(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
                          byte_type* out, size_t limit) noexcept {
   size_t pos = 0;
   for (size_t i = 0; i != codes.size() && pos < limit;) {
-    const auto symbol = NextSymbol(decoder, codes.data(), i);
-    absl::little_endian::Store64(out + pos, symbol.word);
-    pos += symbol.len;
-  }
-  return pos;
-}
-
-inline size_t DecodeAll(const duckdb_fsst_decoder_t& decoder, bytes_view codes,
-                        byte_type* out) noexcept {
-  size_t pos = 0;
-  for (size_t i = 0; i != codes.size();) {
     const auto symbol = NextSymbol(decoder, codes.data(), i);
     absl::little_endian::Store64(out + pos, symbol.word);
     pos += symbol.len;
@@ -568,27 +584,23 @@ struct HeadCounts {
   uint32_t not_after;
 };
 
-template<typename Head>
 IRS_FORCE_INLINE inline HeadCounts CountHeads(const byte_type* heads,
                                               uint32_t from, uint32_t count,
-                                              Head head) noexcept {
+                                              uint32_t head) noexcept {
   static_assert(std::endian::native == std::endian::little);
-  static_assert(std::is_same_v<Head, uint16_t> ||
-                std::is_same_v<Head, uint32_t>);
-  constexpr uint32_t kLanes = 16 / sizeof(Head);
+  constexpr uint32_t kLanes = 16 / sizeof(head);
   constexpr uint32_t kMaskBits = 64 / kLanes;
-  using Lanes = Head __attribute__((vector_size(16)));
-  using MaskLane = std::conditional_t<kMaskBits == 16, int16_t, int8_t>;
-  using Mask = MaskLane __attribute__((vector_size(8)));
+  using Lanes = uint32_t __attribute__((vector_size(16)));
+  using Mask = int16_t __attribute__((vector_size(8)));
   const auto load = [&](uint32_t i) {
-    Head value;
-    std::memcpy(&value, heads + i * sizeof(Head), sizeof(Head));
+    uint32_t value;
+    std::memcpy(&value, heads + i * sizeof(value), sizeof(value));
     return value;
   };
   uint32_t not_after = from;
   for (uint32_t i = from; i < count; i += kLanes) {
     Lanes lanes;
-    std::memcpy(&lanes, heads + i * sizeof(Head), sizeof(lanes));
+    std::memcpy(&lanes, heads + i * sizeof(head), sizeof(lanes));
     const auto bits =
       std::bit_cast<uint64_t>(__builtin_convertvector(lanes <= head, Mask));
     const auto run = std::min<uint32_t>(
@@ -827,7 +839,7 @@ class BlockCursor {
   explicit BlockCursor(const duckdb_fsst_decoder_t* fsst) noexcept
     : _fsst{fsst} {}
 
-  void Open(const byte_type* block, uint32_t limit) {
+  void Open(bytes_view block, uint32_t limit) {
     ++_generation;
     _pending.count = 0;
     _partial = false;
@@ -1263,9 +1275,6 @@ class BlockCursor {
       return size;
     }
     auto* key = Reserve(lcp + suffix.size() * sizeof(uint64_t)) + lcp;
-    if (need == std::numeric_limits<uint32_t>::max()) {
-      return DecodeAll(*_fsst, suffix, key);
-    }
     return DecodeInto(*_fsst, suffix, key, need);
   }
 

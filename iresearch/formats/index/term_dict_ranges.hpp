@@ -77,7 +77,6 @@ class RangeWriter final {
     uint64_t docs_count;
   };
 
-  static void Keep(RangePosting& posting, const PostingMeta& meta) noexcept;
   void Push(size_t level, const Child& child);
   void Close(size_t level);
   void Release(size_t level);

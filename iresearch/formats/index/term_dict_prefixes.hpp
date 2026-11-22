@@ -35,6 +35,7 @@ namespace irs::term_dict {
 inline constexpr uint32_t kTrieFull = 4;
 inline constexpr uint32_t kTrieDepth = 16;
 inline constexpr uint32_t kTrieSpan = 48;
+inline constexpr uint32_t kTrieMaxSpan = 1024;
 inline constexpr uint32_t kNoNode = std::numeric_limits<uint32_t>::max();
 inline constexpr uint32_t kNoLabel = 256;
 
@@ -44,11 +45,51 @@ inline constexpr uint32_t kDenseFanout = 16;
 
 class PrefixTrie {
  public:
-  static constexpr uint32_t kRoot = 0;
+  class Children {
+   public:
+    Children() = default;
+    explicit Children(const uint64_t* words, uint32_t word, uint64_t bits,
+                      uint32_t node) noexcept
+      : _words{words},
+        _bits{bits},
+        _word{word},
+        _label{word * 64 + static_cast<uint32_t>(std::countr_zero(bits))},
+        _node{node} {}
+    explicit Children(const byte_type* at, const byte_type* end,
+                      uint32_t node) noexcept
+      : _at{at},
+        _end{end},
+        _label{at != end ? uint32_t{*at} : kNoLabel},
+        _node{node} {}
 
-  struct Child {
-    uint32_t label;
-    uint32_t node;
+    uint32_t Label() const noexcept { return _label; }
+    uint32_t Node() const noexcept { return _node; }
+
+    void Next() noexcept {
+      ++_node;
+      if (_words) {
+        _bits &= _bits - 1;
+        while (_bits == 0) {
+          if (++_word == 4) {
+            _label = kNoLabel;
+            return;
+          }
+          _bits = _words[_word];
+        }
+        _label = _word * 64 + static_cast<uint32_t>(std::countr_zero(_bits));
+        return;
+      }
+      _label = ++_at != _end ? uint32_t{*_at} : kNoLabel;
+    }
+
+   private:
+    const uint64_t* _words = nullptr;
+    const byte_type* _at = nullptr;
+    const byte_type* _end = nullptr;
+    uint64_t _bits = 0;
+    uint32_t _word = 0;
+    uint32_t _label = kNoLabel;
+    uint32_t _node = kNoNode;
   };
 
   PrefixTrie() = default;
@@ -56,7 +97,8 @@ class PrefixTrie {
 
   bool Empty() const noexcept { return _nodes == 0; }
   uint32_t Nodes() const noexcept { return _nodes; }
-  uint32_t DenseNodes() const noexcept { return _dense; }
+  bytes_view Chain() const noexcept { return _chain; }
+  uint32_t Root() const noexcept { return _chain.empty() ? 0 : _nodes; }
   bool Terminal(uint32_t node) const noexcept { return Bit(_terminal, node); }
   bool Open(uint32_t node) const noexcept { return Bit(_open, node); }
 
@@ -65,42 +107,48 @@ class PrefixTrie {
       const auto* words = DenseWords(node);
       return (words[0] | words[1] | words[2] | words[3]) == 0;
     }
+    if (node >= _nodes) {
+      return false;
+    }
     return !Bit(_inner, node - _dense);
   }
 
-  Child NextChild(uint32_t node, uint32_t from) const noexcept {
-    constexpr Child kNone{.label = kNoLabel, .node = kNoNode};
+  Children ChildrenOf(uint32_t node, uint32_t from) const noexcept {
     if (from > std::numeric_limits<byte_type>::max()) {
-      return kNone;
+      return {};
     }
     if (node < _dense) {
       const auto* words = DenseWords(node);
-      for (uint32_t word = from / 64; word != 4; ++word) {
-        uint64_t bits = words[word];
-        if (word == from / 64) {
-          bits &= ~uint64_t{0} << (from % 64);
+      uint32_t word = from / 64;
+      uint64_t bits = words[word] & (~uint64_t{0} << (from % 64));
+      while (bits == 0) {
+        if (++word == 4) {
+          return {};
         }
-        if (bits != 0) {
-          const uint32_t label =
-            word * 64 + static_cast<uint32_t>(std::countr_zero(bits));
-          return {.label = label, .node = DenseChild(node, words, label)};
-        }
+        bits = words[word];
       }
-      return kNone;
+      const uint32_t label =
+        word * 64 + static_cast<uint32_t>(std::countr_zero(bits));
+      return Children{words, word, bits, DenseChild(node, words, label)};
+    }
+    if (node >= _nodes) {
+      const uint32_t at = node - _nodes;
+      const auto* label = _chain.data() + at;
+      if (*label < from) {
+        return {};
+      }
+      return Children{label, label + 1, at + 1 == _chain.size() ? 0 : node + 1};
     }
     const uint32_t sparse = node - _dense;
     if (!Bit(_inner, sparse)) {
-      return kNone;
+      return {};
     }
     const uint32_t inner = InnerRank(sparse);
     const auto* labels = _labels.data();
-    const auto* begin = labels + (_first[inner] - _dense);
     const auto* end = labels + (_first[inner + 1] - _dense);
-    const auto* at = std::lower_bound(begin, end, static_cast<byte_type>(from));
-    if (at == end) {
-      return kNone;
-    }
-    return {.label = *at, .node = static_cast<uint32_t>(at - labels) + _dense};
+    const auto* at = std::lower_bound(labels + (_first[inner] - _dense), end,
+                                      static_cast<byte_type>(from));
+    return Children{at, end, static_cast<uint32_t>(at - labels) + _dense};
   }
 
   uint32_t ChildOf(uint32_t node, byte_type label) const noexcept {
@@ -111,8 +159,8 @@ class PrefixTrie {
       }
       return DenseChild(node, words, label);
     }
-    const auto next = NextChild(node, label);
-    return next.label == label ? next.node : kNoNode;
+    const auto children = ChildrenOf(node, label);
+    return children.Label() == label ? children.Node() : kNoNode;
   }
 
   size_t MemoryBytes() const noexcept {
@@ -122,7 +170,7 @@ class PrefixTrie {
            (_dense_first.capacity() + _inner_rank.capacity() +
             _first.capacity()) *
              sizeof(uint32_t) +
-           _labels.capacity();
+           _labels.capacity() + _chain.capacity();
   }
 
  private:
@@ -150,6 +198,7 @@ class PrefixTrie {
 
   std::vector<uint64_t> _dense_words;
   std::vector<uint32_t> _dense_first;
+  bstring _chain;
   bstring _labels;
   std::vector<uint64_t> _inner;
   std::vector<uint32_t> _inner_rank;
@@ -163,6 +212,7 @@ class PrefixTrie {
 class PrefixTrieBuilder {
  public:
   void Add(bytes_view term);
+  void SetSpan(uint32_t span) noexcept { _span = span; }
   std::string Finish();
   void Reset() noexcept;
 
@@ -179,16 +229,19 @@ class PrefixTrieBuilder {
   };
 
   uint32_t AppendChild(uint32_t parent, byte_type label);
-  void Expand(uint32_t node, size_t from);
+  void Expand(uint32_t node, size_t from, size_t to);
   void Descend(bytes_view term);
   bool Expands(const Node& node) const noexcept {
-    return node.expanded || node.depth < kTrieFull;
+    return node.expanded || node.depth < _origin + kTrieFull;
   }
 
   std::vector<Node> _nodes;
   std::vector<uint32_t> _open;
   std::vector<bstring> _window;
+  bstring _first;
+  size_t _origin = 0;
   size_t _added = 0;
+  uint32_t _span = kTrieSpan;
 };
 
 }  // namespace irs::term_dict

@@ -35,8 +35,6 @@ namespace irs::count {
 
 bool Disjoint(std::span<const detail::PostingClause> clauses);
 
-uint64_t SumOf(std::span<const detail::PostingClause> clauses) noexcept;
-
 bool ShouldSums(const BooleanQuery& query, const Context& ctx);
 
 template<typename Make>

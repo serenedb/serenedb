@@ -85,7 +85,6 @@ class TermReaderImpl final : public TermReader {
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
 
-  const FieldReader& Owner() const noexcept { return *_owner; }
   const BlockStore& Store() const noexcept;
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
                                TermPostings::ptr reuse) const;
@@ -97,10 +96,9 @@ class TermReaderImpl final : public TermReader {
   uint32_t FirstEntry() const noexcept { return _first_entry; }
   uint32_t FirstRecord() const noexcept { return _first_record; }
   uint32_t LastEntry() const noexcept { return _last_entry; }
-  const byte_type* Block(size_t block, PinnedRange& pinned) const;
+  bytes_view Block(size_t block, PinnedRange& pinned) const;
   void HintBlock(uint32_t block) const noexcept;
   uint64_t BlockOffset(size_t block) const noexcept;
-  uint64_t BlocksEnd() const noexcept { return BlockOffset(Blocks()); }
   std::span<const TermReaderImpl* const> RangeLevels() const noexcept {
     return _range_levels;
   }

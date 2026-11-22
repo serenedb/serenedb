@@ -144,10 +144,6 @@ inline int64_t TimeTzIndexTerm(int64_t raw_bits) noexcept {
     duckdb::dtime_tz_t{static_cast<uint64_t>(raw_bits)}.sort_key());
 }
 
-// A value at the width its terms are built from, read as `load<T>()` of the
-// physical type T. Whoever reads a column must read it this way: a value
-// written at one width and looked up at another is a different term, so the
-// sink and the query share this one definition.
 template<duckdb::LogicalTypeId Kind, typename Load>
 auto NumericValueOf(Load&& load) {
   if constexpr (Kind == duckdb::LogicalTypeId::TINYINT) {

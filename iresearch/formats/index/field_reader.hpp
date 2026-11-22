@@ -94,15 +94,17 @@ inline uint64_t TermReaderImpl::BlockOffset(size_t block) const noexcept {
   return Store().BlockOffset(_first_block + block);
 }
 
-inline const byte_type* TermReaderImpl::Block(size_t block,
-                                              PinnedRange& pinned) const {
+inline bytes_view TermReaderImpl::Block(size_t block,
+                                        PinnedRange& pinned) const {
+  const uint64_t offset = BlockOffset(block);
+  const uint64_t size = BlockOffset(block + 1) - offset;
   if (_small) {
-    return _small;
+    return {_small, size};
   }
   if (const auto* base = Store().Base()) {
-    return base + BlockOffset(block);
+    return {base + offset, size};
   }
-  return PinBlock(block, pinned);
+  return {PinBlock(block, pinned), size};
 }
 
 }  // namespace irs::term_dict

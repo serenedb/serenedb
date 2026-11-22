@@ -48,6 +48,7 @@ class CopyInStream final : public duckdb::RowSource {
   duckdb::optional_idx End() const final;
   bool Live() const final { return true; }
   bool Available(duckdb::idx_t offset) const final;
+  void Nudge() final;
 
  private:
   struct UnitBytes {
@@ -74,6 +75,7 @@ class CopyInStream final : public duckdb::RowSource {
   mutable duckdb::idx_t _pulled ABSL_GUARDED_BY(_lock) = 0;
   mutable bool _pulling ABSL_GUARDED_BY(_lock) = false;
   mutable bool _finished ABSL_GUARDED_BY(_lock) = false;
+  mutable bool _nudged ABSL_GUARDED_BY(_lock) = false;
 };
 
 class CopyInStreamOffer {

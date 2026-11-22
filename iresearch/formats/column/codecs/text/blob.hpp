@@ -463,6 +463,9 @@ class Tuner final : public State {
     const auto tier = _params.tier;
     const auto levels = Levels(tier);
     const auto held = Tuned<Rows>(tier);
+    if (_window.rows == 0) {
+      Trial(state, held, _values, _window, _params.segment_target);
+    }
     const auto size = [&](const Config& config) { return Size(state, config); };
     Measured measured{.config = held};
     const auto input = _window.input;
@@ -602,6 +605,7 @@ class Tuner final : public State {
   }
 
   ShapeRows& TrialRows(Shape shape) {
+    SDB_ASSERT(_window.rows != 0);
     auto& rows = _rows[std::to_underlying(shape)];
     if (rows.done) {
       return rows;
@@ -791,10 +795,10 @@ inline constexpr CompressionFunction kFrameFunction{
 template<typename Codec, typename Rows>
 double AnalyzeTuned(ColumnDataCheckpointData& data, double bound) {
   const auto& values = data.Get<Values>();
-  auto& state = data.Get<CodecState<CompressionState<Codec, Rows>>>();
-  if (!values.Repeats() || !Contests(state, data)) {
+  if (!values.Repeats() || !Contends(values, data.disabled, Rows::kShape)) {
     return kNoScore;
   }
+  auto& state = data.Get<CodecState<CompressionState<Codec, Rows>>>();
   const auto& window = data.Get<Window>();
   const auto priced = [&](uint64_t bytes) {
     return Score(values, window, Rows::kShape, data.price, bytes);

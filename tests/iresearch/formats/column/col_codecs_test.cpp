@@ -1269,7 +1269,6 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
                           checkpoint);
     EXPECT_GT(segments, 1u);
     EXPECT_EQ(rows, 20000u);
-    EXPECT_FALSE(tuning.strings.config);
   }
 }
 
@@ -1315,8 +1314,6 @@ TEST_F(ColCodecsTest, AutoChoosesPerRowGroup) {
   const auto mixed = seal(2, 12);
   EXPECT_GT(mixed.size(), 1u);
   EXPECT_TRUE(all(mixed, Shape::Plain)) << ::testing::PrintToString(mixed);
-  ASSERT_TRUE(tuning.strings.config);
-  EXPECT_EQ(tuning.strings.config->shape, Shape::Plain);
 
   RoundTrip(irs::codecs::CodecType::Auto, {.segment_target = 16 * 1024},
             3 * kSwitch, DEFAULT_ROW_GROUP_SIZE, value);
@@ -5017,7 +5014,14 @@ TEST_F(ColCodecsTest, AutoMeasuresATextCandidateAgainOnlyWhenItMayWin) {
   using irs::codecs::Shape;
   const auto seal = [&](const std::vector<std::unique_ptr<duckdb::Vector>>& in,
                         irs::codecs::ColumnTuning& tuning) {
-    EXPECT_TRUE(AllText(SealAuto(Db(), WriteChunks(in), {}, tuning)));
+    const auto types = SealAuto(Db(), WriteChunks(in), {}, tuning);
+    EXPECT_TRUE(AllText(types));
+    return types;
+  };
+  const auto all = [](const std::vector<CodecType>& types, Shape shape) {
+    return !types.empty() && absl::c_all_of(types, [&](CodecType type) {
+      return irs::codecs::ShapeOf(type) == shape;
+    });
   };
   const Value urls = [](uint64_t g) -> std::optional<std::string> {
     return "https://example.org/section/" + std::to_string(g % 5000) +
@@ -5025,32 +5029,28 @@ TEST_F(ColCodecsTest, AutoMeasuresATextCandidateAgainOnlyWhenItMayWin) {
   };
   const auto steady = Chunks(4096, urls);
   irs::codecs::ColumnTuning tuning;
-  const auto& config = tuning.strings.config;
   auto& dictionary = tuning.hints[std::to_underlying(CodecType::DictFsst)];
-  seal(steady, tuning);
+  auto types = seal(steady, tuning);
   ASSERT_NE(dictionary.forced, 0u);
   const auto far = 2 * dictionary.score;
   dictionary.score = far;
   for (unsigned rg = 1; rg < 8; ++rg) {
-    seal(steady, tuning);
+    types = seal(steady, tuning);
     EXPECT_EQ(dictionary.score, far);
   }
-  ASSERT_TRUE(config);
-  EXPECT_EQ(config->shape, Shape::Plain);
+  EXPECT_TRUE(all(types, Shape::Plain)) << ::testing::PrintToString(types);
 
   const Value repeated = [](uint64_t g) -> std::optional<std::string> {
     std::mt19937_64 rng{g + 1};
     return "status-" + std::to_string(rng() % 37);
   };
   const auto changed = Chunks(4096, repeated);
-  seal(changed, tuning);
-  ASSERT_TRUE(config);
-  EXPECT_EQ(config->shape, Shape::Dictionary);
+  types = seal(changed, tuning);
+  EXPECT_TRUE(all(types, Shape::Dictionary)) << ::testing::PrintToString(types);
   EXPECT_NE(dictionary.score, far);
 
-  seal(steady, tuning);
-  ASSERT_TRUE(config);
-  EXPECT_EQ(config->shape, Shape::Plain);
+  types = seal(steady, tuning);
+  EXPECT_TRUE(all(types, Shape::Plain)) << ::testing::PrintToString(types);
 }
 
 TEST_F(ColCodecsTest, AutoFollowsAChangeBetweenRowGroups) {

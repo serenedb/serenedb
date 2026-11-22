@@ -76,7 +76,6 @@ struct OrderTuning {
 };
 
 struct StringTuning {
-  std::optional<text::Config> config;
   FrameTuning frames[kByteCodecCount][kTextShapeCount];
   OrderTuning order[kByteCodecCount];
   RatioHistory history[kByteCodecCount][kShapeCount]{};

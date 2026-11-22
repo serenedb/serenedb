@@ -84,6 +84,9 @@ inline double Score(const Values& values, const Window& window, Shape shape,
 
 inline bool Contends(const Values& values, const CodecSet& disabled,
                      Shape shape) noexcept {
+  if (values.Rows() == 0) {
+    return false;
+  }
   return shape == Shape::Dictionary || !values.Repeats() ||
          (disabled.test(
             std::to_underlying(CodecOf(Shape::Dictionary, ByteCodec::Fsst))) &&
@@ -231,35 +234,19 @@ Segment& Trial(CodecState<Compression>& state, const Config& config,
 }
 
 template<typename Compression>
-bool Contests(CodecState<Compression>& state, ColumnDataCheckpointData& data) {
-  constexpr auto kShape = Compression::kShape;
-  constexpr auto kLeaf = Compression::kCodec;
-  const auto& values = data.Get<Values>();
-  if (values.Rows() == 0) {
-    return false;
-  }
-  auto& window = data.Get<Window>();
-  state.config = {.shape = kShape, .leaf = kLeaf};
-  const auto& tuned = data.tuning.strings.config;
-  if (window.rows == 0 && tuned && tuned->shape == kShape &&
-      tuned->leaf == kLeaf) {
-    Trial(state, *tuned, values, window, data.params.segment_target);
-  }
-  return Contends(values, data.disabled, kShape);
-}
-
-template<typename Compression>
 double AnalyzeTrial(ColumnDataCheckpointData& data, double) {
-  auto& state = data.Get<CodecState<Compression>>();
-  if (!Contests(state, data)) {
+  constexpr auto kShape = Compression::kShape;
+  const auto& values = data.Get<Values>();
+  if (!Contends(values, data.disabled, kShape)) {
     return kNoScore;
   }
-  const auto& values = data.Get<Values>();
+  auto& state = data.Get<CodecState<Compression>>();
   auto& window = data.Get<Window>();
+  state.config = {.shape = kShape, .leaf = Compression::kCodec};
   const auto bytes =
     Trial(state, state.config, values, window, data.params.segment_target)
       .Size();
-  return Score(values, window, Compression::kShape, data.price, bytes);
+  return Score(values, window, kShape, data.price, bytes);
 }
 
 template<typename Compression>
@@ -288,7 +275,6 @@ bool CompressContested(const Codec& codec, ColumnDataCheckpointData& data) {
   const auto& values = data.Get<Values>();
   auto& window = data.Get<Window>();
   SDB_ASSERT(window.rows != 0);
-  data.tuning.strings.config = state.config;
   auto& first =
     Trial(state, state.config, values, window, data.params.segment_target);
   if (first.Size() > PlainStorageBytes(first)) {

@@ -227,12 +227,6 @@ AnnWriter& ColWriter::AttachAnn(field_id column_id, AnnInfo info) {
   return *back.writer;
 }
 
-bool ColWriter::HasAnn(field_id column_id) const noexcept {
-  return absl::c_any_of(_ann_writers, [&](const auto& entry) {
-    return entry->column_id == column_id;
-  });
-}
-
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
   for (auto& entry : _ann_writers) {
     if (entry->writer) {

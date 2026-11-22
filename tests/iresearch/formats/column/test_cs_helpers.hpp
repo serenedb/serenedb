@@ -99,7 +99,7 @@ class BstringDataOutput final : public duckdb::WriteStream {
   explicit BstringDataOutput(bstring& buf) noexcept : _buf{&buf} {}
 
  private:
-  void Overflow(const byte_type* data, size_t size) final {
+  void Overflow(const byte_type* data, duckdb::idx_t size) final {
     _buf->append(data, size);
     write_offset += size;
   }

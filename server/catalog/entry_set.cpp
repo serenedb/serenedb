@@ -39,6 +39,7 @@
 #include "catalog/base_catalog.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/entry/db_role_setting.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/transaction.h"
@@ -483,6 +484,13 @@ void OidIndex::CheckCreated(const duckdb::SnapshotView& view,
     }
   };
   duckdb::ForEachRoleReference(version, check_role);
+  if (version.type == duckdb::CatalogType::DB_ROLE_SETTING_ENTRY) {
+    const auto& setting = version.Cast<DbRoleSettingCatalogEntry>();
+    check_role(setting.Role());
+    if (setting.Database()) {
+      roles.CheckLive(view, setting.Database(), false);
+    }
+  }
 }
 
 void OidIndex::CheckLive(const duckdb::SnapshotView& view, duckdb::idx_t oid,

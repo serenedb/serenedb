@@ -105,8 +105,7 @@ RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
     _conn_limit{info.conn_limit},
     _valid_until{info.valid_until},
     _password{info.password},
-    _config{info.config},
-    _all_roles_config{info.all_roles_config} {
+    _config{info.config} {
   comment = info.comment;
   tags = info.tags;
   permissions = info.permissions;
@@ -122,7 +121,6 @@ duckdb::unique_ptr<duckdb::CreateInfo> RoleCatalogEntry::GetInfo() const {
   info->password = _password;
   info->member_of = MemberOf();
   info->config = _config;
-  info->all_roles_config = _all_roles_config;
   info->comment = comment;
   info->tags = tags;
   return std::move(info);
@@ -236,8 +234,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
                        ERR_MSG("MD5 password cleared because of role rename")));
     }
   }
-  ApplyConfigChange(alter.all_roles ? next.all_roles_config : next.config,
-                    alter.set_config, alter.reset_config,
+  ApplyConfigChange(next.config, alter.set_config, alter.reset_config,
                     alter.reset_all_config);
   if (alter.grant_role_id != 0) {
     const auto granted = [&](const duckdb::Membership& edge) {

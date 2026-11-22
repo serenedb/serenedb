@@ -18,18 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog/entry/database.h"
+#include "catalog/entry/db_role_setting.h"
 #include "catalog/entry/role.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
 namespace {
-
-struct DatabaseSettingRow {
-  duckdb::idx_t database;
-  const duckdb::DatabaseSetting& setting;
-};
 
 class PgDbRoleSetting final : public SystemTableScan<kPgDbRoleSettingSql> {
  public:
@@ -39,37 +34,27 @@ class PgDbRoleSetting final : public SystemTableScan<kPgDbRoleSettingSql> {
     CatalogSetSource{
       SystemCatalog::Cluster, duckdb::CatalogType::ROLE_ENTRY, {}},
     CatalogSetSource{
-      SystemCatalog::Cluster, duckdb::CatalogType::DATABASE_ENTRY, {}}};
+      SystemCatalog::Cluster, duckdb::CatalogType::DB_ROLE_SETTING_ENTRY, {}}};
 
-  static constexpr auto kSetting = Shape<kSql, const catalog::RoleCatalogEntry>(
-    Col<"setrole">(&duckdb::CatalogEntry::oid),
-    Col<"setconfig">(&catalog::RoleCatalogEntry::Config));
-
-  static constexpr auto kGlobalSetting =
+  static constexpr auto kRoleSetting =
     Shape<kSql, const catalog::RoleCatalogEntry>(
-      Col<"setrole">([](const auto&) { return kInvalidOid; }),
-      Col<"setconfig">(&catalog::RoleCatalogEntry::AllRolesConfig));
+      Col<"setrole">(&duckdb::CatalogEntry::oid),
+      Col<"setconfig">(&catalog::RoleCatalogEntry::Config));
 
-  static constexpr auto kDatabaseSetting =
-    Shape<kSql, const DatabaseSettingRow>(
-      Col<"setdatabase">([](const auto& row) { return row.database; }),
-      Col<"setrole">([](const auto& row) { return row.setting.role; }),
-      Col<"setconfig">(
-        [](const auto& row) -> const auto& { return row.setting.config; }));
+  static constexpr auto kDbRoleSetting =
+    Shape<kSql, const catalog::DbRoleSettingCatalogEntry>(
+      Col<"setdatabase">(&catalog::DbRoleSettingCatalogEntry::Database),
+      Col<"setrole">(&catalog::DbRoleSettingCatalogEntry::Role),
+      Col<"setconfig">(&catalog::DbRoleSettingCatalogEntry::Config));
 
   void Row(const catalog::RoleCatalogEntry& role) {
     if (!role.Config().empty()) {
-      Emit<kSetting>(role);
-    }
-    if (!role.AllRolesConfig().empty()) {
-      Emit<kGlobalSetting>(role);
+      Emit<kRoleSetting>(role);
     }
   }
 
-  void Row(const catalog::DatabaseCatalogEntry& database) {
-    for (const auto& setting : database.Settings()) {
-      Emit<kDatabaseSetting>({database.oid, setting});
-    }
+  void Row(const catalog::DbRoleSettingCatalogEntry& setting) {
+    Emit<kDbRoleSetting>(setting);
   }
 };
 

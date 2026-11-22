@@ -59,6 +59,7 @@
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
+#include "catalog/entry/db_role_setting.h"
 #include "catalog/entry/role.h"
 #include "connector/duckdb_storage_extension.h"
 #include "connector/iresearch_replacement_scan.h"
@@ -244,22 +245,19 @@ std::string ConnectionContext::SessionUserName() {
 }
 
 void ConnectionContext::ApplyRoleSettings() {
-  duckdb::vector<std::string> global_config;
-  catalog::ReadEntry<catalog::RoleCatalogEntry>(
-    catalog::kRootRole, [&](const catalog::RoleCatalogEntry& root) {
-      global_config = root.AllRolesConfig();
-    });
-  duckdb::vector<std::string> database_config;
-  duckdb::vector<std::string> database_role_config;
-  catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
-    GetDatabase(), [&](const catalog::DatabaseCatalogEntry& database) {
-      if (const auto* config = database.SettingsOf(0)) {
-        database_config = *config;
-      }
-      if (const auto* config = database.SettingsOf(_login_role_id)) {
-        database_role_config = *config;
-      }
-    });
+  const auto settings_of = [](duckdb::idx_t database, duckdb::idx_t role) {
+    duckdb::vector<std::string> config;
+    catalog::ReadEntry<catalog::DbRoleSettingCatalogEntry>(
+      duckdb::CreateDbRoleSettingInfo::NameOf(database, role)
+        .GetIdentifierName(),
+      [&](const catalog::DbRoleSettingCatalogEntry& setting) {
+        config = setting.Config();
+      });
+    return config;
+  };
+  auto global_config = settings_of(0, 0);
+  auto database_config = settings_of(_database_id, 0);
+  auto database_role_config = settings_of(_database_id, _login_role_id);
   duckdb::vector<std::string> role_config;
   catalog::ReadEntry<catalog::RoleCatalogEntry>(
     _user, [&](const catalog::RoleCatalogEntry& role) {

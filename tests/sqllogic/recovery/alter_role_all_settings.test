@@ -48,6 +48,36 @@ db error: ERROR: permission denied to alter setting
 DETAIL: Only roles with the SUPERUSER attribute may alter settings globally.
 
 
+connection c_concurrent
+statement ok
+BEGIN;
+
+
+connection c_concurrent
+statement ok
+ALTER ROLE ALL SET aras.concurrent = 'kept';
+
+
+statement ok
+ALTER ROLE postgres CONNECTION LIMIT -1;
+
+
+connection c_concurrent
+statement ok
+COMMIT;
+
+
+query
+SELECT array_to_string(setconfig, ',') AS config FROM pg_db_role_setting WHERE setrole = 0 AND setdatabase = 0;
+----
+config
+aras.scope=global,aras.concurrent=kept
+
+
+statement ok
+ALTER ROLE ALL RESET aras.concurrent;
+
+
 statement ok
 SET sdb_faults = 'shutdown_on_packet';
 

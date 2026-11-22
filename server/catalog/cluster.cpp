@@ -64,6 +64,7 @@
 #include "catalog/catalog.h"
 #include "catalog/database_directory.h"
 #include "catalog/dependency.h"
+#include "catalog/entry/db_role_setting.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/parameter.h"
@@ -352,6 +353,8 @@ EntrySet* ClusterCatalog::FindSet(duckdb::CatalogType type) {
       return &_tablespaces;
     case duckdb::CatalogType::PARAMETER_ENTRY:
       return &_parameters;
+    case duckdb::CatalogType::DB_ROLE_SETTING_ENTRY:
+      return &_db_role_settings;
     default:
       return BaseCatalog::FindSet(type);
   }
@@ -549,6 +552,11 @@ void ClusterCatalog::ApplyAlter(duckdb::CatalogTransaction transaction,
     AlterParameter(transaction, info.Cast<duckdb::AlterPermissionsInfo>());
     return;
   }
+  if (type == duckdb::CatalogType::DB_ROLE_SETTING_ENTRY) {
+    AlterDbRoleSetting(transaction,
+                       info.Cast<duckdb::AlterDatabaseSettingsInfo>());
+    return;
+  }
   if (type != duckdb::CatalogType::ROLE_ENTRY &&
       type != duckdb::CatalogType::DATABASE_ENTRY &&
       type != duckdb::CatalogType::TABLESPACE_ENTRY) {
@@ -603,6 +611,62 @@ void ClusterCatalog::AlterParameter(duckdb::CatalogTransaction transaction,
   AddTo(_parameters, transaction,
         duckdb::make_uniq<ParameterCatalogEntry>(*this, create),
         duckdb::OnCreateConflict::ERROR_ON_CONFLICT);
+}
+
+void ClusterCatalog::AlterDbRoleSetting(
+  duckdb::CatalogTransaction transaction,
+  duckdb::AlterDatabaseSettingsInfo& info) {
+  const auto name =
+    duckdb::CreateDbRoleSettingInfo::NameOf(info.database_id, info.role_id);
+  auto existing = _db_role_settings.Get(transaction, name);
+  duckdb::vector<std::string> config;
+  if (existing) {
+    config = existing->Cast<DbRoleSettingCatalogEntry>().Config();
+  }
+  ApplyConfigChange(config, info.set_config, info.reset_config,
+                    info.reset_all_config);
+  if (config.empty()) {
+    if (existing) {
+      DeclareModified(transaction, *this,
+                      duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
+      _db_role_settings.Drop(transaction, name);
+    }
+    return;
+  }
+  if (existing) {
+    DeclareModified(transaction, *this,
+                    duckdb::DatabaseModificationType::ALTER_TABLE);
+    AlterEntry(transaction, _db_role_settings, *existing, info);
+    return;
+  }
+  duckdb::CreateDbRoleSettingInfo create;
+  create.database = info.database_id;
+  create.role = info.role_id;
+  create.config = std::move(config);
+  AssignObjectOid(*this, create);
+  AddTo(_db_role_settings, transaction,
+        duckdb::make_uniq<DbRoleSettingCatalogEntry>(*this, create),
+        duckdb::OnCreateConflict::ERROR_ON_CONFLICT);
+}
+
+void ClusterCatalog::DropDbRoleSettings(
+  duckdb::CatalogTransaction transaction,
+  absl::FunctionRef<bool(duckdb::idx_t database, duckdb::idx_t role)> matches) {
+  std::vector<duckdb::Identifier> names;
+  _db_role_settings.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+    const auto& setting = entry.Cast<DbRoleSettingCatalogEntry>();
+    if (matches(setting.Database(), setting.Role())) {
+      names.push_back(setting.name);
+    }
+  });
+  if (names.empty()) {
+    return;
+  }
+  DeclareModified(transaction, *this,
+                  duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
+  for (const auto& name : names) {
+    _db_role_settings.Drop(transaction, name);
+  }
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
@@ -733,24 +797,9 @@ void ClusterCatalog::DropRole(
     alter.revoke = true;
     ApplyAlter(transaction, alter);
   }
-  struct Settings {
-    duckdb::Identifier database;
-    duckdb::idx_t role;
-  };
-  std::vector<Settings> settings;
-  _databases.Scan(transaction, [&](duckdb::CatalogEntry& database) {
-    for (const auto role : dropped) {
-      if (database.Cast<DatabaseCatalogEntry>().SettingsOf(role)) {
-        settings.push_back({database.name, role});
-      }
-    }
+  DropDbRoleSettings(transaction, [&](duckdb::idx_t, duckdb::idx_t role) {
+    return absl::c_linear_search(dropped, role);
   });
-  for (const auto& setting : settings) {
-    duckdb::AlterDatabaseSettingsInfo alter{setting.database};
-    alter.role_id = setting.role;
-    alter.reset_all_config = true;
-    ApplyAlter(transaction, alter);
-  }
   for (const auto& name : names) {
     RefuseDependents(context, *this, *_roles.Get(transaction, name));
   }
@@ -818,6 +867,10 @@ void ClusterCatalog::DropDatabase(duckdb::CatalogTransaction transaction,
   if (auto entry =
         _databases.Get(transaction, info.GetQualifiedName().Name())) {
     DropDependents(transaction, *entry, info.cascade, info.dropped_together);
+    DropDbRoleSettings(
+      transaction, [oid = entry->oid](duckdb::idx_t database, duckdb::idx_t) {
+        return database == oid;
+      });
   }
   if (!DropFrom(_databases, transaction, duckdb::CatalogType::DATABASE_ENTRY,
                 info)) {
@@ -1018,6 +1071,11 @@ void ClusterCatalog::ReplayCreate(duckdb::ClientContext& context,
                          duckdb::make_uniq<ParameterCatalogEntry>(
                            *this, info->Cast<duckdb::CreateParameterInfo>()));
       return;
+    case duckdb::CatalogType::DB_ROLE_SETTING_ENTRY:
+      _db_role_settings.Create(
+        transaction, duckdb::make_uniq<DbRoleSettingCatalogEntry>(
+                       *this, info->Cast<duckdb::CreateDbRoleSettingInfo>()));
+      return;
     default:
       BaseCatalog::ReplayCreate(context, std::move(info));
   }
@@ -1030,7 +1088,8 @@ void ClusterCatalog::ReplayDrop(duckdb::ClientContext& context,
       type != duckdb::CatalogType::DATABASE_ENTRY &&
       type != duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY &&
       type != duckdb::CatalogType::TABLESPACE_ENTRY &&
-      type != duckdb::CatalogType::PARAMETER_ENTRY) {
+      type != duckdb::CatalogType::PARAMETER_ENTRY &&
+      type != duckdb::CatalogType::DB_ROLE_SETTING_ENTRY) {
     BaseCatalog::ReplayDrop(context, entry);
     return;
   }

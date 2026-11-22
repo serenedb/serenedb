@@ -3779,6 +3779,100 @@ TEST_F(ColumnReaderTest, SegmentRoundTripNestedList) {
   }
 }
 
+TEST_F(ColumnReaderTest, ListsWhoseElementsArriveInUnevenChunksReadBack) {
+  constexpr uint64_t kRows = 3 * STANDARD_VECTOR_SIZE;
+  constexpr irs::field_id kL = 21;
+  const auto ltype = duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
+  const auto make_row = [](uint64_t g) {
+    duckdb::vector<duckdb::Value> items;
+    for (uint64_t j = 0; j <= g % 3; ++j) {
+      items.push_back(duckdb::Value::BIGINT(static_cast<int64_t>(g * 4 + j)));
+    }
+    return duckdb::Value::LIST(duckdb::LogicalType::BIGINT, items);
+  };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), dir.Tracker("seg")};
+    auto& cw = w.OpenColumn(
+      kL, ltype,
+      {.row_group_size = kRows, .distinct = irs::DistinctStats::Exact});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector v{ltype, STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        v.SetValue(k, make_row(pos + k));
+      }
+      v.Flatten(STANDARD_VECTOR_SIZE);
+      cw.Append(v, STANDARD_VECTOR_SIZE);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* cl = r.Column(kL);
+  ASSERT_NE(cl, nullptr);
+  ASSERT_EQ(cl->RowCount(), kRows);
+  auto state = cl->InitScan(r.Ctx());
+  for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+    duckdb::Vector result{ltype, STANDARD_VECTOR_SIZE};
+    cl->Scan(state, result, STANDARD_VECTOR_SIZE);
+    result.Flatten(STANDARD_VECTOR_SIZE);
+    for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+      EXPECT_EQ(result.GetValue(k).ToString(), make_row(pos + k).ToString())
+        << "list row " << (pos + k);
+    }
+  }
+}
+
+TEST_F(ColumnReaderTest, ListsUnderANamedDeltaReadBackARowGroupOfEmptyLists) {
+  constexpr uint64_t kRows = 3 * STANDARD_VECTOR_SIZE;
+  constexpr irs::field_id kL = 21;
+  for (const auto id :
+       {duckdb::LogicalTypeId::BIGINT, duckdb::LogicalTypeId::DOUBLE}) {
+    const duckdb::LogicalType child{id};
+    SCOPED_TRACE(child.ToString());
+    const auto ltype = duckdb::LogicalType::LIST(child);
+    const auto make_row = [&](uint64_t g) {
+      duckdb::vector<duckdb::Value> items;
+      if (g / STANDARD_VECTOR_SIZE != 1) {
+        for (uint64_t j = 0; j <= g % 3; ++j) {
+          items.push_back(duckdb::Value::BIGINT(static_cast<int64_t>(g * 4 + j))
+                            .DefaultCastAs(child));
+        }
+      }
+      return duckdb::Value::LIST(child, items);
+    };
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    {
+      irs::ColWriter w{Db(), dir.Tracker("seg")};
+      auto& cw = w.OpenColumn(kL, ltype,
+                              {.row_group_size = STANDARD_VECTOR_SIZE,
+                               .compression = irs::codecs::CodecType::Delta});
+      for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+        duckdb::Vector v{ltype, STANDARD_VECTOR_SIZE};
+        for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+          v.SetValue(k, make_row(pos + k));
+        }
+        v.Flatten(STANDARD_VECTOR_SIZE);
+        cw.Append(v, STANDARD_VECTOR_SIZE);
+      }
+      ASSERT_TRUE(w.Commit(0));
+    }
+    irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+    const auto* cl = r.Column(kL);
+    ASSERT_NE(cl, nullptr);
+    ASSERT_EQ(cl->RowCount(), kRows);
+    auto state = cl->InitScan(r.Ctx());
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector result{ltype, STANDARD_VECTOR_SIZE};
+      cl->Scan(state, result, STANDARD_VECTOR_SIZE);
+      result.Flatten(STANDARD_VECTOR_SIZE);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        EXPECT_EQ(result.GetValue(k).ToString(), make_row(pos + k).ToString())
+          << "list row " << (pos + k);
+      }
+    }
+  }
+}
+
 // Same nested-child-view path as SegmentRoundTripNestedList, but the inner
 // collection is a fixed-size ARRAY (positional child) -- verifies SealArray's
 // child slicing under sliced parent views.

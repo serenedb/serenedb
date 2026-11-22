@@ -578,6 +578,89 @@ TEST_F(ColNumericCodecTest, EveryNamedCodecStoresWhatItCanAndReadsBack) {
   }
 }
 
+TEST_F(ColNumericCodecTest,
+       LeafCodecsReadBackRowGroupsOfMoreFramesThanTheySample) {
+  using irs::codecs::CodecType;
+  const Gen random = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g));
+  };
+  const Gen pairs = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g / 2));
+  };
+  const Gen few = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g) % 200) * 97;
+  };
+  const Gen hundreds = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g) % 300) * 211;
+  };
+  const Gen narrow = [](uint64_t g) -> std::optional<int64_t> {
+    return 1000 + static_cast<int64_t>(Mix(g) % 200);
+  };
+  const Gen narrow_words = [](uint64_t g) -> std::optional<int64_t> {
+    return 1000 + static_cast<int64_t>(Mix(g) % 60000);
+  };
+  const Gen narrow_floats = [](uint64_t g) -> std::optional<int64_t> {
+    return 8192 + static_cast<int64_t>(Mix(g) % 60);
+  };
+  const Gen narrow_doubles = [](uint64_t g) -> std::optional<int64_t> {
+    return (int64_t{1} << 44) + static_cast<int64_t>(Mix(g) % 60);
+  };
+  const Gen float_runs = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g / 16) % 50000);
+  };
+  struct Case {
+    duckdb::LogicalType type;
+    CodecType codec;
+    const Gen& gen;
+    uint64_t rows;
+  };
+  const Case cases[] = {
+    {duckdb::LogicalType::TINYINT, CodecType::DeltaLz4, random, 70000},
+    {duckdb::LogicalType::UTINYINT, CodecType::DeltaLz4, random, 70000},
+    {duckdb::LogicalType::SMALLINT, CodecType::DeltaLz4, random, 40000},
+    {duckdb::LogicalType::USMALLINT, CodecType::DeltaLz4, random, 40000},
+    {duckdb::LogicalType::INTEGER, CodecType::DeltaLz4, random, 20000},
+    {duckdb::LogicalType::UINTEGER, CodecType::DeltaLz4, random, 20000},
+    {duckdb::LogicalType::UBIGINT, CodecType::DeltaLz4, random, 10000},
+    {duckdb::LogicalType::FLOAT, CodecType::DeltaLz4, random, 90000},
+    {duckdb::LogicalType::DOUBLE, CodecType::DeltaLz4, random, 45000},
+    {duckdb::LogicalType::SMALLINT, CodecType::DictLz4, few, 70000},
+    {duckdb::LogicalType::USMALLINT, CodecType::DictLz4, few, 70000},
+    {duckdb::LogicalType::UINTEGER, CodecType::DictLz4, hundreds, 40000},
+    {duckdb::LogicalType::FLOAT, CodecType::DictLz4, hundreds, 40000},
+    {duckdb::LogicalType::DOUBLE, CodecType::DictLz4, hundreds, 40000},
+    {duckdb::LogicalType::USMALLINT, CodecType::Lz4, narrow, 70000},
+    {duckdb::LogicalType::UINTEGER, CodecType::Lz4, narrow_words, 40000},
+    {duckdb::LogicalType::FLOAT, CodecType::Lz4, narrow_floats, 40000},
+    {duckdb::LogicalType::FLOAT, CodecType::Lz4, random, 90000},
+    {duckdb::LogicalType::DOUBLE, CodecType::Lz4, narrow_doubles, 40000},
+    {duckdb::LogicalType::DOUBLE, CodecType::Lz4, random, 45000},
+    {duckdb::LogicalType::FLOAT, CodecType::RleLz4, float_runs, 20000},
+    {duckdb::LogicalType::TINYINT, CodecType::Auto, pairs, 70000},
+    {duckdb::LogicalType::UTINYINT, CodecType::Auto, pairs, 70000},
+    {duckdb::LogicalType::SMALLINT, CodecType::Auto, pairs, 50000},
+    {duckdb::LogicalType::USMALLINT, CodecType::Auto, pairs, 50000},
+    {duckdb::LogicalType::UINTEGER, CodecType::Auto, pairs, 30000},
+  };
+  for (const auto& [type, codec, gen, rows] : cases) {
+    SCOPED_TRACE(type.ToString() + " " +
+                 std::string{magic_enum::enum_name(codec)});
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, type, {}, rows, static_cast<uint32_t>(rows), gen, codec);
+    Verify(dir, type, rows, gen);
+    if (codec == CodecType::Auto) {
+      continue;
+    }
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    for (const auto& block : col->DataBlocks()) {
+      EXPECT_EQ(block.codec->type, codec)
+        << magic_enum::enum_name(block.codec->type);
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, ANamedLeafCodecCompressesAtTheColumnsLevel) {
   constexpr uint64_t kRows = 100000;
   std::string words;
@@ -1658,6 +1741,28 @@ TEST_F(ColNumericCodecTest, WideRowGroupsWithNullsReadBack) {
   }
 }
 
+TEST_F(
+  ColNumericCodecTest,
+  ANamedDeltaLeavesWideValuesPlainWhenTheirHalvesCannotPackBelowTheirWidth) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 2 * kRowGroup;
+  const Gen apart = [](uint64_t g) -> std::optional<int64_t> {
+    return (g % 2 == 0 ? int64_t{0} : int64_t{1} << 47) +
+           static_cast<int64_t>(g);
+  };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  Write(dir, duckdb::LogicalType::UUID, {}, kRows, kRowGroup, apart,
+        irs::codecs::CodecType::Delta);
+  Verify(dir, duckdb::LogicalType::UUID, kRows, apart);
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->DataBlocks().size(), 2u);
+  for (const auto& block : col->DataBlocks()) {
+    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Uncompressed);
+  }
+}
+
 TEST_F(ColNumericCodecTest, BlocksStoreDifferencesWhereTheyAreSmaller) {
   constexpr uint64_t kRows = 16 * 1024;
   const auto type = duckdb::LogicalType::BIGINT;
@@ -1728,6 +1833,24 @@ TEST_F(ColNumericCodecTest, SequencesWithACommonFactorStoreNoData) {
         irs::codecs::CodecType::Bitpacking);
   Verify(dir, duckdb::LogicalType::UTINYINT, kRows, wrapping);
   EXPECT_NE(SegmentInfo(dir, "data_bytes"), std::vector<std::string>{"0"});
+}
+
+TEST_F(ColNumericCodecTest, ANamedDeltaStoresEvenlySpacedFloatsAsSteps) {
+  constexpr uint64_t kRows = 8192;
+  const Gen spaced = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(8192 + g);
+  };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  Write(dir, duckdb::LogicalType::FLOAT, {}, kRows, kRows, spaced,
+        irs::codecs::CodecType::Delta);
+  Verify(dir, duckdb::LogicalType::FLOAT, kRows, spaced);
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  for (const auto& block : col->DataBlocks()) {
+    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Delta);
+  }
+  EXPECT_LT(NumericBytes(dir), kRows * sizeof(float) / 2);
 }
 
 TEST_F(ColNumericCodecTest, RowsOfDifferenceBlocksReadInAnyOrder) {

@@ -1056,6 +1056,36 @@ TEST_F(ColCodecsTest, AnEmptyFirstFrameIsNoDictionary) {
   }
 }
 
+TEST_F(ColCodecsTest, AutoStoresEmptyStringsAheadOfValuesLargerThanAFrame) {
+  constexpr uint64_t kRows = 32;
+  const std::string large[] = {
+    std::string(40 * 1024, 'a') + "/first",
+    std::string(40 * 1024, 'b') + "/second",
+  };
+  const Value value = [&](uint64_t g) -> std::optional<std::string> {
+    if (g % 4 < 2) {
+      return std::string{};
+    }
+    return large[g % 2];
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Merge ? "merge" : "flush");
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, irs::codecs::CodecType::Auto, {.tier = tier}, kRows, kRows,
+          value);
+    {
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      for (const auto& block : col->DataBlocks()) {
+        EXPECT_TRUE(irs::codecs::IsText(block.codec->type))
+          << magic_enum::enum_name(block.codec->type);
+      }
+    }
+    Verify(dir, irs::codecs::CodecType::Auto, kRows, value);
+  }
+}
+
 TEST_F(ColCodecsTest, AutoTrainsADictionaryWhereItPays) {
   constexpr uint64_t kRows = 60000;
   std::vector<std::string> templates;
@@ -1368,6 +1398,39 @@ TEST_F(ColCodecsTest, AutoLeavesDisabledTextCodecsOut) {
   EXPECT_EQ(seal(none, without({CodecType::Fsst, CodecType::Lz4,
                                 CodecType::DictFsst, CodecType::DictLz4})),
             std::set<CodecType>{CodecType::Uncompressed});
+}
+
+TEST_F(ColCodecsTest,
+       AutoStoresRepeatingTextWithNullsPlainWhenDictionaryCodecsAreDisabled) {
+  constexpr uint64_t kRows = 4096;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 7 == 0) {
+      return std::nullopt;
+    }
+    return absl::StrCat("tenant-", g % 40, "/region-with-a-long-suffix");
+  };
+  duckdb::DBConfig::GetConfig(Db()).SetDisabledCompressionMethods(
+    {duckdb::CompressionType::COMPRESSION_DICT_FSST,
+     duckdb::CompressionType::COMPRESSION_DICT_LZ4});
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Merge ? "merge" : "flush");
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, irs::codecs::CodecType::Auto, {.tier = tier}, kRows, kRows,
+          value);
+    {
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      for (const auto& block : col->DataBlocks()) {
+        ASSERT_TRUE(irs::codecs::IsText(block.codec->type))
+          << magic_enum::enum_name(block.codec->type);
+        EXPECT_EQ(irs::codecs::ShapeOf(block.codec->type),
+                  irs::codecs::Shape::Plain)
+          << magic_enum::enum_name(block.codec->type);
+      }
+    }
+    Verify(dir, irs::codecs::CodecType::Auto, kRows, value);
+  }
 }
 
 TEST_F(ColCodecsTest, PointReadsAlternateBlocksOfDifferentCodecs) {

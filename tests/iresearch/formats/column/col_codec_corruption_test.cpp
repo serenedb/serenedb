@@ -675,4 +675,82 @@ TEST_F(ColCodecCorruptionTest, UncompressedRejectsDamagedSegments) {
       "end of the file"}});
 }
 
+TEST_F(ColCodecCorruptionTest,
+       NumericCodecsWithByteLeavesRejectDamagedSegments) {
+  Sweep({"lz4",
+         LogicalType::BIGINT,
+         CodecType::Lz4,
+         [](uint64_t g) {
+           return Value::BIGINT(static_cast<int64_t>(g % 16) * 1000);
+         },
+         {"Corrupted numeric segment: frame is inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+  Sweep({"zstd",
+         LogicalType::INTEGER,
+         CodecType::Zstd,
+         [](uint64_t g) {
+           return Value::INTEGER(static_cast<int32_t>(g % 64) * 3);
+         },
+         {"Corrupted numeric segment: frame is inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+  Sweep({"delta lz4",
+         LogicalType::BIGINT,
+         CodecType::DeltaLz4,
+         [](uint64_t g) {
+           return Value::BIGINT(static_cast<int64_t>(g * 5 + g % 3));
+         },
+         {"Corrupted numeric segment: frame is inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+  Sweep({"dict zstd",
+         LogicalType::BIGINT,
+         CodecType::DictZstd,
+         [](uint64_t g) {
+           return Value::BIGINT(static_cast<int64_t>(Mix(g % 40) % 100000));
+         },
+         {"Corrupted numeric segment: dictionary code is out of range",
+          "Corrupted numeric segment: frame is inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+  Sweep({"rle lz4",
+         LogicalType::INTEGER,
+         CodecType::RleLz4,
+         [](uint64_t g) {
+           return Value::INTEGER(static_cast<int32_t>((g / 9) % 13));
+         },
+         {"Corrupted numeric segment: frame is inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: runs are inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+  Sweep({"rle zstd",
+         LogicalType::SMALLINT,
+         CodecType::RleZstd,
+         [](uint64_t g) {
+           return Value::SMALLINT(static_cast<int16_t>((g / 5) % 7));
+         },
+         {"Corrupted numeric segment: frame is inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: runs are inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+  Sweep({"hugeint halves",
+         LogicalType::HUGEINT,
+         CodecType::Bitpacking,
+         [](uint64_t g) {
+           return Value::HUGEINT(
+             duckdb::hugeint_t{static_cast<int64_t>(g % 4) << 20, Mix(g)});
+         },
+         {"Corrupted numeric segment: blocks are inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+}
+
 }  // namespace

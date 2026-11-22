@@ -41,6 +41,7 @@
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 #include "iresearch/utils/enum_name.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 

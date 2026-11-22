@@ -205,6 +205,41 @@ for extra in CONTEXTS[:2]:
     for pred in geo_predicates("geo"):
         check("gdm_p_idx", pred, extra)
 
+PROBED = " AND id IN (3, 70, 444, 1201, 1999)"
+
+
+def probed(preds):
+    return [preds[i] for i in (0, 2, 3, 60, 61, 62, 66)]
+
+
+for name in JSON_INDEXES:
+    t.part()
+    json_table()
+    t.index(f"{name}_idx", "gdm", f"id, geo {name}")
+    t.section(f"JSON column, {DICTS[name]}, the geo predicate probed for a few ids.")
+    for pred in probed(geo_predicates("geo")):
+        check(f"{name}_idx", pred, PROBED)
+
+for idx, dictionary in (("gdm_g_source_idx", "gdm_shape"), ("gdm_g_s2point_idx", "gdm_s2point")):
+    for as_geometry in (False, True):
+        t.part()
+        t.table("gdm_g", "id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84')")
+        t.insert("gdm_g", (f"({i}, '{wkt(shapes[i])}'::GEOMETRY('OGC:CRS84'))"
+                           for i in range(ROWS)))
+        t.index(idx, "gdm_g", f"id, geo {dictionary}")
+        t.section(f"GEOMETRY column ({idx}), the geo predicate probed for a few ids.")
+        for pred in probed(geo_predicates("geo", as_geometry)):
+            check(idx, pred, PROBED)
+
+t.part()
+t.table("gdm_p", "id INTEGER PRIMARY KEY, geo JSON")
+t.insert("gdm_p", (f"({i}, '{{\"lat\":{s['coordinates'][1]},\"lng\":{s['coordinates'][0]}}}')"
+                   for i, s in enumerate(points)), chunk=None)
+t.index("gdm_p_idx", "gdm_p", "id, geo gdm_geopoint")
+t.section("encode_geopoint over latitude and longitude fields, the geo predicate probed for a few ids.")
+for pred in probed(geo_predicates("geo")):
+    check("gdm_p_idx", pred, PROBED)
+
 t.part()
 json_table()
 t.table("gdm_s", "id INTEGER, geo JSON")

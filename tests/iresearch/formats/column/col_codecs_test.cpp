@@ -4501,14 +4501,20 @@ TEST_F(ColCodecsTest, CodesInShortRunsAreNotRunPacked) {
 
 TEST_F(ColCodecsTest, CodesAreRunLengthCodedOnlyWhenThatIsClearlySmaller) {
   constexpr uint64_t kRows = 60000;
+  struct Runs {
+    uint64_t rows;
+    uint64_t runs;
+    bool coded;
+  };
   for (const auto codec :
        {irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictLz4}) {
-    for (const auto& [run, coded] : {std::pair<uint64_t, bool>{2, false},
-                                     std::pair<uint64_t, bool>{8, true}}) {
-      SCOPED_TRACE(
-        absl::StrCat(magic_enum::enum_name(codec), " runs of ", run));
-      const Value value = [run](uint64_t g) -> std::optional<std::string> {
-        return "v" + std::to_string(std::mt19937_64{g / run}() % 10000);
+    for (const auto& [rows, runs, coded] :
+         {Runs{2, 1, false}, Runs{7, 3, false}, Runs{8, 1, true}}) {
+      SCOPED_TRACE(absl::StrCat(magic_enum::enum_name(codec), " ", runs,
+                                " runs in ", rows, " rows"));
+      const Value value = [rows,
+                           runs](uint64_t g) -> std::optional<std::string> {
+        return "v" + std::to_string(std::mt19937_64{g * runs / rows}() % 10000);
       };
       tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
       Write(dir, codec, {}, kRows, 16384, value);

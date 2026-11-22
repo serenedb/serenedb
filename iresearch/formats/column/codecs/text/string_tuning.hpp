@@ -21,7 +21,6 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
 

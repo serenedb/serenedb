@@ -174,9 +174,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       return entry.Table().Sql().shared ? kPgGlobalTablespace
                                         : duckdb::idx_t{0};
     }),
-    Col<"reltype">(&RelationRowType),
-    Col<"relacl">([](const auto& relation) -> const auto& {
-      return relation.permissions.acl;
+    Col<"reltype">(&RelationRowType), Col<"relacl">([](const auto& relation) {
+      return AclOf(relation.permissions);
     }));
 
   static constexpr auto kOrdinary = Shape<kSql, const Ordinary>(
@@ -226,9 +225,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       }
       return -1.0F;
     }),
-    Col<"relacl">([](const auto& row) -> const auto& {
-      return row.table.permissions.acl;
-    }));
+    Col<"relacl">(
+      [](const auto& row) { return AclOf(row.table.permissions); }));
 
   static constexpr auto kKeyIndex = Shape<kSql, const KeyIndex>(
     kRelationTraits,
@@ -291,16 +289,14 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
         }
         return absl::StrSplit(system->options, ',');
       }),
-    Col<"relacl">(
-      [](const auto& view) -> const auto& { return view.permissions.acl; }));
+    Col<"relacl">([](const auto& view) { return AclOf(view.permissions); }));
 
   static constexpr auto kSequence =
     Shape<kSql, const duckdb::SequenceCatalogEntry>(
       kRelation<'S'>, Col<"relnatts">([](const auto&) { return 3; }),
       Col<"reltuples">([](const auto&) { return 1.0F; }),
-      Col<"relacl">([](const auto& sequence) -> const auto& {
-        return sequence.permissions.acl;
-      }));
+      Col<"relacl">(
+        [](const auto& sequence) { return AclOf(sequence.permissions); }));
 
   static constexpr auto kComposite =
     Shape<kSql, const duckdb::TypeCatalogEntry>(

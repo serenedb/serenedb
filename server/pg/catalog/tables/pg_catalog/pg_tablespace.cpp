@@ -45,9 +45,8 @@ class PgTablespace final : public SystemTableScan<kPgTablespaceSql> {
       Col<"spcname">(&duckdb::CatalogEntry::name),
       Col<"spcowner">(
         [](const auto& tablespace) { return tablespace.permissions.owner; }),
-      Col<"spcacl">([](const auto& tablespace) -> const auto& {
-        return tablespace.permissions.acl;
-      }));
+      Col<"spcacl">(
+        [](const auto& tablespace) { return AclOf(tablespace.permissions); }));
 
   void Row(const catalog::TablespaceCatalogEntry& tablespace) {
     Emit<kTablespace>(tablespace);

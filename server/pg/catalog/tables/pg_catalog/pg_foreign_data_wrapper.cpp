@@ -28,7 +28,7 @@ namespace {
 
 struct Wrapper {
   const SystemObject& object;
-  std::span<const duckdb::AclItem> acl;
+  std::optional<std::span<const duckdb::AclItem>> acl;
 };
 
 class PgForeignDataWrapper final
@@ -48,13 +48,10 @@ class PgForeignDataWrapper final
     Col<"fdwacl">([](const auto& row) { return row.acl; }));
 
   void Row(const SystemObject& wrapper) {
-    std::span<const duckdb::AclItem> acl;
-    if (const auto entry = Database().LookupTopLevelEntry(
-          Transaction(), duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
-          duckdb::Identifier{wrapper.name})) {
-      acl = entry->permissions.acl;
-    }
-    Emit<kWrapper>({wrapper, acl});
+    const auto entry = Database().LookupTopLevelEntry(
+      Transaction(), duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
+      duckdb::Identifier{wrapper.name});
+    Emit<kWrapper>({wrapper, entry ? AclOf(entry->permissions) : std::nullopt});
   }
 };
 

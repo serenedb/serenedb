@@ -116,12 +116,11 @@ class PgAttribute final : public SystemTableScan<kPgAttributeSql> {
       [](const auto& row) { return row.not_null[row.column.Logical().index]; }),
     Col<"atthasdef">([](const auto& row) { return HasAttrdef(row.column); }),
     Col<"attgenerated">([](const auto& row) { return Generated(row.column); }),
-    Col<"attacl">(
-      [](const auto& row) -> const auto& { return row.column.Acl(); }));
+    Col<"attacl">([](const auto& row) { return AclOf(row.column.Acl()); }));
 
   static constexpr auto kViewColumn = Shape<kSql, const ViewAttribute>(
     kAttribute, Col<"attname">(&Attribute::name),
-    Col<"attacl">(&ViewAttribute::acl));
+    Col<"attacl">([](const auto& row) { return AclOf(row.acl); }));
 
   static constexpr auto kSequenceColumn = Shape<kSql, const Attribute>(
     kAttribute, Col<"attname">(&Attribute::name),

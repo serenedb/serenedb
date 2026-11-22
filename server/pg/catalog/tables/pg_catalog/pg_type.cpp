@@ -147,9 +147,8 @@ constexpr std::tuple kUserTypeColumns{
     [](const auto& row) { return row.Entry().permissions.owner; }),
   Col<"typarray">(
     [](const auto& row) { return TypeArrayOid(row.Entry().oid); }),
-  Col<"typacl">([](const auto& row) -> const auto& {
-    return row.Entry().permissions.acl;
-  })};
+  Col<"typacl">(
+    [](const auto& row) { return AclOf(row.Entry().permissions); })};
 
 constexpr std::tuple kTypeTraits{
   Col<"typisdefined">([](const auto&) { return true; }),

@@ -581,7 +581,7 @@ void ClusterCatalog::AlterParameter(duckdb::CatalogTransaction transaction,
                        ? existing->permissions
                        : duckdb::Permissions{.owner = info.object_owner_id};
   info.ApplyTo(permissions, duckdb::CatalogType::PARAMETER_ENTRY, nullptr);
-  if (permissions.acl.empty() ||
+  if (permissions.UsesDefaultAcl() ||
       permissions.acl ==
         duckdb::Permissions::AclDefault(duckdb::CatalogType::PARAMETER_ENTRY,
                                         permissions.owner)) {

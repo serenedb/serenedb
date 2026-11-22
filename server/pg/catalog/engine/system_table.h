@@ -330,6 +330,22 @@ struct SystemOptional<std::optional<V>> : std::true_type {
   using Type = V;
 };
 
+inline std::optional<std::span<const duckdb::AclItem>> AclOf(
+  const duckdb::Permissions& permissions) {
+  if (permissions.UsesDefaultAcl()) {
+    return std::nullopt;
+  }
+  return permissions.acl;
+}
+
+inline std::optional<std::span<const duckdb::AclItem>> AclOf(
+  std::span<const duckdb::AclItem> acl) {
+  if (acl.empty()) {
+    return std::nullopt;
+  }
+  return acl;
+}
+
 struct SystemConcatText {
   std::array<std::string_view, 4> parts;
 };
@@ -787,7 +803,7 @@ class SystemScan {
         SDB_ASSERT(scan._table.Holds(kColumn, Integer<int64_t>(value)));
       }
       if constexpr (kMeta.physical == duckdb::PhysicalType::LIST) {
-        scan.PutList<kMeta.element, !kMeta.not_null>(target, value);
+        scan.PutList<kMeta.element>(target, value);
       } else {
         scan.Put<kMeta.physical>(target, scan._row, value);
       }
@@ -937,16 +953,8 @@ class SystemScan {
     }
   }
 
-  template<duckdb::PhysicalType E, bool Nullable, typename R>
+  template<duckdb::PhysicalType E, typename R>
   void PutList(const SystemVector& target, R& items) {
-    constexpr bool kAcl =
-      std::is_same_v<std::ranges::range_value_t<R>, duckdb::AclItem>;
-    if constexpr (Nullable && kAcl) {
-      if (std::ranges::empty(items)) {
-        target.validity->SetInvalid(_row);
-        return;
-      }
-    }
     auto& vector = *target.vector;
     const auto offset = duckdb::ListVector::GetListSize(vector);
     duckdb::ListVector::Reserve(
@@ -957,11 +965,6 @@ class SystemScan {
                                 &duckdb::FlatVector::ValidityMutable(child)};
     auto row = offset;
     for (const auto& item : items) {
-      if constexpr (kAcl) {
-        if (item.GrantsNothing()) {
-          continue;
-        }
-      }
       Put<E>(elements, row++, item);
     }
     Cells<duckdb::list_entry_t>(target)[_row] = {offset, row - offset};

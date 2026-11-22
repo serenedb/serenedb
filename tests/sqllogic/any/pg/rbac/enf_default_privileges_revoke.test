@@ -101,6 +101,33 @@ db error: ERROR: permission denied for procedure dpr_proc
 
 
 statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpr_kostya IN SCHEMA dpr_quas GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
+
+
+statement ok
+SET ROLE dpr_kostya;
+
+
+statement ok
+CREATE FUNCTION dpr_quas.dpr_merged() RETURNS int LANGUAGE sql AS 'SELECT 4';
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT proacl IS NULL AS default_acl FROM pg_proc WHERE proname = 'dpr_merged';
+----
+default_acl
+t
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpr_kostya IN SCHEMA dpr_quas REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
+
+statement ok
 ALTER DEFAULT PRIVILEGES FOR ROLE dpr_kostya GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
 
 

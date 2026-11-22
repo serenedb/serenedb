@@ -36,9 +36,8 @@ class PgParameterAcl final : public SystemTableScan<kPgParameterAclSql> {
     Shape<kSql, const catalog::ParameterCatalogEntry>(
       Col<"oid">(&duckdb::CatalogEntry::oid),
       Col<"parname">(&duckdb::CatalogEntry::name),
-      Col<"paracl">([](const auto& parameter) -> const auto& {
-        return parameter.permissions.acl;
-      }));
+      Col<"paracl">(
+        [](const auto& parameter) { return AclOf(parameter.permissions); }));
 
   void Row(const catalog::ParameterCatalogEntry& parameter) {
     Emit<kParameter>(parameter);

@@ -45,7 +45,6 @@
 #include <iresearch/utils/static_strings.hpp>
 #include <limits>
 #include <optional>
-#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -883,18 +882,19 @@ class ObjectAcls final : public duckdb::FunctionLocalState {
   ObjectAcls(duckdb::ClientContext& context, duckdb::optional_idx caller)
     : _wrappers{ForeignDataWrapperPrivileges::Begin(context, caller)} {}
 
-  std::span<const duckdb::AclItem> Of(uint64_t classid, uint64_t objid,
-                                      int32_t objsubid) const {
+  std::optional<std::span<const duckdb::AclItem>> Of(uint64_t classid,
+                                                     uint64_t objid,
+                                                     int32_t objsubid) const {
     const bool column = classid == kPgClassTable && objsubid != 0;
     const auto target = Find(classid, objid, column ? objsubid : 0);
     if (!target || target->owner_only) {
-      return {};
+      return std::nullopt;
     }
     if (!column) {
-      return target->permissions->acl;
+      return AclOf(*target->permissions);
     }
-    return target->columns.empty() ? std::span<const duckdb::AclItem>{}
-                                   : target->columns.front();
+    return target->columns.empty() ? std::nullopt
+                                   : AclOf(target->columns.front());
   }
 
   const duckdb::SecuritySnapshot& Roles() const { return *_wrappers.roles; }
@@ -977,11 +977,11 @@ void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     }
     const auto acl = acls.Of(oid, static_cast<uint64_t>(objid.GetValue()),
                              objsubid.GetValue());
-    if (acl.empty()) {
+    if (!acl) {
       writer.WriteNull();
       continue;
     }
-    WriteAclTexts(writer, acl, acls.Roles(), text);
+    WriteAclTexts(writer, *acl, acls.Roles(), text);
   }
 }
 
@@ -1290,12 +1290,8 @@ void WriteAclTexts(
   duckdb::VectorWriter<duckdb::VectorListType<duckdb::string_t>>& writer,
   std::span<const duckdb::AclItem> items, const duckdb::SecuritySnapshot& roles,
   std::string& text) {
-  const auto granting = [](const duckdb::AclItem& item) {
-    return !item.GrantsNothing();
-  };
-  auto granted = items | std::views::filter(granting);
-  auto item = granted.begin();
-  for (auto& child : writer.WriteList(absl::c_count_if(items, granting))) {
+  auto item = items.begin();
+  for (auto& child : writer.WriteList(items.size())) {
     text.clear();
     AppendAcl(text, *item++, roles);
     child.WriteValue(duckdb::string_t{text});

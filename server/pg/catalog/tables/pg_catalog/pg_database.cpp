@@ -57,9 +57,8 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
       Col<"dattablespace">(
         [](const auto& database) { return database.Tablespace(); }),
       Col<"datcollate">(kLocale), Col<"datctype">(kLocale),
-      Col<"datacl">([](const auto& database) -> const auto& {
-        return database.permissions.acl;
-      }));
+      Col<"datacl">(
+        [](const auto& database) { return AclOf(database.permissions); }));
 
   void Row(const catalog::DatabaseCatalogEntry& database) {
     Emit<kDatabase>(database);

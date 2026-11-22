@@ -352,12 +352,8 @@ class CompressionState {
 
 inline constexpr size_t kSampleFrames = 8;
 inline constexpr uint64_t kTrialRawBytes = 512 * 1024;
-inline constexpr uint64_t kTuneMinEntries = 2;
 inline constexpr double kEstimateSlack = 0.02;
-inline constexpr double kLevelTolerance = 0.02;
-inline constexpr double kWideFramesGain = 0.03;
-inline constexpr uint64_t kRetuneGrowth = 4;
-inline constexpr size_t kMaxLevels = 4;
+inline constexpr double kSortedGain = 0.06;
 
 template<typename Codec>
 class SizeEstimator {
@@ -365,9 +361,9 @@ class SizeEstimator {
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
 
-  uint64_t EstimateSize(const Profile& p, std::string_view bytes,
-                        const FrameSpans& spans, uint64_t codes_bytes,
-                        uint8_t level, FrameDictionary layout) {
+  uint64_t FramesSize(const Profile& p, std::string_view bytes,
+                      const FrameSpans& spans, uint8_t level,
+                      FrameDictionary layout) {
     ResetCompressor(_codec, _level, level);
     uint64_t data = 0;
     if (!spans.empty()) {
@@ -403,10 +399,15 @@ class SizeEstimator {
         });
       data += Scale(sampled, sampled_raw, p.raw - spans[0].raw);
     }
+    return data;
+  }
+
+  static uint64_t SegmentSize(const Profile& p, uint64_t frames_bytes,
+                              size_t frames, uint64_t codes_bytes) {
     const auto entry_count =
       p.codes.size() + (p.shape == Shape::Dictionary ? 1 : 0);
     Header h;
-    return LayOut(h, data, spans.size(), Packed(entry_count, p.max_len), 0,
+    return LayOut(h, frames_bytes, frames, Packed(entry_count, p.max_len), 0,
                   codes_bytes, 0);
   }
 
@@ -435,69 +436,29 @@ class SizeEstimator {
   std::vector<size_t> _sizes;
 };
 
+constexpr StateId SizesState(ByteCodec codec) noexcept {
+  switch (codec) {
+    case ByteCodec::Zstd:
+      return StateId::TextZstdSizes;
+    case ByteCodec::Zxc:
+      return StateId::TextZxcSizes;
+    default:
+      return StateId::TextLz4Sizes;
+  }
+}
+
 template<typename Codec>
-class Tuner final : public State {
+class TrialSizes final : public State {
  public:
-  static_assert(Codec::kCodec == ByteCodec::Lz4);
-  static constexpr StateId kId = StateId::TextLz4Tuner;
+  static constexpr StateId kId = SizesState(Codec::kCodec);
 
   template<typename Rows>
   using Candidate = CodecState<CompressionState<Codec, Rows>>;
 
-  struct Measured {
-    Config config;
-    uint64_t bytes = 0;
-  };
-
-  explicit Tuner(ColumnDataCheckpointData& data)
+  explicit TrialSizes(ColumnDataCheckpointData& data)
     : _values{data.Get<Values>()},
       _window{data.Get<Window>()},
-      _params{data.params},
-      _tuning{data.tuning.strings} {}
-
-  template<typename Rows, typename Score>
-  Measured Measure(Candidate<Rows>& state, double bound, Score&& score) {
-    constexpr auto kShape = Rows::kShape;
-    auto& tuning =
-      _tuning
-        .frames[std::to_underlying(Codec::kCodec)][std::to_underlying(kShape)];
-    const auto tier = _params.tier;
-    const auto levels = Levels(tier);
-    const auto held = Tuned<Rows>(tier);
-    if (_window.rows == 0) {
-      Trial(state, held, _values, _window, _params.segment_target);
-    }
-    const auto size = [&](const Config& config) { return Size(state, config); };
-    Measured measured{.config = held};
-    const auto input = _window.input;
-    if ((tuning.tuned && input < tuning.tuned_on * kRetuneGrowth) ||
-        TrialEntries() < kTuneMinEntries) {
-      measured.bytes = size(held);
-    } else {
-      measured = Tune<Rows>(levels, tier != WriteTier::Flush, size);
-      tuning = {
-        .tuned = true,
-        .level = measured.config.level,
-        .layout = measured.config.layout,
-        .tuned_on = input,
-      };
-      if constexpr (kShape == Shape::Dictionary) {
-        _tuning.order[std::to_underlying(Codec::kCodec)].sorted =
-          measured.config.sorted;
-      }
-    }
-    if (!Find(state, measured.config)) {
-      const auto priced = score(measured.bytes);
-      if (Codec::HighCompression(measured.config.level)
-            ? priced < bound
-            : priced <= bound * (1.0 + kEstimateSlack)) {
-        measured.bytes = Trial(state, measured.config, _values, _window,
-                               _params.segment_target)
-                           .Size();
-      }
-    }
-    return measured;
-  }
+      _params{data.params} {}
 
   template<typename Rows>
   uint64_t Size(Candidate<Rows>& state, const Config& config) {
@@ -520,10 +481,39 @@ class Tuner final : public State {
     return Estimate(kShape, config);
   }
 
+  uint64_t Estimate(Shape shape, const Config& config) {
+    auto& rows = TrialRows(shape);
+    const auto count = Split(rows, FrameShapeOf<Codec>(config.layout)).size();
+    if (!config.sorted) {
+      return SizeEstimator<Codec>::SegmentSize(
+        rows.profile, FramesSize(rows, config), count, CodesSize(rows));
+    }
+    auto& sorted = SortedRows();
+    auto usual = config;
+    usual.layout = NamedConfig(shape, Codec::kCodec, _params).layout;
+    auto frames = FramesSize(rows, usual);
+    if (rows.profile.raw > kFrameDictionaryBytes) {
+      frames -=
+        static_cast<uint64_t>(static_cast<double>(frames) * kSortedGain);
+    }
+    if (config.layout != usual.layout) {
+      frames =
+        Scale(FramesSize(sorted, config), FramesSize(sorted, usual), frames);
+    }
+    return SizeEstimator<Codec>::SegmentSize(rows.profile, frames, count,
+                                             CodesSize(sorted));
+  }
+
  private:
   struct Spans {
     FrameShape frame;
     FrameSpans spans;
+  };
+
+  struct FramesBytes {
+    uint8_t level;
+    FrameDictionary layout;
+    uint64_t bytes;
   };
 
   struct ShapeRows {
@@ -536,74 +526,8 @@ class Tuner final : public State {
     uint64_t codes_bytes = 0;
     std::string bytes;
     std::vector<Spans> spans;
+    std::vector<FramesBytes> frames;
   };
-
-  static std::span<const uint8_t> Levels(WriteTier tier) noexcept {
-    return tier == WriteTier::Flush
-             ? std::span<const uint8_t>{Codec::kFlushLevels}
-             : std::span<const uint8_t>{Codec::kMergeLevels};
-  }
-
-  template<typename Rows>
-  Config Tuned(WriteTier tier) const noexcept {
-    constexpr auto kShape = Rows::kShape;
-    const auto& tuning =
-      _tuning
-        .frames[std::to_underlying(Codec::kCodec)][std::to_underlying(kShape)];
-    const auto levels = Levels(tier);
-    return {
-      .shape = kShape,
-      .leaf = Codec::kCodec,
-      .level = absl::c_linear_search(levels, tuning.level) ? tuning.level
-                                                           : levels.front(),
-      .layout = tuning.layout,
-      .sorted = kShape == Shape::Dictionary &&
-                _tuning.order[std::to_underlying(Codec::kCodec)].sorted,
-    };
-  }
-
-  template<typename Rows, typename Size>
-  static Measured Tune(std::span<const uint8_t> levels, bool local,
-                       Size&& size) {
-    constexpr auto kShape = Rows::kShape;
-    Config config{.shape = kShape, .leaf = Codec::kCodec};
-    uint64_t sizes[kMaxLevels];
-    auto smallest = std::numeric_limits<uint64_t>::max();
-    for (size_t i = 0; i < levels.size(); ++i) {
-      config.level = levels[i];
-      sizes[i] = size(config);
-      smallest = std::min(smallest, sizes[i]);
-    }
-    size_t level = 0;
-    while (static_cast<double>(sizes[level]) >
-           static_cast<double>(smallest) * (1.0 + kLevelTolerance)) {
-      ++level;
-    }
-    config.level = levels[level];
-    Measured tuned{.config = config, .bytes = sizes[level]};
-    const auto measure = [&](const Config& candidate, double min_gain) {
-      const auto bytes = size(candidate);
-      if (static_cast<double>(bytes) <
-          static_cast<double>(tuned.bytes) * (1.0 - min_gain)) {
-        tuned = {.config = candidate, .bytes = bytes};
-      }
-    };
-    if constexpr (kShape == Shape::Dictionary) {
-      auto candidate = tuned.config;
-      candidate.sorted = true;
-      measure(candidate, kSortedGain);
-    }
-    const auto measure_layout = [&](FrameDictionary layout, double min_gain) {
-      auto candidate = tuned.config;
-      candidate.layout = layout;
-      measure(candidate, min_gain);
-    };
-    if (local) {
-      measure_layout(FrameDictionary::Local, 0.0);
-    }
-    measure_layout(FrameDictionary::None, kWideFramesGain);
-    return tuned;
-  }
 
   ShapeRows& TrialRows(Shape shape) {
     SDB_ASSERT(_window.rows != 0);
@@ -724,95 +648,114 @@ class Tuner final : public State {
     return split;
   }
 
-  uint64_t Estimate(Shape shape, const Config& config) {
-    auto& rows = config.sorted ? SortedRows() : TrialRows(shape);
+  uint64_t FramesSize(ShapeRows& rows, const Config& config) {
+    const auto it = absl::c_find_if(rows.frames, [&](const FramesBytes& f) {
+      return f.level == config.level && f.layout == config.layout;
+    });
+    if (it != rows.frames.end()) {
+      return it->bytes;
+    }
     const auto whole = config.layout == FrameDictionary::Local
                          ? Bytes(rows)
                          : std::string_view{};
-    return _estimator[std::to_underlying(shape)].EstimateSize(
-      rows.profile, whole, Split(rows, FrameShapeOf<Codec>(config.layout)),
-      CodesSize(rows), config.level, config.layout);
+    const auto bytes =
+      _estimator[std::to_underlying(rows.profile.shape)].FramesSize(
+        rows.profile, whole, Split(rows, FrameShapeOf<Codec>(config.layout)),
+        config.level, config.layout);
+    rows.frames.emplace_back(config.level, config.layout, bytes);
+    return bytes;
   }
 
   const Values& _values;
   Window& _window;
   const ColCodecParams& _params;
-  StringTuning& _tuning;
   DedupScratch _dedup;
   ShapeRows _rows[kTextShapeCount];
   ShapeRows _sorted;
   SizeEstimator<Codec> _estimator[kTextShapeCount];
 };
 
-template<typename Compression>
-Config NamedOrder(Config config, ColumnDataCheckpointData& data) {
-  auto& state = data.Get<CodecState<Compression>>();
-  const auto& values = data.Get<Values>();
-  auto& order =
-    data.tuning.strings.order[std::to_underlying(Compression::kCodec)];
-  if (values.Rows() != 0 &&
-      (!order.tuned || values.raw >= order.tuned_on * kOrderRetuneGrowth)) {
-    auto& window = data.Get<Window>();
-    const auto target = data.params.segment_target;
-    const auto& first = Trial(state, config, values, window, target);
-    const auto arrival = first.Size();
-    const bool matters = static_cast<double>(first.entries * first.max_len) >=
-                         static_cast<double>(arrival) * kSortedGain;
-    config.sorted = true;
-    order = {
-      .tuned = true,
-      .sorted =
-        matters && static_cast<double>(
-                     Trial(state, config, values, window, target).Size()) <
-                     static_cast<double>(arrival) * (1.0 - kSortedGain),
-      .tuned_on = values.raw,
-    };
+template<typename Codec, typename Rows>
+Config FrameConfig(const ColumnDataCheckpointData& data) noexcept {
+  auto config = NamedConfig(Rows::kShape, Codec::kCodec, data.params);
+  config.sorted =
+    Rows::kShape == Shape::Dictionary && (data.option & kSorted) != 0;
+  if ((data.option & kWide) != 0) {
+    config.layout = FrameDictionary::None;
   }
-  config.sorted = order.sorted;
   return config;
 }
 
-template<typename Compression>
+template<typename Rows>
+bool Declines(ColumnDataCheckpointData& data) {
+  const auto& values = data.Get<Values>();
+  return data.contested &&
+         (!values.Repeats() || !Contends(values, data.disabled, Rows::kShape));
+}
+
+template<typename Codec, typename Rows>
+double EstimateFrames(ColumnDataCheckpointData& data) {
+  constexpr auto kShape = Rows::kShape;
+  if (Declines<Rows>(data)) {
+    return kNoScore;
+  }
+  const auto& values = data.Get<Values>();
+  auto& window = data.Get<Window>();
+  const auto config = FrameConfig<Codec, Rows>(data);
+  if (window.rows == 0) {
+    Trial(data.Get<CodecState<CompressionState<Codec, Rows>>>(), config, values,
+          window, data.params.segment_target);
+  }
+  return Score(values, window, kShape, data.price,
+               data.Get<TrialSizes<Codec>>().Estimate(kShape, config));
+}
+
+template<typename Codec, typename Rows>
+double AnalyzeFrames(ColumnDataCheckpointData& data, double bound) {
+  constexpr auto kShape = Rows::kShape;
+  if (Declines<Rows>(data)) {
+    return kNoScore;
+  }
+  const auto& values = data.Get<Values>();
+  auto& state = data.Get<CodecState<CompressionState<Codec, Rows>>>();
+  auto& window = data.Get<Window>();
+  const auto config = FrameConfig<Codec, Rows>(data);
+  const auto target = data.params.segment_target;
+  if (window.rows == 0) {
+    Trial(state, config, values, window, target);
+  }
+  const auto priced = [&](uint64_t bytes) {
+    return Score(values, window, kShape, data.price, bytes);
+  };
+  auto bytes = data.Get<TrialSizes<Codec>>().Size(state, config);
+  if (!Find(state, config)) {
+    const auto estimate = priced(bytes);
+    if (Codec::HighCompression(config.level)
+          ? estimate < bound
+          : estimate <= bound * (1.0 + kEstimateSlack)) {
+      bytes = Trial(state, config, values, window, target).Size();
+    }
+  }
+  return priced(bytes);
+}
+
+template<typename Codec, typename Rows>
 bool CompressFrames(const codecs::Codec& codec,
                     ColumnDataCheckpointData& data) {
+  using Compression = CompressionState<Codec, Rows>;
+  const auto config = FrameConfig<Codec, Rows>(data);
   if (data.contested) {
-    return CompressContested<Compression>(codec, data);
-  }
-  auto config =
-    NamedConfig(Compression::kShape, Compression::kCodec, data.params);
-  if constexpr (Compression::kShape == Shape::Dictionary) {
-    config = NamedOrder<Compression>(config, data);
+    return CompressContested<Compression>(config, codec, data);
   }
   CompressAs<Compression>(config, codec, data);
   return true;
 }
 
-template<typename Compression>
+template<typename Codec, typename Rows>
 inline constexpr CompressionFunction kFrameFunction{
-  .analyze = AnalyzeTrial<Compression>,
-  .compress = CompressFrames<Compression>,
-};
-
-template<typename Codec, typename Rows>
-double AnalyzeTuned(ColumnDataCheckpointData& data, double bound) {
-  const auto& values = data.Get<Values>();
-  if (!values.Repeats() || !Contends(values, data.disabled, Rows::kShape)) {
-    return kNoScore;
-  }
-  auto& state = data.Get<CodecState<CompressionState<Codec, Rows>>>();
-  const auto& window = data.Get<Window>();
-  const auto priced = [&](uint64_t bytes) {
-    return Score(values, window, Rows::kShape, data.price, bytes);
-  };
-  const auto measured = data.Get<Tuner<Codec>>().Measure(state, bound, priced);
-  state.config = measured.config;
-  return priced(measured.bytes);
-}
-
-template<typename Codec, typename Rows>
-inline constexpr CompressionFunction kTunedFunction{
-  .analyze = AnalyzeTuned<Codec, Rows>,
-  .compress = CompressFrames<CompressionState<Codec, Rows>>,
+  .analyze = AnalyzeFrames<Codec, Rows>,
+  .compress = CompressFrames<Codec, Rows>,
+  .estimate = EstimateFrames<Codec, Rows>,
 };
 
 template<typename Codec>

@@ -1086,6 +1086,31 @@ TEST_F(ColCodecsTest, AutoStoresEmptyStringsAheadOfValuesLargerThanAFrame) {
   }
 }
 
+TEST_F(ColCodecsTest, AutoStoresRepeatingTextAfterASegmentOfNulls) {
+  constexpr uint64_t kNulls = 1024;
+  constexpr uint64_t kRows = kNulls + 512;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g < kNulls) {
+      return std::nullopt;
+    }
+    return absl::StrCat("tenant-", g % 16, "/region-with-a-long-suffix");
+  };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  Write(dir, irs::codecs::CodecType::Auto,
+        {.segment_target = 64, .tier = irs::WriteTier::Merge}, kRows, kRows,
+        value);
+  {
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    for (const auto& block : col->DataBlocks()) {
+      EXPECT_TRUE(irs::codecs::IsText(block.codec->type))
+        << magic_enum::enum_name(block.codec->type);
+    }
+  }
+  Verify(dir, irs::codecs::CodecType::Auto, kRows, value);
+}
+
 TEST_F(ColCodecsTest, AutoTrainsADictionaryWhereItPays) {
   constexpr uint64_t kRows = 60000;
   std::vector<std::string> templates;
@@ -2012,11 +2037,11 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   };
   const auto levels = [](const irs::codecs::ColumnTuning& tuning) {
     std::vector<int> out;
-    for (const auto& lz4 :
-         tuning.strings
-           .frames[std::to_underlying(irs::codecs::ByteCodec::Lz4)]) {
-      out.push_back(lz4.level);
-      out.push_back(static_cast<int>(lz4.layout));
+    for (const auto type :
+         {irs::codecs::CodecType::DictLz4, irs::codecs::CodecType::Lz4}) {
+      const auto& hint = tuning.hints[std::to_underlying(type)];
+      out.push_back(hint.refreshed != 0 ? 1 : 0);
+      out.push_back(hint.variant);
     }
     return out;
   };
@@ -2782,20 +2807,29 @@ TEST_F(ColCodecsTest, ADictionarySegmentEndsOnAVectorBoundary) {
 
 TEST_F(ColCodecsTest, AutoMeasuresTheSortedOrderOfAnLz4Dictionary) {
   using irs::codecs::CodecType;
-  irs::codecs::CodecSet no_fsst;
-  for (const auto type : {CodecType::Fsst, CodecType::DictFsst}) {
-    no_fsst.set(std::to_underlying(type));
-  }
+  constexpr uint64_t kRows = 30000;
+  duckdb::DBConfig::GetConfig(Db()).SetDisabledCompressionMethods(
+    {duckdb::CompressionType::COMPRESSION_FSST,
+     duckdb::CompressionType::COMPRESSION_DICT_FSST});
   const auto sorted = [&](const Value& value, irs::WriteTier tier) {
-    const auto chunks = Chunks(30000, value);
-    irs::codecs::ColumnTuning tuning;
-    const auto types =
-      SealAuto(Db(), WriteChunks(chunks), {.tier = tier}, tuning, no_fsst);
-    EXPECT_TRUE(absl::c_all_of(
-      types, [](CodecType type) { return type == CodecType::DictLz4; }))
-      << ::testing::PrintToString(types);
-    return tuning.strings.order[std::to_underlying(irs::codecs::ByteCodec::Lz4)]
-      .sorted;
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, CodecType::Auto, {.tier = tier}, kRows, kRows, value);
+    {
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      EXPECT_NE(col, nullptr);
+      if (!col) {
+        return false;
+      }
+      for (const auto& block : col->DataBlocks()) {
+        EXPECT_EQ(block.codec->type, CodecType::DictLz4)
+          << magic_enum::enum_name(block.codec->type);
+      }
+    }
+    const auto orders = SegmentInfo(dir, "sorted");
+    return !orders.empty() && absl::c_all_of(orders, [](const std::string& s) {
+      return s == "true";
+    });
   };
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     SCOPED_TRACE(tier == irs::WriteTier::Merge ? "merge" : "flush");
@@ -5034,7 +5068,8 @@ TEST_F(ColCodecsTest, CodesHeavyDictionarySegmentsStayNearTheSegmentTarget) {
   Verify(dir, irs::codecs::CodecType::DictLz4, kRows, value);
 }
 
-TEST_F(ColCodecsTest, AutoTunesLz4AgainWhenTheValuesChange) {
+TEST_F(ColCodecsTest,
+       AutoAsksEveryVariantOfLz4AgainWhenARowGroupBringsMoreText) {
   const auto seal = [&](const std::vector<std::unique_ptr<duckdb::Vector>>& in,
                         irs::codecs::ColumnTuning& tuning) {
     EXPECT_TRUE(AllText(SealAuto(Db(), WriteChunks(in), {}, tuning)));
@@ -5052,24 +5087,27 @@ TEST_F(ColCodecsTest, AutoTunesLz4AgainWhenTheValuesChange) {
   const auto alike = Chunks(4096, similar);
   const auto large = Chunks(4096, wordy);
   irs::codecs::ColumnTuning tuning;
-  const auto& lz4 =
-    tuning.strings.frames[std::to_underlying(irs::codecs::ByteCodec::Lz4)]
-                         [std::to_underlying(irs::codecs::Shape::Dictionary)];
-  seal(small, tuning);
-  ASSERT_TRUE(lz4.tuned);
-  const auto first = lz4.tuned_on;
-  EXPECT_GT(first, 0u);
   const auto& hint =
     tuning.hints[std::to_underlying(irs::codecs::CodecType::DictLz4)];
+  seal(small, tuning);
   ASSERT_NE(hint.forced, 0u);
-  const auto brief_bytes = hint.features[0];
+  const auto first = hint.refreshed;
+  EXPECT_NE(first, 0u);
+  const auto brief_bytes = hint.input;
+  EXPECT_NE(brief_bytes, 0u);
   for (int rg = 0; rg < 4; ++rg) {
     seal(alike, tuning);
-    EXPECT_EQ(lz4.tuned_on, first);
+    EXPECT_EQ(hint.refreshed, first);
+    EXPECT_EQ(hint.input, brief_bytes);
   }
   seal(large, tuning);
-  EXPECT_GE(lz4.tuned_on, 4 * first);
-  EXPECT_GT(hint.features[0], 2 * brief_bytes);
+  const auto grown = hint.refreshed;
+  EXPECT_GT(grown, first);
+  EXPECT_GE(hint.input, irs::codecs::kMoreInput * brief_bytes);
+  const auto wordy_bytes = hint.input;
+  seal(small, tuning);
+  EXPECT_EQ(hint.refreshed, grown);
+  EXPECT_EQ(hint.input, wordy_bytes);
 }
 
 TEST_F(ColCodecsTest, AutoMeasuresATextCandidateAgainOnlyWhenItMayWin) {

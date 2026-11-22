@@ -51,5 +51,6 @@ const Codec* AlpRdCodec(duckdb::PhysicalType physical);
 const Codec* RoaringCodec(duckdb::PhysicalType physical);
 Features NumericFeatures(ColumnDataCheckpointData& data);
 Features TextFeatures(ColumnDataCheckpointData& data);
+uint64_t TextBytes(ColumnDataCheckpointData& data);
 
 }  // namespace irs::codecs

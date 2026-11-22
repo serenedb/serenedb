@@ -37,9 +37,17 @@ namespace {
 
 using duckdb::PhysicalType;
 
+struct Variant {
+  uint8_t function = 0;
+  uint8_t option = 0;
+  uint8_t level = 0;
+  double price = 1.0;
+};
+
 struct Candidate {
   CodecType codec = CodecType::Uncompressed;
   double price = 1.0;
+  std::span<const Variant> variants = {};
 };
 
 struct Candidates {
@@ -47,12 +55,46 @@ struct Candidates {
   std::span<const Candidate> merge;
   Features (*features)(ColumnDataCheckpointData& data) = nullptr;
   double least_shift = 1.0;
+  uint64_t (*input)(ColumnDataCheckpointData& data) = nullptr;
 };
 
 constexpr double kLz4Price = 1.05;
 constexpr double kZstdPrice = 1.15;
 constexpr double kRoaringPrice = 2.0;
 constexpr double kLeastTextShift = 1.5;
+constexpr double kHigherLevelPrice = 1.02;
+constexpr double kWideFramesPrice = 1.03;
+
+constexpr Variant kFrames[] = {
+  {.level = 4},
+  {.level = 6, .price = kHigherLevelPrice},
+};
+
+constexpr Variant kDictionaryFrames[] = {
+  {.level = 4},
+  {.option = text::kSorted, .level = 4},
+  {.level = 6, .price = kHigherLevelPrice},
+  {.option = text::kSorted, .level = 6, .price = kHigherLevelPrice},
+};
+
+constexpr Variant kFreshFrames[] = {
+  {.level = 1},
+  {.option = text::kWide, .level = 1, .price = kWideFramesPrice},
+};
+
+constexpr Variant kFreshDictionaryFrames[] = {
+  {.level = 1},
+  {.option = text::kSorted, .level = 1},
+  {.option = text::kWide, .level = 1, .price = kWideFramesPrice},
+  {.option = text::kSorted | text::kWide,
+   .level = 1,
+   .price = kWideFramesPrice},
+};
+
+constexpr Variant kNamedDictionaryFrames[] = {
+  {},
+  {.option = text::kSorted},
+};
 
 constexpr Candidate kLightweightRows[] = {
   {CodecType::Uncompressed},
@@ -96,16 +138,16 @@ constexpr Candidate kFloatRows[] = {
 
 constexpr Candidate kTextRows[] = {
   {CodecType::DictFsst},
-  {CodecType::DictLz4},
+  {CodecType::DictLz4, 1.0, kDictionaryFrames},
   {CodecType::Fsst},
-  {CodecType::Lz4, kLz4Price},
+  {CodecType::Lz4, kLz4Price, kFrames},
 };
 
 constexpr Candidate kFreshTextRows[] = {
   {CodecType::DictFsst},
-  {CodecType::DictLz4, kLz4Price},
+  {CodecType::DictLz4, kLz4Price, kFreshDictionaryFrames},
   {CodecType::Fsst},
-  {CodecType::Lz4, kLz4Price},
+  {CodecType::Lz4, kLz4Price, kFreshFrames},
 };
 
 constexpr Candidates kLightweight{
@@ -135,6 +177,7 @@ constexpr Candidates kText{
   .merge = kTextRows,
   .features = TextFeatures,
   .least_shift = kLeastTextShift,
+  .input = TextBytes,
 };
 
 constexpr CodecSet kAlwaysAsked =
@@ -206,6 +249,21 @@ const Candidates& CandidatesOf(PhysicalType physical) noexcept {
   }
 }
 
+std::span<const Variant> NamedVariants(
+  CodecType type, const ColumnDataCheckpointData& data) noexcept {
+  if (data.type.InternalType() != PhysicalType::VARCHAR || data.rows == 0) {
+    return {};
+  }
+  switch (type) {
+    case CodecType::DictLz4:
+    case CodecType::DictZstd:
+    case CodecType::DictZxc:
+      return kNamedDictionaryFrames;
+    default:
+      return {};
+  }
+}
+
 constexpr size_t kMostCandidates = 16;
 
 struct Asked {
@@ -213,28 +271,72 @@ struct Asked {
   const Codec* codec;
 };
 
-double Analyze(const Codec& codec, ColumnDataCheckpointData& data,
-               const Features& features, double bound) {
-  auto& hint = data.tuning.hints[std::to_underlying(codec.type)];
-  const auto functions = codec.compression;
+size_t Variants(const Asked& asked) noexcept {
+  return asked.row->variants.empty() ? asked.codec->compression.size()
+                                     : asked.row->variants.size();
+}
+
+const CompressionFunction& Hand(const Asked& asked, size_t i, uint8_t level,
+                                ColumnDataCheckpointData& data) {
+  const auto variants = asked.row->variants;
+  const auto variant = variants.empty()
+                         ? Variant{.function = static_cast<uint8_t>(i)}
+                         : variants[i];
+  data.price = asked.row->price * variant.price;
+  data.option = variant.option;
+  data.params.compression_level = variant.level != 0 ? variant.level : level;
+  return asked.codec->compression[variant.function];
+}
+
+size_t LeastEstimated(const Asked& asked, uint8_t level, size_t held,
+                      ColumnDataCheckpointData& data) {
+  auto at = held;
+  auto least = Hand(asked, held, level, data).estimate(data);
+  for (size_t i = 0; i < Variants(asked); ++i) {
+    if (i == held) {
+      continue;
+    }
+    const auto estimate = Hand(asked, i, level, data).estimate(data);
+    if (estimate < least) {
+      least = estimate;
+      at = i;
+    }
+  }
+  return at;
+}
+
+double Analyze(const Asked& asked, uint8_t level, const Candidates& type,
+               ColumnDataCheckpointData& data, const Features& features,
+               double bound) {
+  const auto codec = asked.codec->type;
+  auto& hint = data.tuning.hints[std::to_underlying(codec)];
+  const auto count = Variants(asked);
   const auto now = data.tuning.row_group;
-  const bool every = AlwaysAsked(codec.type) || hint.refreshed == 0 ||
-                     now - hint.refreshed > kOldHint ||
-                     features[kStoredWidth] != hint.features[kStoredWidth];
-  const size_t last = hint.function < functions.size() ? hint.function : 0;
+  const auto input = type.input ? type.input(data) : 0;
+  const bool every =
+    AlwaysAsked(codec) || hint.refreshed == 0 ||
+    (type.input ? input >= kMoreInput * hint.input
+                : now - hint.refreshed > kOldHint ||
+                    features[kStoredWidth] != hint.features[kStoredWidth]);
+  const bool estimated =
+    count > 1 && asked.codec->compression.front().estimate != nullptr;
+  size_t last = hint.variant < count ? hint.variant : 0;
+  if (every && estimated) {
+    last = LeastEstimated(asked, level, last, data);
+  }
   auto best = bound;
   auto smallest = kNoScore;
-  hint.function = static_cast<uint8_t>(last);
+  hint.variant = static_cast<uint8_t>(last);
   const auto ask = [&](size_t i) {
-    const auto score = functions[i].analyze(data, best);
+    const auto score = Hand(asked, i, level, data).analyze(data, best);
     if (score < smallest) {
       smallest = score;
-      hint.function = static_cast<uint8_t>(i);
+      hint.variant = static_cast<uint8_t>(i);
     }
     best = std::min(best, score);
   };
   ask(last);
-  for (size_t i = 0; every && i < functions.size(); ++i) {
+  for (size_t i = 0; every && !estimated && i < count; ++i) {
     if (i != last) {
       ask(i);
     }
@@ -243,27 +345,39 @@ double Analyze(const Codec& codec, ColumnDataCheckpointData& data,
   hint.score = smallest;
   if (every) {
     hint.refreshed = now;
+    hint.input = input;
   }
   return smallest;
+}
+
+bool Compress(const Asked& asked, uint8_t level,
+              ColumnDataCheckpointData& data) {
+  const auto variant =
+    data.tuning.hints[std::to_underlying(asked.codec->type)].variant;
+  return Hand(asked, variant, level, data).compress(*asked.codec, data);
 }
 
 }  // namespace
 
 bool CompressAs(const Codec& codec, ColumnDataCheckpointData& data) {
-  const auto functions = codec.compression;
-  if (functions.size() == 1) {
-    return functions.front().compress(codec, data);
+  const auto physical = data.type.InternalType();
+  const Candidate row{
+    .codec = codec.type,
+    .variants = NamedVariants(codec.type, data),
+  };
+  const Asked asked{&row, &codec};
+  if (Variants(asked) == 1) {
+    return codec.compression.front().compress(codec, data);
   }
-  const auto& type = CandidatesOf(data.type.InternalType());
+  const auto level = data.params.compression_level;
+  const auto& type = CandidatesOf(physical);
   const auto features = !AlwaysAsked(codec.type) && type.features
                           ? type.features(data)
                           : Features{};
-  if (Analyze(codec, data, features, kNoScore) == kNoScore) {
+  if (Analyze(asked, level, type, data, features, kNoScore) == kNoScore) {
     return false;
   }
-  const auto function =
-    data.tuning.hints[std::to_underlying(codec.type)].function;
-  return functions[function].compress(codec, data);
+  return Compress(asked, level, data);
 }
 
 bool CompressAuto(ColumnDataCheckpointData& data) {
@@ -304,8 +418,7 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
     if (!forced && !Measures(hint, best, features, type.least_shift)) {
       continue;
     }
-    data.price = candidate.row->price;
-    const auto score = Analyze(*candidate.codec, data, features, best);
+    const auto score = Analyze(candidate, 0, type, data, features, best);
     if (forced) {
       hint.forced = now;
     }
@@ -317,14 +430,7 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
       }
     }
   }
-  if (!winner) {
-    CompressUncompressed(data);
-    return true;
-  }
-  data.price = winner->row->price;
-  const auto& codec = *winner->codec;
-  const auto function = hints[std::to_underlying(codec.type)].function;
-  if (!codec.compression[function].compress(codec, data)) {
+  if (!winner || !Compress(*winner, 0, data)) {
     CompressUncompressed(data);
   }
   return true;

@@ -45,11 +45,11 @@ using Builder = text::blob::CompressionState<Lz4, Rows>;
 constinit const Codec kLz4Codec =
   text::StringCodec<text::PlainScan<text::blob::Scan<Lz4>>,
                     Builder<text::PlainRows>,
-                    text::blob::kTunedFunction<Lz4, text::PlainRows>>();
+                    text::blob::kFrameFunction<Lz4, text::PlainRows>>();
 
 constinit const Codec kDictLz4Codec =
   text::StringCodec<text::DictionaryScan<text::blob::Scan<Lz4>>,
                     Builder<text::DictionaryRows>,
-                    text::blob::kTunedFunction<Lz4, text::DictionaryRows>>();
+                    text::blob::kFrameFunction<Lz4, text::DictionaryRows>>();
 
 }  // namespace irs::codecs

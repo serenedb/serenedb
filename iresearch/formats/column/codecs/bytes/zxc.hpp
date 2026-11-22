@@ -50,6 +50,10 @@ struct Zxc {
     return zxc_compress_bound(raw_size);
   }
 
+  static constexpr bool HighCompression(uint8_t level) noexcept {
+    return EffectiveLevel<Zxc>(level) > kDefaultLevel;
+  }
+
   class Compressor final : public DictionaryCompressor {
    public:
     explicit Compressor(uint8_t level);

@@ -87,4 +87,8 @@ Features TextFeatures(ColumnDataCheckpointData& data) {
   return data.Get<text::Values>().GetFeatures();
 }
 
+uint64_t TextBytes(ColumnDataCheckpointData& data) {
+  return data.Get<text::Values>().raw;
+}
+
 }  // namespace irs::codecs

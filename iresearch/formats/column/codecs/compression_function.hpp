@@ -157,7 +157,9 @@ enum class StateId : uint8_t {
   FsstEncoder,
   FsstPlusEncoder,
   Fsst12Encoder,
-  TextLz4Tuner,
+  TextLz4Sizes,
+  TextZstdSizes,
+  TextZxcSizes,
   AlpSample,
   AlprdSample,
 };
@@ -213,6 +215,7 @@ struct ColumnDataCheckpointData {
   CodecSet disabled;
   bool contested = false;
   double price = 1.0;
+  uint8_t option = 0;
   uint32_t min_packed_run = 1;
   double run_price = 1.0;
   uint64_t rows = 0;
@@ -223,6 +226,7 @@ struct CompressionFunction {
   double (*analyze)(ColumnDataCheckpointData& data, double bound) = nullptr;
   bool (*compress)(const Codec& codec,
                    ColumnDataCheckpointData& data) = nullptr;
+  double (*estimate)(ColumnDataCheckpointData& data) = nullptr;
 };
 
 using CompressionFunctions = std::span<const CompressionFunction>;

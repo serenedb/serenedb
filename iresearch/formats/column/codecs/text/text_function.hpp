@@ -111,7 +111,6 @@ struct CodecState final : State {
   Compression builder;
   Segment segment;
   std::vector<std::unique_ptr<Segment>> trials;
-  Config config;
 };
 
 template<typename Compression>
@@ -234,6 +233,12 @@ Segment& Trial(CodecState<Compression>& state, const Config& config,
 }
 
 template<typename Compression>
+inline constexpr Config kTrialConfig{
+  .shape = Compression::kShape,
+  .leaf = Compression::kCodec,
+};
+
+template<typename Compression>
 double AnalyzeTrial(ColumnDataCheckpointData& data, double) {
   constexpr auto kShape = Compression::kShape;
   const auto& values = data.Get<Values>();
@@ -242,10 +247,9 @@ double AnalyzeTrial(ColumnDataCheckpointData& data, double) {
   }
   auto& state = data.Get<CodecState<Compression>>();
   auto& window = data.Get<Window>();
-  state.config = {.shape = kShape, .leaf = Compression::kCodec};
-  const auto bytes =
-    Trial(state, state.config, values, window, data.params.segment_target)
-      .Size();
+  const auto bytes = Trial(state, kTrialConfig<Compression>, values, window,
+                           data.params.segment_target)
+                       .Size();
   return Score(values, window, kShape, data.price, bytes);
 }
 
@@ -270,26 +274,28 @@ void CompressAs(const Config& config, const Codec& codec,
 }
 
 template<typename Compression>
-bool CompressContested(const Codec& codec, ColumnDataCheckpointData& data) {
+bool CompressContested(const Config& config, const Codec& codec,
+                       ColumnDataCheckpointData& data) {
   auto& state = data.Get<CodecState<Compression>>();
   const auto& values = data.Get<Values>();
   auto& window = data.Get<Window>();
   SDB_ASSERT(window.rows != 0);
   auto& first =
-    Trial(state, state.config, values, window, data.params.segment_target);
+    Trial(state, config, values, window, data.params.segment_target);
   if (first.Size() > PlainStorageBytes(first)) {
     return false;
   }
   const auto rest = first.begin + first.rows;
   Flush(codec, data, first);
-  CompressRows(state.builder, state.config, values, rest, first, codec, data);
+  CompressRows(state.builder, config, values, rest, first, codec, data);
   return true;
 }
 
 template<typename Compression>
 bool CompressText(const Codec& codec, ColumnDataCheckpointData& data) {
   if (data.contested) {
-    return CompressContested<Compression>(codec, data);
+    return CompressContested<Compression>(kTrialConfig<Compression>, codec,
+                                          data);
   }
   CompressAs<Compression>(
     NamedConfig(Compression::kShape, Compression::kCodec, data.params), codec,

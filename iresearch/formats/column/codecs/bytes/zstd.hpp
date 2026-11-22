@@ -52,6 +52,10 @@ struct Zstd {
     return ZSTD_compressBound(raw_size);
   }
 
+  static constexpr bool HighCompression(uint8_t level) noexcept {
+    return EffectiveLevel<Zstd>(level) > 3;
+  }
+
   class Compressor final : public DictionaryCompressor {
    public:
     explicit Compressor(uint8_t level);

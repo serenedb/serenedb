@@ -1504,6 +1504,33 @@ TEST_F(ColNumericCodecTest, BooleansUseTheOneByteTransforms) {
   }
 }
 
+TEST_F(ColNumericCodecTest, ANamedLz4StoresBooleansAndReadsThemBack) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 4 * kRowGroup;
+  const auto type = duckdb::LogicalType::BOOLEAN;
+  const Gen flags = [](uint64_t g) -> std::optional<int64_t> {
+    if (g % 97 == 13) {
+      return std::nullopt;
+    }
+    return static_cast<int64_t>(Mix(g) % 7 == 0);
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, type, {.tier = tier}, kRows, kRowGroup, flags,
+          irs::codecs::CodecType::Lz4);
+    Verify(dir, type, kRows, flags);
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    ASSERT_EQ(col->DataBlocks().size(), kRows / kRowGroup);
+    for (const auto& block : col->DataBlocks()) {
+      EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Lz4)
+        << magic_enum::enum_name(block.codec->type);
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, WideIntegersUseTheNumericTransforms) {
   constexpr uint32_t kRowGroup = 4096;
   constexpr uint64_t kRows = 4 * kRowGroup;

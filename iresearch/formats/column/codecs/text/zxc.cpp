@@ -44,10 +44,12 @@ using Builder = text::blob::CompressionState<Zxc, Rows>;
 
 constinit const Codec kZxcCodec =
   text::StringCodec<text::PlainScan<text::blob::Scan<Zxc>>,
-                    Builder<text::PlainRows>>();
+                    Builder<text::PlainRows>,
+                    text::blob::kFrameFunction<Zxc, text::PlainRows>>();
 
-constinit const Codec kDictZxcCodec = text::StringCodec<
-  text::DictionaryScan<text::blob::Scan<Zxc>>, Builder<text::DictionaryRows>,
-  text::blob::kFrameFunction<Builder<text::DictionaryRows>>>();
+constinit const Codec kDictZxcCodec =
+  text::StringCodec<text::DictionaryScan<text::blob::Scan<Zxc>>,
+                    Builder<text::DictionaryRows>,
+                    text::blob::kFrameFunction<Zxc, text::DictionaryRows>>();
 
 }  // namespace irs::codecs

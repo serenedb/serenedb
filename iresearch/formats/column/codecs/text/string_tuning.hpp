@@ -46,8 +46,8 @@ constexpr double Ratio(const RatioHistory& hist, double empty) noexcept {
 
 namespace text {
 
-inline constexpr double kSortedGain = 0.03;
-inline constexpr uint64_t kOrderRetuneGrowth = 4;
+inline constexpr uint8_t kSorted = 1;
+inline constexpr uint8_t kWide = 2;
 
 struct Config {
   Shape shape = Shape::Dictionary;
@@ -61,22 +61,7 @@ struct Config {
 
 }  // namespace text
 
-struct FrameTuning {
-  bool tuned = false;
-  uint8_t level = 0;
-  FrameDictionary layout = FrameDictionary::None;
-  uint64_t tuned_on = 0;
-};
-
-struct OrderTuning {
-  bool tuned = false;
-  bool sorted = false;
-  uint64_t tuned_on = 0;
-};
-
 struct StringTuning {
-  FrameTuning frames[kByteCodecCount][kTextShapeCount];
-  OrderTuning order[kByteCodecCount];
   RatioHistory history[kByteCodecCount][kShapeCount]{};
   double codes_ratio = 0;
   uint64_t last_distinct = 0;

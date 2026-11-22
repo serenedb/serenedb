@@ -5413,53 +5413,66 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
 }
 
-void TextLevels(const irs::ColumnReader& col, irs::ReadContext& ctx,
-                std::set<std::string>& levels) {
+void TextChoices(const irs::ColumnReader& col, irs::ReadContext& ctx,
+                 std::vector<std::string>& choices) {
   if (col.Type().InternalType() == duckdb::PhysicalType::VARCHAR) {
     for (size_t block = 0; block != col.DataBlocks().size(); ++block) {
       const auto segment = col.OpenSegment(block, ctx);
-      levels.insert(segment->function.get_segment_info(*segment)["level"]);
+      auto info = segment->function.get_segment_info(*segment);
+      choices.push_back(
+        absl::StrCat(magic_enum::enum_name(col.DataBlocks()[block].codec->type),
+                     " level ", info["level"], " sorted ", info["sorted"]));
     }
   }
   col.VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
-    TextLevels(sub.column, ctx, levels);
+    TextChoices(sub.column, ctx, choices);
   });
 }
 
-TEST_F(ColumnReaderTest, VariantRowGroupsKeepTheirStringTuning) {
+TEST_F(ColumnReaderTest,
+       VariantRowGroupsRepeatTheirStringChoiceUntilTheTextGrows) {
   constexpr irs::field_id kId = 31;
   constexpr uint32_t kRowGroup = 16384;
   SetShreddingSize(Db(), -1);
-  const auto levels = [&](uint64_t begin, uint64_t end) {
+  {
+    duckdb::Connection con{Db()};
+    auto set = con.Query("SET disabled_compression_methods = 'fsst,dict_fsst'");
+    ASSERT_FALSE(set->HasError()) << set->GetError();
+  }
+  const std::string clustered =
+    "repeat(md5(((hash(i) % 4000) // 4)::VARCHAR), 6) || '/' || "
+    "((hash(i) % 4000) % 4)";
+  const std::string tenants = "'tenant-' || ((i * 7919) % 3000) || '/item'";
+  const auto choices = [&](const std::string& first, const std::string& then,
+                           uint64_t groups) {
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     std::vector<duckdb::Value> expected;
     WriteVariantViaSql(
       Db(), dir, "vtune", kId,
-      absl::StrCat(
-        "SELECT CASE WHEN i < ", kRowGroup,
-        " THEN array_to_string(list_transform(range(40), lambda k: "
-        "substr(md5((((hash(v * 40 + k) % 3000) * (hash(v * 40 + k) % 3000)) "
-        "// 3000)::VARCHAR), 1, 3 + (hash(v * 40 + k) % 8)::BIGINT)), ' ') "
-        "ELSE repeat(to_base64(unhex(md5(w::VARCHAR))), 4) END::VARIANT "
-        "FROM (SELECT i, i % ",
-        kRowGroup / 4, " AS v, i % ", kRowGroup / 32, " AS w FROM range(",
-        begin, ", ", end, ") t(i))"),
+      absl::StrCat("SELECT (CASE WHEN i < ", kRowGroup, " THEN ", first,
+                   " ELSE ", then, " END)::VARIANT FROM range(",
+                   groups * kRowGroup, ") t(i)"),
       kRowGroup, expected);
-    EXPECT_EQ(expected.size(), end - begin);
+    EXPECT_EQ(expected.size(), groups * kRowGroup);
     irs::ColReader r = irs::tests::OpenColReader(dir, "vtune");
     const auto* col = r.Column(kId);
     EXPECT_NE(col, nullptr);
     ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
-    std::set<std::string> found;
-    TextLevels(*col, r.Ctx(), found);
+    std::vector<std::string> found;
+    TextChoices(*col, r.Ctx(), found);
     return found;
   };
-  const auto words = levels(0, kRowGroup);
-  const auto repeats = levels(kRowGroup, 2 * kRowGroup);
-  ASSERT_EQ(words.size(), 1u) << ::testing::PrintToString(words);
-  ASSERT_EQ(repeats.size(), 1u) << ::testing::PrintToString(repeats);
-  ASSERT_NE(words, repeats);
-  EXPECT_EQ(levels(0, 6 * kRowGroup), words);
+  const auto clustered_alone = choices(clustered, clustered, 1);
+  const auto tenants_alone = choices(tenants, tenants, 1);
+  ASSERT_EQ(clustered_alone.size(), 1u)
+    << ::testing::PrintToString(clustered_alone);
+  ASSERT_EQ(tenants_alone.size(), 1u)
+    << ::testing::PrintToString(tenants_alone);
+  ASSERT_NE(clustered_alone, tenants_alone);
+  EXPECT_EQ(choices(tenants, clustered, 4),
+            (std::vector{tenants_alone[0], clustered_alone[0],
+                         clustered_alone[0], clustered_alone[0]}));
+  EXPECT_EQ(choices(clustered, tenants, 4), std::vector(4, clustered_alone[0]));
 }
 
 TEST_F(ColumnReaderTest, VariantRowGroupsOfOneShapeShredOnOneType) {

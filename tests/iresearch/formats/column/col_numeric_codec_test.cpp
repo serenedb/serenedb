@@ -4208,3 +4208,53 @@ TEST(ColNumericKernelsTest, UnshufflesAndWidensInOnePass) {
 }
 
 }  // namespace
+
+TEST_F(ColNumericCodecTest, FiltersIntoAVectorThatHeldNullsLeaveNoStaleNulls) {
+  constexpr uint64_t kRows = 4 * STANDARD_VECTOR_SIZE;
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    if (g < 2 * STANDARD_VECTOR_SIZE && g % 3 == 0) {
+      return std::nullopt;
+    }
+    return static_cast<int64_t>(Mix(g) % 1000);
+  };
+  const auto type = duckdb::LogicalType::BIGINT;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  Write(dir, type, {}, kRows, STANDARD_VECTOR_SIZE, gen);
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  duckdb::Connection con{_db};
+  const duckdb::ExpressionFilter filter{
+    duckdb::BoundComparisonExpression::Create(
+      duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO,
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        duckdb::Value::BIGINT(0)))};
+  auto filter_state =
+    duckdb::TableFilterState::Initialize(*con.context, filter);
+  for (const auto check :
+       {irs::NullCheckKind::None, irs::NullCheckKind::IsNotNull}) {
+    auto state = col->InitScan(r.Ctx());
+    duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+    for (uint64_t anchor = 0; anchor < kRows; anchor += STANDARD_VECTOR_SIZE) {
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
+        sel.set_index(i, i);
+      }
+      const auto kept = col->GatherFilter(state, anchor, STANDARD_VECTOR_SIZE,
+                                          sel, STANDARD_VECTOR_SIZE, filter,
+                                          *filter_state, check, out);
+      duckdb::idx_t next = 0;
+      for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
+        const auto v = gen(anchor + i);
+        const bool got = next < kept && sel.get_index(next) == i;
+        next += got ? 1 : 0;
+        ASSERT_EQ(got, v.has_value()) << "row " << anchor + i;
+        if (got && check == irs::NullCheckKind::None) {
+          ASSERT_EQ(out.GetValue(i), duckdb::Value::BIGINT(*v))
+            << "row " << anchor + i;
+        }
+      }
+    }
+  }
+}

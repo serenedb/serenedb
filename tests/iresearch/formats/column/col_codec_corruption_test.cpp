@@ -25,7 +25,9 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <duckdb.hpp>
+#include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -36,6 +38,7 @@
 #include <fstream>
 #include <functional>
 #include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/formats/column/codecs/text/string_layout.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -908,6 +911,124 @@ TEST_F(ColCodecCorruptionTest, TextCodecsWithByteLeavesRejectDamagedSegments) {
           "Corrupted text segment: frame table is inconsistent",
           "Corrupted text segment: header is inconsistent",
           "Corrupted text segment: unsupported version #"}});
+}
+
+void RewritePacked(const std::filesystem::path& file, uint64_t offset,
+                   uint64_t size, bool lengths,
+                   const std::function<void(std::vector<uint32_t>&)>& change) {
+  std::fstream io{file, std::ios::in | std::ios::out | std::ios::binary};
+  ASSERT_TRUE(io.good());
+  std::string bytes(size, '\0');
+  io.seekg(static_cast<std::streamoff>(offset));
+  io.read(bytes.data(), static_cast<std::streamsize>(size));
+  irs::codecs::Header h;
+  ASSERT_GE(size, sizeof(h));
+  std::memcpy(&h, bytes.data(), sizeof(h));
+  const uint64_t at = lengths ? h.off_lengths : h.off_lcps;
+  const auto width = lengths ? h.length_width : h.lcp_width;
+  ASSERT_NE(width, 0);
+  const uint64_t groups =
+    (uint64_t{h.entry_count} + irs::codecs::kGroup - 1) / irs::codecs::kGroup;
+  ASSERT_LE(at + groups * irs::codecs::kGroup * width / 8, size);
+  std::vector<uint32_t> values(groups * irs::codecs::kGroup);
+  auto* packed = reinterpret_cast<duckdb::data_ptr_t>(bytes.data()) + at;
+  for (uint64_t g = 0; g < groups; ++g) {
+    duckdb::BitpackingPrimitives::UnPackBlock<uint32_t>(
+      reinterpret_cast<duckdb::data_ptr_t>(values.data() +
+                                           g * irs::codecs::kGroup),
+      packed + g * irs::codecs::kGroup * width / 8, width);
+  }
+  values.resize(h.entry_count);
+  change(values);
+  for (const auto v : values) {
+    ASSERT_LT(uint64_t{v}, uint64_t{1} << width);
+  }
+  values.resize(groups * irs::codecs::kGroup);
+  for (uint64_t g = 0; g < groups; ++g) {
+    duckdb::BitpackingPrimitives::PackBlock<uint32_t>(
+      packed + g * irs::codecs::kGroup * width / 8,
+      values.data() + g * irs::codecs::kGroup, width);
+  }
+  io.seekp(static_cast<std::streamoff>(offset));
+  io.write(bytes.data(), static_cast<std::streamsize>(size));
+}
+
+TEST_F(ColCodecCorruptionTest, TextSegmentsRejectALargerFieldAtTheirLastEntry) {
+  const auto damaged =
+    [&](const Case& c, bool lengths,
+        const std::function<void(std::vector<uint32_t>&)>& change,
+        const std::function<void(irs::ColReader&, const irs::ColumnReader&)>&
+          read,
+        std::string_view rejected) {
+      SCOPED_TRACE(c.name);
+      const auto path =
+        test_dir() / absl::StrCat("col_codec_corruption_field_", _next++);
+      std::filesystem::create_directories(path);
+      uint64_t offset = 0;
+      uint64_t size = 0;
+      ASSERT_NO_FATAL_FAILURE(Write(path, c, offset, size));
+      ASSERT_NO_FATAL_FAILURE(RewritePacked(path / irs::FileName(kSeg), offset,
+                                            size, lengths, change));
+      tests::IndexDir dir{Db(), path.string()};
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      std::set<std::string> messages;
+      Guarded(messages, [&] { read(r, *col); });
+      EXPECT_EQ(absl::StrJoin(messages, "\n"), rejected);
+    };
+  damaged(
+    {"an fsst length that runs past the data, read by rows of its group",
+     LogicalType::VARCHAR,
+     CodecType::Fsst,
+     [](uint64_t g) {
+       return Value{absl::StrCat("tenant-", Mix(g) % 100000, "/item-", g % 7)};
+     },
+     {}},
+    /*lengths=*/true, [](std::vector<uint32_t>& lengths) { ++lengths.back(); },
+    [](irs::ColReader& r, const irs::ColumnReader& col) {
+      constexpr duckdb::idx_t kHits = 65;
+      const uint64_t anchor =
+        col.RowCount() / STANDARD_VECTOR_SIZE * uint64_t{STANDARD_VECTOR_SIZE};
+      const auto span = static_cast<duckdb::idx_t>(col.RowCount() - anchor);
+      ASSERT_GT(span, kHits);
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t i = 0; i < kHits; ++i) {
+        sel.set_index(i, span - kHits + i);
+      }
+      auto state = col.InitScan(r.Ctx());
+      duckdb::Vector out{LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      col.GatherDense(state, anchor, sel, kHits, span, out);
+    },
+    "Corrupted text segment: front coding is inconsistent");
+  damaged(
+    {"an fsst_plus prefix id longer than the rest of its frame",
+     LogicalType::VARCHAR,
+     CodecType::FsstPlus,
+     [](uint64_t g) {
+       return g + 1 == kRows
+                ? Value{"x"}
+                : Value{absl::StrCat(
+                    "a prefix that every row but the last starts with/", g)};
+     },
+     {}},
+    /*lengths=*/false,
+    [](std::vector<uint32_t>& ids) {
+      const auto max_id = *absl::c_max_element(ids);
+      ASSERT_NE(max_id, 0);
+      ids.back() = max_id;
+    },
+    [](irs::ColReader& r, const irs::ColumnReader& col) {
+      auto state = col.InitScan(r.Ctx());
+      for (uint64_t pos = 0; pos < col.RowCount();) {
+        const auto take =
+          std::min<duckdb::idx_t>(col.RowCount() - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector out{LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        col.Scan(state, out, take);
+        pos += take;
+      }
+    },
+    "Corrupted text segment: frame is inconsistent");
 }
 
 TEST_F(ColCodecCorruptionTest, TextDictionariesRejectDamagedSegments) {

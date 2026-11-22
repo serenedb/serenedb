@@ -1,4 +1,5 @@
 import json
+import math
 
 from sqllogic_gen import Test, lit
 
@@ -205,12 +206,36 @@ for extra in CONTEXTS[:2]:
     for pred in geo_predicates("geo"):
         check("gdm_p_idx", pred, extra)
 
-PROBED = " AND id IN (3, 70, 444, 1201, 1999)"
+def first_point(shape):
+    c = shape["coordinates"]
+    while isinstance(c[0], list):
+        c = c[0]
+    return c
+
+
+def metres(a, b):
+    dx = (a[0] - b[0]) * 111320 * math.cos(math.radians((a[1] + b[1]) / 2))
+    return math.hypot(dx, (a[1] - b[1]) * 110540)
+
+
+def probed_ids(rows):
+    ring = QUERIES[0]["coordinates"][0]
+    lo, hi = ring[0], ring[2]
+    inside = [i for i, s in enumerate(rows)
+              if lo[0] <= first_point(s)[0] <= hi[0] and lo[1] <= first_point(s)[1] <= hi[1]]
+    by_distance = sorted(range(len(rows)),
+                         key=lambda i: metres(first_point(rows[i]), CENTROIDS[0]))
+    beyond = [i for i in by_distance if 850 < metres(first_point(rows[i]), CENTROIDS[0])]
+    far = [i for i, s in enumerate(rows) if first_point(s)[0] < 30]
+    ids = sorted(set(inside[:2] + by_distance[:3] + beyond[:1] + far[:1]))
+    return f" AND id IN ({', '.join(map(str, ids))})"
 
 
 def probed(preds):
-    return [preds[i] for i in (0, 2, 3, 60, 61, 62, 66)]
+    return [preds[i] for i in (0, 2, 3, 70, 71, 76, 77, 78, 79)]
 
+
+PROBED = probed_ids(shapes)
 
 for name in JSON_INDEXES:
     t.part()
@@ -238,7 +263,7 @@ t.insert("gdm_p", (f"({i}, '{{\"lat\":{s['coordinates'][1]},\"lng\":{s['coordina
 t.index("gdm_p_idx", "gdm_p", "id, geo gdm_geopoint")
 t.section("encode_geopoint over latitude and longitude fields, the geo predicate probed for a few ids.")
 for pred in probed(geo_predicates("geo")):
-    check("gdm_p_idx", pred, PROBED)
+    check("gdm_p_idx", pred, probed_ids(points))
 
 t.part()
 json_table()

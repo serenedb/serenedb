@@ -274,3 +274,42 @@ CREATE TABLE public.alt_tx(a INTEGER, b INTEGER USING COMPRESSION RLE);
 
 statement ok
 DROP TABLE alt_tx;
+
+statement ok
+SET SESSION debug_verify_statement = 'reparse_statement';
+
+statement ok
+CREATE SCHEMA "alt rp";
+
+statement ok
+CREATE TABLE "alt rp"."t rp" (id INT PRIMARY KEY, "odd col" TEXT, w TEXT);
+
+statement ok
+ALTER TABLE "alt rp"."t rp" ALTER COLUMN "odd col" SET COMPRESSION zstd(compression_level = 3);
+
+statement ok
+ALTER TABLE IF EXISTS "alt rp"."t rp" ALTER COLUMN w SET COMPRESSION dict_lz4;
+
+statement ok
+ALTER TABLE IF EXISTS "alt rp".missing ALTER COLUMN w SET COMPRESSION lz4;
+
+query
+SELECT sql FROM sdb_tables() WHERE database_name = current_database() AND table_name = 't rp';
+----
+sql
+CREATE TABLE "alt rp"."t rp"(id INTEGER PRIMARY KEY, "odd col" VARCHAR USING COMPRESSION ZSTD(compression_level = 3), w VARCHAR USING COMPRESSION DICT_LZ4);
+
+statement ok
+ALTER TABLE "alt rp"."t rp" ALTER COLUMN "odd col" SET COMPRESSION DEFAULT;
+
+query
+SELECT sql FROM sdb_tables() WHERE database_name = current_database() AND table_name = 't rp';
+----
+sql
+CREATE TABLE "alt rp"."t rp"(id INTEGER PRIMARY KEY, "odd col" VARCHAR, w VARCHAR USING COMPRESSION DICT_LZ4);
+
+statement ok
+RESET SESSION debug_verify_statement;
+
+statement ok
+DROP SCHEMA "alt rp" CASCADE;

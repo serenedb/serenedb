@@ -101,3 +101,41 @@ beta
 
 statement ok
 DETACH codecs_v11_${__DATABASE__};
+
+
+statement ok
+ATTACH ':memory:' AS codecs_mem_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE codecs_mem_${__DATABASE__}.main.t_indexed (a INTEGER, v TEXT);
+
+
+statement ok
+INSERT INTO codecs_mem_${__DATABASE__}.main.t_indexed SELECT i, 'v' || (i % 7) FROM range(5000) t(i);
+
+
+statement ok
+CREATE INDEX t_indexed_a ON codecs_mem_${__DATABASE__}.main.t_indexed (a);
+
+
+statement ok
+ALTER TABLE codecs_mem_${__DATABASE__}.main.t_indexed ALTER COLUMN a SET COMPRESSION rle;
+
+
+query
+SELECT sql FROM sdb_tables() WHERE database_name = 'codecs_mem_${__DATABASE__}' AND table_name = 't_indexed';
+----
+sql
+CREATE TABLE t_indexed(a INTEGER USING COMPRESSION RLE, v VARCHAR);
+
+
+query
+SELECT a, v FROM codecs_mem_${__DATABASE__}.main.t_indexed WHERE a = 4321;
+----
+a	v
+4321	v2
+
+
+statement ok
+DETACH codecs_mem_${__DATABASE__};

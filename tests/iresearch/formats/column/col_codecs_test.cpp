@@ -5462,3 +5462,559 @@ TEST_F(ColCodecsTest, SparseAndDenseSelectionsOfEveryTextCodecMatchTheValues) {
     }
   }
 }
+
+namespace {
+
+using Offered = std::function<bool(uint64_t)>;
+using Passes = std::function<bool(const std::optional<std::string>&)>;
+
+constexpr irs::codecs::CodecType kDictionaryCodecs[] = {
+  irs::codecs::CodecType::DictLz4,    irs::codecs::CodecType::DictZstd,
+  irs::codecs::CodecType::DictZxc,    irs::codecs::CodecType::DictFsst,
+  irs::codecs::CodecType::DictFsst12, irs::codecs::CodecType::DictFsstPlus,
+  irs::codecs::CodecType::DictOnpair,
+};
+
+constexpr irs::codecs::CodecType kSortedDictionaryCodecs[] = {
+  irs::codecs::CodecType::DictFsst,
+  irs::codecs::CodecType::DictFsst12,
+  irs::codecs::CodecType::DictFsstPlus,
+  irs::codecs::CodecType::DictOnpair,
+};
+
+bool EveryRow(uint64_t) { return true; }
+
+duckdb::unique_ptr<duckdb::Expression> Compared(duckdb::ExpressionType cmp,
+                                                const duckdb::Value& key) {
+  return duckdb::BoundComparisonExpression::Create(
+    cmp, duckdb::make_uniq<duckdb::BoundReferenceExpression>(key.type(), 0),
+    duckdb::make_uniq<duckdb::BoundConstantExpression>(key));
+}
+
+duckdb::unique_ptr<duckdb::Expression> NullChecked(
+  duckdb::ExpressionType check, const duckdb::LogicalType& type) {
+  auto expr = duckdb::make_uniq<duckdb::BoundOperatorExpression>(
+    check, duckdb::LogicalType::BOOLEAN);
+  expr->GetChildrenMutable().push_back(
+    duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0));
+  return expr;
+}
+
+bool Satisfies(duckdb::ExpressionType cmp, std::string_view v,
+               std::string_view key) {
+  switch (cmp) {
+    case duckdb::ExpressionType::COMPARE_EQUAL:
+      return v == key;
+    case duckdb::ExpressionType::COMPARE_NOTEQUAL:
+      return v != key;
+    case duckdb::ExpressionType::COMPARE_LESSTHAN:
+      return v < key;
+    case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
+      return v <= key;
+    case duckdb::ExpressionType::COMPARE_GREATERTHAN:
+      return v > key;
+    default:
+      return v >= key;
+  }
+}
+
+void ExpectFilteredSpan(const irs::ColumnReader& col,
+                        irs::ColumnReader::ScanState& state, uint64_t anchor,
+                        uint64_t span, const duckdb::TableFilter& filter,
+                        duckdb::TableFilterState& filter_state,
+                        const Offered& offered, const Value& value,
+                        const Passes& passes) {
+  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+  duckdb::idx_t count = 0;
+  for (duckdb::idx_t i = 0; i < span; ++i) {
+    if (offered(anchor + i)) {
+      sel.set_index(count++, i);
+    }
+  }
+  duckdb::Vector out{col.Type(), STANDARD_VECTOR_SIZE};
+  const auto kept =
+    col.GatherFilter(state, anchor, span, sel, count, filter, filter_state,
+                     irs::NullCheckKind::None, out);
+  duckdb::idx_t next = 0;
+  for (duckdb::idx_t i = 0; i < span; ++i) {
+    const auto g = anchor + i;
+    const auto v = value(g);
+    const bool expected = offered(g) && passes(v);
+    const bool got = next < kept && sel.get_index(next) == i;
+    ASSERT_EQ(got, expected) << "row " << g;
+    if (got) {
+      const auto held = out.GetValue(i);
+      ASSERT_EQ(held.IsNull(), !v) << "row " << g;
+      if (v) {
+        EXPECT_EQ(duckdb::StringValue::Get(held), *v) << "row " << g;
+      }
+      ++next;
+    }
+  }
+  EXPECT_EQ(next, kept);
+}
+
+void ExpectFilterKeeps(irs::ColReader& r, const irs::ColumnReader& col,
+                       duckdb::ClientContext& context,
+                       const duckdb::TableFilter& filter, uint64_t rows,
+                       const Offered& offered, const Value& value,
+                       const Passes& passes) {
+  auto filter_state = duckdb::TableFilterState::Initialize(context, filter);
+  auto state = col.InitScan(r.Ctx());
+  for (uint64_t anchor = 0; anchor < rows; anchor += STANDARD_VECTOR_SIZE) {
+    ExpectFilteredSpan(col, state, anchor,
+                       std::min<uint64_t>(rows - anchor, STANDARD_VECTOR_SIZE),
+                       filter, *filter_state, offered, value, passes);
+    if (::testing::Test::HasFatalFailure()) {
+      return;
+    }
+  }
+}
+
+}  // namespace
+
+TEST_F(ColCodecsTest, DictionarySegmentsOfOnlyNullsReadAndFilter) {
+  using Cmp = duckdb::ExpressionType;
+  constexpr uint32_t kRowGroup = 320;
+  constexpr uint64_t kRows = 2 * kRowGroup;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g < 256 || g >= 384) {
+      return std::nullopt;
+    }
+    return absl::StrCat("tenant-", (g * 7919) % 41, "/item");
+  };
+  duckdb::Connection con{_db};
+  for (const auto codec : kDictionaryCodecs) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, codec, {.segment_target = 64}, kRows, kRowGroup, value);
+    const auto entries = SegmentInfo(dir, "entries");
+    EXPECT_GE(absl::c_count(entries, "1"), 2)
+      << ::testing::PrintToString(entries);
+    Verify(dir, codec, kRows, value);
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    for (const std::string_view key : {"tenant-20/item", "", "zzz"}) {
+      for (const auto cmp :
+           {Cmp::COMPARE_EQUAL, Cmp::COMPARE_NOTEQUAL, Cmp::COMPARE_LESSTHAN,
+            Cmp::COMPARE_GREATERTHANOREQUALTO}) {
+        SCOPED_TRACE(
+          absl::StrCat(duckdb::EnumUtil::ToString(cmp), " '", key, "'"));
+        const duckdb::ExpressionFilter filter{
+          Compared(cmp, duckdb::Value{std::string{key}})};
+        ExpectFilterKeeps(r, *col, *con.context, filter, kRows, EveryRow, value,
+                          [&](const std::optional<std::string>& v) {
+                            return v && Satisfies(cmp, *v, key);
+                          });
+      }
+    }
+    for (const auto check :
+         {Cmp::OPERATOR_IS_NULL, Cmp::OPERATOR_IS_NOT_NULL}) {
+      SCOPED_TRACE(duckdb::EnumUtil::ToString(check));
+      const duckdb::ExpressionFilter filter{
+        NullChecked(check, duckdb::LogicalType::VARCHAR)};
+      ExpectFilterKeeps(r, *col, *con.context, filter, kRows, EveryRow, value,
+                        [&](const std::optional<std::string>& v) {
+                          return (check == Cmp::OPERATOR_IS_NULL) == !v;
+                        });
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, LazyFiltersOfEveryDictionaryCodecMatchTheValues) {
+  constexpr uint64_t kDistinct = 6144;
+  constexpr uint64_t kRows = 4 * STANDARD_VECTOR_SIZE;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return absl::StrCat("https://example.org/catalog/",
+                        absl::Dec(g % kDistinct, absl::kZeroPad4), "/reviews");
+  };
+  const Offered offered = [](uint64_t g) {
+    const auto key = g % kDistinct;
+    return key % (key < STANDARD_VECTOR_SIZE ? 5 : 7) == 0;
+  };
+  static constexpr std::string_view kPiece = "catalog/1";
+  duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> args;
+  args.push_back(duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+    duckdb::LogicalType::VARCHAR, 0));
+  args.push_back(duckdb::make_uniq<duckdb::BoundConstantExpression>(
+    duckdb::Value{std::string{kPiece}}));
+  const duckdb::ExpressionFilter contains{
+    duckdb::make_uniq<duckdb::BoundFunctionExpression>(
+      duckdb::BoundScalarFunction(
+        duckdb::ContainsFun::GetFunctions().GetFunctionByOffset(0)),
+      std::move(args), nullptr)};
+  auto& cache = Db().GetObjectCache();
+  const auto room = cache.GetMaxMemory();
+  const absl::Cleanup restore = [&] { cache.SetMaxMemory(room); };
+  duckdb::Connection con{_db};
+  for (const auto codec : kDictionaryCodecs) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, codec, {}, kRows, kRows, value);
+    ASSERT_EQ(SegmentInfo(dir, "entries"),
+              std::vector<std::string>{absl::StrCat(kDistinct + 1)});
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    for (const bool with_room : {true, false}) {
+      SCOPED_TRACE(with_room ? "cache with room" : "cache without room");
+      for (const auto& key : CacheKeys(r, *col)) {
+        cache.Delete(key);
+      }
+      cache.SetMaxMemory(with_room ? room : cache.GetCurrentMemory());
+      ExpectFilterKeeps(r, *col, *con.context, contains, kRows, offered, value,
+                        [](const std::optional<std::string>& v) {
+                          return v && v->find(kPiece) != std::string::npos;
+                        });
+      cache.SetMaxMemory(room);
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, RangeFiltersAfterAPartialScanMatchTheValues) {
+  using Cmp = duckdb::ExpressionType;
+  constexpr uint64_t kRows = 8 * STANDARD_VECTOR_SIZE;
+  std::vector<std::string> rows;
+  for (uint64_t g = 0; g < kRows; ++g) {
+    rows.push_back(
+      absl::StrCat("key-", absl::Dec(3 * g, absl::kZeroPad7), "/x"));
+  }
+  const Value value = [&](uint64_t g) -> std::optional<std::string> {
+    return rows[g];
+  };
+  const auto after = [&](uint64_t g) { return rows[g] + "~"; };
+  auto& cache = Db().GetObjectCache();
+  duckdb::Connection con{_db};
+  for (const auto codec : kSortedDictionaryCodecs) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, codec, {}, kRows, kRows, value);
+    for (const auto& sorted : SegmentInfo(dir, "sorted")) {
+      ASSERT_EQ(sorted, "true");
+    }
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    for (const uint64_t scanned :
+         {uint64_t{40}, uint64_t{700}, uint64_t{STANDARD_VECTOR_SIZE}}) {
+      const std::string keys[] = {
+        rows[scanned / 4], after(15),       after(31),
+        rows[scanned - 1], rows[kRows - 5], std::string{"a"},
+        std::string{"z"},
+      };
+      for (const auto& key : keys) {
+        for (const auto cmp :
+             {Cmp::COMPARE_EQUAL, Cmp::COMPARE_NOTEQUAL, Cmp::COMPARE_LESSTHAN,
+              Cmp::COMPARE_LESSTHANOREQUALTO, Cmp::COMPARE_GREATERTHAN,
+              Cmp::COMPARE_GREATERTHANOREQUALTO}) {
+          SCOPED_TRACE(absl::StrCat(scanned, " rows scanned, ",
+                                    duckdb::EnumUtil::ToString(cmp), " '", key,
+                                    "'"));
+          for (const auto& cached : CacheKeys(r, *col)) {
+            cache.Delete(cached);
+          }
+          auto state = col->InitScan(r.Ctx());
+          duckdb::Vector lead{duckdb::LogicalType::VARCHAR,
+                              STANDARD_VECTOR_SIZE};
+          duckdb::FlatVector::ValidityMutable(lead).Reset(STANDARD_VECTOR_SIZE);
+          if (scanned == STANDARD_VECTOR_SIZE) {
+            ASSERT_EQ(col->Scan(state, lead, scanned), scanned);
+            lead.Flatten(scanned);
+          } else {
+            ASSERT_EQ(col->ScanCount(state, lead, scanned, 0), scanned);
+          }
+          for (duckdb::idx_t k = 0; k < scanned; ++k) {
+            ExpectRow(lead, k, k, value);
+          }
+          const duckdb::ExpressionFilter filter{
+            Compared(cmp, duckdb::Value{key})};
+          auto filter_state =
+            duckdb::TableFilterState::Initialize(*con.context, filter);
+          for (uint64_t anchor = STANDARD_VECTOR_SIZE; anchor < kRows;
+               anchor += STANDARD_VECTOR_SIZE) {
+            ExpectFilteredSpan(*col, state, anchor, STANDARD_VECTOR_SIZE,
+                               filter, *filter_state, EveryRow, value,
+                               [&](const std::optional<std::string>& v) {
+                                 return v && Satisfies(cmp, *v, key);
+                               });
+            if (HasFatalFailure()) {
+              return;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+TEST_F(ColCodecsTest,
+       BatchedPointReadsOfEveryDictionaryCodecCopyOnlyWithoutCacheRoom) {
+  using irs::codecs::CodecType;
+  constexpr uint64_t kRows = 8000;
+  const Value distinct = [](uint64_t g) -> std::optional<std::string> {
+    return absl::StrCat("https://example.org/catalog/", 100000000 + g,
+                        "/reviews?page=", g % 7);
+  };
+  const Value repeating = [&](uint64_t g) -> std::optional<std::string> {
+    return distinct(g % 200);
+  };
+  auto& cache = Db().GetObjectCache();
+  const auto room = cache.GetMaxMemory();
+  const absl::Cleanup restore = [&] { cache.SetMaxMemory(room); };
+  std::vector<uint32_t> spread;
+  for (uint32_t g = 7; g < kRows * 6 / 10; g += 79) {
+    spread.push_back(g);
+  }
+  ASSERT_LT(spread.size(), 64u);
+  std::vector<uint32_t> paired;
+  for (uint32_t g = 3; g < kRows; g += 100) {
+    paired.push_back(g);
+  }
+  for (const auto codec :
+       {CodecType::DictZstd, CodecType::DictZxc, CodecType::DictFsst12,
+        CodecType::DictFsstPlus, CodecType::DictOnpair}) {
+    for (const auto* value : {&distinct, &repeating}) {
+      SCOPED_TRACE(absl::StrCat(
+        magic_enum::enum_name(codec),
+        value == &distinct ? ", distinct values" : ", repeating values"));
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      Write(dir, codec, {}, kRows, 8192, *value);
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      ASSERT_EQ(col->DataBlocks().size(), 1u);
+      ASSERT_EQ(col->DataBlocks().front().codec->type, codec);
+      const auto copied_bytes = [&](const std::vector<uint32_t>& rows) {
+        irs::ColumnReader::PointReader cursor{r, *col};
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        cursor.FetchRows(rows, 0, out, 0);
+        for (size_t k = 0; k < rows.size(); ++k) {
+          ExpectRow(out, k, rows[k], *value);
+        }
+        return duckdb::StringVector::GetStringAllocator(out).SizeInBytes();
+      };
+      cache.SetMaxMemory(cache.GetCurrentMemory());
+      if (value == &distinct) {
+        EXPECT_GT(copied_bytes(spread), 0u);
+      } else {
+        EXPECT_EQ(copied_bytes(spread), 0u);
+      }
+      copied_bytes(paired);
+      cache.SetMaxMemory(room);
+      EXPECT_EQ(copied_bytes(spread), 0u);
+      copied_bytes(paired);
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, DictionaryFiltersOnABlobColumnMatchTheBytes) {
+  using Cmp = duckdb::ExpressionType;
+  constexpr uint64_t kRows = 3 * STANDARD_VECTOR_SIZE + 77;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 17 == 0) {
+      return std::nullopt;
+    }
+    const auto k = (g * 7919) % 300;
+    std::string v(13 + k % 4, '\0');
+    for (size_t i = 0; i < v.size(); ++i) {
+      v[i] = static_cast<char>((k * 37 + i * 101) % 256);
+    }
+    return v;
+  };
+  duckdb::Connection con{_db};
+  for (const auto codec :
+       {irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictLz4}) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    {
+      irs::ColWriter w{Db(), dir.Tracker(kSeg)};
+      auto& cw = w.OpenColumn(kField, duckdb::LogicalType::BLOB,
+                              {.row_group_size = 4096, .compression = codec});
+      for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+        const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+        duckdb::Vector vec{duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE};
+        auto* d = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec);
+        auto& validity = duckdb::FlatVector::ValidityMutable(vec);
+        validity.Reset(STANDARD_VECTOR_SIZE);
+        for (uint64_t k = 0; k < take; ++k) {
+          if (const auto v = value(pos + k)) {
+            d[k] =
+              duckdb::StringVector::AddStringOrBlob(vec, v->data(), v->size());
+          } else {
+            validity.SetInvalid(k);
+          }
+        }
+        duckdb::FlatVector::SetSize(vec, take);
+        cw.Append(vec, take);
+      }
+      ASSERT_TRUE(w.Commit(0));
+    }
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    for (const auto& block : col->DataBlocks()) {
+      EXPECT_EQ(block.codec->type, codec);
+    }
+    auto bumped = *value(1);
+    bumped.back() = static_cast<char>(bumped.back() + 1);
+    for (const auto& key :
+         {*value(1), bumped, std::string(1, '\x80'), std::string{}}) {
+      for (const auto cmp :
+           {Cmp::COMPARE_EQUAL, Cmp::COMPARE_NOTEQUAL, Cmp::COMPARE_LESSTHAN,
+            Cmp::COMPARE_GREATERTHANOREQUALTO}) {
+        SCOPED_TRACE(absl::StrCat(duckdb::EnumUtil::ToString(cmp), " ",
+                                  key.size(), " bytes"));
+        const duckdb::ExpressionFilter filter{
+          Compared(cmp, duckdb::Value::BLOB_RAW(key))};
+        ExpectFilterKeeps(r, *col, *con.context, filter, kRows, EveryRow, value,
+                          [&](const std::optional<std::string>& v) {
+                            return v && Satisfies(cmp, *v, key);
+                          });
+      }
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, ConjunctionsOfRangesOnASortedDictionaryKeepTheirOverlap) {
+  using Cmp = duckdb::ExpressionType;
+  constexpr uint64_t kRows = 30000;
+  const auto tenant = [](uint64_t k) {
+    return absl::StrCat("tenant-", absl::Dec(k, absl::kZeroPad5), "/item");
+  };
+  const Value value = [&](uint64_t g) -> std::optional<std::string> {
+    if (g % 13 == 0) {
+      return std::nullopt;
+    }
+    return tenant((g * 7919) % 3000);
+  };
+  const auto lo = tenant(1000);
+  const auto hi = tenant(2000);
+  const auto both = [](duckdb::unique_ptr<duckdb::Expression> a,
+                       duckdb::unique_ptr<duckdb::Expression> b) {
+    return duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+      Cmp::CONJUNCTION_AND, std::move(a), std::move(b));
+  };
+  const duckdb::ExpressionFilter from_lo{
+    both(Compared(Cmp::COMPARE_GREATERTHANOREQUALTO, duckdb::Value{lo}),
+         Compared(Cmp::COMPARE_LESSTHAN, duckdb::Value{hi}))};
+  const duckdb::ExpressionFilter below_hi{
+    both(Compared(Cmp::COMPARE_LESSTHAN, duckdb::Value{hi}),
+         Compared(Cmp::COMPARE_GREATERTHANOREQUALTO, duckdb::Value{lo}))};
+  const duckdb::ExpressionFilter apart{
+    both(Compared(Cmp::COMPARE_LESSTHAN, duckdb::Value{lo}),
+         Compared(Cmp::COMPARE_GREATERTHAN, duckdb::Value{hi}))};
+  const Passes between = [&](const std::optional<std::string>& v) {
+    return v && *v >= lo && *v < hi;
+  };
+  duckdb::Connection con{_db};
+  for (const auto codec : kSortedDictionaryCodecs) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, codec, {}, kRows, 8192, value);
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    {
+      SCOPED_TRACE("from the lower bound");
+      ExpectFilterKeeps(r, *col, *con.context, from_lo, kRows, EveryRow, value,
+                        between);
+    }
+    {
+      SCOPED_TRACE("from the upper bound");
+      ExpectFilterKeeps(r, *col, *con.context, below_hi, kRows, EveryRow, value,
+                        between);
+    }
+    {
+      SCOPED_TRACE("disjoint ranges");
+      ExpectFilterKeeps(
+        r, *col, *con.context, apart, kRows, EveryRow, value,
+        [](const std::optional<std::string>&) { return false; });
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, UncompressedStringsKeepANullAfterAnOverflowString) {
+  constexpr uint64_t kRows = 3000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    switch (g % 7) {
+      case 0:
+        return Pseudo(g, 5000 + g % 13);
+      case 1:
+        return std::nullopt;
+      default:
+        return Pseudo(g % 97, 20);
+    }
+  };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  Write(dir, irs::codecs::CodecType::Uncompressed, {}, kRows, 1024, value);
+  Verify(dir, irs::codecs::CodecType::Uncompressed, kRows, value);
+}
+
+TEST_F(ColCodecsTest, ACompactionUnderANumericCodecNameCopiesTheTextBlocks) {
+  using irs::codecs::CodecType;
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 3 * kRowGroup;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 11 == 0) {
+      return std::nullopt;
+    }
+    return absl::StrCat("tenant-", (g * 7919) % 300, "/item");
+  };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  Write(dir, CodecType::DictLz4, {}, kRows, kRowGroup, value);
+  irs::ColReader src = irs::tests::OpenColReader(dir, kSeg);
+  const auto* source = src.Column(kField);
+  ASSERT_NE(source, nullptr);
+  const auto blocks = source->DataBlocks();
+  ASSERT_EQ(blocks.size(), kRows / kRowGroup);
+  struct Named {
+    CodecType codec;
+    bool copies;
+  };
+  for (const auto [codec, copies] :
+       {Named{CodecType::Rle, true}, Named{CodecType::Bitpacking, true},
+        Named{CodecType::Lz4, false}}) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    const auto name = absl::StrCat("copy_", magic_enum::enum_name(codec));
+    {
+      irs::ColWriter w{Db(), dir.Tracker(name)};
+      auto& cw =
+        w.OpenColumn(kField, duckdb::LogicalType::VARCHAR,
+                     {.row_group_size = kRowGroup, .compression = codec});
+      ASSERT_EQ(cw.CopyableFrom(*source), copies);
+      if (copies) {
+        ASSERT_TRUE(cw.CopyBlocks(*source, src.Ctx(), [] { return true; }));
+      } else {
+        AppendValues(cw, kRows, value);
+      }
+      ASSERT_TRUE(w.Commit(0));
+    }
+    irs::ColReader dst = irs::tests::OpenColReader(dir, name);
+    const auto* copied = dst.Column(kField);
+    ASSERT_NE(copied, nullptr);
+    ASSERT_EQ(copied->RowCount(), kRows);
+    const auto copied_blocks = copied->DataBlocks();
+    if (copies) {
+      ASSERT_EQ(copied_blocks.size(), blocks.size());
+      for (size_t i = 0; i < blocks.size(); ++i) {
+        EXPECT_EQ(copied_blocks[i].codec->type, blocks[i].codec->type);
+        EXPECT_EQ(copied_blocks[i].byte_size, blocks[i].byte_size);
+      }
+    } else {
+      for (const auto& block : copied_blocks) {
+        EXPECT_EQ(block.codec->type, codec);
+      }
+    }
+    auto state = copied->InitScan(dst.Ctx());
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      ASSERT_EQ(copied->Scan(state, out, STANDARD_VECTOR_SIZE),
+                duckdb::idx_t{STANDARD_VECTOR_SIZE});
+      out.Flatten(STANDARD_VECTOR_SIZE);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        ExpectRow(out, k, pos + k, value);
+      }
+    }
+  }
+}

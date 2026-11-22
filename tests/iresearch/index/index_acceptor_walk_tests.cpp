@@ -76,7 +76,7 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
       bool alive = true;
       for (const auto label : term) {
         state = acceptor.Step(state, label);
-        if (!acceptor.Alive(state)) {
+        if (!Acceptor::Alive(state)) {
           alive = false;
           break;
         }

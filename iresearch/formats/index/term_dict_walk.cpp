@@ -739,7 +739,7 @@ Live<A> FirstLive(const TermReaderImpl& field, bytes_view head,
                   LabelRange range) {
   for (auto label = std::max(from, range.lo); label <= range.hi;) {
     const auto next = a.Step(state, static_cast<byte_type>(label));
-    if (!a.Alive(next)) {
+    if (!A::Alive(next)) {
       ++label;
       continue;
     }
@@ -831,7 +831,7 @@ bstring UpperBound(const A& a) {
     }
     upper.push_back(static_cast<byte_type>(range.hi));
     state = a.Step(state, static_cast<byte_type>(range.hi));
-    if (!a.Alive(state)) {
+    if (!A::Alive(state)) {
       break;
     }
   }
@@ -908,7 +908,7 @@ class BlockPlan {
     }
     for (; depth != prefix.size(); ++depth) {
       const auto next = _a->Step(_states[depth], prefix[depth]);
-      if (!_a->Alive(next)) {
+      if (!A::Alive(next)) {
         _valid = depth;
         return false;
       }
@@ -1133,7 +1133,7 @@ class AcceptorIterator : public SeekTermIterator {
         if (depth == path.size()) {
           break;
         }
-        if (!_a->Alive(next)) {
+        if (!A::Alive(next)) {
           return depth;
         }
         _states[++depth] = next;
@@ -1142,7 +1142,7 @@ class AcceptorIterator : public SeekTermIterator {
     }
     for (; depth != path.size(); ++depth) {
       const auto next = _a->Step(_states[depth], path[depth]);
-      if (!_a->Alive(next)) {
+      if (!A::Alive(next)) {
         return depth;
       }
       _states[depth + 1] = next;

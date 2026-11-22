@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <map>
 #include <span>
@@ -39,8 +40,8 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/compression.hpp"
-#include "server/utils/file_utils.h"
 
 namespace sdb::bench {
 namespace {
@@ -222,9 +223,11 @@ uint32_t ListSlots(const std::filesystem::path& bin) {
 void LoadRegion(const std::filesystem::path& bin) {
   auto index_path = bin;
   index_path.replace_extension(".jsonl");
-  const auto& bytes =
-    Storage().emplace_back(utils::file_utils::Slurp(bin.string()));
-  const auto index = utils::file_utils::Slurp(index_path.string());
+  const auto fs = duckdb::FileSystem::CreateLocal();
+  const auto& bytes = Storage().emplace_back(
+    irs::ReadWhole<std::string>(duckdb::QueryContext{}, *fs, bin.string()));
+  const auto index = irs::ReadWhole<std::string>(duckdb::QueryContext{}, *fs,
+                                                 index_path.string());
   std::vector<std::string_view> blobs;
   simdjson::ondemand::parser parser;
   for (const std::string_view line :

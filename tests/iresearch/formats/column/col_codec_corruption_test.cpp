@@ -642,6 +642,36 @@ TEST_F(ColCodecCorruptionTest, ValidityCodecsRejectDamagedSegments) {
           "Corrupted roaring segment: runs overlap or are out of order"}});
 }
 
+TEST_F(ColCodecCorruptionTest,
+       RoaringRejectsMoreContainersThanItsMetadataHolds) {
+  const Case c{"roaring booleans",
+               LogicalType::BOOLEAN,
+               CodecType::Roaring,
+               [](uint64_t g) { return Value::BOOLEAN(g % 97 == 0); },
+               {}};
+  const auto path = test_dir() / "col_codec_corruption_roaring_metadata";
+  std::filesystem::create_directories(path);
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  ASSERT_NO_FATAL_FAILURE(Write(path, c, offset, size));
+  ASSERT_GT(c.rows, uint64_t{2048});
+  ASSERT_GT(size, uint64_t{16});
+  const uint64_t metadata_offset = size - sizeof(uint64_t) - 1;
+  {
+    std::fstream io{path / irs::FileName(kSeg),
+                    std::ios::in | std::ios::out | std::ios::binary};
+    ASSERT_TRUE(io.good());
+    io.seekp(static_cast<std::streamoff>(offset));
+    io.write(reinterpret_cast<const char*>(&metadata_offset),
+             sizeof(metadata_offset));
+  }
+  std::set<std::string> messages;
+  ASSERT_NO_FATAL_FAILURE(Read(path, c, Value::BOOLEAN(true), messages));
+  EXPECT_EQ(absl::StrJoin(messages, "\n"),
+            "Corrupted roaring segment: container count exceeds available "
+            "metadata space");
+}
+
 TEST_F(ColCodecCorruptionTest, UncompressedRejectsDamagedSegments) {
   Sweep({"bigint",
          LogicalType::BIGINT,

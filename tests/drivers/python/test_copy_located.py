@@ -204,6 +204,28 @@ def test_binary_errors_name_the_tuple(conn: psycopg.Connection,
     assert error.diag.context == f"COPY {table}, line 2, column a"
 
 
+def test_binary_first_failure_in_file_order_wins(conn: psycopg.Connection,
+                                                 table: str,
+                                                 shared_path: Path) -> None:
+    _create(conn, table, "a INT, b INT")
+    header = b"PGCOPY\n\xff\r\n\x00" + b"\x00" * 8
+    good = b"\x00\x02\x00\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x04\x00\x00\x00\x02"
+    short_a = b"\x00\x02\x00\x00\x00\x01x\x00\x00\x00\x04\x00\x00\x00\x02"
+    short_b = b"\x00\x02\x00\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x01y"
+    batch_rows = (1 << 20) // len(good)
+    rows = [good] * (10 * batch_rows)
+    rows[batch_rows - 300] = short_a
+    rows[batch_rows - 290] = short_b
+    for batch in range(1, 10):
+        rows[batch * batch_rows + 10] = short_a
+    path = shared_path / "binary_failures.bin"
+    path.write_bytes(header + b"".join(rows) + b"\xff\xff")
+    with pytest.raises(psycopg.Error) as info, conn.cursor() as cur:
+        cur.execute(f"COPY public.\"{table}\" FROM '{path}' (FORMAT binary)")
+    assert info.value.diag.context == (
+        f"COPY {table}, line {batch_rows - 299}, column a")
+
+
 def test_errors_in_a_later_file_range(conn: psycopg.Connection, table: str,
                                       shared_path: Path) -> None:
     _create(conn, table, "a INT, b TEXT")

@@ -2251,6 +2251,36 @@ def test_copy_readers_waiting_for_data_leave_their_threads_to_other_sessions(con
 
 @pytest.mark.faults
 @pytest.mark.usefixtures("own_server")
+def test_copy_takes_rows_that_arrive_while_earlier_rows_are_held(conn):
+    c = WireConn()
+    try:
+        conn.run_ok("drop table if exists t_copy_held")
+        conn.run_ok("create table t_copy_held(a int)")
+        conn.run_ok("set sdb_faults='pause_copy_from_mid_stream'")
+        c.send("Q", _cstr("copy t_copy_held from stdin"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", b"1\n2\n")
+        await_copied(conn, "t_copy_held", 2)
+        conn.run_ok("set sdb_faults='pause_copy_take_blocked'")
+        c.send("d", b"3\n4\n")
+        deadline = time.time() + 10
+        while "E" in types(conn.run("set sdb_faults='-pause_copy_take_blocked:parked'")):
+            assert time.time() < deadline, "the COPY never waited for more data"
+            time.sleep(0.05)
+        conn.run_ok("set sdb_faults='pause_copy_take_blocked:release'")
+        conn.run_ok("set sdb_faults='-pause_copy_from_mid_stream'")
+        await_copied(conn, "t_copy_held", 4)
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY 4\x00"], errors(m)
+    finally:
+        conn.run("reset sdb_faults")
+        c.close()
+        conn.run("drop table if exists t_copy_held")
+
+
+@pytest.mark.faults
+@pytest.mark.usefixtures("own_server")
 def test_copy_stops_reading_while_its_rows_wait(conn):
     block = b"1234567890\n" * 6000
     blocks = 800

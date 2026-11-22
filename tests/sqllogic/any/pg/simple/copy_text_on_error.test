@@ -83,6 +83,27 @@ id	a	n
 
 
 statement ok
+CREATE TABLE cto_pairs (a INTEGER, b INTEGER);
+
+
+statement count 3
+COPY (SELECT * FROM (VALUES ('1', '2'), ('x', 'y'), ('3', '4')) v(a, b))
+TO '${__TEST_DIR__}/cto_pairs.txt' (FORMAT text);
+
+
+statement count 2
+COPY cto_pairs FROM '${__TEST_DIR__}/cto_pairs.txt' (FORMAT text, ON_ERROR IGNORE, REJECT_LIMIT 1);
+
+
+query
+SELECT a, b FROM cto_pairs ORDER BY a;
+----
+a	b
+1	2
+3	4
+
+
+statement ok
 CREATE TABLE cto_many (a INTEGER);
 
 

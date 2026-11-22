@@ -43,6 +43,8 @@ SELECT id FROM index_name ORDER BY emb <-> $query_vector LIMIT k;
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/example_004" />
 
+[`ts_explain`](../../functions/search/scoring.md#ts_explain-vector) shows how a returned row's distance was computed and how the search found it.
+
 The named distance functions [`l2_distance`](../../functions/vector.md), `cosine_distance`, `l1_distance` and `negative_inner_product` are equivalent to the matching operator and can be used explicitly:
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/example_003" />

@@ -75,6 +75,13 @@ PrepareCollector::ptr ByTerm::MakeCollectorImpl(const Scorer* scorer,
   return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
 }
 
+void ByTerm::ExplainStats(const PrepareCollector* collector,
+                          explain::StatsIndex& out) const {
+  SDB_ASSERT(collector);
+  const bytes_view term = options().term;
+  collector->Describe(field_id(), [&](size_t) { return term; }, out);
+}
+
 TermPredicate::ptr ByTerm::CompileTermPredicate() const {
   return MakeTermPredicate(TermAcceptor{options().term});
 }

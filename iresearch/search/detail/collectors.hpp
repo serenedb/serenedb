@@ -23,6 +23,7 @@
 #pragma once
 
 #include <absl/base/optimization.h>
+#include <absl/functional/function_ref.h>
 #include <absl/hash/hash.h>
 
 #include <algorithm>
@@ -31,6 +32,7 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/stats_arena.hpp"
+#include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -166,12 +168,18 @@ class CompoundCollector;
 class PrepareCollector {
  public:
   using ptr = std::unique_ptr<PrepareCollector>;
+  using TermAt = absl::FunctionRef<bytes_view(size_t i)>;
 
-  explicit PrepareCollector(const Scorer* scorer) noexcept : _scorer{scorer} {}
+  explicit PrepareCollector(const Scorer* scorer) noexcept : _scorer{scorer} {
+    SDB_ASSERT(_scorer);
+  }
 
   virtual ~PrepareCollector() = default;
 
   virtual void Finish(StatsArena& stats) = 0;
+
+  virtual void Describe(field_id field, TermAt term,
+                        explain::StatsIndex& out) const;
 
   virtual CompoundCollector* AsCompound() noexcept { return nullptr; }
 
@@ -194,7 +202,11 @@ class FieldPrepareCollector : public PrepareCollector {
     return _counters.Field(thread);
   }
 
-  void Finish(StatsArena& stats) override;
+  FieldCollector FieldTotal() const noexcept { return _counters.TotalField(); }
+
+  TermCollector TermTotal(size_t i) const noexcept {
+    return _counters.TotalTerm(i);
+  }
 
  protected:
   FieldPrepareCollector(const Scorer* scorer, StatsArena& stats,
@@ -228,6 +240,9 @@ class ByTermsCollector final : public FieldPrepareCollector {
 
   void Finish(StatsArena& stats) final;
 
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const final;
+
  private:
   size_t _size;
   size_t _slot;
@@ -244,6 +259,9 @@ class SlotsCollector : public FieldPrepareCollector {
   }
 
   void Finish(StatsArena& stats) override;
+
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const override;
 };
 
 class ExpandedSlotsCollector final : public SlotsCollector {
@@ -256,14 +274,25 @@ class ExpandedSlotsCollector final : public SlotsCollector {
       _expanded_size{expanded},
       _expanded(static_cast<size_t>(threads) * expanded) {}
 
-  Terms& Expanded(uint32_t thread, size_t i) noexcept {
-    SDB_ASSERT(i < _expanded_size);
-    return _expanded[thread * _expanded_size + i];
+  template<typename Self>
+  auto& Expanded(this Self& self, uint32_t thread, size_t i) noexcept {
+    SDB_ASSERT(i < self._expanded_size);
+    return self._expanded[thread * self._expanded_size + i];
   }
+
+  void VisitExpanded(
+    absl::FunctionRef<void(bytes_view term, const TermCollector& counts)>
+      visitor) const;
 
   void Finish(StatsArena& stats) final;
 
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const final;
+
  private:
+  template<typename Visitor>
+  void WalkExpanded(Visitor&& visitor) const;
+
   size_t _expanded_size;
   containers::Fixed<Terms> _expanded;
 };
@@ -289,7 +318,9 @@ class CompoundCollector final : public PrepareCollector {
 
   CompoundCollector* AsCompound() noexcept final { return this; }
 
-  PrepareCollector* Child(size_t i) noexcept { return _children[i].get(); }
+  PrepareCollector* Child(size_t i) const noexcept {
+    return _children[i].get();
+  }
 
   auto Size() const noexcept { return _children.size(); }
 

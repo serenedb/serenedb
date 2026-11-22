@@ -31,13 +31,16 @@ struct TermReader;
 
 namespace detail {
 
-struct LeafProvider final : AttributeProvider {
+template<typename Base>
+struct FreqProvider final : Base {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return type == irs::Type<FreqBlockAttr>::id() ? &freq : nullptr;
   }
 
   FreqBlockAttr freq;
 };
+
+using LeafProvider = FreqProvider<AttributeProvider>;
 
 struct ScaleProvider final : AttributeProvider {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -60,6 +63,10 @@ struct LeafRecipe {
   const SubReader* segment = nullptr;
   const TermReader* field = nullptr;
   ScoreArgs args;
+};
+
+struct ScoreInputs : AttributeProvider {
+  LeafRecipe recipe;
 };
 
 }  // namespace detail

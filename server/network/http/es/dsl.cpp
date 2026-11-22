@@ -620,6 +620,38 @@ bool ParseBody(std::string_view body, HttpResponseWriter& writer, F&& fill) {
   }
 }
 
+bool ParseQueryBody(std::string_view body, const FieldTypes& fields,
+                    SearchRequest& out, HttpResponseWriter& writer,
+                    bool required) {
+  bool given = false;
+  const bool ok = ParseBody(body, writer, [&](JsonObject& object) {
+    for (auto entry : object) {
+      const auto key = Key(entry);
+      if (key != "query") {
+        Fail(absl::StrCat("request does not support [", key, "]"),
+             "parsing_exception");
+      }
+      auto clause = TranslateQuery(Value(entry), fields);
+      out.where = std::move(clause.sql);
+      out.uses_match = clause.uses_match;
+      given = true;
+    }
+  });
+  if (!ok) {
+    return false;
+  }
+  if (required && !given) {
+    WriteError(writer, HttpStatus::BadRequest,
+               "action_request_validation_exception",
+               "Validation Failed: 1: query is missing;");
+    return false;
+  }
+  if (out.where == "TRUE") {
+    out.where.clear();
+  }
+  return true;
+}
+
 }  // namespace
 
 bool ParseFieldTypes(std::string_view mappings_json, FieldTypes& out) {
@@ -719,6 +751,12 @@ bool ParseSearchBody(std::string_view body, const FieldTypes& fields,
         out.include_source = include;
       } else if (key == "track_total_hits") {
         // Totals are exact; the tracking hint has nothing to change.
+      } else if (key == "explain") {
+        bool explain = false;
+        if (Value(entry).get_bool().get(explain) != simdjson::SUCCESS) {
+          Fail("[explain] must be a boolean");
+        }
+        out.explain = explain;
       } else {
         Fail(
           absl::StrCat("request parameter [", key, "] is not supported yet"));
@@ -778,22 +816,12 @@ bool TranslateStoredQuery(std::string_view query_json, const FieldTypes& fields,
 
 bool ParseCountBody(std::string_view body, const FieldTypes& fields,
                     SearchRequest& out, HttpResponseWriter& writer) {
-  const bool ok = ParseBody(body, writer, [&](JsonObject& object) {
-    for (auto entry : object) {
-      const auto key = Key(entry);
-      if (key != "query") {
-        Fail(absl::StrCat("request does not support [", key, "]"),
-             "parsing_exception");
-      }
-      auto clause = TranslateQuery(Value(entry), fields);
-      out.where = std::move(clause.sql);
-      out.uses_match = clause.uses_match;
-    }
-  });
-  if (ok && out.where == "TRUE") {
-    out.where.clear();
-  }
-  return ok;
+  return ParseQueryBody(body, fields, out, writer, false);
+}
+
+bool ParseExplainBody(std::string_view body, const FieldTypes& fields,
+                      SearchRequest& out, HttpResponseWriter& writer) {
+  return ParseQueryBody(body, fields, out, writer, true);
 }
 
 }  // namespace sdb::network::http::es

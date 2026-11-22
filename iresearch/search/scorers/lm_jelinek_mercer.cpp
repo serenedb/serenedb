@@ -20,9 +20,11 @@
 
 #include "lm_jelinek_mercer.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 
 #include <cmath>
+#include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
@@ -31,8 +33,9 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
+#include "iresearch/search/scorers/lm_similarity.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
 #include "iresearch/utils/down_cast.hpp"
@@ -53,38 +56,64 @@ struct LmJmFormula {
   score_t denom_inv;
 };
 
-template<bool HasScale>
-struct LmJmScore : public ScoreOperatorOf<LmJmScore<HasScale>> {
-  LmJmScore(score_t boost, score_t lambda, const LMStats& stats,
-            const FreqBlockAttr* freq, const uint32_t* norm,
-            const score_t* scale) noexcept
-    : freq{freq},
-      norm{norm},
-      scale{scale},
-      formula{boost, 1.f - lambda, 1.f / (lambda * stats.collection_prob)} {}
+LmJmFormula LmJmOf(score_t boost, score_t lambda, score_t share) noexcept {
+  return {boost, 1.f - lambda, 1.f / (lambda * share)};
+}
 
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
-                                    TryGetValue(scale), formula);
+struct LmJmTermsFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    SDB_ASSERT(dl != 0.f);
+    const double x = num * tf / dl;
+    const double* const denom_inv = denom_invs.data();
+    return static_cast<score_t>(
+             LogOfProduct(denom_invs.size(),
+                          [&](size_t i) { return 1 + x * denom_inv[i]; })) *
+           boost;
   }
 
-  const FreqBlockAttr* freq;
-  const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  LmJmFormula formula;
+  score_t boost;
+  score_t num;
+  absl::InlinedVector<double, 4> denom_invs;
 };
+
+LmJmTermsFormula LmJmTermsOf(score_t boost, score_t lambda,
+                             std::span<const score_t> shares) {
+  LmJmTermsFormula formula{.boost = boost, .num = 1.f - lambda};
+  formula.denom_invs.reserve(shares.size());
+  for (const auto share : shares) {
+    formula.denom_invs.push_back(1 / (static_cast<double>(lambda) * share));
+  }
+  return formula;
+}
 
 }  // namespace
 
 void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
-                              const TermCollector* term) const {
-  CollectLMStats(*stats_cast(stats_buf), field, term);
+                              const TermCollector* term,
+                              StatsArena& arena) const {
+  CollectShare(*stats_cast(stats_buf), field, term, arena);
 }
 
 ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
-  return PrepareLMScorer<LmJmScore>(ctx, *stats_cast(ctx.stats), _lambda);
+  return PrepareShareScorer(
+    ctx, *stats_cast(ctx.stats),
+    [&](score_t share) { return LmJmOf(ctx.boost, _lambda, share); },
+    [&](std::span<const score_t> shares) {
+      return LmJmTermsOf(ctx.boost, _lambda, shares);
+    });
+}
+
+void LMJelinekMercer::Explain(const ScoreContext& ctx,
+                              const explain::SlotStats* stats,
+                              explain::Node& out) const {
+  explain::ExplainLanguageModel(
+    ctx, SharesOf(*stats_cast(ctx.stats)), stats,
+    {.key = "lambda", .value = _lambda},
+    "boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))",
+    [&](score_t tf, score_t dl, score_t share) {
+      return LmJmOf(ctx.boost, _lambda, share)(tf, dl);
+    },
+    out);
 }
 
 std::string LMJelinekMercer::ToString() const {

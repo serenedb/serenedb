@@ -1155,11 +1155,16 @@ def test_docs_all_renders_every_match() -> None:
 
 
 def test_docs_all_numbers_its_listings_as_one_list() -> None:
-    r = _docs_session(".docs --all search", ".docs 36")
+    heading = "Documentation under 'sql/functions/search':"
+    listing = _docs_session(".docs --all search")
+    assert listing.returncode == 0, listing.stderr
+    first = re.search(r"^(\d+)\. ", listing.stdout[listing.stdout.index(heading):],
+                      re.MULTILINE)
+    assert first and int(first[1]) > 1
+    r = _docs_session(".docs --all search", f".docs {first[1]}")
     assert r.returncode == 0, r.stderr
-    under = r.stdout.index("Documentation under 'sql/functions/search':")
-    assert "\n36. " in r.stdout[under:]
-    assert "path: sql/functions/search/" in r.stdout[under:].split("\n36. ")[1]
+    under = r.stdout.index(heading)
+    assert "path: sql/functions/search/" in r.stdout[under:].split(f"\n{first[1]}. ")[1]
 
 
 def test_docs_a_directory_name_lists_its_pages() -> None:

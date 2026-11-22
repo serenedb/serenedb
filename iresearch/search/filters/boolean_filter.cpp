@@ -376,6 +376,48 @@ PrepareCollector::ptr BooleanFilter::MakeCollectorImpl(const Scorer* scorer,
   return compound;
 }
 
+void BooleanFilter::ExplainStats(const PrepareCollector* collector,
+                                 explain::StatsIndex& out) const {
+  if (collector == nullptr) {
+    return;
+  }
+  const auto& compound = utils::downCast<CompoundCollector>(*collector);
+  size_t idx = 0;
+  WalkClauses(
+    *this,
+    [&](std::span<const TermClause> run, Occur) {
+      if (const auto* child = compound.Child(idx++)) {
+        child->Describe(
+          run.front().field, [&](size_t i) { return bytes_view{run[i].term}; },
+          out);
+      }
+    },
+    [&](const Filter& filter, Occur) {
+      filter.ExplainStats(compound.Child(idx++), out);
+    });
+}
+
+void BooleanFilter::ExplainTerms(const SubReader& segment,
+                                 explain::TermNames& out) const {
+  WalkClauses(
+    *this,
+    [&](std::span<const TermClause> run, Occur occur) {
+      if (occur == Occur::MustNot) {
+        return;
+      }
+      const auto& front = run.front();
+      if (const auto* reader = segment.field(front.field, front.dict)) {
+        TermsIterator terms{*reader, run};
+        out.AddAll(*reader, terms);
+      }
+    },
+    [&](const Filter& filter, Occur occur) {
+      if (occur != Occur::MustNot) {
+        filter.ExplainTerms(segment, out);
+      }
+    });
+}
+
 bool BooleanFilter::Prefetch(const SubReader& segment) const {
   bool fetching = false;
   for (const auto occur : kAllOccur) {

@@ -84,6 +84,7 @@ struct SearchRequest {
   int64_t from = 0;
   bool include_source = true;
   bool uses_match = false;
+  bool explain = false;
 };
 
 // Parses a _search body ('' = match_all). On failure writes the ES error
@@ -100,5 +101,8 @@ bool TranslateStoredQuery(std::string_view query_json, const FieldTypes& fields,
 // where/uses_match. On failure writes the error envelope and returns false.
 bool ParseCountBody(std::string_view body, const FieldTypes& fields,
                     SearchRequest& out, HttpResponseWriter& writer);
+
+bool ParseExplainBody(std::string_view body, const FieldTypes& fields,
+                      SearchRequest& out, HttpResponseWriter& writer);
 
 }  // namespace sdb::network::http::es

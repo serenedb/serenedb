@@ -83,12 +83,14 @@ inline constexpr ColumnId kInvertedIndexTermCountId =
   kFirstSyntheticColumnId + 6;
 inline constexpr ColumnId kInvertedIndexTermScoreId =
   kFirstSyntheticColumnId + 7;
+inline constexpr ColumnId kInvertedIndexExplainId = kFirstSyntheticColumnId + 8;
 inline constexpr ColumnId kFirstIndexFieldId = kFirstSyntheticColumnId + 0x100;
 
 // The SQL-visible names of those synthetic columns. The score is a whole
 // column name; the rest are prefixes a column name is appended to after a '$',
 // because one scan can expose the same kind for several indexed columns.
 inline constexpr std::string_view kScoreName = "sdb_inverted_index_score";
+inline constexpr std::string_view kExplainName = "sdb_inverted_index_explain";
 inline constexpr std::string_view kOffsetsPrefix =
   "sdb_inverted_index_offsets$";
 inline constexpr std::string_view kTermName = "sdb_inverted_index_term$";

@@ -20,28 +20,30 @@
 
 #include "idf.hpp"
 
-#include <cmath>
-
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/scale_score.hpp"
+#include "iresearch/search/scorers/bm25.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
 
 void IDF::collect(byte_type* stats_buf, const FieldCollector* field,
-                  const TermCollector* term) const {
+                  const TermCollector* term, StatsArena&) const {
   const auto docs_with_field = field ? field->docs_with_field : 0;
   const auto docs_with_term = term ? term->docs_with_term : 0;
 
   auto* stats = stats_cast(stats_buf);
-  stats->value += static_cast<score_t>(
-    std::log1p((static_cast<double>(docs_with_field - docs_with_term) + 0.5) /
-               (static_cast<double>(docs_with_term) + 0.5)));
+  stats->value += Bm25Idf(docs_with_field, docs_with_term);
   SDB_ASSERT(stats->value >= 0.f);
 }
 
 ScoreFunction IDF::PrepareScorer(const ScoreContext& ctx) const {
   return MakeScaleScore(ctx, ctx.boost * stats_cast(ctx.stats)->value);
+}
+
+void IDF::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+                  explain::Node& out) const {
+  ExplainBm25Idf(ctx, stats_cast(ctx.stats)->value, stats, out);
 }
 
 }  // namespace irs

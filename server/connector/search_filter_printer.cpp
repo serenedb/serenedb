@@ -158,14 +158,7 @@ std::string TermValue(bytes_view term, const LogicalType& type) {
   return TermToString(term);
 }
 
-std::string PrefixValue(bytes_view prefix, const LogicalType& type) {
-  return sdb::pg::IsInetOrCidr(type) ? TermValue(prefix, type)
-                                     : TermToString(prefix);
-}
-
-std::string TermValue(const bstring& term, const LogicalType& type) {
-  return TermValue(bytes_view{term}, type);
-}
+}  // namespace
 
 std::string DictTermValue(DictRef dict, bytes_view term,
                           const LogicalType& type) {
@@ -177,6 +170,13 @@ std::string DictTermValue(DictRef dict, bytes_view term,
     default:
       return TermValue(term, type);
   }
+}
+
+namespace {
+
+std::string PrefixValue(bytes_view prefix, const LogicalType& type) {
+  return sdb::pg::IsInetOrCidr(type) ? TermValue(prefix, type)
+                                     : TermToString(prefix);
 }
 
 template<typename T>

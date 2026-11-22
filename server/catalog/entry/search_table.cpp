@@ -291,6 +291,8 @@ irs::containers::FlatHashSet<duckdb::PhysicalType> LeafPhysicalTypes(
       case duckdb::LogicalTypeId::MAP:
         return self(duckdb::ListType::GetChildType(t));
       case duckdb::LogicalTypeId::STRUCT:
+      case duckdb::LogicalTypeId::TUPLE:
+      case duckdb::LogicalTypeId::UNION:
         for (const auto& field : duckdb::StructType::GetChildTypes(t)) {
           self(field.second);
         }

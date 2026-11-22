@@ -582,3 +582,90 @@ db error: ERROR: Can't compress column "t" with type 'TUPLE' (physical: STRUCT) 
 
 statement ok
 DROP TABLE lvl_tuple;
+
+statement ok
+CREATE TABLE lvl_tuple_rle (a INTEGER PRIMARY KEY,
+                            t TUPLE(INTEGER, INTEGER) USING COMPRESSION rle,
+                            u UNION(n INTEGER, m SMALLINT) USING COMPRESSION rle) WITH (compaction_interval = 0);
+
+statement ok
+INSERT INTO lvl_tuple_rle
+SELECT a, row((a // 700) % 7, (a // 1000) % 11),
+       CASE WHEN (a // 500) % 3 = 0 THEN ((a // 500) % 5)::SMALLINT::UNION(n INTEGER, m SMALLINT)
+            ELSE ((a // 400) % 13)::INTEGER::UNION(n INTEGER, m SMALLINT) END
+FROM range(20000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) lvl_tuple_rle;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+FROM pragma_storage_info('lvl_tuple_rle')
+WHERE column_name IN ('t', 'u') AND segment_type <> 'VALIDITY'
+GROUP BY column_name
+ORDER BY column_name;
+----
+column_name	compression
+t	RLE
+u	RLE
+
+query
+SELECT count(*) FILTER (WHERE t[1] IS DISTINCT FROM (a // 700) % 7 OR t[2] IS DISTINCT FROM (a // 1000) % 11) AS wrong_t,
+       count(*) FILTER (WHERE union_tag(u)::TEXT IS DISTINCT FROM CASE WHEN (a // 500) % 3 = 0 THEN 'm' ELSE 'n' END
+                           OR union_extract(u, 'm') IS DISTINCT FROM CASE WHEN (a // 500) % 3 = 0 THEN (a // 500) % 5 END
+                           OR union_extract(u, 'n') IS DISTINCT FROM CASE WHEN (a // 500) % 3 <> 0 THEN (a // 400) % 13 END) AS wrong_u
+FROM lvl_tuple_rle;
+----
+wrong_t	wrong_u
+0	0
+
+statement ok
+DROP TABLE lvl_tuple_rle;
+
+statement ok
+CREATE TABLE lvl_tuple_set AS SELECT 1 AS a, row(1, 2) AS t, 1::UNION(n INTEGER, m SMALLINT) AS u WHERE false;
+
+statement ok
+ALTER TABLE lvl_tuple_set ALTER COLUMN t SET COMPRESSION bitpacking;
+
+statement ok
+ALTER TABLE lvl_tuple_set ALTER COLUMN u SET COMPRESSION bitpacking;
+
+statement ok
+INSERT INTO lvl_tuple_set
+SELECT a, row(a::INTEGER, (a * 2)::INTEGER),
+       CASE WHEN a % 2 = 0 THEN a::INTEGER::UNION(n INTEGER, m SMALLINT)
+            ELSE (a % 1000)::SMALLINT::UNION(n INTEGER, m SMALLINT) END
+FROM range(20000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) lvl_tuple_set;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+FROM pragma_storage_info('lvl_tuple_set')
+WHERE column_name IN ('t', 'u') AND segment_type <> 'VALIDITY'
+GROUP BY column_name
+ORDER BY column_name;
+----
+column_name	compression
+t	BitPacking
+u	BitPacking
+
+query
+SELECT count(*) FILTER (WHERE t[1] IS DISTINCT FROM a OR t[2] IS DISTINCT FROM a * 2) AS wrong_t,
+       count(*) FILTER (WHERE union_tag(u)::TEXT IS DISTINCT FROM CASE WHEN a % 2 = 0 THEN 'n' ELSE 'm' END
+                           OR union_extract(u, 'n') IS DISTINCT FROM CASE WHEN a % 2 = 0 THEN a END
+                           OR union_extract(u, 'm') IS DISTINCT FROM CASE WHEN a % 2 = 1 THEN a % 1000 END) AS wrong_u
+FROM lvl_tuple_set;
+----
+wrong_t	wrong_u
+0	0
+
+statement ok
+DROP TABLE lvl_tuple_set;
+
+statement error
+CREATE TABLE lvl_tuple_text (a INTEGER PRIMARY KEY, t TUPLE(INTEGER, VARCHAR) USING COMPRESSION bitpacking);
+----
+db error: ERROR: Can't compress column "t" with type 'TUPLE(INTEGER, VARCHAR)' (physical: STRUCT) using compression type 'BitPacking'

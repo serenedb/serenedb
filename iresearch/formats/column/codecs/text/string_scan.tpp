@@ -40,6 +40,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
@@ -48,7 +49,6 @@
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::text {
@@ -99,20 +99,23 @@ struct EntryFrames {
     uint64_t raw = 0;
     for (uint32_t i = 0; i < header.frame_count; ++i) {
       const auto f = FrameAt(base + header.off_frames, i);
-      SDB_ENSURE(
-        (i == 0 ? f.first_entry == kFirstEntry
-                : f.first_entry > frames[i - 1].first_entry) &&
-          f.first_entry < header.entry_count &&
-          static_cast<uint64_t>(f.comp_off) + f.comp_len <= header.data_size &&
-          raw + f.raw_len <= header.raw_bytes,
-        "col codec: corrupted frame table");
+      if (!((i == 0 ? f.first_entry == kFirstEntry
+                    : f.first_entry > frames[i - 1].first_entry) &&
+            f.first_entry < header.entry_count &&
+            static_cast<uint64_t>(f.comp_off) + f.comp_len <=
+              header.data_size &&
+            raw + f.raw_len <= header.raw_bytes)) [[unlikely]] {
+        ThrowCorrupted("text", "frame table is inconsistent");
+      }
       frames[i] = f;
       frame_off[i] = raw;
       raw += f.raw_len;
     }
-    SDB_ENSURE(raw == header.raw_bytes &&
-                 (header.frame_count != 0 || header.entry_count == kFirstEntry),
-               "col codec: corrupted frame table");
+    if (!(raw == header.raw_bytes &&
+          (header.frame_count != 0 || header.entry_count == kFirstEntry)))
+      [[unlikely]] {
+      ThrowCorrupted("text", "frame table is inconsistent");
+    }
   }
 
   uint32_t FrameEnd(uint32_t f) const noexcept {
@@ -304,7 +307,9 @@ struct FetchFrames {
   IRS_FORCE_INLINE void Emit(const ColumnSegment& segment, data_ptr_t base,
                              uint32_t entry, duckdb::Vector& result, idx_t at,
                              bool batched) {
-    SDB_ENSURE(header.frame_count != 0, "col codec: corrupted row codes");
+    if (header.frame_count == 0) [[unlikely]] {
+      ThrowCorrupted("text", "frame table is inconsistent");
+    }
     if (entry < frame.first_entry || entry >= frame_end) {
       const auto* table = base + header.off_frames;
       frame_index = FrameOfEntry(table, header.frame_count, entry);
@@ -312,10 +317,11 @@ struct FetchFrames {
       frame_end = frame_index + 1 < header.frame_count
                     ? FrameAt(table, frame_index + 1).first_entry
                     : header.entry_count;
-      SDB_ENSURE(
-        frame.first_entry <= entry && frame.raw_len <= header.raw_bytes &&
-          uint64_t{frame.comp_off} + frame.comp_len <= header.data_size,
-        "col codec: corrupted frame table");
+      if (!(frame.first_entry <= entry && frame.raw_len <= header.raw_bytes &&
+            uint64_t{frame.comp_off} + frame.comp_len <= header.data_size))
+        [[unlikely]] {
+        ThrowCorrupted("text", "frame table is inconsistent");
+      }
     }
     leaf.Emit(segment, header, base, lengths, frame_index, frame, entry, result,
               at, batched);

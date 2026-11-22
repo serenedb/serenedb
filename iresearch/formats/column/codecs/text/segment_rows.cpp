@@ -29,6 +29,7 @@
 #include <duckdb/common/helper.hpp>
 #include <limits>
 #include <span>
+#include <string_view>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
@@ -194,6 +195,11 @@ void SortEntries(std::span<const string_t> entries, SortScratch& scratch) {
 void DictionaryRows::Sort(SortScratch& scratch) {
   SortEntries(_entries, scratch);
   _entries.swap(scratch.sorted);
+  SDB_ASSERT((absl::c_adjacent_find(
+                _entries, [](const string_t& left, const string_t& right) {
+                  return std::string_view{right.GetData(), right.GetSize()} <=
+                         std::string_view{left.GetData(), left.GetSize()};
+                }) == _entries.end()));
   for (auto& code : _codes) {
     code = scratch.remap[code];
   }

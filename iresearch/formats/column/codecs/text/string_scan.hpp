@@ -47,7 +47,6 @@
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text {
 
@@ -136,7 +135,9 @@ class ChainGroups {
     uint32_t groups = 0;
     for (uint32_t f = 0; f < frame_count; ++f) {
       const auto [first, end] = entries(f);
-      SDB_ENSURE(end > first, "col codec: corrupted frame table");
+      if (end <= first) [[unlikely]] {
+        ThrowCorrupted("text", "frame table is inconsistent");
+      }
       _base[f] = groups;
       groups += (end - first + kChainRestart - 1) / kChainRestart;
     }
@@ -164,7 +165,9 @@ class ChainGroups {
       const auto from = m.first_entry + (known - 1) * kChainRestart;
       const auto offset =
         offsets[known - 1] + lengths.Sum(from, from + kChainRestart);
-      SDB_ENSURE(offset <= end, "col codec: corrupted front coding");
+      if (offset > end) [[unlikely]] {
+        ThrowCorrupted("text", "front coding is inconsistent");
+      }
       offsets[known] = offset;
     }
     return offsets[g];

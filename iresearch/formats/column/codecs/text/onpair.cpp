@@ -39,6 +39,7 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/codecs.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
@@ -46,7 +47,6 @@
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs::text::onpair {
@@ -79,7 +79,9 @@ IRS_FORCE_INLINE std::string_view DecodeEntry(
   const auto tokens = TokenFrame(m, table.Bits());
   const auto first = FirstToken(groups, counts, tokens, f, e);
   const uint64_t count = counts.At(e);
-  SDB_ENSURE(first + count <= tokens.comp_len, "col codec: corrupted entry");
+  if (first + count > tokens.comp_len) [[unlikely]] {
+    ThrowCorrupted("text", "entry is inconsistent");
+  }
   const auto capacity = table.Capacity(count);
   auto* at = Reserve(out, capacity);
   const auto n =
@@ -99,7 +101,9 @@ struct Scan {
   Scan(const ColumnSegment& segment, const Frames& s)
     : table{OpenSymbolTable<Table>(segment.cache_slot.cache,
                                    SymbolTable(s.header, s.base))} {
-    SDB_ENSURE(table, "col codec: corrupted symbol table");
+    if (!table) [[unlikely]] {
+      ThrowCorrupted("text", "symbol table is inconsistent");
+    }
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
       return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
     });
@@ -117,18 +121,19 @@ struct Scan {
     uint64_t off = 0;
     for (auto e = m.first_entry; e < end; ++e) {
       const uint64_t count = s.length_reader.At(e);
-      SDB_ENSURE(token + count <= tokens.comp_len,
-                 "col codec: corrupted entry");
+      if (token + count > tokens.comp_len) [[unlikely]] {
+        ThrowCorrupted("text", "entry is inconsistent");
+      }
       const auto n =
         table->Table().Decode(stream, token, count, out + off, m.raw_len - off);
       const std::string_view v{out + off, n};
-      SDB_ASSERT(!Frames::kDedup || e == m.first_entry ||
-                 View(s.values[e - 1]) < v);
       s.Keep(e, v);
       off += n;
       token += count;
     }
-    SDB_ENSURE(off == m.raw_len, "col codec: corrupted frame");
+    if (off != m.raw_len) [[unlikely]] {
+      ThrowCorrupted("text", "frame is inconsistent");
+    }
   }
 
   template<typename Frames, typename Out>
@@ -218,7 +223,9 @@ struct Fetch {
   void Open(duckdb::ObjectCache* cache, const Header& h,
             duckdb::const_data_ptr_t base) {
     table = OpenSymbolTable<Table>(cache, SymbolTable(h, base));
-    SDB_ENSURE(table, "col codec: corrupted symbol table");
+    if (!table) [[unlikely]] {
+      ThrowCorrupted("text", "symbol table is inconsistent");
+    }
     const auto* frames = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
       return std::pair{FrameAt(frames, i).first_entry,
@@ -336,10 +343,7 @@ bool Table::Open(std::string_view table) {
   return true;
 }
 
-void Table::Corrupted() {
-  SDB_ENSURE(false, "col codec: corrupted entry");
-  SDB_UNREACHABLE();
-}
+void Table::Corrupted() { ThrowCorrupted("text", "entry is inconsistent"); }
 
 Codec::Codec() : _lengths{std::make_unique<std::array<uint16_t, 65536>>()} {}
 

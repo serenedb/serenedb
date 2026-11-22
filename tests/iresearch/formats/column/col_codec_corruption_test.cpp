@@ -783,4 +783,188 @@ TEST_F(ColCodecCorruptionTest,
           "Corrupted numeric segment: unsupported version #"}});
 }
 
+Value TextRow(uint64_t g) {
+  return g % 13 == 0
+           ? Null(LogicalType::VARCHAR)
+           : Value{absl::StrCat("tenant-", Mix(g) % 100000, "/item-", g % 7)};
+}
+
+Value RepeatedText(uint64_t g) {
+  return g % 13 == 0 ? Null(LogicalType::VARCHAR)
+                     : Value{absl::StrCat("status-", (g * 7919) % 300,
+                                          "/a longer suffix")};
+}
+
+TEST_F(ColCodecCorruptionTest,
+       TextCodecsWithSymbolTablesRejectDamagedSegments) {
+  Sweep({"fsst",
+         LogicalType::VARCHAR,
+         CodecType::Fsst,
+         TextRow,
+         {"Corrupted text segment: entry is inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: front coding is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: symbol table is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"fsst12",
+         LogicalType::VARCHAR,
+         CodecType::Fsst12,
+         TextRow,
+         {"Corrupted text segment: entry is inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: front coding is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"fsst plus",
+         LogicalType::VARCHAR,
+         CodecType::FsstPlus,
+         TextRow,
+         {"Corrupted text segment: entry is inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: front coding is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: prefix is inconsistent",
+          "Corrupted text segment: symbol table is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"onpair",
+         LogicalType::VARCHAR,
+         CodecType::Onpair,
+         TextRow,
+         {"Corrupted text segment: entry is inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: front coding is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: symbol table is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+}
+
+TEST_F(ColCodecCorruptionTest, TextCodecsWithByteLeavesRejectDamagedSegments) {
+  Sweep({"lz4",
+         LogicalType::VARCHAR,
+         CodecType::Lz4,
+         TextRow,
+         {"Corrupted text segment: entry lengths are inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"zstd",
+         LogicalType::VARCHAR,
+         CodecType::Zstd,
+         TextRow,
+         {"Corrupted text segment: entry lengths are inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"zxc",
+         LogicalType::VARCHAR,
+         CodecType::Zxc,
+         TextRow,
+         {"Corrupted text segment: entry lengths are inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+}
+
+TEST_F(ColCodecCorruptionTest, TextDictionariesRejectDamagedSegments) {
+  Sweep({"dict lz4",
+         LogicalType::VARCHAR,
+         CodecType::DictLz4,
+         RepeatedText,
+         {"Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #",
+          "Corrupted text segment: dictionary code is out of range",
+          "Corrupted text segment: entry lengths are inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"dict zstd",
+         LogicalType::VARCHAR,
+         CodecType::DictZstd,
+         RepeatedText,
+         {"Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #",
+          "Corrupted text segment: dictionary code is out of range",
+          "Corrupted text segment: entry lengths are inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"dict zxc",
+         LogicalType::VARCHAR,
+         CodecType::DictZxc,
+         RepeatedText,
+         {"Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #",
+          "Corrupted text segment: dictionary code is out of range",
+          "Corrupted text segment: entry lengths are inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"dict fsst",
+         LogicalType::VARCHAR,
+         CodecType::DictFsst,
+         RepeatedText,
+         {"Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #",
+          "Corrupted text segment: dictionary code is out of range",
+          "Corrupted text segment: entry is inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: front coding is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: symbol table is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"dict fsst12",
+         LogicalType::VARCHAR,
+         CodecType::DictFsst12,
+         RepeatedText,
+         {"Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #",
+          "Corrupted text segment: dictionary code is out of range",
+          "Corrupted text segment: entry is inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: front coding is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"dict fsst plus",
+         LogicalType::VARCHAR,
+         CodecType::DictFsstPlus,
+         RepeatedText,
+         {"Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #",
+          "Corrupted text segment: dictionary code is out of range",
+          "Corrupted text segment: entry is inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: front coding is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: symbol table is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+  Sweep({"dict onpair",
+         LogicalType::VARCHAR,
+         CodecType::DictOnpair,
+         RepeatedText,
+         {"Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #",
+          "Corrupted text segment: dictionary code is out of range",
+          "Corrupted text segment: entry is inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: front coding is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: symbol table is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
+}
+
 }  // namespace

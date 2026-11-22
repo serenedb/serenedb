@@ -3896,12 +3896,8 @@ TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {
     duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
     col->Scan(state, out, STANDARD_VECTOR_SIZE);
   };
-#ifdef SDB_DEV
-  GTEST_FLAG_SET(death_test_style, "threadsafe");
-  EXPECT_DEATH(scan(), "corrupted row codes");
-#else
-  EXPECT_ANY_THROW(scan());
-#endif
+  ExpectCorrupted(scan,
+                  "Corrupted text segment: dictionary code is out of range");
 }
 
 TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
@@ -3912,16 +3908,16 @@ TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
   };
   const Case cases[] = {
     {"frames", [](irs::codecs::Header& h) { h.off_frames = 0; },
-     "corrupted segment header"},
+     "Corrupted text segment: header is inconsistent"},
     {"entries",
      [](irs::codecs::Header& h) {
        h.length_width = 0;
        h.entry_count = h.row_count + 2;
      },
-     "corrupted segment header"},
+     "Corrupted text segment: header is inconsistent"},
     {"raw_bytes",
      [](irs::codecs::Header& h) { h.raw_bytes = uint64_t{1} << 46; },
-     "corrupted frame table"},
+     "Corrupted text segment: frame table is inconsistent"},
   };
   const Value values = [](uint64_t g) -> std::optional<std::string> {
     return "value-" + std::to_string((g * 0x9E3779B97F4A7C15ULL >> 40) % 1000);
@@ -3967,12 +3963,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentSizesAreRejected) {
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
       col->Scan(state, out, STANDARD_VECTOR_SIZE);
     };
-#ifdef SDB_DEV
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
-    EXPECT_DEATH(scan(), c.error);
-#else
-    EXPECT_ANY_THROW(scan());
-#endif
+    ExpectCorrupted(scan, c.error);
   }
 }
 
@@ -3987,12 +3978,12 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
      [](irs::codecs::Header& h, duckdb::data_ptr_t) {
        h.dictionary_size = irs::codecs::kMaxDictionaryBytes + 1;
      },
-     "corrupted segment header"},
+     "Corrupted text segment: header is inconsistent"},
     {"bytes",
      [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
        std::memset(block + h.off_symtab, 0xFF, h.symtab_size);
      },
-     "corrupted dictionary"},
+     "Corrupted text segment: dictionary is inconsistent"},
   };
   std::vector<std::string> templates;
   for (uint64_t t = 0; t < 200; ++t) {
@@ -4053,14 +4044,8 @@ TEST_F(ColCodecsTest, CorruptedSegmentDictionariesAreRejected) {
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
       cursor.FetchRow(7, out, 0);
     };
-#ifdef SDB_DEV
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
-    EXPECT_DEATH(scan(), c.error);
-    EXPECT_DEATH(fetch(), c.error);
-#else
-    EXPECT_ANY_THROW(scan());
-    EXPECT_ANY_THROW(fetch());
-#endif
+    ExpectCorrupted(scan, c.error);
+    ExpectCorrupted(fetch, c.error);
   }
 }
 
@@ -4079,17 +4064,17 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
      [](irs::codecs::Header& h, duckdb::data_ptr_t) {
        h.dictionary_size = h.symtab_size;
      },
-     "corrupted segment header"},
+     "Corrupted text segment: header is inconsistent"},
     {"prefix count",
      [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
        duckdb::Store<uint32_t>(h.symtab_size, kPrefixes(h, block));
      },
-     "corrupted symbol table"},
+     "Corrupted text segment: symbol table is inconsistent"},
     {"prefix end",
      [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
        duckdb::Store<uint32_t>(0, kPrefixes(h, block) + sizeof(uint32_t));
      },
-     "corrupted symbol table"},
+     "Corrupted text segment: symbol table is inconsistent"},
   };
   const Value values = [](uint64_t g) -> std::optional<std::string> {
     return "https://example.org/users/" + std::to_string(g % 5000) + "/profile";
@@ -4147,14 +4132,8 @@ TEST_F(ColCodecsTest, CorruptedFsstPlusPrefixesAreRejected) {
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
       cursor.FetchRow(7, out, 0);
     };
-#ifdef SDB_DEV
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
-    EXPECT_DEATH(scan(), c.error);
-    EXPECT_DEATH(fetch(), c.error);
-#else
-    EXPECT_ANY_THROW(scan());
-    EXPECT_ANY_THROW(fetch());
-#endif
+    ExpectCorrupted(scan, c.error);
+    ExpectCorrupted(fetch, c.error);
   }
 }
 
@@ -4169,18 +4148,18 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
      [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
        block[h.off_symtab] = 17;
      },
-     "corrupted symbol table"},
+     "Corrupted text segment: symbol table is inconsistent"},
     {"token count",
      [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
        duckdb::Store<uint32_t>(0, block + h.off_symtab + sizeof(uint32_t));
      },
-     "corrupted symbol table"},
+     "Corrupted text segment: symbol table is inconsistent"},
     {"token lengths",
      [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
        block[h.off_symtab + irs::codecs::text::onpair::kSymbolTableHeader] ^=
          0x0F;
      },
-     "corrupted symbol table"},
+     "Corrupted text segment: symbol table is inconsistent"},
   };
   const Value values = [](uint64_t g) -> std::optional<std::string> {
     return "https://example.org/users/" + std::to_string(g % 5000) + "/profile";
@@ -4236,14 +4215,8 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
       cursor.FetchRow(7, out, 0);
     };
-#ifdef SDB_DEV
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
-    EXPECT_DEATH(scan(), c.error);
-    EXPECT_DEATH(fetch(), c.error);
-#else
-    EXPECT_ANY_THROW(scan());
-    EXPECT_ANY_THROW(fetch());
-#endif
+    ExpectCorrupted(scan, c.error);
+    ExpectCorrupted(fetch, c.error);
   }
 }
 
@@ -4313,14 +4286,10 @@ TEST_F(ColCodecsTest, CorruptedFsst12TablesAreRejected) {
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
       cursor.FetchRow(7, out, 0);
     };
-#ifdef SDB_DEV
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
-    EXPECT_DEATH(scan(), "corrupted symbol table");
-    EXPECT_DEATH(fetch(), "corrupted symbol table");
-#else
-    EXPECT_ANY_THROW(scan());
-    EXPECT_ANY_THROW(fetch());
-#endif
+    ExpectCorrupted(scan,
+                    "Corrupted text segment: symbol table is inconsistent");
+    ExpectCorrupted(fetch,
+                    "Corrupted text segment: symbol table is inconsistent");
   }
 }
 
@@ -4383,12 +4352,8 @@ TEST_F(ColCodecsTest, CorruptedFrameRangesAreRejectedByPointReads) {
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
       cursor.FetchRow(7, out, 0);
     };
-#ifdef SDB_DEV
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
-    EXPECT_DEATH(fetch(), "corrupted frame table");
-#else
-    EXPECT_ANY_THROW(fetch());
-#endif
+    ExpectCorrupted(fetch,
+                    "Corrupted text segment: frame table is inconsistent");
   }
 }
 
@@ -4453,12 +4418,7 @@ TEST_F(ColCodecsTest, CorruptedSegmentCountsAreRejectedByPointReads) {
       duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
       cursor.FetchRow(0, out, 0);
     };
-#ifdef SDB_DEV
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
-    EXPECT_DEATH(fetch(), "corrupted segment header");
-#else
-    EXPECT_ANY_THROW(fetch());
-#endif
+    ExpectCorrupted(fetch, "Corrupted text segment: header is inconsistent");
   }
 }
 
@@ -4661,12 +4621,7 @@ TEST_F(ColCodecsTest, CorruptedNumericCodesAreRejected) {
                       "Corrupted numeric segment: header is inconsistent");
       continue;
     }
-#ifdef SDB_DEV
-    GTEST_FLAG_SET(death_test_style, "threadsafe");
-    EXPECT_DEATH(scan(), "corrupted");
-#else
-    EXPECT_ANY_THROW(scan());
-#endif
+    ExpectCorrupted(scan, "Corrupted text segment: header is inconsistent");
   }
 }
 

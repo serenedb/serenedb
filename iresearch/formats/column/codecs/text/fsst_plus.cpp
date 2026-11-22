@@ -37,6 +37,7 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/codecs.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/fsst.hpp"
@@ -121,9 +122,10 @@ struct Scan {
   template<typename Frames>
   Scan(const ColumnSegment&, const Frames& s)
     : ids{s.base + s.header.off_lcps, s.header.lcp_width} {
-    SDB_ENSURE(prefixes.Open(SymbolTable(s.header, s.base),
-                             s.header.dictionary_size, decoder),
-               "col codec: corrupted symbol table");
+    if (!prefixes.Open(SymbolTable(s.header, s.base), s.header.dictionary_size,
+                       decoder)) [[unlikely]] {
+      ThrowCorrupted("text", "symbol table is inconsistent");
+    }
     prefix_ends.assign(prefixes.Count() + 1, 0);
     for (uint32_t id = 1; id <= prefixes.Count(); ++id) {
       const auto encoded = prefixes.Encoded(id);
@@ -132,7 +134,9 @@ struct Scan {
       const auto room = heap.size() - at;
       const auto n =
         decoder.Decode(encoded.data(), encoded.size(), heap.data() + at, room);
-      SDB_ENSURE(n <= room, "col codec: corrupted prefix");
+      if (n > room) [[unlikely]] {
+        ThrowCorrupted("text", "prefix is inconsistent");
+      }
       heap.resize(at + n);
       prefix_ends[id] = heap.size();
     }
@@ -159,11 +163,13 @@ struct Scan {
     for (auto e = m.first_entry; e < end; ++e) {
       const auto id = ids.At(e);
       const uint64_t enc = s.length_reader.At(e);
-      SDB_ENSURE(id <= prefixes.Count() && enc_off + enc <= enc_end,
-                 "col codec: corrupted entry");
+      if (!(id <= prefixes.Count() && enc_off + enc <= enc_end)) [[unlikely]] {
+        ThrowCorrupted("text", "entry is inconsistent");
+      }
       const auto prefix = Prefix(id);
-      SDB_ENSURE(off + prefix.size() <= m.raw_len,
-                 "col codec: corrupted frame");
+      if (off + prefix.size() > m.raw_len) [[unlikely]] {
+        ThrowCorrupted("text", "frame is inconsistent");
+      }
       if (!prefix.empty()) {
         std::memcpy(out + off, prefix.data(), prefix.size());
       }
@@ -172,16 +178,17 @@ struct Scan {
                          ? 0
                          : decoder.Decode(s.Data() + enc_off, enc,
                                           out + off + prefix.size(), room);
-      SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+      if (dec > room) [[unlikely]] {
+        ThrowCorrupted("text", "entry is inconsistent");
+      }
       const std::string_view v{out + off, prefix.size() + dec};
-      SDB_ASSERT(!Frames::kDedup || e == m.first_entry ||
-                 View(s.values[e - 1]) < v);
       s.Keep(e, v);
       off += v.size();
       enc_off += enc;
     }
-    SDB_ENSURE(off == m.raw_len && enc_off == enc_end,
-               "col codec: corrupted frame");
+    if (off != m.raw_len || enc_off != enc_end) [[unlikely]] {
+      ThrowCorrupted("text", "frame is inconsistent");
+    }
   }
 
   template<typename Frames, typename Out>
@@ -190,10 +197,11 @@ struct Scan {
     const auto enc_off = EntryOffset(groups, s.length_reader, m, f, e);
     const uint64_t enc = s.length_reader.At(e);
     const auto id = ids.At(e);
-    SDB_ENSURE(
-      id <= prefixes.Count() &&
-        enc_off + enc <= static_cast<uint64_t>(m.comp_off) + m.comp_len,
-      "col codec: corrupted entry");
+    if (!(id <= prefixes.Count() &&
+          enc_off + enc <= static_cast<uint64_t>(m.comp_off) + m.comp_len))
+      [[unlikely]] {
+      ThrowCorrupted("text", "entry is inconsistent");
+    }
     const auto prefix = Prefix(id);
     const auto room = enc * fsst::kMaxExpansion;
     auto* at = Reserve(out, prefix.size() + room);
@@ -203,7 +211,9 @@ struct Scan {
     const auto dec = enc == 0 ? 0
                               : decoder.Decode(s.Data() + enc_off, enc,
                                                at + prefix.size(), room);
-    SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+    if (dec > room) [[unlikely]] {
+      ThrowCorrupted("text", "entry is inconsistent");
+    }
     Trim(out, room - dec);
     return {at, prefix.size() + dec};
   }
@@ -283,10 +293,11 @@ struct Fetch {
     const auto enc_off = EntryOffset(groups, lengths, f, lo, entry);
     const uint64_t enc = lengths.At(entry);
     const auto id = ids.At(entry);
-    SDB_ENSURE(
-      id <= prefixes.Count() &&
-        enc_off + enc <= static_cast<uint64_t>(f.comp_off) + f.comp_len,
-      "col codec: corrupted entry");
+    if (!(id <= prefixes.Count() &&
+          enc_off + enc <= static_cast<uint64_t>(f.comp_off) + f.comp_len))
+      [[unlikely]] {
+      ThrowCorrupted("text", "entry is inconsistent");
+    }
     const auto prefix = id == 0 ? std::string_view{} : prefixes.Encoded(id);
     const auto capacity = (prefix.size() + enc) * fsst::kMaxExpansion;
     auto* at = Reserve(buf, capacity);
@@ -294,14 +305,18 @@ struct Fetch {
       prefix.empty()
         ? 0
         : decoder->Decode(prefix.data(), prefix.size(), at, capacity);
-    SDB_ENSURE(head <= capacity, "col codec: corrupted prefix");
+    if (head > capacity) [[unlikely]] {
+      ThrowCorrupted("text", "prefix is inconsistent");
+    }
     const auto room = capacity - head;
     const auto dec =
       enc == 0 ? 0
                : decoder->Decode(
                    reinterpret_cast<const char*>(base + h.off_data) + enc_off,
                    enc, at + head, room);
-    SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+    if (dec > room) [[unlikely]] {
+      ThrowCorrupted("text", "entry is inconsistent");
+    }
     ++walked;
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
     out[result_idx] =
@@ -310,8 +325,10 @@ struct Fetch {
 
   void Open(const Header& h, duckdb::const_data_ptr_t base) {
     decoder.emplace();
-    SDB_ENSURE(prefixes.Open(SymbolTable(h, base), h.dictionary_size, *decoder),
-               "col codec: corrupted symbol table");
+    if (!prefixes.Open(SymbolTable(h, base), h.dictionary_size, *decoder))
+      [[unlikely]] {
+      ThrowCorrupted("text", "symbol table is inconsistent");
+    }
     const auto* table = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
       return std::pair{FrameAt(table, i).first_entry,

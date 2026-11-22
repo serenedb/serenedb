@@ -33,9 +33,9 @@
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/utils/enum_name.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text {
 
@@ -78,10 +78,12 @@ Header SegmentHeader(duckdb::const_data_ptr_t base,
   SDB_ASSERT(segment.codec == CodecOf(shape, codec));
   const auto h = Header::Parse(base, segment.size, segment.codec);
   const uint64_t first_entry = shape == Shape::Dictionary ? 1 : 0;
-  SDB_ENSURE(h.row_count == segment.count &&
-               uint64_t{h.entry_count} <= uint64_t{h.row_count} + first_entry &&
-               (shape == Shape::Dictionary || h.entry_count == h.row_count),
-             "col codec: corrupted segment header");
+  if (!(h.row_count == segment.count &&
+        uint64_t{h.entry_count} <= uint64_t{h.row_count} + first_entry &&
+        (shape == Shape::Dictionary || h.entry_count == h.row_count)))
+    [[unlikely]] {
+    ThrowCorrupted("text", "header is inconsistent");
+  }
   return h;
 }
 

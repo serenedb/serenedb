@@ -46,6 +46,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/numeric/plain.hpp"
 #include "iresearch/formats/column/codecs/numeric/runs.hpp"
@@ -129,7 +130,9 @@ struct DictionaryFetch final : SegmentScanState {
           validity.SetInvalid(at);
           continue;
         }
-        SDB_ENSURE(code < entries, "col codec: corrupted row codes");
+        if (code >= entries) [[unlikely]] {
+          ThrowCorrupted("text", "dictionary code is out of range");
+        }
         out[kept++] = {.entry = code, .at = at};
       }
       return kept;
@@ -141,8 +144,9 @@ struct DictionaryFetch final : SegmentScanState {
     SDB_ENSURE(row < h.row_count, "col codec: row out of range");
     const auto code = Numeric(base).Visit(
       [&](auto& codes) IRS_FORCE_INLINE { return codes.Fetch(row, kNoRow); });
-    SDB_ENSURE(code == 0 || code < h.entry_count,
-               "col codec: corrupted row codes");
+    if (code != 0 && code >= h.entry_count) [[unlikely]] {
+      ThrowCorrupted("text", "dictionary code is out of range");
+    }
     return code;
   }
 
@@ -701,8 +705,9 @@ struct DictionaryScan final : SegmentScanState {
     for (idx_t i = 0; i < count; ++i) {
       max_code = std::max(max_code, codes[i]);
     }
-    SDB_ENSURE(max_code < entries.header.entry_count,
-               "col codec: corrupted row codes");
+    if (max_code >= entries.header.entry_count) [[unlikely]] {
+      ThrowCorrupted("text", "dictionary code is out of range");
+    }
   }
 
   EntryFrames<Shape::Dictionary, Leaf> entries;

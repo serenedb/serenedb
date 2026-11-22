@@ -39,6 +39,7 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/codecs.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
@@ -48,7 +49,6 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/lower_bound.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::text::fsst_front {
@@ -90,7 +90,9 @@ uint64_t DecodeSuffix(const fsst::Decoder<Impl>& fsst, const char* in,
   const auto room = enc * fsst::kMaxExpansion;
   auto* at = Reserve(buf, lcp + room) + lcp;
   const auto dec = enc == 0 ? 0 : fsst.Decode(in, enc, at, room);
-  SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+  if (dec > room) [[unlikely]] {
+    ThrowCorrupted("text", "entry is inconsistent");
+  }
   return lcp + dec;
 }
 
@@ -100,8 +102,9 @@ uint64_t DecodeShared(const fsst::Decoder<Impl>& fsst, const char* in,
   SDB_ASSERT(lcp < shared);
   const auto bytes = shared - lcp;
   const auto dec = fsst.DecodePrefix(in, enc, out + lcp, bytes);
-  SDB_ENSURE(dec >= bytes && dec - bytes <= fsst::kPrefixSlack,
-             "col codec: corrupted front coding");
+  if (dec < bytes || dec - bytes > fsst::kPrefixSlack) [[unlikely]] {
+    ThrowCorrupted("text", "front coding is inconsistent");
+  }
   return lcp + dec;
 }
 
@@ -116,9 +119,10 @@ ChainEnd WalkChain(const fsst::Decoder<Impl>& fsst, const char* in,
   for (auto e = first; e < end; ++e) {
     const uint64_t lcp = e == first ? 0 : lcps.At(e);
     const uint64_t enc = lengths.At(e);
-    SDB_ENSURE(
-      lcp <= prev_len && enc_off + enc <= enc_end && off + lcp <= capacity,
-      "col codec: corrupted front coding");
+    if (!(lcp <= prev_len && enc_off + enc <= enc_end && off + lcp <= capacity))
+      [[unlikely]] {
+      ThrowCorrupted("text", "front coding is inconsistent");
+    }
     const auto room = capacity - (off + lcp);
     size_t dec = 0;
     if (enc * fsst::kMaxExpansion + kCopyChunk <= room) {
@@ -134,7 +138,9 @@ ChainEnd WalkChain(const fsst::Decoder<Impl>& fsst, const char* in,
         dec = fsst.Decode(in + enc_off, enc, out + off + lcp, room);
       }
     }
-    SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+    if (dec > room) [[unlikely]] {
+      ThrowCorrupted("text", "entry is inconsistent");
+    }
     const std::string_view value{out + off, lcp + dec};
     visit(e, value);
     prev_off = off;
@@ -154,8 +160,9 @@ uint32_t WalkInPlace(const fsst::Decoder<Impl>& fsst, const char* in,
   for (auto e = first; e < end; ++e) {
     const uint64_t lcp = e == first ? 0 : lcps.At(e);
     const uint64_t enc = lengths.At(e);
-    SDB_ENSURE(lcp <= len && enc_off + enc <= enc_end,
-               "col codec: corrupted front coding");
+    if (!(lcp <= len && enc_off + enc <= enc_end)) [[unlikely]] {
+      ThrowCorrupted("text", "front coding is inconsistent");
+    }
     len = DecodeSuffix(fsst, in + enc_off, enc, lcp, buf);
     if (!visit(e, std::string_view{buf.data(), len})) {
       return e;
@@ -183,7 +190,9 @@ std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
   for (uint32_t i = 0; i < n; ++i) {
     off[i + 1] = off[i] + enc[i];
   }
-  SDB_ENSURE(off[n] <= enc_end, "col codec: corrupted front coding");
+  if (off[n] > enc_end) [[unlikely]] {
+    ThrowCorrupted("text", "front coding is inconsistent");
+  }
   std::array<uint32_t, kChainRestart> used;
   uint32_t count = 0;
   uint64_t need = std::numeric_limits<uint64_t>::max();
@@ -197,12 +206,16 @@ std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
   while (count > 1) {
     const auto i = used[--count];
     const uint64_t shared = lcp[used[count - 1]];
-    SDB_ENSURE(lcp[i] <= len, "col codec: corrupted front coding");
+    if (lcp[i] > len) [[unlikely]] {
+      ThrowCorrupted("text", "front coding is inconsistent");
+    }
     len = DecodeShared(fsst, in + off[i], off[i + 1] - off[i], lcp[i], shared,
                        Reserve(buf, shared + fsst::kPrefixSlack));
     ++walked;
   }
-  SDB_ENSURE(lcp[n - 1] <= len, "col codec: corrupted front coding");
+  if (lcp[n - 1] > len) [[unlikely]] {
+    ThrowCorrupted("text", "front coding is inconsistent");
+  }
   len =
     DecodeSuffix(fsst, in + off[n - 1], off[n] - off[n - 1], lcp[n - 1], buf);
   ++walked;
@@ -221,8 +234,10 @@ struct Scan {
   Scan(const ColumnSegment& segment, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
     const auto table = SymbolTable(segment, s.header, s.base, probe);
-    SDB_ENSURE(table.empty() || decoder.Import(segment.cache_slot.cache, table),
-               "col codec: corrupted symbol table");
+    if (!table.empty() && !decoder.Import(segment.cache_slot.cache, table))
+      [[unlikely]] {
+      ThrowCorrupted("text", "symbol table is inconsistent");
+    }
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
       return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
     });
@@ -236,17 +251,14 @@ struct Scan {
     const auto chain =
       WalkChain(decoder, s.Data(), s.length_reader, lcps, m.first_entry,
                 s.FrameEnd(f), m.comp_off, enc_end, out, m.raw_len, visit);
-    SDB_ENSURE(chain.written == m.raw_len && chain.enc_off == enc_end,
-               "col codec: corrupted frame");
+    if (chain.written != m.raw_len || chain.enc_off != enc_end) [[unlikely]] {
+      ThrowCorrupted("text", "frame is inconsistent");
+    }
   }
 
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
-    const auto first = s.frames[f].first_entry;
-    WalkFrame(s, f, out, [&](uint32_t e, std::string_view v) {
-      SDB_ASSERT(!Frames::kDedup || e == first || View(s.values[e - 1]) < v);
-      s.Keep(e, v);
-    });
+    WalkFrame(s, f, out, [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
   }
 
   template<typename Frames>
@@ -444,8 +456,9 @@ struct Scan {
     for (uint32_t i = 0; i < n; ++i) {
       off[i + 1] = off[i] + enc[i];
     }
-    SDB_ENSURE(off[n] <= s.header.data_size,
-               "col codec: corrupted front coding");
+    if (off[n] > s.header.data_size) [[unlikely]] {
+      ThrowCorrupted("text", "front coding is inconsistent");
+    }
     std::array<uint32_t, kChainRestart> shared;
     uint32_t whole = 0;
     uint32_t heads = 0;
@@ -479,7 +492,9 @@ struct Scan {
         chained = false;
         continue;
       }
-      SDB_ENSURE(lcp[i] <= prev_len, "col codec: corrupted front coding");
+      if (lcp[i] > prev_len) [[unlikely]] {
+        ThrowCorrupted("text", "front coding is inconsistent");
+      }
       if ((heads >> i & 1) != 0) {
         auto* head = Reserve(chain, shared[i] + fsst::kPrefixSlack);
         if (!chained && lcp[i] != 0) {
@@ -500,7 +515,9 @@ struct Scan {
       const auto dec = enc[i] == 0 ? 0
                                    : decoder.Decode(s.Data() + off[i], enc[i],
                                                     at + lcp[i], room);
-      SDB_ENSURE(dec <= room, "col codec: corrupted entry");
+      if (dec > room) [[unlikely]] {
+        ThrowCorrupted("text", "entry is inconsistent");
+      }
       prev = at;
       prev_len = lcp[i] + dec;
       written += prev_len;
@@ -620,9 +637,10 @@ struct Fetch {
             duckdb::const_data_ptr_t base) {
     decoder.emplace();
     const auto symbols = SymbolTable(segment, h, base, chain);
-    SDB_ENSURE(
-      symbols.empty() || decoder->Import(segment.cache_slot.cache, symbols),
-      "col codec: corrupted symbol table");
+    if (!symbols.empty() && !decoder->Import(segment.cache_slot.cache, symbols))
+      [[unlikely]] {
+      ThrowCorrupted("text", "symbol table is inconsistent");
+    }
     const auto* table = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
       return std::pair{FrameAt(table, i).first_entry,

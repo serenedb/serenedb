@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/bitpacking.hpp>
@@ -28,9 +30,9 @@
 #include <utility>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs {
 
@@ -191,37 +193,41 @@ struct Header {
   static Header Parse(duckdb::const_data_ptr_t p, duckdb::idx_t segment_size,
                       CodecType codec) {
     using duckdb::BitpackingPrimitives;
-    SDB_ENSURE(segment_size >= kHeaderSize,
-               "col codec: segment smaller than its header");
+    if (segment_size < kHeaderSize) [[unlikely]] {
+      ThrowCorrupted("text", "segment is smaller than its header");
+    }
     const auto h = duckdb::Load<Header>(p);
     const auto leaf = LeafOf(codec);
-    SDB_ENSURE(h.version == kSegmentVersion,
-               "col codec: unsupported segment version ", h.version);
-    SDB_ENSURE(
-      (ShapeOf(codec) == Shape::Dictionary ? CodesCodec(h.codes)
-                                           : h.codes == CodecType::Auto) &&
-        h.length_width <= 32 && h.lcp_width <= 32 && h.sorted <= 1 &&
-        (h.flags == FrameDictionary::None ||
-         (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
-          !Sorted(leaf)) ||
-         (h.flags == FrameDictionary::Local && h.symtab_size != 0 &&
-          h.dictionary_size != 0 && h.dictionary_size <= kMaxDictionaryBytes &&
-          !Sorted(leaf))) &&
-        (leaf != ByteCodec::FsstPlus ||
-         h.symtab_size >= uint64_t{h.dictionary_size} + sizeof(uint32_t)) &&
-        static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
-        h.off_frames >= kHeaderSize &&
-        h.off_frames + static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=
-          h.off_lengths &&
-        h.off_lengths + BitpackingPrimitives::GetRequiredSize(h.entry_count,
-                                                              h.length_width) <=
-          h.off_lcps &&
-        h.off_lcps +
-            BitpackingPrimitives::GetRequiredSize(h.entry_count, h.lcp_width) <=
-          h.off_codes &&
-        h.off_codes <= h.off_symtab &&
-        h.off_symtab + static_cast<uint64_t>(h.symtab_size) <= h.off_data,
-      "col codec: corrupted segment header");
+    if (h.version != kSegmentVersion) [[unlikely]] {
+      ThrowCorrupted("text", absl::StrCat("unsupported version ", h.version));
+    }
+    if (!((ShapeOf(codec) == Shape::Dictionary ? CodesCodec(h.codes)
+                                               : h.codes == CodecType::Auto) &&
+          h.length_width <= 32 && h.lcp_width <= 32 && h.sorted <= 1 &&
+          (h.flags == FrameDictionary::None ||
+           (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
+            !Sorted(leaf)) ||
+           (h.flags == FrameDictionary::Local && h.symtab_size != 0 &&
+            h.dictionary_size != 0 &&
+            h.dictionary_size <= kMaxDictionaryBytes && !Sorted(leaf))) &&
+          (leaf != ByteCodec::FsstPlus ||
+           h.symtab_size >= uint64_t{h.dictionary_size} + sizeof(uint32_t)) &&
+          static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
+          h.off_frames >= kHeaderSize &&
+          h.off_frames +
+              static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=
+            h.off_lengths &&
+          h.off_lengths + BitpackingPrimitives::GetRequiredSize(
+                            h.entry_count, h.length_width) <=
+            h.off_lcps &&
+          h.off_lcps + BitpackingPrimitives::GetRequiredSize(h.entry_count,
+                                                             h.lcp_width) <=
+            h.off_codes &&
+          h.off_codes <= h.off_symtab &&
+          h.off_symtab + static_cast<uint64_t>(h.symtab_size) <= h.off_data))
+      [[unlikely]] {
+      ThrowCorrupted("text", "header is inconsistent");
+    }
     return h;
   }
 };

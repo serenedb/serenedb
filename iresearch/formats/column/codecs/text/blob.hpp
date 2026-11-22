@@ -54,7 +54,6 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::text::blob {
@@ -788,20 +787,22 @@ class FrameInflater {
   void Prepare(const Header& h, duckdb::const_data_ptr_t base,
                const char* data) {
     if (h.flags == FrameDictionary::Local) {
-      SDB_ENSURE(
-        _decoder->Load(
-          {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size},
-          h.dictionary_size),
-        "col codec: corrupted dictionary");
+      if (!_decoder->Load(
+            {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size},
+            h.dictionary_size)) [[unlikely]] {
+        ThrowCorrupted("text", "dictionary is inconsistent");
+      }
       _loaded += h.dictionary_size;
     } else if (h.flags == FrameDictionary::FirstFrame) {
       const auto f0 = duckdb::Load<FrameMeta>(base + h.off_frames);
-      SDB_ENSURE(
-        static_cast<uint64_t>(f0.comp_off) + f0.comp_len <= h.data_size,
-        "col codec: corrupted frame table");
-      SDB_ENSURE(
-        _decoder->LoadFrame(data + f0.comp_off, f0.comp_len, f0.raw_len),
-        "col codec: corrupted frame");
+      if (static_cast<uint64_t>(f0.comp_off) + f0.comp_len > h.data_size)
+        [[unlikely]] {
+        ThrowCorrupted("text", "frame table is inconsistent");
+      }
+      if (!_decoder->LoadFrame(data + f0.comp_off, f0.comp_len, f0.raw_len))
+        [[unlikely]] {
+        ThrowCorrupted("text", "frame is inconsistent");
+      }
       _loaded += f0.raw_len;
     }
   }
@@ -874,7 +875,9 @@ struct Fetch {
       offset += lengths.At(first_entry + k - 1);
       offsets[k] = static_cast<uint32_t>(offset);
     }
-    SDB_ENSURE(offset <= f.raw_len, "col codec: corrupted entry lengths");
+    if (offset > f.raw_len) [[unlikely]] {
+      ThrowCorrupted("text", "entry lengths are inconsistent");
+    }
     known = need;
   }
 
@@ -884,7 +887,9 @@ struct Fetch {
       want = f.raw_len;
     }
     const auto got = inflater.Inflate(h, base, f, lo, raw.data(), want);
-    SDB_ENSURE(got.size() >= want, "col codec: corrupted frame");
+    if (got.size() < want) [[unlikely]] {
+      ThrowCorrupted("text", "frame is inconsistent");
+    }
     frame_data = got.data();
     decoded = std::min<size_t>(got.size(), f.raw_len);
     decoded_total += decoded;
@@ -922,7 +927,9 @@ struct Scan {
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
     const auto& m = s.frames[f];
     const auto got = inflater.Inflate(s.header, s.base, m, f, out, m.raw_len);
-    SDB_ENSURE(got.size() == m.raw_len, "col codec: corrupted frame");
+    if (got.size() != m.raw_len) [[unlikely]] {
+      ThrowCorrupted("text", "frame is inconsistent");
+    }
     if (got.data() != out) {
       std::memcpy(out, got.data(), m.raw_len);
     }
@@ -938,11 +945,15 @@ struct Scan {
     uint64_t off = 0;
     for (uint32_t e = m.first_entry; e < end; ++e) {
       const auto len = s.length_reader.At(e);
-      SDB_ENSURE(off + len <= m.raw_len, "col codec: corrupted entry lengths");
+      if (off + len > m.raw_len) [[unlikely]] {
+        ThrowCorrupted("text", "entry lengths are inconsistent");
+      }
       visit(e, off, len);
       off += len;
     }
-    SDB_ENSURE(off == m.raw_len, "col codec: corrupted entry lengths");
+    if (off != m.raw_len) [[unlikely]] {
+      ThrowCorrupted("text", "entry lengths are inconsistent");
+    }
   }
 
   template<typename Frames, typename Entry>
@@ -1021,12 +1032,16 @@ struct Scan {
       end += ends[k];
       ends[k] = static_cast<uint32_t>(end);
     }
-    SDB_ENSURE(end <= m.raw_len, "col codec: corrupted entry lengths");
+    if (end > m.raw_len) [[unlikely]] {
+      ThrowCorrupted("text", "entry lengths are inconsistent");
+    }
     if (raw.size() < m.raw_len) {
       raw.resize_and_overwrite(m.raw_len, [](char*, size_t n) { return n; });
     }
     const auto got = inflater.Inflate(s.header, s.base, m, f, raw.data(), end);
-    SDB_ENSURE(got.size() >= end, "col codec: corrupted frame");
+    if (got.size() < end) [[unlikely]] {
+      ThrowCorrupted("text", "frame is inconsistent");
+    }
     const auto span = [&](duckdb::idx_t k) {
       const auto at = static_cast<uint32_t>(entry_at(k)) - first;
       const auto begin = at == 0 ? 0 : ends[at - 1];

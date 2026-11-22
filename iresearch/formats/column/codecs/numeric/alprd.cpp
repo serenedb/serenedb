@@ -350,10 +350,8 @@ struct RowGroupSample final : State {
     for (const auto& chunk : data.chunks) {
       AlpRdSample(state, chunk.data);
     }
-    if (state.total_values_count) {
-      bits_per_value =
-        FindBestDictionary<T>(state.rowgroup_sample, state.dictionary);
-    }
+    bits_per_value =
+      FindBestDictionary<T>(state.rowgroup_sample, state.dictionary);
   }
 
   AlpRdAnalyzeState<T> state;

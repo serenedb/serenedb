@@ -174,10 +174,7 @@ struct Runs final : State {
   Runs(ColumnDataCheckpointData& data, ScratchVector<U>&& located,
        ScratchVector<uint32_t>&& located_rows)
     : values{std::move(located)}, rows{std::move(located_rows)} {
-    auto& input = data.Get<Values<T>>();
-    if (!WithoutRuns(data, input)) {
-      MeasureRuns(input, *this);
-    }
+    MeasureRuns(data.Get<Values<T>>(), *this);
   }
 
   ScratchVector<U> values;

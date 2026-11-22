@@ -3909,14 +3909,19 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
   const Gen every_entry_twice = [](uint64_t g) -> std::optional<int64_t> {
     return static_cast<int64_t>(Mix(g % irs::codecs::kNumericDictMax));
   };
-  const Gen runs_of_four = [](uint64_t g) -> std::optional<int64_t> {
+  const Gen drifting_runs_of_four = [](uint64_t g) -> std::optional<int64_t> {
     const auto run = g / 4;
-    return static_cast<int64_t>(run % 2 * 1000 + run % 97);
+    return static_cast<int64_t>(run * 1000 + Mix(run) % 4);
   };
   const Gen two_paces = [](uint64_t g) -> std::optional<int64_t> {
     return g < irs::codecs::numeric::kBlockValues
              ? static_cast<int64_t>(g * 3 + Mix(g) % 2)
              : static_cast<int64_t>(5000 + g * 1000 + Mix(g) % 2);
+  };
+  const Gen byte_codes = [](uint64_t g) -> std::optional<int64_t> {
+    const uint64_t at = g % irs::codecs::numeric::kBlockValues;
+    const uint64_t code = at == 0 ? 0 : at == 1 ? 255 : Mix(g) % 256;
+    return static_cast<int64_t>(code * 7 + 1);
   };
   const auto own = [](Block& b) {
     return b.bytes + irs::codecs::OwnHeaderOffset(b.header.flags);
@@ -3960,6 +3965,16 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
        auto m = duckdb::Load<NumericFrameMeta>(frame(b, 0));
        m.frame.raw_len -= sizeof(double);
        m.frame.comp_len -= sizeof(double);
+       duckdb::Store(m, frame(b, 0));
+     },
+     "Corrupted numeric segment: frame table is inconsistent"},
+    {"an integer frame of another size than its rows",
+     duckdb::LogicalType::INTEGER, CodecType::Dict, byte_codes, 16384, "dict",
+     [&](Block& b) {
+       ASSERT_EQ(b.header.stored, 1);
+       auto m = duckdb::Load<NumericFrameMeta>(frame(b, 0));
+       --m.frame.raw_len;
+       --m.frame.comp_len;
        duckdb::Store(m, frame(b, 0));
      },
      "Corrupted numeric segment: frame table is inconsistent"},
@@ -4042,7 +4057,7 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
      },
      "Corrupted numeric segment: runs are inconsistent"},
     {"a stepped block of a single run", duckdb::LogicalType::BIGINT,
-     CodecType::Rle, runs_of_four, 4 * 1025, "rle_bitpacking",
+     CodecType::Rle, drifting_runs_of_four, 4 * 1025, "rle_bitpacking",
      [&](Block& b) {
        ASSERT_EQ(b.header.frame_count, 2);
        const auto meta = irs::codecs::FrameMetaSize(irs::codecs::Shape::Runs,
@@ -4743,11 +4758,13 @@ using ValueAt = std::function<duckdb::Value(uint64_t)>;
 void WriteValues(duckdb::DatabaseInstance& db, const tests::IndexDir& dir,
                  const duckdb::LogicalType& type, irs::WriteTier tier,
                  uint64_t rows, uint32_t rg_size, irs::codecs::CodecType codec,
-                 const ValueAt& value) {
+                 const ValueAt& value,
+                 irs::DistinctStats distinct = irs::DistinctStats::None) {
   irs::ColWriter w{db, dir.Tracker(kSeg), tier};
   auto& cw = w.OpenColumn(kField, type,
                           {.row_group_size = rg_size,
                            .compression = codec,
+                           .distinct = distinct,
                            .codec_params = {.tier = tier}});
   for (uint64_t pos = 0; pos < rows;) {
     const auto take = std::min<uint64_t>(rows - pos, STANDARD_VECTOR_SIZE);
@@ -4999,31 +5016,45 @@ TEST_F(ColNumericCodecTest, ANamedRleStoresWideValuesOnlyWhenNeighboursRepeat) {
 
 TEST_F(ColNumericCodecTest, WideHalvesHoldARunOrAConstantOnlyWhenBothHalvesDo) {
   constexpr uint64_t kRows = 2 * STANDARD_VECTOR_SIZE;
-  const ValueAt value = [](uint64_t g) {
-    return duckdb::Value::HUGEINT(
-      duckdb::hugeint_t{g < 1000 ? int64_t{1} : int64_t{2}, uint64_t{7}});
+  struct Case {
+    std::string wide;
+    ValueAt value;
+  };
+  const Case cases[] = {
+    {"halves",
+     [](uint64_t g) {
+       return duckdb::Value::HUGEINT(
+         duckdb::hugeint_t{g < 1000 ? int64_t{1} : int64_t{2}, uint64_t{7}});
+     }},
+    {"offsets",
+     [](uint64_t g) {
+       return duckdb::Value::HUGEINT(
+         duckdb::hugeint_t{int64_t{1}, g < 1000 ? uint64_t{7} : uint64_t{9}});
+     }},
   };
   const auto type = duckdb::LogicalType::HUGEINT;
   using irs::codecs::CodecType;
-  for (const auto codec : {CodecType::Rle, CodecType::Bitpacking}) {
-    SCOPED_TRACE(magic_enum::enum_name(codec));
-    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-    ASSERT_NO_FATAL_FAILURE(WriteValues(Db(), dir, type, irs::WriteTier::Flush,
-                                        kRows, kRows, codec, value));
-    ExpectValues(dir, type, kRows, value);
-    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
-    const auto* col = r.Column(kField);
-    ASSERT_NE(col, nullptr);
-    ASSERT_EQ(col->DataBlocks().size(), 1);
-    EXPECT_EQ(col->DataBlocks().front().codec->type, codec);
-    EXPECT_EQ(SegmentInfo(dir, "wide"), std::vector<std::string>{"halves"});
-    irs::ColumnReader::PointReader cursor{r, *col};
-    duckdb::Vector out{type, 1};
-    for (const uint64_t g : {uint64_t{0}, uint64_t{999}, uint64_t{1000},
-                             uint64_t{2048}, kRows - 1}) {
-      duckdb::FlatVector::ValidityMutable(out).Reset();
-      ASSERT_TRUE(cursor.FetchRow(g, out, 0)) << g;
-      EXPECT_EQ(out.GetValue(0).ToString(), value(g).ToString()) << g;
+  for (const auto& [wide, value] : cases) {
+    for (const auto codec : {CodecType::Rle, CodecType::Bitpacking}) {
+      SCOPED_TRACE(wide + " " + std::string{magic_enum::enum_name(codec)});
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      ASSERT_NO_FATAL_FAILURE(WriteValues(
+        Db(), dir, type, irs::WriteTier::Flush, kRows, kRows, codec, value));
+      ExpectValues(dir, type, kRows, value);
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      ASSERT_EQ(col->DataBlocks().size(), 1);
+      EXPECT_EQ(col->DataBlocks().front().codec->type, codec);
+      EXPECT_EQ(SegmentInfo(dir, "wide"), std::vector<std::string>{wide});
+      irs::ColumnReader::PointReader cursor{r, *col};
+      duckdb::Vector out{type, 1};
+      for (const uint64_t g : {uint64_t{0}, uint64_t{999}, uint64_t{1000},
+                               uint64_t{2048}, kRows - 1}) {
+        duckdb::FlatVector::ValidityMutable(out).Reset();
+        ASSERT_TRUE(cursor.FetchRow(g, out, 0)) << g;
+        EXPECT_EQ(out.GetValue(0).ToString(), value(g).ToString()) << g;
+      }
     }
   }
 }
@@ -5298,7 +5329,7 @@ TEST_F(ColNumericCodecTest, AConstantBlockBesideAnArithmeticBlockReadsBack) {
   constexpr uint64_t kBlock = irs::codecs::numeric::kBlockValues;
   constexpr uint64_t kRows = 16 * kBlock;
   const Gen constant_then_steps = [](uint64_t g) -> std::optional<int64_t> {
-    if (g >= 6 * kBlock && g < 7 * kBlock) {
+    if (g >= 4 * kBlock && g < 7 * kBlock) {
       return 5;
     }
     if (g >= 7 * kBlock && g < 9 * kBlock) {
@@ -5312,4 +5343,75 @@ TEST_F(ColNumericCodecTest, AConstantBlockBesideAnArithmeticBlockReadsBack) {
         irs::codecs::CodecType::Bitpacking);
   Verify(dir, type, kRows, constant_then_steps);
   EXPECT_EQ(Transforms(dir), std::vector<std::string>{"bitpacking/none"});
+}
+
+TEST_F(ColNumericCodecTest,
+       NamedWideCodecsStoreListsWhoseRowGroupsHaveNoElements) {
+  constexpr uint32_t kRowGroup = STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kRows = 3 * kRowGroup;
+  for (const auto id :
+       {duckdb::LogicalTypeId::HUGEINT, duckdb::LogicalTypeId::UHUGEINT}) {
+    const duckdb::LogicalType element{id};
+    const auto type = duckdb::LogicalType::LIST(element);
+    const ValueAt row = [&](uint64_t g) {
+      duckdb::vector<duckdb::Value> items;
+      if (g / kRowGroup == 1) {
+        for (uint64_t j = 0; j <= g % 3; ++j) {
+          items.push_back(
+            Cast(static_cast<int64_t>(1000 + g / 256 % 4), element));
+        }
+      } else if (g / kRowGroup == 2 && g % 2 == 0) {
+        return duckdb::Value{type};
+      }
+      return duckdb::Value::LIST(element, items);
+    };
+    for (const auto codec :
+         {irs::codecs::CodecType::Bitpacking, irs::codecs::CodecType::Delta,
+          irs::codecs::CodecType::Rle, irs::codecs::CodecType::Dict,
+          irs::codecs::CodecType::Lz4}) {
+      SCOPED_TRACE(element.ToString() + " " +
+                   std::string{magic_enum::enum_name(codec)});
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      ASSERT_NO_FATAL_FAILURE(WriteValues(
+        Db(), dir, type, irs::WriteTier::Flush, kRows, kRowGroup, codec, row));
+      ExpectValues(dir, type, kRows, row);
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      const auto* items = col->Child();
+      ASSERT_NE(items, nullptr);
+      ASSERT_FALSE(items->DataBlocks().empty());
+      for (const auto& block : items->DataBlocks()) {
+        EXPECT_EQ(block.codec->type, codec);
+      }
+    }
+  }
+}
+
+TEST_F(ColNumericCodecTest,
+       ListElementsWithANullInAShortChunkAcrossABlockReadBack) {
+  constexpr uint64_t kFull = STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kRows = kFull + 15;
+  const duckdb::LogicalType element{duckdb::LogicalTypeId::INTEGER};
+  const auto type = duckdb::LogicalType::LIST(element);
+  const ValueAt row = [&](uint64_t g) {
+    duckdb::vector<duckdb::Value> items;
+    const uint64_t count = g >= kFull || g < 1000 ? 2 : 1;
+    for (uint64_t j = 0; j < count; ++j) {
+      items.push_back(g == kFull + 13 && j == 1
+                        ? duckdb::Value{element}
+                        : duckdb::Value::INTEGER(static_cast<int32_t>(
+                            g * 2 + j + Mix(g) % 2 * 100000)));
+    }
+    return duckdb::Value::LIST(element, items);
+  };
+  for (const auto codec :
+       {irs::codecs::CodecType::Bitpacking, irs::codecs::CodecType::Auto}) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    ASSERT_NO_FATAL_FAILURE(WriteValues(Db(), dir, type, irs::WriteTier::Flush,
+                                        kRows, kRows, codec, row,
+                                        irs::DistinctStats::Exact));
+    ExpectValues(dir, type, kRows, row);
+  }
 }

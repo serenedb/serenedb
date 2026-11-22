@@ -279,15 +279,6 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
         declared.compression_level = options.compression_level;
       }
     }
-    if (declared.type == irs::codecs::CodecType::Auto) {
-      for (const auto ann : AnnFields(id)) {
-        if (const auto& options = FindEntry(ann)->column_options;
-            options.compression != irs::codecs::CodecType::Auto) {
-          declared.type = options.compression;
-          declared.compression_level = options.compression_level;
-        }
-      }
-    }
     return {.compression = declared.type,
             .distinct = distinct,
             .compression_level = declared.compression_level};
@@ -420,6 +411,7 @@ InvertedIndexConfig::InvertedIndexConfig(
     const auto* entry = FindEntry(key.field_id);
     SDB_ASSERT(entry);
     if (const auto& ann = entry->column_options.ann_info) {
+      SDB_ASSERT(entry->IsStored());
       auto& ids = anns[ann->column_id];
       if (!absl::c_linear_search(ids, ann->index_id)) {
         ids.push_back(ann->index_id);

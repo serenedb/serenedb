@@ -25,7 +25,6 @@
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
-#include "iresearch/utils/dispatch.hpp"
 
 namespace irs {
 namespace {
@@ -321,26 +320,9 @@ bool FuzzyConjunction::Matches(bytes_view term, PayloadType& payload) const {
   return Fuzzy().Matches(term, payload);
 }
 
-template<bool kPrefix>
-IRS_FORCE_INLINE FuzzyConjunction::State FuzzyConjunction::StepSlowOf(
-  State from, uint8_t c) const {
+IRS_FORCE_INLINE FuzzyConjunction::State FuzzyConjunction::Link(
+  State from, uint8_t c, bool alive, auto&& intern) const {
   auto& slot = const_cast<Row*>(from)->Next()[c];
-  const auto label = _representative[c];
-  [[maybe_unused]] LevenshteinPrefixAcceptor::State prefix{};
-  [[maybe_unused]] LevenshteinAcceptor::State fuzzy{};
-  [[maybe_unused]] Parts parts{};
-  bool alive = false;
-  if constexpr (kPrefix) {
-    prefix = _prefix.Step(PrefixStateOf(*from), label);
-    alive = LevenshteinPrefixAcceptor::Alive(prefix);
-  } else {
-    fuzzy = Fuzzy().Step(from->fuzzy, label);
-    alive = LevenshteinAcceptor::Alive(fuzzy);
-    for (size_t i = 0; alive && i != _size; ++i) {
-      parts[i] = _patterns[i]->Step(from->parts[i], label);
-      alive = !parts[i]->dead;
-    }
-  }
   if (!alive) {
     slot.store(_dead, std::memory_order_release);
     return _dead;
@@ -350,22 +332,27 @@ IRS_FORCE_INLINE FuzzyConjunction::State FuzzyConjunction::StepSlowOf(
       next != nullptr) {
     return next;
   }
-  const State next = [&] {
-    if constexpr (kPrefix) {
-      return InternPrefixLocked(prefix);
-    } else {
-      return InternLocked(parts, fuzzy);
-    }
-  }();
+  const State next = intern();
   slot.store(next, std::memory_order_release);
   return next;
 }
 
 FuzzyConjunction::State FuzzyConjunction::StepSlow(State from,
                                                    uint8_t c) const {
-  return Resolve(_starts_with, [&]<bool kPrefix> IRS_FORCE_INLINE {
-    return StepSlowOf<kPrefix>(from, c);
-  });
+  const auto label = _representative[c];
+  if (_starts_with) {
+    const auto prefix = _prefix.Step(PrefixStateOf(*from), label);
+    return Link(from, c, _prefix.Alive(prefix),
+                [&] { return InternPrefixLocked(prefix); });
+  }
+  const auto fuzzy = Fuzzy().Step(from->fuzzy, label);
+  bool alive = LevenshteinAcceptor::Alive(fuzzy);
+  Parts parts{};
+  for (size_t i = 0; alive && i != _size; ++i) {
+    parts[i] = _patterns[i]->Step(from->parts[i], label);
+    alive = !parts[i]->dead;
+  }
+  return Link(from, c, alive, [&] { return InternLocked(parts, fuzzy); });
 }
 
 uint32_t FuzzyConjunction::Range(Row& row) const {
@@ -414,7 +401,7 @@ FuzzyConjunction::State FuzzyConjunction::InternPrefixLocked(
   SDB_ASSERT(_size == 0);
   return InternRowLocked(KeyOf({}, state.inner, state.best), [&](Row& row) {
     row.fuzzy = state.inner;
-    row.accept = LevenshteinPrefixAcceptor::Accept(state, row.distance);
+    row.accept = _prefix.Accept(state, row.distance);
     uint32_t lo = 1;
     uint32_t hi = 0;
     _prefix.LiveRange(state, lo, hi);
@@ -423,9 +410,8 @@ FuzzyConjunction::State FuzzyConjunction::InternPrefixLocked(
   });
 }
 
-template<typename Fill>
 FuzzyConjunction::State FuzzyConjunction::InternRowLocked(const Key& key,
-                                                          Fill&& fill) const {
+                                                          auto&& fill) const {
   const auto [it, inserted] = _rows.try_emplace(key, nullptr);
   if (!inserted) {
     return it->second;

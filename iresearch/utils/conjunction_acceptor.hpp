@@ -305,11 +305,10 @@ class FuzzyConjunction {
     bool starts_with);
 
   State StepSlow(State from, uint8_t c) const;
-  template<bool kPrefix>
-  IRS_FORCE_INLINE State StepSlowOf(State from, uint8_t c) const;
+  IRS_FORCE_INLINE State Link(State from, uint8_t c, bool alive,
+                              auto&& intern) const;
   uint32_t Range(Row& row) const;
-  template<typename Fill>
-  State InternRowLocked(const Key& key, Fill&& fill) const;
+  State InternRowLocked(const Key& key, auto&& fill) const;
   State InternLocked(const Parts& parts,
                      const LevenshteinAcceptor::State& fuzzy) const;
   State InternPrefixLocked(const LevenshteinPrefixAcceptor::State& state) const;

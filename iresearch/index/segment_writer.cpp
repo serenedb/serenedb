@@ -132,9 +132,9 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
 
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
-    _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
     CopyColumns();
+    _col_writer->SetIdxWriter(idx);
     _col_writer->Commit(buffered_docs());
     if (_ann_env != nullptr) {
       GetBlocking(_col_writer->ComputeAnn(_ann_env).ToFuture());

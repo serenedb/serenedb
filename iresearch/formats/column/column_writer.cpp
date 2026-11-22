@@ -213,6 +213,11 @@ bool SelfContained(const ColumnBlockMeta& block) noexcept {
            duckdb::PhysicalType::VARCHAR;
 }
 
+bool CopyableWithoutNulls(const ColumnReader& column) {
+  return !column.InMemory() && !column.Patched() &&
+         !column.MergedStatistics().CanHaveNull();
+}
+
 bool EmptyValidity(const ColumnBlockMeta& block) noexcept {
   return block.byte_size == 0 &&
          block.codec->type == duckdb::CompressionType::COMPRESSION_EMPTY;
@@ -915,12 +920,102 @@ void ColumnWriter::DecodeRows(const ColumnReader& column, ReadContext& source,
   }
 }
 
+void ColumnWriter::CopyFloatArrayRows(const ColumnReader& column,
+                                      ReadContext& source, uint64_t first,
+                                      uint64_t count) {
+  const auto* elements = column.Child();
+  if (_deferred || _distinct != DistinctStats::None || column.Type() != _type ||
+      !CopyableWithoutNulls(column) || !elements ||
+      elements->Type().id() != duckdb::LogicalTypeId::FLOAT ||
+      !CopyableWithoutNulls(*elements) || elements->DataBlocks().empty()) {
+    DecodeRows(column, source, first, count);
+    return;
+  }
+
+  const auto array_size = duckdb::ArrayType::GetSize(_type);
+  auto& config = duckdb::DBConfig::GetConfig(WriteCtx().Database());
+  const auto forced =
+    ResolveForced(config, _forced,
+                  config.GetCompressionFunctions(duckdb::PhysicalType::FLOAT));
+  const auto blocks = elements->DataBlocks();
+  const auto end_row = first + count;
+  const auto end_element = end_row * array_size;
+  const duckdb::LogicalType validity_type{duckdb::LogicalTypeId::VALIDITY};
+  for (auto row = first; row < end_row;) {
+    const auto element = row * array_size;
+    const auto window = elements->Locate(element);
+    const auto row_limit =
+      row + std::min(end_row - row, _rg_rows - _staged_rows);
+    const auto element_limit = row_limit * array_size;
+    auto next_row = row;
+    auto end_block = window.block;
+    if (window.begin == element) {
+      for (auto block_index = window.block; block_index < blocks.size();
+           ++block_index) {
+        const auto& block = blocks[block_index];
+        const auto block_end =
+          elements->DataBlockFirstRow(block_index) + block.tuple_count;
+        if (block_end > element_limit || !SelfContained(block) ||
+            !InCodec(forced, block)) {
+          break;
+        }
+        if (block_end % array_size == 0) {
+          next_row = block_end / array_size;
+          end_block = block_index + 1;
+        }
+      }
+    }
+    if (next_row == row) {
+      next_row = end_row;
+      for (auto block_index = window.block + 1; block_index < blocks.size();
+           ++block_index) {
+        const auto block_begin = elements->DataBlockFirstRow(block_index);
+        if (block_begin >= end_element) {
+          break;
+        }
+        if (block_begin % array_size == 0) {
+          next_row = block_begin / array_size;
+          break;
+        }
+      }
+      DecodeRows(column, source, row, next_row - row);
+      row = next_row;
+      continue;
+    }
+
+    SealRowGroup();
+    _meta.children.resize(1);
+    auto& element_meta = _meta.children.front();
+    element_meta.id = _id;
+    element_meta.type = elements->Type();
+    const auto copied = blocks.subspan(window.block, end_block - window.block);
+    BlockReadAhead ahead{source, copied};
+    for (size_t b = 0; b != copied.size(); ++b) {
+      ahead.At(b);
+      CopyBlock(copied[b], source, element_meta.data);
+    }
+    const auto rows = next_row - row;
+    if (!_skip_validity) {
+      EmitEmptyValidity(validity_type, rows, config, _meta.validity);
+    }
+    EmitEmptyValidity(validity_type, rows * array_size, config,
+                      element_meta.validity);
+    _row_start += rows;
+    OpenRowGroup();
+    row = next_row;
+  }
+}
+
 void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
                             ReadContext& source, uint64_t first,
                             uint64_t count) {
   SDB_ASSERT(_row_start + _staged_rows <= start_row);
   SDB_ASSERT(first + count <= column.RowCount());
   PadNullsTo(start_row);
+  if (_type.id() == duckdb::LogicalTypeId::ARRAY && _owner->HasAnn(_id)) {
+    CopyFloatArrayRows(column, source, first, count);
+    return;
+  }
   const auto end = first + count;
   auto written = first;
   if (LayoutMatches(column) && _distinct == DistinctStats::None &&

@@ -121,6 +121,8 @@ class ColumnWriter final {
                     uint64_t first, uint64_t end);
   void DecodeRows(const ColumnReader& column, ReadContext& source,
                   uint64_t first, uint64_t count);
+  void CopyFloatArrayRows(const ColumnReader& column, ReadContext& source,
+                          uint64_t first, uint64_t count);
 
   void SealRowGroup();
   void OpenRowGroup() noexcept;

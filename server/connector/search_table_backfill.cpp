@@ -29,6 +29,7 @@
 #include <array>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/types.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/execution/expression_executor.hpp>
@@ -95,12 +96,31 @@ struct ColumnPlan {
   std::vector<ColumnId> carried;
 };
 
+bool CanCopyIvfColumn(const catalog::InvertedIndexConfig& config,
+                      const duckdb::LogicalType& type,
+                      std::span<const irs::field_id> ann_fields) {
+  return type.id() == duckdb::LogicalTypeId::ARRAY &&
+         duckdb::ArrayType::GetChildType(type).id() ==
+           duckdb::LogicalTypeId::FLOAT &&
+         absl::c_all_of(ann_fields, [&](irs::field_id field) {
+           const auto options = config.GetColumnOptions(field);
+           return options.ann_info &&
+                  options.ann_info->kind == irs::AnnKind::Ivf;
+         });
+}
+
 ColumnPlan PlanColumns(const SearchSinkInsertBaseImpl& sink,
                        const catalog::InvertedIndexConfig& config,
                        const SearchBackfillTarget& target) {
   ColumnPlan plan;
-  for (const auto column : target.column_ids) {
-    if (!config.AnnFields(column).empty() ||
+  for (size_t i = 0; i < target.column_ids.size(); ++i) {
+    const auto column = target.column_ids[i];
+    const auto ann_fields = config.AnnFields(column);
+    const bool scan_ann =
+      !ann_fields.empty() &&
+      (!target.added.empty() ||
+       !CanCopyIvfColumn(config, target.column_types[i], ann_fields));
+    if (scan_ann ||
         config.GetColumnOptions(column).distinct != irs::DistinctStats::None) {
       plan.scanned.insert(column);
       continue;

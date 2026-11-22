@@ -47,22 +47,21 @@ double ScanCost(const QueryBuilder* prefilter, double docs,
 }
 
 Route ExactRouteOf(const ExactVectorQuery& query, const Context& ctx) {
-  return RouteOf(query, ctx,
-                 [&](const QueryBuilder& inner, const QueryBuilder* index_part) {
-                   const auto docs =
-                     static_cast<double>(query.Segment().docs_count());
-                   const auto rows_per_decode = std::max(
-                     1.0, kVectorDecodeFloats /
-                            static_cast<double>(query.Column().ArraySize()));
-                   if (ScanCost(&inner, docs, rows_per_decode) <=
-                       ScanCost(index_part, docs, rows_per_decode)) {
-                     return false;
-                   }
-                   SDB_IF_FAILURE("irs::ExactReadsColumns") {
-                     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
-                   }
-                   return true;
-                 });
+  return RouteOf(
+    query, ctx, [&](const QueryBuilder& inner, const QueryBuilder* index_part) {
+      const auto docs = static_cast<double>(query.Segment().docs_count());
+      const auto rows_per_decode =
+        std::max(1.0, kVectorDecodeFloats /
+                        static_cast<double>(query.Column().ArraySize()));
+      if (ScanCost(&inner, docs, rows_per_decode) <=
+          ScanCost(index_part, docs, rows_per_decode)) {
+        return false;
+      }
+      SDB_IF_FAILURE("irs::ExactReadsColumns") {
+        THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
+      }
+      return true;
+    });
 }
 
 class ExactChain : public Root {

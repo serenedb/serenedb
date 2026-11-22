@@ -67,8 +67,8 @@ Route IvfRouteOf(const VectorQueryBase& query, const SubReader& segment,
       const auto column_share =
         index_share > 0 ? std::min(1.0, ShareOf(&inner, docs) / index_share)
                         : 0.0;
-      const auto checks = ColumnChecks(static_cast<double>(ctx.k),
-                                       column_share, candidates * index_share);
+      const auto checks = ColumnChecks(static_cast<double>(ctx.k), column_share,
+                                       candidates * index_share);
       if (ProbeCost(&inner, candidates, docs_count) <=
           ProbeCost(index_part, candidates, docs_count) +
             checks * kColumnCheckCost) {

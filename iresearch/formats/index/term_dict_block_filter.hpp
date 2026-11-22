@@ -375,12 +375,6 @@ class InfixFilter {
         });
     }
     _hit = hit;
-    if (cursor.AtGroupEnd()) {
-      const auto next = cursor.NextGroup();
-      if (const auto group = LiveGroup(cursor, next); group != next) {
-        cursor.SkipGroups(group);
-      }
-    }
     return lcp;
   }
 

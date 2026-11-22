@@ -3016,6 +3016,33 @@ TEST_P(TermDictTest, infix_walks_skip_empty_blocks_and_keep_split_matches) {
   }
 }
 
+TEST_P(TermDictTest, infix_walks_skip_groups_without_a_hit) {
+  std::mt19937 rng{53};
+  std::vector<irs::bstring> keys;
+  for (uint32_t i = 0; i != 60000; ++i) {
+    keys.push_back(Bytes(absl::StrCat(
+      "n", i * 7919 % 1000003, "/",
+      std::string(1 + rng() % 7, static_cast<char>('a' + rng() % 26)))));
+  }
+  const auto entries = MakeEntries(keys);
+  const Field fields[]{
+    {.id = 1, .entries = entries, .sample = false},
+    {.id = 2, .entries = entries},
+  };
+  Write(fields);
+  for (const auto& field : fields) {
+    SCOPED_TRACE(testing::Message("field ") << field.id);
+    const auto* reader = Get(field);
+    ASSERT_NE(nullptr, reader);
+    for (const std::string_view pattern : {"%777%", "%0123%", "%9/qq%"}) {
+      SCOPED_TRACE(testing::Message("pattern ") << pattern);
+      AssertWalk(*reader, field.entries,
+                 irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
+                                     irs::ViewCast<irs::byte_type>(pattern)});
+    }
+  }
+}
+
 TEST_P(TermDictTest, walks_match_in_and_across_the_block_prefix) {
   std::mt19937 rng{41};
   constexpr std::string_view kLetters = "abcdeghklmnoprstuz";

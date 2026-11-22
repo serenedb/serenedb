@@ -869,11 +869,6 @@ class BlockCursor {
     return _entry != kNoEntry && _entry + 1 == _stop;
   }
   uint32_t Stop() const noexcept { return _stop; }
-  bool AtGroupEnd() const noexcept {
-    return !_view.fixed && _entry != kNoEntry && _entry + 1 == _restart &&
-           _restart < _stop;
-  }
-  uint32_t NextGroup() const noexcept { return _restart / kRestartInterval; }
 
   void Group(uint32_t group) {
     _entry = group == 0 ? kNoEntry : group * kRestartInterval - 1;
@@ -881,22 +876,6 @@ class BlockCursor {
     _sp = _view.suffixes + SuffixOffset(_view, group);
     _jumped = true;
     Next();
-  }
-
-  void SkipGroups(uint32_t group) noexcept {
-    SDB_ASSERT(AtGroupEnd() && group > NextGroup());
-    _pending.count = 0;
-    _partial = true;
-    _jumped = true;
-    _size = _mat;
-    const uint32_t restart = group * kRestartInterval;
-    if (restart >= _stop) {
-      _entry = _stop - 1;
-      return;
-    }
-    _entry = restart - 1;
-    _restart = restart;
-    _sp = _view.suffixes + SuffixOffset(_view, group);
   }
 
   int ByteAt(size_t depth) {

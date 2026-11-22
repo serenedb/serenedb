@@ -225,7 +225,7 @@ class CentroidsBuilder {
   AssignedCentroids AssignCentroids(
     std::span<float> data, size_t d,
     std::span<std::span<const float>> centroids_out = {},
-    IvfCudaIndex* assignment = nullptr) const;
+    IvfCudaIndex* root_assignment = nullptr) const;
 
   size_t NumClusters() const noexcept { return _nodes.empty() ? 1 : _n_rows; }
 

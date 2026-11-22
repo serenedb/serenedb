@@ -31,6 +31,7 @@
 #include <duckdb/common/vector/array_vector.hpp>
 #include <pcg_random.hpp>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <yaclib/async/make.hpp>
 
@@ -96,10 +97,20 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   Clock::duration assignment_time{};
   size_t gpu_batches = 0;
   std::unique_ptr<IvfCudaIndex> assignment;
+  IvfCudaIndex* root_assignment = nullptr;
 #ifdef SDB_IVF_BUILD_CUDA
-  if (_info.metric == VectorMetric::InnerProduct &&
+  static const bool cpu_training =
+    static_cast<bool>(std::getenv("SDB_IVF_CPU_TRAINING"));
+  static const bool assign_root_on_cuda = [] {
+    const auto* mode = std::getenv("SDB_IVF_FINAL_ASSIGNMENT_CUDA");
+    return mode && std::string_view{mode} == "root";
+  }();
+  if (!cpu_training && _info.metric == VectorMetric::InnerProduct &&
       _info.quant.kind == VectorQuantization::None) {
     assignment = MakeIvfCudaIndex(d, profile ? &gpu_batches : nullptr);
+    if (assign_root_on_cuda) {
+      root_assignment = assignment.get();
+    }
   }
 #endif
   auto centroids = CentroidsBuilder::Create(
@@ -149,7 +160,8 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
       auto assigned = centroids.AssignCentroids(
         {gather.data(), gathered * d}, d,
         needs_centroid ? std::span{cents.data(), gathered}
-                       : std::span<std::span<const float>>{});
+                       : std::span<std::span<const float>>{},
+        root_assignment);
       if (profile) {
         assignment_time += Clock::now() - start;
       }

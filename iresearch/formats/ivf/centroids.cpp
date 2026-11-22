@@ -668,14 +668,14 @@ void CentroidsBuilder::AssignCentroidsImpl(
                         centroids_out.empty()
                           ? centroids_out
                           : centroids_out.subspan(start, count),
-                        assignment);
+                        nullptr);
   });
 }
 
 AssignedCentroids CentroidsBuilder::AssignCentroids(
   std::span<float> data, size_t d,
   std::span<std::span<const float>> centroids_out,
-  IvfCudaIndex* assignment) const {
+  IvfCudaIndex* root_assignment) const {
   const size_t n = data.size() / d;
   AssignedCentroids result;
   result.ids.resize(n);
@@ -685,7 +685,7 @@ AssignedCentroids CentroidsBuilder::AssignCentroids(
     return result;
   }
   AssignCentroidsImpl(0, data, d, result.ids, result.perm, centroids_out,
-                      assignment);
+                      root_assignment);
   return result;
 }
 

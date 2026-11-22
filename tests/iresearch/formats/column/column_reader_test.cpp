@@ -7295,4 +7295,51 @@ TEST_F(ColumnReaderTest, DictionaryFiltersOnBlobsMatchTheValues) {
   }
 }
 
+TEST_F(ColumnReaderTest, DeferredWritersSealTheirRowsAtCommit) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 10000;
+  constexpr uint32_t kRgSize = 4096;
+  const ValueOf value_of = [](uint64_t g) {
+    return g % 17 == 0 ? duckdb::Value{duckdb::LogicalType::BIGINT}
+                       : duckdb::Value::BIGINT(static_cast<int64_t>(g * 3));
+  };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), dir.Tracker("seg")};
+    w.SetDeferredSeal(true);
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT,
+                            {.row_group_size = kRgSize});
+    for (uint64_t pos = 0; pos < kRows;) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        v.SetValue(k, value_of(pos + k));
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), kRows);
+  EXPECT_EQ(col->DataBlocks().size(), (kRows + kRgSize - 1) / kRgSize);
+  auto state = col->InitScan(r.Ctx());
+  for (uint64_t pos = 0; pos < kRows;) {
+    const auto take =
+      std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector out{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    col->Scan(state, out, take);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      ASSERT_TRUE(
+        duckdb::Value::NotDistinctFrom(out.GetValue(k), value_of(pos + k)))
+        << "row " << pos + k;
+    }
+    pos += take;
+  }
+}
+
 }  // namespace

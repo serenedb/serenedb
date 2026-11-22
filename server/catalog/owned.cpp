@@ -162,25 +162,13 @@ void RevokeShared(ClusterCatalog& cluster, duckdb::ClientContext& context,
         return;
       }
       const auto& permissions = entry.permissions;
-      const auto database =
-        [&](duckdb::idx_t role,
-            duckdb::CatalogType type) -> duckdb::AlterPermissionsInfo& {
-        return AddRevoke(alters, cluster, transaction, entry, role, type, info);
-      };
       for (const auto role : info.role_ids) {
         if (permissions.owner != role && GrantsTo(permissions.acl, role)) {
-          database(role, duckdb::CatalogType::DATABASE_ENTRY);
+          AddRevoke(alters, cluster, transaction, entry, role,
+                    duckdb::CatalogType::DATABASE_ENTRY, info);
         }
         if (!local || entry.name != *local) {
           continue;
-        }
-        for (const auto& row : permissions.Rows().rows) {
-          if (!GrantsTo(row.acl, role)) {
-            continue;
-          }
-          auto& alter = database(role, row.kind);
-          alter.database_rows = {duckdb::GrantRow{row.kind, row.oid, {}}};
-          alter.object_owner_id = bootstrap;
         }
         if (absl::c_any_of(permissions.defaults,
                            [&](const duckdb::DefaultAcl& row) {

@@ -213,6 +213,8 @@ class SereneDBCatalog final : public BaseCatalog {
  private:
   void AlterSubscription(duckdb::CatalogTransaction transaction,
                          duckdb::AlterInfo& info);
+  void AlterWrapper(duckdb::CatalogTransaction transaction,
+                    duckdb::AlterPermissionsInfo& info);
   void ReassignOwned(duckdb::CatalogTransaction transaction,
                      const duckdb::ReassignOwnedInfo& info);
   void DropOwned(duckdb::CatalogTransaction transaction,
@@ -222,6 +224,7 @@ class SereneDBCatalog final : public BaseCatalog {
   CatalogSnapshots _snapshots{*this};
   EntrySet _servers{true, _oids, 0, true};
   EntrySet _subscriptions{true, _oids, 0, true};
+  EntrySet _wrappers{true, _oids};
   bool _durable;
   std::unique_ptr<ForeignLog> _foreign;
   std::atomic_bool _detached{false};

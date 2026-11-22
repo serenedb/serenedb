@@ -349,14 +349,6 @@ void VisitRoleReferences(
           return object;
         });
       });
-    for (const auto& row : record->permissions.Rows().rows) {
-      if (!names(row.acl)) {
-        continue;
-      }
-      const auto classid = duckdb::ObjectKindOf(row.kind).pg_class;
-      visitor({record->oid, classid, row.oid, 0, 'a'},
-              [&] { return DescribeObject(context, classid, row.oid, 0); });
-    }
   }
   cluster.Set(DATABASE_ENTRY)
     .Scan(cluster_transaction, [&](duckdb::CatalogEntry& database) {

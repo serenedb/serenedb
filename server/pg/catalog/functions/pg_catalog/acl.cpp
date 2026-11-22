@@ -755,23 +755,25 @@ struct ForeignDataWrapperPrivileges
   static constexpr bool kSuperuserFirst = true;
 
   struct Scope : ObjectScope {
-    std::array<duckdb::Permissions, kForeignDataWrappers.size()> wrappers;
+    std::array<const duckdb::Permissions*, kForeignDataWrappers.size()>
+      wrappers;
   };
 
   static Scope Begin(duckdb::ClientContext& context,
                      duckdb::optional_idx caller) {
     Scope scope{ObjectPrivileges::Begin(context, caller)};
-    const auto database = FindDatabase(
-      context,
-      duckdb::DatabaseManager::GetDefaultDatabase(context).GetIdentifierName());
+    auto catalog = duckdb::Catalog::GetCatalogEntry(
+      context, duckdb::DatabaseManager::GetDefaultDatabase(context));
     for (size_t i = 0; i < kForeignDataWrappers.size(); ++i) {
-      auto& wrapper = scope.wrappers[i];
-      wrapper.owner = kRootUser;
-      if (database) {
-        const auto acl = database->permissions.RowAcl(
-          duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
-          kForeignDataWrappers[i].oid);
-        wrapper.acl.assign(acl.begin(), acl.end());
+      scope.wrappers[i] = &kBuiltinPermissions;
+      if (!catalog) {
+        continue;
+      }
+      if (const auto entry = catalog->LookupTopLevelEntry(
+            catalog->GetCatalogTransaction(context),
+            duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
+            duckdb::Identifier{kForeignDataWrappers[i].name})) {
+        scope.wrappers[i] = &entry->permissions;
       }
     }
     return scope;
@@ -789,7 +791,7 @@ struct ForeignDataWrapperPrivileges
     if (!wrapper) {
       return std::nullopt;
     }
-    return ObjectTarget{&scope.wrappers[wrapper - kForeignDataWrappers.data()]};
+    return ObjectTarget{scope.wrappers[wrapper - kForeignDataWrappers.data()]};
   }
 };
 

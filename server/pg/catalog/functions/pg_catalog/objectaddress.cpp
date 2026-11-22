@@ -541,6 +541,9 @@ std::string DescribeObject(duckdb::ClientContext& context,
       break;
     case FOREIGN_SERVER_ENTRY:
       return absl::StrCat("server ", entry.name.GetIdentifierName());
+    case FOREIGN_DATA_WRAPPER_ENTRY:
+      classid = kPgForeignDataWrapperTable;
+      break;
     default:
       return absl::StrCat(
         absl::AsciiStrToLower(duckdb::CatalogTypeToString(entry.type)), " ",

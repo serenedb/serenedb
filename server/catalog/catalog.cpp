@@ -31,6 +31,7 @@
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
@@ -61,6 +62,7 @@
 
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
+#include "catalog/entry/foreign_data_wrapper.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
@@ -323,6 +325,8 @@ EntrySet* SereneDBCatalog::FindSet(duckdb::CatalogType type) {
       return &_servers;
     case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
       return &_subscriptions;
+    case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+      return &_wrappers;
     default:
       return BaseCatalog::FindSet(type);
   }
@@ -338,6 +342,7 @@ void SereneDBCatalog::ScanEntries(
     });
   _servers.Scan(transaction, callback);
   _subscriptions.Scan(transaction, callback);
+  _wrappers.Scan(transaction, callback);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateForeignServer(
@@ -371,6 +376,12 @@ void SereneDBCatalog::ReplayCreate(
       AddTo(_subscriptions, GetCatalogTransaction(context),
             duckdb::make_uniq<SubscriptionCatalogEntry>(
               *this, info->Cast<duckdb::CreateSubscriptionInfo>()),
+            info->on_conflict);
+      return;
+    case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+      AddTo(_wrappers, GetCatalogTransaction(context),
+            duckdb::make_uniq<ForeignDataWrapperCatalogEntry>(
+              *this, info->Cast<duckdb::CreateForeignDataWrapperInfo>()),
             info->on_conflict);
       return;
     default:
@@ -422,6 +433,11 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
     AlterSubscription(transaction, info);
     return;
   }
+  if (info.GetCatalogType() ==
+      duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
+    AlterWrapper(transaction, info.Cast<duckdb::AlterPermissionsInfo>());
+    return;
+  }
   if (info.GetCatalogType() == duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
     const auto [server, altered] = AlterIn(_servers, transaction, info);
     if (altered && transaction.HasContext() &&
@@ -437,6 +453,26 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
     RefuseUnsupportedAlter(transaction.GetContext(), info);
   }
   BaseCatalog::Alter(transaction, info);
+}
+
+void SereneDBCatalog::AlterWrapper(duckdb::CatalogTransaction transaction,
+                                   duckdb::AlterPermissionsInfo& info) {
+  const auto& name = info.GetQualifiedName().Name();
+  if (_wrappers.Get(transaction, name)) {
+    AlterIn(_wrappers, transaction, info);
+    return;
+  }
+  duckdb::CreateForeignDataWrapperInfo create;
+  create.SetName(name);
+  create.oid = duckdb::DBConfig::GetConfig(GetDatabase())
+                 .GetForeignDataWrapper(name.GetIdentifierName())
+                 .oid;
+  create.permissions.owner = info.object_owner_id;
+  info.ApplyTo(create.permissions,
+               duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, nullptr);
+  AddTo(_wrappers, transaction,
+        duckdb::make_uniq<ForeignDataWrapperCatalogEntry>(*this, create),
+        duckdb::OnCreateConflict::ERROR_ON_CONFLICT);
 }
 
 void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,

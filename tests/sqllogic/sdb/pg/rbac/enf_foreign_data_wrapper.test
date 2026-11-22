@@ -32,6 +32,29 @@ statement ok
 CREATE ROLE efw_carol LOGIN PASSWORD 'efw_pw';
 
 
+connection c_concurrent
+statement ok
+BEGIN;
+
+
+connection c_concurrent
+statement ok
+GRANT USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw TO efw_carol;
+
+
+statement ok
+GRANT CONNECT ON DATABASE ${__DATABASE__} TO efw_carol;
+
+
+connection c_concurrent
+statement ok
+ROLLBACK;
+
+
+statement ok
+REVOKE CONNECT ON DATABASE ${__DATABASE__} FROM efw_carol;
+
+
 query
 SELECT fdwname, fdwacl FROM pg_foreign_data_wrapper ORDER BY fdwname;
 ----

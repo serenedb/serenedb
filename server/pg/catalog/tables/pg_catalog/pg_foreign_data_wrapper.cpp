@@ -20,7 +20,6 @@
 
 #include <span>
 
-#include "catalog/entry/database.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 
@@ -39,8 +38,8 @@ class PgForeignDataWrapper final
 
   static constexpr duckdb::idx_t kRows = std::size(kForeignDataWrappers);
 
-  static constexpr std::tuple kSources{CatalogSetSource{
-    SystemCatalog::Cluster, duckdb::CatalogType::DATABASE_ENTRY, {}}};
+  static constexpr std::tuple kSources{
+    ArraySource<SystemObject>{&LoadStatic<kForeignDataWrappers>, {}, {}}};
 
   static constexpr auto kWrapper = Shape<kSql, const Wrapper>(
     Col<"oid">([](const auto& row) { return row.object.oid; }),
@@ -48,16 +47,14 @@ class PgForeignDataWrapper final
     Col<"fdwowner">([](const auto&) { return kRootUser; }),
     Col<"fdwacl">([](const auto& row) { return row.acl; }));
 
-  void Row(const catalog::DatabaseCatalogEntry& database) {
-    if (database.oid != Database().GetAttached().oid) {
-      return;
+  void Row(const SystemObject& wrapper) {
+    std::span<const duckdb::AclItem> acl;
+    if (const auto entry = Database().LookupTopLevelEntry(
+          Transaction(), duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
+          duckdb::Identifier{wrapper.name})) {
+      acl = entry->permissions.acl;
     }
-    for (const auto& wrapper : kForeignDataWrappers) {
-      Emit<kWrapper>(
-        {wrapper,
-         database.permissions.RowAcl(
-           duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper.oid)});
-    }
+    Emit<kWrapper>({wrapper, acl});
   }
 };
 

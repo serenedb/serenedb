@@ -46,6 +46,7 @@ struct Zstd {
   static constexpr uint8_t kDefaultLevel = 1;
   static constexpr uint8_t kMaxLevel = 22;
   static constexpr size_t kDictionaryCap = 64 * 1024;
+  static constexpr bool kInflatesPrefix = false;
 
   static size_t Bound(size_t raw_size) noexcept {
     return ZSTD_compressBound(raw_size);

@@ -48,6 +48,7 @@ struct Lz4 {
   static constexpr uint8_t kFlushLevels[] = {1};
   static constexpr uint8_t kMergeLevels[] = {1, 4, 6};
   static constexpr size_t kDictionaryCap = 64 * 1024;
+  static constexpr bool kInflatesPrefix = true;
 
   static size_t Bound(size_t raw_size) noexcept;
 

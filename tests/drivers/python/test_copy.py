@@ -125,6 +125,37 @@ def test_copy_from_stdin_reads_the_stream_in_ranges(conn: psycopg.Connection,
         _drop(conn, table_name)
 
 
+@pytest.mark.usefixtures("own_server")
+@pytest.mark.parametrize("fmt", ["text", "csv", "json"])
+def test_copy_from_stdin_takes_rows_longer_than_its_window_of_batches(
+        conn: psycopg.Connection, table_name: str, fmt: str) -> None:
+    conn.execute("SET threads = 1")
+    _create_int_varchar(conn, table_name)
+    size = 5 << 20
+    rows = []
+    for i in range(3):
+        label = chr(ord("a") + i) * size
+        if fmt == "json":
+            rows.append(json.dumps({"x": i, "label": label}))
+        elif fmt == "csv":
+            rows.append(f'{i},"{label}"')
+        else:
+            rows.append(f"{i}\t{label}")
+    payload = ("\n".join(rows) + "\n").encode()
+    try:
+        with conn.cursor() as cur:
+            with cur.copy(
+                f'COPY public."{table_name}" FROM STDIN (FORMAT {fmt})'
+            ) as cp:
+                for begin in range(0, len(payload), 1 << 20):
+                    cp.write(payload[begin:begin + (1 << 20)])
+            cur.execute(f'SELECT count(*), sum(x), sum(length(label)) '
+                        f'FROM public."{table_name}"')
+            assert cur.fetchone() == (3, 3, 3 * size)
+    finally:
+        _drop(conn, table_name)
+
+
 def test_copy_from_stdin_json_error_names_its_line(conn: psycopg.Connection,
                                                    table_name: str) -> None:
     _create_int_varchar(conn, table_name)
@@ -1188,6 +1219,78 @@ def test_large_binary_copy_damaged_stream_inserts_nothing(
                 _copy_from(cur, table_name, payload, "FORMAT BINARY", source,
                            shared_path)
             assert _count(cur, table_name, storage) == 0
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+_PGCOPY_HEADER = b"PGCOPY\n\xff\r\n\x00" + struct.pack("!ii", 0, 0)
+_PGCOPY_ROW = struct.pack("!hii", 1, 4, 7)
+_PGCOPY_EXTENDED = (b"PGCOPY\n\xff\r\n\x00" + struct.pack("!ii", 0, 8) +
+                    b"abcdefgh" + _PGCOPY_ROW + b"\xff\xff")
+
+
+@pytest.mark.parametrize("chunks, loaded", [
+    ([_PGCOPY_HEADER], 0),
+    ([_PGCOPY_HEADER, b"\xff\xff"], 0),
+    ([_PGCOPY_HEADER, _PGCOPY_ROW, b"\xff\xff"], 1),
+    ([bytes([byte]) for byte in _PGCOPY_EXTENDED], 1),
+], ids=["header_only", "header_and_trailer", "rows_apart",
+        "extension_byte_by_byte"])
+def test_binary_copy_from_stdin_takes_any_split_of_the_stream(
+        conn: psycopg.Connection, table_name: str, chunks: list[bytes],
+        loaded: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(a INT)')
+        try:
+            with cur.copy(
+                    f'COPY public."{table_name}" FROM STDIN (FORMAT BINARY)'
+            ) as cp:
+                for chunk in chunks:
+                    cp.write(chunk)
+            cur.execute(f'SELECT count(*) FROM public."{table_name}"')
+            assert cur.fetchone()[0] == loaded
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("source", _SOURCES)
+@pytest.mark.parametrize("payload", [b"", _PGCOPY_HEADER[:5]],
+                         ids=["no_bytes", "cut_signature"])
+def test_binary_copy_without_a_whole_signature_is_an_error(
+        conn: psycopg.Connection, table_name: str, payload: bytes,
+        source: str, shared_path: Path) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(a INT)')
+        try:
+            with pytest.raises(psycopg.errors.BadCopyFileFormat):
+                if source == "file":
+                    path = shared_path / "copy.dat"
+                    path.write_bytes(payload)
+                    cur.execute(f"COPY public.\"{table_name}\" FROM '{path}' "
+                                f"(FORMAT BINARY)")
+                else:
+                    with cur.copy(f'COPY public."{table_name}" FROM STDIN '
+                                  f'(FORMAT BINARY)') as cp:
+                        cp.write(payload)
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.parametrize("source", _SOURCES)
+@pytest.mark.parametrize("payload", [b"1\t\xc3\\\xa9\n", b"1\xc3\\\xa9\tx\n"],
+                         ids=["text_column", "integer_column"])
+def test_text_copy_refuses_bytes_unescaping_would_join_into_utf8(
+        conn: psycopg.Connection, table_name: str, payload: bytes,
+        source: str, shared_path: Path) -> None:
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{table_name}"(a INT, b TEXT)')
+        try:
+            with pytest.raises(psycopg.errors.CharacterNotInRepertoire,
+                               match="0xc3 0x5c"):
+                _copy_from(cur, table_name, payload, "FORMAT TEXT", source,
+                           shared_path)
+            cur.execute(f'SELECT count(*) FROM public."{table_name}"')
+            assert cur.fetchone()[0] == 0
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 

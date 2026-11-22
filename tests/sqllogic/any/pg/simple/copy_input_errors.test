@@ -113,3 +113,24 @@ SELECT count(*) AS n FROM cie;
 ----
 n
 0
+
+
+statement ok
+CREATE TABLE cie_text (t TEXT);
+
+
+statement count 1
+COPY (SELECT '\xff' AS l) TO '${__TEST_DIR__}/cie_escape_ff.csv' (FORMAT csv);
+
+
+statement error
+COPY cie_text FROM '${__TEST_DIR__}/cie_escape_ff.csv' (FORMAT text);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0xff
+
+
+query
+SELECT count(*) AS n FROM cie_text;
+----
+n
+0

@@ -242,6 +242,43 @@ class ColCodecCorruptionTest : public TestBase {
         segment->function.get_segment_info(*segment);
       }
     });
+    if (c.type.InternalType() != duckdb::PhysicalType::VARCHAR) {
+      return;
+    }
+    Guarded(messages, [&] {
+      irs::ColumnReader::PointReader reader{r, *col};
+      duckdb::Vector out{c.type, 1};
+      for (uint64_t g = 0; g < c.rows; ++g) {
+        if (g >= 128 && g % 16 != 15 && g + 1 != c.rows) {
+          continue;
+        }
+        duckdb::FlatVector::ValidityMutable(out).Reset();
+        reader.FetchRow(g, out, 0);
+      }
+    });
+    Guarded(messages, [&] {
+      irs::ColumnReader::PointReader reader{r, *col};
+      duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+      for (uint32_t g = 0; g + 3 < c.rows; g += 37) {
+        const std::vector<uint32_t> batch{g, g + 1, g + 3};
+        reader.FetchRows(batch, 0, out, 0);
+      }
+    });
+    Guarded(messages, [&] {
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t anchor = 0; anchor < c.rows;
+           anchor += STANDARD_VECTOR_SIZE) {
+        const auto span =
+          std::min<uint64_t>(c.rows - anchor, STANDARD_VECTOR_SIZE);
+        const auto hits = std::min<duckdb::idx_t>(span, 70);
+        duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+        for (duckdb::idx_t i = 0; i < hits; ++i) {
+          sel.set_index(i, i);
+        }
+        duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+        col->GatherDense(state, anchor, sel, hits, span, out);
+      }
+    });
   }
 
   void Sweep(const Case& c) {

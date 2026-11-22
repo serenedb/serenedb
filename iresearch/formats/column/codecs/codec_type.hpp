@@ -64,7 +64,7 @@ enum class CodecType : uint8_t {
 namespace magic_enum {
 
 template<>
-constexpr customize::customize_t customize::enum_name<irs::codecs::CodecType>(
+consteval customize::customize_t customize::enum_name<irs::codecs::CodecType>(
   irs::codecs::CodecType value) noexcept {
   using CodecType = irs::codecs::CodecType;
   switch (value) {

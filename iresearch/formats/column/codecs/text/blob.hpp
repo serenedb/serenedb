@@ -436,7 +436,7 @@ class SizeEstimator {
   std::vector<size_t> _sizes;
 };
 
-constexpr StateId SizesState(ByteCodec codec) noexcept {
+consteval StateId SizesState(ByteCodec codec) noexcept {
   switch (codec) {
     case ByteCodec::Zstd:
       return StateId::TextZstdSizes;

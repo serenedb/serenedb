@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
+#include <array>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -47,7 +48,7 @@ constexpr bool kPacks = std::is_integral_v<T> || kIsWide<T>;
 
 template<typename T, Shape kShape, ByteCodec kLeaf,
          const CompressionFunction& kInner>
-constexpr const CompressionFunction& Of() noexcept {
+consteval const CompressionFunction& Of() noexcept {
   if constexpr (kIsWide<T>) {
     return kWide<T, CodecOf(kShape, kLeaf), kInner>;
   } else {
@@ -56,100 +57,88 @@ constexpr const CompressionFunction& Of() noexcept {
 }
 
 template<typename T, ByteCodec kLeaf>
-constexpr CompressionFunctions PlainFunctions() {
+consteval auto PlainFunctions() {
   if constexpr (sizeof(Inner<T>) == 1 && kLeaf != ByteCodec::None) {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, true>>(),
     };
-    return kFunctions;
   } else if constexpr (sizeof(Inner<T>) == 1) {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Plain, kLeaf, kBlocks<Bitpacking<Inner<T>>>>(),
     };
-    return kFunctions;
   } else if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, true>>(),
       Of<T, Shape::Plain, kLeaf, kFrames<For<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Plain, kLeaf, kFrames<For<Inner<T>>, kLeaf, true>>(),
     };
-    return kFunctions;
   } else if constexpr (kPacks<T>) {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Plain, kLeaf, kFrames<For<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Plain, kLeaf, kBlocks<Bitpacking<Inner<T>>>>(),
     };
-    return kFunctions;
   } else {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Plain, kLeaf, kFrames<For<Inner<T>>, kLeaf, false>>(),
     };
-    return kFunctions;
   }
 }
 
 template<typename T, ByteCodec kLeaf>
-constexpr CompressionFunctions DeltaFunctions() {
+consteval auto DeltaFunctions() {
   if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Delta, kLeaf, kFrames<Delta<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Delta, kLeaf, kFrames<Delta<Inner<T>>, kLeaf, true>>(),
     };
-    return kFunctions;
   } else if constexpr (kPacks<T>) {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Delta, kLeaf, kBlocks<DeltaBitpacking<Inner<T>>>>(),
       Of<T, Shape::Delta, kLeaf, kFrames<Delta<Inner<T>>, kLeaf, false>>(),
     };
-    return kFunctions;
   } else {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Delta, kLeaf, kFrames<Delta<Inner<T>>, kLeaf, false>>(),
     };
-    return kFunctions;
   }
 }
 
 template<typename T, ByteCodec kLeaf>
-constexpr CompressionFunctions RunsFunctions() {
+consteval auto RunsFunctions() {
   if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Runs, kLeaf, kRunFrames<Inner<T>, kLeaf>>(),
     };
-    return kFunctions;
   } else {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Runs, kLeaf, kRunFrames<Inner<T>, kLeaf>>(),
       Of<T, Shape::Runs, kLeaf, kBlocks<RleBitpacking<Inner<T>>>>(),
     };
-    return kFunctions;
   }
 }
 
 template<typename T, ByteCodec kLeaf>
-constexpr CompressionFunctions DictionaryFunctions() {
+consteval auto DictionaryFunctions() {
   if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Dictionary, kLeaf, kFrames<Dict<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Dictionary, kLeaf, kFrames<Dict<Inner<T>>, kLeaf, true>>(),
     };
-    return kFunctions;
   } else {
-    static constexpr CompressionFunction kFunctions[] = {
+    return std::array{
       Of<T, Shape::Dictionary, kLeaf, kFrames<Dict<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Dictionary, kLeaf, kBlocks<DictBitpacking<Inner<T>>>>(),
     };
-    return kFunctions;
   }
 }
 
 template<typename T, Shape kShape, ByteCodec kLeaf>
-constexpr CompressionFunctions FunctionsOf() {
+consteval auto FunctionsOf() {
   if constexpr (kShape == Shape::Plain) {
     return PlainFunctions<T, kLeaf>();
   } else if constexpr (kShape == Shape::Delta) {
@@ -162,7 +151,7 @@ constexpr CompressionFunctions FunctionsOf() {
 }
 
 template<typename T, Shape kShape>
-constexpr auto ReaderType() {
+consteval auto ReaderType() {
   if constexpr (kShape == Shape::Plain) {
     return std::type_identity<PlainReader<Inner<T>>>{};
   } else if constexpr (kShape == Shape::Delta) {
@@ -175,7 +164,7 @@ constexpr auto ReaderType() {
 }
 
 template<typename T, Shape kShape>
-constexpr const DecompressionFunction& DecompressionOf() noexcept {
+consteval const DecompressionFunction& DecompressionOf() noexcept {
   using Reader = typename decltype(ReaderType<T, kShape>())::type;
   if constexpr (kIsWide<T>) {
     return kWideDecompression<WideReader<T, Reader>>;
@@ -185,9 +174,12 @@ constexpr const DecompressionFunction& DecompressionOf() noexcept {
 }
 
 template<typename T, Shape kShape, ByteCodec kLeaf>
+constexpr auto kFunctions = FunctionsOf<T, kShape, kLeaf>();
+
+template<typename T, Shape kShape, ByteCodec kLeaf>
 constexpr Codec kCodec{
   .type = CodecOf(kShape, kLeaf),
-  .compression = FunctionsOf<T, kShape, kLeaf>(),
+  .compression = kFunctions<T, kShape, kLeaf>,
   .decompression = DecompressionOf<T, kShape>(),
 };
 

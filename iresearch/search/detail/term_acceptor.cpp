@@ -185,13 +185,8 @@ class FuzzySource final : public TermAcceptorSource {
 
   SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
     _once.Call([this] {
-      if (!_acceptor->LowerBound().empty()) {
-        return;
-      }
-      if constexpr (kStartsWith) {
-        _dfa = FuzzyConjunction::MakePrefix(_acceptor->Inner());
-      } else {
-        _dfa = FuzzyConjunction::Make(_acceptor);
+      if (_acceptor->LowerBound().empty()) {
+        _dfa = FuzzyConjunctionOf<Acceptor>::Make(_acceptor);
       }
     });
     if (_dfa) {
@@ -332,7 +327,8 @@ TermAcceptorSource::ptr MakeJointSource(
       std::move(fuzzy));
   }
   return std::make_shared<const WalkSource<FuzzyConjunction>>(
-    std::make_shared<const FuzzyConjunction>(patterns, std::move(fuzzy)));
+    std::make_shared<const FuzzyConjunctionOf<LevenshteinAcceptor>>(
+      patterns, std::move(fuzzy)));
 }
 
 TermAcceptorSource::ptr MakeConjunctionSource(TermAcceptorSource::ptr driver,

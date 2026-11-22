@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -61,6 +62,17 @@ class LevenshteinAcceptor {
     // continuation bytes still expected; `kPrefixPhase + n` -- n bytes of the
     // literal prefix matched. One field so a step tests one register.
     uint32_t phase;
+
+    bool operator==(const State& other) const noexcept {
+      return std::bit_cast<std::array<uint32_t, 4>>(*this) ==
+             std::bit_cast<std::array<uint32_t, 4>>(other);
+    }
+
+    template<typename H>
+    friend H AbslHashValue(H h, const State& state) {
+      return H::combine(std::move(h),
+                        std::bit_cast<std::array<uint32_t, 4>>(state));
+    }
   };
 
   LevenshteinAcceptor(const ParametricDescription& description,
@@ -484,6 +496,13 @@ class LevenshteinPrefixAcceptor {
   struct State {
     LevenshteinAcceptor::State inner;
     PayloadType best;
+
+    bool operator==(const State&) const = default;
+
+    template<typename H>
+    friend H AbslHashValue(H h, const State& state) {
+      return H::combine(std::move(h), state.inner, state.best);
+    }
   };
 
   explicit LevenshteinPrefixAcceptor(
@@ -497,6 +516,12 @@ class LevenshteinPrefixAcceptor {
   State Start() const noexcept { return Settle({_inner->Start(), kNone}); }
 
   bytes_view LowerBound() const noexcept { return _inner->LowerBound(); }
+
+  std::array<uint8_t, 256> Bytemap() const { return _inner->Bytemap(); }
+
+  size_t MaxStates() const noexcept {
+    return (_inner->MaxStates() + 1) * (_inner->MaxDistance() + 1);
+  }
 
   static bool Alive(const State& state) noexcept {
     return state.best != kNone || LevenshteinAcceptor::Alive(state.inner);

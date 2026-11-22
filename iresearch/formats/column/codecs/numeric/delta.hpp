@@ -205,8 +205,10 @@ class DeltaReader final : public FrameReader<T> {
               CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
       _own{duckdb::Load<DeltaHeader>(base + OwnHeaderOffset(frames.flags))} {
-    if (!kPacks && this->Packed()) [[unlikely]] {
-      ThrowCorrupted("numeric", "a float column has bit-packed steps");
+    if constexpr (!kPacks) {
+      if (this->Packed()) [[unlikely]] {
+        ThrowCorrupted("numeric", "a float column has bit-packed steps");
+      }
     }
   }
 

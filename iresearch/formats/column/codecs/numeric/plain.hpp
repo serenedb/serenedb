@@ -184,8 +184,10 @@ class PlainReader final : public FrameReader<T> {
               CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
       _own{duckdb::Load<PlainHeader>(base + OwnHeaderOffset(frames.flags))} {
-    if (!kPacks && this->Packed()) [[unlikely]] {
-      ThrowCorrupted("numeric", "a float column has bit-packed frames");
+    if constexpr (!kPacks) {
+      if (this->Packed()) [[unlikely]] {
+        ThrowCorrupted("numeric", "a float column has bit-packed frames");
+      }
     }
     if (!(For() || _own.base == 0)) [[unlikely]] {
       ThrowCorrupted("numeric", "header is inconsistent");

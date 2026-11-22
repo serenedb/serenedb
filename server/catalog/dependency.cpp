@@ -1253,10 +1253,8 @@ void DropClosure(duckdb::CatalogTransaction transaction,
   }
   for (auto* dependent : closure.drops) {
     if (dependent->type == duckdb::CatalogType::SCHEMA_ENTRY) {
-      entry.ParentCatalog()
-        .Cast<BaseCatalog>()
-        .SchemaSet(transaction, dependent->Cast<Schema>())
-        .Drop(transaction, dependent->name);
+      entry.ParentCatalog().Cast<BaseCatalog>().DropSchemaEntry(
+        transaction, dependent->Cast<Schema>());
       continue;
     }
     if (dependent->type == duckdb::CatalogType::TRIGGER_ENTRY) {

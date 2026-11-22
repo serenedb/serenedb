@@ -43,8 +43,11 @@ std::optional<irs::pg::SqlErrorData> ParseAcl(
 
 void VisitDefaultAcls(
   duckdb::ClientContext& context, const duckdb::CatalogEntry& database,
-  absl::FunctionRef<void(duckdb::idx_t oid, const duckdb::DefaultAcl& row)>
-    visitor);
+  absl::FunctionRef<void(const duckdb::DefaultAcl& row)> visitor);
+
+std::string DescribeDefaultAcl(duckdb::ClientContext& context,
+                               const duckdb::DefaultAcl& row,
+                               std::string_view schema);
 
 struct RoleReference {
   duckdb::idx_t dbid;

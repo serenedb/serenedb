@@ -24,6 +24,7 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -54,6 +55,10 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
   tags = info.tags;
   dependencies = info.dependencies;
   permissions = info.permissions;
+  auto& oids = catalog.GetDatabase().GetDatabaseManager();
+  for (auto& row : permissions.defaults) {
+    row.oid = row.oid ? oids.ClaimOid(row.oid) : oids.NextOid();
+  }
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {
@@ -84,6 +89,13 @@ const duckdb::vector<std::string>* DatabaseCatalogEntry::SettingsOf(
 
 duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::AlterEntry(
   duckdb::ClientContext& context, duckdb::AlterInfo& info) {
+  if (info.type == duckdb::AlterType::ALTER_PERMISSIONS) {
+    auto next = GetInfo();
+    info.Cast<duckdb::AlterPermissionsInfo>().ApplyTo(next->permissions, type,
+                                                      nullptr);
+    return duckdb::make_uniq<DatabaseCatalogEntry>(
+      catalog, next->Cast<duckdb::CreateDatabaseInfo>(), _directory);
+  }
   if (info.type != duckdb::AlterType::ALTER_DATABASE_SETTINGS) {
     return duckdb::InCatalogEntry::AlterEntry(context, info);
   }

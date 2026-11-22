@@ -403,6 +403,43 @@ void SereneDBCatalog::ReplayDrop(duckdb::ClientContext& context,
   Set(type).Drop(transaction, entry.name);
 }
 
+void SereneDBCatalog::DropSchemaEntry(
+  duckdb::CatalogTransaction transaction,
+  const duckdb::SchemaCatalogEntry& schema) {
+  BaseCatalog::DropSchemaEntry(transaction, schema);
+  auto& context = transaction.GetContext();
+  auto& cluster = ClusterOf(context);
+  const auto cluster_transaction = cluster.GetCatalogTransaction(context);
+  const auto database = cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+                          .Get(cluster_transaction, GetName());
+  if (!database) {
+    return;
+  }
+  std::vector<duckdb::unique_ptr<duckdb::AlterPermissionsInfo>> revokes;
+  for (const auto& row : database->permissions.defaults) {
+    if (row.scope != schema.oid) {
+      continue;
+    }
+    for (const auto& item : row.acl) {
+      auto& revoke =
+        *revokes.emplace_back(duckdb::make_uniq<duckdb::AlterPermissionsInfo>(
+          duckdb::CatalogType::DATABASE_ENTRY,
+          duckdb::QualifiedName{cluster.GetName(), duckdb::Identifier{},
+                                database->name}));
+      revoke.default_objtype = row.objtype;
+      revoke.target_role = row.role;
+      revoke.default_scope = row.scope;
+      revoke.grantee_id = item.grantee;
+      revoke.privileges = duckdb::ObjectKindOf(row.objtype).privileges;
+      revoke.revoke = true;
+      revoke.cascade = true;
+    }
+  }
+  for (auto& revoke : revokes) {
+    cluster.Alter(cluster_transaction, *revoke);
+  }
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
   duckdb::CatalogTransaction transaction, duckdb::CreateSchemaInfo& info) {
   if (!info.internal && IsReservedSchemaName(info.SchemaName())) {

@@ -1,0 +1,103 @@
+statement ok
+DROP SCHEMA IF EXISTS dpd_mop CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS dpd_kostya;
+
+
+statement ok
+DROP ROLE IF EXISTS dpd_pasha;
+
+
+statement ok
+DROP ROLE IF EXISTS dpd_vova;
+
+
+statement ok
+CREATE ROLE dpd_kostya;
+
+
+statement ok
+CREATE ROLE dpd_pasha;
+
+
+statement ok
+CREATE ROLE dpd_vova;
+
+
+statement ok
+CREATE SCHEMA dpd_mop;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpd_kostya IN SCHEMA dpd_mop GRANT SELECT ON TABLES TO dpd_pasha;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpd_kostya GRANT USAGE ON TYPES TO dpd_vova;
+
+
+query
+SELECT pg_describe_object('pg_default_acl'::regclass, oid, 0) AS object
+FROM pg_default_acl WHERE defaclrole = 'dpd_kostya'::regrole
+ORDER BY 1;
+----
+object
+default privileges on new relations belonging to role dpd_kostya in schema dpd_mop
+default privileges on new types belonging to role dpd_kostya
+
+
+statement ok
+CREATE TABLE dpd_kept AS
+SELECT oid AS kept FROM pg_default_acl
+WHERE defaclrole = 'dpd_kostya'::regrole AND defaclobjtype = 'T';
+
+
+statement ok
+DROP SCHEMA dpd_mop;
+
+
+query
+SELECT defaclobjtype, oid = (SELECT kept FROM dpd_kept) AS same_oid
+FROM pg_default_acl WHERE defaclrole = 'dpd_kostya'::regrole
+ORDER BY 1;
+----
+defaclobjtype	same_oid
+T	t
+
+
+statement ok
+DROP ROLE dpd_pasha;
+
+
+statement ok
+CREATE SCHEMA dpd_mop;
+
+
+query
+SELECT count(*) AS scoped FROM pg_default_acl
+WHERE defaclrole = 'dpd_kostya'::regrole AND defaclnamespace <> 0;
+----
+scoped
+0
+
+
+statement ok
+DROP TABLE dpd_kept;
+
+
+statement ok
+DROP SCHEMA dpd_mop;
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE dpd_kostya REVOKE USAGE ON TYPES FROM dpd_vova;
+
+
+statement ok
+DROP ROLE dpd_vova;
+
+
+statement ok
+DROP ROLE dpd_kostya;

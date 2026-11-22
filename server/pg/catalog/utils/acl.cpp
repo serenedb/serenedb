@@ -235,8 +235,7 @@ std::optional<irs::pg::SqlErrorData> ParseAcl(
 
 void VisitDefaultAcls(
   duckdb::ClientContext& context, const duckdb::CatalogEntry& database,
-  absl::FunctionRef<void(duckdb::idx_t oid, const duckdb::DefaultAcl& row)>
-    visitor) {
+  absl::FunctionRef<void(const duckdb::DefaultAcl& row)> visitor) {
   auto attached =
     duckdb::DatabaseManager::Get(context).GetDatabase(context, database.name);
   if (!attached || attached->oid != database.oid) {
@@ -244,13 +243,23 @@ void VisitDefaultAcls(
   }
   auto& catalog = attached->GetCatalog().Cast<catalog::BaseCatalog>();
   const auto transaction = catalog.GetCatalogTransaction(context);
-  duckdb::idx_t oid = 0;
   for (const auto& row : database.permissions.defaults) {
-    ++oid;
     if (row.scope == kInvalidOid || catalog.LookupOid(transaction, row.scope)) {
-      visitor(oid, row);
+      visitor(row);
     }
   }
+}
+
+std::string DescribeDefaultAcl(duckdb::ClientContext& context,
+                               const duckdb::DefaultAcl& row,
+                               std::string_view schema) {
+  auto description = absl::StrCat(
+    "default privileges on new ", DefaultAclObjects(row.objtype),
+    " belonging to role ", catalog::RolesOf(&context)->NameOf(row.role));
+  if (!schema.empty()) {
+    absl::StrAppend(&description, " in schema ", schema);
+  }
+  return description;
 }
 
 void VisitRoleReferences(
@@ -330,25 +339,20 @@ void VisitRoleReferences(
     if (!record) {
       continue;
     }
-    VisitDefaultAcls(
-      context, *record, [&](duckdb::idx_t oid, const duckdb::DefaultAcl& row) {
-        const char deptype = row.role == role ? 'o' : names(row.acl) ? 'a' : 0;
-        if (!deptype) {
-          return;
-        }
-        visitor({record->oid, kPgDefaultAclTable, oid, 0, deptype}, [&] {
-          auto object =
-            absl::StrCat("default privileges on new ",
-                         DefaultAclObjects(row.objtype), " belonging to role ",
-                         catalog::RolesOf(&context)->NameOf(row.role));
-          if (row.scope != kInvalidOid) {
-            absl::StrAppend(&object, " in schema ",
-                            database.LookupOid(transaction, row.scope)
-                              ->name.GetIdentifierName());
-          }
-          return object;
-        });
+    VisitDefaultAcls(context, *record, [&](const duckdb::DefaultAcl& row) {
+      const char deptype = row.role == role ? 'o' : names(row.acl) ? 'a' : 0;
+      if (!deptype) {
+        return;
+      }
+      visitor({record->oid, kPgDefaultAclTable, row.oid, 0, deptype}, [&] {
+        return DescribeDefaultAcl(
+          context, row,
+          row.scope == kInvalidOid
+            ? std::string_view{}
+            : std::string_view{database.LookupOid(transaction, row.scope)
+                                 ->name.GetIdentifierName()});
       });
+    });
   }
   cluster.Set(DATABASE_ENTRY)
     .Scan(cluster_transaction, [&](duckdb::CatalogEntry& database) {

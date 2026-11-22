@@ -250,8 +250,7 @@ CREATE ROLE ddp_clickclack;
 # Part 5 -- IN SCHEMA-scoped entry. The default-priv row is tied to a schema;
 # while it exists the grantee is a dependency. Revoking it -- with the same
 # IN SCHEMA scope -- clears the dependency, after which the schema and the
-# grantee both drop cleanly. (The REVOKE must precede DROP SCHEMA: once the
-# schema is gone there is no scope left to address the scoped entry through.)
+# grantee both drop cleanly.
 # ===========================================================================
 
 statement ok

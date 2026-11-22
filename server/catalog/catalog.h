@@ -112,6 +112,8 @@ class SereneDBCatalog final : public BaseCatalog {
                     duckdb::unique_ptr<duckdb::CreateInfo> info) final;
   void ReplayDrop(duckdb::ClientContext& context,
                   duckdb::CatalogEntry& entry) final;
+  void DropSchemaEntry(duckdb::CatalogTransaction transaction,
+                       const duckdb::SchemaCatalogEntry& schema) final;
 
   std::string GetCatalogType() final { return kStorageType; }
   duckdb::DatabaseSize GetDatabaseSize(duckdb::ClientContext& context) final;

@@ -165,6 +165,9 @@ class BaseCatalog : public duckdb::Catalog {
   EntrySet& SchemaSet(duckdb::CatalogTransaction transaction,
                       const duckdb::SchemaCatalogEntry& schema);
 
+  virtual void DropSchemaEntry(duckdb::CatalogTransaction transaction,
+                               const duckdb::SchemaCatalogEntry& schema);
+
   OidIndex& Oids() noexcept { return _oids; }
 
   duckdb::optional_ptr<duckdb::CatalogEntry> LookupOid(

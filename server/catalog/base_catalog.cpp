@@ -226,6 +226,11 @@ void BaseCatalog::DropSchema(duckdb::ClientContext& context,
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   DropDependents(transaction, schema, info.cascade, info.dropped_together);
+  DropSchemaEntry(transaction, schema);
+}
+
+void BaseCatalog::DropSchemaEntry(duckdb::CatalogTransaction transaction,
+                                  const duckdb::SchemaCatalogEntry& schema) {
   SchemaSet(transaction, schema).Drop(transaction, schema.name);
 }
 

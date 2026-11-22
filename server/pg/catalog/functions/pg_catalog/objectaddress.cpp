@@ -33,6 +33,7 @@
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -49,6 +50,7 @@
 #include "pg/catalog/functions/functions.h"
 #include "pg/catalog/functions/pg_catalog/regproc.h"
 #include "pg/catalog/oids.h"
+#include "pg/catalog/utils/acl.h"
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/sql_utils.h"
@@ -385,6 +387,55 @@ ObjectIdentity IdentifyTablespace(const Session& session, uint64_t oid) {
            : Missing("tablespace");
 }
 
+std::string_view DefaultAclTargets(duckdb::CatalogType type) {
+  using enum duckdb::CatalogType;
+  switch (type) {
+    case SEQUENCE_ENTRY:
+      return "sequences";
+    case MACRO_ENTRY:
+      return "functions";
+    case TYPE_ENTRY:
+      return "types";
+    case SCHEMA_ENTRY:
+      return "schemas";
+    default:
+      return "tables";
+  }
+}
+
+ObjectIdentity IdentifyDefaultAcl(const Session& session, uint64_t oid) {
+  auto& context = *session.context;
+  auto& cluster = catalog::ClusterOf(context);
+  const auto database =
+    cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
+      .Get(cluster.GetCatalogTransaction(context),
+           duckdb::DatabaseManager::GetDefaultDatabase(context));
+  auto identity = Missing("default acl");
+  if (!database) {
+    return identity;
+  }
+  VisitDefaultAcls(context, *database, [&](const duckdb::DefaultAcl& row) {
+    if (row.oid != oid) {
+      return;
+    }
+    const auto schema =
+      row.scope == kInvalidOid ? nullptr : SchemaByOid(session, row.scope);
+    const std::string_view schema_name =
+      schema ? std::string_view{schema->name.GetIdentifierName()}
+             : std::string_view{};
+    auto target = absl::StrCat(
+      "for role ",
+      QuoteIdentifier(catalog::RolesOf(&context)->NameOf(row.role)));
+    if (schema) {
+      absl::StrAppend(&target, " in schema ", QuoteIdentifier(schema_name));
+    }
+    absl::StrAppend(&target, " on ", DefaultAclTargets(row.objtype));
+    identity.description = DescribeDefaultAcl(context, row, schema_name);
+    identity.identity = std::move(target);
+  });
+  return identity;
+}
+
 std::optional<ObjectIdentity> IdentifyObject(const Session& session,
                                              const ObjectAddress& address) {
   const auto [classid, objid, objsubid] = address;
@@ -436,6 +487,9 @@ std::optional<ObjectIdentity> IdentifyObject(const Session& session,
   }
   if (classid == kPgTablespaceTable) {
     return IdentifyTablespace(session, objid);
+  }
+  if (classid == kPgDefaultAclTable) {
+    return IdentifyDefaultAcl(session, objid);
   }
   return std::nullopt;
 }

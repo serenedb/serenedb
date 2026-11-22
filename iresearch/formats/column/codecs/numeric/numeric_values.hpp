@@ -39,6 +39,7 @@
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/bitpacking_blocks.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs::numeric {
 
@@ -64,9 +65,7 @@ class Values final : public State {
   Values(ColumnDataCheckpointData& data, std::span<const U> run_values,
          std::span<const uint32_t> run_rows)
     : _chunks{data.chunks} {
-    if (!ReadInPlace()) {
-      Gather(data.rows);
-    }
+    SDB_VERIFY(ReadInPlace());
     MeasureRuns(run_values, run_rows);
   }
 

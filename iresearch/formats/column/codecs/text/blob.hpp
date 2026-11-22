@@ -956,18 +956,16 @@ struct Scan {
                                                                result_offset);
     auto& arena = duckdb::StringVector::GetStringAllocator(result);
     bool referenced = false;
-    uint32_t f = kNoFrame;
     for (duckdb::idx_t i = 0; i < count;) {
       auto e = static_cast<uint32_t>(entry_at(i));
-      if (f == kNoFrame || e < s.frames[f].first_entry || e >= s.FrameEnd(f)) {
-        f = s.FrameOf(e);
-      }
+      const auto f = s.FrameOf(e);
       const auto first = s.frames[f].first_entry;
       const auto end = s.FrameEnd(f);
       auto j = i + 1;
       for (; j < count; ++j) {
         const auto next = static_cast<uint32_t>(entry_at(j));
-        if (next < e || next >= end) {
+        SDB_ASSERT(e < next);
+        if (next >= end) {
           break;
         }
         e = next;

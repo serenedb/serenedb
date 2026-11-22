@@ -31,6 +31,7 @@
 #include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -320,7 +321,8 @@ double Analyze(const Asked& asked, uint8_t level, const Candidates& type,
                     features[kStoredWidth] != hint.features[kStoredWidth]);
   const bool estimated =
     count > 1 && asked.codec->compression.front().estimate != nullptr;
-  size_t last = hint.variant < count ? hint.variant : 0;
+  SDB_ASSERT(hint.variant < count);
+  size_t last = hint.variant;
   if (every && estimated) {
     last = LeastEstimated(asked, level, last, data);
   }

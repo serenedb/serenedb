@@ -57,7 +57,19 @@ constexpr const CompressionFunction& Of() noexcept {
 
 template<typename T, ByteCodec kLeaf>
 constexpr CompressionFunctions PlainFunctions() {
-  if constexpr (kLeaf != ByteCodec::None) {
+  if constexpr (sizeof(Inner<T>) == 1 && kLeaf != ByteCodec::None) {
+    static constexpr CompressionFunction kFunctions[] = {
+      Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, true>>(),
+    };
+    return kFunctions;
+  } else if constexpr (sizeof(Inner<T>) == 1) {
+    static constexpr CompressionFunction kFunctions[] = {
+      Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Plain, kLeaf, kBlocks<Bitpacking<Inner<T>>>>(),
+    };
+    return kFunctions;
+  } else if constexpr (kLeaf != ByteCodec::None) {
     static constexpr CompressionFunction kFunctions[] = {
       Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, true>>(),

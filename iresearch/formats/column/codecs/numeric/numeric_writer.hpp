@@ -340,8 +340,7 @@ struct Items {
 };
 
 inline bool Offered(const Items& items, FrameStore store) noexcept {
-  return items.stored != 0 &&
-         !(store.shuffled && (items.stored == 1 || items.run_width != 0));
+  return items.stored != 0 && !(store.shuffled && items.stored == 1);
 }
 
 inline Geometry GeometryOf(Shape shape, const Items& items, ByteCodec leaf,
@@ -573,9 +572,7 @@ class Blocks final : public State {
 
   bool Compress(const Codec& codec) {
     const auto items = _transform.GetItems();
-    if (items.stored == 0) {
-      return false;
-    }
+    SDB_ASSERT(items.stored != 0);
     auto& out = _data.Get<NumericScratch>().out;
     const auto geometry = GeometryOf(items);
     SegmentWriter<T> writer{Transform::kShape, geometry, _transform.Bytes(),

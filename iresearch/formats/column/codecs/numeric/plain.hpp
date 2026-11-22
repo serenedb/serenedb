@@ -75,13 +75,13 @@ class For {
   using Value = T;
   using U = Bits<sizeof(T)>;
 
+  static_assert(sizeof(T) > 1);
+
   For(ColumnDataCheckpointData& data, double) : _values{data.Get<Values<T>>()} {
-    if constexpr (sizeof(T) > 1) {
-      if (_values.Usable()) {
-        const auto reference = _values.GetReference();
-        _lo = reference.lo;
-        _stored = reference.stored < sizeof(T) ? reference.stored : uint8_t{0};
-      }
+    if (_values.Usable()) {
+      const auto reference = _values.GetReference();
+      _lo = reference.lo;
+      _stored = reference.stored < sizeof(T) ? reference.stored : uint8_t{0};
     }
   }
 

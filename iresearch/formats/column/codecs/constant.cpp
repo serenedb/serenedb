@@ -72,10 +72,9 @@ const duckdb::BufferHandle* Bytes(ColumnScanState& state) noexcept {
 void FillValidity(const ColumnSegment& segment, duckdb::Vector& result,
                   idx_t start, idx_t count) {
   SDB_ASSERT(segment.stats.CanHaveNull());
-  if (count != 0) {
-    duckdb::roaring::SetInvalidRange(
-      duckdb::FlatVector::ValidityMutable(result), start, start + count);
-  }
+  SDB_ASSERT(count != 0);
+  duckdb::roaring::SetInvalidRange(duckdb::FlatVector::ValidityMutable(result),
+                                   start, start + count);
 }
 
 void ScanValidity(const ColumnSegment& segment, ColumnScanState&,
@@ -242,7 +241,7 @@ bool EveryRowIsNull(std::span<const WriteChunk> chunks) {
 }
 
 bool CompressValidity(const Codec& codec, ColumnDataCheckpointData& data) {
-  if (data.rows == 0 || !EveryRowIsNull(data.chunks)) {
+  if (!EveryRowIsNull(data.chunks)) {
     return false;
   }
   auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);

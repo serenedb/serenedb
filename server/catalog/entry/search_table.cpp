@@ -498,8 +498,9 @@ void AppendIResearchBlockRows(
     info.segment_type = type_name;
     info.segment_start = row_base + node.DataBlockFirstRow(block);
     info.segment_count = meta.tuple_count;
-    info.compression_type = std::string{magic_enum::enum_name(
-      meta.codec ? meta.codec->type : irs::codecs::CodecType::Uncompressed)};
+    SDB_ASSERT(meta.codec);
+    info.compression_type =
+      std::string{magic_enum::enum_name(meta.codec->type)};
     info.segment_stats = meta.statistics.ToStruct();
     info.has_updates = false;
     info.persistent = true;
@@ -511,7 +512,7 @@ void AppendIResearchBlockRows(
                       ", shared_offset: ", meta.shared_offset,
                       ", shared_size: ", meta.shared_size);
     }
-    if (read && meta.byte_size != 0 && meta.codec &&
+    if (read && meta.byte_size != 0 &&
         meta.codec->decompression.get_segment_info) {
       const auto opened = node.OpenSegment(block, *read);
       for (const auto& [mode, count] :

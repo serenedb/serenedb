@@ -1000,7 +1000,7 @@ void ShareScanPayloads(const duckdb::PhysicalOperator& write_input) {
       continue;
     }
     const auto& scan = source.get().Cast<duckdb::PhysicalTableScan>();
-    if (scan.function.bind != &ScanBind || !scan.bind_data) {
+    if (scan.function.bind != &ScanBind) {
       continue;
     }
     scan.bind_data->Cast<ScanBindData>().share_payloads = true;

@@ -396,8 +396,8 @@ void HitBatcher::MaterializeColumn(Column& c, uint64_t anchor,
     c.extract_binding->MaterializeRows(rows, out, at, dense);
     return;
   }
-  const bool whole = dense && at == 0 && span <= STANDARD_VECTOR_SIZE;
-  if (!whole &&
+  SDB_ASSERT(!dense || (at == 0 && span <= STANDARD_VECTOR_SIZE));
+  if (!dense &&
       column_internal::FetchSparse(
         c.point, *_col_reader, *c.reader,
         std::span<const irs::doc_id_t>{&_docs[first], hits}, span, out, at)) {

@@ -481,7 +481,7 @@ Not for production. These exist to reproduce and diagnose engine behaviour, and 
 | `enable_view_dependencies` | Enable created VIEWs to create dependencies on the referenced objects (such as tables) | `BOOLEAN` | `GLOBAL` | `true` |
 | `force_column_metadata_reuse` | Deprecated. Force the reuse of column metadata when checkpointing in the older storage versions 6 and 7. Files written so cannot be read by older versions. | `BOOLEAN` | `GLOBAL` | `off` |
 | `force_compression` | Forces the use of one compression method for new data. | `VARCHAR` | `GLOBAL` | `auto` |
-| `force_dict_fsst_mode` | For testing: forces one string compression mode (`DICTIONARY`, `DICT_FSST`, `FSST_ONLY`, `DICT_FSST_PLUS` or `FSST_PLUS`) or way of choosing it (`AUTO`, `AUTO_NATIVE`); `DEFAULT` lets the engine choose. | `VARCHAR` | `GLOBAL` | `DEFAULT` |
+| `force_dict_fsst_mode` | For testing: forces one string compression mode (`DICTIONARY`, `DICT_FSST` or `FSST_ONLY`) or way of choosing it (`AUTO`, `AUTO_NATIVE`); `DEFAULT` lets the engine choose. | `VARCHAR` | `GLOBAL` | `DEFAULT` |
 | `force_download_threshold` | Forces upfront download of files smaller than the given size in bytes | `UBIGINT` | `SESSION` | `0` |
 | `force_mbedtls_unsafe` | Enable mbedtls for encryption (WARNING: unsafe to use) | `BOOLEAN` | `GLOBAL` | `false` |
 | `force_variant_shredding` | Forces the VARIANT shredding that happens at checkpoint to use the provided schema for the shredding. | `VARCHAR` | `GLOBAL` | `INVALID` |

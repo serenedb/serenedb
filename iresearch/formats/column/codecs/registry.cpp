@@ -44,39 +44,43 @@ constexpr double kRoaringPrice = 2.0;
 constexpr double kLeastTextShift = 1.5;
 
 constexpr Candidate kLightweightRows[] = {
-  {CodecType::Uncompressed, 1.0, true},
+  {CodecType::Uncompressed},
   {CodecType::Roaring, kRoaringPrice},
 };
 
 constexpr Candidate kBoolRows[] = {
-  {CodecType::Uncompressed, 1.0, true},
-  {CodecType::Bitpacking, 1.0, true},
-  {CodecType::Rle, 1.0, true},
+  {CodecType::Uncompressed},
+  {CodecType::Bitpacking},
+  {CodecType::Rle},
   {CodecType::Roaring, kRoaringPrice},
 };
 
 constexpr Candidate kIntegerRows[] = {
-  {CodecType::Uncompressed, 1.0, true}, {CodecType::Bitpacking, 1.0, true},
-  {CodecType::Rle, 1.0, true},          {CodecType::Dict},
-  {CodecType::Lz4, kLz4Price},          {CodecType::RleLz4, kLz4Price},
-  {CodecType::DictLz4, kLz4Price},      {CodecType::Zstd, kZstdPrice},
-  {CodecType::RleZstd, kZstdPrice},     {CodecType::DictZstd, kZstdPrice},
+  {CodecType::Uncompressed},
+  {CodecType::Bitpacking},
+  {CodecType::Rle},
+  {CodecType::Dict},
+  {CodecType::Lz4, kLz4Price},
+  {CodecType::RleLz4, kLz4Price},
+  {CodecType::DictLz4, kLz4Price},
+  {CodecType::Zstd, kZstdPrice},
+  {CodecType::RleZstd, kZstdPrice},
+  {CodecType::DictZstd, kZstdPrice},
 };
 
 constexpr Candidate kFreshIntegerRows[] = {
-  {CodecType::Uncompressed, 1.0, true}, {CodecType::Bitpacking, 1.0, true},
-  {CodecType::Rle, 1.0, true},          {CodecType::Dict},
-  {CodecType::Lz4, kLz4Price},          {CodecType::RleLz4, kLz4Price},
+  {CodecType::Uncompressed},
+  {CodecType::Bitpacking},
+  {CodecType::Rle},
+  {CodecType::Dict},
+  {CodecType::Lz4, kLz4Price},
+  {CodecType::RleLz4, kLz4Price},
   {CodecType::DictLz4, kLz4Price},
 };
 
 constexpr Candidate kFloatRows[] = {
-  {CodecType::Uncompressed, 1.0, true},
-  {CodecType::Alp},
-  {CodecType::Alprd},
-  {CodecType::Bitpacking, 1.0, true},
-  {CodecType::Rle, 1.0, true},
-  {CodecType::Dict},
+  {CodecType::Uncompressed}, {CodecType::Alp}, {CodecType::Alprd},
+  {CodecType::Bitpacking},   {CodecType::Rle}, {CodecType::Dict},
 };
 
 constexpr Candidate kTextRows[] = {
@@ -121,6 +125,13 @@ constexpr Candidates kText{
   .features = TextFeatures,
   .least_shift = kLeastTextShift,
 };
+
+constexpr CodecSet kAlwaysAsked =
+  CodecSet{}
+    .set(std::to_underlying(CodecType::Uncompressed))
+    .set(std::to_underlying(CodecType::Bitpacking))
+    .set(std::to_underlying(CodecType::Rle))
+    .set(std::to_underlying(CodecType::Delta));
 
 constexpr CodecType kNamedOnly[] = {
   CodecType::Delta,
@@ -201,6 +212,10 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
   }
   return IsNumeric(type) ? NumericCodecOf(ShapeOf(type), LeafOf(type), physical)
                          : nullptr;
+}
+
+bool AlwaysAsked(CodecType type) noexcept {
+  return kAlwaysAsked.test(std::to_underlying(type));
 }
 
 const Candidates& CandidatesOf(PhysicalType physical) noexcept {

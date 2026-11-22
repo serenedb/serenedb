@@ -907,7 +907,8 @@ template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Alprd,
   .compression =
-    kSampled<CodecType::Alprd, AlpRdAnalyzeChunks<T>, AlpRdCompressChunks<T>>,
+    {&kSampled<CodecType::Alprd, AlpRdAnalyzeChunks<T>, AlpRdCompressChunks<T>>,
+     1},
   .decompression = kDecompression<T>,
 };
 

@@ -226,8 +226,9 @@ constexpr DecompressionFunction kFixedSizeDecompression{
 template<typename T, bool kStats = true>
 constexpr Codec kFixedSize{
   .type = CodecType::Uncompressed,
-  .compression = kStreamed<CodecType::Uncompressed, FixedSizeAnalyze<T>,
-                           CompressChunks<FixedSizeAppender<T, kStats>>>,
+  .compression = {&kStreamed<CodecType::Uncompressed, FixedSizeAnalyze<T>,
+                             CompressChunks<FixedSizeAppender<T, kStats>>>,
+                  1},
   .decompression = kFixedSizeDecompression<T>,
 };
 
@@ -354,8 +355,9 @@ constexpr DecompressionFunction kValidityDecompression{
 
 constexpr Codec kValidity{
   .type = CodecType::Uncompressed,
-  .compression = kStreamed<CodecType::Uncompressed, ValidityAnalyze,
-                           CompressChunks<ValidityAppender>>,
+  .compression = {&kStreamed<CodecType::Uncompressed, ValidityAnalyze,
+                             CompressChunks<ValidityAppender>>,
+                  1},
   .decompression = kValidityDecompression,
 };
 
@@ -591,8 +593,9 @@ constexpr DecompressionFunction kStringDecompression{
 
 constexpr Codec kString{
   .type = CodecType::Uncompressed,
-  .compression =
-    kStreamed<CodecType::Uncompressed, nullptr, CompressChunks<StringAppender>>,
+  .compression = {&kStreamed<CodecType::Uncompressed, nullptr,
+                             CompressChunks<StringAppender>>,
+                  1},
   .decompression = kStringDecompression,
 };
 

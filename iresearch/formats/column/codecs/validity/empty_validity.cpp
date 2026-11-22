@@ -67,7 +67,7 @@ constexpr CompressionFunction kFunction{.compress = Compress};
 
 constexpr Codec kCodec{
   .type = CodecType::Empty,
-  .compression = kFunction,
+  .compression = {&kFunction, 1},
   .decompression = kDecompression,
 };
 

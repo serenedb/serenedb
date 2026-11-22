@@ -255,7 +255,7 @@ constexpr CompressionFunction kValidityFunction{.compress = CompressValidity};
 
 constexpr Codec kValidity{
   .type = CodecType::Constant,
-  .compression = kValidityFunction,
+  .compression = {&kValidityFunction, 1},
   .decompression = kValidityDecompression,
 };
 
@@ -335,7 +335,7 @@ constexpr CompressionFunction kFunction{.compress = CompressRows};
 template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Constant,
-  .compression = kFunction,
+  .compression = {&kFunction, 1},
   .decompression = kDecompression<T>,
 };
 

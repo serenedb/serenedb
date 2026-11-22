@@ -41,7 +41,7 @@ namespace {
 
 bool CompressAs(CodecType type, ColumnDataCheckpointData& data) {
   const auto* codec = GetCodec(type, data.type.InternalType());
-  return codec && codec->compression.compress(*codec, data);
+  return codec && CompressAs(*codec, data);
 }
 
 }  // namespace
@@ -120,12 +120,12 @@ void CompressedSegment::Flush(ColumnDataCheckpointData& checkpoint_data,
                               uint64_t size) {
   SDB_ASSERT(size <= kBlockSize);
   const auto physical = _type.InternalType();
-  const auto* constant = ConstantCodec(physical);
   if (_type.id() == duckdb::LogicalTypeId::VALIDITY && !stats.CanHaveNull()) {
     checkpoint_data.flush(*EmptyCodec(physical),
                           duckdb::BaseStatistics::CreateEmpty(_type), count, {},
                           {});
-  } else if (constant && stats.IsConstant()) {
+  } else if (const auto* constant = ConstantCodec(physical);
+             constant && stats.IsConstant()) {
     checkpoint_data.flush(*constant, std::move(stats), count, {}, {});
   } else {
     stored += size;

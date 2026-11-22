@@ -225,7 +225,7 @@ struct CompressionFunction {
                    ColumnDataCheckpointData& data) = nullptr;
 };
 
-using CompressionFunctions = std::span<const CompressionFunction* const>;
+using CompressionFunctions = std::span<const CompressionFunction>;
 
 inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;
 
@@ -280,7 +280,7 @@ struct DecompressionFunction {
 
 struct Codec {
   CodecType type = CodecType::Uncompressed;
-  const CompressionFunction& compression;
+  CompressionFunctions compression;
   const DecompressionFunction& decompression;
 };
 
@@ -321,6 +321,8 @@ inline constexpr CompressionFunction kStreamed{
 };
 
 bool CompressAuto(ColumnDataCheckpointData& data);
+
+bool CompressAs(const Codec& codec, ColumnDataCheckpointData& data);
 
 void CompressUncompressed(ColumnDataCheckpointData& data);
 

@@ -1217,7 +1217,7 @@ template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Alp,
   .compression =
-    kSampled<CodecType::Alp, AlpAnalyzeChunks<T>, AlpCompressChunks<T>>,
+    {&kSampled<CodecType::Alp, AlpAnalyzeChunks<T>, AlpCompressChunks<T>>, 1},
   .decompression = kDecompression<T>,
 };
 

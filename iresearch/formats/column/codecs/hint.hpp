@@ -32,6 +32,7 @@ inline constexpr double kNoScore = std::numeric_limits<double>::infinity();
 inline constexpr double kFeaturesMove = 1.1;
 inline constexpr double kWorthSwitching = 1.02;
 inline constexpr uint32_t kOldHint = 8;
+inline constexpr size_t kStoredWidth = 2;
 
 using Features = std::array<float, 3>;
 
@@ -39,6 +40,8 @@ struct Hint {
   Features features = {};
   double score = kNoScore;
   uint32_t forced = 0;
+  uint32_t refreshed = 0;
+  uint8_t function = 0;
 };
 
 constexpr bool Forgotten(const Hint& hint, uint32_t row_group) noexcept {

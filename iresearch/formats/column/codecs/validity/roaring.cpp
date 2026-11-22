@@ -1788,7 +1788,7 @@ constexpr DecompressionFunction kValidityDecompression{
 
 constexpr Codec kValidity{
   .type = CodecType::Roaring,
-  .compression = kFunction<duckdb::PhysicalType::BIT>,
+  .compression = {&kFunction<duckdb::PhysicalType::BIT>, 1},
   .decompression = kValidityDecompression,
 };
 
@@ -1800,7 +1800,7 @@ constexpr DecompressionFunction kBooleanDecompression{
 
 constexpr Codec kBoolean{
   .type = CodecType::Roaring,
-  .compression = kFunction<duckdb::PhysicalType::BOOL>,
+  .compression = {&kFunction<duckdb::PhysicalType::BOOL>, 1},
   .decompression = kBooleanDecompression,
 };
 

@@ -28,15 +28,8 @@
 
 namespace irs::codecs {
 
-struct FormHint {
-  float width = 0;
-  uint32_t contested = 0;
-  uint8_t form = 0;
-};
-
 struct ColumnTuning {
   Hint hints[magic_enum::enum_count<CodecType>()];
-  FormHint forms[magic_enum::enum_count<CodecType>()];
   StringTuning strings;
   uint32_t dictionary_entries = 0;
   uint32_t row_group = 0;

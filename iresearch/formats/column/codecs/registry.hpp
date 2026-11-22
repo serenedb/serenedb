@@ -34,7 +34,6 @@ const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
 struct Candidate {
   CodecType codec = CodecType::Uncompressed;
   double price = 1.0;
-  bool always = false;
 };
 
 struct Candidates {
@@ -45,6 +44,8 @@ struct Candidates {
 };
 
 const Candidates& CandidatesOf(duckdb::PhysicalType physical) noexcept;
+
+bool AlwaysAsked(CodecType type) noexcept;
 
 bool Writes(CodecType type, duckdb::PhysicalType physical) noexcept;
 

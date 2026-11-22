@@ -21,6 +21,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
 
+#include <algorithm>
 #include <duckdb/common/types.hpp>
 #include <utility>
 
@@ -38,7 +39,58 @@ struct Asked {
   const Codec* codec;
 };
 
+double Analyze(const Codec& codec, ColumnDataCheckpointData& data,
+               const Features& features, double bound) {
+  auto& hint = data.tuning.hints[std::to_underlying(codec.type)];
+  const auto functions = codec.compression;
+  const auto now = data.tuning.row_group;
+  const bool every = AlwaysAsked(codec.type) || hint.refreshed == 0 ||
+                     now - hint.refreshed > kOldHint ||
+                     features[kStoredWidth] != hint.features[kStoredWidth];
+  const size_t last = hint.function < functions.size() ? hint.function : 0;
+  auto best = bound;
+  auto smallest = kNoScore;
+  hint.function = static_cast<uint8_t>(last);
+  const auto ask = [&](size_t i) {
+    const auto score = functions[i].analyze(data, best);
+    if (score < smallest) {
+      smallest = score;
+      hint.function = static_cast<uint8_t>(i);
+    }
+    best = std::min(best, score);
+  };
+  ask(last);
+  for (size_t i = 0; every && i < functions.size(); ++i) {
+    if (i != last) {
+      ask(i);
+    }
+  }
+  hint.features = features;
+  hint.score = smallest;
+  if (every) {
+    hint.refreshed = now;
+  }
+  return smallest;
+}
+
 }  // namespace
+
+bool CompressAs(const Codec& codec, ColumnDataCheckpointData& data) {
+  const auto functions = codec.compression;
+  if (functions.size() == 1) {
+    return functions.front().compress(codec, data);
+  }
+  const auto& type = CandidatesOf(data.type.InternalType());
+  const auto features = !AlwaysAsked(codec.type) && type.features
+                          ? type.features(data)
+                          : Features{};
+  if (Analyze(codec, data, features, kNoScore) == kNoScore) {
+    return false;
+  }
+  const auto function =
+    data.tuning.hints[std::to_underlying(codec.type)].function;
+  return functions[function].compress(codec, data);
+}
 
 bool CompressAuto(ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
@@ -54,14 +106,15 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
     }
     if (const auto* codec = GetCodec(row.codec, physical)) {
       candidates.emplace_back(&row, codec);
-      remembers = remembers || !row.always;
+      remembers = remembers || !AlwaysAsked(row.codec);
     }
   }
   auto& hints = data.tuning.hints;
   const auto now = data.tuning.row_group;
   const auto remembered = [&](const Asked& candidate) {
     const auto& hint = hints[std::to_underlying(candidate.row->codec)];
-    return candidate.row->always || hint.forced == 0 ? 0.0 : hint.score;
+    return AlwaysAsked(candidate.row->codec) || hint.forced == 0 ? 0.0
+                                                                 : hint.score;
   };
   absl::c_stable_sort(candidates, [&](const Asked& a, const Asked& b) {
     return remembered(a) < remembered(b);
@@ -72,14 +125,13 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
   const Asked* winner = nullptr;
   for (const auto& candidate : candidates) {
     auto& hint = hints[std::to_underlying(candidate.row->codec)];
-    const bool forced = candidate.row->always || Forgotten(hint, now);
+    const bool forced =
+      AlwaysAsked(candidate.row->codec) || Forgotten(hint, now);
     if (!forced && !Measures(hint, best, features, type.least_shift)) {
       continue;
     }
     data.price = candidate.row->price;
-    const auto score = candidate.codec->compression.analyze(data, best);
-    hint.features = features;
-    hint.score = score;
+    const auto score = Analyze(*candidate.codec, data, features, best);
     if (forced) {
       hint.forced = now;
     }
@@ -91,10 +143,14 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
       }
     }
   }
-  if (winner) {
-    data.price = winner->row->price;
+  if (!winner) {
+    CompressUncompressed(data);
+    return true;
   }
-  if (!winner || !winner->codec->compression.compress(*winner->codec, data)) {
+  data.price = winner->row->price;
+  const auto& codec = *winner->codec;
+  const auto function = hints[std::to_underlying(codec.type)].function;
+  if (!codec.compression[function].compress(codec, data)) {
     CompressUncompressed(data);
   }
   return true;

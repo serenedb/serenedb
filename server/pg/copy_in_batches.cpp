@@ -174,6 +174,21 @@ bool CopyInBatches::Aborted() const {
   return _aborted;
 }
 
+void CopyInBatches::Nudge() {
+  std::vector<duckdb::InterruptState> waiters;
+  {
+    Guard guard{_waiters.lock};
+    _nudged = true;
+    waiters = TakeAllWaiters();
+  }
+  Wake(waiters);
+}
+
+bool CopyInBatches::Ended() const {
+  Guard guard{_waiters.lock};
+  return _finished || _aborted;
+}
+
 CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
                              std::vector<CopyBatchLease>& out) {
   Lock lock{_waiters.lock};
@@ -210,7 +225,7 @@ CopyBatchLease CopyInBatches::Next() {
     if (_taken != _pushed) {
       return CopyBatchLease{*this, *_window[_taken++ - _watermark]};
     }
-    if (_finished || _aborted) {
+    if (_finished || _aborted || std::exchange(_nudged, false)) {
       return {};
     }
     WaitForPush(lock);

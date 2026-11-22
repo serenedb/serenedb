@@ -46,7 +46,7 @@ duckdb::idx_t CopyInStream::Read(char* data, duckdb::idx_t count,
   const auto end = offset + count;
   absl::InlinedVector<Covering, 4> covering;
   const auto readable = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_lock) {
-    return _pulled >= end || _finished ||
+    return _pulled >= end || _finished || _nudged ||
            (_pulled > offset && !_batches.Pending());
   };
   const auto ready = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_lock) {
@@ -57,6 +57,7 @@ duckdb::idx_t CopyInStream::Read(char* data, duckdb::idx_t count,
     {
       absl::MutexLock lock{&_lock};
       if (readable()) {
+        _nudged = false;
         SDB_ASSERT(offset >=
                    (_units.empty() ? _pulled : _units.front().offset));
         for (const auto& unit : _units) {
@@ -145,7 +146,11 @@ void CopyInStream::Pull(duckdb::idx_t offset, duckdb::idx_t end) const {
     auto lease = _batches.Next();
     if (!lease) {
       absl::MutexLock lock{&_lock};
-      _finished = true;
+      if (_batches.Ended()) {
+        _finished = true;
+      } else {
+        _nudged = true;
+      }
       return;
     }
     const auto size = static_cast<duckdb::idx_t>(lease->bytes);
@@ -183,6 +188,18 @@ duckdb::optional_idx CopyInStream::End() const {
 bool CopyInStream::Available(duckdb::idx_t offset) const {
   absl::MutexLock lock{&_lock};
   return _pulled > offset || _finished || _batches.Pending();
+}
+
+void CopyInStream::Nudge() {
+  bool pulling;
+  {
+    absl::MutexLock lock{&_lock};
+    _nudged = true;
+    pulling = _pulling;
+  }
+  if (pulling) {
+    _batches.Nudge();
+  }
 }
 
 CopyInStreamOffer::CopyInStreamOffer(duckdb::ClientContext& context,

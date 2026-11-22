@@ -867,7 +867,7 @@ void AlpRdFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                     const idx_t* rows, idx_t count, duckdb::Vector& result,
                     const duckdb::SelectionVector& result_sel,
                     idx_t result_offset) {
-  SDB_ASSERT(!count || rows[count - 1] < segment.count);
+  SDB_ASSERT(count != 0 && rows[count - 1] < segment.count);
   auto& fetch_state =
     state.GetOrCreateSegmentState<alp::FetchState<AlpRdScanState<T>>>([&] {
       return std::make_unique<alp::FetchState<AlpRdScanState<T>>>(segment.Pin(),
@@ -879,7 +879,7 @@ void AlpRdFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   if (alp::CopyOneDecoded(fetch_state, rows, count, result_data, result_sel)) {
     return;
   }
-  const idx_t last_vector = count ? rows[count - 1] / kVectorSize : 0;
+  const idx_t last_vector = rows[count - 1] / kVectorSize;
   for (idx_t i = 0; i < count;) {
     if (rows[i] / kVectorSize == fetch_state.decoded_vector ||
         alp::Dense(fetch_state, rows, i, count, last_vector)) {

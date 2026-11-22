@@ -396,7 +396,10 @@ void UnshuffleWidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
   if constexpr (sizeof(U) > 2) {
     if (stored == 2) {
       done = UnshuffleWidenAdd2(in, n, base, out);
-    } else if (stored == 4) {
+    }
+  }
+  if constexpr (sizeof(U) > 4) {
+    if (stored == 4) {
       done = UnshuffleWidenAdd4(in, n, base, out);
     }
   }

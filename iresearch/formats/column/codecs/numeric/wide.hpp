@@ -142,7 +142,6 @@ struct WidePart {
     void operator()(const Codec&, duckdb::BaseStatistics, uint64_t,
                     std::string_view segment, std::string_view) const {
       part->bytes = segment;
-      part->flushed = true;
     }
 
     WidePart* part;
@@ -171,7 +170,6 @@ struct WidePart {
   WriteChunk chunk;
   ColumnTuning tuning;
   std::string_view bytes;
-  bool flushed = false;
   Keep keep{this};
   ColumnDataCheckpointData data;
 };
@@ -247,12 +245,11 @@ struct WideValues final : State {
     W last{};
     for (const auto& chunk : data.chunks) {
       const size_t count = chunk.data.size();
-      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-          !duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
+      SDB_ASSERT(chunk.data.GetVectorType() ==
+                   duckdb::VectorType::FLAT_VECTOR &&
+                 count != 0);
+      if (!duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
         return false;
-      }
-      if (count == 0) {
-        continue;
       }
       const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
       bool repeats = any && values[0] == last;
@@ -307,10 +304,9 @@ struct WideValues final : State {
     size_t row = 0;
     for (const auto& chunk : data.chunks) {
       const size_t size = chunk.data.size();
-      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-          !duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
-        return false;
-      }
+      SDB_ASSERT(
+        chunk.data.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
+        size != 0 && duckdb::FlatVector::Validity(chunk.data).CannotHaveNull());
       const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
       for (size_t i = 0; i < size; ++i) {
         const auto key = WideKey<W>(values[i]);
@@ -326,9 +322,7 @@ struct WideValues final : State {
       }
       row += size;
     }
-    if (count == 0) {
-      return false;
-    }
+    SDB_ASSERT(count != 0);
     const std::span<const absl::uint128> found{keys.data(), count};
     const auto [lowest, highest] = absl::c_minmax_element(found);
     if (absl::Uint128High64(*highest - *lowest) != 0) {
@@ -365,10 +359,10 @@ struct WideValues final : State {
     uint64_t last = 0;
     size_t at = 0;
     for (const auto& chunk : data.chunks) {
-      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR) {
-        return false;
-      }
       const size_t count = chunk.data.size();
+      SDB_ASSERT(chunk.data.GetVectorType() ==
+                   duckdb::VectorType::FLAT_VECTOR &&
+                 count != 0);
       const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
       const auto& validity = duckdb::FlatVector::Validity(chunk.data);
       const bool all_valid = validity.CannotHaveNull();
@@ -379,7 +373,7 @@ struct WideValues final : State {
           ++first;
         }
         if (first == count) {
-          has_null |= count != 0;
+          has_null = true;
           at += count;
           continue;
         }
@@ -398,7 +392,7 @@ struct WideValues final : State {
           hi = std::max(hi, lower);
           lows[at + i] = lower;
         }
-        last = count != 0 ? uint64_t{values[count - 1].lower} : last;
+        last = values[count - 1].lower;
       } else {
         bool nulls = false;
         for (size_t i = first; i < count; ++i) {
@@ -434,11 +428,10 @@ struct WideValues final : State {
     size_t row = 0;
     for (const auto& chunk : data.chunks) {
       const size_t count = chunk.data.size();
-      if (count == 0) {
-        continue;
-      }
-      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-          !duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
+      SDB_ASSERT(chunk.data.GetVectorType() ==
+                   duckdb::VectorType::FLAT_VECTOR &&
+                 count != 0);
+      if (!duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
         sample.clear();
         return;
       }
@@ -499,11 +492,7 @@ struct WideValues final : State {
     lows.resize(data.rows);
     highs.resize(data.rows);
     ReadHalves(data);
-    if (!usable) {
-      sampled = true;
-      sample_narrow = false;
-      return;
-    }
+    SDB_ASSERT(usable);
     if (!sampled) {
       const auto [every, rows] = WideSampleOf(lows.size());
       for (size_t at = 0; at < lows.size(); at += every * kBlockValues) {
@@ -562,9 +551,10 @@ struct WideValues final : State {
     };
     for (const auto& chunk : data.chunks) {
       const size_t count = chunk.data.size();
-      if (count != 0 &&
-          chunk.data.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
-          duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
+      SDB_ASSERT(chunk.data.GetVectorType() ==
+                   duckdb::VectorType::FLAT_VECTOR &&
+                 count != 0);
+      if (duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
         const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
         start(static_cast<uint64_t>(values[0].upper) ^ kWideBias<W>,
               values[0].lower);
@@ -626,8 +616,7 @@ double AnalyzeWide(ColumnDataCheckpointData& data, double bound) {
 
 inline bool CompressPart(const CompressionFunction& inner, const Codec& codec,
                          WidePart& part) {
-  part.flushed = false;
-  return inner.compress(codec, part.data) && part.flushed;
+  return inner.compress(codec, part.data);
 }
 
 template<typename W, CodecType kCodec, const CompressionFunction& kInner>

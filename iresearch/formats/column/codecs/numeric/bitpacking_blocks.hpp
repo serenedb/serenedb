@@ -208,8 +208,7 @@ class BitpackingBlocks {
       for (size_t b = 0; b < count; ++b) {
         const size_t g = first + b;
         const uint8_t kind = _bits[g];
-        duckdb::Store(_first.empty() ? _base[g] : _first[g],
-                      bases + b * sizeof(V));
+        duckdb::Store(_first[g], bases + b * sizeof(V));
         widths[b] = kind;
         const size_t n = Values(g);
         const V* in = rows.Block(g);
@@ -272,7 +271,8 @@ class BitpackingBlocks {
       const auto [lo, hi] = StepBounds(rows.Block(b), rows.BlockSize(b));
       sampled += PackedBytes(std::bit_width(static_cast<V>(hi - lo)));
     }
-    return samples == 0 ? 0 : sampled * rows.Blocks() / samples;
+    SDB_ASSERT(samples != 0);
+    return sampled * rows.Blocks() / samples;
   }
 
   void PlanEqualSteps(BlockRows<V> rows, V step) {
@@ -308,8 +308,8 @@ class BitpackingBlocks {
 
   void PlanMixed(BlockRows<V> rows, std::span<const BlockBounds<V>> bounds,
                  std::span<const uint8_t> offsets_only, double delta_price) {
-    if (const V step =
-          rows.size() < 2 ? V{0} : static_cast<V>(rows[1] - rows[0]);
+    SDB_ASSERT(rows.size() > 1);
+    if (const auto step = static_cast<V>(rows[1] - rows[0]);
         EveryStepIs(step, rows)) {
       PlanEqualSteps(rows, step);
       return;
@@ -520,7 +520,7 @@ class BitpackingBlocks {
   }
 
   static bool EveryStepIs(V step, BlockRows<V> rows) noexcept {
-    V last = rows.size() == 0 ? V{0} : static_cast<V>(rows[0] - step);
+    V last = static_cast<V>(rows[0] - step);
     for (size_t b = 0; b < rows.Blocks(); ++b) {
       const V* values = rows.Block(b);
       const size_t count = rows.BlockSize(b);

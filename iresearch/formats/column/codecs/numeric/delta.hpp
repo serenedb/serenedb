@@ -70,10 +70,7 @@ struct Steps final : State {
       }
       last = block[count - 1];
     }
-    if (values.Size() < 2) {
-      lo = 0;
-      hi = 0;
-    }
+    SDB_ASSERT(values.Size() > 1);
     offset = static_cast<U>(lo);
     const auto range = static_cast<U>(static_cast<U>(hi) - offset);
     stored = BytesFor(range);

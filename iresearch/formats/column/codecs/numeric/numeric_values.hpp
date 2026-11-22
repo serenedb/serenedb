@@ -220,8 +220,9 @@ class Values final : public State {
       size_t rows = 0;
       for (size_t c = 0; c < _chunks.size(); ++c) {
         const auto& input = _chunks[c].data;
-        if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-            !duckdb::FlatVector::Validity(input).CheckAllValid(input.size()) ||
+        SDB_ASSERT(input.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
+                   input.size() != 0);
+        if (!duckdb::FlatVector::Validity(input).CheckAllValid(input.size()) ||
             (c + 1 != _chunks.size() && input.size() % kBlockValues != 0)) {
           return false;
         }
@@ -294,9 +295,7 @@ class Values final : public State {
   }
 
   void Own() {
-    if (!_owned.empty()) {
-      return;
-    }
+    SDB_ASSERT(_owned.empty());
     _owned.reserve(_size);
     const auto rows = Raw();
     for (size_t b = 0; b < rows.Blocks(); ++b) {
@@ -400,15 +399,9 @@ class Values final : public State {
         _hi = bounds.hi;
       }
     }
+    SDB_ASSERT(count > 1 && count < _size);
     _first = values[0];
-    _step =
-      count > 1 && run_rows[1] == 1 ? static_cast<U>(values[1] - _first) : U{0};
-    bool stepped = count == 1 || count == _size;
-    for (size_t i = 1; i < count && count == _size && stepped; ++i) {
-      stepped = static_cast<U>(values[i] - values[i - 1]) == _step;
-    }
     _runs = static_cast<uint32_t>(count);
-    _sequence = stepped && Monotone();
     if constexpr (std::is_integral_v<T>) {
       _stats.Update(std::bit_cast<T>(_lo));
       _stats.Update(std::bit_cast<T>(_hi));
@@ -469,17 +462,13 @@ class Values final : public State {
     }
   }
 
-  bool AddFlat(const duckdb::Vector& input) {
-    if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR) {
-      return false;
-    }
+  void Add(const duckdb::Vector& input) {
     const size_t count = input.size();
+    SDB_ASSERT(input.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
+               count != 0);
     const T* data = duckdb::FlatVector::GetData<T>(input);
     const auto& validity = duckdb::FlatVector::Validity(input);
     if (validity.CheckAllValid(count)) {
-      if (count == 0) {
-        return true;
-      }
       if (!_any_valid) {
         absl::c_fill(_owned, std::bit_cast<U>(data[0]));
         _any_valid = true;
@@ -488,7 +477,7 @@ class Values final : public State {
       _owned.resize(at + count);
       std::memcpy(_owned.data() + at, data, count * sizeof(T));
       _last = _owned.back();
-      return true;
+      return;
     }
     _stats.SetHasNull();
     if (!_any_valid) {
@@ -499,7 +488,7 @@ class Values final : public State {
       if (first == count) {
         MarkNulls(_owned.size(), _owned.size() + count);
         _owned.insert(_owned.end(), count, _last);
-        return true;
+        return;
       }
       _last = std::bit_cast<U>(data[first]);
       absl::c_fill(_owned, _last);
@@ -514,28 +503,6 @@ class Values final : public State {
       _owned[at + i] = last;
     }
     _last = last;
-    return true;
-  }
-
-  void Add(const duckdb::Vector& input) {
-    if (AddFlat(input)) {
-      return;
-    }
-    for (const auto value : input.Values<T>()) {
-      if (!value.IsValid()) {
-        _stats.SetHasNull();
-        MarkNulls(_owned.size(), _owned.size() + 1);
-        _owned.push_back(_last);
-        continue;
-      }
-      const auto bits = std::bit_cast<U>(value.GetValue());
-      if (!_any_valid) {
-        absl::c_fill(_owned, bits);
-        _any_valid = true;
-      }
-      _last = bits;
-      _owned.push_back(bits);
-    }
   }
 
   static constexpr size_t kScaleSeeds = 8;

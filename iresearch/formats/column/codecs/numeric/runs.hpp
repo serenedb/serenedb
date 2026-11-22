@@ -49,12 +49,10 @@ bool EveryRowDiffers(std::span<const WriteChunk> chunks) {
   for (const auto& chunk : chunks) {
     const auto& input = chunk.data;
     const size_t count = input.size();
-    if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-        !duckdb::FlatVector::Validity(input).CheckAllValid(count)) {
+    SDB_ASSERT(input.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
+               count != 0);
+    if (!duckdb::FlatVector::Validity(input).CheckAllValid(count)) {
       return false;
-    }
-    if (count == 0) {
-      continue;
     }
     const T* values = duckdb::FlatVector::GetData<T>(input);
     bool repeats = any && std::bit_cast<U>(values[0]) == last;
@@ -515,8 +513,8 @@ class RunsReader final : public FrameReader<T> {
   }
 
   void LoadPacked(const NumericFrameMeta& m, uint32_t rows) {
-    if (!(m.frame.comp_len == m.frame.raw_len && m.base != 0 &&
-          m.base <= rows && m.base <= kRleBitpackingFrameRuns)) [[unlikely]] {
+    if (!(m.base != 0 && m.base <= rows && m.base <= kRleBitpackingFrameRuns))
+      [[unlikely]] {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
     const auto runs = static_cast<uint32_t>(m.base);

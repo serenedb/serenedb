@@ -296,8 +296,7 @@ inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,
          (LeafOf(codec) == ByteCodec::None && !(f.flags & kNumericShuffled) &&
           f.stored == f.width && f.frame_log2 == kBitpackingFrameLog2)) &&
         f.frame_log2 >= 10 && f.frame_log2 <= 20 &&
-        rows <= std::numeric_limits<uint32_t>::max() &&
-        (f.frame_count != 0 || rows == 0) &&
+        rows <= std::numeric_limits<uint32_t>::max() && f.frame_count != 0 &&
         (!packed || shape == Shape::Runs ||
          f.frame_count == (rows + kBitpackingFrameRows - 1) /
                             kBitpackingFrameRows))) [[unlikely]] {

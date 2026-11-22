@@ -257,9 +257,7 @@ class FrameReader {
   }
 
   NumericFrameMeta Meta(uint32_t f) const {
-    if (f >= _f.frame_count) [[unlikely]] {
-      ThrowCorrupted("numeric", "frame is out of range");
-    }
+    SDB_ASSERT(f < _f.frame_count);
     const auto m = MetaAt(f);
     const auto rows = EndRow(f) - m.frame.first_entry;
     if (!(m.frame.raw_len <= _f.FrameBytes() &&
@@ -329,13 +327,13 @@ class FrameReader {
     }
     const auto* in = reinterpret_cast<const char*>(Data(m));
     auto* out = reinterpret_cast<char*>(dst);
+    SDB_ASSERT(_leaf == ByteCodec::Lz4 || _leaf == ByteCodec::Zstd);
     const bool ok =
       _leaf == ByteCodec::Lz4
         ? Lz4::Decompressor::Decompress(in, m.frame.comp_len, out,
                                         m.frame.raw_len)
-        : _leaf == ByteCodec::Zstd &&
-            (_zstd ? *_zstd : _zstd.emplace())
-              .Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
+        : (_zstd ? *_zstd : _zstd.emplace())
+            .Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
     if (!ok) [[unlikely]] {
       ThrowCorrupted("numeric", "frame is inconsistent");
     }
@@ -853,9 +851,6 @@ class FrameReader {
  private:
   template<typename V>
   IRS_NO_INLINE void OpenBitpacking(uint32_t f) {
-    if (f >= _f.frame_count) [[unlikely]] {
-      ThrowCorrupted("numeric", "frame is out of range");
-    }
     _bitpacking_frame = kNoFrame;
     auto& frame = _bitpacking;
     const auto m = Meta(f);
@@ -884,8 +879,7 @@ class FrameReader {
     const size_t base_bytes =
       stepped ? BytesFor(static_cast<V>(m.max - m.min)) : _code_base_bytes;
     size_t off = BlockMetaBytes(blocks, base_bytes);
-    if (!(m.frame.comp_len == m.frame.raw_len && off <= m.frame.raw_len))
-      [[unlikely]] {
+    if (off > m.frame.raw_len) [[unlikely]] {
       ThrowCorrupted("numeric", "blocks are inconsistent");
     }
     const auto* widths = src + blocks * base_bytes;

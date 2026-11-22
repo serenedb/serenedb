@@ -2559,6 +2559,9 @@ TEST_F(ColCodecsTest, AFrameDictionaryIsSortedWhenThatMakesItSmaller) {
   const Value few = [](uint64_t g) -> std::optional<std::string> {
     return absl::StrCat("status-", (g * 7919) % 40);
   };
+  const Value ids = [](uint64_t g) -> std::optional<std::string> {
+    return Pseudo(Scattered(g, 3000), 32);
+  };
   constexpr uint64_t kRows = 30000;
   for (const auto codec :
        {irs::codecs::CodecType::DictLz4, irs::codecs::CodecType::DictZstd,
@@ -2570,7 +2573,8 @@ TEST_F(ColCodecsTest, AFrameDictionaryIsSortedWhenThatMakesItSmaller) {
       for (const auto& [value, sorted] :
            {std::pair<const Value&, std::string_view>{clustered, "true"},
             std::pair<const Value&, std::string_view>{repeating, "false"},
-            std::pair<const Value&, std::string_view>{few, "false"}}) {
+            std::pair<const Value&, std::string_view>{few, "false"},
+            std::pair<const Value&, std::string_view>{ids, "false"}}) {
         tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
         Write(dir, codec, {.tier = tier}, kRows, kRows, value);
         Verify(dir, codec, kRows, value);

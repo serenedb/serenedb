@@ -727,6 +727,9 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, double bound) {
   const auto priced = [&](uint64_t bytes) {
     return Score(values, window, kShape, data.price, bytes);
   };
+  if (!data.contested) {
+    return priced(Trial(state, config, values, window, target).Size());
+  }
   auto bytes = data.Get<TrialSizes<Codec>>().Size(state, config);
   if (!Find(state, config)) {
     const auto estimate = priced(bytes);

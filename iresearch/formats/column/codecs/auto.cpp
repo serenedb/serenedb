@@ -65,6 +65,7 @@ constexpr double kRoaringPrice = 2.0;
 constexpr double kLeastTextShift = 1.5;
 constexpr double kHigherLevelPrice = 1.02;
 constexpr double kWideFramesPrice = 1.03;
+constexpr double kNamedSortedPrice = 1.03;
 
 constexpr Variant kFrames[] = {
   {.level = 4},
@@ -94,7 +95,7 @@ constexpr Variant kFreshDictionaryFrames[] = {
 
 constexpr Variant kNamedDictionaryFrames[] = {
   {},
-  {.option = text::kSorted},
+  {.option = text::kSorted, .price = kNamedSortedPrice},
 };
 
 constexpr Candidate kLightweightRows[] = {
@@ -319,8 +320,8 @@ double Analyze(const Asked& asked, uint8_t level, const Candidates& type,
     (type.input ? input >= kMoreInput * hint.input
                 : now - hint.refreshed > kOldHint ||
                     features[kStoredWidth] != hint.features[kStoredWidth]);
-  const bool estimated =
-    count > 1 && asked.codec->compression.front().estimate != nullptr;
+  const bool estimated = data.contested && count > 1 &&
+                         asked.codec->compression.front().estimate != nullptr;
   SDB_ASSERT(hint.variant < count);
   size_t last = hint.variant;
   if (every && estimated) {

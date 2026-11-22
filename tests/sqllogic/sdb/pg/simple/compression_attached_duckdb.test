@@ -159,6 +159,10 @@ CREATE TABLE codecs_rle_${__DATABASE__}.main.runs (
 
 
 statement ok
+SET threads = 1;
+
+
+statement ok
 INSERT INTO codecs_rle_${__DATABASE__}.main.runs SELECT
   ((i // 5) % 100)::TINYINT,
   ((i // 20) % 1000)::SMALLINT,
@@ -170,6 +174,10 @@ INSERT INTO codecs_rle_${__DATABASE__}.main.runs SELECT
   ((i // 5) % 1000)::DOUBLE,
   ((i // 2) % 1000)::DOUBLE
 FROM range(200000) t(i);
+
+
+statement ok
+RESET threads;
 
 
 statement ok

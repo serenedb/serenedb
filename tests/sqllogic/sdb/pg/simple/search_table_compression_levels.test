@@ -629,7 +629,8 @@ statement ok
 DROP TABLE lvl_tuple_rle;
 
 statement ok
-CREATE TABLE lvl_tuple_set AS SELECT 1 AS a, row(1, 2) AS t, 1::UNION(n INTEGER, m SMALLINT) AS u WHERE false;
+CREATE TABLE lvl_tuple_set (a INTEGER, t TUPLE(INTEGER, INTEGER), u UNION(n INTEGER, m SMALLINT))
+  WITH (compaction_interval = 0);
 
 statement ok
 ALTER TABLE lvl_tuple_set ALTER COLUMN t SET COMPRESSION bitpacking;
@@ -638,11 +639,17 @@ statement ok
 ALTER TABLE lvl_tuple_set ALTER COLUMN u SET COMPRESSION bitpacking;
 
 statement ok
+SET threads = 1;
+
+statement ok
 INSERT INTO lvl_tuple_set
 SELECT a, row(a::INTEGER, (a * 2)::INTEGER),
        CASE WHEN a % 2 = 0 THEN a::INTEGER::UNION(n INTEGER, m SMALLINT)
             ELSE (a % 1000)::SMALLINT::UNION(n INTEGER, m SMALLINT) END
 FROM range(20000) t(a);
+
+statement ok
+RESET threads;
 
 statement ok
 VACUUM (FLUSH_TABLE) lvl_tuple_set;

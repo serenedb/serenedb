@@ -199,18 +199,26 @@ class DeltaReader final : public FrameReader<T> {
   using Base::FetchRows;
   using Base::NarrowBounds;
 
+  static constexpr bool kPacks = !std::is_floating_point_v<T>;
+
   DeltaReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
               CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
-      _own{duckdb::Load<DeltaHeader>(base + OwnHeaderOffset(frames.flags))} {}
+      _own{duckdb::Load<DeltaHeader>(base + OwnHeaderOffset(frames.flags))} {
+    if (!kPacks && this->Packed()) [[unlikely]] {
+      ThrowCorrupted("numeric", "a float column has bit-packed steps");
+    }
+  }
 
   void Seek(uint64_t row) {
     if (this->Holds(row)) {
       return;
     }
-    if (this->Packed()) {
-      this->DecodeBlock(row);
-      return;
+    if constexpr (kPacks) {
+      if (this->Packed()) {
+        this->DecodeBlock(row);
+        return;
+      }
     }
     this->_scan = row == this->_next;
     const auto f = this->FrameOf(row);
@@ -228,8 +236,10 @@ class DeltaReader final : public FrameReader<T> {
     if (this->Holds(row)) {
       return 0;
     }
-    if (this->Packed()) {
-      return this->DecodeBlockDirect(row, count, out);
+    if constexpr (kPacks) {
+      if (this->Packed()) {
+        return this->DecodeBlockDirect(row, count, out);
+      }
     }
     const auto f = this->FrameOf(row);
     const auto end = this->EndRow(f);
@@ -255,8 +265,10 @@ class DeltaReader final : public FrameReader<T> {
   }
 
   IRS_FORCE_INLINE T FetchApart(uint64_t row, uint64_t next) {
-    if (this->Packed()) {
-      return this->FetchPacked(row, next);
+    if constexpr (kPacks) {
+      if (this->Packed()) {
+        return this->FetchPacked(row, next);
+      }
     }
     return FetchFramed(row, next);
   }

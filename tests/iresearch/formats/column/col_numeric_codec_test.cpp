@@ -1172,6 +1172,75 @@ TEST_F(ColNumericCodecTest,
     scan, "Corrupted numeric segment: value width does not match the column");
 }
 
+TEST_F(ColNumericCodecTest, FrameHeadersOfBitPackedFloatsAreRejected) {
+  struct Case {
+    irs::codecs::CodecType codec;
+    Gen gen;
+    std::string_view message;
+  };
+  const Case cases[] = {
+    {irs::codecs::CodecType::Bitpacking,
+     [](uint64_t g) -> std::optional<int64_t> {
+       return static_cast<int64_t>(Mix(g) % 100000);
+     },
+     "Corrupted numeric segment: a float column has bit-packed frames"},
+    {irs::codecs::CodecType::Delta,
+     [](uint64_t g) -> std::optional<int64_t> {
+       return static_cast<int64_t>(8192 + g);
+     },
+     "Corrupted numeric segment: a float column has bit-packed steps"},
+  };
+  for (const auto& [codec, gen, message] : cases) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    const auto path = test_dir() / "col_numeric_packed_floats";
+    std::filesystem::remove_all(path);
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    {
+      tests::IndexDir dir{Db(), path.string()};
+      Write(dir, duckdb::LogicalType::FLOAT, {.tier = irs::WriteTier::Flush},
+            4096, 4096, gen, codec);
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      const auto& block = col->DataBlocks().front();
+      ASSERT_EQ(block.codec->type, codec);
+      offset = block.file_offset;
+      size = block.byte_size;
+    }
+    const auto file = path / irs::FileName(kSeg);
+    std::string bytes;
+    {
+      std::ifstream in{file, std::ios::binary};
+      bytes.assign(std::istreambuf_iterator<char>{in}, {});
+    }
+    ASSERT_LE(offset + size, bytes.size());
+    auto* block = reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + offset);
+    auto h = irs::codecs::ParseFrames(block, size, 4096, codec);
+    ASSERT_EQ(h.flags & irs::codecs::kNumericPacked, 0);
+    h.flags = irs::codecs::kNumericPacked;
+    h.stored = h.width;
+    h.frame_log2 = irs::codecs::kBitpackingFrameLog2;
+    h.frame_count = 1;
+    h.data_size = 0;
+    std::memcpy(block, &h, irs::codecs::kNumericHeaderSize);
+    {
+      std::ofstream out{file, std::ios::binary | std::ios::trunc};
+      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+    tests::IndexDir dir{Db(), path.string()};
+    const auto scan = [&] {
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      auto state = col->InitScan(r.Ctx());
+      duckdb::Vector out{duckdb::LogicalType::FLOAT, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, STANDARD_VECTOR_SIZE);
+    };
+    ExpectCorrupted(scan, message);
+  }
+}
+
 TEST_F(ColNumericCodecTest, CorruptedRunCountIsRejected) {
   const auto path = test_dir() / "col_numeric_corrupt_runs";
   std::filesystem::create_directories(path);

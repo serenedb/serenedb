@@ -63,6 +63,7 @@ class FrameReader {
   static constexpr bool kHasRuns = false;
   static constexpr bool kFiltersRuns = false;
   static constexpr bool kFiltersEntries = false;
+  static constexpr bool kPacks = true;
 
   uint32_t FrameOf(uint64_t row) const noexcept {
     if (_per_frame != 0) {
@@ -453,18 +454,28 @@ class FrameReader {
                                   duckdb::idx_t count, T* out,
                                   const duckdb::SelectionVector& sel,
                                   duckdb::idx_t offset) {
-    if (!self.Packed()) {
-      for (duckdb::idx_t i = 0; i < count; ++i) {
-        const auto row = static_cast<uint64_t>(rows[i]);
-        SDB_ASSERT(row < self._f.row_count);
-        out[offset + sel.get_index(i)] =
-          self.Holds(row)
-            ? self.At(row)
-            : self.FetchFramed(row,
-                               i + 1 < count ? uint64_t{rows[i + 1]} : kNoRow);
+    if constexpr (std::remove_reference_t<decltype(self)>::kPacks) {
+      if (self.Packed()) {
+        self.FetchPackedRows(rows, count, out, sel, offset);
+        return;
       }
-      return;
     }
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      const auto row = static_cast<uint64_t>(rows[i]);
+      SDB_ASSERT(row < self._f.row_count);
+      out[offset + sel.get_index(i)] =
+        self.Holds(row)
+          ? self.At(row)
+          : self.FetchFramed(row,
+                             i + 1 < count ? uint64_t{rows[i + 1]} : kNoRow);
+    }
+  }
+
+  IRS_FORCE_INLINE void FetchPackedRows(this auto& self,
+                                        const duckdb::idx_t* rows,
+                                        duckdb::idx_t count, T* out,
+                                        const duckdb::SelectionVector& sel,
+                                        duckdb::idx_t offset) {
     for (duckdb::idx_t i = 0; i < count; ++i) {
       const auto row = static_cast<uint64_t>(rows[i]);
       SDB_ASSERT(row < self._f.row_count);
@@ -500,20 +511,24 @@ class FrameReader {
 
   IRS_FORCE_INLINE bool ConstantRows(this auto& self, uint64_t row,
                                      uint64_t count, T& value) {
-    if (!self.Packed()) {
+    if constexpr (!std::remove_reference_t<decltype(self)>::kPacks) {
       return false;
+    } else {
+      if (!self.Packed()) {
+        return false;
+      }
+      const auto block = self.BlockAt(row);
+      if (block.bits != 0 || block.step != 0) {
+        return false;
+      }
+      const auto base = static_cast<U>(block.base);
+      const uint64_t next = row + kBlockValues - row % kBlockValues;
+      if (next < row + count && !self.ConstantBlocks(next, row + count, base)) {
+        return false;
+      }
+      value = self.Scaled(base);
+      return true;
     }
-    const auto block = self.BlockAt(row);
-    if (block.bits != 0 || block.step != 0) {
-      return false;
-    }
-    const auto base = static_cast<U>(block.base);
-    const uint64_t next = row + kBlockValues - row % kBlockValues;
-    if (next < row + count && !self.ConstantBlocks(next, row + count, base)) {
-      return false;
-    }
-    value = self.Scaled(base);
-    return true;
   }
 
   IRS_NO_INLINE bool ConstantBlocks(this auto& self, uint64_t row, uint64_t end,
@@ -530,25 +545,29 @@ class FrameReader {
 
   IRS_FORCE_INLINE bool NarrowBounds(this auto& self, uint64_t row,
                                      uint64_t count, T& min, T& max) {
-    if (!self.Packed()) {
+    if constexpr (!std::remove_reference_t<decltype(self)>::kPacks) {
       return false;
+    } else {
+      if (!self.Packed()) {
+        return false;
+      }
+      if (const auto f = static_cast<uint32_t>(row / kBitpackingFrameRows);
+          f != self._bounds_frame) {
+        const auto m = self.MetaAt(f);
+        self._bounds_frame = f;
+        self._bounds_limit =
+          static_cast<U>(static_cast<U>(m.max) - static_cast<U>(m.min)) / 2;
+      }
+      const auto block = self.BlockAt(row);
+      const U mask = block.bits >= kMaxBits<U>
+                       ? std::numeric_limits<U>::max()
+                       : static_cast<U>((uint64_t{1} << block.bits) - 1);
+      if (mask > (block.delta ? self._bounds_limit / (kBlockValues - 1)
+                              : self._bounds_limit)) {
+        return false;
+      }
+      return self.BlockBounds(row, count, min, max);
     }
-    if (const auto f = static_cast<uint32_t>(row / kBitpackingFrameRows);
-        f != self._bounds_frame) {
-      const auto m = self.MetaAt(f);
-      self._bounds_frame = f;
-      self._bounds_limit =
-        static_cast<U>(static_cast<U>(m.max) - static_cast<U>(m.min)) / 2;
-    }
-    const auto block = self.BlockAt(row);
-    const U mask = block.bits >= kMaxBits<U>
-                     ? std::numeric_limits<U>::max()
-                     : static_cast<U>((uint64_t{1} << block.bits) - 1);
-    if (mask > (block.delta ? self._bounds_limit / (kBlockValues - 1)
-                            : self._bounds_limit)) {
-      return false;
-    }
-    return self.BlockBounds(row, count, min, max);
   }
 
   IRS_NO_INLINE bool BlockBounds(this auto& self, uint64_t row, uint64_t count,

@@ -20,14 +20,18 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/container/inlined_vector.h>
 
+#include <algorithm>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <span>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "iresearch/search/filters/deferral.hpp"
 #include "iresearch/search/filters/filter.hpp"
@@ -51,6 +55,26 @@ struct OptimizeContext {
 namespace optimizer {
 
 void ApplyDeferral(Filter::ptr& root, const OptimizeContext& ctx);
+
+size_t EraseFilters(std::vector<Filter::ptr>& filters, auto predicate) {
+  auto tail = filters.begin();
+  for (auto it = tail, end = filters.end(); it != end; ++it) {
+    if (!predicate(**it)) {
+      if (tail != it) {
+        std::iter_swap(tail, it);
+      }
+      ++tail;
+    }
+  }
+  const auto erased = static_cast<size_t>(std::distance(tail, filters.end()));
+  filters.erase(tail, filters.end());
+  return erased;
+}
+
+bool AnyFilter(std::span<const Filter::ptr> filters, auto predicate) {
+  return absl::c_any_of(
+    filters, [&](const Filter::ptr& child) { return predicate(*child); });
+}
 
 }  // namespace optimizer
 

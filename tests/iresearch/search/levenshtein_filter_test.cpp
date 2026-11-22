@@ -123,6 +123,7 @@ TEST(by_edit_distance_test, options) {
   ASSERT_EQ(0, opts.max_distance);
   ASSERT_EQ(0, opts.max_terms);
   ASSERT_FALSE(opts.with_transpositions);
+  ASSERT_FALSE(opts.starts_with);
   ASSERT_TRUE(opts.term.empty());
 }
 
@@ -143,12 +144,100 @@ TEST(by_edit_distance_test, equal) {
   ASSERT_NE(q, MakeFilter("field", "bar", 2, 0, true));
   ASSERT_NE(q, MakeFilter("field", "bar", 1, 1024, true));
   ASSERT_NE(q, MakeFilter("field", "bar", 1, 0, false));
+  ASSERT_NE(q, MakeFilter("field", "bar", 1, 0, true, "foo"));
+  {
+    auto rhs = MakeFilter("field", "bar", 1, 0, true);
+    rhs.mutable_options()->starts_with = true;
+    ASSERT_NE(q, rhs);
+  }
+  {
+    auto rhs = MakeFilter("field", "bar", 1, 0, true);
+    rhs.mutable_options()->merge = irs::ScoreMergeType::Sum;
+    ASSERT_NE(q, rhs);
+  }
   {
     irs::ByPrefix rhs;
     *rhs.mutable_field_id() = kFieldId;
     rhs.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view("bar"));
     ASSERT_NE(q, rhs);
+  }
+}
+
+TEST(levenshtein_automaton_filter_test, equal) {
+  const irs::LevenshteinAutomatonOptions base{
+    irs::DefaultPDP(1, true),
+    nullptr,
+    true,
+    false,
+    irs::ViewCast<irs::byte_type>(std::string_view{"b"}),
+    irs::ViewCast<irs::byte_type>(std::string_view{"ar"}),
+    0};
+  ASSERT_TRUE(base == base);
+  const auto differs = [&](auto&& change) {
+    auto rhs = base;
+    change(rhs);
+    return !(base == rhs);
+  };
+  EXPECT_TRUE(differs([](auto& o) { o.target += irs::byte_type{'x'}; }));
+  EXPECT_TRUE(differs([](auto& o) { ++o.utf8_target_size; }));
+  EXPECT_TRUE(differs([](auto& o) { ++o.no_distance; }));
+  EXPECT_TRUE(differs([](auto& o) { o.with_transpositions = false; }));
+  EXPECT_TRUE(differs([](auto& o) { o.starts_with = true; }));
+  EXPECT_TRUE(differs([](auto& o) { o.with_ties = true; }));
+  EXPECT_TRUE(differs([](auto& o) { o.max_terms = 7; }));
+  EXPECT_TRUE(differs([](auto& o) { o.merge = irs::ScoreMergeType::Sum; }));
+}
+
+TEST(levenshtein_automaton_filter_test, no_acceptor_no_predicate) {
+  const irs::LevenshteinAutomatonFilter filter;
+  ASSERT_EQ(nullptr, filter.CompileTermPredicate());
+}
+
+TEST(by_edit_distance_test, starts_with_lowering) {
+  auto opts = MakeFilter("field", "ar", 0, 0, true, "b").options();
+  {
+    const auto lowered =
+      irs::LowerLevenshtein(kFieldId, {}, opts, irs::kNoBoost);
+    ASSERT_NE(nullptr, lowered);
+    ASSERT_EQ(irs::Type<irs::ByTerm>::id(), lowered->type());
+    ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}),
+              irs::utils::downCast<irs::ByTerm>(*lowered).options().term);
+  }
+  opts.starts_with = true;
+  {
+    const auto lowered =
+      irs::LowerLevenshtein(kFieldId, {}, opts, irs::kNoBoost);
+    ASSERT_NE(nullptr, lowered);
+    ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), lowered->type());
+    ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}),
+              irs::utils::downCast<irs::ByPrefix>(*lowered).options().term);
+  }
+  {
+    auto filter = MakeFilter("field", "ar", 0, 0, true, "b");
+    *filter.mutable_options() = opts;
+    const auto lowered = Lower(std::move(filter));
+    ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), lowered->type());
+  }
+  opts.max_distance = 1;
+  const auto lowered = irs::LowerLevenshtein(kFieldId, {}, opts, irs::kNoBoost);
+  ASSERT_NE(nullptr, lowered);
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), lowered->type());
+  const auto& automaton =
+    irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*lowered).options();
+  ASSERT_TRUE(automaton.starts_with);
+  ASSERT_EQ(irs::ViewCast<irs::byte_type>(std::string_view{"bar"}),
+            irs::bytes_view{automaton.target});
+  const auto predicate = lowered->CompileTermPredicate();
+  ASSERT_NE(nullptr, predicate);
+  for (const std::string_view term :
+       {"bar", "barn", "bard", "baz", "bazaar", "ba"}) {
+    EXPECT_TRUE(predicate->Accepts(irs::ViewCast<irs::byte_type>(term)))
+      << term;
+  }
+  for (const std::string_view term : {"bzz", "car", "b"}) {
+    EXPECT_FALSE(predicate->Accepts(irs::ViewCast<irs::byte_type>(term)))
+      << term;
   }
 }
 

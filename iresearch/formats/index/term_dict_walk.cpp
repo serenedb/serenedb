@@ -1427,6 +1427,11 @@ SeekTermIterator::ptr TermReaderImpl::iterator(
 }
 
 SeekTermIterator::ptr TermReaderImpl::iterator(
+  const LevenshteinPrefixAcceptor& a) const {
+  return Walk(*this, a);
+}
+
+SeekTermIterator::ptr TermReaderImpl::iterator(
   const RegexpConjunction& a) const {
   return Walk(*this, a);
 }

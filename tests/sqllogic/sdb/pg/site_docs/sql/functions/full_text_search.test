@@ -353,6 +353,14 @@ SELECT id FROM docs_idx WHERE body @@ to_tsquery('+fox -red') ORDER BY id;
 id
 1
 
+# DOCS_TEST: to_tsquery_fuzzy_prefix
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ to_tsquery('trutl*~1') ORDER BY id;
+----
+id
+3
+
 # DOCS_TEST: plainto_tsquery
 # DOCS_TEST_BODY
 query
@@ -1124,12 +1132,23 @@ id
 query
 SELECT id
 FROM docs_idx
-WHERE body @@ ts_levenshtein('X', 1, true, 'quic')
+WHERE body @@ ts_levenshtein('X', 1, prefix := 'quic')
 ORDER BY id;
 ----
 id
 1
 2
+
+# DOCS_TEST: ts_levenshtein_starts_with
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ts_levenshtein('trutl', 1, starts_with := true)
+ORDER BY id;
+----
+id
+3
 
 # DOCS_TEST: ts_between_unbounded
 # DOCS_TEST_BODY

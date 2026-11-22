@@ -91,6 +91,9 @@ struct TermReader : public AttributeProvider {
     const LevenshteinAcceptor& acceptor) const = 0;
 
   virtual SeekTermIterator::ptr iterator(
+    const LevenshteinPrefixAcceptor& acceptor) const = 0;
+
+  virtual SeekTermIterator::ptr iterator(
     const RegexpConjunction& acceptor) const = 0;
 
   virtual SeekTermIterator::ptr iterator(

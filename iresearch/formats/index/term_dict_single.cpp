@@ -164,6 +164,11 @@ SeekTermIterator::ptr SingleTermReader::iterator(
 }
 
 SeekTermIterator::ptr SingleTermReader::iterator(
+  const LevenshteinPrefixAcceptor& a) const {
+  return SingleFor(*this, a);
+}
+
+SeekTermIterator::ptr SingleTermReader::iterator(
   const RegexpConjunction& a) const {
   return SingleFor(*this, a);
 }

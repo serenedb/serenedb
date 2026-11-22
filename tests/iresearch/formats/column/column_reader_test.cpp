@@ -597,6 +597,90 @@ TEST_F(ColumnReaderTest, CopiedRowsReadBackLikeTheirSource) {
   }
 }
 
+TEST_F(ColumnReaderTest, CopiesFixedFloatArraysAcrossEncodedBlocks) {
+  constexpr uint32_t kRgSize = 4096;
+  constexpr uint64_t kRows = 3 * kRgSize;
+  constexpr uint64_t kWidth = 65;
+  constexpr irs::field_id kId = 1;
+  const auto type =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kWidth);
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), dir.Tracker("src")};
+    auto& cw =
+      w.OpenColumn(kId, type,
+                   {.row_group_size = kRgSize,
+                    .compression = irs::codecs::CodecType::Uncompressed});
+    for (uint64_t first = 0; first < kRows; first += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector batch{type, STANDARD_VECTOR_SIZE};
+      auto* values = duckdb::FlatVector::GetDataMutable<float>(
+        duckdb::ArrayVector::GetChildMutable(batch));
+      for (uint64_t i = 0; i < STANDARD_VECTOR_SIZE * kWidth; ++i) {
+        values[i] = static_cast<float>(first * kWidth + i);
+      }
+      duckdb::FlatVector::SetSize(batch, STANDARD_VECTOR_SIZE);
+      cw.Append(batch, STANDARD_VECTOR_SIZE);
+    }
+    w.Commit(0);
+  }
+  irs::ColReader src = irs::tests::OpenColReader(dir, "src");
+  const auto* source = src.Column(kId);
+  ASSERT_NE(source, nullptr);
+  ASSERT_NE(source->Child(), nullptr);
+  {
+    irs::ColWriter w{Db(), dir.Tracker("dst")};
+    auto& cw = w.OpenColumn(kId, type, {.row_group_size = kRgSize});
+    irs::ReadContext context{src};
+    cw.CopyRows(1, *source, context, 1, kRows - 2);
+    w.Commit(0);
+  }
+  irs::ColReader dst = irs::tests::OpenColReader(dir, "dst");
+  const auto* column = dst.Column(kId);
+  ASSERT_NE(column, nullptr);
+  ASSERT_EQ(column->RowCount(), kRows - 1);
+  ASSERT_NE(column->Child(), nullptr);
+
+  const auto& source_elements = *source->Child();
+  const auto& copied_elements = *column->Child();
+  const auto from = source_elements.Locate(kRgSize * kWidth);
+  const auto to = copied_elements.Locate(kRgSize * kWidth);
+  const auto stop = source_elements.Locate(2 * kRgSize * kWidth).block;
+  ASSERT_NE(from.end % kWidth, 0);
+  ASSERT_LE(to.block + stop - from.block, copied_elements.DataBlocks().size());
+  for (size_t i = 0; i < stop - from.block; ++i) {
+    const auto& original = source_elements.DataBlocks()[from.block + i];
+    const auto& copied = copied_elements.DataBlocks()[to.block + i];
+    EXPECT_EQ(source_elements.DataBlockFirstRow(from.block + i),
+              copied_elements.DataBlockFirstRow(to.block + i));
+    EXPECT_EQ(copied.tuple_count, original.tuple_count);
+    EXPECT_EQ(copied.codec, original.codec);
+    EXPECT_EQ(copied.byte_size, original.byte_size);
+  }
+
+  auto state = column->InitScan(dst.Ctx());
+  for (uint64_t first = 0; first < column->RowCount();) {
+    const auto take =
+      std::min<uint64_t>(column->RowCount() - first, STANDARD_VECTOR_SIZE);
+    duckdb::Vector batch{type, STANDARD_VECTOR_SIZE};
+    column->Scan(state, batch, take);
+    batch.Flatten(take);
+    const auto& valid = duckdb::FlatVector::Validity(batch);
+    const auto& child = duckdb::ArrayVector::GetChild(batch);
+    const auto* values = duckdb::FlatVector::GetData<float>(child);
+    for (uint64_t row = 0; row < take; ++row) {
+      const auto source_row = first + row;
+      ASSERT_EQ(valid.RowIsValid(row), source_row != 0);
+      if (source_row != 0) {
+        for (uint64_t i = 0; i < kWidth; ++i) {
+          ASSERT_EQ(values[row * kWidth + i],
+                    static_cast<float>(source_row * kWidth + i));
+        }
+      }
+    }
+    first += take;
+  }
+}
+
 TEST_F(ColumnReaderTest, CopiesOnlyBlocksInTheForcedCodec) {
   constexpr uint32_t kRgSize = 4096;
   constexpr uint64_t kRows = 3 * kRgSize;

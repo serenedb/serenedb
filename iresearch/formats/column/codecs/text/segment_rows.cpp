@@ -99,11 +99,7 @@ void SortByBytes(std::span<SortScratch::Key> order,
 
 }  // namespace
 
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
-                    double ratio) noexcept {
-  if (shape != Shape::Dictionary) {
-    return 0;
-  }
+uint64_t CodesBytes(uint64_t rows, uint64_t entries, double ratio) noexcept {
   return ratio != 0 ? static_cast<uint64_t>(
                         static_cast<double>(rows * sizeof(uint32_t)) * ratio)
                     : Packed(rows, entries);
@@ -112,10 +108,7 @@ uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
 void CompressCodes(
   std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write) {
-  if (codes.empty()) {
-    write(CodecType::Auto, {});
-    return;
-  }
+  SDB_ASSERT(!codes.empty());
   const WriteChunk chunk{
     duckdb::Vector{duckdb::LogicalType::UINTEGER,
                    reinterpret_cast<duckdb::data_ptr_t>(codes.data()),
@@ -173,7 +166,7 @@ uint64_t PlainRows::Estimate() const noexcept {
 
 uint64_t DictionaryRows::Estimate() const noexcept {
   return kHeaderSize + Packed(EntryCount(), _max_len) +
-         CodesBytes(kShape, _rows, _entries.size(), _codes_ratio);
+         CodesBytes(_rows, _entries.size(), _codes_ratio);
 }
 
 void SortEntries(std::span<const string_t> entries, SortScratch& scratch) {

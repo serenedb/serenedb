@@ -31,7 +31,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/planner/expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
 #include <limits>
 #include <span>
@@ -201,7 +201,8 @@ EntryRanges Normalize(EntryRanges ranges);
 
 EntryRanges Intersect(const EntryRanges& a, const EntryRanges& b);
 
-const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept;
+const duckdb::Value* StringConstant(
+  const duckdb::BoundConstantExpression& constant) noexcept;
 
 inline uint64_t DictionaryBytes(const Header& h) noexcept {
   return h.raw_bytes + uint64_t{h.entry_count} * (sizeof(duckdb::string_t) + 1);

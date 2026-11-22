@@ -165,9 +165,7 @@ struct Scan {
 
   template<typename Frames, typename Before>
   uint32_t Bound(Frames& s, Before before) {
-    if (s.frames.empty()) {
-      return s.header.entry_count;
-    }
+    SDB_ASSERT(!s.frames.empty());
     return static_cast<uint32_t>(PartitionIndex(
       s.frames[0].first_entry, s.header.entry_count, [&](size_t i) {
         const auto e = static_cast<uint32_t>(i);

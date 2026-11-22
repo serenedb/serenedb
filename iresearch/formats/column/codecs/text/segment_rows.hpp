@@ -112,8 +112,7 @@ inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
   return code == 0 ? duckdb::string_t{} : *p.values[code - 1];
 }
 
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
-                    double ratio) noexcept;
+uint64_t CodesBytes(uint64_t rows, uint64_t entries, double ratio) noexcept;
 
 void CompressCodes(
   std::span<uint32_t> codes, double& ratio,

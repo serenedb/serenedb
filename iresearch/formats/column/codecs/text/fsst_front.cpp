@@ -282,7 +282,8 @@ struct Scan {
     auto f = group_frame;
     for (duckdb::idx_t i = 0; i < count;) {
       const auto e = static_cast<uint32_t>(entry_at(i));
-      if (f == kNoFrame || e < s.frames[f].first_entry || e >= s.FrameEnd(f)) {
+      SDB_ASSERT(f == kNoFrame || e >= s.frames[f].first_entry);
+      if (f == kNoFrame || e >= s.FrameEnd(f)) {
         f = s.FrameOf(e);
       }
       const auto first = s.frames[f].first_entry;
@@ -290,7 +291,8 @@ struct Scan {
       auto j = i + 1;
       for (; j < count; ++j) {
         const auto next = static_cast<uint32_t>(entry_at(j));
-        if (next < first || next >= end) {
+        SDB_ASSERT(next >= first);
+        if (next >= end) {
           break;
         }
       }
@@ -336,7 +338,8 @@ struct Scan {
     auto f = group_frame;
     for (duckdb::idx_t i = 0; i < count;) {
       const auto e = static_cast<uint32_t>(entry_at(i));
-      if (f == kNoFrame || e < s.frames[f].first_entry || e >= s.FrameEnd(f)) {
+      SDB_ASSERT(f == kNoFrame || e >= s.frames[f].first_entry);
+      if (f == kNoFrame || e >= s.FrameEnd(f)) {
         f = s.FrameOf(e);
       }
       const auto first = s.frames[f].first_entry;
@@ -346,7 +349,8 @@ struct Scan {
       auto j = i + 1;
       for (; j < count; ++j) {
         const auto next = static_cast<uint32_t>(entry_at(j));
-        if (next < first || next >= end) {
+        SDB_ASSERT(next >= first);
+        if (next >= end) {
           break;
         }
         const auto group = (next - first) / kChainRestart;
@@ -539,9 +543,7 @@ struct Scan {
 
   template<typename Frames, typename Before>
   uint32_t Bound(Frames& s, Before before) {
-    if (s.frames.empty()) {
-      return s.header.entry_count;
-    }
+    SDB_ASSERT(!s.frames.empty());
     const auto lo = PartitionIndex(0, s.frames.size(), [&](size_t f) {
       return before(DecodeHead(s, static_cast<uint32_t>(f), 0));
     });

@@ -204,7 +204,8 @@ struct EntryFrames {
     auto f = sparse_frame;
     for (idx_t i = 0; i < count;) {
       const auto e = static_cast<uint32_t>(entry_at(i));
-      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
+      SDB_ASSERT(f == kNoFrame || e >= frames[f].first_entry);
+      if (f == kNoFrame || e >= FrameEnd(f)) {
         f = FrameOf(e);
       }
       const auto first = frames[f].first_entry;
@@ -214,7 +215,8 @@ struct EntryFrames {
       auto j = i + 1;
       for (; j < count; ++j) {
         const auto next = static_cast<uint32_t>(entry_at(j));
-        if (next < first || next >= end) {
+        SDB_ASSERT(next >= first);
+        if (next >= end) {
           break;
         }
         distinct += next != last;

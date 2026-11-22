@@ -43,7 +43,8 @@ using duckdb::string_t;
 
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
   const ReadContext::CacheSlot& slot) {
-  if (!slot.touched || !Touched(slot)) {
+  SDB_ASSERT(slot.touched && slot.cache);
+  if (!Touched(slot)) {
     return nullptr;
   }
   return slot.cache->Get<DecodedDictionary>(
@@ -66,8 +67,9 @@ std::string_view SymbolTable(const ColumnSegment& segment, const Header& h,
 }
 
 bool HasRoom(const ReadContext::CacheSlot& slot, uint64_t bytes) {
-  return slot.touched && slot.cache->GetCurrentMemoryRacy() + bytes <=
-                           slot.cache->GetMaxMemoryRacy();
+  SDB_ASSERT(slot.cache);
+  return slot.cache->GetCurrentMemoryRacy() + bytes <=
+         slot.cache->GetMaxMemoryRacy();
 }
 
 Header SegmentHeader(duckdb::const_data_ptr_t base,
@@ -119,11 +121,9 @@ EntryRanges Intersect(const EntryRanges& a, const EntryRanges& b) {
   return out;
 }
 
-const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept {
-  if (expr.GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
-    return nullptr;
-  }
-  const auto& value = expr.Cast<duckdb::BoundConstantExpression>().GetValue();
+const duckdb::Value* StringConstant(
+  const duckdb::BoundConstantExpression& constant) noexcept {
+  const auto& value = constant.GetValue();
   if (value.type().id() != duckdb::LogicalTypeId::VARCHAR) {
     return nullptr;
   }

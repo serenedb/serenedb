@@ -353,7 +353,7 @@ struct DictionaryScan final : SegmentScanState {
     if (!nullable && entries.header.entry_count > kFirstEntry) {
       entries.values[kNullEntry] = entries.values[kFirstEntry];
     }
-    if (!cache_slot.touched || !SecondTouch(cache_slot)) {
+    if (!SecondTouch(cache_slot)) {
       return;
     }
     const auto bytes = entries.CacheBytes();

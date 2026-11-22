@@ -248,8 +248,8 @@ class CompressionState {
     if (_trained) {
       return FrameDictionary::Local;
     }
-    return _first_frame && _frames.size() > 1 ? FrameDictionary::FirstFrame
-                                              : FrameDictionary::None;
+    SDB_ASSERT(!_first_frame || _frames.size() > 1);
+    return _first_frame ? FrameDictionary::FirstFrame : FrameDictionary::None;
   }
 
   void Closed() {

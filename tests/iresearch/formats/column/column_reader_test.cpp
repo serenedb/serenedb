@@ -44,6 +44,7 @@
 #include <duckdb/function/scalar/variant_utils.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
@@ -7031,6 +7032,266 @@ TEST_F(ColumnReaderTest, UnknownCompressionIsRefused) {
       << message;
     EXPECT_NE(std::string::npos, message.find("written by a newer release"))
       << message;
+  }
+}
+
+TEST_F(ColumnReaderTest, PointReadersReportWhichRowsHoldValues) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 6000;
+  const ValueOf nullable = [](uint64_t g) {
+    return g % 10 == 0 ? duckdb::Value{duckdb::LogicalType::BIGINT}
+                       : duckdb::Value::BIGINT(static_cast<int64_t>(g));
+  };
+  const ValueOf dense = [](uint64_t g) {
+    return duckdb::Value::BIGINT(static_cast<int64_t>(g * 3));
+  };
+  for (const auto& value_of : {nullable, dense}) {
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    WriteColumn(Db(), dir, kId, duckdb::LogicalType::BIGINT, kRows, 4096,
+                value_of);
+    irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+    const auto* col = r.Column(kId);
+    ASSERT_NE(col, nullptr);
+    const std::vector<uint64_t> patched_rows{5, 4097};
+    const auto patch = MergePatch(
+      nullptr, duckdb::LogicalType::BIGINT, patched_rows,
+      [](uint64_t) { return duckdb::Value{duckdb::LogicalType::BIGINT}; });
+    const irs::PatchedColumnReader patched{*col, patch};
+    duckdb::Vector scratch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    irs::ColumnReader::PointReader stored{r, *col};
+    irs::ColumnReader::PointReader through{r, patched};
+    for (const uint64_t g : {0, 1, 5, 10, 4095, 4096, 4097, 5999}) {
+      const bool holds = !value_of(g).IsNull();
+      EXPECT_EQ(stored.ValidRow(g, scratch), holds) << "row " << g;
+      EXPECT_EQ(through.ValidRow(g, scratch),
+                holds && !absl::c_linear_search(patched_rows, g))
+        << "row " << g;
+    }
+    EXPECT_FALSE(stored.ValidRow(kRows, scratch));
+    EXPECT_FALSE(stored.ValidRow(kRows + 100, scratch));
+  }
+}
+
+TEST_F(ColumnReaderTest, FilterGathersSkipBlocksWithoutOfferedRows) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 6000;
+  constexpr uint64_t kBlockRows = 1024;
+  const ValueOf value_of = [](uint64_t g) {
+    return g % 11 == 0
+             ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+             : duckdb::Value{absl::StrCat("tenant-", (g * 7919) % 300)};
+  };
+  const std::string bound = "tenant-150";
+  duckdb::Connection con{Db()};
+  auto set = con.Query("SET force_compression = 'dict_fsst'");
+  ASSERT_FALSE(set->HasError()) << set->GetError();
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  WriteColumn(Db(), dir, kId, duckdb::LogicalType::VARCHAR, kRows, kBlockRows,
+              value_of);
+  con.Query("SET force_compression = 'auto'");
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  ASSERT_GT(col->DataBlocks().size(), 4u);
+  const duckdb::ExpressionFilter filter{
+    duckdb::BoundComparisonExpression::Create(
+      duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO,
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        duckdb::LogicalType::VARCHAR, 0),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        duckdb::Value{bound}))};
+  auto filter_state =
+    duckdb::TableFilterState::Initialize(*con.context, filter);
+  for (const bool first_block : {true, false}) {
+    SCOPED_TRACE(first_block ? "first block offered" : "last block offered");
+    auto state = col->InitScan(r.Ctx());
+    for (uint64_t anchor = 0; anchor < kRows; anchor += STANDARD_VECTOR_SIZE) {
+      const auto span =
+        std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+      const auto offered_block =
+        (first_block ? anchor : anchor + span - 1) / kBlockRows;
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      duckdb::idx_t offered = 0;
+      for (duckdb::idx_t i = 0; i < span; ++i) {
+        if ((anchor + i) / kBlockRows == offered_block) {
+          sel.set_index(offered++, i);
+        }
+      }
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      const auto kept =
+        col->GatherFilter(state, anchor, span, sel, offered, filter,
+                          *filter_state, irs::NullCheckKind::None, out);
+      std::vector<uint64_t> want;
+      for (duckdb::idx_t i = 0; i < span; ++i) {
+        const auto v = value_of(anchor + i);
+        if ((anchor + i) / kBlockRows == offered_block && !v.IsNull() &&
+            v.GetValue<std::string>() >= bound) {
+          want.push_back(i);
+        }
+      }
+      ASSERT_EQ(kept, want.size()) << "span at " << anchor;
+      for (duckdb::idx_t i = 0; i < kept; ++i) {
+        ASSERT_EQ(sel.get_index(i), want[i]) << "span at " << anchor;
+      }
+    }
+  }
+}
+
+TEST_F(ColumnReaderTest, DictionaryConjunctionsIntersectTheirRanges) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 9000;
+  const ValueOf value_of = [](uint64_t g) {
+    return g % 13 == 0
+             ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+             : duckdb::Value{absl::StrCat("tenant-", (g * 7919) % 300)};
+  };
+  duckdb::Connection con{Db()};
+  auto set = con.Query("SET force_compression = 'dict_fsst'");
+  ASSERT_FALSE(set->HasError()) << set->GetError();
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  WriteColumn(Db(), dir, kId, duckdb::LogicalType::VARCHAR, kRows, 4096,
+              value_of);
+  con.Query("SET force_compression = 'auto'");
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  using Cmp = duckdb::ExpressionType;
+  const auto compare = [](Cmp cmp, std::string_view key) {
+    return duckdb::BoundComparisonExpression::Create(
+      cmp,
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        duckdb::LogicalType::VARCHAR, 0),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        duckdb::Value{std::string{key}}));
+  };
+  const auto either = [&] {
+    auto any = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+      Cmp::CONJUNCTION_OR);
+    any->GetChildrenMutable().push_back(
+      compare(Cmp::COMPARE_EQUAL, "tenant-1"));
+    any->GetChildrenMutable().push_back(
+      compare(Cmp::COMPARE_EQUAL, "tenant-200"));
+    return any;
+  };
+  struct Conjunction {
+    std::string name;
+    std::function<duckdb::unique_ptr<duckdb::Expression>()> make;
+    std::function<bool(std::string_view)> holds;
+  };
+  const Conjunction conjunctions[] = {
+    {"range first",
+     [&] {
+       auto all = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+         Cmp::CONJUNCTION_AND);
+       all->GetChildrenMutable().push_back(
+         compare(Cmp::COMPARE_GREATERTHAN, "tenant-150"));
+       all->GetChildrenMutable().push_back(either());
+       return all;
+     },
+     [](std::string_view v) { return v == "tenant-200"; }},
+    {"either first",
+     [&] {
+       auto all = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+         Cmp::CONJUNCTION_AND);
+       all->GetChildrenMutable().push_back(either());
+       all->GetChildrenMutable().push_back(
+         compare(Cmp::COMPARE_GREATERTHAN, "tenant-150"));
+       return all;
+     },
+     [](std::string_view v) { return v == "tenant-200"; }},
+    {"disjoint",
+     [&] {
+       auto all = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+         Cmp::CONJUNCTION_AND);
+       all->GetChildrenMutable().push_back(
+         compare(Cmp::COMPARE_LESSTHAN, "tenant-100"));
+       all->GetChildrenMutable().push_back(
+         compare(Cmp::COMPARE_GREATERTHAN, "tenant-200"));
+       return all;
+     },
+     [](std::string_view) { return false; }},
+  };
+  for (const auto& c : conjunctions) {
+    SCOPED_TRACE(c.name);
+    const duckdb::ExpressionFilter filter{c.make()};
+    auto filter_state =
+      duckdb::TableFilterState::Initialize(*con.context, filter);
+    auto state = col->InitScan(r.Ctx());
+    for (uint64_t anchor = 0; anchor < kRows; anchor += STANDARD_VECTOR_SIZE) {
+      const auto span =
+        std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t i = 0; i < span; ++i) {
+        sel.set_index(i, i);
+      }
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      const auto kept =
+        col->GatherFilter(state, anchor, span, sel, span, filter, *filter_state,
+                          irs::NullCheckKind::None, out);
+      std::vector<uint64_t> want;
+      for (duckdb::idx_t i = 0; i < span; ++i) {
+        const auto v = value_of(anchor + i);
+        if (!v.IsNull() && c.holds(v.GetValue<std::string>())) {
+          want.push_back(i);
+        }
+      }
+      ASSERT_EQ(kept, want.size()) << "span at " << anchor;
+      for (duckdb::idx_t i = 0; i < kept; ++i) {
+        ASSERT_EQ(sel.get_index(i), want[i]) << "span at " << anchor;
+      }
+    }
+  }
+}
+
+TEST_F(ColumnReaderTest, DictionaryFiltersOnBlobsMatchTheValues) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 9000;
+  const ValueOf value_of = [](uint64_t g) {
+    return g % 13 == 0
+             ? duckdb::Value{duckdb::LogicalType::BLOB}
+             : duckdb::Value::BLOB(absl::StrCat("tenant-", (g * 7919) % 300));
+  };
+  duckdb::Connection con{Db()};
+  auto set = con.Query("SET force_compression = 'dict_fsst'");
+  ASSERT_FALSE(set->HasError()) << set->GetError();
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  WriteColumn(Db(), dir, kId, duckdb::LogicalType::BLOB, kRows, 4096, value_of);
+  con.Query("SET force_compression = 'auto'");
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->DataBlocks().front().codec->type,
+            irs::codecs::CodecType::DictFsst);
+  const auto key = duckdb::Value::BLOB("tenant-42");
+  const duckdb::ExpressionFilter filter{
+    duckdb::BoundComparisonExpression::Create(
+      duckdb::ExpressionType::COMPARE_EQUAL,
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        duckdb::LogicalType::BLOB, 0),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(key))};
+  auto filter_state =
+    duckdb::TableFilterState::Initialize(*con.context, filter);
+  auto state = col->InitScan(r.Ctx());
+  for (uint64_t anchor = 0; anchor < kRows; anchor += STANDARD_VECTOR_SIZE) {
+    const auto span = std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+    duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+    for (duckdb::idx_t i = 0; i < span; ++i) {
+      sel.set_index(i, i);
+    }
+    duckdb::Vector out{duckdb::LogicalType::BLOB, STANDARD_VECTOR_SIZE};
+    const auto kept =
+      col->GatherFilter(state, anchor, span, sel, span, filter, *filter_state,
+                        irs::NullCheckKind::None, out);
+    std::vector<uint64_t> want;
+    for (duckdb::idx_t i = 0; i < span; ++i) {
+      if (const auto v = value_of(anchor + i); !v.IsNull() && v == key) {
+        want.push_back(i);
+      }
+    }
+    ASSERT_EQ(kept, want.size()) << "span at " << anchor;
+    for (duckdb::idx_t i = 0; i < kept; ++i) {
+      ASSERT_EQ(sel.get_index(i), want[i]) << "span at " << anchor;
+    }
   }
 }
 

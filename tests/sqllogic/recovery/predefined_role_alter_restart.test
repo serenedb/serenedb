@@ -1,0 +1,62 @@
+control substitution on
+
+statement ok
+CREATE ROLE pra_vedernikoff LOGIN PASSWORD 'pra_pw';
+
+
+statement ok
+GRANT pg_read_all_data TO pra_vedernikoff;
+
+
+statement ok
+CREATE TABLE pra_ledger (id integer);
+
+
+statement ok
+COMMENT ON ROLE pg_read_all_data IS 'reads every table';
+
+
+statement ok
+COMMENT ON ROLE pg_monitor IS 'monitors';
+
+
+connection c_ved user=pra_vedernikoff password=pra_pw
+query
+SELECT count(*) AS n FROM pra_ledger;
+----
+n
+0
+
+
+statement error
+DROP ROLE pg_monitor;
+----
+db error: ERROR: cannot drop role pg_monitor because it is required by the database system
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection c_ved_after user=pra_vedernikoff password=pra_pw
+query
+SELECT count(*) AS n FROM pra_ledger;
+----
+n
+0
+
+
+connection after_crash
+statement error
+DROP ROLE pg_monitor;
+----
+db error: ERROR: cannot drop role pg_monitor because it is required by the database system

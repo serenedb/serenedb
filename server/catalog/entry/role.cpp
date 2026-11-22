@@ -115,6 +115,7 @@ RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
 duckdb::unique_ptr<duckdb::CreateInfo> RoleCatalogEntry::GetInfo() const {
   auto info = duckdb::make_uniq<duckdb::CreateRoleInfo>();
   info->SetName(name);
+  info->oid = oid;
   info->options = Options();
   info->conn_limit = _conn_limit;
   info->valid_until = _valid_until;

@@ -584,6 +584,18 @@ statement ok
 DROP TABLE lvl_tuple;
 
 statement ok
+CREATE TABLE lvl_empty_struct AS SELECT 1 AS a, struct_pack() AS s WHERE false;
+
+statement error
+ALTER TABLE lvl_empty_struct ALTER COLUMN s SET COMPRESSION lz4;
+----
+db error: ERROR: Can't compress column "s" with type 'STRUCT' (physical: STRUCT) using compression type 'LZ4'
+
+
+statement ok
+DROP TABLE lvl_empty_struct;
+
+statement ok
 CREATE TABLE lvl_tuple_rle (a INTEGER PRIMARY KEY,
                             t TUPLE(INTEGER, INTEGER) USING COMPRESSION rle,
                             u UNION(n INTEGER, m SMALLINT) USING COMPRESSION rle) WITH (compaction_interval = 0);

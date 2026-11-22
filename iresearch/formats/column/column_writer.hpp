@@ -141,7 +141,7 @@ class ColumnWriter final {
   }
 
   bool LayoutMatches(const ColumnReader& column) const noexcept;
-  codecs::CodecType ForcedCodec() const;
+  codecs::CodecType ForcedCodec(duckdb::PhysicalType physical) const;
   bool ValidityCopyable(const ColumnReader& column, uint64_t first,
                         uint64_t end) const noexcept;
   void CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
@@ -150,6 +150,8 @@ class ColumnWriter final {
                     uint64_t first, uint64_t end);
   void DecodeRows(const ColumnReader& column, ReadContext& source,
                   uint64_t first, uint64_t count);
+  void CopyFloatArrayRows(const ColumnReader& column, ReadContext& source,
+                          uint64_t first, uint64_t count);
 
   void SealRowGroup();
   void SealStaged(const WriteRows& rows);

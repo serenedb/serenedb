@@ -31,183 +31,141 @@
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 
-namespace irs::codecs {
+namespace irs::codecs::numeric {
 
 template<typename T>
-struct Raw final : State {
+class Raw {
+ public:
   static constexpr StateId kId = StateId::Raw;
+  static constexpr Shape kShape = Shape::Plain;
 
-  explicit Raw(ColumnDataCheckpointData&) {}
+  using Value = T;
 
-  Analysis analysis[2];
+  Raw(ColumnDataCheckpointData& data, double)
+    : _values{data.Get<Values<T>>()} {}
+
+  Items GetItems() const noexcept {
+    return {
+      .stored = _values.Usable() ? uint8_t{sizeof(T)} : uint8_t{0},
+      .count = static_cast<uint32_t>(_values.Size()),
+    };
+  }
+
+  std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
+                                 ScratchVector<uint8_t>&) {
+    return {reinterpret_cast<const uint8_t*>(_values.Get().data()) +
+              size_t{begin} * sizeof(T),
+            size_t{count} * sizeof(T)};
+  }
+
+  PlainHeader Header(const Geometry&) const noexcept { return {}; }
+
+  void Open(NumericFrameMeta&, uint32_t) const noexcept {}
+
+ private:
+  Values<T>& _values;
 };
 
 template<typename T>
-Items RawItems(ColumnDataCheckpointData& data, FrameStore store) {
-  const auto& values = data.Get<Values<T>>();
-  return {
-    .shape = Shape::Plain,
-    .store = store,
-    .stored = values.Usable() ? uint8_t{sizeof(T)} : uint8_t{0},
-    .count = static_cast<uint32_t>(values.Size()),
-  };
-}
-
-template<typename T>
-auto RawFrames(ColumnDataCheckpointData& data) {
-  return Slices(sizeof(T), [&data] {
-    return reinterpret_cast<const uint8_t*>(data.Get<Values<T>>().Get().data());
-  });
-}
-
-template<typename T>
-double AnalyzeRaw(ColumnDataCheckpointData& data, double bound,
-                  FrameStore store) {
-  return AnalyzeFrames<T>(data, RawItems<T>(data, store),
-                          data.Get<Raw<T>>().analysis[store.shuffled], bound,
-                          RawFrames<T>(data));
-}
-
-template<typename T>
-bool CompressRaw(const Codec& codec, ColumnDataCheckpointData& data,
-                 FrameStore store) {
-  return CompressFrames<T>(codec, data, RawItems<T>(data, store),
-                           data.Get<Raw<T>>().analysis[store.shuffled],
-                           PlainHeader{}, RawFrames<T>(data));
-}
-
-template<typename T, ByteCodec kLeaf, bool kShuffled>
-inline constexpr auto& kRaw =
-  kStoredFrames<AnalyzeRaw<T>, CompressRaw<T>, kLeaf, kShuffled>;
-
-template<typename T>
-struct For final : State {
+class For {
+ public:
   static constexpr StateId kId = StateId::For;
+  static constexpr Shape kShape = Shape::Plain;
 
-  explicit For(ColumnDataCheckpointData&) {}
+  using Value = T;
+  using U = Bits<sizeof(T)>;
 
-  ScratchVector<uint8_t> narrowed;
-  Analysis analysis[2];
+  For(ColumnDataCheckpointData& data, double) : _values{data.Get<Values<T>>()} {
+    if constexpr (sizeof(T) > 1) {
+      if (_values.Usable()) {
+        const auto reference = _values.GetReference();
+        _lo = reference.lo;
+        _stored = reference.stored < sizeof(T) ? reference.stored : uint8_t{0};
+      }
+    }
+  }
+
+  Items GetItems() const noexcept {
+    return {
+      .stored = _stored,
+      .count = static_cast<uint32_t>(_values.Size()),
+    };
+  }
+
+  std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
+                                 ScratchVector<uint8_t>&) {
+    if constexpr (sizeof(T) > 1) {
+      if (_narrowed.empty()) {
+        const auto rows = _values.Get();
+        _narrowed.resize(rows.size() * _stored);
+        Narrow<sizeof(T) / 2>(rows.size(), _stored, _narrowed.data(),
+                              [v = rows.data(), lo = _lo](size_t i) {
+                                return static_cast<U>(v[i] - lo);
+                              });
+      }
+    }
+    return {_narrowed.data() + size_t{begin} * _stored,
+            size_t{count} * _stored};
+  }
+
+  PlainHeader Header(const Geometry&) const noexcept { return {.base = _lo}; }
+
+  void Open(NumericFrameMeta&, uint32_t) const noexcept {}
+
+ private:
+  Values<T>& _values;
+  ScratchVector<uint8_t> _narrowed;
+  U _lo = 0;
+  uint8_t _stored = 0;
 };
 
 template<typename T>
-Items ForItems(ColumnDataCheckpointData& data, FrameStore store) {
-  auto& values = data.Get<Values<T>>();
-  uint8_t stored = 0;
-  if constexpr (sizeof(T) > 1) {
-    if (values.Usable() && values.GetReference().stored < sizeof(T)) {
-      stored = values.GetReference().stored;
-    }
-  }
-  return {
-    .shape = Shape::Plain,
-    .store = store,
-    .stored = stored,
-    .count = static_cast<uint32_t>(values.Size()),
-  };
-}
-
-template<typename T>
-const uint8_t* Narrowed(ColumnDataCheckpointData& data) {
-  auto& narrowed = data.Get<For<T>>().narrowed;
-  if constexpr (sizeof(T) > 1) {
-    if (narrowed.empty()) {
-      auto& values = data.Get<Values<T>>();
-      const auto rows = values.Get();
-      const auto reference = values.GetReference();
-      narrowed.resize(rows.size() * reference.stored);
-      numeric::Narrow<sizeof(T) / 2>(
-        rows.size(), reference.stored, narrowed.data(),
-        [v = rows.data(), lo = reference.lo](size_t i) {
-          return static_cast<numeric::Bits<sizeof(T)>>(v[i] - lo);
-        });
-    }
-  }
-  return narrowed.data();
-}
-
-template<typename T>
-double AnalyzeFor(ColumnDataCheckpointData& data, double bound,
-                  FrameStore store) {
-  const auto items = ForItems<T>(data, store);
-  return AnalyzeFrames<T>(
-    data, items, data.Get<For<T>>().analysis[store.shuffled], bound,
-    Slices(items.stored, [&] { return Narrowed<T>(data); }));
-}
-
-template<typename T>
-bool CompressFor(const Codec& codec, ColumnDataCheckpointData& data,
-                 FrameStore store) {
-  const auto items = ForItems<T>(data, store);
-  if (!Offered(items)) {
-    return false;
-  }
-  return CompressFrames<T>(
-    codec, data, items, data.Get<For<T>>().analysis[store.shuffled],
-    PlainHeader{.base = data.Get<Values<T>>().GetReference().lo},
-    Slices(items.stored, [&] { return Narrowed<T>(data); }));
-}
-
-template<typename T, ByteCodec kLeaf, bool kShuffled>
-inline constexpr auto& kFor =
-  kStoredFrames<AnalyzeFor<T>, CompressFor<T>, kLeaf, kShuffled>;
-
-template<typename T>
-struct Bitpacking final : State {
+class Bitpacking {
+ public:
   static constexpr StateId kId = StateId::Bitpacking;
+  static constexpr Shape kShape = Shape::Plain;
 
-  explicit Bitpacking(ColumnDataCheckpointData&) {}
+  using Value = T;
+  using U = Bits<sizeof(T)>;
 
-  BitpackingBlocks<numeric::Bits<sizeof(T)>> blocks;
-  bool planned = false;
-};
-
-template<typename T>
-void PlanBitpacking(const ColumnDataCheckpointData& data,
-                    const Values<T>& values, Bitpacking<T>& state) {
-  if (state.planned) {
-    return;
+  Bitpacking(ColumnDataCheckpointData& data, double)
+    : _values{data.Get<Values<T>>()} {
+    if (!_values.Usable()) {
+      return;
+    }
+    if (_values.Sequence()) {
+      _blocks.PlanEqualSteps(_values.Size(), _values.Bounds(), _values.Step());
+      return;
+    }
+    _blocks.PlanMixed(
+      _values.Rows(), _values.Bounds(),
+      data.contested ? std::span<const uint8_t>{} : _values.NullBlocks(),
+      data.contested ? kDeltaBlocksPrice : 1.0);
   }
-  state.planned = true;
-  if (values.Sequence()) {
-    state.blocks.PlanEqualSteps(values.Size(), values.Bounds(), values.Step());
-    return;
-  }
-  state.blocks.PlanMixed(
-    values.Rows(), values.Bounds(),
-    data.contested ? std::span<const uint8_t>{} : values.NullBlocks(),
-    data.contested ? kDeltaBlocksPrice : 1.0);
-}
 
-template<typename T>
-double AnalyzeBitpacking(ColumnDataCheckpointData& data, double) {
-  auto& values = data.Get<Values<T>>();
-  if (!values.Usable()) {
-    return kNoScore;
+  Items GetItems() const noexcept {
+    return {
+      .stored = _values.Usable() ? uint8_t{sizeof(T)} : uint8_t{0},
+      .count = static_cast<uint32_t>(_values.Size()),
+    };
   }
-  auto& state = data.Get<Bitpacking<T>>();
-  PlanBitpacking(data, values, state);
-  return AnalyzeBlocks<T>(data, Shape::Plain,
-                          static_cast<uint32_t>(values.Size()),
-                          SteppedBytes<T>(state.blocks, values), 0);
-}
 
-template<typename T>
-bool CompressBitpacking(const Codec& codec, ColumnDataCheckpointData& data) {
-  auto& values = data.Get<Values<T>>();
-  if (!values.Usable()) {
-    return false;
+  uint64_t Bytes() { return SteppedBytes<T>(_blocks, _values); }
+
+  void Append(NumericFrameMeta& m, uint32_t begin, uint32_t count,
+              std::string& out) {
+    AppendStepped<T>(_blocks, _values, m, begin, count, out);
   }
-  auto& state = data.Get<Bitpacking<T>>();
-  PlanBitpacking(data, values, state);
-  CompressStepped<T>(codec, data, Shape::Plain, state.blocks, PlainHeader{});
-  return true;
-}
 
-template<typename T>
-inline constexpr CompressionFunction kBitpacking{
-  .analyze = AnalyzeBitpacking<T>,
-  .compress = CompressBitpacking<T>,
+  PlainHeader Header(const Geometry&) const noexcept { return {}; }
+
+  BlockBounds<U> Bounds(uint32_t, uint32_t, uint32_t first, uint32_t end) {
+    return _values.Bounds(first, end);
+  }
+
+ private:
+  Values<T>& _values;
+  BitpackingBlocks<U> _blocks;
 };
 
 template<typename T>
@@ -346,4 +304,4 @@ class PlainReader final : public FrameReader<T> {
   PlainHeader _own;
 };
 
-}  // namespace irs::codecs
+}  // namespace irs::codecs::numeric

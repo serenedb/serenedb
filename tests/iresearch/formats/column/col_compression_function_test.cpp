@@ -191,7 +191,7 @@ TEST_F(ColCompressionFunctionTest, AutoStoresAConstantRowGroupConstant) {
   Fill(kManyRows, [](uint64_t) { return int64_t{42}; });
   EXPECT_EQ(CompressAs(CodecType::Auto, irs::WriteTier::Merge),
             CodecType::Constant);
-  EXPECT_FALSE(HintOf(CodecType::Zstd).known);
+  EXPECT_EQ(HintOf(CodecType::Zstd).forced, 0u);
   irs::codecs::CodecSet disabled;
   disabled.set(std::to_underlying(CodecType::Constant));
   EXPECT_NE(CompressAs(CodecType::Auto, irs::WriteTier::Merge, disabled),
@@ -237,20 +237,18 @@ TEST_F(ColCompressionFunctionTest,
   const auto& dict = HintOf(CodecType::Dict);
   const auto first = CompressAs(CodecType::Auto, irs::WriteTier::Merge);
   EXPECT_EQ(first, CodecType::Bitpacking);
-  ASSERT_TRUE(zstd.known);
-  ASSERT_TRUE(dict.known);
+  ASSERT_EQ(zstd.forced, 1u);
+  ASSERT_EQ(dict.forced, 1u);
   const auto remembered = zstd.score;
-  for (unsigned age = 1; age < irs::codecs::kOldHint; ++age) {
+  for (unsigned age = 1; age <= irs::codecs::kOldHint; ++age) {
     EXPECT_EQ(CompressAs(CodecType::Auto, irs::WriteTier::Merge), first);
-    EXPECT_EQ(zstd.age, age);
-    EXPECT_EQ(dict.age, age);
+    EXPECT_EQ(zstd.forced, 1u);
+    EXPECT_EQ(dict.forced, 1u);
     EXPECT_EQ(zstd.score, remembered);
   }
   EXPECT_EQ(CompressAs(CodecType::Auto, irs::WriteTier::Merge), first);
-  EXPECT_EQ(zstd.age, irs::codecs::kOldHint);
-  EXPECT_EQ(CompressAs(CodecType::Auto, irs::WriteTier::Merge), first);
-  EXPECT_EQ(zstd.age, 0);
-  EXPECT_EQ(dict.age, 0);
+  EXPECT_EQ(zstd.forced, irs::codecs::kOldHint + 2);
+  EXPECT_EQ(dict.forced, irs::codecs::kOldHint + 2);
 }
 
 TEST_F(ColCompressionFunctionTest,
@@ -259,12 +257,12 @@ TEST_F(ColCompressionFunctionTest,
   CompressAs(CodecType::Auto, irs::WriteTier::Merge);
   CompressAs(CodecType::Auto, irs::WriteTier::Merge);
   const auto& hint = HintOf(CodecType::RleZstd);
-  ASSERT_TRUE(hint.known);
-  const auto facts = hint.facts;
+  ASSERT_NE(hint.forced, 0u);
+  const auto features = hint.features;
   Fill(kManyRows,
        [](uint64_t i) { return static_cast<int64_t>(i / 64 % 1000); });
   CompressAs(CodecType::Auto, irs::WriteTier::Merge);
-  EXPECT_NE(hint.facts, facts);
+  EXPECT_NE(hint.features, features);
 }
 
 TEST_F(ColCompressionFunctionTest, TheWinnerIsMeasuredInItsOwnRowGroup) {
@@ -272,7 +270,7 @@ TEST_F(ColCompressionFunctionTest, TheWinnerIsMeasuredInItsOwnRowGroup) {
     return static_cast<int64_t>((i * 2654435761ULL) % 7919 * 1000003);
   });
   const auto winner = CompressAs(CodecType::Auto, irs::WriteTier::Merge);
-  ASSERT_TRUE(HintOf(winner).known) << magic_enum::enum_name(winner);
+  ASSERT_NE(HintOf(winner).forced, 0u) << magic_enum::enum_name(winner);
   for (int rg = 0; rg < 4; ++rg) {
     EXPECT_EQ(CompressAs(CodecType::Auto, irs::WriteTier::Merge), winner);
     EXPECT_LT(HintOf(winner).score, irs::codecs::kNoScore);
@@ -284,7 +282,7 @@ TEST_F(ColCompressionFunctionTest, ACandidateThatWasNotMeasuredIsNotStored) {
   ASSERT_EQ(CompressAs(CodecType::Auto, irs::WriteTier::Merge),
             CodecType::Bitpacking);
   auto& zstd = _tuning.hints[std::to_underlying(CodecType::Zstd)];
-  ASSERT_TRUE(zstd.known);
+  ASSERT_NE(zstd.forced, 0u);
   const auto close = HintOf(CodecType::Bitpacking).score * 0.99;
   zstd.score = close;
   EXPECT_EQ(CompressAs(CodecType::Auto, irs::WriteTier::Merge),
@@ -293,39 +291,38 @@ TEST_F(ColCompressionFunctionTest, ACandidateThatWasNotMeasuredIsNotStored) {
 }
 
 TEST(ColHintTest, TheShiftIsTheLargestRatioBetweenThenAndNow) {
-  using irs::codecs::Facts;
+  using irs::codecs::Features;
   using irs::codecs::Shift;
-  EXPECT_EQ(Shift(Facts{8, 0.5F, 0}, Facts{8, 0.5F, 0}), 1.0);
-  EXPECT_DOUBLE_EQ(Shift(Facts{8, 0.5F, 0}, Facts{16, 0.5F, 0}), 2.0);
-  EXPECT_DOUBLE_EQ(Shift(Facts{8, 0.25F, 0}, Facts{6, 0.5F, 0}), 2.0);
-  EXPECT_EQ(Shift(Facts{8, 0, 0}, Facts{8, 0.5F, 0}), irs::codecs::kNoScore);
+  EXPECT_EQ(Shift(Features{8, 0.5F, 0}, Features{8, 0.5F, 0}), 1.0);
+  EXPECT_DOUBLE_EQ(Shift(Features{8, 0.5F, 0}, Features{16, 0.5F, 0}), 2.0);
+  EXPECT_DOUBLE_EQ(Shift(Features{8, 0.25F, 0}, Features{6, 0.5F, 0}), 2.0);
+  EXPECT_EQ(Shift(Features{8, 0, 0}, Features{8, 0.5F, 0}),
+            irs::codecs::kNoScore);
 }
 
 TEST(ColHintTest, AShiftBelowTheLeastOneDoesNotCount) {
-  using irs::codecs::Facts;
+  using irs::codecs::Features;
   using irs::codecs::Hint;
-  using irs::codecs::Hinted;
-  using irs::codecs::kNoScore;
-  unsigned measured = 0;
-  const auto measure = [&](bool) {
-    ++measured;
-    return 0.9;
-  };
-  Hint hint{.facts = {10, 0.5F, 0}, .score = 1.0, .known = true};
-  EXPECT_EQ(Hinted(hint, 0.95, Facts{14, 0.5F, 0}, 1.5, measure), kNoScore);
-  EXPECT_EQ(measured, 0);
-  EXPECT_EQ(hint.age, 1);
-  EXPECT_EQ(Hinted(hint, 0.95, Facts{16, 0.5F, 0}, 1.5, measure), 0.9);
-  EXPECT_EQ(measured, 1);
-  EXPECT_EQ(hint.age, 0);
-  EXPECT_EQ(hint.facts, (Facts{16, 0.5F, 0}));
+  using irs::codecs::Measures;
+  const Hint hint{.features = {10, 0.5F, 0}, .score = 1.0, .forced = 1};
+  EXPECT_FALSE(Measures(hint, 0.95, Features{14, 0.5F, 0}, 1.5));
+  EXPECT_TRUE(Measures(hint, 0.95, Features{16, 0.5F, 0}, 1.5));
+  EXPECT_TRUE(Measures(hint, 0.95, Features{14, 0.5F, 0}, 1.0));
 
-  Hint nothing{.facts = {10, 0.5F, 0}, .known = true};
-  EXPECT_EQ(Hinted(nothing, 0.95, Facts{10.5F, 0.5F, 0}, 1.5, measure),
-            kNoScore);
-  EXPECT_EQ(measured, 1);
-  EXPECT_EQ(Hinted(nothing, 0.95, Facts{12, 0.5F, 0}, 1.5, measure), 0.9);
-  EXPECT_EQ(measured, 2);
+  const Hint nothing{.features = {10, 0.5F, 0}, .forced = 1};
+  EXPECT_FALSE(Measures(nothing, 0.95, Features{10.5F, 0.5F, 0}, 1.5));
+  EXPECT_TRUE(Measures(nothing, 0.95, Features{12, 0.5F, 0}, 1.5));
+}
+
+TEST(ColHintTest, ACandidateIsAskedAgainOnceItsLastForcedAskIsOld) {
+  using irs::codecs::Forgotten;
+  using irs::codecs::Hint;
+  using irs::codecs::kOldHint;
+  EXPECT_TRUE(Forgotten(Hint{}, 1));
+  const Hint hint{.forced = 3};
+  EXPECT_FALSE(Forgotten(hint, 3));
+  EXPECT_FALSE(Forgotten(hint, 3 + kOldHint));
+  EXPECT_TRUE(Forgotten(hint, 3 + kOldHint + 1));
 }
 
 TEST(ColHintTest, AFormMeasuresWhenItsCreditedAnswerWouldWin) {

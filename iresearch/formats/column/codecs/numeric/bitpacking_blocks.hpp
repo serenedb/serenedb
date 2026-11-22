@@ -37,7 +37,7 @@
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 
-namespace irs::codecs {
+namespace irs::codecs::numeric {
 
 template<typename V>
 class BlockRows {
@@ -600,4 +600,4 @@ class BitpackingBlocks {
   ScratchVector<numeric::LaneWord<V>> _words;
 };
 
-}  // namespace irs::codecs
+}  // namespace irs::codecs::numeric

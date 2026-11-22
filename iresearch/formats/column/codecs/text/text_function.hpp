@@ -41,7 +41,6 @@
 namespace irs::codecs::text {
 
 inline constexpr double kOtherShapeWinsBelow = 0.9;
-inline constexpr double kLeastTextShift = 1.5;
 inline constexpr double kOtherShapeMinSaving = 4096;
 
 inline double ShapeCost(Shape shape, bool repeats, double bytes) noexcept {
@@ -66,29 +65,30 @@ inline Config NamedConfig(Shape shape, ByteCodec leaf,
   };
 }
 
-struct Contest final : State {
-  static constexpr StateId kId = StateId::TextContest;
+struct Window final : State {
+  static constexpr StateId kId = StateId::TextWindow;
 
-  struct Window {
-    uint64_t rows = 0;
-    uint64_t input = 0;
-    uint64_t nulls = 0;
-    uint32_t max_len = 0;
-  };
+  explicit Window(ColumnDataCheckpointData&) {}
 
-  explicit Contest(ColumnDataCheckpointData&) {}
-
-  Window trial;
-  uint64_t built[kTextShapeCount] = {};
-  bool shapes_measured = false;
-  bool contends[kTextShapeCount] = {};
+  uint64_t rows = 0;
+  uint64_t input = 0;
+  uint64_t nulls = 0;
+  uint32_t max_len = 0;
 };
 
-inline double Score(const Values& values, const Contest& contest, Shape shape,
+inline double Score(const Values& values, const Window& window, Shape shape,
                     double price, uint64_t bytes) {
   return ShapeCost(shape, values.Repeats(), static_cast<double>(bytes)) *
-         price /
-         static_cast<double>(std::max<uint64_t>(contest.trial.input, 1));
+         price / static_cast<double>(std::max<uint64_t>(window.input, 1));
+}
+
+inline bool Contends(const Values& values, const CodecSet& disabled,
+                     Shape shape) noexcept {
+  return shape == Shape::Dictionary || !values.Repeats() ||
+         (disabled.test(
+            std::to_underlying(CodecOf(Shape::Dictionary, ByteCodec::Fsst))) &&
+          disabled.test(
+            std::to_underlying(CodecOf(Shape::Dictionary, ByteCodec::Lz4))));
 }
 
 template<typename Compression>
@@ -210,7 +210,7 @@ const Segment* Find(const CodecState<Compression>& state,
 
 template<typename Compression>
 Segment& Trial(CodecState<Compression>& state, const Config& config,
-               const Values& values, Contest& contest, uint32_t target) {
+               const Values& values, Window& window, uint32_t target) {
   for (const auto& trial : state.trials) {
     if (trial->config == config) {
       return *trial;
@@ -218,69 +218,48 @@ Segment& Trial(CodecState<Compression>& state, const Config& config,
   }
   auto& seg = *state.trials.emplace_back(
     std::make_unique<Segment>(state.buffers, state.type));
-  if (contest.trial.rows != 0) {
-    CompressRange(state.builder, config, values, 0, contest.trial.rows, seg);
+  if (window.rows != 0) {
+    CompressRange(state.builder, config, values, 0, window.rows, seg);
   } else {
     CutRows(state.builder, config, values, 0, target, seg);
-    contest.trial = {
-      .rows = seg.rows,
-      .input = seg.input,
-      .nulls = seg.nulls,
-      .max_len = seg.max_len,
-    };
+    window.rows = seg.rows;
+    window.input = seg.input;
+    window.nulls = seg.nulls;
+    window.max_len = seg.max_len;
   }
-  auto& built = contest.built[std::to_underlying(Compression::kShape)];
-  built = built == 0 ? seg.Size() : std::min<uint64_t>(built, seg.Size());
   return seg;
 }
 
-bool Contends(ColumnDataCheckpointData& data, Shape shape);
-
 template<typename Compression>
-bool Contests(CodecState<Compression>& state, ColumnDataCheckpointData& data,
-              bool moved) {
+bool Contests(CodecState<Compression>& state, ColumnDataCheckpointData& data) {
   constexpr auto kShape = Compression::kShape;
   constexpr auto kLeaf = Compression::kCodec;
   const auto& values = data.Get<Values>();
   if (values.Rows() == 0) {
     return false;
   }
-  auto& contest = data.Get<Contest>();
+  auto& window = data.Get<Window>();
   state.config = {.shape = kShape, .leaf = kLeaf};
   const auto& tuned = data.tuning.strings.config;
-  if (contest.trial.rows == 0 && tuned && tuned->shape == kShape &&
+  if (window.rows == 0 && tuned && tuned->shape == kShape &&
       tuned->leaf == kLeaf) {
-    Trial(state, *tuned, values, contest, data.params.segment_target);
+    Trial(state, *tuned, values, window, data.params.segment_target);
   }
-  return (!moved && contest.trial.rows != 0) || Contends(data, kShape);
-}
-
-template<typename Compression, typename Measure>
-double AnalyzeHinted(ColumnDataCheckpointData& data, double bound,
-                     Measure&& measure) {
-  const auto& values = data.Get<Values>();
-  const auto codec = CodecOf(Compression::kShape, Compression::kCodec);
-  return Hinted(data.tuning.hints[std::to_underlying(codec)], bound,
-                values.Statistics(), kLeastTextShift, [&](bool moved) {
-                  return measure(data.Get<CodecState<Compression>>(), values,
-                                 moved);
-                });
+  return Contends(values, data.disabled, kShape);
 }
 
 template<typename Compression>
-double AnalyzeTrial(ColumnDataCheckpointData& data, double bound) {
-  return AnalyzeHinted<Compression>(
-    data, bound,
-    [&](CodecState<Compression>& state, const Values& values, bool moved) {
-      if (!Contests(state, data, moved)) {
-        return kNoScore;
-      }
-      auto& contest = data.Get<Contest>();
-      const auto bytes =
-        Trial(state, state.config, values, contest, data.params.segment_target)
-          .Size();
-      return Score(values, contest, Compression::kShape, 1.0, bytes);
-    });
+double AnalyzeTrial(ColumnDataCheckpointData& data, double) {
+  auto& state = data.Get<CodecState<Compression>>();
+  if (!Contests(state, data)) {
+    return kNoScore;
+  }
+  const auto& values = data.Get<Values>();
+  auto& window = data.Get<Window>();
+  const auto bytes =
+    Trial(state, state.config, values, window, data.params.segment_target)
+      .Size();
+  return Score(values, window, Compression::kShape, data.price, bytes);
 }
 
 template<typename Compression>
@@ -293,7 +272,7 @@ void CompressAs(const Config& config, const Codec& codec,
     const auto& values = data.Get<Values>();
     uint64_t begin = 0;
     if (Find(state, config)) {
-      auto& first = Trial(state, config, values, data.Get<Contest>(),
+      auto& first = Trial(state, config, values, data.Get<Window>(),
                           data.params.segment_target);
       Flush(codec, data, first);
       begin = first.begin + first.rows;
@@ -307,11 +286,11 @@ template<typename Compression>
 bool CompressContested(const Codec& codec, ColumnDataCheckpointData& data) {
   auto& state = data.Get<CodecState<Compression>>();
   const auto& values = data.Get<Values>();
-  auto& contest = data.Get<Contest>();
-  SDB_ASSERT(contest.trial.rows != 0);
+  auto& window = data.Get<Window>();
+  SDB_ASSERT(window.rows != 0);
   data.tuning.strings.config = state.config;
   auto& first =
-    Trial(state, state.config, values, contest, data.params.segment_target);
+    Trial(state, state.config, values, window, data.params.segment_target);
   if (first.Size() > PlainStorageBytes(first)) {
     return false;
   }

@@ -37,7 +37,7 @@
 #include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
-namespace irs::codecs {
+namespace irs::codecs::numeric {
 
 inline constexpr uint8_t kLeastDictionaryValueBytes = 2;
 inline constexpr uint32_t kMostNarrowDictionaryEntries = 256;
@@ -47,24 +47,7 @@ inline constexpr size_t kDictionaryCodeBytes =
   std::min<size_t>(sizeof(T) / 2, numeric::BytesFor(kNumericDictMax - 1));
 
 template<typename T>
-struct Entries final : State {
-  static_assert(sizeof(T) > 1);
-  static constexpr StateId kId = StateId::Entries;
-
-  explicit Entries(ColumnDataCheckpointData&) {}
-
-  std::vector<numeric::Bits<sizeof(T)>> values;
-  containers::FlatHashMap<numeric::Bits<sizeof(T)>, uint32_t> index;
-  ScratchVector<uint32_t> codes;
-  bool built = false;
-  bool fits = false;
-};
-
-template<typename T>
-std::span<const uint8_t> EntryBytes(const Entries<T>& entries) noexcept {
-  return {reinterpret_cast<const uint8_t*>(entries.values.data()),
-          entries.values.size() * sizeof(T)};
-}
+struct Entries;
 
 template<typename T>
 bool CollectEntries(BlockRows<numeric::Bits<sizeof(T)>> rows, uint32_t cap,
@@ -121,19 +104,20 @@ bool CollectEntries(BlockRows<numeric::Bits<sizeof(T)>> rows, uint32_t cap,
 }
 
 template<typename T>
-Entries<T>* BuildEntries(ColumnDataCheckpointData& data, double bound) {
-  auto& values = data.Get<Values<T>>();
-  if (!values.Usable()) {
-    return nullptr;
-  }
-  const auto stored = values.GetReference().stored;
-  if (data.contested && stored < kLeastDictionaryValueBytes) {
-    return nullptr;
-  }
-  auto& entries = data.Get<Entries<T>>();
-  if (!entries.built) {
-    entries.built = true;
-    const auto rows = values.Raw();
+struct Entries final : State {
+  static_assert(sizeof(T) > 1);
+  static constexpr StateId kId = StateId::Entries;
+
+  Entries(ColumnDataCheckpointData& data, double bound) {
+    auto& input = data.Get<Values<T>>();
+    if (!input.Usable()) {
+      return;
+    }
+    const auto stored = input.GetReference().stored;
+    if (data.contested && stored < kLeastDictionaryValueBytes) {
+      return;
+    }
+    const auto rows = input.Raw();
     auto cap = stored >= 4 || !data.contested ? kNumericDictMax
                                               : kMostNarrowDictionaryEntries;
     if (const auto affordable =
@@ -143,148 +127,145 @@ Entries<T>* BuildEntries(ColumnDataCheckpointData& data, double bound) {
         affordable > 1 ? static_cast<uint32_t>(std::ceil(affordable)) - 1 : 0;
     }
     auto& expected = data.tuning.dictionary_entries;
-    entries.fits = CollectEntries<T>(rows, cap, expected, entries);
-    expected = static_cast<uint32_t>(entries.index.size());
-    if (const auto scale = values.Scale(); entries.fits && scale > 1) {
-      numeric::DivideExact<Values<T>::kSigned>(entries.values.data(),
-                                               entries.values.size(), scale,
-                                               entries.values.data());
+    fits = CollectEntries<T>(rows, cap, expected, *this);
+    expected = static_cast<uint32_t>(index.size());
+    if (const auto scale = input.Scale(); fits && scale > 1) {
+      numeric::DivideExact<Values<T>::kSigned>(values.data(), values.size(),
+                                               scale, values.data());
     }
   }
-  return entries.fits ? &entries : nullptr;
+
+  std::vector<numeric::Bits<sizeof(T)>> values;
+  containers::FlatHashMap<numeric::Bits<sizeof(T)>, uint32_t> index;
+  ScratchVector<uint32_t> codes;
+  bool fits = false;
+};
+
+template<typename T>
+std::span<const uint8_t> EntryBytes(const Entries<T>& entries) noexcept {
+  return {reinterpret_cast<const uint8_t*>(entries.values.data()),
+          entries.values.size() * sizeof(T)};
 }
 
 template<typename T>
-struct Dict final : State {
+class Dict {
+ public:
   static constexpr StateId kId = StateId::Dict;
+  static constexpr Shape kShape = Shape::Dictionary;
 
-  explicit Dict(ColumnDataCheckpointData&) {}
+  using Value = T;
 
-  ScratchVector<uint8_t> codes;
-  Analysis analysis[2];
+  Dict(ColumnDataCheckpointData& data, double bound)
+    : _entries{data.Get<Entries<T>>(bound)} {
+    if (_entries.fits) {
+      const auto width = numeric::BytesFor(_entries.values.size() - 1);
+      _stored = width <= kDictionaryCodeBytes<T> ? width : uint8_t{0};
+    }
+  }
+
+  Items GetItems() const noexcept {
+    if (!_entries.fits) {
+      return {};
+    }
+    return {
+      .stored = _stored,
+      .count = static_cast<uint32_t>(_entries.codes.size()),
+      .dictionary = EntryBytes(_entries),
+    };
+  }
+
+  std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
+                                 ScratchVector<uint8_t>&) {
+    if (_codes.empty()) {
+      const auto& wide = _entries.codes;
+      _codes.resize(wide.size() * _stored);
+      Narrow<kDictionaryCodeBytes<T>>(
+        wide.size(), _stored, _codes.data(),
+        [k = wide.data()](size_t i) { return k[i]; });
+    }
+    return {_codes.data() + size_t{begin} * _stored, size_t{count} * _stored};
+  }
+
+  DictionaryHeader Header(const Geometry& geometry) const noexcept {
+    return {
+      .count = static_cast<uint32_t>(_entries.values.size()),
+      .offset = FrameTableEnd(geometry),
+    };
+  }
+
+  void Open(NumericFrameMeta&, uint32_t) const noexcept {}
+
+ private:
+  const Entries<T>& _entries;
+  ScratchVector<uint8_t> _codes;
+  uint8_t _stored = 0;
 };
 
 template<typename T>
-Items DictItems(ColumnDataCheckpointData& data, FrameStore store,
-                double bound) {
-  const auto* entries = BuildEntries<T>(data, bound);
-  if (!entries) {
-    return {};
-  }
-  const auto width = numeric::BytesFor(entries->values.size() - 1);
-  return {
-    .shape = Shape::Dictionary,
-    .store = store,
-    .stored = width <= kDictionaryCodeBytes<T> ? width : uint8_t{0},
-    .count = static_cast<uint32_t>(entries->codes.size()),
-    .dictionary = EntryBytes(*entries),
-  };
-}
-
-template<typename T>
-const uint8_t* NarrowCodes(ColumnDataCheckpointData& data, uint8_t width) {
-  auto& codes = data.Get<Dict<T>>().codes;
-  if (codes.empty()) {
-    const auto& wide = data.Get<Entries<T>>().codes;
-    codes.resize(wide.size() * width);
-    numeric::Narrow<kDictionaryCodeBytes<T>>(
-      wide.size(), width, codes.data(),
-      [k = wide.data()](size_t i) { return k[i]; });
-  }
-  return codes.data();
-}
-
-template<typename T>
-double AnalyzeDict(ColumnDataCheckpointData& data, double bound,
-                   FrameStore store) {
-  const auto items = DictItems<T>(data, store, bound);
-  return AnalyzeFrames<T>(
-    data, items, data.Get<Dict<T>>().analysis[store.shuffled], bound,
-    Slices(items.stored, [&] { return NarrowCodes<T>(data, items.stored); }));
-}
-
-template<typename T>
-bool CompressDict(const Codec& codec, ColumnDataCheckpointData& data,
-                  FrameStore store) {
-  const auto items = DictItems<T>(data, store, kNoScore);
-  if (!Offered(items)) {
-    return false;
-  }
-  return CompressFrames<T>(
-    codec, data, items, data.Get<Dict<T>>().analysis[store.shuffled],
-    DictionaryHeader{
-      .count = static_cast<uint32_t>(items.dictionary.size() / sizeof(T)),
-      .offset = FrameTableEnd(GeometryOf(items, Scaled<T>(data))),
-    },
-    Slices(items.stored, [&] { return NarrowCodes<T>(data, items.stored); }));
-}
-
-template<typename T, ByteCodec kLeaf, bool kShuffled>
-inline constexpr auto& kDict =
-  kStoredFrames<AnalyzeDict<T>, CompressDict<T>, kLeaf, kShuffled>;
-
-template<typename T>
-struct DictBitpacking final : State {
+class DictBitpacking {
+ public:
   static constexpr StateId kId = StateId::DictBitpacking;
+  static constexpr Shape kShape = Shape::Dictionary;
 
-  explicit DictBitpacking(ColumnDataCheckpointData&) {}
+  using Value = T;
+  using U = Bits<sizeof(T)>;
 
-  BitpackingBlocks<uint32_t> blocks;
-  bool planned = false;
-};
-
-template<typename T>
-const Entries<T>* PlanDictBitpacking(ColumnDataCheckpointData& data,
-                                     DictBitpacking<T>& state, double bound) {
-  const auto* entries = BuildEntries<T>(data, bound);
-  if (entries && !state.planned) {
-    state.planned = true;
-    state.blocks.template Plan<false>(
-      BlockRows<uint32_t>{std::span<const uint32_t>{entries->codes}});
+  DictBitpacking(ColumnDataCheckpointData& data, double bound)
+    : _values{data.Get<Values<T>>()}, _entries{data.Get<Entries<T>>(bound)} {
+    if (_entries.fits) {
+      _blocks.template Plan<false>(Codes());
+    }
   }
-  return entries;
-}
 
-template<typename T>
-double AnalyzeDictBitpacking(ColumnDataCheckpointData& data, double bound) {
-  auto& state = data.Get<DictBitpacking<T>>();
-  const auto* entries = PlanDictBitpacking(data, state, bound);
-  if (!entries) {
-    return kNoScore;
+  Items GetItems() const noexcept {
+    if (!_entries.fits) {
+      return {};
+    }
+    return {
+      .stored = sizeof(T),
+      .count = static_cast<uint32_t>(_entries.codes.size()),
+      .dictionary = EntryBytes(_entries),
+    };
   }
-  return AnalyzeBlocks<T>(
-    data, Shape::Dictionary, static_cast<uint32_t>(entries->codes.size()),
-    state.blocks.Bytes(
-      kBitpackingFrameRows,
-      numeric::BytesFor(static_cast<uint32_t>(entries->values.size() - 1))),
-    EntryBytes(*entries).size());
-}
 
-template<typename T>
-bool CompressDictBitpacking(const Codec& codec,
-                            ColumnDataCheckpointData& data) {
-  auto& state = data.Get<DictBitpacking<T>>();
-  const auto* entries = PlanDictBitpacking(data, state, kNoScore);
-  if (!entries) {
-    return false;
+  uint64_t Bytes() const noexcept {
+    return _blocks.Bytes(kBitpackingFrameRows, Stored().bytes);
   }
-  const auto dictionary = EntryBytes(*entries);
-  const auto n = static_cast<uint32_t>(entries->codes.size());
-  CompressBlocks<T>(
-    codec, data, Shape::Dictionary, state.blocks,
-    std::span<const uint32_t>{entries->codes}, dictionary,
-    DictionaryHeader{
-      .count = static_cast<uint32_t>(entries->values.size()),
-      .offset = FrameTableEnd(PackedGeometry(
-        Shape::Dictionary, n, dictionary.size(), sizeof(T), Scaled<T>(data))),
-    });
-  return true;
-}
 
-template<typename T>
-inline constexpr CompressionFunction kDictBitpacking{
-  .analyze = AnalyzeDictBitpacking<T>,
-  .compress = CompressDictBitpacking<T>,
+  void Append(NumericFrameMeta&, uint32_t begin, uint32_t count,
+              std::string& out) {
+    _blocks.Append(
+      Codes(), begin / numeric::kBlockValues,
+      (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues,
+      Stored(), out);
+  }
+
+  DictionaryHeader Header(const Geometry& geometry) const noexcept {
+    return {
+      .count = static_cast<uint32_t>(_entries.values.size()),
+      .offset = FrameTableEnd(geometry),
+    };
+  }
+
+  BlockBounds<U> Bounds(uint32_t, uint32_t, uint32_t first, uint32_t end) {
+    return _values.Bounds(first, end);
+  }
+
+ private:
+  BlockRows<uint32_t> Codes() const noexcept {
+    return BlockRows<uint32_t>{std::span<const uint32_t>{_entries.codes}};
+  }
+
+  BlockBases<uint32_t> Stored() const noexcept {
+    return {
+      .bytes =
+        numeric::BytesFor(static_cast<uint32_t>(_entries.values.size() - 1)),
+    };
+  }
+
+  Values<T>& _values;
+  const Entries<T>& _entries;
+  BitpackingBlocks<uint32_t> _blocks;
 };
 
 template<typename T>
@@ -471,4 +452,4 @@ class DictionaryReader final : public FrameReader<T> {
   ScratchVector<uint32_t> _codes;
 };
 
-}  // namespace irs::codecs
+}  // namespace irs::codecs::numeric

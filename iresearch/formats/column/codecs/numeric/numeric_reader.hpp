@@ -48,7 +48,7 @@
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
-namespace irs::codecs {
+namespace irs::codecs::numeric {
 
 inline constexpr uint64_t kNoRow = std::numeric_limits<uint64_t>::max();
 
@@ -938,4 +938,4 @@ class FrameReader {
   std::optional<Zstd::Decompressor> _zstd;
 };
 
-}  // namespace irs::codecs
+}  // namespace irs::codecs::numeric

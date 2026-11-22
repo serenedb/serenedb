@@ -62,7 +62,7 @@ struct Config {
 
 }  // namespace text
 
-struct Lz4Tuning {
+struct FrameTuning {
   bool tuned = false;
   uint8_t level = 0;
   FrameDictionary layout = FrameDictionary::None;
@@ -77,7 +77,7 @@ struct OrderTuning {
 
 struct StringTuning {
   std::optional<text::Config> config;
-  Lz4Tuning lz4[kTextShapeCount];
+  FrameTuning frames[kByteCodecCount][kTextShapeCount];
   OrderTuning order[kByteCodecCount];
   RatioHistory history[kByteCodecCount][kShapeCount]{};
   double codes_ratio = 0;

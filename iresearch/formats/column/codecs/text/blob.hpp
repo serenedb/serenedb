@@ -349,6 +349,396 @@ class CompressionState {
   std::vector<FrameMeta> _frames;
 };
 
+inline constexpr size_t kSampleFrames = 8;
+inline constexpr uint64_t kTrialRawBytes = 512 * 1024;
+inline constexpr uint64_t kTuneMinEntries = 2;
+inline constexpr double kEstimateSlack = 0.02;
+inline constexpr double kLevelTolerance = 0.02;
+inline constexpr double kWideFramesGain = 0.03;
+inline constexpr uint64_t kRetuneGrowth = 4;
+inline constexpr size_t kMaxLevels = 4;
+
+template<typename Codec>
+class SizeEstimator {
+ public:
+  static constexpr ByteCodec kCodec = Codec::kCodec;
+  static_assert(!Sorted(kCodec));
+
+  uint64_t EstimateSize(const Profile& p, std::string_view bytes,
+                        const FrameSpans& spans, uint64_t codes_bytes,
+                        uint8_t level, FrameDictionary layout) {
+    ResetCompressor(_codec, _level, level);
+    uint64_t data = 0;
+    if (!spans.empty()) {
+      const bool whole =
+        layout == FrameDictionary::Local && spans.size() >= kLocalMinFrames;
+      SDB_ASSERT(!whole || bytes.size() == p.raw);
+      const auto frame = [&](size_t i) {
+        return whole ? bytes.substr(spans[i].offset, spans[i].raw)
+                     : Assemble(p, spans[i].first, spans[i].end);
+      };
+      bool trained = false;
+      if (whole) {
+        spans.Sizes(_sizes);
+        trained = _codec->Train(bytes, _sizes);
+      }
+      if (trained) {
+        data += _codec->Stored().size();
+      }
+      const auto first = frame(0);
+      data += CompressedSize<Codec>(first, _scratch, *_codec);
+      if (!trained && spans.Shape().first != 0 && !first.empty() &&
+          spans.size() > 1) {
+        _codec->Use(first);
+      }
+      uint64_t sampled_raw = 0;
+      uint64_t sampled = 0;
+      spans.Sample(
+        kSampleFrames, [](size_t j) { return Jitter(j); },
+        [&](size_t i) {
+          const auto raw = frame(i);
+          sampled_raw += raw.size();
+          sampled += CompressedSize<Codec>(raw, _scratch, *_codec);
+        });
+      data += Scale(sampled, sampled_raw, p.raw - spans[0].raw);
+    }
+    const auto entry_count =
+      p.codes.size() + (p.shape == Shape::Dictionary ? 1 : 0);
+    Header h;
+    return LayOut(h, data, spans.size(), Packed(entry_count, p.max_len), 0,
+                  codes_bytes, 0);
+  }
+
+ private:
+  static double Jitter(uint64_t stratum) noexcept {
+    uint64_t z = stratum + 1;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    z ^= z >> 31;
+    return static_cast<double>(z >> 11) * 0x1.0p-53;
+  }
+
+  std::string_view Assemble(const Profile& p, size_t first, size_t end) {
+    _frame.clear();
+    for (auto k = first; k < end; ++k) {
+      const auto entry = EntryOf(p, k);
+      _frame.append(entry.GetData(), entry.GetSize());
+    }
+    return _frame;
+  }
+
+  std::optional<typename Codec::Compressor> _codec;
+  uint8_t _level = 0;
+  std::string _frame;
+  std::string _scratch;
+  std::vector<size_t> _sizes;
+};
+
+template<typename Codec>
+class Tuner final : public State {
+ public:
+  static_assert(Codec::kCodec == ByteCodec::Lz4);
+  static constexpr StateId kId = StateId::TextLz4Tuner;
+
+  template<typename Rows>
+  using Candidate = CodecState<CompressionState<Codec, Rows>>;
+
+  struct Measured {
+    Config config;
+    uint64_t bytes = 0;
+  };
+
+  explicit Tuner(ColumnDataCheckpointData& data)
+    : _values{data.Get<Values>()},
+      _window{data.Get<Window>()},
+      _params{data.params},
+      _tuning{data.tuning.strings} {}
+
+  template<typename Rows, typename Score>
+  Measured Measure(Candidate<Rows>& state, double bound, Score&& score) {
+    constexpr auto kShape = Rows::kShape;
+    auto& tuning =
+      _tuning
+        .frames[std::to_underlying(Codec::kCodec)][std::to_underlying(kShape)];
+    const auto tier = _params.tier;
+    const auto levels = Levels(tier);
+    const auto held = Tuned<Rows>(tier);
+    const auto size = [&](const Config& config) { return Size(state, config); };
+    Measured measured{.config = held};
+    const auto input = _window.input;
+    if ((tuning.tuned && input < tuning.tuned_on * kRetuneGrowth) ||
+        TrialEntries() < kTuneMinEntries) {
+      measured.bytes = size(held);
+    } else {
+      measured = Tune<Rows>(levels, tier != WriteTier::Flush, size);
+      tuning = {
+        .tuned = true,
+        .level = measured.config.level,
+        .layout = measured.config.layout,
+        .tuned_on = input,
+      };
+      if constexpr (kShape == Shape::Dictionary) {
+        _tuning.order[std::to_underlying(Codec::kCodec)].sorted =
+          measured.config.sorted;
+      }
+    }
+    if (!Find(state, measured.config)) {
+      const auto priced = score(measured.bytes);
+      if (Codec::HighCompression(measured.config.level)
+            ? priced < bound
+            : priced <= bound * (1.0 + kEstimateSlack)) {
+        measured.bytes = Trial(state, measured.config, _values, _window,
+                               _params.segment_target)
+                           .Size();
+      }
+    }
+    return measured;
+  }
+
+  template<typename Rows>
+  uint64_t Size(Candidate<Rows>& state, const Config& config) {
+    constexpr auto kShape = Rows::kShape;
+    if (const auto* trial = Find(state, config)) {
+      return trial->Size();
+    }
+    if (Codec::HighCompression(config.level)) {
+      return Estimate(kShape, config);
+    }
+    SDB_ASSERT(config.shape == kShape);
+    const auto raw =
+      kShape == Shape::Dictionary
+        ? std::min<uint64_t>(_window.input, TrialEntries() * _window.max_len)
+        : _window.input;
+    if (raw <= kTrialRawBytes) {
+      return Trial(state, config, _values, _window, _params.segment_target)
+        .Size();
+    }
+    return Estimate(kShape, config);
+  }
+
+ private:
+  struct Spans {
+    FrameShape frame;
+    FrameSpans spans;
+  };
+
+  struct ShapeRows {
+    bool done = false;
+    bool assembled = false;
+    bool coded = false;
+    Profile profile;
+    std::vector<uint32_t> codes;
+    ScratchVector<uint32_t> locals;
+    uint64_t codes_bytes = 0;
+    std::string bytes;
+    std::vector<Spans> spans;
+  };
+
+  static std::span<const uint8_t> Levels(WriteTier tier) noexcept {
+    return tier == WriteTier::Flush
+             ? std::span<const uint8_t>{Codec::kFlushLevels}
+             : std::span<const uint8_t>{Codec::kMergeLevels};
+  }
+
+  template<typename Rows>
+  Config Tuned(WriteTier tier) const noexcept {
+    constexpr auto kShape = Rows::kShape;
+    const auto& tuning =
+      _tuning
+        .frames[std::to_underlying(Codec::kCodec)][std::to_underlying(kShape)];
+    const auto levels = Levels(tier);
+    return {
+      .shape = kShape,
+      .leaf = Codec::kCodec,
+      .level = absl::c_linear_search(levels, tuning.level) ? tuning.level
+                                                           : levels.front(),
+      .layout = tuning.layout,
+      .sorted = kShape == Shape::Dictionary &&
+                _tuning.order[std::to_underlying(Codec::kCodec)].sorted,
+    };
+  }
+
+  template<typename Rows, typename Size>
+  static Measured Tune(std::span<const uint8_t> levels, bool local,
+                       Size&& size) {
+    constexpr auto kShape = Rows::kShape;
+    Config config{.shape = kShape, .leaf = Codec::kCodec};
+    uint64_t sizes[kMaxLevels];
+    auto smallest = std::numeric_limits<uint64_t>::max();
+    for (size_t i = 0; i < levels.size(); ++i) {
+      config.level = levels[i];
+      sizes[i] = size(config);
+      smallest = std::min(smallest, sizes[i]);
+    }
+    size_t level = 0;
+    while (static_cast<double>(sizes[level]) >
+           static_cast<double>(smallest) * (1.0 + kLevelTolerance)) {
+      ++level;
+    }
+    config.level = levels[level];
+    Measured tuned{.config = config, .bytes = sizes[level]};
+    const auto measure = [&](const Config& candidate, double min_gain) {
+      const auto bytes = size(candidate);
+      if (static_cast<double>(bytes) <
+          static_cast<double>(tuned.bytes) * (1.0 - min_gain)) {
+        tuned = {.config = candidate, .bytes = bytes};
+      }
+    };
+    if constexpr (kShape == Shape::Dictionary) {
+      auto candidate = tuned.config;
+      candidate.sorted = true;
+      measure(candidate, kSortedGain);
+    }
+    const auto measure_layout = [&](FrameDictionary layout, double min_gain) {
+      auto candidate = tuned.config;
+      candidate.layout = layout;
+      measure(candidate, min_gain);
+    };
+    if (local) {
+      measure_layout(FrameDictionary::Local, 0.0);
+    }
+    measure_layout(FrameDictionary::None, kWideFramesGain);
+    return tuned;
+  }
+
+  ShapeRows& TrialRows(Shape shape) {
+    auto& rows = _rows[std::to_underlying(shape)];
+    if (rows.done) {
+      return rows;
+    }
+    rows.done = true;
+    auto& p = rows.profile;
+    p.shape = shape;
+    const auto window = _window.rows;
+    p.rows = window;
+    const auto& distinct = _values.distinct;
+    p.values = distinct;
+    const auto add = [&](uint32_t code) {
+      const auto size = static_cast<uint32_t>(distinct[code - 1]->GetSize());
+      p.raw += size;
+      p.max_len = std::max(p.max_len, size);
+    };
+    if (shape == Shape::Plain) {
+      p.codes = std::span{_values.codes}.subspan(0, window);
+      for (const auto code : p.codes) {
+        if (code != 0) {
+          add(code);
+        }
+      }
+      return rows;
+    }
+    _dedup.Begin(distinct.size());
+    rows.locals.resize(window);
+    for (uint64_t row = 0; row < window; ++row) {
+      const auto code = _values.codes[row];
+      uint32_t local = 0;
+      if (code != 0) {
+        const auto mapped =
+          _dedup.Local(code, static_cast<uint32_t>(rows.codes.size()) + 1);
+        local = mapped.local;
+        if (mapped.fresh) {
+          rows.codes.push_back(code);
+          add(code);
+        }
+      }
+      rows.locals[row] = local;
+    }
+    p.codes = rows.codes;
+    return rows;
+  }
+
+  ShapeRows& SortedRows() {
+    auto& rows = _sorted;
+    if (rows.done) {
+      return rows;
+    }
+    rows.done = true;
+    const auto& arrival = TrialRows(Shape::Dictionary);
+    std::vector<duckdb::string_t> entries;
+    entries.reserve(arrival.codes.size());
+    for (const auto code : arrival.codes) {
+      entries.emplace_back(*_values.distinct[code - 1]);
+    }
+    SortScratch scratch;
+    SortEntries(entries, scratch);
+    rows.codes.resize(arrival.codes.size());
+    for (size_t at = 0; at < rows.codes.size(); ++at) {
+      rows.codes[at] = arrival.codes[scratch.order[at].entry];
+    }
+    rows.locals.resize(arrival.locals.size());
+    for (size_t row = 0; row < rows.locals.size(); ++row) {
+      rows.locals[row] = scratch.remap[arrival.locals[row]];
+    }
+    rows.profile = arrival.profile;
+    rows.profile.codes = rows.codes;
+    return rows;
+  }
+
+  uint64_t TrialEntries() { return TrialRows(Shape::Dictionary).codes.size(); }
+
+  uint64_t CodesSize(ShapeRows& rows) {
+    if (rows.profile.shape != Shape::Dictionary) {
+      return 0;
+    }
+    if (!rows.coded) {
+      rows.coded = true;
+      double ratio = 0;
+      CompressCodes(rows.locals, ratio, [&](CodecType, std::string_view bytes) {
+        rows.codes_bytes = bytes.size();
+      });
+    }
+    return rows.codes_bytes;
+  }
+
+  static std::string_view Bytes(ShapeRows& rows) {
+    if (!rows.assembled) {
+      rows.assembled = true;
+      const auto& p = rows.profile;
+      rows.bytes.reserve(p.raw);
+      for (size_t i = 0; i < p.codes.size(); ++i) {
+        const auto entry = EntryOf(p, i);
+        rows.bytes.append(entry.GetData(), entry.GetSize());
+      }
+    }
+    return rows.bytes;
+  }
+
+  static const FrameSpans& Split(ShapeRows& rows, FrameShape frame) {
+    const auto it = absl::c_find_if(rows.spans, [&](const Spans& s) {
+      return s.frame.frame == frame.frame && s.frame.first == frame.first;
+    });
+    if (it != rows.spans.end()) {
+      return it->spans;
+    }
+    auto& split = rows.spans.emplace_back(frame).spans;
+    split.Reset(frame);
+    for (size_t i = 0; i < rows.profile.codes.size(); ++i) {
+      split.Add(i, EntryOf(rows.profile, i).GetSize());
+    }
+    split.Close();
+    return split;
+  }
+
+  uint64_t Estimate(Shape shape, const Config& config) {
+    auto& rows = config.sorted ? SortedRows() : TrialRows(shape);
+    const auto whole = config.layout == FrameDictionary::Local
+                         ? Bytes(rows)
+                         : std::string_view{};
+    return _estimator[std::to_underlying(shape)].EstimateSize(
+      rows.profile, whole, Split(rows, FrameShapeOf<Codec>(config.layout)),
+      CodesSize(rows), config.level, config.layout);
+  }
+
+  const Values& _values;
+  Window& _window;
+  const ColCodecParams& _params;
+  StringTuning& _tuning;
+  DedupScratch _dedup;
+  ShapeRows _rows[kTextShapeCount];
+  ShapeRows _sorted;
+  SizeEstimator<Codec> _estimator[kTextShapeCount];
+};
+
 template<typename Compression>
 Config NamedOrder(Config config, ColumnDataCheckpointData& data) {
   auto& state = data.Get<CodecState<Compression>>();
@@ -357,9 +747,9 @@ Config NamedOrder(Config config, ColumnDataCheckpointData& data) {
     data.tuning.strings.order[std::to_underlying(Compression::kCodec)];
   if (values.Rows() != 0 &&
       (!order.tuned || values.raw >= order.tuned_on * kOrderRetuneGrowth)) {
-    auto& contest = data.Get<Contest>();
+    auto& window = data.Get<Window>();
     const auto target = data.params.segment_target;
-    const auto& first = Trial(state, config, values, contest, target);
+    const auto& first = Trial(state, config, values, window, target);
     const auto arrival = first.Size();
     const bool matters = static_cast<double>(first.entries * first.max_len) >=
                          static_cast<double>(arrival) * kSortedGain;
@@ -368,7 +758,7 @@ Config NamedOrder(Config config, ColumnDataCheckpointData& data) {
       .tuned = true,
       .sorted =
         matters && static_cast<double>(
-                     Trial(state, config, values, contest, target).Size()) <
+                     Trial(state, config, values, window, target).Size()) <
                      static_cast<double>(arrival) * (1.0 - kSortedGain),
       .tuned_on = values.raw,
     };
@@ -396,6 +786,28 @@ template<typename Compression>
 inline constexpr CompressionFunction kFrameFunction{
   .analyze = AnalyzeTrial<Compression>,
   .compress = CompressFrames<Compression>,
+};
+
+template<typename Codec, typename Rows>
+double AnalyzeTuned(ColumnDataCheckpointData& data, double bound) {
+  const auto& values = data.Get<Values>();
+  auto& state = data.Get<CodecState<CompressionState<Codec, Rows>>>();
+  if (!values.Repeats() || !Contests(state, data)) {
+    return kNoScore;
+  }
+  const auto& window = data.Get<Window>();
+  const auto priced = [&](uint64_t bytes) {
+    return Score(values, window, Rows::kShape, data.price, bytes);
+  };
+  const auto measured = data.Get<Tuner<Codec>>().Measure(state, bound, priced);
+  state.config = measured.config;
+  return priced(measured.bytes);
+}
+
+template<typename Codec, typename Rows>
+inline constexpr CompressionFunction kTunedFunction{
+  .analyze = AnalyzeTuned<Codec, Rows>,
+  .compress = CompressFrames<CompressionState<Codec, Rows>>,
 };
 
 template<typename Codec>

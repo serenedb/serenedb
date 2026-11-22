@@ -46,104 +46,28 @@ using duckdb::idx_t;
 template<typename T>
 inline constexpr bool kStored = std::is_same_v<T, duckdb::string_t>;
 
-struct Stored final : SegmentScanState {
-  explicit Stored(duckdb::BufferHandle pinned) : bytes{std::move(pinned)} {}
-
+struct Scanned final : SegmentScanState {
   duckdb::BufferHandle bytes;
+  bool filtered = false;
+  bool accepted = false;
 };
 
 std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
-  if (segment.size == 0) {
-    return nullptr;
+  auto scanned = std::make_unique<Scanned>();
+  if (segment.size != 0) {
+    scanned->bytes = segment.Pin();
   }
-  return std::make_unique<Stored>(segment.Pin());
+  return scanned;
+}
+
+std::unique_ptr<SegmentScanState> InitValidityScan(const ColumnSegment&) {
+  return nullptr;
 }
 
 const duckdb::BufferHandle* Bytes(ColumnScanState& state) noexcept {
-  return state.scan_state ? &state.scan_state->Cast<Stored>().bytes : nullptr;
+  const auto& bytes = state.scan_state->Cast<Scanned>().bytes;
+  return bytes.IsValid() ? &bytes : nullptr;
 }
-
-template<typename T>
-T ValueOf(const ColumnSegment& segment, const duckdb::BufferHandle* bytes,
-          duckdb::Vector& result) {
-  if constexpr (kStored<T>) {
-    if (!bytes) {
-      return T{};
-    }
-    const T value{duckdb::const_char_ptr_cast(bytes->Ptr()),
-                  static_cast<uint32_t>(segment.size)};
-    return value.IsInlined()
-             ? value
-             : duckdb::StringVector::AddStringOrBlob(result, value);
-  } else {
-    return duckdb::NumericStats::GetMinUnsafe<T>(segment.stats);
-  }
-}
-
-template<typename T>
-void Scan(const ColumnSegment& segment, ColumnScanState& state,
-          idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
-          duckdb::ScanVectorType scan_type) {
-  const auto value = ValueOf<T>(segment, Bytes(state), result);
-  auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
-  if (scan_type != duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
-    std::fill_n(data + result_offset, scan_count, value);
-    return;
-  }
-  data[0] = value;
-  result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-  duckdb::FlatVector::SetSize(result, duckdb::count_t(scan_count));
-}
-
-template<typename T>
-void Select(const ColumnSegment& segment, ColumnScanState& state,
-            idx_t vector_count, duckdb::Vector& result, idx_t result_offset,
-            const duckdb::SelectionVector&, idx_t sel_count,
-            duckdb::ScanVectorType scan_type) {
-  Scan<T>(segment, state,
-          scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR ? vector_count
-                                                                  : sel_count,
-          result, result_offset, scan_type);
-}
-
-template<typename T>
-void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
-               const idx_t*, idx_t count, duckdb::Vector& result,
-               const duckdb::SelectionVector& result_sel, idx_t result_offset) {
-  const auto value = ValueOf<T>(
-    segment, segment.size == 0 ? nullptr : &state.GetOrInsertHandle(segment),
-    result);
-  auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
-  for (idx_t i = 0; i < count; ++i) {
-    data[result_offset + result_sel.get_index(i)] = value;
-  }
-}
-
-template<typename T>
-void Filter(const ColumnSegment& segment, ColumnScanState& state,
-            idx_t vector_count, duckdb::Vector& result,
-            duckdb::SelectionVector&, idx_t& sel_count,
-            const duckdb::TableFilter&,
-            duckdb::TableFilterState& filter_state) {
-  Scan<T>(segment, state, vector_count, result, 0,
-          duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR);
-  duckdb::SelectionVector accepted;
-  idx_t accepted_count = 1;
-  duckdb::ColumnSegment::FilterSelection(accepted, result, filter_state, 1,
-                                         accepted_count);
-  if (accepted_count == 0) {
-    sel_count = 0;
-  }
-}
-
-template<typename T>
-constexpr DecompressionFunction kDecompression{
-  .init_scan = InitScan,
-  .scan = Scan<T>,
-  .select = Select<T>,
-  .filter = Filter<T>,
-  .fetch_rows = FetchRows<T>,
-};
 
 void FillValidity(const ColumnSegment& segment, duckdb::Vector& result,
                   idx_t start, idx_t count) {
@@ -194,18 +118,131 @@ void FetchRowsValidity(const ColumnSegment& segment, ColumnFetchState&,
 }
 
 constexpr DecompressionFunction kValidityDecompression{
-  .init_scan = InitScan,
+  .init_scan = InitValidityScan,
   .scan = ScanValidity,
   .select = SelectValidity,
   .fetch_rows = FetchRowsValidity,
 };
 
+template<typename T>
+T ValueOf(const ColumnSegment& segment, const duckdb::BufferHandle* bytes,
+          duckdb::Vector& result) {
+  if constexpr (kStored<T>) {
+    if (!bytes) {
+      return T{};
+    }
+    const T value{duckdb::const_char_ptr_cast(bytes->Ptr()),
+                  static_cast<uint32_t>(segment.size)};
+    return value.IsInlined()
+             ? value
+             : duckdb::StringVector::AddStringOrBlob(result, value);
+  } else {
+    return duckdb::NumericStats::GetMinUnsafe<T>(segment.stats);
+  }
+}
+
+template<typename T>
+void Scan(const ColumnSegment& segment, ColumnScanState& state,
+          idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
+          duckdb::ScanVectorType scan_type) {
+  if constexpr (kStored<T>) {
+    if (!segment.stats.CanHaveNoNull()) {
+      if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+        duckdb::ConstantVector::SetNull(result, duckdb::count_t(scan_count));
+      } else {
+        FillValidity(segment, result, result_offset, scan_count);
+      }
+      return;
+    }
+  }
+  const auto value = ValueOf<T>(segment, Bytes(state), result);
+  auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
+  if (scan_type != duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    std::fill_n(data + result_offset, scan_count, value);
+    return;
+  }
+  data[0] = value;
+  result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+  duckdb::FlatVector::SetSize(result, duckdb::count_t(scan_count));
+}
+
+template<typename T>
+void Select(const ColumnSegment& segment, ColumnScanState& state,
+            idx_t vector_count, duckdb::Vector& result, idx_t result_offset,
+            const duckdb::SelectionVector&, idx_t sel_count,
+            duckdb::ScanVectorType scan_type) {
+  Scan<T>(segment, state,
+          scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR ? vector_count
+                                                                  : sel_count,
+          result, result_offset, scan_type);
+}
+
+template<typename T>
+void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
+               const idx_t*, idx_t count, duckdb::Vector& result,
+               const duckdb::SelectionVector& result_sel, idx_t result_offset) {
+  if constexpr (kStored<T>) {
+    if (!segment.stats.CanHaveNoNull()) {
+      FetchRowsValidity(segment, state, nullptr, count, result, result_sel,
+                        result_offset);
+      return;
+    }
+  }
+  const auto value = ValueOf<T>(
+    segment, segment.size == 0 ? nullptr : &state.GetOrInsertHandle(segment),
+    result);
+  auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
+  for (idx_t i = 0; i < count; ++i) {
+    data[result_offset + result_sel.get_index(i)] = value;
+  }
+}
+
+template<typename T>
+void Filter(const ColumnSegment& segment, ColumnScanState& state,
+            idx_t vector_count, duckdb::Vector& result,
+            duckdb::SelectionVector&, idx_t& sel_count,
+            const duckdb::TableFilter&,
+            duckdb::TableFilterState& filter_state) {
+  auto& scanned = state.scan_state->Cast<Scanned>();
+  if (scanned.filtered && !scanned.accepted) {
+    sel_count = 0;
+    return;
+  }
+  Scan<T>(segment, state, vector_count, result, 0,
+          duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR);
+  if (!scanned.filtered) {
+    duckdb::SelectionVector accepted;
+    idx_t accepted_count = 1;
+    duckdb::ColumnSegment::FilterSelection(accepted, result, filter_state, 1,
+                                           accepted_count);
+    scanned.filtered = true;
+    scanned.accepted = accepted_count != 0;
+  }
+  if (!scanned.accepted) {
+    sel_count = 0;
+  }
+}
+
+template<typename T>
+constexpr DecompressionFunction kDecompression{
+  .init_scan = InitScan,
+  .scan = Scan<T>,
+  .select = Select<T>,
+  .filter = Filter<T>,
+  .fetch_rows = FetchRows<T>,
+  .validity = kStored<T> ? CompressionValidity::NoValidityRequired
+                         : CompressionValidity::RequiresValidity,
+};
+
+bool EveryRowIsNull(std::span<const WriteChunk> chunks) {
+  return absl::c_none_of(chunks, [](const WriteChunk& chunk) {
+    return duckdb::FlatVector::Validity(chunk.data)
+             .CountValid(chunk.data.size()) != 0;
+  });
+}
+
 bool CompressValidity(const Codec& codec, ColumnDataCheckpointData& data) {
-  if (data.rows == 0 ||
-      absl::c_any_of(data.chunks, [](const WriteChunk& chunk) {
-        return duckdb::FlatVector::Validity(chunk.data)
-                 .CountValid(chunk.data.size()) != 0;
-      })) {
+  if (data.rows == 0 || !EveryRowIsNull(data.chunks)) {
     return false;
   }
   auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);
@@ -231,7 +268,11 @@ bool EveryValueIsEqual(std::span<const WriteChunk> chunks,
     for (const auto& chunk : chunks) {
       for (const auto entry : chunk.data.Values<T>()) {
         if (!entry.IsValid()) {
-          return false;
+          if (first || !EveryRowIsNull(chunks)) {
+            return false;
+          }
+          stats.SetHasNullFast();
+          return true;
         }
         const auto& value = entry.GetValueUnsafe();
         if (!first) {

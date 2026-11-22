@@ -49,5 +49,7 @@ const Codec* UncompressedCodec(duckdb::PhysicalType physical);
 const Codec* AlpCodec(duckdb::PhysicalType physical);
 const Codec* AlpRdCodec(duckdb::PhysicalType physical);
 const Codec* RoaringCodec(duckdb::PhysicalType physical);
+Features NumericFeatures(ColumnDataCheckpointData& data);
+Features TextFeatures(ColumnDataCheckpointData& data);
 
 }  // namespace irs::codecs

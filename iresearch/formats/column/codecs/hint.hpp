@@ -29,25 +29,23 @@
 namespace irs::codecs {
 
 inline constexpr double kNoScore = std::numeric_limits<double>::infinity();
-inline constexpr double kFactsMove = 1.1;
+inline constexpr double kFeaturesMove = 1.1;
 inline constexpr double kWorthSwitching = 1.02;
-inline constexpr uint8_t kOldHint = 8;
+inline constexpr uint32_t kOldHint = 8;
 
-using Facts = std::array<float, 3>;
+using Features = std::array<float, 3>;
 
 struct Hint {
-  Facts facts = {};
+  Features features = {};
   double score = kNoScore;
-  uint8_t form = 0;
-  uint8_t age = 0;
-  bool known = false;
+  uint32_t forced = 0;
 };
 
-constexpr bool Forgotten(const Hint& hint) noexcept {
-  return !hint.known || hint.age >= kOldHint;
+constexpr bool Forgotten(const Hint& hint, uint32_t row_group) noexcept {
+  return hint.forced == 0 || row_group - hint.forced > kOldHint;
 }
 
-constexpr double Shift(const Facts& now, const Facts& then) noexcept {
+constexpr double Shift(const Features& now, const Features& then) noexcept {
   double shift = 1;
   for (size_t i = 0; i < now.size(); ++i) {
     const double a = now[i];
@@ -65,27 +63,16 @@ constexpr double Shift(const Facts& now, const Facts& then) noexcept {
 
 constexpr bool Measures(double remembered, double best, double shift) noexcept {
   if (remembered == kNoScore) {
-    return best == kNoScore || shift >= kFactsMove;
+    return best == kNoScore || shift >= kFeaturesMove;
   }
   return remembered * kWorthSwitching <= best * shift;
 }
 
-template<typename Measure>
-double Hinted(Hint& hint, double bound, const Facts& now, double least_shift,
-              Measure&& measure) {
-  const bool forgotten = Forgotten(hint);
-  const auto shift = forgotten ? kNoScore : Shift(now, hint.facts);
-  const auto counted =
-    hint.score == kNoScore || shift >= least_shift ? shift : 1.0;
-  if (!forgotten && !Measures(hint.score, bound, counted)) {
-    ++hint.age;
-    return kNoScore;
-  }
-  hint.score = measure(shift >= kFactsMove);
-  hint.facts = now;
-  hint.age = 0;
-  hint.known = true;
-  return hint.score;
+constexpr bool Measures(const Hint& hint, double best, const Features& now,
+                        double least_shift) noexcept {
+  const auto shift = Shift(now, hint.features);
+  return Measures(hint.score, best,
+                  hint.score == kNoScore || shift >= least_shift ? shift : 1.0);
 }
 
 }  // namespace irs::codecs

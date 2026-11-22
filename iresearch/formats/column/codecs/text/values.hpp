@@ -57,7 +57,7 @@ class Values final : public State {
 
   uint64_t Rows() const noexcept { return codes.size(); }
 
-  Facts Statistics() const noexcept {
+  Features GetFeatures() const noexcept {
     const auto valid =
       static_cast<float>(std::max<uint64_t>(Rows() - null_count, 1));
     return {

@@ -1952,7 +1952,9 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   };
   const auto levels = [](const irs::codecs::ColumnTuning& tuning) {
     std::vector<int> out;
-    for (const auto& lz4 : tuning.strings.lz4) {
+    for (const auto& lz4 :
+         tuning.strings
+           .frames[std::to_underlying(irs::codecs::ByteCodec::Lz4)]) {
       out.push_back(lz4.level);
       out.push_back(static_cast<int>(lz4.layout));
     }
@@ -1969,7 +1971,7 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
   const auto constants = Chunks(kRowGroup, constant);
 
   irs::codecs::ColumnTuning untuned;
-  seal(nulls, untuned);
+  seal_constant(nulls, untuned);
   irs::codecs::ColumnTuning tuned;
   seal(text, tuned);
   ASSERT_NE(levels(tuned), levels(untuned));
@@ -1983,11 +1985,7 @@ TEST_F(ColCodecsTest, AutoTunesLevelsOnTheFirstRowGroupWithData) {
       SCOPED_TRACE(absl::StrCat(groups, " ", name, " row groups"));
       irs::codecs::ColumnTuning tuning;
       for (int g = 0; g < groups; ++g) {
-        if (head == &constants) {
-          seal_constant(*head, tuning);
-        } else {
-          seal(*head, tuning);
-        }
+        seal_constant(*head, tuning);
       }
       seal(text, tuning);
       EXPECT_EQ(levels(tuning), levels(tuned));
@@ -2533,6 +2531,49 @@ TEST_F(ColCodecsTest, ARowGroupOfOneTextValueIsStoredConstantUnderAnyCodec) {
   }
 }
 
+TEST_F(ColCodecsTest, ARowGroupOfTextNullsIsStoredConstantWithoutValidity) {
+  using irs::codecs::CodecType;
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 4 * kRowGroup;
+  const Value every_null = [](uint64_t) -> std::optional<std::string> {
+    return std::nullopt;
+  };
+  const Value between_text = [](uint64_t g) -> std::optional<std::string> {
+    if (g / kRowGroup % 2 == 0) {
+      return std::nullopt;
+    }
+    return absl::StrCat("value-", g % 50);
+  };
+  for (const auto codec : {CodecType::Auto, CodecType::DictFsst,
+                           CodecType::DictLz4, CodecType::Lz4}) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+      for (const auto* value : {&every_null, &between_text}) {
+        tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+        Write(dir, codec, {.tier = tier}, kRows, kRowGroup, *value);
+        {
+          irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+          const auto* col = r.Column(kField);
+          ASSERT_NE(col, nullptr);
+          EXPECT_FALSE(col->HasValidity());
+          uint64_t row = 0;
+          for (const auto& block : col->DataBlocks()) {
+            if ((*value)(row)) {
+              EXPECT_NE(block.codec->type, CodecType::Constant);
+            } else {
+              EXPECT_EQ(block.codec->type, CodecType::Constant);
+              EXPECT_EQ(block.byte_size, 0U);
+            }
+            row += block.tuple_count;
+          }
+          EXPECT_EQ(row, kRows);
+        }
+        Verify(dir, codec, kRows, *value);
+      }
+    }
+  }
+}
+
 TEST_F(ColCodecsTest, ACompactionCopiesConstantRowGroupsUnderANamedCodec) {
   using irs::codecs::CodecType;
   constexpr uint32_t kRowGroup = 4096;
@@ -2596,10 +2637,13 @@ TEST_F(ColCodecsTest, ARowGroupWithANullOrASecondTextValueIsNotConstant) {
   const Value with_other = [](uint64_t g) -> std::optional<std::string> {
     return g == 4000 ? "other" : "same";
   };
-  const Value every_null = [](uint64_t) -> std::optional<std::string> {
-    return std::nullopt;
+  const Value null_first = [](uint64_t g) -> std::optional<std::string> {
+    if (g % kRowGroup == 0) {
+      return std::nullopt;
+    }
+    return "same";
   };
-  for (const auto& value : {with_null, with_other, every_null}) {
+  for (const auto& value : {with_null, with_other, null_first}) {
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, CodecType::Auto, {}, kRowGroup, kRowGroup, value);
     {
@@ -4949,22 +4993,23 @@ TEST_F(ColCodecsTest, AutoTunesLz4AgainWhenTheValuesChange) {
   const auto large = Chunks(4096, wordy);
   irs::codecs::ColumnTuning tuning;
   const auto& lz4 =
-    tuning.strings.lz4[std::to_underlying(irs::codecs::Shape::Dictionary)];
+    tuning.strings.frames[std::to_underlying(irs::codecs::ByteCodec::Lz4)]
+                         [std::to_underlying(irs::codecs::Shape::Dictionary)];
   seal(small, tuning);
   ASSERT_TRUE(lz4.tuned);
   const auto first = lz4.tuned_on;
   EXPECT_GT(first, 0u);
   const auto& hint =
     tuning.hints[std::to_underlying(irs::codecs::CodecType::DictLz4)];
-  ASSERT_TRUE(hint.known);
-  const auto brief_bytes = hint.facts[0];
+  ASSERT_NE(hint.forced, 0u);
+  const auto brief_bytes = hint.features[0];
   for (int rg = 0; rg < 4; ++rg) {
     seal(alike, tuning);
     EXPECT_EQ(lz4.tuned_on, first);
   }
   seal(large, tuning);
   EXPECT_GE(lz4.tuned_on, 4 * first);
-  EXPECT_GT(hint.facts[0], 2 * brief_bytes);
+  EXPECT_GT(hint.features[0], 2 * brief_bytes);
 }
 
 TEST_F(ColCodecsTest, AutoMeasuresATextCandidateAgainOnlyWhenItMayWin) {
@@ -4981,18 +5026,17 @@ TEST_F(ColCodecsTest, AutoMeasuresATextCandidateAgainOnlyWhenItMayWin) {
   const auto steady = Chunks(4096, urls);
   irs::codecs::ColumnTuning tuning;
   const auto& config = tuning.strings.config;
-  const auto& dictionary =
-    tuning.hints[std::to_underlying(CodecType::DictFsst)];
-  for (unsigned rg = 0; rg < 8; ++rg) {
+  auto& dictionary = tuning.hints[std::to_underlying(CodecType::DictFsst)];
+  seal(steady, tuning);
+  ASSERT_NE(dictionary.forced, 0u);
+  const auto far = 2 * dictionary.score;
+  dictionary.score = far;
+  for (unsigned rg = 1; rg < 8; ++rg) {
     seal(steady, tuning);
-    ASSERT_TRUE(dictionary.known);
-    EXPECT_EQ(dictionary.age, rg);
+    EXPECT_EQ(dictionary.score, far);
   }
   ASSERT_TRUE(config);
   EXPECT_EQ(config->shape, Shape::Plain);
-  const auto& plain = tuning.hints[std::to_underlying(
-    irs::codecs::CodecOf(config->shape, config->leaf))];
-  EXPECT_EQ(plain.age, 0);
 
   const Value repeated = [](uint64_t g) -> std::optional<std::string> {
     std::mt19937_64 rng{g + 1};
@@ -5002,7 +5046,7 @@ TEST_F(ColCodecsTest, AutoMeasuresATextCandidateAgainOnlyWhenItMayWin) {
   seal(changed, tuning);
   ASSERT_TRUE(config);
   EXPECT_EQ(config->shape, Shape::Dictionary);
-  EXPECT_EQ(dictionary.age, 0);
+  EXPECT_NE(dictionary.score, far);
 
   seal(steady, tuning);
   ASSERT_TRUE(config);

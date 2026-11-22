@@ -82,9 +82,12 @@ void Compress(CodecType method, ColumnDataCheckpointData& data) {
   data.rows = CountRows(data.chunks);
   if (CompressAs(CodecType::Empty, data) ||
       (!data.disabled.test(std::to_underlying(CodecType::Constant)) &&
-       CompressAs(CodecType::Constant, data)) ||
-      (method == CodecType::Auto ? CompressAuto(data)
-                                 : CompressAs(method, data))) {
+       CompressAs(CodecType::Constant, data))) {
+    return;
+  }
+  ++data.tuning.row_group;
+  if (method == CodecType::Auto ? CompressAuto(data)
+                                : CompressAs(method, data)) {
     return;
   }
   CompressUncompressed(data);

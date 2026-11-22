@@ -38,39 +38,88 @@ namespace {
 
 using duckdb::PhysicalType;
 
-constexpr CodecType kLightweight[] = {
-  CodecType::Uncompressed,
-  CodecType::Roaring,
+constexpr double kLz4Price = 1.05;
+constexpr double kZstdPrice = 1.15;
+constexpr double kRoaringPrice = 2.0;
+constexpr double kLeastTextShift = 1.5;
+
+constexpr Candidate kLightweightRows[] = {
+  {CodecType::Uncompressed, 1.0, true},
+  {CodecType::Roaring, kRoaringPrice},
 };
 
-constexpr CodecType kBool[] = {
-  CodecType::Uncompressed,
-  CodecType::Bitpacking,
-  CodecType::Rle,
-  CodecType::Roaring,
+constexpr Candidate kBoolRows[] = {
+  {CodecType::Uncompressed, 1.0, true},
+  {CodecType::Bitpacking, 1.0, true},
+  {CodecType::Rle, 1.0, true},
+  {CodecType::Roaring, kRoaringPrice},
 };
 
-constexpr CodecType kInteger[] = {
-  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Rle,
-  CodecType::Dict,         CodecType::Lz4,        CodecType::RleLz4,
-  CodecType::DictLz4,      CodecType::Zstd,       CodecType::RleZstd,
-  CodecType::DictZstd,
+constexpr Candidate kIntegerRows[] = {
+  {CodecType::Uncompressed, 1.0, true}, {CodecType::Bitpacking, 1.0, true},
+  {CodecType::Rle, 1.0, true},          {CodecType::Dict},
+  {CodecType::Lz4, kLz4Price},          {CodecType::RleLz4, kLz4Price},
+  {CodecType::DictLz4, kLz4Price},      {CodecType::Zstd, kZstdPrice},
+  {CodecType::RleZstd, kZstdPrice},     {CodecType::DictZstd, kZstdPrice},
 };
 
-constexpr CodecType kFreshInteger[] = {
-  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Rle,
-  CodecType::Dict,         CodecType::Lz4,        CodecType::RleLz4,
-  CodecType::DictLz4,
+constexpr Candidate kFreshIntegerRows[] = {
+  {CodecType::Uncompressed, 1.0, true}, {CodecType::Bitpacking, 1.0, true},
+  {CodecType::Rle, 1.0, true},          {CodecType::Dict},
+  {CodecType::Lz4, kLz4Price},          {CodecType::RleLz4, kLz4Price},
+  {CodecType::DictLz4, kLz4Price},
 };
 
-constexpr CodecType kFloat[] = {
-  CodecType::Uncompressed, CodecType::Alp, CodecType::Alprd,
-  CodecType::Bitpacking,   CodecType::Rle, CodecType::Dict,
+constexpr Candidate kFloatRows[] = {
+  {CodecType::Uncompressed, 1.0, true},
+  {CodecType::Alp},
+  {CodecType::Alprd},
+  {CodecType::Bitpacking, 1.0, true},
+  {CodecType::Rle, 1.0, true},
+  {CodecType::Dict},
 };
 
-constexpr CodecType kText[] = {
-  CodecType::Uncompressed, CodecType::DictFsst, CodecType::DictLz4,
-  CodecType::Fsst,         CodecType::Lz4,
+constexpr Candidate kTextRows[] = {
+  {CodecType::DictFsst},
+  {CodecType::DictLz4},
+  {CodecType::Fsst},
+  {CodecType::Lz4, kLz4Price},
+};
+
+constexpr Candidate kFreshTextRows[] = {
+  {CodecType::DictFsst},
+  {CodecType::DictLz4, kLz4Price},
+  {CodecType::Fsst},
+  {CodecType::Lz4, kLz4Price},
+};
+
+constexpr Candidates kLightweight{
+  .flush = kLightweightRows,
+  .merge = kLightweightRows,
+};
+
+constexpr Candidates kBool{
+  .flush = kBoolRows,
+  .merge = kBoolRows,
+};
+
+constexpr Candidates kInteger{
+  .flush = kFreshIntegerRows,
+  .merge = kIntegerRows,
+  .features = NumericFeatures,
+};
+
+constexpr Candidates kFloat{
+  .flush = kFloatRows,
+  .merge = kFloatRows,
+  .features = NumericFeatures,
+};
+
+constexpr Candidates kText{
+  .flush = kFreshTextRows,
+  .merge = kTextRows,
+  .features = TextFeatures,
+  .least_shift = kLeastTextShift,
 };
 
 constexpr CodecType kNamedOnly[] = {
@@ -81,15 +130,18 @@ constexpr CodecType kNamedOnly[] = {
 
 static_assert([] {
   std::array<bool, magic_enum::enum_count<CodecType>()> listed{};
-  for (const std::span<const CodecType> list :
-       {std::span<const CodecType>{kLightweight},
-        std::span<const CodecType>{kBool}, std::span<const CodecType>{kInteger},
-        std::span<const CodecType>{kFreshInteger},
-        std::span<const CodecType>{kFloat},
-        std::span<const CodecType>{kNamedOnly}}) {
-    for (const auto type : list) {
-      listed[std::to_underlying(type)] = true;
+  for (const std::span<const Candidate> rows :
+       {std::span<const Candidate>{kLightweightRows},
+        std::span<const Candidate>{kBoolRows},
+        std::span<const Candidate>{kIntegerRows},
+        std::span<const Candidate>{kFreshIntegerRows},
+        std::span<const Candidate>{kFloatRows}}) {
+    for (const auto& row : rows) {
+      listed[std::to_underlying(row.codec)] = true;
     }
+  }
+  for (const auto type : kNamedOnly) {
+    listed[std::to_underlying(type)] = true;
   }
   for (const auto type : magic_enum::enum_values<CodecType>()) {
     const bool numeric = type != CodecType::Auto && type != CodecType::Empty &&
@@ -151,8 +203,7 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
                          : nullptr;
 }
 
-std::span<const CodecType> Candidates(PhysicalType physical,
-                                      WriteTier tier) noexcept {
+const Candidates& CandidatesOf(PhysicalType physical) noexcept {
   switch (physical) {
     case PhysicalType::VARCHAR:
       return kText;
@@ -172,9 +223,6 @@ std::span<const CodecType> Candidates(PhysicalType physical,
     case PhysicalType::INT128:
     case PhysicalType::UINT128:
     case PhysicalType::LIST:
-      if (tier == WriteTier::Flush) {
-        return kFreshInteger;
-      }
       return kInteger;
     default:
       return kLightweight;

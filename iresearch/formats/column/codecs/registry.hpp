@@ -31,8 +31,20 @@ namespace irs::codecs {
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
 
-std::span<const CodecType> Candidates(duckdb::PhysicalType physical,
-                                      WriteTier tier) noexcept;
+struct Candidate {
+  CodecType codec = CodecType::Uncompressed;
+  double price = 1.0;
+  bool always = false;
+};
+
+struct Candidates {
+  std::span<const Candidate> flush;
+  std::span<const Candidate> merge;
+  Features (*features)(ColumnDataCheckpointData& data) = nullptr;
+  double least_shift = 1.0;
+};
+
+const Candidates& CandidatesOf(duckdb::PhysicalType physical) noexcept;
 
 bool Writes(CodecType type, duckdb::PhysicalType physical) noexcept;
 

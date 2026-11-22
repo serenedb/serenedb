@@ -47,14 +47,14 @@
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_scan.tpp"
-#include "iresearch/formats/column/codecs/numeric/numeric_values.hpp"
+#include "iresearch/formats/column/codecs/numeric/runs.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 
-namespace irs::codecs {
+namespace irs::codecs::numeric {
 
 inline constexpr uint8_t kWideOffsets = 1;
 inline constexpr uint8_t kWideHalves = 2;
@@ -344,17 +344,17 @@ struct WideValues final : State {
              : least;
     lows.resize(data.rows);
     low.emplace(data, lows);
-    auto& runs = low->data.template Get<Runs<uint64_t>>();
-    runs.values.resize(count);
+    ScratchVector<uint64_t> values(count);
     rows.resize(count);
     for (size_t r = 0; r < count; ++r) {
       const uint64_t value = absl::Uint128Low64(keys[r] - base);
-      runs.values[r] = value;
+      values[r] = value;
       std::fill(lows.data() + rows[r],
                 lows.data() + (r + 1 < count ? rows[r + 1] : data.rows), value);
     }
-    runs.rows = std::move(rows);
-    runs.located = true;
+    low->data.template Get<Values<uint64_t>>(std::span<const uint64_t>{values},
+                                             std::span<const uint32_t>{rows});
+    low->data.template Get<Runs<uint64_t>>(std::move(values), std::move(rows));
     return true;
   }
 
@@ -610,9 +610,11 @@ double AnalyzeWide(ColumnDataCheckpointData& data, double bound) {
   if (!wide.Offers(StoresHalves(kCodec), ShapeOf(kCodec), data)) {
     return kNoScore;
   }
+  wide.low->data.price = data.price;
   if (wide.narrow) {
     return kInner.analyze(wide.low->data, bound);
   }
+  wide.high->data.price = data.price;
   const auto limit = std::min(bound, static_cast<double>(sizeof(W)));
   constexpr double price = 8.0 * sizeof(W) / kWideHalvesBits;
   const auto low = kInner.analyze(wide.low->data, limit / price);
@@ -899,4 +901,4 @@ inline constexpr DecompressionFunction kWideDecompression{
   .get_segment_info = WideSegmentInfo<R>,
 };
 
-}  // namespace irs::codecs
+}  // namespace irs::codecs::numeric

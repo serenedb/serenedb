@@ -32,7 +32,7 @@
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/dispatch.hpp"
 
-namespace irs::codecs {
+namespace irs::codecs::numeric {
 
 inline constexpr uint8_t kLeafLevel = 1;
 
@@ -84,4 +84,4 @@ inline std::span<const char> CompressLeaf(ByteCodec leaf,
   });
 }
 
-}  // namespace irs::codecs
+}  // namespace irs::codecs::numeric

@@ -101,9 +101,9 @@ class RowCodes {
   };
 
   Shape _shape = Shape::Plain;
-  std::optional<PlainReader<uint32_t>> _plain;
-  std::optional<DeltaReader<uint32_t>> _delta;
-  std::optional<RunsReader<uint32_t>> _runs;
+  std::optional<numeric::PlainReader<uint32_t>> _plain;
+  std::optional<numeric::DeltaReader<uint32_t>> _delta;
+  std::optional<numeric::RunsReader<uint32_t>> _runs;
 };
 
 template<typename Leaf>

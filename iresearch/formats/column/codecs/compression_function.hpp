@@ -124,7 +124,6 @@ enum class StateId : uint8_t {
   NumericLz4,
   NumericZstd,
   NumericScratch,
-  NumericFacts,
   WideValues,
   Raw,
   For,
@@ -140,7 +139,7 @@ enum class StateId : uint8_t {
   DictBitpacking,
   RoaringContainers,
   TextValues,
-  TextContest,
+  TextWindow,
   TextLz4,
   TextZstd,
   TextFsst,
@@ -159,6 +158,8 @@ enum class StateId : uint8_t {
   FsstPlusEncoder,
   Fsst12Encoder,
   TextLz4Tuner,
+  AlpSample,
+  AlprdSample,
 };
 
 constexpr StateId TextState(Shape shape, ByteCodec leaf) noexcept {
@@ -189,11 +190,11 @@ struct State {
 };
 
 struct ColumnDataCheckpointData {
-  template<typename S>
-  S& Get() {
+  template<typename S, typename... Args>
+  S& Get(Args&&... args) {
     auto& state = states[std::to_underlying(S::kId)];
     if (!state) {
-      state = std::make_unique<S>(*this);
+      state = std::make_unique<S>(*this, std::forward<Args>(args)...);
     }
     return static_cast<S&>(*state);
   }
@@ -211,6 +212,7 @@ struct ColumnDataCheckpointData {
   ColumnTuning& tuning;
   CodecSet disabled;
   bool contested = false;
+  double price = 1.0;
   uint32_t min_packed_run = 1;
   double run_price = 1.0;
   uint64_t rows = 0;
@@ -296,7 +298,7 @@ struct Streamed {
       return kNoScore;
     } else {
       return static_cast<double>(kAnalyze(data.chunks)) /
-             static_cast<double>(std::max<uint64_t>(data.rows, 1));
+             static_cast<double>(std::max<uint64_t>(data.rows, 1)) * data.price;
     }
   }
 

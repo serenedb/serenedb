@@ -33,41 +33,68 @@ namespace {
 
 constexpr size_t kMostCandidates = 16;
 
+struct Asked {
+  const Candidate* row;
+  const Codec* codec;
+};
+
 }  // namespace
 
 bool CompressAuto(ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
   data.params.compression_level = 0;
   data.contested = true;
-  absl::InlinedVector<const Codec*, kMostCandidates> candidates;
-  for (const auto type : Candidates(physical, data.params.tier)) {
-    if (data.disabled.test(std::to_underlying(type))) {
+  const auto& type = CandidatesOf(physical);
+  absl::InlinedVector<Asked, kMostCandidates> candidates;
+  bool remembers = false;
+  for (const auto& row :
+       data.params.tier == WriteTier::Flush ? type.flush : type.merge) {
+    if (data.disabled.test(std::to_underlying(row.codec))) {
       continue;
     }
-    if (const auto* codec = GetCodec(type, physical)) {
-      candidates.push_back(codec);
+    if (const auto* codec = GetCodec(row.codec, physical)) {
+      candidates.emplace_back(&row, codec);
+      remembers = remembers || !row.always;
     }
   }
-  const auto remembered = [&](const Codec* codec) {
-    const auto& hint = data.tuning.hints[std::to_underlying(codec->type)];
-    return hint.known ? hint.score : 0.0;
+  auto& hints = data.tuning.hints;
+  const auto now = data.tuning.row_group;
+  const auto remembered = [&](const Asked& candidate) {
+    const auto& hint = hints[std::to_underlying(candidate.row->codec)];
+    return candidate.row->always || hint.forced == 0 ? 0.0 : hint.score;
   };
-  absl::c_stable_sort(candidates, [&](const Codec* a, const Codec* b) {
+  absl::c_stable_sort(candidates, [&](const Asked& a, const Asked& b) {
     return remembered(a) < remembered(b);
   });
+  const auto features =
+    remembers && type.features ? type.features(data) : Features{};
   auto best = kNoScore;
-  const Codec* winner = nullptr;
-  for (const auto* codec : candidates) {
-    if (const auto score = codec->compression.analyze(data, best);
-        score < best) {
+  const Asked* winner = nullptr;
+  for (const auto& candidate : candidates) {
+    auto& hint = hints[std::to_underlying(candidate.row->codec)];
+    const bool forced = candidate.row->always || Forgotten(hint, now);
+    if (!forced && !Measures(hint, best, features, type.least_shift)) {
+      continue;
+    }
+    data.price = candidate.row->price;
+    const auto score = candidate.codec->compression.analyze(data, best);
+    hint.features = features;
+    hint.score = score;
+    if (forced) {
+      hint.forced = now;
+    }
+    if (score < best) {
       best = score;
-      winner = codec;
+      winner = &candidate;
       if (best == 0) {
         break;
       }
     }
   }
-  if (!winner || !winner->compression.compress(*winner, data)) {
+  if (winner) {
+    data.price = winner->row->price;
+  }
+  if (!winner || !winner->codec->compression.compress(*winner->codec, data)) {
     CompressUncompressed(data);
   }
   return true;

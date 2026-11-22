@@ -41,7 +41,7 @@ e	3	0
 m	2	1
 n	0	3
 w	3	0
-z	0	3
+z	3	0
 
 query
 SELECT count(*) AS rows, count(*) FILTER (WHERE e = '') AS empty, count(*) FILTER (WHERE e <> '') AS filled,

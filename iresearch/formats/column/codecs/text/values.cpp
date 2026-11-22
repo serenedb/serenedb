@@ -26,6 +26,7 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 
 namespace irs::codecs::text {
@@ -80,3 +81,10 @@ void Values::Add(const duckdb::Vector& input) {
 }
 
 }  // namespace irs::codecs::text
+namespace irs::codecs {
+
+Features TextFeatures(ColumnDataCheckpointData& data) {
+  return data.Get<text::Values>().GetFeatures();
+}
+
+}  // namespace irs::codecs

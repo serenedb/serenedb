@@ -51,7 +51,6 @@
 #include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
-#include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -658,9 +657,18 @@ std::unique_ptr<AlpAnalyzeState<T>> AlpSampleRowGroup(
 }
 
 template<typename T>
-idx_t AlpAnalyzeChunks(std::span<const WriteChunk> chunks) {
-  const auto sampled = AlpSampleRowGroup<T>(chunks);
-  auto& analyze_state = *sampled;
+struct RowGroupSample final : State {
+  static constexpr StateId kId = StateId::AlpSample;
+
+  explicit RowGroupSample(ColumnDataCheckpointData& data)
+    : state{AlpSampleRowGroup<T>(data.chunks)} {}
+
+  std::unique_ptr<AlpAnalyzeState<T>> state;
+};
+
+template<typename T>
+idx_t AlpAnalyzeChunks(ColumnDataCheckpointData& data) {
+  auto& analyze_state = *data.template Get<RowGroupSample<T>>().state;
 
   idx_t total_bytes_used = 0;
   idx_t current_bytes_used_in_segment = 0;
@@ -886,11 +894,11 @@ class AlpCompressionState {
 
 template<typename T>
 uint64_t AlpCompressChunks(const Codec& codec,
-                           ColumnDataCheckpointData& checkpoint_data,
-                           std::span<const WriteChunk> chunks) {
-  AlpCompressionState<T> state{codec, checkpoint_data,
-                               *AlpSampleRowGroup<T>(chunks)};
-  for (const auto& chunk : chunks) {
+                           ColumnDataCheckpointData& checkpoint_data) {
+  AlpCompressionState<T> state{
+    codec, checkpoint_data,
+    *checkpoint_data.template Get<RowGroupSample<T>>().state};
+  for (const auto& chunk : checkpoint_data.chunks) {
     state.Append(chunk.data);
   }
   state.Finalize();
@@ -1209,7 +1217,7 @@ template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Alp,
   .compression =
-    kSampled<T, CodecType::Alp, AlpAnalyzeChunks<T>, AlpCompressChunks<T>>,
+    kSampled<CodecType::Alp, AlpAnalyzeChunks<T>, AlpCompressChunks<T>>,
   .decompression = kDecompression<T>,
 };
 

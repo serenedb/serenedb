@@ -45,6 +45,8 @@ struct Lz4 {
   static constexpr ByteCodec kCodec = ByteCodec::Lz4;
   static constexpr uint8_t kDefaultLevel = 1;
   static constexpr uint8_t kMaxLevel = LZ4HC_CLEVEL_MAX;
+  static constexpr uint8_t kFlushLevels[] = {1};
+  static constexpr uint8_t kMergeLevels[] = {1, 4, 6};
   static constexpr size_t kDictionaryCap = 64 * 1024;
 
   static size_t Bound(size_t raw_size) noexcept;

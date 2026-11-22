@@ -1693,8 +1693,6 @@ void EncodeChunks(const Codec& codec, ColumnDataCheckpointData& checkpoint_data,
   Finalize(state);
 }
 
-constexpr double kReadPrice = 2.0;
-
 template<duckdb::PhysicalType kPhysical>
 struct Containers final : State {
   static constexpr StateId kId = StateId::RoaringContainers;
@@ -1709,15 +1707,10 @@ struct Containers final : State {
 template<duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
   .analyze =
-    [](ColumnDataCheckpointData& data, double bound) {
-      return Hinted(
-        data.tuning.hints[std::to_underlying(CodecType::Roaring)], bound,
-        Facts{}, kFactsMove, [&](bool) {
-          return static_cast<double>(
-                   data.Get<Containers<kPhysical>>().state.total_size) /
-                 static_cast<double>(std::max<uint64_t>(data.rows, 1)) *
-                 kReadPrice;
-        });
+    [](ColumnDataCheckpointData& data, double) {
+      return static_cast<double>(
+               data.Get<Containers<kPhysical>>().state.total_size) /
+             static_cast<double>(std::max<uint64_t>(data.rows, 1)) * data.price;
     },
   .compress =
     [](const Codec& codec, ColumnDataCheckpointData& data) {

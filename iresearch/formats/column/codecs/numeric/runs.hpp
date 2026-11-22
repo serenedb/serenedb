@@ -36,7 +36,7 @@
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 
-namespace irs::codecs {
+namespace irs::codecs::numeric {
 
 inline constexpr uint32_t kSparseRunRows = 16;
 inline constexpr double kMostRunsPerRow = 0.5;
@@ -71,18 +71,7 @@ bool EveryRowDiffers(std::span<const WriteChunk> chunks) {
 }
 
 template<typename T>
-bool KnownWithoutRuns(ColumnDataCheckpointData& data) {
-  if constexpr (std::is_integral_v<T>) {
-    return false;
-  } else {
-    auto& runs = data.Get<Runs<T>>();
-    if (!runs.checked) {
-      runs.checked = true;
-      runs.none = !data.Find<Values<T>>() && EveryRowDiffers<T>(data.chunks);
-    }
-    return runs.none;
-  }
-}
+struct Runs;
 
 template<typename T>
 void LocateRuns(const Values<T>& values, uint32_t count, Runs<T>& runs) {
@@ -137,28 +126,19 @@ void LocateRuns(const Values<T>& values, uint32_t count, Runs<T>& runs) {
 }
 
 template<typename T>
-Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
-  if (KnownWithoutRuns<T>(data)) {
-    return nullptr;
-  }
-  const auto& values = data.Get<Values<T>>();
-  if (!values.Usable()) {
-    return nullptr;
-  }
+bool WithoutRuns(const ColumnDataCheckpointData& data,
+                 const Values<T>& values) noexcept {
   const auto n = static_cast<uint32_t>(values.Size());
   const auto count = values.RunCount();
-  if (count == n ||
-      (data.contested &&
-       static_cast<double>(count) > static_cast<double>(n) * kMostRunsPerRow)) {
-    return nullptr;
-  }
-  auto& runs = data.Get<Runs<T>>();
-  if (!runs.lengths.empty()) {
-    return &runs;
-  }
-  if (!runs.located) {
-    LocateRuns(values, count, runs);
-  }
+  return !values.Usable() || count == n ||
+         (data.contested && static_cast<double>(count) >
+                              static_cast<double>(n) * kMostRunsPerRow);
+}
+
+template<typename T>
+void MeasureRuns(Values<T>& values, Runs<T>& runs) {
+  const auto n = static_cast<uint32_t>(values.Size());
+  const auto count = static_cast<uint32_t>(runs.rows.size());
   auto* run_values = runs.values.data();
   const auto* run_rows = runs.rows.data();
   runs.lengths.resize(count);
@@ -170,191 +150,180 @@ Runs<T>* ScanRuns(ColumnDataCheckpointData& data) {
     runs.lengths[r] = run_rows[r + 1] - run_rows[r];
   }
   runs.lengths[count - 1] = n - run_rows[count - 1];
-  return &runs;
 }
 
 template<typename T>
-struct Rle final : State {
-  static constexpr StateId kId = StateId::Rle;
+struct Runs final : State {
+  static constexpr StateId kId = StateId::Runs;
 
-  explicit Rle(ColumnDataCheckpointData&) {}
+  using U = numeric::Bits<sizeof(T)>;
 
-  uint8_t stored = 0;
-  uint8_t run_width = 0;
-  Analysis analysis;
+  explicit Runs(ColumnDataCheckpointData& data) {
+    if constexpr (!std::is_integral_v<T>) {
+      if (!data.Find<Values<T>>() && EveryRowDiffers<T>(data.chunks)) {
+        return;
+      }
+    }
+    auto& input = data.Get<Values<T>>();
+    if (WithoutRuns(data, input)) {
+      return;
+    }
+    LocateRuns(input, input.RunCount(), *this);
+    MeasureRuns(input, *this);
+  }
+
+  Runs(ColumnDataCheckpointData& data, ScratchVector<U>&& located,
+       ScratchVector<uint32_t>&& located_rows)
+    : values{std::move(located)}, rows{std::move(located_rows)} {
+    auto& input = data.Get<Values<T>>();
+    if (!WithoutRuns(data, input)) {
+      MeasureRuns(input, *this);
+    }
+  }
+
+  ScratchVector<U> values;
+  ScratchVector<uint32_t> lengths;
+  ScratchVector<uint32_t> rows;
 };
 
 template<typename T>
-Items RleItems(ColumnDataCheckpointData& data, FrameStore store) {
-  const auto* runs = ScanRuns<T>(data);
-  if (!runs) {
-    return {};
-  }
-  auto& rle = data.Get<Rle<T>>();
-  if (rle.run_width == 0) {
-    rle.stored = data.Get<Values<T>>().GetReference().stored;
-    rle.run_width = numeric::BytesFor(std::ranges::max(runs->lengths));
-  }
-  return {
-    .shape = Shape::Runs,
-    .store = store,
-    .stored = rle.stored,
-    .run_width = rle.run_width,
-    .count = static_cast<uint32_t>(runs->rows.size()),
-  };
-}
+class Rle {
+ public:
+  static constexpr StateId kId = StateId::Rle;
+  static constexpr Shape kShape = Shape::Runs;
 
-template<typename T>
-auto RleFrames(ColumnDataCheckpointData& data) {
-  return [&data](uint32_t begin, uint32_t count,
-                 ScratchVector<uint8_t>& scratch) -> std::span<const uint8_t> {
-    const auto& rle = data.Get<Rle<T>>();
-    const auto& runs = data.Get<Runs<T>>();
-    scratch.resize(size_t{count} * (rle.stored + rle.run_width));
-    numeric::Narrow<sizeof(T)>(
-      count, rle.stored, scratch.data(),
-      [v = runs.values.data() + begin,
-       lo = data.Get<Values<T>>().GetReference().lo](size_t r) {
-        return static_cast<numeric::Bits<sizeof(T)>>(v[r] - lo);
-      });
-    numeric::Narrow<sizeof(uint32_t)>(
-      count, rle.run_width, scratch.data() + size_t{count} * rle.stored,
-      [l = runs.lengths.data() + begin](size_t r) { return l[r]; });
+  using Value = T;
+  using U = Bits<sizeof(T)>;
+
+  Rle(ColumnDataCheckpointData& data, double) : _runs{data.Get<Runs<T>>()} {
+    if (_runs.lengths.empty()) {
+      return;
+    }
+    const auto reference = data.Get<Values<T>>().GetReference();
+    _lo = reference.lo;
+    _stored = reference.stored;
+    _run_width = numeric::BytesFor(std::ranges::max(_runs.lengths));
+  }
+
+  Items GetItems() const noexcept {
+    if (_stored == 0) {
+      return {};
+    }
+    return {
+      .stored = _stored,
+      .run_width = _run_width,
+      .count = static_cast<uint32_t>(_runs.rows.size()),
+    };
+  }
+
+  std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
+                                 ScratchVector<uint8_t>& scratch) {
+    scratch.resize(size_t{count} * (_stored + _run_width));
+    Narrow<sizeof(T)>(count, _stored, scratch.data(),
+                      [v = _runs.values.data() + begin, lo = _lo](size_t r) {
+                        return static_cast<U>(v[r] - lo);
+                      });
+    Narrow<sizeof(uint32_t)>(
+      count, _run_width, scratch.data() + size_t{count} * _stored,
+      [l = _runs.lengths.data() + begin](size_t r) { return l[r]; });
     return scratch;
-  };
-}
-
-template<typename T>
-double AnalyzeRle(ColumnDataCheckpointData& data, double bound,
-                  FrameStore store) {
-  const auto items = RleItems<T>(data, store);
-  return data.run_price *
-         AnalyzeFrames<T>(data, items, data.Get<Rle<T>>().analysis,
-                          bound / data.run_price, RleFrames<T>(data));
-}
-
-template<typename T>
-bool CompressRle(const Codec& codec, ColumnDataCheckpointData& data,
-                 FrameStore store) {
-  const auto items = RleItems<T>(data, store);
-  if (!Offered(items)) {
-    return false;
   }
-  auto& rle = data.Get<Rle<T>>();
-  const auto& rows = data.Get<Runs<T>>().rows;
-  return CompressFrames<T>(
-    codec, data, items, rle.analysis,
-    RunsHeader{.base = data.Get<Values<T>>().GetReference().lo,
-               .run_width = rle.run_width},
-    RleFrames<T>(data), [&](NumericFrameMeta& m, uint32_t begin) {
-      m.frame.first_entry = rows[begin];
-    });
-}
+
+  RunsHeader Header(const Geometry&) const noexcept {
+    return {.base = _lo, .run_width = _run_width};
+  }
+
+  void Open(NumericFrameMeta& m, uint32_t begin) const noexcept {
+    m.frame.first_entry = _runs.rows[begin];
+  }
+
+ private:
+  const Runs<T>& _runs;
+  U _lo = 0;
+  uint8_t _stored = 0;
+  uint8_t _run_width = 0;
+};
 
 template<typename T, ByteCodec kLeaf>
-inline constexpr auto& kRle =
-  kStoredFrames<AnalyzeRle<T>, CompressRle<T>, kLeaf, false>;
-
-template<typename T>
-struct RleBitpacking final : State {
-  static constexpr StateId kId = StateId::RleBitpacking;
-
-  explicit RleBitpacking(ColumnDataCheckpointData&) {}
-
-  BitpackingBlocks<numeric::Bits<sizeof(T)>> value_blocks;
-  BitpackingBlocks<uint32_t> length_blocks;
-  bool planned = false;
+inline constexpr CompressionFunction kRunFrames{
+  .analyze =
+    [](ColumnDataCheckpointData& data, double bound) {
+      return data.run_price *
+             data.Get<Frames<Rle<T>>>(bound).Analyze(bound / data.run_price,
+                                                     FrameStore{kLeaf, false});
+    },
+  .compress = kFrames<Rle<T>, kLeaf, false>.compress,
 };
 
 template<typename T>
-const Runs<T>* PlanRleBitpacking(ColumnDataCheckpointData& data,
-                                 RleBitpacking<T>& state) {
-  using U = numeric::Bits<sizeof(T)>;
-  if (KnownWithoutRuns<T>(data)) {
-    return nullptr;
-  }
-  const auto& values = data.Get<Values<T>>();
-  if (!values.Usable() ||
-      uint64_t{values.RunCount()} * data.min_packed_run > values.Size()) {
-    return nullptr;
-  }
-  const auto* runs = ScanRuns<T>(data);
-  if (runs && !state.planned) {
-    state.planned = true;
-    state.value_blocks.template PlanStream<Values<T>::kSigned>(
-      BlockRows<U>{std::span<const U>{runs->values}});
-    state.length_blocks.template PlanStream<false>(
-      BlockRows<uint32_t>{std::span<const uint32_t>{runs->lengths}});
-  }
-  return runs;
-}
+class RleBitpacking {
+ public:
+  static constexpr StateId kId = StateId::RleBitpacking;
+  static constexpr Shape kShape = Shape::Runs;
 
-template<typename T>
-double AnalyzeRleBitpacking(ColumnDataCheckpointData& data, double) {
-  auto& state = data.Get<RleBitpacking<T>>();
-  const auto* runs = PlanRleBitpacking(data, state);
-  if (!runs) {
-    return kNoScore;
-  }
-  return AnalyzeBlocks<T>(
-    data, Shape::Runs, static_cast<uint32_t>(runs->rows.size()),
-    state.value_blocks.StreamBytes(kRleBitpackingFrameRuns) +
-      state.length_blocks.StreamBytes(kRleBitpackingFrameRuns),
-    0);
-}
+  using Value = T;
+  using U = Bits<sizeof(T)>;
 
-template<typename T>
-bool CompressRleBitpacking(const Codec& codec, ColumnDataCheckpointData& data) {
-  using U = numeric::Bits<sizeof(T)>;
-  auto& state = data.Get<RleBitpacking<T>>();
-  const auto* runs = PlanRleBitpacking(data, state);
-  if (!runs) {
-    return false;
+  RleBitpacking(ColumnDataCheckpointData& data, double)
+    : _runs{data.Get<Runs<T>>()} {
+    if (_runs.lengths.empty()) {
+      return;
+    }
+    const auto& values = data.Get<Values<T>>();
+    if (uint64_t{values.RunCount()} * data.min_packed_run > values.Size()) {
+      return;
+    }
+    _value_blocks.template PlanStream<Values<T>::kSigned>(RunValues());
+    _length_blocks.template PlanStream<false>(RunLengths());
+    _stored = sizeof(T);
   }
-  auto& out = data.Get<NumericScratch>().out;
-  const auto count = static_cast<uint32_t>(runs->rows.size());
-  const auto geometry =
-    PackedGeometry(Shape::Runs, count, 0, sizeof(T), Scaled<T>(data));
-  SegmentWriter<T> writer{
-    Shape::Runs,
-    geometry,
-    state.value_blocks.StreamBytes(kRleBitpackingFrameRuns) +
-      state.length_blocks.StreamBytes(kRleBitpackingFrameRuns),
-    {},
-    out};
-  for (uint32_t f = 0; f < geometry.frames; ++f) {
-    const auto begin = f * geometry.per;
-    const auto items = std::min(count - begin, geometry.per);
+
+  Items GetItems() const noexcept {
+    if (_stored == 0) {
+      return {};
+    }
+    return {
+      .stored = _stored,
+      .count = static_cast<uint32_t>(_runs.rows.size()),
+    };
+  }
+
+  uint64_t Bytes() const noexcept {
+    return _value_blocks.StreamBytes(kRleBitpackingFrameRuns) +
+           _length_blocks.StreamBytes(kRleBitpackingFrameRuns);
+  }
+
+  void Append(NumericFrameMeta& m, uint32_t begin, uint32_t count,
+              std::string& out) {
     const size_t first = begin / numeric::kBlockValues;
     const size_t blocks =
-      (size_t{items} + numeric::kBlockValues - 1) / numeric::kBlockValues;
-    auto& m = writer.Open(f, runs->rows[begin]);
-    m.base = items;
-    state.value_blocks.AppendStream(
-      BlockRows<U>{std::span<const U>{runs->values}}, first, blocks, out);
-    state.length_blocks.AppendStream(
-      BlockRows<uint32_t>{std::span<const uint32_t>{runs->lengths}}, first,
-      blocks, out);
-    writer.Close(m);
+      (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    m.frame.first_entry = _runs.rows[begin];
+    m.base = count;
+    _value_blocks.AppendStream(RunValues(), first, blocks, out);
+    _length_blocks.AppendStream(RunLengths(), first, blocks, out);
   }
-  writer.Finish(
-    {
-      .stored = sizeof(T),
-      .flags = kNumericPacked,
-    },
-    RunsHeader{}, data.Get<Values<T>>(), [&](uint32_t f, uint32_t, uint32_t) {
-      const auto begin = f * geometry.per;
-      return BoundsOf<Values<T>::kSigned>(
-        runs->values.data() + begin, std::min(count - begin, geometry.per));
-    });
-  FlushNumeric<T>(codec, data);
-  return true;
-}
 
-template<typename T>
-inline constexpr CompressionFunction kRleBitpacking{
-  .analyze = AnalyzeRleBitpacking<T>,
-  .compress = CompressRleBitpacking<T>,
+  RunsHeader Header(const Geometry&) const noexcept { return {}; }
+
+  BlockBounds<U> Bounds(uint32_t begin, uint32_t count, uint32_t,
+                        uint32_t) const noexcept {
+    return BoundsOf<Values<T>::kSigned>(_runs.values.data() + begin, count);
+  }
+
+ private:
+  BlockRows<U> RunValues() const noexcept {
+    return BlockRows<U>{std::span<const U>{_runs.values}};
+  }
+
+  BlockRows<uint32_t> RunLengths() const noexcept {
+    return BlockRows<uint32_t>{std::span<const uint32_t>{_runs.lengths}};
+  }
+
+  const Runs<T>& _runs;
+  BitpackingBlocks<U> _value_blocks;
+  BitpackingBlocks<uint32_t> _length_blocks;
+  uint8_t _stored = 0;
 };
 
 template<typename T>
@@ -646,4 +615,4 @@ class RunsReader final : public FrameReader<T> {
   bool _short_runs = false;
 };
 
-}  // namespace irs::codecs
+}  // namespace irs::codecs::numeric

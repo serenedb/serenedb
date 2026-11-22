@@ -240,15 +240,15 @@ FuzzyConjunction::FuzzyConjunction(
   std::shared_ptr<const LevenshteinAcceptor> fuzzy, size_t max_mem,
   bool starts_with)
   : _size{patterns.size()},
-    _fuzzy{std::move(fuzzy)},
+    _prefix{std::move(fuzzy)},
     _starts_with{starts_with},
     _max_mem{max_mem} {
-  SDB_ASSERT(_fuzzy);
+  SDB_ASSERT(_prefix.Inner());
   SDB_ASSERT(!_starts_with || patterns.empty());
   Parts start{};
-  _lower = _fuzzy->LowerBound();
+  _lower = Fuzzy().LowerBound();
   Collect(patterns, _patterns, start, _lower, _suffixes, _infix);
-  const auto fuzzy_bytemap = _fuzzy->Bytemap();
+  const auto fuzzy_bytemap = Fuzzy().Bytemap();
   if (patterns.empty()) {
     _bytemap = fuzzy_bytemap;
     for (uint32_t label = 0; label != kLabels; ++label) {
@@ -274,9 +274,8 @@ FuzzyConjunction::FuzzyConjunction(
   Loop(_unknown, _classes);
   _unknown->range.store(PackRange(0, RegexpAcceptor::kMaxLabel),
                         std::memory_order_relaxed);
-  _start = _starts_with
-             ? InternPrefixLocked(LevenshteinPrefixAcceptor::StartOf(*_fuzzy))
-             : InternLocked(start, _fuzzy->Start());
+  _start = _starts_with ? InternPrefixLocked(_prefix.Start())
+                        : InternLocked(start, Fuzzy().Start());
 }
 
 std::shared_ptr<const FuzzyConjunction> FuzzyConjunction::Make(
@@ -295,9 +294,9 @@ std::shared_ptr<const FuzzyConjunction> FuzzyConjunction::MakeWith(
   auto dfa = std::make_shared<const FuzzyConjunction>(
     std::span<const std::shared_ptr<const RegexpAcceptor>>{}, std::move(fuzzy),
     max_mem, starts_with);
-  auto states = dfa->_fuzzy->MaxStates() + 2;
+  auto states = dfa->Fuzzy().MaxStates() + 2;
   if (starts_with) {
-    states *= dfa->_fuzzy->MaxDistance() + 2;
+    states *= dfa->Fuzzy().MaxDistance() + 2;
   }
   if (states * RowBytes<Row>(dfa->_classes) > max_mem) {
     return nullptr;
@@ -312,14 +311,14 @@ bool FuzzyConjunction::Matches(bytes_view term) const {
 
 bool FuzzyConjunction::Matches(bytes_view term, PayloadType& payload) const {
   if (_starts_with) {
-    return LevenshteinPrefixAcceptor::Matches(*_fuzzy, term, payload);
+    return _prefix.Matches(term, payload);
   }
   for (size_t i = 0; i != _size; ++i) {
     if (!_patterns[i]->Matches(term)) {
       return false;
     }
   }
-  return _fuzzy->Matches(term, payload);
+  return Fuzzy().Matches(term, payload);
 }
 
 template<bool kPrefix>
@@ -332,11 +331,10 @@ IRS_FORCE_INLINE FuzzyConjunction::State FuzzyConjunction::StepSlowOf(
   [[maybe_unused]] Parts parts{};
   bool alive = false;
   if constexpr (kPrefix) {
-    prefix =
-      LevenshteinPrefixAcceptor::StepOf(*_fuzzy, PrefixStateOf(*from), label);
+    prefix = _prefix.Step(PrefixStateOf(*from), label);
     alive = LevenshteinPrefixAcceptor::Alive(prefix);
   } else {
-    fuzzy = _fuzzy->Step(from->fuzzy, label);
+    fuzzy = Fuzzy().Step(from->fuzzy, label);
     alive = LevenshteinAcceptor::Alive(fuzzy);
     for (size_t i = 0; alive && i != _size; ++i) {
       parts[i] = _patterns[i]->Step(from->parts[i], label);
@@ -373,7 +371,7 @@ FuzzyConjunction::State FuzzyConjunction::StepSlow(State from,
 uint32_t FuzzyConjunction::Range(Row& row) const {
   uint32_t lo = 1;
   uint32_t hi = 0;
-  _fuzzy->LiveRange(row.fuzzy, lo, hi);
+  Fuzzy().LiveRange(row.fuzzy, lo, hi);
   for (size_t i = 0; i != _size && lo <= hi; ++i) {
     uint32_t part_lo = 1;
     uint32_t part_hi = 0;
@@ -388,6 +386,41 @@ uint32_t FuzzyConjunction::Range(Row& row) const {
   const auto range = PackRange(lo, hi);
   row.range.store(range, std::memory_order_release);
   return range;
+}
+
+FuzzyConjunction::State FuzzyConjunction::InternLocked(
+  const Parts& parts, const LevenshteinAcceptor::State& fuzzy) const {
+  if (!LevenshteinAcceptor::Alive(fuzzy)) {
+    return _dead;
+  }
+  for (size_t i = 0; i != _size; ++i) {
+    if (parts[i]->dead) {
+      return _dead;
+    }
+  }
+  return InternRowLocked(KeyOf(parts, fuzzy), [&](Row& row) {
+    row.parts = parts;
+    row.fuzzy = fuzzy;
+    row.accept = Fuzzy().Accept(fuzzy, row.distance);
+    for (size_t i = 0; i != _size; ++i) {
+      row.accept = row.accept && parts[i]->accept;
+      row.unknown = row.unknown || parts[i]->unknown;
+    }
+  });
+}
+
+FuzzyConjunction::State FuzzyConjunction::InternPrefixLocked(
+  const LevenshteinPrefixAcceptor::State& state) const {
+  SDB_ASSERT(_size == 0);
+  return InternRowLocked(KeyOf({}, state.inner, state.best), [&](Row& row) {
+    row.fuzzy = state.inner;
+    row.accept = LevenshteinPrefixAcceptor::Accept(state, row.distance);
+    uint32_t lo = 1;
+    uint32_t hi = 0;
+    _prefix.LiveRange(state, lo, hi);
+    SDB_ASSERT(lo <= hi);
+    row.range.store(PackRange(lo, hi), std::memory_order_relaxed);
+  });
 }
 
 template<typename Fill>
@@ -405,41 +438,6 @@ FuzzyConjunction::State FuzzyConjunction::InternRowLocked(const Key& key,
   fill(*row);
   it->second = row;
   return row;
-}
-
-FuzzyConjunction::State FuzzyConjunction::InternLocked(
-  const Parts& parts, const LevenshteinAcceptor::State& fuzzy) const {
-  if (!LevenshteinAcceptor::Alive(fuzzy)) {
-    return _dead;
-  }
-  for (size_t i = 0; i != _size; ++i) {
-    if (parts[i]->dead) {
-      return _dead;
-    }
-  }
-  return InternRowLocked(KeyOf(parts, fuzzy), [&](Row& row) {
-    row.parts = parts;
-    row.fuzzy = fuzzy;
-    row.accept = _fuzzy->Accept(fuzzy, row.distance);
-    for (size_t i = 0; i != _size; ++i) {
-      row.accept = row.accept && parts[i]->accept;
-      row.unknown = row.unknown || parts[i]->unknown;
-    }
-  });
-}
-
-FuzzyConjunction::State FuzzyConjunction::InternPrefixLocked(
-  const LevenshteinPrefixAcceptor::State& state) const {
-  SDB_ASSERT(_size == 0);
-  return InternRowLocked(KeyOf({}, state.inner, state.best), [&](Row& row) {
-    row.fuzzy = state.inner;
-    row.accept = LevenshteinPrefixAcceptor::Accept(state, row.distance);
-    uint32_t lo = 1;
-    uint32_t hi = 0;
-    LevenshteinPrefixAcceptor::LiveRangeOf(*_fuzzy, state, lo, hi);
-    SDB_ASSERT(lo <= hi);
-    row.range.store(PackRange(lo, hi), std::memory_order_relaxed);
-  });
 }
 
 }  // namespace irs

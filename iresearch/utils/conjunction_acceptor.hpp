@@ -260,7 +260,7 @@ class FuzzyConjunction {
 
   bool Matches(bytes_view term, PayloadType& payload) const;
 
-  uint32_t MaxDistance() const noexcept { return _fuzzy->MaxDistance(); }
+  uint32_t MaxDistance() const noexcept { return Fuzzy().MaxDistance(); }
 
  private:
   struct Key {
@@ -295,9 +295,10 @@ class FuzzyConjunction {
 
   static LevenshteinPrefixAcceptor::State PrefixStateOf(
     const Row& row) noexcept {
-    return {row.fuzzy,
-            row.accept ? row.distance : LevenshteinPrefixAcceptor::kNone};
+    return {row.fuzzy, row.distance};
   }
+
+  const LevenshteinAcceptor& Fuzzy() const noexcept { return *_prefix.Inner(); }
 
   static std::shared_ptr<const FuzzyConjunction> MakeWith(
     std::shared_ptr<const LevenshteinAcceptor> fuzzy, size_t max_mem,
@@ -317,7 +318,7 @@ class FuzzyConjunction {
              RegexpConjunction::kMaxPatterns>
     _patterns;
   size_t _size;
-  std::shared_ptr<const LevenshteinAcceptor> _fuzzy;
+  LevenshteinPrefixAcceptor _prefix;
   bool _starts_with;
   std::array<uint8_t, RegexpAcceptor::kMaxLabel + 1> _bytemap{};
   std::array<uint8_t, RegexpAcceptor::kMaxLabel + 1> _representative{};

@@ -27,7 +27,6 @@
 #include <limits>
 #include <memory>
 #include <span>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -481,7 +480,6 @@ class LevenshteinPrefixAcceptor {
   static constexpr bool kHasPayload = true;
   static constexpr bool kCheapRuns = false;
   static constexpr bool kMayBeUnknown = false;
-  static constexpr PayloadType kNone = std::numeric_limits<PayloadType>::max();
 
   struct State {
     LevenshteinAcceptor::State inner;
@@ -496,7 +494,7 @@ class LevenshteinPrefixAcceptor {
     return _inner;
   }
 
-  State Start() const noexcept { return StartOf(*_inner); }
+  State Start() const noexcept { return Settle({_inner->Start(), kNone}); }
 
   bytes_view LowerBound() const noexcept { return _inner->LowerBound(); }
 
@@ -505,7 +503,10 @@ class LevenshteinPrefixAcceptor {
   }
 
   State Step(const State& state, byte_type label) const noexcept {
-    return StepOf(*_inner, state, label);
+    if (Settled(state)) {
+      return state;
+    }
+    return Settle({_inner->Step(state.inner, label), state.best});
   }
 
   static bool Accept(const State& state, PayloadType& payload) noexcept {
@@ -515,60 +516,40 @@ class LevenshteinPrefixAcceptor {
 
   bool Matches(bytes_view term) const noexcept {
     PayloadType payload{};
-    return Matches(*_inner, term, payload);
+    return Matches(term, payload);
   }
 
   bool Matches(bytes_view term, PayloadType& payload) const noexcept {
-    return Matches(*_inner, term, payload);
+    auto state = Start();
+    for (const auto label : term) {
+      if (Settled(state)) {
+        break;
+      }
+      state = Step(state, label);
+    }
+    return Accept(state, payload);
   }
 
   bool LiveRange(const State& state, uint32_t& lo,
                  uint32_t& hi) const noexcept {
-    return LiveRangeOf(*_inner, state, lo, hi);
-  }
-
-  static State StartOf(const LevenshteinAcceptor& inner) noexcept {
-    return Settle(inner, {inner.Start(), kNone});
-  }
-
-  static State StepOf(const LevenshteinAcceptor& inner, const State& state,
-                      byte_type label) noexcept {
-    if (Settled(state)) {
-      return state;
-    }
-    return Settle(inner, {inner.Step(state.inner, label), state.best});
-  }
-
-  static bool LiveRangeOf(const LevenshteinAcceptor& inner, const State& state,
-                          uint32_t& lo, uint32_t& hi) noexcept {
     if (state.best != kNone) {
       lo = 0;
       hi = std::numeric_limits<byte_type>::max();
       return true;
     }
-    return inner.LiveRange(state.inner, lo, hi);
-  }
-
-  static bool Matches(const LevenshteinAcceptor& inner, bytes_view term,
-                      PayloadType& payload) noexcept {
-    auto state = StartOf(inner);
-    for (const auto label : term) {
-      if (Settled(state)) {
-        break;
-      }
-      state = StepOf(inner, state, label);
-    }
-    return Accept(state, payload);
+    return _inner->LiveRange(state.inner, lo, hi);
   }
 
  private:
+  static constexpr PayloadType kNone = std::numeric_limits<PayloadType>::max();
+
   static bool Settled(const State& state) noexcept {
     return state.best == 0 || !LevenshteinAcceptor::Alive(state.inner);
   }
 
-  static State Settle(const LevenshteinAcceptor& inner, State state) noexcept {
+  State Settle(State state) const noexcept {
     PayloadType distance{};
-    if (inner.Accept(state.inner, distance) && distance < state.best) {
+    if (_inner->Accept(state.inner, distance) && distance < state.best) {
       state.best = distance;
     }
     if (Settled(state)) {
@@ -579,20 +560,5 @@ class LevenshteinPrefixAcceptor {
 
   std::shared_ptr<const LevenshteinAcceptor> _inner;
 };
-
-template<bool kStartsWith>
-using LevenshteinAcceptorFor =
-  std::conditional_t<kStartsWith, LevenshteinPrefixAcceptor,
-                     LevenshteinAcceptor>;
-
-template<bool kStartsWith>
-std::shared_ptr<const LevenshteinAcceptorFor<kStartsWith>> AcceptorFor(
-  std::shared_ptr<const LevenshteinAcceptor> fuzzy) {
-  if constexpr (kStartsWith) {
-    return std::make_shared<const LevenshteinPrefixAcceptor>(std::move(fuzzy));
-  } else {
-    return fuzzy;
-  }
-}
 
 }  // namespace irs

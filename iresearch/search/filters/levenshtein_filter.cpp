@@ -207,13 +207,17 @@ void WalkTopTerms(const TermReader& reader,
       if (description) {
         distance = narrowed;
         AssignAfterKey(past, it->value());
-        Resolve(options.starts_with, [&]<bool kStartsWith> {
-          auto acceptor = AcceptorFor<kStartsWith>(
-            std::make_shared<const LevenshteinAcceptor>(description, prefix,
-                                                        term));
+        auto acceptor = std::make_shared<const LevenshteinAcceptor>(
+          description, prefix, term);
+        if (options.starts_with) {
+          auto wrapped = std::make_shared<const LevenshteinPrefixAcceptor>(
+            std::move(acceptor));
+          it.emplace(reader.iterator(*wrapped), options);
+          narrow = std::move(wrapped);
+        } else {
           it.emplace(reader.iterator(*acceptor), options);
           narrow = std::move(acceptor);
-        });
+        }
         if (!it->SeekGe(past)) {
           return;
         }

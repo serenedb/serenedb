@@ -21,7 +21,9 @@
 #include "iresearch/search/detail/term_acceptor.hpp"
 
 #include <algorithm>
+#include <memory>
 #include <span>
+#include <type_traits>
 #include <utility>
 
 #include "iresearch/formats/term_reader.hpp"
@@ -172,9 +174,12 @@ class WalkSource final : public TermAcceptorSource {
 
 template<bool kStartsWith>
 class FuzzySource final : public TermAcceptorSource {
+  using Acceptor = std::conditional_t<kStartsWith, LevenshteinPrefixAcceptor,
+                                      LevenshteinAcceptor>;
+
  public:
   explicit FuzzySource(std::shared_ptr<const LevenshteinAcceptor> fuzzy)
-    : _acceptor{AcceptorFor<kStartsWith>(std::move(fuzzy))} {}
+    : _acceptor{Wrap(std::move(fuzzy))} {}
 
   bool ok() const noexcept final { return true; }
 
@@ -202,7 +207,17 @@ class FuzzySource final : public TermAcceptorSource {
   }
 
  private:
-  std::shared_ptr<const LevenshteinAcceptorFor<kStartsWith>> _acceptor;
+  static std::shared_ptr<const Acceptor> Wrap(
+    std::shared_ptr<const LevenshteinAcceptor> fuzzy) {
+    if constexpr (kStartsWith) {
+      return std::make_shared<const LevenshteinPrefixAcceptor>(
+        std::move(fuzzy));
+    } else {
+      return fuzzy;
+    }
+  }
+
+  std::shared_ptr<const Acceptor> _acceptor;
   mutable BlockingOnce _once;
   mutable std::shared_ptr<const FuzzyConjunction> _dfa;
 };

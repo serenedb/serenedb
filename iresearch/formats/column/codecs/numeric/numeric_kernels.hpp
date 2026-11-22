@@ -62,7 +62,7 @@ constexpr uint8_t BytesFor(U max) noexcept {
 }
 
 template<size_t kMax>
-constexpr auto StoredWidths() noexcept {
+consteval auto StoredWidths() noexcept {
   std::array<uint8_t, std::bit_width(kMax)> widths{};
   for (size_t i = 0; i != widths.size(); ++i) {
     widths[i] = static_cast<uint8_t>(size_t{1} << i);

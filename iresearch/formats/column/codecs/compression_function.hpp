@@ -164,7 +164,7 @@ enum class StateId : uint8_t {
   AlprdSample,
 };
 
-constexpr StateId TextState(Shape shape, ByteCodec leaf) noexcept {
+consteval StateId TextState(Shape shape, ByteCodec leaf) noexcept {
   return static_cast<StateId>(
     std::to_underlying(shape == Shape::Dictionary ? StateId::TextDictLz4
                                                   : StateId::TextLz4) +
@@ -176,7 +176,7 @@ static_assert(TextState(Shape::Plain, ByteCodec::Fsst12) ==
 static_assert(TextState(Shape::Dictionary, ByteCodec::Fsst12) ==
               StateId::TextDictFsst12);
 
-constexpr StateId FsstEncoderState(ByteCodec leaf) noexcept {
+consteval StateId FsstEncoderState(ByteCodec leaf) noexcept {
   switch (leaf) {
     case ByteCodec::FsstPlus:
       return StateId::FsstPlusEncoder;

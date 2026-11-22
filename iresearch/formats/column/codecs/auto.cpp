@@ -22,7 +22,10 @@
 #include <absl/container/inlined_vector.h>
 
 #include <algorithm>
+#include <array>
 #include <duckdb/common/types.hpp>
+#include <magic_enum/magic_enum.hpp>
+#include <span>
 #include <utility>
 
 #include "iresearch/formats/column/codecs/codecs.hpp"
@@ -31,6 +34,177 @@
 
 namespace irs::codecs {
 namespace {
+
+using duckdb::PhysicalType;
+
+struct Candidate {
+  CodecType codec = CodecType::Uncompressed;
+  double price = 1.0;
+};
+
+struct Candidates {
+  std::span<const Candidate> flush;
+  std::span<const Candidate> merge;
+  Features (*features)(ColumnDataCheckpointData& data) = nullptr;
+  double least_shift = 1.0;
+};
+
+constexpr double kLz4Price = 1.05;
+constexpr double kZstdPrice = 1.15;
+constexpr double kRoaringPrice = 2.0;
+constexpr double kLeastTextShift = 1.5;
+
+constexpr Candidate kLightweightRows[] = {
+  {CodecType::Uncompressed},
+  {CodecType::Roaring, kRoaringPrice},
+};
+
+constexpr Candidate kBoolRows[] = {
+  {CodecType::Uncompressed},
+  {CodecType::Bitpacking},
+  {CodecType::Rle},
+  {CodecType::Roaring, kRoaringPrice},
+};
+
+constexpr Candidate kIntegerRows[] = {
+  {CodecType::Uncompressed},
+  {CodecType::Bitpacking},
+  {CodecType::Rle},
+  {CodecType::Dict},
+  {CodecType::Lz4, kLz4Price},
+  {CodecType::RleLz4, kLz4Price},
+  {CodecType::DictLz4, kLz4Price},
+  {CodecType::Zstd, kZstdPrice},
+  {CodecType::RleZstd, kZstdPrice},
+  {CodecType::DictZstd, kZstdPrice},
+};
+
+constexpr Candidate kFreshIntegerRows[] = {
+  {CodecType::Uncompressed},
+  {CodecType::Bitpacking},
+  {CodecType::Rle},
+  {CodecType::Dict},
+  {CodecType::Lz4, kLz4Price},
+  {CodecType::RleLz4, kLz4Price},
+  {CodecType::DictLz4, kLz4Price},
+};
+
+constexpr Candidate kFloatRows[] = {
+  {CodecType::Uncompressed}, {CodecType::Alp}, {CodecType::Alprd},
+  {CodecType::Bitpacking},   {CodecType::Rle}, {CodecType::Dict},
+};
+
+constexpr Candidate kTextRows[] = {
+  {CodecType::DictFsst},
+  {CodecType::DictLz4},
+  {CodecType::Fsst},
+  {CodecType::Lz4, kLz4Price},
+};
+
+constexpr Candidate kFreshTextRows[] = {
+  {CodecType::DictFsst},
+  {CodecType::DictLz4, kLz4Price},
+  {CodecType::Fsst},
+  {CodecType::Lz4, kLz4Price},
+};
+
+constexpr Candidates kLightweight{
+  .flush = kLightweightRows,
+  .merge = kLightweightRows,
+};
+
+constexpr Candidates kBool{
+  .flush = kBoolRows,
+  .merge = kBoolRows,
+};
+
+constexpr Candidates kInteger{
+  .flush = kFreshIntegerRows,
+  .merge = kIntegerRows,
+  .features = NumericFeatures,
+};
+
+constexpr Candidates kFloat{
+  .flush = kFloatRows,
+  .merge = kFloatRows,
+  .features = NumericFeatures,
+};
+
+constexpr Candidates kText{
+  .flush = kFreshTextRows,
+  .merge = kTextRows,
+  .features = TextFeatures,
+  .least_shift = kLeastTextShift,
+};
+
+constexpr CodecSet kAlwaysAsked =
+  CodecSet{}
+    .set(std::to_underlying(CodecType::Uncompressed))
+    .set(std::to_underlying(CodecType::Bitpacking))
+    .set(std::to_underlying(CodecType::Rle))
+    .set(std::to_underlying(CodecType::Delta));
+
+constexpr CodecType kNamedOnly[] = {
+  CodecType::Delta,
+  CodecType::DeltaLz4,
+  CodecType::DeltaZstd,
+};
+
+static_assert([] {
+  std::array<bool, magic_enum::enum_count<CodecType>()> listed{};
+  for (const std::span<const Candidate> rows :
+       {std::span<const Candidate>{kLightweightRows},
+        std::span<const Candidate>{kBoolRows},
+        std::span<const Candidate>{kIntegerRows},
+        std::span<const Candidate>{kFreshIntegerRows},
+        std::span<const Candidate>{kFloatRows}}) {
+    for (const auto& row : rows) {
+      listed[std::to_underlying(row.codec)] = true;
+    }
+  }
+  for (const auto type : kNamedOnly) {
+    listed[std::to_underlying(type)] = true;
+  }
+  for (const auto type : magic_enum::enum_values<CodecType>()) {
+    const bool numeric = type != CodecType::Auto && type != CodecType::Empty &&
+                         type != CodecType::Constant &&
+                         (!IsText(type) || IsNumeric(type));
+    if (listed[std::to_underlying(type)] != numeric) {
+      return false;
+    }
+  }
+  return true;
+}());
+
+bool AlwaysAsked(CodecType type) noexcept {
+  return kAlwaysAsked.test(std::to_underlying(type));
+}
+
+const Candidates& CandidatesOf(PhysicalType physical) noexcept {
+  switch (physical) {
+    case PhysicalType::VARCHAR:
+      return kText;
+    case PhysicalType::FLOAT:
+    case PhysicalType::DOUBLE:
+      return kFloat;
+    case PhysicalType::BOOL:
+      return kBool;
+    case PhysicalType::INT8:
+    case PhysicalType::INT16:
+    case PhysicalType::INT32:
+    case PhysicalType::INT64:
+    case PhysicalType::UINT8:
+    case PhysicalType::UINT16:
+    case PhysicalType::UINT32:
+    case PhysicalType::UINT64:
+    case PhysicalType::INT128:
+    case PhysicalType::UINT128:
+    case PhysicalType::LIST:
+      return kInteger;
+    default:
+      return kLightweight;
+  }
+}
 
 constexpr size_t kMostCandidates = 16;
 

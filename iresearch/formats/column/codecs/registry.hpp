@@ -22,7 +22,6 @@
 
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
-#include <span>
 #include <string_view>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
@@ -30,22 +29,6 @@
 namespace irs::codecs {
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
-
-struct Candidate {
-  CodecType codec = CodecType::Uncompressed;
-  double price = 1.0;
-};
-
-struct Candidates {
-  std::span<const Candidate> flush;
-  std::span<const Candidate> merge;
-  Features (*features)(ColumnDataCheckpointData& data) = nullptr;
-  double least_shift = 1.0;
-};
-
-const Candidates& CandidatesOf(duckdb::PhysicalType physical) noexcept;
-
-bool AlwaysAsked(CodecType type) noexcept;
 
 bool Writes(CodecType type, duckdb::PhysicalType physical) noexcept;
 

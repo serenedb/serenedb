@@ -387,9 +387,7 @@ IRS_FORCE_INLINE bool FuzzyConjunctionOf<A>::MatchesOf(
 template<typename A>
 FuzzyConjunction::State FuzzyConjunctionOf<A>::InternLocked(
   const Parts& parts, const AcceptorState& state) const {
-  if (!_fuzzy->Alive(state)) {
-    return _dead;
-  }
+  SDB_ASSERT(_fuzzy->Alive(state));
   for (size_t i = 0; i != _size; ++i) {
     if (parts[i]->dead) {
       return _dead;

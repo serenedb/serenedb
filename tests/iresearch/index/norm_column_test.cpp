@@ -426,6 +426,20 @@ TEST_F(NormColumnTest, WideRegions) {
   AssertNormReads(*col, expected);
 }
 
+TEST_F(NormColumnTest, StreamedColumnsWithoutRegionsPadToTheSegment) {
+  constexpr uint64_t kRowCount = 100;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), dir.Tracker("padded")};
+    w.StreamNormColumn(9);
+    ASSERT_TRUE(w.Commit(kRowCount));
+  }
+  irs::ColReader r = irs::tests::OpenColReader(dir, "padded");
+  const auto* col = r.NormColumn(9);
+  ASSERT_NE(col, nullptr);
+  AssertNormReads(*col, std::vector<uint32_t>(kRowCount, 0));
+}
+
 TEST_F(NormColumnTest, StreamedRegions) {
   const auto value = [](uint64_t i) -> uint32_t {
     if (i < 3000) {

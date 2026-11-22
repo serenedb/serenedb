@@ -7342,4 +7342,35 @@ TEST_F(ColumnReaderTest, DeferredWritersSealTheirRowsAtCommit) {
   }
 }
 
+TEST_F(ColumnReaderTest, BlobPointReadersReturnNothingForNullRows) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 5000;
+  const ValueOf value_of = [](uint64_t g) {
+    return g % 7 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                      : duckdb::Value{
+                          absl::StrCat("value-", g, "-", std::string(20, 'x'))};
+  };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  WriteColumn(Db(), dir, kId, duckdb::LogicalType::VARCHAR, kRows, 4096,
+              value_of);
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  irs::ColumnReader::BlobPointReader reader{r, *col};
+  for (const uint64_t g : {0, 1, 7, 13, 14, 4095, 4096, 4097, 4998, 4999}) {
+    const auto value = value_of(g);
+    const auto got = reader.FetchRow(g);
+    if (value.IsNull()) {
+      EXPECT_TRUE(got.empty()) << "row " << g;
+      EXPECT_TRUE(reader.IsNullRow(g)) << "row " << g;
+      continue;
+    }
+    EXPECT_EQ(
+      std::string_view(reinterpret_cast<const char*>(got.data()), got.size()),
+      value.GetValue<std::string>())
+      << "row " << g;
+    EXPECT_FALSE(reader.IsNullRow(g)) << "row " << g;
+  }
+}
+
 }  // namespace

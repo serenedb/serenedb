@@ -18,41 +18,30 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "catalog/entry/role.h"
+#include "catalog/entry/parameter.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 
 namespace sdb::pg {
 namespace {
 
-struct Parameter {
-  duckdb::idx_t oid;
-  const duckdb::GrantRow& row;
-};
-
 class PgParameterAcl final : public SystemTableScan<kPgParameterAclSql> {
  public:
   using SystemTableScan::SystemTableScan;
 
   static constexpr std::tuple kSources{CatalogSetSource{
-    SystemCatalog::Cluster, duckdb::CatalogType::ROLE_ENTRY, {}}};
+    SystemCatalog::Cluster, duckdb::CatalogType::PARAMETER_ENTRY, {}}};
 
-  static constexpr auto kParameter = Shape<kSql, const Parameter>(
-    Col<"oid">(&Parameter::oid),
-    Col<"parname">(
-      [](const auto& parameter) -> const auto& { return parameter.row.name; }),
-    Col<"paracl">(
-      [](const auto& parameter) -> const auto& { return parameter.row.acl; }));
+  static constexpr auto kParameter =
+    Shape<kSql, const catalog::ParameterCatalogEntry>(
+      Col<"oid">(&duckdb::CatalogEntry::oid),
+      Col<"parname">(&duckdb::CatalogEntry::name),
+      Col<"paracl">([](const auto& parameter) -> const auto& {
+        return parameter.permissions.acl;
+      }));
 
-  void Row(const catalog::RoleCatalogEntry& role) {
-    if (role.oid != kRootUser) {
-      return;
-    }
-    duckdb::idx_t oid = 0;
-    for (const auto& row :
-         role.permissions.Rows().OfKind(duckdb::CatalogType::PARAMETER_ENTRY)) {
-      Emit<kParameter>({++oid, row});
-    }
+  void Row(const catalog::ParameterCatalogEntry& parameter) {
+    Emit<kParameter>(parameter);
   }
 };
 

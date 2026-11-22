@@ -848,38 +848,14 @@ struct ParameterPrivileges : ObjectPrivileges<ParameterPrivileges> {
   static constexpr AclMode kModes = duckdb::ObjectKindOf(kType).privileges;
   static constexpr bool kSuperuserFirst = false;
 
-  struct Parameter {
-    std::string name;
-    duckdb::Permissions permissions;
-  };
-
-  struct Scope : ObjectScope {
-    std::vector<Parameter> parameters;
-  };
-
-  static Scope Begin(duckdb::ClientContext& context,
-                     duckdb::optional_idx caller) {
-    Scope scope{ObjectPrivileges::Begin(context, caller)};
-    auto& cluster = catalog::ClusterOf(context);
-    const auto root =
-      cluster.LookupOid(cluster.GetCatalogTransaction(context), kRootUser);
-    if (root) {
-      for (const auto& row : root->permissions.Rows().OfKind(
-             duckdb::CatalogType::PARAMETER_ENTRY)) {
-        scope.parameters.push_back(
-          {row.name, duckdb::Permissions{.owner = kRootUser, .acl = row.acl}});
-      }
-    }
-    return scope;
-  }
-
-  static std::optional<ObjectTarget> FindNamed(const Scope& scope,
+  static std::optional<ObjectTarget> FindNamed(const Session& session,
                                                std::string_view name) {
-    const auto row = absl::c_find_if(scope.parameters, [&](const auto& entry) {
-      return absl::EqualsIgnoreCase(entry.name, name);
-    });
-    return ObjectTarget{row == scope.parameters.end() ? &kBuiltinPermissions
-                                                      : &row->permissions};
+    auto& cluster = catalog::ClusterOf(*session.context);
+    const auto parameter =
+      cluster.Set(kType).Get(cluster.GetCatalogTransaction(*session.context),
+                             duckdb::Identifier{name});
+    return ObjectTarget{parameter ? &PrivilegePermissions(*parameter)
+                                  : &kBuiltinPermissions};
   }
 };
 

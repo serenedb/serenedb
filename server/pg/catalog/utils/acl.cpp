@@ -376,18 +376,16 @@ void VisitRoleReferences(
                 });
       }
     });
-  const auto holder = cluster.LookupOid(cluster_transaction, kRootUser);
-  if (!holder) {
-    return;
-  }
-  duckdb::idx_t oid = 0;
-  for (const auto& row : holder->permissions.Rows().OfKind(PARAMETER_ENTRY)) {
-    ++oid;
-    if (names(row.acl)) {
-      visitor({kInvalidOid, kPgParameterAclTable, oid, 0, 'a'},
-              [&] { return absl::StrCat("parameter ", row.name); });
-    }
-  }
+  cluster.Set(PARAMETER_ENTRY)
+    .Scan(cluster_transaction, [&](duckdb::CatalogEntry& parameter) {
+      if (names(parameter.permissions.acl)) {
+        visitor({kInvalidOid, kPgParameterAclTable, parameter.oid, 0, 'a'},
+                [&] {
+                  return absl::StrCat("parameter ",
+                                      parameter.name.GetIdentifierName());
+                });
+      }
+    });
 }
 
 }  // namespace sdb::pg

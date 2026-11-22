@@ -179,8 +179,7 @@ void RevokeShared(ClusterCatalog& cluster, duckdb::ClientContext& context,
             continue;
           }
           auto& alter = database(role, row.kind);
-          alter.database_rows = {
-            duckdb::GrantRow{row.kind, row.oid, row.name, {}}};
+          alter.database_rows = {duckdb::GrantRow{row.kind, row.oid, {}}};
           alter.object_owner_id = bootstrap;
         }
         if (absl::c_any_of(permissions.defaults,
@@ -205,19 +204,13 @@ void RevokeShared(ClusterCatalog& cluster, duckdb::ClientContext& context,
         alter->revoke = true;
         alters.push_back({cluster, transaction, std::move(alter)});
       }
-      if (member.oid != bootstrap) {
-        return;
-      }
-      for (const auto& row : member.permissions.Rows().OfKind(
-             duckdb::CatalogType::PARAMETER_ENTRY)) {
-        for (const auto role : info.role_ids) {
-          if (GrantsTo(row.acl, role)) {
-            auto& alter = AddRevoke(alters, cluster, transaction, member, role,
-                                    duckdb::CatalogType::PARAMETER_ENTRY, info);
-            alter.database_rows = {
-              duckdb::GrantRow{row.kind, row.oid, row.name, {}}};
-            alter.object_owner_id = bootstrap;
-          }
+    });
+  cluster.Set(duckdb::CatalogType::PARAMETER_ENTRY)
+    .Scan(transaction, [&](duckdb::CatalogEntry& parameter) {
+      for (const auto role : info.role_ids) {
+        if (GrantsTo(parameter.permissions.acl, role)) {
+          AddRevoke(alters, cluster, transaction, parameter, role,
+                    duckdb::CatalogType::PARAMETER_ENTRY, info);
         }
       }
     });

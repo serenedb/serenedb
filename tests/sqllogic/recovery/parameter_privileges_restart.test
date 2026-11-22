@@ -57,6 +57,18 @@ SET sdb_faults = '-compact_inside_ddl';
 
 
 statement ok
+GRANT ALTER SYSTEM ON PARAMETER session_replication_role TO ppr_vedernikoff;
+
+
+statement ok
+GRANT SET ON PARAMETER ppr_ext.a TO ppr_vedernikoff;
+
+
+statement ok
+REVOKE SET ON PARAMETER ppr_ext.a FROM ppr_vedernikoff;
+
+
+statement ok
 SET sdb_faults = 'crash_on_packet';
 
 
@@ -75,7 +87,7 @@ SELECT parname, array_to_string(paracl, ',') AS acl FROM pg_parameter_acl ORDER 
 ----
 parname	acl
 sdb_job_history_size	postgres=sA/postgres,ppr_vedernikoff=A/postgres
-session_replication_role	postgres=sA/postgres,ppr_vedernikoff=s/postgres
+session_replication_role	postgres=sA/postgres,ppr_vedernikoff=sA/postgres
 
 
 connection c_ved_after user=ppr_vedernikoff password=ppr_pw

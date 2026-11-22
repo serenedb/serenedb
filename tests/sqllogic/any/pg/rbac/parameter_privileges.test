@@ -18,6 +18,41 @@ statement ok
 GRANT gsp_group TO gsp_user;
 
 
+connection c_concurrent
+statement ok
+BEGIN;
+
+
+connection c_concurrent
+statement ok
+GRANT SET ON PARAMETER gsp_ext.a TO gsp_group;
+
+
+statement ok
+GRANT SET ON PARAMETER gsp_ext.b TO gsp_group;
+
+
+connection c_concurrent
+statement ok
+COMMIT;
+
+
+query
+SELECT parname, array_to_string(paracl, ',') AS acl FROM pg_parameter_acl WHERE parname LIKE 'gsp_ext.%' ORDER BY parname;
+----
+parname	acl
+gsp_ext.a	postgres=sA/postgres,gsp_group=s/postgres
+gsp_ext.b	postgres=sA/postgres,gsp_group=s/postgres
+
+
+statement ok
+REVOKE SET ON PARAMETER gsp_ext.a FROM gsp_group;
+
+
+statement ok
+REVOKE SET ON PARAMETER gsp_ext.b FROM gsp_group;
+
+
 skipif postgres
 connection c_user user=gsp_user password=gsp_pw
 statement error

@@ -47,7 +47,6 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
-#include "iresearch/formats/column/codecs/numeric/delta.hpp"
 #include "iresearch/formats/column/codecs/numeric/plain.hpp"
 #include "iresearch/formats/column/codecs/numeric/runs.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
@@ -73,8 +72,6 @@ class RowCodes {
     Resolve<CodesAxis>(_shape, [&]<Shape S>() {
       if constexpr (S == Shape::Plain) {
         _plain.emplace(codes, frames, h.codes);
-      } else if constexpr (S == Shape::Delta) {
-        _delta.emplace(codes, frames, h.codes);
       } else {
         _runs.emplace(codes, frames, h.codes);
       }
@@ -87,8 +84,6 @@ class RowCodes {
       _shape, [&]<Shape S>() IRS_FORCE_INLINE -> decltype(auto) {
         if constexpr (S == Shape::Plain) {
           return f(*_plain);
-        } else if constexpr (S == Shape::Delta) {
-          return f(*_delta);
         } else {
           return f(*_runs);
         }
@@ -96,13 +91,12 @@ class RowCodes {
   }
 
  private:
-  struct CodesAxis : Axis<Shape::Plain, Shape::Delta, Shape::Runs> {
+  struct CodesAxis : Axis<Shape::Plain, Shape::Runs> {
     static constexpr Shape Of(Shape shape) noexcept { return shape; }
   };
 
   Shape _shape = Shape::Plain;
   std::optional<numeric::PlainReader<uint32_t>> _plain;
-  std::optional<numeric::DeltaReader<uint32_t>> _delta;
   std::optional<numeric::RunsReader<uint32_t>> _runs;
 };
 

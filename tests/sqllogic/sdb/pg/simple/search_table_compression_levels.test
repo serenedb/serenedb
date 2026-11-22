@@ -589,11 +589,17 @@ CREATE TABLE lvl_tuple_rle (a INTEGER PRIMARY KEY,
                             u UNION(n INTEGER, m SMALLINT) USING COMPRESSION rle) WITH (compaction_interval = 0);
 
 statement ok
+SET threads = 1;
+
+statement ok
 INSERT INTO lvl_tuple_rle
 SELECT a, row((a // 700) % 7, (a // 1000) % 11),
        CASE WHEN (a // 500) % 3 = 0 THEN ((a // 500) % 5)::SMALLINT::UNION(n INTEGER, m SMALLINT)
             ELSE ((a // 400) % 13)::INTEGER::UNION(n INTEGER, m SMALLINT) END
 FROM range(20000) t(a);
+
+statement ok
+RESET threads;
 
 statement ok
 VACUUM (FLUSH_TABLE) lvl_tuple_rle;

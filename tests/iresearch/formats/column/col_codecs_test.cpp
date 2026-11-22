@@ -6018,3 +6018,74 @@ TEST_F(ColCodecsTest, ACompactionUnderANumericCodecNameCopiesTheTextBlocks) {
     }
   }
 }
+
+TEST_F(ColCodecsTest, ListElementsFillAnUncompressedBlockAtTheEndOfAVector) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::INTERVAL);
+  constexpr uint64_t kBlockRows =
+    irs::codecs::kBlockSize / sizeof(duckdb::interval_t);
+  constexpr uint64_t kRows = 2 * STANDARD_VECTOR_SIZE;
+  const auto length = [](uint64_t g) -> uint64_t {
+    if (g >= STANDARD_VECTOR_SIZE) {
+      return 2;
+    }
+    return kBlockRows / STANDARD_VECTOR_SIZE +
+           (g < kBlockRows % STANDARD_VECTOR_SIZE ? 1 : 0);
+  };
+  const auto element = [](uint64_t g, uint64_t j) {
+    return duckdb::interval_t{static_cast<int32_t>((g + j) % 12),
+                              static_cast<int32_t>((g * 7 + j) % 28),
+                              static_cast<int64_t>(g * 1000 + j)};
+  };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), dir.Tracker(kSeg)};
+    auto& cw = w.OpenColumn(kField, type,
+                            {.row_group_size = static_cast<uint32_t>(kRows),
+                             .distinct = irs::DistinctStats::Exact});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector vec{type, STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        duckdb::vector<duckdb::Value> items;
+        for (uint64_t j = 0; j < length(pos + k); ++j) {
+          items.push_back(duckdb::Value::INTERVAL(element(pos + k, j)));
+        }
+        vec.SetValue(k, duckdb::Value::LIST(duckdb::LogicalType::INTERVAL,
+                                            std::move(items)));
+      }
+      duckdb::FlatVector::SetSize(vec, STANDARD_VECTOR_SIZE);
+      cw.Append(vec, STANDARD_VECTOR_SIZE);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), kRows);
+  const auto* elements = col->Child();
+  ASSERT_NE(elements, nullptr);
+  const auto blocks = elements->DataBlocks();
+  ASSERT_EQ(blocks.size(), 2u);
+  EXPECT_EQ(blocks[0].codec->type, irs::codecs::CodecType::Uncompressed);
+  EXPECT_EQ(blocks[0].tuple_count, kBlockRows);
+  EXPECT_EQ(blocks[1].tuple_count, 2 * STANDARD_VECTOR_SIZE);
+  auto state = col->InitScan(r.Ctx());
+  for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+    duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+    ASSERT_EQ(col->Scan(state, out, STANDARD_VECTOR_SIZE),
+              duckdb::idx_t{STANDARD_VECTOR_SIZE});
+    for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+      const auto g = pos + k;
+      const auto list = out.GetValue(k);
+      ASSERT_FALSE(list.IsNull()) << g;
+      const auto& items = duckdb::ListValue::GetChildren(list);
+      ASSERT_EQ(items.size(), length(g)) << g;
+      for (uint64_t j = 0; j < items.size(); ++j) {
+        const auto got = items[j].GetValue<duckdb::interval_t>();
+        const auto expected = element(g, j);
+        EXPECT_EQ(got.months, expected.months) << g << ":" << j;
+        EXPECT_EQ(got.days, expected.days) << g << ":" << j;
+        EXPECT_EQ(got.micros, expected.micros) << g << ":" << j;
+      }
+    }
+  }
+}

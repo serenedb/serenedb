@@ -227,8 +227,8 @@ class PlainReader final : public FrameReader<T> {
     const auto end = this->EndRow(f);
     if (For() && !this->Shuffled()) {
       const auto rows = std::min<uint64_t>(count, end - row);
-      numeric::WidenAdd(this->Source(f, this->Meta(f), row), rows,
-                        this->_f.stored, static_cast<U>(_own.base), out);
+      WidenAdd(this->Source(f, this->Meta(f), row), rows, this->_f.stored,
+               static_cast<U>(_own.base), out);
       return rows;
     }
     if (this->FirstRow(f) != row || end - row > count) {
@@ -257,8 +257,8 @@ class PlainReader final : public FrameReader<T> {
     }
     const auto item = this->SourceItem(row);
     U v = 0;
-    numeric::Widen(item.source + size_t{item.at} * this->_f.stored, 1,
-                   this->_f.stored, &v);
+    Widen(item.source + size_t{item.at} * this->_f.stored, 1, this->_f.stored,
+          &v);
     return this->Scaled(static_cast<U>(v + static_cast<U>(_own.base)));
   }
 
@@ -279,16 +279,15 @@ class PlainReader final : public FrameReader<T> {
     }
     const auto* src = this->Inflated(m, nullptr, frame, this->_held);
     if (!For()) {
-      numeric::Unshuffle(src, rows, this->_f.stored, bytes);
+      Unshuffle(src, rows, this->_f.stored, bytes);
       return;
     }
     if (this->Shuffled()) {
-      numeric::UnshuffleWidenAdd(src, rows, this->_f.stored,
-                                 static_cast<U>(_own.base), out);
+      UnshuffleWidenAdd(src, rows, this->_f.stored, static_cast<U>(_own.base),
+                        out);
       return;
     }
-    numeric::WidenAdd(src, rows, this->_f.stored, static_cast<U>(_own.base),
-                      out);
+    WidenAdd(src, rows, this->_f.stored, static_cast<U>(_own.base), out);
   }
 
   IRS_NO_INLINE T ReadLanes(uint64_t row) {
@@ -297,7 +296,7 @@ class PlainReader final : public FrameReader<T> {
     }
     const auto item = this->SourceLanes(row);
     return this->Scaled(static_cast<U>(
-      numeric::ShuffledItem(item.source, item.rows, this->_f.stored, item.at) +
+      ShuffledItem(item.source, item.rows, this->_f.stored, item.at) +
       _own.base));
   }
 

@@ -41,13 +41,13 @@ template<typename T>
 struct Steps final : State {
   static constexpr StateId kId = StateId::Steps;
 
-  using U = numeric::Bits<sizeof(T)>;
+  using U = Bits<sizeof(T)>;
 
   explicit Steps(ColumnDataCheckpointData& data) {
     auto& values = data.Get<Values<T>>();
     if (values.Sequence()) {
       offset = values.Step();
-      stored = numeric::BytesFor(U{0});
+      stored = BytesFor(U{0});
       return;
     }
     using S = std::make_signed_t<U>;
@@ -76,7 +76,7 @@ struct Steps final : State {
     }
     offset = static_cast<U>(lo);
     const auto range = static_cast<U>(static_cast<U>(hi) - offset);
-    stored = numeric::BytesFor(range);
+    stored = BytesFor(range);
     bits = static_cast<uint8_t>(std::bit_width(range));
   }
 
@@ -237,10 +237,10 @@ class DeltaReader final : public FrameReader<T> {
     if (!this->Shuffled() && (first || row == _streamed)) {
       const auto rows = std::min<uint64_t>(count, end - row);
       const auto m = this->Meta(f);
-      _stream = numeric::WidenPrefixSum<true>(
-        this->Source(f, m, row), rows, this->_f.stored,
-        first ? static_cast<U>(m.base) : _stream, static_cast<U>(_own.base),
-        out);
+      _stream =
+        WidenPrefixSum<true>(this->Source(f, m, row), rows, this->_f.stored,
+                             first ? static_cast<U>(m.base) : _stream,
+                             static_cast<U>(_own.base), out);
       _streamed = row + rows;
       return rows;
     }
@@ -280,11 +280,10 @@ class DeltaReader final : public FrameReader<T> {
     }
     if (this->Shuffled()) {
       _sum = static_cast<U>(_sum + uint64_t{item.at + 1 - _summed} * _own.base +
-                            numeric::ShuffledSum(item.source, item.rows,
-                                                 this->_f.stored, _summed,
-                                                 item.at + 1));
+                            ShuffledSum(item.source, item.rows, this->_f.stored,
+                                        _summed, item.at + 1));
     } else {
-      _sum = numeric::WidenPrefixSum<false>(
+      _sum = WidenPrefixSum<false>(
         item.source + size_t{_summed} * this->_f.stored,
         size_t{item.at} + 1 - _summed, this->_f.stored, _sum,
         static_cast<U>(_own.base), static_cast<U*>(nullptr));
@@ -300,9 +299,8 @@ class DeltaReader final : public FrameReader<T> {
     if (this->Shuffled()) {
       src = this->Unshuffled(src, rows);
     }
-    numeric::WidenPrefixSum<true>(src, rows, this->_f.stored,
-                                  static_cast<U>(m.base),
-                                  static_cast<U>(_own.base), out);
+    WidenPrefixSum<true>(src, rows, this->_f.stored, static_cast<U>(m.base),
+                         static_cast<U>(_own.base), out);
   }
 
   DeltaHeader _own;

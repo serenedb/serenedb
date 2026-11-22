@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -29,23 +27,14 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
-#include <limits>
-#include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/text/blob.hpp"
-#include "iresearch/formats/column/codecs/text/dedup_scratch.hpp"
-#include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
-#include "iresearch/formats/column/codecs/text/string_tuning.hpp"
-#include "iresearch/formats/column/codecs/text/text_function.hpp"
-#include "iresearch/formats/column/codecs/text/values.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text::blob {

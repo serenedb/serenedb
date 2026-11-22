@@ -188,7 +188,7 @@ uint64_t EstimateLeaf(const Geometry& geometry, uint32_t items,
 template<typename T>
 class SegmentWriter {
  public:
-  using U = numeric::Bits<sizeof(T)>;
+  using U = Bits<sizeof(T)>;
 
   SegmentWriter(Shape shape, const Geometry& geometry, uint64_t direct_bytes,
                 std::span<const uint8_t> dictionary, std::string& out)
@@ -393,7 +393,7 @@ class Frames final : public State {
         if (store.shuffled) {
           SDB_ASSERT(raw.data() != copy.data());
           copy.resize(raw.size());
-          numeric::Shuffle(raw.data(), count, items.stored, copy.data());
+          Shuffle(raw.data(), count, items.stored, copy.data());
         } else if (raw.data() != copy.data()) {
           return raw;
         }
@@ -452,8 +452,8 @@ class Frames final : public State {
                       return raw;
                     }
                     scratch.shuffled.resize(raw.size());
-                    numeric::Shuffle(raw.data(), count, items.stored,
-                                     scratch.shuffled.data());
+                    Shuffle(raw.data(), count, items.stored,
+                            scratch.shuffled.data());
                     return scratch.shuffled;
                   });
     }
@@ -489,12 +489,11 @@ inline constexpr CompressionFunction kFrames{
 };
 
 template<typename T>
-bool ArithmeticFrame(const BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
+bool ArithmeticFrame(const BitpackingBlocks<Bits<sizeof(T)>>& blocks,
                      Values<T>& values, uint32_t begin, uint32_t count) {
-  using U = numeric::Bits<sizeof(T)>;
-  const size_t first = begin / numeric::kBlockValues;
-  if (!blocks.EqualSteps(
-        first, (count + numeric::kBlockValues - 1) / numeric::kBlockValues)) {
+  using U = Bits<sizeof(T)>;
+  const size_t first = begin / kBlockValues;
+  if (!blocks.EqualSteps(first, (count + kBlockValues - 1) / kBlockValues)) {
     return false;
   }
   if (values.Sequence()) {
@@ -513,45 +512,42 @@ bool ArithmeticFrame(const BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
 }
 
 template<typename T>
-BlockBases<numeric::Bits<sizeof(T)>> FrameBases(Values<T>& values,
-                                                uint32_t begin,
-                                                uint32_t count) {
-  using U = numeric::Bits<sizeof(T)>;
+BlockBases<Bits<sizeof(T)>> FrameBases(Values<T>& values, uint32_t begin,
+                                       uint32_t count) {
+  using U = Bits<sizeof(T)>;
   const auto bounds = values.Bounds(begin, begin + count);
   return {
     .origin = bounds.lo,
-    .bytes = numeric::BytesFor(static_cast<U>(bounds.hi - bounds.lo)),
+    .bytes = BytesFor(static_cast<U>(bounds.hi - bounds.lo)),
   };
 }
 
 template<typename T>
-uint64_t SteppedBytes(const BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
+uint64_t SteppedBytes(const BitpackingBlocks<Bits<sizeof(T)>>& blocks,
                       Values<T>& values) {
   uint64_t bytes = 0;
   const auto n = static_cast<uint32_t>(values.Size());
   for (uint32_t begin = 0; begin < n; begin += kBitpackingFrameRows) {
     const auto count = std::min(n - begin, kBitpackingFrameRows);
     if (!ArithmeticFrame<T>(blocks, values, begin, count)) {
-      bytes += blocks.Bytes(
-        begin / numeric::kBlockValues,
-        (count + numeric::kBlockValues - 1) / numeric::kBlockValues,
-        FrameBases(values, begin, count).bytes);
+      bytes += blocks.Bytes(begin / kBlockValues,
+                            (count + kBlockValues - 1) / kBlockValues,
+                            FrameBases(values, begin, count).bytes);
     }
   }
   return bytes;
 }
 
 template<typename T>
-void AppendStepped(BitpackingBlocks<numeric::Bits<sizeof(T)>>& blocks,
-                   Values<T>& values, NumericFrameMeta& m, uint32_t begin,
-                   uint32_t count, std::string& out) {
-  const size_t first = begin / numeric::kBlockValues;
+void AppendStepped(BitpackingBlocks<Bits<sizeof(T)>>& blocks, Values<T>& values,
+                   NumericFrameMeta& m, uint32_t begin, uint32_t count,
+                   std::string& out) {
+  const size_t first = begin / kBlockValues;
   m.base = blocks.FrameStep(first);
   if (!ArithmeticFrame<T>(blocks, values, begin, count)) {
-    blocks.Append(
-      values.Rows(), first,
-      (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues,
-      FrameBases(values, begin, count), out);
+    blocks.Append(values.Rows(), first,
+                  (size_t{count} + kBlockValues - 1) / kBlockValues,
+                  FrameBases(values, begin, count), out);
   }
 }
 

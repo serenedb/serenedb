@@ -44,15 +44,15 @@ inline constexpr uint32_t kMostNarrowDictionaryEntries = 256;
 
 template<typename T>
 inline constexpr size_t kDictionaryCodeBytes =
-  std::min<size_t>(sizeof(T) / 2, numeric::BytesFor(kNumericDictMax - 1));
+  std::min<size_t>(sizeof(T) / 2, BytesFor(kNumericDictMax - 1));
 
 template<typename T>
 struct Entries;
 
 template<typename T>
-bool CollectEntries(BlockRows<numeric::Bits<sizeof(T)>> rows, uint32_t cap,
+bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
                     uint32_t expected, Entries<T>& entries) {
-  using U = numeric::Bits<sizeof(T)>;
+  using U = Bits<sizeof(T)>;
   const auto n = static_cast<uint32_t>(rows.size());
   auto& values = entries.values;
   auto& codes = entries.codes;
@@ -130,13 +130,13 @@ struct Entries final : State {
     fits = CollectEntries<T>(rows, cap, expected, *this);
     expected = static_cast<uint32_t>(index.size());
     if (const auto scale = input.Scale(); fits && scale > 1) {
-      numeric::DivideExact<Values<T>::kSigned>(values.data(), values.size(),
-                                               scale, values.data());
+      DivideExact<Values<T>::kSigned>(values.data(), values.size(), scale,
+                                      values.data());
     }
   }
 
-  std::vector<numeric::Bits<sizeof(T)>> values;
-  containers::FlatHashMap<numeric::Bits<sizeof(T)>, uint32_t> index;
+  std::vector<Bits<sizeof(T)>> values;
+  containers::FlatHashMap<Bits<sizeof(T)>, uint32_t> index;
   ScratchVector<uint32_t> codes;
   bool fits = false;
 };
@@ -158,7 +158,7 @@ class Dict {
   Dict(ColumnDataCheckpointData& data, double bound)
     : _entries{data.Get<Entries<T>>(bound)} {
     if (_entries.fits) {
-      const auto width = numeric::BytesFor(_entries.values.size() - 1);
+      const auto width = BytesFor(_entries.values.size() - 1);
       _stored = width <= kDictionaryCodeBytes<T> ? width : uint8_t{0};
     }
   }
@@ -234,10 +234,9 @@ class DictBitpacking {
 
   void Append(NumericFrameMeta&, uint32_t begin, uint32_t count,
               std::string& out) {
-    _blocks.Append(
-      Codes(), begin / numeric::kBlockValues,
-      (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues,
-      Stored(), out);
+    _blocks.Append(Codes(), begin / kBlockValues,
+                   (size_t{count} + kBlockValues - 1) / kBlockValues, Stored(),
+                   out);
   }
 
   DictionaryHeader Header(const Geometry& geometry) const noexcept {
@@ -258,8 +257,7 @@ class DictBitpacking {
 
   BlockBases<uint32_t> Stored() const noexcept {
     return {
-      .bytes =
-        numeric::BytesFor(static_cast<uint32_t>(_entries.values.size() - 1)),
+      .bytes = BytesFor(static_cast<uint32_t>(_entries.values.size() - 1)),
     };
   }
 
@@ -289,7 +287,7 @@ class DictionaryReader final : public FrameReader<T> {
       [[unlikely]] {
       ThrowCorrupted("numeric", "header is inconsistent");
     }
-    this->_code_base_bytes = numeric::BytesFor(_own.count - 1);
+    this->_code_base_bytes = BytesFor(_own.count - 1);
   }
 
   void Seek(uint64_t row) {
@@ -343,10 +341,10 @@ class DictionaryReader final : public FrameReader<T> {
     }
     if (this->Packed()) {
       const auto block = this->template BlockAt<uint32_t>(row);
-      const auto index = static_cast<uint32_t>(row % numeric::kBlockValues);
+      const auto index = static_cast<uint32_t>(row % kBlockValues);
       const auto base = static_cast<uint32_t>(block.base);
       return Entry(
-        numeric::UnpackValue<uint32_t>(block.packed, block.bits, index, base));
+        UnpackValue<uint32_t>(block.packed, block.bits, index, base));
     }
     uint32_t code = 0;
     if (this->Shuffled()) {
@@ -354,8 +352,8 @@ class DictionaryReader final : public FrameReader<T> {
         return this->Get(row);
       }
       const auto item = this->SourceLanes(row);
-      code = static_cast<uint32_t>(numeric::ShuffledItem(
-        item.source, item.rows, this->_f.stored, item.at));
+      code = static_cast<uint32_t>(
+        ShuffledItem(item.source, item.rows, this->_f.stored, item.at));
     } else if (this->_leaf == ByteCodec::None) {
       if (next < this->_f.row_count) {
         const auto ahead = this->MetaAt(this->FrameOf(next));
@@ -363,13 +361,12 @@ class DictionaryReader final : public FrameReader<T> {
                            (next - ahead.frame.first_entry) * this->_f.stored);
       }
       const auto m = this->Meta(this->FrameOf(row));
-      numeric::Widen(
-        this->Data(m) + (row - m.frame.first_entry) * this->_f.stored, 1,
-        this->_f.stored, &code);
+      Widen(this->Data(m) + (row - m.frame.first_entry) * this->_f.stored, 1,
+            this->_f.stored, &code);
     } else {
       const auto item = this->SourceItem(row);
-      numeric::Widen(item.source + size_t{item.at} * this->_f.stored, 1,
-                     this->_f.stored, &code);
+      Widen(item.source + size_t{item.at} * this->_f.stored, 1, this->_f.stored,
+            &code);
     }
     return Entry(code);
   }
@@ -393,10 +390,10 @@ class DictionaryReader final : public FrameReader<T> {
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
     const auto block = this->template BlockAt<uint32_t>(first);
     const auto base = static_cast<uint32_t>(block.base);
-    if (_codes.size() < numeric::kBlockValues) {
-      _codes.resize(numeric::kBlockValues);
+    if (_codes.size() < kBlockValues) {
+      _codes.resize(kBlockValues);
     }
-    numeric::Unpack<uint32_t>(
+    Unpack<uint32_t>(
       block.bits,
       this->template BlockWords<uint32_t>(block.packed, block.bits, rows),
       _codes.data(), base);
@@ -424,7 +421,7 @@ class DictionaryReader final : public FrameReader<T> {
   }
 
   void DecodeCodes(const uint8_t* src, uint32_t rows, U* out) const {
-    Resolve<numeric::StoredAxis<kDictionaryCodeBytes<T>>>(
+    Resolve<StoredAxis<kDictionaryCodeBytes<T>>>(
       this->_f.stored,
       [&]<typename C>() IRS_FORCE_INLINE { Gather<C>(src, rows, out); });
   }

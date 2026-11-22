@@ -43,7 +43,7 @@ inline constexpr double kMostRunsPerRow = 0.5;
 
 template<typename T>
 bool EveryRowDiffers(std::span<const WriteChunk> chunks) {
-  using U = numeric::Bits<sizeof(T)>;
+  using U = Bits<sizeof(T)>;
   bool any = false;
   U last = 0;
   for (const auto& chunk : chunks) {
@@ -75,7 +75,7 @@ struct Runs;
 
 template<typename T>
 void LocateRuns(const Values<T>& values, uint32_t count, Runs<T>& runs) {
-  using U = numeric::Bits<sizeof(T)>;
+  using U = Bits<sizeof(T)>;
   const auto n = static_cast<uint32_t>(values.Size());
   const auto rows = values.Raw();
   const auto bounds = values.RawBounds();
@@ -84,7 +84,7 @@ void LocateRuns(const Values<T>& values, uint32_t count, Runs<T>& runs) {
   runs.rows.resize(size_t{count} + 1);
   auto* run_values = runs.values.data();
   auto* run_rows = runs.rows.data();
-  uint8_t changed[numeric::kBlockValues + sizeof(uint64_t)];
+  uint8_t changed[kBlockValues + sizeof(uint64_t)];
   auto previous = static_cast<U>(~rows[0]);
   uint32_t run = 0;
   for (size_t b = 0; b < rows.Blocks(); ++b) {
@@ -92,7 +92,7 @@ void LocateRuns(const Values<T>& values, uint32_t count, Runs<T>& runs) {
       continue;
     }
     const U* block = rows.Block(b);
-    const auto first = static_cast<uint32_t>(b * numeric::kBlockValues);
+    const auto first = static_cast<uint32_t>(b * kBlockValues);
     const auto size = static_cast<uint32_t>(rows.BlockSize(b));
     if (dense) {
       for (uint32_t i = 0; i < size; ++i) {
@@ -143,8 +143,7 @@ void MeasureRuns(Values<T>& values, Runs<T>& runs) {
   const auto* run_rows = runs.rows.data();
   runs.lengths.resize(count);
   if (const auto scale = values.Scale({run_values, count}); scale > 1) {
-    numeric::DivideExact<Values<T>::kSigned>(run_values, count, scale,
-                                             run_values);
+    DivideExact<Values<T>::kSigned>(run_values, count, scale, run_values);
   }
   for (uint32_t r = 0; r + 1 < count; ++r) {
     runs.lengths[r] = run_rows[r + 1] - run_rows[r];
@@ -156,7 +155,7 @@ template<typename T>
 struct Runs final : State {
   static constexpr StateId kId = StateId::Runs;
 
-  using U = numeric::Bits<sizeof(T)>;
+  using U = Bits<sizeof(T)>;
 
   explicit Runs(ColumnDataCheckpointData& data) {
     if constexpr (!std::is_integral_v<T>) {
@@ -202,7 +201,7 @@ class Rle {
     const auto reference = data.Get<Values<T>>().GetReference();
     _lo = reference.lo;
     _stored = reference.stored;
-    _run_width = numeric::BytesFor(std::ranges::max(_runs.lengths));
+    _run_width = BytesFor(std::ranges::max(_runs.lengths));
   }
 
   Items GetItems() const noexcept {
@@ -295,9 +294,8 @@ class RleBitpacking {
 
   void Append(NumericFrameMeta& m, uint32_t begin, uint32_t count,
               std::string& out) {
-    const size_t first = begin / numeric::kBlockValues;
-    const size_t blocks =
-      (size_t{count} + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    const size_t first = begin / kBlockValues;
+    const size_t blocks = (size_t{count} + kBlockValues - 1) / kBlockValues;
     m.frame.first_entry = _runs.rows[begin];
     m.base = count;
     _value_blocks.AppendStream(RunValues(), first, blocks, out);
@@ -509,12 +507,12 @@ class RunsReader final : public FrameReader<T> {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
     const uint32_t runs = m.frame.raw_len / item;
-    _values.resize(size_t{runs} + numeric::kRunPad);
+    _values.resize(size_t{runs} + kRunPad);
     _ends.resize(runs);
-    numeric::WidenAdd(src, runs, this->_f.stored, static_cast<U>(_own.base),
-                      _values.data());
-    numeric::Widen(src + size_t{runs} * this->_f.stored, runs, _own.run_width,
-                   _ends.data());
+    WidenAdd(src, runs, this->_f.stored, static_cast<U>(_own.base),
+             _values.data());
+    Widen(src + size_t{runs} * this->_f.stored, runs, _own.run_width,
+          _ends.data());
     _length_bound = (uint64_t{1} << (8 * _own.run_width)) - 1;
     EndRuns(rows);
   }
@@ -525,10 +523,9 @@ class RunsReader final : public FrameReader<T> {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
     const auto runs = static_cast<uint32_t>(m.base);
-    const size_t blocks =
-      (runs + numeric::kBlockValues - 1) / numeric::kBlockValues;
-    _values.resize(blocks * numeric::kBlockValues + numeric::kRunPad);
-    _ends.resize(blocks * numeric::kBlockValues);
+    const size_t blocks = (runs + kBlockValues - 1) / kBlockValues;
+    _values.resize(blocks * kBlockValues + kRunPad);
+    _ends.resize(blocks * kBlockValues);
     const auto* src = this->Data(m);
     const auto lengths =
       this->UnpackStream(src, m.frame.raw_len, 0, runs, _values.data());
@@ -538,7 +535,7 @@ class RunsReader final : public FrameReader<T> {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
     _length_bound = LengthBound(src + lengths, blocks);
-    _values.resize(size_t{runs} + numeric::kRunPad);
+    _values.resize(size_t{runs} + kRunPad);
     _ends.resize(runs);
     EndRuns(rows);
   }
@@ -568,12 +565,12 @@ class RunsReader final : public FrameReader<T> {
     if (empty || total != rows) [[unlikely]] {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
-    numeric::WidenPrefixSumAs<uint32_t, uint32_t, true>(
+    WidenPrefixSumAs<uint32_t, uint32_t, true>(
       reinterpret_cast<const uint8_t*>(_ends.data()), _ends.size(), 0, 0,
       _ends.data());
     _long_runs = total >= uint64_t{kBurst} * _ends.size();
-    _short_runs = numeric::kExpandsRuns &&
-                  total < uint64_t{kExpandedRunRows} * _ends.size();
+    _short_runs =
+      kExpandsRuns && total < uint64_t{kExpandedRunRows} * _ends.size();
     _hint = 0;
   }
 

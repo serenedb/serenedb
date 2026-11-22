@@ -20,15 +20,6 @@
 
 #include "iresearch/formats/column/codecs/text/lz4.hpp"
 
-#include <absl/algorithm/container.h>
-
-#include <algorithm>
-#include <cstdint>
-#include <span>
-#include <string_view>
-#include <utility>
-#include <vector>
-
 #include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/text/blob.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"

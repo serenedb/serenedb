@@ -53,20 +53,19 @@ class BlockRows {
   size_t size() const noexcept { return _size; }
 
   size_t Blocks() const noexcept {
-    return (_size + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    return (_size + kBlockValues - 1) / kBlockValues;
   }
 
   size_t BlockSize(size_t block) const noexcept {
-    return std::min(numeric::kBlockValues,
-                    _size - block * numeric::kBlockValues);
+    return std::min(kBlockValues, _size - block * kBlockValues);
   }
 
   const V* Block(size_t block) const noexcept {
-    return _base ? _base + block * numeric::kBlockValues : _blocks[block];
+    return _base ? _base + block * kBlockValues : _blocks[block];
   }
 
   V operator[](size_t row) const noexcept {
-    return Block(row / numeric::kBlockValues)[row % numeric::kBlockValues];
+    return Block(row / kBlockValues)[row % kBlockValues];
   }
 
  private:
@@ -131,7 +130,7 @@ class BitpackingBlocks {
   }
 
   uint64_t Bytes(uint32_t frame_values, size_t base_bytes) const noexcept {
-    const size_t per = frame_values / numeric::kBlockValues;
+    const size_t per = frame_values / kBlockValues;
     uint64_t bytes = 0;
     for (size_t first = 0; first < _bits.size(); first += per) {
       bytes += Bytes(first, std::min(per, _bits.size() - first), base_bytes);
@@ -140,7 +139,7 @@ class BitpackingBlocks {
   }
 
   uint64_t StreamBytes(uint32_t frame_values) const noexcept {
-    const size_t per = frame_values / numeric::kBlockValues;
+    const size_t per = frame_values / kBlockValues;
     uint64_t bytes = 0;
     for (size_t first = 0; first < _bits.size(); first += per) {
       const auto count = std::min(per, _bits.size() - first);
@@ -195,7 +194,7 @@ class BitpackingBlocks {
 
   void AppendStream(BlockRows<V> rows, size_t first, size_t count,
                     std::string& out) {
-    _scratch.resize(numeric::kBlockValues);
+    _scratch.resize(kBlockValues);
     uint64_t bytes = BlockMetaBytes(count, sizeof(V));
     for (size_t b = first; b < first + count; ++b) {
       bytes += StreamBytes(b);
@@ -231,10 +230,8 @@ class BitpackingBlocks {
           }
           in = _scratch.data();
         }
-        if (n == numeric::kBlockValues) {
-          numeric::Pack<V>(bits, in,
-                           reinterpret_cast<numeric::LaneWord<V>*>(packed),
-                           _base[g]);
+        if (n == kBlockValues) {
+          Pack<V>(bits, in, reinterpret_cast<LaneWord<V>*>(packed), _base[g]);
         } else if (bits != 0) {
           for (size_t i = 0; i < n; ++i) {
             _scratch[i] = static_cast<V>(in[i] - _base[g]);
@@ -258,8 +255,8 @@ class BitpackingBlocks {
     }
     const uint64_t step = FrameStep(first);
     for (size_t b = first; b < first + count; ++b) {
-      const auto start = static_cast<V>(
-        _first[first] + (b - first) * numeric::kBlockValues * step);
+      const auto start =
+        static_cast<V>(_first[first] + (b - first) * kBlockValues * step);
       if (_bits[b] != kBlockDelta || _first[b] != start) {
         return false;
       }
@@ -273,7 +270,7 @@ class BitpackingBlocks {
     size_t samples = 0;
     for (size_t b = 0; b < rows.Blocks(); b += kEvery, ++samples) {
       const auto [lo, hi] = StepBounds(rows.Block(b), rows.BlockSize(b));
-      sampled += numeric::PackedBytes(std::bit_width(static_cast<V>(hi - lo)));
+      sampled += PackedBytes(std::bit_width(static_cast<V>(hi - lo)));
     }
     return samples == 0 ? 0 : sampled * rows.Blocks() / samples;
   }
@@ -325,10 +322,9 @@ class BitpackingBlocks {
     const auto widths = std::exchange(_bits, {});
     PlanSteps(rows);
     for (size_t b = 0; b < _bits.size(); ++b) {
-      const auto for_bytes = numeric::PackedBytes<V>(widths[b], Values(b));
-      const auto delta_bytes =
-        (_own[b] ? sizeof(uint64_t) : 0) +
-        numeric::PackedBytes<V>(DeltaWidth(b), Values(b));
+      const auto for_bytes = PackedBytes<V>(widths[b], Values(b));
+      const auto delta_bytes = (_own[b] ? sizeof(uint64_t) : 0) +
+                               PackedBytes<V>(DeltaWidth(b), Values(b));
       const bool allowed =
         DeltaWidth(b) == 0 || offsets_only.empty() || offsets_only[b] == 0;
       if (allowed && DeltaWidth(b) <= kBlockDeltaBits &&
@@ -343,7 +339,7 @@ class BitpackingBlocks {
 
   void Append(BlockRows<V> rows, size_t first, size_t count,
               BlockBases<V> stored, std::string& out) {
-    _scratch.resize(numeric::kBlockValues);
+    _scratch.resize(kBlockValues);
     const size_t at = out.size();
     out.resize_and_overwrite(
       at + Bytes(first, count, stored.bytes), [&](char* buf, size_t size) {
@@ -375,24 +371,19 @@ class BitpackingBlocks {
               _scratch[i] = static_cast<V>(in[i] - in[i - 1]);
             }
             in = _scratch.data();
-          } else if (n < numeric::kBlockValues) {
+          } else if (n < kBlockValues) {
             std::memcpy(_scratch.data(), in, n * sizeof(V));
             in = _scratch.data();
           }
-          if (n < numeric::kBlockValues) {
-            std::fill_n(_scratch.data() + n, numeric::kBlockValues - n,
-                        _base[g]);
-            _words.resize(numeric::kBlockValues * sizeof(V) /
-                          sizeof(numeric::LaneWord<V>));
-            numeric::Pack<V>(bits, in, _words.data(), _base[g]);
-            std::memcpy(packed, _words.data(),
-                        numeric::PackedBytes<V>(bits, n));
+          if (n < kBlockValues) {
+            std::fill_n(_scratch.data() + n, kBlockValues - n, _base[g]);
+            _words.resize(kBlockValues * sizeof(V) / sizeof(LaneWord<V>));
+            Pack<V>(bits, in, _words.data(), _base[g]);
+            std::memcpy(packed, _words.data(), PackedBytes<V>(bits, n));
           } else {
-            numeric::Pack<V>(bits, in,
-                             reinterpret_cast<numeric::LaneWord<V>*>(packed),
-                             _base[g]);
+            Pack<V>(bits, in, reinterpret_cast<LaneWord<V>*>(packed), _base[g]);
           }
-          packed += numeric::PackedBytes<V>(bits, n);
+          packed += PackedBytes<V>(bits, n);
         }
         return size;
       });
@@ -401,22 +392,19 @@ class BitpackingBlocks {
  private:
   using S = std::make_signed_t<V>;
 
-  static constexpr size_t kFrameBlocks =
-    kBitpackingFrameRows / numeric::kBlockValues;
+  static constexpr size_t kFrameBlocks = kBitpackingFrameRows / kBlockValues;
   static constexpr size_t kSampledSteps = 64;
   static constexpr uint64_t kNoShare = std::numeric_limits<uint64_t>::max();
 
   void Resize(size_t rows) {
-    const size_t blocks =
-      (rows + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    const size_t blocks = (rows + kBlockValues - 1) / kBlockValues;
     _size = rows;
     _base.resize(blocks);
     _bits.resize(blocks);
   }
 
   size_t Values(size_t block) const noexcept {
-    return std::min(numeric::kBlockValues,
-                    _size - block * numeric::kBlockValues);
+    return std::min(kBlockValues, _size - block * kBlockValues);
   }
 
   static unsigned Width(uint8_t bits) noexcept {
@@ -435,8 +423,8 @@ class BitpackingBlocks {
   }
 
   static uint64_t StreamBlockBytes(size_t values, unsigned bits) noexcept {
-    return values == numeric::kBlockValues
-             ? numeric::PackedBytes(bits)
+    return values == kBlockValues
+             ? PackedBytes(bits)
              : duckdb::BitpackingPrimitives::GetRequiredSize(values, bits);
   }
 
@@ -466,7 +454,7 @@ class BitpackingBlocks {
   uint64_t StoredBytes(size_t block) const noexcept {
     const auto bits = _bits[block];
     return (OwnStep(bits) ? sizeof(uint64_t) : 0) +
-           numeric::PackedBytes<V>(Width(bits), Values(block));
+           PackedBytes<V>(Width(bits), Values(block));
   }
 
   static BlockBounds<V> StepBounds(const V* values, size_t count) noexcept {
@@ -562,15 +550,15 @@ class BitpackingBlocks {
 
   uint64_t OwnStepBytes(size_t b) const noexcept {
     return sizeof(uint64_t) +
-           numeric::PackedBytes<V>(
-             std::bit_width(static_cast<V>(_top[b] - _base[b])), Values(b));
+           PackedBytes<V>(std::bit_width(static_cast<V>(_top[b] - _base[b])),
+                          Values(b));
   }
 
   uint64_t SharedStepBytes(size_t b, V step) const noexcept {
     return static_cast<S>(_base[b]) < static_cast<S>(step)
              ? kNoShare
-             : numeric::PackedBytes<V>(
-                 std::bit_width(static_cast<V>(_top[b] - step)), Values(b));
+             : PackedBytes<V>(std::bit_width(static_cast<V>(_top[b] - step)),
+                              Values(b));
   }
 
   V LeastBytesStep(size_t first, size_t end) const noexcept {
@@ -597,7 +585,7 @@ class BitpackingBlocks {
   std::vector<uint8_t> _own;
   size_t _size = 0;
   ScratchVector<V> _scratch;
-  ScratchVector<numeric::LaneWord<V>> _words;
+  ScratchVector<LaneWord<V>> _words;
 };
 
 }  // namespace irs::codecs::numeric

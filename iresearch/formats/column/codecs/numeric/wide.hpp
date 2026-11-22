@@ -105,14 +105,13 @@ struct WideSample {
 };
 
 constexpr WideSample WideSampleOf(size_t rows) noexcept {
-  const size_t blocks =
-    (rows + numeric::kBlockValues - 1) / numeric::kBlockValues;
+  const size_t blocks = (rows + kBlockValues - 1) / kBlockValues;
   const size_t every =
     std::clamp<size_t>(blocks / kWideSampledBlocks, 1, kWideSampleEvery);
   const size_t sampled = std::max<size_t>((blocks + every - 1) / every, 1);
   return {
     .every = every,
-    .rows = std::max(kWideSampledRows, numeric::kBlockValues / sampled),
+    .rows = std::max(kWideSampledRows, kBlockValues / sampled),
   };
 }
 
@@ -445,9 +444,9 @@ struct WideValues final : State {
       }
       const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
       for (size_t i = 0; i < count;) {
-        const size_t block = (row + i) / numeric::kBlockValues;
-        const size_t at = (row + i) % numeric::kBlockValues;
-        const size_t stop = std::min(count, i + numeric::kBlockValues - at);
+        const size_t block = (row + i) / kBlockValues;
+        const size_t at = (row + i) % kBlockValues;
+        const size_t stop = std::min(count, i + kBlockValues - at);
         if (block % every == 0 && at < rows) {
           for (size_t k = i, end = std::min(stop, i + rows - at); k < end;
                ++k) {
@@ -507,8 +506,7 @@ struct WideValues final : State {
     }
     if (!sampled) {
       const auto [every, rows] = WideSampleOf(lows.size());
-      for (size_t at = 0; at < lows.size();
-           at += every * numeric::kBlockValues) {
+      for (size_t at = 0; at < lows.size(); at += every * kBlockValues) {
         for (size_t i = at, stop = std::min(lows.size(), at + rows); i < stop;
              ++i) {
           sample.push_back(absl::MakeUint128(highs[i], lows[i]));
@@ -893,11 +891,11 @@ duckdb::InsertionOrderPreservingMap<std::string> WideSegmentInfo(
 
 template<typename R>
 inline constexpr DecompressionFunction kWideDecompression{
-  .init_scan = numeric::InitScan<R>,
-  .scan = numeric::Scan<R>,
-  .select = numeric::Select<R>,
-  .filter = numeric::Filter<R>,
-  .fetch_rows = numeric::FetchRows<R>,
+  .init_scan = InitScan<R>,
+  .scan = Scan<R>,
+  .select = Select<R>,
+  .filter = Filter<R>,
+  .fetch_rows = FetchRows<R>,
   .get_segment_info = WideSegmentInfo<R>,
 };
 

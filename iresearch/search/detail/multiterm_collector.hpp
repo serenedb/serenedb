@@ -62,10 +62,7 @@ class MultiTermCollector final : public FieldPrepareCollector {
     return it->second.stats;
   }
 
-  void Finish(StatsArena&) final {
-    if (_scorer == nullptr) {
-      return;
-    }
+  void Finish(StatsArena& stats) final {
     const auto field = _counters.TotalField();
     struct Merged {
       TermCollector counter;
@@ -82,9 +79,27 @@ class MultiTermCollector final : public FieldPrepareCollector {
     }
     for (auto& [term, one] : merged) {
       auto* const first = one.slots.front();
-      _scorer->collect(first, &field, &one.counter);
+      _scorer->collect(first, &field, &one.counter, stats);
       for (size_t i = 1; i != one.slots.size(); ++i) {
         std::memcpy(one.slots[i], first, _slot);
+      }
+    }
+  }
+
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const final;
+
+  template<typename Visitor>
+  void VisitTerms(Visitor&& visitor) const {
+    TermMap<TermCollector> merged;
+    for (const auto& own : _threads) {
+      for (const auto& [term, slot] : own.terms) {
+        Accumulate(merged[term], slot.counter);
+      }
+    }
+    for (const auto& own : _threads) {
+      for (const auto& [term, slot] : own.terms) {
+        visitor(bytes_view{term}, merged.find(term)->second, slot.stats);
       }
     }
   }
@@ -129,17 +144,20 @@ class BlendedTermsCollector final : public FieldPrepareCollector {
     _threads[thread].try_emplace(term).first->second.Collect(meta);
   }
 
-  void Finish(StatsArena&) final {
-    if (_scorer == nullptr) {
-      return;
-    }
+  void Finish(StatsArena& stats) final {
     const auto field = _counters.TotalField();
+    const auto blended = Blended();
+    _scorer->collect(const_cast<byte_type*>(_stats), &field, &blended, stats);
+  }
+
+  void Describe(field_id field, TermAt term,
+                explain::StatsIndex& out) const final;
+
+  TermCollector Blended() const {
     Terms merged;
-    for (auto& terms : _threads) {
-      for (auto& [term, counter] : terms) {
-        auto& one = merged[term];
-        one.docs_with_term += counter.docs_with_term;
-        one.total_term_freq += counter.total_term_freq;
+    for (const auto& terms : _threads) {
+      for (const auto& [term, counter] : terms) {
+        Accumulate(merged[term], counter);
       }
     }
     TermCollector blended;
@@ -148,7 +166,7 @@ class BlendedTermsCollector final : public FieldPrepareCollector {
         std::max(blended.docs_with_term, counter.docs_with_term);
       blended.total_term_freq += counter.total_term_freq;
     }
-    _scorer->collect(const_cast<byte_type*>(_stats), &field, &blended);
+    return blended;
   }
 
  private:

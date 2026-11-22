@@ -301,6 +301,7 @@ bool ProjectionIsVirtual(const ScanBindData& bind,
   }
   const auto catalog_col_id = bind.columns.ids[col_id];
   return catalog_col_id == kInvertedIndexScoreId ||
+         catalog_col_id == kInvertedIndexExplainId ||
          catalog_col_id == kInvertedIndexOffsetsId ||
          catalog_col_id == kInvertedIndexTermId ||
          catalog_col_id == kInvertedIndexTermRawId ||
@@ -418,6 +419,11 @@ duckdb::ExplainNode TableFilterNode(std::span<const DeferredCheck> checks,
 }
 
 }  // namespace
+
+duckdb::LogicalType ScanBindData::FieldType(ColumnId col_id,
+                                            irs::DictRef dict) const {
+  return MakeFieldTypeResolver(*this)(col_id, dict);
+}
 
 void ScanBindData::AppendSummary(
   duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>& out) const {

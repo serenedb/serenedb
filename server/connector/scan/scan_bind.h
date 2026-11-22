@@ -310,6 +310,7 @@ struct ScanBindData final : duckdb::FunctionData {
 
   std::string_view ColumnNameById(ColumnId col_id) const;
   duckdb::LogicalType ColumnTypeById(ColumnId col_id) const;
+  duckdb::LogicalType FieldType(ColumnId col_id, irs::DictRef dict) const;
   std::string DisplayColumnName(ColumnId col_id) const;
   bool IsColumnNotNull(ColumnId col_id) const;
   void IterateColumns(const ColumnVisitor& cb) const;

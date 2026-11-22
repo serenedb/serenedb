@@ -25,6 +25,8 @@ The score is an ordinary value — use it wherever you need one: project it in t
 | [`raw_boost(tableoid)`](#raw_boost) | Raw query boost factor. |
 | [`raw_dl(tableoid)`](#raw_dl) | Raw document length. |
 
+To see how a row's score was computed, use [`ts_explain(tableoid)`](#ts_explain).
+
 ## Quick start
 
 Filter with `@@` to select matching rows, then rank them with a scorer in `ORDER BY ... DESC`. Add the primary key as a final sort key so ties resolve deterministically:
@@ -85,6 +87,8 @@ How they differ, simple to advanced:
 - **DFI** is *parameter-free*: it scores a term by how far its observed frequency diverges from what statistical independence would predict, so there is nothing to tune at all.
 
 ## Scorers
+
+A phrase or an n-gram match is scored with how often the whole match occurs in the row. `BM25`, `TFIDF` and `idf` add up the idf of its terms; `lm_jm`, `lm_dirichlet`, `indri_dirichlet` and `dfi` add up one score per term, each from that term's share of the column.
 
 ### `BM25(tableoid[, k1, b])` {#bm25}
 
@@ -323,6 +327,83 @@ WHERE (body @@ 'fox' OR body @@ 'cat')::score('constant(42)')::merge('max')
 ```
 
 A per-branch scorer competes on its own terms under a group policy, so a `constant(10)` branch survives a `max` against a BM25 sibling. An unscored branch has nothing to compare, so the other branch wins by default.
+
+## Explaining scores {#ts_explain}
+
+**Signature.** `ts_explain(tableoid) -> VARIANT`.
+
+`ts_explain` shows how a row got its score: which clauses of the query matched the row, what each one contributed and the inputs of the scorer's formula. It explains the scorer function the query uses on the same index, so the query needs one, such as `BM25(idx.tableoid)` in the select list or in `ORDER BY`:
+
+<SqlLogicTest id="sql/functions/full_text_search/ts_explain" />
+
+The explanation is a tree of objects, and clients receive it as `json`. Every object has a `value`; the other keys appear only where they apply:
+
+| Key | Meaning |
+| :--- | :--- |
+| `value` | The object's contribution: the row's score at the top, a factor of an expression or a count below it. |
+| `expression` | How `value` is computed from `inputs`, or `sum` / `max` for clauses that combine, following the query's [`::merge`](#merge) policy. |
+| `inputs` | The values `expression` reads, keyed by name. |
+| `clauses` | The clauses a `sum` or `max` combines. Optional clauses that the row does not match are left out. |
+| `parts` | The terms of a phrase or an n-gram match: the idf of each term, which its `idf` adds up, or with `lm_jm`, `lm_dirichlet`, `indri_dirichlet` and `dfi`, the score of each term, which the clause adds up. |
+| `column`, `term` | The column and the term a clause matched; `terms` lists several terms of one clause. |
+| `phrase`, `slop` | A phrase's words in order: `null` for each word the phrase skips, `{"min": m, "max": n}` for a gap of `m` to `n` words, and an array for a position several words can fill, such as the words a prefix in the phrase expanded to. `slop` is the slop of a sloppy phrase. |
+| `scorer` | The scorer function of a clause, such as `bm25(k1=1.2, b=0.75)`. |
+| `scored` | `false` for a clause excluded from scoring with [`::score(NULL)`](#score-modifier): it matched and added nothing. |
+| `note` | Why a clause scores `0`, or only its boost, without an expression; on an input, how it was counted, such as a `dl` of `1` on a column without the [`norm`](#requirements) flag. |
+
+Read one part with dots and 1-based array indexes, and cast it where a plain value is needed:
+
+<SqlLogicTest id="sql/functions/full_text_search/ts_explain_paths" />
+
+The names in `inputs` are:
+
+| Input | Meaning |
+| :--- | :--- |
+| `boost` | The query's weight for the clause, when it is not `1`. |
+| `idf` | How rare the term is, from `df`, the number of rows containing it, and `N`, the number of rows with the column. |
+| `tf` | How much the term's occurrences count, from `freq`, its occurrences in the row, the BM25 parameters `k1` and `b`, the row's length `dl` and the column's average length `avgdl`, computed as `L` / `N` from the column's total length `L`. |
+| `norm` | TF-IDF's length normalization, `1 / sqrt(dl)`. |
+| `p` | The term's share of all text in the column, `(ttf + 1) / (L + 1)`, from its occurrences `ttf` over all rows; with `mu` or `lambda`, the smoothing parameter of a language model. |
+| `expected` | For DFI, the term's occurrences in the row if they were spread evenly, `p * dl`. |
+| `value` | The score of `constant(value)`. |
+| `count`, `scale` | For a sloppy phrase or an n-gram similarity match, `freq` is computed as `count * scale`: the matches in the row weighted by how well they match. A scorer without `freq` multiplies by `scale` directly. |
+| `scale`, `score` | For an n-gram similarity match that needs every n-gram of the query the column contains, the clause scores `scale * score`: the scorer's `score`, weighted by `scale`, the share of the query's n-grams the column contains. |
+| `constant` | In a `sum` or `max`, the score of clauses every row matches. |
+
+- The top `value` is the row's score, exactly as the scorer function returns it for that row.
+- Each word a prefix, pattern, range or fuzzy match expanded to is a clause of its own, with its `term`. A numeric range names only the `column`, as does a term in a column indexed without positions when another term of the query occurs in exactly the same rows, as often.
+- `df`, `N` and the column's average length count the whole index, as the scorer does. A fuzzy match scores every word it matched with the same statistics, so its `df` is the most rows any one of those words occurs in.
+- Each value is computed separately, so the values of `clauses` can differ from their total in the last digit.
+
+`ts_explain` is computed for every row the scan returns and costs about as much as running the query again for that row, so request it together with a `LIMIT`. A query without a scorer function or a vector distance on the index raises an error.
+
+**Elasticsearch's layout.** `ts_explain_json(explanation) -> JSON` turns a `ts_explain` result into the layout Elasticsearch and Lucene use, the one the [Elasticsearch-compatible API](../../../clients/elasticsearch-api.md#explaining-scores) returns: every node has a `value`, a `description` that says in words what the value is and how it was computed, and its `details`:
+
+<SqlLogicTest id="sql/functions/full_text_search/ts_explain_json" />
+
+The `details` of a node list its `clauses`, `parts` and `inputs`, with the inputs in the order of their names. A phrase is written as Lucene writes it, such as `body:"quick ? fox"~1`: `?` for a skipped word, `?{m,n}` for a gap of `m` to `n` words, `(bread brown)` for a position several words can fill and `~` with the slop of a sloppy phrase.
+
+### Vector distances {#ts_explain-vector}
+
+A query that ranks or filters by a distance to an indexed [vector column](../../indexes/inverted/vector-search.md) explains that distance: the function and its formula, how the row was found, and the parameters of the search:
+
+<SqlLogicTest id="sql/indexes/inverted/vector-search/ts_explain" />
+
+The top `value` is the distance the query returned for the row. `scorer` names the distance function, `expression` computes it from the column and the query vector, and `note` says how the row was found, such as `found by an ivf search over sq8 codes`. Its `inputs` are:
+
+| Input | Meaning |
+| :--- | :--- |
+| `exact` | The distance computed from the row's stored vector. A search over quantized codes can return a different value when the row was not re-scored. Shown for an `ivf` or `hnsw` search. |
+| `dims` | The number of dimensions of the vectors. |
+| `k` | How many nearest rows the search returns, for a query with `ORDER BY` and `LIMIT`. |
+| `radius` | The distance the search compares with, for a range search. |
+| `nprobe` | The clusters an `ivf` search scans in each segment, when [`sdb_ivf_search_nprobe`](../../indexes/inverted/maintenance.md#session-settings) sets them. |
+| `ef_search` | The candidates an `hnsw` search keeps, from [`sdb_hnsw_ef_search`](../../indexes/inverted/maintenance.md#session-settings) or its default. |
+| `rescore_width` | For a quantized index, how far a candidate's code score may be off and still be read again at full precision: [`sdb_ann_rescore_width`](../../indexes/inverted/maintenance.md#session-settings) or the quantizer's default. |
+
+A distance computed from every row's stored vector, without `ORDER BY ... LIMIT` and without a radius, says so in its `note` and has only `dims`. A row whose vector is `NULL` gets a `null` value and a `note`.
+
+A query that uses both a scorer function and a vector distance on the same index explains the scorer's score; the distance is then computed exactly from each row's stored vector, without a vector search. To explain both, compute each in its own subquery, as [reciprocal rank fusion](../../../cookbook/search/reciprocal-rank-fusion.md) does.
 
 ## Top-K and WAND pruning {#top-k}
 

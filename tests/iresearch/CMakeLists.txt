@@ -140,6 +140,7 @@ add_executable(
     search/docs_mask_plan_test.cpp
     search/document_mask_test.cpp
     search/empty_filter_tests.cpp
+    search/explain_test.cpp
     search/geo_distance_filter_test.cpp
     search/geo_filter_test.cpp
     search/geo_tokenizer_test.cpp

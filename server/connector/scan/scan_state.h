@@ -50,6 +50,8 @@
 #include <iresearch/search/ann/shared_floor.hpp>
 #include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/vector_slots.hpp>
+#include <iresearch/search/explain/explanation.hpp>
+#include <iresearch/search/explain/stats.hpp>
 #include <iresearch/search/filters/filter.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/top/root.hpp>
@@ -255,6 +257,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::vector<TsDictField> ts_dict_fields;
   std::vector<FetchedCopy> fetched_copy;
   duckdb::idx_t score_output_idx = duckdb::DConstants::INVALID_INDEX;
+  duckdb::idx_t explain_output_idx = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t tableoid_output_idx = duckdb::DConstants::INVALID_INDEX;
   int64_t tableoid_value = 0;
   duckdb::idx_t generated_pk_output_idx = duckdb::DConstants::INVALID_INDEX;
@@ -267,6 +270,10 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
 
   bool ScanScore() const noexcept {
     return score_output_idx != duckdb::DConstants::INVALID_INDEX;
+  }
+
+  bool ScanExplain() const noexcept {
+    return explain_output_idx != duckdb::DConstants::INVALID_INDEX;
   }
 
   std::vector<irs::ColumnstoreProjection> cs_projections;
@@ -311,6 +318,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   std::vector<irs::QueryBuilder::ptr> queries;
   std::optional<irs::StatsArena> stats_arena;
   std::optional<irs::PreparedCollector> collector;
+  irs::explain::StatsIndex explain_stats;
   const irs::Scorer* stats_scorer = nullptr;
   uint32_t collect_threads = 1;
   std::atomic_uint32_t thread_slots{0};
@@ -506,6 +514,9 @@ struct FetchLocalState {
   std::vector<FieldEntry> offsets_entries;
   std::vector<highlight::HitRange> offsets_doc_scratch;
   uint32_t offsets_prepped_seg = std::numeric_limits<uint32_t>::max();
+  std::unique_ptr<irs::explain::Explainer> explainer;
+  std::vector<irs::explain::Node> explain_rows;
+  uint32_t explain_seg = std::numeric_limits<uint32_t>::max();
   std::shared_ptr<irs::IndexSource> index_source;
   duckdb::Vector* pk_column = nullptr;
 

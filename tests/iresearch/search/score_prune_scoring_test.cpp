@@ -1409,7 +1409,8 @@ irs::bstring MakeStats(const Scorer& scorer) {
   term.total_term_freq = 2048;
 
   irs::bstring stats(scorer.stats_size(), 0);
-  scorer.collect(stats.data(), &field, &term);
+  irs::StatsArena arena{duckdb::Allocator::DefaultAllocator()};
+  scorer.collect(stats.data(), &field, &term, arena);
   return stats;
 }
 

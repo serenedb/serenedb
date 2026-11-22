@@ -97,7 +97,6 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   using Base::_left_in_leaf;
   using Base::_left_in_list;
   using Base::_provider;
-  using Base::_recipe;
   using Base::_score;
   using Base::_walk;
   using Base::In;

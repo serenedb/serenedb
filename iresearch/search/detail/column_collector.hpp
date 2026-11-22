@@ -24,6 +24,7 @@
 #include <span>
 
 #include "iresearch/formats/column/norm_reader.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -43,13 +44,14 @@ class ColumnArgsFetcher {
   }
   ~ColumnArgsFetcher() { Free(); }
 
-  const uint32_t* AddNorms(field_id field, NormReader::ptr reader) {
-    if (!reader) {
-      return nullptr;
-    }
+  const uint32_t* AddNorms(const NormProvider& segment, field_id field) {
     auto [it, emplaced] = _index.try_emplace(field, nullptr);
     if (!emplaced) {
       return it->second;
+    }
+    auto reader = segment.norms(field);
+    if (!reader) {
+      return nullptr;
     }
     auto& entry = _columns.emplace_back(std::move(reader), nullptr);
     auto* norms = std::allocator<uint32_t>{}.allocate(kPostingBlock);

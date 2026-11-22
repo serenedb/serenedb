@@ -180,7 +180,7 @@ void WalkTopTerms(const TermReader& reader,
   on_terms(it->GetImpl());
   const auto prefix = options.parametric->LowerBound();
   const auto term = bytes_view{options.target}.substr(prefix.size());
-  std::shared_ptr<const LevenshteinPrefixAcceptor> narrow;
+  std::unique_ptr<const LevenshteinPrefixAcceptor> narrow;
   bstring past;
   auto distance = static_cast<uint8_t>(options.no_distance - 1);
   std::array<size_t, ParametricDescription::kMaxDistance + 1> reached{};
@@ -207,7 +207,7 @@ void WalkTopTerms(const TermReader& reader,
       if (description) {
         distance = narrowed;
         AssignAfterKey(past, it->value());
-        auto acceptor = std::make_shared<const LevenshteinPrefixAcceptor>(
+        auto acceptor = std::make_unique<const LevenshteinPrefixAcceptor>(
           std::make_shared<const LevenshteinAcceptor>(description, prefix,
                                                       term));
         it.emplace(options.starts_with ? reader.iterator(*acceptor)

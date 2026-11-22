@@ -80,36 +80,6 @@ struct Packed {
   bytes_view stored;
 };
 
-class FrameWriter final : public duckdb::WriteStream {
- public:
-  explicit FrameWriter(uint32_t frame_bytes);
-  FrameWriter(FrameWriter&&) noexcept = default;
-  FrameWriter& operator=(FrameWriter&&) noexcept = default;
-
-  duckdb::data_ptr_t Alloc(duckdb::idx_t size) final;
-
-  uint32_t FrameBytes() const noexcept { return _frame_bytes; }
-  uint64_t RawBytes() const noexcept { return _raw_bytes; }
-  void ForEachFrame(absl::FunctionRef<void(bytes_view)> visit) const;
-
- protected:
-  void Overflow(duckdb::const_data_ptr_t data, duckdb::idx_t size) final;
-
- private:
-  struct Piece {
-    std::unique_ptr<byte_type[]> data;
-    uint64_t begin = 0;
-    uint64_t end = 0;
-  };
-
-  uint64_t Room() const noexcept;
-  void AddPiece(uint64_t size);
-
-  uint32_t _frame_bytes;
-  uint64_t _raw_bytes = 0;
-  std::vector<Piece> _pieces;
-};
-
 struct FrameStart {
   uint64_t stored = 0;
   uint64_t raw = 0;
@@ -123,8 +93,8 @@ Compressed Compress(Method method, bytes_view raw,
                     uint32_t frame_bytes = kFrameBytes,
                     ParallelFor parallel = SerialFor);
 
-std::vector<Compressed> Compress(Method method,
-                                 std::span<const FrameWriter> raws,
+std::vector<Compressed> Compress(Method method, uint32_t frame_bytes,
+                                 std::span<const std::vector<bytes_view>> blobs,
                                  ParallelFor parallel = SerialFor);
 
 Frames Compress(Method method, bytes_view raw, uint32_t frame_bytes,
@@ -153,7 +123,7 @@ uint64_t PackedBytes(const Compressed& packed);
 
 bool Pays(const Compressed& packed);
 
-void KeepPlain(Compressed& packed, const FrameWriter& raw);
+void KeepPlain(Compressed& packed, std::span<const bytes_view> frames);
 
 bool IsPlain(const Compressed& packed) noexcept;
 

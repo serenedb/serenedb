@@ -40,6 +40,7 @@
 #include "connector/column_id.h"
 #include "connector/file_manifest.h"
 #include "search/parallel.h"
+#include "server/utils/frame_stream.h"
 
 namespace sdb::search {
 namespace {
@@ -210,11 +211,12 @@ void PackBlobs(std::span<LoggedRows* const> runs,
   if (blobs == 0) {
     return;
   }
-  std::vector<irs::compression::FrameWriter> raws;
+  std::vector<message::FrameStream> raws;
   raws.reserve(blobs);
   for (size_t i = 0; i != blobs; ++i) {
     raws.emplace_back(frame_bytes);
   }
+  std::vector<std::vector<irs::bytes_view>> frames(blobs);
   parallel(blobs, [&](size_t i) {
     duckdb::BinarySerializer serializer{raws[i]};
     if (i < runs.size()) {
@@ -224,12 +226,13 @@ void PackBlobs(std::span<LoggedRows* const> runs,
       WriteValues(serializer, *values[i - runs.size()].patch);
       serializer.End();
     }
+    frames[i] = raws[i].Frames();
   });
-  auto staged =
-    irs::compression::Compress(irs::compression::kZstd1, raws, parallel);
+  auto staged = irs::compression::Compress(irs::compression::kZstd1,
+                                           frame_bytes, frames, parallel);
   for (size_t i = 0; i != blobs; ++i) {
     if (!irs::compression::Pays(staged[i])) {
-      irs::compression::KeepPlain(staged[i], raws[i]);
+      irs::compression::KeepPlain(staged[i], frames[i]);
     }
   }
   for (size_t i = 0; i != runs.size(); ++i) {

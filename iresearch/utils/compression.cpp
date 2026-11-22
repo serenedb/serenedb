@@ -509,61 +509,6 @@ uint64_t ReadStoredSize(duckdb::BinaryDeserializer& object, Frames& frames) {
 
 }  // namespace
 
-FrameWriter::FrameWriter(uint32_t frame_bytes) : _frame_bytes{frame_bytes} {
-  SDB_ASSERT(frame_bytes != 0 && frame_bytes <= kMaxFrameBytes);
-}
-
-uint64_t FrameWriter::Room() const noexcept {
-  return _pieces.empty() ? 0 : _pieces.back().end - _raw_bytes;
-}
-
-void FrameWriter::AddPiece(uint64_t size) {
-  const auto capacity = (size + _frame_bytes - 1) / _frame_bytes * _frame_bytes;
-  _pieces.push_back({
-    .data = std::make_unique_for_overwrite<byte_type[]>(capacity),
-    .begin = _raw_bytes,
-    .end = _raw_bytes + capacity,
-  });
-}
-
-void FrameWriter::Overflow(duckdb::const_data_ptr_t data, duckdb::idx_t size) {
-  if (const auto head = std::min<uint64_t>(size, Room())) {
-    std::memcpy(Alloc(head), data, head);
-    data += head;
-    size -= head;
-  }
-  if (size != 0) {
-    std::memcpy(Alloc(size), data, size);
-  }
-}
-
-duckdb::data_ptr_t FrameWriter::Alloc(duckdb::idx_t size) {
-  if (size == 0) {
-    return nullptr;
-  }
-  if (Room() < size) {
-    AddPiece(size);
-  }
-  auto& piece = _pieces.back();
-  auto* at = piece.data.get() + (_raw_bytes - piece.begin);
-  _raw_bytes += size;
-  return at;
-}
-
-void FrameWriter::ForEachFrame(
-  absl::FunctionRef<void(bytes_view)> visit) const {
-  for (size_t p = 0; p != _pieces.size(); ++p) {
-    const auto& piece = _pieces[p];
-    const auto used =
-      (p + 1 < _pieces.size() ? _pieces[p + 1].begin : _raw_bytes) -
-      piece.begin;
-    for (uint64_t at = 0; at < used; at += _frame_bytes) {
-      visit({piece.data.get() + at,
-             static_cast<size_t>(std::min<uint64_t>(_frame_bytes, used - at))});
-    }
-  }
-}
-
 uint64_t StoredBytes(const Frames& frames) noexcept {
   return absl::c_accumulate(frames.sizes, uint64_t{0});
 }
@@ -582,24 +527,25 @@ Compressed Compress(Method method, bytes_view raw, uint32_t frame_bytes,
   return out;
 }
 
-std::vector<Compressed> Compress(Method method,
-                                 std::span<const FrameWriter> raws,
+std::vector<Compressed> Compress(Method method, uint32_t frame_bytes,
+                                 std::span<const std::vector<bytes_view>> blobs,
                                  ParallelFor parallel) {
   std::vector<Plan> plans;
-  plans.reserve(raws.size());
-  std::vector<Compressed> out(raws.size());
-  for (size_t i = 0; i != raws.size(); ++i) {
-    const auto& raw = raws[i];
+  plans.reserve(blobs.size());
+  std::vector<Compressed> out(blobs.size());
+  for (size_t i = 0; i != blobs.size(); ++i) {
     auto& plan = plans.emplace_back(PlanFrames(
-      method, raw.FrameBytes(), [&](absl::FunctionRef<void(bytes_view)> visit) {
-        raw.ForEachFrame(visit);
+      method, frame_bytes, [&](absl::FunctionRef<void(bytes_view)> visit) {
+        for (const auto frame : blobs[i]) {
+          visit(frame);
+        }
       }));
     out[i].slots =
       std::make_unique_for_overwrite<byte_type[]>(plan.frames.raw_bytes);
     plan.slots = out[i].slots.get();
   }
   EncodePlans(method, plans, parallel);
-  for (size_t i = 0; i != raws.size(); ++i) {
+  for (size_t i = 0; i != blobs.size(); ++i) {
     out[i].frames = std::move(plans[i].frames);
   }
   return out;
@@ -703,17 +649,17 @@ bool Pays(const Compressed& packed) {
   return PackedBytes(packed) < packed.frames.raw_bytes;
 }
 
-void KeepPlain(Compressed& packed, const FrameWriter& raw) {
-  SDB_ASSERT(raw.RawBytes() == packed.frames.raw_bytes);
+void KeepPlain(Compressed& packed, std::span<const bytes_view> frames) {
+  SDB_ASSERT(frames.size() == packed.frames.sizes.size());
   auto* slot = packed.slots.get();
-  size_t frame = 0;
-  raw.ForEachFrame([&](bytes_view in) {
+  for (size_t frame = 0; frame != frames.size(); ++frame) {
+    const auto in = frames[frame];
     if (packed.frames.sizes[frame] != in.size()) {
       std::memcpy(slot, in.data(), in.size());
     }
     slot += in.size();
-    ++frame;
-  });
+  }
+  SDB_ASSERT(slot == packed.slots.get() + packed.frames.raw_bytes);
   packed.frames.sizes.clear();
   packed.frames.raw_sizes.clear();
 }

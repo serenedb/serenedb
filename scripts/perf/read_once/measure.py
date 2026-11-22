@@ -256,10 +256,6 @@ class Server:
     def relation_metrics(self, relation):
         return dict(self.sql(f"SELECT metric, value FROM sdb_metrics WHERE relation_id = '{relation}'::regclass"))
 
-    def oids(self, relations):
-        names = ", ".join(f"'{r}'" for r in relations)
-        return {str(oid): name for oid, name in self.sql(f"SELECT oid, relname FROM pg_class WHERE relname IN ({names})")}
-
     def stop(self, crash=False):
         if self.conn is not None:
             self.conn.close()
@@ -360,11 +356,22 @@ def dump_payload(blobs, region, name, payload):
         blobs.add(f"{region}_search", name, bytes(payload[U32.size + catalog :]))
 
 
+def current_snapshot(wal):
+    pointer = wal / "current_snapshot"
+    if not pointer.exists():
+        return None
+    buf = pointer.read_bytes()
+    payloads, end = parse_records(buf)
+    if len(payloads) != 1 or len(payloads[0]) != 8 or end != len(buf):
+        raise RuntimeError(f"{pointer} is not a snapshot pointer")
+    return wal / f"{struct.unpack_from('<Q', payloads[0])[0]:016x}.snapshot"
+
+
 def parse_wal(wal, blobs, tag):
     result = {}
     covered = number = begin = 0
-    snapshot_path = wal / "snapshot"
-    if snapshot_path.exists():
+    snapshot_path = current_snapshot(wal)
+    if snapshot_path:
         buf = snapshot_path.read_bytes()
         payloads, end = parse_records(buf)
         if not payloads or len(payloads[0]) != SNAPSHOT_HEADER.size:
@@ -407,12 +414,11 @@ def parse_wal(wal, blobs, tag):
     return result
 
 
-def segment_files(store, names, blobs, tag):
+def segment_files(store, relation, blobs, tag):
     per = {}
     for path in data_files(store):
         if path.suffix not in SEGMENT_SUFFIXES:
             continue
-        relation = names.get(path.parent.name, path.parent.name)
         size = path.stat().st_size
         with open(path, "rb") as f:
             f.seek(size - HEADER.size)
@@ -433,10 +439,10 @@ def segment_files(store, names, blobs, tag):
     return per
 
 
-def hnsw_graph(store, relation, names, blobs, tag, m, docs):
-    paths = [p for p in data_files(store) if p.suffix == ".idx" and names.get(p.parent.name) == relation]
+def hnsw_graph(store, blobs, tag, m, docs):
+    paths = [p for p in data_files(store) if p.suffix == ".idx"]
     if len(paths) != 1:
-        return {"skipped": f"{len(paths)} .idx files for {relation}, expected one segment"}
+        return {"skipped": f"{len(paths)} .idx files, expected one segment"}
     n = docs
     with open(paths[0], "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as data:
         found = []
@@ -664,11 +670,10 @@ def phase_bulk(args, out, blobs):
         res["table"] = server.relation_metrics("hits")
         rows = server.sql("SELECT count(*) FROM hits")[0][0]
         url = server.sql("SELECT \"URL\" FROM hits WHERE \"URL\" <> '' LIMIT 1")[0][0]
-        names = server.oids(["hits"])
         res["rows"] = rows
         res["clean_stop"] = server.stop()
         res["data_dir_bytes"] = tree_bytes(datadir)
-        res["files"] = segment_files(store, names, blobs, "bulk")
+        res["files"] = segment_files(store, "hits", blobs, "bulk")
         res["evicted_before_open"] = evict(datadir)
         log("bulk: cold open")
         res["open"] = server.start("open")
@@ -711,11 +716,10 @@ def phase_hnsw(args, out, blobs):
         res["compact"], _ = server.timed("VACUUM (COMPACT_TABLE) vec")
         res["table"] = server.relation_metrics("vec")
         res["explain"] = "\n".join(r[-1] for r in server.sql(f"EXPLAIN {ann_query(args)}"))
-        names = server.oids(["vec"])
         res["clean_stop"] = server.stop()
         res["data_dir_bytes"] = tree_bytes(datadir)
-        res["files"] = segment_files(store, names, blobs, "hnsw")
-        res["graph"] = hnsw_graph(store, "vec", names, blobs, "hnsw", args.hnsw_m, res["table"]["num_docs"])
+        res["files"] = segment_files(store, "vec", blobs, "hnsw")
+        res["graph"] = hnsw_graph(store, blobs, "hnsw", args.hnsw_m, res["table"]["num_docs"])
         res["evicted_before_open"] = evict(datadir)
         log("hnsw: cold first query")
         res["open"] = server.start("open")

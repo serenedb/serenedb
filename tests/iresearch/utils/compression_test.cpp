@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 
 #include <array>
@@ -226,37 +227,35 @@ TEST(Compression, CompressesIntoReusedSlots) {
   }
 }
 
-void WriteInPieces(compression::FrameWriter& writer, const Bytes& raw) {
-  constexpr std::array kPieces{size_t{1000}, size_t{7}, size_t{kFrame} + 5,
-                               size_t{1}, size_t{kFrame} * 3};
+constexpr std::array kEven{size_t{kFrame}};
+constexpr std::array kUneven{size_t{1000}, size_t{7}, size_t{kFrame}, size_t{1},
+                             size_t{kFrame} - 3};
+
+std::vector<irs::bytes_view> Frames(const Bytes& raw,
+                                    std::span<const size_t> sizes) {
+  std::vector<irs::bytes_view> frames;
   size_t at = 0;
-  for (size_t piece = 0; at < raw.size(); ++piece) {
-    const auto take =
-      std::min(kPieces[piece % kPieces.size()], raw.size() - at);
-    if (piece % 2 == 0) {
-      writer.WriteData(raw.data() + at, take);
-    } else {
-      auto* room = writer.Alloc(take);
-      ASSERT_TRUE(room);
-      std::memcpy(room, raw.data() + at, take);
-    }
+  for (size_t frame = 0; at < raw.size(); ++frame) {
+    const auto take = std::min(sizes[frame % sizes.size()], raw.size() - at);
+    frames.push_back(View(raw).substr(at, take));
     at += take;
   }
-}
-
-std::vector<Bytes> WrittenFrames(const compression::FrameWriter& writer) {
-  std::vector<Bytes> frames;
-  writer.ForEachFrame([&](irs::bytes_view frame) {
-    frames.emplace_back(frame.begin(), frame.end());
-  });
   return frames;
 }
 
+bool AllButLastFull(std::span<const irs::bytes_view> frames) {
+  return frames.empty() || absl::c_all_of(frames.first(frames.size() - 1),
+                                          [](irs::bytes_view frame) {
+                                            return frame.size() == kFrame;
+                                          });
+}
+
 compression::Compressed CompressOne(compression::Method method,
-                                    const compression::FrameWriter& writer) {
+                                    std::span<const irs::bytes_view> frames) {
+  const std::vector<std::vector<irs::bytes_view>> blobs{
+    {frames.begin(), frames.end()}};
   return std::move(
-    compression::Compress(method, std::span{&writer, size_t{1}}, Threads)
-      .front());
+    compression::Compress(method, kFrame, blobs, Threads).front());
 }
 
 Bytes PackedRoundTrip(const compression::Compressed& compressed) {
@@ -268,29 +267,24 @@ Bytes PackedRoundTrip(const compression::Compressed& compressed) {
   return Bytes(decoded.get(), decoded.get() + packed.frames.raw_bytes);
 }
 
-TEST(Compression, FrameWriterFramesRoundTrip) {
+TEST(Compression, FrameListsRoundTrip) {
   for (const auto method : kMethods) {
     for (const size_t size :
          {size_t{0}, size_t{1}, size_t{kFrame}, size_t{kFrame} * 3 + 17,
           size_t{kFrame} * 20 + 3}) {
       const auto raw = Text(size);
-      compression::FrameWriter writer{kFrame};
-      WriteInPieces(writer, raw);
-      ASSERT_EQ(writer.RawBytes(), raw.size());
-      const auto frames = WrittenFrames(writer);
-      Bytes joined;
-      for (const auto& frame : frames) {
-        EXPECT_FALSE(frame.empty());
-        EXPECT_LE(frame.size(), kFrame);
-        joined.insert(joined.end(), frame.begin(), frame.end());
+      for (const std::span<const size_t> sizes :
+           {std::span<const size_t>{kEven}, std::span<const size_t>{kUneven}}) {
+        const auto frames = Frames(raw, sizes);
+        const auto compressed = CompressOne(method, frames);
+        EXPECT_EQ(compressed.frames.raw_bytes, raw.size());
+        EXPECT_EQ(compressed.frames.frame_bytes, kFrame);
+        EXPECT_EQ(compressed.frames.sizes.size(), frames.size());
+        EXPECT_EQ(compressed.frames.raw_sizes.empty(), AllButLastFull(frames));
+        EXPECT_EQ(PackedRoundTrip(compressed), raw)
+          << magic_enum::enum_name(method.codec) << " " << size << " "
+          << sizes.size();
       }
-      EXPECT_EQ(joined, raw);
-      const auto compressed = CompressOne(method, writer);
-      EXPECT_EQ(compressed.frames.raw_bytes, raw.size());
-      EXPECT_EQ(compressed.frames.frame_bytes, kFrame);
-      EXPECT_EQ(compressed.frames.sizes.size(), frames.size());
-      EXPECT_EQ(PackedRoundTrip(compressed), raw)
-        << magic_enum::enum_name(method.codec) << " " << size;
     }
   }
 }
@@ -302,11 +296,10 @@ TEST(Compression, KeepPlainTurnsTheSlotsBackIntoTheStream) {
   for (const auto method : kMethods) {
     for (const auto& raw : {Noise(100), Noise(size_t{kFrame} * 3 + 17),
                             Text(size_t{kFrame} * 3 + 17), mixed}) {
-      compression::FrameWriter writer{kFrame};
-      WriteInPieces(writer, raw);
-      auto compressed = CompressOne(method, writer);
+      const auto frames = Frames(raw, kUneven);
+      auto compressed = CompressOne(method, frames);
       ASSERT_FALSE(compression::IsPlain(compressed));
-      compression::KeepPlain(compressed, writer);
+      compression::KeepPlain(compressed, frames);
       EXPECT_TRUE(compression::IsPlain(compressed));
       EXPECT_TRUE(compressed.frames.raw_sizes.empty());
       ASSERT_EQ(compressed.frames.raw_bytes, raw.size());
@@ -317,49 +310,30 @@ TEST(Compression, KeepPlainTurnsTheSlotsBackIntoTheStream) {
   }
 }
 
-TEST(Compression, FrameWriterEndsFramesWithTheirPiece) {
+TEST(Compression, UnevenFramesKeepTheirSizes) {
   const auto raw = Text(size_t{kFrame} * 4 + 50);
-  compression::FrameWriter writer{kFrame};
-  EXPECT_FALSE(writer.Alloc(0));
-  writer.WriteData(raw.data(), 100);
-  const size_t big = size_t{kFrame} * 2 + 10;
-  auto* room = writer.Alloc(big);
-  ASSERT_TRUE(room);
-  std::memcpy(room, raw.data() + 100, big);
-  auto* small = writer.Alloc(5);
-  ASSERT_TRUE(small);
-  std::memcpy(small, raw.data() + 100 + big, 5);
-  writer.WriteData(raw.data() + 105 + big, raw.size() - 105 - big);
-  ASSERT_EQ(writer.RawBytes(), raw.size());
+  constexpr std::array kSizes{size_t{100}, size_t{kFrame}, size_t{kFrame},
+                              size_t{kFrame}, size_t{kFrame} - 50};
+  const auto compressed = CompressOne(compression::kZstd1, Frames(raw, kSizes));
   const absl::InlinedVector<uint32_t, 1> expected{100, kFrame, kFrame, kFrame,
                                                   kFrame - 50};
-  const auto frames = WrittenFrames(writer);
-  ASSERT_EQ(frames.size(), expected.size());
-  size_t at = 0;
-  for (size_t frame = 0; frame != frames.size(); ++frame) {
-    const auto begin = raw.begin() + static_cast<ptrdiff_t>(at);
-    EXPECT_EQ(frames[frame], Bytes(begin, begin + expected[frame])) << frame;
-    at += expected[frame];
-  }
-  const auto compressed = CompressOne(compression::kZstd1, writer);
   EXPECT_EQ(compressed.frames.raw_sizes, expected);
   EXPECT_EQ(PackedRoundTrip(compressed), raw);
 }
 
-TEST(Compression, CompressesEveryWriterInOnePass) {
+TEST(Compression, CompressesEveryBlobInOnePass) {
   for (const auto method : kMethods) {
     std::vector<Bytes> raws{Text(size_t{kFrame} * 3 + 17), Text(1),
                             Noise(size_t{kFrame} * 2),
                             Text(size_t{kFrame} * 5)};
-    std::vector<compression::FrameWriter> writers;
-    writers.reserve(raws.size());
+    std::vector<std::vector<irs::bytes_view>> blobs;
     for (const auto& raw : raws) {
-      WriteInPieces(writers.emplace_back(kFrame), raw);
+      blobs.push_back(Frames(raw, kUneven));
     }
-    const auto together = compression::Compress(method, writers, Threads);
-    ASSERT_EQ(together.size(), writers.size());
-    for (size_t i = 0; i != writers.size(); ++i) {
-      const auto alone = CompressOne(method, writers[i]);
+    const auto together = compression::Compress(method, kFrame, blobs, Threads);
+    ASSERT_EQ(together.size(), blobs.size());
+    for (size_t i = 0; i != blobs.size(); ++i) {
+      const auto alone = CompressOne(method, blobs[i]);
       EXPECT_EQ(together[i].frames.sizes, alone.frames.sizes) << i;
       EXPECT_EQ(together[i].frames.raw_sizes, alone.frames.raw_sizes) << i;
       EXPECT_TRUE(Stored(together[i]) == Stored(alone)) << i;

@@ -47,6 +47,7 @@
 #include "search/log_entry.h"
 #include "search/table.h"
 #include "search/table_replay.h"
+#include "server/utils/frame_stream.h"
 
 namespace {
 
@@ -203,7 +204,7 @@ TEST(SearchLogEntry, BlobsThatPayArePacked) {
 TEST(SearchLogEntry, ReplayRefusesPackedRowsLongerThanTheirChunks) {
   std::mt19937_64 random{1};
   auto rows = Rows(60, 250, random);
-  irs::compression::FrameWriter raw{kFrame};
+  sdb::message::FrameStream raw{kFrame};
   {
     duckdb::BinarySerializer serializer{raw};
     serializer.OnListBegin(rows.chunks);
@@ -216,8 +217,9 @@ TEST(SearchLogEntry, ReplayRefusesPackedRowsLongerThanTheirChunks) {
   }
   constexpr std::array<uint8_t, 4> kTail{1, 2, 3, 4};
   raw.WriteData(kTail.data(), kTail.size());
+  const std::vector<std::vector<irs::bytes_view>> frames{raw.Frames()};
   rows.staged = std::move(
-    irs::compression::Compress(irs::compression::kZstd1, std::span{&raw, 1})
+    irs::compression::Compress(irs::compression::kZstd1, kFrame, frames)
       .front());
   rows.scan = nullptr;
   ASSERT_FALSE(irs::compression::IsPlain(rows.staged));

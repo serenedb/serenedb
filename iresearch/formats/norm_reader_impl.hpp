@@ -460,8 +460,11 @@ class NormReaderBase : public NormReader {
 template<bool Multi, bool Paged>
 class PersistedNormReader : public NormReaderBase {
  public:
-  explicit PersistedNormReader(const NormColumnReader& column) noexcept
-    : NormReaderBase{column} {
+  explicit PersistedNormReader(
+    const NormColumnReader& column,
+    std::unique_ptr<const NormColumnReader> owner = {}) noexcept
+    : NormReaderBase{column}, _owner{std::move(owner)} {
+    SDB_ASSERT(!_owner || _owner.get() == &column);
     SDB_ASSERT(Multi || column.RegionCount() == 1);
     SDB_ASSERT(Paged == column.Paged());
     Position(column.Region(0));
@@ -478,7 +481,9 @@ class PersistedNormReader : public NormReaderBase {
   uint32_t Get(doc_id_t doc) final {
     SDB_ASSERT(doc >= doc_limits::min());
     if constexpr (Multi) {
-      if (doc < _region->first_doc || doc >= _region->end_doc) [[unlikely]] {
+      if (doc >= _region->end_doc) [[unlikely]] {
+        Position(_column->LocateAfter(*_region, doc));
+      } else if (doc < _region->first_doc) [[unlikely]] {
         Position(_column->Locate(doc));
       }
     }
@@ -544,16 +549,21 @@ class PersistedNormReader : public NormReaderBase {
       i = j;
     }
   }
+
+  std::unique_ptr<const NormColumnReader> _owner;
 };
 
 inline memory::managed_ptr<NormReader> MakePersistedNormReader(
-  const NormColumnReader& column) {
+  const NormColumnReader& column,
+  std::unique_ptr<const NormColumnReader> owner = {}) {
   SDB_ASSERT(column.RegionCount() > 0);
   const auto make = [&]<bool Paged> -> memory::managed_ptr<NormReader> {
     if (column.RegionCount() == 1) {
-      return memory::make_managed<PersistedNormReader<false, Paged>>(column);
+      return memory::make_managed<PersistedNormReader<false, Paged>>(
+        column, std::move(owner));
     }
-    return memory::make_managed<PersistedNormReader<true, Paged>>(column);
+    return memory::make_managed<PersistedNormReader<true, Paged>>(
+      column, std::move(owner));
   };
   return column.Paged() ? make.template operator()<true>()
                         : make.template operator()<false>();

@@ -51,7 +51,6 @@ struct NormReader : public memory::Managed {
   }
 };
 
-// Returns nullptr when the field has no norm column.
 struct NormProvider {
   virtual ~NormProvider() = default;
 

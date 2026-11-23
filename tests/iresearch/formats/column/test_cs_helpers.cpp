@@ -62,7 +62,7 @@ ColReader OpenColReader(const ::tests::IndexDir& dir,
 
 std::unique_ptr<IdxReader> CommitNorms(const ::tests::IndexDir& dir,
                                        std::string_view segment_name,
-                                       NormsWriter&& norms, uint64_t rows) {
+                                       BufferedNorms&& norms, uint64_t rows) {
   IdxWriter idx{dir.Tracker(segment_name)};
   idx.WriteNorms(std::move(norms).Seal(rows));
   idx.Commit(/*hnsw_bases=*/nullptr);

@@ -34,6 +34,7 @@
 #include <utility>
 
 #include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -97,6 +98,7 @@ ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
             footer.columns.push_back(std::move(meta));
           });
         });
+      ReadNormColumns(in, kColFieldDeletedNormColumns, data_size);
       footer.block_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
         kColFieldBlockSize, "block_size", DEFAULT_BLOCK_ALLOC_SIZE);
       in.ReadOptionalList(

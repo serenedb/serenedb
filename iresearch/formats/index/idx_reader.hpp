@@ -104,9 +104,7 @@ class IdxReader final {
 
   const AnnIndex* Ann(field_id id) const noexcept;
 
-  const NormColumnReader* NormColumn(field_id id) const noexcept {
-    return _norms.Column(id);
-  }
+  const NormColumns& Norms() const noexcept { return _norms; }
 
   term_dict::TermsMeta TakeTerms() noexcept {
     return std::exchange(_terms, {});

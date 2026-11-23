@@ -31,7 +31,6 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
-#include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/reader_state.hpp"
 #include "iresearch/index/doc_removal.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
@@ -195,13 +194,13 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
 }
 
 NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
-  const auto* column = NormColumn(field);
-  return column ? MakePersistedNormReader(*column) : NormReader::ptr{};
+  const auto* idx = _readers ? _readers->Idx() : nullptr;
+  return idx ? idx->Norms().norms(field) : NormReader::ptr{};
 }
 
 const NormColumnReader* SegmentReaderImpl::NormColumn(field_id field) const {
   const auto* idx = _readers ? _readers->Idx() : nullptr;
-  return idx ? idx->NormColumn(field) : nullptr;
+  return idx ? idx->Norms().Column(field) : nullptr;
 }
 
 const ColumnReader* SegmentReaderImpl::Column(field_id field) const {

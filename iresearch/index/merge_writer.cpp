@@ -57,6 +57,7 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -669,15 +670,11 @@ std::unique_ptr<NormColumnReader> ViewMergedNorm(
       }
       continue;
     }
-    std::vector<uint32_t> live;
-    live.reserve(src.alive_count);
     for (size_t r = 0; r != column->RegionCount(); ++r) {
-      ForLiveNorms(src, *column, r, values,
-                   [&](std::span<const uint32_t> chunk) {
-                     live.insert(live.end(), chunk.begin(), chunk.end());
-                   });
+      ForLiveNorms(
+        src, *column, r, values,
+        [&](std::span<const uint32_t> live) { concat.Append(live); });
     }
-    concat.Append(std::move(live));
   }
   return std::move(concat).Finish(out_id);
 }
@@ -758,19 +755,38 @@ MergedNormIdMap MergeNorms(NormsWriter& norms,
   return out;
 }
 
-NormColumns ViewMergedNorms(std::span<const MergeSource> sources,
-                            const FieldMetaMapT& field_meta_map,
-                            const MergedNormIdMap& merged_norm_ids) {
-  std::vector<std::unique_ptr<NormColumnReader>> columns;
-  columns.reserve(merged_norm_ids.size());
-  for (const auto& [id, out_id] : merged_norm_ids) {
-    const auto& field = field_meta_map.at(id);
-    columns.push_back(ViewMergedNorm(
-      out_id, id, {.layout = *field.layout, .member = DictMember::Strings},
-      sources));
+class MergedNormViews final : public NormProvider {
+ public:
+  MergedNormViews(std::span<const MergeSource> sources,
+                  const FieldMetaMapT& field_meta_map,
+                  const MergedNormIdMap& merged_norm_ids)
+    : _sources{sources} {
+    _fields.reserve(merged_norm_ids.size());
+    for (const auto& [id, out_id] : merged_norm_ids) {
+      _fields.try_emplace(out_id, id,
+                          DictRef{.layout = *field_meta_map.at(id).layout,
+                                  .member = DictMember::Strings});
+    }
   }
-  return NormColumns{std::move(columns)};
-}
+
+  NormReader::ptr norms(field_id out_id) const final {
+    const auto it = _fields.find(out_id);
+    if (it == _fields.end()) {
+      return {};
+    }
+    const auto& [id, dict] = it->second;
+    return MakeNormReader(ViewMergedNorm(out_id, id, dict, _sources));
+  }
+
+ private:
+  struct Field {
+    field_id id;
+    DictRef dict;
+  };
+
+  std::span<const MergeSource> _sources;
+  containers::FlatHashMap<field_id, Field> _fields;
+};
 
 bool WriteFields(FieldSink& field_writer, const irs::FlushState& flush_state,
                  CompoundFieldIterator& field_itr,
@@ -936,11 +952,11 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   col_writer->SetHnswBases(_hnsw_bases);
 
   IdxWriter idx{*tracker};
-  NormsWriter norms_writer{idx.NormsOut()};
+  NormsWriter norms_writer{
+    [&idx] -> duckdb::WriteStream& { return idx.NormsOut(); }};
   const auto merged_norm_ids =
     MergeNorms(norms_writer, sources, field_meta_map, _field_options);
-  idx.SetNorms(std::move(norms_writer).Seal(segment.docs_count).columns);
-  const auto norms = ViewMergedNorms(sources, field_meta_map, merged_norm_ids);
+  idx.SetNorms(std::move(norms_writer).Seal(segment.docs_count));
 
   if (!progress_callback()) {
     co_return nullptr;
@@ -975,6 +991,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     co_return nullptr;
   }
 
+  const MergedNormViews norms{sources, field_meta_map, merged_norm_ids};
   const FlushState state{
     .tracker = *tracker,
     .norms = &norms,
@@ -1036,11 +1053,11 @@ std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
   }
 
   const auto sources = MakeSources(_readers);
-  NormsWriter norms_writer{
+  BufferedNorms buffered_norms{
     duckdb::BufferManager::GetBufferManager(_db).GetBufferAllocator()};
-  const auto merged_norm_ids =
-    MergeNorms(norms_writer, sources, field_meta_map, _field_options);
-  auto norms = std::move(norms_writer).Seal(segment.docs_count);
+  const auto merged_norm_ids = MergeNorms(buffered_norms.Writer(), sources,
+                                          field_meta_map, _field_options);
+  auto norms = std::move(buffered_norms).Seal(segment.docs_count);
   auto columns = ConcatInMemory(_db, sources, _field_options);
 
   auto fields = std::make_shared<PieceFields>();

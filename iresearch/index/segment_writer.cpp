@@ -345,7 +345,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   _col_writer->SetDeferredSeal(_deferred_columns);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
-  _fields.SetNormsWriter(&_norms.emplace(_fields.Allocator()));
+  _fields.SetNormsWriter(&_norms.emplace(_fields.Allocator()).Writer());
   _fields.SetFieldOptions(active);
 
   _initialized = true;

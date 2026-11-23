@@ -43,6 +43,7 @@ namespace irs {
 inline constexpr std::string_view kFormatExt = "col";
 
 inline constexpr duckdb::field_id_t kColFieldColumns = 0;
+inline constexpr duckdb::field_id_t kColFieldDeletedNormColumns = 1;
 inline constexpr duckdb::field_id_t kColFieldBlockSize = 2;
 inline constexpr duckdb::field_id_t kColFieldRowGroupStarts = 3;
 

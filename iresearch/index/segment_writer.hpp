@@ -294,7 +294,7 @@ class SegmentWriter final : util::Noncopyable {
   // Owning per-op override; null falls back to _fallback_field_options.
   std::shared_ptr<const IndexFieldOptions> _field_options;
   std::unique_ptr<ColWriter> _col_writer;
-  std::optional<NormsWriter> _norms;
+  std::optional<BufferedNorms> _norms;
   std::vector<field_id> _copied_columns;
   std::vector<CopiedRows> _copied_rows;
   doc_id_t _batch_first_doc_id = doc_limits::eof();

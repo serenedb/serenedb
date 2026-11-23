@@ -125,19 +125,14 @@ NormColumns::NormColumns(duckdb::shared_ptr<duckdb::InputFile> file,
   }
 }
 
-NormColumns::NormColumns(
-  std::vector<std::unique_ptr<NormColumnReader>> columns) {
-  _columns.reserve(columns.size());
-  for (auto& column : columns) {
-    const auto id = column->Id();
-    const bool added = _columns.try_emplace(id, std::move(column)).second;
-    SDB_ENSURE(added, "duplicate norm column ", id);
-  }
-}
-
 NormReader::ptr NormColumns::norms(field_id field) const {
   const auto* column = Column(field);
   return column ? MakePersistedNormReader(*column) : NormReader::ptr{};
+}
+
+NormReader::ptr MakeNormReader(std::unique_ptr<const NormColumnReader> column) {
+  const auto& reader = *column;
+  return MakePersistedNormReader(reader, std::move(column));
 }
 
 uint32_t NormRegion::Overflow(uint32_t row) const {
@@ -272,7 +267,7 @@ void NormColumnReader::IndexEnds() {
 
 NormColumnReader::NormColumnReader(field_id id, std::vector<NormRegion> regions,
                                    std::vector<NormStats> stats,
-                                   std::vector<std::vector<uint32_t>> owned)
+                                   std::vector<std::vector<byte_type>> owned)
   : _file{nullptr},
     _id{id},
     _regions{std::move(regions)},
@@ -327,18 +322,37 @@ void NormColumnConcat::AppendZeros(uint64_t rows) {
   Add({}, {.rows = rows, .min = 0});
 }
 
-void NormColumnConcat::Append(std::vector<uint32_t> values) {
-  static_assert(std::endian::native == std::endian::little);
+void NormColumnConcat::Append(std::span<const uint32_t> values) {
   if (values.empty()) {
     return;
   }
   NormStats stats;
   stats.Add(values);
-  Add({.base = reinterpret_cast<const byte_type*>(values.data()) -
-               uint64_t{_next} * sizeof(uint32_t),
-       .bits = 32},
+  if (stats.min == stats.max) {
+    Add({.value = stats.max}, stats);
+    return;
+  }
+  const uint32_t bytes = stats.max <= std::numeric_limits<uint8_t>::max() ? 1
+                         : stats.max <= std::numeric_limits<uint16_t>::max()
+                           ? 2
+                           : 4;
+  auto& slots = _owned.emplace_back(values.size() * bytes);
+  auto* out = slots.data();
+  for (const auto value : values) {
+    switch (bytes) {
+      case 1:
+        *out = static_cast<byte_type>(value);
+        break;
+      case 2:
+        absl::little_endian::Store16(out, static_cast<uint16_t>(value));
+        break;
+      default:
+        absl::little_endian::Store32(out, value);
+    }
+    out += bytes;
+  }
+  Add({.base = slots.data() - uint64_t{_next} * bytes, .bits = bytes * 8},
       stats);
-  _owned.push_back(std::move(values));
 }
 
 std::unique_ptr<NormColumnReader> NormColumnConcat::Finish(field_id id) && {

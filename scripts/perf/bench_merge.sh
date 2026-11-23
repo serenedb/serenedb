@@ -15,7 +15,9 @@
 # env: BENCH_ROWS (60000000), BENCH_SEGMENTS (8), BENCH_RUNS (3),
 #      BENCH_PORT (55620), BENCH_DIR (/tmp/$USER-bench-merge),
 #      BENCH_QUIET_LOAD (unset: each merge waits until the 1-minute load
-#      average is below it)
+#      average is below it), BENCH_DELETE_EVERY (unset: the input deletes
+#      every row whose id is a multiple of it, so every source segment of
+#      the merge has deletions)
 set -euo pipefail
 
 rows=${BENCH_ROWS:-60000000}
@@ -24,6 +26,7 @@ runs=${BENCH_RUNS:-3}
 port=${BENCH_PORT:-55620}
 dir=${BENCH_DIR:-/tmp/$USER-bench-merge}
 quiet=${BENCH_QUIET_LOAD:-}
+delete_every=${BENCH_DELETE_EVERY:-}
 results="$dir/results.tsv"
 
 wait_quiet() {
@@ -101,6 +104,9 @@ SQL
                  FROM range($((k * step)), $(((k + 1) * step))) t(i)" \
 			-c "VACUUM (FLUSH_TABLE) m"
 	done
+	[[ -z $delete_every ]] ||
+		psql_q -c "DELETE FROM m WHERE id % $delete_every = 0" \
+			-c "VACUUM (FLUSH_TABLE) m"
 	stop
 }
 

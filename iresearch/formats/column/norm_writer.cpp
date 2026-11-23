@@ -25,11 +25,12 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
-#include <duckdb/common/memory_mapped_file.hpp>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <utility>
 
+#include "iresearch/store/bytes_mapping.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -45,22 +46,13 @@ uint8_t PickShift(uint64_t rows, uint64_t exceptions) noexcept {
     static_cast<uint32_t>(std::bit_width(span)) - 1, kNormMaxShift));
 }
 
-class NormBytes final : public duckdb::MemoryMappedFile {
+class NormBytes final : public BytesMapping {
  public:
-  explicit NormBytes(duckdb::MemoryStream bytes)
-    : MemoryMappedFile{/*path=*/{}, duckdb::FileOpenFlags::FILE_FLAGS_READ,
-                       bytes.GetData(), bytes.GetPosition()},
-      _bytes{std::move(bytes)} {}
-
-  void Sync() final {}
-  bool Trim(duckdb::idx_t /*offset*/, duckdb::idx_t /*length*/) final {
-    return false;
-  }
-  bool OnDiskFile() const final { return false; }
-  void Close() final {}
+  explicit NormBytes(duckdb::AllocatedData bytes)
+    : BytesMapping{{bytes.get(), bytes.GetSize()}}, _bytes{std::move(bytes)} {}
 
  private:
-  duckdb::MemoryStream _bytes;
+  duckdb::AllocatedData _bytes;
 };
 
 void WriteNormRegion(duckdb::BinarySerializer& s, const NormRegionMeta& r) {
@@ -341,20 +333,19 @@ void NormColumnWriter::Finalize() {
 
 NormColumnWriter& NormsWriter::Add(field_id id, uint32_t row_group_size) {
   if (!_out) {
-    _out = &_buffer.emplace(*_allocator);
+    _out = &_open();
   }
-  auto& writer = *_columns.emplace_back(
+  return *_columns.emplace_back(
     std::make_unique<NormColumnWriter>(id, row_group_size, *_out));
-  _by_id.emplace(id, &writer);
-  return writer;
 }
 
 NormColumnWriter& NormsWriter::Open(field_id id, uint32_t row_group_size) {
   SDB_ASSERT(row_group_size != 0);
-  if (const auto it = _by_id.find(id); it != _by_id.end()) {
-    return *it->second;
+  auto [it, added] = _by_id.try_emplace(id, nullptr);
+  if (added) {
+    it->second = &Add(id, row_group_size);
   }
-  return Add(id, row_group_size);
+  return *it->second;
 }
 
 NormColumnWriter& NormsWriter::Stream(field_id id) {
@@ -362,21 +353,33 @@ NormColumnWriter& NormsWriter::Stream(field_id id) {
   return Add(id, 0);
 }
 
-SealedNorms NormsWriter::Seal(uint64_t rows) && {
-  SealedNorms sealed;
+std::vector<NormColumnSpec> NormsWriter::Seal(uint64_t rows) && {
+  std::vector<NormColumnSpec> columns;
   for (auto& writer : _columns) {
     writer->PadTo(rows);
     writer->Finalize();
     SDB_ASSERT(writer->Meta().row_count == rows);
     if (!writer->Meta().regions.empty()) {
-      sealed.columns.push_back(
-        {.id = writer->Id(), .meta = writer->TakeMeta()});
+      columns.push_back({.id = writer->Id(), .meta = writer->TakeMeta()});
     }
   }
-  if (!sealed.columns.empty() && _buffer) {
-    sealed.file = duckdb::make_shared_ptr<duckdb::InputFile>(
-      duckdb::make_uniq<NormBytes>(std::move(*_buffer)));
+  return columns;
+}
+
+SealedNorms BufferedNorms::Seal(uint64_t rows) && {
+  SealedNorms sealed{.columns = std::move(_writer).Seal(rows)};
+  if (sealed.columns.empty()) {
+    return sealed;
   }
+  SDB_ASSERT(_buffer);
+  duckdb::AllocatedData bytes;
+  if (const auto size = _buffer->GetPosition(); size != 0) {
+    bytes = _allocator.Allocate(size);
+    std::memcpy(bytes.get(), _buffer->GetData(), size);
+  }
+  _buffer.reset();
+  sealed.file = duckdb::make_shared_ptr<duckdb::InputFile>(
+    duckdb::make_uniq<NormBytes>(std::move(bytes)));
   return sealed;
 }
 

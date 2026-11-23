@@ -79,11 +79,9 @@ std::unique_ptr<ColReader> MakeCsReader(const ::tests::IndexDir& dir,
 ColReader OpenColReader(const ::tests::IndexDir& dir,
                         std::string_view segment_name);
 
-// Seals `norms` at `rows`, writes them to `segment_name`'s .idx and reads that
-// file back.
 std::unique_ptr<IdxReader> CommitNorms(const ::tests::IndexDir& dir,
                                        std::string_view segment_name,
-                                       NormsWriter&& norms, uint64_t rows);
+                                       BufferedNorms&& norms, uint64_t rows);
 
 // Open a BLOB column on the given writer; convenience wrapper around
 // Writer::OpenColumn(id, BLOB, ...). Most legacy tests stored bytes per

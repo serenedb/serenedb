@@ -24,19 +24,15 @@
 
 #include <cstddef>
 
+#include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/store/storage.hpp"
 
 namespace irs {
 
-struct NormProvider;
-
 struct FlushState {
   FileTracker& tracker;
-  // In-flight norm reader source (SegmentWriter during initial flush,
-  // null during merge). Posting writers consult it to read per-doc norms
-  // for score bounds while the segment is still being written.
   const NormProvider* norms{};
   ScorerPtr scorer = nullptr;
   const size_t doc_count;

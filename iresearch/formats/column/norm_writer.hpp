@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/functional/any_invocable.h>
+
 #include <cstdint>
 #include <duckdb/common/allocator.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
@@ -175,9 +177,8 @@ struct SealedNorms {
 
 class NormsWriter final {
  public:
-  explicit NormsWriter(duckdb::Allocator& allocator) noexcept
-    : _allocator{&allocator} {}
-  explicit NormsWriter(duckdb::WriteStream& out) noexcept : _out{&out} {}
+  explicit NormsWriter(absl::AnyInvocable<duckdb::WriteStream&()> open) noexcept
+    : _open{std::move(open)} {}
 
   NormsWriter(const NormsWriter&) = delete;
   NormsWriter& operator=(const NormsWriter&) = delete;
@@ -185,6 +186,29 @@ class NormsWriter final {
   NormColumnWriter& Open(field_id id, uint32_t row_group_size);
 
   NormColumnWriter& Stream(field_id id);
+
+  std::vector<NormColumnSpec> Seal(uint64_t rows) &&;
+
+ private:
+  NormColumnWriter& Add(field_id id, uint32_t row_group_size);
+
+  absl::AnyInvocable<duckdb::WriteStream&()> _open;
+  duckdb::WriteStream* _out = nullptr;
+  std::vector<std::unique_ptr<NormColumnWriter>> _columns;
+  containers::FlatHashMap<field_id, NormColumnWriter*> _by_id;
+};
+
+class BufferedNorms final {
+ public:
+  explicit BufferedNorms(duckdb::Allocator& allocator)
+    : _allocator{allocator}, _writer{[this] -> duckdb::WriteStream& {
+        return _buffer.emplace(_allocator);
+      }} {}
+
+  BufferedNorms(const BufferedNorms&) = delete;
+  BufferedNorms& operator=(const BufferedNorms&) = delete;
+
+  NormsWriter& Writer() noexcept { return _writer; }
 
   uint64_t Bytes() const noexcept {
     return _buffer ? _buffer->GetPosition() : 0;
@@ -196,13 +220,9 @@ class NormsWriter final {
   SealedNorms Seal(uint64_t rows) &&;
 
  private:
-  NormColumnWriter& Add(field_id id, uint32_t row_group_size);
-
-  duckdb::Allocator* _allocator = nullptr;
+  duckdb::Allocator& _allocator;
   std::optional<duckdb::MemoryStream> _buffer;
-  duckdb::WriteStream* _out = nullptr;
-  std::vector<std::unique_ptr<NormColumnWriter>> _columns;
-  containers::FlatHashMap<field_id, NormColumnWriter*> _by_id;
+  NormsWriter _writer;
 };
 
 }  // namespace irs

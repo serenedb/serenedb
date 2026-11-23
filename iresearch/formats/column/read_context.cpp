@@ -29,25 +29,12 @@
 #include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 
 #include "iresearch/formats/column/col_reader.hpp"
+#include "iresearch/store/bytes_mapping.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
-
-class ColMapping final : public duckdb::MemoryMappedFile {
- public:
-  ColMapping(const byte_type* data, uint64_t size)
-    : MemoryMappedFile{/*path=*/{}, duckdb::FileOpenFlags::FILE_FLAGS_READ,
-                       const_cast<duckdb::data_ptr_t>(data),
-                       static_cast<duckdb::idx_t>(size)} {}
-
-  void Sync() final {}
-  bool Trim(duckdb::idx_t /*offset*/, duckdb::idx_t /*length*/) final {
-    return false;
-  }
-  void Close() final {}
-};
 
 class PinnedColBlock final : public duckdb::Block {
  public:
@@ -185,7 +172,7 @@ duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
   } else {
     pinned = File()->PinCopy(offset, size);
   }
-  ColMapping bytes{pinned.Ptr(), SectorAligned(size)};
+  BytesMapping bytes{{pinned.Ptr(), SectorAligned(size)}};
   return duckdb::make_uniq<PinnedColBlock>(*_allocator, block_id, bytes, size,
                                            std::move(pinned));
 }

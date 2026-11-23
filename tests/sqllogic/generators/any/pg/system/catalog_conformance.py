@@ -249,6 +249,7 @@ JOIN pg_catalog.pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0
 {SYSTEM_ORDER}, a.attnum''')
 check(f"""SELECT oid, spcname, pg_catalog.pg_get_userbyid(spcowner) AS spcowner, {acl("spcacl")}, spcoptions
 FROM pg_catalog.pg_tablespace
+WHERE spcname IN ('pg_default', 'pg_global')
 ORDER BY oid""")
 check(f'''SELECT oid::regnamespace::text AS oid, nspname, pg_catalog.pg_get_userbyid(nspowner) AS nspowner, {acl("nspacl")}
 FROM pg_catalog.pg_namespace

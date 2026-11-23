@@ -196,7 +196,9 @@ std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
   std::array<uint32_t, kChainRestart> used;
   uint32_t count = 0;
   uint64_t need = std::numeric_limits<uint64_t>::max();
-  for (uint32_t i = n; need != 0 && i-- > 0;) {
+  for (uint32_t i = n; need != 0;) {
+    SDB_ASSERT(i != 0);
+    --i;
     if (lcp[i] < need) {
       used[count++] = i;
       need = lcp[i];

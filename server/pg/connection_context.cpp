@@ -135,6 +135,7 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
     _login_role_id{identity.role},
     _session_role_id{identity.role},
     _effective_role_id{identity.role},
+    _owns_temporary_objects{!identity.temporary},
     _progress{std::make_shared<pg::ProgressSource>()},
     _slot{catalog::Transactions::Get().Join()} {
   session_user = _user;
@@ -174,7 +175,7 @@ ConnectionContext::~ConnectionContext() {
       Destroy();
     } catch (...) {
     }
-    if (_progress->client_backend) {
+    if (_owns_temporary_objects) {
       client_data->temporary_objects->OnDetach(*this);
     }
   }

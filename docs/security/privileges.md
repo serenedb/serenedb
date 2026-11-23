@@ -101,6 +101,7 @@ Ownership can be transferred with `ALTER ... OWNER TO`. The new owner immediatel
 
 - Granting a privilege requires owning the object or holding it `WITH GRANT OPTION`.
 - Superusers bypass all privilege checks.
+- Privileges guard data, not names. The system catalogs and the `sdb_*` table functions, such as `sdb_tables()`, list every object, including those the current role has no privilege on, and an error may suggest such an object's name in its `Did you mean ...` hint.
 - `ALTER DEFAULT PRIVILEGES` sets the privileges that tables, sequences, functions and types created afterwards receive, in every schema or only `IN SCHEMA` one, for the objects of the current role or `FOR ROLE` another.
 
 ## See also

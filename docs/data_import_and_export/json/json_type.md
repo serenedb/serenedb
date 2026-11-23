@@ -35,6 +35,8 @@ Duplicate keys are allowed in JSON objects:
 
 <SqlLogicTest id="data_import_and_export/json/json_type/example_006" />
 
+`->`, `->>`, `#>`, `#>>`, `json_extract_path` and `json_extract_path_text` take the first of duplicate keys.
+
 We allow any of SereneDB's types to be cast to JSON, and JSON to be cast back to any of SereneDB's types, for example, to cast `JSON` to SereneDB's `STRUCT` type, run:
 
 <SqlLogicTest id="data_import_and_export/json/json_type/example_007" />

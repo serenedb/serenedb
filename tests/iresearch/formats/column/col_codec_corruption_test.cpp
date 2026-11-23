@@ -37,6 +37,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iresearch/formats/column/codecs/frame_meta.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/text/string_layout.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -47,6 +48,7 @@
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <set>
 #include <string>
@@ -1123,6 +1125,147 @@ TEST_F(ColCodecCorruptionTest, TextDictionariesRejectDamagedSegments) {
           "Corrupted text segment: header is inconsistent",
           "Corrupted text segment: symbol table is inconsistent",
           "Corrupted text segment: unsupported version #"}});
+}
+
+TEST_F(ColCodecCorruptionTest,
+       UncompressedStringsRejectAHeaderOrOffsetOutOfRange) {
+  const Case c{"short strings",
+               LogicalType::VARCHAR,
+               CodecType::Uncompressed,
+               [](uint64_t g) { return Value{absl::StrCat("row-", g % 97)}; },
+               {}};
+  const auto damaged = [&](std::string_view name, uint64_t at, uint32_t value,
+                           uint64_t row, std::string_view rejected) {
+    SCOPED_TRACE(name);
+    const auto path =
+      test_dir() / absl::StrCat("col_codec_corruption_strings_", _next++);
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    ASSERT_NO_FATAL_FAILURE(Write(path, c, offset, size));
+    ASSERT_LT(at + sizeof(value), size);
+    {
+      std::fstream io{path / irs::FileName(kSeg),
+                      std::ios::in | std::ios::out | std::ios::binary};
+      ASSERT_TRUE(io.good());
+      io.seekp(static_cast<std::streamoff>(offset + at));
+      io.write(reinterpret_cast<const char*>(&value), sizeof(value));
+    }
+    tests::IndexDir dir{Db(), path.string()};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    std::set<std::string> messages;
+    Guarded(messages, [&] {
+      irs::ColumnReader::PointReader reader{r, *col};
+      duckdb::Vector out{c.type, 1};
+      reader.FetchRow(row, out, 0);
+    });
+    EXPECT_EQ(absl::StrJoin(messages, "\n"), rejected);
+  };
+  damaged("a dictionary end inside the header", sizeof(uint32_t), 4, 5,
+          "Corrupted uncompressed string segment: dictionary is outside the "
+          "segment or overlaps offsets");
+  damaged("an offset of INT32_MIN just before the fetched row",
+          2 * sizeof(uint32_t) + 99 * sizeof(int32_t),
+          static_cast<uint32_t>(std::numeric_limits<int32_t>::min()), 100,
+          "Corrupted uncompressed string segment: dictionary offsets are "
+          "invalid");
+}
+
+TEST_F(ColCodecCorruptionTest, OnpairFramesShorterThanTheirPaddingAreRefused) {
+  const Case c{"onpair", LogicalType::VARCHAR, CodecType::Onpair, TextRow, {}};
+  const auto path = test_dir() / "col_codec_corruption_onpair_padding";
+  std::filesystem::create_directories(path);
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  ASSERT_NO_FATAL_FAILURE(Write(path, c, offset, size));
+  {
+    std::fstream io{path / irs::FileName(kSeg),
+                    std::ios::in | std::ios::out | std::ios::binary};
+    ASSERT_TRUE(io.good());
+    irs::codecs::Header h;
+    ASSERT_GE(size, sizeof(h));
+    io.seekg(static_cast<std::streamoff>(offset));
+    io.read(reinterpret_cast<char*>(&h), sizeof(h));
+    ASSERT_NE(h.frame_count, 0);
+    irs::codecs::FrameMeta frame;
+    io.seekg(static_cast<std::streamoff>(offset + h.off_frames));
+    io.read(reinterpret_cast<char*>(&frame), sizeof(frame));
+    ASSERT_GT(frame.comp_len, 1);
+    frame.comp_len = 1;
+    io.seekp(static_cast<std::streamoff>(offset + h.off_frames));
+    io.write(reinterpret_cast<const char*>(&frame), sizeof(frame));
+  }
+  tests::IndexDir dir{Db(), path.string()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  std::set<std::string> messages;
+  Guarded(messages, [&] {
+    auto state = col->InitScan(r.Ctx());
+    duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+    col->Scan(state, out, STANDARD_VECTOR_SIZE);
+  });
+  Guarded(messages, [&] {
+    irs::ColumnReader::PointReader reader{r, *col};
+    duckdb::Vector out{c.type, 1};
+    reader.FetchRow(1, out, 0);
+  });
+  EXPECT_EQ(absl::StrJoin(messages, "\n"),
+            "Corrupted text segment: entry is inconsistent");
+}
+
+TEST_F(ColCodecCorruptionTest, TextHeadersRejectAnImpossibleLocalDictionary) {
+  const auto damaged =
+    [&](const Case& c,
+        const std::function<void(irs::codecs::Header&)>& change) {
+      SCOPED_TRACE(c.name);
+      const auto path =
+        test_dir() / absl::StrCat("col_codec_corruption_header_", _next++);
+      std::filesystem::create_directories(path);
+      uint64_t offset = 0;
+      uint64_t size = 0;
+      ASSERT_NO_FATAL_FAILURE(Write(path, c, offset, size));
+      {
+        std::fstream io{path / irs::FileName(kSeg),
+                        std::ios::in | std::ios::out | std::ios::binary};
+        ASSERT_TRUE(io.good());
+        irs::codecs::Header h;
+        ASSERT_GE(size, sizeof(h));
+        io.seekg(static_cast<std::streamoff>(offset));
+        io.read(reinterpret_cast<char*>(&h), sizeof(h));
+        change(h);
+        io.seekp(static_cast<std::streamoff>(offset));
+        io.write(reinterpret_cast<const char*>(&h), sizeof(h));
+      }
+      std::set<std::string> messages;
+      ASSERT_NO_FATAL_FAILURE(Read(path, c, Value{"x"}, messages));
+      EXPECT_EQ(absl::StrJoin(messages, "\n"),
+                "Corrupted text segment: header is inconsistent");
+    };
+  const Case zstd{"zstd", LogicalType::VARCHAR, CodecType::Zstd, TextRow, {}};
+  const Case fsst{"fsst", LogicalType::VARCHAR, CodecType::Fsst, TextRow, {}};
+  using irs::codecs::FrameDictionary;
+  damaged(zstd, [](irs::codecs::Header& h) {
+    h.flags = FrameDictionary::Local;
+    h.symtab_size = 0;
+  });
+  damaged(zstd, [](irs::codecs::Header& h) {
+    h.flags = FrameDictionary::Local;
+    h.symtab_size = 16;
+    h.dictionary_size = 0;
+  });
+  damaged(zstd, [](irs::codecs::Header& h) {
+    h.flags = FrameDictionary::Local;
+    h.symtab_size = 16;
+    h.dictionary_size = irs::codecs::kMaxDictionaryBytes + 1;
+  });
+  damaged(fsst, [](irs::codecs::Header& h) {
+    ASSERT_NE(h.symtab_size, 0);
+    h.flags = FrameDictionary::Local;
+    h.dictionary_size = 1;
+  });
 }
 
 }  // namespace

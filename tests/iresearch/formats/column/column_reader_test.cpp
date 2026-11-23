@@ -8264,4 +8264,99 @@ TEST_F(ColumnReaderTest, RangeFiltersOnSortedLz4DictionariesMatchTheValues) {
   }
 }
 
+TEST_F(ColumnReaderTest,
+       CopiedBlocksOfARowGroupSplitIntoSeveralKeepTheirValidity) {
+  constexpr uint32_t kRgSize = 4 * STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kRows = 3 * kRgSize;
+  constexpr irs::field_id kS = 1;
+  const auto type = duckdb::LogicalType::VARCHAR;
+  const irs::ColumnWriterOptions options{
+    .row_group_size = kRgSize,
+    .compression = irs::codecs::CodecType::Fsst12,
+    .codec_params = {.segment_target = 32 * 1024}};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(
+    Db(), dir, "src", kS, type,
+    absl::StrCat("SELECT CASE WHEN i < ", kRgSize,
+                 " AND i % 7 = 0 THEN NULL ELSE 'https://example.org/' || (i % "
+                 "977) || '/item/' || (i * 7919 % 100003) || '?ref=' || i END "
+                 "FROM range(",
+                 kRows, ") t(i)"),
+    kRgSize, expected, options);
+  irs::ColReader src = irs::tests::OpenColReader(dir, "src");
+  const auto& source = *src.Column(kS);
+  ASSERT_GT(source.DataBlocks().size(), 6);
+  ASSERT_NE(source.Validity(), nullptr);
+  ASSERT_LT(source.Validity()->DataBlocks().size(), source.DataBlocks().size());
+  {
+    irs::ColWriter w{Db(), dir.Tracker("dst"), irs::WriteTier::Merge};
+    auto& cw = w.OpenColumn(kS, type, options);
+    irs::ReadContext context{src};
+    cw.CopyRows(0, source, context, 0, kRows);
+    ASSERT_TRUE(w.Commit(0));
+  }
+  irs::ColReader r = irs::tests::OpenColReader(dir, "dst");
+  const auto* col = r.Column(kS);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), kRows);
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+}
+
+TEST_F(ColumnReaderTest, FooterTextBlocksSmallerThanTheirHeaderAreRejected) {
+  EXPECT_EQ(ReadWithCorruptedFooter(
+              Db(), duckdb::LogicalType::VARCHAR,
+              {.compression = irs::codecs::CodecType::Zstd},
+              [](uint64_t g) {
+                return duckdb::Value{absl::StrCat("text-", g % 300, "-value")};
+              },
+              [](irs::ColumnMeta& meta) { meta.data.front().byte_size = 16; },
+              [](irs::ColReader& r, const irs::ColumnReader& col) {
+                irs::ColumnReader::PointReader reader{r, col};
+                duckdb::Vector out{col.Type(), 1};
+                reader.FetchRow(10, out, 0);
+              }),
+            "Corrupted text segment: segment is smaller than its header");
+}
+
+TEST_F(ColumnReaderTest, SmallListGathersWidenToTheirBlockOnlyWhileItFits) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
+  const auto check = [&](uint32_t rg_size, uint64_t elems,
+                         const std::vector<std::vector<uint64_t>>& gathers) {
+    SCOPED_TRACE(absl::StrCat(rg_size, " lists of ", elems));
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    std::vector<duckdb::Value> expected;
+    WriteViaSql(Db(), dir, "lseg", 45, type,
+                absl::StrCat("SELECT list_transform(range(", elems,
+                             "), lambda k: (i * 7 + k)::INTEGER) FROM range(",
+                             rg_size, ") t(i)"),
+                rg_size, expected);
+    irs::ColReader r = irs::tests::OpenColReader(dir, "lseg");
+    const auto* col = r.Column(45);
+    ASSERT_NE(col, nullptr);
+    ASSERT_EQ(col->RowCount(), rg_size);
+    auto state = col->InitScan(r.Ctx());
+    for (const auto& rows : gathers) {
+      const auto anchor = rows.front();
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      for (size_t i = 0; i < rows.size(); ++i) {
+        sel.set_index(i, rows[i] - anchor);
+      }
+      duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+      col->GatherScatter(state, anchor, sel, rows.size(), out, 0);
+      for (size_t i = 0; i < rows.size(); ++i) {
+        EXPECT_EQ(out.GetValue(i).ToString(), expected[rows[i]].ToString())
+          << "row " << rows[i];
+      }
+    }
+  };
+  check(8192, 80,
+        {{0, 600, 1200, 1800, 2400, 3000, 3600, 4200, 4800, 5400},
+         {6000, 6005},
+         {6100, 6105},
+         {6200, 6205},
+         {6300, 6305}});
+  check(16384, 2, {{100, 105}, {200, 205}, {300, 305}});
+}
+
 }  // namespace

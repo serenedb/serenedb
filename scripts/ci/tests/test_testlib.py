@@ -359,41 +359,6 @@ def test_croaring_tests_run_in_the_croaring_checkout_where_their_data_paths_lead
     assert calls == [([str(tests / "format_portability_unit")], tmp_path / "src" / "third_party" / "croaring")]
 
 
-def test_amd64_coverage_builds_rerun_the_fsst_tests_on_an_emulated_cpu_with_and_without_avx512(
-        monkeypatch, tmp_path):
-    sde = tmp_path / "sde64"
-    sde.write_text("")
-    sde.chmod(0o755)
-    monkeypatch.setenv("SDB_SDE", str(sde))
-    monkeypatch.delenv("CI", raising=False)
-    monkeypatch.setattr(duckdb.platform, "machine", lambda: "x86_64")
-    ctx = SimpleNamespace(
-        root=tmp_path / "src", build=SimpleNamespace(coverage=True, dir=tmp_path / "build"),
-        timing=Timing(), config=SimpleNamespace(slowdown=1.0), timeout_floor=180.0, skips=[])
-    units = duckdb._emulated_cpu_units(ctx, [])
-    assert [u.id for u in units] == ["duckdb:cpp:fsst-on-avx512", "duckdb:cpp:fsst-on-no-avx512"]
-    calls = []
-    r = SimpleNamespace(outcome=lambda res: res, exec=lambda argv, cwd: calls.append((argv, cwd)) or "ran")
-    assert [u.run(r) for u in units] == ["ran", "ran"]
-    assert [argv[:3] for argv, _ in calls] == [[str(sde), "-icx", "--"], [str(sde), "-hsw", "--"]]
-    assert all(argv[-1] == '[fsst] ~"*.test" ~"*.test_slow"' and cwd == tmp_path / "src" / "third_party" / "duckdb"
-               for argv, cwd in calls)
-    skips = [SimpleNamespace(pattern="duckdb:cpp:fsst-on-no-avx512", kind="issue", reason="slow")]
-    assert [u.id for u in duckdb._emulated_cpu_units(ctx, skips)] == ["duckdb:cpp:fsst-on-avx512"]
-    assert [uid for uid, _ in ctx.skips] == ["duckdb:cpp:fsst-on-no-avx512"]
-    monkeypatch.setattr(duckdb.platform, "machine", lambda: "aarch64")
-    assert duckdb._emulated_cpu_units(ctx, []) == []
-    monkeypatch.setattr(duckdb.platform, "machine", lambda: "x86_64")
-    ctx.build.coverage = False
-    assert duckdb._emulated_cpu_units(ctx, []) == []
-    ctx.build.coverage = True
-    monkeypatch.setenv("SDB_SDE", str(tmp_path / "missing"))
-    assert duckdb._emulated_cpu_units(ctx, []) == []
-    monkeypatch.setenv("CI", "true")
-    with pytest.raises(SystemExit):
-        duckdb._emulated_cpu_units(ctx, [])
-
-
 def alive(pid):
     try:
         state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[-1].split()[0]

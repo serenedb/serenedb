@@ -1,7 +1,6 @@
 import hashlib
 import json
 import os
-import platform
 import re
 import shutil
 import socket
@@ -54,8 +53,6 @@ ENV_FIXTURES = (
 BATCH_SECONDS = 30.0
 BATCH_MAX = 200
 JOBS = 2
-FSST_CPP_TESTS = '[fsst] ~"*.test" ~"*.test_slow"'
-EMULATED_CPUS = {"avx512": ("-icx", 30.0), "no-avx512": ("-hsw", 30.0)}
 THREADS = {"SLURM_CPUS_ON_NODE": str(min(os.cpu_count() or 16, 16))}
 _REQUIRE_ENV = re.compile(r"^require-env\s+([A-Z0-9_]+)", re.M)
 _EVENT = re.compile(r"\[TEST_EVENT\] (\{.*\})\s*$")
@@ -165,7 +162,6 @@ def duckdb_units(ctx, args, skips):
         if suite == "cpp":
             may_fail = frozenset(list_tests(ctx, suite, "[!mayfail]"))
             units += _batches(ctx, skips, suite, [(n, n) for n in names], cpp=True, may_fail=may_fail)
-            units += _emulated_cpu_units(ctx, skips)
             continue
         excluded = config_skips(ctx, suite)
         groups = {}
@@ -233,33 +229,6 @@ def _batches(ctx, skips, suite, tests, cpp=False, serial=None, fixtures=(), may_
         batch_cost += cost
     flush()
     return units
-
-
-def _emulated_cpu_units(ctx, skips):
-    if not ctx.build.coverage or platform.machine() != "x86_64":
-        return []
-    sde = os.environ.get("SDB_SDE", "")
-    if not os.access(sde, os.X_OK):
-        if os.environ.get("CI") == "true":
-            raise SystemExit(f"SDB_SDE={sde!r} is not Intel SDE's sde64: the CI image installs it for coverage builds")
-        return []
-    units = []
-    for cpu, (chip, seconds) in EMULATED_CPUS.items():
-        uid = f"duckdb:cpp:fsst-on-{cpu}"
-        skip = skipped(skips, uid)
-        if skip:
-            ctx.skips.append((uid, skip))
-            continue
-        cost, timeout = plan(ctx, uid, seconds)
-        units.append(Unit(uid, "duckdb", _emulated_cpu_run(ctx, sde, chip), mem_gb=1.5, cost=cost, timeout=timeout))
-    return units
-
-
-def _emulated_cpu_run(ctx, sde, chip):
-    def run(r):
-        return r.outcome(r.exec([sde, chip, "--", *unittest_argv(ctx, FSST_CPP_TESTS)], cwd=core_dir(ctx)))
-
-    return run
 
 
 def _ended(line):

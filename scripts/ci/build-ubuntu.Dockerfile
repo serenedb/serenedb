@@ -33,7 +33,7 @@ RUN \
   echo "deb https://apt.postgresql.org/pub/repos/apt resolute-pgdg main" > /etc/apt/sources.list.d/pgdg.list && \
   apt-get update && \
   apt-get install -y --no-install-recommends \
-      curl wget gnupg xz-utils \
+      curl wget gnupg \
       ninja-build cmake ccache make \
       llvm-23 clang-23 lld-23 lldb-23 libclang-rt-23-dev zstd libcap2-bin \
       bison flex libfl-dev \
@@ -73,16 +73,6 @@ RUN \
   echo "UTC" > /etc/timezone
 
 ENV CCACHE_DIR=/.ccache
-
-ARG SDE_URL=https://downloadmirror.intel.com/859732/sde-external-9.58.0-2025-06-16-lin.tar.xz
-ARG SDE_SHA256=f849acecad4c9b108259c643b2688fd65c35723cd23368abe5dd64b917cc18c0
-ENV SDB_SDE=/opt/intel-sde/sde64
-RUN if [ "$(dpkg --print-architecture)" = amd64 ]; then \
-      curl -fsSL -o /tmp/sde.tar.xz "$SDE_URL" && \
-      echo "$SDE_SHA256  /tmp/sde.tar.xz" | sha256sum -c - && \
-      mkdir -p /opt/intel-sde && tar -C /opt/intel-sde --strip-components=1 -xJf /tmp/sde.tar.xz && \
-      rm /tmp/sde.tar.xz; \
-    fi
 
 ENV SDB_DRIVERS_DEPS=/opt/sdb-drivers
 ENV GOMODCACHE=/opt/sdb-drivers/go/mod

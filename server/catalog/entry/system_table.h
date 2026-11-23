@@ -51,6 +51,11 @@ class SystemTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::ClientContext& context,
     duckdb::unique_ptr<duckdb::FunctionData>& bind_data) final;
 
+  duckdb::TableFunction GetScanFunction(
+    duckdb::ClientContext& context,
+    duckdb::unique_ptr<duckdb::FunctionData>& bind_data,
+    const duckdb::EntryLookupInfo& lookup_info) final;
+
   duckdb::TableStorageInfo GetStorageInfo(duckdb::ClientContext&) final {
     return {};
   }

@@ -25,6 +25,7 @@
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/catalog/default/default_generator.hpp>
 #include <duckdb/catalog/default/default_schemas.hpp>
+#include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/main/extension_callback_manager.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_macro_info.hpp>
@@ -159,7 +160,13 @@ const duckdb::ColumnList& SystemTableEntry::GetColumns() const {
 
 duckdb::TableFunction SystemTableEntry::GetScanFunction(
   duckdb::ClientContext&, duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  return pg::BindSystemTableScan(*this, bind_data);
+  return pg::BindSystemTableScan(*this, bind_data, duckdb::optional_idx{});
+}
+
+duckdb::TableFunction SystemTableEntry::GetScanFunction(
+  duckdb::ClientContext&, duckdb::unique_ptr<duckdb::FunctionData>& bind_data,
+  const duckdb::EntryLookupInfo& lookup_info) {
+  return pg::BindSystemTableScan(*this, bind_data, lookup_info.GetCallerRole());
 }
 
 duckdb::virtual_column_map_t SystemTableEntry::GetVirtualColumns() const {

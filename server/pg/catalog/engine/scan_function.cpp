@@ -154,7 +154,7 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemTableScanDeserialize(
   const auto& functions = entry.Table().Functions();
   function.init_global = functions.init;
   function.function = functions.scan;
-  return duckdb::make_uniq<SystemTableBindData>(entry);
+  return duckdb::make_uniq<SystemTableBindData>(entry, duckdb::optional_idx{});
 }
 
 duckdb::TableFunction SystemScanFunction(duckdb::Identifier name,
@@ -199,15 +199,18 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
     input.binder->GetStatementProperties().RegisterDBRead(
       catalog, context, input.binder->CheckAs());
   }
-  return duckdb::make_uniq<SystemTableBindData>(table, catalog, nullptr);
+  return duckdb::make_uniq<SystemTableBindData>(
+    table, catalog, nullptr,
+    input.binder ? input.binder->CallerRole() : duckdb::optional_idx{});
 }
 
 }  // namespace
 
 duckdb::TableFunction BindSystemTableScan(
   catalog::SystemTableEntry& entry,
-  duckdb::unique_ptr<duckdb::FunctionData>& bind_data) {
-  bind_data = duckdb::make_uniq<SystemTableBindData>(entry);
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data,
+  duckdb::optional_idx caller_role) {
+  bind_data = duckdb::make_uniq<SystemTableBindData>(entry, caller_role);
   return SystemEntryScanFunction(entry.Table().Functions());
 }
 

@@ -949,7 +949,7 @@ class ObjectAcls final : public duckdb::FunctionLocalState {
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitObjectAcls(
   duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData*) {
-  return duckdb::make_uniq<ObjectAcls>(state.GetContext(), expr.CallerRole());
+  return duckdb::make_uniq<ObjectAcls>(state.GetContext(), CallerRole(expr));
 }
 
 void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
@@ -1208,7 +1208,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitPrivilegeCheck(
   duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData*) {
   return duckdb::make_uniq<PrivilegeCheck<F>>(state.GetContext(),
-                                              expr.CallerRole());
+                                              CallerRole(expr));
 }
 
 template<typename F, typename Role, typename... Object>
@@ -1229,7 +1229,7 @@ duckdb::ScalarFunction PrivilegeFunction() {
                       .ForChunk();
       if constexpr (std::is_void_v<Role>) {
         const auto caller =
-          state.expr.Cast<duckdb::BoundFunctionExpression>().CallerRole();
+          CallerRole(state.expr.Cast<duckdb::BoundFunctionExpression>());
         const auto role =
           caller.IsValid()
             ? caller.GetIndex()
@@ -1247,7 +1247,7 @@ duckdb::ScalarFunction PrivilegeFunction() {
           });
       }
     },
-    nullptr,
+    BindCaller,
     nullptr,
     InitPrivilegeCheck<F>};
 }
@@ -1333,7 +1333,8 @@ void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY, InitObjectAcls,
     {duckdb::ScalarFunction{{OID(), OID(), duckdb::LogicalType::INTEGER},
                             duckdb::LogicalType::LIST(ACLITEM()),
-                            PgGetAclFunction}});
+                            PgGetAclFunction,
+                            BindCaller}});
 }
 
 }  // namespace sdb::pg

@@ -263,7 +263,20 @@ CreateIndexRequest ParseCreateIndexBody(std::string_view index,
   return request;
 }
 
-struct EsIndexBindData final : duckdb::TableFunctionData {
+struct EsBindData : duckdb::TableFunctionData {
+  duckdb::optional_idx caller_role;
+};
+
+duckdb::optional_idx CallerRoleOf(duckdb::optional_ptr<duckdb::Binder> binder) {
+  return binder ? binder->CallerRole() : duckdb::optional_idx{};
+}
+
+duckdb::RoleAccess CallerAccessOf(duckdb::ClientContext& context,
+                                  duckdb::TableFunctionInitInput& input) {
+  return context.CallerAccess(input.bind_data->Cast<EsBindData>().caller_role);
+}
+
+struct EsIndexBindData final : EsBindData {
   std::string index;
   std::string body;
 };
@@ -276,7 +289,7 @@ struct EsOnceState final : duckdb::GlobalTableFunctionState {
   static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
     duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
     auto state = duckdb::make_uniq<EsOnceState>();
-    state->role = context.CallerAccess(input.caller_role);
+    state->role = CallerAccessOf(context, input);
     state->acting = {&state->role, &state->role, &state->role};
     return state;
   }
@@ -285,6 +298,7 @@ struct EsOnceState final : duckdb::GlobalTableFunctionState {
 duckdb::unique_ptr<duckdb::FunctionData> BindIndexArgs(
   duckdb::TableFunctionBindInput& input) {
   auto data = duckdb::make_uniq<EsIndexBindData>();
+  data->caller_role = CallerRoleOf(input.binder);
   if (input.inputs[0].IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index name cannot be NULL"));
@@ -558,14 +572,16 @@ void EsMappingExecute(duckdb::ClientContext& context,
 }
 
 duckdb::unique_ptr<duckdb::FunctionData> EsCatIndicesBind(
-  duckdb::ClientContext&, duckdb::TableFunctionBindInput&,
+  duckdb::ClientContext&, duckdb::TableFunctionBindInput& input,
   duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
   return_types.push_back(duckdb::LogicalType::VARCHAR);
   names.push_back("index");
   return_types.push_back(duckdb::LogicalType::BIGINT);
   names.push_back("docs_count");
-  return duckdb::make_uniq<duckdb::TableFunctionData>();
+  auto data = duckdb::make_uniq<EsBindData>();
+  data->caller_role = CallerRoleOf(input.binder);
+  return data;
 }
 
 struct EsCatIndicesState final : duckdb::GlobalTableFunctionState {
@@ -577,7 +593,7 @@ struct EsCatIndicesState final : duckdb::GlobalTableFunctionState {
   static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
     duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
     auto state = duckdb::make_uniq<EsCatIndicesState>();
-    state->role = context.CallerAccess(input.caller_role);
+    state->role = CallerAccessOf(context, input);
     return state;
   }
 };
@@ -647,7 +663,7 @@ void ValidateDocId(std::string_view id) {
 
 inline constexpr size_t kJsonPadding = simdjson::SIMDJSON_PADDING;
 
-struct EsWriteBindData final : duckdb::TableFunctionData {
+struct EsWriteBindData final : EsBindData {
   std::string index;
   std::string id;
   std::string body;
@@ -665,6 +681,7 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
   std::string index, duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
   auto data = duckdb::make_uniq<EsWriteBindData>();
+  data->caller_role = CallerRoleOf(binder);
   data->index = std::move(index);
 
   duckdb::CatalogEntryRetriever own{context};
@@ -1460,6 +1477,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsRefreshBind(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context)),
     "es_refresh");
   auto data = duckdb::make_uniq<EsIndexBindData>();
+  data->caller_role = CallerRoleOf(input.binder);
   if (!input.inputs[0].IsNull()) {
     data->index = input.inputs[0].GetValue<std::string>();
   }

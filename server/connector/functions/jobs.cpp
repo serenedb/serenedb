@@ -28,6 +28,7 @@
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/numeric_utils.hpp>
+#include <duckdb/function/table/system_functions.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -103,7 +104,7 @@ duckdb::unique_ptr<duckdb::FunctionData> JobsBind(
   add("comment", duckdb::LogicalType::VARCHAR);
   add("body", duckdb::LogicalType::VARCHAR);
   add("sql", duckdb::LogicalType::VARCHAR);
-  return nullptr;
+  return duckdb::make_uniq<duckdb::DuckDBSystemIncludeHiddenBindData>(input);
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
@@ -112,7 +113,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
   const auto holds_jobs = [](duckdb::AttachedDatabase& database) {
     return catalog::IsSereneDB(database.GetCatalog()) && !database.IsReadOnly();
   };
-  const auto role = context.CallerAccess(input.caller_role);
+  const auto role = context.CallerAccess(
+    input.bind_data->Cast<duckdb::DuckDBSystemIncludeHiddenBindData>()
+      .caller_role);
   for (auto& schema :
        duckdb::Catalog::GetAllSchemas(context, role, false, holds_jobs)) {
     duckdb::Catalog::ScanListedEntries(
@@ -193,7 +196,7 @@ duckdb::unique_ptr<duckdb::FunctionData> JobRunsBind(
   add("finish_time", duckdb::LogicalType::TIMESTAMP_TZ);
   add("success", duckdb::LogicalType::BOOLEAN);
   add("error", duckdb::LogicalType::VARCHAR);
-  return nullptr;
+  return duckdb::make_uniq<duckdb::DuckDBSystemIncludeHiddenBindData>(input);
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
@@ -204,7 +207,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
     return result;
   }
   absl::flat_hash_map<duckdb::idx_t, catalog::SereneDBCatalog*> databases;
-  const auto role = context.CallerAccess(input.caller_role);
+  const auto role = context.CallerAccess(
+    input.bind_data->Cast<duckdb::DuckDBSystemIncludeHiddenBindData>()
+      .caller_role);
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     if (catalog::IsSereneDB(database->GetCatalog()) &&

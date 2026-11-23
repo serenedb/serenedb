@@ -579,10 +579,10 @@ void RegisterDbsizeFunctions(duckdb::ExtensionLoader& loader) {
                  {duckdb::ScalarFunction{
                    {regclass}, int8, RelationBytesFunction<false, true>}});
   duckdb::ScalarFunction database_by_name{
-    {text}, int8, DatabaseSizeFunction<duckdb::string_t>};
+    {text}, int8, DatabaseSizeFunction<duckdb::string_t>, BindCaller};
   database_by_name.SetFallible();
   duckdb::ScalarFunction database_by_oid{
-    {int8}, int8, DatabaseSizeFunction<int64_t>};
+    {int8}, int8, DatabaseSizeFunction<int64_t>, BindCaller};
   database_by_oid.SetFallible();
   RegisterScalar(loader, pg_catalog, "pg_database_size", stability, nullptr,
                  {database_by_name, database_by_oid});

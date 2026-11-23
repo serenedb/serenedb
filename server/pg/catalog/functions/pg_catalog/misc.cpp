@@ -512,7 +512,7 @@ void CurrentUserFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
   if (const auto caller =
-        state.expr.Cast<duckdb::BoundFunctionExpression>().CallerRole();
+        CallerRole(state.expr.Cast<duckdb::BoundFunctionExpression>());
       caller.IsValid()) {
     result.Reference(
       duckdb::Value{std::string{
@@ -655,7 +655,7 @@ duckdb::unique_ptr<duckdb::FunctionData> BindSetConfig(
   if (input.HasBinder() && input.GetBinder().acting.security_definer) {
     input.GetBoundFunction().SetFunctionCallback(SetConfigFunction<true>);
   }
-  return nullptr;
+  return BindCaller(input);
 }
 
 void VersionFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
@@ -1524,9 +1524,10 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(
     loader, pg_catalog, "col_description", CONSISTENT_WITHIN_QUERY, InitSession,
     {duckdb::ScalarFunction{{oid, int4}, text, ColDescriptionFunction}});
-  RegisterScalar(
-    loader, pg_catalog, "shobj_description", CONSISTENT_WITHIN_QUERY, nullptr,
-    {duckdb::ScalarFunction{{oid, text}, text, ShobjDescriptionFunction}});
+  RegisterScalar(loader, pg_catalog, "shobj_description",
+                 CONSISTENT_WITHIN_QUERY, nullptr,
+                 {duckdb::ScalarFunction{
+                   {oid, text}, text, ShobjDescriptionFunction, BindCaller}});
   {
     duckdb::ScalarFunction function{
       {text, text}, text, PgGetSerialSequenceFunction};
@@ -1594,7 +1595,7 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
 
   {
     duckdb::ScalarFunction function{
-      {text, boolean}, text, CurrentSetting2Function};
+      {text, boolean}, text, CurrentSetting2Function, BindCaller};
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     function.SetFallible();
     ExtendScalar(loader, "current_setting", CONSISTENT_WITHIN_QUERY, nullptr,
@@ -1622,11 +1623,11 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
 
   {
     duckdb::ScalarFunction cancel{
-      {int4}, boolean, SignalBackendFunction<false>};
+      {int4}, boolean, SignalBackendFunction<false>, BindCaller};
     cancel.SetFallible();
     ExtendScalar(loader, "pg_cancel_backend", VOLATILE, nullptr, {cancel});
     duckdb::ScalarFunction terminate{
-      {int4}, boolean, SignalBackendFunction<true>};
+      {int4}, boolean, SignalBackendFunction<true>, BindCaller};
     terminate.SetFallible();
     ExtendScalar(loader, "pg_terminate_backend", VOLATILE, nullptr,
                  {terminate});
@@ -1664,10 +1665,12 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   ExtendScalar(loader, "pg_xact_status", VOLATILE, nullptr,
                {duckdb::ScalarFunction{{XID8()}, text, NotSupportedFunction}});
 
-  ExtendScalar(loader, "current_user", CONSISTENT_WITHIN_QUERY, nullptr,
-               {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
-  ExtendScalar(loader, "current_role", CONSISTENT_WITHIN_QUERY, nullptr,
-               {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
+  ExtendScalar(
+    loader, "current_user", CONSISTENT_WITHIN_QUERY, nullptr,
+    {duckdb::ScalarFunction{{}, text, CurrentUserFunction, BindCaller}});
+  ExtendScalar(
+    loader, "current_role", CONSISTENT_WITHIN_QUERY, nullptr,
+    {duckdb::ScalarFunction{{}, text, CurrentUserFunction, BindCaller}});
   ExtendScalar(loader, "session_user", CONSISTENT_WITHIN_QUERY, nullptr,
                {duckdb::ScalarFunction{{}, text, SessionUserFunction}});
 

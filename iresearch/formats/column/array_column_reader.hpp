@@ -36,13 +36,12 @@ class ArrayColumnReader final : public ColumnReader {
                     std::vector<std::unique_ptr<ColumnReader>> children)
     : ColumnReader{
         id, std::move(type), {}, std::move(validity), std::move(children)} {
+    SDB_ASSERT(_children.size() == 1 && _array_size != 0);
+    const auto& child = *_children.front();
+    _row_count = child.RowCount() / _array_size;
     auto stats = duckdb::ArrayStats::CreateEmpty(_type);
-    if (!_children.empty()) {
-      const auto& child = *_children.front();
-      _row_count = _array_size ? child.RowCount() / _array_size : 0;
-      duckdb::ArrayStats::SetChildStats(stats,
-                                        child.MergedStatistics().ToUnique());
-    }
+    duckdb::ArrayStats::SetChildStats(stats,
+                                      child.MergedStatistics().ToUnique());
     FinishStats(std::move(stats));
   }
 

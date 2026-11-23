@@ -279,7 +279,7 @@ struct Scan {
     if (count <= kSparseEntries) {
       EnsureGroups(s, count, entry_at, window_first, window_end);
     } else {
-      s.EnsureEach(count, entry_at);
+      s.EnsureRange(window_first, window_end);
     }
   }
 

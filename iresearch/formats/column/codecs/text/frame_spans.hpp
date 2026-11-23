@@ -66,17 +66,22 @@ class FrameSpans {
   IRS_FORCE_INLINE bool Add(uint64_t entry, uint64_t size) {
     const auto limit =
       _spans.empty() && _shape.first != 0 ? _shape.first : _shape.frame;
-    const bool closed = _open.end != _open.first && _open.raw + size > limit;
-    if (closed) {
-      _spans.push_back(_open);
-      _open = {.offset = _open.offset + _open.raw};
-    }
+    const bool closed = _open.raw + size > limit && Cut();
     if (_open.end == _open.first) {
       _open.first = entry;
     }
     _open.end = entry + 1;
     _open.raw += size;
     return closed;
+  }
+
+  bool Cut() {
+    if (!Open()) {
+      return false;
+    }
+    _spans.push_back(_open);
+    _open = {.offset = _open.offset + _open.raw};
+    return true;
   }
 
   void Close() {
@@ -87,6 +92,8 @@ class FrameSpans {
   }
 
   bool Open() const noexcept { return _open.end != _open.first; }
+
+  const Span& OpenSpan() const noexcept { return _open; }
 
   FrameShape Shape() const noexcept { return _shape; }
 

@@ -232,9 +232,8 @@ struct Scan {
   }
 
   template<typename Frames, typename Entry>
-  void Ensure(Frames& s, duckdb::idx_t count, Entry entry_at, uint32_t,
-              uint32_t) {
-    s.EnsureEach(count, entry_at);
+  void Ensure(Frames& s, duckdb::idx_t, Entry, uint32_t first, uint32_t end) {
+    s.EnsureRange(first, end);
   }
 
   template<typename Frames, typename Entry>

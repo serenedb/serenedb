@@ -43,7 +43,7 @@ struct ZstdFree {
 
 struct Zstd {
   static constexpr ByteCodec kCodec = ByteCodec::Zstd;
-  static constexpr uint8_t kDefaultLevel = 1;
+  static constexpr uint8_t kDefaultLevel = 3;
   static constexpr uint8_t kMaxLevel = 22;
   static constexpr size_t kDictionaryCap = 64 * 1024;
   static constexpr bool kInflatesPrefix = false;

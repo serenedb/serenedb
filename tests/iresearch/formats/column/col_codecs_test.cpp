@@ -975,8 +975,8 @@ TEST_F(ColCodecsTest, CompactionsTrainADictionaryPerSegment) {
   };
   for (const auto codec :
        {irs::codecs::CodecType::DictLz4, irs::codecs::CodecType::Lz4,
-        irs::codecs::CodecType::DictZstd, irs::codecs::CodecType::Zstd,
-        irs::codecs::CodecType::DictZxc, irs::codecs::CodecType::Zxc}) {
+        irs::codecs::CodecType::DictZstd, irs::codecs::CodecType::DictZxc,
+        irs::codecs::CodecType::Zxc}) {
     const auto& value =
       irs::codecs::ShapeOf(codec) == irs::codecs::Shape::Dictionary ? apart
                                                                     : spread;
@@ -1007,8 +1007,7 @@ TEST_F(ColCodecsTest, CompactionsDropADictionaryThatDoesNotPay) {
     return Pseudo(g, 24);
   };
   for (const auto codec :
-       {irs::codecs::CodecType::Lz4, irs::codecs::CodecType::Zstd,
-        irs::codecs::CodecType::Zxc}) {
+       {irs::codecs::CodecType::Lz4, irs::codecs::CodecType::Zxc}) {
     SCOPED_TRACE(magic_enum::enum_name(codec));
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
@@ -1027,8 +1026,7 @@ TEST_F(ColCodecsTest, SegmentsTooSmallToTrainUseTheFirstFrame) {
            ".example.org/item?id=" + std::to_string(g);
   };
   for (const auto codec :
-       {irs::codecs::CodecType::Lz4, irs::codecs::CodecType::Zstd,
-        irs::codecs::CodecType::Zxc}) {
+       {irs::codecs::CodecType::Lz4, irs::codecs::CodecType::Zxc}) {
     SCOPED_TRACE(magic_enum::enum_name(codec));
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
@@ -1047,8 +1045,7 @@ TEST_F(ColCodecsTest, AnEmptyFirstFrameIsNoDictionary) {
     return Pseudo(g % 4, 40000) + std::to_string(g);
   };
   for (const auto codec :
-       {irs::codecs::CodecType::Lz4, irs::codecs::CodecType::Zstd,
-        irs::codecs::CodecType::Zxc}) {
+       {irs::codecs::CodecType::Lz4, irs::codecs::CodecType::Zxc}) {
     SCOPED_TRACE(magic_enum::enum_name(codec));
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     Write(dir, codec, {}, kRows, DEFAULT_ROW_GROUP_SIZE, value);
@@ -6218,4 +6215,109 @@ TEST_F(ColCodecsTest, ListElementsFillAnUncompressedBlockAtTheEndOfAVector) {
       }
     }
   }
+}
+
+TEST_F(ColCodecsTest, ZstdTextFramesNeverCrossABatchOfTheirRowGroup) {
+  constexpr uint64_t kRows = 30000;
+  constexpr uint32_t kRowGroup = 10000;
+  const Value values = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 97 == 0) {
+      return std::nullopt;
+    }
+    if (g >= 20000) {
+      return absl::StrCat("s", g % 13);
+    }
+    return Pseudo(g, 100 + g % 120);
+  };
+  const auto path = test_dir() / "col_codecs_zstd_batch_frames";
+  std::filesystem::create_directories(path);
+  tests::IndexDir dir{Db(), path.string()};
+  Write(dir, irs::codecs::CodecType::Zstd, {}, kRows, kRowGroup, values);
+  Verify(dir, irs::codecs::CodecType::Zstd, kRows, values);
+
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  {
+    auto state = col->InitScan(r.Ctx());
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    col->Scan(state, out, 100);
+    out.Flatten(100);
+    for (duckdb::idx_t k = 0; k < 100; ++k) {
+      ExpectRow(out, k, k, values);
+    }
+  }
+  std::string bytes;
+  {
+    std::ifstream in{path / irs::FileName(kSeg), std::ios::binary};
+    bytes.assign(std::istreambuf_iterator<char>{in}, {});
+  }
+  uint64_t row_in_group = 0;
+  uint64_t whole_batches = 0;
+  uint64_t split_batches = 0;
+  for (const auto& block : col->DataBlocks()) {
+    ASSERT_EQ(block.codec->type, irs::codecs::CodecType::Zstd);
+    ASSERT_LE(block.file_offset + block.byte_size, bytes.size());
+    auto* base =
+      reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + block.file_offset);
+    const auto h =
+      irs::codecs::Header::Parse(base, block.byte_size, block.codec->type);
+    EXPECT_EQ(h.flags, irs::codecs::FrameDictionary::None);
+    ASSERT_NE(h.frame_count, 0u);
+    for (uint32_t f = 0; f < h.frame_count; ++f) {
+      const auto frame = duckdb::Load<irs::codecs::FrameMeta>(
+        base + h.off_frames + f * irs::codecs::kFrameMetaSize);
+      const uint64_t end =
+        f + 1 < h.frame_count
+          ? duckdb::Load<irs::codecs::FrameMeta>(
+              base + h.off_frames + (f + 1) * irs::codecs::kFrameMetaSize)
+              .first_entry
+          : h.entry_count;
+      const auto first = row_in_group + frame.first_entry;
+      const auto last = row_in_group + end - 1;
+      EXPECT_EQ(first / STANDARD_VECTOR_SIZE, last / STANDARD_VECTOR_SIZE)
+        << "rows " << first << ".." << last;
+      EXPECT_LE(frame.raw_len, irs::codecs::kZstdFrameBytes);
+      whole_batches += end - frame.first_entry == STANDARD_VECTOR_SIZE;
+      split_batches +=
+        first % STANDARD_VECTOR_SIZE != 0 && f != 0 && first % kRowGroup != 0;
+    }
+    row_in_group = (row_in_group + block.tuple_count) % kRowGroup;
+  }
+  EXPECT_NE(whole_batches, 0u);
+  EXPECT_NE(split_batches, 0u);
+}
+
+TEST_F(ColCodecsTest, ZstdTextWithoutALevelCompressesAtLevelThree) {
+  const Value values = [](uint64_t g) -> std::optional<std::string> {
+    return absl::StrCat("https://shop", g % 97, ".example.org/item?id=", g,
+                        "&ref=", g % 13 * 7919);
+  };
+  const auto blocks = [&](uint8_t level) {
+    const auto path =
+      test_dir() / absl::StrCat("col_codecs_zstd_level_", level);
+    std::filesystem::create_directories(path);
+    tests::IndexDir dir{Db(), path.string()};
+    Write(dir, irs::codecs::CodecType::Zstd, {.compression_level = level},
+          20000, DEFAULT_ROW_GROUP_SIZE, values);
+    std::string file;
+    {
+      std::ifstream in{path / irs::FileName(kSeg), std::ios::binary};
+      file.assign(std::istreambuf_iterator<char>{in}, {});
+    }
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    std::string out;
+    for (const auto& block : col->DataBlocks()) {
+      const auto h =
+        irs::codecs::Header::Parse(reinterpret_cast<duckdb::const_data_ptr_t>(
+                                     file.data() + block.file_offset),
+                                   block.byte_size, block.codec->type);
+      out.append(file, block.file_offset + h.off_data, h.data_size);
+    }
+    return out;
+  };
+  const auto unset = blocks(0);
+  EXPECT_EQ(unset, blocks(3));
+  EXPECT_NE(unset, blocks(1));
 }

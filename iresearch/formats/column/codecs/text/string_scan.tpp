@@ -170,6 +170,21 @@ struct EntryFrames {
     DecodeFrame(f);
   }
 
+  void EnsureRange(uint32_t first, uint32_t end) {
+    SDB_ASSERT(first < end);
+    if (Complete()) {
+      return;
+    }
+    for (auto f = FrameOf(first);; ++f) {
+      if (!decoded[f]) {
+        DecodeFrame(f);
+      }
+      if (FrameEnd(f) >= end) {
+        return;
+      }
+    }
+  }
+
   template<typename Entry>
   void EnsureEach(idx_t count, Entry entry_at) {
     if (Complete()) {

@@ -69,7 +69,7 @@ A statement that writes its rows straight to segments stores the transformed val
 
 ## Choosing a codec
 
-Name the codec on the column with `USING COMPRESSION`, optionally with a level in parentheses, as in `USING COMPRESSION zstd(compression_level = 9)`. A named codec is used as named: it is not measured against other codecs, and without a level it runs at its default level (1 for `lz4` and `zstd`). `lz4`, `dict_lz4`, `delta_lz4` and `rle_lz4` take levels 1 to 12, `zstd`, `dict_zstd`, `delta_zstd` and `rle_zstd` 1 to 22; the other codecs take none. `zstd` decodes several times slower than `fsst` or `lz4`, which shows on point lookups and cold scans.
+Name the codec on the column with `USING COMPRESSION`, optionally with a level in parentheses, as in `USING COMPRESSION zstd(compression_level = 9)`. A named codec is used as named: it is not measured against other codecs, and without a level it runs at its default level (3 for `zstd` and `dict_zstd` on text columns, 1 for every other codec that takes one). `lz4`, `dict_lz4`, `delta_lz4` and `rle_lz4` take levels 1 to 12, `zstd`, `dict_zstd`, `delta_zstd` and `rle_zstd` 1 to 22; the other codecs take none. `zstd` decodes several times slower than `fsst` or `lz4`, which shows on point lookups and cold scans.
 
 <SqlLogicTest id="sql/indexes/inverted/columnstore/example_001" />
 

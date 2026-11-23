@@ -228,7 +228,7 @@ class JsonParser {
 
 template<typename T>
 bool ValidateJson(T& value) {
-  switch (value.type()) {
+  switch (Unwrap(value.type())) {
     case simdjson::ondemand::json_type::array: {
       simdjson::ondemand::array arr;
       if (value.get_array().get(arr)) {
@@ -271,7 +271,7 @@ bool ValidateJson(T& value) {
     case simdjson::ondemand::json_type::boolean:
       return value.get_bool().error() == simdjson::SUCCESS;
     case simdjson::ondemand::json_type::null:
-      return value.is_null();
+      return value.is_null().error() == simdjson::SUCCESS;
     default:
       return false;
   }

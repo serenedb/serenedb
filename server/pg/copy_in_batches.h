@@ -100,6 +100,8 @@ class CopyInBatches {
   void Fail(std::exception_ptr error);
   void Abort();
   bool Aborted() const;
+  void Nudge();
+  bool Ended() const;
 
   CopyTake Take(duckdb::TableFunctionInput& input, size_t max,
                 std::vector<CopyBatchLease>& out);
@@ -141,6 +143,7 @@ class CopyInBatches {
   std::exception_ptr _error;
   bool _finished = false;
   bool _aborted = false;
+  bool _nudged = false;
   bool _space_waiter = false;
   yaclib::OneShotEvent _space;
   std::function<void()> _on_starve;

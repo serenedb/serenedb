@@ -362,9 +362,6 @@ template<typename T>
 idx_t AlpRdAnalyzeChunks(ColumnDataCheckpointData& data) {
   auto& sample = data.template Get<RowGroupSample<T>>();
   auto& analyze_state = sample.state;
-  if (!analyze_state.total_values_count) {
-    return duckdb::DConstants::INVALID_INDEX;
-  }
   const double factor_of_sampling =
     1 / (static_cast<double>(analyze_state.rowgroup_sample.size()) /
          static_cast<double>(analyze_state.total_values_count));

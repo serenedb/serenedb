@@ -39,6 +39,9 @@ namespace irs::codecs {
 template<CodecType kCodec, auto kAnalyze, auto kCompress>
 struct Sampled {
   static double Analyze(ColumnDataCheckpointData& data, double) {
+    if (!HasRows(data.chunks)) {
+      return kNoScore;
+    }
     return ScoreOfBytes(kAnalyze(data), data);
   }
 

@@ -513,22 +513,24 @@ TEST_F(ColCompressionFunctionTest,
   }
 }
 
-TEST_F(ColCompressionFunctionTest, AlpOffersNothingForARowGroupOfNoRows) {
-  for (const duckdb::LogicalType type :
-       {duckdb::LogicalType::FLOAT, duckdb::LogicalType::DOUBLE}) {
-    SCOPED_TRACE(type.ToString());
-    const Rows rows{type, {}};
-    const auto& codec =
-      *irs::codecs::GetCodec(CodecType::Alp, type.InternalType());
-    const auto& fn = codec.compression.front();
-    FlushedBlocks blocks{type};
-    Checkpoint(
-      type, rows, {}, {}, false, blocks, [&](ColumnDataCheckpointData& data) {
-        EXPECT_EQ(fn.analyze(data, irs::codecs::kNoScore),
-                  static_cast<double>(duckdb::DConstants::INVALID_INDEX));
-        EXPECT_FALSE(fn.compress(codec, data));
-      });
-    EXPECT_TRUE(blocks.Blocks().empty());
+TEST_F(ColCompressionFunctionTest, AlpCodecsOfferNothingForARowGroupOfNoRows) {
+  for (const auto named : {CodecType::Alp, CodecType::Alprd}) {
+    for (const duckdb::LogicalType type :
+         {duckdb::LogicalType::FLOAT, duckdb::LogicalType::DOUBLE}) {
+      SCOPED_TRACE(
+        absl::StrCat(magic_enum::enum_name(named), " ", type.ToString()));
+      const Rows rows{type, {}};
+      const auto& codec = *irs::codecs::GetCodec(named, type.InternalType());
+      const auto& fn = codec.compression.front();
+      FlushedBlocks blocks{type};
+      Checkpoint(type, rows, {}, {}, false, blocks,
+                 [&](ColumnDataCheckpointData& data) {
+                   EXPECT_EQ(fn.analyze(data, irs::codecs::kNoScore),
+                             irs::codecs::kNoScore);
+                   EXPECT_FALSE(fn.compress(codec, data));
+                 });
+      EXPECT_TRUE(blocks.Blocks().empty());
+    }
   }
 }
 

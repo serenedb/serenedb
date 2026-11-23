@@ -692,9 +692,7 @@ idx_t AlpAnalyzeChunks(ColumnDataCheckpointData& data) {
   }
   total_bytes_used += current_bytes_used_in_segment + kMetadataPointerSize;
 
-  if (!compressed_values) {
-    return duckdb::DConstants::INVALID_INDEX;
-  }
+  SDB_ASSERT(compressed_values != 0);
   const auto factor_of_sampling =
     analyze_state.total_values_count / compressed_values;
   return duckdb::AlignValue(total_bytes_used) * factor_of_sampling;

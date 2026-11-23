@@ -32,16 +32,14 @@ FrameStream::FrameStream(uint32_t frame_bytes)
   SDB_ASSERT(frame_bytes != 0);
 }
 
-std::vector<irs::bytes_view> FrameStream::Frames() const {
-  std::vector<irs::bytes_view> frames;
+void FrameStream::ForEachFrame(
+  absl::FunctionRef<void(irs::bytes_view)> visit) const {
   for (const auto part : _buffer.Written()) {
     const auto* data = static_cast<const irs::byte_type*>(part.data());
     for (size_t at = 0; at < part.size(); at += _frame_bytes) {
-      frames.emplace_back(data + at,
-                          std::min<size_t>(_frame_bytes, part.size() - at));
+      visit({data + at, std::min<size_t>(_frame_bytes, part.size() - at)});
     }
   }
-  return frames;
 }
 
 }  // namespace sdb::message

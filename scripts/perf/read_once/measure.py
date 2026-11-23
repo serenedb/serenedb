@@ -805,6 +805,7 @@ SUMMARY = [
     ("hnsw: cold ready s", "hnsw.open.ready_s"),
     ("hnsw: cold server ready s", "hnsw.open.server_ready_s"),
     ("hnsw: cold ready cpu s", "hnsw.open.cpu_s"),
+    ("hnsw: cold ready read bytes", "hnsw.open.read_bytes"),
     ("hnsw: cold ready peak RSS bytes", "hnsw.open.peak_rss_bytes"),
     ("hnsw: cold first ANN s", "hnsw.open.first_ann.s"),
     ("hnsw: cold first ANN read bytes", "hnsw.open.first_ann.read_bytes"),

@@ -89,13 +89,17 @@ uint64_t StoredBytes(const Frames& frames) noexcept;
 
 absl::InlinedVector<FrameStart, 1> FrameStarts(const Frames& frames);
 
+using FrameVisitor = absl::FunctionRef<void(bytes_view)>;
+using FrameSource = absl::FunctionRef<void(FrameVisitor)>;
+
 Compressed Compress(Method method, bytes_view raw,
                     uint32_t frame_bytes = kFrameBytes,
                     ParallelFor parallel = SerialFor);
 
-std::vector<Compressed> Compress(Method method, uint32_t frame_bytes,
-                                 std::span<const std::vector<bytes_view>> blobs,
-                                 ParallelFor parallel = SerialFor);
+std::vector<Compressed> Compress(
+  Method method, uint32_t frame_bytes, size_t blobs,
+  absl::FunctionRef<void(size_t blob, FrameVisitor visit)> frames,
+  ParallelFor parallel = SerialFor);
 
 Frames Compress(Method method, bytes_view raw, uint32_t frame_bytes,
                 std::span<byte_type> slots, ParallelFor parallel = SerialFor);
@@ -123,7 +127,7 @@ uint64_t PackedBytes(const Compressed& packed);
 
 bool Pays(const Compressed& packed);
 
-void KeepPlain(Compressed& packed, std::span<const bytes_view> frames);
+void KeepPlain(Compressed& packed, FrameSource frames);
 
 bool IsPlain(const Compressed& packed) noexcept;
 

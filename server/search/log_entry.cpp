@@ -213,8 +213,6 @@ void PackBlobs(std::span<LoggedRows* const> runs,
     return;
   }
   std::deque<message::FrameStream> raws;
-  std::vector<std::vector<irs::bytes_view>> frames;
-  frames.reserve(blobs);
   for (size_t i = 0; i != blobs; ++i) {
     auto& raw = raws.emplace_back(frame_bytes);
     duckdb::BinarySerializer serializer{raw};
@@ -225,13 +223,19 @@ void PackBlobs(std::span<LoggedRows* const> runs,
       WriteValues(serializer, *values[i - runs.size()].patch);
       serializer.End();
     }
-    frames.push_back(raw.Frames());
   }
-  auto staged = irs::compression::Compress(irs::compression::kZstd1,
-                                           frame_bytes, frames, parallel);
+  auto staged = irs::compression::Compress(
+    irs::compression::kZstd1, frame_bytes, blobs,
+    [&](size_t i, irs::compression::FrameVisitor visit) {
+      raws[i].ForEachFrame(visit);
+    },
+    parallel);
   for (size_t i = 0; i != blobs; ++i) {
     if (!irs::compression::Pays(staged[i])) {
-      irs::compression::KeepPlain(staged[i], frames[i]);
+      irs::compression::KeepPlain(staged[i],
+                                  [&](irs::compression::FrameVisitor visit) {
+                                    raws[i].ForEachFrame(visit);
+                                  });
     }
   }
   for (size_t i = 0; i != runs.size(); ++i) {

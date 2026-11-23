@@ -61,6 +61,12 @@ void WriteInPieces(sdb::message::FrameStream& stream, const Bytes& raw) {
   }
 }
 
+std::vector<irs::bytes_view> Frames(const sdb::message::FrameStream& stream) {
+  std::vector<irs::bytes_view> frames;
+  stream.ForEachFrame([&](irs::bytes_view frame) { frames.push_back(frame); });
+  return frames;
+}
+
 TEST(MessageFrameStream, FramesCoverTheWrittenBytes) {
   for (const size_t size : {size_t{0}, size_t{1}, size_t{kFrame},
                             size_t{kFrame} * 3 + 17, size_t{kFrame} * 20 + 3}) {
@@ -68,7 +74,7 @@ TEST(MessageFrameStream, FramesCoverTheWrittenBytes) {
     sdb::message::FrameStream stream{kFrame};
     WriteInPieces(stream, raw);
     Bytes joined;
-    for (const auto frame : stream.Frames()) {
+    for (const auto frame : Frames(stream)) {
       EXPECT_FALSE(frame.empty());
       EXPECT_LE(frame.size(), kFrame);
       joined.insert(joined.end(), frame.begin(), frame.end());
@@ -91,7 +97,7 @@ TEST(MessageFrameStream, FramesEndWithTheirChunk) {
   stream.WriteData(raw.data() + 105 + big, raw.size() - 105 - big);
   constexpr std::array kExpected{size_t{100}, size_t{kFrame}, size_t{kFrame},
                                  size_t{kFrame}, size_t{kFrame} - 50};
-  const auto frames = stream.Frames();
+  const auto frames = Frames(stream);
   ASSERT_EQ(frames.size(), kExpected.size());
   size_t at = 0;
   for (size_t frame = 0; frame != frames.size(); ++frame) {

@@ -217,10 +217,12 @@ TEST(SearchLogEntry, ReplayRefusesPackedRowsLongerThanTheirChunks) {
   }
   constexpr std::array<uint8_t, 4> kTail{1, 2, 3, 4};
   raw.WriteData(kTail.data(), kTail.size());
-  const std::vector<std::vector<irs::bytes_view>> frames{raw.Frames()};
-  rows.staged = std::move(
-    irs::compression::Compress(irs::compression::kZstd1, kFrame, frames)
-      .front());
+  rows.staged = std::move(irs::compression::Compress(
+                            irs::compression::kZstd1, kFrame, 1,
+                            [&](size_t, irs::compression::FrameVisitor visit) {
+                              raw.ForEachFrame(visit);
+                            })
+                            .front());
   rows.scan = nullptr;
   ASSERT_FALSE(irs::compression::IsPlain(rows.staged));
   TableDelta delta;

@@ -411,9 +411,6 @@ Frames ReadFrames(duckdb::BinaryDeserializer& deserializer) {
 
 namespace {
 
-using FrameSource =
-  absl::FunctionRef<void(absl::FunctionRef<void(bytes_view)>)>;
-
 struct Plan {
   Frames frames;
   absl::InlinedVector<bytes_view, 1> raws;
@@ -529,25 +526,22 @@ Compressed Compress(Method method, bytes_view raw, uint32_t frame_bytes,
   return out;
 }
 
-std::vector<Compressed> Compress(Method method, uint32_t frame_bytes,
-                                 std::span<const std::vector<bytes_view>> blobs,
-                                 ParallelFor parallel) {
+std::vector<Compressed> Compress(
+  Method method, uint32_t frame_bytes, size_t blobs,
+  absl::FunctionRef<void(size_t blob, FrameVisitor visit)> frames,
+  ParallelFor parallel) {
   std::vector<Plan> plans;
-  plans.reserve(blobs.size());
-  std::vector<Compressed> out(blobs.size());
-  for (size_t i = 0; i != blobs.size(); ++i) {
+  plans.reserve(blobs);
+  std::vector<Compressed> out(blobs);
+  for (size_t i = 0; i != blobs; ++i) {
     auto& plan = plans.emplace_back(PlanFrames(
-      method, frame_bytes, [&](absl::FunctionRef<void(bytes_view)> visit) {
-        for (const auto frame : blobs[i]) {
-          visit(frame);
-        }
-      }));
+      method, frame_bytes, [&](FrameVisitor visit) { frames(i, visit); }));
     out[i].slots =
       std::make_unique_for_overwrite<byte_type[]>(plan.frames.raw_bytes);
     plan.slots = out[i].slots.get();
   }
   EncodePlans(method, plans, parallel);
-  for (size_t i = 0; i != blobs.size(); ++i) {
+  for (size_t i = 0; i != blobs; ++i) {
     out[i].frames = std::move(plans[i].frames);
   }
   return out;
@@ -651,16 +645,18 @@ bool Pays(const Compressed& packed) {
   return PackedBytes(packed) < packed.frames.raw_bytes;
 }
 
-void KeepPlain(Compressed& packed, std::span<const bytes_view> frames) {
-  SDB_ASSERT(frames.size() == packed.frames.sizes.size());
+void KeepPlain(Compressed& packed, FrameSource frames) {
   auto* slot = packed.slots.get();
-  for (size_t frame = 0; frame != frames.size(); ++frame) {
-    const auto in = frames[frame];
+  size_t frame = 0;
+  frames([&](bytes_view in) {
+    SDB_ASSERT(frame < packed.frames.sizes.size());
     if (packed.frames.sizes[frame] != in.size()) {
       std::memcpy(slot, in.data(), in.size());
     }
     slot += in.size();
-  }
+    ++frame;
+  });
+  SDB_ASSERT(frame == packed.frames.sizes.size());
   SDB_ASSERT(slot == packed.slots.get() + packed.frames.raw_bytes);
   packed.frames.sizes.clear();
   packed.frames.raw_sizes.clear();

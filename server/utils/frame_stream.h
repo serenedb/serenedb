@@ -20,11 +20,12 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
+
 #include <cstdint>
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/string.hpp>
-#include <vector>
 
 #include "server/utils/message_buffer.h"
 
@@ -40,7 +41,7 @@ class FrameStream final : public duckdb::WriteStream {
     return _writer.Alloc(size);
   }
 
-  std::vector<irs::bytes_view> Frames() const;
+  void ForEachFrame(absl::FunctionRef<void(irs::bytes_view)> visit) const;
 
  protected:
   void Overflow(duckdb::const_data_ptr_t data, duckdb::idx_t size) final {

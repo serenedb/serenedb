@@ -250,12 +250,21 @@ bool AllButLastFull(std::span<const irs::bytes_view> frames) {
                                           });
 }
 
+void Visit(std::span<const irs::bytes_view> frames,
+           compression::FrameVisitor visit) {
+  for (const auto frame : frames) {
+    visit(frame);
+  }
+}
+
 compression::Compressed CompressOne(compression::Method method,
                                     std::span<const irs::bytes_view> frames) {
-  const std::vector<std::vector<irs::bytes_view>> blobs{
-    {frames.begin(), frames.end()}};
   return std::move(
-    compression::Compress(method, kFrame, blobs, Threads).front());
+    compression::Compress(
+      method, kFrame, 1,
+      [&](size_t, compression::FrameVisitor visit) { Visit(frames, visit); },
+      Threads)
+      .front());
 }
 
 Bytes PackedRoundTrip(const compression::Compressed& compressed) {
@@ -299,7 +308,9 @@ TEST(Compression, KeepPlainTurnsTheSlotsBackIntoTheStream) {
       const auto frames = Frames(raw, kUneven);
       auto compressed = CompressOne(method, frames);
       ASSERT_FALSE(compression::IsPlain(compressed));
-      compression::KeepPlain(compressed, frames);
+      compression::KeepPlain(compressed, [&](compression::FrameVisitor visit) {
+        Visit(frames, visit);
+      });
       EXPECT_TRUE(compression::IsPlain(compressed));
       EXPECT_TRUE(compressed.frames.raw_sizes.empty());
       ASSERT_EQ(compressed.frames.raw_bytes, raw.size());
@@ -330,7 +341,12 @@ TEST(Compression, CompressesEveryBlobInOnePass) {
     for (const auto& raw : raws) {
       blobs.push_back(Frames(raw, kUneven));
     }
-    const auto together = compression::Compress(method, kFrame, blobs, Threads);
+    const auto together = compression::Compress(
+      method, kFrame, blobs.size(),
+      [&](size_t i, compression::FrameVisitor visit) {
+        Visit(blobs[i], visit);
+      },
+      Threads);
     ASSERT_EQ(together.size(), blobs.size());
     for (size_t i = 0; i != blobs.size(); ++i) {
       const auto alone = CompressOne(method, blobs[i]);

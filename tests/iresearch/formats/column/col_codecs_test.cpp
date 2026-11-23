@@ -61,6 +61,7 @@
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/text/fsst.hpp>
 #include <iresearch/formats/column/codecs/text/onpair.hpp>
+#include <iresearch/formats/column/codecs/text/segment_buffer.hpp>
 #include <iresearch/formats/column/codecs/text/string_layout.hpp>
 #include <iresearch/formats/column/codecs/text/string_scan.hpp>
 #include <iresearch/formats/column/codecs/text/values.hpp>
@@ -4154,6 +4155,17 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
        duckdb::Store<uint32_t>(0, block + h.off_symtab + sizeof(uint32_t));
      },
      "Corrupted text segment: symbol table is inconsistent"},
+    {"token count beyond the code width",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
+       block[h.off_symtab] = 2;
+       duckdb::Store<uint32_t>(5, block + h.off_symtab + sizeof(uint32_t));
+     },
+     "Corrupted text segment: symbol table is inconsistent"},
+    {"table shorter than its header",
+     [](irs::codecs::Header& h, duckdb::data_ptr_t) {
+       h.symtab_size = irs::codecs::text::onpair::kSymbolTableHeader - 1;
+     },
+     "Corrupted text segment: symbol table is inconsistent"},
     {"token lengths",
      [](irs::codecs::Header& h, duckdb::data_ptr_t block) {
        block[h.off_symtab + irs::codecs::text::onpair::kSymbolTableHeader] ^=
@@ -4217,6 +4229,90 @@ TEST_F(ColCodecsTest, CorruptedOnPairDictionariesAreRejected) {
     };
     ExpectCorrupted(scan, c.error);
     ExpectCorrupted(fetch, c.error);
+  }
+}
+
+TEST_F(ColCodecsTest, OnPairCodesPastTheTokenTableAreRejected) {
+  namespace onpair = irs::codecs::text::onpair;
+  std::string table(onpair::kSymbolTableHeader, '\0');
+  table[0] = 2;
+  duckdb::Store<uint32_t>(
+    3, duckdb::data_ptr_cast(table.data() + sizeof(uint32_t)));
+  table.append(2, '\0');
+  table.append("abc");
+  onpair::Table tokens;
+  ASSERT_TRUE(tokens.Open(table));
+  constexpr uint64_t kCodes = 64;
+  std::vector<uint8_t> stream(
+    kCodes * 2 / 8 + onpair::kPadding + sizeof(uint64_t), 0);
+  std::string expected;
+  for (uint64_t k = 0; k < kCodes; ++k) {
+    stream[k * 2 / 8] |= static_cast<uint8_t>((k % 3) << (k * 2 % 8));
+    expected += "abc"[k % 3];
+  }
+  std::string out(kCodes * onpair::kMaxToken, '\0');
+  ASSERT_EQ(tokens.Decode(stream.data(), 0, kCodes, out.data(), out.size()),
+            kCodes);
+  EXPECT_EQ(out.substr(0, kCodes), expected);
+  stream[3] = 0xFF;
+  ExpectCorrupted(
+    [&] { tokens.Decode(stream.data(), 0, kCodes, out.data(), out.size()); },
+    "Corrupted text segment: entry is inconsistent");
+}
+
+TEST_F(ColCodecsTest, OnPairTrainingStopsOnceItsTokenTableIsFull) {
+  namespace onpair = irs::codecs::text::onpair;
+  constexpr uint64_t kMotifs = 3851;
+  constexpr uint64_t kRows = 1'500'000;
+  std::vector<std::string> motifs;
+  for (uint64_t m = 0; m < kMotifs; ++m) {
+    motifs.push_back(
+      {static_cast<char>('!' + m % 90), static_cast<char>('!' + m / 90 % 90)});
+  }
+  std::vector<duckdb::string_t> entries;
+  uint64_t raw = 0;
+  for (uint64_t r = 0; r < kRows; ++r) {
+    const auto& motif = motifs[r % kMotifs];
+    entries.emplace_back(motif.data(), static_cast<uint32_t>(motif.size()));
+    raw += motif.size();
+  }
+  onpair::Codec codec;
+  codec.Train(entries, raw);
+  std::string exported;
+  codec.Export(exported);
+  ASSERT_GE(exported.size(), onpair::kSymbolTableHeader);
+  EXPECT_EQ(duckdb::Load<uint32_t>(
+              duckdb::const_data_ptr_cast(exported.data() + sizeof(uint32_t))),
+            uint32_t{1} << onpair::kDictionaryBits);
+  onpair::Table table;
+  ASSERT_TRUE(table.Open(exported));
+  ASSERT_EQ(table.Bits(), codec.Bits());
+  const std::span<const duckdb::string_t> probe{entries.data(), kMotifs};
+  uint64_t probe_raw = 0;
+  for (const auto& entry : probe) {
+    probe_raw += entry.GetSize();
+  }
+  std::vector<uint16_t> codes(probe_raw);
+  std::vector<uint32_t> counts(probe.size());
+  codec.Encode(probe, codes, counts);
+  uint64_t at = 0;
+  for (size_t e = 0; e < probe.size(); ++e) {
+    const auto bits = table.Bits();
+    std::vector<uint8_t> stream(
+      (counts[e] * bits + 7) / 8 + onpair::kPadding + sizeof(uint64_t), 0);
+    for (uint32_t k = 0; k < counts[e]; ++k) {
+      for (uint32_t b = 0; b < bits; ++b) {
+        if (codes[at + k] >> b & 1) {
+          const auto bit = uint64_t{k} * bits + b;
+          stream[bit / 8] |= static_cast<uint8_t>(1U << bit % 8);
+        }
+      }
+    }
+    std::string out(uint64_t{counts[e]} * onpair::kMaxToken, '\0');
+    const auto n =
+      table.Decode(stream.data(), 0, counts[e], out.data(), out.size());
+    ASSERT_EQ(out.substr(0, n), probe[e].GetString()) << "entry " << e;
+    at += probe[e].GetSize();
   }
 }
 
@@ -5524,6 +5620,85 @@ void ExpectFilterKeeps(irs::ColReader& r, const irs::ColumnReader& col,
       return;
     }
   }
+}
+
+TEST_F(ColCodecsTest, ARoaringScanStateMovedBackReloadsItsContainer) {
+  constexpr uint64_t kRows = 3 * STANDARD_VECTOR_SIZE;
+  const auto truth = [](uint64_t g) { return g / 7 % 3 == 0 || g % 11 == 0; };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), dir.Tracker(kSeg)};
+    auto& cw = w.OpenColumn(kField, duckdb::LogicalType::BOOLEAN,
+                            {.row_group_size = kRows,
+                             .compression = irs::codecs::CodecType::Roaring});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector v{duckdb::LogicalType::BOOLEAN, STANDARD_VECTOR_SIZE};
+      auto* data = duckdb::FlatVector::GetDataMutable<bool>(v);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        data[k] = truth(pos + k);
+      }
+      duckdb::FlatVector::SetSize(v, STANDARD_VECTOR_SIZE);
+      cw.Append(v, STANDARD_VECTOR_SIZE);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->DataBlocks().size(), 1);
+  ASSERT_EQ(col->DataBlocks().front().codec->type,
+            irs::codecs::CodecType::Roaring);
+  irs::ReadContext ctx{r};
+  const auto segment = col->OpenSegment(0, ctx);
+  irs::codecs::ColumnScanState state;
+  state.scan_state = segment->function.init_scan(*segment);
+  const auto scan = [&](uint64_t row, duckdb::idx_t count) {
+    state.offset_in_column = row;
+    duckdb::Vector out{duckdb::LogicalType::BOOLEAN, STANDARD_VECTOR_SIZE};
+    segment->function.scan(*segment, state, count, out, 0,
+                           duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+    const auto* got = duckdb::FlatVector::GetData<bool>(out);
+    for (duckdb::idx_t k = 0; k < count; ++k) {
+      ASSERT_EQ(got[k], truth(row + k)) << "row " << row + k;
+    }
+  };
+  ASSERT_NO_FATAL_FAILURE(scan(600, 100));
+  ASSERT_NO_FATAL_FAILURE(scan(100, 100));
+  ASSERT_NO_FATAL_FAILURE(scan(150, 1000));
+}
+
+TEST_F(ColCodecsTest, ASegmentBufferThatCannotAllocateGivesBackItsReservation) {
+  duckdb::Connection con{Db()};
+  auto set = con.Query("SET memory_limit = '8192TB'");
+  ASSERT_FALSE(set->HasError()) << set->GetError();
+  auto& buffers = Db().GetBufferManager();
+  const auto used = buffers.GetUsedMemory();
+  irs::codecs::text::SegmentBuffer segment{buffers};
+  EXPECT_THROW(segment.Extend(uint64_t{1} << 52), std::bad_alloc);
+  EXPECT_EQ(segment.Size(), 0);
+  EXPECT_EQ(buffers.GetUsedMemory(), used);
+  auto* at = segment.Extend(16);
+  std::memset(at, 'x', 16);
+  EXPECT_EQ(segment.View(), std::string(16, 'x'));
+}
+
+TEST_F(ColCodecsTest, AHeapReferenceWhoseTargetExpiredIsMadeAgain) {
+  duckdb::Vector source{duckdb::LogicalType::VARCHAR, 4};
+  source.SetValue(0, duckdb::Value{"a value longer than an inlined string"});
+  duckdb::StringVector::AddAuxiliaryData(
+    source, duckdb::make_uniq<irs::ImmutablePayloads>());
+  duckdb::Vector result{duckdb::LogicalType::VARCHAR, 4};
+  irs::codecs::text::HeapReference reference;
+  irs::codecs::text::ReferenceOnce(reference, source, result);
+  const auto* held = result.GetBufferRef()->GetAuxiliaryData().get();
+  ASSERT_NE(held, nullptr);
+  EXPECT_EQ(reference.target, held);
+  EXPECT_FALSE(reference.target_weak.expired());
+  reference.target_weak = {};
+  irs::codecs::text::ReferenceOnce(reference, source, result);
+  EXPECT_EQ(reference.target, result.GetBufferRef()->GetAuxiliaryData().get());
+  EXPECT_FALSE(reference.target_weak.expired());
+  EXPECT_EQ(reference.source, source.GetBufferRef()->GetAuxiliaryData().get());
 }
 
 }  // namespace

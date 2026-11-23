@@ -23,12 +23,11 @@ SELECT domain_name, data_type FROM information_schema.domains WHERE domain_name 
 domain_name	data_type
 d_is	integer
 
-# TODO: information_schema.domain_constraints does not list domain constraints yet
-# query
-# SELECT constraint_name FROM information_schema.domain_constraints WHERE domain_name = 'd_is';
-# ----
-# constraint_name
-# d_is_pos
+query
+SELECT constraint_name FROM information_schema.domain_constraints WHERE domain_name = 'd_is';
+----
+constraint_name
+d_is_pos
 
 query
 SELECT table_name, column_name FROM information_schema.column_domain_usage WHERE domain_name = 'd_is';

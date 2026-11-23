@@ -61,15 +61,13 @@ CREATE DOMAIN d_cn AS INT4
     CONSTRAINT must_have NOT NULL
     CHECK (VALUE < 100);
 
-# TODO: pg_constraint does not list domain constraints yet
-#
-# query
-# SELECT conname FROM pg_constraint WHERE contypid = 'd_cn'::regtype ORDER BY conname;
-# ----
-# conname
-# d_cn_check
-# must_have
-# positive
+query
+SELECT conname FROM pg_constraint WHERE contypid = 'd_cn'::regtype ORDER BY conname;
+----
+conname
+d_cn_check
+must_have
+positive
 
 statement ok
 CREATE DOMAIN d_full AS text COLLATE "C" DEFAULT 'x'

@@ -131,6 +131,18 @@ std::vector<T> MapIndexExpressions(const duckdb::IndexCatalogEntry& index,
 
 }  // namespace
 
+const duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>* ConstraintsOf(
+  const duckdb::CatalogEntry& owner) {
+  if (owner.type == duckdb::CatalogType::TABLE_ENTRY) {
+    return &owner.Cast<duckdb::TableCatalogEntry>().GetConstraints();
+  }
+  if (owner.type == duckdb::CatalogType::TYPE_ENTRY) {
+    const auto& type = owner.Cast<duckdb::TypeCatalogEntry>();
+    return type.domain_info ? &type.domain_info->constraints : nullptr;
+  }
+  return nullptr;
+}
+
 std::vector<const duckdb::ParsedExpression*> IndexExpressions(
   const duckdb::IndexCatalogEntry& index) {
   return MapIndexExpressions<const duckdb::ParsedExpression*>(

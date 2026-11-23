@@ -245,42 +245,66 @@ std::string ForeignKeyDefinition(const Session& session,
 }
 
 Definition ConstraintDefinition(const Session& session, int64_t oid) {
-  const auto owner = OwnerTable(session, static_cast<uint64_t>(oid));
+  if (!session.database) {
+    return std::nullopt;
+  }
+
+  const auto owner = session.database->LookupOwner(
+    *session.transaction, static_cast<duckdb::idx_t>(oid));
   if (!owner) {
     return std::nullopt;
   }
-  const auto& table = *owner;
+  const auto* constraints = ConstraintsOf(*owner);
+  if (!constraints) {
+    return std::nullopt;
+  }
   const auto found = absl::c_find_if(
-    table.GetConstraints(),
+    *constraints,
     [&](const duckdb::unique_ptr<duckdb::Constraint>& constraint) {
       return constraint->oid == static_cast<duckdb::idx_t>(oid) &&
              IsPgConstraint(constraint);
     });
-  if (found == table.GetConstraints().end()) {
+  if (found == constraints->end()) {
     return std::nullopt;
   }
+  const auto* table = owner->type == duckdb::CatalogType::TABLE_ENTRY
+                        ? &owner->Cast<duckdb::TableCatalogEntry>()
+                        : nullptr;
   const auto& constraint = **found;
+  std::string definition;
   switch (constraint.type) {
     case duckdb::ConstraintType::CHECK:
-      return absl::StrCat(
+      definition = absl::StrCat(
         "CHECK (",
         ExpressionText(*constraint.Cast<duckdb::CheckConstraint>().expression),
         ")");
+      break;
     case duckdb::ConstraintType::NOT_NULL:
-      return absl::StrCat(
-        "NOT NULL ",
-        ColumnName(table, constraint.Cast<duckdb::NotNullConstraint>().index));
+      definition =
+        table ? absl::StrCat(
+                  "NOT NULL ",
+                  ColumnName(
+                    *table, constraint.Cast<duckdb::NotNullConstraint>().index))
+              : "NOT NULL";
+      break;
     case duckdb::ConstraintType::UNIQUE: {
       const auto& unique = constraint.Cast<duckdb::UniqueConstraint>();
-      return absl::StrCat(unique.IsPrimaryKey() ? "PRIMARY KEY (" : "UNIQUE (",
-                          absl::StrJoin(KeyColumns(table, unique), ", "), ")");
+      definition =
+        absl::StrCat(unique.IsPrimaryKey() ? "PRIMARY KEY (" : "UNIQUE (",
+                     absl::StrJoin(KeyColumns(*table, unique), ", "), ")");
+      break;
     }
     case duckdb::ConstraintType::FOREIGN_KEY:
-      return ForeignKeyDefinition(
-        session, table, constraint.Cast<duckdb::ForeignKeyConstraint>());
+      definition = ForeignKeyDefinition(
+        session, *table, constraint.Cast<duckdb::ForeignKeyConstraint>());
+      break;
     case duckdb::ConstraintType::INVALID:
       return std::nullopt;
   }
+  if (!constraint.validated) {
+    absl::StrAppend(&definition, " NOT VALID");
+  }
+  return definition;
 }
 
 struct IndexElement {

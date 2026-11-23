@@ -37,19 +37,24 @@ constexpr SystemIndex kIndexes[] = {
   {kPgConstraintSql["conrelid"], SystemLookup::Object},
 };
 
+constexpr duckdb::CatalogType kOwnerTypes[] = {duckdb::CatalogType::TABLE_ENTRY,
+                                               duckdb::CatalogType::TYPE_ENTRY};
+
 struct ConstraintRow {
-  const duckdb::TableCatalogEntry& table;
+  const duckdb::StandardEntry& owner;
   const duckdb::Constraint& constraint;
 
   template<typename T>
   const T& As() const {
     return constraint.Cast<T>();
   }
-};
 
-struct DomainConstraintRow {
-  const duckdb::TypeCatalogEntry& type;
-  const duckdb::DomainConstraint& constraint;
+  duckdb::optional_ptr<const duckdb::TableCatalogEntry> Table() const {
+    if (owner.type != duckdb::CatalogType::TABLE_ENTRY) {
+      return nullptr;
+    }
+    return &owner.Cast<duckdb::TableCatalogEntry>();
+  }
 };
 
 struct ForeignKeyRow : ConstraintRow {
@@ -58,7 +63,7 @@ struct ForeignKeyRow : ConstraintRow {
 
   const duckdb::TableCatalogEntry& Target(const SystemScan& scan) const {
     if (!target) {
-      target = &ReferencedTable(scan.Transaction(), table,
+      target = &ReferencedTable(scan.Transaction(), *Table(),
                                 As<duckdb::ForeignKeyConstraint>());
     }
     return *target;
@@ -72,25 +77,21 @@ struct ForeignKeyRow : ConstraintRow {
 
 constexpr std::tuple kConstraint{
   Col<"oid">([](const auto& row) { return row.constraint.oid; }),
-  Col<"conrelid">([](const auto& row) { return row.table.oid; }),
+  Col<"conrelid">([](const auto& row) {
+    return row.Table() ? row.owner.oid : duckdb::idx_t{0};
+  }),
+  Col<"contypid">([](const auto& row) {
+    return row.Table() ? duckdb::idx_t{0} : row.owner.oid;
+  }),
   Col<"connamespace">(
-    [](const auto& row) { return row.table.ParentSchemaOid(); }),
-  Col<"conname">(
-    [](const auto& row) { return ConstraintName(row.table, row.constraint); }),
+    [](const auto& row) { return row.owner.ParentSchemaOid(); }),
+  Col<"conname">([](const auto& row) {
+    const auto table = row.Table();
+    return table ? ConstraintName(*table, row.constraint)
+                 : SystemConcatText{{row.constraint.constraint_name}};
+  }),
   Col<"conenforced">([](const auto&) { return true; }),
-  Col<"convalidated">([](const auto&) { return true; }),
-  Col<"conislocal">([](const auto&) { return true; })};
-
-constexpr std::tuple kDomainConstraint{
-  Col<"oid">([](const auto& row) { return row.constraint.oid; }),
-  Col<"conrelid">([](const auto&) { return duckdb::idx_t{0}; }),
-  Col<"contypid">([](const auto& row) { return row.type.oid; }),
-  Col<"connamespace">(
-    [](const auto& row) { return row.type.ParentSchemaOid(); }),
-  Col<"conname">([](const auto& row) { return row.constraint.name; }),
-  Col<"conenforced">([](const auto&) { return true; }),
-  Col<"convalidated">(
-    [](const auto& row) { return row.constraint.validated; }),
+  Col<"convalidated">([](const auto& row) { return row.constraint.validated; }),
   Col<"conislocal">([](const auto&) { return true; })};
 
 constexpr std::tuple kNoForeignKey{
@@ -105,14 +106,15 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
   static constexpr duckdb::idx_t kRows = 10000;
 
   static constexpr std::tuple kSources{
-    CatalogSource{kTableTypes, SystemSchemas::Skip, kIndexes},
-    CatalogSource{kTypeTypes, SystemSchemas::Skip, kIndexes}};
+    CatalogSource{kOwnerTypes, SystemSchemas::Skip, kIndexes}};
 
   static constexpr auto kCheck = Shape<kSql, const ConstraintRow>(
     kConstraint, kNoForeignKey, Col<"contype">([](const auto&) { return 'c'; }),
     Col<"conkey">([](const ConstraintRow& row) {
-      return NonEmpty(ExpressionAttnums(
-        row.table, *row.As<duckdb::CheckConstraint>().expression));
+      const auto table = row.Table();
+      return table ? NonEmpty(ExpressionAttnums(
+                       *table, *row.As<duckdb::CheckConstraint>().expression))
+                   : std::nullopt;
     }),
     Col<"conbin">([](const ConstraintRow& row) {
       return ExpressionText(*row.As<duckdb::CheckConstraint>().expression);
@@ -121,21 +123,11 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
   static constexpr auto kNotNull = Shape<kSql, const ConstraintRow>(
     kConstraint, kNoForeignKey, Col<"contype">([](const auto&) { return 'n'; }),
     Col<"conkey">([](const ConstraintRow& row) {
-      return std::array{
-        Attnum(row.table.GetColumn(row.As<duckdb::NotNullConstraint>().index))};
+      const auto table = row.Table();
+      return table ? std::optional{std::array{Attnum(table->GetColumn(
+                       row.As<duckdb::NotNullConstraint>().index))}}
+                   : std::nullopt;
     }));
-
-  static constexpr auto kDomainCheck = Shape<kSql, const DomainConstraintRow>(
-    kDomainConstraint, kNoForeignKey,
-    Col<"contype">([](const auto&) { return 'c'; }),
-    Col<"conbin">([](const DomainConstraintRow& row) {
-      return ExpressionText(*row.constraint.expression);
-    }));
-
-  static constexpr auto kDomainNotNull =
-    Shape<kSql, const DomainConstraintRow>(
-      kDomainConstraint, kNoForeignKey,
-      Col<"contype">([](const auto&) { return 'n'; }));
 
   static constexpr auto kUnique = Shape<kSql, const ConstraintRow>(
     kConstraint, kNoForeignKey, Col<"contype">([](const ConstraintRow& row) {
@@ -152,7 +144,7 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
     }),
     Col<"connoinherit">([](const auto&) { return true; }),
     Col<"conkey">([](const ConstraintRow& row) {
-      return KeyAttnums(row.table.GetColumns(),
+      return KeyAttnums(row.Table()->GetColumns(),
                         row.As<duckdb::UniqueConstraint>());
     }));
 
@@ -173,57 +165,47 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
       return key ? key->index_oid : duckdb::idx_t{0};
     }),
     Col<"conkey">([](const ForeignKeyRow& row) {
-      return Attnums(row.table.GetColumns(),
+      return Attnums(row.Table()->GetColumns(),
                      row.As<duckdb::ForeignKeyConstraint>().info.fk_keys);
     }));
 
   void Row(const duckdb::TableCatalogEntry& table) {
-    using enum duckdb::ConstraintType;
     if (!Allows<"conrelid">(table.oid)) {
       return;
     }
-    for (const auto& constraint : table.GetConstraints()) {
+    Constraints(table, table.GetConstraints());
+  }
+
+  void Row(const duckdb::TypeCatalogEntry& type) {
+    if (!type.domain_info || !Allows<"contypid">(type.oid)) {
+      return;
+    }
+    Constraints(type, type.domain_info->constraints);
+  }
+
+ private:
+  void Constraints(
+    const duckdb::StandardEntry& owner,
+    const duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>& constraints) {
+    using enum duckdb::ConstraintType;
+    for (const auto& constraint : constraints) {
       if (!IsPgConstraint(constraint)) {
         continue;
       }
       switch (constraint->type) {
         case CHECK:
-          Emit<kCheck>({table, *constraint});
+          Emit<kCheck>({owner, *constraint});
           break;
         case NOT_NULL:
-          Emit<kNotNull>({table, *constraint});
+          Emit<kNotNull>({owner, *constraint});
           break;
         case UNIQUE:
-          Emit<kUnique>({table, *constraint});
+          Emit<kUnique>({owner, *constraint});
           break;
         case FOREIGN_KEY:
-          Emit<kForeignKey>({{table, *constraint}});
+          Emit<kForeignKey>({{owner, *constraint}});
           break;
         case INVALID:
-          break;
-      }
-    }
-  }
-
-  void Row(const duckdb::TypeCatalogEntry& type) {
-    using enum duckdb::ConstraintType;
-    if (!type.domain_info || !Allows<"contypid">(type.oid)) {
-      return;
-    }
-
-    for (const auto& constraint : type.domain_info->constraints) {
-      if (!constraint.oid) {
-        continue;
-      }
-
-      switch (constraint.type) {
-        case CHECK:
-          Emit<kDomainCheck>({type, constraint});
-          break;
-        case NOT_NULL:
-          Emit<kDomainNotNull>({type, constraint});
-          break;
-        default:
           break;
       }
     }

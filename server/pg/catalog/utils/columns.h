@@ -96,6 +96,9 @@ inline bool IsPgConstraint(
             duckdb::ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE);
 }
 
+const duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>* ConstraintsOf(
+  const duckdb::CatalogEntry& owner);
+
 inline auto KeyIndexes(const duckdb::TableCatalogEntry& table) {
   return table.GetConstraints() |
          std::views::filter(

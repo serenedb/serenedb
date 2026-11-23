@@ -305,6 +305,14 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
 
   void Row(const duckdb::TypeCatalogEntry& type) {
     Namespace(type);
+    if (type.domain_info && Allows<"deptype">('a')) {
+      for (const auto& constraint : type.domain_info->constraints) {
+        if (IsPgConstraint(constraint)) {
+          Depend(kPgConstraintTable, constraint->oid, 0, kPgTypeTable, type.oid,
+                 0, 'a');
+        }
+      }
+    }
     Depend(kPgTypeTable, TypeArrayOid(type.oid), 0, kPgTypeTable, type.oid, 0,
            'i');
     if (duckdb::StructType::IsStruct(type.user_type)) {

@@ -32,6 +32,7 @@
 #include <duckdb/function/cast/default_casts.hpp>
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/parser/column_list.hpp>
+#include <duckdb/parser/constraints/check_constraint.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression_binder/check_binder.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -77,7 +78,8 @@ struct DomainCastLocalState : duckdb::FunctionLocalState {
 };
 
 duckdb::unique_ptr<DomainCastLocalState> CreateDomainCastLocalState(
-  const DomainCastData& data, duckdb::optional_ptr<duckdb::ClientContext> context) {
+  const DomainCastData& data,
+  duckdb::optional_ptr<duckdb::ClientContext> context) {
   auto state = duckdb::make_uniq<DomainCastLocalState>();
   if (data.base_cast.HasInitLocalState()) {
     duckdb::CastLocalStateParameters base_parameters(
@@ -227,12 +229,13 @@ void BindDomainChecks(duckdb::ClientContext& context,
   check_binder.target_type = duckdb::LogicalType::BOOLEAN;
 
   for (const auto& constraint : domain.domain_info->constraints) {
-    if (constraint.type != duckdb::ConstraintType::CHECK) {
+    if (constraint->type != duckdb::ConstraintType::CHECK) {
       continue;
     }
-    auto expression = constraint.expression->Copy();
+    auto expression =
+      constraint->Cast<duckdb::CheckConstraint>().expression->Copy();
     data.checks.push_back(check_binder.Bind(expression));
-    data.check_names.push_back(constraint.name);
+    data.check_names.push_back(constraint->constraint_name);
   }
 }
 

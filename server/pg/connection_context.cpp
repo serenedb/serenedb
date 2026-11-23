@@ -68,12 +68,14 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
     duckdb::idx_t oid = 0;
     bool can_login = false;
     bool superuser = false;
+    duckdb::vector<std::string> settings;
   } role;
   if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
         user, [&](const catalog::RoleCatalogEntry& entry) {
           role.oid = entry.oid;
           role.can_login = entry.CanLogin();
           role.superuser = entry.IsSuperuser();
+          role.settings = entry.Config();
         })) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
@@ -92,7 +94,9 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
               ERR_MSG("permission denied for database \"", dbname, "\""),
               ERR_DETAIL("User does not have CONNECT privilege."))};
   }
-  return {.role = role.oid, .superuser = role.superuser};
+  return {.role = role.oid,
+          .superuser = role.superuser,
+          .settings = std::move(role.settings)};
 }
 
 }  // namespace sdb::pg

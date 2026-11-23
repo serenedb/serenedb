@@ -298,7 +298,7 @@ def test_startup_rejects_missing_user():
         sock.close()
 
 
-def _startup_collect(extra_params: dict[str, str]):
+def _startup_collect(extra_params: dict[str, str], user: str | None = None):
     """Open a raw trust connection with extra startup params; collect every
     message from AuthenticationOk through the terminating ReadyForQuery (or an
     ErrorResponse if the connection is refused)."""
@@ -314,7 +314,12 @@ def _startup_collect(extra_params: dict[str, str]):
             buf += chunk
         return buf
 
-    params = _cstr("user") + _cstr(kw["user"]) + _cstr("database") + _cstr(kw["dbname"])
+    params = (
+        _cstr("user")
+        + _cstr(user or kw["user"])
+        + _cstr("database")
+        + _cstr(kw["dbname"])
+    )
     for k, v in extra_params.items():
         params += _cstr(k) + _cstr(v)
     params += b"\0"
@@ -348,6 +353,24 @@ def test_startup_non_utf8_client_encoding_accepted_with_warning():
     assert len(warns) == 1, notices(m)
     assert warns[0].get("S") == "WARNING" and warns[0].get("C") == "01000", warns
     assert "LATIN1" in warns[0]["M"] and "UTF8" in warns[0]["M"], warns
+
+
+def test_startup_refused_role_setting_is_a_warning(conn):
+    login = "drv_refused_role_setting"
+    conn.run_ok(f"DROP ROLE IF EXISTS {login}")
+    conn.run_ok(f"CREATE ROLE {login} LOGIN")
+    try:
+        conn.run_ok(f"ALTER ROLE {login} SET statement_timeout = 'nan'")
+        conn.run_ok(f"ALTER ROLE {login} SET application_name = 'stored'")
+        m = _startup_collect({}, user=login)
+        assert "Z" in types(m) and "E" not in types(m), errors(m)
+        status = dict(param_status(m))
+        assert status.get("application_name") == "stored", status
+        warns = notices(m)
+        assert [(n.get("S"), n.get("C")) for n in warns] == [("WARNING", "01000")], warns
+        assert "statement_timeout" in warns[0]["M"], warns
+    finally:
+        conn.run_ok(f"DROP ROLE {login}")
 
 
 def test_startup_options_apply_settings():

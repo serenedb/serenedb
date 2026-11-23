@@ -523,11 +523,17 @@ bool PgWireSession<Kind>::SetupConnection() {
   keep_as_default("session_authorization");
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
 
-  const auto apply = [&](const std::string& name, const std::string& value) {
+  const auto set = [&](const std::string& name, const std::string& value) {
     try {
       _connection_ctx->SetSettingChecked(name, value, false);
     } catch (const duckdb::InternalException&) {
       _connection_ctx->SetSetting(name, value, false);
+    }
+    keep_as_default(name);
+  };
+  const auto apply = [&](const std::string& name, const std::string& value) {
+    try {
+      set(name, value);
     } catch (const std::exception& exception) {
       if (name == "client_encoding") {
         _connection_ctx->AddNotice(
@@ -539,7 +545,6 @@ bool PgWireSession<Kind>::SetupConnection() {
       WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
       return false;
     }
-    keep_as_default(name);
     return true;
   };
   std::vector<StartupSetting> settings;
@@ -551,6 +556,17 @@ bool PgWireSession<Kind>::SetupConnection() {
   }
   bool applied = true;
   _conn->context->RunFunctionInTransaction([&] {
+    for (const std::string_view setting : login.settings) {
+      const auto eq = setting.find('=');
+      try {
+        set(std::string{setting.substr(0, eq)},
+            std::string{setting.substr(eq + 1)});
+      } catch (const std::exception& exception) {
+        auto notice = irs::pg::ToSqlError(exception);
+        notice.errcode = ERRCODE_WARNING;
+        _connection_ctx->AddNotice(std::move(notice));
+      }
+    }
     for (const auto& [name, value] : settings) {
       if (!apply(name, value)) {
         applied = false;

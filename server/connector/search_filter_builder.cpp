@@ -2009,6 +2009,32 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
   return scorer;
 }
 
+struct Claim {
+  irs::BooleanFilter* group = nullptr;
+  irs::Filter* leaf = nullptr;
+};
+
+Claim ClaimOf(irs::BooleanFilter& scope) {
+  Claim claim;
+  for (auto* node = &scope;;) {
+    const auto required = node->Size(irs::Occur::Must);
+    if (required + node->Size(irs::Occur::Should) != 1) {
+      return claim;
+    }
+    const auto clauses =
+      node->Filters(required == 1 ? irs::Occur::Must : irs::Occur::Should);
+    if (clauses.empty()) {
+      return claim;
+    }
+    if (clauses[0]->type() != irs::Type<irs::BooleanFilter>::id()) {
+      claim.leaf = clauses[0].get();
+      return claim;
+    }
+    claim.group = &irs::utils::downCast<irs::BooleanFilter>(*clauses[0]);
+    node = claim.group;
+  }
+}
+
 bool HasScorableLeaf(const irs::Filter& filter) {
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
     return !irs::IsConstScoreSingleton(filter.GetScorer());
@@ -2039,14 +2065,9 @@ void ApplyScoreOverride(const FilterContext& ctx, irs::BooleanFilter& scope,
   }
   const auto scored_clauses =
     scope.Size(irs::Occur::Must) + scope.Size(irs::Occur::Should);
-  if (scored_clauses == 1) {
-    for (const auto occur : {irs::Occur::Must, irs::Occur::Should}) {
-      for (const auto& child : scope.Filters(occur)) {
-        if (child->GetScorer() == &irs::DefaultConstScore()) {
-          child->SetScorer(scorer);
-        }
-      }
-    }
+  if (auto* leaf = ClaimOf(scope).leaf;
+      leaf && leaf->GetScorer() == &irs::DefaultConstScore()) {
+    leaf->SetScorer(scorer);
   }
   if (irs::NeedsTermStats(*scorer) && scored_clauses != 0 &&
       !HasScorableLeaf(scope)) {
@@ -2076,33 +2097,6 @@ void CloseScope(BoolTarget parent, std::unique_ptr<irs::BooleanFilter> scope) {
   if (!scope->Empty()) {
     parent.Add(std::move(scope));
   }
-}
-
-irs::BooleanFilter* InnermostGroup(irs::BooleanFilter& scope) {
-  irs::BooleanFilter* group = nullptr;
-  for (auto* node = &scope;;) {
-    const auto clauses = node->Filters(irs::Occur::Must);
-    if (clauses.size() != 1 || node->Size(irs::Occur::Must) != 1 ||
-        node->Size(irs::Occur::Should) != 0 ||
-        node->Size(irs::Occur::MustNot) != 0 ||
-        clauses[0]->type() != irs::Type<irs::BooleanFilter>::id()) {
-      break;
-    }
-    group = &irs::utils::downCast<irs::BooleanFilter>(*clauses[0]);
-    node = group;
-  }
-  return group;
-}
-
-irs::Filter* SingleLeaf(irs::BooleanFilter& node) {
-  const auto clauses = node.Filters(irs::Occur::Must);
-  if (clauses.size() != 1 || node.Size(irs::Occur::Must) != 1 ||
-      node.Size(irs::Occur::Should) != 0 ||
-      node.Size(irs::Occur::MustNot) != 0 ||
-      clauses[0]->type() == irs::Type<irs::BooleanFilter>::id()) {
-    return nullptr;
-  }
-  return clauses[0].get();
 }
 
 irs::ScoreMergeType* WordsMerge(irs::Filter& filter) {
@@ -2139,8 +2133,8 @@ void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
   }
   const auto type = merge == TSQueryMerge::Max ? irs::ScoreMergeType::Max
                                                : irs::ScoreMergeType::Sum;
-  auto* group = InnermostGroup(scope);
-  if (auto* leaf = SingleLeaf(group ? *group : scope)) {
+  const auto claim = ClaimOf(scope);
+  if (auto* leaf = claim.leaf) {
     if (leaf->GetScorer() == &irs::ForceConstScore()) {
       if (type == irs::ScoreMergeType::Sum) {
         THROW_SQL_ERROR(
@@ -2157,7 +2151,7 @@ void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
       return;
     }
   }
-  if (!group) {
+  if (!claim.group) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("::merge(...) applies to a boolean group or a "
                             "pattern match"),
@@ -2166,7 +2160,7 @@ void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
                              "prefix, wildcard, regular expression, range or "
                              "fuzzy match."));
   }
-  group->SetMergeType(type);
+  claim.group->SetMergeType(type);
 }
 
 bool TryDispatchScoreCast(BoolTarget parent, const FilterContext& ctx,
@@ -2345,7 +2339,7 @@ bool TryDispatchSqlMinMatchCast(BoolTarget filter, const FilterContext& ctx,
   CheckMinMatchGroup(cast_expr, *min_match, branches);
   auto scope =
     BuildSqlModifierScope(ctx, operand, "::min_match", kMinMatchUnclaimedHint);
-  auto* group = InnermostGroup(*scope);
+  auto* group = ClaimOf(*scope).group;
   SDB_ASSERT(group && group->Size(irs::Occur::Should) == branches);
   SetMinMatch(*group, *min_match);
   CloseScope(filter, std::move(scope));

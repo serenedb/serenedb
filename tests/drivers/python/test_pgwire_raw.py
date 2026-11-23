@@ -4116,3 +4116,35 @@ def test_xact_start_is_the_start_of_each_statements_transaction(conn):
         conn, "ROLLBACK; SELECT state, now() = xact_start AS current " + activity)
     assert not errors(msgs), errors(msgs)
     assert all_fields(msgs) == [b"active", b"t"]
+
+
+def test_text_parameters_take_postgres_input_forms(conn):
+    conn.parse(
+        "input_forms",
+        "SELECT $1::bool, $2::bool, $3::date, $4::date, $5::time, "
+        "$6::timestamptz::text",
+    )
+    conn.bind(
+        "",
+        "input_forms",
+        params=(
+            b"TRUE",
+            b" on ",
+            b"2004-02-01 00:00:00",
+            b"20240102",
+            b"07:08:09+00",
+            b"2026-10-10 09:55:01.123 +00:00",
+        ),
+    )
+    conn.execute("")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), errors(msgs)
+    assert all_fields(msgs) == [
+        b"t",
+        b"t",
+        b"2004-02-01",
+        b"2024-01-02",
+        b"07:08:09",
+        b"2026-10-10 09:55:01.123+00",
+    ]

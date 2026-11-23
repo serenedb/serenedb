@@ -1,0 +1,152 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY mgs_words AS split_text(case := 'lower') WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE mgs_two (id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR);
+
+statement ok
+CREATE INDEX mgs_two_idx ON mgs_two USING inverted (id, body mgs_words, tag mgs_words);
+
+statement ok
+INSERT INTO mgs_two VALUES (1, 'red fox', 'king'), (2, 'blue dog', 'queen');
+
+statement ok
+CREATE TABLE mgs_three (id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR);
+
+statement ok
+CREATE INDEX mgs_three_idx ON mgs_three USING inverted (id, body mgs_words, tag mgs_words);
+
+statement ok
+INSERT INTO mgs_three VALUES (1, 'red fox', 'king'), (2, 'blue dog fax', 'queen'), (3, 'red fax', 'king');
+
+query
+SELECT id,
+       ts_explain(mgs_two_idx.tableoid).clauses[2].value AS group_value,
+       abs(ts_explain(mgs_two_idx.tableoid).clauses[1].value::DOUBLE
+           + ts_explain(mgs_two_idx.tableoid).clauses[2].value::DOUBLE
+           - indri_dirichlet(mgs_two_idx.tableoid)) < 1e-5 AS adds_up
+FROM mgs_two_idx
+WHERE body @@ 'red' AND (body @@ 'fox' OR tag @@ 'king')::merge('max')
+ORDER BY id;
+----
+id	group_value	adds_up
+1	0	t
+
+query
+SELECT id,
+       ts_explain(mgs_three_idx.tableoid).clauses[2].value AS group_value,
+       abs(ts_explain(mgs_three_idx.tableoid).clauses[1].value::DOUBLE
+           + ts_explain(mgs_three_idx.tableoid).clauses[2].value::DOUBLE
+           - indri_dirichlet(mgs_three_idx.tableoid)) < 1e-5 AS adds_up
+FROM mgs_three_idx
+WHERE body @@ 'red' AND (body @@ 'fox' OR tag @@ 'king')::merge('max')
+ORDER BY id;
+----
+id	group_value	adds_up
+1	0	t
+3	0	t
+
+query
+SELECT id,
+       ts_explain(mgs_two_idx.tableoid).clauses[2].value AS group_value,
+       abs(ts_explain(mgs_two_idx.tableoid).clauses[1].value::DOUBLE
+           + ts_explain(mgs_two_idx.tableoid).clauses[2].value::DOUBLE
+           - indri_dirichlet(mgs_two_idx.tableoid)) < 1e-5 AS adds_up
+FROM mgs_two_idx
+WHERE body @@ 'red' AND (body @@ 'fox' AND tag @@ 'king')::merge('max')
+ORDER BY id;
+----
+id	group_value	adds_up
+1	0	t
+
+query
+SELECT id,
+       indri_dirichlet(mgs_two_idx.tableoid) AS score,
+       ts_explain(mgs_two_idx.tableoid).clauses[1].value::DOUBLE < 0 AS negative_clause
+FROM mgs_two_idx
+WHERE (body @@ 'red' AND tag @@ 'king')::merge('max')
+ORDER BY id;
+----
+id	score	negative_clause
+1	0	t
+
+query
+SELECT id,
+       abs(ts_explain(mgs_two_idx.tableoid).clauses[1].value::DOUBLE
+           + greatest(ts_explain(mgs_two_idx.tableoid).clauses[2].clauses[1].value::DOUBLE,
+                      ts_explain(mgs_two_idx.tableoid).clauses[2].clauses[2].value::DOUBLE)
+           - bm25(mgs_two_idx.tableoid)) < 1e-5 AS adds_up
+FROM mgs_two_idx
+WHERE body @@ 'red' AND (body @@ 'fox' AND tag @@ 'king')::merge('max')
+ORDER BY id;
+----
+id	adds_up
+1	t
+
+statement ok
+CREATE TABLE mgs_term_leads (id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR);
+
+statement ok
+CREATE INDEX mgs_term_leads_idx ON mgs_term_leads USING inverted (id, body mgs_words, tag mgs_words);
+
+statement ok
+INSERT INTO mgs_term_leads VALUES
+  (1, 'red fox fox', 'king king king king queen queen queen'),
+  (2, 'fox', 'king'), (3, 'fox', 'king'),
+  (4, 'blue', 'king'), (5, 'blue', 'king'), (6, 'blue', 'king');
+
+statement ok
+CREATE TABLE mgs_group_leads (id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR);
+
+statement ok
+CREATE INDEX mgs_group_leads_idx ON mgs_group_leads USING inverted (id, body mgs_words, tag mgs_words);
+
+statement ok
+INSERT INTO mgs_group_leads VALUES
+  (1, 'red fox fox', 'king king king king queen queen queen'),
+  (2, 'red', 'ace'), (3, 'red', 'ace'), (4, 'red', 'ace'), (5, 'red', 'ace'), (6, 'red', 'ace');
+
+query
+SELECT id, raw_tf(mgs_term_leads_idx.tableoid) AS score
+FROM mgs_term_leads_idx
+WHERE body @@ 'red' AND (body @@ 'fox' AND tag @@ 'king')::merge('max')
+ORDER BY id;
+----
+id	score
+1	5
+
+query
+SELECT id, raw_tf(mgs_group_leads_idx.tableoid) AS score
+FROM mgs_group_leads_idx
+WHERE body @@ 'red' AND (body @@ 'fox' AND tag @@ 'king')::merge('max')
+ORDER BY id;
+----
+id	score
+1	5
+
+query
+SELECT id, raw_tf(mgs_term_leads_idx.tableoid) AS score
+FROM mgs_term_leads_idx
+WHERE (body @@ 'red' AND body @@ 'fox')::merge('max') AND (tag @@ 'king' AND tag @@ 'queen')::merge('max')
+ORDER BY id;
+----
+id	score
+1	6
+
+query
+SELECT id, raw_tf(mgs_term_leads_idx.tableoid) AS score
+FROM mgs_term_leads_idx
+WHERE body @@ 'red' AND (body @@ 'fox' AND (tag @@ 'king' AND tag @@ 'queen')::merge('sum'))::merge('max')
+ORDER BY id;
+----
+id	score
+1	8
+
+query
+SELECT id, raw_tf(mgs_term_leads_idx.tableoid) AS score
+FROM mgs_term_leads_idx
+WHERE (body @@ 'red' AND (body @@ 'fox' AND tag @@ 'king')::merge('sum'))::merge('max')
+ORDER BY id;
+----
+id	score
+1	6

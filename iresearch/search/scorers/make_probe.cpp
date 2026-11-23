@@ -25,6 +25,7 @@
 
 #include <bit>
 
+#include "iresearch/search/scorers/make_conjunction.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
@@ -52,31 +53,15 @@ class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
   }
 
   score_t ScoreOne() const noexcept {
-    score_t res = 0;
-    bool covered = false;
+    auto res = Start();
     if (!_required.IsDefault()) {
-      res = _required.Score();
-      covered = true;
+      irs::Merge<Inner>(res, _required.Score());
     }
     for (size_t i = 0, count = _probed.size(); i != count; ++i) {
       const auto held = _held[i];
       _held[i] = 0;
-      if (!CheckBit(held, 0)) {
-        continue;
-      }
-      const auto one = _probed[i].Score();
-      if (covered) {
-        irs::Merge<Inner>(res, one);
-      } else {
-        res = one;
-        covered = true;
-      }
-    }
-    if constexpr (HasConst) {
-      if (covered) {
-        irs::Merge<Inner>(res, _constant);
-      } else {
-        res = _constant;
+      if (CheckBit(held, 0)) {
+        irs::Merge<Inner>(res, _probed[i].Score());
       }
     }
     return res;
@@ -86,48 +71,35 @@ class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
     SDB_ASSERT(n <= kScoreBlock);
-    ScoreMask covered = 0;
+    std::fill_n(_gathered, n, Start());
     if (!_required.IsDefault()) {
-      _required.Score(_gathered, n);
-      covered = ~ScoreMask{0};
+      _required.Score<Inner>(_gathered, n);
     }
     for (size_t i = 0, count = _probed.size(); i != count; ++i) {
-      const auto held = _held[i];
+      auto held = _held[i];
       _held[i] = 0;
       if (held == 0) {
         continue;
       }
       _probed[i].Score(_scratch, n);
-      auto fresh = held & ~covered;
-      auto again = held & covered;
-      covered |= held;
-      while (fresh != 0) {
-        const auto slot = static_cast<uint32_t>(std::countr_zero(fresh));
-        fresh = PopBit(fresh);
-        _gathered[slot] = _scratch[slot];
-      }
-      while (again != 0) {
-        const auto slot = static_cast<uint32_t>(std::countr_zero(again));
-        again = PopBit(again);
+      do {
+        const auto slot = static_cast<uint32_t>(std::countr_zero(held));
+        held = PopBit(held);
         irs::Merge<Inner>(_gathered[slot], _scratch[slot]);
-      }
+      } while (held != 0);
     }
-    for (scores_size_t i = 0; i != n; ++i) {
-      if (CheckBit(covered, i)) {
-        auto value = _gathered[i];
-        if constexpr (HasConst) {
-          irs::Merge<Inner>(value, _constant);
-        }
-        irs::Merge<Outer>(res[i], value);
-      } else if constexpr (HasConst) {
-        irs::Merge<Outer>(res[i], _constant);
-      } else if constexpr (Outer == ScoreMergeType::Noop) {
-        res[i] = 0;
-      }
-    }
+    irs::Merge<Outer>(res, _gathered, n);
   }
 
  private:
+  score_t Start() const noexcept {
+    if constexpr (HasConst) {
+      return _constant;
+    } else {
+      return 0;
+    }
+  }
+
   ScoreFunction _required;
   containers::Fixed<ScoreFunction> _probed;
   ScoreMask* IRS_RESTRICT _held;
@@ -148,12 +120,8 @@ ScoreFunction MakeProbeScore(ScoreMergeType inner, ScoreFunction&& required,
                              ScoreMask* held, score_t constant) {
   if (!AnyProbed(probed)) {
     probed.clear();
-    if (constant == 0) {
-      return std::move(required);
-    }
-    if (required.IsDefault()) {
-      return ScoreFunction::Constant(constant);
-    }
+    probed.push_back(std::move(required));
+    return MakeConjunctionScore(inner, std::move(probed), constant);
   }
   return Resolve(constant != 0, [&]<bool HasConst> {
     return Resolve(inner, [&]<ScoreMergeType M> {

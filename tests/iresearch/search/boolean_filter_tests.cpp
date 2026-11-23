@@ -3818,10 +3818,10 @@ TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
                                           kFieldTestField, prefix);
       child.SetBoost(2.f);
       child.SetScorer(&tfidf);
-      child.mutable_options()->merge = irs::ScoreMergeType::Sum;
     }
     root->SetBoost(3.f);
     AsDisjunction(*root);
+    root->SetMergeType(irs::ScoreMergeType::Max);
 
     irs::Filter::ptr filter = std::move(root);
     irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
@@ -3830,6 +3830,25 @@ TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
     ASSERT_NE(nullptr, fused);
     EXPECT_EQ(6.f, fused->GetBoost());
   }
+}
+
+TEST(OrAcceptorFusion_test, scored_sum_stays_clauses) {
+  irs::TFIDF tfidf;
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto* prefix : {"ax", "axl"}) {
+    auto& child =
+      Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, prefix);
+    child.SetScorer(&tfidf);
+    child.mutable_options()->merge = irs::ScoreMergeType::Sum;
+  }
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(2, irs::utils::downCast<irs::BooleanFilter>(*filter).Size(
+                 irs::Occur::Should));
 }
 
 TEST(OrAcceptorFusion_test, scored_constants_stay_clauses) {

@@ -164,8 +164,47 @@ void RescoreWhileReachable(ScanGlobalState& g, AnnLocalState& l,
   }
 }
 
+irs::Filter::ptr ExactFilter(const ScanGlobalState& g) {
+  auto vs = *g.vector_scorer;
+  vs.exact = true;
+  return MakeVectorFilter(vs, g.ClaimedWhere(), vs.EffectiveRadius());
+}
+
+void RankSegment(ScanGlobalState& g, RankedLocalState& l,
+                 const irs::Filter& exact, const irs::SubReader& segment,
+                 irs::ann::Collector& collector) {
+  const auto query = exact.PrepareSegment(segment, {});
+  if (g.profile && !irs::QueryBuilder::IsEmpty(*query)) {
+    query->SetProfile(g.profile->Query(), 0);
+  }
+  l.score_fetcher.Clear();
+  auto root = irs::ann::MakeRoot(
+    *query, {.scorer = *g.scorer_obj,
+             .fetcher = l.score_fetcher,
+             .table = BeginVerify(l.col_verify, segment, g, l),
+             .k = collector.K()});
+  EnsurePlanned(static_cast<bool>(root));
+  root->Run(collector);
+}
+
+bool RanksShortSegments(const ScanGlobalState& g) {
+  const auto* vs = g.vector_scorer;
+  return !g.has_lookup_filter && !vs->exact &&
+         vs->radius == std::numeric_limits<float>::max() &&
+         absl::c_any_of(g.col_filters,
+                        [](const ScanGlobalState::ColFilter& filter) {
+                          return filter.is_score && !filter.keeps_best;
+                        });
+}
+
 void FlushSegment(ScanGlobalState& g, AnnLocalState& l) {
   auto pool = l.collector->Flush();
+  if (pool.size() < l.collector->K() && RanksShortSegments(g)) {
+    l.collector->Clear();
+    l.segment_floor->Reset(g.score_static_floor);
+    RankSegment(g, l, *ExactFilter(g), (*g.reader)[l.pool_seg], *l.collector);
+    pool = l.collector->Flush();
+  }
   if (!pool.empty()) {
     for (auto& hit : pool) {
       hit.segment_idx = l.pool_seg;
@@ -185,7 +224,6 @@ void FlushSegment(ScanGlobalState& g, AnnLocalState& l) {
           l.rescored.push_back(hit);
         }
       }
-      l.segment_floor->Reset(g.score_static_floor);
     } else if (g.ann.rescore) {
       absl::c_copy_if(pool, std::back_inserter(l.pending),
                       [bar = RescoreBar(g.ann)](const irs::ScoreDoc& hit) {
@@ -196,6 +234,9 @@ void FlushSegment(ScanGlobalState& g, AnnLocalState& l) {
     }
   }
   l.collector->Clear();
+  if (l.segment_floor) {
+    l.segment_floor->Reset(g.score_static_floor);
+  }
 }
 
 void CollectUnit(ScanGlobalState& g, AnnLocalState& l) {
@@ -260,10 +301,7 @@ void Merge(ScanGlobalState& g, AnnLocalState& l) {
 
 std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, RankedLocalState& l,
                                        uint64_t per_segment) {
-  auto vs = *g.vector_scorer;
-  vs.exact = true;
-  const auto filter =
-    MakeVectorFilter(vs, g.ClaimedWhere(), vs.EffectiveRadius());
+  const auto filter = ExactFilter(g);
   std::vector<irs::ScoreDoc> ranked;
   for (const auto seg : g.segment_order) {
     l.Classify(g, seg);
@@ -275,20 +313,9 @@ std::vector<irs::ScoreDoc> RankExactly(ScanGlobalState& g, RankedLocalState& l,
     if (slots == 0) {
       continue;
     }
-    const auto query = filter->PrepareSegment(segment, {});
-    if (g.profile && !irs::QueryBuilder::IsEmpty(*query)) {
-      query->SetProfile(g.profile->Query(), 0);
-    }
     irs::ann::SharedFloor floor{static_cast<uint32_t>(slots)};
     irs::ann::Collector collector{floor, static_cast<uint32_t>(slots)};
-    l.score_fetcher.Clear();
-    auto root = irs::ann::MakeRoot(
-      *query, {.scorer = *g.scorer_obj,
-               .fetcher = l.score_fetcher,
-               .table = BeginVerify(l.col_verify, segment, g, l),
-               .k = static_cast<uint32_t>(slots)});
-    EnsurePlanned(static_cast<bool>(root));
-    root->Run(collector);
+    RankSegment(g, l, *filter, segment, collector);
     auto hits = collector.Flush();
     if (hits.size() > slots) {
       std::nth_element(hits.begin(), hits.begin() + slots, hits.end(),
@@ -403,7 +430,7 @@ void InitAnnGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
 void InitAnnLocal(ScanGlobalState& g, AnnLocalState& l) {
   SDB_ASSERT(l.worker < g.workers);
   const auto k = g.ann.floor->K();
-  if (g.has_lookup_filter) {
+  if (g.has_lookup_filter || RanksShortSegments(g)) {
     l.segment_floor.emplace(k, g.score_static_floor);
     l.collector.emplace(*l.segment_floor, k);
   } else {

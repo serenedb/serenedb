@@ -26,7 +26,6 @@
 #include <absl/strings/str_split.h>
 #include <fast_float/fast_float.h>
 
-#include <duckdb/catalog/catalog.hpp>
 #include <duckdb/main/database.hpp>
 #include <iresearch/analysis/classification_tokenizer.hpp>
 #include <iresearch/analysis/collation_tokenizer.hpp>
@@ -155,8 +154,7 @@ constexpr std::string_view kCreateOperation = "CREATE TEXT SEARCH DICTIONARY";
 
 class CreateTSDictionaryOptions : public OptionsParser {
  public:
-  CreateTSDictionaryOptions(duckdb::ClientContext& context,
-                            std::string_view type, Options options,
+  CreateTSDictionaryOptions(std::string_view type, Options options,
                             TokenizerConfigs children,
                             std::string_view operation = kCreateOperation)
     : OptionsParser{std::move(options),
@@ -165,9 +163,8 @@ class CreateTSDictionaryOptions : public OptionsParser {
                      .help_hint = operation == kCreateOperation
                                     ? "Use WITH (HELP) to see available options"
                                     : ""}},
-      _context{context},
       _children{std::move(children)} {
-    ParseOptions([&] { BuildChild(type, _config); });
+    ParseOptions([&] { Dispatch(type, _config); });
   }
 
   irs::analysis::TokenizerConfig Result() && { return std::move(_config); }
@@ -668,14 +665,6 @@ class CreateTSDictionaryOptions : public OptionsParser {
     return opts;
   }
 
-  void BuildChild(std::string_view type, irs::analysis::TokenizerConfig& out) {
-    if (type == tokenizer_options::kDictionaryTemplate) {
-      BuildDictionary(out);
-      return;
-    }
-    Dispatch(type, out);
-  }
-
   template<auto Builder>
   static void Build(CreateTSDictionaryOptions& self,
                     irs::analysis::TokenizerConfig& cfg) {
@@ -729,21 +718,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     it->second(*this, out);
   }
 
-  void BuildDictionary(irs::analysis::TokenizerConfig& out) {
-    std::string from = Value<tokenizer_options::kFrom>();
-    auto tokenizer = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-      _context, duckdb::QualifiedName::Parse(from),
-      duckdb::OnEntryNotFound::RETURN_NULL);
-    if (!tokenizer) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-        ERR_MSG("text search dictionary \"", from, "\" does not exist"));
-    }
-    out = irs::analysis::Clone(tokenizer->Config());
-  }
-
   irs::analysis::TokenizerConfig _config;
-  duckdb::ClientContext& _context;
   TokenizerConfigs _children;
 };
 
@@ -804,12 +779,11 @@ void CheckWithClause(const duckdb::named_parameter_map_t& with) {
 
 }  // namespace
 
-irs::analysis::TokenizerConfig BuildStage(duckdb::ClientContext& context,
-                                          std::string_view type,
+irs::analysis::TokenizerConfig BuildStage(std::string_view type,
                                           Options options,
                                           TokenizerConfigs children,
                                           std::string_view operation) {
-  return std::move(CreateTSDictionaryOptions{context, type, std::move(options),
+  return std::move(CreateTSDictionaryOptions{type, std::move(options),
                                              std::move(children), operation})
     .Result();
 }

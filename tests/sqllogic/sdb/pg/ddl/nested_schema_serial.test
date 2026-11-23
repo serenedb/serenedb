@@ -1,0 +1,319 @@
+control substitution on
+
+
+statement ok
+CREATE SCHEMA nss1;
+
+
+statement ok
+CREATE SCHEMA nss1.nss2;
+
+
+statement ok
+CREATE TABLE nss1.nss2.nss_t (id SERIAL, a INT);
+
+
+statement ok
+INSERT INTO nss1.nss2.nss_t (a) VALUES (1);
+
+
+statement error
+ALTER SCHEMA nss1.nss2 RENAME TO nss3;
+----
+db error: ERROR: Cannot alter entry "nss2" because there are entries that depend on it.
+table "nss_t" depends on sequence "nss_t_id_seq".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement error
+ALTER SCHEMA nss1 RENAME TO nssm1;
+----
+db error: ERROR: Cannot alter entry "nss1" because there are entries that depend on it.
+table "nss_t" depends on sequence "nss_t_id_seq".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement error
+ALTER TABLE nss1.nss2.nss_t SET SCHEMA public;
+----
+db error: ERROR: Cannot alter entry "nss_t" because there are entries that depend on it.
+table "nss_t" depends on sequence "nss_t_id_seq".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+CREATE SCHEMA nss_i1;
+
+
+statement ok
+CREATE SCHEMA nss_i1.nss_i2;
+
+
+statement ok
+CREATE TABLE nss_i1.nss_i2.nss_i (a INT);
+
+
+statement ok
+CREATE INDEX nss_i_a ON nss_i1.nss_i2.nss_i (a);
+
+
+statement ok
+INSERT INTO nss_i1.nss_i2.nss_i VALUES (1);
+
+
+statement ok
+ALTER SCHEMA nss_i1.nss_i2 RENAME TO nss_i3;
+
+
+statement ok
+ALTER SCHEMA nss_i1 RENAME TO nss_i4;
+
+
+statement ok
+INSERT INTO nss_i4.nss_i3.nss_i VALUES (2);
+
+
+query
+SELECT a FROM nss_i4.nss_i3.nss_i ORDER BY a;
+----
+a
+1
+2
+
+
+statement ok
+CREATE VIEW nss_i4.nss_i3.nss_v AS SELECT a FROM nss_i4.nss_i3.nss_i;
+
+
+statement error
+ALTER SCHEMA nss_i4.nss_i3 RENAME TO nss_i5;
+----
+db error: ERROR: Cannot alter entry "nss_i3" because there are entries that depend on it.
+view "nss_v" depends on table "nss_i".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+CREATE TABLE nss_i4.nss_i3.nss_j (a INT);
+
+
+statement ok
+CREATE VIEW nss_i4.nss_i3.nss_v2 AS SELECT nss_i.a FROM nss_i4.nss_i3.nss_i JOIN nss_i4.nss_i3.nss_j ON nss_i.a = nss_j.a;
+
+
+statement error
+ALTER SCHEMA nss_i4 RENAME TO nss_i9;
+----
+db error: ERROR: Cannot alter entry "nss_i4" because there are entries that depend on it.
+view "nss_v" depends on table "nss_i".
+view "nss_v2" depends on table "nss_i".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+CREATE TABLE nss_i4.nss_i3.nss_plain (a INT);
+
+
+statement ok
+ALTER TABLE nss_i4.nss_i3.nss_plain SET SCHEMA public;
+
+
+statement ok
+INSERT INTO nss_plain VALUES (1);
+
+
+statement ok
+CREATE SCHEMA nss_g1;
+
+
+statement ok
+CREATE SCHEMA nss_g1.nss_g2;
+
+
+statement ok
+CREATE TABLE nss_g1.nss_g2.nss_src (v INT);
+
+
+statement ok
+CREATE TABLE nss_g1.nss_g2.nss_log (v INT);
+
+
+statement ok
+CREATE TRIGGER nss_trg AFTER INSERT ON nss_g1.nss_g2.nss_src FOR EACH ROW INSERT INTO nss_g1.nss_g2.nss_log VALUES (NEW.v);
+
+
+statement error
+ALTER SCHEMA nss_g1.nss_g2 RENAME TO nss_g3;
+----
+db error: ERROR: Cannot alter entry "nss_g2" because there are entries that depend on it.
+trigger "nss_trg" on table "nss_src" depends on table "nss_log".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+CREATE TABLE nss_top (id SERIAL, a INT);
+
+
+statement ok
+INSERT INTO nss1.nss2.nss_t (a) VALUES (2);
+
+
+query
+SELECT id, a FROM nss1.nss2.nss_t ORDER BY a;
+----
+id	a
+1	1
+2	2
+
+
+statement ok
+CREATE SCHEMA nss_flat;
+
+
+statement ok
+ALTER TABLE nss_top SET SCHEMA nss_flat;
+
+
+statement ok
+ALTER SCHEMA nss_flat RENAME TO nss_flat2;
+
+
+statement ok
+INSERT INTO nss_flat2.nss_top (a) VALUES (1), (2);
+
+
+query
+SELECT id, a FROM nss_flat2.nss_top ORDER BY a;
+----
+id	a
+1	1
+2	2
+
+
+statement ok
+DROP DATABASE IF EXISTS nss_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS nss_dst_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE nss_src_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE nss_dst_${__DATABASE__};
+
+
+statement ok
+USE nss_src_${__DATABASE__};
+
+
+statement ok
+CREATE SCHEMA nss_c1;
+
+
+statement ok
+CREATE SCHEMA nss_c1.nss_c2;
+
+
+statement ok
+CREATE FUNCTION nss_c1.nss_c2.nss_pos(x INT) RETURNS BOOLEAN LANGUAGE sql AS 'SELECT x > 0';
+
+
+statement ok
+CREATE TABLE nss_c1.nss_c2.nss_w (id SERIAL, a INT CHECK (nss_c1.nss_c2.nss_pos(a)));
+
+
+statement ok
+INSERT INTO nss_c1.nss_c2.nss_w (a) VALUES (1);
+
+
+statement ok
+CREATE TYPE nss_c1.nss_c2.nss_mood AS ENUM ('ok', 'bad');
+
+
+statement ok
+CREATE TABLE nss_c1.nss_c2.nss_m (m TEXT CHECK (m::nss_c1.nss_c2.nss_mood IS NOT NULL));
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+COPY FROM DATABASE nss_src_${__DATABASE__} TO nss_dst_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE nss_src_${__DATABASE__};
+
+
+statement ok
+USE nss_dst_${__DATABASE__};
+
+
+statement ok
+INSERT INTO nss_c1.nss_c2.nss_w (a) VALUES (2);
+
+
+statement ok
+INSERT INTO nss_c1.nss_c2.nss_m VALUES ('ok');
+
+
+query
+SELECT m FROM nss_c1.nss_c2.nss_m;
+----
+m
+ok
+
+
+statement error
+INSERT INTO nss_c1.nss_c2.nss_w (a) VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "nss_w" with expression CHECK(nss_dst_<slt:ignore>.nss_c1.nss_c2.nss_pos(a))
+
+
+query
+SELECT id, a FROM nss_c1.nss_c2.nss_w ORDER BY a;
+----
+id	a
+1	1
+2	2
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE nss_dst_${__DATABASE__};
+
+
+statement ok
+CREATE SCHEMA nss_d1;
+
+
+statement ok
+CREATE SCHEMA nss_d1.nss_d2;
+
+
+statement ok
+CREATE SCHEMA nss_d1.nss_d2.nss_d3;
+
+
+statement ok
+CREATE TABLE nss_d1.nss_d2.nss_d3.nss_dt (id SERIAL, a INT);
+
+
+statement error
+ALTER SCHEMA nss_d1 RENAME TO nss_d9;
+----
+db error: ERROR: Cannot alter entry "nss_d1" because there are entries that depend on it.
+table "nss_dt" depends on sequence "nss_dt_id_seq".
+Drop the dependent entries first and recreate them after the change.
+
+
+statement ok
+INSERT INTO nss_d1.nss_d2.nss_d3.nss_dt (a) VALUES (1);

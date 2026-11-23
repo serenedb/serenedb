@@ -163,6 +163,7 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kSplit = 2;
 
   SegmentRowGroups groups;
+  uint64_t first_row = 0;
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
   uint32_t base = 0;
@@ -286,6 +287,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     irs::field_id field;
     const duckdb::TableFilter* filter;
     bool is_score = false;
+    bool keeps_best = false;
     bool is_dynamic = false;
     bool optional = false;
     bool row_gather = false;

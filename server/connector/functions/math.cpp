@@ -420,10 +420,13 @@ void MakeTimestampFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 duckdb::unique_ptr<duckdb::FunctionData> BindDateBin(
   duckdb::BindScalarFunctionInput& input) {
   const auto stride = input.TryGetConstant(0);
-  if (!stride) {
+  const auto interval =
+    stride ? stride->DefaultTryCastAs(duckdb::LogicalType::INTERVAL)
+           : std::optional<duckdb::Value>{};
+  if (!interval) {
     input.GetBoundFunction().SetFallible();
-  } else if (!stride->IsNull()) {
-    const auto value = stride->GetValue<duckdb::interval_t>();
+  } else if (!interval->IsNull()) {
+    const auto value = interval->GetValue<duckdb::interval_t>();
     if (value.months != 0 ||
         value.micros + static_cast<int64_t>(value.days) * 86400'000'000LL <=
           0) {

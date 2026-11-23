@@ -523,11 +523,17 @@ bool PgWireSession<Kind>::SetupConnection() {
   keep_as_default("session_authorization");
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
 
-  const auto apply = [&](const std::string& name, const std::string& value) {
+  const auto set = [&](const std::string& name, const std::string& value) {
     try {
       _connection_ctx->SetSettingChecked(name, value, false);
     } catch (const duckdb::InternalException&) {
       _connection_ctx->SetSetting(name, value, false);
+    }
+    keep_as_default(name);
+  };
+  const auto apply = [&](const std::string& name, const std::string& value) {
+    try {
+      set(name, value);
     } catch (const std::exception& exception) {
       if (name == "client_encoding") {
         _connection_ctx->AddNotice(
@@ -539,7 +545,6 @@ bool PgWireSession<Kind>::SetupConnection() {
       WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
       return false;
     }
-    keep_as_default(name);
     return true;
   };
   std::vector<StartupSetting> settings;
@@ -549,8 +554,26 @@ bool PgWireSession<Kind>::SetupConnection() {
       return false;
     }
   }
+  std::vector<StartupSetting> role_settings;
+  catalog::ReadEntry<catalog::RoleCatalogEntry>(
+    user, [&](const catalog::RoleCatalogEntry& entry) {
+      for (const std::string_view item : entry.Config()) {
+        const auto eq = item.find('=');
+        role_settings.push_back({.name = std::string{item.substr(0, eq)},
+                                 .value = std::string{item.substr(eq + 1)}});
+      }
+    });
   bool applied = true;
   _conn->context->RunFunctionInTransaction([&] {
+    for (const auto& [name, value] : role_settings) {
+      try {
+        set(name, value);
+      } catch (const std::exception& exception) {
+        auto notice = irs::pg::ToSqlError(exception);
+        notice.errcode = ERRCODE_WARNING;
+        _connection_ctx->AddNotice(std::move(notice));
+      }
+    }
     for (const auto& [name, value] : settings) {
       if (!apply(name, value)) {
         applied = false;

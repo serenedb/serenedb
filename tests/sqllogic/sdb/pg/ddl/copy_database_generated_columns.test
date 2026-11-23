@@ -1,0 +1,120 @@
+control substitution on
+
+
+statement ok
+DROP DATABASE IF EXISTS cdg_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS cdg_dst_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE cdg_src_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE cdg_dst_${__DATABASE__};
+
+
+statement ok
+USE cdg_src_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE cdg_s (a INT, b INT GENERATED ALWAYS AS (a + 1) STORED, c TEXT);
+
+
+statement ok
+CREATE TABLE cdg_v (a INT, b INT GENERATED ALWAYS AS (a * 10) VIRTUAL);
+
+
+statement ok
+CREATE SCHEMA cdg_n1;
+
+
+statement ok
+CREATE SCHEMA cdg_n1.cdg_n2;
+
+
+statement ok
+CREATE FUNCTION cdg_n1.cdg_n2.cdg_twice(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x * 2';
+
+
+statement ok
+CREATE TABLE cdg_n1.cdg_n2.cdg_f (a INT, b INT GENERATED ALWAYS AS (cdg_n1.cdg_n2.cdg_twice(a)) STORED);
+
+
+statement ok
+INSERT INTO cdg_s (a, c) VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+INSERT INTO cdg_v (a) VALUES (1), (2);
+
+
+statement ok
+INSERT INTO cdg_n1.cdg_n2.cdg_f (a) VALUES (1), (2);
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+COPY FROM DATABASE cdg_src_${__DATABASE__} TO cdg_dst_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE cdg_src_${__DATABASE__};
+
+
+statement ok
+USE cdg_dst_${__DATABASE__};
+
+
+statement ok
+INSERT INTO cdg_s (a, c) VALUES (3, 'three');
+
+
+statement ok
+INSERT INTO cdg_v (a) VALUES (3);
+
+
+statement ok
+INSERT INTO cdg_n1.cdg_n2.cdg_f (a) VALUES (3);
+
+
+query
+SELECT a, b, c FROM cdg_s ORDER BY a;
+----
+a	b	c
+1	2	one
+2	3	two
+3	4	three
+
+
+query
+SELECT a, b FROM cdg_v ORDER BY a;
+----
+a	b
+1	10
+2	20
+3	30
+
+
+query
+SELECT a, b FROM cdg_n1.cdg_n2.cdg_f ORDER BY a;
+----
+a	b
+1	2
+2	4
+3	6
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE cdg_dst_${__DATABASE__};

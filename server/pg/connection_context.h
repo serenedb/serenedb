@@ -232,6 +232,7 @@ class ConnectionContext final : public duckdb::ClientContext {
     return _progress;
   }
   void ReportIdle();
+  absl::Mutex& SettingWritesMutex() noexcept { return _setting_writes; }
 
   int copy_stdin_open_count = 0;
   bool copy_stdin_done = false;
@@ -293,6 +294,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   const duckdb::idx_t _login_role_id;
   duckdb::idx_t _session_role_id;
   duckdb::idx_t _effective_role_id;
+  const bool _owns_temporary_objects;
   SideChannel _side_channel;
   bool _in_transaction_block = false;
   std::atomic<NoticeNode*> _notices{nullptr};
@@ -302,6 +304,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   irs::containers::NodeHashMap<std::string, TxnVariable> _variables;
   catalog::SessionSlot& _slot;
   absl::Mutex _transaction_mutex;
+  absl::Mutex _setting_writes;
   std::shared_ptr<catalog::SessionTransaction> _transaction;
   duckdb::transaction_t _transaction_owner = duckdb::MAX_TRANSACTION_ID;
   utils::DrainGate::Pass _commit_pass;

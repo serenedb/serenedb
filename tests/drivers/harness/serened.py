@@ -214,6 +214,7 @@ class Serened:
         return self.start(timeout=timeout)
 
     def stop(self, keep_datadir=False):
+        died = self.proc is not None and self.proc.poll() not in (None, 0)
         self.graceful_stop(timeout=30)
         self.kill()
         for sock in self.reserved:
@@ -224,8 +225,20 @@ class Serened:
             except OSError:
                 pass
             self._log_fh = None
+        if died:
+            self.keep_logs()
         if self.owns_datadir and not keep_datadir:
             shutil.rmtree(self.datadir, ignore_errors=True)
+
+    def keep_logs(self):
+        dest = os.environ.get("SDB_DRV_JUNIT")
+        if not dest or not self.log_path:
+            return
+        os.makedirs(dest, exist_ok=True)
+        for generation in range(1, self.generation + 1):
+            path = self.log_path if generation == 1 else f"{self.log_path}.{generation}"
+            if os.path.exists(path):
+                shutil.copy(path, os.path.join(dest, f"serened-{self.port}-{generation}.log"))
 
     def preserve_datadir(self, dest_root):
         os.makedirs(dest_root, exist_ok=True)

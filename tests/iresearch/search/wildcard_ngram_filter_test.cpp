@@ -169,10 +169,14 @@ TEST(WildcardNGramFilterOptionsTest, short_pieces) {
   EXPECT_EQ(irs::GramQuery{}, any.query);
   EXPECT_NE(nullptr, any.matcher);
 
-  EXPECT_NE(nullptr,
+  EXPECT_EQ(nullptr,
             irs::ByWildcardNGramOptions("bc%", analyzer, false).matcher);
   EXPECT_EQ(nullptr,
             irs::ByWildcardNGramOptions("bc%", analyzer, true).matcher);
+  EXPECT_NE(nullptr,
+            irs::ByWildcardNGramOptions("bcd%", analyzer, false).matcher);
+  EXPECT_EQ(nullptr,
+            irs::ByWildcardNGramOptions("bcd%", analyzer, true).matcher);
 }
 
 TEST(WildcardNGramFilterOptionsTest, equality_empty) {

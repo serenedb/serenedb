@@ -41,6 +41,7 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/function/scalar/string_functions.hpp>
 #include <duckdb/main/config.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
@@ -3835,6 +3836,13 @@ TEST(ColCodecNames, ColumnstoreCompressionTypesRoundTrip) {
     EXPECT_TRUE(absl::EqualsIgnoreCase(magic_enum::enum_name(codec), name));
     EXPECT_EQ(irs::codecs::FindCodec(type), codec);
   }
+}
+
+TEST(ColCodecNames, SetColumnCompressionAlterTypeRoundTrips) {
+  constexpr auto kType = duckdb::AlterTableType::SET_COLUMN_COMPRESSION;
+  const std::string_view name = duckdb::EnumUtil::ToChars(kType);
+  EXPECT_EQ(name, "SET_COLUMN_COMPRESSION");
+  EXPECT_EQ(duckdb::EnumUtil::FromString<duckdb::AlterTableType>(name), kType);
 }
 
 TEST_F(ColCodecsTest, CorruptedDictionaryCodesAreRejected) {

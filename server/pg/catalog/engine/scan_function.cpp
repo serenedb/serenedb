@@ -196,7 +196,8 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context))
       .Cast<catalog::BaseCatalog>();
   if (input.binder) {
-    input.binder->GetStatementProperties().RegisterDBRead(catalog, context);
+    input.binder->GetStatementProperties().RegisterDBRead(
+      catalog, context, input.binder->CheckAs());
   }
   return duckdb::make_uniq<SystemTableBindData>(table, catalog, nullptr);
 }

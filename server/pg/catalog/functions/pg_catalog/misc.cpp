@@ -455,6 +455,7 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {
   auto& context = state.GetContext();
+  const auto caller = CallerAccess(state);
   const auto names = args.data[0].Values<duckdb::string_t>();
   const auto oks = args.data[1].Values<bool>();
   auto writer =
@@ -482,7 +483,7 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
     const auto key = AsView(name.GetValue());
     duckdb::Value value;
     if (context.TryGetCurrentSetting(duckdb::Identifier{key}, value)) {
-      duckdb::Settings::CheckRead(context, duckdb::Identifier{key});
+      duckdb::Settings::CheckRead(context, duckdb::Identifier{key}, caller);
       value = duckdb::Settings::FormatDisplayValue(context, value);
       last_found = row;
       last_value = value.IsNull()

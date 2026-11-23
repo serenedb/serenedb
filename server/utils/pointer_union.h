@@ -66,7 +66,7 @@ class PointerUnion {
     static_assert(kHolds<T>);
     const auto raw = reinterpret_cast<uintptr_t>(pointer);
     SDB_ASSERT((raw & kTagMask) == 0);
-    _value = pointer == nullptr ? 0 : raw | kTag<T>;
+    _value = pointer ? raw | kTag<T> : 0;
   }
 
   void Reset() noexcept { _value = 0; }

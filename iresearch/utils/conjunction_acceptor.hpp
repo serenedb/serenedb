@@ -21,13 +21,13 @@
 #pragma once
 
 #include <absl/container/flat_hash_map.h>
+#include <absl/synchronization/mutex.h>
 
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -114,8 +114,8 @@ class RegexpConjunction {
 
   State Step(State from, byte_type label) const {
     const auto c = _bytemap[label];
-    if (const auto* next = from->Next()[c].load(std::memory_order_acquire);
-        next != nullptr) [[likely]] {
+    if (const auto* next = from->Next()[c].load(std::memory_order_acquire))
+      [[likely]] {
       return next;
     }
     return StepSlow(from, c);
@@ -164,7 +164,7 @@ class RegexpConjunction {
   bytes_view _infix;
   KeyBytes _bytes;
   size_t _max_mem;
-  mutable std::mutex _mutex;
+  mutable absl::Mutex _mutex;
   mutable absl::flat_hash_map<Parts, Row*> _rows;
   mutable RowArena _arena;
   Row* _dead{nullptr};
@@ -225,8 +225,8 @@ class FuzzyConjunction {
 
   State Step(State from, byte_type label) const {
     const auto c = _bytemap[label];
-    if (const auto* next = from->Next()[c].load(std::memory_order_acquire);
-        next != nullptr) [[likely]] {
+    if (const auto* next = from->Next()[c].load(std::memory_order_acquire))
+      [[likely]] {
       return next;
     }
     return StepSlow(from, c);
@@ -276,7 +276,7 @@ class FuzzyConjunction {
     _patterns;
   size_t _size;
   std::array<uint8_t, RegexpAcceptor::kMaxLabel + 1> _representative{};
-  mutable std::mutex _mutex;
+  mutable absl::Mutex _mutex;
   Row* _dead{nullptr};
   Row* _unknown{nullptr};
   State _start{nullptr};

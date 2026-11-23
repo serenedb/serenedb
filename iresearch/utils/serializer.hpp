@@ -25,10 +25,12 @@
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iterator>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <optional>
@@ -65,6 +67,7 @@ static_assert(BOOST_PFR_ENABLED);
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/pg/error_mapping.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/std.hpp"
 
 namespace irs::utils {
 namespace detail {
@@ -133,11 +136,9 @@ template<typename T>
 concept IsSet = std::same_as<typename T::key_type, typename T::value_type>;
 
 template<typename T>
-struct IsString : std::false_type {};
-template<typename C, typename T>
-struct IsString<std::basic_string_view<C, T>> : std::true_type {};
-template<typename C, typename T, typename A>
-struct IsString<std::basic_string<C, T, A>> : std::true_type {};
+inline constexpr bool kIsStringType =
+  irstd::kIsSpecialization<T, std::basic_string> ||
+  irstd::kIsSpecialization<T, std::basic_string_view>;
 
 template<typename T>
 struct IsArray : std::false_type {};
@@ -154,39 +155,7 @@ struct IsArray<std::array<T, N>> : std::true_type {};
 // struct IsArray<T[N]> : std::true_type {};
 
 template<typename T>
-struct IsTuple : std::false_type {};
-template<typename... Args>
-struct IsTuple<std::tuple<Args...>> : std::true_type {};
-template<typename... Args>
-struct IsTuple<std::pair<Args...>> : std::true_type {};
-
-template<typename T>
-struct IsOptional : std::false_type {};
-template<typename... Args>
-struct IsOptional<std::optional<Args...>> : std::true_type {};
-
-template<typename T>
-struct IsUniquePtr : std::false_type {};
-template<typename... Args>
-struct IsUniquePtr<std::unique_ptr<Args...>> : std::true_type {};
-
-template<typename T>
-struct IsSharedPtr : std::false_type {};
-template<typename... Args>
-struct IsSharedPtr<std::shared_ptr<Args...>> : std::true_type {};
-
-template<typename... Args>
-struct IsVariant : std::false_type {};
-template<typename... Args>
-struct IsVariant<std::variant<Args...>> : std::true_type {};
-
-template<typename T>
-struct IsDeleted : std::false_type {};
-template<typename T>
-struct IsDeleted<Deleted<T>> : std::true_type {};
-
-template<typename T>
-concept IsRange = requires(std::enable_if_t<!IsString<T>::value, T> t) {
+concept IsRange = requires(std::enable_if_t<!kIsStringType<T>, T> t) {
   t.begin();
   t.end();
 };
@@ -264,22 +233,26 @@ template<typename T>
 }  // namespace detail
 
 template<typename T>
-inline constexpr bool kIsString = detail::IsString<std::decay_t<T>>::value;
+inline constexpr bool kIsString = detail::kIsStringType<std::decay_t<T>>;
 
 template<typename T>
 inline constexpr bool kIsArray = detail::IsArray<std::decay_t<T>>::value;
 
 template<typename T>
-inline constexpr bool kIsTuple = detail::IsTuple<std::decay_t<T>>::value;
+inline constexpr bool kIsTuple =
+  irstd::kIsSpecialization<std::decay_t<T>, std::tuple> ||
+  irstd::kIsSpecialization<std::decay_t<T>, std::pair>;
 
 template<typename T>
-inline constexpr bool kIsOptional = detail::IsOptional<T>::value;
+inline constexpr bool kIsOptional = irstd::kIsSpecialization<T, std::optional>;
 
 template<typename T>
-inline constexpr bool kIsUniquePtr = detail::IsUniquePtr<T>::value;
+inline constexpr bool kIsUniquePtr =
+  irstd::kIsSpecialization<T, std::unique_ptr>;
 
 template<typename T>
-inline constexpr bool kIsSharedPtr = detail::IsSharedPtr<T>::value;
+inline constexpr bool kIsSharedPtr =
+  irstd::kIsSpecialization<T, std::shared_ptr>;
 
 template<typename T>
 inline constexpr bool kIsPointer =
@@ -294,10 +267,10 @@ inline constexpr bool kIsPrimitive =
   std::is_arithmetic_v<T> || kIsString<T> || std::is_enum_v<T>;
 
 template<typename T>
-inline constexpr bool kIsVariant = detail::IsVariant<T>::value;
+inline constexpr bool kIsVariant = irstd::kIsSpecialization<T, std::variant>;
 
 template<typename T>
-inline constexpr bool kIsDeleted = detail::IsDeleted<T>::value;
+inline constexpr bool kIsDeleted = irstd::kIsSpecialization<T, Deleted>;
 
 template<typename T>
 inline constexpr bool kIsFieldObject =
@@ -358,18 +331,12 @@ const T& DefaultValue() {
 
 template<size_t I>
 inline constexpr auto kFieldTag = [] {
-  constexpr size_t kDigits = [] {
-    size_t digits = 1;
-    for (size_t v = I; v >= 10; v /= 10) {
-      ++digits;
-    }
-    return digits;
+  constexpr auto kDigits = [] {
+    char digits[std::numeric_limits<size_t>::digits10 + 1];
+    return std::to_chars(std::begin(digits), std::end(digits), I).ptr - digits;
   }();
   FixedString<kDigits> tag;
-  size_t v = I;
-  for (size_t i = kDigits; i-- > 0; v /= 10) {
-    tag.value[i] = static_cast<char>('0' + v % 10);
-  }
+  std::to_chars(tag.value, tag.value + kDigits, I);
   return tag;
 }();
 

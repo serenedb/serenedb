@@ -251,7 +251,7 @@ class LevenshteinAcceptor {
         continue;
       }
       own[LeadByte(c)] = true;
-      const uint32_t continuations = c < 0x800 ? 1 : c < 0x10000 ? 2 : 3;
+      const uint32_t continuations = utf8_utils::LengthFromChar32(c) - 1;
       for (uint32_t i = 0; i != continuations; ++i) {
         own[0x80 | ((c >> (6 * i)) & 0x3FU)] = true;
       }

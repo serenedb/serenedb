@@ -53,9 +53,7 @@ BANNED = [
     ),
 ]
 
-EXCEPTIONS = {
-    "iresearch/utils/crash_handler.cpp": {"snprintf"},
-}
+EXCEPTIONS: dict[str, set[str]] = {}
 
 
 def check_file(path: str) -> list[str]:

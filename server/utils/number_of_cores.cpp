@@ -32,7 +32,6 @@
 #include <cstdint>
 #include <fstream>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
-#include <iresearch/utils/operating_system.hpp>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -55,12 +54,6 @@ std::optional<T> ParseNumber(std::string_view sv) {
 }
 
 int64_t OnlineCores() {
-#ifdef SERENEDB_SC_NPROCESSORS_ONLN
-  const int64_t n = sysconf(_SC_NPROCESSORS_ONLN);
-  if (n > 0) {
-    return n;
-  }
-#endif
   const unsigned hc = std::thread::hardware_concurrency();
   return hc > 0 ? static_cast<int64_t>(hc) : int64_t{1};
 }

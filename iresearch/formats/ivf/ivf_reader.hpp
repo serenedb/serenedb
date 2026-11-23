@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/base/internal/endian.h>
+
 #include <cstdint>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
@@ -44,8 +46,7 @@ class ColReader;
 inline constexpr size_t kCentroidTermWidth = 4;
 
 inline void EncodeCentroidTerm(uint32_t id, byte_type* out) noexcept {
-  auto* p = out;
-  irs::WriteBE<uint32_t>(id, p);
+  absl::big_endian::Store32(out, id);
 }
 
 using VectorDistanceFn = float (*)(const byte_type*, const byte_type*, size_t);

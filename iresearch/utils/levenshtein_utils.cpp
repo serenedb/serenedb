@@ -28,14 +28,11 @@
 
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
-#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/utf8_utils.hpp"
+#include "iresearch/utils/std.hpp"
 
 namespace irs {
 namespace {
-
-constexpr uint32_t kInvalidState = 0;
 
 // describes parametric transition related to a certain parametric state
 struct Position {
@@ -283,16 +280,6 @@ uint32_t Distance(const ParametricState& state, const uint32_t max_distance,
   return min_dist;
 }
 
-// characteristic vector for a given character
-template<typename Iterator>
-uint64_t Chi(Iterator begin, Iterator end, uint32_t c) noexcept {
-  uint64_t chi = 0;
-  for (size_t i = 0; begin < end; ++begin, ++i) {
-    chi |= uint64_t(c == *begin) << i;
-  }
-  return chi;
-}
-
 }  // namespace
 
 ParametricDescription::ParametricDescription(
@@ -365,79 +352,6 @@ ParametricDescription MakeParametricDescription(uint8_t max_distance,
   }
 
   return {std::move(transitions), std::move(distance), max_distance};
-}
-
-size_t EditDistance(const ParametricDescription& description,
-                    const byte_type* lhs, size_t lhs_size, const byte_type* rhs,
-                    size_t rhs_size) {
-  SDB_ASSERT(description);
-
-  irs::containers::SmallVector<uint32_t, 16> lhs_chars;
-  utf8_utils::ToUTF32<false>({lhs, lhs_size}, std::back_inserter(lhs_chars));
-
-  size_t state = 1;   // current parametric state
-  size_t offset = 0;  // current offset
-
-  for (auto* rhs_end = rhs + rhs_size; rhs < rhs_end;) {
-    const auto c = utf8_utils::ToChar32(rhs);
-
-    const auto begin = lhs_chars.begin() + ptrdiff_t(offset);
-    const auto end =
-      lhs_chars.begin() + std::min(offset + description.chi_size(),
-                                   static_cast<uint64_t>(lhs_chars.size()));
-    const auto chi = Chi(begin, end, c);
-    const auto& transition = description.transition(state, chi);
-
-    if (kInvalidState == transition.first) {
-      return description.max_distance() + 1;
-    }
-
-    state = transition.first;
-    offset += transition.second;
-  }
-
-  return description.distance(state, lhs_chars.size() - offset);
-}
-
-bool EditDistance(size_t& distance, const ParametricDescription& description,
-                  const byte_type* lhs, size_t lhs_size, const byte_type* rhs,
-                  size_t rhs_size) {
-  SDB_ASSERT(description);
-
-  irs::containers::SmallVector<uint32_t, 16> lhs_chars;
-  if (!utf8_utils::ToUTF32<true>({lhs, lhs_size},
-                                 std::back_inserter(lhs_chars))) {
-    return false;
-  }
-
-  size_t state = 1;   // current parametric state
-  size_t offset = 0;  // current offset
-
-  for (auto* rhs_end = rhs + rhs_size; rhs < rhs_end;) {
-    const auto c = utf8_utils::ToChar32(rhs, rhs_end);
-
-    if (c == utf8_utils::kInvalidChar32) {
-      return false;
-    }
-
-    const auto begin = lhs_chars.begin() + static_cast<ptrdiff_t>(offset);
-    const auto end =
-      lhs_chars.begin() + std::min(offset + description.chi_size(),
-                                   static_cast<uint64_t>(lhs_chars.size()));
-    const auto chi = Chi(begin, end, c);
-    const auto& transition = description.transition(state, chi);
-
-    if (kInvalidState == transition.first) {
-      distance = description.max_distance() + 1;
-      return true;
-    }
-
-    state = transition.first;
-    offset += transition.second;
-  }
-
-  distance = description.distance(state, lhs_chars.size() - offset);
-  return true;
 }
 
 }  // namespace irs

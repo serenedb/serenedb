@@ -22,10 +22,17 @@
 
 #pragma once
 
-#include "iresearch/utils/type_utils.hpp"
+#include <string_view>
+
+#include "iresearch/utils/shared.hpp"
 #include "type_info.hpp"
 
 namespace irs {
+
+template<typename T>
+constexpr std::string_view ctti() noexcept {
+  return {IRS_FUNC_NAME};
+}
 
 /// @tparam T type for which one needs access meta information
 /// @brief convenient helper for accessing meta information

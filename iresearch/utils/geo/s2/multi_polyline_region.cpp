@@ -84,7 +84,11 @@ bool S2MultiPolylineRegion::Contains(const S2Point& /*p*/) const {
   return false;
 }
 
-using namespace coding;
+using coding::IsOptionsS2;
+using coding::Options;
+using coding::ToSize;
+using coding::ToTag;
+using coding::Type;
 /// num_lines <= 1:
 ///   varint(line[0]_num_vertices << 1 | 0)
 ///     line[0]_vertices_data

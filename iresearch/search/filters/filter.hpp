@@ -53,8 +53,8 @@
 #include "iresearch/search/scorers/unscored.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/down_cast.hpp"
-#include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/parallel_for.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 

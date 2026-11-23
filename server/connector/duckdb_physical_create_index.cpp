@@ -82,7 +82,6 @@
 #include "query/config_variable_names.h"
 #include "search/store.h"
 #include "search/table_keys.h"
-#include "server/utils/primary_key.h"
 
 namespace sdb::connector {
 namespace {

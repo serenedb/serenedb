@@ -759,23 +759,7 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       if (!s) {
         return "NULL";
       }
-      bool has_backslash = s->find('\\') != std::string::npos;
-      std::string out;
-      if (has_backslash) {
-        out += "E";
-      }
-      out += '\'';
-      for (auto c : *s) {
-        if (c == '\'') {
-          out += "''";
-        } else if (c == '\\') {
-          out += "\\\\";
-        } else {
-          out += c;
-        }
-      }
-      out += '\'';
-      return out;
+      return pg::QuoteLiteral(*s);
     };
 
     out.clear();
@@ -829,26 +813,9 @@ void QuoteLiteralFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                           duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(), [&](duckdb::string_t input) {
-      auto str = input.GetString();
-      bool has_backslash = str.find('\\') != std::string::npos;
-      std::string quoted;
-      quoted.reserve(str.size() + 3);
-      if (has_backslash) {
-        quoted += "E'";
-      } else {
-        quoted += '\'';
-      }
-      for (char c : str) {
-        if (c == '\'') {
-          quoted += "''";
-        } else if (c == '\\') {
-          quoted += "\\\\";
-        } else {
-          quoted += c;
-        }
-      }
-      quoted += '\'';
-      return duckdb::StringVector::AddString(result, quoted);
+      return duckdb::StringVector::AddString(
+        result,
+        pg::QuoteLiteral(std::string_view{input.GetData(), input.GetSize()}));
     });
 }
 
@@ -865,25 +832,9 @@ void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       out.WriteValue(duckdb::string_t{"NULL", 4});
       continue;
     }
-    const auto str = input.GetValue().GetString();
-    const bool has_backslash = str.find('\\') != std::string::npos;
-    std::string quoted;
-    quoted.reserve(str.size() + 3);
-    if (has_backslash) {
-      quoted += "E'";
-    } else {
-      quoted += '\'';
-    }
-    for (char c : str) {
-      if (c == '\'') {
-        quoted += "''";
-      } else if (c == '\\') {
-        quoted += "\\\\";
-      } else {
-        quoted += c;
-      }
-    }
-    quoted += '\'';
+    const auto& value = input.GetValue();
+    const auto quoted =
+      pg::QuoteLiteral(std::string_view{value.GetData(), value.GetSize()});
     out.WriteValue(duckdb::string_t::Safe(quoted));
   }
 }

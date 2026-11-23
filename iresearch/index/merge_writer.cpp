@@ -60,6 +60,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"

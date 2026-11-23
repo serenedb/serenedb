@@ -52,7 +52,6 @@
 #include "pg/types/logical.h"
 #include "search/search_analyzer_impl.h"
 #include "search/store.h"
-#include "server/utils/primary_key.h"
 
 namespace duckdb {
 

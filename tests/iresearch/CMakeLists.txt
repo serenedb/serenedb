@@ -193,7 +193,6 @@ add_executable(
     store/store_utils_tests.cpp
     utils/bit_utils_tests.cpp
     utils/bitset_tests.cpp
-    utils/bitvector_tests.cpp
     utils/blocking_once_test.cpp
     utils/compression_test.cpp
     utils/group_commit_test.cpp
@@ -203,7 +202,6 @@ add_executable(
     utils/lower_bound_test.cpp
     utils/math_utils_test.cpp
     utils/minhash_utils_test.cpp
-    utils/misc_test.cpp
     utils/ngram_match_utils_tests.cpp
     utils/numeric_utils_test.cpp
     utils/object_pool_tests.cpp
@@ -215,7 +213,6 @@ add_executable(
     utils/regexp_ngram_test.cpp
     utils/regexp_utils_test.cpp
     utils/serializer_tests.cpp
-    utils/std_test.cpp
     utils/string_tests.cpp
     utils/utf8_utils_test.cpp
     utils/wildcard_utils_test.cpp

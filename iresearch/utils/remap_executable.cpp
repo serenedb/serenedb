@@ -22,6 +22,7 @@
 
 #include <absl/base/config.h>
 #include <absl/debugging/internal/symbolize.h>
+#include <absl/strings/str_split.h>
 #include <fast_float/fast_float.h>
 
 #include <algorithm>
@@ -29,12 +30,15 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
+#include <duckdb/common/local_file_system.hpp>
+#include <filesystem>
 #include <span>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#include "iresearch/store/storage.hpp"
 
 #if defined(__linux__)
 #include <dirent.h>
@@ -73,13 +77,9 @@ struct Mapping {
 };
 
 std::string ExecutablePath() {
-  std::string path(4096, '\0');
-  const auto n = readlink("/proc/self/exe", path.data(), path.size());
-  if (n <= 0 || static_cast<size_t>(n) >= path.size()) {
-    return {};
-  }
-  path.resize(static_cast<size_t>(n));
-  return path;
+  std::error_code ec;
+  auto path = std::filesystem::read_symlink("/proc/self/exe", ec);
+  return ec ? std::string{} : path.string();
 }
 
 std::vector<Mapping> ExecutableMappings(std::string_view exe) {
@@ -87,12 +87,13 @@ std::vector<Mapping> ExecutableMappings(std::string_view exe) {
   if (exe.empty()) {
     return mappings;
   }
-  std::ifstream maps{"/proc/self/maps"};
-  std::string line;
-  while (std::getline(maps, line)) {
+  duckdb::LocalFileSystem fs;
+  const auto maps =
+    ReadWhole<std::string>(duckdb::QueryContext{}, fs, "/proc/self/maps");
+  for (const std::string_view line : absl::StrSplit(maps, '\n')) {
     const auto path_at = line.find('/');
-    if (path_at == std::string::npos ||
-        line.compare(path_at, std::string::npos, exe) != 0) {
+    if (path_at == std::string_view::npos ||
+        line.compare(path_at, std::string_view::npos, exe) != 0) {
       continue;
     }
     const auto* const line_end = line.data() + line.size();
@@ -168,7 +169,7 @@ void ReadInParallel(std::span<const Mapping> mappings, size_t threads) {
 #if defined(IRS_REMAP_EXECUTABLE)
 
 bool SetAllocatorBackgroundThreads(bool enabled) {
-  if (JemallocControl == nullptr) {
+  if (!JemallocControl) {
     return false;
   }
   bool previous = false;
@@ -180,7 +181,7 @@ bool SetAllocatorBackgroundThreads(bool enabled) {
 
 size_t ThreadCount() {
   size_t count = 0;
-  if (auto* dir = opendir("/proc/self/task"); dir != nullptr) {
+  if (auto* dir = opendir("/proc/self/task")) {
     while (const auto* entry = readdir(dir)) {
       count += entry->d_name[0] != '.';
     }

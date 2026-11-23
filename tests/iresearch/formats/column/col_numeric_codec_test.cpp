@@ -29,6 +29,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -45,6 +46,7 @@
 #include <iresearch/formats/column/codecs/numeric/numeric_kernels.hpp>
 #include <iresearch/formats/column/codecs/numeric/numeric_layout.hpp>
 #include <iresearch/formats/column/codecs/numeric/numeric_reader.hpp>
+#include <iresearch/formats/column/codecs/numeric/plain.hpp>
 #include <iresearch/formats/column/codecs/numeric/wide.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/text/string_layout.hpp>
@@ -52,6 +54,8 @@
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
+#include <iresearch/formats/column/internal/write_context.hpp>
+#include <iresearch/formats/column/list_ingest.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -4699,7 +4703,183 @@ TEST(ColNumericKernelsTest, UnshufflesAndWidensInOnePass) {
   check.template operator()<uint64_t>();
 }
 
+TEST(ColNumericKernelsTest, PackAndUnpackWriteNothingForAWidthBeyondTheType) {
+  const auto check = []<typename U>() {
+    using Word = irs::codecs::numeric::LaneWord<U>;
+    constexpr auto kValues = irs::codecs::numeric::kBlockValues;
+    constexpr unsigned kBeyond = irs::codecs::numeric::kMaxBits<U> + 1;
+    SCOPED_TRACE(sizeof(U));
+    const std::vector<U> values(kValues, U{7});
+    const std::vector<Word> untouched(irs::codecs::numeric::kLanes<U>,
+                                      Word{0x5a});
+    auto packed = untouched;
+    irs::codecs::numeric::Pack<U>(kBeyond, values.data(), packed.data(), U{0});
+    EXPECT_EQ(packed, untouched);
+    std::vector<U> unpacked(kValues, U{0x5a});
+    irs::codecs::numeric::Unpack<U>(kBeyond, packed.data(), unpacked.data(),
+                                    U{0});
+    EXPECT_EQ(unpacked, std::vector<U>(kValues, U{0x5a}));
+  };
+  check.template operator()<uint8_t>();
+  check.template operator()<uint16_t>();
+  check.template operator()<uint32_t>();
+  check.template operator()<uint64_t>();
+}
+
+TEST(ColNumericLayoutTest, AnUnknownShapeHasNoOwnHeaderAndReadsAsRaw) {
+  const auto unknown =
+    static_cast<irs::codecs::Shape>(irs::codecs::kShapeCount);
+  EXPECT_EQ(irs::codecs::OwnHeaderSize(unknown, false), 0);
+  EXPECT_EQ(irs::codecs::OwnHeaderSize(unknown, true), 0);
+  EXPECT_EQ(irs::codecs::TransformName(unknown, irs::codecs::FrameHeader{}),
+            "raw");
+}
+
+struct VariantSegment {
+  std::string bytes;
+  uint64_t rows = 0;
+};
+
+VariantSegment CompressVariant(duckdb::DatabaseInstance& db,
+                               irs::codecs::CodecType codec_type,
+                               size_t variant,
+                               const std::vector<int64_t>& values) {
+  const duckdb::LogicalType type = duckdb::LogicalType::BIGINT;
+  std::vector<duckdb::Vector> vectors;
+  for (size_t pos = 0; pos < values.size(); pos += STANDARD_VECTOR_SIZE) {
+    const auto take =
+      std::min<size_t>(values.size() - pos, STANDARD_VECTOR_SIZE);
+    auto& v = vectors.emplace_back(type, STANDARD_VECTOR_SIZE);
+    std::copy_n(values.data() + pos, take,
+                duckdb::FlatVector::GetDataMutable<int64_t>(v));
+    duckdb::FlatVector::SetSize(v, take);
+  }
+  std::vector<irs::WriteChunk> chunks;
+  for (const auto& v : vectors) {
+    chunks.push_back(irs::RefChunk(v, v.size()));
+  }
+  duckdb::MemoryStream out;
+  irs::WriteContext ctx{db.GetBufferManager(), out};
+  VariantSegment segment{.rows = values.size()};
+  size_t flushed = 0;
+  const auto flush = [&](const irs::codecs::Codec&, duckdb::BaseStatistics,
+                         uint64_t rows, std::string_view bytes,
+                         std::string_view) {
+    EXPECT_EQ(rows, values.size());
+    segment.bytes.assign(bytes);
+    ++flushed;
+  };
+  irs::codecs::ColumnTuning tuning;
+  irs::codecs::ColumnDataCheckpointData data{
+    .type = type,
+    .chunks = chunks,
+    .ctx = &ctx,
+    .flush = flush,
+    .tuning = tuning,
+    .rows = values.size(),
+  };
+  const auto& codec = *irs::codecs::GetCodec(codec_type, type.InternalType());
+  const auto& fn = codec.compression[variant];
+  if (fn.analyze) {
+    EXPECT_LT(fn.analyze(data, irs::codecs::kNoScore), irs::codecs::kNoScore);
+  }
+  EXPECT_TRUE(fn.compress(codec, data));
+  EXPECT_EQ(flushed, 1);
+  return segment;
+}
+
 }  // namespace
+
+TEST_F(ColNumericCodecTest, AFrameOpenedByItsStartIsInflatedWholeForAScan) {
+  std::vector<int64_t> values(3000);
+  for (size_t g = 0; g < values.size(); ++g) {
+    values[g] = static_cast<int64_t>(Mix(g % 64) % 3000);
+  }
+  const auto segment =
+    CompressVariant(Db(), irs::codecs::CodecType::Lz4, 2, values);
+  const auto* base =
+    reinterpret_cast<duckdb::const_data_ptr_t>(segment.bytes.data());
+  const auto frames = irs::codecs::ParseFrames(
+    base, segment.bytes.size(), segment.rows, irs::codecs::CodecType::Lz4);
+  ASSERT_EQ(irs::codecs::TransformName(irs::codecs::Shape::Plain, frames),
+            "for");
+  ASSERT_EQ(frames.flags & irs::codecs::kNumericShuffled, 0);
+  irs::codecs::numeric::PlainReader<int64_t> reader{
+    base, frames, irs::codecs::CodecType::Lz4};
+  EXPECT_EQ(reader.FetchApart(5, irs::codecs::numeric::kNoRow), values[5]);
+  std::vector<int64_t> read(values.size());
+  reader.Read(0, read.size(), read.data());
+  EXPECT_EQ(read, values);
+}
+
+TEST_F(ColNumericCodecTest, AConstantCheckInsideOneBlockReadsThatBlockAlone) {
+  constexpr uint64_t kBlock = irs::codecs::numeric::kBlockValues;
+  std::vector<int64_t> values(3 * kBlock);
+  for (size_t g = 0; g < values.size(); ++g) {
+    values[g] = g < kBlock ? 7 : static_cast<int64_t>(Mix(g) % 1000);
+  }
+  const auto segment =
+    CompressVariant(Db(), irs::codecs::CodecType::Bitpacking, 2, values);
+  const auto* base =
+    reinterpret_cast<duckdb::const_data_ptr_t>(segment.bytes.data());
+  const auto frames =
+    irs::codecs::ParseFrames(base, segment.bytes.size(), segment.rows,
+                             irs::codecs::CodecType::Bitpacking);
+  ASSERT_EQ(irs::codecs::TransformName(irs::codecs::Shape::Plain, frames),
+            "bitpacking");
+  irs::codecs::numeric::PlainReader<int64_t> reader{
+    base, frames, irs::codecs::CodecType::Bitpacking};
+  int64_t value = 0;
+  EXPECT_TRUE(reader.ConstantRows(10, 100, value));
+  EXPECT_EQ(value, 7);
+  EXPECT_FALSE(reader.ConstantRows(kBlock - 24, 100, value));
+}
+
+TEST_F(ColNumericCodecTest, BitPackedFramesAtAnUnalignedAddressAreRejected) {
+  std::vector<int64_t> values(3000);
+  for (size_t g = 0; g < values.size(); ++g) {
+    values[g] = static_cast<int64_t>(Mix(g) % 1000);
+  }
+  const auto segment =
+    CompressVariant(Db(), irs::codecs::CodecType::Bitpacking, 2, values);
+  const auto size = segment.bytes.size();
+  std::vector<uint64_t> words(size / sizeof(uint64_t) + 2);
+  auto* aligned = reinterpret_cast<uint8_t*>(words.data());
+  std::memcpy(aligned, segment.bytes.data(), size);
+  const auto frames = irs::codecs::ParseFrames(
+    aligned, size, segment.rows, irs::codecs::CodecType::Bitpacking);
+  ASSERT_EQ(irs::codecs::TransformName(irs::codecs::Shape::Plain, frames),
+            "bitpacking");
+  std::memmove(aligned + 1, aligned, size);
+  try {
+    irs::codecs::ParseFrames(aligned + 1, size, segment.rows,
+                             irs::codecs::CodecType::Bitpacking);
+    ADD_FAILURE() << "an unaligned bit-packed segment was accepted";
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED);
+    EXPECT_EQ(e.message(), "Corrupted numeric segment: header is inconsistent");
+  }
+}
+
+TEST_F(ColNumericCodecTest, WideValuesOfAnUnknownShapeOrTypeOfferNothing) {
+  const duckdb::LogicalType type = duckdb::LogicalType::HUGEINT;
+  duckdb::MemoryStream out;
+  irs::WriteContext ctx{Db().GetBufferManager(), out};
+  const auto flush = [](const irs::codecs::Codec&, duckdb::BaseStatistics,
+                        uint64_t, std::string_view, std::string_view) {};
+  irs::codecs::ColumnTuning tuning;
+  irs::codecs::ColumnDataCheckpointData data{
+    .type = type,
+    .ctx = &ctx,
+    .flush = flush,
+    .tuning = tuning,
+  };
+  irs::codecs::numeric::WideValues<duckdb::hugeint_t> wide{data};
+  EXPECT_FALSE(wide.MayPack(
+    static_cast<irs::codecs::Shape>(irs::codecs::kShapeCount), data));
+  EXPECT_EQ(wide.Stats(duckdb::LogicalType::VARCHAR).GetStatsType(),
+            duckdb::StatisticsType::STRING_STATS);
+}
 
 TEST_F(ColNumericCodecTest, FiltersIntoAVectorThatHeldNullsLeaveNoStaleNulls) {
   constexpr uint64_t kRows = 4 * STANDARD_VECTOR_SIZE;

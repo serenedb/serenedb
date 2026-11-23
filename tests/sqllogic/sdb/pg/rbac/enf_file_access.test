@@ -83,6 +83,54 @@ db error: ERROR: permission denied to access "/etc"
 DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
 
 
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+SELECT "Columns" FROM sniff_csv('${__TEST_DIR__}/efa_numbers.csv'), efa_sink;
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efa_numbers.csv"
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+SELECT count(*) FROM avro_metadata('${__TEST_DIR__}/efa_numbers.csv'), efa_sink;
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efa_numbers.csv"
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+SELECT count(*) FROM read_postgres_binary('${__TEST_DIR__}/efa_numbers.csv', columns = {'v': 'VARCHAR'}), efa_sink;
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efa_numbers.csv"
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+statement error
+SELECT count(*) FROM ST_ReadOSM('${__TEST_DIR__}/efa_numbers.csv'), efa_sink;
+----
+db error: ERROR: permission denied to access "<slt:ignore>/efa_numbers.csv"
+DETAIL: Only roles with privileges of the "pg_read_server_files" role may read server files and URLs.
+
+
+statement ok
+CREATE VIEW efa_sniffed AS SELECT "Columns" AS sniffed FROM sniff_csv('${__TEST_DIR__}/efa_numbers.csv');
+
+
+statement ok
+GRANT SELECT ON efa_sniffed TO efa_vedernikoff;
+
+
+connection c_ved user=efa_vedernikoff password=efa_pw
+query
+SELECT sniffed FROM efa_sniffed;
+----
+sniffed
+{"(v,BIGINT)"}
+
+
 
 query
 SELECT count(*) > 0 AS listed FROM sql_auto_complete('SELECT * FROM ''/etc/host') WHERE suggestion LIKE 'host%';
@@ -239,6 +287,10 @@ REVOKE CREATE ON SCHEMA public FROM efa_vedernikoff;
 
 statement ok
 DROP TABLE efa_sink;
+
+
+statement ok
+DROP VIEW efa_sniffed;
 
 
 statement ok

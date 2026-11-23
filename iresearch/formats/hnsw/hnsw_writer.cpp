@@ -1118,9 +1118,9 @@ HnswBases::Basis AcquireBasis(HnswBases* bases, field_id field,
     basis = bases->Find(field);
   }
   if (!basis && donor.index) {
-    if (auto data = donor.index->Load(AnnParallelFor(env))) {
-      basis = data->rotation;
-    }
+    const auto data = donor.index->Load(AnnParallelFor(env));
+    SDB_ASSERT(data);
+    basis = data->rotation;
   }
   if (!basis && enough) {
     basis = std::make_shared<const std::vector<float>>(

@@ -632,6 +632,7 @@ TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
 }
 
 constexpr std::string_view kRawGraph = "irs::HnswRawGraph";
+constexpr std::string_view kFrameByFrame = "irs::HnswGraphReadsFrameByFrame";
 
 void ThreadsFor(size_t count, absl::FunctionRef<void(size_t)> body) {
   std::vector<std::thread> threads;
@@ -718,7 +719,10 @@ TEST(HnswGraphFormatTest, PackedGraphLoadsAsTheRawGraph) {
       .Load(ThreadsFor);
   };
   const auto from_raw = load(raw.reader);
+  ASSERT_GT(raw.idx_bytes, 2 * irs::compression::kFrameBytes);
+  ASSERT_TRUE(duckdb::FaultPoints::Arm(kFrameByFrame));
   const auto from_packed = load(packed.reader);
+  duckdb::FaultPoints::Disarm(kFrameByFrame);
   ASSERT_TRUE(from_raw && from_packed);
   const auto& expected = from_raw->graph;
   const auto& actual = from_packed->graph;

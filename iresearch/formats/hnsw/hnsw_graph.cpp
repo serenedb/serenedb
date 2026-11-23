@@ -24,6 +24,7 @@
 #include <absl/random/distributions.h>
 
 #include <cmath>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <iterator>
@@ -107,12 +108,14 @@ void ReadPacked(duckdb::InputFileReader& in, const compression::Frames& frames,
                                  frames.raw_bytes};
   const auto starts = compression::FrameStarts(frames);
   const auto count = frames.sizes.size();
+  auto batch_bytes = kPackBatchBytes;
+  SDB_IF_FAILURE("irs::HnswGraphReadsFrameByFrame") { batch_bytes = 0; }
   std::unique_ptr<byte_type[]> stored;
   uint64_t capacity = 0;
   for (size_t first = 0, last = 0; first != count; first = last) {
     last = first + 1;
     while (last != count &&
-           starts[last + 1].stored - starts[first].stored <= kPackBatchBytes) {
+           starts[last + 1].stored - starts[first].stored <= batch_bytes) {
       ++last;
     }
     const auto size = starts[last].stored - starts[first].stored;

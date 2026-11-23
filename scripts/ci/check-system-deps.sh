@@ -5,6 +5,12 @@ set -uo pipefail
 BUILD_DIR="$1"
 SANITIZERS="${2:-None}"
 STATIC="${3:-Off}"
+ALLOWED_IVF_CUDA_LIBRARIES='^$'
+if grep -Eiq '^SDB_IVF_BUILD_CUDA:[^=]+=(1|ON|YES|TRUE|Y)$' "$BUILD_DIR/CMakeCache.txt"; then
+	STATIC=Off
+	ALLOWED_IVF_CUDA_LIBRARIES='^(libsdb_ivf_cuda\.so|ld-linux-[a-z0-9_-]+\.so\.[0-9]+)$'
+	ALLOWED_IVF_CUDA_LIBRARIES='^(libsdb_ivf_cuda\.so|ld-linux-[a-z0-9_-]+\.so\.[0-9]+)$'
+fi
 
 ALLOWED_PACKAGES='^(libc6|libc6-dev|linux-libc-dev|libclang-common-[0-9]+-dev|libclang-rt-[0-9]+-dev)$'
 ALLOWED_GCC_FILES='^/usr/lib/gcc/[a-z0-9_-]+/[0-9]+/crt(begin|end)[ST]?\.o$'
@@ -58,7 +64,7 @@ done < <(sed -n 's/^ *LINK_\(LIBRARIES\|FLAGS\) = //p' "$BUILD_DIR/build.ninja" 
 
 while IFS= read -r binary; do
 	while IFS= read -r library; do
-		if ! [[ "$library" =~ $ALLOWED_LIBRARIES ]]; then
+		if ! [[ "$library" =~ $ALLOWED_LIBRARIES || "$library" =~ $ALLOWED_IVF_CUDA_LIBRARIES ]]; then
 			echo "::error::${binary#"$BUILD_DIR"/} needs shared library ${library}"
 			failed=1
 		fi

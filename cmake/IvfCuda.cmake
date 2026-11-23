@@ -1,17 +1,19 @@
 include(ExternalProject)
 
-find_package(CUDAToolkit 13.4 REQUIRED)
-find_program(SDB_IVF_CUDA_CXX NAMES g++ REQUIRED)
+find_package(CUDAToolkit REQUIRED)
+find_program(SDB_IVF_CUDA_CXX NAMES g++ HINTS /usr/bin REQUIRED)
 
 set(ivf_cuda_binary_dir "${CMAKE_BINARY_DIR}/ivf-cuda")
 set(ivf_cuda_library "${ivf_cuda_binary_dir}/libsdb_ivf_cuda.so")
 set(ivf_cuda_architecture_arg)
+
 if(CMAKE_CUDA_ARCHITECTURES)
     string(REPLACE ";" "|" ivf_cuda_architectures "${CMAKE_CUDA_ARCHITECTURES}")
     set(ivf_cuda_architecture_arg
         "-DCMAKE_CUDA_ARCHITECTURES=${ivf_cuda_architectures}"
     )
 endif()
+
 ExternalProject_Add(
     sdb_ivf_cuda_build
     SOURCE_DIR "${CMAKE_SOURCE_DIR}/iresearch/formats/ivf/cuda"
@@ -22,7 +24,8 @@ ExternalProject_Add(
         "-DCMAKE_CXX_COMPILER=${SDB_IVF_CUDA_CXX}"
         "-DCMAKE_CUDA_COMPILER=${CUDAToolkit_NVCC_EXECUTABLE}"
         "-DCMAKE_CUDA_HOST_COMPILER=${SDB_IVF_CUDA_CXX}"
-        ${ivf_cuda_architecture_arg} "-DCUDAToolkit_ROOT=${CUDAToolkit_ROOT}"
+        "-DFAISS_GPU_STATIC=${SDB_STATIC}" ${ivf_cuda_architecture_arg}
+        "-DCUDAToolkit_ROOT=${CUDAToolkit_ROOT}"
         "-DFAISS_SOURCE_DIR=${CMAKE_SOURCE_DIR}/third_party/faiss"
         "-DPCG_INCLUDE_DIR=${CMAKE_SOURCE_DIR}/third_party/duckdb/third_party/pcg"
         "-DOPENBLAS_ARCHIVE=$<TARGET_FILE:openblas>"

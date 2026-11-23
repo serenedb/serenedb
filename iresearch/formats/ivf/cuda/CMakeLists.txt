@@ -7,7 +7,7 @@ set(CMAKE_CUDA_STANDARD 20)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-find_package(CUDAToolkit 13.4 REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 
 add_library(sdb::blas STATIC IMPORTED)
 set_target_properties(
@@ -36,7 +36,16 @@ set_property(
 )
 
 add_library(sdb_ivf_cuda SHARED bridge.cpp)
-target_link_libraries(sdb_ivf_cuda PRIVATE faiss CUDA::cudart CUDA::cublas)
+
+if(FAISS_GPU_STATIC)
+    target_link_libraries(
+        sdb_ivf_cuda
+        PRIVATE faiss CUDA::cudart_static CUDA::cublas_static
+    )
+else()
+    target_link_libraries(sdb_ivf_cuda PRIVATE faiss CUDA::cudart CUDA::cublas)
+endif()
+
 set(exports "${CMAKE_CURRENT_SOURCE_DIR}/exports.map")
 target_link_options(
     sdb_ivf_cuda

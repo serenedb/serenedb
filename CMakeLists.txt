@@ -270,11 +270,11 @@ option(
     OFF
 )
 
-option(SDB_STATIC "link executables statically" OFF)
-
-if(SDB_IVF_BUILD_CUDA AND SDB_STATIC)
-    message(FATAL_ERROR "SDB_IVF_BUILD_CUDA requires SDB_STATIC=OFF")
-endif()
+option(
+    SDB_STATIC
+    "link executables statically, or link CUDA libraries statically into the shared IVF module"
+    OFF
+)
 
 option(
     SDB_VTUNE
@@ -532,7 +532,7 @@ else()
     # TODO(mbkkt) think about -lrt -lpthread -ldl
     string(APPEND SDB_DEFAULT_LIBS " -lc -lm")
 endif()
-if(SDB_STATIC)
+if(SDB_STATIC AND NOT SDB_IVF_BUILD_CUDA)
     set(SDB_DEFAULT_LIBS "-static ${SDB_DEFAULT_LIBS}")
 endif()
 set(CMAKE_CXX_STANDARD_LIBRARIES ${SDB_DEFAULT_LIBS})

@@ -53,6 +53,8 @@ template<typename T>
 bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
                     uint32_t expected, Entries<T>& entries) {
   using U = Bits<sizeof(T)>;
+  using Ordered =
+    std::conditional_t<Values<T>::kSigned, std::make_signed_t<U>, U>;
   const auto n = static_cast<uint32_t>(rows.size());
   auto& values = entries.values;
   auto& codes = entries.codes;
@@ -80,19 +82,11 @@ bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
       codes[row] = entry;
     }
   }
-  if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) {
-    std::span keys{reinterpret_cast<std::make_signed_t<U>*>(values.data()),
-                   values.size()};
-    if (absl::c_is_sorted(keys)) {
-      return true;
-    }
-    absl::c_sort(keys);
-  } else {
-    if (absl::c_is_sorted(values)) {
-      return true;
-    }
-    absl::c_sort(values);
+  std::span keys{reinterpret_cast<Ordered*>(values.data()), values.size()};
+  if (absl::c_is_sorted(keys)) {
+    return true;
   }
+  absl::c_sort(keys);
   ScratchVector<uint32_t> ranks(values.size());
   for (uint32_t k = 0; k < values.size(); ++k) {
     ranks[entries.index.find(values[k])->second] = k;

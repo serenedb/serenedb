@@ -808,9 +808,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       {
         ASSERT_TRUE(irs::field_limits::valid(field.norm));
 
-        const auto* cs = segment.GetColReader();
-        ASSERT_NE(nullptr, cs);
-        const auto* column = cs->NormColumn(field.norm);
+        const auto* column = segment.NormColumn(field.norm);
         ASSERT_NE(nullptr, column);
 
         std::unordered_map<uint32_t, irs::doc_id_t> expected_values{{4, 1},
@@ -1006,9 +1004,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
       {
         ASSERT_TRUE(irs::field_limits::valid(field.norm));
 
-        const auto* cs = segment.GetColReader();
-        ASSERT_NE(nullptr, cs);
-        const auto* column = cs->NormColumn(field.norm);
+        const auto* column = segment.NormColumn(field.norm);
         ASSERT_NE(nullptr, column);
 
         ASSERT_EQ(3u, irs::MakePersistedNormReader(*column)->Get(
@@ -1207,9 +1203,7 @@ TEST_P(MergeWriterTestCase, test_merge_writer) {
     {
       ASSERT_TRUE(irs::field_limits::valid(field.norm));
 
-      const auto* cs = segment->GetColReader();
-      ASSERT_NE(nullptr, cs);
-      const auto* column = cs->NormColumn(field.norm);
+      const auto* column = segment->NormColumn(field.norm);
       ASSERT_NE(nullptr, column);
 
       std::unordered_map<uint32_t, irs::doc_id_t> expected_values{

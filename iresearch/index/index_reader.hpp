@@ -26,6 +26,7 @@
 
 #include <span>
 
+#include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/term_reader.hpp"
@@ -116,15 +117,6 @@ struct IndexReader {
   Iterator end() const { return Iterator{*this, size()}; }
 };
 
-// Provides per-field norm readers. Implemented by SegmentReaderImpl over
-// the persisted `<seg>.col` and by SegmentWriter for in-flight reads
-// during segment flush. Returns nullptr when the field has no norm column.
-struct NormProvider {
-  virtual ~NormProvider() = default;
-
-  virtual NormReader::ptr norms(field_id field) const = 0;
-};
-
 // Generic interface for accessing an index segment
 struct SubReader : public IndexReader, public NormProvider {
   using ptr = std::shared_ptr<const SubReader>;
@@ -169,6 +161,9 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const ColReader* GetColReader() const { return nullptr; }
 
   virtual const ColumnReader* Column(field_id /*field*/) const {
+    return nullptr;
+  }
+  virtual const NormColumnReader* NormColumn(field_id /*field*/) const {
     return nullptr;
   }
   virtual const AnnIndex* Ann(field_id /*field*/) const { return nullptr; }

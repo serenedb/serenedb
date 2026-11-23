@@ -46,10 +46,8 @@
 #include <iresearch/formats/column/hot_column_reader.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/merge.hpp>
-#include <iresearch/formats/column/norm_column_reader.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
-#include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -3211,42 +3209,6 @@ TEST_F(ColumnReaderTest, DistinctStatistics) {
   EXPECT_GT(sampled->sample_count.load(), 0);
   EXPECT_LT(sampled->sample_count.load(), kRows);
   EXPECT_TRUE(in_band(sampled->GetCount())) << sampled->GetCount();
-}
-
-// Norm column: per-doc uint32 FTS norm, bit-packed per row group, with sparse
-// docs (gaps zero-padded to target_row), across multiple row groups.
-TEST_F(ColumnReaderTest, NormColumnRoundTrip) {
-  constexpr uint64_t kDocs = 5000;
-  constexpr uint32_t kRgSize = 1024;
-  constexpr irs::field_id kN = 50;
-
-  auto has_norm = [](uint64_t d) { return d % 3 == 0; };
-  auto norm_val = [](uint64_t d) { return static_cast<uint32_t>(d * 13 + 1); };
-
-  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  {
-    irs::ColWriter w{Db(), dir.Tracker("seg")};
-    auto& nw = w.OpenNormColumn(kN, kRgSize);
-    for (uint64_t d = 0; d < kDocs; ++d) {
-      if (has_norm(d)) {
-        nw.Append(d, norm_val(d));
-      }
-    }
-    w.Commit(kDocs);
-  }
-
-  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
-  const auto* nr = r.NormColumn(kN);
-  ASSERT_NE(nr, nullptr);
-  ASSERT_EQ(nr->RowCount(), kDocs);
-  const auto reader = irs::MakePersistedNormReader(*nr);
-  for (uint64_t d = 0; d < kDocs; ++d) {
-    const auto expected = has_norm(d) ? norm_val(d) : 0u;
-    EXPECT_EQ(
-      reader->Get(static_cast<irs::doc_id_t>(d + irs::doc_limits::min())),
-      expected)
-      << "doc " << d;
-  }
 }
 
 // BlobPointReader: point-read raw bytes of a BLOB column (incl null rows),

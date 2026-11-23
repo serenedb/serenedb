@@ -213,9 +213,7 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
     ASSERT_TRUE(irs::field_limits::valid(norm_id))
       << "no norm id on " << field_id;
 
-    const auto* cs = segment.GetColReader();
-    ASSERT_NE(nullptr, cs);
-    const auto* column = cs->NormColumn(norm_id);
+    const auto* column = segment.NormColumn(norm_id);
     ASSERT_NE(nullptr, column) << "norm column missing for " << field_id;
     ASSERT_EQ(norm_id, column->Id());
 
@@ -374,7 +372,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgInOneSegment) {
   const auto* field = seg.field(kBody);
   ASSERT_NE(nullptr, field);
   const auto norm_id = field->meta().norm;
-  const auto* col = seg.GetColReader()->NormColumn(norm_id);
+  const auto* col = seg.NormColumn(norm_id);
   ASSERT_NE(nullptr, col);
   ASSERT_EQ(3u, col->RegionCount())
     << "expected 4+4+2 layout, got " << col->RegionCount();

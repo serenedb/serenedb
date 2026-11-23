@@ -23,7 +23,9 @@
 #include <algorithm>
 #include <bit>
 #include <span>
+#include <utility>
 
+#include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -33,7 +35,110 @@ namespace {
 constexpr uint32_t kPageShift =
   static_cast<uint32_t>(std::countr_zero(duckdb::PageResidency::PAGE_SIZE));
 
+NormRegionMeta ReadNormRegion(duckdb::BinaryDeserializer& d, field_id id,
+                              uint64_t data_size) {
+  NormRegionMeta r;
+  r.stats.rows = d.ReadProperty<uint64_t>(0, "rows");
+  r.stats.sum = d.ReadProperty<uint64_t>(1, "sum");
+  r.stats.non_zero = d.ReadProperty<uint64_t>(2, "non_zero");
+  r.stats.wide8 = d.ReadProperty<uint64_t>(3, "wide8");
+  r.stats.wide16 = d.ReadProperty<uint64_t>(4, "wide16");
+  r.stats.min = d.ReadProperty<uint32_t>(5, "min");
+  r.stats.max = d.ReadProperty<uint32_t>(6, "max");
+  r.bits = d.ReadProperty<uint8_t>(7, "bits");
+  SDB_ENSURE(r.stats.rows != 0 && r.stats.rows <= doc_limits::kMaxDocs &&
+               r.stats.min <= r.stats.max &&
+               (r.bits == 0 || r.bits == 8 || r.bits == 16 || r.bits == 32),
+             "norm region of column ", id, " is corrupt");
+  if (r.bits == 0) {
+    r.value = d.ReadProperty<uint32_t>(8, "value");
+    return r;
+  }
+  r.file_offset = d.ReadProperty<uint64_t>(9, "file_offset");
+  const auto slots = NormSlotsSize(r);
+  SDB_ENSURE(r.file_offset + slots >= r.file_offset &&
+               r.file_offset + slots <= data_size,
+             "norm data of column ", id, " out of range (offset ",
+             r.file_offset, ")");
+  r.exceptions =
+    d.ReadPropertyWithExplicitDefault<uint32_t>(10, "exceptions", 0);
+  if (r.exceptions == 0) {
+    return r;
+  }
+  r.overflow = d.ReadProperty<uint32_t>(11, "overflow");
+  r.shift = d.ReadProperty<uint8_t>(12, "shift");
+  r.exception_bytes = d.ReadProperty<uint8_t>(13, "exception_bytes");
+  r.table_offset = d.ReadProperty<uint64_t>(14, "table_offset");
+  SDB_ENSURE(r.bits != 32 && r.exceptions <= r.stats.rows &&
+               r.overflow <= r.exceptions && r.shift <= kNormMaxShift &&
+               (r.exception_bytes == 2 || r.exception_bytes == 4),
+             "norm exceptions of column ", id, " are corrupt");
+  const auto table = NormTableSize(r);
+  SDB_ENSURE(r.table_offset + table >= r.table_offset &&
+               r.table_offset + table <= data_size,
+             "norm exceptions of column ", id, " out of range (offset ",
+             r.table_offset, ")");
+  return r;
+}
+
 }  // namespace
+
+std::vector<NormColumnSpec> ReadNormColumns(duckdb::BinaryDeserializer& in,
+                                            duckdb::field_id_t field,
+                                            uint64_t data_size) {
+  std::vector<NormColumnSpec> columns;
+  in.ReadOptionalList(
+    field, "norm_columns",
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& column) {
+        auto& spec = columns.emplace_back();
+        spec.id = static_cast<field_id>(column.ReadProperty<uint64_t>(0, "id"));
+        column.ReadList(
+          1, "regions",
+          [&](duckdb::BinaryDeserializer::List& regions, duckdb::idx_t) {
+            regions.ReadObject([&](duckdb::BinaryDeserializer& region) {
+              const auto& r = spec.meta.regions.emplace_back(
+                ReadNormRegion(region, spec.id, data_size));
+              spec.meta.row_count += r.stats.rows;
+            });
+          });
+        SDB_ENSURE(!spec.meta.regions.empty() &&
+                     spec.meta.row_count <= doc_limits::kMaxDocs,
+                   "norm column ", spec.id, " holds ", spec.meta.row_count,
+                   " rows across ", spec.meta.regions.size(), " regions");
+      });
+    });
+  return columns;
+}
+
+NormColumns::NormColumns(duckdb::shared_ptr<duckdb::InputFile> file,
+                         std::span<const NormColumnSpec> columns)
+  : _file{std::move(file)} {
+  SDB_ASSERT(columns.empty() || _file);
+  _columns.reserve(columns.size());
+  for (const auto& [id, meta] : columns) {
+    const bool added =
+      _columns
+        .try_emplace(id, std::make_unique<NormColumnReader>(id, meta, *_file))
+        .second;
+    SDB_ENSURE(added, "duplicate norm column ", id);
+  }
+}
+
+NormColumns::NormColumns(
+  std::vector<std::unique_ptr<NormColumnReader>> columns) {
+  _columns.reserve(columns.size());
+  for (auto& column : columns) {
+    const auto id = column->Id();
+    const bool added = _columns.try_emplace(id, std::move(column)).second;
+    SDB_ENSURE(added, "duplicate norm column ", id);
+  }
+}
+
+NormReader::ptr NormColumns::norms(field_id field) const {
+  const auto* column = Column(field);
+  return column ? MakePersistedNormReader(*column) : NormReader::ptr{};
+}
 
 uint32_t NormRegion::Overflow(uint32_t row) const {
   uint32_t lo = 0;
@@ -54,9 +159,8 @@ uint32_t NormRegion::Overflow(uint32_t row) const {
 }
 
 void NormRegion::Corrupt(doc_id_t doc) const {
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-    ERR_MSG(".col reader: norm exception for doc ", doc, " is missing"));
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                  ERR_MSG("norm exception for doc ", doc, " is missing"));
 }
 
 const byte_type* NormColumnReader::Map(const duckdb::InputFile& file,
@@ -139,7 +243,7 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
     for (uint64_t b = 0; b != buckets; ++b) {
       const auto at = absl::little_endian::Load32(r.bases + b * 4);
       SDB_ENSURE(at >= prev && at <= r.direct,
-                 ".col reader: norm exceptions index on column id ", _id,
+                 "norm exceptions index of column ", _id,
                  " is corrupt at bucket ", b);
       prev = at;
     }
@@ -149,23 +253,105 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
       SDB_ENSURE(row < m.stats.rows &&
                    (k == 0 || row > absl::little_endian::Load32(
                                       r.overflow_rows + size_t{k - 1} * 4)),
-                 ".col reader: norm overflow exceptions on column id ", _id,
-                 " are corrupt at ", k);
+                 "norm overflow exceptions of column ", _id, " are corrupt at ",
+                 k);
     }
   }
   if (_paged) {
     _residency.Reset(_pages);
   }
+  IndexEnds();
+}
+
+void NormColumnReader::IndexEnds() {
+  _ends.reserve(_regions.size());
+  for (const auto& region : _regions) {
+    _ends.push_back(region.end_doc);
+  }
+}
+
+NormColumnReader::NormColumnReader(field_id id, std::vector<NormRegion> regions,
+                                   std::vector<NormStats> stats,
+                                   std::vector<std::vector<uint32_t>> owned)
+  : _file{nullptr},
+    _id{id},
+    _regions{std::move(regions)},
+    _stats{std::move(stats)},
+    _owned{std::move(owned)} {
+  SDB_ASSERT(_regions.size() == _stats.size());
+  for (const auto& stats : _stats) {
+    _row_count += stats.rows;
+    _sum += stats.sum;
+    _non_zero += stats.non_zero;
+  }
+  IndexEnds();
+}
+
+void NormColumnConcat::Add(NormRegion region, const NormStats& stats) {
+  if (stats.rows == 0) {
+    return;
+  }
+  const auto end = static_cast<doc_id_t>(_next + stats.rows);
+  if (!_regions.empty()) {
+    auto& last = _regions.back();
+    if (!last.exceptions && !region.exceptions && last.bits == region.bits &&
+        (last.bits == 0 ? last.value == region.value
+                        : last.base == region.base)) {
+      last.end_doc = end;
+      _stats.back().Merge(stats);
+      _next = end;
+      return;
+    }
+  }
+  region.first_doc = _next;
+  region.end_doc = end;
+  region.window = 0;
+  region.windows = 0;
+  region.page = 0;
+  region.first_page = 0;
+  _next = end;
+  _regions.push_back(region);
+  _stats.push_back(stats);
+}
+
+void NormColumnConcat::Append(const NormColumnReader& column, size_t region) {
+  auto moved = column.Region(region);
+  if (moved.bits != 0) {
+    moved.base +=
+      (int64_t{moved.first_doc} - int64_t{_next}) * (moved.bits / 8);
+  }
+  Add(moved, column.Stats(region));
+}
+
+void NormColumnConcat::AppendZeros(uint64_t rows) {
+  Add({}, {.rows = rows, .min = 0});
+}
+
+void NormColumnConcat::Append(std::vector<uint32_t> values) {
+  static_assert(std::endian::native == std::endian::little);
+  if (values.empty()) {
+    return;
+  }
+  NormStats stats;
+  stats.Add(values);
+  Add({.base = reinterpret_cast<const byte_type*>(values.data()) -
+               uint64_t{_next} * sizeof(uint32_t),
+       .bits = 32},
+      stats);
+  _owned.push_back(std::move(values));
+}
+
+std::unique_ptr<NormColumnReader> NormColumnConcat::Finish(field_id id) && {
+  return std::make_unique<NormColumnReader>(
+    id, std::move(_regions), std::move(_stats), std::move(_owned));
 }
 
 const NormRegion& NormColumnReader::Locate(doc_id_t doc) const noexcept {
   SDB_ASSERT(doc >= doc_limits::min());
   SDB_ASSERT(doc - doc_limits::min() < _row_count);
-  const auto it = std::upper_bound(
-    _regions.begin(), _regions.end(), doc,
-    [](doc_id_t d, const NormRegion& r) { return d < r.end_doc; });
-  SDB_ASSERT(it != _regions.end());
-  return *it;
+  const auto it = absl::c_upper_bound(_ends, doc);
+  SDB_ASSERT(it != _ends.end());
+  return _regions[static_cast<size_t>(it - _ends.begin())];
 }
 
 void NormColumnReader::Decode(doc_id_t first, size_t n,

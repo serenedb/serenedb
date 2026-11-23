@@ -33,7 +33,6 @@
 #include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
-#include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/types.hpp"
@@ -41,12 +40,9 @@
 
 namespace irs {
 
-class NormColumnReader;
-
 inline constexpr std::string_view kFormatExt = "col";
 
 inline constexpr duckdb::field_id_t kColFieldColumns = 0;
-inline constexpr duckdb::field_id_t kColFieldNormColumns = 1;
 inline constexpr duckdb::field_id_t kColFieldBlockSize = 2;
 inline constexpr duckdb::field_id_t kColFieldRowGroupStarts = 3;
 
@@ -56,7 +52,6 @@ inline std::string FileName(std::string_view segment_name) {
 
 struct ColFooter {
   std::vector<ColumnMeta> columns;
-  std::vector<NormColumnSpec> norms;
   uint64_t block_size = DEFAULT_BLOCK_ALLOC_SIZE;
   std::vector<uint64_t> row_group_starts;
 };
@@ -70,10 +65,6 @@ class ColReader final {
             duckdb::shared_ptr<duckdb::InputFile> file, ColFooter footer);
   ColReader(duckdb::DatabaseInstance& db,
             std::vector<std::unique_ptr<ColumnReader>> columns);
-  ColReader(duckdb::DatabaseInstance& db,
-            std::vector<std::unique_ptr<ColumnReader>> columns,
-            duckdb::shared_ptr<duckdb::InputFile> norms_file,
-            std::vector<NormColumnSpec> norms);
   ColReader(const ColReader& base,
             std::vector<std::shared_ptr<const ColumnReader>> replaced);
   ~ColReader();
@@ -87,7 +78,6 @@ class ColReader final {
     return _columns;
   }
 
-  const NormColumnReader* NormColumn(field_id id) const noexcept;
   ReadContext& Ctx() noexcept { return _ctx; }
 
   const duckdb::InputFile* File() const noexcept {
@@ -113,8 +103,6 @@ class ColReader final {
   std::vector<std::shared_ptr<const ColumnReader>> _replaced;
   std::vector<const ColumnReader*> _columns;
   irs::containers::FlatHashMap<field_id, const ColumnReader*> _by_id;
-  std::vector<std::unique_ptr<NormColumnReader>> _norm_columns;
-  irs::containers::FlatHashMap<field_id, const NormColumnReader*> _norm_by_id;
   std::vector<uint64_t> _row_group_starts;
 };
 

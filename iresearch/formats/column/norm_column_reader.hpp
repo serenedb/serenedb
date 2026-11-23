@@ -20,16 +20,21 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #include <cstdint>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/storage/external_file_cache/external_file_cache.hpp>
+#include <memory>
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -97,6 +102,9 @@ class NormColumnReader final {
  public:
   NormColumnReader(field_id id, const NormColumnMeta& meta,
                    const duckdb::InputFile& file);
+  NormColumnReader(field_id id, std::vector<NormRegion> regions,
+                   std::vector<NormStats> stats,
+                   std::vector<std::vector<uint32_t>> owned);
 
   field_id Id() const noexcept { return _id; }
   uint64_t RowCount() const noexcept { return _row_count; }
@@ -119,6 +127,20 @@ class NormColumnReader final {
 
   const NormRegion& Locate(doc_id_t doc) const noexcept;
 
+  IRS_FORCE_INLINE const NormRegion& LocateAfter(const NormRegion& region,
+                                                 doc_id_t doc) const noexcept {
+    SDB_ASSERT(doc >= region.end_doc);
+    const auto next = static_cast<size_t>(&region - _regions.data()) + 1;
+    SDB_ASSERT(next < _regions.size());
+    if (doc < _ends[next]) [[likely]] {
+      return _regions[next];
+    }
+    const auto rest = std::span{_ends}.subspan(next + 1);
+    return _regions[next + 1 +
+                    static_cast<size_t>(absl::c_upper_bound(rest, doc) -
+                                        rest.begin())];
+  }
+
   std::span<const byte_type> Window(size_t i) const noexcept {
     SDB_ASSERT(i < _windows.size());
     return _windows[i];
@@ -139,18 +161,62 @@ class NormColumnReader final {
   const byte_type* Map(const duckdb::InputFile& file, uint64_t offset,
                        uint64_t size);
 
+  void IndexEnds();
+
   const duckdb::InputFile* _file;
   field_id _id;
   std::vector<NormRegion> _regions;
+  std::vector<doc_id_t> _ends;
   std::vector<NormStats> _stats;
   std::vector<std::span<const byte_type>> _windows;
   duckdb::PageResidencyMap _residency;
   std::vector<duckdb::FilePin> _pins;
+  std::vector<std::vector<uint32_t>> _owned;
   uint64_t _row_count = 0;
   uint64_t _sum = 0;
   uint64_t _non_zero = 0;
   size_t _pages = 0;
   bool _paged = false;
+};
+
+class NormColumnConcat final {
+ public:
+  void Append(const NormColumnReader& column, size_t region);
+  void AppendZeros(uint64_t rows);
+  void Append(std::vector<uint32_t> values);
+
+  std::unique_ptr<NormColumnReader> Finish(field_id id) &&;
+
+ private:
+  void Add(NormRegion region, const NormStats& stats);
+
+  std::vector<NormRegion> _regions;
+  std::vector<NormStats> _stats;
+  std::vector<std::vector<uint32_t>> _owned;
+  doc_id_t _next = doc_limits::min();
+};
+
+std::vector<NormColumnSpec> ReadNormColumns(duckdb::BinaryDeserializer& in,
+                                            duckdb::field_id_t field,
+                                            uint64_t data_size);
+
+class NormColumns final : public NormProvider {
+ public:
+  NormColumns() = default;
+  NormColumns(duckdb::shared_ptr<duckdb::InputFile> file,
+              std::span<const NormColumnSpec> columns);
+  explicit NormColumns(std::vector<std::unique_ptr<NormColumnReader>> columns);
+
+  const NormColumnReader* Column(field_id id) const noexcept {
+    const auto it = _columns.find(id);
+    return it == _columns.end() ? nullptr : it->second.get();
+  }
+
+  NormReader::ptr norms(field_id field) const final;
+
+ private:
+  duckdb::shared_ptr<duckdb::InputFile> _file;
+  containers::FlatHashMap<field_id, std::unique_ptr<NormColumnReader>> _columns;
 };
 
 }  // namespace irs

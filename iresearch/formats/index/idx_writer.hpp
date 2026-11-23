@@ -29,6 +29,7 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
@@ -43,6 +44,14 @@ class IdxWriter final {
 
   IdxWriter(const IdxWriter&) = delete;
   IdxWriter& operator=(const IdxWriter&) = delete;
+
+  duckdb::WriteStream& NormsOut();
+
+  void SetNorms(std::vector<NormColumnSpec> columns) noexcept {
+    _footer.norms = std::move(columns);
+  }
+
+  void WriteNorms(SealedNorms norms);
 
   duckdb::WriteStream& BlocksOut();
 

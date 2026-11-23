@@ -25,8 +25,10 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <duckdb/common/memory_mapped_file.hpp>
 #include <limits>
 #include <span>
+#include <utility>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -43,7 +45,67 @@ uint8_t PickShift(uint64_t rows, uint64_t exceptions) noexcept {
     static_cast<uint32_t>(std::bit_width(span)) - 1, kNormMaxShift));
 }
 
+class NormBytes final : public duckdb::MemoryMappedFile {
+ public:
+  explicit NormBytes(duckdb::MemoryStream bytes)
+    : MemoryMappedFile{/*path=*/{}, duckdb::FileOpenFlags::FILE_FLAGS_READ,
+                       bytes.GetData(), bytes.GetPosition()},
+      _bytes{std::move(bytes)} {}
+
+  void Sync() final {}
+  bool Trim(duckdb::idx_t /*offset*/, duckdb::idx_t /*length*/) final {
+    return false;
+  }
+  bool OnDiskFile() const final { return false; }
+  void Close() final {}
+
+ private:
+  duckdb::MemoryStream _bytes;
+};
+
+void WriteNormRegion(duckdb::BinarySerializer& s, const NormRegionMeta& r) {
+  s.WriteProperty(0, "rows", r.stats.rows);
+  s.WriteProperty(1, "sum", r.stats.sum);
+  s.WriteProperty(2, "non_zero", r.stats.non_zero);
+  s.WriteProperty(3, "wide8", r.stats.wide8);
+  s.WriteProperty(4, "wide16", r.stats.wide16);
+  s.WriteProperty(5, "min", r.stats.min);
+  s.WriteProperty(6, "max", r.stats.max);
+  s.WriteProperty(7, "bits", r.bits);
+  if (r.bits == 0) {
+    s.WriteProperty(8, "value", r.value);
+    return;
+  }
+  s.WriteProperty(9, "file_offset", r.file_offset);
+  s.WritePropertyWithDefault<uint32_t>(10, "exceptions", r.exceptions, 0);
+  if (r.exceptions != 0) {
+    s.WriteProperty(11, "overflow", r.overflow);
+    s.WriteProperty(12, "shift", r.shift);
+    s.WriteProperty(13, "exception_bytes", r.exception_bytes);
+    s.WriteProperty(14, "table_offset", r.table_offset);
+  }
+}
+
 }  // namespace
+
+void WriteNormColumns(duckdb::BinarySerializer& out, duckdb::field_id_t field,
+                      std::span<const NormColumnSpec> columns) {
+  out.WriteOptionalList(
+    field, "norm_columns", columns.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      list.WriteObject([&](duckdb::BinarySerializer& column) {
+        const auto& regions = columns[i].meta.regions;
+        column.WriteProperty(0, "id", static_cast<uint64_t>(columns[i].id));
+        column.WriteList(
+          1, "regions", regions.size(),
+          [&](duckdb::BinarySerializer::List& items, duckdb::idx_t r) {
+            items.WriteObject([&](duckdb::BinarySerializer& region) {
+              WriteNormRegion(region, regions[r]);
+            });
+          });
+      });
+    });
+}
 
 void NormStats::Add(std::span<const uint32_t> values) noexcept {
   rows += values.size();
@@ -82,8 +144,8 @@ NormLayout PickNormLayout(const NormStats& stats) noexcept {
 }
 
 NormColumnWriter::NormColumnWriter(field_id id, uint32_t row_group_size,
-                                   Open open)
-  : _id{id}, _open{std::move(open)}, _row_group_size{row_group_size} {}
+                                   duckdb::WriteStream& out)
+  : _id{id}, _out{&out}, _row_group_size{row_group_size} {}
 
 void NormColumnWriter::Append(uint64_t target_row, uint32_t value) {
   SDB_ASSERT(target_row >= RowCount(),
@@ -144,9 +206,6 @@ void NormColumnWriter::CloseRegion() {
 
 void NormColumnWriter::Begin(const NormLayout& layout, uint64_t rows,
                              uint32_t max) {
-  if (layout.bits != 0 && _out == nullptr) {
-    _out = &_open();
-  }
   _open_region = true;
   _region = {};
   _region.bits = static_cast<uint8_t>(layout.bits);
@@ -278,6 +337,47 @@ void NormColumnWriter::Finalize() {
   _overflow_rows = {};
   _overflow_values = {};
   _staging = {};
+}
+
+NormColumnWriter& NormsWriter::Add(field_id id, uint32_t row_group_size) {
+  if (!_out) {
+    _out = &_buffer.emplace(*_allocator);
+  }
+  auto& writer = *_columns.emplace_back(
+    std::make_unique<NormColumnWriter>(id, row_group_size, *_out));
+  _by_id.emplace(id, &writer);
+  return writer;
+}
+
+NormColumnWriter& NormsWriter::Open(field_id id, uint32_t row_group_size) {
+  SDB_ASSERT(row_group_size != 0);
+  if (const auto it = _by_id.find(id); it != _by_id.end()) {
+    return *it->second;
+  }
+  return Add(id, row_group_size);
+}
+
+NormColumnWriter& NormsWriter::Stream(field_id id) {
+  SDB_ASSERT(!_by_id.contains(id));
+  return Add(id, 0);
+}
+
+SealedNorms NormsWriter::Seal(uint64_t rows) && {
+  SealedNorms sealed;
+  for (auto& writer : _columns) {
+    writer->PadTo(rows);
+    writer->Finalize();
+    SDB_ASSERT(writer->Meta().row_count == rows);
+    if (!writer->Meta().regions.empty()) {
+      sealed.columns.push_back(
+        {.id = writer->Id(), .meta = writer->TakeMeta()});
+    }
+  }
+  if (!sealed.columns.empty() && _buffer) {
+    sealed.file = duckdb::make_shared_ptr<duckdb::InputFile>(
+      duckdb::make_uniq<NormBytes>(std::move(*_buffer)));
+  }
+  return sealed;
 }
 
 }  // namespace irs

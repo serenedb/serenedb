@@ -23,18 +23,15 @@
 
 // The legacy `irs::BufferedColumn` is being removed (task #6). The four
 // tests here keep the name+shape but exercise the surviving norm-column
-// write path (`irs::NormColumnWriter` via `Writer::Open
-// NormColumn`) -- BufferedColumn's role was to stage per-doc norm bytes
-// before flush, and the new NormColumnWriter replaces it.
+// write path (`irs::NormColumnWriter` via `NormsWriter::Open`), written to
+// and read back from a segment's .idx.
 
 #include <gtest/gtest.h>
 
-#include <duckdb/common/types/vector.hpp>
-#include <duckdb/common/vector/flat_vector.hpp>
-#include <iresearch/formats/column/col_reader.hpp>
-#include <iresearch/formats/column/column_writer.hpp>
+#include <iresearch/formats/column/norm_column_reader.hpp>
 #include <iresearch/formats/column/norm_reader.hpp>
 #include <iresearch/formats/column/norm_writer.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
@@ -50,14 +47,6 @@ class BufferedColumnTestCase : public ::testing::TestWithParam<bool> {
     return ::irs::DuckDBEngine::Instance().instance();
   }
 };
-
-// Returns true iff `dir` contains a file named `segment_name + ".col"`.
-// Used to assert that Rollback() leaves the directory clean.
-bool HasCsFile(const tests::IndexDir& dir, std::string_view segment_name) {
-  std::string fn{segment_name};
-  fn.append(".col");
-  return dir.Has(fn);
-}
 
 void AssertNormReads(const irs::NormColumnReader& col,
                      const std::vector<uint32_t>& expected) {
@@ -138,69 +127,34 @@ TEST_P(BufferedColumnTestCase, Ctor) {
   // Fresh writer + fresh norm column => Id matches, RowCount == 0.
   // Mirrors the legacy `Empty()`/`Size()` checks on a default-constructed
   // BufferedColumn.
-  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  {
-    irs::ColWriter w{Db(), dir.Tracker("ctor_seg")};
-    auto& nw = w.OpenNormColumn(/*id=*/1, /*row_group_size=*/128);
-    EXPECT_EQ(nw.Id(), 1);
-    EXPECT_EQ(nw.RowCount(), 0u);
+  irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+  auto& nw = w.Open(/*id=*/1, /*row_group_size=*/128);
+  EXPECT_EQ(nw.Id(), 1);
+  EXPECT_EQ(nw.RowCount(), 0u);
 
-    // RowCount advances on Append.
-    nw.Append(0, /*value=*/3);
-    EXPECT_EQ(nw.RowCount(), 1u);
+  // RowCount advances on Append.
+  nw.Append(0, /*value=*/3);
+  EXPECT_EQ(nw.RowCount(), 1u);
 
-    // Append a few more; RowCount tracks the high-water row.
-    nw.Append(1, 5);
-    nw.Append(2, 7);
-    EXPECT_EQ(nw.RowCount(), 3u);
-
-    w.Rollback();
-  }
-  EXPECT_FALSE(HasCsFile(dir, "ctor_seg"));
+  // Append a few more; RowCount tracks the high-water row.
+  nw.Append(1, 5);
+  nw.Append(2, 7);
+  EXPECT_EQ(nw.RowCount(), 3u);
 }
 
 TEST_P(BufferedColumnTestCase, FlushEmpty) {
-  // BufferedColumn::Flush on an empty buffer was a no-op + the segment's
-  // column meta wasn't written. New cs analogue: open the norm column,
-  // append nothing, Rollback() the writer => no .col file appears.
-
-  // --- (1) Rollback path on a norm-only writer ----------------------------
-  {
-    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-    {
-      irs::ColWriter w{Db(), dir.Tracker("flush_empty_rb")};
-      auto& nw = w.OpenNormColumn(/*id=*/3, /*row_group_size=*/128);
-      EXPECT_EQ(nw.RowCount(), 0u);
-      w.Rollback();
-    }
-    EXPECT_FALSE(HasCsFile(dir, "flush_empty_rb"));
-  }
-
-  // --- (2) Commit-with-zero-padding produces a 0-row group ---------------
-  // Writer::Commit pads the norm column to target_row before flushing; a
-  // typed column with one row + an unused norm column => the .col file
-  // exists, the typed column has one row, the norm column has one
-  // implicit zero-padded row (NonZeroCount == 0, Sum == 0).
-  {
-    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-    {
-      irs::ColWriter w{Db(), dir.Tracker("flush_empty_typed")};
-      w.OpenNormColumn(/*id=*/3, /*row_group_size=*/128);
-      auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BIGINT);
-      duckdb::Vector v{duckdb::LogicalType::BIGINT, 1};
-      duckdb::FlatVector::GetDataMutable<int64_t>(v)[0] = 42;
-      duckdb::FlatVector::ValidityMutable(v).SetAllValid(1);
-      cw.Append(0, v, 1);
-      w.Commit(/*target_row=*/1);
-    }
-    irs::ColReader r = irs::tests::OpenColReader(dir, "flush_empty_typed");
-    EXPECT_TRUE(r.HasColumn(1));
-    const auto* norm = r.NormColumn(3);
-    ASSERT_NE(norm, nullptr);
-    EXPECT_EQ(norm->RowCount(), 1u);
-    EXPECT_EQ(norm->Sum(), 0u);
-    EXPECT_EQ(norm->NonZeroCount(), 0u);
-  }
+  // Sealing pads a norm column nothing was appended to with zero rows:
+  // NonZeroCount == 0, Sum == 0.
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+  w.Open(/*id=*/3, /*row_group_size=*/128);
+  const auto r =
+    irs::tests::CommitNorms(dir, "flush_empty", std::move(w), /*rows=*/1);
+  const auto* norm = r->NormColumn(3);
+  ASSERT_NE(norm, nullptr);
+  EXPECT_EQ(norm->RowCount(), 1u);
+  EXPECT_EQ(norm->Sum(), 0u);
+  EXPECT_EQ(norm->NonZeroCount(), 0u);
 }
 
 TEST_P(BufferedColumnTestCase, InsertDuplicates) {
@@ -217,16 +171,14 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
     constexpr uint64_t kRowCount = 256;
     constexpr uint32_t kRowGroupSize = 64;  // 4 row groups
-    {
-      irs::ColWriter w{Db(), dir.Tracker("dup_zero")};
-      auto& nw = w.OpenNormColumn(9, kRowGroupSize);
-      for (uint64_t i = 0; i < kRowCount; ++i) {
-        nw.Append(i, /*value=*/0);
-      }
-      w.Commit(kRowCount);
+    irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+    auto& nw = w.Open(9, kRowGroupSize);
+    for (uint64_t i = 0; i < kRowCount; ++i) {
+      nw.Append(i, /*value=*/0);
     }
-    irs::ColReader r = irs::tests::OpenColReader(dir, "dup_zero");
-    const auto* col = r.NormColumn(9);
+    const auto r =
+      irs::tests::CommitNorms(dir, "dup_zero", std::move(w), kRowCount);
+    const auto* col = r->NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kRowCount);
     EXPECT_EQ(col->Sum(), 0u);
@@ -245,16 +197,14 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     constexpr uint64_t kRowCount = 5000;
     constexpr uint32_t kRepeatedValue = 42;
     constexpr uint32_t kRowGroupSize = 1024;
-    {
-      irs::ColWriter w{Db(), dir.Tracker("dup_value")};
-      auto& nw = w.OpenNormColumn(9, kRowGroupSize);
-      for (uint64_t i = 0; i < kRowCount; ++i) {
-        nw.Append(i, kRepeatedValue);
-      }
-      w.Commit(kRowCount);
+    irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+    auto& nw = w.Open(9, kRowGroupSize);
+    for (uint64_t i = 0; i < kRowCount; ++i) {
+      nw.Append(i, kRepeatedValue);
     }
-    irs::ColReader r = irs::tests::OpenColReader(dir, "dup_value");
-    const auto* col = r.NormColumn(9);
+    const auto r =
+      irs::tests::CommitNorms(dir, "dup_value", std::move(w), kRowCount);
+    const auto* col = r->NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kRowCount);
     EXPECT_EQ(col->Sum(), uint64_t{kRepeatedValue} * kRowCount);
@@ -279,16 +229,14 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
     constexpr uint64_t kRowCount = 300;
     constexpr uint32_t kRepeatedValue = 7;
     constexpr uint32_t kRowGroupSize = 100;
-    {
-      irs::ColWriter w{Db(), dir.Tracker("dup_rg")};
-      auto& nw = w.OpenNormColumn(9, kRowGroupSize);
-      for (uint64_t i = 0; i < kRowCount; ++i) {
-        nw.Append(i, kRepeatedValue);
-      }
-      w.Commit(kRowCount);
+    irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+    auto& nw = w.Open(9, kRowGroupSize);
+    for (uint64_t i = 0; i < kRowCount; ++i) {
+      nw.Append(i, kRepeatedValue);
     }
-    irs::ColReader r = irs::tests::OpenColReader(dir, "dup_rg");
-    const auto* col = r.NormColumn(9);
+    const auto r =
+      irs::tests::CommitNorms(dir, "dup_rg", std::move(w), kRowCount);
+    const auto* col = r->NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RegionCount(), 3u);
     for (size_t r = 0; r < col->RegionCount(); ++r) {
@@ -299,6 +247,77 @@ TEST_P(BufferedColumnTestCase, InsertDuplicates) {
       EXPECT_FALSE(region.exceptions) << "r=" << r;
     }
   }
+}
+
+TEST_P(BufferedColumnTestCase, SparseRows) {
+  constexpr uint64_t kDocs = 5000;
+  constexpr uint32_t kRowGroupSize = 1024;
+  std::vector<uint32_t> expected(kDocs, 0);
+  for (uint64_t d = 0; d < kDocs; d += 3) {
+    expected[d] = static_cast<uint32_t>(d * 13 + 1);
+  }
+
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+  auto& nw = w.Open(9, kRowGroupSize);
+  for (uint64_t d = 0; d < kDocs; d += 3) {
+    nw.Append(d, expected[d]);
+  }
+  const auto r = irs::tests::CommitNorms(dir, "sparse", std::move(w), kDocs);
+  const auto* col = r->NormColumn(9);
+  ASSERT_NE(col, nullptr);
+  AssertNormReads(*col, expected);
+}
+
+TEST_P(BufferedColumnTestCase, ConcatenatedColumns) {
+  constexpr uint32_t kRowGroupSize = 1024;
+  std::vector<uint32_t> first(3000);
+  for (size_t i = 0; i < first.size(); ++i) {
+    first[i] = static_cast<uint32_t>(1 + i % 200);
+  }
+  first[700] = 70000;
+  std::vector<uint32_t> second(2000);
+  for (size_t i = 0; i < second.size(); ++i) {
+    second[i] = static_cast<uint32_t>(300 + i % 5000);
+  }
+  const std::vector<uint32_t> owned{5, 0, 77, 100000};
+  constexpr uint64_t kZeros = 500;
+
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  const auto commit = [&](std::string_view name, irs::field_id id,
+                          const std::vector<uint32_t>& values) {
+    irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+    auto& nw = w.Open(id, kRowGroupSize);
+    for (uint64_t i = 0; i < values.size(); ++i) {
+      nw.Append(i, values[i]);
+    }
+    return irs::tests::CommitNorms(dir, name, std::move(w), values.size());
+  };
+  const auto a = commit("concat_a", 1, first);
+  const auto b = commit("concat_b", 2, second);
+  const auto* column_a = a->NormColumn(1);
+  const auto* column_b = b->NormColumn(2);
+  ASSERT_NE(column_a, nullptr);
+  ASSERT_NE(column_b, nullptr);
+
+  irs::NormColumnConcat concat;
+  for (size_t r = 0; r < column_a->RegionCount(); ++r) {
+    concat.Append(*column_a, r);
+  }
+  concat.AppendZeros(kZeros);
+  concat.Append(owned);
+  for (size_t r = 0; r < column_b->RegionCount(); ++r) {
+    concat.Append(*column_b, r);
+  }
+  const auto view = std::move(concat).Finish(9);
+
+  std::vector<uint32_t> expected = first;
+  expected.insert(expected.end(), kZeros, 0);
+  expected.insert(expected.end(), owned.begin(), owned.end());
+  expected.insert(expected.end(), second.begin(), second.end());
+  EXPECT_EQ(view->Id(), 9);
+  EXPECT_FALSE(view->Paged());
+  AssertNormReads(*view, expected);
 }
 
 TEST_P(BufferedColumnTestCase, RareLargeValues) {
@@ -317,16 +336,13 @@ TEST_P(BufferedColumnTestCase, RareLargeValues) {
   expected[2058] = 255;
 
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  {
-    irs::ColWriter w{Db(), dir.Tracker("rare")};
-    auto& nw = w.OpenNormColumn(9, kRowGroupSize);
-    for (uint64_t i = 0; i < kRowCount; ++i) {
-      nw.Append(i, expected[i]);
-    }
-    w.Commit(kRowCount);
+  irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+  auto& nw = w.Open(9, kRowGroupSize);
+  for (uint64_t i = 0; i < kRowCount; ++i) {
+    nw.Append(i, expected[i]);
   }
-  irs::ColReader r = irs::tests::OpenColReader(dir, "rare");
-  const auto* col = r.NormColumn(9);
+  const auto r = irs::tests::CommitNorms(dir, "rare", std::move(w), kRowCount);
+  const auto* col = r->NormColumn(9);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RegionCount(), 3u);
   EXPECT_EQ(col->Region(0).bits, 8u);
@@ -351,16 +367,14 @@ TEST_P(BufferedColumnTestCase, RareLargeValuesEveryRowGroup) {
 
   for (const uint32_t row_group_size : {512u, 4096u}) {
     tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-    {
-      irs::ColWriter w{Db(), dir.Tracker("rare_all")};
-      auto& nw = w.OpenNormColumn(9, row_group_size);
-      for (uint64_t i = 0; i < kRowCount; ++i) {
-        nw.Append(i, expected[i]);
-      }
-      w.Commit(kRowCount);
+    irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+    auto& nw = w.Open(9, row_group_size);
+    for (uint64_t i = 0; i < kRowCount; ++i) {
+      nw.Append(i, expected[i]);
     }
-    irs::ColReader r = irs::tests::OpenColReader(dir, "rare_all");
-    const auto* col = r.NormColumn(9);
+    const auto r =
+      irs::tests::CommitNorms(dir, "rare_all", std::move(w), kRowCount);
+    const auto* col = r->NormColumn(9);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RegionCount(),
               kRowCount / std::min<uint64_t>(kRowCount, row_group_size));
@@ -384,16 +398,14 @@ TEST_P(BufferedColumnTestCase, CrowdedBucketOverflows) {
   expected[kRowCount - 1] = 1u << 31;
 
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  {
-    irs::ColWriter w{Db(), dir.Tracker("crowded")};
-    auto& nw = w.OpenNormColumn(9, kRowCount);
-    for (uint64_t i = 0; i < kRowCount; ++i) {
-      nw.Append(i, expected[i]);
-    }
-    w.Commit(kRowCount);
+  irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+  auto& nw = w.Open(9, kRowCount);
+  for (uint64_t i = 0; i < kRowCount; ++i) {
+    nw.Append(i, expected[i]);
   }
-  irs::ColReader r = irs::tests::OpenColReader(dir, "crowded");
-  const auto* col = r.NormColumn(9);
+  const auto r =
+    irs::tests::CommitNorms(dir, "crowded", std::move(w), kRowCount);
+  const auto* col = r->NormColumn(9);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RegionCount(), 1u);
   const auto& region = col->Region(0);
@@ -418,16 +430,13 @@ TEST_P(BufferedColumnTestCase, WideRegions) {
   }
 
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  {
-    irs::ColWriter w{Db(), dir.Tracker("wide")};
-    auto& nw = w.OpenNormColumn(9, 2048);
-    for (uint64_t i = 0; i < kRowCount; ++i) {
-      nw.Append(i, expected[i]);
-    }
-    w.Commit(kRowCount);
+  irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
+  auto& nw = w.Open(9, 2048);
+  for (uint64_t i = 0; i < kRowCount; ++i) {
+    nw.Append(i, expected[i]);
   }
-  irs::ColReader r = irs::tests::OpenColReader(dir, "wide");
-  const auto* col = r.NormColumn(9);
+  const auto r = irs::tests::CommitNorms(dir, "wide", std::move(w), kRowCount);
+  const auto* col = r->NormColumn(9);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RegionCount(), 2u);
   EXPECT_EQ(col->Region(0).bits, 16u);
@@ -451,9 +460,9 @@ TEST_P(BufferedColumnTestCase, StreamedRegions) {
   constexpr uint64_t kRowCount = 7000;
   std::vector<uint32_t> expected;
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  irs::NormsWriter w{duckdb::Allocator::DefaultAllocator()};
   {
-    irs::ColWriter w{Db(), dir.Tracker("streamed")};
-    auto& nw = w.StreamNormColumn(9);
+    auto& nw = w.Stream(9);
     const auto write = [&](uint64_t from, uint64_t to, uint64_t skip) {
       irs::NormStats planned;
       std::vector<uint32_t> all;
@@ -478,10 +487,10 @@ TEST_P(BufferedColumnTestCase, StreamedRegions) {
     write(5000, kRowCount, 5);
     write(kRowCount, kRowCount, 0);
     nw.Finalize();
-    w.Commit(expected.size());
   }
-  irs::ColReader r = irs::tests::OpenColReader(dir, "streamed");
-  const auto* col = r.NormColumn(9);
+  const auto r =
+    irs::tests::CommitNorms(dir, "streamed", std::move(w), expected.size());
+  const auto* col = r->NormColumn(9);
   ASSERT_NE(col, nullptr);
   ASSERT_EQ(col->RegionCount(), 3u);
   EXPECT_EQ(col->Region(0).bits, 8u);
@@ -499,8 +508,7 @@ TEST(NormColumnReaderTest, CorruptExceptionIndexThrows) {
   duckdb::MemoryStream written;
   irs::NormColumnMeta meta;
   {
-    irs::NormColumnWriter writer{
-      1, kRows, [&]() -> duckdb::WriteStream& { return written; }};
+    irs::NormColumnWriter writer{1, kRows, written};
     for (uint32_t i = 0; i != kRows; ++i) {
       writer.Append(i, i % kWideEvery == 0 ? 70000 + i : 1 + i % 3);
     }

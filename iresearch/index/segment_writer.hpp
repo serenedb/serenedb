@@ -25,14 +25,15 @@
 
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/main/database.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/field_writer.hpp"
-#include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
@@ -44,7 +45,7 @@ namespace irs {
 
 struct SegmentMeta;
 
-class SegmentWriter final : public NormProvider, util::Noncopyable {
+class SegmentWriter final : util::Noncopyable {
  private:
   struct ConstructToken final {
     explicit ConstructToken() = default;
@@ -153,16 +154,6 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
                 duckdb::FileSystem& fs, std::string_view root,
                 const SegmentWriterOptions& options);
 
-  NormReader::ptr norms(field_id id) const final {
-    if (_col_reader == nullptr) {
-      return {};
-    }
-    const auto* col = _col_reader->NormColumn(id);
-    if (col == nullptr) {
-      return {};
-    }
-    return MakePersistedNormReader(*col);
-  }
   ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
   const ColWriter* GetColWriter() const noexcept { return _col_writer.get(); }
 
@@ -275,6 +266,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   void FlushFields(FlushState& state,
                    std::span<const BasicTermReader* const> extra);
   void CopyColumns();
+  SealedNorms SealNorms();
 
   // Reset body that keeps _field_options; reset() drops them, reset(meta)
   // keeps.
@@ -302,6 +294,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Owning per-op override; null falls back to _fallback_field_options.
   std::shared_ptr<const IndexFieldOptions> _field_options;
   std::unique_ptr<ColWriter> _col_writer;
+  std::optional<NormsWriter> _norms;
   std::vector<field_id> _copied_columns;
   std::vector<CopiedRows> _copied_rows;
   doc_id_t _batch_first_doc_id = doc_limits::eof();

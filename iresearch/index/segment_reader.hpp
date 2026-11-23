@@ -65,6 +65,8 @@ class SegmentReader final : public SubReader {
 
   NormReader::ptr norms(field_id field) const final;
 
+  const NormColumnReader* NormColumn(field_id field) const final;
+
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;
   const ColReader* GetColReader() const final;

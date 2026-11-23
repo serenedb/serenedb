@@ -142,9 +142,7 @@ void NormTestCase::AssertNormColumn(
   ASSERT_EQ(id, meta.id);
   ASSERT_TRUE(irs::field_limits::valid(meta.norm));
 
-  const auto* cs = segment.GetColReader();
-  ASSERT_NE(nullptr, cs);
-  const auto* column = cs->NormColumn(meta.norm);
+  const auto* column = segment.NormColumn(meta.norm);
   ASSERT_NE(nullptr, column);
   ASSERT_EQ(meta.norm, column->Id());
 
@@ -324,7 +322,7 @@ TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
   const auto assert_escaped = [&](const irs::SubReader& segment) {
     const auto* field = segment.field(FieldIdFor(kName));
     ASSERT_NE(nullptr, field);
-    const auto* column = segment.GetColReader()->NormColumn(field->meta().norm);
+    const auto* column = segment.NormColumn(field->meta().norm);
     ASSERT_NE(nullptr, column);
     bool exceptions = false;
     for (size_t r = 0; r < column->RegionCount(); ++r) {

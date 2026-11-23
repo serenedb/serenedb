@@ -127,11 +127,12 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenInMemory(
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenPiece(
   const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns,
-  std::shared_ptr<const PieceFields> fields) {
+  std::unique_ptr<IdxReader> norms, std::shared_ptr<const PieceFields> fields) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_id = id;
   reader->_readers = std::make_shared<Readers>();
   reader->_readers->col_reader = std::move(columns);
+  reader->_readers->idx_reader = std::move(norms);
   reader->_pieces = std::move(fields);
   return reader;
 }
@@ -194,14 +195,13 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
 }
 
 NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
-  if (!_readers) {
-    return {};
-  }
-  const auto* nc = _readers->col_reader->NormColumn(field);
-  if (!nc) {
-    return {};
-  }
-  return MakePersistedNormReader(*nc);
+  const auto* column = NormColumn(field);
+  return column ? MakePersistedNormReader(*column) : NormReader::ptr{};
+}
+
+const NormColumnReader* SegmentReaderImpl::NormColumn(field_id field) const {
+  const auto* idx = _readers ? _readers->Idx() : nullptr;
+  return idx ? idx->NormColumn(field) : nullptr;
 }
 
 const ColumnReader* SegmentReaderImpl::Column(field_id field) const {

@@ -26,6 +26,8 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
+#include <iresearch/formats/index/idx_writer.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -56,6 +58,17 @@ ColReader OpenColReader(const ::tests::IndexDir& dir,
                    segment_name,
                    dir.Has(FileName(segment_name)),
                    duckdb::MappedFileAccess::SEQUENTIAL};
+}
+
+std::unique_ptr<IdxReader> CommitNorms(const ::tests::IndexDir& dir,
+                                       std::string_view segment_name,
+                                       NormsWriter&& norms, uint64_t rows) {
+  IdxWriter idx{dir.Tracker(segment_name)};
+  idx.WriteNorms(std::move(norms).Seal(rows));
+  idx.Commit(/*hnsw_bases=*/nullptr);
+  return std::make_unique<IdxReader>(
+    dir.Fs(), dir.Root(), segment_name,
+    dir.Has(FileName(segment_name, kIdxFormatExt)), /*hnsw_bases=*/nullptr);
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

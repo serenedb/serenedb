@@ -530,7 +530,9 @@ class PersistedNormReader : public NormReaderBase {
   void Split(const doc_id_t* IRS_RESTRICT docs, uint32_t* IRS_RESTRICT values,
              size_t n) {
     for (size_t i = 0; i != n;) {
-      if (docs[i] < _region->first_doc || docs[i] >= _region->end_doc) {
+      if (docs[i] >= _region->end_doc) {
+        Position(_column->LocateAfter(*_region, docs[i]));
+      } else if (docs[i] < _region->first_doc) {
         Position(_column->Locate(docs[i]));
       }
       size_t j = i + 1;

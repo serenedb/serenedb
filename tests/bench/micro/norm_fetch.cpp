@@ -260,8 +260,7 @@ struct PackedColumn {
   size_t bytes = 0;
 
   void Build(const std::vector<uint32_t>& values) {
-    irs::NormColumnWriter writer{
-      1, kRgRows, [&]() -> duckdb::WriteStream& { return file; }};
+    irs::NormColumnWriter writer{1, kRgRows, file};
     for (size_t i = 0; i != values.size(); ++i) {
       writer.Append(i, values[i]);
     }

@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <duckdb/common/operator/comparison_operators.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
@@ -32,7 +31,6 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
-#include <duckdb/storage/statistics/string_stats.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <optional>
 #include <utility>
@@ -78,31 +76,6 @@ void CollectNumeric(duckdb::BaseStatistics& stats, const ChunkView& chunk) {
   duckdb::StatsWriter<T> writer;
   Collect<T>(writer, chunk);
   writer.Merge(stats);
-}
-
-void SetExactBounds(duckdb::BaseStatistics& stats, const ChunkView& chunk) {
-  const auto values = chunk.data.Values<duckdb::string_t>();
-  std::optional<duckdb::string_t> min;
-  std::optional<duckdb::string_t> max;
-  for (duckdb::idx_t i = 0; i < chunk.count; ++i) {
-    const auto entry = values[i];
-    if (!entry.IsValid()) {
-      continue;
-    }
-    const auto value = entry.GetValue();
-    if (!min || duckdb::LessThan::Operation(value, *min)) {
-      min = value;
-    }
-    if (!max || duckdb::GreaterThan::Operation(value, *max)) {
-      max = value;
-    }
-  }
-  if (min) {
-    duckdb::StringStats::SetMin(stats, *min,
-                                duckdb::StringStatsType::EXACT_STATS);
-    duckdb::StringStats::SetMax(stats, *max,
-                                duckdb::StringStatsType::EXACT_STATS);
-  }
 }
 
 struct IntervalStatsWriter {
@@ -179,9 +152,6 @@ duckdb::BaseStatistics ChunkStatistics(const duckdb::LogicalType& type,
         duckdb::StatsWriter<duckdb::string_t> writer{type};
         Collect<duckdb::string_t>(writer, chunk);
         writer.Merge(stats);
-        if (stats.GetStatsType() == duckdb::StatisticsType::STRING_STATS) {
-          SetExactBounds(stats, chunk);
-        }
         return stats;
       }
       break;

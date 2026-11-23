@@ -40,15 +40,44 @@ query
 EXPLAIN SELECT count(*), min(n), max(n), min(d), max(d), min(cat), max(cat), min(s), max(s) FROM sag_idx
 ----
 QUERY PLAN
-╭─ COLUMN_DATA_SCAN ─╮
-│ ~1 row             │
-╰────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star(), │
+│             min(#0),      │
+│             max(#0),      │
+│             min(#1),      │
+│             max(#1),      │
+│             min(#2),      │
+│             max(#2),      │
+│             min(#3),      │
+│             max(#3)       │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: sag_idx            │
+│ Lookup: search            │
+│ Projections: n, d, cat, s │
+│ ~150 rows                 │
+╰───────────────────────────╯
 
 query
 SELECT count(*), min(n), max(n), min(d), max(d), min(cat), max(cat), min(s), max(s) FROM sag_idx
 ----
 count	min	max	min	max	min	max	min	max
 150	-47	400	2024-01-02	2024-05-30	category-shared-prefix-0	category-shared-prefix-6	v1	v99
+
+query
+EXPLAIN SELECT count(*), min(n), max(n), min(d), max(d), min(s), max(s) FROM sag_idx
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+query
+SELECT count(*), min(n), max(n), min(d), max(d), min(s), max(s) FROM sag_idx
+----
+count	min	max	min	max	min	max
+150	-47	400	2024-01-02	2024-05-30	v1	v99
 
 query
 SELECT count(*), min(n), max(n), min(d), max(d), min(cat), max(cat), min(s), max(s) FROM sag
@@ -190,9 +219,19 @@ query
 EXPLAIN SELECT count(*), max(cat), max(s), max(d) FROM sag_idx
 ----
 QUERY PLAN
-╭─ COLUMN_DATA_SCAN ─╮
-│ ~1 row             │
-╰────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star(), │
+│             max(#0),      │
+│             max(#1),      │
+│             max(#2)       │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: sag_idx            │
+│ Lookup: search            │
+│ Projections: cat, s, d    │
+│ ~151 rows                 │
+╰───────────────────────────╯
 
 query
 SELECT count(*), max(cat), max(s), max(d) FROM sag_idx
@@ -419,9 +458,21 @@ query
 EXPLAIN SELECT count(*), min(n), max(n), min(cat), max(cat) FROM sag_v_idx
 ----
 QUERY PLAN
-╭─ COLUMN_DATA_SCAN ─╮
-│ ~1 row             │
-╰────────────────────╯
+╭─ UNGROUPED_AGGREGATE ─────╮
+│ Aggregates: count_star(), │
+│             min(#0),      │
+│             max(#0),      │
+│             min(#1),      │
+│             max(#1)       │
+│ ~1 row                    │
+╰─────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: sag_v_idx          │
+│ Lookup: glob parquet      │
+│ Projections: n (i),       │
+│              cat (l)      │
+│ ~70 rows                  │
+╰───────────────────────────╯
 
 query
 SELECT count(*), min(n), max(n), min(cat), max(cat) FROM sag_v_idx

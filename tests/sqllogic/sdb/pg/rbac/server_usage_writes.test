@@ -1,0 +1,74 @@
+control substitution on
+
+statement ok
+DROP SERVER IF EXISTS suw_s;
+
+
+statement ok
+DROP ROLE IF EXISTS suw_bob;
+
+
+statement ok
+CREATE SERVER suw_s FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/suw.duckdb');
+
+
+statement ok
+CREATE OR REPLACE TABLE suw_s.main.t (a int);
+
+
+statement ok
+CREATE ROLE suw_bob LOGIN PASSWORD 'suw_pw';
+
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER suw_s TO suw_bob;
+
+
+connection c_bob user=suw_bob password=suw_pw
+query
+SELECT count(*) AS n FROM suw_s.main.t;
+----
+n
+0
+
+
+connection c_bob user=suw_bob password=suw_pw
+statement ok
+INSERT INTO suw_s.main.t VALUES (1), (2);
+
+
+connection c_bob user=suw_bob password=suw_pw
+statement ok
+UPDATE suw_s.main.t SET a = a * 10 WHERE a = 2;
+
+
+connection c_bob user=suw_bob password=suw_pw
+statement ok
+DELETE FROM suw_s.main.t WHERE a = 1;
+
+
+connection c_bob user=suw_bob password=suw_pw
+query
+SELECT a FROM suw_s.main.t ORDER BY a;
+----
+a
+20
+
+
+statement ok
+REVOKE USAGE ON FOREIGN SERVER suw_s FROM suw_bob;
+
+
+connection c_bob user=suw_bob password=suw_pw
+statement error
+INSERT INTO suw_s.main.t VALUES (3);
+----
+db error: ERROR: permission denied for foreign server suw_s
+
+
+statement ok
+DROP SERVER suw_s;
+
+
+statement ok
+DROP ROLE suw_bob;

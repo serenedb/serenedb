@@ -263,7 +263,7 @@ A foreign server is owned by the role that created it and carries a single privi
 | `CREATE SERVER` | `USAGE` on the foreign-data wrapper in the current database, which only superusers hold until one grants it; a server owned by a role without `SUPERUSER` also follows the [rules below](#servers-owned-by-roles-without-superuser) |
 | `ALTER SERVER ... OWNER TO` | Ownership of the server, the right to `SET ROLE` to the new owner, and `USAGE` on the server's foreign-data wrapper for the new owner; superusers need none of these. A new owner without `SUPERUSER` makes the server follow the [rules below](#servers-owned-by-roles-without-superuser) |
 | `DROP SERVER` | Ownership of the server, or superuser |
-| Querying through the server | `USAGE` on the server (owner and superusers exempt) |
+| Reading and writing through the server | `USAGE` on the server (owner and superusers exempt) |
 | `iceberg_snapshots`, `iceberg_metadata`, `iceberg_column_stats`, `iceberg_partition_stats`, `iceberg_table_properties`, `iceberg_schema_properties`, `iceberg_scan_plan` and `iceberg_view_metadata` on the server's tables, views and schemas | `USAGE` on the server |
 | `set_iceberg_table_properties`, `remove_iceberg_table_properties`, `iceberg_rollback_to_snapshot`, `iceberg_rewrite_data_files`, `set_iceberg_schema_properties` and `remove_iceberg_schema_properties` | Superuser: they change the table or schema as `ALTER` does, which needs its owner, and the server's tables and schemas have none |
 | `iceberg_load_table_response` | Superuser: it returns the storage credentials the catalog hands out |

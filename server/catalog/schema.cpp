@@ -170,11 +170,14 @@ bool MoveOverload(Schema& schema, Schema& target_schema,
       ERR_CODE(ERRCODE_UNDEFINED_FUNCTION),
       ERR_MSG("function with OID ", overload_oid, " does not exist"));
   }
+  RefuseDependents(transaction, entry,
+                   [](const duckdb::CatalogEntry&) { return true; });
   auto moved = std::move(*source_it);
   source_macros.erase(source_it);
+  const bool held_entry_oid = !moved->oid;
   moved->permissions = function.OverloadPermissions(*moved);
   moved->comment = function.OverloadComment(*moved);
-  moved->oid = 0;
+  moved->oid = overload_oid;
   duckdb::unique_ptr<duckdb::CreateInfo> destination;
   if (target) {
     destination = target->GetSerializedInfo();
@@ -193,15 +196,18 @@ bool MoveOverload(Schema& schema, Schema& target_schema,
     macro_info.SetQualifiedName(target_schema.GetQualifiedName(new_name));
     macro_info.permissions = moved->permissions;
     macro_info.comment = moved->comment;
-    moved->permissions = duckdb::Permissions{};
-    moved->comment = duckdb::Value{};
     macro_info.macros.clear();
     macro_info.macros.push_back(std::move(moved));
   }
-  if (source_macros.empty()) {
+  if (source_macros.empty() || held_entry_oid) {
     schema.Drop(transaction, entry);
-  } else {
-    source->on_conflict = duckdb::OnCreateConflict::ALTER_ON_CONFLICT;
+  }
+  if (!source_macros.empty()) {
+    if (held_entry_oid) {
+      source->oid = 0;
+    } else {
+      source->on_conflict = duckdb::OnCreateConflict::ALTER_ON_CONFLICT;
+    }
     schema.CreateFunction(transaction,
                           source->Cast<duckdb::CreateFunctionInfo>());
   }

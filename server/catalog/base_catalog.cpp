@@ -20,6 +20,8 @@
 
 #include "catalog/base_catalog.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
@@ -493,10 +495,16 @@ duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::LookupOid(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::LookupOwner(
   duckdb::CatalogTransaction transaction, duckdb::idx_t oid) {
-  if (const auto owner = _oids.Owner(oid)) {
-    return _oids.Find(transaction, owner);
+  const auto owners = _oids.OwnersOf(oid);
+  for (auto owner = owners.rbegin(); owner != owners.rend(); ++owner) {
+    auto entry = _oids.Find(transaction, *owner);
+    if (entry && (owners.size() == 1 ||
+                  absl::c_linear_search(entry->GetSubObjectOids(), oid))) {
+      return entry;
+    }
   }
-  return LookupOid(transaction, oid);
+  return owners.empty() ? LookupOid(transaction, oid)
+                        : _oids.Find(transaction, oid);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::FindRelation(

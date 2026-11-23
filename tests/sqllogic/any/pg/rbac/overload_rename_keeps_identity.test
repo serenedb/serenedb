@@ -1,0 +1,155 @@
+statement ok
+DROP SCHEMA IF EXISTS orki_s CASCADE;
+
+
+statement ok
+DROP FUNCTION IF EXISTS orki_f(int);
+
+
+statement ok
+DROP FUNCTION IF EXISTS orki_f(text);
+
+
+statement ok
+DROP FUNCTION IF EXISTS orki_f(boolean);
+
+
+statement ok
+DROP FUNCTION IF EXISTS orki_g(text);
+
+
+statement ok
+DROP FUNCTION IF EXISTS orki_h(int);
+
+
+statement ok
+DROP TABLE IF EXISTS orki_oids;
+
+
+statement ok
+DROP ROLE IF EXISTS orki_runner;
+
+
+statement ok
+CREATE ROLE orki_runner;
+
+
+statement ok
+CREATE SCHEMA orki_s;
+
+
+statement ok
+CREATE FUNCTION orki_f(int) RETURNS int LANGUAGE sql AS 'SELECT $1';
+
+
+statement ok
+CREATE FUNCTION orki_f(text) RETURNS int LANGUAGE sql AS 'SELECT length($1)';
+
+
+statement ok
+CREATE FUNCTION orki_f(boolean) RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+COMMENT ON FUNCTION orki_f(text) IS 'the text one';
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION orki_f(text) FROM PUBLIC;
+
+
+statement ok
+GRANT EXECUTE ON FUNCTION orki_f(text) TO orki_runner;
+
+
+statement ok
+CREATE TABLE orki_oids (name text, oid bigint);
+
+
+statement ok
+INSERT INTO orki_oids VALUES
+  ('int', 'orki_f(int)'::regprocedure::oid),
+  ('text', 'orki_f(text)'::regprocedure::oid),
+  ('boolean', 'orki_f(boolean)'::regprocedure::oid);
+
+
+statement ok
+ALTER FUNCTION orki_f(text) RENAME TO orki_g;
+
+
+query
+SELECT 'orki_g(text)'::regprocedure::oid = oid AS kept FROM orki_oids WHERE name = 'text';
+----
+kept
+t
+
+
+query
+SELECT obj_description('orki_g(text)'::regprocedure, 'pg_proc') AS comment;
+----
+comment
+the text one
+
+
+query
+SELECT has_function_privilege('orki_runner', 'orki_g(text)', 'EXECUTE') AS runner,
+       has_function_privilege('public', 'orki_g(text)', 'EXECUTE') AS anyone;
+----
+runner	anyone
+t	f
+
+
+statement ok
+ALTER FUNCTION orki_f(int) RENAME TO orki_h;
+
+
+query
+SELECT 'orki_h(int)'::regprocedure::oid = oid AS kept FROM orki_oids WHERE name = 'int';
+----
+kept
+t
+
+
+query
+SELECT 'orki_f(boolean)'::regprocedure::oid = oid AS kept FROM orki_oids WHERE name = 'boolean';
+----
+kept
+t
+
+
+statement ok
+ALTER FUNCTION orki_f(boolean) SET SCHEMA orki_s;
+
+
+query
+SELECT 'orki_s.orki_f(boolean)'::regprocedure::oid = oid AS kept FROM orki_oids WHERE name = 'boolean';
+----
+kept
+t
+
+
+query
+SELECT orki_g('abc') AS g, orki_h(7) AS h, orki_s.orki_f(true) AS f;
+----
+g	h	f
+3	7	1
+
+
+statement ok
+DROP SCHEMA orki_s CASCADE;
+
+
+statement ok
+DROP FUNCTION orki_g(text);
+
+
+statement ok
+DROP FUNCTION orki_h(int);
+
+
+statement ok
+DROP TABLE orki_oids;
+
+
+statement ok
+DROP ROLE orki_runner;

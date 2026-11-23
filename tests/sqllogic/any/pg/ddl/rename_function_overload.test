@@ -29,22 +29,11 @@ rof_f(text)
 rof_g(integer)
 
 
-# PostgreSQL keeps the oid of a renamed overload; SereneDB gives an overload
-# that moves to another name a new one.
-onlyif postgres
 query
 SELECT o.f AS was, p.oid::regprocedure::text AS now FROM rof_oids o JOIN pg_proc p ON p.oid = o.oid ORDER BY 1;
 ----
 was	now
 rof_f(integer)	rof_g(integer)
-rof_f(text)	rof_f(text)
-
-
-skipif postgres
-query
-SELECT o.f AS was, p.oid::regprocedure::text AS now FROM rof_oids o JOIN pg_proc p ON p.oid = o.oid ORDER BY 1;
-----
-was	now
 rof_f(text)	rof_f(text)
 
 
@@ -67,20 +56,12 @@ rof_g(integer)
 rof_g(text)
 
 
-onlyif postgres
 query
 SELECT o.f AS was, p.oid::regprocedure::text AS now FROM rof_oids o JOIN pg_proc p ON p.oid = o.oid ORDER BY 1;
 ----
 was	now
 rof_f(integer)	rof_g(integer)
 rof_f(text)	rof_g(text)
-
-
-skipif postgres
-query
-SELECT o.f AS was, p.oid::regprocedure::text AS now FROM rof_oids o JOIN pg_proc p ON p.oid = o.oid ORDER BY 1;
-----
-was	now
 
 
 query

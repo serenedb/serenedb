@@ -320,14 +320,17 @@ void OidIndex::Forget(const EntrySet& set,
 void OidIndex::Alias(std::span<const duckdb::idx_t> oids, duckdb::idx_t owner) {
   absl::MutexLock lock{&_owners_mutex};
   for (const auto oid : oids) {
-    _owners.try_emplace(oid, owner);
+    auto& owners = _owners[oid];
+    if (!absl::c_linear_search(owners, owner)) {
+      owners.push_back(owner);
+    }
   }
 }
 
-duckdb::idx_t OidIndex::Owner(duckdb::idx_t oid) {
+OidIndex::Owners OidIndex::OwnersOf(duckdb::idx_t oid) {
   absl::ReaderMutexLock lock{&_owners_mutex};
   const auto it = _owners.find(oid);
-  return it == _owners.end() ? 0 : it->second;
+  return it == _owners.end() ? Owners{} : it->second;
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> OidIndex::Find(
@@ -503,7 +506,8 @@ void OidIndex::CheckLive(const duckdb::SnapshotView& view, duckdb::idx_t oid,
   if (indexed) {
     return;
   }
-  if (const auto owner = Owner(oid)) {
+  if (const auto owners = OwnersOf(oid); !owners.empty()) {
+    const auto owner = owners.back();
     VisitNewest(owner, [&](EntrySet& set, const duckdb::Identifier& name) {
       set.CheckSubjectLive(view, name, owner, oid, false);
     });

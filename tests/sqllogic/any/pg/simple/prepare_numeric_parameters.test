@@ -1,0 +1,62 @@
+statement ok
+PREPARE pnp_decl(numeric) AS SELECT $1 = 1.23456789 AS same
+
+statement ok
+PREPARE pnp_decl_typmod(numeric(20,10)) AS SELECT $1 = 1.0123456789 AS same
+
+statement ok
+PREPARE pnp_decl_big(numeric) AS SELECT $1 = 12345678901234567.5 AS same
+
+query
+EXECUTE pnp_decl(1.23456789)
+----
+same
+t
+
+query
+EXECUTE pnp_decl_typmod(1.0123456789)
+----
+same
+t
+
+query
+EXECUTE pnp_decl_big(12345678901234567.5)
+----
+same
+t
+
+statement ok
+CREATE TABLE pnp_price (id INT, price NUMERIC(5,2))
+
+statement ok
+INSERT INTO pnp_price VALUES (1, 100.00), (2, 19.99)
+
+statement ok
+PREPARE pnp_any_eq AS SELECT count(*) AS n FROM pnp_price WHERE price = ANY($1)
+
+statement ok
+PREPARE pnp_all_ne AS SELECT count(*) AS n FROM pnp_price WHERE price <> ALL($1)
+
+query
+EXECUTE pnp_any_eq('{100.001}')
+----
+n
+0
+
+query
+EXECUTE pnp_any_eq('{100.00}')
+----
+n
+1
+
+query
+EXECUTE pnp_all_ne('{100.001,19.991}')
+----
+n
+2
+
+statement ok
+DEALLOCATE ALL
+
+statement ok
+DROP TABLE pnp_price

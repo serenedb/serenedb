@@ -281,6 +281,33 @@ def test_a_database_in_a_tablespace_needs_create_on_it(
     assert not list(home.glob("*/engine_v1/store/*"))
 
 
+def test_a_prepared_create_table_is_checked_where_it_lands(
+        tmp_path: Path) -> None:
+    server = _Server(tmp_path / "data")
+    try:
+        assert server.wait_ready(), server.output()
+        with server.connect() as conn:
+            conn.execute(
+                f"CREATE TABLESPACE fenced LOCATION '{tmp_path / 'fenced'}'")
+            conn.execute("CREATE ROLE app LOGIN PASSWORD 'app_pw'")
+            conn.execute("GRANT ALL ON SCHEMA public TO app")
+        with psycopg.connect(host="127.0.0.1", port=server.port, user="app",
+                             password="app_pw", dbname="postgres",
+                             autocommit=True) as conn:
+            prepared = conn.pgconn.prepare(b"later",
+                                           b"CREATE TABLE later (id INT)")
+            assert prepared.status == psycopg.pq.ExecStatus.COMMAND_OK, (
+                prepared.error_message)
+            conn.execute("SET default_tablespace = fenced")
+            result = conn.pgconn.exec_prepared(b"later", [])
+            assert result.status == psycopg.pq.ExecStatus.FATAL_ERROR
+            assert (b"permission denied for tablespace fenced"
+                    in result.error_message)
+            assert _placement(conn, ["later"]) == {}
+    finally:
+        server.stop()
+
+
 MINIO = ("MINIO_HOST", "MINIO_PORT", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY",
          "MINIO_BUCKET")
 

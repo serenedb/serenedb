@@ -57,6 +57,7 @@
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
+#include <duckdb/planner/parsed_data/bound_create_table_info.hpp>
 #include <exception>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -100,8 +101,9 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> EsSchema(
 }
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
-  duckdb::ClientContext& context, std::string_view index) {
-  auto entry = duckdb::CatalogEntryRetriever{context}.GetEntry(
+  duckdb::ClientContext& context, duckdb::CatalogEntryRetriever& retriever,
+  const duckdb::RoleAccess& role, std::string_view index) {
+  auto entry = retriever.GetEntry(
     duckdb::EntryLookupInfo{
       duckdb::CatalogType::TABLE_ENTRY,
       duckdb::QualifiedName{
@@ -111,7 +113,7 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
   if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
     return nullptr;
   }
-  context.CheckEntryReference(context.CurrentRole(), *entry);
+  context.CheckEntryReference(role, *entry);
   return &entry->Cast<duckdb::TableCatalogEntry>();
 }
 
@@ -267,11 +269,16 @@ struct EsIndexBindData final : duckdb::TableFunctionData {
 };
 
 struct EsOnceState final : duckdb::GlobalTableFunctionState {
+  duckdb::RoleAccess role;
+  duckdb::ActingRoles acting;
   bool done = false;
 
   static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
-    duckdb::ClientContext&, duckdb::TableFunctionInitInput&) {
-    return duckdb::make_uniq<EsOnceState>();
+    duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
+    auto state = duckdb::make_uniq<EsOnceState>();
+    state->role = context.CallerAccess(input.caller_role);
+    state->acting = {&state->role, &state->role, &state->role};
+    return state;
   }
 };
 
@@ -310,7 +317,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsAcknowledgedBind(
 // The backfill-free tail of CREATE INDEX ... USING inverted: the table was
 // created in the same call and is empty, so after StartTasks the first
 // commit only seals the meta payload.
-void CreateTextIndex(duckdb::ClientContext& context,
+void CreateTextIndex(duckdb::ClientContext& context, duckdb::idx_t owner,
                      duckdb::TableCatalogEntry& table,
                      std::span<const std::string_view> text_columns) {
   {
@@ -325,7 +332,7 @@ void CreateTextIndex(duckdb::ClientContext& context,
     tokenizer.options["frequency"] = duckdb::Value::BOOLEAN(true);
     tokenizer.options["position"] = duckdb::Value::BOOLEAN(true);
     tokenizer.options["norm"] = duckdb::Value::BOOLEAN(true);
-    tokenizer.permissions.owner = ConnectionContext::Get(context).GetRoleId();
+    tokenizer.permissions.owner = owner;
     duckdb::Catalog::GetCatalog(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context))
       .CreateTokenizer(context, tokenizer);
@@ -391,8 +398,8 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   // duckdb's operations, and serenedb's are the same ones.
   auto& db_catalog = duckdb::Catalog::GetCatalog(
     context, duckdb::DatabaseManager::GetDefaultDatabase(context));
-  const auto owner = ConnectionContext::Get(context).GetRoleId();
-  const auto& role = context.CurrentRole();
+  const auto& role = state.role;
+  const auto owner = role.role;
   if (!EsSchema(context)) {
     duckdb::RequireDatabasePrivilege(context, role, db_catalog.GetName(),
                                      duckdb::AclMode::Create);
@@ -427,14 +434,17 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   }
   add_column(kSourceColumn, duckdb::LogicalType::VARCHAR);
 
-  auto table = db_catalog.CreateTable(context, std::move(options));
+  auto binder = duckdb::Binder::CreateBinder(context);
+  binder->acting = state.acting;
+  auto bound = binder->BindCreateTableInfo(std::move(options));
+  auto table = db_catalog.CreateTable(context, *bound);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),
                     ERR_MSG("index [", data.index, "] already exists"));
   }
 
   if (!text_columns.empty()) {
-    CreateTextIndex(context, table->Cast<duckdb::TableCatalogEntry>(),
+    CreateTextIndex(context, owner, table->Cast<duckdb::TableCatalogEntry>(),
                     text_columns);
   }
 
@@ -462,7 +472,7 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
                                     duckdb::Identifier{data.index}};
   // ES "no such index" covers both a missing name and a name that resolves
   // to a non-table relation, so gate the drop on an actual table existing.
-  duckdb::CatalogEntryRetriever retriever{context};
+  duckdb::CatalogEntryRetriever retriever{context, state.acting};
   auto table = retriever.GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, qname},
     duckdb::OnEntryNotFound::RETURN_NULL);
@@ -470,8 +480,7 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }
-  duckdb::Require(context, context.CurrentRole(), *table,
-                  duckdb::AclMode::Drop);
+  duckdb::Require(context, state.role, *table, duckdb::AclMode::Drop);
   duckdb::DropInfo drop;
   drop.type = duckdb::CatalogType::TABLE_ENTRY;
   drop.SetQualifiedName(qname);
@@ -504,7 +513,8 @@ void EsMappingExecute(duckdb::ClientContext& context,
   state.done = true;
   auto& data = input.bind_data->Cast<EsIndexBindData>();
 
-  auto table = FindEsTable(context, data.index);
+  duckdb::CatalogEntryRetriever retriever{context, state.acting};
+  auto table = FindEsTable(context, retriever, state.role, data.index);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
@@ -657,7 +667,11 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
   auto data = duckdb::make_uniq<EsWriteBindData>();
   data->index = std::move(index);
 
-  auto table = FindEsTable(context, data->index);
+  duckdb::CatalogEntryRetriever own{context};
+  auto table =
+    binder ? FindEsTable(context, binder->EntryRetriever(), binder->CheckAs(),
+                         data->index)
+           : FindEsTable(context, own, context.CurrentRole(), data->index);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data->index, "]"));
@@ -1427,7 +1441,9 @@ void EsRefreshExecute(duckdb::ClientContext& context,
   }
   state.done = true;
   auto& data = input.bind_data->Cast<EsIndexBindData>();
-  if (!data.index.empty() && !FindEsTable(context, data.index)) {
+  duckdb::CatalogEntryRetriever retriever{context, state.acting};
+  if (!data.index.empty() &&
+      !FindEsTable(context, retriever, state.role, data.index)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }

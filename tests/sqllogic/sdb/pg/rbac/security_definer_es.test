@@ -1,0 +1,107 @@
+statement ok
+DROP SCHEMA IF EXISTS es CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS sdes_owner;
+
+
+statement ok
+CREATE ROLE sdes_owner LOGIN PASSWORD 'sdes_pw';
+
+
+statement ok
+CALL es_create_index('sdes_docs', '{"mappings":{"properties":{"title":{"type":"keyword"}}}}');
+
+
+statement ok
+CREATE FUNCTION sdes_drop() RETURNS TABLE (acknowledged boolean) LANGUAGE sql SECURITY DEFINER
+AS $$ SELECT * FROM es_drop_index('sdes_docs') $$;
+
+
+statement ok
+CREATE FUNCTION sdes_create() RETURNS TABLE (acknowledged boolean) LANGUAGE sql SECURITY DEFINER
+AS $$ SELECT * FROM es_create_index('sdes_more', '{"mappings":{"properties":{"title":{"type":"text"}}}}') $$;
+
+
+statement ok
+ALTER FUNCTION sdes_drop() OWNER TO sdes_owner;
+
+
+statement ok
+ALTER FUNCTION sdes_create() OWNER TO sdes_owner;
+
+
+statement error
+SELECT * FROM sdes_drop();
+----
+db error: ERROR: permission denied for schema es
+
+
+statement ok
+GRANT USAGE ON SCHEMA es TO sdes_owner;
+
+
+statement error
+SELECT * FROM sdes_drop();
+----
+db error: ERROR: must be owner of table sdes_docs
+
+
+statement error
+SELECT * FROM sdes_create();
+----
+db error: ERROR: permission denied for schema es
+
+
+statement ok
+GRANT CREATE ON SCHEMA es TO sdes_owner;
+
+
+query
+SELECT * FROM sdes_create();
+----
+acknowledged
+t
+
+
+query
+SELECT tablename, tableowner FROM pg_tables WHERE schemaname = 'es' ORDER BY 1;
+----
+tablename	tableowner
+sdes_docs	postgres
+sdes_more	sdes_owner
+
+
+statement ok
+ALTER TABLE es.sdes_docs OWNER TO sdes_owner;
+
+
+query
+SELECT * FROM sdes_drop();
+----
+acknowledged
+t
+
+
+query
+SELECT tablename FROM pg_tables WHERE schemaname = 'es' ORDER BY 1;
+----
+tablename
+sdes_more
+
+
+statement ok
+DROP FUNCTION sdes_drop();
+
+
+statement ok
+DROP FUNCTION sdes_create();
+
+
+statement ok
+DROP SCHEMA es CASCADE;
+
+
+statement ok
+DROP ROLE sdes_owner;

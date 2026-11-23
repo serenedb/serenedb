@@ -31,7 +31,7 @@ namespace irs {
 inline constexpr uint32_t kHnswMaxWorkers = 64;
 
 struct AnnBuildEnv {
-  yaclib::IExecutor* executor = nullptr;
+  yaclib::IExecutor& executor;
   absl::FunctionRef<uint32_t(uint32_t, uint32_t)> acquire;
   absl::FunctionRef<void(uint32_t)> release;
 };

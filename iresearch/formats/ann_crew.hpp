@@ -35,8 +35,7 @@ namespace irs {
 class AnnCrew {
  public:
   AnnCrew(const AnnBuildEnv* env, uint32_t want) noexcept
-    : _env{env && env->executor && want > 1 ? env : nullptr},
-      _want{_env ? want : 1U} {
+    : _env{env && want > 1 ? env : nullptr}, _want{_env ? want : 1U} {
     if (_env) {
       _held = _env->acquire(_want, 0);
     }
@@ -66,7 +65,7 @@ class AnnCrew {
   void Spawn(F& work) {
     for (; _spawned < _held; ++_spawned) {
       _runs.push_back(
-        yaclib::Run(*_env->executor, [&work, w = _spawned] { work(w); }));
+        yaclib::Run(_env->executor, [&work, w = _spawned] { work(w); }));
     }
   }
 

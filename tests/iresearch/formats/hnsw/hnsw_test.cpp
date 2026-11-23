@@ -702,7 +702,7 @@ TEST(HnswGraphFormatTest, PackedGraphLoadsAsTheRawGraph) {
   };
   const auto release = [&](uint32_t n) { held.fetch_sub(n); };
   const irs::AnnBuildEnv env{
-    .executor = pool.Get(), .acquire = acquire, .release = release};
+    .executor = *pool, .acquire = acquire, .release = release};
   const auto vecs = MakeVectors(2000, 29);
   const tests::IndexDir raw_dir{irs::DuckDBEngine::Instance().instance(),
                                 TestEnv::MemoryRoot()};
@@ -1770,7 +1770,7 @@ TEST_P(HnswBuildWorkersTest, BuildTakesWorkersAsTheyFreeUp) {
   };
   const auto release = [&](uint32_t n) { held.fetch_sub(n); };
   const irs::AnnBuildEnv env{
-    .executor = pool.Get(), .acquire = acquire, .release = release};
+    .executor = *pool, .acquire = acquire, .release = release};
 
   auto opts = irs::tests::DefaultWriterOptions();
   SetAnn(opts, irs::AnnInfo{

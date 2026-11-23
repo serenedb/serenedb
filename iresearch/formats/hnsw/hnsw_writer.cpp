@@ -398,7 +398,7 @@ bool EncodeColumn(const ColumnReader& col, ReadContext& ctx, uint64_t rows,
     runs.clear();
     for (size_t w = 1; w < parts; ++w) {
       runs.push_back(
-        yaclib::Run(*env->executor, [&run_part, w] { run_part(w); }));
+        yaclib::Run(env->executor, [&run_part, w] { run_part(w); }));
     }
     {
       absl::Cleanup wait = [&] {

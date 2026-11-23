@@ -58,7 +58,7 @@ TEST(AnnBuildEnvFanOut, RunsEveryTaskOnceWithinItsGrant) {
   };
   const auto release = [&](uint32_t n) { held.fetch_sub(n); };
   const irs::AnnBuildEnv env{
-    .executor = pool.Get(), .acquire = acquire, .release = release};
+    .executor = *pool, .acquire = acquire, .release = release};
 
   constexpr size_t kTasks = 500;
   std::vector<std::atomic<uint32_t>> runs(kTasks);
@@ -88,7 +88,7 @@ TEST(AnnBuildEnvFanOut, RethrowsAWorkersError) {
   const auto acquire = [](uint32_t want, uint32_t) { return want; };
   const auto release = [](uint32_t) {};
   const irs::AnnBuildEnv env{
-    .executor = pool.Get(), .acquire = acquire, .release = release};
+    .executor = *pool, .acquire = acquire, .release = release};
 
   const auto caller = std::this_thread::get_id();
   std::atomic<bool> failed{false};

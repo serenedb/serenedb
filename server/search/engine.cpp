@@ -68,13 +68,13 @@ uint32_t AnnAcquireAllWorkers(uint32_t want, uint32_t held) noexcept {
 
 SearchEngine::SearchEngine(Runtime& runtime)
   : _runtime{runtime},
-    _ann_env{.executor = &runtime.Background(),
+    _ann_env{.executor = runtime.Background(),
              .acquire = AnnAcquireWorkers,
              .release = AnnReleaseWorkers},
-    _manual_ann_env{.executor = &runtime.Background(),
+    _manual_ann_env{.executor = runtime.Background(),
                     .acquire = AnnAcquireAllWorkers,
                     .release = AnnReleaseWorkers},
-    _snapshot_env{.executor = &runtime.Background(),
+    _snapshot_env{.executor = runtime.Background(),
                   .acquire = SnapshotAcquireWorkers,
                   .release = SnapshotReleaseWorkers} {
   gInstance = this;

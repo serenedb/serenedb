@@ -235,7 +235,7 @@ The rows already in the table are checked against the new constraint: a duplicat
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_038" />
 
-The change applies to the segments written after it and is undone if its transaction rolls back; an older segment keeps its codec until a compaction includes it, which rewrites the column with the named codec and level. A codec that an inverted index names for the column through `INCLUDE` keeps precedence while that index exists. In a database file with a DuckDB storage version it fails at commit, because DuckDB cannot read the change back from the file's log (see [DuckDB files](../attach/duckdb.md)).
+The change applies to the segments written after it and is undone if its transaction rolls back; an older segment keeps its codec until a compaction includes it, which rewrites the column with the named codec and level. A codec that an inverted index names for the column through `INCLUDE` keeps precedence while that index exists. In a database file with a DuckDB storage version it fails at commit, since such a file holds only what DuckDB reads (see [DuckDB files](../attach/duckdb.md)).
 
 ## `ENABLE` / `DISABLE TRIGGER`
 

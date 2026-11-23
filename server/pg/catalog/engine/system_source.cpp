@@ -494,8 +494,10 @@ void SystemScan::VisitNamed(
     }
   }
   if (wanted.test(std::to_underlying(SCHEMA_ENTRY))) {
-    if (auto schema = FindSchema(name, entries.keys.source->schemas)) {
-      visit(*schema);
+    for (auto* schema : entries.schemas) {
+      if (schema->name == identifier) {
+        visit(*schema);
+      }
     }
   }
   if (wanted.test(std::to_underlying(TYPE_ENTRY)) && name.starts_with('_')) {

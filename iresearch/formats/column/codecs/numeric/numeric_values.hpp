@@ -97,8 +97,12 @@ class Values final : public State {
   std::span<const uint8_t> NullBlocks() const noexcept { return _null_blocks; }
 
   std::span<const U> Contiguous() {
-    if (_values.size() != _size) {
-      Own();
+    if constexpr (std::is_integral_v<T>) {
+      if (_values.size() != _size) {
+        Own();
+      }
+    } else {
+      SDB_ASSERT(_values.size() == _size);
     }
     return _values;
   }

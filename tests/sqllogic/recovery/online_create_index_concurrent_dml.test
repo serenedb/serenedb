@@ -24,6 +24,10 @@ INSERT INTO oci_race SELECT g, repeat(md5(g::text), 4) FROM generate_series(1, 5
 
 
 statement ok
+SET GLOBAL threads = 2;
+
+
+statement ok
 SET sdb_faults = 'pause_create_index_mid_build';
 
 

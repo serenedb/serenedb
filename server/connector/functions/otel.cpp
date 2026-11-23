@@ -67,13 +67,15 @@ void BindTarget(duckdb::ClientContext& context,
                 TargetColumns& data,
                 duckdb::vector<duckdb::LogicalType>& return_types,
                 duckdb::vector<duckdb::Identifier>& names) {
-  auto table = duckdb::CatalogEntryRetriever{context}.GetEntry(
-    duckdb::EntryLookupInfo{
-      duckdb::CatalogType::TABLE_ENTRY,
-      duckdb::QualifiedName{
-        duckdb::DatabaseManager::GetDefaultDatabase(context),
-        duckdb::Identifier{schema_name}, duckdb::Identifier{table_name}}},
-    duckdb::OnEntryNotFound::RETURN_NULL);
+  const duckdb::EntryLookupInfo lookup{
+    duckdb::CatalogType::TABLE_ENTRY,
+    duckdb::QualifiedName{duckdb::DatabaseManager::GetDefaultDatabase(context),
+                          duckdb::Identifier{schema_name},
+                          duckdb::Identifier{table_name}}};
+  auto table = binder ? binder->EntryRetriever().GetEntry(
+                          lookup, duckdb::OnEntryNotFound::RETURN_NULL)
+                      : duckdb::CatalogEntryRetriever{context}.GetEntry(
+                          lookup, duckdb::OnEntryNotFound::RETURN_NULL);
   if (!table || table->type != duckdb::CatalogType::TABLE_ENTRY) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("relation \"", schema_name, ".", table_name,

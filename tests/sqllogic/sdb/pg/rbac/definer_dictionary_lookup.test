@@ -1,0 +1,125 @@
+statement ok
+DROP SCHEMA IF EXISTS ddlk_private CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS ddlk_caller;
+
+
+statement ok
+DROP ROLE IF EXISTS ddlk_owner;
+
+
+statement ok
+CREATE ROLE ddlk_owner;
+
+
+statement ok
+CREATE ROLE ddlk_caller LOGIN PASSWORD 'ddlk_pw';
+
+
+statement ok
+CREATE SCHEMA ddlk_private AUTHORIZATION ddlk_owner;
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ddlk_private.ddlk_kw AS keyword();
+
+
+statement ok
+CREATE FUNCTION ddlk_lexize(d text) RETURNS text[] LANGUAGE sql SECURITY DEFINER AS 'SELECT ts_lexize(d, ''Word'')';
+
+
+statement ok
+ALTER FUNCTION ddlk_lexize(text) OWNER TO ddlk_owner;
+
+
+statement ok
+CREATE FUNCTION ddlk_lexize_list(d text) RETURNS text[] LANGUAGE sql SECURITY DEFINER AS 'SELECT ts_lexize(d, [''Word''])';
+
+
+statement ok
+ALTER FUNCTION ddlk_lexize_list(text) OWNER TO ddlk_owner;
+
+
+connection c_caller user=ddlk_caller password=ddlk_pw
+statement error
+SELECT ts_lexize(d, 'Word') FROM (VALUES ('ddlk_private.ddlk_kw')) AS t(d);
+----
+db error: ERROR: text search dictionary "ddlk_private.ddlk_kw" does not exist
+
+
+connection c_caller user=ddlk_caller password=ddlk_pw
+query
+SELECT ddlk_lexize(d) AS lexemes FROM (VALUES ('ddlk_private.ddlk_kw')) AS t(d);
+----
+lexemes
+{Word}
+
+
+connection c_caller user=ddlk_caller password=ddlk_pw
+query
+SELECT ddlk_lexize_list(d) AS lexemes FROM (VALUES ('ddlk_private.ddlk_kw')) AS t(d);
+----
+lexemes
+{Word}
+
+
+statement ok
+CREATE TABLE ddlk_docs (id integer, body text);
+
+
+statement ok
+INSERT INTO ddlk_docs VALUES (1, 'Word'), (2, 'Other');
+
+
+statement ok
+CREATE INDEX ddlk_idx ON ddlk_docs USING inverted(id, body ddlk_private.ddlk_kw);
+
+
+statement ok
+GRANT SELECT ON ddlk_docs TO ddlk_owner;
+
+
+statement ok
+CREATE FUNCTION ddlk_search() RETURNS bigint LANGUAGE sql SECURITY DEFINER AS 'SELECT count(*) FROM ddlk_idx WHERE body @@ ts_tokenize(''Word'', ''ddlk_private.ddlk_kw'')';
+
+
+statement ok
+ALTER FUNCTION ddlk_search() OWNER TO ddlk_owner;
+
+
+connection c_caller user=ddlk_caller password=ddlk_pw
+query
+SELECT ddlk_search() AS hits;
+----
+hits
+1
+
+
+statement ok
+DROP FUNCTION ddlk_search();
+
+
+statement ok
+DROP TABLE ddlk_docs;
+
+
+statement ok
+DROP FUNCTION ddlk_lexize_list(text);
+
+
+statement ok
+DROP FUNCTION ddlk_lexize(text);
+
+
+statement ok
+DROP SCHEMA ddlk_private CASCADE;
+
+
+statement ok
+DROP ROLE ddlk_caller;
+
+
+statement ok
+DROP ROLE ddlk_owner;

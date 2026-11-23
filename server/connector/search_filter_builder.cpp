@@ -498,7 +498,7 @@ void UniqueMarkers(std::vector<NullMarker>& markers) {
 
 catalog::Tokenizer::TokenizerWrapper ResolveTokenizerOrThrow(
   const FilterContext& ctx, std::string_view name) {
-  auto wrapper = AcquireTokenizer(ctx.client_context, name);
+  auto wrapper = AcquireTokenizer(ctx.client_context, *ctx.role, name);
   if (!wrapper) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -1652,7 +1652,11 @@ absl::Status FromFunctionExpression(
     // evaluated outside @@" error -- losing the specific cause. Throw
     // at this boundary so users see the actual reason + a hint.
     SDB_ASSERT(args.size() == 2);
-    FromTSQueryMatch(filter, ctx, *args[0], *args[1]);
+    const auto role = ctx.client_context.CallerAccess(
+      func.BindInfo()
+        ? func.BindInfo()->Cast<TSQueryMatchBindData>().caller_role
+        : duckdb::optional_idx{});
+    FromTSQueryMatch(filter, ctx.WithRole(role), *args[0], *args[1]);
     return absl::OkStatus();
   }
   if (TryDispatchGeoFunction(filter, ctx, func)) {
@@ -3247,6 +3251,7 @@ absl::Status MakeSearchFilter(
     .identity = identity,
     .tokenizer = identity,
     .client_context = context,
+    .role = &context.CurrentRole(),
     .levenshtein_max_terms = levenshtein_max_terms,
     .scorer_sink = scorers,
     .wide_ranges = wide_ranges,

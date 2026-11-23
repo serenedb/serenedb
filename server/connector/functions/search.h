@@ -96,6 +96,23 @@ inline constexpr std::string_view kTSQueryPhraseSeq = "##";
 // side resolves to a column reference.
 inline constexpr std::string_view kTSQueryMatch = "@@";
 
+struct TSQueryMatchBindData final : duckdb::FunctionData {
+  duckdb::optional_idx caller_role;
+
+  explicit TSQueryMatchBindData(duckdb::optional_idx caller_role)
+    : caller_role{caller_role} {}
+
+  duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
+    return duckdb::make_uniq<TSQueryMatchBindData>(caller_role);
+  }
+  bool Equals(const duckdb::FunctionData& other) const final {
+    return caller_role == other.Cast<TSQueryMatchBindData>().caller_role;
+  }
+};
+
+duckdb::unique_ptr<duckdb::FunctionData> BindTSQueryMatch(
+  duckdb::BindScalarFunctionInput& input);
+
 // Sugar predicates -- rewritten to `col @@ ts_*(...)` at filter-build.
 inline constexpr std::string_view kPhraseMatches = "phrase_matches";
 inline constexpr std::string_view kNGramMatches = "ngram_matches";
@@ -140,7 +157,8 @@ duckdb::LogicalType MakeTSQueryType();
 bool IsSearchStub(const duckdb::BoundFunctionExpression& call);
 
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
-  duckdb::ClientContext& context, std::string_view name);
+  duckdb::ClientContext& context, const duckdb::RoleAccess& role,
+  std::string_view name);
 
 duckdb::optional_ptr<catalog::TokenizerCatalogEntry> BindDictionary(
   duckdb::BindScalarFunctionInput& input, std::string_view name);

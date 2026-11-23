@@ -213,8 +213,7 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
      .role = job.owner,
      .database = database->GetName().GetIdentifierName(),
      .database_id = database->oid,
-     .temporary = temporary,
-     .caller = caller ? &ConnectionContext::Get(*caller) : nullptr},
+     .temporary = temporary},
     {.what = "job", .name = job.name.GetIdentifierName()}};
   ConnectionContext::Get(*connection.conn->context).job_depth = depth;
   context = connection.conn->context;

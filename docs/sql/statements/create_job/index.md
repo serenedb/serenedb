@@ -82,7 +82,7 @@ Scheduled runs execute in the background, like index maintenance, so a long job 
 
 ## Running a job on demand
 
-`EXECUTE JOB` runs the body once, synchronously, and reports the body's error if it fails. The body runs in the job's own session and transaction, exactly as a scheduled run would, so its effects commit independently of the calling transaction. Canceling the calling statement, its `statement_timeout`, terminating its session or stopping the server cancels the statement of the body that is running, and the run fails without the statements after it. It works for suspended jobs too and does not change the schedule of an `EVERY` job; for an `AFTER` job the next run is counted from the end of this one. It fails if the job is already running, unless the job is `CONCURRENT`.
+`EXECUTE JOB` runs the body once, synchronously, and reports the body's error if it fails. The body runs in the job's own session and transaction, exactly as a scheduled run would, so its effects commit independently of the calling transaction. It works for suspended jobs too and does not change the schedule of an `EVERY` job; for an `AFTER` job the next run is counted from the end of this one. It fails if the job is already running, unless the job is `CONCURRENT`.
 
 A body can run another job with `EXECUTE JOB`: that job runs in a session of its own while the calling run waits for it. A chain of such calls holds at most [`sdb_job_max_depth`](../../../configuration/overview.md#query-execution-and-the-optimizer) runs, 16 by default: a `CONCURRENT` job that executes itself, directly or through other jobs, fails with `Max job depth limit of 16 exceeded`, and every run in the chain is recorded as failed.
 

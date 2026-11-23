@@ -485,37 +485,7 @@ void ConnectionContext::OnSettingChange(const std::string& name,
   OnSet(name, scope == duckdb::SetScope::LOCAL, previous);
 }
 
-void ConnectionContext::SetCaller(ConnectionContext* caller) {
-  if (auto* previous = std::exchange(_caller, caller)) {
-    absl::MutexLock lock{&previous->_workers_mutex};
-    std::erase(previous->_workers, this);
-  }
-  if (caller) {
-    absl::MutexLock lock{&caller->_workers_mutex};
-    caller->_workers.push_back(this);
-  }
-}
-
-void ConnectionContext::OnInterrupt() {
-  absl::MutexLock lock{&_workers_mutex};
-  for (auto* worker : _workers) {
-    worker->Interrupt();
-  }
-}
-
 void ConnectionContext::OnQueryBegin() {
-  if (_caller) {
-    const auto deadline = _caller->query_deadline;
-    if (deadline.IsValid() &&
-        (!query_deadline.IsValid() ||
-         deadline.GetIndex() < query_deadline.GetIndex())) {
-      query_deadline = deadline;
-    }
-    if (_caller->interrupt_state.load() ==
-        duckdb::ClientInterruptState::INTERRUPTED) {
-      interrupt_state = duckdb::ClientInterruptState::INTERRUPTED;
-    }
-  }
   RefreshCatalogEpoch();
   if (!IsStableSnapshot() && transaction.HasActiveTransaction() &&
       !transaction.IsAutoCommit()) {
@@ -689,13 +659,10 @@ SystemConnection::SystemConnection(const SystemSession& session,
                          .backend_pid = session.backend_pid,
                          .temporary = session.temporary})},
     progress{ConnectionContext::Get(*conn->context).ProgressSource()},
-    notices{notices} {
-  ConnectionContext::Get(*conn->context).SetCaller(session.caller);
-}
+    notices{notices} {}
 
 SystemConnection::~SystemConnection() {
   auto& context = ConnectionContext::Get(*conn->context);
-  context.SetCaller(nullptr);
   if (context.transaction.HasActiveTransaction()) {
     try {
       context.transaction.Rollback(nullptr);

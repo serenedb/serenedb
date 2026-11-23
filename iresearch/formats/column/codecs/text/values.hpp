@@ -104,9 +104,7 @@ class Values final : public State {
   struct Eq {
     using is_transparent = void;
 
-    bool operator()(uint32_t lhs, uint32_t rhs) const noexcept {
-      return lhs == rhs;
-    }
+    bool operator()(uint32_t lhs, uint32_t rhs) const noexcept;
 
     bool operator()(uint32_t code,
                     const duckdb::string_t& value) const noexcept {

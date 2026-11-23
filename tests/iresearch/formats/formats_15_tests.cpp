@@ -115,6 +115,10 @@ class MockPostingsField final : public irs::TermReader {
     return irs::SeekTermIterator::empty();
   }
   irs::SeekTermIterator::ptr iterator(
+    const irs::LevenshteinPrefixAcceptor&) const final {
+    return irs::SeekTermIterator::empty();
+  }
+  irs::SeekTermIterator::ptr iterator(
     const irs::RegexpConjunction&) const final {
     return irs::SeekTermIterator::empty();
   }

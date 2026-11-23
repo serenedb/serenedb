@@ -43,6 +43,12 @@ A dropdown shows a few rows, not the whole branch. Order by popularity and `LIMI
 
 <SqlLogicTest id="cookbook/search/autocomplete/example_004" />
 
+## Tolerate typos
+
+Users mistype while they type. [`ts_levenshtein`](../../sql/functions/search/full-text.md#ts_levenshtein) with `starts_with := true` matches the queries that *start* within an edit of what was typed, so `runin` still completes to `running ...`. [`ts_dict_score`](../../sql/functions/search/term-dictionary.md) ranks closer starts first and the count breaks ties.
+
+<SqlLogicTest id="cookbook/search/autocomplete/example_005" />
+
 ## See also
 
 - [Faceted Search](./faceted-search.md): count how many results sit behind each filter from the same dictionary

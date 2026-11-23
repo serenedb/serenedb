@@ -231,6 +231,11 @@ SeekTermIterator::ptr PieceTermReader::iterator(
 }
 
 SeekTermIterator::ptr PieceTermReader::iterator(
+  const LevenshteinPrefixAcceptor& a) const {
+  return Filtered(*this, a);
+}
+
+SeekTermIterator::ptr PieceTermReader::iterator(
   const RegexpConjunction& a) const {
   return Filtered(*this, a);
 }

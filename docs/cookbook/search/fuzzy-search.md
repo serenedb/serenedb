@@ -72,9 +72,11 @@ Use strict Levenshtein (no transposition counting):
 
 ### Prefix matching
 
-Require a prefix before applying fuzzy matching — useful for autocomplete:
+Require an exact prefix before the fuzzy part, which narrows the candidates and speeds up the search:
 
 <SqlLogicTest id="cookbook/search/fuzzy-search/example_004" />
+
+To complete what the user is still typing, typos included, match the terms that *start* within the distance with `starts_with := true`; see [Autocomplete](./autocomplete.md#tolerate-typos).
 
 ### Parameters
 
@@ -85,6 +87,9 @@ Require a prefix before applying fuzzy matching — useful for autocomplete:
 | *distance* | integer | | Max edit distance (0–4) |
 | *transpositions* | boolean | `true` | Count transpositions as single edit |
 | *prefix* | string | `''` | Required prefix before fuzzy matching |
+| *starts_with* | boolean | `false` | Match the terms that start within the distance |
+
+`transpositions` and `prefix` follow the distance by position or are given by name (`prefix := 'ca'`); `starts_with` is given by name only.
 
 The number of dictionary terms the predicate expands to is capped by the [`sdb_levenshtein_max_terms`](../../sql/indexes/inverted/maintenance.md#session-settings) session setting (default `50`, per index segment), keeping the terms closest to the query. `SET sdb_levenshtein_max_terms = 0` matches every term within the edit distance.
 

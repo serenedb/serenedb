@@ -83,12 +83,7 @@ score_t AbsorbedOf(const BooleanQuery::Clauses& clauses,
       if (record.stats == nullptr) {
         continue;
       }
-      const auto one = detail::AllDocsScore(segment, detail::ScoreArgs{
-                                                       .scorer = record.scorer,
-                                                       .stats = record.stats,
-                                                       .fetcher = &fetcher,
-                                                       .boost = clause.boost,
-                                                     });
+      const auto one = detail::AllDocsScore(segment, clause, &fetcher);
       if (!any) {
         any = true;
         out = one;

@@ -26,6 +26,7 @@
 #include <iresearch/utils/static_strings.hpp>
 
 #include "network/http/common.h"
+#include "pg/connection_context.h"
 
 namespace sdb::network::http {
 namespace {
@@ -48,7 +49,8 @@ bool TakeScheme(std::string_view& header, std::string_view scheme) {
 }  // namespace
 
 AuthResult HttpAuthenticator::Authenticate(
-  std::string_view authorization_header, bool is_loopback) const {
+  std::string_view authorization_header, bool is_loopback,
+  pg::hba::ClientInfo client) const {
   if (!Enabled()) {
     // Unconfigured server: trust a local (loopback/unix) client, but never
     // blanket-trust a remote HTTP peer.
@@ -60,7 +62,7 @@ AuthResult HttpAuthenticator::Authenticate(
     return {.status = HttpStatus::Unauthorized};
   }
   if (TakeScheme(header, "Basic")) {
-    return Basic(header, is_loopback);
+    return Basic(header, is_loopback, client);
   }
   if (TakeScheme(header, "ApiKey")) {
     return ApiKey(header);
@@ -71,8 +73,8 @@ AuthResult HttpAuthenticator::Authenticate(
   return {.status = HttpStatus::Unauthorized};
 }
 
-AuthResult HttpAuthenticator::Basic(std::string_view payload,
-                                    bool is_loopback) const {
+AuthResult HttpAuthenticator::Basic(std::string_view payload, bool is_loopback,
+                                    pg::hba::ClientInfo client) const {
   const auto decoded = network::Base64Decode(payload);
   if (!decoded) {
     return {.status = HttpStatus::Unauthorized};
@@ -85,6 +87,14 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload,
   const std::string_view user = pair.substr(0, colon);
   const std::string_view password = pair.substr(colon + 1);
 
+  client.user = user;
+  using Kind = pg::hba::Decision::Kind;
+  const auto admitted =
+    pg::hba::Decide(*pg::hba::GetHbaRuleset(), client, sdb::pg::IsHbaMember)
+      .kind;
+  if (admitted != Kind::Trust && admitted != Kind::Method) {
+    return {.status = HttpStatus::Unauthorized};
+  }
   const auto credential = _credentials->LookupCredential(user);
   if (!credential) {
     if (is_loopback && user == irs::StaticStrings::kDefaultUser) {
@@ -92,8 +102,7 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload,
     }
     return {.status = HttpStatus::Unauthorized};
   }
-  if (credential->scram &&
-      network::VerifyCleartextAgainstScram(*credential->scram, password) &&
+  if (network::VerifyCleartext(*credential, user, password) &&
       !network::PasswordExpired(*credential)) {
     return {.context = {.user = std::string{user}}};
   }

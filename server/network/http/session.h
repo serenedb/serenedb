@@ -201,6 +201,10 @@ class HttpSession final
       }
       _progress =
         sdb::pg::ProgressRegistration{_connection_ctx->ProgressSource()};
+      if (auto error = sdb::pg::ConnectionLimitError(login, dbname)) {
+        ReleaseConnection();
+        THROW_SQL_ERROR_FROM_DATA(std::move(*error));
+      }
       _conn->context->RunFunctionInTransaction(
         [&] { _connection_ctx->ApplyRoleSettings(); });
       _conn_user = _user;
@@ -720,8 +724,11 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
         }
 
+        auto client = this->HbaClient();
+        client.database =
+          _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
         auto auth = _auth.Authenticate(
-          request.Header(HttpHeader::Authorization), _peer_is_loopback);
+          request.Header(HttpHeader::Authorization), _peer_is_loopback, client);
         _user = std::move(auth.context.user);
         if (auth.status != http::HttpStatus::None) {
           writer.Fixed(auth.status, http::kJsonContentType,

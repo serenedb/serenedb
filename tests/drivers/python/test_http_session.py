@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import http.client
 import os
 import socket
@@ -170,3 +171,64 @@ def test_a_passwordless_role_is_not_trusted(passwordless_role, http_conn):
     empty_user = "Basic " + base64.b64encode(b":").decode()
     status, _ = session_user(http_conn, empty_user)
     assert status == 401
+
+
+MD5_ROLE = "drv_http_session_md5"
+MD5_PASSWORD = "drv-http-session-md5-pw"
+
+
+@pytest.fixture()
+def md5_role():
+    database = conn_kwargs()["dbname"]
+    stored = "md5" + hashlib.md5(f"{MD5_PASSWORD}{MD5_ROLE}".encode()).hexdigest()
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f"DROP ROLE IF EXISTS {MD5_ROLE}")
+        conn.execute(f"CREATE ROLE {MD5_ROLE} LOGIN PASSWORD '{stored}'")
+        conn.execute(f'GRANT CONNECT ON DATABASE "{database}" TO {MD5_ROLE}')
+    yield MD5_ROLE
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f'REVOKE CONNECT ON DATABASE "{database}" FROM {MD5_ROLE}')
+        conn.execute(f"DROP ROLE {MD5_ROLE}")
+
+
+def test_an_md5_stored_password_authenticates(md5_role, http_conn):
+    for password, want in ((MD5_PASSWORD, (200, md5_role)), ("wrong", (401,))):
+        auth = "Basic " + base64.b64encode(
+            f"{md5_role}:{password}".encode()
+        ).decode()
+        status, body = session_user(http_conn, auth)
+        assert ((status, body) if status == 200 else (status,)) == want
+
+
+LIMITED = "drv_http_session_limited"
+LIMITED_PASSWORD = "drv-http-session-limited-pw"
+
+
+@pytest.fixture()
+def limited_role():
+    database = conn_kwargs()["dbname"]
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f"DROP ROLE IF EXISTS {LIMITED}")
+        conn.execute(
+            f"CREATE ROLE {LIMITED} LOGIN PASSWORD '{LIMITED_PASSWORD}' "
+            "CONNECTION LIMIT 1"
+        )
+        conn.execute(f'GRANT CONNECT ON DATABASE "{database}" TO {LIMITED}')
+    yield LIMITED
+    with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:
+        conn.execute(f'REVOKE CONNECT ON DATABASE "{database}" FROM {LIMITED}')
+        conn.execute(f"DROP ROLE {LIMITED}")
+
+
+def test_http_sessions_count_toward_the_connection_limit(limited_role):
+    auth = "Basic " + base64.b64encode(
+        f"{limited_role}:{LIMITED_PASSWORD}".encode()
+    ).decode()
+    first = http.client.HTTPConnection(HOST, PORT, timeout=30)
+    second = http.client.HTTPConnection(HOST, PORT, timeout=30)
+    try:
+        assert session_user(first, auth) == (200, limited_role)
+        assert session_user(second, auth)[0] != 200
+    finally:
+        first.close()
+        second.close()

@@ -97,6 +97,9 @@ bool VerifyCleartextAgainstMd5(std::string_view stored_md5,
                                std::string_view username,
                                std::string_view cleartext);
 
+bool VerifyCleartext(const Credential& credential, std::string_view username,
+                     std::string_view cleartext);
+
 // Cryptographically strong random bytes (pg_strong_random). false on failure.
 bool RandomBytes(std::span<uint8_t> out);
 

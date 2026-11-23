@@ -302,4 +302,13 @@ bool VerifyCleartextAgainstMd5(std::string_view stored_md5,
     {reinterpret_cast<const uint8_t*>(stored_md5.data()), stored_md5.size()});
 }
 
+bool VerifyCleartext(const Credential& credential, std::string_view username,
+                     std::string_view cleartext) {
+  if (credential.scram) {
+    return VerifyCleartextAgainstScram(*credential.scram, cleartext);
+  }
+  return credential.md5 &&
+         VerifyCleartextAgainstMd5(*credential.md5, username, cleartext);
+}
+
 }  // namespace sdb::network

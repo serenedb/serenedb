@@ -87,6 +87,8 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname);
 std::optional<irs::pg::SqlErrorData> ConnectionLimitError(
   const LoginCheck& login, std::string_view dbname);
 
+bool IsHbaMember(std::string_view user, std::string_view group);
+
 }  // namespace sdb::pg
 namespace sdb::network {
 

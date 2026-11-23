@@ -21,7 +21,9 @@
 #pragma once
 
 #include <absl/cleanup/cleanup.h>
+#include <sys/socket.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -46,6 +48,7 @@
 #include "network/cpu_resumer.h"
 #include "network/gate.h"
 #include "network/io_context.h"
+#include "network/pg/hba.h"
 #include "network/proxy_protocol.h"
 #include "network/socket.h"
 #include "server/utils/asio_ns.h"
@@ -301,6 +304,24 @@ class Transport : public TransportBase {
       }
     }
     return address;
+  }
+
+  pg::hba::ClientInfo HbaClient() {
+    pg::hba::ClientInfo client;
+    client.is_local = Kind == SocketKind::Unix && !_proxy_client;
+    client.is_ssl = _socket.IsTls();
+    if (const auto address = ClientAddress()) {
+      if (address->is_v4()) {
+        client.family = AF_INET;
+        const auto bytes = address->to_v4().to_bytes();
+        std::copy(bytes.begin(), bytes.end(), client.addr.begin());
+      } else {
+        client.family = AF_INET6;
+        const auto bytes = address->to_v6().to_bytes();
+        std::copy(bytes.begin(), bytes.end(), client.addr.begin());
+      }
+    }
+    return client;
   }
 
   void InjectRecv(const uint8_t* data, size_t len) {

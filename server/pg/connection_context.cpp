@@ -159,6 +159,20 @@ std::optional<irs::pg::SqlErrorData> ConnectionLimitError(
   return std::nullopt;
 }
 
+bool IsHbaMember(std::string_view user, std::string_view group) {
+  duckdb::idx_t user_oid = 0;
+  duckdb::idx_t group_oid = 0;
+  if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
+        user,
+        [&](const catalog::RoleCatalogEntry& role) { user_oid = role.oid; }) ||
+      !catalog::ReadEntry<catalog::RoleCatalogEntry>(
+        group,
+        [&](const catalog::RoleCatalogEntry& role) { group_oid = role.oid; })) {
+    return false;
+  }
+  return catalog::RolesOf(nullptr)->MembershipsOf(user_oid).IsMember(group_oid);
+}
+
 }  // namespace sdb::pg
 namespace sdb {
 namespace {

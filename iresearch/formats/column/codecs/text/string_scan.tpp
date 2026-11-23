@@ -187,9 +187,6 @@ struct EntryFrames {
 
   template<typename Entry>
   void EnsureEach(idx_t count, Entry entry_at) {
-    if (Complete()) {
-      return;
-    }
     const bool sparse = count <= kSparseEntries;
     uint32_t f = kNoFrame;
     for (idx_t i = 0; i < count; ++i) {

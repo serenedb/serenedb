@@ -39,7 +39,6 @@ ALLOWED = {
     f"{EXTENSIONS}/core_functions/scalar/generic/system_functions.cpp": 2,
     f"{SERVER}/catalog/catalog_subscription.cpp": 1,
     f"{SERVER}/connector/copy_from_batches.cpp": 1,
-    f"{SERVER}/connector/functions/jobs.cpp": 1,
     f"{SERVER}/connector/index_source_external_lookup.cpp": 1,
     f"{SERVER}/connector/index_source_native.cpp": 1,
     f"{SERVER}/connector/iresearch_replacement_scan.cpp": 1,

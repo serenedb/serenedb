@@ -20,7 +20,7 @@
 
 #include "connector/functions/jobs.h"
 
-#include <absl/container/flat_hash_set.h>
+#include <absl/container/flat_hash_map.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
@@ -202,25 +202,26 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
   if (!scheduler) {
     return result;
   }
-  absl::flat_hash_set<duckdb::idx_t> databases;
+  absl::flat_hash_map<duckdb::idx_t, catalog::SereneDBCatalog*> databases;
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
-    if (context.CanSeeDatabase(*database)) {
-      databases.insert(database->oid);
+    if (catalog::IsSereneDB(database->GetCatalog()) &&
+        context.CanSeeDatabase(*database)) {
+      databases.emplace(
+        database->oid,
+        &database->GetCatalog().Cast<catalog::SereneDBCatalog>());
     }
   }
   const bool superuser = context.CurrentRole().is_superuser;
   for (auto& run : scheduler->GetHistory()) {
-    if (!databases.contains(run.database_oid)) {
+    const auto database = databases.find(run.database_oid);
+    if (database == databases.end()) {
       continue;
     }
     if (!superuser) {
-      auto job = duckdb::Catalog::GetEntry(
-        context,
-        duckdb::EntryLookupInfo{
-          duckdb::CatalogType::JOB_ENTRY,
-          duckdb::QualifiedName{run.catalog, run.schema, run.name}},
-        duckdb::OnEntryNotFound::RETURN_NULL);
+      auto& catalog = *database->second;
+      auto job = catalog.FindIn<catalog::JobCatalogEntry>(
+        catalog.GetCatalogTransaction(context), run.job_oid);
       if (!job || !context.CanSee(*job)) {
         continue;
       }

@@ -56,6 +56,7 @@ void VerifySchedule(const duckdb::JobSchedule& schedule);
 
 struct JobRunRecord {
   duckdb::idx_t database_oid = 0;
+  duckdb::idx_t job_oid = 0;
   duckdb::Identifier catalog;
   duckdb::Identifier schema;
   duckdb::Identifier name;

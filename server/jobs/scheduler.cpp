@@ -417,6 +417,7 @@ duckdb::ErrorData JobScheduler::RunBody(
   duckdb::optional_ptr<duckdb::ClientContext> caller, uint64_t timer) {
   JobRunRecord run{
     .database_oid = job.database_oid,
+    .job_oid = job.oid,
     .catalog = job.catalog,
     .schema = job.schema->Name(),
     .name = job.name,

@@ -73,6 +73,49 @@ runs
 2
 
 
+statement ok
+CREATE SCHEMA jro_s;
+
+
+statement ok
+CREATE SCHEMA jro_s.jro_inner;
+
+
+statement ok
+GRANT USAGE ON SCHEMA jro_s TO jro_bob;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA jro_s.jro_inner TO jro_bob;
+
+
+connection c_bob user=jro_bob password=jro_pw
+statement ok
+CREATE JOB jro_s.jro_inner.jro_nested_job AFTER 1 HOUR SUSPENDED AS SELECT 1;
+
+
+connection c_bob user=jro_bob password=jro_pw
+statement ok
+EXECUTE JOB jro_s.jro_inner.jro_nested_job;
+
+
+connection c_bob user=jro_bob password=jro_pw
+query
+SELECT count(*) AS runs FROM sdb_job_runs() WHERE job_name = 'jro_nested_job' AND database_name = current_database();
+----
+runs
+1
+
+
+connection c_bob user=jro_bob password=jro_pw
+statement ok
+DROP JOB jro_s.jro_inner.jro_nested_job;
+
+
+statement ok
+DROP SCHEMA jro_s CASCADE;
+
+
 connection c_bob user=jro_bob password=jro_pw
 statement ok
 DROP JOB jro_renamed;

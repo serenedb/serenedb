@@ -403,12 +403,12 @@ struct DictionaryScan final : SegmentScanState {
 
   template<typename Before>
   uint32_t Bound(Before before) {
-    if (!full) {
-      if constexpr (requires { entries.leaf->Bound(entries, before); }) {
+    if constexpr (requires { entries.leaf->Bound(entries, before); }) {
+      if (!full) {
         return entries.leaf->Bound(entries, before);
-      } else {
-        EnsureDictionary();
       }
+    } else {
+      EnsureDictionary();
     }
     return static_cast<uint32_t>(PartitionIndex(
       1, entries.header.entry_count,

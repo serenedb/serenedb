@@ -918,8 +918,8 @@ void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
   _shared_source = nullptr;
   const auto end = first + count;
   auto written = first;
-  if (LayoutMatches(column) && _options.distinct == DistinctStats::None &&
-      !_owner->HasAnn(_id)) {
+  if (LayoutMatches(column) && _options.distinct == DistinctStats::None) {
+    SDB_ASSERT(!_owner->HasAnn(_id));
     const auto forced = ForcedCodec();
     const auto blocks = column.DataBlocks();
     for (auto b = column.Locate(first).block; b < blocks.size(); ++b) {

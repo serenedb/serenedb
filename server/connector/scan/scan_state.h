@@ -163,6 +163,7 @@ struct ABSL_CACHELINE_ALIGNED SegmentWork {
   static constexpr uint8_t kSplit = 2;
 
   SegmentRowGroups groups;
+  uint64_t first_row = 0;
   uint32_t rg_count = 0;
   uint32_t run_end = 0;
   uint32_t base = 0;

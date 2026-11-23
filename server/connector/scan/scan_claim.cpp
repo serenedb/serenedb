@@ -620,11 +620,14 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
 
   g.segments = std::make_unique<SegmentWork[]>(g.total_segments);
   size_t row_groups = 0;
+  uint64_t rows = 0;
   for (uint32_t seg = 0; seg != g.total_segments; ++seg) {
     auto& work = g.Segment(seg);
     work.groups = SegmentRowGroups{(*g.reader)[seg], g.rg_size};
+    work.first_row = rows;
     work.rg_count = work.groups.Count();
     row_groups += work.rg_count;
+    rows += work.groups.docs;
   }
   const bool limit_prunes =
     ordered && bind.scan_order->row_limit.IsValid() && EveryRowQualifies(g);

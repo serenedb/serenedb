@@ -194,7 +194,8 @@ struct WideValues final : State {
       }
       Read(data);
     }
-    return low && (narrow || (high && halves && MayPack(shape, data)));
+    SDB_ASSERT(!low || narrow || high);
+    return low && (narrow || (halves && MayPack(shape, data)));
   }
 
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {

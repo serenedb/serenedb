@@ -58,8 +58,8 @@ For PostgreSQL-specific functionality such as system table support, see the [Sys
 | SET ROLE              | Yes           | Enforced; membership required for non-superusers |
 | INHERIT               | Yes           | `INHERIT`/`NOINHERIT` attributes enforced |
 | ALTER DEFAULT PRIVILEGES | Yes        | Applied to the objects the role creates afterwards, in the whole database or in one schema |
-| REASSIGN OWNED        | Yes           | Objects in the current database, its subscriptions included, and databases; see [Dropping roles](../security/roles.md#dropping-roles) |
-| DROP OWNED            | Yes           | Objects in the current database; privileges in it and on databases; see [Dropping roles](../security/roles.md#dropping-roles) |
+| REASSIGN OWNED        | Yes           | Objects in the current database, its subscriptions included, databases and tablespaces; see [Dropping roles](../security/roles.md#dropping-roles) |
+| DROP OWNED            | Yes           | Objects in the current database; privileges in it and on databases and tablespaces; see [Dropping roles](../security/roles.md#dropping-roles) |
 | Row Security Policies | No            | `CREATE POLICY`, `ALTER POLICY`, `DROP POLICY` and `ALTER TABLE ... ROW LEVEL SECURITY` fail with `row-level security is not supported` |
 
 ### Indexes

@@ -1,0 +1,144 @@
+statement ok
+DROP DATABASE IF EXISTS rop_db;
+
+
+statement ok
+DROP TABLE IF EXISTS rop_t;
+
+
+statement ok
+DROP ROLE IF EXISTS rop_alice, rop_bob, rop_dave;
+
+
+statement ok
+CREATE ROLE rop_alice;
+
+
+statement ok
+CREATE ROLE rop_bob;
+
+
+statement ok
+CREATE ROLE rop_dave LOGIN PASSWORD 'rop_pw';
+
+
+statement ok
+GRANT rop_alice TO rop_dave;
+
+
+statement ok
+GRANT rop_bob TO rop_dave WITH INHERIT TRUE, SET FALSE;
+
+
+statement ok
+CREATE TABLE rop_t (a int);
+
+
+statement ok
+ALTER TABLE rop_t OWNER TO rop_alice;
+
+
+onlyif postgres
+connection c_dave user=rop_dave password=rop_pw
+statement ok
+REASSIGN OWNED BY rop_alice TO rop_bob;
+
+
+skipif postgres
+connection c_dave user=rop_dave password=rop_pw
+statement error
+REASSIGN OWNED BY rop_alice TO rop_bob;
+----
+db error: ERROR: must be able to SET ROLE "rop_bob"
+
+
+statement ok
+GRANT rop_bob TO rop_dave WITH INHERIT FALSE, SET TRUE;
+
+
+onlyif postgres
+connection c_dave user=rop_dave password=rop_pw
+statement error
+REASSIGN OWNED BY rop_alice TO rop_bob;
+----
+db error: ERROR: permission denied to reassign objects
+DETAIL: Only roles with privileges of role "rop_bob" may reassign objects to it.
+
+
+skipif postgres
+connection c_dave user=rop_dave password=rop_pw
+statement ok
+REASSIGN OWNED BY rop_alice TO rop_bob;
+
+
+query
+SELECT relowner::regrole::text AS owner FROM pg_class WHERE relname = 'rop_t';
+----
+owner
+rop_bob
+
+
+statement ok
+GRANT rop_bob TO rop_dave WITH INHERIT TRUE, SET TRUE;
+
+
+statement ok
+CREATE DATABASE rop_db OWNER rop_alice;
+
+
+onlyif postgres
+connection c_dave user=rop_dave password=rop_pw
+statement ok
+REASSIGN OWNED BY rop_alice TO rop_bob;
+
+
+skipif postgres
+connection c_dave user=rop_dave password=rop_pw
+statement error
+REASSIGN OWNED BY rop_alice TO rop_bob;
+----
+db error: ERROR: permission denied to change owner of database
+
+
+onlyif postgres
+query
+SELECT datdba::regrole::text AS owner FROM pg_database WHERE datname = 'rop_db';
+----
+owner
+rop_bob
+
+
+skipif postgres
+query
+SELECT datdba::regrole::text AS owner FROM pg_database WHERE datname = 'rop_db';
+----
+owner
+rop_alice
+
+
+statement ok
+ALTER ROLE rop_dave CREATEDB;
+
+
+connection c_dave user=rop_dave password=rop_pw
+statement ok
+REASSIGN OWNED BY rop_alice TO rop_bob;
+
+
+query
+SELECT datdba::regrole::text AS owner FROM pg_database WHERE datname = 'rop_db';
+----
+owner
+rop_bob
+
+
+statement ok
+DROP DATABASE rop_db;
+
+
+statement ok
+DROP TABLE rop_t;
+
+
+statement ok
+DROP ROLE rop_alice, rop_bob, rop_dave;

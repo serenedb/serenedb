@@ -141,12 +141,14 @@ void ReassignShared(ClusterCatalog& cluster, duckdb::ClientContext& context,
                     const duckdb::ReassignOwnedInfo& info,
                     std::vector<OwnedAlter>& alters) {
   const auto transaction = cluster.GetCatalogTransaction(context);
-  cluster.Set(duckdb::CatalogType::DATABASE_ENTRY)
-    .Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+  for (const auto type : {duckdb::CatalogType::DATABASE_ENTRY,
+                          duckdb::CatalogType::TABLESPACE_ENTRY}) {
+    cluster.Set(type).Scan(transaction, [&](duckdb::CatalogEntry& entry) {
       if (!entry.internal && Reassigned(info, entry.permissions.owner)) {
         AddReassign(alters, cluster, transaction, entry, info);
       }
     });
+  }
 }
 
 void RevokeShared(ClusterCatalog& cluster, duckdb::ClientContext& context,
@@ -193,15 +195,17 @@ void RevokeShared(ClusterCatalog& cluster, duckdb::ClientContext& context,
         alters.push_back({cluster, transaction, std::move(alter)});
       }
     });
-  cluster.Set(duckdb::CatalogType::PARAMETER_ENTRY)
-    .Scan(transaction, [&](duckdb::CatalogEntry& parameter) {
+  for (const auto type : {duckdb::CatalogType::TABLESPACE_ENTRY,
+                          duckdb::CatalogType::PARAMETER_ENTRY}) {
+    cluster.Set(type).Scan(transaction, [&](duckdb::CatalogEntry& entry) {
       for (const auto role : info.role_ids) {
-        if (GrantsTo(parameter.permissions.acl, role)) {
-          AddRevoke(alters, cluster, transaction, parameter, role,
-                    duckdb::CatalogType::PARAMETER_ENTRY, info);
+        if (entry.permissions.owner != role &&
+            GrantsTo(entry.permissions.acl, role)) {
+          AddRevoke(alters, cluster, transaction, entry, role, type, info);
         }
       }
     });
+  }
 }
 
 }  // namespace

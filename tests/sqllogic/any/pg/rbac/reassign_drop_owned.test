@@ -126,12 +126,21 @@ db error: ERROR: permission denied to reassign objects
 DETAIL: Only roles with privileges of role "rdo_alice" may reassign objects owned by it.
 
 
+onlyif postgres
 connection c_alice user=rdo_alice password=rdo_pw
 statement error
 REASSIGN OWNED BY rdo_alice TO rdo_bob;
 ----
 db error: ERROR: permission denied to reassign objects
 DETAIL: Only roles with privileges of role "rdo_bob" may reassign objects to it.
+
+
+skipif postgres
+connection c_alice user=rdo_alice password=rdo_pw
+statement error
+REASSIGN OWNED BY rdo_alice TO rdo_bob;
+----
+db error: ERROR: must be able to SET ROLE "rdo_bob"
 
 
 statement error

@@ -394,6 +394,8 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                const idx_t* rows, idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
   using Fetch = typename Scan::Fetch;
+  constexpr bool kDecodesWhole =
+    Scan::kShape == Shape::Dictionary || Sorted(Scan::kCodec);
   auto& handle = state.GetOrInsertHandle(segment);
   auto* base = handle.GetDataMutable();
   auto& fetch = state.GetOrCreateSegmentState<Fetch>(
@@ -409,8 +411,10 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
       duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
       return;
     }
-    if (!frames.decoded && fetch.Whole()) {
-      frames.decoded = DecodeWhole<Scan>(segment);
+    if constexpr (kDecodesWhole) {
+      if (!frames.decoded && fetch.Whole()) {
+        frames.decoded = DecodeWhole<Scan>(segment);
+      }
     }
     if (frames.decoded) {
       const EntryAt one{.entry = entry, .at = at};
@@ -419,15 +423,19 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
       return;
     }
     frames.Emit(segment, base, entry, result, at, false);
-    if (fetch.Whole()) {
-      frames.decoded = DecodeWhole<Scan>(segment);
+    if constexpr (kDecodesWhole) {
+      if (fetch.Whole()) {
+        frames.decoded = DecodeWhole<Scan>(segment);
+      }
     }
     return;
   }
   fetch.Read(base, rows, count, result, result_sel, result_offset);
   auto& order = frames.order;
-  if (!frames.decoded && fetch.Whole()) {
-    frames.decoded = DecodeWhole<Scan>(segment);
+  if constexpr (kDecodesWhole) {
+    if (!frames.decoded && fetch.Whole()) {
+      frames.decoded = DecodeWhole<Scan>(segment);
+    }
   }
   if (frames.decoded) {
     EmitDecoded(*frames.decoded, order, result, frames.heap_reference);
@@ -435,9 +443,11 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   }
   const bool batched = order.size() > 1;
   if (batched && fetch.PlanBatch(base)) {
-    frames.decoded = DecodeWhole<Scan>(segment);
-    EmitDecoded(*frames.decoded, order, result, frames.heap_reference);
-    return;
+    if constexpr (kDecodesWhole) {
+      frames.decoded = DecodeWhole<Scan>(segment);
+      EmitDecoded(*frames.decoded, order, result, frames.heap_reference);
+      return;
+    }
   }
   auto* strings = duckdb::FlatVector::GetDataMutable<string_t>(result);
   for (size_t i = 0; i < order.size(); ++i) {
@@ -446,12 +456,14 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
       continue;
     }
     frames.Emit(segment, base, order[i].entry, result, order[i].at, batched);
-    if (fetch.Whole()) {
-      frames.decoded = DecodeWhole<Scan>(segment);
-      EmitDecoded(*frames.decoded,
-                  std::span<const EntryAt>{order}.subspan(i + 1), result,
-                  frames.heap_reference);
-      return;
+    if constexpr (kDecodesWhole) {
+      if (fetch.Whole()) {
+        frames.decoded = DecodeWhole<Scan>(segment);
+        EmitDecoded(*frames.decoded,
+                    std::span<const EntryAt>{order}.subspan(i + 1), result,
+                    frames.heap_reference);
+        return;
+      }
     }
   }
 }

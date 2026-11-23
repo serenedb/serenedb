@@ -276,7 +276,7 @@ void CopyBatchBuilder::Finish() {
   if (_format != CopyBatchFormat::Binary) {
     return;
   }
-  if (!_header_done && !_header.empty()) {
+  if (!_header_done) {
     ThrowFormat("invalid PGCOPY signature");
   }
   if (_open) {

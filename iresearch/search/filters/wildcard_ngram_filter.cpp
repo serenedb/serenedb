@@ -126,9 +126,9 @@ bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
                    bool has_pos, bool bytes,
                    std::vector<ByPhraseOptions>& grams) {
   if (query.kind == GramQuery::Kind::Literal) {
-    grams.emplace_back(
+    const auto& part = grams.emplace_back(
       LiteralGrams(ngram, value_analyzer, tokens, query.literal, bytes));
-    return SymbolCount(query.literal, bytes) < ngram.min_gram() || has_pos;
+    return part.size() == 1 || has_pos;
   }
   bool exact = true;
   for (const auto& child : query.children) {

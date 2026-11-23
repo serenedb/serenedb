@@ -208,10 +208,47 @@ TEST(WildcardNGramFilterOptionsTest, short_pieces) {
   EXPECT_EQ(irs::GramQuery{}, any.query);
   EXPECT_NE(nullptr, any.matcher);
 
-  EXPECT_NE(nullptr,
-            irs::ByWildcardNGramOptions("bc%", analyzer, false).matcher);
-  EXPECT_EQ(nullptr,
-            irs::ByWildcardNGramOptions("bc%", analyzer, true).matcher);
+  const auto gram = [](std::string_view term) {
+    return irs::ByPhraseOptions::PhrasePart{irs::ByTermOptions{
+      .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)}}};
+  };
+  EXPECT_EQ(gram("\xFF"
+                 "bc"),
+            part("bc%"));
+  EXPECT_EQ(gram("bc\xFF"), part("%bc"));
+  EXPECT_EQ(gram("bcd"), part("%bcd%"));
+  EXPECT_EQ(gram("\xFF"
+                 "b\xFF"),
+            part("b"));
+  EXPECT_EQ(
+    irs::ByPhraseOptions::PhrasePart{irs::ByPrefixOptions{
+      {.term =
+         irs::bstring{irs::ViewCast<irs::byte_type>(std::string_view{"bc"})}}}},
+    part("%bc%"));
+
+  for (const std::string_view like : {"bcd%", "%bcd", "%bcde%", "bc"}) {
+    EXPECT_NE(nullptr,
+              irs::ByWildcardNGramOptions(like, analyzer, false).matcher)
+      << like;
+    EXPECT_EQ(nullptr,
+              irs::ByWildcardNGramOptions(like, analyzer, true).matcher)
+      << like;
+  }
+  for (const std::string_view like : {"%b%c%", "b_d"}) {
+    EXPECT_NE(nullptr,
+              irs::ByWildcardNGramOptions(like, analyzer, false).matcher)
+      << like;
+    EXPECT_NE(nullptr,
+              irs::ByWildcardNGramOptions(like, analyzer, true).matcher)
+      << like;
+  }
+
+  irs::analysis::WildcardTokenizer two{nullptr, 2};
+  EXPECT_EQ(nullptr, irs::ByWildcardNGramOptions("%bc%", two, false).matcher);
+  EXPECT_NE(nullptr, irs::ByWildcardNGramOptions("bc%", two, false).matcher);
+  irs::analysis::WildcardTokenizer four{nullptr, 4};
+  EXPECT_EQ(nullptr, irs::ByWildcardNGramOptions("bcd%", four, false).matcher);
+  EXPECT_NE(nullptr, irs::ByWildcardNGramOptions("bcde%", four, false).matcher);
 }
 
 TEST(WildcardNGramFilterOptionsTest, equality_empty) {
@@ -563,6 +600,39 @@ TEST(WildcardNGramFilterTest, every_plan_family_checks_the_candidates) {
       SCOPED_TRACE(pattern);
       const auto filter = MakeFilter(kTextId, pattern, analyzer, false);
       ASSERT_NE(nullptr, filter.options().matcher);
+      const auto families = index.Run(filter);
+      EXPECT_EQ(expected.size(), families.count);
+      EXPECT_EQ(expected, families.docs);
+      EXPECT_EQ(expected, families.fill);
+      EXPECT_EQ(expected, families.probe);
+      EXPECT_EQ(expected, Keys(families.hits));
+      EXPECT_EQ(expected, Keys(families.fill_scores));
+      EXPECT_EQ(expected, Keys(families.probe_scores));
+      EXPECT_EQ(expected.size(), families.top_total);
+      EXPECT_EQ(expected, index.Docs(filter));
+      EXPECT_EQ(expected, Keys(index.ScoresBy(irs::BM25{}, filter)));
+    }
+  }
+}
+
+TEST(WildcardNGramFilterTest, one_gram_decides_its_piece) {
+  static constexpr std::string_view kValues[]{
+    "ab", "abc", "xab", "abx", "bab", "a", "ba", "abxbc", "xabcx", "aab", "b"};
+  using Docs = std::vector<irs::doc_id_t>;
+  const std::pair<std::string_view, Docs> cases[]{
+    {"ab%", {0, 1, 3, 7}},
+    {"%ab", {0, 2, 4, 9}},
+    {"%abc%", {1, 8}},
+    {"a", {5}},
+  };
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+  for (const auto& dir : {tests::kMemoryDirParam, tests::kDirParams[2]}) {
+    SCOPED_TRACE(dir.name);
+    const WildcardIndex index{kValues, analyzer, dir.factory(nullptr)};
+    for (const auto& [pattern, expected] : cases) {
+      SCOPED_TRACE(pattern);
+      const auto filter = MakeFilter(kTextId, pattern, analyzer, false);
+      ASSERT_EQ(nullptr, filter.options().matcher);
       const auto families = index.Run(filter);
       EXPECT_EQ(expected.size(), families.count);
       EXPECT_EQ(expected, families.docs);

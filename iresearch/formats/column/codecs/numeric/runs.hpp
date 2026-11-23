@@ -506,6 +506,7 @@ class RunsReader final : public FrameReader<T> {
     _ends.resize(runs);
     WidenAdd(src, runs, this->_f.stored, static_cast<U>(_own.base),
              _values.data());
+    std::fill_n(_values.data() + runs, kRunPad, U{});
     Widen(src + size_t{runs} * this->_f.stored, runs, _own.run_width,
           _ends.data());
     _length_bound = (uint64_t{1} << (8 * _own.run_width)) - 1;
@@ -531,6 +532,7 @@ class RunsReader final : public FrameReader<T> {
     }
     _length_bound = LengthBound(src + lengths, blocks);
     _values.resize(size_t{runs} + kRunPad);
+    std::fill_n(_values.data() + runs, kRunPad, U{});
     _ends.resize(runs);
     EndRuns(rows);
   }

@@ -1075,32 +1075,6 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
-      kLogCompressionSetting,
-      {
-        LogicalTypeId::BOOLEAN,
-        "Whether the write-ahead log and its snapshot store the rows and the "
-        "updated values of search tables compressed. Compressed data takes "
-        "several times less disk space and reads faster from slow disks, at "
-        "the cost of CPU time when committing and restarting. Data that "
-        "compression does not shrink, such as a single small row, is stored "
-        "uncompressed. The log and the snapshot stay readable whatever the "
-        "value was when they were written. Default true. Server-global.",
-        [] {
-          return duckdb::Value::BOOLEAN(
-            catalog::Transactions::kDefaultLogCompression);
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value& value) {
-          catalog::Transactions::Get().SetLogCompression(
-            value.GetValue<bool>());
-        },
-        [](duckdb::ClientContext&, duckdb::SetScope) {
-          catalog::Transactions::Get().SetLogCompression(
-            catalog::Transactions::kDefaultLogCompression);
-        },
-        duckdb::SetScope::GLOBAL,
-      },
-    },
-    {
       "sdb_job_history_size",
       {
         LogicalTypeId::UBIGINT,

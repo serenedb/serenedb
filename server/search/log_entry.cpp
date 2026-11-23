@@ -24,6 +24,7 @@
 
 #include <array>
 #include <deque>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -208,6 +209,7 @@ void WriteChunks(duckdb::BinarySerializer& object, const LoggedRows& rows) {
 void PackBlobs(std::span<LoggedRows* const> runs,
                std::span<const PackJob> values, uint32_t frame_bytes,
                irs::ParallelFor parallel) {
+  SDB_IF_FAILURE("search_log_plain") { return; }
   const auto blobs = runs.size() + values.size();
   if (blobs == 0) {
     return;

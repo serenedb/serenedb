@@ -2031,9 +2031,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
                        removed](ChunkVisit visit) {
           ForEachLiveChunk(*collection, removed.get(), visit);
         };
-        if (catalog::Transactions::Get().LogCompression()) {
-          PackRows(w.rows, kLogFrameBytes, parallel);
-        }
+        PackRows(w.rows, kLogFrameBytes, parallel);
       }
       const auto docs = PieceDocs(piece.trx);
       if (docs != 0) {
@@ -2049,7 +2047,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
     }
     parallel(changes.patches.size(),
              [&](size_t p) { UniteRows(changes.patches[p]); });
-    if (Logged(w) && catalog::Transactions::Get().LogCompression()) {
+    if (Logged(w)) {
       PackPatches(changes.patches, kLogFrameBytes, parallel);
     }
     if (!w.own_segments.empty()) {
@@ -2101,7 +2099,7 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
     }
     if (!w.changes.patches.empty()) {
       w.changes.patches = table.Resolve(std::move(w.changes.patches));
-      if (Logged(w) && catalog::Transactions::Get().LogCompression()) {
+      if (Logged(w)) {
         PackPatches(w.changes.patches, kLogFrameBytes, ParallelOn(context));
       }
     }

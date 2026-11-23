@@ -734,9 +734,7 @@ catalog::RecordBuffer Store::SnapshotRecord(const TableState& state,
       }
     };
   }
-  if (catalog::Transactions::Get().LogCompression()) {
-    PackDelta(delta, irs::compression::kFrameBytes, parallel);
-  }
+  PackDelta(delta, irs::compression::kFrameBytes, parallel);
   delta.manifest = state.manifest;
   return catalog::SearchRecord(_db_id, _id, delta);
 }

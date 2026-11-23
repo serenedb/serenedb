@@ -10,7 +10,7 @@ CREATE INDEX lc_tag ON lc USING inverted (tag);
 
 
 statement ok
-SET sdb_log_compression = false;
+SET sdb_faults = 'search_log_plain';
 
 
 statement ok
@@ -24,7 +24,7 @@ VACUUM (FLUSH_TABLE) lc;
 
 
 statement ok
-RESET sdb_log_compression;
+SET sdb_faults = '-search_log_plain';
 
 
 statement ok
@@ -126,7 +126,7 @@ count
 
 connection after_packed_snapshot
 statement ok
-SET sdb_log_compression = false;
+SET sdb_faults = 'search_log_plain';
 
 
 connection after_packed_snapshot
@@ -146,7 +146,7 @@ CHECKPOINT;
 
 connection after_packed_snapshot
 statement ok
-RESET sdb_log_compression;
+SET sdb_faults = '-search_log_plain';
 
 
 connection after_packed_snapshot

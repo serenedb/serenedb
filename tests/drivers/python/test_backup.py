@@ -497,13 +497,13 @@ def _retained_backup(tmp_path: Path) -> Path:
                 conn.execute("CHECKPOINT st")
             conn.execute("RESET debug_checkpoint_abort")
             conn.execute("INSERT INTO docs SELECT i, 'fourth' FROM range(3000, 3010) r(i)")
-            conn.execute("CREATE TABLE pad (id BIGINT, body TEXT) WITH "
+            conn.execute("CREATE TABLE pad (id BIGINT, body BYTEA) WITH "
                          "(compaction_interval = 0, "
                          "compaction_floor_segment_bytes = 67108864)")
             for n in range(20):
                 conn.execute(
-                    "INSERT INTO pad SELECT i, array_to_string(list_transform("
-                    f"range(32), lambda x: md5(concat(i, '/', x, '/{n}'))), '') "
+                    "INSERT INTO pad SELECT i, unhex(array_to_string(list_transform("
+                    f"range(64), lambda x: md5(concat(i, '/', x, '/{n}'))), '')) "
                     "FROM range(2000) r(i)")
 
         copy = tmp_path / "copy"

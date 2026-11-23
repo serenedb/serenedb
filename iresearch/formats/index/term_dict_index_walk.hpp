@@ -357,11 +357,9 @@ class BlockFilter {
       _states(1, a.Start()) {}
 
   bool Live(uint32_t block) {
+    SDB_ASSERT(!_index->Small());
     if (!Holds(block)) {
       return false;
-    }
-    if (_index->Small()) {
-      return true;
     }
     if (block != _last) {
       _last = block;
@@ -381,12 +379,7 @@ class BlockFilter {
 
   template<typename StateAt>
   bool LiveAt(uint32_t block, StateAt&& state_at) {
-    if (!Holds(block)) {
-      return false;
-    }
-    if (!Explores()) {
-      return true;
-    }
+    SDB_ASSERT(Explores());
     if (block != _last) {
       _last = block;
       const auto link = _index->Link(block);

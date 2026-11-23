@@ -104,8 +104,9 @@ bool Ascending(Cursor& cursor, RangeAhead& ahead, bytes_view from,
   ahead.Arm(cursor, to);
   if (from.empty()) {
     cursor.First();
-  } else if (cursor.SeekGe(from) == SeekResult::End) {
-    return true;
+  } else {
+    const auto found = cursor.SeekGe(from);
+    SDB_ASSERT(found != SeekResult::End);
   }
   do {
     const bytes_view term = cursor.Term();
@@ -461,10 +462,9 @@ bool TermReaderImpl::CoverRange(bytes_view from, bytes_view to,
         return Cover<sizeof(uint32_t)>(*this, from, to, visit);
       case sizeof(uint64_t):
         return Cover<sizeof(uint64_t)>(*this, from, to, visit);
-      case 2 * sizeof(uint64_t):
-        return Cover<2 * sizeof(uint64_t)>(*this, from, to, visit);
       default:
-        break;
+        SDB_ASSERT(width == 2 * sizeof(uint64_t));
+        return Cover<2 * sizeof(uint64_t)>(*this, from, to, visit);
     }
   }
   return Cover<0>(*this, from, to, visit);

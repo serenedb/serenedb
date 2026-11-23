@@ -54,12 +54,8 @@ void BuildFtsTerm(BoolTarget parent, const FilterContext& ctx,
       ERR_MSG(exact.status().message()),
       ERR_HINT("The value's type must match the column's indexed type."));
   }
-  const auto target = MaybeNegated(parent, ctx, column_info);
-  if (*exact) {
-    target.Add(std::move(clause));
-  } else {
-    AddFilter<irs::Empty>(target);
-  }
+  SDB_ASSERT(*exact);
+  MaybeNegated(parent, ctx, column_info).Add(std::move(clause));
 }
 
 namespace {

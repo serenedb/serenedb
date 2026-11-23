@@ -270,11 +270,6 @@ ByteSet RequiredBytesOf(re2::Regexp* re, size_t depth) {
     case re2::kRegexpCapture:
       out = RequiredBytesOf(re->sub()[0], depth + 1);
       break;
-    case re2::kRegexpRepeat:
-      if (re->min() > 0) {
-        out = RequiredBytesOf(re->sub()[0], depth + 1);
-      }
-      break;
     default:
       break;
   }
@@ -940,9 +935,9 @@ constexpr Utf8At Utf8After(Utf8At at, byte_type b) noexcept {
     case Utf8At::Tail3F4:
       return tail(0x80, 0x8F, Utf8At::Tail2);
     case Utf8At::Broken:
-      break;
+      SDB_UNREACHABLE();
   }
-  return Utf8At::Broken;
+  SDB_UNREACHABLE();
 }
 
 re2::Regexp* WildcardTree(bytes_view pattern, bool bytes) {

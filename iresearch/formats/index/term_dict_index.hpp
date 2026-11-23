@@ -54,7 +54,6 @@ class DictIndex {
 
   uint32_t Blocks() const noexcept { return _blocks; }
   bool Small() const noexcept { return _blocks == 1; }
-  bool Gated() const noexcept { return _gated; }
   size_t MemoryBytes() const noexcept;
 
   bytes_view KeyPrefix() const noexcept {

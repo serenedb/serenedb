@@ -1855,6 +1855,19 @@ TEST_F(RegexpUtilsTest, invalid_unclosed_paren) {
   EXPECT_EQ("missing ): (abc", a.Error());
 }
 
+TEST_F(RegexpUtilsTest, invalid_part_rejects_the_union) {
+  using Part = irs::RegexpAcceptor::Part;
+  using Kind = irs::RegexpAcceptor::PartKind;
+  const Part parts[] = {
+    {Kind::Prefix, ToBytesView("auto")},
+    {Kind::Perl, ToBytesView("(abc")},
+    {Kind::Term, ToBytesView("zeta")},
+  };
+  const irs::RegexpAcceptor a{parts};
+  EXPECT_FALSE(a.ok());
+  EXPECT_EQ("missing ): (abc", a.Error());
+}
+
 TEST_F(RegexpUtilsTest, invalid_unexpected_rparen) {
   EXPECT_FALSE(FromPerl("abc)").ok());
 }

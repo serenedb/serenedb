@@ -94,6 +94,22 @@ TEST(sorted_docs_test, sort_concatenates_disjoint_runs_in_order) {
   ASSERT_EQ((std::vector<doc_id_t>{5, 10, 30, 40, 60, 70}), overlapping);
 }
 
+TEST(sorted_docs_test, append_docs_expands_runs_and_bitsets) {
+  std::vector<doc_id_t> docs;
+  std::vector<uint32_t> starts;
+  irs::detail::AppendDocs sink{docs, starts};
+  sink.Term();
+  sink.Run(9, 3);
+  sink.Run(20, 0);
+  const irs::UnalignedWord words[]{0b1011, 0, uint64_t{1} << 63};
+  sink.Bitset(100, words, 3, 0);
+  sink.Term();
+  sink.Doc(500);
+  ASSERT_EQ((std::vector<doc_id_t>{10, 11, 12, 101, 102, 104, 292, 500}),
+            docs);
+  ASSERT_EQ((std::vector<uint32_t>{0, 7}), starts);
+}
+
 TEST(sorted_docs_test, lead_walks_and_seeks_like_the_list) {
   std::mt19937 rng{9};
   std::uniform_int_distribution<doc_id_t> pick{doc_limits::min(), 100000};

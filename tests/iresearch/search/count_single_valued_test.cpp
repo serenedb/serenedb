@@ -218,10 +218,12 @@ TEST_P(CountSingleValuedTest, ranges_count_from_term_statistics) {
     SCOPED_TRACE(absl::StrCat(lo, "..", hi));
     CheckCount(*Range(kSingle, lo, hi), SingleIn(lo, hi), true);
   }
-  for (const auto [lo, hi] : {std::pair{100, 2000}, std::pair{500, 2999}}) {
+  for (const auto [lo, hi] :
+       {std::pair{100, 2000}, std::pair{500, 2999}, std::pair{2998, 2999}}) {
     SCOPED_TRACE(absl::StrCat("multi ", lo, "..", hi));
     CheckCount(*Range(kMulti, lo, hi), MultiIn(lo, hi), false);
   }
+  CheckDocs(*Range(kUnique, 100, 110), 11);
 }
 
 TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {

@@ -53,9 +53,7 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
   if (blocks == 1) {
     return;
   }
-  if (size_t{head.first_block} + blocks > separators.offsets.size()) {
-    Corrupted("separators", head.id);
-  }
+  SDB_ASSERT(size_t{head.first_block} + blocks <= separators.offsets.size());
   _root =
     Root{Slice(separators, head.first_block, blocks - 1), head.width != 0};
   for (uint32_t block = 0; block != blocks; ++block) {
@@ -91,7 +89,7 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
       }
       const uint32_t child = _trie.ChildOf(node, term[at]);
       if (child == kNoNode) {
-        break;
+        Corrupted("block prefixes", head.id);
       }
       path.push_back(child);
     }

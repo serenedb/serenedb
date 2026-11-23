@@ -65,8 +65,8 @@ class SuffixFilter {
   }
 
   IRS_NO_INLINE bool Rejects(BlockCursor& cursor, size_t prefix) {
-    if (const auto* pending = cursor.Pending();
-        pending && pending->lcp >= prefix) {
+    if (const auto* pending = cursor.Pending()) {
+      SDB_ASSERT(pending->lcp >= prefix);
       const auto* fsst = SuffixCodes(cursor);
       const auto* codes = pending->restart ? nullptr : fsst;
       auto match =
@@ -95,9 +95,7 @@ class SuffixFilter {
     const auto* fsst = SuffixCodes(cursor);
     return cursor.SkipWhile([&](const byte_type* data, Header header,
                                 bool restart, uint32_t entry) IRS_FORCE_INLINE {
-      if (header.lcp < prefix) {
-        return false;
-      }
+      SDB_ASSERT(header.lcp >= prefix);
       const auto* codes = restart ? nullptr : fsst;
       auto match = Classify(data, header.len, codes, header.lcp <= prefix);
       if (match == Match::Unknown) [[unlikely]] {
@@ -142,9 +140,7 @@ class SuffixFilter {
   }
 
   Match TailMatch(Tail tail, bool whole) const noexcept {
-    if (tail.size == 0) {
-      return Match::Unknown;
-    }
+    SDB_ASSERT(tail.size != 0);
     const auto last = static_cast<byte_type>(tail.bytes >> 56);
     auto match = Match::None;
     for (auto i = _starts[last]; i != _starts[last + 1]; ++i) {
@@ -175,16 +171,15 @@ class SuffixFilter {
   IRS_FORCE_INLINE Match Classify(const byte_type* data, uint32_t size,
                                   const duckdb_fsst_decoder_t* fsst,
                                   bool whole) const noexcept {
-    if (size != 0) {
-      const auto last = data[size - 1];
-      if (!fsst) {
-        if (_starts[last] == _starts[last + 1]) {
-          return Match::None;
-        }
-      } else if (size == 1 || data[size - 2] != FSST_ESC) {
-        if (const auto match = _last[last]; match != Match::Unknown) {
-          return match;
-        }
+    SDB_ASSERT(size != 0);
+    const auto last = data[size - 1];
+    if (!fsst) {
+      if (_starts[last] == _starts[last + 1]) {
+        return Match::None;
+      }
+    } else if (size == 1 || data[size - 2] != FSST_ESC) {
+      if (const auto match = _last[last]; match != Match::Unknown) {
+        return match;
       }
     }
     return ClassifyTail(data, size, fsst, whole);
@@ -751,10 +746,8 @@ class InfixFilter {
   bool Verify(bytes_view key) {
     const size_t m = _infix.size();
     const size_t from = _lcp >= m ? _lcp - m + 1 : 0;
+    SDB_ASSERT(from <= key.size());
     _end = kNone;
-    if (from >= key.size()) {
-      return false;
-    }
     const auto* text = reinterpret_cast<const char*>(key.data());
     const auto* hit =
       _finder.Find(ViewCast<char>(_infix), text + from, text + key.size());

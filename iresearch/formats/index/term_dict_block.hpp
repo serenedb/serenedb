@@ -87,22 +87,6 @@ struct EfKeys {
     return uint64_t{at - entry} << low_bits | Low(entry);
   }
 
-  uint32_t At(uint32_t entry) const noexcept {
-    const uint32_t from = Sample(entry / kEfSample);
-    uint64_t rank = entry % kEfSample;
-    if (rank == 0) {
-      return from;
-    }
-    uint32_t word = from / kEfWordBits;
-    uint64_t bits = Word(word) & (~uint64_t{0} << (from % kEfWordBits));
-    for (auto count = static_cast<uint64_t>(std::popcount(bits)); count <= rank;
-         count = static_cast<uint64_t>(std::popcount(bits))) {
-      rank -= count;
-      bits = Word(++word);
-    }
-    return word * kEfWordBits + static_cast<uint32_t>(SelectInWord(bits, rank));
-  }
-
   uint32_t After(uint32_t at) const noexcept {
     uint32_t word = at / kEfWordBits;
     uint64_t bits = Word(word) & (~uint64_t{1} << (at % kEfWordBits));
@@ -922,15 +906,11 @@ class BlockCursor {
     SDB_ASSERT(_entry < _stop);
     _restart += kRestartInterval;
     const auto header = HeaderAt(_view, entry);
-    uint32_t shared = header.lcp;
-    if (std::exchange(_jumped, false)) {
-      shared = static_cast<uint32_t>(RestartMismatch(
-        _sp, std::min<size_t>(_mat, header.len + _view.prefix)));
-    }
+    SDB_ASSERT(!_jumped);
     PushRestart(_sp, header);
-    _mat = std::min<size_t>(_mat, shared);
+    _mat = std::min<size_t>(_mat, header.lcp);
     _sp += header.len;
-    return shared;
+    return header.lcp;
   }
 
   template<typename Reject>
@@ -1080,9 +1060,7 @@ class BlockCursor {
   };
 
   Span SkipSpan() const noexcept {
-    if (_view.fixed || _entry == kNoEntry || _jumped) {
-      return {.first = 0, .end = 0};
-    }
+    SDB_ASSERT(!_view.fixed && _entry != kNoEntry && !_jumped);
     return {.first = _entry + 1, .end = _stop};
   }
 
@@ -1264,10 +1242,11 @@ class BlockCursor {
     }
     const auto& ef = _view.ef;
     if (at == kNoEntry) {
+      SDB_ASSERT(_fixed.entry == entry || entry == 0 ||
+                 (_fixed.entry != kNoEntry && _fixed.entry + 1 == entry));
       at = _fixed.entry == entry ? _fixed.at
-           : _fixed.entry != kNoEntry && _fixed.entry + 1 == entry
-             ? ef.After(_fixed.at)
-             : ef.At(entry);
+           : entry == 0          ? 0
+                                 : ef.After(_fixed.at);
     }
     const uint64_t value = ef.base + ef.ValueAt(entry, at);
     const uint32_t stride = _view.stride;

@@ -327,6 +327,17 @@ absl::Status RequireLeafValues(const SearchColumnInfo& info) {
   return absl::OkStatus();
 }
 
+absl::Status RequireElementValue(const SearchColumnInfo& info,
+                                 const duckdb::Value& value) {
+  const auto id = value.type().id();
+  if (irs::IsList(info.layout) && (id == duckdb::LogicalTypeId::LIST ||
+                                   id == duckdb::LogicalTypeId::ARRAY)) {
+    return absl::InvalidArgumentError(
+      "A list compares as a whole, which the index doesn't keep");
+  }
+  return absl::OkStatus();
+}
+
 // Peels the TSQUERY_MODIFIER -> BOOLEAN coercion that the WhereBinder
 // inserts when a `(predicate)::boost(K)` cast appears at the WHERE
 // root. Returns the inner cast (whose return_type carries the boost
@@ -919,6 +930,9 @@ absl::Status FromBinaryEq(BoolTarget filter, const FilterContext& ctx,
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
   }
+  if (auto s = RequireElementValue(*column_info, *const_val); !s.ok()) {
+    return s;
+  }
   if (LooksUpKey(*column_info)) {
     return FromKeyLookup(filter, ctx, *column_info, {&const_val, 1},
                          ctx.negated != not_equal);
@@ -988,6 +1002,9 @@ absl::Status FromComparison(BoolTarget filter, const FilterContext& ctx,
   if (const_val->IsNull()) {
     AddFilter<irs::Empty>(filter);
     return absl::OkStatus();
+  }
+  if (auto s = RequireElementValue(*column_info, *const_val); !s.ok()) {
+    return s;
   }
   if constexpr (GenericVersion) {
     if (auto s = RequireKeywordAnalyzed(
@@ -1172,6 +1189,8 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
     }
     if (val->IsNull()) {
       has_null = true;
+    } else if (auto s = RequireElementValue(*column_info, *val); !s.ok()) {
+      return s;
     } else {
       values.push_back(val);
     }
@@ -2754,12 +2773,14 @@ ColumnCast CastToColumn(const duckdb::Value& value,
       }
       return {.value = duckdb::Value{}, .outside = above ? 1 : -1};
     }
-    if (duckdb::ValueOperations::GreaterThan(
-          value, duckdb::Value::MaximumValue(type))) {
+    if (const auto max =
+          duckdb::Value::MaximumValue(type).DefaultTryCastAs(value.type());
+        max && duckdb::ValueOperations::GreaterThan(value, *max)) {
       return {.value = duckdb::Value{}, .outside = 1};
     }
-    if (duckdb::ValueOperations::GreaterThan(duckdb::Value::MinimumValue(type),
-                                             value)) {
+    if (const auto min =
+          duckdb::Value::MinimumValue(type).DefaultTryCastAs(value.type());
+        min && duckdb::ValueOperations::GreaterThan(*min, value)) {
       return {.value = duckdb::Value{}, .outside = -1};
     }
   }

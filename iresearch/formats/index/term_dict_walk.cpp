@@ -18,6 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
+#include <ranges>
+
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/field_reader.hpp"
 #include "iresearch/formats/index/term_dict_block_filter.hpp"
@@ -84,16 +88,11 @@ class BlockPlan {
 
   void Run(uint32_t block, uint32_t end, uint64_t budget) {
     const uint64_t limit = _field->BlockOffset(block) + budget;
-    const uint32_t first = block;
-    while (block < end) {
-      const uint32_t mid = block + (end - block) / 2;
-      if (_field->BlockOffset(mid) < limit) {
-        block = mid + 1;
-      } else {
-        end = mid;
-      }
-    }
-    _filter->Run(first, end, [&](uint32_t lo, uint32_t hi) { Extend(lo, hi); });
+    const auto blocks = std::views::iota(block, end);
+    const auto stop = absl::c_partition_point(
+      blocks, [&](uint32_t b) { return _field->BlockOffset(b) < limit; });
+    end = stop == blocks.end() ? end : *stop;
+    _filter->Run(block, end, [&](uint32_t lo, uint32_t hi) { Extend(lo, hi); });
     Flush();
     if (!_runs.empty()) {
       _field->Store().Input().Prefetch(_runs);

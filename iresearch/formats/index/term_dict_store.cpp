@@ -86,9 +86,7 @@ void BlockStore::Bind(const TermsMeta& terms) {
   _first_page = terms.first_page;
   _blocks_end = terms.blocks_end;
   const auto blocks = _block_count;
-  if (_blocks_end > _in->GetSize()) {
-    Corrupted("block directory");
-  }
+  SDB_ASSERT(_blocks_end <= _in->GetSize());
   if (terms.spans.size() > blocks) {
     Corrupted("block directory");
   }

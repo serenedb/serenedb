@@ -157,6 +157,70 @@ for column in LISTS:
         t.same_rows(f"SELECT id FROM wnm_idx WHERE {pred}", expected)
         t.same_rows(f"SELECT id FROM wnm_s WHERE {pred}", expected)
 
+CAST_COLUMNS = {
+    "ti": ("TINYINT", lambda row: str(row * 13 % 199 - 99)),
+    "si": ("SMALLINT", lambda row: str(row * 37 - 700)),
+    "ci": ("INTEGER", lambda row: str(row * 1000 - 20000)),
+    "bi": ("BIGINT", lambda row: str(row * 10000000000 - 5)),
+    "ut": ("UTINYINT", lambda row: str(row * 6 % 256)),
+    "us": ("USMALLINT", lambda row: str(row * 1500 % 65536)),
+    "ui": ("UINTEGER", lambda row: str(row * 1000)),
+    "f": ("FLOAT", lambda row: str(row / 4)),
+    "d": ("DECIMAL(6,2)", lambda row: f"{row * 1.25 - 10:.2f}"),
+    "tn": ("TIMESTAMP_NS",
+           lambda row: f"'2020-{1 + row // 28:02d}-{1 + row % 28:02d}'"
+                       "::TIMESTAMP_NS"),
+}
+CAST_ROWS = 40
+cast_definition = "id INTEGER PRIMARY KEY, " + ", ".join(
+    f"{name} {spec[0]}" for name, spec in CAST_COLUMNS.items())
+cast_rows = []
+for row in range(CAST_ROWS):
+    values = ["NULL" if row % 9 == 4 else spec[1](row)
+              for spec in CAST_COLUMNS.values()]
+    cast_rows.append(f"({row}, {', '.join(values)})")
+CAST_KEYS = [f"(abs({name}))" for name in CAST_COLUMNS if name != "tn"]
+CAST_KEYS.append("(CAST(tn AS DATE))")
+cast_keys = ", ".join(["id", *CAST_COLUMNS, *CAST_KEYS])
+t.table("wnc", cast_definition)
+t.table("wnc_s", cast_definition)
+t.index("wnc_idx", "wnc", cast_keys)
+t.index("wnc_s_idx", "wnc_s", cast_keys)
+t.insert("wnc", cast_rows)
+t.statement("INSERT INTO wnc_s SELECT * FROM wnc")
+t.statement("VACUUM (FLUSH_TABLE) wnc")
+t.statement("VACUUM (FLUSH_TABLE) wnc_s")
+
+t.section("A cast on an indexed expression, looked through only when it "
+          "widens without loss, and bounds a TIMESTAMP_NS column can't hold.")
+CAST_PREDICATES = [
+    "CAST(abs(f) AS DOUBLE) > 2.5", "CAST(abs(f) AS DECIMAL(10,2)) > 2.5",
+    "CAST(abs(d) AS DECIMAL(12,4)) = 5", "CAST(abs(d) AS DECIMAL(8,1)) > 5",
+    "CAST(abs(d) AS DOUBLE) = 5", "CAST(abs(ti) AS DECIMAL(6,2)) = 5",
+    "CAST(abs(ti) AS DECIMAL(5,3)) < 3", "CAST(abs(ci) AS DOUBLE) = 0",
+    "CAST(abs(bi) AS DOUBLE) = 5", "CAST(abs(si) AS FLOAT) = 410",
+    "CAST(abs(ci) AS FLOAT) = 0", "CAST(abs(si) AS INTEGER) = 410",
+    "CAST(abs(si) AS UINTEGER) < 100", "CAST(abs(ut) AS SMALLINT) = 6",
+    "CAST(abs(ut) AS USMALLINT) = 6", "CAST(abs(ui) AS INTEGER) = 1000",
+    "CAST(abs(ui) AS UBIGINT) = 1000", "CAST(abs(ci) AS VARCHAR) = '0'",
+    "CAST(CAST(tn AS DATE) AS TIMESTAMP) > TIMESTAMP '2020-01-10'",
+    "abs(ti) IN (500, 1000)", "abs(ci) IN (0.5, 1.5)", "abs(ci) = 0.5",
+    "abs(ci) = -0.4",
+]
+for pred in CAST_PREDICATES:
+    expected = f"SELECT id FROM wnc WHERE {pred}"
+    t.same_rows(f"SELECT id FROM wnc_idx WHERE {pred}", expected)
+    t.same_rows(f"SELECT id FROM wnc_s WHERE {pred}", expected)
+for fn, op, bound in (("ts_lt", "<", "2300-01-01"),
+                      ("ts_gt", ">", "1600-01-01"),
+                      ("ts_le", "<=", "1600-01-01"),
+                      ("ts_ge", ">=", "2300-01-01")):
+    pred = f"tn @@ {fn}(TIMESTAMP '{bound}')"
+    expected = (f"SELECT id FROM wnc WHERE CAST(tn AS TIMESTAMP) {op} "
+                f"TIMESTAMP '{bound}'")
+    t.same_rows(f"SELECT id FROM wnc_idx WHERE {pred}", expected)
+    t.same_rows(f"SELECT id FROM wnc_s WHERE {pred}", expected)
+
 t.section("The plan prints each bound as a value of the column type.")
 for pred in ("d4 = 5.12", "d4 @@ ts_lt(5.125)", "d16 = 0",
              f"u = {UUIDS[3]}", "ub > 9223372036854775807", "h = -1",

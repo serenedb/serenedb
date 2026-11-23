@@ -84,9 +84,7 @@ uint32_t Base(uint32_t base) noexcept { return base == kNoBase ? 0 : base; }
 
 uint32_t MisfitMask(uint32_t lcp, uint32_t len, uint32_t base) noexcept {
   constexpr uint32_t kAll = (1U << kLenSplits) - 1;
-  if (lcp < base) {
-    return kAll;
-  }
+  SDB_ASSERT(lcp >= base);
   const uint32_t delta = lcp - base;
   const auto low = static_cast<uint32_t>(std::bit_width(len));
   const auto delta_bits = static_cast<uint32_t>(std::bit_width(delta));
@@ -538,9 +536,6 @@ void BlockEncoder::TrainFsst() {
   auto starts = SampleStarts(arena, lengths);
   FsstEncoder encoder{
     duckdb_fsst_create(lengths.size(), lengths.data(), starts.data(), 0)};
-  if (!encoder) {
-    return;
-  }
   unsigned char table[FSST_MAXHEADER];
   const auto table_size = duckdb_fsst_export(encoder.get(), table);
   if (!Compresses(encoder.get(), arena, lengths, table_size)) {
@@ -611,9 +606,7 @@ void BlockEncoder::EncodeDeferred() {
 }
 
 bytes_view BlockEncoder::EncodeSuffix(bytes_view suffix) {
-  if (suffix.empty()) {
-    return {};
-  }
+  SDB_ASSERT(!suffix.empty());
   size_t length = suffix.size();
   auto* input = const_cast<unsigned char*>(suffix.data());
   utils::StrResizeAmortized(_scratch.coded, 7 + 2 * length);

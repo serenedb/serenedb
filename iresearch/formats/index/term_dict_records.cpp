@@ -307,9 +307,7 @@ uint64_t RecordRun::SparseBytes(const SparseStats& stats,
 }
 
 uint64_t RecordRun::SizeOf(const Stats& s) const noexcept {
-  if (s.count == 0) {
-    return 0;
-  }
+  SDB_ASSERT(s.count != 0);
   const uint32_t singles = s.count - s.multis;
   const uint32_t stored = s.multis - s.inlines;
   uint64_t size = VSize(s.count) + 1;

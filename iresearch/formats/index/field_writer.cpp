@@ -39,9 +39,7 @@ static_assert(kPage * kMaxBlockPages <= uint64_t{1} << (8 * kVarRestart));
 
 uint32_t PagesFor(const BlockShare& share) noexcept {
   const uint64_t keyed = share.bytes - share.inline_bytes;
-  if (keyed == 0) {
-    return 1;
-  }
+  SDB_ASSERT(keyed != 0);
   return static_cast<uint32_t>(
     std::clamp<uint64_t>((share.bytes + keyed / 2) / keyed, 1, kMaxBlockPages));
 }

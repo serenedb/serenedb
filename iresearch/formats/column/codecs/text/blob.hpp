@@ -636,8 +636,11 @@ class TrialSizes final : public State {
   }
 
   static const FrameSpans& Split(ShapeRows& rows, FrameShape frame) {
+    static_assert(kFrameRawBytes != kDictionaryFrameBytes &&
+                  kFrameRawBytes != kZstdDictionaryFrameBytes);
     const auto it = absl::c_find_if(rows.spans, [&](const Spans& s) {
-      return s.frame.frame == frame.frame && s.frame.first == frame.first;
+      SDB_ASSERT(s.frame.frame != frame.frame || s.frame.first == frame.first);
+      return s.frame.frame == frame.frame;
     });
     if (it != rows.spans.end()) {
       return it->spans;

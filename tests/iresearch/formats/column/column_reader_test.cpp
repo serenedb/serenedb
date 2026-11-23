@@ -4811,6 +4811,29 @@ TEST_F(ColumnReaderTest, UncompressedListElementsKeepTheirValuesAcrossScans) {
   ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
 }
 
+TEST_F(ColumnReaderTest, RowGroupsWithoutListElementsWriteNoLz4Segment) {
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  std::vector<duckdb::Value> expected;
+  WriteViaSql(Db(), dir, "lseg", 41, type,
+              "SELECT CASE WHEN i % 3 = 0 THEN NULL WHEN i < 2048 THEN [] ELSE "
+              "['tag-' || (i % 7), 'value-' || i] END FROM range(3072) t(i)",
+              1024, expected, {.compression = irs::codecs::CodecType::Lz4});
+  irs::ColReader r = irs::tests::OpenColReader(dir, "lseg");
+  const auto* col = r.Column(41);
+  ASSERT_NE(col, nullptr);
+  const auto* elements = col->Child();
+  ASSERT_NE(elements, nullptr);
+  ASSERT_FALSE(elements->DataBlocks().empty());
+  for (const auto& block : elements->DataBlocks()) {
+    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Lz4);
+    EXPECT_NE(block.tuple_count, 0);
+  }
+  ExpectVariantValuesEqual(expected, ScanValues(*col, r.Ctx()));
+  ExpectGathered(*col, r.Ctx(), expected,
+                 Rows{{0, 1, 1023, 1024, 2047, 2048, 2049, 3071}}, false);
+}
+
 TEST_F(ColumnReaderTest,
        UncompressedNestedListElementsKeepTheirValuesAcrossRereads) {
   const auto type = duckdb::LogicalType::LIST(

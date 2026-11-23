@@ -1,0 +1,381 @@
+control substitution on
+
+# DOCS_TEST: make_sample
+
+# DOCS_TEST_RAW
+#| COPY (
+#|     SELECT * FROM (VALUES
+#|         (1, DATE '2026-03-02', 'search',  'high',   'Search results are empty after the index rebuild'),
+#|         (2, DATE '2026-03-02', 'billing', 'low',    'Invoice PDF shows the wrong company address'),
+#|         (3, DATE '2026-03-03', 'search',  'medium', 'Slow search when the query has many words'),
+#|         (4, DATE '2026-03-04', 'api',     'high',   'Export endpoint times out on large result sets'),
+#|         (5, DATE '2026-03-05', 'search',  'low',    'Typo on the search settings page')
+#|     ) AS t(id, opened_on, product, priority, body)
+#| ) TO '/data/tickets.parquet' (FORMAT parquet);
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES
+        (1, DATE '2026-03-02', 'search',  'high',   'Search results are empty after the index rebuild'),
+        (2, DATE '2026-03-02', 'billing', 'low',    'Invoice PDF shows the wrong company address'),
+        (3, DATE '2026-03-03', 'search',  'medium', 'Slow search when the query has many words'),
+        (4, DATE '2026-03-04', 'api',     'high',   'Export endpoint times out on large result sets'),
+        (5, DATE '2026-03-05', 'search',  'low',    'Typo on the search settings page')
+    ) AS t(id, opened_on, product, priority, body)
+) TO '${__TEST_DIR__}/tickets.parquet' (FORMAT parquet);
+
+# DOCS_TEST: read_rows
+
+# DOCS_TEST_RAW
+#| SELECT * FROM '/data/tickets.parquet';
+
+# DOCS_TEST_BODY
+
+query
+SELECT * FROM '${__TEST_DIR__}/tickets.parquet';
+----
+id	opened_on	product	priority	body
+1	2026-03-02	search	high	Search results are empty after the index rebuild
+2	2026-03-02	billing	low	Invoice PDF shows the wrong company address
+3	2026-03-03	search	medium	Slow search when the query has many words
+4	2026-03-04	api	high	Export endpoint times out on large result sets
+5	2026-03-05	search	low	Typo on the search settings page
+
+# DOCS_TEST: read_filtered
+
+# DOCS_TEST_RAW
+#| SELECT id, priority, body
+#| FROM read_parquet('/data/tickets.parquet')
+#| WHERE product = 'search'
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, priority, body
+FROM read_parquet('${__TEST_DIR__}/tickets.parquet')
+WHERE product = 'search'
+ORDER BY id;
+----
+id	priority	body
+1	high	Search results are empty after the index rebuild
+3	medium	Slow search when the query has many words
+5	low	Typo on the search settings page
+
+# DOCS_TEST: describe
+
+# DOCS_TEST_RAW
+#| DESCRIBE SELECT * FROM '/data/tickets.parquet';
+
+# DOCS_TEST_BODY
+
+query
+DESCRIBE SELECT * FROM '${__TEST_DIR__}/tickets.parquet';
+----
+column_name	column_type	null	key	default	extra
+id	INTEGER	YES	NULL	NULL	NULL
+opened_on	DATE	YES	NULL	NULL	NULL
+product	VARCHAR	YES	NULL	NULL	NULL
+priority	VARCHAR	YES	NULL	NULL	NULL
+body	VARCHAR	YES	NULL	NULL	NULL
+
+# DOCS_TEST: summarize
+
+# DOCS_TEST_RAW
+#| SELECT column_name, min, max, null_percentage
+#| FROM (SUMMARIZE SELECT * FROM '/data/tickets.parquet');
+
+# DOCS_TEST_BODY
+
+query
+SELECT column_name, min, max, null_percentage
+FROM (SUMMARIZE SELECT * FROM '${__TEST_DIR__}/tickets.parquet');
+----
+column_name	min	max	null_percentage
+id	1	5	0.00
+opened_on	2026-03-02	2026-03-05	0.00
+product	api	search	0.00
+priority	high	medium	0.00
+body	Export endpoint times out on large result sets	Typo on the search settings page	0.00
+
+# DOCS_TEST: metadata
+
+# DOCS_TEST_RAW
+#| SELECT row_group_id, path_in_schema, type, compression, stats_min, stats_max
+#| FROM parquet_metadata('/data/tickets.parquet')
+#| ORDER BY row_group_id, column_id;
+
+# DOCS_TEST_BODY
+
+query
+SELECT row_group_id, path_in_schema, type, compression, stats_min, stats_max
+FROM parquet_metadata('${__TEST_DIR__}/tickets.parquet')
+ORDER BY row_group_id, column_id;
+----
+row_group_id	path_in_schema	type	compression	stats_min	stats_max
+0	id	INT32	SNAPPY	1	5
+0	opened_on	INT32	SNAPPY	2026-03-02	2026-03-05
+0	product	BYTE_ARRAY	SNAPPY	api	search
+0	priority	BYTE_ARRAY	SNAPPY	high	medium
+0	body	BYTE_ARRAY	SNAPPY	Export endpoint times out on large result sets	Typo on the search settings page
+
+# DOCS_TEST: write_partitioned
+
+# DOCS_TEST_RAW
+#| COPY (SELECT * FROM '/data/tickets.parquet')
+#| TO '/data/by_product' (FORMAT parquet, PARTITION_BY (product));
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT * FROM '${__TEST_DIR__}/tickets.parquet')
+TO '${__TEST_DIR__}/by_product' (FORMAT parquet, PARTITION_BY (product));
+
+# DOCS_TEST: read_glob_hive
+
+# DOCS_TEST_RAW
+#| SELECT product, count(*) AS tickets
+#| FROM read_parquet('/data/by_product/*/*.parquet', hive_partitioning = true)
+#| GROUP BY product
+#| ORDER BY product;
+
+# DOCS_TEST_BODY
+
+query
+SELECT product, count(*) AS tickets
+FROM read_parquet('${__TEST_DIR__}/by_product/*/*.parquet', hive_partitioning = true)
+GROUP BY product
+ORDER BY product;
+----
+product	tickets
+api	1
+billing	1
+search	3
+
+# DOCS_TEST: read_glob_filename
+
+# DOCS_TEST_RAW
+#| SELECT filename, count(*) AS tickets
+#| FROM read_parquet('/data/by_product/*/*.parquet', filename = true)
+#| GROUP BY filename
+#| ORDER BY filename;
+#| ----
+#| filename	tickets
+#| /data/by_product/product=api/data_0.parquet	1
+#| /data/by_product/product=billing/data_0.parquet	1
+#| /data/by_product/product=search/data_0.parquet	3
+
+# DOCS_TEST_BODY
+
+query
+SELECT replace(filename, '${__TEST_DIR__}', '/data') AS filename, count(*) AS tickets
+FROM read_parquet('${__TEST_DIR__}/by_product/*/*.parquet', filename = true)
+GROUP BY filename
+ORDER BY filename;
+----
+filename	tickets
+/data/by_product/product=api/data_0.parquet	1
+/data/by_product/product=billing/data_0.parquet	1
+/data/by_product/product=search/data_0.parquet	3
+
+# DOCS_TEST: union_by_name
+
+# DOCS_TEST_RAW
+#| COPY (
+#|     SELECT 6 AS id, DATE '2026-03-06' AS opened_on, 'api' AS product,
+#|            'Webhook retries never stop' AS body, 'support' AS team
+#| ) TO '/data/tickets_extra.parquet' (FORMAT parquet);
+#|
+#| SELECT id, product, priority, team
+#| FROM read_parquet(['/data/tickets.parquet', '/data/tickets_extra.parquet'], union_by_name = true)
+#| ORDER BY id;
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (
+    SELECT 6 AS id, DATE '2026-03-06' AS opened_on, 'api' AS product,
+           'Webhook retries never stop' AS body, 'support' AS team
+) TO '${__TEST_DIR__}/tickets_extra.parquet' (FORMAT parquet);
+
+query
+SELECT id, product, priority, team
+FROM read_parquet(['${__TEST_DIR__}/tickets.parquet', '${__TEST_DIR__}/tickets_extra.parquet'], union_by_name = true)
+ORDER BY id;
+----
+id	product	priority	team
+1	search	high	NULL
+2	billing	low	NULL
+3	search	medium	NULL
+4	api	high	NULL
+5	search	low	NULL
+6	api	NULL	support
+
+# DOCS_TEST: s3_secret
+
+# DOCS_TEST_RAW
+#| CREATE SECRET (
+#|     TYPE s3,
+#|     KEY_ID '⟨your-access-key-id⟩',
+#|     SECRET '⟨your-secret-access-key⟩',
+#|     REGION '⟨us-east-1⟩',
+#|     SCOPE 's3://⟨my-bucket⟩'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE OR REPLACE SECRET read_parquet_file_${__DATABASE__} (
+    TYPE s3,
+    KEY_ID 'my_access_key_id',
+    SECRET 'my_secret_access_key',
+    REGION 'us-east-1',
+    SCOPE 's3://my-bucket'
+);
+
+statement ok
+DROP SECRET read_parquet_file_${__DATABASE__};
+
+# DOCS_TEST: s3_public
+
+# DOCS_TEST_RAW
+#| CREATE SECRET ookla (TYPE s3, REGION 'us-west-2', SCOPE 's3://ookla-open-data');
+#|
+#| SELECT count(*)
+#| FROM read_parquet('s3://ookla-open-data/parquet/performance/type=fixed/year=2023/quarter=1/2023-01-01_performance_fixed_tiles.parquet');
+#| ----
+#| count
+#| 6336489
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_read_parquet_file_s3_public (x INTEGER);
+
+# DOCS_TEST: https
+
+# DOCS_TEST_RAW
+#| DESCRIBE SELECT *
+#| FROM 'https://huggingface.co/datasets/neuralwork/arxiver/resolve/main/data/train.parquet';
+#| ----
+#| column_name	column_type	null	key	default	extra
+#| id	VARCHAR	YES	NULL	NULL	NULL
+#| title	VARCHAR	YES	NULL	NULL	NULL
+#| abstract	VARCHAR	YES	NULL	NULL	NULL
+#| authors	VARCHAR	YES	NULL	NULL	NULL
+#| published_date	VARCHAR	YES	NULL	NULL	NULL
+#| link	VARCHAR	YES	NULL	NULL	NULL
+#| markdown	VARCHAR	YES	NULL	NULL	NULL
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_read_parquet_file_https (x INTEGER);
+
+# DOCS_TEST: view
+
+# DOCS_TEST_RAW
+#| CREATE VIEW tickets AS
+#|     SELECT * FROM read_parquet('/data/tickets.parquet');
+#|
+#| SELECT priority, count(*) AS tickets
+#| FROM tickets
+#| GROUP BY priority
+#| ORDER BY priority;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE VIEW tickets AS
+    SELECT * FROM read_parquet('${__TEST_DIR__}/tickets.parquet');
+
+query
+SELECT priority, count(*) AS tickets
+FROM tickets
+GROUP BY priority
+ORDER BY priority;
+----
+priority	tickets
+high	2
+low	2
+medium	1
+
+# DOCS_TEST: load_table
+
+# DOCS_TEST_RAW
+#| CREATE TABLE urgent_tickets AS
+#|     SELECT * FROM '/data/tickets.parquet' WHERE priority = 'high';
+#|
+#| INSERT INTO urgent_tickets
+#|     SELECT * FROM '/data/tickets.parquet' WHERE priority = 'medium';
+#|
+#| SELECT count(*) FROM urgent_tickets;
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE urgent_tickets AS
+    SELECT * FROM '${__TEST_DIR__}/tickets.parquet' WHERE priority = 'high';
+
+statement ok
+INSERT INTO urgent_tickets
+    SELECT * FROM '${__TEST_DIR__}/tickets.parquet' WHERE priority = 'medium';
+
+query
+SELECT count(*) FROM urgent_tickets;
+----
+count
+3
+
+# DOCS_TEST: to_csv
+
+# DOCS_TEST_RAW
+#| COPY (SELECT * FROM '/data/tickets.parquet')
+#| TO '/data/tickets.csv' (HEADER);
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (SELECT * FROM '${__TEST_DIR__}/tickets.parquet')
+TO '${__TEST_DIR__}/tickets.csv' (HEADER);
+
+# DOCS_TEST: dictionary
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_dict AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')
+    WITH (frequency, position, offset);
+
+# DOCS_TEST: index
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX tickets_idx ON tickets
+    USING inverted (id, product, body english_dict);
+
+# DOCS_TEST: bm25
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body
+FROM tickets_idx
+WHERE body @@ 'slow searches'
+ORDER BY BM25(tickets_idx.tableoid) DESC, id;
+----
+id	body
+3	Slow search when the query has many words
+1	Search results are empty after the index rebuild
+5	Typo on the search settings page
+
+# DOCS_TEST: reindex
+
+# DOCS_TEST_BODY
+
+statement ok
+REINDEX INDEX tickets_idx;

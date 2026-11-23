@@ -1,0 +1,93 @@
+# A database the catalog log names without a tablespace, as releases without
+# tablespaces wrote it, lies in pg_default: the server replays such a log, and
+# a log rewritten in that shape too.
+
+control substitution on
+
+statement ok
+SET sdb_faults = 'database_without_tablespace';
+
+
+statement ok
+CREATE DATABASE dwt_logged;
+
+
+statement ok
+CREATE TABLE dwt_logged.public.t (x BIGINT);
+
+
+statement ok
+INSERT INTO dwt_logged.public.t VALUES (1);
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT x FROM dwt_logged.public.t;
+----
+x
+1
+
+
+connection after_crash
+query
+SELECT d.datname, t.spcname
+FROM pg_database d JOIN pg_tablespace t ON t.oid = d.dattablespace
+WHERE d.datname IN ('dwt_logged', 'postgres')
+ORDER BY d.datname;
+----
+datname	spcname
+dwt_logged	pg_default
+postgres	pg_default
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'database_without_tablespace';
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+connection after_crash
+statement ok
+CREATE TABLE dwt_trigger (x INTEGER);
+
+
+connection after_crash
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_crash
+statement error connection closed
+SELECT 1;
+
+
+connection after_second_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT x FROM dwt_logged.public.t;
+----
+x
+1
+
+
+connection after_second_crash
+query
+SELECT d.datname, t.spcname
+FROM pg_database d JOIN pg_tablespace t ON t.oid = d.dattablespace
+WHERE d.datname IN ('dwt_logged', 'postgres')
+ORDER BY d.datname;
+----
+datname	spcname
+dwt_logged	pg_default
+postgres	pg_default

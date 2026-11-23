@@ -177,6 +177,8 @@ modified_term:
     | TERM FUZZY                    { $$ = $2.has_value
                                           ? &ctx.AddFuzzySimilarity($1, $2.value)
                                           : &ctx.AddFuzzy($1, 2); }
+    | PREFIX FUZZY                  { $$ = &ctx.AddFuzzyPrefix(
+                                        $1, $2.has_value, $2.value); }
     | phrase FUZZY                  { if ($2.has_value) {
                                         ctx.SetSlop($1, static_cast<int>($2.value));
                                       }
@@ -225,6 +227,10 @@ phrase_part:
     | PREFIX                        { ctx.AddPhrasePrefix($1); }
     | WILDCARD                      { ctx.AddPhraseWildcard($1); }
     | TERM FUZZY                    { ctx.AddPhraseFuzzy(
+                                        $1, $2.has_value
+                                              ? static_cast<int>($2.value)
+                                              : 2); }
+    | PREFIX FUZZY                  { ctx.AddPhraseFuzzyPrefix(
                                         $1, $2.has_value
                                               ? static_cast<int>($2.value)
                                               : 2); }

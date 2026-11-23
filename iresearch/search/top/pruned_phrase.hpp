@@ -35,6 +35,7 @@
 #include "iresearch/search/top/pruned_leaf.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -170,8 +171,9 @@ class PrunedPhrase : public Root {
   doc_id_t BoundFirst(doc_id_t doc, doc_id_t end,
                       LoserScoreCollector& collector, Batch& batch) {
     FlushBatch(collector, batch);
-    doc = _slots.Gating() ? Bound<true>(doc, end, collector)
-                          : Bound<false>(doc, end, collector);
+    doc = Resolve(_slots.Gating(), [&]<bool Gating> IRS_FORCE_INLINE {
+      return Bound<Gating>(doc, end, collector);
+    });
     if (_seen >= kWindow) {
       if (_passed * kPassShare > _seen) {
         _interval = std::min(2 * _interval, kMaxInterval);

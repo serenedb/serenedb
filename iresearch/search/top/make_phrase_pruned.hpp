@@ -57,7 +57,8 @@ Result BuildPrunedPhrase(const Query& query, const Context& ctx, Make&& make) {
 }
 
 template<irs::detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrasePruned(const Query& query, const Context& ctx) {
+Root::ptr PhraseMaker<M, Query>::Pruned(const Query& query,
+                                        const Context& ctx) {
   return BuildPrunedPhrase<M, Root::ptr>(
     query, ctx, [&]<typename Slots>(auto&&... args) -> Root::ptr {
       return MakeShape<PrunedPhrase, Slots>(
@@ -66,7 +67,8 @@ Root::ptr MakePhrasePruned(const Query& query, const Context& ctx) {
 }
 
 template<irs::detail::PhraseMatch M, typename Query>
-UnionMember::ptr MakePhraseMember(const Query& query, const Context& ctx) {
+UnionMember::ptr PhraseMaker<M, Query>::Member(const Query& query,
+                                               const Context& ctx) {
   return BuildPrunedPhrase<M, UnionMember::ptr>(
     query, ctx, []<typename Slots>(auto&&... args) -> UnionMember::ptr {
       auto member = memory::make_managed<PhraseUnionMember<Slots>>(
@@ -79,7 +81,8 @@ UnionMember::ptr MakePhraseMember(const Query& query, const Context& ctx) {
 }
 
 template<irs::detail::PhraseMatch M, typename Query>
-PrunedClause::ptr MakePhraseClause(const Query& query, const Context& ctx) {
+PrunedClause::ptr PhraseMaker<M, Query>::Clause(const Query& query,
+                                                const Context& ctx) {
   return BuildPrunedPhrase<M, PrunedClause::ptr>(
     query, ctx, []<typename Slots>(auto&&... args) -> PrunedClause::ptr {
       return memory::make_managed<PrunedClauseImpl<PhrasePrunedClause<Slots>>>(
@@ -88,12 +91,3 @@ PrunedClause::ptr MakePhraseClause(const Query& query, const Context& ctx) {
 }
 
 }  // namespace irs::top
-
-#define IRS_TOP_PHRASE_PRUNED(Query, Match)                                    \
-  template Root::ptr MakePhrasePruned<irs::detail::PhraseMatch::Match>(        \
-    const Query&, const Context&);                                             \
-  template UnionMember::ptr MakePhraseMember<irs::detail::PhraseMatch::Match>( \
-    const Query&, const Context&);                                             \
-  template PrunedClause::ptr                                                   \
-  MakePhraseClause<irs::detail::PhraseMatch::Match>(const Query&,              \
-                                                    const Context&)

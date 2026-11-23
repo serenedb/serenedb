@@ -51,6 +51,7 @@
 #include "iresearch/search/filters/wildcard_filter.hpp"
 #include "iresearch/search/scorers/constant_score.hpp"
 #include "iresearch/utils/conjunction_acceptor.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -179,18 +180,6 @@ void MoveClauses(BooleanFilter& to, Occur occur, Clauses& from) {
     to.Add(std::move(filter), occur);
   }
   from.filters.clear();
-}
-
-size_t EraseFilters(std::vector<Filter::ptr>& filters, auto predicate) {
-  const auto before = filters.size();
-  std::erase_if(filters,
-                [&](const Filter::ptr& child) { return predicate(*child); });
-  return before - filters.size();
-}
-
-bool AnyFilter(std::span<const Filter::ptr> filters, auto predicate) {
-  return absl::c_any_of(
-    filters, [&](const Filter::ptr& child) { return predicate(*child); });
 }
 
 bool Overlaps(const Clauses& lhs, const Clauses& rhs) {
@@ -1012,7 +1001,8 @@ std::optional<AndAcceptorFusionRule::Operand> AndAcceptorFusionRule::OperandOf(
     const auto& filter =
       irs::utils::downCast<LevenshteinAutomatonFilter>(child);
     const auto& options = filter.options();
-    if (!options.parametric) {
+    SDB_ASSERT(options.parametric);
+    if (options.starts_with) {
       return std::nullopt;
     }
     auto pattern = options.target;

@@ -20,11 +20,11 @@
 
 #include "search/store_stats.h"
 
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 
 namespace sdb::search {
 
-StoreStats StoreStats::FromReader(const irs::DirectoryReader& reader) {
+StoreStats StoreStats::FromReader(const irs::CompositeReader& reader) {
   StoreStats stats;
   stats.numSegments = reader.size();
   stats.numDocs = reader.docs_count();

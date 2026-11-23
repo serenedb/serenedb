@@ -66,6 +66,7 @@ std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
 #include "index/index_tests.hpp"
 #include "tests_shared.hpp"
 #include "typed_terms.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -110,7 +111,7 @@ std::unique_ptr<duckdb::ExpressionFilter> ScoreBelow(irs::score_t bound) {
 // collector -- the production row-filter shape for `is_score`: docs with
 // score >= `reject_score` are dropped before they reach the collector, so
 // only passing scores ever lift its threshold.
-uint64_t ExecuteTopKFiltered(const irs::DirectoryReader& reader,
+uint64_t ExecuteTopKFiltered(const irs::CompositeReader& reader,
                              const irs::Filter& filter,
                              const irs::Scorer& scorer, size_t k,
                              bool /*score_prune*/, irs::score_t reject_score,
@@ -281,7 +282,7 @@ class RowRuns final : public irs::detail::TableFilter {
 };
 
 std::vector<irs::QueryBuilder::ptr> PrepareScored(
-  const irs::DirectoryReader& reader, const irs::Filter& filter,
+  const irs::CompositeReader& reader, const irs::Filter& filter,
   const irs::Scorer& scorer, irs::StatsArena& stats) {
   irs::PreparedCollector collector{filter, scorer, stats, 1};
   std::vector<irs::QueryBuilder::ptr> queries;
@@ -293,7 +294,7 @@ std::vector<irs::QueryBuilder::ptr> PrepareScored(
   return queries;
 }
 
-std::vector<irs::score_t> FilteredRanking(const irs::DirectoryReader& reader,
+std::vector<irs::score_t> FilteredRanking(const irs::CompositeReader& reader,
                                           const irs::Filter& filter,
                                           const irs::Scorer& scorer,
                                           irs::doc_id_t run,
@@ -360,7 +361,7 @@ struct TableTop {
   bool ordered = true;
 };
 
-TableTop TopThroughTable(const irs::DirectoryReader& reader,
+TableTop TopThroughTable(const irs::CompositeReader& reader,
                          const irs::Filter& filter, const irs::Scorer& scorer,
                          irs::doc_id_t run, const ScoreBound* bound, size_t k,
                          bool prune) {
@@ -415,8 +416,8 @@ class TokenizedField final : public tests::Ifield {
   irs::IndexFeatures GetIndexFeatures() const noexcept final {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
   }
-  bool Write(irs::DataOutput& out) const final {
-    irs::WriteStr(out, _value);
+  bool Write(duckdb::WriteStream& out) const final {
+    tests::WriteStr(out, _value);
     return true;
   }
 
@@ -493,7 +494,7 @@ class ScorePruneScoringTestCase : public IndexTestBase {
   }
 
   // Single segment with multiplier * 420 docs.
-  irs::DirectoryReader CreateLargeIndex(const irs::Scorer& scorer,
+  irs::CompositeReader CreateLargeIndex(const irs::Scorer& scorer,
                                         size_t multiplier = 1) {
     irs::IndexWriterOptions opts;
     opts.reader_options.scorer = &scorer;
@@ -515,7 +516,7 @@ class ScorePruneScoringTestCase : public IndexTestBase {
   }
 
   // 3 segments, each with multiplier * 140 docs.
-  irs::DirectoryReader CreateMultiSegmentIndex(const irs::Scorer& scorer,
+  irs::CompositeReader CreateMultiSegmentIndex(const irs::Scorer& scorer,
                                                size_t multiplier = 1) {
     irs::IndexWriterOptions opts;
     opts.reader_options.scorer = &scorer;
@@ -607,7 +608,7 @@ class ScorePruneScoringTestCase : public IndexTestBase {
 
   // Compare pruned vs unpruned results for a single-term query.
   // The pruned top-K must match the unpruned top-K.
-  void ComparePrunedVsBaseline(const irs::DirectoryReader& reader,
+  void ComparePrunedVsBaseline(const irs::CompositeReader& reader,
                                const irs::Filter& filter,
                                const irs::Scorer& scorer, size_t k) {
     std::vector<irs::ScoreDoc> baseline_hits(k);
@@ -706,7 +707,7 @@ TEST_P(ScorePruneScoringTestCase, RawTfPrunedVsBaseline) {
 // something, so each of these must also reach fewer documents than the run
 // that cannot skip.
 TEST_P(ScorePruneScoringTestCase, PruningIsTakenForBoundedScorers) {
-  auto reached = [&](const irs::DirectoryReader& reader,
+  auto reached = [&](const irs::CompositeReader& reader,
                      const irs::Filter& filter, const irs::Scorer& scorer,
                      bool prune) {
     constexpr size_t k = 10;
@@ -1349,7 +1350,7 @@ TEST_P(ScorePruneScoringTestCase, TableFilteredTopMatchesFilteredRanking) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(ScorePruneScoringTest, ScorePruneScoringTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),
@@ -1408,7 +1409,8 @@ irs::bstring MakeStats(const Scorer& scorer) {
   term.total_term_freq = 2048;
 
   irs::bstring stats(scorer.stats_size(), 0);
-  scorer.collect(stats.data(), &field, &term);
+  irs::StatsArena arena{duckdb::Allocator::DefaultAllocator()};
+  scorer.collect(stats.data(), &field, &term, arena);
   return stats;
 }
 

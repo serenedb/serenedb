@@ -104,6 +104,7 @@ struct SessionIdentity {
   int32_t backend_pid = 0;
   network::CancelRegistry* cancel_registry = nullptr;
   bool client_backend = false;
+  duckdb::shared_ptr<duckdb::AttachedDatabase> temporary;
 };
 
 class ConnectionContext final : public duckdb::ClientContext {
@@ -330,6 +331,7 @@ struct SystemSession {
   std::string_view database;
   duckdb::idx_t database_id = 0;
   int32_t backend_pid = 0;
+  duckdb::shared_ptr<duckdb::AttachedDatabase> temporary;
 };
 
 struct SystemConnection {

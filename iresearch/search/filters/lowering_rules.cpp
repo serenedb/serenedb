@@ -130,12 +130,7 @@ bool EditDistanceSimplifyRule::Apply(Filter::ptr& slot,
   if (opts.max_distance != 0) {
     return false;
   }
-  auto filter = TargetOf(node).Make<ByTerm>();
-  auto& term = filter->mutable_options()->term;
-  term.reserve(opts.prefix.size() + opts.term.size());
-  term += opts.prefix;
-  term += opts.term;
-  slot = std::move(filter);
+  slot = LowerExactLevenshtein(TargetOf(node), opts);
   return true;
 }
 

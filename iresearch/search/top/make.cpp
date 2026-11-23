@@ -41,6 +41,7 @@
 #include "iresearch/search/top/constant_union_member.hpp"
 #include "iresearch/search/top/empty.hpp"
 #include "iresearch/search/top/family.hpp"
+#include "iresearch/search/top/make_pruned_disjunction.hpp"
 
 namespace irs::top {
 namespace {
@@ -138,17 +139,17 @@ Ptr ProfileMember(const QueryBuilder& query, Ptr node) {
 
 template<typename Query>
 Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
-  return irs::detail::ResolveMatch(
+  return Resolve<irs::detail::PhraseMatchAxis>(
     query, [&]<irs::detail::PhraseMatch M> -> Root::ptr {
       if constexpr (M != irs::detail::PhraseMatch::Slop) {
         if (ctx.prune) {
-          if (auto pruned = MakePhrasePruned<M>(query, ctx)) {
+          if (auto pruned = PhraseMaker<M, Query>::Pruned(query, ctx)) {
             return pruned;
           }
         }
       }
-      return irs::detail::MakeScored<Family, irs::detail::PhraseKind<M>>(query,
-                                                                         ctx);
+      return irs::detail::ScoredMaker<Family, irs::detail::PhraseKind<M>,
+                                      Query>::Make(query, ctx);
     });
 }
 
@@ -158,7 +159,7 @@ Result MakePhraseOf(const QueryBuilder& query, Make&& make) {
     return {};
   }
   const auto resolve = [&](const auto& phrase) {
-    return irs::detail::ResolveMatch(
+    return Resolve<irs::detail::PhraseMatchAxis>(
       phrase, [&]<irs::detail::PhraseMatch M> -> Result {
         if constexpr (!irs::detail::IsScaled(M)) {
           return make.template operator()<M>(phrase);
@@ -208,8 +209,9 @@ UnionMember::ptr MakeConstantMember(const QueryBuilder& query,
 UnionMember::ptr MakeUnionMember(const QueryBuilder& query,
                                  const Context& ctx) {
   auto member = MakePhraseOf<UnionMember::ptr>(
-    query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
-      return MakePhraseMember<M>(phrase, ctx);
+    query,
+    [&]<irs::detail::PhraseMatch M, typename Phrase>(const Phrase& phrase) {
+      return PhraseMaker<M, Phrase>::Member(phrase, ctx);
     });
   if (!member) {
     member = MakeConstantMember(query, ctx);
@@ -221,8 +223,9 @@ PrunedClause::ptr MakeConjunctionClause(const QueryBuilder& query,
                                         const Context& ctx) {
   return ProfileMember<ProfiledClause>(
     query, MakePhraseOf<PrunedClause::ptr>(
-             query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
-               return MakePhraseClause<M>(phrase, ctx);
+             query, [&]<irs::detail::PhraseMatch M, typename Phrase>(
+                      const Phrase& phrase) {
+               return PhraseMaker<M, Phrase>::Clause(phrase, ctx);
              }));
 }
 
@@ -252,8 +255,8 @@ Root::ptr Family::Make(const TokenPhraseQuery& query, const Context& ctx) {
       return pruned;
     }
   }
-  return irs::detail::MakeScored<Family, irs::detail::TokenPhraseKind>(query,
-                                                                       ctx);
+  return irs::detail::ScoredMaker<Family, irs::detail::TokenPhraseKind,
+                                  TokenPhraseQuery>::Make(query, ctx);
 }
 
 Root::ptr Family::Make(const TermQuery& query, const Context& ctx) {
@@ -291,9 +294,11 @@ Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
         }
       }
     } else if (query.MergeType() == ScoreMergeType::Sum) {
-      if (auto pruned = MakePrunedDisjunction<false>(
-            terms, {}, irs::detail::UniformityOf(*field, scorer), field, scorer,
-            boost, {}, {}, query.Segment(), ctx, ScoreMergeType::Sum)) {
+      if (auto pruned =
+            PrunedDisjunctionMaker<false, MultiTermState::Entry>::Make(
+              terms, {}, irs::detail::UniformityOf(*field, scorer), field,
+              scorer, boost, {}, {}, query.Segment(), ctx,
+              ScoreMergeType::Sum)) {
         return pruned;
       }
     }

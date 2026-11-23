@@ -4,6 +4,8 @@ target_sources(
         constraint_keys.cpp
         primary_key.cpp
         row_position_deduplicator.cpp
+        explain_output.cpp
+        vector_explain.cpp
         offsets_collector.cpp
         search_sink_rows.cpp
         search_sink_writer.cpp
@@ -23,6 +25,7 @@ target_sources(
         scan/geo_check.cpp
         scan/phrase_check.cpp
         scan/wildcard_check.cpp
+        scan/scan_ahead.cpp
         scan/scan_ann.cpp
         scan/scan_barrier.cpp
         scan/scan_bind.cpp

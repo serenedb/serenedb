@@ -541,8 +541,8 @@ class PhraseOpenGapMatcher {
   uint32_t _end_offset{0};
 };
 
-template<bool Offs, bool HasFreq, size_t N = 0>
+template<typename Input, bool Offs, bool HasFreq, size_t N = 0>
 using FixedPhraseOpenGapMatcher =
-  PhraseOpenGapMatcher<FixedTermPosition<Offs>, Offs, HasFreq, N>;
+  PhraseOpenGapMatcher<FixedTermPosition<Offs, Input>, Offs, HasFreq, N>;
 
 }  // namespace irs

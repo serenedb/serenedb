@@ -95,9 +95,9 @@ class CatalogCredentialProvider final : public network::CredentialProvider {
   std::optional<network::Credential> LookupCredential(
     std::string_view username) const final {
     std::string stored;
-    catalog::ReadRole(username, [&](const catalog::RoleCatalogEntry& role) {
-      stored = role.Password();
-    });
+    catalog::ReadEntry<catalog::RoleCatalogEntry>(
+      username,
+      [&](const catalog::RoleCatalogEntry& role) { stored = role.Password(); });
     if (stored.empty()) {
       return std::nullopt;
     }

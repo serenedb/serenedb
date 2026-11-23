@@ -99,7 +99,7 @@ MatchResult SweepOf(Cursors& cur, std::span<const int64_t> offsets,
                     int64_t slop, std::span<const GroupPair> pairs,
                     MatchScratch& scratch, bool early_exit, Collect&& collect) {
   MatchResult res{};
-  constexpr bool kStatic = N != 0;
+  constexpr bool kStatic = N != kAnyArity;
   const size_t n = kStatic ? N : offsets.size();
   SDB_ASSERT(n == offsets.size());
 
@@ -481,9 +481,10 @@ class PhraseSlopMatcher {
       return Run<0>();
     }
 #endif
-    if constexpr (N == 0) {
-      return detail::ResolveArity<detail::kSlotArity, detail::kSlotFloor>(
-        _pos.size(), [&]<size_t Arity> { return Run<Arity>(); });
+    if constexpr (N == detail::kAnyArity) {
+      return Resolve<detail::ArityAxis<detail::kSlotArity, detail::kSlotFloor>>(
+        _pos.size(),
+        [&]<size_t Arity> IRS_FORCE_INLINE { return Run<Arity>(); });
     } else {
       return Run<N>();
     }
@@ -530,7 +531,7 @@ class PhraseSlopMatcher {
 
   template<size_t Arity>
   bool Run() {
-    if constexpr (N == 0 && Arity != 0) {
+    if constexpr (N == detail::kAnyArity && Arity != detail::kAnyArity) {
       containers::Fixed<TermPosition, Arity> slots{
         Arity, [&](TermPosition& slot, size_t i) noexcept { slot = _pos[i]; }};
       return Run<Arity>(slots);
@@ -595,8 +596,8 @@ class PhraseSlopMatcher {
   uint32_t _end_offset{0};
 };
 
-template<bool Offs, bool HasFreq, size_t N = 0>
+template<typename Input, bool Offs, bool HasFreq, size_t N = 0>
 using FixedPhraseSlopMatcher =
-  PhraseSlopMatcher<FixedTermPosition<Offs>, Offs, HasFreq, N>;
+  PhraseSlopMatcher<FixedTermPosition<Offs, Input>, Offs, HasFreq, N>;
 
 }  // namespace irs

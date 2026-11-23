@@ -370,8 +370,14 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
 
   std::optional<int64_t> arg_slop;
   for (const auto& child : func.GetChildren()) {
-    if (!(child->GetAlias() == "slop")) {
+    if (child->GetAlias().empty()) {
       continue;
+    }
+    if (!(child->GetAlias() == "slop")) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_phrase has no argument named ",
+                              child->GetAlias().GetIdentifierName()),
+                      ERR_HINT(kSyntaxHint));
     }
     int64_t slop_raw = 0;
     GetIntArg(*child, slop_raw, {"ts_phrase slop", kSyntaxHint});

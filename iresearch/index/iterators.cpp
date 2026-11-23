@@ -30,7 +30,6 @@
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/singleton.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

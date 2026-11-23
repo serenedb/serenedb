@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <filesystem>
@@ -40,7 +41,7 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
@@ -48,7 +49,6 @@
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -182,8 +182,7 @@ struct Field {
 };
 
 struct Index {
-  std::unique_ptr<irs::MMapDirectory> dir;
-  irs::DirectoryReader reader;
+  irs::CompositeReader reader;
 };
 
 const Index& IndexOf(size_t dictionary) {
@@ -199,15 +198,15 @@ const Index& IndexOf(size_t dictionary) {
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   index = std::make_unique<Index>();
-  index->dir = std::make_unique<irs::MMapDirectory>(path);
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = path.string();
+  tests::IndexDir dir{*db, fs, root};
   irs::IndexWriterOptions writer_opts;
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
   writer_opts.reader_options.scorer = &Bm25();
   writer_opts.norm_column_id = [](irs::field_id id) { return id + kNormBase; };
-  auto writer = tests::IndexWriter::Make(*index->dir, tests::kOmCreate,
-                                         std::move(writer_opts));
+  auto writer =
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(writer_opts));
   auto plain_tokens = spec.make();
   auto positional_tokens = spec.make();
   Field plain{.tokenizer = plain_tokens.get(),
@@ -238,8 +237,7 @@ const Index& IndexOf(size_t dictionary) {
     writer->RefreshCommit();
   }
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  index->reader = tests::OpenReader(*index->dir, reader_opts);
+  index->reader = tests::OpenReader(dir, reader_opts);
   std::fprintf(stderr, "[index] %-8s %zu segments\n", spec.name,
                index->reader.size());
   return *index;
@@ -326,7 +324,7 @@ irs::Filter::ptr MakeFilter(size_t dictionary,
   return root;
 }
 
-uint64_t Count(const irs::DirectoryReader& reader, const irs::Filter& filter) {
+uint64_t Count(const irs::CompositeReader& reader, const irs::Filter& filter) {
   uint64_t hits = 0;
   for (const auto& segment : reader) {
     auto query = filter.PrepareSegment(segment, {});
@@ -340,7 +338,7 @@ uint64_t Count(const irs::DirectoryReader& reader, const irs::Filter& filter) {
   return hits;
 }
 
-double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
+double Scored(const irs::CompositeReader& reader, const irs::Filter& filter,
               uint64_t& hits) {
   irs::StatsArena stats{duckdb::Allocator::DefaultAllocator()};
   irs::PreparedCollector collector{filter, Bm25(), stats, 1};
@@ -374,7 +372,7 @@ double Scored(const irs::DirectoryReader& reader, const irs::Filter& filter,
   return total;
 }
 
-std::vector<irs::score_t> Top(const irs::DirectoryReader& reader,
+std::vector<irs::score_t> Top(const irs::CompositeReader& reader,
                               const irs::Filter& filter) {
   std::vector<irs::ScoreDoc> hits(kTopK);
   irs::ExecuteTopK(reader, filter, Bm25(), kTopK, true, hits);

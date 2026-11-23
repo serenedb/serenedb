@@ -22,10 +22,18 @@
 
 #pragma once
 
+#include <cmath>
+
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 
 namespace irs {
+
+inline score_t TfIdfIdf(uint64_t docs_with_field,
+                        uint64_t docs_with_term) noexcept {
+  return static_cast<score_t>(
+    std::log1p((docs_with_field + 1.0) / (docs_with_term + 1.0)));
+}
 
 struct TFIDFStats {
   score_t value;
@@ -59,7 +67,7 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
     : _normalize{normalize}, _boost_as_score{boost_as_score} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final;
+               const irs::TermCollector* term, StatsArena&) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     if (normalize()) {
@@ -70,6 +78,9 @@ class TFIDF final : public irs::ScorerBase<TFIDF, TFIDFStats> {
   }
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+
+  void Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+               explain::Node& out) const final;
 
   ScoreBoundWriter::ptr PrepareScoreBoundWriter() const final;
 

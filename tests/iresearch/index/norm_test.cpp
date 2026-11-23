@@ -23,16 +23,17 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_cat.h>
 
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index_tests.hpp"
 #include "token_sink_utils.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -98,8 +99,8 @@ class NormField final : public tests::Ifield {
     return irs::kPosOffs | irs::IndexFeatures::Norm;
   }
 
-  bool Write(irs::DataOutput& out) const final {
-    irs::WriteStr(out, _value);
+  bool Write(duckdb::WriteStream& out) const final {
+    tests::WriteStr(out, _value);
     return true;
   }
 
@@ -1070,7 +1071,7 @@ TEST_P(NormTestCase, CheckNormsCompactionWithRemovals) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(NormTest, NormTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

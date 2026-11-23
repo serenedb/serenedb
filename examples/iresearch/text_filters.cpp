@@ -26,7 +26,7 @@
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
@@ -35,7 +35,6 @@
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
@@ -113,8 +112,6 @@ constexpr std::pair<std::string_view, std::string_view> kCorpus[] = {
 
 irs::IndexWriterOptions MakeWriterOptions() {
   irs::IndexWriterOptions options;
-  options.db = &Db();
-  options.reader_options.db = &Db();
   options.norm_column_id = [next = std::make_shared<std::atomic<irs::field_id>>(
                               0)](irs::field_id) -> irs::field_id {
     return next->fetch_add(1, std::memory_order_relaxed);
@@ -124,11 +121,11 @@ irs::IndexWriterOptions MakeWriterOptions() {
 
 // Build the index from kCorpus, return the snapshot. Doc ids are assigned
 // in order, so doc_id N corresponds to kCorpus[N-min_doc_id].
-irs::DirectoryReader BuildIndex(irs::Directory& dir,
+irs::CompositeReader BuildIndex(duckdb::FileSystem& fs, std::string_view root,
                                 std::vector<std::string>& names_out) {
   auto options = MakeWriterOptions();
-  examples::Segments segments{dir, options.reader_options};
-  auto writer = irs::IndexWriter::Make(dir, std::move(options));
+  examples::Segments segments{fs, root};
+  auto writer = irs::IndexWriter::Make(Db(), fs, root, std::move(options));
 
   TextField body;
 
@@ -147,7 +144,7 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
 
 // Run a prepared filter over all segments, collect doc names
 // (kCorpus[i].first).
-std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
+std::vector<std::string> RunFilter(const irs::CompositeReader& reader,
                                    irs::Filter::ptr filter,
                                    const std::vector<std::string>& names) {
   irs::Optimize(filter, {.scored = false});
@@ -218,12 +215,12 @@ int TextFiltersMain() {
 
   irs::InitOptimizeRules();
 
-  // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
-  // down the duckdb::DuckDB they were dispatching through.
+  // Nested scope so the reader destructs before DuckDBEngine::Shutdown tears
+  // down the duckdb::DuckDB it was dispatching through.
   {
     std::vector<std::string> names;
-    irs::MemoryDirectory dir;
-    auto reader = BuildIndex(dir, names);
+    auto reader = BuildIndex(duckdb::FileSystem::GetFileSystem(Db()),
+                             "memory://text_filters", names);
     std::cout << "Indexed " << reader.docs_count() << " docs across "
               << reader.size() << " segment(s).\n\n";
 

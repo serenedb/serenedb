@@ -27,6 +27,16 @@ statement ok
 INSERT INTO sfd_shop.public.notes SELECT i, 'note' || (i % 4) FROM range(1, 41) t(i);
 
 statement ok
+CREATE TEMP TABLE sfd_before AS SELECT file FROM glob('${SDB_DATADIR}/engine_v1/store/*');
+
+statement ok
+VACUUM (FLUSH_TABLE) sfd_shop.public.notes;
+
+statement ok
+COPY (SELECT parse_filename(file) FROM glob('${SDB_DATADIR}/engine_v1/store/*') WHERE file NOT IN (SELECT file FROM sfd_before))
+TO '${__TEST_DIR__}/sfd_notes.files' (FORMAT csv, HEADER false);
+
+statement ok
 CREATE TABLE sfd_shop.public.gone(id INTEGER, body VARCHAR) WITH (compaction_interval = 0);
 
 statement ok
@@ -77,9 +87,6 @@ CREATE DATABASE sfd_again;
 
 statement ok
 CREATE TABLE sfd_again.public.t AS SELECT 2 AS v;
-
-statement ok
-COPY (SELECT table_oid FROM sdb_tables() WHERE database_name = 'sfd_shop' AND table_name = 'notes') TO '${__TEST_DIR__}/sfd_notes.oid' (FORMAT csv, HEADER false);
 
 connection holder
 query
@@ -170,13 +177,13 @@ statement ok
 DROP SERVER sfd_again_snap;
 
 system ok
-rm -rf $__TEST_DIR__/sfd_torn && cp -r $__TEST_DIR__/sfd_copy $__TEST_DIR__/sfd_torn && rm -rf $__TEST_DIR__/sfd_torn/engine_v1/store/$(cat $__TEST_DIR__/sfd_notes.oid)
+rm -rf $__TEST_DIR__/sfd_torn && cp -r $__TEST_DIR__/sfd_copy $__TEST_DIR__/sfd_torn && cd $__TEST_DIR__/sfd_torn/engine_v1/store && rm $(cat $__TEST_DIR__/sfd_notes.files)
 
 statement error
 CREATE SERVER sfd_torn FOREIGN DATA WRAPPER serenedb_fdw
   OPTIONS (path '${__TEST_DIR__}/sfd_torn', database 'sfd_shop');
 ----
-db error: ERROR: the directory "<slt:ignore>" of notes (oid <slt:ignore>) is missing
+db error: ERROR: cannot open the files of relation <slt:ignore>: <slt:ignore>No such file or directory
 
 
 query

@@ -29,6 +29,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <duckdb/common/path.hpp>
 #include <filesystem>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/operating_system.hpp>
@@ -132,7 +133,7 @@ std::string ResolveDataDir(std::string flag_value) {
   dir.erase(dir.find_last_not_of(SERENEDB_DIR_SEPARATOR_STR) + 1);
   std::error_code ec;
   if (auto abs = std::filesystem::absolute(dir, ec); !ec) {
-    dir = abs.string();
+    dir = duckdb::Path::Normalize(abs.string());
   }
   return dir;
 }

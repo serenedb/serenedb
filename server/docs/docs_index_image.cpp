@@ -28,6 +28,11 @@
 #include "docs/docs_index_data.h"
 
 namespace sdb::docs {
+
+#ifndef __APPLE__
+extern "C" std::uint8_t sdb_docs_region[];
+#endif
+
 namespace {
 
 constexpr std::size_t kAlignment = 64;
@@ -49,16 +54,16 @@ struct Region {
 
 [[gnu::used]] constinit Region gRegion;
 
-const Header* GetHeader() { return &gRegion.header; }
+std::uint8_t* GetRegion() { return reinterpret_cast<std::uint8_t*>(&gRegion); }
 #else
 [[gnu::used, gnu::section(".sdb_docs")]] constinit const Header gHeader{};
 
-const Header* GetHeader() { return &gHeader; }
+std::uint8_t* GetRegion() { return sdb_docs_region; }
 #endif
 
 class Cursor {
  public:
-  explicit Cursor(const std::uint8_t* data) : _data{data} {}
+  explicit Cursor(std::uint8_t* data) : _data{data} {}
 
   template<typename T>
   T Read() {
@@ -68,8 +73,8 @@ class Cursor {
     return value;
   }
 
-  std::span<const std::uint8_t> Take(std::size_t size) {
-    std::span<const std::uint8_t> bytes{_data + _offset, size};
+  std::span<std::uint8_t> Take(std::size_t size) {
+    std::span<std::uint8_t> bytes{_data + _offset, size};
     _offset += size;
     return bytes;
   }
@@ -79,7 +84,7 @@ class Cursor {
   }
 
  private:
-  const std::uint8_t* _data;
+  std::uint8_t* _data;
   std::size_t _offset = 0;
 };
 
@@ -102,12 +107,13 @@ struct Image {
 
 const Image& GetImage() {
   static const Image kImage = [] {
-    const Header* header = GetHeader();
-    asm volatile("" : "+r"(header));
+    std::uint8_t* region = GetRegion();
+    asm volatile("" : "+r"(region));
+    Header header;
+    std::memcpy(&header, region, sizeof(Header));
     Image image;
-    if (header->size != 0) {
-      Cursor cursor{reinterpret_cast<const std::uint8_t*>(header) +
-                    sizeof(Header)};
+    if (header.size != 0) {
+      Cursor cursor{region + sizeof(Header)};
       image.docs = ReadIndex(cursor);
       image.objects = ReadIndex(cursor);
     }

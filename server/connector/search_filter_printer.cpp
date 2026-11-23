@@ -143,14 +143,7 @@ std::string TermValue(bytes_view term, const LogicalType& type) {
   return TermToString(term);
 }
 
-std::string PrefixValue(bytes_view prefix, const LogicalType& type) {
-  return sdb::pg::IsInetOrCidr(type) ? TermValue(prefix, type)
-                                     : TermToString(prefix);
-}
-
-std::string TermValue(const bstring& term, const LogicalType& type) {
-  return TermValue(bytes_view{term}, type);
-}
+}  // namespace
 
 std::string DictTermValue(DictRef dict, bytes_view term,
                           const LogicalType& type) {
@@ -162,6 +155,13 @@ std::string DictTermValue(DictRef dict, bytes_view term,
     default:
       return TermValue(term, type);
   }
+}
+
+namespace {
+
+std::string PrefixValue(bytes_view prefix, const LogicalType& type) {
+  return sdb::pg::IsInetOrCidr(type) ? TermValue(prefix, type)
+                                     : TermToString(prefix);
 }
 
 template<typename T>
@@ -218,7 +218,10 @@ struct PhrasePartVisitor : util::Noncopyable {
               "printing"));
   }
   auto operator()(const LevenshteinAutomatonOptions& opts) const {
-    absl::StrAppend(out, "LevenshteinAutomaton:", TermToString(opts.target));
+    absl::StrAppend(out,
+                    opts.starts_with ? "LevenshteinAutomatonStartsWith:"
+                                     : "LevenshteinAutomaton:",
+                    TermToString(opts.target));
   }
   auto operator()(const AutomatonOptions& opts) const {
     absl::StrAppend(out, "Automaton:", TermToString(opts.pattern));
@@ -519,6 +522,9 @@ struct FilterPrinter {
       ExplainNode node{"Levenshtein"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Target"] = TermToString(o.target);
+      if (o.starts_with) {
+        node.attributes["Starts With"] = "true";
+      }
       node.attributes["Max Terms"] = o.with_ties
                                        ? absl::StrCat(o.max_terms, " with ties")
                                        : absl::StrCat(o.max_terms);

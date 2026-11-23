@@ -55,6 +55,23 @@
 namespace sdb::connector {
 namespace {
 
+void PrefetchTerms(const irs::Filter& filter, const irs::IndexReader& reader) {
+  const auto count = reader.size();
+  if (count == 0) {
+    return;
+  }
+  bool fetching = filter.Prefetch(reader[0]);
+  if (count > 1) {
+    fetching = filter.Prefetch(reader[count - 1]) || fetching;
+  }
+  if (!fetching) {
+    return;
+  }
+  for (size_t i = 1; i + 1 < count; ++i) {
+    filter.Prefetch(reader[i]);
+  }
+}
+
 bool HasNested(const irs::Filter& filter) {
   if (filter.type() == irs::Type<irs::ByNestedFilter>::id()) {
     return true;
@@ -250,6 +267,14 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
       ERR_MSG("ts_offsets() requires an inverted index scan in the same "
               "sub-query"));
   }
+  if (state->ScanExplain() && !ss.score.text && !ss.score.vector) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("ts_explain() requires a scorer function on the same index in "
+              "the query"),
+      ERR_HINT("Add a scorer such as BM25(", ss.RelationName(),
+               ".tableoid) to the select list or ORDER BY."));
+  }
   state->scan = &ss;
   const auto snapshot_start = profiled ? duckdb::TimePoint::Now() : 0;
   AcquireScanSnapshot(*state, context, ss);
@@ -353,6 +378,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   if (profiled) {
     StartProfile(*state, bind_data, snapshot_ticks);
   }
+  if (state->remote) {
+    PrefetchTerms(*state->filter, *state->reader);
+  }
   state->queries.resize(state->total_segments);
 
   ClassifySegments(*state);
@@ -360,6 +388,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   state->splittable = !(where && HasNested(*where)) && !ss.score.vector;
 
   if (state->shape == ScanShape::Count) {
+    if (state->remote) {
+      state->head_prefetch_min = 2;
+    }
     BuildClaimPlan(*state, context);
     return state;
   }
@@ -376,6 +407,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
     state->stats_stage =
       state->scorer_obj && state->total_segments != 0 && !ss.score.vector;
+  }
+  if (state->remote && state->stats_stage) {
+    state->head_prefetch_min = 1;
   }
 
   if (state->shape == ScanShape::TopK) {

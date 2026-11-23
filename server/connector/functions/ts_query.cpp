@@ -914,23 +914,28 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // LEVENSHTEIN(term [, distance [, transpositions [, prefix]]]) -- raw
-  // fuzzy match. The optional `prefix` is a literal leading substring
-  // that must match exactly; only the suffix after `prefix` participates
-  // in edit-distance computation. The 1-arg form `ts_levenshtein('term')`
-  // picks the distance automatically from term length.
+  // LEVENSHTEIN(term [, distance [, transpositions [, prefix]]]
+  // [, transpositions := BOOLEAN] [, prefix := VARCHAR]
+  // [, starts_with := BOOLEAN]) -- raw fuzzy match. The optional `prefix` is
+  // a literal leading substring that must match exactly; only the suffix
+  // after `prefix` participates in edit-distance computation. The 1-arg form
+  // `ts_levenshtein('term')` picks the distance automatically from term
+  // length.
   {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{kTSQLevenshtein}};
+    const auto add = [&](duckdb::vector<duckdb::LogicalType> args) {
+      auto fn = TSQConstructor(std::move(args));
+      fn.GetSignature().AddKwargs("kwargs", duckdb::LogicalType::ANY);
+      set.AddFunction(std::move(fn));
+    };
     for (auto first_arg :
          {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
-      set.AddFunction(TSQConstructor({first_arg}));
-      set.AddFunction(
-        TSQConstructor({first_arg, duckdb::LogicalType::INTEGER}));
-      set.AddFunction(TSQConstructor({first_arg, duckdb::LogicalType::INTEGER,
-                                      duckdb::LogicalType::BOOLEAN}));
-      set.AddFunction(TSQConstructor({first_arg, duckdb::LogicalType::INTEGER,
-                                      duckdb::LogicalType::BOOLEAN,
-                                      duckdb::LogicalType::VARCHAR}));
+      add({first_arg});
+      add({first_arg, duckdb::LogicalType::INTEGER});
+      add({first_arg, duckdb::LogicalType::INTEGER,
+           duckdb::LogicalType::BOOLEAN});
+      add({first_arg, duckdb::LogicalType::INTEGER,
+           duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::VARCHAR});
     }
     loader.RegisterFunction(std::move(set));
   }
@@ -1209,19 +1214,19 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
 
   {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{kLevenshteinMatches}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::INTEGER},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN,
-       duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
+    const auto add = [&](duckdb::vector<duckdb::LogicalType> args) {
+      duckdb::ScalarFunction fn(std::move(args), duckdb::LogicalType::BOOLEAN,
+                                SearchStubFn);
+      fn.GetSignature().AddKwargs("kwargs", duckdb::LogicalType::ANY);
+      set.AddFunction(std::move(fn));
+    };
+    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
+         duckdb::LogicalType::INTEGER});
+    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
+         duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN});
+    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
+         duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN,
+         duckdb::LogicalType::VARCHAR});
     loader.RegisterFunction(std::move(set));
   }
 

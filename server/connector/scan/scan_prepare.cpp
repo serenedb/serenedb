@@ -24,6 +24,7 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/filters/query_profile.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
+#include <iresearch/search/queries/posting_heads.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -35,14 +36,7 @@ namespace sdb::connector {
 const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
                                             ScanLocalState* l,
                                             uint32_t seg_idx) {
-  auto& work = g.Segment(seg_idx);
-  auto state = work.prepare.load(std::memory_order_acquire);
-  if (state == SegmentWork::kReady) {
-    return *g.queries[seg_idx];
-  }
-  if (state == SegmentWork::kUnprepared &&
-      work.prepare.compare_exchange_strong(state, SegmentWork::kPreparing,
-                                           std::memory_order_acq_rel)) {
+  g.Segment(seg_idx).prepare.Call([&] {
     irs::PrepareCollector* collector = nullptr;
     if (g.collector) {
       SDB_ASSERT(l);
@@ -65,21 +59,10 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
     g.queries[seg_idx] = g.vector_scorer == nullptr
                            ? irs::PrepareMasked(filter, segment, ctx)
                            : irs::PrepareFilter(*g.filter, segment, ctx);
-    if (work.prepare.exchange(SegmentWork::kReady, std::memory_order_acq_rel) ==
-        SegmentWork::kAwaited) {
-      work.prepare.notify_all();
+    if (g.head_prefetch_min != 0) {
+      irs::PrefetchPostingHeads(*g.queries[seg_idx], g.head_prefetch_min);
     }
-    return *g.queries[seg_idx];
-  }
-  while (state != SegmentWork::kReady) {
-    if (state == SegmentWork::kPreparing &&
-        !work.prepare.compare_exchange_weak(state, SegmentWork::kAwaited,
-                                            std::memory_order_acq_rel)) {
-      continue;
-    }
-    work.prepare.wait(SegmentWork::kAwaited, std::memory_order_acquire);
-    state = work.prepare.load(std::memory_order_acquire);
-  }
+  });
   return *g.queries[seg_idx];
 }
 
@@ -107,6 +90,9 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
           g.collector->Finish();
           if (g.profile) {
             g.profile->AddStats(ElapsedTicks(start));
+          }
+          if (g.ScanExplain()) {
+            g.filter->ExplainStats(g.collector->Get(), g.explain_stats);
           }
         }
         g.stats_barrier.Release(input);

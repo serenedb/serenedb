@@ -30,6 +30,7 @@
 #include "iresearch/search/filters/filter_optimizer.hpp"
 #include "iresearch/search/filters/levenshtein_filter.hpp"
 #include "iresearch/search/filters/prefix_filter.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 
 namespace irs::optimizer {
 namespace {

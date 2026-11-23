@@ -24,6 +24,7 @@
 
 #include "iresearch/analysis/text/segment/fill.hpp"
 #include "iresearch/analysis/token_batch.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::analysis {
 namespace {
@@ -103,22 +104,9 @@ struct Type<analysis::UnicodeAnalyzerImpl<S>> : Type<analysis::TextTokenizer> {
 namespace irs::analysis {
 
 Tokenizer::ptr TextTokenizer::Make(Options options) {
-  using Separate = Options::Separate;
-  switch (options.separate) {
-    case Separate::None:
-      return std::make_unique<UnicodeAnalyzerImpl<Separate::None>>(options);
-    case Separate::Word:
-      return std::make_unique<UnicodeAnalyzerImpl<Separate::Word>>(options);
-    case Separate::Sentence:
-      return std::make_unique<UnicodeAnalyzerImpl<Separate::Sentence>>(options);
-    case Separate::Line:
-      return std::make_unique<UnicodeAnalyzerImpl<Separate::Line>>(options);
-    case Separate::Paragraph:
-      return std::make_unique<UnicodeAnalyzerImpl<Separate::Paragraph>>(
-        options);
-    case Separate::Grapheme:
-      return std::make_unique<UnicodeAnalyzerImpl<Separate::Grapheme>>(options);
-  }
+  return Resolve(options.separate, [&]<Options::Separate S> -> Tokenizer::ptr {
+    return std::make_unique<UnicodeAnalyzerImpl<S>>(options);
+  });
 }
 
 }  // namespace irs::analysis

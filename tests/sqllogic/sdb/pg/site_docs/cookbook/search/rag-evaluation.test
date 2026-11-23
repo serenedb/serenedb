@@ -1,0 +1,262 @@
+# DOCS_TEST: setup
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+statement ok
+CREATE TABLE chunks (id INTEGER PRIMARY KEY, body VARCHAR, emb FLOAT[3]);
+
+statement ok
+CREATE INDEX chunks_idx ON chunks
+    USING inverted (id, body en, emb hnsw (metric = 'l2'));
+
+statement ok
+INSERT INTO chunks VALUES
+(1, 'To reset your password, open Settings and choose Reset password.', [0.0, 1.0, 0.0]),
+(2, 'Accounts lock after five failed sign-in attempts; an admin can unlock them.', [0.1, 0.9, 0.1]),
+(3, 'Password rules: at least 12 characters, one number and one symbol.', [0.0, 0.8, 0.0]),
+(4, 'Refunds for annual plans are prorated by the unused months.', [1.0, 0.0, 0.0]),
+(5, 'Invoices are emailed on the first day of each billing cycle.', [0.9, 0.1, 0.0]),
+(6, 'Cancel a subscription at any time; the plan stays active until the period ends.', [0.8, 0.0, 0.1]),
+(7, 'Reports with many widgets can take a minute to load; narrow the date range.', [0.0, 0.1, 1.0]),
+(8, 'Cache query results to make dashboards open faster.', [0.0, 0.0, 0.9]),
+(9, 'Error E1042 means the API key has expired; create a new key.', [0.2, 0.6, 0.2]);
+
+statement ok
+CREATE TABLE queries (qid INTEGER PRIMARY KEY, text VARCHAR, emb FLOAT[3]);
+
+statement ok
+INSERT INTO queries VALUES
+(1, 'reset password', [0.05, 0.95, 0.0]),
+(2, 'refund annual plan', [0.95, 0.0, 0.05]),
+(3, 'slow dashboard', [0.0, 0.05, 0.95]),
+(4, 'error E1042', [0.5, 0.0, 0.5]);
+
+statement ok
+CREATE TABLE qrels (qid INTEGER, doc_id INTEGER, rel INTEGER);
+
+statement ok
+INSERT INTO qrels VALUES
+(1, 1, 2), (1, 2, 1),
+(2, 4, 2), (2, 6, 1),
+(3, 7, 2), (3, 8, 2),
+(4, 9, 2);
+
+statement ok
+CREATE TABLE runs (system VARCHAR, qid INTEGER, doc_id INTEGER, rank INTEGER);
+
+# DOCS_TEST: bm25_run
+
+# DOCS_TEST_BODY
+
+statement ok
+PREPARE bm25_run(INTEGER, VARCHAR) AS
+INSERT INTO runs
+SELECT 'bm25', $1, id, ROW_NUMBER() OVER (ORDER BY s DESC, id)
+FROM (
+    SELECT id, BM25(chunks_idx.tableoid) AS s
+    FROM chunks_idx
+    WHERE body @@ $2
+    ORDER BY s DESC, id
+    LIMIT 10
+) t;
+
+statement ok
+EXECUTE bm25_run(1, 'reset password');
+
+statement ok
+EXECUTE bm25_run(2, 'refund annual plan');
+
+statement ok
+EXECUTE bm25_run(3, 'slow dashboard');
+
+statement ok
+EXECUTE bm25_run(4, 'error E1042');
+
+# DOCS_TEST: vector_run
+
+# DOCS_TEST_BODY
+
+statement ok
+PREPARE vector_run(INTEGER, FLOAT[3]) AS
+INSERT INTO runs
+SELECT 'vector', $1, id, ROW_NUMBER() OVER (ORDER BY d, id)
+FROM (
+    SELECT id, emb <-> $2 AS d
+    FROM chunks_idx
+    ORDER BY d
+    LIMIT 10
+) t;
+
+statement ok
+EXECUTE vector_run(1, [0.05, 0.95, 0.0]);
+
+statement ok
+EXECUTE vector_run(2, [0.95, 0.0, 0.05]);
+
+statement ok
+EXECUTE vector_run(3, [0.0, 0.05, 0.95]);
+
+statement ok
+EXECUTE vector_run(4, [0.5, 0.0, 0.5]);
+
+# DOCS_TEST: hybrid_run
+
+# DOCS_TEST_BODY
+
+statement ok
+INSERT INTO runs
+SELECT 'hybrid', qid, doc_id,
+       ROW_NUMBER() OVER (PARTITION BY qid ORDER BY SUM(1.0 / (60 + rank)) DESC, doc_id)
+FROM runs
+WHERE system IN ('bm25', 'vector')
+GROUP BY qid, doc_id;
+
+# DOCS_TEST: top_3
+
+# DOCS_TEST_BODY
+
+query
+SELECT qid, system, string_agg(doc_id::VARCHAR, ', ' ORDER BY rank) AS top_3
+FROM runs
+WHERE rank <= 3
+GROUP BY qid, system
+ORDER BY qid, system;
+----
+qid	system	top_3
+1	bm25	1, 3
+1	hybrid	1, 3, 2
+1	vector	1, 2, 3
+2	bm25	4, 6
+2	hybrid	4, 6, 5
+2	vector	4, 5, 6
+3	hybrid	7, 8, 9
+3	vector	7, 8, 9
+4	bm25	9
+4	hybrid	9, 6, 8
+4	vector	6, 8, 5
+
+# DOCS_TEST: eval_view
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE VIEW eval_at_3 AS
+WITH ideal AS (
+    SELECT qid,
+           COUNT(*) FILTER (WHERE rel > 0) AS n_relevant,
+           SUM((2 ^ rel - 1) / log2(pos + 1)) FILTER (WHERE pos <= 3) AS idcg
+    FROM (
+        SELECT qid, rel, ROW_NUMBER() OVER (PARTITION BY qid ORDER BY rel DESC) AS pos
+        FROM qrels
+    ) t
+    GROUP BY qid
+),
+judged AS (
+    SELECT r.system, r.qid, r.rank, COALESCE(q.rel, 0) AS rel
+    FROM runs r
+    LEFT JOIN qrels q ON q.qid = r.qid AND q.doc_id = r.doc_id
+    WHERE r.rank <= 3
+)
+SELECT s.system,
+       i.qid,
+       COUNT(*) FILTER (WHERE j.rel > 0)::DOUBLE / i.n_relevant AS recall,
+       COUNT(*) FILTER (WHERE j.rel > 0) / 3.0 AS precision,
+       COALESCE(MAX(1.0 / j.rank) FILTER (WHERE j.rel > 0), 0) AS rr,
+       COALESCE(SUM((2 ^ j.rel - 1) / log2(j.rank + 1)), 0) / i.idcg AS ndcg
+FROM (SELECT DISTINCT system FROM runs) s
+CROSS JOIN ideal i
+LEFT JOIN judged j ON j.system = s.system AND j.qid = i.qid
+GROUP BY s.system, i.qid, i.n_relevant, i.idcg;
+
+# DOCS_TEST: metrics
+
+# DOCS_TEST_BODY
+
+query
+SELECT system,
+       COUNT(*) AS queries,
+       AVG(recall)::DECIMAL(4,3) AS recall_at_3,
+       AVG(precision)::DECIMAL(4,3) AS precision_at_3,
+       AVG(CASE WHEN recall > 0 THEN 1 ELSE 0 END)::DECIMAL(4,3) AS hit_rate_at_3,
+       AVG(rr)::DECIMAL(4,3) AS mrr,
+       AVG(ndcg)::DECIMAL(4,3) AS ndcg_at_3
+FROM eval_at_3
+GROUP BY system
+ORDER BY system;
+----
+system	queries	recall_at_3	precision_at_3	hit_rate_at_3	mrr	ndcg_at_3
+bm25	4	0.625	0.333	0.750	0.750	0.707
+hybrid	4	1.000	0.583	1.000	1.000	0.991
+vector	4	0.750	0.500	0.750	0.750	0.741
+
+# DOCS_TEST: per_query
+
+# DOCS_TEST_BODY
+
+query
+SELECT q.qid,
+       q.text,
+       MAX(e.ndcg) FILTER (WHERE e.system = 'bm25')::DECIMAL(4,3) AS bm25,
+       MAX(e.ndcg) FILTER (WHERE e.system = 'vector')::DECIMAL(4,3) AS vector,
+       MAX(e.ndcg) FILTER (WHERE e.system = 'hybrid')::DECIMAL(4,3) AS hybrid
+FROM queries q
+JOIN eval_at_3 e ON e.qid = q.qid
+GROUP BY q.qid, q.text
+ORDER BY q.qid;
+----
+qid	text	bm25	vector	hybrid
+1	reset password	0.826	1.000	0.964
+2	refund annual plan	1.000	0.964	1.000
+3	slow dashboard	0.000	1.000	1.000
+4	error E1042	1.000	0.000	1.000
+
+# DOCS_TEST: scorer_variant
+
+# DOCS_TEST_BODY
+
+statement ok
+PREPARE lm_run(INTEGER, VARCHAR) AS
+INSERT INTO runs
+SELECT 'lm_dirichlet', $1, id, ROW_NUMBER() OVER (ORDER BY s DESC, id)
+FROM (
+    SELECT id, LM_DIRICHLET(chunks_idx.tableoid) AS s
+    FROM chunks_idx
+    WHERE body @@ $2
+    ORDER BY s DESC, id
+    LIMIT 10
+) t;
+
+# DOCS_TEST: export
+
+control substitution on
+
+# DOCS_TEST_RAW
+#| COPY (
+#|     SELECT q.text AS user_input,
+#|            list(c.body ORDER BY r.rank) AS retrieved_contexts
+#|     FROM runs r
+#|     JOIN queries q ON q.qid = r.qid
+#|     JOIN chunks c ON c.id = r.doc_id
+#|     WHERE r.system = 'hybrid' AND r.rank <= 3
+#|     GROUP BY q.qid, q.text
+#|     ORDER BY q.qid
+#| ) TO 'hybrid_contexts.ndjson' (FORMAT json);
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (
+    SELECT q.text AS user_input,
+           list(c.body ORDER BY r.rank) AS retrieved_contexts
+    FROM runs r
+    JOIN queries q ON q.qid = r.qid
+    JOIN chunks c ON c.id = r.doc_id
+    WHERE r.system = 'hybrid' AND r.rank <= 3
+    GROUP BY q.qid, q.text
+    ORDER BY q.qid
+) TO '${__TEST_DIR__}/cookbook_search_rag_evaluation_hybrid_contexts.ndjson' (FORMAT json);

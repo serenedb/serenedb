@@ -26,15 +26,16 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/columnar_readers.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <string>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "postings_cursor.hpp"
 #include "test_index_writer.hpp"
@@ -1185,7 +1186,8 @@ TEST(InverterPipelineTest, DenseAfterExplicitDoc) {
 namespace {
 
 TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
-  MemoryDirectory dir;
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
   auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -1290,7 +1292,8 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
 }
 
 TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
-  MemoryDirectory dir;
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
   auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -1395,7 +1398,8 @@ bool InsertNullIfAny(const IndexWriter::Document& doc, field_id id,
 }
 
 TEST(InverterEndToEndTest, NullBlockUvfAllValidMaskCreatesNoField) {
-  MemoryDirectory dir;
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
   auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -1436,7 +1440,8 @@ TEST(InverterEndToEndTest, NullBlockUvfAllValidMaskCreatesNoField) {
 }
 
 TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
-  MemoryDirectory dir;
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
   auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
@@ -2316,7 +2321,8 @@ TEST(InverterEndToEndTest, EmptyPositionalFieldWritesNoStreams) {
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
 
   const auto run_case = [&](bool text_tokens) {
-    MemoryDirectory dir;
+    ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                          TestEnv::MemoryRoot()};
     auto writer = ::tests::IndexWriter::Make(
       dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
@@ -2360,11 +2366,10 @@ TEST(InverterEndToEndTest, EmptyPositionalFieldWritesNoStreams) {
     }
     bool has_pos = false;
     bool has_pay = false;
-    ASSERT_TRUE(dir.visit([&](std::string_view name) {
+    for (const auto& name : dir.Files()) {
       has_pos |= name.ends_with(".pos");
       has_pay |= name.ends_with(".pay");
-      return true;
-    }));
+    }
     EXPECT_EQ(text_tokens, has_pos);
     EXPECT_EQ(text_tokens, has_pay);
   };

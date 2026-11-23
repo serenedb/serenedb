@@ -290,10 +290,8 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(size_t block,
   auto& slot = segment->cache_slot;
   slot.file_id = _file_id;
   slot.file_offset = m.file_offset;
-  if (auto* cache = ctx.Cache()) {
-    slot.touched = &_touched[block];
-    slot.cache = cache;
-  }
+  slot.touched = &_touched[block];
+  slot.cache = ctx.Cache();
   segment->block = ctx.RegisterColBlock(m.file_offset, m.byte_size);
   return segment;
 }

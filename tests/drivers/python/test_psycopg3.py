@@ -1120,6 +1120,53 @@ def test_analyze_without_maintain_warns_and_skips():
         admin.close()
 
 
+def test_partial_grant_and_revoke_warn_as_postgresql():
+    suffix = os.getpid()
+    grantor = f"pgw_grantor_{suffix}"
+    grantee = f"pgw_grantee_{suffix}"
+    table = f"pgw_ledger_{suffix}"
+    admin = psycopg.connect(**conn_kwargs(), autocommit=True)
+    try:
+        admin.execute(f"CREATE ROLE {grantor} LOGIN PASSWORD 'pgw_pw'")
+        admin.execute(f"CREATE ROLE {grantee}")
+        admin.execute(f"CREATE TABLE {table} (a integer, b integer)")
+        admin.execute(f"GRANT SELECT ON {table} TO {grantor}")
+        admin.execute(f"GRANT INSERT ON {table} TO {grantor} WITH GRANT OPTION")
+        admin.execute(f"GRANT UPDATE (a) ON {table} TO {grantor} WITH GRANT OPTION")
+        c = psycopg.connect(
+            **{**conn_kwargs(), "user": grantor, "password": "pgw_pw"}, autocommit=True
+        )
+        diags: list[tuple] = []
+        c.add_notice_handler(lambda d: diags.append((d.severity, d.sqlstate, d.message_primary)))
+        try:
+            c.execute(f"GRANT SELECT ON {table} TO {grantee}")
+            c.execute(f"GRANT SELECT, INSERT ON {table} TO {grantee}")
+            c.execute(f"GRANT ALL ON {table} TO {grantee}")
+            c.execute(f"GRANT UPDATE (a, b) ON {table} TO {grantee}")
+            c.execute(f"REVOKE SELECT ON {table} FROM {grantee}")
+            c.execute(f"REVOKE INSERT ON {table} FROM {grantee}")
+        finally:
+            c.close()
+        assert diags == [
+            ("WARNING", "01007", f'no privileges were granted for "{table}"'),
+            ("WARNING", "01007", f'not all privileges were granted for "{table}"'),
+            ("WARNING", "01007", f'no privileges were granted for column "b" of relation "{table}"'),
+            ("WARNING", "01006", f'no privileges could be revoked for "{table}"'),
+        ], diags
+        held = admin.execute(
+            f"SELECT has_table_privilege('{grantee}', '{table}', 'SELECT'),"
+            f" has_table_privilege('{grantee}', '{table}', 'INSERT'),"
+            f" has_column_privilege('{grantee}', '{table}', 'a', 'UPDATE'),"
+            f" has_column_privilege('{grantee}', '{table}', 'b', 'UPDATE')"
+        ).fetchone()
+        assert held == (False, False, True, False), held
+    finally:
+        admin.execute(f"DROP TABLE IF EXISTS {table}")
+        admin.execute(f"DROP ROLE IF EXISTS {grantee}")
+        admin.execute(f"DROP ROLE IF EXISTS {grantor}")
+        admin.close()
+
+
 def test_unenforced_setting_warns_when_its_value_changes():
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     notices: list[str] = []

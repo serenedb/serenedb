@@ -539,18 +539,19 @@ void ConnectionContext::ValidateIsolationLevel(
   }
 }
 
-bool ConnectionContext::EmitWarning(const char* message) {
-  if (absl::StrContains(message, "no transaction is active")) {
-    AddNotice(SQL_ERROR_DATA(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
-                             ERR_MSG("there is no transaction in progress")));
-    return true;
+bool ConnectionContext::EmitWarning(const char* message,
+                                    std::string_view subtype) {
+  auto code = ERRCODE_WARNING;
+  if (subtype == "NO_ACTIVE_SQL_TRANSACTION") {
+    code = ERRCODE_NO_ACTIVE_SQL_TRANSACTION;
+  } else if (subtype == "ACTIVE_SQL_TRANSACTION") {
+    code = ERRCODE_ACTIVE_SQL_TRANSACTION;
+  } else if (subtype == "PRIVILEGE_NOT_GRANTED") {
+    code = ERRCODE_WARNING_PRIVILEGE_NOT_GRANTED;
+  } else if (subtype == "PRIVILEGE_NOT_REVOKED") {
+    code = ERRCODE_WARNING_PRIVILEGE_NOT_REVOKED;
   }
-  if (absl::StrContains(message, "can only be used in transaction blocks")) {
-    AddNotice(SQL_ERROR_DATA(ERR_CODE(ERRCODE_NO_ACTIVE_SQL_TRANSACTION),
-                             ERR_MSG(message)));
-    return true;
-  }
-  AddNotice(SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING), ERR_MSG(message)));
+  AddNotice(SQL_ERROR_DATA(ERR_CODE(code), ERR_MSG(message)));
   return true;
 }
 

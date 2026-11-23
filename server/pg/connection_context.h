@@ -263,7 +263,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   std::unique_ptr<replication::OriginSession> replication_origin;
 
   void ValidateIsolationLevel(duckdb::TransactionIsolationLevel level) final;
-  bool EmitWarning(const char* message) final;
+  bool EmitWarning(const char* message, std::string_view subtype) final;
   void OnSettingChange(const std::string& name, duckdb::SetScope scope,
                        const duckdb::Value& previous) final;
   void OnQueryBegin() final;

@@ -1268,4 +1268,96 @@ TEST_F(ColCodecCorruptionTest, TextHeadersRejectAnImpossibleLocalDictionary) {
   });
 }
 
+TEST_F(ColCodecCorruptionTest, FsstPlusPrefixesWithoutASymbolTableAreRefused) {
+  const Case c{
+    "fsst_plus", LogicalType::VARCHAR, CodecType::FsstPlus, TextRow, {}};
+  const auto path = test_dir() / "col_codec_corruption_fsst_plus_prefixes";
+  std::filesystem::create_directories(path);
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  ASSERT_NO_FATAL_FAILURE(Write(path, c, offset, size));
+  {
+    std::fstream io{path / irs::FileName(kSeg),
+                    std::ios::in | std::ios::out | std::ios::binary};
+    ASSERT_TRUE(io.good());
+    irs::codecs::Header h;
+    ASSERT_GE(size, sizeof(h));
+    io.seekg(static_cast<std::streamoff>(offset));
+    io.read(reinterpret_cast<char*>(&h), sizeof(h));
+    ASSERT_NE(h.dictionary_size, 0);
+    ASSERT_GE(h.symtab_size, 2 * sizeof(uint32_t));
+    h.dictionary_size = 0;
+    io.seekp(static_cast<std::streamoff>(offset));
+    io.write(reinterpret_cast<const char*>(&h), sizeof(h));
+    const uint32_t prefixes = 1;
+    io.seekp(static_cast<std::streamoff>(offset + h.off_symtab));
+    io.write(reinterpret_cast<const char*>(&prefixes), sizeof(prefixes));
+  }
+  std::set<std::string> messages;
+  ASSERT_NO_FATAL_FAILURE(Read(path, c, Value{"x"}, messages));
+  EXPECT_EQ(absl::StrJoin(messages, "\n"),
+            "Corrupted text segment: symbol table is inconsistent");
+}
+
+TEST_F(ColCodecCorruptionTest, TextSegmentsOfEntriesWithoutFramesAreRefused) {
+  const auto empty = [](uint64_t g) {
+    return g % 3 == 0 ? Null(LogicalType::VARCHAR) : Value{""};
+  };
+  for (const auto codec : {CodecType::Lz4, CodecType::DictLz4}) {
+    const Case c{std::string{magic_enum::enum_name(codec)},
+                 LogicalType::VARCHAR,
+                 codec,
+                 empty,
+                 {}};
+    SCOPED_TRACE(c.name);
+    const auto path =
+      test_dir() / absl::StrCat("col_codec_corruption_frameless_", _next++);
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    ASSERT_NO_FATAL_FAILURE(Write(path, c, offset, size));
+    {
+      std::fstream io{path / irs::FileName(kSeg),
+                      std::ios::in | std::ios::out | std::ios::binary};
+      ASSERT_TRUE(io.good());
+      irs::codecs::Header h;
+      ASSERT_GE(size, sizeof(h));
+      io.seekg(static_cast<std::streamoff>(offset));
+      io.read(reinterpret_cast<char*>(&h), sizeof(h));
+      ASSERT_EQ(h.raw_bytes, 0);
+      ASSERT_NE(h.frame_count, 0);
+      h.frame_count = 0;
+      io.seekp(static_cast<std::streamoff>(offset));
+      io.write(reinterpret_cast<const char*>(&h), sizeof(h));
+    }
+    std::set<std::string> messages;
+    ASSERT_NO_FATAL_FAILURE(Read(path, c, Value{""}, messages));
+    EXPECT_EQ(absl::StrJoin(messages, "\n"),
+              "Corrupted text segment: frame table is inconsistent");
+  }
+}
+
+TEST_F(ColCodecCorruptionTest,
+       OverflowStringsPastTheStartOfATinyFileAreRefused) {
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  {
+    auto out = dir.Create("tiny");
+    const irs::byte_type bytes[] = {1, 2};
+    out->WriteData(bytes, sizeof(bytes));
+    out->Close();
+  }
+  const auto file = dir.Open("tiny", duckdb::MappedFileAccess::SEQUENTIAL);
+  irs::ReadContext ctx{Db(), file.get()};
+  duckdb::Vector result{LogicalType::VARCHAR, 1};
+  try {
+    ctx.ReadString(result, 0, 0);
+    ADD_FAILURE() << "an overflow string was read from a file of two bytes";
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED) << e.what();
+    EXPECT_EQ(e.message(),
+              "Corrupted uncompressed string segment: overflow string is "
+              "outside the file");
+  }
+}
+
 }  // namespace

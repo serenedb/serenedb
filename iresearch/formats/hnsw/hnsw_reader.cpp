@@ -55,9 +55,10 @@ std::shared_ptr<const HnswData> HnswIndex::Load(ParallelFor parallel) const {
     duckdb::InputFileReader in{_file};
     in.Seek(_meta.offset);
     auto data = std::make_shared<HnswData>();
-    data->graph = _meta.graph.Packed()
-                    ? HnswGraph::DeserializePacked(in, _meta.graph, parallel)
-                    : HnswGraph::Deserialize(in);
+    data->graph =
+      _meta.graph_compression.Packed()
+        ? HnswGraph::DeserializePacked(in, _meta.graph_compression, parallel)
+        : HnswGraph::Deserialize(in);
     const auto read_floats = [&](auto& out, size_t count) {
       out.resize(count);
       if (count != 0) {

@@ -1405,7 +1405,7 @@ void HnswWriter::Flush() {
   _idx->AddHnsw(_info.index_id, HnswMeta{
                                   .offset = offset,
                                   .header = header,
-                                  .graph = std::move(graph),
+                                  .graph_compression = std::move(graph),
                                 });
 
   _vectors.clear();

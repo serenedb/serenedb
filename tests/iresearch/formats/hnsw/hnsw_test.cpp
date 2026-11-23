@@ -796,7 +796,7 @@ TEST(HnswGraphFormatTest, AGraphWithoutLevelsIsCorrupted) {
             obj.WriteProperty<uint32_t>(7, "record_size", 0);
             obj.WriteProperty<uint64_t>(8, "rows", 1);
             obj.WriteProperty<bool>(9, "rotated", false);
-            obj.WriteObject(irs::kHnswMetaGraph, "graph",
+            obj.WriteObject(irs::kHnswMetaGraphCompression, "graph_compression",
                             [](duckdb::BinarySerializer& graph) {
                               for (const auto& [field, tag] :
                                    {std::pair{irs::kHnswGraphLevels, "levels"},

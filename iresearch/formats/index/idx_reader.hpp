@@ -69,7 +69,7 @@ struct HnswGraphFrames {
 struct HnswMeta {
   uint64_t offset = 0;
   HnswHeader header;
-  HnswGraphFrames graph;
+  HnswGraphFrames graph_compression;
 };
 
 inline constexpr std::string_view kIdxFormatExt = "idx";
@@ -78,7 +78,7 @@ inline constexpr duckdb::field_id_t kIdxFieldIvf = 1;
 inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
 inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
 
-inline constexpr duckdb::field_id_t kHnswMetaGraph = 10;
+inline constexpr duckdb::field_id_t kHnswMetaGraphCompression = 10;
 inline constexpr duckdb::field_id_t kHnswGraphLevels = 0;
 inline constexpr duckdb::field_id_t kHnswGraphBase = 1;
 inline constexpr duckdb::field_id_t kHnswGraphUpper = 2;

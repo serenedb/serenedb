@@ -122,11 +122,12 @@ std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
           obj.WriteProperty<uint32_t>(7, "record_size", h.record_size);
           obj.WriteProperty<uint64_t>(8, "rows", h.rows);
           obj.WriteProperty<bool>(9, "rotated", h.rotated);
-          obj.WriteOptionalObject(kHnswMetaGraph, "graph",
-                                  e.meta.graph.Packed(),
-                                  [&](duckdb::BinarySerializer& graph) {
-                                    WriteGraphFrames(graph, e.meta.graph);
-                                  });
+          obj.WriteOptionalObject(
+            kHnswMetaGraphCompression, "graph_compression",
+            e.meta.graph_compression.Packed(),
+            [&](duckdb::BinarySerializer& graph) {
+              WriteGraphFrames(graph, e.meta.graph_compression);
+            });
         });
       });
     footer.WriteOptionalObject(kIdxFieldTerms, "terms",

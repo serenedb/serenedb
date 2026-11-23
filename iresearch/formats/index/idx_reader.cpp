@@ -121,8 +121,9 @@ IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
                 },
             });
             obj.ReadOptionalObject(
-              kHnswMetaGraph, "graph", [&](duckdb::BinaryDeserializer& graph) {
-                ReadGraphFrames(graph, filename, entry.meta.graph);
+              kHnswMetaGraphCompression, "graph_compression",
+              [&](duckdb::BinaryDeserializer& graph) {
+                ReadGraphFrames(graph, filename, entry.meta.graph_compression);
               });
           });
         });

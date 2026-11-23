@@ -65,6 +65,7 @@
 #include <iresearch/formats/ivf/ivf_reader.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_reader.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -8357,6 +8358,101 @@ TEST_F(ColumnReaderTest, SmallListGathersWidenToTheirBlockOnlyWhileItFits) {
          {6200, 6205},
          {6300, 6305}});
   check(16384, 2, {{100, 105}, {200, 205}, {300, 305}});
+}
+
+TEST_F(ColumnReaderTest, ListGathersAcrossDictionariesOfSeveralEndsBlocks) {
+  constexpr uint64_t kChunk = STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kRows = 50 * kChunk;
+  constexpr uint64_t kFresh = 1792;
+  constexpr irs::field_id kId = 46;
+  const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER);
+  const auto mix = [](uint64_t z) {
+    z += 0x9E3779B97F4A7C15ULL;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+  };
+  const irs::containers::FlatHashMap<uint64_t, uint64_t> repeats{
+    {47 * kChunk + kFresh + 50, 1000},   {47 * kChunk + kFresh + 51, 1003},
+    {48 * kChunk + kFresh + 100, 69990}, {48 * kChunk + kFresh + 101, 75000},
+    {49 * kChunk + kFresh + 100, 70000}, {49 * kChunk + kFresh + 101, 70001},
+    {49 * kChunk + kFresh + 102, 70002}, {49 * kChunk + kFresh + 103, 70003},
+    {49 * kChunk + kFresh + 120, 69000}, {49 * kChunk + kFresh + 121, 69001},
+    {49 * kChunk + kFresh + 122, 69002},
+  };
+  std::vector<uint64_t> code(kRows);
+  std::vector<uint64_t> row_of;
+  for (uint64_t r = 0; r < kRows; ++r) {
+    if (r % kChunk < kFresh) {
+      code[r] = row_of.size();
+      row_of.push_back(r);
+    } else if (const auto it = repeats.find(r); it != repeats.end()) {
+      code[r] = it->second;
+    } else {
+      code[r] = mix(r) % row_of.size();
+    }
+  }
+  ASSERT_GT(row_of.size(), 85710u);
+  const ValueOf value_of = [&](uint64_t r) {
+    return duckdb::Value::LIST(
+      duckdb::LogicalType::INTEGER,
+      {duckdb::Value::INTEGER(static_cast<int32_t>(code[r]))});
+  };
+  duckdb::Connection con{Db()};
+  auto set = con.Query("SET force_compression = 'uncompressed'");
+  ASSERT_FALSE(set->HasError()) << set->GetError();
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  WriteColumn(Db(), dir, kId, type, kRows, DEFAULT_ROW_GROUP_SIZE, value_of);
+  con.Query("SET force_compression = 'auto'");
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), kRows);
+  size_t ends_blocks = 0;
+  col->VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    if (sub.index == 2) {
+      ends_blocks = sub.column.DataBlocks().size();
+    }
+  });
+  ASSERT_GE(ends_blocks, 3u);
+  auto state = col->InitScan(r.Ctx());
+  const auto gather = [&](const std::vector<uint64_t>& rows) {
+    const auto anchor = rows.front();
+    duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+    for (size_t i = 0; i < rows.size(); ++i) {
+      sel.set_index(i, rows[i] - anchor);
+    }
+    duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+    col->GatherScatter(state, anchor, sel, rows.size(), out, 0);
+    for (size_t i = 0; i < rows.size(); ++i) {
+      ASSERT_EQ(out.GetValue(i).ToString(), value_of(rows[i]).ToString())
+        << "row " << rows[i];
+    }
+  };
+  std::vector<uint64_t> spread;
+  for (uint64_t k = 0; k < 40; ++k) {
+    spread.push_back(row_of[80640 + 130 * k]);
+  }
+  ASSERT_NO_FATAL_FAILURE(gather(spread));
+  ASSERT_NO_FATAL_FAILURE(
+    gather({47 * kChunk + kFresh + 50, 47 * kChunk + kFresh + 51}));
+  ASSERT_NO_FATAL_FAILURE(
+    gather({48 * kChunk + kFresh + 100, 48 * kChunk + kFresh + 101}));
+  ASSERT_NO_FATAL_FAILURE(
+    gather({49 * kChunk + kFresh + 100, 49 * kChunk + kFresh + 101,
+            49 * kChunk + kFresh + 102, 49 * kChunk + kFresh + 103}));
+  ASSERT_NO_FATAL_FAILURE(
+    gather({49 * kChunk + kFresh + 120, 49 * kChunk + kFresh + 121,
+            49 * kChunk + kFresh + 122}));
+  ExpectVariantValuesEqual(
+    [&] {
+      std::vector<duckdb::Value> all;
+      for (uint64_t row = 0; row < kRows; ++row) {
+        all.push_back(value_of(row));
+      }
+      return all;
+    }(),
+    ScanValues(*col, r.Ctx()));
 }
 
 }  // namespace

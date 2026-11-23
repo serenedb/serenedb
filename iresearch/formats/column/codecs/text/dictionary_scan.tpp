@@ -289,6 +289,7 @@ struct DictionaryScan final : SegmentScanState {
   using Fetch = DictionaryFetch<Leaf>;
   static constexpr Shape kShape = Shape::Dictionary;
   static constexpr ByteCodec kCodec = Leaf::kCodec;
+  static constexpr bool kDecodesWhole = true;
   static constexpr auto kValidity = CompressionValidity::NoValidityRequired;
   static constexpr uint32_t kNullEntry = 0;
   static constexpr uint32_t kFirstEntry =

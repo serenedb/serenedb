@@ -73,6 +73,7 @@ struct PlainScan final : SegmentScanState {
   using Fetch = PlainFetch<Leaf>;
   static constexpr Shape kShape = Shape::Plain;
   static constexpr ByteCodec kCodec = Leaf::kCodec;
+  static constexpr bool kDecodesWhole = Sorted(kCodec);
   static constexpr auto kValidity = CompressionValidity::RequiresValidity;
 
   PlainScan(const ColumnSegment& segment, duckdb::BufferHandle handle)

@@ -420,8 +420,10 @@ void CompressionState<Rows>::FinalizeCompress() {
       frame_off = Written();
     }
     const auto suffix = _codes[i].substr(_shared[i]);
-    std::memcpy(_out->bytes.Extend(suffix.size()), suffix.data(),
-                suffix.size());
+    if (!suffix.empty()) {
+      std::memcpy(_out->bytes.Extend(suffix.size()), suffix.data(),
+                  suffix.size());
+    }
     lengths[i] = static_cast<uint32_t>(suffix.size());
     max_length = std::max(max_length, lengths[i]);
     frame_raw += size;

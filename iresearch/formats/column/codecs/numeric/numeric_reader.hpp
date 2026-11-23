@@ -746,6 +746,9 @@ class FrameReader {
     if (values == kBlockValues) {
       return Words<LaneWord<V>>(packed);
     }
+    if (bits == 0) {
+      return nullptr;
+    }
     const auto stored = PackedBytes<V>(bits, values);
     const auto whole = PackedBytes(bits);
     if (_words.size() * sizeof(uint64_t) < whole) {

@@ -88,14 +88,20 @@ struct PlainScan final : SegmentScanState {
     if constexpr (requires(Leaf& leaf) {
                     leaf.DecodeInto(entries, result, result_offset, first, end);
                   }) {
-      if (entries.leaf->DecodeInto(entries, result, result_offset, first,
-                                   end)) {
-        return;
+      if (!entries.leaf->DecodeInto(entries, result, result_offset, first,
+                                    end)) {
+        ScanCached(result, result_offset, first, end);
       }
+    } else {
+      ScanCached(result, result_offset, first, end);
     }
-    const auto entry_at = [&](idx_t i) { return start + i; };
-    entries.leaf->Ensure(entries, count, entry_at, first, end);
-    entries.WriteRefs(result, result_offset, count, entry_at);
+  }
+
+  void ScanCached(duckdb::Vector& result, idx_t result_offset, uint32_t first,
+                  uint32_t end) {
+    const auto entry_at = [&](idx_t i) { return first + i; };
+    entries.leaf->Ensure(entries, end - first, entry_at, first, end);
+    entries.WriteRefs(result, result_offset, end - first, entry_at);
   }
 
   void ScanVector(duckdb::Vector& result, idx_t start, idx_t count) {

@@ -620,8 +620,9 @@ void AppendBitset(ContainerCompressionState& state, bool null,
 void AppendRun(ContainerCompressionState& state, bool null, uint16_t) {
   const auto run_idx = state.run_idx;
   const auto appended_count = state.appended_count;
-  if (!null && run_idx < kMaxRunIdx && appended_count &&
-      null != state.last_is_null) {
+  SDB_ASSERT(run_idx < kMaxRunIdx);
+  SDB_ASSERT(!appended_count || null != state.last_is_null);
+  if (!null && appended_count) {
     if (run_idx < kCompressedRunThreshold) {
       auto& last_run = state.runs[run_idx];
       last_run.length =
@@ -631,8 +632,7 @@ void AppendRun(ContainerCompressionState& state, bool null, uint16_t) {
       static_cast<uint8_t>(appended_count & (kCompressedSegmentSize - 1));
     ++state.run_counts[appended_count >> kCompressedSegmentShift];
     ++state.run_idx;
-  } else if (null && run_idx < kMaxRunIdx &&
-             (!appended_count || null != state.last_is_null)) {
+  } else if (null) {
     if (run_idx < kCompressedRunThreshold) {
       state.runs[run_idx].start = appended_count;
     }
@@ -649,9 +649,7 @@ void AppendToArray(ContainerCompressionState& state, bool null,
     return;
   }
   const auto current_array_idx = state.array_idx[null];
-  if (current_array_idx + amount > kMaxArrayIdx) {
-    return;
-  }
+  SDB_ASSERT(current_array_idx + amount <= kMaxArrayIdx);
   const auto appended_count = state.appended_count;
   auto* array_count = state.array_counts[null];
   auto* compressed_array = state.compressed_arrays[null];
@@ -738,9 +736,9 @@ void OverrideUncompressed(ContainerCompressionState& state, data_ptr_t base,
 }
 
 void Finalize(ContainerCompressionState& state) {
-  SDB_ASSERT(!state.finalized);
-  if (state.appended_count && state.last_is_null &&
-      state.run_idx < kMaxRunIdx) {
+  SDB_ASSERT(!state.finalized && state.appended_count != 0 &&
+             state.run_idx < kMaxRunIdx);
+  if (state.last_is_null) {
     if (state.run_idx < kCompressedRunThreshold) {
       auto& last_run = state.runs[state.run_idx];
       last_run.length =
@@ -899,10 +897,11 @@ void FlushContainer(RoaringCompressState& state) {
   state.total_count += container.appended_count;
   const bool has_nulls = container.null_count != 0;
   const bool has_non_nulls = container.null_count != container.appended_count;
-  if (has_nulls || container.uncompressed) {
+  SDB_ASSERT(!container.uncompressed || (has_nulls && has_non_nulls));
+  if (has_nulls) {
     state.stats_writer.SetHasNull();
   }
-  if (has_non_nulls || container.uncompressed) {
+  if (has_non_nulls) {
     state.stats_writer.SetHasValid();
   }
   state.segment.count += container.appended_count;
@@ -1470,11 +1469,7 @@ struct RoaringScanState final : SegmentScanState {
 void SkipContainer(ContainerScan& container, idx_t skip_count) {
   std::visit(
     [&](auto& state) {
-      SDB_ASSERT(state.scanned_count + skip_count <= state.container_size);
-      if (state.scanned_count + skip_count == state.container_size) {
-        state.scanned_count = state.container_size;
-        return;
-      }
+      SDB_ASSERT(state.scanned_count + skip_count < state.container_size);
       state.Skip(skip_count);
     },
     container);

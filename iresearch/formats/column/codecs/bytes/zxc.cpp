@@ -97,9 +97,7 @@ std::string_view Zxc::Decompressor::Inflate(const char* src, size_t size,
   }
   if (!_blocks) {
     _blocks.reset(zxc_create_dctx());
-    if (!_blocks) {
-      return {};
-    }
+    SDB_ENSURE(_blocks, "zxc: cannot create a decompression context");
   }
   const auto capacity = zxc_decompress_block_bound(raw_size);
   auto* out = FrameAfterDictionary(capacity);

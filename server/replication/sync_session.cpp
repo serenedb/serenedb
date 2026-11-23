@@ -32,6 +32,7 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <utility>
@@ -284,7 +285,7 @@ yaclib::Task<bool> SyncSession::RunDuckJob(Job job) {
         break;
     }
   } catch (const std::exception& ex) {
-    ApplyFailed(network::pg::ToSqlError(ex));
+    ApplyFailed(irs::pg::ToSqlError(ex));
   }
   co_return false;
 }
@@ -330,7 +331,7 @@ yaclib::Task<bool> SyncSession::RunLocalCopy() {
     }
     ok = (co_await RunPrepared(*prepared)).has_value();
   } catch (const std::exception& ex) {
-    ApplyFailed(network::pg::ToSqlError(ex));
+    ApplyFailed(irs::pg::ToSqlError(ex));
   }
   if (!ok && batches) {
     batches->Abort();
@@ -438,7 +439,7 @@ yaclib::Future<> TableSyncWorker::LocalMain() {
   try {
     _setup_ok = SetupApplyConnection();
   } catch (const std::exception& ex) {
-    ApplyFailed(network::pg::ToSqlError(ex));
+    ApplyFailed(irs::pg::ToSqlError(ex));
   }
   _setup_done.Set();
   if (_setup_ok) {

@@ -35,6 +35,7 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <random>
 #include <string>
@@ -110,7 +111,7 @@ irs::codecs::CodecType CompressionOf(Codec c) {
     case Codec::Alp:
       return irs::codecs::CodecType::Alp;
     case Codec::AlpRd:
-      return irs::codecs::CodecType::AlpRd;
+      return irs::codecs::CodecType::Alprd;
     case Codec::DictFsst:
       return irs::codecs::CodecType::DictFsst;
     case Codec::Zstd:
@@ -299,12 +300,12 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
   }
   std::string codecs;
   for (const auto& block : seg->col->DataBlocks()) {
-    absl::StrAppend(&codecs, irs::codecs::NameOf(block.codec->type), " ");
+    absl::StrAppend(&codecs, magic_enum::enum_name(block.codec->type), " ");
   }
   if (const auto* validity = seg->col->Validity()) {
     codecs += "| validity ";
     for (const auto& block : validity->DataBlocks()) {
-      absl::StrAppend(&codecs, irs::codecs::NameOf(block.codec->type), " ");
+      absl::StrAppend(&codecs, magic_enum::enum_name(block.codec->type), " ");
     }
   }
   std::fprintf(stderr, "codec %d: %s\n", static_cast<int>(codec),

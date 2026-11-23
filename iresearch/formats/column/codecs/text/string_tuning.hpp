@@ -1,0 +1,93 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <cstdint>
+#include <optional>
+
+#include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_tuning.hpp"
+#include "iresearch/formats/column/codecs/reuse_policy.hpp"
+
+namespace irs::codecs {
+
+enum class FrameDictionary : uint8_t {
+  None,
+  FirstFrame,
+  Local,
+};
+
+struct RatioHistory {
+  uint64_t raw = 0;
+  uint64_t comp = 0;
+};
+
+constexpr double Ratio(const RatioHistory& hist, double empty) noexcept {
+  if (hist.raw != 0) {
+    return static_cast<double>(hist.comp) / static_cast<double>(hist.raw);
+  }
+  return empty;
+}
+
+namespace text {
+
+struct Config {
+  Shape shape = Shape::Dictionary;
+  ByteCodec leaf = ByteCodec::Lz4;
+  uint8_t level = 0;
+  FrameDictionary layout = FrameDictionary::FirstFrame;
+
+  bool operator==(const Config&) const = default;
+};
+
+}  // namespace text
+
+struct TextStatistics {
+  double value_bytes = 0;
+  double distinct_share = 0;
+};
+
+constexpr bool Moved(const TextStatistics& now, const TextStatistics& then,
+                     double factor) noexcept {
+  const auto moved = [&](double a, double b) {
+    return a > b * factor || a * factor < b;
+  };
+  return moved(now.value_bytes, then.value_bytes) ||
+         moved(now.distinct_share, then.distinct_share);
+}
+
+struct Lz4Tuning {
+  bool tuned = false;
+  uint8_t level = 0;
+  FrameDictionary layout = FrameDictionary::None;
+  uint64_t tuned_on = 0;
+};
+
+struct StringTuning {
+  std::optional<text::Config> config;
+  TextStatistics contested_on;
+  Lz4Tuning lz4[kTextShapeCount];
+  RatioHistory history[kByteCodecCount][kShapeCount]{};
+  NumericTuning codes;
+  uint64_t last_distinct = 0;
+};
+
+}  // namespace irs::codecs

@@ -34,6 +34,8 @@
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <magic_enum/magic_enum.hpp>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -217,6 +219,39 @@ void PrintHash(Shape shape, const Seg& seg) {
                static_cast<unsigned long long>(hash));
 }
 
+void PrintSegmentInfo(const Seg& seg, const irs::ColumnReader& col,
+                      const std::string& path) {
+  std::map<std::string, uint64_t> rows;
+  irs::ReadContext ctx{*seg.reader};
+  irs::BlockWindow window{};
+  uint64_t row = 0;
+  for (const auto& block : col.DataBlocks()) {
+    std::string key{magic_enum::enum_name(block.codec->type)};
+    if (block.codec->decompression->get_segment_info && block.byte_size != 0) {
+      window = col.Locate(row, window);
+      auto segment = col.OpenSegment(window.block, ctx);
+      auto info = block.codec->decompression->get_segment_info(*segment);
+      for (const auto* name :
+           {"transform", "leaf", "stored", "shuffled", "codec", "shape",
+            "dictionary", "codes_transform"}) {
+        if (info.contains(name)) {
+          key += std::string{" "} + name + "=" + info[name];
+        }
+      }
+    }
+    rows[key] += block.tuple_count;
+    row += block.tuple_count;
+  }
+  for (const auto& [key, count] : rows) {
+    std::fprintf(stderr, "seginfo %s %s %s rows %llu\n", path.c_str(),
+                 col.Type().ToString().c_str(), key.c_str(),
+                 static_cast<unsigned long long>(count));
+  }
+  col.VisitSubColumns([&](const irs::ColumnReader::SubColumn& sub) {
+    PrintSegmentInfo(seg, sub.column, path + "/" + std::to_string(sub.index));
+  });
+}
+
 const Seg& GetSeg(Shape shape) {
   static std::array<std::unique_ptr<Seg>, kShapes> cache;
   auto& slot = cache[static_cast<size_t>(shape)];
@@ -233,6 +268,10 @@ const Seg& GetSeg(Shape shape) {
     std::abort();
   }
   PrintHash(shape, *slot);
+  if (std::getenv("SDB_BENCH_SEGINFO")) {
+    PrintSegmentInfo(*slot, *slot->col,
+                     "shape" + std::to_string(static_cast<int>(shape)));
+  }
   return *slot;
 }
 

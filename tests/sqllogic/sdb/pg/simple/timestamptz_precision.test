@@ -1,0 +1,32 @@
+# A time-zoned timestamp with a precision keeps its time zone, so a value with
+# an offset is stored at the instant it names.
+
+statement ok
+SET timezone = 'UTC';
+
+statement ok
+CREATE TABLE tzp (a timestamp(3) with time zone, b timestamptz(0), c timestamp(3) without time zone);
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type FROM pg_attribute
+WHERE attrelid = 'tzp'::regclass AND attname IN ('a', 'b', 'c') ORDER BY attname;
+----
+attname	type
+a	timestamp with time zone
+b	timestamp with time zone
+c	timestamp without time zone
+
+statement ok
+INSERT INTO tzp VALUES ('2026-01-01 00:00:00+05', '2026-01-01 00:00:00+05', '2026-01-01 00:00:00');
+
+query
+SELECT a, b, c FROM tzp;
+----
+a	b	c
+2025-12-31 19:00:00+00	2025-12-31 19:00:00+00	2026-01-01 00:00:00
+
+query
+SELECT '2026-01-01 00:00:00+05'::timestamp(6) with time zone AS t;
+----
+t
+2025-12-31 19:00:00+00

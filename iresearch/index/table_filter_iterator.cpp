@@ -694,11 +694,13 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
 
 detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
   const auto frames = [](const irs::ColumnReader& reader) {
-    return absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
-      const auto* choice = codecs::ChoiceOf(block.codec->type);
-      return choice && choice->shape == codecs::Shape::Plain &&
-             !codecs::Sorted(choice->leaf);
-    });
+    return reader.Type().InternalType() == duckdb::PhysicalType::VARCHAR &&
+           absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
+             const auto type = block.codec->type;
+             return codecs::IsText(type) &&
+                    codecs::ShapeOf(type) == codecs::Shape::Plain &&
+                    !codecs::Sorted(codecs::LeafOf(type));
+           });
   };
   auto read = detail::PointRead::Row;
   for (const auto& c : _cols) {

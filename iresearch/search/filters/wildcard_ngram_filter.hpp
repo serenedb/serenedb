@@ -60,18 +60,20 @@ class WildcardNGramVerifier {
     SDB_ASSERT(_matcher);
   }
 
-  bool Check(doc_id_t doc) {
-    return MatchStoredTerms(*_matcher, _cursor.FetchDoc(doc));
-  }
+  bool Check(doc_id_t doc) { return Matches(_cursor.FetchDoc(doc)); }
 
-  void Check(std::span<const doc_id_t> docs, std::span<bool> matched) {
+  void Check(std::span<const doc_id_t> docs, auto& matched) {
     _cursor.FetchDocs(docs);
     for (size_t i = 0; i < docs.size(); ++i) {
-      matched[i] = MatchStoredTerms(*_matcher, _cursor.Fetched(i));
+      matched[i] = Matches(_cursor.Fetched(i));
     }
   }
 
  private:
+  bool Matches(bytes_view terms) const {
+    return MatchStoredTerms(*_matcher, terms);
+  }
+
   std::shared_ptr<const re2::RE2> _matcher;
   ColumnReader::BlobPointReader _cursor;
 };

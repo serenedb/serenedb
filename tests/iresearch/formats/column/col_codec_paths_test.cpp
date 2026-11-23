@@ -21,6 +21,7 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <duckdb.hpp>
@@ -37,7 +38,9 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
+#include <iresearch/formats/column/codecs/numeric/alp_primitives.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/formats/column/codecs/text/string_scan.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -45,6 +48,8 @@
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/store/memory_directory.hpp>
+#include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <optional>
 #include <random>
 #include <string>
@@ -209,6 +214,17 @@ class ColCodecPathsTest : public TestBase {
         }
       }
     }
+    auto state = col.InitScan(r.Ctx());
+    col.Skip(state, 5);
+    for (uint64_t pos = 5; pos < c.rows;) {
+      const auto take = std::min<duckdb::idx_t>(c.rows - pos, 64);
+      duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+      col.ScanCount(state, out, take, 0);
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        ASSERT_NO_FATAL_FAILURE(ExpectRow(c, rows, out, k, pos + k));
+      }
+      pos += take;
+    }
   }
 
   static void CheckGathers(const Case& c, const std::vector<Value>& rows,
@@ -232,6 +248,40 @@ class ColCodecPathsTest : public TestBase {
           ASSERT_NO_FATAL_FAILURE(ExpectRow(c, rows, out, k, picked[i + k]));
         }
         i += take;
+      }
+    }
+  }
+
+  static void CheckSelections(const Case& c, const std::vector<Value>& rows,
+                              irs::ColReader& r, const irs::ColumnReader& col) {
+    for (const bool dense : {true, false}) {
+      for (const duckdb::idx_t stride :
+           {duckdb::idx_t{2}, duckdb::idx_t{9}, duckdb::idx_t{20},
+            duckdb::idx_t{41}, duckdb::idx_t{300}, duckdb::idx_t{1500}}) {
+        auto state = col.InitScan(r.Ctx());
+        for (uint64_t anchor = 0; anchor < c.rows;
+             anchor += STANDARD_VECTOR_SIZE) {
+          const auto span =
+            std::min<uint64_t>(c.rows - anchor, STANDARD_VECTOR_SIZE);
+          duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+          duckdb::idx_t hits = 0;
+          for (duckdb::idx_t i = stride / 2; i < span; i += stride) {
+            sel.set_index(hits++, i);
+          }
+          if (hits == 0) {
+            continue;
+          }
+          duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+          if (dense) {
+            col.GatherDense(state, anchor, sel, hits, span, out);
+          } else {
+            col.GatherScatter(state, anchor, sel, hits, out, 0);
+          }
+          for (duckdb::idx_t k = 0; k < hits; ++k) {
+            ASSERT_NO_FATAL_FAILURE(
+              ExpectRow(c, rows, out, k, anchor + sel.get_index(k)));
+          }
+        }
       }
     }
   }
@@ -282,79 +332,6 @@ class ColCodecPathsTest : public TestBase {
     }
   }
 
-  static bool Matches(duckdb::ExpressionType cmp, const Value& value,
-                      const Value& probe) {
-    switch (cmp) {
-      case duckdb::ExpressionType::COMPARE_EQUAL:
-        return duckdb::ValueOperations::Equals(value, probe);
-      case duckdb::ExpressionType::COMPARE_NOTEQUAL:
-        return duckdb::ValueOperations::NotEquals(value, probe);
-      case duckdb::ExpressionType::COMPARE_LESSTHAN:
-        return duckdb::ValueOperations::LessThan(value, probe);
-      default:
-        return duckdb::ValueOperations::GreaterThanEquals(value, probe);
-    }
-  }
-
-  void CheckFilters(const Case& c, const std::vector<Value>& rows,
-                    irs::ColReader& r, const irs::ColumnReader& col) {
-    duckdb::Connection con{_db};
-    std::vector<Value> probes;
-    for (const uint64_t g : {uint64_t{1}, c.rows / 2, c.rows - 2}) {
-      for (auto at = g; at < c.rows; ++at) {
-        if (!rows[at].IsNull()) {
-          probes.push_back(rows[at]);
-          break;
-        }
-      }
-    }
-    for (const auto& probe : probes) {
-      for (const auto cmp :
-           {duckdb::ExpressionType::COMPARE_EQUAL,
-            duckdb::ExpressionType::COMPARE_NOTEQUAL,
-            duckdb::ExpressionType::COMPARE_LESSTHAN,
-            duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO}) {
-        const duckdb::ExpressionFilter filter{
-          duckdb::BoundComparisonExpression::Create(
-            cmp, duckdb::make_uniq<duckdb::BoundReferenceExpression>(c.type, 0),
-            duckdb::make_uniq<duckdb::BoundConstantExpression>(probe))};
-        auto filter_state =
-          duckdb::TableFilterState::Initialize(*con.context, filter);
-        for (const duckdb::idx_t stride :
-             {duckdb::idx_t{1}, duckdb::idx_t{3}}) {
-          auto state = col.InitScan(r.Ctx());
-          for (uint64_t anchor = 0; anchor < c.rows;
-               anchor += STANDARD_VECTOR_SIZE) {
-            const auto span =
-              std::min<uint64_t>(c.rows - anchor, STANDARD_VECTOR_SIZE);
-            duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-            duckdb::idx_t count = 0;
-            for (duckdb::idx_t i = 0; i < span; i += stride) {
-              sel.set_index(count++, i);
-            }
-            duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
-            const auto kept =
-              col.GatherFilter(state, anchor, span, sel, count, filter,
-                               *filter_state, irs::NullCheckKind::None, out);
-            duckdb::idx_t next = 0;
-            for (duckdb::idx_t i = 0; i < span; i += stride) {
-              const auto& value = rows[anchor + i];
-              const bool expected =
-                !value.IsNull() && Matches(cmp, value, probe);
-              const bool got = next < kept && sel.get_index(next) == i;
-              next += got ? 1 : 0;
-              ASSERT_EQ(got, expected)
-                << c.name << " row " << anchor + i << " probe "
-                << probe.ToString() << " cmp "
-                << duckdb::ExpressionTypeToString(cmp) << " stride " << stride;
-            }
-            ASSERT_EQ(next, kept) << c.name;
-          }
-        }
-      }
-    }
-  }
-
   using ExpressionPtr = duckdb::unique_ptr<duckdb::Expression>;
 
   struct Form {
@@ -398,12 +375,19 @@ class ColCodecPathsTest : public TestBase {
   }
 
   static std::vector<Form> Forms(const Case& c, const Value& lo,
-                                 const Value& hi) {
+                                 const Value& hi, const Value& mid) {
     using enum duckdb::ExpressionType;
     const auto outside = [&] {
       return Operator(COMPARE_NOT_IN, Ref(c), Const(lo), Const(hi));
     };
     std::vector<Form> forms;
+    for (const auto cmp : {COMPARE_EQUAL, COMPARE_NOTEQUAL, COMPARE_LESSTHAN,
+                           COMPARE_LESSTHANOREQUALTO, COMPARE_GREATERTHAN,
+                           COMPARE_GREATERTHANOREQUALTO}) {
+      forms.emplace_back(
+        absl::StrCat(duckdb::ExpressionTypeToString(cmp), " a value"),
+        Compare(c, cmp, mid));
+    }
     forms.emplace_back("equals null", Compare(c, COMPARE_EQUAL, Value{c.type}));
     forms.emplace_back("distinct from a value",
                        Compare(c, COMPARE_DISTINCT_FROM, lo));
@@ -422,6 +406,9 @@ class ColCodecPathsTest : public TestBase {
       "a comparison is null",
       Operator(OPERATOR_IS_NULL, Compare(c, COMPARE_EQUAL, lo)));
     forms.emplace_back("outside a list", outside());
+    forms.emplace_back("not in a null",
+                       Operator(OPERATOR_NOT, Operator(COMPARE_IN, Ref(c),
+                                                       Const(Value{c.type}))));
     forms.emplace_back("between two values",
                        duckdb::BoundBetweenExpression::Create(
                          Ref(c), Const(lo), Const(hi), true, false));
@@ -482,41 +469,42 @@ class ColCodecPathsTest : public TestBase {
   void CheckFilterForms(const Case& c, const std::vector<Value>& rows,
                         irs::ColReader& r, const irs::ColumnReader& col) {
     duckdb::Connection con{_db};
-    std::optional<Value> lo;
-    std::optional<Value> hi;
+    auto lo = c.value(0);
+    auto hi = lo;
+    auto mid = lo;
+    bool any = false;
     for (uint64_t g = 0; g < c.rows; g += 7) {
       const auto& v = rows[g];
       if (v.IsNull()) {
         continue;
       }
-      if (!lo || duckdb::ValueOperations::LessThan(v, *lo)) {
-        hi = hi ? hi : lo;
+      if (!any || duckdb::ValueOperations::LessThan(v, lo)) {
         lo = v;
-      } else if (duckdb::ValueOperations::GreaterThan(v, *lo) &&
-                 (!hi || duckdb::ValueOperations::LessThan(v, *hi))) {
+      }
+      if (!any || duckdb::ValueOperations::GreaterThan(v, hi)) {
         hi = v;
       }
-      if (g > c.rows / 3 && lo && hi) {
-        break;
+      if (!any || g <= c.rows / 2) {
+        mid = v;
       }
+      any = true;
     }
-    if (!lo) {
-      return;
-    }
-    if (!hi) {
-      hi = lo;
-    }
-    for (const auto& form : Forms(c, *lo, *hi)) {
+    for (const auto& form : Forms(c, lo, hi, mid)) {
       SCOPED_TRACE(form.name);
       const auto expected = Evaluate(*con.context, c, *form.expr, rows);
       const duckdb::ExpressionFilter filter{form.expr->Copy()};
       auto filter_state =
         duckdb::TableFilterState::Initialize(*con.context, filter);
       bool agrees = true;
-      for (const duckdb::idx_t stride : {duckdb::idx_t{1}, duckdb::idx_t{5}}) {
+      for (const duckdb::idx_t strides :
+           {duckdb::idx_t{1}, duckdb::idx_t{5}, duckdb::idx_t{0}}) {
         auto state = col.InitScan(r.Ctx());
         for (uint64_t anchor = 0; agrees && anchor < c.rows;
              anchor += STANDARD_VECTOR_SIZE) {
+          const duckdb::idx_t stride = strides != 0 ? strides
+                                       : anchor / STANDARD_VECTOR_SIZE % 4 != 3
+                                         ? 5
+                                         : 1;
           const auto span =
             std::min<uint64_t>(c.rows - anchor, STANDARD_VECTOR_SIZE);
           duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
@@ -536,6 +524,14 @@ class ColCodecPathsTest : public TestBase {
             EXPECT_TRUE(agrees) << c.name << " row " << anchor + i << " value "
                                 << rows[anchor + i].ToString() << " stride "
                                 << stride << " kept " << got;
+            if (agrees && got && form.null_check == irs::NullCheckKind::None) {
+              agrees =
+                Value::NotDistinctFrom(out.GetValue(i), rows[anchor + i]);
+              EXPECT_TRUE(agrees)
+                << c.name << " row " << anchor + i << " holds "
+                << out.GetValue(i).ToString() << " for "
+                << rows[anchor + i].ToString() << " stride " << stride;
+            }
           }
           if (agrees) {
             agrees = next == kept;
@@ -555,7 +551,8 @@ class ColCodecPathsTest : public TestBase {
       const auto segment = col.OpenSegment(window.block, ctx);
       if (segment->function.get_segment_info) {
         EXPECT_FALSE(segment->function.get_segment_info(*segment).empty())
-          << irs::codecs::NameOf(block.codec->type) << " block at row " << row;
+          << magic_enum::enum_name(block.codec->type) << " block at row "
+          << row;
       }
       row += block.tuple_count;
     }
@@ -574,15 +571,15 @@ class ColCodecPathsTest : public TestBase {
       std::string codecs;
       bool found = false;
       for (const auto& block : col->DataBlocks()) {
-        absl::StrAppend(&codecs, irs::codecs::NameOf(block.codec->type), " ");
+        absl::StrAppend(&codecs, magic_enum::enum_name(block.codec->type), " ");
         found = found || block.codec->type == c.codec;
       }
       ASSERT_TRUE(found) << codecs;
     }
     ASSERT_NO_FATAL_FAILURE(CheckScans(c, rows, r, *col));
     ASSERT_NO_FATAL_FAILURE(CheckGathers(c, rows, r, *col));
+    ASSERT_NO_FATAL_FAILURE(CheckSelections(c, rows, r, *col));
     ASSERT_NO_FATAL_FAILURE(CheckPoints(c, rows, r, *col));
-    ASSERT_NO_FATAL_FAILURE(CheckFilters(c, rows, r, *col));
     ASSERT_NO_FATAL_FAILURE(CheckFilterForms(c, rows, r, *col));
     DescribeBlocks(r, *col);
   }
@@ -624,12 +621,37 @@ TEST_F(ColCodecPathsTest, BitpackingReadsEveryIntegerTypeInEveryMode) {
     if (size <= sizeof(int64_t)) {
       Check({name("near the maximum"), type, CodecType::Bitpacking, Periodic,
              [&](uint64_t g) { return NearMaximum(type, Mix(g) % 28); }});
+      Check({name("near the maximum without nulls"), type,
+             CodecType::Bitpacking, All,
+             [&](uint64_t g) { return NearMaximum(type, Mix(g) % 28); }});
       if (type.IsUnsigned()) {
         Check({name("the whole range"), type, CodecType::Bitpacking, All,
                [&](uint64_t g) { return Wide(type, g); }});
       }
     }
     if (!AtLeast16Bits(type)) {
+      Check({name("steps"), type, CodecType::Bitpacking, All,
+             [&](uint64_t g) { return Int(type, 3 + (g % 2048) % 40 * 3); },
+             /*stored=*/false});
+      Check({name("small steps with noise"), type, CodecType::Bitpacking, All,
+             [&](uint64_t g) {
+               return Int(type, (g % 2048) % 50 * 2 + (g * 7919) % 2);
+             },
+             /*stored=*/false});
+      constexpr uint64_t kShortGroup = 100;
+      Check({name("a short last group counting up"), type,
+             CodecType::Bitpacking, All,
+             [&](uint64_t g) {
+               return Int(type, g < kRgSize ? (g * 7919) % 100 : g - kRgSize);
+             },
+             /*stored=*/true, irs::WriteTier::Flush, kRgSize + kShortGroup});
+      Check({name("a short last group with uneven steps"), type,
+             CodecType::Bitpacking, All,
+             [&](uint64_t g) {
+               return Int(type, g < kRgSize ? (g * 7919) % 100
+                                            : g - kRgSize + (g * 7919) % 2);
+             },
+             /*stored=*/true, irs::WriteTier::Flush, kRgSize + kShortGroup});
       continue;
     }
     if (!type.IsUnsigned() && size <= sizeof(int64_t)) {
@@ -641,6 +663,29 @@ TEST_F(ColCodecPathsTest, BitpackingReadsEveryIntegerTypeInEveryMode) {
              All, [&, step, lowest](uint64_t g) {
                return Int(type, lowest + static_cast<int64_t>(g % 2048) * step +
                                   static_cast<int64_t>(Mix(g) % 2));
+             }});
+    }
+    if (type.id() == duckdb::LogicalTypeId::BIGINT) {
+      constexpr int64_t kLow = -4'700'000'000'000'000'000;
+      constexpr int64_t kJump = std::numeric_limits<int64_t>::max() - 1000;
+      Check({name("one step as wide as the type"), type, CodecType::Bitpacking,
+             All, [&](uint64_t g) {
+               const auto p = static_cast<int64_t>(g % 2048);
+               return Int(type, kLow + p + (p < 1024 ? 0 : kJump - 1));
+             }});
+      const auto lowest = Value::MinimumValue(type).GetValue<int64_t>();
+      const auto highest = Value::MaximumValue(type).GetValue<int64_t>();
+      Check({name("falling to the minimum"), type, CodecType::Bitpacking, All,
+             [&, lowest](uint64_t g) {
+               return Int(type, lowest + 82000 -
+                                  static_cast<int64_t>(g % 2048) * 40 +
+                                  static_cast<int64_t>(Mix(g) % 4));
+             }});
+      Check({name("rising to the maximum"), type, CodecType::Bitpacking, All,
+             [&, highest](uint64_t g) {
+               return Int(type, highest - 82000 +
+                                  static_cast<int64_t>(g % 2048) * 40 -
+                                  static_cast<int64_t>(Mix(g) % 4));
              }});
     }
     Check({name("constant delta"), type, CodecType::Bitpacking, All,
@@ -683,6 +728,100 @@ TEST_F(ColCodecPathsTest, RleReadsRunsOfEveryType) {
       {name("runs that turn single"), type, CodecType::Rle, All,
        [&](uint64_t g) { return item(g % kRgSize < 3000 ? g / 500 : g % 90); },
        /*stored=*/false});
+  }
+}
+
+TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
+  const LogicalType types[] = {
+    LogicalType::TINYINT,   LogicalType::UTINYINT, LogicalType::SMALLINT,
+    LogicalType::USMALLINT, LogicalType::INTEGER,  LogicalType::UINTEGER,
+    LogicalType::BIGINT,    LogicalType::UBIGINT,  LogicalType::FLOAT,
+    LogicalType::DOUBLE,
+  };
+  using Gen = std::function<Value(uint64_t)>;
+  for (const auto& type : types) {
+    const bool real = type.id() == duckdb::LogicalTypeId::FLOAT ||
+                      type.id() == duckdb::LogicalTypeId::DOUBLE;
+    const auto item = [&](int64_t v) {
+      return real
+               ? Value::DOUBLE(static_cast<double>(v) / 4).DefaultCastAs(type)
+               : Int(type, v);
+    };
+    const auto wide = [&](uint64_t k) {
+      return real ? Value::DOUBLE(static_cast<double>(Mix(k) % 1000003) / 7)
+                      .DefaultCastAs(type)
+                  : Wide(type, k);
+    };
+    const auto check = [&](CodecType codec, std::string_view shape,
+                           const Gen& value, bool (*valid)(uint64_t) = All) {
+      Check({absl::StrCat(type.ToString(), " ", magic_enum::enum_name(codec),
+                          " ", shape),
+             type, codec, valid, value});
+    };
+    const auto bits = [&](uint64_t offset) {
+      return type.id() == duckdb::LogicalTypeId::FLOAT
+               ? Value::FLOAT(std::bit_cast<float>(
+                   static_cast<uint32_t>(0x3f800000 + offset)))
+               : Value::DOUBLE(
+                   std::bit_cast<double>(0x3ff0000000000000ULL + offset));
+    };
+    const Gen narrow = [&](uint64_t g) {
+      return real
+               ? bits(Mix(g) % 200)
+               : item(static_cast<int64_t>((g / 1024) % 4 * 25 + Mix(g) % 16));
+    };
+    const Gen spread = [&](uint64_t g) { return wide(g); };
+    for (const auto codec :
+         {CodecType::Ffor, CodecType::Lz4, CodecType::Zstd}) {
+      check(codec, "narrow", narrow);
+      check(codec, "spread", spread);
+      check(codec, "narrow with nulls", narrow, Periodic);
+    }
+    if (real) {
+      const uint64_t mid = type.id() == duckdb::LogicalTypeId::FLOAT
+                             ? 40000
+                             : uint64_t{4000000000};
+      check(CodecType::Ffor, "close bit patterns",
+            [&](uint64_t g) { return bits(Mix(g) % mid); });
+    }
+    const Gen steps = [&](uint64_t g) {
+      return item(static_cast<int64_t>(g / 1000));
+    };
+    const Gen noisy = [&](uint64_t g) {
+      return item(static_cast<int64_t>((g / 100 + Mix(g) % 3) % 100));
+    };
+    for (const auto codec :
+         {CodecType::DeltaFfor, CodecType::DeltaLz4, CodecType::DeltaZstd}) {
+      check(codec, "steps", steps);
+      check(codec, "noisy steps", noisy);
+      check(codec, "steps with nulls", steps, Periodic);
+    }
+    const Gen runs = [&](uint64_t g) {
+      return item(static_cast<int64_t>((g / 37) % 11));
+    };
+    for (const auto codec :
+         {CodecType::RleFfor, CodecType::RleLz4, CodecType::RleZstd}) {
+      check(codec, "runs", runs);
+      check(codec, "runs with null runs", runs, NullRuns);
+    }
+    Check({absl::StrCat(type.ToString(), " RLE_LZ4 a run of 70000 rows"), type,
+           CodecType::RleLz4, All,
+           [&](uint64_t g) { return item(g < 70000 ? 3 : 5); },
+           /*stored=*/true, irs::WriteTier::Flush, /*rows=*/140000,
+           /*rg_size=*/131072});
+    if (duckdb::GetTypeIdSize(type.InternalType()) == 1) {
+      continue;
+    }
+    const Gen fifty = [&](uint64_t g) { return wide(Mix(g) % 50); };
+    const Gen two_hundred = [&](uint64_t g) { return wide(Mix(g) % 200); };
+    const Gen three_hundred = [&](uint64_t g) { return wide(Mix(g) % 300); };
+    for (const auto codec :
+         {CodecType::DictFfor, CodecType::DictLz4, CodecType::DictZstd}) {
+      check(codec, "50 values", fifty);
+      check(codec, "200 values", two_hundred);
+      check(codec, "300 values", three_hundred);
+      check(codec, "50 values with nulls", fifty, Periodic);
+    }
   }
 }
 
@@ -762,14 +901,111 @@ TEST_F(ColCodecPathsTest, AlpCodecsReadFloatsAndDoubles) {
       Check({name("alp one value"), type, CodecType::Alp, valid,
              [&](uint64_t g) { return item(g % 4096 < 2048 ? 2.5 : 3.25); },
              /*stored=*/false});
-      Check({name("alprd"), type, CodecType::AlpRd, valid, [&](uint64_t g) {
+      Check({name("alprd"), type, CodecType::Alprd, valid, [&](uint64_t g) {
                return item(std::sin(static_cast<double>(g)) * 12345.678901234);
              }});
-      Check({name("alprd exceptions"), type, CodecType::AlpRd, valid,
+      Check({name("alprd exceptions"), type, CodecType::Alprd, valid,
              [&](uint64_t g) {
                return g % 97 == 0 ? item(-1e30 * static_cast<double>(g + 1))
                                   : item(std::sin(static_cast<double>(g)));
              }});
+    }
+    if (type.id() == duckdb::LogicalTypeId::DOUBLE) {
+      Check({name("alp digits near the limit"), type, CodecType::Alp, All,
+             [&](uint64_t g) {
+               return item(0x1p63 - 0x1p20 * static_cast<double>(1 + g % 1000));
+             }});
+      for (const double edge :
+           {2147483647.0, 2147483648.0, -2147482625.0, -2147482626.0}) {
+        Check({name("alp integers on and past the 32-bit limits"), type,
+               CodecType::Alp, All, [&, edge](uint64_t g) {
+                 return item(edge - static_cast<double>(g % 1024));
+               }});
+      }
+    }
+    Check({name("alp a value that rounds past the limit"), type, CodecType::Alp,
+           All, [&](uint64_t g) {
+             return g % 4 == 0 ? item(9223372036854774784.0)
+                               : item(static_cast<double>(g % 1000));
+           }});
+    constexpr uint32_t kSampledRows =
+      (irs::codecs::alp::kRowGroupSamplesJump + 1) * STANDARD_VECTOR_SIZE;
+    constexpr uint64_t kShortLastVector =
+      2 * uint64_t{kSampledRows} - STANDARD_VECTOR_SIZE +
+      irs::codecs::alp::kSamplesPerVector - 1;
+    Check(
+      {name("alp short last vector"), type, CodecType::Alp, All,
+       [&](uint64_t g) { return item(static_cast<double>(g % 10000) / 100.0); },
+       /*stored=*/true, irs::WriteTier::Flush, kShortLastVector, kSampledRows});
+    Check({name("alprd short last vector"), type, CodecType::Alprd, All,
+           [&](uint64_t g) {
+             return item(std::sin(static_cast<double>(g)) * 12345.678901234);
+           },
+           /*stored=*/true, irs::WriteTier::Flush, kShortLastVector,
+           kSampledRows});
+  }
+}
+
+TEST_F(ColCodecPathsTest, RoaringReadsEveryContainerKind) {
+  struct Bits {
+    std::string_view name;
+    std::function<bool(uint64_t)> at;
+  };
+  const auto irregular = [](uint64_t g) { return Mix(g) % 2 == 0; };
+  const std::vector<Bits> valid{
+    {"all", All},
+    {"irregular", irregular},
+    {"irregular after whole words",
+     [&](uint64_t g) {
+       const auto at = g % STANDARD_VECTOR_SIZE;
+       return at < 64 || (at >= 640 && at < 704) || irregular(g);
+     }},
+    {"runs", NullRuns},
+    {"rare", Rare},
+    {"frequent", Periodic},
+    {"a kind per vector",
+     [&](uint64_t g) {
+       switch (g / STANDARD_VECTOR_SIZE % 4) {
+         case 0:
+           return irregular(g);
+         case 1:
+           return NullRuns(g);
+         case 2:
+           return Rare(g);
+         default:
+           return Periodic(g);
+       }
+     }},
+  };
+  const std::vector<Bits> values{
+    {"irregular", [&](uint64_t g) { return irregular(g + 1); }},
+    {"irregular after whole words",
+     [&](uint64_t g) {
+       const auto at = g % STANDARD_VECTOR_SIZE;
+       return at < 64 || (at >= 640 && at < 704) || irregular(g + 1);
+     }},
+    {"runs", [](uint64_t g) { return g / 211 % 2 == 0; }},
+    {"rare", [](uint64_t g) { return g % 61 == 7; }},
+    {"frequent", [](uint64_t g) { return g % 13 != 5; }},
+    {"a kind per vector",
+     [&](uint64_t g) {
+       switch (g / STANDARD_VECTOR_SIZE % 4) {
+         case 0:
+           return g % 13 != 5;
+         case 1:
+           return g % 61 == 7;
+         case 2:
+           return g / 211 % 2 == 0;
+         default:
+           return irregular(g + 1);
+       }
+     }},
+  };
+  for (const auto& rows : valid) {
+    for (const auto& bits : values) {
+      Check({absl::StrCat("valid ", rows.name, ", true ", bits.name),
+             LogicalType::BOOLEAN, CodecType::Roaring, rows.at,
+             [&](uint64_t g) { return Value::BOOLEAN(bits.at(g)); }});
     }
   }
 }
@@ -819,19 +1055,49 @@ TEST_F(ColCodecPathsTest, AutoReadsEveryNumericTypeAndShape) {
   }
 }
 
+TEST_F(ColCodecPathsTest, AutoReadsWideIntegers) {
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    for (const LogicalType type :
+         {LogicalType::HUGEINT, LogicalType::UHUGEINT}) {
+      const auto name = [&](std::string_view shape) {
+        return absl::StrCat(type.ToString(), " ", shape, " tier ",
+                            static_cast<int>(tier));
+      };
+      const auto item = [&](int64_t v) { return Int(type, v); };
+      Check({name("narrow"), type, CodecType::Auto, Periodic,
+             [&](uint64_t g) { return item((g * 7919) % 100); },
+             /*stored=*/false, tier});
+      Check({name("runs"), type, CodecType::Auto, NullRuns,
+             [&](uint64_t g) { return item((g / 37) % 11); },
+             /*stored=*/false, tier});
+      Check({name("steps"), type, CodecType::Auto, All,
+             [&](uint64_t g) { return item(11 + (g % 2048) * 3); },
+             /*stored=*/false, tier});
+      Check({name("sorted"), type, CodecType::Auto, All,
+             [&](uint64_t g) {
+               return item(static_cast<int64_t>(g) * 5 + (g * 7919) % 3);
+             },
+             /*stored=*/false, tier});
+      Check({name("wide"), type, CodecType::Auto, Periodic,
+             [&](uint64_t g) { return Wide(type, g); }, /*stored=*/false,
+             tier});
+    }
+  }
+}
+
 TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
   static constexpr CodecType kCodecs[] = {
     CodecType::DictLz4,    CodecType::Lz4,        CodecType::DictZstd,
     CodecType::Zstd,       CodecType::DictZxc,    CodecType::Zxc,
     CodecType::DictFsst,   CodecType::Fsst,       CodecType::DictFsstPlus,
-    CodecType::FsstPlus,   CodecType::DictOnPair, CodecType::OnPair,
+    CodecType::FsstPlus,   CodecType::DictOnpair, CodecType::Onpair,
     CodecType::DictFsst12, CodecType::Fsst12,
   };
   const std::string filler(400, 'w');
   for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
     for (const auto codec : kCodecs) {
       const auto name = [&](std::string_view shape) {
-        return absl::StrCat(irs::codecs::NameOf(codec), " ", shape, " tier ",
+        return absl::StrCat(magic_enum::enum_name(codec), " ", shape, " tier ",
                             static_cast<int>(tier));
       };
       Check(
@@ -854,7 +1120,95 @@ TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
       Check({name("mostly null"), LogicalType::VARCHAR, codec, Rare,
              [](uint64_t g) { return Value{absl::StrCat("v", g % 9)}; },
              /*stored=*/true, tier});
+      Check({name("all null"), LogicalType::VARCHAR, codec,
+             [](uint64_t) { return false; },
+             [](uint64_t) { return Value{"never stored"}; },
+             /*stored=*/false, tier});
+      Check({name("many values in no order"), LogicalType::VARCHAR, codec, All,
+             [&](uint64_t g) {
+               return Value{
+                 absl::StrCat("https://example.org/", Mix(Mix(g) % 3000), "/",
+                              std::string_view{filler}.substr(0, 40))};
+             },
+             /*stored=*/true, tier});
     }
+  }
+  constexpr uint32_t kLargeDictionary =
+    irs::codecs::text::kLazyFilterEntries + 907;
+  constexpr uint32_t kLargeGroup = 8 * STANDARD_VECTOR_SIZE;
+  for (const auto codec :
+       {CodecType::DictLz4, CodecType::DictZstd, CodecType::DictZxc,
+        CodecType::DictFsst, CodecType::DictFsstPlus, CodecType::DictOnpair,
+        CodecType::DictFsst12}) {
+    Check({absl::StrCat(magic_enum::enum_name(codec),
+                        " half of a large dictionary judged row by row"),
+           LogicalType::VARCHAR, codec, All,
+           [](uint64_t g) {
+             return Value{absl::StrCat("entry_", g % kLargeDictionary)};
+           },
+           /*stored=*/true, irs::WriteTier::Flush, 2 * kLargeGroup + 517,
+           kLargeGroup});
+  }
+}
+
+TEST_F(ColCodecPathsTest, AllNullBlocksFillTheirPartOfAVector) {
+  constexpr uint32_t kUnaligned = 1000;
+  static_assert(kUnaligned % 64 != 0);
+  const auto every_other_block = [](uint64_t g) {
+    return (g / kUnaligned) % 2 == 0;
+  };
+  Check({"numbers between all-null blocks", LogicalType::BIGINT,
+         CodecType::Auto, every_other_block,
+         [](uint64_t g) { return Int(LogicalType::BIGINT, (g * 7919) % 1000); },
+         /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+  Check({"text between all-null blocks", LogicalType::VARCHAR, CodecType::Auto,
+         every_other_block,
+         [](uint64_t g) { return Value{absl::StrCat("v", g % 211)}; },
+         /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+  Check({"a column that starts with all-null blocks", LogicalType::BIGINT,
+         CodecType::Auto, [](uint64_t g) { return g >= 3 * kUnaligned + 17; },
+         [](uint64_t g) { return Int(LogicalType::BIGINT, g % 50); },
+         /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+}
+
+TEST_F(ColCodecPathsTest, FiltersSplitAVectorAtBlockBoundaries) {
+  constexpr uint32_t kUnaligned = 1000;
+  static_assert(STANDARD_VECTOR_SIZE % kUnaligned != 0);
+  const std::string filler(40, 'w');
+  for (const auto codec : {CodecType::DictFsst, CodecType::DictLz4,
+                           CodecType::Fsst, CodecType::Lz4, CodecType::Auto}) {
+    const auto name = [&](std::string_view shape) {
+      return absl::StrCat(magic_enum::enum_name(codec), " ", shape);
+    };
+    Check({name("categories"), LogicalType::VARCHAR, codec, Periodic,
+           [](uint64_t g) { return Value{absl::StrCat("category_", g % 50)}; },
+           /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+    Check({name("many values in no order"), LogicalType::VARCHAR, codec, All,
+           [&](uint64_t g) {
+             return Value{absl::StrCat("https://example.org/",
+                                       Mix(Mix(g) % 3000), "/", filler)};
+           },
+           /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+    Check({name("values between null runs"), LogicalType::VARCHAR, codec,
+           NullRuns,
+           [](uint64_t g) { return Value{absl::StrCat("v", g % 211)}; },
+           /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+  }
+  for (const auto codec :
+       {CodecType::Rle, CodecType::Bitpacking, CodecType::Auto}) {
+    const auto name = [&](std::string_view shape) {
+      return absl::StrCat(magic_enum::enum_name(codec), " ", shape);
+    };
+    Check({name("runs"), LogicalType::BIGINT, codec, All,
+           [](uint64_t g) { return Int(LogicalType::BIGINT, (g / 37) % 11); },
+           /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+    Check({name("runs with nulls"), LogicalType::BIGINT, codec, Periodic,
+           [](uint64_t g) { return Int(LogicalType::BIGINT, (g / 13) % 100); },
+           /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
+    Check(
+      {name("values between null runs"), LogicalType::BIGINT, codec, NullRuns,
+       [](uint64_t g) { return Int(LogicalType::BIGINT, (g * 7919) % 1000); },
+       /*stored=*/false, irs::WriteTier::Flush, kRows, kUnaligned});
   }
 }
 

@@ -335,7 +335,7 @@ query
 SELECT DISTINCT compression FROM pragma_storage_info('search_forced_zstd') WHERE column_name = 'a';
 ----
 compression
-BitPacking
+ZSTD
 
 statement ok
 CREATE TABLE search_auto_numeric (a INTEGER PRIMARY KEY, g BIGINT, d BIGINT, h UBIGINT)
@@ -370,9 +370,9 @@ JOIN (SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compress
 ORDER BY column_name;
 ----
 column_name	forced	auto
-d	Numeric	Numeric
-g	Numeric	Numeric
-h	Numeric	Numeric
+d	ZSTD	DICT_LZ4
+g	ZSTD	DELTA_LZ4
+h	ZSTD	DICT_LZ4
 
 query
 SELECT count(*) FROM search_forced_numeric f JOIN search_auto_numeric a USING (a) WHERE f.g IS DISTINCT FROM a.g OR f.d IS DISTINCT FROM a.d OR f.h IS DISTINCT FROM a.h;
@@ -685,9 +685,9 @@ count
 0
 
 statement error
-CREATE TABLE search_mixed_map_codec (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION dict_zstd) WITH (compaction_interval = 0);
+CREATE TABLE search_mixed_map_codec (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION dict_fsst) WITH (compaction_interval = 0);
 ----
-db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (physical: LIST) using compression type 'DICT_ZSTD'
+db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (physical: LIST) using compression type 'DICT_FSST'
 
 
 statement ok
@@ -730,9 +730,9 @@ statement ok
 DROP TABLE search_mixed_uncompressed;
 
 statement error
-CREATE TABLE search_mixed_zstd (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION zstd) WITH (compaction_interval = 0);
+CREATE TABLE search_mixed_fsst (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION fsst) WITH (compaction_interval = 0);
 ----
-db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (physical: LIST) using compression type 'ZSTD'
+db error: ERROR: Can't compress column "m" with type 'MAP(VARCHAR, INTEGER)' (physical: LIST) using compression type 'FSST'
 
 
 statement ok

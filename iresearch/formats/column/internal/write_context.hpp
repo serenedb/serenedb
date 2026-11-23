@@ -20,9 +20,7 @@
 
 #pragma once
 
-#include <duckdb/common/types.hpp>
-#include <duckdb/common/types/string_type.hpp>
-#include <duckdb/main/database.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 
 #include "iresearch/formats/column/col_file_writer.hpp"
 
@@ -30,19 +28,17 @@ namespace irs {
 
 class WriteContext final {
  public:
-  WriteContext(duckdb::DatabaseInstance& db, ColFileWriter& blocks) noexcept
-    : _db{&db}, _blocks{&blocks} {}
+  WriteContext(duckdb::BufferManager& buffers, ColFileWriter& blocks) noexcept
+    : _buffers{&buffers}, _blocks{&blocks} {}
 
   WriteContext(const WriteContext&) = delete;
   WriteContext& operator=(const WriteContext&) = delete;
 
-  duckdb::DatabaseInstance& Database() noexcept { return *_db; }
+  duckdb::BufferManager& BufferManager() noexcept { return *_buffers; }
   ColFileWriter& Blocks() noexcept { return *_blocks; }
 
-  duckdb::block_id_t WriteOverflowString(duckdb::string_t string);
-
  private:
-  duckdb::DatabaseInstance* _db;
+  duckdb::BufferManager* _buffers;
   ColFileWriter* _blocks;
 };
 

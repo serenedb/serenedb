@@ -46,24 +46,27 @@ class BooleanWindow
   : public detail::BooleanWindowBase<
       BooleanWindow<Lead, Others, Optional, Excludes, Score>, Score,
       !std::is_same_v<Score, utils::Empty>,
-      !std::is_same_v<Score, utils::Empty> && !detail::LazyReset<Optional>()> {
+      !std::is_same_v<Score, utils::Empty> && !detail::LazyReset<Optional>()>,
+    detail::WindowClauses<Lead, Others, Optional, Excludes> {
   using Base = detail::BooleanWindowBase<
     BooleanWindow, Score, !std::is_same_v<Score, utils::Empty>,
     !std::is_same_v<Score, utils::Empty> && !detail::LazyReset<Optional>()>;
+  using Clauses = detail::WindowClauses<Lead, Others, Optional, Excludes>;
   using Base::_doc;
   using Base::_filled;
   using Base::_gathered;
   using Base::_min;
   using Base::_window;
+  using Clauses::_optional;
+  using Clauses::FillClauses;
 
  public:
-  static constexpr bool kLead = !std::is_same_v<Lead, utils::Empty>;
-  static constexpr bool kOthers = !std::is_same_v<Others, utils::Empty>;
-  static constexpr bool kOptional = !std::is_same_v<Optional, utils::Empty>;
-  static constexpr bool kExcludes = !std::is_same_v<Excludes, utils::Empty>;
+  using Clauses::kExcludes;
+  using Clauses::kLead;
+  using Clauses::kOptional;
+  using Clauses::kOthers;
   static constexpr bool kScored = !std::is_same_v<Score, utils::Empty>;
   static_assert(kLead != kOptional);
-  static_assert(kLead || !kOthers);
   static_assert(!kScored || (kOptional && !kExcludes));
 
   template<typename LeadArgs, typename OthersArgs, typename OptionalArgs,
@@ -72,15 +75,10 @@ class BooleanWindow
                 OthersArgs&& others, OptionalArgs&& optional,
                 ExcludesArgs&& excludes, Score score = {})
     : Base{score},
-      _lead{std::make_from_tuple<Lead>(std::forward<LeadArgs>(lead))},
-      _others{std::make_from_tuple<Others>(std::forward<OthersArgs>(others))},
-      _optional{
-        std::make_from_tuple<Optional>(std::forward<OptionalArgs>(optional))},
-      _excludes{
-        std::make_from_tuple<Excludes>(std::forward<ExcludesArgs>(excludes))} {}
-
-  BooleanWindow(BooleanWindow&&) = delete;
-  BooleanWindow& operator=(BooleanWindow&&) = delete;
+      Clauses{std::piecewise_construct, std::forward<LeadArgs>(lead),
+              std::forward<OthersArgs>(others),
+              std::forward<OptionalArgs>(optional),
+              std::forward<ExcludesArgs>(excludes)} {}
 
   doc_id_t Next() { return Seek(_doc + 1); }
 
@@ -102,16 +100,9 @@ class BooleanWindow
     if constexpr (kScored) {
       return _optional.Fill(min, max, words, _window);
     } else {
-      return detail::FillClauses(_lead, _others, _optional, _excludes, min, max,
-                                 words);
+      return FillClauses(min, max, words);
     }
   }
-
- private:
-  [[no_unique_address]] Lead _lead;
-  [[no_unique_address]] Others _others;
-  [[no_unique_address]] Optional _optional;
-  [[no_unique_address]] Excludes _excludes;
 };
 
 }  // namespace irs::lead

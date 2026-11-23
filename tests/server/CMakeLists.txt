@@ -72,7 +72,6 @@ add_executable(
     connector/scram_client_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
-    connector/writer_generations_test.cpp
     search/compaction/merge_executor_test.cpp
 )
 

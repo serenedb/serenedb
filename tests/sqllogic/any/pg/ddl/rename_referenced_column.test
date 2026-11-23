@@ -1,0 +1,43 @@
+statement ok
+CREATE TABLE rrc_p (id INT PRIMARY KEY, k INT UNIQUE);
+
+
+statement ok
+CREATE TABLE rrc_q (x INT PRIMARY KEY);
+
+
+statement ok
+CREATE TABLE rrc_c (pid INT NOT NULL REFERENCES rrc_p (id), qx INT REFERENCES rrc_q (x), CHECK (pid > 0));
+
+
+statement ok
+ALTER TABLE rrc_p RENAME COLUMN id TO pid2;
+
+
+query
+SELECT conname, pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = 'rrc_c'::regclass AND contype IN ('f', 'c') ORDER BY conname;
+----
+conname	def
+rrc_c_pid_check	CHECK ((pid > 0))
+rrc_c_pid_fkey	FOREIGN KEY (pid) REFERENCES rrc_p(pid2)
+rrc_c_qx_fkey	FOREIGN KEY (qx) REFERENCES rrc_q(x)
+
+
+statement ok
+INSERT INTO rrc_p VALUES (1, 10);
+
+
+statement ok
+INSERT INTO rrc_q VALUES (5);
+
+
+statement ok
+INSERT INTO rrc_c VALUES (1, 5);
+
+
+statement error violates foreign key constraint "rrc_c_pid_fkey"
+INSERT INTO rrc_c VALUES (2, 5);
+
+
+statement error violates foreign key constraint "rrc_c_qx_fkey"
+INSERT INTO rrc_c VALUES (1, 6);

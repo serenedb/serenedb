@@ -38,7 +38,7 @@
 #include <duckdb/planner/expression.hpp>
 #include <duckdb/storage/storage_info.hpp>
 #include <duckdb/storage/table_storage_info.hpp>
-#include <iresearch/formats/column/codecs/codec_type.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/index/directory_reader.hpp>
 #include <iresearch/types.hpp>
 #include <memory>
@@ -104,6 +104,7 @@ inline constexpr auto kSearchTableOptions = std::to_array({
 
 void RequireSearchTableIndexOption(std::string_view name);
 irs::codecs::CodecType CheckColumnCodec(std::string_view column_name,
+                                        irs::codecs::CodecType codec,
                                         std::string_view codec_name,
                                         uint32_t level,
                                         const duckdb::LogicalType& column_type);
@@ -191,6 +192,9 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     const duckdb::Identifier& name) const final;
   bool DropTrigger(duckdb::CatalogTransaction transaction,
                    const duckdb::Identifier& name, bool cascade) final;
+  void ReplaceTrigger(duckdb::CatalogTransaction transaction,
+                      duckdb::CreateTriggerInfo& info);
+  void MoveTriggers(duckdb::CatalogTransaction transaction);
   duckdb::vector<std::reference_wrapper<duckdb::TableCatalogEntry>>
   ReferencingTables(duckdb::ClientContext& context) final;
 
@@ -201,6 +205,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   }
   search::TableRead RowsWithOwn(duckdb::ClientContext& context) const;
   void AdoptAsWritten(duckdb::ClientContext& context) const;
+  bool PatchesColumns(std::span<const duckdb::PhysicalIndex> columns) const;
 
  private:
   duckdb::unique_ptr<duckdb::CreateTableInfo> Definition() const;
@@ -250,7 +255,6 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
     duckdb::Binder& binder, duckdb::ClientContext& context,
     duckdb::ChangeColumnTypeInfo& info);
   duckdb::idx_t UnusedColumnOid() const;
-  bool PatchesColumns(std::span<const duckdb::PhysicalIndex> columns) const;
 
   void BeginSchemaChange(duckdb::ClientContext& context);
   void ApplyKeys() const;

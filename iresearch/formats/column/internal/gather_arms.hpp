@@ -35,14 +35,26 @@ namespace irs::column_internal {
 
 inline constexpr duckdb::idx_t kPointDensity = 64;
 
-inline void FetchPoints(std::unique_ptr<ColumnReader::PointReader>& point,
+inline duckdb::SelectionVector& Allocated(duckdb::SelectionVector& sel) {
+  if (!sel.IsSet()) {
+    sel.Initialize(STANDARD_VECTOR_SIZE);
+  }
+  return sel;
+}
+
+inline bool FetchSparse(std::unique_ptr<ColumnReader::PointReader>& point,
                         const ColReader& col_reader, const ColumnReader& column,
-                        std::span<const doc_id_t> docs, duckdb::Vector& out,
-                        duckdb::idx_t at) {
+                        std::span<const doc_id_t> docs, duckdb::idx_t span,
+                        duckdb::Vector& out, duckdb::idx_t at) {
+  const auto hits = static_cast<duckdb::idx_t>(docs.size());
+  if ((hits != 1 && hits * kPointDensity >= span) || column.Type().IsNested()) {
+    return false;
+  }
   if (!point) {
     point = std::make_unique<ColumnReader::PointReader>(col_reader, column);
   }
   point->FetchRows(docs, doc_limits::min(), out, at);
+  return true;
 }
 
 template<typename Kind>
@@ -109,18 +121,16 @@ void GatherRows(const ColumnReader& reader, ColumnReader::ScanState& s,
   if (n == 0) {
     return;
   }
-  if (!s.sel.IsSet()) {
-    s.sel.Initialize(STANDARD_VECTOR_SIZE);
-  }
+  auto& sel = Allocated(s.sel);
   const auto anchor = static_cast<uint64_t>(rows[0]);
   for (duckdb::idx_t i = 0; i < n; ++i) {
     SDB_ASSERT(i == 0 || rows[i] > rows[i - 1],
                "GatherRows requires ascending rows");
-    s.sel.set_index(i, static_cast<uint64_t>(rows[i]) - anchor);
+    sel.set_index(i, static_cast<uint64_t>(rows[i]) - anchor);
   }
   const auto span =
     static_cast<duckdb::idx_t>(static_cast<uint64_t>(rows[n - 1]) - anchor + 1);
-  GatherSelected(reader, s, anchor, s.sel, n, span, result, out_offset,
+  GatherSelected(reader, s, anchor, sel, n, span, result, out_offset,
                  whole_output);
 }
 

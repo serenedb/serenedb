@@ -252,8 +252,8 @@ TEST_P(InputNormsTest, BlocksReadTheMergedValues) {
     for (size_t i = 0; i != docs.size(); ++i) {
       docs[i] = static_cast<irs::doc_id_t>(first + i);
     }
-    expected->GetPostingBlock(docs, want);
-    actual->GetPostingBlock(docs, got);
+    expected->GetPostingBlock(docs, want, irs::doc_limits::invalid());
+    actual->GetPostingBlock(docs, got, irs::doc_limits::invalid());
     EXPECT_EQ(want, got) << first;
     const auto score_docs = std::span<const irs::doc_id_t, irs::kScoreBlock>{
       docs.data(), irs::kScoreBlock};
@@ -391,8 +391,8 @@ TEST(InputNormsWideTest, FarApartPostingBlocksReadTheMergedValues) {
       docs[k] = static_cast<irs::doc_id_t>(irs::doc_limits::min() + k * step);
     }
     ASSERT_LE(docs.back(), merged->docs_count());
-    expected->GetPostingBlock(docs, want);
-    actual->GetPostingBlock(docs, got);
+    expected->GetPostingBlock(docs, want, irs::doc_limits::invalid());
+    actual->GetPostingBlock(docs, got, irs::doc_limits::invalid());
     EXPECT_EQ(want, got) << step;
   }
 }

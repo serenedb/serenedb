@@ -1,47 +1,38 @@
 target_sources(
     iresearch
     PRIVATE
-        column/codecs/alp.cpp
-        column/codecs/alprd.cpp
-        column/codecs/bitpacking.cpp
-        column/codecs/blob_compression_state.cpp
+        column/codecs/auto.cpp
+        column/codecs/bytes/lz4.cpp
+        column/codecs/bytes/segment_dictionary.cpp
+        column/codecs/bytes/zstd.cpp
+        column/codecs/bytes/zxc.cpp
         column/codecs/compression_function.cpp
         column/codecs/constant.cpp
-        column/codecs/empty_validity.cpp
-        column/codecs/fsst.cpp
-        column/codecs/fsst12.cpp
-        column/codecs/fsst12_compression_state.cpp
-        column/codecs/fsst_compression_state.cpp
-        column/codecs/fsst_plus.cpp
-        column/codecs/fsst_plus_compression_state.cpp
-        column/codecs/lz4.cpp
-        column/codecs/numeric.cpp
-        column/codecs/onpair.cpp
-        column/codecs/onpair_compression_state.cpp
+        column/codecs/numeric/alp.cpp
+        column/codecs/numeric/alprd.cpp
+        column/codecs/numeric/bitpacking.cpp
+        column/codecs/numeric/numeric.cpp
+        column/codecs/numeric/rle.cpp
         column/codecs/registry.cpp
-        column/codecs/rle.cpp
-        column/codecs/roaring.cpp
-        column/codecs/segment_buffer.cpp
-        column/codecs/segment_dictionary.cpp
-        column/codecs/segment_rows.cpp
-        column/codecs/string_compression_function.cpp
-        column/codecs/string_compressor.cpp
-        column/codecs/string_picker.cpp
-        column/codecs/string_scan.cpp
-        column/codecs/string_seal.cpp
-        column/codecs/string_window.cpp
+        column/codecs/text/fsst_front.cpp
+        column/codecs/text/fsst_plus.cpp
+        column/codecs/text/onpair.cpp
+        column/codecs/text/segment_buffer.cpp
+        column/codecs/text/segment_rows.cpp
+        column/codecs/text/shape.cpp
+        column/codecs/text/string_scan.cpp
+        column/codecs/text/values.cpp
         column/codecs/uncompressed.cpp
-        column/codecs/zstd.cpp
-        column/codecs/zxc.cpp
-        column/col_file_writer.cpp
+        column/codecs/validity/empty_validity.cpp
+        column/codecs/validity/roaring.cpp
         column/col_copy_check.cpp
+        column/col_file_writer.cpp
         column/col_reader.cpp
         column/col_writer.cpp
         column/column_patch.cpp
         column/column_reader.cpp
         column/column_writer.cpp
         column/hot_column_reader.cpp
-        column/internal/write_context.cpp
         column/list_ingest.cpp
         column/merge.cpp
         column/norm_column_reader.cpp

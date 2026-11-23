@@ -142,8 +142,8 @@ class SearchSinkInsertBaseImpl {
     return _indexed_expressions;
   }
 
-  std::span<const ConstraintKeyEncoder> ConstraintKeys() const noexcept {
-    return _constraint_keys;
+  auto ConstraintKeys(this auto& self) noexcept {
+    return std::span{self._constraint_keys};
   }
 
   void FinishImpl();
@@ -358,7 +358,12 @@ class DuckDBSearchSinkInsertWriter final : public DuckDBSinkIndexWriter,
   irs::containers::FlatHashSet<ColumnId> _indexed;
 };
 
-std::unique_ptr<SearchSinkInsertBaseImpl> MakeSearchTableInsertSink(
+struct SearchTableInsertSink {
+  std::unique_ptr<SearchSinkInsertBaseImpl> sink;
+  uint64_t version = 0;
+};
+
+SearchTableInsertSink MakeSearchTableInsertSink(
   irs::IndexWriter::Transaction& trx, const search::Store& shard,
   duckdb::Catalog& catalog, duckdb::ClientContext& context);
 

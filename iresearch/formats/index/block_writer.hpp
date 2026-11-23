@@ -29,7 +29,6 @@
 #include <string_view>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/fsst.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/posting/writer.hpp"
@@ -39,7 +38,13 @@
 
 namespace irs::term_dict {
 
-using FsstEncoder = std::unique_ptr<duckdb_fsst_encoder_t, codecs::FsstFree>;
+struct FsstDestroy {
+  void operator()(duckdb_fsst_encoder_t* encoder) const noexcept {
+    duckdb_fsst_destroy(encoder);
+  }
+};
+
+using FsstEncoder = std::unique_ptr<duckdb_fsst_encoder_t, FsstDestroy>;
 
 struct VarColumns {
   std::vector<uint32_t> lcps;

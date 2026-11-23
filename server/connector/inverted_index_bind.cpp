@@ -631,7 +631,7 @@ void ApplyIncludedOpclass(
     return;
   }
   uint32_t level = 0;
-  std::string declared{irs::codecs::NameOf(irs::codecs::CodecType::Auto)};
+  std::string declared{magic_enum::enum_name(irs::codecs::CodecType::Auto)};
   for (const auto& [key, raw_val] : *opts) {
     if (key == kCompressionField) {
       declared =
@@ -652,8 +652,8 @@ void ApplyIncludedOpclass(
                 "'none')"));
     }
   }
-  entry.column_options.compression =
-    catalog::CheckColumnCodec(owner_label, declared, level, value_type);
+  entry.column_options.compression = catalog::CheckColumnCodec(
+    owner_label, irs::codecs::FindCodec(declared), declared, level, value_type);
   entry.column_options.compression_level = static_cast<uint8_t>(level);
 }
 

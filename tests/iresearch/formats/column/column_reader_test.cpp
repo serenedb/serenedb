@@ -45,7 +45,7 @@
 #include <duckdb/planner/table_filter_state.hpp>
 #include <functional>
 #include <iresearch/formats/column/codecs/registry.hpp>
-#include <iresearch/formats/column/codecs/string_tuning.hpp>
+#include <iresearch/formats/column/codecs/text/string_tuning.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_patch.hpp>
 #include <iresearch/formats/column/hot_column_reader.hpp>
@@ -58,10 +58,13 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/file_utils_ext.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <latch>
+#include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <numeric>
 #include <random>
 #include <span>
@@ -1340,10 +1343,10 @@ TEST_F(ColumnReaderTest, GathersMatchScanAcrossBlocks) {
       ASSERT_NE(col, nullptr);
       ASSERT_EQ(col->RowCount(), c.rows);
       if (codec != "auto") {
-        const auto* forced = irs::codecs::FindCodec(codec);
-        ASSERT_NE(forced, nullptr);
+        const auto forced = irs::codecs::FindCodec(codec);
+        ASSERT_NE(forced, irs::codecs::kNoCodec);
         EXPECT_TRUE(absl::c_any_of(col->DataBlocks(), [&](const auto& b) {
-          return b.codec->type == forced->type;
+          return b.codec->type == forced;
         }));
       }
       GatherStats stats;
@@ -1895,6 +1898,17 @@ TEST_F(ColumnReaderTest, NestedGathersMatchScan) {
                                RandomText(g, 8)}});
      },
      {"uncompressed", "dict_fsst"}},
+    {"struct with a nullable field in every other vector",
+     stype,
+     20000,
+     [stype](uint64_t g) {
+       const bool null = (g / STANDARD_VECTOR_SIZE) % 2 == 0 && g % 500 == 3;
+       return duckdb::Value::STRUCT(
+         stype, {null ? duckdb::Value{duckdb::LogicalType::BIGINT}
+                      : duckdb::Value::BIGINT(static_cast<int64_t>(g)),
+                 duckdb::Value{"value_" + std::to_string(g)}});
+     },
+     {"uncompressed"}},
     {"list",
      ltype,
      20000,
@@ -2090,13 +2104,13 @@ void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
   ASSERT_NE(col, nullptr) << c.name;
   std::string codecs;
   for (const auto& block : col->DataBlocks()) {
-    absl::StrAppend(&codecs, irs::codecs::NameOf(block.codec->type), " ");
+    absl::StrAppend(&codecs, magic_enum::enum_name(block.codec->type), " ");
   }
   ASSERT_TRUE(std::ranges::any_of(col->DataBlocks(),
                                   [&](const auto& block) {
-                                    return irs::codecs::NameOf(
+                                    return magic_enum::enum_name(
                                              block.codec->type) ==
-                                           irs::codecs::NameOf(c.codec);
+                                           magic_enum::enum_name(c.codec);
                                   }))
     << c.name << ": " << codecs;
   if (c.validity_codec) {
@@ -2104,8 +2118,8 @@ void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
     ASSERT_TRUE(
       std::ranges::any_of(col->Validity()->DataBlocks(),
                           [&](const auto& block) {
-                            return irs::codecs::NameOf(block.codec->type) ==
-                                   irs::codecs::NameOf(*c.validity_codec);
+                            return magic_enum::enum_name(block.codec->type) ==
+                                   magic_enum::enum_name(*c.validity_codec);
                           }))
       << c.name;
   }
@@ -2173,7 +2187,7 @@ TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
      [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(g % 777)); },
      irs::codecs::CodecType::Roaring},
     {"double alprd exceptions", LogicalType::DOUBLE,
-     irs::codecs::CodecType::AlpRd, all,
+     irs::codecs::CodecType::Alprd, all,
      [](uint64_t g) {
        return g % 97 == 0 ? Value::DOUBLE(-1e300 * static_cast<double>(g))
                           : Value::DOUBLE(std::sin(static_cast<double>(g)));
@@ -2247,11 +2261,11 @@ TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
      [](uint64_t g) {
        return Value::FLOAT(static_cast<float>(g % 1000) / 10.0F);
      }},
-    {"double alprd", LogicalType::DOUBLE, irs::codecs::CodecType::AlpRd, dense,
+    {"double alprd", LogicalType::DOUBLE, irs::codecs::CodecType::Alprd, dense,
      [](uint64_t g) {
        return Value::DOUBLE(std::sin(static_cast<double>(g)) * 12345.678901234);
      }},
-    {"float alprd", LogicalType::FLOAT, irs::codecs::CodecType::AlpRd, sparse,
+    {"float alprd", LogicalType::FLOAT, irs::codecs::CodecType::Alprd, sparse,
      [](uint64_t g) {
        return Value::FLOAT(std::sin(static_cast<float>(g)) * 123.456F);
      }},
@@ -2353,11 +2367,19 @@ struct PrefetchRange {
   uint64_t size = 0;
 };
 
+struct ResidencyScript {
+  std::vector<PrefetchRange> prefetched;
+  std::vector<PrefetchRange> probed;
+  std::vector<bool> warm;
+  uint32_t epoch = 0;
+  uint64_t resident_end = 0;
+};
+
 class PrefetchRecordingInput final : public irs::IndexInput {
  public:
   PrefetchRecordingInput(irs::IndexInput::ptr impl,
-                         std::vector<PrefetchRange>& prefetched) noexcept
-    : _impl{std::move(impl)}, _prefetched{&prefetched} {}
+                         ResidencyScript& script) noexcept
+    : _impl{std::move(impl)}, _script{&script} {}
 
   const irs::byte_type* ReadStable(uint64_t count) final {
     return _impl->ReadStable(count);
@@ -2393,11 +2415,10 @@ class PrefetchRecordingInput final : public irs::IndexInput {
   uint64_t Length() const noexcept final { return _impl->Length(); }
   bool IsEOF() const noexcept final { return _impl->IsEOF(); }
   ptr Dup() const final {
-    return std::make_unique<PrefetchRecordingInput>(_impl->Dup(), *_prefetched);
+    return std::make_unique<PrefetchRecordingInput>(_impl->Dup(), *_script);
   }
   ptr Reopen() const final {
-    return std::make_unique<PrefetchRecordingInput>(_impl->Reopen(),
-                                                    *_prefetched);
+    return std::make_unique<PrefetchRecordingInput>(_impl->Reopen(), *_script);
   }
   void Skip(uint64_t count) final { _impl->Skip(count); }
   void Seek(uint64_t pos) final { _impl->Seek(pos); }
@@ -2405,28 +2426,51 @@ class PrefetchRecordingInput final : public irs::IndexInput {
     return _impl->Checksum(offset);
   }
   void Prefetch(uint64_t offset, uint64_t size) const noexcept final {
-    _prefetched->emplace_back(offset, size);
+    _script->prefetched.emplace_back(offset, size);
+  }
+  bool Resident(uint64_t offset, uint64_t size) const noexcept final {
+    _script->probed.emplace_back(offset, size);
+    return size != 0 && offset + size <= _script->resident_end;
+  }
+  uint64_t Warm(uint64_t offset, uint64_t size) const noexcept final {
+    if (_script->epoch != irs::file_utils::ResidencyEpoch()) {
+      return 0;
+    }
+    uint64_t warm = 0;
+    while (warm < size && offset + warm < _script->warm.size() &&
+           _script->warm[offset + warm]) {
+      ++warm;
+    }
+    return warm;
+  }
+  void MarkWarm(uint64_t offset, uint64_t size) const noexcept final {
+    const auto epoch = irs::file_utils::ResidencyEpoch();
+    if (_script->epoch != epoch) {
+      _script->epoch = epoch;
+      _script->warm.clear();
+    }
+    _script->warm.resize(std::max<size_t>(_script->warm.size(), offset + size));
+    std::fill_n(_script->warm.begin() + offset, size, true);
   }
 
  private:
   irs::IndexInput::ptr _impl;
-  std::vector<PrefetchRange>* _prefetched;
+  ResidencyScript* _script;
 };
 
 class PrefetchRecordingDirectory final : public tests::DirectoryMock {
  public:
-  PrefetchRecordingDirectory(irs::Directory& impl,
-                             std::vector<PrefetchRange>& prefetched)
-    : DirectoryMock{impl}, _prefetched{&prefetched} {}
+  PrefetchRecordingDirectory(irs::Directory& impl, ResidencyScript& script)
+    : DirectoryMock{impl}, _script{&script} {}
 
   irs::IndexInput::ptr open(std::string_view name,
                             irs::IOAdvice advice) const final {
     return std::make_unique<PrefetchRecordingInput>(
-      DirectoryMock::open(name, advice), *_prefetched);
+      DirectoryMock::open(name, advice), *_script);
   }
 
  private:
-  std::vector<PrefetchRange>* _prefetched;
+  ResidencyScript* _script;
 };
 
 TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
@@ -2452,8 +2496,9 @@ TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
     w.Commit(0);
   }
 
-  std::vector<PrefetchRange> prefetched;
-  PrefetchRecordingDirectory dir{mem, prefetched};
+  ResidencyScript script;
+  auto& prefetched = script.prefetched;
+  PrefetchRecordingDirectory dir{mem, script};
   irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
   const auto& col = *r.Column(kS);
   const auto& block = col.DataBlocks().back();
@@ -2474,6 +2519,182 @@ TEST_F(ColumnReaderTest, PointReadsPrefetchTheirBlockUnlessRandomAccess) {
   irs::ColumnReader::PointReader reader{r, col};
   ASSERT_TRUE(reader.FetchRow(kRows - 1, out, 0));
   EXPECT_TRUE(absl::c_any_of(prefetched, covers_block));
+}
+
+TEST_F(ColumnReaderTest, ScansTrustTheWarmMapBetweenTwoResidentEnds) {
+  constexpr uint32_t kRgSize = STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kRows = 48 * kRgSize;
+  constexpr uint64_t kRun = 32 * irs::file_utils::kPage;
+  constexpr uint64_t kEverything = std::numeric_limits<uint64_t>::max();
+  constexpr irs::field_id kPlain = 1;
+  constexpr irs::field_id kRuns = 2;
+  const auto plain = [](uint64_t row) { return static_cast<int64_t>(row * 7); };
+  const auto runs = [](uint64_t row) {
+    const auto group = row / kRgSize;
+    return static_cast<int64_t>(group % 2 == 0 ? row * 3 : group);
+  };
+  irs::MemoryDirectory mem;
+  {
+    irs::ColWriter w{mem, "seg", Db(), irs::WriteTier::Merge};
+    auto& plain_writer =
+      w.OpenColumn(kPlain, duckdb::LogicalType::BIGINT,
+                   {.row_group_size = kRgSize,
+                    .compression = irs::codecs::CodecType::Uncompressed});
+    auto& runs_writer = w.OpenColumn(kRuns, duckdb::LogicalType::BIGINT,
+                                     {.row_group_size = kRgSize});
+    for (uint64_t pos = 0; pos < kRows; pos += kRgSize) {
+      duckdb::Vector plain_values{duckdb::LogicalType::BIGINT, kRgSize};
+      duckdb::Vector runs_values{duckdb::LogicalType::BIGINT, kRgSize};
+      auto* plain_data =
+        duckdb::FlatVector::GetDataMutable<int64_t>(plain_values);
+      auto* runs_data =
+        duckdb::FlatVector::GetDataMutable<int64_t>(runs_values);
+      for (duckdb::idx_t k = 0; k < kRgSize; ++k) {
+        plain_data[k] = plain(pos + k);
+        runs_data[k] = runs(pos + k);
+      }
+      duckdb::FlatVector::SetSize(plain_values, kRgSize);
+      duckdb::FlatVector::SetSize(runs_values, kRgSize);
+      plain_writer.Append(plain_values, kRgSize);
+      runs_writer.Append(runs_values, kRgSize);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+
+  ResidencyScript script;
+  PrefetchRecordingDirectory dir{mem, script};
+  irs::ColReader r{dir, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+  ASSERT_TRUE(absl::c_any_of(r.Column(kRuns)->DataBlocks(),
+                             [](const auto& b) { return b.byte_size == 0; }));
+  const auto check = [&](irs::field_id field,
+                         const std::function<int64_t(uint64_t)>& value_of) {
+    const auto& col = *r.Column(field);
+    std::vector<PrefetchRange> blocks;
+    for (const auto& b : col.DataBlocks()) {
+      if (b.byte_size != 0) {
+        blocks.emplace_back(b.file_offset, b.byte_size);
+      }
+    }
+    ASSERT_GE(blocks.size(), 8);
+    const auto scan = [&] {
+      script.probed.clear();
+      script.prefetched.clear();
+      VerifyBigint(
+        col, r.Ctx(), kRows, [](uint64_t) { return true; }, value_of);
+    };
+    const auto probed = [&](const PrefetchRange& b) {
+      return absl::c_any_of(script.probed, [&](const PrefetchRange& p) {
+        return p.offset == b.offset && p.size == b.size;
+      });
+    };
+    const auto prefetched = [&](const PrefetchRange& b) {
+      return absl::c_any_of(script.prefetched, [&](const PrefetchRange& p) {
+        return p.offset <= b.offset && b.offset + b.size <= p.offset + p.size;
+      });
+    };
+
+    script.resident_end = kEverything;
+    auto epoch = irs::file_utils::ResidencyEpoch();
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_EQ(irs::file_utils::ResidencyEpoch(), epoch);
+    EXPECT_TRUE(absl::c_none_of(blocks, prefetched));
+    EXPECT_TRUE(absl::c_all_of(blocks, probed));
+
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_EQ(irs::file_utils::ResidencyEpoch(), epoch);
+    EXPECT_TRUE(absl::c_none_of(blocks, prefetched));
+    EXPECT_LT(static_cast<size_t>(absl::c_count_if(blocks, probed)),
+              blocks.size() / 2);
+    EXPECT_TRUE(probed(blocks.front()));
+    EXPECT_TRUE(probed(blocks.back()));
+    uint64_t trusted = 0;
+    for (const auto& b : blocks) {
+      trusted = probed(b) ? 0 : trusted + b.size;
+      EXPECT_LE(trusted, kRun);
+    }
+
+    const auto half = blocks.size() / 2 + 1;
+    script.resident_end = blocks[half].offset;
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_NE(irs::file_utils::ResidencyEpoch(), epoch);
+    for (size_t b = 0; b < blocks.size(); ++b) {
+      EXPECT_EQ(prefetched(blocks[b]), b >= half) << "block " << b;
+    }
+
+    script.resident_end = kEverything;
+    ASSERT_NO_FATAL_FAILURE(scan());
+    epoch = irs::file_utils::ResidencyEpoch();
+    script.resident_end = 0;
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_NE(irs::file_utils::ResidencyEpoch(), epoch);
+    EXPECT_TRUE(absl::c_all_of(blocks, prefetched));
+
+    epoch = irs::file_utils::ResidencyEpoch();
+    ASSERT_NO_FATAL_FAILURE(scan());
+    EXPECT_EQ(irs::file_utils::ResidencyEpoch(), epoch);
+    EXPECT_TRUE(absl::c_all_of(blocks, prefetched));
+  };
+  ASSERT_NO_FATAL_FAILURE(check(kPlain, plain));
+  ASSERT_NO_FATAL_FAILURE(check(kRuns, runs));
+}
+
+TEST_F(ColumnReaderTest, PointReaderReopensBlocksItClosed) {
+  constexpr uint32_t kRgSize = 4096;
+  constexpr uint64_t kGroups = 20;
+  constexpr uint64_t kRows = kGroups * kRgSize;
+  constexpr size_t kValueSize = 1024;
+  constexpr irs::field_id kS = 1;
+  const auto value = [](uint64_t row) {
+    std::string v(kValueSize, ' ');
+    std::mt19937_64 random{row};
+    for (auto& c : v) {
+      c = static_cast<char>('a' + random() % 26);
+    }
+    return v;
+  };
+  irs::MemoryDirectory mem;
+  {
+    irs::ColWriter w{mem, "seg", Db()};
+    auto& cw =
+      w.OpenColumn(kS, duckdb::LogicalType::VARCHAR,
+                   {.row_group_size = kRgSize,
+                    .compression = irs::codecs::CodecType::Uncompressed});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector vs{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      auto* ds = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vs);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        ds[k] = duckdb::StringVector::AddString(vs, value(pos + k));
+      }
+      duckdb::FlatVector::SetSize(vs, STANDARD_VECTOR_SIZE);
+      cw.Append(vs, STANDARD_VECTOR_SIZE);
+    }
+    w.Commit(0);
+  }
+  irs::ColReader r{mem, "seg", Db(), irs::IOAdvice::SEQUENTIAL};
+  const auto& col = *r.Column(kS);
+  std::vector<uint64_t> first_rows;
+  uint64_t stored = 0;
+  uint64_t rows = 0;
+  for (const auto& block : col.DataBlocks()) {
+    ASSERT_GT(block.tuple_count, 1);
+    first_rows.push_back(rows);
+    rows += block.tuple_count;
+    stored += block.byte_size;
+  }
+  ASSERT_EQ(rows, kRows);
+  ASSERT_GT(stored, uint64_t{64} << 20);
+  irs::ColumnReader::PointReader reader{r, col};
+  duckdb::Vector out{duckdb::LogicalType::VARCHAR, 1};
+  for (const uint64_t pass : {uint64_t{0}, uint64_t{1}}) {
+    for (const auto first : first_rows) {
+      const auto row = first + pass;
+      ASSERT_TRUE(reader.FetchRow(row, out, 0));
+      ASSERT_EQ(
+        duckdb::FlatVector::GetData<duckdb::string_t>(out)[0].GetString(),
+        value(row))
+        << "row " << row;
+    }
+  }
 }
 
 TEST_F(ColumnReaderTest, SameColumnsGiveTheSameFileSize) {
@@ -2982,7 +3203,7 @@ TEST_F(ColumnReaderTest, SegmentRoundTripArray) {
       for (duckdb::idx_t i = 0; i < kDim; ++i) {
         if (elem_valid(g, i)) {
           ASSERT_TRUE(cv.RowIsValid(k * kDim + i)) << "elem " << g << ":" << i;
-          EXPECT_EQ(cd[k * kDim + i], elem_val(g, i))
+          EXPECT_EQ(cd[k * kDim + i], arr_valid(g) ? elem_val(g, i) : 0)
             << "elem " << g << ":" << i;
         } else {
           EXPECT_FALSE(cv.RowIsValid(k * kDim + i)) << "elem " << g << ":" << i;
@@ -3056,7 +3277,8 @@ TEST_F(ColumnReaderTest, GatherArrayAcrossRowGroups) {
     const auto g = rows[i];
     EXPECT_EQ(av.RowIsValid(i), arr_valid(g)) << "array row " << g;
     for (duckdb::idx_t e = 0; e < kDim; ++e) {
-      EXPECT_EQ(cd[i * kDim + e], elem_val(g, e)) << "elem " << g << ":" << e;
+      EXPECT_EQ(cd[i * kDim + e], arr_valid(g) ? elem_val(g, e) : 0)
+        << "elem " << g << ":" << e;
     }
   }
 }
@@ -3137,7 +3359,7 @@ TEST_F(ColumnReaderTest, VectorReadsInRandomOrderLandOnTheirRows) {
     irs::ColWriter w{dir, "seg", Db()};
     auto& cw = w.OpenColumn(kField, vtype,
                             {.row_group_size = kRgSize,
-                             .compression = irs::codecs::CodecType::AlpRd});
+                             .compression = irs::codecs::CodecType::Alprd});
     for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
       const auto take =
         std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
@@ -4670,8 +4892,8 @@ void FetchWithCorruptedFooter(duckdb::DatabaseInstance& db,
   }
   ASSERT_EQ(metas.size(), 2);
   ASSERT_EQ(metas.front().id, kId);
-  ASSERT_EQ(irs::codecs::NameOf(metas.front().data.front().codec->type),
-            irs::codecs::NameOf(codec));
+  ASSERT_EQ(magic_enum::enum_name(metas.front().data.front().codec->type),
+            magic_enum::enum_name(codec));
   corrupt(metas.front());
   {
     auto out = dir.create(file);
@@ -4709,15 +4931,6 @@ TEST_F(ColumnReaderTest, FooterBlocksWithoutBytesAreIndexCorruption) {
     [](irs::ColumnMeta& meta) { meta.data.front().byte_size = 0; });
 }
 
-TEST_F(ColumnReaderTest, FooterBlocksLargerThanABlockAreIndexCorruption) {
-  FetchWithCorruptedFooter(
-    Db(), duckdb::LogicalType::BIGINT, irs::codecs::CodecType::Bitpacking,
-    "Corrupted BitPacking segment: segment is larger than a block", 10,
-    [](irs::ColumnMeta& meta) {
-      meta.data.front().byte_size = irs::codecs::kBlockSize + 8;
-    });
-}
-
 TEST_F(ColumnReaderTest, FooterRowCountsBeyondUncompressedBlocks) {
   constexpr uint64_t kCount = (uint64_t{1} << 61) + 512;
   FetchWithCorruptedFooter(
@@ -4743,7 +4956,7 @@ TEST_F(ColumnReaderTest, FooterRowCountsBeyondAlpBlocks) {
 TEST_F(ColumnReaderTest, FooterRowCountsBeyondAlpRdBlocks) {
   constexpr uint64_t kCount = std::numeric_limits<uint64_t>::max();
   FetchWithCorruptedFooter(
-    Db(), duckdb::LogicalType::DOUBLE, irs::codecs::CodecType::AlpRd,
+    Db(), duckdb::LogicalType::DOUBLE, irs::codecs::CodecType::Alprd,
     "Corrupted ALPRD segment: metadata offset table exceeds the segment",
     10'000'000, [&](irs::ColumnMeta& meta) {
       meta.data.front().tuple_count = kCount;
@@ -4873,10 +5086,9 @@ TEST_F(ColumnReaderTest, VariantRoundTripUnshredded) {
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
 }
 
-uint32_t LargestCalibrationGap(const irs::ColumnMeta& meta) {
-  uint32_t gap =
-    meta.write_string_tuning ? meta.write_string_tuning->reuse.clock.gap : 0;
-  for (const auto& child : meta.children) {
+uint32_t LargestCalibrationGap(const irs::ColumnWriteState& state) {
+  uint32_t gap = state.tuning.reuse.gap;
+  for (const auto& child : state.children) {
     gap = std::max(gap, LargestCalibrationGap(child));
   }
   return gap;
@@ -4904,7 +5116,7 @@ TEST_F(ColumnReaderTest, VariantRowGroupsKeepTheirStringTuning) {
     }
     const auto& rgs = cw.Meta().variant_rgs;
     ASSERT_GT(rgs.size(), 2u);
-    EXPECT_GT(LargestCalibrationGap(*rgs.back().unshredded), 1u);
+    EXPECT_GT(LargestCalibrationGap(cw.State()), 1u);
     ASSERT_TRUE(w.Commit(0));
   }
   irs::ColReader r{dir, "vtune", Db(), irs::IOAdvice::SEQUENTIAL};
@@ -4955,11 +5167,10 @@ TEST_F(ColumnReaderTest, VariantRoundTripShredded) {
   ExpectVariantValuesEqual(expected, ScanVariantAll(*col, r.Ctx()));
 }
 
-TEST_F(ColumnReaderTest, StoredBytesOfAVariantCountItsRowGroups) {
+TEST_F(ColumnReaderTest, SubColumnsOfAVariantAreVisitedRowGroupByRowGroup) {
   constexpr irs::field_id kId = 34;
   constexpr uint32_t kRowGroup = 256;
   constexpr uint64_t kRows = 600;
-  constexpr uint64_t kMd5Bytes = 16;
   SetShreddingSize(Db(), kRowGroup);
   irs::MemoryDirectory dir{};
   std::vector<duckdb::Value> expected;
@@ -4980,7 +5191,6 @@ TEST_F(ColumnReaderTest, StoredBytesOfAVariantCountItsRowGroups) {
   });
   EXPECT_EQ((std::vector<std::string>{"1@0", "2@0", "1@256", "2@256", "1@512"}),
             sub_columns);
-  EXPECT_GE(irs::StoredBytes(*col), kRows * kMd5Bytes);
 }
 
 // VARIANT with NULL rows + leftover (mixed types) under shredding: exercises
@@ -6417,9 +6627,9 @@ TEST_F(ColumnReaderTest, VectorColumnAutoPicksFloatCodec) {
     ASSERT_NE(blocks[rg].codec, nullptr) << "row-group " << rg;
     const auto codec = blocks[rg].codec->type;
     EXPECT_TRUE(codec == irs::codecs::CodecType::Alp ||
-                codec == irs::codecs::CodecType::AlpRd ||
-                codec == irs::codecs::CodecType::Numeric)
-      << "row-group " << rg << " codec=" << irs::codecs::NameOf(codec);
+                codec == irs::codecs::CodecType::Alprd ||
+                irs::codecs::IsNumeric(codec))
+      << "row-group " << rg << " codec=" << magic_enum::enum_name(codec);
   }
 }
 
@@ -6505,41 +6715,48 @@ TEST_F(ColumnReaderTest, VectorColumnForcedUncompressed) {
 }
 
 TEST_F(ColumnReaderTest, UnknownCompressionIsRefused) {
-  auto unknown = *irs::codecs::GetCodec(irs::codecs::CodecType::Uncompressed,
-                                        duckdb::PhysicalType::INT64);
-  unknown.type = irs::codecs::CodecType{200};
+  for (const auto type :
+       {irs::codecs::CodecType{200}, irs::codecs::CodecType::Auto}) {
+    const auto id = static_cast<uint32_t>(type);
+    SCOPED_TRACE(id);
+    auto unknown = *irs::codecs::GetCodec(irs::codecs::CodecType::Uncompressed,
+                                          duckdb::PhysicalType::INT64);
+    unknown.type = type;
 
-  irs::ColumnMeta meta;
-  meta.id = 7;
-  meta.type = duckdb::LogicalType::BIGINT;
-  meta.data.push_back(irs::ColumnBlockMeta{
-    .statistics =
-      duckdb::BaseStatistics::CreateEmpty(duckdb::LogicalType::BIGINT),
-    .tuple_count = 1,
-    .byte_size = sizeof(int64_t),
-    .codec = &unknown,
-  });
+    irs::ColumnMeta meta;
+    meta.id = 7;
+    meta.type = duckdb::LogicalType::BIGINT;
+    meta.data.push_back(irs::ColumnBlockMeta{
+      .statistics =
+        duckdb::BaseStatistics::CreateEmpty(duckdb::LogicalType::BIGINT),
+      .tuple_count = 1,
+      .byte_size = sizeof(int64_t),
+      .codec = &unknown,
+    });
 
-  duckdb::MemoryStream stream;
-  duckdb::BinarySerializer serializer{stream};
-  serializer.Begin();
-  irs::SerializeColumnMeta(serializer, meta);
-  serializer.End();
+    duckdb::MemoryStream stream;
+    duckdb::BinarySerializer serializer{stream};
+    serializer.Begin();
+    irs::SerializeColumnMeta(serializer, meta);
+    serializer.End();
 
-  stream.Rewind();
-  duckdb::BinaryDeserializer deserializer{stream};
-  deserializer.Set<duckdb::DatabaseInstance&>(Db());
-  deserializer.Begin();
-  std::string message;
-  try {
-    irs::DeserializeColumnMeta(deserializer);
-  } catch (const irs::SqlException& e) {
-    EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
-    message = e.what();
+    stream.Rewind();
+    duckdb::BinaryDeserializer deserializer{stream};
+    deserializer.Set<duckdb::DatabaseInstance&>(Db());
+    deserializer.Begin();
+    std::string message;
+    try {
+      irs::DeserializeColumnMeta(deserializer);
+    } catch (const irs::SqlException& e) {
+      EXPECT_EQ(e.error().errcode, ERRCODE_FEATURE_NOT_SUPPORTED);
+      message = e.what();
+    }
+    EXPECT_NE(std::string::npos,
+              message.find(absl::StrCat("compression ", id, ",")))
+      << message;
+    EXPECT_NE(std::string::npos, message.find("written by a newer release"))
+      << message;
   }
-  EXPECT_NE(std::string::npos, message.find("compression 200")) << message;
-  EXPECT_NE(std::string::npos, message.find("written by a newer release"))
-    << message;
 }
 
 }  // namespace

@@ -255,6 +255,11 @@ void PieceTermReader::ReadDocs(bytes_view term, Acceptor acceptor) const {
   term_dict::ReadPostingDocs(*this, Lookup(term), acceptor);
 }
 
+void PieceTermReader::ReadDocs(const PostingMeta& meta,
+                               Acceptor acceptor) const {
+  term_dict::ReadPostingDocs(*this, meta, acceptor);
+}
+
 void PieceTermReader::VisitRange(bytes_view from, bytes_view to,
                                  RangeVisitor visit) const {
   for (auto i = from.empty() ? 0 : LowerBound(from); i != _entries.size();

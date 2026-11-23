@@ -59,22 +59,6 @@ uint64_t MetaRows(const ColumnMeta& meta) {
   return BlockRows(meta.data.empty() ? meta.validity : meta.data);
 }
 
-void DropTuning(ColumnMeta& meta) {
-  meta.write_string_tuning.reset();
-  meta.write_numeric_tuning.reset();
-  for (auto& child : meta.children) {
-    DropTuning(child);
-  }
-  for (auto& layout : meta.variant_rgs) {
-    if (layout.unshredded) {
-      DropTuning(*layout.unshredded);
-    }
-    if (layout.shredded) {
-      DropTuning(*layout.shredded);
-    }
-  }
-}
-
 void AppendPart(ColumnMeta& meta, ColumnMeta& part) {
   SDB_ASSERT(part.list_parts.empty() && part.variant_rgs.empty() &&
              !part.distinct);
@@ -155,7 +139,7 @@ void ColWriter::EnsureOut() {
   }
   _file =
     std::make_unique<ColFileWriter>(_dir->create(FileName(_segment_name)));
-  _write_ctx = std::make_unique<WriteContext>(*_db, *_file);
+  _write_ctx = std::make_unique<WriteContext>(_db->GetBufferManager(), *_file);
 }
 
 bool ColWriter::Empty() const noexcept {
@@ -264,7 +248,6 @@ void ColWriter::Close(ColumnEntry& entry) {
   entry.writer->Finish();
   entry.meta = std::move(entry.writer->_meta);
   entry.writer.reset();
-  DropTuning(entry.meta);
 }
 
 ColumnWriter& ColWriter::OpenColumnPart(field_id id, uint32_t part,
@@ -523,24 +506,20 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
     metas.emplace_back(Assemble(*column));
   }
   _file->Finish([&](duckdb::BinarySerializer& footer) {
-    if (!metas.empty()) {
-      footer.WriteList(
-        kColFieldColumns, "columns", metas.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            SerializeColumnMeta(obj, metas[i]);
-          });
+    footer.WriteOptionalList(
+      kColFieldColumns, "columns", metas.size(),
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+        list.WriteObject([&](duckdb::BinarySerializer& obj) {
+          SerializeColumnMeta(obj, metas[i]);
         });
-    }
-    if (!norms.empty()) {
-      footer.WriteList(
-        kColFieldNormColumns, "norm_columns", norms.size(),
-        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-          list.WriteObject([&](duckdb::BinarySerializer& obj) {
-            SerializeNormColumn(obj, *norms[i]);
-          });
+      });
+    footer.WriteOptionalList(
+      kColFieldNormColumns, "norm_columns", norms.size(),
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+        list.WriteObject([&](duckdb::BinarySerializer& obj) {
+          SerializeNormColumn(obj, *norms[i]);
         });
-    }
+      });
   });
   _committed = true;
   return true;

@@ -29,12 +29,14 @@
 #include <duckdb/common/types/validity_mask.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/unified_vector_format.hpp>
+#include <duckdb/storage/segment/uncompressed.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -45,49 +47,28 @@ using duckdb::idx_t;
 using duckdb::validity_t;
 
 template<typename Appender>
-class UncompressedCompress {
- public:
-  explicit UncompressedCompress(ColumnDataCheckpointData& checkpoint_data)
-    : _checkpoint_data{&checkpoint_data}, _segment{checkpoint_data.type} {
-    Appender::Begin(_segment);
-  }
-
-  void Append(const duckdb::Vector& input) {
+void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
+                    std::span<const WriteChunk> chunks) {
+  CompressedSegment segment{CodecType::Uncompressed, checkpoint_data.type};
+  Appender::Begin(segment);
+  for (const auto& chunk : chunks) {
     duckdb::UnifiedVectorFormat data;
-    input.ToUnifiedFormat(data);
+    chunk.data.ToUnifiedFormat(data);
     idx_t offset = 0;
-    idx_t remaining = input.size();
-    while (remaining > 0) {
+    idx_t remaining = chunk.data.size();
+    while (true) {
       const auto appended =
-        Appender::Append(*_checkpoint_data, _segment, data, offset, remaining);
+        Appender::Append(checkpoint_data, segment, data, offset, remaining);
       if (appended == remaining) {
-        return;
+        break;
       }
-      Flush();
+      segment.Flush(checkpoint_data, Appender::Finish(segment));
+      Appender::Begin(segment);
       offset += appended;
       remaining -= appended;
     }
   }
-
-  void Flush() {
-    _segment.Flush(*_checkpoint_data, Appender::Finish(_segment));
-    Appender::Begin(_segment);
-  }
-
- private:
-  ColumnDataCheckpointData* _checkpoint_data;
-  CompressedSegment _segment;
-};
-
-template<typename Appender>
-void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
-                    std::span<const WriteChunk> chunks) {
-  const auto state =
-    std::make_unique<UncompressedCompress<Appender>>(checkpoint_data);
-  for (const auto& chunk : chunks) {
-    state->Append(chunk.data);
-  }
-  state->Flush();
+  segment.Flush(checkpoint_data, Appender::Finish(segment));
 }
 
 struct PinnedScan final : SegmentScanState {
@@ -105,50 +86,72 @@ const_data_ptr_t ScanBase(ColumnScanState& state) {
   return state.scan_state->Cast<PinnedScan>().handle.Ptr();
 }
 
-template<typename T, bool kList>
+template<typename T, bool kStats>
 struct FixedSizeAppender {
-  using Stored = std::conditional_t<kList, uint64_t, T>;
+  struct SegmentStats {
+    void SetHasNull() { stats.SetHasNullFast(); }
+    void SetHasValid() { stats.SetHasNoNullFast(); }
+    void UpdateMinMax(const T& value) { stats.UpdateNumericStats<T>(value); }
+
+    duckdb::BaseStatistics& stats;
+  };
+
+  template<typename Stats>
+  IRS_FORCE_INLINE static void Copy(Stats& stats,
+                                    const duckdb::UnifiedVectorFormat& data,
+                                    const T* source, T* target, idx_t offset,
+                                    idx_t count) {
+    if (data.validity.CanHaveNull()) {
+      for (idx_t i = 0; i < count; ++i) {
+        const auto source_idx = data.sel->get_index(offset + i);
+        if (!data.validity.RowIsValid(source_idx)) {
+          stats.SetHasNull();
+          target[i] = duckdb::NullValue<T>();
+          continue;
+        }
+        stats.SetHasValid();
+        stats.UpdateMinMax(source[source_idx]);
+        target[i] = source[source_idx];
+      }
+      return;
+    }
+    for (idx_t i = 0; i < count; ++i) {
+      const auto value = source[data.sel->get_index(offset + i)];
+      stats.UpdateMinMax(value);
+      target[i] = value;
+    }
+    if (count != 0) {
+      stats.SetHasValid();
+    }
+  }
 
   static void Begin(CompressedSegment&) {}
 
   static idx_t Append(ColumnDataCheckpointData&, CompressedSegment& segment,
                       const duckdb::UnifiedVectorFormat& data, idx_t offset,
                       idx_t count) {
-    constexpr idx_t kMaxRows = kBlockSize / sizeof(Stored);
+    constexpr idx_t kMaxRows = kBlockSize / sizeof(T);
     const auto copy = std::min<idx_t>(count, kMaxRows - segment.count);
-    const auto* source = duckdb::UnifiedVectorFormat::GetData<Stored>(data);
-    auto* target = reinterpret_cast<Stored*>(segment.Data()) + segment.count;
-    auto& stats = segment.stats;
-    if constexpr (kList) {
+    const auto* source = duckdb::UnifiedVectorFormat::GetData<T>(data);
+    auto* target = reinterpret_cast<T*>(segment.Data()) + segment.count;
+    if constexpr (!kStats) {
       for (idx_t i = 0; i < copy; ++i) {
         target[i] = source[data.sel->get_index(offset + i)];
       }
-    } else if (data.validity.CanHaveNull()) {
-      for (idx_t i = 0; i < copy; ++i) {
-        const auto source_idx = data.sel->get_index(offset + i);
-        if (!data.validity.RowIsValid(source_idx)) {
-          stats.SetHasNullFast();
-          target[i] = duckdb::NullValue<T>();
-          continue;
-        }
-        stats.SetHasNoNullFast();
-        stats.UpdateNumericStats<T>(source[source_idx]);
-        target[i] = source[source_idx];
-      }
+    } else if constexpr (std::is_integral_v<T>) {
+      duckdb::StatsWriter<T> stats;
+      Copy(stats, data, source, target, offset, copy);
+      stats.Merge(segment.stats);
     } else {
-      stats.SetHasNoNullFast();
-      for (idx_t i = 0; i < copy; ++i) {
-        const auto value = source[data.sel->get_index(offset + i)];
-        stats.UpdateNumericStats<T>(value);
-        target[i] = value;
-      }
+      SegmentStats stats{segment.stats};
+      Copy(stats, data, source, target, offset, copy);
     }
     segment.count += copy;
     return copy;
   }
 
   static uint64_t Finish(CompressedSegment& segment) {
-    return segment.count * sizeof(Stored);
+    return segment.count * sizeof(T);
   }
 };
 
@@ -169,25 +172,20 @@ idx_t FixedSizeAnalyze(std::span<const WriteChunk> chunks) {
 }
 
 template<typename T>
-void FixedSizeScanPartial(const ColumnSegment& segment, ColumnScanState& state,
-                          idx_t scan_count, duckdb::Vector& result,
-                          idx_t result_offset) {
+void FixedSizeScan(const ColumnSegment& segment, ColumnScanState& state,
+                   idx_t scan_count, duckdb::Vector& result,
+                   idx_t result_offset, duckdb::ScanVectorType scan_type) {
   const auto* source = FixedSizeRows<T>(
     segment, ScanBase(state), state.GetPositionInSegment(), scan_count);
   result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    duckdb::FlatVector::SetData(result,
+                                duckdb::data_ptr_cast(const_cast<T*>(source)),
+                                duckdb::count_t(scan_count));
+    return;
+  }
   auto* target = duckdb::FlatVector::GetDataMutable<T>(result);
   std::memcpy(target + result_offset, source, scan_count * sizeof(T));
-}
-
-template<typename T>
-void FixedSizeScan(const ColumnSegment& segment, ColumnScanState& state,
-                   idx_t scan_count, duckdb::Vector& result) {
-  const auto* source = FixedSizeRows<T>(
-    segment, ScanBase(state), state.GetPositionInSegment(), scan_count);
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  duckdb::FlatVector::SetData(result,
-                              duckdb::data_ptr_cast(const_cast<T*>(source)),
-                              duckdb::count_t(scan_count));
 }
 
 template<typename T>
@@ -204,28 +202,22 @@ void FixedSizeFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   }
 }
 
-template<typename T, bool kList, duckdb::PhysicalType kPhysical>
-constexpr CompressionFunction kFixedSize{
-  .type = CodecType::Uncompressed,
-  .analyze = FixedSizeAnalyze<std::conditional_t<kList, uint64_t, T>>,
-  .compress = CompressChunks<FixedSizeAppender<T, kList>>,
+template<typename T>
+constexpr DecompressionFunction kFixedSizeDecompression{
   .init_scan = InitPinnedScan,
-  .scan_vector = FixedSizeScan<std::conditional_t<kList, uint64_t, T>>,
-  .scan_partial = FixedSizeScanPartial<std::conditional_t<kList, uint64_t, T>>,
-  .fetch_rows = FixedSizeFetchRows<std::conditional_t<kList, uint64_t, T>>,
-  .skip = EmptySkip,
+  .scan = FixedSizeScan<T>,
+  .fetch_rows = FixedSizeFetchRows<T>,
+};
+
+template<typename T, bool kStats = true>
+constexpr Codec kFixedSize{
+  .type = CodecType::Uncompressed,
+  .compression = &kStreamed<CodecType::Uncompressed, FixedSizeAnalyze<T>,
+                            CompressChunks<FixedSizeAppender<T, kStats>>>,
+  .decompression = &kFixedSizeDecompression<T>,
 };
 
 constexpr idx_t kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
-constexpr validity_t kAllValid = ~validity_t{0};
-
-constexpr validity_t LowerMask(idx_t bits) noexcept {
-  return bits >= kBitsPerEntry ? kAllValid : (validity_t{1} << bits) - 1;
-}
-
-constexpr validity_t UpperMask(idx_t bits) noexcept {
-  return bits == 0 ? 0 : kAllValid << (kBitsPerEntry - bits);
-}
 
 struct ValidityAppender {
   static void Begin(CompressedSegment& segment) {
@@ -273,6 +265,7 @@ idx_t ValidityAnalyze(std::span<const WriteChunk> chunks) {
 const validity_t* ValidityEntries(const ColumnSegment& segment,
                                   const_data_ptr_t base, idx_t start,
                                   idx_t count) {
+  SDB_ASSERT(count != 0);
   SDB_ASSERT(start <= segment.count && count <= segment.count - start);
   const auto last_entry = (start + count - 1) / kBitsPerEntry;
   if ((last_entry + 1) * sizeof(validity_t) > segment.size) [[unlikely]] {
@@ -286,93 +279,31 @@ bool RowValid(const validity_t* entries, idx_t row) noexcept {
                                           row % kBitsPerEntry);
 }
 
-void UnalignedScan(const validity_t* input, idx_t input_start,
-                   duckdb::ValidityMask& result_mask, idx_t result_offset,
-                   idx_t scan_count) {
-  auto* result_data = result_mask.GetData();
-  auto result_entry = result_offset / kBitsPerEntry;
-  auto result_idx = result_offset % kBitsPerEntry;
-  auto input_entry = input_start / kBitsPerEntry;
-  auto input_idx = input_start % kBitsPerEntry;
-  idx_t pos = 0;
-  while (pos < scan_count) {
-    auto input_mask = input[input_entry];
-    const auto bits_left = scan_count - pos;
-    const auto window_size = std::min(
-      {bits_left, kBitsPerEntry - input_idx, kBitsPerEntry - result_idx});
-    if (result_idx < input_idx) {
-      input_mask >>= input_idx - result_idx;
-    } else {
-      const auto shift = result_idx - input_idx;
-      input_mask = (input_mask & ~UpperMask(shift)) << shift;
-    }
-    input_mask |= UpperMask(kBitsPerEntry - result_idx - window_size);
-    input_mask |= LowerMask(result_idx);
-    if (input_mask != kAllValid) {
-      if (!result_data) {
-        result_mask.Initialize();
-        result_data = result_mask.GetData();
-      }
-      result_data[result_entry] &= input_mask;
-    }
-    pos += window_size;
-    input_idx = (input_idx + window_size) % kBitsPerEntry;
-    result_idx = (result_idx + window_size) % kBitsPerEntry;
-    input_entry += input_idx == 0;
-    result_entry += result_idx == 0;
-  }
-}
-
-void ValidityScanPartial(const ColumnSegment& segment, ColumnScanState& state,
-                         idx_t scan_count, duckdb::Vector& result,
-                         idx_t result_offset) {
-  if (scan_count == 0) {
-    return;
-  }
-  const auto start = state.GetPositionInSegment();
-  const auto* input =
-    ValidityEntries(segment, ScanBase(state), start, scan_count);
-  UnalignedScan(input, start, duckdb::FlatVector::ValidityMutable(result),
-                result_offset, scan_count);
-}
-
 void ValidityScan(const ColumnSegment& segment, ColumnScanState& state,
-                  idx_t scan_count, duckdb::Vector& result) {
-  if (scan_count == 0) {
-    return;
-  }
-  result.Flatten();
+                  idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
+                  duckdb::ScanVectorType scan_type) {
   const auto start = state.GetPositionInSegment();
-  if (start % kBitsPerEntry != 0) {
-    ValidityScanPartial(segment, state, scan_count, result, 0);
+  const bool entire = scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR;
+  if (entire) {
+    result.Flatten();
+  }
+  const duckdb::unsafe_array_ptr<const validity_t> input{
+    ValidityEntries(segment, ScanBase(state), start, scan_count),
+    segment.size / sizeof(validity_t)};
+  auto& result_mask = duckdb::FlatVector::ValidityMutable(result);
+  if (entire && start % kBitsPerEntry == 0) {
+    duckdb::ValidityUncompressed::AlignedScan(input, start, result_mask,
+                                              scan_count);
     return;
   }
-  const auto* input =
-    ValidityEntries(segment, ScanBase(state), start, scan_count) +
-    start / kBitsPerEntry;
-  auto& result_mask = duckdb::FlatVector::ValidityMutable(result);
-  auto* result_data = result_mask.GetData();
-  const auto entries = (scan_count + kBitsPerEntry - 1) / kBitsPerEntry;
-  for (idx_t i = 0; i < entries; ++i) {
-    const auto entry = input[i];
-    if (!result_data && entry == kAllValid) {
-      continue;
-    }
-    if (!result_data) {
-      result_mask.Initialize();
-      result_data = result_mask.GetData();
-    }
-    result_data[i] = entry;
-  }
+  duckdb::ValidityUncompressed::UnalignedScan(
+    input, segment.count, start, result_mask, result_offset, scan_count);
 }
 
 void ValiditySelect(const ColumnSegment& segment, ColumnScanState& state,
                     idx_t vector_count, duckdb::Vector& result,
                     idx_t result_offset, const duckdb::SelectionVector& sel,
                     idx_t sel_count, duckdb::ScanVectorType) {
-  if (sel_count == 0) {
-    return;
-  }
   result.Flatten();
   const auto start = state.GetPositionInSegment();
   const auto* input =
@@ -400,16 +331,18 @@ void ValidityFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   }
 }
 
-constexpr CompressionFunction kValidity{
-  .type = CodecType::Uncompressed,
-  .analyze = ValidityAnalyze,
-  .compress = CompressChunks<ValidityAppender>,
+constexpr DecompressionFunction kValidityDecompression{
   .init_scan = InitPinnedScan,
-  .scan_vector = ValidityScan,
-  .scan_partial = ValidityScanPartial,
+  .scan = ValidityScan,
   .select = ValiditySelect,
   .fetch_rows = ValidityFetchRows,
-  .skip = EmptySkip,
+};
+
+constexpr Codec kValidity{
+  .type = CodecType::Uncompressed,
+  .compression = &kStreamed<CodecType::Uncompressed, ValidityAnalyze,
+                            CompressChunks<ValidityAppender>>,
+  .decompression = &kValidityDecompression,
 };
 
 constexpr uint32_t kDictionaryHeaderSize = 2 * sizeof(uint32_t);
@@ -469,7 +402,9 @@ struct StringAppender {
       remaining -= required;
       auto* position = base + dictionary_end - *dictionary_size;
       if (overflow) {
-        const auto block = checkpoint_data.ctx.WriteOverflowString(value);
+        const auto block = static_cast<duckdb::block_id_t>(
+          checkpoint_data.ctx->Blocks().AppendString(
+            {value.GetData(), value.GetSize()}));
         const int32_t block_offset = 0;
         std::memcpy(position, &block, sizeof(block));
         std::memcpy(position + sizeof(block), &block_offset,
@@ -526,15 +461,10 @@ bool ValidEntry(int32_t current, int32_t previous,
   return invalid == 0;
 }
 
-struct StringEntry {
-  const_data_ptr_t data;
-  uint32_t length;
-  bool overflow;
-};
-
 class StringLayout {
  public:
-  StringLayout(const ColumnSegment& segment, const_data_ptr_t base) {
+  StringLayout(const ColumnSegment& segment, const_data_ptr_t base)
+    : _ctx{segment.ctx} {
     if (segment.size < kDictionaryHeaderSize) [[unlikely]] {
       ThrowCorrupted("uncompressed string", "header exceeds the segment");
     }
@@ -569,65 +499,60 @@ class StringLayout {
     }
   }
 
-  StringEntry Entry(idx_t row) const noexcept {
+  duckdb::string_t Read(duckdb::Vector& result, idx_t row) const {
     const auto current = _offsets[row];
     const auto offset = DictionaryOffset(current);
     const auto previous = row > 0 ? DictionaryOffset(_offsets[row - 1]) : 0;
     const auto length = offset - previous;
-    return {_dictionary_end - offset, length, current < 0 && length > 0};
+    const auto* data = _dictionary_end - offset;
+    if (current >= 0 || length == 0) [[likely]] {
+      return {reinterpret_cast<const char*>(data), length};
+    }
+    const auto block = duckdb::Load<duckdb::block_id_t>(data);
+    const auto block_offset =
+      duckdb::Load<int32_t>(data + sizeof(duckdb::block_id_t));
+    if (block < 0 || block_offset != 0) [[unlikely]] {
+      ThrowCorrupted("uncompressed string", "invalid overflow string marker");
+    }
+    return _ctx.ReadString(result, block, block_offset);
   }
 
  private:
+  ReadContext& _ctx;
   const int32_t* _offsets = nullptr;
   const_data_ptr_t _dictionary_end = nullptr;
   uint32_t _dictionary_size = 0;
   uint64_t _count = 0;
 };
 
-duckdb::string_t ReadEntry(const ColumnSegment& segment, duckdb::Vector& result,
-                           const StringEntry& entry) {
-  if (!entry.overflow) [[likely]] {
-    return {reinterpret_cast<const char*>(entry.data), entry.length};
-  }
-  const auto block = duckdb::Load<duckdb::block_id_t>(entry.data);
-  const auto offset =
-    duckdb::Load<int32_t>(entry.data + sizeof(duckdb::block_id_t));
-  if (block < 0 || offset != 0) [[unlikely]] {
-    ThrowCorrupted("uncompressed string", "invalid overflow string marker");
-  }
-  return segment.ctx.ReadString(result, block, offset);
-}
-
-void StringScanPartial(const ColumnSegment& segment, ColumnScanState& state,
-                       idx_t scan_count, duckdb::Vector& result,
-                       idx_t result_offset) {
+template<typename Row>
+void ReadStrings(const ColumnSegment& segment, ColumnScanState& state,
+                 idx_t span, idx_t count, Row row_at, duckdb::Vector& result,
+                 idx_t result_offset) {
   const StringLayout layout{segment, ScanBase(state)};
   const auto start = state.GetPositionInSegment();
-  layout.Validate(start, scan_count);
+  layout.Validate(start, span);
   auto* target = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  for (idx_t i = 0; i < scan_count; ++i) {
-    target[result_offset + i] =
-      ReadEntry(segment, result, layout.Entry(start + i));
+  for (idx_t i = 0; i < count; ++i) {
+    target[result_offset + i] = layout.Read(result, start + row_at(i));
   }
 }
 
 void StringScan(const ColumnSegment& segment, ColumnScanState& state,
-                idx_t scan_count, duckdb::Vector& result) {
-  StringScanPartial(segment, state, scan_count, result, 0);
+                idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
+                duckdb::ScanVectorType) {
+  ReadStrings(
+    segment, state, scan_count, scan_count, [](idx_t i) { return i; }, result,
+    result_offset);
 }
 
 void StringSelect(const ColumnSegment& segment, ColumnScanState& state,
                   idx_t vector_count, duckdb::Vector& result,
                   idx_t result_offset, const duckdb::SelectionVector& sel,
                   idx_t sel_count, duckdb::ScanVectorType) {
-  const StringLayout layout{segment, ScanBase(state)};
-  const auto start = state.GetPositionInSegment();
-  layout.Validate(start, vector_count);
-  auto* target = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-  for (idx_t i = 0; i < sel_count; ++i) {
-    target[result_offset + i] =
-      ReadEntry(segment, result, layout.Entry(start + sel.get_index(i)));
-  }
+  ReadStrings(
+    segment, state, vector_count, sel_count,
+    [&](idx_t i) { return sel.get_index(i); }, result, result_offset);
 }
 
 void StringFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
@@ -640,56 +565,58 @@ void StringFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
     SDB_ASSERT(rows[i] < segment.count);
     layout.Validate(rows[i], 1);
     target[result_offset + result_sel.get_index(i)] =
-      ReadEntry(segment, result, layout.Entry(rows[i]));
+      layout.Read(result, rows[i]);
   }
 }
 
-constexpr CompressionFunction kString{
-  .type = CodecType::Uncompressed,
-  .compress = CompressChunks<StringAppender>,
+constexpr DecompressionFunction kStringDecompression{
   .init_scan = InitPinnedScan,
-  .scan_vector = StringScan,
-  .scan_partial = StringScanPartial,
+  .scan = StringScan,
   .select = StringSelect,
   .fetch_rows = StringFetchRows,
-  .skip = EmptySkip,
+};
+
+constexpr Codec kString{
+  .type = CodecType::Uncompressed,
+  .compression = &kStreamed<CodecType::Uncompressed, nullptr,
+                            CompressChunks<StringAppender>>,
+  .decompression = &kStringDecompression,
 };
 
 }  // namespace
 
-const CompressionFunction* UncompressedFunction(duckdb::PhysicalType physical) {
+const Codec* UncompressedCodec(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BOOL:
-      return &kFixedSize<int8_t, false, BOOL>;
     case INT8:
-      return &kFixedSize<int8_t, false, INT8>;
+      return &kFixedSize<int8_t>;
     case INT16:
-      return &kFixedSize<int16_t, false, INT16>;
+      return &kFixedSize<int16_t>;
     case INT32:
-      return &kFixedSize<int32_t, false, INT32>;
+      return &kFixedSize<int32_t>;
     case INT64:
-      return &kFixedSize<int64_t, false, INT64>;
+      return &kFixedSize<int64_t>;
     case UINT8:
-      return &kFixedSize<uint8_t, false, UINT8>;
+      return &kFixedSize<uint8_t>;
     case UINT16:
-      return &kFixedSize<uint16_t, false, UINT16>;
+      return &kFixedSize<uint16_t>;
     case UINT32:
-      return &kFixedSize<uint32_t, false, UINT32>;
+      return &kFixedSize<uint32_t>;
     case UINT64:
-      return &kFixedSize<uint64_t, false, UINT64>;
+      return &kFixedSize<uint64_t>;
     case INT128:
-      return &kFixedSize<duckdb::hugeint_t, false, INT128>;
+      return &kFixedSize<duckdb::hugeint_t>;
     case UINT128:
-      return &kFixedSize<duckdb::uhugeint_t, false, UINT128>;
+      return &kFixedSize<duckdb::uhugeint_t>;
     case FLOAT:
-      return &kFixedSize<float, false, FLOAT>;
+      return &kFixedSize<float>;
     case DOUBLE:
-      return &kFixedSize<double, false, DOUBLE>;
+      return &kFixedSize<double>;
     case INTERVAL:
-      return &kFixedSize<duckdb::interval_t, false, INTERVAL>;
+      return &kFixedSize<duckdb::interval_t>;
     case LIST:
-      return &kFixedSize<uint64_t, true, LIST>;
+      return &kFixedSize<uint64_t, false>;
     case BIT:
       return &kValidity;
     case VARCHAR:

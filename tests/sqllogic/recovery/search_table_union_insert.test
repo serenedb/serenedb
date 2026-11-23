@@ -118,7 +118,11 @@ statement ok
 INSERT INTO u
   SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y)
   UNION ALL
-  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet');
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet') WHERE x < 20000
+  UNION ALL
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet') WHERE x >= 20000 AND x < 40000
+  UNION ALL
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet') WHERE x >= 40000;
 
 statement ok
 VACUUM (FLUSH_TABLE) u;
@@ -155,7 +159,11 @@ CREATE TABLE u (x INTEGER, y TEXT)
 
 statement ok
 INSERT INTO u
-  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet')
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet') WHERE x < 20000
+  UNION ALL
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet') WHERE x >= 20000 AND x < 40000
+  UNION ALL
+  SELECT x, y FROM read_parquet('${__TEST_DIR__}/union_src.parquet') WHERE x >= 40000
   UNION ALL
   SELECT * FROM (VALUES (5, 'i5'), (7, 'i7')) v(x, y);
 

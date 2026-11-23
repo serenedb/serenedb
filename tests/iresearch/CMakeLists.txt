@@ -75,11 +75,12 @@ add_executable(
     duckdb/validity_mask_tests.cpp
     formats/column/col_codec_corruption_test.cpp
     formats/column/col_codec_paths_test.cpp
+    formats/column/col_byte_codecs_test.cpp
     formats/column/col_codecs_test.cpp
+    formats/column/col_compression_function_test.cpp
     formats/column/col_copy_check_test.cpp
     formats/column/col_numeric_codec_test.cpp
     formats/column/column_reader_test.cpp
-    formats/column/write_context_test.cpp
     formats/columnstore2_test.cpp
     formats/docs_slack_test.cpp
     formats/formats_10_tests.cpp
@@ -132,9 +133,11 @@ add_executable(
     search/block_scoring_test.cpp
     search/bm25_test.cpp
     search/boolean_filter_tests.cpp
+    search/boolean_window_test.cpp
     search/boost_attribute_test.cpp
     search/boost_query_test.cpp
     search/col_filter_leaf_test.cpp
+    search/conjunction_leaves_test.cpp
     search/count_subtract_test.cpp
     search/dfi_test.cpp
     search/doc_collector_test.cpp
@@ -150,6 +153,7 @@ add_executable(
     search/indri_dirichlet_test.cpp
     search/levenshtein_filter_test.cpp
     search/lm_test.cpp
+    search/masked_leaf_test.cpp
     search/merge_consistency_test.cpp
     search/nested_filter_test.cpp
     search/ngram_similarity_filter_tests.cpp
@@ -161,6 +165,7 @@ add_executable(
     search/phrase_slop_matcher_fuzz.cpp
     search/phrase_slop_matcher_tests.cpp
     search/prefix_filter_test.cpp
+    search/pruned_top_test.cpp
     search/range_filter_test.cpp
     search/raw_tf_test.cpp
     search/regexp_filter_test.cpp
@@ -229,6 +234,7 @@ target_link_libraries(
         iresearch-merge-support
         iresearch-test-writer
         search-benchmark-common
+        zxc::zxc_lib
 )
 target_include_directories(
     iresearch-tests

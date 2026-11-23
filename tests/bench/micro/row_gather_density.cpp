@@ -34,6 +34,7 @@
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <random>
 #include <string>
@@ -190,7 +191,7 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   std::fprintf(
     stderr, "shape %-9s %-4s rows=%llu blocks=%zu codec=%s\n", shape.name,
     shape.codec, static_cast<unsigned long long>(c->windows * kWindow),
-    blocks.size(), irs::codecs::NameOf(blocks[0].codec->type).data());
+    blocks.size(), magic_enum::enum_name(blocks[0].codec->type).data());
   return c;
 }
 

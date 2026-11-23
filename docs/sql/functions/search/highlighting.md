@@ -72,6 +72,8 @@ The sugar form takes the same `options` string. It requires an inverted-index sc
 
 Returns the byte offsets of the matched tokens as interleaved `start, end` pairs — the building block for [`ts_highlight`](#ts_highlight). The optional `limit` caps the number of pairs returned per row.
 
+Every term of the query that matches a token of the text contributes its offsets, whatever `AND`, `OR` or [`::min_match`](./full-text.md#min-match) surrounds it, and the predicates on other columns of the same `WHERE` don't change them; terms under `NOT` or `!!` contribute none.
+
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | `column` | indexed column | The FTS-indexed column whose matches to locate (column-reference form, inside an index scan). |

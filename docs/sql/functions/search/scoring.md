@@ -305,15 +305,19 @@ A per-branch scorer competes on its own terms under a group policy, so a `consta
 
 ## Top-K and WAND pruning {#top-k}
 
-The common shape `ORDER BY <scorer>(idx.tableoid) DESC LIMIT k` returns the best `k` matches. Building the index with the `optimize_top_k` option enables **WAND** pruning, which skips candidates that provably cannot reach the top `k`:
+The common shape `ORDER BY <scorer>(idx.tableoid) DESC LIMIT k` returns the best `k` matches. Creating the table with the [`optimize_top_k` table option](../../statements/create_table/index.md#table-options) enables **WAND** pruning, which skips candidates that provably cannot reach the top `k`:
 
 ```sql
+CREATE TABLE docs (
+    id INTEGER PRIMARY KEY,
+    body VARCHAR
+) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+
 CREATE INDEX docs_idx ON docs
-    USING inverted (id, body scored_en)
-    WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+    USING inverted (id, body scored_en);
 ```
 
-Pruning engages only when the `ORDER BY` scorer can use the score bounds the index stores for its `optimize_top_k` scorer and the filter is a single term, an `OR` of terms that any one term satisfies, an `AND` of terms or of such `OR`s (the latter when enough rows match), terms with `AND NOT` exclusions, one required term with optional scoring terms (`+fox quick`), or a phrase without slop. An `OR` prunes only when the scores of its terms add up: one that keeps the best score, such as a fuzzy match that expands to several terms or [`::merge('max')`](#merge), does not. Otherwise the query still runs correctly, just without the optimization. `EXPLAIN` shows `Top: k, optimized` on the scan when the scorer qualifies, whatever the filter. See [Relevance ranking → Top-K queries and WAND pruning](../../indexes/inverted/ranking.md#top-k-queries-and-wand-pruning) for the full conditions, including which scorers share score bounds.
+Pruning engages only when the `ORDER BY` scorer can use the score bounds stored for the `optimize_top_k` scorer and the filter is a single term, an `OR` of terms that any one term satisfies, an `AND` of terms or of such `OR`s (the latter when enough rows match), terms with `AND NOT` exclusions, one required term with optional scoring terms (`+fox quick`), or a phrase without slop. An `OR` prunes only when the scores of its terms add up: one that keeps the best score, such as a fuzzy match that expands to several terms or [`::merge('max')`](#merge), does not. Otherwise the query still runs correctly, just without the optimization. `EXPLAIN` shows `Top: k, optimized` on the scan when the scorer qualifies, whatever the filter. See [Relevance ranking → Top-K queries and WAND pruning](../../indexes/inverted/ranking.md#top-k-queries-and-wand-pruning) for the full conditions, including which scorers share score bounds.
 
 ## Cross-engine notes {#cross-engine-notes}
 

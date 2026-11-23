@@ -20,7 +20,6 @@
 
 #include "iresearch/formats/column/variant_column_reader.hpp"
 
-#include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -60,9 +59,9 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
       duckdb::VariantStats::SetShreddedStats(rg_s,
                                              vrg.shredded->MergedStatistics());
       _row_group_columns.emplace_back(*vrg.shredded, 2, _row_count);
+    } else {
+      duckdb::VariantStats::MarkAsNotShredded(rg_s);
     }
-    // Like duckdb's checkpoint stats, an unshredded row group stays
-    // UNINITIALIZED so mixed segments merge to SHREDDED, not INCONSISTENT.
     stats.Merge(rg_s);
     _row_count += rg.row_count;
     _variant_offsets.push_back(_row_count);
@@ -140,8 +139,7 @@ const ColumnReader* VariantColumnReader::FindShreddedLeaf(
   }
   const auto& fields = duckdb::StructType::GetChildTypes(tv.Type());
   for (size_t fi = 0; fi < fields.size(); ++fi) {
-    if (duckdb::StringUtil::CIEquals(path[0],
-                                     fields[fi].first.GetIdentifierName())) {
+    if (path[0] == fields[fi].first.GetIdentifierName()) {
       return FindShreddedLeaf(tv.StructField(fi), path.subspan(1));
     }
   }

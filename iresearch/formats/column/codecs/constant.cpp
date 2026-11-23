@@ -18,10 +18,12 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
 #include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
 #include <duckdb/common/vector/constant_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
+#include <duckdb/storage/compression/roaring/roaring.hpp>
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
@@ -35,41 +37,30 @@ using duckdb::idx_t;
 void FillValidity(const ColumnSegment& segment, duckdb::Vector& result,
                   idx_t start, idx_t count) {
   SDB_ASSERT(segment.stats.CanHaveNull());
-  auto& mask = duckdb::FlatVector::ValidityMutable(result);
-  for (idx_t i = 0; i < count; ++i) {
-    mask.SetInvalid(start + i);
+  if (count != 0) {
+    duckdb::roaring::SetInvalidRange(
+      duckdb::FlatVector::ValidityMutable(result), start, start + count);
   }
 }
 
 template<typename T>
 void Fill(const ColumnSegment& segment, duckdb::Vector& result, idx_t start,
           idx_t count) {
-  auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
-  const auto value = duckdb::NumericStats::GetMin<T>(segment.stats);
-  for (idx_t i = 0; i < count; ++i) {
-    data[start + i] = value;
-  }
+  std::fill_n(duckdb::FlatVector::GetDataMutable<T>(result) + start, count,
+              duckdb::NumericStats::GetMin<T>(segment.stats));
 }
 
 std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment&) {
   return nullptr;
 }
 
-void ScanPartialValidity(const ColumnSegment& segment, ColumnScanState&,
-                         idx_t scan_count, duckdb::Vector& result,
-                         idx_t result_offset) {
-  FillValidity(segment, result, result_offset, scan_count);
-}
-
-template<typename T>
-void ScanPartial(const ColumnSegment& segment, ColumnScanState&,
-                 idx_t scan_count, duckdb::Vector& result,
-                 idx_t result_offset) {
-  Fill<T>(segment, result, result_offset, scan_count);
-}
-
 void ScanValidity(const ColumnSegment& segment, ColumnScanState&,
-                  idx_t scan_count, duckdb::Vector& result) {
+                  idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
+                  duckdb::ScanVectorType scan_type) {
+  if (scan_type != duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    FillValidity(segment, result, result_offset, scan_count);
+    return;
+  }
   SDB_ASSERT(segment.stats.CanHaveNull());
   if (result.GetType().InternalType() == duckdb::PhysicalType::STRUCT ||
       result.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
@@ -82,7 +73,12 @@ void ScanValidity(const ColumnSegment& segment, ColumnScanState&,
 
 template<typename T>
 void Scan(const ColumnSegment& segment, ColumnScanState&, idx_t scan_count,
-          duckdb::Vector& result) {
+          duckdb::Vector& result, idx_t result_offset,
+          duckdb::ScanVectorType scan_type) {
+  if (scan_type != duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+    Fill<T>(segment, result, result_offset, scan_count);
+    return;
+  }
   auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
   data[0] = duckdb::NumericStats::GetMin<T>(segment.stats);
   result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
@@ -93,8 +89,10 @@ void FetchRowsValidity(const ColumnSegment& segment, ColumnFetchState&,
                        const idx_t*, idx_t count, duckdb::Vector& result,
                        const duckdb::SelectionVector& result_sel,
                        idx_t result_offset) {
+  SDB_ASSERT(segment.stats.CanHaveNull());
+  auto& mask = duckdb::FlatVector::ValidityMutable(result);
   for (idx_t i = 0; i < count; ++i) {
-    FillValidity(segment, result, result_offset + result_sel.get_index(i), 1);
+    mask.SetInvalid(result_offset + result_sel.get_index(i));
   }
 }
 
@@ -112,7 +110,7 @@ void SelectValidity(const ColumnSegment& segment, ColumnScanState& state, idx_t,
                     const duckdb::SelectionVector&, idx_t sel_count,
                     duckdb::ScanVectorType scan_type) {
   if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
-    ScanValidity(segment, state, sel_count, result);
+    ScanValidity(segment, state, sel_count, result, 0, scan_type);
     return;
   }
   FillValidity(segment, result, result_offset, sel_count);
@@ -124,66 +122,105 @@ void Select(const ColumnSegment& segment, ColumnScanState& state,
             const duckdb::SelectionVector&, idx_t sel_count,
             duckdb::ScanVectorType scan_type) {
   if (scan_type == duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
-    Scan<T>(segment, state, vector_count, result);
+    Scan<T>(segment, state, vector_count, result, 0, scan_type);
     return;
   }
   Fill<T>(segment, result, result_offset, sel_count);
 }
 
-constexpr CompressionFunction kValidity{
-  .type = CodecType::Constant,
+constexpr DecompressionFunction kValidityDecompression{
   .init_scan = InitScan,
-  .scan_vector = ScanValidity,
-  .scan_partial = ScanPartialValidity,
+  .scan = ScanValidity,
   .select = SelectValidity,
   .fetch_rows = FetchRowsValidity,
-  .skip = EmptySkip,
 };
 
-template<typename T, duckdb::PhysicalType kPhysical>
-constexpr CompressionFunction kFunction{
+constexpr Codec kValidity{
   .type = CodecType::Constant,
+  .decompression = &kValidityDecompression,
+};
+
+template<typename T>
+constexpr DecompressionFunction kDecompression{
   .init_scan = InitScan,
-  .scan_vector = Scan<T>,
-  .scan_partial = ScanPartial<T>,
+  .scan = Scan<T>,
   .select = Select<T>,
   .fetch_rows = FetchRows<T>,
-  .skip = EmptySkip,
+};
+
+template<typename T>
+constexpr Codec kCodec{
+  .type = CodecType::Constant,
+  .decompression = &kDecompression<T>,
 };
 
 }  // namespace
 
-const CompressionFunction* ConstantFunction(duckdb::PhysicalType physical) {
+bool CompressConstant(ColumnDataCheckpointData& data) {
+  const auto physical = data.type.InternalType();
+  if (data.rows == 0 ||
+      data.disabled.test(std::to_underlying(CodecType::Constant)) ||
+      !GetCodec(CodecType::Constant, physical)) {
+    return false;
+  }
+  auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);
+  if (stats.GetStatsType() != duckdb::StatisticsType::NUMERIC_STATS) {
+    return false;
+  }
+  const bool constant =
+    WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
+      for (const auto& chunk : data.chunks) {
+        for (const auto value : chunk.data.Values<T>()) {
+          if (!value.IsValid()) {
+            stats.SetHasNullFast();
+            continue;
+          }
+          stats.SetHasNoNullFast();
+          stats.UpdateNumericStats<T>(value.GetValue());
+        }
+        if (!duckdb::NumericStats::IsConstant(stats)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  if (!constant) {
+    return false;
+  }
+  data.FlushSegment(CodecType::Constant, std::move(stats), data.rows, {});
+  return true;
+}
+
+const Codec* ConstantCodec(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
     case BIT:
       return &kValidity;
     case BOOL:
-      return &kFunction<int8_t, BOOL>;
     case INT8:
-      return &kFunction<int8_t, INT8>;
+      return &kCodec<int8_t>;
     case INT16:
-      return &kFunction<int16_t, INT16>;
+      return &kCodec<int16_t>;
     case INT32:
-      return &kFunction<int32_t, INT32>;
+      return &kCodec<int32_t>;
     case INT64:
-      return &kFunction<int64_t, INT64>;
+      return &kCodec<int64_t>;
     case UINT8:
-      return &kFunction<uint8_t, UINT8>;
+      return &kCodec<uint8_t>;
     case UINT16:
-      return &kFunction<uint16_t, UINT16>;
+      return &kCodec<uint16_t>;
     case UINT32:
-      return &kFunction<uint32_t, UINT32>;
+      return &kCodec<uint32_t>;
     case UINT64:
-      return &kFunction<uint64_t, UINT64>;
+      return &kCodec<uint64_t>;
     case INT128:
-      return &kFunction<duckdb::hugeint_t, INT128>;
+      return &kCodec<duckdb::hugeint_t>;
     case UINT128:
-      return &kFunction<duckdb::uhugeint_t, UINT128>;
+      return &kCodec<duckdb::uhugeint_t>;
     case FLOAT:
-      return &kFunction<float, FLOAT>;
+      return &kCodec<float>;
     case DOUBLE:
-      return &kFunction<double, DOUBLE>;
+      return &kCodec<double>;
     default:
       return nullptr;
   }

@@ -60,6 +60,7 @@ class EmptyTermReader final : public irs::TermReader {
   void VisitRange(bytes_view, bytes_view, RangeVisitor) const noexcept final {}
 
   void ReadDocs(bytes_view, Acceptor acceptor) const noexcept final {}
+  void ReadDocs(const PostingMeta&, Acceptor) const noexcept final {}
 
   const FieldMeta& meta() const noexcept final { return FieldMeta::kEmpty; }
 

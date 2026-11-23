@@ -133,3 +133,10 @@ ORDER BY pk;
 pk	k	x
 1	1	7
 2	2	9
+
+
+query
+SELECT sum((s.n)::BIGINT) AS total, sum((s.n)::DOUBLE)::BIGINT AS doubles FROM nv_t_idx;
+----
+total	doubles
+300	300

@@ -44,6 +44,7 @@
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <set>
 #include <string>
 #include <vector>
@@ -76,7 +77,6 @@ struct Case {
   std::function<Value(uint64_t)> value;
   std::set<std::string> rejected;
   bool validity = false;
-  irs::WriteTier tier = irs::WriteTier::Flush;
   uint64_t rows = kRows;
 };
 
@@ -112,7 +112,7 @@ class ColCodecCorruptionTest : public TestBase {
              uint64_t& size) {
     irs::MMapDirectory dir{path};
     {
-      irs::ColWriter w{dir, kSeg, Db(), c.tier};
+      irs::ColWriter w{dir, kSeg, Db(), irs::WriteTier::Flush};
       auto& cw = w.OpenColumn(
         kField, c.type, {.row_group_size = kRgSize, .compression = c.codec});
       for (uint64_t pos = 0; pos < c.rows;) {
@@ -139,8 +139,8 @@ class ColCodecCorruptionTest : public TestBase {
     ASSERT_FALSE(target->DataBlocks().empty());
     const auto& block = target->DataBlocks().front();
     if (c.codec != CodecType::Auto && !c.validity) {
-      ASSERT_EQ(irs::codecs::NameOf(block.codec->type),
-                irs::codecs::NameOf(c.codec));
+      ASSERT_EQ(magic_enum::enum_name(block.codec->type),
+                magic_enum::enum_name(c.codec));
     }
     offset = block.file_offset;
     size = block.byte_size;
@@ -389,7 +389,6 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
       "Corrupted bitpacking segment: offset is outside the segment",
       "Corrupted bitpacking segment: unknown bitpacking mode"},
      /*validity=*/false,
-     irs::WriteTier::Flush,
      /*rows=*/300});
   Sweep(
     {"rle",
@@ -402,7 +401,6 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
       "Corrupted RLE segment: run count # exceeds the remaining row count #",
       "Corrupted RLE segment: run counts do not cover the segment row count"},
      /*validity=*/false,
-     irs::WriteTier::Flush,
      /*rows=*/300});
   Sweep({"alp",
          LogicalType::DOUBLE,
@@ -417,12 +415,11 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
           "Corrupted ALP segment: vector offset is outside the data region",
           "Corrupted ALP segment: vector offsets do not describe a data range"},
          /*validity=*/false,
-         irs::WriteTier::Flush,
          /*rows=*/300});
   Sweep(
     {"alprd",
      LogicalType::DOUBLE,
-     CodecType::AlpRd,
+     CodecType::Alprd,
      [](uint64_t g) {
        return Value::DOUBLE(std::sqrt(static_cast<double>(g + 2)));
      },
@@ -437,7 +434,6 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
       "Corrupted ALPRD segment: vector offsets do not describe a data range",
       "Corrupted ALPRD vector: attempted to read past the end of the segment"},
      /*validity=*/false,
-     irs::WriteTier::Flush,
      /*rows=*/300});
 }
 
@@ -526,7 +522,7 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
   Sweep(
     {"alprd double",
      LogicalType::DOUBLE,
-     CodecType::AlpRd,
+     CodecType::Alprd,
      [](uint64_t g) {
        return g % 97 == 0 ? Value::DOUBLE(-1e300 * static_cast<double>(g + 1))
                           : Value::DOUBLE(std::sin(static_cast<double>(g)));
@@ -545,7 +541,7 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
   Sweep(
     {"alprd float",
      LogicalType::FLOAT,
-     CodecType::AlpRd,
+     CodecType::Alprd,
      [](uint64_t g) {
        return g % 89 == 0
                 ? Value::FLOAT(-1e30F * static_cast<float>(g + 1))

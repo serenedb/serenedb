@@ -20,61 +20,54 @@
 
 #pragma once
 
+#include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/types.hpp>
 #include <span>
 #include <string_view>
 
-#include "iresearch/formats/column/codecs/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 
 namespace irs::codecs {
 
-struct Codec {
-  CodecType type;
-  std::string_view name;
-  const CompressionFunction* (&function)(duckdb::PhysicalType physical);
-  StringChoice choice{};
-};
+extern const Codec kDictLz4Codec;
+extern const Codec kLz4Codec;
+extern const Codec kDictZstdCodec;
+extern const Codec kZstdCodec;
+extern const Codec kDictZxcCodec;
+extern const Codec kZxcCodec;
+extern const Codec kDictFsstFrontCodec;
+extern const Codec kFsstFrontCodec;
+extern const Codec kDictFsstPlusCodec;
+extern const Codec kFsstPlusCodec;
+extern const Codec kDictOnPairCodec;
+extern const Codec kOnPairCodec;
+extern const Codec kDictFsst12FrontCodec;
+extern const Codec kFsst12FrontCodec;
+const Codec* NumericCodecOf(Shape shape, ByteCodec leaf,
+                            duckdb::PhysicalType physical);
+const Codec* ConstantCodec(duckdb::PhysicalType physical);
+bool CompressConstant(ColumnDataCheckpointData& data);
+const Codec* EmptyCodec(duckdb::PhysicalType physical);
+const Codec* UncompressedCodec(duckdb::PhysicalType physical);
+const Codec* RleCodec(duckdb::PhysicalType physical);
+const Codec* BitpackingCodec(duckdb::PhysicalType physical);
+const Codec* AlpCodec(duckdb::PhysicalType physical);
+const Codec* AlpRdCodec(duckdb::PhysicalType physical);
+const Codec* RoaringCodec(duckdb::PhysicalType physical);
+const Codec* AutoCodec(duckdb::PhysicalType physical);
 
-std::span<const Codec> AnalyzedCodecs() noexcept;
+const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
 
-extern const CompressionFunction kDictLz4Function;
-extern const CompressionFunction kLz4Function;
-extern const CompressionFunction kDictZstdFunction;
-extern const CompressionFunction kZstdFunction;
-extern const CompressionFunction kDictZxcFunction;
-extern const CompressionFunction kZxcFunction;
-extern const CompressionFunction kDictFsstFunction;
-extern const CompressionFunction kFsstFunction;
-extern const CompressionFunction kDictFsstPlusFunction;
-extern const CompressionFunction kFsstPlusFunction;
-extern const CompressionFunction kDictOnPairFunction;
-extern const CompressionFunction kOnPairFunction;
-extern const CompressionFunction kDictFsst12Function;
-extern const CompressionFunction kFsst12Function;
-const CompressionFunction* NumericFunction(duckdb::PhysicalType physical);
-const CompressionFunction* ConstantFunction(duckdb::PhysicalType physical);
-const CompressionFunction& EmptyValidityFunction();
-const CompressionFunction* UncompressedFunction(duckdb::PhysicalType physical);
-const CompressionFunction* RleFunction(duckdb::PhysicalType physical);
-const CompressionFunction* BitpackingFunction(duckdb::PhysicalType physical);
-const CompressionFunction* AlpFunction(duckdb::PhysicalType physical);
-const CompressionFunction* AlpRdFunction(duckdb::PhysicalType physical);
-const CompressionFunction* RoaringFunction(duckdb::PhysicalType physical);
+bool Writes(CodecType type, duckdb::PhysicalType physical,
+            const CodecSet& disabled) noexcept;
 
-bool CompressRoaringValidity(ColumnDataCheckpointData& checkpoint_data,
-                             std::span<const WriteChunk> chunks,
-                             duckdb::idx_t limit);
+inline constexpr auto kNoCodec =
+  static_cast<CodecType>(magic_enum::enum_count<CodecType>());
 
-const CompressionFunction* GetCodec(CodecType type,
-                                    duckdb::PhysicalType physical);
-
-std::string_view NameOf(CodecType type) noexcept;
-const Codec* FindCodec(std::string_view name) noexcept;
-
-const StringChoice* ChoiceOf(CodecType type) noexcept;
-
-CodecType TypeOf(StringChoice choice) noexcept;
+CodecType FindCodec(std::string_view name);
+CodecType FindCodec(duckdb::CompressionType type);
 
 uint8_t MaxLevel(CodecType type) noexcept;
 

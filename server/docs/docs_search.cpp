@@ -604,9 +604,7 @@ std::vector<std::string> Analyze(irs::analysis::Tokenizer& tokenizer,
                                  std::string_view text) {
   irs::ValueAnalyzer analyzer;
   irs::ValueTokens<> tokens;
-  analyzer.Analyze(
-    tokenizer,
-    duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())}, tokens);
+  analyzer.Analyze(tokenizer, duckdb::string_t::Unsafe(text), tokens);
   return tokens.terms() | std::views::transform(&duckdb::string_t::GetString) |
          std::ranges::to<std::vector>();
 }
@@ -805,7 +803,7 @@ std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
   const size_t capacity = std::max<size_t>(reader.live_docs_count(), 1);
   std::vector<irs::ScoreDoc> hits(capacity);
   const auto matched = irs::ExecuteTopK(reader, filter, *scorer, capacity,
-                                        /*score_prune=*/false, std::span{hits});
+                                        /*score_prune=*/true, std::span{hits});
 
   hits.resize(std::min<size_t>(matched, capacity));
   absl::c_sort(hits, [](const irs::ScoreDoc& lhs, const irs::ScoreDoc& rhs) {

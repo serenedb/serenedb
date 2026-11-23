@@ -204,9 +204,9 @@ pk	payload
 
 statement error
 CREATE INDEX compr_nested_zstd ON compr_nested USING inverted(txt compr_english)
-  INCLUDE (pk, payload included (compression = 'zstd'));
+  INCLUDE (pk, payload included (compression = 'fsst'));
 ----
-db error: ERROR: Can't compress column "payload" with type 'STRUCT(a INTEGER, b VARCHAR)' (physical: STRUCT) using compression type 'ZSTD'
+db error: ERROR: Can't compress column "payload" with type 'STRUCT(a INTEGER, b VARCHAR)' (physical: STRUCT) using compression type 'FSST'
 
 
 # --- 9. IVF accepts the compression boolean option ---------------------
@@ -222,6 +222,19 @@ CREATE INDEX ivf_comp_bad ON ivf_comp
 statement ok
 CREATE INDEX ivf_comp_unc ON ivf_comp
   USING inverted(emb ivf (metric = 'l2', compression = false));
+
+statement ok
+INSERT INTO ivf_comp SELECT i, [i, i + 1, i + 2]::FLOAT[3] FROM range(3000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) ivf_comp;
+
+query
+SELECT DISTINCT compression FROM pragma_storage_info('ivf_comp_unc')
+WHERE column_name = 'emb' AND segment_type <> 'VALIDITY';
+----
+compression
+Uncompressed
 
 # --- 10. IVF vector column visible to materialization ------------------
 # After auto-promoting ivf columns to store_values=true, the materializer

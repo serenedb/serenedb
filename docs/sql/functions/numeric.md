@@ -46,6 +46,8 @@ Integer `+`, `-`, `*` and unary minus fail with an overflow error when the resul
 
 <SqlLogicTest id="sql/functions/numeric/integer_overflow" />
 
+`wrap` trades exactness on overflow for speed: comparisons and sums are still rewritten as if integer arithmetic could not overflow. When a result does wrap, a comparison or a sum over it may see the exact value instead of the wrapped one. For example, `x + 1 < 0` can be `false` for the largest `INTEGER` while `x + 1` itself returns a negative number, and `SUM(x + 1)` can return the exact sum. Queries whose arithmetic does not overflow return the same results in both modes.
+
 ### Supported Types
 
 The modulo, bitwise, negation, and factorial operators work only on integral data types,

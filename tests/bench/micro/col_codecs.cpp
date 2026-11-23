@@ -27,7 +27,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <filesystem>
-#include <iresearch/formats/column/codecs/fsst.hpp>
+#include <iresearch/formats/column/codecs/text/fsst.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
@@ -306,8 +306,8 @@ struct FsstFrames {
   std::vector<duckdb::string_t> views;
   std::string encoded;
   std::vector<uint32_t> lengths;
-  irs::codecs::FsstEncoder encoder;
-  irs::codecs::FsstDecoder decoder;
+  irs::codecs::text::fsst::Encoder<irs::codecs::text::fsst::Fsst8> encoder;
+  irs::codecs::text::fsst::Decoder<irs::codecs::text::fsst::Fsst8> decoder;
   size_t raw = 0;
   static constexpr size_t kPerFrame = 400;
   static constexpr size_t kFrames = 64;
@@ -326,7 +326,7 @@ struct FsstFrames {
     encoded.resize(
       encoder.Encode(views, skip, encoded.data(), encoded.size(), lengths)
         .bytes);
-    decoder.Import(encoder.SymbolTable());
+    decoder.Import(nullptr, encoder.SymbolTable());
   }
 };
 

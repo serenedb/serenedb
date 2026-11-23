@@ -26,32 +26,18 @@
 namespace irs::detail {
 namespace {
 
-class WindowScore : public ScoreOperator {
+class WindowScore : public ScoreOperatorOf<WindowScore, false> {
  public:
   explicit WindowScore(const score_t* gathered) noexcept : _gathered{gathered} {
     SDB_ASSERT(_gathered);
   }
 
-  score_t Score() const noexcept final { return _gathered[0]; }
+  score_t ScoreOne() const noexcept { return _gathered[0]; }
 
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    irs::Merge<ScoreMergeType::Noop>(res, _gathered, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    irs::Merge<ScoreMergeType::Sum>(res, _gathered, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    irs::Merge<ScoreMergeType::Max>(res, _gathered, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    irs::Merge<ScoreMergeType::Noop>(res, _gathered, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    irs::Merge<ScoreMergeType::Sum>(res, _gathered, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    irs::Merge<ScoreMergeType::Max>(res, _gathered, kScoreBlock);
+  template<ScoreMergeType Outer = ScoreMergeType::Noop>
+  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
+                                  scores_size_t n) const noexcept {
+    irs::Merge<Outer>(res, _gathered, n);
   }
 
  private:
@@ -59,7 +45,8 @@ class WindowScore : public ScoreOperator {
 };
 
 template<ScoreMergeType Inner>
-class WindowConstScore : public ScoreOperator {
+class WindowConstScore
+  : public ScoreOperatorOf<WindowConstScore<Inner>, false> {
   static_assert(Inner != ScoreMergeType::Noop);
 
  public:
@@ -68,34 +55,13 @@ class WindowConstScore : public ScoreOperator {
     SDB_ASSERT(_gathered);
   }
 
-  score_t Score() const noexcept final {
+  score_t ScoreOne() const noexcept {
     auto res = _gathered[0];
     irs::Merge<Inner>(res, _constant);
     return res;
   }
 
-  void Score(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Noop>(res, n);
-  }
-  void ScoreSum(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, n);
-  }
-  void ScoreMax(score_t* res, scores_size_t n) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, n);
-  }
-
-  void ScoreBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Noop>(res, kScoreBlock);
-  }
-  void ScoreSumBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Sum>(res, kScoreBlock);
-  }
-  void ScoreMaxBlock(score_t* res) const noexcept final {
-    ScoreImpl<ScoreMergeType::Max>(res, kScoreBlock);
-  }
-
- private:
-  template<ScoreMergeType Outer>
+  template<ScoreMergeType Outer = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
     for (scores_size_t i = 0; i != n; ++i) {
@@ -105,6 +71,7 @@ class WindowConstScore : public ScoreOperator {
     }
   }
 
+ private:
   const score_t* _gathered;
   score_t _constant;
 };

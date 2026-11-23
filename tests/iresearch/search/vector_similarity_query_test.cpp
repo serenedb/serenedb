@@ -41,6 +41,7 @@
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
 #include <iresearch/store/memory_directory.hpp>
 #include <limits>
+#include <magic_enum/magic_enum.hpp>
 #include <map>
 
 #include "formats/column/test_cs_helpers.hpp"
@@ -470,8 +471,8 @@ class RerankExactDistancesTest
     ASSERT_NE(nullptr, child);
     ASSERT_LT(1U, child->DataBlocks().size());
     for (const auto& block : child->DataBlocks()) {
-      ASSERT_EQ(irs::codecs::NameOf(GetParam()),
-                irs::codecs::NameOf(block.codec->type));
+      ASSERT_EQ(magic_enum::enum_name(GetParam()),
+                magic_enum::enum_name(block.codec->type));
     }
   }
 

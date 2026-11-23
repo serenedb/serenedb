@@ -1,0 +1,120 @@
+statement ok
+CREATE TABLE lck_parent (k TEXT PRIMARY KEY, v INT);
+
+
+statement ok
+CREATE TABLE lck_child (id INT PRIMARY KEY, k TEXT REFERENCES lck_parent (k));
+
+
+statement ok
+WITH c AS (INSERT INTO lck_child VALUES (1, 'parent-key-longer-than-twelve-bytes-1')) INSERT INTO lck_parent VALUES ('parent-key-longer-than-twelve-bytes-1', 1);
+
+
+statement ok
+WITH c AS (INSERT INTO lck_child SELECT i, 'parent-key-longer-than-twelve-bytes-2' FROM generate_series(10, 3000) AS g (i)) INSERT INTO lck_parent VALUES ('parent-key-longer-than-twelve-bytes-2', 2);
+
+
+statement error
+INSERT INTO lck_child VALUES (2, 'parent-key-longer-than-twelve-bytes-missing');
+----
+db error: ERROR: insert or update on table "lck_child" violates foreign key constraint "lck_child_k_fkey"
+DETAIL: Key (k)=(parent-key-longer-than-twelve-bytes-missing) is not present in table "lck_parent".
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO lck_parent VALUES ('parent-key-longer-than-twelve-bytes-3', 3);
+
+
+statement error
+INSERT INTO lck_parent VALUES ('parent-key-longer-than-twelve-bytes-3', 4);
+----
+db error: ERROR: duplicate key value violates unique constraint "lck_parent_pkey"
+DETAIL: Key (k)=(parent-key-longer-than-twelve-bytes-3) already exists.
+
+
+statement ok
+ROLLBACK;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO lck_parent SELECT 'parent-key-longer-than-twelve-bytes-' || i, i FROM generate_series(100, 2100) AS g (i);
+
+
+statement ok
+INSERT INTO lck_parent VALUES ('parent-key-longer-than-twelve-bytes-5000', 5000), ('parent-key-longer-than-twelve-bytes-100', 6) ON CONFLICT DO NOTHING;
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT count(*) AS n, sum(v) AS s FROM lck_parent WHERE v >= 100;
+----
+n	s
+2002	2206100
+
+
+statement error
+DELETE FROM lck_parent WHERE k = 'parent-key-longer-than-twelve-bytes-1';
+----
+db error: ERROR: update or delete on table "lck_parent" violates foreign key constraint "lck_child_k_fkey" on table "lck_child"
+DETAIL: Key (k)=(parent-key-longer-than-twelve-bytes-1) is still referenced from table "lck_child".
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+DELETE FROM lck_child WHERE k = 'parent-key-longer-than-twelve-bytes-2';
+
+
+statement ok
+DELETE FROM lck_parent WHERE k = 'parent-key-longer-than-twelve-bytes-2';
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+INSERT INTO lck_child VALUES (5, 'parent-key-longer-than-twelve-bytes-100');
+
+
+statement error
+DELETE FROM lck_parent WHERE k = 'parent-key-longer-than-twelve-bytes-100';
+----
+db error: ERROR: update or delete on table "lck_parent" violates foreign key constraint "lck_child_k_fkey" on table "lck_child"
+DETAIL: Key (k)=(parent-key-longer-than-twelve-bytes-100) is still referenced from table "lck_child".
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT count(*) AS children FROM lck_child;
+----
+children
+1
+
+
+statement ok
+DROP TABLE lck_child;
+
+
+statement ok
+DROP TABLE lck_parent;

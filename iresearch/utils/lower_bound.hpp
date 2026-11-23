@@ -83,22 +83,30 @@ IRS_FORCE_INLINE uint32_t CountLess(const uint32_t* begin,
 #endif
 }
 
+inline constexpr size_t kLowerBoundGroup = 32;
+
+template<size_t N>
+IRS_FORCE_INLINE size_t LowerBoundGroup(const uint32_t* begin,
+                                        uint32_t value) noexcept {
+  static_assert(N > kLowerBoundGroup && N % kLowerBoundGroup == 0);
+  size_t group = 0;
+  for (size_t g = 1; g != N / kLowerBoundGroup; ++g) {
+    group += static_cast<size_t>(begin[g * kLowerBoundGroup - 1] < value);
+  }
+  return group;
+}
+
 template<size_t N, typename It, typename T, typename Cmp = std::less<>>
 IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
                                          Cmp&& compare = {}) {
   static_assert(std::has_single_bit(N));
-  constexpr size_t kGroup = 32;
-  if constexpr (N > kGroup && std::is_pointer_v<It> &&
+  if constexpr (N > kLowerBoundGroup && std::is_pointer_v<It> &&
                 std::is_same_v<std::remove_const_t<std::remove_pointer_t<It>>,
                                uint32_t> &&
                 std::is_same_v<T, uint32_t> &&
                 std::is_same_v<std::remove_cvref_t<Cmp>, std::less<>>) {
-    size_t group = 0;
-    for (size_t g = 1; g != N / kGroup; ++g) {
-      group += static_cast<size_t>(begin[g * kGroup - 1] < value);
-    }
-    begin += group * kGroup;
-    return begin + CountLess<kGroup>(begin, value);
+    begin += LowerBoundGroup<N>(begin, value) * kLowerBoundGroup;
+    return begin + CountLess<kLowerBoundGroup>(begin, value);
   } else {
     for (size_t step = N / 2; step != 0; step /= 2) {
       begin =
@@ -106,6 +114,34 @@ IRS_FORCE_INLINE It BranchlessLowerBound(It begin, const T& value,
     }
     return begin + compare(*begin, value);
   }
+}
+
+template<typename T>
+IRS_FORCE_INLINE const T* ScanNotBelow(const T* begin, const T* end,
+                                       const T& value) noexcept {
+  while (begin != end && *begin < value) {
+    ++begin;
+  }
+  return begin;
+}
+
+template<typename T>
+IRS_FORCE_INLINE const T* ScanNotBelow(const T* begin,
+                                       const T& value) noexcept {
+  while (*begin < value) {
+    ++begin;
+  }
+  return begin;
+}
+
+template<size_t N, typename T>
+IRS_FORCE_INLINE const T* LeafLowerBound(const T* block, size_t len,
+                                         const T* from,
+                                         const T& value) noexcept {
+  if (len == N) [[likely]] {
+    return BranchlessLowerBound<N>(block, value);
+  }
+  return ScanNotBelow(from, block + N, value);
 }
 
 template<typename It, typename Pred>

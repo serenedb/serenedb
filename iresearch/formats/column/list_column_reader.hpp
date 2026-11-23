@@ -35,10 +35,50 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
+
+struct ListRun {
+  uint64_t begin = 0;
+  uint64_t end = 0;
+};
+
+struct ListDictionary {
+  uint64_t begin = 0;
+  uint64_t end = 0;
+  uint64_t missed_block = 0;
+  uint64_t oversized_block = 0;
+  uint64_t ends_block = 0;
+  uint64_t ends_base = 0;
+  uint64_t ends_begin = 0;
+  uint64_t ends_end = 0;
+  duckdb::buffer_ptr<duckdb::DictionaryEntry> lists;
+  bitset decoded;
+  std::vector<uint32_t> ranks;
+  std::vector<ListRun> runs;
+  ScratchVector<uint64_t> ends;
+};
+
+struct ListScanState {
+  std::unique_ptr<ColumnReader::VectorScratch> codes;
+  std::unique_ptr<ColumnReader::VectorScratch> ends;
+  ListDictionary dictionary;
+  std::vector<duckdb::sel_t> picked;
+  duckdb::SelectionVector sel;
+};
+
+inline void KeepReadahead(const ColumnReader::ScanState& from,
+                          ColumnReader::ScanState& to) noexcept {
+  SDB_ASSERT(from.child_states.size() == to.child_states.size());
+  to.advised_end = from.advised_end;
+  for (size_t i = 0; i != to.child_states.size(); ++i) {
+    KeepReadahead(from.child_states[i], to.child_states[i]);
+  }
+}
 
 class ListColumnReader final : public ColumnReader {
  public:

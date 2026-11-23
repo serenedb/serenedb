@@ -53,7 +53,7 @@ Copy only the schema (catalog elements) but not any data:
 
 ## Overview
 
-`COPY` moves data between SereneDB and external files. `COPY ... FROM` imports data into SereneDB from an external file. `COPY ... TO` writes data from SereneDB to an external file. The `COPY` command can be used for `CSV`, `PARQUET` and `JSON` files.
+`COPY` moves data between SereneDB and external files. `COPY ... FROM` imports data into SereneDB from an external file. `COPY ... TO` writes data from SereneDB to an external file. The `COPY` command can be used for files in the `text` and `binary` formats and for `CSV`, `PARQUET` and `JSON` files.
 
 ## `COPY ... FROM`
 
@@ -61,7 +61,7 @@ Copy only the schema (catalog elements) but not any data:
 
 If a list of columns is specified, `COPY` will only copy the data in the specified columns from the file. If there are any columns in the table that are not in the column list, `COPY ... FROM` will insert the default values for those columns.
 
-A statement that names the format, as `FORMAT csv` or `CSV`, reads the CSV dialect of PostgreSQL: a comma between values, double quotes, a doubled quote inside a quoted value, no header, and an unquoted empty value read as `NULL` while a quoted one (`""`) is an empty string. The dialect is not detected from the file unless `AUTO_DETECT true` asks for it; only the line ending is. Without a format, a CSV file's delimiter, quoting and header are detected.
+A statement that names the format, as `FORMAT csv` or `CSV`, reads the CSV dialect of PostgreSQL: a comma between values, double quotes, a doubled quote inside a quoted value, no header, and an unquoted empty value read as `NULL` while a quoted one (`""`) is an empty string. The dialect is not detected from the file unless `AUTO_DETECT true` asks for it; only the line ending is. Without a format, a CSV file's delimiter, quoting and header are detected. Without a format, a file whose extension names no format, such as `.tbl`, `.tsv` or `.dat`, or that has no extension, is read and written in the `text` format.
 
 Copy the contents of a comma-separated file `test.csv` without a header into the table `test`:
 
@@ -109,9 +109,13 @@ Read the contents of a file provided as parameter of a prepared statement into t
 
 Over the PostgreSQL wire protocol, `COPY ... FROM STDIN` in the `text` and `binary` formats parses rows on several threads, up to the `threads` setting, while the client is still sending them. The table may store the rows in another order than they arrived in; see [Insertion Order](../../../compatibility/order_preservation.md#insertion-order). A client that sends slowly does not keep threads busy: they run other queries until more data arrives. The initial table copy of a [subscription](../create_subscription/index.md) loads rows the same way.
 
-`COPY ... FROM 'file'` in the `text` and `binary` formats also parses rows on several threads, with the same ordering rules. The file is read ahead on the asynchronous I/O pool, as the CSV reader does: `async_threads` sizes the pool and `read_ahead_depth` limits how far ahead it reads. A `text` file is read in parallel parts; a `binary` file, and a `text` file that cannot be read at an offset, such as a named pipe, are read in order while other threads parse what has arrived. With `async_threads` set to 0, or `read_ahead_depth` set to 0 for a `text` file, the query's own threads read the file.
+`COPY ... FROM 'file'` in the `text` and `binary` formats also parses rows on several threads, with the same ordering rules. The file is read ahead on the asynchronous I/O pool, as the CSV reader does: `async_threads` sizes the pool and `read_ahead_depth` limits how far ahead it reads. A `text` file is read in parallel parts; a `binary` file, and a `text` file that cannot be read at an offset, such as a named pipe or a compressed file, are read in order while other threads parse what has arrived. A `text` or `binary` file whose name ends in `.gz` or `.zst` is decompressed as it is read and compressed as it is written. With `async_threads` set to 0, or `read_ahead_depth` set to 0 for a `text` file, the query's own threads read the file.
 
 In the `text` format a row ends at a newline or at a carriage return followed by a newline, as in PostgreSQL. A newline or carriage return preceded by a backslash is part of the value, not the end of the row.
+
+In the `text` format a line holding only `\.` ends the data. Over STDIN anything after it is ignored. In a file only empty lines may follow it, so the data files of a `pg_dump` directory or tar archive load as they are; any other line after it fails the `COPY` with `end-of-copy marker is followed by data`. A `\.` elsewhere in a line fails with `end-of-copy marker is not alone on its line`. In the `csv` format `\.` is data.
+
+In the `text` format `ON_ERROR IGNORE` skips a row whose value cannot be converted to its column's type, and `REJECT_LIMIT n` fails the `COPY` with `skipped more than REJECT_LIMIT (n) rows due to data type incompatibility` once more than `n` rows are skipped. A row with more or fewer values than the table has columns fails the `COPY` either way. `REJECT_LIMIT` requires `ON_ERROR IGNORE`, and neither is allowed in `COPY ... TO`. The `binary` format allows only `ON_ERROR STOP` and no `DELIMITER`, `NULL`, `HEADER` or CSV option.
 
 ### Syntax
 
@@ -139,9 +143,11 @@ Copy the contents of the `lineitem` table to the file `lineitem.tbl`, where the 
 
 <SqlLogicTest id="sql/statements/copy/index/example_025" />
 
-Use tab separators to create a TSV file without a header:
+Write the `lineitem` table to `lineitem.tsv` in the `text` format, with tab separators and no header:
 
 <SqlLogicTest id="sql/statements/copy/index/example_026" />
+
+With `HEADER`, a `text` file starts with a line of the column names as the query gives them, separated and escaped like the values.
 
 Copy the l_orderkey column of the `lineitem` table to the file `orderkey.tbl`:
 
@@ -193,7 +199,7 @@ With few exceptions, the below options are applicable to all formats written wit
 
 | Name                      | Description                                                                                                                                                                                                                                                                                                                                                                                                                                 | Type                  | Default |
 | :------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :-------------------- | :------ |
-| `FORMAT`                  | Specifies the copy function to use. The default is selected from the file extension (e.g., `.parquet` results in a Parquet file being written/read). If the file extension is unknown `CSV` is selected. SereneDB provides the `CSV`, `PARQUET` and `JSON` copy functions. The name is case-insensitive, quoted or not: `FORMAT 'CSV'` is `FORMAT csv`. | `VARCHAR`             | `auto`  |
+| `FORMAT`                  | Specifies the copy function to use. The default is selected from the file extension (e.g., `.parquet` results in a Parquet file being written/read). If the file extension names no format, or the file has none, `TEXT` is selected. SereneDB provides the `TEXT`, `BINARY`, `CSV`, `PARQUET`, `JSON` and `BLOB` copy functions. The name is case-insensitive, quoted or not: `FORMAT 'CSV'` is `FORMAT csv`. | `VARCHAR`             | `auto`  |
 | `USE_TMP_FILE`            | Whether or not to write to a temporary file first if the original file exists (`target.csv.tmp`). This prevents overwriting an existing file with a broken file in case the writing is cancelled.                                                                                                                                                                                                                                           | `BOOL`                | `auto`  |
 | `OVERWRITE_OR_IGNORE`     | Whether or not to allow overwriting files if they already exist. Only has an effect when used with `PARTITION_BY`.                                                                                                                                                                                                                                                                                                                          | `BOOL`                | `false` |
 | `OVERWRITE`               | When `true`, all existing files inside targeted directories will be removed (not supported on remote filesystems). Only has an effect when used with `PARTITION_BY`.                                                                                                                                                                                                                                                                        | `BOOL`                | `false` |
@@ -221,6 +227,8 @@ To ensure compatibility with PostgreSQL, SereneDB accepts `COPY ... TO` statemen
 ## `COPY FROM DATABASE ... TO`
 
 The `COPY FROM DATABASE ... TO` statement copies the entire content from one attached database to another attached database. This includes the schema, including constraints, indexes, sequences, macros and the data itself. [Jobs](../create_job/index.md) are not copied.
+
+Copied objects keep their owners, and a sequence owned by a column, such as the one behind a `SERIAL` column, stays owned by that column in the copy.
 
 <SqlLogicTest id="sql/statements/copy/copy_database_full/example_037" />
 

@@ -78,7 +78,8 @@ class OrderedInputNormReader : public NormReader {
   }
 
   void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
-                       std::span<uint32_t, kPostingBlock> values) final {
+                       std::span<uint32_t, kPostingBlock> values,
+                       doc_id_t) final {
     Read(docs, values);
   }
 
@@ -153,7 +154,8 @@ class InputNormReader : public NormReader {
   }
 
   void GetPostingBlock(std::span<const doc_id_t, kPostingBlock> docs,
-                       std::span<uint32_t, kPostingBlock> values) final {
+                       std::span<uint32_t, kPostingBlock> values,
+                       doc_id_t) final {
     GetRuns<true>(docs, values);
   }
 

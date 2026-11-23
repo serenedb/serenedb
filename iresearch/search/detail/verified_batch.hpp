@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bitset>
 #include <cstdint>
 #include <span>
 
@@ -40,9 +41,6 @@ class VerifiedBatch {
     if (_at + 1 < _count) {
       return _docs[++_at];
     }
-    if (_exhausted) {
-      return doc_limits::eof();
-    }
     _size = std::min(_size * 2, kMaxSize);
     return Fill(approx.Next(), approx, verifier);
   }
@@ -54,9 +52,6 @@ class VerifiedBatch {
     }
     if (_at < _count) {
       return _docs[_at];
-    }
-    if (_exhausted) {
-      return doc_limits::eof();
     }
     _size = std::max<uint32_t>(_size / 2, 1);
     return Fill(approx.Seek(target), approx, verifier);
@@ -73,29 +68,25 @@ class VerifiedBatch {
     _at = 0;
     _count = 0;
     if (doc_limits::eof(first)) {
-      _exhausted = true;
       return first;
     }
     _docs[_count++] = first;
     while (_count < _size) {
       const auto doc = approx.Next();
       if (doc_limits::eof(doc)) {
-        _exhausted = true;
         break;
       }
       _docs[_count++] = doc;
     }
-    verifier.Check(std::span<const doc_id_t>{_docs.data(), _count},
-                   std::span<bool>{_matched.data(), _count});
+    verifier.Check(std::span<const doc_id_t>{_docs.data(), _count}, _matched);
     return first;
   }
 
   std::array<doc_id_t, kMaxSize> _docs{};
-  std::array<bool, kMaxSize> _matched{};
+  std::bitset<kMaxSize> _matched;
   uint32_t _count = 0;
   uint32_t _at = 0;
   uint32_t _size = 4;
-  bool _exhausted = false;
 };
 
 }  // namespace irs::detail

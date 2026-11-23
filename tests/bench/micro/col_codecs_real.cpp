@@ -57,6 +57,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <map>
 #include <memory>
 #include <random>
@@ -191,7 +192,19 @@ constexpr ColArm kNumArms[] = {
   {"bitpacking", irs::codecs::CodecType::Bitpacking, 0},
   {"rle", irs::codecs::CodecType::Rle, 0},
   {"alp", irs::codecs::CodecType::Alp, 0},
-  {"alprd", irs::codecs::CodecType::AlpRd, 0},
+  {"alprd", irs::codecs::CodecType::Alprd, 0},
+  {"ffor", irs::codecs::CodecType::Ffor, 0},
+  {"lz4", irs::codecs::CodecType::Lz4, 0},
+  {"zstd", irs::codecs::CodecType::Zstd, 0},
+  {"delta_ffor", irs::codecs::CodecType::DeltaFfor, 0},
+  {"delta_lz4", irs::codecs::CodecType::DeltaLz4, 0},
+  {"delta_zstd", irs::codecs::CodecType::DeltaZstd, 0},
+  {"rle_ffor", irs::codecs::CodecType::RleFfor, 0},
+  {"rle_lz4", irs::codecs::CodecType::RleLz4, 0},
+  {"rle_zstd", irs::codecs::CodecType::RleZstd, 0},
+  {"dict_ffor", irs::codecs::CodecType::DictFfor, 0},
+  {"dict_lz4", irs::codecs::CodecType::DictLz4, 0},
+  {"dict_zstd", irs::codecs::CodecType::DictZstd, 0},
   {"uncompressed", irs::codecs::CodecType::Uncompressed, 0},
 };
 
@@ -201,8 +214,8 @@ constexpr ColArm kColArms[] = {
   {"fsst", irs::codecs::CodecType::Fsst, 0},
   {"dict_fsst_plus", irs::codecs::CodecType::DictFsstPlus, 0},
   {"fsst_plus", irs::codecs::CodecType::FsstPlus, 0},
-  {"dict_onpair", irs::codecs::CodecType::DictOnPair, 0},
-  {"onpair", irs::codecs::CodecType::OnPair, 0},
+  {"dict_onpair", irs::codecs::CodecType::DictOnpair, 0},
+  {"onpair", irs::codecs::CodecType::Onpair, 0},
   {"dict_fsst12", irs::codecs::CodecType::DictFsst12, 0},
   {"fsst12", irs::codecs::CodecType::Fsst12, 0},
   {"dict_lz4", irs::codecs::CodecType::DictLz4, 0},
@@ -213,6 +226,7 @@ constexpr ColArm kColArms[] = {
   {"dict_lz4_hc12", irs::codecs::CodecType::DictLz4, 12},
   {"lz4", irs::codecs::CodecType::Lz4, 0},
   {"lz4_hc4", irs::codecs::CodecType::Lz4, 4},
+  {"lz4_hc6", irs::codecs::CodecType::Lz4, 6},
   {"lz4_hc9", irs::codecs::CodecType::Lz4, 9},
   {"lz4_hc12", irs::codecs::CodecType::Lz4, 12},
   {"dict_zstd1", irs::codecs::CodecType::DictZstd, 1},
@@ -253,12 +267,24 @@ uint32_t SegmentTarget() {
   return target;
 }
 
+uint32_t RowGroupSize() {
+  static const uint32_t size = [] {
+    if (const char* e = std::getenv("SDB_BENCH_ROW_GROUP")) {
+      return static_cast<uint32_t>(std::strtoul(e, nullptr, 10));
+    }
+    return static_cast<uint32_t>(DEFAULT_ROW_GROUP_SIZE);
+  }();
+  return size;
+}
+
 irs::WriteTier Tier() {
   return std::getenv("SDB_BENCH_REFRESH") ? irs::WriteTier::Flush
                                           : irs::WriteTier::Merge;
 }
 
 bool Cold() { return std::getenv("SDB_BENCH_COLD") != nullptr; }
+
+bool Stale() { return std::getenv("SDB_BENCH_STALE") != nullptr; }
 
 struct ColSeg {
   std::unique_ptr<irs::Directory> dir;
@@ -294,8 +320,63 @@ void OpenReader(ColSeg& seg) {
   }
 }
 
+void EvictUnderWarmMap(ColSeg& seg) {
+  {
+    irs::ReadContext ctx{*seg.reader};
+    auto st = seg.col->InitScan(ctx);
+    duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
+                              Data().type, STANDARD_VECTOR_SIZE};
+    duckdb::Vector batch{cache};
+    const auto rows = Data().rows;
+    for (uint64_t pos = 0; pos < rows;) {
+      const auto take = std::min<uint64_t>(rows - pos, STANDARD_VECTOR_SIZE);
+      batch.ResetFromCache(cache);
+      seg.col->Scan(st, batch, take);
+      pos += take;
+    }
+  }
+  for (const auto& entry : std::filesystem::directory_iterator(seg.path)) {
+    const int fd = ::open(entry.path().c_str(), O_RDONLY);
+    if (fd < 0) {
+      continue;
+    }
+    ::fdatasync(fd);
+    ::close(fd);
+  }
+  irs::ReadContext ctx{*seg.reader};
+  auto& in = ctx.In();
+  const uint64_t length = in.Length();
+  uint64_t from = 0;
+  if (const char* e = std::getenv("SDB_BENCH_STALE_FROM")) {
+    from = length * std::strtoull(e, nullptr, 10) / 100;
+  }
+  uint64_t bytes = length - from;
+  if (const char* e = std::getenv("SDB_BENCH_STALE_BYTES")) {
+    bytes = std::min<uint64_t>(bytes, std::strtoull(e, nullptr, 10));
+  }
+  in.Evict(from, bytes);
+  static bool reported = false;
+  if (!reported) {
+    reported = true;
+    std::fprintf(stderr,
+                 "stale: evicted from %llu of %llu, resident after evict %d, "
+                 "warm bytes %llu\n",
+                 static_cast<unsigned long long>(from),
+                 static_cast<unsigned long long>(length),
+                 static_cast<int>(in.Resident(from, bytes)),
+                 static_cast<unsigned long long>(in.Warm(0, length)));
+  }
+}
+
 void Evict(ColSeg& seg) {
-  if (!Cold() || seg.path.empty()) {
+  if (seg.path.empty()) {
+    return;
+  }
+  if (Stale()) {
+    EvictUnderWarmMap(seg);
+    return;
+  }
+  if (!Cold()) {
     return;
   }
   seg.col = nullptr;
@@ -322,7 +403,8 @@ void ColBuild(irs::Directory& dir, const ColArm& arm) {
   irs::ColWriter w{dir, kSeg, CsDb(), Tier()};
   auto& cw = w.OpenColumn(
     kField, data.type,
-    {.compression = arm.codec,
+    {.row_group_size = RowGroupSize(),
+     .compression = arm.codec,
      .codec_params = irs::ColCodecParams{.compression_level = arm.level,
                                          .segment_target = SegmentTarget()}});
   uint64_t pos = 0;
@@ -353,7 +435,8 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
     in->ReadData(file.data(), file.size());
     uint64_t parts[7]{};
     for (const auto& block : data_blocks) {
-      if (!block.codec || block.byte_size == 0 || !block.codec->framed) {
+      if (!block.codec || block.byte_size == 0 ||
+          !irs::codecs::IsText(block.codec->type)) {
         continue;
       }
       const auto* p = file.data() + block.file_offset;
@@ -399,7 +482,7 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
   Built built;
   for (const auto& block : data_blocks) {
     built.bytes += block.byte_size;
-    if (block.codec && block.codec->type == irs::codecs::CodecType::Numeric) {
+    if (block.codec && irs::codecs::IsNumeric(block.codec->type)) {
       built.ours += block.tuple_count;
     }
   }
@@ -596,13 +679,14 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
   irs::BlockWindow window{};
   uint64_t row = 0;
   for (const auto& block : seg.col->DataBlocks()) {
-    std::string key{irs::codecs::NameOf(block.codec->type)};
-    if (block.codec->get_segment_info && block.byte_size != 0) {
+    std::string key{magic_enum::enum_name(block.codec->type)};
+    if (block.codec->decompression->get_segment_info && block.byte_size != 0) {
       window = seg.col->Locate(row, window);
       auto segment = seg.col->OpenSegment(window.block, ctx);
-      auto info = block.codec->get_segment_info(*segment);
-      for (const auto* name : {"transform", "leaf", "codec", "shape",
-                               "dictionary", "codes_transform"}) {
+      auto info = block.codec->decompression->get_segment_info(*segment);
+      for (const auto* name :
+           {"transform", "leaf", "stored", "shuffled", "codec", "shape",
+            "dictionary", "codes_transform"}) {
         if (info.contains(name)) {
           key += std::string{" "} + name + "=" + info[name];
         }
@@ -614,6 +698,33 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
   for (const auto& [key, count] : rows) {
     std::fprintf(stderr, "seginfo %s %s rows %llu\n", arm.name, key.c_str(),
                  static_cast<unsigned long long>(count));
+  }
+}
+
+void PrintBlocks(const ColArm& arm, const ColSeg& seg) {
+  if (!std::getenv("SDB_BENCH_BLOCKS")) {
+    return;
+  }
+  irs::ReadContext ctx{*seg.reader};
+  irs::BlockWindow window{};
+  uint64_t row = 0;
+  for (const auto& block : seg.col->DataBlocks()) {
+    std::string info;
+    if (block.codec->decompression->get_segment_info && block.byte_size != 0) {
+      window = seg.col->Locate(row, window);
+      const auto segment = seg.col->OpenSegment(window.block, ctx);
+      for (const auto& [name, value] :
+           block.codec->decompression->get_segment_info(*segment)) {
+        info += " " + name + "=" + value;
+      }
+    }
+    std::fprintf(stderr, "block %s %llu %llu %llu %s%s\n", arm.name,
+                 static_cast<unsigned long long>(row),
+                 static_cast<unsigned long long>(block.tuple_count),
+                 static_cast<unsigned long long>(block.byte_size),
+                 std::string{magic_enum::enum_name(block.codec->type)}.c_str(),
+                 info.c_str());
+    row += block.tuple_count;
   }
 }
 
@@ -630,6 +741,7 @@ ColSeg& GetColSeg(const ColArm* arm) {
     OpenReader(*slot);
     Verify(*arm, *slot);
     PrintSegmentInfo(*arm, *slot);
+    PrintBlocks(*arm, *slot);
   }
   return *slot;
 }

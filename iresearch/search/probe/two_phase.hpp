@@ -23,14 +23,14 @@
 #include <utility>
 
 #include "iresearch/search/detail/two_phase.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::probe {
 
-template<typename Slots, bool Scored>
+template<typename Slots, bool Scored, bool CountsReads = false>
 class TwoPhase : public detail::TwoPhaseBase<Slots, Scored> {
   using Base = detail::TwoPhaseBase<Slots, Scored>;
-  using Base::_slots;
 
  public:
   using Base::Base;
@@ -45,15 +45,28 @@ class TwoPhase : public detail::TwoPhaseBase<Slots, Scored> {
     if (const auto probe = _slots.Probe(target); probe != target) {
       return _least = probe;
     }
+    if constexpr (CountsReads) {
+      ++_reads;
+    }
     if (!_slots.Match(target)) {
       return _least = target + 1;
     }
     return _matched = target;
   }
 
+  uint32_t TakeReads() noexcept
+    requires CountsReads
+  {
+    return std::exchange(_reads, 0);
+  }
+
+ protected:
+  using Base::_slots;
+
  private:
   doc_id_t _matched = doc_limits::invalid();
   doc_id_t _least = doc_limits::invalid();
+  [[no_unique_address]] utils::Need<CountsReads, uint32_t> _reads{};
 };
 
 template<typename Slots>

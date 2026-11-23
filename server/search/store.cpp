@@ -56,6 +56,7 @@
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <optional>
 #include <utility>
 #include <yaclib/coro/await.hpp>
 #include <yaclib/coro/future.hpp>
@@ -84,12 +85,12 @@ catalog::CompressionByColumn DeclaredCompression(
   const duckdb::ColumnList& columns) {
   catalog::CompressionByColumn compression;
   for (const auto& column : columns.Logical()) {
-    const auto* codec = irs::codecs::FindCodec(
-      duckdb::CompressionTypeToString(column.CompressionType()));
-    if (codec && codec->type != irs::codecs::CodecType::Auto) {
+    const auto type = irs::codecs::FindCodec(column.CompressionType());
+    SDB_ASSERT(type != irs::codecs::kNoCodec);
+    if (type != irs::codecs::CodecType::Auto) {
       compression.emplace(
         connector::TableColumnId(column),
-        catalog::DeclaredCodec{.type = codec->type,
+        catalog::DeclaredCodec{.type = type,
                                .compression_level = column.CompressionLevel()});
     }
   }
@@ -690,7 +691,9 @@ std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
     auto& rows = delta.rows.emplace_back(LoggedRows{.first = unit->first});
     std::vector<const irs::ColumnReader*> readers;
     duckdb::vector<duckdb::LogicalType> types;
+    std::optional<irs::ReadContext> ctx;
     if (const auto* columns = unit->reader->GetColReader()) {
+      ctx.emplace(*columns);
       for (const auto* column : columns->Columns()) {
         if (stored.contains(column->Id())) {
           readers.push_back(column);
@@ -699,11 +702,10 @@ std::vector<uint8_t> Store::SnapshotRecord(const TableState& state) const {
         }
       }
     }
-    irs::ReadContext ctx{*ReaderOptions().db};
     std::vector<irs::ColumnReader::ScanState> scans;
     scans.reserve(readers.size());
     for (const auto* reader : readers) {
-      scans.push_back(reader->InitScan(ctx));
+      scans.push_back(reader->InitScan(*ctx));
     }
     duckdb::DataChunk chunk;
     chunk.Initialize(duckdb::Allocator::DefaultAllocator(), types);
@@ -1044,16 +1046,21 @@ std::shared_ptr<const TableState> Store::ReplaceSegments(
   return published;
 }
 
-void Store::DrainPriorWriters(duckdb::ClientContext& context) {
-  _writers.Drain(
-    context,
-    ConnectionContext::Get(context).Transaction().SearchTxn().Registration(
-      _id));
+void Store::AdvanceVersion(duckdb::ClientContext& context) {
+  absl::MutexLockMaybe commits{_table ? &_table->CommitMutex() : nullptr};
+  const auto before = _version.fetch_add(1);
+  ConnectionContext::Get(context).Transaction().SearchTxn().FollowVersion(
+    *this, before);
 }
 
 std::shared_ptr<const catalog::InvertedIndexConfig> Store::Config() const {
   absl::ReaderMutexLock lock{&_layout_mutex};
   return _layout.config;
+}
+
+Store::VersionedConfig Store::ConfigToWrite() const {
+  absl::ReaderMutexLock lock{&_layout_mutex};
+  return {.config = _layout.config, .version = _version.load()};
 }
 
 bool Store::IsCurrentConfig(const irs::IndexFieldOptions* options) const {
@@ -1201,6 +1208,8 @@ bool Store::AcquireLayout(duckdb::transaction_t owner, std::string_view name,
 
 void Store::ReleaseLayout(duckdb::transaction_t owner,
                           bool committed) noexcept {
+  absl::MutexLockMaybe commits{!committed && _table ? &_table->CommitMutex()
+                                                    : nullptr};
   absl::MutexLock lock{&_layout_mutex};
   SDB_ASSERT(_layout.owner == owner);
   if (committed) {
@@ -1216,6 +1225,7 @@ void Store::ReleaseLayout(duckdb::transaction_t owner,
     _compression = std::move(undo->compression);
     _constraint_keys = std::move(undo->constraint_keys);
     RebuildConfig(_layout.configs, _layout.building_index);
+    _version.fetch_add(1);
   }
 }
 
@@ -1306,14 +1316,21 @@ bool Store::HasReferencing() const {
 }
 
 Store::BuildClaim Store::BeginIndexBuild(
-  duckdb::idx_t index_oid,
+  duckdb::ClientContext& context, duckdb::idx_t index_oid,
   std::shared_ptr<const catalog::InvertedIndexConfig> config) {
   BuildClaim claim{*this, index_oid};
-  absl::MutexLock lock{&_layout_mutex};
-  SDB_ASSERT(!_layout.building_index);
-  RebuildConfig(
-    WithConfig(_layout.configs, IndexConfig{index_oid, std::move(config)}),
-    index_oid);
+  absl::MutexLockMaybe commits{_table ? &_table->CommitMutex() : nullptr};
+  uint64_t before = 0;
+  {
+    absl::MutexLock lock{&_layout_mutex};
+    SDB_ASSERT(!_layout.building_index);
+    RebuildConfig(
+      WithConfig(_layout.configs, IndexConfig{index_oid, std::move(config)}),
+      index_oid);
+    before = _version.fetch_add(1);
+  }
+  ConnectionContext::Get(context).Transaction().SearchTxn().FollowVersion(
+    *this, before);
   return claim;
 }
 
@@ -1430,7 +1447,8 @@ std::shared_ptr<const irs::SegmentReaderImpl> Store::ReplayPiece(
   uint64_t rows = 0;
   {
     const auto sink = connector::MakeSearchTableInsertSink(
-      piece.trx, *this, _replay.RowsCatalog(), context);
+                        piece.trx, *this, _replay.RowsCatalog(), context)
+                        .sink;
     for (const auto& chunk : chunks) {
       connector::WriteChunkToSearchSink(*sink, *chunk.rows, *chunk.columns, _id,
                                         context);

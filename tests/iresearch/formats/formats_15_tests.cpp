@@ -118,6 +118,7 @@ class MockPostingsField final : public irs::TermReader {
     return irs::SeekTermIterator::empty();
   }
   void ReadDocs(irs::bytes_view, Acceptor) const final {}
+  void ReadDocs(const irs::PostingMeta&, Acceptor) const final {}
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
   void LookupBatch(size_t, TermAt, FoundTerm) const final {}
   void VisitRange(irs::bytes_view, irs::bytes_view, RangeVisitor) const final {}

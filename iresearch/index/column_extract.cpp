@@ -280,8 +280,7 @@ void ExtractBinding::VariantExtract(const Rows& rows, duckdb::Vector& out_vec,
   const auto& scan_type = _extract_scan_type;
   const bool variant_out = scan_type.id() == duckdb::LogicalTypeId::VARIANT;
   SDB_ASSERT(_leaf_reader->Type().id() == duckdb::LogicalTypeId::VARIANT);
-  const auto& variant_col =
-    static_cast<const irs::VariantColumnReader&>(*_leaf_reader);
+  const auto& column = *_leaf_reader;
   auto& variant_state = *_leaf_state;
   const size_t skip = _variant_skip;
 
@@ -289,8 +288,10 @@ void ExtractBinding::VariantExtract(const Rows& rows, duckdb::Vector& out_vec,
     _extract_path.subspan(std::min<size_t>(skip, _extract_path.size()));
 
   duckdb::LogicalType leaf_type;
-  if (!variant_out && variant_col.CachedUniformShreddedLeaf(
-                        variant_state, remaining, leaf_type)) {
+  if (!variant_out &&
+      column.CachedUniformShreddedLeaf(variant_state, remaining, leaf_type)) {
+    const auto& variant_col =
+      static_cast<const irs::VariantColumnReader&>(column);
     if (at == 0 && n != 0) {
       variant_col.ReleaseLeavesBefore(variant_state,
                                       static_cast<uint64_t>(rows[0]));
@@ -338,8 +339,7 @@ void ExtractBinding::VariantExtract(const Rows& rows, duckdb::Vector& out_vec,
   }
 
   auto& variant = GatherScratch(_variant, VariantType());
-  irs::column_internal::GatherRows(variant_col, variant_state, rows, variant,
-                                   0);
+  irs::column_internal::GatherRows(column, variant_state, rows, variant, 0);
 
   const bool direct_out = variant_out && entire && at == 0;
   auto& extracted =

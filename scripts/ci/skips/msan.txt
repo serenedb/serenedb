@@ -27,6 +27,7 @@ duckdb:core:test/sql/outofcore/out_of_core_sort.test_slow	issue	temporary files 
 duckdb:core:test/sql/pragma/profiling/test_custom_profiling_memory_and_temp_dir.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/profiling/test_spilled_bytes_metric.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/buffer_manager_temp_dir.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:core:test/sql/storage/compression/zstd/zstd_giant_string.test_slow	memory	peaks at 16 GB RSS in dev, before msan shadows every byte, against the 3 GB a batch slot reserves per test; dev runs it
 duckdb:core:test/sql/storage/encryption/temp_files/*	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/evict_unpinned_without_temp_directory.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/external_file_cache/external_file_cache_eviction_queue.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
@@ -59,6 +60,7 @@ duckdb:cpp:Test buffer manager buffer re-use	issue	temporary files hold buffer b
 duckdb:cpp:Test evicted_data not double-decremented for variable-sized blocks	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Test in-memory database initialization argument ""	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Test in-memory database initialization argument ":memory:"	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:httpfs:test/sql/copy/s3/hive_partitioned_write_s3.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:httpfs:test/sql/storage/encryption/temp_files/encrypted_out_of_core.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/parquet/variant/variant_disabled_shredding_nested.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/copy/return_stats.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
@@ -74,6 +76,7 @@ duckdb:core:test/sql/storage/types/variant/test_all_types.test	issue	the VARIANT
 duckdb:core:test/sql/storage/types/variant/test_all_types_single_object.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/types/variant/test_all_types_single_table.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/types/variant/test_all_types_variant.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
+duckdb:iceberg:catalog	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:iceberg:test/sql/local/iceberg_scans/scan_plan_path.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:iceberg:test/sql/local/scan_tasks_execution.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/compression/alp/alp_tpcds.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
@@ -93,10 +96,12 @@ duckdb:core:test/sql/copy/parquet/writer/parquet_write_tpcds.test_slow	slow	take
 duckdb:core:test/sql/copy/partitioned/partitioned_write_tpch.test_slow	slow	takes 3 min under msan; dev runs it
 duckdb:core:test/sql/cte/recursive_cte_aoc2022.test_slow	slow	takes 4 min under msan; dev runs it
 duckdb:core:test/sql/cte/recursive_cte_research.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/function/string/test_string_size_limit.test_slow	slow	takes 4 min and 80 GB under msan; dev runs it
 duckdb:core:test/sql/function/string/test_translate_large.test_slow	slow	takes 10 min under msan; dev runs it
 duckdb:core:test/sql/json/table/read_json_many_files.test_slow	slow	takes 4 min under msan; dev runs it
 duckdb:core:test/sql/json/test_json_struct_projection_pushdown.test_slow	slow	takes 5 min under msan; dev runs it
 duckdb:core:test/sql/merge/merge_into_tpch.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/overflow/deep_plan_passes.test	slow	no result after 27 min under msan, whose 64 MB stacks let it plan 4700 joins; dev runs it
 duckdb:core:test/sql/storage/compression/alp/alp_tpch.test_slow	slow	takes 7 min under msan; dev runs it
 duckdb:core:test/sql/storage/compression/alprd/alprd_tpch.test_slow	slow	takes 7 min under msan; dev runs it
 duckdb:core:test/sql/storage/compression/bitpacking/bitpacking_compression_ratio.test_slow	slow	takes 4 min under msan; dev runs it

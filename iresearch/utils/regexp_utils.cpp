@@ -23,6 +23,12 @@
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
+namespace {
+
+constexpr byte_type kDotAllFlagBytes[] = {'(', '?', 's', ')'};
+constexpr bytes_view kDotAllFlag{kDotAllFlagBytes, std::size(kDotAllFlagBytes)};
+
+}  // namespace
 
 bytes_view UnescapeRegexp(bytes_view in, bstring& out) {
   out.clear();
@@ -47,14 +53,16 @@ bytes_view UnescapeRegexp(bytes_view in, bstring& out) {
   return bytes_view{out.data(), out.size()};
 }
 
-RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
+RegexpType ComputeRegexpType(bytes_view pattern, RegexpSyntax syntax) noexcept {
   if (pattern.empty()) {
     return RegexpType::Literal;
   }
 
+  const bool dot_all =
+    syntax == RegexpSyntax::Perl && pattern.starts_with(kDotAllFlag);
   bool has_escapes = false;
   bool escaped = false;
-  for (size_t i = 0; i < pattern.size(); ++i) {
+  for (size_t i = dot_all ? kDotAllFlag.size() : 0; i < pattern.size(); ++i) {
     if (escaped) {
       escaped = false;
       if (!IsSimpleEscape(pattern[i])) {
@@ -70,15 +78,15 @@ RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
     if (!IsRegexpMeta(pattern[i])) {
       continue;
     }
-    // First unescaped metacharacter: only .* at end is Prefix
-    if (pattern[i] == AsByte(RegexpMeta::kDot) && i + 1 == pattern.size() - 1 &&
+    if (dot_all && pattern[i] == AsByte(RegexpMeta::kDot) &&
+        i + 1 == pattern.size() - 1 &&
         pattern[i + 1] == AsByte(RegexpMeta::kStar)) {
       return has_escapes ? RegexpType::PrefixEscaped : RegexpType::Prefix;
     }
     return RegexpType::Complex;
   }
 
-  if (escaped) {
+  if (escaped || dot_all) {
     return RegexpType::Complex;
   }
 
@@ -86,8 +94,9 @@ RegexpType ComputeRegexpType(bytes_view pattern) noexcept {
 }
 
 bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept {
-  SDB_ASSERT(pattern.size() >= 2);
-  return bytes_view{pattern.data(), pattern.size() - 2};
+  SDB_ASSERT(pattern.size() >= kDotAllFlag.size() + 2);
+  return pattern.substr(kDotAllFlag.size(),
+                        pattern.size() - kDotAllFlag.size() - 2);
 }
 
 }  // namespace irs

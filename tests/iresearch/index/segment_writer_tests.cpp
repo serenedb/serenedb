@@ -334,7 +334,6 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
       ASSERT_TRUE(writer->valid());
       ASSERT_EQ(kStagedDocs, writer->buffered_docs());
     }
-    size_t memory = 0;
     for (irs::doc_id_t i = 0; i < kStagedDocs; ++i) {
       const auto doc = i + irs::doc_limits::min();
       if (!batched) {
@@ -346,12 +345,11 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
                                RawField{value});
       ASSERT_TRUE(writer->valid());
       writer->commit();
-      ASSERT_LE(memory, writer->memory_active());
-      memory = writer->memory_active();
+      ASSERT_LT(0u, writer->GetColWriter()->StagedBytes());
+      ASSERT_LE(writer->GetColWriter()->StagedBytes(),
+                writer->memory_active());
     }
     ASSERT_EQ(kStagedDocs, writer->buffered_docs());
-    EXPECT_LT(0u, writer->GetColWriter()->StagedBytes());
-    EXPECT_LE(writer->GetColWriter()->StagedBytes(), writer->memory_active());
     writer->reset();
     ASSERT_EQ(0u, writer->memory_active());
   }

@@ -1,0 +1,36 @@
+# GFM and plain Markdown parses running at the same time do not change each
+# other's special characters: every GFM parse keeps its strikethrough.
+
+connection gfm1
+query async
+SELECT count(*) AS bad FROM range(20000) t(i)
+WHERE md_to_html('~~x' || i || '~~ y') NOT LIKE '%<del>x' || i || '</del>%';
+----
+bad
+0
+
+connection plain1
+query async
+SELECT count(*) AS bad FROM range(20000) t(i)
+WHERE md_to_text('a ~~b' || i || '~~ c') NOT LIKE '%~~b' || i || '~~%';
+----
+bad
+0
+
+connection gfm2
+query async
+SELECT count(*) AS bad FROM range(20000) t(i)
+WHERE md_to_html('w ~~z' || i || '~~') NOT LIKE '%<del>z' || i || '</del>%';
+----
+bad
+0
+
+connection plain2
+query async
+SELECT count(*) AS bad FROM range(20000) t(i)
+WHERE md_to_text('*e' || i || '* ~f~') NOT LIKE '%e' || i || '%';
+----
+bad
+0
+
+wait

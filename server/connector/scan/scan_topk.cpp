@@ -56,7 +56,8 @@ void CollectUnit(ScanGlobalState& g, TopKLocalState& l) {
       {.scorer = *g.scorer_obj,
        .fetcher = l.score_fetcher,
        .table = table,
-       .prune = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
+       .prune = true,
+       .bounds = g.prune_scorer != nullptr && g.stats_scorer == g.prune_scorer,
        .k = static_cast<uint32_t>(l.hit_slice.size()),
        .span = g.UnitSpan(unit)});
     EnsurePlanned(plan != nullptr);
@@ -101,39 +102,23 @@ void Merge(ScanGlobalState& g) {
   PlanFetch(g);
 }
 
-bool FetchedColumn(const ScanGlobalState& g, duckdb::idx_t col) noexcept {
-  return !g.needs_lookup ||
-         g.lookup_projected_columns[col] == duckdb::DConstants::INVALID_INDEX;
-}
-
-bool ProducedColumn(const ScanGlobalState& g, const FetchLocalState& f,
-                    duckdb::idx_t col) noexcept {
-  if (col == g.score_output_idx || col == g.tableoid_output_idx ||
-      col == g.doc_address_output_idx) {
-    return true;
-  }
-  if (absl::c_any_of(f.offsets_entries,
-                     [col](const auto& e) { return e.output_idx == col; })) {
-    return true;
-  }
-  return absl::c_any_of(g.cs_projections,
-                        [col](const auto& p) { return p.output_slot == col; });
-}
-
-void CopyFetched(const ScanGlobalState& g, const FetchLocalState& f,
-                 const duckdb::DataChunk& from, duckdb::DataChunk& into,
-                 duckdb::idx_t count, duckdb::idx_t offset) {
+void CopyFetched(const ScanGlobalState& g, const duckdb::DataChunk& from,
+                 duckdb::DataChunk& into, duckdb::idx_t count,
+                 duckdb::idx_t offset) {
+  SDB_ASSERT(g.fetched_copy.size() == from.ColumnCount());
   for (duckdb::idx_t c = 0; c < from.ColumnCount(); ++c) {
-    if (!FetchedColumn(g, c)) {
-      continue;
+    switch (g.fetched_copy[c]) {
+      case FetchedCopy::Skip:
+        break;
+      case FetchedCopy::Null:
+        into.data[c].SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+        duckdb::ConstantVector::SetNull(into.data[c], true);
+        break;
+      case FetchedCopy::Copy:
+        duckdb::VectorOperations::Copy(from.data[c], into.data[c], count, 0,
+                                       offset);
+        break;
     }
-    if (!ProducedColumn(g, f, c)) {
-      into.data[c].SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
-      duckdb::ConstantVector::SetNull(into.data[c], true);
-      continue;
-    }
-    duckdb::VectorOperations::Copy(from.data[c], into.data[c], count, 0,
-                                   offset);
   }
   into.SetChildCardinality(offset + count);
 }
@@ -148,7 +133,7 @@ void AppendBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     return;
   }
   SDB_ASSERT(appended + count <= capacity);
-  CopyFetched(g, l, tmp, into, count, appended);
+  CopyFetched(g, tmp, into, count, appended);
   if (g.needs_lookup) {
     SDB_ASSERT(l.pk_column != nullptr);
     if (!pk) {
@@ -271,7 +256,7 @@ void MaterializeHits(duckdb::ClientContext& ctx, const ScanGlobalState& g,
                      duckdb::DataChunk& batch,
                      std::vector<irs::ScoreDoc>& row_hits) {
   batch.Reset();
-  CopyFetched(g, l, fetched, batch, hits.size(), 0);
+  CopyFetched(g, fetched, batch, hits.size(), 0);
   const auto rows = l.index_source->Materialize(ctx, pk, hits.size(), batch);
   const auto survivors = l.index_source->Survivors();
   for (duckdb::idx_t i = 0; i < rows; ++i) {
@@ -445,12 +430,11 @@ void InitTopKGlobal(ScanGlobalState& g, duckdb::ClientContext& /*context*/) {
   }
 }
 
-void InitTopKLocal(ScanGlobalState& g, TopKLocalState& l,
-                   duckdb::TableFunctionInitInput& input) {
+void InitTopKLocal(ScanGlobalState& g, TopKLocalState& l) {
   SDB_ASSERT(l.worker < g.workers);
   l.hit_slice = std::span<irs::ScoreDoc>{g.topk.hits}.subspan(
     size_t{l.worker} * g.topk.pool, g.topk.pool);
-  BuildOffsetsEntries(l, input, g.Bind());
+  l.BindOffsets(g);
 }
 
 void RunTopKScan(duckdb::ClientContext& ctx, duckdb::TableFunctionInput& input,

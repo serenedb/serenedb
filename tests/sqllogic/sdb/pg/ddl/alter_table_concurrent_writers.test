@@ -1,0 +1,92 @@
+# ALTER TABLE does not wait for the other transactions that wrote the table:
+# they fail at COMMIT instead, so two transactions that alter each other's
+# written tables never wait for each other.
+
+statement ok
+CREATE TABLE atcw_a (a INT);
+
+statement ok
+CREATE TABLE atcw_b (a INT);
+
+connection atcw_one
+statement ok
+BEGIN;
+
+connection atcw_one
+statement ok
+INSERT INTO atcw_a VALUES (1);
+
+connection atcw_two
+statement ok
+BEGIN;
+
+connection atcw_two
+statement ok
+INSERT INTO atcw_b VALUES (2);
+
+connection atcw_one
+statement ok
+ALTER TABLE atcw_b ADD COLUMN c INT;
+
+connection atcw_two
+statement ok
+ALTER TABLE atcw_a ADD COLUMN c INT;
+
+connection atcw_one
+statement error
+COMMIT;
+----
+db error: ERROR: table "atcw_a" was altered by a concurrent transaction
+HINT: Retry the transaction.
+
+
+connection atcw_two
+statement ok
+COMMIT;
+
+query
+SELECT table_name, column_name FROM information_schema.columns
+WHERE table_name IN ('atcw_a', 'atcw_b') ORDER BY table_name, column_name;
+----
+table_name	column_name
+atcw_a	a
+atcw_a	c
+atcw_b	a
+
+query
+SELECT (SELECT count(*) FROM atcw_a) AS a, (SELECT count(*) FROM atcw_b) AS b;
+----
+a	b
+0	1
+
+connection atcw_one
+statement ok
+BEGIN;
+
+connection atcw_one
+statement ok
+INSERT INTO atcw_b VALUES (3);
+
+connection atcw_two
+statement ok
+ALTER TABLE atcw_b ADD COLUMN d INT;
+
+connection atcw_one
+statement error
+COMMIT;
+----
+db error: ERROR: table "atcw_b" was altered by a concurrent transaction
+HINT: Retry the transaction.
+
+
+query
+SELECT a, d FROM atcw_b ORDER BY a;
+----
+a	d
+2	NULL
+
+statement ok
+DROP TABLE atcw_a;
+
+statement ok
+DROP TABLE atcw_b;

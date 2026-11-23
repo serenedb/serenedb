@@ -38,6 +38,7 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "connector/column_id.h"
 #include "search/hot_keys.h"
 #include "search/key_spec.h"
 #include "search/table.h"
@@ -76,16 +77,14 @@ KeySpec UniqueIndexKey(const catalog::SearchTableEntry& table,
                        irs::field_id field, std::string name,
                        std::span<const UniqueIndexPart> parts);
 
-// The unique key `key` of `table` if it is an index's, committed or not: a
-// table's store writes and checks the key from the start of the index's
-// build.
 std::optional<KeySpec> IndexKeySpec(const catalog::SearchTableEntry& table,
                                     const catalog::ConstraintKey& key,
                                     duckdb::CatalogTransaction transaction);
 
-// Refuses rows of `reader` sharing unique key `spec`, as a new index on it.
-void VerifyUniqueKey(duckdb::ClientContext& context,
-                     const irs::DirectoryReader& reader, const KeySpec& spec);
+std::vector<irs::field_id> ConflictArbiters(
+  const catalog::SearchTableEntry& table,
+  std::span<const connector::ColumnId> target,
+  duckdb::CatalogTransaction transaction);
 
 // Whether a row is gone: deleted by a commit, or removed by the transaction
 // asking.
@@ -125,12 +124,17 @@ class KeyProbe {
   void Add(const Segment& segment);
   void Add(const Hot& hot) { _hots.push_back(hot); }
   void AddLive(const LiveUnits& live, const LiveUnits* since = nullptr);
+  void AddLive(const LiveUnits& live,
+               absl::FunctionRef<bool(uint64_t unit)> skip);
 
   bool Empty() const noexcept { return _segments.empty() && _hots.empty(); }
 
   // Visits the live rows holding `key` until `visit` returns false.
   void ForEach(std::string_view key,
                absl::FunctionRef<bool(const KeyHolder&)> visit) const;
+  void ForEachSorted(
+    std::span<const std::string_view> keys, std::vector<uint32_t>& rest,
+    absl::FunctionRef<void(size_t index, const KeyHolder& holder)> visit) const;
   bool Exists(std::string_view key) const;
 
  private:
@@ -163,6 +167,6 @@ uint64_t SegmentKeyCount(std::span<const KeyProbe::Segment> segments,
 
 std::vector<std::string> SplitSegmentKeys(
   std::span<const KeyProbe::Segment> segments, irs::field_id field,
-  std::span<const std::string> keys, size_t parts);
+  std::span<const duckdb::string_t> keys, size_t parts);
 
 }  // namespace sdb::search

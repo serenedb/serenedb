@@ -17,6 +17,8 @@ as well as support for regular expressions via functions.
 
 SereneDB uses the [RE2 library](https://github.com/google/re2) as its regular expression engine. For the regular expression syntax, see the [RE2 docs](https://github.com/google/re2/wiki/Syntax).
 
+A pattern that is not valid RE2 syntax, or is too large to compile, fails the query with `invalid regular expression: …` and SQLSTATE `2201B`, whether the pattern is a constant or comes from a column.
+
 ## Functions
 
 All functions accept an optional set of [options](#options-for-regular-expression-functions).
@@ -77,13 +79,13 @@ If `string` contains the regexp `pattern`, replaces the matching part with `repl
 
 #### `regexp_split_to_array(string, regex[, options])`
 
-Alias of `string_split_regex`. Splits the `string` along the `regex`. A set of optional [`options`](#options-for-regular-expression-functions) can be set.
+Alias of `string_split_regex`. Splits the `string` along the `regex`. A set of optional [`options`](#options-for-regular-expression-functions) can be set. A match of zero length at the start or the end of `string`, or right after the previous match, does not split it: `regexp_split_to_array('axb', 'x*')` is `{a,b}`.
 
 <SqlLogicTest id="sql/functions/regular_expressions/regexp_split_to_array" />
 
 #### `regexp_split_to_table(string, regex[, options])`
 
-Splits the `string` along the `regex` and returns a row for each part. A set of optional [`options`](#options-for-regular-expression-functions) can be set.
+Splits the `string` along the `regex` and returns a row for each part, skipping the same zero-length matches as `regexp_split_to_array`. A set of optional [`options`](#options-for-regular-expression-functions) can be set.
 
 <SqlLogicTest id="sql/functions/regular_expressions/regexp_split_to_table" />
 
@@ -121,7 +123,7 @@ The `regexp_matches` operator will be optimized to the `LIKE` operator when poss
 
 ### Using `regexp_replace`
 
-The `regexp_replace` function can be used to replace the part of a string that matches the regexp pattern with a replacement string. The notation `\d` (where `d` is a number indicating the group) can be used to refer to groups captured in the regular expression in the replacement string. Note that by default, `regexp_replace` only replaces the first occurrence of the regular expression. To replace all occurrences, use the global replace (`g`) flag.
+The `regexp_replace` function can be used to replace the part of a string that matches the regexp pattern with a replacement string. In the replacement, `\1` to `\9` insert the text a capturing group matched, or nothing when the pattern has no such group, `\&` inserts the whole match and `\\` a backslash; any other backslash, `\0` included, stays as written. Note that by default, `regexp_replace` only replaces the first occurrence of the regular expression. To replace all occurrences, use the global replace (`g`) flag.
 
 Some examples for using `regexp_replace`:
 

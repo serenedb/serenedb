@@ -195,8 +195,41 @@ statement ok
 CREATE TYPE ddl_misc_enum AS ENUM ('a','b');
 
 # ddl_misc: Triggers
-statement error
+statement ok
+CREATE TABLE ddl_misc_trg (a INT);
+
+statement ok
+CREATE TABLE ddl_misc_trg_log (what TEXT);
+
+statement error syntax error at or near "EXECUTE"
 CREATE TRIGGER ddl_misc_t1 BEFORE INSERT ON ddl_misc_trg FOR EACH ROW EXECUTE FUNCTION ddl_misc_fn();
+
+statement ok
+CREATE TRIGGER ddl_misc_t2 AFTER INSERT ON ddl_misc_trg FOR EACH ROW INSERT INTO ddl_misc_trg_log VALUES ('row ' || NEW.a);
+
+statement error Mixing FOR EACH STATEMENT and FOR EACH ROW triggers on the same table
+CREATE TRIGGER ddl_misc_t3 AFTER INSERT ON ddl_misc_trg FOR EACH STATEMENT INSERT INTO ddl_misc_trg_log VALUES ('statement');
+
+statement ok
+CREATE TABLE ddl_misc_trg_stmt (a INT);
+
+statement ok
+CREATE TRIGGER ddl_misc_t4 AFTER INSERT ON ddl_misc_trg_stmt REFERENCING NEW TABLE AS added FOR EACH STATEMENT INSERT INTO ddl_misc_trg_log SELECT 'table ' || count(*) FROM ddl_misc_trg_stmt UNION ALL SELECT 'new ' || count(*) FROM added;
+
+statement ok
+INSERT INTO ddl_misc_trg VALUES (1), (2);
+
+statement ok
+INSERT INTO ddl_misc_trg_stmt VALUES (1), (2);
+
+query
+SELECT what FROM ddl_misc_trg_log ORDER BY what;
+----
+what
+new 2
+row 1
+row 2
+table 0
 
 # ddl_misc: Prepared Statements
 statement ok

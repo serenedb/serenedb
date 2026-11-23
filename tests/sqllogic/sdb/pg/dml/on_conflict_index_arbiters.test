@@ -1,0 +1,179 @@
+statement ok
+CREATE TABLE ocia_t (id INT PRIMARY KEY, x INT)
+
+statement ok
+INSERT INTO ocia_t VALUES (1, 10)
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE UNIQUE INDEX ocia_t_x ON ocia_t (x)
+
+connection b
+statement error
+INSERT INTO ocia_t VALUES (4, 10) ON CONFLICT (x) DO UPDATE SET id = 99
+----
+db error: ERROR: The specified columns as conflict target are not referenced by a UNIQUE/PRIMARY KEY CONSTRAINT or INDEX
+
+
+connection b
+statement ok
+INSERT INTO ocia_t VALUES (2, 10) ON CONFLICT DO NOTHING
+
+connection b
+statement ok
+INSERT INTO ocia_t VALUES (3, 10)
+
+connection a
+statement ok
+ROLLBACK
+
+query
+SELECT id, x FROM ocia_t ORDER BY id
+----
+id	x
+1	10
+2	10
+3	10
+
+statement ok
+DELETE FROM ocia_t WHERE id > 1
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE UNIQUE INDEX ocia_t_x ON ocia_t (x)
+
+connection b
+statement ok
+INSERT INTO ocia_t VALUES (2, 10), (3, 20)
+
+connection a
+statement error
+COMMIT
+----
+db error: ERROR: could not create unique index "ocia_t_x"
+DETAIL: Key (x)=(10) is duplicated.
+
+
+query
+SELECT count(*) AS indexes FROM pg_class WHERE relname = 'ocia_t_x'
+----
+indexes
+0
+
+statement ok
+DELETE FROM ocia_t WHERE id > 1
+
+connection b
+statement ok
+BEGIN
+
+connection b
+statement ok
+INSERT INTO ocia_t VALUES (4, 40)
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE UNIQUE INDEX ocia_t_x ON ocia_t (x)
+
+connection b
+statement ok
+INSERT INTO ocia_t VALUES (2, 10), (3, 20)
+
+connection a
+statement ok
+COMMIT
+
+connection b
+statement error
+COMMIT
+----
+db error: ERROR: duplicate key value violates unique constraint "ocia_t_x"
+DETAIL: Key (x)=(10) already exists.
+
+
+connection b
+statement ok
+INSERT INTO ocia_t VALUES (3, 20)
+
+statement error
+INSERT INTO ocia_t VALUES (5, 20)
+----
+db error: ERROR: duplicate key value violates unique constraint "ocia_t_x"
+DETAIL: Key (x)=(20) already exists.
+
+
+statement ok
+DROP INDEX ocia_t_x
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE UNIQUE INDEX ocia_t_x ON ocia_t (x)
+
+connection b
+statement ok
+UPDATE ocia_t SET id = 2 WHERE id = 1
+
+connection a
+statement ok
+COMMIT
+
+query
+SELECT id, x FROM ocia_t ORDER BY id
+----
+id	x
+2	10
+3	20
+
+statement ok
+CREATE TABLE ocia_u (id INT PRIMARY KEY, team INT, email TEXT)
+
+statement ok
+CREATE UNIQUE INDEX ocia_u_team_email ON ocia_u (team, lower(email))
+
+statement ok
+INSERT INTO ocia_u VALUES (1, 1, 'a@x')
+
+statement ok
+INSERT INTO ocia_u VALUES (2, 1, 'b@x') ON CONFLICT DO NOTHING
+
+statement error
+INSERT INTO ocia_u VALUES (3, 1, 'c@x') ON CONFLICT (team) DO UPDATE SET email = excluded.email
+----
+db error: ERROR: The specified columns as conflict target are not referenced by a UNIQUE/PRIMARY KEY CONSTRAINT or INDEX
+
+
+statement error
+INSERT INTO ocia_u VALUES (4, 1, 'A@X')
+----
+db error: ERROR: duplicate key value violates unique constraint "ocia_u_team_email"
+DETAIL: Key (team, lower(email))=(1, a@x) already exists.
+
+
+query
+SELECT id, team, email FROM ocia_u ORDER BY id
+----
+id	team	email
+1	1	a@x
+2	1	b@x
+
+statement ok
+DROP TABLE ocia_u
+
+statement ok
+DROP TABLE ocia_t

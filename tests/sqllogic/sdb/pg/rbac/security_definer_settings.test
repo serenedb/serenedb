@@ -60,6 +60,59 @@ t
 
 
 statement ok
+SET ROLE sdset_owner;
+
+
+statement ok
+CREATE FUNCTION sdset_s.quiet_progress() RETURNS text LANGUAGE sql SECURITY DEFINER
+AS 'SELECT set_config(''enable_progress_bar_print'', ''false'', false)';
+
+
+statement ok
+CREATE FUNCTION sdset_s.profile_to_file() RETURNS TABLE (success boolean) LANGUAGE sql SECURITY DEFINER
+AS 'SELECT * FROM enable_profiling(format = ''json'', save_location = ''sdset_profile.json'')';
+
+
+statement ok
+RESET ROLE;
+
+
+statement error
+SELECT sdset_s.quiet_progress();
+----
+db error: ERROR: permission denied to set parameter "enable_progress_bar_print"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+statement error
+SELECT * FROM sdset_s.profile_to_file();
+----
+db error: ERROR: permission denied to set parameter "profiling_output"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+statement ok
+CREATE FUNCTION sdset_s.quiet_progress_as_superuser() RETURNS text LANGUAGE sql SECURITY DEFINER
+AS 'SELECT set_config(''enable_progress_bar_print'', ''false'', false)';
+
+
+connection c_caller user=sdset_caller password=sdset_pw
+statement error
+SELECT set_config('enable_progress_bar_print', 'false', false);
+----
+db error: ERROR: permission denied to set parameter "enable_progress_bar_print"
+DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
+
+
+connection c_caller user=sdset_caller password=sdset_pw
+query
+SELECT sdset_s.quiet_progress_as_superuser() AS value;
+----
+value
+off
+
+
+statement ok
 DROP SCHEMA sdset_s CASCADE;
 
 

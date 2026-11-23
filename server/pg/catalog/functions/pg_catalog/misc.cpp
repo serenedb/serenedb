@@ -616,6 +616,7 @@ template<bool kSecurityDefinerBody>
 void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        duckdb::Vector& result) {
   auto& context = state.GetContext();
+  const auto caller = CallerAccess(state);
   duckdb::TernaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool,
                                    duckdb::string_t>(
     args.data[0], args.data[1], args.data[2], result, args.size(),
@@ -634,7 +635,7 @@ void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       duckdb::PhysicalSet::SetVariable(
         context, setting,
         is_local ? duckdb::SetScope::LOCAL : duckdb::SetScope::AUTOMATIC,
-        duckdb::Value{value});
+        duckdb::Value{value}, true, &caller);
       duckdb::Value current;
       const bool ok = context.TryGetCurrentSetting(setting, current);
       SDB_ASSERT(ok);

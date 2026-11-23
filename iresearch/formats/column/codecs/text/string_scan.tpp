@@ -407,9 +407,11 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   if (count == 1) {
     const auto at = result_offset + result_sel.get_index(0);
     const auto entry = fetch.ReadOne(base, rows[0]);
-    if (Scan::kShape == Shape::Dictionary && entry == 0) {
-      duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
-      return;
+    if constexpr (Scan::kShape == Shape::Dictionary) {
+      if (entry == 0) {
+        duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
+        return;
+      }
     }
     if constexpr (kDecodesWhole) {
       if (!frames.decoded && fetch.Whole()) {

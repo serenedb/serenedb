@@ -213,13 +213,11 @@ duckdb::ErrorData RunQuery(JobState& state, const JobDefinition& job,
      .role = job.owner,
      .database = database->GetName().GetIdentifierName(),
      .database_id = database->oid,
-     .temporary = temporary},
+     .temporary = temporary,
+     .caller = caller ? &ConnectionContext::Get(*caller) : nullptr},
     {.what = "job", .name = job.name.GetIdentifierName()}};
   ConnectionContext::Get(*connection.conn->context).job_depth = depth;
   context = connection.conn->context;
-  if (caller) {
-    caller->SetCallee(context);
-  }
   if (!temporary && !job.schema->parent) {
     context->client_data->catalog_search_path->Set(
       {duckdb::CatalogSearchEntry{database->GetName(), job.schema->Name()}},

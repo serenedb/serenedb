@@ -215,82 +215,17 @@ void WrapScoreRefsWithEmit(duckdb::unique_ptr<duckdb::Expression>& expr,
     });
 }
 
-struct ScoreBound {
-  duckdb::ExpressionType type;
-  const duckdb::Expression* bound;
-};
-
-std::optional<ScoreBound> ScoreBoundOf(const duckdb::Expression& expr) {
-  if (!duckdb::BoundComparisonExpression::IsComparison(expr)) {
-    return std::nullopt;
-  }
-  const auto is_score = [](const duckdb::Expression* side) {
-    while (duckdb::BoundCastExpression::IsCast(*side)) {
-      const auto& child = duckdb::BoundCastExpression::Child(
-        side->Cast<duckdb::BoundFunctionExpression>());
-      if (side->GetReturnType().id() != duckdb::LogicalTypeId::DOUBLE ||
-          child.GetReturnType().id() != duckdb::LogicalTypeId::FLOAT) {
-        return false;
-      }
-      side = &child;
-    }
-    return side->GetExpressionClass() == duckdb::ExpressionClass::BOUND_REF;
-  };
-  const auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
-  const auto& left = duckdb::BoundComparisonExpression::Left(cmp);
-  const auto& right = duckdb::BoundComparisonExpression::Right(cmp);
-  if (is_score(&left) && right.IsScalar()) {
-    return ScoreBound{.type = expr.GetExpressionType(), .bound = &right};
-  }
-  if (is_score(&right) && left.IsScalar()) {
-    return ScoreBound{
-      .type = duckdb::FlipComparisonExpression(expr.GetExpressionType()),
-      .bound = &left};
-  }
-  return std::nullopt;
-}
-
-bool KeepsBestScores(const duckdb::Expression& expr, duckdb::OrderType order) {
-  if (expr.GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONJUNCTION) {
-    return expr.GetExpressionType() ==
-             duckdb::ExpressionType::CONJUNCTION_AND &&
-           absl::c_all_of(
-             expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren(),
-             [&](const duckdb::unique_ptr<duckdb::Expression>& child) {
-               return KeepsBestScores(*child, order);
-             });
-  }
-  const auto bound = ScoreBoundOf(expr);
-  if (!bound) {
-    return false;
-  }
-  switch (bound->type) {
-    case duckdb::ExpressionType::COMPARE_LESSTHAN:
-    case duckdb::ExpressionType::COMPARE_LESSTHANOREQUALTO:
-      return order == duckdb::OrderType::ASCENDING;
-    case duckdb::ExpressionType::COMPARE_GREATERTHAN:
-    case duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO:
-      return order == duckdb::OrderType::DESCENDING;
-    default:
-      return false;
-  }
-}
-
 void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
                       const duckdb::TableFilterSet& filters) {
   const auto score_emit = bind_data.score.vector
                             ? bind_data.score.vector->score_emit
                             : ScoreEmit::Identity;
-  const auto score_order = bind_data.score.vector
-                             ? bind_data.score.vector->natural_order
-                             : duckdb::OrderType::DESCENDING;
   const auto push_score_filter = [&](const duckdb::TableFilter& filter) {
-    const auto& expr =
-      *duckdb::ExpressionFilter::GetExpressionFilter(filter, "BuildTableFilter")
-         .expr;
     const duckdb::TableFilter* pushed = &filter;
     if (score_emit != ScoreEmit::Identity) {
-      auto adjusted = expr.Copy();
+      auto adjusted = duckdb::ExpressionFilter::GetExpressionFilter(
+                        filter, "BuildTableFilter")
+                        .expr->Copy();
       WrapScoreRefsWithEmit(adjusted, score_emit);
       auto owned =
         duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(adjusted));
@@ -298,10 +233,7 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
       state.emit_score_filters.push_back(std::move(owned));
     }
     state.col_filters.push_back(
-      {.field = 0,
-       .filter = pushed,
-       .is_score = true,
-       .keeps_best = KeepsBestScores(expr, score_order)});
+      {.field = 0, .filter = pushed, .is_score = true});
     if (auto dyn =
           duckdb::ExpressionFilter::GetOptionalDynamicFilterData(*pushed)) {
       state.score_dynamic_filter = std::move(dyn);
@@ -516,16 +448,35 @@ float StaticScoreFloor(const duckdb::Expression& expr, bool& exact) {
     exact = all_exact;
     return floor;
   }
-  const auto bound = ScoreBoundOf(expr);
-  if (!bound ||
-      (bound->type != duckdb::ExpressionType::COMPARE_GREATERTHAN &&
-       bound->type != duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) ||
-      bound->bound->GetExpressionClass() !=
-        duckdb::ExpressionClass::BOUND_CONSTANT) {
+  if (!duckdb::BoundComparisonExpression::IsComparison(expr)) {
     return kNone;
   }
-  const auto& val =
-    bound->bound->Cast<duckdb::BoundConstantExpression>().GetValue();
+  const auto& cmp = expr.Cast<duckdb::BoundFunctionExpression>();
+  const auto* ref = &duckdb::BoundComparisonExpression::Left(cmp);
+  const auto* cst = &duckdb::BoundComparisonExpression::Right(cmp);
+  auto type = expr.GetExpressionType();
+  if (ref->GetExpressionClass() == duckdb::ExpressionClass::BOUND_CONSTANT) {
+    std::swap(ref, cst);
+    type = duckdb::FlipComparisonExpression(type);
+  }
+  if (type != duckdb::ExpressionType::COMPARE_GREATERTHAN &&
+      type != duckdb::ExpressionType::COMPARE_GREATERTHANOREQUALTO) {
+    return kNone;
+  }
+  while (duckdb::BoundCastExpression::IsCast(*ref)) {
+    const auto& child = duckdb::BoundCastExpression::Child(
+      ref->Cast<duckdb::BoundFunctionExpression>());
+    if (ref->GetReturnType().id() != duckdb::LogicalTypeId::DOUBLE ||
+        child.GetReturnType().id() != duckdb::LogicalTypeId::FLOAT) {
+      return kNone;
+    }
+    ref = &child;
+  }
+  if (ref->GetExpressionClass() != duckdb::ExpressionClass::BOUND_REF ||
+      cst->GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
+    return kNone;
+  }
+  const auto& val = cst->Cast<duckdb::BoundConstantExpression>().GetValue();
   if (val.IsNull() || !val.type().IsNumeric()) {
     return kNone;
   }
@@ -533,8 +484,7 @@ float StaticScoreFloor(const duckdb::Expression& expr, bool& exact) {
   if (std::isnan(c)) {
     return kNone;
   }
-  const bool strict =
-    bound->type == duckdb::ExpressionType::COMPARE_GREATERTHAN;
+  const bool strict = type == duckdb::ExpressionType::COMPARE_GREATERTHAN;
   float t = static_cast<float>(c);
   if (strict ? static_cast<double>(t) > c : static_cast<double>(t) >= c) {
     t = std::nextafterf(t, kNone);

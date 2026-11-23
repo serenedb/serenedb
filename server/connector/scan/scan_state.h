@@ -287,7 +287,6 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
     irs::field_id field;
     const duckdb::TableFilter* filter;
     bool is_score = false;
-    bool keeps_best = false;
     bool is_dynamic = false;
     bool optional = false;
     bool row_gather = false;

@@ -76,21 +76,25 @@ score_t AbsorbedOf(const BooleanQuery::Clauses& clauses,
                    const SubReader& segment, ScoreMergeType merge,
                    ColumnArgsFetcher& fetcher) {
   score_t out = 0;
+  bool any = false;
   for (const auto occur : {Occur::Must, Occur::Should}) {
     for (const auto& clause : clauses[OccurIndex(occur)].all_docs) {
       const auto& record = clause.stats;
       if (record.stats == nullptr) {
         continue;
       }
-      MergeBoost(out,
-                 detail::AllDocsScore(segment,
-                                      detail::ScoreArgs{
-                                        .scorer = record.scorer,
-                                        .stats = record.stats,
-                                        .fetcher = &fetcher,
-                                        .boost = clause.boost,
-                                      }),
-                 merge);
+      const auto one = detail::AllDocsScore(segment, detail::ScoreArgs{
+                                                       .scorer = record.scorer,
+                                                       .stats = record.stats,
+                                                       .fetcher = &fetcher,
+                                                       .boost = clause.boost,
+                                                     });
+      if (!any) {
+        any = true;
+        out = one;
+        continue;
+      }
+      MergeBoost(out, one, merge);
     }
   }
   return out;

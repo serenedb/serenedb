@@ -34,7 +34,6 @@ template<ScoreMergeType Inner, bool HasConst>
 class ConjunctionScore
   : public ScoreOperatorOf<ConjunctionScore<Inner, HasConst>, false> {
   static_assert(Inner != ScoreMergeType::Noop);
-  static constexpr bool kStarts = HasConst || Inner == ScoreMergeType::Max;
 
  public:
   ConjunctionScore(std::vector<ScoreFunction>&& children,
@@ -44,16 +43,19 @@ class ConjunctionScore
                   slot = std::move(children[i]);
                 }},
       _constant{constant} {
-    SDB_ASSERT(kStarts ? !_children.empty() : _children.size() > 1);
+    SDB_ASSERT(HasConst ? !_children.empty() : _children.size() > 1);
   }
 
   score_t ScoreOne() const noexcept {
     auto child = _children.begin();
     const auto end = _children.end();
 
-    auto res = kStarts ? Start() : (child++)->Score();
-    for (; child != end; ++child) {
+    auto res = child->Score();
+    for (++child; child != end; ++child) {
       irs::Merge<Inner>(res, child->Score());
+    }
+    if constexpr (HasConst) {
+      irs::Merge<Inner>(res, _constant);
     }
     return res;
   }
@@ -87,27 +89,17 @@ class ConjunctionScore
     auto child = _children.begin();
     const auto end = _children.end();
 
-    if constexpr (Into == Inner) {
-      if constexpr (HasConst) {
-        for (scores_size_t i = 0; i != n; ++i) {
-          irs::Merge<Inner>(dst[i], _constant);
-        }
+    if constexpr (!HasConst) {
+      ScoreChild<Into, Block>(*child++, dst, n);
+    } else if constexpr (Into == Inner) {
+      for (scores_size_t i = 0; i != n; ++i) {
+        irs::Merge<Inner>(dst[i], _constant);
       }
-    } else if constexpr (kStarts) {
-      std::fill_n(dst, n, Start());
     } else {
-      ScoreChild<ScoreMergeType::Noop, Block>(*child++, dst, n);
+      std::fill_n(dst, n, _constant);
     }
     for (; child != end; ++child) {
       ScoreChild<Inner, Block>(*child, dst, n);
-    }
-  }
-
-  score_t Start() const noexcept {
-    if constexpr (HasConst) {
-      return _constant;
-    } else {
-      return 0;
     }
   }
 
@@ -140,7 +132,7 @@ ScoreFunction MakeConjunctionScore(ScoreMergeType inner,
     return constant != 0 ? ScoreFunction::Constant(constant)
                          : ScoreFunction::Default();
   }
-  if (constant == 0 && children.size() == 1 && inner == ScoreMergeType::Sum) {
+  if (constant == 0 && children.size() == 1) {
     return std::move(children.front());
   }
   return Resolve(constant != 0, [&]<bool HasConst> {

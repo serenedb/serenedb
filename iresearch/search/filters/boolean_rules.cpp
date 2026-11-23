@@ -863,9 +863,6 @@ bool OrAcceptorFusionRule::Apply(Filter::ptr& slot,
     return false;
   }
   const bool scores = !ScoreIsIgnored(node, ctx);
-  if (scores && node.MergeType() == ScoreMergeType::Sum) {
-    return false;
-  }
   const auto terms = node.Terms(Occur::Should);
   const auto filters = node.Filters(Occur::Should);
 

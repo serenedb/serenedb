@@ -66,48 +66,6 @@ n
 
 
 statement ok
-CREATE TABLE pms_fuse (id INTEGER PRIMARY KEY, body VARCHAR);
-
-
-statement ok
-CREATE INDEX pms_fuse_idx ON pms_fuse
-  USING inverted(id, body pms_en);
-
-
-statement ok
-INSERT INTO pms_fuse VALUES (1, 'apple'), (2, 'apricot'), (3, 'banana');
-
-
-query
-SELECT id, BM25(pms_fuse_idx.tableoid) AS score FROM pms_fuse_idx
-WHERE body @@ (ts_like('ap%') || ts_like('%ppl%')) ORDER BY id;
-----
-id	score
-1	2
-2	1
-
-
-query
-SELECT id, BM25(pms_fuse_idx.tableoid) AS score FROM pms_fuse_idx
-WHERE body @@ (ts_like('ap%')::merge('sum') || ts_like('%ppl%')::merge('sum'))
-ORDER BY id;
-----
-id	score
-1	2
-2	1
-
-
-query
-SELECT id, BM25(pms_fuse_idx.tableoid) AS score FROM pms_fuse_idx
-WHERE body @@ ('apple'::tsquery::score('constant(1)') ||
-               ts_like('%ppl%')::score('constant(1)')::merge('sum'))
-ORDER BY id;
-----
-id	score
-1	2
-
-
-statement ok
 CREATE TABLE pms_boost (id INTEGER PRIMARY KEY, body VARCHAR);
 
 

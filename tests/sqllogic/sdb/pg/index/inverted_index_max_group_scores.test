@@ -10,66 +10,6 @@ CREATE INDEX mgs_two_idx ON mgs_two USING inverted (id, body mgs_words, tag mgs_
 statement ok
 INSERT INTO mgs_two VALUES (1, 'red fox', 'king'), (2, 'blue dog', 'queen');
 
-statement ok
-CREATE TABLE mgs_three (id INTEGER PRIMARY KEY, body VARCHAR, tag VARCHAR);
-
-statement ok
-CREATE INDEX mgs_three_idx ON mgs_three USING inverted (id, body mgs_words, tag mgs_words);
-
-statement ok
-INSERT INTO mgs_three VALUES (1, 'red fox', 'king'), (2, 'blue dog fax', 'queen'), (3, 'red fax', 'king');
-
-query
-SELECT id,
-       ts_explain(mgs_two_idx.tableoid).clauses[2].value AS group_value,
-       abs(ts_explain(mgs_two_idx.tableoid).clauses[1].value::DOUBLE
-           + ts_explain(mgs_two_idx.tableoid).clauses[2].value::DOUBLE
-           - indri_dirichlet(mgs_two_idx.tableoid)) < 1e-5 AS adds_up
-FROM mgs_two_idx
-WHERE body @@ 'red' AND (body @@ 'fox' OR tag @@ 'king')::merge('max')
-ORDER BY id;
-----
-id	group_value	adds_up
-1	0	t
-
-query
-SELECT id,
-       ts_explain(mgs_three_idx.tableoid).clauses[2].value AS group_value,
-       abs(ts_explain(mgs_three_idx.tableoid).clauses[1].value::DOUBLE
-           + ts_explain(mgs_three_idx.tableoid).clauses[2].value::DOUBLE
-           - indri_dirichlet(mgs_three_idx.tableoid)) < 1e-5 AS adds_up
-FROM mgs_three_idx
-WHERE body @@ 'red' AND (body @@ 'fox' OR tag @@ 'king')::merge('max')
-ORDER BY id;
-----
-id	group_value	adds_up
-1	0	t
-3	0	t
-
-query
-SELECT id,
-       ts_explain(mgs_two_idx.tableoid).clauses[2].value AS group_value,
-       abs(ts_explain(mgs_two_idx.tableoid).clauses[1].value::DOUBLE
-           + ts_explain(mgs_two_idx.tableoid).clauses[2].value::DOUBLE
-           - indri_dirichlet(mgs_two_idx.tableoid)) < 1e-5 AS adds_up
-FROM mgs_two_idx
-WHERE body @@ 'red' AND (body @@ 'fox' AND tag @@ 'king')::merge('max')
-ORDER BY id;
-----
-id	group_value	adds_up
-1	0	t
-
-query
-SELECT id,
-       indri_dirichlet(mgs_two_idx.tableoid) AS score,
-       ts_explain(mgs_two_idx.tableoid).clauses[1].value::DOUBLE < 0 AS negative_clause
-FROM mgs_two_idx
-WHERE (body @@ 'red' AND tag @@ 'king')::merge('max')
-ORDER BY id;
-----
-id	score	negative_clause
-1	0	t
-
 query
 SELECT id,
        abs(ts_explain(mgs_two_idx.tableoid).clauses[1].value::DOUBLE

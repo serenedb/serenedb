@@ -33,6 +33,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "catalog/entry/role.h"
 #include "catalog/transaction.h"
@@ -234,6 +235,8 @@ class ConnectionContext final : public duckdb::ClientContext {
   void ReportIdle();
   absl::Mutex& SettingWritesMutex() noexcept { return _setting_writes; }
 
+  void SetCaller(ConnectionContext* caller);
+
   int copy_stdin_open_count = 0;
   bool copy_stdin_done = false;
 
@@ -264,6 +267,7 @@ class ConnectionContext final : public duckdb::ClientContext {
       transaction->SearchTxn().CheckStatement(*this);
     }
   }
+  void OnInterrupt() final;
 
  private:
   struct NoticeNode {
@@ -311,6 +315,9 @@ class ConnectionContext final : public duckdb::ClientContext {
   uint32_t _internal_statements = 0;
   bool _query_in_transaction = false;
   bool _had_query_in_transaction = false;
+  ConnectionContext* _caller = nullptr;
+  absl::Mutex _workers_mutex;
+  std::vector<ConnectionContext*> _workers ABSL_GUARDED_BY(_workers_mutex);
 };
 
 duckdb::shared_ptr<duckdb::ClientContext> CreateClientContext(
@@ -335,6 +342,7 @@ struct SystemSession {
   duckdb::idx_t database_id = 0;
   int32_t backend_pid = 0;
   duckdb::shared_ptr<duckdb::AttachedDatabase> temporary;
+  ConnectionContext* caller = nullptr;
 };
 
 struct SystemConnection {

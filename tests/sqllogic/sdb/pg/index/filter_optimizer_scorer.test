@@ -121,15 +121,12 @@ QUERY PLAN
 │ Index: fo_score_idx                    │
 │ Lookup: search                         │
 │ Index Filter:                          │
-│ ╭─ Or ───╮                             │
-│ ╰────┬───╯                             │
-│      ├───────────╮                     │
-│ ╭─ All ──╮  ╭─ All ──╮                 │
-│ ╰────────╯  ╰────────╯                 │
+│ ╭─ All ──╮                             │
+│ ╰────────╯                             │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: id,                       │
 │              sdb_inverted_index_score  │
-│ ~1 row                                 │
+│ ~4 rows                                │
 ╰────────────────────────────────────────╯
 
 query

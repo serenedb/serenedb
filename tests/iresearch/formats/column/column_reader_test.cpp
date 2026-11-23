@@ -5156,12 +5156,14 @@ void OpenWithCorruptedFooter(duckdb::DatabaseInstance& db, const char* error,
     });
     out->Close();
   }
-#ifdef SDB_DEV
-  GTEST_FLAG_SET(death_test_style, "threadsafe");
-  EXPECT_DEATH((irs::tests::OpenColReader(dir, "fseg")), error);
-#else
-  EXPECT_ANY_THROW((irs::tests::OpenColReader(dir, "fseg")));
-#endif
+  try {
+    irs::tests::OpenColReader(dir, "fseg");
+    ADD_FAILURE() << "a footer with " << error << " was accepted";
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED);
+    EXPECT_NE(std::string_view{e.message()}.find(error), std::string_view::npos)
+      << e.message();
+  }
 }
 
 void FetchWithCorruptedFooter(duckdb::DatabaseInstance& db,
@@ -5295,13 +5297,19 @@ TEST_F(ColumnReaderTest, FooterRowCountsBeyondAlpRdBlocks) {
     });
 }
 
-TEST_F(ColumnReaderTest, FooterBlockRangesThatWrapAreRejected) {
-  OpenWithCorruptedFooter(
-    Db(), "column data on column id 1 out of range", [](irs::ColumnMeta& meta) {
-      auto& block = meta.data.front();
-      block.file_offset =
-        std::numeric_limits<uint64_t>::max() - block.byte_size + 1;
-    });
+TEST_F(ColumnReaderTest, FooterBlocksOutsideTheFileAreRefusedAsCorrupted) {
+  constexpr auto kError = "column data on column id 1 out of range";
+  OpenWithCorruptedFooter(Db(), kError, [](irs::ColumnMeta& meta) {
+    auto& block = meta.data.front();
+    block.file_offset =
+      std::numeric_limits<uint64_t>::max() - block.byte_size + 1;
+  });
+  OpenWithCorruptedFooter(Db(), kError, [](irs::ColumnMeta& meta) {
+    meta.data.front().byte_size = std::numeric_limits<uint64_t>::max();
+  });
+  OpenWithCorruptedFooter(Db(), kError, [](irs::ColumnMeta& meta) {
+    meta.data.front().shared_offset = std::numeric_limits<uint64_t>::max();
+  });
 }
 
 TEST_F(ColumnReaderTest, ListsTurningRepetitiveAreDeduplicatedAgain) {

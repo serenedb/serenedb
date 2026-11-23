@@ -45,11 +45,13 @@ bool InRange(uint64_t offset, uint64_t size, uint64_t end) noexcept {
 
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
                      uint64_t footer_offset) {
-  SDB_ENSURE(InRange(m.file_offset, m.byte_size, footer_offset) &&
-               InRange(m.shared_offset, m.shared_size, footer_offset),
-             ".col reader: column data on column id ", id,
-             " out of range (offset ", m.file_offset, ", size ", m.byte_size,
-             ")");
+  if (!(InRange(m.file_offset, m.byte_size, footer_offset) &&
+        InRange(m.shared_offset, m.shared_size, footer_offset))) [[unlikely]] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
+                    ERR_MSG(".col reader: column data on column id ", id,
+                            " out of range (offset ", m.file_offset, ", size ",
+                            m.byte_size, ")"));
+  }
 }
 
 void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {

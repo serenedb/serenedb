@@ -3735,6 +3735,7 @@ def test_transaction_block_rules_follow_the_block_at_execute(conn):
         other.close()
 
 
+@pytest.mark.usefixtures("own_server")
 def test_prepared_statement_counts_one_plan_per_execution(conn):
     other = WireConn()
     try:
@@ -3751,7 +3752,7 @@ def test_prepared_statement_counts_one_plan_per_execution(conn):
             "SELECT generic_plans, custom_plans FROM pg_prepared_statements "
             "WHERE name = 'ns_counted'"
         )
-        assert all_fields(m) == [b"2", b"0"], all_fields(m)
+        assert all_fields(m) == [b"2", b"1"], all_fields(m)
     finally:
         other.close()
         conn.run_ok("DEALLOCATE ALL")

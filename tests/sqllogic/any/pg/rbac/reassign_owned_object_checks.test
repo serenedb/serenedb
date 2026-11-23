@@ -1,0 +1,179 @@
+control substitution on
+
+statement ok
+DROP SCHEMA IF EXISTS rooc_kept CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS rooc_moved CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS rooc_admin;
+
+
+statement ok
+DROP ROLE IF EXISTS rooc_new;
+
+
+statement ok
+DROP ROLE IF EXISTS rooc_old;
+
+
+statement ok
+CREATE ROLE rooc_old;
+
+
+statement ok
+CREATE ROLE rooc_new;
+
+
+statement ok
+CREATE ROLE rooc_admin LOGIN PASSWORD 'rooc_pw';
+
+
+statement ok
+GRANT rooc_old TO rooc_admin;
+
+
+statement ok
+GRANT rooc_new TO rooc_admin;
+
+
+statement ok
+CREATE SCHEMA rooc_kept;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA rooc_kept TO rooc_old;
+
+
+statement ok
+GRANT USAGE ON SCHEMA rooc_kept TO rooc_new;
+
+
+statement ok
+SET ROLE rooc_old;
+
+
+statement ok
+CREATE TABLE rooc_kept.rooc_t (a int);
+
+
+statement ok
+CREATE FUNCTION rooc_kept.rooc_f() RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+RESET ROLE;
+
+
+connection c_admin user=rooc_admin password=rooc_pw
+statement error
+REASSIGN OWNED BY rooc_old TO rooc_new;
+----
+db error: ERROR: permission denied for schema rooc_kept
+
+
+query
+SELECT tableowner FROM pg_tables WHERE schemaname = 'rooc_kept' AND tablename = 'rooc_t';
+----
+tableowner
+rooc_old
+
+
+statement ok
+GRANT CREATE ON SCHEMA rooc_kept TO rooc_new;
+
+
+connection c_admin user=rooc_admin password=rooc_pw
+statement ok
+REASSIGN OWNED BY rooc_old TO rooc_new;
+
+
+query
+SELECT (SELECT tableowner FROM pg_tables WHERE schemaname = 'rooc_kept' AND tablename = 'rooc_t') AS t,
+       (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE proname = 'rooc_f') AS f;
+----
+t	f
+rooc_new	rooc_new
+
+
+statement ok
+REVOKE CREATE ON SCHEMA rooc_kept FROM rooc_new;
+
+
+statement ok
+GRANT CREATE ON DATABASE ${__DATABASE__} TO rooc_old;
+
+
+statement ok
+SET ROLE rooc_old;
+
+
+statement ok
+CREATE SCHEMA rooc_moved;
+
+
+statement ok
+CREATE FUNCTION rooc_moved.rooc_g() RETURNS int LANGUAGE sql AS 'SELECT 2';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM rooc_old;
+
+
+connection c_admin user=rooc_admin password=rooc_pw
+statement error
+REASSIGN OWNED BY rooc_old TO rooc_new;
+----
+db error: ERROR: permission denied for database <slt:ignore>
+
+
+statement ok
+GRANT CREATE ON DATABASE ${__DATABASE__} TO rooc_admin;
+
+
+connection c_admin user=rooc_admin password=rooc_pw
+statement ok
+REASSIGN OWNED BY rooc_old TO rooc_new;
+
+
+query
+SELECT (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'rooc_moved') AS s,
+       (SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE proname = 'rooc_g') AS g;
+----
+s	g
+rooc_new	rooc_new
+
+
+statement ok
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM rooc_admin;
+
+
+statement ok
+REVOKE CREATE ON DATABASE ${__DATABASE__} FROM rooc_old;
+
+
+statement ok
+DROP SCHEMA rooc_moved CASCADE;
+
+
+statement ok
+DROP SCHEMA rooc_kept CASCADE;
+
+
+statement ok
+DROP ROLE rooc_admin;
+
+
+statement ok
+DROP ROLE rooc_new;
+
+
+statement ok
+DROP ROLE rooc_old;

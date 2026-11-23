@@ -1,0 +1,190 @@
+statement ok
+DROP FUNCTION IF EXISTS public.sdcs_definer();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.sdcs_definer_list();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.sdcs_invoker();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.sdcs_fixed();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.sdcs_fixed_list();
+
+
+statement ok
+DROP FUNCTION IF EXISTS public.sdcs_fixed_setting();
+
+
+statement ok
+DROP SCHEMA IF EXISTS sdcs_priv;
+
+
+statement ok
+DROP SCHEMA IF EXISTS sdcs_open;
+
+
+statement ok
+DROP SCHEMA IF EXISTS sdcs_fixed;
+
+
+statement ok
+DROP ROLE IF EXISTS sdcs_caller;
+
+
+statement ok
+DROP ROLE IF EXISTS sdcs_owner;
+
+
+statement ok
+CREATE ROLE sdcs_owner;
+
+
+statement ok
+CREATE ROLE sdcs_caller;
+
+
+statement ok
+CREATE SCHEMA sdcs_priv;
+
+
+statement ok
+CREATE SCHEMA sdcs_open;
+
+
+statement ok
+CREATE SCHEMA sdcs_fixed;
+
+
+statement ok
+GRANT USAGE ON SCHEMA sdcs_priv TO sdcs_caller;
+
+
+statement ok
+GRANT USAGE ON SCHEMA sdcs_open TO sdcs_caller, sdcs_owner;
+
+
+statement ok
+GRANT USAGE ON SCHEMA sdcs_fixed TO sdcs_caller, sdcs_owner;
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO sdcs_owner;
+
+
+statement ok
+SET ROLE sdcs_owner;
+
+
+statement ok
+CREATE FUNCTION public.sdcs_definer() RETURNS text LANGUAGE sql SECURITY DEFINER AS 'SELECT current_schema()::text';
+
+
+statement ok
+CREATE FUNCTION public.sdcs_definer_list() RETURNS text LANGUAGE sql SECURITY DEFINER AS 'SELECT array_to_string(current_schemas(false), '','')';
+
+
+statement ok
+CREATE FUNCTION public.sdcs_invoker() RETURNS text LANGUAGE sql AS 'SELECT current_schema()::text';
+
+
+statement ok
+CREATE FUNCTION public.sdcs_fixed() RETURNS text LANGUAGE sql SET search_path = sdcs_fixed AS 'SELECT current_schema()::text';
+
+
+statement ok
+CREATE FUNCTION public.sdcs_fixed_list() RETURNS text LANGUAGE sql SET search_path = sdcs_fixed AS 'SELECT array_to_string(current_schemas(false), '','')';
+
+
+statement ok
+CREATE FUNCTION public.sdcs_fixed_setting(name text) RETURNS text LANGUAGE sql SET search_path = sdcs_fixed AS 'SELECT current_setting(''search_path'') || '';'' || current_setting(name)';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE sdcs_caller;
+
+
+statement ok
+SET search_path = sdcs_priv, sdcs_open, public;
+
+
+query
+SELECT current_schema() AS top, public.sdcs_definer() AS definer, public.sdcs_definer_list() AS definer_list,
+       public.sdcs_invoker() AS invoker, public.sdcs_fixed() AS fixed, public.sdcs_fixed_list() AS fixed_list;
+----
+top	definer	definer_list	invoker	fixed	fixed_list
+sdcs_priv	sdcs_open	sdcs_open,public	sdcs_priv	sdcs_fixed	sdcs_fixed
+
+
+query
+SELECT public.sdcs_fixed_setting(k) AS settings, current_setting(k) AS session
+FROM (VALUES ('search_path')) AS v(k);
+----
+settings	session
+sdcs_fixed;sdcs_fixed	sdcs_priv, sdcs_open, public
+
+
+statement ok
+RESET search_path;
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+DROP FUNCTION public.sdcs_definer();
+
+
+statement ok
+DROP FUNCTION public.sdcs_definer_list();
+
+
+statement ok
+DROP FUNCTION public.sdcs_invoker();
+
+
+statement ok
+DROP FUNCTION public.sdcs_fixed();
+
+
+statement ok
+DROP FUNCTION public.sdcs_fixed_list();
+
+
+statement ok
+DROP FUNCTION public.sdcs_fixed_setting(text);
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM sdcs_owner;
+
+
+statement ok
+DROP SCHEMA sdcs_priv;
+
+
+statement ok
+DROP SCHEMA sdcs_open;
+
+
+statement ok
+DROP SCHEMA sdcs_fixed;
+
+
+statement ok
+DROP ROLE sdcs_caller;
+
+
+statement ok
+DROP ROLE sdcs_owner;

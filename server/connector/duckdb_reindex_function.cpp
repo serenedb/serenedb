@@ -228,7 +228,8 @@ class PassConnection {
                .role = caller.GetRoleId(),
                .database = target.database,
                .database_id = target.database_id,
-               .backend_pid = caller.GetBackendPid()},
+               .backend_pid = caller.GetBackendPid(),
+               .caller = &caller},
               {.forward_to = &caller}} {
     _system.conn->context->config.user_settings = context.config.user_settings;
   }
@@ -936,7 +937,8 @@ class ReindexSession {
                .role = role_id,
                .database = database,
                .database_id = database_id,
-               .backend_pid = backend_pid},
+               .backend_pid = backend_pid,
+               .caller = &caller},
               {.forward_to = &caller}} {}
 
   duckdb::ClientContext& Context() { return *_system.conn->context; }

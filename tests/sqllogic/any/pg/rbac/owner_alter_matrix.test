@@ -87,11 +87,20 @@ db error: ERROR: must be able to SET ROLE "oam_iceberg"<slt:ignore>
 
 
 # (c) non-owner cannot transfer
+onlyif postgres
 connection c2 user=oam_iceberg password=oam_iceberg_pw
 statement error
 ALTER TABLE oam_clickclack OWNER TO oam_iceberg;
 ----
 db error: ERROR: must be owner of table oam_clickclack<slt:ignore>
+
+
+skipif postgres
+connection c2 user=oam_iceberg password=oam_iceberg_pw
+statement error
+ALTER TABLE oam_clickclack OWNER TO oam_iceberg;
+----
+db error: ERROR: Table with name oam_clickclack does not exist!<slt:ignore>
 
 
 # owner unchanged after the failed transfers

@@ -116,7 +116,7 @@ connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
 statement error
 SELECT count(*) FROM zebrafin_vault;
 ----
-db error: ERROR: permission denied for table zebrafin_vault<slt:ignore>
+db error: ERROR: Table with name zebrafin_vault does not exist!<slt:ignore>
 
 
 # ---- definer rights on ordinary user views are unchanged ----
@@ -183,8 +183,18 @@ source_rows	alias_rows	sqlite_wrapper
 # ---- no escalation: an unprivileged definer view is still its owner's ----
 
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
+statement error
+CREATE VIEW zebrafin_pub.w_escalate AS SELECT id, secret FROM zebrafin_vault
+----
+db error: ERROR: Table with name zebrafin_vault does not exist!<slt:ignore>
+
+
 statement ok
 CREATE VIEW zebrafin_pub.w_escalate AS SELECT id, secret FROM zebrafin_vault
+
+
+statement ok
+ALTER VIEW zebrafin_pub.w_escalate OWNER TO zebrafin_clerk
 
 
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw

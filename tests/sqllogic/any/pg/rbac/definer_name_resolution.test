@@ -77,10 +77,18 @@ cast_name	lookup_name	owner_select
 dnr_s.t	dnr_s.t	t
 
 
+onlyif postgres
 statement error
 SELECT 'dnr_s.t'::regclass;
 ----
 db error: ERROR: permission denied for schema dnr_s
+
+
+skipif postgres
+statement error
+SELECT 'dnr_s.t'::regclass;
+----
+db error: ERROR: relation "dnr_s.t" does not exist<slt:ignore>
 
 
 statement ok

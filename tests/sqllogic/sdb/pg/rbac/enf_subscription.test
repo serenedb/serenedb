@@ -101,14 +101,14 @@ connection c_other user=subenf_clickclack password=subenf_pw database=subenf_vau
 statement error
 ALTER SUBSCRIPTION subenf_sub1 DISABLE;
 ----
-db error: ERROR: must be owner of subscription subenf_sub1
+db error: ERROR: subscription "subenf_sub1" does not exist<slt:ignore>
 
 
 connection c_other user=subenf_clickclack password=subenf_pw database=subenf_vault
 statement error
 DROP SUBSCRIPTION subenf_sub1;
 ----
-db error: ERROR: must be owner of subscription subenf_sub1
+db error: ERROR: subscription "subenf_sub1" does not exist<slt:ignore>
 
 
 connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault

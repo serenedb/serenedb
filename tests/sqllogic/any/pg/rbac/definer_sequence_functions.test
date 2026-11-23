@@ -41,12 +41,29 @@ statement ok
 CREATE FUNCTION dsf_lastval() RETURNS bigint LANGUAGE sql SECURITY DEFINER AS 'SELECT lastval()';
 
 
+onlyif postgres
 connection c_user user=dsf_user password=dsf_pw
 query
 SELECT pg_sequence_last_value('dsf_seq'::regclass) AS invoker, dsf_last_value() AS definer;
 ----
 invoker	definer
 NULL	1
+
+skipif postgres
+connection c_user user=dsf_user password=dsf_pw
+statement error
+SELECT pg_sequence_last_value('dsf_seq'::regclass) AS invoker;
+----
+db error: ERROR: relation "dsf_seq" does not exist
+
+
+skipif postgres
+connection c_user user=dsf_user password=dsf_pw
+query
+SELECT dsf_last_value() AS definer;
+----
+definer
+1
 
 
 connection c_user user=dsf_user password=dsf_pw

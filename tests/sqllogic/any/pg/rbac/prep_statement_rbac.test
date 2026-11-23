@@ -79,11 +79,20 @@ REVOKE SELECT (id, amt) ON prep_ledger FROM prep_vedernikoff;
 
 
 # Same prepared statement, re-checked on EXECUTE -> denied.
+onlyif postgres
 connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement error
 EXECUTE p_read;
 ----
 db error: ERROR: permission denied for table prep_ledger<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement error
+EXECUTE p_read;
+----
+db error: ERROR: Table with name prep_ledger does not exist!<slt:ignore>
 
 
 # Admin re-grants; the pinned statement works again without a re-prepare.
@@ -131,11 +140,20 @@ statement ok
 REVOKE SELECT (id, amt) ON prep_ledger FROM prep_vedernikoff;
 
 
+onlyif postgres
 connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
 statement error
 EXECUTE p_param(1);
 ----
 db error: ERROR: permission denied for table prep_ledger<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=prep_vedernikoff password=prep_vedernikoff_pw
+statement error
+EXECUTE p_param(1);
+----
+db error: ERROR: Table with name prep_ledger does not exist!<slt:ignore>
 
 
 # Re-grant and confirm it reads again with the same bound parameter shape.

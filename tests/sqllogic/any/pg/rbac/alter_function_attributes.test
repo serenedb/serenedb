@@ -70,11 +70,20 @@ statement ok
 CREATE PROCEDURE afa_proc(a int) LANGUAGE sql AS 'SELECT 1';
 
 
+onlyif postgres
 connection c_user user=afa_user password=afa_pw
 statement error
 SELECT afa_read(1);
 ----
 db error: ERROR: permission denied for table afa_secret
+
+
+skipif postgres
+connection c_user user=afa_user password=afa_pw
+statement error
+SELECT afa_read(1);
+----
+db error: ERROR: Table with name afa_secret does not exist!<slt:ignore>
 
 
 connection c_user user=afa_user password=afa_pw
@@ -109,11 +118,20 @@ statement ok
 ALTER ROUTINE afa_read(integer) EXTERNAL SECURITY INVOKER VOLATILE COST 10 RESTRICT;
 
 
+onlyif postgres
 connection c_user user=afa_user password=afa_pw
 statement error
 SELECT afa_read(1);
 ----
 db error: ERROR: permission denied for table afa_secret
+
+
+skipif postgres
+connection c_user user=afa_user password=afa_pw
+statement error
+SELECT afa_read(1);
+----
+db error: ERROR: Table with name afa_secret does not exist!<slt:ignore>
 
 
 query
@@ -190,11 +208,20 @@ statement ok
 ALTER FUNCTION afa_read(int) SECURITY DEFINER;
 
 
+onlyif postgres
 connection c_user user=afa_user password=afa_pw
 statement error
 SELECT afa_read(1);
 ----
 db error: ERROR: permission denied for function afa_read
+
+
+skipif postgres
+connection c_user user=afa_user password=afa_pw
+statement error
+SELECT afa_read(1);
+----
+db error: ERROR: Scalar Function with name afa_read does not exist!<slt:ignore>
 
 
 onlyif postgres

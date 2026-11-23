@@ -225,6 +225,29 @@ statement ok
 CREATE FUNCTION efs_definer_next() RETURNS bigint LANGUAGE sql SECURITY DEFINER AS 'SELECT nextval(''efs_seq'')';
 
 
+onlyif postgres
+connection c_owner user=efs_owner password=efs_pw
+statement ok
+CREATE FUNCTION efs_probe_mine() RETURNS int LANGUAGE sql AS 'SELECT max(v) FROM efs_mine';
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION efs_probe_mine();
+
+
+skipif postgres
+connection c_owner user=efs_owner password=efs_pw
+statement error
+CREATE FUNCTION efs_probe_mine() RETURNS int LANGUAGE sql AS 'SELECT max(v) FROM efs_mine';
+----
+db error: ERROR: Table with name efs_mine does not exist!<slt:ignore>
+
+
+statement ok
+GRANT REFERENCES ON efs_mine TO efs_owner;
+
+
 connection c_owner user=efs_owner password=efs_pw
 statement ok
 CREATE FUNCTION efs_reads_mine() RETURNS int LANGUAGE sql AS 'SELECT max(v) FROM efs_mine';
@@ -290,11 +313,20 @@ statement ok
 GRANT SELECT ON efs_view, efs_definer_view TO efs_user;
 
 
+onlyif postgres
 connection c_user user=efs_user password=efs_pw
 statement error
 SELECT efs_invoker();
 ----
 db error: ERROR: permission denied for table efs_secret
+
+
+skipif postgres
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT efs_invoker();
+----
+db error: ERROR: Table with name efs_secret does not exist!<slt:ignore>
 
 
 connection c_user user=efs_user password=efs_pw
@@ -313,11 +345,20 @@ m
 49
 
 
+onlyif postgres
 connection c_user user=efs_user password=efs_pw
 statement error
 SELECT efs_definer_arg((SELECT max(v) FROM efs_secret));
 ----
 db error: ERROR: permission denied for table efs_secret
+
+
+skipif postgres
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT efs_definer_arg((SELECT max(v) FROM efs_secret));
+----
+db error: ERROR: Table with name efs_secret does not exist!<slt:ignore>
 
 
 connection c_user user=efs_user password=efs_pw
@@ -360,11 +401,20 @@ m
 44
 
 
+onlyif postgres
 connection c_user user=efs_user password=efs_pw
 statement error
 SELECT nextval('efs_seq');
 ----
 db error: ERROR: permission denied for sequence efs_seq
+
+
+skipif postgres
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT nextval('efs_seq');
+----
+db error: ERROR: Sequence with name efs_seq does not exist!<slt:ignore>
 
 
 connection c_user user=efs_user password=efs_pw
@@ -375,12 +425,30 @@ n
 1
 
 
+onlyif postgres
 connection c_user user=efs_user password=efs_pw
 query
 SELECT has_table_privilege('efs_secret', 'SELECT') AS caller, efs_definer_can_read() AS definer;
 ----
 caller	definer
 f	t
+
+
+skipif postgres
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT has_table_privilege('efs_secret', 'SELECT');
+----
+db error: ERROR: relation "efs_secret" does not exist
+
+
+skipif postgres
+connection c_user user=efs_user password=efs_pw
+query
+SELECT efs_definer_can_read() AS definer;
+----
+definer
+t
 
 
 connection c_user user=efs_user password=efs_pw
@@ -462,11 +530,20 @@ v
 49
 
 
+onlyif postgres
 connection c_user user=efs_user password=efs_pw
 statement error
 SELECT v FROM efs_definer_rows((SELECT max(v) FROM efs_secret));
 ----
 db error: ERROR: permission denied for table efs_secret
+
+
+skipif postgres
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT v FROM efs_definer_rows((SELECT max(v) FROM efs_secret));
+----
+db error: ERROR: Table with name efs_secret does not exist!<slt:ignore>
 
 
 connection c_user user=efs_user password=efs_pw
@@ -493,6 +570,7 @@ m
 47
 
 
+onlyif postgres
 connection c_user user=efs_user password=efs_pw
 statement error
 SELECT efs_private();
@@ -500,11 +578,28 @@ SELECT efs_private();
 db error: ERROR: permission denied for function efs_private
 
 
+skipif postgres
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT efs_private();
+----
+db error: ERROR: Scalar Function with name efs_private does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_user user=efs_user password=efs_pw
 statement error
 SELECT m FROM efs_view;
 ----
 db error: ERROR: permission denied for table efs_secret
+
+
+skipif postgres
+connection c_user user=efs_user password=efs_pw
+statement error
+SELECT m FROM efs_view;
+----
+db error: ERROR: Table with name efs_secret does not exist!<slt:ignore>
 
 
 connection c_user user=efs_user password=efs_pw

@@ -49,7 +49,7 @@ CREATE TABLE rio_u (y INTEGER);
 statement error
 CREATE OR REPLACE INDEX rio_i ON rio_t (x);
 ----
-db error: ERROR: must be owner of table rio_t
+db error: ERROR: Table with name rio_t does not exist!<slt:ignore>
 
 
 statement error

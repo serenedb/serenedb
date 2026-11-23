@@ -64,24 +64,21 @@ connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 SELECT * FROM edcp_other_${__DATABASE__}.public.edcp_remote;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name "edcp_other_<slt:ignore>.public.edcp_remote" does not exist because schema "edcp_other_<slt:ignore>.public" does not exist.
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 SET search_path TO edcp_other_${__DATABASE__}.public;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: SET search_path: No catalog + schema named "edcp_other_<slt:ignore>.public" found.
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 SET search_path TO public, edcp_other_${__DATABASE__}.public;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: SET search_path: No catalog + schema named "edcp_other_<slt:ignore>.public" found.
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
@@ -95,152 +92,131 @@ connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 DROP TABLE edcp_other_${__DATABASE__}.public.edcp_owned;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name edcp_owned does not exist!<slt:ignore>
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
-statement error
+statement ok
 DROP TABLE IF EXISTS edcp_other_${__DATABASE__}.public.edcp_missing;
-----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 SELECT * FROM edcp_other_${__DATABASE__}.public.edcp_missing;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name "edcp_other_<slt:ignore>.public.edcp_missing" does not exist because schema "edcp_other_<slt:ignore>.public" does not exist.
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 INSERT INTO edcp_other_${__DATABASE__}.public.edcp_missing VALUES (1);
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name "edcp_other_<slt:ignore>.public.edcp_missing" does not exist because schema "edcp_other_<slt:ignore>.public" does not exist.
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 ALTER TABLE edcp_other_${__DATABASE__}.public.edcp_missing ADD COLUMN b integer;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name "edcp_other_<slt:ignore>.public.edcp_missing" does not exist because schema "edcp_other_<slt:ignore>.public" does not exist.
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 COMMENT ON TABLE edcp_other_${__DATABASE__}.public.edcp_missing IS 'x';
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name "edcp_other_<slt:ignore>.public.edcp_missing" does not exist because schema "edcp_other_<slt:ignore>.public" does not exist.
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 PRAGMA table_info('edcp_other_${__DATABASE__}.public.edcp_missing');
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name "edcp_other_<slt:ignore>.public.edcp_missing" does not exist because schema "edcp_other_<slt:ignore>.public" does not exist.
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 SELECT * FROM seq_scan(['edcp_other_${__DATABASE__}', 'public', 'edcp_missing']);
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Catalog "edcp_other_<slt:ignore>" does not exist!
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 CREATE TABLE edcp_other_${__DATABASE__}.edcp_missing_schema.edcp_made (a integer);
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Schema with name edcp_other_<slt:ignore> does not exist!
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 CREATE TABLE edcp_other_${__DATABASE__}.public.edcp_made (a integer);
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Schema with name edcp_other_<slt:ignore> does not exist!
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 CREATE TABLE edcp_other_${__DATABASE__}.public.edcp_made AS SELECT 1 AS a;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Schema with name edcp_other_<slt:ignore> does not exist!
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 CREATE VIEW edcp_other_${__DATABASE__}.public.edcp_made_view AS SELECT 1 AS x;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Schema with name edcp_other_<slt:ignore> does not exist!
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 CREATE OR REPLACE VIEW edcp_other_${__DATABASE__}.public.edcp_foreign_view AS SELECT 2 AS x;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Schema with name edcp_other_<slt:ignore> does not exist!
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 CREATE SEQUENCE edcp_other_${__DATABASE__}.public.edcp_made_seq;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Schema with name edcp_other_<slt:ignore> does not exist!
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 CREATE SCHEMA edcp_other_${__DATABASE__}.edcp_made_schema;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: permission denied for database <slt:ignore>
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 ALTER SCHEMA edcp_other_${__DATABASE__}.edcp_kept RENAME TO edcp_renamed;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Schema with name edcp_other_<slt:ignore> does not exist!
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 ALTER SCHEMA edcp_other_${__DATABASE__}.edcp_foreign_schema RENAME TO edcp_renamed;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Schema with name edcp_other_<slt:ignore> does not exist!
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 DROP SCHEMA edcp_other_${__DATABASE__}.edcp_kept;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Schema with name edcp_other_<slt:ignore> does not exist!
 
 
 connection c_ved user=edcp_vedernikoff password=edcp_pw
 statement error
 GRANT USAGE ON SCHEMA edcp_other_${__DATABASE__}.edcp_kept TO PUBLIC;
 ----
-db error: ERROR: permission denied for database "edcp_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Schema with name edcp_other_<slt:ignore> does not exist!
 
 
 query

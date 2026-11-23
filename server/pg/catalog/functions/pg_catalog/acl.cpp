@@ -704,7 +704,8 @@ struct DatabasePrivileges : ObjectPrivileges<DatabasePrivileges> {
   static constexpr bool kSuperuserFirst = true;
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
-    if (const auto database = FindDatabase(*session.context, name)) {
+    if (auto database = FindDatabase(*session.context, name);
+        database && Shown(session, *database)) {
       return database->oid;
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
@@ -713,8 +714,8 @@ struct DatabasePrivileges : ObjectPrivileges<DatabasePrivileges> {
 
   static std::optional<ObjectTarget> Find(const Session& session,
                                           uint64_t oid) {
-    const auto database = FindDatabaseById(*session.context, oid);
-    if (!database) {
+    auto database = FindDatabaseById(*session.context, oid);
+    if (!database || !Shown(session, *database)) {
       return std::nullopt;
     }
     return ObjectTarget{&PrivilegePermissions(*database)};
@@ -729,8 +730,9 @@ struct ServerPrivileges : ObjectPrivileges<ServerPrivileges> {
 
   static uint64_t Resolve(const Session& session, std::string_view name) {
     SDB_ASSERT(session.database);
-    if (const auto entry = session.database->Servers().Get(*session.transaction,
-                                                           Identifier{name})) {
+    if (auto entry = session.database->Servers().Get(*session.transaction,
+                                                     Identifier{name});
+        entry && Shown(session, *entry)) {
       return entry->oid;
     }
     ThrowUndefinedObject("server", name);
@@ -904,6 +906,17 @@ class ObjectAcls final : public duckdb::FunctionLocalState {
   std::optional<ObjectTarget> Find(uint64_t classid, uint64_t objid,
                                    int32_t objsubid) const {
     const Session& session = _wrappers;
+    if (auto entry = EntryByOid(session, objid);
+        entry && !Shown(session, *entry)) {
+      return std::nullopt;
+    }
+    if (classid == kPgDatabaseTable) {
+      if (auto database = FindDatabaseById(*session.context,
+                                           static_cast<duckdb::idx_t>(objid));
+          database && !Shown(session, *database)) {
+        return std::nullopt;
+      }
+    }
     if (classid == kPgClassTable) {
       if (objsubid == 0) {
         return TablePrivileges::Find(session, objid,

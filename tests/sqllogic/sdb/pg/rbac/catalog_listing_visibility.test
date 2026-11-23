@@ -259,7 +259,7 @@ connection c_peek user=clv_peek password=clv_pw
 statement error
 SELECT * FROM clv_ungranted;
 ----
-db error: ERROR: permission denied for table clv_ungranted
+db error: ERROR: Table with name clv_ungranted does not exist!<slt:ignore>
 
 
 statement ok

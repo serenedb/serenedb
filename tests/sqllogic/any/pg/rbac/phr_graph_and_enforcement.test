@@ -127,11 +127,20 @@ t	f	f
 
 
 # The live path agrees: SELECT is now denied on the second connection.
+onlyif postgres
 connection c_phr user=phr_clickclack password=phr_clickclack_pw
 statement error
 SELECT * FROM phr_iceberg;
 ----
 db error: ERROR: permission denied for table phr_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_phr user=phr_clickclack password=phr_clickclack_pw
+statement error
+SELECT * FROM phr_iceberg;
+----
+db error: ERROR: Table with name phr_iceberg does not exist!<slt:ignore>
 
 
 # ============================================================================

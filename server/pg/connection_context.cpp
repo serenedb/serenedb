@@ -104,14 +104,16 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
     int32_t conn_limit = -1;
   } database;
   if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
-        dbname, [&](const catalog::DatabaseCatalogEntry& entry) {
+        dbname,
+        [&](const catalog::DatabaseCatalogEntry& entry) {
           database.oid = entry.oid;
           database.connect =
             principal.Can(duckdb::CatalogType::DATABASE_ENTRY,
                           entry.permissions, duckdb::AclMode::Connect);
           database.allow_connections = entry.AllowConnections();
           database.conn_limit = entry.ConnLimit();
-        })) {
+        }) ||
+      !database.connect) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_CATALOG_NAME),
               ERR_MSG("database \"", dbname, "\" does not exist"))};
@@ -121,12 +123,6 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
               ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
               ERR_MSG("database \"", dbname,
                       "\" is not currently accepting connections"))};
-  }
-  if (!database.connect) {
-    return {.error = SQL_ERROR_DATA(
-              ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-              ERR_MSG("permission denied for database \"", dbname, "\""),
-              ERR_DETAIL("User does not have CONNECT privilege."))};
   }
   return {.role = role.oid,
           .database = database.oid,

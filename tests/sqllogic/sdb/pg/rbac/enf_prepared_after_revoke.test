@@ -139,21 +139,21 @@ connection c_epr user=epr_vedernikoff password=epr_pw
 statement error
 EXECUTE epr_direct_q;
 ----
-db error: ERROR: permission denied for table epr_direct
+db error: ERROR: Table with name epr_direct does not exist!<slt:ignore>
 
 
 connection c_epr user=epr_vedernikoff password=epr_pw
 statement error
 EXECUTE epr_inherited_q;
 ----
-db error: ERROR: permission denied for table epr_inherited
+db error: ERROR: Table with name epr_inherited does not exist!<slt:ignore>
 
 
 connection c_epr user=epr_vedernikoff password=epr_pw
 statement error
 EXECUTE epr_server_q;
 ----
-db error: ERROR: permission denied for foreign server epr_srv_<slt:ignore>
+db error: ERROR: Table with name "epr_srv_<slt:ignore>
 
 
 connection c_epr user=epr_vedernikoff password=epr_pw

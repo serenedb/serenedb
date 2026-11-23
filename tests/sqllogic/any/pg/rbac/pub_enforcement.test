@@ -28,11 +28,20 @@ CREATE ROLE pub_vedernikoff LOGIN PASSWORD 'pub_vedernikoff_pw';
 
 
 # Before the PUBLIC grant the fresh role cannot even read.
+onlyif postgres
 connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
 statement error
 SELECT * FROM pub_kostya;
 ----
 db error: ERROR: permission denied for table pub_kostya<slt:ignore>
+
+
+skipif postgres
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
+statement error
+SELECT * FROM pub_kostya;
+----
+db error: ERROR: Table with name pub_kostya does not exist!<slt:ignore>
 
 
 # Owner grants SELECT to PUBLIC.
@@ -87,11 +96,20 @@ sel
 f
 
 
+onlyif postgres
 connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
 statement error
 SELECT * FROM pub_kostya;
 ----
 db error: ERROR: permission denied for table pub_kostya<slt:ignore>
+
+
+skipif postgres
+connection c_pub user=pub_vedernikoff password=pub_vedernikoff_pw
+statement error
+SELECT * FROM pub_kostya;
+----
+db error: ERROR: Table with name pub_kostya does not exist!<slt:ignore>
 
 
 # Cleanup.

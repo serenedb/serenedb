@@ -20,11 +20,20 @@ CREATE ROLE dss_vedernikoff LOGIN PASSWORD 'dss_vedernikoff_pw';
 
 
 # Non-owner DROP SCHEMA is refused (PG: "must be owner of schema ...").
+onlyif postgres
 connection c_ved user=dss_vedernikoff password=dss_vedernikoff_pw
 statement error
 DROP SCHEMA dss_clickclack;
 ----
 db error: ERROR: must be owner of schema dss_clickclack<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=dss_vedernikoff password=dss_vedernikoff_pw
+statement error
+DROP SCHEMA dss_clickclack;
+----
+db error: ERROR: Schema with name dss_clickclack does not exist!<slt:ignore>
 
 
 # The schema still exists after the refused drop.

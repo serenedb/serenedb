@@ -123,6 +123,7 @@ statement ok
 CREATE ROLE enf_us_nobody LOGIN PASSWORD 'enf_us_nobody_pw';
 
 
+onlyif postgres
 connection c_nobody user=enf_us_nobody password=enf_us_nobody_pw
 statement error
 UPDATE enf_us_ledger SET amount = 1;
@@ -130,12 +131,29 @@ UPDATE enf_us_ledger SET amount = 1;
 db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
 
 
+skipif postgres
+connection c_nobody user=enf_us_nobody password=enf_us_nobody_pw
+statement error
+UPDATE enf_us_ledger SET amount = 1;
+----
+db error: ERROR: Table with name enf_us_ledger does not exist!<slt:ignore>
+
+
 # Plain SELECT still requires the SELECT privilege.
+onlyif postgres
 connection c_nobody user=enf_us_nobody password=enf_us_nobody_pw
 statement error
 SELECT * FROM enf_us_ledger;
 ----
 db error: ERROR: permission denied for table enf_us_ledger<slt:ignore>
+
+
+skipif postgres
+connection c_nobody user=enf_us_nobody password=enf_us_nobody_pw
+statement error
+SELECT * FROM enf_us_ledger;
+----
+db error: ERROR: Table with name enf_us_ledger does not exist!<slt:ignore>
 
 
 statement ok

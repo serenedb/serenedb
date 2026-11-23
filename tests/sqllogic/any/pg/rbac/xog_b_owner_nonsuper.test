@@ -111,6 +111,7 @@ DELETE FROM xog_iceberg WHERE id = 2;
 
 
 # The unrelated role cannot even SELECT (it has no grant of any kind).
+onlyif postgres
 connection c_babsky user=xog_b_babsky password=xog_b_babsky_pw
 statement error
 SELECT * FROM xog_iceberg;
@@ -118,13 +119,30 @@ SELECT * FROM xog_iceberg;
 db error: ERROR: permission denied for table xog_iceberg<slt:ignore>
 
 
+skipif postgres
+connection c_babsky user=xog_b_babsky password=xog_b_babsky_pw
+statement error
+SELECT * FROM xog_iceberg;
+----
+db error: ERROR: Table with name xog_iceberg does not exist!<slt:ignore>
+
+
 # The unrelated role is not the owner, so DROP TABLE is refused with the
 # canonical ownership error.
+onlyif postgres
 connection c_babsky user=xog_b_babsky password=xog_b_babsky_pw
 statement error
 DROP TABLE xog_iceberg;
 ----
 db error: ERROR: must be owner of table xog_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_babsky user=xog_b_babsky password=xog_b_babsky_pw
+statement error
+DROP TABLE xog_iceberg;
+----
+db error: ERROR: Table with name xog_iceberg does not exist!<slt:ignore>
 
 
 # Even granting the non-owner full DML does not make it the owner: DROP is still

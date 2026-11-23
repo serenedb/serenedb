@@ -220,11 +220,11 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
                                 std::string_view name) {
   auto found =
     duckdb::Catalog::GetCatalogEntry(context, duckdb::Identifier{name});
-  if (!found) {
+  if (!found ||
+      !context.CanSeeDatabase(context.CurrentRole(), found->GetAttached())) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
-  context.CheckDatabaseReference(context.CurrentRole(), *found);
   return *found;
 }
 

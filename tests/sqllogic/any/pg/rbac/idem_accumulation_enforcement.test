@@ -43,11 +43,20 @@ sel	ins
 f	f
 
 
+onlyif postgres
 connection c_gul user=idem_gul password=idem_gul_pw
 statement error
 SELECT * FROM idem_kostyatable;
 ----
 db error: ERROR: permission denied for table idem_kostyatable<slt:ignore>
+
+
+skipif postgres
+connection c_gul user=idem_gul password=idem_gul_pw
+statement error
+SELECT * FROM idem_kostyatable;
+----
+db error: ERROR: Table with name idem_kostyatable does not exist!<slt:ignore>
 
 
 # ---- Grant SELECT, then re-grant SELECT (idempotent): real read works after

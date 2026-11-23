@@ -87,11 +87,20 @@ settings	stats	scan	data
 t	t	t	f
 
 
+onlyif postgres
 connection c_reader user=prr_reader password=prr_pw
 statement error
 SELECT v FROM prr_s.prr_t;
 ----
 db error: ERROR: permission denied for schema prr_s
+
+
+skipif postgres
+connection c_reader user=prr_reader password=prr_pw
+statement error
+SELECT v FROM prr_s.prr_t;
+----
+db error: ERROR: Table with name "prr_s.prr_t" does not exist because schema "prr_s" does not exist.<slt:ignore>
 
 
 statement ok

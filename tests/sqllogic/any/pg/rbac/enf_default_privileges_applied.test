@@ -53,11 +53,20 @@ a
 1
 
 
+onlyif postgres
 connection c_dpa_reader user=dpa_vedernikoff password=dpa_pw2
 statement error
 SELECT a FROM dpa_before;
 ----
 db error: ERROR: permission denied for table dpa_before
+
+
+skipif postgres
+connection c_dpa_reader user=dpa_vedernikoff password=dpa_pw2
+statement error
+SELECT a FROM dpa_before;
+----
+db error: ERROR: Table with name dpa_before does not exist!<slt:ignore>
 
 
 query

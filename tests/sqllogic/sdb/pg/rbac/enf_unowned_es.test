@@ -31,14 +31,14 @@ connection c_ved user=eue_vedernikoff password=eue_pw
 statement error
 SELECT count(*) FROM nation;
 ----
-db error: ERROR: permission denied for table nation
+db error: ERROR: Table with name nation does not exist!<slt:ignore>
 
 
 connection c_ved user=eue_vedernikoff password=eue_pw
 statement error
 INSERT INTO region VALUES (9, 'EUE', 'unowned');
 ----
-db error: ERROR: permission denied for table region
+db error: ERROR: Table with name region does not exist!<slt:ignore>
 
 
 query
@@ -82,7 +82,7 @@ connection c_ved user=eue_vedernikoff password=eue_pw
 statement error
 CALL es_create_index('eue_more', '{"mappings":{"properties":{"title":{"type":"keyword"}}}}');
 ----
-db error: ERROR: permission denied for schema es
+db error: ERROR: Schema with name es does not exist!<slt:ignore>
 
 
 connection c_ved user=eue_vedernikoff password=eue_pw
@@ -105,14 +105,14 @@ connection c_ved user=eue_vedernikoff password=eue_pw
 statement error
 CALL es_refresh('eue_docs');
 ----
-db error: ERROR: permission denied for schema es
+db error: ERROR: no such index [eue_docs]
 
 
 connection c_ved user=eue_vedernikoff password=eue_pw
 statement error
 CALL es_drop_index('eue_docs');
 ----
-db error: ERROR: permission denied for schema es
+db error: ERROR: no such index [eue_docs]
 
 
 connection c_click user=eue_clickclack password=eue_pw
@@ -124,7 +124,7 @@ connection c_ved user=eue_vedernikoff password=eue_pw
 statement error
 CALL es_refresh('eue_docs');
 ----
-db error: ERROR: permission denied for table eue_docs
+db error: ERROR: no such index [eue_docs]
 
 
 connection c_ved user=eue_vedernikoff password=eue_pw
@@ -136,7 +136,7 @@ connection c_ved user=eue_vedernikoff password=eue_pw
 statement error
 CALL es_drop_index('eue_docs');
 ----
-db error: ERROR: must be owner of table eue_docs
+db error: ERROR: no such index [eue_docs]
 
 
 connection c_click user=eue_clickclack password=eue_pw

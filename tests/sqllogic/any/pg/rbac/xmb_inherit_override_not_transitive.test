@@ -79,11 +79,20 @@ mop_usage_kostya	mop_member_iceberg	mop_usage_iceberg
 t	t	f
 
 
+onlyif postgres
 connection c_mop user=xmb_iont_mop password=xmb_iont_mop_pw
 statement error
 SELECT * FROM xmb_iont_clickclack;
 ----
 db error: ERROR: permission denied for table xmb_iont_clickclack<slt:ignore>
+
+
+skipif postgres
+connection c_mop user=xmb_iont_mop password=xmb_iont_mop_pw
+statement error
+SELECT * FROM xmb_iont_clickclack;
+----
+db error: ERROR: Table with name xmb_iont_clickclack does not exist!<slt:ignore>
 
 
 # ---- Fix the SECOND edge with WITH INHERIT TRUE: now the chain inherits ----

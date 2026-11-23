@@ -22,7 +22,7 @@ connection c_reader user=ejes_reader password=ejes_pw
 statement error
 SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT secret FROM ejes_vault'));
 ----
-db error: ERROR: permission denied for table ejes_vault<slt:ignore>
+db error: ERROR: Table with name ejes_vault does not exist!<slt:ignore>
 
 
 statement ok

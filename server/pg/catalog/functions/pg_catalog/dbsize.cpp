@@ -146,7 +146,7 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
 std::optional<int64_t> RelationBytes(const Session& session, uint64_t oid,
                                      bool data, bool indexes) {
   auto relation = FindRelation(session, oid);
-  if (!relation) {
+  if (!relation || !RelationShown(session, *relation)) {
     return std::nullopt;
   }
   if (relation->key || !relation->entry) {
@@ -245,15 +245,13 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
     args.data[0], result, args.size(), [&](Key key) -> int64_t {
       const auto entry = DatabaseEntry(context, key);
       duckdb::optional_ptr<duckdb::Catalog> database =
-        entry ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
-              : nullptr;
+        entry && (role.Has(duckdb::RoleCapability::ReadAllStats) ||
+                  duckdb::Allowed(role, *entry, duckdb::AclMode::Connect))
+          ? duckdb::Catalog::GetCatalogEntry(context, entry->name)
+          : nullptr;
       if (!database) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database ", KeyText(key), " does not exist"));
-      }
-      if (!role.Has(duckdb::RoleCapability::ReadAllStats) &&
-          !duckdb::Allowed(role, *entry, duckdb::AclMode::Connect)) {
-        duckdb::ThrowPermissionDenied(*entry);
       }
       return static_cast<int64_t>(
         DatabaseStorageSize(context, *database, {}).bytes);
@@ -278,9 +276,8 @@ void SchemaSizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   const auto& session = SessionOf(state);
   duckdb::UnaryExecutor::Execute<Key, int64_t>(
     args.data[0], result, args.size(), [&](Key key) -> int64_t {
-      const auto schema =
-        session.database ? SchemaEntry(session, key) : nullptr;
-      if (!schema) {
+      auto schema = session.database ? SchemaEntry(session, key) : nullptr;
+      if (!schema || !Shown(session, *schema)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                         ERR_MSG("schema ", KeyText(key), " does not exist"));
       }

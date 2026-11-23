@@ -266,8 +266,8 @@ ObjectIdentity IdentifyRole(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyConstraint(const Session& session, uint64_t oid) {
-  const auto table = OwnerTable(session, oid);
-  if (!table) {
+  auto table = OwnerTable(session, oid);
+  if (!table || !Shown(session, *table)) {
     return Missing("constraint");
   }
   const auto& constraints = table->GetConstraints();
@@ -290,8 +290,8 @@ ObjectIdentity IdentifyConstraint(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyDefault(const Session& session, uint64_t oid) {
-  const auto table = OwnerTable(session, oid);
-  if (!table) {
+  auto table = OwnerTable(session, oid);
+  if (!table || !Shown(session, *table)) {
     return Missing("default value");
   }
   for (const auto& column : table->GetColumns().Logical()) {
@@ -374,8 +374,8 @@ ObjectIdentity IdentifyNamed(std::string_view type, const auto& objects,
 }
 
 ObjectIdentity IdentifyDatabase(const Session& session, uint64_t oid) {
-  const auto database = FindDatabaseById(*session.context, oid);
-  return database
+  auto database = FindDatabaseById(*session.context, oid);
+  return database && Shown(session, *database)
            ? IdentifyNamed("database", database->name.GetIdentifierName())
            : Missing("database");
 }

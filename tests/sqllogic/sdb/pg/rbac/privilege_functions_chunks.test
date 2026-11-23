@@ -19,6 +19,14 @@ CREATE TABLE pfc_hidden (a integer);
 
 
 statement ok
+CREATE TABLE pfcoids AS SELECT 'pfc_hidden'::regclass::oid AS hidden;
+
+
+statement ok
+GRANT SELECT ON pfcoids TO pfc_vedernikoff;
+
+
+statement ok
 GRANT SELECT ON pfc_granted TO pfc_vedernikoff;
 
 
@@ -33,7 +41,7 @@ FROM (
   FROM unnest([
     'pfc_granted'::regclass::oid,
     NULL,
-    'pfc_hidden'::regclass::oid,
+    (SELECT hidden FROM pfcoids),
     'pfc_granted_i'::regclass::oid,
     'pfc_granted'::regclass::oid,
     0::oid
@@ -52,7 +60,7 @@ SELECT
 FROM (
   SELECT has_table_privilege('pfc_vedernikoff', o, 'SELECT') AS allowed
   FROM unnest([
-    'pfc_hidden'::regclass::oid,
+    (SELECT hidden FROM pfcoids),
     'pfc_granted'::regclass::oid
   ]) AS u(o), range(3000)
 );
@@ -71,7 +79,7 @@ FROM (
   SELECT has_table_privilege(o, CASE WHEN i % 3 = 0 THEN NULL ELSE 'SELECT' END) AS allowed
   FROM unnest([
     'pfc_granted'::regclass::oid,
-    'pfc_hidden'::regclass::oid
+    (SELECT hidden FROM pfcoids)
   ]) AS u(o), range(3000) AS r(i)
 );
 ----
@@ -190,6 +198,10 @@ DROP TYPE pfc_closed;
 
 statement ok
 DROP TABLE pfc_granted;
+
+
+statement ok
+DROP TABLE pfcoids;
 
 
 statement ok

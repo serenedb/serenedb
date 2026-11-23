@@ -145,7 +145,7 @@ connection c_ved4 user=csa_vedernikoff password=csa_vedernikoff_pw
 statement error
 DROP SCHEMA csa_babsky;
 ----
-db error: ERROR: must be owner of schema csa_babsky
+db error: ERROR: Schema with name csa_babsky does not exist!<slt:ignore>
 
 
 connection default

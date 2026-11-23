@@ -118,9 +118,10 @@ connection c_edo user=edo_vedernikoff password=edo_pw
 statement error
 DROP TRIGGER edo_theirs_trg ON edo_theirs;
 ----
-db error: ERROR: must be owner of table edo_theirs
+db error: ERROR: Table with name edo_theirs does not exist!<slt:ignore>
 
 
+onlyif postgres
 connection c_edo user=edo_vedernikoff password=edo_pw
 statement error
 DROP INDEX edo_theirs_idx;
@@ -128,6 +129,15 @@ DROP INDEX edo_theirs_idx;
 db error: ERROR: must be owner of index edo_theirs_idx
 
 
+skipif postgres
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+DROP INDEX edo_theirs_idx;
+----
+db error: ERROR: Index with name edo_theirs_idx does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_edo user=edo_vedernikoff password=edo_pw
 statement error
 CREATE INDEX edo_more_idx ON edo_theirs (a);
@@ -135,11 +145,28 @@ CREATE INDEX edo_more_idx ON edo_theirs (a);
 db error: ERROR: must be owner of table edo_theirs
 
 
+skipif postgres
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+CREATE INDEX edo_more_idx ON edo_theirs (a);
+----
+db error: ERROR: Table with name edo_theirs does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_edo user=edo_vedernikoff password=edo_pw
 statement error
 COMMENT ON TABLE edo_theirs IS 'mine now';
 ----
 db error: ERROR: must be owner of table edo_theirs
+
+
+skipif postgres
+connection c_edo user=edo_vedernikoff password=edo_pw
+statement error
+COMMENT ON TABLE edo_theirs IS 'mine now';
+----
+db error: ERROR: Table with name edo_theirs does not exist!<slt:ignore>
 
 
 connection c_edo user=edo_vedernikoff password=edo_pw

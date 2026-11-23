@@ -87,16 +87,32 @@ INSERT INTO ednc_notes (body) VALUES ('mop');
 db error: ERROR: permission denied for table ednc_notes
 
 
+onlyif postgres
 statement error
 INSERT INTO ednc_vault SELECT amount FROM ednc_notes, ednc_ledger;
 ----
 db error: ERROR: permission denied for table ednc_vault
 
 
+skipif postgres
+statement error
+INSERT INTO ednc_vault SELECT amount FROM ednc_notes, ednc_ledger;
+----
+db error: ERROR: Table with name ednc_vault does not exist!<slt:ignore>
+
+
+onlyif postgres
 statement error
 UPDATE ednc_vault SET secret = (SELECT count(*) FROM ednc_notes);
 ----
 db error: ERROR: permission denied for table ednc_vault
+
+
+skipif postgres
+statement error
+UPDATE ednc_vault SET secret = (SELECT count(*) FROM ednc_notes);
+----
+db error: ERROR: Table with name ednc_vault does not exist!<slt:ignore>
 
 
 statement ok

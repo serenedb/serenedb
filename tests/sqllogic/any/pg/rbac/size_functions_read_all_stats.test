@@ -38,11 +38,20 @@ sized
 t
 
 
+onlyif postgres
 connection c_plain user=sfr_plain password=sfr_pw
 statement error
 SELECT pg_database_size('sfr_noconn');
 ----
 db error: ERROR: permission denied for database sfr_noconn
+
+
+skipif postgres
+connection c_plain user=sfr_plain password=sfr_pw
+statement error
+SELECT pg_database_size('sfr_noconn');
+----
+db error: ERROR: database "sfr_noconn" does not exist<slt:ignore>
 
 
 connection c_stats user=sfr_stats password=sfr_pw

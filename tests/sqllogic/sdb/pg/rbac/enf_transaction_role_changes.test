@@ -45,7 +45,7 @@ SET ROLE etrc_vedernikoff;
 statement error
 SELECT * FROM etrc_secret;
 ----
-db error: ERROR: permission denied for table etrc_secret
+db error: ERROR: Table with name etrc_secret does not exist!<slt:ignore>
 
 
 statement ok
@@ -75,7 +75,7 @@ SET ROLE etrc_vedernikoff;
 statement error
 SELECT * FROM etrc_secret;
 ----
-db error: ERROR: permission denied for table etrc_secret
+db error: ERROR: Table with name etrc_secret does not exist!<slt:ignore>
 
 
 statement ok
@@ -99,10 +99,10 @@ SET ROLE etrc_vedernikoff;
 
 
 query
-SELECT has_table_privilege('etrc_secret', 'SELECT') AS can_read;
+SELECT to_regclass('etrc_secret') IS NULL AS hidden;
 ----
-can_read
-f
+hidden
+t
 
 
 statement ok

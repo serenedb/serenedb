@@ -147,11 +147,20 @@ statement ok
 REVOKE INSERT ON ett_log FROM ett_writer;
 
 
+onlyif postgres
 connection c_ett user=ett_writer password=ett_pw
 statement error
 INSERT INTO ett_t VALUES (5, 'five');
 ----
 db error: ERROR: permission denied for table ett_log
+
+
+skipif postgres
+connection c_ett user=ett_writer password=ett_pw
+statement error
+INSERT INTO ett_t VALUES (5, 'five');
+----
+db error: ERROR: Table with name ett_log does not exist!<slt:ignore>
 
 
 query

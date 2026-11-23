@@ -34,6 +34,7 @@ statement ok
 GRANT TRUNCATE ON etc_parent TO etc_cleaner;
 
 
+onlyif postgres
 connection c_etc user=etc_cleaner password=etc_pw
 statement error
 TRUNCATE etc_parent CASCADE;
@@ -41,11 +42,28 @@ TRUNCATE etc_parent CASCADE;
 db error: ERROR: permission denied for table etc_child
 
 
+skipif postgres
+connection c_etc user=etc_cleaner password=etc_pw
+statement error
+TRUNCATE etc_parent CASCADE;
+----
+db error: ERROR: Table with name etc_child does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_etc user=etc_cleaner password=etc_pw
 statement error
 TRUNCATE etc_parent, etc_child;
 ----
 db error: ERROR: permission denied for table etc_child
+
+
+skipif postgres
+connection c_etc user=etc_cleaner password=etc_pw
+statement error
+TRUNCATE etc_parent, etc_child;
+----
+db error: ERROR: Table with name etc_child does not exist!<slt:ignore>
 
 
 query

@@ -127,6 +127,7 @@ statement ok
 ALTER SEQUENCE sso_t_id_seq OWNER TO CURRENT_USER
 
 
+onlyif postgres
 connection other user=sso_other password=sso_other_pw
 statement error
 ALTER SEQUENCE sso_t_id_seq OWNER TO sso_heir
@@ -134,6 +135,15 @@ ALTER SEQUENCE sso_t_id_seq OWNER TO sso_heir
 db error: ERROR: must be owner of sequence sso_t_id_seq
 
 
+skipif postgres
+connection other user=sso_other password=sso_other_pw
+statement error
+ALTER SEQUENCE sso_t_id_seq OWNER TO sso_heir
+----
+db error: ERROR: Sequence with name sso_t_id_seq does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection other user=sso_other password=sso_other_pw
 statement error
 ALTER SEQUENCE sso_t_id_seq OWNER TO sso_owner
@@ -141,11 +151,28 @@ ALTER SEQUENCE sso_t_id_seq OWNER TO sso_owner
 db error: ERROR: must be owner of sequence sso_t_id_seq
 
 
+skipif postgres
+connection other user=sso_other password=sso_other_pw
+statement error
+ALTER SEQUENCE sso_t_id_seq OWNER TO sso_owner
+----
+db error: ERROR: Sequence with name sso_t_id_seq does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection other user=sso_other password=sso_other_pw
 statement error
 ALTER TABLE sso_t OWNER TO sso_owner
 ----
 db error: ERROR: must be owner of table sso_t
+
+
+skipif postgres
+connection other user=sso_other password=sso_other_pw
+statement error
+ALTER TABLE sso_t OWNER TO sso_owner
+----
+db error: ERROR: Table with name sso_t does not exist!<slt:ignore>
 
 
 statement ok
@@ -272,11 +299,20 @@ db error: ERROR: cannot change owner of sequence "sso_t_added_seq"
 DETAIL: Sequence "sso_t_added_seq" is linked to table "sso_t".
 
 
+onlyif postgres
 connection other user=sso_other password=sso_other_pw
 statement error
 ALTER TABLE sso_t ADD COLUMN theirs serial
 ----
 db error: ERROR: must be owner of table sso_t
+
+
+skipif postgres
+connection other user=sso_other password=sso_other_pw
+statement error
+ALTER TABLE sso_t ADD COLUMN theirs serial
+----
+db error: ERROR: Table with name sso_t does not exist!<slt:ignore>
 
 
 query

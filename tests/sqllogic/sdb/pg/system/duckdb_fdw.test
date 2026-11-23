@@ -87,7 +87,7 @@ connection dfw_reader user=dfw_reader password=dfw_pw
 statement error
 SELECT count(*) FROM dfw_ro_${__DATABASE__}.main.docs;
 ----
-db error: ERROR: permission denied for foreign server dfw_ro_<slt:ignore>
+db error: ERROR: Table with name "dfw_ro_<slt:ignore>
 
 
 connection default

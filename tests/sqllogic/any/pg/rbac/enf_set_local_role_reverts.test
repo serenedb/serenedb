@@ -61,11 +61,20 @@ current
 eslr_login
 
 
+onlyif postgres
 connection c_eslr user=eslr_login password=eslr_pw
 statement error
 SELECT count(*) FROM eslr_secret;
 ----
 db error: ERROR: permission denied for table eslr_secret
+
+
+skipif postgres
+connection c_eslr user=eslr_login password=eslr_pw
+statement error
+SELECT count(*) FROM eslr_secret;
+----
+db error: ERROR: Table with name eslr_secret does not exist!<slt:ignore>
 
 
 connection c_eslr user=eslr_login password=eslr_pw
@@ -91,11 +100,20 @@ current
 eslr_login
 
 
+onlyif postgres
 connection c_eslr user=eslr_login password=eslr_pw
 statement error
 SELECT count(*) FROM eslr_secret;
 ----
 db error: ERROR: permission denied for table eslr_secret
+
+
+skipif postgres
+connection c_eslr user=eslr_login password=eslr_pw
+statement error
+SELECT count(*) FROM eslr_secret;
+----
+db error: ERROR: Table with name eslr_secret does not exist!<slt:ignore>
 
 
 statement ok

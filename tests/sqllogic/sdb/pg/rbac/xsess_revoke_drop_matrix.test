@@ -64,7 +64,7 @@ connection c_intern user=xsess_intern password=xsess_intern_pw
 statement error
 SELECT count(*) FROM xsess_ledger;
 ----
-db error: ERROR: permission denied for table xsess_ledger<slt:ignore>
+db error: ERROR: Table with name xsess_ledger does not exist!<slt:ignore>
 
 
 # Owner re-grants; access is restored on the next statement, still same session.

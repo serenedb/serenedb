@@ -53,7 +53,7 @@ connection viewer user=papich_viewer password=pv_pw
 statement error
 SELECT count(*) FROM papich_scores;
 ----
-db error: ERROR: permission denied for table papich_scores
+db error: ERROR: Table with name papich_scores does not exist!<slt:ignore>
 
 
 connection default

@@ -54,11 +54,20 @@ CREATE ROLE esm_grp;
 
 
 # No grant yet -> refused.
+onlyif postgres
 connection c_ved user=esm_vedernikoff password=esm_vedernikoff_pw
 statement error
 SELECT id FROM esm_clickclack;
 ----
 db error: ERROR: permission denied for table esm_clickclack<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=esm_vedernikoff password=esm_vedernikoff_pw
+statement error
+SELECT id FROM esm_clickclack;
+----
+db error: ERROR: Table with name esm_clickclack does not exist!<slt:ignore>
 
 
 # Direct grant -> allowed.
@@ -135,11 +144,20 @@ statement ok
 REVOKE SELECT ON esm_mop FROM PUBLIC;
 
 
+onlyif postgres
 connection c_ved4 user=esm_vedernikoff password=esm_vedernikoff_pw
 statement error
 SELECT id FROM esm_clickclack WHERE id IN (SELECT id FROM esm_mop);
 ----
 db error: ERROR: permission denied for table esm_mop<slt:ignore>
+
+
+skipif postgres
+connection c_ved4 user=esm_vedernikoff password=esm_vedernikoff_pw
+statement error
+SELECT id FROM esm_clickclack WHERE id IN (SELECT id FROM esm_mop);
+----
+db error: ERROR: Table with name esm_mop does not exist!<slt:ignore>
 
 
 statement ok

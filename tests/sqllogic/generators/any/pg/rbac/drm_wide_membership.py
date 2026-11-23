@@ -38,12 +38,14 @@ t.query("SELECT has_table_privilege('rwm_user', 'rwm_t', 'SELECT') AS t, "
 
 t.statement("SET ROLE rwm_user")
 t.query("SELECT count(*) AS n FROM rwm_t", ["n"], [[1]])
-t.error("SELECT count(*) FROM rwm_u", "permission denied for table rwm_u")
+t.error("SELECT count(*) FROM rwm_u", "permission denied for table rwm_u", onlyif="postgres")
+t.error("SELECT count(*) FROM rwm_u", "Table with name rwm_u does not exist!", skipif="postgres")
 t.statement("RESET ROLE")
 
 t.statement(f"REVOKE rwm_g{GROUPS} FROM rwm_user")
 t.statement("SET ROLE rwm_user")
-t.error("SELECT count(*) FROM rwm_t", "permission denied for table rwm_t")
+t.error("SELECT count(*) FROM rwm_t", "permission denied for table rwm_t", onlyif="postgres")
+t.error("SELECT count(*) FROM rwm_t", "Table with name rwm_t does not exist!", skipif="postgres")
 t.statement("RESET ROLE")
 
 t.statement("DROP TABLE rwm_t")

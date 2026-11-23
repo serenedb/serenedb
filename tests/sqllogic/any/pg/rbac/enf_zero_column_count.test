@@ -50,6 +50,7 @@ CREATE ROLE zc_vedernikoff LOGIN PASSWORD 'zc_vedernikoff_pw';
 
 # C8 core (B2 regression target): count(*) projects no column but still reads
 # the relation -> needs SELECT, which is absent.
+onlyif postgres
 connection c_ved user=zc_vedernikoff password=zc_vedernikoff_pw
 statement error
 SELECT count(*) FROM zc_pb;
@@ -57,7 +58,16 @@ SELECT count(*) FROM zc_pb;
 db error: ERROR: permission denied for table zc_pb<slt:ignore>
 
 
+skipif postgres
+connection c_ved user=zc_vedernikoff password=zc_vedernikoff_pw
+statement error
+SELECT count(*) FROM zc_pb;
+----
+db error: ERROR: Table with name zc_pb does not exist!<slt:ignore>
+
+
 # SELECT 1 FROM t reads no column of t but still scans it -> refused.
+onlyif postgres
 connection c_ved2 user=zc_vedernikoff password=zc_vedernikoff_pw
 statement error
 SELECT 1 FROM zc_pb;
@@ -65,7 +75,16 @@ SELECT 1 FROM zc_pb;
 db error: ERROR: permission denied for table zc_pb<slt:ignore>
 
 
+skipif postgres
+connection c_ved2 user=zc_vedernikoff password=zc_vedernikoff_pw
+statement error
+SELECT 1 FROM zc_pb;
+----
+db error: ERROR: Table with name zc_pb does not exist!<slt:ignore>
+
+
 # A constant-false predicate still reads the relation -> refused.
+onlyif postgres
 connection c_ved3 user=zc_vedernikoff password=zc_vedernikoff_pw
 statement error
 SELECT count(*) FROM zc_pb WHERE false;
@@ -73,12 +92,29 @@ SELECT count(*) FROM zc_pb WHERE false;
 db error: ERROR: permission denied for table zc_pb<slt:ignore>
 
 
+skipif postgres
+connection c_ved3 user=zc_vedernikoff password=zc_vedernikoff_pw
+statement error
+SELECT count(*) FROM zc_pb WHERE false;
+----
+db error: ERROR: Table with name zc_pb does not exist!<slt:ignore>
+
+
 # EXISTS over an ungranted relation is the same zero-column read -> refused.
+onlyif postgres
 connection c_ved4 user=zc_vedernikoff password=zc_vedernikoff_pw
 statement error
 SELECT EXISTS(SELECT 1 FROM zc_pb);
 ----
 db error: ERROR: permission denied for table zc_pb<slt:ignore>
+
+
+skipif postgres
+connection c_ved4 user=zc_vedernikoff password=zc_vedernikoff_pw
+statement error
+SELECT EXISTS(SELECT 1 FROM zc_pb);
+----
+db error: ERROR: Table with name zc_pb does not exist!<slt:ignore>
 
 
 # === C7: a column-level SELECT grant on zc_pa is enough for count(*) ===
@@ -152,11 +188,20 @@ sel
 f
 
 
+onlyif postgres
 connection c_ved7 user=zc_vedernikoff password=zc_vedernikoff_pw
 statement error
 SELECT count(*) FROM zc_pa;
 ----
 db error: ERROR: permission denied for table zc_pa<slt:ignore>
+
+
+skipif postgres
+connection c_ved7 user=zc_vedernikoff password=zc_vedernikoff_pw
+statement error
+SELECT count(*) FROM zc_pa;
+----
+db error: ERROR: Table with name zc_pa does not exist!<slt:ignore>
 
 
 # ---- cleanup ----

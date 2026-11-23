@@ -86,6 +86,7 @@ schema_scoped
 1
 
 
+onlyif postgres
 connection c_dpr user=dpr_vedernikoff password=dpr_pw
 statement error
 SELECT dpr_quas.dpr_global();
@@ -93,11 +94,28 @@ SELECT dpr_quas.dpr_global();
 db error: ERROR: permission denied for function dpr_global
 
 
+skipif postgres
+connection c_dpr user=dpr_vedernikoff password=dpr_pw
+statement error
+SELECT dpr_quas.dpr_global();
+----
+db error: ERROR: Scalar Function with name dpr_global does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_dpr user=dpr_vedernikoff password=dpr_pw
 statement error
 CALL dpr_quas.dpr_proc();
 ----
 db error: ERROR: permission denied for procedure dpr_proc
+
+
+skipif postgres
+connection c_dpr user=dpr_vedernikoff password=dpr_pw
+statement error
+CALL dpr_quas.dpr_proc();
+----
+db error: ERROR: Table Function with name dpr_proc does not exist!<slt:ignore>
 
 
 statement ok

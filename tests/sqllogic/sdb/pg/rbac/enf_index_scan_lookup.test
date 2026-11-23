@@ -48,15 +48,14 @@ connection c_eisl user=eisl_vedernikoff password=eisl_pw
 statement error
 SELECT count(*) FROM eisl_hidden.eisl_hidden_idx;
 ----
-db error: ERROR: permission denied for schema eisl_hidden
+db error: ERROR: Table with name "eisl_hidden.eisl_hidden_idx" does not exist<slt:ignore>
 
 
 connection c_eisl user=eisl_vedernikoff password=eisl_pw
 statement error
 SELECT count(*) FROM eisl_other_${__DATABASE__}.public.eisl_remote_idx;
 ----
-db error: ERROR: permission denied for database "eisl_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name "eisl_other_<slt:ignore>.public.eisl_remote_idx" does not exist because schema "eisl_other_<slt:ignore>.public" does not exist.
 
 
 statement ok

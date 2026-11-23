@@ -114,11 +114,20 @@ sel
 f
 
 
+onlyif postgres
 connection c_mop3 user=xmb_sptp_mop password=xmb_sptp_mop_pw
 statement error
 SELECT * FROM xmb_sptp_clickclack;
 ----
 db error: ERROR: permission denied for table xmb_sptp_clickclack<slt:ignore>
+
+
+skipif postgres
+connection c_mop3 user=xmb_sptp_mop password=xmb_sptp_mop_pw
+statement error
+SELECT * FROM xmb_sptp_clickclack;
+----
+db error: ERROR: Table with name xmb_sptp_clickclack does not exist!<slt:ignore>
 
 
 # ---- Cleanup ----

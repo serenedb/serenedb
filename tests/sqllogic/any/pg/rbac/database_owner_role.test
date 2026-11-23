@@ -72,11 +72,20 @@ member
 f
 
 
+onlyif postgres
 connection c_other_db user=dor_other password=dor_pw database=dor_db
 statement error
 SELECT count(*) FROM dor_s.dor_t;
 ----
 db error: ERROR: permission denied for schema dor_s
+
+
+skipif postgres
+connection c_other_db user=dor_other password=dor_pw database=dor_db
+statement error
+SELECT count(*) FROM dor_s.dor_t;
+----
+db error: ERROR: Table with name "dor_s.dor_t" does not exist because schema "dor_s" does not exist.<slt:ignore>
 
 
 connection c_owner_db user=dor_owner password=dor_pw database=dor_db

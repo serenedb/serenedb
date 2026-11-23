@@ -24,7 +24,7 @@ connection c_ved user=edpd_vedernikoff password=edpd_pw
 statement error
 CREATE TABLE edpd_other_${__DATABASE__}.edpd_bare.edpd_made (a integer);
 ----
-db error: ERROR: permission denied for schema edpd_bare
+db error: ERROR: Schema with name edpd_bare does not exist!<slt:ignore>
 
 
 statement ok

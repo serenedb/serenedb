@@ -76,11 +76,20 @@ member	usage	setrole	sel
 t	f	t	f
 
 
+onlyif postgres
 connection c2 user=xmb_eoc_mop password=xmb_eoc_mop_pw
 statement error
 SELECT * FROM xmb_eoc_clickclack;
 ----
 db error: ERROR: permission denied for table xmb_eoc_clickclack<slt:ignore>
+
+
+skipif postgres
+connection c2 user=xmb_eoc_mop password=xmb_eoc_mop_pw
+statement error
+SELECT * FROM xmb_eoc_clickclack;
+----
+db error: ERROR: Table with name xmb_eoc_clickclack does not exist!<slt:ignore>
 
 
 # ---- INHERIT TRUE again: privilege flow restored, SET still true ----

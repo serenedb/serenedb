@@ -461,10 +461,18 @@ statement ok
 SET ROLE bgr_view_n;
 
 
+onlyif postgres
 statement error
 GRANT SELECT ON bgr_v TO bgr_view_x;
 ----
 db error: ERROR: permission denied for table bgr_v
+
+
+skipif postgres
+statement error
+GRANT SELECT ON bgr_v TO bgr_view_x;
+----
+db error: ERROR: Table with name bgr_v does not exist!<slt:ignore>
 
 
 statement ok

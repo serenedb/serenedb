@@ -78,11 +78,20 @@ f	f
 # ---- With SELECT fully revoked, the real read is denied. serenedb appends a
 #      DETAIL line PG does not, so the expected block ends with an ignore
 #      marker that matches both engines. ----
+onlyif postgres
 connection c_ved user=go_rev_vedernikoff password=go_rev_vedernikoff_pw
 statement error
 SELECT id FROM go_mop_deadinside;
 ----
 db error: ERROR: permission denied for table go_mop_deadinside<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=go_rev_vedernikoff password=go_rev_vedernikoff_pw
+statement error
+SELECT id FROM go_mop_deadinside;
+----
+db error: ERROR: Table with name go_mop_deadinside does not exist!<slt:ignore>
 
 
 # ---- Re-GRANT plainly: privilege returns WITHOUT the option. ----

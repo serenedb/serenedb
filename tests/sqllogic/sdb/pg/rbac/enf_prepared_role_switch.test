@@ -79,31 +79,31 @@ SET ROLE eprs_reader_${__DATABASE__};
 statement error
 SELECT count(*) AS n FROM eprs_search;
 ----
-db error: ERROR: permission denied for table eprs_search
+db error: ERROR: Table with name eprs_search does not exist!<slt:ignore>
 
 
 statement error
 EXECUTE eprs_q1;
 ----
-db error: ERROR: permission denied for table eprs_search
+db error: ERROR: Table with name eprs_search does not exist!<slt:ignore>
 
 
 statement error
 EXECUTE eprs_q2;
 ----
-db error: ERROR: permission denied for table eprs_vectors
+db error: ERROR: Table with name eprs_vectors_idx does not exist<slt:ignore>
 
 
 statement error
 EXECUTE eprs_q3;
 ----
-db error: ERROR: permission denied for table eprs_log
+db error: ERROR: Table with name eprs_log does not exist!<slt:ignore>
 
 
 statement error
 EXECUTE eprs_q4;
 ----
-db error: ERROR: permission denied for sequence eprs_seq
+db error: ERROR: Sequence with name eprs_seq does not exist!<slt:ignore>
 
 
 statement ok

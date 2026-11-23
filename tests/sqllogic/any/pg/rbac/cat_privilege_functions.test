@@ -130,6 +130,7 @@ statement ok
 SET ROLE pfn_reader;
 
 
+onlyif postgres
 query
 SELECT has_table_privilege('pfn_table', 'SELECT') AS via_group,
        has_table_privilege('pfn_columns', 'SELECT') AS table_select,
@@ -146,6 +147,31 @@ SELECT has_table_privilege('pfn_table', 'SELECT') AS via_group,
 ----
 via_group	table_select	any_column	column_b	column_attnum	sequence_usage	schema_usage	function_execute	type_usage	database_create	tablespace_create	member
 t	f	t	t	t	t	t	t	f	f	f	t
+
+
+skipif postgres
+query
+SELECT has_table_privilege('pfn_table', 'SELECT') AS via_group,
+       has_table_privilege('pfn_columns', 'SELECT') AS table_select,
+       has_any_column_privilege('pfn_columns', 'UPDATE') AS any_column,
+       has_column_privilege('pfn_columns', 'b', 'UPDATE') AS column_b,
+       has_column_privilege('pfn_columns', 2::smallint, 'UPDATE') AS column_attnum,
+       has_sequence_privilege('pfn_sequence', 'USAGE') AS sequence_usage,
+       has_schema_privilege('pfn_schema', 'USAGE') AS schema_usage,
+       has_function_privilege('pfn_function(int)', 'EXECUTE') AS function_execute,
+       has_database_privilege(current_database(), 'CREATE') AS database_create,
+       has_tablespace_privilege('pg_default', 'CREATE') AS tablespace_create,
+       pg_has_role('pfn_group', 'MEMBER') AS member;
+----
+via_group	table_select	any_column	column_b	column_attnum	sequence_usage	schema_usage	function_execute	database_create	tablespace_create	member
+t	f	t	t	t	t	t	t	f	f	t
+
+
+skipif postgres
+statement error
+SELECT has_type_privilege('pfn_type', 'USAGE');
+----
+db error: ERROR: type "pfn_type" does not exist
 
 
 onlyif postgres
@@ -172,12 +198,18 @@ SELECT has_table_privilege('pfn_table'::regclass, 'SELECT') AS table_oid,
        has_sequence_privilege('pfn_sequence'::regclass, 'USAGE') AS sequence_oid,
        has_schema_privilege('pfn_schema'::regnamespace, 'USAGE') AS schema_oid,
        has_function_privilege('pfn_function(int)'::regprocedure, 'EXECUTE') AS function_oid,
-       has_type_privilege('pfn_type'::regtype, 'USAGE') AS type_oid,
        has_database_privilege((SELECT oid FROM pg_database WHERE datname = current_database()), 'CONNECT') AS database_oid,
        pg_has_role((SELECT oid FROM pg_roles WHERE rolname = 'pfn_group'), 'MEMBER') AS member_oid;
 ----
-table_oid	any_column_oid	column_oid	sequence_oid	schema_oid	function_oid	type_oid	database_oid	member_oid
-t	t	t	t	t	t	NULL	t	t
+table_oid	any_column_oid	column_oid	sequence_oid	schema_oid	function_oid	database_oid	member_oid
+t	t	t	t	t	t	t	t
+
+
+skipif postgres
+statement error
+SELECT 'pfn_type'::regtype;
+----
+db error: ERROR: type "pfn_type" does not exist
 
 
 query

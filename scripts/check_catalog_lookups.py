@@ -41,7 +41,6 @@ ALLOWED = {
     f"{SERVER}/connector/copy_from_batches.cpp": 1,
     f"{SERVER}/connector/index_source_external_lookup.cpp": 1,
     f"{SERVER}/connector/index_source_native.cpp": 1,
-    f"{SERVER}/connector/iresearch_replacement_scan.cpp": 1,
     f"{SERVER}/connector/scan/scan_bind.cpp": 1,
     f"{SERVER}/connector/view_fast_path.cpp": 1,
     f"{SERVER}/docs/builder/docs_loader.cpp": 1,

@@ -283,11 +283,20 @@ pinned	floating
 a	b
 
 
+onlyif postgres
 connection c_user user=efsp_user password=efsp_pw
 statement error
 SELECT v FROM efsp_a.t;
 ----
 db error: ERROR: permission denied for schema efsp_a
+
+
+skipif postgres
+connection c_user user=efsp_user password=efsp_pw
+statement error
+SELECT v FROM efsp_a.t;
+----
+db error: ERROR: Table with name "efsp_a.t" does not exist because schema "efsp_a" does not exist.<slt:ignore>
 
 
 onlyif postgres

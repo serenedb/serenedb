@@ -58,7 +58,7 @@ connection su user=su_reader password=su_reader_pw
 statement error
 SELECT a FROM su_s.t;
 ----
-db error: ERROR: permission denied for schema su_s
+db error: ERROR: Table with name "su_s.t" does not exist because schema "su_s" does not exist.<slt:ignore>
 
 
 connection su user=su_reader password=su_reader_pw

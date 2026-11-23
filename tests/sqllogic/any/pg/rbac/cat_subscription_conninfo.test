@@ -28,6 +28,7 @@ SELECT * FROM pg_subscription;
 db error: ERROR: permission denied for table pg_subscription<slt:ignore>
 
 
+onlyif postgres
 connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
 query
 SELECT subname, subenabled, subpublications FROM pg_subscription WHERE subname = 'cat_sub_conninfo';
@@ -35,12 +36,28 @@ SELECT subname, subenabled, subpublications FROM pg_subscription WHERE subname =
 subname	subenabled	subpublications
 cat_sub_conninfo	f	{cat_sub_pub}
 
+skipif postgres
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+query
+SELECT subname, subenabled, subpublications FROM pg_subscription WHERE subname = 'cat_sub_conninfo';
+----
+subname	subenabled	subpublications
+
+onlyif postgres
 connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
 query
 SELECT count(*) > 0 AS counted FROM pg_subscription;
 ----
 counted
 t
+
+skipif postgres
+connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
+query
+SELECT count(*) > 0 AS counted FROM pg_subscription;
+----
+counted
+f
 
 connection c_sub_intern user=cat_sub_intern password=cat_sub_intern_pw
 query

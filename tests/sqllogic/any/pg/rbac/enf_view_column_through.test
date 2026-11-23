@@ -82,11 +82,20 @@ CREATE ROLE evct_mop LOGIN PASSWORD 'evct_mop_pw';
 # Before any grant, vedernikoff holds nothing on the view relation, so the read
 # is refused naming the VIEW (RULE R: the view relation is checked vs the caller
 # even though its base is checked vs the owner).
+onlyif postgres
 connection c_def0 user=evct_vedernikoff password=evct_vedernikoff_pw
 statement error
 SELECT id, av FROM evct_clickclack ORDER BY id;
 ----
 db error: ERROR: permission denied for view evct_clickclack<slt:ignore>
+
+
+skipif postgres
+connection c_def0 user=evct_vedernikoff password=evct_vedernikoff_pw
+statement error
+SELECT id, av FROM evct_clickclack ORDER BY id;
+----
+db error: ERROR: Table with name evct_clickclack does not exist!<slt:ignore>
 
 
 # Granting SELECT on the definer view authorizes the read: the view relation is
@@ -125,6 +134,7 @@ db error: ERROR: Referenced column "secret" not found in FROM clause!<slt:ignore
 # === Definer view does NOT let the reader bypass column grants on the base
 # directly. vedernikoff holds NOTHING on evct_iceberg, so a direct base read --
 # of any column, including the unexposed secret -- is refused naming the base. ===
+onlyif postgres
 connection c_def3 user=evct_vedernikoff password=evct_vedernikoff_pw
 statement error
 SELECT id, av FROM evct_iceberg;
@@ -132,11 +142,28 @@ SELECT id, av FROM evct_iceberg;
 db error: ERROR: permission denied for table evct_iceberg<slt:ignore>
 
 
+skipif postgres
+connection c_def3 user=evct_vedernikoff password=evct_vedernikoff_pw
+statement error
+SELECT id, av FROM evct_iceberg;
+----
+db error: ERROR: Table with name evct_iceberg does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_def4 user=evct_vedernikoff password=evct_vedernikoff_pw
 statement error
 SELECT secret FROM evct_iceberg;
 ----
 db error: ERROR: permission denied for table evct_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_def4 user=evct_vedernikoff password=evct_vedernikoff_pw
+statement error
+SELECT secret FROM evct_iceberg;
+----
+db error: ERROR: Table with name evct_iceberg does not exist!<slt:ignore>
 
 
 # === Invoker view over a base where the caller has a COLUMN grant. ===
@@ -204,6 +231,7 @@ db error: ERROR: permission denied for table evct_iceberg<slt:ignore>
 # Both views enforce their OWN SELECT privilege against the caller (RULE R). mop
 # holds nothing on either view relation, so each read is refused naming the VIEW
 # it lacks -- before the base is ever reached. PG-faithful on both paths.
+onlyif postgres
 connection c_mop user=evct_mop password=evct_mop_pw
 statement error
 SELECT id, av FROM evct_clickclack ORDER BY id;
@@ -211,11 +239,28 @@ SELECT id, av FROM evct_clickclack ORDER BY id;
 db error: ERROR: permission denied for view evct_clickclack<slt:ignore>
 
 
+skipif postgres
+connection c_mop user=evct_mop password=evct_mop_pw
+statement error
+SELECT id, av FROM evct_clickclack ORDER BY id;
+----
+db error: ERROR: Table with name evct_clickclack does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_mop2 user=evct_mop password=evct_mop_pw
 statement error
 SELECT id, av FROM evct_clackclick ORDER BY id;
 ----
 db error: ERROR: permission denied for view evct_clackclick<slt:ignore>
+
+
+skipif postgres
+connection c_mop2 user=evct_mop password=evct_mop_pw
+statement error
+SELECT id, av FROM evct_clackclick ORDER BY id;
+----
+db error: ERROR: Table with name evct_clackclick does not exist!<slt:ignore>
 
 
 statement ok

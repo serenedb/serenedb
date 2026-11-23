@@ -120,7 +120,7 @@ CREATE JOB jt_serene.jt_arelav_space.jt_peek AFTER 1 HOUR AS INSERT INTO jt_mine
 statement error
 EXECUTE JOB jt_serene.jt_arelav_space.jt_peek;
 ----
-db error: ERROR: permission denied for table jt_secret<slt:ignore>
+db error: ERROR: Table with name jt_secret does not exist!<slt:ignore>
 
 
 statement ok

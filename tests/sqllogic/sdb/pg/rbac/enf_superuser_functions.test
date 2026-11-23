@@ -18,14 +18,14 @@ connection c_ved user=esf_vedernikoff password=esf_pw
 statement error
 SELECT * FROM esf_vault;
 ----
-db error: ERROR: permission denied for table esf_vault
+db error: ERROR: Table with name esf_vault does not exist!<slt:ignore>
 
 
 connection c_ved user=esf_vedernikoff password=esf_pw
 statement error
 SELECT * FROM json_execute_serialized_sql(json_serialize_sql('SELECT * FROM esf_vault'));
 ----
-db error: ERROR: permission denied for table esf_vault
+db error: ERROR: Table with name esf_vault does not exist!<slt:ignore>
 
 
 connection c_ved user=esf_vedernikoff password=esf_pw

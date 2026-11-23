@@ -64,11 +64,20 @@ statement ok
 RESET ROLE;
 
 
+onlyif postgres
 connection c_caller user=sds_caller password=sds_pw
 statement error
 SELECT pg_database_size('sds_db');
 ----
 db error: ERROR: permission denied for database sds_db
+
+
+skipif postgres
+connection c_caller user=sds_caller password=sds_pw
+statement error
+SELECT pg_database_size('sds_db');
+----
+db error: ERROR: database "sds_db" does not exist<slt:ignore>
 
 
 connection c_caller user=sds_caller password=sds_pw

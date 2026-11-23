@@ -68,6 +68,7 @@ statement ok
 REVOKE EXECUTE ON FUNCTION epo_double(integer) FROM epo_vedernikoff;
 
 
+onlyif postgres
 connection c_epo user=epo_vedernikoff password=epo_pw
 statement error
 EXECUTE epo_seq_q;
@@ -75,11 +76,28 @@ EXECUTE epo_seq_q;
 db error: ERROR: permission denied for sequence epo_counter
 
 
+skipif postgres
+connection c_epo user=epo_vedernikoff password=epo_pw
+statement error
+EXECUTE epo_seq_q;
+----
+db error: ERROR: Sequence with name epo_counter does not exist!<slt:ignore>
+
+
+onlyif postgres
 connection c_epo user=epo_vedernikoff password=epo_pw
 statement error
 EXECUTE epo_fn_q;
 ----
 db error: ERROR: permission denied for function epo_double<slt:ignore>
+
+
+skipif postgres
+connection c_epo user=epo_vedernikoff password=epo_pw
+statement error
+EXECUTE epo_fn_q;
+----
+db error: ERROR: Scalar Function with name epo_double does not exist!<slt:ignore>
 
 
 connection c_epo user=epo_vedernikoff password=epo_pw

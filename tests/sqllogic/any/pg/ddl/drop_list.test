@@ -484,10 +484,18 @@ statement ok
 SET ROLE dropl_u1;
 
 
+onlyif postgres
 statement error
 DROP VIEW dropl_va, dropl_vb CASCADE;
 ----
 db error: ERROR: must be owner of view dropl_vb
+
+
+skipif postgres
+statement error
+DROP VIEW dropl_va, dropl_vb CASCADE;
+----
+db error: ERROR: View with name dropl_vb does not exist!<slt:ignore>
 
 
 statement ok

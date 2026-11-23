@@ -211,7 +211,7 @@ connection c_carol user=efw_carol password=efw_pw
 statement error
 ALTER SERVER efw_srv OWNER TO efw_carol;
 ----
-db error: ERROR: must be owner of foreign server efw_srv
+db error: ERROR: server "efw_srv" does not exist<slt:ignore>
 
 
 statement ok

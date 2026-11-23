@@ -77,7 +77,7 @@ void PgSequenceLastValueFunction(duckdb::DataChunk& args,
       continue;
     }
     const auto entry =
-      EntryByOid(session, static_cast<uint64_t>(oid.GetValue()));
+      ShownEntryByOid(session, static_cast<uint64_t>(oid.GetValue()));
     if (!entry) {
       writer.WriteNull();
       continue;
@@ -149,7 +149,7 @@ void PgSequenceParametersFunction(duckdb::DataChunk& args,
     }
     const auto relation =
       RelationByOid(session, static_cast<uint64_t>(oid.GetValue()));
-    if (!relation) {
+    if (!relation || !RelationShown(session, *relation)) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_TABLE),
         ERR_MSG("relation with OID ", oid.GetValue(), " does not exist"));

@@ -63,11 +63,20 @@ t	f	f
 
 
 # Real query path agrees: SELECT is denied for the NOINHERIT member.
+onlyif postgres
 connection c_ved user=ni_mop_vedernikoff password=ni_mop_vedernikoff_pw
 statement error
 SELECT * FROM ni_mop_iceberg;
 ----
 db error: ERROR: permission denied for table ni_mop_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=ni_mop_vedernikoff password=ni_mop_vedernikoff_pw
+statement error
+SELECT * FROM ni_mop_iceberg;
+----
+db error: ERROR: Table with name ni_mop_iceberg does not exist!<slt:ignore>
 
 
 # ---- Per-edge override: WITH INHERIT TRUE turns the same edge inheriting ----

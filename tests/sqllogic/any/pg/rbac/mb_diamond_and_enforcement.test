@@ -162,11 +162,20 @@ statement ok
 REVOKE mb_dia_kryakva FROM mb_dia_shlepach;
 
 
+onlyif postgres
 connection c_shlepach user=mb_dia_shlepach password=mb_dia_shlepach_pw
 statement error
 SELECT * FROM mb_dia_iceberg;
 ----
 db error: ERROR: permission denied for table mb_dia_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_shlepach user=mb_dia_shlepach password=mb_dia_shlepach_pw
+statement error
+SELECT * FROM mb_dia_iceberg;
+----
+db error: ERROR: Table with name mb_dia_iceberg does not exist!<slt:ignore>
 
 
 connection c_vitalik user=mb_dia_vitalik password=mb_dia_vitalik_pw

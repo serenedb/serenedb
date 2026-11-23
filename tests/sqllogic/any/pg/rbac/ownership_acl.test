@@ -132,11 +132,20 @@ grantee_rows
 
 # After the revoke the grantee can no longer read on the real query path, but
 # the owner still holds everything -- ownership was never in the ACL.
+onlyif postgres
 connection c_v user=own_acl_vedernikoff password=own_acl_vedernikoff_pw
 statement error
 SELECT id FROM own_mop_babsky;
 ----
 db error: ERROR: permission denied for table own_mop_babsky<slt:ignore>
+
+
+skipif postgres
+connection c_v user=own_acl_vedernikoff password=own_acl_vedernikoff_pw
+statement error
+SELECT id FROM own_mop_babsky;
+----
+db error: ERROR: Table with name own_mop_babsky does not exist!<slt:ignore>
 
 
 query

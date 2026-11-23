@@ -76,32 +76,64 @@ db error: ERROR: Referenced column "zzz" not found in FROM clause!
 Candidate bindings: "a"
 
 
+onlyif postgres
 statement error
 SELECT * FROM cpo_t, cpo_hidden;
 ----
 db error: ERROR: permission denied for table cpo_t
 
 
+skipif postgres
+statement error
+SELECT * FROM cpo_t, cpo_hidden;
+----
+db error: ERROR: Table with name cpo_hidden does not exist!<slt:ignore>
+
+
+onlyif postgres
 statement error
 SELECT * FROM cpo_hidden, cpo_t;
 ----
 db error: ERROR: permission denied for table cpo_hidden
 
 
+skipif postgres
+statement error
+SELECT * FROM cpo_hidden, cpo_t;
+----
+db error: ERROR: Table with name cpo_hidden does not exist!<slt:ignore>
+
+
 statement ok
 INSERT INTO cpo_t (a) VALUES (1);
 
 
+onlyif postgres
 statement error
 INSERT INTO cpo_t (b) SELECT x FROM cpo_hidden;
 ----
 db error: ERROR: permission denied for table cpo_t
 
 
+skipif postgres
+statement error
+INSERT INTO cpo_t (b) SELECT x FROM cpo_hidden;
+----
+db error: ERROR: Table with name cpo_hidden does not exist!<slt:ignore>
+
+
+onlyif postgres
 statement error
 UPDATE cpo_t SET b = (SELECT x FROM cpo_hidden);
 ----
 db error: ERROR: permission denied for table cpo_t
+
+
+skipif postgres
+statement error
+UPDATE cpo_t SET b = (SELECT x FROM cpo_hidden);
+----
+db error: ERROR: Table with name cpo_hidden does not exist!<slt:ignore>
 
 
 onlyif postgres

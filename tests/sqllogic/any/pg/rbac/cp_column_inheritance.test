@@ -121,11 +121,20 @@ bab_click
 f
 
 
+onlyif postgres
 connection c_bab user=cci2_babsky password=cci2_babsky_pw
 statement error
 SELECT clickclack FROM cci2_iceberg;
 ----
 db error: ERROR: permission denied for table cci2_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_bab user=cci2_babsky password=cci2_babsky_pw
+statement error
+SELECT clickclack FROM cci2_iceberg;
+----
+db error: ERROR: Table with name cci2_iceberg does not exist!<slt:ignore>
 
 
 # ============================================================================

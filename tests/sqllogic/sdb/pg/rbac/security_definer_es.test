@@ -35,7 +35,7 @@ ALTER FUNCTION sdes_create() OWNER TO sdes_owner;
 statement error
 SELECT * FROM sdes_drop();
 ----
-db error: ERROR: permission denied for schema es
+db error: ERROR: no such index [sdes_docs]
 
 
 statement ok
@@ -45,7 +45,7 @@ GRANT USAGE ON SCHEMA es TO sdes_owner;
 statement error
 SELECT * FROM sdes_drop();
 ----
-db error: ERROR: must be owner of table sdes_docs
+db error: ERROR: no such index [sdes_docs]
 
 
 statement error

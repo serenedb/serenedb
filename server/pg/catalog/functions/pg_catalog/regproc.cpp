@@ -104,12 +104,12 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> LookupSchema(
   const auto path = absl::c_find_if(
     session.search_path,
     [&](const SessionSchema& schema) { return schema.name == name; });
-  if (path != session.search_path.end()) {
-    return path->entry;
-  }
-  return session.database->GetSchema(*session.transaction,
-                                     duckdb::Identifier{name},
-                                     duckdb::OnEntryNotFound::RETURN_NULL);
+  auto schema = path != session.search_path.end()
+                  ? path->entry
+                  : session.database->GetSchema(
+                      *session.transaction, duckdb::Identifier{name},
+                      duckdb::OnEntryNotFound::RETURN_NULL);
+  return schema && Shown(session, *schema) ? schema : nullptr;
 }
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
@@ -130,7 +130,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> FindInSchema(
   }
   auto entry =
     FindMember(*session.transaction, *schema, type, duckdb::Identifier{name});
-  if (!entry || entry->internal) {
+  if (!entry || entry->internal || !Shown(session, *entry)) {
     return nullptr;
   }
   return entry;
@@ -159,20 +159,21 @@ IRS_NO_INLINE uint64_t UserRelationOid(const Session& session,
                                        std::string_view name) {
   const duckdb::Identifier identifier{name};
   for (const auto type : kRelationSets) {
-    if (const auto member =
+    if (auto member =
           FindMember(*session.transaction, schema, type, identifier)) {
-      return member->oid;
+      return Shown(session, *member) ? member->oid : kInvalidOid;
     }
   }
-  if (const auto member =
-        FindMember(*session.transaction, schema,
-                   duckdb::CatalogType::TYPE_ENTRY, identifier);
+  if (auto member = FindMember(*session.transaction, schema,
+                               duckdb::CatalogType::TYPE_ENTRY, identifier);
       member && duckdb::StructType::IsStruct(
                   member->Cast<duckdb::TypeCatalogEntry>().user_type)) {
-    return member->oid;
+    return Shown(session, *member) ? member->oid : kInvalidOid;
   }
   const auto key = FindKeyIndex(*session.context, schema, name);
-  return key.constraint ? key.constraint->index_oid : kInvalidOid;
+  return key.constraint && Shown(session, *key.table)
+           ? key.constraint->index_oid
+           : kInvalidOid;
 }
 
 uint64_t RelationOid(const Session& session, const SessionSchema& schema,
@@ -993,18 +994,23 @@ duckdb::optional_ptr<duckdb::CatalogEntry> AttachedRelation(
   const auto names = ParseNames(text, nullptr);
   if (!names || names->size() != 3 ||
       duckdb::DatabaseManager::TryGetDefaultDatabase(*session.context) ==
-        names->front() ||
-      !duckdb::Catalog::GetCatalogEntry(*session.context,
-                                        duckdb::Identifier{names->front()})) {
+        names->front()) {
+    return nullptr;
+  }
+  auto database = duckdb::Catalog::GetCatalogEntry(
+    *session.context, duckdb::Identifier{names->front()});
+  if (!database ||
+      !session.context->CanSeeDatabase(session.role, database->GetAttached())) {
     return nullptr;
   }
   const duckdb::QualifiedName name{duckdb::Identifier{(*names)[0]},
                                    duckdb::Identifier{(*names)[1]},
                                    duckdb::Identifier{(*names)[2]}};
+  const duckdb::ActingRoles acting{&session.role, &session.role, &session.role};
+  duckdb::CatalogEntryRetriever retriever{*session.context, acting};
   for (const auto type : kRelationSets) {
-    if (auto entry = duckdb::CatalogEntryRetriever{*session.context}.GetEntry(
-          duckdb::EntryLookupInfo{type, name},
-          duckdb::OnEntryNotFound::RETURN_NULL)) {
+    if (auto entry = retriever.GetEntry(duckdb::EntryLookupInfo{type, name},
+                                        duckdb::OnEntryNotFound::RETURN_NULL)) {
       return entry;
     }
   }

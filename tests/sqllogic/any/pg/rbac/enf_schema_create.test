@@ -39,11 +39,20 @@ f	f
 
 
 # Non-owner CREATE in a foreign schema is refused.
+onlyif postgres
 connection c_sc user=enf_sc_vedernikoff password=enf_sc_vedernikoff_pw
 statement error
 CREATE TABLE enf_sc_mop.intruder (x int);
 ----
 db error: ERROR: permission denied for schema enf_sc_mop<slt:ignore>
+
+
+skipif postgres
+connection c_sc user=enf_sc_vedernikoff password=enf_sc_vedernikoff_pw
+statement error
+CREATE TABLE enf_sc_mop.intruder (x int);
+----
+db error: ERROR: Schema with name enf_sc_mop does not exist!<slt:ignore>
 
 
 # Non-owner CREATE in public is refused (PG >= 15 does not grant CREATE on

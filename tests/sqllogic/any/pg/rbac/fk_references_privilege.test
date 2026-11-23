@@ -33,11 +33,20 @@ GRANT CREATE ON SCHEMA public TO fkr_vedernikoff;
 
 
 # === no REFERENCES on the parent -> the FK is refused ===
+onlyif postgres
 connection c_ved user=fkr_vedernikoff password=fkr_vedernikoff_pw
 statement error
 CREATE TABLE fkr_child (id int, ref int REFERENCES fkr_roster(id));
 ----
 db error: ERROR: permission denied for table fkr_roster<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=fkr_vedernikoff password=fkr_vedernikoff_pw
+statement error
+CREATE TABLE fkr_child (id int, ref int REFERENCES fkr_roster(id));
+----
+db error: ERROR: Table with name fkr_roster does not exist!<slt:ignore>
 
 
 # === table-wide REFERENCES grant -> the FK is allowed ===

@@ -67,35 +67,35 @@ connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 SELECT secret_cod FROM evis_vault;
 ----
-db error: ERROR: permission denied for table evis_vault
+db error: ERROR: Table with name evis_vault does not exist!<slt:ignore>
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 SELECT v.secret_cod FROM evis_vault AS v;
 ----
-db error: ERROR: permission denied for table evis_vault
+db error: ERROR: Table with name evis_vault does not exist!<slt:ignore>
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 SELECT COLUMNS('^secret_cod$') FROM evis_vault;
 ----
-db error: ERROR: permission denied for table evis_vault
+db error: ERROR: Table with name evis_vault does not exist!<slt:ignore>
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 UPDATE evis_vault SET secret_cod = 1;
 ----
-db error: ERROR: permission denied for table evis_vault
+db error: ERROR: Table with name evis_vault does not exist!<slt:ignore>
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 INSERT INTO evis_vault (secret_cod) VALUES (1);
 ----
-db error: ERROR: permission denied for table evis_vault
+db error: ERROR: Table with name evis_vault does not exist!<slt:ignore>
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
@@ -110,21 +110,21 @@ connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 SELECT * FROM pragma_table_info('evis_vault');
 ----
-db error: ERROR: permission denied for table evis_vault
+db error: ERROR: Table with name evis_vault does not exist!<slt:ignore>
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 PRAGMA table_info('evis_vault');
 ----
-db error: ERROR: permission denied for table evis_vault
+db error: ERROR: Table with name evis_vault does not exist!<slt:ignore>
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 DESCRIBE evis_vault;
 ----
-db error: ERROR: permission denied for table evis_vault
+db error: ERROR: Table with name evis_vault does not exist!<slt:ignore>
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
@@ -225,40 +225,35 @@ connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 SELECT * FROM evis_other_${__DATABASE__}.public.evis_remote;
 ----
-db error: ERROR: permission denied for database "evis_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name "evis_other_<slt:ignore>.public.evis_remote" does not exist because schema "evis_other_<slt:ignore>.public" does not exist.
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 VACUUM (FLUSH_TABLE) evis_other_${__DATABASE__}.public.evis_remote;
 ----
-db error: ERROR: permission denied for database "evis_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: database "evis_other_<slt:ignore>" does not exist
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 USE evis_other_${__DATABASE__};
 ----
-db error: ERROR: permission denied for database "evis_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: SET schema: No catalog + schema named "evis_other_<slt:ignore>" found.
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 REINDEX INDEX evis_other_${__DATABASE__}.public.evis_remote_idx;
 ----
-db error: ERROR: permission denied for database "evis_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: index "evis_remote_idx" does not exist
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 INSERT INTO evis_other_${__DATABASE__}.public.evis_remote VALUES (1);
 ----
-db error: ERROR: permission denied for database "evis_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name "evis_other_<slt:ignore>.public.evis_remote" does not exist because schema "evis_other_<slt:ignore>.public" does not exist.
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
@@ -273,7 +268,7 @@ connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 SELECT pg_database_size('evis_other_${__DATABASE__}');
 ----
-db error: ERROR: permission denied for database evis_other_<slt:ignore>
+db error: ERROR: database "evis_other_<slt:ignore>" does not exist
 
 
 connection c_ved user=evis_vedernikoff password=evis_pw
@@ -307,7 +302,7 @@ connection c_ved user=evis_vedernikoff password=evis_pw
 statement error
 REINDEX INDEX evis_other_${__DATABASE__}.public.evis_remote_idx;
 ----
-db error: ERROR: permission denied for index "evis_remote_idx"
+db error: ERROR: index "evis_remote_idx" does not exist
 
 
 

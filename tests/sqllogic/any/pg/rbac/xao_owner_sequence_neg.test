@@ -67,11 +67,20 @@ xao_osn_clickclack
 
 
 # (a) non-owner cannot transfer
+onlyif postgres
 connection cbabsky user=xao_osn_babsky password=xao_osn_babsky_pw
 statement error
 ALTER SEQUENCE xao_osn_mop_seq OWNER TO xao_osn_babsky;
 ----
 db error: ERROR: must be owner of sequence xao_osn_mop_seq<slt:ignore>
+
+
+skipif postgres
+connection cbabsky user=xao_osn_babsky password=xao_osn_babsky_pw
+statement error
+ALTER SEQUENCE xao_osn_mop_seq OWNER TO xao_osn_babsky;
+----
+db error: ERROR: Sequence with name xao_osn_mop_seq does not exist!<slt:ignore>
 
 
 # (b) owner cannot transfer to a role it cannot SET ROLE to

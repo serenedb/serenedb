@@ -14,6 +14,10 @@ statement ok
 GRANT CREATE ON SCHEMA public TO edov_vedernikoff;
 
 
+statement ok
+GRANT USAGE ON SEQUENCE edov_counter TO edov_vedernikoff;
+
+
 connection c_ved user=edov_vedernikoff password=edov_pw
 statement error
 CREATE TEXT SEARCH DICTIONARY edov_ngrams AS generate_ngrams(min_gram := nextval('edov_counter'), max_gram := 3);

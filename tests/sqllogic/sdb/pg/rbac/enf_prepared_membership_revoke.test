@@ -91,21 +91,21 @@ connection c_epod_on user=epod_user password=epod_pw
 statement error
 EXECUTE epod_q(1);
 ----
-db error: ERROR: permission denied for table epod_t
+db error: ERROR: Table with name epod_t does not exist!<slt:ignore>
 
 
 connection c_epod_off user=epod_user password=epod_pw
 statement error
 EXECUTE epod_q(1);
 ----
-db error: ERROR: permission denied for table epod_t
+db error: ERROR: Table with name epod_t does not exist!<slt:ignore>
 
 
 connection c_epod_explain user=epod_user password=epod_pw
 statement error
 EXECUTE epod_q(2);
 ----
-db error: ERROR: permission denied for table epod_t
+db error: ERROR: Table with name epod_t does not exist!<slt:ignore>
 
 
 connection c_epod_on user=epod_user password=epod_pw

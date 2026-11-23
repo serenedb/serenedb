@@ -43,23 +43,26 @@ namespace {
 duckdb::unique_ptr<duckdb::TableRef> IResearchReplacementScan(
   duckdb::ClientContext& context, duckdb::ReplacementScanInput& input,
   duckdb::optional_ptr<duckdb::ReplacementScanData> /*data*/) {
-  duckdb::CatalogEntryRetriever retriever{context};
-  auto index = duckdb::Catalog::GetEntry<duckdb::IndexCatalogEntry>(
-    context, duckdb::Binder::BindTableName(retriever, input.name),
+  const auto found = input.retriever.GetEntry(
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::INDEX_ENTRY,
+      duckdb::Binder::BindTableName(input.retriever, input.name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
-  if (!index || !catalog::IsInvertedIndex(*index)) {
+  if (!found || found->type != duckdb::CatalogType::INDEX_ENTRY ||
+      !catalog::IsInvertedIndex(found->Cast<duckdb::IndexCatalogEntry>())) {
     return nullptr;
   }
+  auto& index = found->Cast<duckdb::IndexCatalogEntry>();
   duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>> arguments;
   arguments.emplace_back(duckdb::ConstantExpression::String(
-    index->ParentCatalog().GetName().GetIdentifierName()));
+    index.ParentCatalog().GetName().GetIdentifierName()));
   for (const auto& schema :
-       index->ParentSchemaPath(index->catalog.GetCatalogTransaction(context))) {
+       index.ParentSchemaPath(index.catalog.GetCatalogTransaction(context))) {
     arguments.emplace_back(
       duckdb::ConstantExpression::String(schema.GetIdentifierName()));
   }
   arguments.emplace_back(
-    duckdb::ConstantExpression::String(index->name.GetIdentifierName()));
+    duckdb::ConstantExpression::String(index.name.GetIdentifierName()));
 
   auto ref = duckdb::make_uniq<duckdb::TableFunctionRef>();
   ref->function = duckdb::make_uniq<duckdb::FunctionExpression>(

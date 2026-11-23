@@ -111,11 +111,20 @@ INSERT INTO esen_with_check VALUES (-1);
 db error: ERROR: CHECK constraint failed on table "esen_with_check" with expression CHECK(esen_hidden.esen_positive(a))
 
 
+onlyif postgres
 connection c_ved user=esen_vedernikoff password=esen_pw
 statement error
 SELECT nextval('esen_hidden.esen_ids');
 ----
 db error: ERROR: permission denied for schema esen_hidden
+
+
+skipif postgres
+connection c_ved user=esen_vedernikoff password=esen_pw
+statement error
+SELECT nextval('esen_hidden.esen_ids');
+----
+db error: ERROR: Sequence with name esen_ids does not exist!<slt:ignore>
 
 
 connection c_ved user=esen_vedernikoff password=esen_pw

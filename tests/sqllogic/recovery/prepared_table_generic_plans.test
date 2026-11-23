@@ -491,7 +491,7 @@ SET ROLE ptg_reader_${__DATABASE__};
 statement error
 EXECUTE ptg_point(5);
 ----
-db error: ERROR: permission denied for table ptg_t
+db error: ERROR: Table with name ptg_t does not exist!<slt:ignore>
 
 
 statement ok

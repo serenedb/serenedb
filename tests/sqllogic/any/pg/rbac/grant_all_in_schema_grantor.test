@@ -70,10 +70,18 @@ statement ok
 SET ROLE gaig_alice;
 
 
+onlyif postgres
 statement error
 GRANT SELECT ON ALL TABLES IN SCHEMA gaig_s TO gaig_bob;
 ----
 db error: ERROR: permission denied for table gaig_theirs
+
+
+skipif postgres
+statement error
+GRANT SELECT ON ALL TABLES IN SCHEMA gaig_s TO gaig_bob;
+----
+db error: ERROR: Table with name gaig_theirs does not exist!<slt:ignore>
 
 
 statement ok

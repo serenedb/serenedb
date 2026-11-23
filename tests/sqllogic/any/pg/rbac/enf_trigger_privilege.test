@@ -49,7 +49,7 @@ connection c_etp user=etp_vedernikoff password=etp_pw
 statement error
 CREATE TRIGGER etp_trg AFTER INSERT ON etp_t REFERENCING NEW TABLE AS new_rows FOR EACH STATEMENT INSERT INTO etp_log SELECT a FROM new_rows;
 ----
-db error: ERROR: permission denied for table etp_t
+db error: ERROR: Table with name etp_t does not exist!<slt:ignore>
 
 
 statement ok

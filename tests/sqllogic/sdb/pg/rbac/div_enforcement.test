@@ -43,7 +43,7 @@ connection c_enf user=enf_user password=enf_user_pw
 statement error
 SELECT * FROM enf_secret;
 ----
-db error: ERROR: permission denied for table enf_secret
+db error: ERROR: Table with name enf_secret does not exist!<slt:ignore>
 
 
 # M1 regression: reading the table via its INDEX name must ALSO be denied.
@@ -51,28 +51,28 @@ connection c_enf user=enf_user password=enf_user_pw
 statement error
 SELECT * FROM enf_secret_idx;
 ----
-db error: ERROR: permission denied for table enf_secret
+db error: ERROR: Table with name enf_secret_idx does not exist<slt:ignore>
 
 
 connection c_enf user=enf_user password=enf_user_pw
 statement error
 INSERT INTO enf_secret VALUES (3, '777-88-9999');
 ----
-db error: ERROR: permission denied for table enf_secret
+db error: ERROR: Table with name enf_secret does not exist!<slt:ignore>
 
 
 connection c_enf user=enf_user password=enf_user_pw
 statement error
 UPDATE enf_secret SET ssn = 'x' WHERE id = 1;
 ----
-db error: ERROR: permission denied for table enf_secret
+db error: ERROR: Table with name enf_secret does not exist!<slt:ignore>
 
 
 connection c_enf user=enf_user password=enf_user_pw
 statement error
 DELETE FROM enf_secret WHERE id = 1;
 ----
-db error: ERROR: permission denied for table enf_secret
+db error: ERROR: Table with name enf_secret does not exist!<slt:ignore>
 
 
 # ---- Owner grants SELECT; enf_user can now read but still not write ----

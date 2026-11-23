@@ -149,11 +149,20 @@ f
 
 
 # r3 still cannot read the column.
+onlyif postgres
 connection c_r3 user=crg_mop password=crg_mop_pw
 statement error
 SELECT clickclack FROM crg_iceberg;
 ----
 db error: ERROR: permission denied for table crg_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_r3 user=crg_mop password=crg_mop_pw
+statement error
+SELECT clickclack FROM crg_iceberg;
+----
+db error: ERROR: Table with name crg_iceberg does not exist!<slt:ignore>
 
 
 # === r1 tears down its own chained grant to r2 ===
@@ -178,11 +187,20 @@ mop	(none)
 
 
 # r2 can no longer read the column once its grant is gone.
+onlyif postgres
 connection c_r2d user=crg_babsky password=crg_babsky_pw
 statement error
 SELECT clickclack FROM crg_iceberg;
 ----
 db error: ERROR: permission denied for table crg_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_r2d user=crg_babsky password=crg_babsky_pw
+statement error
+SELECT clickclack FROM crg_iceberg;
+----
+db error: ERROR: Table with name crg_iceberg does not exist!<slt:ignore>
 
 
 # === REVOKE GRANT OPTION FOR downgrades the star ===

@@ -63,7 +63,7 @@ connection c_bob user=suw_bob password=suw_pw
 statement error
 INSERT INTO suw_s.main.t VALUES (3);
 ----
-db error: ERROR: permission denied for foreign server suw_s
+db error: ERROR: Table with name "suw_s.main.t" does not exist because schema "suw_s.main" does not exist.<slt:ignore>
 
 
 statement ok

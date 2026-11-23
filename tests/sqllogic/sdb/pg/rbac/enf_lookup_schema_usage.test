@@ -29,14 +29,14 @@ connection c_elu user=elu_reader password=elu_pw
 statement error
 SELECT ts_lexize('elu_private.elu_kw', 'Word');
 ----
-db error: ERROR: permission denied for schema elu_private
+db error: ERROR: text search dictionary "elu_private.elu_kw" does not exist<slt:ignore>
 
 
 connection c_elu user=elu_reader password=elu_pw
 statement error
 SELECT ts_lexize(d, 'Word') FROM (VALUES ('elu_private.elu_kw')) AS t(d);
 ----
-db error: ERROR: permission denied for schema elu_private
+db error: ERROR: text search dictionary "elu_private.elu_kw" does not exist<slt:ignore>
 
 
 connection c_elu user=elu_reader password=elu_pw
@@ -97,7 +97,7 @@ connection c_elu user=elu_reader password=elu_pw
 statement error
 CALL es_mapping('elu_secret');
 ----
-db error: ERROR: permission denied for schema es
+db error: ERROR: no such index [elu_secret]
 
 
 statement ok
@@ -108,14 +108,14 @@ connection c_elu user=elu_reader password=elu_pw
 statement error
 CALL es_mapping('elu_secret');
 ----
-db error: ERROR: permission denied for table elu_secret
+db error: ERROR: no such index [elu_secret]
 
 
 connection c_elu user=elu_reader password=elu_pw
 statement error
 SELECT * FROM es_doc('elu_secret', '1', '{"ssn":"1"}');
 ----
-db error: ERROR: permission denied for table elu_secret
+db error: ERROR: no such index [elu_secret]
 
 
 statement ok

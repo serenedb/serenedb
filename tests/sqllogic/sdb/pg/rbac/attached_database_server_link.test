@@ -36,8 +36,7 @@ connection c_alice user=asl_alice password=asl_pw
 statement error
 SELECT x FROM asl_s.main.secret;
 ----
-db error: ERROR: permission denied for database "asl_s"
-DETAIL: Only roles with the SUPERUSER attribute may use a database attached without a foreign server.
+db error: ERROR: Table with name "asl_s.main.secret" does not exist because schema "asl_s.main" does not exist.
 
 
 statement ok

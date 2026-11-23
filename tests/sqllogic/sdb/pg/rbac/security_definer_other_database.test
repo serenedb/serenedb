@@ -69,8 +69,7 @@ connection c_caller user=sdod_caller password=sdod_pw
 statement error
 SELECT count(*) FROM sdod_other_${__DATABASE__}.public.sdod_remote;
 ----
-db error: ERROR: permission denied for database "sdod_other_<slt:ignore>"
-DETAIL: User does not have CONNECT privilege.
+db error: ERROR: Table with name "sdod_other_<slt:ignore>.public.sdod_remote" does not exist because schema "sdod_other_<slt:ignore>.public" does not exist.
 
 
 connection c_caller user=sdod_caller password=sdod_pw

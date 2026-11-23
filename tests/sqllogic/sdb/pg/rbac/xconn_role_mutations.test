@@ -180,7 +180,7 @@ connection c_grp user=xcm_vedernikoff password=ved_pw
 statement error
 SELECT count(*) FROM xcm_iceberg_ledger;
 ----
-db error: ERROR: permission denied for table xcm_iceberg_ledger<slt:ignore>
+db error: ERROR: Table with name xcm_iceberg_ledger does not exist!<slt:ignore>
 
 
 # Re-granting to the committee restores the inherited read on the next statement.
@@ -269,7 +269,7 @@ connection c_hop user=xcm_vedernikoff password=ved_pw
 statement error
 SELECT count(*) FROM xcm_hop_ledger;
 ----
-db error: ERROR: permission denied for table xcm_hop_ledger<slt:ignore>
+db error: ERROR: Table with name xcm_hop_ledger does not exist!<slt:ignore>
 
 
 # ---- (5) VALID UNTIL in the past does NOT kill a live session
@@ -377,7 +377,7 @@ connection c_heir user=xcm_heir password=heir_pw
 statement error
 SELECT count(*) FROM xcm_iceberg_ledger;
 ----
-db error: ERROR: permission denied for table xcm_iceberg_ledger<slt:ignore>
+db error: ERROR: Table with name xcm_iceberg_ledger does not exist!<slt:ignore>
 
 
 # Owner turns inheritance back ON; the inherited read returns on the next

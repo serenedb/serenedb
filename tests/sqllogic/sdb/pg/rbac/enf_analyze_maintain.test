@@ -44,13 +44,17 @@ db error: ERROR: permission denied for table eam_ledger
 
 
 connection c_stranger user=eam_stranger password=eam_pw
-statement ok
+statement error
 ANALYZE eam_ledger;
+----
+db error: ERROR: Table with name eam_ledger does not exist!<slt:ignore>
 
 
 connection c_stranger user=eam_stranger password=eam_pw
-statement ok
+statement error
 VACUUM eam_ledger;
+----
+db error: ERROR: Table with name eam_ledger does not exist!<slt:ignore>
 
 
 statement ok

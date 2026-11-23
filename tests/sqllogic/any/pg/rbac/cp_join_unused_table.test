@@ -56,11 +56,20 @@ GRANT SELECT (id, av) ON cju_iceberg TO cju_vedernikoff;
 # === C4: LEFT JOIN brings cju_mop into the range table via the ON key ===
 # Only cju_iceberg.av is projected; cju_mop contributes only its join key, but
 # that is a column reference on an ungranted relation -> refused on cju_mop.
+onlyif postgres
 connection c_ved user=cju_vedernikoff password=cju_vedernikoff_pw
 statement error
 SELECT cju_iceberg.av FROM cju_iceberg LEFT JOIN cju_mop ON cju_iceberg.id = cju_mop.id;
 ----
 db error: ERROR: permission denied for table cju_mop<slt:ignore>
+
+
+skipif postgres
+connection c_ved user=cju_vedernikoff password=cju_vedernikoff_pw
+statement error
+SELECT cju_iceberg.av FROM cju_iceberg LEFT JOIN cju_mop ON cju_iceberg.id = cju_mop.id;
+----
+db error: ERROR: Table with name cju_mop does not exist!<slt:ignore>
 
 
 # Control: drop cju_mop from the query entirely and the same projection of the

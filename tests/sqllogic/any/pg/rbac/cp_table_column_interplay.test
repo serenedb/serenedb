@@ -120,11 +120,20 @@ mop	(none)
 
 
 # Even the once-column-granted clickclack is now refused.
+onlyif postgres
 connection c_ved2 user=tci_vedernikoff password=tci_vedernikoff_pw
 statement error
 SELECT clickclack FROM tci_iceberg;
 ----
 db error: ERROR: permission denied for table tci_iceberg<slt:ignore>
+
+
+skipif postgres
+connection c_ved2 user=tci_vedernikoff password=tci_vedernikoff_pw
+statement error
+SELECT clickclack FROM tci_iceberg;
+----
+db error: ERROR: Table with name tci_iceberg does not exist!<slt:ignore>
 
 
 # === Case 2 (inverse order): column SELECT(clickclack), THEN table SELECT, then
@@ -291,11 +300,20 @@ mop	(none)
 
 
 # With both INSERT grants gone, the grantee can no longer insert.
+onlyif postgres
 connection c_kal user=tci_kalganov password=tci_kalganov_pw
 statement error
 INSERT INTO tci_mop (clickclack) VALUES (99);
 ----
 db error: ERROR: permission denied for table tci_mop<slt:ignore>
+
+
+skipif postgres
+connection c_kal user=tci_kalganov password=tci_kalganov_pw
+statement error
+INSERT INTO tci_mop (clickclack) VALUES (99);
+----
+db error: ERROR: Table with name tci_mop does not exist!<slt:ignore>
 
 
 connection default

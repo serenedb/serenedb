@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 
 #include <array>
@@ -173,8 +174,14 @@ const duckdb::TableCatalogEntry& ReferencedTable(
 template<typename R>
 const duckdb::UniqueConstraint* ReferencedKey(
   const duckdb::TableCatalogEntry& target, const R& attnums) {
+  absl::InlinedVector<int16_t, 8> referenced(attnums.begin(), attnums.end());
+  absl::c_sort(referenced);
   for (const auto& key : KeyIndexes(target)) {
-    if (absl::c_equal(KeyAttnums(target.GetColumns(), key), attnums)) {
+    const auto columns = KeyAttnums(target.GetColumns(), key);
+    if (columns.size() == referenced.size() &&
+        absl::c_all_of(columns, [&](int16_t column) {
+          return absl::c_binary_search(referenced, column);
+        })) {
       return &key;
     }
   }

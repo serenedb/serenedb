@@ -274,16 +274,16 @@ class Controller {
     }
     const auto entries = _created - _created_at;
     const auto bytes = _scanned - _scanned_at;
+    SDB_ASSERT(bytes > 0 && _capacity > _created);
     const double recent =
-      bytes > 0 ? static_cast<double>(entries) / static_cast<double>(bytes)
-                : 1e9;
-    const uint64_t entries_left =
-      _capacity > _created ? _capacity - _created : 1;
+      static_cast<double>(entries) / static_cast<double>(bytes);
+    const uint64_t entries_left = _capacity - _created;
     const uint64_t bytes_left = _budget > _scanned ? _budget - _scanned : 1;
     const double target =
       static_cast<double>(entries_left) / static_cast<double>(bytes_left);
-    const double ratio = target > 0.0 ? recent / target : 1e9;
-    if (ratio > 2.0 && _threshold < kMaxThreshold) {
+    const double ratio = recent / target;
+    if (ratio > 2.0) {
+      SDB_ASSERT(_threshold < kMaxThreshold);
       ++_threshold;
     } else if (ratio < 0.5 && _threshold > kMinThreshold) {
       --_threshold;
@@ -361,9 +361,7 @@ void Codec::Reset() {
 uint32_t Codec::Insert(std::string_view token) {
   const auto [it, fresh] =
     _ids.try_emplace(token, static_cast<uint32_t>(_tokens.size()));
-  if (!fresh) {
-    return it->second;
-  }
+  SDB_ASSERT(fresh);
   _tokens.emplace_back(token);
   if (token.size() > 1) {
     (*_lengths)[static_cast<uint8_t>(token[0]) |
@@ -424,7 +422,8 @@ void Codec::Train(std::span<const duckdb::string_t> entries, uint64_t raw) {
         if (pair_len <= kMaxToken) {
           const auto key = PairKey(prev.id, cur.id);
           auto& count = _pairs[key];
-          count = count == kMaxThreshold ? count : count + 1;
+          SDB_ASSERT(count < kMaxThreshold);
+          ++count;
           if (count >= ctrl.Threshold()) {
             const auto id = Insert({data + pos - prev.len, pair_len});
             if (_tokens.size() == cap) {

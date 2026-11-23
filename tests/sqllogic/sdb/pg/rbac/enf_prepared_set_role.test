@@ -115,8 +115,63 @@ n
 
 
 statement ok
+DROP ROLE IF EXISTS epsr_plans;
+
+
+statement ok
+CREATE ROLE epsr_plans LOGIN PASSWORD 'epsr_pw';
+
+
+statement ok
+GRANT epsr_reader_${__DATABASE__} TO epsr_plans;
+
+
+connection c_plans user=epsr_plans password=epsr_pw
+statement ok
+PREPARE epsr_back AS SELECT 1 AS one;
+
+
+connection c_plans user=epsr_plans password=epsr_pw
+query
+EXECUTE epsr_back;
+----
+one
+1
+
+
+connection c_plans user=epsr_plans password=epsr_pw
+statement ok
+SET ROLE epsr_reader_${__DATABASE__};
+
+
+connection c_plans user=epsr_plans password=epsr_pw
+statement ok
+RESET ROLE;
+
+
+connection c_plans user=epsr_plans password=epsr_pw
+query
+EXECUTE epsr_back;
+----
+one
+1
+
+
+connection c_plans user=epsr_plans password=epsr_pw
+query
+SELECT custom_plans FROM pg_prepared_statements WHERE name = 'epsr_back';
+----
+custom_plans
+0
+
+
+statement ok
 DEALLOCATE ALL;
 
 
 statement ok
 DROP ROLE epsr_reader_${__DATABASE__};
+
+
+statement ok
+DROP ROLE epsr_plans;

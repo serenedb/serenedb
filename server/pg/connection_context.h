@@ -144,9 +144,6 @@ class ConnectionContext final : public duckdb::ClientContext {
   std::string SessionUserName();
 
   void SetEffectiveRole(duckdb::idx_t role) {
-    if (current_role_id != role) {
-      BumpBindingGeneration();
-    }
     SetCurrentRole(role);
     session_user = EffectiveUserName();
   }

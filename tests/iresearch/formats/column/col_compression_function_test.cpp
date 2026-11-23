@@ -594,6 +594,39 @@ TEST_F(ColCompressionFunctionTest,
 }
 
 TEST_F(ColCompressionFunctionTest,
+       RunsOfFloatsEstimatedOverSeveralLeafFramesReadBack) {
+  constexpr uint64_t kRunRows = 122880;
+  for (const duckdb::LogicalType type :
+       {duckdb::LogicalType::FLOAT, duckdb::LogicalType::DOUBLE}) {
+    std::vector<duckdb::Value> values;
+    values.reserve(kRunRows);
+    for (uint64_t g = 0; g < kRunRows; ++g) {
+      const auto run = static_cast<double>(g / 3);
+      values.emplace_back(type.id() == duckdb::LogicalTypeId::FLOAT
+                            ? duckdb::Value::FLOAT(static_cast<float>(run))
+                            : duckdb::Value::DOUBLE(run));
+    }
+    const Rows rows{type, std::move(values)};
+    for (const auto named : {CodecType::RleLz4, CodecType::RleZstd}) {
+      SCOPED_TRACE(
+        absl::StrCat(magic_enum::enum_name(named), " ", type.ToString()));
+      const auto& codec = *irs::codecs::GetCodec(named, type.InternalType());
+      ASSERT_EQ(codec.compression.size(), 1);
+      const auto& fn = codec.compression.front();
+      FlushedBlocks blocks{type};
+      Checkpoint(type, rows, {}, {}, false, blocks,
+                 [&](ColumnDataCheckpointData& data) {
+                   EXPECT_LT(fn.analyze(data, irs::codecs::kNoScore),
+                             irs::codecs::kNoScore);
+                   EXPECT_TRUE(fn.compress(codec, data));
+                 });
+      ASSERT_FALSE(blocks.Blocks().empty());
+      ASSERT_NO_FATAL_FAILURE(ExpectReadBack(blocks, rows));
+    }
+  }
+}
+
+TEST_F(ColCompressionFunctionTest,
        AnAlpVectorPackedAtSixtyFourBitsAnswersFiltersByItsValues) {
   constexpr uint32_t kCount = 32;
   constexpr uint32_t kVectorHeader = 13;

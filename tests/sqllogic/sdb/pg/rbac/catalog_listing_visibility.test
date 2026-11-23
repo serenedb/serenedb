@@ -27,7 +27,27 @@ DROP FUNCTION IF EXISTS clv_func();
 
 
 statement ok
+DROP FUNCTION IF EXISTS clv_open();
+
+
+statement ok
+DROP TABLE IF EXISTS clv_by_group;
+
+
+statement ok
+DROP TABLE IF EXISTS clv_by_public;
+
+
+statement ok
+DROP TABLE IF EXISTS clv_group_owned;
+
+
+statement ok
 DROP ROLE IF EXISTS clv_peek;
+
+
+statement ok
+DROP ROLE IF EXISTS clv_group;
 
 
 statement ok
@@ -87,6 +107,42 @@ REVOKE EXECUTE ON FUNCTION clv_func() FROM PUBLIC;
 
 
 statement ok
+CREATE FUNCTION clv_open() RETURNS int LANGUAGE sql AS 'SELECT 2';
+
+
+statement ok
+CREATE ROLE clv_group;
+
+
+statement ok
+GRANT clv_group TO clv_peek;
+
+
+statement ok
+CREATE TABLE clv_by_group (a int);
+
+
+statement ok
+GRANT SELECT ON clv_by_group TO clv_group;
+
+
+statement ok
+CREATE TABLE clv_by_public (a int);
+
+
+statement ok
+GRANT SELECT ON clv_by_public TO PUBLIC;
+
+
+statement ok
+CREATE TABLE clv_group_owned (a int);
+
+
+statement ok
+ALTER TABLE clv_group_owned OWNER TO clv_group;
+
+
+statement ok
 CREATE TABLE clv_oids AS
 SELECT 'clv_hidden.clv_secret_table'::regclass::oid AS secret,
        'clv_ungranted'::regclass::oid AS ungranted,
@@ -104,8 +160,19 @@ query
 SELECT relname FROM pg_class WHERE relname LIKE 'clv%' ORDER BY 1;
 ----
 relname
+clv_by_group
+clv_by_public
 clv_granted
+clv_group_owned
 clv_oids
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT proname FROM pg_proc WHERE proname LIKE 'clv%' ORDER BY 1;
+----
+proname
+clv_open
 
 
 connection c_peek user=clv_peek password=clv_pw
@@ -129,7 +196,10 @@ query
 SELECT typname FROM pg_type WHERE typname LIKE 'clv%' ORDER BY 1;
 ----
 typname
+clv_by_group
+clv_by_public
 clv_granted
+clv_group_owned
 clv_oids
 
 
@@ -149,7 +219,7 @@ SELECT (SELECT count(*) FROM pg_tables WHERE tablename LIKE 'clv%') AS tables,
        (SELECT count(*) FROM pg_sequences WHERE sequencename LIKE 'clv%') AS sequences;
 ----
 tables	views	sequences
-2	0	0
+5	0	0
 
 
 connection c_peek user=clv_peek password=clv_pw
@@ -235,7 +305,27 @@ DROP FUNCTION clv_func();
 
 
 statement ok
+DROP FUNCTION clv_open();
+
+
+statement ok
+DROP TABLE clv_by_group;
+
+
+statement ok
+DROP TABLE clv_by_public;
+
+
+statement ok
+DROP TABLE clv_group_owned;
+
+
+statement ok
 DROP ROLE clv_peek;
+
+
+statement ok
+DROP ROLE clv_group;
 
 
 statement ok

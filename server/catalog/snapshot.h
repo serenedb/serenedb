@@ -65,6 +65,7 @@ struct CatalogEdge {
 
 struct CatalogSnapshot {
   std::vector<duckdb::CatalogEntry*> entries;
+  Derived<std::vector<uint64_t>> visibility;
   Derived<irs::containers::FlatHashMap<std::string_view, CatalogKey>> keys;
   Derived<irs::containers::FlatHashSet<duckdb::idx_t>> indexed;
   Derived<irs::containers::FlatHashSet<duckdb::idx_t>> triggered;

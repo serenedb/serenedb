@@ -111,7 +111,8 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
     _transaction{_database.GetCatalogTransaction(context)},
     _table{input.bind_data->Cast<SystemTableBindData>().table},
     _role{context.CallerAccess(
-      input.bind_data->Cast<SystemTableBindData>().caller_role)} {
+      input.bind_data->Cast<SystemTableBindData>().caller_role)},
+    _viewer{duckdb::ViewerBits(_role)} {
   const auto& ids = input.column_ids;
   if (input.filters) {
     for (const auto& entry : *input.filters) {

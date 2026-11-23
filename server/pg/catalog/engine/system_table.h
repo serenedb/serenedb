@@ -602,6 +602,7 @@ class SystemScan {
 
   duckdb::ClientContext& Context() const noexcept { return _context; }
   const duckdb::RoleAccess& Role() const noexcept { return _role; }
+  uint64_t Viewer() const noexcept { return _viewer; }
   bool Shows(duckdb::CatalogEntry& entry) const {
     return _context.CanSee(_role, entry);
   }
@@ -1021,6 +1022,7 @@ class SystemScan {
   duckdb::CatalogTransaction _transaction;
   const SystemTable& _table;
   duckdb::RoleAccess _role;
+  uint64_t _viewer = 0;
   duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles;
   std::vector<SystemFilter> _filters;
   std::array<uint32_t, 64> _slots{};
@@ -1321,13 +1323,41 @@ class SystemCursor<SystemEntries> final {
     });
   }
 
+  template<typename T>
+  std::span<const uint64_t> Visibility(
+    const T& table, const duckdb::SchemaCatalogEntry& schema) const {
+    if (table.Viewer() == duckdb::VISIBLE_TO_ALL ||
+        schema.ParentCatalog().GetAttached().IsReadOnly()) {
+      return {};
+    }
+    const auto& snapshot = *_set.snapshot;
+    const auto& bits =
+      snapshot.visibility.Get([&](std::vector<uint64_t>& visibility) {
+        visibility.reserve(snapshot.entries.size());
+        for (const auto* entry : snapshot.entries) {
+          visibility.push_back(duckdb::VisibilityBits(*entry));
+        }
+      });
+    return std::span{bits}.subspan(
+      _set.entries.data() - snapshot.entries.data(), _set.entries.size());
+  }
+
   template<typename T, typename V>
   bool Walk(T& table, const duckdb::SchemaCatalogEntry& schema, V&& visit) {
     const auto entries = _set.entries;
+    const auto visibility = Visibility(table, schema);
+    const auto viewer = table.Viewer();
+    const auto hidden = [&](size_t pos) {
+      return !visibility.empty() && !(visibility[pos] & viewer);
+    };
     const bool user_schema = !schema.internal;
     table.Walking(_set.snapshot.get());
     for (; _pos < entries.size(); ++_pos) {
-      if (_pos + kPrefetchAhead < entries.size()) {
+      if (hidden(_pos)) {
+        continue;
+      }
+      if (_pos + kPrefetchAhead < entries.size() &&
+          !hidden(_pos + kPrefetchAhead)) {
         __builtin_prefetch(entries[_pos + kPrefetchAhead]);
       }
       auto& entry = *entries[_pos];

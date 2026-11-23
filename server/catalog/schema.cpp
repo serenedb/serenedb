@@ -210,49 +210,6 @@ bool MoveOverload(Schema& schema, Schema& target_schema,
   return true;
 }
 
-void AlterAllInSchema(Schema& schema, duckdb::CatalogTransaction transaction,
-                      duckdb::AlterPermissionsInfo& info) {
-  const auto kind = info.entry_catalog_type;
-  struct Target {
-    duckdb::reference<duckdb::CatalogEntry> entry;
-    duckdb::idx_t overload_oid;
-  };
-  std::vector<Target> targets;
-  const auto collect = [&](duckdb::CatalogEntry& entry) {
-    if (entry.internal || !InKind(entry, kind)) {
-      return;
-    }
-    if (entry.type != duckdb::CatalogType::MACRO_ENTRY &&
-        entry.type != duckdb::CatalogType::TABLE_MACRO_ENTRY) {
-      targets.push_back({entry, 0});
-      return;
-    }
-    const auto& macro = entry.Cast<duckdb::MacroCatalogEntry>();
-    for (const auto& overload : macro.macros) {
-      if (overload->is_procedure ? info.include_procedures
-                                 : info.include_functions) {
-        targets.push_back({entry, macro.OverloadOid(*overload)});
-      }
-    }
-  };
-  schema.Set(kind).Scan(transaction, collect);
-  if (kind == duckdb::CatalogType::MACRO_ENTRY) {
-    schema.Set(duckdb::CatalogType::TABLE_MACRO_ENTRY)
-      .Scan(transaction, collect);
-  }
-  info.all_in_schema = false;
-  for (const auto& target : targets) {
-    const auto& entry = target.entry.get();
-    info.entry_catalog_type = entry.type == duckdb::CatalogType::VIEW_ENTRY
-                                ? duckdb::CatalogType::TABLE_ENTRY
-                                : entry.type;
-    info.SetQualifiedName(schema.GetQualifiedName(entry.name));
-    info.overload_oid = target.overload_oid;
-    schema.Alter(transaction, info);
-  }
-  info.overload_oid = 0;
-}
-
 void ReownSequences(duckdb::CatalogTransaction transaction,
                     duckdb::CatalogEntry& table,
                     const duckdb::AlterPermissionsInfo& info) {
@@ -1020,12 +977,6 @@ void Schema::DropEntry(duckdb::ClientContext& context, duckdb::DropInfo& info) {
 
 void Schema::Alter(duckdb::CatalogTransaction transaction,
                    duckdb::AlterInfo& info) {
-  if (info.type == duckdb::AlterType::ALTER_PERMISSIONS &&
-      info.Cast<duckdb::AlterPermissionsInfo>().all_in_schema) {
-    AlterAllInSchema(*this, transaction,
-                     info.Cast<duckdb::AlterPermissionsInfo>());
-    return;
-  }
   auto type = info.GetCatalogType();
   const auto& entry_name = info.GetQualifiedName().Name();
   if (info.type == duckdb::AlterType::ALTER_SCALAR_FUNCTION &&

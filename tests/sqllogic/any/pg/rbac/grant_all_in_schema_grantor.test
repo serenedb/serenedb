@@ -1,0 +1,123 @@
+statement ok
+DROP SCHEMA IF EXISTS gaig_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS gaig_alice;
+
+
+statement ok
+DROP ROLE IF EXISTS gaig_bob;
+
+
+statement ok
+DROP ROLE IF EXISTS gaig_carol;
+
+
+statement ok
+CREATE ROLE gaig_alice;
+
+
+statement ok
+CREATE ROLE gaig_bob;
+
+
+statement ok
+CREATE ROLE gaig_carol;
+
+
+statement ok
+CREATE SCHEMA gaig_s;
+
+
+statement ok
+GRANT USAGE, CREATE ON SCHEMA gaig_s TO gaig_alice, gaig_carol;
+
+
+statement ok
+SET ROLE gaig_alice;
+
+
+statement ok
+CREATE TABLE gaig_s.gaig_mine (a int);
+
+
+statement ok
+CREATE FUNCTION gaig_s.gaig_f(int) RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+CREATE FUNCTION gaig_s.gaig_f(text) RETURNS int LANGUAGE sql AS 'SELECT 2';
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE gaig_carol;
+
+
+statement ok
+CREATE TABLE gaig_s.gaig_theirs (a int);
+
+
+statement ok
+RESET ROLE;
+
+
+statement ok
+SET ROLE gaig_alice;
+
+
+statement error
+GRANT SELECT ON ALL TABLES IN SCHEMA gaig_s TO gaig_bob;
+----
+db error: ERROR: permission denied for table gaig_theirs
+
+
+statement ok
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA gaig_s TO gaig_bob;
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT c.relname, array_to_string(c.relacl, ',') AS acl
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'gaig_s' AND c.relkind = 'r'
+ORDER BY c.relname;
+----
+relname	acl
+gaig_mine	NULL
+gaig_theirs	NULL
+
+
+query
+SELECT pg_get_function_identity_arguments(p.oid) AS args,
+       array_to_string(p.proacl, ',') LIKE '%gaig_bob=X/gaig_alice%' AS granted
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'gaig_s'
+ORDER BY 1;
+----
+args	granted
+integer	t
+text	t
+
+
+statement ok
+DROP SCHEMA gaig_s CASCADE;
+
+
+statement ok
+DROP ROLE gaig_alice;
+
+
+statement ok
+DROP ROLE gaig_bob;
+
+
+statement ok
+DROP ROLE gaig_carol;

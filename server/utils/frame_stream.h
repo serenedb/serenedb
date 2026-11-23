@@ -24,7 +24,6 @@
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/string.hpp>
-#include <memory>
 #include <vector>
 
 #include "server/utils/message_buffer.h"
@@ -34,24 +33,24 @@ namespace sdb::message {
 class FrameStream final : public duckdb::WriteStream {
  public:
   explicit FrameStream(uint32_t frame_bytes);
-  FrameStream(FrameStream&&) noexcept = default;
-  FrameStream& operator=(FrameStream&&) noexcept = default;
+  FrameStream(const FrameStream&) = delete;
+  FrameStream& operator=(const FrameStream&) = delete;
 
   [[nodiscard]] duckdb::data_ptr_t Alloc(duckdb::idx_t size) final {
-    return _writer->Alloc(size);
+    return _writer.Alloc(size);
   }
 
   std::vector<irs::bytes_view> Frames() const;
 
  protected:
   void Overflow(duckdb::const_data_ptr_t data, duckdb::idx_t size) final {
-    _writer->Write({reinterpret_cast<const char*>(data), size});
+    _writer.Write({reinterpret_cast<const char*>(data), size});
   }
 
  private:
   uint32_t _frame_bytes;
-  std::unique_ptr<Buffer> _buffer;
-  std::unique_ptr<Writer> _writer;
+  Buffer _buffer;
+  Writer _writer;
 };
 
 }  // namespace sdb::message

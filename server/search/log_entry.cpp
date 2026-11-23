@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <array>
+#include <deque>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -211,8 +212,7 @@ void PackBlobs(std::span<LoggedRows* const> runs,
   if (blobs == 0) {
     return;
   }
-  std::vector<message::FrameStream> raws;
-  raws.reserve(blobs);
+  std::deque<message::FrameStream> raws;
   for (size_t i = 0; i != blobs; ++i) {
     raws.emplace_back(frame_bytes);
   }

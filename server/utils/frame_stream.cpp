@@ -27,14 +27,14 @@ namespace sdb::message {
 
 FrameStream::FrameStream(uint32_t frame_bytes)
   : _frame_bytes{frame_bytes},
-    _buffer{std::make_unique<Buffer>(frame_bytes, frame_bytes)},
-    _writer{std::make_unique<Writer>(*_buffer)} {
+    _buffer{frame_bytes, frame_bytes},
+    _writer{_buffer} {
   SDB_ASSERT(frame_bytes != 0);
 }
 
 std::vector<irs::bytes_view> FrameStream::Frames() const {
   std::vector<irs::bytes_view> frames;
-  for (const auto part : _buffer->Written()) {
+  for (const auto part : _buffer.Written()) {
     const auto* data = static_cast<const irs::byte_type*>(part.data());
     for (size_t at = 0; at < part.size(); at += _frame_bytes) {
       frames.emplace_back(data + at,

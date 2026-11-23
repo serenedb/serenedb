@@ -76,10 +76,16 @@ struct LoginCheck {
   duckdb::idx_t role;
   duckdb::idx_t database = 0;
   bool superuser = false;
+  int32_t role_conn_limit = -1;
+  int32_t database_conn_limit = -1;
+  std::string role_name;
   irs::pg::SqlErrorData error;
 };
 
 LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname);
+
+std::optional<irs::pg::SqlErrorData> ConnectionLimitError(
+  const LoginCheck& login, std::string_view dbname);
 
 }  // namespace sdb::pg
 namespace sdb::network {

@@ -95,13 +95,6 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
               ERR_MSG("role \"", user, "\" is not permitted to log in"))};
   }
-  if (!role.superuser && role.conn_limit >= 0 &&
-      ProgressRegistry::Instance().SessionsOf(role.oid) >=
-        static_cast<size_t>(role.conn_limit)) {
-    return {.error = SQL_ERROR_DATA(
-              ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
-              ERR_MSG("too many connections for role \"", role.name, "\""))};
-  }
   const auto roles = catalog::RolesOf(nullptr);
   const auto principal = roles->AccessOf(role.oid);
   struct {
@@ -135,15 +128,35 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
               ERR_MSG("permission denied for database \"", dbname, "\""),
               ERR_DETAIL("User does not have CONNECT privilege."))};
   }
-  if (!role.superuser && database.conn_limit >= 0 &&
-      ProgressRegistry::Instance().SessionsIn(database.oid) >=
-        static_cast<size_t>(database.conn_limit)) {
-    return {.error = SQL_ERROR_DATA(
-              ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
-              ERR_MSG("too many connections for database \"", dbname, "\""))};
+  return {.role = role.oid,
+          .database = database.oid,
+          .superuser = role.superuser,
+          .role_conn_limit = role.conn_limit,
+          .database_conn_limit = database.conn_limit,
+          .role_name = std::move(role.name)};
+}
+
+std::optional<irs::pg::SqlErrorData> ConnectionLimitError(
+  const LoginCheck& login, std::string_view dbname) {
+  if (login.superuser) {
+    return std::nullopt;
   }
-  return {
-    .role = role.oid, .database = database.oid, .superuser = role.superuser};
+  auto& registry = ProgressRegistry::Instance();
+  if (login.role_conn_limit >= 0 &&
+      registry.SessionsOf(login.role) >
+        static_cast<size_t>(login.role_conn_limit)) {
+    return SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
+      ERR_MSG("too many connections for role \"", login.role_name, "\""));
+  }
+  if (login.database_conn_limit >= 0 &&
+      registry.SessionsIn(login.database) >
+        static_cast<size_t>(login.database_conn_limit)) {
+    return SQL_ERROR_DATA(
+      ERR_CODE(ERRCODE_TOO_MANY_CONNECTIONS),
+      ERR_MSG("too many connections for database \"", dbname, "\""));
+  }
+  return std::nullopt;
 }
 
 }  // namespace sdb::pg

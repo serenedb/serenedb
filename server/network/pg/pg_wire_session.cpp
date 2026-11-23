@@ -442,6 +442,7 @@ bool PgWireSession<Kind>::SetupConnection() {
     WriteFatalResponse(this->_send, login.error);
     return false;
   }
+  SDB_PARK_ONCE_ON_FAILURE("pause_login_before_register");
   const auto role = login.role;
   const auto database_id = login.database;
   const bool superuser = login.superuser;
@@ -461,6 +462,10 @@ bool PgWireSession<Kind>::SetupConnection() {
   _txn_state.emplace(_conn->context->transaction);
   _connection_ctx = &ConnectionContext::Get(*_conn->context);
   _progress = sdb::pg::ProgressRegistration{_connection_ctx->ProgressSource()};
+  if (auto error = sdb::pg::ConnectionLimitError(login, DatabaseName())) {
+    WriteFatalResponse(this->_send, *error);
+    return false;
+  }
   auto& client_config = duckdb::ClientConfig::GetConfig(*_conn->context);
   client_config.get_result_collector = MakeWireCollector;
   client_config.enable_progress_bar = true;

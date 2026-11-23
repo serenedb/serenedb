@@ -49,11 +49,12 @@ struct ShellServices {
 };
 
 std::optional<ShellServices> gShellServices;
+std::optional<duckdb::Identifier> gShellFile;
 duckdb_shell::ShellSubcommand gShellSubcommand =
   duckdb_shell::ShellSubcommand::SHELL;
 
 duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
-  const std::string& path) {
+  const std::string& path, bool read_only) {
   auto& engine = irs::DuckDBEngine::Instance();
   const bool client = gShellSubcommand == duckdb_shell::ShellSubcommand::PSQL;
   if (!gShellServices) {
@@ -63,6 +64,14 @@ duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
   }
   auto& db = engine.instance();
   auto& manager = duckdb::DatabaseManager::Get(db);
+  if (const auto opened = std::exchange(gShellFile, std::nullopt)) {
+    const auto conn = engine.CreateConnection();
+    auto& context = *conn->context;
+    context.RunFunctionInTransaction([&] {
+      manager.DetachDatabase(context, *opened,
+                             duckdb::OnEntryNotFound::RETURN_NULL, true);
+    });
+  }
   if (path.empty() || path == IN_MEMORY_PATH) {
     if (!client) {
       manager.SetDefaultDatabase(
@@ -70,17 +79,24 @@ duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
     }
     return db.shared_from_this();
   }
-  auto conn = engine.CreateConnection();
-  auto& context = *conn->context;
   duckdb::AttachInfo info;
   info.path = path;
   info.name = duckdb::AttachedDatabase::ExtractDatabaseName(
     path, duckdb::FileSystem::GetFileSystem(db));
+  if (manager.GetDatabase(info.name)) {
+    info.name =
+      duckdb::Identifier{absl::StrCat(info.name.GetIdentifierName(), "_db")};
+  }
+  const auto conn = engine.CreateConnection();
+  auto& context = *conn->context;
   context.RunFunctionInTransaction([&] {
-    catalog::Attach(context, info, "duckdb", duckdb::AccessMode::READ_WRITE,
+    catalog::Attach(context, info, "duckdb",
+                    read_only ? duckdb::AccessMode::READ_ONLY
+                              : duckdb::AccessMode::READ_WRITE,
                     duckdb::AttachVisibility::SHOWN);
   });
   manager.SetDefaultDatabase(info.name);
+  gShellFile = info.name;
   return db.shared_from_this();
 }
 

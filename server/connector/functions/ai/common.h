@@ -34,6 +34,7 @@
 #include <duckdb/function/function.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context_state.hpp>
+#include <duckdb/planner/binder.hpp>
 #include <exception>
 #include <limits>
 #include <memory>
@@ -107,9 +108,16 @@ struct EndpointRef {
   const Api* api = nullptr;
   std::optional<std::string> secret_name;
   std::optional<std::string> model;
+  bool superuser = false;
 
   bool operator==(const EndpointRef&) const = default;
 };
+
+bool BoundAsSuperuser(auto& input) {
+  return (input.HasBinder() ? input.GetBinder().CurrentRole()
+                            : input.GetClientContext().CurrentRole())
+    .is_superuser;
+}
 
 std::optional<duckdb::Value> FoldArgument(duckdb::ClientContext& context,
                                           duckdb::Expression& expr,

@@ -176,8 +176,8 @@ duckdb::unique_ptr<duckdb::FunctionData> AggBind(
 
   auto bind = duckdb::make_uniq<AggBindData>(context);
   bind->chat =
-    BindChat(context, name, std::span{args}.subspan(summarize ? 1 : 2), 0.0,
-             bind->endpoint);
+    BindChat(context, BoundAsSuperuser(input), name,
+             std::span{args}.subspan(summarize ? 1 : 2), 0.0, bind->endpoint);
   const auto max_context =
     FoldArgument(context, *args.back(), name, "max_context_chars");
   const auto chars =

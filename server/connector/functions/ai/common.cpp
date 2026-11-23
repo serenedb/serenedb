@@ -231,7 +231,7 @@ Endpoint ResolveEndpoint(duckdb::ClientContext& context,
                     ERR_HINT("Pass secret_name := '<name>' or SET ",
                              api.default_secret, " = '<name>'."));
   }
-  if (!context.CurrentRole().is_superuser) {
+  if (!ref.superuser) {
     const auto shared = GetGlobalSetting(duckdb::DBConfig::GetConfig(context),
                                          api.default_secret);
     if (shared.IsNull() || shared.ToString() != name) {

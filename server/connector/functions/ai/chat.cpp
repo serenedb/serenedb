@@ -56,7 +56,8 @@ void AddChatOptions(duckdb::FunctionSignature& signature) {
   AddOption(signature, "max_tokens", duckdb::LogicalType::INTEGER);
 }
 
-ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
+ChatConfig BindChat(duckdb::ClientContext& context, bool superuser,
+                    std::string_view fn,
                     std::span<duckdb::unique_ptr<duckdb::Expression>> options,
                     double default_temperature, EndpointRef& endpoint) {
   endpoint = {
@@ -64,6 +65,7 @@ ChatConfig BindChat(duckdb::ClientContext& context, std::string_view fn,
     .api = &kChatApi,
     .secret_name = FoldString(context, *options[1], fn, "secret_name"),
     .model = FoldString(context, *options[0], fn, "model"),
+    .superuser = superuser,
   };
   const auto temperature =
     FoldArgument(context, *options[2], fn, "temperature");

@@ -206,16 +206,12 @@ std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
   while (count > 1) {
     const auto i = used[--count];
     const uint64_t shared = lcp[used[count - 1]];
-    if (lcp[i] > len) [[unlikely]] {
-      ThrowCorrupted("text", "front coding is inconsistent");
-    }
+    SDB_ASSERT(lcp[i] <= len);
     len = DecodeShared(fsst, in + off[i], off[i + 1] - off[i], lcp[i], shared,
                        Reserve(buf, shared + fsst::kPrefixSlack));
     ++walked;
   }
-  if (lcp[n - 1] > len) [[unlikely]] {
-    ThrowCorrupted("text", "front coding is inconsistent");
-  }
+  SDB_ASSERT(lcp[n - 1] <= len);
   len =
     DecodeSuffix(fsst, in + off[n - 1], off[n] - off[n - 1], lcp[n - 1], buf);
   ++walked;

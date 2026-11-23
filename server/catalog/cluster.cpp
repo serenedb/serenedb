@@ -462,8 +462,7 @@ void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
 
 void ClusterCatalog::RevokeMembership(duckdb::CatalogTransaction transaction,
                                       duckdb::AlterRoleInfo& alter) {
-  const auto granted =
-    _roles.Get(transaction, duckdb::Identifier{alter.grant_role});
+  const auto granted = _roles.Get(transaction, alter.grant_role.name);
   const auto member = _roles.Get(transaction, alter.GetQualifiedName().Name());
   if (!granted || !member || !alter.grantor_id ||
       (alter.option_only && alter.admin_option != 0)) {
@@ -696,24 +695,24 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   const auto grant = [&](const duckdb::Identifier& member,
                          const duckdb::Identifier& granted, bool admin) {
     duckdb::AlterRoleInfo alter{member};
-    alter.grant_role = granted.GetIdentifierName();
+    alter.grant_role = duckdb::RoleSpec{granted};
     alter.admin_option = admin;
     ApplyAlter(transaction, alter);
   };
-  for (const auto& name : info.in_roles) {
-    grant(role->name, name, false);
+  for (const auto& spec : info.in_roles) {
+    grant(role->name, spec.name, false);
   }
-  for (const auto& name : info.role_members) {
-    grant(name, role->name, false);
+  for (const auto& spec : info.role_members) {
+    grant(spec.name, role->name, false);
   }
-  for (const auto& name : info.admin_members) {
-    grant(name, role->name, true);
+  for (const auto& spec : info.admin_members) {
+    grant(spec.name, role->name, true);
   }
   if (const auto creator = GrantorOfMembership(context);
       creator != pg::kRootUser) {
     duckdb::AlterRoleInfo alter{
       duckdb::Identifier{RolesOf(&context)->NameOf(creator)}};
-    alter.grant_role = role->name.GetIdentifierName();
+    alter.grant_role = duckdb::RoleSpec{role->name};
     alter.grantor_id = pg::kRootUser;
     alter.admin_option = true;
     alter.inherit_option = false;

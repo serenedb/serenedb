@@ -58,7 +58,7 @@ Only the unquoted keyword means every role: a quoted `"PUBLIC"` names a role cal
 
 In `GRANT`, `REVOKE` and `ALTER DEFAULT PRIVILEGES`, a grantee may be written `GROUP name`, which means the same as `name`.
 
-Wherever a role is named, as a grantee, after `GRANTED BY`, as the member of a role, in `ALTER ROLE` and `ALTER DEFAULT PRIVILEGES FOR ROLE`, `CURRENT_USER` and `CURRENT_ROLE` stand for the role the session acts as and `SESSION_USER` for the role it logged in as (or set with `SET SESSION AUTHORIZATION`). As with `PUBLIC`, a quoted `"current_user"` names a role.
+Wherever a role is named, as a grantee, an owner or a member, after `GRANTED BY`, in the `IN ROLE`, `ROLE` and `ADMIN` lists of `CREATE ROLE`, and in `ALTER ROLE`, `ALTER GROUP`, `REASSIGN OWNED`, `DROP OWNED` and `ALTER DEFAULT PRIVILEGES FOR ROLE`, `CURRENT_USER` and `CURRENT_ROLE` stand for the role the session acts as and `SESSION_USER` for the role it logged in as (or set with `SET SESSION AUTHORIZATION`). Quoted, `"CURRENT_USER"` names a role called `CURRENT_USER`. None of the three keywords can name a new role or a role to drop: `CREATE ROLE current_user` reports `CURRENT_USER cannot be used as a role name here`, and `DROP ROLE current_user` reports `cannot use special role specifier in DROP ROLE`.
 
 Granting to a role that does not exist is an error:
 

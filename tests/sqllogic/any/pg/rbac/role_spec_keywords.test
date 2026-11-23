@@ -1,0 +1,322 @@
+control substitution on
+
+statement ok
+DROP SCHEMA IF EXISTS "CURRENT_USER" CASCADE;
+
+
+statement ok
+DROP SCHEMA IF EXISTS rsk_mine CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS rsk_t;
+
+
+statement ok
+DROP ROLE IF EXISTS rsk_solo;
+
+
+statement ok
+DROP ROLE IF EXISTS rsk_in;
+
+
+statement ok
+DROP ROLE IF EXISTS rsk_group;
+
+
+statement ok
+DROP ROLE IF EXISTS rsk_member;
+
+
+statement ok
+DROP ROLE IF EXISTS "CURRENT_USER";
+
+
+statement ok
+DROP ROLE IF EXISTS "session_user";
+
+
+statement ok
+CREATE ROLE "CURRENT_USER";
+
+
+statement ok
+CREATE ROLE "session_user";
+
+
+statement ok
+CREATE ROLE rsk_member;
+
+
+statement error
+CREATE ROLE current_user;
+----
+db error: ERROR: CURRENT_USER cannot be used as a role name here
+
+
+statement error
+CREATE USER Session_User;
+----
+db error: ERROR: SESSION_USER cannot be used as a role name here
+
+
+statement error
+ALTER ROLE rsk_member RENAME TO current_role;
+----
+db error: ERROR: CURRENT_ROLE cannot be used as a role name here
+
+
+statement error
+DROP ROLE current_user;
+----
+db error: ERROR: cannot use special role specifier in DROP ROLE
+
+
+statement error
+DROP ROLE public;
+----
+db error: ERROR: cannot use special role specifier in DROP ROLE
+
+
+statement ok
+CREATE TABLE rsk_t (a int);
+
+
+statement ok
+ALTER TABLE rsk_t OWNER TO "CURRENT_USER";
+
+
+query
+SELECT tableowner FROM pg_tables WHERE tablename = 'rsk_t';
+----
+tableowner
+CURRENT_USER
+
+
+statement ok
+ALTER TABLE rsk_t OWNER TO current_user;
+
+
+query
+SELECT tableowner = current_user AS mine FROM pg_tables WHERE tablename = 'rsk_t';
+----
+mine
+t
+
+
+statement ok
+GRANT SELECT ON rsk_t TO "CURRENT_USER", "session_user";
+
+
+query
+SELECT has_table_privilege('CURRENT_USER', 'rsk_t', 'SELECT') AS upper_name,
+       has_table_privilege('session_user', 'rsk_t', 'SELECT') AS lower_name;
+----
+upper_name	lower_name
+t	t
+
+
+statement ok
+GRANT rsk_member TO "CURRENT_USER";
+
+
+statement ok
+CREATE ROLE rsk_group;
+
+
+statement ok
+ALTER GROUP rsk_group ADD USER current_user, "session_user";
+
+
+statement ok
+CREATE ROLE rsk_in IN ROLE "CURRENT_USER" ROLE session_user;
+
+
+query
+SELECT r.rolname AS role, CASE WHEN m.rolname = current_user THEN 'me' ELSE m.rolname END AS member
+FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
+WHERE r.rolname IN ('CURRENT_USER', 'rsk_group', 'rsk_in', 'rsk_member')
+ORDER BY 1, 2;
+----
+role	member
+CURRENT_USER	rsk_in
+rsk_group	me
+rsk_group	session_user
+rsk_in	me
+rsk_member	CURRENT_USER
+
+
+statement error
+ALTER GROUP current_user ADD USER rsk_member;
+----
+db error: ERROR: role "postgres" is a member of role "rsk_member"
+
+
+statement ok
+CREATE ROLE rsk_solo;
+
+
+statement ok
+ALTER GROUP current_user ADD USER rsk_solo;
+
+
+query
+SELECT m.rolname AS member FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
+WHERE r.rolname = current_user AND m.rolname LIKE 'rsk%';
+----
+member
+rsk_solo
+
+
+statement ok
+ALTER GROUP current_user DROP USER rsk_solo;
+
+
+query
+SELECT count(*) AS members FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
+WHERE r.rolname = current_user AND m.rolname LIKE 'rsk%';
+----
+members
+0
+
+
+statement ok
+ALTER ROLE "CURRENT_USER" WITH CREATEDB;
+
+
+statement ok
+ALTER ROLE "CURRENT_USER" SET application_name = 'rsk_role';
+
+
+statement ok
+ALTER ROLE "CURRENT_USER" IN DATABASE ${__DATABASE__} SET application_name = 'rsk_database';
+
+
+query
+SELECT rolname, rolcreatedb FROM pg_roles WHERE rolname IN ('CURRENT_USER', 'session_user') ORDER BY 1;
+----
+rolname	rolcreatedb
+CURRENT_USER	t
+session_user	f
+
+
+query
+SELECT s.setdatabase <> 0 AS in_database, s.setconfig
+FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole
+WHERE r.rolname = 'CURRENT_USER'
+ORDER BY 1;
+----
+in_database	setconfig
+f	{application_name=rsk_role}
+t	{application_name=rsk_database}
+
+
+statement ok
+ALTER DEFAULT PRIVILEGES FOR ROLE "CURRENT_USER" GRANT SELECT ON TABLES TO rsk_member;
+
+
+query
+SELECT pg_get_userbyid(defaclrole) AS role, defaclobjtype AS type FROM pg_default_acl
+WHERE defaclrole = (SELECT oid FROM pg_roles WHERE rolname = 'CURRENT_USER');
+----
+role	type
+CURRENT_USER	r
+
+
+statement ok
+CREATE SCHEMA AUTHORIZATION "CURRENT_USER";
+
+
+query
+SELECT nspname, pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'CURRENT_USER';
+----
+nspname	owner
+CURRENT_USER	CURRENT_USER
+
+
+statement ok
+CREATE SCHEMA rsk_mine AUTHORIZATION current_user;
+
+
+query
+SELECT pg_get_userbyid(nspowner) = current_user AS mine FROM pg_namespace WHERE nspname = 'rsk_mine';
+----
+mine
+t
+
+
+statement ok
+CREATE SCHEMA AUTHORIZATION current_user;
+
+
+query
+SELECT count(*) AS mine FROM pg_namespace
+WHERE nspname = current_user AND nspowner = (SELECT oid FROM pg_roles WHERE rolname = current_user);
+----
+mine
+1
+
+
+statement ok
+DROP SCHEMA postgres;
+
+
+statement ok
+REASSIGN OWNED BY "CURRENT_USER" TO rsk_member;
+
+
+query
+SELECT pg_get_userbyid(nspowner) AS owner FROM pg_namespace WHERE nspname = 'CURRENT_USER';
+----
+owner
+rsk_member
+
+
+statement ok
+DROP OWNED BY "CURRENT_USER";
+
+
+query
+SELECT has_table_privilege('CURRENT_USER', 'rsk_t', 'SELECT') AS upper_name,
+       has_table_privilege('session_user', 'rsk_t', 'SELECT') AS lower_name,
+       (SELECT count(*) FROM pg_default_acl
+        WHERE defaclrole = (SELECT oid FROM pg_roles WHERE rolname = 'CURRENT_USER')) AS default_acls;
+----
+upper_name	lower_name	default_acls
+f	t	0
+
+
+statement ok
+DROP SCHEMA "CURRENT_USER";
+
+
+statement ok
+DROP SCHEMA rsk_mine;
+
+
+statement ok
+DROP TABLE rsk_t;
+
+
+statement ok
+DROP ROLE rsk_solo;
+
+
+statement ok
+DROP ROLE rsk_in;
+
+
+statement ok
+DROP ROLE rsk_group;
+
+
+statement ok
+DROP ROLE rsk_member;
+
+
+statement ok
+DROP ROLE "CURRENT_USER";
+
+
+statement ok
+DROP ROLE "session_user";

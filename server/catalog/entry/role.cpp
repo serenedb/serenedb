@@ -184,7 +184,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
     alter.null_password = alter.password.empty();
   }
   if (!alter.grant_role.empty() && alter.grant_role_id == 0) {
-    const duckdb::Identifier granted{alter.grant_role};
+    const auto& granted = alter.grant_role.name;
     auto target = catalog.Cast<ClusterCatalog>()
                     .Set(duckdb::CatalogType::ROLE_ENTRY)
                     .Get(catalog.GetCatalogTransaction(context), granted);

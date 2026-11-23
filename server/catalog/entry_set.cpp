@@ -243,8 +243,8 @@ void DependentIndex::Remove(duckdb::idx_t subject, duckdb::idx_t dependent,
   }
 }
 
-std::vector<Dependent> DependentIndex::Of(duckdb::idx_t subject) {
-  std::vector<Dependent> dependents;
+absl::InlinedVector<Dependent, 8> DependentIndex::Of(duckdb::idx_t subject) {
+  absl::InlinedVector<Dependent, 8> dependents;
   absl::ReaderMutexLock lock{&_mutex};
   if (const auto it = _dependents.find(subject); it != _dependents.end()) {
     dependents.reserve(it->second.size());

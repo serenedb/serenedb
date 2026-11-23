@@ -22,6 +22,8 @@
 
 #include <absl/algorithm/container.h>
 
+#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/enums/catalog_type.hpp>
@@ -321,6 +323,19 @@ void BaseCatalog::ScanSubjects(
     transaction, entry,
     [&](duckdb::CatalogEntry& subject,
         const duckdb::DependencyDependentFlags&) { callback(subject); });
+}
+
+void BaseCatalog::ScanIndexes(
+  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& table,
+  absl::FunctionRef<void(duckdb::IndexCatalogEntry&)> callback) {
+  _oids.ForEachDependent(
+    GetCatalogTransaction(context), table.oid,
+    [&](duckdb::CatalogEntry& member) {
+      if (member.type == duckdb::CatalogType::INDEX_ENTRY &&
+          member.Cast<duckdb::IndexCatalogEntry>().table_oid == table.oid) {
+        callback(member.Cast<duckdb::IndexCatalogEntry>());
+      }
+    });
 }
 
 duckdb::catalog_entry_vector_t BaseCatalog::OwnedEntries(

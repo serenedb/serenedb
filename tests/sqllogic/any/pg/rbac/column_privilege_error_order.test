@@ -1,0 +1,166 @@
+statement ok
+DROP TABLE IF EXISTS cpo_t;
+
+
+statement ok
+DROP TABLE IF EXISTS cpo_hidden;
+
+
+statement ok
+DROP TABLE IF EXISTS cpo_keyed;
+
+
+statement ok
+DROP ROLE IF EXISTS cpo_reader;
+
+
+statement ok
+CREATE ROLE cpo_reader;
+
+
+statement ok
+CREATE TABLE cpo_t (a int, b int, c int);
+
+
+statement ok
+CREATE TABLE cpo_hidden (x int);
+
+
+statement ok
+CREATE TABLE cpo_keyed (k int PRIMARY KEY, v int, w int);
+
+
+statement ok
+GRANT SELECT (a), INSERT (a), UPDATE (a) ON cpo_t TO cpo_reader;
+
+
+statement ok
+GRANT INSERT (k), SELECT (k), UPDATE (w) ON cpo_keyed TO cpo_reader;
+
+
+statement ok
+SET ROLE cpo_reader;
+
+
+query
+SELECT a FROM cpo_t;
+----
+a
+
+
+query
+SELECT count(*) FROM cpo_t;
+----
+count
+0
+
+
+statement error
+SELECT b FROM cpo_t;
+----
+db error: ERROR: permission denied for table cpo_t
+
+
+onlyif postgres
+statement error
+SELECT b, zzz FROM cpo_t;
+----
+db error: ERROR: column "zzz" does not exist
+
+
+skipif postgres
+statement error
+SELECT b, zzz FROM cpo_t;
+----
+db error: ERROR: Referenced column "zzz" not found in FROM clause!
+Candidate bindings: "a"
+
+
+statement error
+SELECT * FROM cpo_t, cpo_hidden;
+----
+db error: ERROR: permission denied for table cpo_t
+
+
+statement error
+SELECT * FROM cpo_hidden, cpo_t;
+----
+db error: ERROR: permission denied for table cpo_hidden
+
+
+statement ok
+INSERT INTO cpo_t (a) VALUES (1);
+
+
+statement error
+INSERT INTO cpo_t (b) SELECT x FROM cpo_hidden;
+----
+db error: ERROR: permission denied for table cpo_t
+
+
+statement error
+UPDATE cpo_t SET b = (SELECT x FROM cpo_hidden);
+----
+db error: ERROR: permission denied for table cpo_t
+
+
+onlyif postgres
+statement error
+INSERT INTO cpo_t (b) VALUES (1) RETURNING zzz;
+----
+db error: ERROR: column "zzz" does not exist
+
+
+skipif postgres
+statement error
+INSERT INTO cpo_t (b) VALUES (1) RETURNING zzz;
+----
+db error: ERROR: Referenced column "zzz" not found in FROM clause!
+Candidate bindings: "a"
+
+
+statement ok
+INSERT INTO cpo_keyed (k) VALUES (1) ON CONFLICT DO NOTHING;
+
+
+statement ok
+INSERT INTO cpo_keyed (k) VALUES (1) ON CONFLICT (k) DO UPDATE SET w = 5;
+
+
+statement error
+INSERT INTO cpo_keyed (k) VALUES (1) ON CONFLICT (k) DO UPDATE SET v = 5;
+----
+db error: ERROR: permission denied for table cpo_keyed
+
+
+statement error
+INSERT INTO cpo_keyed VALUES (2, 2, 2) ON CONFLICT DO NOTHING;
+----
+db error: ERROR: permission denied for table cpo_keyed
+
+
+statement ok
+RESET ROLE;
+
+
+query
+SELECT k, v, w FROM cpo_keyed;
+----
+k	v	w
+1	NULL	5
+
+
+statement ok
+DROP TABLE cpo_t;
+
+
+statement ok
+DROP TABLE cpo_hidden;
+
+
+statement ok
+DROP TABLE cpo_keyed;
+
+
+statement ok
+DROP ROLE cpo_reader;

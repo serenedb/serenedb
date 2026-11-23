@@ -78,7 +78,7 @@ class DependentIndex final {
 
   void Remove(duckdb::idx_t subject, duckdb::idx_t dependent, OidIndex& index);
 
-  std::vector<Dependent> Of(duckdb::idx_t subject);
+  absl::InlinedVector<Dependent, 8> Of(duckdb::idx_t subject);
 
   void Forget(const OidIndex& index);
 

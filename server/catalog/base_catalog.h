@@ -113,6 +113,10 @@ class BaseCatalog : public duckdb::Catalog {
     duckdb::CatalogTransaction transaction, duckdb::CatalogEntry& entry,
     const std::function<void(duckdb::CatalogEntry&)>& callback) final;
 
+  void ScanIndexes(
+    duckdb::ClientContext& context, const duckdb::TableCatalogEntry& table,
+    absl::FunctionRef<void(duckdb::IndexCatalogEntry&)> callback) final;
+
   duckdb::catalog_entry_vector_t OwnedEntries(
     duckdb::CatalogTransaction transaction,
     const duckdb::CatalogEntry& owner) final;

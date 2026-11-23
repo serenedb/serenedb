@@ -2604,11 +2604,19 @@ TEST_F(RegexpUtilsTest, required_bytes) {
   const irs::LevenshteinAcceptor fuzzy{description, ToBytesView("x"),
                                        ToBytesView("aabc")};
   EXPECT_EQ("ax", bytes(fuzzy.RequiredBytes()));
-  EXPECT_EQ("abx", bytes(irs::FuzzyConjunction{
+  EXPECT_EQ("abx", bytes(irs::FuzzyConjunctionOf<irs::LevenshteinAcceptor>{
                      std::span{patterns}.last(1),
                      std::make_shared<const irs::LevenshteinAcceptor>(
                        description, ToBytesView("x"), ToBytesView("aabc"))}
                            .RequiredBytes()));
+  const auto inner = std::make_shared<const irs::LevenshteinAcceptor>(
+    description, ToBytesView("x"), ToBytesView("aabc"));
+  EXPECT_EQ("ax", bytes(irs::LevenshteinPrefixAcceptor{inner}.RequiredBytes()));
+  EXPECT_EQ("abx",
+            bytes(irs::FuzzyConjunctionOf<irs::LevenshteinPrefixAcceptor>{
+              std::span{patterns}.last(1),
+              std::make_shared<const irs::LevenshteinPrefixAcceptor>(inner)}
+                    .RequiredBytes()));
 }
 
 TEST_F(RegexpUtilsTest, required_bytes_hold_in_every_match) {
@@ -2644,6 +2652,27 @@ TEST_F(RegexpUtilsTest, required_bytes_hold_in_every_match) {
     }
     EXPECT_NE(0, hits) << pattern;
   }
+
+  const auto description = irs::MakeParametricDescription(1, false);
+  const irs::LevenshteinPrefixAcceptor prefix{
+    std::make_shared<const irs::LevenshteinAcceptor>(
+      description, ToBytesView("x"), ToBytesView("aab1"))};
+  const auto& required = prefix.RequiredBytes();
+  ASSERT_TRUE(required.Contains('a'));
+  ASSERT_TRUE(required.Contains('x'));
+  size_t hits = 0;
+  for (const auto& term : terms) {
+    if (!prefix.Matches(ToBytesView(term))) {
+      continue;
+    }
+    ++hits;
+    irs::ByteSet seen;
+    irs::AddBytes(seen, ToBytesView(term));
+    for (size_t i = 0; i != seen.words.size(); ++i) {
+      EXPECT_EQ(required.words[i], required.words[i] & seen.words[i]) << term;
+    }
+  }
+  EXPECT_NE(0, hits);
 }
 
 TEST_F(RegexpUtilsTest, dead_bytes) {

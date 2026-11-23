@@ -23,8 +23,10 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -61,6 +63,17 @@ class LevenshteinAcceptor {
     // continuation bytes still expected; `kPrefixPhase + n` -- n bytes of the
     // literal prefix matched. One field so a step tests one register.
     uint32_t phase;
+
+    bool operator==(const State& other) const noexcept {
+      return std::bit_cast<std::array<uint32_t, 4>>(*this) ==
+             std::bit_cast<std::array<uint32_t, 4>>(other);
+    }
+
+    template<typename H>
+    friend H AbslHashValue(H h, const State& state) {
+      return H::combine(std::move(h),
+                        std::bit_cast<std::array<uint32_t, 4>>(state));
+    }
   };
 
   LevenshteinAcceptor(const ParametricDescription& description,
@@ -487,6 +500,110 @@ class LevenshteinAcceptor {
   uint32_t _chi_size;
   uint64_t _mask;
   byte_type _no_distance;
+};
+
+class LevenshteinPrefixAcceptor {
+ public:
+  using PayloadType = LevenshteinAcceptor::PayloadType;
+  static constexpr bool kHasPayload = true;
+  static constexpr bool kCheapRuns = false;
+  static constexpr bool kMayBeUnknown = false;
+
+  struct State {
+    LevenshteinAcceptor::State inner;
+    PayloadType best;
+
+    bool operator==(const State&) const = default;
+
+    template<typename H>
+    friend H AbslHashValue(H h, const State& state) {
+      return H::combine(std::move(h), state.inner, state.best);
+    }
+  };
+
+  explicit LevenshteinPrefixAcceptor(
+    std::shared_ptr<const LevenshteinAcceptor> inner) noexcept
+    : _inner{std::move(inner)} {}
+
+  const std::shared_ptr<const LevenshteinAcceptor>& Inner() const noexcept {
+    return _inner;
+  }
+
+  State Start() const noexcept { return Settle({_inner->Start(), kNone}); }
+
+  bytes_view LowerBound() const noexcept { return _inner->LowerBound(); }
+
+  const ByteSet& RequiredBytes() const noexcept {
+    return _inner->RequiredBytes();
+  }
+
+  std::array<uint8_t, 256> Bytemap() const { return _inner->Bytemap(); }
+
+  size_t MaxStates() const noexcept {
+    return (_inner->MaxStates() + 1) * (_inner->MaxDistance() + 1);
+  }
+
+  static bool Alive(const State& state) noexcept {
+    return state.best != kNone || LevenshteinAcceptor::Alive(state.inner);
+  }
+
+  State Step(const State& state, byte_type label) const noexcept {
+    if (Settled(state)) {
+      return state;
+    }
+    return Settle({_inner->Step(state.inner, label), state.best});
+  }
+
+  static bool Accept(const State& state, PayloadType& payload) noexcept {
+    payload = state.best;
+    return state.best != kNone;
+  }
+
+  bool Matches(bytes_view term) const noexcept {
+    PayloadType payload{};
+    return Matches(term, payload);
+  }
+
+  bool Matches(bytes_view term, PayloadType& payload) const noexcept {
+    auto state = Start();
+    for (const auto label : term) {
+      if (Settled(state)) {
+        break;
+      }
+      state = Step(state, label);
+    }
+    return Accept(state, payload);
+  }
+
+  bool LiveRange(const State& state, uint32_t& lo,
+                 uint32_t& hi) const noexcept {
+    if (state.best != kNone) {
+      lo = 0;
+      hi = std::numeric_limits<byte_type>::max();
+      return true;
+    }
+    return _inner->LiveRange(state.inner, lo, hi);
+  }
+
+ private:
+  static constexpr PayloadType kNone = std::numeric_limits<PayloadType>::max();
+
+  static bool Settled(const State& state) noexcept {
+    return state.best == 0 || !LevenshteinAcceptor::Alive(state.inner);
+  }
+
+  State Settle(State state) const noexcept {
+    PayloadType distance{};
+    if (_inner->Accept(state.inner, distance) && distance < state.best) {
+      state.best = distance;
+    }
+    if (Settled(state)) {
+      state.inner = {};
+    }
+    return state;
+  }
+
+  std::shared_ptr<const LevenshteinAcceptor> _inner;
 };
 
 }  // namespace irs

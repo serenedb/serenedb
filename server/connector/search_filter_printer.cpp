@@ -233,7 +233,10 @@ struct PhrasePartVisitor : util::Noncopyable {
               "printing"));
   }
   auto operator()(const LevenshteinAutomatonOptions& opts) const {
-    absl::StrAppend(out, "LevenshteinAutomaton:", TermToString(opts.target));
+    absl::StrAppend(out,
+                    opts.starts_with ? "LevenshteinAutomatonStartsWith:"
+                                     : "LevenshteinAutomaton:",
+                    TermToString(opts.target));
   }
   auto operator()(const AutomatonOptions& opts) const {
     absl::StrAppend(out, "Automaton:", TermToString(opts.pattern));
@@ -529,6 +532,9 @@ struct FilterPrinter {
       ExplainNode node{"Levenshtein"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Target"] = TermToString(o.target);
+      if (o.starts_with) {
+        node.attributes["Starts With"] = "true";
+      }
       node.attributes["Max Terms"] = o.with_ties
                                        ? absl::StrCat(o.max_terms, " with ties")
                                        : absl::StrCat(o.max_terms);

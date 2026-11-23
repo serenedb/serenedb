@@ -47,6 +47,11 @@ class EmptyTermReader final : public irs::TermReader {
   }
 
   SeekTermIterator::ptr iterator(
+    const LevenshteinPrefixAcceptor&) const noexcept final {
+    return SeekTermIterator::empty();
+  }
+
+  SeekTermIterator::ptr iterator(
     const RegexpConjunction&) const noexcept final {
     return SeekTermIterator::empty();
   }

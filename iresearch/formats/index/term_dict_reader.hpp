@@ -57,6 +57,8 @@ class TermReaderImpl final : public TermReader {
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
   SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final;
+  SeekTermIterator::ptr iterator(
+    const LevenshteinPrefixAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const RegexpConjunction& a) const final;
   SeekTermIterator::ptr iterator(const FuzzyConjunction& a) const final;
 

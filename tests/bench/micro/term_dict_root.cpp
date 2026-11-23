@@ -459,7 +459,8 @@ void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance,
   for (const auto& target : targets) {
     fuzzy.push_back(std::make_shared<const irs::LevenshteinAcceptor>(
       description, bytes_view{}, target));
-    dfas.push_back(irs::FuzzyConjunction::Make(fuzzy.back()));
+    dfas.push_back(
+      irs::FuzzyConjunctionOf<irs::LevenshteinAcceptor>::Make(fuzzy.back()));
   }
   size_t terms = 0;
   for (auto _ : state) {

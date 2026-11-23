@@ -247,6 +247,7 @@ struct LevenshteinArgs {
   std::string text;
   int64_t distance = 1;
   bool with_transpositions = true;
+  bool starts_with = false;
   // Literal prefix that must match exactly; only the suffix beyond it
   // participates in edit-distance computation. Empty by default.
   std::string prefix;

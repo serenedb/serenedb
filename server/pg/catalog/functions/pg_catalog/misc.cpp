@@ -561,7 +561,7 @@ void SignalBackendFunction(duckdb::DataChunk& args,
   auto& conn_ctx = ConnectionContext::Get(context);
   auto* registry = conn_ctx.GetCancelRegistry();
   const auto roles = catalog::RolesOf(&context);
-  const auto& caller = context.CurrentRole();
+  const auto caller = CallerAccess(state);
   const auto pids = args.data[0].Values<int32_t>();
   auto out = duckdb::FlatVector::Writer<bool>(result, args.size());
   for (duckdb::idx_t row = 0; row < args.size(); ++row) {

@@ -1,0 +1,110 @@
+statement ok
+DROP SCHEMA IF EXISTS sds_s CASCADE;
+
+
+statement ok
+DROP DATABASE IF EXISTS sds_db;
+
+
+statement ok
+DROP ROLE IF EXISTS sds_caller;
+
+
+statement ok
+DROP ROLE IF EXISTS sds_owner;
+
+
+statement ok
+CREATE ROLE sds_owner;
+
+
+statement ok
+CREATE ROLE sds_caller LOGIN PASSWORD 'sds_pw';
+
+
+statement ok
+CREATE DATABASE sds_db;
+
+
+statement ok
+REVOKE CONNECT ON DATABASE sds_db FROM PUBLIC;
+
+
+statement ok
+GRANT CONNECT ON DATABASE sds_db TO sds_owner;
+
+
+statement ok
+GRANT pg_read_all_stats TO sds_owner;
+
+
+statement ok
+CREATE SCHEMA sds_s AUTHORIZATION sds_owner;
+
+
+statement ok
+GRANT USAGE ON SCHEMA sds_s TO sds_caller;
+
+
+statement ok
+SET ROLE sds_owner;
+
+
+statement ok
+CREATE FUNCTION sds_s.database_size() RETURNS boolean LANGUAGE sql SECURITY DEFINER
+AS 'SELECT pg_database_size(''sds_db'') >= 0';
+
+
+statement ok
+CREATE FUNCTION sds_s.tablespace_size() RETURNS boolean LANGUAGE sql SECURITY DEFINER
+AS 'SELECT pg_tablespace_size(''pg_global'') >= 0';
+
+
+statement ok
+RESET ROLE;
+
+
+connection c_caller user=sds_caller password=sds_pw
+statement error
+SELECT pg_database_size('sds_db');
+----
+db error: ERROR: permission denied for database sds_db
+
+
+connection c_caller user=sds_caller password=sds_pw
+query
+SELECT sds_s.database_size() AS allowed;
+----
+allowed
+t
+
+
+connection c_caller user=sds_caller password=sds_pw
+statement error
+SELECT pg_tablespace_size('pg_global');
+----
+db error: ERROR: permission denied for tablespace pg_global
+
+
+connection c_caller user=sds_caller password=sds_pw
+query
+SELECT sds_s.tablespace_size() AS allowed;
+----
+allowed
+t
+
+
+statement ok
+DROP SCHEMA sds_s CASCADE;
+
+
+statement ok
+DROP DATABASE sds_db;
+
+
+statement ok
+DROP ROLE sds_caller;
+
+
+statement ok
+DROP ROLE sds_owner;

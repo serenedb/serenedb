@@ -240,6 +240,7 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
                           duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
   auto& context = state.GetContext();
+  const auto role = CallerAccess(state);
   duckdb::UnaryExecutor::Execute<Key, int64_t>(
     args.data[0], result, args.size(), [&](Key key) -> int64_t {
       const auto entry = DatabaseEntry(context, key);
@@ -250,7 +251,6 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                         ERR_MSG("database ", KeyText(key), " does not exist"));
       }
-      const auto& role = context.CurrentRole();
       if (!role.Has(duckdb::RoleCapability::ReadAllStats) &&
           !duckdb::Allowed(role, *entry, duckdb::AclMode::Connect)) {
         duckdb::ThrowPermissionDenied(*entry);
@@ -303,9 +303,8 @@ duckdb::idx_t SessionTablespace(const Session& session) {
 
 int64_t TablespaceBytes(const Session& session,
                         const catalog::TablespaceCatalogEntry& tablespace) {
-  auto& context = *session.context;
   if (tablespace.oid != SessionTablespace(session)) {
-    if (const auto& role = context.CurrentRole();
+    if (const auto& role = session.role;
         !role.Has(duckdb::RoleCapability::ReadAllStats) &&
         !role.Owns(kRootUser) &&
         !role.CanAny(duckdb::CatalogType::TABLESPACE_ENTRY,

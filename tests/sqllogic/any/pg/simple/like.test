@@ -56,6 +56,50 @@ escaped_backslash	shared_lead_byte	escaped_backslash_matches
 a\\\\b	aêb\\%	t
 
 
+query
+SELECT 'abc' LIKE 'a§%' ESCAPE '§' AS literal_percent, 'a%' LIKE 'a§%' ESCAPE '§' AS escaped_percent,
+       'a§' LIKE 'a§§' ESCAPE '§' AS escaped_escape, 'aêb' LIKE 'aêb' ESCAPE 'é' AS shared_lead_byte,
+       'A%' ILIKE 'a§%' ESCAPE '§' AS ilike_escaped, 'a\b' LIKE 'a\b' ESCAPE '§' AS literal_backslash;
+----
+literal_percent	escaped_percent	escaped_escape	shared_lead_byte	ilike_escaped	literal_backslash
+f	t	t	t	t	t
+
+
+statement ok
+CREATE TABLE like_multibyte_escape (id INT, s TEXT);
+
+
+statement ok
+INSERT INTO like_multibyte_escape VALUES (1, 'a%'), (2, 'abc'), (3, 'A%');
+
+
+query
+SELECT id FROM like_multibyte_escape WHERE s LIKE 'a§%' ESCAPE '§' ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id FROM like_multibyte_escape WHERE s NOT LIKE 'a§%' ESCAPE '§' ORDER BY id;
+----
+id
+2
+3
+
+
+query
+SELECT id FROM like_multibyte_escape WHERE s ILIKE 'a§%' ESCAPE '§' ORDER BY id;
+----
+id
+1
+3
+
+
+statement ok
+DROP TABLE like_multibyte_escape;
+
+
 statement error
 SELECT like_escape('ab', 'xy');
 ----

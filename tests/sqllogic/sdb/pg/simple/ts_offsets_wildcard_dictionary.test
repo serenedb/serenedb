@@ -1,0 +1,35 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsow_wild AS generate_wildcard_ngrams(split_text_csv(' '), 3) WITH (frequency, position)
+
+statement ok
+CREATE TABLE tsow_docs (id INT PRIMARY KEY, body TEXT)
+
+statement ok
+CREATE INDEX tsow_docs_idx ON tsow_docs USING inverted (id, body tsow_wild)
+
+statement ok
+INSERT INTO tsow_docs VALUES (1, 'quick brown fox')
+
+query
+SELECT ts_offsets(body) AS o FROM tsow_docs_idx WHERE body @@ ts_like('qu%')
+----
+o
+{}
+
+query
+SELECT ts_offsets('tsow_wild', 'quick brown fox', ts_like('qu%')) AS o
+----
+o
+{}
+
+query
+SELECT ts_offsets('tsow_wild', 'quick brown fox', ts_regexp('qu.*')) AS o
+----
+o
+{}
+
+query
+SELECT ts_offsets('tsow_wild', 'quick brown fox', 'quick'::tsquery) AS o
+----
+o
+{0,15}

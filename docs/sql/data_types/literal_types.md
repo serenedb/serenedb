@@ -75,6 +75,10 @@ However, we cannot compare `VARCHAR` values with dates.
 
 <SqlLogicTest id="sql/data_types/literal_types/example_008" />
 
+A string literal compared with a column takes the column's type, so against a `NUMERIC(p, s)` column it is rounded to the column's scale before the comparison. An untyped query parameter takes the column's type the same way. Cast the literal to compare its exact value:
+
+<SqlLogicTest id="sql/data_types/literal_types/example_013" />
+
 ### Escape String Literals
 
 To escape a single quote (apostrophe) character in a string literal, use `''`. For example, `SELECT '''' AS s` returns `'`.

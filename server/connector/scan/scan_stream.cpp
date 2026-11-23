@@ -108,8 +108,9 @@ duckdb::idx_t KeepSampledHits(const ScanGlobalState& g, StreamLocalState& l,
   auto* docs = batcher.WindowHead();
   auto* scores = l.scored ? batcher.ScoreHead() : nullptr;
   duckdb::idx_t kept = 0;
+  const auto base = g.segments[l.unit.seg].first_row - irs::doc_limits::min();
   for (duckdb::idx_t i = 0; i != n; ++i) {
-    if (g.sampling.KeepsRow(docs[i] - irs::doc_limits::min())) {
+    if (g.sampling.KeepsRow(base + docs[i])) {
       docs[kept] = docs[i];
       if (scores) {
         scores[kept] = scores[i];

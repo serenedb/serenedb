@@ -23,68 +23,98 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <utility>
 
+#include "search/search_table_changes.h"
+
 namespace sdb::connector {
+namespace {
+
+SearchSinkWriter OpenWriter(duckdb::ClientContext& context,
+                            const SearchSinkTable& table) {
+  SearchSinkWriter writer{.trx =
+                            std::make_unique<irs::IndexWriter::Transaction>(
+                              table.store->GetTransaction())};
+  auto made = MakeSearchTableInsertSink(*writer.trx, *table.store,
+                                        *table.catalog, context);
+  writer.sink = std::move(made.sink);
+  writer.version = made.version;
+  return writer;
+}
+
+void WriteRows(duckdb::ClientContext& context, const SearchSinkTable& table,
+               SearchSinkWriter& writer, duckdb::ColumnDataCollection& rows) {
+  for (auto& chunk : rows.Chunks()) {
+    WriteChunkToSearchSink(*writer.sink, chunk, table.column_ids,
+                           table.table_id, context);
+  }
+}
+
+void HandOver(const SearchSinkTable& table, SearchSinkWriter& writer,
+              search::Writes& writes) {
+  writer.sink.reset();
+  const auto flushed = writer.trx->FlushAndFsync();
+  writes.AddOwnSegments(table.store, std::move(writer.trx), flushed,
+                        writer.version);
+}
+
+}  // namespace
 
 void SearchSinkRows::Append(duckdb::ClientContext& context,
                             SearchSinkTable& table, duckdb::DataChunk& rows) {
-  if (_sink) {
-    WriteChunkToSearchSink(*_sink, rows, table.column_ids, table.table_id,
-                           context);
+  if (_writer.sink) {
+    WriteChunkToSearchSink(*_writer.sink, rows, table.column_ids,
+                           table.table_id, context);
     return;
   }
   if (!_rows) {
     _rows = std::make_unique<duckdb::ColumnDataCollection>(
       duckdb::BufferManager::GetBufferManager(context), table.types);
   }
-  const auto bytes = rows.GetDataSize();
   _rows->Append(rows);
-  _bytes += bytes;
-  const auto statement_bytes =
-    table.inline_bytes.fetch_add(bytes, std::memory_order_relaxed) + bytes;
-  if (_rows->Count() <= STANDARD_VECTOR_SIZE &&
-      statement_bytes <= table.buffer_bytes) {
+  _bytes += rows.GetDataSize();
+  if (_rows->Count() <= STANDARD_VECTOR_SIZE && _bytes <= table.buffer_bytes) {
     return;
   }
-  table.inline_bytes.fetch_sub(_bytes, std::memory_order_relaxed);
-  _bytes = 0;
-  // Exclusive: Combine reports this thread's segments to the WAL, so they
-  // must not also carry a previous transaction's documents.
-  _trx = std::make_unique<irs::IndexWriter::Transaction>(
-    table.store->GetTransaction());
-  auto made =
-    MakeSearchTableInsertSink(*_trx, *table.store, *table.catalog, context);
-  _sink = std::move(made.sink);
-  _version = made.version;
-  for (auto& chunk : _rows->Chunks()) {
-    WriteChunkToSearchSink(*_sink, chunk, table.column_ids, table.table_id,
-                           context);
-  }
+  _writer = OpenWriter(context, table);
+  WriteRows(context, table, _writer, *_rows);
   _rows.reset();
+  _bytes = 0;
 }
 
-void SearchSinkRows::Flush() {
-  _sink.reset();
-  if (!_trx) {
+void SearchSinkRows::Combine(duckdb::ClientContext& context,
+                             SearchSinkTable& table, search::Writes& writes) {
+  if (_writer.sink) {
+    HandOver(table, _writer, writes);
     return;
-  }
-  // On the worker, in parallel with the others; the fsync is what lets the
-  // log reference these by name instead of copying the rows.
-  _flushed = _trx->FlushAndFsync();
-}
-
-void SearchSinkRows::HandOver(duckdb::ClientContext& context,
-                              const SearchSinkTable& table,
-                              search::Writes& writes) {
-  if (_trx) {
-    writes.AddOwnSegments(table.store, std::move(_trx), _flushed, _version);
-    _flushed = {};
   }
   if (!_rows) {
     return;
   }
-  writes.AddInlineRows(context, table.store, table.column_ids, *table.catalog,
-                       std::move(_rows), std::exchange(_bytes, 0),
-                       table.buffer_bytes);
+  std::unique_ptr<duckdb::ColumnDataCollection> full;
+  {
+    absl::MutexLock lock{&table.pool_mutex};
+    search::AppendRows(table.pool, std::move(_rows));
+    table.pool_bytes += std::exchange(_bytes, 0);
+    if (table.pool_bytes > table.buffer_bytes) {
+      full = std::move(table.pool);
+      table.pool_bytes = 0;
+    }
+  }
+  if (full) {
+    auto writer = OpenWriter(context, table);
+    WriteRows(context, table, writer, *full);
+    HandOver(table, writer, writes);
+  }
+}
+
+void FinishSearchSink(duckdb::ClientContext& context, SearchSinkTable& table,
+                      search::Writes& writes) {
+  absl::MutexLock lock{&table.pool_mutex};
+  if (table.pool) {
+    writes.AddInlineRows(context, table.store, table.column_ids, *table.catalog,
+                         std::move(table.pool),
+                         std::exchange(table.pool_bytes, 0),
+                         table.buffer_bytes);
+  }
 }
 
 }  // namespace sdb::connector

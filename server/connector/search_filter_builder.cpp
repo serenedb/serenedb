@@ -476,10 +476,24 @@ void AddNegated(BoolTarget parent, const SearchColumnInfo& info,
 
 namespace {
 
+duckdb::unique_ptr<duckdb::Expression> NegatedComparison(
+  const duckdb::Expression& cmp) {
+  auto negated = cmp.Copy();
+  duckdb::BoundComparisonExpression::SetType(
+    negated->Cast<duckdb::BoundFunctionExpression>(),
+    duckdb::NegateComparisonExpression(cmp.GetExpressionType()));
+  return negated;
+}
+
 void CollectNullableMarkers(const FilterContext& ctx,
                             const duckdb::Expression& expr,
                             std::vector<NullMarker>& markers) {
-  if (const auto* info = FindIndexedExpressionInfo(ctx, expr)) {
+  const auto* info = FindIndexedExpressionInfo(ctx, expr);
+  if (!info && ctx.expr_getter &&
+      duckdb::BoundComparisonExpression::IsComparison(expr)) {
+    info = FindIndexedExpressionInfo(ctx, *NegatedComparison(expr));
+  }
+  if (info) {
     if (info->nullable) {
       markers.push_back(NullMarkerOf(*info));
     }
@@ -1614,7 +1628,6 @@ struct StringBuiltin {
   StringBuiltinBuilder keyword;
   StringBuiltinBuilder wildcard;
   bool like_pattern = false;
-  bool per_term = false;
 };
 
 const irs::containers::FlatHashMap<std::string_view, StringBuiltin>
@@ -1628,7 +1641,7 @@ const irs::containers::FlatHashMap<std::string_view, StringBuiltin>
     {"regexp_matches", {&BuildTSRegexp, &BuildTSRegexp}},
     {"regexp_like", {&BuildTSRegexp, &BuildTSRegexp}},
     {"regexp_full_match", {&BuildTSFullRegexp, &BuildTSFullRegexp}},
-    {"~~", {&BuildTSLike, &BuildTSLike, true, true}},
+    {"~~", {&BuildTSLike, &BuildTSLike, true}},
     {"~~*", {&BuildTSILike, &BuildTSILike, true}},
 };
 
@@ -1742,10 +1755,9 @@ absl::Status FromFunctionExpression(
         builder = builtin->second.keyword;
       } else if (analyzer.type() ==
                    irs::Type<irs::analysis::WildcardTokenizer>::id() &&
-                 (builtin->second.per_term ||
-                  irs::utils::downCast<irs::analysis::WildcardTokenizer>(
-                    analyzer)
-                    .KeepsWholeValues())) {
+                 irs::utils::downCast<irs::analysis::WildcardTokenizer>(
+                   analyzer)
+                   .KeepsWholeValues()) {
         builder = builtin->second.wildcard;
       }
       if (!builder) {
@@ -1995,6 +2007,24 @@ const irs::Scorer* ResolveScoreOverride(const FilterContext& ctx,
   return scorer;
 }
 
+irs::Filter* SingleLeaf(irs::BooleanFilter& scope) {
+  for (auto* node = &scope;;) {
+    const auto required = node->Size(irs::Occur::Must);
+    if (required + node->Size(irs::Occur::Should) != 1) {
+      return nullptr;
+    }
+    const auto clauses =
+      node->Filters(required == 1 ? irs::Occur::Must : irs::Occur::Should);
+    if (clauses.empty()) {
+      return nullptr;
+    }
+    if (clauses[0]->type() != irs::Type<irs::BooleanFilter>::id()) {
+      return clauses[0].get();
+    }
+    node = &irs::utils::downCast<irs::BooleanFilter>(*clauses[0]);
+  }
+}
+
 bool HasScorableLeaf(const irs::Filter& filter) {
   if (filter.type() != irs::Type<irs::BooleanFilter>::id()) {
     return !irs::IsConstScoreSingleton(filter.GetScorer());
@@ -2018,17 +2048,16 @@ bool HasScorableLeaf(const irs::Filter& filter) {
   return false;
 }
 
-void ApplyScoreOverride(irs::BooleanFilter& scope, const irs::Scorer* scorer) {
+void ApplyScoreOverride(const FilterContext& ctx, irs::BooleanFilter& scope,
+                        const irs::Scorer* scorer) {
+  if (ctx.negated) {
+    return;
+  }
   const auto scored_clauses =
     scope.Size(irs::Occur::Must) + scope.Size(irs::Occur::Should);
-  if (scored_clauses == 1) {
-    for (const auto occur : {irs::Occur::Must, irs::Occur::Should}) {
-      for (const auto& child : scope.Filters(occur)) {
-        if (child->GetScorer() == &irs::DefaultConstScore()) {
-          child->SetScorer(scorer);
-        }
-      }
-    }
+  if (auto* leaf = SingleLeaf(scope);
+      leaf && leaf->GetScorer() == &irs::DefaultConstScore()) {
+    leaf->SetScorer(scorer);
   }
   if (irs::NeedsTermStats(*scorer) && scored_clauses != 0 &&
       !HasScorableLeaf(scope)) {
@@ -2076,17 +2105,6 @@ irs::BooleanFilter* InnermostGroup(irs::BooleanFilter& scope) {
   return group;
 }
 
-irs::Filter* SingleLeaf(irs::BooleanFilter& node) {
-  const auto clauses = node.Filters(irs::Occur::Must);
-  if (clauses.size() != 1 || node.Size(irs::Occur::Must) != 1 ||
-      node.Size(irs::Occur::Should) != 0 ||
-      node.Size(irs::Occur::MustNot) != 0 ||
-      clauses[0]->type() == irs::Type<irs::BooleanFilter>::id()) {
-    return nullptr;
-  }
-  return clauses[0].get();
-}
-
 irs::ScoreMergeType* WordsMerge(irs::Filter& filter) {
   const auto type = filter.type();
   if (type == irs::Type<irs::ByPrefix>::id()) {
@@ -2121,8 +2139,7 @@ void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
   }
   const auto type = merge == TSQueryMerge::Max ? irs::ScoreMergeType::Max
                                                : irs::ScoreMergeType::Sum;
-  auto* group = InnermostGroup(scope);
-  if (auto* leaf = SingleLeaf(group ? *group : scope)) {
+  if (auto* leaf = SingleLeaf(scope)) {
     if (leaf->GetScorer() == &irs::ForceConstScore()) {
       if (type == irs::ScoreMergeType::Sum) {
         THROW_SQL_ERROR(
@@ -2139,6 +2156,7 @@ void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
       return;
     }
   }
+  auto* group = InnermostGroup(scope);
   if (!group) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                     ERR_MSG("::merge(...) applies to a boolean group or a "
@@ -2166,7 +2184,7 @@ bool TryDispatchScoreCast(BoolTarget parent, const FilterContext& ctx,
   auto scope = OpenScope();
   BuildTSQuery(ScopeTarget(scope), ctx, column_info,
                duckdb::BoundCastExpression::Child(cast_expr));
-  ApplyScoreOverride(*scope, scorer);
+  ApplyScoreOverride(ctx, *scope, scorer);
   CloseScope(parent, std::move(scope));
   return true;
 }
@@ -2253,7 +2271,7 @@ bool TryDispatchSqlScoreCast(BoolTarget filter, const FilterContext& ctx,
     ctx, duckdb::BoundCastExpression::Child(cast_expr), "::score(...)",
     "score is only meaningful inside an inverted-index match. Move it into an "
     "`@@` match or remove it.");
-  ApplyScoreOverride(*scope, scorer);
+  ApplyScoreOverride(ctx, *scope, scorer);
   CloseScope(filter, std::move(scope));
   return true;
 }
@@ -2468,10 +2486,7 @@ absl::Status FromComparisonExpression(
       const duckdb::BoundConstantExpression value{duckdb::Value::BOOLEAN(true)};
       return FromBinaryEq<true>(filter, ctx, cmp, value, false);
     }
-    auto negated = cmp.Copy();
-    duckdb::BoundComparisonExpression::SetType(
-      negated->Cast<duckdb::BoundFunctionExpression>(),
-      duckdb::NegateComparisonExpression(cmp_type));
+    const auto negated = NegatedComparison(cmp);
     if (FindColumnInfoForExpr(ctx, *negated)) {
       const duckdb::BoundConstantExpression value{
         duckdb::Value::BOOLEAN(false)};
@@ -3025,7 +3040,7 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
     return;
   }
   if (scorer) {
-    ApplyScoreOverride(*scope, scorer);
+    ApplyScoreOverride(ctx, *scope, scorer);
   }
   ApplyMerge(*scope, parts->merge);
   CloseScope(parent, std::move(scope));

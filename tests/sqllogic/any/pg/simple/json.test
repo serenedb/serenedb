@@ -241,3 +241,17 @@ SELECT json_strip_nulls('{"a":[1,null,{"b":null}]}'::json) AS nested, json_strip
 ----
 nested	scalar
 {"a":[1,null,{}]}	5
+
+skipif postgres
+query
+SELECT '{"ab": 4, "ab": 5}'::json ->> 'ab' AS duplicate;
+----
+duplicate
+4
+
+onlyif postgres
+query
+SELECT '{"ab": 4, "ab": 5}'::json ->> 'ab' AS duplicate;
+----
+duplicate
+5

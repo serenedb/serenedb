@@ -1,0 +1,108 @@
+statement ok
+CREATE TABLE ukof (k INT PRIMARY KEY) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ukof VALUES (1), (2);
+
+
+connection ukof_reader
+statement ok
+BEGIN;
+
+
+connection ukof_reader
+query
+SELECT count(*) AS n FROM ukof;
+----
+n
+2
+
+
+statement count 1
+INSERT OR REPLACE INTO ukof VALUES (1);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ukof;
+
+
+query
+SELECT k FROM ukof ORDER BY k;
+----
+k
+1
+2
+
+
+connection ukof_reader
+statement ok
+COMMIT;
+
+
+statement ok
+CREATE TABLE ukof_wide (k INT PRIMARY KEY, v TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ukof_wide VALUES (1, 'a'), (2, 'b');
+
+
+connection ukof_reader
+statement ok
+BEGIN;
+
+
+connection ukof_reader
+query
+SELECT count(*) AS n FROM ukof_wide;
+----
+n
+2
+
+
+statement count 1
+INSERT OR REPLACE INTO ukof_wide (k) VALUES (1);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ukof_wide;
+
+
+query
+SELECT k, v FROM ukof_wide ORDER BY k;
+----
+k	v
+1	a
+2	b
+
+
+connection ukof_reader
+statement ok
+COMMIT;
+
+
+connection ukof_writer
+statement ok
+BEGIN;
+
+
+connection ukof_writer
+statement count 1
+INSERT OR REPLACE INTO ukof VALUES (2);
+
+
+statement ok
+DELETE FROM ukof WHERE k = 2;
+
+
+connection ukof_writer
+statement ok
+COMMIT;
+
+
+query
+SELECT k FROM ukof ORDER BY k;
+----
+k
+1

@@ -1,0 +1,32 @@
+query
+SELECT date_bin('15 minutes', TIMESTAMP '2020-02-11 15:44:17', TIMESTAMP '2001-01-01') AS b
+----
+b
+2020-02-11 15:30:00
+
+statement ok
+CREATE TABLE dbts (ts TIMESTAMP)
+
+statement ok
+INSERT INTO dbts VALUES ('2020-02-11 15:44:17')
+
+query
+SELECT date_bin('1 hour', ts, '2000-01-01') AS b FROM dbts
+----
+b
+2020-02-11 15:00:00
+
+statement ok
+CREATE VIEW dbts_v AS SELECT date_bin('30 minutes', ts, TIMESTAMP '2000-01-01') AS b FROM dbts
+
+query
+SELECT b FROM dbts_v
+----
+b
+2020-02-11 15:30:00
+
+statement ok
+DROP VIEW dbts_v
+
+statement ok
+DROP TABLE dbts

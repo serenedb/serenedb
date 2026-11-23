@@ -26,6 +26,7 @@
 #include <duckdb/common/types/hash.hpp>
 #include <duckdb/execution/aggregate_hashtable.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -67,9 +68,13 @@ const std::vector<Dataset>& Datasets() {
   return datasets;
 }
 
+constinit std::unique_ptr<duckdb::DuckDB> gDb;
+
 duckdb::DuckDB& Db() {
-  static duckdb::DuckDB db(nullptr);
-  return db;
+  if (!gDb) {
+    gDb = std::make_unique<duckdb::DuckDB>(nullptr);
+  }
+  return *gDb;
 }
 
 void DuckDBTable(benchmark::State& state, const Dataset& data) {
@@ -331,6 +336,7 @@ int Main(int argc, char** argv) {
   }
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+  gDb.reset();
   return 0;
 }
 

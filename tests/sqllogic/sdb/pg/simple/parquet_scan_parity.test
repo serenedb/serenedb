@@ -164,3 +164,97 @@ SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp.parquet') USING SAMP
 ----
 n
 40000
+
+
+statement ok
+COPY (SELECT 1 AS a) TO '${__TEST_DIR__}/psp_ties_1.parquet' (FORMAT parquet);
+
+
+statement ok
+COPY (SELECT a FROM (VALUES (1), (3)) v(a)) TO '${__TEST_DIR__}/psp_ties_2.parquet' (FORMAT parquet);
+
+
+statement ok
+COPY (SELECT 2 AS a) TO '${__TEST_DIR__}/psp_ties_3.parquet' (FORMAT parquet);
+
+
+query
+SELECT a FROM read_parquet([
+  '${__TEST_DIR__}/psp_ties_1.parquet',
+  '${__TEST_DIR__}/psp_ties_2.parquet',
+  '${__TEST_DIR__}/psp_ties_3.parquet'
+]) ORDER BY a LIMIT 3;
+----
+a
+1
+1
+2
+
+
+statement ok
+COPY (SELECT {'a': i} AS s FROM range(300000) t(i))
+  TO '${__TEST_DIR__}/psp_struct.parquet' (FORMAT parquet, ROW_GROUP_SIZE 100000);
+
+
+query
+SELECT s.a AS a FROM read_parquet('${__TEST_DIR__}/psp_struct.parquet') ORDER BY s.a LIMIT 3 OFFSET 150000;
+----
+a
+150000
+150001
+150002
+
+
+statement ok
+COPY (SELECT 5 AS a, 0 AS b) TO '${__TEST_DIR__}/psp_hive' (FORMAT parquet, PARTITION_BY (a));
+
+
+statement ok
+COPY (SELECT i AS a, (i * 7919) % 300007 AS b FROM range(300000) t(i))
+  TO '${__TEST_DIR__}/psp_hive/a=5/data.parquet' (FORMAT parquet, ROW_GROUP_SIZE 100000);
+
+
+query
+SELECT a, b FROM read_parquet('${__TEST_DIR__}/psp_hive/a=5/data.parquet', hive_partitioning = true)
+ORDER BY a, b LIMIT 3 OFFSET 150000;
+----
+a	b
+5	150000
+5	150001
+5	150002
+
+
+statement ok
+COPY (SELECT 5 AS a, 0 AS b) TO '${__TEST_DIR__}/psp_hive_stats' (FORMAT parquet, PARTITION_BY (a));
+
+
+statement ok
+COPY (SELECT i AS a, i AS b FROM range(300000) t(i))
+  TO '${__TEST_DIR__}/psp_hive_stats/a=5/data.parquet' (FORMAT parquet, ROW_GROUP_SIZE 100000);
+
+
+query
+SELECT max(a) AS hi, min(a) AS lo, count(*) AS n
+FROM read_parquet('${__TEST_DIR__}/psp_hive_stats/a=5/data.parquet', hive_partitioning = true) WHERE b >= 50000;
+----
+hi	lo	n
+5	5	250000
+
+
+query
+SELECT max(a) AS hi, min(a) AS lo FROM read_parquet('${__TEST_DIR__}/psp_hive_stats/a=5/data.parquet', hive_partitioning = true);
+----
+hi	lo
+5	5
+
+
+statement ok
+COPY (SELECT i AS v, i // 100 AS f FROM range(10000) t(i))
+  TO '${__TEST_DIR__}/psp_sample_files' (FORMAT parquet, PARTITION_BY (f));
+
+
+query
+SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp_sample_files/*/*.parquet') USING SAMPLE 10 ROWS (system, 1);
+----
+n
+10

@@ -580,9 +580,9 @@ void RewriteIndexedPatches(duckdb::ClientContext& context,
   if (positions.Empty()) {
     return;
   }
-  rows.Flush();
   writes.AddRemoval(context, target.shard, std::move(positions));
-  rows.HandOver(context, table, writes);
+  rows.Combine(context, table, writes);
+  FinishSearchSink(context, table, writes);
 }
 
 }  // namespace

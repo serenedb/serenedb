@@ -78,7 +78,8 @@ enum class KeyKinds : uint8_t {
 
 bool OfKinds(const search::KeySpec& spec, KeyKinds kinds) {
   return catalog::IsSingleColumnKey(spec.key) &&
-         (kinds == KeyKinds::All || spec.kind == search::KeyKind::Unique);
+         (kinds == KeyKinds::All ||
+          (spec.kind == search::KeyKind::Unique && !spec.deferred));
 }
 
 FieldSet KeyTermFields(const ScanBindData& bind, KeyKinds kinds) {
@@ -649,6 +650,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
     filter ? EstimateFilterMatchCount(*filter, live,
                                       KeyTermFields(*this, KeyKinds::Unique))
            : live;
+  if (IsPointRead()) {
+    return duckdb::make_uniq<duckdb::NodeStatistics>(estimate);
+  }
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, live);
 }
 

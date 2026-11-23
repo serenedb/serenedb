@@ -324,12 +324,12 @@ class BuiltinTablespaces final : public duckdb::DefaultGenerator {
     info.SetName(name);
     info.internal = true;
     info.permissions.owner = pg::kRootUser;
-    if (name == kDefault) {
+    if (name.GetIdentifierName() == kDefault) {
       info.oid = pg::kPgDefaultTablespace;
       return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, info,
                                                        _default_directory);
     }
-    if (name == kGlobal) {
+    if (name.GetIdentifierName() == kGlobal) {
       info.oid = pg::kPgGlobalTablespace;
       return duckdb::make_uniq<TablespaceCatalogEntry>(catalog, info,
                                                        std::string{});
@@ -436,6 +436,7 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context,
     info.permissions.owner = pg::kRootUser;
     CreateDatabase(transaction, info);
   }
+  _tablespaces.CreateDefaults(transaction);
 }
 
 void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,

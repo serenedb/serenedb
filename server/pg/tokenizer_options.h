@@ -255,12 +255,6 @@ inline constexpr OptionInfo kDelimiters{
   "Delimiters: a list of strings, or a comma-separated string of "
   "double-quoted delimiters (e.g. '\",\", \"|\", \"!\"')"};
 
-inline constexpr std::string_view kDictionaryTemplate = "dictionary";
-
-inline constexpr OptionInfo kFrom{"from",
-                                  OptionInfo::RequiredTag<std::string_view>{},
-                                  "the source tokenizer name"};
-
 // Template
 
 void CheckTemplate(std::string_view option, std::string_view value);

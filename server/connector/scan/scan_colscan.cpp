@@ -58,9 +58,10 @@ duckdb::idx_t SampleRows(const ScanGlobalState& g, ColScanLocalState& l,
     l.live_sel.Initialize(l.live_sel_data);
   }
   duckdb::idx_t kept = 0;
+  const auto first = g.segments[l.unit.seg].first_row + l.doc_cursor;
   for (duckdb::idx_t i = 0; i != live; ++i) {
     const auto row = every_row ? i : l.live_sel.get_index(i);
-    if (g.sampling.KeepsRow(l.doc_cursor + row)) {
+    if (g.sampling.KeepsRow(first + row)) {
       l.live_sel.set_index(kept++, row);
     }
   }

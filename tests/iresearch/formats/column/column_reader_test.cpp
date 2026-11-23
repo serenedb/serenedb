@@ -1765,6 +1765,48 @@ void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
   }
 }
 
+TEST_F(ColumnReaderTest, ReopenedBlocksReuseTheirIds) {
+  constexpr uint32_t kRgSize = 2048;
+  constexpr uint64_t kRowGroups = 4;
+  constexpr irs::field_id kField = 1;
+
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), dir.Tracker("seg")};
+    auto& cw = w.OpenColumn(kField, duckdb::LogicalType::BIGINT,
+                            /*skip_validity=*/true, kRgSize);
+    for (uint64_t pos = 0; pos < kRowGroups * kRgSize;
+         pos += STANDARD_VECTOR_SIZE) {
+      duckdb::Vector v{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+      auto* d = duckdb::FlatVector::GetDataMutable<int64_t>(v);
+      for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+        d[k] = static_cast<int64_t>((pos + k) * 7);
+      }
+      duckdb::FlatVector::SetSize(v, STANDARD_VECTOR_SIZE);
+      cw.Append(v, STANDARD_VECTOR_SIZE);
+    }
+    w.Commit(0);
+  }
+
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->DataRgCount(), kRowGroups);
+  irs::ReadContext ctx{r, /*random_access=*/true};
+  for (int round = 0; round < 3; ++round) {
+    for (uint64_t rg = 0; rg < kRowGroups; ++rg) {
+      auto segment = col->OpenSegment(rg, ctx);
+      EXPECT_EQ(segment->GetBlockHandle()->BlockId(), 0) << "round " << round;
+      duckdb::ColumnFetchState state;
+      duckdb::Vector out{duckdb::LogicalType::BIGINT};
+      segment->FetchRow(state, kRgSize - 1, out, 0);
+      EXPECT_EQ(duckdb::FlatVector::GetData<int64_t>(out)[0],
+                static_cast<int64_t>((rg * kRgSize + kRgSize - 1) * 7))
+        << "round " << round << " row group " << rg;
+    }
+  }
+}
+
 TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
   using duckdb::CompressionType;
   using duckdb::LogicalType;

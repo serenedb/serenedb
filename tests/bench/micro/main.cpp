@@ -46,16 +46,6 @@ Modules& GetModules() {
 
 Module& GetModule(std::string_view name) { return GetModules()[name]; }
 
-int RunBenchmarks(int argc, char** argv) {
-  ::benchmark::Initialize(&argc, argv);
-  if (::benchmark::ReportUnrecognizedArguments(argc, argv)) {
-    return 1;
-  }
-  ::benchmark::RunSpecifiedBenchmarks();
-  ::benchmark::Shutdown();
-  return 0;
-}
-
 int Run(Module& module, int argc, char** argv) {
   for (auto& benchmark : module.benchmarks) {
     (::benchmark::internal::RegisterBenchmarkInternal)(std::move(benchmark));
@@ -65,6 +55,16 @@ int Run(Module& module, int argc, char** argv) {
 }
 
 }  // namespace
+
+int RunBenchmarks(int argc, char** argv) {
+  ::benchmark::Initialize(&argc, argv);
+  if (::benchmark::ReportUnrecognizedArguments(argc, argv)) {
+    return 1;
+  }
+  ::benchmark::RunSpecifiedBenchmarks();
+  ::benchmark::Shutdown();
+  return 0;
+}
 
 bool AddMain(std::string_view module, int (*main)(int argc, char** argv)) {
   GetModule(module).main = main;

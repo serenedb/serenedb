@@ -36,6 +36,7 @@
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/optimizer/optimizer_extension.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -318,7 +319,10 @@ bool IsSearchStub(const duckdb::BoundFunctionExpression& call) {
 catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
   duckdb::ClientContext& context, std::string_view name) {
   auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-    context, duckdb::QualifiedName::Parse(name),
+    context,
+    duckdb::QualifiedName::Parse(
+      name,
+      duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(context)),
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     return {};
@@ -328,8 +332,11 @@ catalog::Tokenizer::TokenizerWrapper AcquireTokenizer(
 
 duckdb::optional_ptr<catalog::TokenizerCatalogEntry> BindDictionary(
   duckdb::BindScalarFunctionInput& input, std::string_view name) {
-  const duckdb::EntryLookupInfo lookup{duckdb::CatalogType::TOKENIZER_ENTRY,
-                                       duckdb::QualifiedName::Parse(name)};
+  const duckdb::EntryLookupInfo lookup{
+    duckdb::CatalogType::TOKENIZER_ENTRY,
+    duckdb::QualifiedName::Parse(
+      name, duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(
+              input.GetClientContext()))};
   auto entry =
     input.HasBinder()
       ? input.GetBinder().EntryRetriever().GetEntry(

@@ -30,6 +30,7 @@
 #include <duckdb/function/function_set.hpp>
 #include <duckdb/function/scalar_function.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
@@ -52,7 +53,10 @@ namespace {
 catalog::TokenizerRef LookupTokenizerDict(duckdb::ClientContext& context,
                                           std::string_view dict_name) {
   auto dict = duckdb::Catalog::GetEntry<catalog::TokenizerCatalogEntry>(
-    context, duckdb::QualifiedName::Parse(dict_name),
+    context,
+    duckdb::QualifiedName::Parse(
+      dict_name,
+      duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(context)),
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     THROW_SQL_ERROR(

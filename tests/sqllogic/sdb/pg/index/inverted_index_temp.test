@@ -274,3 +274,43 @@ Did you mean "pg_index"?
 
 statement ok
 DROP TABLE plain_docs;
+
+statement ok
+CREATE DATABASE temp_use_${__DATABASE__};
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY temp_use_words AS split_text(case := 'lower');
+
+statement ok
+CREATE TEMP TABLE temp_use_notes (id INT, body TEXT);
+
+statement ok
+CREATE INDEX temp_use_notes_idx ON temp_use_notes USING inverted (body temp_use_words);
+
+statement ok
+INSERT INTO temp_use_notes VALUES (1, 'Quick FOX');
+
+statement ok
+USE temp_use_${__DATABASE__};
+
+statement ok
+INSERT INTO temp_use_notes VALUES (2, 'lazy Fox');
+
+query
+SELECT id FROM temp_use_notes WHERE body @@ 'fox' ORDER BY id;
+----
+id
+1
+2
+
+statement ok
+USE ${__DATABASE__};
+
+statement ok
+DROP TABLE temp_use_notes;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY temp_use_words;
+
+statement ok
+DROP DATABASE temp_use_${__DATABASE__};

@@ -559,19 +559,6 @@ irs::field_id ResolveAnnTargetFieldId(const duckdb::Expression& col_arg,
                                     client_context));
 }
 
-bool IsScorerFunctionName(std::string_view name) {
-  using S = catalog::ScorerOptions;
-  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
-    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
-    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
-    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
-    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
-    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
-    S::Constant::Owner::type_name(),
-  };
-  return kScorerNames.contains(name);
-}
-
 struct AnnFunctionInfo {
   irs::VectorMetric metric;
   duckdb::OrderType order;
@@ -1798,6 +1785,19 @@ void TakeColumnConjuncts(
 }
 
 }  // namespace
+
+bool IsScorerFunctionName(std::string_view name) {
+  using S = catalog::ScorerOptions;
+  static const irs::containers::FlatHashSet<std::string_view> kScorerNames{
+    S::Bm25::Owner::type_name(),           S::Tfidf::Owner::type_name(),
+    S::LmJm::Owner::type_name(),           S::LmDirichlet::Owner::type_name(),
+    S::IndriDirichlet::Owner::type_name(), S::Dfi::Owner::type_name(),
+    S::RawBoost::Owner::type_name(),       S::RawTf::Owner::type_name(),
+    S::RawDL::Owner::type_name(),          S::Idf::Owner::type_name(),
+    S::Constant::Owner::type_name(),
+  };
+  return kScorerNames.contains(name);
+}
 
 void IResearchPushdownComplexFilter(
   duckdb::ClientContext& context, duckdb::LogicalGet& get,

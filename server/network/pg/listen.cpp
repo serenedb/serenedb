@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/log.hpp>
+#include <limits>
 #include <memory>
 #include <string>
 
@@ -80,8 +81,12 @@ std::shared_ptr<const ListenOptions> ParsePg(
                   "host:port) in endpoint '",
                   spec.url, "'");
       }
-      options->unix_port =
-        static_cast<uint16_t>(ParseUintParam(value, key, spec.url));
+      const auto port = ParseUintParam(value, key, spec.url);
+      if (port == 0 || port > std::numeric_limits<uint16_t>::max()) {
+        SDB_FATAL(GENERAL, "invalid port '", value, "' in endpoint '", spec.url,
+                  "': expected 1..65535");
+      }
+      options->unix_port = static_cast<uint16_t>(port);
     } else {
       SDB_FATAL(GENERAL, "unknown parameter '", key, "' in endpoint '",
                 spec.url, "'");

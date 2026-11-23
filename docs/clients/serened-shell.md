@@ -18,6 +18,8 @@ serenedb shell [OPTION]... [FILENAME [SQL]]
 
 `FILENAME` is the path to a DuckDB database file; a new file is created if it does not exist. Omit it (or pass `:memory:`) for an in-memory database. The optional `SQL` argument is run before the interactive prompt starts.
 
+The file becomes the default database, named after the file without its extension (`my_data.db` is `my_data`). A file named like one of the shell's own databases gets `_db` appended: `postgres.db` is `postgres_db`. `.open` closes the file opened before it.
+
 Open an in-memory shell:
 
 ```sh

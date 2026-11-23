@@ -10,6 +10,9 @@ PRIVILEGES = os.path.join(DUCKDB_INCLUDE, 'catalog', 'privileges.hpp')
 
 CONTAINERS = ('NONE', 'CLUSTER', 'DATABASE', 'SCHEMA', 'RELATION', 'REGISTRY')
 
+USES = (('See', 32), ('Own', 33), ('Drop', 34), ('Rename', 35), ('Admin', 36),
+        ('SetRole', 37), ('GrantOption', 40))
+
 KINDS = (
     ('OBJECT_TABLE', 'SCHEMA', ('TABLE_ENTRY', ('VIEW_ENTRY', 'OBJECT_VIEW'))),
     ('OBJECT_SEQUENCE', 'SCHEMA', ('SEQUENCE_ENTRY',)),
@@ -109,6 +112,7 @@ def generate(gen):
     ]
     lines += [f'\t{camel(name.lower())} = {hex(1 << bit)},'
               for name, bit in bits]
+    lines += [f'\t{name} = {hex(1 << bit)},' for name, bit in USES]
     lines += [
         '};',
         '',
@@ -147,6 +151,7 @@ def generate(gen):
         '',
         'inline constexpr AclMode ACL_COLUMN_PRIVILEGES = '
         f'{mode(source.all_rights()["COLUMN"])};',
+        f'inline constexpr AclMode ACL_GRANTABLE = {mode(order)};',
         '',
         f'enum class ObjectContainer : uint8_t {{ {", ".join(CONTAINERS)} }};',
         '',

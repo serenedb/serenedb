@@ -251,8 +251,9 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
                         ERR_MSG("database ", KeyText(key), " does not exist"));
       }
       const auto& role = context.CurrentRole();
-      if (!role.Has(duckdb::RoleCapability::ReadAllStats)) {
-        duckdb::RequireEntryPrivilege(role, *entry, duckdb::AclMode::Connect);
+      if (!role.Has(duckdb::RoleCapability::ReadAllStats) &&
+          !duckdb::Allowed(role, *entry, duckdb::AclMode::Connect)) {
+        duckdb::ThrowPermissionDenied(*entry);
       }
       return static_cast<int64_t>(
         DatabaseStorageSize(context, *database, {}).bytes);

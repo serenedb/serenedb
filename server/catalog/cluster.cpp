@@ -825,8 +825,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateDatabase(
         ERR_MSG("pg_global cannot be used as default tablespace"));
     }
     if (tablespace.oid != pg::kPgDefaultTablespace) {
-      duckdb::RequireEntryPrivilege(transaction.GetContext().CurrentRole(),
-                                    tablespace, duckdb::AclMode::Create);
+      if (!duckdb::Allowed(transaction.GetContext().CurrentRole(), tablespace,
+                           duckdb::AclMode::Create)) {
+        duckdb::ThrowPermissionDenied(tablespace);
+      }
       info.dependencies.AddDependency(tablespace);
     }
     info.tablespace_oid = tablespace.oid;

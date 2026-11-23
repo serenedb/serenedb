@@ -689,7 +689,9 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
         index.GetRelation(index.catalog.GetCatalogTransaction(context));
       host && host->type == duckdb::CatalogType::VIEW_ENTRY &&
       !duckdb::IsUnowned(*host)) {
-    duckdb::RequireEntryPrivilege(role, *host, duckdb::AclMode::Select);
+    if (!duckdb::Allowed(role, *host, duckdb::AclMode::Select)) {
+      duckdb::ThrowPermissionDenied(*host);
+    }
   }
   auto data = BindIndexScan(
     context, irs::utils::downCast<catalog::InvertedIndexEntry>(index));

@@ -266,8 +266,10 @@ void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), ERR_MSG(refusal));
   }
-  duckdb::RequireEntryPrivilege(context.CurrentRole(), *tablespace,
-                                duckdb::AclMode::Create);
+  if (!duckdb::Allowed(context.CurrentRole(), *tablespace,
+                       duckdb::AclMode::Create)) {
+    duckdb::ThrowPermissionDenied(*tablespace);
+  }
   info.dependencies.AddDependency(*tablespace);
   info.tablespace_oid = tablespace->oid;
 }

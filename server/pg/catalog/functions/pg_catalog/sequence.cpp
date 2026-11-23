@@ -210,8 +210,11 @@ void LastvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     ERR_MSG("lastval is not yet defined in this session"));
   }
-  duckdb::RequireEntryPrivilege(CallerAccess(state), *entry,
-                                AclMode::Select | AclMode::Usage);
+  if (!CallerAccess(state).CanAny(duckdb::CatalogType::SEQUENCE_ENTRY,
+                                  entry->permissions,
+                                  AclMode::Select | AclMode::Usage)) {
+    duckdb::ThrowPermissionDenied(*entry);
+  }
   result.Reference(duckdb::Value::BIGINT(last->value),
                    duckdb::count_t(args.size()));
 }

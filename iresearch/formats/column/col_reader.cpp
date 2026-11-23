@@ -43,14 +43,18 @@ bool InRange(uint64_t offset, uint64_t size, uint64_t end) noexcept {
   return size <= end && offset <= end - size;
 }
 
+template<typename... Parts>
+[[noreturn]] void ThrowCorruptedFooter(const Parts&... parts) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED), ERR_MSG(parts...));
+}
+
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
                      uint64_t footer_offset) {
   if (!(InRange(m.file_offset, m.byte_size, footer_offset) &&
         InRange(m.shared_offset, m.shared_size, footer_offset))) [[unlikely]] {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG(".col reader: column data on column id ", id,
-                            " out of range (offset ", m.file_offset, ", size ",
-                            m.byte_size, ")"));
+    ThrowCorruptedFooter(".col reader: column data on column id ", id,
+                         " out of range (offset ", m.file_offset, ", size ",
+                         m.byte_size, ")");
   }
 }
 
@@ -83,19 +87,23 @@ NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   r.stats.min = d.ReadProperty<uint32_t>(5, "min");
   r.stats.max = d.ReadProperty<uint32_t>(6, "max");
   r.bits = d.ReadProperty<uint8_t>(7, "bits");
-  SDB_ENSURE(r.stats.rows != 0 && r.stats.rows <= doc_limits::kMaxDocs &&
-               r.stats.min <= r.stats.max &&
-               (r.bits == 0 || r.bits == 8 || r.bits == 16 || r.bits == 32),
-             ".col reader: norm region on column id ", id, " is corrupt");
+  if (!(r.stats.rows != 0 && r.stats.rows <= doc_limits::kMaxDocs &&
+        r.stats.min <= r.stats.max &&
+        (r.bits == 0 || r.bits == 8 || r.bits == 16 || r.bits == 32)))
+    [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: norm region on column id ", id,
+                         " is corrupt");
+  }
   if (r.bits == 0) {
     r.value = d.ReadProperty<uint32_t>(8, "value");
     return r;
   }
   r.file_offset = d.ReadProperty<uint64_t>(9, "file_offset");
   const auto slots = NormSlotsSize(r);
-  SDB_ENSURE(InRange(r.file_offset, slots, footer_offset),
-             ".col reader: norm data on column id ", id,
-             " out of range (offset ", r.file_offset, ")");
+  if (!InRange(r.file_offset, slots, footer_offset)) [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: norm data on column id ", id,
+                         " out of range (offset ", r.file_offset, ")");
+  }
   r.exceptions =
     d.ReadPropertyWithExplicitDefault<uint32_t>(10, "exceptions", 0);
   if (r.exceptions == 0) {
@@ -105,14 +113,17 @@ NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   r.shift = d.ReadProperty<uint8_t>(12, "shift");
   r.exception_bytes = d.ReadProperty<uint8_t>(13, "exception_bytes");
   r.table_offset = d.ReadProperty<uint64_t>(14, "table_offset");
-  SDB_ENSURE(r.bits != 32 && r.exceptions <= r.stats.rows &&
-               r.overflow <= r.exceptions && r.shift <= kNormMaxShift &&
-               (r.exception_bytes == 2 || r.exception_bytes == 4),
-             ".col reader: norm exceptions on column id ", id, " are corrupt");
+  if (!(r.bits != 32 && r.exceptions <= r.stats.rows &&
+        r.overflow <= r.exceptions && r.shift <= kNormMaxShift &&
+        (r.exception_bytes == 2 || r.exception_bytes == 4))) [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: norm exceptions on column id ", id,
+                         " are corrupt");
+  }
   const auto table = NormTableSize(r);
-  SDB_ENSURE(InRange(r.table_offset, table, footer_offset),
-             ".col reader: norm exceptions on column id ", id,
-             " out of range (offset ", r.table_offset, ")");
+  if (!InRange(r.table_offset, table, footer_offset)) [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: norm exceptions on column id ", id,
+                         " out of range (offset ", r.table_offset, ")");
+  }
   return r;
 }
 
@@ -127,9 +138,12 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
                  meta.row_count += r.stats.rows;
                });
              });
-  SDB_ENSURE(!meta.regions.empty() && meta.row_count <= doc_limits::kMaxDocs,
-             ".col reader: norm column id ", id, " holds ", meta.row_count,
-             " rows across ", meta.regions.size(), " regions");
+  if (meta.regions.empty() || meta.row_count > doc_limits::kMaxDocs)
+    [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: norm column id ", id, " holds ",
+                         meta.row_count, " rows across ", meta.regions.size(),
+                         " regions");
+  }
   return meta;
 }
 
@@ -175,10 +189,12 @@ ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
         kColFieldRowGroupStarts, "row_group_starts",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           const auto start = list.ReadElement<uint64_t>();
-          SDB_ENSURE(footer.row_group_starts.empty()
-                       ? start == 0
-                       : start > footer.row_group_starts.back(),
-                     ".col footer: row group starts are not increasing from 0");
+          if (!(footer.row_group_starts.empty()
+                  ? start == 0
+                  : start > footer.row_group_starts.back())) [[unlikely]] {
+            ThrowCorruptedFooter(
+              ".col footer: row group starts are not increasing from 0");
+          }
           footer.row_group_starts.push_back(start);
         });
       in.Unset<duckdb::DatabaseInstance>();
@@ -203,8 +219,9 @@ void ColReader::Adopt(ColFooter footer) {
   for (auto& norm : footer.norms) {
     auto column =
       std::make_unique<NormColumnReader>(norm.id, std::move(norm.meta), *_file);
-    const bool ok = _norm_by_id.emplace(norm.id, column.get()).second;
-    SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", norm.id);
+    if (!_norm_by_id.emplace(norm.id, column.get()).second) [[unlikely]] {
+      ThrowCorruptedFooter(".col footer: duplicate norm field_id ", norm.id);
+    }
     _norm_columns.push_back(std::move(column));
   }
   _row_group_starts = std::move(footer.row_group_starts);

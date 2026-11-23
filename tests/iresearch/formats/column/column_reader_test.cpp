@@ -60,6 +60,7 @@
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/merge.hpp>
 #include <iresearch/formats/column/norm_column_reader.hpp>
+#include <iresearch/formats/column/norm_writer.hpp>
 #include <iresearch/formats/column/variant_column_reader.hpp>
 #include <iresearch/formats/format_utils.hpp>
 #include <iresearch/formats/ivf/ivf_reader.hpp>
@@ -5310,6 +5311,160 @@ TEST_F(ColumnReaderTest, FooterBlocksOutsideTheFileAreRefusedAsCorrupted) {
   OpenWithCorruptedFooter(Db(), kError, [](irs::ColumnMeta& meta) {
     meta.data.front().shared_offset = std::numeric_limits<uint64_t>::max();
   });
+}
+
+void WriteNormRegion(duckdb::BinarySerializer& s,
+                     const irs::NormRegionMeta& r) {
+  s.WriteProperty(0, "rows", r.stats.rows);
+  s.WriteProperty(1, "sum", r.stats.sum);
+  s.WriteProperty(2, "non_zero", r.stats.non_zero);
+  s.WriteProperty(3, "wide8", r.stats.wide8);
+  s.WriteProperty(4, "wide16", r.stats.wide16);
+  s.WriteProperty(5, "min", r.stats.min);
+  s.WriteProperty(6, "max", r.stats.max);
+  s.WriteProperty(7, "bits", r.bits);
+  if (r.bits == 0) {
+    s.WriteProperty(8, "value", r.value);
+    return;
+  }
+  s.WriteProperty(9, "file_offset", r.file_offset);
+  s.WritePropertyWithDefault<uint32_t>(10, "exceptions", r.exceptions, 0);
+  if (r.exceptions != 0) {
+    s.WriteProperty(11, "overflow", r.overflow);
+    s.WriteProperty(12, "shift", r.shift);
+    s.WriteProperty(13, "exception_bytes", r.exception_bytes);
+    s.WriteProperty(14, "table_offset", r.table_offset);
+  }
+}
+
+void OpenWithFooter(duckdb::DatabaseInstance& db, std::string_view error,
+                    const std::vector<irs::NormColumnSpec>& norms,
+                    const std::vector<uint64_t>& starts) {
+  constexpr size_t kData = 8192;
+  tests::IndexDir dir{db, TestEnv::MemoryRoot()};
+  {
+    auto out = dir.Create(irs::FileName("nseg"));
+    const std::string data(kData, '\0');
+    out->WriteData(reinterpret_cast<const irs::byte_type*>(data.data()),
+                   data.size());
+    irs::format_utils::WriteFooter(*out, [&](duckdb::BinarySerializer& footer) {
+      footer.WriteOptionalList(
+        irs::kColFieldNormColumns, "norm_columns", norms.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::BinarySerializer& obj) {
+            obj.WriteProperty(0, "id", static_cast<uint64_t>(norms[i].id));
+            obj.WriteList(
+              1, "regions", norms[i].meta.regions.size(),
+              [&](duckdb::BinarySerializer::List& regions, duckdb::idx_t k) {
+                regions.WriteObject([&](duckdb::BinarySerializer& region) {
+                  WriteNormRegion(region, norms[i].meta.regions[k]);
+                });
+              });
+          });
+        });
+      footer.WriteOptionalList(
+        irs::kColFieldRowGroupStarts, "row_group_starts", starts.size(),
+        [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+          list.WriteElement(starts[i]);
+        });
+    });
+    out->Close();
+  }
+  if (error.empty()) {
+    const irs::ColReader r = irs::tests::OpenColReader(dir, "nseg");
+    for (const auto& norm : norms) {
+      EXPECT_NE(r.NormColumn(norm.id), nullptr);
+    }
+    return;
+  }
+  try {
+    irs::tests::OpenColReader(dir, "nseg");
+    ADD_FAILURE() << "a footer with " << error << " was accepted";
+  } catch (const irs::SqlException& e) {
+    EXPECT_EQ(e.error().errcode, ERRCODE_INDEX_CORRUPTED);
+    EXPECT_NE(std::string_view{e.message()}.find(error), std::string_view::npos)
+      << e.message();
+  }
+}
+
+TEST_F(ColumnReaderTest, FooterNormsAndRowGroupStartsOutOfShapeAreCorrupted) {
+  constexpr irs::field_id kId = 7;
+  const auto region = [](uint8_t bits) {
+    irs::NormRegionMeta r;
+    r.stats.rows = 100;
+    r.stats.min = 1;
+    r.stats.max = bits == 0 ? 1 : 200;
+    r.bits = bits;
+    r.value = 1;
+    return r;
+  };
+  const auto excepted = [&](uint8_t exception_bytes) {
+    auto r = region(8);
+    r.exceptions = 1;
+    r.exception_bytes = exception_bytes;
+    r.table_offset = 1024;
+    return r;
+  };
+  const auto norm = [&](std::vector<irs::NormRegionMeta> regions) {
+    irs::NormColumnSpec spec{.id = kId};
+    for (const auto& r : regions) {
+      spec.meta.row_count += r.stats.rows;
+    }
+    spec.meta.regions = std::move(regions);
+    return std::vector<irs::NormColumnSpec>{std::move(spec)};
+  };
+  for (const uint8_t bits : {0, 8, 16, 32}) {
+    SCOPED_TRACE(static_cast<int>(bits));
+    OpenWithFooter(Db(), "", norm({region(bits)}), {0, 100});
+  }
+  for (const uint8_t bytes : {2, 4}) {
+    OpenWithFooter(Db(), "", norm({excepted(bytes)}), {});
+  }
+  constexpr std::string_view kRegion = "norm region on column id 7 is corrupt";
+  auto r = region(8);
+  r.stats.rows = 0;
+  OpenWithFooter(Db(), kRegion, norm({r}), {});
+  r = region(8);
+  r.stats.rows = uint64_t{irs::doc_limits::kMaxDocs} + 1;
+  OpenWithFooter(Db(), kRegion, norm({r}), {});
+  r = region(8);
+  r.stats.min = 300;
+  OpenWithFooter(Db(), kRegion, norm({r}), {});
+  OpenWithFooter(Db(), kRegion, norm({region(1)}), {});
+  r = region(8);
+  r.file_offset = 8190;
+  OpenWithFooter(Db(), "norm data on column id 7 out of range", norm({r}), {});
+  constexpr std::string_view kExceptions =
+    "norm exceptions on column id 7 are corrupt";
+  r = excepted(2);
+  r.bits = 32;
+  OpenWithFooter(Db(), kExceptions, norm({r}), {});
+  r = excepted(2);
+  r.exceptions = 101;
+  OpenWithFooter(Db(), kExceptions, norm({r}), {});
+  r = excepted(2);
+  r.overflow = 2;
+  OpenWithFooter(Db(), kExceptions, norm({r}), {});
+  r = excepted(2);
+  r.shift = irs::kNormMaxShift + 1;
+  OpenWithFooter(Db(), kExceptions, norm({r}), {});
+  OpenWithFooter(Db(), kExceptions, norm({excepted(3)}), {});
+  r = excepted(2);
+  r.table_offset = 8190;
+  OpenWithFooter(Db(), "norm exceptions on column id 7 out of range", norm({r}),
+                 {});
+  OpenWithFooter(Db(), "norm column id 7 holds 0 rows across 0 regions",
+                 norm({}), {});
+  r = region(0);
+  r.stats.rows = irs::doc_limits::kMaxDocs;
+  OpenWithFooter(Db(), "norm column id 7 holds", norm({r, r}), {});
+  constexpr std::string_view kStarts =
+    "row group starts are not increasing from 0";
+  OpenWithFooter(Db(), kStarts, norm({region(0)}), {1});
+  OpenWithFooter(Db(), kStarts, norm({region(0)}), {0, 0});
+  auto twice = norm({region(0)});
+  twice.push_back(twice.front());
+  OpenWithFooter(Db(), "duplicate norm field_id 7", twice, {});
 }
 
 TEST_F(ColumnReaderTest, ListsTurningRepetitiveAreDeduplicatedAgain) {

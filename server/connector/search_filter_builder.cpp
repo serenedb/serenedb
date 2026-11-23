@@ -2032,7 +2032,11 @@ bool HasScorableLeaf(const irs::Filter& filter) {
   return false;
 }
 
-void ApplyScoreOverride(irs::BooleanFilter& scope, const irs::Scorer* scorer) {
+void ApplyScoreOverride(const FilterContext& ctx, irs::BooleanFilter& scope,
+                        const irs::Scorer* scorer) {
+  if (ctx.negated) {
+    return;
+  }
   const auto scored_clauses =
     scope.Size(irs::Occur::Must) + scope.Size(irs::Occur::Should);
   if (scored_clauses == 1) {
@@ -2180,7 +2184,7 @@ bool TryDispatchScoreCast(BoolTarget parent, const FilterContext& ctx,
   auto scope = OpenScope();
   BuildTSQuery(ScopeTarget(scope), ctx, column_info,
                duckdb::BoundCastExpression::Child(cast_expr));
-  ApplyScoreOverride(*scope, scorer);
+  ApplyScoreOverride(ctx, *scope, scorer);
   CloseScope(parent, std::move(scope));
   return true;
 }
@@ -2267,7 +2271,7 @@ bool TryDispatchSqlScoreCast(BoolTarget filter, const FilterContext& ctx,
     ctx, duckdb::BoundCastExpression::Child(cast_expr), "::score(...)",
     "score is only meaningful inside an inverted-index match. Move it into an "
     "`@@` match or remove it.");
-  ApplyScoreOverride(*scope, scorer);
+  ApplyScoreOverride(ctx, *scope, scorer);
   CloseScope(filter, std::move(scope));
   return true;
 }
@@ -3036,7 +3040,7 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
     return;
   }
   if (scorer) {
-    ApplyScoreOverride(*scope, scorer);
+    ApplyScoreOverride(ctx, *scope, scorer);
   }
   ApplyMerge(*scope, parts->merge);
   CloseScope(parent, std::move(scope));

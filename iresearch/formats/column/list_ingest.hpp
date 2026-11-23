@@ -193,8 +193,7 @@ class ListKeys {
         }
         return h;
       }
-      if (kind == Kind::Fixed && width <= kMaxHashedWidth &&
-          RangeValid(e, length)) {
+      if (kind == Kind::Fixed && RangeValid(e, length)) {
         return HashFixedRange(std::move(h), e, length);
       }
       if (all_valid && flat && kind == Kind::String) {

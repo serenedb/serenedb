@@ -74,6 +74,7 @@ class CopyInBatches;
 struct LoginCheck {
   duckdb::idx_t role;
   bool superuser = false;
+  duckdb::vector<std::string> settings;
   irs::pg::SqlErrorData error;
 };
 

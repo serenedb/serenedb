@@ -549,11 +549,15 @@ void Decompress(duckdb::const_data_ptr_t for_encoded, T* output, idx_t count,
     .exponent = vector_exponent,
     .factor = vector_factor,
   };
-  if (const auto base = static_cast<int64_t>(frame_of_reference);
-      std::is_same_v<T, double> && bit_width != 0 && bit_width < 32 &&
-      base >= std::numeric_limits<int32_t>::min() &&
-      base <=
-        std::numeric_limits<int32_t>::max() - ((int64_t{1} << bit_width) - 1)) {
+  const auto base = static_cast<int64_t>(frame_of_reference);
+  bool fits_int32 = false;
+  if constexpr (std::is_same_v<T, double>) {
+    fits_int32 = bit_width != 0 && bit_width < 32 &&
+                 base >= std::numeric_limits<int32_t>::min() &&
+                 base <= std::numeric_limits<int32_t>::max() -
+                           ((int64_t{1} << bit_width) - 1);
+  }
+  if (fits_int32) {
     ABSL_CACHELINE_ALIGNED uint32_t narrow[kVectorSize];
     duckdb::BitpackingPrimitives::UnPackBuffer<uint32_t>(
       reinterpret_cast<duckdb::data_ptr_t>(narrow), for_encoded, count,

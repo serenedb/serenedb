@@ -20,7 +20,6 @@
 
 #include <absl/algorithm/container.h>
 
-#include <algorithm>
 #include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/types/uhugeint.hpp>
@@ -32,6 +31,7 @@
 #include <duckdb/storage/statistics/numeric_stats.hpp>
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
+#include <span>
 #include <type_traits>
 
 #include "iresearch/formats/column/codecs/codecs.hpp"
@@ -157,7 +157,7 @@ void Scan(const ColumnSegment& segment, ColumnScanState& state,
   const auto value = ValueOf<T>(segment, Bytes(state), result);
   auto* data = duckdb::FlatVector::GetDataMutable<T>(result);
   if (scan_type != duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
-    std::fill_n(data + result_offset, scan_count, value);
+    absl::c_fill(std::span{data + result_offset, scan_count}, value);
     return;
   }
   data[0] = value;

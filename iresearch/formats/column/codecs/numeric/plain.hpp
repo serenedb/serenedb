@@ -94,15 +94,13 @@ class For {
 
   std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
                                  ScratchVector<uint8_t>&) {
-    if constexpr (sizeof(T) > 1) {
-      if (_narrowed.empty()) {
-        const auto rows = _values.Get();
-        _narrowed.resize(rows.size() * _stored);
-        Narrow<sizeof(T) / 2>(rows.size(), _stored, _narrowed.data(),
-                              [v = rows.data(), lo = _lo](size_t i) {
-                                return static_cast<U>(v[i] - lo);
-                              });
-      }
+    if (_narrowed.empty()) {
+      const auto rows = _values.Get();
+      _narrowed.resize(rows.size() * _stored);
+      Narrow<sizeof(T) / 2>(rows.size(), _stored, _narrowed.data(),
+                            [v = rows.data(), lo = _lo](size_t i) {
+                              return static_cast<U>(v[i] - lo);
+                            });
     }
     return {_narrowed.data() + size_t{begin} * _stored,
             size_t{count} * _stored};

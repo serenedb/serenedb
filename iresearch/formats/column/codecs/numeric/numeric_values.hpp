@@ -355,18 +355,27 @@ class Values final : public State {
       }
       stepped = stepped && EveryStepIs(values, count, last, _step);
       last = values[count - 1];
-      if (b == 0 || Less(bounds.lo, _lo)) {
-        _lo = bounds.lo;
-      }
-      if (b == 0 || Less(_hi, bounds.hi)) {
-        _hi = bounds.hi;
-      }
+      ExtendBounds(b, bounds);
       if constexpr (std::is_floating_point_v<T>) {
         MeasureFloats(values, count);
       }
     }
     _runs = runs;
     _sequence = stepped && Monotone();
+    UpdateStatsBounds();
+  }
+
+  IRS_FORCE_INLINE void ExtendBounds(size_t b,
+                                     const BlockBounds<U>& bounds) noexcept {
+    if (b == 0 || Less(bounds.lo, _lo)) {
+      _lo = bounds.lo;
+    }
+    if (b == 0 || Less(_hi, bounds.hi)) {
+      _hi = bounds.hi;
+    }
+  }
+
+  void UpdateStatsBounds() {
     if constexpr (std::is_integral_v<T>) {
       _stats.Update(std::bit_cast<T>(_lo));
       _stats.Update(std::bit_cast<T>(_hi));
@@ -392,20 +401,12 @@ class Values final : public State {
         bounds.hi = Less(bounds.hi, value) ? value : bounds.hi;
       }
       _bounds[b] = bounds;
-      if (b == 0 || Less(bounds.lo, _lo)) {
-        _lo = bounds.lo;
-      }
-      if (b == 0 || Less(_hi, bounds.hi)) {
-        _hi = bounds.hi;
-      }
+      ExtendBounds(b, bounds);
     }
     SDB_ASSERT(count > 1 && count < _size);
     _first = values[0];
     _runs = static_cast<uint32_t>(count);
-    if constexpr (std::is_integral_v<T>) {
-      _stats.Update(std::bit_cast<T>(_lo));
-      _stats.Update(std::bit_cast<T>(_hi));
-    }
+    UpdateStatsBounds();
   }
 
   void MeasureFloats(const U* values, size_t count) {

@@ -200,8 +200,7 @@ IRS_NO_INLINE void CompressRows(Compression& builder, const Config& config,
 }
 
 template<typename Compression>
-const Segment* Find(const CodecState<Compression>& state,
-                    const Config& config) noexcept {
+Segment* Find(CodecState<Compression>& state, const Config& config) noexcept {
   for (const auto& trial : state.trials) {
     if (trial->config == config) {
       return trial.get();
@@ -213,10 +212,8 @@ const Segment* Find(const CodecState<Compression>& state,
 template<typename Compression>
 Segment& Trial(CodecState<Compression>& state, const Config& config,
                const Values& values, Window& window, uint32_t target) {
-  for (const auto& trial : state.trials) {
-    if (trial->config == config) {
-      return *trial;
-    }
+  if (auto* found = Find(state, config)) {
+    return *found;
   }
   auto& seg = *state.trials.emplace_back(
     std::make_unique<Segment>(state.buffers, state.type));

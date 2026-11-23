@@ -129,10 +129,15 @@ inline uint64_t ShuffledSum(const uint8_t* in, size_t n, uint8_t stored,
 
 using U8x16 = uint8_t __attribute__((vector_size(16)));
 
-inline U8x16 Lane(const uint8_t* in, size_t n, size_t b, size_t i) noexcept {
+IRS_FORCE_INLINE inline U8x16 Bytes16(const uint8_t* in) noexcept {
   U8x16 v;
-  std::memcpy(&v, in + b * n + i, sizeof(v));
+  std::memcpy(&v, in, sizeof(v));
   return v;
+}
+
+IRS_FORCE_INLINE inline U8x16 Lane(const uint8_t* in, size_t n, size_t b,
+                                   size_t i) noexcept {
+  return Bytes16(in + b * n + i);
 }
 
 inline void Put(uint8_t* out, size_t at, U8x16 v) noexcept {
@@ -167,12 +172,6 @@ inline U8x16 Bytes32Lo(U8x16 a, U8x16 b) noexcept {
 inline U8x16 Bytes32Hi(U8x16 a, U8x16 b) noexcept {
   return __builtin_shufflevector(a, b, 8, 9, 10, 11, 24, 25, 26, 27, 12, 13, 14,
                                  15, 28, 29, 30, 31);
-}
-
-inline U8x16 Bytes16(const uint8_t* in) noexcept {
-  U8x16 v;
-  std::memcpy(&v, in, sizeof(v));
-  return v;
 }
 
 inline U8x16 EvenBytes(U8x16 a, U8x16 b) noexcept {

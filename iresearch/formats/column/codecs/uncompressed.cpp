@@ -60,12 +60,11 @@ duckdb::block_id_t WriteOverflowString(duckdb::WriteStream& out,
 }
 
 template<typename Appender>
-void CompressChunks(const Codec& codec,
-                    ColumnDataCheckpointData& checkpoint_data,
-                    std::span<const WriteChunk> chunks) {
+bool CompressChunks(const Codec& codec,
+                    ColumnDataCheckpointData& checkpoint_data) {
   CompressedSegment segment{codec, checkpoint_data.type};
   Appender::Begin(segment);
-  for (const auto& chunk : chunks) {
+  for (const auto& chunk : checkpoint_data.chunks) {
     duckdb::UnifiedVectorFormat data;
     chunk.data.ToUnifiedFormat(data);
     idx_t offset = 0;
@@ -83,7 +82,23 @@ void CompressChunks(const Codec& codec,
     }
   }
   segment.Flush(checkpoint_data, Appender::Finish(segment));
+  return true;
 }
+
+template<auto kBytes>
+double AnalyzeBytes([[maybe_unused]] ColumnDataCheckpointData& data, double) {
+  if constexpr (kBytes == nullptr) {
+    return kNoScore;
+  } else {
+    return ScoreOfBytes(kBytes(data.chunks), data);
+  }
+}
+
+template<auto kBytes, typename Appender>
+constexpr CompressionFunction kChunks{
+  .analyze = AnalyzeBytes<kBytes>,
+  .compress = CompressChunks<Appender>,
+};
 
 struct PinnedScan final : SegmentScanState {
   explicit PinnedScan(duckdb::BufferHandle handle_p)
@@ -181,7 +196,7 @@ const T* FixedSizeRows(const ColumnSegment& segment, const_data_ptr_t base,
 }
 
 template<typename T>
-idx_t FixedSizeAnalyze(std::span<const WriteChunk> chunks) {
+idx_t FixedSizeBytes(std::span<const WriteChunk> chunks) {
   return sizeof(T) * CountRows(chunks);
 }
 
@@ -226,9 +241,7 @@ constexpr DecompressionFunction kFixedSizeDecompression{
 template<typename T, bool kStats = true>
 constexpr Codec kFixedSize{
   .type = CodecType::Uncompressed,
-  .compression = {&kStreamed<CodecType::Uncompressed, FixedSizeAnalyze<T>,
-                             CompressChunks<FixedSizeAppender<T, kStats>>>,
-                  1},
+  .compression = {&kChunks<FixedSizeBytes<T>, FixedSizeAppender<T, kStats>>, 1},
   .decompression = kFixedSizeDecompression<T>,
 };
 
@@ -273,7 +286,7 @@ struct ValidityAppender {
   }
 };
 
-idx_t ValidityAnalyze(std::span<const WriteChunk> chunks) {
+idx_t ValidityBytes(std::span<const WriteChunk> chunks) {
   return (CountRows(chunks) + 7) / 8;
 }
 
@@ -355,9 +368,7 @@ constexpr DecompressionFunction kValidityDecompression{
 
 constexpr Codec kValidity{
   .type = CodecType::Uncompressed,
-  .compression = {&kStreamed<CodecType::Uncompressed, ValidityAnalyze,
-                             CompressChunks<ValidityAppender>>,
-                  1},
+  .compression = {&kChunks<ValidityBytes, ValidityAppender>, 1},
   .decompression = kValidityDecompression,
 };
 
@@ -593,9 +604,7 @@ constexpr DecompressionFunction kStringDecompression{
 
 constexpr Codec kString{
   .type = CodecType::Uncompressed,
-  .compression = {&kStreamed<CodecType::Uncompressed, nullptr,
-                             CompressChunks<StringAppender>>,
-                  1},
+  .compression = {&kChunks<nullptr, StringAppender>, 1},
   .decompression = kStringDecompression,
 };
 

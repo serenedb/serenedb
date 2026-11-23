@@ -85,6 +85,11 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
                          : nullptr;
 }
 
+bool Writes(CodecType type, PhysicalType physical) noexcept {
+  return type != CodecType::Constant && type != CodecType::Empty &&
+         GetCodec(type, physical);
+}
+
 CodecType FindCodec(std::string_view name) {
   for (const auto type : magic_enum::enum_values<CodecType>()) {
     if (absl::EqualsIgnoreCase(magic_enum::enum_name(type), name)) {

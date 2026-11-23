@@ -202,8 +202,6 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
       TransformName(ShapeOf(h.codes),
                     ParseFrames(base + h.off_codes, h.off_symtab - h.off_codes,
                                 h.row_count, h.codes))};
-  }
-  if (shape == Shape::Dictionary) {
     info["sorted"] = h.sorted != 0 ? "true" : "false";
   }
   info["entries"] = absl::StrCat(h.entry_count);

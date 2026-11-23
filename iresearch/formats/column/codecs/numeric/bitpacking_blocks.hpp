@@ -142,11 +142,7 @@ class BitpackingBlocks {
     const size_t per = frame_values / kBlockValues;
     uint64_t bytes = 0;
     for (size_t first = 0; first < _bits.size(); first += per) {
-      const auto count = std::min(per, _bits.size() - first);
-      bytes += BlockMetaBytes(count, sizeof(V));
-      for (size_t b = first; b < first + count; ++b) {
-        bytes += StreamBytes(b);
-      }
+      bytes += StreamFrameBytes(first, std::min(per, _bits.size() - first));
     }
     return bytes;
   }
@@ -195,53 +191,50 @@ class BitpackingBlocks {
   void AppendStream(BlockRows<V> rows, size_t first, size_t count,
                     std::string& out) {
     _scratch.resize(kBlockValues);
-    uint64_t bytes = BlockMetaBytes(count, sizeof(V));
-    for (size_t b = first; b < first + count; ++b) {
-      bytes += StreamBytes(b);
-    }
     const size_t at = out.size();
-    out.resize_and_overwrite(at + bytes, [&](char* buf, size_t size) {
-      auto* bases = reinterpret_cast<uint8_t*>(buf + at);
-      auto* widths = bases + count * sizeof(V);
-      auto* packed = bases + BlockMetaBytes(count, sizeof(V));
-      std::fill(widths + count, packed, uint8_t{0});
-      for (size_t b = 0; b < count; ++b) {
-        const size_t g = first + b;
-        const uint8_t kind = _bits[g];
-        duckdb::Store(_first[g], bases + b * sizeof(V));
-        widths[b] = kind;
-        const size_t n = Values(g);
-        const V* in = rows.Block(g);
-        unsigned bits = kind;
-        if (kind & kBlockDelta) {
-          duckdb::Store(uint64_t{_base[g]}, packed);
-          packed += sizeof(uint64_t);
-          if (kind == kStreamAlternates) {
-            continue;
+    out.resize_and_overwrite(
+      at + StreamFrameBytes(first, count), [&](char* buf, size_t size) {
+        auto* bases = reinterpret_cast<uint8_t*>(buf + at);
+        auto* widths = bases + count * sizeof(V);
+        auto* packed = bases + BlockMetaBytes(count, sizeof(V));
+        std::fill(widths + count, packed, uint8_t{0});
+        for (size_t b = 0; b < count; ++b) {
+          const size_t g = first + b;
+          const uint8_t kind = _bits[g];
+          duckdb::Store(_first[g], bases + b * sizeof(V));
+          widths[b] = kind;
+          const size_t n = Values(g);
+          const V* in = rows.Block(g);
+          unsigned bits = kind;
+          if (kind & kBlockDelta) {
+            duckdb::Store(uint64_t{_base[g]}, packed);
+            packed += sizeof(uint64_t);
+            if (kind == kStreamAlternates) {
+              continue;
+            }
+            bits = kind & kBlockDeltaBits;
+            if (bits == 0) {
+              continue;
+            }
+            _scratch[0] = _base[g];
+            for (size_t i = 1; i < n; ++i) {
+              _scratch[i] = static_cast<V>(in[i] - in[i - 1]);
+            }
+            in = _scratch.data();
           }
-          bits = kind & kBlockDeltaBits;
-          if (bits == 0) {
-            continue;
+          if (n == kBlockValues) {
+            Pack<V>(bits, in, reinterpret_cast<LaneWord<V>*>(packed), _base[g]);
+          } else if (bits != 0) {
+            for (size_t i = 0; i < n; ++i) {
+              _scratch[i] = static_cast<V>(in[i] - _base[g]);
+            }
+            duckdb::BitpackingPrimitives::PackBuffer<V, false>(
+              packed, _scratch.data(), n, bits);
           }
-          _scratch[0] = _base[g];
-          for (size_t i = 1; i < n; ++i) {
-            _scratch[i] = static_cast<V>(in[i] - in[i - 1]);
-          }
-          in = _scratch.data();
+          packed += StreamBlockBytes(n, bits);
         }
-        if (n == kBlockValues) {
-          Pack<V>(bits, in, reinterpret_cast<LaneWord<V>*>(packed), _base[g]);
-        } else if (bits != 0) {
-          for (size_t i = 0; i < n; ++i) {
-            _scratch[i] = static_cast<V>(in[i] - _base[g]);
-          }
-          duckdb::BitpackingPrimitives::PackBuffer<V, false>(
-            packed, _scratch.data(), n, bits);
-        }
-        packed += StreamBlockBytes(n, bits);
-      }
-      return size;
-    });
+        return size;
+      });
   }
 
   V FrameStep(size_t first) const noexcept {
@@ -440,6 +433,14 @@ class BitpackingBlocks {
     return StreamBlockBytes(Values(block), kind);
   }
 
+  uint64_t StreamFrameBytes(size_t first, size_t count) const noexcept {
+    uint64_t bytes = BlockMetaBytes(count, sizeof(V));
+    for (size_t b = first; b < first + count; ++b) {
+      bytes += StreamBytes(b);
+    }
+    return bytes;
+  }
+
   static bool Alternates(const V* values, size_t count) noexcept {
     if (values[0] == values[1] || (count > 2 && values[2] != values[0])) {
       return false;
@@ -504,7 +505,7 @@ class BitpackingBlocks {
     }
   }
 
-  unsigned DeltaWidth(size_t b) const noexcept {
+  IRS_FORCE_INLINE unsigned DeltaWidth(size_t b) const noexcept {
     return std::bit_width(static_cast<V>(_top[b] - _base[b]));
   }
 
@@ -549,9 +550,7 @@ class BitpackingBlocks {
   }
 
   uint64_t OwnStepBytes(size_t b) const noexcept {
-    return sizeof(uint64_t) +
-           PackedBytes<V>(std::bit_width(static_cast<V>(_top[b] - _base[b])),
-                          Values(b));
+    return sizeof(uint64_t) + PackedBytes<V>(DeltaWidth(b), Values(b));
   }
 
   uint64_t SharedStepBytes(size_t b, V step) const noexcept {

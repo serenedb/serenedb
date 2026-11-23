@@ -148,6 +148,15 @@ std::span<const uint8_t> EntryBytes(const Entries<T>& entries) noexcept {
 }
 
 template<typename T>
+DictionaryHeader DictionaryHeaderOf(const Entries<T>& entries,
+                                    const Geometry& geometry) noexcept {
+  return {
+    .count = static_cast<uint32_t>(entries.values.size()),
+    .offset = FrameTableEnd(geometry),
+  };
+}
+
+template<typename T>
 class Dict {
  public:
   static constexpr StateId kId = StateId::Dict;
@@ -187,10 +196,7 @@ class Dict {
   }
 
   DictionaryHeader Header(const Geometry& geometry) const noexcept {
-    return {
-      .count = static_cast<uint32_t>(_entries.values.size()),
-      .offset = FrameTableEnd(geometry),
-    };
+    return DictionaryHeaderOf(_entries, geometry);
   }
 
   void Open(NumericFrameMeta&, uint32_t) const noexcept {}
@@ -240,10 +246,7 @@ class DictBitpacking {
   }
 
   DictionaryHeader Header(const Geometry& geometry) const noexcept {
-    return {
-      .count = static_cast<uint32_t>(_entries.values.size()),
-      .offset = FrameTableEnd(geometry),
-    };
+    return DictionaryHeaderOf(_entries, geometry);
   }
 
   BlockBounds<U> Bounds(uint32_t, uint32_t, uint32_t first, uint32_t end) {

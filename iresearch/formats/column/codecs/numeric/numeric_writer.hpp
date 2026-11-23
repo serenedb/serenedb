@@ -343,10 +343,13 @@ inline bool Offered(const Items& items, FrameStore store) noexcept {
   return items.stored != 0 && !(store.shuffled && items.stored == 1);
 }
 
+inline uint32_t ItemBytes(const Items& items) noexcept {
+  return uint32_t{items.stored} + items.run_width;
+}
+
 inline Geometry GeometryOf(Shape shape, const Items& items, ByteCodec leaf,
                            bool scaled) noexcept {
-  return BytesGeometry(shape, leaf, items.count,
-                       uint32_t{items.stored} + items.run_width,
+  return BytesGeometry(shape, leaf, items.count, ItemBytes(items),
                        items.dictionary.size(), scaled);
 }
 
@@ -369,7 +372,7 @@ class Frames final : public State {
     const auto leaf = store.leaf;
     auto& values = _data.Get<Values<T>>();
     const auto rows = values.Size();
-    const uint32_t item = uint32_t{items.stored} + items.run_width;
+    const uint32_t item = ItemBytes(items);
     const auto geometry =
       GeometryOf(Transform::kShape, items, leaf, values.Scale() > 1);
     const auto price = _data.price;
@@ -420,7 +423,7 @@ class Frames final : public State {
     const auto leaf = store.leaf;
     const auto& analysis = _analysis[store.shuffled];
     auto& scratch = _data.Get<NumericScratch>();
-    const uint32_t item = uint32_t{items.stored} + items.run_width;
+    const uint32_t item = ItemBytes(items);
     const auto geometry = GeometryOf(Transform::kShape, items, leaf,
                                      _data.Get<Values<T>>().Scale() > 1);
     const uint64_t raw_bytes = uint64_t{items.count} * item;

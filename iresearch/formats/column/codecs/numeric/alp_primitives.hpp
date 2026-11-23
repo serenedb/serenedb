@@ -38,13 +38,8 @@ namespace irs::codecs {
 
 template<CodecType kCodec, auto kAnalyze, auto kCompress>
 struct Sampled {
-  static double Score(ColumnDataCheckpointData& data, uint64_t bytes) {
-    return static_cast<double>(bytes) /
-           static_cast<double>(std::max<uint64_t>(data.rows, 1)) * data.price;
-  }
-
   static double Analyze(ColumnDataCheckpointData& data, double) {
-    return Score(data, kAnalyze(data));
+    return ScoreOfBytes(kAnalyze(data), data);
   }
 
   static bool Compress(const Codec& codec, ColumnDataCheckpointData& data) {
@@ -52,7 +47,7 @@ struct Sampled {
       return false;
     }
     data.tuning.hints[std::to_underlying(kCodec)].score =
-      Score(data, kCompress(codec, data));
+      ScoreOfBytes(kCompress(codec, data), data);
     return true;
   }
 };

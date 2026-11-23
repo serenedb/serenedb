@@ -383,7 +383,7 @@ bool CompressAs(const Codec& codec, ColumnDataCheckpointData& data) {
   return Compress(asked, level, data);
 }
 
-bool CompressAuto(ColumnDataCheckpointData& data) {
+void CompressAuto(ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
   data.params.compression_level = 0;
   data.contested = true;
@@ -436,7 +436,6 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
   if (!winner || !Compress(*winner, 0, data)) {
     CompressUncompressed(data);
   }
-  return true;
 }
 
 }  // namespace irs::codecs

@@ -22,7 +22,6 @@
 
 #include <absl/functional/function_ref.h>
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <duckdb/common/enums/scan_vector_type.hpp>
@@ -222,6 +221,12 @@ struct ColumnDataCheckpointData {
   std::array<std::unique_ptr<State>, magic_enum::enum_count<StateId>()> states;
 };
 
+inline double ScoreOfBytes(uint64_t bytes,
+                           const ColumnDataCheckpointData& data) noexcept {
+  return static_cast<double>(bytes) /
+         static_cast<double>(data.rows != 0 ? data.rows : 1) * data.price;
+}
+
 struct CompressionFunction {
   double (*analyze)(ColumnDataCheckpointData& data, double bound) = nullptr;
   bool (*compress)(const Codec& codec,
@@ -292,39 +297,7 @@ duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;
 
 bool HasRows(std::span<const WriteChunk> chunks) noexcept;
 
-const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
-
-template<CodecType kType, auto kAnalyze, auto kCompress, auto kAccepts>
-struct Streamed {
-  static double Analyze([[maybe_unused]] ColumnDataCheckpointData& data,
-                        double) {
-    if constexpr (kAnalyze == nullptr) {
-      return kNoScore;
-    } else {
-      return static_cast<double>(kAnalyze(data.chunks)) /
-             static_cast<double>(std::max<uint64_t>(data.rows, 1)) * data.price;
-    }
-  }
-
-  static bool Compress(const Codec& codec, ColumnDataCheckpointData& data) {
-    if constexpr (kAccepts != nullptr) {
-      if (!kAccepts(data.chunks)) {
-        return false;
-      }
-    }
-    kCompress(codec, data, data.chunks);
-    return true;
-  }
-};
-
-template<CodecType kType, auto kAnalyze, auto kCompress,
-         auto kAccepts = nullptr>
-inline constexpr CompressionFunction kStreamed{
-  .analyze = Streamed<kType, kAnalyze, kCompress, kAccepts>::Analyze,
-  .compress = Streamed<kType, kAnalyze, kCompress, kAccepts>::Compress,
-};
-
-bool CompressAuto(ColumnDataCheckpointData& data);
+void CompressAuto(ColumnDataCheckpointData& data);
 
 bool CompressAs(const Codec& codec, ColumnDataCheckpointData& data);
 

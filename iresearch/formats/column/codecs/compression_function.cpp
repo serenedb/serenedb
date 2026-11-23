@@ -86,16 +86,11 @@ void Compress(CodecType method, ColumnDataCheckpointData& data) {
     return;
   }
   ++data.tuning.row_group;
-  if (method == CodecType::Auto ? CompressAuto(data)
-                                : CompressAs(method, data)) {
-    return;
+  if (method == CodecType::Auto) {
+    CompressAuto(data);
+  } else if (!CompressAs(method, data)) {
+    CompressUncompressed(data);
   }
-  CompressUncompressed(data);
-}
-
-bool Writes(CodecType type, duckdb::PhysicalType physical) noexcept {
-  return type != CodecType::Constant && type != CodecType::Empty &&
-         GetCodec(type, physical);
 }
 
 void ThrowCorrupted(std::string_view codec, std::string_view what) {

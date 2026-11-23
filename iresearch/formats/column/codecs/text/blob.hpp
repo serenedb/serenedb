@@ -204,9 +204,13 @@ class CompressionState {
     for (size_t i = 0; i < rows.entries.size() && _frame.size() < frame; ++i) {
       _frame.append(rows.entries[i].GetData(), rows.entries[i].GetSize());
     }
-    hist.raw += _frame.size();
-    hist.comp += blob::CompressedSize<Codec>(_frame, _scratch, *_codec);
+    AddSample(hist, _frame);
     _frame.clear();
+  }
+
+  void AddSample(RatioHistory& hist, std::string_view raw) {
+    hist.raw += raw.size();
+    hist.comp += blob::CompressedSize<Codec>(raw, _scratch, *_codec);
   }
 
   uint64_t Estimate() {
@@ -259,9 +263,7 @@ class CompressionState {
       return;
     }
     if (auto& hist = History(); hist.raw == 0) {
-      const auto raw = Slice(_spans.size() - 1);
-      hist.raw += raw.size();
-      hist.comp += blob::CompressedSize<Codec>(raw, _scratch, *_codec);
+      AddSample(hist, Slice(_spans.size() - 1));
     }
   }
 
@@ -354,6 +356,14 @@ inline constexpr uint64_t kTrialRawBytes = 512 * 1024;
 inline constexpr double kEstimateSlack = 0.02;
 inline constexpr double kSortedGain = 0.06;
 
+inline void ConcatEntries(const Profile& p, size_t first, size_t end,
+                          std::string& out) {
+  for (auto k = first; k < end; ++k) {
+    const auto entry = EntryOf(p, k);
+    out.append(entry.GetData(), entry.GetSize());
+  }
+}
+
 template<typename Codec>
 class SizeEstimator {
  public:
@@ -421,10 +431,7 @@ class SizeEstimator {
 
   std::string_view Assemble(const Profile& p, size_t first, size_t end) {
     _frame.clear();
-    for (auto k = first; k < end; ++k) {
-      const auto entry = EntryOf(p, k);
-      _frame.append(entry.GetData(), entry.GetSize());
-    }
+    ConcatEntries(p, first, end, _frame);
     return _frame;
   }
 
@@ -623,10 +630,7 @@ class TrialSizes final : public State {
       rows.assembled = true;
       const auto& p = rows.profile;
       rows.bytes.reserve(p.raw);
-      for (size_t i = 0; i < p.codes.size(); ++i) {
-        const auto entry = EntryOf(p, i);
-        rows.bytes.append(entry.GetData(), entry.GetSize());
-      }
+      ConcatEntries(p, 0, p.codes.size(), rows.bytes);
     }
     return rows.bytes;
   }

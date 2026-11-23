@@ -535,6 +535,65 @@ TEST_F(ColCompressionFunctionTest, AlpCodecsOfferNothingForARowGroupOfNoRows) {
 }
 
 TEST_F(ColCompressionFunctionTest,
+       AContestedWideDictionaryOfOneByteHighHalvesOffersAndWritesNothing) {
+  const duckdb::LogicalType type = duckdb::LogicalType::HUGEINT;
+  std::vector<duckdb::Value> values;
+  values.reserve(5000);
+  for (uint64_t g = 0; g < 5000; ++g) {
+    values.push_back(duckdb::Value::HUGEINT(duckdb::hugeint_t{
+      static_cast<int64_t>(g % 2), uint64_t{0x10000000} + g % 8 * 0x01000001}));
+  }
+  const Rows rows{type, std::move(values)};
+  const auto& codec =
+    *irs::codecs::GetCodec(CodecType::Dict, type.InternalType());
+  const auto& fn = codec.compression.front();
+  FlushedBlocks blocks{type};
+  Checkpoint(
+    type, rows, {}, {}, true, blocks, [&](ColumnDataCheckpointData& data) {
+      EXPECT_EQ(fn.analyze(data, irs::codecs::kNoScore), irs::codecs::kNoScore);
+      EXPECT_FALSE(fn.compress(codec, data));
+    });
+  EXPECT_TRUE(blocks.Blocks().empty());
+}
+
+TEST_F(ColCompressionFunctionTest,
+       PlainZstdAndZxcContestedOnMoreThanASegmentCutTheirTrialAndReadBack) {
+  const duckdb::LogicalType type = duckdb::LogicalType::VARCHAR;
+  constexpr uint64_t kDistinct = 40000;
+  std::vector<duckdb::Value> values;
+  values.reserve(2 * kDistinct);
+  for (uint64_t g = 0; g < 2 * kDistinct; ++g) {
+    std::string s;
+    for (uint64_t i = 0; i < 4; ++i) {
+      absl::StrAppend(&s,
+                      absl::Hex(Mix(g % kDistinct * 4 + i), absl::kZeroPad16));
+    }
+    values.emplace_back(std::move(s));
+  }
+  const Rows rows{type, std::move(values)};
+  irs::codecs::CodecSet disabled;
+  disabled.set(std::to_underlying(CodecType::DictFsst));
+  disabled.set(std::to_underlying(CodecType::DictLz4));
+  for (const auto named : {CodecType::Zstd, CodecType::Zxc}) {
+    SCOPED_TRACE(magic_enum::enum_name(named));
+    const auto& codec = *irs::codecs::GetCodec(named, type.InternalType());
+    const auto& fn = codec.compression.front();
+    FlushedBlocks blocks{type};
+    Checkpoint(type, rows, {}, disabled, true, blocks,
+               [&](ColumnDataCheckpointData& data) {
+                 EXPECT_LT(fn.analyze(data, irs::codecs::kNoScore),
+                           irs::codecs::kNoScore);
+                 EXPECT_TRUE(fn.compress(codec, data));
+               });
+    ASSERT_GT(blocks.Blocks().size(), 1);
+    for (const auto& block : blocks.Blocks()) {
+      EXPECT_EQ(block.codec->type, named);
+    }
+    ASSERT_NO_FATAL_FAILURE(ExpectReadBack(blocks, rows));
+  }
+}
+
+TEST_F(ColCompressionFunctionTest,
        AnAlpVectorPackedAtSixtyFourBitsAnswersFiltersByItsValues) {
   constexpr uint32_t kCount = 32;
   constexpr uint32_t kVectorHeader = 13;

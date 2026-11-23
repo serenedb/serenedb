@@ -8306,6 +8306,103 @@ TEST_F(ColumnReaderTest, RangeFiltersOnSortedLz4DictionariesMatchTheValues) {
 }
 
 TEST_F(ColumnReaderTest,
+       RangeFiltersOnASortedLz4DictionaryDecodedByAScanMatchTheValues) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint64_t kRows = 2 * STANDARD_VECTOR_SIZE;
+  const auto mix = [](uint64_t z) {
+    z += 0x9E3779B97F4A7C15ULL;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+  };
+  const auto clustered = [&](uint64_t k) {
+    std::string s;
+    for (uint64_t i = 0; i < 12; ++i) {
+      absl::StrAppend(&s, absl::Hex(mix(k / 4 * 16 + i), absl::kZeroPad16));
+    }
+    return absl::StrCat(s, "/", k % 4);
+  };
+  const ValueOf value_of = [&](uint64_t g) {
+    return g % 13 == 0 ? duckdb::Value{duckdb::LogicalType::VARCHAR}
+                       : duckdb::Value{clustered(mix(g) % 4000)};
+  };
+  duckdb::Connection con{Db()};
+  auto set = con.Query("SET force_compression = 'dict_lz4'");
+  ASSERT_FALSE(set->HasError()) << set->GetError();
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  WriteColumn(Db(), dir, kId, duckdb::LogicalType::VARCHAR, kRows, kRows,
+              value_of);
+  con.Query("SET force_compression = 'auto'");
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kId);
+  ASSERT_NE(col, nullptr);
+  ASSERT_GT(col->DataBlocks().front().tuple_count, STANDARD_VECTOR_SIZE);
+  for (size_t block = 0; block != col->DataBlocks().size(); ++block) {
+    ASSERT_EQ(col->DataBlocks()[block].codec->type,
+              irs::codecs::CodecType::DictLz4);
+    const auto segment = col->OpenSegment(block, r.Ctx());
+    ASSERT_EQ(segment->function.get_segment_info(*segment).at("sorted"), "true")
+      << "block " << block;
+  }
+  using Cmp = duckdb::ExpressionType;
+  for (const auto cmp :
+       {Cmp::COMPARE_LESSTHAN, Cmp::COMPARE_GREATERTHANOREQUALTO}) {
+    SCOPED_TRACE(duckdb::ExpressionTypeToString(cmp));
+    const std::string bound = clustered(2001);
+    const duckdb::ExpressionFilter filter{
+      duckdb::BoundComparisonExpression::Create(
+        cmp,
+        duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+          duckdb::LogicalType::VARCHAR, 0),
+        duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          duckdb::Value{bound}))};
+    auto filter_state =
+      duckdb::TableFilterState::Initialize(*con.context, filter);
+    auto state = col->InitScan(r.Ctx());
+    duckdb::Vector scanned{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    ASSERT_EQ(col->Scan(state, scanned, STANDARD_VECTOR_SIZE),
+              STANDARD_VECTOR_SIZE);
+    for (uint64_t g = 0; g < STANDARD_VECTOR_SIZE; ++g) {
+      const auto got = scanned.GetValue(g);
+      const auto want = value_of(g);
+      ASSERT_EQ(got.IsNull(), want.IsNull()) << "row " << g;
+      if (!want.IsNull()) {
+        ASSERT_EQ(got.GetValue<std::string>(), want.GetValue<std::string>())
+          << "row " << g;
+      }
+    }
+    constexpr uint64_t kAnchor = STANDARD_VECTOR_SIZE;
+    constexpr duckdb::idx_t kSpan = STANDARD_VECTOR_SIZE;
+    duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+    for (duckdb::idx_t i = 0; i < kSpan; ++i) {
+      sel.set_index(i, i);
+    }
+    duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+    const auto kept =
+      col->GatherFilter(state, kAnchor, kSpan, sel, kSpan, filter,
+                        *filter_state, irs::NullCheckKind::None, out);
+    std::vector<uint64_t> want;
+    for (duckdb::idx_t i = 0; i < kSpan; ++i) {
+      const auto v = value_of(kAnchor + i);
+      if (v.IsNull()) {
+        continue;
+      }
+      const auto s = v.GetValue<std::string>();
+      if (cmp == Cmp::COMPARE_LESSTHAN ? s < bound : s >= bound) {
+        want.push_back(i);
+      }
+    }
+    ASSERT_FALSE(want.empty());
+    ASSERT_EQ(kept, want.size());
+    for (duckdb::idx_t i = 0; i < kept; ++i) {
+      ASSERT_EQ(sel.get_index(i), want[i]);
+      ASSERT_EQ(out.GetValue(want[i]).GetValue<std::string>(),
+                value_of(kAnchor + want[i]).GetValue<std::string>());
+    }
+  }
+}
+
+TEST_F(ColumnReaderTest,
        CopiedBlocksOfARowGroupSplitIntoSeveralKeepTheirValidity) {
   constexpr uint32_t kRgSize = 4 * STANDARD_VECTOR_SIZE;
   constexpr uint64_t kRows = 3 * kRgSize;

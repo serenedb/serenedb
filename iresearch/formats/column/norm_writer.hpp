@@ -145,7 +145,7 @@ class NormColumnWriter final {
   uint32_t Escape(uint64_t row, uint32_t value);
 
   field_id _id;
-  duckdb::WriteStream* _blocks = nullptr;
+  duckdb::WriteStream* _out = nullptr;
   Open _open;
   uint32_t _row_group_size;
   NormColumnMeta _meta;

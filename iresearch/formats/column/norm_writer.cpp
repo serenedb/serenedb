@@ -159,27 +159,26 @@ void NormColumnWriter::CloseRegion() {
                "norm column ", _id, " has ", exceptions, " exceptions");
     region.exceptions = static_cast<uint32_t>(exceptions);
     region.overflow = static_cast<uint32_t>(_overflow_rows.size());
-    region.table_offset = _blocks->Position();
+    region.table_offset = _out->Position();
     _bases.resize(NormBuckets(region), static_cast<uint32_t>(_direct.size()));
     for (const auto base : _bases) {
-      _blocks->Write<uint32_t>(base);
+      _out->Write<uint32_t>(base);
     }
     for (const auto row : _overflow_rows) {
-      _blocks->Write<uint32_t>(row);
+      _out->Write<uint32_t>(row);
     }
     for (const auto v : _overflow_values) {
-      _blocks->Write<uint32_t>(v);
+      _out->Write<uint32_t>(v);
     }
     for (const auto v : _direct) {
       if (region.exception_bytes == 2) {
-        _blocks->Write<uint16_t>(static_cast<uint16_t>(v));
+        _out->Write<uint16_t>(static_cast<uint16_t>(v));
       } else {
-        _blocks->Write<uint32_t>(v);
+        _out->Write<uint32_t>(v);
       }
     }
-    _blocks->Write<uint32_t>(0);
-    SDB_ASSERT(_blocks->Position() - region.table_offset ==
-               NormTableSize(region));
+    _out->Write<uint32_t>(0);
+    SDB_ASSERT(_out->Position() - region.table_offset == NormTableSize(region));
   }
   _meta.row_count += region.stats.rows;
   _meta.regions.push_back(region);
@@ -187,14 +186,14 @@ void NormColumnWriter::CloseRegion() {
 
 void NormColumnWriter::Begin(const NormStats& planned) {
   const auto layout = PickNormLayout(planned);
-  if (layout.bits != 0 && !_blocks) {
-    _blocks = &_open();
+  if (layout.bits != 0 && !_out) {
+    _out = &_open();
   }
   _open_region = true;
   _region = {};
   _region.bits = static_cast<uint8_t>(layout.bits);
   _region.value = layout.value;
-  _region.file_offset = layout.bits == 0 ? 0 : _blocks->Position();
+  _region.file_offset = layout.bits == 0 ? 0 : _out->Position();
   if (layout.exceptions != 0) {
     _region.shift = PickShift(planned.rows, layout.exceptions);
     _region.exception_bytes =
@@ -248,7 +247,7 @@ void NormColumnWriter::EncodeSlots(std::span<const uint32_t> values,
         absl::little_endian::Store32(out + i * 4, v);
       }
     }
-    _blocks->WriteData(out, bytes);
+    _out->WriteData(out, bytes);
   }
 }
 

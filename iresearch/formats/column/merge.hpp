@@ -70,7 +70,8 @@ class ColumnMerger {
 
   bool Splittable(field_id column) const;
 
-  bool Copyable(field_id column, size_t input) const;
+  bool Copyable(field_id column, size_t input,
+                std::span<const uint64_t> row_groups) const;
 
   void Open(field_id column, ColWriter& output) const;
 
@@ -109,7 +110,7 @@ class ColumnMerger {
 
   std::span<const field_id> AnnFields(field_id column) const noexcept;
 
-  ColumnWriter& OpenPart(field_id column, uint32_t part,
+  ColumnWriter& OpenPart(field_id column, uint32_t part, uint64_t first_row,
                          ColWriter& output) const;
 
   bool FillPart(ColumnWriter& cw, field_id column, uint32_t part,

@@ -38,7 +38,7 @@ n
 
 connection after_crash
 query
-SELECT split_part(sql, ' WITH', 1) AS columns FROM duckdb_tables() WHERE table_name IN ('alr', 'alr_tx') ORDER BY table_name;
+SELECT split_part(sql, ' WITH', 1) AS columns FROM sdb_tables() WHERE table_name IN ('alr', 'alr_tx') ORDER BY table_name;
 ----
 columns
 CREATE TABLE public.alr(id INTEGER PRIMARY KEY, v VARCHAR USING COMPRESSION DICT_ZXC(compression_level = 4))

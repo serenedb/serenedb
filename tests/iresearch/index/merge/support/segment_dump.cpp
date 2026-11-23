@@ -619,4 +619,38 @@ std::string FirstDifference(const SegmentDump& expected,
   return {};
 }
 
+std::string RowGroupMisfit(const irs::SubReader& segment,
+                           uint64_t row_group_size) {
+  const auto* cs = segment.GetColReader();
+  if (cs == nullptr) {
+    return {};
+  }
+  const uint64_t rows = segment.docs_count();
+  std::vector<uint64_t> starts{cs->RowGroupStarts().begin(),
+                               cs->RowGroupStarts().end()};
+  if (starts.empty()) {
+    for (uint64_t start = 0; start < rows; start += row_group_size) {
+      starts.push_back(start);
+    }
+  }
+  starts.push_back(rows);
+  for (const auto* col : cs->Columns()) {
+    const auto blocks = col->DataBlocks();
+    size_t group = 0;
+    for (size_t b = 0; b != blocks.size(); ++b) {
+      const auto first = col->DataBlockFirstRow(b);
+      const auto end = first + blocks[b].tuple_count;
+      while (starts[group + 1] <= first) {
+        ++group;
+      }
+      if (end > starts[group + 1]) {
+        return absl::StrCat("column ", col->Id(), " block ", b, " [", first,
+                            ", ", end, ") crosses the row group start ",
+                            starts[group + 1]);
+      }
+    }
+  }
+  return {};
+}
+
 }  // namespace tests::merge

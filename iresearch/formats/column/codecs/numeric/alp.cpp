@@ -28,7 +28,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <duckdb/common/array_ptr.hpp>
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/constants.hpp>
 #include <duckdb/common/exception.hpp>
@@ -50,7 +49,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
-#include "iresearch/formats/column/codecs/numeric/segment_reader.hpp"
+#include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -60,26 +59,27 @@
 namespace irs::codecs {
 namespace {
 
+using alp::kMetadataPointerSize;
 using alp::kVectorSize;
 using duckdb::idx_t;
 
 constexpr uint8_t kUncompressedModeSentinel =
   std::numeric_limits<uint8_t>::max();
 constexpr uint32_t kHeaderSize = sizeof(uint32_t);
-constexpr uint32_t kMetadataPointerSize = sizeof(uint32_t);
 constexpr uint32_t kExponentSize = sizeof(uint8_t);
 constexpr uint32_t kFactorSize = sizeof(uint8_t);
 constexpr uint32_t kExceptionsCountSize = sizeof(uint16_t);
 constexpr uint32_t kExceptionPositionSize = sizeof(uint16_t);
 constexpr uint32_t kForSize = sizeof(uint64_t);
 constexpr uint32_t kBitWidthSize = sizeof(uint8_t);
+constexpr uint32_t kVectorHeaderSize =
+  kExponentSize + kFactorSize + kExceptionsCountSize + kForSize + kBitWidthSize;
 constexpr uint8_t kMaxBitWidth = sizeof(uint64_t) * 8;
 constexpr idx_t kSamplingEarlyExitThreshold = 2;
 constexpr double kEncodingUpperLimit = 9223372036854774784.0;
 constexpr double kEncodingLowerLimit = -9223372036854774784.0;
 constexpr auto kEncodedUpperLimit = static_cast<int64_t>(kEncodingUpperLimit);
 constexpr size_t kMaxCombinations = 5;
-constexpr idx_t kDecodeDistance = kVectorSize / 64;
 
 constexpr int64_t kFactArr[] = {
   1,
@@ -176,20 +176,8 @@ struct AlpTypedConstants<double> {
   };
 };
 
-[[noreturn]] IRS_NO_INLINE void ThrowAlpMetadataBeforeHeader() {
-  ThrowCorrupted("ALP", "metadata ends before the segment header");
-}
-
-[[noreturn]] IRS_NO_INLINE void ThrowAlpMetadataTableOutOfBounds() {
-  ThrowCorrupted("ALP", "metadata offset table exceeds the segment");
-}
-
-[[noreturn]] IRS_NO_INLINE void ThrowAlpVectorOffsetOutOfBounds() {
-  ThrowCorrupted("ALP", "vector offset is outside the data region");
-}
-
-[[noreturn]] IRS_NO_INLINE void ThrowAlpVectorOffsetsInvalid() {
-  ThrowCorrupted("ALP", "vector offsets do not describe a data range");
+[[noreturn]] IRS_NO_INLINE void ThrowAlpVectorOutOfRange() {
+  ThrowCorrupted("ALP", "vector exceeds its data range");
 }
 
 [[noreturn]] IRS_NO_INLINE void ThrowAlpExponentOutOfRange(
@@ -219,6 +207,26 @@ struct AlpTypedConstants<double> {
   uint16_t position, idx_t vector_size) {
   ThrowCorrupted("ALP", absl::StrCat("exception position ", position,
                                      " is outside vector size ", vector_size));
+}
+
+template<typename T>
+[[noreturn]] IRS_NO_INLINE void ThrowAlpVector(uint8_t exponent, uint8_t factor,
+                                               uint16_t exceptions_count,
+                                               uint8_t bit_width,
+                                               idx_t vector_size) {
+  if (exponent > AlpTypedConstants<T>::kMaxExponent) {
+    ThrowAlpExponentOutOfRange(exponent, AlpTypedConstants<T>::kMaxExponent);
+  }
+  if (exceptions_count > vector_size) {
+    ThrowAlpExceptionCountOutOfRange(exceptions_count, vector_size);
+  }
+  if (factor > exponent) {
+    ThrowAlpFactorOutOfRange(factor, exponent);
+  }
+  if (bit_width > kMaxBitWidth) {
+    ThrowAlpBitWidthOutOfRange(bit_width);
+  }
+  ThrowAlpVectorOutOfRange();
 }
 
 struct AlpEncodingIndices {
@@ -251,8 +259,7 @@ idx_t RequiredSpace(const AlpCompressionData<T>& data) {
   return data.bp_size +
          (data.exceptions_count *
           (sizeof(alp::ExactType<T>) + kExceptionPositionSize)) +
-         kExponentSize + kFactorSize + kExceptionsCountSize + kForSize +
-         kBitWidthSize;
+         kVectorHeaderSize;
 }
 
 template<typename T>
@@ -890,286 +897,173 @@ struct AlpVectorState {
   T exceptions[kVectorSize];
   uint16_t exceptions_positions[kVectorSize];
   uint64_t for_encoded[kVectorSize];
-  uint8_t v_exponent = 0;
-  uint8_t v_factor = 0;
-  uint16_t exceptions_count = 0;
+};
+
+struct AlpVector {
+  duckdb::const_data_ptr_t values = nullptr;
+  duckdb::const_data_ptr_t packed = nullptr;
+  duckdb::const_data_ptr_t exceptions = nullptr;
+  duckdb::const_data_ptr_t positions = nullptr;
   uint64_t frame_of_reference = 0;
+  uint16_t exceptions_count = 0;
+  uint8_t exponent = 0;
+  uint8_t factor = 0;
   uint8_t bit_width = 0;
 };
 
-struct AlpSegmentLayout {
-  SegmentReader data;
-  duckdb::unsafe_array_ptr<const uint32_t> vector_offsets;
-};
-
-AlpSegmentLayout ReadAlpSegmentLayout(duckdb::const_data_ptr_t base, idx_t size,
-                                      idx_t count) {
-  SegmentReader reader{base, size, "ALP segment"};
-  const auto metadata_end = reader.Read<uint32_t>();
-  if (metadata_end < kHeaderSize) {
-    ThrowAlpMetadataBeforeHeader();
-  }
-  reader = reader.GetSubReader(0, metadata_end, "ALP segment");
-
-  const idx_t vector_count = count / kVectorSize + (count % kVectorSize != 0);
-  if (vector_count > (metadata_end - kHeaderSize) / kMetadataPointerSize) {
-    ThrowAlpMetadataTableOutOfBounds();
-  }
-  const idx_t metadata_size = vector_count * kMetadataPointerSize;
-  const idx_t metadata_start = metadata_end - metadata_size;
-  return {
-    .data = reader.GetSubReader(kHeaderSize, metadata_start - kHeaderSize,
-                                "ALP data"),
-    .vector_offsets = reader.GetArray<uint32_t>(metadata_start, vector_count),
-  };
-}
-
-uint32_t GetVectorOffset(const AlpSegmentLayout& layout, idx_t vector_index) {
-  SDB_ASSERT(vector_index < layout.vector_offsets.size());
-  return layout.vector_offsets[layout.vector_offsets.size() - 1 - vector_index];
-}
-
-SegmentReader GetVectorReader(const AlpSegmentLayout& layout,
-                              idx_t vector_index) {
-  const auto vector_start = GetVectorOffset(layout, vector_index);
-  if (vector_start < kHeaderSize) {
-    ThrowAlpVectorOffsetOutOfBounds();
-  }
-  const idx_t data_start = vector_start - kHeaderSize;
-
-  idx_t data_end = layout.data.Size();
-  if (vector_index + 1 < layout.vector_offsets.size()) {
-    const auto vector_end = GetVectorOffset(layout, vector_index + 1);
-    if (vector_end < kHeaderSize) {
-      ThrowAlpVectorOffsetOutOfBounds();
+template<typename T>
+IRS_FORCE_INLINE AlpVector OpenVector(const alp::SegmentLayout& layout,
+                                      idx_t vector_index, idx_t vector_size) {
+  const auto bytes =
+    alp::VectorBytes(layout, vector_index, kExponentSize, "ALP");
+  const auto* at = bytes.data();
+  AlpVector vector{.exponent = duckdb::Load<uint8_t>(at)};
+  if (vector.exponent == kUncompressedModeSentinel) {
+    if (bytes.size() < kExponentSize + vector_size * sizeof(T)) [[unlikely]] {
+      ThrowAlpVectorOutOfRange();
     }
-    data_end = vector_end - kHeaderSize;
+    vector.values = at + kExponentSize;
+    return vector;
   }
-  if (data_start > data_end || data_end > layout.data.Size()) {
-    ThrowAlpVectorOffsetsInvalid();
+  if (bytes.size() < kVectorHeaderSize) [[unlikely]] {
+    ThrowAlpVectorOutOfRange();
   }
-  return layout.data.GetSubReader(data_start, data_end - data_start,
-                                  "ALP vector");
+  at += kExponentSize;
+  vector.factor = duckdb::Load<uint8_t>(at);
+  at += kFactorSize;
+  vector.exceptions_count = duckdb::Load<uint16_t>(at);
+  at += kExceptionsCountSize;
+  vector.frame_of_reference = duckdb::Load<uint64_t>(at);
+  at += kForSize;
+  vector.bit_width = duckdb::Load<uint8_t>(at);
+  at += kBitWidthSize;
+  const idx_t packed_size = duckdb::BitpackingPrimitives::GetRequiredSize(
+    vector_size, vector.bit_width);
+  const idx_t exceptions_size = vector.exceptions_count * sizeof(T);
+  if (!(vector.exponent <= AlpTypedConstants<T>::kMaxExponent &&
+        vector.factor <= vector.exponent && vector.bit_width <= kMaxBitWidth &&
+        vector.exceptions_count <= vector_size &&
+        kVectorHeaderSize + packed_size + exceptions_size +
+            vector.exceptions_count * kExceptionPositionSize <=
+          bytes.size())) [[unlikely]] {
+    ThrowAlpVector<T>(vector.exponent, vector.factor, vector.exceptions_count,
+                      vector.bit_width, vector_size);
+  }
+  vector.packed = at;
+  vector.exceptions = at + packed_size;
+  vector.positions = vector.exceptions + exceptions_size;
+  return vector;
+}
+
+alp::SegmentLayout ReadAlpSegmentLayout(duckdb::const_data_ptr_t base,
+                                        idx_t size, idx_t count) {
+  return alp::ReadLayout(base, kHeaderSize,
+                         alp::MetadataEnd(base, size, kHeaderSize, "ALP"),
+                         count, "ALP");
 }
 
 template<typename T>
 struct AlpScanState final : SegmentScanState {
-  AlpScanState(duckdb::BufferHandle handle_p, const ColumnSegment& segment)
+  using Value = T;
+  using Vector = AlpVector;
+  using VectorState = AlpVectorState<T>;
+
+  AlpScanState(duckdb::BufferHandle handle_p, const ColumnSegment& segment,
+               std::unique_ptr<VectorState> vector_state_p = nullptr)
     : handle{std::move(handle_p)},
       count{segment.count},
-      layout{ReadAlpSegmentLayout(handle.Ptr(), segment.size, count)} {}
+      layout{ReadAlpSegmentLayout(handle.Ptr(), segment.size, count)},
+      vector_state{std::move(vector_state_p)} {}
 
   duckdb::BufferHandle handle;
   idx_t count = 0;
-  AlpSegmentLayout layout;
+  alp::SegmentLayout layout;
   idx_t total_value_count = 0;
-  AlpVectorState<T> vector_state;
+  std::unique_ptr<VectorState> vector_state;
   duckdb::unique_ptr<duckdb::BaseStatistics> filter_group_stats;
 };
 
 template<typename T>
-idx_t LeftInVector(const AlpScanState<T>& state) {
-  return kVectorSize - (state.total_value_count % kVectorSize);
+AlpVector OpenVector(const AlpScanState<T>& state, idx_t vector_index) {
+  return OpenVector<T>(
+    state.layout, vector_index,
+    std::min<idx_t>(kVectorSize, state.count - vector_index * kVectorSize));
 }
 
 template<typename T>
-bool VectorFinished(const AlpScanState<T>& state) {
-  return !(state.total_value_count % kVectorSize);
+T* ResultValues(const AlpScanState<T>&, duckdb::Vector& result) {
+  return duckdb::FlatVector::GetDataMutable<T>(result);
 }
 
 template<typename T>
 void LoadVector(AlpScanState<T>& state, T* value_buffer) {
-  auto& vector_state = state.vector_state;
+  auto& vector_state = *state.vector_state;
   vector_state.index = 0;
 
-  const auto vector_index = state.total_value_count / kVectorSize;
-  SegmentReader vector_reader = GetVectorReader(state.layout, vector_index);
   const idx_t vector_size =
     std::min<idx_t>(kVectorSize, state.count - state.total_value_count);
-
-  vector_state.v_exponent = vector_reader.Read<uint8_t>();
-  if (vector_state.v_exponent == kUncompressedModeSentinel) {
-    vector_reader.ReadBytesInto(
-      reinterpret_cast<duckdb::data_ptr_t>(value_buffer),
-      sizeof(T) * vector_size);
+  const auto vector = OpenVector<T>(
+    state.layout, state.total_value_count / kVectorSize, vector_size);
+  if (vector.exponent == kUncompressedModeSentinel) {
+    std::memcpy(value_buffer, vector.values, sizeof(T) * vector_size);
     return;
   }
-  if (vector_state.v_exponent > AlpTypedConstants<T>::kMaxExponent) {
-    ThrowAlpExponentOutOfRange(vector_state.v_exponent,
-                               AlpTypedConstants<T>::kMaxExponent);
-  }
-  vector_state.v_factor = vector_reader.Read<uint8_t>();
-  vector_state.exceptions_count = vector_reader.Read<uint16_t>();
-  vector_state.frame_of_reference = vector_reader.Read<uint64_t>();
-  vector_state.bit_width = vector_reader.Read<uint8_t>();
 
-  if (vector_state.exceptions_count > vector_size) {
-    ThrowAlpExceptionCountOutOfRange(vector_state.exceptions_count,
-                                     vector_size);
-  }
-  if (vector_state.v_factor > vector_state.v_exponent) {
-    ThrowAlpFactorOutOfRange(vector_state.v_factor, vector_state.v_exponent);
-  }
-  if (vector_state.bit_width > kMaxBitWidth) {
-    ThrowAlpBitWidthOutOfRange(vector_state.bit_width);
-  }
-
-  if (vector_state.bit_width) {
-    const auto bp_size = duckdb::BitpackingPrimitives::GetRequiredSize(
-      vector_size, vector_state.bit_width);
-    vector_reader.ReadBytesIntoArray(vector_state.for_encoded, bp_size);
-  }
-
-  if (vector_state.exceptions_count) {
-    vector_reader.ReadIntoArray(vector_state.exceptions,
-                                vector_state.exceptions_count);
-    vector_reader.ReadIntoArray(vector_state.exceptions_positions,
-                                vector_state.exceptions_count);
-    for (idx_t i = 0; i < vector_state.exceptions_count; ++i) {
-      if (vector_state.exceptions_positions[i] >= vector_size) {
-        ThrowAlpExceptionPositionOutOfRange(
-          vector_state.exceptions_positions[i], vector_size);
-      }
+  static_assert(sizeof(vector_state.for_encoded) ==
+                kVectorSize * kMaxBitWidth / 8);
+  std::memcpy(vector_state.for_encoded, vector.packed,
+              duckdb::BitpackingPrimitives::GetRequiredSize(vector_size,
+                                                            vector.bit_width));
+  std::memcpy(vector_state.exceptions, vector.exceptions,
+              vector.exceptions_count * sizeof(T));
+  std::memcpy(vector_state.exceptions_positions, vector.positions,
+              vector.exceptions_count * kExceptionPositionSize);
+  for (idx_t i = 0; i < vector.exceptions_count; ++i) {
+    if (vector_state.exceptions_positions[i] >= vector_size) {
+      ThrowAlpExceptionPositionOutOfRange(vector_state.exceptions_positions[i],
+                                          vector_size);
     }
   }
 
   Decompress<T>(
     reinterpret_cast<duckdb::const_data_ptr_t>(vector_state.for_encoded),
-    value_buffer, vector_size, vector_state.v_factor, vector_state.v_exponent,
-    vector_state.exceptions_count, vector_state.exceptions,
-    vector_state.exceptions_positions, vector_state.frame_of_reference,
-    vector_state.bit_width);
-}
-
-template<typename T, bool kSkip>
-void ScanVector(AlpScanState<T>& state, T* values, idx_t vector_size) {
-  SDB_ASSERT(vector_size <= kVectorSize);
-  SDB_ASSERT(vector_size <= LeftInVector(state));
-  if (VectorFinished(state)) {
-    SDB_ASSERT(state.total_value_count < state.count);
-    if constexpr (!kSkip) {
-      if (vector_size == kVectorSize) {
-        LoadVector(state, values);
-        state.total_value_count += vector_size;
-        return;
-      }
-    }
-    LoadVector(state, state.vector_state.decoded_values);
-  }
-  if constexpr (!kSkip) {
-    std::memcpy(values,
-                state.vector_state.decoded_values + state.vector_state.index,
-                sizeof(T) * vector_size);
-  }
-  state.vector_state.index += vector_size;
-  state.total_value_count += vector_size;
-}
-
-template<typename T>
-void SkipVector(AlpScanState<T>& state) {
-  SDB_ASSERT(state.total_value_count < state.count);
-  state.total_value_count +=
-    std::min<idx_t>(kVectorSize, state.count - state.total_value_count);
-}
-
-template<typename T>
-void SkipValues(AlpScanState<T>& state, idx_t skip_count) {
-  SDB_ASSERT(state.total_value_count <= state.count);
-  SDB_ASSERT(skip_count <= state.count - state.total_value_count);
-  if (state.total_value_count && !VectorFinished(state)) {
-    const idx_t to_skip = std::min<idx_t>(skip_count, LeftInVector(state));
-    ScanVector<T, true>(state, nullptr, to_skip);
-    skip_count -= to_skip;
-  }
-  const idx_t vectors_to_skip = skip_count / kVectorSize;
-  for (idx_t i = 0; i < vectors_to_skip; ++i) {
-    SkipVector(state);
-  }
-  skip_count -= kVectorSize * vectors_to_skip;
-  if (!skip_count) {
-    return;
-  }
-  ScanVector<T, true>(state, nullptr, skip_count);
-}
-
-template<typename T>
-std::unique_ptr<SegmentScanState> AlpInitScan(const ColumnSegment& segment) {
-  return std::make_unique<AlpScanState<T>>(segment.Pin(), segment);
-}
-
-template<typename T>
-void AlpScan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
-             duckdb::Vector& result, idx_t result_offset,
-             duckdb::ScanVectorType) {
-  auto& scan_state = state.scan_state->Cast<AlpScanState<T>>();
-  SDB_ASSERT(scan_state.total_value_count <= scan_state.count);
-  SDB_ASSERT(scan_count <= scan_state.count - scan_state.total_value_count);
-
-  auto* current_result_ptr = duckdb::FlatVector::GetDataMutable<T>(result);
-  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
-  current_result_ptr += result_offset;
-
-  idx_t scanned = 0;
-  while (scanned < scan_count) {
-    const auto remaining = scan_count - scanned;
-    const idx_t to_scan = std::min(remaining, LeftInVector(scan_state));
-    ScanVector<T, false>(scan_state, current_result_ptr + scanned, to_scan);
-    scanned += to_scan;
-  }
-}
-
-template<typename T>
-void AlpSkip(const ColumnSegment&, ColumnScanState& state, idx_t skip_count) {
-  SkipValues(state.scan_state->Cast<AlpScanState<T>>(), skip_count);
+    value_buffer, vector_size, vector.factor, vector.exponent,
+    vector.exceptions_count, vector_state.exceptions,
+    vector_state.exceptions_positions, vector.frame_of_reference,
+    vector.bit_width);
 }
 
 template<typename T>
 bool AlpVectorBounds(const AlpScanState<T>& scan_state, idx_t vector_idx,
                      idx_t vector_rows, T& minimum, T& maximum) {
-  SegmentReader vector_reader = GetVectorReader(scan_state.layout, vector_idx);
-  const auto v_exponent = vector_reader.Read<uint8_t>();
-  if (v_exponent == kUncompressedModeSentinel) {
-    return false;
-  }
-  const auto v_factor = vector_reader.Read<uint8_t>();
-  const auto exceptions_count = vector_reader.Read<uint16_t>();
-  const auto frame_of_reference = vector_reader.Read<uint64_t>();
-  const auto bit_width = vector_reader.Read<uint8_t>();
-  if (v_exponent > AlpTypedConstants<T>::kMaxExponent ||
-      v_factor > v_exponent || bit_width > kMaxBitWidth ||
-      bit_width >= sizeof(uint64_t) * 8 || exceptions_count > vector_rows) {
+  const auto vector = OpenVector<T>(scan_state.layout, vector_idx, vector_rows);
+  if (vector.exponent == kUncompressedModeSentinel ||
+      vector.bit_width >= sizeof(uint64_t) * 8) {
     return false;
   }
 
   const uint64_t packed_span =
-    bit_width ? (uint64_t{1} << bit_width) - 1 : uint64_t{0};
-  const auto lo_digit = static_cast<int64_t>(frame_of_reference);
-  const auto hi_digit = static_cast<int64_t>(frame_of_reference + packed_span);
+    vector.bit_width ? (uint64_t{1} << vector.bit_width) - 1 : uint64_t{0};
+  const auto lo_digit = static_cast<int64_t>(vector.frame_of_reference);
+  const auto hi_digit =
+    static_cast<int64_t>(vector.frame_of_reference + packed_span);
   if (lo_digit > hi_digit) {
     return false;
   }
   const AlpEncodingIndices encoding_indices{
-    .exponent = v_exponent,
-    .factor = v_factor,
+    .exponent = vector.exponent,
+    .factor = vector.factor,
   };
   minimum = DecodeValue<T>(lo_digit, encoding_indices);
   maximum = DecodeValue<T>(hi_digit, encoding_indices);
 
-  if (exceptions_count) {
-    if (bit_width) {
-      vector_reader.Skip(
-        duckdb::BitpackingPrimitives::GetRequiredSize(vector_rows, bit_width));
+  for (idx_t i = 0; i < vector.exceptions_count; ++i) {
+    const T exception = duckdb::Load<T>(vector.exceptions + i * sizeof(T));
+    if (duckdb::LessThan::Operation(exception, minimum)) {
+      minimum = exception;
     }
-    const auto exceptions =
-      vector_reader.ReadBytes(exceptions_count * sizeof(T));
-    for (idx_t i = 0; i < exceptions_count; ++i) {
-      const T exception = duckdb::Load<T>(exceptions.data() + i * sizeof(T));
-      if (duckdb::LessThan::Operation(exception, minimum)) {
-        minimum = exception;
-      }
-      if (duckdb::GreaterThan::Operation(exception, maximum)) {
-        maximum = exception;
-      }
+    if (duckdb::GreaterThan::Operation(exception, maximum)) {
+      maximum = exception;
     }
   }
   return true;
@@ -1225,12 +1119,12 @@ void AlpFilter(const ColumnSegment& segment, ColumnScanState& state,
   }
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
       verdict == duckdb::FilterPropagateResult::FILTER_FALSE_OR_NULL) {
-    SkipValues(scan_state, vector_count);
+    alp::SkipValues(scan_state, vector_count);
     sel_count = 0;
     return;
   }
-  AlpScan<T>(segment, state, vector_count, result, 0,
-             duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+  alp::Scan<AlpScanState<T>>(segment, state, vector_count, result, 0,
+                             duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
   duckdb::FlatVector::SetSize(result, duckdb::count_t(vector_count));
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
     return;
@@ -1240,87 +1134,29 @@ void AlpFilter(const ColumnSegment& segment, ColumnScanState& state,
 }
 
 template<typename T>
-struct AlpFetchState final : SegmentScanState {
-  AlpFetchState(duckdb::BufferHandle handle, const ColumnSegment& segment)
-    : scan_state{std::move(handle), segment} {}
-
-  AlpScanState<T> scan_state;
-  idx_t decoded_vector = duckdb::DConstants::INVALID_INDEX;
-  idx_t previous_row = duckdb::DConstants::INVALID_INDEX;
-};
-
-template<typename T>
-IRS_NO_INLINE T FetchValue(const AlpScanState<T>& scan_state, idx_t row) {
-  SDB_ASSERT(row < scan_state.count);
-  const idx_t vector_index = row / kVectorSize;
-  const idx_t index = row % kVectorSize;
-  SegmentReader reader = GetVectorReader(scan_state.layout, vector_index);
-  const idx_t vector_size =
-    std::min<idx_t>(kVectorSize, scan_state.count - vector_index * kVectorSize);
-  const auto exponent = reader.Read<uint8_t>();
-  if (exponent == kUncompressedModeSentinel) {
-    return reader.Get<T>(reader.Position() + index * sizeof(T));
+IRS_FORCE_INLINE T ValueAt(const AlpScanState<T>&, const AlpVector& vector,
+                           idx_t index) {
+  if (vector.exponent == kUncompressedModeSentinel) {
+    return duckdb::Load<T>(vector.values + index * sizeof(T));
   }
-  if (exponent > AlpTypedConstants<T>::kMaxExponent) {
-    ThrowAlpExponentOutOfRange(exponent, AlpTypedConstants<T>::kMaxExponent);
-  }
-  const auto factor = reader.Read<uint8_t>();
-  const auto exceptions_count = reader.Read<uint16_t>();
-  const auto frame_of_reference = reader.Read<uint64_t>();
-  const auto bit_width = reader.Read<uint8_t>();
-  if (exceptions_count > vector_size) {
-    ThrowAlpExceptionCountOutOfRange(exceptions_count, vector_size);
-  }
-  if (factor > exponent) {
-    ThrowAlpFactorOutOfRange(factor, exponent);
-  }
-  if (bit_width > kMaxBitWidth) {
-    ThrowAlpBitWidthOutOfRange(bit_width);
-  }
-  uint64_t encoded = 0;
-  if (bit_width) {
-    const auto packed = reader.ReadBytes(
-      duckdb::BitpackingPrimitives::GetRequiredSize(vector_size, bit_width));
-    encoded = duckdb::BitpackingPrimitives::UnPackValue<uint64_t>(
-      packed.data(), index, bit_width);
-  }
-  if (exceptions_count) {
-    const auto exceptions = reader.ReadBytes(exceptions_count * sizeof(T));
-    const auto positions =
-      reader.ReadBytes(exceptions_count * kExceptionPositionSize);
+  if (vector.exceptions_count) {
     const auto position_at = [&](idx_t i) {
-      return duckdb::Load<uint16_t>(positions.data() +
+      return duckdb::Load<uint16_t>(vector.positions +
                                     i * kExceptionPositionSize);
     };
-    const auto found = PartitionIndex(
-      0, exceptions_count, [&](size_t i) { return position_at(i) < index; });
-    if (found < exceptions_count) {
-      const auto position = position_at(found);
-      if (position >= vector_size) {
-        ThrowAlpExceptionPositionOutOfRange(position, vector_size);
-      }
-      if (position == index) {
-        return duckdb::Load<T>(exceptions.data() + found * sizeof(T));
-      }
+    const auto found =
+      PartitionIndex(0, vector.exceptions_count,
+                     [&](size_t i) { return position_at(i) < index; });
+    if (found < vector.exceptions_count && position_at(found) == index) {
+      return duckdb::Load<T>(vector.exceptions + found * sizeof(T));
     }
   }
-  return DecodeValue<T>(static_cast<int64_t>(encoded + frame_of_reference),
-                        {.exponent = exponent, .factor = factor});
-}
-
-bool Near(idx_t row, idx_t other) {
-  return other != duckdb::DConstants::INVALID_INDEX &&
-         row / kVectorSize == other / kVectorSize &&
-         (row > other ? row - other : other - row) <= kDecodeDistance;
-}
-
-template<typename T>
-bool Alone(AlpFetchState<T>& fetch_state, const idx_t* rows, idx_t i,
-           idx_t count) {
-  const auto previous = fetch_state.previous_row;
-  fetch_state.previous_row = rows[i];
-  return !Near(rows[i], previous) &&
-         (i + 1 == count || !Near(rows[i], rows[i + 1]));
+  static_assert(kHeaderSize + kVectorHeaderSize >= alp::kWordReach);
+  const auto encoded =
+    alp::PackedValue<uint64_t>(vector.packed, index, vector.bit_width);
+  return DecodeValue<T>(
+    static_cast<int64_t>(encoded + vector.frame_of_reference),
+    {.exponent = vector.exponent, .factor = vector.factor});
 }
 
 template<typename T>
@@ -1329,37 +1165,37 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                   const duckdb::SelectionVector& result_sel,
                   idx_t result_offset) {
   SDB_ASSERT(!count || rows[count - 1] < segment.count);
-  auto& fetch_state = state.GetOrCreateSegmentState<AlpFetchState<T>>(
-    [&] { return std::make_unique<AlpFetchState<T>>(segment.Pin(), segment); });
-  auto& scan_state = fetch_state.scan_state;
+  auto& fetch_state =
+    state.GetOrCreateSegmentState<alp::FetchState<AlpScanState<T>>>([&] {
+      return std::make_unique<alp::FetchState<AlpScanState<T>>>(segment.Pin(),
+                                                                segment);
+    });
   auto* result_data =
-    duckdb::FlatVector::GetDataMutableUnsafe<alp::ExactType<T>>(result);
-  for (idx_t i = 0; i < count; ++i) {
-    const auto vector_index = rows[i] / kVectorSize;
-    if (vector_index != fetch_state.decoded_vector) {
-      if (Alone(fetch_state, rows, i, count)) {
-        const auto value = FetchValue(scan_state, rows[i]);
-        std::memcpy(result_data + result_offset + result_sel.get_index(i),
-                    &value, sizeof(T));
-        continue;
-      }
-      scan_state.total_value_count = vector_index * kVectorSize;
-      LoadVector(scan_state, scan_state.vector_state.decoded_values);
-      fetch_state.decoded_vector = vector_index;
+    duckdb::FlatVector::GetDataMutableUnsafe<T>(result) + result_offset;
+  if (alp::CopyOneDecoded(fetch_state, rows, count, result_data, result_sel)) {
+    return;
+  }
+  const idx_t last_vector = count ? rows[count - 1] / kVectorSize : 0;
+  for (idx_t i = 0; i < count;) {
+    if (rows[i] / kVectorSize == fetch_state.decoded_vector ||
+        alp::Dense(fetch_state, rows, i, count, last_vector)) {
+      i =
+        alp::CopyDecoded(fetch_state, rows, i, count, result_data, result_sel);
+      continue;
     }
-    std::memcpy(result_data + result_offset + result_sel.get_index(i),
-                scan_state.vector_state.decoded_values + rows[i] % kVectorSize,
-                sizeof(T));
+    result_data[result_sel.get_index(i)] =
+      alp::FetchValue(fetch_state, rows[i]);
+    ++i;
   }
 }
 
 template<typename T>
 constexpr DecompressionFunction kDecompression{
-  .init_scan = AlpInitScan<T>,
-  .scan = AlpScan<T>,
+  .init_scan = alp::InitScan<AlpScanState<T>>,
+  .scan = alp::Scan<AlpScanState<T>>,
   .filter = AlpFilter<T>,
   .fetch_rows = AlpFetchRows<T>,
-  .skip = AlpSkip<T>,
+  .skip = alp::Skip<AlpScanState<T>>,
 };
 
 template<typename T>

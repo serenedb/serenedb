@@ -49,49 +49,9 @@ struct Lz4 {
 
   static size_t Bound(size_t raw_size) noexcept;
 
-  class Compressor final : public DictionaryCompressor {
-   public:
-    explicit Compressor(uint8_t level);
-
-    size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
-
-    void Attach();
-    static size_t StoredBound(size_t size) noexcept { return Bound(size); }
-    size_t CompressStored(const char* src, size_t size, char* dst,
-                          size_t capacity) {
-      return Plain(src, size, dst, capacity);
-    }
-
-   private:
-    size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
-
-    std::unique_ptr<LZ4_stream_t> _work;
-    std::unique_ptr<LZ4_stream_t> _attached;
-  };
-
-  class Decompressor final : public DictionaryDecompressor {
-   public:
-    static bool Decompress(const char* src, size_t size, char* dst,
-                           size_t raw_size) noexcept;
-    static size_t DecompressPrefix(const char* src, size_t size, char* dst,
-                                   size_t want, size_t raw_size) noexcept;
-    static bool DecompressStored(const char* src, size_t size, char* dst,
-                                 size_t raw_size) noexcept {
-      return Decompress(src, size, dst, raw_size);
-    }
-
-    std::string_view Inflate(const char* src, size_t size, char* dst,
-                             size_t want, size_t raw_size);
-  };
-};
-
-struct Lz4Hc {
-  static constexpr ByteCodec kCodec = ByteCodec::Lz4;
-  static constexpr uint8_t kDefaultLevel = LZ4HC_CLEVEL_DEFAULT;
-  static constexpr uint8_t kMaxLevel = LZ4HC_CLEVEL_MAX;
-  static constexpr size_t kDictionaryCap = Lz4::kDictionaryCap;
-
-  static size_t Bound(size_t raw_size) noexcept { return Lz4::Bound(raw_size); }
+  static constexpr bool HighCompression(uint8_t level) noexcept {
+    return EffectiveLevel<Lz4>(level) > 1;
+  }
 
   class Compressor final : public DictionaryCompressor {
    public:
@@ -110,8 +70,25 @@ struct Lz4Hc {
     size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
 
     int _level;
-    std::unique_ptr<LZ4_streamHC_t, Lz4HcFree> _work;
-    std::unique_ptr<LZ4_streamHC_t> _attached;
+    std::unique_ptr<LZ4_stream_t> _fast;
+    std::unique_ptr<LZ4_stream_t> _fast_attached;
+    std::unique_ptr<LZ4_streamHC_t, Lz4HcFree> _high;
+    std::unique_ptr<LZ4_streamHC_t> _high_attached;
+  };
+
+  class Decompressor final : public DictionaryDecompressor {
+   public:
+    static bool Decompress(const char* src, size_t size, char* dst,
+                           size_t raw_size) noexcept;
+    static size_t DecompressPrefix(const char* src, size_t size, char* dst,
+                                   size_t want, size_t raw_size) noexcept;
+    static bool DecompressStored(const char* src, size_t size, char* dst,
+                                 size_t raw_size) noexcept {
+      return Decompress(src, size, dst, raw_size);
+    }
+
+    std::string_view Inflate(const char* src, size_t size, char* dst,
+                             size_t want, size_t raw_size);
   };
 };
 

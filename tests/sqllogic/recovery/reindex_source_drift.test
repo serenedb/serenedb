@@ -25,7 +25,7 @@ SET sdb_faults = 'pause_reindex_before_pass';
 
 connection reindexer
 statement async ok
-SELECT * FROM serenedb_reindex('rsd_idx');
+SELECT * FROM sdb_reindex('rsd_idx');
 
 connection default
 statement ok retry 40 backoff 250ms
@@ -46,7 +46,7 @@ count
 10
 
 query
-SELECT * FROM serenedb_reindex('rsd_idx');
+SELECT * FROM sdb_reindex('rsd_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -71,7 +71,7 @@ SET sdb_faults = 'pause_reindex_before_pass';
 
 connection reindexer
 statement async error
-SELECT * FROM serenedb_reindex('rsd_dropped_idx');
+SELECT * FROM sdb_reindex('rsd_dropped_idx');
 ----
 db error: ERROR: REINDEX: source index "rsd_dropped_idx" vanished mid-refresh
 

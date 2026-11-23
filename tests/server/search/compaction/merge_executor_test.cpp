@@ -135,8 +135,9 @@ class NoPostingsDirectory final : public irs::Directory {
   bool rename(std::string_view src, std::string_view dst) noexcept final {
     return _impl.rename(src, dst);
   }
-  bool sync(std::span<const std::string_view> files) noexcept final {
-    return _impl.sync(files);
+  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr out,
+                              irs::IOAdvice advice) const final {
+    return _impl.Finish(std::move(out), advice);
   }
   bool visit(const visitor_f& visitor) const final {
     return _impl.visit(visitor);

@@ -53,7 +53,9 @@ class ColFileWriter final {
 
   void Flush();
 
-  void Finish(format_utils::FooterWriter footer);
+  IndexOutput::ptr Finish();
+
+  IndexOutput::ptr Finish(format_utils::FooterWriter footer);
 
  private:
   struct Chunk {

@@ -26,7 +26,7 @@ LINESTRING (2 0, 4 0)
 # than present and failing.
 
 query
-SELECT count(*) AS v FROM duckdb_functions()
+SELECT count(*) AS v FROM sdb_functions()
 WHERE lower(function_name) IN ('st_makevalid', 'st_node', 'st_polygonize', 'st_buildarea',
                                'st_concavehull', 'st_voronoidiagram', 'st_coverageunion');
 ----
@@ -37,7 +37,7 @@ v
 # --- PROJ is gone: reprojection goes with it ---
 
 query
-SELECT count(*) AS v FROM duckdb_functions()
+SELECT count(*) AS v FROM sdb_functions()
 WHERE lower(function_name) IN ('st_transform', 'duckdb_proj_version',
                                'duckdb_proj_compiled_version');
 ----
@@ -50,7 +50,7 @@ v
 # name because several of them carry both a GEOMETRY and a POINT_2D variant.
 
 query
-SELECT count(DISTINCT lower(function_name)) AS v FROM duckdb_functions()
+SELECT count(DISTINCT lower(function_name)) AS v FROM sdb_functions()
 WHERE lower(function_name) IN ('st_area_spheroid', 'st_distance_spheroid',
                                'st_dwithin_spheroid', 'st_length_spheroid',
                                'st_perimeter_spheroid');
@@ -72,7 +72,7 @@ OGC:CRS84
 # --- GDAL is gone: the file readers and the COPY format go with it ---
 
 query
-SELECT count(*) AS v FROM duckdb_functions()
+SELECT count(*) AS v FROM sdb_functions()
 WHERE lower(function_name) IN ('st_read', 'st_read_meta', 'st_drivers');
 ----
 v
@@ -83,7 +83,7 @@ v
 # the vendored shapelib, OSM through protozero.
 
 query
-SELECT count(DISTINCT lower(function_name)) AS v FROM duckdb_functions()
+SELECT count(DISTINCT lower(function_name)) AS v FROM sdb_functions()
 WHERE lower(function_name) IN ('st_readshp', 'st_readosm');
 ----
 v
@@ -106,7 +106,7 @@ db error: ERROR: access method "rtree" does not exist
 # erroring, so they are the guard that SPATIAL_USE_RTREE is still off.
 
 query
-SELECT count(*) AS v FROM duckdb_functions() WHERE function_name ILIKE '%rtree%';
+SELECT count(*) AS v FROM sdb_functions() WHERE function_name ILIKE '%rtree%';
 ----
 v
 0

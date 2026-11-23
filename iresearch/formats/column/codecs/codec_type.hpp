@@ -31,14 +31,12 @@ namespace irs::codecs {
 enum class CodecType : uint8_t {
   Auto,
   Uncompressed,
-  Rle,
-  Bitpacking,
   Alp,
   Alprd,
   Roaring,
   Constant,
   Empty,
-  Ffor,
+  Bitpacking,
   Lz4,
   Zstd,
   Fsst,
@@ -46,7 +44,7 @@ enum class CodecType : uint8_t {
   FsstPlus,
   Onpair,
   Fsst12,
-  DictFfor,
+  Dict,
   DictLz4,
   DictZstd,
   DictFsst,
@@ -54,10 +52,10 @@ enum class CodecType : uint8_t {
   DictFsstPlus,
   DictOnpair,
   DictFsst12,
-  DeltaFfor,
+  Delta,
   DeltaLz4,
   DeltaZstd,
-  RleFfor,
+  Rle,
   RleLz4,
   RleZstd,
 };
@@ -74,10 +72,6 @@ constexpr customize::customize_t customize::enum_name<irs::codecs::CodecType>(
       return "Auto";
     case CodecType::Uncompressed:
       return "Uncompressed";
-    case CodecType::Rle:
-      return "RLE";
-    case CodecType::Bitpacking:
-      return "BitPacking";
     case CodecType::Alp:
       return "ALP";
     case CodecType::Alprd:
@@ -88,8 +82,8 @@ constexpr customize::customize_t customize::enum_name<irs::codecs::CodecType>(
       return "Constant";
     case CodecType::Empty:
       return "Empty Validity";
-    case CodecType::Ffor:
-      return "FFOR";
+    case CodecType::Bitpacking:
+      return "BitPacking";
     case CodecType::Lz4:
       return "LZ4";
     case CodecType::Zstd:
@@ -104,8 +98,8 @@ constexpr customize::customize_t customize::enum_name<irs::codecs::CodecType>(
       return "ONPAIR";
     case CodecType::Fsst12:
       return "FSST12";
-    case CodecType::DictFfor:
-      return "DICT_FFOR";
+    case CodecType::Dict:
+      return "DICT";
     case CodecType::DictLz4:
       return "DICT_LZ4";
     case CodecType::DictZstd:
@@ -120,14 +114,14 @@ constexpr customize::customize_t customize::enum_name<irs::codecs::CodecType>(
       return "DICT_ONPAIR";
     case CodecType::DictFsst12:
       return "DICT_FSST12";
-    case CodecType::DeltaFfor:
-      return "DELTA_FFOR";
+    case CodecType::Delta:
+      return "DELTA";
     case CodecType::DeltaLz4:
       return "DELTA_LZ4";
     case CodecType::DeltaZstd:
       return "DELTA_ZSTD";
-    case CodecType::RleFfor:
-      return "RLE_FFOR";
+    case CodecType::Rle:
+      return "RLE";
     case CodecType::RleLz4:
       return "RLE_LZ4";
     case CodecType::RleZstd:
@@ -168,11 +162,11 @@ inline constexpr size_t kTextShapeForms = kTextShapeCount * kByteCodecCount;
 inline constexpr size_t kNumericLeafCount = 3;
 
 constexpr bool IsForm(CodecType type) noexcept {
-  return type >= CodecType::Ffor;
+  return type >= CodecType::Bitpacking;
 }
 
 constexpr size_t FormIndex(CodecType type) noexcept {
-  return std::to_underlying(type) - std::to_underlying(CodecType::Ffor);
+  return std::to_underlying(type) - std::to_underlying(CodecType::Bitpacking);
 }
 
 constexpr CodecType CodecOf(Shape shape, ByteCodec leaf) noexcept {
@@ -182,7 +176,8 @@ constexpr CodecType CodecOf(Shape shape, ByteCodec leaf) noexcept {
     s < kTextShapeCount
       ? s * kByteCodecCount + l
       : kTextShapeForms + (s - kTextShapeCount) * kNumericLeafCount + l;
-  return static_cast<CodecType>(std::to_underlying(CodecType::Ffor) + index);
+  return static_cast<CodecType>(std::to_underlying(CodecType::Bitpacking) +
+                                index);
 }
 
 constexpr Shape ShapeOf(CodecType type) noexcept {
@@ -218,7 +213,7 @@ static_assert(std::to_underlying(Shape::Dictionary) + 1 == kTextShapeCount);
 static_assert(std::to_underlying(ByteCodec::Zstd) + 1 == kNumericLeafCount);
 static_assert(CodecOf(Shape::Dictionary, ByteCodec::Fsst12) ==
               CodecType::DictFsst12);
-static_assert(CodecOf(Shape::Delta, ByteCodec::None) == CodecType::DeltaFfor);
+static_assert(CodecOf(Shape::Delta, ByteCodec::None) == CodecType::Delta);
 static_assert(std::to_underlying(CodecOf(Shape::Runs, ByteCodec::Zstd)) + 1 ==
               magic_enum::enum_count<CodecType>());
 

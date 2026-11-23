@@ -367,10 +367,9 @@ void AppendU32(std::string& out, uint32_t value) {
 
 }  // namespace
 
-void CompressionState::FinalizeCompress() {
-  if (_rows.SegmentShape() == Shape::Dictionary) {
-    _rows.Sort(_sort);
-  }
+template<typename Rows>
+void CompressionState<Rows>::FinalizeCompress() {
+  this->Sort();
   const auto lengths = _rows.Lengths();
   const auto rows = _rows.View();
   const auto entries = rows.entries;
@@ -439,8 +438,7 @@ void CompressionState::FinalizeCompress() {
   _ids.resize(
     duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
     0);
-  RecordRatio(_history[static_cast<size_t>(_rows.SegmentShape())], rows.raw,
-              Written() + _side.size(), _target);
+  RecordRatio(this->History(), rows.raw, Written() + _side.size(), _target);
   _rows.Write(
     {
       .codec = kCodec,
@@ -454,7 +452,8 @@ void CompressionState::FinalizeCompress() {
     *_out);
 }
 
-void CompressionState::Cleave(uint32_t first_entry) {
+template<typename Rows>
+void CompressionState<Rows>::Cleave(uint32_t first_entry) {
   const auto n = static_cast<uint32_t>(_codes.size());
   if (n < 2) {
     return;
@@ -570,16 +569,17 @@ stores the rest of its codes.
 |   +----------------------------------------------+   |
 |   |   each entry's codes after its group's       |   |
 |   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
+|   frames of up to 16 KiB of decoded entries; a       |
+|   longer entry is a frame of its own                 |
 +------------------------------------------------------+
 */
 
 constinit const Codec kFsstPlusCodec =
   text::StringCodec<text::PlainScan<text::fsst_plus::Scan>,
-                    text::fsst_plus::CompressionState>();
+                    text::fsst_plus::CompressionState<text::PlainRows>>();
 
 constinit const Codec kDictFsstPlusCodec =
   text::StringCodec<text::DictionaryScan<text::fsst_plus::Scan>,
-                    text::fsst_plus::CompressionState>();
+                    text::fsst_plus::CompressionState<text::DictionaryRows>>();
 
 }  // namespace irs::codecs

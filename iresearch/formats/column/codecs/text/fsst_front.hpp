@@ -28,39 +28,49 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/fsst.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text::fsst_front {
 
-template<typename Impl>
-class CompressionState : public SortedCompressionState {
+template<typename Impl, typename Rows>
+class CompressionState final : public SortedCompressionState<Rows> {
+  using Base = SortedCompressionState<Rows>;
+
  public:
   static constexpr ByteCodec kCodec = Impl::kCodec;
 
-  CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                   StringTuning& tuning, uint32_t target)
-    : SortedCompressionState{kCodec, type, dedup, tuning, target} {}
+  CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
+    : Base{kCodec, data.type, dedup, data.tuning.strings,
+           data.params.segment_target},
+      _codec{data.Get<fsst::SharedEncoder<Impl>>().encoder},
+      _shares{Impl::kSharedTable && data.shared} {}
 
   void FinalizeCompress();
 
  private:
+  using Base::_frames;
+  using Base::_out;
+  using Base::_rows;
+  using Base::_target;
+
   static constexpr uint64_t kEncodeExpansion = 2;
   static constexpr uint64_t kEncodeSlack = 8;
 
-  fsst::Encoder<Impl> _codec;
+  fsst::Encoder<Impl>& _codec;
+  bool _shares;
   std::vector<uint32_t> _lcp_stream;
 };
 
-template<typename Impl>
-void CompressionState<Impl>::FinalizeCompress() {
-  if (_rows.SegmentShape() == Shape::Dictionary) {
-    _rows.Sort(_sort);
-  }
+template<typename Impl, typename Rows>
+void CompressionState<Impl, Rows>::FinalizeCompress() {
+  this->Sort();
   const auto lengths = _rows.Lengths();
   const auto rows = _rows.View();
   const auto entries = rows.entries;
@@ -128,9 +138,9 @@ void CompressionState<Impl>::FinalizeCompress() {
   _lcp_stream.resize(
     duckdb::BitpackingPrimitives::RoundUpToAlgorithmGroupSize(EntryCount(rows)),
     0);
-  const auto symtab = _codec.SymbolTable();
-  RecordRatio(_history[static_cast<size_t>(_rows.SegmentShape())], rows.raw,
-              data.Size() + symtab.size(), _target);
+  const auto table = _codec.SymbolTable();
+  const auto symtab = _shares ? std::string_view{} : table;
+  RecordRatio(this->History(), rows.raw, data.Size() + symtab.size(), _target);
   _rows.Write(
     {
       .codec = kCodec,
@@ -139,6 +149,7 @@ void CompressionState<Impl>::FinalizeCompress() {
       .lcps = _lcp_stream,
       .max_lcp = max_lcp,
       .symtab = symtab,
+      .shared = _shares ? table : std::string_view{},
     },
     *_out);
 }

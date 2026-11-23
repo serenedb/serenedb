@@ -36,9 +36,8 @@ namespace irs::codecs {
 
 inline constexpr CodecSet kCodesGroup =
   CodecSet{}
-    .set(std::to_underlying(CodecType::Ffor))
-    .set(std::to_underlying(CodecType::DeltaFfor))
-    .set(std::to_underlying(CodecType::RleFfor));
+    .set(std::to_underlying(CodecType::Bitpacking))
+    .set(std::to_underlying(CodecType::Rle));
 
 constexpr bool CodesCodec(CodecType type) noexcept {
   const auto index = std::to_underlying(type);
@@ -60,6 +59,7 @@ inline constexpr size_t kDictionaryFrameBytes = 16 * 1024;
 inline constexpr size_t kZstdDictionaryFrameBytes = 32 * 1024;
 inline constexpr size_t kMaxDictionaryBytes = 64 * 1024;
 inline constexpr uint32_t kChainRestart = 16;
+inline constexpr uint32_t kMeanChainWalk = 4;
 inline constexpr duckdb::idx_t kGroup =
   duckdb::BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
 
@@ -72,8 +72,8 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   |   Header, 72 bytes                           |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   codec of the row codes, level, bit widths,         |
+|   counts, section offsets, flags, decoded size       |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -90,12 +90,13 @@ kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 |                      Dictionary                      |
 |   +----------------------------------------------+   |
-|   |   packed bytes[dictionary_size]              |   |
+|   |   packed bytes[symtab_size]                  |   |
 |   +----------------------------------------------+   |
 |   trained on the frames of this segment and          |
 |   packed by the leaf (lz4 for zstd, whose unpacking  |
-|   is slower), or as is when that is not smaller:     |
-|   symtab_size bytes; empty unless flags is Local     |
+|   is slower), or as is when that is not smaller;     |
+|   dictionary_size bytes once unpacked; empty         |
+|   unless flags is Local                              |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
@@ -118,8 +119,8 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   |   Header, 72 bytes                           |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   codec of the row codes, level, bit widths,         |
+|   counts, section offsets, flags, decoded size       |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -143,12 +144,13 @@ kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 |                      Dictionary                      |
 |   +----------------------------------------------+   |
-|   |   packed bytes[dictionary_size]              |   |
+|   |   packed bytes[symtab_size]                  |   |
 |   +----------------------------------------------+   |
 |   trained on the frames of this segment and          |
 |   packed by the leaf (lz4 for zstd, whose unpacking  |
-|   is slower), or as is when that is not smaller:     |
-|   symtab_size bytes; empty unless flags is Local     |
+|   is slower), or as is when that is not smaller;     |
+|   dictionary_size bytes once unpacked; empty         |
+|   unless flags is Local                              |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |

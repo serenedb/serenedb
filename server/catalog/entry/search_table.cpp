@@ -112,13 +112,13 @@ using Constraints = duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>;
 void RefreshTypeNames(duckdb::CatalogTransaction transaction,
                       duckdb::Catalog& catalog,
                       duckdb::LogicalDependencyList& dependencies) {
-  const duckdb::IdentifierEquality same_name{catalog.IsCaseSensitive()};
   duckdb::LogicalDependencyList current;
   for (auto dependency : dependencies.Set()) {
     if (dependency.oid &&
         dependency.entry.type == duckdb::CatalogType::TYPE_ENTRY &&
         (dependency.catalog.empty() ||
-         same_name(dependency.catalog, catalog.GetName()))) {
+         dependency.catalog.GetIdentifierName() ==
+           catalog.GetName().GetIdentifierName())) {
       if (auto subject = catalog.Cast<BaseCatalog>().LookupOid(
             transaction, dependency.oid)) {
         dependency.entry.name = subject->name;
@@ -506,6 +506,11 @@ void AppendIResearchBlockRows(
     info.block_id = INVALID_BLOCK;
     info.block_offset = meta.file_offset;
     info.segment_info = absl::StrCat("byte_size: ", meta.byte_size);
+    if (meta.shared_size != 0) {
+      absl::StrAppend(&info.segment_info,
+                      ", shared_offset: ", meta.shared_offset,
+                      ", shared_size: ", meta.shared_size);
+    }
     if (read && meta.byte_size != 0 && meta.codec &&
         meta.codec->decompression->get_segment_info) {
       const auto opened = node.OpenSegment(block, *read);
@@ -634,6 +639,11 @@ duckdb::optional_idx SearchTableEntry::GetDataVersion(
   return SessionOf(context, catalog).SearchTxn().PlanVersion(*_storage);
 }
 
+duckdb::optional_idx SearchTableEntry::GetLayoutVersion(
+  duckdb::ClientContext& context) const {
+  return SessionOf(context, catalog).SearchTxn().LayoutVersion(*_storage);
+}
+
 void SearchTableEntry::Rollback(duckdb::CatalogEntry& prev_entry) {
   if (CreatedObject(prev_entry)) {
     OnDrop();
@@ -650,14 +660,11 @@ bool SearchTableEntry::PatchesColumns(
     return false;
   }
   const auto config = _storage->Config();
-  if (config && config->HasExpressionKeys()) {
-    return false;
-  }
   return absl::c_all_of(columns, [&](duckdb::PhysicalIndex index) {
     const auto& column = list.GetColumn(index);
     const auto field = connector::TableColumnId(column);
     return irs::ColumnPatch::Patchable(column.Type()) &&
-           !(config && config->FindColumnInfo(field)) &&
+           !(config && config->ReadsColumn(field)) &&
            absl::c_none_of(_keys, [&](const search::KeySpec& spec) {
              return absl::c_contains(spec.key.columns, field);
            });
@@ -882,13 +889,6 @@ bool IsNullConstant(duckdb::ClientContext& context,
          value.IsNull();
 }
 
-duckdb::shared_ptr<duckdb::Binder> SchemaBinder(
-  duckdb::ClientContext& context, const duckdb::TableCatalogEntry& table) {
-  auto binder = duckdb::Binder::CreateBinder(context);
-  binder->SetSearchPath(table.catalog, table.ParentSchema(context).name);
-  return binder;
-}
-
 bool IsNotNullOn(const duckdb::Constraint& constraint,
                  duckdb::LogicalIndex column) {
   return constraint.type == duckdb::ConstraintType::NOT_NULL &&
@@ -917,7 +917,8 @@ bool ConstraintUsesColumn(duckdb::ClientContext& context,
       return IsNotNullOn(constraint, column);
     case duckdb::ConstraintType::CHECK:
       return !columns.GetColumn(column).Generated() &&
-             SchemaBinder(context, table)
+             duckdb::Binder::CreateTableBinder(context,
+                                               table.ParentSchema(context))
                ->BindConstraint(constraint, table.name, columns)
                ->Cast<duckdb::BoundCheckConstraint>()
                .bound_columns.contains(columns.LogicalToPhysical(column));
@@ -1239,9 +1240,10 @@ SearchTableEntry::AddVerifiedConstraint(duckdb::ClientContext& context,
   if (!IsReplay(info)) {
     altered->BeginSchemaChange(context);
     altered->VerifyExistingRows(
-      context, *SchemaBinder(context, *this)
-                  ->BindConstraint(*altered->GetConstraints().back(), name,
-                                   altered->_columns));
+      context,
+      *duckdb::Binder::CreateTableBinder(context, ParentSchema(context))
+         ->BindConstraint(*altered->GetConstraints().back(), name,
+                          altered->_columns));
     altered->AdoptAsWritten(context);
   }
   return altered;
@@ -1544,7 +1546,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterAddColumn(
   if (info.if_column_not_exists && ColumnExists(column.Name())) {
     return nullptr;
   }
-  SchemaBinder(context, *this)->BindLogicalType(column.TypeMutable());
   if (!column.CatalogOid()) {
     column.SetCatalogOid(UnusedColumnOid());
   }
@@ -1623,8 +1624,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterColumnType(
   duckdb::ClientContext& context, duckdb::ChangeColumnTypeInfo& info) {
   RequireTopLevelColumn(info.column_path,
                         "Changing the type of a nested field");
-  auto binder = SchemaBinder(context, *this);
-  binder->BindLogicalType(info.target_type);
+  auto binder =
+    duckdb::Binder::CreateTableBinder(context, ParentSchema(context));
   const auto changed = GetColumnIndex(info.column_path[0]);
   RequireRetypable(context, *this, changed);
   auto conversion = BindConversion(*binder, context, info);

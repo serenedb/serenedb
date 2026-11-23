@@ -98,15 +98,6 @@ void Widen(const uint8_t* in, size_t n, uint8_t stored, U* out) noexcept {
                            [&]<typename S> { WidenAs<U, S>(in, n, out); });
 }
 
-inline void Shuffle(const uint8_t* in, size_t n, uint8_t stored,
-                    uint8_t* out) noexcept {
-  for (size_t i = 0; i < n; ++i) {
-    for (uint8_t b = 0; b < stored; ++b) {
-      out[b * n + i] = in[i * stored + b];
-    }
-  }
-}
-
 inline uint64_t ShuffledItem(const uint8_t* in, size_t n, uint8_t stored,
                              size_t at) noexcept {
   uint64_t v = 0;
@@ -170,6 +161,96 @@ inline U8x16 Bytes32Lo(U8x16 a, U8x16 b) noexcept {
 inline U8x16 Bytes32Hi(U8x16 a, U8x16 b) noexcept {
   return __builtin_shufflevector(a, b, 8, 9, 10, 11, 24, 25, 26, 27, 12, 13, 14,
                                  15, 28, 29, 30, 31);
+}
+
+inline U8x16 Bytes16(const uint8_t* in) noexcept {
+  U8x16 v;
+  std::memcpy(&v, in, sizeof(v));
+  return v;
+}
+
+inline U8x16 EvenBytes(U8x16 a, U8x16 b) noexcept {
+  return __builtin_shufflevector(a, b, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20,
+                                 22, 24, 26, 28, 30);
+}
+
+inline U8x16 OddBytes(U8x16 a, U8x16 b) noexcept {
+  return __builtin_shufflevector(a, b, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21,
+                                 23, 25, 27, 29, 31);
+}
+
+inline size_t Shuffle2(const uint8_t* in, size_t n, uint8_t* out) noexcept {
+  size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    const auto a = Bytes16(in + 2 * i);
+    const auto b = Bytes16(in + 2 * i + 16);
+    Put(out, i, EvenBytes(a, b));
+    Put(out, n + i, OddBytes(a, b));
+  }
+  return i;
+}
+
+inline size_t Shuffle4(const uint8_t* in, size_t n, uint8_t* out) noexcept {
+  size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    const auto* row = in + 4 * i;
+    const auto even_lo = EvenBytes(Bytes16(row), Bytes16(row + 16));
+    const auto odd_lo = OddBytes(Bytes16(row), Bytes16(row + 16));
+    const auto even_hi = EvenBytes(Bytes16(row + 32), Bytes16(row + 48));
+    const auto odd_hi = OddBytes(Bytes16(row + 32), Bytes16(row + 48));
+    Put(out, i, EvenBytes(even_lo, even_hi));
+    Put(out, n + i, EvenBytes(odd_lo, odd_hi));
+    Put(out, 2 * n + i, OddBytes(even_lo, even_hi));
+    Put(out, 3 * n + i, OddBytes(odd_lo, odd_hi));
+  }
+  return i;
+}
+
+inline size_t Shuffle8(const uint8_t* in, size_t n, uint8_t* out) noexcept {
+  size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    const auto* row = in + 8 * i;
+    U8x16 even[4];
+    U8x16 odd[4];
+    for (size_t p = 0; p < 4; ++p) {
+      const auto a = Bytes16(row + 32 * p);
+      const auto b = Bytes16(row + 32 * p + 16);
+      even[p] = EvenBytes(a, b);
+      odd[p] = OddBytes(a, b);
+    }
+    const U8x16 pairs[8] = {
+      EvenBytes(even[0], even[1]), EvenBytes(even[2], even[3]),
+      EvenBytes(odd[0], odd[1]),   EvenBytes(odd[2], odd[3]),
+      OddBytes(even[0], even[1]),  OddBytes(even[2], even[3]),
+      OddBytes(odd[0], odd[1]),    OddBytes(odd[2], odd[3]),
+    };
+    for (size_t b = 0; b < 4; ++b) {
+      Put(out, b * n + i, EvenBytes(pairs[2 * b], pairs[2 * b + 1]));
+      Put(out, (b + 4) * n + i, OddBytes(pairs[2 * b], pairs[2 * b + 1]));
+    }
+  }
+  return i;
+}
+
+inline void Shuffle(const uint8_t* in, size_t n, uint8_t stored,
+                    uint8_t* out) noexcept {
+  size_t done = 0;
+  switch (stored) {
+    case 2:
+      done = Shuffle2(in, n, out);
+      break;
+    case 4:
+      done = Shuffle4(in, n, out);
+      break;
+    case 8:
+      done = Shuffle8(in, n, out);
+      break;
+  }
+  for (size_t i = done; i < n; ++i) {
+    for (uint8_t b = 0; b < stored; ++b) {
+      out[b * n + i] = in[i * stored + b];
+    }
+  }
 }
 
 inline size_t Unshuffle2(const uint8_t* in, size_t n, uint8_t* out) noexcept {
@@ -261,6 +342,63 @@ void WidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
     stored, [&]<typename S> { WidenAddAs<U, S>(in, n, base, out); });
 }
 
+template<typename U, typename S>
+void PutWidened(U8x16 items, U base, U* out) noexcept {
+  using Stored = S __attribute__((vector_size(16)));
+  using Wide = U __attribute__((vector_size(16 / sizeof(S) * sizeof(U))));
+  const Wide wide =
+    __builtin_convertvector(std::bit_cast<Stored>(items), Wide) + base;
+  std::memcpy(out, &wide, sizeof(wide));
+}
+
+template<typename U>
+size_t UnshuffleWidenAdd2(const uint8_t* in, size_t n, U base,
+                          U* out) noexcept {
+  size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    const auto a = Lane(in, n, 0, i);
+    const auto b = Lane(in, n, 1, i);
+    PutWidened<U, uint16_t>(Bytes8Lo(a, b), base, out + i);
+    PutWidened<U, uint16_t>(Bytes8Hi(a, b), base, out + i + 8);
+  }
+  return i;
+}
+
+template<typename U>
+size_t UnshuffleWidenAdd4(const uint8_t* in, size_t n, U base,
+                          U* out) noexcept {
+  size_t i = 0;
+  for (; i + 16 <= n; i += 16) {
+    const auto ab_lo = Bytes8Lo(Lane(in, n, 0, i), Lane(in, n, 1, i));
+    const auto ab_hi = Bytes8Hi(Lane(in, n, 0, i), Lane(in, n, 1, i));
+    const auto cd_lo = Bytes8Lo(Lane(in, n, 2, i), Lane(in, n, 3, i));
+    const auto cd_hi = Bytes8Hi(Lane(in, n, 2, i), Lane(in, n, 3, i));
+    PutWidened<U, uint32_t>(Bytes16Lo(ab_lo, cd_lo), base, out + i);
+    PutWidened<U, uint32_t>(Bytes16Hi(ab_lo, cd_lo), base, out + i + 4);
+    PutWidened<U, uint32_t>(Bytes16Lo(ab_hi, cd_hi), base, out + i + 8);
+    PutWidened<U, uint32_t>(Bytes16Hi(ab_hi, cd_hi), base, out + i + 12);
+  }
+  return i;
+}
+
+template<typename U>
+void UnshuffleWidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
+                       U* out) noexcept {
+  SDB_ASSERT(stored < sizeof(U));
+  size_t done = 0;
+  if constexpr (sizeof(U) > 2) {
+    if (stored == 2) {
+      done = UnshuffleWidenAdd2(in, n, base, out);
+    } else if (stored == 4) {
+      done = UnshuffleWidenAdd4(in, n, base, out);
+    }
+  }
+  for (size_t i = done; i < n; ++i) {
+    out[i] =
+      static_cast<U>(static_cast<U>(ShuffledItem(in, n, stored, i)) + base);
+  }
+}
+
 #ifdef __AVX2__
 template<typename S>
 __m256i WidenLanes(const uint8_t* in) noexcept {
@@ -339,7 +477,7 @@ U OddInverse(U odd) noexcept {
 }
 
 template<bool kSigned, typename U>
-void DivideExact(U* v, size_t n, U divisor) noexcept {
+void DivideExact(const U* in, size_t n, U divisor, U* out) noexcept {
   using S = std::make_signed_t<U>;
   using W = WideWord<U>;
   const auto shift = std::countr_zero(divisor);
@@ -347,11 +485,11 @@ void DivideExact(U* v, size_t n, U divisor) noexcept {
   for (size_t i = 0; i < n; ++i) {
     U x;
     if constexpr (kSigned) {
-      x = static_cast<U>(static_cast<S>(v[i]) >> shift);
+      x = static_cast<U>(static_cast<S>(in[i]) >> shift);
     } else {
-      x = static_cast<U>(v[i] >> shift);
+      x = static_cast<U>(in[i] >> shift);
     }
-    v[i] = static_cast<U>(static_cast<W>(x) * inverse);
+    out[i] = static_cast<U>(static_cast<W>(x) * inverse);
   }
 }
 
@@ -376,6 +514,13 @@ inline constexpr unsigned kMaxBits = 8 * sizeof(U);
 
 constexpr size_t PackedBytes(unsigned bits) noexcept {
   return kBlockValues / 8 * bits;
+}
+
+template<typename U>
+constexpr size_t PackedBytes(unsigned bits, size_t values) noexcept {
+  constexpr size_t kWordBits = 8 * sizeof(LaneWord<U>);
+  const size_t rows = (values + kLanes<U> - 1) / kLanes<U>;
+  return (rows * bits + kWordBits - 1) / kWordBits * (kBlockValues / 8);
 }
 
 template<typename U, unsigned W, unsigned J>
@@ -413,7 +558,11 @@ IRS_FORCE_INLINE void PackLane(const U* IRS_RESTRICT in,
 template<typename U, unsigned W>
 void PackBlock(const U* IRS_RESTRICT in, LaneWord<U>* IRS_RESTRICT out,
                U base) noexcept {
-  if constexpr (W != 0) {
+  if constexpr (W == 8 * sizeof(LaneWord<U>)) {
+    for (unsigned i = 0; i < kBlockValues; ++i) {
+      out[i] = static_cast<LaneWord<U>>(static_cast<U>(in[i] - base));
+    }
+  } else if constexpr (W != 0) {
     constexpr unsigned kRows = 8 * sizeof(LaneWord<U>);
     for (unsigned l = 0; l < kLanes<U>; ++l) {
       PackLane<U, W>(in, out, base, l,
@@ -451,6 +600,10 @@ void UnpackBlock(const LaneWord<U>* IRS_RESTRICT in, U* IRS_RESTRICT out,
                  U base) noexcept {
   if constexpr (W == 0) {
     std::fill_n(out, kBlockValues, base);
+  } else if constexpr (W == 8 * sizeof(LaneWord<U>)) {
+    for (unsigned i = 0; i < kBlockValues; ++i) {
+      out[i] = static_cast<U>(in[i] + base);
+    }
   } else {
     constexpr unsigned kRows = 8 * sizeof(LaneWord<U>);
     for (unsigned l = 0; l < kLanes<U>; ++l) {
@@ -461,8 +614,8 @@ void UnpackBlock(const LaneWord<U>* IRS_RESTRICT in, U* IRS_RESTRICT out,
 }
 
 template<typename U>
-U UnpackValue(const uint8_t* packed, unsigned bits, uint32_t index,
-              U base) noexcept {
+IRS_FORCE_INLINE U UnpackValue(const uint8_t* packed, unsigned bits,
+                               uint32_t index, U base) noexcept {
   using Word = LaneWord<U>;
   constexpr unsigned kWordBits = 8 * sizeof(Word);
   if (bits == 0) {
@@ -472,11 +625,14 @@ U UnpackValue(const uint8_t* packed, unsigned bits, uint32_t index,
   const auto* at = packed + (size_t{bit / kWordBits} * kLanes<U> +
                              index % kLanes<U>)*sizeof(Word);
   const unsigned shift = bit % kWordBits;
-  Word v = duckdb::Load<Word>(at) >> shift;
-  if (shift + bits > kWordBits) {
-    v |= duckdb::Load<Word>(at + kLanes<U> * sizeof(Word))
-         << (kWordBits - shift);
-  }
+  const bool split = shift + bits > kWordBits;
+  const auto low = duckdb::Load<Word>(at);
+  const auto high =
+    duckdb::Load<Word>(at + (split ? kLanes<U> * sizeof(Word) : 0));
+  const auto carried =
+    static_cast<Word>(static_cast<Word>(high << 1) << (kWordBits - 1 - shift));
+  const auto v = static_cast<Word>(
+    (low >> shift) | (carried & static_cast<Word>(-static_cast<Word>(split))));
   const Word mask =
     bits == kWordBits ? ~Word{0} : static_cast<Word>((Word{1} << bits) - 1);
   return static_cast<U>(static_cast<U>(v & mask) + base);

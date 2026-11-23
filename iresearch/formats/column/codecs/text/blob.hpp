@@ -31,7 +31,6 @@
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
-#include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <optional>
@@ -42,124 +41,25 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/bytes/segment_dictionary.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/formats/column/codecs/text/frame_spans.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
-#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::text::blob {
 
-inline constexpr size_t kSampleFrames = 8;
 inline constexpr size_t kProbeFrames = 1;
 inline constexpr size_t kLocalMinFrames = 8;
-inline constexpr uint64_t kInflateByteCost = 6;
-inline constexpr uint64_t kFrameCopyByteCost = 2;
-inline constexpr uint64_t kFrameEntryCost = 72;
-inline constexpr uint64_t kPrefixEntryCost = 16;
-inline constexpr uint64_t kHitByteCost = 2;
-inline constexpr uint64_t kHitCost = 128;
-
-struct FrameShape {
-  size_t frame;
-  size_t first;
-};
-
-template<typename Codec>
-constexpr FrameShape FrameShapeOf(FrameDictionary layout) noexcept {
-  if (layout == FrameDictionary::None) {
-    return {kFrameRawBytes, 0};
-  }
-  if constexpr (Codec::kCodec == ByteCodec::Zstd) {
-    return {kZstdDictionaryFrameBytes, kFrameDictionaryBytes};
-  } else {
-    return {kDictionaryFrameBytes, kFrameDictionaryBytes};
-  }
-}
-
-class FrameSpans {
- public:
-  struct Span {
-    uint64_t first = 0;
-    uint64_t end = 0;
-    uint64_t offset = 0;
-    uint64_t raw = 0;
-  };
-
-  void Reset(FrameShape shape) noexcept {
-    _shape = shape;
-    _spans.clear();
-    _open = {};
-  }
-
-  IRS_FORCE_INLINE bool Add(uint64_t entry, uint64_t size) {
-    const auto limit =
-      _spans.empty() && _shape.first != 0 ? _shape.first : _shape.frame;
-    const bool closed = _open.end != _open.first && _open.raw + size > limit;
-    if (closed) {
-      _spans.push_back(_open);
-      _open = {.offset = _open.offset + _open.raw};
-    }
-    if (_open.end == _open.first) {
-      _open.first = entry;
-    }
-    _open.end = entry + 1;
-    _open.raw += size;
-    return closed;
-  }
-
-  void Close() {
-    if (Open()) {
-      _spans.push_back(_open);
-    }
-    _open = {};
-  }
-
-  bool Open() const noexcept { return _open.end != _open.first; }
-
-  FrameShape Shape() const noexcept { return _shape; }
-
-  size_t size() const noexcept { return _spans.size(); }
-
-  bool empty() const noexcept { return _spans.empty(); }
-
-  const Span& operator[](size_t i) const noexcept { return _spans[i]; }
-
-  std::span<const Span> All() const noexcept { return _spans; }
-
-  template<typename Offset, typename Visit>
-  void Sample(size_t count, Offset&& offset, Visit&& visit) const {
-    const size_t rest = _spans.size() - 1;
-    if (rest <= count) {
-      for (size_t i = 1; i < _spans.size(); ++i) {
-        visit(i);
-      }
-      return;
-    }
-    size_t last = 0;
-    for (size_t j = 0; j < count; ++j) {
-      const auto i =
-        1 + static_cast<size_t>((static_cast<double>(j) + offset(j)) *
-                                static_cast<double>(rest) /
-                                static_cast<double>(count));
-      if (i != last) {
-        last = i;
-        visit(i);
-      }
-    }
-  }
-
- private:
-  FrameShape _shape{kFrameRawBytes, 0};
-  Span _open;
-  std::vector<Span> _spans;
-};
+inline constexpr uint64_t kLocalDictionaryPacking = 2;
 
 inline uint64_t Scale(uint64_t sampled, uint64_t sampled_raw,
                       uint64_t raw) noexcept {
@@ -168,6 +68,17 @@ inline uint64_t Scale(uint64_t sampled, uint64_t sampled_raw,
            : static_cast<uint64_t>(static_cast<double>(sampled) *
                                    static_cast<double>(raw) /
                                    static_cast<double>(sampled_raw));
+}
+
+template<typename Compressor>
+void ResetCompressor(std::optional<Compressor>& codec, uint8_t& held,
+                     uint8_t level) {
+  if (!codec || held != level) {
+    codec.emplace(level);
+    held = level;
+  } else {
+    codec->Clear();
+  }
 }
 
 template<typename Codec>
@@ -182,102 +93,16 @@ size_t CompressedSize(std::string_view raw, std::string& scratch,
   return n;
 }
 
-template<typename Codec>
-class SizeEstimator {
- public:
-  static constexpr ByteCodec kCodec = Codec::kCodec;
-  static_assert(!Sorted(kCodec));
-
-  uint64_t EstimateSize(const Profile& p, std::string_view bytes,
-                        const FrameSpans& spans, uint64_t codes_bytes,
-                        uint8_t level, FrameDictionary layout, uint64_t begin) {
-    if (!_codec || _level != level) {
-      _codec.emplace(level);
-      _level = level;
-    } else {
-      _codec->Clear();
-    }
-    uint64_t data = 0;
-    if (!spans.empty()) {
-      const bool whole =
-        layout == FrameDictionary::Local && spans.size() >= kLocalMinFrames;
-      SDB_ASSERT(!whole || bytes.size() == p.raw);
-      const auto frame = [&](size_t i) {
-        return whole ? bytes.substr(spans[i].offset, spans[i].raw)
-                     : Assemble(p, spans[i].first, spans[i].end);
-      };
-      bool trained = false;
-      if (whole) {
-        _sizes.clear();
-        for (const auto& span : spans.All()) {
-          _sizes.push_back(span.raw);
-        }
-        trained = _codec->Train(bytes, _sizes);
-      }
-      if (trained) {
-        data += _codec->Stored().size();
-      }
-      const auto first = frame(0);
-      data += CompressedSize<Codec>(first, _scratch, *_codec);
-      if (!trained && spans.Shape().first != 0 && !first.empty() &&
-          spans.size() > 1) {
-        _codec->Use(first);
-      }
-      uint64_t sampled_raw = 0;
-      uint64_t sampled = 0;
-      spans.Sample(
-        kSampleFrames, [&](size_t j) { return Jitter(begin, j); },
-        [&](size_t i) {
-          const auto raw = frame(i);
-          sampled_raw += raw.size();
-          sampled += CompressedSize<Codec>(raw, _scratch, *_codec);
-        });
-      data += Scale(sampled, sampled_raw, p.raw - spans[0].raw);
-    }
-    const auto entry_count =
-      p.codes.size() + (p.shape == Shape::Dictionary ? 1 : 0);
-    Header h;
-    return LayOut(h, data, spans.size(), Packed(entry_count, p.max_len), 0,
-                  codes_bytes, 0);
-  }
-
- private:
-  static double Jitter(uint64_t seed, uint64_t stratum) noexcept {
-    uint64_t z = seed * 0x9E3779B97F4A7C15ULL + stratum + 1;
-    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
-    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
-    z ^= z >> 31;
-    return static_cast<double>(z >> 11) * 0x1.0p-53;
-  }
-
-  std::string_view Assemble(const Profile& p, size_t first, size_t end) {
-    _frame.clear();
-    for (auto k = first; k < end; ++k) {
-      const auto entry = EntryOf(p, k);
-      _frame.append(entry.GetData(), entry.GetSize());
-    }
-    return _frame;
-  }
-
-  std::optional<typename Codec::Compressor> _codec;
-  uint8_t _level = 0;
-  std::string _frame;
-  std::string _scratch;
-  std::vector<size_t> _sizes;
-};
-
-inline constexpr uint64_t kLocalDictionaryPacking = 2;
-
-template<typename Codec>
+template<typename Codec, typename Rows>
 class CompressionState {
  public:
   static constexpr ByteCodec kCodec = Codec::kCodec;
+  static constexpr Shape kShape = Rows::kShape;
   static_assert(!Sorted(kCodec));
 
-  CompressionState(const duckdb::LogicalType& type, DedupScratch& dedup,
-                   StringTuning& tuning)
-    : _rows{type, dedup, tuning.codes},
-      _history{tuning.history[static_cast<size_t>(kCodec)]} {}
+  CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
+    : _rows{MakeRows<Rows>(data.type, dedup, data.tuning.strings.codes)},
+      _history{data.tuning.strings.history[static_cast<size_t>(kCodec)]} {}
 
   void InitCompression(const Config& config, uint64_t first_row,
                        size_t distinct, Segment& out) {
@@ -312,7 +137,7 @@ class CompressionState {
     const auto lengths = _rows.Lengths();
     _spans.Close();
     if (_layout == FrameDictionary::Local && _spans.size() >= kLocalMinFrames) {
-      Sizes();
+      _spans.Sizes(_sizes);
       _trained = _codec->Train(_frame, _sizes);
     }
     CompressRest();
@@ -357,13 +182,12 @@ class CompressionState {
               ? SegmentDictionaryBytes(raw, Codec::kDictionaryCap) /
                   kLocalDictionaryPacking
               : 0) +
-           static_cast<uint64_t>(
-             static_cast<double>(raw - _packed) *
-             Ratio(_history[static_cast<size_t>(_rows.SegmentShape())], 1.0));
+           static_cast<uint64_t>(static_cast<double>(raw - _packed) *
+                                 Ratio(History(), 1.0));
   }
 
-  RatioHistory& History() noexcept {
-    return _history[static_cast<size_t>(_rows.SegmentShape())];
+  RatioHistory& History() const noexcept {
+    return _history[static_cast<size_t>(kShape)];
   }
 
   void Configure(uint8_t level, FrameDictionary layout) {
@@ -373,12 +197,7 @@ class CompressionState {
     _spans.Reset(FrameShapeOf<Codec>(layout));
     _counted = 0;
     _packed = 0;
-    if (!_codec || _level != level) {
-      _codec.emplace(level);
-      _level = level;
-    } else {
-      _codec->Clear();
-    }
+    ResetCompressor(_codec, _level, level);
   }
 
   FrameDictionary Flags() const noexcept {
@@ -412,13 +231,6 @@ class CompressionState {
     }
   }
 
-  void Sizes() {
-    _sizes.clear();
-    for (const auto& span : _spans.All()) {
-      _sizes.push_back(span.raw);
-    }
-  }
-
   std::string_view Slice(size_t i) const noexcept {
     return std::string_view{_frame}.substr(_spans[i].offset - _packed,
                                            _spans[i].raw);
@@ -443,12 +255,8 @@ class CompressionState {
   }
 
   bool Pays() {
-    if (!_probe || _probe_level != _level) {
-      _probe.emplace(_level);
-      _probe_level = _level;
-    }
+    ResetCompressor(_probe, _probe_level, _level);
     const auto first = Slice(0);
-    _probe->Clear();
     const auto first_plain =
       blob::CompressedSize<Codec>(first, _scratch, *_probe);
     _probe->Use(first);
@@ -477,7 +285,7 @@ class CompressionState {
     return n;
   }
 
-  SegmentRows _rows;
+  Rows _rows;
   RatioHistory* _history;
   std::optional<typename Codec::Compressor> _codec;
   std::optional<typename Codec::Compressor> _probe;
@@ -544,187 +352,6 @@ class FrameInflater {
   std::optional<typename Codec::Decompressor> _decoder;
   bool _ready = false;
   uint64_t _loaded = 0;
-};
-
-template<typename Codec>
-struct Fetch;
-
-template<typename Codec>
-struct Scan {
-  static constexpr ByteCodec kCodec = Codec::kCodec;
-  using Fetch = blob::Fetch<Codec>;
-
-  template<typename Frames>
-  Scan(const ColumnSegment&, const Frames&) {}
-
-  template<typename Frames>
-  void DecodeFrame(Frames& s, uint32_t f, char* out) {
-    Inflate(s, f, out);
-    Entries(s, f, [&](uint32_t e, uint64_t off, uint32_t len) {
-      s.values[e] = duckdb::string_t{out + off, len};
-    });
-  }
-
-  template<typename Frames>
-  void Stream(Frames& s, uint32_t f, char* out, uint32_t* ends) {
-    Inflate(s, f, out);
-    Entries(s, f, [&](uint32_t, uint64_t off, uint32_t len) {
-      *ends++ = static_cast<uint32_t>(off + len);
-    });
-  }
-
-  template<typename Frames>
-  void Inflate(Frames& s, uint32_t f, char* out) {
-    const auto& m = s.frames[f];
-    const auto got = inflater.Inflate(s.header, s.base, m, f, out, m.raw_len);
-    SDB_ENSURE(got.size() == m.raw_len, "col codec: corrupted frame");
-    if (got.data() != out) {
-      std::memcpy(out, got.data(), m.raw_len);
-    }
-  }
-
-  template<typename Frames, typename Visit>
-  static void Entries(Frames& s, uint32_t f, Visit&& visit) {
-    const auto& m = s.frames[f];
-    const auto end = s.FrameEnd(f);
-    uint64_t off = 0;
-    for (uint32_t e = m.first_entry; e < end; ++e) {
-      const auto len = s.length_reader.At(e);
-      SDB_ENSURE(off + len <= m.raw_len, "col codec: corrupted entry lengths");
-      visit(e, off, len);
-      off += len;
-    }
-    SDB_ENSURE(off == m.raw_len, "col codec: corrupted entry lengths");
-  }
-
-  template<typename Frames, typename Entry>
-  void Ensure(Frames& s, duckdb::idx_t count, Entry entry_at, uint32_t,
-              uint32_t) {
-    s.EnsureEach(count, entry_at);
-  }
-
-  template<typename Frames, typename Entry>
-  void Select(Frames& s, duckdb::Vector& result, duckdb::idx_t result_offset,
-              duckdb::idx_t count, Entry entry_at, uint32_t window_first,
-              uint32_t window_end) {
-    if constexpr (kCodec == ByteCodec::Lz4) {
-      SelectFrames(s, result, result_offset, count, entry_at, window_first,
-                   window_end);
-    } else {
-      s.EnsureEach(count, entry_at);
-      s.WriteRefs(result, result_offset, count, entry_at);
-    }
-  }
-
-  template<typename Frames, typename Entry>
-  void SelectFrames(Frames& s, duckdb::Vector& result,
-                    duckdb::idx_t result_offset, duckdb::idx_t count,
-                    Entry entry_at, uint32_t window_first,
-                    uint32_t window_end) {
-    auto writer = duckdb::FlatVector::Writer<duckdb::string_t>(result, count,
-                                                               result_offset);
-    auto& arena = duckdb::StringVector::GetStringAllocator(result);
-    bool referenced = false;
-    uint32_t f = kNoFrame;
-    for (duckdb::idx_t i = 0; i < count;) {
-      auto e = static_cast<uint32_t>(entry_at(i));
-      if (f == kNoFrame || e < s.frames[f].first_entry || e >= s.FrameEnd(f)) {
-        f = s.FrameOf(e);
-      }
-      const auto first = s.frames[f].first_entry;
-      const auto end = s.FrameEnd(f);
-      auto j = i + 1;
-      for (; j < count; ++j) {
-        const auto next = static_cast<uint32_t>(entry_at(j));
-        if (next < e || next >= end) {
-          break;
-        }
-        e = next;
-      }
-      if (!s.decoded[f]) {
-        const uint64_t rows = end - first;
-        const uint64_t prefix = e - first + 1;
-        const uint64_t hits = j - i;
-        const uint64_t entry_bytes = s.frames[f].raw_len / rows;
-        const uint64_t frame_byte_cost =
-          kInflateByteCost +
-          (s.header.flags == FrameDictionary::None ? 0 : kFrameCopyByteCost);
-        const bool done =
-          end <= window_end ||
-          count * uint64_t{end - window_end} < window_end - window_first;
-        if (done &&
-            prefix * (entry_bytes * kInflateByteCost + kPrefixEntryCost) +
-                hits * (entry_bytes * kHitByteCost + kHitCost) <=
-              rows * (entry_bytes * frame_byte_cost + kFrameEntryCost)) {
-          EmitRows(s, f, i, j, entry_at, arena, writer);
-          i = j;
-          continue;
-        }
-        s.DecodeFrame(f);
-      }
-      referenced = true;
-      for (; i < j; ++i) {
-        writer.WriteStringRef(s.values[entry_at(i)]);
-      }
-    }
-    if (referenced) {
-      s.ReferenceHeap(result);
-    }
-  }
-
-  template<typename Frames, typename Entry, typename Writer>
-  void EmitRows(Frames& s, uint32_t f, duckdb::idx_t i, duckdb::idx_t j,
-                Entry entry_at, duckdb::ArenaAllocator& arena, Writer& writer) {
-    const auto& m = s.frames[f];
-    const auto first = m.first_entry;
-    const auto prefix = static_cast<uint32_t>(entry_at(j - 1)) - first + 1;
-    if (ends.size() < prefix) {
-      ends.resize(prefix);
-    }
-    s.length_reader.Read(first, prefix, ends.data());
-    uint64_t end = 0;
-    for (uint32_t k = 0; k < prefix; ++k) {
-      end += ends[k];
-      ends[k] = static_cast<uint32_t>(end);
-    }
-    SDB_ENSURE(end <= m.raw_len, "col codec: corrupted entry lengths");
-    if (raw.size() < m.raw_len) {
-      raw.resize_and_overwrite(m.raw_len, [](char*, size_t n) { return n; });
-    }
-    const auto got = inflater.Inflate(s.header, s.base, m, f, raw.data(), end);
-    SDB_ENSURE(got.size() >= end, "col codec: corrupted frame");
-    const auto span = [&](duckdb::idx_t k) {
-      const auto at = static_cast<uint32_t>(entry_at(k)) - first;
-      const auto begin = at == 0 ? 0 : ends[at - 1];
-      return std::string_view{got.data() + begin, ends[at] - begin};
-    };
-    uint64_t bytes = 0;
-    for (auto k = i; k < j; ++k) {
-      const auto len = span(k).size();
-      bytes += len > duckdb::string_t::INLINE_LENGTH ? len : 0;
-    }
-    auto* out =
-      bytes != 0 ? duckdb::char_ptr_cast(arena.Allocate(bytes)) : nullptr;
-    for (auto k = i; k < j; ++k) {
-      const auto value = span(k);
-      const auto len = static_cast<uint32_t>(value.size());
-      if (len <= duckdb::string_t::INLINE_LENGTH) {
-        writer.WriteStringRef(duckdb::string_t{value.data(), len});
-        continue;
-      }
-      std::memcpy(out, value.data(), len);
-      writer.WriteStringRef(duckdb::string_t{out, len});
-      out += len;
-    }
-  }
-
-  uint64_t HeapBytes() const noexcept { return 0; }
-
-  FrameInflater<Codec> inflater;
-  [[no_unique_address]] utils::Need<Codec::kCodec == ByteCodec::Lz4,
-                                    std::string> raw;
-  [[no_unique_address]] utils::Need<Codec::kCodec == ByteCodec::Lz4,
-                                    std::vector<uint32_t>> ends;
 };
 
 template<typename Codec>
@@ -816,6 +443,72 @@ struct Fetch {
   std::vector<uint32_t> offsets;
   const char* frame_data = nullptr;
   uint64_t decoded_total = 0;
+  FrameInflater<Codec> inflater;
+};
+
+template<typename Codec>
+struct Scan {
+  static constexpr ByteCodec kCodec = Codec::kCodec;
+  using Fetch = blob::Fetch<Codec>;
+
+  template<typename Frames>
+  Scan(const ColumnSegment&, const Frames&) {}
+
+  template<typename Frames>
+  void DecodeFrame(Frames& s, uint32_t f, char* out) {
+    Inflate(s, f, out);
+    Entries(s, f, [&](uint32_t e, uint64_t off, uint32_t len) {
+      s.values[e] = duckdb::string_t{out + off, len};
+    });
+  }
+
+  template<typename Frames>
+  void Stream(Frames& s, uint32_t f, char* out, uint32_t* ends) {
+    Inflate(s, f, out);
+    Entries(s, f, [&](uint32_t, uint64_t off, uint32_t len) {
+      *ends++ = static_cast<uint32_t>(off + len);
+    });
+  }
+
+  template<typename Frames>
+  void Inflate(Frames& s, uint32_t f, char* out) {
+    const auto& m = s.frames[f];
+    const auto got = inflater.Inflate(s.header, s.base, m, f, out, m.raw_len);
+    SDB_ENSURE(got.size() == m.raw_len, "col codec: corrupted frame");
+    if (got.data() != out) {
+      std::memcpy(out, got.data(), m.raw_len);
+    }
+  }
+
+  template<typename Frames, typename Visit>
+  static void Entries(Frames& s, uint32_t f, Visit&& visit) {
+    const auto& m = s.frames[f];
+    const auto end = s.FrameEnd(f);
+    uint64_t off = 0;
+    for (uint32_t e = m.first_entry; e < end; ++e) {
+      const auto len = s.length_reader.At(e);
+      SDB_ENSURE(off + len <= m.raw_len, "col codec: corrupted entry lengths");
+      visit(e, off, len);
+      off += len;
+    }
+    SDB_ENSURE(off == m.raw_len, "col codec: corrupted entry lengths");
+  }
+
+  template<typename Frames, typename Entry>
+  void Ensure(Frames& s, duckdb::idx_t count, Entry entry_at, uint32_t,
+              uint32_t) {
+    s.EnsureEach(count, entry_at);
+  }
+
+  template<typename Frames, typename Entry>
+  void Select(Frames& s, duckdb::Vector& result, duckdb::idx_t result_offset,
+              duckdb::idx_t count, Entry entry_at, uint32_t, uint32_t) {
+    s.EnsureEach(count, entry_at);
+    s.WriteRefs(result, result_offset, count, entry_at);
+  }
+
+  uint64_t HeapBytes() const noexcept { return 0; }
+
   FrameInflater<Codec> inflater;
 };
 

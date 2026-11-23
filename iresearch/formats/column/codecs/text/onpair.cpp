@@ -621,10 +621,9 @@ void Codec::Export(std::string& table) const {
   }
 }
 
-void CompressionState::FinalizeCompress() {
-  if (_rows.SegmentShape() == Shape::Dictionary) {
-    _rows.Sort(_sort);
-  }
+template<typename Rows>
+void CompressionState<Rows>::FinalizeCompress() {
+  this->Sort();
   const auto lengths = _rows.Lengths();
   const auto rows = _rows.View();
   const auto entries = rows.entries;
@@ -666,8 +665,7 @@ void CompressionState::FinalizeCompress() {
     close(entries.size());
   }
   _codec.Export(_side);
-  RecordRatio(_history[static_cast<size_t>(_rows.SegmentShape())], rows.raw,
-              Written() + _side.size(), _target);
+  RecordRatio(this->History(), rows.raw, Written() + _side.size(), _target);
   _rows.Write(
     {
       .codec = kCodec,
@@ -678,9 +676,10 @@ void CompressionState::FinalizeCompress() {
     *_out);
 }
 
-void CompressionState::Pack(std::span<const duckdb::string_t> entries,
-                            std::span<const uint32_t> lengths, size_t first,
-                            size_t end, uint64_t region) {
+template<typename Rows>
+void CompressionState<Rows>::Pack(std::span<const duckdb::string_t> entries,
+                                  std::span<const uint32_t> lengths,
+                                  size_t first, size_t end, uint64_t region) {
   const auto bits = _codec.Bits();
   uint64_t count = 0;
   for (auto e = first; e < end; ++e) {
@@ -714,10 +713,10 @@ namespace irs::codecs {
 
 constinit const Codec kOnPairCodec =
   text::StringCodec<text::PlainScan<text::onpair::Scan>,
-                    text::onpair::CompressionState>();
+                    text::onpair::CompressionState<text::PlainRows>>();
 
 constinit const Codec kDictOnPairCodec =
   text::StringCodec<text::DictionaryScan<text::onpair::Scan>,
-                    text::onpair::CompressionState>();
+                    text::onpair::CompressionState<text::DictionaryRows>>();
 
 }  // namespace irs::codecs

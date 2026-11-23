@@ -197,5 +197,17 @@ auto PlanApprox(const QueryBuilder& approx, uint64_t interrogations) {
   }
 }
 
+template<typename Family, typename Ctx>
+typename Family::Result PlanConstant(const QueryBuilder& matches, score_t value,
+                                     const Ctx& ctx) {
+  using Result = typename Family::Result;
+  auto node = PlanApprox<Result>(matches, Family::Interrogations(ctx));
+  if (!node) {
+    return {};
+  }
+  return Family::template Constant<ApproxNode<Result>>(ctx, value,
+                                                       std::move(node));
+}
+
 }  // namespace detail
 }  // namespace irs

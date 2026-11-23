@@ -29,7 +29,6 @@
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/statistics/base_statistics.hpp>
-#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -37,8 +36,8 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
-#include "iresearch/formats/column/codecs/text/blob.hpp"
 #include "iresearch/formats/column/codecs/text/dedup_scratch.hpp"
+#include "iresearch/formats/column/codecs/text/frame_spans.hpp"
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 #include "iresearch/formats/column/list_ingest.hpp"
@@ -96,11 +95,8 @@ class Values final : public State {
   uint64_t TrialEntries() { return TrialRows(Shape::Dictionary).codes.size(); }
 
   bool Repeats() const noexcept {
-    return distinct.size() * kMinRepeat <= Rows() - null_count;
-  }
-
-  bool TrialRepeats() {
-    return TrialEntries() * kMinRepeat <= trial.rows - trial.nulls;
+    const uint64_t null_values = null_count != 0 ? 1 : 0;
+    return (distinct.size() + null_values) * kMinRepeat <= Rows();
   }
 
   uint64_t CodesSize(ShapeRows& rows);
@@ -110,7 +106,8 @@ class Values final : public State {
   static const blob::FrameSpans& Split(ShapeRows& rows, blob::FrameShape frame);
 
   Trial trial;
-  std::optional<Shape> shape;
+  bool shapes_measured = false;
+  bool contends[kTextShapeCount] = {};
   uint64_t null_count = 0;
   uint64_t raw = 0;
   std::vector<const duckdb::string_t*> distinct;
@@ -157,7 +154,7 @@ class Values final : public State {
 
   containers::FlatHashSet<uint32_t, Hash, Eq> _codes{0, Hash{&distinct},
                                                      Eq{&distinct}};
-  const NumericTuning& _codes_tuning;
+  const ReusePolicy& _codes_tuning;
   DedupScratch _dedup;
   ShapeRows _rows[kTextShapeCount];
   uint32_t _last_code = 0;

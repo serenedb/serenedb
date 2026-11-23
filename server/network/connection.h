@@ -46,7 +46,6 @@
 #include "network/cpu_resumer.h"
 #include "network/gate.h"
 #include "network/io_context.h"
-#include "network/listen_spec.h"
 #include "network/proxy_protocol.h"
 #include "network/socket.h"
 #include "server/utils/asio_ns.h"

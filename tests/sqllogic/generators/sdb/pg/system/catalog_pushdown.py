@@ -6,7 +6,7 @@ from sqllogic_gen import HERE, Test
 CATALOG = Path(HERE).parents[1] / "server" / "pg" / "catalog"
 COLUMNS = re.compile(r"SystemSqlColumn k(\w+)Columns\[\] = \{(.*?)\n\};", re.S)
 COLUMN = re.compile(r'\{"(\w+)", (k\w+), (\w+), \w+, (true|false), [^,]+, \d+, SystemKey::(\w+)\}')
-RELATION = re.compile(r'SystemSql k(\w+)Sql\{(?:\.oid = )?k\w+?(Table|Function),\s*'
+RELATION = re.compile(r'SystemSql k(\w+)Sql\{\s*(?:\.oid = )?k\w+?(Table|Function),\s*'
                       r'(?:\.schema = )?"(\w+)",\s*(?:\.name = )?"(\w+)"')
 TEXT = {"kName", "kText", "kChar", "kPgNodeTree", "kCharacterData", "kSqlIdentifier",
         "kYesOrNo"}

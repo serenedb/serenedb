@@ -1,0 +1,53 @@
+statement ok
+CREATE TABLE fkpu_parent (id INT PRIMARY KEY, flag INT, code TEXT UNIQUE);
+
+
+statement ok
+CREATE INDEX fkpu_parent_flag ON fkpu_parent (flag);
+
+
+statement ok
+CREATE TABLE fkpu_child (id INT PRIMARY KEY, pid INT REFERENCES fkpu_parent (id));
+
+
+statement ok
+INSERT INTO fkpu_parent VALUES (1, 0, 'a'), (2, 0, 'b');
+
+
+statement ok
+INSERT INTO fkpu_child VALUES (10, 1), (20, 2);
+
+
+statement count 1
+UPDATE fkpu_parent SET flag = 1 WHERE id = 1;
+
+
+statement count 1
+UPDATE fkpu_parent SET code = 'a' WHERE id = 1;
+
+
+statement count 1
+UPDATE fkpu_parent SET code = 'c', flag = 2 WHERE id = 2;
+
+
+query
+SELECT id, flag, code FROM fkpu_parent ORDER BY id;
+----
+id	flag	code
+1	1	a
+2	2	c
+
+
+statement error
+UPDATE fkpu_parent SET id = 3 WHERE id = 1;
+----
+db error: ERROR: update or delete on table "fkpu_parent" violates foreign key constraint "fkpu_child_pid_fkey" on table "fkpu_child"
+DETAIL: Key (id)=(1) is still referenced from table "fkpu_child".
+
+
+statement ok
+DROP TABLE fkpu_child;
+
+
+statement ok
+DROP TABLE fkpu_parent;

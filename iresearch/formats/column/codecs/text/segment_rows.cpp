@@ -64,19 +64,18 @@ bool Less(const string_t& a, const string_t& b) noexcept {
 }  // namespace
 
 uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
-                    const NumericTuning& tuning) noexcept {
+                    const ReusePolicy& reuse) noexcept {
   if (shape != Shape::Dictionary) {
     return 0;
   }
-  return tuning.reuse.calibrated
+  return reuse.calibrated
            ? static_cast<uint64_t>(
-               static_cast<double>(rows * sizeof(uint32_t)) *
-               tuning.reuse.reference)
+               static_cast<double>(rows * sizeof(uint32_t)) * reuse.reference)
            : Packed(rows, entries);
 }
 
 void CompressCodes(
-  std::span<uint32_t> codes, NumericTuning& tuning,
+  std::span<uint32_t> codes, ReusePolicy& reuse,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write) {
   if (codes.empty()) {
     write(CodecType::Auto, {});
@@ -87,7 +86,7 @@ void CompressCodes(
                    reinterpret_cast<duckdb::data_ptr_t>(codes.data()),
                    codes.size()},
     codes.size()};
-  ColumnTuning column{.reuse = tuning.reuse, .numeric = tuning.choice};
+  ColumnTuning column{.reuse = reuse};
   const auto flush = [&](const Codec& codec, duckdb::BaseStatistics, uint64_t,
                          std::string_view bytes) {
     SDB_ASSERT(CodesCodec(codec.type));
@@ -102,8 +101,7 @@ void CompressCodes(
     .min_packed_run = kPackedCodeRunRows,
   };
   Compress(CodecType::Auto, data);
-  tuning.reuse = column.reuse;
-  tuning.choice = column.numeric;
+  reuse = column.reuse;
 }
 
 uint64_t EstimateEntries(const SegmentEntries& rows,
@@ -130,12 +128,16 @@ void RecordRatio(RatioHistory& hist, uint64_t raw, uint64_t comp,
   hist.comp += comp;
 }
 
-uint64_t SegmentRows::Estimate() const noexcept {
-  return kHeaderSize + Packed(EntryCount(), _max_len) +
-         CodesBytes(_shape, _rows, _entries.size(), _codes_tuning);
+uint64_t PlainRows::Estimate() const noexcept {
+  return kHeaderSize + Packed(EntryCount(), _max_len);
 }
 
-void SegmentRows::Sort(SortScratch& scratch) {
+uint64_t DictionaryRows::Estimate() const noexcept {
+  return kHeaderSize + Packed(EntryCount(), _max_len) +
+         CodesBytes(kShape, _rows, _entries.size(), _codes_tuning);
+}
+
+void DictionaryRows::Sort(SortScratch& scratch) {
   const auto n = static_cast<uint32_t>(_entries.size());
   uint32_t common = _entries.empty() ? 0 : _entries[0].GetSize();
   for (uint32_t i = 1; i < n && common != 0; ++i) {
@@ -167,68 +169,64 @@ void SegmentRows::Sort(SortScratch& scratch) {
   }
 }
 
-void SegmentRows::Write(const EncodedFrames& frames, Segment& out) {
+void SegmentRows::Assemble(const EncodedFrames& frames, CodecType codes_codec,
+                           std::string_view codes, Segment& out) {
   const auto entry_count = EntryCount();
   const auto data_size = out.bytes.Size();
   SDB_ENSURE(_rows <= std::numeric_limits<uint32_t>::max() &&
                entry_count <= std::numeric_limits<uint32_t>::max() &&
                data_size <= std::numeric_limits<uint32_t>::max(),
              "col codec: segment too large");
-
-  const auto assemble = [&](CodecType codes_codec, std::string_view codes) {
-    Header h{
-      .codes = codes_codec,
-      .level = _level,
-      .length_width =
-        BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length),
-      .row_count = static_cast<uint32_t>(_rows),
-      .entry_count = static_cast<uint32_t>(entry_count),
-      .frame_count = static_cast<uint32_t>(frames.frames.size()),
-      .dictionary_size = frames.dictionary_size,
-      .symtab_size = static_cast<uint32_t>(frames.symtab.size()),
-      .data_size = static_cast<uint32_t>(data_size),
-      .lcp_width =
-        BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_lcp),
-      .flags = frames.flags,
-      .raw_bytes = _raw,
-    };
-    const auto total =
-      LayOut(h, data_size, frames.frames.size(),
-             BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
-             BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width),
-             codes.size(), frames.symtab.size());
-
-    out.bytes.Extend(total - data_size);
-    auto* base = reinterpret_cast<duckdb::data_ptr_t>(out.bytes.Data());
-    std::memmove(base + h.off_data, base, data_size);
-    std::memset(base, 0, h.off_data);
-    duckdb::Store(h, base);
-    for (size_t i = 0; i < frames.frames.size(); ++i) {
-      duckdb::Store(frames.frames[i], base + h.off_frames + i * kFrameMetaSize);
-    }
-    BitpackingPrimitives::PackBuffer<uint32_t, true>(
-      base + h.off_lengths, _lengths.data(), _lengths.size(), h.length_width);
-    if (!frames.lcps.empty()) {
-      BitpackingPrimitives::PackBuffer<uint32_t, true>(
-        base + h.off_lcps, frames.lcps.data(), frames.lcps.size(), h.lcp_width);
-    }
-    if (!codes.empty()) {
-      std::memcpy(base + h.off_codes, codes.data(), codes.size());
-    }
-    if (!frames.symtab.empty()) {
-      std::memcpy(base + h.off_symtab, frames.symtab.data(),
-                  frames.symtab.size());
-    }
+  Header h{
+    .codes = codes_codec,
+    .level = _level,
+    .length_width =
+      BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length),
+    .row_count = static_cast<uint32_t>(_rows),
+    .entry_count = static_cast<uint32_t>(entry_count),
+    .frame_count = static_cast<uint32_t>(frames.frames.size()),
+    .dictionary_size = frames.dictionary_size,
+    .symtab_size = static_cast<uint32_t>(frames.symtab.size()),
+    .data_size = static_cast<uint32_t>(data_size),
+    .lcp_width =
+      BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_lcp),
+    .flags = frames.flags,
+    .raw_bytes = _raw,
   };
-  if (_shape == Shape::Dictionary) {
-    CompressCodes(_codes, _codes_tuning, assemble);
-  } else {
-    assemble(CodecType::Auto, {});
-  }
+  const auto total =
+    LayOut(h, data_size, frames.frames.size(),
+           BitpackingPrimitives::GetRequiredSize(entry_count, h.length_width),
+           BitpackingPrimitives::GetRequiredSize(entry_count, h.lcp_width),
+           codes.size(), frames.symtab.size());
 
+  out.bytes.Extend(total - data_size);
+  auto* base = reinterpret_cast<duckdb::data_ptr_t>(out.bytes.Data());
+  std::memmove(base + h.off_data, base, data_size);
+  std::memset(base, 0, h.off_data);
+  duckdb::Store(h, base);
+  for (size_t i = 0; i < frames.frames.size(); ++i) {
+    duckdb::Store(frames.frames[i], base + h.off_frames + i * kFrameMetaSize);
+  }
+  BitpackingPrimitives::PackBuffer<uint32_t, true>(
+    base + h.off_lengths, _lengths.data(), _lengths.size(), h.length_width);
+  if (!frames.lcps.empty()) {
+    BitpackingPrimitives::PackBuffer<uint32_t, true>(
+      base + h.off_lcps, frames.lcps.data(), frames.lcps.size(), h.lcp_width);
+  }
+  if (!codes.empty()) {
+    std::memcpy(base + h.off_codes, codes.data(), codes.size());
+  }
+  if (!frames.symtab.empty()) {
+    std::memcpy(base + h.off_symtab, frames.symtab.data(),
+                frames.symtab.size());
+  }
+}
+
+void SegmentRows::Finish(const EncodedFrames& frames, Shape shape,
+                         Segment& out) {
   _stats.Merge(out.stats.emplace(duckdb::BaseStatistics::CreateEmpty(_type)));
   out.config = {
-    .shape = _shape,
+    .shape = shape,
     .leaf = frames.codec,
     .level = _level,
     .layout = _layout,
@@ -239,15 +237,29 @@ void SegmentRows::Write(const EncodedFrames& frames, Segment& out) {
   out.nulls = _nulls;
   out.input = _input;
   out.max_len = _max_len;
+  out.shared = frames.shared;
 
   _stats.Clear();
-  _codes.clear();
   _entries.clear();
   _rows = 0;
   _raw = 0;
   _max_len = 0;
   _nulls = 0;
   _input = 0;
+}
+
+void PlainRows::Write(const EncodedFrames& frames, Segment& out) {
+  Assemble(frames, CodecType::Auto, {}, out);
+  Finish(frames, kShape, out);
+}
+
+void DictionaryRows::Write(const EncodedFrames& frames, Segment& out) {
+  CompressCodes(_codes, _codes_tuning,
+                [&](CodecType codec, std::string_view codes) {
+                  Assemble(frames, codec, codes, out);
+                });
+  Finish(frames, kShape, out);
+  _codes.clear();
 }
 
 }  // namespace irs::codecs::text

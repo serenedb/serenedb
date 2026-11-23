@@ -60,7 +60,7 @@ id	k	body_ok
 
 statement ok
 CREATE TABLE http_mark AS
-SELECT count(*) AS n FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id() AND request.type = 'GET';
+SELECT count(*) AS n FROM sdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id() AND request.type = 'GET';
 
 query
 SELECT id, k, body = array_to_string(list_transform(range(16), lambda x: md5(id::VARCHAR || '-' || x::VARCHAR)), '') AS body_ok
@@ -73,7 +73,7 @@ id	k	body_ok
 
 query
 SELECT count(*) - (SELECT n FROM http_mark) AS gets
-FROM duckdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id() AND request.type = 'GET';
+FROM sdb_logs_parsed('HTTP') WHERE connection_id = current_connection_id() AND request.type = 'GET';
 ----
 gets
 0

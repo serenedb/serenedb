@@ -18,11 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <gtest/gtest.h>
 
 #include <array>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <yaclib/async/future.hpp>
 #include <yaclib/async/make.hpp>
@@ -58,6 +60,20 @@ const NamedHandler* MatchRoute(HttpRouter& router, HttpMethod method,
   request.target = std::move(target);
   return static_cast<const NamedHandler*>(router.Match(request));
 }
+
+const http::Api* Api(std::string_view name) {
+  return Registry<http::Api>::Find(name);
+}
+
+std::unique_ptr<HttpHandler> MakeRegisteredHandler() {
+  return std::make_unique<NamedHandler>("registered");
+}
+
+constexpr std::array kRegisteredRoutes{
+  http::Route{HttpMethod::Get, "/_registered/:item", MakeRegisteredHandler},
+};
+
+SDB_HTTP_API kRouterTestApi{"router-test", kRegisteredRoutes, uint64_t{7}};
 
 }  // namespace
 
@@ -162,13 +178,15 @@ TEST(NetworkRouter, UrlPatternSyntax) {
 }
 
 TEST(NetworkRouter, RouteTableIsFilteredByApi) {
-  for (const auto& route : http::Routes()) {
-    HttpRouter router;
-    router.Add(route.method, route.pattern, route.make());
+  for (const auto name : Registry<http::Api>::Names()) {
+    for (const auto& route : Api(name)->routes) {
+      HttpRouter router;
+      router.Add(route.method, route.pattern, route.make());
+    }
   }
 
   HttpRouter otel;
-  const std::array otel_only{HttpApi::Otel};
+  const std::array otel_only{Api("otel")};
   http::AddRoutes(otel, otel_only);
   HttpRequest request;
   request.method = HttpMethod::Post;
@@ -180,7 +198,7 @@ TEST(NetworkRouter, RouteTableIsFilteredByApi) {
   EXPECT_EQ(otel.Match(request), nullptr);
 
   HttpRouter both;
-  const std::array es_and_mcp{HttpApi::Es, HttpApi::Mcp};
+  const std::array es_and_mcp{Api("es"), Api("mcp")};
   http::AddRoutes(both, es_and_mcp);
   request.method = HttpMethod::Put;
   request.target = "/_mcp";
@@ -190,12 +208,32 @@ TEST(NetworkRouter, RouteTableIsFilteredByApi) {
   EXPECT_EQ(request.Param("index"), "my-index");
 }
 
+TEST(NetworkRouter, RegisteredApiServesItsRoutes) {
+  const auto* api = Api("router-test");
+  ASSERT_TRUE(api);
+  EXPECT_FALSE(Api("router-test-missing"));
+  EXPECT_TRUE(
+    absl::c_linear_search(Registry<http::Api>::Names(), "router-test"));
+  EXPECT_EQ(http::MaxBodyBytes(std::array{api}), 7u);
+  EXPECT_EQ(http::MaxBodyBytes(std::array{api, Api("mcp")}), uint64_t{4} << 20);
+
+  HttpRouter router;
+  http::AddRoutes(router, std::array{api});
+  HttpRequest request;
+  const auto* handler =
+    MatchRoute(router, HttpMethod::Get, "/_registered/apples", request);
+  ASSERT_NE(handler, nullptr);
+  EXPECT_EQ(handler->name, "registered");
+  EXPECT_EQ(request.Param("item"), "apples");
+  EXPECT_EQ(MatchRoute(router, HttpMethod::Get, "/_mcp", request), nullptr);
+}
+
 TEST(NetworkRouter, BodyLimitIsTheLargestOfTheApis) {
-  EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Es}), uint64_t{100} << 20);
-  EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Otel}), uint64_t{100} << 20);
-  EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Mcp}), uint64_t{4} << 20);
-  EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Otel, HttpApi::Mcp}),
+  EXPECT_EQ(http::MaxBodyBytes(std::array{Api("es")}), uint64_t{100} << 20);
+  EXPECT_EQ(http::MaxBodyBytes(std::array{Api("otel")}), uint64_t{100} << 20);
+  EXPECT_EQ(http::MaxBodyBytes(std::array{Api("mcp")}), uint64_t{4} << 20);
+  EXPECT_EQ(http::MaxBodyBytes(std::array{Api("otel"), Api("mcp")}),
             uint64_t{100} << 20);
-  EXPECT_EQ(http::MaxBodyBytes(std::array{HttpApi::Otel, HttpApi::Es}),
+  EXPECT_EQ(http::MaxBodyBytes(std::array{Api("otel"), Api("es")}),
             uint64_t{100} << 20);
 }

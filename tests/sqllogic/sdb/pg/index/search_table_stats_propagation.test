@@ -101,11 +101,16 @@ c
 
 
 # Range holds for every non-NULL value, but `n` has NULLs in the first
-# segment: the filter degrades to an IS NOT NULL check instead.
+# segment: the filter degrades to an IS NOT NULL check instead, and the rows
+# of the segment without NULLs are counted from its statistics.
 query
 EXPLAIN SELECT count(*) FROM stp WHERE n >= 0;
 ----
 QUERY PLAN
+╭─ PROJECTION ─────────────────╮
+│ Projections: "+"(100, #0)    │
+│ ~1 row                       │
+╰───────────────┬──────────────╯
 ╭─ UNGROUPED_AGGREGATE ────────╮
 │ Aggregates: count_star()     │
 │ ~1 row                       │

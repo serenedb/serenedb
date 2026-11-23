@@ -3404,11 +3404,15 @@ TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
     EXPECT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
   }
   {
+    irs::TFIDF tfidf;
     auto root = std::make_unique<irs::BooleanFilter>();
-    Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax")
-      .SetBoost(2.f);
-    Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ban")
-      .SetBoost(2.f);
+    for (const auto* prefix : {"ax", "ban"}) {
+      auto& child = Append<irs::ByPrefix>(*root, irs::Occur::Should,
+                                          kFieldTestField, prefix);
+      child.SetBoost(2.f);
+      child.SetScorer(&tfidf);
+      child.mutable_options()->merge = irs::ScoreMergeType::Sum;
+    }
     root->SetBoost(3.f);
     AsDisjunction(*root);
 
@@ -3419,6 +3423,53 @@ TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
     ASSERT_NE(nullptr, fused);
     EXPECT_EQ(6.f, fused->GetBoost());
   }
+}
+
+TEST(OrAcceptorFusion_test, scored_constants_stay_clauses) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax");
+  Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ban");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(2, irs::utils::downCast<irs::BooleanFilter>(*filter).Size(
+                 irs::Occur::Should));
+}
+
+TEST(OrAcceptorFusion_test, scored_constants_fuse_under_max) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax");
+  Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ban");
+  AsDisjunction(*root);
+  root->SetMergeType(irs::ScoreMergeType::Max);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
+
+  EXPECT_NE(nullptr, FusedOf(filter));
+}
+
+TEST(OrAcceptorFusion_test, scored_merge_mismatch_stays_clauses) {
+  irs::TFIDF tfidf;
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto* prefix : {"ax", "ban"}) {
+    auto& child =
+      Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, prefix);
+    child.SetScorer(&tfidf);
+    child.mutable_options()->merge = irs::ScoreMergeType::Sum;
+  }
+  AsDisjunction(*root);
+  root->SetMergeType(irs::ScoreMergeType::Max);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(2, irs::utils::downCast<irs::BooleanFilter>(*filter).Size(
+                 irs::Occur::Should));
 }
 
 TEST(OrAcceptorFusion_test, flattens_nested_or_on_search_path) {

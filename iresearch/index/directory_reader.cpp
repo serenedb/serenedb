@@ -72,7 +72,7 @@ DirectoryReader::DirectoryReader(const Directory& dir,
 DirectoryReader::DirectoryReader(const DirectoryReader& base,
                                  std::vector<SegmentReader> readers,
                                  std::span<const SegmentReader> added,
-                                 std::span<const SegmentReader> patched,
+                                 std::span<const PatchedReader> patched,
                                  std::span<const SegmentReader> removed)
   : _dir{base._dir},
     _opts{base._opts},
@@ -92,7 +92,7 @@ DirectoryReader::DirectoryReader(const DirectoryReader& base,
   for (const auto& reader : added) {
     AddTerms(*reader, /*keep_sorted=*/true);
   }
-  if (!removed.empty()) {
+  if (!removed.empty() && _docs != base._docs) {
     for (const auto& reader : _readers) {
       AddColumns(*reader, /*new_docs=*/true);
     }
@@ -107,11 +107,15 @@ DirectoryReader::DirectoryReader(const DirectoryReader& base,
                .distinct = column.distinct ? column.distinct->Copy() : nullptr,
                .docs = column.docs});
   }
+  for (const auto& reader : removed) {
+    RemoveColumns(*reader);
+  }
   for (const auto& reader : added) {
     AddColumns(*reader, /*new_docs=*/true);
   }
-  for (const auto& reader : patched) {
-    AddColumns(*reader, /*new_docs=*/false);
+  for (const auto& [before, after] : patched) {
+    RemoveColumns(*before);
+    AddColumns(*after, /*new_docs=*/true);
   }
   Publish();
 }
@@ -199,6 +203,24 @@ void DirectoryReader::AddColumns(const SubReader& reader, bool new_docs) {
     }
     if (new_docs) {
       stats.docs += reader.docs_count();
+    }
+  }
+}
+
+void DirectoryReader::RemoveColumns(const SubReader& reader) {
+  const auto* col_reader = reader.GetColReader();
+  if (!col_reader) {
+    return;
+  }
+  for (const auto& column : col_reader->Columns()) {
+    const auto it = _columns.find(column->Id());
+    SDB_ASSERT(it != _columns.end() && it->second.docs >= reader.docs_count());
+    auto& stats = it->second;
+    stats.docs -= reader.docs_count();
+    stats.merged->SubtractAdditiveStatistics(column->MergedStatistics());
+    if (const auto* distinct = column->Distinct()) {
+      SDB_ASSERT(stats.distinct);
+      stats.distinct->SubtractCounts(*distinct);
     }
   }
 }

@@ -251,7 +251,7 @@ What stays gated, and why:
 
 ## DuckDB file interop
 
-The `interop` suite checks that a database file with a DuckDB storage version is a DuckDB file: vanilla DuckDB reads what SereneDB writes, and SereneDB reads what vanilla DuckDB writes. It is not a `unittest` suite. [interop/run.sh](interop/run.sh) drives `serened shell` and a vanilla `duckdb` copied out of the official `duckdb/duckdb` image (`docker create` + `docker cp` into `$BUILD_DIR/duckdb-<tag>/`; nothing is built, and the CI container gets the docker socket for it).
+The `interop` suite checks that a database file with a DuckDB storage version is a DuckDB file: vanilla DuckDB reads what SereneDB writes, and SereneDB reads what vanilla DuckDB writes. It is not a `unittest` suite. [interop/run.sh](interop/run.sh) drives `serenedb shell` and a vanilla `duckdb` copied out of the official `duckdb/duckdb` image (`docker create` + `docker cp` into `$BUILD_DIR/duckdb-<tag>/`; nothing is built, and the CI container gets the docker socket for it).
 
 For each storage version in `INTEROP_STORAGE_VERSIONS` (`v1.0.0 v1.5.0`) and each writer, it writes a file as:
 

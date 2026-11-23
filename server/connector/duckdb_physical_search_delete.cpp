@@ -39,6 +39,7 @@
 #include "connector/primary_key.h"
 #include "connector/row_position_deduplicator.h"
 #include "connector/search_sink_writer.hpp"
+#include "search/parallel.h"
 #include "search/search_table_changes.h"
 #include "search/store.h"
 
@@ -50,6 +51,7 @@ struct SearchTableDeleteState final : duckdb::GlobalSinkState {
   std::optional<RowPositionDeduplicator> deleted_rows;
   std::shared_ptr<search::Store> search_table;
   absl::Mutex mutex;
+  std::vector<irs::DocRemovalBuilder> positions;
   duckdb::idx_t delete_count = 0;
   // RETURNING only: the rows this statement removed.
   std::optional<duckdb::ColumnDataCollection> returned;
@@ -184,14 +186,13 @@ duckdb::SinkResultType SereneDBSearchDelete::Sink(
 }
 
 duckdb::SinkCombineResultType SereneDBSearchDelete::Combine(
-  duckdb::ExecutionContext& context,
+  duckdb::ExecutionContext& /*context*/,
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   auto& lstate = input.local_state.Cast<SearchDeleteLocalState>();
   absl::MutexLock lock{&gstate.mutex};
   if (!lstate.positions.Empty()) {
-    gstate.sdb_txn->SearchTxn().AddRemoval(context.client, gstate.search_table,
-                                           std::move(lstate.positions));
+    gstate.positions.push_back(std::move(lstate.positions));
   }
   gstate.delete_count += lstate.delete_count;
   if (lstate.returned && lstate.returned->Count() != 0) {
@@ -205,11 +206,16 @@ duckdb::SinkFinalizeType SereneDBSearchDelete::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchTableDeleteState>();
   auto& search_txn = gstate.sdb_txn->SearchTxn();
-  if (gstate.deleted_rows) {
-    if (auto positions = std::move(*gstate.deleted_rows).Positions();
-        !positions.Empty()) {
-      search_txn.AddRemoval(context, gstate.search_table, std::move(positions));
-    }
+  auto positions =
+    gstate.deleted_rows
+      ? std::move(*gstate.deleted_rows).Positions()
+      : irs::DocRemovalBuilder::Union(
+          gstate.positions,
+          [&](size_t count, absl::FunctionRef<void(size_t)> body) {
+            search::ParallelFor(context, count, body);
+          });
+  if (!positions.Empty()) {
+    search_txn.AddRemoval(context, gstate.search_table, std::move(positions));
   }
   search_txn.CheckKeys(context, *gstate.search_table,
                        search::KeyConflict::Unique);

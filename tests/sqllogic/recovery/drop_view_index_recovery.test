@@ -38,7 +38,7 @@ count
 statement ok
 CREATE TABLE drop_view_oids AS
 SELECT index_oid AS idx
-FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'drop_view_idx';
+FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'drop_view_idx';
 
 statement ok
 DROP VIEW drop_view_v;

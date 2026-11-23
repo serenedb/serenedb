@@ -41,6 +41,7 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
+#include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
 #include <iresearch/search/scorers/constant_score.hpp>
@@ -77,6 +78,12 @@ void AddMergeAttribute(ExplainNode& node, ScoreMergeType merge) {
   }
 }
 
+void AddWordsMergeAttribute(ExplainNode& node, ScoreMergeType merge) {
+  if (merge == ScoreMergeType::Sum) {
+    node.attributes["Merge"] = "sum";
+  }
+}
+
 // Prints a binary term byte-by-byte, escaping non-printable chars.
 template<typename Term>
 std::string TermToString(Term term) {
@@ -91,27 +98,22 @@ std::string TermToString(Term term) {
   return s;
 }
 
-// Decodes a numeric term back to the number it encodes. The leading byte is
-// the type's TYPE_MAGIC, disjoint per type, so the value type is recovered
-// from the term itself (which also disambiguates the shared JSON-leaf numeric
-// field).
-std::string DecodeNumericTerm(bytes_view term) {
+template<typename T>
+bool NumberToString(bytes_view term, std::string& out) {
   namespace nu = irs::numeric_utils;
-  if (term.empty()) {
-    return "";
+  if (term.size() != nu::kNumericTermSize<T> ||
+      term[0] != nu::kNumericTermMagic<T>) {
+    return false;
   }
-  const auto marker = term[0];
-  if (marker < 0x20) {
-    return absl::StrCat(nu::numeric_traits<int32_t>::decode(term.data()));
-  }
-  if (marker < 0x40) {
-    return absl::StrCat(nu::numeric_traits<float>::decode(term.data()));
-  }
-  if (marker >= 0x60 && marker < 0xA0) {
-    return absl::StrCat(nu::numeric_traits<int64_t>::decode(term.data()));
-  }
-  if (marker >= 0xA0 && marker < 0xE0) {
-    return absl::StrCat(nu::numeric_traits<double>::decode(term.data()));
+  out = absl::StrCat(nu::DecodeNumericTerm<T>(term));
+  return true;
+}
+
+std::string NumericTermToString(bytes_view term) {
+  std::string out;
+  if (NumberToString<int32_t>(term, out) || NumberToString<float>(term, out) ||
+      NumberToString<int64_t>(term, out) || NumberToString<double>(term, out)) {
+    return out;
   }
   return TermToString(term);
 }
@@ -132,7 +134,7 @@ std::string TermValue(bytes_view term, const LogicalType& type) {
     return !term.empty() && term[0] ? "true" : "false";
   }
   if (sdb::connector::term_dict::IsNumeric(type.id())) {
-    return DecodeNumericTerm(term);
+    return NumericTermToString(term);
   }
   if (sdb::pg::IsInetOrCidr(type)) {
     return sdb::connector::inet_terms::Describe(term);
@@ -481,6 +483,7 @@ struct FilterPrinter {
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Range"] =
         RangeValue(f.options().range, FieldType(f.field_id(), f.dict()));
+      AddWordsMergeAttribute(node, f.options().merge);
       return node;
     }
     if (type == Type<ByGranularRange>::id()) {
@@ -513,6 +516,7 @@ struct FilterPrinter {
       node.attributes["Max Terms"] = o.with_ties
                                        ? absl::StrCat(o.max_terms, " with ties")
                                        : absl::StrCat(o.max_terms);
+      AddWordsMergeAttribute(node, o.merge);
       return node;
     }
     if (type == Type<ByPrefix>::id()) {
@@ -521,6 +525,7 @@ struct FilterPrinter {
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Prefix"] =
         PrefixValue(f.options().term, FieldType(f.field_id(), f.dict()));
+      AddWordsMergeAttribute(node, f.options().merge);
       return node;
     }
     if (type == Type<ByPrefixes>::id()) {
@@ -570,6 +575,7 @@ struct FilterPrinter {
         options.kind == PatternKind::Union
           ? TermToString(irs::DescribeUnion(options.pattern))
           : TermToString(options.pattern);
+      AddWordsMergeAttribute(node, options.merge);
       return node;
     }
     if (type == Type<ByWildcardNGram>::id()) {
@@ -613,10 +619,10 @@ struct FilterPrinter {
       const auto& f = downCast<const GeoFilter>(filter);
       ExplainNode node{"Geo"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
-      node.attributes["Op"].assign(GeoFilterTypeName(f.options().type));
-      node.attributes["Shape"].assign(
-        GeoShapeTypeName(f.options().shape.type()));
-      node.attributes["Verify"].assign(GeoVerify(f.options()));
+      node.attributes["Op"] = std::string{GeoFilterTypeName(f.options().type)};
+      node.attributes["Shape"] =
+        std::string{GeoShapeTypeName(f.options().shape.type())};
+      node.attributes["Verify"] = std::string{GeoVerify(f.options())};
       return node;
     }
     if (type == Type<GeoDistanceFilter>::id()) {
@@ -624,7 +630,7 @@ struct FilterPrinter {
       ExplainNode node{"Geo Distance"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
       node.attributes["Range"] = GeoDistanceRange(f);
-      node.attributes["Verify"].assign(GeoVerify(f.options()));
+      node.attributes["Verify"] = std::string{GeoVerify(f.options())};
       return node;
     }
     if (type == Type<ByRadius>::id()) {
@@ -632,7 +638,7 @@ struct FilterPrinter {
       const auto& o = f.options();
       ExplainNode node{"Vector Range"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
-      node.attributes["Metric"].assign(VectorMetricName(o.metric));
+      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
       if (o.inner) {
@@ -645,7 +651,7 @@ struct FilterPrinter {
       const auto& o = f.options();
       ExplainNode node{"Vector Range"};
       node.attributes["Field"] = FieldName(f.field_id(), f.dict());
-      node.attributes["Metric"].assign(VectorMetricName(o.metric));
+      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
       node.attributes["Radius"] =
         absl::StrCat(o.inclusive ? "<= " : "< ", o.radius);
       node.attributes["Exact"] = "brute force over the stored vectors";
@@ -654,8 +660,20 @@ struct FilterPrinter {
       }
       return node;
     }
+    if (type == Type<ByVectorSimilarity>::id()) {
+      const auto& f = downCast<const ByVectorSimilarity>(filter);
+      const auto& o = f.options();
+      ExplainNode node{"Vector Similarity"};
+      node.attributes["Field"] = FieldName(f.field_id(), f.dict());
+      node.attributes["Metric"] = std::string{VectorMetricName(o.metric)};
+      node.attributes["Top"] = absl::StrCat(o.top_k);
+      if (o.inner) {
+        node.children.push_back(Build(*o.inner));
+      }
+      return node;
+    }
     ExplainNode node{"Unknown"};
-    node.attributes["Type"].assign(type().name());
+    node.attributes["Type"] = std::string{type().name()};
     return node;
   }
 };
@@ -671,6 +689,77 @@ LogicalType UnknownType(sdb::connector::ColumnId, DictRef) { return {}; }
 
 bool NoKey(sdb::connector::ColumnId) { return false; }
 
+const Filter* InnerOf(const Filter& filter) {
+  const auto type = filter.type();
+  if (type == Type<ByVectorSimilarity>::id()) {
+    return downCast<const ByVectorSimilarity>(filter).options().inner.get();
+  }
+  if (type == Type<ByRadius>::id()) {
+    return downCast<const ByRadius>(filter).options().inner.get();
+  }
+  if (type == Type<ByVectorExact>::id()) {
+    return downCast<const ByVectorExact>(filter).options().inner.get();
+  }
+  return nullptr;
+}
+
+uint32_t CountNodes(const ExplainNode& node) {
+  uint32_t count = 1;
+  for (const auto& child : node.children) {
+    count += CountNodes(child);
+  }
+  return count;
+}
+
+void AddFilterBoxes(const Filter& filter, const ExplainNode& node,
+                    uint32_t index, uint32_t parent,
+                    std::vector<FilterBox>& out) {
+  const auto self = static_cast<uint32_t>(out.size());
+  out.push_back({.filter = &filter, .parent = parent, .node = index});
+  if (const auto* inner = InnerOf(filter)) {
+    SDB_ASSERT(!node.children.empty());
+    AddFilterBoxes(*inner, node.children.front(), index + 1, self, out);
+    return;
+  }
+  if (filter.type() != Type<BooleanFilter>::id()) {
+    return;
+  }
+  const auto& boolean = downCast<const BooleanFilter>(filter);
+  const auto add_bucket = [&](Occur occur, const ExplainNode& bucket,
+                              uint32_t bucket_index) {
+    const auto subs = boolean.Filters(occur);
+    SDB_ASSERT(subs.size() <= bucket.children.size());
+    const auto first_sub = bucket.children.size() - subs.size();
+    auto child_index = bucket_index + 1;
+    for (size_t i = 0; i != bucket.children.size(); ++i) {
+      if (i >= first_sub) {
+        AddFilterBoxes(*subs[i - first_sub], bucket.children[i], child_index,
+                       self, out);
+      }
+      child_index += CountNodes(bucket.children[i]);
+    }
+  };
+  if (node.label == "And") {
+    add_bucket(Occur::Must, node, index);
+  } else if (node.label == "Or") {
+    add_bucket(Occur::Should, node, index);
+  } else if (node.label == "Not") {
+    add_bucket(Occur::MustNot, node, index);
+  } else {
+    size_t next = 0;
+    auto bucket_index = index + 1;
+    for (const auto occur : kAllOccur) {
+      if (boolean.Size(occur) == 0) {
+        continue;
+      }
+      SDB_ASSERT(next < node.children.size());
+      const auto& bucket = node.children[next++];
+      add_bucket(occur, bucket, bucket_index);
+      bucket_index += CountNodes(bucket);
+    }
+  }
+}
+
 }  // namespace
 
 duckdb::ExplainNode ToExplainNode(const Filter& f) {
@@ -683,6 +772,17 @@ duckdb::ExplainNode ToExplainNode(const Filter& f,
                                   const FieldKeyResolver& key_of) {
   return FilterPrinter{.name_of = name_of, .type_of = type_of, .key_of = key_of}
     .Build(f);
+}
+
+FilterTree ToFilterTree(const Filter& f, const FieldNameResolver& name_of,
+                        const FieldTypeResolver& type_of,
+                        const FieldKeyResolver& key_of) {
+  FilterTree tree{
+    .root =
+      FilterPrinter{.name_of = name_of, .type_of = type_of, .key_of = key_of}
+        .Build(f)};
+  AddFilterBoxes(f, tree.root, 0, FilterBox::kRoot, tree.boxes);
+  return tree;
 }
 
 }  // namespace irs

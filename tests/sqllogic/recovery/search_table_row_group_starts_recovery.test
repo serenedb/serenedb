@@ -1,0 +1,167 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE rgs (k INT)
+  WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+INSERT INTO rgs SELECT i FROM range(0, 1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) rgs;
+
+
+statement ok
+INSERT INTO rgs SELECT i FROM range(1000, 3000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) rgs;
+
+
+statement ok
+INSERT INTO rgs SELECT i FROM range(3000, 10000) t(i);
+
+
+statement ok
+RESET threads;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) rgs;
+
+
+statement ok
+SET sdb_faults = 'irs::ColWriterOmitsRowGroupStarts';
+
+
+statement ok
+VACUUM (COMPACT_TABLE) rgs;
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+EXPLAIN SELECT k FROM rgs ORDER BY k LIMIT 3 OFFSET 4100;
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────╮
+│ Top: 3                           │
+│ Offset: 2052                     │
+│ Order By: k ASC                  │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: rgs                       │
+│ Projections: k                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (k < ?) │
+│ ~10,000 rows                     │
+╰──────────────────────────────────╯
+
+
+connection after_crash
+query
+SELECT k FROM rgs ORDER BY k LIMIT 3 OFFSET 4100;
+----
+k
+4100
+4101
+4102
+
+
+connection after_crash
+query
+SELECT count(*) AS n, min(k) AS lo, max(k) AS hi, sum(k) AS total FROM rgs;
+----
+n	lo	hi	total
+10000	0	9999	49995000
+
+
+connection after_crash
+statement ok
+INSERT INTO rgs SELECT i FROM range(10000, 12000) t(i);
+
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_TABLE) rgs;
+
+
+connection after_crash
+statement ok
+VACUUM (COMPACT_TABLE) rgs;
+
+
+connection after_crash
+query
+EXPLAIN SELECT k FROM rgs ORDER BY k LIMIT 3 OFFSET 4100;
+----
+QUERY PLAN
+╭─ TOP_N ──────────────────────────╮
+│ Top: 3                           │
+│ Offset: 4                        │
+│ Order By: k ASC                  │
+│ ~3 rows                          │
+╰─────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ┴────────────────╮
+│ Table: rgs                       │
+│ Projections: k                   │
+│ Column Filter:                   │
+│ optional: Dynamic Filter (k < ?) │
+│ ~12,000 rows                     │
+╰──────────────────────────────────╯
+
+
+connection after_crash
+query
+SELECT k FROM rgs ORDER BY k LIMIT 3 OFFSET 4100;
+----
+k
+4100
+4101
+4102
+
+
+connection after_crash
+query
+SELECT count(*) AS n, min(k) AS lo, max(k) AS hi, sum(k) AS total FROM rgs;
+----
+n	lo	hi	total
+12000	0	11999	71994000
+
+
+connection after_crash
+query
+SELECT k FROM rgs ORDER BY k DESC LIMIT 3 OFFSET 5000;
+----
+k
+6999
+6998
+6997

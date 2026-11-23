@@ -107,7 +107,7 @@ COMMENT ON INDEX ixrb_rank_idx IS 'kept';
 
 
 query
-SELECT comment FROM duckdb_indexes() WHERE index_name = 'ixrb_rank_idx';
+SELECT comment FROM sdb_indexes() WHERE index_name = 'ixrb_rank_idx';
 ----
 comment
 kept
@@ -126,7 +126,7 @@ ROLLBACK;
 
 
 query
-SELECT comment FROM duckdb_indexes() WHERE index_name = 'ixrb_rank_idx';
+SELECT comment FROM sdb_indexes() WHERE index_name = 'ixrb_rank_idx';
 ----
 comment
 kept
@@ -159,7 +159,7 @@ COMMENT ON INDEX ixrb_rank_idx IS 'committed';
 
 
 query
-SELECT comment FROM duckdb_indexes() WHERE index_name = 'ixrb_rank_idx';
+SELECT comment FROM sdb_indexes() WHERE index_name = 'ixrb_rank_idx';
 ----
 comment
 committed

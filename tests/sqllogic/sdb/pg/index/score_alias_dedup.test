@@ -273,7 +273,8 @@ QUERY PLAN
 ╰────────────────────────────────────────╯
 
 
-# Scorer not the primary sort key.
+# Scorer not the primary sort key. kostya is the primary key, so the score
+# key after it orders nothing and is dropped.
 query
 SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
 ----
@@ -286,9 +287,48 @@ query
 EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
 ----
 QUERY PLAN
+╭─ TOP_N ───────────────────────────────╮
+│ Top: 2                                │
+│ Order By: kostya ASC                  │
+│ ~1 row                                │
+╰───────────────────┬───────────────────╯
+╭─ IRESEARCH_SCAN ──┴───────────────────╮
+│ Index: vedernikoff_alias_idx          │
+│ Lookup: search                        │
+│ Index Filter:                         │
+│ ╭─ Term ─────────────────╮            │
+│ │ Field: abramov(string) │            │
+│ │ Value: clickclack      │            │
+│ ╰────────────────────────╯            │
+│ Column Filter:                        │
+│ optional: Dynamic Filter (kostya < ?) │
+│ Score: bm25(k1=1.2, b=0.75)           │
+│ Projections: kostya                   │
+│ ~1 row                                │
+╰───────────────────────────────────────╯
+
+
+# A leading key that is not unique keeps the score key after it.
+query
+SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya % 2 ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
+----
+kostya
+322
+42
+
+
+query
+EXPLAIN SELECT kostya FROM vedernikoff_alias_idx WHERE abramov @@ ts_phrase('clickclack') ORDER BY kostya % 2 ASC, bm25(vedernikoff_alias_idx.tableoid) DESC LIMIT 2;
+----
+QUERY PLAN
 ╭─ TOP_N ────────────────────────────────╮
 │ Top: 2                                 │
-│ Order By: kostya ASC, #1 DESC          │
+│ Order By: #1 ASC, #2 DESC              │
+│ ~1 row                                 │
+╰────────────────────┬───────────────────╯
+╭─ PROJECTION ───────┴───────────────────╮
+│ Projections: kostya, kostya % 2,       │
+│              sdb_inverted_index_score  │
 │ ~1 row                                 │
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
@@ -299,8 +339,6 @@ QUERY PLAN
 │ │ Field: abramov(string) │             │
 │ │ Value: clickclack      │             │
 │ ╰────────────────────────╯             │
-│ Column Filter:                         │
-│ optional: Dynamic Filter (kostya <= ?) │
 │ Score: bm25(k1=1.2, b=0.75)            │
 │ Projections: kostya,                   │
 │              sdb_inverted_index_score  │

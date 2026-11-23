@@ -179,9 +179,14 @@ class ChainGroups {
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
   const ReadContext::CacheSlot& slot);
 
+bool HasRoom(const ReadContext::CacheSlot& slot, uint64_t bytes);
+
 Header SegmentHeader(duckdb::const_data_ptr_t base,
                      const ColumnSegment& segment, Shape shape,
                      ByteCodec codec);
+
+std::string_view SymbolTable(const ColumnSegment& segment, const Header& h,
+                             duckdb::const_data_ptr_t base, std::string& copy);
 
 struct EntryRange {
   uint32_t lo;
@@ -197,6 +202,10 @@ EntryRanges Normalize(EntryRanges ranges);
 EntryRanges Intersect(const EntryRanges& a, const EntryRanges& b);
 
 const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept;
+
+inline uint64_t DictionaryBytes(const Header& h) noexcept {
+  return h.raw_bytes + uint64_t{h.entry_count} * (sizeof(duckdb::string_t) + 1);
+}
 
 inline std::string_view View(const duckdb::string_t& s) noexcept {
   return {s.GetData(), s.GetSize()};
@@ -226,6 +235,8 @@ struct EntryAt {
 
 uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
                       std::span<const EntryAt> order);
+
+uint64_t DistinctEntries(std::span<const EntryAt> order) noexcept;
 
 struct HeapReference {
   duckdb::weak_ptr<duckdb::AuxiliaryDataSet> target_weak;

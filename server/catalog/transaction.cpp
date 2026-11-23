@@ -41,11 +41,11 @@
 #include "catalog/base_catalog.h"
 #include "catalog/record.h"
 #include "pg/connection_context.h"
-#include "scheduler/background_scheduler.h"
+#include "runtime/runtime.h"
+#include "search/engine.h"
 #include "search/task.h"
 #include "search/wal_recovery.h"
 #include "server/utils/lifecycle.h"
-#include "storage_engine/search_engine.h"
 
 namespace sdb::catalog {
 namespace {
@@ -180,6 +180,12 @@ void SessionTransaction::Refresh() {
   _catalog_epoch.store(transactions.CatalogEpoch(snapshot),
                        std::memory_order_release);
   transactions.Ended(previous);
+}
+
+void SessionTransaction::Push(Change change) {
+  _changes.push_back(std::move(change));
+  _change_epoch.store(Transactions::Get().NextId(), std::memory_order_release);
+  _change_count.store(_changes.size(), std::memory_order_release);
 }
 
 void ApplyLsnUpdate(const LsnUpdate& update, duckdb::transaction_t commit) {
@@ -420,7 +426,7 @@ void Transactions::GarbageQueued() noexcept {
 }
 
 void Transactions::RequestCollect() noexcept {
-  if (!BackgroundScheduler::gInstance || lifecycle::IsStopping()) {
+  if (lifecycle::IsStopping()) {
     return;
   }
   auto state = _collect_state.load(std::memory_order_acquire);
@@ -439,7 +445,7 @@ void Transactions::RequestCollect() noexcept {
     }
   }
   try {
-    BackgroundScheduler::instance().Run([this] { RunCollector(); }).Detach();
+    Runtime::Get().Run([this] { RunCollector(); }).Detach();
   } catch (...) {
     _collect_state.store(CollectState::Idle, std::memory_order_release);
   }
@@ -537,7 +543,7 @@ void Transactions::Commit(SessionTransaction& transaction,
       writes.Empty()) {
     return;
   }
-  std::vector<uint8_t> record;
+  std::optional<RecordBuffer> record;
   Log::Range range;
   Lsn end = 0;
   duckdb::transaction_t commit = 0;
@@ -553,7 +559,7 @@ void Transactions::Commit(SessionTransaction& transaction,
       CheckDependencies(transaction);
     }
     record = WriteRecord(context, transaction, writes);
-    const bool logged = !record.empty() && _log && !_replaying;
+    const bool logged = record && _log && !_replaying;
     if (logged) {
       SDB_IF_FAILURE("crash_before_catalog_commit") { SDB_IMMEDIATE_ABORT(); }
       SDB_IF_FAILURE("catalog_append_fails") {
@@ -565,7 +571,7 @@ void Transactions::Commit(SessionTransaction& transaction,
     {
       absl::MutexLock sequence{&_sequence_mutex};
       if (logged) {
-        range = _log->Reserve(record.size());
+        range = _log->Reserve(record->PayloadBytes());
       }
       commit = ++_reserved_commit;
       end = range.end != 0 ? range.end : ReservedEnd();
@@ -592,10 +598,10 @@ void Transactions::Commit(SessionTransaction& transaction,
         change.version->Child().OnDrop();
       }
     }
-    writes.Apply(commit, layouts);
+    writes.Apply(context, commit, layouts);
   }
   if (range.end != 0) {
-    _log->Write(range, record);
+    _log->Write(range, *record);
     _log->Sync(range.end);
     SDB_IF_FAILURE("crash_after_catalog_before_data") { SDB_IMMEDIATE_ABORT(); }
     SDB_IF_FAILURE("crash_on_drop") { SDB_IMMEDIATE_ABORT(); }
@@ -630,9 +636,9 @@ void Transactions::Commit(SessionTransaction& transaction,
 }
 
 void Transactions::CommitStorage(
-  absl::Mutex& table, absl::FunctionRef<std::vector<uint8_t>()> build,
+  absl::Mutex& table, absl::FunctionRef<std::optional<RecordBuffer>()> build,
   absl::FunctionRef<void(duckdb::transaction_t)> apply) {
-  std::vector<uint8_t> record;
+  std::optional<RecordBuffer> record;
   Log::Range range;
   Lsn end = 0;
   duckdb::transaction_t commit = 0;
@@ -642,8 +648,8 @@ void Transactions::CommitStorage(
     record = build();
     {
       absl::MutexLock sequence{&_sequence_mutex};
-      if (!record.empty() && _log && !_replaying) {
-        range = _log->Reserve(record.size());
+      if (record && _log && !_replaying) {
+        range = _log->Reserve(record->PayloadBytes());
       }
       commit = ++_reserved_commit;
       end = range.end != 0 ? range.end : ReservedEnd();
@@ -652,7 +658,7 @@ void Transactions::CommitStorage(
     apply(commit);
   }
   if (range.end != 0) {
-    _log->Write(range, record);
+    _log->Write(range, *record);
     _log->Sync(range.end);
   }
   Publish(commit, false, false);
@@ -670,9 +676,8 @@ void Transactions::MaintainLog(Lsn end) {
     return;
   }
   if (!_log->HasNext() && end - _log->NewestChunk() > Log::kChunkBytes / 2 &&
-      BackgroundScheduler::gInstance &&
       !_preparing_next.exchange(true, std::memory_order_acq_rel)) {
-    BackgroundScheduler::instance()
+    Runtime::Get()
       .Run([this] {
         absl::Cleanup done = [this] {
           _preparing_next.store(false, std::memory_order_release);
@@ -709,11 +714,11 @@ void Transactions::SettleLog() {
 }
 
 void Transactions::TruncateInBackground() {
-  if (search::IsBackupActive() || !BackgroundScheduler::gInstance ||
+  if (search::IsBackupActive() ||
       _truncating.exchange(true, std::memory_order_acq_rel)) {
     return;
   }
-  BackgroundScheduler::instance()
+  Runtime::Get()
     .Run([this] {
       absl::Cleanup done = [this] {
         _truncating.store(false, std::memory_order_release);

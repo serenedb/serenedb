@@ -26,6 +26,7 @@
 
 #include "iresearch/store/directory.hpp"
 #include "iresearch/store/directory_attributes.hpp"
+#include "iresearch/utils/file_utils_ext.hpp"
 
 namespace irs {
 
@@ -54,17 +55,19 @@ class FSDirectory : public Directory {
 
   IndexInput::ptr open(std::string_view name, IOAdvice advice) const override;
 
+  IndexInput::ptr Finish(IndexOutput::ptr out, IOAdvice advice) const final;
+
   bool remove(std::string_view name) noexcept override;
 
   bool rename(std::string_view src, std::string_view dst) noexcept override;
 
-  bool sync(std::span<const std::string_view> files) noexcept override;
-
   bool visit(const visitor_f& visitor) const final;
 
- private:
-  bool sync(std::string_view name) noexcept;
+ protected:
+  virtual IndexInput::ptr Adopt(file_utils::handle_t file, uint64_t size,
+                                IOAdvice advice) const;
 
+ private:
   DirectoryAttributes _attrs;
   std::filesystem::path _dir;
   size_t _fd_pool_size;

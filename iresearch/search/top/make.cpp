@@ -21,21 +21,120 @@
 #include "iresearch/search/top/make.hpp"
 
 #include <span>
+#include <typeinfo>
 
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/detail/bitset_of.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/detail/phrase_match.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
+#include "iresearch/search/lead/bitset_docs.hpp"
+#include "iresearch/search/lead/impl.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
+#include "iresearch/search/scorers/all_docs_score.hpp"
+#include "iresearch/search/scorers/constant_score.hpp"
+#include "iresearch/search/top/constant_union_member.hpp"
 #include "iresearch/search/top/empty.hpp"
 #include "iresearch/search/top/family.hpp"
 
 namespace irs::top {
 namespace {
+
+class ProfiledMember : public QueryProfile::Profiled<UnionMember> {
+ public:
+  ProfiledMember(UnionMember::ptr inner, QueryProfile::Executed& slot)
+    : Profiled{std::move(inner), slot} {
+    _doc = _inner->Value();
+  }
+
+  doc_id_t Seek(doc_id_t target) final {
+    const auto doc = _counter.Sample([&] { return _inner->Seek(target); });
+    _counter.Docs(doc == target);
+    return _doc = doc;
+  }
+
+  doc_id_t AdvanceBlock(doc_id_t target) final {
+    const auto last =
+      _counter.Sample([&] { return _inner->AdvanceBlock(target); });
+    _doc = _inner->Value();
+    return last;
+  }
+
+  score_t MaxScore(doc_id_t last) final { return _inner->MaxScore(last); }
+
+  doc_id_t SkipNonCompetitive(doc_id_t first, doc_id_t second,
+                              score_t threshold) final {
+    const auto doc = _counter.Sample(
+      [&] { return _inner->SkipNonCompetitive(first, second, threshold); });
+    _doc = _inner->Value();
+    return doc;
+  }
+
+  void ForEachScoredBlock(doc_id_t max, Visit visit) final {
+    uint64_t docs = 0;
+    _counter.Time([&] {
+      _inner->ForEachScoredBlock(
+        max, [&](doc_id_t* block, uint32_t count, score_t* scores) {
+          docs += count;
+          visit(block, count, scores);
+        });
+    });
+    _counter.Docs(docs);
+    _doc = _inner->Value();
+  }
+
+  void Fill(doc_id_t min, doc_id_t max, uint64_t* mask, score_t* window) final {
+    const auto before = QueryProfile::WindowDocs(mask, min, max);
+    _counter.Time([&] { _inner->Fill(min, max, mask, window); });
+    _counter.Docs(QueryProfile::WindowDocs(mask, min, max) - before);
+    _doc = _inner->Value();
+  }
+
+  uint32_t ScoreCandidates(doc_id_t* docs, score_t* scores, uint32_t count,
+                           bool required) final {
+    const auto kept = _counter.Time(
+      [&] { return _inner->ScoreCandidates(docs, scores, count, required); });
+    _counter.Docs(kept);
+    _doc = _inner->Value();
+    return kept;
+  }
+};
+
+class ProfiledClause : public QueryProfile::Profiled<PrunedClause> {
+ public:
+  using Profiled::Profiled;
+
+  doc_id_t Probe(doc_id_t target) final {
+    const auto doc = _counter.Sample([&] { return _inner->Probe(target); });
+    _counter.Docs(doc == target);
+    return doc;
+  }
+
+  doc_id_t AdvanceBlock(doc_id_t target) final {
+    return _counter.Sample([&] { return _inner->AdvanceBlock(target); });
+  }
+
+  score_t MaxScore(doc_id_t last) final { return _inner->MaxScore(last); }
+
+  void FetchScoreArgs(uint32_t slot) final { _inner->FetchScoreArgs(slot); }
+
+  ScoreFunction PrepareScore() final { return _inner->PrepareScore(); }
+
+  uint32_t TakeReads() final { return _inner->TakeReads(); }
+};
+
+template<typename Wrapper, typename Ptr>
+Ptr ProfileMember(const QueryBuilder& query, Ptr node) {
+  if (auto* profile = query.Profile(); profile && node) [[unlikely]] {
+    return profile->WrapAs<Wrapper>(std::move(node), query.ProfileNode());
+  }
+  return node;
+}
 
 template<typename Query>
 Root::ptr MakeAnyPhrase(const Query& query, const Context& ctx) {
@@ -74,22 +173,57 @@ Result MakePhraseOf(const QueryBuilder& query, Make&& make) {
   return resolve(utils::downCast<VariadicPhraseQuery>(query));
 }
 
+UnionMember::ptr MakeConstantMember(const QueryBuilder& query,
+                                    const Context& ctx) {
+  if (query.Kind() != QueryKind::Terms) {
+    return {};
+  }
+  const auto& multi = utils::downCast<MultiTermQuery>(query);
+  if (multi.MergeType() != ScoreMergeType::Max ||
+      !IsConstantScore(multi.Stats(ScoredOf(ctx)).scorer)) {
+    return {};
+  }
+  const auto score = irs::detail::AllDocsScoreOf(multi, ScoredOf(ctx));
+  const auto& state = multi.State();
+  const auto* const field = state.Reader();
+  const std::span<const MultiTermState::Entry> terms{state.Terms()};
+  const auto* const doc = irs::detail::DocOf(*field);
+  const auto docs_count = static_cast<doc_id_t>(multi.Segment().docs_count());
+  if (doc && irs::detail::TakeBitset<irs::detail::LeadNode::ptr>(terms, *doc,
+                                                                 docs_count)) {
+    auto buckets = irs::detail::DisjunctionBuckets(terms, field);
+    return memory::make_managed<ConstantUnionMember<lead::BitsetDocs>>(
+      score, irs::detail::BuildBitset(buckets, *doc, docs_count));
+  }
+  auto docs = multi.PlanLead({});
+  if (!docs) {
+    return {};
+  }
+  return memory::make_managed<ConstantUnionMember<lead::Erased>>(
+    score, std::move(docs));
+}
+
 }  // namespace
 
 UnionMember::ptr MakeUnionMember(const QueryBuilder& query,
                                  const Context& ctx) {
-  return MakePhraseOf<UnionMember::ptr>(
+  auto member = MakePhraseOf<UnionMember::ptr>(
     query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
       return MakePhraseMember<M>(phrase, ctx);
     });
+  if (!member) {
+    member = MakeConstantMember(query, ctx);
+  }
+  return ProfileMember<ProfiledMember>(query, std::move(member));
 }
 
 PrunedClause::ptr MakeConjunctionClause(const QueryBuilder& query,
                                         const Context& ctx) {
-  return MakePhraseOf<PrunedClause::ptr>(
-    query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
-      return MakePhraseClause<M>(phrase, ctx);
-    });
+  return ProfileMember<ProfiledClause>(
+    query, MakePhraseOf<PrunedClause::ptr>(
+             query, [&]<irs::detail::PhraseMatch M>(const auto& phrase) {
+               return MakePhraseClause<M>(phrase, ctx);
+             }));
 }
 
 Root::ptr MakeEmpty() { return memory::make_managed<Empty>(); }
@@ -99,7 +233,9 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
     return MakeEmpty();
   }
   const detail::FoldReachScope reach{ctx.span};
-  return query.PlanTop(ctx);
+  return ProfileRoot(query, ctx, [&](const Context& profiled) {
+    return query.PlanTop(profiled);
+  });
 }
 
 Root::ptr Family::Make(const FixedPhraseQuery& query, const Context& ctx) {
@@ -135,12 +271,17 @@ Root::ptr Family::Make(const TermQuery& query, const Context& ctx) {
 }
 
 Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
+  const auto& state = query.State();
+  const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
+  const std::span<const MultiTermState::Entry> terms{state.Terms()};
+  if (ctx.prune && terms.size() > 1 &&
+      query.MergeType() == ScoreMergeType::Max && IsConstantScore(scorer)) {
+    return irs::detail::PlanConstant<Family>(
+      query, irs::detail::AllDocsScoreOf(query, ScoredOf(ctx)), ctx);
+  }
   if (PruneByBounds(ctx)) {
-    const auto& state = query.State();
     const auto* const field = state.Reader();
-    const auto* const scorer = query.Stats(ScoredOf(ctx)).scorer;
     const auto boost = query.Boost();
-    const std::span<const MultiTermState::Entry> terms{state.Terms()};
     if (terms.size() == 1) {
       const auto posting =
         irs::detail::ClauseOf(terms.front(), field, scorer, boost);

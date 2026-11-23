@@ -78,7 +78,7 @@ a	b	c
 # Same entry: same oid, comment and grant still attached.
 query
 SELECT c.oid = b.oid AS same_oid, comment
-FROM pg_class c, corv_before b, duckdb_views() v
+FROM pg_class c, corv_before b, sdb_views() v
 WHERE c.relname = 'corv' AND v.view_name = 'corv' AND v.database_name = current_database();
 ----
 same_oid	comment
@@ -127,7 +127,7 @@ same_oid	definitions
 t	1
 
 query
-SELECT DISTINCT comment FROM duckdb_functions()
+SELECT DISTINCT comment FROM sdb_functions()
 WHERE function_name = 'corv_f' AND database_name = current_database();
 ----
 comment

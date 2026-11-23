@@ -31,7 +31,14 @@ RECOVERY_DIR = "tests/sqllogic/recovery"
 SOURCE_DIRS = ("server", "iresearch")
 DUCKDB_CHECKOUT = "third_party/duckdb/.git"
 DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
-DUCKDB_FAULTS = frozenset({"slow_expression_bind"})
+DUCKDB_FAULTS = frozenset(
+    {
+        "scheduler_enqueue_finds_no_free_slot",
+        "slow_expression_bind",
+        "slow_expression_rewrite",
+        "slow_statistics_propagation",
+    }
+)
 DUCKDB_PARK_FAULTS = frozenset(
     {
         "async_write_failure_completed",
@@ -39,6 +46,7 @@ DUCKDB_PARK_FAULTS = frozenset(
         "catalog_all_schemas_listed",
         "duckdb_databases_listed",
         "read_duckdb_reader_attached",
+        "scheduler_woken_worker_pauses",
     }
 )
 DUCKDB_TEST_DIR = "third_party/duckdb/test"
@@ -82,8 +90,9 @@ TESTNET_LITERAL = re.compile(
     r'\s*\(\s*"([^"]+)"'
 )
 # Python driver tests activate faults through f-strings (`SET sdb_faults =
-# '{name}'`), so the SET literal itself carries no name; the names live in
-# module constants by convention: <SOMETHING>_FAULT = "name".
+# '{name}'`) or, for startup paths, through the SDB_FAULTS environment
+# variable, so the activation itself carries no name; the names live in module
+# constants by convention: <SOMETHING>_FAULT = "name".
 PY_FAULT_CONST = re.compile(r'FAULT\w*\s*=\s*"([^"]+)"')
 CPP_NAME_CONST = re.compile(r'constexpr\s+std::string_view\s+(\w+)\s*=\s*"([^"]+)"')
 
@@ -209,7 +218,8 @@ def main():
         has_set = "sdb_faults" in text
         has_lit = "FAIL" in text or "Fail" in text or "FaultPoints::" in text
         has_points = "FaultPoints::" in text
-        if not has_set and not has_lit and not has_points:
+        has_env = "SDB_FAULTS" in text
+        if not has_set and not has_lit and not has_points and not has_env:
             continue
         normalized = rel(path)
         is_recovery = normalized.startswith(RECOVERY_DIR + "/")
@@ -233,7 +243,7 @@ def main():
         if has_lit:
             for m in TESTNET_LITERAL.finditer(text):
                 exercised.add(m.group(1))
-        if path.endswith(".py") and (has_set or has_lit):
+        if path.endswith(".py") and (has_set or has_lit or has_env):
             for m in PY_FAULT_CONST.finditer(text):
                 exercised.add(m.group(1))
         if has_points:

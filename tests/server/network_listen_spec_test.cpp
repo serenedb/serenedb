@@ -21,10 +21,17 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include <iresearch/utils/down_cast.hpp>
+#include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
+#include "network/http/listen.h"
+#include "network/listen_protocol.h"
 #include "network/listen_spec.h"
+#include "network/pg/listen.h"
 
 using namespace sdb;
 using namespace sdb::network;
@@ -35,10 +42,41 @@ std::vector<ListenSpec> Parse(std::vector<std::string> urls) {
   return ParseListenSpecs(urls);
 }
 
+const ListenProtocol* Protocol(std::string_view scheme) {
+  return Registry<ListenProtocol>::Find(scheme);
+}
+
+const http::Api* Api(std::string_view name) {
+  return Registry<http::Api>::Find(name);
+}
+
+struct FlavorOptions final : ListenOptions {
+  std::string flavor;
+};
+
+std::shared_ptr<const ListenOptions> ParseFlavor(
+  const ListenSpec&, std::span<const ListenParam> params) {
+  auto options = std::make_shared<FlavorOptions>();
+  for (const auto& [key, value] : params) {
+    EXPECT_EQ(key, "flavor");
+    options->flavor = value;
+  }
+  return options;
+}
+
+std::unique_ptr<AcceptorBase> ListenFlavor(const ListenContext&,
+                                           const ListenSpec&) {
+  return nullptr;
+}
+
+SDB_LISTEN_PROTOCOL kFlavor{"listen-spec-test", &ParseFlavor, &ListenFlavor};
+
+SDB_HTTP_API kListenSpecTestApi{"listen-spec-test"};
+
 TEST(ListenSpec, DefaultIsLoopbackPg) {
   const auto specs = Parse({});
   ASSERT_EQ(specs.size(), 1u);
-  EXPECT_EQ(specs[0].protocol, ListenProtocol::Pg);
+  EXPECT_EQ(specs[0].protocol, Protocol("postgres"));
   EXPECT_EQ(specs[0].transport, ListenTransport::Tcp);
   EXPECT_EQ(specs[0].endpoint.address().to_string(), "127.0.0.1");
   EXPECT_EQ(specs[0].endpoint.port(), 7890);
@@ -47,16 +85,41 @@ TEST(ListenSpec, DefaultIsLoopbackPg) {
 TEST(ListenSpec, PgTcpV4) {
   const auto specs = Parse({"postgres://127.0.0.1:5432"});
   ASSERT_EQ(specs.size(), 1u);
-  EXPECT_EQ(specs[0].protocol, ListenProtocol::Pg);
+  EXPECT_EQ(specs[0].protocol, Protocol("postgres"));
   EXPECT_EQ(specs[0].endpoint.port(), 5432);
   EXPECT_FALSE(specs[0].endpoint.address().is_v6());
-  EXPECT_EQ(specs[0].sslmode, SslMode::Prefer);
+  EXPECT_EQ(PgOptions(specs[0]).sslmode, SslMode::Prefer);
 }
 
 TEST(ListenSpec, PostgresqlAlias) {
-  const auto specs = Parse({"postgresql://127.0.0.1:5432"});
+  const auto specs = Parse({"postgresql://127.0.0.1:5432?sslmode=require"});
   ASSERT_EQ(specs.size(), 1u);
-  EXPECT_EQ(specs[0].protocol, ListenProtocol::Pg);
+  EXPECT_EQ(specs[0].protocol, Protocol("postgresql"));
+  EXPECT_EQ(PgOptions(specs[0]).sslmode, SslMode::Require);
+}
+
+TEST(ListenSpec, RegisteredProtocolParsesItsOwnParams) {
+  const auto specs =
+    Parse({"listen-spec-test://127.0.0.1:9999?flavor=plain&backlog=7"});
+  ASSERT_EQ(specs.size(), 1u);
+  EXPECT_EQ(specs[0].protocol, Protocol("listen-spec-test"));
+  EXPECT_EQ(specs[0].transport, ListenTransport::Tcp);
+  EXPECT_EQ(specs[0].endpoint.port(), 9999);
+  ASSERT_TRUE(specs[0].backlog);
+  EXPECT_EQ(*specs[0].backlog, 7);
+  EXPECT_EQ(irs::utils::downCast<FlavorOptions>(*specs[0].options).flavor,
+            "plain");
+}
+
+TEST(ListenSpec, UnknownSchemeListsTheRegisteredOnes) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"mysql://127.0.0.1:3306"});
+    },
+    "unsupported scheme 'mysql' in endpoint 'mysql://127.0.0.1:3306' "
+    "\\(([^)]*, )?http(, [^)]*)?, https(, [^)]*)?, postgres(, [^)]*)?, "
+    "postgresql(, [^)]*)?\\)");
 }
 
 TEST(ListenSpec, IPv6Brackets) {
@@ -85,36 +148,64 @@ TEST(ListenSpec, MultipleCommaSeparated) {
   const auto specs =
     Parse({"postgres://127.0.0.1:5432,http://127.0.0.1:9200?api=es"});
   ASSERT_EQ(specs.size(), 2u);
-  EXPECT_EQ(specs[0].protocol, ListenProtocol::Pg);
-  EXPECT_EQ(specs[1].protocol, ListenProtocol::Http);
-  ASSERT_EQ(specs[1].apis.size(), 1u);
-  EXPECT_EQ(specs[1].apis[0], network::HttpApi::Es);
+  EXPECT_EQ(specs[0].protocol, Protocol("postgres"));
+  EXPECT_EQ(specs[1].protocol, Protocol("http"));
+  const auto& apis = HttpOptions(specs[1]).apis;
+  ASSERT_EQ(apis.size(), 1u);
+  EXPECT_EQ(apis[0], Api("es"));
 }
 
 TEST(ListenSpec, HttpRepeatedApiListedOnce) {
   const auto specs =
     Parse({"http://127.0.0.1:9200?api=es&api=otel&api=es&api=otel"});
   ASSERT_EQ(specs.size(), 1u);
-  ASSERT_EQ(specs[0].apis.size(), 2u);
-  EXPECT_EQ(specs[0].apis[0], network::HttpApi::Es);
-  EXPECT_EQ(specs[0].apis[1], network::HttpApi::Otel);
+  const auto& apis = HttpOptions(specs[0]).apis;
+  ASSERT_EQ(apis.size(), 2u);
+  EXPECT_EQ(apis[0], Api("es"));
+  EXPECT_EQ(apis[1], Api("otel"));
+}
+
+TEST(ListenSpec, HttpRegisteredApi) {
+  const auto specs = Parse(
+    {"http://127.0.0.1:9300?api=listen-spec-test&api=es&api=listen-spec-test"});
+  ASSERT_EQ(specs.size(), 1u);
+  const auto& apis = HttpOptions(specs[0]).apis;
+  ASSERT_EQ(apis.size(), 2u);
+  EXPECT_EQ(apis[0], Api("listen-spec-test"));
+  EXPECT_EQ(apis[1], Api("es"));
+}
+
+TEST(ListenSpec, UnknownApiIsRejected) {
+  EXPECT_DEATH(
+    {
+      dup2(STDERR_FILENO, STDOUT_FILENO);
+      Parse({"http://127.0.0.1:9300?api=no-such-api"});
+    },
+    "unknown api 'no-such-api' in endpoint '[^']*' \\(known: ([^)]*, )?es(, "
+    "[^)]*)?, mcp(, [^)]*)?, otel(, [^)]*)?, test(, [^)]*)?\\)");
 }
 
 TEST(ListenSpec, HttpDatabaseParam) {
   const auto specs = Parse({"http://127.0.0.1:4318?api=otel&db=telemetry"});
   ASSERT_EQ(specs.size(), 1u);
-  ASSERT_EQ(specs[0].apis.size(), 1u);
-  EXPECT_EQ(specs[0].apis[0], network::HttpApi::Otel);
-  EXPECT_EQ(specs[0].database, "telemetry");
-  EXPECT_TRUE(Parse({"http://127.0.0.1:4318?api=otel"})[0].database.empty());
+  const auto& options = HttpOptions(specs[0]);
+  ASSERT_EQ(options.apis.size(), 1u);
+  EXPECT_EQ(options.apis[0], Api("otel"));
+  EXPECT_EQ(options.database, "telemetry");
+  EXPECT_TRUE(
+    HttpOptions(Parse({"http://127.0.0.1:4318?api=otel"})[0]).database.empty());
 }
 
 TEST(ListenSpec, HttpCreateSchemaParam) {
-  EXPECT_TRUE(Parse({"http://127.0.0.1:4318?api=otel"})[0].create_schema);
-  EXPECT_TRUE(Parse({"http://127.0.0.1:4318?api=otel&create_schema=true"})[0]
-                .create_schema);
-  EXPECT_FALSE(Parse({"http://127.0.0.1:4318?api=otel&create_schema=false"})[0]
-                 .create_schema);
+  EXPECT_TRUE(
+    HttpOptions(Parse({"http://127.0.0.1:4318?api=otel"})[0]).create_schema);
+  EXPECT_TRUE(
+    HttpOptions(Parse({"http://127.0.0.1:4318?api=otel&create_schema=true"})[0])
+      .create_schema);
+  EXPECT_FALSE(
+    HttpOptions(
+      Parse({"http://127.0.0.1:4318?api=otel&create_schema=false"})[0])
+      .create_schema);
 }
 
 TEST(ListenSpec, CreateSchemaOnPgIsRejected) {
@@ -123,7 +214,7 @@ TEST(ListenSpec, CreateSchemaOnPgIsRejected) {
       dup2(STDERR_FILENO, STDOUT_FILENO);
       Parse({"postgres://127.0.0.1:7890?create_schema=false"});
     },
-    "'create_schema' is only valid on an http endpoint");
+    "unknown parameter 'create_schema' in endpoint");
 }
 
 TEST(ListenSpec, CreateSchemaNeedsBoolean) {
@@ -135,22 +226,76 @@ TEST(ListenSpec, CreateSchemaNeedsBoolean) {
     "invalid boolean for 'create_schema'");
 }
 
+struct Refused {
+  std::string_view url;
+  std::string_view message;
+};
+
+constexpr Refused kRefused[] = {
+  {"postgres:///tmp/s.sock?sslmode=require",
+   "'sslmode' is not valid on a unix endpoint"},
+  {"postgres://127.0.0.1:1?sslmode=sometimes",
+   "invalid sslmode in endpoint '[^']*': 'sometimes'"},
+  {"postgres://127.0.0.1:1?port=5",
+   "'port' query is only for a unix pg socket"},
+  {"postgres://127.0.0.1:1?backlog=lots",
+   "invalid number for 'backlog' in endpoint '[^']*': 'lots'"},
+  {"postgres://127.0.0.1:1?api=es", "unknown parameter 'api' in endpoint"},
+  {"http://127.0.0.1:1?api=es&sslmode=require",
+   "'sslmode' is not valid on an http endpoint"},
+  {"http://127.0.0.1:1?api=es&cert=/c.pem",
+   "TLS material is not valid on a plaintext http endpoint"},
+  {"https://127.0.0.1:1?api=es&proxy_protocol=require",
+   "proxy_protocol is not supported on an https listener"},
+  {"http://127.0.0.1:1?api=es&db=", "empty 'db' in endpoint"},
+  {"http://127.0.0.1:1?api=es&schema=", "empty 'schema' in endpoint"},
+  {"http://127.0.0.1:1?api=es&color=red", "unknown parameter 'color'"},
+  {"http://127.0.0.1:1", "requires \\?api="},
+};
+
+TEST(ListenSpec, ProtocolParamsAreChecked) {
+  for (const auto& refused : kRefused) {
+    EXPECT_DEATH(
+      {
+        dup2(STDERR_FILENO, STDOUT_FILENO);
+        Parse({std::string{refused.url}});
+      },
+      std::string{refused.message})
+      << refused.url;
+  }
+}
+
 TEST(ListenSpec, HttpsImpliesTls) {
   const auto specs = Parse({"https://127.0.0.1:9443?api=es"});
   ASSERT_EQ(specs.size(), 1u);
-  EXPECT_TRUE(specs[0].https);
-  EXPECT_TRUE(specs[0].TlsCapable());
+  EXPECT_EQ(specs[0].protocol, Protocol("https"));
+  EXPECT_TRUE(HttpOptions(specs[0]).https);
+  EXPECT_FALSE(HttpOptions(Parse({"http://127.0.0.1:9200?api=es"})[0]).https);
 }
 
 TEST(ListenSpec, SslModeParsed) {
-  EXPECT_EQ(Parse({"postgres://127.0.0.1:1?sslmode=disable"})[0].sslmode,
-            SslMode::Disable);
-  EXPECT_EQ(Parse({"postgres://127.0.0.1:1?sslmode=require"})[0].sslmode,
-            SslMode::Require);
+  EXPECT_EQ(
+    PgOptions(Parse({"postgres://127.0.0.1:1?sslmode=disable"})[0]).sslmode,
+    SslMode::Disable);
+  EXPECT_EQ(
+    PgOptions(Parse({"postgres://127.0.0.1:1?sslmode=allow"})[0]).sslmode,
+    SslMode::Allow);
+  EXPECT_EQ(
+    PgOptions(Parse({"postgres://127.0.0.1:1?sslmode=prefer"})[0]).sslmode,
+    SslMode::Prefer);
+  EXPECT_EQ(
+    PgOptions(Parse({"postgres://127.0.0.1:1?sslmode=require"})[0]).sslmode,
+    SslMode::Require);
+  const auto ca =
+    PgOptions(Parse({"postgres://127.0.0.1:1?sslmode=verify-ca"})[0]).sslmode;
+  EXPECT_EQ(ca, SslMode::VerifyCa);
+  EXPECT_TRUE(RequireTls(ca));
+  EXPECT_TRUE(RequireClientCert(ca));
   const auto vf = Parse({"postgres://127.0.0.1:1?sslmode=verify-full"});
-  EXPECT_EQ(vf[0].sslmode, SslMode::VerifyFull);
-  EXPECT_TRUE(vf[0].RequireTls());
-  EXPECT_TRUE(vf[0].RequireClientCert());
+  const auto sslmode = PgOptions(vf[0]).sslmode;
+  EXPECT_EQ(sslmode, SslMode::VerifyFull);
+  EXPECT_TRUE(RequireTls(sslmode));
+  EXPECT_TRUE(RequireClientCert(sslmode));
 }
 
 TEST(ListenSpec, UnixFromPath) {
@@ -173,10 +318,11 @@ TEST(ListenSpec, UnixPgPortMakesPgsqlPath) {
   const auto specs = Parse({"postgres:///tmp/sdbsock?port=5499"});
   ASSERT_EQ(specs.size(), 1u);
   EXPECT_EQ(specs[0].transport, ListenTransport::Unix);
-  EXPECT_EQ(specs[0].protocol, ListenProtocol::Pg);
+  EXPECT_EQ(specs[0].protocol, Protocol("postgres"));
   EXPECT_EQ(specs[0].unix_path, "/tmp/sdbsock");
-  ASSERT_TRUE(specs[0].unix_port.has_value());
-  EXPECT_EQ(*specs[0].unix_port, 5499);
+  const auto& unix_port = PgOptions(specs[0]).unix_port;
+  ASSERT_TRUE(unix_port);
+  EXPECT_EQ(*unix_port, 5499);
 }
 
 TEST(ListenSpec, HttpKeepsItsDefaultPort) {

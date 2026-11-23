@@ -38,26 +38,40 @@ namespace {
 
 using duckdb::PhysicalType;
 
-constexpr CodecType kMerge[] = {
-  CodecType::Uncompressed, CodecType::Rle,       CodecType::Bitpacking,
-  CodecType::Roaring,      CodecType::Ffor,      CodecType::DeltaFfor,
-  CodecType::RleFfor,      CodecType::DictFfor,  CodecType::Lz4,
-  CodecType::DeltaLz4,     CodecType::RleLz4,    CodecType::DictLz4,
-  CodecType::Zstd,         CodecType::DeltaZstd, CodecType::RleZstd,
+constexpr CodecType kLightweight[] = {
+  CodecType::Uncompressed,
+  CodecType::Roaring,
+};
+
+constexpr CodecType kBool[] = {
+  CodecType::Uncompressed,
+  CodecType::Bitpacking,
+  CodecType::Rle,
+  CodecType::Roaring,
+};
+
+constexpr CodecType kIntegerMerge[] = {
+  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Rle,
+  CodecType::Dict,         CodecType::Lz4,        CodecType::RleLz4,
+  CodecType::DictLz4,      CodecType::Zstd,       CodecType::RleZstd,
   CodecType::DictZstd,
 };
 
-constexpr CodecType kFlush[] = {
-  CodecType::Uncompressed, CodecType::Rle,      CodecType::Bitpacking,
-  CodecType::Roaring,      CodecType::Ffor,     CodecType::DeltaFfor,
-  CodecType::RleFfor,      CodecType::DictFfor, CodecType::Lz4,
-  CodecType::DeltaLz4,     CodecType::RleLz4,   CodecType::DictLz4,
+constexpr CodecType kIntegerFlush[] = {
+  CodecType::Uncompressed, CodecType::Bitpacking, CodecType::Rle,
+  CodecType::Dict,         CodecType::Lz4,        CodecType::RleLz4,
+  CodecType::DictLz4,
 };
 
 constexpr CodecType kFloat[] = {
-  CodecType::Uncompressed, CodecType::Rle,      CodecType::Alp,
-  CodecType::Alprd,        CodecType::Ffor,     CodecType::DeltaFfor,
-  CodecType::RleFfor,      CodecType::DictFfor,
+  CodecType::Uncompressed, CodecType::Alp, CodecType::Alprd,
+  CodecType::Bitpacking,   CodecType::Rle, CodecType::Dict,
+};
+
+constexpr CodecType kNamedOnly[] = {
+  CodecType::Delta,
+  CodecType::DeltaLz4,
+  CodecType::DeltaZstd,
 };
 
 constexpr CodecType kText[] = {
@@ -65,12 +79,17 @@ constexpr CodecType kText[] = {
   CodecType::Fsst,         CodecType::Lz4,
 };
 
+constexpr size_t kMostContenders = 40;
+
 struct Orders {
   std::span<const CodecType> flush;
   std::span<const CodecType> merge;
 };
 
-constexpr Orders kOrders{.flush = kFlush, .merge = kMerge};
+constexpr Orders kLightweightOrders{.flush = kLightweight,
+                                    .merge = kLightweight};
+constexpr Orders kBoolOrders{.flush = kBool, .merge = kBool};
+constexpr Orders kIntegerOrders{.flush = kIntegerFlush, .merge = kIntegerMerge};
 constexpr Orders kFloatOrders{.flush = kFloat, .merge = kFloat};
 constexpr Orders kTextOrders{.flush = kText, .merge = kText};
 
@@ -81,14 +100,30 @@ const Orders& OrdersOf(PhysicalType physical) noexcept {
     case PhysicalType::FLOAT:
     case PhysicalType::DOUBLE:
       return kFloatOrders;
+    case PhysicalType::BOOL:
+      return kBoolOrders;
+    case PhysicalType::INT8:
+    case PhysicalType::INT16:
+    case PhysicalType::INT32:
+    case PhysicalType::INT64:
+    case PhysicalType::UINT8:
+    case PhysicalType::UINT16:
+    case PhysicalType::UINT32:
+    case PhysicalType::UINT64:
+    case PhysicalType::INT128:
+    case PhysicalType::UINT128:
+    case PhysicalType::LIST:
+      return kIntegerOrders;
     default:
-      return kOrders;
+      return kLightweightOrders;
   }
 }
 
 static_assert([] {
   std::array<bool, magic_enum::enum_count<CodecType>()> listed{};
-  for (const auto order : {kOrders.merge, kFloatOrders.merge}) {
+  for (const auto order :
+       {kLightweightOrders.merge, kIntegerOrders.merge, kFloatOrders.merge,
+        std::span<const CodecType>{kNamedOnly}}) {
     for (const auto type : order) {
       listed[std::to_underlying(type)] = true;
     }
@@ -104,12 +139,42 @@ static_assert([] {
   return true;
 }());
 
-const CompressionFunction* FunctionOf(std::span<const Contender> contenders,
-                                      CodecType codec) {
-  const auto it = absl::c_find_if(contenders, [&](const Contender& contender) {
-    return contender.codecs.test(std::to_underlying(codec));
-  });
-  return it == contenders.end() ? nullptr : it->function;
+const CompressionFunction* Held(CompressionFunctions contenders,
+                                const ReusePolicy& reuse) {
+  return absl::c_linear_search(contenders, reuse.held) ? reuse.held : nullptr;
+}
+
+bool PackingUndercutsHeld(CompressionFunctions contenders,
+                          ColumnDataCheckpointData& data) {
+  if (absl::c_none_of(contenders, [](const CompressionFunction* contender) {
+        return contender->codec == CodecType::Bitpacking;
+      })) {
+    return false;
+  }
+  const auto& reuse = data.tuning.reuse;
+  const auto input = static_cast<double>(RawInput(data));
+  const auto one_bit_per_row = static_cast<double>(data.rows) / 8;
+  if (!reuse.Undercuts(one_bit_per_row, input)) {
+    return false;
+  }
+  const auto packed = PackedBytes(data);
+  return packed != 0 && reuse.Undercuts(static_cast<double>(packed), input);
+}
+
+bool Lz4UndercutsHeld(CompressionFunctions contenders,
+                      const CompressionFunction& held,
+                      ColumnDataCheckpointData& data) {
+  if (!IsNumeric(held.codec) || LeafOf(held.codec) != ByteCodec::None ||
+      absl::c_none_of(contenders, [](const CompressionFunction* contender) {
+        return contender->codec == CodecType::Lz4;
+      })) {
+    return false;
+  }
+  const auto price =
+    data.preferences->leaf_price[std::to_underlying(ByteCodec::Lz4)];
+  const auto sampled = static_cast<double>(SampledLz4Bytes(data)) * price;
+  return sampled != 0 && data.tuning.reuse.Undercuts(
+                           sampled, static_cast<double>(RawInput(data)));
 }
 
 bool CompressHeld(const CompressionFunction& held,
@@ -126,38 +191,47 @@ bool CompressHeld(const CompressionFunction& held,
   return true;
 }
 
-void Decide(std::span<const Contender> contenders,
+bool OneCodec(CompressionFunctions contenders) {
+  return absl::c_all_of(contenders, [&](const CompressionFunction* contender) {
+    return contender->codec == contenders.front()->codec;
+  });
+}
+
+void Decide(CompressionFunctions contenders, bool timed,
             ColumnDataCheckpointData& data) {
-  Estimate best;
+  auto& reuse = data.tuning.reuse;
+  const auto* held = Held(contenders, reuse);
+  auto best = kNoScore;
   const CompressionFunction* winner = nullptr;
-  const auto analyze = [&](const CompressionFunction* function) {
-    if (const auto estimate = function->analyze(data, best.score);
-        estimate.score < best.score) {
-      best = estimate;
-      winner = function;
+  const auto analyze = [&](const CompressionFunction* contender) {
+    if (const auto score = contender->analyze(data, best); score < best) {
+      best = score;
+      winner = contender;
     }
   };
-  const auto* held = FunctionOf(contenders, data.tuning.reuse.pick);
-  if (held) {
-    analyze(held);
+  for (const auto* contender : contenders) {
+    if (held && contender->codec == held->codec) {
+      analyze(contender);
+    }
   }
-  for (const auto& [function, codecs] : contenders) {
-    if (function != held) {
-      analyze(function);
+  for (const auto* contender : contenders) {
+    if (!held || contender->codec != held->codec) {
+      analyze(contender);
     }
   }
   const auto written = data.written;
   if (!winner || !winner->compress(data)) {
     winner = &UncompressedCompression(data.type.InternalType());
-    best = {.codec = CodecType::Uncompressed};
     winner->compress(data);
   }
   const auto bytes = data.written - written;
   if (bytes == 0) {
     return;
   }
-  data.tuning.reuse.Settle(best.codec, static_cast<double>(bytes),
-                           static_cast<double>(RawInput(data)));
+  reuse.Settle(
+    winner,
+    !timed || winner == reuse.held || (held && held->codec == winner->codec),
+    static_cast<double>(bytes), static_cast<double>(RawInput(data)));
 }
 
 bool CompressAuto(ColumnDataCheckpointData& data) {
@@ -165,10 +239,12 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
     return true;
   }
   const auto physical = data.type.InternalType();
-  absl::InlinedVector<Contender, std::size(kMerge)> contenders;
+  const bool flush = data.params.tier == WriteTier::Flush;
+  data.preferences = flush ? &kFlushPreferences : &kMergePreferences;
+  data.params.compression_level = 0;
+  absl::InlinedVector<const CompressionFunction*, kMostContenders> contenders;
   const auto& orders = OrdersOf(physical);
-  for (const auto type :
-       data.params.tier == WriteTier::Flush ? orders.flush : orders.merge) {
+  for (const auto type : flush ? orders.flush : orders.merge) {
     if (data.disabled.test(std::to_underlying(type))) {
       continue;
     }
@@ -176,14 +252,14 @@ bool CompressAuto(ColumnDataCheckpointData& data) {
     if (!codec || !codec->compression) {
       continue;
     }
-    auto it = absl::c_find_if(contenders, [&](const Contender& contender) {
-      return contender.function == codec->compression;
-    });
-    if (it == contenders.end()) {
-      it =
-        contenders.insert(contenders.end(), Contender{codec->compression, {}});
+    if (const auto own = Contenders(type, physical); !own.empty()) {
+      contenders.insert(contenders.end(), own.begin(), own.end());
+      continue;
     }
-    it->codecs.set(std::to_underlying(type));
+    SDB_ASSERT(codec->compression->analyze);
+    SDB_ASSERT(codec->compression->codec == type);
+    SDB_ASSERT(!absl::c_linear_search(contenders, codec->compression));
+    contenders.push_back(codec->compression);
   }
   Contest(contenders, data);
   return true;
@@ -195,14 +271,20 @@ constexpr Codec kAutoCodec{.type = CodecType::Auto, .compression = &kAuto};
 
 }  // namespace
 
-void Contest(std::span<const Contender> contenders,
-             ColumnDataCheckpointData& data) {
+void Contest(CompressionFunctions contenders, ColumnDataCheckpointData& data) {
   auto& reuse = data.tuning.reuse;
-  const auto* held = reuse.Due() ? nullptr : FunctionOf(contenders, reuse.pick);
-  if (held && CompressHeld(*held, data)) {
-    return;
+  const bool timed = !OneCodec(contenders);
+  const bool due = reuse.Due() && (timed || reuse.gap == 1);
+  const auto* held = due ? nullptr : Held(contenders, reuse);
+  bool probed = false;
+  if (held && !PackingUndercutsHeld(contenders, data)) {
+    probed = !reuse.probed && Lz4UndercutsHeld(contenders, *held, data);
+    if (!probed && CompressHeld(*held, data)) {
+      return;
+    }
   }
-  Decide(contenders, data);
+  Decide(contenders, timed, data);
+  reuse.probed = probed && reuse.held == held;
 }
 
 const Codec* AutoCodec(PhysicalType) { return &kAutoCodec; }

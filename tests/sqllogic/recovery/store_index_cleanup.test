@@ -21,7 +21,7 @@ CREATE INDEX sic_sec_idx ON sic_sec (a);
 
 
 query
-SELECT schema_name, index_name, is_unique FROM duckdb_indexes(include_hidden := true)
+SELECT schema_name, index_name, is_unique FROM sdb_indexes(include_hidden := true)
 WHERE table_name = 'sic_sec';
 ----
 schema_name	index_name	is_unique
@@ -33,7 +33,7 @@ DROP INDEX sic_sec_idx;
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true)
+SELECT count(*) AS n FROM sdb_indexes(include_hidden := true)
 WHERE table_name = 'sic_sec';
 ----
 n
@@ -62,7 +62,7 @@ CREATE INDEX sic_inv_idx ON sic_inv USING inverted (txt sic_kw);
 query
 SELECT
   (SELECT count(*) FROM pg_class WHERE relname = 'sic_inv_idx' AND relkind = 'i') AS relation,
-  (SELECT count(*) FROM duckdb_indexes(include_hidden := true)
+  (SELECT count(*) FROM sdb_indexes(include_hidden := true)
    WHERE table_name = 'sic_inv') AS listed;
 ----
 relation	listed
@@ -76,7 +76,7 @@ DROP INDEX sic_inv_idx;
 query
 SELECT
   (SELECT count(*) FROM pg_class WHERE relname = 'sic_inv_idx' AND relkind = 'i') AS relation,
-  (SELECT count(*) FROM duckdb_indexes(include_hidden := true)
+  (SELECT count(*) FROM sdb_indexes(include_hidden := true)
    WHERE table_name = 'sic_inv') AS listed;
 ----
 relation	listed
@@ -97,7 +97,7 @@ CREATE UNIQUE INDEX sic_dup_idx ON sic_dup (a);
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true)
+SELECT count(*) AS n FROM sdb_indexes(include_hidden := true)
 WHERE table_name = 'sic_dup';
 ----
 n
@@ -114,7 +114,7 @@ DROP TABLE sic_inv;
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true)
+SELECT count(*) AS n FROM sdb_indexes(include_hidden := true)
 WHERE database_name = current_database()
   AND table_name NOT IN (SELECT relname FROM pg_class WHERE relkind = 'r');
 ----
@@ -123,7 +123,7 @@ n
 
 
 query
-SELECT count(*) AS n FROM duckdb_indexes(include_hidden := true)
+SELECT count(*) AS n FROM sdb_indexes(include_hidden := true)
 WHERE database_name = current_database()
   AND index_name NOT IN (SELECT relname FROM pg_class WHERE relkind = 'i');
 ----

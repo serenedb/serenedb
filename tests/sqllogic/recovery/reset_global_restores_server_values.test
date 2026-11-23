@@ -1,0 +1,72 @@
+query
+SELECT current_setting('integer_division') AS d,
+       current_setting('preserve_identifier_case') AS c,
+       current_setting('explain_output_format') AS e,
+       7 / 2 AS v;
+----
+d	c	e	v
+on	lowercase	SERVER	3
+
+
+statement ok
+SET GLOBAL integer_division = false;
+
+
+statement ok
+SET GLOBAL preserve_identifier_case = true;
+
+
+statement ok
+SET GLOBAL explain_output_format = 'cli';
+
+
+connection changed
+query
+SELECT current_setting('integer_division') AS d,
+       current_setting('preserve_identifier_case') AS c,
+       current_setting('explain_output_format') AS e,
+       7 / 2 AS v;
+----
+d	c	e	v
+off	preserve_case	cli	3.5
+
+
+statement ok
+RESET GLOBAL integer_division;
+
+
+statement ok
+RESET GLOBAL preserve_identifier_case;
+
+
+statement ok
+RESET GLOBAL explain_output_format;
+
+
+connection fresh
+query
+SELECT current_setting('integer_division') AS d,
+       current_setting('preserve_identifier_case') AS c,
+       current_setting('explain_output_format') AS e,
+       7 / 2 AS v;
+----
+d	c	e	v
+on	lowercase	SERVER	3
+
+
+connection fresh
+statement ok
+SET integer_division = false;
+
+
+connection fresh
+statement ok
+RESET integer_division;
+
+
+connection fresh
+query
+SELECT current_setting('integer_division') AS d, 7 / 2 AS v;
+----
+d	v
+on	3

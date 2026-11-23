@@ -315,7 +315,8 @@ void StatementTimestampFunction(duckdb::DataChunk& args,
                                 duckdb::Vector& result) {
   const auto start = ConnectionContext::Get(state.GetContext())
                        .ProgressSource()
-                       ->query_start_us.load(std::memory_order_relaxed);
+                       ->status.Read()
+                       .query_start_us;
   result.Reference(duckdb::Value::TIMESTAMPTZ(duckdb::timestamp_tz_t{start}),
                    duckdb::count_t(args.size()));
 }
@@ -1278,8 +1279,7 @@ void CurrentLogfileFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
     }
   }
-  result.Reference(duckdb::Value{duckdb::LogicalType::VARCHAR},
-                   duckdb::count_t(args.size()));
+  duckdb::ConstantVector::SetNull(result, duckdb::count_t(args.size()));
 }
 
 template<const std::string_view& kKind,
@@ -1489,6 +1489,7 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunction function{
       {text, boolean}, text, CurrentSetting2Function};
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+    function.SetFallible();
     ExtendScalar(loader, "current_setting", CONSISTENT_WITHIN_QUERY, nullptr,
                  {function});
   }
@@ -1511,12 +1512,17 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   ExtendScalar(loader, "pg_backend_pid", CONSISTENT_WITHIN_QUERY, nullptr,
                {duckdb::ScalarFunction{{}, int4, PgBackendPidFunction}});
 
-  ExtendScalar(
-    loader, "pg_cancel_backend", VOLATILE, nullptr,
-    {duckdb::ScalarFunction{{int4}, boolean, SignalBackendFunction<false>}});
-  ExtendScalar(
-    loader, "pg_terminate_backend", VOLATILE, nullptr,
-    {duckdb::ScalarFunction{{int4}, boolean, SignalBackendFunction<true>}});
+  {
+    duckdb::ScalarFunction cancel{
+      {int4}, boolean, SignalBackendFunction<false>};
+    cancel.SetFallible();
+    ExtendScalar(loader, "pg_cancel_backend", VOLATILE, nullptr, {cancel});
+    duckdb::ScalarFunction terminate{
+      {int4}, boolean, SignalBackendFunction<true>};
+    terminate.SetFallible();
+    ExtendScalar(loader, "pg_terminate_backend", VOLATILE, nullptr,
+                 {terminate});
+  }
 
   {
     duckdb::ScalarFunction function{{any}, int4, CountNullsFunction<false>};

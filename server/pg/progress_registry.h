@@ -32,6 +32,8 @@
 #include <string_view>
 #include <vector>
 
+#include "server/utils/striped_counters.h"
+
 namespace sdb::pg {
 
 enum class ProgressCommand : int64_t {
@@ -100,10 +102,12 @@ struct ProgressMetrics {
   std::atomic_int64_t io_type{0};
   std::atomic_int64_t relid{0};
   std::atomic_int64_t current_relid{0};
+  static constexpr size_t kTuples = 0;
+  static constexpr size_t kBytes = 1;
+
   std::atomic_int64_t phase{0};
-  std::atomic_int64_t bytes_processed{0};
+  StripedCounters processed;
   std::atomic_int64_t bytes_total{0};
-  std::atomic_int64_t tuples_processed{0};
   std::atomic_int64_t tuples_total{0};
   std::atomic_int64_t stage{0};
   std::atomic_int64_t stages_total{0};
@@ -128,8 +132,43 @@ struct ProgressMetrics {
   static void Add(std::atomic<int64_t>& slot, int64_t delta) {
     slot.fetch_add(delta, std::memory_order_relaxed);
   }
+  void AddTuples(int64_t tuples) noexcept { processed.Add({tuples}); }
+  void AddProcessed(int64_t tuples, int64_t bytes) noexcept {
+    processed.Add({tuples, bytes});
+  }
+  int64_t Tuples() const noexcept { return processed.Read(kTuples); }
+  int64_t Bytes() const noexcept { return processed.Read(kBytes); }
 
   void Reset();
+};
+
+enum class BackendState : uint8_t {
+  Idle,
+  Active,
+  IdleInTransaction,
+  IdleInTransactionAborted,
+};
+
+BackendState IdleState(duckdb::TransactionContext& transaction);
+
+struct BackendStatus {
+  BackendState state{BackendState::Idle};
+  int64_t xact_start_us{0};
+  int64_t query_start_us{0};
+  int64_t state_change_us{0};
+};
+
+class BackendStatusEntry {
+ public:
+  void Write(const BackendStatus& status) noexcept;
+  BackendStatus Read() const noexcept;
+
+ private:
+  std::atomic<uint32_t> _changes{0};
+  std::atomic<BackendState> _state{BackendState::Idle};
+  std::atomic<int64_t> _xact_start_us{0};
+  std::atomic<int64_t> _query_start_us{0};
+  std::atomic<int64_t> _state_change_us{0};
 };
 
 // One row of sdb_progress: a live connection. Immutable identity fields are
@@ -148,13 +187,13 @@ struct ProgressSource {
   std::string query;
   duckdb::ClientContext* ctx{nullptr};
 
-  std::atomic<int64_t> query_start_us{0};
+  BackendStatusEntry status;
   std::atomic<int64_t> xact_commit{0};
   std::atomic<int64_t> xact_rollback{0};
   ProgressMetrics metrics;
 
   void BeginQuery(std::string query_text);
-  void EndQuery();
+  void ReportIdle(BackendState state);
   void Detach();
 };
 
@@ -172,7 +211,7 @@ struct ProgressSnapshot {
   std::string database;
   std::string query;
   int64_t backend_start_us{0};
-  int64_t query_start_us{0};
+  BackendStatus status;
   double percent{-1};
   int64_t rows_processed{0};
   int64_t rows_total{0};

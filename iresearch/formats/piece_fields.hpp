@@ -154,6 +154,8 @@ class PieceFieldWriter final : public FieldSink {
 
   IndexFeatures Features() const noexcept { return _features; }
 
+  PostingsInputs TakePostings() noexcept { return _pw.TakeInputs(); }
+
  private:
   PieceTermReader& BeginSlot(field_id id, DictRef dict);
   void EndSlot(PieceTermReader& field, const PostingMeta& posting);

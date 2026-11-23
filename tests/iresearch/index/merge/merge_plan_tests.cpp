@@ -422,6 +422,14 @@ std::string TemplatedLine(size_t row) {
     "-", RandomId(rng, 24));
 }
 
+irs::ColumnOptionsProvider Lz4Column(irs::field_id column) {
+  return [column](irs::field_id id) {
+    return irs::ColumnOptions{.compression = id == column
+                                               ? irs::codecs::CodecType::Lz4
+                                               : irs::codecs::CodecType::Auto};
+  };
+}
+
 std::vector<std::string> DictionariesByBlock(const irs::ColReader& cs,
                                              const irs::ColumnReader& col) {
   std::vector<std::string> out;
@@ -446,9 +454,12 @@ std::vector<std::string> DictionariesByBlock(const irs::SubReader& segment,
 
 class ColumnSplitTest : public ::testing::Test {
  protected:
-  void SetUp() final {
+  void SetUp() final { FlushRowGroups(DEFAULT_ROW_GROUP_SIZE); }
+
+  void FlushRowGroups(uint32_t row_group_size) {
     auto options = irs::tests::DefaultWriterOptions();
     options.column_options = PlainColumns;
+    options.row_group_size = row_group_size;
     _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(options));
   }
 
@@ -531,6 +542,7 @@ class ColumnSplitTest : public ::testing::Test {
       removed.emplace_back(absl::StrCat("doc-", row));
     }
     RemoveTerms(*_writer, kIdField, removed);
+    _merge_columns = Lz4Column(kText);
     irs::MemoryDirectory out;
     std::span<const irs::MergeUnit> units;
     const auto merged = Merge(out, static_cast<uint32_t>(row_group), 4, &units);
@@ -736,6 +748,7 @@ class NestedTextSplitTest : public ColumnSplitTest {
       removed.emplace_back(absl::StrCat("doc-", row));
     }
     RemoveTerms(*_writer, kIdField, removed);
+    _merge_columns = Lz4Column(kMap);
     irs::MemoryDirectory out;
     std::span<const irs::MergeUnit> units;
     const auto merged = Merge(out, row_group, 4, &units);
@@ -917,7 +930,7 @@ class ColumnCopyTest : public ColumnSplitTest {
     return {_inputs.end() - static_cast<ptrdiff_t>(count), _inputs.end()};
   }
 
-  static constexpr uint32_t kTrainedRowGroup = 4096;
+  static constexpr uint32_t kTrainedRowGroup = 16384;
   static constexpr uint32_t kTrainingRowGroup = 8192;
 
   std::shared_ptr<const irs::SegmentReaderImpl> TrainedSegment(
@@ -926,7 +939,8 @@ class ColumnCopyTest : public ColumnSplitTest {
       WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
                  duckdb::Value{TemplatedLine(row)});
     });
-    auto merged = MergeSegments(dir, Fresh(1), 16384);
+    _merge_columns = Lz4Column(kText);
+    auto merged = MergeSegments(dir, Fresh(1), kTrainedRowGroup);
     const auto dictionaries = DictionariesByBlock(*merged, kText);
     EXPECT_TRUE(absl::c_linear_search(dictionaries, "local"))
       << ::testing::PrintToString(dictionaries);
@@ -996,6 +1010,33 @@ TEST_F(ColumnCopyTest, CopiesSitBesideSplitEncodedRanges) {
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
 }
 
+TEST_F(ColumnCopyTest, CopiesKeepTheirRowGroupsBetweenReencodedInputs) {
+  irs::MemoryDirectory dir_a;
+  irs::MemoryDirectory out;
+  const auto a = MergeWritten(dir_a, FillRowWithNulls);
+  const auto kept = a->GetColReader()->RowGroupStarts();
+  ASSERT_FALSE(kept.empty());
+  constexpr uint64_t kSmall = 100;
+  AddSegment(kSmall, FillRowWithNulls);
+  AddSegment(kSmall, FillRowWithNulls);
+  auto inputs = Fresh(2);
+  inputs.insert(inputs.begin() + 1, a.get());
+  std::span<const irs::MergeUnit> units;
+  const auto merged = MergeSegments(out, inputs, kRowGroup, 16, &units);
+  ASSERT_NE(nullptr, merged);
+  EXPECT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnCopy, kReal).size());
+  EXPECT_LT(1, UnitsOf(units, MergeUnitKind::Column, kList).size());
+  std::vector<uint64_t> expected{0};
+  for (const auto start : kept) {
+    expected.push_back(kSmall + start);
+  }
+  expected.push_back(kSmall + a->live_docs_count());
+  const auto starts = merged->GetColReader()->RowGroupStarts();
+  EXPECT_EQ(expected, std::vector<uint64_t>(starts.begin(), starts.end()));
+  EXPECT_EQ("", RowGroupMisfit(*merged, kRowGroup));
+  EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
+}
+
 constexpr uint64_t kCopyCostDivisor = 10;
 constexpr double kEncodeCostPerRow = 0.3;
 constexpr uint64_t kRangesPerThread = 4;
@@ -1012,6 +1053,7 @@ TEST_F(ColumnCopyTest, StretchesBetweenCopiesCostTheirOwnInputs) {
     WriteValue(doc, kNumber, duckdb::LogicalType::BIGINT,
                duckdb::Value::BIGINT(static_cast<int64_t>(rng())));
   };
+  FlushRowGroups(kRowGroup);
   AddSegment(kEligibleRows, dense);
   AddSegment(kEligibleRows, dense);
   std::vector<std::string> removed;
@@ -1085,7 +1127,8 @@ TEST_F(ColumnCopyTest, CopyUnitsReencodeWhenThatPays) {
     AddSegment(kEligibleRows, [](auto& doc, size_t row) {
       auto& cw = doc.GetColWriter()->OpenColumn(
         kNumber, duckdb::LogicalType::BIGINT,
-        {.compression = irs::codecs::CodecType::Uncompressed,
+        {.row_group_size = kRowGroup,
+         .compression = irs::codecs::CodecType::Uncompressed,
          .codec_params = irs::ColCodecParams{.tier = irs::WriteTier::Flush}});
       duckdb::Vector v{duckdb::LogicalType::BIGINT, 1};
       v.SetValue(0, duckdb::Value::BIGINT(static_cast<int64_t>(row)));
@@ -1105,6 +1148,7 @@ TEST_F(ColumnCopyTest, CopyUnitsReencodeWhenThatPays) {
 }
 
 TEST_F(ColumnCopyTest, ReencodedTextCopiesTrainTheirSegments) {
+  FlushRowGroups(kTrainingRowGroup);
   for (size_t s = 0; s != 2; ++s) {
     AddSegment(70000, [](auto& doc, size_t row) {
       WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
@@ -1127,6 +1171,7 @@ TEST_F(ColumnCopyTest, ReencodedTextCopiesTrainTheirSegments) {
 }
 
 TEST_F(ColumnCopyTest, InputsThatCannotBeCopiedAreReencoded) {
+  FlushRowGroups(kRowGroup);
   irs::MemoryDirectory dir_a;
   irs::MemoryDirectory out;
   const auto a = MergeWritten(dir_a);
@@ -1289,7 +1334,7 @@ TEST_F(ColumnCopyTest, CopiedBlocksWithAndWithoutADictionaryStayAsTheyAre) {
     WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
                duckdb::Value{absl::StrCat("value-", row % 700)});
   });
-  const auto b = MergeSegments(dir_b, Fresh(2), kTrainingRowGroup);
+  const auto b = MergeSegments(dir_b, Fresh(2), kTrainedRowGroup);
   const auto mixed = DictionariesByBlock(*b, kText);
   ASSERT_TRUE(absl::c_linear_search(mixed, "local"))
     << ::testing::PrintToString(mixed);
@@ -1299,7 +1344,7 @@ TEST_F(ColumnCopyTest, CopiedBlocksWithAndWithoutADictionaryStayAsTheyAre) {
   irs::MemoryDirectory out;
   std::span<const irs::MergeUnit> units;
   const auto merged =
-    MergeSegments(out, {a.get(), b.get()}, kTrainingRowGroup, 1, &units);
+    MergeSegments(out, {a.get(), b.get()}, kTrainedRowGroup, 1, &units);
   ASSERT_NE(nullptr, merged);
   EXPECT_EQ(2, UnitsOf(units, MergeUnitKind::ColumnCopy, kText).size());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));

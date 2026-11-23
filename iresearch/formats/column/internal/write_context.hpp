@@ -21,10 +21,15 @@
 #pragma once
 
 #include <duckdb/storage/buffer_manager.hpp>
+#include <string_view>
 
 #include "iresearch/formats/column/col_file_writer.hpp"
 
 namespace irs {
+
+inline uint64_t AppendAligned(ColFileWriter& out, std::string_view bytes) {
+  return out.AppendAligned({&bytes, 1});
+}
 
 class WriteContext final {
  public:

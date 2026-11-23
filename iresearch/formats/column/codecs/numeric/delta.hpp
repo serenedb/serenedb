@@ -20,87 +20,157 @@
 
 #pragma once
 
+#include <absl/numeric/int128.h>
+
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <span>
 #include <string>
 #include <type_traits>
+#include <utility>
 
-#include "iresearch/formats/column/codecs/numeric/numeric_encoder.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 
 namespace irs::codecs {
 
 template<typename T>
-class DeltaEncoder final : public NumericEncoder<T> {
-  using Base = NumericEncoder<T>;
-  using Base::kWidth;
-  using typename Base::U;
+struct Delta final : State {
+  static constexpr StateId kId = StateId::Delta;
 
- public:
-  static constexpr Shape kShape = Shape::Delta;
-  static constexpr StateId kId = StateId::DeltaEncoder;
+  explicit Delta(ColumnDataCheckpointData&) {}
 
-  explicit DeltaEncoder(ColumnDataCheckpointData& data) : Base{data, kShape} {}
+  ScratchVector<uint8_t> deltas;
+  Analysis analysis[2];
+};
 
- private:
-  void AddCandidates(const NumericChoice* only) final {
-    const auto values = this->_values.Get();
-    const auto& facts = this->_values.GetFacts();
-    const auto n = static_cast<uint32_t>(values.size());
-    if constexpr (std::is_integral_v<T>) {
-      if (Base::Wanted(only, true) && this->_forced &&
-          facts.delta_bits < facts.for_bits) {
-        _wide.resize(n);
-        for (uint32_t i = 0; i < n; ++i) {
-          _wide[i] =
-            i % numeric::kBlockValues == 0
-              ? U{0}
-              : static_cast<U>(values[i] - values[i - 1] - facts.delta_offset);
-        }
-        _blocks.PlanDeltas(std::span<const U>{_wide}, values);
-        this->Add({
-          .packed = true,
-          .stored = kWidth,
-          .base = facts.delta_offset,
-          .items = n,
-        });
-      }
-    }
-    if (!Base::Wanted(only, false)) {
-      return;
-    }
-    _delta.resize(size_t{n} * facts.delta_stored);
-    std::memset(_delta.data(), 0, facts.delta_stored);
-    numeric::Narrow<kWidth>(
-      n - 1, facts.delta_stored, _delta.data() + facts.delta_stored,
-      [v = values.data(), offset = facts.delta_offset](size_t i) {
-        return static_cast<U>(v[i + 1] - v[i] - offset);
+template<typename T>
+Items DeltaItems(ColumnDataCheckpointData& data, FrameStore store) {
+  auto& values = data.Get<Values<T>>();
+  return {
+    .shape = Shape::Delta,
+    .store = store,
+    .stored = values.Usable() ? values.GetSteps().stored : uint8_t{0},
+    .count = static_cast<uint32_t>(values.Size()),
+  };
+}
+
+template<typename T>
+const uint8_t* Deltas(ColumnDataCheckpointData& data) {
+  auto& deltas = data.Get<Delta<T>>().deltas;
+  if (deltas.empty()) {
+    auto& values = data.Get<Values<T>>();
+    const auto rows = values.Get();
+    const auto& steps = values.GetSteps();
+    deltas.resize(rows.size() * steps.stored);
+    std::memset(deltas.data(), 0, steps.stored);
+    numeric::Narrow<sizeof(T)>(
+      rows.size() - 1, steps.stored, deltas.data() + steps.stored,
+      [v = rows.data(), offset = steps.offset](size_t i) {
+        return static_cast<numeric::Bits<sizeof(T)>>(v[i + 1] - v[i] - offset);
       });
-    this->AddWithShuffle({
-      .stored = facts.delta_stored,
-      .base = facts.delta_offset,
-      .items = n,
-      .values = _delta,
+  }
+  return deltas.data();
+}
+
+template<typename T>
+double AnalyzeDelta(ColumnDataCheckpointData& data, double bound,
+                    FrameStore store) {
+  const auto items = DeltaItems<T>(data, store);
+  const auto price = data.preferences->delta_price;
+  return price * AnalyzeFrames<T>(
+                   data, items, data.Get<Delta<T>>().analysis[store.shuffled],
+                   bound / price,
+                   Slices(items.stored, [&] { return Deltas<T>(data); }));
+}
+
+template<typename T>
+bool CompressDelta(ColumnDataCheckpointData& data, FrameStore store) {
+  using U = numeric::Bits<sizeof(T)>;
+  const auto items = DeltaItems<T>(data, store);
+  if (!Offered(items)) {
+    return false;
+  }
+  auto& values = data.Get<Values<T>>();
+  const auto rows = values.Get();
+  const auto offset = values.GetSteps().offset;
+  return CompressFrames<T>(
+    data, items, data.Get<Delta<T>>().analysis[store.shuffled],
+    DeltaHeader{.base = offset},
+    Slices(items.stored, [&] { return Deltas<T>(data); }),
+    [&](NumericFrameMeta& m, uint32_t begin) {
+      m.base = begin == 0 ? static_cast<U>(rows[0] - offset) : rows[begin - 1];
     });
-  }
+}
 
-  void StoreHeader(const Candidate& c, uint32_t,
-                   duckdb::data_ptr_t own) const final {
-    duckdb::Store(DeltaHeader{.base = c.base}, own);
-  }
+template<typename T, ByteCodec kLeaf, bool kShuffled>
+inline constexpr auto& kDelta =
+  kStoredFrames<Shape::Delta, AnalyzeDelta<T>, CompressDelta<T>, kLeaf,
+                kShuffled>;
 
-  uint64_t PackedBlocks(const Candidate&) const noexcept final {
-    return _blocks.Bytes();
-  }
+template<typename T>
+struct DeltaBitpacking final : State {
+  static constexpr StateId kId = StateId::DeltaBitpacking;
 
-  void AppendBlocks(const Candidate&, size_t first, size_t blocks,
-                    std::string& out) final {
-    _blocks.Append(std::span<const U>{_wide}, first, blocks, out);
-  }
+  explicit DeltaBitpacking(ColumnDataCheckpointData&) {}
 
-  ScratchVector<uint8_t> _delta;
-  ScratchVector<U> _wide;
-  FforBlocks<U> _blocks;
+  BitpackingBlocks<numeric::Bits<sizeof(T)>> blocks;
+  bool planned = false;
+};
+
+template<typename T>
+void PlanDeltaBitpacking(Values<T>& values, DeltaBitpacking<T>& state) {
+  if (state.planned) {
+    return;
+  }
+  state.planned = true;
+  const auto rows = values.Rows();
+  if (const auto& steps = values.GetSteps(); steps.bits == 0) {
+    state.blocks.PlanEqualSteps(rows, steps.offset);
+  } else {
+    state.blocks.template PlanDeltas<Values<T>::kSigned>(rows);
+  }
+}
+
+template<typename T>
+double AnalyzeDeltaBitpacking(ColumnDataCheckpointData& data, double bound) {
+  using U = numeric::Bits<sizeof(T)>;
+  auto& values = data.Get<Values<T>>();
+  auto& state = data.Get<DeltaBitpacking<T>>();
+  if (!values.Usable()) {
+    return kNoScore;
+  }
+  const auto rows = values.Rows();
+  const auto price = data.preferences->delta_bitpacking_price;
+  if (!state.planned && ScoreOf(BitpackingBlocks<U>::SampledDeltaBytes(rows),
+                                rows.size(), price) >= bound) {
+    return kNoScore;
+  }
+  PlanDeltaBitpacking(values, state);
+  return price * AnalyzeBlocks<T>(
+                   data, Shape::Delta, static_cast<uint32_t>(rows.size()),
+                   SteppedBytes<T>(state.blocks, values), 0, bound / price);
+}
+
+template<typename T>
+bool CompressDeltaBitpacking(ColumnDataCheckpointData& data) {
+  auto& values = data.Get<Values<T>>();
+  auto& state = data.Get<DeltaBitpacking<T>>();
+  const bool analyzed = state.planned;
+  if (!values.Usable() || !MayWrite(data, analyzed, ByteCodec::None)) {
+    return false;
+  }
+  PlanDeltaBitpacking(values, state);
+  return CompressStepped<T>(data, Shape::Delta, state.blocks, analyzed,
+                            DeltaHeader{});
+}
+
+template<typename T>
+inline constexpr CompressionFunction kDeltaBitpacking{
+  .analyze = AnalyzeDeltaBitpacking<T>,
+  .compress = CompressDeltaBitpacking<T>,
+  .codec = CodecType::Delta,
 };
 
 template<typename T>
@@ -109,10 +179,14 @@ class DeltaReader final : public FrameReader<T> {
   using typename Base::U;
 
  public:
+  using Base::ConstantRows;
+  using Base::FetchRows;
+  using Base::NarrowBounds;
+
   DeltaReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
               CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
-      _own{duckdb::Load<DeltaHeader>(base + sizeof(FrameHeader))} {}
+      _own{duckdb::Load<DeltaHeader>(base + OwnHeaderOffset(frames.flags))} {}
 
   void Seek(uint64_t row) {
     if (this->Holds(row)) {
@@ -164,8 +238,15 @@ class DeltaReader final : public FrameReader<T> {
     return rows;
   }
 
-  IRS_NO_INLINE T FetchApart(uint64_t row, uint64_t next) {
-    if (this->Packed() || this->Near(row, next)) {
+  IRS_FORCE_INLINE T FetchApart(uint64_t row, uint64_t next) {
+    if (this->Packed()) {
+      return this->FetchPacked(row, next);
+    }
+    return FetchFramed(row, next);
+  }
+
+  IRS_NO_INLINE T FetchFramed(uint64_t row, uint64_t next) {
+    if (this->Near(row, next)) {
       return this->Get(row);
     }
     if (this->Shuffled() && this->Near(row, this->_fetched)) {
@@ -194,20 +275,6 @@ class DeltaReader final : public FrameReader<T> {
     }
     _summed = item.at + 1;
     return this->Scaled(_sum);
-  }
-
-  void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
-    const auto [packed, base, bits] = this->BlockAt(first);
-    this->_block.resize(numeric::kBlockValues);
-    numeric::Unpack<U>(bits, this->template Words<numeric::LaneWord<U>>(packed),
-                       this->_block.data(), U{0});
-    const auto step = static_cast<U>(_own.base);
-    auto value = static_cast<U>(base);
-    out[0] = value;
-    for (uint64_t i = 1; i < rows; ++i) {
-      value = static_cast<U>(value + this->_block[i] + step);
-      out[i] = value;
-    }
   }
 
  private:

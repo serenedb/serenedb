@@ -50,7 +50,7 @@ id
 3
 
 query
-SELECT * FROM serenedb_reindex('vdr_idx');
+SELECT * FROM sdb_reindex('vdr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -83,7 +83,7 @@ id	body
 4	after the restart too
 
 query
-SELECT * FROM serenedb_reindex('vdr_idx');
+SELECT * FROM sdb_reindex('vdr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -145,7 +145,7 @@ statement count 1
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vdr_t VALUES (5, 'restart number five');
 
 query
-SELECT * FROM serenedb_reindex('vdr_idx');
+SELECT * FROM sdb_reindex('vdr_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0

@@ -46,8 +46,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> LookupInitGlobal(
   state->view = bind.Read(context);
   state->reader = state->view.reader;
   state->total_segments = state->reader->size();
-  state->workers =
-    duckdb::TaskScheduler::GetScheduler(context).NumberOfThreads();
+  state->workers = duckdb::TaskScheduler::QueryThreads(context);
   ClassifyColumnstoreProjections(*state, bind);
   BuildFetchedCopy(*state);
   return state;

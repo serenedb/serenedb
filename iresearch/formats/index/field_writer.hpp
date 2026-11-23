@@ -86,6 +86,8 @@ class FieldWriter final : public FieldSink {
   void WriteSlot(field_id id, DictRef dict, TermPostings& docs) final;
   void end() final;
 
+  PostingsInputs TakePostings() noexcept { return _pw.TakeInputs(); }
+
  private:
   void Begin(field_id id, DictRef dict) noexcept;
   void BeginTerms(const BasicTermReader& reader, const FieldProperties& props);

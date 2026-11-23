@@ -22,6 +22,7 @@
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <duckdb.hpp>
@@ -297,65 +298,46 @@ class ColCodecCorruptionTest : public TestBase {
 Value Null(const LogicalType& type) { return Value{type}; }
 
 TEST_F(ColCodecCorruptionTest, BitpackingRejectsDamagedSegments) {
-  Sweep(
-    {"for",
-     LogicalType::BIGINT,
-     CodecType::Bitpacking,
-     [](uint64_t g) {
-       return Value::BIGINT(static_cast<int64_t>((g * 7919) % 1000) - 500);
-     },
-     {"Corrupted bitpacking group data: attempted to read past the end of the "
-      "segment",
-      "Corrupted bitpacking segment: array offset is misaligned",
-      "Corrupted bitpacking segment: bit width exceeds the physical type width",
-      "Corrupted bitpacking segment: group offsets do not describe a range in "
-      "the data region",
-      "Corrupted bitpacking segment: offset is outside the segment",
-      "Corrupted bitpacking segment: unknown bitpacking mode"}});
-  Sweep(
-    {"delta for",
-     LogicalType::BIGINT,
-     CodecType::Bitpacking,
-     [](uint64_t g) {
-       return Value::BIGINT(static_cast<int64_t>(g * 3 + (g * 7919) % 5));
-     },
-     {"Corrupted bitpacking group data: attempted to read past the end of the "
-      "segment",
-      "Corrupted bitpacking segment: array offset is misaligned",
-      "Corrupted bitpacking segment: bit width exceeds the physical type width",
-      "Corrupted bitpacking segment: group offsets do not describe a range in "
-      "the data region",
-      "Corrupted bitpacking segment: offset is outside the segment",
-      "Corrupted bitpacking segment: unknown bitpacking mode"}});
+  Sweep({"for",
+         LogicalType::BIGINT,
+         CodecType::Bitpacking,
+         [](uint64_t g) {
+           return Value::BIGINT(static_cast<int64_t>((g * 7919) % 1000) - 500);
+         },
+         {"Corrupted numeric segment: blocks are inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+  Sweep({"delta for",
+         LogicalType::BIGINT,
+         CodecType::Bitpacking,
+         [](uint64_t g) {
+           return Value::BIGINT(static_cast<int64_t>(g * 3 + (g * 7919) % 5));
+         },
+         {"Corrupted numeric segment: blocks are inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
   Sweep({"constant delta",
          LogicalType::INTEGER,
          CodecType::Bitpacking,
          [](uint64_t g) {
            return Value::INTEGER(1000 + static_cast<int32_t>(g) * 5);
          },
-         {"Corrupted bitpacking group data: attempted to read past the end of "
-          "the segment",
-          "Corrupted bitpacking segment: array offset is misaligned",
-          "Corrupted bitpacking segment: group offsets do not describe a range "
-          "in the data region",
-          "Corrupted bitpacking segment: offset is outside the segment",
-          "Corrupted bitpacking segment: unknown bitpacking mode"}});
-  Sweep(
-    {"constant",
-     LogicalType::SMALLINT,
-     CodecType::Bitpacking,
-     [](uint64_t g) {
-       return g < 2048 ? Value::SMALLINT(7)
-                       : Value::SMALLINT(static_cast<int16_t>(g % 50));
-     },
-     {"Corrupted bitpacking group data: attempted to read past the end of the "
-      "segment",
-      "Corrupted bitpacking segment: array offset is misaligned",
-      "Corrupted bitpacking segment: bit width exceeds the physical type width",
-      "Corrupted bitpacking segment: group offsets do not describe a range in "
-      "the data region",
-      "Corrupted bitpacking segment: offset is outside the segment",
-      "Corrupted bitpacking segment: unknown bitpacking mode"}});
+         {"Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+  Sweep({"constant",
+         LogicalType::SMALLINT,
+         CodecType::Bitpacking,
+         [](uint64_t g) {
+           return g < 2048 ? Value::SMALLINT(7)
+                           : Value::SMALLINT(static_cast<int16_t>(g % 50));
+         },
+         {"Corrupted numeric segment: blocks are inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
   Sweep({"hugeint",
          LogicalType::HUGEINT,
          CodecType::Bitpacking,
@@ -363,45 +345,35 @@ TEST_F(ColCodecCorruptionTest, BitpackingRejectsDamagedSegments) {
            return Value::HUGEINT(
              duckdb::hugeint_t{static_cast<int64_t>((g * 31) % 100000)});
          },
-         {"Corrupted bitpacking group data: attempted to read past the end of "
-          "the segment",
-          "Corrupted bitpacking segment: array offset is misaligned",
-          "Corrupted bitpacking segment: group offsets do not describe a range "
-          "in the data region",
-          "Corrupted bitpacking segment: offset is outside the segment",
-          "Corrupted bitpacking segment: unknown bitpacking mode"}});
+         {"Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
 }
 
 TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
-  Sweep(
-    {"bitpacking",
-     LogicalType::BIGINT,
-     CodecType::Bitpacking,
-     [](uint64_t g) {
-       return Value::BIGINT(static_cast<int64_t>((g * 7919) % 1000) - 500);
-     },
-     {"Corrupted bitpacking group data: attempted to read past the end of the "
-      "segment",
-      "Corrupted bitpacking segment: array offset is misaligned",
-      "Corrupted bitpacking segment: bit width exceeds the physical type width",
-      "Corrupted bitpacking segment: group offsets do not describe a range in "
-      "the data region",
-      "Corrupted bitpacking segment: offset is outside the segment",
-      "Corrupted bitpacking segment: unknown bitpacking mode"},
-     /*validity=*/false,
-     /*rows=*/300});
-  Sweep(
-    {"rle",
-     LogicalType::BIGINT,
-     CodecType::Rle,
-     [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(g / 7)); },
-     {"Corrupted RLE segment: bitpacking width exceeds the value width",
-      "Corrupted RLE segment: entry count exceeds the segment capacity",
-      "Corrupted RLE segment: rle_count_offset is corrupted",
-      "Corrupted RLE segment: run count # exceeds the remaining row count #",
-      "Corrupted RLE segment: run counts do not cover the segment row count"},
-     /*validity=*/false,
-     /*rows=*/300});
+  Sweep({"bitpacking",
+         LogicalType::BIGINT,
+         CodecType::Bitpacking,
+         [](uint64_t g) {
+           return Value::BIGINT(static_cast<int64_t>((g * 7919) % 1000) - 500);
+         },
+         {"Corrupted numeric segment: blocks are inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #"},
+         /*validity=*/false,
+         /*rows=*/300});
+  Sweep({"rle",
+         LogicalType::BIGINT,
+         CodecType::Rle,
+         [](uint64_t g) { return Value::BIGINT(static_cast<int64_t>(g / 7)); },
+         {"Corrupted numeric segment: blocks are inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: runs are inconsistent",
+          "Corrupted numeric segment: unsupported version #"},
+         /*validity=*/false,
+         /*rows=*/300});
   Sweep({"alp",
          LogicalType::DOUBLE,
          CodecType::Alp,
@@ -410,9 +382,7 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
          },
          {"Corrupted ALP segment: bit width # exceeds #",
           "Corrupted ALP segment: exponent # exceeds the maximum #",
-          "Corrupted ALP segment: requested range extends past the end of the "
-          "segment",
-          "Corrupted ALP segment: vector offset is outside the data region",
+          "Corrupted ALP segment: metadata offset table exceeds the segment",
           "Corrupted ALP segment: vector offsets do not describe a data range"},
          /*validity=*/false,
          /*rows=*/300});
@@ -427,54 +397,115 @@ TEST_F(ColCodecCorruptionTest, SmallSegmentsRejectDamagedHeaders) {
       "Corrupted ALPRD segment: exception count # exceeds vector size #",
       "Corrupted ALPRD segment: exception position # is outside vector size #",
       "Corrupted ALPRD segment: left bit width # exceeds #",
-      "Corrupted ALPRD segment: requested range extends past the end of the "
-      "segment",
+      "Corrupted ALPRD segment: metadata offset table exceeds the segment",
       "Corrupted ALPRD segment: right bit width # exceeds #",
-      "Corrupted ALPRD segment: vector offset is outside the data region",
-      "Corrupted ALPRD segment: vector offsets do not describe a data range",
-      "Corrupted ALPRD vector: attempted to read past the end of the segment"},
+      "Corrupted ALPRD segment: vector exceeds its data range",
+      "Corrupted ALPRD segment: vector offsets do not describe a data range"},
      /*validity=*/false,
      /*rows=*/300});
+  Sweep({"alp few values",
+         LogicalType::DOUBLE,
+         CodecType::Alp,
+         [](uint64_t g) { return Value::DOUBLE(static_cast<double>(g) / 10); },
+         {"Corrupted ALP segment: bit width # exceeds #",
+          "Corrupted ALP segment: exception count # exceeds vector size #",
+          "Corrupted ALP segment: factor # exceeds exponent #",
+          "Corrupted ALP segment: metadata ends before the segment header",
+          "Corrupted ALP segment: metadata offset table exceeds the segment",
+          "Corrupted ALP segment: vector exceeds its data range",
+          "Corrupted ALP segment: vector offsets do not describe a data range"},
+         /*validity=*/false,
+         /*rows=*/8});
+  Sweep(
+    {"alprd few values",
+     LogicalType::DOUBLE,
+     CodecType::Alprd,
+     [](uint64_t g) {
+       return Value::DOUBLE(std::sqrt(static_cast<double>(g + 2)));
+     },
+     {"Corrupted ALPRD segment: dictionary size exceeds maximum",
+      "Corrupted ALPRD segment: exception count # exceeds vector size #",
+      "Corrupted ALPRD segment: left bit width # exceeds #",
+      "Corrupted ALPRD segment: metadata ends before the segment header",
+      "Corrupted ALPRD segment: metadata offset table exceeds the segment",
+      "Corrupted ALPRD segment: right bit width # exceeds #",
+      "Corrupted ALPRD segment: vector offsets do not describe a data range"},
+     /*validity=*/false,
+     /*rows=*/8});
+  Sweep(
+    {"alp last vector of one value",
+     LogicalType::DOUBLE,
+     CodecType::Alp,
+     [](uint64_t g) {
+       return g == 100 || g == 200 || g == 300
+                ? Value::DOUBLE(std::sqrt(static_cast<double>(g)) * 1.000001)
+                : Value::DOUBLE(static_cast<double>(g % 1000) / 100.0);
+     },
+     {"Corrupted ALP segment: bit width # exceeds #",
+      "Corrupted ALP segment: exception count # exceeds vector size #",
+      "Corrupted ALP segment: exception position # is outside vector size #",
+      "Corrupted ALP segment: exponent # exceeds the maximum #",
+      "Corrupted ALP segment: factor # exceeds exponent #",
+      "Corrupted ALP segment: metadata offset table exceeds the segment",
+      "Corrupted ALP segment: vector exceeds its data range",
+      "Corrupted ALP segment: vector offsets do not describe a data range"},
+     /*validity=*/false,
+     /*rows=*/1025});
+  Sweep(
+    {"alprd vectors stored as is",
+     LogicalType::DOUBLE,
+     CodecType::Alprd,
+     [](uint64_t g) {
+       auto bits = Mix(g);
+       if ((bits >> 52 & 0x7FF) == 0x7FF) {
+         bits ^= uint64_t{1} << 52;
+       }
+       return Value::DOUBLE(std::bit_cast<double>(bits));
+     },
+     {"Corrupted ALPRD segment: dictionary size exceeds maximum",
+      "Corrupted ALPRD segment: exception count # exceeds vector size #",
+      "Corrupted ALPRD segment: left bit width # exceeds #",
+      "Corrupted ALPRD segment: metadata offset table exceeds the segment",
+      "Corrupted ALPRD segment: right bit width # exceeds #",
+      "Corrupted ALPRD segment: vector exceeds its data range",
+      "Corrupted ALPRD segment: vector offsets do not describe a data range"}});
 }
 
 TEST_F(ColCodecCorruptionTest, RleRejectsDamagedSegments) {
-  Sweep(
-    {"bigint",
-     LogicalType::BIGINT,
-     CodecType::Rle,
-     [](uint64_t g) {
-       return Value::BIGINT(static_cast<int64_t>((g / 37) % 11));
-     },
-     {"Corrupted RLE segment: bitpacking width exceeds the value width",
-      "Corrupted RLE segment: entry count exceeds the segment capacity",
-      "Corrupted RLE segment: rle_count_offset is corrupted",
-      "Corrupted RLE segment: run count # exceeds the remaining row count #",
-      "Corrupted RLE segment: run counts do not cover the segment row count"}});
-  Sweep(
-    {"double",
-     LogicalType::DOUBLE,
-     CodecType::Rle,
-     [](uint64_t g) {
-       return Value::DOUBLE(static_cast<double>((g / 50) % 7) + 0.5);
-     },
-     {"Corrupted RLE segment: bitpacking width exceeds the value width",
-      "Corrupted RLE segment: entry count exceeds the segment capacity",
-      "Corrupted RLE segment: rle_count_offset is corrupted",
-      "Corrupted RLE segment: run count # exceeds the remaining row count #",
-      "Corrupted RLE segment: run counts do not cover the segment row count"}});
-  Sweep(
-    {"single runs",
-     LogicalType::INTEGER,
-     CodecType::Rle,
-     [](uint64_t g) {
-       return Value::INTEGER(g < 2000 ? static_cast<int32_t>(g / 500)
-                                      : static_cast<int32_t>(g % 90));
-     },
-     {"Corrupted RLE segment: bitpacking width exceeds the value width",
-      "Corrupted RLE segment: entry count exceeds the segment capacity",
-      "Corrupted RLE segment: rle_count_offset is corrupted",
-      "Corrupted RLE segment: run count # exceeds the remaining row count #",
-      "Corrupted RLE segment: run counts do not cover the segment row count"}});
+  Sweep({"bigint",
+         LogicalType::BIGINT,
+         CodecType::Rle,
+         [](uint64_t g) {
+           return Value::BIGINT(static_cast<int64_t>((g / 37) % 11));
+         },
+         {"Corrupted numeric segment: blocks are inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: runs are inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+  Sweep({"double",
+         LogicalType::DOUBLE,
+         CodecType::Rle,
+         [](uint64_t g) {
+           return Value::DOUBLE(static_cast<double>((g / 50) % 7) + 0.5);
+         },
+         {"Corrupted numeric segment: blocks are inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: runs are inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
+  Sweep({"single runs",
+         LogicalType::INTEGER,
+         CodecType::Rle,
+         [](uint64_t g) {
+           return Value::INTEGER(g < 2000 ? static_cast<int32_t>(g / 500)
+                                          : static_cast<int32_t>(g % 90));
+         },
+         {"Corrupted numeric segment: blocks are inconsistent",
+          "Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: runs are inconsistent",
+          "Corrupted numeric segment: unsupported version #"}});
 }
 
 TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
@@ -493,12 +524,8 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
       "Corrupted ALP segment: exponent # exceeds the maximum #",
       "Corrupted ALP segment: factor # exceeds exponent #",
       "Corrupted ALP segment: metadata offset table exceeds the segment",
-      "Corrupted ALP segment: requested range extends past the end of the "
-      "segment",
-      "Corrupted ALP segment: vector offset is outside the data region",
-      "Corrupted ALP segment: vector offsets do not describe a data range",
-      "Corrupted ALP vector: attempted to read past the end of the segment",
-      "Corrupted ALP vector: offset is outside the segment"}});
+      "Corrupted ALP segment: vector exceeds its data range",
+      "Corrupted ALP segment: vector offsets do not describe a data range"}});
   Sweep(
     {"alp float",
      LogicalType::FLOAT,
@@ -513,12 +540,9 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
       "Corrupted ALP segment: exception position # is outside vector size #",
       "Corrupted ALP segment: exponent # exceeds the maximum #",
       "Corrupted ALP segment: factor # exceeds exponent #",
-      "Corrupted ALP segment: requested range extends past the end of the "
-      "segment",
-      "Corrupted ALP segment: vector offset is outside the data region",
-      "Corrupted ALP segment: vector offsets do not describe a data range",
-      "Corrupted ALP vector: attempted to read past the end of the segment",
-      "Corrupted ALP vector: offset is outside the segment"}});
+      "Corrupted ALP segment: metadata offset table exceeds the segment",
+      "Corrupted ALP segment: vector exceeds its data range",
+      "Corrupted ALP segment: vector offsets do not describe a data range"}});
   Sweep(
     {"alprd double",
      LogicalType::DOUBLE,
@@ -531,13 +555,10 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
       "Corrupted ALPRD segment: exception count # exceeds vector size #",
       "Corrupted ALPRD segment: exception position # is outside vector size #",
       "Corrupted ALPRD segment: left bit width # exceeds #",
-      "Corrupted ALPRD segment: requested range extends past the end of the "
-      "segment",
+      "Corrupted ALPRD segment: metadata offset table exceeds the segment",
       "Corrupted ALPRD segment: right bit width # exceeds #",
-      "Corrupted ALPRD segment: vector offset is outside the data region",
-      "Corrupted ALPRD segment: vector offsets do not describe a data range",
-      "Corrupted ALPRD vector: attempted to read past the end of the "
-      "segment"}});
+      "Corrupted ALPRD segment: vector exceeds its data range",
+      "Corrupted ALPRD segment: vector offsets do not describe a data range"}});
   Sweep(
     {"alprd float",
      LogicalType::FLOAT,
@@ -551,13 +572,10 @@ TEST_F(ColCodecCorruptionTest, AlpCodecsRejectDamagedSegments) {
       "Corrupted ALPRD segment: exception count # exceeds vector size #",
       "Corrupted ALPRD segment: exception position # is outside vector size #",
       "Corrupted ALPRD segment: left bit width # exceeds #",
-      "Corrupted ALPRD segment: requested range extends past the end of the "
-      "segment",
+      "Corrupted ALPRD segment: metadata offset table exceeds the segment",
       "Corrupted ALPRD segment: right bit width # exceeds #",
-      "Corrupted ALPRD segment: vector offset is outside the data region",
-      "Corrupted ALPRD segment: vector offsets do not describe a data range",
-      "Corrupted ALPRD vector: attempted to read past the end of the "
-      "segment"}});
+      "Corrupted ALPRD segment: vector exceeds its data range",
+      "Corrupted ALPRD segment: vector offsets do not describe a data range"}});
 }
 
 TEST_F(ColCodecCorruptionTest, ValidityCodecsRejectDamagedSegments) {

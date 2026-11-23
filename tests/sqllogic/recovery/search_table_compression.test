@@ -201,7 +201,7 @@ query
 SELECT string_agg(DISTINCT compression, ',') AS compression FROM pragma_storage_info('search_forced_bitpacking_wide') WHERE column_name = 'v';
 ----
 compression
-Uncompressed
+BitPacking
 
 query
 SELECT count(*) FROM search_forced_bitpacking_wide WHERE v IS DISTINCT FROM CASE WHEN a % 2 = 0 THEN -9223372036854775807 - 1 ELSE 9223372036854775807 END;
@@ -342,7 +342,13 @@ CREATE TABLE search_auto_numeric (a INTEGER PRIMARY KEY, g BIGINT, d BIGINT, h U
   WITH (compaction_interval = 0);
 
 statement ok
+SET threads = 1;
+
+statement ok
 INSERT INTO search_auto_numeric SELECT a, ((a * 7919) % 5000) * 1000000, (a % 7) * 1000000007 + 123456789012, hash(a % 100) FROM range(5000) t(a);
+
+statement ok
+RESET threads;
 
 statement ok
 VACUUM (FLUSH_TABLE) search_auto_numeric;
@@ -371,7 +377,7 @@ ORDER BY column_name;
 ----
 column_name	forced	auto
 d	ZSTD	DICT_LZ4
-g	ZSTD	DELTA_LZ4
+g	ZSTD	LZ4
 h	ZSTD	DICT_LZ4
 
 query
@@ -577,9 +583,9 @@ WHERE segment_type <> 'VALIDITY' AND column_name IN ('host', 'body', 'url')
 GROUP BY column_name ORDER BY column_name;
 ----
 column_name	compression
-body	LZ4
-host	LZ4
-url	DICT_FSST
+body	FSST
+host	DICT_LZ4
+url	DICT_LZ4
 
 query
 SELECT count(*) AS hits FROM obj_auto WHERE url = 'https://example.org/section/42/page?id=0';
@@ -631,7 +637,7 @@ statement ok
 VACUUM (FLUSH_TABLE) bg_merge;
 
 query ?? retry 300 backoff 100ms
-SELECT bool_or(compression = 'DICT_FSST') AS objective
+SELECT bool_or(compression = 'DICT_LZ4' AND count > 20000) AS objective
 FROM pragma_storage_info('bg_merge') WHERE column_name = 'url' AND segment_type <> 'VALIDITY';
 ----
 objective

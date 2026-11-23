@@ -83,10 +83,15 @@ void ColFileWriter::Flush() {
   _out->Flush();
 }
 
-void ColFileWriter::Finish(format_utils::FooterWriter footer) {
+IndexOutput::ptr ColFileWriter::Finish() {
+  Drain();
+  return std::move(_out);
+}
+
+IndexOutput::ptr ColFileWriter::Finish(format_utils::FooterWriter footer) {
   Drain();
   format_utils::WriteFooter(*_out, footer);
-  _out.reset();
+  return std::move(_out);
 }
 
 void ColFileWriter::Drain() {

@@ -751,7 +751,7 @@ TEST_P(Format10TestCase, ires336) {
     fw.prepare(flush_state, 1);
     fw.write(irs::StringLayout::kStrings, term_reader);
     fw.end();
-    idx.Commit();
+    idx.Commit(nullptr);
   }
 
   irs::SegmentMeta meta;

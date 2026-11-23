@@ -72,7 +72,17 @@ namespace {
 
 using FieldSet = irs::containers::FlatHashSet<irs::field_id>;
 
-FieldSet UniqueTermFields(const ScanBindData& bind) {
+enum class KeyKinds : uint8_t {
+  Unique,
+  All,
+};
+
+bool OfKinds(const search::KeySpec& spec, KeyKinds kinds) {
+  return catalog::IsSingleColumnKey(spec.key) &&
+         (kinds == KeyKinds::All || spec.kind == search::KeyKind::Unique);
+}
+
+FieldSet KeyTermFields(const ScanBindData& bind, KeyKinds kinds) {
   FieldSet fields;
   if (!bind.relation.IsSearchTable() || !bind.relation.inverted_config) {
     return fields;
@@ -81,8 +91,7 @@ FieldSet UniqueTermFields(const ScanBindData& bind) {
   for (const auto& spec :
        bind.relation.table_entry->Cast<catalog::SearchTableEntry>()
          .KeySpecs()) {
-    if (spec.kind != search::KeyKind::Unique ||
-        !catalog::IsSingleColumnKey(spec.key)) {
+    if (!OfKinds(spec, kinds)) {
       continue;
     }
     fields.insert(spec.key.field);
@@ -171,6 +180,64 @@ std::optional<uint64_t> UniqueMatches(const irs::Filter& filter,
     rows += *child_rows;
   }
   return rows;
+}
+
+bool IsSingleColumnKey(const ScanBindData& bind, ColumnId column,
+                       KeyKinds kinds) {
+  return absl::c_any_of(
+    bind.relation.table_entry->Cast<catalog::SearchTableEntry>().KeySpecs(),
+    [&](const search::KeySpec& spec) {
+      return OfKinds(spec, kinds) && spec.key.columns.front() == column;
+    });
+}
+
+bool PinsKey(const ScanBindData& bind, const DeferredClaim& claim,
+             KeyKinds kinds) {
+  if (!claim.columns) {
+    return false;
+  }
+  return absl::c_any_of(
+    claim.conjuncts,
+    [&](const std::shared_ptr<const duckdb::Expression>& conjunct) {
+      if (conjunct->GetExpressionType() !=
+            duckdb::ExpressionType::COMPARE_EQUAL ||
+          !duckdb::BoundComparisonExpression::IsComparison(*conjunct)) {
+        return false;
+      }
+      const auto& comparison =
+        conjunct->Cast<duckdb::BoundFunctionExpression>();
+      const auto& left = duckdb::BoundComparisonExpression::Left(comparison);
+      const auto& right = duckdb::BoundComparisonExpression::Right(comparison);
+      const bool column_left =
+        left.GetExpressionClass() == duckdb::ExpressionClass::BOUND_COLUMN_REF;
+      const auto& column = column_left ? left : right;
+      const auto& value = column_left ? right : left;
+      if (column.GetExpressionClass() !=
+            duckdb::ExpressionClass::BOUND_COLUMN_REF ||
+          !value.IsScalar() || value.IsVolatile()) {
+        return false;
+      }
+      const auto it = claim.columns->find(MakeBindingKey(
+        column.Cast<duckdb::BoundColumnRefExpression>().Binding()));
+      return it != claim.columns->end() &&
+             IsSingleColumnKey(bind, it->second.column, kinds);
+    });
+}
+
+bool PinsKeyValue(const ScanBindData& bind, KeyKinds kinds) {
+  if (!bind.relation.IsSearchTable() || bind.view || bind.score.vector ||
+      bind.score.HasTopK() || bind.ts_dict.Active() || bind.offsets.Active()) {
+    return false;
+  }
+  if (bind.plan_cache.deferred) {
+    return PinsKey(bind, *bind.plan_cache.deferred, kinds);
+  }
+  if (!bind.search.filter) {
+    return false;
+  }
+  const auto bound =
+    UniqueMatches(*bind.search.filter, KeyTermFields(bind, kinds));
+  return bound && *bound <= 1;
 }
 
 uint64_t EstimateFilterMatchCount(const irs::Filter& filter, uint64_t live_docs,
@@ -438,7 +505,8 @@ bool ScanBindData::Equals(const duckdb::FunctionData& other) const {
   if (view.has_value() != o.view.has_value()) {
     return false;
   }
-  if (columns.ids != o.columns.ids) {
+  if (columns.ids != o.columns.ids ||
+      partitions_to_scan != o.partitions_to_scan) {
     return false;
   }
   if (view) {
@@ -454,8 +522,7 @@ bool ScanBindData::HasPushdowns() const noexcept {
          score.HasTopK() || score.top_offset_expr || score.top_offset != 0 ||
          score.top_n_consumed || score.order ||
          score.static_floor != std::numeric_limits<float>::lowest() ||
-         scan_order || offsets.Active() || ts_dict.Active() ||
-         plan_cache.deferred;
+         offsets.Active() || ts_dict.Active() || plan_cache.deferred;
 }
 
 bool ScanBindData::ReadsParametersAtExecution() const {
@@ -564,15 +631,23 @@ std::string_view ScanBindData::RelationName() const {
               : relation.table_entry->name.GetIdentifierName();
 }
 
+bool ScanBindData::IsPointRead() const {
+  return PinsKeyValue(*this, KeyKinds::All);
+}
+
 duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
   duckdb::ClientContext& context) const {
   if (ts_dict.Active()) {
     return TsDictEstimation(context, *this);
   }
+  if (PinsKeyValue(*this, KeyKinds::Unique)) {
+    return duckdb::make_uniq<duckdb::NodeStatistics>(1, 1);
+  }
   const auto live = Read(context).reader->live_docs_count();
   const auto* filter = search.filter.get();
   const auto estimate =
-    filter ? EstimateFilterMatchCount(*filter, live, UniqueTermFields(*this))
+    filter ? EstimateFilterMatchCount(*filter, live,
+                                      KeyTermFields(*this, KeyKinds::Unique))
            : live;
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, live);
 }
@@ -599,7 +674,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   if (input.binder) {
     auto& properties = input.binder->GetStatementProperties();
     properties.RegisterDBRead(index->ParentCatalog(), context);
-    properties.RegisterDataRead(*index, context);
+    properties.RegisterDataRead(*index, context, input.table_index);
   }
   auto data = BindIndexScan(
     context, irs::utils::downCast<catalog::InvertedIndexEntry>(*index));
@@ -670,7 +745,7 @@ bool RowsOnlySegment(const irs::SubReader& segment) {
 
 std::optional<uint64_t> UniqueMatchBound(const ScanBindData& scan,
                                          const irs::Filter& filter) {
-  return UniqueMatches(filter, UniqueTermFields(scan));
+  return UniqueMatches(filter, KeyTermFields(scan, KeyKinds::Unique));
 }
 
 std::optional<uint64_t> UniqueColumnBound(const ScanBindData& scan,

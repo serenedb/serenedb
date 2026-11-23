@@ -57,6 +57,7 @@
 #include <iresearch/store/memory_directory.hpp>
 #include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <map>
 #include <memory>
@@ -166,8 +167,14 @@ const std::vector<uint64_t>& ScatteredRows() {
     if (const char* e = std::getenv("SDB_BENCH_STRIDE")) {
       stride = std::max<uint64_t>(1, std::strtoull(e, nullptr, 10));
     }
+    uint64_t run = 1;
+    if (const char* e = std::getenv("SDB_BENCH_RUN")) {
+      run = std::clamp<uint64_t>(std::strtoull(e, nullptr, 10), 1, stride);
+    }
     for (uint64_t r = 0; r < Data().rows; r += stride) {
-      out.push_back(r);
+      for (uint64_t k = 0; k < run && r + k < Data().rows; ++k) {
+        out.push_back(r + k);
+      }
     }
     return out;
   }();
@@ -193,16 +200,14 @@ constexpr ColArm kNumArms[] = {
   {"rle", irs::codecs::CodecType::Rle, 0},
   {"alp", irs::codecs::CodecType::Alp, 0},
   {"alprd", irs::codecs::CodecType::Alprd, 0},
-  {"ffor", irs::codecs::CodecType::Ffor, 0},
   {"lz4", irs::codecs::CodecType::Lz4, 0},
   {"zstd", irs::codecs::CodecType::Zstd, 0},
-  {"delta_ffor", irs::codecs::CodecType::DeltaFfor, 0},
+  {"delta", irs::codecs::CodecType::Delta, 0},
   {"delta_lz4", irs::codecs::CodecType::DeltaLz4, 0},
   {"delta_zstd", irs::codecs::CodecType::DeltaZstd, 0},
-  {"rle_ffor", irs::codecs::CodecType::RleFfor, 0},
   {"rle_lz4", irs::codecs::CodecType::RleLz4, 0},
   {"rle_zstd", irs::codecs::CodecType::RleZstd, 0},
-  {"dict_ffor", irs::codecs::CodecType::DictFfor, 0},
+  {"dict", irs::codecs::CodecType::Dict, 0},
   {"dict_lz4", irs::codecs::CodecType::DictLz4, 0},
   {"dict_zstd", irs::codecs::CodecType::DictZstd, 0},
   {"uncompressed", irs::codecs::CodecType::Uncompressed, 0},
@@ -295,16 +300,21 @@ struct ColSeg {
   uint64_t ours = 0;
 };
 
+const std::filesystem::path& SegRoot() {
+  static const std::filesystem::path root = [] {
+    if (const char* e = std::getenv("SDB_BENCH_MMAP_DIR")) {
+      return std::filesystem::path{e};
+    }
+    return std::filesystem::temp_directory_path() /
+           ("sdb_col_codecs_real_" + std::to_string(::getpid()));
+  }();
+  return root;
+}
+
 void MakeSegDirectory(ColSeg& seg, const ColArm& arm) {
-  const char* root = std::getenv("SDB_BENCH_MMAP_DIR");
-  if (root == nullptr) {
-    seg.dir = std::make_unique<irs::MemoryDirectory>();
-    return;
-  }
   const bool numeric =
     &arm >= std::begin(kNumArms) && &arm < std::end(kNumArms);
-  seg.path = std::filesystem::path{root} /
-             (std::string{numeric ? "num_" : "col_"} + arm.name);
+  seg.path = SegRoot() / (std::string{numeric ? "num_" : "col_"} + arm.name);
   std::filesystem::remove_all(seg.path);
   std::filesystem::create_directories(seg.path);
   seg.dir = std::make_unique<irs::MMapDirectory>(seg.path);
@@ -468,7 +478,14 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
     in->ReadData(file.data(), file.size());
     uint64_t hash = 0xcbf29ce484222325ULL;
     const auto mix = [&](const auto& blocks) {
+      auto shared = std::numeric_limits<uint64_t>::max();
       for (const auto& block : blocks) {
+        if (block.shared_size != 0 && block.shared_offset != shared) {
+          shared = block.shared_offset;
+          for (uint64_t i = 0; i < block.shared_size; ++i) {
+            hash = (hash ^ file[shared + i]) * 0x100000001b3ULL;
+          }
+        }
         for (uint64_t i = 0; i < block.byte_size; ++i) {
           hash = (hash ^ file[block.file_offset + i]) * 0x100000001b3ULL;
         }
@@ -480,8 +497,13 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
                  static_cast<unsigned long long>(hash));
   }
   Built built;
+  auto shared = std::numeric_limits<uint64_t>::max();
   for (const auto& block : data_blocks) {
     built.bytes += block.byte_size;
+    if (block.shared_size != 0 && block.shared_offset != shared) {
+      shared = block.shared_offset;
+      built.bytes += block.shared_size;
+    }
     if (block.codec && irs::codecs::IsNumeric(block.codec->type)) {
       built.ours += block.tuple_count;
     }
@@ -887,12 +909,12 @@ void ColFilter(benchmark::State& state, const ColArm* arm, bool like) {
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
                               Data().type, STANDARD_VECTOR_SIZE};
     duckdb::Vector out{cache};
+    duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
     state.ResumeTiming();
     kept = 0;
     for (uint64_t anchor = 0; anchor < rows; anchor += STANDARD_VECTOR_SIZE) {
       const auto span = static_cast<duckdb::idx_t>(
         std::min<uint64_t>(rows - anchor, STANDARD_VECTOR_SIZE));
-      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
       for (duckdb::idx_t i = 0; i < span; ++i) {
         sel.set_index(i, i);
       }
@@ -1245,6 +1267,10 @@ static int Main(int argc, char** argv) {
   benchmark::Shutdown();
   for (const auto& path : DuckFiles()) {
     RemoveDuckFile(path);
+  }
+  if (!std::getenv("SDB_BENCH_MMAP_DIR")) {
+    std::error_code ec;
+    std::filesystem::remove_all(SegRoot(), ec);
   }
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;

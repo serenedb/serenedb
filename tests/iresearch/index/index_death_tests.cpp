@@ -74,7 +74,7 @@ bool InsertWithName(tests::IndexWriter& writer, const tests::Document& doc) {
   return true;
 }
 
-class FailingDirectory : public tests::DirectoryMock {
+class FailingDirectory : public tests::FinishHookDirectory {
  public:
   enum class Failure : size_t {
     CREATE = 0,
@@ -90,51 +90,11 @@ class FailingDirectory : public tests::DirectoryMock {
   };
 
  private:
-  class FailingIndexInput : public irs::IndexInput {
+  class FailingIndexInput final : public tests::ForwardingIndexInput {
    public:
     explicit FailingIndexInput(IndexInput::ptr&& impl, std::string_view name,
                                const FailingDirectory& dir)
-      : _impl(std::move(impl)), _dir(&dir), _name(name) {}
-
-    const irs::byte_type* ReadStable(uint64_t count) final {
-      return _impl->ReadStable(count);
-    }
-    const irs::byte_type* ReadStable(uint64_t offset, uint64_t count) final {
-      return _impl->ReadStable(offset, count);
-    }
-
-    const irs::byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
-      return _impl->ReadVolatile(offset, count);
-    }
-    const irs::byte_type* ReadVolatile(uint64_t count) final {
-      return _impl->ReadVolatile(count);
-    }
-
-    irs::byte_type ReadByte() final { return _impl->ReadByte(); }
-    using DataInput::ReadData;
-    void ReadData(irs::byte_type* b, uint64_t count) final {
-      _impl->ReadData(b, count);
-    }
-    void ReadData(duckdb::QueryContext, irs::byte_type* b,
-                  uint64_t count) final {
-      _impl->ReadData(b, count);
-    }
-    void ReadData(uint64_t offset, irs::byte_type* b, size_t count) final {
-      _impl->ReadData(offset, b, count);
-    }
-
-    int16_t ReadI16() final { return _impl->ReadI16(); }
-    int32_t ReadI32() final { return _impl->ReadI32(); }
-    int64_t ReadI64() final { return _impl->ReadI64(); }
-    uint32_t ReadV32() final { return _impl->ReadV32(); }
-    uint64_t ReadV64() final { return _impl->ReadV64(); }
-
-    void SkipV32() final { _impl->SkipV32(); }
-    void SkipV64() final { _impl->SkipV64(); }
-
-    uint64_t Position() const noexcept final { return _impl->Position(); }
-    uint64_t Length() const noexcept final { return _impl->Length(); }
-    bool IsEOF() const noexcept final { return _impl->IsEOF(); }
+      : ForwardingIndexInput(std::move(impl)), _dir(&dir), _name(name) {}
 
     ptr Dup() const final {
       if (_dir->ShouldFail(Failure::DUP, _name)) {
@@ -142,8 +102,8 @@ class FailingDirectory : public tests::DirectoryMock {
                         ERR_MSG("injected dup failure: ", _name));
       }
 
-      return std::make_unique<FailingIndexInput>(_impl->Dup(), this->_name,
-                                                 *this->_dir);
+      return std::make_unique<FailingIndexInput>(ForwardingIndexInput::Dup(),
+                                                 this->_name, *this->_dir);
     }
     ptr Reopen() const final {
       if (_dir->ShouldFail(Failure::REOPEN, _name)) {
@@ -151,25 +111,22 @@ class FailingDirectory : public tests::DirectoryMock {
                         ERR_MSG("injected reopen failure: ", _name));
       }
 
-      return std::make_unique<FailingIndexInput>(_impl->Reopen(), this->_name,
-                                                 *this->_dir);
+      return std::make_unique<FailingIndexInput>(ForwardingIndexInput::Reopen(),
+                                                 this->_name, *this->_dir);
     }
-    void Skip(uint64_t count) final { _impl->Skip(count); }
-    void Seek(uint64_t pos) final { _impl->Seek(pos); }
-
-    uint32_t Checksum(uint64_t offset) const final {
-      return _impl->Checksum(offset);
+    bool Sync() const noexcept final {
+      return !_dir->ShouldFail(Failure::SYNC, _name) &&
+             ForwardingIndexInput::Sync();
     }
 
    private:
-    IndexInput::ptr _impl;
     const FailingDirectory* _dir;
     std::string _name;
   };
 
  public:
   explicit FailingDirectory(irs::Directory& impl) noexcept
-    : tests::DirectoryMock(impl) {}
+    : tests::FinishHookDirectory(impl) {}
 
   bool RegisterFailure(Failure type, const std::string& name) {
     return _failures.emplace(name, type).second;
@@ -187,7 +144,7 @@ class FailingDirectory : public tests::DirectoryMock {
                       ERR_MSG("injected create failure: ", name));
     }
 
-    return tests::DirectoryMock::create(name);
+    return tests::FinishHookDirectory::create(name);
   }
   bool exists(bool& result, std::string_view name) const noexcept final {
     if (ShouldFail(Failure::EXISTS, name)) {
@@ -234,18 +191,13 @@ class FailingDirectory : public tests::DirectoryMock {
 
     return tests::DirectoryMock::rename(src, dst);
   }
-  bool sync(std::span<const std::string_view> files) noexcept final {
-    return std::all_of(std::begin(files), std::end(files),
-                       [this](std::string_view name) mutable noexcept {
-                         if (ShouldFail(Failure::SYNC, name)) {
-                           return false;
-                         }
-
-                         return tests::DirectoryMock::sync({&name, 1});
-                       });
-  }
 
  private:
+  irs::IndexInput::ptr Finished(irs::IndexInput::ptr in,
+                                std::string_view name) const final {
+    return std::make_unique<FailingIndexInput>(std::move(in), name, *this);
+  }
+
   bool ShouldFail(Failure type, std::string_view name) const {
     auto it = _failures.find(std::make_pair(std::string{name}, type));
 

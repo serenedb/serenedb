@@ -88,6 +88,24 @@ class DistinctMerger {
   duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
 };
 
+bool BlocksStartAt(const ColumnReader& column,
+                   std::span<const uint64_t> starts) {
+  BlockWindow w;
+  for (const auto start : starts) {
+    if (start == 0) {
+      continue;
+    }
+    if (start >= column.RowCount()) {
+      break;
+    }
+    w = column.Locate(start, w);
+    if (w.begin != start) {
+      return false;
+    }
+  }
+  return true;
+}
+
 std::vector<std::pair<field_id, const ColumnReader*>> OrderedColumns(
   std::span<const MergeSource> sources,
   const IndexFieldOptions* field_options) {
@@ -233,8 +251,9 @@ ColumnWriterOptions ColumnMerger::WriterOptions(field_id column) const {
 }
 
 ColumnWriter& ColumnMerger::OpenPart(field_id column, uint32_t part,
+                                     uint64_t first_row,
                                      ColWriter& output) const {
-  return output.OpenColumnPart(column, part, First(column).Type(),
+  return output.OpenColumnPart(column, part, first_row, First(column).Type(),
                                WriterOptions(column));
 }
 
@@ -603,10 +622,12 @@ bool ColumnMerger::Splittable(field_id column) const {
                                         duckdb::LogicalTypeId::VARIANT);
 }
 
-bool ColumnMerger::Copyable(field_id column, size_t input) const {
+bool ColumnMerger::Copyable(field_id column, size_t input,
+                            std::span<const uint64_t> row_groups) const {
   const auto& source = _sources[input];
   const auto* col = ColumnOf(source, column);
-  if (!_field_options || !col || HasRemovals(source.reader->Meta()) ||
+  if (row_groups.empty() || !_field_options || !col ||
+      HasRemovals(source.reader->Meta()) ||
       col->Type().IsNested() || col->InMemory() || col->Patched() ||
       !Splittable(column)) {
     return false;
@@ -622,14 +643,14 @@ bool ColumnMerger::Copyable(field_id column, size_t input) const {
   if (Options(column).skip_validity && col->HasValidity()) {
     return false;
   }
-  return BlocksRelocatable(*col);
+  return BlocksRelocatable(*col) && BlocksStartAt(*col, row_groups);
 }
 
 bool ColumnMerger::MergeRange(field_id column, uint32_t part, uint64_t begin,
                               uint64_t end, ColWriter& output,
                               const MergeProgress& progress) {
-  return FillPart(OpenPart(column, part, output), column, part, begin, end,
-                  output, progress);
+  return FillPart(OpenPart(column, part, begin, output), column, part, begin,
+                  end, output, progress);
 }
 
 bool ColumnMerger::FillPart(ColumnWriter& cw, field_id column, uint32_t part,
@@ -638,7 +659,7 @@ bool ColumnMerger::FillPart(ColumnWriter& cw, field_id column, uint32_t part,
   SDB_ASSERT(begin < end);
   const auto append = [&](uint64_t at, const duckdb::Vector& values,
                           duckdb::idx_t count) {
-    cw.Append(at - begin, values, count);
+    cw.Append(at, values, count);
   };
   if (!(_order ? VisitOrdered(column, begin, end, progress, append)
                : VisitRows(
@@ -647,7 +668,7 @@ bool ColumnMerger::FillPart(ColumnWriter& cw, field_id column, uint32_t part,
                        duckdb::idx_t count) { append(at, values, count); }))) {
     return false;
   }
-  cw.PadNullsTo(end - begin);
+  cw.PadNullsTo(end);
   output.CloseColumnPart(column, part);
   return true;
 }
@@ -657,7 +678,7 @@ bool ColumnMerger::CopyRange(field_id column, uint32_t part, size_t input,
                              const MergeProgress& progress) {
   const auto& source = _sources[input];
   const auto& col = *ColumnOf(source, column);
-  auto& cw = OpenPart(column, part, output);
+  auto& cw = OpenPart(column, part, begin, output);
   if (!cw.CopyableFrom(col) ||
       ReencodePays(
         EstimateReencode(*source.col_reader, col, *_field_options, _cache))) {

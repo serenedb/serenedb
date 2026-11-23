@@ -28,7 +28,7 @@ CREATE TABLE lrd_local (id INTEGER);
 
 
 query
-SELECT table_name, index_count FROM duckdb_tables()
+SELECT table_name, index_count FROM sdb_tables()
 WHERE database_name IN (current_database(), 'lrd_${__DATABASE__}') AND schema_name = 'public'
   AND table_name IN ('t', 'lrd_local')
 ORDER BY table_name;
@@ -50,7 +50,7 @@ BEGIN;
 
 
 query
-SELECT count(*) AS n FROM duckdb_schemas() WHERE database_name = 'lrd_${__DATABASE__}' AND schema_name = 'public';
+SELECT count(*) AS n FROM sdb_schemas() WHERE database_name = 'lrd_${__DATABASE__}' AND schema_name = 'public';
 ----
 n
 1
@@ -61,7 +61,7 @@ CALL postgres_execute('lrda_${__DATABASE__}', 'DROP DATABASE lrddb_${__DATABASE_
 
 
 query
-SELECT table_name, index_count FROM duckdb_tables()
+SELECT table_name, index_count FROM sdb_tables()
 WHERE database_name IN (current_database(), 'lrd_${__DATABASE__}') AND schema_name = 'public'
   AND table_name IN ('t', 'lrd_local')
 ORDER BY table_name;

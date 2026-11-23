@@ -577,7 +577,7 @@ DROP DATABASE cxd_db CASCADE
 
 
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'cxd_db'
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'cxd_db'
 ----
 n
 0

@@ -49,8 +49,6 @@ namespace irs {
 
 class ColWriter;
 
-void EmitEmptyValidity(uint64_t rows, std::vector<ColumnBlockMeta>& sink);
-
 bool SelfContained(const ColumnBlockMeta& block) noexcept;
 void DropAllValidMask(WriteChunk& chunk);
 
@@ -71,6 +69,8 @@ struct ColumnWriterOptions {
   codecs::CodecType compression = codecs::CodecType::Auto;
   DistinctStats distinct = DistinctStats::None;
   ColCodecParams codec_params;
+
+  bool operator==(const ColumnWriterOptions&) const = default;
 };
 
 struct ColumnWriteState {
@@ -83,7 +83,8 @@ struct ColumnWriteState {
 class ColumnWriter final {
  public:
   ColumnWriter(ColWriter& owner, field_id id, duckdb::LogicalType type,
-               const ColumnWriterOptions& options, bool deferred);
+               const ColumnWriterOptions& options, bool deferred,
+               uint64_t first_row);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -104,7 +105,7 @@ class ColumnWriter final {
     }
     duckdb::FlatVector::SetSize(back.data, back.count);
     ++_staged_rows;
-    if (!_deferred && _staged_rows == _row_group_size) {
+    if (!_deferred && _staged_rows == _rg_rows) {
       SealRowGroup();
     }
   }
@@ -130,13 +131,13 @@ class ColumnWriter final {
 
   void SetDistinct(duckdb::shared_ptr<duckdb::DistinctStatistics> distinct);
 
+  field_id Id() const noexcept { return _id; }
   const duckdb::LogicalType& Type() const noexcept { return _type; }
+  const ColumnWriterOptions& Options() const noexcept { return _options; }
   const ColumnMeta& Meta() const noexcept { return _meta; }
-  const ColumnWriteState& State() const noexcept { return _state; }
+  ColumnMeta TakeMeta() noexcept { return std::move(_meta); }
 
  private:
-  friend class ColWriter;
-
   template<typename Fill>
   void Stage(uint64_t count, Fill&& fill);
   void AppendList(const duckdb::Vector& vec, duckdb::idx_t count);
@@ -162,6 +163,7 @@ class ColumnWriter final {
 
   void SealRowGroup();
   void SealStaged(std::span<WriteChunk> chunks, uint64_t rows);
+  void OpenRowGroup() noexcept;
 
   bool Compress(const duckdb::LogicalType& type,
                 std::span<const WriteChunk> chunks, codecs::CodecType method,
@@ -214,23 +216,21 @@ class ColumnWriter final {
   ColWriter* _owner;
   field_id _id;
   duckdb::LogicalType _type;
-  bool _skip_validity = false;
-  bool _ingest_lists = false;
-  uint32_t _row_group_size = 0;
-  codecs::CodecType _named = codecs::CodecType::Auto;
+  ColumnWriterOptions _options;
   codecs::CodecType _method = codecs::CodecType::Auto;
   codecs::CodecType _global_method = codecs::CodecType::Auto;
   codecs::CodecSet _disabled;
-
-  ColCodecParams _codec_params;
   std::vector<WriteChunk> _staged;
   std::vector<duckdb::VectorCache> _staged_caches;
   std::unique_ptr<duckdb::Vector> _null_pad;
   duckdb::idx_t _staged_chunks = 0;
   uint64_t _staged_rows = 0;
   uint64_t _row_start = 0;
+  uint64_t _rg_rows = 0;
+  const ReadContext* _shared_source = nullptr;
+  uint64_t _shared_from = 0;
+  uint64_t _shared_to = 0;
   bool _deferred = false;
-  DistinctStats _distinct = DistinctStats::None;
   duckdb::Vector _distinct_hashes{duckdb::LogicalType::HASH, nullptr};
   int64_t _variant_min_shred_size = -1;
   duckdb::LogicalType _force_variant_shredding;

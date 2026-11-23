@@ -49,7 +49,7 @@ DROP SECRET trgrc_${__DATABASE__};
 
 
 query
-SELECT trigger_name FROM duckdb_triggers() WHERE database_name = current_database() ORDER BY 1;
+SELECT trigger_name FROM sdb_triggers() WHERE database_name = current_database() ORDER BY 1;
 ----
 trigger_name
 trgrc_upd
@@ -74,7 +74,7 @@ SELECT 1;
 
 connection after_crash
 query
-SELECT trigger_name FROM duckdb_triggers() WHERE database_name = current_database() ORDER BY 1;
+SELECT trigger_name FROM sdb_triggers() WHERE database_name = current_database() ORDER BY 1;
 ----
 trigger_name
 trgrc_upd

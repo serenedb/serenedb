@@ -21,55 +21,54 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
+#include <span>
 
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 
 namespace irs::codecs {
 
 inline constexpr uint8_t kLeafLevel = 1;
 
-class Leaves final : public State {
- public:
-  static constexpr StateId kId = StateId::NumericLeaves;
+inline uint8_t LeafLevel(const ColumnDataCheckpointData& data) noexcept {
+  return data.params.compression_level ? data.params.compression_level
+                                       : kLeafLevel;
+}
 
-  explicit Leaves(ColumnDataCheckpointData& data)
-    : _level{data.method != CodecType::Auto && data.params.compression_level
-               ? data.params.compression_level
-               : kLeafLevel} {}
+template<typename Codec>
+struct Leaf final : State {
+  static constexpr StateId kId = Codec::kCodec == ByteCodec::Lz4
+                                   ? StateId::NumericLz4
+                                   : StateId::NumericZstd;
 
-  uint8_t Level() const noexcept { return _level; }
+  explicit Leaf(ColumnDataCheckpointData& data) : compressor{LeafLevel(data)} {}
 
-  size_t Compress(ByteCodec leaf, const uint8_t* src, size_t size) {
-    const auto bound =
-      leaf == ByteCodec::Lz4 ? Lz4::Bound(size) : Zstd::Bound(size);
-    if (_out.size() < bound) {
-      _out.resize(bound);
-    }
-    const auto* in = reinterpret_cast<const char*>(src);
-    if (leaf == ByteCodec::Lz4 && _level > 1) {
-      auto& lz4 = _lz4_hc ? *_lz4_hc : _lz4_hc.emplace(_level);
-      return lz4.Compress(in, size, _out.data(), _out.size());
-    }
-    if (leaf == ByteCodec::Lz4) {
-      auto& lz4 = _lz4 ? *_lz4 : _lz4.emplace(_level);
-      return lz4.Compress(in, size, _out.data(), _out.size());
-    }
-    auto& zstd = _zstd ? *_zstd : _zstd.emplace(_level);
-    return zstd.Compress(in, size, _out.data(), _out.size());
-  }
-
-  const char* Out() const noexcept { return _out.data(); }
-
- private:
-  std::optional<Lz4::Compressor> _lz4;
-  std::optional<Lz4Hc::Compressor> _lz4_hc;
-  std::optional<Zstd::Compressor> _zstd;
-  ScratchVector<char> _out;
-  uint8_t _level;
+  typename Codec::Compressor compressor;
+  ScratchVector<char> out;
 };
+
+template<typename Codec>
+std::span<const char> CompressLeaf(ColumnDataCheckpointData& data,
+                                   std::span<const uint8_t> raw) {
+  auto& leaf = data.Get<Leaf<Codec>>();
+  if (const auto bound = Codec::Bound(raw.size()); leaf.out.size() < bound) {
+    leaf.out.resize(bound);
+  }
+  const auto n =
+    leaf.compressor.Compress(reinterpret_cast<const char*>(raw.data()),
+                             raw.size(), leaf.out.data(), leaf.out.size());
+  return {leaf.out.data(), n};
+}
+
+inline std::span<const char> CompressLeaf(ByteCodec leaf,
+                                          ColumnDataCheckpointData& data,
+                                          std::span<const uint8_t> raw) {
+  SDB_ASSERT(leaf == ByteCodec::Lz4 || leaf == ByteCodec::Zstd);
+  return leaf == ByteCodec::Lz4 ? CompressLeaf<Lz4>(data, raw)
+                                : CompressLeaf<Zstd>(data, raw);
+}
 
 }  // namespace irs::codecs

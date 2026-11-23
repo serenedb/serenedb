@@ -142,6 +142,68 @@ doc_id_t ComputeDocIds(ManagedVector<doc_id_t>& doc_id_map,
   return next_id;
 }
 
+std::vector<uint64_t> SourceRowGroupStarts(const MergeSource& source,
+                                           uint64_t row_group_size) {
+  if (const auto recorded = source.col_reader->RowGroupStarts();
+      !recorded.empty()) {
+    return {recorded.begin(), recorded.end()};
+  }
+  std::vector<uint64_t> starts;
+  for (uint64_t start = 0; start < source.alive_count;
+       start += row_group_size) {
+    starts.push_back(start);
+  }
+  return starts;
+}
+
+struct RowGroupPlan {
+  std::vector<uint64_t> starts;
+  std::vector<std::vector<uint64_t>> kept;
+};
+
+RowGroupPlan PlanRowGroups(std::span<const MergeSource> sources,
+                           std::span<const uint64_t> begins, uint64_t rows,
+                           uint64_t row_group_size) {
+  RowGroupPlan plan;
+  plan.kept.resize(sources.size());
+  std::vector<size_t> kept;
+  for (size_t si = 0; si != sources.size(); ++si) {
+    const auto& source = sources[si];
+    if (begins[si] != KeyOrder::kNotIsolated && source.col_reader &&
+        !HasRemovals(source.reader->Meta()) &&
+        source.alive_count >= row_group_size) {
+      kept.push_back(si);
+    }
+  }
+  absl::c_sort(kept, [&](size_t l, size_t r) { return begins[l] < begins[r]; });
+  uint64_t pos = 0;
+  const auto encode = [&](uint64_t end) {
+    for (; pos < end; pos = std::min(end, pos + row_group_size)) {
+      plan.starts.push_back(pos);
+    }
+  };
+  for (const auto si : kept) {
+    encode(begins[si]);
+    SDB_ASSERT(pos == begins[si]);
+    auto starts = SourceRowGroupStarts(sources[si], row_group_size);
+    for (const auto start : starts) {
+      plan.starts.push_back(pos + start);
+    }
+    pos += sources[si].alive_count;
+    plan.kept[si] = std::move(starts);
+  }
+  encode(rows);
+  plan.starts.push_back(rows);
+  bool uniform = true;
+  for (size_t i = 0; uniform && i + 1 < plan.starts.size(); ++i) {
+    uniform = plan.starts[i] == i * row_group_size;
+  }
+  if (uniform) {
+    plan.starts.clear();
+  }
+  return plan;
+}
+
 }  // namespace
 
 MergePlan::MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
@@ -176,17 +238,14 @@ size_t MergePlan::AddUnit(MergeUnit unit) {
 std::vector<MergePlan::InputColumn> MergePlan::InputColumns(field_id id) const {
   std::vector<InputColumn> inputs;
   inputs.reserve(_sources.size());
-  uint64_t row = 0;
   for (size_t input = 0; input != _sources.size(); ++input) {
-    const uint64_t rows = _sources[input].alive_count;
     inputs.push_back({
       .input = input,
-      .begin = _key_order ? _key_order->IsolatedBegin(input) : row,
-      .rows = rows,
+      .begin = _begins[input],
+      .rows = _sources[input].alive_count,
       .bytes = _columns->StoredBytes(id, input),
-      .copyable = _columns->Copyable(id, input),
+      .copyable = _columns->Copyable(id, input, _row_groups[input]),
     });
-    row += rows;
   }
   absl::c_sort(inputs, [](const InputColumn& l, const InputColumn& r) {
     return l.begin != r.begin ? l.begin < r.begin : l.input < r.input;
@@ -258,13 +317,16 @@ std::vector<MergePlan::ColumnRange> MergePlan::SplitStretches(
       out.push_back(range);
       continue;
     }
-    const uint64_t rows = range.end - range.begin;
-    const uint64_t row_groups = math::DivCeil64(rows, row_group_size);
+    std::vector<uint64_t> starts;
+    for (auto row = range.begin; row < range.end;
+         row += _col_writer->RowGroupRows(row, row_group_size)) {
+      starts.push_back(row);
+    }
+    const uint64_t row_groups = starts.size();
     const uint64_t parts =
       std::min(math::DivCeil64(range.cost, target), row_groups);
     const auto part_begin = [&](uint64_t part) {
-      return range.begin +
-             std::min(rows, part * row_groups / parts * row_group_size);
+      return part == parts ? range.end : starts[part * row_groups / parts];
     };
     for (uint64_t part = 0; part != parts; ++part) {
       out.push_back({
@@ -295,13 +357,15 @@ uint64_t MergePlan::AddColumns(const std::vector<size_t>& after_norms) {
     _threads > 1 ? total / (kRangesPerThread * _threads) : 0;
   for (size_t i = 0; const auto id : _columns->Columns()) {
     auto column_ranges = SplitStretches(id, std::move(unsplit[i++]), target);
-    if (column_ranges.size() < 2 &&
-        (column_ranges.empty() || column_ranges[0].input == kEncode)) {
+    if (column_ranges.empty()) {
+      continue;
+    }
+    if (column_ranges.size() == 1 && column_ranges[0].input == kEncode) {
       _columns->Open(id, *_col_writer);
       AddUnit({
         .kind = MergeUnitKind::Column,
         .id = id,
-        .cost = column_ranges.empty() ? 0 : column_ranges[0].cost,
+        .cost = column_ranges[0].cost,
         .deps = after_norms,
       });
       continue;
@@ -502,7 +566,7 @@ bool MergePlan::WriteIndex(MergeStepClock& clock) {
   for (const auto& writer : _ann_writers) {
     writer->Flush();
   }
-  _idx->Commit();
+  _idx->Commit(_hnsw_bases);
   if (!_progress()) {
     return false;
   }
@@ -593,6 +657,16 @@ bool MergePlan::Prepare(duckdb::shared_ptr<duckdb::DedicatedPool> pool) {
   _col_writer->SetHnswBases(_hnsw_bases);
   _columns =
     std::make_unique<ColumnMerger>(_sources, _field_options, Order(), _cache);
+  _begins.reserve(_sources.size());
+  for (uint64_t row = 0; const auto& source : _sources) {
+    _begins.push_back(
+      _key_order ? _key_order->IsolatedBegin(_begins.size()) : row);
+    row += source.alive_count;
+  }
+  auto row_groups = PlanRowGroups(_sources, _begins, _segment.docs_count,
+                                  _columns->RowGroupSize());
+  _col_writer->SetRowGroupStarts(std::move(row_groups.starts));
+  _row_groups = std::move(row_groups.kept);
   _norms.emplace(_sources, _doc_map.get_allocator().Manager(), Order());
   _idx = std::make_unique<IdxWriter>(_idx_dir, _segment.name);
 

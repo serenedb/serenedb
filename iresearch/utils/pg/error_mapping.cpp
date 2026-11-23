@@ -112,6 +112,9 @@ int DuckExceptionToErrcode(const duckdb::ErrorData& error) {
   if (subtype == "NUMERIC_VALUE_OUT_OF_RANGE") {
     return ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE;
   }
+  if (subtype == "INTERVAL_FIELD_OVERFLOW") {
+    return ERRCODE_INTERVAL_FIELD_OVERFLOW;
+  }
   if (subtype == "FEATURE_NOT_SUPPORTED") {
     return ERRCODE_FEATURE_NOT_SUPPORTED;
   }

@@ -1,0 +1,166 @@
+control substitution on
+
+statement ok
+SET threads = 4
+
+
+statement ok
+COPY (SELECT i AS id, 40000 - i AS k, CASE WHEN i % 3 = 0 THEN '' ELSE 'v' || i::VARCHAR END AS s FROM range(40000) t(i))
+TO '${__TEST_DIR__}/psp.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 1000);
+
+
+statement ok
+COPY (SELECT i AS id, 120000 - i AS k, CASE WHEN i % 5 = 0 THEN '' ELSE 'w' || i::VARCHAR END AS s FROM range(40000, 80000) t(i))
+TO '${__TEST_DIR__}/psp_high.parquet' (FORMAT PARQUET, ROW_GROUP_SIZE 1000);
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/psp_limit.json'
+
+
+query
+SELECT id, k FROM read_parquet('${__TEST_DIR__}/psp.parquet') ORDER BY k LIMIT 3;
+----
+id	k
+39999	1
+39998	2
+39997	3
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/psp_offset.json'
+
+
+query
+SELECT k FROM read_parquet('${__TEST_DIR__}/psp.parquet') ORDER BY k LIMIT 2 OFFSET 2500;
+----
+k
+2501
+2502
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/psp_files.json'
+
+
+query
+SELECT id, k FROM read_parquet(['${__TEST_DIR__}/psp_high.parquet', '${__TEST_DIR__}/psp.parquet']) ORDER BY k LIMIT 3;
+----
+id	k
+39999	1
+39998	2
+39997	3
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/psp_desc.json'
+
+
+query
+SELECT id, k FROM read_parquet(['${__TEST_DIR__}/psp.parquet', '${__TEST_DIR__}/psp_high.parquet']) ORDER BY k DESC LIMIT 3;
+----
+id	k
+40000	80000
+40001	79999
+40002	79998
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT list_max(regexp_extract_all(content, '"row_groups_scanned": ?"?([0-9]+)', 1)::INTEGER[]) AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/psp_limit.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT list_max(regexp_extract_all(content, '"row_groups_scanned": ?"?([0-9]+)', 1)::INTEGER[]) AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/psp_offset.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT list_max(regexp_extract_all(content, '"row_groups_scanned": ?"?([0-9]+)', 1)::INTEGER[]) AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/psp_files.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT list_max(regexp_extract_all(content, '"row_groups_scanned": ?"?([0-9]+)', 1)::INTEGER[]) AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/psp_desc.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT count(*) AS groups FROM (SELECT k, count(*) FROM read_parquet('${__TEST_DIR__}/psp.parquet') GROUP BY k LIMIT 3);
+----
+groups
+3
+
+
+query
+SELECT count(*) AS n, min(k) AS lo, max(k) AS hi FROM read_parquet('${__TEST_DIR__}/psp.parquet') WHERE k > 20500;
+----
+n	lo	hi
+19500	20501	40000
+
+
+query
+SELECT count(*) AS n, min(k) AS lo, max(k) AS hi
+FROM read_parquet(['${__TEST_DIR__}/psp.parquet', '${__TEST_DIR__}/psp_high.parquet']) WHERE k > 20500;
+----
+n	lo	hi
+59500	20501	80000
+
+
+query
+SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp.parquet') USING SAMPLE 10% (system, 7);
+----
+n
+2048
+
+
+statement ok
+SET threads = 1
+
+
+query
+SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp.parquet') USING SAMPLE 10% (system, 7);
+----
+n
+2048
+
+
+query
+SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp.parquet') USING SAMPLE 10% (system, 7);
+----
+n
+2048
+
+
+query
+SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp.parquet') USING SAMPLE 400 ROWS (system, 7);
+----
+n
+400
+
+
+query
+SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp.parquet') USING SAMPLE 100000 ROWS (system, 7);
+----
+n
+40000

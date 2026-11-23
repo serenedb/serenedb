@@ -30,7 +30,6 @@
 namespace {
 
 using irs::codecs::Lz4;
-using irs::codecs::Lz4Hc;
 using irs::codecs::Zstd;
 using irs::codecs::Zxc;
 
@@ -58,8 +57,8 @@ std::string Squeeze(typename Codec::Compressor& compressor,
 }
 
 template<typename Codec>
-void ExpectNoDictionaryFromTooLittleData() {
-  typename Codec::Compressor compressor{Codec::kDefaultLevel};
+void ExpectNoDictionaryFromTooLittleData(uint8_t level = Codec::kDefaultLevel) {
+  typename Codec::Compressor compressor{level};
   const std::string frames = "abc";
   const size_t sizes[] = {frames.size()};
   EXPECT_FALSE(compressor.Train(frames, sizes));
@@ -69,7 +68,7 @@ void ExpectNoDictionaryFromTooLittleData() {
 
 TEST(ColByteCodecsTest, TooLittleDataTrainsNoDictionary) {
   ExpectNoDictionaryFromTooLittleData<Lz4>();
-  ExpectNoDictionaryFromTooLittleData<Lz4Hc>();
+  ExpectNoDictionaryFromTooLittleData<Lz4>(LZ4HC_CLEVEL_DEFAULT);
   ExpectNoDictionaryFromTooLittleData<Zstd>();
   ExpectNoDictionaryFromTooLittleData<Zxc>();
 }

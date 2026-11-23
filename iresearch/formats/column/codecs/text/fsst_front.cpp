@@ -31,6 +31,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -43,6 +44,7 @@
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
+#include "iresearch/formats/column/codecs/text/text_encoder.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -53,6 +55,19 @@ namespace irs::codecs::text::fsst_front {
 
 constexpr uint64_t kChainGroupCost = 180;
 constexpr uint64_t kChainMinRowBytes = 8;
+constexpr uint64_t kCopyChunk = 32;
+static_assert(kCopyChunk > fsst::kPrefixSlack);
+
+IRS_FORCE_INLINE void CopyChunks(char* to, const char* from,
+                                 uint64_t bytes) noexcept {
+  uint64_t at = 0;
+  do {
+    char chunk[kCopyChunk];
+    std::memcpy(chunk, from + at, kCopyChunk);
+    std::memcpy(to + at, chunk, kCopyChunk);
+    at += kCopyChunk;
+  } while (at < bytes);
+}
 
 struct ChainEnd {
   uint64_t written;
@@ -79,6 +94,17 @@ uint64_t DecodeSuffix(const fsst::Decoder<Impl>& fsst, const char* in,
   return lcp + dec;
 }
 
+template<typename Impl>
+uint64_t DecodeShared(const fsst::Decoder<Impl>& fsst, const char* in,
+                      uint64_t enc, uint64_t lcp, uint64_t shared, char* out) {
+  SDB_ASSERT(lcp < shared);
+  const auto bytes = shared - lcp;
+  const auto dec = fsst.DecodePrefix(in, enc, out + lcp, bytes);
+  SDB_ENSURE(dec >= bytes && dec - bytes <= fsst::kPrefixSlack,
+             "col codec: corrupted front coding");
+  return lcp + dec;
+}
+
 template<typename Impl, typename Visit>
 ChainEnd WalkChain(const fsst::Decoder<Impl>& fsst, const char* in,
                    PackedReader& lengths, PackedReader& lcps, uint32_t first,
@@ -93,12 +119,21 @@ ChainEnd WalkChain(const fsst::Decoder<Impl>& fsst, const char* in,
     SDB_ENSURE(
       lcp <= prev_len && enc_off + enc <= enc_end && off + lcp <= capacity,
       "col codec: corrupted front coding");
-    if (lcp != 0) {
-      std::memcpy(out + off, out + prev_off, lcp);
-    }
     const auto room = capacity - (off + lcp);
-    const auto dec =
-      enc == 0 ? 0 : fsst.Decode(in + enc_off, enc, out + off + lcp, room);
+    size_t dec = 0;
+    if (enc * fsst::kMaxExpansion + kCopyChunk <= room) {
+      CopyChunks(out + off, out + prev_off, lcp);
+      if (enc != 0) {
+        dec = fsst.DecodePrefix(in + enc_off, enc, out + off + lcp, room);
+      }
+    } else {
+      if (lcp != 0) {
+        std::memcpy(out + off, out + prev_off, lcp);
+      }
+      if (enc != 0) {
+        dec = fsst.Decode(in + enc_off, enc, out + off + lcp, room);
+      }
+    }
     SDB_ENSURE(dec <= room, "col codec: corrupted entry");
     const std::string_view value{out + off, lcp + dec};
     visit(e, value);
@@ -159,12 +194,18 @@ std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
     }
   }
   uint64_t len = 0;
-  while (count != 0) {
+  while (count > 1) {
     const auto i = used[--count];
+    const uint64_t shared = lcp[used[count - 1]];
     SDB_ENSURE(lcp[i] <= len, "col codec: corrupted front coding");
-    len = DecodeSuffix(fsst, in + off[i], off[i + 1] - off[i], lcp[i], buf);
+    len = DecodeShared(fsst, in + off[i], off[i + 1] - off[i], lcp[i], shared,
+                       Reserve(buf, shared + fsst::kPrefixSlack));
     ++walked;
   }
+  SDB_ENSURE(lcp[n - 1] <= len, "col codec: corrupted front coding");
+  len =
+    DecodeSuffix(fsst, in + off[n - 1], off[n] - off[n - 1], lcp[n - 1], buf);
+  ++walked;
   return {buf.data(), len};
 }
 
@@ -179,13 +220,9 @@ struct Scan {
   template<typename Frames>
   Scan(const ColumnSegment& segment, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
-    SDB_ENSURE(
-      s.header.symtab_size == 0 ||
-        decoder.Import(segment.cache_slot.cache,
-                       std::string_view{reinterpret_cast<const char*>(
-                                          s.base + s.header.off_symtab),
-                                        s.header.symtab_size}),
-      "col codec: corrupted symbol table");
+    const auto table = SymbolTable(segment, s.header, s.base, probe);
+    SDB_ENSURE(table.empty() || decoder.Import(segment.cache_slot.cache, table),
+               "col codec: corrupted symbol table");
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
       return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
     });
@@ -225,6 +262,12 @@ struct Scan {
     if (!group_decoded[groups.Base(f) + g]) {
       DecodeGroup(s, f, g);
     }
+  }
+
+  template<typename Frames>
+  void EnsureRow(Frames& s, uint32_t e, uint32_t f) {
+    const auto at = e - s.frames[f].first_entry;
+    EnsureRows(s, f, at / kChainRestart, uint32_t{1} << at % kChainRestart);
   }
 
   template<typename Frames, typename Entry>
@@ -341,13 +384,11 @@ struct Scan {
               }
               rows |= uint32_t{1} << at % kChainRestart;
             }
-            DecodeRows(s, f, group, rows, 0, arena,
-                       [&](uint32_t row, std::string_view v) {
-                         if ((rows >> row & 1) != 0) {
-                           writer.WriteStringRef(duckdb::string_t{
-                             v.data(), static_cast<uint32_t>(v.size())});
-                         }
-                       });
+            DecodeRows(
+              s, f, group, rows, 0, arena, [&](uint32_t, std::string_view v) {
+                writer.WriteStringRef(
+                  duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())});
+              });
           }
           continue;
         }
@@ -379,21 +420,20 @@ struct Scan {
       return;
     }
     const auto restart = s.frames[f].first_entry + g * kChainRestart;
-    const auto used =
-      DecodeRows(s, f, g, rows, kept,
-                 duckdb::StringVector::GetStringAllocator(s.dictionary->data),
-                 [&](uint32_t row, std::string_view v) {
-                   s.Keep(restart + row, v);
-                   group_heap_bytes += v.size();
-                 });
-    group_rows[index] = static_cast<uint16_t>(kept | used);
+    DecodeRows(s, f, g, rows, kept,
+               duckdb::StringVector::GetStringAllocator(s.dictionary->data),
+               [&](uint32_t row, std::string_view v) {
+                 s.Keep(restart + row, v);
+                 group_heap_bytes += v.size();
+               });
+    group_rows[index] = static_cast<uint16_t>(kept | rows);
   }
 
   template<typename Frames, typename Visit>
-  IRS_FORCE_INLINE uint32_t DecodeRows(Frames& s, uint32_t f, uint32_t g,
-                                       uint32_t rows, uint32_t kept,
-                                       duckdb::ArenaAllocator& arena,
-                                       Visit&& visit) {
+  IRS_FORCE_INLINE void DecodeRows(Frames& s, uint32_t f, uint32_t g,
+                                   uint32_t rows, uint32_t kept,
+                                   duckdb::ArenaAllocator& arena,
+                                   Visit&& visit) {
     const auto restart = s.frames[f].first_entry + g * kChainRestart;
     const uint32_t n = std::bit_width(rows);
     SDB_ASSERT(n != 0 && n <= kChainRestart && restart + n <= s.FrameEnd(f));
@@ -409,32 +449,52 @@ struct Scan {
     }
     SDB_ENSURE(off[n] <= s.header.data_size,
                "col codec: corrupted front coding");
-    uint32_t used = 0;
+    std::array<uint32_t, kChainRestart> shared;
+    uint32_t whole = 0;
+    uint32_t heads = 0;
     uint32_t sources = 0;
     uint64_t need = 0;
     uint64_t capacity = 0;
     for (uint32_t i = n; i-- > 0;) {
-      const uint32_t wanted = (rows >> i & 1) | uint32_t{lcp[i] < need};
+      const uint32_t row = rows >> i & 1;
+      const uint32_t wanted = row | uint32_t{lcp[i] < need};
       const uint32_t source = wanted & (kept >> i);
       const uint32_t decode = wanted ^ source;
       sources |= source << i;
-      used |= decode << i;
+      whole |= (decode & row) << i;
+      heads |= (decode & (row ^ 1)) << i;
+      shared[i] = static_cast<uint32_t>(need);
       need = wanted != 0 ? (source != 0 ? 0 : lcp[i]) : need;
-      capacity += decode * (lcp[i] + uint64_t{enc[i]} * fsst::kMaxExpansion);
+      capacity +=
+        (decode & row) * (lcp[i] + uint64_t{enc[i]} * fsst::kMaxExpansion);
     }
     auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
     uint64_t written = 0;
     const char* prev = nullptr;
     uint64_t prev_len = 0;
-    for (auto left = used | sources; left != 0; left &= left - 1) {
+    bool chained = false;
+    for (auto left = whole | heads | sources; left != 0; left &= left - 1) {
       const auto i = static_cast<uint32_t>(std::countr_zero(left));
       if ((sources >> i & 1) != 0) {
         const auto value = View(s.values[restart + i]);
         prev = value.data();
         prev_len = value.size();
+        chained = false;
         continue;
       }
       SDB_ENSURE(lcp[i] <= prev_len, "col codec: corrupted front coding");
+      if ((heads >> i & 1) != 0) {
+        auto* head = Reserve(chain, shared[i] + fsst::kPrefixSlack);
+        if (!chained && lcp[i] != 0) {
+          std::memcpy(head, prev, lcp[i]);
+        }
+        prev_len = DecodeShared(decoder, s.Data() + off[i], enc[i], lcp[i],
+                                shared[i], head);
+        prev = head;
+        chained = true;
+        continue;
+      }
+      chained = false;
       auto* at = out + written;
       if (lcp[i] != 0) {
         std::memcpy(at, prev, lcp[i]);
@@ -450,7 +510,6 @@ struct Scan {
       visit(i, std::string_view{at, prev_len});
     }
     arena.ShrinkHead(capacity - written);
-    return used;
   }
 
   template<typename Frames>
@@ -528,6 +587,7 @@ struct Scan {
   uint64_t group_heap_bytes = 0;
   uint32_t group_frame = kNoFrame;
   std::string probe;
+  std::string chain;
 };
 
 template<typename Impl>
@@ -548,7 +608,7 @@ struct Fetch {
             const FrameMeta& f, uint32_t entry, duckdb::Vector& result,
             duckdb::idx_t result_idx, bool) {
     if (groups.Empty()) {
-      Open(segment.cache_slot.cache, h, base);
+      Open(segment, h, base);
     }
     const auto* in = reinterpret_cast<const char*>(base + h.off_data);
     const uint32_t group = (entry - f.first_entry) / kChainRestart;
@@ -561,14 +621,12 @@ struct Fetch {
       duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
   }
 
-  void Open(duckdb::ObjectCache* cache, const Header& h,
+  void Open(const ColumnSegment& segment, const Header& h,
             duckdb::const_data_ptr_t base) {
     decoder.emplace();
+    const auto symbols = SymbolTable(segment, h, base, chain);
     SDB_ENSURE(
-      h.symtab_size == 0 ||
-        decoder->Import(cache, std::string_view{reinterpret_cast<const char*>(
-                                                  base + h.off_symtab),
-                                                h.symtab_size}),
+      symbols.empty() || decoder->Import(segment.cache_slot.cache, symbols),
       "col codec: corrupted symbol table");
     const auto* table = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
@@ -596,8 +654,8 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   |   Header (string_layout.hpp), 72 bytes       |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   codec of the row codes, level, bit widths,         |
+|   counts, section offsets, flags, decoded size       |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -622,28 +680,80 @@ row group is cut into segments of about kDefaultColSegmentTarget encoded bytes:
 +------------------------------------------------------+
 |                     Symbol table                     |
 |   +----------------------------------------------+   |
-|   |   FSST symbol table: at most 2066 bytes      |   |
-|   |   with 8-bit codes, 36872 with 12-bit ones   |   |
+|   |   FSST symbol table with 8-bit codes, about  |   |
+|   |   2 KiB at most                              |   |
 |   +----------------------------------------------+   |
-|   trained per row group and again when its data      |
-|   drifts; each FSST segment stores a copy            |
+|   trained once per row group; each segment stores    |
+|   a copy; a table with 12-bit codes, up to 36 KiB,   |
+|   is stored once for the row group, outside its      |
+|   segments: the block's metadata says where, and     |
+|   this section is empty                              |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
 |   |   FSST-encoded suffixes                      |   |
 |   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
+|   frames of up to 16 KiB of decoded entries; a       |
+|   longer entry is a frame of its own                 |
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
 */
 
+namespace {
+
+template<typename Impl>
+using PlainFsst = text::fsst_front::CompressionState<Impl, text::PlainRows>;
+
+template<typename Impl>
+using DictFsst = text::fsst_front::CompressionState<Impl, text::DictionaryRows>;
+
+double AnalyzeFsst(ColumnDataCheckpointData& data, double bound) {
+  return text::AnalyzeTrial<PlainFsst<text::fsst::Fsst8>>(data, bound);
+}
+
+bool CompressFsst(ColumnDataCheckpointData& data) {
+  return text::CompressContested<PlainFsst<text::fsst::Fsst8>>(data);
+}
+
+double AnalyzeDictFsst(ColumnDataCheckpointData& data, double bound) {
+  return text::AnalyzeTrial<DictFsst<text::fsst::Fsst8>>(data, bound);
+}
+
+bool CompressDictFsst(ColumnDataCheckpointData& data) {
+  return text::CompressContested<DictFsst<text::fsst::Fsst8>>(data);
+}
+
+constexpr CompressionFunction kFsst{
+  .analyze = AnalyzeFsst,
+  .compress = CompressFsst,
+  .codec = CodecType::Fsst,
+};
+
+constexpr CompressionFunction kDictFsst{
+  .analyze = AnalyzeDictFsst,
+  .compress = CompressDictFsst,
+  .codec = CodecType::DictFsst,
+};
+
+constexpr const CompressionFunction* kFsstContenders[] = {&kFsst};
+constexpr const CompressionFunction* kDictFsstContenders[] = {&kDictFsst};
+
+}  // namespace
+
+CompressionFunctions FsstTextContenders(Shape shape) {
+  if (shape == Shape::Plain) {
+    return kFsstContenders;
+  }
+  return kDictFsstContenders;
+}
+
 constinit const Codec kFsstFrontCodec =
   text::StringCodec<text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst8>>,
-                    text::fsst_front::CompressionState<text::fsst::Fsst8>>();
+                    PlainFsst<text::fsst::Fsst8>>();
 
 constinit const Codec kFsst12FrontCodec =
   text::StringCodec<text::PlainScan<text::fsst_front::Scan<text::fsst::Fsst12>>,
-                    text::fsst_front::CompressionState<text::fsst::Fsst12>>();
+                    PlainFsst<text::fsst::Fsst12>>();
 
 /*
 Data layout per DictionaryScan segment, one block of one column; a text
@@ -654,8 +764,8 @@ encoded bytes:
 |   +----------------------------------------------+   |
 |   |   Header (string_layout.hpp), 72 bytes       |   |
 |   +----------------------------------------------+   |
-|   shape, leaf, level, bit widths, counts,            |
-|   section offsets, flags                             |
+|   codec of the row codes, level, bit widths,         |
+|   counts, section offsets, flags, decoded size       |
 +------------------------------------------------------+
 |                     Frame table                      |
 |   +----------------------------------------------+   |
@@ -687,27 +797,31 @@ encoded bytes:
 +------------------------------------------------------+
 |                     Symbol table                     |
 |   +----------------------------------------------+   |
-|   |   FSST symbol table: at most 2066 bytes      |   |
-|   |   with 8-bit codes, 36872 with 12-bit ones   |   |
+|   |   FSST symbol table with 8-bit codes, about  |   |
+|   |   2 KiB at most                              |   |
 |   +----------------------------------------------+   |
-|   trained per row group and again when its data      |
-|   drifts; each FSST segment stores a copy            |
+|   trained once per row group; each segment stores    |
+|   a copy; a table with 12-bit codes, up to 36 KiB,   |
+|   is stored once for the row group, outside its      |
+|   segments: the block's metadata says where, and     |
+|   this section is empty                              |
 +------------------------------------------------------+
 |                         Data                         |
 |   +----------------------------------------------+   |
 |   |   FSST-encoded suffixes                      |   |
 |   +----------------------------------------------+   |
-|   frames of up to 16 KiB of decoded entries          |
+|   frames of up to 16 KiB of decoded entries; a       |
+|   longer entry is a frame of its own                 |
 +------------------------------------------------------+
 Sections start at 8-byte boundaries.
 */
 
 constinit const Codec kDictFsstFrontCodec = text::StringCodec<
   text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst8>>,
-  text::fsst_front::CompressionState<text::fsst::Fsst8>>();
+  DictFsst<text::fsst::Fsst8>>();
 
 constinit const Codec kDictFsst12FrontCodec = text::StringCodec<
   text::DictionaryScan<text::fsst_front::Scan<text::fsst::Fsst12>>,
-  text::fsst_front::CompressionState<text::fsst::Fsst12>>();
+  DictFsst<text::fsst::Fsst12>>();
 
 }  // namespace irs::codecs

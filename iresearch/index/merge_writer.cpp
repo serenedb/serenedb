@@ -898,16 +898,18 @@ std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
     segment.byte_size += utils::downCast<HotColumnReader>(*column).Bytes();
   }
   segment.byte_size += fields->Bytes();
-  fields->Open(ReaderState{.dir = &scratch, .meta = &segment},
-               field_writer.Features());
-  IndexInput::ptr norms_in;
-  if (!norms.empty()) {
-    norms_in = scratch.open(FileName(segment.name), IOAdvice::RANDOM);
-  }
+  auto postings = field_writer.TakePostings();
+  fields->Open(
+    ReaderState{
+      .dir = &scratch,
+      .meta = &segment,
+      .postings = postings.doc ? &postings : nullptr,
+    },
+    field_writer.Features());
   return SegmentReaderImpl::OpenPiece(
     segment, id,
-    std::make_unique<ColReader>(_db, std::move(columns), std::move(norms_in),
-                                std::move(norms)),
+    std::make_unique<ColReader>(_db, std::move(columns), std::move(norms.in),
+                                std::move(norms.columns)),
     std::move(fields));
 }
 

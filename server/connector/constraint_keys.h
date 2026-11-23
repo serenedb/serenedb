@@ -29,6 +29,7 @@
 #include <duckdb/planner/expression.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -49,6 +50,20 @@ struct KeyRead {
 
 void CollectReads(const duckdb::Expression& expr, std::vector<KeyRead>& reads);
 
+class KeyEncoder {
+ public:
+  KeyEncoder(duckdb::Allocator& allocator,
+             const duckdb::vector<duckdb::LogicalType>& types);
+
+  void Encode(duckdb::DataChunk& input, duckdb::Vector& keys);
+
+ private:
+  std::vector<size_t> _intervals;
+  duckdb::DataChunk _normalized;
+  duckdb::vector<duckdb::OrderModifiers> _modifiers;
+  duckdb::UnifiedVectorFormat _format;
+};
+
 class ConstraintKeyEncoder {
  public:
   ConstraintKeyEncoder(duckdb::ClientContext& context, duckdb::idx_t table_id,
@@ -68,10 +83,7 @@ class ConstraintKeyEncoder {
     std::vector<duckdb::unique_ptr<duckdb::Expression>> parts;
     duckdb::ExpressionExecutor executor;
     duckdb::DataChunk input;
-    std::vector<size_t> intervals;
-    duckdb::DataChunk normalized;
-    duckdb::vector<duckdb::OrderModifiers> modifiers;
-    duckdb::UnifiedVectorFormat format;
+    std::optional<KeyEncoder> encoder;
     duckdb::DataChunk keys;
   };
 

@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/formats/column/codecs/preferences.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
@@ -51,6 +52,7 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/down_cast.hpp"
+#include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs {
 
@@ -75,6 +77,8 @@ struct ColumnSegment {
   uint64_t count = 0;
   uint64_t size = 0;
   CodecType codec = CodecType::Uncompressed;
+  uint64_t shared_offset = 0;
+  uint64_t shared_size = 0;
 };
 
 struct SegmentScanState {
@@ -94,13 +98,14 @@ struct ColumnScanState {
   uint64_t offset_in_column = 0;
   uint64_t internal_index = 0;
   uint64_t last_offset = 0;
+  bool dynamic_filter = false;
 };
 
 struct ColumnFetchState {
   duckdb::BufferHandle& GetOrInsertHandle(const ColumnSegment& segment);
 
   template<typename T, typename Create>
-  T& GetOrCreateSegmentState(Create&& create) {
+  IRS_FORCE_INLINE T& GetOrCreateSegmentState(Create&& create) {
     if (!segment_state) {
       segment_state = create();
     }
@@ -117,11 +122,21 @@ using FlushSegmentFn =
 
 enum class StateId : uint8_t {
   NumericValues,
-  NumericLeaves,
-  PlainEncoder,
-  DeltaEncoder,
-  RunsEncoder,
-  DictionaryEncoder,
+  NumericLz4,
+  NumericZstd,
+  NumericScratch,
+  WideValues,
+  Raw,
+  For,
+  Bitpacking,
+  Delta,
+  DeltaBitpacking,
+  Runs,
+  Rle,
+  RleBitpacking,
+  Entries,
+  Dict,
+  DictBitpacking,
   RoaringContainers,
   TextValues,
   TextLz4,
@@ -131,23 +146,60 @@ enum class StateId : uint8_t {
   TextFsstPlus,
   TextOnPair,
   TextFsst12,
+  TextDictLz4,
+  TextDictZstd,
+  TextDictFsst,
+  TextDictZxc,
+  TextDictFsstPlus,
+  TextDictOnPair,
+  TextDictFsst12,
+  FsstEncoder,
+  FsstPlusEncoder,
+  Fsst12Encoder,
 };
 
-constexpr StateId TextState(ByteCodec leaf) noexcept {
-  return static_cast<StateId>(std::to_underlying(StateId::TextLz4) +
-                              std::to_underlying(leaf) -
-                              std::to_underlying(ByteCodec::Lz4));
+constexpr StateId TextState(Shape shape, ByteCodec leaf) noexcept {
+  return static_cast<StateId>(
+    std::to_underlying(shape == Shape::Dictionary ? StateId::TextDictLz4
+                                                  : StateId::TextLz4) +
+    std::to_underlying(leaf) - std::to_underlying(ByteCodec::Lz4));
 }
 
-static_assert(TextState(ByteCodec::Fsst12) == StateId::TextFsst12);
+static_assert(TextState(Shape::Plain, ByteCodec::Fsst12) ==
+              StateId::TextFsst12);
+static_assert(TextState(Shape::Dictionary, ByteCodec::Fsst12) ==
+              StateId::TextDictFsst12);
+
+constexpr StateId FsstEncoderState(ByteCodec leaf) noexcept {
+  switch (leaf) {
+    case ByteCodec::FsstPlus:
+      return StateId::FsstPlusEncoder;
+    case ByteCodec::Fsst12:
+      return StateId::Fsst12Encoder;
+    default:
+      return StateId::FsstEncoder;
+  }
+}
 
 struct State {
   virtual ~State() = default;
 };
 
+struct SharedBlock {
+  uint64_t offset = 0;
+  uint64_t size = 0;
+};
+
+struct SharedBlocks {
+  std::string bytes;
+  SharedBlock written;
+  SharedBlock staged;
+};
+
 struct ColumnDataCheckpointData {
   void FlushSegment(CodecType codec, duckdb::BaseStatistics stats,
-                    uint64_t rows, std::string_view bytes);
+                    uint64_t rows, std::string_view bytes,
+                    std::string_view shared_bytes = {});
 
   template<typename S>
   S& Get() {
@@ -158,35 +210,36 @@ struct ColumnDataCheckpointData {
     return static_cast<S&>(*state);
   }
 
+  template<typename S>
+  S* Find() noexcept {
+    return static_cast<S*>(states[std::to_underlying(S::kId)].get());
+  }
+
   const duckdb::LogicalType& type;
   std::span<const WriteChunk> chunks;
   WriteContext* ctx = nullptr;
   FlushSegmentFn flush;
+  SharedBlocks* shared = nullptr;
   ColCodecParams params;
   ColumnTuning& tuning;
+  const Preferences* preferences = &kNoPreferences;
   CodecSet disabled;
   uint32_t min_packed_run = 1;
-  CodecType method = CodecType::Auto;
   uint64_t rows = 0;
   uint64_t raw_input = 0;
   uint64_t written = 0;
   std::array<std::unique_ptr<State>, magic_enum::enum_count<StateId>()> states;
 };
 
-struct Estimate {
-  CodecType codec = CodecType::Auto;
-  double score = std::numeric_limits<double>::infinity();
-};
+inline constexpr double kNoScore = std::numeric_limits<double>::infinity();
 
 struct CompressionFunction {
-  Estimate (*analyze)(ColumnDataCheckpointData& data, double bound) = nullptr;
+  double (*analyze)(ColumnDataCheckpointData& data, double bound) = nullptr;
   bool (*compress)(ColumnDataCheckpointData& data) = nullptr;
+  CodecType codec = CodecType::Auto;
 };
 
-struct Contender {
-  const CompressionFunction* function;
-  CodecSet codecs;
-};
+using CompressionFunctions = std::span<const CompressionFunction* const>;
 
 inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;
 
@@ -248,22 +301,23 @@ duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;
 
 uint64_t RawInput(ColumnDataCheckpointData& data);
 
+uint64_t PackedBytes(ColumnDataCheckpointData& data);
+
+uint64_t SampledLz4Bytes(ColumnDataCheckpointData& data);
+
 bool HasRows(std::span<const WriteChunk> chunks) noexcept;
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
 
 template<CodecType kType, auto kAnalyze, auto kCompress, auto kAccepts>
 struct Streamed {
-  static Estimate Analyze([[maybe_unused]] ColumnDataCheckpointData& data,
-                          double) {
+  static double Analyze([[maybe_unused]] ColumnDataCheckpointData& data,
+                        double) {
     if constexpr (kAnalyze == nullptr) {
-      return {};
+      return kNoScore;
     } else {
-      return {
-        .codec = kType,
-        .score = static_cast<double>(kAnalyze(data.chunks)) /
-                 static_cast<double>(std::max<uint64_t>(data.rows, 1)),
-      };
+      return static_cast<double>(kAnalyze(data.chunks)) /
+             static_cast<double>(std::max<uint64_t>(data.rows, 1));
     }
   }
 
@@ -283,10 +337,10 @@ template<CodecType kType, auto kAnalyze, auto kCompress,
 inline constexpr CompressionFunction kStreamed{
   .analyze = Streamed<kType, kAnalyze, kCompress, kAccepts>::Analyze,
   .compress = Streamed<kType, kAnalyze, kCompress, kAccepts>::Compress,
+  .codec = kType,
 };
 
-void Contest(std::span<const Contender> contenders,
-             ColumnDataCheckpointData& data);
+void Contest(CompressionFunctions contenders, ColumnDataCheckpointData& data);
 
 const CompressionFunction& UncompressedCompression(
   duckdb::PhysicalType physical);

@@ -25,6 +25,6 @@
 
 namespace irs::codecs::text {
 
-Shape ContestedShape(ColumnDataCheckpointData& data);
+bool Contends(ColumnDataCheckpointData& data, Shape shape);
 
 }  // namespace irs::codecs::text

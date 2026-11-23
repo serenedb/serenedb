@@ -72,14 +72,14 @@ inline bool ApproxEquals(T lhs, T rhs,
   return std::fabs(rhs - lhs) < eps;
 }
 
-constexpr uint64_t Ceil64(double_t v) noexcept {
-  return (static_cast<double_t>(static_cast<size_t>(v)) == v)
+constexpr uint64_t Ceil64(double v) noexcept {
+  return (static_cast<double>(static_cast<size_t>(v)) == v)
            ? static_cast<size_t>(v)
            : static_cast<size_t>(v) + ((v > 0) ? 1 : 0);
 }
 
-constexpr uint32_t Ceil32(float_t v) noexcept {
-  return (static_cast<float_t>(static_cast<uint32_t>(v)) == v)
+constexpr uint32_t Ceil32(float v) noexcept {
+  return (static_cast<float>(static_cast<uint32_t>(v)) == v)
            ? static_cast<uint32_t>(v)
            : static_cast<uint32_t>(v) + ((v > 0) ? 1 : 0);
 }

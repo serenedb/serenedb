@@ -30,9 +30,11 @@
 #include "iresearch/formats/posting/block_io.hpp"
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
+#include "iresearch/formats/reader_state.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -245,6 +247,8 @@ class PostingsWriter final {
 
   void End();
 
+  PostingsInputs TakeInputs() noexcept { return std::move(_inputs); }
+
  private:
   void AddBlock(const PostingMeta& meta, doc_id_t last);
   void BeginTerm(PostingMeta& meta);
@@ -307,9 +311,11 @@ class PostingsWriter final {
   IndexOutput::ptr _doc_out;  // Postings (doc + freq)
   IndexOutput::ptr _pos_out;  // Positions
   IndexOutput::ptr _pay_out;  // Payload (pay + offs)
-  DocBuffer _doc;             // Document stream
-  PosBuffer _pos;             // Proximity stream
-  PayBuffer _pay;             // Payloads and offsets stream
+  const Directory* _dir{};
+  PostingsInputs _inputs;
+  DocBuffer _doc;  // Document stream
+  PosBuffer _pos;  // Proximity stream
+  PayBuffer _pay;  // Payloads and offsets stream
   BlockGroup _pos_group;
   BlockGroup _pay_group;
   const NormProvider* _norms{};
@@ -390,6 +396,8 @@ inline void PostingsWriter::PrepareOutputs(PostingsOutputs& out,
 inline void PostingsWriter::Prepare(const FlushState& state,
                                     PostingsOutputs out) {
   PrepareOutputs(out, state);
+  _dir = state.dir;
+  _inputs = {};
   _doc_out = std::move(out.doc);
   _pos_out = std::move(out.pos);
   _pay_out = std::move(out.pay);
@@ -785,12 +793,12 @@ inline void PostingsWriter::End() {
 
   block_io::WriteSlack(*_doc_out);
   format_utils::WriteFooter(*_doc_out);
-  _doc_out.reset();  // ensure stream is closed
+  _inputs.doc = _dir->Finish(std::move(_doc_out), IOAdvice::RANDOM);
 
   if (_pos_out) {
     block_io::WriteSlack(*_pos_out);
     format_utils::WriteFooter(*_pos_out);
-    _pos_out.reset();  // ensure stream is closed
+    _inputs.pos = _dir->Finish(std::move(_pos_out), IOAdvice::RANDOM);
   }
 
   // ".pay" may be open for offsets (with positions) and/or for fixed-width
@@ -798,7 +806,7 @@ inline void PostingsWriter::End() {
   if (_pay_out) {
     block_io::WriteSlack(*_pay_out);
     format_utils::WriteFooter(*_pay_out);
-    _pay_out.reset();  // ensure stream is closed
+    _inputs.pay = _dir->Finish(std::move(_pay_out), IOAdvice::RANDOM);
   }
 }
 

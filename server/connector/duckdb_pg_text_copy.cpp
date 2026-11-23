@@ -201,12 +201,7 @@ duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   result->file_buffer =
     duckdb::make_uniq<message::Buffer>(64u * 1024, 1u << 20);
   sdb::pg::FillContext(ConnectionContext::Get(context), result->ctx);
-  // CopyText reuses the Text renderers; the inline COPY escaping is keyed off
-  // copy_text + the doubled backslash base, so it is a no-op without these two.
-  result->ctx.copy_text = true;
-  result->ctx.backslash_count = 2;
-  result->ctx.copy_delim = bdata.delim;
-  result->ctx.copy_null = bdata.null_str;
+  sdb::pg::SetCopyText(result->ctx, bdata.delim, bdata.null_str);
   result->serializers.reserve(bdata.sql_types.size());
   for (const auto& type : bdata.sql_types) {
     result->serializers.push_back(sdb::pg::GetSerialization(
@@ -322,6 +317,28 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> InitGlobalFrom(
 }  // namespace
 
 void CheckTextCopyOptions(const TextCopyOptions& options, bool from) {
+  if (options.delim == '\r' || options.delim == '\n') {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("COPY delimiter cannot be newline or carriage return"));
+  }
+  if (options.null_str.find_first_of("\r\n") != std::string::npos) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG(
+        "COPY null representation cannot use newline or carriage return"));
+  }
+  if (std::string_view{"\\.abcdefghijklmnopqrstuvwxyz0123456789"}.contains(
+        options.delim)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("COPY delimiter cannot be \"",
+                            std::string_view{&options.delim, 1}, "\""));
+  }
+  if (options.null_str.contains(options.delim)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("COPY delimiter character must not appear in the "
+                            "NULL specification"));
+  }
   if (!from && options.ignore_errors) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("COPY ON_ERROR cannot be used with COPY TO"));

@@ -50,6 +50,26 @@ duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
     DictionaryCacheKey(slot.file_id, slot.file_offset));
 }
 
+std::string_view SymbolTable(const ColumnSegment& segment, const Header& h,
+                             duckdb::const_data_ptr_t base, std::string& copy) {
+  if (h.symtab_size != 0 || segment.shared_size == 0) {
+    return {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size};
+  }
+  if (const auto* stable =
+        segment.ctx.TryReadStable(segment.shared_offset, segment.shared_size)) {
+    return {reinterpret_cast<const char*>(stable), segment.shared_size};
+  }
+  copy.resize(segment.shared_size);
+  segment.ctx.Read(segment.shared_offset, duckdb::data_ptr_cast(copy.data()),
+                   segment.shared_size);
+  return copy;
+}
+
+bool HasRoom(const ReadContext::CacheSlot& slot, uint64_t bytes) {
+  return slot.touched && slot.cache->GetCurrentMemoryRacy() + bytes <=
+                           slot.cache->GetMaxMemoryRacy();
+}
+
 Header SegmentHeader(duckdb::const_data_ptr_t base,
                      const ColumnSegment& segment, Shape shape,
                      ByteCodec codec) {
@@ -126,6 +146,14 @@ uint64_t TouchedBytes(const Header& h, duckdb::const_data_ptr_t base,
   return bytes;
 }
 
+uint64_t DistinctEntries(std::span<const EntryAt> order) noexcept {
+  uint64_t distinct = 0;
+  for (size_t i = 0; i < order.size(); ++i) {
+    distinct += i == 0 || order[i].entry != order[i - 1].entry;
+  }
+  return distinct;
+}
+
 void ReferenceOnce(HeapReference& reference, const duckdb::Vector& source,
                    duckdb::Vector& result) {
   const auto& heap = source.GetBufferRef()->GetAuxiliaryData();
@@ -184,9 +212,10 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   info["codec"] = std::string{SnakeCaseName(LeafOf(segment.codec))};
   info["level"] = absl::StrCat(static_cast<uint32_t>(h.level));
   if (shape == Shape::Dictionary) {
-    info["codes_transform"] = std::string{TransformName(
-      ShapeOf(h.codes),
-      ParseFrames(base + h.off_codes, h.off_symtab - h.off_codes, h.codes))};
+    info["codes_transform"] = std::string{
+      TransformName(ShapeOf(h.codes),
+                    ParseFrames(base + h.off_codes, h.off_symtab - h.off_codes,
+                                h.row_count, h.codes))};
   }
   info["entries"] = absl::StrCat(h.entry_count);
   info["frames"] = absl::StrCat(h.frame_count);

@@ -1,3 +1,6 @@
+add_library(serene_docs_builder OBJECT docs_loader.cpp docs_bootstrap.cpp)
+target_link_libraries(serene_docs_builder PRIVATE sereneserver)
+
 if(NOT SDB_EMBEDDED_DOCS)
     add_library(serene_docs_corpus OBJECT docs_data_stub.cpp)
     target_include_directories(
@@ -68,12 +71,6 @@ target_include_directories(
     PRIVATE ${CMAKE_SOURCE_DIR}/server
 )
 
-add_library(serene_docs_builder OBJECT docs_loader.cpp)
-target_link_libraries(serene_docs_builder PRIVATE sereneserver)
-
-add_library(serene_docs_bootstrap OBJECT docs_bootstrap.cpp)
-target_link_libraries(serene_docs_bootstrap PRIVATE sereneserver)
-
 add_library(
     serene_docs_index
     OBJECT
@@ -107,15 +104,18 @@ endfunction()
 
 function(sdb_build_docs_index TARGET)
     add_dependencies(${TARGET} serene_docs_corpus_file)
+    set_property(
+        TARGET ${TARGET}
+        APPEND
+        PROPERTY LINK_DEPENDS ${SDB_DOCS_CORPUS}
+    )
     add_custom_command(
         TARGET ${TARGET}
         POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E rm -rf ${SDB_DOCS_INDEX_WORK}
         COMMAND
-            $<TARGET_FILE:${TARGET}> ${SDB_DOCS_INDEX_WORK}/datadir
-            --build_docs_index=${SDB_DOCS_INDEX_WORK}/index
-            --docs_corpus=${SDB_DOCS_CORPUS}
-        COMMAND ${CMAKE_COMMAND} -E rm -rf ${SDB_DOCS_INDEX_WORK}/datadir
+            $<TARGET_FILE:${TARGET}> docs-index ${SDB_DOCS_CORPUS}
+            ${SDB_DOCS_INDEX_WORK}/index
         VERBATIM
     )
     sdb_embed_docs_index(${TARGET})

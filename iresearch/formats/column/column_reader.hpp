@@ -39,6 +39,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -84,6 +85,8 @@ struct ColumnBlockMeta {
   uint64_t file_offset = 0;
   uint64_t byte_size = 0;
   const codecs::Codec* codec = nullptr;
+  uint64_t shared_offset = 0;
+  uint64_t shared_size = 0;
 };
 
 struct ListPart {
@@ -347,7 +350,7 @@ class ColumnReader {
     };
 
     OpenBlock& Block(Blocks& blocks, uint64_t row);
-    bool FetchOne(Blocks& blocks, uint64_t row, duckdb::Vector& out,
+    void FetchOne(Blocks& blocks, uint64_t row, duckdb::Vector& out,
                   duckdb::idx_t out_offset);
     void FetchBlock(OpenBlock& block, duckdb::Vector& out,
                     const duckdb::SelectionVector& sel, duckdb::idx_t offset);

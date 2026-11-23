@@ -47,7 +47,7 @@ COMMIT;
 
 connection s2
 query
-SELECT table_name, sql FROM duckdb_indexes()
+SELECT table_name, sql FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name	sql
@@ -73,7 +73,7 @@ statement ok
 ALTER TABLE crs.t2 RENAME TO t9;
 
 query
-SELECT table_name FROM duckdb_indexes()
+SELECT table_name FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name
@@ -83,7 +83,7 @@ statement ok
 ROLLBACK;
 
 query
-SELECT table_name, sql FROM duckdb_indexes()
+SELECT table_name, sql FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name	sql
@@ -127,7 +127,7 @@ statement ok
 ROLLBACK;
 
 query
-SELECT index_name FROM duckdb_indexes() WHERE table_name = 't2' AND database_name = current_database();
+SELECT index_name FROM sdb_indexes() WHERE table_name = 't2' AND database_name = current_database();
 ----
 index_name
 i2
@@ -180,7 +180,7 @@ statement ok
 COMMIT;
 
 query
-SELECT index_name FROM duckdb_indexes() WHERE table_name = 't5' AND database_name = current_database() ORDER BY 1;
+SELECT index_name FROM sdb_indexes() WHERE table_name = 't5' AND database_name = current_database() ORDER BY 1;
 ----
 index_name
 i
@@ -204,14 +204,14 @@ ALTER TABLE crs.r RENAME COLUMN b TO c;
 
 connection s1
 query
-SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+SELECT sql FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
 ----
 sql
 CREATE INDEX crs_r_b ON crs.r USING inverted (c);
 
 connection s2
 query
-SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+SELECT sql FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
 ----
 sql
 CREATE INDEX crs_r_b ON crs.r USING inverted (b);
@@ -222,7 +222,7 @@ ROLLBACK;
 
 connection s2
 query
-SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+SELECT sql FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
 ----
 sql
 CREATE INDEX crs_r_b ON crs.r USING inverted (b);
@@ -233,7 +233,7 @@ ALTER TABLE crs.r RENAME COLUMN b TO c;
 
 connection s2
 query
-SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+SELECT sql FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
 ----
 sql
 CREATE INDEX crs_r_b ON crs.r USING inverted (c);

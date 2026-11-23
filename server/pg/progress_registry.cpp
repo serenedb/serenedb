@@ -24,6 +24,8 @@
 
 #include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/valid_checker.hpp>
+#include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
 
 namespace sdb::pg {
@@ -124,28 +126,78 @@ std::string_view ProgressPhaseName(ProgressCommand command, int64_t phase) {
 }
 
 void ProgressMetrics::Reset() {
-  for (auto* slot :
-       {&command, &io_type, &relid, &current_relid, &phase, &bytes_processed,
-        &bytes_total, &tuples_processed, &tuples_total, &stage, &stages_total,
-        &step, &steps_total, &items_processed, &items_total}) {
+  for (auto* slot : {&command, &io_type, &relid, &current_relid, &phase,
+                     &bytes_total, &tuples_total, &stage, &stages_total, &step,
+                     &steps_total, &items_processed, &items_total}) {
     slot->store(0, std::memory_order_relaxed);
+  }
+  processed.Reset();
+}
+
+BackendState IdleState(duckdb::TransactionContext& transaction) {
+  if (transaction.IsAutoCommit()) {
+    return BackendState::Idle;
+  }
+  if (transaction.HasActiveTransaction() &&
+      duckdb::ValidChecker::IsInvalidated(transaction.ActiveTransaction())) {
+    return BackendState::IdleInTransactionAborted;
+  }
+  return BackendState::IdleInTransaction;
+}
+
+void BackendStatusEntry::Write(const BackendStatus& status) noexcept {
+  const auto changes = _changes.load(std::memory_order_relaxed);
+  _changes.store(changes + 1, std::memory_order_relaxed);
+  std::atomic_thread_fence(std::memory_order_release);
+  _state.store(status.state, std::memory_order_relaxed);
+  _xact_start_us.store(status.xact_start_us, std::memory_order_relaxed);
+  _query_start_us.store(status.query_start_us, std::memory_order_relaxed);
+  _state_change_us.store(status.state_change_us, std::memory_order_relaxed);
+  _changes.store(changes + 2, std::memory_order_release);
+}
+
+BackendStatus BackendStatusEntry::Read() const noexcept {
+  for (;;) {
+    const auto changes = _changes.load(std::memory_order_acquire);
+    const BackendStatus status{
+      .state = _state.load(std::memory_order_relaxed),
+      .xact_start_us = _xact_start_us.load(std::memory_order_relaxed),
+      .query_start_us = _query_start_us.load(std::memory_order_relaxed),
+      .state_change_us = _state_change_us.load(std::memory_order_relaxed),
+    };
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (changes % 2 == 0 &&
+        _changes.load(std::memory_order_relaxed) == changes) {
+      return status;
+    }
   }
 }
 
 void ProgressSource::BeginQuery(std::string query_text) {
   metrics.Reset();
-  {
-    absl::MutexLock lock{&mu};
-    query = std::move(query_text);
-  }
-  query_start_us.store(duckdb::Timestamp::GetCurrentTimestamp().value,
-                       std::memory_order_relaxed);
+  const auto now = duckdb::Timestamp::GetCurrentTimestamp().value;
+  const auto previous = status.Read();
+  absl::MutexLock lock{&mu};
+  query = std::move(query_text);
+  status.Write({
+    .state = BackendState::Active,
+    .xact_start_us =
+      previous.state == BackendState::Idle ? now : previous.xact_start_us,
+    .query_start_us = now,
+    .state_change_us = now,
+  });
 }
 
-void ProgressSource::EndQuery() {
-  // PG keeps the last statement's text visible with state=idle; only the
-  // start timestamp is cleared.
-  query_start_us.store(0, std::memory_order_relaxed);
+void ProgressSource::ReportIdle(BackendState state) {
+  SDB_ASSERT(state != BackendState::Active);
+  const auto previous = status.Read();
+  status.Write({
+    .state = state,
+    .xact_start_us =
+      state == BackendState::IdleInTransaction ? previous.xact_start_us : 0,
+    .query_start_us = previous.query_start_us,
+    .state_change_us = duckdb::Timestamp::GetCurrentTimestamp().value,
+  });
 }
 
 namespace {
@@ -250,7 +302,8 @@ size_t ProgressRegistry::OtherSessions(int64_t datid, int32_t pid,
   const auto count = [&] {
     return static_cast<size_t>(
       absl::c_count_if(_sources, [&](const auto& entry) {
-        return entry.second->datid == datid && entry.second->pid != pid;
+        return entry.second->client_backend && entry.second->datid == datid &&
+               entry.second->pid != pid;
       }));
   };
   const auto none = [&] { return count() == 0; };
@@ -278,7 +331,6 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
     s.user = source->user;
     s.database = source->database;
     s.backend_start_us = source->backend_start_us;
-    s.query_start_us = source->query_start_us.load(std::memory_order_relaxed);
 
     const auto& m = source->metrics;
     s.command = m.command.load(std::memory_order_relaxed);
@@ -286,9 +338,9 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
     s.relid = m.relid.load(std::memory_order_relaxed);
     s.current_relid = m.current_relid.load(std::memory_order_relaxed);
     s.phase = m.phase.load(std::memory_order_relaxed);
-    s.bytes_processed = m.bytes_processed.load(std::memory_order_relaxed);
+    s.bytes_processed = m.Bytes();
     s.bytes_total = m.bytes_total.load(std::memory_order_relaxed);
-    s.tuples_processed = m.tuples_processed.load(std::memory_order_relaxed);
+    s.tuples_processed = m.Tuples();
     s.tuples_total = m.tuples_total.load(std::memory_order_relaxed);
     s.stage = m.stage.load(std::memory_order_relaxed);
     s.stages_total = m.stages_total.load(std::memory_order_relaxed);
@@ -299,7 +351,8 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
 
     absl::MutexLock lock{&source->mu};
     s.query = source->query;
-    if (source->ctx && s.query_start_us != 0) {
+    s.status = source->status.Read();
+    if (source->ctx && s.status.state == BackendState::Active) {
       auto progress = source->ctx->GetQueryProgress();
       s.percent = progress.GetPercentage();
       s.rows_processed = static_cast<int64_t>(progress.GetRowsProcessed());

@@ -106,3 +106,10 @@ ORDER BY bits;
 middle	replaced	trimmed	bits
 \\x0203	\\xff02030405060708090a0b0c0d0e0f	\\x02030405060708090a0b0c0d0e0f	120
 NULL	NULL	NULL	NULL
+
+query
+SELECT '\x01'::bytea || 'abc' AS appended, 'abc' || '\x01'::bytea AS prepended,
+       pg_typeof('\x01'::bytea || 'abc') AS t;
+----
+appended	prepended	t
+\\x01616263	\\x61626301	bytea

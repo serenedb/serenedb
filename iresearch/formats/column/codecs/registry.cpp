@@ -63,10 +63,6 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
       return AutoCodec(physical);
     case CodecType::Uncompressed:
       return UncompressedCodec(physical);
-    case CodecType::Rle:
-      return RleCodec(physical);
-    case CodecType::Bitpacking:
-      return BitpackingCodec(physical);
     case CodecType::Alp:
       return AlpCodec(physical);
     case CodecType::Alprd:
@@ -86,6 +82,26 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
   }
   return IsNumeric(type) ? NumericCodecOf(ShapeOf(type), LeafOf(type), physical)
                          : nullptr;
+}
+
+CompressionFunctions Contenders(CodecType type, PhysicalType physical) {
+  if (!IsForm(type)) {
+    return {};
+  }
+  if (physical == PhysicalType::VARCHAR) {
+    switch (LeafOf(type)) {
+      case ByteCodec::Lz4:
+        return Lz4TextContenders(ShapeOf(type));
+      case ByteCodec::Fsst:
+        return FsstTextContenders(ShapeOf(type));
+      default:
+        return {};
+    }
+  }
+  if (!IsNumeric(type)) {
+    return {};
+  }
+  return NumericContenders(ShapeOf(type), LeafOf(type), physical);
 }
 
 CodecType FindCodec(std::string_view name) {

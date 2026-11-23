@@ -24,19 +24,8 @@
 #include <zxc_constants.h>
 #include <zxc_error.h>
 
-#include "iresearch/formats/column/codecs/registry.hpp"
-#include "iresearch/formats/column/codecs/text/blob.hpp"
-#include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
-#include "iresearch/formats/column/codecs/text/plain_scan.tpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
-
-/*
-zxc frames in Data (string_layout.hpp draws the segments): frame 0 holds up
-to 32 KiB and is the dictionary of the later frames of up to 16 KiB; or the
-same frames, each compressed with the segment's trained dictionary; or
-64 KiB frames without a dictionary.
-*/
 
 namespace irs::codecs {
 namespace {
@@ -57,14 +46,6 @@ std::unique_ptr<zxc_cctx, ZxcFree> NewContext(uint8_t level) {
 }
 
 }  // namespace
-
-constinit const Codec kZxcCodec =
-  text::StringCodec<text::PlainScan<text::blob::Scan<Zxc>>,
-                    text::blob::CompressionState<Zxc>>();
-
-constinit const Codec kDictZxcCodec =
-  text::StringCodec<text::DictionaryScan<text::blob::Scan<Zxc>>,
-                    text::blob::CompressionState<Zxc>>();
 
 Zxc::Compressor::Compressor(uint8_t level)
   : DictionaryCompressor{kDictionaryCap},

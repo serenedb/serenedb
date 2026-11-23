@@ -24,7 +24,7 @@
 
 # Log destination at process start:
 #   stdout  -- captured by systemd/journald (default)
-#   memory  -- queryable via SELECT * FROM duckdb_logs()
+#   memory  -- queryable via SELECT * FROM sdb_logs()
 #   file    -- written to --log_path below
 --log_storage=stdout
 

@@ -125,7 +125,8 @@ void SegmentWriter::FlushFields(FlushState& state,
   }
 }
 
-void SegmentWriter::flush(SegmentMeta& meta, DocumentMaskBuilder& docs_mask) {
+SegmentInputs SegmentWriter::flush(SegmentMeta& meta,
+                                   DocumentMaskBuilder& docs_mask) {
   DocOrder order;
   FlushState state{
     .dir = &_dir,
@@ -152,17 +153,20 @@ void SegmentWriter::flush(SegmentMeta& meta, DocumentMaskBuilder& docs_mask) {
       GetReady(_col_writer->ComputeAnn(/*env=*/nullptr).ToFuture());
     }
     ann_writers = _col_writer->TakeAnnWriters();
+    _col_reader = _col_writer->TakeReader();
     _col_writer.reset();
+  } else {
+    _col_reader = std::make_unique<ColReader>(_db, nullptr, ColFooter{});
   }
 
+  PostingsInputs postings;
   if (state.doc_count != 0) {
-    _col_reader =
-      std::make_unique<ColReader>(_dir, _seg_name, _db, IOAdvice::SEQUENTIAL);
     _field_writer->SetIdxWriter(idx);
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =
       PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx);
     FlushFields(state, cluster_readers, order);
+    postings = _field_writer->TakePostings();
   }
 
   for (const auto& w : ann_writers) {
@@ -171,9 +175,11 @@ void SegmentWriter::flush(SegmentMeta& meta, DocumentMaskBuilder& docs_mask) {
     }
   }
 
-  _col_reader.reset();
-
-  idx.Commit();
+  SegmentInputs inputs{
+    .col = std::move(_col_reader),
+    .idx = idx.Commit(_hnsw_bases),
+    .postings = std::move(postings),
+  };
 
   if (order.Empty()) {
     docs_mask = std::move(_docs_mask);
@@ -191,6 +197,7 @@ void SegmentWriter::flush(SegmentMeta& meta, DocumentMaskBuilder& docs_mask) {
   meta.live_docs_count =
     meta.docs_count - static_cast<doc_id_t>(docs_mask.Count());
   meta.kinds = SegmentFileKinds(_dir.FlushTracked(meta.byte_size));
+  return inputs;
 }
 
 void SegmentWriter::CopyRows(const ColReader& source,
@@ -241,7 +248,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   SDB_ASSERT(docs != 0);
   SDB_ASSERT(_copied_rows.empty());
   std::vector<std::unique_ptr<ColumnReader>> columns;
-  std::vector<NormColumnSpec> norms;
+  SealedNorms norms;
   size_t column_bytes = 0;
   if (_col_writer) {
     _fields.FinalizeNorms();
@@ -267,19 +274,21 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   meta.live_docs_count = meta.docs_count - RemovalCount(meta);
   const auto files = _dir.FlushTracked(meta.byte_size);
   meta.byte_size += column_bytes + fields->Bytes();
-  fields->Open(ReaderState{.dir = &_dir, .meta = &meta},
-               field_writer.Features());
-  IndexInput::ptr norms_in;
-  if (!norms.empty()) {
-    norms_in = _dir.open(FileName(_seg_name), IOAdvice::RANDOM);
-  }
+  auto postings = field_writer.TakePostings();
+  fields->Open(
+    ReaderState{
+      .dir = &_dir,
+      .meta = &meta,
+      .postings = postings.doc ? &postings : nullptr,
+    },
+    field_writer.Features());
   for (const auto& file : files) {
     _dir.remove(file);
   }
   return SegmentReaderImpl::OpenPiece(
     meta, id,
-    std::make_unique<ColReader>(_db, std::move(columns), std::move(norms_in),
-                                std::move(norms)),
+    std::make_unique<ColReader>(_db, std::move(columns), std::move(norms.in),
+                                std::move(norms.columns)),
     std::move(fields));
 }
 

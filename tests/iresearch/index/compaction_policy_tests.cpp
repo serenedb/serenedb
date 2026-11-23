@@ -63,7 +63,7 @@ namespace {
     for (auto* segment : sorted_candidates) {
       auto& meta = segment->Meta();
       std::cerr << meta.byte_size << " ("
-                << double_t(meta.live_docs_count) / meta.docs_count << "), ";
+                << double(meta.live_docs_count) / meta.docs_count << "), ";
     }
     std::cerr << "\n";
 

@@ -30,6 +30,7 @@
 #include "iresearch/index/document_mask.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/parallel_for.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -81,13 +82,16 @@ class DocRemovalBuilder {
   void Add(uint32_t index, doc_id_t doc);
   void AddRange(uint32_t index, doc_id_t first, doc_id_t last);
   DocumentMaskBuilder& Group(uint32_t index);
+  static DocRemovalBuilder Union(std::span<DocRemovalBuilder> parts,
+                                 ParallelFor parallel = SerialFor);
 
   bool Empty() const noexcept {
     return absl::c_all_of(
       _groups, [](const auto& group) { return group.second.Empty(); });
   }
 
-  std::shared_ptr<const DocRemoval> Finish(const DirectoryReader& reader) &&;
+  std::shared_ptr<const DocRemoval> Finish(const DirectoryReader& reader,
+                                           ParallelFor parallel = SerialFor) &&;
 
  private:
   std::vector<std::pair<uint32_t, DocumentMaskBuilder>> _groups;

@@ -184,6 +184,8 @@ class MergePlan {
   MergedFieldMap _field_meta_map;
   std::unique_ptr<KeyOrder> _key_order;
   std::vector<MergeSource> _sources;
+  std::vector<uint64_t> _begins;
+  std::vector<std::vector<uint64_t>> _row_groups;
   std::unique_ptr<ColWriter> _col_writer;
   std::unique_ptr<ColumnMerger> _columns;
   containers::FlatHashMap<field_id, std::vector<ColumnRange>> _ranges;

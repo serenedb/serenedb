@@ -33,6 +33,7 @@
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -195,6 +196,23 @@ struct EntryFrames {
   }
 
   template<typename Entry>
+  void EnsureRows(idx_t count, Entry entry_at) {
+    uint32_t f = kNoFrame;
+    for (idx_t i = 0; i < count; ++i) {
+      const auto e = static_cast<uint32_t>(entry_at(i));
+      if (e < kFirstEntry) {
+        continue;
+      }
+      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
+        f = FrameOf(e);
+      }
+      if (!decoded[f]) {
+        leaf->EnsureRow(*this, e, f);
+      }
+    }
+  }
+
+  template<typename Entry>
   void EnsureSparse(idx_t count, Entry entry_at, uint32_t window_first,
                     uint32_t window_end) {
     if (Complete()) {
@@ -256,12 +274,11 @@ struct EntryFrames {
   }
 
   void Keep(uint32_t e, std::string_view v) noexcept {
-    values[e] = string_t{v.data(), static_cast<uint32_t>(v.size())};
+    std::construct_at(values + e, v.data(), static_cast<uint32_t>(v.size()));
   }
 
   uint64_t CacheBytes() const noexcept {
-    return header.raw_bytes + (leaf ? leaf->HeapBytes() : 0) +
-           static_cast<uint64_t>(header.entry_count) * (sizeof(string_t) + 1);
+    return DictionaryBytes(header) + (leaf ? leaf->HeapBytes() : 0);
   }
 
   void ReferenceHeap(duckdb::Vector& result) {
@@ -304,17 +321,26 @@ struct FetchFrames {
                              uint32_t entry, duckdb::Vector& result, idx_t at,
                              bool batched) {
     SDB_ENSURE(header.frame_count != 0, "col codec: corrupted row codes");
-    const auto* table = base + header.off_frames;
-    const auto lo = FrameOfEntry(table, header.frame_count, entry);
-    const auto f = FrameAt(table, lo);
-    SDB_ENSURE(f.first_entry <= entry && f.raw_len <= header.raw_bytes &&
-                 uint64_t{f.comp_off} + f.comp_len <= header.data_size,
-               "col codec: corrupted frame table");
-    leaf.Emit(segment, header, base, lengths, lo, f, entry, result, at,
-              batched);
+    if (entry < frame.first_entry || entry >= frame_end) {
+      const auto* table = base + header.off_frames;
+      frame_index = FrameOfEntry(table, header.frame_count, entry);
+      frame = FrameAt(table, frame_index);
+      frame_end = frame_index + 1 < header.frame_count
+                    ? FrameAt(table, frame_index + 1).first_entry
+                    : header.entry_count;
+      SDB_ENSURE(
+        frame.first_entry <= entry && frame.raw_len <= header.raw_bytes &&
+          uint64_t{frame.comp_off} + frame.comp_len <= header.data_size,
+        "col codec: corrupted frame table");
+    }
+    leaf.Emit(segment, header, base, lengths, frame_index, frame, entry, result,
+              at, batched);
   }
 
   bool switched = false;
+  uint32_t frame_index = 0;
+  uint32_t frame_end = 0;
+  FrameMeta frame{};
   Header header;
   PackedReader lengths{nullptr, 0};
   ScratchVector<EntryAt> order;
@@ -458,9 +484,10 @@ inline constexpr DecompressionFunction kStringDecompression = [] consteval {
 template<typename Scan, typename Compression>
 consteval Codec StringCodec() {
   static_assert(Compression::kCodec == Scan::kCodec);
+  static_assert(Compression::kShape == Scan::kShape);
   return {
     .type = CodecOf(Scan::kShape, Scan::kCodec),
-    .compression = &kTextFunction<Compression, Scan::kShape>,
+    .compression = &kNamedTextFunction<Compression>,
     .decompression = &kStringDecompression<Scan>,
   };
 }

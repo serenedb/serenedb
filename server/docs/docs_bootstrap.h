@@ -20,10 +20,11 @@
 
 #pragma once
 
-#include <optional>
+#include <filesystem>
 
 namespace sdb::docs {
 
-std::optional<int> RunDocsBootstrap();
+bool BuildDocsIndex(const std::filesystem::path& corpus,
+                    const std::filesystem::path& index);
 
 }  // namespace sdb::docs

@@ -27,52 +27,49 @@
 #include <lz4hc.h>
 
 #include <memory>
+#include <span>
 #include <utility>
 
-#include "iresearch/formats/column/codecs/registry.hpp"
-#include "iresearch/formats/column/codecs/text/blob.hpp"
-#include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
-#include "iresearch/formats/column/codecs/text/lz4.hpp"
-#include "iresearch/formats/column/codecs/text/plain_scan.tpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
-/*
-lz4 frames in Data (string_layout.hpp draws the segments): frame 0 holds up
-to 32 KiB and is the dictionary of the later frames of up to 16 KiB; or the
-same frames, each compressed with the segment's trained dictionary; or
-64 KiB frames without a dictionary.
-*/
-
 namespace irs::codecs {
-
-constinit const Codec kLz4Codec =
-  text::StringCodec<text::PlainScan<text::blob::Scan<Lz4>>,
-                    text::blob::Lz4CompressionState>();
-
-constinit const Codec kDictLz4Codec =
-  text::StringCodec<text::DictionaryScan<text::blob::Scan<Lz4>>,
-                    text::blob::Lz4CompressionState>();
 
 size_t Lz4::Bound(size_t raw_size) noexcept {
   SDB_ASSERT(raw_size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
   return static_cast<size_t>(LZ4_compressBound(static_cast<int>(raw_size)));
 }
 
-Lz4::Compressor::Compressor(uint8_t)
-  : DictionaryCompressor{kDictionaryCap},
-    _work{std::make_unique_for_overwrite<LZ4_stream_t>()} {
-  SDB_ENSURE(LZ4_initStream(_work.get(), sizeof(LZ4_stream_t)),
+Lz4::Compressor::Compressor(uint8_t level)
+  : DictionaryCompressor{kDictionaryCap}, _level{EffectiveLevel<Lz4>(level)} {
+  if (HighCompression(level)) {
+    _high.reset(LZ4_createStreamHC());
+    SDB_ENSURE(_high, "lz4: cannot create a compression stream");
+    return;
+  }
+  _fast = std::make_unique_for_overwrite<LZ4_stream_t>();
+  SDB_ENSURE(LZ4_initStream(_fast.get(), sizeof(LZ4_stream_t)),
              "lz4: cannot initialize a compression stream");
 }
 
 void Lz4::Compressor::Attach() {
   const auto dictionary = Dictionary();
   SDB_ASSERT(dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
-  if (!_attached) {
-    _attached = std::make_unique_for_overwrite<LZ4_stream_t>();
+  if (_high) {
+    if (!_high_attached) {
+      _high_attached = std::make_unique_for_overwrite<LZ4_streamHC_t>();
+    }
+    LZ4_setCompressionLevel(_high_attached.get(), _level);
+    LZ4_favorDecompressionSpeed(_high_attached.get(), 0);
+    _high_attached->internal_donotuse.hasWorkspace = 0;
+    LZ4_loadDictHC(_high_attached.get(), dictionary.data(),
+                   static_cast<int>(dictionary.size()));
+    return;
   }
-  LZ4_loadDict(_attached.get(), dictionary.data(),
+  if (!_fast_attached) {
+    _fast_attached = std::make_unique_for_overwrite<LZ4_stream_t>();
+  }
+  LZ4_loadDict(_fast_attached.get(), dictionary.data(),
                static_cast<int>(dictionary.size()));
 }
 
@@ -83,11 +80,19 @@ size_t Lz4::Compressor::Compress(const char* src, size_t size, char* dst,
   }
   SDB_ASSERT(size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
   SDB_ASSERT(std::in_range<int>(capacity));
-  LZ4_resetStream_fast(_work.get());
-  LZ4_attach_dictionary(_work.get(), _attached.get());
-  const int n =
-    LZ4_compress_fast_continue(_work.get(), src, dst, static_cast<int>(size),
-                               static_cast<int>(capacity), 1);
+  int n = 0;
+  if (_high) {
+    LZ4_resetStreamHC_fast(_high.get(), _level);
+    LZ4_attach_HC_dictionary(_high.get(), _high_attached.get());
+    n = LZ4_compress_HC_continue(_high.get(), src, dst, static_cast<int>(size),
+                                 static_cast<int>(capacity));
+  } else {
+    LZ4_resetStream_fast(_fast.get());
+    LZ4_attach_dictionary(_fast.get(), _fast_attached.get());
+    n =
+      LZ4_compress_fast_continue(_fast.get(), src, dst, static_cast<int>(size),
+                                 static_cast<int>(capacity), 1);
+  }
   SDB_ENSURE(n > 0, "lz4 compression failed");
   return static_cast<size_t>(n);
 }
@@ -96,55 +101,12 @@ size_t Lz4::Compressor::Plain(const char* src, size_t size, char* dst,
                               size_t capacity) {
   SDB_ASSERT(size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
   SDB_ASSERT(std::in_range<int>(capacity));
-  const int n = LZ4_compress_fast_extState_fastReset(
-    _work.get(), src, dst, static_cast<int>(size), static_cast<int>(capacity),
-    1);
-  SDB_ENSURE(n > 0, "lz4 compression failed");
-  return static_cast<size_t>(n);
-}
-
-Lz4Hc::Compressor::Compressor(uint8_t level)
-  : DictionaryCompressor{kDictionaryCap},
-    _level{EffectiveLevel<Lz4Hc>(level)},
-    _work{LZ4_createStreamHC()} {
-  SDB_ENSURE(_work, "lz4: cannot create a compression stream");
-}
-
-void Lz4Hc::Compressor::Attach() {
-  const auto dictionary = Dictionary();
-  SDB_ASSERT(dictionary.size() <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
-  if (!_attached) {
-    _attached = std::make_unique_for_overwrite<LZ4_streamHC_t>();
-  }
-  LZ4_setCompressionLevel(_attached.get(), _level);
-  LZ4_favorDecompressionSpeed(_attached.get(), 0);
-  _attached->internal_donotuse.hasWorkspace = 0;
-  LZ4_loadDictHC(_attached.get(), dictionary.data(),
-                 static_cast<int>(dictionary.size()));
-}
-
-size_t Lz4Hc::Compressor::Compress(const char* src, size_t size, char* dst,
-                                   size_t capacity) {
-  if (Dictionary().empty()) {
-    return Plain(src, size, dst, capacity);
-  }
-  SDB_ASSERT(size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
-  SDB_ASSERT(std::in_range<int>(capacity));
-  LZ4_resetStreamHC_fast(_work.get(), _level);
-  LZ4_attach_HC_dictionary(_work.get(), _attached.get());
-  const int n = LZ4_compress_HC_continue(
-    _work.get(), src, dst, static_cast<int>(size), static_cast<int>(capacity));
-  SDB_ENSURE(n > 0, "lz4 compression failed");
-  return static_cast<size_t>(n);
-}
-
-size_t Lz4Hc::Compressor::Plain(const char* src, size_t size, char* dst,
-                                size_t capacity) {
-  SDB_ASSERT(size <= static_cast<size_t>(LZ4_MAX_INPUT_SIZE));
-  SDB_ASSERT(std::in_range<int>(capacity));
-  const int n = LZ4_compress_HC_extStateHC_fastReset(
-    _work.get(), src, dst, static_cast<int>(size), static_cast<int>(capacity),
-    _level);
+  const int n = _high ? LZ4_compress_HC_extStateHC_fastReset(
+                          _high.get(), src, dst, static_cast<int>(size),
+                          static_cast<int>(capacity), _level)
+                      : LZ4_compress_fast_extState_fastReset(
+                          _fast.get(), src, dst, static_cast<int>(size),
+                          static_cast<int>(capacity), 1);
   SDB_ENSURE(n > 0, "lz4 compression failed");
   return static_cast<size_t>(n);
 }

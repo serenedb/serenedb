@@ -51,22 +51,64 @@ using duckdb::idx_t;
 
 inline FrameHeader SegmentFrames(const_data_ptr_t base,
                                  const ColumnSegment& segment) {
-  const auto frames = ParseFrames(base, segment.size, segment.codec);
-  SDB_ENSURE(frames.row_count == segment.count,
-             "numeric codec: row count mismatch");
-  return frames;
+  return ParseFrames(base, segment.size, segment.count, segment.codec);
 }
+
+inline constexpr uint64_t kWalkedRunRows = 4;
+inline constexpr idx_t kRunBurst = 32;
+inline constexpr uint32_t kEntryBatch = 512;
+
+static_assert(STANDARD_VECTOR_SIZE / kWalkedRunRows <= kEntryBatch);
+
+template<typename T>
+struct EntryBatch {
+  explicit EntryBatch(const duckdb::LogicalType& type)
+    : vector{type, reinterpret_cast<duckdb::data_ptr_t>(values),
+             std::size(values)} {}
+
+  T values[kEntryBatch];
+  duckdb::Vector vector;
+};
+
+template<typename R>
+R OpenReader(const_data_ptr_t base, const ColumnSegment& segment) {
+  if constexpr (std::is_constructible_v<R, const_data_ptr_t,
+                                        const ColumnSegment&>) {
+    return R{base, segment};
+  } else {
+    return R{base, SegmentFrames(base, segment), segment.codec,
+             segment.cache_slot};
+  }
+}
+
+template<typename T>
+struct RangeVerdict {
+  const duckdb::ZonemapChecker* checker = nullptr;
+  T min{};
+  T max{};
+  duckdb::FilterPropagateResult result =
+    duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
+};
 
 template<typename R>
 struct ScanState final : SegmentScanState {
   ScanState(const ColumnSegment& segment, duckdb::BufferHandle handle_p)
     : handle{std::move(handle_p)},
-      frames{handle.Ptr(), SegmentFrames(handle.Ptr(), segment), segment.codec,
-             segment.cache_slot} {}
+      frames{OpenReader<R>(handle.Ptr(), segment)} {}
+
+  EntryBatch<typename R::Value>& Batch(const duckdb::LogicalType& type) {
+    if (!batch) [[unlikely]] {
+      batch = std::make_unique<EntryBatch<typename R::Value>>(type);
+    }
+    return *batch;
+  }
 
   duckdb::BufferHandle handle;
   R frames;
   duckdb::unique_ptr<duckdb::BaseStatistics> filter_stats;
+  RangeVerdict<typename R::Value> frame_verdict;
+  RangeVerdict<typename R::Value> value_verdict;
+  std::unique_ptr<EntryBatch<typename R::Value>> batch;
   [[no_unique_address]] typename R::Matches matches;
 };
 
@@ -76,42 +118,95 @@ std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
 }
 
 template<typename R>
-void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
-          duckdb::Vector& result, idx_t result_offset, duckdb::ScanVectorType) {
-  state.scan_state->Cast<ScanState<R>>().frames.Read(
-    state.GetPositionInSegment(), scan_count,
-    duckdb::FlatVector::GetDataMutable<typename R::Value>(result) +
-      result_offset);
+IRS_FORCE_INLINE bool ScanConstant(R& reader, uint64_t start,
+                                   idx_t vector_count,
+                                   duckdb::ScanVectorType scan_type,
+                                   duckdb::Vector& result) {
+  if (scan_type != duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR ||
+      vector_count != STANDARD_VECTOR_SIZE) {
+    return false;
+  }
+  typename R::Value value{};
+  if constexpr (R::kHasRuns) {
+    if (!reader.RunHolds(start, vector_count, value)) {
+      return false;
+    }
+  } else if constexpr (requires { reader.ConstantRows(start, start, value); }) {
+    if (!reader.ConstantRows(start, vector_count, value)) {
+      return false;
+    }
+  } else {
+    return false;
+  }
+  duckdb::FlatVector::GetDataMutable<typename R::Value>(result)[0] = value;
+  result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
+  duckdb::FlatVector::SetSize(result, duckdb::count_t(vector_count));
+  return true;
 }
 
 template<typename R>
-void Select(const ColumnSegment&, ColumnScanState& state, idx_t,
+void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
+          duckdb::Vector& result, idx_t result_offset,
+          duckdb::ScanVectorType scan_type) {
+  auto& frames = state.scan_state->Cast<ScanState<R>>().frames;
+  const uint64_t start = state.GetPositionInSegment();
+  if (ScanConstant(frames, start, scan_count, scan_type, result)) {
+    return;
+  }
+  frames.Read(start, scan_count,
+              duckdb::FlatVector::GetDataMutable<typename R::Value>(result) +
+                result_offset);
+}
+
+template<typename R>
+void Select(const ColumnSegment&, ColumnScanState& state, idx_t vector_count,
             duckdb::Vector& result, idx_t result_offset,
             const duckdb::SelectionVector& sel, idx_t sel_count,
-            duckdb::ScanVectorType) {
+            duckdb::ScanVectorType scan_type) {
   auto& frames = state.scan_state->Cast<ScanState<R>>().frames;
+  const uint64_t start = state.GetPositionInSegment();
+  if (ScanConstant(frames, start, vector_count, scan_type, result)) {
+    return;
+  }
   auto* out = duckdb::FlatVector::GetDataMutable<typename R::Value>(result) +
               result_offset;
-  const uint64_t start = state.GetPositionInSegment();
   for (idx_t i = 0; i < sel_count; ++i) {
     out[i] = frames.Get(start + sel.get_index(i));
   }
 }
 
 template<typename R>
+duckdb::FilterPropagateResult VerdictOf(ScanState<R>& scan,
+                                        RangeVerdict<typename R::Value>& kept,
+                                        const duckdb::LogicalType& type,
+                                        typename R::Value min,
+                                        typename R::Value max,
+                                        const duckdb::ZonemapChecker& checker) {
+  using T = typename R::Value;
+  if (kept.checker != &checker || kept.min != min || kept.max != max) {
+    if (!scan.filter_stats) {
+      scan.filter_stats = duckdb::NumericStats::CreateEmpty(type).ToUnique();
+      scan.filter_stats->SetHasNoNullFast();
+    }
+    duckdb::NumericStats::SetMin<T>(*scan.filter_stats, min);
+    duckdb::NumericStats::SetMax<T>(*scan.filter_stats, max);
+    kept = {
+      .checker = &checker,
+      .min = min,
+      .max = max,
+      .result = checker.Check(*scan.filter_stats, nullptr),
+    };
+  }
+  return kept.result;
+}
+
+template<typename R>
 duckdb::FilterPropagateResult FramesVerdict(
   ScanState<R>& scan, const duckdb::LogicalType& type, uint64_t begin,
   uint64_t end, const duckdb::ZonemapChecker& checker) {
-  using T = typename R::Value;
-  if (!scan.filter_stats) {
-    scan.filter_stats = duckdb::NumericStats::CreateEmpty(type).ToUnique();
-    scan.filter_stats->SetHasNoNullFast();
-  }
-  auto& stats = *scan.filter_stats;
   const auto check = [&](uint32_t f) {
-    duckdb::NumericStats::SetMin<T>(stats, scan.frames.FrameMin(f));
-    duckdb::NumericStats::SetMax<T>(stats, scan.frames.FrameMax(f));
-    return checker.Check(stats, nullptr);
+    return VerdictOf(scan, scan.frame_verdict, type, scan.frames.FrameMin(f),
+                     scan.frames.FrameMax(f), checker);
   };
   const auto first = scan.frames.FrameOf(begin);
   const auto last = scan.frames.FrameOf(end - 1);
@@ -127,10 +222,6 @@ duckdb::FilterPropagateResult FramesVerdict(
   return verdict;
 }
 
-inline constexpr uint64_t kWalkedRunRows = 4;
-inline constexpr idx_t kRunBurst = 32;
-inline constexpr uint32_t kJudgedEntries = 512;
-
 template<typename R>
 bool FilterRuns(ScanState<R>& scan, uint64_t start, idx_t count,
                 duckdb::Vector& result, duckdb::SelectionVector& sel,
@@ -141,7 +232,8 @@ bool FilterRuns(ScanState<R>& scan, uint64_t start, idx_t count,
   if (start + count > frames.FrameEnd()) {
     return false;
   }
-  T values[STANDARD_VECTOR_SIZE / kWalkedRunRows];
+  auto& batch = scan.Batch(result.GetType());
+  auto& values = batch.values;
   const auto runs =
     frames.ReadRuns(start, count,
                     std::span{values}.first(std::min<size_t>(
@@ -149,11 +241,9 @@ bool FilterRuns(ScanState<R>& scan, uint64_t start, idx_t count,
   if (runs.count == 0) {
     return false;
   }
-  duckdb::Vector judged{
-    result.GetType(), reinterpret_cast<duckdb::data_ptr_t>(values), runs.count};
   duckdb::SelectionVector accepted;
   idx_t accepted_count = runs.count;
-  duckdb::ColumnSegment::FilterSelection(accepted, judged, filter_state,
+  duckdb::ColumnSegment::FilterSelection(accepted, batch.vector, filter_state,
                                          runs.count, accepted_count);
   auto* out = duckdb::FlatVector::GetDataMutable<T>(result);
   auto* picked = sel.data();
@@ -202,25 +292,22 @@ bool FilterRuns(ScanState<R>& scan, uint64_t start, idx_t count,
 }
 
 template<typename R>
-IRS_NO_INLINE void JudgeEntries(ScanState<R>& scan,
-                                const duckdb::LogicalType& type,
-                                duckdb::TableFilterState& filter_state) {
+IRS_NO_INLINE void CountMatchingEntries(
+  ScanState<R>& scan, const duckdb::LogicalType& type,
+  duckdb::TableFilterState& filter_state) {
   auto& matches = scan.matches;
-  matches.judged = true;
+  matches.counted = true;
   const auto entries = scan.frames.EntryCount();
-  typename R::Value values[kJudgedEntries];
-  for (uint32_t first = 0; first < entries; first += kJudgedEntries) {
-    const auto judged_count =
-      std::min<uint32_t>(entries - first, kJudgedEntries);
-    scan.frames.Entries(first, judged_count, values);
-    duckdb::Vector judged{type, reinterpret_cast<duckdb::data_ptr_t>(values),
-                          judged_count};
+  auto& batch = scan.Batch(type);
+  for (uint32_t first = 0; first < entries; first += kEntryBatch) {
+    const auto batch_count = std::min<uint32_t>(entries - first, kEntryBatch);
+    scan.frames.Entries(first, batch_count, batch.values);
     duckdb::SelectionVector accepted;
-    idx_t accepted_count = judged_count;
-    duckdb::ColumnSegment::FilterSelection(accepted, judged, filter_state,
-                                           judged_count, accepted_count);
+    idx_t accepted_count = batch_count;
+    duckdb::ColumnSegment::FilterSelection(accepted, batch.vector, filter_state,
+                                           batch_count, accepted_count);
     matches.count += static_cast<uint32_t>(accepted_count);
-    if (matches.count != 0 && matches.count != first + judged_count) {
+    if (matches.count != 0 && matches.count != first + batch_count) {
       break;
     }
   }
@@ -231,8 +318,8 @@ bool FilterEntries(const ColumnSegment& segment, ColumnScanState& state,
                    ScanState<R>& scan, idx_t count, duckdb::Vector& result,
                    idx_t& sel_count, duckdb::TableFilterState& filter_state) {
   const auto& matches = scan.matches;
-  if (!matches.judged) [[unlikely]] {
-    JudgeEntries(scan, result.GetType(), filter_state);
+  if (!matches.counted) [[unlikely]] {
+    CountMatchingEntries(scan, result.GetType(), filter_state);
   }
   if (matches.count == 0) {
     sel_count = 0;
@@ -253,6 +340,10 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
             const duckdb::TableFilter& /*filter*/,
             duckdb::TableFilterState& filter_state) {
   auto& scan = state.scan_state->Cast<ScanState<R>>();
+  if (state.dynamic_filter) {
+    scan.frame_verdict = {};
+    scan.value_verdict = {};
+  }
   const uint64_t start = state.GetPositionInSegment();
   auto verdict = duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE;
   if constexpr (std::is_integral_v<typename R::Value>) {
@@ -261,6 +352,17 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
     if (checker.IsFullyCompiled()) {
       verdict = FramesVerdict(scan, segment.stats.GetType(), start,
                               start + vector_count, checker);
+      if constexpr (requires(typename R::Value value) {
+                      scan.frames.NarrowBounds(start, start, value, value);
+                    }) {
+        typename R::Value min;
+        typename R::Value max;
+        if (verdict == duckdb::FilterPropagateResult::NO_PRUNING_POSSIBLE &&
+            scan.frames.NarrowBounds(start, vector_count, min, max)) {
+          verdict = VerdictOf(scan, scan.value_verdict, segment.stats.GetType(),
+                              min, max, checker);
+        }
+      }
     }
   }
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_FALSE ||
@@ -277,8 +379,9 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
       return;
     }
   } else if constexpr (R::kFiltersEntries) {
-    if (!every_row && FilterEntries(segment, state, scan, vector_count, result,
-                                    sel_count, filter_state)) {
+    if (!every_row && !state.dynamic_filter &&
+        FilterEntries(segment, state, scan, vector_count, result, sel_count,
+                      filter_state)) {
       return;
     }
   }
@@ -293,37 +396,61 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
 
 template<typename R>
 struct FetchCache final : SegmentScanState {
-  std::optional<R> frames;
+  FetchCache(const_data_ptr_t base, const ColumnSegment& segment)
+    : frames{OpenReader<R>(base, segment)} {}
+
+  R frames;
 };
 
 template<typename R>
 void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                const idx_t* rows, idx_t count, duckdb::Vector& result,
                const duckdb::SelectionVector& result_sel, idx_t result_offset) {
-  auto& handle = state.GetOrInsertHandle(segment);
-  auto& cache = state.GetOrCreateSegmentState<FetchCache<R>>(
-    [] { return std::make_unique<FetchCache<R>>(); });
-  if (!cache.frames) {
-    const auto* base = handle.Ptr();
-    cache.frames.emplace(base, SegmentFrames(base, segment), segment.codec,
-                         segment.cache_slot);
-  }
-  auto& frames = *cache.frames;
+  auto& frames = state
+                   .GetOrCreateSegmentState<FetchCache<R>>([&] {
+                     return std::make_unique<FetchCache<R>>(
+                       state.GetOrInsertHandle(segment).Ptr(), segment);
+                   })
+                   .frames;
   auto* data = duckdb::FlatVector::GetDataMutable<typename R::Value>(result);
-  constexpr auto kNone = std::numeric_limits<uint64_t>::max();
-  for (idx_t i = 0; i < count; ++i) {
-    const auto row = static_cast<uint64_t>(rows[i]);
-    SDB_ENSURE(row < segment.count, "numeric codec: row out of range");
-    const uint64_t next = i + 1 < count ? rows[i + 1] : kNone;
-    data[result_offset + result_sel.get_index(i)] = frames.Fetch(row, next);
+  if constexpr (requires {
+                  frames.FetchRows(rows, count, data, result_sel,
+                                   result_offset);
+                }) {
+    frames.FetchRows(rows, count, data, result_sel, result_offset);
+  } else {
+    for (idx_t i = 0; i < count; ++i) {
+      const auto row = static_cast<uint64_t>(rows[i]);
+      SDB_ASSERT(row < segment.count);
+      const uint64_t next = i + 1 < count ? rows[i + 1] : kNoRow;
+      data[result_offset + result_sel.get_index(i)] = frames.Fetch(row, next);
+    }
   }
+}
+
+inline uint64_t RawBytes(const_data_ptr_t base, const FrameHeader& h,
+                         Shape shape) {
+  const bool packed = h.flags & kNumericPacked;
+  if (packed && shape != Shape::Runs) {
+    return uint64_t{h.row_count} * h.width;
+  }
+  const auto meta = FrameMetaSize(shape, packed, h.width);
+  uint64_t raw = 0;
+  for (uint32_t f = 0; f < h.frame_count; ++f) {
+    const auto* at = base + h.off_frames + size_t{f} * meta;
+    raw +=
+      packed
+        ? uint64_t{duckdb::Load<uint16_t>(at + 2 * sizeof(uint32_t))} * h.width
+        : duckdb::Load<NumericFrameMeta>(at).frame.raw_len;
+  }
+  return raw;
 }
 
 inline duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   const ColumnSegment& segment) {
   auto handle = segment.Pin();
   const auto* base = handle.Ptr();
-  const auto h = ParseFrames(base, segment.size, segment.codec);
+  const auto h = SegmentFrames(base, segment);
   const auto shape = ShapeOf(segment.codec);
   duckdb::InsertionOrderPreservingMap<std::string> info;
   info["transform"] = TransformName(shape, h);
@@ -334,9 +461,9 @@ inline duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
   info["frames"] = absl::StrCat(h.frame_count);
   info["entries"] = absl::StrCat(
     shape == Shape::Dictionary
-      ? duckdb::Load<DictionaryHeader>(base + sizeof(FrameHeader)).count
+      ? duckdb::Load<DictionaryHeader>(base + OwnHeaderOffset(h.flags)).count
       : 0);
-  info["raw_bytes"] = absl::StrCat(h.raw_bytes);
+  info["raw_bytes"] = absl::StrCat(RawBytes(base, h, shape));
   info["data_bytes"] = absl::StrCat(h.data_size);
   info["scale"] = absl::StrCat(h.scale > 1 ? h.scale : 1);
   return info;

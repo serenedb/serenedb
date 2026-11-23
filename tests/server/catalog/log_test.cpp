@@ -44,8 +44,11 @@ std::string Payload(char fill) { return std::string(kPayload, fill); }
 
 std::string Half(char fill) { return std::string(Log::kChunkBytes / 2, fill); }
 
-std::span<const uint8_t> Bytes(const std::string& payload) {
-  return {reinterpret_cast<const uint8_t*>(payload.data()), payload.size()};
+RecordBuffer Bytes(const std::string& payload) {
+  RecordBuffer record;
+  record.WriteData(reinterpret_cast<const uint8_t*>(payload.data()),
+                   payload.size());
+  return record;
 }
 
 std::vector<std::vector<uint8_t>> Keep(
@@ -90,7 +93,8 @@ class LogTest : public ::testing::Test {
 
   static Written WriteUnsynced(Log& log, const std::string& payload) {
     const auto range = log.Reserve(payload.size());
-    log.Write(range, Bytes(payload));
+    auto record = Bytes(payload);
+    log.Write(range, record);
     return {.begin = range.begin, .end = range.end};
   }
 

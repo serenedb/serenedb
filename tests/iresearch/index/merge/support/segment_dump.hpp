@@ -97,4 +97,7 @@ std::string Describe(const SegmentDump& dump);
 std::string FirstDifference(const SegmentDump& expected,
                             const SegmentDump& actual);
 
+std::string RowGroupMisfit(const irs::SubReader& segment,
+                           uint64_t row_group_size);
+
 }  // namespace tests::merge

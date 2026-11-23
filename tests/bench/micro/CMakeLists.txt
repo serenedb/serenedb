@@ -3,6 +3,7 @@ target_link_libraries(
     serenedb-bench-micro
     PRIVATE
         sereneserver
+        serene_listeners
         benchmark
         search-benchmark-common
         iresearch-test-writer
@@ -41,6 +42,7 @@ endfunction()
 add_bench(bm25_byte_norm)
 add_bench(col_codecs)
 add_bench(col_codecs_real)
+add_bench(numeric_term_encoding)
 add_bench(ascii_probe)
 add_bench(vector_access)
 add_bench(crc32c)
@@ -85,6 +87,7 @@ add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(regexp_engines)
 add_bench(packed_key_agg)
+add_bench(order_keys)
 add_bench(http_codecs)
 add_bench(http_compression)
 set_property(

@@ -76,8 +76,8 @@ enum class StorageVersion : uint64_t {
     V1_5_6 = V1_5_0,
     V2_0_0 = 69ULL << 32,
     DUCKDB_LATEST = V2_0_0,
-    SERENEDB_V1 = V2_0_0 + 1,
-    SERENEDB_LATEST = SERENEDB_V1,
+    SDB_V1 = V2_0_0 + 1,
+    SDB_LATEST = SDB_V1,
     DEPRECATED = 999ULL << 32,
     INVALID = 0
 };
@@ -117,7 +117,7 @@ enum class SerializationVersionDeprecated : uint64_t {
 };
 // clang-format on
 
-inline constexpr auto SERENEDB_VERSION_LOWER = StorageVersion::SERENEDB_V1;
-inline constexpr auto SERENEDB_VERSION_UPPER = StorageVersion::SERENEDB_LATEST;
+inline constexpr auto SDB_VERSION_LOWER = StorageVersion::SDB_V1;
+inline constexpr auto SDB_VERSION_UPPER = StorageVersion::SDB_LATEST;
 
 } // namespace duckdb

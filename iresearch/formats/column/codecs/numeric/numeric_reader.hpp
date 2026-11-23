@@ -20,32 +20,37 @@
 
 #pragma once
 
+#include <absl/numeric/int128.h>
+
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/typedefs.hpp>
+#include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <limits>
 #include <optional>
 #include <string>
 #include <type_traits>
-#include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs {
+
+inline constexpr uint64_t kNoRow = std::numeric_limits<uint64_t>::max();
 
 template<typename T>
 class FrameReader {
@@ -55,6 +60,7 @@ class FrameReader {
 
   struct Matches {};
 
+  static constexpr bool kHasRuns = false;
   static constexpr bool kFiltersRuns = false;
   static constexpr bool kFiltersEntries = false;
 
@@ -131,11 +137,13 @@ class FrameReader {
   struct PackedBlock {
     const uint8_t* packed = nullptr;
     uint64_t base = 0;
+    uint64_t step = 0;
     unsigned bits = 0;
+    bool delta = false;
   };
 
-  using FforFrame =
-    std::array<PackedBlock, kFforFrameRows / numeric::kBlockValues>;
+  using BitpackingFrame =
+    std::array<PackedBlock, kBitpackingFrameRows / numeric::kBlockValues>;
 
   struct Item {
     const uint8_t* source = nullptr;
@@ -149,24 +157,30 @@ class FrameReader {
       _f{frames},
       _shape{ShapeOf(codec)},
       _leaf{LeafOf(codec)},
+      _meta_size{static_cast<uint32_t>(FrameMetaSize(
+        ShapeOf(codec), frames.flags & kNumericPacked, sizeof(T)))},
       _cache{slot.touched ? slot.cache : nullptr},
       _slot{slot} {
-    SDB_ENSURE(_f.width == sizeof(T), "numeric codec: width mismatch");
+    if (_f.width != sizeof(T)) [[unlikely]] {
+      ThrowCorrupted("numeric", "value width does not match the column");
+    }
     if (Packed()) {
-      _per_frame = _shape == Shape::Runs ? 0 : kFforFrameRows;
+      _per_frame = _shape == Shape::Runs ? 0 : kBitpackingFrameRows;
     } else if (_shape != Shape::Runs) {
       _per_frame = _f.FrameBytes() / _f.stored;
     }
     for (uint32_t f = 0; f < _f.frame_count; ++f) {
       const auto first = FirstRow(f);
-      SDB_ENSURE((f == 0 ? first == 0 : first > FirstRow(f - 1)) &&
-                   (_per_frame == 0 || first == uint64_t{f} * _per_frame) &&
-                   first < _f.row_count,
-                 "numeric codec: corrupted frame table");
+      if (!((f == 0 ? first == 0 : first > FirstRow(f - 1)) &&
+            (_per_frame == 0 || first == uint64_t{f} * _per_frame) &&
+            first < _f.row_count)) [[unlikely]] {
+        ThrowCorrupted("numeric", "frame table is inconsistent");
+      }
     }
-    SDB_ENSURE(
-      _per_frame == 0 || uint64_t{_f.frame_count} * _per_frame >= _f.row_count,
-      "numeric codec: corrupted frame table");
+    if (!(_per_frame == 0 ||
+          uint64_t{_f.frame_count} * _per_frame >= _f.row_count)) [[unlikely]] {
+      ThrowCorrupted("numeric", "frame table is inconsistent");
+    }
   }
 
   bool Packed() const noexcept { return _f.flags & kNumericPacked; }
@@ -185,7 +199,7 @@ class FrameReader {
 
   T Scaled(U v) const noexcept {
     if constexpr (std::is_integral_v<T>) {
-      if (const auto scale = static_cast<U>(_f.scale); scale > 1) {
+      if (const auto scale = static_cast<U>(_f.scale); scale > 1) [[unlikely]] {
         numeric::MultiplyBy(&v, 1, scale);
       }
     }
@@ -201,8 +215,12 @@ class FrameReader {
   }
 
   uint64_t FirstRow(uint32_t f) const noexcept {
-    return duckdb::Load<uint32_t>(_base + _f.off_frames +
-                                  f * kNumericFrameMetaSize);
+    const auto* at = _base + _f.off_frames + size_t{f} * _meta_size;
+    if (_meta_size == kNumericFrameMetaSize) {
+      return duckdb::Load<uint32_t>(at);
+    }
+    return _shape == Shape::Runs ? duckdb::Load<uint32_t>(at + sizeof(uint32_t))
+                                 : uint64_t{f} * kBitpackingFrameRows;
   }
 
   uint64_t EndRow(uint32_t f) const noexcept {
@@ -211,21 +229,45 @@ class FrameReader {
 
   NumericFrameMeta MetaAt(uint32_t f) const noexcept {
     SDB_ASSERT(f < _f.frame_count);
-    return duckdb::Load<NumericFrameMeta>(_base + _f.off_frames +
-                                          f * kNumericFrameMetaSize);
+    const auto* at = _base + _f.off_frames + size_t{f} * _meta_size;
+    if (_meta_size == kNumericFrameMetaSize) {
+      return duckdb::Load<NumericFrameMeta>(at);
+    }
+    NumericFrameMeta m;
+    m.frame.comp_off = duckdb::Load<uint32_t>(at);
+    m.frame.raw_len =
+      (f + 1 < _f.frame_count ? duckdb::Load<uint32_t>(at + _meta_size)
+                              : _f.data_size) -
+      m.frame.comp_off;
+    m.frame.comp_len = m.frame.raw_len;
+    const auto* own = at + sizeof(uint32_t);
+    if (_shape == Shape::Runs) {
+      m.frame.first_entry = duckdb::Load<uint32_t>(own);
+      m.base = duckdb::Load<uint16_t>(own + sizeof(uint32_t));
+      own += sizeof(uint32_t) + sizeof(uint16_t);
+    } else {
+      m.frame.first_entry = f * kBitpackingFrameRows;
+      m.base = duckdb::Load<U>(own);
+      own += sizeof(U);
+    }
+    m.min = duckdb::Load<U>(own);
+    m.max = duckdb::Load<U>(own + sizeof(U));
+    return m;
   }
 
   NumericFrameMeta Meta(uint32_t f) const {
-    SDB_ENSURE(f < _f.frame_count, "numeric codec: frame out of range");
+    if (f >= _f.frame_count) [[unlikely]] {
+      ThrowCorrupted("numeric", "frame is out of range");
+    }
     const auto m = MetaAt(f);
     const auto rows = EndRow(f) - m.frame.first_entry;
-    SDB_ENSURE(
-      m.frame.raw_len <= _f.FrameBytes() &&
-        uint64_t{m.frame.comp_off} + m.frame.comp_len <= _f.data_size &&
-        (_leaf != ByteCodec::None || m.frame.comp_len == m.frame.raw_len) &&
-        (_shape == Shape::Runs || Packed() ||
-         m.frame.raw_len == rows * _f.stored),
-      "numeric codec: corrupted frame table");
+    if (!(m.frame.raw_len <= _f.FrameBytes() &&
+          uint64_t{m.frame.comp_off} + m.frame.comp_len <= _f.data_size &&
+          (_leaf != ByteCodec::None || m.frame.comp_len == m.frame.raw_len) &&
+          (_shape == Shape::Runs || Packed() ||
+           m.frame.raw_len == rows * _f.stored))) [[unlikely]] {
+      ThrowCorrupted("numeric", "frame table is inconsistent");
+    }
     return m;
   }
 
@@ -293,7 +335,9 @@ class FrameReader {
         : _leaf == ByteCodec::Zstd &&
             (_zstd ? *_zstd : _zstd.emplace())
               .Decompress(in, m.frame.comp_len, out, m.frame.raw_len);
-    SDB_ENSURE(ok, "numeric codec: corrupted frame");
+    if (!ok) [[unlikely]] {
+      ThrowCorrupted("numeric", "frame is inconsistent");
+    }
     if (!admitted.empty()) {
       held = duckdb::make_shared_ptr<DecodedFrame>(std::move(admitted));
       _cache->Put(_key, held);
@@ -314,11 +358,12 @@ class FrameReader {
       if (_raw.size() < m.frame.raw_len) {
         _raw.resize(m.frame.raw_len);
       }
-      SDB_ENSURE(
-        Lz4::Decompressor::DecompressPrefix(
-          reinterpret_cast<const char*>(Data(m)), m.frame.comp_len,
-          reinterpret_cast<char*>(_raw.data()), need, m.frame.raw_len) != 0,
-        "numeric codec: corrupted frame");
+      if (Lz4::Decompressor::DecompressPrefix(
+            reinterpret_cast<const char*>(Data(m)), m.frame.comp_len,
+            reinterpret_cast<char*>(_raw.data()), need, m.frame.raw_len) == 0)
+        [[unlikely]] {
+        ThrowCorrupted("numeric", "frame is inconsistent");
+      }
       _source = _raw.data();
     } else {
       _source = Inflated(m, nullptr, f, _source_held);
@@ -366,7 +411,10 @@ class FrameReader {
   void DecodeBlock(this auto& self, uint64_t row) {
     const auto first = row - row % numeric::kBlockValues;
     auto* rows = self.Rows(numeric::kBlockValues);
-    self.UnpackBlock(first, numeric::kBlockValues, rows);
+    self.UnpackBlock(
+      first,
+      std::min<uint64_t>(numeric::kBlockValues, self._f.row_count - first),
+      rows);
     self.Window(
       reinterpret_cast<const uint8_t*>(rows), first,
       std::min<uint64_t>(first + numeric::kBlockValues, self._f.row_count));
@@ -391,12 +439,290 @@ class FrameReader {
     return _shuffled.data();
   }
 
+  template<typename V = U>
   IRS_FORCE_INLINE PackedBlock BlockAt(uint64_t row) {
-    if (const auto f = static_cast<uint32_t>(row / kFforFrameRows);
-        f != _ffor_frame) {
-      OpenFfor(f);
+    if (const auto f = static_cast<uint32_t>(row / kBitpackingFrameRows);
+        f != _bitpacking_frame) {
+      OpenBitpacking<V>(f);
     }
-    return (*_ffor)[row % kFforFrameRows / numeric::kBlockValues];
+    return _bitpacking[row % kBitpackingFrameRows / numeric::kBlockValues];
+  }
+
+  static bool NearInBlock(uint64_t row, uint64_t next) noexcept {
+    return next - row <= numeric::kBlockValues / kNearShare &&
+           (row ^ next) < numeric::kBlockValues;
+  }
+
+  IRS_FORCE_INLINE void FetchRows(this auto& self, const duckdb::idx_t* rows,
+                                  duckdb::idx_t count, T* out,
+                                  const duckdb::SelectionVector& sel,
+                                  duckdb::idx_t offset) {
+    if (!self.Packed()) {
+      for (duckdb::idx_t i = 0; i < count; ++i) {
+        const auto row = static_cast<uint64_t>(rows[i]);
+        SDB_ASSERT(row < self._f.row_count);
+        out[offset + sel.get_index(i)] =
+          self.Holds(row)
+            ? self.At(row)
+            : self.FetchFramed(row,
+                               i + 1 < count ? uint64_t{rows[i + 1]} : kNoRow);
+      }
+      return;
+    }
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      const auto row = static_cast<uint64_t>(rows[i]);
+      SDB_ASSERT(row < self._f.row_count);
+      T value;
+      if (self.Holds(row)) {
+        value = self.At(row);
+      } else if (const auto block = self.BlockAt(row); block.bits == 0) {
+        const uint64_t first = row - row % numeric::kBlockValues;
+        const auto base = static_cast<U>(block.base);
+        const auto step = static_cast<U>(block.step);
+        for (;; ++i) {
+          SDB_ASSERT(rows[i] < self._f.row_count);
+          out[offset + sel.get_index(i)] = self.Scaled(
+            static_cast<U>(base + static_cast<U>(rows[i] - first) * step));
+          if (i + 1 == count || rows[i + 1] - first >= numeric::kBlockValues) {
+            break;
+          }
+        }
+        continue;
+      } else if (block.delta) {
+        i += self.FetchSummed(rows, i, count, out, sel, offset) - 1;
+        continue;
+      } else if (i + 1 != count && NearInBlock(row, rows[i + 1])) {
+        value = self.Get(row);
+      } else {
+        value = self.Scaled(numeric::UnpackValue<U>(
+          block.packed, block.bits,
+          static_cast<uint32_t>(row % numeric::kBlockValues),
+          static_cast<U>(block.base)));
+      }
+      out[offset + sel.get_index(i)] = value;
+    }
+  }
+
+  IRS_FORCE_INLINE bool ConstantRows(this auto& self, uint64_t row,
+                                     uint64_t count, T& value) {
+    if (!self.Packed()) {
+      return false;
+    }
+    const auto block = self.BlockAt(row);
+    if (block.bits != 0 || block.step != 0) {
+      return false;
+    }
+    const auto base = static_cast<U>(block.base);
+    const uint64_t next =
+      row + numeric::kBlockValues - row % numeric::kBlockValues;
+    if (next < row + count && !self.ConstantBlocks(next, row + count, base)) {
+      return false;
+    }
+    value = self.Scaled(base);
+    return true;
+  }
+
+  IRS_NO_INLINE bool ConstantBlocks(this auto& self, uint64_t row, uint64_t end,
+                                    U base) {
+    for (uint64_t at = row; at < end; at += numeric::kBlockValues) {
+      const auto block = self.BlockAt(at);
+      if (block.bits != 0 || block.step != 0 ||
+          static_cast<U>(block.base) != base) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  IRS_FORCE_INLINE bool NarrowBounds(this auto& self, uint64_t row,
+                                     uint64_t count, T& min, T& max) {
+    if (!self.Packed()) {
+      return false;
+    }
+    if (const auto f = static_cast<uint32_t>(row / kBitpackingFrameRows);
+        f != self._bounds_frame) {
+      const auto m = self.MetaAt(f);
+      self._bounds_frame = f;
+      self._bounds_limit =
+        static_cast<U>(static_cast<U>(m.max) - static_cast<U>(m.min)) / 2;
+    }
+    const auto block = self.BlockAt(row);
+    const U mask = block.bits >= numeric::kMaxBits<U>
+                     ? std::numeric_limits<U>::max()
+                     : static_cast<U>((uint64_t{1} << block.bits) - 1);
+    if (mask > (block.delta ? self._bounds_limit / (numeric::kBlockValues - 1)
+                            : self._bounds_limit)) {
+      return false;
+    }
+    return self.BlockBounds(row, count, min, max);
+  }
+
+  IRS_NO_INLINE bool BlockBounds(this auto& self, uint64_t row, uint64_t count,
+                                 T& min, T& max) {
+    using S = std::make_signed_t<U>;
+    constexpr absl::int128 kLeast{std::numeric_limits<T>::min()};
+    constexpr absl::int128 kMost{std::numeric_limits<T>::max()};
+    const auto wide = [](uint64_t bits) {
+      return absl::int128{std::bit_cast<T>(static_cast<U>(bits))};
+    };
+    const absl::int128 limit{self._bounds_limit};
+    absl::int128 lo = kMost;
+    absl::int128 hi = kLeast;
+    for (uint64_t at = row, end = row + count; at < end;) {
+      const auto block = self.BlockAt(at);
+      const uint64_t from = at % numeric::kBlockValues;
+      const uint64_t to =
+        std::min<uint64_t>(numeric::kBlockValues, from + (end - at)) - 1;
+      const auto base = wide(block.base);
+      const auto mask = (absl::int128{1} << block.bits) - 1;
+      auto first = base;
+      auto last = std::min(base + mask, kMost);
+      if (block.delta) {
+        const absl::int128 least{static_cast<S>(static_cast<U>(block.step))};
+        const auto most = least + mask;
+        first = base + std::min(least * from, least * to);
+        last = base + std::max(most * from, most * to);
+        if (first < kLeast || last > kMost) {
+          return false;
+        }
+      }
+      lo = std::min(lo, first);
+      hi = std::max(hi, last);
+      if (hi - lo > limit) {
+        return false;
+      }
+      at += to + 1 - from;
+    }
+    const absl::int128 scale{std::max<uint64_t>(self._f.scale, 1)};
+    min = static_cast<T>(std::max(lo * scale, kLeast));
+    max = static_cast<T>(std::min(hi * scale, kMost));
+    return true;
+  }
+
+  IRS_NO_INLINE duckdb::idx_t FetchSummed(this auto& self,
+                                          const duckdb::idx_t* rows,
+                                          duckdb::idx_t i, duckdb::idx_t count,
+                                          T* out,
+                                          const duckdb::SelectionVector& sel,
+                                          duckdb::idx_t offset) {
+    const auto row = static_cast<uint64_t>(rows[i]);
+    duckdb::idx_t end = i + 1;
+    while (end < count && (rows[end] ^ row) < numeric::kBlockValues) {
+      SDB_ASSERT(rows[end] < self._f.row_count);
+      ++end;
+    }
+    const bool decoded =
+      (end - i) * 2 >= numeric::kBlockValues || NearInBlock(self._fetched, row);
+    self._fetched = rows[end - 1];
+    if (decoded) {
+      self.Seek(row);
+      for (auto k = i; k < end; ++k) {
+        out[offset + sel.get_index(k)] = self.At(rows[k]);
+      }
+      return end - i;
+    }
+    if (self._steps_block != row - row % numeric::kBlockValues) {
+      self.LoadSteps(row);
+    }
+    for (auto k = i; k < end; ++k) {
+      out[offset + sel.get_index(k)] = self.Scaled(self.SummedTo(rows[k]));
+    }
+    return end - i;
+  }
+
+  IRS_NO_INLINE void LoadSteps(uint64_t row) {
+    const uint64_t first = row - row % numeric::kBlockValues;
+    const auto block = BlockAt(row);
+    _block.resize(numeric::kBlockValues);
+    numeric::Unpack<U>(block.bits,
+                       BlockWords<U>(block.packed, block.bits,
+                                     std::min<uint64_t>(numeric::kBlockValues,
+                                                        _f.row_count - first)),
+                       _block.data(), U{0});
+    _steps_block = first;
+    _steps_summed = 0;
+    _steps_sum = 0;
+  }
+
+  U SummedTo(uint64_t row) {
+    SDB_ASSERT(_steps_block == row - row % numeric::kBlockValues);
+    const auto block = BlockAt(row);
+    const auto index = static_cast<size_t>(row % numeric::kBlockValues);
+    if (index + 1 < _steps_summed) {
+      _steps_summed = 0;
+      _steps_sum = 0;
+    }
+    U sum = _steps_sum;
+    const U* steps = _block.data();
+    for (size_t j = _steps_summed; j <= index; ++j) {
+      sum = static_cast<U>(sum + steps[j]);
+    }
+    _steps_sum = sum;
+    _steps_summed = index + 1;
+    return static_cast<U>(static_cast<U>(block.base) +
+                          static_cast<U>(index) * static_cast<U>(block.step) +
+                          sum);
+  }
+
+  void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
+    const auto block = BlockAt(first);
+    const auto base = static_cast<U>(block.base);
+    if (!block.delta) {
+      const auto* words = BlockWords<U>(block.packed, block.bits, rows);
+      if (rows == numeric::kBlockValues) {
+        numeric::Unpack<U>(block.bits, words, out, base);
+        return;
+      }
+      _steps_block = kNoRow;
+      _block.resize(numeric::kBlockValues);
+      numeric::Unpack<U>(block.bits, words, _block.data(), base);
+      std::memcpy(out, _block.data(), rows * sizeof(U));
+      return;
+    }
+    const auto step = static_cast<U>(block.step);
+    if (block.bits == 0) {
+      auto value = base;
+      for (uint64_t i = 0; i < rows; ++i) {
+        out[i] = value;
+        value = static_cast<U>(value + step);
+      }
+      return;
+    }
+    _steps_block = kNoRow;
+    _block.resize(numeric::kBlockValues);
+    numeric::Unpack<U>(block.bits,
+                       BlockWords<U>(block.packed, block.bits, rows),
+                       _block.data(), U{0});
+    numeric::WidenPrefixSumAs<U, U, true>(
+      reinterpret_cast<const uint8_t*>(_block.data()), rows,
+      static_cast<U>(base - step), step, out);
+  }
+
+  IRS_FORCE_INLINE T FetchPacked(this auto& self, uint64_t row, uint64_t next) {
+    const auto block = self.BlockAt(row);
+    const auto index = static_cast<uint32_t>(row % numeric::kBlockValues);
+    const auto base = static_cast<U>(block.base);
+    if (block.bits == 0) {
+      return self.Scaled(static_cast<U>(base + static_cast<U>(index) *
+                                                 static_cast<U>(block.step)));
+    }
+    if (block.delta) {
+      const bool decoded = (next != kNoRow && NearInBlock(row, next)) ||
+                           NearInBlock(self._fetched, row);
+      self._fetched = row;
+      if (decoded) {
+        return self.Get(row);
+      }
+      if (self._steps_block != row - index) {
+        self.LoadSteps(row);
+      }
+      return self.Scaled(self.SummedTo(row));
+    }
+    if (next != kNoRow && NearInBlock(row, next)) {
+      return self.Get(row);
+    }
+    return self.Scaled(
+      numeric::UnpackValue<U>(block.packed, block.bits, index, base));
   }
 
   template<typename W>
@@ -406,21 +732,88 @@ class FrameReader {
   }
 
   template<typename V>
-  size_t UnpackStream(const uint8_t* src, size_t len, size_t off, size_t blocks,
+  const numeric::LaneWord<V>* BlockWords(const uint8_t* packed, unsigned bits,
+                                         size_t values) {
+    if (values == numeric::kBlockValues) {
+      return Words<numeric::LaneWord<V>>(packed);
+    }
+    const auto stored = numeric::PackedBytes<V>(bits, values);
+    const auto whole = numeric::PackedBytes(bits);
+    if (_words.size() * sizeof(uint64_t) < whole) {
+      _words.resize(whole / sizeof(uint64_t));
+    }
+    auto* words = reinterpret_cast<uint8_t*>(_words.data());
+    std::memcpy(words, packed, stored);
+    std::memset(words + stored, 0, whole - stored);
+    return reinterpret_cast<const numeric::LaneWord<V>*>(words);
+  }
+
+  template<typename V>
+  size_t UnpackStream(const uint8_t* src, size_t len, size_t off, size_t values,
                       V* out) {
-    const auto* metas = src + off;
-    off += blocks * kFforBlockMetaBytes;
-    SDB_ENSURE(off <= len, "numeric codec: corrupted blocks");
+    const size_t blocks =
+      (values + numeric::kBlockValues - 1) / numeric::kBlockValues;
+    const auto* bases = src + off;
+    const auto* widths = bases + blocks * sizeof(V);
+    off += BlockMetaBytes(blocks, sizeof(V));
+    if (off > len) [[unlikely]] {
+      ThrowCorrupted("numeric", "blocks are inconsistent");
+    }
     for (size_t b = 0; b < blocks; ++b) {
-      const auto* meta = metas + b * kFforBlockMetaBytes;
-      const unsigned bits = meta[sizeof(uint64_t)];
-      SDB_ENSURE(
-        bits <= numeric::kMaxBits<V> && off + numeric::PackedBytes(bits) <= len,
-        "numeric codec: corrupted blocks");
-      numeric::Unpack<V>(bits, Words<numeric::LaneWord<V>>(src + off),
-                         out + b * numeric::kBlockValues,
-                         static_cast<V>(duckdb::Load<uint64_t>(meta)));
-      off += numeric::PackedBytes(bits);
+      const uint8_t kind = widths[b];
+      const size_t count =
+        std::min(numeric::kBlockValues, values - b * numeric::kBlockValues);
+      auto* block = out + b * numeric::kBlockValues;
+      const auto base = duckdb::Load<V>(bases + b * sizeof(V));
+      const bool stepped = (kind & kBlockDelta) != 0;
+      unsigned bits = kind;
+      V from = base;
+      if (stepped) {
+        if (!(count > 1 && off + sizeof(uint64_t) <= len)) [[unlikely]] {
+          ThrowCorrupted("numeric", "blocks are inconsistent");
+        }
+        from = static_cast<V>(duckdb::Load<uint64_t>(src + off));
+        off += sizeof(uint64_t);
+        if (kind & kBlockOwnStep) {
+          if (kind != kStreamAlternates) [[unlikely]] {
+            ThrowCorrupted("numeric", "blocks are inconsistent");
+          }
+          for (size_t i = 0; i < count; ++i) {
+            block[i] = static_cast<V>(base + (i % 2 == 0 ? V{0} : from));
+          }
+          continue;
+        }
+        bits = kind & kBlockDeltaBits;
+      }
+      const auto stored =
+        count == numeric::kBlockValues
+          ? numeric::PackedBytes(bits)
+          : duckdb::BitpackingPrimitives::GetRequiredSize(count, bits);
+      if (!(bits <= numeric::kMaxBits<V> && off + stored <= len)) [[unlikely]] {
+        ThrowCorrupted("numeric", "blocks are inconsistent");
+      }
+      if (count == numeric::kBlockValues) {
+        numeric::Unpack<V>(bits, Words<numeric::LaneWord<V>>(src + off), block,
+                           from);
+      } else if (bits == 0) {
+        std::fill_n(block, count, from);
+      } else {
+        duckdb::BitpackingPrimitives::UnPackBuffer<V>(
+          reinterpret_cast<duckdb::data_ptr_t>(block), src + off, count, bits,
+          true);
+        for (size_t i = 0; i < count; ++i) {
+          block[i] = static_cast<V>(block[i] + from);
+        }
+      }
+      if (stepped) {
+        V value = base;
+        block[0] = value;
+        for (size_t i = 1; i < count; ++i) {
+          value = static_cast<V>(value + block[i]);
+          block[i] = value;
+        }
+      }
+      off += stored;
     }
     return off;
   }
@@ -429,8 +822,8 @@ class FrameReader {
   FrameHeader _f;
   Shape _shape;
   ByteCodec _leaf;
+  uint32_t _meta_size;
   uint32_t _per_frame = 0;
-  unsigned _max_bits = numeric::kMaxBits<U>;
   uint64_t _begin = 0;
   uint64_t _end = 0;
   uint64_t _next = 0;
@@ -444,42 +837,88 @@ class FrameReader {
   uint32_t _source_opens = 0;
   uint64_t _fetched = std::numeric_limits<uint64_t>::max();
   ScratchVector<U> _block;
+  uint64_t _steps_block = kNoRow;
+  size_t _steps_summed = 0;
+  U _steps_sum = 0;
+  uint8_t _code_base_bytes = sizeof(uint32_t);
 
  private:
-  void OpenFfor(uint32_t f) {
-    SDB_ENSURE(f < _f.frame_count, "numeric codec: frame out of range");
-    if (_ffor_frames.empty()) {
-      _ffor_frames.resize(_f.frame_count);
+  template<typename V>
+  IRS_NO_INLINE void OpenBitpacking(uint32_t f) {
+    if (f >= _f.frame_count) [[unlikely]] {
+      ThrowCorrupted("numeric", "frame is out of range");
     }
-    auto& frame = _ffor_frames[f];
-    if (!frame.front().packed) {
-      IndexFfor(f, frame);
-    }
-    _ffor = &frame;
-    _ffor_frame = f;
-  }
-
-  IRS_NO_INLINE void IndexFfor(uint32_t f, FforFrame& frame) {
+    _bitpacking_frame = kNoFrame;
+    auto& frame = _bitpacking;
     const auto m = Meta(f);
     const auto rows = EndRow(f) - m.frame.first_entry;
     const auto blocks =
       (rows + numeric::kBlockValues - 1) / numeric::kBlockValues;
     const auto* src = Data(m);
-    size_t off = blocks * kFforBlockMetaBytes;
-    SDB_ENSURE(m.frame.comp_len == m.frame.raw_len && off <= m.frame.raw_len,
-               "numeric codec: corrupted blocks");
+    const bool stepped = _shape == Shape::Plain || _shape == Shape::Delta;
+    if (stepped && m.frame.raw_len == 0) {
+      const auto step = static_cast<V>(m.base);
+      auto start = static_cast<V>(
+        static_cast<std::make_signed_t<V>>(step) < 0 ? m.max : m.min);
+      for (size_t b = 0; b < blocks; ++b) {
+        frame[b] = {
+          .packed = src,
+          .base = start,
+          .step = step,
+          .bits = 0,
+          .delta = true,
+        };
+        start = static_cast<V>(start + uint64_t{numeric::kBlockValues} * step);
+      }
+      _bitpacking_frame = f;
+      return;
+    }
+    const auto origin = stepped ? static_cast<V>(m.min) : V{0};
+    const size_t base_bytes =
+      stepped ? numeric::BytesFor(static_cast<V>(m.max - m.min))
+              : _code_base_bytes;
+    size_t off = BlockMetaBytes(blocks, base_bytes);
+    if (!(m.frame.comp_len == m.frame.raw_len && off <= m.frame.raw_len))
+      [[unlikely]] {
+      ThrowCorrupted("numeric", "blocks are inconsistent");
+    }
+    const auto* widths = src + blocks * base_bytes;
+    V bases[kBitpackingFrameRows / numeric::kBlockValues];
+    numeric::WidenAdd<V>(src, blocks, static_cast<uint8_t>(base_bytes), origin,
+                         bases);
     for (size_t b = 0; b < blocks; ++b) {
-      const auto* meta = src + b * kFforBlockMetaBytes;
-      const unsigned bits = meta[sizeof(uint64_t)];
-      SDB_ENSURE(bits <= _max_bits, "numeric codec: corrupted blocks");
+      unsigned bits = widths[b];
+      const bool delta = stepped && (bits & kBlockDelta) != 0;
+      uint64_t step = 0;
+      if (delta) {
+        step = m.base;
+        if ((bits & kBlockOwnStep) != 0) {
+          if (off + sizeof(uint64_t) > m.frame.raw_len) [[unlikely]] {
+            ThrowCorrupted("numeric", "blocks are inconsistent");
+          }
+          step = duckdb::Load<uint64_t>(src + off);
+          off += sizeof(uint64_t);
+        }
+        bits &= kBlockDeltaBits;
+      }
+      if (bits > numeric::kMaxBits<V>) [[unlikely]] {
+        ThrowCorrupted("numeric", "blocks are inconsistent");
+      }
       frame[b] = {
         .packed = src + off,
-        .base = duckdb::Load<uint64_t>(meta),
+        .base = bases[b],
+        .step = step,
         .bits = bits,
+        .delta = delta,
       };
-      off += numeric::PackedBytes(bits);
+      off += numeric::PackedBytes<V>(
+        bits, std::min<uint64_t>(numeric::kBlockValues,
+                                 rows - b * numeric::kBlockValues));
     }
-    SDB_ENSURE(off == m.frame.raw_len, "numeric codec: corrupted blocks");
+    if (off != m.frame.raw_len) [[unlikely]] {
+      ThrowCorrupted("numeric", "blocks are inconsistent");
+    }
+    _bitpacking_frame = f;
   }
 
   duckdb::ObjectCache* _cache;
@@ -491,9 +930,11 @@ class FrameReader {
   ScratchVector<U> _rows;
   ScratchVector<uint8_t> _raw;
   ScratchVector<uint8_t> _shuffled;
-  const FforFrame* _ffor = nullptr;
-  uint32_t _ffor_frame = kNoFrame;
-  std::vector<FforFrame> _ffor_frames;
+  ScratchVector<uint64_t> _words;
+  BitpackingFrame _bitpacking;
+  uint32_t _bitpacking_frame = kNoFrame;
+  uint32_t _bounds_frame = kNoFrame;
+  U _bounds_limit = 0;
   std::optional<Zstd::Decompressor> _zstd;
 };
 

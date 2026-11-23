@@ -33,6 +33,7 @@ struct FieldTarget {
   DictRef dict;
   score_t boost;
   const Scorer* scorer = nullptr;
+  ScoreMergeType merge = ScoreMergeType::Max;
 
   template<typename Filter>
   std::unique_ptr<Filter> Make() const {
@@ -55,12 +56,14 @@ struct FieldTarget {
   Filter::ptr Prefix(bytes_view prefix) const {
     auto filter = Make<ByPrefix>();
     filter->mutable_options()->term = prefix;
+    filter->mutable_options()->merge = merge;
     return filter;
   }
 
   Filter::ptr Automaton(bytes_view pattern, PatternKind kind) const {
     auto filter = Make<AutomatonFilter>();
     *filter->mutable_options() = AutomatonOptions{pattern, kind};
+    filter->mutable_options()->merge = merge;
     return filter;
   }
 };
@@ -72,6 +75,7 @@ FieldTarget TargetOf(const Node& node) noexcept {
     .dict = node.dict(),
     .boost = node.GetBoost(),
     .scorer = node.GetScorer(),
+    .merge = node.options().merge,
   };
 }
 

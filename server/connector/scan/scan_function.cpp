@@ -21,18 +21,21 @@
 #include "connector/scan/scan_function.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 
 #include <cmath>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/multi_file/multi_file_reader.hpp>
+#include <duckdb/common/time_point.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/operator/helper/physical_limit.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <duckdb/main/profiler/profiling_node.hpp>
+#include <duckdb/main/query_profiler.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/bound_result_modifier.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
@@ -66,7 +69,16 @@ bool HasNested(const irs::Filter& filter) {
   return nested;
 }
 
+constexpr std::string_view kIndexProfileMetric = "operator.index_profile";
+
 void ClassifySegments(ScanGlobalState& g) {
+  const auto start = g.profile ? duckdb::TimePoint::Now() : 0;
+  absl::Cleanup classified = [&] {
+    if (g.profile) {
+      g.profile->SetSegments(ElapsedTicks(start), g.segment_order.size(),
+                             g.total_segments);
+    }
+  };
   g.segment_order.clear();
   g.segment_order.reserve(g.total_segments);
   if (g.col_filters.empty()) {
@@ -85,6 +97,16 @@ void ClassifySegments(ScanGlobalState& g) {
       g.segment_order.push_back(si);
     }
   }
+}
+
+void StartProfile(ScanGlobalState& g, const ScanBindData& bind,
+                  uint64_t snapshot_ticks) {
+  g.profile = std::make_unique<ScanProfile>(
+    g.filter ? IndexFilterTree(bind, *g.filter)
+             : irs::FilterTree{duckdb::ExplainNode{}},
+    ColumnChecks(g), bind.lookup.label,
+    GetBoolSetting(*g.client_context, "sdb_index_profile_nodes"),
+    snapshot_ticks);
 }
 
 std::optional<uint64_t> EvaluateLimitValue(duckdb::ClientContext& context,
@@ -211,6 +233,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
   auto& bind_data = input.bind_data->Cast<ScanBindData>();
   auto state = duckdb::make_uniq<ScanGlobalState>();
+  const bool profiled =
+    duckdb::QueryProfiler::Get(context).MetricIsTracked(kIndexProfileMetric);
+  absl::Cleanup finish_init = [g = state.get()] {
+    if (g->profile) {
+      g->profile->FinishInit();
+    }
+  };
 
   InitScanState(*state, &context, bind_data, input);
 
@@ -222,7 +251,14 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
               "sub-query"));
   }
   state->scan = &ss;
+  const auto snapshot_start = profiled ? duckdb::TimePoint::Now() : 0;
   AcquireScanSnapshot(*state, context, ss);
+  const auto snapshot_ticks = profiled ? ElapsedTicks(snapshot_start) : 0;
+  if (input.sample_options) {
+    state->sampling = duckdb::ScanSamplingInfo::FromOptions(
+      *input.sample_options, state->reader->live_docs_count());
+    state->sample_seed = input.sample_options->seed;
+  }
   if (ss.score.text && ss.relation.kind == ScanEntryKind::SearchTable &&
       !state->ClaimedWhere()) {
     THROW_SQL_ERROR(
@@ -260,6 +296,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     }
     if (ss.search.filter) {
       state->filter = ss.search.filter.get();
+    }
+    if (profiled) {
+      StartProfile(*state, bind_data, snapshot_ticks);
     }
     state->queries.resize(state->total_segments);
     const bool seeks_one_term =
@@ -310,6 +349,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
     state->filter = state->owned_filter.get();
   } else {
     state->filter = where ? where.get() : &MatchAllFilter();
+  }
+  if (profiled) {
+    StartProfile(*state, bind_data, snapshot_ticks);
   }
   state->queries.resize(state->total_segments);
 
@@ -430,6 +472,17 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
   return result;
 }
 
+duckdb::RandomEngine& SampleRandom(const ScanGlobalState& g,
+                                   ScanLocalState& l) {
+  if (!l.sample_seeded) {
+    if (g.sample_seed.IsValid()) {
+      l.sample_random.SetSeed(g.sample_seed.GetIndex());
+    }
+    l.sample_seeded = true;
+  }
+  return l.sample_random;
+}
+
 void IResearchScanFunction(duckdb::ClientContext& context,
                            duckdb::TableFunctionInput& data,
                            duckdb::DataChunk& output) {
@@ -439,10 +492,6 @@ void IResearchScanFunction(duckdb::ClientContext& context,
   }
   const bool reorder = !g.output_projection_ids.empty();
   auto& base = data.local_state->Cast<ScanLocalState>();
-  if (base.parked_on) {
-    base.parked_on->Resume();
-    base.parked_on = nullptr;
-  }
   if (reorder) {
     if (base.scan_chunk.ColumnCount() == 0) {
       base.scan_chunk.Initialize(context, g.projected_types);
@@ -481,9 +530,15 @@ void IResearchScanFunction(duckdb::ClientContext& context,
 }
 
 void IResearchScanGetMetrics(duckdb::TableFunctionGetMetricsInput& input) {
-  const auto& l = input.local_state->Cast<ScanLocalState>();
+  auto& l = input.local_state->Cast<ScanLocalState>();
   input.operator_metrics.rows_scanned = l.produced_rows;
   input.operator_metrics.row_groups_scanned = l.rg_units;
+  auto& g = input.global_state->Cast<ScanGlobalState>();
+  if (!g.profile) {
+    return;
+  }
+  l.ReleasePlans();
+  g.profile->Report(input.operator_metrics);
 }
 
 double IResearchScanProgress(duckdb::ClientContext&,
@@ -507,33 +562,42 @@ void IResearchSetScanOrder(
     return;
   }
   auto& bd = bind_data->Cast<ScanBindData>();
-  if (options->row_group_offset != 0 ||
-      options->leading_null_group_offset != 0) {
-    bd.search.filter = std::make_shared<irs::Empty>();
-    return;
-  }
-  if (!options->single_order_key ||
-      (!options->row_limit.IsValid() && !options->row_limit_expression)) {
-    return;
-  }
-  if (GetBoolSetting(context, "sdb_disable_top_k_optimization")) {
-    return;
-  }
   const auto order_col =
     ScanColumnOfStorage(bd, options->column_idx.GetPrimaryIndex());
-  if (order_col >= bd.columns.ids.size()) {
+  const auto order = [&] {
+    return ScanOrderSpec{
+      .column = bd.columns.ids[order_col],
+      .order_type = options->order_type,
+      .null_order = options->null_order,
+      .order_by = options->order_by,
+      .column_type = options->column_type,
+      .storage = options->column_idx,
+      .skipped_groups = options->row_group_offset,
+      .skipped_null_groups = options->leading_null_group_offset,
+      .row_limit = options->row_limit,
+    };
+  };
+  if (options->row_group_offset != 0 ||
+      options->leading_null_group_offset != 0) {
+    SDB_ASSERT(order_col < bd.columns.ids.size() &&
+               bd.relation.Stores(bd.columns.ids[order_col]));
+    bd.scan_order = order();
+    return;
+  }
+  if (GetBoolSetting(context, "sdb_disable_top_k_optimization") ||
+      order_col >= bd.columns.ids.size()) {
     return;
   }
   const auto col_id = bd.columns.ids[order_col];
   if (col_id != kInvertedIndexScoreId) {
     if (bd.relation.Stores(col_id) && !bd.scan_order) {
-      bd.scan_order =
-        ScanOrderSpec{col_id, options->order_type, options->null_order,
-                      options->order_by, options->column_type};
+      bd.scan_order = order();
     }
     return;
   }
-  if (bd.score.HasTopK()) {
+  if (!options->single_order_key ||
+      (!options->row_limit.IsValid() && !options->row_limit_expression) ||
+      bd.score.HasTopK()) {
     return;
   }
   const auto take_limit = [&] {
@@ -558,6 +622,14 @@ void IResearchSetScanOrder(
     }
     take_limit();
   }
+}
+
+void IResearchSetPartitionsToScan(
+  duckdb::vector<duckdb::idx_t> partition_indices,
+  duckdb::optional_ptr<duckdb::FunctionData> bind_data) {
+  auto& bd = bind_data->Cast<ScanBindData>();
+  bd.partitions_to_scan.emplace(partition_indices.begin(),
+                                partition_indices.end());
 }
 
 bool IResearchConsumeTopN(duckdb::ClientContext&,
@@ -718,6 +790,7 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.pushdown_complex_filter = &optimizer::IResearchPushdownComplexFilter;
   func.pushdown_expression = &IResearchPushdownExpression;
   func.set_scan_order = &IResearchSetScanOrder;
+  func.set_partitions_to_scan = &IResearchSetPartitionsToScan;
   func.consume_top_n = &IResearchConsumeTopN;
   func.supports_pushdown_extract = &IResearchSupportsPushdownExtract;
   func.supports_pushdown_filter = &IResearchSupportsPushdownFilter;
@@ -727,6 +800,9 @@ duckdb::TableFunction CreateIResearchScanFunction() {
   func.projection_pushdown = true;
   func.filter_pushdown = true;
   func.filter_prune = true;
+  func.sampling_pushdown = true;
+  func.multi_column_filter_pushdown = true;
+  func.ordered_filter_pushdown = true;
   func.order_preservation_type = duckdb::OrderPreservationType::NO_ORDER;
   return func;
 }
@@ -734,6 +810,13 @@ duckdb::TableFunction CreateIResearchScanFunction() {
 void RegisterIResearchScanFunction(duckdb::DatabaseInstance& db) {
   duckdb::ExtensionLoader loader(db, "serenedb");
   loader.RegisterFunction(CreateIResearchScanFunction());
+  loader.RegisterMetric({
+    .name = std::string{kIndexProfileMetric},
+    .metric_type = "map",
+    .description = "Time an inverted index scan spends preparing the index "
+                   "and running its execution plans",
+    .unit = "",
+  });
 }
 
 }  // namespace sdb::connector

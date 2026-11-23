@@ -28,30 +28,11 @@
 #include <utility>
 
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
-#include "iresearch/formats/column/codecs/text/blob.hpp"
-#include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
-#include "iresearch/formats/column/codecs/text/plain_scan.tpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
-/*
-zstd frames in Data (string_layout.hpp draws the segments): frame 0 holds up
-to 32 KiB and is the dictionary of the later frames of up to 32 KiB; or the
-same frames, each compressed with the segment's trained dictionary; or
-64 KiB frames without a dictionary.
-*/
-
 namespace irs::codecs {
-
-constinit const Codec kZstdCodec =
-  text::StringCodec<text::PlainScan<text::blob::Scan<Zstd>>,
-                    text::blob::CompressionState<Zstd>>();
-
-constinit const Codec kDictZstdCodec =
-  text::StringCodec<text::DictionaryScan<text::blob::Scan<Zstd>>,
-                    text::blob::CompressionState<Zstd>>();
 
 Zstd::Compressor::Compressor(uint8_t level)
   : DictionaryCompressor{kDictionaryCap},

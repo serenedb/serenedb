@@ -57,6 +57,7 @@
 #include "catalog/database_directory.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "catalog/log.h"
 #include "catalog/persistence/inverted_index.h"
 #include "connector/column_id.h"
 #include "connector/file_manifest.h"
@@ -172,7 +173,6 @@ class Store final : public std::enable_shared_from_this<Store>,
   irs::IndexWriter& Writer() noexcept { return *_writer; }
   std::vector<OwnSegment> OpenFlushed(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) const;
-  OwnSegment OpenOwn(irs::SegmentMeta meta) const;
 
   struct Piece {
     irs::IndexWriter::Transaction trx;
@@ -194,6 +194,7 @@ class Store final : public std::enable_shared_from_this<Store>,
     return GetTasksSettings().compaction_floor_segment_bytes.load(
       std::memory_order_relaxed);
   }
+  void SyncSegments() const;
   bool RewriteDirtiest();
 
   irs::IndexWriter::Transaction GetTransaction() {
@@ -327,7 +328,7 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   std::shared_ptr<const TableState> SnapshotState(Tick snapshot,
                                                   catalog::WalkCounters& walks);
-  std::vector<uint8_t> SnapshotRecord(const TableState& state) const;
+  catalog::RecordBuffer SnapshotRecord(const TableState& state) const;
 
   // One REINDEX at a time per index, across all connections: claim the
   // store for the whole refresh (observe -> delta/rebuild -> publish).
@@ -342,6 +343,17 @@ class Store final : public std::enable_shared_from_this<Store>,
  private:
   static constexpr uint32_t kReindexing = 1;
   static constexpr uint32_t kReindexWaiter = 2;
+
+  struct GroupCompaction {
+    absl::Status status;
+    bool merged = false;
+    bool contended = false;
+  };
+
+  yaclib::Future<GroupCompaction> CompactGroupAsync(
+    duckdb::ClientContext& context, std::span<const std::string> names,
+    const irs::MergeWriter::FlushProgress& progress,
+    const irs::AnnBuildEnv* env);
 
   struct IndexConfig {
     duckdb::idx_t oid;
@@ -374,12 +386,12 @@ class Store final : public std::enable_shared_from_this<Store>,
   bool OwnsFiles() const noexcept { return _on_disk && !_read_only; }
   bool CloseFiles();
   void ClaimColumnOids(const irs::DirectoryReader& reader) const;
-  void SyncSegments() const;
   bool OwnerDropped() const noexcept {
     return Dropped() || _directory->Dropped();
   }
   std::shared_ptr<const TableState> CommitReplace(
-    std::span<const uint64_t> replaced, std::span<const Tick> folded,
+    std::span<const uint64_t> replaced,
+    std::span<const std::span<const irs::FieldPatch>> folded,
     std::vector<std::shared_ptr<TableUnit>> added,
     std::vector<irs::DocMap> maps, uint64_t memory_below, bool logged);
   void CommitUnlogged(absl::FunctionRef<void(Tick)> apply);

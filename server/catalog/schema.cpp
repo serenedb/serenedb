@@ -70,8 +70,8 @@
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
 #include "catalog/record.h"
+#include "jobs/scheduler.h"
 #include "pg/tsdictionary.h"
-#include "scheduler/job_scheduler.h"
 
 namespace sdb::catalog {
 namespace {
@@ -165,12 +165,12 @@ void ResolveDependencyOids(duckdb::CatalogTransaction transaction,
                       })) {
     return;
   }
-  const duckdb::IdentifierEquality same_name{catalog.IsCaseSensitive()};
   duckdb::LogicalDependencyList resolved;
   for (auto dependency : dependencies.Set()) {
     if (dependency.oid == 0 && !dependency.entry.schema_path.empty() &&
         (dependency.catalog.empty() ||
-         same_name(dependency.catalog, catalog.GetName()))) {
+         dependency.catalog.GetIdentifierName() ==
+           catalog.GetName().GetIdentifierName())) {
       const auto name = duckdb::QualifiedName::FromCatalogSchema(
         catalog.GetName(), dependency.entry.schema_path, dependency.entry.name);
       if (auto schema = catalog.Cast<BaseCatalog>().LookupSchema(

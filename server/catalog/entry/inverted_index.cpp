@@ -791,14 +791,20 @@ void InvertedIndexEntry::OnDrop() {
 
 duckdb::optional_idx InvertedIndexEntry::GetDataVersion(
   duckdb::ClientContext& context) const {
-  auto& session = SessionOf(context, catalog);
-  if (_search_table) {
-    return session.SearchTxn().PlanVersion(*_search_table);
+  const auto* store = VersionedStore();
+  if (!store) {
+    return {};
   }
-  if (_storage) {
-    return session.SearchTxn().PlanVersion(*_storage);
+  return SessionOf(context, catalog).SearchTxn().PlanVersion(*store);
+}
+
+duckdb::optional_idx InvertedIndexEntry::GetLayoutVersion(
+  duckdb::ClientContext& context) const {
+  const auto* store = VersionedStore();
+  if (!store) {
+    return {};
   }
-  return duckdb::optional_idx{};
+  return SessionOf(context, catalog).SearchTxn().LayoutVersion(*store);
 }
 
 InvertedIndexEntry::~InvertedIndexEntry() {

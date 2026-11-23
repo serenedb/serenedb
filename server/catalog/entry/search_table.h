@@ -173,6 +173,8 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   void OnDrop() final;
   duckdb::optional_idx GetDataVersion(
     duckdb::ClientContext& context) const final;
+  duckdb::optional_idx GetLayoutVersion(
+    duckdb::ClientContext& context) const final;
 
   void Rollback(duckdb::CatalogEntry& prev_entry) final;
 

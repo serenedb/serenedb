@@ -979,17 +979,12 @@ inline constexpr double kMaxIndexRangeShare = 1.0 / 32;
 
 std::optional<double> RangeShare(const SearchColumnInfo& info, double lo,
                                  double hi) {
-  if (!info.stats || !duckdb::NumericStats::HasMinMax(*info.stats)) {
+  double min = 0;
+  double max = 0;
+  if (!info.stats ||
+      !duckdb::NumericStats::TryCastRange(*info.stats, min, max)) {
     return std::nullopt;
   }
-  const auto number = [&](const duckdb::Value& value) {
-    double out = 0;
-    WithNumericValue(info.logical_type.id(), value,
-                     [&](auto v) { out = static_cast<double>(v); });
-    return out;
-  };
-  const auto min = number(duckdb::NumericStats::Min(*info.stats));
-  const auto max = number(duckdb::NumericStats::Max(*info.stats));
   if (!(max > min)) {
     return std::nullopt;
   }
@@ -2081,19 +2076,79 @@ irs::BooleanFilter* InnermostGroup(irs::BooleanFilter& scope) {
   return group;
 }
 
+irs::Filter* SingleLeaf(irs::BooleanFilter& node) {
+  const auto clauses = node.Filters(irs::Occur::Must);
+  if (clauses.size() != 1 || node.Size(irs::Occur::Must) != 1 ||
+      node.Size(irs::Occur::Should) != 0 ||
+      node.Size(irs::Occur::MustNot) != 0 ||
+      clauses[0]->type() == irs::Type<irs::BooleanFilter>::id()) {
+    return nullptr;
+  }
+  return clauses[0].get();
+}
+
+irs::ScoreMergeType* WordsMerge(irs::Filter& filter) {
+  const auto type = filter.type();
+  if (type == irs::Type<irs::ByPrefix>::id()) {
+    return &irs::utils::downCast<irs::ByPrefix>(filter)
+              .mutable_options()
+              ->merge;
+  }
+  if (type == irs::Type<irs::ByWildcard>::id()) {
+    return &irs::utils::downCast<irs::ByWildcard>(filter)
+              .mutable_options()
+              ->merge;
+  }
+  if (type == irs::Type<irs::ByRegexp>::id()) {
+    return &irs::utils::downCast<irs::ByRegexp>(filter)
+              .mutable_options()
+              ->merge;
+  }
+  if (type == irs::Type<irs::ByRange>::id()) {
+    return &irs::utils::downCast<irs::ByRange>(filter).mutable_options()->merge;
+  }
+  if (type == irs::Type<irs::ByEditDistance>::id()) {
+    return &irs::utils::downCast<irs::ByEditDistance>(filter)
+              .mutable_options()
+              ->merge;
+  }
+  return nullptr;
+}
+
 void ApplyMerge(irs::BooleanFilter& scope, TSQueryMerge merge) {
   if (merge == TSQueryMerge::Default) {
     return;
   }
+  const auto type = merge == TSQueryMerge::Max ? irs::ScoreMergeType::Max
+                                               : irs::ScoreMergeType::Sum;
   auto* group = InnermostGroup(scope);
+  if (auto* leaf = SingleLeaf(group ? *group : scope)) {
+    if (leaf->GetScorer() == &irs::ForceConstScore()) {
+      if (type == irs::ScoreMergeType::Sum) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("::merge('sum') cannot apply to a match that always scores "
+                  "a constant"),
+          ERR_HINT("Such a match scores its constant once per row, however "
+                   "many of its terms the row holds."));
+      }
+      return;
+    }
+    if (auto* words = WordsMerge(*leaf)) {
+      *words = type;
+      return;
+    }
+  }
   if (!group) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("::merge(...) applies to a boolean group"),
+                    ERR_MSG("::merge(...) applies to a boolean group or a "
+                            "pattern match"),
                     ERR_HINT("Write it on an AND / OR of predicates, e.g. "
-                             "(a @@ 'x' OR a @@ 'y')::merge('max')."));
+                             "(a @@ 'x' OR a @@ 'y')::merge('max'), or on a "
+                             "prefix, wildcard, regular expression, range or "
+                             "fuzzy match."));
   }
-  group->SetMergeType(merge == TSQueryMerge::Max ? irs::ScoreMergeType::Max
-                                                 : irs::ScoreMergeType::Sum);
+  group->SetMergeType(type);
 }
 
 bool TryDispatchScoreCast(BoolTarget parent, const FilterContext& ctx,

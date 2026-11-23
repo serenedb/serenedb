@@ -194,7 +194,7 @@ r
 
 connection after_crash
 query
-SELECT index_name FROM duckdb_indexes() WHERE schema_name = 'cck' ORDER BY 1;
+SELECT index_name FROM sdb_indexes() WHERE schema_name = 'cck' ORDER BY 1;
 ----
 index_name
 cck_t_inv

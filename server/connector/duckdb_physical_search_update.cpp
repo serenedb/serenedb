@@ -46,6 +46,7 @@
 #include "connector/primary_key.h"
 #include "connector/row_position_deduplicator.h"
 #include "connector/search_sink_rows.h"
+#include "search/parallel.h"
 #include "search/search_table_changes.h"
 #include "search/store.h"
 
@@ -70,6 +71,7 @@ struct SearchUpdateGlobalState final : duckdb::GlobalSinkState {
   std::optional<RowPositionDeduplicator> updated_rows;
 
   absl::Mutex mutex;
+  std::vector<irs::DocRemovalBuilder> positions;
   duckdb::idx_t update_count = 0;
   // RETURNING only: the rows as this statement left them.
   std::optional<duckdb::ColumnDataCollection> returned;
@@ -79,7 +81,7 @@ struct SearchUpdateLocalState final : duckdb::LocalSinkState {
   SearchSinkRows rows;
   irs::DocRemovalBuilder positions;
   search::UnitRows unit_rows;
-  std::vector<search::UnitPatch> patches;
+  std::optional<search::UnitPatchBuilder> patches;
   duckdb::idx_t update_count = 0;
   std::optional<duckdb::ColumnDataCollection> returned;
   duckdb::DataChunk combined;
@@ -264,16 +266,22 @@ duckdb::SinkResultType SereneDBSearchUpdate::Sink(
                          static_cast<duckdb::sel_t>(i));
     }
     absl::c_sort(order);
+    if (!lstate.patches) {
+      std::vector<search::UnitPatchBuilder::Column> columns;
+      columns.reserve(gstate.patched.size());
+      for (const auto& column : gstate.patched) {
+        columns.push_back({.field = column.field, .type = column.type});
+      }
+      lstate.patches.emplace(std::move(columns));
+    }
     search::ForEachUnitRows(reader, lstate.unit_rows,
                             [&](uint64_t unit, std::span<const uint64_t> rows,
                                 const duckdb::SelectionVector& sel) {
-                              for (const auto& column : gstate.patched) {
-                                const duckdb::Vector values{
-                                  chunk.data[column.input], sel, rows.size()};
-                                search::AddUnitPatch(lstate.patches, unit,
-                                                     column.field, column.type,
-                                                     rows, values);
-                              }
+                              lstate.patches->Add(unit, rows, [&](size_t c) {
+                                return duckdb::Vector{
+                                  chunk.data[gstate.patched[c].input], sel,
+                                  rows.size()};
+                              });
                             });
     if (lstate.returned) {
       duckdb::DataChunk new_row;
@@ -310,15 +318,15 @@ duckdb::SinkCombineResultType SereneDBSearchUpdate::Combine(
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   auto& lstate = input.local_state.Cast<SearchUpdateLocalState>();
   lstate.rows.Flush();
-  absl::MutexLock lock{&gstate.mutex};
   auto& search_txn = gstate.sdb_txn->SearchTxn();
+  if (lstate.patches && !lstate.patches->Empty()) {
+    search_txn.AddPatches(gstate.table.store,
+                          std::move(*lstate.patches).Finish());
+  }
+  absl::MutexLock lock{&gstate.mutex};
   lstate.rows.HandOver(context.client, gstate.table, search_txn);
   if (!lstate.positions.Empty()) {
-    search_txn.AddRemoval(context.client, gstate.table.store,
-                          std::move(lstate.positions));
-  }
-  if (!lstate.patches.empty()) {
-    search_txn.AddPatches(gstate.table.store, std::move(lstate.patches));
+    gstate.positions.push_back(std::move(lstate.positions));
   }
   gstate.update_count += lstate.update_count;
   if (lstate.returned && lstate.returned->Count() != 0) {
@@ -359,11 +367,16 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   auto& search_txn = gstate.sdb_txn->SearchTxn();
-  if (!_patch && gstate.updated_rows) {
-    if (auto positions = std::move(*gstate.updated_rows).Positions();
-        !positions.Empty()) {
-      search_txn.AddRemoval(context, gstate.table.store, std::move(positions));
-    }
+  auto positions =
+    !_patch && gstate.updated_rows
+      ? std::move(*gstate.updated_rows).Positions()
+      : irs::DocRemovalBuilder::Union(
+          gstate.positions,
+          [&](size_t count, absl::FunctionRef<void(size_t)> body) {
+            search::ParallelFor(context, count, body);
+          });
+  if (!positions.Empty()) {
+    search_txn.AddRemoval(context, gstate.table.store, std::move(positions));
   }
   SDB_PARK_ONCE_ON_FAILURE("search_update_before_key_check");
   if (_patch) {

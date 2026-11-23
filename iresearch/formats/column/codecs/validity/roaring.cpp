@@ -34,7 +34,9 @@
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
+#include <variant>
 #include <vector>
 
 #include "iresearch/formats/column/codecs/registry.hpp"
@@ -75,7 +77,6 @@ constexpr idx_t kBitsPerValue = ValidityMask::BITS_PER_VALUE;
 constexpr idx_t kPackGroupSize =
   BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
 constexpr validity_t kAllValid = ~validity_t{0};
-constexpr double kCompressPenalty = 2.0;
 
 static_assert(kMaxRunIdx < std::numeric_limits<uint8_t>::max());
 static_assert(kBitsetSentinel < std::numeric_limits<uint8_t>::max());
@@ -1198,28 +1199,24 @@ void AlignedScan(const validity_t* input, idx_t input_start,
 }
 
 struct ContainerScanState {
-  explicit ContainerScanState(idx_t container_index, idx_t container_size)
-    : container_index{container_index}, container_size{container_size} {}
-  virtual ~ContainerScanState() = default;
-
-  virtual void ScanPartial(ValidityMask& result_mask, idx_t result_offset,
-                           idx_t to_scan) = 0;
-  virtual void Skip(idx_t to_skip) = 0;
-
   idx_t container_index;
   idx_t container_size;
   idx_t scanned_count = 0;
 };
 
+template<bool kCompressed>
 struct RunContainerScanState : ContainerScanState {
-  explicit RunContainerScanState(idx_t container_index, idx_t container_size,
-                                 idx_t count, const_data_ptr_t data)
+  RunContainerScanState(idx_t container_index, idx_t container_size,
+                        idx_t count, const_data_ptr_t payload)
     : ContainerScanState{container_index, container_size},
       count{count},
-      data{data} {}
+      data{kCompressed ? payload + kCompressedSegmentCount : payload},
+      segment{payload} {
+    SDB_ASSERT(!kCompressed || count >= kCompressedRunThreshold);
+  }
 
   void ScanPartial(ValidityMask& result_mask, idx_t result_offset,
-                   idx_t to_scan) final {
+                   idx_t to_scan) {
     idx_t result_idx = 0;
     if (!run_index) {
       LoadNextRun();
@@ -1251,7 +1248,7 @@ struct RunContainerScanState : ContainerScanState {
     scanned_count += to_scan;
   }
 
-  void Skip(idx_t to_skip) final {
+  void Skip(idx_t to_skip) {
     const idx_t end = scanned_count + to_skip;
     if (!run_index) {
       LoadNextRun();
@@ -1266,13 +1263,29 @@ struct RunContainerScanState : ContainerScanState {
     scanned_count = end;
   }
 
-  virtual void LoadNextRun() {
+  void LoadNextRun() {
     if (run_index >= count) {
       finished = true;
       return;
     }
-    run = duckdb::Load<RunContainerRLEPair>(
-      data + run_index * sizeof(RunContainerRLEPair));
+    if constexpr (kCompressed) {
+      auto start = segment.Next();
+      start += data[(run_index * 2) + 0];
+
+      auto end = segment.Next();
+      end += data[(run_index * 2) + 1];
+
+      if (end <= start) [[unlikely]] {
+        ThrowCorrupted("roaring", "run ends before it starts");
+      }
+      run = RunContainerRLEPair{
+        .start = start,
+        .length = static_cast<uint16_t>(end - 1 - start),
+      };
+    } else {
+      run = duckdb::Load<RunContainerRLEPair>(
+        data + run_index * sizeof(RunContainerRLEPair));
+    }
     ++run_index;
   }
 
@@ -1281,61 +1294,36 @@ struct RunContainerScanState : ContainerScanState {
   idx_t run_index = 0;
   idx_t count;
   const_data_ptr_t data;
-};
-
-struct CompressedRunContainerScanState final : RunContainerScanState {
-  explicit CompressedRunContainerScanState(idx_t container_index,
-                                           idx_t container_size, idx_t count,
-                                           const_data_ptr_t segments,
-                                           const_data_ptr_t data)
-    : RunContainerScanState{container_index, container_size, count, data},
-      segment{segments} {
-    SDB_ASSERT(count >= kCompressedRunThreshold);
-  }
-
-  void LoadNextRun() final {
-    if (run_index >= count) {
-      finished = true;
-      return;
-    }
-    auto start = segment.Next();
-    start += data[(run_index * 2) + 0];
-
-    auto end = segment.Next();
-    end += data[(run_index * 2) + 1];
-
-    if (end <= start) [[unlikely]] {
-      ThrowCorrupted("roaring", "run ends before it starts");
-    }
-    run = RunContainerRLEPair{
-      .start = start,
-      .length = static_cast<uint16_t>(end - 1 - start),
-    };
-    ++run_index;
-  }
-
   ContainerSegmentScan segment;
 };
 
-template<bool kInverted>
+template<bool kInverted, bool kCompressed>
 struct ArrayContainerScanState : ContainerScanState {
-  explicit ArrayContainerScanState(idx_t container_index, idx_t container_size,
-                                   idx_t count, const_data_ptr_t data)
+  ArrayContainerScanState(idx_t container_index, idx_t container_size,
+                          idx_t count, const_data_ptr_t payload)
     : ContainerScanState{container_index, container_size},
-      data{data},
-      count{count} {}
+      data{kCompressed ? payload + kCompressedSegmentCount : payload},
+      count{count},
+      segment{payload} {
+    SDB_ASSERT(!kCompressed || count >= kCompressedArrayThreshold);
+  }
 
-  virtual void LoadNextValue() {
+  void LoadNextValue() {
     if (array_index >= count) {
       finished = true;
       return;
     }
-    value = duckdb::Load<uint16_t>(data + array_index * sizeof(uint16_t));
+    if constexpr (kCompressed) {
+      value = segment.Next();
+      value += data[array_index];
+    } else {
+      value = duckdb::Load<uint16_t>(data + array_index * sizeof(uint16_t));
+    }
     ++array_index;
   }
 
   void ScanPartial(ValidityMask& result_mask, idx_t result_offset,
-                   idx_t to_scan) final {
+                   idx_t to_scan) {
     if constexpr (!kInverted) {
       SetInvalidRange(result_mask, result_offset, result_offset + to_scan);
     }
@@ -1361,7 +1349,7 @@ struct ArrayContainerScanState : ContainerScanState {
     scanned_count += to_scan;
   }
 
-  void Skip(idx_t to_skip) final {
+  void Skip(idx_t to_skip) {
     const idx_t end = scanned_count + to_skip;
     if (!array_index) {
       LoadNextValue();
@@ -1377,41 +1365,16 @@ struct ArrayContainerScanState : ContainerScanState {
   bool finished = false;
   idx_t count;
   idx_t array_index = 0;
-};
-
-template<bool kInverted>
-struct CompressedArrayContainerScanState final
-  : ArrayContainerScanState<kInverted> {
-  explicit CompressedArrayContainerScanState(idx_t container_index,
-                                             idx_t container_size, idx_t count,
-                                             const_data_ptr_t segments,
-                                             const_data_ptr_t data)
-    : ArrayContainerScanState<kInverted>{container_index, container_size, count,
-                                         data},
-      segment{segments} {
-    SDB_ASSERT(count >= kCompressedArrayThreshold);
-  }
-
-  void LoadNextValue() final {
-    if (this->array_index >= this->count) {
-      this->finished = true;
-      return;
-    }
-    this->value = segment.Next();
-    this->value += this->data[this->array_index];
-    ++this->array_index;
-  }
-
   ContainerSegmentScan segment;
 };
 
-struct BitsetContainerScanState final : ContainerScanState {
-  explicit BitsetContainerScanState(idx_t container_index, idx_t container_size,
-                                    const validity_t* bitset)
+struct BitsetContainerScanState : ContainerScanState {
+  BitsetContainerScanState(idx_t container_index, idx_t container_size,
+                           const validity_t* bitset)
     : ContainerScanState{container_index, container_size}, bitset{bitset} {}
 
   void ScanPartial(ValidityMask& result_mask, idx_t result_offset,
-                   idx_t to_scan) final {
+                   idx_t to_scan) {
     if (!result_offset && to_scan % kBitsPerValue == 0 &&
         scanned_count % kBitsPerValue == 0) {
       AlignedScan(bitset, scanned_count, result_mask, to_scan);
@@ -1422,10 +1385,18 @@ struct BitsetContainerScanState final : ContainerScanState {
     scanned_count += to_scan;
   }
 
-  void Skip(idx_t to_skip) final { scanned_count += to_skip; }
+  void Skip(idx_t to_skip) { scanned_count += to_skip; }
 
   const validity_t* bitset;
 };
+
+using ContainerScan =
+  std::variant<BitsetContainerScanState, RunContainerScanState<false>,
+               RunContainerScanState<true>,
+               ArrayContainerScanState<kNulls, false>,
+               ArrayContainerScanState<kNulls, true>,
+               ArrayContainerScanState<kNonNulls, false>,
+               ArrayContainerScanState<kNonNulls, true>>;
 
 struct RoaringScanState final : SegmentScanState {
   explicit RoaringScanState(const ColumnSegment& segment)
@@ -1487,31 +1458,41 @@ struct RoaringScanState final : SegmentScanState {
   duckdb::BufferHandle handle;
   uint64_t count;
   const_data_ptr_t data_ptr = nullptr;
-  std::unique_ptr<ContainerScanState> current_container;
+  std::optional<ContainerScan> current_container;
   std::vector<ContainerMetadata> container_metadata;
   std::vector<idx_t> data_start_position;
   idx_t lookup_container = duckdb::DConstants::INVALID_INDEX;
   std::array<idx_t, kCompressedSegmentCount + 1> lookup_starts = {};
+  validity_t boolean_words[STANDARD_VECTOR_SIZE / kBitsPerValue];
 };
 
-void SkipContainer(ContainerScanState& container, idx_t skip_count) {
-  SDB_ASSERT(container.scanned_count + skip_count <= container.container_size);
-  if (container.scanned_count + skip_count == container.container_size) {
-    container.scanned_count = container.container_size;
-    return;
-  }
-  container.Skip(skip_count);
+void SkipContainer(ContainerScan& container, idx_t skip_count) {
+  std::visit(
+    [&](auto& state) {
+      SDB_ASSERT(state.scanned_count + skip_count <= state.container_size);
+      if (state.scanned_count + skip_count == state.container_size) {
+        state.scanned_count = state.container_size;
+        return;
+      }
+      state.Skip(skip_count);
+    },
+    container);
 }
 
-ContainerScanState& LoadContainer(RoaringScanState& scan, idx_t container_index,
-                                  idx_t internal_offset) {
+ContainerScan& LoadContainer(RoaringScanState& scan, idx_t container_index,
+                             idx_t internal_offset) {
   auto& current = scan.current_container;
-  if (current && current->container_index == container_index &&
-      current->scanned_count <= internal_offset) {
-    if (current->scanned_count < internal_offset) {
-      SkipContainer(*current, internal_offset - current->scanned_count);
+  if (current) {
+    const auto& held = std::visit(
+      [](const auto& state) -> const ContainerScanState& { return state; },
+      *current);
+    if (held.container_index == container_index &&
+        held.scanned_count <= internal_offset) {
+      if (held.scanned_count < internal_offset) {
+        SkipContainer(*current, internal_offset - held.scanned_count);
+      }
+      return *current;
     }
-    return *current;
   }
   const auto metadata = scan.container_metadata[container_index];
   const auto* data = scan.data_ptr + scan.data_start_position[container_index];
@@ -1520,34 +1501,33 @@ ContainerScanState& LoadContainer(RoaringScanState& scan, idx_t container_index,
   const auto container_size =
     std::min<idx_t>(scan.count - start_of_container, kContainerSize);
   if (metadata.type == ContainerType::Bitset) {
-    current = std::make_unique<BitsetContainerScanState>(
-      container_index, container_size,
-      reinterpret_cast<const validity_t*>(data));
+    current.emplace(std::in_place_type<BitsetContainerScanState>,
+                    container_index, container_size,
+                    reinterpret_cast<const validity_t*>(data));
   } else if (metadata.type == ContainerType::Run) {
     SDB_ASSERT(metadata.nulls);
     if (metadata.count >= kCompressedRunThreshold) {
-      current = std::make_unique<CompressedRunContainerScanState>(
-        container_index, container_size, metadata.count, data,
-        data + kCompressedSegmentCount);
+      current.emplace(std::in_place_type<RunContainerScanState<true>>,
+                      container_index, container_size, metadata.count, data);
     } else {
-      current = std::make_unique<RunContainerScanState>(
-        container_index, container_size, metadata.count, data);
+      current.emplace(std::in_place_type<RunContainerScanState<false>>,
+                      container_index, container_size, metadata.count, data);
     }
   } else if (metadata.count >= kCompressedArrayThreshold) {
     if (metadata.nulls) {
-      current = std::make_unique<CompressedArrayContainerScanState<kNulls>>(
-        container_index, container_size, metadata.count, data,
-        data + kCompressedSegmentCount);
+      current.emplace(std::in_place_type<ArrayContainerScanState<kNulls, true>>,
+                      container_index, container_size, metadata.count, data);
     } else {
-      current = std::make_unique<CompressedArrayContainerScanState<kNonNulls>>(
-        container_index, container_size, metadata.count, data,
-        data + kCompressedSegmentCount);
+      current.emplace(
+        std::in_place_type<ArrayContainerScanState<kNonNulls, true>>,
+        container_index, container_size, metadata.count, data);
     }
   } else if (metadata.nulls) {
-    current = std::make_unique<ArrayContainerScanState<kNulls>>(
-      container_index, container_size, metadata.count, data);
+    current.emplace(std::in_place_type<ArrayContainerScanState<kNulls, false>>,
+                    container_index, container_size, metadata.count, data);
   } else {
-    current = std::make_unique<ArrayContainerScanState<kNonNulls>>(
+    current.emplace(
+      std::in_place_type<ArrayContainerScanState<kNonNulls, false>>,
       container_index, container_size, metadata.count, data);
   }
 
@@ -1559,20 +1539,18 @@ ContainerScanState& LoadContainer(RoaringScanState& scan, idx_t container_index,
 
 void ScanPartial(RoaringScanState& scan, idx_t start_idx, ValidityMask& result,
                  idx_t offset, idx_t count) {
-  idx_t remaining = count;
   idx_t scanned = 0;
-  while (remaining) {
+  while (scanned < count) {
     const idx_t row = start_idx + scanned;
-    auto& container =
-      LoadContainer(scan, row / kContainerSize, row % kContainerSize);
-    const idx_t remaining_in_container =
-      container.container_size - container.scanned_count;
-    const idx_t to_scan = std::min(remaining, remaining_in_container);
-    container.ScanPartial(result, offset + scanned, to_scan);
-    remaining -= to_scan;
-    scanned += to_scan;
+    scanned += std::visit(
+      [&](auto& state) {
+        const idx_t to_scan =
+          std::min(count - scanned, state.container_size - state.scanned_count);
+        state.ScanPartial(result, offset + scanned, to_scan);
+        return to_scan;
+      },
+      LoadContainer(scan, row / kContainerSize, row % kContainerSize));
   }
-  SDB_ASSERT(scanned == count);
 }
 
 const std::array<idx_t, kCompressedSegmentCount + 1>& CompressedSegmentStarts(
@@ -1647,7 +1625,7 @@ void ExtractValidityMaskToData(const ValidityMask& validity,
                                duckdb::Vector& dst, idx_t offset,
                                idx_t scan_count) {
   auto* write_ptr = duckdb::FlatVector::GetDataMutable<uint8_t>(dst) + offset;
-  if (validity.CannotHaveNull()) {
+  if (validity.CheckAllValid(scan_count)) {
     std::memset(write_ptr, 1, scan_count);
     return;
   }
@@ -1727,21 +1705,20 @@ struct Containers final : State {
 
 template<duckdb::PhysicalType kPhysical>
 constexpr CompressionFunction kFunction{
-  .analyze = [](ColumnDataCheckpointData& data, double) -> Estimate {
-    return {
-      .codec = CodecType::Roaring,
-      .score = static_cast<double>(
-                 data.Get<Containers<kPhysical>>().state.total_size) /
-               static_cast<double>(std::max<uint64_t>(data.rows, 1)) *
-               kCompressPenalty,
-    };
-  },
+  .analyze =
+    [](ColumnDataCheckpointData& data, double) {
+      return static_cast<double>(
+               data.Get<Containers<kPhysical>>().state.total_size) /
+             static_cast<double>(std::max<uint64_t>(data.rows, 1)) *
+             data.preferences->roaring_price;
+    },
   .compress =
     [](ColumnDataCheckpointData& data) {
       EncodeChunks<kPhysical>(data, data.chunks,
                               data.Get<Containers<kPhysical>>().state);
       return true;
     },
+  .codec = CodecType::Roaring,
 };
 
 std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
@@ -1762,9 +1739,12 @@ void ScanValidity(const ColumnSegment&, ColumnScanState& state,
 void ScanBoolean(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
                  duckdb::Vector& result, idx_t result_offset,
                  duckdb::ScanVectorType) {
-  ValidityMask mask{scan_count};
-  ScanPartial(state.scan_state->Cast<RoaringScanState>(),
-              state.GetPositionInSegment(), mask, 0, scan_count);
+  auto& scan = state.scan_state->Cast<RoaringScanState>();
+  SDB_ASSERT(scan_count <= STANDARD_VECTOR_SIZE);
+  std::fill_n(scan.boolean_words, ValidityMask::EntryCount(scan_count),
+              kAllValid);
+  ValidityMask mask{scan.boolean_words, scan_count};
+  ScanPartial(scan, state.GetPositionInSegment(), mask, 0, scan_count);
   ExtractValidityMaskToData(mask, result, result_offset, scan_count);
 }
 

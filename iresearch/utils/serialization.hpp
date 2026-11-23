@@ -27,10 +27,10 @@
 namespace duckdb {
 
 inline std::string_view StorageVersionError(uint64_t version) {
-  if (version > static_cast<uint64_t>(SERENEDB_VERSION_UPPER)) {
+  if (version > static_cast<uint64_t>(SDB_VERSION_UPPER)) {
     return "it was written by a newer release of SereneDB";
   }
-  if (version < static_cast<uint64_t>(SERENEDB_VERSION_LOWER)) {
+  if (version < static_cast<uint64_t>(SDB_VERSION_LOWER)) {
     return "it is older than this release of SereneDB reads; upgrade it "
            "through an earlier release first";
   }

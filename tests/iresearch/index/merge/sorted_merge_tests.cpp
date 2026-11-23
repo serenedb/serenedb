@@ -349,6 +349,33 @@ TEST_F(SortedMergeTest, InterleavedInputsAreGathered) {
   EXPECT_EQ("", MergedDifference(out, inputs, spec));
 }
 
+TEST_F(SortedMergeTest, CopiedInputsKeepTheirRowGroupsAfterInterleavedOnes) {
+  AddSegment(Keys(0, 2, 600));
+  AddSegment(Keys(1, 2, 600));
+  AddSegment(Keys(2000, 1, 600));
+  const auto inputs = Snapshot();
+  const std::vector<irs::SortKey> spec{{{.column = kBigint}}};
+  irs::MemoryDirectory out;
+  auto plan = MakePlan(out, inputs, spec);
+  ASSERT_TRUE(plan.Prepare(MergePool(4)));
+  EXPECT_EQ(1, CountUnits(plan.Units(), MergeUnitKind::ColumnCopy, kBigint));
+  ASSERT_TRUE(irs::ExecuteMerge(plan));
+  EXPECT_EQ("", MergedDifference(out, inputs, spec));
+  const auto merged =
+    irs::SegmentReaderImpl::Open(out, _meta, irs::tests::DefaultReaderOptions());
+  ASSERT_NE(nullptr, merged);
+  std::vector<uint64_t> expected;
+  for (uint64_t start = 0; start < 1200; start += kSmallRowGroup) {
+    expected.push_back(start);
+  }
+  for (uint64_t start = 0; start < 600; start += kSmallRowGroup) {
+    expected.push_back(1200 + start);
+  }
+  const auto starts = merged->GetColReader()->RowGroupStarts();
+  EXPECT_EQ(expected, std::vector<uint64_t>(starts.begin(), starts.end()));
+  EXPECT_EQ("", RowGroupMisfit(*merged, kSmallRowGroup));
+}
+
 constexpr uint64_t kCopyCostDivisor = 10;
 constexpr double kEncodeCostPerRow = 0.3;
 

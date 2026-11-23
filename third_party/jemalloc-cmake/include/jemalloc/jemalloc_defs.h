@@ -50,8 +50,17 @@
 /*
  * If undefined, disables reading configuration from environment variable or file
  */
-#define JEMALLOC_CONFIG_ENV 
-#define JEMALLOC_CONFIG_FILE 
+#define JEMALLOC_CONFIG_ENV
+#define JEMALLOC_CONFIG_FILE
+
+/*
+ * Whether throwing operator new aborts on OOM instead of throwing
+ * std::bad_alloc.  This is always defined to either 0 or 1.
+ */
+/* #undef JEMALLOC_INFALLIBLE_NEW */
+#ifndef JEMALLOC_INFALLIBLE_NEW
+#  define JEMALLOC_INFALLIBLE_NEW 0
+#endif
 
 #ifdef _MSC_VER
 #  ifdef _WIN64

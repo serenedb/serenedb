@@ -23,20 +23,21 @@
 #include <algorithm>
 #include <cstdint>
 
-#include "iresearch/formats/column/codecs/codec_type.hpp"
-
 namespace irs::codecs {
 
 inline constexpr double kDrift = 1.25;
 
+struct CompressionFunction;
+
 struct ReusePolicy {
   static constexpr uint32_t kMaxGap = 16;
 
-  CodecType pick = CodecType::Auto;
+  const CompressionFunction* held = nullptr;
   uint32_t gap = 1;
   uint32_t since = 0;
   double reference = 0;
   bool calibrated = false;
+  bool probed = false;
 
   bool Due() noexcept { return !calibrated || ++since >= gap; }
 
@@ -45,22 +46,20 @@ struct ReusePolicy {
     since = 0;
   }
 
-  void Release() noexcept { pick = CodecType::Auto; }
-
-  bool Drifted(double bytes, double input) const noexcept {
-    const auto ratio = bytes / input;
-    return ratio > reference * kDrift || ratio * kDrift < reference;
-  }
-
   bool Grew(double bytes, double input) const noexcept {
     return bytes / input > reference * kDrift;
   }
 
-  void Settle(CodecType next, double bytes, double input) noexcept {
-    gap = pick == next ? std::min(gap * 2, kMaxGap) : 1;
+  bool Undercuts(double bytes, double input) const noexcept {
+    return bytes * kDrift < reference * input;
+  }
+
+  void Settle(const CompressionFunction* next, bool same_codec, double bytes,
+              double input) noexcept {
+    gap = same_codec ? std::min(gap * 2, kMaxGap) : 1;
     since = 0;
     calibrated = true;
-    pick = next;
+    held = next;
     if (input != 0) {
       reference = bytes / input;
     }

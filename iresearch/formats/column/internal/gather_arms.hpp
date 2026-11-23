@@ -57,6 +57,17 @@ inline bool FetchSparse(std::unique_ptr<ColumnReader::PointReader>& point,
   return true;
 }
 
+inline duckdb::idx_t ConsecutiveRows(const duckdb::SelectionVector& sel,
+                                     duckdb::idx_t i,
+                                     duckdb::idx_t end) noexcept {
+  duckdb::idx_t run = 1;
+  while (i + run < end &&
+         sel.get_index(i + run) == sel.get_index(i + run - 1) + 1) {
+    ++run;
+  }
+  return run;
+}
+
 template<typename Kind>
 void ScatterRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
                  const duckdb::SelectionVector& sel, duckdb::idx_t i,
@@ -65,11 +76,7 @@ void ScatterRuns(const Kind& self, ColumnReader::ScanState& s, uint64_t anchor,
   while (i < end) {
     const uint64_t target = anchor + sel.get_index(i);
     SDB_ASSERT(target >= pos, "GatherScatter requires ascending rows");
-    duckdb::idx_t run = 1;
-    while (i + run < end &&
-           sel.get_index(i + run) == sel.get_index(i + run - 1) + 1) {
-      ++run;
-    }
+    const auto run = ConsecutiveRows(sel, i, end);
     if (target > pos) {
       self.Kind::Skip(s, target - pos);
     }

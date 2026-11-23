@@ -47,18 +47,22 @@ extern const Codec kDictFsst12FrontCodec;
 extern const Codec kFsst12FrontCodec;
 const Codec* NumericCodecOf(Shape shape, ByteCodec leaf,
                             duckdb::PhysicalType physical);
+CompressionFunctions NumericContenders(Shape shape, ByteCodec leaf,
+                                       duckdb::PhysicalType physical);
+CompressionFunctions Lz4TextContenders(Shape shape);
+CompressionFunctions FsstTextContenders(Shape shape);
 const Codec* ConstantCodec(duckdb::PhysicalType physical);
 bool CompressConstant(ColumnDataCheckpointData& data);
 const Codec* EmptyCodec(duckdb::PhysicalType physical);
 const Codec* UncompressedCodec(duckdb::PhysicalType physical);
-const Codec* RleCodec(duckdb::PhysicalType physical);
-const Codec* BitpackingCodec(duckdb::PhysicalType physical);
 const Codec* AlpCodec(duckdb::PhysicalType physical);
 const Codec* AlpRdCodec(duckdb::PhysicalType physical);
 const Codec* RoaringCodec(duckdb::PhysicalType physical);
 const Codec* AutoCodec(duckdb::PhysicalType physical);
 
 const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
+
+CompressionFunctions Contenders(CodecType type, duckdb::PhysicalType physical);
 
 bool Writes(CodecType type, duckdb::PhysicalType physical,
             const CodecSet& disabled) noexcept;

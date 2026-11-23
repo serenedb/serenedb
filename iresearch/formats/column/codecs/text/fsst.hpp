@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -42,9 +43,11 @@
 namespace irs::codecs::text::fsst {
 
 inline constexpr size_t kMaxExpansion = 8;
+inline constexpr size_t kPrefixSlack = 31;
 
 struct Fsst8 {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst;
+  static constexpr bool kSharedTable = false;
 
   using Encoding = duckdb_fsst_encoder_t;
   using Table = duckdb_fsst_decoder_t;
@@ -88,10 +91,18 @@ struct Fsst8 {
     return duckdb_fsst_decompress(const_cast<Table*>(&imported), size, in,
                                   capacity, out);
   }
+
+  static size_t DecompressPrefix(const Imported& imported,
+                                 const unsigned char* in, size_t size,
+                                 unsigned char* out, size_t bytes) noexcept {
+    return duckdb_fsst_decompress_prefix(const_cast<Table*>(&imported), size,
+                                         in, bytes, out);
+  }
 };
 
 struct Fsst12 {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst12;
+  static constexpr bool kSharedTable = true;
 
   using Encoding = duckdb_fsst12_encoder_t;
   using Table = duckdb_fsst12_decoder_t;
@@ -144,6 +155,14 @@ struct Fsst12 {
                            size_t capacity) noexcept {
     return imported ? duckdb_fsst12_decompress(&imported->Table().decoder, size,
                                                in, capacity, out)
+                    : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
+  }
+
+  static size_t DecompressPrefix(const Imported& imported,
+                                 const unsigned char* in, size_t size,
+                                 unsigned char* out, size_t bytes) noexcept {
+    return imported ? duckdb_fsst12_decompress_prefix(
+                        &imported->Table().decoder, size, in, bytes, out)
                     : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
   }
 };
@@ -211,6 +230,15 @@ class Encoder {
   std::vector<unsigned char*> _out_ptrs;
 };
 
+template<typename Impl, ByteCodec kLeaf = Impl::kCodec>
+struct SharedEncoder final : State {
+  static constexpr StateId kId = FsstEncoderState(kLeaf);
+
+  explicit SharedEncoder(ColumnDataCheckpointData&) {}
+
+  Encoder<Impl> encoder;
+};
+
 template<typename Impl>
 class Decoder {
  public:
@@ -223,6 +251,13 @@ class Decoder {
     return Impl::Decompress(
       _imported, reinterpret_cast<const unsigned char*>(in), in_length,
       reinterpret_cast<unsigned char*>(out), capacity);
+  }
+
+  size_t DecodePrefix(const char* in, size_t in_length, char* out,
+                      size_t bytes) const noexcept {
+    return Impl::DecompressPrefix(
+      _imported, reinterpret_cast<const unsigned char*>(in), in_length,
+      reinterpret_cast<unsigned char*>(out), bytes);
   }
 
  private:

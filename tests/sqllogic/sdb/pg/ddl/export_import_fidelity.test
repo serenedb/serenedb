@@ -84,6 +84,18 @@ q	q2	w	w2	d	d2	t
 
 
 statement ok
+CREATE TABLE s1."MixedT" ("MyCol" INT);
+
+
+statement ok
+INSERT INTO s1."MixedT" VALUES (1);
+
+
+statement ok
+CREATE VIEW s1."MixedV" AS SELECT "MyCol" FROM s1."MixedT";
+
+
+statement ok
 CREATE TABLE s1.docs (id INT, body TEXT) WITH (compaction_max_segments = 3);
 
 
@@ -134,6 +146,21 @@ IMPORT DATABASE '${__TEST_DIR__}/export_import_fidelity';
 
 
 query
+SELECT table_name FROM information_schema.tables WHERE table_schema = 's1' AND lower(table_name) LIKE 'mixed%' ORDER BY 1;
+----
+table_name
+MixedT
+MixedV
+
+
+query
+SELECT "MyCol" FROM s1."MixedV";
+----
+MyCol
+1
+
+
+query
 SELECT column_name, data_type, udt_schema, udt_name FROM information_schema.columns WHERE table_schema = 's1' AND table_name = 'typed' AND column_name NOT IN ('ms', 'arr') ORDER BY ordinal_position;
 ----
 column_name	data_type	udt_schema	udt_name
@@ -162,7 +189,7 @@ id	t_null	t_len	v_null	v_len	l
 
 
 query
-SELECT sequence_name, start_value, last_value FROM duckdb_sequences() WHERE database_name = current_database() ORDER BY 1;
+SELECT sequence_name, start_value, last_value FROM sdb_sequences() WHERE database_name = current_database() ORDER BY 1;
 ----
 sequence_name	start_value	last_value
 done	1	2

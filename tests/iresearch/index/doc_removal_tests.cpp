@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+#include <absl/functional/function_ref.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -313,6 +315,44 @@ TEST(DocRemovalBuilderTest, ScatteredDocsStayCompact) {
   const auto removal = std::move(builder).Finish(Segments());
   ASSERT_EQ(1000, removal->groups[0].docs.Count());
   EXPECT_GT(4096, removal->groups[0].docs.FrozenSize());
+}
+
+TEST(DocRemovalBuilderTest, UnionMatchesOneBuilderOnRandomParts) {
+  std::mt19937 rng{42};
+  std::uniform_int_distribution<irs::doc_id_t> doc{1, 300000};
+  std::uniform_int_distribution<uint32_t> segment{0, 2};
+  constexpr uint32_t kIndexes[] = {1, 3, 5};
+  std::vector<irs::DocRemovalBuilder> parts(8);
+  irs::DocRemovalBuilder model;
+  for (size_t p = 0; p != parts.size(); ++p) {
+    for (int i = 0; i != 2000; ++i) {
+      const auto index = kIndexes[segment(rng)];
+      const auto first = doc(rng);
+      if (i % 7 == 0) {
+        const auto last = std::min<irs::doc_id_t>(first + 300, 300000);
+        parts[p].AddRange(index, first, last);
+        model.AddRange(index, first, last);
+      } else {
+        parts[p].Add(index, first);
+        model.Add(index, first);
+      }
+    }
+  }
+  parts[3].Add(6, 9);
+  model.Add(6, 9);
+  auto united = irs::DocRemovalBuilder::Union(
+    parts, [](size_t count, absl::FunctionRef<void(size_t)> body) {
+      for (auto i = count; i-- != 0;) {
+        body(i);
+      }
+    });
+  EXPECT_TRUE(absl::c_all_of(parts, [](const auto& p) { return p.Empty(); }));
+  const auto got = std::move(united).Finish(Segments());
+  const auto want = std::move(model).Finish(Segments());
+  ASSERT_EQ(SegmentsOf(want), SegmentsOf(got));
+  for (size_t g = 0; g != want->groups.size(); ++g) {
+    EXPECT_EQ(DocsOf(&want->groups[g].docs), DocsOf(&got->groups[g].docs));
+  }
 }
 
 TEST(MapDocsTest, AWindowWithoutAMaskShiftsTheDocToItsBase) {

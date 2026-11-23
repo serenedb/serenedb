@@ -28,7 +28,7 @@ d	ZSTD
 
 
 query
-SELECT sql LIKE '%USING COMPRESSION ZSTD%' FROM duckdb_tables() WHERE table_name = 'aca_t';
+SELECT sql LIKE '%USING COMPRESSION ZSTD%' FROM sdb_tables() WHERE table_name = 'aca_t';
 ----
 ?column?
 t

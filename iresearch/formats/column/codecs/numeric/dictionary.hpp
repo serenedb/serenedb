@@ -23,14 +23,18 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <functional>
 #include <span>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/numeric/numeric_encoder.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
+#include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs::codecs {
@@ -40,140 +44,249 @@ inline constexpr size_t kDictionaryCodeBytes =
   std::min<size_t>(sizeof(T) / 2, numeric::BytesFor(kNumericDictMax - 1));
 
 template<typename T>
-class DictionaryEncoder final : public NumericEncoder<T> {
+struct Entries final : State {
   static_assert(sizeof(T) > 1);
-  using Base = NumericEncoder<T>;
-  using Base::kWidth;
-  using typename Base::U;
+  static constexpr StateId kId = StateId::Entries;
 
-  static constexpr size_t kCodeBytes = kDictionaryCodeBytes<T>;
+  explicit Entries(ColumnDataCheckpointData&) {}
 
- public:
-  static constexpr Shape kShape = Shape::Dictionary;
-  static constexpr StateId kId = StateId::DictionaryEncoder;
+  std::vector<numeric::Bits<sizeof(T)>> values;
+  std::vector<uint32_t> ranks;
+  containers::FlatHashMap<numeric::Bits<sizeof(T)>, uint32_t> index;
+  ScratchVector<uint32_t> codes;
+  bool built = false;
+  bool fits = false;
+};
 
-  explicit DictionaryEncoder(ColumnDataCheckpointData& data)
-    : Base{data, kShape} {}
+template<typename T>
+std::span<const uint8_t> EntryBytes(const Entries<T>& entries) noexcept {
+  return {reinterpret_cast<const uint8_t*>(entries.values.data()),
+          entries.values.size() * sizeof(T)};
+}
 
- private:
-  void AddCandidates(const NumericChoice* only) final {
-    const bool bytes = Base::Wanted(only, false);
-    const bool packed = Base::Wanted(only, true);
-    const auto& facts = this->_values.GetFacts();
-    SDB_ASSERT(bytes || packed);
-    if ((!this->_forced && facts.for_stored <= 1) ||
-        !BuiltEntries(this->_forced || facts.for_stored >= 4 ? kNumericDictMax
-                                                             : 256)) {
-      return;
-    }
-    const auto n = static_cast<uint32_t>(_codes.size());
-    const auto entries = static_cast<uint32_t>(_entries.size());
-    const std::span<const uint8_t> dict{
-      reinterpret_cast<const uint8_t*>(_entries.data()),
-      size_t{entries} * kWidth};
-    if (const auto code_width = numeric::BytesFor(entries - 1);
-        bytes && code_width <= kCodeBytes) {
-      SDB_ASSERT(this->_forced || code_width < facts.for_stored);
-      _code_bytes.resize(size_t{n} * code_width);
-      numeric::Narrow<kCodeBytes>(
-        n, code_width, _code_bytes.data(),
-        [k = _codes.data()](size_t i) { return k[i]; });
-      this->AddWithShuffle({
-        .stored = code_width,
-        .items = n,
-        .values = _code_bytes,
-        .dict = dict,
-      });
-    }
-    if (packed) {
-      _code_blocks.Plan(std::span<const uint32_t>{_codes},
-                        std::less<uint32_t>{});
-      this->Add({
-        .packed = true,
-        .stored = kWidth,
-        .items = n,
-        .dict = dict,
-      });
-    }
-  }
-
-  bool BuiltEntries(uint32_t cap) {
-    if (!_built) {
-      _built = true;
-      _fits = BuildEntries(cap);
-    }
-    return _fits;
-  }
-
-  bool BuildEntries(uint32_t cap) {
-    const auto values = this->_values.Get();
-    const auto n = static_cast<uint32_t>(values.size());
-    _index.clear();
-    _entries.clear();
-    _codes.resize(n);
-    uint32_t entry = 0;
-    for (uint32_t i = 0; i < n; ++i) {
-      if (i == 0 || values[i] != values[i - 1]) {
-        const auto [it, added] =
-          _index.try_emplace(values[i], static_cast<uint32_t>(_entries.size()));
+template<typename T>
+bool CollectEntries(BlockRows<numeric::Bits<sizeof(T)>> rows, uint32_t cap,
+                    Entries<T>& entries) {
+  using U = numeric::Bits<sizeof(T)>;
+  const auto n = static_cast<uint32_t>(rows.size());
+  auto& values = entries.values;
+  auto& codes = entries.codes;
+  codes.resize(n);
+  uint32_t entry = 0;
+  uint32_t row = 0;
+  U previous = 0;
+  for (size_t b = 0; b < rows.Blocks(); ++b) {
+    const U* block = rows.Block(b);
+    const size_t size = rows.BlockSize(b);
+    for (size_t i = 0; i < size; ++i, ++row) {
+      if (row == 0 || block[i] != previous) {
+        previous = block[i];
+        const auto [it, added] = entries.index.try_emplace(
+          previous, static_cast<uint32_t>(values.size()));
         if (added) {
-          if (_index.size() > cap) {
+          if (entries.index.size() > cap) {
             return false;
           }
-          _entries.push_back(values[i]);
+          values.push_back(previous);
         }
         entry = it->second;
       }
-      _codes[i] = entry;
+      codes[row] = entry;
     }
-    if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) {
-      std::span keys{reinterpret_cast<std::make_signed_t<U>*>(_entries.data()),
-                     _entries.size()};
-      if (!absl::c_is_sorted(keys)) {
-        absl::c_sort(keys);
-      }
-    } else {
-      if (!absl::c_is_sorted(_entries)) {
-        absl::c_sort(_entries);
-      }
+  }
+  if constexpr (std::is_integral_v<T> && std::is_signed_v<T>) {
+    std::span keys{reinterpret_cast<std::make_signed_t<U>*>(values.data()),
+                   values.size()};
+    if (!absl::c_is_sorted(keys)) {
+      absl::c_sort(keys);
     }
-    _ranks.resize(_entries.size());
-    for (uint32_t k = 0; k < _entries.size(); ++k) {
-      _ranks[_index.find(_entries[k])->second] = k;
+  } else {
+    if (!absl::c_is_sorted(values)) {
+      absl::c_sort(values);
     }
-    for (uint32_t i = 0; i < n; ++i) {
-      _codes[i] = _ranks[_codes[i]];
+  }
+  entries.ranks.resize(values.size());
+  for (uint32_t k = 0; k < values.size(); ++k) {
+    entries.ranks[entries.index.find(values[k])->second] = k;
+  }
+  for (uint32_t i = 0; i < n; ++i) {
+    codes[i] = entries.ranks[codes[i]];
+  }
+  return true;
+}
+
+template<typename T>
+Entries<T>* BuildEntries(ColumnDataCheckpointData& data, double bound) {
+  auto& values = data.Get<Values<T>>();
+  if (!values.Usable()) {
+    return nullptr;
+  }
+  const auto stored = values.GetFacts().for_stored;
+  const auto& preferences = *data.preferences;
+  if (stored < preferences.min_dictionary_value_bytes) {
+    return nullptr;
+  }
+  auto& entries = data.Get<Entries<T>>();
+  if (!entries.built) {
+    entries.built = true;
+    const auto rows = values.Raw();
+    auto cap =
+      stored >= 4
+        ? kNumericDictMax
+        : std::min(kNumericDictMax, preferences.max_narrow_dictionary_entries);
+    if (const auto affordable =
+          bound * static_cast<double>(rows.size()) / sizeof(T);
+        affordable <= static_cast<double>(cap)) {
+      cap =
+        affordable > 1 ? static_cast<uint32_t>(std::ceil(affordable)) - 1 : 0;
     }
-    return true;
+    entries.fits = CollectEntries<T>(rows, cap, entries);
+    if (const auto scale = values.Scale(); entries.fits && scale > 1) {
+      numeric::DivideExact<Values<T>::kSigned>(entries.values.data(),
+                                               entries.values.size(), scale,
+                                               entries.values.data());
+    }
   }
+  return entries.fits ? &entries : nullptr;
+}
 
-  void StoreHeader(const Candidate& c, uint32_t off_dict,
-                   duckdb::data_ptr_t own) const final {
-    duckdb::Store(
-      DictionaryHeader{
-        .count = static_cast<uint32_t>(c.dict.size() / kWidth),
-        .offset = off_dict,
-      },
-      own);
+template<typename T>
+struct Dict final : State {
+  static constexpr StateId kId = StateId::Dict;
+
+  explicit Dict(ColumnDataCheckpointData&) {}
+
+  ScratchVector<uint8_t> codes;
+  Analysis analysis[2];
+};
+
+template<typename T>
+Items DictItems(ColumnDataCheckpointData& data, FrameStore store,
+                double bound) {
+  const auto* entries = BuildEntries<T>(data, bound);
+  if (!entries) {
+    return {};
   }
+  const auto width = numeric::BytesFor(entries->values.size() - 1);
+  return {
+    .shape = Shape::Dictionary,
+    .store = store,
+    .stored = width <= kDictionaryCodeBytes<T> ? width : uint8_t{0},
+    .count = static_cast<uint32_t>(entries->codes.size()),
+    .dictionary = EntryBytes(*entries),
+  };
+}
 
-  uint64_t PackedBlocks(const Candidate&) const noexcept final {
-    return _code_blocks.Bytes();
+template<typename T>
+const uint8_t* NarrowCodes(ColumnDataCheckpointData& data, uint8_t width) {
+  auto& codes = data.Get<Dict<T>>().codes;
+  if (codes.empty()) {
+    const auto& wide = data.Get<Entries<T>>().codes;
+    codes.resize(wide.size() * width);
+    numeric::Narrow<kDictionaryCodeBytes<T>>(
+      wide.size(), width, codes.data(),
+      [k = wide.data()](size_t i) { return k[i]; });
   }
+  return codes.data();
+}
 
-  void AppendBlocks(const Candidate&, size_t first, size_t blocks,
-                    std::string& out) final {
-    _code_blocks.Append(std::span<const uint32_t>{_codes}, first, blocks, out);
+template<typename T>
+double AnalyzeDict(ColumnDataCheckpointData& data, double bound,
+                   FrameStore store) {
+  const auto items = DictItems<T>(data, store, bound);
+  return AnalyzeFrames<T>(
+    data, items, data.Get<Dict<T>>().analysis[store.shuffled], bound,
+    Slices(items.stored, [&] { return NarrowCodes<T>(data, items.stored); }));
+}
+
+template<typename T>
+bool CompressDict(ColumnDataCheckpointData& data, FrameStore store) {
+  auto& analysis = data.Get<Dict<T>>().analysis[store.shuffled];
+  if (!MayWrite(data, analysis.done, store.leaf)) {
+    return false;
   }
+  const auto items = DictItems<T>(data, store, kNoScore);
+  if (!Offered(items)) {
+    return false;
+  }
+  return CompressFrames<T>(
+    data, items, analysis,
+    DictionaryHeader{
+      .count = static_cast<uint32_t>(items.dictionary.size() / sizeof(T)),
+      .offset = FrameTableEnd(GeometryOf(items, Scaled<T>(data))),
+    },
+    Slices(items.stored, [&] { return NarrowCodes<T>(data, items.stored); }));
+}
 
-  std::vector<U> _entries;
-  std::vector<uint32_t> _ranks;
-  containers::FlatHashMap<U, uint32_t> _index;
-  ScratchVector<uint32_t> _codes;
-  ScratchVector<uint8_t> _code_bytes;
-  FforBlocks<uint32_t> _code_blocks;
-  bool _built = false;
-  bool _fits = false;
+template<typename T, ByteCodec kLeaf, bool kShuffled>
+inline constexpr auto& kDict = kStoredFrames<Shape::Dictionary, AnalyzeDict<T>,
+                                             CompressDict<T>, kLeaf, kShuffled>;
+
+template<typename T>
+struct DictBitpacking final : State {
+  static constexpr StateId kId = StateId::DictBitpacking;
+
+  explicit DictBitpacking(ColumnDataCheckpointData&) {}
+
+  BitpackingBlocks<uint32_t> blocks;
+  bool planned = false;
+};
+
+template<typename T>
+const Entries<T>* PlanDictBitpacking(ColumnDataCheckpointData& data,
+                                     DictBitpacking<T>& state, double bound) {
+  const auto* entries = BuildEntries<T>(data, bound);
+  if (entries && !state.planned) {
+    state.planned = true;
+    state.blocks.template Plan<false>(
+      BlockRows<uint32_t>{std::span<const uint32_t>{entries->codes}});
+  }
+  return entries;
+}
+
+template<typename T>
+double AnalyzeDictBitpacking(ColumnDataCheckpointData& data, double bound) {
+  auto& state = data.Get<DictBitpacking<T>>();
+  const auto* entries = PlanDictBitpacking(data, state, bound);
+  if (!entries) {
+    return kNoScore;
+  }
+  return AnalyzeBlocks<T>(
+    data, Shape::Dictionary, static_cast<uint32_t>(entries->codes.size()),
+    state.blocks.Bytes(
+      kBitpackingFrameRows,
+      numeric::BytesFor(static_cast<uint32_t>(entries->values.size() - 1))),
+    EntryBytes(*entries).size(), bound);
+}
+
+template<typename T>
+bool CompressDictBitpacking(ColumnDataCheckpointData& data) {
+  auto& state = data.Get<DictBitpacking<T>>();
+  const bool analyzed = state.planned;
+  if (!MayWrite(data, analyzed, ByteCodec::None)) {
+    return false;
+  }
+  const auto* entries = PlanDictBitpacking(data, state, kNoScore);
+  if (!entries) {
+    return false;
+  }
+  const auto dictionary = EntryBytes(*entries);
+  const auto n = static_cast<uint32_t>(entries->codes.size());
+  return CompressBlocks<T>(
+    data, Shape::Dictionary, state.blocks,
+    std::span<const uint32_t>{entries->codes}, dictionary, analyzed,
+    DictionaryHeader{
+      .count = static_cast<uint32_t>(entries->values.size()),
+      .offset = FrameTableEnd(PackedGeometry(
+        Shape::Dictionary, n, dictionary.size(), sizeof(T), Scaled<T>(data))),
+    });
+}
+
+template<typename T>
+inline constexpr CompressionFunction kDictBitpacking{
+  .analyze = AnalyzeDictBitpacking<T>,
+  .compress = CompressDictBitpacking<T>,
+  .codec = CodecType::Dict,
 };
 
 template<typename T>
@@ -185,18 +298,19 @@ class DictionaryReader final : public FrameReader<T> {
   DictionaryReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
                    CodecType codec, const ReadContext::CacheSlot& slot = {})
     : Base{base, frames, codec, slot},
-      _own{duckdb::Load<DictionaryHeader>(base + sizeof(FrameHeader))} {
-    SDB_ENSURE(
-      _own.count != 0 && _own.count <= kNumericDictMax &&
-        (this->Packed() || frames.stored <= kDictionaryCodeBytes<T>) &&
-        uint64_t{frames.off_frames} +
-            uint64_t{frames.frame_count} * kNumericFrameMetaSize <=
-          _own.offset &&
-        _own.offset + uint64_t{_own.count} * sizeof(U) <= frames.off_data,
-      "numeric codec: corrupted segment header");
-    if (this->Packed()) {
-      this->_max_bits = numeric::kMaxBits<uint32_t>;
+      _own{
+        duckdb::Load<DictionaryHeader>(base + OwnHeaderOffset(frames.flags))} {
+    if (!(_own.count != 0 && _own.count <= kNumericDictMax &&
+          (this->Packed() || frames.stored <= kDictionaryCodeBytes<T>) &&
+          uint64_t{frames.off_frames} +
+              uint64_t{frames.frame_count} *
+                FrameMetaSize(Shape::Dictionary, this->Packed(), sizeof(T)) <=
+            _own.offset &&
+          _own.offset + uint64_t{_own.count} * sizeof(U) <= frames.off_data))
+      [[unlikely]] {
+      ThrowCorrupted("numeric", "header is inconsistent");
     }
+    this->_code_base_bytes = numeric::BytesFor(_own.count - 1);
   }
 
   void Seek(uint64_t row) {
@@ -249,10 +363,11 @@ class DictionaryReader final : public FrameReader<T> {
       return this->Get(row);
     }
     if (this->Packed()) {
-      const auto [packed, base, bits] = this->BlockAt(row);
-      return Entry(numeric::UnpackValue<uint32_t>(
-        packed, bits, static_cast<uint32_t>(row % numeric::kBlockValues),
-        static_cast<uint32_t>(base)));
+      const auto block = this->template BlockAt<uint32_t>(row);
+      const auto index = static_cast<uint32_t>(row % numeric::kBlockValues);
+      const auto base = static_cast<uint32_t>(block.base);
+      return Entry(
+        numeric::UnpackValue<uint32_t>(block.packed, block.bits, index, base));
     }
     uint32_t code = 0;
     if (this->Shuffled()) {
@@ -281,7 +396,7 @@ class DictionaryReader final : public FrameReader<T> {
   }
 
   struct Matches {
-    bool judged = false;
+    bool counted = false;
     uint32_t count = 0;
   };
 
@@ -297,21 +412,25 @@ class DictionaryReader final : public FrameReader<T> {
   }
 
   void UnpackBlock(uint64_t first, uint64_t rows, U* out) {
-    const auto [packed, base, bits] = this->BlockAt(first);
+    const auto block = this->template BlockAt<uint32_t>(first);
+    const auto base = static_cast<uint32_t>(block.base);
     if (_codes.size() < numeric::kBlockValues) {
       _codes.resize(numeric::kBlockValues);
     }
-    numeric::Unpack<uint32_t>(bits, this->template Words<uint32_t>(packed),
-                              _codes.data(), static_cast<uint32_t>(base));
-    const auto largest =
-      uint64_t{static_cast<uint32_t>(base)} + (uint64_t{1} << bits) - 1;
+    numeric::Unpack<uint32_t>(
+      block.bits,
+      this->template BlockWords<uint32_t>(block.packed, block.bits, rows),
+      _codes.data(), base);
+    const auto largest = uint64_t{base} + (uint64_t{1} << block.bits) - 1;
     Gather<uint32_t>(reinterpret_cast<const uint8_t*>(_codes.data()),
                      static_cast<uint32_t>(rows), out, largest >= _own.count);
   }
 
  private:
   T Entry(uint32_t code) const {
-    SDB_ENSURE(code < _own.count, "numeric codec: corrupted codes");
+    if (code >= _own.count) [[unlikely]] {
+      ThrowCorrupted("numeric", "dictionary code is out of range");
+    }
     return this->Scaled(
       duckdb::Load<U>(this->_base + _own.offset + size_t{code} * sizeof(U)));
   }
@@ -338,7 +457,9 @@ class DictionaryReader final : public FrameReader<T> {
       for (uint32_t i = 0; i < rows; ++i) {
         worst = std::max(worst, duckdb::Load<C>(src + size_t{i} * sizeof(C)));
       }
-      SDB_ENSURE(worst < _own.count, "numeric codec: corrupted codes");
+      if (worst >= _own.count) [[unlikely]] {
+        ThrowCorrupted("numeric", "dictionary code is out of range");
+      }
     }
     const auto* dict = this->_base + _own.offset;
     for (uint32_t i = 0; i < rows; ++i) {

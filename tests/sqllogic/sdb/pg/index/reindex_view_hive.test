@@ -45,7 +45,7 @@ COPY (SELECT * FROM (VALUES (4, 'techies plants mines'), (5, 'lina burns pudge')
 TO '${__TEST_DIR__}/rvh/color=green/c.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('rvh_idx');
+SELECT * FROM sdb_reindex('rvh_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -80,7 +80,7 @@ COPY (SELECT * FROM (VALUES (6, 'pudge buys blink')) t(id, body))
 TO '${__TEST_DIR__}/rvh/color=red/d.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('rvh_idx');
+SELECT * FROM sdb_reindex('rvh_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -107,7 +107,7 @@ COPY (SELECT * FROM (VALUES (7, 'kostya types all night'), (3, 'pudge plays supp
 TO '${__TEST_DIR__}/rvh/color=blue/b.parquet' (FORMAT PARQUET);
 
 query
-SELECT * FROM serenedb_reindex('rvh_idx');
+SELECT * FROM sdb_reindex('rvh_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	1	0	1
@@ -140,7 +140,7 @@ system ok
 rm $__TEST_DIR__/rvh/color=green/c.parquet
 
 query
-SELECT * FROM serenedb_reindex('rvh_idx');
+SELECT * FROM sdb_reindex('rvh_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	0	1	0
@@ -166,7 +166,7 @@ count
 0
 
 query
-SELECT * FROM serenedb_reindex('rvh_idx');
+SELECT * FROM sdb_reindex('rvh_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

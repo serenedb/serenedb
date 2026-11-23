@@ -6,11 +6,11 @@ SET threads = 1;
 
 statement ok
 CREATE TABLE stnc_named (a INTEGER PRIMARY KEY,
-                         codes BIGINT USING COMPRESSION dict_ffor,
-                         steps BIGINT USING COMPRESSION delta_ffor,
+                         codes BIGINT USING COMPRESSION dict,
+                         steps BIGINT USING COMPRESSION delta,
                          runs BIGINT USING COMPRESSION rle_lz4,
                          ratio DOUBLE USING COMPRESSION zstd,
-                         tags BIGINT[] USING COMPRESSION ffor)
+                         tags BIGINT[] USING COMPRESSION bitpacking)
 WITH (compaction_interval = 0);
 
 
@@ -29,10 +29,10 @@ WHERE column_name IN ('codes', 'steps', 'runs', 'ratio') AND segment_type <> 'VA
 GROUP BY ALL ORDER BY column_name;
 ----
 column_name	compression
-codes	DICT_FFOR
+codes	DICT
 ratio	ZSTD
 runs	RLE_LZ4
-steps	DELTA_FFOR
+steps	DELTA
 
 
 query
@@ -45,9 +45,9 @@ mismatches
 
 
 statement error
-CREATE TABLE stnc_text (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION delta_ffor);
+CREATE TABLE stnc_text (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION delta);
 ----
-db error: ERROR: Can't compress column "v" with type 'VARCHAR' (physical: VARCHAR) using compression type 'DELTA_FFOR'
+db error: ERROR: Can't compress column "v" with type 'VARCHAR' (physical: VARCHAR) using compression type 'DELTA'
 
 
 statement ok
@@ -116,7 +116,7 @@ mismatches
 
 
 statement ok
-SET force_compression = 'rle_ffor';
+SET force_compression = 'rle';
 
 
 statement ok
@@ -140,7 +140,7 @@ GROUP BY ALL ORDER BY column_name;
 ----
 column_name	compression
 apart	Uncompressed
-runs	RLE_FFOR
+runs	RLE
 v	FSST
 
 
@@ -157,11 +157,11 @@ RESET force_compression;
 
 
 statement ok
-SET disabled_compression_methods = 'dict_ffor,dict_lz4,dict_zstd';
+SET disabled_compression_methods = 'dict,dict_lz4,dict_zstd';
 
 
 statement ok
-CREATE TABLE stnc_disabled (a INTEGER PRIMARY KEY, auto_n BIGINT, named_n BIGINT USING COMPRESSION dict_ffor)
+CREATE TABLE stnc_disabled (a INTEGER PRIMARY KEY, auto_n BIGINT, named_n BIGINT USING COMPRESSION dict)
 WITH (compaction_interval = 0);
 
 
@@ -178,7 +178,7 @@ SELECT count(*) AS dictionary_segments,
        (SELECT count(*) FROM stnc_disabled
         WHERE auto_n IS DISTINCT FROM (hash(a % 100) >> 2)::BIGINT OR named_n IS DISTINCT FROM (hash(a % 100) >> 2)::BIGINT) AS mismatches
 FROM pragma_storage_info('stnc_disabled')
-WHERE compression IN ('DICT_FFOR', 'DICT_LZ4', 'DICT_ZSTD');
+WHERE compression IN ('DICT', 'DICT_LZ4', 'DICT_ZSTD');
 ----
 dictionary_segments	mismatches
 0	0
@@ -225,9 +225,9 @@ mismatches
 
 
 statement error
-CREATE TABLE stnc_bad_level (a INTEGER PRIMARY KEY, n BIGINT USING COMPRESSION delta_ffor(compression_level = 3));
+CREATE TABLE stnc_bad_level (a INTEGER PRIMARY KEY, n BIGINT USING COMPRESSION delta(compression_level = 3));
 ----
-db error: ERROR: Column "n": compression 'delta_ffor' takes no compression_level
+db error: ERROR: Column "n": compression 'delta' takes no compression_level
 
 
 statement error

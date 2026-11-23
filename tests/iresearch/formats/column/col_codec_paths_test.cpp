@@ -731,6 +731,45 @@ TEST_F(ColCodecPathsTest, RleReadsRunsOfEveryType) {
   }
 }
 
+TEST_F(ColCodecPathsTest, WideIntegersReadThroughEveryPath) {
+  for (const LogicalType type : {LogicalType::HUGEINT, LogicalType::UHUGEINT}) {
+    const auto name = [&](std::string_view shape) {
+      return absl::StrCat(type.ToString(), " ", shape);
+    };
+    const auto halves = [&](uint64_t k) {
+      return Value::HUGEINT(duckdb::hugeint_t{static_cast<int64_t>(k), Mix(k)})
+        .DefaultCastAs(type);
+    };
+    const auto narrow = [&](uint64_t g) {
+      return Int(type, static_cast<int64_t>((g / 1024) % 4 * 25 + Mix(g) % 16));
+    };
+    Check({name("narrow"), type, CodecType::Bitpacking, All, narrow});
+    Check({name("narrow with nulls"), type, CodecType::Bitpacking, Periodic,
+           narrow});
+    Check({name("steps"), type, CodecType::Delta, All,
+           [&](uint64_t g) { return Int(type, static_cast<int64_t>(g / 3)); }});
+    Check({name("runs"), type, CodecType::Rle, All, [&](uint64_t g) {
+             return Int(type, static_cast<int64_t>((g / 37) % 11));
+           }});
+    Check({name("runs with nulls"), type, CodecType::Rle, Periodic,
+           [&](uint64_t g) {
+             return Int(type, static_cast<int64_t>((g / 13) % 100));
+           }});
+    Check(
+      {name("runs longer than a vector"), type, CodecType::Rle, All,
+       [&](uint64_t g) { return Int(type, static_cast<int64_t>(g / 5000)); }});
+    Check({name("few values"), type, CodecType::Dict, All, [&](uint64_t g) {
+             return Int(type, static_cast<int64_t>(Mix(g) % 40 * 1000003));
+           }});
+    Check({name("runs in two halves"), type, CodecType::Rle, All,
+           [&](uint64_t g) { return halves((g / 37) % 11); }});
+    Check({name("long runs in two halves"), type, CodecType::Rle, All,
+           [&](uint64_t g) { return halves(g / 5000); }});
+    Check({name("few values in two halves"), type, CodecType::Dict, All,
+           [&](uint64_t g) { return halves(Mix(g) % 40); }});
+  }
+}
+
 TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
   const LogicalType types[] = {
     LogicalType::TINYINT,   LogicalType::UTINYINT, LogicalType::SMALLINT,
@@ -772,7 +811,7 @@ TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
     };
     const Gen spread = [&](uint64_t g) { return wide(g); };
     for (const auto codec :
-         {CodecType::Ffor, CodecType::Lz4, CodecType::Zstd}) {
+         {CodecType::Bitpacking, CodecType::Lz4, CodecType::Zstd}) {
       check(codec, "narrow", narrow);
       check(codec, "spread", spread);
       check(codec, "narrow with nulls", narrow, Periodic);
@@ -781,7 +820,7 @@ TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
       const uint64_t mid = type.id() == duckdb::LogicalTypeId::FLOAT
                              ? 40000
                              : uint64_t{4000000000};
-      check(CodecType::Ffor, "close bit patterns",
+      check(CodecType::Bitpacking, "close bit patterns",
             [&](uint64_t g) { return bits(Mix(g) % mid); });
     }
     const Gen steps = [&](uint64_t g) {
@@ -791,7 +830,7 @@ TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
       return item(static_cast<int64_t>((g / 100 + Mix(g) % 3) % 100));
     };
     for (const auto codec :
-         {CodecType::DeltaFfor, CodecType::DeltaLz4, CodecType::DeltaZstd}) {
+         {CodecType::Delta, CodecType::DeltaLz4, CodecType::DeltaZstd}) {
       check(codec, "steps", steps);
       check(codec, "noisy steps", noisy);
       check(codec, "steps with nulls", steps, Periodic);
@@ -800,7 +839,7 @@ TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
       return item(static_cast<int64_t>((g / 37) % 11));
     };
     for (const auto codec :
-         {CodecType::RleFfor, CodecType::RleLz4, CodecType::RleZstd}) {
+         {CodecType::Rle, CodecType::RleLz4, CodecType::RleZstd}) {
       check(codec, "runs", runs);
       check(codec, "runs with null runs", runs, NullRuns);
     }
@@ -816,7 +855,7 @@ TEST_F(ColCodecPathsTest, NumericCodecsReadEveryTypeThroughEveryPath) {
     const Gen two_hundred = [&](uint64_t g) { return wide(Mix(g) % 200); };
     const Gen three_hundred = [&](uint64_t g) { return wide(Mix(g) % 300); };
     for (const auto codec :
-         {CodecType::DictFfor, CodecType::DictLz4, CodecType::DictZstd}) {
+         {CodecType::Dict, CodecType::DictLz4, CodecType::DictZstd}) {
       check(codec, "50 values", fifty);
       check(codec, "200 values", two_hundred);
       check(codec, "300 values", three_hundred);
@@ -911,6 +950,12 @@ TEST_F(ColCodecPathsTest, AlpCodecsReadFloatsAndDoubles) {
              }});
     }
     if (type.id() == duckdb::LogicalTypeId::DOUBLE) {
+      Check({name("alprd right parts that span nine bytes"), type,
+             CodecType::Alprd, All, [&](uint64_t g) {
+               const auto bits = g * 0x9E3779B97F4A7C15ULL;
+               return item(std::bit_cast<double>(
+                 (bits & ((uint64_t{1} << 59) - 1)) | bits >> 61 << 60));
+             }});
       Check({name("alp digits near the limit"), type, CodecType::Alp, All,
              [&](uint64_t g) {
                return item(0x1p63 - 0x1p20 * static_cast<double>(1 + g % 1000));
@@ -1141,7 +1186,7 @@ TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
         CodecType::DictFsst, CodecType::DictFsstPlus, CodecType::DictOnpair,
         CodecType::DictFsst12}) {
     Check({absl::StrCat(magic_enum::enum_name(codec),
-                        " half of a large dictionary judged row by row"),
+                        " half of a large dictionary filtered row by row"),
            LogicalType::VARCHAR, codec, All,
            [](uint64_t g) {
              return Value{absl::StrCat("entry_", g % kLargeDictionary)};

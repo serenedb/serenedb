@@ -142,7 +142,7 @@ COMMENT ON VIEW aclc_ledger_v IS 'the mop ledger';
 
 
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'aclc_ledger_v';
+SELECT comment FROM sdb_views() WHERE view_name = 'aclc_ledger_v';
 ----
 comment
 the mop ledger
@@ -172,7 +172,7 @@ COMMENT ON COLUMN aclc_ledger_v.vsecret IS 'the secret column';
 
 
 query
-SELECT comment FROM duckdb_columns()
+SELECT comment FROM sdb_columns()
 WHERE table_name = 'aclc_ledger_v' AND column_name = 'vsecret';
 ----
 comment
@@ -228,14 +228,14 @@ aclc_grantee=r/aclc_mop
 
 # The comments came along too -- both of them ride the same Copy().
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'aclc_ledger_v2';
+SELECT comment FROM sdb_views() WHERE view_name = 'aclc_ledger_v2';
 ----
 comment
 the mop ledger
 
 
 query
-SELECT comment FROM duckdb_columns()
+SELECT comment FROM sdb_columns()
 WHERE table_name = 'aclc_ledger_v2' AND column_name = 'vsecret';
 ----
 comment
@@ -392,7 +392,7 @@ COMMENT ON TYPE aclc_mood IS 'how the mop feels';
 
 
 query
-SELECT comment FROM duckdb_types() WHERE type_name = 'aclc_mood';
+SELECT comment FROM sdb_types() WHERE type_name = 'aclc_mood';
 ----
 comment
 how the mop feels

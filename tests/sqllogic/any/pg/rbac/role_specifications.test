@@ -15,6 +15,14 @@ DROP ROLE IF EXISTS rspec_bob;
 
 
 statement ok
+DROP ROLE IF EXISTS rspec_root;
+
+
+statement ok
+CREATE ROLE rspec_root SUPERUSER LOGIN PASSWORD 'rspec_pw';
+
+
+statement ok
 CREATE ROLE rspec_alice LOGIN PASSWORD 'rspec_pw';
 
 
@@ -159,10 +167,12 @@ statement ok
 DROP SCHEMA postgres;
 
 
+connection c_root user=rspec_root password=rspec_pw
 statement ok
 GRANT rspec_bob TO SESSION_USER;
 
 
+connection c_root user=rspec_root password=rspec_pw
 query
 SELECT pg_has_role(session_user, 'rspec_bob', 'MEMBER') AS member,
        count(*) FILTER (WHERE m.oid = (SELECT oid FROM pg_roles WHERE rolname = session_user)) AS session_user_edges
@@ -173,6 +183,7 @@ member	session_user_edges
 t	1
 
 
+connection c_root user=rspec_root password=rspec_pw
 statement ok
 REVOKE rspec_bob FROM SESSION_USER;
 
@@ -227,3 +238,7 @@ DROP ROLE rspec_alice;
 
 statement ok
 DROP ROLE rspec_bob;
+
+
+statement ok
+DROP ROLE rspec_root;

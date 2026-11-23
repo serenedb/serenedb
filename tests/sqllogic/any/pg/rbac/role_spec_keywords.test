@@ -37,6 +37,14 @@ DROP ROLE IF EXISTS "session_user";
 
 
 statement ok
+DROP ROLE IF EXISTS rsk_me;
+
+
+statement ok
+CREATE ROLE rsk_me SUPERUSER LOGIN PASSWORD 'rsk_pw';
+
+
+statement ok
 CREATE ROLE "CURRENT_USER";
 
 
@@ -124,14 +132,17 @@ statement ok
 CREATE ROLE rsk_group;
 
 
+connection c_me user=rsk_me password=rsk_pw
 statement ok
 ALTER GROUP rsk_group ADD USER current_user, "session_user";
 
 
+connection c_me user=rsk_me password=rsk_pw
 statement ok
 CREATE ROLE rsk_in IN ROLE "CURRENT_USER" ROLE session_user;
 
 
+connection c_me user=rsk_me password=rsk_pw
 query
 SELECT r.rolname AS role, CASE WHEN m.rolname = current_user THEN 'me' ELSE m.rolname END AS member
 FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
@@ -146,20 +157,23 @@ rsk_in	me
 rsk_member	CURRENT_USER
 
 
+connection c_me user=rsk_me password=rsk_pw
 statement error
 ALTER GROUP current_user ADD USER rsk_member;
 ----
-db error: ERROR: role "postgres" is a member of role "rsk_member"
+db error: ERROR: role "rsk_me" is a member of role "rsk_member"
 
 
 statement ok
 CREATE ROLE rsk_solo;
 
 
+connection c_me user=rsk_me password=rsk_pw
 statement ok
 ALTER GROUP current_user ADD USER rsk_solo;
 
 
+connection c_me user=rsk_me password=rsk_pw
 query
 SELECT m.rolname AS member FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
 WHERE r.rolname = current_user AND m.rolname LIKE 'rsk%';
@@ -168,10 +182,12 @@ member
 rsk_solo
 
 
+connection c_me user=rsk_me password=rsk_pw
 statement ok
 ALTER GROUP current_user DROP USER rsk_solo;
 
 
+connection c_me user=rsk_me password=rsk_pw
 query
 SELECT count(*) AS members FROM pg_auth_members a JOIN pg_roles r ON r.oid = a.roleid JOIN pg_roles m ON m.oid = a.member
 WHERE r.rolname = current_user AND m.rolname LIKE 'rsk%';
@@ -320,3 +336,7 @@ DROP ROLE "CURRENT_USER";
 
 statement ok
 DROP ROLE "session_user";
+
+
+statement ok
+DROP ROLE rsk_me;

@@ -48,7 +48,7 @@ struct StaticView {
 };
 
 inline constexpr duckdb::AclItem kPublicSelect{
-  .grantee = kPublicGrantee,
+  .grantee = duckdb::ACL_ID_PUBLIC,
   .grantor = kRootUser,
   .privs = duckdb::AclMode::Select};
 

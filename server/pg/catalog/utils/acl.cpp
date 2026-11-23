@@ -147,7 +147,7 @@ std::string_view DefaultAclObjects(duckdb::CatalogType type) {
 
 void AppendAcl(std::string& out, const duckdb::AclItem& item,
                const duckdb::SecuritySnapshot& roles) {
-  if (item.grantee != kPublicGrantee) {
+  if (item.grantee != duckdb::ACL_ID_PUBLIC) {
     PutRole(out, item.grantee, roles);
   }
   out.push_back('=');
@@ -208,7 +208,7 @@ std::optional<irs::pg::SqlErrorData> ParseAcl(
   }
   std::optional<irs::pg::SqlErrorData> error;
   if (grantee.empty()) {
-    item.grantee = kPublicGrantee;
+    item.grantee = duckdb::ACL_ID_PUBLIC;
   } else if (const auto role = AclRole(roles, grantee, oids, error)) {
     item.grantee = *role;
   } else {

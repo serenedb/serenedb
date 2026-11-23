@@ -134,8 +134,9 @@ void AclDefaultFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     const auto owner_id = static_cast<duckdb::idx_t>(owner.GetValue());
     absl::InlinedVector<duckdb::AclItem, 2> items;
     if (it->world != AclMode::NoRights) {
-      items.emplace_back(duckdb::AclItem{
-        .grantee = kPublicGrantee, .grantor = owner_id, .privs = it->world});
+      items.emplace_back(duckdb::AclItem{.grantee = duckdb::ACL_ID_PUBLIC,
+                                         .grantor = owner_id,
+                                         .privs = it->world});
     }
     if (it->owner != AclMode::NoRights) {
       items.emplace_back(duckdb::AclItem{
@@ -389,7 +390,7 @@ struct ObjectPrivileges {
   static duckdb::idx_t Role(const ObjectScope& scope, duckdb::string_t name) {
     const auto text = AsView(name);
     if (text == irs::StaticStrings::kPublic) {
-      return kPublicGrantee;
+      return duckdb::ACL_ID_PUBLIC;
     }
     return RoleIdByName(*scope.roles, text);
   }
@@ -1105,21 +1106,6 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     return *this;
   }
 
-  void Prefetch(duckdb::Vector& oids) {
-    if constexpr (kFindsEntries) {
-      _oids.clear();
-      _next = 0;
-      if (oids.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR) {
-        return;
-      }
-      for (const auto oid : oids.ValidValues<int64_t>()) {
-        _oids.push_back(static_cast<duckdb::idx_t>(oid.GetValue()));
-      }
-      _entries.resize(_oids.size());
-      EntriesByOid(_scope, _oids, _entries);
-    }
-  }
-
   duckdb::idx_t Role(duckdb::string_t name) {
     if (!_named || name != _named->name) {
       _named = NamedRole{.name = name, .role = F::Role(_scope, name)};
@@ -1174,20 +1160,10 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   template<typename... Rest>
   auto FindObject(uint64_t oid, Rest... rest) {
     if constexpr (kFindsEntries) {
-      return F::Find(_scope, oid, Entry(oid), rest...);
+      return F::Find(_scope, oid, EntryByOid(_scope, oid), rest...);
     } else {
       return F::Find(_scope, oid, rest...);
     }
-  }
-
-  duckdb::optional_ptr<duckdb::CatalogEntry> Entry(uint64_t oid) {
-    for (auto next = _next; next < _oids.size(); ++next) {
-      if (_oids[next] == oid) {
-        _next = next + 1;
-        return _entries[next];
-      }
-    }
-    return EntryByOid(_scope, oid);
   }
 
   const typename F::Modes& Modes(duckdb::string_t text) {
@@ -1208,9 +1184,6 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
   std::optional<NamedRole> _named;
   std::optional<ParsedModes> _modes;
   std::optional<duckdb::RoleAccess> _closure;
-  std::vector<duckdb::idx_t> _oids;
-  std::vector<duckdb::optional_ptr<duckdb::CatalogEntry>> _entries;
-  size_t _next = 0;
 };
 
 template<typename F>
@@ -1237,11 +1210,6 @@ duckdb::ScalarFunction PrivilegeFunction() {
       auto& check = duckdb::ExecuteFunctionState::GetFunctionState(state)
                       ->Cast<PrivilegeCheck<F>>()
                       .ForChunk();
-      if constexpr (std::is_same_v<
-                      std::tuple_element_t<0, std::tuple<Object...>>,
-                      int64_t>) {
-        check.Prefetch(args.data[std::is_void_v<Role> ? 0 : 1]);
-      }
       if constexpr (std::is_void_v<Role>) {
         const auto caller =
           state.expr.Cast<duckdb::BoundFunctionExpression>().CallerRole();

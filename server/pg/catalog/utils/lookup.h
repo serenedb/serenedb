@@ -83,9 +83,6 @@ inline ObjectName NameOf(duckdb::CatalogTransaction transaction,
 
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid);
-void EntriesByOid(
-  const Session& session, std::span<const duckdb::idx_t> oids,
-  std::span<duckdb::optional_ptr<duckdb::CatalogEntry>> entries);
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
   const Session& session, uint64_t oid);
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(

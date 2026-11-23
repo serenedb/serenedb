@@ -59,14 +59,6 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
   return entry;
 }
 
-void EntriesByOid(
-  const Session& session, std::span<const duckdb::idx_t> oids,
-  std::span<duckdb::optional_ptr<duckdb::CatalogEntry>> entries) {
-  for (size_t i = 0; i < oids.size(); ++i) {
-    entries[i] = EntryByOid(session, oids[i]);
-  }
-}
-
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
   const Session& session, uint64_t oid) {
   if (!session.context || oid == kInvalidOid) {

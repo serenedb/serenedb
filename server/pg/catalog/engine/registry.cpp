@@ -357,7 +357,7 @@ const duckdb::Permissions& SchemaPermissions() {
     .acl = {{.grantee = kRootUser,
              .grantor = kRootUser,
              .privs = duckdb::AclMode::Usage | duckdb::AclMode::Create},
-            {.grantee = kPublicGrantee,
+            {.grantee = duckdb::ACL_ID_PUBLIC,
              .grantor = kRootUser,
              .privs = duckdb::AclMode::Usage}}};
   return kPermissions;
@@ -369,7 +369,7 @@ const duckdb::Permissions& PublicSchemaPermissions() {
     .acl = {{.grantee = kPgDatabaseOwnerRole,
              .grantor = kPgDatabaseOwnerRole,
              .privs = duckdb::AclMode::Usage | duckdb::AclMode::Create},
-            {.grantee = kPublicGrantee,
+            {.grantee = duckdb::ACL_ID_PUBLIC,
              .grantor = kPgDatabaseOwnerRole,
              .privs = duckdb::AclMode::Usage}}};
   return kPermissions;

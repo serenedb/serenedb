@@ -274,15 +274,6 @@ QUERY PLAN
 │ │ Query: "abc"             │ │
 │ │ Verify: false            │ │
 │ ╰──────────────────────────╯ │
-│ Table Filter:                │
-│ ╭─ Wildcard NGram ─────────╮ │
-│ │ Field: msg(string)       │ │
-│ │ Pattern: (?s)\\A.*abc.*\\z │ │
-│ │ Syntax: perl             │ │
-│ │ Has Pos: false           │ │
-│ │ Query: "abc"             │ │
-│ │ Verify: table filter     │ │
-│ ╰──────────────────────────╯ │
 │ Projections: id              │
 │ ~1 row                       │
 ╰──────────────────────────────╯
@@ -302,15 +293,6 @@ QUERY PLAN
 │ │ Has Pos: false        │ │
 │ │ Query: "\\xffab"       │ │
 │ │ Verify: false         │ │
-│ ╰───────────────────────╯ │
-│ Table Filter:             │
-│ ╭─ Wildcard NGram ──────╮ │
-│ │ Field: msg(string)    │ │
-│ │ Pattern: (?s)\\Aab.*\\z │ │
-│ │ Syntax: perl          │ │
-│ │ Has Pos: false        │ │
-│ │ Query: "\\xffab"       │ │
-│ │ Verify: table filter  │ │
 │ ╰───────────────────────╯ │
 │ Projections: id           │
 │ ~1 row                    │
@@ -820,15 +802,6 @@ QUERY PLAN
 │ │ Has Pos: false                        │ │
 │ │ Query: Or("A_E", "A_e", "a_E", "a_e") │ │
 │ │ Verify: false                         │ │
-│ ╰───────────────────────────────────────╯ │
-│ Table Filter:                             │
-│ ╭─ Wildcard NGram ──────────────────────╮ │
-│ │ Field: msg(string)                    │ │
-│ │ Pattern: (?si)\\A.*A_E.*\\z             │ │
-│ │ Syntax: perl                          │ │
-│ │ Has Pos: false                        │ │
-│ │ Query: Or("A_E", "A_e", "a_E", "a_e") │ │
-│ │ Verify: table filter                  │ │
 │ ╰───────────────────────────────────────╯ │
 │ Projections: id                           │
 │ ~1 row                                    │

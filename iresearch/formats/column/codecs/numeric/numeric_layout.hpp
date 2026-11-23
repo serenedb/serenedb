@@ -37,6 +37,7 @@
 #include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 /*
 Data layout per segment, one block of one column holding a whole row group:
@@ -254,7 +255,7 @@ constexpr uint32_t OwnHeaderSize(Shape shape, bool packed) noexcept {
     case Shape::Dictionary:
       return sizeof(DictionaryHeader);
   }
-  return 0;
+  SDB_UNREACHABLE();
 }
 
 constexpr std::string_view TransformName(Shape shape,
@@ -270,7 +271,7 @@ constexpr std::string_view TransformName(Shape shape,
     case Shape::Dictionary:
       return packed ? "dict_bitpacking" : "dict";
   }
-  return "raw";
+  SDB_UNREACHABLE();
 }
 
 inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,

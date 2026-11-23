@@ -30,6 +30,7 @@
 #include "iresearch/formats/column/codecs/bytes/zxc.hpp"
 #include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -125,7 +126,7 @@ uint8_t MaxLevel(CodecType type) noexcept {
     case ByteCodec::Fsst12:
       return 0;
   }
-  return 0;
+  SDB_UNREACHABLE();
 }
 
 }  // namespace irs::codecs

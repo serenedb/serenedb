@@ -53,6 +53,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs::numeric {
 
@@ -293,7 +294,7 @@ struct WideValues final : State {
         }
         return sample_few;
     }
-    return false;
+    SDB_UNREACHABLE();
   }
 
   bool ReadRuns(ColumnDataCheckpointData& data) {

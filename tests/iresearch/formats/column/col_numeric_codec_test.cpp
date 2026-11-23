@@ -4726,15 +4726,6 @@ TEST(ColNumericKernelsTest, PackAndUnpackWriteNothingForAWidthBeyondTheType) {
   check.template operator()<uint64_t>();
 }
 
-TEST(ColNumericLayoutTest, AnUnknownShapeHasNoOwnHeaderAndReadsAsRaw) {
-  const auto unknown =
-    static_cast<irs::codecs::Shape>(irs::codecs::kShapeCount);
-  EXPECT_EQ(irs::codecs::OwnHeaderSize(unknown, false), 0);
-  EXPECT_EQ(irs::codecs::OwnHeaderSize(unknown, true), 0);
-  EXPECT_EQ(irs::codecs::TransformName(unknown, irs::codecs::FrameHeader{}),
-            "raw");
-}
-
 struct VariantSegment {
   std::string bytes;
   uint64_t rows = 0;
@@ -4861,7 +4852,7 @@ TEST_F(ColNumericCodecTest, BitPackedFramesAtAnUnalignedAddressAreRejected) {
   }
 }
 
-TEST_F(ColNumericCodecTest, WideValuesOfAnUnknownShapeOrTypeOfferNothing) {
+TEST_F(ColNumericCodecTest, WideValuesGiveEmptyStatisticsForANonNumericType) {
   const duckdb::LogicalType type = duckdb::LogicalType::HUGEINT;
   duckdb::MemoryStream out;
   irs::WriteContext ctx{Db().GetBufferManager(), out};
@@ -4875,8 +4866,6 @@ TEST_F(ColNumericCodecTest, WideValuesOfAnUnknownShapeOrTypeOfferNothing) {
     .tuning = tuning,
   };
   irs::codecs::numeric::WideValues<duckdb::hugeint_t> wide{data};
-  EXPECT_FALSE(wide.MayPack(
-    static_cast<irs::codecs::Shape>(irs::codecs::kShapeCount), data));
   EXPECT_EQ(wide.Stats(duckdb::LogicalType::VARCHAR).GetStatsType(),
             duckdb::StatisticsType::STRING_STATS);
 }

@@ -41,7 +41,7 @@ FROM (
 );
 ----
 allowed	denied	unknown
-2000	2000	2000
+2000	1000	3000
 
 
 connection c_ved user=pfc_vedernikoff password=pfc_pw
@@ -58,7 +58,7 @@ FROM (
 );
 ----
 allowed	denied
-3000	3000
+3000	0
 
 
 connection c_ved user=pfc_vedernikoff password=pfc_pw
@@ -76,7 +76,7 @@ FROM (
 );
 ----
 allowed	denied	unknown
-2000	2000	2000
+2000	0	4000
 
 
 connection c_ved user=pfc_vedernikoff password=pfc_pw
@@ -89,7 +89,6 @@ ORDER BY relname;
 relname	allowed
 pfc_granted	t
 pfc_granted_i	f
-pfc_hidden	f
 
 
 statement ok
@@ -152,7 +151,7 @@ FROM (
 );
 ----
 allowed	denied
-1500	1500
+1500	0
 
 
 connection c_ved user=pfc_vedernikoff password=pfc_pw
@@ -166,7 +165,7 @@ FROM (
 );
 ----
 allowed	denied
-1500	1500
+1500	0
 
 
 statement ok

@@ -1,0 +1,242 @@
+statement ok
+DROP TABLE IF EXISTS clv_oids;
+
+
+statement ok
+DROP SCHEMA IF EXISTS clv_hidden CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS clv_ungranted;
+
+
+statement ok
+DROP TABLE IF EXISTS clv_granted;
+
+
+statement ok
+DROP VIEW IF EXISTS clv_ungranted_view;
+
+
+statement ok
+DROP SEQUENCE IF EXISTS clv_ungranted_seq;
+
+
+statement ok
+DROP FUNCTION IF EXISTS clv_func();
+
+
+statement ok
+DROP ROLE IF EXISTS clv_peek;
+
+
+statement ok
+DROP ROLE IF EXISTS clv_other;
+
+
+statement ok
+CREATE ROLE clv_peek LOGIN PASSWORD 'clv_pw';
+
+
+statement ok
+CREATE ROLE clv_other;
+
+
+statement ok
+CREATE SCHEMA clv_hidden;
+
+
+statement ok
+CREATE TABLE clv_hidden.clv_secret_table (a int);
+
+
+statement ok
+GRANT SELECT ON clv_hidden.clv_secret_table TO clv_other;
+
+
+statement ok
+CREATE TABLE clv_ungranted (a int);
+
+
+statement ok
+COMMENT ON TABLE clv_ungranted IS 'clv ungranted';
+
+
+statement ok
+CREATE TABLE clv_granted (a int, b int);
+
+
+statement ok
+GRANT SELECT (a) ON clv_granted TO clv_peek;
+
+
+statement ok
+CREATE VIEW clv_ungranted_view AS SELECT 1 AS a;
+
+
+statement ok
+CREATE SEQUENCE clv_ungranted_seq;
+
+
+statement ok
+CREATE FUNCTION clv_func() RETURNS int LANGUAGE sql AS 'SELECT 1';
+
+
+statement ok
+REVOKE EXECUTE ON FUNCTION clv_func() FROM PUBLIC;
+
+
+statement ok
+CREATE TABLE clv_oids AS
+SELECT 'clv_hidden.clv_secret_table'::regclass::oid AS secret,
+       'clv_ungranted'::regclass::oid AS ungranted,
+       'clv_ungranted_view'::regclass::oid AS view_oid,
+       'clv_hidden'::regnamespace::oid AS schema_oid,
+       'clv_func()'::regprocedure::oid AS func_oid;
+
+
+statement ok
+GRANT SELECT ON clv_oids TO clv_peek;
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT relname FROM pg_class WHERE relname LIKE 'clv%' ORDER BY 1;
+----
+relname
+clv_granted
+clv_oids
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT count(*) AS schemas FROM pg_namespace WHERE nspname = 'clv_hidden';
+----
+schemas
+0
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT count(*) AS functions FROM pg_proc WHERE proname = 'clv_func';
+----
+functions
+0
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT typname FROM pg_type WHERE typname LIKE 'clv%' ORDER BY 1;
+----
+typname
+clv_granted
+clv_oids
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT count(*) AS columns FROM pg_attribute
+WHERE attrelid IN (SELECT secret FROM clv_oids UNION ALL SELECT ungranted FROM clv_oids);
+----
+columns
+0
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT (SELECT count(*) FROM pg_tables WHERE tablename LIKE 'clv%') AS tables,
+       (SELECT count(*) FROM pg_views WHERE viewname LIKE 'clv%') AS views,
+       (SELECT count(*) FROM pg_sequences WHERE sequencename LIKE 'clv%') AS sequences;
+----
+tables	views	sequences
+2	0	0
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT secret::regclass::text = secret::text AS secret_by_number,
+       ungranted::regclass::text = ungranted::text AS ungranted_by_number,
+       schema_oid::regnamespace::text = schema_oid::text AS schema_by_number,
+       func_oid::regprocedure::text = func_oid::text AS function_by_number
+FROM clv_oids;
+----
+secret_by_number	ungranted_by_number	schema_by_number	function_by_number
+t	t	t	t
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT pg_get_viewdef(view_oid) IS NULL AS viewdef,
+       pg_describe_object('pg_class'::regclass, ungranted, 0) IS NULL AS described,
+       obj_description(ungranted, 'pg_class') IS NULL AS comment,
+       has_table_privilege(ungranted, 'SELECT') IS NULL AS privilege
+FROM clv_oids;
+----
+viewdef	described	comment	privilege
+t	t	t	t
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT count(*) AS dependencies FROM pg_shdepend
+WHERE objid IN (SELECT secret FROM clv_oids UNION ALL SELECT ungranted FROM clv_oids);
+----
+dependencies
+0
+
+
+connection c_peek user=clv_peek password=clv_pw
+statement error
+SELECT * FROM clv_ungranted;
+----
+db error: ERROR: permission denied for table clv_ungranted
+
+
+statement ok
+GRANT SELECT ON clv_ungranted TO clv_peek;
+
+
+connection c_peek user=clv_peek password=clv_pw
+query
+SELECT ungranted::regclass::text AS name, obj_description(ungranted, 'pg_class') AS comment,
+       has_table_privilege(ungranted, 'SELECT') AS privilege
+FROM clv_oids;
+----
+name	comment	privilege
+clv_ungranted	clv ungranted	t
+
+
+statement ok
+DROP TABLE clv_oids;
+
+
+statement ok
+DROP SCHEMA clv_hidden CASCADE;
+
+
+statement ok
+DROP TABLE clv_ungranted;
+
+
+statement ok
+DROP TABLE clv_granted;
+
+
+statement ok
+DROP VIEW clv_ungranted_view;
+
+
+statement ok
+DROP SEQUENCE clv_ungranted_seq;
+
+
+statement ok
+DROP FUNCTION clv_func();
+
+
+statement ok
+DROP ROLE clv_peek;
+
+
+statement ok
+DROP ROLE clv_other;

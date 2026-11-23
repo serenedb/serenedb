@@ -159,7 +159,7 @@ std::optional<std::string> ColumnName(const Session& session,
 ObjectIdentity IdentifyRelation(const Session& session, uint64_t oid,
                                 int32_t attnum) {
   auto relation = RelationByOid(session, oid);
-  if (!relation) {
+  if (!relation || !RelationShown(session, *relation)) {
     return Missing("relation");
   }
   const auto kind = RelationKind(*relation);
@@ -199,7 +199,7 @@ ObjectIdentity IdentifyFunction(const Session& session, uint64_t oid) {
     schema = FindSystemObject(kSystemNamespaces, builtin->nsp)->name;
   } else {
     const auto found = FindMacro(session, oid);
-    if (!found.entry) {
+    if (!found.entry || !OwnerShown(session, oid)) {
       return Missing("routine");
     }
     kind = found.macro->is_procedure ? 'p' : 'f';
@@ -232,7 +232,7 @@ ObjectIdentity IdentifyType(const Session& session, uint64_t oid) {
     identity.name = std::string{object->name};
   } else if (const auto element = ArrayElementOid(session, oid);
              element != kInvalidOid) {
-    if (const auto entry = EntryByOid(session, element)) {
+    if (const auto entry = ShownEntryByOid(session, element)) {
       identity.schema =
         std::string{NameOf(*session.transaction, *entry).schema};
       identity.name = ArrayTypeName(*session.transaction, *entry);
@@ -242,8 +242,8 @@ ObjectIdentity IdentifyType(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifySchema(const Session& session, uint64_t oid) {
-  const auto entry = SchemaByOid(session, oid);
-  if (!entry) {
+  auto entry = SchemaByOid(session, oid);
+  if (!entry || !Shown(session, *entry)) {
     return Missing("schema");
   }
   const auto& name = entry->name.GetIdentifierName();
@@ -313,7 +313,8 @@ ObjectIdentity IdentifyDefault(const Session& session, uint64_t oid) {
 
 ObjectIdentity IdentifyRule(const Session& session, uint64_t oid) {
   const auto relation = RelationByOid(session, oid);
-  if (!relation || RelationKind(*relation) != "view") {
+  if (!relation || RelationKind(*relation) != "view" ||
+      !RelationShown(session, *relation)) {
     return Missing("rule");
   }
   const auto [schema, name] = NameOf(*session.transaction, *relation);
@@ -327,7 +328,8 @@ ObjectIdentity IdentifyRule(const Session& session, uint64_t oid) {
 
 ObjectIdentity IdentifyTrigger(const Session& session, uint64_t oid) {
   const auto entry = EntryByOid(session, oid);
-  if (!entry || entry->type != duckdb::CatalogType::TRIGGER_ENTRY) {
+  if (!entry || entry->type != duckdb::CatalogType::TRIGGER_ENTRY ||
+      !OwnerShown(session, oid)) {
     return Missing("trigger");
   }
   const auto& trigger = entry->Cast<duckdb::TriggerCatalogEntry>();

@@ -153,11 +153,14 @@ struct DescribedObject {
 std::optional<DescribedObject> Described(const Session& session, uint64_t oid) {
   if (auto entry = EntryByOid(session, oid);
       entry && duckdb::ObjectKindOf(entry->type).pg_class != kPgProcTable) {
+    if (!Shown(session, *entry)) {
+      return std::nullopt;
+    }
     return DescribedObject{duckdb::ObjectKindOf(entry->type).pg_class,
                            entry->comment};
   }
   const auto found = FindMacro(session, oid);
-  if (!found.macro) {
+  if (!found.macro || !OwnerShown(session, oid)) {
     return std::nullopt;
   }
   return DescribedObject{kPgProcTable,
@@ -189,6 +192,7 @@ void ShobjDescriptionFunction(duckdb::DataChunk& args,
   auto& context = state.GetContext();
   auto& cluster = catalog::ClusterOf(context);
   const auto transaction = cluster.GetCatalogTransaction(context);
+  const auto role = CallerAccess(state);
   duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t,
                                     duckdb::string_t>(
     args, result,
@@ -201,7 +205,8 @@ void ShobjDescriptionFunction(duckdb::DataChunk& args,
       }
       auto entry = cluster.LookupOid(transaction, static_cast<uint64_t>(oid));
       if (!entry ||
-          duckdb::ObjectKindOf(entry->type).pg_class != table->Sql().oid) {
+          duckdb::ObjectKindOf(entry->type).pg_class != table->Sql().oid ||
+          !context.CanSee(role, *entry)) {
         return duckdb::nullopt;
       }
       return Comment(result, entry->comment);
@@ -230,7 +235,7 @@ void ColDescriptionFunction(duckdb::DataChunk& args,
   duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t, int32_t>(
     args, result,
     [&](int64_t oid, int32_t column) -> duckdb::optional<duckdb::string_t> {
-      auto entry = EntryByOid(session, oid);
+      auto entry = ShownEntryByOid(session, oid);
       if (!entry || column < 0 ||
           (column == 0 &&
            duckdb::ObjectKindOf(entry->type).pg_class != kPgClassTable)) {
@@ -334,7 +339,7 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
 constexpr int32_t kAllUpdateEvents = (1 << 2) | (1 << 3) | (1 << 4);
 
 int32_t UpdatableEvents(const Session& session, int64_t oid) {
-  auto entry = EntryByOid(session, oid);
+  auto entry = ShownEntryByOid(session, oid);
   return entry && entry->type == CatalogType::TABLE_ENTRY ? kAllUpdateEvents
                                                           : 0;
 }
@@ -399,7 +404,7 @@ void PgEncodingMaxLengthFunction(duckdb::DataChunk& args,
 }
 
 int64_t LiveTuples(const Session& session, int64_t oid) {
-  auto entry = EntryByOid(session, oid);
+  auto entry = ShownEntryByOid(session, oid);
   if (!entry || entry->type != CatalogType::TABLE_ENTRY) {
     return 0;
   }

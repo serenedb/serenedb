@@ -73,7 +73,7 @@ using Definition = std::optional<std::string>;
 
 template<typename T>
 T* TypedEntry(const Session& session, duckdb::CatalogType type, int64_t oid) {
-  auto entry = EntryByOid(session, static_cast<uint64_t>(oid));
+  auto entry = ShownEntryByOid(session, static_cast<uint64_t>(oid));
   if (!entry) {
     entry = TemporaryEntryByOid(session, static_cast<uint64_t>(oid));
   }
@@ -246,8 +246,8 @@ std::string ForeignKeyDefinition(const Session& session,
 }
 
 Definition ConstraintDefinition(const Session& session, int64_t oid) {
-  const auto owner = OwnerTable(session, static_cast<uint64_t>(oid));
-  if (!owner) {
+  auto owner = OwnerTable(session, static_cast<uint64_t>(oid));
+  if (!owner || !Shown(session, *owner)) {
     return std::nullopt;
   }
   const auto& table = *owner;
@@ -579,7 +579,7 @@ Definition FunctionResult(const Session& session,
 
 Definition FunctionDefinition(const Session& session, int64_t oid) {
   const auto found = FindMacro(session, static_cast<uint64_t>(oid));
-  if (!found.entry) {
+  if (!found.entry || !OwnerShown(session, static_cast<uint64_t>(oid))) {
     return std::nullopt;
   }
   const auto* entry = found.entry;
@@ -660,7 +660,9 @@ duckdb::scalar_function_t FunctionInfo(MacroRenderer macro_renderer,
         Definition definition;
         if (const auto found = FindMacro(session, static_cast<uint64_t>(oid));
             found.entry) {
-          definition = macro_renderer(session, *found.macro);
+          if (OwnerShown(session, static_cast<uint64_t>(oid))) {
+            definition = macro_renderer(session, *found.macro);
+          }
         } else if (oid > 0) {
           if (!builtins) {
             builtins = GetBuiltinFunctions(state.GetContext());
@@ -678,7 +680,8 @@ duckdb::scalar_function_t FunctionInfo(MacroRenderer macro_renderer,
 Definition FunctionArgDefault(const Session& session, int64_t oid,
                               int64_t argument) {
   const auto found = FindMacro(session, static_cast<uint64_t>(oid));
-  if (!found.entry || argument < 1) {
+  if (!found.entry || argument < 1 ||
+      !OwnerShown(session, static_cast<uint64_t>(oid))) {
     return std::nullopt;
   }
   const auto& macro = *found.macro;

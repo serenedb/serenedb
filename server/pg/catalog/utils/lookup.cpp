@@ -47,6 +47,10 @@
 
 namespace sdb::pg {
 
+bool Shown(const Session& session, duckdb::CatalogEntry& entry) {
+  return !session.context || session.context->CanSee(session.role, entry);
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid) {
   if (!session.database || oid == kInvalidOid) {
@@ -57,6 +61,24 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
     return nullptr;
   }
   return entry;
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> ShownEntryByOid(
+  const Session& session, uint64_t oid) {
+  auto entry = EntryByOid(session, oid);
+  return entry && Shown(session, *entry) ? entry : nullptr;
+}
+
+bool RelationShown(const Session& session, const Relation& relation) {
+  return !relation.entry || Shown(session, *relation.entry.get_mutable());
+}
+
+bool OwnerShown(const Session& session, uint64_t oid) {
+  if (!session.database) {
+    return true;
+  }
+  auto owner = session.database->LookupOwner(*session.transaction, oid);
+  return !owner || Shown(session, *owner);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
@@ -330,7 +352,7 @@ std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
       return std::nullopt;
     }
     const auto relation = RowTypeOwner(session, oid);
-    if (!relation) {
+    if (!relation || !RelationShown(session, *relation)) {
       return std::nullopt;
     }
     return NameOf(*session.transaction, *relation);
@@ -341,7 +363,7 @@ std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
                         builtin->name};
     }
   }
-  if (auto entry = EntryByOid(session, oid);
+  if (auto entry = ShownEntryByOid(session, oid);
       entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
     return NameOf(*session.transaction, *entry);
   }

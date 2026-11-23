@@ -602,6 +602,9 @@ class SystemScan {
 
   duckdb::ClientContext& Context() const noexcept { return _context; }
   const duckdb::RoleAccess& Role() const noexcept { return _role; }
+  bool Shows(duckdb::CatalogEntry& entry) const {
+    return _context.CanSee(_role, entry);
+  }
   catalog::BaseCatalog& Database() const noexcept { return _database; }
   const duckdb::CatalogTransaction& Transaction() const noexcept {
     return _transaction;
@@ -1070,6 +1073,9 @@ concept Visits = requires(T& table, Entry& entry) { table.Row(entry); };
 template<typename Entry, typename T>
   requires Visits<T, Entry>
 void Visit(T& table, duckdb::CatalogEntry& entry) {
+  if (!table.Shows(entry)) {
+    return;
+  }
 #ifdef SDB_DEV
   table.Visiting(entry.type);
 #endif

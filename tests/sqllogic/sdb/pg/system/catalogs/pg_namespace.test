@@ -183,7 +183,6 @@ WHERE nspname LIKE 'rubick\_nsp\_%' ORDER BY nspname;
 ----
 nspname	owner
 rubick_nsp_steal	rubick_nsp_grand_magus
-rubick_nsp_telekinesis	rubick_nsp_grand_magus
 
 
 connection default

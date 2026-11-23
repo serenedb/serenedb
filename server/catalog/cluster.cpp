@@ -95,7 +95,7 @@ void RefuseDependents(duckdb::ClientContext& context, ClusterCatalog& cluster,
   const auto current = DefaultSereneDBCatalog(context);
   const auto local = current ? current->GetAttached().oid : pg::kInvalidOid;
   pg::VisitRoleReferences(
-    context, role.oid,
+    context, role.oid, nullptr,
     [&](const pg::RoleReference& reference,
         absl::FunctionRef<std::string()> describe) {
       if (reference.dbid != pg::kInvalidOid && reference.dbid != local) {

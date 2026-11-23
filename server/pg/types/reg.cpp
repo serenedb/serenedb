@@ -42,27 +42,31 @@ struct RegInputState final : InputState {
   Session session;
 };
 
-struct RegInputData final : duckdb::BoundCastData {
-  explicit RegInputData(duckdb::optional_idx caller) : caller{caller} {}
+struct RegCastData final : duckdb::BoundCastData {
+  explicit RegCastData(duckdb::optional_idx caller) : caller{caller} {}
 
   duckdb::unique_ptr<duckdb::BoundCastData> Copy() const final {
-    return duckdb::make_uniq<RegInputData>(caller);
+    return duckdb::make_uniq<RegCastData>(caller);
   }
 
   duckdb::optional_idx caller;
 };
 
+duckdb::optional_idx CallerOf(duckdb::CastLocalStateParameters& parameters) {
+  return parameters.cast_data ? parameters.cast_data->Cast<RegCastData>().caller
+                              : duckdb::optional_idx{};
+}
+
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitRegInput(
   duckdb::CastLocalStateParameters& parameters) {
-  return duckdb::make_uniq<RegInputState>(
-    parameters.context.get(),
-    parameters.cast_data ? parameters.cast_data->Cast<RegInputData>().caller
-                         : duckdb::optional_idx{});
+  return duckdb::make_uniq<RegInputState>(parameters.context.get(),
+                                          CallerOf(parameters));
 }
 
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitRegCast(
   duckdb::CastLocalStateParameters& parameters) {
-  return duckdb::make_uniq<SessionState>(parameters.context.get());
+  return duckdb::make_uniq<SessionState>(parameters.context.get(),
+                                         CallerOf(parameters));
 }
 
 template<RegKind Kind>
@@ -113,17 +117,25 @@ duckdb::BoundCastInfo BindTextToReg(duckdb::BindCastInput& input,
                                     const duckdb::LogicalType&,
                                     const duckdb::LogicalType&) {
   return duckdb::BoundCastInfo{
-    TextToReg<Kind>, duckdb::make_uniq<RegInputData>(input.caller_role),
+    TextToReg<Kind>, duckdb::make_uniq<RegCastData>(input.caller_role),
     InitRegInput};
+}
+
+template<RegKind Kind>
+duckdb::BoundCastInfo BindRegToText(duckdb::BindCastInput& input,
+                                    const duckdb::LogicalType&,
+                                    const duckdb::LogicalType&) {
+  return duckdb::BoundCastInfo{
+    RegToText<Kind>, duckdb::make_uniq<RegCastData>(input.caller_role),
+    InitRegCast};
 }
 
 template<RegKind Kind>
 void RegisterRegCasts(duckdb::CastFunctionSet& casts,
                       const duckdb::LogicalType& reg) {
   RegisterTextInput(casts, reg, BindTextToReg<Kind>);
-  casts.RegisterCastFunction(
-    reg, duckdb::LogicalType::VARCHAR,
-    duckdb::BoundCastInfo(RegToText<Kind>, nullptr, InitRegCast), 50);
+  casts.RegisterCastFunction(reg, duckdb::LogicalType::VARCHAR,
+                             BindRegToText<Kind>, 50);
   casts.RegisterCastFunction(
     OID(), reg, duckdb::BoundCastInfo(duckdb::DefaultCasts::ReinterpretCast),
     1);

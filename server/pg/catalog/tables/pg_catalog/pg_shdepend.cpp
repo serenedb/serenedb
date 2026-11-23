@@ -64,7 +64,7 @@ class PgShdepend final : public SystemTableScan<kPgShdependSql> {
       return;
     }
     VisitRoleReferences(
-      Context(), role.oid,
+      Context(), role.oid, &Role(),
       [&](const RoleReference& reference, absl::FunctionRef<std::string()>) {
         if (reference.classid != kInvalidOid) {
           Emit<kDependency>({reference.dbid, reference.classid, reference.objid,

@@ -59,6 +59,7 @@ struct RoleReference {
 
 void VisitRoleReferences(
   duckdb::ClientContext& context, duckdb::idx_t role,
+  const duckdb::RoleAccess* viewer,
   absl::FunctionRef<void(const RoleReference& reference,
                          absl::FunctionRef<std::string()> describe)>
     visitor);

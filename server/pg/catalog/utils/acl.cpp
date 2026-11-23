@@ -264,10 +264,14 @@ std::string DescribeDefaultAcl(duckdb::ClientContext& context,
 
 void VisitRoleReferences(
   duckdb::ClientContext& context, duckdb::idx_t role,
+  const duckdb::RoleAccess* viewer,
   absl::FunctionRef<void(const RoleReference& reference,
                          absl::FunctionRef<std::string()> describe)>
     visitor) {
   using enum duckdb::CatalogType;
+  const auto shown = [&](duckdb::CatalogEntry& object) {
+    return !viewer || context.CanSee(*viewer, object);
+  };
   const auto names = [&](std::span<const duckdb::AclItem> acl) {
     return absl::c_any_of(acl, [&](const duckdb::AclItem& item) {
       return item.grantee == role || item.grantor == role;
@@ -283,10 +287,14 @@ void VisitRoleReferences(
   const auto cluster_transaction = cluster.GetCatalogTransaction(context);
   for (const auto& db :
        catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+    if (viewer && !context.CanSeeDatabase(*viewer, *db)) {
+      continue;
+    }
     auto& database = db->GetCatalog().Cast<catalog::SereneDBCatalog>();
     const auto transaction = database.GetCatalogTransaction(context);
     const auto entry = [&](duckdb::CatalogEntry& object) {
-      if (object.type == INDEX_ENTRY || object.type == ROLE_ENTRY) {
+      if (object.type == INDEX_ENTRY || object.type == ROLE_ENTRY ||
+          !shown(object)) {
         return;
       }
       if (object.type == MACRO_ENTRY || object.type == TABLE_MACRO_ENTRY) {
@@ -356,7 +364,8 @@ void VisitRoleReferences(
   }
   cluster.Set(DATABASE_ENTRY)
     .Scan(cluster_transaction, [&](duckdb::CatalogEntry& database) {
-      if (const auto deptype = use(database.permissions)) {
+      if (const auto deptype = use(database.permissions);
+          deptype && shown(database)) {
         visitor({kInvalidOid, kPgDatabaseTable, database.oid, 0, deptype}, [&] {
           return absl::StrCat("database ", database.name.GetIdentifierName());
         });

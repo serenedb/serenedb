@@ -81,8 +81,12 @@ inline ObjectName NameOf(duckdb::CatalogTransaction transaction,
           .name = entry.name.GetIdentifierName()};
 }
 
+bool Shown(const Session& session, duckdb::CatalogEntry& entry);
 duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
                                                       uint64_t oid);
+duckdb::optional_ptr<duckdb::CatalogEntry> ShownEntryByOid(
+  const Session& session, uint64_t oid);
+bool OwnerShown(const Session& session, uint64_t oid);
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
   const Session& session, uint64_t oid);
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
@@ -138,6 +142,8 @@ struct Relation {
   const SystemTable* system;
   const StaticView* view;
 };
+
+bool RelationShown(const Session& session, const Relation& relation);
 
 inline bool IsTemporary(const Relation& relation) {
   return relation.entry && !relation.key &&

@@ -1122,7 +1122,7 @@ OutText ClassOut(const Session& session, uint64_t oid) {
     return absl::StrCat(oid);
   }
   const auto relation = FindRelation(session, oid);
-  if (!relation) {
+  if (!relation || !RelationShown(session, *relation)) {
     return absl::StrCat(oid);
   }
   const auto object = NameOf(*session.transaction, *relation);
@@ -1267,7 +1267,7 @@ std::optional<ProcInfo> FindProc(const Session& session,
     return std::nullopt;
   }
   const auto found = FindMacro(session, oid);
-  if (!found.entry) {
+  if (!found.entry || !OwnerShown(session, oid)) {
     return std::nullopt;
   }
   const auto object = NameOf(*session.transaction, *found.entry);
@@ -1567,7 +1567,7 @@ std::optional<uint64_t> DictionaryIn(const Session& session,
 }
 
 OutText DictionaryOut(const Session& session, uint64_t oid) {
-  auto entry = EntryByOid(session, oid);
+  auto entry = ShownEntryByOid(session, oid);
   if (!entry || entry->type != duckdb::CatalogType::TOKENIZER_ENTRY) {
     return absl::StrCat(oid);
   }
@@ -1617,7 +1617,8 @@ OutText NamespaceOut(const Session& session, uint64_t oid) {
   if (const auto* system = FindSystemObject(kSystemNamespaces, oid)) {
     return system->name;
   }
-  if (auto schema = SchemaByOid(session, oid)) {
+  if (auto schema = SchemaByOid(session, oid);
+      schema && Shown(session, *schema)) {
     return OutName(schema->name.GetIdentifierName());
   }
   return absl::StrCat(oid);

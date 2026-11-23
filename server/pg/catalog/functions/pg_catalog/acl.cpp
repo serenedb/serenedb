@@ -1137,6 +1137,8 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
              duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
       F::Find(scope, oid, entry);
     };
+  static constexpr bool kSessionScope =
+    std::is_convertible_v<const typename F::Scope&, const Session&>;
 
   struct NamedRole {
     duckdb::string_t name;
@@ -1153,15 +1155,30 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     if constexpr (requires { F::FindNamed(_scope, AsView(name), rest...); }) {
       return F::FindNamed(_scope, AsView(name), rest...);
     } else {
-      return FindObject(F::Resolve(_scope, AsView(name)), rest...);
+      const auto oid = F::Resolve(_scope, AsView(name));
+      if constexpr (kFindsEntries) {
+        return F::Find(_scope, oid, EntryByOid(_scope, oid), rest...);
+      } else {
+        return F::Find(_scope, oid, rest...);
+      }
     }
   }
 
   template<typename... Rest>
   auto FindObject(uint64_t oid, Rest... rest) {
     if constexpr (kFindsEntries) {
-      return F::Find(_scope, oid, EntryByOid(_scope, oid), rest...);
+      auto entry = EntryByOid(_scope, oid);
+      if (entry && !Shown(_scope, *entry)) {
+        return decltype(F::Find(_scope, oid, entry, rest...)){};
+      }
+      return F::Find(_scope, oid, entry, rest...);
     } else {
+      if constexpr (kSessionScope) {
+        if (auto entry = EntryByOid(_scope, oid);
+            entry && !Shown(_scope, *entry)) {
+          return decltype(F::Find(_scope, oid, rest...)){};
+        }
+      }
       return F::Find(_scope, oid, rest...);
     }
   }

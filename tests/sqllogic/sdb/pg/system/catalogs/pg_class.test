@@ -752,7 +752,6 @@ SELECT relname, relkind, relowner::regrole::text AS owner FROM pg_class WHERE oi
 ----
 relname	relkind	owner
 pudge_cls_hook	r	postgres
-pudge_cls_seq	S	postgres
 
 
 connection default

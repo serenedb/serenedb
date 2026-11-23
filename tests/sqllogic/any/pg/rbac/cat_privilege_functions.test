@@ -148,6 +148,7 @@ via_group	table_select	any_column	column_b	column_attnum	sequence_usage	schema_u
 t	f	t	t	t	t	t	t	f	f	f	t
 
 
+onlyif postgres
 query
 SELECT has_table_privilege('pfn_table'::regclass, 'SELECT') AS table_oid,
        has_any_column_privilege('pfn_columns'::regclass, 'UPDATE') AS any_column_oid,
@@ -161,6 +162,22 @@ SELECT has_table_privilege('pfn_table'::regclass, 'SELECT') AS table_oid,
 ----
 table_oid	any_column_oid	column_oid	sequence_oid	schema_oid	function_oid	type_oid	database_oid	member_oid
 t	t	t	t	t	t	f	t	t
+
+
+skipif postgres
+query
+SELECT has_table_privilege('pfn_table'::regclass, 'SELECT') AS table_oid,
+       has_any_column_privilege('pfn_columns'::regclass, 'UPDATE') AS any_column_oid,
+       has_column_privilege('pfn_columns'::regclass, 'b', 'UPDATE') AS column_oid,
+       has_sequence_privilege('pfn_sequence'::regclass, 'USAGE') AS sequence_oid,
+       has_schema_privilege('pfn_schema'::regnamespace, 'USAGE') AS schema_oid,
+       has_function_privilege('pfn_function(int)'::regprocedure, 'EXECUTE') AS function_oid,
+       has_type_privilege('pfn_type'::regtype, 'USAGE') AS type_oid,
+       has_database_privilege((SELECT oid FROM pg_database WHERE datname = current_database()), 'CONNECT') AS database_oid,
+       pg_has_role((SELECT oid FROM pg_roles WHERE rolname = 'pfn_group'), 'MEMBER') AS member_oid;
+----
+table_oid	any_column_oid	column_oid	sequence_oid	schema_oid	function_oid	type_oid	database_oid	member_oid
+t	t	t	t	t	t	NULL	t	t
 
 
 query

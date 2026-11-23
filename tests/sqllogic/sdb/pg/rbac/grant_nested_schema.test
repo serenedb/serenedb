@@ -1,0 +1,139 @@
+statement ok
+DROP SCHEMA IF EXISTS gns_s CASCADE;
+
+
+statement ok
+DROP ROLE IF EXISTS gns_reader, gns_owner, gns_heir;
+
+
+statement ok
+CREATE ROLE gns_reader LOGIN PASSWORD 'gns_pw';
+
+
+statement ok
+CREATE ROLE gns_owner;
+
+
+statement ok
+CREATE ROLE gns_heir;
+
+
+statement ok
+CREATE SCHEMA gns_s;
+
+
+statement ok
+CREATE SCHEMA gns_s.gns_inner;
+
+
+statement ok
+CREATE TABLE gns_s.gns_inner.t (a int);
+
+
+statement ok
+INSERT INTO gns_s.gns_inner.t VALUES (1);
+
+
+statement ok
+GRANT USAGE ON SCHEMA gns_s TO gns_reader;
+
+
+statement ok
+GRANT SELECT ON gns_s.gns_inner.t TO gns_reader;
+
+
+connection c_reader user=gns_reader password=gns_pw
+statement error
+SELECT a FROM gns_s.gns_inner.t;
+----
+db error: ERROR: permission denied for schema gns_inner
+
+
+statement ok
+GRANT USAGE ON SCHEMA gns_s.gns_inner TO gns_reader;
+
+
+connection c_reader user=gns_reader password=gns_pw
+query
+SELECT a FROM gns_s.gns_inner.t;
+----
+a
+1
+
+
+statement ok
+REVOKE SELECT ON gns_s.gns_inner.t FROM gns_reader;
+
+
+statement ok
+GRANT SELECT ON ALL TABLES IN SCHEMA gns_s.gns_inner TO gns_reader;
+
+
+connection c_reader user=gns_reader password=gns_pw
+query
+SELECT a FROM gns_s.gns_inner.t;
+----
+a
+1
+
+
+statement ok
+REVOKE USAGE ON SCHEMA gns_s.gns_inner FROM gns_reader;
+
+
+connection c_reader user=gns_reader password=gns_pw
+statement error
+SELECT a FROM gns_s.gns_inner.t;
+----
+db error: ERROR: permission denied for schema gns_inner
+
+
+statement error
+GRANT USAGE ON SCHEMA gns_nosuch.gns_inner TO gns_reader;
+----
+db error: ERROR: Schema with name gns_nosuch does not exist!
+
+
+statement ok
+ALTER SCHEMA gns_s.gns_inner OWNER TO gns_owner;
+
+
+query
+SELECT schema_name FROM information_schema.schemata WHERE schema_owner = 'gns_owner';
+----
+schema_name
+gns_inner
+
+
+statement ok
+REASSIGN OWNED BY gns_owner TO gns_heir;
+
+
+query
+SELECT schema_name, schema_owner FROM information_schema.schemata WHERE schema_owner IN ('gns_owner', 'gns_heir');
+----
+schema_name	schema_owner
+gns_inner	gns_heir
+
+
+statement ok
+DROP OWNED BY gns_reader;
+
+
+statement ok
+DROP OWNED BY gns_heir CASCADE;
+
+
+query
+SELECT count(*) AS n FROM information_schema.schemata WHERE schema_owner = 'gns_heir';
+----
+n
+0
+
+
+statement ok
+DROP SCHEMA gns_s CASCADE;
+
+
+statement ok
+DROP ROLE gns_reader, gns_owner, gns_heir;

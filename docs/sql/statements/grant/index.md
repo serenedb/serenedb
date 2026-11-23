@@ -83,6 +83,7 @@ Granting to a role that does not exist is an error:
 
 - Granting a privilege requires owning the object or holding the privilege `WITH GRANT OPTION`; granting membership requires `ADMIN OPTION` on the role, or superuser.
 - The object's owner always holds all privileges on it, and the owner of a granted role's privileges flow to members automatically.
+- A database, tablespace, foreign server, foreign-data wrapper or language is named without qualification: `GRANT CONNECT ON DATABASE other.db TO r` is a syntax error. A schema can be qualified with its database, and a nested schema is named by its path, as in `GRANT USAGE ON SCHEMA outer.inner TO r`.
 - Several objects, grantees, granted roles and members can be listed, separated by commas: `GRANT SELECT ON t1, t2 TO r1, r2` grants on every pair, and if any part fails, such as a missing table, nothing is granted. `ALTER DEFAULT PRIVILEGES FOR ROLE` and `IN SCHEMA` take lists the same way.
 - Unlike PostgreSQL, an unknown privilege keyword (e.g. `GRANT FLY ON t TO r`) is a syntax error rather than a semantic one.
 

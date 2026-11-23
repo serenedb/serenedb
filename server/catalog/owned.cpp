@@ -22,6 +22,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -61,6 +62,12 @@ bool GrantsTo(std::span<const duckdb::AclItem> acl, duckdb::idx_t role) {
 duckdb::QualifiedName OwnedEntryName(duckdb::CatalogTransaction transaction,
                                      duckdb::CatalogEntry& entry) {
   const auto& catalog = entry.ParentCatalog().GetName();
+  if (entry.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+    return duckdb::QualifiedName::FromCatalogSchema(
+      catalog,
+      entry.Cast<duckdb::SchemaCatalogEntry>().GetParentSchemaPath(transaction),
+      entry.name);
+  }
   if (TopLevel(entry.type)) {
     return duckdb::QualifiedName{catalog, duckdb::Identifier{}, entry.name};
   }

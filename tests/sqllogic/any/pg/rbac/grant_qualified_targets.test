@@ -1,0 +1,78 @@
+statement ok
+DROP ROLE IF EXISTS gqt_r;
+
+
+statement ok
+CREATE ROLE gqt_r;
+
+
+statement error
+GRANT CONNECT ON DATABASE gqt_nosuch.postgres TO gqt_r;
+----
+db error: ERROR: syntax error at or near "."
+
+
+statement error
+REVOKE CONNECT ON DATABASE gqt_nosuch.postgres FROM gqt_r;
+----
+db error: ERROR: syntax error at or near "."
+
+
+statement error
+GRANT CREATE ON TABLESPACE gqt_nosuch.pg_default TO gqt_r;
+----
+db error: ERROR: syntax error at or near "."
+
+
+statement error
+GRANT USAGE ON FOREIGN DATA WRAPPER gqt_nosuch.postgres_fdw TO gqt_r;
+----
+db error: ERROR: syntax error at or near "."
+
+
+statement error
+GRANT USAGE ON FOREIGN SERVER gqt_nosuch.gqt_srv TO gqt_r;
+----
+db error: ERROR: syntax error at or near "."
+
+
+statement error
+GRANT USAGE ON LANGUAGE gqt_nosuch.sql TO gqt_r;
+----
+db error: ERROR: syntax error at or near "."
+
+
+statement error
+ALTER DATABASE gqt_nosuch.postgres OWNER TO gqt_r;
+----
+db error: ERROR: syntax error at or near "."
+
+
+statement error
+ALTER TABLESPACE gqt_nosuch.pg_default OWNER TO gqt_r;
+----
+db error: ERROR: syntax error at or near "."
+
+
+statement error
+ALTER SERVER gqt_nosuch.gqt_srv OWNER TO gqt_r;
+----
+db error: ERROR: syntax error at or near "."
+
+
+onlyif postgres
+statement error
+GRANT USAGE ON SCHEMA gqt_nosuch.public TO gqt_r;
+----
+db error: ERROR: syntax error at or near "."
+
+
+skipif postgres
+statement error
+GRANT USAGE ON SCHEMA gqt_nosuch.public TO gqt_r;
+----
+db error: ERROR: Schema with name gqt_nosuch does not exist!
+
+
+statement ok
+DROP ROLE gqt_r;

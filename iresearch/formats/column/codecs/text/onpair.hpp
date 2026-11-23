@@ -38,6 +38,7 @@
 #include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -81,8 +82,8 @@ class Table {
     if constexpr (!kTail) {
       const uint64_t batch = (64 - 7) / bits;
       const auto readable = (end + 7) / 8 + kPadding;
-      while (bit + batch * bits <= end &&
-             bit / 8 + sizeof(uint64_t) <= readable) {
+      while (bit + batch * bits <= end) {
+        SDB_ASSERT(bit / 8 + sizeof(uint64_t) <= readable);
         uint64_t word;
         std::memcpy(&word, stream + bit / 8, sizeof(word));
         word >>= bit % 8;

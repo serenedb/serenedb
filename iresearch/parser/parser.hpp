@@ -353,12 +353,19 @@ struct ParserContext {
     return word.size();
   }
 
-  void AddPhraseFuzzy(std::string_view word, int distance) {
+  irs::ByEditDistanceOptions& AddPhraseFuzzy(std::string_view word,
+                                             int distance) {
     auto& part = Emplace<irs::ByEditDistanceOptions>();
     part.term = Analyze(word);
     part.max_distance = static_cast<uint8_t>(distance);
     part.max_terms = fuzzy_max_terms;
     part.with_transpositions = true;
+    return part;
+  }
+
+  void AddPhraseFuzzyPrefix(std::string_view word, int distance) {
+    word.remove_suffix(1);
+    AddPhraseFuzzy(word, distance).starts_with = true;
   }
 
   void BeginNGram(float threshold) {
@@ -675,17 +682,37 @@ struct ParserContext {
       }
       return *built;
     }
+    if (built->type() == irs::Type<irs::ByPrefix>::id()) {
+      auto& prefix = irs::utils::downCast<irs::ByPrefix>(*built);
+      const auto boost = prefix.GetBoost();
+      auto& f = FuzzyOf(prefix.options().term, has_value, value);
+      f.mutable_options()->starts_with = true;
+      f.SetBoost(boost);
+      return f;
+    }
     if (built->type() != irs::Type<irs::ByTerm>::id()) {
       THROW_SQL_ERROR(
         ERR_MSG("a fuzziness applies to a term or a phrase, not to this"));
     }
     auto& term = irs::utils::downCast<irs::ByTerm>(*built);
-    auto text = term.options().term;
     const auto boost = term.GetBoost();
-
-    auto& f = has_value ? FuzzyFromSimilarity(std::move(text), value)
-                        : AddFuzzyTerm(std::move(text), 2);
+    auto& f = FuzzyOf(term.options().term, has_value, value);
     f.SetBoost(boost);
+    return f;
+  }
+
+  irs::ByEditDistance& FuzzyOf(irs::bstring value, bool has_value,
+                               float similarity) {
+    return has_value ? FuzzyFromSimilarity(std::move(value), similarity)
+                     : AddFuzzyTerm(std::move(value), 2);
+  }
+
+  irs::ByEditDistance& AddFuzzyPrefix(std::string_view value, bool has_value,
+                                      float similarity) {
+    SDB_ASSERT(!value.empty() && value.back() == '*');
+    value.remove_suffix(1);
+    auto& f = FuzzyOf(Normalize(value), has_value, similarity);
+    f.mutable_options()->starts_with = true;
     return f;
   }
 
@@ -725,7 +752,9 @@ struct ParserContext {
 
   irs::Filter& AddFieldExists() {
     THROW_SQL_ERROR(
-      ERR_MSG("field existence queries (`field:*`) are not supported"));
+      ERR_MSG("field existence queries (`field:*`) are not supported"),
+      ERR_HINT("A `*` on its own asks whether the field exists. A prefix is "
+               "`term*`, a fuzzy prefix `term*~N`."));
   }
 
   void BeginFn() {

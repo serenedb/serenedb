@@ -51,6 +51,8 @@ class PieceTermReader final : public TermReader {
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr iterator(const RegexpAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const LevenshteinAcceptor& a) const final;
+  SeekTermIterator::ptr iterator(
+    const LevenshteinPrefixAcceptor& a) const final;
   SeekTermIterator::ptr iterator(const RegexpConjunction& a) const final;
   SeekTermIterator::ptr iterator(const FuzzyConjunction& a) const final;
 

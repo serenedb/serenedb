@@ -246,7 +246,7 @@ To rank by the matched terms instead, put [`::score`](#score-modifier) on the ma
 
 `::score` with a scorer that needs term statistics, put on a group, scores the group's other terms and leaves its pattern and range matches at their constant. `::score('constant(N)')` replaces the constant with `N`, on the match or on a group around it.
 
-[`ts_levenshtein`](./full-text.md#ts_levenshtein) is scored by default: each matched term scores with the `ORDER BY` scorer times its similarity to the query, and the row gets the best of them. `::score('constant(N)')` makes it score `N` once, without the similarity, and `::merge('sum')` adds its terms up.
+[`ts_levenshtein`](./full-text.md#ts_levenshtein) is scored by default: each matched term scores with the `ORDER BY` scorer times its similarity to the query (with `starts_with := true`, the similarity of its closest beginning), and the row gets the best of them. `::score('constant(N)')` makes it score `N` once, without the similarity, and `::merge('sum')` adds its terms up.
 
 Matches on numeric, network address and geographic columns always score a constant once: `::score('constant(N)')` changes its value, while a scorer that needs term statistics and `::merge('sum')` are errors.
 

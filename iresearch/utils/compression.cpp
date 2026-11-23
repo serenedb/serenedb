@@ -246,8 +246,10 @@ bool DecodeStrip(bytes_view in, std::span<byte_type> out) noexcept {
   auto* at = out.data();
   for (size_t list = 0; list != lists; ++list) {
     uint32_t count = 0;
-    if (!counts.Copy(reinterpret_cast<byte_type*>(&count), 1) ||
-        count > slots || !ids.Copy(at, count)) {
+    [[maybe_unused]] const bool counted =
+      counts.Copy(reinterpret_cast<byte_type*>(&count), 1);
+    SDB_ASSERT(counted);
+    if (count > slots || !ids.Copy(at, count)) {
       return false;
     }
     for (auto slot = count; slot != slots; ++slot) {

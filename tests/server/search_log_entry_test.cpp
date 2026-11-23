@@ -245,6 +245,27 @@ TEST(SearchLogEntry, ReplayRefusesPackedRowsLongerThanTheirChunks) {
   }
 }
 
+TEST(SearchLogEntry, AReplayWithoutATableSkipsPackedRecords) {
+  auto delta = Delta(60, 250);
+  sdb::search::PackDelta(delta, kFrame, irs::SerialFor);
+  ASSERT_FALSE(irs::compression::IsPlain(delta.rows.front().staged));
+  for (const auto& value : delta.segments.front().staged) {
+    ASSERT_FALSE(irs::compression::IsPlain(*value));
+  }
+  auto record = Record(delta);
+
+  duckdb::DuckDB db{nullptr};
+  duckdb::Connection connection{db};
+  duckdb::MemoryStream stream{
+    reinterpret_cast<duckdb::data_ptr_t>(record.data()), record.size()};
+  duckdb::BinaryDeserializer object{stream};
+  object.Begin();
+  sdb::search::ReplayTableDelta(*connection.context, nullptr, nullptr, object,
+                                stream);
+  object.End();
+  EXPECT_EQ(stream.GetPosition(), record.size());
+}
+
 TEST(SearchLogEntry, APackedRecordIsNeverLargerThanThePlainOne) {
   for (const auto blobs : {Blobs::Rows, Blobs::Patches}) {
     for (const size_t rows : {size_t{1}, size_t{2}, size_t{5}}) {

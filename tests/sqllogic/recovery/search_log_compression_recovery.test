@@ -136,6 +136,11 @@ INSERT INTO lc VALUES (4001, 'late', 'w');
 
 connection after_packed_snapshot
 statement ok
+UPDATE lc SET payload = 'v' WHERE id = 4000;
+
+
+connection after_packed_snapshot
+statement ok
 CHECKPOINT;
 
 
@@ -171,7 +176,7 @@ id	tag	payload
 8	plain8	xxxxxxxx
 2007	packed7	updated
 2008	packed8	yyyyyyyy
-4000	single	z
+4000	single	v
 4001	late	w
 
 

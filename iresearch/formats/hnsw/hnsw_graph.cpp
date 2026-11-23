@@ -101,9 +101,7 @@ compression::Frames WritePacked(duckdb::WriteStream& out,
 template<typename T, typename A>
 void ReadPacked(duckdb::InputFileReader& in, const compression::Frames& frames,
                 std::vector<T, A>& v, ParallelFor parallel) {
-  if (frames.raw_bytes % sizeof(T) != 0) {
-    Corrupted("an array size that is not a whole number of elements");
-  }
+  SDB_ASSERT(frames.raw_bytes % sizeof(T) == 0);
   v.resize(frames.raw_bytes / sizeof(T));
   const std::span<byte_type> raw{reinterpret_cast<byte_type*>(v.data()),
                                  frames.raw_bytes};

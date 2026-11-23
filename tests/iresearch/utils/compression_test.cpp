@@ -424,6 +424,18 @@ TEST(Compression, CorruptStripFramesAreRejected) {
     compression::Decompress(compressed.frames, View(wrong_width), decoded),
     ERRCODE_DATA_CORRUPTED);
 
+  Bytes zero_slots(stored.begin(), stored.end());
+  std::fill_n(zero_slots.begin(), sizeof(uint32_t), irs::byte_type{0});
+  ASSERT_SQL_ERROR(
+    compression::Decompress(compressed.frames, View(zero_slots), decoded),
+    ERRCODE_DATA_CORRUPTED);
+
+  Bytes zero_width(stored.begin(), stored.end());
+  zero_width[sizeof(uint32_t)] = 0;
+  ASSERT_SQL_ERROR(
+    compression::Decompress(compressed.frames, View(zero_width), decoded),
+    ERRCODE_DATA_CORRUPTED);
+
   Bytes count_over(stored.begin(), stored.end());
   std::fill_n(count_over.begin() + sizeof(uint32_t) + sizeof(uint8_t),
               sizeof(uint32_t), irs::byte_type{0xFF});
@@ -437,6 +449,74 @@ TEST(Compression, CorruptStripFramesAreRejected) {
   ++longer.sizes[0];
   ASSERT_SQL_ERROR(compression::Decompress(longer, View(trailing), decoded),
                    ERRCODE_DATA_CORRUPTED);
+
+  for (const uint32_t kept : {uint32_t{3}, uint32_t{6}}) {
+    auto cut = compressed.frames;
+    cut.sizes[0] = kept;
+    ASSERT_SQL_ERROR(
+      compression::Decompress(cut, stored.substr(0, kept), decoded),
+      ERRCODE_DATA_CORRUPTED);
+  }
+}
+
+TEST(Compression, StripStoresAFrameItCannotEncodeRaw) {
+  const auto partial = Lists(4, 2, 1000, 13);
+  const Bytes one_list(sizeof(uint32_t), irs::byte_type{1});
+  for (const auto& [slots, raw] :
+       {std::pair{uint32_t{4}, Bytes(partial.begin(), partial.end() - 2)},
+        std::pair{uint32_t{1}, one_list}, std::pair{uint32_t{0}, partial}}) {
+    const auto compressed =
+      compression::Compress(compression::Strip(slots), View(raw), kFrame);
+    ASSERT_EQ(compressed.frames.sizes.size(), 1U) << slots;
+    EXPECT_EQ(compressed.frames.sizes[0], raw.size()) << slots;
+    Bytes decoded(raw.size());
+    compression::Decompress(compressed.frames, Stored(compressed), decoded);
+    EXPECT_EQ(decoded, raw) << slots;
+  }
+}
+
+std::string PackedObject(const compression::Frames& frames,
+                         irs::bytes_view stored) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream};
+  serializer.Begin();
+  serializer.WriteObject(0, "frames", [&](duckdb::BinarySerializer& object) {
+    compression::WriteFrames(object, frames);
+  });
+  serializer.OnPropertyBegin(1, "bytes");
+  serializer.WriteValue(uint64_t{stored.size()});
+  stream.WriteData(stored.data(), stored.size());
+  serializer.OnPropertyEnd();
+  serializer.End();
+  return {reinterpret_cast<const char*>(stream.GetData()),
+          stream.GetPosition()};
+}
+
+compression::Packed ReadPackedFromFile(std::string_view bytes) {
+  duckdb::InputFileReader stream{std::span{
+    reinterpret_cast<const duckdb::data_t*>(bytes.data()), bytes.size()}};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Begin();
+  return compression::ReadPacked(deserializer, stream);
+}
+
+TEST(Compression, ReadPackedRejectsBytesThatDoNotMatchItsFrames) {
+  const auto raw = Text(size_t{kFrame} * 2);
+  const auto compressed =
+    compression::Compress(compression::kZstd1, View(raw), kFrame);
+  const auto stored = Stored(compressed);
+
+  auto longer = PackedObject(compressed.frames, stored + irs::byte_type{0});
+  ASSERT_SQL_ERROR(ReadPacked(longer), ERRCODE_DATA_CORRUPTED);
+  ASSERT_SQL_ERROR(ReadPackedFromFile(longer), ERRCODE_DATA_CORRUPTED);
+
+  auto truncated = PackedObject(compressed.frames, stored);
+  truncated.resize(truncated.size() - sizeof(duckdb::field_id_t) - 1);
+  ASSERT_SQL_ERROR(ReadPacked(truncated), ERRCODE_DATA_CORRUPTED);
+  ASSERT_SQL_ERROR(ReadPackedFromFile(truncated), ERRCODE_DATA_CORRUPTED);
+
+  auto whole = PackedObject(compressed.frames, stored);
+  EXPECT_TRUE(ReadPackedFromFile(whole).stored == stored);
 }
 
 TEST(Compression, TruncatedFrameIsCorrupted) {
@@ -451,6 +531,38 @@ TEST(Compression, TruncatedFrameIsCorrupted) {
         frames, Stored(compressed).substr(0, frames.sizes[0]), decoded),
       ERRCODE_DATA_CORRUPTED);
   }
+}
+
+TEST(Compression, AFrameThatDecodesShortIsCorrupted) {
+  for (const auto method : kMethods) {
+    const auto raw = Text(kFrame);
+    const auto compressed =
+      compression::Compress(method, View(raw), 2 * kFrame);
+    ASSERT_LT(compressed.frames.sizes[0], raw.size());
+    auto longer = compressed.frames;
+    longer.raw_bytes += 20;
+    Bytes decoded(longer.raw_bytes);
+    ASSERT_SQL_ERROR(
+      compression::Decompress(longer, Stored(compressed), decoded),
+      ERRCODE_DATA_CORRUPTED);
+  }
+}
+
+TEST(Compression, ARangeOfFramesChecksItsRawSize) {
+  const auto raw = Text(size_t{kFrame} * 3);
+  const auto compressed =
+    compression::Compress(compression::kZstd1, View(raw), kFrame);
+  const auto stored = Stored(compressed);
+  const auto starts = compression::FrameStarts(compressed.frames);
+  const auto frame = irs::bytes_view{stored}.substr(
+    starts[1].stored, starts[2].stored - starts[1].stored);
+  Bytes shorter(kFrame - 1);
+  ASSERT_SQL_ERROR(
+    compression::Decompress(compressed.frames, 1, 2, frame, shorter),
+    ERRCODE_DATA_CORRUPTED);
+  Bytes decoded(kFrame);
+  compression::Decompress(compressed.frames, 1, 2, frame, decoded);
+  EXPECT_TRUE(absl::c_equal(decoded, View(raw).substr(kFrame, kFrame)));
 }
 
 TEST(Compression, SizesThatDoNotMatchTheFramesAreCorrupted) {

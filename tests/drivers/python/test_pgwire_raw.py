@@ -4101,3 +4101,18 @@ def test_string_over_the_size_limit(conn):
         ("54000", "Cannot create a string of size: '5368709120', the maximum "
                   "supported string size is: '4294967295'")
     ]
+
+
+def test_xact_start_is_the_start_of_each_statements_transaction(conn):
+    activity = ("FROM pg_stat_activity WHERE pid = pg_backend_pid()")
+    assert not errors(_simple(conn, "BEGIN"))
+    assert not errors(_simple(conn, "SELECT pg_sleep(0.3)"))
+    msgs = _simple(conn, "COMMIT; SELECT now() = xact_start AS current " + activity)
+    assert not errors(msgs), errors(msgs)
+    assert all_fields(msgs) == [b"t"]
+    assert not errors(_simple(conn, "BEGIN"))
+    assert errors(_simple(conn, "SELECT 1/0"))
+    msgs = _simple(
+        conn, "ROLLBACK; SELECT state, now() = xact_start AS current " + activity)
+    assert not errors(msgs), errors(msgs)
+    assert all_fields(msgs) == [b"active", b"t"]

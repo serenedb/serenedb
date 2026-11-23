@@ -7,7 +7,7 @@ split: headings
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 import DocCallout from "@site/src/components/DocCallout";
 
-Every database object has an owner and an access-control list. The owner — normally the role that created the object — holds every privilege on it implicitly; everyone else has only what has been granted to them (directly, through [role membership](role_membership.md), or through `PUBLIC`).
+Every database object has an owner and an access-control list. The owner — normally the role that created the object — holds every privilege on it from the start; everyone else has only what has been granted to them (directly, through [role membership](role_membership.md), or through `PUBLIC`). An owner that revokes a privilege from itself loses it, and may grant it back, since the owner always holds the right to grant every privilege on its objects.
 
 The owner holds all privileges from the start:
 

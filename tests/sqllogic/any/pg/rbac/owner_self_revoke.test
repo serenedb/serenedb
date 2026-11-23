@@ -1,0 +1,75 @@
+statement ok
+DROP TABLE IF EXISTS osr_t;
+
+
+statement ok
+DROP ROLE IF EXISTS osr_owner;
+
+
+statement ok
+CREATE ROLE osr_owner LOGIN PASSWORD 'osr_pw';
+
+
+statement ok
+GRANT CREATE ON SCHEMA public TO osr_owner;
+
+
+connection c_owner user=osr_owner password=osr_pw
+statement ok
+CREATE TABLE osr_t (a int);
+
+
+connection c_owner user=osr_owner password=osr_pw
+statement ok
+INSERT INTO osr_t VALUES (1);
+
+
+connection c_owner user=osr_owner password=osr_pw
+statement ok
+REVOKE SELECT ON osr_t FROM osr_owner;
+
+
+connection c_owner user=osr_owner password=osr_pw
+statement error
+SELECT a FROM osr_t;
+----
+db error: ERROR: permission denied for table osr_t
+
+
+connection c_owner user=osr_owner password=osr_pw
+statement ok
+INSERT INTO osr_t VALUES (2);
+
+
+query
+SELECT has_table_privilege('osr_owner', 'osr_t', 'SELECT') AS sel,
+       has_table_privilege('osr_owner', 'osr_t', 'INSERT') AS ins
+----
+sel	ins
+f	t
+
+
+connection c_owner user=osr_owner password=osr_pw
+statement ok
+GRANT SELECT ON osr_t TO osr_owner;
+
+
+connection c_owner user=osr_owner password=osr_pw
+query
+SELECT a FROM osr_t ORDER BY a;
+----
+a
+1
+2
+
+
+statement ok
+DROP TABLE osr_t;
+
+
+statement ok
+REVOKE CREATE ON SCHEMA public FROM osr_owner;
+
+
+statement ok
+DROP ROLE osr_owner;

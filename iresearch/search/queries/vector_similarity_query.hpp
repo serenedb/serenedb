@@ -77,8 +77,6 @@ class KnnVectorQuery : public QueryBuilderImpl<KnnVectorQuery>,
 
   score_t Boost() const noexcept final { return _boost; }
 
-  void SetBoost(score_t value) noexcept final { _boost = value; }
-
   ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 
  private:
@@ -110,8 +108,6 @@ class RangeVectorQuery : public QueryBuilderImpl<RangeVectorQuery>,
   void Visit(PreparedStateVisitor&, score_t) const final {}
 
   score_t Boost() const noexcept final { return _boost; }
-
-  void SetBoost(score_t value) noexcept final { _boost = value; }
 
   ann::Root::ptr PlanAnn(const ann::Context& ctx) const final;
 

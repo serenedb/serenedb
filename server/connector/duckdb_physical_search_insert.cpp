@@ -214,10 +214,9 @@ duckdb::SinkCombineResultType SereneDBSearchInsert::Combine(
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
   auto& lstate = input.local_state.Cast<SearchInsertLocalState>();
-  lstate.rows.Flush();
+  lstate.rows.Combine(context.client, gstate.table,
+                      gstate.sdb_txn->SearchTxn());
   absl::MutexLock lock{&gstate.mutex};
-  lstate.rows.HandOver(context.client, gstate.table,
-                       gstate.sdb_txn->SearchTxn());
   gstate.insert_count += lstate.insert_count;
   if (lstate.returned && lstate.returned->Count() != 0) {
     gstate.returned->Combine(*lstate.returned);
@@ -233,8 +232,9 @@ duckdb::SinkFinalizeType SereneDBSearchInsert::Finalize(
     SDB_IF_FAILURE("crash_before_commit") { SDB_IMMEDIATE_ABORT(); }
   }
   auto& gstate = input.global_state.Cast<SearchInsertGlobalState>();
-  gstate.sdb_txn->SearchTxn().CheckKeys(context, *gstate.table.store,
-                                        _conflict);
+  auto& search_txn = gstate.sdb_txn->SearchTxn();
+  FinishSearchSink(context, gstate.table, search_txn);
+  search_txn.CheckKeys(context, *gstate.table.store, _conflict);
   return duckdb::SinkFinalizeType::READY;
 }
 
@@ -430,6 +430,7 @@ duckdb::SinkFinalizeType SereneDBSearchUpsert::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpsertGlobalState>();
   auto& search_txn = gstate.sdb_txn->SearchTxn();
+  FinishSearchSink(context, gstate.table, search_txn);
   if (_in_place) {
     search_txn.CheckConflicts(*gstate.table.store);
   }

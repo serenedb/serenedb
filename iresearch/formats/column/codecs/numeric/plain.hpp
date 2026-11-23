@@ -263,8 +263,10 @@ class PlainReader final : public FrameReader<T> {
     if (this->Near(row, next)) {
       return this->Get(row);
     }
-    if (this->Shuffled()) {
-      return ReadLanes(row);
+    if constexpr (sizeof(T) > 1) {
+      if (this->Shuffled()) {
+        return ReadLanes(row);
+      }
     }
     const auto item = this->SourceItem(row);
     U v = 0;
@@ -293,10 +295,12 @@ class PlainReader final : public FrameReader<T> {
       Unshuffle(src, rows, this->_f.stored, bytes);
       return;
     }
-    if (this->Shuffled()) {
-      UnshuffleWidenAdd(src, rows, this->_f.stored, static_cast<U>(_own.base),
-                        out);
-      return;
+    if constexpr (sizeof(T) > 1) {
+      if (this->Shuffled()) {
+        UnshuffleWidenAdd(src, rows, this->_f.stored, static_cast<U>(_own.base),
+                          out);
+        return;
+      }
     }
     WidenAdd(src, rows, this->_f.stored, static_cast<U>(_own.base), out);
   }

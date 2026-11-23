@@ -198,9 +198,13 @@ class SegmentWriter {
       _out.reserve(geometry.off_data + direct_bytes);
     }
     _out.resize(geometry.off_data);
-    if (!dictionary.empty()) {
-      std::memcpy(_out.data() + DictionaryOffset(), dictionary.data(),
-                  dictionary.size());
+    if constexpr (sizeof(T) > 1) {
+      if (!dictionary.empty()) {
+        std::memcpy(_out.data() + DictionaryOffset(), dictionary.data(),
+                    dictionary.size());
+      }
+    } else {
+      SDB_ASSERT(dictionary.empty());
     }
   }
 

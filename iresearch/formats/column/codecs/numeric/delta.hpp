@@ -280,8 +280,14 @@ class DeltaReader final : public FrameReader<T> {
       return this->Get(row);
     }
     const auto f = this->FrameOf(row);
-    const auto item =
-      this->Shuffled() ? this->SourceLanes(row) : this->SourceItem(row);
+    const auto item = [&] {
+      if constexpr (sizeof(T) > 1) {
+        if (this->Shuffled()) {
+          return this->SourceLanes(row);
+        }
+      }
+      return this->SourceItem(row);
+    }();
     if (this->_source_opens != _opens || item.at + 1 < _summed) {
       _opens = this->_source_opens;
       _summed = 0;
@@ -307,8 +313,10 @@ class DeltaReader final : public FrameReader<T> {
   void DecodeInto(const NumericFrameMeta& m, uint32_t rows, U* out,
                   uint32_t frame) {
     const auto* src = this->Inflated(m, nullptr, frame, this->_held);
-    if (this->Shuffled()) {
-      src = this->Unshuffled(src, rows);
+    if constexpr (sizeof(T) > 1) {
+      if (this->Shuffled()) {
+        src = this->Unshuffled(src, rows);
+      }
     }
     WidenPrefixSum<true>(src, rows, this->_f.stored, static_cast<U>(m.base),
                          static_cast<U>(_own.base), out);

@@ -20,6 +20,7 @@
 
 #include <array>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/parser/constraints/list.hpp>
 #include <optional>
 #include <ranges>
@@ -44,6 +45,11 @@ struct ConstraintRow {
   const T& As() const {
     return constraint.Cast<T>();
   }
+};
+
+struct DomainConstraintRow {
+  const duckdb::TypeCatalogEntry& type;
+  const duckdb::DomainConstraint& constraint;
 };
 
 struct ForeignKeyRow : ConstraintRow {
@@ -75,6 +81,18 @@ constexpr std::tuple kConstraint{
   Col<"convalidated">([](const auto&) { return true; }),
   Col<"conislocal">([](const auto&) { return true; })};
 
+constexpr std::tuple kDomainConstraint{
+  Col<"oid">([](const auto& row) { return row.constraint.oid; }),
+  Col<"conrelid">([](const auto&) { return duckdb::idx_t{0}; }),
+  Col<"contypid">([](const auto& row) { return row.type.oid; }),
+  Col<"connamespace">(
+    [](const auto& row) { return row.type.ParentSchemaOid(); }),
+  Col<"conname">([](const auto& row) { return row.constraint.name; }),
+  Col<"conenforced">([](const auto&) { return true; }),
+  Col<"convalidated">(
+    [](const auto& row) { return row.constraint.validated; }),
+  Col<"conislocal">([](const auto&) { return true; })};
+
 constexpr std::tuple kNoForeignKey{
   Col<"confupdtype">([](const auto&) { return ' '; }),
   Col<"confdeltype">([](const auto&) { return ' '; }),
@@ -87,7 +105,8 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
   static constexpr duckdb::idx_t kRows = 10000;
 
   static constexpr std::tuple kSources{
-    CatalogSource{kTableTypes, SystemSchemas::Skip, kIndexes}};
+    CatalogSource{kTableTypes, SystemSchemas::Skip, kIndexes},
+    CatalogSource{kTypeTypes, SystemSchemas::Skip, kIndexes}};
 
   static constexpr auto kCheck = Shape<kSql, const ConstraintRow>(
     kConstraint, kNoForeignKey, Col<"contype">([](const auto&) { return 'c'; }),
@@ -105,6 +124,18 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
       return std::array{
         Attnum(row.table.GetColumn(row.As<duckdb::NotNullConstraint>().index))};
     }));
+
+  static constexpr auto kDomainCheck = Shape<kSql, const DomainConstraintRow>(
+    kDomainConstraint, kNoForeignKey,
+    Col<"contype">([](const auto&) { return 'c'; }),
+    Col<"conbin">([](const DomainConstraintRow& row) {
+      return ExpressionText(*row.constraint.expression);
+    }));
+
+  static constexpr auto kDomainNotNull =
+    Shape<kSql, const DomainConstraintRow>(
+      kDomainConstraint, kNoForeignKey,
+      Col<"contype">([](const auto&) { return 'n'; }));
 
   static constexpr auto kUnique = Shape<kSql, const ConstraintRow>(
     kConstraint, kNoForeignKey, Col<"contype">([](const ConstraintRow& row) {
@@ -169,6 +200,30 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
           Emit<kForeignKey>({{table, *constraint}});
           break;
         case INVALID:
+          break;
+      }
+    }
+  }
+
+  void Row(const duckdb::TypeCatalogEntry& type) {
+    using enum duckdb::ConstraintType;
+    if (!type.domain_info || !Allows<"contypid">(type.oid)) {
+      return;
+    }
+
+    for (const auto& constraint : type.domain_info->constraints) {
+      if (!constraint.oid) {
+        continue;
+      }
+
+      switch (constraint.type) {
+        case CHECK:
+          Emit<kDomainCheck>({type, constraint});
+          break;
+        case NOT_NULL:
+          Emit<kDomainNotNull>({type, constraint});
+          break;
+        default:
           break;
       }
     }

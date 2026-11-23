@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <cstring>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -103,10 +102,9 @@ CompressedSegment::CompressedSegment(const Codec& codec,
   : stats{duckdb::BaseStatistics::CreateEmpty(type)},
     _codec{codec},
     _type{type},
-    _buffer{std::make_unique<duckdb::data_t[]>(kBlockSize)} {}
+    _buffer{std::make_unique_for_overwrite<duckdb::data_t[]>(kBlockSize)} {}
 
 void CompressedSegment::Reset() {
-  std::memset(_buffer.get(), 0, kBlockSize);
   count = 0;
   stats = duckdb::BaseStatistics::CreateEmpty(_type);
 }

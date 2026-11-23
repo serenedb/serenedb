@@ -712,10 +712,10 @@ void ColumnReader::GatherWindow(ScanState& s, uint64_t anchor,
                                 const duckdb::SelectionVector& sel,
                                 duckdb::idx_t hits, duckdb::idx_t span,
                                 duckdb::Vector& out, duckdb::idx_t at) const {
-  SDB_ASSERT(hits > 0 && hits <= span && span <= STANDARD_VECTOR_SIZE);
-  if (hits != span && anchor < _row_count &&
-      !ScatterWins(_segments[Locate(anchor, s.window).block], _type, hits,
-                   span)) {
+  SDB_ASSERT(hits > 0 && hits <= span && span <= STANDARD_VECTOR_SIZE &&
+             anchor < _row_count);
+  if (hits != span && !ScatterWins(_segments[Locate(anchor, s.window).block],
+                                   _type, hits, span)) {
     SkipTo(s, anchor);
     if (SelectNative(s, sel, hits, span, out, at,
                      duckdb::ScanVectorType::SCAN_FLAT_VECTOR)) {

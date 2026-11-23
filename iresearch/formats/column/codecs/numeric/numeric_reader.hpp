@@ -397,9 +397,10 @@ class FrameReader {
     const auto first = uint64_t{f} * _per_frame;
     const auto rows = static_cast<uint32_t>(EndRow(f) - first);
     const size_t need = size_t{rows} * _f.stored;
-    if (f != _source_frame || need > _source_len) {
+    if (f != _source_frame) {
       OpenSource(f, Meta(f), need, false);
     }
+    SDB_ASSERT(need <= _source_len);
     return {
       .source = _source,
       .at = static_cast<uint32_t>(row - first),

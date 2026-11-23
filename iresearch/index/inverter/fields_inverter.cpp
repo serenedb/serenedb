@@ -61,7 +61,7 @@ size_t FieldsInverter::FlushBound(size_t docs) const {
          term_dict::FieldWriter::Bound(needs.terms, docs, needs.ranges);
 }
 
-void FieldsInverter::Flush(term_dict::FieldWriter& fw, FlushState& state,
+void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
                            std::span<const BasicTermReader* const> extra) {
   IndexFeatures index_features{IndexFeatures::None};
   uint64_t keyed_dicts = extra.size();

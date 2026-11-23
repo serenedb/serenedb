@@ -10,6 +10,8 @@ Use SereneDB applications, or connect with any PostgreSQL-compatible client or d
 
 PostgreSQL connections require a user name. If the startup packet omits the database name or sends an empty one, SereneDB connects to the database named after that user. An explicit database name takes precedence.
 
+A connection keeps one paged result open at a time. A result fetched a page at a time (a portal executed with a row limit, as JDBC's `setFetchSize`, psycopg's server-side cursors and asyncpg's cursors do) is closed by any other statement run on the same connection, and its next fetch fails with SQLSTATE `22023`. Read such a result to its end before running another statement, or run the other statements on another connection.
+
 ## Apps
 
 | App | Purpose | Guide |
@@ -45,13 +47,13 @@ Elasticsearch clients and tools connect over HTTP to the subset of the Elasticse
 
 ## Tools
 
-SereneDB also ships its own command-line clients inside the `serened` binary: [`serened psql`](./serened-psql.md), a PostgreSQL-compatible client for a running server, and [`serened shell`](./serened-shell.md), a local shell for querying database files directly.
+SereneDB also ships its own command-line clients inside the `serenedb` binary: [`serenedb psql`](./serened-psql.md), a PostgreSQL-compatible client for a running server, and [`serenedb shell`](./serened-shell.md), a local shell for querying database files directly.
 
 | Tool | Version | Support | Guide |
 |---|---|---|---|
 | psql | any | Full | [Guide](./psql.md) |
-| serened psql | bundled | Full | [Guide](./serened-psql.md) |
-| serened shell | bundled | Full | [Guide](./serened-shell.md) |
+| serenedb psql | bundled | Full | [Guide](./serened-psql.md) |
+| serenedb shell | bundled | Full | [Guide](./serened-shell.md) |
 | DBeaver | 24.2.2 | Partial | [Guide](./dbeaver.md) |
 | DataGrip | 2024.2.2 | Partial | [Guide](./datagrip.md) |
 | Grafana | 10.4.2 | Partial | [Guide](./grafana.md) |

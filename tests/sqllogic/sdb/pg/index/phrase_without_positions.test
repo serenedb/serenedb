@@ -27,9 +27,6 @@ CREATE INDEX pwp_pos_idx ON pwp_docs USING inverted (id, body pwp_words_pos)
 statement ok
 CREATE INDEX pwp_bare_idx ON pwp_docs USING inverted (id, body pwp_words)
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_docs
-
 query
 SELECT id, round(BM25(pwp_text_idx.tableoid)::numeric, 4) AS score
 FROM pwp_text_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
@@ -58,7 +55,7 @@ EXPLAIN SELECT id FROM pwp_text_idx WHERE body @@ ts_phrase('quick brown')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pwp_text_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ And ────────────────────╮             │
 │ ╰─────────────┬────────────╯             │
@@ -105,11 +102,15 @@ id
 3
 5
 
-statement error
-SELECT id FROM pwp_bare_idx WHERE tableoid @@ to_tsquery('body:"quick brown"')
+query
+SELECT id FROM pwp_bare_idx WHERE tableoid @@ to_tsquery('body:"quick brown"') ORDER BY id
 ----
-db error: ERROR: to_tsquery on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or search for single words.
+id
+1
+2
+5
+7
+8
 
 
 query
@@ -119,7 +120,7 @@ WHERE body @@ 'quick' AND body @@ ts_phrase('quick brown')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pwp_text_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ And ────────────────────╮             │
 │ ╰─────────────┬────────────╯             │
@@ -156,7 +157,7 @@ WHERE body @@ ts_phrase('quick brown') AND body @@ ts_phrase('brown fox')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────────────╮
 │ Index: pwp_text_idx                                                              │
-│ Lookup: table                                                                    │
+│ Lookup: search                                                                   │
 │ Index Filter:                                                                    │
 │ ╭─ And ───────────────────────────╮                                              │
 │ ╰────────────────┬────────────────╯                                              │
@@ -194,7 +195,7 @@ ORDER BY BM25(pwp_text_idx.tableoid) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pwp_text_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ Phrase ─────────────────────────────╮ │
 │ │ Field: body(string)                  │ │
@@ -226,7 +227,7 @@ ORDER BY constant(pwp_text_idx.tableoid, 2.0) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pwp_text_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ And ────────────────────╮             │
 │ │ Merge: max               │             │
@@ -276,7 +277,7 @@ ORDER BY BM25(pwp_text_idx.tableoid) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────────╮
 │ Index: pwp_text_idx                                   │
-│ Lookup: table                                         │
+│ Lookup: search                                        │
 │ Index Filter:                                         │
 │ ╭─ And ───────────────╮                               │
 │ ╰──────────┬──────────╯                               │
@@ -331,7 +332,7 @@ ORDER BY BM25(pwp_text_idx.tableoid) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────────────────────────────╮
 │ Index: pwp_text_idx                               │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ And ─────────────────────────────────────────╮ │
 │ ╰───────────────────────┬───────────────────────╯ │
@@ -400,7 +401,7 @@ ORDER BY constant(pwp_text_idx.tableoid, 2.0) DESC LIMIT 2
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────╮
 │ Index: pwp_text_idx                      │
-│ Lookup: table                            │
+│ Lookup: search                           │
 │ Index Filter:                            │
 │ ╭─ And ────────────────────╮             │
 │ │ Merge: max               │             │
@@ -463,7 +464,7 @@ WHERE body @@ ts_phrase('quick brown') OR body @@ ts_phrase('lazy dog')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────────╮
 │ Index: pwp_text_idx                                                                    │
-│ Lookup: table                                                                          │
+│ Lookup: search                                                                         │
 │ Index Filter:                                                                          │
 │ ╭─ Or ─────────────────────────────────╮                                               │
 │ ╰───────────────────┬──────────────────╯                                               │
@@ -485,7 +486,7 @@ WHERE body @@ (ts_phrase('quick') ## ts_starts_with('br') ## 'fox')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────────────────────────╮
 │ Index: pwp_text_idx                                     │
-│ Lookup: table                                           │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ And ──────────────────╮                              │
 │ ╰────────────┬───────────╯                              │
@@ -611,7 +612,7 @@ EXPLAIN SELECT id FROM pwp_text_idx WHERE body @@ to_tsquery('"quick fo*"~2')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────╮
 │ Index: pwp_text_idx                              │
-│ Lookup: table                                    │
+│ Lookup: search                                   │
 │ Index Filter:                                    │
 │ ╭─ And ───────────────╮                          │
 │ ╰──────────┬──────────╯                          │
@@ -707,10 +708,7 @@ SELECT id FROM pwp_bare_idx WHERE body @@ websearch_to_tsquery('quick-brown') OR
 id
 1
 2
-3
-4
 5
-6
 7
 8
 
@@ -791,9 +789,6 @@ CREATE INDEX pwp_nulls_text ON pwp_nulls USING inverted (id, body pwp_words) INC
 statement ok
 CREATE INDEX pwp_nulls_pos ON pwp_nulls USING inverted (id, body pwp_words_pos)
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_nulls
-
 query
 SELECT id FROM pwp_nulls_text WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
@@ -837,9 +832,6 @@ FROM range(1, 6001) t(i)
 statement ok
 CREATE INDEX pwp_zstd_idx ON pwp_zstd USING inverted (id, body pwp_words)
     INCLUDE (body included (compression = 'zstd'))
-
-statement ok
-VACUUM (REFRESH_TABLE) pwp_zstd
 
 query
 SELECT DISTINCT compression FROM pragma_storage_info('pwp_zstd_idx') WHERE column_name = 'body'
@@ -915,9 +907,6 @@ CREATE INDEX pwp_expr_bare ON pwp_expr USING inverted (id, (lower(body)) pwp_raw
 statement ok
 CREATE INDEX pwp_expr_inputs ON pwp_expr USING inverted (id, (lower(body)) pwp_raw) INCLUDE (body)
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_expr
-
 query
 SELECT id FROM pwp_expr_lower WHERE lower(body) @@ ts_phrase('brown fox') ORDER BY id
 ----
@@ -938,7 +927,7 @@ EXPLAIN SELECT id FROM pwp_expr_lower WHERE lower(body) @@ ts_phrase('brown fox'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: pwp_expr_lower                  │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ And ──────────────────────╮         │
 │ ╰──────────────┬─────────────╯         │
@@ -993,7 +982,7 @@ EXPLAIN SELECT id FROM pwp_expr_concat WHERE lower(title || ' ' || body) @@ ts_p
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────────────────────────────╮
 │ Index: pwp_expr_concat                                   │
-│ Lookup: table                                            │
+│ Lookup: search                                           │
 │ Index Filter:                                            │
 │ ╭─ And ───────────────────────────────────╮              │
 │ ╰────────────────────┬────────────────────╯              │
@@ -1034,9 +1023,6 @@ id	text
 
 statement ok
 INSERT INTO pwp_expr VALUES (6, 'brown', 'Quick Brown Fox later')
-
-statement ok
-VACUUM (REFRESH_TABLE) pwp_expr
 
 query
 SELECT id FROM pwp_expr_lower WHERE lower(body) @@ ts_phrase('brown fox') ORDER BY id
@@ -1081,19 +1067,16 @@ statement ok
 INSERT INTO pwp_segments VALUES (1, 'quick brown fox'), (2, 'brown quick fox')
 
 statement ok
-VACUUM (REFRESH_TABLE) pwp_segments
+VACUUM (FLUSH_TABLE) pwp_segments
 
 statement ok
 INSERT INTO pwp_segments VALUES (3, 'the quick brown dog'), (4, 'quick dog brown')
 
 statement ok
-VACUUM (REFRESH_TABLE) pwp_segments
+VACUUM (FLUSH_TABLE) pwp_segments
 
 statement ok
 INSERT INTO pwp_segments VALUES (5, 'brown fox quick brown')
-
-statement ok
-VACUUM (REFRESH_TABLE) pwp_segments
 
 query
 SELECT id FROM pwp_segments_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
@@ -1112,18 +1095,25 @@ count
 statement ok
 DROP TABLE pwp_segments
 
-statement error
-SELECT id FROM pwp_bare_idx WHERE body @@ ts_phrase('quick brown')
+query
+SELECT id FROM pwp_bare_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
-db error: ERROR: ts_phrase on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or query with a single-term ts_phrase / ts_like.
+id
+1
+2
+5
+7
+8
 
-
-statement error
-SELECT id FROM pwp_bare_idx WHERE body @@ to_tsquery('"quick brown"')
+query
+SELECT id FROM pwp_bare_idx WHERE body @@ to_tsquery('"quick brown"') ORDER BY id
 ----
-db error: ERROR: to_tsquery on a column without positions needs the column's text in the index
-HINT: Add `position` to the dictionary, keep the column's text in the index with `INCLUDE` or an expression's value with `included()`, or search for single words.
+id
+1
+2
+5
+7
+8
 
 
 query
@@ -1165,9 +1155,6 @@ CREATE TEXT SEARCH DICTIONARY pwp_stop AS split_text(case := 'lower') | remove_s
 
 statement ok
 CREATE INDEX pwp_stop_idx ON pwp_docs USING inverted (id, body pwp_stop)
-
-statement ok
-VACUUM (REFRESH_TABLE) pwp_docs
 
 query
 SELECT id FROM pwp_kw_idx WHERE body @@ websearch_to_tsquery('"quick brown dog"') ORDER BY id
@@ -1215,9 +1202,6 @@ INSERT INTO pwp_blobs SELECT id, body::BLOB FROM pwp_docs
 statement ok
 CREATE INDEX pwp_blobs_idx ON pwp_blobs USING inverted (id, body pwp_words_pos)
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_blobs
-
 query
 SELECT id FROM pwp_blobs_idx WHERE body @@ websearch_to_tsquery('quick-brown') ORDER BY id
 ----
@@ -1233,7 +1217,7 @@ DROP TABLE pwp_blobs
 
 statement ok
 CREATE TABLE pwp_search (id BIGINT PRIMARY KEY, body TEXT, tags TEXT[])
-  WITH (storage='search', compaction_interval=0)
+  WITH (compaction_interval=0)
 
 statement ok
 CREATE INDEX pwp_search_idx ON pwp_search USING inverted (body pwp_words, tags pwp_words)
@@ -1243,9 +1227,6 @@ INSERT INTO pwp_search VALUES
     (1, 'the quick brown fox', ['quick brown', 'fox']),
     (2, 'quick fox brown', ['brown', 'quick fox']),
     (3, 'a quick brown dog', [NULL, 'quick brown fox', ''])
-
-statement ok
-VACUUM (REFRESH_TABLE) pwp_search
 
 query
 SELECT id FROM pwp_search_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
@@ -1264,9 +1245,6 @@ id
 statement ok
 CREATE INDEX pwp_search_upper ON pwp_search USING inverted ((upper(body)) pwp_raw)
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_search
-
 statement error
 SELECT id FROM pwp_search_upper WHERE upper(body) @@ ts_phrase('QUICK BROWN') ORDER BY id
 ----
@@ -1276,9 +1254,6 @@ HINT: Add `position` to the dictionary, keep the column's text in the index with
 
 statement ok
 CREATE INDEX pwp_search_upper_stored ON pwp_search USING inverted ((upper(body)) pwp_raw, (upper(body)) included())
-
-statement ok
-VACUUM (REFRESH_TABLE) pwp_search
 
 query
 SELECT id FROM pwp_search_upper_stored WHERE upper(body) @@ ts_phrase('QUICK BROWN') ORDER BY id
@@ -1319,9 +1294,6 @@ INSERT INTO pwp_cars VALUES
 statement ok
 CREATE INDEX pwp_cars_idx ON pwp_cars USING inverted (id, body pwp_synonyms) INCLUDE (body)
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_cars
-
 query
 SELECT id, round(BM25(pwp_cars_idx.tableoid)::numeric, 4) AS score
 FROM pwp_cars_idx WHERE body @@ ts_phrase('red car') ORDER BY id
@@ -1345,7 +1317,7 @@ EXPLAIN SELECT id FROM pwp_cars_idx WHERE body @@ to_tsquery('"red aut*"~2')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────╮
 │ Index: pwp_cars_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Phrase ───────────────────────────╮ │
 │ │ Field: body(string)                │ │
@@ -1377,9 +1349,6 @@ INSERT INTO pwp_shingled VALUES
 statement ok
 CREATE INDEX pwp_shingled_idx ON pwp_shingled USING inverted (id, body pwp_shingles) INCLUDE (body)
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_shingled
-
 query
 SELECT id, round(BM25(pwp_shingled_idx.tableoid)::numeric, 4) AS score
 FROM pwp_shingled_idx WHERE body @@ ts_phrase('quick brown fox') ORDER BY id
@@ -1394,7 +1363,7 @@ EXPLAIN SELECT id FROM pwp_shingled_idx WHERE body @@ ts_phrase('quick brown fox
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────────────────────────────────────────────╮
 │ Index: pwp_shingled_idx                                                            │
-│ Lookup: table                                                                      │
+│ Lookup: search                                                                     │
 │ Index Filter:                                                                      │
 │ ╭─ And ──────────────────────────────╮                                             │
 │ ╰──────────────────┬─────────────────╯                                             │
@@ -1478,9 +1447,6 @@ id
 statement ok
 INSERT INTO pwp_empty VALUES (1, 'quick brown fox'), (2, 'brown quick')
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_empty
-
 query
 SELECT id FROM pwp_empty_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
@@ -1507,9 +1473,6 @@ INSERT INTO pwp_cov VALUES
 
 statement ok
 CREATE INDEX pwp_cov_idx ON pwp_cov USING inverted (id, body pwp_cov_synonyms) INCLUDE (body, val)
-
-statement ok
-VACUUM (REFRESH_TABLE) pwp_cov
 
 query
 SELECT count(*) FROM pwp_cov_idx WHERE body @@ to_tsquery('"red aut*"~2') AND val >= 20
@@ -1551,9 +1514,6 @@ INSERT INTO pwp_cov_arr VALUES
 statement ok
 CREATE INDEX pwp_cov_arr_idx ON pwp_cov_arr USING inverted (id, tags pwp_words) INCLUDE (tags)
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_cov_arr
-
 query
 SELECT id FROM pwp_cov_arr_idx WHERE tags @@ ts_phrase('quick brown') ORDER BY id
 ----
@@ -1584,9 +1544,6 @@ INSERT INTO pwp_cov_long VALUES
 statement ok
 CREATE INDEX pwp_cov_long_idx ON pwp_cov_long USING inverted (id, body pwp_words) INCLUDE (body)
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_cov_long
-
 query
 SELECT id FROM pwp_cov_long_idx WHERE body @@ ts_phrase('quick brown') ORDER BY id
 ----
@@ -1614,9 +1571,6 @@ CREATE INDEX pwp_lists_text ON pwp_lists USING inverted (id, tags pwp_words) INC
 
 statement ok
 CREATE INDEX pwp_lists_pos ON pwp_lists USING inverted (id, tags pwp_words_pos)
-
-statement ok
-VACUUM (REFRESH_TABLE) pwp_lists
 
 query
 SELECT id FROM pwp_lists_text WHERE tags @@ ts_phrase('quick brown fox') ORDER BY id
@@ -1692,9 +1646,6 @@ CREATE INDEX pwp_synonym_lists_text ON pwp_synonym_lists USING inverted (id, tag
 
 statement ok
 CREATE INDEX pwp_synonym_lists_pos ON pwp_synonym_lists USING inverted (id, tags pwp_list_synonyms_pos)
-
-statement ok
-VACUUM (REFRESH_TABLE) pwp_synonym_lists
 
 query
 SELECT id FROM pwp_synonym_lists_text WHERE tags @@ ts_phrase('red auto') ORDER BY id
@@ -1772,9 +1723,6 @@ INSERT INTO pwp_score VALUES
 statement ok
 CREATE INDEX pwp_score_idx ON pwp_score USING inverted (id, body pwp_norm) INCLUDE (body)
 
-statement ok
-VACUUM (REFRESH_TABLE) pwp_score
-
 query
 SELECT id FROM pwp_score_idx
 WHERE (body @@ ts_phrase('quick brown'))::score('constant(1)') AND body @@ 'fox'
@@ -1800,7 +1748,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: pwp_score_idx                                    │
-│ Lookup: table                                           │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ And ───────────────╮                                 │
 │ ╰──────────┬──────────╯                                 │

@@ -1,8 +1,8 @@
 statement ok
-CREATE TABLE dr (id BIGINT, v TEXT) WITH (storage = 'search', compaction_interval = 0, refresh_interval = 0);
+CREATE TABLE dr (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
-CREATE TABLE dr_plain (id BIGINT, v TEXT);
+CREATE TABLE dr_plain (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok
 SET threads = 1;
@@ -15,9 +15,6 @@ RESET threads;
 
 statement ok
 INSERT INTO dr_plain SELECT i, 'v' || i FROM generate_series(0, 2999) g(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
 
 statement ok
 CREATE TABLE dr_src (id BIGINT);
@@ -35,20 +32,17 @@ query
 SELECT id, rowid & 4294967295 AS doc FROM dr WHERE id IN (5, 1005, 2005) ORDER BY id;
 ----
 id	doc
-5	6
-1005	1006
-2005	2006
+5	5
+1005	1005
+2005	2005
 
 query ?? rowsort
 DELETE FROM dr WHERE id IN (5, 1005, 2005) RETURNING id, rowid & 4294967295 AS doc;
 ----
 id	doc
-1005	1006
-2005	2006
-5	6
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
+1005	1005
+2005	2005
+5	5
 
 query ?? rowsort
 DELETE FROM dr_plain WHERE id IN (5, 1005, 2005) RETURNING id, rowid;
@@ -62,10 +56,7 @@ query
 DELETE FROM dr WHERE id = 6 RETURNING rowid & 4294967295 AS doc, id, tableoid::regclass::text AS rel;
 ----
 doc	id	rel
-7	6	dr
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
+6	6	dr
 
 query
 DELETE FROM dr_plain WHERE id = 6 RETURNING rowid, id, tableoid::regclass::text AS rel;
@@ -77,10 +68,7 @@ query
 DELETE FROM dr WHERE id = 8 RETURNING tableoid::regclass::text AS rel, (rowid & 4294967295) + 1 AS next, rowid & 4294967295 AS doc;
 ----
 rel	next	doc
-dr	10	9
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
+dr	9	8
 
 query
 DELETE FROM dr_plain WHERE id = 8 RETURNING tableoid::regclass::text AS rel, rowid + 1 AS next, rowid;
@@ -94,9 +82,6 @@ DELETE FROM dr WHERE id = 9 RETURNING id, v;
 id	v
 9	v9
 
-statement ok
-VACUUM (REFRESH_TABLE) dr;
-
 query
 DELETE FROM dr_plain WHERE id = 9 RETURNING id, v;
 ----
@@ -109,17 +94,11 @@ DELETE FROM dr WHERE id = 10 RETURNING *, rowid IS NOT NULL AS placed;
 id	v	placed
 10	v10	t
 
-statement ok
-VACUUM (REFRESH_TABLE) dr;
-
 query
 DELETE FROM dr WHERE id = 11 RETURNING id, rowid & 4294967295 AS doc, rowid >> 32 AS segment;
 ----
 id	doc	segment
-11	12	0
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
+11	11	0
 
 statement count 2
 DELETE FROM dr_plain WHERE id IN (10, 11);
@@ -136,9 +115,6 @@ id
 42
 49
 7
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
 
 query ? rowsort
 DELETE FROM dr_plain USING dr_src WHERE dr_plain.id = dr_src.id AND dr_plain.id < 50 RETURNING dr_plain.id;
@@ -157,13 +133,10 @@ query ?? rowsort
 DELETE FROM dr USING dr_src WHERE dr.id = dr_src.id + 1 AND dr.id < 30 RETURNING dr.id, rowid & 4294967295 AS doc;
 ----
 id	doc
-1	2
-15	16
-22	23
-29	30
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
+1	1
+15	15
+22	22
+29	29
 
 query ?? rowsort
 DELETE FROM dr_plain USING dr_src WHERE dr_plain.id = dr_src.id + 1 AND dr_plain.id < 30 RETURNING dr_plain.id, rowid;
@@ -182,9 +155,6 @@ id	v	rel
 2	v2	dr
 23	v23	dr
 
-statement ok
-VACUUM (REFRESH_TABLE) dr;
-
 query ??? rowsort
 DELETE FROM dr_plain USING dr_src WHERE dr_plain.id = dr_src.id + 2 AND dr_plain.id < 30 RETURNING dr_plain.id, v, tableoid::regclass::text AS rel;
 ----
@@ -201,9 +171,6 @@ id	v
 115	v115
 122	v122
 129	v129
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
 
 query ?? rowsort
 DELETE FROM dr_plain USING dr_src WHERE dr_plain.id = dr_src.id + 3 AND dr_src.id BETWEEN 100 AND 130 RETURNING *;
@@ -223,9 +190,6 @@ src	id
 217	221
 224	228
 
-statement ok
-VACUUM (REFRESH_TABLE) dr;
-
 query ?? rowsort
 DELETE FROM dr_plain USING (SELECT DISTINCT id FROM dr_src WHERE id BETWEEN 200 AND 230) s WHERE dr_plain.id = s.id + 4 RETURNING dr_plain.id - 4 AS src, dr_plain.id;
 ----
@@ -242,9 +206,6 @@ id
 306
 313
 320
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
 
 query ? rowsort
 DELETE FROM dr_plain USING dr_src a, dr_src b WHERE dr_plain.id = a.id + 5 AND a.id = b.id AND a.id BETWEEN 300 AND 320 RETURNING dr_plain.id;
@@ -264,9 +225,6 @@ id	other_id
 1403	403
 1404	404
 
-statement ok
-VACUUM (REFRESH_TABLE) dr;
-
 query ?? rowsort
 DELETE FROM dr_plain USING dr_plain AS other WHERE dr_plain.id = other.id + 1000 AND other.id BETWEEN 400 AND 404 RETURNING dr_plain.id, dr_plain.id - 1000 AS other_id;
 ----
@@ -285,9 +243,6 @@ id
 517
 524
 
-statement ok
-VACUUM (REFRESH_TABLE) dr;
-
 query ? rowsort
 DELETE FROM dr_plain WHERE id IN (SELECT id + 6 FROM dr_src WHERE id BETWEEN 500 AND 520) RETURNING id;
 ----
@@ -300,13 +255,10 @@ query ?? rowsort
 DELETE FROM dr WHERE EXISTS (SELECT 1 FROM dr_src WHERE dr_src.id = dr.id - 600) AND id < 625 RETURNING id, rowid & 4294967295 AS doc;
 ----
 id	doc
-600	601
-607	608
-614	615
-621	622
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
+600	600
+607	607
+614	614
+621	621
 
 query ?? rowsort
 DELETE FROM dr_plain WHERE EXISTS (SELECT 1 FROM dr_src WHERE dr_src.id = dr_plain.id - 600) AND id < 625 RETURNING id, rowid;
@@ -322,9 +274,6 @@ DELETE FROM dr USING dr_src WHERE dr.id = dr_src.id AND dr.id < 50 RETURNING dr.
 ----
 id
 
-statement ok
-VACUUM (REFRESH_TABLE) dr;
-
 query ?? rowsort
 UPDATE dr SET v = 'u' || dr_src.id FROM dr_src WHERE dr.id = dr_src.id + 1 AND dr.id BETWEEN 700 AND 730 RETURNING dr.id, v;
 ----
@@ -334,9 +283,6 @@ id	v
 715	u714
 722	u721
 729	u728
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
 
 query ?? rowsort
 UPDATE dr_plain SET v = 'u' || dr_src.id FROM dr_src WHERE dr_plain.id = dr_src.id + 1 AND dr_plain.id BETWEEN 700 AND 730 RETURNING dr_plain.id, v;
@@ -355,9 +301,9 @@ query ? rowsort
 DELETE FROM dr USING dr_src WHERE dr.id = dr_src.id + 1 AND dr.id BETWEEN 800 AND 820 RETURNING (rowid & 4294967295) - dr.id AS gap;
 ----
 gap
-1
-1
-1
+0
+0
+0
 
 statement ok
 ROLLBACK;
@@ -369,9 +315,9 @@ query ?? rowsort
 DELETE FROM dr USING dr_src WHERE dr.id = dr_src.id + 1 AND dr.id BETWEEN 800 AND 820 RETURNING dr.id, rowid & 4294967295 AS doc;
 ----
 id	doc
-806	807
-813	814
-820	821
+806	806
+813	813
+820	820
 
 query ?? rowsort
 DELETE FROM dr_plain USING dr_src WHERE dr_plain.id = dr_src.id + 1 AND dr_plain.id BETWEEN 800 AND 820 RETURNING dr_plain.id, rowid;
@@ -383,9 +329,6 @@ id	rowid
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) dr;
 
 query
 SELECT (SELECT count(*) FROM (SELECT id, v FROM dr EXCEPT ALL SELECT id, v FROM dr_plain)) + (SELECT count(*) FROM (SELECT id, v FROM dr_plain EXCEPT ALL SELECT id, v FROM dr)) AS diff;

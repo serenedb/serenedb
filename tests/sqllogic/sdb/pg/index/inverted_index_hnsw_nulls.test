@@ -47,10 +47,6 @@ statement ok
 INSERT INTO vec_n VALUES (5, [0, 0, 1]::FLOAT[3], 'unit-z')
 
 
-statement ok
-VACUUM (REFRESH_TABLE) vec_n
-
-
 # ---- Full scan returns every row, NULL emb materialises as NULL ----
 query
 SELECT pk, label FROM vec_n_idx ORDER BY pk;
@@ -116,10 +112,6 @@ pk	label
 # ---- DELETE filters out via docs_mask, no dangling HNSW node ----
 statement ok
 DELETE FROM vec_n WHERE pk = 3
-
-
-statement ok
-VACUUM (REFRESH_TABLE) vec_n
 
 
 # pk=3 was the closest match to [0, 0.9, 0.1]; with the docs_mask

@@ -23,6 +23,8 @@
 #include <absl/strings/ascii.h>
 #include <absl/strings/match.h>
 
+#include <iresearch/utils/static_strings.hpp>
+
 #include "network/http/common.h"
 
 namespace sdb::network::http {
@@ -164,7 +166,7 @@ std::optional<AuthContext> FlagApiKeyValidator::Validate(
   const bool id_ok = SecureEquals(id, _id);
   const bool key_ok = SecureEquals(key, _key);
   if (id_ok && key_ok) {
-    return AuthContext{.user = _user};
+    return AuthContext{.user = std::string{irs::StaticStrings::kDefaultUser}};
   }
   return std::nullopt;
 }
@@ -172,7 +174,7 @@ std::optional<AuthContext> FlagApiKeyValidator::Validate(
 std::optional<AuthContext> FlagBearerValidator::Validate(
   std::string_view token) const {
   if (SecureEquals(token, _token)) {
-    return AuthContext{.user = _user};
+    return AuthContext{.user = std::string{irs::StaticStrings::kDefaultUser}};
   }
   return std::nullopt;
 }

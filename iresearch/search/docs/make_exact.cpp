@@ -28,13 +28,14 @@ namespace {
 class ExactDocs : public Root {
  public:
   ExactDocs(PlanMemory& memory, const ExactVectorQuery& query)
-    : _scanner{memory, query} {}
+    : _scanner{memory, query, true} {}
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
+    score_t dists[irs::detail::ExactScanner::kRun];
     _scanner.Reset(min, max);
     uint32_t n = 0;
     for (;;) {
-      const auto m = _scanner.NextMatches(out + n, _dists);
+      const auto m = _scanner.NextMatches(out + n, dists);
       if (m == 0) {
         return n;
       }
@@ -44,7 +45,6 @@ class ExactDocs : public Root {
 
  private:
   irs::detail::ExactScanner _scanner;
-  score_t _dists[irs::detail::ExactScanner::kRun];
 };
 
 }  // namespace

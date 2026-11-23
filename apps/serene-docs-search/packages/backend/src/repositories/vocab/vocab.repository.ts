@@ -63,7 +63,6 @@ export const VocabRepository = {
                 batch.flat(),
             );
         }
-        await ctx.pool.query(`VACUUM (REFRESH_TABLE) ${ctx.vocabTable}`);
     },
 
     /** Is any vocabulary term a completion of this prefix? (as-you-type guard) */

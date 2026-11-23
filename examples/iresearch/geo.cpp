@@ -29,10 +29,9 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/geo_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/geo/shape_container.hpp>
 #include <memory>
@@ -43,6 +42,7 @@
 #include "s2/s2latlng.h"
 #include "s2/s2loop.h"
 #include "s2/s2polygon.h"
+#include "segments.h"
 
 // This example demonstrates iresearch's S2-based geospatial filters:
 //   1. Index a corpus of points (GeoJSON) with the geojson analyzer
@@ -168,8 +168,6 @@ constexpr std::string_view kCorpus = R"([
 
 irs::IndexWriterOptions MakeWriterOptions() {
   irs::IndexWriterOptions options;
-  options.db = &Db();
-  options.reader_options.db = &Db();
   options.norm_column_id = [next = std::make_shared<std::atomic<irs::field_id>>(
                               0)](irs::field_id) -> irs::field_id {
     return next->fetch_add(1, std::memory_order_relaxed);
@@ -177,12 +175,13 @@ irs::IndexWriterOptions MakeWriterOptions() {
   return options;
 }
 
-// Build a tiny index from the corpus above. Returns the writer's snapshot.
-irs::DirectoryReader BuildIndex(irs::Directory& dir,
+// Build a tiny index from the corpus above.
+irs::CompositeReader BuildIndex(duckdb::FileSystem& fs, std::string_view root,
                                 const std::vector<GeoEntry>& docs,
                                 std::vector<std::string>& names_out) {
-  auto writer =
-    irs::IndexWriter::Make(dir, irs::kOmCreate, MakeWriterOptions());
+  auto options = MakeWriterOptions();
+  examples::Segments segments{fs, root};
+  auto writer = irs::IndexWriter::Make(Db(), fs, root, std::move(options));
 
   GeoField geo;
 
@@ -202,14 +201,13 @@ irs::DirectoryReader BuildIndex(irs::Directory& dir,
       }
       AppendStoredShape(*geo_cw, doc.DocId(), geo.shape_text);
     }
-    trx.Commit();
+    segments.Add(trx.FlushSegments(true));
   }
-  writer->RefreshCommit();
-  return writer->GetSnapshot();
+  return segments.Reader();
 }
 
 // Run a prepared filter over all segments, collect names of matching docs.
-std::vector<std::string> RunFilter(const irs::DirectoryReader& reader,
+std::vector<std::string> RunFilter(const irs::CompositeReader& reader,
                                    const irs::Filter& filter,
                                    const std::vector<std::string>& names) {
   // Nothing here scores, so there is no collector and no statistics.
@@ -274,14 +272,14 @@ int GeoMain() {
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();
 
-  // Nested scope so reader/dir destruct before DuckDBEngine::Shutdown tears
-  // down the duckdb::DuckDB they were dispatching through.
+  // Nested scope so the reader destructs before DuckDBEngine::Shutdown tears
+  // down the duckdb::DuckDB it was dispatching through.
   {
     auto docs = ParseCorpus(kCorpus);
     std::vector<std::string> names;
 
-    irs::MemoryDirectory dir;
-    auto reader = BuildIndex(dir, docs, names);
+    auto reader = BuildIndex(duckdb::FileSystem::GetFileSystem(Db()),
+                             "memory://geo", docs, names);
     std::cout << "Indexed " << reader.docs_count() << " points across "
               << reader.size() << " segment(s).\n\n";
 

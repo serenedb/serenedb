@@ -17,4 +17,4 @@ SELECT id,
        (CASE WHEN (hash(id) % 10) < 7 THEN repeat('fox ', (id % 20) + 1) ELSE 'dog cat bird ' END)
        || (CASE WHEN id % 997 = 0 THEN 'zebra' ELSE '' END)
 FROM (SELECT a*1000 + b AS id FROM generate_series(0,499) a, generate_series(1,1000) b) s;
-VACUUM (REFRESH_TABLE) d;
+VACUUM (FLUSH_TABLE) d;

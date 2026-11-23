@@ -23,6 +23,10 @@
 
 #pragma once
 
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
+#include <string>
+#include <string_view>
 #include <vector>
 #include <yaclib/async/future.hpp>
 
@@ -31,20 +35,14 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/tracked.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-}
-
 namespace irs {
-
-struct TrackingDirectory;
 
 struct DocRemap {
   doc_id_t base_id = doc_limits::invalid();
@@ -76,18 +74,18 @@ class MergeWriter : public util::Noncopyable {
     DocRemap remap;
   };
 
-  MergeWriter(Directory& dir, const SegmentWriterOptions& options,
-              MemoryBudget& budget) noexcept
-    : _dir{dir},
+  MergeWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+              std::string_view root, const SegmentWriterOptions& options,
+              MemoryBudget& budget)
+    : _fs{fs},
+      _root{root},
       _budget{budget},
       _readers{TrackedAllocator<ReaderCtx>{&budget}},
       _scorer{options.scorer},
-      _db{[db = options.db] -> duckdb::DatabaseInstance& {
-        SDB_ASSERT(db);
-        return *db;
-      }()},
+      _db{db},
       _field_options{options.field_options},
-      _hnsw_bases{options.hnsw_bases} {}
+      _hnsw_bases{options.hnsw_bases},
+      _released{options.released} {}
   MergeWriter(MergeWriter&&) = default;
   MergeWriter& operator=(MergeWriter&&) = delete;
 
@@ -105,7 +103,13 @@ class MergeWriter : public util::Noncopyable {
 
   // Flush all added readers into a single segment.
   auto Flush(SegmentMeta& segment, const FlushProgress& progress = {},
-             const AnnBuildEnv* env = nullptr) -> yaclib::Future<bool>;
+             const AnnBuildEnv* env = nullptr)
+    -> yaclib::Future<std::shared_ptr<const FileTracker>>;
+
+  std::shared_ptr<const SegmentReaderImpl> FlushPiece(SegmentMeta& segment,
+                                                      uint64_t id);
+
+  SegmentInputs TakeInputs() noexcept { return std::move(_inputs); }
 
   const ReaderCtx& operator[](size_t i) const noexcept {
     SDB_ASSERT(i < _readers.size());
@@ -113,7 +117,8 @@ class MergeWriter : public util::Noncopyable {
   }
 
  private:
-  Directory& _dir;
+  duckdb::FileSystem& _fs;
+  std::string _root;
   MemoryBudget& _budget;
   TrackedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
@@ -121,6 +126,8 @@ class MergeWriter : public util::Noncopyable {
   // Non-owning; the caller pins it for the whole merge.
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
+  std::shared_ptr<ReleasedSegments> _released;
+  SegmentInputs _inputs;
 };
 
 static_assert(std::is_nothrow_move_constructible_v<MergeWriter>);

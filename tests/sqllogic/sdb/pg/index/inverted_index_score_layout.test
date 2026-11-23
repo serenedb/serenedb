@@ -1,6 +1,6 @@
 # Reproducer for the flaky BM25-OR scoring bug from inverted_index_score.test:1480.
 # The original test was non-deterministic w.r.t. segment layout; here we pin
-# each layout explicitly via `VACUUM (REFRESH_TABLE)` per INSERT or as a
+# each layout explicitly via `VACUUM (FLUSH_TABLE)` per INSERT or as a
 # single batch, plus `VACUUM (COMPACT_TABLE) <table>` for
 # compaction.
 #
@@ -39,11 +39,6 @@ statement count 1
 INSERT INTO one_seg_docs VALUES (3, 'gamma');
 
 
-# Single VACUUM => single batch flush => one segment.
-statement ok
-VACUUM (REFRESH_TABLE) one_seg_docs;
-
-
 # All three should be uniform.
 query
 SELECT id, BM25(one_seg_idx.tableoid) as d FROM one_seg_idx
@@ -72,19 +67,16 @@ statement count 1
 INSERT INTO three_segs_docs VALUES (1, 'alpha');
 
 statement ok
-VACUUM (REFRESH_TABLE) three_segs_docs;
+VACUUM (FLUSH_TABLE) three_segs_docs;
 
 statement count 1
 INSERT INTO three_segs_docs VALUES (2, 'beta');
 
 statement ok
-VACUUM (REFRESH_TABLE) three_segs_docs;
+VACUUM (FLUSH_TABLE) three_segs_docs;
 
 statement count 1
 INSERT INTO three_segs_docs VALUES (3, 'gamma');
-
-statement ok
-VACUUM (REFRESH_TABLE) three_segs_docs;
 
 
 query
@@ -119,13 +111,10 @@ statement count 1
 INSERT INTO split_docs VALUES (3, 'gamma');
 
 statement ok
-VACUUM (REFRESH_TABLE) split_docs;
+VACUUM (FLUSH_TABLE) split_docs;
 
 statement count 1
 INSERT INTO split_docs VALUES (2, 'beta');
-
-statement ok
-VACUUM (REFRESH_TABLE) split_docs;
 
 
 query
@@ -156,16 +145,13 @@ statement count 1
 INSERT INTO split2_docs VALUES (2, 'beta');
 
 statement ok
-VACUUM (REFRESH_TABLE) split2_docs;
+VACUUM (FLUSH_TABLE) split2_docs;
 
 statement count 1
 INSERT INTO split2_docs VALUES (1, 'alpha');
 
 statement count 1
 INSERT INTO split2_docs VALUES (3, 'gamma');
-
-statement ok
-VACUUM (REFRESH_TABLE) split2_docs;
 
 
 query
@@ -196,19 +182,16 @@ statement count 1
 INSERT INTO compacted_docs VALUES (1, 'alpha');
 
 statement ok
-VACUUM (REFRESH_TABLE) compacted_docs;
+VACUUM (FLUSH_TABLE) compacted_docs;
 
 statement count 1
 INSERT INTO compacted_docs VALUES (2, 'beta');
 
 statement ok
-VACUUM (REFRESH_TABLE) compacted_docs;
+VACUUM (FLUSH_TABLE) compacted_docs;
 
 statement count 1
 INSERT INTO compacted_docs VALUES (3, 'gamma');
-
-statement ok
-VACUUM (REFRESH_TABLE) compacted_docs;
 
 statement ok
 VACUUM (COMPACT_TABLE) compacted_docs;

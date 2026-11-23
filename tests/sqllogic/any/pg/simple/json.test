@@ -234,3 +234,10 @@ SELECT json_strip_nulls('{"a":1,"b":null,"c":{"d":null,"e":2}}'::json);
 ----
 json_strip_nulls
 {"a":1,"c":{"e":2}}
+
+
+query
+SELECT json_strip_nulls('{"a":[1,null,{"b":null}]}'::json) AS nested, json_strip_nulls('5'::json) AS scalar;
+----
+nested	scalar
+{"a":[1,null,{}]}	5

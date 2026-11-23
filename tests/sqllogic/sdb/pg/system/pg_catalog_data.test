@@ -273,8 +273,6 @@ f
 # pg_am (access methods)
 
 
-# serened access methods: iresearch backs tables;
-# secondary/inverted back indexes.
 query
 SELECT amname, amtype FROM pg_catalog.pg_am ORDER BY amname
 ----
@@ -282,7 +280,6 @@ amname	amtype
 heap	t
 inverted	i
 iresearch	t
-secondary	i
 
 
 # Index vs table access-method counts
@@ -290,7 +287,7 @@ query
 SELECT count(*) FROM pg_catalog.pg_am WHERE amtype = 'i'
 ----
 count
-2
+1
 
 
 query
@@ -325,7 +322,7 @@ t
 
 # Should have pg_default and pg_global
 query
-SELECT spcname FROM pg_catalog.pg_tablespace ORDER BY spcname
+SELECT spcname FROM pg_catalog.pg_tablespace WHERE oid < 16384 ORDER BY spcname
 ----
 spcname
 pg_default
@@ -333,7 +330,7 @@ pg_global
 
 
 query
-SELECT count(*) FROM pg_catalog.pg_tablespace
+SELECT count(*) FROM pg_catalog.pg_tablespace WHERE oid < 16384
 ----
 count
 2

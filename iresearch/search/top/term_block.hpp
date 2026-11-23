@@ -26,7 +26,6 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/posting_batch.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::top {
@@ -44,13 +43,12 @@ class TermBlock : public irs::detail::PostingBatch<InputType, true> {
  public:
   static constexpr uint32_t kFill = doc_limits::kBlockSize;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args, IndexFeatures layout,
                bool bounds) {
     SDB_ASSERT(meta.docs_count > 1, "a single document has its own root");
-    this->OpenInput(meta, doc_in, bounds);
-    this->ArmWalk(meta, layout, bounds);
+    this->OpenList(meta, doc_in, layout, bounds);
     this->MakeScore(segment, field, args);
   }
 

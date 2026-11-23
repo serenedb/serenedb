@@ -1574,12 +1574,8 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_posix_accepts_posix_class) {
 }
 
 TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
-  // Literal and Prefix patterns take the ByTerm / ByPrefix fast paths
-  // in ComputeRegexpType, which operate on raw bytes and do not consult
-  // the RegexpSyntax at all.  The two modes must therefore produce
-  // identical results for such patterns.  This test guards against a
-  // future refactor that accidentally threads syntax into the fast
-  // path and breaks the invariant.
+  // A literal and a literal followed by .* mean the same in both dialects,
+  // so the two modes must produce identical results for them.
   {
     tests::JsonDocGenerator gen(resource("regexp_test_data.json"),
                                 &tests::GenericJsonFieldFactory);
@@ -1609,7 +1605,6 @@ TEST_P(RegexpFilterTestCase, by_regexp_syntax_fast_paths_are_agnostic) {
     ASSERT_EQ(perl, posix);
     ASSERT_FALSE(perl.empty());
   }
-  // Prefix pattern -> ByPrefix fast path
   {
     auto perl = run("term", "foo.*", irs::RegexpSyntax::Perl);
     auto posix = run("term", "foo.*", irs::RegexpSyntax::PosixEre);
@@ -1663,7 +1658,7 @@ TEST_P(RegexpFilterTestCase, by_regexp_visit_with_syntax) {
                irs::SqlException);
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(regexp_filter_test, RegexpFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

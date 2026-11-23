@@ -1,11 +1,11 @@
 target_sources(
     sereneserver
     PRIVATE
-        key_encoding.cpp
+        constraint_keys.cpp
         primary_key.cpp
-        search_key_unique.cpp
-        search_unique_probe.cpp
         row_position_deduplicator.cpp
+        explain_output.cpp
+        vector_explain.cpp
         offsets_collector.cpp
         search_sink_rows.cpp
         search_sink_writer.cpp
@@ -18,7 +18,6 @@ target_sources(
         inet_filter_builder.cpp
         inet_terms.cpp
         search_filter_printer.cpp
-        duckdb_client_state.cpp
         duckdb_subscription.cpp
         scan/col_filter_share.cpp
         scan/col_filter_verify.cpp
@@ -26,6 +25,7 @@ target_sources(
         scan/geo_check.cpp
         scan/phrase_check.cpp
         scan/wildcard_check.cpp
+        scan/scan_ahead.cpp
         scan/scan_ann.cpp
         scan/scan_barrier.cpp
         scan/scan_bind.cpp
@@ -37,6 +37,7 @@ target_sources(
         scan/scan_lookup.cpp
         scan/scan_plan.cpp
         scan/scan_prepare.cpp
+        scan/scan_profile.cpp
         scan/scan_pushdown.cpp
         scan/scan_stats.cpp
         scan/scan_stream.cpp
@@ -45,7 +46,6 @@ target_sources(
         full_scanner.cpp
         index_source_factory.cpp
         index_source_view.cpp
-        inverted_store_index.cpp
         iresearch_replacement_scan.cpp
         index_source_native.cpp
         index_source_external_lookup.cpp
@@ -70,7 +70,7 @@ target_sources(
         highlight/memory_index.cpp
 )
 
-target_link_libraries(sereneserver PRIVATE simdjson)
+target_link_libraries(sereneserver PRIVATE simdjson absl::demangle_internal)
 
 # view_fast_path.cpp reads iceberg-bound snapshot ids; iceberg's REST
 # headers include yyjson unprefixed.

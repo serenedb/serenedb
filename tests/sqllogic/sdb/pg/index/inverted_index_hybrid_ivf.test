@@ -47,9 +47,6 @@ INSERT INTO docs VALUES
     (4, 'red trail shoes',       'lightweight running gear', [90,10,0]::FLOAT[3], [9,1,0,0]::FLOAT[4]),
     (5, 'yellow tennis racket',  'indoor court equipment',   [50,50,0]::FLOAT[3], [0,0,0,10]::FLOAT[4]);
 
-statement ok
-VACUUM (REFRESH_TABLE) docs;
-
 # Exhaustive scan so the tiny-table kNN is exact (nprobe >= nlist).
 statement ok
 SET sdb_ivf_search_nprobe = 256;
@@ -197,6 +194,63 @@ pk	hybrid
 3	0
 
 
+# The order the two are written in changes nothing: the text score keeps the
+# scan's score and the distance is computed per row.
+query
+SELECT pk, round((va <-> [100,0,0]::FLOAT[3])::DOUBLE, 3) AS dist,
+       round(IDF(docs_idx.tableoid)::DOUBLE, 3) AS idf
+FROM docs_idx WHERE body @@ ts_any(['trail', 'gear']) ORDER BY pk;
+----
+pk	dist	idf
+1	0	1.414
+3	141.421	1.414
+4	14.142	0.539
+
+
+query
+SELECT pk, round(((va <-> [100,0,0]::FLOAT[3]) * -0.001
+                  + IDF(docs_idx.tableoid))::DOUBLE, 3) AS hybrid
+FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
+ORDER BY hybrid DESC, pk;
+----
+pk	hybrid
+1	1.414
+3	1.273
+4	0.525
+
+
+query
+SELECT pk, round(IDF(docs_idx.tableoid)::DOUBLE, 3) AS idf
+FROM docs_idx
+WHERE body @@ ts_any(['trail', 'gear']) AND va <-> [100,0,0]::FLOAT[3] < 20
+ORDER BY pk;
+----
+pk	idf
+1	1.414
+4	0.539
+
+
+query
+SELECT pk, round((va <-> [100,0,0]::FLOAT[3])::DOUBLE, 3) AS dist
+FROM docs_idx WHERE body @@ ts_any(['trail', 'gear'])
+ORDER BY IDF(docs_idx.tableoid) DESC, pk LIMIT 2;
+----
+pk	dist
+1	0
+3	141.421
+
+
+query
+SELECT pk, round((va <-> [100,0,0]::FLOAT[3])::DOUBLE, 3) AS dist,
+       ts_offsets(body) AS o
+FROM docs_idx WHERE body @@ 'gear' ORDER BY pk;
+----
+pk	dist	o
+1	0	{18,22}
+3	141.421	{13,17}
+4	14.142	{20,24}
+
+
 # A per-branch override composes with it: scoring one branch by a constant
 # makes the text side contribute a flat amount, leaving the vector to order
 # what is left.
@@ -233,7 +287,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ────────────────────╮            │
 │ ╰────────────┬────────────╯            │
@@ -242,7 +296,7 @@ QUERY PLAN
 │ │ Values: 'gear', 'trail' │            │
 │ ╰─────────────────────────╯            │
 │ Score: idf()                           │
-│ Projections: pk (l), va (i),           │
+│ Projections: pk, va,                   │
 │              sdb_inverted_index_score  │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯
@@ -261,7 +315,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ────────────────────╮            │
 │ ╰────────────┬────────────╯            │
@@ -298,7 +352,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: docs_idx                        │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ─────────────────────╮           │
 │ │ Merge: max               │           │
@@ -309,7 +363,7 @@ QUERY PLAN
 │ │ Values: 'gear', 'trail'  │           │
 │ ╰──────────────────────────╯           │
 │ Score: bm25(k1=1.2, b=0.75)            │
-│ Projections: pk (l), va (i),           │
+│ Projections: pk, va,                   │
 │              sdb_inverted_index_score  │
 │ ~1 row                                 │
 ╰────────────────────────────────────────╯
@@ -381,9 +435,6 @@ INSERT INTO docs VALUES
     (6, 'red climbing rope',     'durable trail gear',       [80,20,0]::FLOAT[3], [8,2,0,0]::FLOAT[4]),
     (7, 'black cycling helmet',  'road sport equipment',     [0,80,20]::FLOAT[3], [0,8,2,0]::FLOAT[4]),
     (8, 'white golf gloves',     'course accessory',         [0,20,80]::FLOAT[3], [0,0,8,2]::FLOAT[4]);
-
-statement ok
-VACUUM (REFRESH_TABLE) docs;
 
 statement ok
 VACUUM (COMPACT_TABLE) docs;

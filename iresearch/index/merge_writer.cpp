@@ -24,6 +24,7 @@
 #include "merge_writer.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
@@ -41,6 +42,7 @@
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/hot_column_reader.hpp"
 #include "iresearch/formats/column/merge.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
@@ -50,12 +52,15 @@
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
+#include "iresearch/formats/piece_fields.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/directory_utils.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
@@ -748,16 +753,12 @@ struct MergedNormProvider final : public NormProvider {
   }
 };
 
-bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
+bool WriteFields(FieldSink& field_writer, const irs::FlushState& flush_state,
                  CompoundFieldIterator& field_itr,
                  const MergedNormIdMap& merged_norm_ids,
-                 const MergeWriter::FlushProgress& progress, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra,
                  uint64_t keyed_dicts, uint64_t terms) {
-  auto field_writer =
-    std::make_unique<term_dict::FieldWriter>(/*compaction=*/true);
-  field_writer->SetIdxWriter(idx);
-  field_writer->prepare(flush_state, keyed_dicts + extra.size(), terms);
+  field_writer.prepare(flush_state, keyed_dicts + extra.size(), terms);
 
   SDB_ASSERT(absl::c_is_sorted(
     extra, [](const BasicTermReader* lhs, const BasicTermReader* rhs) {
@@ -770,7 +771,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     };
   };
   const auto write_extra = [&](const BasicTermReader& reader) {
-    field_writer->write(StringLayout::kStrings, reader);
+    field_writer.write(StringLayout::kStrings, reader);
   };
   size_t ei = 0;
   const size_t en = extra.size();
@@ -793,8 +794,8 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     if (!IsTermMember(dict.member)) {
       if (auto terms = field_itr.iterator(); terms->next()) {
         SDB_ASSERT(terms->value() == kSlotTerm);
-        field_writer->WriteSlot(key.id, dict,
-                                *terms->postings(IndexFeatures::None));
+        field_writer.WriteSlot(key.id, dict,
+                               *terms->postings(IndexFeatures::None));
       }
       continue;
     }
@@ -810,7 +811,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     }
 
     field_itr.SetProperties(props);
-    field_writer->write(dict, field_itr);
+    field_writer.write(dict, field_itr);
   }
 
   while (ei < en) {
@@ -818,8 +819,7 @@ bool WriteFields(const irs::FlushState& flush_state, const SegmentMeta& meta,
     ++ei;
   }
 
-  field_writer->end();
-  field_writer.reset();
+  field_writer.end();
 
   return !field_itr.Aborted();
 }
@@ -836,10 +836,12 @@ bool ComputeDocMappingsAndFieldMeta(std::span<MergeWriter::ReaderCtx> readers,
     SDB_ASSERT(reader_ctx.reader);
     auto& reader = *reader_ctx.reader;
     const auto docs_count = reader.docs_count();
+    SDB_ENSURE(base_id - doc_limits::min() + reader.live_docs_count() <=
+                 doc_limits::kMaxDocs,
+               "a merge into one segment of more than ", doc_limits::kMaxDocs,
+               " documents");
     reader_ctx.remap.base_id = base_id;
     if (reader.live_docs_count() == docs_count) {
-      SDB_ASSERT(static_cast<uint64_t>(base_id) + docs_count <
-                 std::numeric_limits<doc_id_t>::max());
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
       reader_ctx.remap.id_map =
@@ -899,12 +901,11 @@ TextNeeds MergedTextNeeds(std::span<const MergeWriter::ReaderCtx> readers,
   return needs;
 }
 
-void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
-                   std::string_view segment_name,
+void OpenColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
                    std::unique_ptr<ColWriter>& col_writer,
                    const IndexFieldOptions* field_options,
                    HnswBases* hnsw_bases, MemoryBudget& budget) {
-  col_writer = std::make_unique<ColWriter>(dir, segment_name, db);
+  col_writer = std::make_unique<ColWriter>(db, tracker);
   col_writer->SetBudget(budget);
   col_writer->SetFieldOptions(field_options);
   col_writer->SetHnswBases(hnsw_bases);
@@ -951,17 +952,19 @@ void MergeWriter::Reserve() {
 auto MergeWriter::Flush(SegmentMeta& segment,
                         const FlushProgress& progress /*= {}*/,
                         const AnnBuildEnv* env /*= nullptr*/)
-  -> yaclib::Future<bool> {
+  -> yaclib::Future<std::shared_ptr<const FileTracker>> {
   bool result = false;
-  Finally segment_invalidator = [&result, &segment]() noexcept {
+  auto tracker =
+    std::make_shared<FileTracker>(_fs, _root, segment.name, 0, _released);
+  Finally segment_invalidator = [&]() noexcept {
     if (!result) [[unlikely]] {
-      segment.files.clear();
+      tracker->Remove();
+      segment.kinds = 0;
       static_cast<SegmentInfo&>(segment) = SegmentInfo{};
     }
   };
 
   const auto& progress_callback = progress ? progress : kProgressNoop;
-  TrackingDirectory track_dir{_dir};
 
   FieldMetaMapT field_meta_map;
   CompoundFieldIterator fields_itr{_readers.size(), progress_callback,
@@ -970,51 +973,49 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   if (!ComputeDocMappingsAndFieldMeta(_readers, segment, field_meta_map,
                                       fields_itr, index_features,
                                       _field_options, _budget)) {
-    co_return false;
+    co_return nullptr;
   }
 
   if (!progress_callback()) {
-    co_return false;
+    co_return nullptr;
   }
 
   const auto sources = MakeSources(_readers, _budget);
   std::unique_ptr<ColWriter> col_writer;
-  OpenColWriter(_db, track_dir, segment.name, col_writer, _field_options,
-                _hnsw_bases, _budget);
+  OpenColWriter(_db, *tracker, col_writer, _field_options, _hnsw_bases,
+                _budget);
   SDB_ASSERT(col_writer);
 
   const auto merged_norm_ids =
     MergeNorms(*col_writer, sources, field_meta_map, _field_options);
 
   if (!progress_callback()) {
-    co_return false;
+    co_return nullptr;
   }
 
   if (!sources.empty() &&
       !MergeInto(sources, *col_writer, _field_options, progress_callback)) {
-    co_return false;
+    co_return nullptr;
   }
 
   if (!progress_callback()) {
-    co_return false;
+    co_return nullptr;
   }
 
-  std::unique_ptr<ColReader> col_reader;
   MergedNormProvider norm_provider;
-  IdxWriter idx{track_dir, segment.name};
+  IdxWriter idx{*tracker};
 
   col_writer->SetIdxWriter(idx);
   if (!col_writer->Commit(segment.docs_count, progress_callback)) {
-    co_return false;
+    co_return nullptr;
   }
   if (!co_await col_writer->ComputeAnn(env, progress_callback)) {
-    co_return false;
+    co_return nullptr;
   }
   const auto cluster_terms = col_writer->AnnBound(segment.docs_count).terms;
   auto ann_writers = col_writer->TakeAnnWriters();
+  auto col_reader = col_writer->TakeReader();
   if (segment.docs_count != 0) {
-    col_reader = std::make_unique<ColReader>(track_dir, segment.name, _db,
-                                             IOAdvice::SEQUENTIAL);
     norm_provider.reader = col_reader.get();
   }
   std::optional<ReadContext> ivf_ctx;
@@ -1025,24 +1026,29 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
 
   if (!progress_callback()) {
-    co_return false;
+    co_return nullptr;
   }
 
   const FlushState state{
-    .dir = &track_dir,
+    .tracker = *tracker,
     .norms = norm_provider.reader != nullptr ? &norm_provider : nullptr,
-    .name = segment.name,
     .scorer = _scorer,
     .doc_count = segment.docs_count,
     .index_features = index_features,
     .budget = _budget,
   };
-  if (segment.docs_count != 0 &&
-      !WriteFields(
-        state, segment, fields_itr, merged_norm_ids, progress_callback, idx,
-        cluster_readers, KeyedDicts(field_meta_map),
-        MergedTextNeeds(_readers, _field_options).terms + cluster_terms)) {
-    co_return false;
+  PostingsInputs postings;
+  if (segment.docs_count != 0) {
+    auto field_writer =
+      std::make_unique<term_dict::FieldWriter>(/*compaction=*/true);
+    field_writer->SetIdxWriter(idx);
+    if (!WriteFields(
+          *field_writer, state, fields_itr, merged_norm_ids, cluster_readers,
+          KeyedDicts(field_meta_map),
+          MergedTextNeeds(_readers, _field_options).terms + cluster_terms)) {
+      co_return nullptr;
+    }
+    postings = field_writer->TakePostings();
   }
 
   for (const auto& w : ann_writers) {
@@ -1051,19 +1057,89 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     }
   }
 
-  idx.Commit();
+  _inputs = {
+    .col = std::move(col_reader),
+    .idx = idx.Commit(_hnsw_bases),
+    .postings = std::move(postings),
+  };
 
   if (!progress_callback()) {
-    co_return false;
+    co_return nullptr;
   }
 
-  segment.files = track_dir.FlushTracked(segment.byte_size);
   if (segment.live_docs_count == 0) {
-    co_return false;
+    co_return nullptr;
   }
-  SDB_ASSERT(!segment.files.empty());
+  segment.byte_size = tracker->Bytes();
+  segment.kinds = tracker->Kinds();
+  SDB_ASSERT(segment.kinds != 0);
   result = true;
-  co_return true;
+  co_return tracker;
+}
+
+std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
+  SegmentMeta& segment, uint64_t id) {
+  FileTracker tracker{_fs, _root, segment.name};
+  const absl::Cleanup remove = [&] { tracker.Remove(); };
+  FieldMetaMapT field_meta_map;
+  CompoundFieldIterator fields_itr{_readers.size(), kProgressNoop,
+                                   _field_options};
+  IndexFeatures index_features{IndexFeatures::None};
+  if (!ComputeDocMappingsAndFieldMeta(_readers, segment, field_meta_map,
+                                      fields_itr, index_features,
+                                      _field_options, _budget) ||
+      segment.docs_count == 0) {
+    return nullptr;
+  }
+
+  const auto sources = MakeSources(_readers, _budget);
+  std::unique_ptr<ColWriter> col_writer;
+  OpenColWriter(_db, tracker, col_writer, _field_options, _hnsw_bases, _budget);
+  const auto merged_norm_ids =
+    MergeNorms(*col_writer, sources, field_meta_map, _field_options);
+  auto norms = col_writer->SealNorms(segment.docs_count);
+  duckdb::shared_ptr<duckdb::InputFile> col_file;
+  if (!norms.empty()) {
+    col_file = _fs.OpenInputFile(_fs.JoinPath(_root, FileName(segment.name)),
+                                 duckdb::MappedFileAccess::RANDOM);
+  }
+  auto columns = ConcatInMemory(_db, sources, _field_options);
+
+  auto fields = std::make_shared<PieceFields>();
+  PieceFieldWriter field_writer{*fields, /*compaction=*/true};
+  const FlushState state{
+    .tracker = tracker,
+    .doc_count = segment.docs_count,
+    .index_features = index_features,
+    .budget = _budget,
+  };
+  if (!WriteFields(field_writer, state, fields_itr, merged_norm_ids, {},
+                   KeyedDicts(field_meta_map),
+                   MergedTextNeeds(_readers, _field_options).terms)) {
+    return nullptr;
+  }
+  col_writer.reset();
+
+  segment.byte_size = tracker.Bytes() + (col_file ? col_file->GetSize() : 0);
+  for (const auto& column : columns) {
+    segment.byte_size += utils::downCast<HotColumnReader>(*column).Bytes();
+  }
+  segment.byte_size += fields->Bytes();
+  auto postings = field_writer.TakePostings();
+  fields->Open(
+    ReaderState{
+      .db = _db,
+      .fs = _fs,
+      .root = _root,
+      .meta = segment,
+      .postings = postings.doc ? &postings : nullptr,
+    },
+    field_writer.Features());
+  return SegmentReaderImpl::OpenPiece(
+    segment, id,
+    std::make_unique<ColReader>(_db, std::move(columns), std::move(col_file),
+                                std::move(norms)),
+    std::move(fields));
 }
 
 }  // namespace irs

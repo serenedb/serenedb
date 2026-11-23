@@ -91,7 +91,6 @@ def server(tmp_path: Path):
 def _counts(pg: psycopg.Connection) -> dict[str, int]:
     counts = {}
     for table in OTEL_TABLES:
-        pg.execute(f"VACUUM (REFRESH_TABLE) {table}")
         counts[table] = pg.execute(
             f"SELECT count(*) FROM {table}").fetchone()[0]
     return counts

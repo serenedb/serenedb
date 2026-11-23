@@ -1,0 +1,45 @@
+statement ok
+CREATE TABLE ppa_rows (id INTEGER, label TEXT);
+
+
+connection executor
+statement ok
+PREPARE ppa_insert AS INSERT INTO ppa_rows VALUES (1, 'one');
+
+
+connection executor
+statement ok
+SET sdb_faults = 'session_transaction_before_snapshot';
+
+
+connection executor
+statement async error
+EXECUTE ppa_insert;
+----
+db error: ERROR: table "ppa_rows" has 1 columns but 2 values were supplied
+
+
+connection other
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-session_transaction_before_snapshot:parked';
+
+
+connection other
+statement ok
+ALTER TABLE ppa_rows DROP COLUMN label;
+
+
+connection other
+statement ok
+SET sdb_faults = 'session_transaction_before_snapshot:release';
+
+
+connection executor
+wait
+
+
+query
+SELECT count(*) AS n FROM ppa_rows;
+----
+n
+0

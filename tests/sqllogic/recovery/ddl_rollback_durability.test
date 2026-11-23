@@ -304,7 +304,7 @@ COMMENT ON COLUMN rbd_keep_v.vb IS 'changed col';
 
 
 statement ok
-ALTER INDEX rbd_keep_ii SET (segment_docs_max = 4242);
+ALTER TABLE rbd_keep_t SET (compaction_interval = 4242);
 
 
 statement ok
@@ -359,7 +359,7 @@ COMMENT ON COLUMN rbd_move_v.vb IS 'committed col';
 
 
 statement ok
-ALTER INDEX rbd_move_ii SET (segment_docs_max = 777);
+ALTER TABLE rbd_move_t SET (compaction_interval = 777);
 
 
 statement ok
@@ -533,7 +533,7 @@ colacl
 
 connection after_crash
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'rbd_keep_v';
+SELECT comment FROM sdb_views() WHERE view_name = 'rbd_keep_v';
 ----
 comment
 orig
@@ -541,7 +541,7 @@ orig
 
 connection after_crash
 query
-SELECT comment FROM duckdb_columns()
+SELECT comment FROM sdb_columns()
 WHERE table_name = 'rbd_keep_v' AND column_name = 'vb';
 ----
 comment
@@ -550,12 +550,11 @@ orig col
 
 connection after_crash
 query
-SELECT regexp_extract(array_to_string(reloptions, ','),
-                      'segment_docs_max=[0-9]*') AS opt
-FROM pg_class WHERE relname = 'rbd_keep_ii';
+SELECT reloptions AS opt
+FROM pg_class WHERE relname = 'rbd_keep_t';
 ----
 opt
-segment_docs_max=0
+NULL
 
 
 connection after_crash
@@ -634,7 +633,7 @@ rbd_grantee=r/rbd_owner
 
 connection after_crash
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'rbd_move_v';
+SELECT comment FROM sdb_views() WHERE view_name = 'rbd_move_v';
 ----
 comment
 committed
@@ -642,7 +641,7 @@ committed
 
 connection after_crash
 query
-SELECT comment FROM duckdb_columns()
+SELECT comment FROM sdb_columns()
 WHERE table_name = 'rbd_move_v' AND column_name = 'vb';
 ----
 comment
@@ -651,12 +650,11 @@ committed col
 
 connection after_crash
 query
-SELECT regexp_extract(array_to_string(reloptions, ','),
-                      'segment_docs_max=[0-9]*') AS opt
-FROM pg_class WHERE relname = 'rbd_move_ii';
+SELECT list_contains(reloptions, 'compaction_interval=777') AS opt
+FROM pg_class WHERE relname = 'rbd_move_t';
 ----
 opt
-segment_docs_max=777
+t
 
 
 connection after_crash

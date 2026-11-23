@@ -179,7 +179,7 @@ EOF
 
 ### Refresh and request bodies
 
-- `?refresh=true`, `?refresh=wait_for` or a bare `?refresh` on a write refreshes the index before the response returns, so the new documents are searchable at once. `POST /<index>/_refresh` refreshes one index and `POST /_refresh` all of them. See [Visibility](#visibility).
+- `?refresh=true`, `?refresh=wait_for` or a bare `?refresh` on a write, `POST /<index>/_refresh` and `POST /_refresh` are accepted and change nothing: a document is searchable as soon as its write returns. See [Visibility](#visibility).
 - A request body is at most 100 MiB, Elasticsearch's default `http.max_content_length`. A larger one gets `413`. A listener that also serves other APIs (`?api=es&api=otel`) applies the largest of their limits to every request.
 - A request body can be compressed. A body sent with `Content-Encoding` is decompressed before the request reaches the API; see [HTTP Compression](../configuration/http_compression.md#compressed-request-bodies) for the codings and limits.
 
@@ -249,11 +249,11 @@ curl -s -u postgres: http://127.0.0.1:9200/articles/_search \
   ...
   "hits": {
     "total": {"value": 2, "relation": "eq"},
-    "max_score": 0.22689829766750336,
+    "max_score": 0.2268983,
     "hits": [
-      {"_index": "articles", "_id": "2", "_score": 0.22689829766750336,
+      {"_index": "articles", "_id": "2", "_score": 0.2268983,
        "_source": {"title": "Search with BM25 ranking", "tag": "search", "views": 300, "posted": "2026-09-02T11:00:00Z"}},
-      {"_index": "articles", "_id": "3", "_score": 0.1912805140018463,
+      {"_index": "articles", "_id": "3", "_score": 0.19128051,
        "_source": {"title": "Hybrid search in one SQL query", "tag": "search", "views": 80, "posted": "2026-09-10T09:30:00Z", "draft": true}}
     ]
   }
@@ -270,10 +270,11 @@ curl -s -u postgres: http://127.0.0.1:9200/articles/_search \
 | `_source` | `true` or `false` |
 | `aggs`, `aggregations` | see [Aggregations](#aggregations) |
 | `track_total_hits` | accepted and ignored, since totals are always exact |
+| `explain` | `true` or `false`; see [Explaining scores](#explaining-scores) |
 
 Any other key fails with `400 illegal_argument_exception`, for example `highlight`, `search_after`, `fields` or `collapse`.
 
-In the URL, `size` and `from` apply unless the body sets them, and `rest_total_hits_as_int=true` reports `hits.total` as a plain number. Every other URL parameter is ignored, `q` and `sort` included: `/articles/_search?q=title:wire` returns every document.
+In the URL, `size` and `from` apply unless the body sets them, `explain=true` explains each hit unless the body sets `explain`, and `rest_total_hits_as_int=true` reports `hits.total` as a plain number. Every other URL parameter is ignored, `q` and `sort` included: `/articles/_search?q=title:wire` returns every document.
 
 `_count` accepts only `query` in its body.
 
@@ -329,6 +330,19 @@ curl -s -u postgres: http://127.0.0.1:9200/articles/_search \
 - A query with a full-text clause and no `sort` is ranked by [BM25](../sql/indexes/inverted/ranking.md): hits come in score order, `_score` is the BM25 score and `max_score` the highest one.
 - Without a full-text clause, every hit scores `1.0`.
 - With a `sort`, `_score` and `max_score` are `null`.
+
+### Explaining scores
+
+With `"explain": true`, each hit carries an `_explanation`: how its BM25 score was computed, clause by clause, in Elasticsearch's layout of `value`, `description` and `details`, as [`ts_explain_json`](../sql/functions/search/scoring.md#ts_explain) returns it. Its `value` equals the hit's `_score`. A query without a full-text clause explains the constant `1.0`, and a query with a `sort` still explains the BM25 score its hits would have. A scroll search cannot have `explain`.
+
+`GET` or `POST` on `/<index>/_explain/<id>` explains one document for the `query` in the body, the only key it accepts:
+
+```bash
+curl -s -u postgres: http://127.0.0.1:9200/articles/_explain/2 \
+  -H 'Content-Type: application/json' -d '{"query": {"match": {"title": "search"}}}'
+```
+
+The answer has `"matched": true` and the `explanation`, or `"matched": false` when the document does not match the query. A missing ID answers `404` with `"matched": false`, and a request without a `query` answers `400`.
 
 ### Sorting and paging
 
@@ -401,7 +415,7 @@ curl -s -u postgres: 'http://127.0.0.1:9200/articles/_search?scroll=1m&size=2' \
 
 The response carries a `_scroll_id`. Post it to `/_search/scroll`, as `{"scroll_id": "..."}` in the body or `?scroll_id=` in the URL, to get the next page, and repeat until a page comes back without hits. `DELETE /_search/scroll` answers success.
 
-- A scroll search cannot have `sort` (other than `_doc`), `aggs` or `from`.
+- A scroll search cannot have `sort` (other than `_doc`), `aggs`, `from` or `explain`.
 - Pages come in `_id` order, with `_score` set to `null`.
 - The scroll ID carries the query and the last `_id` returned, not a snapshot. Documents written during the scroll can appear on later pages, `hits.total` is the count from the first page, the keep-alive is not enforced and an ID can be used again.
 
@@ -409,9 +423,7 @@ The Python client's `helpers.scan` pages through a scroll this way.
 
 ## Visibility
 
-- `GET /<index>/_doc/<id>`, `_source`, `_mget` and searches without a full-text clause read the table, so they see a document as soon as its write returns.
-- Searches with a full-text clause, with their counts and aggregations, read the `<index>$text` index. It picks up new documents when it refreshes, every second by default (its [`refresh_interval`](../sql/indexes/inverted/maintenance.md#visibility-and-the-refresh-model)).
-- `?refresh=true` on the write or `POST /<index>/_refresh` makes new documents visible to those searches at once.
+Every read sees a document as soon as its write returns: `GET /<index>/_doc/<id>`, `_source`, `_mget` and searches, full-text ones included, with their counts and aggregations.
 
 ```bash
 curl -s -u postgres: -X PUT http://127.0.0.1:9200/articles/_doc/4 \
@@ -419,14 +431,8 @@ curl -s -u postgres: -X PUT http://127.0.0.1:9200/articles/_doc/4 \
 
 curl -s -u postgres: http://127.0.0.1:9200/articles/_count \
   -H 'Content-Type: application/json' -d '{"query": {"match": {"title": "vector"}}}'
-# {"count":0,...}  the text index has not refreshed yet
-
-curl -s -u postgres: http://127.0.0.1:9200/articles/_count \
-  -H 'Content-Type: application/json' -d '{"query": {"term": {"tag": "search"}}}'
-# {"count":3,...}  document 4 is already in the table
+# {"count":1,...}
 ```
-
-After the next refresh, the first count returns `1`.
 
 ## Using a client library
 

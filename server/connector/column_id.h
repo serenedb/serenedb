@@ -27,9 +27,11 @@
 #include <duckdb/parser/column_definition.hpp>
 #include <duckdb/planner/column_binding.hpp>
 #include <iresearch/types.hpp>
+#include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace sdb::connector {
 
@@ -40,8 +42,8 @@ using ColumnId = irs::field_id;
 inline constexpr ColumnId kInvalidColumnId = irs::field_limits::invalid();
 
 inline ColumnId TableColumnId(const duckdb::ColumnDefinition& column) {
-  return column.CatalogOid() != 0 ? ColumnId{column.CatalogOid()}
-                                  : ColumnId{column.Oid()};
+  SDB_ASSERT(column.CatalogOid() != 0);
+  return ColumnId{column.CatalogOid()};
 }
 
 struct BindingKey {
@@ -50,6 +52,11 @@ struct BindingKey {
 
   auto operator<=>(const BindingKey&) const = default;
 };
+
+template<typename H>
+H AbslHashValue(H h, const BindingKey& key) {
+  return H::combine(std::move(h), key.table, key.column);
+}
 
 inline BindingKey MakeBindingKey(const duckdb::ColumnBinding& binding) {
   return {.table = binding.table_index.index,
@@ -76,12 +83,14 @@ inline constexpr ColumnId kInvertedIndexTermCountId =
   kFirstSyntheticColumnId + 6;
 inline constexpr ColumnId kInvertedIndexTermScoreId =
   kFirstSyntheticColumnId + 7;
+inline constexpr ColumnId kInvertedIndexExplainId = kFirstSyntheticColumnId + 8;
 inline constexpr ColumnId kFirstIndexFieldId = kFirstSyntheticColumnId + 0x100;
 
 // The SQL-visible names of those synthetic columns. The score is a whole
 // column name; the rest are prefixes a column name is appended to after a '$',
 // because one scan can expose the same kind for several indexed columns.
 inline constexpr std::string_view kScoreName = "sdb_inverted_index_score";
+inline constexpr std::string_view kExplainName = "sdb_inverted_index_explain";
 inline constexpr std::string_view kOffsetsPrefix =
   "sdb_inverted_index_offsets$";
 inline constexpr std::string_view kTermName = "sdb_inverted_index_term$";

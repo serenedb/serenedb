@@ -292,9 +292,6 @@ INSERT INTO g6_t VALUES
         DATE '2024-06-15', TIMESTAMP '2024-06-15 12:00:00',
         'POINT(10 20)'::GEOMETRY('OGC:CRS84'));
 
-statement ok
-VACUUM (REFRESH_TABLE) g6_t;
-
 query
 SELECT count(*) FROM g6_idx;
 ----

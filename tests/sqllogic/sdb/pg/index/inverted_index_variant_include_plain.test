@@ -29,10 +29,6 @@ INSERT INTO variant_inc_plain VALUES
   (4, 'delta horse', '{"a": 42}'::json::variant);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) variant_inc_plain;
-
-
 query
 SELECT id, payload FROM variant_inc_plain_idx WHERE body @@ ts_phrase('alpha')
 ORDER BY id;

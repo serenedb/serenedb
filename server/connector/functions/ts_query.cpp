@@ -150,6 +150,18 @@ TSQueryRowView ComposeParts(const TSQueryRowView& inner,
                           "against an inverted-indexed column."));
 }
 
+[[noreturn]] bool ThrowingPredicateScoreCast(duckdb::Vector&, duckdb::Vector&,
+                                             duckdb::idx_t,
+                                             duckdb::CastParameters&) {
+  THROW_SQL_ERROR(
+    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+    ERR_MSG("::score(...) is only meaningful on a predicate the inverted "
+            "index answers."),
+    ERR_HINT("A predicate the index does not answer, such as IN (subquery), "
+             "is checked after the search and adds nothing to the score: "
+             "remove ::score from it."));
+}
+
 [[noreturn]] bool ThrowingMinMatchCast(duckdb::Vector&, duckdb::Vector&,
                                        duckdb::idx_t, duckdb::CastParameters&) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
@@ -389,6 +401,15 @@ duckdb::BoundCastInfo BindTSQueryToVarcharCast(
     return duckdb::BoundCastInfo(ThrowingScoreCast);
   }
   return duckdb::BoundCastInfo(TSQueryToVarcharCast);
+}
+
+duckdb::unique_ptr<duckdb::FunctionData> TSQueryBoostBind(
+  duckdb::BindScalarFunctionInput& input) {
+  const auto factor = input.TryGetConstant(1);
+  if (!factor || (!factor->IsNull() && factor->GetValue<double>() < 0.0)) {
+    input.GetBoundFunction().SetFallible();
+  }
+  return nullptr;
 }
 
 void TSQueryBoostFn(duckdb::DataChunk& args, duckdb::ExpressionState&,
@@ -749,6 +770,15 @@ void RegisterTSQueryBoolCasts(duckdb::ExtensionLoader& loader) {
       return {ThrowingMinMatchCast,
               duckdb::make_uniq<TSQueryCastData>(TSQueryParts{})};
     }
+    if (HasScoreModifier(source) || HasScoreModifier(target)) {
+      return duckdb::BoundCastInfo(ThrowingPredicateScoreCast);
+    }
+    if (HasTokenizerModifier(source) || HasTokenizerModifier(target)) {
+      return duckdb::BoundCastInfo(ThrowingTokenizeCast);
+    }
+    if (HasSlopModifier(source) || HasSlopModifier(target)) {
+      return duckdb::BoundCastInfo(ThrowingSlopCast);
+    }
     return duckdb::BoundCastInfo(+[](duckdb::Vector&, duckdb::Vector&,
                                      duckdb::idx_t,
                                      duckdb::CastParameters&) -> bool {
@@ -884,23 +914,28 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(set));
   }
 
-  // LEVENSHTEIN(term [, distance [, transpositions [, prefix]]]) -- raw
-  // fuzzy match. The optional `prefix` is a literal leading substring
-  // that must match exactly; only the suffix after `prefix` participates
-  // in edit-distance computation. The 1-arg form `ts_levenshtein('term')`
-  // picks the distance automatically from term length.
+  // LEVENSHTEIN(term [, distance [, transpositions [, prefix]]]
+  // [, transpositions := BOOLEAN] [, prefix := VARCHAR]
+  // [, starts_with := BOOLEAN]) -- raw fuzzy match. The optional `prefix` is
+  // a literal leading substring that must match exactly; only the suffix
+  // after `prefix` participates in edit-distance computation. The 1-arg form
+  // `ts_levenshtein('term')` picks the distance automatically from term
+  // length.
   {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{kTSQLevenshtein}};
+    const auto add = [&](duckdb::vector<duckdb::LogicalType> args) {
+      auto fn = TSQConstructor(std::move(args));
+      fn.GetSignature().AddKwargs("kwargs", duckdb::LogicalType::ANY);
+      set.AddFunction(std::move(fn));
+    };
     for (auto first_arg :
          {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
-      set.AddFunction(TSQConstructor({first_arg}));
-      set.AddFunction(
-        TSQConstructor({first_arg, duckdb::LogicalType::INTEGER}));
-      set.AddFunction(TSQConstructor({first_arg, duckdb::LogicalType::INTEGER,
-                                      duckdb::LogicalType::BOOLEAN}));
-      set.AddFunction(TSQConstructor({first_arg, duckdb::LogicalType::INTEGER,
-                                      duckdb::LogicalType::BOOLEAN,
-                                      duckdb::LogicalType::VARCHAR}));
+      add({first_arg});
+      add({first_arg, duckdb::LogicalType::INTEGER});
+      add({first_arg, duckdb::LogicalType::INTEGER,
+           duckdb::LogicalType::BOOLEAN});
+      add({first_arg, duckdb::LogicalType::INTEGER,
+           duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::VARCHAR});
     }
     loader.RegisterFunction(std::move(set));
   }
@@ -1103,10 +1138,10 @@ void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
     loader.RegisterFunction(std::move(fn));
   }
 
-  loader.RegisterFunction(
-    duckdb::ScalarFunction(duckdb::Identifier{kTSQueryBoost},
-                           {MakeTSQueryType(), duckdb::LogicalType::DOUBLE},
-                           MakeTSQueryType(), TSQueryBoostFn));
+  loader.RegisterFunction(duckdb::ScalarFunction(
+    duckdb::Identifier{kTSQueryBoost},
+    {MakeTSQueryType(), duckdb::LogicalType::DOUBLE}, MakeTSQueryType(),
+    TSQueryBoostFn, TSQueryBoostBind));
 
   // Phrase sequence `a ## b` (strictly adjacent), `a ## N ## b` (gap N),
   // `a ## [lo, hi] ## b` (interval).
@@ -1179,19 +1214,19 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
 
   {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{kLevenshteinMatches}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::INTEGER},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN,
-       duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
+    const auto add = [&](duckdb::vector<duckdb::LogicalType> args) {
+      duckdb::ScalarFunction fn(std::move(args), duckdb::LogicalType::BOOLEAN,
+                                SearchStubFn);
+      fn.GetSignature().AddKwargs("kwargs", duckdb::LogicalType::ANY);
+      set.AddFunction(std::move(fn));
+    };
+    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
+         duckdb::LogicalType::INTEGER});
+    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
+         duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN});
+    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
+         duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN,
+         duckdb::LogicalType::VARCHAR});
     loader.RegisterFunction(std::move(set));
   }
 

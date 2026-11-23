@@ -3,7 +3,7 @@ control substitution on
 # COPY FROM a file into a table that carries an inverted index. COPY drives a
 # bulk write path (optimistic data writer / ROW_GROUP_DATA in the WAL),
 # distinct from row-at-a-time INSERT, so this pins that COPY'd rows still feed
-# the inverted index sink: after a refresh they are searchable and INCLUDE
+# the inverted index sink: they are searchable and INCLUDE
 # columns round-trip. A 4000-row COPY exercises the multi-vector bulk path.
 
 
@@ -35,10 +35,6 @@ CREATE INDEX cpi_idx ON cpi_t USING inverted(body cpi_dict) INCLUDE (n);
 
 statement count 3
 COPY cpi_t FROM '${__TEST_DIR__}/cpi.parquet' (FORMAT PARQUET);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cpi_t;
 
 
 # COPY'd rows are indexed: search finds them and the INCLUDE column round-trips.
@@ -73,10 +69,6 @@ CREATE INDEX cpi_big_idx ON cpi_big USING inverted(body cpi_dict) INCLUDE (n);
 
 statement count 4000
 COPY cpi_big FROM '${__TEST_DIR__}/cpi_big.parquet' (FORMAT PARQUET);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) cpi_big;
 
 
 query

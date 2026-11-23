@@ -48,7 +48,6 @@ class Snapshot:
         self.row_tokens = {}
         self.row_errors = {}
         self.database_count = 1
-        self.catalog_wal_bytes = None
         self.errors = []
 
     def is_generated(self, name):
@@ -75,14 +74,6 @@ def read_row_tokens(conn, keys):
         except Exception as exc:
             errors[key] = f"{type(exc).__name__}: {exc}"
     return out, errors
-
-
-def catalog_wal_size(datadir):
-    path = os.path.join(datadir, "engine_v1", "catalog.wal")
-    try:
-        return os.path.getsize(path)
-    except OSError:
-        return None
 
 
 def take(conn, run_tag, datadir=None, scan_artifacts=False):
@@ -143,31 +134,37 @@ def take(conn, run_tag, datadir=None, scan_artifacts=False):
     if datadir:
         # Artifact reclamation is deferred to a background pool after the commit
         # that decided the drop, so mid-run a just-dropped index legitimately
-        # still has its directory. Boot's orphan sweep is the real contract, so
+        # still has its files. Boot's orphan sweep is the real contract, so
         # this only runs where that contract applies: after a restart.
         if scan_artifacts:
-            snap.orphan_files = scan_datadir(datadir, snap.all_oids)
-        snap.catalog_wal_bytes = catalog_wal_size(datadir)
+            try:
+                snap.orphan_files = scan_datadir(datadir, owned_files(conn))
+            except Exception as exc:
+                snap.errors.append(f"store scan failed: {exc}")
     return snap
 
 
-def scan_datadir(datadir, live_oids):
-    findings = []
-    engine = os.path.join(datadir, "engine_v1")
-    if not os.path.isdir(engine):
-        return findings
-    for database in os.listdir(engine):
-        path = os.path.join(engine, database)
-        if not database.isdigit() or not os.path.isdir(path):
-            continue
-        if int(database) not in live_oids:
-            findings.append(("engine_v1", database))
-            continue
-        for entry in os.listdir(path):
-            if (entry.isdigit() and os.path.isdir(os.path.join(path, entry))
-                    and int(entry) not in live_oids):
-                findings.append((os.path.join("engine_v1", database), entry))
-    return findings
+SEGMENT_FILE = re.compile(r"[0-9a-f]{16}\.")
+
+
+def owned_files(conn):
+    owned = 0
+    for (name,) in _rows(conn, "SELECT datname FROM pg_database"):
+        rows = _rows(conn, "SELECT coalesce(sum(value), 0) FROM "
+                     f'"{name}".pg_catalog.sdb_metrics WHERE metric = %s',
+                     ("num_files",))
+        owned += int(rows[0][0])
+    return owned
+
+
+def scan_datadir(datadir, owned):
+    store = os.path.join(datadir, "engine_v1", "store")
+    if not os.path.isdir(store):
+        return []
+    files = sum(1 for entry in os.listdir(store) if SEGMENT_FILE.match(entry))
+    if files == owned:
+        return []
+    return [(os.path.join("engine_v1", "store"), files - owned)]
 
 
 def observed_states(snap):

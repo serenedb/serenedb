@@ -25,7 +25,7 @@
 ABSL_FLAG(std::string, log_storage, "stdout",
           "Log destination at process start. Accepted values: 'stdout' "
           "(default; systemd/container log drivers capture it), 'memory' "
-          "(queryable via SELECT * FROM duckdb_logs()), or 'file' (uses "
+          "(queryable via SELECT * FROM sdb_logs()), or 'file' (uses "
           "--log_path). Override at runtime with "
           "`CALL enable_logging(storage='<value>', storage_path='<path>')`.");
 ABSL_FLAG(std::string, log_path, "",

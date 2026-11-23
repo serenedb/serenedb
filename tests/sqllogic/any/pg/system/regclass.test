@@ -170,7 +170,7 @@ t	f
 
 query
 SELECT to_regclass('regclass_temp') IS NOT NULL AS temp_found,
-       to_regclass('duckdb_tables') IS NULL AS duckdb_view_hidden
+       to_regclass('sdb_tables') IS NULL AS duckdb_view_hidden
 ----
 temp_found	duckdb_view_hidden
 t	t

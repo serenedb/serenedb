@@ -62,7 +62,7 @@ std::string AttachSereneDBFile(const std::string& path) {
 std::string TaggedWithLatestVersion(std::string_view database) {
   return absl::StrCat("SELECT tags::VARCHAR LIKE '%",
                       duckdb::StorageVersionInfo::GetStorageVersionString(
-                        duckdb::StorageVersion::SERENEDB_LATEST),
+                        duckdb::StorageVersion::SDB_LATEST),
                       "%' FROM duckdb_databases() WHERE database_name = '",
                       database, "'");
 }
@@ -155,7 +155,9 @@ duckdb::unique_ptr<duckdb::Catalog> AttachOwned(
   duckdb::optional_ptr<duckdb::StorageExtensionInfo>, duckdb::ClientContext&,
   duckdb::AttachedDatabase& db, const std::string&, duckdb::AttachInfo&,
   duckdb::AttachOptions& options) {
-  sdb::catalog::RequestSereneDBStorageVersion(options);
+  options.options["storage_version"] =
+    duckdb::Value{duckdb::StorageVersionInfo::GetStorageVersionString(
+      duckdb::StorageVersion::SDB_LATEST)};
   return duckdb::make_uniq<duckdb::DuckCatalog>(db);
 }
 
@@ -208,7 +210,7 @@ TEST_F(StorageVersionTest, SereneDBFileRoundTrips) {
 TEST_F(StorageVersionTest, DuckDBDatabaseRefusesSereneDBVersion) {
   duckdb::DuckDB db{nullptr};
   duckdb::Connection con{db};
-  for (const auto* version : {"serenedb_v1", "serenedb_latest"}) {
+  for (const auto* version : {"sdb_v1", "sdb_latest"}) {
     const auto error =
       Exec(con, absl::StrCat("ATTACH '", File("d.db"),
                              "' AS d (STORAGE_VERSION '", version, "')"));
@@ -230,9 +232,9 @@ TEST_F(StorageVersionTest, NewerSereneDBVersionIsRefused) {
   ASSERT_EQ(Exec(con, AttachSereneDBFile(path)), "");
   ASSERT_EQ(Exec(con, "CREATE TABLE f.t AS SELECT 1 AS i"), "");
   ASSERT_EQ(Exec(con, "DETACH f"), "");
-  SetStorageVersion(
-    path, static_cast<duckdb::StorageVersion>(
-            static_cast<uint64_t>(duckdb::SERENEDB_VERSION_UPPER) + 1));
+  SetStorageVersion(path,
+                    static_cast<duckdb::StorageVersion>(
+                      static_cast<uint64_t>(duckdb::SDB_VERSION_UPPER) + 1));
   const auto error = Exec(con, AttachSereneDBFile(path));
   EXPECT_NE(error.find("The file was created with a newer storage version"),
             std::string::npos)
@@ -392,14 +394,14 @@ TEST_F(StorageVersionTest, CheckpointWritesNoStaleBufferBytes) {
   constexpr std::array<Segments, 11> kCases{{
     {"uncompressed", "v2.0.0", kStrings},
     {"dict_fsst", "v2.0.0", kStrings},
-    {"dict_fsst", "serenedb_latest", kStrings},
+    {"dict_fsst", "sdb_latest", kStrings},
     {"zstd", "v2.0.0", kStrings},
     {"dictionary", "v1.2.0", kStrings},
     {"alp", "v2.0.0", kDoubles},
     {"alprd", "v2.0.0", kDoubles},
     {"bitpacking", "v2.0.0", kIntegers},
     {"rle", "v2.0.0", kIntegers},
-    {"rle", "serenedb_latest", kIntegers},
+    {"rle", "sdb_latest", kIntegers},
     {"roaring", "v2.0.0", kBooleans},
   }};
   constexpr auto kBlockStart = 3 * duckdb::Storage::FILE_HEADER_SIZE;
@@ -423,7 +425,7 @@ TEST_F(StorageVersionTest, CheckpointWritesNoStaleBufferBytes) {
       const auto& segments = kCases[i];
       const auto path = File(absl::StrCat(prefix, i, ".db"));
       const auto options =
-        segments.storage_version == "serenedb_latest"
+        segments.storage_version == "sdb_latest"
           ? std::string{"TYPE sdb_owned"}
           : absl::StrCat("STORAGE_VERSION '", segments.storage_version, "'");
       EXPECT_EQ(

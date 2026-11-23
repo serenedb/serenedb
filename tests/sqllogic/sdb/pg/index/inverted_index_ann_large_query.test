@@ -1,0 +1,33 @@
+statement ok
+CREATE TABLE ialq (pk INTEGER PRIMARY KEY, emb FLOAT[100000]);
+
+statement ok
+INSERT INTO ialq SELECT i, list_transform(range(100000), lambda x: (i * 10)::FLOAT)::FLOAT[100000]
+FROM range(3) t(i);
+
+statement ok
+CREATE INDEX ialq_idx ON ialq USING inverted(pk, emb hnsw (metric = 'l2', quant = 'none'));
+
+query
+EXPLAIN SELECT pk FROM ialq_idx
+  ORDER BY emb <-> list_transform(range(100000), lambda x: 11::FLOAT)::FLOAT[100000] LIMIT 1;
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: ialq_idx                        │
+│ Lookup: search                         │
+│ Score: l2_distance(emb, FLOAT[100000]) │
+│ Top: 1                                 │
+│ Projections: pk                        │
+│ ~3 rows                                │
+╰────────────────────────────────────────╯
+
+query
+SELECT pk FROM ialq_idx
+  ORDER BY emb <-> list_transform(range(100000), lambda x: 11::FLOAT)::FLOAT[100000] LIMIT 1;
+----
+pk
+1
+
+statement ok
+DROP TABLE ialq

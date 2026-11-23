@@ -26,7 +26,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | Feature                     | Support State | Details |
 |-----------------------------|---------------|---------|
 | pg_aggregate                | 🟢            | Stores information about aggregate functions. |
-| pg_am                       | 🟢            | Contains information about access methods. |
+| pg_am                       | 🟢            | Contains information about access methods: `heap` and `iresearch` for tables, `inverted` for indexes. User tables use `iresearch`, the system catalogs `heap`, and every index `inverted`. |
 | pg_amop                     | 🟡            | Stores information about operators associated with access methods. |
 | pg_amproc                   | 🟡            | Contains information about support procedures associated with access methods. |
 | pg_attrdef                  | 🟢            | Stores column default values. |
@@ -46,7 +46,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_enum                     | 🟢            | Contains information about enum types. |
 | pg_event_trigger            | 🟡            | Stores information about event triggers. |
 | pg_extension                | 🟡            | Contains information about installed extensions. |
-| pg_foreign_data_wrapper     | 🟢            | Lists the foreign-data wrappers [`CREATE SERVER`](../sql/statements/create_server/index.md) accepts: `clickhouse_fdw`, `iceberg_fdw` and `postgres_fdw`. Every role may use them, so each grants `USAGE` to `PUBLIC`. |
+| pg_foreign_data_wrapper     | 🟢            | Lists the foreign-data wrappers [`CREATE SERVER`](../sql/statements/create_server/index.md) accepts: `clickhouse_fdw`, `duckdb_fdw`, `iceberg_fdw`, `postgres_fdw` and `serenedb_fdw`. Every role may use them, so each grants `USAGE` to `PUBLIC`. |
 | pg_foreign_server           | 🟢            | Contains information about foreign servers created with [`CREATE SERVER`](../sql/statements/create_server/index.md). **Superuser-only** -- its `srvoptions` carry credentials and are shown unredacted. `srvfdw` names the server's wrapper in `pg_foreign_data_wrapper`. |
 | pg_foreign_table            | 🟡            | Stores information about foreign tables. |
 | pg_index                    | 🟢            | Contains information about indexes. |
@@ -77,7 +77,7 @@ Built-in objects carry PostgreSQL's object identifiers: `'pg_class'::regclass` i
 | pg_statistic                | 🟡            | Stores planner statistics. |
 | pg_statistic_ext            | 🟡            | Stores extended statistics definitions. |
 | pg_statistic_ext_data       | 🟡            | Contains data for extended statistics. |
-| pg_subscription             | 🟢            | Stores logical replication subscriptions; see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md). |
+| pg_subscription             | 🟢            | Stores logical replication subscriptions; see [CREATE SUBSCRIPTION](../sql/statements/create_subscription/index.md). It lists the subscriptions of the current database, where PostgreSQL lists those of every database, and so do `pg_stat_subscription` and `pg_stat_subscription_stats`. |
 | pg_subscription_rel         | 🟢            | Tracks per-relation subscription state: `i` before the initial copy, `r` once replicated, with the copy's LSN. |
 | pg_tablespace               | 🟢            | Stores information about tablespaces. |
 | pg_transform                | 🟡            | Stores transforms between data types and languages. |
@@ -98,7 +98,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_available_extensions | 🟡 | Lists available extensions. |
 | pg_available_extension_versions | 🟡 | Shows available versions of extensions. |
 | pg_backend_memory_contexts | 🟡 | Displays memory contexts of the backend. |
-| pg_config | 🟡 | Provides access to compile-time configuration parameters. |
+| pg_config | 🟢 | How the server was built, readable by superusers as in PostgreSQL: `BINDIR`, `SYSCONFDIR`, `CONFIGURE` (the CMake options of the build), `CC`, `CXX`, `CFLAGS`, `CXXFLAGS`, `LDFLAGS`, `VERSION` (the PostgreSQL version SereneDB reports), `SDB_VERSION` and `SDB_COMMIT` (the commit the server was built from, ending in `-dirty` when the source differed from it). |
 | pg_cursors | 🟡 | Lists open cursors. |
 | pg_file_settings | 🟡 | Summarizes contents of configuration files. |
 | pg_group | 🟢 | Displays groups of database users. |
@@ -108,7 +108,7 @@ System views provide convenient access to system information. System tables ofte
 | pg_locks | 🟡 | Displays locks currently held or awaited. |
 | pg_matviews | 🟡 | Lists materialized views. |
 | pg_policies | 🟡 | Displays information about policies. |
-| pg_prepared_statements | 🟢 | Lists the session's prepared statements, from `PREPARE` and from the extended protocol; `generic_plans` and `custom_plans` are always NULL. |
+| pg_prepared_statements | 🟢 | Lists the session's prepared statements, from `PREPARE` and from the extended protocol. `generic_plans` counts the executions that ran the statement's existing plan and `custom_plans` those that planned it again, whatever the reason: a plan rebuilt after a change counts as custom, where PostgreSQL counts a rebuilt generic plan as generic, and the first executions run the plan made at `PREPARE`, where PostgreSQL plans the first five with their values. |
 | pg_prepared_xacts | 🟡 | Shows prepared transactions. |
 | pg_publication_tables | 🟡 | Displays publications and their associated tables. |
 | pg_replication_origin_status | 🟢 | Shows each replication origin, of a subscription or made with `pg_replication_origin_create`, with the remote position it has durably applied; `local_lsn` is always `0/0`. |
@@ -117,9 +117,10 @@ System views provide convenient access to system information. System tables ofte
 | pg_rules | 🟡 | Shows information about rules. |
 | pg_seclabels | 🟡 | Displays security labels. |
 | pg_sequences | 🟢 | Lists sequences. |
-| pg_settings | 🟢 | Lists SereneDB and DuckDB settings and the [PostgreSQL settings SereneDB accepts](../configuration/overview.md), each with SereneDB's own value, with PostgreSQL's columns. A lookup by `name` reads only that setting. |
+| pg_settings | 🟢 | Lists SereneDB's settings and the [PostgreSQL settings it accepts](../configuration/overview.md), each with SereneDB's own value, with PostgreSQL's columns. A lookup by `name` reads only that setting. |
 | pg_shadow | 🟢 | Displays database users. |
 | pg_shmem_allocations | 🟡 | Shows shared memory allocations. |
+| pg_stat_activity | 🟡 | Shows one row per session. `state` (`active`, `idle`, `idle in transaction` or `idle in transaction (aborted)`), `backend_start`, `xact_start`, `query_start` (the last statement's start while idle), `state_change` and `query` follow PostgreSQL. `application_name`, the client's address, host name and port, the wait events, `backend_xid`, `backend_xmin`, `leader_pid` and `query_id` are `NULL`, and `backend_type` is `client backend`. Another role's sessions show only their `pid`, database and user, with `query` `<insufficient privilege>`, unless you are a superuser or a member of that role. |
 | pg_stat_database | 🟢 | Shows one row per database, plus a row with `datid` `0` for shared objects. `numbackends`, `xact_commit`, `xact_rollback`, `sessions` and `session_time` count from the moment the server started; a restart sets them back to `0`. The other counters are always `0` and `stats_reset` is `NULL`. |
 | pg_stats | 🟡 | Provides planner statistics. |
 | pg_stats_ext | 🟡 | Displays extended planner statistics. |

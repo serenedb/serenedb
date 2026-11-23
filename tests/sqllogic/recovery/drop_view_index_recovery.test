@@ -1,8 +1,8 @@
 control substitution on
 
 # DROP VIEW cascades to its view-backed inverted indexes (AutoDrop, like a
-# table's indexes on DROP TABLE): the index definition and its iresearch
-# directory are reclaimed, and a restart must neither resurrect the index
+# table's indexes on DROP TABLE): the index definition and its index files
+# are reclaimed, and a restart must neither resurrect the index
 # nor collide when the same names are recreated.
 
 statement count 4
@@ -34,11 +34,6 @@ SELECT count(*) FROM drop_view_idx WHERE body @@ ts_phrase('vedernikoff');
 ----
 count
 1
-
-statement ok
-CREATE TABLE drop_view_oids AS
-SELECT (SELECT oid FROM pg_database WHERE datname = current_database()) AS db, index_oid AS idx
-FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'drop_view_idx';
 
 statement ok
 DROP VIEW drop_view_v;
@@ -73,8 +68,8 @@ count
 
 connection after_drop
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/**'), drop_view_oids
-WHERE file LIKE '%/engine_v1/' || db || '/' || idx || '/%';
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
+       - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files') AS leftover;
 ----
 leftover
 0

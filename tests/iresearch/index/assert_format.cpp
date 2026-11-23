@@ -26,12 +26,13 @@
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <iostream>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/directory_reader_impl.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
@@ -42,15 +43,14 @@
 #include <iresearch/search/lead/make.hpp>
 #include <iresearch/search/queries/term_state.hpp>
 #include <iresearch/search/scorers/tfidf.hpp>
-#include <iresearch/store/data_output.hpp>
 #include <iresearch/utils/bit_utils.hpp>
-#include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <unordered_set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "postings_cursor.hpp"
+#include "test_index_writer.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {
@@ -169,9 +169,9 @@ void IndexSegment::compute_features() {}
 
 void IndexSegment::insert_sorted(const Ifield* f) {
   if (f) {
-    _buf.clear();
-    irs::BytesOutput out{_buf};
+    duckdb::MemoryStream out;
     if (f->Write(out)) {
+      _buf = irs::bytes_view{out.GetData(), out.GetPosition()};
       _sort.emplace_back(std::move(_buf), doc(), _empty_count);
       _empty_count = 0;
     } else {
@@ -183,11 +183,11 @@ void IndexSegment::insert_sorted(const Ifield* f) {
 }
 
 void IndexSegment::insert_stored(const Ifield& f) {
-  _buf.clear();
-  irs::BytesOutput out{_buf};
+  duckdb::MemoryStream out;
   if (!f.Write(out)) {
     return;
   }
+  _buf = irs::bytes_view{out.GetData(), out.GetPosition()};
 
   const size_t id = _columns.size();
   EXPECT_LE(id, std::numeric_limits<irs::field_id>::max());
@@ -744,13 +744,13 @@ void AssertTermsSeek(const Field& expected_field,
   }
 }
 
-void AssertIndex(irs::IndexReader::ptr actual_index,
+void AssertIndex(const irs::IndexReader& actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
                  size_t skip, const irs::RegexpAcceptor* acceptor) {
-  ASSERT_EQ(expected_index.size(), actual_index->size());
+  ASSERT_EQ(expected_index.size(), actual_index.size());
   size_t i = 0;
   size_t segment_index = 0;
-  for (auto& actual_segment : *actual_index) {
+  for (auto& actual_segment : actual_index) {
     SCOPED_TRACE(absl::StrCat("segment_index=", segment_index++));
     if (skip) {
       ++i;
@@ -827,13 +827,11 @@ void AssertIndex(irs::IndexReader::ptr actual_index,
   }
 }
 
-void AssertIndex(const irs::Directory& dir, const index_t& expected_index,
+void AssertIndex(const IndexDir& dir, const index_t& expected_index,
                  irs::IndexFeatures features, size_t skip,
                  const irs::RegexpAcceptor* acceptor) {
-  auto reader = irs::DirectoryReader(dir, ::irs::tests::DefaultReaderOptions());
-  ASSERT_NE(nullptr, reader);
-
-  AssertIndex(reader.GetImpl(), expected_index, features, skip, acceptor);
+  AssertIndex(OpenReader(dir, ::irs::tests::DefaultReaderOptions()),
+              expected_index, features, skip, acceptor);
 }
 
 }  // namespace tests

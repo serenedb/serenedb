@@ -54,7 +54,7 @@ class ColFilterLeafTestCase : public tests::FilterTestCaseBase {
     return docs;
   }
 
-  void AddSequential(irs::OpenMode mode = irs::kOmCreate) {
+  void AddSequential(tests::OpenMode mode = tests::kOmCreate) {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen, mode);
@@ -94,7 +94,7 @@ TEST_P(ColFilterLeafTestCase, disjunction) {
 
 TEST_P(ColFilterLeafTestCase, per_segment) {
   AddSequential();
-  AddSequential(irs::kOmAppend);
+  AddSequential(tests::kOmAppend);
   auto rdr = open_reader();
   ASSERT_EQ(2, rdr.size());
   const auto filter = MakeFilter("name", "C");
@@ -102,7 +102,7 @@ TEST_P(ColFilterLeafTestCase, per_segment) {
   EXPECT_EQ(1, Members(*filter, rdr[0]).size());
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(col_filter_leaf_test, ColFilterLeafTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

@@ -78,7 +78,7 @@ a	b	c
 # Same entry: same oid, comment and grant still attached.
 query
 SELECT c.oid = b.oid AS same_oid, comment
-FROM pg_class c, corv_before b, duckdb_views() v
+FROM pg_class c, corv_before b, sdb_views() v
 WHERE c.relname = 'corv' AND v.view_name = 'corv' AND v.database_name = current_database();
 ----
 same_oid	comment
@@ -101,9 +101,9 @@ a
 statement error
 DROP VIEW corv;
 ----
-db error: ERROR: Cannot drop entry "corv" because there are entries that depend on it.
-view "corv_child" depends on view "corv".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view corv because other objects depend on it
+DETAIL: view corv_child depends on view corv
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # Functions: the replaced body keeps the entry and its comment.
@@ -127,7 +127,7 @@ same_oid	definitions
 t	1
 
 query
-SELECT DISTINCT comment FROM duckdb_functions()
+SELECT DISTINCT comment FROM sdb_functions()
 WHERE function_name = 'corv_f' AND database_name = current_database();
 ----
 comment

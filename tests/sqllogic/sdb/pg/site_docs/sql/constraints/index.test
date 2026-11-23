@@ -51,7 +51,8 @@ INSERT INTO students VALUES (1, 'Student 1');
 statement error
 INSERT INTO students VALUES (1, 'Student 2');
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "students_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 # DOCS_TEST: example_004
@@ -76,7 +77,8 @@ INSERT INTO students VALUES (1, 'Student 2');
 statement error
 INSERT INTO students VALUES (1, 'Student 1');
 ----
-db error: ERROR: Duplicate key "id: 1, name: Student 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "students_pkey"
+DETAIL: Key (id, name)=(1, Student 1) already exists.
 
 
 # DOCS_TEST: example_005
@@ -98,7 +100,8 @@ INSERT INTO students VALUES (1, 'Student 1', 'student1@uni.com');
 statement error
 INSERT INTO students VALUES (2, 'Student 2', 'student1@uni.com');
 ----
-db error: ERROR: Duplicate key "email: student1@uni.com" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "students_email_key"
+DETAIL: Key (email)=(student1@uni.com) already exists.
 
 
 # DOCS_TEST: example_006
@@ -130,7 +133,8 @@ INSERT INTO integers VALUES (1, 4, 5);
 statement error
 INSERT INTO integers VALUES (1, 2, 5);
 ----
-db error: ERROR: Duplicate key "i: 1, j: 2" violates unique constraint.
+db error: ERROR: duplicate key value violates unique constraint "integers_i_j_key"
+DETAIL: Key (i, j)=(1, 2) already exists.
 
 
 # DOCS_TEST: example_008
@@ -169,7 +173,8 @@ INSERT INTO exams VALUES (1, 1, 1, 10);
 statement error
 INSERT INTO exams VALUES (2, 1, 2, 10);
 ----
-db error: ERROR: Violates foreign key constraint because key "id: 2" does not exist in the referenced table
+db error: ERROR: insert or update on table "exams" violates foreign key constraint "exams_student_id_fkey"
+DETAIL: Key (student_id)=(2) is not present in table "students".
 
 
 # DOCS_TEST: example_009
@@ -209,7 +214,8 @@ INSERT INTO accounts VALUES (3, 'd');
 statement error
 COMMIT;
 ----
-db error: ERROR: Failed to commit: PRIMARY KEY or UNIQUE constraint violation: duplicate key "3"
+db error: ERROR: duplicate key value violates unique constraint "accounts_pkey"
+DETAIL: Key (id)=(3) already exists.
 
 
 query

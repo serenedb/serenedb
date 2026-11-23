@@ -7,15 +7,11 @@
 
 statement ok
 CREATE TABLE stbb (pk BIGINT PRIMARY KEY, x BIGINT, s TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
 INSERT INTO stbb SELECT i, i, 'r' || i FROM generate_series(0, 99999) t(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) stbb;
 
 
 # i = 0 plus every i whose decimal form starts with '1'.

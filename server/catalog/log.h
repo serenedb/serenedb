@@ -1,0 +1,228 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <absl/base/thread_annotations.h>
+#include <absl/container/btree_map.h>
+#include <absl/functional/function_ref.h>
+#include <absl/synchronization/mutex.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <cstring>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
+#include <iresearch/utils/group_commit.hpp>
+#include <memory>
+#include <span>
+#include <string>
+#include <vector>
+
+#include "server/utils/message_buffer.h"
+
+namespace sdb::catalog {
+
+using Lsn = uint64_t;
+
+class RecordBuffer final : public duckdb::WriteStream {
+ public:
+  static constexpr size_t kFrameBytes = 2 * sizeof(uint32_t);
+
+  RecordBuffer();
+  RecordBuffer(RecordBuffer&&) noexcept = default;
+  RecordBuffer& operator=(RecordBuffer&&) noexcept = default;
+  ~RecordBuffer() final;
+
+  [[nodiscard]] duckdb::data_ptr_t Alloc(duckdb::idx_t size) final {
+    return _writer->Alloc(size);
+  }
+
+  size_t PayloadBytes() const noexcept {
+    return _writer->Written() - kFrameBytes;
+  }
+
+  void SetFrame(std::span<const uint8_t, kFrameBytes> frame) noexcept {
+    std::memcpy(_frame, frame.data(), kFrameBytes);
+  }
+
+  message::SequenceView Framed() const noexcept { return _buffer->Written(); }
+
+  template<typename Visit>
+  void ForEachPayload(const Visit& visit) const {
+    size_t skip = kFrameBytes;
+    for (const auto part : Framed()) {
+      const auto taken = std::min(skip, part.size());
+      skip -= taken;
+      if (taken != part.size()) {
+        visit(std::span{static_cast<const uint8_t*>(part.data()) + taken,
+                        part.size() - taken});
+      }
+    }
+  }
+
+ protected:
+  void Overflow(duckdb::const_data_ptr_t data, duckdb::idx_t size) final {
+    _writer->Write({reinterpret_cast<const char*>(data), size});
+  }
+
+ private:
+  std::unique_ptr<message::Buffer> _buffer;
+  std::unique_ptr<message::Writer> _writer;
+  uint8_t* _frame = nullptr;
+};
+
+class Log {
+  struct Chunk;
+
+ public:
+  struct Range {
+    Lsn begin = 0;
+    Lsn end = 0;
+    uint64_t seq = 0;
+    std::shared_ptr<Chunk> chunk;
+  };
+
+  using Apply = absl::FunctionRef<void(std::span<uint8_t>)>;
+  using CatalogPart = absl::FunctionRef<std::span<uint8_t>(std::span<uint8_t>)>;
+  using Compact = absl::FunctionRef<std::vector<std::vector<uint8_t>>(
+    std::span<const std::span<uint8_t>>)>;
+
+  static constexpr uint64_t kChunkBytes = uint64_t{16} << 20;
+
+  static std::string ChunkName(uint64_t number);
+  static bool Exists(duckdb::FileSystem& fs, const std::string& dir);
+  static bool IsEarlierFormat(duckdb::FileSystem& fs, const std::string& dir);
+  static void Read(duckdb::FileSystem& fs, const std::string& dir, Apply apply);
+  static void Move(duckdb::FileSystem& fs, const std::string& from,
+                   const std::string& to);
+  static void Cut(duckdb::FileSystem& fs, const std::string& dir, Lsn end);
+  static bool Remove(duckdb::FileSystem& fs, const std::string& dir);
+
+  Log(duckdb::FileSystem& fs, std::string dir);
+
+  void Replay(Apply apply, CatalogPart part);
+
+  Range Reserve(size_t payload_size);
+  void Write(const Range& range, RecordBuffer& record);
+  void Sync(Lsn end);
+
+  Lsn Append(RecordBuffer record);
+
+  void WriteSnapshot(Lsn covered, std::span<const RecordBuffer> records,
+                     CatalogPart part, Compact compact);
+  void DropCovered();
+
+  Lsn Link(const std::string& dir);
+
+  Lsn Covered() const noexcept {
+    return _covered.load(std::memory_order_acquire);
+  }
+  uint64_t SnapshotBytes() const noexcept {
+    return _snapshot_bytes.load(std::memory_order_relaxed);
+  }
+  uint64_t HistoryBytes() const noexcept {
+    return _history_bytes.load(std::memory_order_relaxed);
+  }
+
+  Lsn End() const {
+    absl::MutexLock lock{&_mutex};
+    return _reserved;
+  }
+
+  Lsn Durable() const noexcept {
+    return _durable.load(std::memory_order_acquire);
+  }
+
+  Lsn Appended() const {
+    absl::MutexLock lock{&_mutex};
+    return _reserved - _replayed;
+  }
+
+  Lsn Oldest() const noexcept {
+    return _oldest.load(std::memory_order_relaxed);
+  }
+  Lsn NewestChunk() const noexcept {
+    return _newest.load(std::memory_order_relaxed);
+  }
+  uint64_t Size() const { return End() - Oldest(); }
+
+  bool HasNext() const noexcept {
+    return _has_next.load(std::memory_order_relaxed);
+  }
+  void PrepareNext();
+
+ private:
+  struct Chunk {
+    uint64_t number = 0;
+    Lsn begin = 0;
+    duckdb::unique_ptr<duckdb::FileHandle> file;
+  };
+
+  struct Written {
+    std::atomic<uint64_t> seq{0};
+    std::atomic<Lsn> end{0};
+  };
+
+  static constexpr uint64_t kWrittenRing = uint64_t{1} << 16;
+
+  std::string ChunkPath(uint64_t number) const;
+  duckdb::unique_ptr<duckdb::FileHandle> OpenChunk(uint64_t number,
+                                                   bool create) const;
+  void StartChunk() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
+  bool NotPreparing() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex) {
+    return !_preparing;
+  }
+  void SyncDirectory() const;
+  void AdvanceWritten() noexcept;
+  void SyncTo(Lsn target);
+
+  duckdb::FileSystem& _fs;
+  std::string _dir;
+  mutable absl::Mutex _mutex;
+  absl::btree_map<Lsn, std::shared_ptr<Chunk>> _chunks ABSL_GUARDED_BY(_mutex);
+  uint64_t _next_number ABSL_GUARDED_BY(_mutex) = 0;
+  Lsn _replayed ABSL_GUARDED_BY(_mutex) = 0;
+  Lsn _reserved ABSL_GUARDED_BY(_mutex) = 0;
+  uint64_t _reserved_seq ABSL_GUARDED_BY(_mutex) = 0;
+  std::unique_ptr<Written[]> _written_ring =
+    std::make_unique<Written[]>(kWrittenRing);
+  std::atomic<uint64_t> _written_seq{0};
+  std::atomic<Lsn> _written{0};
+  std::atomic<Lsn> _durable{0};
+  irs::GroupCommit<Lsn> _syncs;
+  uint64_t _directory_changes ABSL_GUARDED_BY(_mutex) = 0;
+  uint64_t _directory_synced ABSL_GUARDED_BY(_mutex) = 0;
+  duckdb::unique_ptr<duckdb::FileHandle> _next ABSL_GUARDED_BY(_mutex);
+  bool _preparing ABSL_GUARDED_BY(_mutex) = false;
+  std::atomic<bool> _has_next{false};
+  std::atomic<Lsn> _oldest{0};
+  std::atomic<Lsn> _newest{0};
+  std::atomic<Lsn> _covered{0};
+  std::atomic<uint64_t> _covered_number{0};
+  std::atomic<uint64_t> _snapshot_bytes{0};
+  std::atomic<uint64_t> _history_bytes{0};
+  absl::Mutex _files_mutex;
+  uint64_t _snapshot ABSL_GUARDED_BY(_files_mutex) = 0;
+  std::vector<std::vector<uint8_t>> _history ABSL_GUARDED_BY(_files_mutex);
+};
+
+}  // namespace sdb::catalog

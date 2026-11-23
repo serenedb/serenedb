@@ -10,7 +10,7 @@ CREATE DATABASE st_rcrash;
 
 statement ok
 CREATE TABLE st_rcrash.public.docs (id BIGINT, body TEXT)
-  WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 
 statement ok
@@ -57,14 +57,6 @@ SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM st_rcrash.public.cou
 ----
 ids
 1
-
-
-connection after_wal_finish
-query
-SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
-----
-n
-0
 
 
 connection after_wal_finish
@@ -160,7 +152,7 @@ SET sdb_faults = 'pause_checkpoint';
 
 connection after_header
 statement ok
-SET debug_checkpoint_abort = 'before_moving_checkpoint_wal';
+SET debug_checkpoint_abort = 'before_truncate';
 
 
 connection checkpointer
@@ -218,14 +210,6 @@ SELECT string_agg(id::VARCHAR, ',' ORDER BY id) AS ids FROM st_rcrash.public.cou
 ----
 ids
 1,2,3,4,5
-
-
-connection after_move
-query
-SELECT count(*) AS n FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db.wal.retained.*');
-----
-n
-0
 
 
 connection after_move

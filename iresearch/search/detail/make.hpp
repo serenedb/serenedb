@@ -24,6 +24,7 @@
 #include <type_traits>
 
 #include "iresearch/search/detail/phrase_match.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::detail {
 
@@ -42,13 +43,12 @@ struct NGramKind {
   static constexpr bool kConstant = false;
 };
 
-template<typename Query, typename F>
-auto ResolveNGram(const Query& query, F&& f) {
-  if (query.Every()) {
-    return f.template operator()<NGramMatch::All>();
+struct NGramMatchAxis : EnumAxis<NGramMatch> {
+  template<typename Query>
+  static NGramMatch Of(const Query& query) noexcept {
+    return query.Every() ? NGramMatch::All : NGramMatch::Threshold;
   }
-  return f.template operator()<NGramMatch::Threshold>();
-}
+};
 
 struct TokenPhraseKind {
   static constexpr bool kConstant = false;
@@ -75,33 +75,29 @@ template<typename Family, typename Ctx>
 inline constexpr bool kScoredPlan = ScoredPlan<Family, Ctx>();
 
 template<typename Family, typename Kind, typename Query>
-typename Family::Result MakeDocs(const Query& query,
-                                 const typename Family::DocsContext& ctx);
+struct DocsMaker {
+  static typename Family::Result Make(const Query& query,
+                                      const typename Family::DocsContext& ctx);
+};
 
 template<typename Family, typename Kind, typename Query>
-typename Family::Result MakeScored(const Query& query,
-                                   const typename Family::ScoredContext& ctx);
+struct ScoredMaker {
+  static typename Family::Result Make(
+    const Query& query, const typename Family::ScoredContext& ctx);
+};
 
 template<typename Family, typename Kind, typename Query, typename Ctx>
 typename Family::Result MakeKind(const Query& query, const Ctx& ctx) {
   if constexpr (!kScoredPlan<Family, Ctx>) {
-    return MakeDocs<Family, Kind>(query, ctx);
+    return DocsMaker<Family, Kind, Query>::Make(query, ctx);
   } else {
     if constexpr (!Kind::kConstant && requires { Family::DocsOf(ctx); }) {
       if (!query.Stats().stats) {
-        return MakeDocs<Family, Kind>(query, Family::DocsOf(ctx));
+        return DocsMaker<Family, Kind, Query>::Make(query, Family::DocsOf(ctx));
       }
     }
-    return MakeScored<Family, Kind>(query, ctx);
+    return ScoredMaker<Family, Kind, Query>::Make(query, ctx);
   }
 }
 
 }  // namespace irs::detail
-
-#define IRS_MAKE_DOCS(Family, Kind, ...)                             \
-  template Family::Result MakeDocs<Family, Kind>(const __VA_ARGS__&, \
-                                                 const Family::DocsContext&)
-
-#define IRS_MAKE_SCORED(Family, Kind, ...)          \
-  template Family::Result MakeScored<Family, Kind>( \
-    const __VA_ARGS__&, const Family::ScoredContext&)

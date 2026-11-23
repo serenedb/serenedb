@@ -24,7 +24,6 @@
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/posting_leaf.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -36,23 +35,17 @@ class PostingLead : public PostingLeaf<InputType, kCursorShape> {
  public:
   PostingLead() = default;
 
-  PostingLead(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingLead(const PostingMeta& meta, const duckdb::InputFile& doc_in,
               IndexFeatures layout, bool bounds) {
     Prepare(meta, doc_in, layout, bounds);
   }
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                IndexFeatures layout, bool bounds) {
-    SDB_ASSERT(meta.docs_count != 0);
     this->SetFreqLen(FeaturesHaveFreq(layout));
-
-    if (meta.docs_count == 1) {
+    if (!this->OpenList(meta, doc_in, layout, bounds)) {
       this->SetSingle(meta);
-      return;
     }
-
-    this->OpenInput(meta, doc_in, bounds);
-    this->ArmWalk(meta, layout, bounds);
   }
 
   IRS_FORCE_INLINE std::span<const doc_id_t> Leaf() const noexcept {

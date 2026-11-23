@@ -74,6 +74,9 @@ void RunSearchTableBackfill(duckdb::ClientContext& context,
                             const SearchBackfillTarget& target,
                             pg::ProgressMetrics* progress);
 
+void RewriteOwnRows(duckdb::ClientContext& context,
+                    const SearchBackfillTarget& target);
+
 uint64_t SearchBackfillGroupBytes(duckdb::ClientContext& context);
 
 }  // namespace sdb::connector

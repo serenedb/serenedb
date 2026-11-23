@@ -1,0 +1,97 @@
+control substitution on
+
+
+statement ok
+CREATE DATABASE ccdo_db;
+
+
+statement ok
+CREATE TABLE ccdo_db.public.t (id INT, body TEXT);
+
+
+statement ok
+INSERT INTO ccdo_db.public.t VALUES (1, 'one'), (2, 'two');
+
+
+statement ok
+CREATE TABLE ccdo_keep (id INT);
+
+
+statement ok
+INSERT INTO ccdo_keep VALUES (1), (2);
+
+
+statement ok
+CREATE TABLE ccdo_gone (id INT);
+
+
+statement ok
+INSERT INTO ccdo_gone VALUES (1);
+
+
+connection checkpointer
+statement ok
+SET sdb_faults = 'pause_cover_after_collect';
+
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+
+connection dropper
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_cover_after_collect:parked';
+
+
+connection dropper
+statement ok
+DROP DATABASE ccdo_db;
+
+
+connection dropper
+statement ok
+DROP TABLE ccdo_gone;
+
+
+connection dropper
+statement ok
+SET sdb_faults = 'pause_cover_after_collect:release';
+
+
+wait
+
+
+connection dropper
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection dropper
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM ccdo_keep ORDER BY id;
+----
+id
+1
+2
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_database WHERE datname = 'ccdo_db';
+----
+n
+0
+
+
+connection after_crash
+query
+SELECT count(*) AS n FROM pg_class WHERE relname = 'ccdo_gone';
+----
+n
+0

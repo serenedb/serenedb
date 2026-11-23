@@ -47,6 +47,9 @@ class ConstantScore final : public irs::ScorerBase<ConstantScore, void> {
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
 
+  void Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+               explain::Node& out) const final;
+
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::None;
   }
@@ -67,6 +70,10 @@ const ConstantScore& DefaultConstScore() noexcept;
 
 inline bool IsConstScoreSingleton(const Scorer* scorer) noexcept {
   return scorer == &ForceConstScore() || scorer == &DefaultConstScore();
+}
+
+inline bool IsConstantScore(const Scorer* scorer) noexcept {
+  return scorer && scorer->type() == Type<ConstantScore>::id();
 }
 
 inline bool NeedsTermStats(const Scorer& scorer) {

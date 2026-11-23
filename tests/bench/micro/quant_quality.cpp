@@ -30,10 +30,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <fstream>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/formats/ivf/quantizer.hpp>
-#include <iresearch/utils/bytes_output.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/query_memory.hpp>
 #include <limits>
@@ -638,12 +638,11 @@ int Main(int argc, char** argv) {
       std::printf("%-12s no EncodeInto\n", cfg.name.c_str());
       continue;
     }
-    bstring framed;
-    {
-      BytesOutput out{framed};
-      writer->Serialize(out);
-    }
-    const bstring blob = framed.substr(sizeof(uint64_t));
+    duckdb::MemoryStream framed;
+    writer->Serialize(framed);
+    const bstring blob{
+      irs::bytes_view{framed.GetData(), framed.GetPosition()}.substr(
+        sizeof(uint64_t))};
     auto stats = MakeQuantizerStats(cfg.quant, d, blob, metric, true);
 
     std::vector<std::vector<size_t>> hits(nq,

@@ -18,7 +18,9 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <string_view>
 
 #include "auth/role_closure.h"
@@ -37,7 +39,9 @@ constexpr SystemSqlColumn kSdbProgressColumns[] = {
   {"state", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"query", kText, 0, false, false, kCCollation, 0, SystemKey::None},
   {"backend_start_us", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"xact_start_us", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"query_start_us", kInt8, 0, false, false, 0, 0, SystemKey::None},
+  {"state_change_us", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"percent", kFloat8, 0, false, false, 0, 0, SystemKey::None},
   {"rows_processed", kInt8, 0, false, false, 0, 0, SystemKey::None},
   {"rows_total", kInt8, 0, false, false, 0, 0, SystemKey::None},
@@ -74,15 +78,36 @@ constexpr std::tuple kProgressBase{Col<"pid">(&ProgressSnapshot::pid),
                                    Col<"usename">(&ProgressSnapshot::user),
                                    Col<"datname">(&ProgressSnapshot::database)};
 
+std::string_view StateName(BackendState state) {
+  switch (state) {
+    case BackendState::Idle:
+      return "idle";
+    case BackendState::Active:
+      return "active";
+    case BackendState::IdleInTransaction:
+      return "idle in transaction";
+    case BackendState::IdleInTransactionAborted:
+      return "idle in transaction (aborted)";
+  }
+  return "";
+}
+
+std::optional<int64_t> MicrosOrNull(int64_t micros) {
+  return micros == 0 ? std::nullopt : std::optional<int64_t>{micros};
+}
+
 constexpr std::tuple kProgressSession{
-  Col<"state">([](const auto& s) {
-    return std::string_view{s.query_start_us != 0 ? "active" : "idle"};
-  }),
+  Col<"state">([](const auto& s) { return StateName(s.status.state); }),
   Col<"query">(&ProgressSnapshot::query),
-  Col<"backend_start_us">(&ProgressSnapshot::backend_start_us)};
+  Col<"backend_start_us">(&ProgressSnapshot::backend_start_us),
+  Col<"xact_start_us">(
+    [](const auto& s) { return MicrosOrNull(s.status.xact_start_us); }),
+  Col<"query_start_us">(
+    [](const auto& s) { return MicrosOrNull(s.status.query_start_us); }),
+  Col<"state_change_us">(
+    [](const auto& s) { return s.status.state_change_us; })};
 
 constexpr std::tuple kProgressActive{
-  Col<"query_start_us">(&ProgressSnapshot::query_start_us),
   Col<"rows_processed">(&ProgressSnapshot::rows_processed),
   Col<"rows_total">(&ProgressSnapshot::rows_total),
   Col<"tuples_processed">(&ProgressSnapshot::tuples_processed),
@@ -134,14 +159,14 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
     kProgressBase, kProgressSession, kProgressActive, kProgressCommand);
 
   void Row(const ProgressSnapshot& s) {
-    if (_closure && !_closure->is_superuser) {
+    if (!_closure->is_superuser) {
       const auto* role = _roles->FindByName(s.user);
       if (!role || !_closure->MemberOf(role->first)) {
         Emit<kHidden>(s);
         return;
       }
     }
-    if (s.query_start_us == 0) {
+    if (s.status.state != BackendState::Active) {
       Emit<kIdle>(s);
     } else if (static_cast<ProgressCommand>(s.command) ==
                ProgressCommand::None) {
@@ -155,7 +180,7 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
   std::shared_ptr<const auth::RoleClosure> _closure =
     auth::SessionClosure(Context());
   std::shared_ptr<const auth::RoleGraph> _roles =
-    _closure && !_closure->is_superuser ? auth::RolesOf(&Context()) : nullptr;
+    _closure->is_superuser ? nullptr : auth::RolesOf(&Context());
 };
 
 }  // namespace

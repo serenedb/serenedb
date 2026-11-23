@@ -46,25 +46,22 @@ inline constexpr duckdb::idx_t kMaxSystem = 262144;
 
 #include "pg/catalog/generated/catalog_oids.gen.inc"
 
-inline constexpr duckdb::idx_t kClusterCatalog = kMinSystem + 1;
-
-inline constexpr duckdb::idx_t kPgMainSchema = kMinSystem + 4;
-
 inline constexpr duckdb::idx_t kRootUser = kMinSystem;
 
 inline constexpr duckdb::idx_t kPgAmInverted = kMinSystem + 300;
 inline constexpr duckdb::idx_t kPgAmIResearch = kMinSystem + 301;
-inline constexpr duckdb::idx_t kPgAmSecondary = kMinSystem + 303;
 
 inline constexpr duckdb::idx_t kPgOpclassIvf = kMinSystem + 200;
 inline constexpr duckdb::idx_t kPgOpclassIncluded = kMinSystem + 201;
 inline constexpr duckdb::idx_t kPgOpclassHnsw = kMinSystem + 202;
 
-inline constexpr duckdb::idx_t kSdbSettingsTable = kMinSystem + 400;
+inline constexpr duckdb::idx_t kSdbFlagsTable = kMinSystem + 400;
 inline constexpr duckdb::idx_t kSdbMetricsTable = kMinSystem + 401;
 inline constexpr duckdb::idx_t kSdbProgressTable = kMinSystem + 402;
 inline constexpr duckdb::idx_t kPgStatProgressCreateTableAsView =
   kMinSystem + 403;
+inline constexpr duckdb::idx_t kSdbLicensesTable = kMinSystem + 404;
+inline constexpr duckdb::idx_t kSdbContributorsTable = kMinSystem + 405;
 
 struct SystemObject {
   duckdb::idx_t oid;
@@ -75,16 +72,13 @@ inline constexpr std::array kForeignDataWrappers{
   SystemObject{kMinSystem + 500, "clickhouse_fdw"},
   SystemObject{kMinSystem + 501, "iceberg_fdw"},
   SystemObject{kMinSystem + 502, "postgres_fdw"},
+  SystemObject{kMinSystem + 503, "duckdb_fdw"},
+  SystemObject{kMinSystem + 504, "serenedb_fdw"},
 };
 
 inline constexpr std::array kSystemNamespaces{
   SystemObject{kPgCatalogSchema, irs::StaticStrings::kPgCatalogSchema},
   SystemObject{kPgInformationSchema, irs::StaticStrings::kInformationSchema},
-};
-
-inline constexpr std::array kSystemTablespaces{
-  SystemObject{kPgDefaultTablespace, "pg_default"},
-  SystemObject{kPgGlobalTablespace, "pg_global"},
 };
 
 struct SystemLanguage {
@@ -111,7 +105,6 @@ inline constexpr std::array kSystemAccessMethods{
   SystemAccessMethod{kPgAmHeap, "heap", 't', kPgAmHeapHandler},
   SystemAccessMethod{kPgAmInverted, "inverted", 'i', kInvalidOid},
   SystemAccessMethod{kPgAmIResearch, "iresearch", 't', kInvalidOid},
-  SystemAccessMethod{kPgAmSecondary, "secondary", 'i', kInvalidOid},
 };
 
 template<typename T, size_t N>

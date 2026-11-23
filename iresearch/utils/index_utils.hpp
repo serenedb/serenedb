@@ -79,13 +79,11 @@ struct CompactionTier {
   // treat all smaller segments as equal for compaction selection
   size_t floor_segment_bytes = size_t(2) * (1 << 20);
   // filter out candidates with score less than min_score
-  double_t min_score = 0.;
+  double min_score = 0.;
+  double min_singleton_removals = 0.;
+  double max_largest_share = 1.;
 };
 
 CompactionPolicy MakePolicy(const CompactionTier& options);
-
-// Writes segment_meta to the supplied directory
-void FlushIndexSegment(Directory& dir, IndexSegment& segment,
-                       bool increment_version = true);
 
 }  // namespace irs::index_utils

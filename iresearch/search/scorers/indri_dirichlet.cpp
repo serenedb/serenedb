@@ -20,9 +20,13 @@
 
 #include "indri_dirichlet.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -30,71 +34,118 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
+#include "iresearch/search/scorers/lm_similarity.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
 namespace {
 
-template<ScoreMergeType MergeType, bool HasScale>
-IRS_FORCE_INLINE void IndriImpl(
-  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
-  const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t mu_p, score_t mu,
-  score_t const_boost) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
-    const score_t dl = TermCountToScore(norm[i]);
-    score_t r = std::log((tf + mu_p) / (dl + mu));
-    r *= const_boost;
-    Merge<MergeType>(res[i], r);
-  }
-}
-
-template<bool HasScale>
-struct IndriScore : public ScoreOperatorOf<IndriScore<HasScale>> {
-  IndriScore(score_t boost, score_t mu, const LMStats& stats,
-             const FreqBlockAttr* freq, const uint32_t* norm,
-             const score_t* scale) noexcept
-    : freq{freq},
-      norm{norm},
-      scale{scale},
-      boost{boost},
-      mu{mu},
-      mu_p{mu * stats.collection_prob} {}
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    IndriImpl<MergeType, HasScale>(res, n, freq->value, norm,
-                                   TryGetValue(scale), mu_p, mu, boost);
+struct IndriFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    return std::log((tf + mu_p) / (dl + mu)) * boost;
   }
 
-  const FreqBlockAttr* freq;
-  const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t boost;
   score_t mu;
   score_t mu_p;
 };
 
+IndriFormula IndriOf(score_t boost, score_t mu, score_t share) noexcept {
+  return {boost, mu, mu * share};
+}
+
+struct IndriTermsFormula {
+  template<ScoreMergeType MergeType, bool HasScale>
+  IRS_FORCE_INLINE void ScoreBlock(
+    score_t* IRS_RESTRICT res, scores_size_t n,
+    const uint32_t* IRS_RESTRICT freq, const uint32_t* IRS_RESTRICT norm,
+    [[maybe_unused]] const score_t* IRS_RESTRICT scale) const noexcept {
+    score_t tf[kScoreBlock];
+    score_t doc_inv[kScoreBlock];
+    score_t product[kScoreBlock];
+    for (scores_size_t begin = 0; begin < n; begin += kScoreBlock) {
+      const auto size = std::min<scores_size_t>(kScoreBlock, n - begin);
+      for (scores_size_t i = 0; i != size; ++i) {
+        tf[i] = ScaledFreq<HasScale>(freq, scale, begin + i);
+        doc_inv[i] = 1.f / (TermCountToScore(norm[begin + i]) + mu);
+        product[i] = 1.f;
+      }
+      for (const auto mu_p : mu_ps) {
+        for (scores_size_t i = 0; i != size; ++i) {
+          product[i] *= (tf[i] + mu_p) * doc_inv[i];
+        }
+      }
+      for (scores_size_t i = 0; i != size; ++i) {
+        Merge<MergeType>(res[begin + i],
+                         LogOf(product[i], tf[i], doc_inv[i]) * boost);
+      }
+    }
+  }
+
+  IRS_FORCE_INLINE score_t LogOf(score_t product, score_t tf,
+                                 score_t doc_inv) const noexcept {
+    if (product >= std::numeric_limits<score_t>::min() &&
+        product <= std::numeric_limits<score_t>::max()) [[likely]] {
+      return std::log(product);
+    }
+    return static_cast<score_t>(LogOfProductInChunks(
+      mu_ps.size(), [&](size_t i) { return (tf + mu_ps[i]) * doc_inv; }));
+  }
+
+  score_t boost;
+  score_t mu;
+  absl::InlinedVector<score_t, 4> mu_ps;
+};
+
+IndriTermsFormula IndriTermsOf(score_t boost, score_t mu,
+                               std::span<const score_t> shares) {
+  IndriTermsFormula formula{.boost = boost, .mu = mu};
+  formula.mu_ps.reserve(shares.size());
+  for (const auto share : shares) {
+    formula.mu_ps.push_back(mu * share);
+  }
+  return formula;
+}
+
 }  // namespace
 
 void IndriDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
-                             const TermCollector* term) const {
-  CollectLMStats(*stats_cast(stats_buf), field, term);
+                             const TermCollector* term,
+                             StatsArena& arena) const {
+  CollectShare(*stats_cast(stats_buf), field, term, arena);
 }
 
 ScoreFunction IndriDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   if (_mu <= 0.f) {
     return ScoreFunction::Default();
   }
-  return PrepareLMScorer<IndriScore>(ctx, *stats_cast(ctx.stats), _mu);
+  return PrepareShareScorer(
+    ctx, *stats_cast(ctx.stats),
+    [&](score_t share) { return IndriOf(ctx.boost, _mu, share); },
+    [&](std::span<const score_t> shares) {
+      return IndriTermsOf(ctx.boost, _mu, shares);
+    });
+}
+
+void IndriDirichlet::Explain(const ScoreContext& ctx,
+                             const explain::SlotStats* stats,
+                             explain::Node& out) const {
+  if (_mu <= 0.f) {
+    out.note = "mu is not positive, so the clause scores 0";
+    return;
+  }
+  explain::ExplainLanguageModel(
+    ctx, SharesOf(*stats_cast(ctx.stats)), stats, {.key = "mu", .value = _mu},
+    "boost * log((freq + mu * p) / (dl + mu))",
+    [&](score_t tf, score_t dl, score_t share) {
+      return IndriOf(ctx.boost, _mu, share)(tf, dl);
+    },
+    out);
 }
 
 std::string IndriDirichlet::ToString() const {

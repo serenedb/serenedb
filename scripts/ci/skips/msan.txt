@@ -27,6 +27,7 @@ duckdb:core:test/sql/outofcore/out_of_core_sort.test_slow	issue	temporary files 
 duckdb:core:test/sql/pragma/profiling/test_custom_profiling_memory_and_temp_dir.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/profiling/test_spilled_bytes_metric.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/buffer_manager_temp_dir.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:core:test/sql/storage/compression/zstd/zstd_giant_string.test_slow	memory	peaks at 16 GB RSS in dev, before msan shadows every byte, against the 3 GB a batch slot reserves per test; dev runs it
 duckdb:core:test/sql/storage/encryption/temp_files/*	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/evict_unpinned_without_temp_directory.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/storage/external_file_cache/external_file_cache_eviction_queue.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
@@ -53,13 +54,38 @@ duckdb:core:test/sql/window/test_custom_spooling.test_slow	issue	temporary files
 duckdb:core:test/sql/window/test_window_distinct.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/window/window_distinct_build_oom.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/sql/window/window_partition_paging.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:A block that keeps a copy is written once while the copies have room, otherwise destroyed	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:A client's buffer manager registers, loads and discards blocks through the database's	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:A destroyed buffer is loaded anew from outside, and a discarded block loses its buffer and its copy	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache benchmark: concurrent reads of blocks evicted to temporary files	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache benchmark: pins that evict while the buffer pool is full	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache blocks of in-memory files spill to temporary files and are never dropped	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache concurrent pins and evictions return the right bytes	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache fetches evicted blocks again when the temporary files have no room or the file is local	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache gives memory back to the buffer pool	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache keeps evicted blocks of remote files in temporary files and reads them back	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache keeps external_file_cache_min_memory of remote blocks while operator blocks can spill	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache keeps the end of a fetched file in a buffer of its own size and fetches it again once it left memory	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache pins of an in-memory file return the right bytes while it grows and spills	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache reads an in-memory block while an eviction writes it to a temporary file	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:External file cache reads an in-memory block while another reader loads it back from its temporary file	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:Instances sharing a temporary directory spill in-memory blocks to files of their own	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:Many pins of blocks that keep being unloaded wait for each other's loads	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:Memory files larger than the memory limit spill and read back	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:Pins of a block another pin is loading wait for that load	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:cpp:Pins of loaded blocks race with their eviction and reload	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Preserve input order when row ID hashes collide	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Test appender_allocator_flush_threshold	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Test buffer manager buffer re-use	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Test evicted_data not double-decremented for variable-sized blocks	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Test in-memory database initialization argument ""	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:cpp:Test in-memory database initialization argument ":memory:"	issue	temporary files hold buffer bytes nothing wrote (#1883)
+duckdb:httpfs:test/sql/copy/s3/hive_partitioned_write_s3.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:httpfs:test/sql/storage/encryption/temp_files/encrypted_out_of_core.test_slow	issue	temporary files hold buffer bytes nothing wrote (#1883)
+gtest:iresearch-tests:IndexInputTest.pins_outlive_evictions	issue	temporary files hold buffer bytes nothing wrote (#1883)
+gtest:iresearch-tests:IndexInputTest.reads_wait_for_an_eviction_writing_a_temporary_copy	issue	temporary files hold buffer bytes nothing wrote (#1883)
+gtest:iresearch-tests:IndexInputTest.reads_wait_for_another_reader_loading_a_spilled_block	issue	temporary files hold buffer bytes nothing wrote (#1883)
+recovery:recovery/external_file_cache_settings.test	issue	temporary files hold buffer bytes nothing wrote (#1883)
 duckdb:core:test/parquet/variant/variant_disabled_shredding_nested.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/copy/return_stats.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/function/variant/variant_array_length.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
@@ -74,6 +100,7 @@ duckdb:core:test/sql/storage/types/variant/test_all_types.test	issue	the VARIANT
 duckdb:core:test/sql/storage/types/variant/test_all_types_single_object.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/types/variant/test_all_types_single_table.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/types/variant/test_all_types_variant.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
+duckdb:iceberg:catalog	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:iceberg:test/sql/local/iceberg_scans/scan_plan_path.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:iceberg:test/sql/local/scan_tasks_execution.test	issue	the VARIANT sizing pass leaves blob bytes unwritten (#1356)
 duckdb:core:test/sql/storage/compression/alp/alp_tpcds.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
@@ -93,10 +120,12 @@ duckdb:core:test/sql/copy/parquet/writer/parquet_write_tpcds.test_slow	slow	take
 duckdb:core:test/sql/copy/partitioned/partitioned_write_tpch.test_slow	slow	takes 3 min under msan; dev runs it
 duckdb:core:test/sql/cte/recursive_cte_aoc2022.test_slow	slow	takes 4 min under msan; dev runs it
 duckdb:core:test/sql/cte/recursive_cte_research.test_slow	slow	takes 4 min under msan; dev runs it
+duckdb:core:test/sql/function/string/test_string_size_limit.test_slow	slow	takes 4 min and 80 GB under msan; dev runs it
 duckdb:core:test/sql/function/string/test_translate_large.test_slow	slow	takes 10 min under msan; dev runs it
 duckdb:core:test/sql/json/table/read_json_many_files.test_slow	slow	takes 4 min under msan; dev runs it
 duckdb:core:test/sql/json/test_json_struct_projection_pushdown.test_slow	slow	takes 5 min under msan; dev runs it
 duckdb:core:test/sql/merge/merge_into_tpch.test_slow	slow	takes 5 min under msan; dev runs it
+duckdb:core:test/sql/overflow/deep_plan_passes.test	slow	no result after 27 min under msan, whose 64 MB stacks let it plan 4700 joins; dev runs it
 duckdb:core:test/sql/storage/compression/alp/alp_tpch.test_slow	slow	takes 7 min under msan; dev runs it
 duckdb:core:test/sql/storage/compression/alprd/alprd_tpch.test_slow	slow	takes 7 min under msan; dev runs it
 duckdb:core:test/sql/storage/compression/bitpacking/bitpacking_compression_ratio.test_slow	slow	takes 4 min under msan; dev runs it
@@ -126,33 +155,33 @@ gtest:iresearch-tests:Families/TokenizerFuzzLoad.ManyValues/nearest_neighbors_1	
 gtest:iresearch-tests:Families/TokenizerInversionLoad.ManyDocuments/nearest_neighbors	slow	takes 4 min under msan; dev runs it
 gtest:iresearch-tests:Families/TokenizerInversionLoad.ManyDocuments/ngram	slow	takes 5 min under msan; dev runs it
 gtest:iresearch-tests:Families/TokenizerInversionLoad.ManyDocuments/path_hierarchy	slow	takes 3 min under msan; dev runs it
-gtest:iresearch-tests:Format10Test/Format10TestCase.postings_seek/fs	slow	takes 9 min under msan; dev runs it
+gtest:iresearch-tests:Format10Test/Format10TestCase.postings_seek/local	slow	takes 15 min under msan; dev runs it
 gtest:iresearch-tests:Format10Test/Format10TestCase.postings_seek/memory	slow	takes 9 min under msan; dev runs it
-gtest:iresearch-tests:Format10Test/Format10TestCase.postings_seek/mmap	slow	takes 8 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs0/fs	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:Format10Test/Format10TestCase.postings_seek/sim	slow	takes 15 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs0/local	slow	takes 15 min under msan; dev runs it
 gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs0/memory	slow	takes 7 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs0/mmap	slow	takes 7 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/fs	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs0/sim	slow	takes 15 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/local	slow	takes 15 min under msan; dev runs it
 gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/memory	slow	takes 6 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/mmap	slow	takes 7 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs2/fs	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/sim	slow	takes 15 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs2/local	slow	takes 15 min under msan; dev runs it
 gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs2/memory	slow	takes 6 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs2/mmap	slow	takes 7 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs3/fs	slow	takes 7 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs2/sim	slow	takes 15 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs3/local	slow	takes 15 min under msan; dev runs it
 gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs3/memory	slow	takes 8 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs3/mmap	slow	takes 6 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos0/fs	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs3/sim	slow	takes 15 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos0/local	slow	takes 12 min under msan; dev runs it
 gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos0/memory	slow	takes 4 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos0/mmap	slow	takes 5 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos1/fs	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos0/sim	slow	takes 11 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos1/local	slow	takes 11 min under msan; dev runs it
 gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos1/memory	slow	takes 5 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos1/mmap	slow	takes 5 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos2/fs	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos1/sim	slow	takes 11 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos2/local	slow	takes 11 min under msan; dev runs it
 gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos2/memory	slow	takes 5 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos2/mmap	slow	takes 6 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos3/fs	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos2/sim	slow	takes 11 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos3/local	slow	takes 11 min under msan; dev runs it
 gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos3/memory	slow	takes 5 min under msan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos3/mmap	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressPos3/sim	slow	takes 11 min under msan; dev runs it
 gtest:iresearch-tests:TokenizerFuzz.BlockFillMatchesPerValue	slow	takes 6 min under msan; dev runs it
 gtest:iresearch-tests:TokenizerFuzz.EdgeCases	slow	takes 6 min under msan; dev runs it
 gtest:iresearch-tests:TokenizerFuzz.HugeValues	slow	takes 4 min under msan; dev runs it
@@ -163,12 +192,14 @@ gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.regexp_
 gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.union_walk_is_the_union_of_its_parts/memory	slow	takes 6 min under msan; dev runs it
 gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.walks_match_re2_perl0/memory	slow	takes 6 min under msan; dev runs it
 gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.walks_match_re2_perl3/memory	slow	takes 6 min under msan; dev runs it
-gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs/fs	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs/local	slow	takes 5 min under msan; dev runs it
 gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs/memory	slow	takes 3 min under msan; dev runs it
-gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs/mmap	slow	takes 4 min under msan; dev runs it
-gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_batched/fs	slow	takes 5 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs/sim	slow	takes 6 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_batched/local	slow	takes 5 min under msan; dev runs it
 gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_batched/memory	slow	takes 4 min under msan; dev runs it
-gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_batched/mmap	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_batched/sim	slow	takes 6 min under msan; dev runs it
 gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_big/memory	slow	takes 16 min under msan; dev runs it
-gtest:iresearch-tests:index_test_15/IndexTestCase.s2sequence/fs	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_big/sim	slow	takes 15 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.s2sequence/local	slow	takes 4 min under msan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.s2sequence/sim	slow	takes 5 min under msan; dev runs it
 iresearch-load:LoadTest	slow	takes 13 min under msan; dev runs it

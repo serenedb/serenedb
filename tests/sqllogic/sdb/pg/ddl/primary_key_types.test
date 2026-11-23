@@ -1,11 +1,5 @@
-# Primary key / unique constraint type matrix.
-#
-# Scalar key columns are enforced by the store table's DuckDB ART (any scalar
-# type works -- a duplicate is rejected). Nested-type key columns cannot be
-# indexed by the ART, so they are rejected at DDL with a clear error rather
-# than silently creating the table with the constraint dropped (unenforced
-# uniqueness). Nested keys are planned to be supported via the encoded-key
-# index (sdb_encode_key).
+# Primary key / unique constraint type matrix: every column type a key can
+# hold, scalar or nested, refuses a duplicate.
 
 
 # ---- scalar PK types: uniqueness enforced (duplicate -> error) ----
@@ -21,7 +15,8 @@ INSERT INTO pk_i32 VALUES (1, 'a');
 statement error
 INSERT INTO pk_i32 VALUES (1, 'b');
 ----
-db error: ERROR: Duplicate key "k: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_i32_pkey"
+DETAIL: Key (k)=(1) already exists.
 
 
 statement ok
@@ -35,7 +30,8 @@ INSERT INTO pk_u64 VALUES (1, 'a');
 statement error
 INSERT INTO pk_u64 VALUES (1, 'b');
 ----
-db error: ERROR: Duplicate key "k: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_u64_pkey"
+DETAIL: Key (k)=(1) already exists.
 
 
 statement ok
@@ -49,7 +45,8 @@ INSERT INTO pk_i128 VALUES (1, 'a');
 statement error
 INSERT INTO pk_i128 VALUES (1, 'b');
 ----
-db error: ERROR: Duplicate key "k: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_i128_pkey"
+DETAIL: Key (k)=(1) already exists.
 
 
 statement ok
@@ -63,7 +60,8 @@ INSERT INTO pk_u128 VALUES (1, 'a');
 statement error
 INSERT INTO pk_u128 VALUES (1, 'b');
 ----
-db error: ERROR: Duplicate key "k: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_u128_pkey"
+DETAIL: Key (k)=(1) already exists.
 
 
 statement ok
@@ -77,7 +75,8 @@ INSERT INTO pk_dec VALUES (1.5, 'a');
 statement error
 INSERT INTO pk_dec VALUES (1.5, 'b');
 ----
-db error: ERROR: Duplicate key "k: 1.5000" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_dec_pkey"
+DETAIL: Key (k)=(1.5000) already exists.
 
 
 statement ok
@@ -91,7 +90,8 @@ INSERT INTO pk_uuid VALUES ('00000000-0000-0000-0000-000000000001', 'a');
 statement error
 INSERT INTO pk_uuid VALUES ('00000000-0000-0000-0000-000000000001', 'b');
 ----
-db error: ERROR: Duplicate key "k: 00000000-0000-0000-0000-000000000001" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_uuid_pkey"
+DETAIL: Key (k)=(00000000-0000-0000-0000-000000000001) already exists.
 
 
 statement ok
@@ -105,7 +105,8 @@ INSERT INTO pk_str VALUES ('x', 'a');
 statement error
 INSERT INTO pk_str VALUES ('x', 'b');
 ----
-db error: ERROR: Duplicate key "k: x" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_str_pkey"
+DETAIL: Key (k)=(x) already exists.
 
 
 statement ok
@@ -119,7 +120,8 @@ INSERT INTO pk_blob VALUES ('\x01', 'a');
 statement error
 INSERT INTO pk_blob VALUES ('\x01', 'b');
 ----
-db error: ERROR: Duplicate key "k: \x01" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_blob_pkey"
+DETAIL: Key (k)=(\x01) already exists.
 
 
 statement ok
@@ -133,7 +135,8 @@ INSERT INTO pk_bool VALUES (true, 'a');
 statement error
 INSERT INTO pk_bool VALUES (true, 'b');
 ----
-db error: ERROR: Duplicate key "k: true" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_bool_pkey"
+DETAIL: Key (k)=(true) already exists.
 
 
 statement ok
@@ -147,7 +150,8 @@ INSERT INTO pk_date VALUES ('2020-01-01', 'a');
 statement error
 INSERT INTO pk_date VALUES ('2020-01-01', 'b');
 ----
-db error: ERROR: Duplicate key "k: 2020-01-01" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_date_pkey"
+DETAIL: Key (k)=(2020-01-01) already exists.
 
 
 statement ok
@@ -161,7 +165,8 @@ INSERT INTO pk_ts VALUES ('2020-01-01 00:00:00', 'a');
 statement error
 INSERT INTO pk_ts VALUES ('2020-01-01 00:00:00', 'b');
 ----
-db error: ERROR: Duplicate key "k: 2020-01-01 00:00:00" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_ts_pkey"
+DETAIL: Key (k)=(2020-01-01 00:00:00) already exists.
 
 
 statement ok
@@ -175,7 +180,8 @@ INSERT INTO pk_dbl VALUES (1.5, 'a');
 statement error
 INSERT INTO pk_dbl VALUES (1.5, 'b');
 ----
-db error: ERROR: Duplicate key "k: 1.5" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_dbl_pkey"
+DETAIL: Key (k)=(1.5) already exists.
 
 
 # ---- composite scalar PK: enforced; only the full tuple must be unique ----
@@ -191,40 +197,66 @@ INSERT INTO pk_comp VALUES (1, 'x', 'one');
 statement error
 INSERT INTO pk_comp VALUES (1, 'x', 'two');
 ----
-db error: ERROR: Duplicate key "a: 1, b: x" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_comp_pkey"
+DETAIL: Key (a, b)=(1, x) already exists.
 
 
 statement ok
 INSERT INTO pk_comp VALUES (1, 'y', 'three');
 
 
-# ---- nested-type key columns: rejected at DDL (not silently unenforced) ----
+# ---- nested-type key columns ----
 
-statement error
+statement ok
 CREATE TABLE pk_struct(k STRUCT(a INT) PRIMARY KEY, v TEXT);
-----
-db error: ERROR: Invalid Type [STRUCT(a INTEGER)]: Invalid type for index key.
 
+statement ok
+INSERT INTO pk_struct VALUES ({'a': 1}, 'a'), ({'a': 2}, 'b');
 
 statement error
+INSERT INTO pk_struct VALUES ({'a': 1}, 'c');
+----
+db error: ERROR: duplicate key value violates unique constraint "pk_struct_pkey"
+DETAIL: Key (k)=({'a': 1}) already exists.
+
+
+statement ok
 CREATE TABLE pk_list(k INT[] PRIMARY KEY, v TEXT);
-----
-db error: ERROR: Invalid Type [INTEGER[]]: Invalid type for index key.
 
+statement ok
+INSERT INTO pk_list VALUES ([1, 2], 'a'), ([2, 1], 'b'), ([1], 'c');
 
 statement error
+INSERT INTO pk_list VALUES ([1, 2], 'd');
+----
+db error: ERROR: duplicate key value violates unique constraint "pk_list_pkey"
+DETAIL: Key (k)=([1, 2]) already exists.
+
+
+statement ok
 CREATE TABLE complex_pk (a INTEGER, b INTEGER[] PRIMARY KEY);
-----
-db error: ERROR: Invalid Type [INTEGER[]]: Invalid type for index key.
 
-
-statement error
+statement ok
 CREATE TABLE pk_map(k MAP(INTEGER, INTEGER) PRIMARY KEY, v TEXT);
-----
-db error: ERROR: Invalid Type [MAP(INTEGER, INTEGER)]: Invalid type for index key.
 
+statement ok
+INSERT INTO pk_map VALUES (MAP {1: 2}, 'a');
 
 statement error
-CREATE TABLE uq_struct(id INT PRIMARY KEY, k STRUCT(a INT), UNIQUE(k));
+INSERT INTO pk_map VALUES (MAP {1: 2}, 'b');
 ----
-db error: ERROR: Invalid Type [STRUCT(a INTEGER)]: Invalid type for index key.
+db error: ERROR: duplicate key value violates unique constraint "pk_map_pkey"
+DETAIL: Key (k)=({1=2}) already exists.
+
+
+statement ok
+CREATE TABLE uq_struct(id INT PRIMARY KEY, k STRUCT(a INT), UNIQUE(k));
+
+statement ok
+INSERT INTO uq_struct VALUES (1, NULL), (2, NULL), (3, {'a': 3});
+
+statement error
+INSERT INTO uq_struct VALUES (4, {'a': 3});
+----
+db error: ERROR: duplicate key value violates unique constraint "uq_struct_k_key"
+DETAIL: Key (k)=({'a': 3}) already exists.

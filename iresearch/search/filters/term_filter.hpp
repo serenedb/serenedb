@@ -59,9 +59,14 @@ class ByTerm : public FilterWithField<ByTermOptions> {
                                           const TermReader* reader,
                                           const bytes_view term);
 
+  bool Prefetch(const SubReader& segment) const final;
+
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,
                                           uint32_t threads) const final;
+
+  void ExplainStats(const PrepareCollector* collector,
+                    explain::StatsIndex& out) const final;
 
   TermPredicate::ptr CompileTermPredicate() const final;
 

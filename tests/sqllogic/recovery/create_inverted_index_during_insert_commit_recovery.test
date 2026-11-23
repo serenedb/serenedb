@@ -55,7 +55,7 @@ SET debug_local_file_system_delay_ms = 0;
 
 connection default
 statement ok
-VACUUM (REFRESH_TABLE) goshandr_chat;
+VACUUM (FLUSH_TABLE) goshandr_chat;
 
 
 connection default
@@ -86,7 +86,7 @@ n
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) goshandr_chat;
+VACUUM (FLUSH_TABLE) goshandr_chat;
 
 
 connection after_crash

@@ -50,7 +50,7 @@ namespace {
 
 irs::ByNGramSimilarity MakeFilter(irs::field_id field_id,
                                   const std::vector<std::string_view>& ngrams,
-                                  float_t threshold = 1.f) {
+                                  float threshold = 1.f) {
   irs::ByNGramSimilarity filter;
   *filter.mutable_field_id() = field_id;
   auto* opts = filter.mutable_options();
@@ -1136,7 +1136,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_norm_test) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate, std::move(opts));
+    add_segment(gen, tests::kOmCreate, std::move(opts));
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -1158,7 +1158,7 @@ TEST_P(NGramSimilarityFilterTestCase, all_match_ngram_score_test) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate, std::move(opts));
+    add_segment(gen, tests::kOmCreate, std::move(opts));
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -1198,7 +1198,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_tfidf_test) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate, std::move(opts));
+    add_segment(gen, tests::kOmCreate, std::move(opts));
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -1220,7 +1220,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_bm25_test) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate, std::move(opts));
+    add_segment(gen, tests::kOmCreate, std::move(opts));
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -1242,7 +1242,7 @@ TEST_P(NGramSimilarityFilterTestCase, missed_first_bm15_test) {
     tests::JsonDocGenerator gen(resource("ngram_similarity.json"),
                                 &tests::NormalizedStringJsonFieldFactory);
 
-    add_segment(gen, irs::kOmCreate, std::move(opts));
+    add_segment(gen, tests::kOmCreate, std::move(opts));
   }
 
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -1386,7 +1386,7 @@ TEST_P(NGramSimilarityFilterTestCase, negation_regression) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(ngram_similarity_test, NGramSimilarityFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

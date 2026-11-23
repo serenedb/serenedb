@@ -38,7 +38,7 @@
 #include "iresearch/search/docs/make.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -144,30 +144,28 @@ void WithHnswDist(PlanMemory& memory, const HnswData& data,
     fn(dist);
     return;
   }
-  ResolveEnum<VectorMetric>(
-    EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
-      if constexpr (M == VectorMetric::L2Sqr ||
-                    M == VectorMetric::InnerProduct) {
-        if (panorama) {
-          HnswPanoramaDist<M> dist{.base = data.vectors.data(),
-                                   .d = d,
-                                   .q = panorama->rotated.data(),
-                                   .tails = panorama->tails.data(),
-                                   .norms = data.norms.data()};
-          fn(dist);
-          return;
-        }
+  Resolve(EffectiveQuantMetric(metric), [&]<VectorMetric M>() {
+    if constexpr (M == VectorMetric::L2Sqr || M == VectorMetric::InnerProduct) {
+      if (panorama) {
+        HnswPanoramaDist<M> dist{.base = data.vectors.data(),
+                                 .d = d,
+                                 .q = panorama->rotated.data(),
+                                 .tails = panorama->tails.data(),
+                                 .norms = data.norms.data()};
+        fn(dist);
+        return;
       }
-      HnswQueryDist<M> dist{
-        .base = data.vectors.data(), .d = d, .q = query.data()};
-      fn(dist);
-    });
+    }
+    HnswQueryDist<M> dist{
+      .base = data.vectors.data(), .d = d, .q = query.data()};
+    fn(dist);
+  });
 }
 
 memory::ArenaVector<ScoreDoc> CollectHits(MemoryArena& arena,
                                           std::span<const HnswCandidate> found,
                                           const SubReader& segment) {
-  const auto it_mask = segment.MaskedDocs();
+  const auto* mask = segment.docs_mask();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
   memory::ArenaVector<ScoreDoc> hits{arena};
@@ -176,7 +174,7 @@ memory::ArenaVector<ScoreDoc> CollectHits(MemoryArena& arena,
     const auto doc = static_cast<doc_id_t>(c.node) + doc_limits::min();
     SDB_ENSURE(doc >= doc_limits::min() && doc < end,
                "an hnsw hit is outside its segment");
-    if (it_mask.Contains(doc)) {
+    if (mask && mask->Contains(doc)) {
       continue;
     }
     hits.push_back({.score = c.score, .doc = doc});
@@ -196,7 +194,7 @@ memory::ArenaVector<ScoreDoc> CollectHits(
   absl::c_sort(order, [&](uint32_t l, uint32_t r) {
     return found[l].node < found[r].node;
   });
-  const auto it_mask = segment.MaskedDocs();
+  const auto* mask = segment.docs_mask();
   const auto end =
     doc_limits::min() + static_cast<doc_id_t>(segment.docs_count());
   memory::ArenaVector<ScoreDoc> hits{arena};
@@ -207,7 +205,7 @@ memory::ArenaVector<ScoreDoc> CollectHits(
     const auto doc = static_cast<doc_id_t>(found[i].node) + doc_limits::min();
     SDB_ENSURE(doc >= doc_limits::min() && doc < end,
                "an hnsw hit is outside its segment");
-    if (it_mask.Contains(doc)) {
+    if (mask && mask->Contains(doc)) {
       continue;
     }
     hits.push_back({.score = found[i].score, .doc = doc});
@@ -626,7 +624,7 @@ template<typename Dist>
 void HnswQuery::RunRadius(PlanMemory& memory, Dist& dist,
                           detail::TableFilter* table,
                           HnswSearchScratch& scratch) const {
-  ResolveBool(_inclusive, [&]<bool Inclusive>() {
+  Resolve(_inclusive, [&]<bool Inclusive>() {
     if (!_inner && !table) {
       HnswSearchRadius<Inclusive>(_data->graph, dist, _threshold, _max_results,
                                   scratch);
@@ -712,7 +710,7 @@ void HnswQuery::RunFiltered(PlanMemory& memory, Dist& dist,
   const auto run = [&](const auto& acc) {
     bool done = false;
     if (plan.walks) {
-      ResolveEnum<HnswWalk>(plan.walk, [&]<HnswWalk Walk>() {
+      Resolve(plan.walk, [&]<HnswWalk Walk>() {
         done =
           walked(HnswSearchTopK<Walk>(graph, dist, _ef, scratch, acc, budget));
       });

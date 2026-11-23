@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/document_mask.hpp>
 #include <iresearch/search/count/make.hpp>
@@ -35,7 +36,6 @@
 #include <iresearch/search/fill/walk.hpp>
 #include <iresearch/search/lead/bitset_docs.hpp>
 #include <iresearch/search/probe/bitset_docs.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/memory.hpp>
 #include <iresearch/utils/query_memory.hpp>
@@ -128,12 +128,6 @@ class WindowFill : public irs::fill::Node {
                        uint64_t* IRS_RESTRICT mask) final {
     ++_windows;
     return _set.FillOr(min, max, mask);
-  }
-
-  irs::doc_id_t FillAnd(irs::doc_id_t min, irs::doc_id_t max,
-                        uint64_t* IRS_RESTRICT mask) final {
-    ++_windows;
-    return _set.FillAnd(min, max, mask);
   }
 
   irs::doc_id_t FillAndNot(irs::doc_id_t min, irs::doc_id_t max,
@@ -653,16 +647,6 @@ TEST(bitset_fill_test, fill_or) {
   EXPECT_EQ(0, std::popcount(mask[0]) + std::popcount(mask[1]));
 }
 
-TEST(bitset_fill_test, fill_and) {
-  irs::fill::BitsetDocs it{MakeSet(192, {3, 70, 130})};
-
-  uint64_t mask[2]{~uint64_t{0}, ~uint64_t{0}};
-  ASSERT_EQ(130, it.FillAnd(1, 129, mask));
-  EXPECT_TRUE(irs::CheckBit(mask[0], 3 - 1));
-  EXPECT_TRUE(irs::CheckBit(mask[1], 70 - 1 - kBits));
-  EXPECT_EQ(2, std::popcount(mask[0]) + std::popcount(mask[1]));
-}
-
 TEST(bitset_fill_test, fill_and_not) {
   irs::fill::BitsetDocs it{MakeSet(192, {3, 70, 130})};
 
@@ -896,11 +880,13 @@ TEST(docs_mask_test, clear_empties_a_reusable_mask) {
 
   ASSERT_TRUE(mask.Empty());
   ASSERT_EQ(0, mask.Count());
-  ASSERT_FALSE(mask.Contains(64));
 
   ASSERT_TRUE(mask.Add(7));
+  ASSERT_FALSE(mask.Add(7));
   ASSERT_EQ(1, mask.Count());
-  ASSERT_TRUE(mask.Contains(7));
+  const auto finished = std::move(mask).Finish();
+  ASSERT_FALSE(finished.Contains(64));
+  ASSERT_TRUE(finished.Contains(7));
 }
 
 TEST(docs_mask_test, finish_releases_an_all_zero_mask) {
@@ -1180,8 +1166,8 @@ TEST(docs_mask_test, mask_round_trips_and_mutates) {
   const auto round_trip = [](const irs::DocumentMask& source) {
     std::string blob(source.FrozenSize(), '\0');
     source.WriteFrozen(blob.data());
-    irs::BytesViewInput in{
-      irs::ViewCast<irs::byte_type>(std::string_view{blob})};
+    duckdb::MemoryStream in{reinterpret_cast<duckdb::data_ptr_t>(blob.data()),
+                            blob.size()};
     return irs::DocumentMask::ReadFrozen(in, blob.size());
   };
 

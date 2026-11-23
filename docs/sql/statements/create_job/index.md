@@ -16,7 +16,7 @@ Roll up yesterday's events every day at 02:00 UTC, and run it once right away:
 ## Syntax
 
 ```sql
-CREATE [ OR REPLACE ] JOB [ IF NOT EXISTS ] name
+CREATE [ OR REPLACE ] [ TEMPORARY | TEMP ] JOB [ IF NOT EXISTS ] name
     { EVERY interval [ OFFSET interval ] [ RANDOMIZE FOR interval ] [ CONCURRENT ]
     | AFTER interval [ RANDOMIZE FOR interval ] }
     [ SUSPENDED ]
@@ -35,7 +35,7 @@ EXECUTE JOB name
 DROP JOB [ IF EXISTS ] name [ CASCADE | RESTRICT ]
 ```
 
-`interval` is an interval literal (`INTERVAL '15 minutes'`, `INTERVAL (2 * 3) MINUTE`), the short form `<number> <unit>`, repeatable (`30 SECONDS`, `1 HOUR`, `1 MONTH`, `1 WEEK 2 DAYS`, `5 DAYS 2 HOURS`), or any constant expression in parentheses (`(INTERVAL '1 hour' * 2)`); it is evaluated once, when the statement runs. The body is one statement, or a string constant, usually dollar-quoted (`AS $$ ... $$`), that holds any number of statements. It is parsed when the job is created, so a syntax error fails `CREATE JOB`, and it cannot use parameters. One statement is stored as normalized SQL text, the statements of a string as written: the `body` column of `sdb_jobs()` shows them. A transaction statement cannot be the whole body, and neither can `EXPLAIN` of a transaction statement or of a statement that runs as several statements. A statement that runs as several statements, such as `TRUNCATE` of several tables or with `RESTART IDENTITY` or `CASCADE`, `ALTER TABLE ... ADD COLUMN` with `NOT NULL`, `UNIQUE`, `PRIMARY KEY` or a default that is not a constant, or `DROP ROLE` with several roles, has to be in a string: unquoted, `CREATE JOB` fails with `CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$`. A `PIVOT` that takes its values from the data has to be in a string too, or list its values with `IN (...)`: unquoted, it fails `CREATE JOB`, as in a view.
+`interval` is an interval literal (`INTERVAL '15 minutes'`, `INTERVAL (2 * 3) MINUTE`), the short form `<number> <unit>`, repeatable (`30 SECONDS`, `1 HOUR`, `1 MONTH`, `1 WEEK 2 DAYS`, `5 DAYS 2 HOURS`), or any constant expression in parentheses (`(INTERVAL '1 hour' * 2)`); it is evaluated once, when the statement runs. The body is one statement, or a string constant, usually dollar-quoted (`AS $$ ... $$`), that holds any number of statements. It is parsed when the job is created, with the settings of the creating session such as `integer_division`, so a syntax error fails `CREATE JOB`, and it cannot use parameters. One statement, quoted or not, is stored as normalized SQL text, which keeps the meaning that parse gave it. The statements of a string of several are stored as written and parsed again at every run, with the settings of the job's session, as a function body is when it is called. The `body` column of `sdb_jobs()` shows them. A transaction statement cannot be the whole body, and neither can `EXPLAIN` of a transaction statement or of a statement that runs as several statements. A statement that runs as several statements, such as `TRUNCATE` of several tables or with `RESTART IDENTITY` or `CASCADE`, `ALTER TABLE ... ADD COLUMN` with `NOT NULL`, `UNIQUE`, `PRIMARY KEY` or a default that is not a constant, or `DROP ROLE` with several roles, has to be in a string: unquoted, `CREATE JOB` fails with `CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$`. A `PIVOT` that takes its values from the data has to be in a string too, or list its values with `IN (...)`: unquoted, it fails `CREATE JOB`, as in a view.
 
 A run executes the body the way a client's query of several statements runs: the statements run in order, each commits on its own unless the body groups them with `BEGIN` and `COMMIT`, and the first one that fails ends the run, leaving committed what committed before it. A transaction the body leaves open, by ending before its `COMMIT` or failing inside it, is rolled back when the run ends. The body is bound again on every run, so it always sees the current definition of the objects it references, and a missing table, column or privilege fails the run rather than `CREATE JOB`. When a statement of the body drops its own job, the run ends there and counts as a success: the statements after it do not run. Dropping or replacing the job from another session cancels the statement that is running, and the run fails without the statements after it. A job can that way run once and remove itself:
 
@@ -110,7 +110,13 @@ A job can live in any SereneDB database, not only the current one; wherever it l
 
 <SqlLogicTest id="sql/statements/create_job/index/example_006" />
 
-Jobs exist only in SereneDB databases, like text search dictionaries and inverted indexes: `CREATE TEMPORARY JOB`, and jobs in `memory` or in an attached DuckDB file, are rejected with `Jobs are not supported by this catalog`.
+Jobs exist only in SereneDB databases, like text search dictionaries: a job in `memory` or in an attached DuckDB file is rejected with `Jobs are not supported by this catalog`.
+
+## Temporary jobs
+
+`CREATE TEMPORARY JOB` creates the job in the session's temporary database, `temp`, as `CREATE TEMPORARY TABLE` creates a table there: only the session sees it, it is not persisted, and it is dropped when the session ends, which interrupts a run in progress, and by `DISCARD TEMP` and `DISCARD ALL`. Its runs see what the session's own statements see: they connect to the session's database, so `current_database()` is that database, and the session's temporary objects come first on the search path, so the body names the session's temporary tables and the database's tables alike:
+
+<SqlLogicTest id="sql/statements/create_job/index/example_011" />
 
 ## Dropping a job
 

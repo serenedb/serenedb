@@ -205,7 +205,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
             field.id = fid;
             field.value(irs::ViewCast<irs::byte_type>(tests::kTrueTerm));
           } else if (data.is_number()) {
-            const double d_value = data.as_number<double_t>();
+            const double d_value = data.as_number<double>();
             {
               // 'value' can be interpreted as a double
               doc.insert(std::make_shared<tests::DoubleField>());
@@ -215,7 +215,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
               field.value(d_value);
             }
 
-            const float f_value = data.as_number<float_t>();
+            const float f_value = data.as_number<float>();
             {
               // 'value' can be interpreted as a float
               doc.insert(std::make_shared<tests::FloatField>());
@@ -298,7 +298,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     {
       irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
       const auto term =
-        irs::numeric_utils::EncodeNumericTerm(stream_buf, (double_t)90.564);
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (double)90.564);
 
       irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
                                      irs::NumericLayout::kNumbers);
@@ -321,7 +321,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     {
       irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
       const auto term =
-        irs::numeric_utils::EncodeNumericTerm(stream_buf, (float_t)90.564f);
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (float)90.564f);
 
       irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
                                      irs::NumericLayout::kNumbers);
@@ -344,7 +344,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
     {
       irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
       const auto term =
-        irs::numeric_utils::EncodeNumericTerm(stream_buf, (double_t)100.);
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (double)100.);
 
       irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
                                      irs::NumericLayout::kNumbers);
@@ -363,11 +363,11 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       ASSERT_EQ(expected, actual);
     }
 
-    // float_t(100)
+    // float(100)
     {
       irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
       const auto term =
-        irs::numeric_utils::EncodeNumericTerm(stream_buf, (float_t)100.f);
+        irs::numeric_utils::EncodeNumericTerm(stream_buf, (float)100.f);
 
       irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
                                      irs::NumericLayout::kNumbers);
@@ -528,7 +528,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
   void ByTermSchemas() {
     // write segments
     {
-      auto writer = open_writer(irs::kOmCreate);
+      auto writer = open_writer(tests::kOmCreate);
 
       std::vector<tests::DocGeneratorBase::ptr> gens;
       gens.emplace_back(new tests::JsonDocGenerator(
@@ -681,7 +681,7 @@ TEST(by_term_test, boost) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(term_filter_test, TermFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

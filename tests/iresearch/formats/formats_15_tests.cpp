@@ -36,7 +36,9 @@
 #include <random>
 
 #include "formats_test_case_base.hpp"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -114,6 +116,10 @@ class MockPostingsField final : public irs::TermReader {
     return irs::SeekTermIterator::empty();
   }
   irs::SeekTermIterator::ptr iterator(
+    const irs::LevenshteinPrefixAcceptor&) const final {
+    return irs::SeekTermIterator::empty();
+  }
+  irs::SeekTermIterator::ptr iterator(
     const irs::RegexpConjunction&) const final {
     return irs::SeekTermIterator::empty();
   }
@@ -122,6 +128,7 @@ class MockPostingsField final : public irs::TermReader {
     return irs::SeekTermIterator::empty();
   }
   void ReadDocs(irs::bytes_view, Acceptor) const final {}
+  void ReadDocs(const irs::PostingMeta&, Acceptor) const final {}
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
   void LookupBatch(size_t, TermAt, FoundTerm) const final {}
   void VisitRange(irs::bytes_view, irs::bytes_view, RangeVisitor) const final {}
@@ -256,7 +263,7 @@ class Format15TestCase : public tests::FormatTestCase {
   using Docs = std::vector<Doc>;
   using DocsView = std::span<const Doc>;
 
-  Docs GenerateDocs(size_t count, float_t mean, float_t dev, size_t step);
+  Docs GenerateDocs(size_t count, float mean, float dev, size_t step);
 
   struct ReadMeta {
     irs::PostingMeta meta;
@@ -264,7 +271,7 @@ class Format15TestCase : public tests::FormatTestCase {
     tests::Records records;
   };
 
-  ReadMeta WriteReadMeta(irs::Directory& dir, DocsView docs,
+  ReadMeta WriteReadMeta(const tests::IndexDir& dir, DocsView docs,
                          irs::ScorerPtr scorer, irs::IndexFeatures features);
 
   void AssertPostingsWalk(irs::PostingsReader& reader, DocsView docs,
@@ -340,7 +347,7 @@ class Format15TestCase : public tests::FormatTestCase {
 };
 
 Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
-  irs::Directory& dir, DocsView docs, irs::ScorerPtr scorer,
+  const tests::IndexDir& dir, DocsView docs, irs::ScorerPtr scorer,
   irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
   irs::PostingsWriter writer;
@@ -349,18 +356,17 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   {
     auto budget = irs::EmptyBudget();
     const irs::FlushState state{
-      .dir = &dir,
+      .tracker = dir.Tracker("segment_name"),
       .norms = &irs::SubReader::empty(),
-      .name = "segment_name",
       .scorer = scorer,
       .doc_count = docs.back().first + 1,
       .index_features = features,
       .budget = budget,
     };
 
-    auto out = dir.create("attributes");
+    auto out = dir.Create("attributes");
     EXPECT_FALSE(!out);
-    irs::WriteStr(*out, std::string_view("file_header"));
+    tests::WriteStr(*out, std::string_view("file_header"));
 
     writer.Prepare(state);
     writer.BeginField(irs::FieldProperties{.index_features = features});
@@ -374,21 +380,24 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
     EXPECT_EQ(expected_has_score_bounds, stats.has_score_bounds);
     tests::WriteRecord(writer, *out, posting_meta);
     writer.End();
+    out->Close();
   }
 
   irs::SegmentMeta meta;
   meta.name = "segment_name";
 
-  const irs::ReaderState state{.dir = &dir, .meta = &meta};
+  const irs::ReaderState state{
+    .db = dir.Db(), .fs = dir.Fs(), .root = dir.Root(), .meta = meta};
 
-  auto in = dir.open("attributes", irs::IOAdvice::RANDOM);
+  const auto in_file = dir.Open("attributes", duckdb::MappedFileAccess::NORMAL);
+  duckdb::InputFileReader in{*in_file};
   EXPECT_FALSE(!in);
-  [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(*in);
+  [[maybe_unused]] const auto tmp = irs::ReadString<std::string>(in);
 
   auto reader = std::make_unique<irs::PostingsReader>();
   reader->prepare(state, features);
 
-  auto records = tests::ReadRecords(*in);
+  auto records = tests::ReadRecords(in);
   const auto* begin = records.data.get();
 
   irs::PostingMeta read_meta;
@@ -531,15 +540,14 @@ void Format15TestCase::AssertDocsSeq(irs::PostingsReader& reader, DocsView docs,
   ASSERT_TRUE(irs::doc_limits::eof(actual->Seek(docs.back().first + 42)));
 }
 
-Format15TestCase::Docs Format15TestCase::GenerateDocs(size_t count,
-                                                      float_t mean, float_t dev,
-                                                      size_t step) {
+Format15TestCase::Docs Format15TestCase::GenerateDocs(size_t count, float mean,
+                                                      float dev, size_t step) {
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs;
   docs.reserve(count);
   std::generate_n(
     std::back_inserter(docs), count,
     [i = (irs::doc_limits::min)(), gen = std::mt19937{},
-     distr = std::normal_distribution<float_t>{mean, dev}, step]() mutable {
+     distr = std::normal_distribution<float>{mean, dev}, step]() mutable {
       const irs::doc_id_t doc = i;
       const auto freq = static_cast<uint32_t>(std::roundf(distr(gen)));
       i += step;
@@ -725,8 +733,7 @@ void Format15TestCase::AssertStressPostings(DocsView docs) {
   AssertPostings(docs, kOffs, kOffs);
 }
 
-static const auto kTestDirs =
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefault>());
+static const auto kTestDirs = ::testing::ValuesIn(tests::kDirParams);
 
 static const auto kTestValues = ::testing::Combine(kTestDirs);
 

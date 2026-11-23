@@ -76,7 +76,6 @@ class HnswWriter final : public AnnWriter {
   TrackedVector<float> _norms;
   TrackedVector<float> _tails;
   TrackedVector<byte_type> _codes;
-  bstring _stats_blob;
   std::unique_ptr<QuantizerWriter> _qw;
   std::vector<float> _centroid;
   uint32_t _d = 0;

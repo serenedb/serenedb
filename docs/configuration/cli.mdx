@@ -6,7 +6,7 @@ split: page
 
 import CliHelpReference from "@site/src/components/CliHelpReference";
 
-The `serened` executable starts the SereneDB pg-wire server. It can also delegate to the embedded shell commands without starting the server.
+The `serenedb` executable runs SereneDB's commands: `serenedb server` starts the SereneDB pg-wire server, and [`serenedb shell`](../clients/serened-shell.md) and [`serenedb psql`](../clients/serened-psql.md) are the command-line clients, which run without starting the server. `serened`, installed next to it, is `serenedb server`.
 
-Use `serened --help` to print the current command line reference. 
+Use `serenedb --help` to list the commands, and `serened --help` to print the server's command line reference below.
 <CliHelpReference />

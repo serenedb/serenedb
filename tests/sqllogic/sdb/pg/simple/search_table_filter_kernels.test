@@ -1,0 +1,174 @@
+control substitution on
+
+statement ok
+CREATE TABLE fk (id BIGINT PRIMARY KEY, d DOUBLE, h HUGEINT, u UINTEGER, iv INTERVAL, b BOOLEAN, s VARCHAR, n INTEGER)
+  WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO fk
+SELECT i,
+       CASE WHEN i % 97 = 0 THEN NULL ELSE i / 100.0 END,
+       i::HUGEINT * 100000000000000000000,
+       i::UINTEGER,
+       to_minutes(i),
+       i // 2048 % 2 = 1,
+       lpad(i::VARCHAR, 6, '0') || '_a_suffix_longer_than_twelve_bytes',
+       CASE WHEN i % 3 = 0 THEN NULL ELSE i::INTEGER END
+FROM range(16384) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) fk;
+
+
+query
+SELECT count(*) AS n FROM fk WHERE d > 100.5;
+----
+n
+6268
+
+
+query
+SELECT count(*) AS n FROM fk WHERE d >= 20.0 AND d <= 30.0;
+----
+n
+991
+
+
+query
+SELECT count(*) AS n FROM fk WHERE h >= 5000::HUGEINT * 100000000000000000000;
+----
+n
+11384
+
+
+query
+SELECT count(*) AS n FROM fk WHERE u < 100;
+----
+n
+100
+
+
+query
+SELECT count(*) AS n FROM fk WHERE iv > INTERVAL '10000 minutes';
+----
+n
+6383
+
+
+query
+SELECT count(*) AS n FROM fk WHERE b = true;
+----
+n
+8192
+
+
+query
+SELECT id, n FROM fk WHERE n IS NULL AND id < 10 ORDER BY id;
+----
+id	n
+0	NULL
+3	NULL
+6	NULL
+9	NULL
+
+
+query
+SELECT count(n) AS c, sum(n) AS s FROM fk WHERE n IS NOT NULL;
+----
+c	s
+10922	89467563
+
+
+query
+SELECT n FROM fk WHERE id = 3 AND n IS NULL;
+----
+n
+NULL
+
+
+query
+SELECT n FROM fk WHERE id = 4 AND n IS NULL;
+----
+n
+
+
+query
+SELECT n FROM fk WHERE id = 4 AND n IS NOT NULL;
+----
+n
+4
+
+
+statement ok
+SET enable_profiling = 'json'
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/fk_uinteger_topn.json'
+
+
+query
+SELECT u FROM fk ORDER BY u DESC LIMIT 3;
+----
+u
+16383
+16382
+16381
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/fk_varchar_topn.json'
+
+
+query
+SELECT s FROM fk ORDER BY s LIMIT 3;
+----
+s
+000000_a_suffix_longer_than_twelve_bytes
+000001_a_suffix_longer_than_twelve_bytes
+000002_a_suffix_longer_than_twelve_bytes
+
+
+statement ok
+SET profiling_output = '${__TEST_DIR__}/fk_string_in.json'
+
+
+query
+SELECT count(*) AS n FROM fk WHERE s IN ('000005_a_suffix_longer_than_twelve_bytes', '010000_a_suffix_longer_than_twelve_bytes', '999999_a_suffix_longer_than_twelve_bytes');
+----
+n
+2
+
+
+statement ok
+RESET enable_profiling
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/fk_uinteger_topn.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/fk_varchar_topn.json');
+----
+row_groups_scanned
+1
+
+
+query
+SELECT json_extract(content, '$.operator[0].children[0].children[0].children[0].row_groups_scanned') AS row_groups_scanned
+FROM read_text('${__TEST_DIR__}/fk_string_in.json');
+----
+row_groups_scanned
+2

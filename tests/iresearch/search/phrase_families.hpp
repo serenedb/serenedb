@@ -25,7 +25,7 @@
 #include <atomic>
 #include <bit>
 #include <functional>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/count/root.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
@@ -36,8 +36,8 @@
 #include <iresearch/search/probe/node.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/top/root.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/bit_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <map>
 #include <span>
@@ -46,6 +46,7 @@
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 
 namespace tests {
@@ -61,7 +62,7 @@ struct AnalyzedField {
 
   irs::IndexFeatures GetIndexFeatures() const noexcept { return features; }
 
-  bool Write(irs::DataOutput& out) const {
+  bool Write(duckdb::WriteStream& out) const {
     out.WriteData(reinterpret_cast<const irs::byte_type*>(value.data()),
                   value.size());
     return true;
@@ -94,12 +95,36 @@ inline void ExpectScores(const std::map<irs::doc_id_t, irs::score_t>& expected,
   }
 }
 
+inline void ExpectFamilies(const Families& expected, const Families& actual) {
+  EXPECT_EQ(expected.count, actual.count);
+  EXPECT_EQ(expected.docs, actual.docs);
+  EXPECT_EQ(expected.docs, actual.fill);
+  EXPECT_EQ(expected.docs, actual.probe);
+  {
+    SCOPED_TRACE("hits");
+    ExpectScores(expected.hits, actual.hits);
+  }
+  {
+    SCOPED_TRACE("fill");
+    ExpectScores(expected.hits, actual.fill_scores);
+  }
+  {
+    SCOPED_TRACE("probe");
+    ExpectScores(expected.hits, actual.probe_scores);
+  }
+  EXPECT_EQ(expected.top_total, actual.top_total);
+  ASSERT_EQ(expected.top.size(), actual.top.size());
+  for (size_t i = 0; i != expected.top.size(); ++i) {
+    EXPECT_FLOAT_EQ(expected.top[i], actual.top[i]) << i;
+  }
+}
+
 class FamilyIndex {
  public:
-  const irs::DirectoryReader& Reader() const noexcept { return _reader; }
+  const irs::CompositeReader& Reader() const noexcept { return _reader; }
 
   std::vector<irs::doc_id_t> Docs(const irs::Filter& filter) const {
-    PreparedFilter prepared{filter, *_reader};
+    PreparedFilter prepared{filter, _reader};
     std::vector<irs::doc_id_t> out;
     for (size_t i = 0; i != prepared.size(); ++i) {
       auto docs = prepared.Execute(i);
@@ -112,7 +137,7 @@ class FamilyIndex {
 
   std::map<irs::doc_id_t, irs::score_t> ScoresBy(
     const irs::Scorer& scorer, const irs::Filter& filter) const {
-    PreparedFilter prepared{filter, *_reader, &scorer};
+    PreparedFilter prepared{filter, _reader, &scorer};
     std::map<irs::doc_id_t, irs::score_t> out;
     for (size_t i = 0; i != prepared.size(); ++i) {
       irs::ColumnArgsFetcher fetcher;
@@ -137,7 +162,7 @@ class FamilyIndex {
                const irs::Scorer& scorer = irs::BM25{}) const {
     Families out;
     {
-      PreparedFilter prepared{filter, *_reader};
+      PreparedFilter prepared{filter, _reader};
       for (size_t i = 0; i != prepared.size(); ++i) {
         const auto* query = prepared.Query(i);
         if (!query || irs::QueryBuilder::IsEmpty(*query)) {
@@ -178,7 +203,7 @@ class FamilyIndex {
       }
     }
 
-    PreparedFilter prepared{filter, *_reader, &scorer};
+    PreparedFilter prepared{filter, _reader, &scorer};
     for (size_t i = 0; i != prepared.size(); ++i) {
       const auto* query = prepared.Query(i);
       if (!query || irs::QueryBuilder::IsEmpty(*query)) {
@@ -262,21 +287,22 @@ class FamilyIndex {
 
  protected:
   void Open() {
-    _reader = irs::DirectoryReader{_dir, irs::tests::DefaultReaderOptions()};
+    _reader = OpenReader(_dir, irs::tests::DefaultReaderOptions());
   }
 
-  irs::MemoryDirectory _dir;
+  IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                TestEnv::MemoryRoot()};
 
  private:
   irs::doc_id_t End(size_t segment) const {
     return static_cast<irs::doc_id_t>(irs::doc_limits::min() +
-                                      (*_reader)[segment].docs_count());
+                                      (_reader)[segment].docs_count());
   }
 
   irs::doc_id_t Global(size_t segment, irs::doc_id_t doc) const {
     irs::doc_id_t base = 0;
     for (size_t i = 0; i != segment; ++i) {
-      base += static_cast<irs::doc_id_t>((*_reader)[i].docs_count());
+      base += static_cast<irs::doc_id_t>((_reader)[i].docs_count());
     }
     return base + doc - irs::doc_limits::min();
   }
@@ -292,7 +318,7 @@ class FamilyIndex {
     }
   }
 
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
 };
 
 }  // namespace tests

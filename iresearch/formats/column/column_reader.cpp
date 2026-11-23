@@ -43,6 +43,7 @@
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <duckdb/storage/segment/uncompressed.hpp>
 #include <duckdb/storage/statistics/array_stats.hpp>
 #include <duckdb/storage/statistics/list_stats.hpp>
@@ -58,9 +59,8 @@
 #include "iresearch/formats/column/list_column_reader.hpp"
 #include "iresearch/formats/column/struct_column_reader.hpp"
 #include "iresearch/formats/column/variant_column_reader.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -68,6 +68,7 @@ namespace irs {
 namespace {
 
 constexpr duckdb::idx_t kMaxFetchHits = 64;
+constexpr size_t kBlocksAhead = 32;
 
 void SerializeColumnBlockMeta(duckdb::BinarySerializer& s,
                               const ColumnBlockMeta& m) {
@@ -103,12 +104,13 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
 void SerializeBlockMetas(duckdb::BinarySerializer& s, duckdb::field_id_t id,
                          const char* tag,
                          const std::vector<ColumnBlockMeta>& blocks) {
-  s.WriteList(id, tag, blocks.size(),
-              [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                  SerializeColumnBlockMeta(obj, blocks[i]);
-                });
-              });
+  s.WriteOptionalList(
+    id, tag, blocks.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      list.WriteObject([&](duckdb::BinarySerializer& obj) {
+        SerializeColumnBlockMeta(obj, blocks[i]);
+      });
+    });
 }
 
 struct GatherBands {
@@ -171,41 +173,32 @@ bool ScatterWins(const ColumnBlockMeta& block, const duckdb::LogicalType& type,
 void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
   s.WriteProperty(0, "id", meta.id);
   s.WriteProperty(1, "type", meta.type);
-  if (!meta.data.empty()) {
-    SerializeBlockMetas(s, 2, "data", meta.data);
-  }
-  if (!meta.validity.empty()) {
-    SerializeBlockMetas(s, 3, "validity", meta.validity);
-  }
-  if (!meta.children.empty()) {
-    s.WriteList(4, "children", meta.children.size(),
-                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                  list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                    SerializeColumnMeta(obj, meta.children[i]);
-                  });
-                });
-  }
-  if (!meta.variant_rgs.empty()) {
-    s.WriteList(5, "variant_rgs", meta.variant_rgs.size(),
-                [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
-                  const auto& rg = meta.variant_rgs[i];
-                  list.WriteObject([&](duckdb::BinarySerializer& obj) {
-                    obj.WriteProperty(0, "row_count", rg.row_count);
-                    obj.WriteObject(1, "unshredded",
-                                    [&](duckdb::BinarySerializer& unshredded) {
-                                      SerializeColumnMeta(unshredded,
-                                                          *rg.unshredded);
-                                    });
-                    if (rg.shredded) {
-                      obj.WriteObject(
-                        2, "shredded", [&](duckdb::BinarySerializer& shredded) {
-                          SerializeColumnMeta(shredded, *rg.shredded);
+  SerializeBlockMetas(s, 2, "data", meta.data);
+  SerializeBlockMetas(s, 3, "validity", meta.validity);
+  s.WriteOptionalList(
+    4, "children", meta.children.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      list.WriteObject([&](duckdb::BinarySerializer& obj) {
+        SerializeColumnMeta(obj, meta.children[i]);
+      });
+    });
+  s.WriteOptionalList(
+    5, "variant_rgs", meta.variant_rgs.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      const auto& rg = meta.variant_rgs[i];
+      list.WriteObject([&](duckdb::BinarySerializer& obj) {
+        obj.WriteProperty(0, "row_count", rg.row_count);
+        obj.WriteObject(1, "unshredded",
+                        [&](duckdb::BinarySerializer& unshredded) {
+                          SerializeColumnMeta(unshredded, *rg.unshredded);
                         });
-                    }
-                  });
-                });
-  }
-  s.WritePropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+        obj.WriteOptionalObject(2, "shredded", rg.shredded != nullptr,
+                                [&](duckdb::BinarySerializer& shredded) {
+                                  SerializeColumnMeta(shredded, *rg.shredded);
+                                });
+      });
+    });
+  s.WritePropertyWithDefault(7, "distinct", meta.distinct);
 }
 
 ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
@@ -257,7 +250,7 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
         meta.variant_rgs.push_back(std::move(rg));
       });
     });
-  d.ReadPropertyWithDefault(6, "hyperloglog", meta.hyperloglog);
+  d.ReadPropertyWithDefault(7, "distinct", meta.distinct);
   return meta;
 }
 
@@ -275,6 +268,7 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _type{std::move(type)},
     _segments{std::move(segments)},
     _validity{std::move(validity)},
+    _validity_view{_validity.get()},
     _children{std::move(children)},
     _array_size{_type.id() == duckdb::LogicalTypeId::ARRAY
                   ? duckdb::ArrayType::GetSize(_type)
@@ -301,7 +295,7 @@ bool ColumnReader::NullsInData() const noexcept {
 void ColumnReader::FinishStats(duckdb::BaseStatistics stats) {
   if (_validity) {
     stats.Merge(_validity->MergedStatistics());
-  } else if (_row_count > 0 && !_children.empty()) {
+  } else if (_row_count > 0 && (!_children.empty() || _segments.empty())) {
     // A nested parent rebuilds its stats from CreateEmpty (its own blocks are
     // plumbing, e.g. list offsets), so the null flags only come from the
     // validity child -- and its absence means the writer counted every row
@@ -345,6 +339,23 @@ BlockWindow ColumnReader::Locate(uint64_t row,
                              [row](uint64_t offset) { return offset <= row; });
   const auto rg = static_cast<size_t>(it - _offsets.data()) - 1;
   return BlockWindow{rg, _offsets[rg], _offsets[rg + 1]};
+}
+
+void ColumnReader::CollectBlocks(uint64_t first, uint64_t last,
+                                 std::vector<duckdb::FileRange>& out) const {
+  if (!_segments.empty() && first < _row_count) {
+    const auto from = Locate(first).block;
+    const auto to = Locate(std::min(last, _row_count - 1)).block;
+    for (auto block = from; block <= to; ++block) {
+      const auto& m = _segments[block];
+      if (m.byte_size != 0) {
+        out.push_back({.offset = m.file_offset, .size = m.byte_size});
+      }
+    }
+  }
+  if (_validity) {
+    _validity->CollectBlocks(first, last, out);
+  }
 }
 
 bool ColumnReader::NextSegment(BlockWindow& w) const noexcept {
@@ -393,13 +404,13 @@ std::unique_ptr<duckdb::ColumnSegment> ColumnReader::Open(const BlockWindow& w,
 
 void ColumnReader::Readahead(size_t block, ReadContext& ctx,
                              ScanState* s) const noexcept {
-  if (ctx.RandomAccess()) {
+  const auto* file = ctx.File();
+  if (ctx.RandomAccess() || file == nullptr) {
     return;
   }
-  auto& in = ctx.In();
   const auto& first = _segments[block];
   if (s == nullptr) {
-    in.Prefetch(first.file_offset, first.byte_size);
+    file->Hint(first.file_offset, first.byte_size);
     return;
   }
   const bool sequential = block != 0 && s->opened_block + 1 == block;
@@ -407,21 +418,31 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   if (block < s->advised_end) {
     return;
   }
-  if (in.Resident(first.file_offset, first.byte_size)) {
+  if (file->IsResident(first.file_offset, first.byte_size)) {
     s->advised_end = block + 1;
     return;
   }
-  uint64_t budget = sequential ? file_utils::kMaxReadahead : 0;
+  if (!sequential) {
+    file->Prefetch(first.file_offset, first.byte_size);
+    s->advised_end = block + 1;
+    return;
+  }
+  containers::SmallVector<duckdb::FileRange, kBlocksAhead> ahead;
+  uint64_t budget = duckdb::InputFile::MAX_HINT;
   auto b = block;
   do {
     const auto& m = _segments[b++];
-    in.Prefetch(m.file_offset, m.byte_size);
-    const auto cost = std::max<uint64_t>(m.byte_size, file_utils::kPage);
+    if (m.byte_size != 0) {
+      ahead.push_back({.offset = m.file_offset, .size = m.byte_size});
+    }
+    const auto cost =
+      std::max<uint64_t>(m.byte_size, duckdb::PageResidency::PAGE_SIZE);
     if (budget <= cost) {
       break;
     }
     budget -= cost;
   } while (b < _segments.size());
+  file->Hint(ahead);
   s->advised_end = b;
 }
 
@@ -596,8 +617,7 @@ bool ColumnReader::FetchSparse(ScanState& s, uint64_t anchor,
   const uint64_t cur = ColumnReader::GatherCursor(s);
   SDB_ASSERT(first >= cur);
   const auto window = Locate(first, s.window);
-  if (last >= window.end || (s.initialized && window.block == s.window.block) ||
-      (s.fetch.segment && s.fetch_window.block == window.block)) {
+  if (s.initialized && window.block == s.window.block) {
     return false;
   }
   if (first > cur) {
@@ -841,8 +861,14 @@ void ColumnReader::SkipRows(ScanState& s, duckdb::idx_t count) const {
 }
 
 std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
+  const auto id = meta.type.id();
+  const bool fieldless =
+    meta.children.empty() &&
+    (id == duckdb::LogicalTypeId::STRUCT ||
+     id == duckdb::LogicalTypeId::TUPLE || id == duckdb::LogicalTypeId::UNION);
   std::unique_ptr<ColumnReader> validity;
-  if (absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
+  if ((fieldless && !meta.validity.empty()) ||
+      absl::c_any_of(meta.validity, [](const ColumnBlockMeta& m) {
         return m.codec->type != duckdb::CompressionType::COMPRESSION_EMPTY;
       })) {
     validity.reset(new ColumnReader{
@@ -896,7 +922,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta) {
       });
       break;
   }
-  col->_hyperloglog = std::move(meta.hyperloglog);
+  col->_distinct = std::move(meta.distinct);
   return col;
 }
 
@@ -953,14 +979,25 @@ IRS_FORCE_INLINE bool ColumnReader::PointReader::FetchValidity(
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
-bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
-                                         duckdb::idx_t out_offset) {
+bool ColumnReader::FetchPoint(PointReader& reader, uint64_t row,
+                              duckdb::Vector& out,
+                              duckdb::idx_t out_offset) const {
+  return reader.FetchStored(row, out, out_offset);
+}
+
+bool ColumnReader::ValidPoint(PointReader& reader, uint64_t row,
+                              duckdb::Vector& scratch) const {
+  return reader.ValidStored(row, scratch);
+}
+
+bool ColumnReader::PointReader::FetchStored(uint64_t row, duckdb::Vector& out,
+                                            duckdb::idx_t out_offset) {
   if (row >= _reader->RowCount()) {
     duckdb::FlatVector::ValidityMutable(out).SetInvalid(out_offset);
     return false;
   }
   duckdb::FlatVector::ValidityMutable(out).SetValid(out_offset);
-  const auto* validity = _reader->_validity.get();
+  const auto* validity = _reader->_validity_view;
   if (validity && !FetchValidity(*validity, row, out, out_offset)) {
     return false;
   }
@@ -971,12 +1008,12 @@ bool ColumnReader::PointReader::FetchRow(uint64_t row, duckdb::Vector& out,
   return duckdb::FlatVector::Validity(out).RowIsValid(out_offset);
 }
 
-bool ColumnReader::PointReader::ValidRow(uint64_t row,
-                                         duckdb::Vector& scratch) {
+bool ColumnReader::PointReader::ValidStored(uint64_t row,
+                                            duckdb::Vector& scratch) {
   if (row >= _reader->RowCount()) {
     return false;
   }
-  const auto* validity = _reader->_validity.get();
+  const auto* validity = _reader->_validity_view;
   if (!validity) {
     return true;
   }

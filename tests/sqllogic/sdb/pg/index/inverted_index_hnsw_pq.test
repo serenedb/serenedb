@@ -17,9 +17,6 @@ INSERT INTO hnsw_pq SELECT i,
                            ELSE 0.0::FLOAT END)::FLOAT[8]
   FROM range(64) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_pq;
-
 query
 SELECT pk FROM hnsw_pq_idx
   ORDER BY emb <-> [0, 0, 0, 60, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
@@ -59,9 +56,6 @@ INSERT INTO hnsw_pq_ip SELECT i,
                            ELSE 0.0::FLOAT END)::FLOAT[8]
   FROM range(64) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_pq_ip;
-
 query
 SELECT pk FROM hnsw_pq_ip_idx
   ORDER BY emb <#> [0, 0, 1, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 3;
@@ -92,9 +86,6 @@ INSERT INTO hnsw_pq_cos VALUES
   (3, [0, 0, 1, 0]::FLOAT[4]),
   (4, [0, 0, 0, 1]::FLOAT[4]);
 
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_pq_cos;
-
 query
 SELECT pk FROM hnsw_pq_cos_idx
   ORDER BY emb <=> [0, 0, 3, 0]::FLOAT[4] LIMIT 1;
@@ -111,9 +102,6 @@ count
 
 statement ok
 DELETE FROM hnsw_pq WHERE pk = 43;
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_pq;
 
 query
 SELECT pk FROM hnsw_pq_idx

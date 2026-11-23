@@ -32,7 +32,7 @@
 
 #include <algorithm>
 #include <array>
-#include <ctime>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/main/database.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
@@ -40,9 +40,14 @@
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
+#include <iresearch/index/file_names.hpp>
+#include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/iterators.hpp>
+#include <iresearch/index/segment_list.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/detail/lazy_bitset.hpp>
@@ -51,9 +56,6 @@
 #include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/directory.hpp>
-#include <iresearch/store/directory_attributes.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -72,7 +74,6 @@
 
 #include "connector/functions/markdown_render.h"
 #include "docs/docs_index_data.h"
-#include "search/index_durability.h"
 
 namespace sdb::docs {
 namespace {
@@ -199,99 +200,38 @@ bool OfKind(const Object& object, std::string_view kind) {
   return kind.empty() || absl::EqualsIgnoreCase(object.kind, kind);
 }
 
-class SpanDirectory final : public irs::Directory {
- public:
-  SpanDirectory(std::span<const IndexFile> files,
-                const irs::ResourceManagementOptions& resource_manager) noexcept
-    : Directory{resource_manager}, _files{files} {}
-
-  irs::IndexInput::ptr open(std::string_view name, irs::IOAdvice) const final {
-    const auto* file = Find(name);
-    if (!file) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_FILE),
-                      ERR_MSG("could not open file \"", name,
-                              "\" of the documentation index: no such file"));
-    }
-    return std::make_unique<irs::BytesViewInput>(
-      irs::bytes_view{file->bytes.data(), file->bytes.size()});
+irs::CompositeReader LoadIndex(duckdb::DatabaseInstance& db,
+                               duckdb::MemoryFileSystem& fs,
+                               std::span<const IndexFile> files) {
+  const auto root = absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "docs");
+  for (const auto& file : files) {
+    fs.AddFile(absl::StrCat(root, "/", file.name), file.bytes.data(),
+               file.bytes.size());
   }
-
-  bool exists(bool& result, std::string_view name) const noexcept final {
-    result = absl::c_any_of(
-      _files, [&](const IndexFile& file) { return file.name == name; });
-    return true;
+  const auto segments = absl::c_find_if(
+    files, [](const IndexFile& file) { return file.name == kSegmentsFile; });
+  if (segments == files.end()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INTERNAL_ERROR),
+      ERR_MSG("the documentation index carries no ", kSegmentsFile));
   }
-
-  bool length(uint64_t& result, std::string_view name) const noexcept final {
-    const auto* file = Find(name);
-    if (!file) {
-      return false;
-    }
-    result = file->bytes.size();
-    return true;
-  }
-
-  bool visit(const visitor_f& visitor) const final {
-    return absl::c_all_of(
-      _files, [&](const IndexFile& file) { return visitor(file.name); });
-  }
-
-  irs::DirectoryAttributes& attributes() noexcept final { return _attributes; }
-
-  irs::IndexOutput::ptr create(std::string_view name) final {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                    ERR_MSG("could not create file \"", name,
-                            "\": the documentation index is read-only"));
-  }
-
-  irs::IndexLock::ptr make_lock(std::string_view) noexcept final {
-    return nullptr;
-  }
-
-  bool mtime(std::time_t&, std::string_view) const noexcept final {
-    return false;
-  }
-
-  bool remove(std::string_view) noexcept final { return false; }
-
-  bool rename(std::string_view, std::string_view) noexcept final {
-    return false;
-  }
-
-  bool sync(std::span<const std::string_view>) noexcept final { return true; }
-
- private:
-  const IndexFile* Find(std::string_view name) const noexcept {
-    const auto it = absl::c_find_if(
-      _files, [&](const IndexFile& file) { return file.name == name; });
-    return it == _files.end() ? nullptr : &*it;
-  }
-
-  std::span<const IndexFile> _files;
-  irs::DirectoryAttributes _attributes;
-};
+  return irs::OpenSegmentList(
+    db, fs, root,
+    {reinterpret_cast<const char*>(segments->bytes.data()),
+     segments->bytes.size()},
+    {});
+}
 
 class EmbeddedIndex {
  public:
   EmbeddedIndex(duckdb::DatabaseInstance& db, std::span<const IndexFile> files)
-    : _dir{files, kResourceManager},
-      _reader{_dir, Options(db), [](duckdb::BinaryDeserializer& payload) {
-                search::IndexStamp::Read(payload);
-              }} {}
+    : _reader{LoadIndex(db, _fs, files)} {}
 
-  const irs::DirectoryReader& Reader() const noexcept { return _reader; }
+  const irs::CompositeReader& Reader() const noexcept { return _reader; }
 
  private:
-  static inline const irs::ResourceManagementOptions kResourceManager;
-
-  static irs::IndexReaderOptions Options(duckdb::DatabaseInstance& db) {
-    irs::IndexReaderOptions options;
-    options.db = &db;
-    return options;
-  }
-
-  SpanDirectory _dir;
-  irs::DirectoryReader _reader;
+  duckdb::MemoryFileSystem _fs;
+  irs::CompositeReader _reader;
 };
 
 class DocsIndex final : public duckdb::ObjectCacheEntry {
@@ -306,9 +246,9 @@ class DocsIndex final : public duckdb::ObjectCacheEntry {
   std::string GetObjectType() final { return ObjectType(); }
   duckdb::optional_idx GetEstimatedCacheMemory() const final { return {}; }
 
-  const irs::DirectoryReader& Reader() const noexcept { return _docs.Reader(); }
+  const irs::CompositeReader& Reader() const noexcept { return _docs.Reader(); }
   const Layout& Fields() const noexcept { return _layout; }
-  const irs::DirectoryReader& ObjectReader() const noexcept {
+  const irs::CompositeReader& ObjectReader() const noexcept {
     return _objects.Reader();
   }
   const ObjectLayout& ObjectFields() const noexcept { return _object_layout; }
@@ -502,7 +442,7 @@ class ObjectFetcher {
 };
 
 template<typename MakeFetcher, typename Fn>
-void ForEachMatchIn(const irs::DirectoryReader& reader,
+void ForEachMatchIn(const irs::CompositeReader& reader,
                     const irs::Filter& filter, MakeFetcher&& make, Fn&& fn) {
   irs::QueryMemory query_memory;
   irs::PlanMemory plan_memory;
@@ -597,9 +537,7 @@ std::vector<std::string> Analyze(irs::analysis::Tokenizer& tokenizer,
                                  std::string_view text) {
   irs::ValueAnalyzer analyzer;
   irs::ValueTokens<> tokens;
-  analyzer.Analyze(
-    tokenizer,
-    duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())}, tokens);
+  analyzer.Analyze(tokenizer, duckdb::string_t::Unsafe(text), tokens);
   return tokens.terms() | std::views::transform(&duckdb::string_t::GetString) |
          std::ranges::to<std::vector>();
 }
@@ -686,7 +624,7 @@ constexpr std::string_view kStopwords[] = {
   "yes",   "you",  "your"};
 
 constexpr irs::score_t kPhraseBoost = 2;
-constexpr irs::score_t kStemBoost = 0.1F;
+constexpr irs::score_t kStemBoost = 1;
 
 std::string_view Stem(std::string_view word) {
   constexpr std::string_view kSuffixes[] = {
@@ -798,7 +736,7 @@ std::vector<Entry> RunScored(const DocsIndex& index, const irs::Filter& filter,
   const size_t capacity = std::max<size_t>(reader.live_docs_count(), 1);
   std::vector<irs::ScoreDoc> hits(capacity);
   const auto matched = irs::ExecuteTopK(reader, filter, *scorer, capacity,
-                                        /*score_prune=*/false, std::span{hits});
+                                        /*score_prune=*/true, std::span{hits});
 
   hits.resize(std::min<size_t>(matched, capacity));
   absl::c_sort(hits, [](const irs::ScoreDoc& lhs, const irs::ScoreDoc& rhs) {

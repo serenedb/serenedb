@@ -51,4 +51,6 @@ Node::ptr MakeAllDocs(PlanMemory& memory, const SubReader& segment);
 Node::ptr MakeAllScored(PlanMemory& memory, const SubReader& segment,
                         ScoreMergeType merge, score_t score);
 
+Node::ptr MakeRoot(PlanMemory& memory, const QueryBuilder& query);
+
 }  // namespace irs::fill

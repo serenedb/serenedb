@@ -21,6 +21,7 @@
 #include "connector/functions/ts_offsets.h"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -50,7 +51,6 @@
 
 #include "catalog/catalog.h"
 #include "connector/common.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/search.h"
 #include "connector/highlight/highlight_types.h"
 #include "connector/highlight/memory_index.h"
@@ -65,7 +65,7 @@ bool OffsetsBindData::Equals(const duckdb::FunctionData& other) const {
   const auto& o = other.Cast<OffsetsBindData>();
   return config == o.config && column_id == o.column_id &&
          dict_tokenizer == o.dict_tokenizer && limit == o.limit &&
-         stored_filter == o.stored_filter;
+         filter == o.filter;
 }
 
 namespace {
@@ -155,6 +155,7 @@ struct IndexField {
 struct OffsetsLocalState final : duckdb::FunctionLocalState {
   highlight::MemoryIndex memory_index;
   IndexField field;
+  std::vector<irs::QueryBuilder::ptr> leaves;
 };
 
 auto& EnsureField(duckdb::ClientContext& context,
@@ -189,7 +190,7 @@ duckdb::unique_ptr<duckdb::FunctionLocalState> InitOffsetsLocalState(
 void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                      duckdb::Vector& result) {
   auto& expr = state.expr.Cast<duckdb::BoundFunctionExpression>();
-  if (!expr.BindInfo()) {
+  if (!expr.BindInfo() || !expr.BindInfo()->Cast<OffsetsBindData>().filter) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("ts_offsets() requires an inverted index scan in the same "
@@ -243,15 +244,16 @@ void OffsetsScalarFn(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   });
 
   irs::QueryMemory query_memory;
-  auto query = bind.stored_filter->PrepareSegment(
-    *segment, {.memory = query_memory, .needs_terms = true});
-  if (!query) {
-    return;
-  }
-
+  auto& leaves = local_state.leaves;
+  absl::Cleanup clear_leaves = [&] { leaves.clear(); };
+  irs::PreparePositiveLeaves(
+    *bind.filter, *segment, {.memory = query_memory, .needs_terms = true},
+    [&](irs::QueryBuilder::ptr query) { leaves.push_back(std::move(query)); });
   FieldEntry entry{.id = field.Id()};
   OffsetsCollector visitor{std::span{&entry, 1}};
-  query->Visit(visitor, irs::kNoBoost);
+  for (const auto& query : leaves) {
+    query->Visit(visitor, irs::kNoBoost);
+  }
 
   std::vector<highlight::HitRange> offsets;
   for (duckdb::idx_t r = 0; r < count; ++r) {
@@ -377,7 +379,7 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
 
   auto bind = duckdb::make_uniq<OffsetsBindData>();
   bind->dict_tokenizer = dict->GetTokenizer();
-  bind->stored_filter = BuildFilterFromTSQuery(
+  bind->filter = BuildFilterFromTSQuery(
     context, *arguments[2], kStandaloneSyntheticColumnId, bind->dict_tokenizer);
   constexpr size_t kDefaultOffsetsLimit = 1 << 12;
   bind->limit = kDefaultOffsetsLimit;

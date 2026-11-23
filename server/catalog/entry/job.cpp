@@ -27,9 +27,9 @@
 #include <utility>
 
 #include "catalog/catalog.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/transaction.h"
+#include "jobs/scheduler.h"
 #include "pg/connection_context.h"
-#include "scheduler/job_scheduler.h"
 
 namespace sdb::catalog {
 
@@ -43,6 +43,7 @@ JobCatalogEntry::JobCatalogEntry(duckdb::Catalog& catalog,
     _suspended{info.suspended},
     _body{duckdb::CreateJobInfo::CopyBody(info.body)},
     _state{std::move(state)} {
+  temporary = info.temporary;
   comment = info.comment;
   tags = info.tags;
   dependencies = info.dependencies;
@@ -55,6 +56,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> JobCatalogEntry::GetInfo() const {
   info->schedule = _schedule;
   info->suspended = _suspended;
   info->body = duckdb::CreateJobInfo::CopyBody(_body);
+  info->temporary = temporary;
   info->comment = comment;
   info->tags = tags;
   info->dependencies = dependencies;
@@ -100,14 +102,15 @@ duckdb::unique_ptr<duckdb::CatalogEntry> JobCatalogEntry::AlterEntry(
 }
 
 void JobCatalogEntry::ScheduleAtCommit(duckdb::ClientContext& context) const {
-  auto* connection = connector::GetSereneDBContextPtr(context);
-  if (!connection) {
+  if (catalog.GetAttached().IsReadOnly()) {
     return;
   }
   auto& serene = catalog.Cast<SereneDBCatalog>();
-  connection->DeferToCommit([&serene, oid = oid] {
+  SessionOf(context, catalog).DeferToCommit([&serene, oid = oid] {
     auto* jobs = JobScheduler::Instance();
-    auto entry = serene.FindIn<JobCatalogEntry>(nullptr, oid);
+    const CommittedView view;
+    auto entry = serene.FindIn<JobCatalogEntry>(
+      view.Transaction(serene.GetDatabase()), oid);
     if (jobs && entry) {
       jobs->Schedule(*entry);
     }
@@ -115,16 +118,18 @@ void JobCatalogEntry::ScheduleAtCommit(duckdb::ClientContext& context) const {
 }
 
 void JobCatalogEntry::OnDrop() {
+  duckdb::shared_ptr<duckdb::AttachedDatabase> temporary;
   absl::MutexLock lock{&_state->mutex};
   _state->dropped = true;
+  temporary = std::move(_state->temporary);
   for (const auto& context : _state->contexts) {
     context->Interrupt();
   }
 }
 
-void ForEachJob(duckdb::DuckCatalog& catalog,
+void ForEachJob(BaseCatalog& catalog,
                 const std::function<void(JobCatalogEntry&)>& callback) {
-  catalog.ScanSchemas([&](duckdb::SchemaCatalogEntry& schema) {
+  catalog.ScanSchemas([&](Schema& schema) {
     schema.Scan(duckdb::CatalogType::JOB_ENTRY,
                 [&](duckdb::CatalogEntry& entry) {
                   callback(entry.Cast<JobCatalogEntry>());

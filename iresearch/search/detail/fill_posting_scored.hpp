@@ -29,41 +29,33 @@
 
 namespace irs::detail {
 
-template<typename Result, typename Make>
-Result ResolveFillScored(const IndexInput& doc, bool per_doc,
+template<typename Result, typename P = NoPins, typename Make>
+Result ResolveFillScored(const duckdb::InputFile& doc, bool per_doc,
                          ScoreMergeType merge, Make&& make) {
-  return ResolveInput(doc, [&]<typename Input> -> Result {
+  return Resolve<P>(doc, [&]<typename Input> -> Result {
     using Plain = PlainFillScored<Input>;
-    const auto with = [&]<ScoreMergeType M> -> Result {
-      if (per_doc) {
-        return make.template operator()<PostingFillScored<Input, M>, Plain>();
-      }
-      return make.template operator()<ConstFillScored<Input, M>, Plain>();
-    };
-    if (merge == ScoreMergeType::Max) {
-      return with.template operator()<ScoreMergeType::Max>();
-    }
-    SDB_ASSERT(merge == ScoreMergeType::Sum);
-    return with.template operator()<ScoreMergeType::Sum>();
+    return Resolve<P>(merge, [&]<ScoreMergeType M> -> Result {
+      return Resolve<PerDocAxis, P>(per_doc, [&]<bool PerDoc> -> Result {
+        using Leaf = std::conditional_t<PerDoc, PostingFillScored<Input, M>,
+                                        ConstFillScored<Input, M>>;
+        return make.template operator()<Leaf, Plain>();
+      });
+    });
   });
 }
 
-template<typename Result, typename Make>
-Result ResolveCountScored(const IndexInput& doc, bool per_doc,
+template<typename Result, typename P = NoPins, typename Make>
+Result ResolveCountScored(const duckdb::InputFile& doc, bool per_doc,
                           ScoreMergeType merge, Make&& make) {
-  return ResolveInput(doc, [&]<typename Input> -> Result {
+  return Resolve<P>(doc, [&]<typename Input> -> Result {
     using Plain = PlainCountScored<Input>;
-    const auto with = [&]<ScoreMergeType M> -> Result {
-      if (per_doc) {
-        return make.template operator()<PostingCountScored<Input, M>, Plain>();
-      }
-      return make.template operator()<ConstCountScored<Input, M>, Plain>();
-    };
-    if (merge == ScoreMergeType::Max) {
-      return with.template operator()<ScoreMergeType::Max>();
-    }
-    SDB_ASSERT(merge == ScoreMergeType::Sum);
-    return with.template operator()<ScoreMergeType::Sum>();
+    return Resolve<P>(merge, [&]<ScoreMergeType M> -> Result {
+      return Resolve<PerDocAxis, P>(per_doc, [&]<bool PerDoc> -> Result {
+        using Leaf = std::conditional_t<PerDoc, PostingCountScored<Input, M>,
+                                        ConstCountScored<Input, M>>;
+        return make.template operator()<Leaf, Plain>();
+      });
+    });
   });
 }
 

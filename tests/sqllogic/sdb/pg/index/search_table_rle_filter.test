@@ -7,7 +7,7 @@
 
 statement ok
 CREATE TABLE srlef (pk BIGINT PRIMARY KEY, r BIGINT, n BIGINT, s TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 
 statement ok
@@ -17,17 +17,13 @@ INSERT INTO srlef SELECT i, (i // 2000) * 7919,
 
 
 statement ok
-VACUUM (REFRESH_TABLE) srlef;
+VACUUM (FLUSH_TABLE) srlef;
 
 
 statement ok
 INSERT INTO srlef SELECT i, (i // 2000) * 7919,
   CASE WHEN i % 10 = 0 THEN NULL ELSE (i // 2000) * 7919 END, 'v' || (i // 2000)
   FROM generate_series(12000, 23999) g(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) srlef;
 
 
 # One full run matches (run 5: rows 10000..11999).
@@ -95,10 +91,6 @@ c
 
 statement ok
 DELETE FROM srlef WHERE pk >= 10500 AND pk < 11500;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) srlef;
 
 
 # The matching run now has a hole from the delete masks.

@@ -55,7 +55,7 @@
     {"cat": "task phrase", "q": "build grafana dashboards on serenedb tables", "expect": ["/docs/clients/grafana"]},
     {"cat": "task phrase", "q": "set up serenedb on a server with no internet access", "expect": ["/docs/installation/tarball", "/docs/installation"]},
     {"cat": "symptom or error", "q": "serened crashes on startup with illegal instruction", "expect": ["/docs/installation"]},
-    {"cat": "symptom or error", "q": "serened psql connection refused even though the server is running", "expect": ["/docs/clients/serened-psql"]},
+    {"cat": "symptom or error", "q": "serenedb psql connection refused even though the server is running", "expect": ["/docs/clients/serened-psql"]},
     {"cat": "symptom or error", "q": "langchain hybrid search returns fewer results than the k I asked for", "expect": ["/docs/clients/langchain-serenedb/hybrid-search"]},
     {"cat": "symptom or error", "q": "server-side cursor in psycopg fails on serenedb", "expect": ["/docs/clients/python"]},
     {"cat": "comparison", "q": "how does serenedb full-text search speed compare to lucene and tantivy?", "expect": ["/docs/benchmarks/search-benchmark-game"]},

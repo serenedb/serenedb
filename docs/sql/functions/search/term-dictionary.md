@@ -24,7 +24,7 @@ The `ts_dict_*` aggregates read an inverted index's on-disk dictionary, so they 
 
 <SqlLogicTest id="sql/functions/term_dictionary/setup" />
 
-`cat` and `promo` are keyword columns (the whole value is one term, the default when a column is listed with no dictionary), `body` uses a text dictionary (terms are lowercased tokens). The index options disable background maintenance so the examples control visibility explicitly with `VACUUM (REFRESH_TABLE)`.
+`cat` and `promo` are keyword columns (the whole value is one term, the default when a column is listed with no dictionary), `body` uses a text dictionary (terms are lowercased tokens). The table option disables background compaction so the segments stay as the examples write them.
 
 </details>
 
@@ -71,11 +71,13 @@ Filtering the *emitted terms* by arbitrary conditions belongs to the outer query
 `EXPLAIN` shows the split: the whole claimed tree renders as `Filter:` inside the `IRESEARCH_SCAN` box and scalar post-filters as a `FILTER` node above the scan.
 
 :::note Filtered enumeration runs in parallel
-An unfiltered enumeration answers from term metadata and costs one dictionary walk, so there is nothing to spread. Once a filter or a pending delete makes the counts document-dependent, a segment large enough to span several row groups is split across worker threads: each counts every term over its own document range, and the thread that finishes the segment's last range emits the summed rows. `min`/`max`-only requests are exempt — they seek to the one term they need instead of walking the dictionary. [`sdb_scan_split`](../../indexes/inverted/maintenance.md#session-settings) forces or disables the split.
+An unfiltered enumeration answers from term metadata and costs one dictionary walk, so there is nothing to spread. Once a filter or a pending delete makes the counts document-dependent, a segment large enough to span several row groups is split across worker threads: each counts every term over its own document range, and the thread that finishes the segment's last range emits the summed rows. `min`/`max`-only requests are exempt — they seek to the one term they need instead of walking the dictionary.
 :::
 
 :::note Scores follow the driver
 `ts_dict_score` reflects the driving acceptor only, so scores need a term-driving acceptor — a comparison or a matcher on a keyword column, not a `@@ ts_*` document filter over a tokenized column. In `cat @@ ts_starts_with('p') AND cat @@ ts_levenshtein('phon', 2)` the prefix drives, so every score is `1`; swap the query so the fuzzy matcher drives and the scores become similarities.
+
+Some ORs score like the `ts_levenshtein` alone and take the top-*k* bound below: those that pair a `ts_levenshtein` with exact matches it already accepts at distance 0. That is its own text, and with `starts_with := true` also a `ts_starts_with` whose text starts with it. So `cat @@ (ts_starts_with('phon') || ts_levenshtein('phon', 1, starts_with := true))` ranks the exact completions first, at `1`. Any other OR scores every term `1`.
 :::
 
 :::note The fuzzy expansion cap follows the field
@@ -116,7 +118,7 @@ Facets over a nullable column include the `NULL` group, synthesized from the col
 
 ## Consistency under writes {#consistency}
 
-The index relation is the snapshot taken at the last [refresh](../../indexes/inverted/maintenance.md): inserts and deletes become visible at the next refresh. A deleted document stays in its segment until compaction rewrites it, but from that refresh on no query sees it: terms whose documents are all deleted are never returned, and `ts_dict_count`, `ts_dict_min` and `ts_dict_max` count and compare live documents only.
+The index relation reads the same snapshot as the rest of the transaction: it sees the inserts and deletes committed before that snapshot was taken, and the transaction's own. A deleted document stays in its segment until compaction rewrites it, but no query that sees the delete returns it: terms whose documents are all deleted are never returned, and `ts_dict_count`, `ts_dict_min` and `ts_dict_max` count and compare live documents only.
 
 <SqlLogicTest id="sql/functions/term_dictionary/deletes" />
 

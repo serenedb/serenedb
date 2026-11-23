@@ -1,4 +1,4 @@
-add_library(serene_docs STATIC docs_bootstrap_stub.cpp docs_index_stub.cpp)
+add_library(serene_docs STATIC docs_index_stub.cpp)
 
 target_include_directories(serene_docs PUBLIC ${CMAKE_SOURCE_DIR}/server)
 

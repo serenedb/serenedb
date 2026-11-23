@@ -79,14 +79,13 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
   }
 
   auto reader = open_reader();
-  ASSERT_NE(nullptr, reader);
 
   // One field with real postings, and a term with enough documents that the
   // iterator has to set up its block machinery rather than take the df == 1
   // shortcut.
   const irs::TermReader* field = nullptr;
   const irs::SubReader* found_segment = nullptr;
-  for (auto& segment : *reader.GetImpl()) {
+  for (auto& segment : reader) {
     for (auto field_id : segment.field_ids()) {
       const auto* f = segment.field(field_id, irs::StringLayout::kStrings);
       if (f && f->size() > 64) {
@@ -153,9 +152,9 @@ TEST_P(PostingAllocTestCase, doc_iterator_construction_bytes) {
   EXPECT_LT(per_iterator, 64u * 1024u);
 }
 
-INSTANTIATE_TEST_SUITE_P(posting_alloc_test, PostingAllocTestCase,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         PostingAllocTestCase::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  posting_alloc_test, PostingAllocTestCase,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  PostingAllocTestCase::to_string);
 
 }  // namespace

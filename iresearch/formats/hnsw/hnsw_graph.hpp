@@ -29,6 +29,8 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <limits>
 #include <mutex>
 #include <new>
@@ -43,10 +45,8 @@
 #include "iresearch/utils/huge_page_allocator.hpp"
 #include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/tracked.hpp"
-namespace irs {
 
-class DataOutput;
-class IndexInput;
+namespace irs {
 
 inline constexpr uint32_t kHnswInvalidNode =
   std::numeric_limits<uint32_t>::max();
@@ -383,8 +383,8 @@ class HnswGraph {
     return {_upper.data() + Upper(node, level), _m};
   }
 
-  void Serialize(DataOutput& out) const;
-  static HnswGraph Deserialize(IndexInput& in);
+  void Serialize(duckdb::WriteStream& out) const;
+  static HnswGraph Deserialize(duckdb::InputFileReader& in);
 
  private:
   friend class HnswGraphWriter;
@@ -464,7 +464,7 @@ class HnswGraphWriter {
     return _graph.Neighbors(node, level);
   }
 
-  void Serialize(DataOutput& out) const { _graph.Serialize(out); }
+  void Serialize(duckdb::WriteStream& out) const { _graph.Serialize(out); }
 
  private:
   HnswGraph _graph;
@@ -518,8 +518,7 @@ void HnswComputeDistances(const float* q, const float* base, uint32_t d,
     } else if constexpr (kKernel == VectorMetric::InnerProduct) {
       out[i] = faiss::fvec_inner_product(q, row(ids[i]), d);
     } else {
-      out[i] =
-        ComputeDistance<kKernel>(q, row(ids[i]), static_cast<uint16_t>(d));
+      out[i] = ComputeDistance<kKernel>(q, row(ids[i]), d);
     }
   }
 }

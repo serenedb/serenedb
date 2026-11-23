@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <array>
 #include <iresearch/formats/posting/block_codec.hpp>
+#include <iresearch/formats/posting/block_encode.hpp>
 #include <iresearch/formats/posting/block_io.hpp>
 #include <iresearch/formats/posting/block_kernels.hpp>
 #include <random>
@@ -34,6 +35,7 @@ namespace {
 namespace bc = irs::block_codec;
 
 using Codec = bc::BlockCodec;
+using Encoder = bc::BlockEncoder;
 
 constexpr uint32_t kSlack = 16;
 constexpr uint32_t kWidths = bc::kMaxWidth + 1;
@@ -199,9 +201,9 @@ void CheckDocs(const std::vector<irs::doc_id_t>& docs, irs::doc_id_t prev,
   Buffer encoded;
   encoded.fill(0xEF);
   const auto size =
-    full
-      ? Codec::EncodeDeltaBlock(docs.data(), prev, encoded.data(), options)
-      : Codec::EncodeDeltaTail(docs.data(), len, prev, encoded.data(), options);
+    full ? Encoder::EncodeDeltaBlock(docs.data(), prev, encoded.data(), options)
+         : Encoder::EncodeDeltaTail(docs.data(), len, prev, encoded.data(),
+                                    options);
   ASSERT_LE(size, bc::kMaxBlockBytes);
   EXPECT_EQ(size, full ? Codec::DeltaBlockSize(encoded.data())
                        : Codec::DeltaTailSize(encoded.data(), len));
@@ -232,8 +234,9 @@ void CheckValues(const std::vector<uint32_t>& values,
   Buffer encoded;
   encoded.fill(0xEF);
   const auto size =
-    full ? Codec::EncodeValuesBlock(values.data(), encoded.data(), options)
-         : Codec::EncodeValuesTail(values.data(), len, encoded.data(), options);
+    full
+      ? Encoder::EncodeValuesBlock(values.data(), encoded.data(), options)
+      : Encoder::EncodeValuesTail(values.data(), len, encoded.data(), options);
   ASSERT_LE(size, bc::kMaxBlockBytes);
   EXPECT_EQ(size, full ? Codec::ValuesBlockSize(encoded.data())
                        : Codec::ValuesTailSize(encoded.data(), len));
@@ -384,13 +387,13 @@ TEST(BlockCodecTest, ChosenEncodings) {
   for (uint32_t i = 0; i != kN; ++i) {
     docs[i] = 10 + i;
   }
-  EXPECT_EQ(1U, Codec::EncodeDeltaBlock(docs.data(), 9, encoded.data()));
+  EXPECT_EQ(1U, Encoder::EncodeDeltaBlock(docs.data(), 9, encoded.data()));
   EXPECT_EQ(static_cast<irs::byte_type>(bc::DeltaEncoding::Run), encoded[0]);
 
   for (uint32_t i = 0; i != kN; ++i) {
     docs[i] = 12 + 3 * i;
   }
-  EXPECT_EQ(2U, Codec::EncodeDeltaBlock(docs.data(), 9, encoded.data()));
+  EXPECT_EQ(2U, Encoder::EncodeDeltaBlock(docs.data(), 9, encoded.data()));
   EXPECT_EQ(static_cast<irs::byte_type>(bc::DeltaEncoding::Same08), encoded[0]);
 
   for (uint32_t i = 0, doc = 0; i != kN; ++i) {
@@ -399,7 +402,7 @@ TEST(BlockCodecTest, ChosenEncodings) {
   }
   constexpr uint32_t kSpread = (kN + kN / 16 + 63) / 64;
   EXPECT_EQ(1 + 8 * kSpread,
-            Codec::EncodeDeltaBlock(docs.data(), 0, encoded.data()));
+            Encoder::EncodeDeltaBlock(docs.data(), 0, encoded.data()));
   EXPECT_EQ(bc::Code(bc::DeltaEncoding::BitsetWords) + kSpread - 1, encoded[0]);
 
   for (uint32_t i = 0, doc = 0; i != kN; ++i) {
@@ -407,7 +410,7 @@ TEST(BlockCodecTest, ChosenEncodings) {
     docs[i] = doc;
   }
   EXPECT_EQ(1 + kN / 4,
-            Codec::EncodeDeltaBlock(docs.data(), 0, encoded.data()));
+            Encoder::EncodeDeltaBlock(docs.data(), 0, encoded.data()));
   EXPECT_EQ(bc::Code(bc::DeltaEncoding::BitsetWords) + kN / 32 - 1, encoded[0]);
 
   for (uint32_t i = 0, doc = 0; i != kN; ++i) {
@@ -416,24 +419,24 @@ TEST(BlockCodecTest, ChosenEncodings) {
   }
   static_assert((24 * kN + 63) / 64 > bc::kMaxBitsetWords);
   EXPECT_EQ(1 + kN * 5 / 8,
-            Codec::EncodeDeltaBlock(docs.data(), 0, encoded.data()));
+            Encoder::EncodeDeltaBlock(docs.data(), 0, encoded.data()));
   EXPECT_EQ(bc::Code(bc::DeltaEncoding::Pack) + 4, encoded[0]);
   std::vector<irs::doc_id_t> decoded(kN + bc::kOutSlack);
   Codec::DecodeDeltaBlock(encoded.data(), 0, decoded.data());
   EXPECT_TRUE(std::equal(docs.begin(), docs.end(), decoded.begin()));
 
   docs.assign({1U, 2'000'000'002U});
-  EXPECT_EQ(8U, Codec::EncodeDeltaTail(docs.data(), 2, 0, encoded.data()));
+  EXPECT_EQ(8U, Encoder::EncodeDeltaTail(docs.data(), 2, 0, encoded.data()));
   EXPECT_EQ(bc::Code(bc::DeltaEncoding::PatchBit), encoded[0]);
   EXPECT_EQ(1U, encoded[1]);
   EXPECT_EQ(31U, encoded[2]);
 
   std::vector<uint32_t> values(kN, 0);
-  EXPECT_EQ(1U, Codec::EncodeValuesBlock(values.data(), encoded.data()));
+  EXPECT_EQ(1U, Encoder::EncodeValuesBlock(values.data(), encoded.data()));
   EXPECT_EQ(static_cast<irs::byte_type>(bc::ValueEncoding::Zero), encoded[0]);
 
   std::fill(values.begin(), values.end(), 1);
-  EXPECT_EQ(2U, Codec::EncodeValuesBlock(values.data(), encoded.data()));
+  EXPECT_EQ(2U, Encoder::EncodeValuesBlock(values.data(), encoded.data()));
   EXPECT_EQ(static_cast<irs::byte_type>(bc::ValueEncoding::Same08), encoded[0]);
 
   for (uint32_t i = 0; i != kN; ++i) {
@@ -442,7 +445,7 @@ TEST(BlockCodecTest, ChosenEncodings) {
   values[17] = 39;
   values[90] = 99;
   EXPECT_EQ(6 + kN / 4,
-            Codec::EncodeValuesBlock(values.data(), encoded.data()));
+            Encoder::EncodeValuesBlock(values.data(), encoded.data()));
   EXPECT_EQ(bc::Code(bc::ValueEncoding::PatchByte) + 2, encoded[0]);
   EXPECT_EQ(2U, encoded[1]);
 
@@ -450,14 +453,14 @@ TEST(BlockCodecTest, ChosenEncodings) {
     values[i] = i % 4;
   }
   EXPECT_EQ(1 + kN / 4,
-            Codec::EncodeValuesBlock(values.data(), encoded.data()));
+            Encoder::EncodeValuesBlock(values.data(), encoded.data()));
   EXPECT_EQ(bc::Code(bc::ValueEncoding::Pack) + 1, encoded[0]);
 
   for (uint32_t i = 0; i != kN; ++i) {
     values[i] = i % 3;
   }
   EXPECT_EQ(1 + kN / 4,
-            Codec::EncodeValuesBlock(values.data(), encoded.data()));
+            Encoder::EncodeValuesBlock(values.data(), encoded.data()));
   EXPECT_EQ(bc::Code(bc::ValueEncoding::Pack) + 1, encoded[0]);
 
   for (uint32_t i = 0; i != kN; ++i) {
@@ -465,11 +468,11 @@ TEST(BlockCodecTest, ChosenEncodings) {
   }
   constexpr uint32_t kSparse = (kN + 6) / 7;
   EXPECT_EQ(1 + kN / 4,
-            Codec::EncodeValuesBlock(values.data(), encoded.data()));
+            Encoder::EncodeValuesBlock(values.data(), encoded.data()));
   EXPECT_EQ(bc::Code(bc::ValueEncoding::Pack) + 1, encoded[0]);
   EXPECT_EQ(3 + kSparse + (2 * kSparse + 7) / 8,
-            Codec::EncodeValuesBlock(values.data(), encoded.data(),
-                                     {.narrow_highs = true}));
+            Encoder::EncodeValuesBlock(values.data(), encoded.data(),
+                                       {.narrow_highs = true}));
   EXPECT_EQ(bc::Code(bc::ValueEncoding::PatchBit), encoded[0]);
   EXPECT_EQ(kSparse, encoded[1]);
   EXPECT_EQ(2U, encoded[2]);
@@ -491,10 +494,10 @@ TEST(BlockIoTest, HolesBecomeBitset) {
       Buffer encoded;
       encoded.fill(0xEF);
       const auto size = len == kN
-                          ? io::Codec::EncodeDeltaBlock(docs.data(), kPrev,
-                                                        encoded.data(), options)
-                          : io::Codec::EncodeDeltaTail(docs.data(), len, kPrev,
-                                                       encoded.data(), options);
+                          ? io::Encoder::EncodeDeltaBlock(
+                              docs.data(), kPrev, encoded.data(), options)
+                          : io::Encoder::EncodeDeltaTail(
+                              docs.data(), len, kPrev, encoded.data(), options);
       ASSERT_EQ(bc::Code(narrow ? bc::DeltaEncoding::PatchBit
                                 : bc::DeltaEncoding::PatchByte),
                 encoded[0])

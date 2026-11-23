@@ -22,7 +22,7 @@ INSERT INTO bulk_src SELECT i, i FROM generate_series(1, 200000) g(i);
 
 statement ok
 CREATE TABLE bt (pk BIGINT PRIMARY KEY, x BIGINT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 # Pre-existing committed rows: the in-txn DELETE below must match visible rows
 # (search tables have no read-your-own-writes, so a DELETE can't see the
@@ -31,7 +31,7 @@ statement ok
 INSERT INTO bt VALUES (-1, -1), (-2, -2), (-3, -3);
 
 statement ok
-VACUUM (REFRESH_TABLE) bt;
+VACUUM (FLUSH_TABLE) bt;
 
 # One explicit transaction: BULK insert (appends flushed per-thread transactions)
 # then a serial INSERT and a serial DELETE -- both reuse the flushed tail.
@@ -51,7 +51,7 @@ statement ok
 COMMIT;
 
 statement ok
-VACUUM (REFRESH_TABLE) bt;
+VACUUM (FLUSH_TABLE) bt;
 
 # 3 pre-existing + 200000 bulk + 2 serial-insert - 2 serial-delete = 200003.
 query

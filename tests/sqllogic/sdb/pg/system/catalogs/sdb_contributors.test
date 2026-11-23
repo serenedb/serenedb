@@ -1,0 +1,49 @@
+statement ok
+DROP ROLE IF EXISTS courier_contributors_reader;
+
+
+statement ok
+CREATE ROLE courier_contributors_reader LOGIN PASSWORD 'courier_contributors_pw';
+
+
+query
+SELECT c.relkind, n.nspname, c.relnatts
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relname = 'sdb_contributors';
+----
+relkind	nspname	relnatts
+r	pg_catalog	1
+
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attnotnull
+FROM pg_attribute
+WHERE attrelid = 'sdb_contributors'::regclass AND attnum > 0
+ORDER BY attnum;
+----
+attname	type	attnotnull
+name	text	f
+
+
+query
+SELECT count(*) > 0 AS listed,
+       count(*) = count(DISTINCT name) AS distinct_names,
+       count(*) FILTER (WHERE name IS NULL OR name = '' OR name <> trim(name)) AS blank,
+       count(*) FILTER (WHERE name LIKE '%[bot]') AS bots
+FROM sdb_contributors;
+----
+listed	distinct_names	blank	bots
+t	t	0	0
+
+
+connection courier_contributors user=courier_contributors_reader password=courier_contributors_pw
+query
+SELECT count(*) > 0 AS readable FROM sdb_contributors;
+----
+readable
+t
+
+
+connection default
+statement ok
+DROP ROLE courier_contributors_reader;

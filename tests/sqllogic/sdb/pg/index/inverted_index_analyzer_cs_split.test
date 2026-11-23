@@ -46,9 +46,6 @@ statement ok
 CREATE INDEX t_geo_inc_idx ON t_geo_inc
   USING inverted(geo g_dict) INCLUDE (geo);
 
-statement ok
-VACUUM (REFRESH_TABLE) t_geo_inc;
-
 query
 EXPLAIN SELECT pk, geo FROM t_geo_inc_idx
 WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
@@ -56,7 +53,7 @@ WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: t_geo_inc_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo Distance ─────╮   │
 │ │ Field: geo(string) │   │
@@ -69,8 +66,7 @@ QUERY PLAN
 │ │ Range: *, <1000      │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: pk (l),     │
-│              geo (i)     │
+│ Projections: pk, geo     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -92,9 +88,6 @@ INSERT INTO t_geo_noi VALUES (1, '{"type":"Point","coordinates":[37.615895,55.70
 statement ok
 CREATE INDEX t_geo_noi_idx ON t_geo_noi USING inverted(geo g_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) t_geo_noi;
-
 query
 EXPLAIN SELECT pk, geo FROM t_geo_noi_idx
 WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
@@ -102,7 +95,7 @@ WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: t_geo_noi_idx     │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo Distance ─────╮   │
 │ │ Field: geo(string) │   │
@@ -140,9 +133,6 @@ INSERT INTO t_geo_src_noi VALUES (1, '{"type":"Point","coordinates":[37.615895,5
 statement ok
 CREATE INDEX t_geo_src_noi_idx ON t_geo_src_noi USING inverted(geo g_src_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) t_geo_src_noi;
-
 query
 EXPLAIN SELECT pk, geo FROM t_geo_src_noi_idx
 WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
@@ -150,7 +140,7 @@ WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: t_geo_src_noi_idx │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Geo Distance ─────╮   │
 │ │ Field: geo(string) │   │
@@ -163,8 +153,7 @@ QUERY PLAN
 │ │ Range: *, <1000      │ │
 │ │ Verify: table filter │ │
 │ ╰──────────────────────╯ │
-│ Projections: pk (l),     │
-│              geo (i)     │
+│ Projections: pk, geo     │
 │ ~1 row                   │
 ╰──────────────────────────╯
 
@@ -192,9 +181,6 @@ statement ok
 CREATE INDEX t_geo_src_zstd_idx ON t_geo_src_zstd
   USING inverted(geo g_src_dict, geo included (compression = 'zstd'));
 
-statement ok
-VACUUM (REFRESH_TABLE) t_geo_src_zstd;
-
 query
 EXPLAIN SELECT pk, geo FROM t_geo_src_zstd_idx
 WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}') < 1000.0;
@@ -202,7 +188,7 @@ WHERE ST_Distance_Centroid(geo, '{"type":"Point","coordinates":[37.616,55.704]}'
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ──────────╮
 │ Index: t_geo_src_zstd_idx │
-│ Lookup: table             │
+│ Lookup: search            │
 │ Index Filter:             │
 │ ╭─ Geo Distance ─────╮    │
 │ │ Field: geo(string) │    │
@@ -215,8 +201,7 @@ QUERY PLAN
 │ │ Range: *, <1000      │  │
 │ │ Verify: table filter │  │
 │ ╰──────────────────────╯  │
-│ Projections: pk (l),      │
-│              geo (i)      │
+│ Projections: pk, geo      │
 │ ~1 row                    │
 ╰───────────────────────────╯
 
@@ -246,9 +231,6 @@ statement ok
 CREATE INDEX t_wild_inc_idx ON t_wild_inc
   USING inverted(b w_dict) INCLUDE (b);
 
-statement ok
-VACUUM (REFRESH_TABLE) t_wild_inc;
-
 query
 EXPLAIN SELECT pk, b FROM t_wild_inc_idx
 WHERE b @@ ts_like('percent_alpha_one');
@@ -256,7 +238,7 @@ WHERE b @@ ts_like('percent_alpha_one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: t_wild_inc_idx                      │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Wildcard NGram ───────────────────────╮ │
 │ │ Field: b(string)                       │ │
@@ -277,7 +259,7 @@ QUERY PLAN
 │ │ And("\\xffpercent", "alpha", "one\\xff") │ │
 │ │ Verify: table filter                   │ │
 │ ╰────────────────────────────────────────╯ │
-│ Projections: pk (l), b (i)                 │
+│ Projections: pk, b                         │
 │ ~1 row                                     │
 ╰────────────────────────────────────────────╯
 
@@ -298,9 +280,6 @@ INSERT INTO t_wild_noi VALUES (1, 'percent_alpha_one');
 statement ok
 CREATE INDEX t_wild_noi_idx ON t_wild_noi USING inverted(b w_dict);
 
-statement ok
-VACUUM (REFRESH_TABLE) t_wild_noi;
-
 query
 EXPLAIN SELECT pk, b FROM t_wild_noi_idx
 WHERE b @@ ts_like('percent_alpha_one');
@@ -308,7 +287,7 @@ WHERE b @@ ts_like('percent_alpha_one');
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────────────────╮
 │ Index: t_wild_noi_idx                      │
-│ Lookup: table                              │
+│ Lookup: search                             │
 │ Index Filter:                              │
 │ ╭─ Wildcard NGram ───────────────────────╮ │
 │ │ Field: b(string)                       │ │

@@ -22,9 +22,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY ckw AS keyword() WITH (frequency)
 
 statement ok
@@ -35,7 +32,7 @@ CREATE TEXT SEARCH DICTIONARY ctx AS
 statement ok
 CREATE TABLE cev(id INTEGER PRIMARY KEY, sev VARCHAR NOT NULL,
                  svc VARCHAR NOT NULL, amount INTEGER, ts TIMESTAMP,
-                 flag BOOLEAN, body VARCHAR NOT NULL)
+                 flag BOOLEAN, body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO cev VALUES
@@ -51,7 +48,6 @@ INSERT INTO cev VALUES
 statement ok
 CREATE INDEX cev_idx ON cev USING inverted(sev ckw, body ctx)
     INCLUDE (svc, amount, ts, flag)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 CREATE VIEW cvw AS
@@ -62,10 +58,7 @@ FROM cev
 statement ok
 CREATE INDEX cvw_idx ON cvw USING inverted(Sev ckw, Body ctx)
     INCLUDE (Svc, Amount, Ts, Flag)
-    WITH (refresh_interval = 0, compaction_interval = 0)
-
-statement ok
-VACUUM (REFRESH_TABLE) cev;
+    WITH (compaction_interval = 0)
 
 # ==========================================================================
 # Numeric ranges
@@ -89,6 +82,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -132,6 +126,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -177,6 +172,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -220,6 +216,7 @@ QUERY PLAN
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
 │ Index: cev_idx                                                                       │
+│ Lookup: search                                                                       │
 │ TsDict: sev                                                                          │
 │ Projections:                                                                         │
 │ sdb_inverted_index_term$sev, sdb_inverted_index_term_count$sev                       │
@@ -259,6 +256,7 @@ QUERY PLAN
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
 │ Index: cev_idx                                                                       │
+│ Lookup: search                                                                       │
 │ TsDict: sev                                                                          │
 │ Projections:                                                                         │
 │ sdb_inverted_index_term$sev, sdb_inverted_index_term_count$sev                       │
@@ -300,6 +298,7 @@ QUERY PLAN
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
 │ Index: cev_idx                                                                       │
+│ Lookup: search                                                                       │
 │ TsDict: sev                                                                          │
 │ Projections:                                                                         │
 │ sdb_inverted_index_term$sev, sdb_inverted_index_term_count$sev                       │
@@ -346,6 +345,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -390,6 +390,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -432,6 +433,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -476,6 +478,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -521,6 +524,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -565,6 +569,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -609,6 +614,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -657,6 +663,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -702,6 +709,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -746,6 +754,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -790,6 +799,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -834,6 +844,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -879,6 +890,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -927,6 +939,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -967,6 +980,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -1009,6 +1023,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -1057,6 +1072,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ──────────────╮                   │
 │ │ Field: body(string) │                   │
@@ -1103,6 +1119,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ──────────────╮                   │
 │ │ Field: body(string) │                   │
@@ -1156,9 +1173,8 @@ QUERY PLAN
 ╰────────────────┬───────────────╯
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: cev_idx                 │
-│ Lookup: table                  │
-│ Projections: amount (i),       │
-│              sev (l)           │
+│ Lookup: search                 │
+│ Projections: amount, sev       │
 │ Column Filter: length(svc) > 7 │
 │ ~1 row                         │
 ╰────────────────────────────────╯
@@ -1192,7 +1208,7 @@ QUERY PLAN
 ╰────────────────────┬────────────────────╯
 ╭─ IRESEARCH_SCAN ───┴────────────────────╮
 │ Index: cev_idx                          │
-│ Lookup: table                           │
+│ Lookup: search                          │
 │ Index Filter:                           │
 │ ╭─ Term ──────────────╮                 │
 │ │ Field: body(string) │                 │
@@ -1242,8 +1258,8 @@ QUERY PLAN
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: cev_idx                             │
-│ Lookup: table                              │
-│ Projections: svc (i), sev (l)              │
+│ Lookup: search                             │
+│ Projections: svc, sev                      │
 │ Column Filter:                             │
 │ optional: (svc IN ('frontend', 'backend')) │
 │ ~8 rows                                    │
@@ -1289,8 +1305,8 @@ QUERY PLAN
 ╰───────────────────────┬──────────────────────╯
 ╭─ IRESEARCH_SCAN ──────┴──────────────────────╮
 │ Index: cev_idx                               │
-│ Lookup: table                                │
-│ Projections: amount (i), sev (l)             │
+│ Lookup: search                               │
+│ Projections: amount, sev                     │
 │ Column Filter:                               │
 │ optional: ((amount = 150) OR (amount = 300)) │
 │ ~8 rows                                      │
@@ -1332,9 +1348,8 @@ QUERY PLAN
 ╰──────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Index: cev_idx                      │
-│ Lookup: table                       │
-│ Projections: svc (i), amount (i),   │
-│              sev (l)                │
+│ Lookup: search                      │
+│ Projections: svc, amount, sev       │
 │ ~8 rows                             │
 ╰─────────────────────────────────────╯
 
@@ -1494,9 +1509,6 @@ ERROR	4
 statement ok
 DELETE FROM cev WHERE id IN (1, 3)
 
-statement ok
-VACUUM (REFRESH_TABLE) cev;
-
 # --- abs() transform + deletions (Masked mode + Column Filter)
 query
 EXPLAIN SELECT sev, count(*) FROM cev_idx
@@ -1515,6 +1527,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -1556,6 +1569,7 @@ QUERY PLAN
 ╰───────────────────────────────────────────┬──────────────────────────────────────────╯
 ╭─ IRESEARCH_SCAN ──────────────────────────┴──────────────────────────────────────────╮
 │ Index: cev_idx                                                                       │
+│ Lookup: search                                                                       │
 │ TsDict: sev                                                                          │
 │ Projections:                                                                         │
 │ sdb_inverted_index_term$sev, sdb_inverted_index_term_count$sev                       │
@@ -1598,6 +1612,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -1641,6 +1656,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -1685,6 +1701,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -1725,6 +1742,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ──────────────╮                   │
 │ │ Field: body(string) │                   │
@@ -1774,6 +1792,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: cev_idx                            │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ──────────────╮                   │
 │ │ Field: body(string) │                   │

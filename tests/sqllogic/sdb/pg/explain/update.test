@@ -6,9 +6,8 @@ query
 EXPLAIN select * from t;
 ----
 QUERY PLAN
-╭─ SEQ_SCAN ────────────╮
+╭─ IRESEARCH_SCAN ──────╮
 │ Table: t              │
-│ Type: Sequential Scan │
 │ Projections: column1, │
 │              column2  │
 │ ~0 rows               │
@@ -19,10 +18,25 @@ query
 EXPLAIN UPDATE t SET column2 = 42 WHERE column1 = 'foo';
 ----
 QUERY PLAN
-╭─ UPDATE ───────╮
-╰────────┬───────╯
-╭─ EMPTY_RESULT ─╮
-╰────────────────╯
+╭─ UPDATE ───────────────────╮
+│ Table: t                   │
+│ Row Ids: ASSUME_UNIQUE     │
+│ Patched Columns: column2   │
+╰──────────────┬─────────────╯
+╭─ PROJECTION ─┴─────────────╮
+│ Projections: 42, rowid     │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Table: t                   │
+│ Index Filter:              │
+│ ╭─ Term ─────────────────╮ │
+│ │ Field: column1(string) │ │
+│ │ Value: foo             │ │
+│ ╰────────────────────────╯ │
+│ Projections: rowid         │
+│ ~1 row                     │
+╰────────────────────────────╯
 
 
 query
@@ -30,16 +44,19 @@ EXPLAIN UPDATE t SET column2 = column2 + 1;
 ----
 QUERY PLAN
 ╭─ UPDATE ──────────────────╮
+│ Table: t                  │
+│ Row Ids: ASSUME_UNIQUE    │
+│ Patched Columns: column2  │
 ╰─────────────┬─────────────╯
 ╭─ PROJECTION ┴─────────────╮
 │ Projections: column2 + 1, │
 │              rowid        │
 │ ~0 rows                   │
 ╰─────────────┬─────────────╯
-╭─ SEQ_SCAN ──┴─────────────╮
+╭─ IRESEARCH_SCAN ──────────╮
 │ Table: t                  │
-│ Type: Sequential Scan     │
-│ Projections: column2      │
+│ Projections: column2,     │
+│              rowid        │
 │ ~0 rows                   │
 ╰───────────────────────────╯
 

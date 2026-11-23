@@ -4,7 +4,6 @@
 # a norm-featured search index aborted the writer ("Norm-featured field requires
 # per-field index options"). Scores are read through the index scan; length
 # normalization (the norm column) makes a shorter matching document rank higher.
-# Commit-time-only, so rows are observed after VACUUM (REFRESH_TABLE).
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY norm_en AS
@@ -13,7 +12,7 @@ CREATE TEXT SEARCH DICTIONARY norm_en AS
 
 statement ok
 CREATE TABLE nb (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX nb_idx ON nb USING inverted (body norm_en);
@@ -25,9 +24,6 @@ INSERT INTO nb VALUES
   (1, 'the quick brown fox'),
   (2, 'fox runs fast'),
   (3, 'the lazy dog');
-
-statement ok
-VACUUM (REFRESH_TABLE) nb;
 
 # The term matches the two documents that contain 'fox'.
 query

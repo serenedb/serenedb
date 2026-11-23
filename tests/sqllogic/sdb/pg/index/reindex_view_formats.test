@@ -43,7 +43,7 @@ COPY (SELECT 5 AS id, 'pudge buys blink' AS body
 TO '${__TEST_DIR__}/refmt_c.csv' (FORMAT CSV, HEADER);
 
 query
-SELECT * FROM serenedb_reindex('refmt_csv_idx');
+SELECT * FROM sdb_reindex('refmt_csv_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -62,7 +62,7 @@ COPY (SELECT 3 AS id, 'pudge plays support' AS body
 TO '${__TEST_DIR__}/refmt_b.csv' (FORMAT CSV, HEADER);
 
 query
-SELECT * FROM serenedb_reindex('refmt_csv_idx');
+SELECT * FROM sdb_reindex('refmt_csv_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	1	0	1
@@ -74,7 +74,7 @@ count
 3
 
 query
-SELECT * FROM serenedb_reindex('refmt_csv_idx');
+SELECT * FROM sdb_reindex('refmt_csv_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -110,7 +110,7 @@ COPY (SELECT 5 AS id, 'pudge buys blink' AS body
 TO '${__TEST_DIR__}/refmt_j3.json' (FORMAT JSON);
 
 query
-SELECT * FROM serenedb_reindex('refmt_json_idx');
+SELECT * FROM sdb_reindex('refmt_json_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -145,7 +145,7 @@ statement ok
 CREATE INDEX refmt_single_idx ON refmt_single_v USING inverted(id, body refmt_en);
 
 query
-SELECT * FROM serenedb_reindex('refmt_single_idx');
+SELECT * FROM sdb_reindex('refmt_single_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -157,7 +157,7 @@ COPY (SELECT 1 AS id, 'pudge goes mid' AS body
 TO '${__TEST_DIR__}/refmt_single.csv' (FORMAT CSV, HEADER);
 
 query
-SELECT * FROM serenedb_reindex('refmt_single_idx');
+SELECT * FROM sdb_reindex('refmt_single_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 rebuild	0	1	0	1
@@ -212,7 +212,7 @@ count
 1
 
 query
-SELECT * FROM serenedb_reindex('refmt_ext_idx');
+SELECT * FROM sdb_reindex('refmt_ext_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 rebuild	0	0	0	0

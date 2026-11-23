@@ -21,7 +21,8 @@ ALTER TABLE pk1 ADD PRIMARY KEY (i);
 statement error
 INSERT INTO pk1 VALUES (1, 30);
 ----
-db error: ERROR: Duplicate key "i: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk1_pkey"
+DETAIL: Key (i)=(1) already exists.
 
 
 # A PK column is implicitly NOT NULL.
@@ -113,7 +114,8 @@ INSERT INTO pk_multi VALUES (1, 'x', 100), (1, 'y', 100);
 statement error
 INSERT INTO pk_multi VALUES (1, 'x', 999);
 ----
-db error: ERROR: Duplicate key "a: 1, b: x" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_multi_pkey"
+DETAIL: Key (a, b)=(1, x) already exists.
 
 
 query
@@ -142,7 +144,8 @@ INSERT INTO pk_empty VALUES (1, 'a');
 statement error
 INSERT INTO pk_empty VALUES (1, 'b');
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "pk_empty_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +163,8 @@ INSERT INTO pk_dups VALUES (1), (1), (2);
 statement error
 ALTER TABLE pk_dups ADD PRIMARY KEY (i);
 ----
-db error: ERROR: Data contains duplicates on indexed column(s)
+db error: ERROR: could not create unique index "pk_dups_pkey"
+DETAIL: Key (i)=(1) is duplicated.
 
 
 # The table is unchanged -- no PK was recorded, duplicates are still allowed.
@@ -188,7 +192,7 @@ INSERT INTO pk_nulls VALUES (1), (NULL);
 statement error
 ALTER TABLE pk_nulls ADD PRIMARY KEY (i);
 ----
-db error: ERROR: NOT NULL constraint failed: "PRIMARY_pk_nulls_i"
+db error: ERROR: column "i" of relation "pk_nulls" contains null values
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +220,7 @@ db error: ERROR: table "pk_badcol" does not have a column named "nope"
 
 
 # ---------------------------------------------------------------------------
-# Dependent-index guard: adding a PK would change which columns provide row
-# identity, invalidating existing indexes. It is refused while any depend on
-# the table, and succeeds once the index is dropped.
+# A table with an index takes a primary key; a second one is refused.
 # ---------------------------------------------------------------------------
 
 statement ok
@@ -229,30 +231,29 @@ statement ok
 CREATE INDEX pk_idx_b ON pk_idx (b);
 
 
-statement error
+statement ok
 ALTER TABLE pk_idx ADD PRIMARY KEY (a);
-----
-db error: ERROR: Cannot alter entry "pk_idx" because there are entries that depend on it.
-index "pk_idx_b" depends on table "pk_idx".
-Drop the dependent entries first and recreate them after the change.
-
 
 statement ok
 DROP INDEX pk_idx_b;
 
 
-statement ok
+statement error
 ALTER TABLE pk_idx ADD PRIMARY KEY (a);
+----
+db error: ERROR: table "pk_idx" can have only one primary key: PRIMARY KEY(a)
+
 
 
 statement error
 INSERT INTO pk_idx VALUES (1, 1), (1, 2);
 ----
-db error: ERROR: PRIMARY KEY or UNIQUE constraint violation: duplicate key "1"
+db error: ERROR: duplicate key value violates unique constraint "pk_idx_pkey"
+DETAIL: Key (a)=(1) already exists.
 
 
 # ---------------------------------------------------------------------------
-# ADD CONSTRAINT supports UNIQUE and CHECK (FOREIGN KEY is not supported).
+# ADD CONSTRAINT supports UNIQUE and CHECK.
 # ---------------------------------------------------------------------------
 
 statement ok

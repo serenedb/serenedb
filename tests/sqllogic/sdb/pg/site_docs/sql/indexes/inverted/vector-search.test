@@ -17,9 +17,6 @@ INSERT INTO vectors VALUES
     (3, [50, 25, 50]::FLOAT[3]),
     (4, [50, 50, 100]::FLOAT[3]);
 
-statement ok
-VACUUM (REFRESH_TABLE) vectors;
-
 # DOCS_TEST_BODY
 
 query
@@ -40,6 +37,21 @@ id
 2
 3
 
+# DOCS_TEST: ts_explain
+
+# DOCS_TEST_BODY
+
+query
+SELECT id,
+       emb <-> [0, 0, 0]::FLOAT[3] AS distance,
+       ts_explain(l2_index.tableoid) AS why
+FROM l2_index
+ORDER BY emb <-> [0, 0, 0]::FLOAT[3]
+LIMIT 1;
+----
+id	distance	why
+3	75	{"column":"emb","expression":"sqrt(sum(emb[i]^2))","inputs":{"dims":{"value":3},"exact":{"value":75},"k":{"value":1},"rescore_width":{"value":2}},"note":"found by an ivf search over sq8 codes","scorer":"l2_norm","value":75}
+
 # DOCS_TEST: example_003
 
 statement ok
@@ -53,9 +65,6 @@ INSERT INTO vectors_c VALUES
     (1, [1, 0, 0]::FLOAT[3]),
     (2, [0, 1, 0]::FLOAT[3]),
     (3, [1, 1, 0]::FLOAT[3]);
-
-statement ok
-VACUUM (REFRESH_TABLE) vectors_c;
 
 # DOCS_TEST_BODY
 
@@ -82,9 +91,6 @@ INSERT INTO hnsw_vectors VALUES
     (2, [50, 50, 50]::FLOAT[3]),
     (3, [50, 25, 50]::FLOAT[3]),
     (4, [50, 50, 100]::FLOAT[3]);
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_vectors;
 
 query
 SELECT id FROM hnsw_index ORDER BY emb <-> [0, 0, 0]::FLOAT[3] LIMIT 2;

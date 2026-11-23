@@ -9,17 +9,13 @@ statement ok
 CREATE TEXT SEARCH DICTIONARY num_kw AS keyword() WITH (frequency)
 
 statement ok
-CREATE TABLE numt(id INTEGER PRIMARY KEY, n INTEGER, cat VARCHAR NOT NULL)
+CREATE TABLE numt(id INTEGER PRIMARY KEY, n INTEGER, cat VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 CREATE INDEX numt_idx ON numt USING inverted(n, cat num_kw)
-    WITH (refresh_interval = 0, compaction_interval = 0)
 
 statement ok
 INSERT INTO numt VALUES (1, 10, 'red'), (2, 20, 'blue'), (3, 30, 'red')
-
-statement ok
-VACUUM (REFRESH_TABLE) numt;
 
 statement error
 SELECT ts_dict_agg(n) FROM numt_idx

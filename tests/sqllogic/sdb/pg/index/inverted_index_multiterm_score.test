@@ -21,10 +21,6 @@ INSERT INTO mt VALUES
   (4, 'avocado'), (5, 'banana'), (6, 'blueberry'), (7, 'cherry');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt;
-
-
 # --- ByPrefix: prefix 'a' expands to {apple, avocado} ---
 
 # Counting: 3 apple + 1 avocado.
@@ -142,10 +138,6 @@ id	body	score
 
 statement ok
 INSERT INTO mt VALUES (8, 'apple'), (9, 'avocado'), (10, 'apricot');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) mt;
 
 
 # apple x4, avocado x2, apricot x1.
@@ -268,8 +260,8 @@ statement ok
 DROP TABLE mt;
 
 
-# --- A document matching several terms of the disjunction accumulates the
-# per-term contributions (Sum merge). ---
+# --- With ::merge('sum') a document matching several terms of the pattern
+# accumulates the per-term contributions; without it, it keeps the best one. ---
 
 statement ok
 CREATE TABLE mt_multi (id INTEGER PRIMARY KEY, body VARCHAR);
@@ -283,12 +275,9 @@ statement ok
 INSERT INTO mt_multi VALUES (1, 'apple'), (2, 'avocado'), (3, 'apple avocado');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) mt_multi;
-
-
-# Disjunction scores merge by Sum: a doc's BM25 is the sum, over every query
-# term t the doc contains, of that term's full BM25 contribution:
+# With ::merge('sum') the pattern's terms merge by Sum: a doc's BM25 is the sum,
+# over every query term t the doc contains, of that term's full BM25
+# contribution:
 #   score(doc) = SUM_t  idf(t) * (k1 + 1) * tf / (k1 * (1 - b + b*dl/avgdl) + tf)
 #   idf(t)     = ln(1 + (N - n_t + 0.5) / (n_t + 0.5)),   k1 = 1.2,  b = 0.75
 # apple and avocado each have df 2 (n=2, N=3), so each idf = ln(1 + 1.5/2.5) =
@@ -302,13 +291,26 @@ VACUUM (REFRESH_TABLE) mt_multi;
 # is length-penalized): the Sum over two terms beats either single term.
 query
 SELECT id, body, BM25(mt_multi_idx.tableoid) AS score FROM mt_multi_idx
-WHERE body @@ ts_starts_with('a')::score('bm25(1.2, 0.75)')
+WHERE body @@ ts_starts_with('a')::score('bm25(1.2, 0.75)')::merge('sum')
 ORDER BY BM25(mt_multi_idx.tableoid) DESC, id;
 ----
 id	body	score
 3	apple avocado	0.35471976
 1	apple	0.23797652
 2	avocado	0.23797652
+
+
+# Keeping the best term, id 3 scores one of its length-penalized terms, half of
+# its sum, and falls behind the single-term docs.
+query
+SELECT id, body, BM25(mt_multi_idx.tableoid) AS score FROM mt_multi_idx
+WHERE body @@ ts_starts_with('a')::score('bm25(1.2, 0.75)')
+ORDER BY BM25(mt_multi_idx.tableoid) DESC, id;
+----
+id	body	score
+1	apple	0.23797652
+2	avocado	0.23797652
+3	apple avocado	0.17735988
 
 
 statement ok
@@ -340,10 +342,6 @@ INSERT INTO mtok VALUES
   (2, 'apple apple'),   -- tf=2 dl=2
   (3, 'apple cat'),     -- tf=1 dl=2  (dl == avgdl)
   (4, 'apple cat dog'); -- tf=1 dl=3
-
-
-statement ok
-VACUUM (REFRESH_TABLE) mtok;
 
 
 # id 3 is at average length with tf=1, so its factor is exactly 1 and its score

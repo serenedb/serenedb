@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <span>
 #include <tuple>
 #include <type_traits>
@@ -27,7 +28,6 @@
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/search/detail/conjunction_leaves.hpp"
 #include "iresearch/search/detail/ngram_matcher.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -40,9 +40,9 @@ class NGramAllSlots {
   static_assert(!Offs || Leaf::kOffsets);
 
   NGramAllSlots(PlanMemory& memory, std::span<const PostingMeta> metas,
-                const IndexInput& doc_in, IndexFeatures layout,
-                const IndexInput& pos_in, const IndexInput* pay_in,
-                size_t total_terms)
+                const duckdb::InputFile& doc_in, IndexFeatures layout,
+                const duckdb::InputFile& pos_in,
+                const duckdb::InputFile* pay_in, size_t total_terms)
     : _matcher{memory, metas.size(), total_terms,
                static_cast<uint32_t>(metas.size())},
       _leaves{memory, metas.size(),

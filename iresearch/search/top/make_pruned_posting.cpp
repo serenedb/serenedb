@@ -58,12 +58,8 @@ Root::ptr MakePrunedPosting(
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
   const auto& doc = *irs::detail::DocOf(own);
-  const irs::detail::ScoreArgs args{.memory = &ctx.memory,
-                                    .scorer = posting.stats.scorer,
-                                    .stats = posting.stats.stats,
-                                    .fetcher = &ctx.fetcher,
-                                    .boost = posting.boost};
-  return irs::detail::ResolveInput(doc, [&]<typename Input> -> Root::ptr {
+  const auto args = posting.Args(ctx.memory, &ctx.fetcher);
+  return Resolve(doc, [&]<typename Input> -> Root::ptr {
     if (excludes.empty() && exclude_filters.empty()) {
       return MakeShape<PrunedPosting, Input, utils::Empty>(
         ctx, std::forward_as_tuple(), meta, doc, irs::detail::LayoutOf(own),

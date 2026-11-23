@@ -27,13 +27,15 @@
 
 #include <atomic>
 #include <cstdio>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <filesystem>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <iresearch/utils/resource_manager.hpp>
 #include <iresearch/utils/tracked.hpp>
 #include <memory>
+#include <string>
+#include <string_view>
 
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
 
@@ -61,6 +63,20 @@ class TestEnv {
 
   // returns path to resource with the specified name
   static std::filesystem::path resource(const std::string& name);
+  static std::string MemoryRoot();
+
+  static bool ArmFaultPoint(std::string_view name) {
+#ifdef SDB_FAULT_INJECTION
+    return duckdb::FaultPoints::Arm(name);
+#else
+    return false;
+#endif
+  }
+  static void ClearFaultPoints() noexcept {
+#ifdef SDB_FAULT_INJECTION
+    duckdb::FaultPoints::Clear();
+#endif
+  }
 
   static uint32_t iteration();
 
@@ -87,28 +103,6 @@ class TestEnv {
   static std::filesystem::path gResPath;  // res_dir_/test_detail.xml
 };
 
-struct SimpleMemoryAccounter : public irs::IResourceManager {
-  void Increase(size_t value) override {
-    _counter.fetch_add(value, std::memory_order_relaxed);
-    if (!result) {
-      throw std::runtime_error{"SimpleMemoryAccounter"};
-    }
-  }
-
-  void Decrease(size_t value) noexcept override {
-    _counter.fetch_sub(value, std::memory_order_relaxed);
-  }
-
-  auto Counter() const noexcept {
-    return _counter.load(std::memory_order_relaxed);
-  }
-
-  bool result{true};
-
- private:
-  std::atomic_size_t _counter{0};
-};
-
 inline int64_t TrackedMemory() {
   auto* manager = irs::DuckDBEngine::TrackingBufferManager();
   if (!manager) {
@@ -122,27 +116,9 @@ inline int64_t TrackedMemory() {
   return 0;
 }
 
-struct TestResourceManager {
-  SimpleMemoryAccounter cached_columns;
-  SimpleMemoryAccounter compactions;
-  SimpleMemoryAccounter file_descriptors;
-  SimpleMemoryAccounter readers;
-  SimpleMemoryAccounter transactions;
-
-  irs::ResourceManagementOptions options{.transactions = &transactions,
-                                         .readers = &readers,
-                                         .compactions = &compactions,
-                                         .file_descriptors = &file_descriptors,
-                                         .cached_columns = &cached_columns};
-};
-
 class TestBase : public TestEnv, public ::testing::Test {
  public:
   const std::filesystem::path& test_dir() const { return _test_dir; }
-  const std::filesystem::path& test_case_dir() const { return _test_case_dir; }
-  TestResourceManager& GetResourceManager() const noexcept {
-    return _resource_manager;
-  }
 
  protected:
   TestBase() = default;
@@ -150,9 +126,7 @@ class TestBase : public TestEnv, public ::testing::Test {
   void TearDown() override;
 
  private:
-  std::filesystem::path _test_dir;       // res_dir_/<test-name>
-  std::filesystem::path _test_case_dir;  // test_dir/<test-case-name>
-  mutable TestResourceManager _resource_manager;
+  std::filesystem::path _test_dir;  // res_dir_/<test-name>
 };
 
 template<typename T>

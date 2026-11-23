@@ -24,12 +24,11 @@
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/offsets/root.hpp"
+#include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/utils/query_memory.hpp"
 
 namespace irs {
 
-class FixedPhraseQuery;
-class VariadicPhraseQuery;
 class NGramSimilarityQuery;
 struct TermReader;
 
@@ -38,7 +37,7 @@ namespace irs::offsets {
 
 using Handles = detail::PhraseHandles;
 
-bool Resolve(const TermReader* field, Handles& out);
+bool HandlesOf(const TermReader* field, Handles& out);
 
 Root::ptr MakePosting(PlanMemory& memory, const PostingMeta& meta,
                       const Handles& handles);
@@ -48,9 +47,13 @@ Root::ptr Make(PlanMemory& memory, const VariadicPhraseQuery& query);
 Root::ptr Make(PlanMemory& memory, const NGramSimilarityQuery& query);
 
 template<detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrase(PlanMemory& memory, const Query& query);
+struct PhraseMaker {
+  static Root::ptr Make(PlanMemory& memory, const Query& query);
+};
 
 template<detail::NGramMatch M>
-Root::ptr MakeNGram(PlanMemory& memory, const NGramSimilarityQuery& query);
+struct NGramMaker {
+  static Root::ptr Make(PlanMemory& memory, const NGramSimilarityQuery& query);
+};
 
 }  // namespace irs::offsets

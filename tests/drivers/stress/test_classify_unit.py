@@ -271,7 +271,7 @@ def test_22023_dispatches_on_message_not_just_code():
                     "Temporary secret with name 'x' already exists!",
                     key_scope="shared").label == "shared_key_duplicate"
     assert classify(C.INVALID_PARAMETER_VALUE,
-                    "invalid value for parameter \"refresh_interval\": \"-1\"",
+                    "invalid value for parameter \"compaction_interval\": \"-1\"",
                     key_scope="shared").verdict is Verdict.FINDING
 
 

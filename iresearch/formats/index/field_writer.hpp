@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "iresearch/formats/basic_term_reader.hpp"
+#include "iresearch/formats/field_sink.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
@@ -72,7 +73,7 @@ struct BlockBuilder {
   bool all_coded = true;
 };
 
-class FieldWriter final {
+class FieldWriter final : public FieldSink {
  public:
   explicit FieldWriter(bool compaction) noexcept : _compaction{compaction} {}
 
@@ -83,11 +84,14 @@ class FieldWriter final {
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
   void prepare(const FlushState& state, uint64_t keyed_dicts,
-               uint64_t terms = 0);
-  void write(DictRef dict, const BasicTermReader& reader);
-  void WriteSlot(field_id id, DictRef dict, std::span<const doc_id_t> docs);
-  void WriteSlot(field_id id, DictRef dict, TermPostings& docs);
-  void end();
+               uint64_t terms) final;
+  void write(DictRef dict, const BasicTermReader& reader) final;
+  void WriteSlot(field_id id, DictRef dict,
+                 std::span<const doc_id_t> docs) final;
+  void WriteSlot(field_id id, DictRef dict, TermPostings& docs) final;
+  void end() final;
+
+  PostingsInputs TakePostings() noexcept { return _pw.TakeInputs(); }
 
  private:
   void Begin(field_id id, DictRef dict) noexcept;
@@ -137,7 +141,7 @@ class FieldWriter final {
   PostingMeta _single;
   std::array<byte_type, PostingMeta::kInlineBytes> _single_inline{};
   IdxWriter* _idx = nullptr;
-  IndexOutput* _out = nullptr;
+  duckdb::WriteStream* _out = nullptr;
   uint64_t _docs = 0;
   uint64_t _terms = 0;
   uint64_t _first_page = 0;

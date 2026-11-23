@@ -1,10 +1,18 @@
 set(IRS_TEST_RESOURCE_DIR ${CMAKE_SOURCE_DIR}/resources/tests/iresearch)
 configure_file(tests_config.hpp.in tests_config.hpp)
 
+add_library(iresearch-test-object-store STATIC store/simulated_object_store.cpp)
+target_include_directories(
+    iresearch-test-object-store
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(iresearch-test-object-store PUBLIC iresearch)
+
 add_library(
     iresearch-test-support
     OBJECT
     formats/column/test_cs_helpers.cpp
+    hook_file_system.cpp
     search/filter_test_case_base.cpp
     tests_main.cpp
     tests_param.cpp
@@ -15,7 +23,7 @@ target_include_directories(
 )
 target_link_libraries(
     iresearch-test-support
-    PUBLIC iresearch gtest simdjson simdutf
+    PUBLIC iresearch iresearch-test-object-store gtest simdjson simdutf
 )
 
 add_executable(
@@ -100,13 +108,14 @@ add_executable(
     index/index_adopt_tests.cpp
     index/index_column_tests.cpp
     index/index_death_tests.cpp
-    index/index_meta_tests.cpp
     index/index_profile_tests.cpp
     index/index_tests.cpp
     index/inverter_oracle_test.cpp
     index/inverter_tests.cpp
     index/merge_writer_tests.cpp
     index/norm_test.cpp
+    index/object_store_index_tests.cpp
+    index/piece_tests.cpp
     index/segment_writer_tests.cpp
     index/sorted_index_tests.cpp
     parser/lucene_parser_test.cpp
@@ -115,15 +124,18 @@ add_executable(
     search/block_scoring_test.cpp
     search/bm25_test.cpp
     search/boolean_filter_tests.cpp
+    search/boolean_window_test.cpp
     search/boost_attribute_test.cpp
     search/boost_query_test.cpp
     search/col_filter_leaf_test.cpp
+    search/conjunction_leaves_test.cpp
     search/count_subtract_test.cpp
     search/dfi_test.cpp
     search/doc_collector_test.cpp
     search/docs_mask_plan_test.cpp
     search/document_mask_test.cpp
     search/empty_filter_tests.cpp
+    search/explain_test.cpp
     search/geo_distance_filter_test.cpp
     search/geo_filter_test.cpp
     search/geo_tokenizer_test.cpp
@@ -133,6 +145,7 @@ add_executable(
     search/indri_dirichlet_test.cpp
     search/levenshtein_filter_test.cpp
     search/lm_test.cpp
+    search/masked_leaf_test.cpp
     search/merge_consistency_test.cpp
     search/nested_filter_test.cpp
     search/ngram_similarity_filter_tests.cpp
@@ -144,6 +157,8 @@ add_executable(
     search/phrase_slop_matcher_fuzz.cpp
     search/phrase_slop_matcher_tests.cpp
     search/prefix_filter_test.cpp
+    search/pruned_top_test.cpp
+    search/query_profile_test.cpp
     search/range_filter_test.cpp
     search/raw_tf_test.cpp
     search/regexp_filter_test.cpp
@@ -163,18 +178,15 @@ add_executable(
     search/vector_similarity_query_test.cpp
     search/wildcard_filter_test.cpp
     search/wildcard_ngram_filter_test.cpp
-    store/directory_cleaner_tests.cpp
-    store/directory_test_case.cpp
-    store/memory_index_output_tests.cpp
+    store/directory_tests.cpp
+    store/index_input_tests.cpp
+    store/simulated_object_store_tests.cpp
     store/store_utils_tests.cpp
-    utils/bit_packing_tests.cpp
     utils/bit_utils_tests.cpp
     utils/bitset_tests.cpp
     utils/bitvector_tests.cpp
-    utils/container_utils_tests.cpp
-    utils/crc_test.cpp
-    utils/directory_utils_tests.cpp
-    utils/file_utils_tests.cpp
+    utils/blocking_once_test.cpp
+    utils/group_commit_test.cpp
     utils/huge_page_allocator_test.cpp
     utils/json_leaf_test.cpp
     utils/levenshtein_utils_test.cpp
@@ -185,18 +197,16 @@ add_executable(
     utils/ngram_match_utils_tests.cpp
     utils/numeric_utils_test.cpp
     utils/object_pool_tests.cpp
+    utils/pg_errcodes_test.cpp
     utils/re2_literal_finder_test.cpp
     utils/re2_owned_dfa_test.cpp
     utils/re2_required_literal_test.cpp
     utils/re2_segment_plan_test.cpp
-    utils/ref_counter_tests.cpp
     utils/regexp_ngram_test.cpp
     utils/regexp_utils_test.cpp
-    utils/simd_utils_test.cpp
     utils/std_test.cpp
     utils/string_tests.cpp
     utils/tracked_test.cpp
-    utils/utf8_path_tests.cpp
     utils/utf8_utils_test.cpp
     utils/wildcard_utils_test.cpp
     utils/wkb_parser_test.cpp
@@ -204,13 +214,17 @@ add_executable(
 )
 target_link_libraries(
     iresearch-tests
-    PRIVATE iresearch-test-support search-benchmark-common
+    PRIVATE iresearch-test-support iresearch-test-writer search-benchmark-common
 )
 sdb_link_duckdb_extensions(iresearch-tests)
 
 add_executable(iresearch-load-tests search/load_test.cpp)
 target_link_libraries(
     iresearch-load-tests
-    PRIVATE iresearch-test-support search-benchmark-common serene
+    PRIVATE
+        iresearch-test-support
+        iresearch-test-writer
+        search-benchmark-common
+        serene
 )
 sdb_link_duckdb_extensions(iresearch-load-tests)

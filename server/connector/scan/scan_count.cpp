@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/search/count/make.hpp>
+#include <utility>
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
@@ -28,13 +29,24 @@
 namespace sdb::connector {
 namespace {
 
+constexpr uint64_t kEmitSlice = 64 * STANDARD_VECTOR_SIZE;
+
 void FinishRoot(CountLocalState& l) {
   if (l.root) {
-    l.local_count +=
-      irs::utils::downCast<irs::count::Root>(l.root.get())->Finish();
+    l.local_count += l.root->Finish();
     l.root.reset();
     l.root_seg = std::numeric_limits<uint32_t>::max();
   }
+}
+
+uint64_t ClaimCounted(ScanGlobalState& g) {
+  auto counted = g.counted.load(std::memory_order_relaxed);
+  uint64_t take = 0;
+  do {
+    take = std::min(counted, std::max(kEmitSlice, counted / g.workers));
+  } while (take != 0 && !g.counted.compare_exchange_weak(
+                          counted, counted - take, std::memory_order_relaxed));
+  return take;
 }
 
 }  // namespace
@@ -52,7 +64,7 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
       if (l.root_seg != unit.seg || range.begin < l.root_end) {
         FinishRoot(l);
         l.plan_memory.Rewind();
-        const auto& seg_query = EnsureSegmentQuery(g, l, unit.seg);
+        const auto& seg_query = EnsureSegmentQuery(g, &l, unit.seg);
         auto* table = BeginVerify(l.col_verify, sub, g, l);
         auto plan = irs::count::MakeRoot(seg_query, {.memory = l.plan_memory,
                                                      .table = table,
@@ -62,21 +74,26 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
         l.root = std::move(plan);
         l.root_seg = unit.seg;
       }
-      l.local_count += irs::utils::downCast<irs::count::Root>(l.root.get())
-                         ->Run(range.begin, range.end);
+      l.local_count += l.root->Run(range.begin, range.end);
+      l.local_count += l.root->Finish();
       l.root_end = range.end;
     }
     FinishUnit(g, l);
   }
   FinishRoot(l);
-  if (l.local_emitted >= l.local_count) {
-    output.SetChildCardinality(0);
-    return;
+  if (l.local_count != 0) {
+    g.counted.fetch_add(std::exchange(l.local_count, 0),
+                        std::memory_order_relaxed);
   }
-  const auto batch = std::min<duckdb::idx_t>(l.local_count - l.local_emitted,
-                                             STANDARD_VECTOR_SIZE);
+  if (l.to_emit == 0) {
+    l.to_emit = ClaimCounted(g);
+  }
+  const auto batch = std::min<uint64_t>(l.to_emit, STANDARD_VECTOR_SIZE);
+  l.to_emit -= batch;
+  if (batch != 0) {
+    WriteVirtualColumns(g, batch, nullptr, output);
+  }
   output.SetChildCardinality(batch);
-  l.local_emitted += batch;
 }
 
 }  // namespace sdb::connector

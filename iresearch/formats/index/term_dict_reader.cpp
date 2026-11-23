@@ -43,11 +43,15 @@ constexpr size_t kBatchKeyBytes = 4096;
 
 template<typename Ranges>
 void DropBefore(Ranges& ranges, uint64_t at) {
-  const auto rest = absl::c_find_if(
-    ranges, [&](const FileRange& range) { return range.second > at; });
+  const auto rest =
+    absl::c_find_if(ranges, [&](const duckdb::FileRange& range) {
+      return range.offset + range.size > at;
+    });
   ranges.erase(ranges.begin(), rest);
-  if (!ranges.empty()) {
-    ranges.front().first = std::max(ranges.front().first, at);
+  if (!ranges.empty() && ranges.front().offset < at) {
+    auto& first = ranges.front();
+    first.size -= at - first.offset;
+    first.offset = at;
   }
 }
 
@@ -71,21 +75,34 @@ uint32_t Find(const BlockView& view, Probe key,
   return entry;
 }
 
-const byte_type* MapAt(IndexInput& in, uint64_t offset, uint64_t size,
-                       bstring& copy) {
-  if (const auto* p = in.ReadStable(offset, size)) {
-    return p;
+uint32_t Find(const BlockView& view, Probe key,
+              const duckdb_fsst_decoder_t* fsst, uint32_t from) noexcept {
+  if (!view.fixed || from == kNoEntry) {
+    return Find(view, key, fsst);
   }
-  copy.resize(size);
-  in.ReadData(offset, copy.data(), size);
-  return copy.data();
-}
-
-IndexInput& Reopened(BlockBuffer& buffer, const IndexInput& in) {
-  if (!buffer.in) {
-    buffer.in = in.Reopen();
+  if (key.size != size_t{view.prefix} + view.stride ||
+      PaddedMismatch(Prefix(view).data(), key.data, view.prefix) !=
+        view.prefix) {
+    return kNoEntry;
   }
-  return *buffer.in;
+  const auto* rest = key.data + view.prefix;
+  const auto less = [&](size_t entry) {
+    return std::memcmp(FixedKey(view, static_cast<uint32_t>(entry)).data(),
+                       rest, view.stride) < 0;
+  };
+  size_t lo = from;
+  size_t bound = from;
+  for (size_t step = 1; bound < view.count && less(bound); step *= 2) {
+    lo = bound + 1;
+    bound += step;
+  }
+  const auto entry = static_cast<uint32_t>(
+    PartitionIndex(lo, std::min<size_t>(bound + 1, view.count), less));
+  if (entry == view.count || PaddedMismatch(FixedKey(view, entry).data(), rest,
+                                            view.stride) != view.stride) {
+    return kNoEntry;
+  }
+  return entry;
 }
 
 PostingMeta DecodeRecord(const TermReaderImpl& field, const BlockView& view,
@@ -178,8 +195,7 @@ class TermIteratorImpl : public SeekTermIterator {
 }  // namespace
 
 TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
-                               bytes_view prefix, IndexInput& in,
-                               const Separators& separators)
+                               bytes_view prefix, const Separators& separators)
   : _owner{&owner},
     _meta{head.id, head.features},
     _terms{head.term_count},
@@ -232,12 +248,12 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     }
   }
   if (!head.ranges.counts.empty()) {
-    ReadRanges(owner, in, head.ranges);
+    ReadRanges(owner, head.ranges);
   } else if (head.ranges.size != 0) {
     corrupted();
   }
   if (_blocks == 1) {
-    _small = owner.CopyBlock(_first_block, in.Length());
+    _small = owner.CopyBlock(_first_block, owner.Input().GetSize());
     if (inline_size != 0) {
       _small_inline = {owner.InlineRegion() + _inline_base, inline_size};
       if (owner.Base()) {
@@ -250,8 +266,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   }
 }
 
-void TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
-                                const RangesHead& ranges) {
+void TermReaderImpl::ReadRanges(FieldReader& owner, const RangesHead& ranges) {
   const auto corrupted = [&] { Corrupted("range levels", _meta.id); };
   const auto offset = ranges.offset;
   const auto size = ranges.size;
@@ -263,7 +278,7 @@ void TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
       min().substr(0, _range_prefix) != max().substr(0, _range_prefix)) {
     corrupted();
   }
-  const auto* p = owner.Load(in, owner.RangesBegin() + offset, size).data();
+  const auto* p = owner.Load(owner.RangesBegin() + offset, size).data();
   const auto* const end = p + size;
   const uint64_t stride = key_width - _range_prefix;
   _levels.reserve(height);
@@ -334,7 +349,7 @@ void TermReaderImpl::SampleTerms(
 }
 
 const byte_type* TermReaderImpl::Block(size_t block,
-                                       BlockBuffer& buffer) const {
+                                       PinnedRange& pinned) const {
   if (_small) {
     return _small;
   }
@@ -342,25 +357,36 @@ const byte_type* TermReaderImpl::Block(size_t block,
   if (const auto* base = _owner->Base()) {
     return base + offset;
   }
-  auto& in = Reopened(buffer, _owner->Input());
-  return MapAt(in, offset,
-               std::min(BlockOffset(block + 1), in.Length()) - offset,
-               buffer.copy);
+  const auto& in = _owner->Input();
+  const uint64_t end = std::min(BlockOffset(block + 1), in.GetSize());
+  if (offset < pinned.start || end - pinned.start > pinned.pinned.Size()) {
+    const uint64_t cached = in.BlockSize();
+    const uint64_t first = offset - offset % cached;
+    const uint64_t last = std::min(first + cached, in.GetSize());
+    pinned.start = end <= last ? first : offset;
+    pinned.pinned = in.Pin(pinned.start, std::max(end, last) - pinned.start);
+  }
+  return pinned.pinned.Ptr() + (offset - pinned.start);
 }
 
 void TermReaderImpl::PrefetchLookup(uint32_t block) const {
   if (Small() || !_owner->Base()) {
     return;
   }
-  const auto span = InlineSpan(block);
-  if (span.from == span.to) {
-    return;
+  if (const auto span = InlineSpan(block); span.from != span.to) {
+    HintBlock(block, span);
   }
-  const std::array ranges{
-    FileRange{BlockOffset(block), BlockOffset(block + 1)},
-    FileRange{span.from, span.to},
-  };
-  HintRanges(_owner->Input(), ranges);
+}
+
+bool TermReaderImpl::HintBlock(uint32_t block, InlinePages::Span span) const {
+  const auto& in = _owner->Input();
+  const uint64_t offset = BlockOffset(block);
+  bool hinted =
+    in.Hint(offset, std::min(BlockOffset(block + 1), in.GetSize()) - offset);
+  if (span.from != span.to) {
+    hinted |= in.Hint(span.from, span.to - span.from);
+  }
+  return hinted;
 }
 
 SeekTermIterator::ptr TermReaderImpl::iterator() const {
@@ -396,8 +422,8 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   const auto probe = padded.Assign(KeyPrefix(), term);
   const uint32_t block = BlockOf(probe);
   PrefetchLookup(block);
-  BlockBuffer buffer;
-  const auto view = Parse(Block(block, buffer), Fsst());
+  PinnedRange pinned;
+  const auto view = Parse(Block(block, pinned), Fsst());
   const auto entry = Find(view, probe, Fsst());
   if (entry == kNoEntry) {
     return {};
@@ -415,17 +441,28 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   };
   containers::SmallVector<Probed, kBatchTerms> probes;
   containers::SmallVector<byte_type, kBatchKeyBytes> keys;
-  containers::SmallVector<FileRange, kBatchTerms> blocks;
-  containers::SmallVector<FileRange, kBatchTerms> inlines;
+  containers::SmallVector<duckdb::FileRange, kBatchTerms> blocks;
+  containers::SmallVector<duckdb::FileRange, kBatchTerms> inlines;
   const auto prefix = KeyPrefix();
   const bool mapped = _owner->Base() != nullptr;
   uint32_t last = kNoBlock;
   size_t visited = 0;
   bytes_view last_term;
+  bool below_min = true;
   for (size_t i = 0; i != count; ++i) {
     const auto value = term(i);
-    SDB_ASSERT(probes.empty() || last_term <= value);
-    if (Excludes(value)) {
+    SDB_ASSERT(i == 0 || last_term <= value);
+    last_term = value;
+    if (below_min) {
+      if (value < min()) {
+        continue;
+      }
+      below_min = false;
+    }
+    if (max() < value) {
+      break;
+    }
+    if (key_width != 0 && value.size() != key_width) {
       continue;
     }
     const auto at = keys.size();
@@ -443,10 +480,13 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
       block = last == kNoBlock ? BlockOf(probe) : BlockFrom(last, probe);
       if (block != last) {
         ++visited;
-        AppendRange(blocks, BlockOffset(block), BlockOffset(block + 1));
+        const uint64_t offset = BlockOffset(block);
+        blocks.push_back(
+          {.offset = offset, .size = BlockOffset(block + 1) - offset});
         if (mapped) {
           if (const auto span = InlineSpan(block); span.from != span.to) {
-            AppendRange(inlines, span.from, span.to);
+            inlines.push_back(
+              {.offset = span.from, .size = span.to - span.from});
           }
         }
       }
@@ -458,44 +498,68 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
       .size = static_cast<uint32_t>(size),
     });
     last = block;
-    last_term = value;
   }
   const auto& in = _owner->Input();
   const bool hinted = visited > 1 || !inlines.empty();
   if (hinted) {
-    const auto budget = HintRanges(in, blocks);
-    HintRanges(in, inlines, budget);
+    in.Hint(inlines, in.Hint(blocks));
   }
-  auto epoch = file_utils::ResidencyEpoch();
+  auto epoch = duckdb::PageResidency::Epoch();
 
-  BlockBuffer buffer;
+  PinnedRange pinned;
   BlockView view{};
   uint32_t parsed = kNoBlock;
+  auto decoded = kNoEntry;
+  const byte_type* record = nullptr;
+  PostingMeta posting;
+  uint64_t inline_end = 0;
   for (const auto& probe : probes) {
     if (probe.block != parsed) {
       parsed = probe.block;
       const uint64_t offset = BlockOffset(parsed);
-      if (hinted && file_utils::Evicted(
-                      in, offset, BlockOffset(parsed + 1) - offset, epoch)) {
+      if (hinted &&
+          in.Evicted(offset, BlockOffset(parsed + 1) - offset, epoch)) {
         DropBefore(blocks, offset);
         if (!inlines.empty()) {
           DropBefore(inlines, InlineSpan(parsed).from);
         }
-        const auto budget = HintRanges(in, blocks);
-        HintRanges(in, inlines, budget);
+        in.Hint(inlines, in.Hint(blocks));
       }
-      view = Parse(Block(parsed, buffer), Fsst());
+      view = Parse(Block(parsed, pinned), Fsst());
+      decoded = kNoEntry;
     }
     const auto entry =
-      Find(view, Probe{keys.data() + probe.key, probe.size}, Fsst());
-    if (entry != kNoEntry) {
-      found(probe.index, DecodeRecord(*this, view, parsed, entry));
+      Find(view, Probe{keys.data() + probe.key, probe.size}, Fsst(), decoded);
+    if (entry == kNoEntry) {
+      continue;
     }
+    uint32_t count = 0;
+    if (decoded != kNoEntry && entry >= decoded &&
+        entry / kRecordInterval == decoded / kRecordInterval) {
+      count = entry - decoded;
+    } else {
+      record = FieldRecords(*this, view, parsed, entry, count);
+      posting = {};
+      inline_end = 0;
+    }
+    DecodeRecords(record, count, _meta.index_features, posting, inline_end);
+    decoded = entry;
+    auto result = posting;
+    if (result.inline_size != 0) {
+      result.inline_data = ResolveInline(inline_end, result.inline_size);
+    }
+    found(probe.index, result);
   }
 }
 
-std::unique_ptr<IndexInput> TermReaderImpl::ReopenPayload() const {
-  return _owner->Postings().ReopenPayload();
+bool TermReaderImpl::Prefetch(bytes_view term) const {
+  if (Small() || Excludes(term)) {
+    return false;
+  }
+  PaddedKey padded;
+  const auto block = BlockOf(padded.Assign(KeyPrefix(), term));
+  return HintBlock(block,
+                   _owner->Base() ? InlineSpan(block) : InlinePages::Span{});
 }
 
 PostingsHandles TermReaderImpl::Handles() const noexcept {

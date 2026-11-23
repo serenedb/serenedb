@@ -22,9 +22,6 @@
 
 #include "index_reader.hpp"
 
-#include "iresearch/utils/misc.hpp"
-#include "iresearch/utils/resource_manager.hpp"
-
 namespace irs {
 namespace {
 
@@ -41,8 +38,6 @@ struct EmptyDocs final : lead::Node {
 EmptyDocs kEmptyDocs;
 
 struct EmptySubReader final : SubReader {
-  uint64_t CountMappedMemory() const final { return 0; }
-
   NormReader::ptr norms(field_id) const final { return {}; }
   NormReader::ptr norms(PlanMemory&, field_id) const final { return {}; }
   const SegmentInfo& Meta() const final { return kEmptyInfo; }
@@ -59,11 +54,5 @@ const EmptySubReader kEmpty;
 }  // namespace
 
 const SubReader& SubReader::empty() noexcept { return kEmpty; }
-
-#ifdef SDB_DEV
-IResourceManager IResourceManager::gForbidden;
-#endif
-IResourceManager IResourceManager::gNoop;
-ResourceManagementOptions ResourceManagementOptions::gDefault;
 
 }  // namespace irs

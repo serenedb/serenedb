@@ -33,6 +33,7 @@
 #include <duckdb/common/fault_points.hpp>
 #include <exception>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <memory>
 #include <utility>
@@ -43,9 +44,9 @@
 #include "network/io_context.h"
 #include "network/pg/scram_client.h"
 #include "network/pg/wire_frames.h"
-#include "network/server.h"
 #include "network/tls_context.h"
 #include "pg/protocol.h"
+#include "runtime/runtime.h"
 
 namespace sdb::replication {
 namespace {
@@ -165,7 +166,7 @@ yaclib::Task<bool> PublisherSession::Guarded(yaclib::Task<bool> task) {
   try {
     co_return co_await std::move(task);
   } catch (const std::exception& ex) {
-    Fail(network::pg::ToSqlError(ex));
+    Fail(irs::pg::ToSqlError(ex));
   }
   co_return false;
 }
@@ -673,8 +674,7 @@ yaclib::Task<> PublisherCall::Run(Body body,
 PublisherResult CallPublisher(const ConnInfo& conninfo,
                               std::string_view application_name,
                               bool require_password, PublisherCall::Body body) {
-  auto* pool = Server::instance().IoPool();
-  SDB_ASSERT(pool);
+  auto* pool = &Runtime::Get().IoPool();
   PublisherResult result;
   const auto seed = absl::Uniform<uint64_t>(absl::BitGen{});
   const bool fallback =

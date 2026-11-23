@@ -5,7 +5,7 @@ split: headings
 
 import SqlLogicTest from "@site/src/components/SqlLogicTest";
 
-SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serened shell` has other defaults for some options, such as `integer_division` (`false`), `ieee_floating_point_ops` (`true`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
+SereneDB has a number of configuration options that can be used to change the behavior of the system. The defaults listed here are a server's; `serenedb shell` has other defaults for some options, such as `integer_division` (`false`), `ieee_floating_point_ops` (`true`), `preserve_identifier_case` (`preserve_case`) and the default schema (`main`).
 
 The configuration options can be set using either the [`SET` statement](../sql/statements/set/index.md) or the [`PRAGMA` statement](../configuration/pragmas.md). They can be reset to their original values using the [`RESET` statement](../sql/statements/set/index.md#reset).
 
@@ -88,21 +88,20 @@ WHERE kind = 'setting' AND name LIKE 'compaction%';
 
 ### Search and indexing
 
-Background maintenance of inverted indexes, and the knobs the search and vector operators read.
+Background maintenance of tables and of inverted indexes on views, and the knobs the search and vector operators read.
 
 | Name | Description | Type | Scope | Default value |
 | --- | --- | --- | --- | --- |
-| `cleanup_interval_step` | Number of automatic refreshes between background unreferenced-file cleanup passes for newly created inverted indexes and search tables. WITH (cleanup_interval_step = ...) overrides it per index or table. 0 disables the periodic passes: cleanup then follows only background compaction and, on a search table, VACUUM, and a search table keeps more write-ahead logs (see [Durability](../sql/indexes/inverted/maintenance.md#durability)). Default: 1. | `UINTEGER` | `SESSION` | `1` |
-| `compaction_floor_segment_bytes` | Inverted-index segments below this size count as equal-sized for compaction candidate selection. Per-index WITH (compaction_floor_segment_bytes = ...) overrides. Default 2097152 (2MB). | `UBIGINT` | `SESSION` | `2097152` |
-| `compaction_interval` | Background compaction interval (ms) for newly created inverted indexes. Per-index WITH (compaction_interval = ...) overrides. 0 disables the compaction task. Default: 1000. | `UINTEGER` | `SESSION` | `1000` |
-| `compaction_max_segments` | Maximum inverted-index segments merged by one background compaction. Per-index WITH (compaction_max_segments = ...) overrides. Default 10. | `UINTEGER` | `SESSION` | `10` |
-| `compaction_max_segments_bytes` | Byte budget of one background inverted-index compaction (the tier target size). Per-index WITH (compaction_max_segments_bytes = ...) overrides. Default 5368709120 (5GB). | `UBIGINT` | `SESSION` | `5368709120` |
-| `refresh_interval` | Background refresh interval (ms) for newly created inverted indexes. Per-index WITH (refresh_interval = ...) overrides. 0 disables the refresh task. Default: 1000. | `UINTEGER` | `SESSION` | `1000` |
+| `compaction_floor_segment_bytes` | Segments of a table or of an inverted index over a view below this size count as equal-sized for compaction candidate selection. Their WITH (compaction_floor_segment_bytes = ...) overrides it. Default 2097152 (2MB). | `UBIGINT` | `SESSION` | `2097152` |
+| `compaction_interval` | Background compaction interval (ms) for newly created tables and inverted indexes over views. Their WITH (compaction_interval = ...) overrides it, ALTER TABLE / ALTER INDEX ... SET changes it later. 0 disables background compaction; VACUUM (COMPACT_*) still merges on demand. Default: 1000. | `UINTEGER` | `SESSION` | `1000` |
+| `compaction_max_segments` | Maximum segments of a table or of an inverted index over a view merged by one background compaction. Their WITH (compaction_max_segments = ...) overrides it. Default 10. | `UINTEGER` | `SESSION` | `10` |
+| `compaction_max_segments_bytes` | Byte budget of one background compaction of a table or of an inverted index over a view (the tier target size). Their WITH (compaction_max_segments_bytes = ...) overrides it. Default 5368709120 (5GB). | `UBIGINT` | `SESSION` | `5368709120` |
 | `reindex_interval` | Periodic reindex interval (ms) for newly created VIEW-backed inverted indexes: a non-zero value creates a [job](../sql/indexes/inverted/views.md#automatic-refresh) named after the index that reindexes it, each pass starting that long after the previous one finished. Per-index WITH (reindex_interval = ...) overrides; ALTER INDEX SET retunes, creates or drops the job, and ALTER INDEX RESET applies this setting. 0 creates no job. Hint-less iceberg sources refresh from the background only when the GLOBAL unsafe_enable_version_guessing is set. Default: 0. | `UINTEGER` | `SESSION` | `0` |
 | `sdb_ann_force_exact` | When true, a vector search (`ORDER BY <distance> LIMIT k`, or a distance range) returns the exact answer instead of walking the ANN index, split across the scan's workers. Every row with a vector is considered; where an `hnsw` index stores 8-bit codes, a row's stored vector is read only if its code leaves it a chance at the top `k`. Default false, which leaves the choice to the engine. | `BOOLEAN` | `SESSION` | `off` |
 | `sdb_ann_rescore_width` | Rescore width z for a quantized vector-similarity query, HNSW and IVF alike: the search runs on quantized codes, and a candidate from any segment is read back at full precision while its code score plus z times the code's estimated error could still beat the k-th best full-precision score found so far, so a segment holding many of the nearest neighbours gets more of them rescored and a segment holding none gets none. A larger z rescores more and misses fewer: a neighbour sitting exactly at the k-th score is missed with the probability that a normal error exceeds z standard deviations. 0 disables the rescore: the query answers from the codes, which is faster and caps recall at whatever the codes can tell apart. -1 (the default) uses 2 for sq8 and 1-bit rabitq, 3 for tq and multi-bit rabitq, 4 for usq8, 5 for sq4, 6 for usq4, 7 for osq at 4 or more bits, and 0 for fp16 and bf16, which answer from their codes; pq uses 2 on an ivf index and 3 on an hnsw index, bq 1 and 3, and osq at 1 or 2 bits 3 and 2. Unquantized (quant = 'none') indexes are never rescored. | `DOUBLE` | `SESSION` | `-1` |
-| `sdb_compact_target_segments` | How many segments `VACUUM (COMPACT_*)` leaves in a search table. 0 or 1 merges every segment into one; a larger N splits the segments into N groups and merges each group into one segment, so no single merge holds the whole table. A table with N segments or fewer is left as it is. | `UINTEGER` | `SESSION` | `1` |
+| `sdb_compact_target_segments` | How many segments `VACUUM (COMPACT_*)` leaves in a table. 0 or 1 merges every segment into one; a larger N splits the segments into N groups and merges each group into one segment, so no single merge holds the whole table. Up to `threads` groups merge at once, which finishes sooner and holds that many merges in memory. A table with N segments or fewer is left as it is. | `UINTEGER` | `SESSION` | `1` |
 | `sdb_disable_top_k_optimization` | When true, an `ORDER BY <scorer>(...) DESC LIMIT k` query over an inverted index scores every matching document instead of skipping those that cannot reach the top k, so it runs slower. Useful to compare plans or to work around a plan regression. Default: false (optimization on). | `BOOLEAN` | `SESSION` | `off` |
+| `sdb_index_profile_nodes` | When true, `EXPLAIN ANALYZE` and the profiling output also time the nested parts of an inverted index scan's execution plans, in boxes below the plans they belong to. The scan runs slower while it is on, and the nested times are estimated from about one call in 32. Default: false. | `BOOLEAN` | `SESSION` | `off` |
 | `sdb_lookup_join_source_hop` | When true, a query over an inverted index that keeps `k` rows and returns only columns the index does not store reads the rows' `pk` from the index in one `LOOKUP_JOIN` and the columns from the source in a second one, instead of one `LOOKUP_JOIN` that does both. Useful to compare plans. Default: false. | `BOOLEAN` | `SESSION` | `off` |
 | `sdb_hnsw_column_filter` | How an HNSW graph walk answers a predicate the columnstore can evaluate: 'fold' evaluates one only the columnstore answers over the whole segment before the walk, and takes one the index answers from the index; 'read' reads the columns of each row the walk reaches, including for predicates the index answers; 'auto' reads while the walk is expected to reach few enough rows for that to cost less than the fold, or than the index where the index answers the predicate, weighing what one read costs in the columns' encodings. Default 'auto'. | `VARCHAR` | `SESSION` | `auto` |
 | `sdb_hnsw_ef_search` | Search-time beam width (ef) of each segment's HNSW search. Higher values improve recall at the cost of latency. A value is used as written, floored only at what a segment must return for the query's LIMIT. -1 (the default) lets the engine choose: the index's ef_construction or the LIMIT, whichever is larger, so an untuned query keeps its recall at any LIMIT. With a quantized index every hit of the beam is rescored exactly. | `INTEGER` | `SESSION` | `-1` |
@@ -114,12 +113,9 @@ Background maintenance of inverted indexes, and the knobs the search and vector 
 | `sdb_ivf_search_nprobe` | Number of IVF cluster lists each segment scans per vector-similarity query. Higher values improve recall at the cost of latency. A value is used as written. -1 (the default) lets the engine choose per segment: 1.3 * log10(max(LIMIT, 10)) * sqrt(lists), where lists is the segment's rows over the index's posting size, which keeps recall near 0.95 at any LIMIT and segment size. | `INTEGER` | `SESSION` | `-1` |
 | `sdb_levenshtein_max_terms` | The maximum number of dictionary terms a fuzzy predicate (`ts_levenshtein`) expands to per index segment. Terms closest to the query survive; the rest neither match nor contribute to scoring. Higher values improve recall on wide expansions at the cost of per-query work. 0 removes the cap, so every term within the edit distance matches. Default 50. | `INTEGER` | `SESSION` | `50` |
 | `sdb_pattern_cache_size` | Bytes of compiled search patterns (`ts_regexp`, `ts_like`, LIKE and fused alternations over an inverted index) kept across queries, so a pattern is compiled once per server rather than once per query. The least recently used patterns are dropped first; a pattern in use by a running query stays alive until it finishes. 0, the default, keeps nothing: each query compiles its own patterns. Server-global. | `UBIGINT` | `GLOBAL` | `0` |
-| `sdb_scan_no_split_row_groups` | A segment with at most this many row groups is always scanned whole by one worker of an inverted-index scan. | `INTEGER` | `SESSION` | `1` |
-| `sdb_scan_order` | The order in which an inverted-index scan takes its segments: `largest_first` and `smallest_first` order them by live document count; `order` takes them best first by the `ORDER BY` column's row-group statistics when the query has a scan order; `auto` is `order` under a scan order and `largest_first` otherwise. | `VARCHAR` | `SESSION` | `auto` |
-| `sdb_scan_split` | How an inverted-index scan shares a segment between workers: `tail` gives each worker a segment of its own and lets an idle worker join the segment with the most row groups left only once no segment is unclaimed; `always` puts every worker on the same segment until all its row groups are claimed; `never` scans each segment whole on one worker; `auto` is `always` when the query has an `ORDER BY ... LIMIT` scan order and `tail` otherwise. See [Session settings](../sql/indexes/inverted/maintenance.md#session-settings). | `VARCHAR` | `SESSION` | `auto` |
-| `search_backfill_group_bytes` | How many bytes of a search table's existing segments `CREATE INDEX` rewrites before it swaps them in and moves on to the next group. The build needs extra disk of about twice one group; a value above the table's size, or 0, rewrites the whole table in one swap. | `UBIGINT` | `SESSION` | `1073741824` |
-| `segment_docs_max` | Document count at which an inverted-index segment writer rolls over to a new on-disk segment. Per-index WITH (segment_docs_max = ...) overrides. 0 = unlimited (memory limit governs). | `UINTEGER` | `SESSION` | `0` |
-| `segment_memory_max` | In-memory bytes an inverted-index or search-table segment writer fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence). Per-object WITH (segment_memory_max = ...) overrides. Default 268435456 (256MB). A serial write to a search table also buffers up to `checkpoint_threshold` of rows; see [Write memory](../sql/indexes/inverted/maintenance.md#write-memory). | `UBIGINT` | `SESSION` | `268435456` |
+| `search_backfill_group_bytes` | How many bytes of a table's existing segments `CREATE INDEX` and the `ALTER TABLE` forms that rewrite rows rewrite before they swap them in and move on to the next group. A group holds at least one whole segment, and the rewrite needs extra disk of about twice one group, also inside a transaction that stays open after it; a value above the table's size, or 0, rewrites the whole table in one swap. | `UBIGINT` | `SESSION` | `1073741824` |
+| `segment_docs_max` | Document count at which the segment writer of an inverted index over a view rolls over to a new on-disk segment. The index's WITH (segment_docs_max = ...) overrides it. 0 = unlimited (memory limit governs). | `UINTEGER` | `SESSION` | `0` |
+| `segment_memory_max` | In-memory bytes of committed rows, deletes and in-place updates a table holds before writing them to disk, and the bytes a parallel write to a table or the segment writer of an inverted index over a view fills before rolling over to a new on-disk segment (also the CREATE INDEX backfill commit cadence). Their WITH (segment_memory_max = ...) overrides it. Below 4294967296 (4 GiB). Default 268435456 (256MB). A write to a table holds up to `compaction_floor_segment_bytes` of its own rows in memory; more go to disk as segments of their own, and so do all of them when the table already holds `segment_memory_max`; see [Write memory](../sql/indexes/inverted/maintenance.md#write-memory). | `UBIGINT` | `SESSION` | `268435456` |
 
 ### AI functions
 
@@ -157,7 +153,7 @@ How much memory the engine may use and how many threads it runs.
 | `memory_limit` | Alias of `max_memory`. | `VARCHAR` | `GLOBAL` | 80% of RAM |
 | `operator_memory_limit` | The maximum memory for query intermediates (sorts, hash tables) per connection (e.g. 256MB). | `VARCHAR` | `SESSION` |  |
 | `temp_file_encryption` | Encrypt all temporary files if database is encrypted | `BOOLEAN` | `GLOBAL` | `false` |
-| `threads` | Caps the threads the queries of the session run on (with `SET LOCAL`, of the transaction). `SET GLOBAL threads` sets the size of the thread pool of the whole server. See [`SET`](../sql/statements/set/index.md#threads). | `BIGINT` | `SESSION` | the number of CPU cores |
+| `threads` | Caps the threads the queries of the session run on (with `SET LOCAL`, of the transaction). `SET GLOBAL threads` sets the size of the thread pool of the whole server. See [`SET`](../sql/statements/set/index.md#threads). | `BIGINT` | `SESSION` | the number of CPU cores, at most `1024` |
 | `worker_threads` | Alias of `threads`. | `BIGINT` | `SESSION` | the number of CPU cores |
 | `write_buffer_row_group_memory_limit` | The maximum data (in bytes) to buffer in row groups before flushing them together. When either this limit or `write_buffer_row_group_count` is reached, the data is flushed to disk. | `VARCHAR` | `GLOBAL` | 20% of `memory_limit` divided by `threads` |
 
@@ -168,14 +164,14 @@ Durability, the write-ahead log, and how rows are laid out on disk.
 | Name | Description | Type | Scope | Default value |
 | --- | --- | --- | --- | --- |
 | `checkpoint_on_detach` | Whether `DETACH` checkpoints the database: `ENABLED` checkpoints it, `DISABLED` does not, and `DEFAULT` checkpoints it unless `PRAGMA disable_checkpoint_on_shutdown` has turned checkpointing on shutdown off. The checkpoint is skipped while another connection still uses the database. | `VARCHAR` | `SESSION` | `DEFAULT` |
-| `checkpoint_threshold` | The WAL size threshold at which to automatically trigger a checkpoint (e.g. 1GB). Also the size of the row buffer a serial write to a search table fills before it writes the rows to the table's index; see [Write memory](../sql/indexes/inverted/maintenance.md#write-memory). | `VARCHAR` | `GLOBAL` | `16.0 MiB` |
-| `default_block_size` | The block size of newly created database files. | `UBIGINT` | `GLOBAL` | `262144` |
+| `checkpoint_threshold` | The size the write-ahead log of an attached DuckDB database file grows to before the file is checkpointed (e.g. 1GB). The server's own log follows `max_wal_size`. | `VARCHAR` | `GLOBAL` | `16.0 MiB` |
+| `default_block_size` | The block size in bytes of newly created DuckDB database files, and of new tables in databases created without `BLOCK_SIZE`: a power of two from 16384 to 262144. A table's `WITH (block_size = ...)` overrides it. | `UBIGINT` | `GLOBAL` | `262144` |
 | `disabled_compression_methods` | Disable a specific set of compression methods (comma separated) | `VARCHAR` | `GLOBAL` |  |
 | `enable_optimistic_write` | Whether or not to optimistically write large appends to disk before committing. Disable this to keep bulk appends in memory. | `BOOLEAN` | `GLOBAL` | `true` |
 | `fsync_mode` | How to synchronize database file changes to stable storage (`STANDARD`, `NONE` or `FULL`). `NONE` may cause database corruption after an operating system or hardware crash. | `VARCHAR` | `GLOBAL` | `STANDARD` |
+| `max_wal_size` | Size of the write-ahead log written since the last log snapshot at which the server writes a new snapshot and removes the log files it covers, such as '1GB' or '64MB'; a snapshot larger than it raises the threshold to its own size. Bounds the log on disk and the part of it a restart replays. | `VARCHAR` | `GLOBAL` | `1GB` |
 | `initial_column_segment_size` | The initial memory (in bytes) reserved for the first transient column segment. Must be a power of two. Subsequent segments double in size until reaching the block size. | `UBIGINT` | `GLOBAL` | `2048` |
-| `recovery_replay_depth` | Maximum number of write-ahead-log chunks each inverted index holds while recovery replays it; a larger value uses more memory during recovery. 0 = 4 x the number of threads. Recovery reads the server's global value: set it at start with the `--recovery_replay_depth` flag. | `UINTEGER` | `SESSION` | `0` |
-| `row_group_size` | Default columnstore row-group size for newly created inverted indexes. Per-index WITH (row_group_size = ...) overrides it. Reads from existing indexes are unaffected. Default: 122'880. | `UINTEGER` | `SESSION` | `122880` |
+| `row_group_size` | Default columnstore row-group size for newly created tables and inverted indexes over views. Their WITH (row_group_size = ...) overrides it. Reads from existing ones are unaffected. Default: 122'880. | `UINTEGER` | `SESSION` | `122880` |
 | `storage_block_prefetch` | In which scenarios to use storage block prefetching | `VARCHAR` | `GLOBAL` | `REMOTE_ONLY` |
 | `storage_compatibility_version` | Serialize on checkpoint with compatibility for a given duckdb version | `VARCHAR` | `GLOBAL` | `latest` |
 | `wal_autocheckpoint` | Alias of `checkpoint_threshold`. | `VARCHAR` | `GLOBAL` | `16.0 MiB` |
@@ -197,7 +193,7 @@ Planning, rewriting and the shape of query output.
 | `enable_caching_operators` | Enables caching operators that cache intermediate results. | `BOOLEAN` | `SESSION` | `on` |
 | `enable_optimizer` | Whether or not query optimization is enabled. | `BOOLEAN` | `GLOBAL` | `on` |
 | `explain_output` | Output of EXPLAIN statements (`ALL`, `OPTIMIZED_ONLY`, `PHYSICAL_ONLY`) | `VARCHAR` | `SESSION` | `PHYSICAL_ONLY` |
-| `explain_output_format` | Column shape of EXPLAIN output (DUCKDB_NATIVE = native two-column key/value, PG = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats). | `VARCHAR` | `SESSION` | `PG` |
+| `explain_output_format` | Column shape of EXPLAIN output (`CLI` = two columns, key and value, as `serenedb shell` and `serenedb psql` print them; `SERVER` = single QUERY PLAN column with one row per line of a text or compact plan and one row per plan in other formats). | `VARCHAR` | `SESSION` | `SERVER` |
 | `filter_reorder` | How far filter reordering may move conditions that can fail (`never`, `safe`, `fast` or `always`) | `VARCHAR` | `SESSION` | `fast` |
 | `late_materialization_lookup_max_rows` | The maximum amount of rows in the LIMIT/TOP_N/SAMPLE for which a scan that can look up rows by their row id is late materialized through a `LOOKUP_JOIN`. `0` disables the `LOOKUP_JOIN`: late materialization then joins on the row ids, up to `late_materialization_max_rows`. | `UBIGINT` | `SESSION` | `2048` |
 | `late_materialization_max_rows` | The maximum amount of rows in the LIMIT/SAMPLE for which we trigger late materialization | `UBIGINT` | `SESSION` | `50` |
@@ -211,7 +207,7 @@ Planning, rewriting and the shape of query output.
 | `partitioned_write_flush_threshold` | The threshold in number of rows after which we flush a thread state when writing using `PARTITION_BY` | `UBIGINT` | `SESSION` | `524288` |
 | `partitioned_write_max_open_files` | The maximum amount of files the system can keep open before flushing to disk when writing using `PARTITION_BY` | `UBIGINT` | `SESSION` | `100` |
 | `prefer_range_joins` | Force use of range joins with mixed predicates | `BOOLEAN` | `SESSION` | `false` |
-| `preserve_insertion_order` | Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses. | `BOOLEAN` | `GLOBAL` | `true` |
+| `preserve_insertion_order` | Whether or not to preserve insertion order. If set to false the system is allowed to re-order any results that do not contain ORDER BY clauses. Tables do not honor it: a table returns its rows in the order it stores them (see [Order Preservation](../compatibility/order_preservation.md#insertion-order)). | `BOOLEAN` | `GLOBAL` | `false` |
 | `read_ahead_depth` | The number of scan jobs prefetched ahead of decoding (-1 = automatic, bounded by a memory budget; 0 = disabled). | `BIGINT` | `GLOBAL` | `-1` |
 | `scalar_subquery_error_on_multiple_rows` | Deprecated. When true, a scalar subquery that returns more than one row raises an error; when false, it returns an arbitrary one of those rows. | `BOOLEAN` | `SESSION` | `true` |
 | `sdb_job_max_depth` | Maximum number of job runs in one chain of EXECUTE JOB calls, where a job's body executes another job; a run that would go deeper fails. Default 16. Server-global. | `UINTEGER` | `GLOBAL` | `16` |
@@ -229,6 +225,7 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `archive_mode` | Not used. Added for PostgreSQL compatibility only. | `VARCHAR` | `SESSION` | `off` |
 | `bytea_output` | Sets the output format for bytea. | `VARCHAR` | `SESSION` | `hex` |
 | `Calendar` | The current calendar | `VARCHAR` | `SESSION` | `gregorian` |
+| `check_function_bodies` | Not used. Added for PostgreSQL compatibility only. Setting `off` is accepted with a warning that SereneDB still checks function bodies. | `BOOLEAN` | `SESSION` | `on` |
 | `checkpoint_timeout` | Not used. Added for PostgreSQL compatibility only. | `INTEGER` | `SESSION` | `300` |
 | `client_encoding` | Sets the client's character set encoding. | `VARCHAR` | `SESSION` | `UTF8` |
 | `client_min_messages` | Sets the message levels that are sent to the client. | `VARCHAR` | `SESSION` | `notice` |
@@ -236,26 +233,30 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `custom_user_agent` | Metadata from SereneDB callers | `VARCHAR` | `GLOBAL` |  |
 | `data_directory` | Shows the data directory. Read-only. | `VARCHAR` | `SESSION` | The directory the server was started with |
 | `DateStyle` | Sets the display format for date and time values. | `VARCHAR` | `SESSION` | `ISO, MDY` |
+| `default_table_access_method` | Not used. Added for PostgreSQL compatibility only. Another value is accepted with a warning that it is not enforced. | `VARCHAR` | `SESSION` | `heap` |
+| `default_tablespace` | The [tablespace](../sql/statements/create_tablespace/index.md) tables and inverted indexes on views are created in when `CREATE` names none; empty for the tablespace of their database. Setting it to a tablespace that does not exist is an error. | `VARCHAR` | `SESSION` |  |
 | `default_transaction_invalidation_policy` | When to invalidate transactions when errors occur (SYNTACTIC_ERRORS_DO_NOT_INVALIDATE, i.e. parser and binder exceptions do not invalidate, or ALL_ERRORS_INVALIDATE_TRANSACTION). | `VARCHAR` | `GLOBAL` | `ALL_ERRORS_INVALIDATE_TRANSACTION` |
 | `default_transaction_isolation` | Sets the transaction isolation level of each new transaction. | `VARCHAR` | `SESSION` | `repeatable read` |
 | `default_transaction_read_only` | Sets the default read-only status of new transactions. | `BOOLEAN` | `SESSION` | `off` |
 | `dialect_compatibility_mode` | Enable SQL dialect compatibility for a certain engine (e.g. `SET dialect_compatibility_mode='spark'`). | `VARCHAR` | `SESSION` | `NONE` |
-| `duckdb_api` | The API name the server reports in its user agent (see `PRAGMA user_agent`). | `VARCHAR` | `GLOBAL` | `cpp` |
 | `error_on_division_by_zero` | Deprecated. Throw an error instead of returning NULL when dividing by zero. | `BOOLEAN` | `SESSION` | `true` |
 | `errors_as_json` | Output error messages as structured `JSON` instead of as a raw string | `BOOLEAN` | `SESSION` | `false` |
 | `extra_float_digits` | Sets the number of digits displayed for floating-point values. | `INTEGER` | `SESSION` | `1` |
+| `idle_in_transaction_session_timeout` | Not used. Added for PostgreSQL compatibility only. A value other than `0` is accepted with a warning that it is not enforced. | `VARCHAR` | `SESSION` | `0` |
 | `immediate_transaction_mode` | Whether transactions should be started lazily when needed, or immediately when BEGIN TRANSACTION is called | `BOOLEAN` | `GLOBAL` | `false` |
 | `in_hot_standby` | Shows whether hot standby is currently active. | `BOOLEAN` | `SESSION` | `off` |
 | `integer_datetimes` | Shows whether datetimes are integer based. | `BOOLEAN` | `SESSION` | `on` |
 | `IntervalStyle` | Sets the display format for interval values. | `VARCHAR` | `SESSION` | `postgres` |
 | `is_superuser` | Shows whether the current session's user is a superuser. | `BOOLEAN` | `SESSION` | `on` |
 | `lock_configuration` | Whether or not configurations can be altered | `BOOLEAN` | `GLOBAL` | `false` |
+| `lock_timeout` | Not used. Added for PostgreSQL compatibility only. A value other than `0` is accepted with a warning that it is not enforced. | `VARCHAR` | `SESSION` | `0` |
 | `max_execution_time` | The maximum execution time per query in milliseconds (0 = no limit). | `BIGINT` | `SESSION` | `0` |
 | `max_identifier_length` | Shows the maximum identifier length. SereneDB keeps longer identifiers in full. Read-only. | `INTEGER` | `SESSION` | `63` |
 | `max_index_keys` | Shows the maximum number of index keys. Clients read it as the bound of index and constraint key arrays, such as `pg_index.indkey` and `pg_constraint.conkey`. Read-only. | `INTEGER` | `SESSION` | `32` |
 | `max_parallel_workers_per_gather` | Not used. Added for PostgreSQL compatibility only. | `INTEGER` | `SESSION` | `2` |
 | `regex_match_operator_semantics` | Deprecated. Configures whether regex match operators use partial or full string matching. | `VARCHAR` | `SESSION` | `partial` |
 | `role` | Sets the current role. | `VARCHAR` | `SESSION` | `none` |
+| `row_security` | Not used. Added for PostgreSQL compatibility only. | `BOOLEAN` | `SESSION` | `on` |
 | `search_path` | Sets the default catalog search path as a comma-separated list of values | `VARCHAR` | `SESSION` | `"$user", public` |
 | `server_encoding` | Shows the server (database) character set encoding. | `VARCHAR` | `SESSION` | `UTF8` |
 | `server_version` | Shows the server version. | `VARCHAR` | `SESSION` | `18.6` |
@@ -265,9 +266,11 @@ Wire-protocol and session state that PostgreSQL clients read or set.
 | `show_behavior` | Configures how `SHOW` resolves a bare identifier: `auto` describes a table if one exists, else a setting (deprecated); `table` always describes a table; `setting` always describes a setting. | `VARCHAR` | `SESSION` | `SETTING` |
 | `standard_conforming_strings` | Causes '...' strings to treat backslashes literally. | `BOOLEAN` | `SESSION` | `on` |
 | `statement_timeout` | Aborts any statement that takes more than the specified amount of time (milliseconds without a unit; units `us`, `ms`, `s`, `min`, `h`, `d`) with SQLSTATE `57014`, as in PostgreSQL. 0 disables the timeout. Sets `max_execution_time` for the same scope. | `VARCHAR` | `SESSION` | `0` |
+| `synchronize_seqscans` | Not used. Added for PostgreSQL compatibility only. | `BOOLEAN` | `SESSION` | `on` |
 | `table_function_identifier_conversion` | Deprecated. Configures the use of deprecated implicit conversion of unbound identifiers to strings in table function arguments. | `VARCHAR` | `SESSION` | `DISABLE_IMPLICIT_STRING` |
 | `TimeZone` | Sets the time zone for displaying and interpreting time stamps. | `VARCHAR` | `SESSION` | `Etc/UTC` |
 | `transaction_isolation` | Sets the current transaction's isolation level. | `VARCHAR` | `SESSION` | `repeatable read` |
+| `transaction_timeout` | Not used. Added for PostgreSQL compatibility only. A value other than `0` is accepted with a warning that it is not enforced. | `VARCHAR` | `SESSION` | `0` |
 | `xmloption` | Whether text read as `xml`, and the argument of `xml_is_well_formed`, must be an XML `document` or may be `content`. | `VARCHAR` | `SESSION` | `content` |
 
 PostgreSQL settings that are not listed here, such as `work_mem`, `lock_timeout` or `shared_buffers`, do not exist in SereneDB: `SET` and `SHOW` fail with `unrecognized configuration parameter`. This includes several of the `SET` lines at the top of a `pg_dump` script.
@@ -290,16 +293,13 @@ Authentication, authorization and what the server is allowed to reach.
 | Name | Description | Type | Scope | Default value |
 | --- | --- | --- | --- | --- |
 | `allow_asterisks_in_http_paths` | Allow '\*' character in URLs users can query | `BOOLEAN` | `SESSION` | `false` |
-| `allow_community_extensions` | Allow to load community built extensions | `BOOLEAN` | `GLOBAL` | `true` |
-| `allow_extensions_metadata_mismatch` | Allow to load extensions with not compatible metadata | `BOOLEAN` | `GLOBAL` | `false` |
 | `allow_persistent_secrets` | Allow the creation of persistent secrets, that are stored and loaded on restarts | `BOOLEAN` | `GLOBAL` | `true` |
 | `allow_unredacted_secrets` | Allow printing unredacted secrets | `BOOLEAN` | `GLOBAL` | `false` |
-| `allow_unsigned_extensions` | Allow to load extensions with invalid or missing signatures | `BOOLEAN` | `GLOBAL` | `false` |
-| `enable_external_access` | Allow the database to access external state (through e.g., loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc) | `BOOLEAN` | `GLOBAL` | `true` |
+| `enable_external_access` | Allow the database to access external state (through e.g., loading/installing modules, COPY TO/FROM, CSV readers, pandas replacement scans, etc). Turning it off does not restrict the server's own files: databases, tables, indexes and existing tablespaces keep working. `CREATE TABLESPACE` is refused for a location outside `allowed_directories`. | `BOOLEAN` | `GLOBAL` | `true` |
 | `enable_macro_dependencies` | Enable created MACROs to create dependencies on the referenced objects (such as tables) | `BOOLEAN` | `GLOBAL` | `true` |
 | `hba` | Host-based authentication ruleset (pg_hba.conf syntax) as a single string: one rule per line, first match wins, applied to connections opened after the SET. A rule that lets the `postgres` superuser in without a password over local and loopback (127.0.0.1, ::1) connections always comes first, so a bad ruleset cannot lock the superuser out; other roles follow the ruleset. An empty value restores the default (SCRAM for every role). Server-global. | `VARCHAR` | `GLOBAL` |  |
 | `scram_iterations` | Sets the iteration count for SCRAM secret generation. | `INTEGER` | `SESSION` | `4096` |
-| `secret_directory` | Set the directory to which persistent secrets are stored | `VARCHAR` | `GLOBAL` | `<datadir>/secrets` |
+| `secret_directory` | Not used: persistent secrets are stored in the server's log with the rest of the catalog. | `VARCHAR` | `GLOBAL` | `<datadir>/secrets` |
 
 ### Logging, metrics and profiling
 
@@ -341,16 +341,18 @@ Local paths, remote object stores and the external file cache.
 | `azure_read_buffer_size` | Size of the read buffer for Azure reads, in bytes. | `UBIGINT` | `SESSION` | `8388608` |
 | `azure_storage_connection_string` | Azure connection string, used to authenticate and configure Azure requests. | `VARCHAR` | `SESSION` | NULL |
 | `azure_write_block_size` | Size in bytes of each block of a Blob or DFS write; 0 restores the default (8 MiB), at most 4000 MiB. A blob holds at most 50,000 blocks, so raise it to write files larger than 50,000 x this size. | `UBIGINT` | `SESSION` | `8388608` |
+| `azure_write_blocks_in_flight` | Blocks of one blob write staged at the same time, on the async threads; `1` stages each block from the write that fills it. | `UBIGINT` | `SESSION` | `20` |
 | `azure_write_staged_blocks_per_commit` | How many blocks a write stages before it commits the blocks written so far; 0 commits only when the file is closed. Non-zero values make partial writes visible sooner at the cost of extra requests. | `UBIGINT` | `SESSION` | `0` |
 | `ca_cert_file` | Path to a custom certificate file for self-signed certificates. | `VARCHAR` | `SESSION` |  |
 | `cache_local_files` | Whether the external file cache also caches local files (remote files are always cached). | `BOOLEAN` | `GLOBAL` | `off` |
 | `enable_fsst_vectors` | Allow scans on FSST compressed segments to emit compressed vectors to utilize late decompression | `BOOLEAN` | `GLOBAL` | `false` |
 | `enable_server_cert_verification` | Enable server side certificate verification. | `BOOLEAN` | `SESSION` | `false` |
-| `extension_directory` | Deprecated: use `extension_directories` instead. The directory to store extensions in. | `VARCHAR` | `GLOBAL` | `<datadir>/extensions` |
-| `external_file_cache_local_max_block_size` | Maximum size in bytes of an external file cache block for local (non-remote) files. Larger reads are split into blocks of this size, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `16384` |
-| `external_file_cache_remote_max_block_size` | Maximum size in bytes of an external file cache block for remote files (e.g. HTTP/S3). Larger reads are split into blocks of this size, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `2097152` |
-| `external_file_cache_remote_min_block_size` | Reads of remote files are rounded out to aligned blocks of this size, so tiny reads do not each cost a request. | `UBIGINT` | `GLOBAL` | `4096` |
-| `external_file_cache_spill` | Whether evicted external file cache blocks of remote files spill to the temporary directory instead of being dropped, so they are re-read from there rather than re-fetched. | `BOOLEAN` | `GLOBAL` | `false` |
+| `external_file_cache_local_max_block_size` | Size in bytes of the pieces a long read of a local file the external file cache caches (cache_local_files) is split into, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `4194304` |
+| `external_file_cache_min_memory` | The memory that external file cache blocks of remote files keep when queries need memory (e.g. 1GB), by default 5% of memory_limit; below it, queries spill to the temporary directory first. | `VARCHAR` | `GLOBAL` | 5% of `memory_limit` |
+| `external_file_cache_remote_max_block_size` | Size in bytes of the pieces a long read of a remote file (e.g. HTTP/S3) is split into, which are fetched in parallel. | `UBIGINT` | `GLOBAL` | `4194304` |
+| `external_file_cache_remote_min_block_size` | Size in bytes of the blocks the external file cache keeps of the files it starts caching (32KB to 256KB): reads are rounded out to aligned blocks of this size, so tiny reads do not each cost a request. | `UBIGINT` | `GLOBAL` | `131072` |
+| `external_file_cache_spill` | Whether evicted external file cache blocks of remote files keep a copy in the temporary directory, up to external_file_cache_spill_size, so that they are re-read from there rather than re-fetched from the source. | `BOOLEAN` | `GLOBAL` | `true` |
+| `external_file_cache_spill_size` | The disk space in the temporary directory that copies of evicted external file cache blocks of remote files may take (e.g. 50GB), by default half of max_temp_directory_size; 0 drops evicted blocks instead. | `VARCHAR` | `GLOBAL` | half of `max_temp_directory_size` |
 | `extra_http_headers` | Extra HTTP headers added to every request. | `MAP(VARCHAR, VARCHAR)` | `GLOBAL` | `{}` |
 | `file_search_path` | A comma separated list of directories to search for input files | `VARCHAR` | `SESSION` |  |
 | `force_download` | Forces upfront download of file | `BOOLEAN` | `SESSION` | `false` |
@@ -358,6 +360,7 @@ Local paths, remote object stores and the external file cache.
 | `hf_max_per_page` | Debug option to limit number of items returned in list requests. | `UBIGINT` | `SESSION` | `0` |
 | `home_directory` | Sets the home directory used by the system | `VARCHAR` | `SESSION` |  |
 | `http_client_pool_capacity` | Capacity of the HTTP client pool. Unless set, the larger of twice the number of CPU cores (at least 16) and the number of async I/O threads (`async_threads`), at most an eighth of the server's open-file limit. | `BIGINT` | `GLOBAL` | automatic |
+| `http_connect_timeout_ms` | How long connecting to an HTTP server, TLS included, may take before the request is retried (in milliseconds); never longer than http_timeout | `UBIGINT` | `SESSION` | `2000` |
 | `http_keep_alive` | Keep alive connections. Setting this to false can help when running into connection failures | `BOOLEAN` | `SESSION` | `true` |
 | `http_proxy` | HTTP proxy host | `VARCHAR` | `GLOBAL` |  |
 | `http_proxy_password` | Password for HTTP proxy | `VARCHAR` | `GLOBAL` |  |
@@ -365,7 +368,7 @@ Local paths, remote object stores and the external file cache.
 | `http_retries` | HTTP retries on I/O error | `UBIGINT` | `SESSION` | `3` |
 | `http_retry_backoff` | Backoff factor for exponentially increasing retry wait time | `FLOAT` | `SESSION` | `4` |
 | `http_retry_wait_ms` | Time between retries | `UBIGINT` | `SESSION` | `100` |
-| `http_timeout` | HTTP timeout read/write/connection/retry (in seconds) | `UBIGINT` | `SESSION` | `30` |
+| `http_timeout` | HTTP timeout read/write/connection/retry (in seconds); a ranged read fails after this many seconds plus one per MiB it asks for | `UBIGINT` | `SESSION` | `30` |
 | `httpfs_enable_credential_refresh` | When S3 refuses a request for its credentials, reload them, refreshing the secret where it supports refresh, and retry the request once. | `BOOLEAN` | `SESSION` | `true` |
 | `s3_access_key_id` | S3 Access Key ID | `VARCHAR` | `SESSION` | NULL |
 | `s3_allow_recursive_globbing` | Whether globs on S3-like storage are optimized with recursive strategy (alterative is listing) | `BOOLEAN` | `SESSION` | `true` |
@@ -376,8 +379,10 @@ Local paths, remote object stores and the external file cache.
 | `s3_requester_pays` | S3 use requester pays mode | `BOOLEAN` | `SESSION` | `false` |
 | `s3_secret_access_key` | S3 Access Key | `VARCHAR` | `SESSION` | NULL |
 | `s3_session_token` | S3 Session Token | `VARCHAR` | `SESSION` | NULL |
+| `s3_upload_checksum` | Send the CRC32C of every S3 upload, which the store checks against the bytes it receives and keeps with the object; for stores that refuse checksums, turn it off. | `BOOLEAN` | `SESSION` | `true` |
 | `s3_uploader_max_filesize` | Maximum size of a file written to S3. It must be above zero, fit in `s3_uploader_max_parts_per_file` parts and stay within the provider's largest object size. | `VARCHAR` | `SESSION` | `80GB` |
 | `s3_uploader_max_parts_per_file` | S3 Uploader max parts per file (between 1 and 10000) | `UBIGINT` | `SESSION` | `10000` |
+| `s3_uploader_parts_in_flight` | Parts of one S3 multipart upload sent at the same time, on the async threads; `1` sends each part from the write that fills it. | `UBIGINT` | `SESSION` | `20` |
 | `s3_url_compatibility_mode` | Disable Globs and Query Parameters on S3 URLs | `BOOLEAN` | `SESSION` | `false` |
 | `s3_url_scheme_aliases` | Additional URL schemes routed to the S3-compatible filesystem (e.g. `['oss', 'cos']`). Can only be set globally; secrets for aliased schemes need an explicit `SCOPE`. | `VARCHAR[]` | `GLOBAL` | `[]` |
 | `s3_url_style` | S3 URL style | `VARCHAR` | `SESSION` | `vhost` |
@@ -460,13 +465,6 @@ Installing and loading extensions.
 
 | Name | Description | Type | Scope | Default value |
 | --- | --- | --- | --- | --- |
-| `allow_extension_repositories` | Whether custom trusted extension repositories are `allowed`, `forbidden` (which also distrusts existing repositories) or `undecided` (blocks adding new repositories but keeps trusting existing ones). While the server runs, it can only move from `undecided` to `allowed` or `forbidden`, or from `allowed` to `forbidden`. | `VARCHAR` | `GLOBAL` | `undecided` |
-| `autoinstall_extension_repository` | Overrides the custom endpoint for extension installation on autoloading | `VARCHAR` | `GLOBAL` |  |
-| `autoinstall_known_extensions` | Whether known extensions are allowed to be automatically installed when a query depends on them | `BOOLEAN` | `GLOBAL` | `false` |
-| `autoload_known_extensions` | Whether known extensions are allowed to be automatically loaded when a query depends on them | `BOOLEAN` | `GLOBAL` | `false` |
-| `custom_extension_repository` | Overrides the custom endpoint for remote extension installation | `VARCHAR` | `GLOBAL` |  |
-| `extension_directories` | Set the directories to store extensions in | `VARCHAR[]` | `GLOBAL` | `[]` |
-| `extension_repository_directory` | The directory that stores trusted extension repositories. While signature checking is on (`allow_unsigned_extensions = false`), it can only be set at start. | `VARCHAR` | `GLOBAL` |  |
 
 ### Debugging and unsafe options
 
@@ -539,7 +537,7 @@ Everything that does not fall into the groups above.
 | `rtree_index_scan_ratio` | Has no effect: SereneDB has no R-tree index. | `DOUBLE` | `SESSION` | `0.075` |
 | `schema` | Sets the default search schema. Equivalent to setting search_path to a single value. | `VARCHAR` | `SESSION` | `public` |
 | `streaming_buffer_size` | Alias of `max_streaming_buffer_size`. | `VARCHAR` | `SESSION` | `10.0 MiB` |
-| `vacuum_rebuild_indexes` | Deprecated. Maximum row count of a table whose bound ART indexes are rebuilt when a checkpoint vacuum cannot remap their row IDs; 0 disables the rebuild. | `UBIGINT` | `GLOBAL` | `0` |
+| `vacuum_rebuild_indexes` | Deprecated. Maximum row count of a table in an attached DuckDB database file whose indexes are rebuilt when a checkpoint vacuum cannot remap their row IDs; 0 disables the rebuild. Fixed at startup. | `UBIGINT` | `GLOBAL` | `0` |
 | `validate_external_file_cache` | Cache validation mode: `VALIDATE_ALL` (validate all cache entries), `VALIDATE_REMOTE` (validate only remote cache entries) or `NO_VALIDATION` (disable cache validation). | `VARCHAR` | `GLOBAL` | `VALIDATE_ALL` |
 | `variant_minimum_shredding_size` | Minimum size of a rowgroup to enable VARIANT shredding, or set to -1 to disable entirely. Defaults to 1/4th of a rowgroup | `BIGINT` | `GLOBAL` | `30000` |
 | `warnings_as_errors` | Escalate all warnings to errors. | `BOOLEAN` | `GLOBAL` | `false` |

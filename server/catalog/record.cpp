@@ -1,0 +1,1452 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "catalog/record.h"
+
+#include <absl/algorithm/container.h>
+#include <absl/container/btree_map.h>
+#include <absl/strings/ascii.h>
+#include <absl/strings/str_cat.h>
+
+#include <algorithm>
+#include <compare>
+#include <cstring>
+#include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/common/serializer/binary_deserializer.hpp>
+#include <duckdb/common/serializer/binary_serializer.hpp>
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/secret/secret_manager.hpp>
+#include <duckdb/parser/constraints/not_null_constraint.hpp>
+#include <duckdb/parser/parsed_data/alter_job_info.hpp>
+#include <duckdb/parser/parsed_data/alter_sequence_info.hpp>
+#include <duckdb/parser/parsed_data/alter_table_info.hpp>
+#include <duckdb/parser/parsed_data/comment_on_column_info.hpp>
+#include <duckdb/parser/parsed_data/create_info.hpp>
+#include <duckdb/parser/parsed_data/create_schema_info.hpp>
+#include <duckdb/parser/parsed_data/create_trigger_info.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <limits>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "catalog/base_catalog.h"
+#include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/entry/role.h"
+#include "catalog/entry/search_table.h"
+#include "catalog/entry_set.h"
+#include "catalog/secret_store.h"
+#include "search/log_entry.h"
+
+namespace sdb::catalog {
+namespace {
+
+using FieldWriter =
+  absl::FunctionRef<void(duckdb::BinarySerializer& object, size_t index)>;
+
+BaseCatalog& Owner(duckdb::CatalogEntry& entry) {
+  return entry.ParentCatalog().Cast<BaseCatalog>();
+}
+
+uint32_t PartSize(size_t size) {
+  if (size > std::numeric_limits<uint32_t>::max()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+                    ERR_MSG("a catalog log record would take ", size,
+                            " bytes, more than a record holds"));
+  }
+  return static_cast<uint32_t>(size);
+}
+
+template<typename Write>
+void WriteBlob(duckdb::BinarySerializer& object, RecordBuffer& out,
+               duckdb::field_id_t field, const char* tag, const Write& write) {
+  object.OnPropertyBegin(field, tag);
+  auto* length = out.Alloc(sizeof(uint32_t));
+  const auto begin = out.PayloadBytes();
+  write();
+  const auto size = PartSize(out.PayloadBytes() - begin);
+  std::memcpy(length, &size, sizeof(size));
+  object.OnPropertyEnd();
+}
+
+void WriteView(duckdb::BinarySerializer& object, duckdb::WriteStream& stream,
+               duckdb::field_id_t field, const char* tag,
+               std::span<const uint8_t> bytes) {
+  if (bytes.empty()) {
+    return;
+  }
+  object.OnPropertyBegin(field, tag);
+  const auto size = PartSize(bytes.size());
+  stream.WriteData(reinterpret_cast<const uint8_t*>(&size), sizeof(size));
+  stream.WriteData(bytes.data(), bytes.size());
+  object.OnPropertyEnd();
+}
+
+std::span<uint8_t> ReadView(duckdb::BinaryDeserializer& object,
+                            duckdb::MemoryStream& stream,
+                            duckdb::field_id_t field, const char* tag) {
+  std::span<uint8_t> bytes;
+  const auto present = object.OnOptionalPropertyBegin(field, tag);
+  if (present) {
+    auto at = stream.GetPosition();
+    uint32_t size = 0;
+    if (stream.GetCapacity() - at < sizeof(size)) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                      ERR_MSG("the log holds a damaged record"));
+    }
+    std::memcpy(&size, stream.GetData() + at, sizeof(size));
+    at += sizeof(size);
+    if (size > stream.GetCapacity() - at) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                      ERR_MSG("the log holds a damaged record"));
+    }
+    stream.SetPosition(at + size);
+    bytes = {stream.GetData() + at, size};
+  }
+  object.OnOptionalPropertyEnd(present);
+  return bytes;
+}
+
+void WriteSecret(const duckdb::CatalogEntry& entry, RecordBuffer& out) {
+  duckdb::BinarySerializer serializer{out};
+  serializer.Begin();
+  entry.Cast<duckdb::SecretCatalogEntry>().secret->secret->Serialize(
+    serializer);
+  serializer.End();
+}
+
+struct ChangeRecord {
+  duckdb::idx_t catalog = 0;
+  ChangeKind kind = ChangeKind::Create;
+  duckdb::idx_t oid = 0;
+  duckdb::idx_t owner = 0;
+  std::span<uint8_t> body;
+  duckdb::vector<duckdb::idx_t> references;
+  duckdb::vector<std::string> supersedes;
+};
+
+struct LsnRecord {
+  duckdb::idx_t catalog = 0;
+  duckdb::idx_t oid = 0;
+  duckdb::CatalogType type = duckdb::CatalogType::INVALID;
+  std::string name;
+  duckdb::idx_t relation = 0;
+  uint64_t remote_lsn = 0;
+  bool assign = false;
+};
+
+struct SequenceRecordValue {
+  duckdb::idx_t catalog = 0;
+  duckdb::idx_t oid = 0;
+  uint64_t usage_count = 0;
+  int64_t counter = 0;
+  duckdb::optional<int64_t> last_value;
+};
+
+struct SecretRecord {
+  ChangeKind kind = ChangeKind::Create;
+  std::string name;
+  std::span<uint8_t> secret;
+};
+
+struct CatalogRecord {
+  std::vector<ChangeRecord> changes;
+  std::vector<LsnRecord> lsns;
+  std::vector<SequenceRecordValue> sequences;
+  std::vector<SecretRecord> secrets;
+  bool shutdown = false;
+
+  bool Empty() const noexcept {
+    return changes.empty() && lsns.empty() && sequences.empty() &&
+           secrets.empty();
+  }
+};
+
+constexpr auto kNoLife = std::numeric_limits<size_t>::max();
+
+using Key = std::pair<duckdb::idx_t, duckdb::idx_t>;
+
+struct Life {
+  Key key;
+  size_t create = kNoLife;
+  size_t end = kNoLife;
+  bool eliminated = false;
+};
+
+struct StateKey {
+  size_t life = kNoLife;
+  duckdb::idx_t catalog = 0;
+  duckdb::idx_t oid = 0;
+  duckdb::idx_t relation = 0;
+
+  auto operator<=>(const StateKey&) const = default;
+};
+
+template<typename T>
+struct Slot {
+  size_t record = 0;
+  size_t life = kNoLife;
+  T value;
+};
+
+void WriteCatalogRecord(duckdb::BinarySerializer& serializer,
+                        const CatalogRecord& record, FieldWriter body,
+                        FieldWriter secret) {
+  serializer.WriteList(
+    100, "changes", record.changes.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      const auto& change = record.changes[i];
+      list.WriteObject([&](duckdb::BinarySerializer& object) {
+        object.WriteProperty(100, "catalog", change.catalog);
+        object.WriteProperty(101, "kind", static_cast<uint8_t>(change.kind));
+        object.WriteProperty(102, "oid", change.oid);
+        object.WritePropertyWithDefault<duckdb::idx_t>(103, "owner",
+                                                       change.owner);
+        body(object, i);
+        object.WritePropertyWithDefault(105, "references", change.references);
+        object.WritePropertyWithDefault(106, "supersedes", change.supersedes);
+      });
+    });
+  serializer.WriteList(
+    101, "lsns", record.lsns.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      const auto& update = record.lsns[i];
+      list.WriteObject([&](duckdb::BinarySerializer& object) {
+        object.WriteProperty(100, "catalog", update.catalog);
+        object.WriteProperty(101, "oid", update.oid);
+        object.WriteProperty(102, "type", update.type);
+        object.WritePropertyWithDefault(103, "name", update.name);
+        object.WritePropertyWithDefault(104, "relation", update.relation);
+        object.WriteProperty(105, "remote_lsn", update.remote_lsn);
+        object.WritePropertyWithDefault(106, "assign", update.assign);
+      });
+    });
+  serializer.WriteList(
+    102, "sequences", record.sequences.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      const auto& value = record.sequences[i];
+      list.WriteObject([&](duckdb::BinarySerializer& object) {
+        object.WriteProperty(100, "catalog", value.catalog);
+        object.WriteProperty(101, "oid", value.oid);
+        object.WritePropertyWithDefault<uint64_t>(102, "usage_count",
+                                                  value.usage_count);
+        object.WritePropertyWithDefault<int64_t>(103, "counter", value.counter);
+        object.WritePropertyWithDefault<duckdb::optional<int64_t>>(
+          104, "last_value", value.last_value);
+      });
+    });
+  serializer.WriteList(
+    103, "secrets", record.secrets.size(),
+    [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+      const auto& item = record.secrets[i];
+      list.WriteObject([&](duckdb::BinarySerializer& object) {
+        object.WriteProperty(100, "kind", static_cast<uint8_t>(item.kind));
+        object.WriteProperty(101, "name", item.name);
+        secret(object, i);
+      });
+    });
+  serializer.WritePropertyWithDefault(104, "shutdown", record.shutdown);
+}
+
+template<typename Write>
+void WriteCatalogPart(RecordBuffer& out, bool present, const Write& write) {
+  auto* size = out.Alloc(sizeof(uint32_t));
+  const auto begin = out.PayloadBytes();
+  if (present) {
+    duckdb::BinarySerializer serializer{out};
+    serializer.Begin();
+    write(serializer);
+    serializer.End();
+  }
+  const auto written = PartSize(out.PayloadBytes() - begin);
+  std::memcpy(size, &written, sizeof(written));
+}
+
+void NoField(duckdb::BinarySerializer&, size_t) {}
+
+CatalogRecord ReadCatalogRecord(std::span<uint8_t> bytes) {
+  CatalogRecord record;
+  duckdb::MemoryStream stream{bytes.data(), bytes.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Begin();
+  deserializer.ReadList(
+    100, "changes", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        record.changes.push_back({
+          .catalog = object.ReadProperty<duckdb::idx_t>(100, "catalog"),
+          .kind =
+            static_cast<ChangeKind>(object.ReadProperty<uint8_t>(101, "kind")),
+          .oid = object.ReadProperty<duckdb::idx_t>(102, "oid"),
+          .owner = object.ReadPropertyWithDefault<duckdb::idx_t>(103, "owner"),
+          .body = ReadView(object, stream, 104, "body"),
+          .references =
+            object.ReadPropertyWithDefault<duckdb::vector<duckdb::idx_t>>(
+              105, "references"),
+          .supersedes =
+            object.ReadPropertyWithDefault<duckdb::vector<std::string>>(
+              106, "supersedes"),
+        });
+      });
+    });
+  deserializer.ReadList(
+    101, "lsns", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        record.lsns.push_back({
+          .catalog = object.ReadProperty<duckdb::idx_t>(100, "catalog"),
+          .oid = object.ReadProperty<duckdb::idx_t>(101, "oid"),
+          .type = object.ReadProperty<duckdb::CatalogType>(102, "type"),
+          .name = object.ReadPropertyWithDefault<std::string>(103, "name"),
+          .relation =
+            object.ReadPropertyWithDefault<duckdb::idx_t>(104, "relation"),
+          .remote_lsn = object.ReadProperty<uint64_t>(105, "remote_lsn"),
+          .assign = object.ReadPropertyWithDefault<bool>(106, "assign"),
+        });
+      });
+    });
+  deserializer.ReadList(
+    102, "sequences",
+    [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        record.sequences.push_back({
+          .catalog = object.ReadProperty<duckdb::idx_t>(100, "catalog"),
+          .oid = object.ReadProperty<duckdb::idx_t>(101, "oid"),
+          .usage_count =
+            object.ReadPropertyWithDefault<uint64_t>(102, "usage_count"),
+          .counter = object.ReadPropertyWithDefault<int64_t>(103, "counter"),
+          .last_value =
+            object.ReadPropertyWithDefault<duckdb::optional<int64_t>>(
+              104, "last_value"),
+        });
+      });
+    });
+  deserializer.ReadList(
+    103, "secrets", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        record.secrets.push_back({
+          .kind =
+            static_cast<ChangeKind>(object.ReadProperty<uint8_t>(100, "kind")),
+          .name = object.ReadProperty<std::string>(101, "name"),
+          .secret = ReadView(object, stream, 102, "secret"),
+        });
+      });
+    });
+  record.shutdown = deserializer.ReadPropertyWithDefault<bool>(104, "shutdown");
+  deserializer.End();
+  return record;
+}
+
+void ReplaySecret(duckdb::ClientContext& context, ReplayTarget target,
+                  SecretRecord& record) {
+  auto* owner = target(ClusterCatalog::kRecordId);
+  if (!owner) {
+    return;
+  }
+  auto& cluster = owner->Cast<ClusterCatalog>();
+  auto& set = cluster.Secrets(true);
+  const auto transaction = cluster.GetCatalogTransaction(context);
+  DeclareModified(transaction, cluster);
+  const duckdb::Identifier name{record.name};
+  if (record.kind == ChangeKind::Drop) {
+    set.Drop(transaction, name);
+    return;
+  }
+  duckdb::MemoryStream stream{record.secret.data(), record.secret.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Begin();
+  auto secret =
+    duckdb::SecretManager::Get(context).DeserializeSecret(deserializer);
+  deserializer.End();
+  set.Create(
+    transaction,
+    MakeSecretEntry(cluster, std::move(secret),
+                    duckdb::SecretManager::LOCAL_FILE_STORAGE_NAME, true));
+}
+
+duckdb::unique_ptr<duckdb::AlterInfo> DeserializeAlter(
+  duckdb::ClientContext& context, std::string& bytes) {
+  duckdb::MemoryStream stream{
+    reinterpret_cast<duckdb::data_ptr_t>(bytes.data()), bytes.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Set<duckdb::ClientContext&>(context);
+  deserializer.Begin();
+  auto info = deserializer.ReadProperty<duckdb::unique_ptr<duckdb::ParseInfo>>(
+    100, "info");
+  deserializer.End();
+  return duckdb::unique_ptr_cast<duckdb::ParseInfo, duckdb::AlterInfo>(
+    std::move(info));
+}
+
+duckdb::TableCatalogEntry& LoggedTable(BaseCatalog& catalog,
+                                       duckdb::CatalogTransaction transaction,
+                                       duckdb::idx_t oid) {
+  auto table = catalog.FindRelation(transaction, oid);
+  SDB_ENSURE(table && table->type == duckdb::CatalogType::TABLE_ENTRY,
+             "the log changes a missing table ", oid);
+  return table->Cast<duckdb::TableCatalogEntry>();
+}
+
+duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>::const_iterator
+ColumnNotNull(
+  const duckdb::AlterInfo& info, const duckdb::TableCatalogEntry& table,
+  const duckdb::vector<duckdb::unique_ptr<duckdb::Constraint>>& constraints) {
+  if (info.type != duckdb::AlterType::ALTER_TABLE ||
+      info.Cast<duckdb::AlterTableInfo>().alter_table_type !=
+        duckdb::AlterTableType::SET_NOT_NULL) {
+    return constraints.end();
+  }
+  const auto& path = info.Cast<duckdb::SetNotNullInfo>().column_path;
+  const auto& columns = table.GetColumns();
+  if (path.size() != 1 || !columns.ColumnExists(path.front())) {
+    return constraints.end();
+  }
+  const auto index = columns.GetColumn(path.front()).Logical();
+  return absl::c_find_if(
+    constraints, [&](const duckdb::unique_ptr<duckdb::Constraint>& constraint) {
+      return constraint->type == duckdb::ConstraintType::NOT_NULL &&
+             constraint->Cast<duckdb::NotNullConstraint>().index == index;
+    });
+}
+
+void QualifyInLoggedSchema(BaseCatalog& catalog,
+                           duckdb::CatalogTransaction transaction,
+                           duckdb::CreateInfo& info) {
+  if (!info.schema_oid) {
+    return;
+  }
+  const auto entry = catalog.LookupOid(transaction, info.schema_oid);
+  SDB_ENSURE(entry && entry->type == duckdb::CatalogType::SCHEMA_ENTRY,
+             "the log creates in a missing schema ", info.schema_oid);
+  const auto& schema = entry->Cast<duckdb::SchemaCatalogEntry>();
+  auto path = schema.GetParentSchemaPath(transaction);
+  path.push_back(schema.name);
+  auto name = info.GetQualifiedName().Name();
+  if (info.type == duckdb::CatalogType::SCHEMA_ENTRY) {
+    path.push_back(info.Cast<duckdb::CreateSchemaInfo>().SchemaName());
+  }
+  info.SetQualifiedName(duckdb::QualifiedName::FromCatalogSchema(
+    catalog.GetName(), std::move(path), std::move(name)));
+}
+
+struct CreatedConstraint {
+  std::string name;
+  duckdb::idx_t oid = 0;
+};
+
+struct ChangeContent {
+  duckdb::unique_ptr<duckdb::CreateInfo> info;
+  duckdb::unique_ptr<duckdb::AlterInfo> alter;
+  duckdb::LogicalDependencyList dependencies;
+  std::vector<CreatedConstraint> constraints;
+};
+
+std::vector<CreatedConstraint> CreatedConstraints(const Change& change) {
+  std::vector<CreatedConstraint> created;
+  auto& version = *change.version;
+  if (!version.HasChild() ||
+      version.Child().type != duckdb::CatalogType::TABLE_ENTRY) {
+    return created;
+  }
+  const auto& before =
+    version.Child().Cast<duckdb::TableCatalogEntry>().GetConstraints();
+  for (const auto& constraint :
+       version.Cast<duckdb::TableCatalogEntry>().GetConstraints()) {
+    if (absl::c_none_of(before, [&](const auto& old) {
+          return old->oid == constraint->oid;
+        })) {
+      created.push_back(
+        {.name = constraint->constraint_name, .oid = constraint->oid});
+    }
+  }
+  return created;
+}
+
+duckdb::vector<duckdb::idx_t> References(const Change& change) {
+  const auto& subject = change.Subject();
+  duckdb::vector<duckdb::idx_t> references;
+  const auto add = [&](duckdb::idx_t oid) {
+    if (oid && oid != subject.oid) {
+      references.push_back(oid);
+    }
+  };
+  add(subject.ParentSchemaOid());
+  if (change.set->Members()) {
+    ForEachSubject(subject, add);
+  } else {
+    add(subject.permissions.owner);
+    for (const auto& item : subject.permissions.acl) {
+      add(item.grantee);
+      add(item.grantor);
+    }
+  }
+  for (const auto& defaults : subject.permissions.defaults) {
+    add(defaults.role);
+    for (const auto& item : defaults.acl) {
+      add(item.grantee);
+      add(item.grantor);
+    }
+  }
+  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
+    for (const auto& column :
+         subject.Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {
+      for (const auto& item : column.Acl()) {
+        add(item.grantee);
+        add(item.grantor);
+      }
+    }
+  }
+  if (subject.type == duckdb::CatalogType::ROLE_ENTRY) {
+    for (const auto& membership : subject.Cast<RoleCatalogEntry>().MemberOf()) {
+      add(membership.role);
+      add(membership.grantor);
+    }
+  }
+  absl::c_sort(references);
+  references.erase(std::ranges::unique(references).begin(), references.end());
+  return references;
+}
+
+constexpr std::string_view kComment = "comment";
+constexpr std::string_view kDefinition = "definition";
+constexpr std::string_view kConfig = "config";
+constexpr std::string_view kFiring = "firing";
+constexpr std::string_view kDefault = "default";
+constexpr std::string_view kNotNull = "notnull";
+
+std::string ColumnKey(std::string_view attribute,
+                      const duckdb::CatalogEntry& subject,
+                      const duckdb::Identifier& column) {
+  if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
+    const auto& columns =
+      subject.Cast<duckdb::TableCatalogEntry>().GetColumns();
+    if (columns.ColumnExists(column)) {
+      return absl::StrCat(attribute, ":",
+                          columns.GetColumn(column).CatalogOid());
+    }
+  }
+  return absl::StrCat(attribute, ":name:", column.GetIdentifierName());
+}
+
+std::string OptionKey(std::string_view option) {
+  return absl::StrCat("options:", absl::AsciiStrToLower(option));
+}
+
+void RoleKeys(const duckdb::AlterRoleInfo& alter,
+              duckdb::vector<std::string>& keys) {
+  if (!alter.new_name.GetIdentifierName().empty() ||
+      !alter.grant_role.empty() || alter.grant_role_id != 0) {
+    return;
+  }
+  const auto options = static_cast<uint32_t>(alter.set_options) |
+                       static_cast<uint32_t>(alter.clear_options);
+  for (uint32_t bit = 1; bit != 0 && bit <= options; bit <<= 1) {
+    if ((options & bit) != 0) {
+      keys.push_back(absl::StrCat("role:", bit));
+    }
+  }
+  if (alter.set_password) {
+    keys.emplace_back("password");
+  }
+  if (alter.set_conn_limit) {
+    keys.emplace_back("connlimit");
+  }
+  if (alter.set_valid_until) {
+    keys.emplace_back("validuntil");
+  }
+  if (alter.reset_all_config) {
+    keys.emplace_back(kConfig);
+  }
+  for (const std::string_view setting : alter.set_config) {
+    keys.push_back(absl::StrCat(
+      kConfig, ":",
+      absl::AsciiStrToLower(setting.substr(0, setting.find('=')))));
+  }
+  for (const auto& setting : alter.reset_config) {
+    keys.push_back(absl::StrCat(kConfig, ":", absl::AsciiStrToLower(setting)));
+  }
+}
+
+void TableKeys(const duckdb::AlterTableInfo& alter,
+               const duckdb::CatalogEntry& subject,
+               duckdb::vector<std::string>& keys) {
+  const auto column = [&](std::string_view attribute,
+                          const duckdb::vector<duckdb::Identifier>& path) {
+    if (path.size() == 1) {
+      keys.push_back(ColumnKey(attribute, subject, path.front()));
+    }
+  };
+  switch (alter.alter_table_type) {
+    case duckdb::AlterTableType::SET_TABLE_OPTIONS:
+      for (const auto& [name, value] :
+           alter.Cast<duckdb::SetTableOptionsInfo>().table_options) {
+        keys.push_back(OptionKey(name));
+      }
+      break;
+    case duckdb::AlterTableType::RESET_TABLE_OPTIONS:
+      for (const auto& name :
+           alter.Cast<duckdb::ResetTableOptionsInfo>().table_options) {
+        keys.push_back(OptionKey(name.GetIdentifierName()));
+      }
+      break;
+    case duckdb::AlterTableType::SET_TRIGGER_FIRING: {
+      const auto& trigger = alter.Cast<duckdb::SetTriggerFiringInfo>()
+                              .trigger_name.GetIdentifierName();
+      keys.push_back(trigger.empty() ? std::string{kFiring}
+                                     : absl::StrCat(kFiring, ":", trigger));
+      break;
+    }
+    case duckdb::AlterTableType::SET_DEFAULT:
+      column(kDefault, alter.Cast<duckdb::SetDefaultInfo>().column_path);
+      break;
+    case duckdb::AlterTableType::SET_NOT_NULL:
+      column(kNotNull, alter.Cast<duckdb::SetNotNullInfo>().column_path);
+      break;
+    case duckdb::AlterTableType::DROP_NOT_NULL:
+      column(kNotNull, alter.Cast<duckdb::DropNotNullInfo>().column_path);
+      break;
+    default:
+      break;
+  }
+}
+
+duckdb::vector<std::string> Supersedes(const duckdb::AlterInfo& info,
+                                       const duckdb::CatalogEntry& subject) {
+  duckdb::vector<std::string> keys;
+  switch (info.type) {
+    case duckdb::AlterType::REPLACE_DEFINITION:
+      keys.emplace_back(kDefinition);
+      break;
+    case duckdb::AlterType::SET_COMMENT:
+      keys.emplace_back(kComment);
+      break;
+    case duckdb::AlterType::SET_COLUMN_COMMENT:
+      keys.push_back(
+        ColumnKey(kComment, subject,
+                  info.Cast<duckdb::SetColumnCommentInfo>().column_name));
+      break;
+    case duckdb::AlterType::CHANGE_OWNERSHIP:
+      keys.emplace_back("owned_by");
+      break;
+    case duckdb::AlterType::ALTER_SEQUENCE:
+      if (info.Cast<duckdb::AlterSequenceInfo>().alter_sequence_type ==
+          duckdb::AlterSequenceType::RESTART_SEQUENCE) {
+        keys.emplace_back("restart");
+      }
+      break;
+    case duckdb::AlterType::ALTER_JOB:
+      switch (info.Cast<duckdb::AlterJobInfo>().alter_job_type) {
+        case duckdb::AlterJobType::SUSPEND:
+        case duckdb::AlterJobType::RESUME:
+          keys.emplace_back("state");
+          break;
+        case duckdb::AlterJobType::SET_SCHEDULE:
+          keys.emplace_back("schedule");
+          break;
+        case duckdb::AlterJobType::RENAME:
+          break;
+      }
+      break;
+    case duckdb::AlterType::ALTER_ROLE:
+      RoleKeys(info.Cast<duckdb::AlterRoleInfo>(), keys);
+      break;
+    case duckdb::AlterType::ALTER_INDEX: {
+      const auto& alter = info.Cast<duckdb::AlterIndexInfo>();
+      if (alter.alter_index_type == duckdb::AlterIndexType::SET_INDEX_OPTIONS) {
+        for (const auto& [name, value] :
+             alter.Cast<duckdb::SetIndexOptionsInfo>().options) {
+          keys.push_back(OptionKey(name));
+        }
+      } else if (alter.alter_index_type ==
+                 duckdb::AlterIndexType::RESET_INDEX_OPTIONS) {
+        for (const auto& name :
+             alter.Cast<duckdb::ResetIndexOptionsInfo>().options) {
+          keys.push_back(OptionKey(name.GetIdentifierName()));
+        }
+      }
+      break;
+    }
+    case duckdb::AlterType::ALTER_TABLE:
+      TableKeys(info.Cast<duckdb::AlterTableInfo>(), subject, keys);
+      break;
+    default:
+      break;
+  }
+  absl::c_sort(keys);
+  keys.erase(std::ranges::unique(keys).begin(), keys.end());
+  return keys;
+}
+
+bool Covers(std::string_view all, std::string_view key) {
+  return key.size() > all.size() && key.starts_with(all) &&
+         key[all.size()] == ':';
+}
+
+bool Interacts(std::string_view key, std::string_view other) {
+  const auto one_way = [](std::string_view a, std::string_view b) {
+    return ((a == kConfig || a == kFiring) && Covers(a, b)) ||
+           (a == kDefinition && (Covers(kComment, b) || Covers(kDefault, b) ||
+                                 Covers(kNotNull, b)));
+  };
+  return one_way(key, other) || one_way(other, key);
+}
+
+bool Commutes(std::span<const std::string_view> earlier,
+              const duckdb::vector<std::string>& later) {
+  if (later.empty()) {
+    return absl::c_all_of(earlier,
+                          [](std::string_view key) { return key == kComment; });
+  }
+  return absl::c_none_of(earlier, [&](std::string_view key) {
+    return absl::c_any_of(
+      later, [&](std::string_view other) { return Interacts(key, other); });
+  });
+}
+
+void WriteChangeBody(const Change& change, RecordBuffer& out) {
+  auto& subject = change.Subject();
+  duckdb::BinarySerializer serializer{out};
+  serializer.Begin();
+  if (change.kind == ChangeKind::Create) {
+    serializer.WritePropertyWithDefault(100, "info",
+                                        subject.GetSerializedInfo());
+  } else {
+    if (!change.alter.empty()) {
+      serializer.OnPropertyBegin(101, "alter");
+      out.WriteData(reinterpret_cast<const uint8_t*>(change.alter.data()),
+                    change.alter.size());
+      serializer.OnPropertyEnd();
+    }
+    if (subject.type == duckdb::CatalogType::TABLE_ENTRY) {
+      serializer.WriteProperty(
+        102, "dependencies",
+        subject.Cast<duckdb::TableCatalogEntry>().dependencies);
+      const auto created = CreatedConstraints(change);
+      serializer.WriteOptionalList(
+        103, "constraints", created.size(),
+        [&](duckdb::Serializer::List& list, duckdb::idx_t i) {
+          list.WriteObject([&](duckdb::Serializer& object) {
+            object.WriteProperty(100, "name", created[i].name);
+            object.WriteProperty(101, "oid", created[i].oid);
+          });
+        });
+    }
+  }
+  serializer.End();
+}
+
+ChangeContent ReadChangeBody(duckdb::ClientContext& context,
+                             std::span<uint8_t> body) {
+  ChangeContent content;
+  if (body.empty()) {
+    return content;
+  }
+  duckdb::MemoryStream stream{body.data(), body.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Set<duckdb::ClientContext&>(context);
+  deserializer.Begin();
+  content.info =
+    deserializer
+      .ReadPropertyWithDefault<duckdb::unique_ptr<duckdb::CreateInfo>>(100,
+                                                                       "info");
+  deserializer.ReadOptionalObject(
+    101, "alter", [&](duckdb::BinaryDeserializer& alter) {
+      content.alter =
+        duckdb::unique_ptr_cast<duckdb::ParseInfo, duckdb::AlterInfo>(
+          alter.ReadProperty<duckdb::unique_ptr<duckdb::ParseInfo>>(100,
+                                                                    "info"));
+    });
+  content.dependencies =
+    deserializer.ReadPropertyWithExplicitDefault<duckdb::LogicalDependencyList>(
+      102, "dependencies", duckdb::LogicalDependencyList{});
+  deserializer.ReadOptionalList(
+    103, "constraints", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::Deserializer& object) {
+        content.constraints.push_back({
+          .name = object.ReadProperty<std::string>(100, "name"),
+          .oid = object.ReadProperty<duckdb::idx_t>(101, "oid"),
+        });
+      });
+    });
+  deserializer.End();
+  return content;
+}
+
+void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
+                  ChangeRecord& change) {
+  auto* owner = target(change.catalog);
+  if (!owner) {
+    return;
+  }
+  auto content = ReadChangeBody(context, change.body);
+  auto& catalog = *owner;
+  const auto oid = change.oid;
+  const auto transaction = catalog.GetCatalogTransaction(context);
+  switch (change.kind) {
+    case ChangeKind::Create:
+      if (change.owner) {
+        LoggedTable(catalog, transaction, change.owner)
+          .CreateTrigger(transaction,
+                         content.info->Cast<duckdb::CreateTriggerInfo>());
+        return;
+      }
+      QualifyInLoggedSchema(catalog, transaction, *content.info);
+      catalog.ReplayCreate(context, std::move(content.info));
+      return;
+    case ChangeKind::Alter: {
+      SDB_ENSURE(content.alter, "the log alters entry ", oid,
+                 " without saying how");
+      auto& info = *content.alter;
+      info.bind_mode = duckdb::AlterBindMode::SKIP_BINDING;
+      if (change.owner && info.type == duckdb::AlterType::REPLACE_DEFINITION) {
+        LoggedTable(catalog, transaction, change.owner)
+          .Cast<SearchTableEntry>()
+          .ReplaceTrigger(transaction,
+                          info.Cast<duckdb::ReplaceDefinitionInfo>()
+                            .definition->Cast<duckdb::CreateTriggerInfo>());
+        return;
+      }
+      catalog.Alter(context, info);
+      if (!content.dependencies.Set().empty()) {
+        auto& table = LoggedTable(catalog, transaction, oid);
+        catalog.Oids().RemoveDependents(table, table.oid);
+        table.dependencies = std::move(content.dependencies);
+        catalog.Oids().AddDependents(table, table.oid);
+      }
+      if (!content.constraints.empty()) {
+        auto& oids = catalog.GetDatabase().GetDatabaseManager();
+        std::vector<duckdb::idx_t> restored;
+        auto& table = LoggedTable(catalog, transaction, oid);
+        auto& made_constraints = table.GetConstraints();
+        for (const auto& created : content.constraints) {
+          auto it = absl::c_find_if(made_constraints, [&](const auto& made) {
+            return made->constraint_name == created.name;
+          });
+          if (it == made_constraints.end()) {
+            it = ColumnNotNull(info, table, made_constraints);
+          }
+          SDB_ENSURE(it != made_constraints.end(),
+                     "the log creates constraint \"", created.name,
+                     "\" on table ", oid, " that replay did not make");
+          (*it)->constraint_name = created.name;
+          (*it)->oid = created.oid;
+          oids.ClaimOid(created.oid);
+          restored.push_back(created.oid);
+        }
+        catalog.Oids().Alias(restored, oid);
+      }
+      return;
+    }
+    case ChangeKind::Drop: {
+      auto entry = catalog.LookupOid(transaction, oid);
+      SDB_ENSURE(entry, "the log drops a missing entry ", oid);
+      if (change.owner) {
+        LoggedTable(catalog, transaction, change.owner)
+          .DropTrigger(transaction, entry->name, false);
+        return;
+      }
+      catalog.ReplayDrop(context, *entry);
+      return;
+    }
+    case ChangeKind::Rename:
+      break;
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                  ERR_MSG("the log holds an unknown catalog change"));
+}
+
+void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
+                   duckdb::BinaryDeserializer& object) {
+  const auto id = object.ReadProperty<duckdb::idx_t>(100, "catalog");
+  const auto oid = object.ReadProperty<duckdb::idx_t>(101, "table");
+  search::TableReplay* replay = nullptr;
+  auto* catalog = target(id);
+  if (catalog) {
+    if (auto entry =
+          catalog->LookupOid(catalog->GetCatalogTransaction(context), oid)) {
+      std::shared_ptr<search::Store> store;
+      if (IsSearchTable(*entry)) {
+        store = entry->Cast<SearchTableEntry>().Storage();
+      } else if (entry->type == duckdb::CatalogType::INDEX_ENTRY) {
+        store = entry->Cast<InvertedIndexEntry>().Storage();
+      }
+      SDB_ENSURE(store, "the log writes a missing table ", oid);
+      replay = store->Replay();
+    }
+  }
+  object.ReadObject(102, "delta", [&](duckdb::BinaryDeserializer& delta) {
+    search::ReplayTableDelta(context, replay, catalog, delta);
+  });
+}
+
+void WriteSection(duckdb::BinarySerializer::List& list, RecordBuffer& out,
+                  duckdb::idx_t catalog, duckdb::idx_t table,
+                  const search::TableDelta& delta) {
+  list.WriteObject([&](duckdb::BinarySerializer& object) {
+    object.WriteProperty(100, "catalog", catalog);
+    object.WriteProperty(101, "table", table);
+    object.WriteObject(102, "delta", [&](duckdb::BinarySerializer& change) {
+      search::WriteTableDelta(change, out, delta);
+    });
+  });
+}
+
+template<typename Write>
+void WriteSearchPart(RecordBuffer& out, size_t sections, const Write& write) {
+  duckdb::BinarySerializer serializer{out};
+  serializer.Begin();
+  serializer.WriteList(100, "search", sections,
+                       [&](duckdb::BinarySerializer::List& list,
+                           duckdb::idx_t i) { write(list, i); });
+  serializer.End();
+}
+
+void ReplayLsn(duckdb::ClientContext& context, ReplayTarget target,
+               const LsnRecord& record) {
+  auto* owner = target(record.catalog);
+  if (!owner) {
+    return;
+  }
+  auto& catalog = *owner;
+  const auto transaction = catalog.GetCatalogTransaction(context);
+  auto entry = catalog.LookupOid(transaction, record.oid);
+  if (!entry || entry->type != record.type) {
+    entry = catalog.Set(record.type)
+              .Get(transaction, duckdb::Identifier{record.name});
+  }
+  if (!entry) {
+    return;
+  }
+  ApplyLsnUpdate(
+    {
+      .entry = &entry->Cast<ReplicationLsnEntry>(),
+      .relation = record.relation,
+      .remote_lsn = record.remote_lsn,
+      .assign = record.assign,
+    },
+    0);
+}
+
+void ReplaySequence(duckdb::ClientContext& context, ReplayTarget target,
+                    const SequenceRecordValue& value) {
+  auto* catalog = target(value.catalog);
+  if (!catalog) {
+    return;
+  }
+  auto entry =
+    catalog->LookupOid(catalog->GetCatalogTransaction(context), value.oid);
+  if (entry && entry->type == duckdb::CatalogType::SEQUENCE_ENTRY) {
+    entry->Cast<duckdb::SequenceCatalogEntry>().ReplayValue(
+      value.usage_count, value.counter, value.last_value);
+  }
+}
+
+RecordBuffer CatalogOnly(const CatalogRecord& record) {
+  RecordBuffer out;
+  WriteCatalogPart(out, true, [&](duckdb::BinarySerializer& serializer) {
+    WriteCatalogRecord(serializer, record, &NoField, &NoField);
+  });
+  return out;
+}
+
+uint32_t CatalogSize(std::span<const uint8_t> payload) {
+  uint32_t size = 0;
+  SDB_ENSURE(payload.size() >= sizeof(size), "the log holds a cut record");
+  std::memcpy(&size, payload.data(), sizeof(size));
+  SDB_ENSURE(size <= payload.size() - sizeof(size),
+             "the log holds a damaged record");
+  return size;
+}
+
+}  // namespace
+
+RecordBuffer SequenceRecord(const BaseCatalog& catalog,
+                            const duckdb::SequenceValue& value) {
+  CatalogRecord record;
+  record.sequences.push_back({
+    .catalog = catalog.RecordId(),
+    .oid = value.entry->oid,
+    .usage_count = value.usage_count,
+    .counter = value.counter,
+    .last_value = value.last_value,
+  });
+  return CatalogOnly(record);
+}
+
+RecordBuffer SearchRecord(duckdb::idx_t catalog, duckdb::idx_t table,
+                          const search::TableDelta& delta) {
+  RecordBuffer out;
+  WriteCatalogPart(out, false, [](duckdb::BinarySerializer&) {});
+  WriteSearchPart(out, 1,
+                  [&](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+                    WriteSection(list, out, catalog, table, delta);
+                  });
+  return out;
+}
+
+RecordBuffer ShutdownRecord() {
+  return CatalogOnly(CatalogRecord{.shutdown = true});
+}
+
+RecordBuffer StartupRecord() {
+  RecordBuffer out;
+  WriteCatalogPart(out, false, [](duckdb::BinarySerializer&) {});
+  return out;
+}
+
+std::span<uint8_t> CatalogPart(std::span<uint8_t> payload) {
+  return payload.subspan(sizeof(uint32_t), CatalogSize(payload));
+}
+
+std::vector<std::vector<uint8_t>> CompactHistory(
+  std::span<const std::span<uint8_t>> parts) {
+  std::vector<CatalogRecord> records;
+  records.reserve(parts.size());
+  for (const auto part : parts) {
+    records.push_back(ReadCatalogRecord(part));
+  }
+  std::vector<Life> lives;
+  std::vector<size_t> change_life;
+  std::vector<const ChangeRecord*> changes;
+  std::vector<bool> folded;
+  struct Pending {
+    size_t change = 0;
+    std::vector<std::string_view> keys;
+  };
+  irs::containers::FlatHashMap<Key, std::vector<Pending>> superseded;
+  irs::containers::FlatHashMap<duckdb::idx_t, std::vector<size_t>> referencing;
+  irs::containers::FlatHashMap<Key, size_t> live;
+  irs::containers::FlatHashMap<duckdb::idx_t, std::vector<size_t>> contained;
+  irs::containers::FlatHashMap<Key, std::vector<size_t>> owned;
+  absl::btree_map<StateKey, Slot<LsnRecord>> lsns;
+  absl::btree_map<StateKey, Slot<SequenceRecordValue>> sequences;
+  absl::btree_map<std::string, Slot<SecretRecord>> secrets;
+  const auto end = [&](size_t life, size_t at) {
+    if (lives[life].end != kNoLife) {
+      return;
+    }
+    lives[life].end = at;
+    if (const auto it = live.find(lives[life].key);
+        it != live.end() && it->second == life) {
+      live.erase(it);
+    }
+  };
+  const auto end_all = [&](auto& index, const auto& key, size_t at) {
+    if (const auto it = index.find(key); it != index.end()) {
+      for (const auto life : it->second) {
+        end(life, at);
+      }
+      index.erase(it);
+    }
+  };
+  const auto life_of = [&](duckdb::idx_t catalog, duckdb::idx_t oid) {
+    const auto it = live.find(Key{catalog, oid});
+    return it == live.end() ? kNoLife : it->second;
+  };
+  const auto state_key = [&](size_t life, duckdb::idx_t catalog,
+                             duckdb::idx_t oid, duckdb::idx_t relation) {
+    return life == kNoLife
+             ? StateKey{.catalog = catalog, .oid = oid, .relation = relation}
+             : StateKey{.life = life, .relation = relation};
+  };
+
+  for (size_t r = 0; r < records.size(); ++r) {
+    auto& record = records[r];
+    for (const auto& change : record.changes) {
+      const auto at = change_life.size();
+      const Key key{change.catalog, change.oid};
+      changes.push_back(&change);
+      folded.push_back(false);
+      auto& pending = superseded[key];
+      std::erase_if(pending, [&](Pending& earlier) {
+        std::erase_if(earlier.keys, [&](std::string_view kept) {
+          return absl::c_binary_search(change.supersedes, kept);
+        });
+        if (earlier.keys.empty()) {
+          folded[earlier.change] = true;
+          return true;
+        }
+        return change.kind != ChangeKind::Alter ||
+               !Commutes(earlier.keys, change.supersedes);
+      });
+      if (!change.supersedes.empty()) {
+        pending.push_back(
+          {.change = at,
+           .keys = {change.supersedes.begin(), change.supersedes.end()}});
+      }
+      for (const auto oid : change.references) {
+        referencing[oid].push_back(at);
+      }
+      switch (change.kind) {
+        case ChangeKind::Create: {
+          const auto life = lives.size();
+          lives.push_back({.key = key, .create = at});
+          live.insert_or_assign(key, life);
+          contained[change.catalog].push_back(life);
+          if (change.owner) {
+            owned[Key{change.catalog, change.owner}].push_back(life);
+          }
+          change_life.push_back(life);
+          break;
+        }
+        case ChangeKind::Drop: {
+          const auto life = life_of(change.catalog, change.oid);
+          change_life.push_back(life);
+          if (life == kNoLife) {
+            break;
+          }
+          end(life, at);
+          end_all(owned, key, at);
+          if (change.catalog == ClusterCatalog::kRecordId) {
+            end_all(contained, change.oid, at);
+          }
+          break;
+        }
+        default:
+          change_life.push_back(life_of(change.catalog, change.oid));
+          break;
+      }
+    }
+    for (auto& update : record.lsns) {
+      const auto life = life_of(update.catalog, update.oid);
+      const auto key =
+        state_key(life, update.catalog, update.oid, update.relation);
+      auto [it, inserted] = lsns.try_emplace(
+        key, Slot<LsnRecord>{.record = r, .life = life, .value = update});
+      if (inserted) {
+        continue;
+      }
+      auto& slot = it->second;
+      slot.record = r;
+      if (update.relation != 0 || update.assign) {
+        slot.value = std::move(update);
+      } else {
+        const auto remote_lsn =
+          std::max(slot.value.remote_lsn, update.remote_lsn);
+        const auto assign = slot.value.assign;
+        slot.value = std::move(update);
+        slot.value.remote_lsn = remote_lsn;
+        slot.value.assign = assign;
+      }
+    }
+    for (auto& value : record.sequences) {
+      const auto life = life_of(value.catalog, value.oid);
+      auto& slot = sequences[state_key(life, value.catalog, value.oid, 0)];
+      if (slot.value.usage_count <= value.usage_count) {
+        slot = {.record = r, .life = life, .value = std::move(value)};
+      }
+    }
+    for (auto& secret : record.secrets) {
+      auto name = secret.name;
+      secrets.insert_or_assign(
+        std::move(name),
+        Slot<SecretRecord>{.record = r, .value = std::move(secret)});
+    }
+  }
+
+  for (auto& life : lives) {
+    life.eliminated = life.end != kNoLife;
+  }
+  const auto gone = [&](size_t life) {
+    return life != kNoLife && lives[life].eliminated;
+  };
+  const auto references = [&](size_t at, const Life& life) {
+    return at > life.create && at < life.end && !folded[at] &&
+           !gone(change_life[at]) &&
+           (life.key.first == ClusterCatalog::kRecordId ||
+            changes[at]->catalog == life.key.first);
+  };
+  for (bool changed = true; changed;) {
+    changed = false;
+    for (auto& life : lives) {
+      if (!life.eliminated) {
+        continue;
+      }
+      if (const auto it = referencing.find(life.key.second);
+          it != referencing.end() && absl::c_any_of(it->second, [&](size_t at) {
+            return references(at, life);
+          })) {
+        life.eliminated = false;
+        changed = true;
+      }
+    }
+  }
+
+  std::vector<CatalogRecord> kept(records.size());
+  size_t at = 0;
+  for (size_t r = 0; r < records.size(); ++r) {
+    for (auto& change : records[r].changes) {
+      if (!gone(change_life[at]) && !folded[at]) {
+        kept[r].changes.push_back(std::move(change));
+      }
+      ++at;
+    }
+  }
+  for (auto& [key, slot] : lsns) {
+    if (!gone(slot.life)) {
+      kept[slot.record].lsns.push_back(std::move(slot.value));
+    }
+  }
+  for (auto& [key, slot] : sequences) {
+    if (!gone(slot.life)) {
+      kept[slot.record].sequences.push_back(std::move(slot.value));
+    }
+  }
+  for (auto& [name, slot] : secrets) {
+    if (slot.value.kind != ChangeKind::Drop) {
+      kept[slot.record].secrets.push_back(std::move(slot.value));
+    }
+  }
+  std::vector<std::vector<uint8_t>> compacted;
+  for (const auto& record : kept) {
+    if (record.Empty()) {
+      continue;
+    }
+    duckdb::MemoryStream stream;
+    uint32_t size = 0;
+    stream.WriteData(reinterpret_cast<const uint8_t*>(&size), sizeof(size));
+    {
+      duckdb::BinarySerializer serializer{stream};
+      serializer.Begin();
+      WriteCatalogRecord(
+        serializer, record,
+        [&](duckdb::BinarySerializer& object, size_t i) {
+          WriteView(object, stream, 104, "body", record.changes[i].body);
+        },
+        [&](duckdb::BinarySerializer& object, size_t i) {
+          WriteView(object, stream, 102, "secret", record.secrets[i].secret);
+        });
+      serializer.End();
+    }
+    size = PartSize(stream.GetPosition() - sizeof(size));
+    std::memcpy(stream.GetData(), &size, sizeof(size));
+    compacted.emplace_back(stream.GetData(),
+                           stream.GetData() + stream.GetPosition());
+  }
+  return compacted;
+}
+
+std::string SerializeAlter(const duckdb::AlterInfo& info) {
+  duckdb::MemoryStream stream;
+  duckdb::BinarySerializer serializer{stream};
+  serializer.Begin();
+  serializer.WriteProperty(100, "info", &info);
+  serializer.End();
+  return std::string{reinterpret_cast<const char*>(stream.GetData()),
+                     stream.GetPosition()};
+}
+
+std::optional<RecordBuffer> WriteRecord(duckdb::ClientContext& context,
+                                        const SessionTransaction& transaction,
+                                        search::Writes& writes) {
+  std::vector<const Change*> changes;
+  std::vector<const Change*> secrets;
+  std::vector<duckdb::SequenceCatalogEntry*> sequences;
+  for (const auto& change : transaction.Changes()) {
+    auto& subject = change.Subject();
+    if (subject.type == duckdb::CatalogType::SECRET_ENTRY) {
+      if (!subject.temporary) {
+        secrets.push_back(&change);
+      }
+      continue;
+    }
+    if (change.kind != ChangeKind::Rename &&
+        (change.kind != ChangeKind::Alter || !change.alter.empty()) &&
+        Owner(subject).Durable()) {
+      changes.push_back(&change);
+      if (subject.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
+          change.kind != ChangeKind::Drop && !subject.temporary) {
+        sequences.push_back(&subject.Cast<duckdb::SequenceCatalogEntry>());
+      }
+    }
+  }
+  auto sections = writes.TakeLog(context);
+  std::erase_if(sections, [](const search::LogSection& section) {
+    return search::Empty(section.delta);
+  });
+  CatalogRecord record;
+  for (const auto* change : changes) {
+    auto& subject = change->Subject();
+    auto& written = record.changes.emplace_back(ChangeRecord{
+      .catalog = Owner(subject).RecordId(),
+      .kind = change->kind,
+      .oid = subject.oid,
+      .owner = change->set->Owner(),
+    });
+    if (change->kind == ChangeKind::Drop) {
+      continue;
+    }
+    written.references = References(*change);
+    if (change->kind == ChangeKind::Alter) {
+      auto alter = change->alter;
+      written.supersedes =
+        Supersedes(*DeserializeAlter(context, alter), subject);
+    }
+  }
+  for (const auto& update : transaction.LsnUpdates()) {
+    record.lsns.push_back({
+      .catalog = Owner(*update.entry).RecordId(),
+      .oid = update.entry->oid,
+      .type = update.entry->type,
+      .name = std::string{update.entry->name.GetIdentifierName()},
+      .relation = update.relation,
+      .remote_lsn = update.remote_lsn,
+      .assign = update.assign,
+    });
+  }
+  for (auto* sequence : sequences) {
+    const auto data = sequence->GetData();
+    record.sequences.push_back({
+      .catalog = Owner(*sequence).RecordId(),
+      .oid = sequence->oid,
+      .usage_count = data.usage_count,
+      .counter = data.counter,
+      .last_value = data.last_value,
+    });
+  }
+  for (const auto* change : secrets) {
+    record.secrets.push_back({
+      .kind = change->kind,
+      .name = std::string{change->Subject().name.GetIdentifierName()},
+    });
+  }
+  if (record.Empty() && sections.empty()) {
+    return std::nullopt;
+  }
+  std::optional<RecordBuffer> out{std::in_place};
+  WriteCatalogPart(
+    *out, !record.Empty(), [&](duckdb::BinarySerializer& serializer) {
+      WriteCatalogRecord(
+        serializer, record,
+        [&](duckdb::BinarySerializer& object, size_t i) {
+          if (changes[i]->kind != ChangeKind::Drop) {
+            WriteBlob(object, *out, 104, "body",
+                      [&] { WriteChangeBody(*changes[i], *out); });
+          }
+        },
+        [&](duckdb::BinarySerializer& object, size_t i) {
+          if (secrets[i]->kind == ChangeKind::Create) {
+            WriteBlob(object, *out, 102, "secret",
+                      [&] { WriteSecret(secrets[i]->Subject(), *out); });
+          }
+        });
+    });
+  if (!sections.empty()) {
+    WriteSearchPart(
+      *out, sections.size(),
+      [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
+        const auto& section = sections[i];
+        WriteSection(
+          list, *out,
+          section.owner->ParentCatalog().Cast<BaseCatalog>().RecordId(),
+          section.owner->oid, section.delta);
+      });
+  }
+  return out;
+}
+
+BaseCatalog* InstanceCatalog(duckdb::ClientContext& context, duckdb::idx_t id) {
+  auto& cluster = ClusterOf(context);
+  if (cluster.RecordId() == id) {
+    return &cluster;
+  }
+  for (const auto& db :
+       SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
+    if (auto& catalog = db->GetCatalog().Cast<SereneDBCatalog>();
+        catalog.Durable() && catalog.RecordId() == id) {
+      return &catalog;
+    }
+  }
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATA_CORRUPTED),
+                  ERR_MSG("the log names a missing catalog ", id));
+}
+
+bool ReplayCatalogPart(duckdb::ClientContext& context, ReplayTarget target,
+                       std::span<uint8_t> catalog) {
+  auto record = ReadCatalogRecord(catalog);
+  for (auto& change : record.changes) {
+    ReplayChange(context, target, change);
+  }
+  for (const auto& update : record.lsns) {
+    ReplayLsn(context, target, update);
+  }
+  for (const auto& value : record.sequences) {
+    ReplaySequence(context, target, value);
+  }
+  for (auto& secret : record.secrets) {
+    ReplaySecret(context, target, secret);
+  }
+  return record.shutdown;
+}
+
+void ReadDatabases(duckdb::ClientContext& context, std::span<uint8_t> catalog,
+                   LoggedDatabases& databases) {
+  if (catalog.empty()) {
+    return;
+  }
+  for (auto& change : ReadCatalogRecord(catalog).changes) {
+    if (change.catalog != ClusterCatalog::kRecordId) {
+      continue;
+    }
+    if (change.kind == ChangeKind::Drop) {
+      databases.erase(change.oid);
+      continue;
+    }
+    if (change.kind != ChangeKind::Create) {
+      continue;
+    }
+    const auto content = ReadChangeBody(context, change.body);
+    if (content.info->type == duckdb::CatalogType::DATABASE_ENTRY) {
+      databases.insert_or_assign(change.oid,
+                                 content.info->GetQualifiedName().Name());
+    }
+  }
+}
+
+bool ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
+                  std::span<uint8_t> payload) {
+  const auto size = CatalogSize(payload);
+  const bool shutdown =
+    size != 0 &&
+    ReplayCatalogPart(context, target, payload.subspan(sizeof(uint32_t), size));
+  const auto search = payload.subspan(sizeof(uint32_t) + size);
+  if (search.empty()) {
+    return shutdown;
+  }
+  duckdb::MemoryStream stream{search.data(), search.size()};
+  duckdb::BinaryDeserializer deserializer{stream};
+  deserializer.Set<duckdb::ClientContext&>(context);
+  deserializer.Begin();
+  deserializer.ReadList(
+    100, "search", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
+      list.ReadObject([&](duckdb::BinaryDeserializer& object) {
+        ReplaySection(context, target, object);
+      });
+    });
+  deserializer.End();
+  return shutdown;
+}
+
+}  // namespace sdb::catalog

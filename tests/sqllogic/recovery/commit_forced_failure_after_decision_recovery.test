@@ -35,7 +35,7 @@ SET debug_force_commit_failure = false;
 
 connection victim
 query
-SELECT (SELECT count(*) FROM cff_rows) AS n, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cff_new') AS t;
+SELECT (SELECT count(*) FROM cff_rows) AS n, (SELECT count(*) FROM sdb_tables() WHERE table_name = 'cff_new') AS t;
 ----
 n	t
 0	0
@@ -53,7 +53,7 @@ SELECT 1;
 
 connection after_crash
 query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
-SELECT (SELECT count(*) FROM cff_rows) AS n, (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'cff_new') AS t;
+SELECT (SELECT count(*) FROM cff_rows) AS n, (SELECT count(*) FROM sdb_tables() WHERE table_name = 'cff_new') AS t;
 ----
 n	t
 0	0

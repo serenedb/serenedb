@@ -21,9 +21,6 @@ CREATE INDEX blob_col_idx ON blob_col USING inverted(id, payload blob_kw);
 statement ok
 INSERT INTO blob_col VALUES (1, '\x68656c6c6f'::BLOB), (2, '\x776f726c64'::BLOB), (3, '\xdeadbeef'::BLOB);
 
-statement ok
-VACUUM (REFRESH_TABLE) blob_col;
-
 # Sanity: direct column index finds the BLOB value.
 query
 SELECT id FROM blob_col_idx WHERE payload @@ ts_like('\xdeadbeef'::BLOB) ORDER BY id;
@@ -47,9 +44,6 @@ CREATE INDEX blob_expr_idx ON blob_expr
 
 statement ok
 INSERT INTO blob_expr VALUES (1, '\x68656c6c6f'::BLOB), (2, '\x776f726c64'::BLOB), (3, '\xdeadbeef'::BLOB);
-
-statement ok
-VACUUM (REFRESH_TABLE) blob_expr;
 
 # Same value via the BLOB expression must match the same row.
 query

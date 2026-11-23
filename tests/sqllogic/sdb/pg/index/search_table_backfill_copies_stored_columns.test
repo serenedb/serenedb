@@ -1,0 +1,186 @@
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TABLE bsc (
+  id BIGINT,
+  body TEXT,
+  n INTEGER,
+  s VARCHAR,
+  z VARCHAR USING COMPRESSION zstd,
+  st STRUCT(a INTEGER, b VARCHAR),
+  l INTEGER[]
+) WITH (compaction_interval = 0, row_group_size = 10240);
+
+statement ok
+INSERT INTO bsc
+SELECT
+  i,
+  'word' || (i % 100),
+  CASE WHEN i % 7 = 0 THEN NULL ELSE i * 3 END,
+  CASE WHEN i % 5 = 0 THEN NULL ELSE 'stored_value_' || (i % 37) END,
+  'zstd_value_' || i,
+  struct_pack(a := i::INTEGER, b := 'nested_' || (i % 11)),
+  ARRAY[i::INTEGER, (i + 1)::INTEGER]
+FROM range(0, 60000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) bsc;
+
+statement ok
+SET threads = 4;
+
+statement ok
+DELETE FROM bsc WHERE (id < 5000 AND id % 13 = 0) OR id BETWEEN 20000 AND 20999;
+
+statement ok
+CREATE TABLE bsc_before AS SELECT * FROM bsc;
+
+statement ok
+CREATE INDEX bsc_idx ON bsc USING inverted (body);
+
+query
+SELECT
+  (SELECT count(*) FROM bsc) AS rows,
+  NOT EXISTS (SELECT * FROM bsc EXCEPT ALL SELECT * FROM bsc_before)
+    AND NOT EXISTS (SELECT * FROM bsc_before EXCEPT ALL SELECT * FROM bsc) AS same;
+----
+rows	same
+58615	t
+
+query
+SELECT count(*) AS hits FROM bsc WHERE body @@ 'word42';
+----
+hits
+586
+
+statement ok
+ALTER TABLE bsc ADD COLUMN d INTEGER DEFAULT 7;
+
+statement ok
+ALTER TABLE bsc ALTER COLUMN n TYPE BIGINT;
+
+query
+SELECT
+  (SELECT count(*) FROM bsc) AS rows,
+  (SELECT pg_typeof(n)::TEXT FROM bsc LIMIT 1) AS n_type,
+  NOT EXISTS (
+    SELECT id, body, n, s, z, st, l, d FROM bsc
+    EXCEPT ALL
+    SELECT id, body, n::BIGINT, s, z, st, l, 7 FROM bsc_before)
+  AND NOT EXISTS (
+    SELECT id, body, n::BIGINT, s, z, st, l, 7 FROM bsc_before
+    EXCEPT ALL
+    SELECT id, body, n, s, z, st, l, d FROM bsc) AS same;
+----
+rows	n_type	same
+58615	bigint	t
+
+query
+SELECT count(*) AS hits FROM bsc WHERE body @@ 'word42';
+----
+hits
+586
+
+statement ok
+CREATE TABLE bsc_plain (id BIGINT, s VARCHAR)
+WITH (compaction_interval = 0, row_group_size = 10240);
+
+statement ok
+INSERT INTO bsc_plain SELECT i, 'plain_' || (i % 23) FROM range(0, 20000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) bsc_plain;
+
+statement ok
+ALTER TABLE bsc_plain ADD COLUMN e VARCHAR;
+
+statement ok
+INSERT INTO bsc_plain
+SELECT i, 'plain_' || (i % 23), 'late_' || (i % 17) FROM range(20000, 30000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) bsc_plain;
+
+statement ok
+DELETE FROM bsc_plain WHERE id % 1000 = 999;
+
+statement ok
+ALTER TABLE bsc_plain ADD COLUMN d INTEGER DEFAULT 5;
+
+statement ok
+CREATE INDEX bsc_plain_idx ON bsc_plain USING inverted (s);
+
+query
+SELECT
+  count(*) AS rows,
+  count(*) FILTER (
+    WHERE s = 'plain_' || (id % 23) AND d = 5
+      AND e IS NOT DISTINCT FROM
+        CASE WHEN id >= 20000 THEN 'late_' || (id % 17) END) AS right_rows,
+  sum(id) AS ids
+FROM bsc_plain;
+----
+rows	right_rows	ids
+29970	29970	449520030
+
+statement ok
+CREATE TABLE bsc_layout (id BIGINT, body TEXT, s VARCHAR)
+WITH (compaction_interval = 0, row_group_size = 10240);
+
+statement ok
+SET threads = 1;
+
+statement ok
+INSERT INTO bsc_layout
+SELECT i, 'word' || (i % 100), 'layout_' || (i % 41) FROM range(0, 25000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) bsc_layout;
+
+statement ok
+INSERT INTO bsc_layout
+SELECT i, 'word' || (i % 100), 'layout_' || (i % 41) FROM range(25000, 50000) r(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) bsc_layout;
+
+statement ok
+VACUUM (COMPACT_TABLE) bsc_layout;
+
+statement ok
+CREATE TABLE bsc_layout_before AS
+SELECT column_name, compression, count FROM pragma_storage_info('bsc_layout')
+WHERE column_name IN ('id', 'body', 's');
+
+query
+SELECT
+  count(DISTINCT segment_id) AS segments,
+  count(*) FILTER (WHERE start % 10240 <> 0) > 0 AS off_row_groups
+FROM pragma_storage_info('bsc_layout')
+WHERE column_name IN ('id', 'body', 's');
+----
+segments	off_row_groups
+1	t
+
+statement ok
+SET threads = 4;
+
+statement ok
+CREATE INDEX bsc_layout_idx ON bsc_layout USING inverted (body);
+
+query
+SELECT
+  NOT EXISTS (
+    SELECT column_name, compression, count FROM pragma_storage_info('bsc_layout')
+    WHERE column_name IN ('id', 'body', 's')
+    EXCEPT ALL
+    SELECT * FROM bsc_layout_before)
+  AND NOT EXISTS (
+    SELECT * FROM bsc_layout_before
+    EXCEPT ALL
+    SELECT column_name, compression, count FROM pragma_storage_info('bsc_layout')
+    WHERE column_name IN ('id', 'body', 's')) AS blocks_kept;
+----
+blocks_kept
+t

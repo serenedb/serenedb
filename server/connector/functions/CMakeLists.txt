@@ -4,10 +4,10 @@ target_sources(
         array.cpp
         backup.cpp
         catalog_introspect.cpp
-        duckdb_aliases.cpp
         encode_key.cpp
         es.cpp
         formatting.cpp
+        function_alias.cpp
         hash.cpp
         jobs.cpp
         json.cpp

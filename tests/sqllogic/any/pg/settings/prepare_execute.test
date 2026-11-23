@@ -471,3 +471,69 @@ DEALLOCATE prep_operand_not_like;
 
 statement ok
 DROP TABLE prep_operand;
+
+
+statement ok
+PREPARE prep_typmod_num(numeric(5,2)) AS SELECT $1 AS r;
+
+
+query
+EXECUTE prep_typmod_num(1234.567);
+----
+r
+1234.567
+
+
+statement ok
+CREATE TABLE prep_typmod (x numeric(10,2));
+
+
+statement ok
+PREPARE prep_typmod_ins(numeric(5,1)) AS INSERT INTO prep_typmod VALUES ($1);
+
+
+statement ok
+EXECUTE prep_typmod_ins(1.25);
+
+
+query
+SELECT x FROM prep_typmod;
+----
+x
+1.25
+
+
+statement ok
+PREPARE prep_typmod_ts(timestamp(0)) AS SELECT $1 AS r;
+
+
+query
+EXECUTE prep_typmod_ts('2020-01-01 10:00:00.123456');
+----
+r
+2020-01-01 10:00:00.123456
+
+
+query
+SELECT name, array_to_string(parameter_types, ',') AS parameter_types FROM pg_prepared_statements WHERE name LIKE 'prep_typmod%' ORDER BY name;
+----
+name	parameter_types
+prep_typmod_ins	numeric
+prep_typmod_num	numeric
+prep_typmod_ts	timestamp without time zone
+
+
+statement ok
+DEALLOCATE prep_typmod_num;
+
+
+statement ok
+DEALLOCATE prep_typmod_ins;
+
+
+statement ok
+DEALLOCATE prep_typmod_ts;
+
+
+statement ok
+DROP TABLE prep_typmod;

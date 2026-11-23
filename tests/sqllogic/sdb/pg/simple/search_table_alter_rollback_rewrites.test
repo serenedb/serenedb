@@ -1,0 +1,160 @@
+statement ok
+CREATE TABLE sarr_drop (id INT PRIMARY KEY, x INT, y TEXT);
+
+
+statement ok
+INSERT INTO sarr_drop VALUES (1, 10, 'a'), (2, 20, 'b');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sarr_drop;
+
+
+statement ok
+INSERT INTO sarr_drop VALUES (3, 30, 'c');
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE sarr_drop DROP COLUMN x;
+
+
+statement ok
+ALTER TABLE sarr_drop ADD COLUMN c INT DEFAULT 7;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT id, x, y FROM sarr_drop ORDER BY id;
+----
+id	x	y
+1	10	a
+2	20	b
+3	30	c
+
+
+statement ok
+CREATE TABLE sarr_retype (id INT PRIMARY KEY, a INT, b INT);
+
+
+statement ok
+INSERT INTO sarr_retype VALUES (1, 10, 100), (2, 20, 200);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sarr_retype;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE sarr_retype ALTER COLUMN a TYPE BIGINT;
+
+
+statement ok
+ALTER TABLE sarr_retype ALTER COLUMN b TYPE BIGINT;
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT id, a, b, pg_typeof(a) AS a_type FROM sarr_retype ORDER BY id;
+----
+id	a	b	a_type
+1	10	100	integer
+2	20	200	integer
+
+
+statement ok
+CREATE TABLE sarr_index (id INT PRIMARY KEY, x INT, y TEXT);
+
+
+statement ok
+INSERT INTO sarr_index VALUES (1, 10, 'red fox'), (2, 20, 'blue fox');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sarr_index;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE sarr_index DROP COLUMN x;
+
+
+statement ok
+CREATE INDEX sarr_index_y ON sarr_index USING inverted (y);
+
+
+statement ok
+ROLLBACK;
+
+
+query
+SELECT id, x, y FROM sarr_index ORDER BY id;
+----
+id	x	y
+1	10	red fox
+2	20	blue fox
+
+
+statement ok
+CREATE TABLE sarr_commit (id INT PRIMARY KEY, x INT, y TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO sarr_commit VALUES (1, 10, 'a'), (2, 20, 'b');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sarr_commit;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE sarr_commit DROP COLUMN x;
+
+
+statement ok
+ALTER TABLE sarr_commit ADD COLUMN c INT DEFAULT 7;
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+INSERT INTO sarr_commit VALUES (3, 'c', 9);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) sarr_commit;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) sarr_commit;
+
+
+query
+SELECT * FROM sarr_commit ORDER BY id;
+----
+id	y	c
+1	a	7
+2	b	7
+3	c	9

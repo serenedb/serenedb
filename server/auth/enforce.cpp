@@ -30,11 +30,12 @@
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
-#include <duckdb/catalog/dependency_manager.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/constraint.hpp>
 #include <duckdb/parser/constraints/foreign_key_constraint.hpp>
@@ -45,6 +46,7 @@
 #include <duckdb/parser/parsed_data/create_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_sequence_info.hpp>
 #include <duckdb/parser/parsed_data/create_table_info.hpp>
+#include <duckdb/parser/parsed_data/create_tablespace_info.hpp>
 #include <duckdb/parser/parsed_data/create_trigger_info.hpp>
 #include <duckdb/parser/parsed_data/detach_info.hpp>
 #include <duckdb/parser/parsed_data/drop_info.hpp>
@@ -84,8 +86,9 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
+#include "catalog/dependency.h"
 #include "catalog/entry/role.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/entry/tablespace.h"
 #include "connector/scan/scan_bind.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
@@ -125,6 +128,8 @@ std::string KindName(CatalogType type) {
       return "subscription";
     case CatalogType::JOB_ENTRY:
       return "job";
+    case CatalogType::TABLESPACE_ENTRY:
+      return "tablespace";
     default:
       return "object";
   }
@@ -142,13 +147,13 @@ std::string KindName(CatalogType type) {
                           entry.name.GetIdentifierName()));
 }
 
-void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
-  if (const auto* system =
-        pg::FindSystemObject(pg::kSystemNamespaces, schema)) {
+void RequireUserSchema(const duckdb::SchemaCatalogEntry& schema,
+                       const duckdb::Identifier& name) {
+  if (schema.internal && catalog::IsSereneDB(schema.catalog)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied to create \"", system->name, ".",
-              info.GetQualifiedName().Name().GetIdentifierName(), "\""),
+      ERR_MSG("permission denied to create \"", schema.name.GetIdentifierName(),
+              ".", name.GetIdentifierName(), "\""),
       ERR_DETAIL("System catalog modifications are currently disallowed."));
   }
 }
@@ -161,9 +166,7 @@ void RequireUserSchema(duckdb::idx_t schema, const duckdb::CreateInfo& info) {
 }
 
 bool StoresPermissions(duckdb::Catalog& catalog) {
-  return !catalog.IsDuckCatalog() ||
-         duckdb::IsSereneDBStorageVersion(
-           catalog.GetAttached().GetStorageManager().GetStorageVersion());
+  return !catalog.IsDuckCatalog();
 }
 
 bool IsSchemaMember(CatalogType type) {
@@ -245,12 +248,12 @@ duckdb::LogicalOperator& StatementRoot(duckdb::LogicalOperator& root) {
   return root;
 }
 
-template<typename Info>
-void PointAtCluster(Info& info, CatalogType type) {
-  if (type == CatalogType::DATABASE_ENTRY || type == CatalogType::ROLE_ENTRY) {
-    info.GetQualifiedNameMutable() = duckdb::QualifiedName{
-      duckdb::Identifier{catalog::ClusterCatalog::kDatabaseName},
-      duckdb::Identifier{}, info.GetQualifiedName().Name()};
+void RequireOutsideTransaction(duckdb::ClientContext& context,
+                               std::string_view statement) {
+  if (!context.transaction.IsAutoCommit()) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
+      ERR_MSG(statement, " cannot run inside a transaction block"));
   }
 }
 
@@ -275,7 +278,9 @@ class Enforcer {
     if (!_enforce) {
       return;
     }
-    _props.RegisterDBRead(catalog::ClusterOf(_context), _context);
+    if (auto database = catalog::DefaultSereneDBCatalog(_context)) {
+      _props.RegisterDBRead(*database, _context);
+    }
     CheckSchemaUsage();
     CheckResolved();
     CheckReturning();
@@ -332,34 +337,60 @@ class Enforcer {
     }
   }
 
+  void CollectProjectionReads(
+    const duckdb::LogicalProjection& projection,
+    const duckdb::TableCatalogEntry& table,
+    std::span<const duckdb::PhysicalIndex> columns,
+    std::span<duckdb::unique_ptr<duckdb::Expression>> expressions) {
+    auto& positions = _projection_reads[projection.table_index.index];
+    for (duckdb::idx_t i = 0; i < expressions.size(); ++i) {
+      auto collect = [&](duckdb::Expression& expr) {
+        if (expr.GetExpressionType() !=
+            duckdb::ExpressionType::BOUND_COLUMN_REF) {
+          return;
+        }
+        const auto& binding =
+          expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
+        if (binding.table_index.index != projection.table_index.index) {
+          return;
+        }
+        const auto position = binding.column_index.GetIndex();
+        if (i < columns.size() &&
+            IsPassthrough(projection, position, table, columns[i])) {
+          return;
+        }
+        positions.insert(position);
+      };
+      if (expressions[i]) {
+        duckdb::ExpressionIterator::EnumerateExpression(expressions[i],
+                                                        collect);
+      }
+    }
+  }
+
   void Check(duckdb::LogicalOperator& op) {
-    if (op.type == LogicalOperatorType::LOGICAL_UPDATE &&
-        !op.children.empty() &&
+    if (!op.children.empty() &&
         op.children[0]->type == LogicalOperatorType::LOGICAL_PROJECTION) {
-      auto& update = op.Cast<duckdb::LogicalUpdate>();
       const auto& projection =
         op.children[0]->Cast<duckdb::LogicalProjection>();
-      auto& positions = _projection_reads[projection.table_index.index];
-      for (duckdb::idx_t i = 0; i < update.expressions.size(); ++i) {
-        auto collect = [&](duckdb::Expression& expr) {
-          if (expr.GetExpressionType() !=
-              duckdb::ExpressionType::BOUND_COLUMN_REF) {
-            return;
+      if (op.type == LogicalOperatorType::LOGICAL_UPDATE) {
+        auto& update = op.Cast<duckdb::LogicalUpdate>();
+        CollectProjectionReads(projection, update.table, update.columns,
+                               update.expressions);
+      } else if (op.type == LogicalOperatorType::LOGICAL_MERGE_INTO) {
+        auto& merge = op.Cast<duckdb::LogicalMergeInto>();
+        for (auto& [condition, actions] : merge.actions) {
+          for (auto& action : actions) {
+            CollectProjectionReads(projection, merge.table, {},
+                                   {&action->condition, 1});
+            CollectProjectionReads(
+              projection, merge.table,
+              action->action_type == duckdb::MergeActionType::MERGE_UPDATE
+                ? std::span<const duckdb::PhysicalIndex>{action->columns}
+                : std::span<const duckdb::PhysicalIndex>{},
+              action->expressions);
           }
-          const auto& binding =
-            expr.Cast<duckdb::BoundColumnRefExpression>().Binding();
-          if (binding.table_index.index != projection.table_index.index) {
-            return;
-          }
-          const auto position = binding.column_index.GetIndex();
-          if (IsPassthrough(projection, position, update.table,
-                            update.columns[i])) {
-            return;
-          }
-          positions.insert(position);
-        };
-        duckdb::ExpressionIterator::EnumerateExpression(update.expressions[i],
-                                                        collect);
+        }
       }
     }
     auto visit = [&](duckdb::Expression& expr) {
@@ -459,7 +490,7 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_TABLE: {
         auto& create = op.Cast<duckdb::LogicalCreateTable>();
         auto& info = create.info->base->Cast<duckdb::CreateTableInfo>();
-        RequireUserSchema(create.schema.oid, info);
+        RequireUserSchema(create.schema, info.GetQualifiedName().Name());
         Stamp(info, CatalogType::TABLE_ENTRY, &create.schema);
         for (auto& serial : create.info->serial_sequences) {
           Stamp(serial.permissions, create.schema.ParentCatalog(),
@@ -479,7 +510,8 @@ class Enforcer {
       case LogicalOperatorType::LOGICAL_CREATE_JOB:
       case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
-        RequireUserSchema(create.schema->oid, *create.info);
+        RequireUserSchema(*create.schema,
+                          create.info->GetQualifiedName().Name());
         Stamp(*create.info, DefaultObjType(op.type), create.schema,
               OwnerFor(*create.info));
         if (_enforce) {
@@ -494,7 +526,41 @@ class Enforcer {
         if (_enforce) {
           CheckCreateRole(info);
         }
-        PointAtCluster(info, CatalogType::ROLE_ENTRY);
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_CREATE_DATABASE: {
+        auto& info = *op.Cast<duckdb::LogicalCreate>().info;
+        if (_enforce && !_caller_closure.Has(catalog::RoleOption::CreateDb)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("permission denied to create database"));
+        }
+        RequireDatabaseNotBeingCreated(info.GetQualifiedName().Name());
+        info.permissions.owner = _caller;
+        break;
+      }
+      case LogicalOperatorType::LOGICAL_CREATE_TABLESPACE: {
+        auto& info = op.Cast<duckdb::LogicalCreate>()
+                       .info->Cast<duckdb::CreateTablespaceInfo>();
+        RequireOutsideTransaction(_context, "CREATE TABLESPACE");
+        if (_enforce) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+            ERR_MSG("permission denied to create tablespace \"",
+                    info.GetQualifiedName().Name().GetIdentifierName(), "\""),
+            ERR_HINT("Must be superuser to create a tablespace."));
+        }
+        if (!duckdb::DBConfig::GetConfig(_context).CanAccessFile(
+              duckdb::FileSystem::GetFileSystem(_context).CanonicalizePath(
+                info.location),
+              duckdb::FileType::FILE_TYPE_DIR)) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                          ERR_MSG("cannot access directory \"", info.location,
+                                  "\": file system operations are disabled by "
+                                  "configuration"));
+        }
+        info.permissions.owner = info.owner.empty()
+                                   ? _caller
+                                   : RoleSpecId(info.owner.GetIdentifierName());
         break;
       }
       case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER: {
@@ -507,7 +573,8 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_CREATE_TRIGGER: {
         auto& create = op.Cast<duckdb::LogicalCreate>();
-        RequireUserSchema(create.schema->oid, *create.info);
+        RequireUserSchema(*create.schema,
+                          create.info->GetQualifiedName().Name());
         Stamp(*create.info, CatalogType::TRIGGER_ENTRY, create.schema);
         if (_enforce) {
           CheckCreateTrigger(create.info->Cast<duckdb::CreateTriggerInfo>());
@@ -533,20 +600,17 @@ class Enforcer {
       }
       case LogicalOperatorType::LOGICAL_DROP: {
         auto& info = *op.Cast<duckdb::LogicalDrop>().info;
-        if (info.type == CatalogType::DATABASE_ENTRY &&
-            !_context.transaction.IsAutoCommit()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-            ERR_MSG("DROP DATABASE cannot run inside a transaction block"));
+        if (info.type == CatalogType::DATABASE_ENTRY) {
+          RequireOutsideTransaction(_context, "DROP DATABASE");
+        }
+        if (info.type == CatalogType::TABLESPACE_ENTRY) {
+          RequireOutsideTransaction(_context, "DROP TABLESPACE");
         }
         if (info.type == CatalogType::PREPARED_STATEMENT &&
             info.extra_drop_info &&
             info.extra_drop_info->Cast<duckdb::ExtraDropDiscardInfo>().target ==
-              duckdb::DiscardTarget::ALL &&
-            !_context.transaction.IsAutoCommit()) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_ACTIVE_SQL_TRANSACTION),
-            ERR_MSG("DISCARD ALL cannot run inside a transaction block"));
+              duckdb::DiscardTarget::ALL) {
+          RequireOutsideTransaction(_context, "DISCARD ALL");
         }
         if (_enforce) {
           CheckDrop(info);
@@ -554,12 +618,11 @@ class Enforcer {
         if (info.type == CatalogType::DATABASE_ENTRY) {
           auto database = duckdb::DatabaseManager::Get(_context).GetDatabase(
             info.GetQualifiedName().Name());
-          if (database && database->GetCatalog().GetCatalogType() ==
-                            catalog::SereneDBCatalog::kStorageType) {
+          if (database && catalog::IsSereneDB(database->GetCatalog()) &&
+              !database->IsReadOnly()) {
             RequireDatabaseUnused(*database);
           }
         }
-        PointAtCluster(info, info.type);
         break;
       }
       case LogicalOperatorType::LOGICAL_ALTER: {
@@ -574,12 +637,20 @@ class Enforcer {
           if (_enforce) {
             CheckAlterRole(info.Cast<duckdb::AlterRoleInfo>());
           }
+        } else if (info.type == duckdb::AlterType::ALTER_TABLESPACE) {
+          CheckRenameTablespace(info);
         } else {
+          if (const auto new_schema = info.GetNewSchema()) {
+            if (auto target = duckdb::Catalog::GetSchema(
+                  _context, info.GetQualifiedName().Catalog(), *new_schema,
+                  duckdb::OnEntryNotFound::RETURN_NULL)) {
+              RequireUserSchema(*target, info.GetQualifiedName().Name());
+            }
+          }
           if (_enforce) {
             CheckAlter(info);
           }
         }
-        PointAtCluster(info, info.GetCatalogType());
         break;
       }
       case LogicalOperatorType::LOGICAL_ATTACH:
@@ -710,8 +781,8 @@ class Enforcer {
       return;
     }
     const auto& index = *bind.relation.inverted_index;
-    if (index.catalog.GetCatalogType() !=
-        catalog::SereneDBCatalog::kStorageType) {
+    if (!catalog::IsSereneDB(index.catalog) ||
+        index.catalog.GetAttached().IsReadOnly()) {
       RequireServerUsage(index.catalog.GetName());
     }
     if (!bind.IsViewBacked()) {
@@ -734,8 +805,8 @@ class Enforcer {
       CheckIndexScan(get);
       return;
     }
-    if (table->catalog.GetCatalogType() !=
-        catalog::SereneDBCatalog::kStorageType) {
+    if (!catalog::IsSereneDB(table->catalog) ||
+        table->catalog.GetAttached().IsReadOnly()) {
       RequireServerUsage(table->catalog.GetName());
     }
     if (Unowned(*table)) {
@@ -814,14 +885,27 @@ class Enforcer {
   }
 
   void CheckUpdate(duckdb::LogicalUpdate& update) {
-    auto& table = update.table;
-    if (update.update_is_del_and_insert) {
-      RequireTablePrivilege(table, AclMode::Update);
-      return;
+    CheckUpdateColumns(update.table, update.columns,
+                       update.update_is_del_and_insert,
+                       update.update_column_count);
+  }
+
+  void CheckUpdateColumns(const duckdb::TableCatalogEntry& table,
+                          std::span<const duckdb::PhysicalIndex> columns,
+                          bool del_and_insert, duckdb::idx_t set_columns) {
+    if (del_and_insert) {
+      if (set_columns == 0) {
+        RequireTablePrivilege(table, AclMode::Update);
+        return;
+      }
+      columns = columns.first(set_columns);
     }
     std::vector<std::span<const duckdb::AclItem>> acls;
-    for (const auto index : update.columns) {
-      acls.emplace_back(table.GetColumns().GetColumn(index).Acl());
+    for (const auto index : columns) {
+      const auto& column = table.GetColumns().GetColumn(index);
+      if (!column.Generated()) {
+        acls.emplace_back(column.Acl());
+      }
     }
     if (!_caller_closure.CanColumns(table.permissions, AclMode::Update, acls)) {
       Denied(table);
@@ -833,7 +917,9 @@ class Enforcer {
       for (const auto& action : actions) {
         switch (action->action_type) {
           case duckdb::MergeActionType::MERGE_UPDATE:
-            RequireTablePrivilege(merge.table, AclMode::Update);
+            CheckUpdateColumns(merge.table, action->columns,
+                               action->update_is_del_and_insert,
+                               action->update_column_count);
             break;
           case duckdb::MergeActionType::MERGE_DELETE:
             RequireTablePrivilege(merge.table, AclMode::Delete);
@@ -906,20 +992,14 @@ class Enforcer {
         if (dependency.entry.type != CatalogType::TYPE_ENTRY) {
           continue;
         }
-        auto& catalog =
-          duckdb::Catalog::GetCatalog(_context, dependency.catalog);
-        auto dependency_manager = catalog.GetDependencyManager();
-        auto entry = dependency_manager
-                       ? dependency_manager->LookupEntry(
-                           catalog.GetCatalogTransaction(_context), dependency)
-                       : duckdb::Catalog::GetEntry(
-                           _context,
-                           duckdb::EntryLookupInfo{
-                             CatalogType::TYPE_ENTRY,
-                             duckdb::QualifiedName::FromCatalogSchema(
-                               dependency.catalog, dependency.entry.schema_path,
-                               dependency.entry.name)},
-                           duckdb::OnEntryNotFound::RETURN_NULL);
+        auto entry = duckdb::Catalog::GetEntry(
+          _context,
+          duckdb::EntryLookupInfo{
+            CatalogType::TYPE_ENTRY,
+            duckdb::QualifiedName::FromCatalogSchema(
+              dependency.catalog, dependency.entry.schema_path,
+              dependency.entry.name)},
+          duckdb::OnEntryNotFound::RETURN_NULL);
         if (!entry || Unowned(*entry) || !seen.insert(entry.get()).second) {
           continue;
         }
@@ -1117,6 +1197,13 @@ class Enforcer {
       }
       return;
     }
+    if (info.type == CatalogType::TABLESPACE_ENTRY) {
+      if (auto tablespace = ClusterEntry(CatalogType::TABLESPACE_ENTRY,
+                                         name.Name().GetIdentifierName())) {
+        RequireOwner(*tablespace);
+      }
+      return;
+    }
     if (info.type == CatalogType::SECRET_ENTRY) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied: superuser required"));
@@ -1126,6 +1213,30 @@ class Enforcer {
     }
     if (auto entry = FindEntry(info.type, name)) {
       RequireOwner(*entry);
+    }
+  }
+
+  duckdb::CatalogEntry& AlterableTablespace(const duckdb::Identifier& name) {
+    auto& cluster = catalog::ClusterOf(_context);
+    auto& tablespace =
+      cluster.Tablespace(cluster.GetCatalogTransaction(_context), name);
+    if (tablespace.internal) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("tablespace \"", name.GetIdentifierName(),
+                "\" is a system tablespace"),
+        ERR_DETAIL("A system tablespace cannot be renamed, given to another "
+                   "owner or granted on."));
+    }
+    return tablespace;
+  }
+
+  void CheckRenameTablespace(const duckdb::AlterInfo& info) {
+    catalog::RequireUnreservedTablespaceName(
+      info.GetNewName()->GetIdentifierName());
+    auto& tablespace = AlterableTablespace(info.GetQualifiedName().Name());
+    if (_enforce) {
+      RequireOwner(tablespace);
     }
   }
 
@@ -1189,9 +1300,9 @@ class Enforcer {
 
   duckdb::idx_t RoleId(std::string_view name) {
     auto& cluster = catalog::ClusterOf(_context);
-    auto role = cluster.GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-                  .GetEntry(cluster.GetCatalogTransaction(_context),
-                            duckdb::Identifier{name});
+    auto role =
+      cluster.Set(duckdb::CatalogType::ROLE_ENTRY)
+        .Get(cluster.GetCatalogTransaction(_context), duckdb::Identifier{name});
     if (!role) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                       ERR_MSG("role \"", name, "\" does not exist"));
@@ -1253,6 +1364,9 @@ class Enforcer {
 
   duckdb::CatalogEntry& ResolveTarget(duckdb::AlterPermissionsInfo& info) {
     const auto& name = info.GetQualifiedName();
+    if (info.entry_catalog_type == CatalogType::TABLESPACE_ENTRY) {
+      return AlterableTablespace(name.Name());
+    }
     if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
       auto& schema =
         duckdb::Catalog::GetSchema(_context, name.Catalog(), name.Name());
@@ -1354,6 +1468,7 @@ class Enforcer {
                               _roles->NameOf(info.new_owner_id), "\""));
     }
     if (entry.type != CatalogType::SCHEMA_ENTRY &&
+        entry.type != CatalogType::TABLESPACE_ENTRY &&
         !ClosureOf(info.new_owner_id)
            .Can(CatalogType::SCHEMA_ENTRY,
                 entry.ParentSchema(_context).permissions, AclMode::Create)) {
@@ -1363,12 +1478,11 @@ class Enforcer {
 
   void RefuseOwnedSequence(duckdb::CatalogEntry& sequence) {
     auto& catalog = sequence.ParentCatalog();
-    auto dependency_manager = catalog.GetDependencyManager();
-    if (!dependency_manager) {
+    if (!catalog::IsSereneDB(catalog)) {
       return;
     }
-    auto table = dependency_manager->OwnerOf(
-      catalog.GetCatalogTransaction(_context), sequence);
+    auto table =
+      catalog::OwnerOf(catalog.GetCatalogTransaction(_context), sequence);
     if (!table) {
       return;
     }
@@ -1442,8 +1556,8 @@ class Enforcer {
   duckdb::optional_ptr<duckdb::CatalogEntry> ClusterEntry(
     CatalogType type, std::string_view name) {
     auto& cluster = catalog::ClusterOf(_context);
-    return cluster.GetCatalogSet(type).GetEntry(
-      cluster.GetCatalogTransaction(_context), duckdb::Identifier{name});
+    return cluster.Set(type).Get(cluster.GetCatalogTransaction(_context),
+                                 duckdb::Identifier{name});
   }
 
   void RequireDatabasePrivilege(AclMode need) {
@@ -1466,8 +1580,8 @@ class Enforcer {
 
   void RequireDatabaseNotBeingCreated(const duckdb::Identifier& name) {
     auto database = duckdb::DatabaseManager::Get(_context).GetDatabase(name);
-    if (!database || database->GetCatalog().GetCatalogType() !=
-                       catalog::SereneDBCatalog::kStorageType) {
+    if (!database || !catalog::IsSereneDB(database->GetCatalog()) ||
+        database->IsReadOnly()) {
       return;
     }
     if (!ClusterEntry(CatalogType::DATABASE_ENTRY, name.GetIdentifierName())) {
@@ -1483,19 +1597,22 @@ class Enforcer {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_IN_USE),
                       ERR_MSG("cannot drop the currently open database"));
     }
-    auto& catalog = database.GetCatalog().Cast<duckdb::DuckCatalog>();
-    size_t subscriptions = 0;
-    catalog.GetCatalogSet(CatalogType::SUBSCRIPTION_ENTRY)
-      .Scan([&](duckdb::CatalogEntry&) { ++subscriptions; });
-    if (subscriptions != 0) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_OBJECT_IN_USE),
-        ERR_MSG("database \"", database.GetName().GetIdentifierName(),
-                "\" is being used by logical replication subscription"),
-        ERR_DETAIL(
-          subscriptions == 1
-            ? std::string{"There is 1 subscription."}
-            : absl::StrCat("There are ", subscriptions, " subscriptions.")));
+    if (catalog::IsSereneDB(database.GetCatalog())) {
+      auto& catalog = database.GetCatalog().Cast<catalog::SereneDBCatalog>();
+      size_t subscriptions = 0;
+      catalog.Set(CatalogType::SUBSCRIPTION_ENTRY)
+        .Scan(catalog.GetCatalogTransaction(_context),
+              [&](duckdb::CatalogEntry&) { ++subscriptions; });
+      if (subscriptions != 0) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_OBJECT_IN_USE),
+          ERR_MSG("database \"", database.GetName().GetIdentifierName(),
+                  "\" is being used by logical replication subscription"),
+          ERR_DETAIL(
+            subscriptions == 1
+              ? std::string{"There is 1 subscription."}
+              : absl::StrCat("There are ", subscriptions, " subscriptions.")));
+      }
     }
     const auto others = pg::ProgressRegistry::Instance().OtherSessions(
       static_cast<int64_t>(database.oid), _connection.GetBackendPid(),
@@ -1606,18 +1723,16 @@ class Enforcer {
     auto& catalog =
       duckdb::Catalog::GetCatalog(
         _context, duckdb::DatabaseManager::GetDefaultDatabase(_context))
-        .Cast<duckdb::DuckCatalog>();
-    return catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-      .GetEntry(catalog.GetCatalogTransaction(_context),
-                duckdb::Identifier{name});
+        .Cast<catalog::SereneDBCatalog>();
+    return catalog.Servers().Get(catalog.GetCatalogTransaction(_context),
+                                 duckdb::Identifier{name});
   }
   void RequireServerUsage(const duckdb::Identifier& name) {
     for (const auto& db : catalog::SereneDBDatabases(
            duckdb::DatabaseManager::Get(*_context.db))) {
-      auto& duck_catalog = db->GetCatalog().Cast<duckdb::DuckCatalog>();
-      auto server =
-        duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-          .GetEntry(duck_catalog.GetCatalogTransaction(_context), name);
+      auto& sdb_catalog = db->GetCatalog().Cast<catalog::SereneDBCatalog>();
+      auto server = sdb_catalog.Servers().Get(
+        sdb_catalog.GetCatalogTransaction(_context), name);
       if (!server) {
         continue;
       }
@@ -1738,8 +1853,8 @@ void EnforcePlan(duckdb::ClientContext& context, ConnectionContext& connection,
 
 void RequireSuperuser(duckdb::ClientContext& context,
                       std::string_view function) {
-  auto& conn = connector::GetSereneDBContext(context);
-  if (!ClosureFor(&context, conn.GetRoleId())->is_superuser) {
+  if (!ClosureFor(&context, ConnectionContext::Get(context).GetRoleId())
+         ->is_superuser) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied for function ", function));
   }
@@ -1748,6 +1863,15 @@ void RequireSuperuser(duckdb::ClientContext& context,
 bool Unowned(const duckdb::CatalogEntry& entry) {
   return entry.permissions.owner == pg::kInvalidOid ||
          (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
+}
+
+void RequireTablespaceCreate(duckdb::ClientContext& context,
+                             const duckdb::CatalogEntry& tablespace) {
+  if (const auto closure = SessionClosure(context);
+      closure &&
+      !closure->Can(tablespace.type, tablespace.permissions, AclMode::Create)) {
+    Denied(tablespace);
+  }
 }
 
 }  // namespace sdb::auth

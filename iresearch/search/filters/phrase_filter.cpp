@@ -165,26 +165,17 @@ std::shared_ptr<const RegexpAcceptor> WordAcceptor(bytes_view separator) {
 }
 
 template<typename Bounds>
-class WordIterator final : public WrappedTermIterator {
+class WordIterator final : public SeekFirstTermIterator<WordIterator<Bounds>> {
+  using Base = SeekFirstTermIterator<WordIterator<Bounds>>;
+  using Base::_impl;
+
  public:
   WordIterator(const TermReader& reader, Bounds bounds, bytes_view separator)
-    : WrappedTermIterator{reader.iterator()},
-      _bounds{bounds},
-      _separator{separator} {}
+    : Base{reader.iterator()}, _bounds{bounds}, _separator{separator} {}
 
-  bool next() final {
-    if (_started) {
-      if (!_impl->next()) {
-        return false;
-      }
-    } else {
-      _started = true;
-      if (!_bounds.Start(*_impl)) {
-        return false;
-      }
-    }
-    return SkipShingles();
-  }
+  bool Start() { return _bounds.Start(*_impl); }
+
+  bool next() final { return this->Step() && SkipShingles(); }
 
  private:
   bool SkipShingles() {
@@ -207,7 +198,6 @@ class WordIterator final : public WrappedTermIterator {
   Bounds _bounds;
   bytes_view _separator;
   bstring _upper;
-  bool _started = false;
 };
 
 class WordTermsVisitor final : public FilterVisitor {
@@ -410,11 +400,8 @@ void ApplyTermGroups(const ByPhraseOptions& options,
     positions[i].term_group = static_cast<uint32_t>(i);
   }
   const auto find = [&](uint32_t x) {
-    while (positions[x].term_group != x) {
-      positions[x].term_group = positions[positions[x].term_group].term_group;
-      x = positions[x].term_group;
-    }
-    return x;
+    return detail::slop::FindGroup(
+      [&](uint32_t i) -> uint32_t& { return positions[i].term_group; }, x);
   };
 
   absl::flat_hash_map<bytes_view, uint32_t> first_owner;
@@ -689,6 +676,20 @@ QueryBuilder::ptr ByPhrase::PrepareSegment(const SubReader& segment,
   return PhrasePrepareSegment(segment, sub_ctx, field_id(), dict(), options());
 }
 
+bool ByPhrase::Prefetch(const SubReader& segment) const {
+  const auto* reader = segment.field(field_id());
+  if (!reader) {
+    return false;
+  }
+  bool fetching = false;
+  for (const auto& info : options()) {
+    if (ByPhraseOptions::KindOf(info.part) == SlotKind::Term) {
+      fetching |= reader->Prefetch(ByPhraseOptions::TermOf(info.part));
+    }
+  }
+  return fetching;
+}
+
 PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
                                                   StatsArena& stats,
                                                   uint32_t threads) const {
@@ -702,6 +703,37 @@ PrepareCollector::ptr ByPhrase::MakeCollectorImpl(const Scorer* scorer,
   }
   return std::make_unique<ExpandedSlotsCollector>(
     scorer, counts.terms, counts.expanded, stats, threads);
+}
+
+void ByPhrase::ExplainStats(const PrepareCollector* collector,
+                            explain::StatsIndex& out) const {
+  if (collector == nullptr) {
+    return;
+  }
+  std::vector<bytes_view> terms;
+  for (const auto& word : options()) {
+    switch (ByPhraseOptions::KindOf(word.part)) {
+      case SlotKind::Term:
+        terms.push_back(ByPhraseOptions::TermOf(word.part));
+        break;
+      case SlotKind::Set:
+        for (const auto& term : std::get<TermSetOptions>(word.part).terms) {
+          terms.push_back(term);
+        }
+        break;
+      case SlotKind::Expansion:
+        break;
+    }
+  }
+  collector->Describe(field_id(), [&](size_t i) { return terms[i]; }, out);
+}
+
+void ByPhrase::ExplainTerms(const SubReader& segment,
+                            explain::TermNames& out) const {
+  for (const auto& word : options()) {
+    PartFilter(field_id(), dict(), word.part, false)
+      ->ExplainTerms(segment, out);
+  }
 }
 
 Filter::ptr PartFilter(field_id field, DictRef dict,
@@ -764,7 +796,7 @@ bool ByPhraseOptions::LowerParts() {
       bstring buf;
       const auto kind = RegexpPattern(r->syntax);
       info.part = ExecuteRegexp(
-        buf, bytes_view{r->pattern},
+        buf, bytes_view{r->pattern}, r->syntax,
         [](bytes_view term) -> PhrasePart {
           return ByTermOptions{bstring{term}};
         },
@@ -782,16 +814,20 @@ bool ByPhraseOptions::LowerParts() {
         e->max_distance, e->provider, e->with_transpositions, e->prefix,
         e->term, [] -> PhrasePart { return TermSetOptions{}; },
         [&] -> PhrasePart {
-          ByTermOptions opts;
-          opts.term.reserve(e->prefix.size() + e->term.size());
-          opts.term += e->prefix;
-          opts.term += e->term;
-          return opts;
+          bstring whole;
+          whole.reserve(e->prefix.size() + e->term.size());
+          whole += e->prefix;
+          whole += e->term;
+          if (e->starts_with) {
+            return ByPrefixOptions{{std::move(whole)}};
+          }
+          return ByTermOptions{std::move(whole)};
         },
         [e, max_terms](const ParametricDescription& d, bytes_view prefix,
                        bytes_view term) -> PhrasePart {
           return LevenshteinAutomatonOptions{
-            d, e->provider, e->with_transpositions, prefix, term, max_terms};
+            d,    e->provider, e->with_transpositions, e->starts_with, prefix,
+            term, max_terms};
         });
       changed = true;
     }

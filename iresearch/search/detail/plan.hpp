@@ -35,14 +35,13 @@
 #include "iresearch/search/lead/node.hpp"
 #include "iresearch/search/probe/impl.hpp"
 #include "iresearch/search/probe/node.hpp"
+#include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_state.hpp"
 
 namespace irs {
 
 class TermQuery;
 class MultiTermQuery;
-class FixedPhraseQuery;
-class VariadicPhraseQuery;
 class AllQuery;
 class NGramSimilarityQuery;
 class WildcardNGramQuery;
@@ -183,6 +182,8 @@ inline constexpr uint32_t kBitplaneMaxMatch = 2;
 
 inline constexpr uint64_t kDensityThresholdInverse = 32;
 
+inline constexpr uint64_t kBatchThresholdInverse = 4096;
+
 template<typename Result>
 using ApproxNode = std::conditional_t<std::is_same_v<Result, ProbeNode::ptr>,
                                       probe::Erased, lead::Erased>;
@@ -195,6 +196,19 @@ auto PlanApprox(PlanMemory& memory, const QueryBuilder& approx,
   } else {
     return approx.PlanLead({.memory = memory});
   }
+}
+
+template<typename Family, typename Ctx>
+typename Family::Result PlanConstant(const QueryBuilder& matches, score_t value,
+                                     const Ctx& ctx) {
+  using Result = typename Family::Result;
+  auto node = PlanApprox<Result>(Family::MemoryOf(ctx), matches,
+                                 Family::Interrogations(ctx));
+  if (!node) {
+    return {};
+  }
+  return Family::template Constant<ApproxNode<Result>>(ctx, value,
+                                                       std::move(node));
 }
 
 }  // namespace detail

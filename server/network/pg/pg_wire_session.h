@@ -74,7 +74,6 @@
 #include <yaclib/util/helper.hpp>
 
 #include "catalog/catalog.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
@@ -305,7 +304,7 @@ class PgWireSession
   void CapturePeerAddress();
   yaclib::Task<bool> AuthenticateCleartext(const Credential& credential);
   yaclib::Task<bool> AuthenticateMd5(std::string stored_md5);
-  yaclib::Task<bool> AuthenticateScram(const ScramVerifier& verifier);
+  yaclib::Task<bool> AuthenticateScram(ScramVerifier verifier, bool doomed);
 
   // The duck-side half of the session: an endless coroutine hosted by _task
   // on the DuckDB scheduler. Prologue (SetupConnection + startup burst) ->
@@ -366,6 +365,7 @@ class PgWireSession
   void RevalidatePlan(Statement& stmt);
   void DropDeallocated(std::string_view name);
   void ReleaseDeallocated();
+  StatementPtr& FindStatement(std::string_view name);
   void RegisterUnprepared(
     Statement& statement, std::string_view name, std::string_view query,
     const duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>>& body);
@@ -373,6 +373,13 @@ class PgWireSession
   void DescribePortal(Portal& portal);
   PlanPtr ResolvePlan(Statement& stmt, const PlanPtr& plan,
                       std::span<const duckdb::Value> values);
+  duckdb::unique_ptr<duckdb::PreparedStatement> PrepareInternal(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement,
+    duckdb::optional_ptr<
+      const duckdb::case_insensitive_map_t<duckdb::LogicalType>>
+      hints = nullptr,
+    const duckdb::shared_ptr<duckdb::PreparedStatementEntry>& entry = nullptr,
+    bool custom = false);
   BindInfo ParseBindVars(std::string_view cursor, const Statement& stmt,
                          std::string_view statement_name);
 
@@ -457,10 +464,7 @@ class PgWireSession
   // per-command ParameterStatus poll in ReportChangedParameters.
   uint64_t _reported_settings_version = 0;
   duckdb::unique_ptr<duckdb::Connection> _conn;
-  std::shared_ptr<ConnectionContext> _connection_ctx;
-  // Owned by _conn's registered_state; cached here to skip the keyed registry
-  // lookup on every query. Valid for the connection's lifetime.
-  connector::SereneDBClientState* _client_state = nullptr;
+  ConnectionContext* _connection_ctx = nullptr;
   sdb::pg::ProgressRegistration _progress;
   // Reused across queries (Reset per query); see MakeWireContext.
   std::shared_ptr<WireSinkContext> _wire_ctx;

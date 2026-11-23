@@ -131,6 +131,15 @@ NULL	NULL	NULL	0
 
 
 query
+SELECT family(ip) AS f, percentile_disc(0) WITHIN GROUP (ORDER BY ip) AS p0, percentile_disc(0.5) WITHIN GROUP (ORDER BY ip) AS p50, percentile_disc(1) WITHIN GROUP (ORDER BY ip) AS p100, percentile_disc(0) WITHIN GROUP (ORDER BY ip DESC) AS p0_desc, percentile_disc(ARRAY[0, 0.5, 1]) WITHIN GROUP (ORDER BY ip) AS ps FROM inet_extremes GROUP BY family(ip) ORDER BY f NULLS LAST;
+----
+f	p0	p50	p100	p0_desc	ps
+4	10.0.0.5/8	10.0.0.0/16	10.0.0.1	10.0.0.1	{10.0.0.5/8,10.0.0.0/16,10.0.0.1}
+6	::1	::1	2001:db8::/32	2001:db8::/32	{::1,::1,2001:db8::/32}
+NULL	NULL	NULL	NULL	NULL	NULL
+
+
+query
 SELECT ip FROM inet_extremes ORDER BY ip DESC NULLS FIRST;
 ----
 ip

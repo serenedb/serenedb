@@ -782,17 +782,13 @@ def test_search_paging_and_source(conn, corpus):
     assert body["hits"]["total"] == 3
 
 
-def test_search_visibility_follows_refresh(conn, corpus):
+def test_search_sees_a_written_document_at_once(conn, corpus):
     match_quick = {"query": {"match": {"title": "quick"}}}
     status, body = _request(conn, "POST", f"/{corpus}/_count", match_quick)
     assert body["count"] == 2
 
     _request(conn, "PUT", f"/{corpus}/_doc/4",
              {"title": "quick addendum", "year": 2000})
-    status, body = _request(conn, "POST", f"/{corpus}/_count", match_quick)
-    assert body["count"] == 2  # not searchable until refresh
-
-    _request(conn, "POST", f"/{corpus}/_refresh")
     status, body = _request(conn, "POST", f"/{corpus}/_count", match_quick)
     assert body["count"] == 3
 
@@ -864,6 +860,117 @@ def test_search_match_phrase(conn, corpus):
     status, body = _search(
         conn, corpus, {"query": {"match_phrase": {"title": "brown quick"}}})
     assert body["hits"]["total"]["value"] == 0
+
+
+def test_search_explain(conn, corpus):
+    status, body = _search(
+        conn, corpus,
+        {"query": {"match": {"title": "quick dog"}}, "explain": True})
+    assert status == 200, body
+    hits = body["hits"]["hits"]
+    assert len(hits) == 3
+    for hit in hits:
+        explanation = hit["_explanation"]
+        assert set(explanation) == {"value", "description", "details"}
+        assert explanation["value"] == hit["_score"]
+        assert explanation["details"]
+
+    status, body = _search(
+        conn, corpus, {"query": {"match": {"title": "quick"}}},
+        qs="?explain=true")
+    assert status == 200, body
+    assert all("_explanation" in hit for hit in body["hits"]["hits"])
+
+    status, body = _search(
+        conn, corpus,
+        {"query": {"match": {"title": "quick"}}, "explain": False},
+        qs="?explain=true")
+    assert status == 200, body
+    assert all("_explanation" not in hit for hit in body["hits"]["hits"])
+
+    status, body = _search(
+        conn, corpus, {"query": {"term": {"author": "aesop"}}, "explain": True})
+    assert status == 200, body
+    for hit in body["hits"]["hits"]:
+        assert hit["_explanation"]["value"] == 1.0
+
+    status, body = _search(conn, corpus, {
+        "query": {"match": {"title": "quick"}},
+        "sort": [{"year": {"order": "desc"}}],
+        "explain": True,
+    })
+    assert status == 200, body
+    for hit in body["hits"]["hits"]:
+        assert hit["_score"] is None
+        assert hit["_explanation"]["value"] > 0
+
+    for extra in ({"explain": True}, {"sort": [{"year": {"order": "desc"}}]},
+                  {"aggs": {"years": {"terms": {"field": "year"}}}},
+                  {"from": 1}):
+        status, body = _request(
+            conn, "POST", f"/{corpus}/_search?scroll=1m",
+            {"query": {"match": {"title": "quick"}}, **extra})
+        assert status == 400, body
+        assert body["error"]["reason"] == (
+            "scroll supports only plain _doc-ordered requests yet")
+
+    status, body = _search(conn, corpus, {"explain": "yes"})
+    assert status == 400, body
+
+
+def test_explain_one_document(conn, corpus):
+    query = {"query": {"match": {"title": "quick"}}}
+    status, body = _request(conn, "POST", f"/{corpus}/_explain/1", query)
+    assert status == 200, body
+    assert body["_index"] == corpus
+    assert body["_id"] == "1"
+    assert body["matched"] is True
+    status, search = _search(conn, corpus, query)
+    assert status == 200, search
+    score = next(h["_score"] for h in search["hits"]["hits"] if h["_id"] == "1")
+    assert body["explanation"]["value"] == score
+
+    status, body = _request(conn, "POST", f"/{corpus}/_explain/2", query)
+    assert status == 200, body
+    assert body["matched"] is False
+
+    status, body = _request(conn, "POST", f"/{corpus}/_explain/9", query)
+    assert status == 404, body
+    assert body["matched"] is False
+
+    status, body = _request(conn, "GET", f"/{corpus}/_explain/2",
+                            {"query": {"term": {"author": "aesop"}}})
+    assert status == 200, body
+    assert body["matched"] is True
+    assert body["explanation"]["value"] == 1.0
+
+    status, body = _request(conn, "POST", f"/{corpus}/_explain/3",
+                            {"query": {"term": {"author": "aesop"}}})
+    assert status == 200, body
+    assert body["matched"] is False
+
+    status, body = _request(conn, "POST", f"/{corpus}/_explain/9",
+                            {"query": {"match_all": {}}})
+    assert status == 404, body
+    assert body == {"_index": corpus, "_id": "9", "matched": False}
+
+
+def test_explain_errors(conn, corpus):
+    cases = [
+        (f"/{corpus}/_explain/1", None, 400,
+         "action_request_validation_exception"),
+        (f"/{corpus}/_explain/1", {}, 400,
+         "action_request_validation_exception"),
+        (f"/{corpus}/_explain/1", {"match_all": {}}, 400, "parsing_exception"),
+        (f"/{corpus}/_explain/1", {"query": {"term": {"year": "abc"}}}, 400,
+         "mapper_parsing_exception"),
+        ("/drv_es_missing/_explain/1", {"query": {"match_all": {}}}, 404,
+         "index_not_found_exception"),
+    ]
+    for path, body, status, error in cases:
+        got, response = _request(conn, "POST", path, body)
+        assert got == status, (path, body, response)
+        assert response["error"]["type"] == error, (path, body, response)
 
 
 # --- aggregations + scroll ---------------------------------------------------

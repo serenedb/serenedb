@@ -40,18 +40,22 @@
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter_set.hpp>
+#include <iresearch/search/explain/plan.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
 #include "connector/column_id.h"
+#include "connector/explain_output.h"
 #include "connector/index_source_factory.h"
 #include "connector/offsets_writer.hpp"
 #include "connector/row_position.h"
 #include "connector/scan/deferred_check.h"
 #include "connector/scan/scan_state.h"
 #include "connector/term_dict.h"
+#include "connector/vector_explain.h"
 
 namespace sdb::connector {
 namespace {
@@ -62,6 +66,9 @@ std::optional<duckdb::LogicalType> VirtualIndexColumnType(ColumnId col_id) {
   }
   if (col_id == kInvertedIndexOffsetsId) {
     return MakeOffsetsType();
+  }
+  if (col_id == kInvertedIndexExplainId) {
+    return duckdb::LogicalType::VARIANT();
   }
   if (col_id == kInvertedIndexTermId) {
     return duckdb::LogicalType::VARCHAR;
@@ -103,6 +110,34 @@ duckdb::unique_ptr<duckdb::TableFilter> MakeNotNullReplacement(
     duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0ULL),
     duckdb::ExpressionType::OPERATOR_IS_NOT_NULL);
   return duckdb::make_uniq<duckdb::ExpressionFilter>(std::move(not_null));
+}
+
+duckdb::unique_ptr<duckdb::Expression> EvaluateDynamicFilters(
+  const duckdb::Expression& expr) {
+  if (expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
+    auto result = duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+      duckdb::ExpressionType::CONJUNCTION_AND);
+    for (const auto& child :
+         expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
+      result->GetChildrenMutable().push_back(EvaluateDynamicFilters(*child));
+    }
+    return result;
+  }
+  if (!duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
+    return expr.Copy();
+  }
+  const auto child = duckdb::ExpressionFilter::GetOptionalFilterChild(expr);
+  float threshold = 0;
+  duckdb::idx_t vectors_to_check = 0;
+  duckdb::GetThresholdAndVectorsToCheck(
+    duckdb::SelectivityOptionalFilterType::MIN_MAX, threshold,
+    vectors_to_check);
+  return duckdb::CreateSelectivityOptionalFilterExpression(
+    child->Copy(),
+    expr.Cast<duckdb::BoundFunctionExpression>()
+      .GetChildren()[0]
+      ->GetReturnType(),
+    threshold, vectors_to_check);
 }
 
 irs::NullCheckKind DetectNullCheck(const duckdb::Expression& expr) {
@@ -199,25 +234,9 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
     }
     state.col_filters.push_back(
       {.field = 0, .filter = pushed, .is_score = true});
-    const auto& expr = *duckdb::ExpressionFilter::GetExpressionFilter(
-                          *pushed, "BuildTableFilter")
-                          .expr;
     if (auto dyn =
-          duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
+          duckdb::ExpressionFilter::GetOptionalDynamicFilterData(*pushed)) {
       state.score_dynamic_filter = std::move(dyn);
-      return;
-    }
-    if (expr.GetExpressionClass() ==
-          duckdb::ExpressionClass::BOUND_CONJUNCTION &&
-        expr.GetExpressionType() == duckdb::ExpressionType::CONJUNCTION_AND) {
-      for (const auto& child :
-           expr.Cast<duckdb::BoundConjunctionExpression>().GetChildren()) {
-        if (auto dyn =
-              duckdb::ExpressionFilter::GetOptionalDynamicFilterData(*child)) {
-          state.score_dynamic_filter = std::move(dyn);
-          return;
-        }
-      }
     }
   };
   for (const auto& entry : filters) {
@@ -246,9 +265,18 @@ void BuildTableFilter(ScanGlobalState& state, const ScanBindData& bind_data,
                             .expr;
       cf.is_dynamic = duckdb::ExpressionFilter::ContainsInternalFunction(
         expr, duckdb::DynamicFilterScalarFun::NAME);
-      cf.zonemap_only =
+      cf.optional =
         duckdb::ExpressionFilter::IsRootNonSelectivityOptionalFilter(
           entry.Filter());
+      if (duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
+        const auto& per_row = state.dynamic_filters.emplace_back(
+          duckdb::make_uniq<duckdb::ExpressionFilter>(
+            EvaluateDynamicFilters(expr),
+            duckdb::ExpressionFilter::GetExpressionFilter(entry.Filter(),
+                                                          "BuildTableFilter")
+              .column_indexes));
+        cf.filter = per_row.get();
+      }
       cf.null_check = DetectNullCheck(expr);
       cf.type = bind_data.columns.types[bind_index];
       if (proj_idx < state.projected_column_indexes.size()) {
@@ -295,12 +323,26 @@ void BuildRowFilters(ScanGlobalState& state, const ScanBindData& bind_data) {
   }
 }
 
+void AddDualFilter(ScanGlobalState& state, std::span<const ColumnId> columns,
+                   std::span<const duckdb::LogicalType> types,
+                   const duckdb::TableFilter& filter) {
+  auto& cf = state.dual_filters.emplace_back();
+  if (columns.size() == 1) {
+    cf.field = columns.front();
+    BindExpressionFilter(cf, filter, types.front());
+    return;
+  }
+  cf.filter = &filter;
+  cf.row_fields.assign(columns.begin(), columns.end());
+  cf.row_types.assign(types.begin(), types.end());
+  cf.field = cf.row_fields.front();
+  cf.type = cf.row_types.front();
+}
+
 void BuildDualFilters(ScanGlobalState& state,
                       std::span<const RowFilter> duals) {
   for (const auto& dual : duals) {
-    auto& cf = state.dual_filters.emplace_back();
-    cf.field = dual.columns.front();
-    BindExpressionFilter(cf, *dual.filter, dual.types.front());
+    AddDualFilter(state, dual.columns, dual.types, *dual.filter);
   }
 }
 
@@ -309,7 +351,7 @@ void AddDeferredColumnFilter(ScanGlobalState& state,
   using ColFilter = ScanGlobalState::ColFilter;
   auto existing = absl::c_find_if(state.col_filters, [&](const ColFilter& cf) {
     return cf.field == deferred.column && !cf.is_score && !cf.is_dynamic &&
-           !cf.zonemap_only && !cf.row_gather && cf.extract_path.empty() &&
+           !cf.optional && !cf.row_gather && cf.extract_path.empty() &&
            cf.row_fields.empty();
   });
   if (existing != state.col_filters.end()) {
@@ -347,6 +389,38 @@ std::optional<ColumnId> FetchableColumn(
     return std::nullopt;
   }
   return col_id;
+}
+
+void ApplyDeferredClaim(ScanGlobalState& state, DeferredBuild&& built) {
+  state.owned_where = std::move(built.filter);
+  state.owned_index_only = std::move(built.index_only);
+  state.owned_where_scorers = std::move(built.scorers);
+  for (auto& column_filter : built.column_filters) {
+    AddDeferredColumnFilter(state, std::move(column_filter));
+  }
+  for (auto& dual : built.dual_filters) {
+    const auto& owned =
+      state.deferred_filters.emplace_back(std::move(dual.filter));
+    AddDualFilter(state, dual.columns, dual.types, *owned);
+  }
+  state.deferred_checks = std::move(built.checks);
+  AddDeferredChecks(state, state.deferred_checks);
+}
+
+void NullMissingDistances(duckdb::Vector& distances, duckdb::idx_t count) {
+  const auto* data = duckdb::FlatVector::GetData<float>(distances);
+  bool owned = false;
+  for (duckdb::idx_t i = 0; i != count; ++i) {
+    if (!std::isnan(data[i])) {
+      continue;
+    }
+    auto& validity = duckdb::FlatVector::ValidityMutable(distances);
+    if (!owned) {
+      validity.Initialize(count);
+      owned = true;
+    }
+    validity.SetInvalid(i);
+  }
 }
 
 }  // namespace
@@ -390,8 +464,13 @@ float StaticScoreFloor(const duckdb::Expression& expr, bool& exact) {
     return kNone;
   }
   while (duckdb::BoundCastExpression::IsCast(*ref)) {
-    ref = &duckdb::BoundCastExpression::Child(
+    const auto& child = duckdb::BoundCastExpression::Child(
       ref->Cast<duckdb::BoundFunctionExpression>());
+    if (ref->GetReturnType().id() != duckdb::LogicalTypeId::DOUBLE ||
+        child.GetReturnType().id() != duckdb::LogicalTypeId::FLOAT) {
+      return kNone;
+    }
+    ref = &child;
   }
   if (ref->GetExpressionClass() != duckdb::ExpressionClass::BOUND_REF ||
       cst->GetExpressionClass() != duckdb::ExpressionClass::BOUND_CONSTANT) {
@@ -402,6 +481,9 @@ float StaticScoreFloor(const duckdb::Expression& expr, bool& exact) {
     return kNone;
   }
   const double c = val.GetValue<double>();
+  if (std::isnan(c)) {
+    return kNone;
+  }
   const bool strict = type == duckdb::ExpressionType::COMPARE_GREATERTHAN;
   float t = static_cast<float>(c);
   if (strict ? static_cast<double>(t) > c : static_cast<double>(t) >= c) {
@@ -437,35 +519,29 @@ void DecodeExtractPath(const duckdb::ColumnIndex& column_index,
   }
 }
 
-void ApplyDeferredClaim(ScanGlobalState& state, duckdb::ClientContext& context,
-                        const ScanBindData& bind_data) {
-  auto built = BuildDeferredFilter(context, bind_data, *state.snapshot);
-  state.owned_where = std::move(built.filter);
-  state.owned_index_only = std::move(built.index_only);
-  state.owned_where_scorers = std::move(built.scorers);
-  for (auto& column_filter : built.column_filters) {
-    AddDeferredColumnFilter(state, std::move(column_filter));
+void AcquireScanSnapshot(ScanGlobalState& state, duckdb::ClientContext& context,
+                         const ScanBindData& bind_data) {
+  state.view = bind_data.Read(context);
+  std::optional<DeferredBuild> built;
+  if (bind_data.plan_cache.deferred) {
+    built = BuildDeferredFilter(context, bind_data, *state.view.reader);
   }
-  for (auto& dual : built.dual_filters) {
-    const auto& owned =
-      state.deferred_filters.emplace_back(std::move(dual.filter));
-    auto& cf = state.dual_filters.emplace_back();
-    cf.field = dual.column;
-    BindExpressionFilter(cf, *owned, std::move(dual.type));
+  state.reader = state.view.reader;
+  state.total_segments = state.view.reader->size();
+  if (built) {
+    ApplyDeferredClaim(state, std::move(*built));
   }
-  state.deferred_checks = std::move(built.checks);
-  AddDeferredChecks(state, state.deferred_checks);
 }
 
 void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
                    const ScanBindData& bind_data,
                    duckdb::TableFunctionInitInput& input) {
-  const auto in_output = [&](duckdb::idx_t proj) {
-    return input.projection_ids.empty() ||
-           absl::c_find(input.projection_ids, proj) !=
-             input.projection_ids.end();
-  };
+  state.in_output.assign(input.column_ids.size(), input.projection_ids.empty());
+  for (const auto proj : input.projection_ids) {
+    state.in_output[proj] = true;
+  }
   const auto num_bind_columns = bind_data.columns.ids.size();
+  state.bind_slots.assign(num_bind_columns, duckdb::DConstants::INVALID_INDEX);
   for (auto col_id : input.column_ids) {
     const auto proj = state.projected_columns.size();
     if (col_id == kColumnIdentifierGeneratedPk) {
@@ -506,6 +582,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
       state.projected_types.push_back(file_index ? duckdb::LogicalType::UBIGINT
                                                  : duckdb::LogicalType::BIGINT);
     } else if (col_id == duckdb::COLUMN_IDENTIFIER_EMPTY) {
+      state.empty_output_idx = proj;
       state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
       state.projected_types.push_back(duckdb::LogicalType::BOOLEAN);
       continue;
@@ -524,10 +601,13 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
         ERR_MSG("projecting virtual column ", col_id,
                 " through an inverted-index scan is not supported"));
     } else if (col_id < num_bind_columns) {
+      state.bind_slots[col_id] = proj;
       const auto catalog_col_id = bind_data.columns.ids[col_id];
       if (const auto virtual_type = VirtualIndexColumnType(catalog_col_id)) {
         if (catalog_col_id == kInvertedIndexScoreId) {
           state.score_output_idx = proj;
+        } else if (catalog_col_id == kInvertedIndexExplainId) {
+          state.explain_output_idx = proj;
         }
         state.projected_columns.push_back(duckdb::DConstants::INVALID_INDEX);
         state.projected_types.push_back(*virtual_type);
@@ -543,7 +623,7 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
     } else {
       continue;
     }
-    if (in_output(proj)) {
+    if (state.in_output[proj]) {
       state.has_output_column = true;
     }
   }
@@ -573,6 +653,11 @@ void InitScanState(ScanGlobalState& state, duckdb::ClientContext* context,
     AddDeferredChecks(state, bind_data.search.deferred);
     BuildDualFilters(state, bind_data.search.duals);
   }
+
+  state.rg_size = bind_data.relation.row_group_size != 0
+                    ? bind_data.relation.row_group_size
+                    : DEFAULT_ROW_GROUP_SIZE;
+  state.remote = bind_data.Storage().Remote();
 }
 
 void ClassifyColumnstoreProjections(ScanGlobalState& state,
@@ -596,11 +681,6 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
       .extract_path = {"file_index"},
       .extract_scan_type = duckdb::LogicalType::UBIGINT});
   }
-  const auto in_output = [&](duckdb::idx_t proj) {
-    return state.output_projection_ids.empty() ||
-           absl::c_find(state.output_projection_ids, proj) !=
-             state.output_projection_ids.end();
-  };
   if (bind_data.relation.IsSearchTable()) {
     std::vector<std::string_view> path;
     for (duckdb::idx_t proj = 0; proj < state.projected_columns.size();
@@ -610,7 +690,7 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
         continue;
       }
       state.lookup_projected_columns[proj] = duckdb::DConstants::INVALID_INDEX;
-      if (!in_output(proj)) {
+      if (!state.in_output[proj]) {
         continue;
       }
       const auto col_id = bind_data.columns.ids[bind_col];
@@ -641,7 +721,7 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
     const auto* info = bind_data.relation.ScannedIndex().FindColumnInfo(col_id);
     if (info && info->IsStored()) {
       state.lookup_projected_columns[proj] = duckdb::DConstants::INVALID_INDEX;
-      if (!in_output(proj)) {
+      if (!state.in_output[proj]) {
         continue;
       }
       irs::ColumnstoreProjection cp{.output_slot = proj, .column_id = col_id};
@@ -660,7 +740,7 @@ void ClassifyColumnstoreProjections(ScanGlobalState& state,
       state.cs_projections.emplace_back(std::move(cp));
       continue;
     }
-    if (in_output(proj) ||
+    if (state.in_output[proj] ||
         (state.pushed_filters &&
          state.pushed_filters->HasFilter(duckdb::ProjectionIndex{proj}))) {
       state.needs_lookup = true;
@@ -683,19 +763,25 @@ bool IsStoreServed(const ScanBindData& bind,
 }
 
 ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
+  const bool sampled = g.sampling.do_system_sample;
   if (ss.ts_dict.Active()) {
+    if (sampled) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("TABLESAMPLE cannot be combined with ts_dict_agg()"));
+    }
     return ScanShape::TsDict;
   }
   const bool score_filter = absl::c_any_of(
     g.col_filters,
     [](const ScanGlobalState::ColFilter& f) { return f.is_score; });
-  if (!g.has_output_column && !g.needs_lookup && !score_filter) {
+  if (!sampled && !g.has_output_column && !g.needs_lookup && !score_filter) {
     return ScanShape::Count;
   }
-  if (g.top_k && ss.score.vector && ss.score.order) {
+  if (!sampled && g.top_k && ss.score.vector && ss.score.order) {
     return ScanShape::Ann;
   }
-  if (g.top_k && ss.score.text && !g.has_lookup_filter) {
+  if (!sampled && g.top_k && ss.score.text && !g.has_lookup_filter) {
     return ScanShape::TopK;
   }
   if (ss.IsMatchAll() && !ss.offsets.Active() && !ss.score.text &&
@@ -711,6 +797,10 @@ void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
     auto* tableoid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
       output.data[g.tableoid_output_idx]);
     std::fill_n(tableoid_data, num_rows, g.tableoid_value);
+  }
+  if (g.empty_output_idx != duckdb::DConstants::INVALID_INDEX) {
+    duckdb::ConstantVector::SetNull(output.data[g.empty_output_idx],
+                                    duckdb::count_t(num_rows));
   }
   if (!g.ScanScore()) {
     return;
@@ -752,7 +842,7 @@ void FetchLocalState::EnsureHitBatcher(const ScanGlobalState& g) {
     hit_batcher = std::make_unique<irs::HitBatcher>(
       g.cs_projections,
       g.needs_lookup ? term_dict::kPKFieldId : irs::field_limits::invalid(),
-      g.ScanScore());
+      g.ScanScore(), g.remote);
   }
 }
 
@@ -788,40 +878,88 @@ void WriteChunkOffsets(FetchLocalState& f, const ScanGlobalState& g,
   }
 }
 
-void BuildOffsetsEntries(FetchLocalState& f,
-                         duckdb::TableFunctionInitInput& input,
-                         const ScanBindData& bd) {
-  if (bd.offsets.requests.empty()) {
+std::unique_ptr<irs::explain::Explainer> MakeExplainer(const ScanGlobalState& g,
+                                                       uint32_t seg) {
+  if (const auto* vs = g.vector_scorer) {
+    return std::make_unique<DistanceExplainer>(
+      (*g.reader)[seg], *vs, g.Bind().DisplayColumnName(vs->field_id));
+  }
+  const auto& seg_query = g.queries[seg];
+  SDB_ASSERT(seg_query && g.scorer_obj);
+  return irs::explain::MakePlan(*seg_query, *g.scorer_obj, g.explain_stats,
+                                *g.filter);
+}
+
+void WriteChunkExplain(FetchLocalState& f, const ScanGlobalState& g,
+                       uint32_t seg, std::span<const irs::doc_id_t> docs,
+                       const duckdb::Vector* scores,
+                       duckdb::DataChunk& output) {
+  if (!g.ScanExplain()) {
     return;
   }
-  std::vector<size_t> ss_idx_at_bind(bd.columns.ids.size(),
-                                     std::numeric_limits<size_t>::max());
-  size_t k = 0;
-  for (size_t i = 0; i < bd.columns.ids.size(); ++i) {
-    if (bd.columns.ids[i] == kInvertedIndexOffsetsId) {
-      ss_idx_at_bind[i] = k++;
-    }
+  f.explain_rows.clear();
+  if (seg != f.explain_seg) {
+    f.explainer = MakeExplainer(g, seg);
+    f.explain_seg = seg;
   }
-  duckdb::idx_t out_slot = 0;
-  for (auto col_id : input.column_ids) {
-    if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID ||
-        col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      ++out_slot;
+  const auto* returned =
+    scores ? duckdb::FlatVector::GetData<irs::score_t>(*scores) : nullptr;
+  for (size_t i = 0; i < docs.size(); ++i) {
+    f.explain_rows.push_back(f.explainer->Explain(
+      docs[i],
+      returned ? std::optional<irs::score_t>{returned[i]} : std::nullopt));
+  }
+  WriteExplanations(f.explain_rows, g.Bind(),
+                    output.data[g.explain_output_idx]);
+}
+
+void BuildOffsetsOutputs(ScanGlobalState& g) {
+  for (const auto& req : g.Bind().offsets.requests) {
+    if (req.bind_column == duckdb::DConstants::INVALID_INDEX) {
       continue;
     }
-    if (col_id >= bd.columns.ids.size()) {
+    const auto slot = g.bind_slots[req.bind_column];
+    if (slot == duckdb::DConstants::INVALID_INDEX) {
       continue;
     }
-    if (bd.columns.ids[col_id] == kInvertedIndexOffsetsId) {
-      const auto ss_idx = ss_idx_at_bind[col_id];
-      SDB_ASSERT(ss_idx < bd.offsets.requests.size());
-      FieldEntry entry;
-      entry.output_idx = out_slot;
-      entry.limit = bd.offsets.requests[ss_idx].limit;
-      entry.id = bd.offsets.requests[ss_idx].column_id;
-      f.offsets_entries.push_back(std::move(entry));
+    g.offsets_outputs.push_back(
+      {.slot = slot, .field = req.column_id, .limit = req.limit});
+  }
+}
+
+void FetchLocalState::BindOffsets(const ScanGlobalState& g) {
+  offsets_entries.reserve(g.offsets_outputs.size());
+  for (const auto& output : g.offsets_outputs) {
+    offsets_entries.push_back(
+      {.output_idx = output.slot, .id = output.field, .limit = output.limit});
+  }
+}
+
+void BuildFetchedCopy(ScanGlobalState& g) {
+  const auto columns = g.projected_types.size();
+  g.fetched_copy.assign(columns, FetchedCopy::Null);
+  const auto produced = [&](duckdb::idx_t slot) {
+    if (slot < columns) {
+      g.fetched_copy[slot] = FetchedCopy::Copy;
     }
-    ++out_slot;
+  };
+  produced(g.score_output_idx);
+  produced(g.explain_output_idx);
+  produced(g.tableoid_output_idx);
+  produced(g.doc_address_output_idx);
+  for (const auto& output : g.offsets_outputs) {
+    produced(output.slot);
+  }
+  for (const auto& projection : g.cs_projections) {
+    produced(projection.output_slot);
+  }
+  if (!g.needs_lookup) {
+    return;
+  }
+  for (duckdb::idx_t slot = 0; slot != columns; ++slot) {
+    if (g.lookup_projected_columns[slot] != duckdb::DConstants::INVALID_INDEX) {
+      g.fetched_copy[slot] = FetchedCopy::Skip;
+    }
   }
 }
 
@@ -842,8 +980,12 @@ duckdb::idx_t EmitReadyBatch(duckdb::ClientContext&, ScanGlobalState& g,
     f.pk_column = batch.pk;
   }
   WriteChunkOffsets(f, g, batch.seg, batch.docs, output);
+  WriteChunkExplain(f, g, batch.seg, batch.docs, batch.score_vec, output);
   WriteRowPositions(g, batch.seg, batch.docs, output);
   WriteVirtualColumns(g, batch.count, batch.score_vec, output);
+  if (g.ScanScore() && g.vector_scorer && g.vector_scorer->PerRow()) {
+    NullMissingDistances(output.data[g.score_output_idx], batch.count);
+  }
   return batch.count;
 }
 
@@ -854,10 +996,12 @@ duckdb::idx_t FinalizeBatch(duckdb::ClientContext& ctx, ScanGlobalState& g,
     return collected;
   }
   if (!f.index_source) {
-    f.index_source =
-      MakeIndexSource(ctx, g.Bind(), *g.snapshot, g.lookup_projected_columns,
-                      g.projected_types, g.Bind().columns.ids,
-                      const_cast<duckdb::TableFilterSet*>(g.pushed_filters));
+    f.index_source = ProfileLookup(
+      g.profile.get(),
+      MakeIndexSource(ctx, g.Bind(), g.view.manifest,
+                      g.lookup_projected_columns, g.projected_types,
+                      g.Bind().columns.ids,
+                      const_cast<duckdb::TableFilterSet*>(g.pushed_filters)));
   }
   SDB_ASSERT(f.pk_column);
   const auto rows =

@@ -22,9 +22,6 @@ statement ok
 CREATE INDEX candidates_idx ON candidates
     USING inverted (id, name, skills);
 
-statement ok
-VACUUM (REFRESH_TABLE) candidates;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

@@ -1,16 +1,10 @@
 control substitution on
 
-# A database is a file, and its committed catalog record is the decision
-# point: the attach creates the file, the append happens at commit, and a
-# file whose id no committed record names is garbage reclaimed at boot.
-
 
 statement ok
 CREATE DATABASE dbfile_keep;
 
 
-# Rolled back: the file was created, the record never landed.
-#
 # CREATE DATABASE is the one statement whose entries do not all belong to the
 # transaction that made them: the attach happens before the entry install can
 # reach it, so the schemas it seeds -- public -- are written with a system
@@ -28,7 +22,7 @@ CREATE DATABASE dbfile_rolled;
 # Inside the transaction the attachment is real and the database entry is in
 # the set, so the schemas seeded on it have somewhere to be.
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dbfile_rolled';
+SELECT count(*) FROM sdb_databases() WHERE database_name = 'dbfile_rolled';
 ----
 count
 1
@@ -55,7 +49,7 @@ count
 # The attachment went with it, which is what makes the system-transaction
 # schemas unreachable rather than merely invisible.
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dbfile_rolled';
+SELECT count(*) FROM sdb_databases() WHERE database_name = 'dbfile_rolled';
 ----
 count
 0
@@ -77,9 +71,6 @@ statement ok
 DROP DATABASE dbfile_rolled;
 
 
-# Crashing after the catalog append is the other side of the same rule: the
-# record is the decision, so the database is there after the restart with the
-# file the attach created for it.
 statement ok
 SET sdb_faults = 'crash_after_catalog_before_data';
 
@@ -109,7 +100,7 @@ dbfile_keep
 # carried it, so there is no record to replay and no attachment to rebuild.
 connection after_crash
 query
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'dbfile_rolled';
+SELECT count(*) FROM sdb_databases() WHERE database_name = 'dbfile_rolled';
 ----
 count
 0
@@ -117,10 +108,11 @@ count
 
 connection after_crash
 query
-SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db')) = (SELECT count(*) FROM pg_database) AS one_file_per_database;
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
+       - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files') AS orphans;
 ----
-one_file_per_database
-t
+orphans
+0
 
 
 connection after_crash
@@ -143,10 +135,11 @@ dbfile_keep
 
 connection after_drop_crash
 query
-SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/*/data.db')) = (SELECT count(*) FROM pg_database) AS one_file_per_database;
+SELECT (SELECT count(*) FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*'))
+       - (SELECT coalesce(sum(value), 0) FROM sdb_metrics WHERE metric = 'num_files') AS orphans;
 ----
-one_file_per_database
-t
+orphans
+0
 
 
 connection after_drop_crash

@@ -1,0 +1,58 @@
+statement ok
+CREATE TABLE rgn (k INT, s TEXT) WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO rgn SELECT i, CASE WHEN i % 100 <> 0 AND i < 4096 THEN 'value ' || i END FROM range(0, 5000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) rgn;
+
+
+statement ok
+INSERT INTO rgn SELECT i, 'value ' || i FROM range(5000, 6000) t(i);
+
+
+statement ok
+RESET threads
+
+
+statement ok
+VACUUM (FLUSH_TABLE) rgn;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) rgn;
+
+
+query
+SELECT count(*) AS n, count(s) AS strings, min(k) AS lo, max(k) AS hi FROM rgn;
+----
+n	strings	lo	hi
+6000	5055	0	5999
+
+
+query
+SELECT k, s FROM rgn WHERE k IN (99, 100, 2047, 2048, 4095, 4096, 4999, 5000) ORDER BY k;
+----
+k	s
+99	value 99
+100	NULL
+2047	value 2047
+2048	value 2048
+4095	value 4095
+4096	NULL
+4999	NULL
+5000	value 5000
+
+
+query
+SELECT count(*) AS n FROM rgn WHERE s IS NULL AND k < 5000;
+----
+n
+945

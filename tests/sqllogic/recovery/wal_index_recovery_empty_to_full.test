@@ -15,7 +15,6 @@ CREATE TABLE ef_t(id INTEGER PRIMARY KEY, body TEXT);
 statement ok
 CREATE INDEX ef_idx ON ef_t USING inverted(id, body ef_dict);
 
-# No VACUUM (REFRESH_TABLE) needed — table is empty, index has 0 docs.
 
 # Initial sanity: index is empty.
 query
@@ -23,9 +22,6 @@ SELECT COUNT(*) FROM ef_idx;
 ----
 count
 0
-
-statement ok
-SET sdb_faults = 'SearchRefreshTask::commitUnsafe';
 
 # Bulk-load into the empty index, all of which goes only to RocksDB.
 statement ok
@@ -41,7 +37,7 @@ SELECT 1;
 
 connection ef_after
 statement ok retry 60 backoff 1s
-VACUUM (REFRESH_TABLE) ef_t;
+SELECT 1;
 
 connection ef_after
 query

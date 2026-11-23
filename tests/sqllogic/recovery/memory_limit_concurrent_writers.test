@@ -1,9 +1,9 @@
-# Four connections insert, update and delete in a search table with an
-# inverted index and insert into another search table at once, under a
-# memory_limit 2 MB above the memory in use, so that some of them run out of
-# memory: every statement either succeeds or fails with out-of-memory and
-# leaves nothing behind, the index stays in sync with its table, a large DELETE
-# holds no memory once refreshed, CHECKPOINT works, and a restart keeps it.
+# Four connections insert, update and delete in a table with an inverted
+# index and insert into another table at once, under a memory_limit 2 MB above
+# the memory in use, so that some of them run out of memory: every statement
+# either succeeds or fails with out-of-memory and leaves nothing behind, the
+# index stays in sync with its table, a large DELETE holds no memory once
+# flushed, CHECKPOINT works, and a restart keeps it.
 
 control substitution on
 

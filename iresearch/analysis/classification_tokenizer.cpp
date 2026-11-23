@@ -22,11 +22,11 @@
 
 #include <fasttext.h>
 
+#include <istream>
 #include <string_view>
 
 #include "iresearch/analysis/fast_text_model.hpp"
 #include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::analysis {
@@ -34,13 +34,16 @@ namespace irs::analysis {
 Tokenizer::ptr ClassificationTokenizer::Make(Options opts,
                                              duckdb::SharedObjectCache& cache) {
   if (opts.model_location.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("classify_text: empty model location"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("classify_text: empty model location"));
   }
   if (opts.top_k <= 0) {
-    THROW_SQL_ERROR(ERR_MSG("classify_text: top_k must be positive"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("classify_text: top_k must be positive"));
   }
   if (opts.threshold < 0.0 || opts.threshold > 1.0) {
-    THROW_SQL_ERROR(ERR_MSG("classify_text: threshold must be in [0, 1]"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("classify_text: threshold must be in [0, 1]"));
   }
   auto model = irs::fast_text::GetOrBuildModel<fasttext::FastText>(
     cache, opts.model_location);
@@ -57,11 +60,8 @@ ClassificationTokenizer::ClassificationTokenizer(const Options& options,
 
 template<TokenLayout Layout>
 bool ClassificationTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
-  const auto size = static_cast<uint32_t>(raw.GetSize());
-  BytesViewInput s_input{
-    bytes_view{reinterpret_cast<const byte_type*>(raw.GetData()), size}};
-  InputBuf in_buf{&s_input};
-  std::istream ss{&in_buf};
+  fast_text::TextBuf text{std::string_view{raw.GetData(), raw.GetSize()}};
+  std::istream ss{&text};
   _predictions.clear();
   _model->predictLine(ss, _predictions, _top_k, static_cast<float>(_threshold));
 

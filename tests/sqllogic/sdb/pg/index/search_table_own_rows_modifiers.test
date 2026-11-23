@@ -1,0 +1,86 @@
+statement ok
+CREATE TABLE own_mod (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER)
+
+
+statement ok
+INSERT INTO own_mod VALUES (1, 10, 1), (2, 20, 2)
+
+
+statement ok
+BEGIN
+
+
+statement ok
+INSERT INTO own_mod VALUES (4, 40, 4), (5, NULL, 5)
+
+
+query
+SELECT id FROM own_mod WHERE (u = 40)::boost(2)
+----
+id
+4
+
+
+query
+SELECT id FROM own_mod WHERE (id = 4 OR id > 100)::min_match(1)
+----
+id
+4
+
+
+query
+SELECT id FROM own_mod WHERE (id = 4 OR u = 40 OR id = 1)::min_match(2)
+----
+id
+4
+
+
+query
+SELECT id FROM own_mod WHERE (id = 1 OR id = 5 OR u = 10 OR u = 50)::min_match(2)
+----
+id
+1
+
+
+query
+SELECT id FROM own_mod WHERE ((u = 40)::boost(2) OR (id = 5)::boost(3))::min_match(1) ORDER BY id
+----
+id
+4
+5
+
+
+query
+SELECT id FROM own_mod WHERE ((id = 2 OR id = 5)::min_match(1))::boost(2) ORDER BY id
+----
+id
+2
+5
+
+
+statement ok
+UPDATE own_mod SET v = 44 WHERE (u = 40)::boost(2)
+
+
+statement ok
+DELETE FROM own_mod WHERE (id = 5 OR id = 6)::min_match(1)
+
+
+query
+SELECT id, v FROM own_mod ORDER BY id
+----
+id v
+1 1
+2 2
+4 44
+
+
+statement ok
+COMMIT
+
+
+query
+SELECT id, v FROM own_mod WHERE (u = 40)::boost(2)
+----
+id v
+4 44

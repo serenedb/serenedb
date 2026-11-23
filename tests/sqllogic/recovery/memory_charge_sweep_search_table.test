@@ -1,4 +1,4 @@
-# INSERT, UPDATE, DELETE and TRUNCATE on a search table without an extra
+# INSERT, UPDATE, DELETE and TRUNCATE on a table without an extra
 # index, each run once for every memory charge it makes with that charge
 # failing: a statement either succeeds or fails with out-of-memory and leaves
 # nothing behind, the row counts match, CHECKPOINT works, and a restart keeps

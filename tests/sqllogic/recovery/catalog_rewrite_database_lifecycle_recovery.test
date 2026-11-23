@@ -102,7 +102,7 @@ n	e
 
 connection after_crash
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'crl_dropped';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'crl_dropped';
 ----
 n
 0
@@ -110,7 +110,7 @@ n
 
 connection after_crash
 query
-SELECT count(*) AS n FROM duckdb_tables() WHERE table_name IN ('crl_trigger1', 'crl_trigger2');
+SELECT count(*) AS n FROM sdb_tables() WHERE table_name IN ('crl_trigger1', 'crl_trigger2');
 ----
 n
 2

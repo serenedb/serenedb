@@ -123,9 +123,8 @@ class ScoredChild {
 
  private:
   void Flush() {
-    _fetcher->Fetch(std::span<const doc_id_t>{_docs, _held});
-    _score.Score(_batch, _held);
-    irs::ResolveMergeType(_merge, [&]<ScoreMergeType Merge> {
+    FetchAndScore(*_fetcher, _score, _docs, _batch, _held);
+    Resolve(_merge, [&]<ScoreMergeType Merge> IRS_FORCE_INLINE {
       for (scores_size_t i = 0; i != _held; ++i) {
         irs::Merge<Merge>(_sum, _batch[i]);
       }

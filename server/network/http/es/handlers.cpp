@@ -36,7 +36,6 @@
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/es.h"
 #include "network/http/common.h"
 #include "network/http/es/common.h"
@@ -44,6 +43,7 @@
 #include "network/http/handler.h"
 #include "network/http/prepared_source.h"
 #include "pg/connection_context.h"
+#include "pg/types/float.h"
 
 namespace sdb::network::http::es {
 namespace {
@@ -62,34 +62,21 @@ yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunSql(
   co_return std::move(result);
 }
 
-// ?refresh, ?refresh=true and ?refresh=wait_for all refresh synchronously
-// (CommitWait IS the wait); only an explicit false is a no-op.
-bool WantsRefresh(const HttpRequest& request) {
-  for (const auto& [key, value] : request.query) {
-    if (key == "refresh") {
-      return value != "false";
-    }
-  }
-  return false;
-}
-
-yaclib::Task<bool> MaybeRefresh(RequestContext& ctx, const HttpRequest& request,
-                                std::string_view index,
-                                http::HttpResponseWriter& writer) {
-  if (!WantsRefresh(request)) {
-    co_return true;
-  }
-  auto result = co_await RunSql(
-    ctx, absl::StrCat("CALL es_refresh(", SqlLiteral(index), ")"), writer,
-    index);
-  co_return result != nullptr;
-}
-
 int64_t TookMs(std::chrono::steady_clock::time_point start) {
   return std::chrono::duration_cast<std::chrono::milliseconds>(
            std::chrono::steady_clock::now() - start)
     .count();
 }
+
+void AppendScore(simdjson::builder::string_builder& sb, float score) {
+  char buffer[sdb::pg::kNumberStrMaxLen];
+  const auto* end = sdb::pg::WriteShortestFloat(score, buffer);
+  sb.append_raw(std::string_view{buffer, static_cast<size_t>(end - buffer)});
+}
+
+constexpr std::string_view kConstantExplanation =
+  R"({"value":1.0,"description":"constant score, the query has no )"
+  R"(full-text clause","details":[]})";
 
 // The official clients post to bare /_bulk and route via per-line _index;
 // peek the FIRST action line for it (es_bulk enforces that every line names
@@ -190,7 +177,7 @@ class BulkHandler final : public HttpHandler {
     std::vector<std::vector<connector::EsBulkItem>> items;
     const connector::EsBulkInput input{
       .body = body, .capacity = padded.size(), .items = &items};
-    auto& connection = connector::GetSereneDBContext(*ctx.Connection().context);
+    auto& connection = ConnectionContext::Get(*ctx.Connection().context);
     connection.SetSideChannel(&input);
     const absl::Cleanup clear = [&] {
       connection.SetSideChannel<const connector::EsBulkInput>(nullptr);
@@ -198,9 +185,6 @@ class BulkHandler final : public HttpHandler {
     auto result = co_await ctx.RunPrepared(*prepared.statement);
     if (result->HasError()) {
       WriteSqlError(writer, result->GetErrorObject(), index);
-      co_return {};
-    }
-    if (!co_await MaybeRefresh(ctx, request, index, writer)) {
       co_return {};
     }
     const std::string head = absl::StrCat("{\"took\":", TookMs(start),
@@ -259,8 +243,7 @@ class DocHandler final : public HttpHandler {
                                   " SELECT * FROM es_doc(", SqlLiteral(index),
                                   ", ", SqlLiteral(id), ", ",
                                   SqlLiteral(FlattenBody(request.body)), ")");
-    if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true) ||
-        !co_await MaybeRefresh(ctx, request, index, writer)) {
+    if (!co_await RunSql(ctx, sql, writer, index, /*writes=*/true)) {
       co_return {};
     }
     simdjson::builder::string_builder sb;
@@ -750,6 +733,7 @@ class SearchHandler final : public HttpHandler {
         co_return {};
       }
     }
+    spec.explain = request.Query("explain") == "true";
     FieldTypes fields;
     if (!co_await FetchFieldTypes(ctx, index, fields, writer)) {
       co_return {};
@@ -772,6 +756,7 @@ class SearchHandler final : public HttpHandler {
     // _source (TOP_N sits above the scan, so projecting _source here would
     // materialize the stored doc for EVERY match before the limit prunes --
     // seconds for a common term). _source is fetched for the final page only.
+    const bool explains = spec.explain && spec.uses_match;
     std::string sql = "SELECT \"_id\"";
     const duckdb::idx_t sort_base = 1;
     for (const auto& field : spec.sort_fields) {
@@ -779,6 +764,12 @@ class SearchHandler final : public HttpHandler {
     }
     if (relevance) {
       absl::StrAppend(&sql, ", BM25(t.tableoid) AS \"_score\"");
+    } else if (explains) {
+      absl::StrAppend(&sql, ", BM25(t.tableoid) AS \"_explained_score\"");
+    }
+    if (explains) {
+      absl::StrAppend(
+        &sql, ", ts_explain_json(ts_explain(t.tableoid)) AS \"_explanation\"");
     }
     absl::StrAppend(&sql, " FROM ", relation, " AS t");
     if (!spec.where.empty()) {
@@ -843,8 +834,9 @@ class SearchHandler final : public HttpHandler {
     // scores like ES.
     const bool scored = spec.order_by.empty();
     const duckdb::idx_t score_column = sort_base + spec.sort_fields.size();
+    const duckdb::idx_t explanation_column = score_column + 1;
     auto score_of = [&](duckdb::idx_t row) {
-      return table.GetValue(score_column, row).GetValue<double>();
+      return table.GetValue(score_column, row).GetValue<float>();
     };
     simdjson::builder::string_builder sb;
     sb.append_raw("{\"took\":");
@@ -863,7 +855,7 @@ class SearchHandler final : public HttpHandler {
     if (rows == 0 || !scored) {
       sb.append_raw("null");
     } else if (relevance) {
-      sb.append(score_of(0));
+      AppendScore(sb, score_of(0));
     } else {
       sb.append_raw("1.0");
     }
@@ -881,9 +873,18 @@ class SearchHandler final : public HttpHandler {
       if (!scored) {
         sb.append_raw("null");
       } else if (relevance) {
-        sb.append(score_of(row));
+        AppendScore(sb, score_of(row));
       } else {
         sb.append_raw("1.0");
+      }
+      if (spec.explain) {
+        sb.append_raw(",\"_explanation\":");
+        if (explains) {
+          sb.append_raw(
+            table.GetValue(explanation_column, row).GetValue<std::string>());
+        } else {
+          sb.append_raw(kConstantExplanation);
+        }
       }
       if (spec.include_source) {
         sb.append_raw(",\"_source\":");
@@ -938,7 +939,8 @@ class SearchHandler final : public HttpHandler {
         co_return {};
       }
     }
-    if (!spec.sort_fields.empty() || !spec.aggs.empty() || spec.from != 0) {
+    if (!spec.sort_fields.empty() || !spec.aggs.empty() || spec.from != 0 ||
+        spec.explain) {
       WriteError(writer, HttpStatus::BadRequest, "illegal_argument_exception",
                  "scroll supports only plain _doc-ordered requests yet");
       co_return {};
@@ -1096,6 +1098,65 @@ class CountHandler final : public HttpHandler {
               absl::StrCat("{\"count\":", count,
                            ",\"_shards\":{\"total\":1,\"successful\":1,"
                            "\"skipped\":0,\"failed\":0}}"));
+    co_return {};
+  }
+};
+
+class ExplainHandler final : public HttpHandler {
+ public:
+  yaclib::Task<> Handle(RequestContext& ctx, const HttpRequest& request,
+                        http::HttpResponseWriter& writer) override {
+    const auto index = request.Param("index");
+    const auto id = request.Param("id");
+    FieldTypes fields;
+    if (!co_await FetchFieldTypes(ctx, index, fields, writer)) {
+      co_return {};
+    }
+    SearchRequest spec;
+    if (!ParseExplainBody(FlattenBody(request.body), fields, spec, writer)) {
+      co_return {};
+    }
+    const auto key = SqlLiteral(id);
+    auto sql = absl::StrCat(
+      "SELECT m.hit FROM \"es\".", SqlIdentifier(index),
+      " AS d LEFT JOIN (SELECT ",
+      spec.uses_match
+        ? "BM25(t.tableoid), ts_explain_json(ts_explain(t.tableoid))"
+        : "TRUE",
+      " AS hit FROM ", SearchRelation(index, spec),
+      " AS t WHERE \"_id\" = ", key);
+    if (!spec.where.empty()) {
+      absl::StrAppend(&sql, " AND (", spec.where, ")");
+    }
+    absl::StrAppend(&sql, ") AS m ON TRUE WHERE d.\"_id\" = ", key);
+    auto result = co_await RunSql(ctx, sql, writer, index);
+    if (!result) {
+      co_return {};
+    }
+    simdjson::builder::string_builder sb;
+    sb.append_raw(R"({"_index":)");
+    sb.escape_and_append_with_quotes(index);
+    sb.append_raw(R"(,"_id":)");
+    sb.escape_and_append_with_quotes(id);
+    if (result->RowCount() == 0) {
+      sb.append_raw(R"(,"matched":false})");
+      WriteJson(writer, HttpStatus::NotFound,
+                std::string_view{sb.view().value()});
+      co_return {};
+    }
+    const auto hit = result->Collection().GetValue(0, 0);
+    if (hit.IsNull()) {
+      sb.append_raw(R"(,"matched":false,"explanation":{"value":0.0,)"
+                    R"("description":"the document does not match the query",)"
+                    R"("details":[]}})");
+    } else {
+      sb.append_raw(R"(,"matched":true,"explanation":)");
+      sb.append_raw(spec.uses_match
+                      ? std::string_view{duckdb::StringValue::Get(hit)}
+                      : kConstantExplanation);
+      sb.append_raw("}");
+    }
+    WriteJson(writer, HttpStatus::Ok, std::string_view{sb.view().value()});
     co_return {};
   }
 };
@@ -1525,6 +1586,8 @@ std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
       return std::make_unique<MgetHandler>();
     case Endpoint::Count:
       return std::make_unique<CountHandler>();
+    case Endpoint::Explain:
+      return std::make_unique<ExplainHandler>();
     case Endpoint::Search:
       return std::make_unique<SearchHandler>();
     case Endpoint::Scroll:

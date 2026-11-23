@@ -23,9 +23,6 @@ INSERT INTO searches VALUES
 statement ok
 CREATE INDEX searches_idx ON searches USING inverted (query);
 
-statement ok
-VACUUM (REFRESH_TABLE) searches;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
@@ -86,3 +83,20 @@ ORDER BY suggestion;
 suggestion
 road bike
 road running
+
+# DOCS_TEST: example_005
+
+# DOCS_TEST_BODY
+
+query
+SELECT unnest(ts_dict_agg(query))   AS suggestion,
+       unnest(ts_dict_score(query)) AS similarity,
+       unnest(ts_dict_count(query)) AS searches
+FROM searches_idx
+WHERE query @@ ts_levenshtein('runin', 1, starts_with := true)
+ORDER BY similarity DESC, searches DESC, suggestion;
+----
+suggestion	similarity	searches
+running shoes	0.8	3
+running jacket	0.8	2
+running watch	0.8	1

@@ -131,7 +131,7 @@ irs::TermClause Clause(std::string_view value) {
 class CountSubtractTest : public tests::IndexTestBase {
  protected:
   void Build() {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
     auto body = std::make_shared<tests::TextField<std::string>>("body");
     body->id = kBodyId;
     tests::Document doc;
@@ -240,9 +240,9 @@ TEST_P(CountSubtractTest, conjunctions_count_on_both_sides_of_the_gate) {
   CheckIntersection("rare", "rarer");
 }
 
-INSTANTIATE_TEST_SUITE_P(count_subtract_test, CountSubtractTest,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         CountSubtractTest::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  count_subtract_test, CountSubtractTest,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  CountSubtractTest::to_string);
 
 }  // namespace

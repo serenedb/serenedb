@@ -214,8 +214,24 @@ class DynamicBitset {
 
   void clear() noexcept { clear_offset(0); }
 
+  void clear(size_t first_word, size_t end_word) noexcept {
+    if (first_word < end_word) {
+      SDB_ASSERT(end_word <= _words);
+      std::memset(_data.get() + first_word, 0,
+                  (end_word - first_word) * sizeof(word_t));
+    }
+  }
+
   // counts bits set
   size_t count() const noexcept { return math::Popcount(begin(), end()); }
+
+  size_t count(size_t first_word, size_t end_word) const noexcept {
+    if (first_word >= end_word) {
+      return 0;
+    }
+    SDB_ASSERT(end_word <= _words);
+    return math::Popcount(begin() + first_word, begin() + end_word);
+  }
 
   Alloc& get_allocator() { return _data.get_deleter().alloc(); }
 

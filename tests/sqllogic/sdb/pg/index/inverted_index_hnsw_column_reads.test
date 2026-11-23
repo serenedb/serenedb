@@ -33,10 +33,6 @@ FROM range(5000) t(i);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) hnsw_cr;
-
-
-statement ok
 SET sdb_hnsw_filter_mode = 'walk';
 
 
@@ -134,6 +130,30 @@ pk
 
 query
 SELECT pk FROM hnsw_cr_idx WHERE opt > 2400
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2501
+2499
+2502
+2498
+2503
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE opt IS NULL
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2500
+2505
+2495
+2510
+2490
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE opt IS NOT NULL
   ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
 ----
 pk
@@ -281,6 +301,30 @@ pk
 
 
 query
+SELECT pk FROM hnsw_cr_idx WHERE opt IS NULL
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2500
+2505
+2495
+2510
+2490
+
+
+query
+SELECT pk FROM hnsw_cr_idx WHERE opt IS NOT NULL
+  ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
+----
+pk
+2501
+2499
+2502
+2498
+2503
+
+
+query
 SELECT pk FROM hnsw_cr_idx WHERE tag = 'a' AND qty < 250
   ORDER BY emb <-> [2500.3, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 5;
 ----
@@ -329,10 +373,6 @@ INSERT INTO hnsw_nest SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
   CASE WHEN i % 4 = 0 THEN NULL ELSE [i] END,
   (CASE WHEN i % 3 = 0 THEN NULL ELSE [i, i] END)::INTEGER[2]
 FROM range(2000) t(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_nest;
 
 
 statement ok
@@ -390,10 +430,6 @@ CREATE INDEX hnsw_late_idx ON hnsw_late
 statement ok
 INSERT INTO hnsw_late SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i
 FROM range(40000) t(i);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) hnsw_late;
 
 
 statement ok

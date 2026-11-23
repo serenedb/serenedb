@@ -121,7 +121,7 @@ if [[ "${MODE}" == "title_only" ]]; then
 else
 	INCLUDE_LIST=$(psql "${PSQL_CONN}" -At -v ON_ERROR_STOP=1 -X -c "
 SELECT string_agg('\"' || column_name || '\"', ', ' ORDER BY column_index)
-FROM duckdb_columns()
+FROM sdb_columns()
 WHERE table_name = 'hits_view';
 ")
 	CREATE_INDEX_SQL="CREATE INDEX hits_idx ON hits_view USING inverted(\"Title\" perf_english) INCLUDE (${INCLUDE_LIST});"

@@ -23,15 +23,13 @@
 
 #include <absl/synchronization/notification.h>
 
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
-#include <iresearch/utils/file_utils_ext.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <latch>
 #include <thread>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "index_tests.hpp"
 #include "insert_field.hpp"
 
@@ -53,23 +51,15 @@ void StoreNamed(irs::IndexWriter::Document& d, const ParticleT& fields,
 class IndexProfileTestCase : public tests::IndexTestBase {
  private:
   std::mutex _commit_mutex;
-  bool _staged{false};
 
-  void CommitTransaction(irs::IndexWriter::Transaction& trx) {
-    if (_staged) {
-      irs::IndexWriter::Transaction::Stage(std::array{&trx});
-    }
-    trx.Commit();
-  }
+  void CommitTransaction(tests::IndexWriter::Transaction& trx) { trx.Commit(); }
 
  public:
   IndexProfileTestCase() { irs::timer_utils::InitStats(true); }
 
-  void SetStaged(bool value) noexcept { _staged = value; }
-
   void ProfileBulkIndex(size_t num_insert_threads, size_t num_update_threads,
                         size_t batch_size,
-                        irs::IndexWriter::ptr writer = nullptr,
+                        tests::IndexWriter::ptr writer = nullptr,
                         std::atomic<size_t>* commit_count = nullptr) {
     struct CsvDocTemplateT : public tests::CsvDocGenerator::DocTemplate {
       std::vector<std::shared_ptr<tests::StringField>> fields;
@@ -115,11 +105,8 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     std::latch inserts{static_cast<std::ptrdiff_t>(thread_count)};
 
     if (!writer) {
-      auto options = irs::tests::DefaultWriterOptions();
-      // match original implementation or may run out of file handles
-      // (e.g. MacOS/Travis)
-      options.segment_count_max = 8;
-      writer = open_writer(irs::kOmCreate, std::move(options));
+      writer =
+        open_writer(tests::kOmCreate, irs::tests::DefaultWriterOptions());
     }
 
     {
@@ -344,11 +331,10 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     out.close();
 
-    irs::file_utils::EnsureAbsolute(path);
+    path = std::filesystem::absolute(path);
     std::cout << "Path to timing log: " << path.string() << std::endl;
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     // not all commits might produce a new segment,
     ASSERT_LE(1, reader.size());
     // some might merge with concurrent commits
@@ -387,7 +373,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
 
     std::jthread cleaner{[cleanup_interval, directory, &working]() -> void {
       while (working.load()) {
-        irs::DirectoryCleaner::clean(*directory);
+        directory->RemoveReleased();
         std::this_thread::sleep_for(
           std::chrono::milliseconds(cleanup_interval));
       }
@@ -409,11 +395,9 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     std::atomic<size_t> writer_commit_count(0);
 
     commit_threads = (std::max)(size_t(1), commit_threads);
-    options.segment_count_max = 8;  // match original implementation or may run
-                                    // out of file handles (e.g. MacOS/Travis)
 
     std::vector<std::jthread> threads;
-    auto writer = open_writer(irs::kOmCreate, std::move(options));
+    auto writer = open_writer(tests::kOmCreate, std::move(options));
 
     for (size_t i = 0; i < commit_threads; ++i) {
       threads.emplace_back(
@@ -446,10 +430,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
     auto options = irs::tests::DefaultWriterOptions();
     std::atomic<bool> working(true);
 
-    options.segment_count_max = 8;  // match original implementation or may run
-                                    // out of file handles (e.g. MacOS/Travis)
-
-    auto writer = open_writer(irs::kOmCreate, std::move(options));
+    auto writer = open_writer(tests::kOmCreate, std::move(options));
 
     std::jthread compactor{
       [compact_interval, &working, &writer, &policy]() -> void {
@@ -494,8 +475,7 @@ class IndexProfileTestCase : public tests::IndexTestBase {
       ++docs_count;
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     ASSERT_EQ(1, reader.size());
     ASSERT_EQ(docs_count, reader[0].docs_count());
   }
@@ -539,57 +519,7 @@ TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_update_batched_mt) {
   ProfileBulkIndex(16, 5, 10000);  // 5 does not divide evenly into 16
 }
 
-TEST_P(IndexProfileTestCase, profile_bulk_index_singlethread_full_mt_staged) {
-  SetStaged(true);
-  ProfileBulkIndex(0, 0, 0);
-}
-
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_singlethread_batched_mt_staged) {
-  SetStaged(true);
-  ProfileBulkIndex(0, 0, 10000);
-}
-
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_cleanup_mt_staged) {
-  SetStaged(true);
-  ProfileBulkIndexDedicatedCleanup(16, 10000, 100);
-}
-
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_compact_mt_staged) {
-  SetStaged(true);
-  // a lot of threads cause a lot of contention for the segment pool
-  ProfileBulkIndexDedicatedCompact(8, 10000, 500);
-}
-
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_dedicated_commit_mt_staged) {
-  SetStaged(true);
-  ProfileBulkIndexDedicatedCommit(16, 1, 1000);
-}
-
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_full_mt_staged) {
-  SetStaged(true);
-  ProfileBulkIndex(16, 0, 0);
-}
-
-TEST_P(IndexProfileTestCase, profile_bulk_index_multithread_batched_mt_staged) {
-  SetStaged(true);
-  ProfileBulkIndex(16, 0, 10000);
-}
-
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_update_full_mt_staged) {
-  SetStaged(true);
-  ProfileBulkIndex(16, 5, 0);  // 5 does not divide evenly into 16
-}
-
-TEST_P(IndexProfileTestCase,
-       profile_bulk_index_multithread_update_batched_mt_staged) {
-  SetStaged(true);
-  ProfileBulkIndex(16, 5, 10000);  // 5 does not divide evenly into 16
-}
-
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(index_profile_test, IndexProfileTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

@@ -70,7 +70,7 @@ IMPORT DATABASE '${__TEST_DIR__}/iins_export';
 
 
 query
-SELECT schema_name, index_name FROM duckdb_indexes() WHERE database_name = current_database() ORDER BY index_name;
+SELECT schema_name, index_name FROM sdb_indexes() WHERE database_name = current_database() ORDER BY index_name;
 ----
 schema_name	index_name
 iins_inner	iins_tidx

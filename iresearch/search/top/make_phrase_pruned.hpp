@@ -27,12 +27,15 @@
 #include "iresearch/search/detail/scored_context.hpp"
 #include "iresearch/search/queries/phrase_query.hpp"
 #include "iresearch/search/top/make.hpp"
+#include "iresearch/search/top/phrase_pruned_clause.hpp"
+#include "iresearch/search/top/phrase_union_member.hpp"
 #include "iresearch/search/top/pruned_phrase.hpp"
 
 namespace irs::top {
 
-template<irs::detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrasePruned(const Query& query, const Context& ctx) {
+template<irs::detail::PhraseMatch M, typename Result, typename Query,
+         typename Make>
+Result BuildPrunedPhrase(const Query& query, const Context& ctx, Make&& make) {
   static_assert(M != irs::detail::PhraseMatch::Slop);
   if (!query.state.boosts.empty() || !query.state.reader) {
     return {};
@@ -47,15 +50,45 @@ Root::ptr MakePhrasePruned(const Query& query, const Context& ctx) {
                                     .fetcher = &ctx.fetcher,
                                     .boost = query.Boost()};
   return irs::detail::BuildPhrase<M, true, false, false>(
-    ctx.memory, query, [&]<typename Slots>(auto&&... rest) -> Root::ptr {
-      return MakeShape<PrunedPhrase, Slots>(
-        ctx, query.Segment(), *query.state.reader, args,
+    ctx.memory, query, [&]<typename Slots>(auto&&... rest) -> Result {
+      return make.template operator()<Slots>(
+        query.Segment(), *query.state.reader, args, ctx.bounds,
         std::forward<decltype(rest)>(rest)...);
     });
 }
 
-}  // namespace irs::top
+template<irs::detail::PhraseMatch M, typename Query>
+Root::ptr PhraseMaker<M, Query>::Pruned(const Query& query,
+                                        const Context& ctx) {
+  return BuildPrunedPhrase<M, Root::ptr>(
+    query, ctx, [&]<typename Slots>(auto&&... args) -> Root::ptr {
+      return MakeShape<PrunedPhrase, Slots>(
+        ctx, std::forward<decltype(args)>(args)...);
+    });
+}
 
-#define IRS_TOP_PHRASE_PRUNED(Query, Match)                             \
-  template Root::ptr MakePhrasePruned<irs::detail::PhraseMatch::Match>( \
-    const Query&, const Context&)
+template<irs::detail::PhraseMatch M, typename Query>
+UnionMember::ptr PhraseMaker<M, Query>::Member(const Query& query,
+                                               const Context& ctx) {
+  return BuildPrunedPhrase<M, UnionMember::ptr>(
+    query, ctx, [&]<typename Slots>(auto&&... args) -> UnionMember::ptr {
+      auto member = ctx.memory.Make<PhraseUnionMember<Slots>>(
+        std::forward<decltype(args)>(args)...);
+      if (!member->Bounded()) {
+        return {};
+      }
+      return member;
+    });
+}
+
+template<irs::detail::PhraseMatch M, typename Query>
+PrunedClause::ptr PhraseMaker<M, Query>::Clause(const Query& query,
+                                                const Context& ctx) {
+  return BuildPrunedPhrase<M, PrunedClause::ptr>(
+    query, ctx, [&]<typename Slots>(auto&&... args) -> PrunedClause::ptr {
+      return ctx.memory.Make<PrunedClauseImpl<PhrasePrunedClause<Slots>>>(
+        std::forward<decltype(args)>(args)...);
+    });
+}
+
+}  // namespace irs::top

@@ -65,9 +65,9 @@ via_view	via_macro	via_sequence
 connection s2
 query
 SELECT (SELECT count(*) FROM pg_namespace WHERE nspname = 'cst_a') AS schemas,
-       (SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'cst_a') AS tables,
-       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_a') AS indexes,
-       (SELECT count(*) FROM duckdb_sequences() WHERE schema_name = 'cst_a') AS sequences
+       (SELECT count(*) FROM sdb_tables() WHERE schema_name = 'cst_a') AS tables,
+       (SELECT count(*) FROM sdb_indexes() WHERE schema_name = 'cst_a') AS indexes,
+       (SELECT count(*) FROM sdb_sequences() WHERE schema_name = 'cst_a') AS sequences
 ----
 schemas	tables	indexes	sequences
 0	0	0	0
@@ -88,10 +88,10 @@ ROLLBACK
 connection s1
 query
 SELECT (SELECT count(*) FROM pg_namespace WHERE nspname = 'cst_a') AS schemas,
-       (SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'cst_a') AS tables,
-       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_a') AS indexes,
-       (SELECT count(*) FROM duckdb_sequences() WHERE schema_name = 'cst_a') AS sequences,
-       (SELECT count(*) FROM duckdb_functions() WHERE schema_name = 'cst_a') AS functions
+       (SELECT count(*) FROM sdb_tables() WHERE schema_name = 'cst_a') AS tables,
+       (SELECT count(*) FROM sdb_indexes() WHERE schema_name = 'cst_a') AS indexes,
+       (SELECT count(*) FROM sdb_sequences() WHERE schema_name = 'cst_a') AS sequences,
+       (SELECT count(*) FROM sdb_functions() WHERE schema_name = 'cst_a') AS functions
 ----
 schemas	tables	indexes	sequences	functions
 0	0	0	0	0
@@ -293,7 +293,7 @@ n
 connection s2
 query
 SELECT (SELECT count(*) FROM cst_d.v) AS via_view,
-       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_d') AS indexes
+       (SELECT count(*) FROM sdb_indexes() WHERE schema_name = 'cst_d') AS indexes
 ----
 via_view	indexes
 2	1
@@ -305,7 +305,7 @@ connection s2
 statement error
 INSERT INTO cst_d.t VALUES (3, 'z')
 ----
-db error: ERROR: Failed to commit: Attempting to modify table "t" but another transaction has no changes this table
+db error: ERROR: Attempting to write to table t but another transaction is dropping it
 
 
 connection s1
@@ -331,7 +331,7 @@ connection s2
 query
 SELECT (SELECT count(*) FROM cst_d.v) AS via_view,
        nextval('cst_d.sq') AS via_sequence,
-       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_d') AS indexes
+       (SELECT count(*) FROM sdb_indexes() WHERE schema_name = 'cst_d') AS indexes
 ----
 via_view	via_sequence	indexes
 3	1	1
@@ -345,9 +345,9 @@ DROP SCHEMA cst_d CASCADE
 connection s2
 query
 SELECT (SELECT count(*) FROM pg_namespace WHERE nspname = 'cst_d') AS schemas,
-       (SELECT count(*) FROM duckdb_tables() WHERE schema_name = 'cst_d') AS tables,
-       (SELECT count(*) FROM duckdb_indexes() WHERE schema_name = 'cst_d') AS indexes,
-       (SELECT count(*) FROM duckdb_sequences() WHERE schema_name = 'cst_d') AS sequences
+       (SELECT count(*) FROM sdb_tables() WHERE schema_name = 'cst_d') AS tables,
+       (SELECT count(*) FROM sdb_indexes() WHERE schema_name = 'cst_d') AS indexes,
+       (SELECT count(*) FROM sdb_sequences() WHERE schema_name = 'cst_d') AS sequences
 ----
 schemas	tables	indexes	sequences
 0	0	0	0
@@ -372,7 +372,7 @@ connection s2
 statement error
 CREATE SCHEMA cst_dup
 ----
-db error: ERROR: Catalog write-write conflict on create with "cst_dup"
+db error: ERROR: could not serialize access due to concurrent update of "cst_dup"
 
 
 connection s1
@@ -399,7 +399,7 @@ connection s2
 statement error
 CREATE SCHEMA cst_dup2
 ----
-db error: ERROR: Catalog write-write conflict on create with "cst_dup2"
+db error: ERROR: could not serialize access due to concurrent update of "cst_dup2"
 
 
 connection s1
@@ -411,7 +411,7 @@ connection s2
 statement error
 CREATE SCHEMA cst_dup2
 ----
-db error: ERROR: Schema with name "cst_dup2" already exists!
+db error: ERROR: schema "cst_dup2" already exists
 
 
 connection s2
@@ -444,9 +444,9 @@ CREATE TABLE cst_f.t(a INTEGER)
 statement error
 DROP SCHEMA cst_f
 ----
-db error: ERROR: Cannot drop entry "cst_f" because there are entries that depend on it.
-table "t" depends on schema "cst_f".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop schema cst_f because other objects depend on it
+DETAIL: table cst_f.t depends on schema cst_f
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection s1

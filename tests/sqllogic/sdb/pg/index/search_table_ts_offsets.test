@@ -1,8 +1,7 @@
 # ts_offsets over a search-table index. ts_offsets reads the stored match
 # offsets for the term filter, which live under the index's own allocated term
 # field on a search table (not the column id); the offsets collector matches the
-# scan's term query on that field. ts_highlight then renders them. Commit-time
-# only, so rows are observed after VACUUM (REFRESH_TABLE).
+# scan's term query on that field. ts_highlight then renders them.
 
 statement ok
 CREATE TEXT SEARCH DICTIONARY offs_en AS
@@ -11,16 +10,13 @@ CREATE TEXT SEARCH DICTIONARY offs_en AS
 
 statement ok
 CREATE TABLE d (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX d_off ON d USING inverted (body offs_en);
 
 statement ok
 INSERT INTO d VALUES (1, 'the quick brown fox'), (2, 'the lazy dog');
-
-statement ok
-VACUUM (REFRESH_TABLE) d;
 
 # 'quick' occupies bytes [4,9) in row 1.
 query
@@ -78,16 +74,13 @@ CREATE TEXT SEARCH DICTIONARY no_offs_en AS
 
 statement ok
 CREATE TABLE d2 (id BIGINT PRIMARY KEY, body TEXT)
-  WITH (storage='search', compaction_interval=0);
+  WITH (compaction_interval=0);
 
 statement ok
 CREATE INDEX d2_idx ON d2 USING inverted (body no_offs_en);
 
 statement ok
 INSERT INTO d2 VALUES (1, 'the quick brown fox'), (2, 'the lazy dog');
-
-statement ok
-VACUUM (REFRESH_TABLE) d2;
 
 query
 SELECT id, ts_offsets(body) AS bo FROM d2_idx WHERE body @@ 'quick' ORDER BY id;

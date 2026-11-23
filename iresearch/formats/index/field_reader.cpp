@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <limits>
 #include <string_view>
 #include <utility>
@@ -32,36 +33,47 @@
 
 namespace irs::term_dict {
 
-uint64_t FieldReader::CountMappedMemory() const {
-  uint64_t bytes = _pr.CountMappedMemory();
-  if (_in) {
-    bytes += _in->CountMappedMemory();
+FieldReader::~FieldReader() {
+  if (_reserved != 0) {
+    _buffers->FreeReservedMemory(_reserved);
   }
-  return bytes;
 }
 
-bytes_view FieldReader::Load(IndexInput& in, uint64_t offset, uint64_t size) {
+bytes_view FieldReader::Load(uint64_t offset, uint64_t size) {
   if (_base) {
     return {_base + offset, size};
   }
   const auto [it, inserted] = _copies.try_emplace(offset);
   auto& copy = it->second;
   if (inserted) {
-    copy.resize(size);
-    in.ReadData(offset, copy.data(), size);
+    copy = _buffers->GetBufferAllocator().Allocate(size);
+    duckdb::InputFileReader in{*_in};
+    in.Seek(offset);
+    in.ReadData(copy.get(), size);
   }
-  SDB_ASSERT(copy.size() == size);
-  return copy;
+  SDB_ASSERT(copy.GetSize() == size);
+  return {copy.get(), size};
 }
 
 bytes_view FieldReader::Copy(uint64_t offset, uint64_t size) {
   const auto [it, inserted] = _copies.try_emplace(offset);
   auto& copy = it->second;
   if (inserted) {
-    copy.resize(size);
-    _pending.push_back({.offset = offset, .size = size, .data = copy.data()});
+    copy = _buffers->GetBufferAllocator().Allocate(size);
+    _pending.push_back({.offset = offset, .size = size, .data = copy.get()});
   }
-  return copy;
+  return {copy.get(), size};
+}
+
+uint64_t FieldReader::DecodedBytes() const noexcept {
+  uint64_t bytes = _spans.capacity() * sizeof(SpanningBlock) +
+                   SeparatorBytes(_separators) + _inline_pages.MemoryBytes() +
+                   _single_inline.capacity() +
+                   (_fsst ? sizeof(duckdb_fsst_decoder_t) : 0);
+  for (const auto& reader : _keyed) {
+    bytes += reader.MemoryBytes();
+  }
+  return bytes;
 }
 
 const byte_type* FieldReader::CopyBlock(uint32_t block, uint64_t length) {
@@ -81,8 +93,10 @@ void FieldReader::FillCopies() {
     }
     _in->Prefetch(begin, end - begin);
   }
+  duckdb::InputFileReader in{*_in};
   for (const auto& copy : _pending) {
-    _in->ReadData(copy.offset, copy.data, copy.size);
+    in.Seek(copy.offset);
+    in.ReadData(copy.data, copy.size);
   }
   _pending.clear();
   _pending.shrink_to_fit();
@@ -136,7 +150,7 @@ void FieldReader::Bind(const TermsMeta& terms) {
     Corrupted("inline starts");
   }
   if (_inline_size != 0) {
-    if (InlineEnd() > _in->Length() || _in->Length() - InlineEnd() < kSlack) {
+    if (InlineEnd() > _in->GetSize() || _in->GetSize() - InlineEnd() < kSlack) {
       Corrupted("inline postings");
     }
     _inline_pages =
@@ -150,14 +164,15 @@ void FieldReader::Bind(const TermsMeta& terms) {
 void FieldReader::prepare(const ReaderState& state) {
   SDB_ASSERT(state.idx);
   auto terms = state.idx->TakeTerms();
-  _in = state.idx->ReopenIn();
+  _in = state.idx->File();
   if (!_in) {
     SDB_ENSURE(terms.fields.empty(),
                "term dictionary: fields but no `.idx` stream");
     return;
   }
 
-  _base = _in->ReadStable(0, _in->Length());
+  _base = _in->Data();
+  _buffers = &duckdb::BufferManager::GetBufferManager(state.db);
   const auto& heads = terms.fields;
   if (!heads.empty()) {
     Bind(terms);
@@ -186,8 +201,7 @@ void FieldReader::prepare(const ReaderState& state) {
     } else {
       prefix.clear();
       AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
-      _dicts.push_back(
-        &_keyed.emplace_back(*this, head, prefix, *_in, _separators));
+      _dicts.push_back(&_keyed.emplace_back(*this, head, prefix, _separators));
     }
     ++_by_id
         .try_emplace(
@@ -202,6 +216,15 @@ void FieldReader::prepare(const ReaderState& state) {
     _single_inline.resize(_single_inline.size() + kSlack);
   }
   FillCopies();
+  if (!_base) {
+    _in->Evict(InlineBegin(), RangesBegin() + RangesSize() - InlineBegin());
+    if (_block_count != 0) {
+      _in->Prefetch(PageOffset(0), PageOffset(_block_count) - PageOffset(0));
+    }
+  }
+  const auto decoded = DecodedBytes();
+  _buffers->ReserveMemory(decoded);
+  _reserved = decoded;
 }
 
 const byte_type* FieldReader::KeepInline(bytes_view bytes) {

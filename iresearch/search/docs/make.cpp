@@ -22,6 +22,7 @@
 
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/docs/empty.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 
 namespace irs::docs {
 
@@ -30,7 +31,7 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
     return ctx.memory.Make<Empty>();
   }
   const detail::FoldReachScope reach{ctx.span};
-  return query.PlanDocs(ctx);
+  return ProfileRoot(ctx.memory, query, [&] { return query.PlanDocs(ctx); });
 }
 
 }  // namespace irs::docs

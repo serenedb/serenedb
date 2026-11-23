@@ -22,17 +22,80 @@
 
 #include <cmath>
 #include <cstdint>
-#include <iresearch/store/data_input.hpp>
-#include <iresearch/store/data_output.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
+#include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/bytes_utils.hpp>
+#include <limits>
 
+namespace irs {
+
+constexpr uint32_t ZigZagEncode32(int32_t n) noexcept {
+  return (static_cast<uint32_t>(n) << 1) ^ static_cast<uint32_t>(n >> 31);
+}
+
+constexpr int32_t ZigZagDecode32(uint32_t n) noexcept {
+  return static_cast<int32_t>((n >> 1) ^ (~(n & 1) + 1));
+}
+
+constexpr uint64_t ZigZagEncode64(int64_t n) noexcept {
+  return (static_cast<uint64_t>(n) << 1) ^ static_cast<uint64_t>(n >> 63);
+}
+
+template<typename StringType,
+         typename TraitsType = typename StringType::traits_type>
+StringType ToString(const byte_type* begin) {
+  const auto size = irs::vread<uint32_t>(begin);
+  return StringType(
+    reinterpret_cast<const typename TraitsType::char_type*>(begin), size);
+}
+
+template<typename N>
+N ReadVarintBytes(auto& in) {
+  N value = 0;
+  for (uint32_t shift = 0;; shift += 7) {
+    const auto b = in.template Read<byte_type>();
+    value |= static_cast<N>(b & 0x7F) << shift;
+    if (b < 0x80) {
+      return value;
+    }
+  }
+}
+
+uint32_t ReadV32(auto& in) { return ReadVarintBytes<uint32_t>(in); }
+
+uint64_t ReadV64(auto& in) { return ReadVarintBytes<uint64_t>(in); }
+
+inline void WriteZV32(duckdb::WriteStream& out, int32_t v) {
+  out.WriteVarint<uint32_t>(irs::ZigZagEncode32(v));
+}
+
+int32_t ReadZV32(auto& in) { return irs::ZigZagDecode32(ReadV32(in)); }
+
+inline void WriteZV64(duckdb::WriteStream& out, int64_t v) {
+  out.WriteVarint<uint64_t>(irs::ZigZagEncode64(v));
+}
+
+template<typename StringType>
+StringType ReadString(auto& in) {
+  StringType str(ReadV32(in), 0);
+  in.ReadData(reinterpret_cast<byte_type*>(str.data()), str.size());
+  return str;
+}
+
+}  // namespace irs
 namespace tests {
 
-void WriteZvfloat(irs::DataOutput& out, float_t v);
+void WriteZvfloat(duckdb::WriteStream& out, float v);
 
-float_t ReadZvfloat(irs::DataInput& in);
+void WriteZvdouble(duckdb::WriteStream& out, double v);
 
-void WriteZvdouble(irs::DataOutput& out, double_t v);
-
-double_t ReadZvdouble(irs::DataInput& in);
+template<typename StringType>
+void WriteStr(duckdb::WriteStream& out, const StringType& str) {
+  SDB_ASSERT(str.size() < std::numeric_limits<uint32_t>::max());
+  out.WriteVarint<uint32_t>(static_cast<uint32_t>(str.size()));
+  out.WriteData(reinterpret_cast<const irs::byte_type*>(str.data()),
+                str.size());
+}
 
 }  // namespace tests

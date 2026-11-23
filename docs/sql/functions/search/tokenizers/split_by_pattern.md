@@ -19,7 +19,7 @@ It works in two modes selected by the `GROUP` option. In **extract** mode (`GROU
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `PATTERN` | string | **required** | RE2 regular expression used to match (extract mode) or to mark separators (split mode). An empty string fails with `split_by_pattern: empty pattern`, and a regex RE2 cannot compile fails with `split_by_pattern: invalid regex: <RE2 message>` |
+| `PATTERN` | string | **required** | RE2 regular expression used to match (extract mode) or to mark separators (split mode). An empty string fails with `split_by_pattern: empty pattern`, and a regex RE2 cannot compile fails with `split_by_pattern: invalid regular expression: <RE2 message>` and SQLSTATE `2201B` |
 | `GROUP` | integer | `-1` | What each match contributes to the token stream: `-1` = split on each match, `0` = the whole match, `N > 0` = the Nth capture group. `N` may not exceed the number of capture groups in `PATTERN`; any other value fails with `split_by_pattern: group <n> out of range, pattern has <k> capturing groups` |
 
 All three errors are raised by `CREATE TEXT SEARCH DICTIONARY` itself, because the statement instantiates the tokenizer to validate it. The regex is compiled with capturing disabled whenever `GROUP` is `0` or below, so for a `GROUP` below `-1` the range error reports `0 capturing groups`.

@@ -107,7 +107,9 @@ jobs:
     build-docker:
         name: Build Docker Image
         if: inputs.RUN_TESTS || inputs.BUILD_IMAGE
-        runs-on: linux-amd64
+        runs-on:
+            - linux-amd64
+            - build
         permissions:
             contents: read
         timeout-minutes: 60
@@ -123,7 +125,7 @@ jobs:
             IMAGE: serene-ui
             DOCKER_TAG: ${{ inputs.VERSION }}
         steps:
-            - name: Reap containers left on this runner
+            - name: Reap the containers and git locks left on this runner
               working-directory: ${{ github.workspace }}
               run: |
                   echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
@@ -131,6 +133,7 @@ jobs:
                   docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
                   docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
                   docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+                  [ ! -d .git ] || find .git -name '*.lock' -type f -delete
 
             - name: Resolve branch
               working-directory: ${{ github.workspace }}

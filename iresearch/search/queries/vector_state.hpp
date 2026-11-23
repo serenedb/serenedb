@@ -20,12 +20,12 @@
 
 #pragma once
 
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <memory>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/query_memory.hpp"
 
@@ -48,7 +48,7 @@ struct VectorState {
   const ColumnReader* vector_column = nullptr;
   const ColReader* col_reader = nullptr;
   memory::ArenaVector<PostingMeta> cookies;
-  std::unique_ptr<IndexInput> payload;
+  const duckdb::InputFile* payload = nullptr;
   uint64_t estimation = 0;
 
   VectorQuantization quant = VectorQuantization::None;

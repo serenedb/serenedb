@@ -17,9 +17,6 @@ INSERT INTO fo_sem VALUES
   (4, 'delta alpha', 4),
   (5, 'alpha gamma', 5);
 
-statement ok
-VACUUM (REFRESH_TABLE) fo_sem;
-
 query
 SELECT id FROM fo_sem_idx WHERE t @@ ts_phrase('alpha') ORDER BY id;
 ----

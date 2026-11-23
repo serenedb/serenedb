@@ -35,7 +35,7 @@ Tokenizer::ptr StopwordsTokenizer::Make(Options opts,
                                         duckdb::SharedObjectCache& cache) {
   auto stopwords = duckdb::make_uniq<StopwordSet>(std::move(opts.mask));
   if (!opts.stopwords_path.empty()) {
-    dict::LoadStopwords(*stopwords, {}, opts.stopwords_path);
+    dict::LoadStopwords(*stopwords, opts.stopwords_path);
   }
   stopwords->ShrinkToFit();
 

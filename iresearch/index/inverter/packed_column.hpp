@@ -26,7 +26,7 @@
 #include <span>
 
 #include "iresearch/formats/posting/block_codec.hpp"
-#include "iresearch/utils/bit_packing.hpp"
+#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/tracked.hpp"
@@ -137,7 +137,7 @@ class PackedU32Column : util::Noncopyable {
       }
       const auto* src = reinterpret_cast<const byte_type*>(blk.data);
       const block_codec::U32x8 base = block_codec::U32x8{} + blk.base;
-      block_codec::ResolveByte<block_codec::kMaxWidth + 1>(
+      Resolve<block_codec::ByteAxis<block_codec::kMaxWidth + 1>>(
         blk.bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
           for (size_t at = 0; at != kBlockValues; at += kSimdValues) {
             block_codec::VerticalRows<B>(
@@ -201,19 +201,19 @@ class PackedU32Column : util::Noncopyable {
       mn = std::min(mn, _staging[i]);
       mx = std::max(mx, _staging[i]);
     }
-    const auto bits = packed::Maxbits32(mx - mn);
+    const auto bits = math::MathTraits<uint32_t>::bits_required(mx - mn);
     const uint32_t* out = nullptr;
     if (bits == kRawBits) {
       auto* buf = Alloc16(kBlockValues * sizeof(uint32_t));
       std::memcpy(buf, _staging, kBlockValues * sizeof(uint32_t));
       out = buf;
     } else if (bits != 0) {
-      auto* buf = Alloc16(packed::BytesRequired32(kBlockValues, bits));
+      auto* buf = Alloc16(math::DivCeil64(kBlockValues * bits, 8));
       for (size_t i = 0; i != kBlockValues; ++i) {
         _staging[i] -= mn;
       }
       auto* dst = reinterpret_cast<byte_type*>(buf);
-      block_codec::ResolveByte<block_codec::kMaxWidth + 1>(
+      Resolve<block_codec::ByteAxis<block_codec::kMaxWidth + 1>>(
         bits, [&]<uint32_t B>() IRS_FORCE_INLINE {
           for (size_t at = 0; at != kBlockValues; at += kSimdValues) {
             block_codec::PackVertical<B, false>(_staging + at, dst);

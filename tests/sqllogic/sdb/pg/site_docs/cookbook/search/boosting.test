@@ -18,9 +18,6 @@ INSERT INTO pages VALUES
 (1, 'shipping policy', 'our returns and shipping policy explains how a refund works for any order you place'),
 (2, 'refund and returns', 'read this before you request anything at all from support today please');
 
-statement ok
-VACUUM (REFRESH_TABLE) pages;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
@@ -56,9 +53,6 @@ INSERT INTO bd VALUES
 (1, 'Fox', 'a quiet report with little else to say here', 0.10),
 (2, 'Morning walk', 'a fox and then another fox ran across the path', 0.90),
 (3, 'Field notes', 'a fox appeared once near the fence', 0.50);
-
-statement ok
-VACUUM (REFRESH_TABLE) bd;
 
 # DOCS_TEST_BODY
 

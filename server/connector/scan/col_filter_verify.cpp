@@ -54,7 +54,7 @@ void ColFilterVerify::Begin(const irs::SubReader& seg,
   const auto* col_reader = seg.GetColReader();
   SDB_ENSURE(col_reader != nullptr,
              "`.col` table filter requires a columnstore segment");
-  if (_ctx) {
+  if (_ctx && _ctx->GetBlockAllocSize() == col_reader->BlockAllocSize()) {
     _ctx->Reset(*col_reader);
   } else {
     _ctx = std::make_unique<irs::ReadContext>(*col_reader);
@@ -123,7 +123,7 @@ void ClassifySegmentColFilters(
       .filter = cf.filter,
       .is_score = cf.is_score,
       .is_dynamic = cf.is_dynamic,
-      .zonemap_only = cf.zonemap_only,
+      .optional = cf.optional,
       .null_check = cf.null_check,
       .row_gather = cf.row_gather,
       .not_null = cf.not_null.get(),
@@ -159,13 +159,7 @@ void ClassifySegmentColFilters(
       continue;
     }
     if (reader == nullptr) {
-      duckdb::Vector null_row{duckdb::Value{cf.type}, duckdb::count_t{1}};
-      duckdb::SelectionVector sel;
-      duckdb::idx_t approved = 1;
-      duckdb::ColumnSegment::FilterSelection(
-        sel, null_row, states.State(*g.client_context, *spec.filter), 1,
-        approved);
-      if (approved == 0) {
+      if (!states.AdmitsNull(*g.client_context, *spec.filter, cf.type)) {
         out.segment_dead = true;
         out.active.clear();
         return;
@@ -183,12 +177,12 @@ void ClassifySegmentColFilters(
         out.active.clear();
         return;
       case duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE:
-        if (spec.zonemap_only) {
+        if (spec.is_dynamic) {
           out.active.push_back(spec);
         }
         break;
       case duckdb::FilterPropagateResult::FILTER_TRUE_OR_NULL:
-        if (!spec.zonemap_only && spec.not_null != nullptr) {
+        if (!spec.optional && !spec.is_dynamic && spec.not_null) {
           spec.filter = spec.not_null;
           spec.null_check = irs::NullCheckKind::IsNotNull;
         }
@@ -202,12 +196,30 @@ void ClassifySegmentColFilters(
   }
 }
 
+bool UsesColumnForms(const ScanGlobalState& g, const irs::SubReader& seg) {
+  return g.vector_scorer == nullptr && !g.dual_filters.empty() &&
+         RowsOnlySegment(seg);
+}
+
 void ScanLocalState::Classify(ScanGlobalState& g, uint32_t seg) {
   if (classified_seg == seg) {
     return;
   }
-  ClassifySegmentColFilters((*g.reader)[seg], g, g.col_filters, filter_states,
-                            seg_cls, true);
+  const auto& segment = (*g.reader)[seg];
+  ClassifySegmentColFilters(segment, g, g.col_filters, filter_states, seg_cls,
+                            true);
+  if (!seg_cls.segment_dead && UsesColumnForms(g, segment)) {
+    ClassifySegmentColFilters(segment, g, g.dual_filters, filter_states,
+                              column_form_cls, true);
+    if (column_form_cls.segment_dead) {
+      seg_cls.segment_dead = true;
+      seg_cls.active.clear();
+    } else {
+      seg_cls.active.insert(seg_cls.active.end(),
+                            column_form_cls.active.begin(),
+                            column_form_cls.active.end());
+    }
+  }
   classified_seg = seg;
 }
 

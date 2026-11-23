@@ -21,6 +21,7 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/detail/column_collector.hpp>
@@ -34,8 +35,6 @@
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/store_utils.hpp>
-#include <iresearch/utils/bytes_output.hpp>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
@@ -134,13 +133,13 @@ void Bm25TestCase::TestQueryNorms() {
         }
       });
 
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreSeq());
   }
 
   auto scorer = irs::BM25{irs::BM25::K(), irs::BM25::B(), true};
 
-  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
@@ -152,6 +151,7 @@ void Bm25TestCase::TestQueryNorms() {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -162,7 +162,7 @@ void Bm25TestCase::TestQueryNorms() {
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
     constexpr std::array kExpected{7, 3, 0, 1, 5};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     irs::ColumnArgsFetcher fetcher;
@@ -175,7 +175,7 @@ void Bm25TestCase::TestQueryNorms() {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -197,6 +197,7 @@ void Bm25TestCase::TestQueryNorms() {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -207,7 +208,7 @@ void Bm25TestCase::TestQueryNorms() {
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
     const auto expected = std::array{0, 7, 5, 3, 2, 1};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     irs::ColumnArgsFetcher fetcher;
@@ -220,7 +221,7 @@ void Bm25TestCase::TestQueryNorms() {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -315,7 +316,7 @@ TEST_P(Bm25TestCase, test_bm1_idf_only) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 analyzed_json_field_factory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -325,11 +326,11 @@ TEST_P(Bm25TestCase, test_bm1_idf_only) {
   ASSERT_EQ(irs::IndexFeatures::None, impl->GetIndexFeatures());
 
   auto index = open_reader(irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
 
   auto collect = [&](const irs::Filter& filter) {
     std::map<irs::doc_id_t, irs::score_t> scores;
-    tests::PreparedFilter prepared_filter{filter, *index, impl.get()};
+    tests::PreparedFilter prepared_filter{filter, index, impl.get()};
     irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
     auto score = docs->PrepareScore();
@@ -446,7 +447,7 @@ TEST_P(Bm25TestCase, test_phrase) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 analyzed_json_field_factory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -454,7 +455,7 @@ TEST_P(Bm25TestCase, test_phrase) {
 
   // read segment
   auto index = open_reader(irs::tests::DefaultReaderOptions());
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
   auto& segment = *(index.begin());
 
   // "jumps high" with order
@@ -474,7 +475,7 @@ TEST_P(Bm25TestCase, test_phrase) {
       "Q",   // jumps high jumps left jumps right jumps down walks back
       "R"};  // jumps high jumps left jumps right walks down walks back
 
-    tests::PreparedFilter prepared_filter{filter, *index, impl.get()};
+    tests::PreparedFilter prepared_filter{filter, index, impl.get()};
 
     irs::ColumnArgsFetcher fetcher;
 
@@ -490,8 +491,8 @@ TEST_P(Bm25TestCase, test_phrase) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      irs::BytesViewInput in;
-      in.reset(values.Get(docs->Value()));
+      duckdb::MemoryReader in;
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
       sorted.emplace(score_value, irs::ReadString<std::string>(in));
     }
 
@@ -533,7 +534,7 @@ TEST_P(Bm25TestCase, test_phrase) {
       "SPWLC3"};  // cookies cake pie biscuet marshmallows cake meringue
 
     tests::PreparedFilter prepared_filter{*Lower(std::move(filter), impl.get()),
-                                          *index, impl.get()};
+                                          index, impl.get()};
 
     irs::ColumnArgsFetcher fetcher;
 
@@ -549,8 +550,8 @@ TEST_P(Bm25TestCase, test_phrase) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      irs::BytesViewInput in;
-      in.reset(values.Get(docs->Value()));
+      duckdb::MemoryReader in;
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
       sorted.emplace(score_value, irs::ReadString<std::string>(in));
     }
 
@@ -580,13 +581,13 @@ TEST_P(Bm25TestCase, test_query) {
           doc.insert(std::move(field), false, true);
         }
       });
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreSeq());
   }
 
   irs::BM25 scorer{irs::BM25::K(), irs::BM25::B(), true};
 
-  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
   const auto* column = segment.Column(kSeq);
   ASSERT_NE(nullptr, column);
@@ -603,7 +604,7 @@ TEST_P(Bm25TestCase, test_query) {
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
     constexpr std::array kExpected{0, 1, 5, 7};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -615,7 +616,7 @@ TEST_P(Bm25TestCase, test_query) {
 
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -650,7 +651,7 @@ TEST_P(Bm25TestCase, test_query) {
         }
       });
     auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+      open_writer(tests::kOmCreate, irs::tests::DefaultWriterOptions());
     auto store_seq = StoreSeq();
     const Document* doc;
 
@@ -691,8 +692,7 @@ TEST_P(Bm25TestCase, test_query) {
       AssertSnapshotEquality(*writer);
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     irs::ByTerm filter;
     *filter.mutable_field_id() = kField;
     filter.mutable_options()->term =
@@ -704,7 +704,7 @@ TEST_P(Bm25TestCase, test_query) {
       5      // segment 1
     };
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     irs::ColumnArgsFetcher fetcher;
@@ -721,7 +721,7 @@ TEST_P(Bm25TestCase, test_query) {
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
-        in.reset(values.Get(docs->Value()));
+        in = duckdb::MemoryReader{values.Get(docs->Value())};
 
         auto str_seq = irs::ReadString<std::string>(in);
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -759,7 +759,7 @@ TEST_P(Bm25TestCase, test_query) {
         }
       });
     auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+      open_writer(tests::kOmCreate, irs::tests::DefaultWriterOptions());
     auto store_seq = StoreSeq();
     const Document* doc;
 
@@ -800,8 +800,7 @@ TEST_P(Bm25TestCase, test_query) {
       AssertSnapshotEquality(*writer);
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     irs::BooleanFilter filter;
     // doc 0, 2, 5
     filter.Add(
@@ -827,7 +826,7 @@ TEST_P(Bm25TestCase, test_query) {
       0, 2, 5  // same value in 3 documents
     };
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     irs::ColumnArgsFetcher fetcher;
@@ -844,7 +843,7 @@ TEST_P(Bm25TestCase, test_query) {
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
-        in.reset(values.Get(docs->Value()));
+        in = duckdb::MemoryReader{values.Get(docs->Value())};
 
         auto str_seq = irs::ReadString<std::string>(in);
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -881,7 +880,7 @@ TEST_P(Bm25TestCase, test_query) {
         }
       });
     auto writer =
-      open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+      open_writer(tests::kOmCreate, irs::tests::DefaultWriterOptions());
     auto store_seq = StoreSeq();
     const Document* doc;
 
@@ -922,11 +921,11 @@ TEST_P(Bm25TestCase, test_query) {
       AssertSnapshotEquality(*writer);
     }
 
-    auto reader =
-      irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+    auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
     irs::ByPrefix filter;
     *filter.mutable_field_id() = kPrefix;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->term =
       irs::ViewCast<irs::byte_type>(std::string_view(""));
 
@@ -938,7 +937,7 @@ TEST_P(Bm25TestCase, test_query) {
                // smaller tfidf() + reverse)
     };
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
 
     irs::ColumnArgsFetcher fetcher;
@@ -955,7 +954,7 @@ TEST_P(Bm25TestCase, test_query) {
         docs->FetchScoreArgs(0);
         irs::score_t score_value{};
         score.Score(&score_value, 1);
-        in.reset(values.Get(docs->Value()));
+        in = duckdb::MemoryReader{values.Get(docs->Value())};
 
         auto str_seq = irs::ReadString<std::string>(in);
         auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -979,6 +978,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -989,7 +989,7 @@ TEST_P(Bm25TestCase, test_query) {
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
     constexpr std::array kExpected{0, 1, 5, 7};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -1000,7 +1000,7 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1022,6 +1022,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("8"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1032,7 +1033,7 @@ TEST_P(Bm25TestCase, test_query) {
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
     constexpr std::array kExpected{3, 7};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -1043,7 +1044,7 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1065,6 +1066,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
@@ -1075,7 +1077,7 @@ TEST_P(Bm25TestCase, test_query) {
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
     constexpr std::array kExpected{7, 3, 0, 1, 5};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -1086,7 +1088,7 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1108,6 +1110,7 @@ TEST_P(Bm25TestCase, test_query) {
     irs::ByRange filter;
     *filter.mutable_field_id() = kField;
     filter.SetScorer(&scorer);
+    filter.mutable_options()->merge = irs::ScoreMergeType::Sum;
     filter.mutable_options()->range.min =
       irs::ViewCast<irs::byte_type>(std::string_view("6"));
     filter.mutable_options()->range.min_type = irs::BoundType::Inclusive;
@@ -1118,7 +1121,7 @@ TEST_P(Bm25TestCase, test_query) {
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
     constexpr std::array kExpected{7, 0, 5, 3, 2, 1};
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -1129,7 +1132,7 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1154,14 +1157,14 @@ TEST_P(Bm25TestCase, test_query) {
       irs::ViewCast<irs::byte_type>(std::string_view("7"));
 
     std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
-    std::vector<std::pair<float_t, uint32_t>> expected = {
+    std::vector<std::pair<float, uint32_t>> expected = {
       {-1, 0},
       {-1, 1},
       {-1, 5},
       {-1, 7},
     };
 
-    irs::BytesViewInput in;
+    duckdb::MemoryReader in;
     tests::PreparedFilter prepared_filter{filter, reader, &scorer};
     irs::ColumnArgsFetcher fetcher;
     auto docs = prepared_filter.ExecuteScored(0, fetcher);
@@ -1172,7 +1175,7 @@ TEST_P(Bm25TestCase, test_query) {
       docs->FetchScoreArgs(0);
       irs::score_t score_value{};
       score.Score(&score_value, 1);
-      in.reset(values.Get(docs->Value()));
+      in = duckdb::MemoryReader{values.Get(docs->Value())};
 
       auto str_seq = irs::ReadString<std::string>(in);
       auto seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1305,11 +1308,11 @@ TEST_P(Bm25TestCase, test_order) {
           doc.insert(std::move(field), false, true);
         }
       });
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreSeq());
   }
 
-  auto reader = irs::DirectoryReader(dir(), irs::tests::DefaultReaderOptions());
+  auto reader = tests::OpenReader(dir(), irs::tests::DefaultReaderOptions());
   auto& segment = *(reader.begin());
 
   irs::ByTerm query;
@@ -1334,7 +1337,7 @@ TEST_P(Bm25TestCase, test_order) {
         std::multimap<irs::score_t, uint32_t, std::greater<>> sorted;
         constexpr std::array kExpected{0, 1, 5, 7};
 
-        irs::BytesViewInput in;
+        duckdb::MemoryReader in;
         query.SetBoost(boost);
         tests::PreparedFilter prepared{query, reader, &sort};
         irs::ColumnArgsFetcher fetcher;
@@ -1346,7 +1349,7 @@ TEST_P(Bm25TestCase, test_order) {
           irs::score_t score_value{};
           score.Score(&score_value, 1);
 
-          in.reset(values.Get(docs->Value()));
+          in = duckdb::MemoryReader{values.Get(docs->Value())};
 
           auto str_seq = irs::ReadString<std::string>(in);
           seq = strtoull(str_seq.c_str(), nullptr, 10);
@@ -1363,7 +1366,7 @@ TEST_P(Bm25TestCase, test_order) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 TEST_P(Bm25TestCase, test_query_norms) { TestQueryNorms(); }
 

@@ -58,7 +58,7 @@ SELECT i AS id,
 FROM range(200000, 400000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) vecs;
+VACUUM (FLUSH_TABLE) vecs;
 
 statement ok
 SET GLOBAL memory_limit = '48MB';
@@ -66,7 +66,7 @@ SET GLOBAL memory_limit = '48MB';
 statement error
 VACUUM (COMPACT_INDEX) vecs_hnsw;
 ----
-db error: ERROR: compact_index: compaction failed: compaction of search store <slt:ignore> failed: failed to reserve memory data of size <slt:ignore>
+db error: ERROR: compact_index: compaction failed: compaction of table <slt:ignore> failed: failed to reserve memory data of size <slt:ignore>
 
 
 statement ok

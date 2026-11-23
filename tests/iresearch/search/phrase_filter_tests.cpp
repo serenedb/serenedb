@@ -93,8 +93,9 @@ class CapturingScorer final : public irs::Scorer {
   void Target(BlockAttrs& attrs) noexcept { _attrs = &attrs; }
 
   void collect(irs::byte_type* stats, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final {
-    _impl.collect(stats, field, term);
+               const irs::TermCollector* term,
+               irs::StatsArena& arena) const final {
+    _impl.collect(stats, field, term, arena);
   }
 
   irs::IndexFeatures GetIndexFeatures() const final {
@@ -132,7 +133,7 @@ class CapturingScorer final : public irs::Scorer {
 class TermOrderScorer final : public irs::ScorerBase<TermOrderScorer, void> {
  public:
   void collect(irs::byte_type*, const irs::FieldCollector*,
-               const irs::TermCollector* term) const final {
+               const irs::TermCollector* term, irs::StatsArena&) const final {
     if (term != nullptr) {
       docs_with_term.push_back(term->docs_with_term);
     }
@@ -207,7 +208,7 @@ TEST_P(PhraseFilterTestCase, sequential_one_term) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -2153,7 +2154,7 @@ TEST_P(PhraseFilterTestCase, sequential_three_terms) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -4090,7 +4091,7 @@ TEST_P(PhraseFilterTestCase, sequential_several_terms) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -5914,7 +5915,7 @@ TEST_P(PhraseFilterTestCase, interval_several_terms) {
   {
     tests::JsonDocGenerator gen(resource("phrase_interval.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -6868,7 +6869,7 @@ TEST_P(PhraseFilterTestCase, fuzzy_slot_scale_varies_by_term) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
   auto rdr = open_reader();
@@ -7469,7 +7470,7 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(phrase_filter_test, PhraseFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),
@@ -7479,7 +7480,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_two_terms) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -7746,7 +7747,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_reversal) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -7841,7 +7842,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_three_terms) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8037,7 +8038,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_four_terms) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8110,7 +8111,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_prefix_and_wildcard) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8177,7 +8178,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_variadic) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8292,7 +8293,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_edge_cases) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8423,7 +8424,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_explicit_gap) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
   auto rdr = open_reader(irs::tests::DefaultReaderOptions());
@@ -8492,7 +8493,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_scoring) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8561,7 +8562,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_seek_interleave) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8622,7 +8623,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_count) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8653,13 +8654,13 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_two_segments) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8703,7 +8704,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_variadic_scoring) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8797,7 +8798,7 @@ TEST_P(PhraseFilterTestCase, interval_combinations) {
   {
     tests::JsonDocGenerator gen(resource("phrase_interval.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -8967,7 +8968,7 @@ TEST_P(PhraseFilterTestCase, interval_execute_with_offsets) {
   {
     tests::JsonDocGenerator gen(resource("phrase_interval.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -9052,7 +9053,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_execute_with_offsets) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -9130,7 +9131,7 @@ TEST_P(PhraseFilterTestCase, sloppy_phrase_variadic_execute_with_offsets) {
   {
     tests::JsonDocGenerator gen(resource("phrase_sequential.json"),
                                 &tests::AnalyzedJsonFieldFactory);
-    add_segment(gen, irs::kOmCreate, irs::tests::DefaultWriterOptions(),
+    add_segment(gen, tests::kOmCreate, irs::tests::DefaultWriterOptions(),
                 StoreName());
   }
 
@@ -9236,7 +9237,7 @@ class OverlapField : public tests::FieldBase {
   std::string_view Value() const final { return _value; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   std::string _value{"foo"};
   irs::analysis::Tokenizer::ptr _stream;
@@ -9446,7 +9447,7 @@ class RepeatOverlapField : public tests::FieldBase {
   std::string_view Value() const final { return {}; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   static constexpr std::array<FixedTokensStream::Token, 3> kTokens{{
     {"foo", 1, 0, 3},
@@ -9635,7 +9636,7 @@ class OverlapPrefixField : public tests::FieldBase {
   std::string_view Value() const final { return _value; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   std::string _value{"foo"};
   irs::analysis::Tokenizer::ptr _stream;
@@ -9739,7 +9740,7 @@ class VariadicOverlapField : public tests::FieldBase {
   std::string_view Value() const final { return {}; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   static constexpr std::array<FixedTokensStream::Token, 3> kTokens{{
     {"aa", 1, 0, 2},

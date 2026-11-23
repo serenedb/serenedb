@@ -20,22 +20,26 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <duckdb.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <span>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -43,6 +47,7 @@
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
 #include "engine_context.h"
+#include "index/test_index_writer.hpp"
 
 namespace sdb::test {
 
@@ -83,7 +88,7 @@ inline uint64_t IdOf(const irs::SubReader& segment) {
   return id;
 }
 
-inline uint32_t IndexOf(const irs::DirectoryReader& snapshot, uint64_t id) {
+inline uint32_t IndexOf(const irs::CompositeReader& snapshot, uint64_t id) {
   for (uint32_t index = 0; index != snapshot.size(); ++index) {
     if (IdOf(snapshot[index]) == id) {
       return index;
@@ -93,53 +98,52 @@ inline uint32_t IndexOf(const irs::DirectoryReader& snapshot, uint64_t id) {
   return 0;
 }
 
+inline std::string MemoryRoot(std::string_view name) {
+  static constinit std::atomic<uint64_t> gNext{0};
+  return absl::StrCat("memory://", name, "/",
+                      gNext.fetch_add(1, std::memory_order_relaxed));
+}
+
 inline std::vector<std::pair<uint64_t, irs::doc_id_t>> RemovedDocs(
   const irs::DocRemoval& removal) {
   std::vector<std::pair<uint64_t, irs::doc_id_t>> docs;
   for (const auto& group : removal.groups) {
-    group.docs.ForEachRun(nullptr,
-                          [&](irs::doc_id_t first, irs::doc_id_t last) {
-                            for (auto doc = first; doc < last; ++doc) {
-                              docs.emplace_back(group.segment, doc);
-                            }
-                            return true;
-                          });
+    irs::DocumentMask::Cursor cursor{group.docs};
+    std::array<irs::doc_id_t, 64> batch;
+    while (const auto count = cursor.Read(batch)) {
+      for (const auto doc : std::span{batch}.first(count)) {
+        docs.emplace_back(group.segment, doc);
+      }
+    }
   }
   return docs;
 }
 
-inline irs::DirectoryReader BuildOneRowSegments(irs::MemoryDirectory& dir) {
-  irs::IndexWriterOptions options;
-  options.db = &EngineDb();
-  options.reader_options.db = &EngineDb();
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(options));
-  for (int64_t value = 0; value != 8; ++value) {
-    auto trx = writer->GetBatch(/*exclusive_segment=*/true);
-    WriteValues(trx, std::array{value});
-    EXPECT_TRUE(trx.Commit());
-    writer->RefreshCommit();
-  }
-  return writer->GetSnapshot();
-}
-
 struct OneRowIndex {
-  OneRowIndex() : reader{BuildOneRowSegments(dir)} {}
-
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{EngineDb(), MemoryRoot("one_row_segments")};
+  irs::CompositeReader reader = [this] {
+    auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate, {});
+    for (int64_t value = 0; value != 8; ++value) {
+      auto trx = writer->GetBatch();
+      WriteValues(trx.Native(), std::array{value});
+      EXPECT_TRUE(trx.Commit());
+      writer->RefreshCommit();
+    }
+    return writer->GetSnapshot();
+  }();
 };
 
 inline std::unique_ptr<OneRowIndex> gOneRowIndex;
 
-inline const irs::DirectoryReader& OneRowSegments() {
-  if (!gOneRowIndex) {
-    gOneRowIndex = std::make_unique<OneRowIndex>();
-  }
+inline const irs::CompositeReader& OneRowSegments() {
   return gOneRowIndex->reader;
 }
 
 class OneRowSegmentsTest : public ::testing::Test {
  protected:
+  static void SetUpTestSuite() {
+    gOneRowIndex = std::make_unique<OneRowIndex>();
+  }
   static void TearDownTestSuite() { gOneRowIndex.reset(); }
 };
 

@@ -272,7 +272,7 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
             .record_size = static_cast<uint32_t>(_sq.code_size)};
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(duckdb::WriteStream& out, const float* vecs, size_t n) final {
     if (_codes.empty()) {
       _codes.resize(kEncodeTile * _sq.code_size);
     }
@@ -288,11 +288,11 @@ class ScalarQuantizerWriter final : public QuantizerWriter {
     return true;
   }
 
-  void Finish(IndexOutput& /*out*/) final {}
+  void Finish(duckdb::WriteStream& /*out*/) final {}
 
-  void Serialize(DataOutput& out) const final {
+  void Serialize(duckdb::WriteStream& out) const final {
     const auto bytes = FloatSpan(_sq.trained);
-    out.WriteU64(bytes.size());
+    out.Write<uint64_t>(bytes.size());
     if (!bytes.empty()) {
       out.WriteData(bytes.data(), bytes.size());
     }
@@ -700,8 +700,8 @@ class ScalarQuantizerReader : public QuantizerReader {
       return;
     }
     double var = weighted / 12.0;
-    if (_fast && _weights.int_ip()) {
-      const double unit = uniform ? vdiff[0] / 255.0 : 1.0;
+    if (const double unit = uniform ? vdiff[0] / 255.0 : 1.0;
+        _fast && _weights.int_ip() && unit > 0) {
       const double t = _weights.int_dot_scale / unit;
       const double mid = _weights.int_sum_scale / unit;
       double rounding = 0;

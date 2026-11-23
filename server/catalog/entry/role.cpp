@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -31,7 +30,7 @@
 #include <utility>
 
 #include "auth/role_closure.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/cluster.h"
 #include "network/credentials.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
@@ -65,12 +64,11 @@ std::string StoredPassword(std::string_view password) {
 }
 
 duckdb::idx_t GrantorOfMembership(duckdb::ClientContext& context) {
-  auto* session = connector::GetSereneDBContextPtr(context);
-  if (!session ||
-      auth::ClosureFor(&context, session->GetRoleId())->is_superuser) {
+  const auto role = ConnectionContext::Get(context).GetRoleId();
+  if (auth::ClosureFor(&context, role)->is_superuser) {
     return pg::kRootUser;
   }
-  return session->GetRoleId();
+  return role;
 }
 
 RoleCatalogEntry::RoleCatalogEntry(duckdb::Catalog& catalog,
@@ -125,9 +123,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   auto& alter = info.Cast<duckdb::AlterRoleInfo>();
   if (!alter.new_name.empty()) {
     RequireUnreservedRoleName(alter.new_name);
-    auto* session = connector::GetSereneDBContextPtr(context);
-    if (session &&
-        (oid == session->GetRoleId() || oid == session->GetSessionRoleId())) {
+    const auto& session = ConnectionContext::Get(context);
+    if (oid == session.GetRoleId() || oid == session.GetSessionRoleId()) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
                       ERR_MSG("session user cannot be renamed"));
     }
@@ -144,9 +141,9 @@ duckdb::unique_ptr<duckdb::CatalogEntry> RoleCatalogEntry::AlterEntry(
   }
   if (!alter.grant_role.empty() && alter.grant_role_id == 0) {
     const duckdb::Identifier granted{alter.grant_role};
-    auto target = catalog.Cast<duckdb::DuckCatalog>()
-                    .GetCatalogSet(duckdb::CatalogType::ROLE_ENTRY)
-                    .GetEntry(catalog.GetCatalogTransaction(context), granted);
+    auto target = catalog.Cast<ClusterCatalog>()
+                    .Set(duckdb::CatalogType::ROLE_ENTRY)
+                    .Get(catalog.GetCatalogTransaction(context), granted);
     if (!target) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),

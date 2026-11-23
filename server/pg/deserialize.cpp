@@ -52,6 +52,7 @@
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <icu-zone-lut.hpp>
+#include <iresearch/utils/dispatch.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -239,8 +240,7 @@ struct JsonBin {
 struct BlobBin {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    sink.Blob(
-      duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())});
+    sink.Blob(duckdb::string_t::Unsafe(data));
     return true;
   }
 };
@@ -914,8 +914,7 @@ struct BlobText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     if (!data.contains('\\')) {
-      sink.Blob(
-        duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())});
+      sink.Blob(duckdb::string_t::Unsafe(data));
       return true;
     }
     return sink.ByteaText(data);
@@ -1077,8 +1076,7 @@ struct HugeintText {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     duckdb::hugeint_t result;
     if (!duckdb::TryCast::Operation<duckdb::string_t, duckdb::hugeint_t>(
-          duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())},
-          result, /*strict=*/true)) {
+          duckdb::string_t::Unsafe(data), result, /*strict=*/true)) {
       return false;
     }
     sink.Fixed(result);
@@ -1091,8 +1089,7 @@ struct UhugeintText {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     duckdb::uhugeint_t result;
     if (!duckdb::TryCast::Operation<duckdb::string_t, duckdb::uhugeint_t>(
-          duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())},
-          result, /*strict=*/true)) {
+          duckdb::string_t::Unsafe(data), result, /*strict=*/true)) {
       return false;
     }
     sink.Fixed(result);
@@ -1110,8 +1107,7 @@ struct DecimalText {
     duckdb::CastParameters params(/*strict=*/true, nullptr);
     Phys result;
     if (!duckdb::TryCastToDecimal::Operation<duckdb::string_t, Phys>(
-          duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())},
-          result, params, width, scale)) {
+          duckdb::string_t::Unsafe(data), result, params, width, scale)) {
       return false;
     }
     sink.template Decimal<Phys>(result, width, scale);
@@ -1128,8 +1124,7 @@ struct CastText {
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     T result;
     if (!duckdb::TryCast::Operation<duckdb::string_t, T>(
-          duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())},
-          result, /*strict=*/true)) {
+          duckdb::string_t::Unsafe(data), result, /*strict=*/true)) {
       return false;
     }
     sink.Fixed(result);
@@ -1160,8 +1155,8 @@ struct EnumCore {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     const auto& type = sink.Type();
-    const auto pos = duckdb::EnumType::GetPos(
-      type, duckdb::string_t{data.data(), static_cast<uint32_t>(data.size())});
+    const auto pos =
+      duckdb::EnumType::GetPos(type, duckdb::string_t::Unsafe(data));
     if (pos < 0) {
       return false;
     }
@@ -1278,31 +1273,9 @@ struct RegText {
 
 template<typename Sink>
 DeserializationFunction<Sink> RegTextDecoder(RegKind kind) {
-  switch (kind) {
-    case RegKind::Proc:
-      return &RegText<RegKind::Proc>::template Decode<Sink>;
-    case RegKind::Procedure:
-      return &RegText<RegKind::Procedure>::template Decode<Sink>;
-    case RegKind::Oper:
-      return &RegText<RegKind::Oper>::template Decode<Sink>;
-    case RegKind::Operator:
-      return &RegText<RegKind::Operator>::template Decode<Sink>;
-    case RegKind::Class:
-      return &RegText<RegKind::Class>::template Decode<Sink>;
-    case RegKind::Type:
-      return &RegText<RegKind::Type>::template Decode<Sink>;
-    case RegKind::Collation:
-      return &RegText<RegKind::Collation>::template Decode<Sink>;
-    case RegKind::Config:
-      return &RegText<RegKind::Config>::template Decode<Sink>;
-    case RegKind::Dictionary:
-      return &RegText<RegKind::Dictionary>::template Decode<Sink>;
-    case RegKind::Role:
-      return &RegText<RegKind::Role>::template Decode<Sink>;
-    case RegKind::Namespace:
-      return &RegText<RegKind::Namespace>::template Decode<Sink>;
-  }
-  SDB_UNREACHABLE();
+  return irs::Resolve(kind, [&]<RegKind K> -> DeserializationFunction<Sink> {
+    return &RegText<K>::template Decode<Sink>;
+  });
 }
 
 struct DefaultBin {
@@ -2556,9 +2529,9 @@ DeserializationFunction<Sink> GetDeserialization(
                              Nested<DeserializeTextRange>, Sink>(binary);
       }
       if (const auto geometric = GeometricOf(type)) {
-        return VisitGeometric(*geometric, [&]<Geometric kKind>() {
-          return SelectDecoder<Nested<DeserializeBinaryGeometric<kKind>>,
-                               Nested<DeserializeTextGeometric<kKind>>, Sink>(
+        return irs::Resolve(*geometric, [&]<Geometric Kind>() {
+          return SelectDecoder<Nested<DeserializeBinaryGeometric<Kind>>,
+                               Nested<DeserializeTextGeometric<Kind>>, Sink>(
             binary);
         });
       }

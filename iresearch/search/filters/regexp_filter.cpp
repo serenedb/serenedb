@@ -21,9 +21,7 @@
 #include "regexp_filter.hpp"
 
 #include "iresearch/search/detail/term_acceptor.hpp"
-#include "iresearch/search/filters/automaton_filter.hpp"
-#include "iresearch/search/filters/prefix_filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/search/filters/field_target.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 
@@ -35,35 +33,18 @@ QueryBuilder::ptr ByRegexp::PrepareSegment(const SubReader&,
     ERR_MSG("ByRegexp must be lowered by the optimizer before prepare"));
 }
 
-Filter::ptr LowerRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
-                        RegexpSyntax syntax, score_t boost, bool bytes) {
+Filter::ptr LowerRegexp(irs::field_id id, DictRef dict,
+                        const ByRegexpOptions& options, score_t boost) {
+  const FieldTarget target{
+    .id = id, .dict = dict, .boost = boost, .merge = options.merge};
   bstring buf;
   return ExecuteRegexp(
-    buf, pattern,
-    [&](bytes_view term) -> Filter::ptr {
-      auto filter = std::make_unique<ByTerm>();
-      *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
-      filter->mutable_options()->term = term;
-      filter->SetBoost(boost);
-      return filter;
-    },
-    [&](bytes_view prefix) -> Filter::ptr {
-      auto filter = std::make_unique<ByPrefix>();
-      *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
-      filter->mutable_options()->term = prefix;
-      filter->SetBoost(boost);
-      return filter;
-    },
-    [&](bytes_view pattern) -> Filter::ptr {
-      auto filter = std::make_unique<AutomatonFilter>();
-      *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
-      *filter->mutable_options() =
-        AutomatonOptions{pattern, RegexpPattern(syntax, bytes)};
-      filter->SetBoost(boost);
-      return filter;
+    buf, options.pattern, options.syntax,
+    [&](bytes_view term) { return target.Term(term); },
+    [&](bytes_view prefix) { return target.Prefix(prefix); },
+    [&](bytes_view pattern) {
+      return target.Automaton(pattern,
+                              RegexpPattern(options.syntax, options.bytes));
     });
 }
 
@@ -82,7 +63,7 @@ Filter::ptr CreateByRegexp(irs::field_id id, DictRef dict, bytes_view pattern,
 TermPredicate::ptr ByRegexp::CompileTermPredicate() const {
   bstring buf;
   return ExecuteRegexp(
-    buf, options().pattern,
+    buf, options().pattern, options().syntax,
     [](bytes_view term) -> TermPredicate::ptr {
       return MakeTermPredicate(
         [term = bstring{term}](bytes_view key) { return key == term; });

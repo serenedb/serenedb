@@ -43,10 +43,6 @@ statement ok
 CREATE INDEX and_score_idx ON and_score USING inverted(id, body en_and_score);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) and_score;
-
-
 # A multi-term match, scored on its own. This is the reference value.
 
 query

@@ -54,7 +54,7 @@ Size the thread pool of the whole instance to `4` threads:
 
 ### Threads
 
-What `threads` changes depends on the scope it is set in. `SET GLOBAL threads` sizes the pool of worker threads the whole instance runs queries on. A session value (`SET threads`, `SET SESSION threads`) or a transaction value (`SET LOCAL threads`) leaves the pool alone and caps how many of its threads each query of that session or transaction runs on; a cap larger than the pool has no effect until the pool grows. `SHOW threads` returns the cap when one is set and the pool size otherwise. `RESET threads` drops the session's cap, `RESET GLOBAL threads` sizes the pool back to its default.
+What `threads` changes depends on the scope it is set in. `SET GLOBAL threads` sizes the pool of worker threads the whole instance runs queries on. The pool holds at most `1024` threads: a larger `SET GLOBAL threads` is an error, and on a machine with more CPU cores the pool starts with `1024`. A session value (`SET threads`, `SET SESSION threads`) or a transaction value (`SET LOCAL threads`) leaves the pool alone and caps how many of its threads each query of that session or transaction runs on; a cap larger than the pool has no effect until the pool grows. `SHOW threads` returns the cap when one is set and the pool size otherwise. `RESET threads` drops the session's cap, `RESET GLOBAL threads` sizes the pool back to the size the server started with.
 
 Run the queries of one transaction on at most `2` threads:
 
@@ -78,7 +78,7 @@ Run the I/O of one transaction's queries without async tasks:
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram2" />
 
-The `RESET` statement changes the given SereneDB configuration option to the default value.
+The `RESET` statement returns the given SereneDB configuration option to the value the session started with: the value the client set when it connected, as a connection parameter such as `application_name` or in `options`, and otherwise the server-wide value. `RESET GLOBAL` returns the server-wide value to the one the server started with. `RESET ALL` resets every option of the session except `role` and `session_authorization`.
 
 ## Scopes
 

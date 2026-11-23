@@ -21,6 +21,7 @@
 #include <faiss/impl/ScalarQuantizer.h>
 #include <faiss/utils/random.h>
 
+#include <cmath>
 #include <core_functions/array_kernels.hpp>
 #include <limits>
 #include <numbers>
@@ -658,7 +659,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     return _lay.BlockSetting();
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(duckdb::WriteStream& out, const float* vecs, size_t n) final {
     SDB_ASSERT(_centroid.size() == _lay.rd);
     for (size_t i = 0; i < n; ++i) {
       if (_lay.row_major) {
@@ -694,7 +695,7 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     return out;
   }
 
-  void Finish(IndexOutput& out) final {
+  void Finish(duckdb::WriteStream& out) final {
     if (!_lay.row_major && _lane != 0) {
       WriteGroup(out, _lane);
     }
@@ -704,15 +705,15 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     return _lay.row_major ? 0U : static_cast<uint32_t>(_lane);
   }
 
-  void Serialize(DataOutput& out) const final {
-    out.WriteU64(sizeof(TurboQuantStatsHeader));
-    WritePod(out, TurboQuantStatsHeader{
-                    .layout = kTurboQuantLayout,
-                    .bits_hi = static_cast<uint8_t>(_bits.hi),
-                    .bits_lo = static_cast<uint8_t>(_bits.lo),
-                    .full = static_cast<uint8_t>(_bits.full ? 1 : 0),
-                    .d = _lay.d,
-                    .seed = kIvfRotationSeed});
+  void Serialize(duckdb::WriteStream& out) const final {
+    out.Write<uint64_t>(sizeof(TurboQuantStatsHeader));
+    out.Write(
+      TurboQuantStatsHeader{.layout = kTurboQuantLayout,
+                            .bits_hi = static_cast<uint8_t>(_bits.hi),
+                            .bits_lo = static_cast<uint8_t>(_bits.lo),
+                            .full = static_cast<uint8_t>(_bits.full ? 1 : 0),
+                            .d = _lay.d,
+                            .seed = kIvfRotationSeed});
   }
 
   VectorQuantization Kind() const noexcept final {
@@ -825,20 +826,20 @@ class TurboQuantizerWriter final : public QuantizerWriter {
     std::memcpy(dst + _lay.RowBiasOffset(), &_bias[0], sizeof(float));
   }
 
-  void WriteRecord(IndexOutput& out, const float* vec) {
+  void WriteRecord(duckdb::WriteStream& out, const float* vec) {
     _record.resize(_lay.record_size);
     PackRecord(_record.data(), vec);
     out.WriteData(_record.data(), _lay.record_size);
   }
 
-  void WriteFloats(IndexOutput& out, std::array<float, kFastScanBbs>& v,
+  void WriteFloats(duckdb::WriteStream& out, std::array<float, kFastScanBbs>& v,
                    size_t count) {
     std::fill_n(v.data() + count, kFastScanBbs - count, 0.f);
     out.WriteData(reinterpret_cast<const byte_type*>(v.data()),
                   kFastScanBbs * sizeof(float));
   }
 
-  void WriteGroup(IndexOutput& out, size_t count) {
+  void WriteGroup(duckdb::WriteStream& out, size_t count) {
     faiss::pq4_pack_codes(_code1.data(), count, _lay.m1, kFastScanBbs,
                           kFastScanBbs, _lay.nsq1, _packed1.data(),
                           _lay.code1_bytes);
@@ -1050,7 +1051,7 @@ class TurboQuantizerCodebook final : public QuantizerCodebook {
     _qi.resize(lay.rd);
     for (uint32_t j = 0; j < lay.rd; ++j) {
       _qi[j] = static_cast<int8_t>(
-        std::clamp(std::nearbyint(_rot_query[j] * scale_q), -127.f, 127.f));
+        std::clamp<int64_t>(std::lrint(_rot_query[j] * scale_q), -127, 127));
     }
     const bool uniform = lay.bits_hi == lay.bits_lo;
     _nsegs = uniform ? 1 : 2;
@@ -1394,8 +1395,8 @@ class TurboQuantizerReader : public QuantizerReader {
       return;
     }
     SDB_ASSERT(_cluster);
-    _cc = ComputeDistance<VectorMetric::InnerProduct>(
-      _cluster, _cluster, static_cast<uint16_t>(_lay.d));
+    _cc =
+      ComputeDistance<VectorMetric::InnerProduct>(_cluster, _cluster, _lay.d);
     const TurboQuantCentroids& tc = _cb->Stats().Centroids();
     const size_t segs = _lay.bits_hi == _lay.bits_lo ? 1 : 2;
 #ifdef __AVX2__
@@ -1705,13 +1706,13 @@ class TurboQuantizerReader : public QuantizerReader {
     }
     const std::span<const float> query = _cur->Query();
     const float qc_sq = -ComputeDistance<VectorMetric::L2Sqr>(
-      query.data(), _cluster, static_cast<uint16_t>(query.size()));
+      query.data(), _cluster, query.size());
     _qc_norm = std::sqrt(std::max(0.f, qc_sq));
     if constexpr (M == VectorMetric::L2Sqr) {
       _qc = qc_sq;
     } else {
-      _qc = ComputeDistance<VectorMetric::InnerProduct>(
-        query.data(), _cluster, static_cast<uint16_t>(query.size()));
+      _qc = ComputeDistance<VectorMetric::InnerProduct>(query.data(), _cluster,
+                                                        query.size());
     }
   }
 

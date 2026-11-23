@@ -23,6 +23,8 @@
 #include <absl/functional/function_ref.h>
 
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/buffered_file_writer.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <memory>
 #include <string>
@@ -36,10 +38,9 @@
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/store/directory.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/tracked.hpp"
@@ -53,8 +54,7 @@ AnnFlushBound AnnBound(const AnnInfo& info, uint64_t rows);
 
 class ColWriter final {
  public:
-  ColWriter(Directory& dir, std::string_view segment_name,
-            duckdb::DatabaseInstance& db);
+  ColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
@@ -67,7 +67,24 @@ class ColWriter final {
   void SetBudget(MemoryBudget& budget) noexcept { _budget = &budget; }
   MemoryBudget& Budget() const noexcept { return *_budget; }
 
-  static constexpr size_t kSealBound = 2 * DEFAULT_BLOCK_ALLOC_SIZE;
+  static constexpr size_t kSealBound =
+    2 * duckdb::Storage::MAX_BLOCK_ALLOC_SIZE;
+
+  void SetDeferredSeal(bool deferred) noexcept {
+    SDB_ASSERT(_columns.empty());
+    _deferred = deferred;
+  }
+
+  void SetRowGroupStarts(std::vector<uint64_t> starts) noexcept {
+    SDB_ASSERT(_columns.empty());
+    _row_group_starts = std::move(starts);
+  }
+
+  uint64_t RowGroupRows(uint64_t row, uint64_t uniform) const noexcept;
+
+  std::vector<StagedColumn> Snapshot(uint64_t rows) const;
+  std::vector<NormColumnSpec> SealNorms(uint64_t rows);
+  size_t StagedBytes() const noexcept;
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
@@ -75,9 +92,11 @@ class ColWriter final {
                            bool skip_validity, uint32_t row_group_size,
                            duckdb::CompressionType compression =
                              duckdb::CompressionType::COMPRESSION_AUTO,
-                           bool hyperloglog = false);
+                           DistinctStats distinct = DistinctStats::None);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
+
+  bool HasAnn(field_id column_id) const noexcept;
 
   void SetIdxWriter(IdxWriter& idx) noexcept;
 
@@ -89,6 +108,10 @@ class ColWriter final {
 
   AnnFlushBound AnnBound(uint64_t rows) const;
 
+  std::unique_ptr<ColReader> TakeReader() noexcept {
+    return std::move(_reader);
+  }
+
   bool Commit(uint64_t target_row);
   bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress);
 
@@ -99,7 +122,8 @@ class ColWriter final {
   void Rollback() noexcept;
 
   WriteContext& WriteCtx() const noexcept { return *_write_ctx; }
-  IndexOutput& Out() const noexcept { return *_out; }
+  duckdb::WriteStream& Out() const noexcept { return *_out; }
+  duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
 
  private:
   struct AnnEntry {
@@ -114,17 +138,17 @@ class ColWriter final {
   ColumnWriter& OpenColumnInternal(field_id id, duckdb::LogicalType type,
                                    bool skip_validity, uint32_t row_group_size,
                                    duckdb::CompressionType forced,
-                                   bool hyperloglog);
+                                   DistinctStats distinct);
 
-  Directory* _dir;
-  std::string _segment_name;
+  FileTracker& _tracker;
   std::string _filename;
   duckdb::DatabaseInstance* _db;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
   duckdb::TempBufferPoolReservation _own_budget{EmptyBudget()};
   MemoryBudget* _budget = &_own_budget;
-  IndexOutput::ptr _out;
+  std::unique_ptr<duckdb::BufferedFileWriter> _out;
+  std::unique_ptr<ColReader> _reader;
   std::unique_ptr<WriteContext> _write_ctx;
   std::vector<std::unique_ptr<ColumnWriter>> _columns;
   irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
@@ -132,7 +156,9 @@ class ColWriter final {
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
   std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
   irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
+  std::vector<uint64_t> _row_group_starts;
   bool _committed = false;
+  bool _deferred = false;
 };
 
 }  // namespace irs

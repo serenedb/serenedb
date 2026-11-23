@@ -25,15 +25,16 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <fstream>
+#include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/index/field_reader.hpp>
 #include <iresearch/formats/index/field_writer.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/index/idx_writer.hpp>
 #include <iresearch/formats/index/term_dict_root.hpp>
 #include <iresearch/index/index_meta.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/conjunction_acceptor.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_acceptor.hpp>
@@ -172,7 +173,7 @@ struct Data {
   std::vector<bstring> batches[std::size(kBatchKinds)][std::size(kBatchSizes)];
   std::vector<bytes_view> separators;
   irs::term_dict::Separators decoded;
-  std::unique_ptr<irs::MMapDirectory> dir;
+  std::string root;
   std::unique_ptr<irs::IdxReader> idx;
   std::unique_ptr<irs::term_dict::FieldReader> fields;
   const irs::TermReader* field = nullptr;
@@ -189,21 +190,23 @@ void Write(Data& data) {
     std::filesystem::temp_directory_path() / "serenedb-bench-term-dict-root";
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
-  data.dir = std::make_unique<irs::MMapDirectory>(path);
+  data.root = path.string();
   auto budget = irs::EmptyBudget();
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(db);
+  irs::FileTracker tracker{fs, data.root, "segment"};
   const irs::FlushState state{
-    .dir = data.dir.get(),
-    .name = "segment",
+    .tracker = tracker,
     .doc_count = data.keys.size(),
     .budget = budget,
   };
-  irs::IdxWriter idx{*data.dir, "segment"};
+  irs::IdxWriter idx{tracker};
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
-  writer.prepare(state, 1);
+  writer.prepare(state, 1, 0);
   writer.write(irs::StringLayout::kStrings, KeysReader{data.keys});
   writer.end();
-  idx.Commit();
+  idx.Commit(nullptr);
 }
 
 void Open(Data& data) {
@@ -212,10 +215,18 @@ void Open(Data& data) {
     meta.name = "segment";
     return meta;
   }()};
-  data.idx = std::make_unique<irs::IdxReader>(*data.dir, "segment", nullptr);
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(db);
+  data.idx =
+    std::make_unique<irs::IdxReader>(fs, data.root, "segment", true, nullptr);
   data.fields = std::make_unique<irs::term_dict::FieldReader>();
   data.fields->prepare(irs::ReaderState{
-    .dir = data.dir.get(), .meta = &kMeta, .idx = data.idx.get()});
+    .db = db,
+    .fs = fs,
+    .root = data.root,
+    .meta = kMeta,
+    .idx = data.idx.get(),
+  });
   data.field = data.fields->fields(1).front();
   const auto& impl =
     static_cast<const irs::term_dict::TermReaderImpl&>(*data.field);
@@ -546,7 +557,8 @@ void Fuzzy(benchmark::State& state, const std::string& base, uint8_t distance) {
   for (const auto& target : targets) {
     fuzzy.push_back(std::make_shared<const irs::LevenshteinAcceptor>(
       description, bytes_view{}, target));
-    dfas.push_back(irs::FuzzyConjunction::Make(fuzzy.back()));
+    dfas.push_back(
+      irs::FuzzyConjunctionOf<irs::LevenshteinAcceptor>::Make(fuzzy.back()));
   }
   size_t terms = 0;
   for (auto _ : state) {

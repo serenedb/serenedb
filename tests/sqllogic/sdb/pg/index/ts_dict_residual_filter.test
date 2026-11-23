@@ -15,9 +15,6 @@ statement ok
 SET compaction_interval = 0
 
 statement ok
-SET refresh_interval = 0
-
-statement ok
 CREATE TEXT SEARCH DICTIONARY rkw AS keyword() WITH (frequency)
 
 statement ok
@@ -28,7 +25,7 @@ CREATE TEXT SEARCH DICTIONARY rtx AS
 statement ok
 CREATE TABLE rbase(id INTEGER PRIMARY KEY, sev VARCHAR NOT NULL,
                    svc VARCHAR NOT NULL, region VARCHAR, tier VARCHAR,
-                   body VARCHAR NOT NULL)
+                   body VARCHAR NOT NULL) WITH (compaction_interval = 0)
 
 statement ok
 INSERT INTO rbase VALUES
@@ -43,7 +40,7 @@ INSERT INTO rbase VALUES
 
 statement ok
 CREATE INDEX rtab_idx ON rbase USING inverted(sev rkw, tier rkw, body rtx)
-    INCLUDE (svc, region) WITH (refresh_interval = 0, compaction_interval = 0)
+    INCLUDE (svc, region)
 
 statement ok
 CREATE VIEW rlog AS
@@ -52,10 +49,7 @@ FROM rbase
 
 statement ok
 CREATE INDEX rlog_idx ON rlog USING inverted(Sev rkw, Tier rkw, Body rtx)
-    INCLUDE (Svc, Region) WITH (refresh_interval = 0, compaction_interval = 0)
-
-statement ok
-VACUUM (REFRESH_TABLE) rbase;
+    INCLUDE (Svc, Region) WITH (compaction_interval = 0)
 
 # ==========================================================================
 # Table-backed index
@@ -78,6 +72,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -121,6 +116,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ──────────────╮                   │
 │ │ Field: body(string) │                   │
@@ -167,6 +163,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -210,6 +207,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -253,6 +251,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -292,6 +291,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -335,6 +335,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -378,6 +379,7 @@ QUERY PLAN
 ╰──────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Index: rtab_idx                     │
+│ Lookup: search                      │
 │ TsDict: tier                        │
 │ Projections:                        │
 │ sdb_inverted_index_term$tier,       │
@@ -421,6 +423,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -468,8 +471,8 @@ QUERY PLAN
 ╰──────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
 │ Index: rtab_idx                            │
-│ Lookup: table                              │
-│ Projections: svc (i), sev (l)              │
+│ Lookup: search                             │
+│ Projections: svc, sev                      │
 │ Column Filter:                             │
 │ optional: (svc IN ('frontend', 'backend')) │
 │ ~8 rows                                    │
@@ -724,9 +727,6 @@ ERROR	1
 statement ok
 DELETE FROM rbase WHERE id IN (1, 6)
 
-statement ok
-VACUUM (REFRESH_TABLE) rbase;
-
 # --- covered residual + deletions (Masked mode + Column Filter)
 query
 EXPLAIN SELECT sev, count(*) FROM rtab_idx WHERE svc = 'frontend' GROUP BY sev
@@ -744,6 +744,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ TsDict: sev                               │
 │ Projections:                              │
 │ sdb_inverted_index_term$sev,              │
@@ -787,6 +788,7 @@ QUERY PLAN
 ╰─────────────────────┬─────────────────────╯
 ╭─ IRESEARCH_SCAN ────┴─────────────────────╮
 │ Index: rtab_idx                           │
+│ Lookup: search                            │
 │ Index Filter:                             │
 │ ╭─ Term ──────────────╮                   │
 │ │ Field: body(string) │                   │
@@ -834,6 +836,7 @@ QUERY PLAN
 ╰──────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ─┴──────────────────╮
 │ Index: rtab_idx                     │
+│ Lookup: search                      │
 │ TsDict: tier                        │
 │ Projections:                        │
 │ sdb_inverted_index_term$tier,       │

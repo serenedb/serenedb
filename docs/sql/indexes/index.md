@@ -9,22 +9,25 @@ import RailroadSource from './diagram.js';
 
 import DocCallout from "@site/src/components/DocCallout";
 
-SereneDB supports two kinds of **secondary index**, each suited to a different access pattern: the Adaptive Radix Tree (ART) — the default index created by `CREATE INDEX` — enforces constraints and speeds up point lookups, while the inverted index powers full-text, vector and geospatial search.
+An index in SereneDB is an [inverted index](./inverted/index.md), on a table or on a view.
+
+`PRIMARY KEY`, `UNIQUE` and `FOREIGN KEY` constraints are enforced by the table itself and need no index. `CREATE UNIQUE INDEX` adds a unique key the same way.
 
 ## Index Types
 
 | Index | Created | Purpose |
 |---|---|---|
-| [Adaptive Radix Tree (ART)](./art.md) | Automatically for `PRIMARY KEY` / `UNIQUE`, or manually | Enforce constraints and speed up highly selective point queries |
-| [Inverted Index](./inverted/index.md) | Manually, with `USING inverted` | Full-text search, [vector / ANN search](./inverted/vector-search.md) and [geospatial search](./inverted/geospatial-search.md) |
+| [Inverted Index](./inverted/index.md) | With `CREATE INDEX` or `CREATE UNIQUE INDEX`, with or without `USING inverted` | Equality and range lookups, full-text search, [vector / ANN search](./inverted/vector-search.md) and [geospatial search](./inverted/geospatial-search.md) |
+
+The catalog lists the keys of `PRIMARY KEY` and `UNIQUE` constraints as indexes with the `inverted` access method.
 
 ## Persistence
 
-Both index types are persisted on disk.
+Indexes are persisted on disk.
 
 ## `CREATE INDEX` and `DROP INDEX`
 
-Indexes are created with `CREATE INDEX` and removed with `DROP INDEX`. The index type is selected with the `USING` clause (`USING inverted` for an inverted index); when omitted, an ART index is created. See [CREATE INDEX](../statements/create_index/index.md) for the full statement reference and [the inverted index pages](./inverted/index.md) for the `USING inverted` syntax.
+Indexes are created with `CREATE INDEX` and removed with `DROP INDEX`. `CREATE INDEX` creates an inverted index, with or without `USING inverted`; `USING btree` creates one too, and any other access method fails, for example with `access method "gin" does not exist`. See [CREATE INDEX](../statements/create_index/index.md) for the full statement reference and [the inverted index pages](./inverted/index.md) for the column dictionaries, `INCLUDE` columns and index options.
 
 ### `CREATE INDEX`
 

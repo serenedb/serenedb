@@ -27,15 +27,15 @@ A lambda parameter may appear any number of times. Nothing else is in scope, so 
 
 - `sql(): required option "expression" not given` — the option is missing.
 - `sql: expected exactly one expression` — the value holds more than one comma-separated expression.
-- `sql: <DuckDB parser message>` — the value does not parse as an expression.
+- `sql: <parser message>` — the value does not parse as an expression.
 - `"$1" is not available in an SQL stage` — any placeholder, positional or named; `column "input" is not available in an SQL stage` — the pseudo-column earlier versions used. Both were replaced by the implicit first argument and the lambda.
 - `sql: subqueries are not allowed` — a `SELECT` inside the expression.
 - `unknown stage "<name>"` — a call at a stage position whose name is neither a template nor a function of any catalog. The hint suggests the nearest template name when there is one, and points a call on a stored dictionary's name at the bare-name form.
-- `sql: function "<name>": only built-in functions are allowed` — the function is qualified with a catalog other than `system` or a schema other than `main`, or its name is not a scalar function, macro or aggregate of the system catalog. An unqualified name is resolved as `system.main.<name>`, which is why a user-defined macro is rejected whether it is qualified or not.
+- `sql: function "<name>": only built-in functions are allowed` — the function is qualified with a database or with a schema other than `pg_catalog`, or its name is not a built-in scalar function, macro or aggregate. An unqualified name is resolved among the built-in functions only, which is why a user-defined function is rejected whether it is qualified or not.
 - `sql: text-search function "<name>" is not allowed in a sql tokenizer expression (it would recurse into the tokenizer)` — any function whose name starts with `ts_`, anywhere in the expression, since calling one would re-enter the tokenizer.
 - `sql: volatile expressions are not allowed` — `random()::VARCHAR` and the like. The same value has to produce the same tokens every time.
 - `sql: expression must return VARCHAR, BLOB, or a list of them, got <type>` — `length()` reports `BIGINT`, `(lambda x: [length(x)])` reports `BIGINT[]`.
-- `sql: <DuckDB binder message>` — whatever else the binder refuses: an unknown column, a call whose argument types no overload of the function accepts, an aggregate, a window function. The wording mentions check constraints, because the expression is bound the way a `CHECK` constraint is.
+- `sql: <binder message>` — whatever else the binder refuses: an unknown column, a call whose argument types no overload of the function accepts, an aggregate, a window function. The wording mentions check constraints, because the expression is bound the way a `CHECK` constraint is.
 
 The template supports the `FREQUENCY`, `POSITION` and `NORM` [feature flags](./index.md#feature-flags). `OFFSET` is rejected with `Unsupported index features are specified: offset`, because an expression result carries no offsets back into the source value; a [`pipeline`](./pipeline/index.md) that contains a `sql` step loses offsets for the same reason.
 

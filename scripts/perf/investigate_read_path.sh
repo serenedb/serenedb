@@ -43,7 +43,7 @@ SETUP_SQL=$(sed "s/@N@/${ROWS}/g" "$(dirname "$0")/iresearch_sweep/cases/${CASE}
 echo "prepping $CASE/${ROWS}..."
 $PSQL <<<"$SETUP_SQL" >/dev/null
 $PSQL -c "CREATE INDEX sweep_idx ON sweep_t USING inverted(${_idx_clause});" >/dev/null
-$PSQL -c "VACUUM (REFRESH_TABLE) sweep_t;" >/dev/null
+$PSQL -c "VACUUM (FLUSH_TABLE) sweep_t;" >/dev/null
 
 # Build the multi-query script: N copies of the query
 HOT_SQL=""

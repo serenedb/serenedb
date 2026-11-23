@@ -24,12 +24,11 @@
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/config.hpp>
 #include <duckdb/storage/storage_extension.hpp>
-#include <filesystem>
+#include <duckdb/transaction/transaction_manager.hpp>
 #include <string>
 #include <string_view>
-#include <utility>
-#include <vector>
 
 namespace duckdb {
 
@@ -42,38 +41,30 @@ struct DBConfig;
 }  // namespace duckdb
 namespace sdb::catalog {
 
-struct DataDirectory final : duckdb::StorageExtensionInfo {
+struct DataDirectory {
   explicit DataDirectory(std::string directory);
 
-  std::filesystem::path EngineDir() const;
-  std::string CatalogLogFile() const;
-  std::filesystem::path DatabaseDir(duckdb::idx_t oid) const;
-  std::filesystem::path StorageDir(duckdb::idx_t database,
-                                   duckdb::idx_t oid) const;
-  std::string DatabaseFile(duckdb::idx_t oid) const;
+  bool InMemory() const noexcept { return directory.empty(); }
+  std::string LogDir() const;
+  std::string StoreDir() const;
 
   std::string directory;
+  std::string engine;
 };
-
-void RequestSereneDBStorageVersion(duckdb::AttachOptions& options);
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
             std::string_view type, duckdb::AccessMode access_mode,
-            duckdb::AttachVisibility visibility,
-            bool defer_storage_load = false);
+            duckdb::AttachVisibility visibility);
 
-duckdb::Catalog& AttachDatabaseCatalog(duckdb::ClientContext& context,
-                                       const duckdb::Identifier& name,
-                                       duckdb::idx_t oid);
+duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
+  duckdb::optional_ptr<duckdb::StorageExtensionInfo> info,
+  duckdb::AttachedDatabase& db, duckdb::Catalog& catalog);
 
-const DataDirectory& ClusterLayout(duckdb::AttachedDatabase& cluster);
+duckdb::InternalCatalog CreateInternalCatalog(duckdb::AttachedDatabase& db,
+                                              const DataDirectory& layout);
 
-std::vector<std::pair<duckdb::idx_t, std::filesystem::path>> OidDirectories(
-  const std::filesystem::path& directory);
+void InitCatalog(bool default_database, bool initialized);
 
-void RegisterClusterStorage(duckdb::DBConfig& config,
-                            duckdb::shared_ptr<DataDirectory> layout);
-
-void InitCatalog(std::string_view directory);
+void CloseLog();
 
 }  // namespace sdb::catalog

@@ -25,7 +25,6 @@
 #include <memory>
 #include <thread>
 
-#include "connector/duckdb_client_state.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
 
@@ -61,7 +60,8 @@ TEST(ProgressRegistryTest, RegisterSnapshotUnregister) {
   EXPECT_EQ(snap->user, "postgres");
   EXPECT_EQ(snap->database, "postgres");
   EXPECT_EQ(snap->backend_start_us, 123456);
-  EXPECT_EQ(snap->query_start_us, 0);
+  EXPECT_EQ(snap->status.state, BackendState::Idle);
+  EXPECT_EQ(snap->status.query_start_us, 0);
   EXPECT_EQ(snap->query, "");
   EXPECT_EQ(snap->percent, -1);
 
@@ -77,15 +77,92 @@ TEST(ProgressRegistryTest, QueryLifecycle) {
   auto snap = FindByPid(1002);
   ASSERT_TRUE(snap.has_value());
   EXPECT_EQ(snap->query, "SELECT 1");
-  EXPECT_GT(snap->query_start_us, 0);
+  EXPECT_EQ(snap->status.state, BackendState::Active);
+  EXPECT_GT(snap->status.query_start_us, 0);
+  EXPECT_EQ(snap->status.xact_start_us, snap->status.query_start_us);
+  EXPECT_EQ(snap->status.state_change_us, snap->status.query_start_us);
+  const auto started = snap->status.query_start_us;
 
-  source->EndQuery();
+  source->ReportIdle(BackendState::Idle);
   snap = FindByPid(1002);
   ASSERT_TRUE(snap.has_value());
-  // last statement text stays visible, only the start timestamp is cleared
   EXPECT_EQ(snap->query, "SELECT 1");
-  EXPECT_EQ(snap->query_start_us, 0);
+  EXPECT_EQ(snap->status.state, BackendState::Idle);
+  EXPECT_EQ(snap->status.query_start_us, started);
+  EXPECT_EQ(snap->status.xact_start_us, 0);
+  EXPECT_GE(snap->status.state_change_us, started);
 
+  ProgressRegistry::Instance().Unregister(source.get());
+}
+
+TEST(ProgressRegistryTest, TransactionBlockLifecycle) {
+  auto source = MakeSource(1007);
+  ProgressRegistry::Instance().Register(source);
+
+  source->BeginQuery("BEGIN");
+  source->ReportIdle(BackendState::IdleInTransaction);
+  auto snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  const auto began = snap->status.xact_start_us;
+  EXPECT_GT(began, 0);
+  EXPECT_EQ(snap->status.state, BackendState::IdleInTransaction);
+
+  source->BeginQuery("SELECT 1/0");
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_EQ(snap->status.state, BackendState::Active);
+  EXPECT_EQ(snap->status.xact_start_us, began);
+  EXPECT_GE(snap->status.query_start_us, began);
+
+  source->ReportIdle(BackendState::IdleInTransactionAborted);
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_EQ(snap->status.state, BackendState::IdleInTransactionAborted);
+  EXPECT_EQ(snap->status.xact_start_us, 0);
+
+  source->BeginQuery("ROLLBACK");
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_EQ(snap->status.state, BackendState::Active);
+  EXPECT_EQ(snap->status.xact_start_us, 0);
+  source->ReportIdle(BackendState::Idle);
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_EQ(snap->status.state, BackendState::Idle);
+  EXPECT_EQ(snap->status.xact_start_us, 0);
+  EXPECT_GE(snap->status.state_change_us, snap->status.query_start_us);
+
+  source->BeginQuery("SELECT 2");
+  snap = FindByPid(1007);
+  ASSERT_TRUE(snap.has_value());
+  EXPECT_EQ(snap->status.xact_start_us, snap->status.query_start_us);
+
+  ProgressRegistry::Instance().Unregister(source.get());
+}
+
+TEST(ProgressRegistryTest, SnapshotsNeverMixTwoStates) {
+  auto source = MakeSource(1008);
+  ProgressRegistry::Instance().Register(source);
+  std::atomic<bool> stop{false};
+  std::thread session{[&] {
+    while (!stop.load(std::memory_order_relaxed)) {
+      source->BeginQuery("BEGIN");
+      source->ReportIdle(BackendState::IdleInTransaction);
+      source->BeginQuery("COMMIT");
+      source->ReportIdle(BackendState::Idle);
+    }
+  }};
+  for (int i = 0; i < 2000; ++i) {
+    const auto snap = FindByPid(1008);
+    if (!snap) {
+      ADD_FAILURE() << "the session is not registered";
+      break;
+    }
+    EXPECT_EQ(snap->status.state == BackendState::Idle,
+              snap->status.xact_start_us == 0);
+  }
+  stop.store(true, std::memory_order_relaxed);
+  session.join();
   ProgressRegistry::Instance().Unregister(source.get());
 }
 
@@ -98,9 +175,8 @@ TEST(ProgressRegistryTest, BeginQueryResetsMetrics) {
   m.SetCommand(ProgressCommand::CopyFrom);
   m.SetIoType(ProgressIoType::Pipe);
   ProgressMetrics::Set(m.relid, 42);
-  ProgressMetrics::Add(m.tuples_processed, 100);
-  ProgressMetrics::Add(m.tuples_processed, 50);
-  ProgressMetrics::Add(m.bytes_processed, 4096);
+  m.AddTuples(100);
+  m.AddProcessed(50, 4096);
 
   auto snap = FindByPid(1003);
   ASSERT_TRUE(snap.has_value());
@@ -110,7 +186,7 @@ TEST(ProgressRegistryTest, BeginQueryResetsMetrics) {
   EXPECT_EQ(snap->tuples_processed, 150);
   EXPECT_EQ(snap->bytes_processed, 4096);
 
-  source->EndQuery();
+  source->ReportIdle(BackendState::Idle);
   source->BeginQuery("SELECT 1");
   snap = FindByPid(1003);
   ASSERT_TRUE(snap.has_value());
@@ -167,15 +243,15 @@ TEST(ProgressRegistryTest, DetachedSourceReportsNoDuckDBProgress) {
 TEST(ProgressRegistryTest,
      ClosedRegistrationDetachesBeforeTheConnectionIsDestroyed) {
   duckdb::DuckDB db{nullptr};
-  auto conn = std::make_unique<duckdb::Connection>(db);
-  auto& state = connector::SereneDBClientState::Register(
-    *conn->context,
-    std::make_shared<ConnectionContext>(*conn->context, "postgres",
-                                        std::string_view{}, 0, "memory", 0,
-                                        nullptr, 1006, nullptr),
-    true);
-  ProgressRegistration registration{state.progress_source};
-  state.progress_source->BeginQuery("SELECT 1");
+  auto conn = std::make_unique<duckdb::Connection>(
+    duckdb::make_shared_ptr<ConnectionContext>(
+      *db.instance, SessionIdentity{.user = "postgres",
+                                    .database = "memory",
+                                    .backend_pid = 1006,
+                                    .client_backend = true}));
+  auto& state = ConnectionContext::Get(*conn->context);
+  ProgressRegistration registration{state.ProgressSource()};
+  state.ProgressSource()->BeginQuery("SELECT 1");
 
   bool listed = false;
   std::atomic_bool snapshotted;

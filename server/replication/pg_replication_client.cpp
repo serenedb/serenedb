@@ -33,10 +33,8 @@
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/catalog_entry/subscription_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
-#include <duckdb/catalog/duck_catalog.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/execution/operator/helper/physical_set.hpp>
 #include <duckdb/main/attached_database.hpp>
@@ -53,11 +51,11 @@
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/data_table.hpp>
-#include <duckdb/transaction/duck_transaction.hpp>
 #include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <optional>
 #include <string_view>
@@ -68,10 +66,9 @@
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
 #include "catalog/entry/subscription.h"
-#include "connector/duckdb_client_state.h"
+#include "catalog/transaction.h"
 #include "network/asio_awaitable.h"
 #include "network/pg/wire_frames.h"
-#include "network/server.h"
 #include "pg/commands/create_subscription.h"
 #include "pg/connection_context.h"
 #include "pg/protocol.h"
@@ -79,6 +76,7 @@
 #include "pg/types/mapping.h"
 #include "replication/repl_source.h"
 #include "replication/settings.h"
+#include "runtime/runtime.h"
 
 namespace sdb::replication {
 namespace {
@@ -217,6 +215,7 @@ yaclib::Task<> PgReplicationClient::RunClient() {
       streaming = false;
     }
     streaming = streaming && co_await Guarded(StartReplication());
+    _streaming.store(streaming, std::memory_order_release);
     co_await RunJob(Job::Stream);
     if (streaming) {
       auto feedback = FeedbackLoop();
@@ -430,7 +429,7 @@ yaclib::Task<bool> PgReplicationClient::SyncParallel(size_t workers) {
   auto target = _target;
   _target.relations = std::move(relations);
   target.conninfo.hosts = {_host};
-  auto* pool = Server::instance().IoPool();
+  auto* pool = &Runtime::Get().IoPool();
   std::vector<duckdb::shared_ptr<TableSyncWorker>> sessions;
   std::vector<yaclib::Future<bool>> results;
   sessions.reserve(workers);
@@ -904,7 +903,7 @@ yaclib::Task<> PgReplicationClient::ReplicationLoop() {
   try {
     _setup_ok = SetupApplyConnection();
   } catch (const std::exception& ex) {
-    ApplyFailed(network::pg::ToSqlError(ex));
+    ApplyFailed(irs::pg::ToSqlError(ex));
   }
   _setup_done.Set();
   if (!_setup_ok) {
@@ -964,7 +963,7 @@ yaclib::Task<> PgReplicationClient::ReplicationLoop() {
         ok = co_await ApplyMessage(*message);
       }
     } catch (const std::exception& ex) {
-      ApplyFailed(network::pg::ToSqlError(ex));
+      ApplyFailed(irs::pg::ToSqlError(ex));
     }
     if (!ok) {
       _stream.Abort();
@@ -1076,7 +1075,7 @@ void PgReplicationClient::OnRelation(const RelationMessage& message) {
       .Scan(*this->_conn->context, duckdb::CatalogType::INDEX_ENTRY,
             [&](duckdb::CatalogEntry& entry) {
               const auto& index = entry.Cast<duckdb::IndexCatalogEntry>();
-              if (!index.IsUnique() || index.GetTableName() != table->name) {
+              if (!index.IsUnique() || index.table_oid != table->oid) {
                 return;
               }
               std::vector<std::string_view> names;
@@ -1204,7 +1203,7 @@ void PgReplicationClient::PushRemoteLsn(uint64_t end_lsn) {
     return;
   }
   if (auto* subscription = VisibleSubscription()) {
-    duckdb::DuckTransaction::Get(context, *_database)
+    catalog::SessionOf(context, _database->GetCatalog())
       .PushReplicationLsn(*subscription, end_lsn);
   }
 }
@@ -1391,8 +1390,7 @@ yaclib::Task<> PgReplicationClient::ApplyTruncate(
       }
     }
     for (size_t i = 0; message.cascade && i < tables.size(); ++i) {
-      for (auto& referencing :
-           duckdb::Binder::TruncateReferencingTables(context, tables[i])) {
+      for (auto& referencing : tables[i].get().ReferencingTables(context)) {
         add(referencing, referencing.get().permissions.owner);
       }
     }
@@ -1548,7 +1546,7 @@ yaclib::Task<bool> PgReplicationClient::RunBatch() {
   try {
     affected = co_await RunPrepared(*statement);
   } catch (const std::exception& ex) {
-    error = network::pg::ToSqlError(ex);
+    error = irs::pg::ToSqlError(ex);
   }
   if (!affected) {
     if (error.errcode == ERRCODE_UNIQUE_VIOLATION && shape.op != 'D') {

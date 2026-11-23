@@ -122,16 +122,19 @@ statement ok
 ALTER INDEX deadinside_renamed RENAME TO deadinside;
 
 
-# pudge is a table that pudge_view depends on. PostgreSQL refuses ALTER INDEX
-# on a table (relation "pudge" does not exist); here the rename is refused
-# because a view depends on the table. Either way it does not happen.
-statement error
+statement ok
 ALTER INDEX pudge RENAME TO pudge_tmp;
+
+
+query
+SELECT count(*) AS n FROM pudge_view;
 ----
-db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.
-table macro function "clickclack" depends on table "pudge".
-view "pudge_view" depends on table "pudge".
-Drop the dependent entries first and recreate them after the change.
+n
+0
+
+
+statement ok
+ALTER TABLE pudge_tmp RENAME TO pudge;
 
 
 
@@ -203,37 +206,37 @@ db error: ERROR: Macro Function with name nonexistent does not exist!
 statement error
 ALTER TABLE pudge RENAME TO invoker;
 ----
-db error: ERROR: Could not rename "pudge" to "invoker": another entry with this name already exists!
+db error: ERROR: relation "invoker" already exists
 
 
 statement error
 ALTER VIEW pudge_view RENAME TO pudge;
 ----
-db error: ERROR: Could not rename "pudge_view" to "pudge": another entry with this name already exists!
+db error: ERROR: relation "pudge" already exists
 
 
 statement error
 ALTER INDEX deadinside RENAME TO pudge;
 ----
-db error: ERROR: Could not rename "deadinside" to "pudge": another entry with this name already exists!
+db error: ERROR: relation "pudge" already exists
 
 
 statement error
 ALTER TABLE pudge RENAME TO pudge;
 ----
-db error: ERROR: Could not rename "pudge" to "pudge": another entry with this name already exists!
+db error: ERROR: relation "pudge" already exists
 
 
 statement error
 ALTER VIEW pudge_view RENAME TO pudge_view;
 ----
-db error: ERROR: Could not rename "pudge_view" to "pudge_view": another entry with this name already exists!
+db error: ERROR: relation "pudge_view" already exists
 
 
 statement error
 ALTER FUNCTION clickclack RENAME TO clickclack;
 ----
-db error: ERROR: Could not rename "clickclack" to "clickclack": another entry with this name already exists!
+db error: ERROR: function "clickclack" already exists
 
 
 statement error
@@ -243,18 +246,27 @@ db error: ERROR: Macro Function with name pudge does not exist!
 <slt:ignore>
 
 
-# pudge_view and deadinside depend on pudge. Duckdb's views and indexes keep the
-# base column by name, so DependencyManager::AlterObject refuses RENAME COLUMN under
-# a dependent (only index dependents are allowed through), the same refusal the
-# table and view renames above pin. PG allows it because its dependents hold the
-# column number.
-statement error
+# pudge_view, clickclack and deadinside depend on pudge and follow the column
+# through its renames.
+statement ok
 ALTER TABLE pudge RENAME COLUMN a TO a_renamed;
+
+
+query
+SELECT count(*) AS n FROM pudge_view;
 ----
-db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.
-table macro function "clickclack" depends on table "pudge".
-view "pudge_view" depends on table "pudge".
-Drop the dependent entries first and recreate them after the change.
+n
+0
+
+
+query
+SELECT * FROM clickclack();
+----
+a	b
+
+
+statement ok
+ALTER TABLE pudge RENAME COLUMN a_renamed TO a;
 
 
 query
@@ -287,10 +299,7 @@ db error: ERROR: Table with name nonexistent does not exist!
 statement error
 ALTER TABLE pudge RENAME COLUMN a TO a;
 ----
-db error: ERROR: Cannot alter entry "pudge" because there are entries that depend on it.
-table macro function "clickclack" depends on table "pudge".
-view "pudge_view" depends on table "pudge".
-Drop the dependent entries first and recreate them after the change.
+db error: ERROR: column "a" of relation "pudge" already exists
 
 
 statement ok
@@ -302,11 +311,53 @@ ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO constr_test_positiv
 statement error
 ALTER TABLE constr_test RENAME CONSTRAINT constr_test_pos TO something;
 ----
-db error: ERROR: constraint "constr_test_pos" of table "constr_test" does not exist
+db error: ERROR: constraint "constr_test_pos" of relation "constr_test" does not exist
 
 
 statement ok
 ALTER TABLE constr_test RENAME CONSTRAINT constr_test_positive TO constr_test_pos;
+
+
+statement ok
+CREATE TABLE constr_dup (id INT PRIMARY KEY, a INT CHECK (a > 0), CONSTRAINT constr_dup_named CHECK (a < 100));
+
+
+statement error
+ALTER TABLE constr_dup RENAME CONSTRAINT constr_dup_named TO constr_dup_a_check;
+----
+db error: ERROR: constraint "constr_dup_a_check" for relation "constr_dup" already exists
+
+
+statement error
+ALTER TABLE constr_dup ADD CONSTRAINT constr_dup_named CHECK (a < 50);
+----
+db error: ERROR: constraint "constr_dup_named" for relation "constr_dup" already exists
+
+
+statement error
+ALTER TABLE constr_dup ADD CONSTRAINT constr_dup_pkey CHECK (a < 50);
+----
+db error: ERROR: constraint "constr_dup_pkey" for relation "constr_dup" already exists
+
+
+statement error
+CREATE TABLE constr_dup2 (a INT CONSTRAINT constr_dup2_c CHECK (a > 0), b INT CONSTRAINT constr_dup2_c CHECK (b > 0));
+----
+db error: ERROR: constraint "constr_dup2_c" for relation "constr_dup2" already exists
+
+
+query
+SELECT conname FROM pg_constraint WHERE conrelid = 'constr_dup'::regclass ORDER BY conname;
+----
+conname
+constr_dup_a_check
+constr_dup_id_not_null
+constr_dup_named
+constr_dup_pkey
+
+
+statement ok
+DROP TABLE constr_dup;
 
 
 statement ok
@@ -363,9 +414,8 @@ statement ok
 DROP TABLE pudge;
 
 
-# A column no dependent view or table function reads can be renamed or
-# retyped; one they read is refused with the dependents listed. A function an
-# index expression calls can't be renamed: the expression names it.
+# A column a dependent view reads can be renamed; the view follows. A function
+# an index expression calls can't be renamed: the expression names it.
 statement ok
 CREATE TABLE arc(a INT, b INT, c INT);
 
@@ -382,12 +432,19 @@ statement ok
 ALTER TABLE arc ALTER COLUMN c TYPE BIGINT;
 
 
-statement error
+statement ok
 ALTER TABLE arc RENAME COLUMN a TO a2;
+
+
+statement ok
+INSERT INTO arc VALUES (1, 2, 3);
+
+
+query
+SELECT * FROM arc_v;
 ----
-db error: ERROR: Cannot alter entry "arc" because there are entries that depend on it.
-view "arc_v" depends on table "arc".
-Drop the dependent entries first and recreate them after the change.
+a
+1
 
 
 statement ok
@@ -405,13 +462,39 @@ CREATE INDEX arc_ft_idx ON arc_ft ((arc_f(a)));
 statement error
 ALTER FUNCTION arc_f RENAME TO arc_f2;
 ----
-db error: ERROR: Cannot alter entry "arc_f" because there are entries that depend on it.
-index "arc_ft_idx" depends on macro function "arc_f".
-Drop the dependent entries first and recreate them after the change.
+db error: ERROR: cannot rename macro function "arc_f" because other objects depend on it
+DETAIL: index "arc_ft_idx" depends on it by name
+
+
+statement ok
+CREATE SCHEMA arc_s;
+
+
+statement ok
+CREATE FUNCTION arc_s.arc_sf(x INT) RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT x + 1';
+
+
+statement ok
+CREATE INDEX arc_ft_sidx ON arc_ft ((arc_s.arc_sf(a)));
+
+
+statement error
+ALTER SCHEMA arc_s RENAME TO arc_s2;
+----
+db error: ERROR: cannot rename macro function "arc_sf" because other objects depend on it
+DETAIL: index "arc_ft_sidx" depends on it by name
+
+
+statement count 1
+INSERT INTO arc_ft VALUES (1);
 
 
 statement ok
 DROP TABLE arc_ft;
+
+
+statement ok
+DROP SCHEMA arc_s CASCADE;
 
 
 statement ok

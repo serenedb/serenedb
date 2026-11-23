@@ -72,7 +72,7 @@ inline AnchorFreqs::ptr MakeAnchorFreqs(PlanMemory& memory,
     return nullptr;
   }
   const auto& field = query.Reader();
-  return ResolveInput(*DocOf(field), [&]<typename Input> -> AnchorFreqs::ptr {
+  return Resolve(*DocOf(field), [&]<typename Input> -> AnchorFreqs::ptr {
     return memory.Make<AnchorFreqs, AnchorFreqsOf<Input>>(
       *meta, query.Segment(), field);
   });

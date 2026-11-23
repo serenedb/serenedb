@@ -26,17 +26,19 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/inverter/columnar_readers.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <string>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "postings_cursor.hpp"
+#include "test_index_writer.hpp"
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
@@ -1145,9 +1147,10 @@ TEST(InverterPipelineTest, DenseAfterExplicitDoc) {
 namespace {
 
 TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
-  MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   constexpr field_id kKeyword = 1;
@@ -1197,10 +1200,9 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
   }
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(reader);
-  ASSERT_EQ(3, reader->docs_count());
-  const auto& segment = (*reader)[0];
+  auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(3, reader.docs_count());
+  const auto& segment = (reader)[0];
 
   const auto* keyword_reader = segment.field(kKeyword);
   ASSERT_NE(nullptr, keyword_reader);
@@ -1251,9 +1253,10 @@ TEST(InverterEndToEndTest, InsertKeywordAndTokensThroughWriter) {
 }
 
 TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
-  MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   constexpr field_id kFreq3 = 1;
@@ -1300,10 +1303,9 @@ TEST(InverterEndToEndTest, TermCrossingScatterBlockBoundary) {
   }
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(reader);
-  ASSERT_EQ(kFreq1Docs, reader->docs_count());
-  const auto& segment = (*reader)[0];
+  auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+  ASSERT_EQ(kFreq1Docs, reader.docs_count());
+  const auto& segment = (reader)[0];
 
   {
     const auto* field = segment.field(kFreq3);
@@ -1357,9 +1359,10 @@ bool InsertNullIfAny(const IndexWriter::Document& doc, field_id id,
 }
 
 TEST(InverterEndToEndTest, NullBlockUvfAllValidMaskCreatesNoField) {
-  MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   constexpr field_id kKeyword = 1;
@@ -1391,17 +1394,17 @@ TEST(InverterEndToEndTest, NullBlockUvfAllValidMaskCreatesNoField) {
   }
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(reader);
-  const auto& segment = (*reader)[0];
+  auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+  const auto& segment = (reader)[0];
   ASSERT_NE(nullptr, segment.field(kKeyword));
   ASSERT_EQ(nullptr, segment.field(kNull, StringLayout::kNulls));
 }
 
 TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
-  MemoryDirectory dir;
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   constexpr field_id kKeyword = 1;
@@ -1458,9 +1461,8 @@ TEST(InverterEndToEndTest, NullBlockUvfInvalidRows) {
   }
   ASSERT_TRUE(writer->RefreshCommit());
 
-  auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-  ASSERT_TRUE(reader);
-  const auto& segment = (*reader)[0];
+  auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+  const auto& segment = (reader)[0];
 
   const auto* keyword_reader = segment.field(kKeyword);
   ASSERT_NE(nullptr, keyword_reader);
@@ -2280,9 +2282,10 @@ TEST(InverterEndToEndTest, EmptyPositionalFieldWritesNoStreams) {
     IndexFeatures::Freq | IndexFeatures::Pos | IndexFeatures::Offs;
 
   const auto run_case = [&](bool text_tokens) {
-    MemoryDirectory dir;
-    auto writer =
-      IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+    ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                          TestEnv::MemoryRoot()};
+    auto writer = ::tests::IndexWriter::Make(
+      dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     auto batch = std::make_unique<TokenBatch>();
     {
@@ -2314,9 +2317,8 @@ TEST(InverterEndToEndTest, EmptyPositionalFieldWritesNoStreams) {
     }
     ASSERT_TRUE(writer->RefreshCommit());
 
-    auto reader = DirectoryReader(dir, irs::tests::DefaultReaderOptions());
-    ASSERT_TRUE(reader);
-    const auto& segment = (*reader)[0];
+    auto reader = ::tests::OpenReader(dir, irs::tests::DefaultReaderOptions());
+    const auto& segment = (reader)[0];
     ASSERT_NE(nullptr, segment.field(kKeyword));
     const auto* text = segment.field(kText);
     EXPECT_EQ(text_tokens, text != nullptr);
@@ -2325,11 +2327,10 @@ TEST(InverterEndToEndTest, EmptyPositionalFieldWritesNoStreams) {
     }
     bool has_pos = false;
     bool has_pay = false;
-    ASSERT_TRUE(dir.visit([&](std::string_view name) {
+    for (const auto& name : dir.Files()) {
       has_pos |= name.ends_with(".pos");
       has_pay |= name.ends_with(".pay");
-      return true;
-    }));
+    }
     EXPECT_EQ(text_tokens, has_pos);
     EXPECT_EQ(text_tokens, has_pay);
   };

@@ -18,7 +18,7 @@
 /// Copyright holder is ArangoDB GmbH, Cologne, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
@@ -26,12 +26,12 @@
 #include <iresearch/search/filters/geo_filter.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "geo_test_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
@@ -91,7 +91,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
   };
 
   void collect(irs::byte_type* stats, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final {
+               const irs::TermCollector* term, irs::StatsArena&) const final {
     if (collector_finish) {
       collector_finish(stats, field, term);
     }
@@ -409,13 +409,14 @@ TEST(GeoDistanceFilterTest, query) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
 
   // index data
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::IndexWriter::Make(
+      dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -448,10 +449,9 @@ TEST(GeoDistanceFilterTest, query) {
     reader = writer->GetSnapshot();
   }
 
-  ASSERT_NE(nullptr, reader);
-  ASSERT_EQ(2U, reader->size());
-  ASSERT_EQ(docs.size(), reader->docs_count());
-  ASSERT_EQ(docs.size(), reader->live_docs_count());
+  ASSERT_EQ(2U, reader.size());
+  ASSERT_EQ(docs.size(), reader.docs_count());
+  ASSERT_EQ(docs.size(), reader.live_docs_count());
 
   auto execute_query = [&reader](GeoDistanceFilter q,
                                  const std::vector<uint64_t>& costs) {
@@ -460,9 +460,9 @@ TEST(GeoDistanceFilterTest, query) {
     auto optimized = ::tests::Optimized(std::move(q));
 
     std::optional<::tests::PreparedFilter> prepared{std::in_place, *optimized,
-                                                    *reader, nullptr};
+                                                    reader, nullptr};
     auto expected_cost = costs.begin();
-    for (size_t i = 0; auto& segment : *reader) {
+    for (size_t i = 0; auto& segment : reader) {
       const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
@@ -898,13 +898,14 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
 
   // index data
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::IndexWriter::Make(
+      dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -937,16 +938,15 @@ TEST(GeoDistanceFilterTest, checkScorer) {
     reader = writer->GetSnapshot();
   }
 
-  ASSERT_NE(nullptr, reader);
-  ASSERT_EQ(2, reader->size());
-  ASSERT_EQ(docs.size(), reader->docs_count());
-  ASSERT_EQ(docs.size(), reader->live_docs_count());
+  ASSERT_EQ(2, reader.size());
+  ASSERT_EQ(docs.size(), reader.docs_count());
+  ASSERT_EQ(docs.size(), reader.live_docs_count());
 
   auto execute_query = [&](const irs::Filter& q, const irs::Scorer& ord) {
     std::map<std::string, irs::score_t> actual_results;
 
-    ::tests::PreparedFilter prepared{q, *reader, &ord};
-    for (size_t i = 0; [[maybe_unused]] auto& segment : *reader) {
+    ::tests::PreparedFilter prepared{q, reader, &ord};
+    for (size_t i = 0; [[maybe_unused]] auto& segment : reader) {
       const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};

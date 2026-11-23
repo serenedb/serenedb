@@ -14,9 +14,6 @@ INSERT INTO jes VALUES
     (3, '{"t":"standardizations\t\"bar\""}'),
     (4, '{"t":"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nbar"}');
 
-statement ok
-VACUUM (REFRESH_TABLE) jes;
-
 query
 SELECT id FROM jes_idx WHERE (doc->'t') @@ 'internationalization' ORDER BY id;
 ----

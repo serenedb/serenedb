@@ -28,6 +28,7 @@
 #include <utility>
 #include <variant>
 
+#include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/search/queries/nested_query.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 
@@ -90,7 +91,7 @@ QueryBuilder::ptr ByNestedFilter::PrepareSegment(
   child_ctx.boost = sub_boost;
   child_ctx.collector = compound ? compound->Child(0) : nullptr;
 
-  auto prepared_child = child->PrepareSegment(segment, child_ctx);
+  auto prepared_child = PrepareFilter(*child, segment, child_ctx);
 
   if (!prepared_child) {
     return QueryBuilder::Empty();

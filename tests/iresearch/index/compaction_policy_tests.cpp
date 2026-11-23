@@ -21,10 +21,12 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
-#include <iresearch/index/composite_reader_impl.hpp>
+#include <absl/algorithm/container.h>
+
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <vector>
 
 #include "tests_shared.hpp"
 
@@ -61,7 +63,7 @@ namespace {
     for (auto* segment : sorted_candidates) {
       auto& meta = segment->Meta();
       std::cerr << meta.byte_size << " ("
-                << double_t(meta.live_docs_count) / meta.docs_count << "), ";
+                << double(meta.live_docs_count) / meta.docs_count << "), ";
     }
     std::cerr << "\n";
 
@@ -88,8 +90,6 @@ void AssertCandidates(const irs::IndexReader& reader,
 class SubReaderMock final : public irs::SubReader {
  public:
   explicit SubReaderMock(const irs::SegmentInfo meta) : _meta{meta} {}
-
-  uint64_t CountMappedMemory() const final { return 0; }
 
   const irs::SegmentInfo& Meta() const final { return _meta; }
 
@@ -132,38 +132,31 @@ class SubReaderMock final : public irs::SubReader {
   irs::SegmentInfo _meta;
 };
 
-class IndexReaderMock final
-  : public irs::CompositeReaderImpl<std::vector<SubReaderMock>> {
+using Segments = std::vector<irs::SegmentInfo>;
+
+class IndexReaderMock final : public irs::IndexReader {
  public:
-  explicit IndexReaderMock(const irs::IndexMeta& meta)
-    : IndexReaderMock{Init{meta}} {}
+  explicit IndexReaderMock(const Segments& segments)
+    : _readers{segments.begin(), segments.end()} {
+    for (const auto& segment : segments) {
+      _docs += segment.docs_count;
+      _live += segment.live_docs_count;
+    }
+  }
+  uint64_t live_docs_count() const final { return _live; }
+  uint64_t docs_count() const final { return _docs; }
+  const irs::SubReader& operator[](size_t i) const final { return _readers[i]; }
+  size_t size() const final { return _readers.size(); }
 
  private:
-  struct Init {
-    explicit Init(const irs::IndexMeta& meta) {
-      readers.reserve(meta.segments.size());
-
-      for (const auto& segment : meta.segments) {
-        readers.emplace_back(segment.meta);
-        docs_count += segment.meta.docs_count;
-        live_docs_count += segment.meta.live_docs_count;
-      }
-    }
-
-    std::vector<SubReaderMock> readers;
-    uint64_t docs_count{};
-    uint64_t live_docs_count{};
-  };
-
-  explicit IndexReaderMock(Init&& init) noexcept
-    : irs::CompositeReaderImpl<std::vector<SubReaderMock>>{
-        std::move(init.readers), init.live_docs_count, init.docs_count} {}
+  std::vector<SubReaderMock> _readers;
+  uint64_t _docs = 0;
+  uint64_t _live = 0;
 };
 
-void AddSegment(irs::IndexMeta& meta, std::string_view name,
-                irs::doc_id_t docs_count, irs::doc_id_t live_docs_count,
-                size_t size) {
-  auto& segment = meta.segments.emplace_back().meta;
+void AddSegment(Segments& meta, std::string_view name, irs::doc_id_t docs_count,
+                irs::doc_id_t live_docs_count, size_t size) {
+  auto& segment = meta.emplace_back();
   segment.name = name;
   segment.docs_count = docs_count;
   segment.live_docs_count = live_docs_count;
@@ -173,7 +166,7 @@ void AddSegment(irs::IndexMeta& meta, std::string_view name,
 }  // namespace
 
 TEST(CompactionTierTest, MaxCompactSize) {
-  irs::IndexMeta meta;
+  Segments meta;
   for (size_t i = 0; i < 22; ++i) {
     AddSegment(meta, std::to_string(i), 1, 1, 1);
   }
@@ -252,7 +245,7 @@ TEST(CompactionTierTest, MaxCompactSize) {
 }
 
 TEST(CompactionTierTest, EmptyMeta) {
-  irs::IndexMeta meta;
+  Segments meta;
   IndexReaderMock reader{meta};
 
   irs::index_utils::CompactionTier options;
@@ -269,7 +262,7 @@ TEST(CompactionTierTest, EmptyMeta) {
 }
 
 TEST(CompactionTierTest, EmptyCompactingSegment) {
-  irs::IndexMeta meta;
+  Segments meta;
   AddSegment(meta, "empty", 1, 0, 1);
   IndexReaderMock reader{meta};
 
@@ -287,7 +280,7 @@ TEST(CompactionTierTest, EmptyCompactingSegment) {
 }
 
 TEST(CompactionTierTest, EmptySegment) {
-  irs::IndexMeta meta;
+  Segments meta;
   AddSegment(meta, "empty", 0, 0, 1);
   IndexReaderMock reader{meta};
 
@@ -306,7 +299,7 @@ TEST(CompactionTierTest, EmptySegment) {
 
 TEST(CompactionTierTest, MaxCompactionCount) {
   // generate meta
-  irs::IndexMeta meta;
+  Segments meta;
   for (size_t i = 0; i < 22; ++i) {
     AddSegment(meta, std::to_string(i), 1, 1, 1);
   }
@@ -456,7 +449,7 @@ TEST(CompactionTierTest, MaxCompactionCount) {
 
 TEST(CompactionTierTest, MinCompactionCount) {
   // generate meta
-  irs::IndexMeta meta;
+  Segments meta;
   for (size_t i = 0; i < 22; ++i) {
     AddSegment(meta, std::to_string(i), 1, 1, 1);
   }
@@ -618,7 +611,7 @@ TEST(CompactionTierTest, MinCompactionCount) {
 
 TEST(CompactionTierTest, CompactFloor) {
   // generate meta
-  irs::IndexMeta meta;
+  Segments meta;
   {
     size_t i = 0;
     for (; i < 5; ++i) {
@@ -708,7 +701,7 @@ TEST(CompactionTierTest, CompactFloor) {
 
 TEST(CompactionTierTest, PreferSegmentsWithRemovals) {
   // generate meta
-  irs::IndexMeta meta;
+  Segments meta;
   AddSegment(meta, "0", 10, 10, 10);
   AddSegment(meta, "1", 10, 10, 10);
   AddSegment(meta, "2", 11, 10, 11);
@@ -759,7 +752,7 @@ TEST(CompactionTierTest, Singleton) {
   // singleton compaction without removals
   {
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 150);
     IndexReaderMock reader{meta};
 
@@ -774,7 +767,7 @@ TEST(CompactionTierTest, Singleton) {
   // singleton compaction with removals
   {
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 99, 150);
     IndexReaderMock reader{meta};
 
@@ -800,6 +793,78 @@ TEST(CompactionTierTest, Singleton) {
   }
 }
 
+TEST(CompactionTierTest, SingletonWaitsForEnoughRemovals) {
+  irs::index_utils::CompactionTier options;
+  options.floor_segment_bytes = 1;
+  options.max_segments = std::numeric_limits<size_t>::max();
+  options.min_segments = 1;
+  options.max_segments_bytes = std::numeric_limits<size_t>::max();
+  options.min_singleton_removals = 0.2;
+  auto policy = irs::index_utils::MakePolicy(options);
+
+  struct Case {
+    irs::doc_id_t live;
+    bool rewritten;
+  };
+  for (const auto& c :
+       {Case{99, false}, Case{81, false}, Case{80, true}, Case{10, true}}) {
+    SCOPED_TRACE(c.live);
+    irs::CompactingSegments compacting_segments;
+    Segments meta;
+    AddSegment(meta, "0", 100, c.live, 150);
+    IndexReaderMock reader{meta};
+    irs::Compaction candidates;
+    policy(candidates, reader, compacting_segments);
+    if (c.rewritten) {
+      AssertCandidates(reader, {0}, candidates);
+    } else {
+      ASSERT_TRUE(candidates.empty());
+    }
+  }
+
+  Segments meta;
+  AddSegment(meta, "0", 100, 99, 150);
+  AddSegment(meta, "1", 100, 100, 150);
+  IndexReaderMock reader{meta};
+  irs::CompactingSegments compacting_segments;
+  irs::Compaction candidates;
+  policy(candidates, reader, compacting_segments);
+  AssertCandidates(reader, {0, 1}, candidates);
+}
+
+TEST(CompactionTierTest, LargestShareKeepsBigSegmentsOutOfSmallMerges) {
+  irs::index_utils::CompactionTier options;
+  options.floor_segment_bytes = 10;
+  options.max_segments = 10;
+  options.min_segments = 1;
+  options.max_segments_bytes = std::numeric_limits<size_t>::max();
+  const auto merged = [&](std::vector<size_t> sizes) {
+    Segments meta;
+    for (size_t i = 0; i != sizes.size(); ++i) {
+      AddSegment(meta, std::to_string(i), 100, 100, sizes[i]);
+    }
+    IndexReaderMock reader{meta};
+    irs::CompactingSegments compacting_segments;
+    irs::Compaction candidates;
+    irs::index_utils::MakePolicy(options)(candidates, reader,
+                                          compacting_segments);
+    sizes.clear();
+    for (const auto* candidate : candidates) {
+      sizes.push_back(candidate->Meta().byte_size);
+    }
+    absl::c_sort(sizes);
+    return sizes;
+  };
+  using Sizes = std::vector<size_t>;
+  EXPECT_EQ((Sizes{30, 710}), merged({30, 710}));
+  options.max_largest_share = 0.5;
+  EXPECT_EQ((Sizes{}), merged({30, 710}));
+  EXPECT_EQ((Sizes{30, 30}), merged({30, 30, 710}));
+  EXPECT_EQ((Sizes{500, 500}), merged({500, 500}));
+  EXPECT_EQ((Sizes{300, 400, 500}), merged({300, 400, 500}));
+  EXPECT_EQ((Sizes{1, 2, 3}), merged({1, 2, 3, 700}));
+}
+
 TEST(CompactionTierTest, Defaults) {
   irs::index_utils::CompactionTier options;
   auto policy = irs::index_utils::MakePolicy(options);
@@ -807,7 +872,7 @@ TEST(CompactionTierTest, Defaults) {
   {
     irs::CompactingSegments compacting_segments;
 
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 150);
     AddSegment(meta, "1", 100, 100, 100);
     AddSegment(meta, "2", 100, 100, 100);
@@ -839,7 +904,7 @@ TEST(CompactionTierTest, Defaults) {
 
   {
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 150);
     AddSegment(meta, "1", 100, 100, 100);
     AddSegment(meta, "2", 100, 100, 100);
@@ -886,7 +951,7 @@ TEST(CompactionTierTest, NoCandidates) {
   auto policy = irs::index_utils::MakePolicy(options);
 
   irs::CompactingSegments compacting_segments;
-  irs::IndexMeta meta;
+  Segments meta;
   AddSegment(meta, "0", 100, 100, 141747);
   AddSegment(meta, "1", 100, 100, 1548373791);
   AddSegment(meta, "2", 100, 100, 1699787770);
@@ -912,7 +977,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     auto policy = irs::index_utils::MakePolicy(options);
 
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 10);
     AddSegment(meta, "1", 100, 100, 40);
     AddSegment(meta, "2", 100, 100, 60);
@@ -971,7 +1036,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     auto policy = irs::index_utils::MakePolicy(options);
 
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 10);
     AddSegment(meta, "1", 100, 100, 100);
     AddSegment(meta, "2", 100, 100, 500);
@@ -1024,7 +1089,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     auto policy = irs::index_utils::MakePolicy(options);
 
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 10);
     AddSegment(meta, "1", 100, 100, 100);
     AddSegment(meta, "2", 100, 100, 500);
@@ -1073,7 +1138,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     auto policy = irs::index_utils::MakePolicy(options);
 
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 10);
     AddSegment(meta, "1", 100, 100, 100);
     AddSegment(meta, "2", 100, 100, 500);
@@ -1124,7 +1189,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     auto policy = irs::index_utils::MakePolicy(options);
 
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 10);
     AddSegment(meta, "1", 100, 100, 100);
     AddSegment(meta, "2", 100, 100, 500);
@@ -1183,7 +1248,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     auto policy = irs::index_utils::MakePolicy(options);
 
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 1);
     AddSegment(meta, "1", 100, 100, 9886);
     IndexReaderMock reader{meta};
@@ -1225,7 +1290,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     auto policy = irs::index_utils::MakePolicy(options);
 
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 1);
     AddSegment(meta, "1", 100, 100, 9886);
     IndexReaderMock reader{meta};
@@ -1251,7 +1316,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     auto policy = irs::index_utils::MakePolicy(options);
 
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 1);
     AddSegment(meta, "1", 100, 100, 9886);
     AddSegment(meta, "2", 100, 100, 2);
@@ -1295,7 +1360,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     auto policy = irs::index_utils::MakePolicy(options);
 
     irs::CompactingSegments compacting_segments;
-    irs::IndexMeta meta;
+    Segments meta;
     AddSegment(meta, "0", 100, 100, 1);
     AddSegment(meta, "1", 100, 100, 9886);
     AddSegment(meta, "2", 100, 100, 2);
@@ -1338,7 +1403,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     options.floor_segment_bytes = 50;
     auto policy = irs::index_utils::MakePolicy(options);
 
-    irs::IndexMeta meta;
+    Segments meta;
     {
       constexpr size_t kSizes[] = {
         90,    100,  110,    95,     105,   150,    145,   155,   160,
@@ -1397,7 +1462,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     options.floor_segment_bytes = 50;
     auto policy = irs::index_utils::MakePolicy(options);
 
-    irs::IndexMeta meta;
+    Segments meta;
     {
       constexpr size_t kSizes[] = {
         90,    100,  110,    95,     105,   150,    145,   155,   160,
@@ -1411,7 +1476,7 @@ TEST(CompactionTierTest, SkewedSegments) {
         AddSegment(meta, std::to_string(i), 100, 100, *begin);
       }
 
-      const_cast<irs::SegmentMeta&>(meta.segments[10].meta).live_docs_count = 1;
+      meta[10].live_docs_count = 1;
     }
     IndexReaderMock reader{meta};
 
@@ -1456,7 +1521,7 @@ TEST(CompactionTierTest, SkewedSegments) {
     options.floor_segment_bytes = 50;
     auto policy = irs::index_utils::MakePolicy(options);
 
-    irs::IndexMeta meta;
+    Segments meta;
     {
       constexpr size_t kSizes[] = {
         90,    100,  110,    95,     105,   150,    145,   155,   160,
@@ -1470,7 +1535,7 @@ TEST(CompactionTierTest, SkewedSegments) {
         AddSegment(meta, std::to_string(i), 100, 100, *begin);
       }
 
-      const_cast<irs::SegmentMeta&>(meta.segments[10].meta).live_docs_count = 1;
+      meta[10].live_docs_count = 1;
     }
     IndexReaderMock reader{meta};
 

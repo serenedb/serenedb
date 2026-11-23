@@ -50,17 +50,11 @@ statement error (22012)
 SELECT interval '67 days' / 0;
 
 
-skipif serenedb
 query
 SELECT 'NaN'::float8 / 0 AS nan8, 'NaN'::float4 / 0::float4 AS nan4;
 ----
 nan8	nan4
 NaN	NaN
-
-
-onlyif serenedb
-statement error (22012)
-SELECT 'NaN'::float8 / 0 AS nan8, 'NaN'::float4 / 0::float4 AS nan4;
 
 
 query

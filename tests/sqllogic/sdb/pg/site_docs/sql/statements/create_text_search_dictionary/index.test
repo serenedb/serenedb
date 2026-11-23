@@ -25,9 +25,6 @@ CREATE INDEX idx_docs ON documents
 
 # DOCS_TEST: example_002
 
-statement ok
-VACUUM (REFRESH_TABLE) documents;
-
 # DOCS_TEST_BODY
 
 query

@@ -33,6 +33,10 @@ namespace irs::term_dict {
 
 class RangeWriter final {
  public:
+  RangeWriter() = default;
+  RangeWriter(const RangeWriter&) = delete;
+  RangeWriter& operator=(const RangeWriter&) = delete;
+
   static uint64_t Bound(uint64_t docs) noexcept;
 
   bool Active() const noexcept { return _pw != nullptr; }

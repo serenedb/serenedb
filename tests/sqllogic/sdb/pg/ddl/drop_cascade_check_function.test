@@ -19,9 +19,9 @@ db error: ERROR: CHECK constraint failed on table "iceberg_snapshots" with expre
 statement error
 DROP FUNCTION iceberg_is_valid_snapshot_id(INT);
 ----
-db error: ERROR: Cannot drop entry "iceberg_is_valid_snapshot_id" because there are entries that depend on it.
-table "iceberg_snapshots" depends on macro function "iceberg_is_valid_snapshot_id".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function iceberg_is_valid_snapshot_id(integer) because other objects depend on it
+DETAIL: constraint iceberg_snapshots_id_check on table iceberg_snapshots depends on function iceberg_is_valid_snapshot_id(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -85,9 +85,9 @@ db error: ERROR: CHECK constraint failed on table "clickclack_query_logs" with e
 statement error
 DROP FUNCTION clickclack_nonzero_qps(INT);
 ----
-db error: ERROR: Cannot drop entry "clickclack_nonzero_qps" because there are entries that depend on it.
-table "clickclack_query_logs" depends on macro function "clickclack_nonzero_qps".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function clickclack_nonzero_qps(integer) because other objects depend on it
+DETAIL: constraint clickclack_query_logs_id_check on table clickclack_query_logs depends on function clickclack_nonzero_qps(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -148,9 +148,9 @@ INSERT INTO mop_applications VALUES (1);
 statement error
 DROP SEQUENCE mop_application_seq;
 ----
-db error: ERROR: Cannot drop entry "mop_application_seq" because there are entries that depend on it.
-table "mop_applications" depends on sequence "mop_application_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence mop_application_seq because other objects depend on it
+DETAIL: constraint mop_applications_id_check on table mop_applications depends on sequence mop_application_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -216,9 +216,8 @@ CREATE VIEW ml_papers_view AS SELECT ml_dbl_weights(id) AS d FROM ml_papers;
 statement error
 DROP FUNCTION ml_dbl_weights(INT);
 ----
-db error: ERROR: Cannot drop entry "ml_dbl_weights" because there are entries that depend on it.
+db error: ERROR: cannot drop function ml_dbl_weights(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 

@@ -29,6 +29,7 @@
 #include <functional>
 #include <variant>
 
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -160,11 +161,8 @@ void ScatteredField::Reset(const FieldInverter& field) {
   const auto nocc = PrefixSums();
   SDB_ASSERT(nocc == field.Log().Size());
   field.VisitLog([&](const auto& log) {
-    if (log.Refs().Size() != 0) {
-      Scatter<true>(log, nocc);
-    } else {
-      Scatter<false>(log, nocc);
-    }
+    Resolve(log.Refs().Size() != 0,
+            [&]<bool Refs> { Scatter<Refs>(log, nocc); });
   });
 }
 

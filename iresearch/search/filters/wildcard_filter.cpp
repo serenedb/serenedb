@@ -23,9 +23,7 @@
 #include "wildcard_filter.hpp"
 
 #include "iresearch/search/detail/term_acceptor.hpp"
-#include "iresearch/search/filters/automaton_filter.hpp"
-#include "iresearch/search/filters/prefix_filter.hpp"
-#include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/search/filters/field_target.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/wildcard_utils.hpp"
 
@@ -37,35 +35,16 @@ QueryBuilder::ptr ByWildcard::PrepareSegment(const SubReader&,
     ERR_MSG("ByWildcard must be lowered by the optimizer before prepare"));
 }
 
-Filter::ptr LowerWildcard(irs::field_id id, DictRef dict, bytes_view term,
-                          score_t boost, bool bytes) {
+Filter::ptr LowerWildcard(irs::field_id id, DictRef dict,
+                          const ByWildcardOptions& options, score_t boost) {
+  const FieldTarget target{
+    .id = id, .dict = dict, .boost = boost, .merge = options.merge};
   bstring buf;
   return ExecuteWildcard(
-    buf, term,
-    [&](bytes_view term) -> Filter::ptr {
-      auto filter = std::make_unique<ByTerm>();
-      *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
-      filter->mutable_options()->term = term;
-      filter->SetBoost(boost);
-      return filter;
-    },
-    [&](bytes_view term) -> Filter::ptr {
-      auto filter = std::make_unique<ByPrefix>();
-      *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
-      filter->mutable_options()->term = term;
-      filter->SetBoost(boost);
-      return filter;
-    },
-    [&](bytes_view term) -> Filter::ptr {
-      auto filter = std::make_unique<AutomatonFilter>();
-      *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
-      *filter->mutable_options() =
-        AutomatonOptions{term, WildcardPattern(bytes)};
-      filter->SetBoost(boost);
-      return filter;
+    buf, options.term, [&](bytes_view term) { return target.Term(term); },
+    [&](bytes_view prefix) { return target.Prefix(prefix); },
+    [&](bytes_view pattern) {
+      return target.Automaton(pattern, WildcardPattern(options.bytes));
     });
 }
 

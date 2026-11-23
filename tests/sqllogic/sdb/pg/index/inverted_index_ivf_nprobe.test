@@ -32,9 +32,6 @@ statement ok
 INSERT INTO ivf_np SELECT i,
   [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] FROM range(2000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) ivf_np;
-
 query
 SELECT count(*) FROM (
   SELECT pk FROM ivf_np_idx

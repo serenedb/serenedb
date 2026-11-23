@@ -49,10 +49,12 @@ constexpr duckdb::idx_t kMinDenseBatch = 64;
 }  // namespace
 
 HitBatcher::HitBatcher(std::span<const ColumnstoreProjection> projections,
-                       irs::field_id pk_field_id, bool track_scores)
+                       irs::field_id pk_field_id, bool track_scores,
+                       bool prefetch)
   : _projections{projections},
     _pk_field_id{pk_field_id},
-    _track_scores{track_scores} {
+    _track_scores{track_scores},
+    _prefetch{prefetch} {
   _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   _sel.Initialize(_sel_data);
 }
@@ -86,7 +88,7 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
     _ctx.reset();
     return;
   }
-  if (_ctx) {
+  if (_ctx && _ctx->GetBlockAllocSize() == col_reader->BlockAllocSize()) {
     _ctx->Reset(*col_reader);
   } else {
     _ctx = std::make_unique<irs::ReadContext>(*col_reader);
@@ -161,6 +163,22 @@ void HitBatcher::BeginSegment(uint32_t seg_idx,
   }
 
   _filters.FinishBind();
+}
+
+void HitBatcher::CollectBlocks(const irs::ColReader& col_reader, uint64_t first,
+                               uint64_t last,
+                               std::vector<duckdb::FileRange>& out) const {
+  const auto collect = [&](irs::field_id id) {
+    if (const auto* column = col_reader.Column(id)) {
+      column->CollectBlocks(first, last, out);
+    }
+  };
+  if (_pk_field_id != irs::field_limits::invalid()) {
+    collect(_pk_field_id);
+  }
+  for (const auto& p : _projections) {
+    collect(p.column_id);
+  }
 }
 
 uint64_t HitBatcher::RgEndFor(uint64_t row) noexcept {
@@ -247,7 +265,8 @@ float* HitBatcher::ScoreData() {
   auto& s = _score_bufs[_score_idx];
   if (!s) {
     s = std::make_unique<irs::ColumnReader::VectorScratch>(
-      duckdb::LogicalType::FLOAT);
+      duckdb::LogicalType::FLOAT,
+      STANDARD_VECTOR_SIZE + irs::doc_limits::kScoresSlack);
   }
   return duckdb::FlatVector::GetDataMutable<float>(s->vector);
 }
@@ -321,8 +340,24 @@ void HitBatcher::CloseGroup() {
   }
 }
 
+void HitBatcher::PrefetchColumns(uint64_t anchor, duckdb::idx_t span) {
+  if (!_prefetch) {
+    return;
+  }
+  const auto* file = _ctx ? _ctx->File() : nullptr;
+  if (!file) {
+    return;
+  }
+  _extents.clear();
+  for (const auto& c : _columns) {
+    c.reader->CollectBlocks(anchor, anchor + span - 1, _extents);
+  }
+  file->Prefetch(_extents);
+}
+
 void HitBatcher::ScatterGroup(uint64_t anchor, duckdb::idx_t span) {
   const auto hits = _len - _group;
+  PrefetchColumns(anchor, span);
   _sel.Initialize(_sel_data);
   for (duckdb::idx_t i = 0; i < hits; ++i) {
     _sel.set_index(i, Row(_group + i) - anchor);
@@ -406,6 +441,9 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
 
   // Materialize the survivors of the non-filter projected columns (and PK),
   // keyed off the same anchor/span the `_sel` offsets were built against.
+  if (survivors != 0) {
+    PrefetchColumns(anchor, span);
+  }
   for (auto& c : _columns) {
     auto& out = c.is_pk ? _pk_out->Reset() : output.data[c.slot];
     if (survivors != 0) {
@@ -430,6 +468,7 @@ HitBatcher::Batch HitBatcher::Emit(duckdb::DataChunk& output) {
   batch.seg = _seg_idx;
   if (_ready == Pending::Dense) {
     const auto [anchor, span] = BuildSel(0, _batch);
+    PrefetchColumns(anchor, span);
     for (auto& c : _columns) {
       auto& out = c.is_pk ? _pk_out->Reset() : output.data[c.slot];
       MaterializeColumn(c, anchor, span, _batch, 0, out, 0, /*dense=*/true);

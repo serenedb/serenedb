@@ -67,7 +67,7 @@ statement count 1
 INSERT INTO srv_${__DATABASE__}.${__DATABASE__}.vrd_t VALUES (4, 'after the restart too');
 
 query
-SELECT * FROM serenedb_reindex('vrd_idx');
+SELECT * FROM sdb_reindex('vrd_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -128,7 +128,7 @@ statement count 1
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vrd_t WHERE id = 2;
 
 query
-SELECT action, files_changed FROM serenedb_reindex('vrd_idx');
+SELECT action, files_changed FROM sdb_reindex('vrd_idx');
 ----
 action	files_changed
 delta	1

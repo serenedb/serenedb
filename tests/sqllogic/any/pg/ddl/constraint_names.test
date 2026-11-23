@@ -1,0 +1,67 @@
+statement ok
+CREATE TABLE cn_t (id INT PRIMARY KEY, v INT, w INT);
+
+
+statement ok
+ALTER TABLE cn_t ADD CONSTRAINT cn_t_w_not_null CHECK (w > 0);
+
+
+statement ok
+CREATE TABLE cn_u (id INT, w INT);
+
+
+statement ok
+ALTER TABLE cn_u ADD PRIMARY KEY (id, w);
+
+
+statement ok
+ALTER TABLE cn_t ALTER COLUMN v SET NOT NULL;
+
+
+statement ok
+ALTER TABLE cn_t ALTER COLUMN w SET NOT NULL;
+
+
+statement ok
+ALTER TABLE cn_t RENAME TO cn_renamed;
+
+
+statement ok
+ALTER TABLE cn_u RENAME TO cn_u_renamed;
+
+
+query
+SELECT conname, contype FROM pg_constraint WHERE conrelid = 'cn_renamed'::regclass ORDER BY conname;
+----
+conname	contype
+cn_t_id_not_null	n
+cn_t_pkey	p
+cn_t_v_not_null	n
+cn_t_w_not_null	c
+cn_t_w_not_null1	n
+
+
+query
+SELECT conname, contype FROM pg_constraint WHERE conrelid = 'cn_u_renamed'::regclass ORDER BY conname;
+----
+conname	contype
+cn_u_id_not_null	n
+cn_u_pkey	p
+cn_u_w_not_null	n
+
+
+statement error constraint "cn_t_pkey" for relation "cn_renamed" already exists
+ALTER TABLE cn_renamed RENAME CONSTRAINT cn_t_v_not_null TO cn_t_pkey;
+
+
+statement ok
+ALTER TABLE cn_renamed RENAME CONSTRAINT cn_t_v_not_null TO cn_v_set;
+
+
+query
+SELECT conname FROM pg_constraint WHERE conrelid = 'cn_renamed'::regclass AND contype = 'n' ORDER BY conname;
+----
+conname
+cn_t_id_not_null
+cn_t_w_not_null1
+cn_v_set

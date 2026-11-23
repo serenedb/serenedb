@@ -17,15 +17,15 @@ CALL postgres_execute('rsrch_${__DATABASE__}', 'DO $$ BEGIN CREATE TABLE rsrch_p
 
 
 statement ok
-CREATE TABLE rsrch_plain (id INTEGER, body TEXT) WITH (storage = 'search');
+CREATE TABLE rsrch_plain (id INTEGER, body TEXT);
 
 
 statement ok
-CREATE TABLE rsrch_full (a INTEGER, b TEXT) WITH (storage = 'search');
+CREATE TABLE rsrch_full (a INTEGER, b TEXT);
 
 
 statement ok
-CREATE TABLE rsrch_indexed (id INTEGER, body TEXT) WITH (storage = 'search');
+CREATE TABLE rsrch_indexed (id INTEGER, body TEXT);
 
 
 statement ok

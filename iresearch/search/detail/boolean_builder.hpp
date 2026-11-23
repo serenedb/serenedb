@@ -69,22 +69,22 @@ consteval bool LazyGroups() {
   }
 }
 
-template<typename Family, typename Ctx>
+template<typename Family, typename P = NoPins, typename Ctx>
 Result<Family> MakeBitset(const BooleanGroups& groups, const SubReader& segment,
                           const Ctx& ctx) {
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  return MakeBooleanBitset<Result<Family>>(Family::MemoryOf(ctx), groups,
-                                           segment, Family::BitsetTable(ctx),
-                                           Family::BitsetSpan(ctx, docs_count));
+  return MakeBooleanBitset<Result<Family>, P>(
+    Family::MemoryOf(ctx), groups, segment, Family::BitsetTable(ctx),
+    Family::BitsetSpan(ctx, docs_count));
 }
 
-template<typename Family, typename Excludes, typename ExcludesArgs,
-         typename Ctx>
+template<typename Family, typename Excludes, typename P = NoPins,
+         typename ExcludesArgs, typename Ctx>
 Result<Family> MakeWindowOfTerms(std::span<const PostingClause> terms,
-                                 const IndexInput& doc, ExcludesArgs&& excludes,
-                                 const Ctx& ctx) {
+                                 const duckdb::InputFile& doc, bool batches,
+                                 ExcludesArgs&& excludes, const Ctx& ctx) {
   SDB_ASSERT(terms.size() >= 2);
-  return ResolveInput(doc, [&]<typename Input> -> Result<Family> {
+  return Resolve<P>(doc, [&]<typename Input> -> Result<Family> {
     using Leaf = PostingFill<Input>;
     using Others = fill::AndLeaves<Leaf>;
     const auto& own = FieldOf(terms.front(), nullptr);
@@ -93,7 +93,7 @@ Result<Family> MakeWindowOfTerms(std::span<const PostingClause> terms,
       ctx, ScoreMergeType::Noop, utils::Empty{},
       std::forward_as_tuple(front, doc, LayoutOf(own),
                             front.docs_count != 1 && BoundsOf(own),
-                            front.docs_count != 1 && FreqOf(own)),
+                            front.docs_count != 1 && FreqOf(own), batches),
       std::forward_as_tuple(
         Family::MemoryOf(ctx), terms.size() - 1,
         [&](Leaf& leaf, size_t i) {
@@ -107,13 +107,13 @@ Result<Family> MakeWindowOfTerms(std::span<const PostingClause> terms,
   });
 }
 
-template<typename Family, typename Term, typename Ctx>
+template<typename Family, typename P = NoPins, typename Term, typename Ctx>
 Result<Family> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
                                             const TermReader* field,
-                                            const IndexInput& doc,
+                                            const duckdb::InputFile& doc,
                                             const Ctx& ctx) {
   SDB_ASSERT(terms.size() > 1);
-  return ResolveInput(doc, [&]<typename Input> -> Result<Family> {
+  return Resolve<P>(doc, [&]<typename Input> -> Result<Family> {
     using Leaf = PostingFill<Input>;
     using Optional = OrGroup<fill::SetLeaves<Leaf>>;
     return Family::template MakeWindow<utils::Empty, utils::Empty, Optional,
@@ -134,20 +134,20 @@ Result<Family> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
   });
 }
 
-template<typename Family, typename Term, typename Ctx>
+template<typename Family, typename P = NoPins, typename Term, typename Ctx>
 Result<Family> MakeDisjunctionOfTerms(std::span<const Term> terms,
                                       const TermReader* field,
-                                      const IndexInput& doc,
+                                      const duckdb::InputFile& doc,
                                       doc_id_t docs_count, const Ctx& ctx) {
   SDB_ASSERT(terms.size() > 1);
   if (Family::BitsetSpan(ctx, docs_count) >= docs_count) {
-    if (auto folded =
-          MakeBitsetOf<Result<Family>>(Family::MemoryOf(ctx), terms, field, doc,
-                                       docs_count, Family::BitsetTable(ctx))) {
+    if (auto folded = MakeBitsetOf<Result<Family>, P>(
+          Family::MemoryOf(ctx), terms, field, doc, docs_count,
+          Family::BitsetTable(ctx))) {
       return folded;
     }
   }
-  return MakeWindowDisjunctionOfTerms<Family>(terms, field, doc, ctx);
+  return MakeWindowDisjunctionOfTerms<Family, P>(terms, field, doc, ctx);
 }
 
 template<typename Family, typename Ctx>
@@ -207,14 +207,15 @@ TermScoring ScoringOf(const SubReader& segment, const Ctx& ctx,
           .merge = merge};
 }
 
-template<typename Family, typename Term, typename Scoring, typename Ctx>
+template<typename Family, typename P = NoPins, typename Term, typename Scoring,
+         typename Ctx>
 Result<Family> MakeWindowDisjunction(std::span<const Term> terms,
                                      const TermReader* field,
-                                     const IndexInput* doc,
+                                     const duckdb::InputFile* doc,
                                      memory::ArenaVector<FillNode::ptr>& rest,
                                      const Scoring& scoring, const Ctx& ctx,
                                      score_t absorbed) {
-  return BuildWindowSet<Result<Family>>(
+  return BuildWindowSet<Result<Family>, P>(
     Family::MemoryOf(ctx), terms, field, doc, rest, scoring,
     [&]<typename Set>(auto&&... args) -> Result<Family> {
       return Family::template MakeWindow<utils::Empty, utils::Empty,
@@ -226,7 +227,76 @@ Result<Family> MakeWindowDisjunction(std::span<const Term> terms,
     });
 }
 
-template<typename Family, typename Ctx>
+template<typename Family>
+inline constexpr bool kScoredLeadWindow =
+  requires { requires Family::kScoredLeadWindow; };
+
+inline constexpr uint64_t kScoredScanValues = 2;
+inline constexpr uint64_t kWindowPasses = 2;
+inline constexpr uint64_t kMaskWordsPerLeadDoc = 2;
+
+template<typename Family, typename P = NoPins, typename Scoring, typename Ctx>
+Result<Family> MakeScoredLeadWindow(std::span<const PostingClause> must,
+                                    std::span<const PostingClause> should,
+                                    const SubReader& segment,
+                                    const Scoring& scoring, const Ctx& ctx,
+                                    score_t absorbed) {
+  if (must.size() != 1 || should.empty()) {
+    return {};
+  }
+  const auto& lead = must.front();
+  if (!ScoresPerDocTerm(lead)) {
+    return {};
+  }
+  const uint64_t lead_docs = CookieOf(lead).docs_count;
+  if (lead_docs * kMaskWordsPerLeadDoc * kWindowBits < segment.docs_count()) {
+    return {};
+  }
+  const auto* const doc = DocOf(FieldOf(lead, nullptr));
+  const uint64_t windows = std::min<uint64_t>(
+    lead_docs, (segment.docs_count() + kWindowDocs - 1) / kWindowDocs);
+  uint64_t scanned = windows * kWindowWords * kWindowPasses;
+  uint64_t probed = 0;
+  for (const auto& term : should) {
+    if (DocOf(FieldOf(term, nullptr)) != doc || !ScoresPerDocTerm(term)) {
+      return {};
+    }
+    const uint64_t docs = CookieOf(term).docs_count;
+    scanned += docs * kScoredScanValues;
+    probed += std::min(lead_docs, docs) * kProbeSteps + lead_docs;
+  }
+  if (scanned >= probed) {
+    return {};
+  }
+  return Resolve<P>(*doc, [&]<typename Input> -> Result<Family> {
+    const auto make = [&]<ScoreMergeType M> -> Result<Family> {
+      using Leaf = PostingFillScored<Input, M>;
+      const auto clause =
+        ClauseOf(lead, nullptr, scoring.scorer, scoring.boost);
+      const auto args = scoring.recipe.Args(clause.stats, clause.boost);
+      return Family::template MakeWindow<
+        Leaf, utils::Empty, OrGroup<fill::SetLeaves<Leaf>>, utils::Empty>(
+        ctx, scoring.merge, ScoreOf(scoring, absorbed),
+        std::forward_as_tuple(
+          clause.state.cookie, *doc, BoundsOf(*clause.state.reader),
+          *scoring.recipe.segment, *clause.state.reader, args),
+        std::forward_as_tuple(),
+        std::forward_as_tuple(Family::MemoryOf(ctx), should.size(),
+                              [&](Leaf& leaf, size_t i) {
+                                PrepareScored(leaf, should[i], nullptr, *doc,
+                                              scoring);
+                              }),
+        std::forward_as_tuple());
+    };
+    return Resolve<P>(scoring.merge, make);
+  });
+}
+
+template<typename Family>
+inline constexpr bool kWindowBatches =
+  requires { requires Family::kWindowBatches; };
+
+template<typename Family, typename P = NoPins, typename Ctx>
 Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
                                      std::span<const QueryBuilder::ptr> filters,
                                      const SubReader& segment, const Ctx& ctx) {
@@ -240,18 +310,20 @@ Result<Family> MakeWindowConjunction(std::span<const PostingClause> terms,
       return MakeWindowOfNodes<Family>(terms, filters, segment, ctx);
     }
   }
-  const IndexInput* doc = nullptr;
+  const duckdb::InputFile* doc = nullptr;
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (!DenseConjunction(terms, docs_count)) {
+  if (kWindowBatches<Family> ? !BatchedConjunction(terms, docs_count)
+                             : !DenseConjunction(terms, docs_count)) {
     return {};
   }
-  return MakeWindowOfTerms<Family, utils::Empty>(terms, *doc,
-                                                 std::forward_as_tuple(), ctx);
+  return MakeWindowOfTerms<Family, utils::Empty, P>(
+    terms, *doc, !DenseConjunction(terms, docs_count), std::forward_as_tuple(),
+    ctx);
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildNegationWindow(PlanMemory& memory, std::span<const Term> terms,
                            std::span<const QueryBuilder::ptr> filters,
                            const SubReader& segment, Make&& make) {
@@ -276,12 +348,13 @@ Result BuildNegationWindow(PlanMemory& memory, std::span<const Term> terms,
                                 leaf = fill::Erased{std::move(nodes[i])};
                               })));
   };
-  if (!split.masked) {
-    return with_lead.template operator()<fill::AllDocs>(
-      std::forward_as_tuple(segment));
-  }
-  return ResolveDocsMask(
-    segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
+  return ResolveMask<P, Result>(
+    split.masked, segment,
+    [&] {
+      return with_lead.template operator()<fill::AllDocs>(
+        std::forward_as_tuple(segment));
+    },
+    [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
       return with_lead.template operator()<fill::LiveDocs<Mask>>(
         std::forward_as_tuple(std::move(docs_mask), LiveEnd(segment)));
     });
@@ -304,7 +377,7 @@ Result<Family> MakeWindowNegation(
     });
 }
 
-template<typename Family, typename Ctx>
+template<typename Family, typename P, typename Ctx>
 Result<Family> MakeWindowExclusion(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
@@ -330,8 +403,8 @@ Result<Family> MakeWindowExclusion(
         return {};
       }
       const auto& front = CookieOf(terms.front());
-      return ResolveInput(*doc, [&]<typename Input> -> Result<Family> {
-        return BuildWindowExcludes<Result<Family>>(
+      return Resolve<P>(*doc, [&]<typename Input> -> Result<Family> {
+        return BuildWindowExcludes<Result<Family>, P>(
           memory, exclude_terms, exclude_filters, nullptr, segment, candidates,
           [&]<typename Excludes>(auto&& excludes) -> Result<Family> {
             return Family::template MakeWindow<PostingFill<Input>, utils::Empty,
@@ -350,7 +423,7 @@ Result<Family> MakeWindowExclusion(
     if (!node) {
       return {};
     }
-    return BuildWindowExcludes<Result<Family>>(
+    return BuildWindowExcludes<Result<Family>, P>(
       memory, exclude_terms, exclude_filters, nullptr, segment, candidates,
       [&]<typename Excludes>(auto&& excludes) -> Result<Family> {
         return Family::template MakeWindow<fill::Erased, utils::Empty,
@@ -360,24 +433,26 @@ Result<Family> MakeWindowExclusion(
           std::forward_as_tuple(), std::forward<decltype(excludes)>(excludes));
       });
   }
-  const IndexInput* doc = nullptr;
+  const duckdb::InputFile* doc = nullptr;
   if (!WindowTerms(terms, filters, nullptr, doc)) {
     return {};
   }
-  if (!DenseConjunction(terms, docs_count)) {
+  if (kWindowBatches<Family> ? !BatchedConjunction(terms, docs_count)
+                             : !DenseConjunction(terms, docs_count)) {
     return {};
   }
-  return BuildWindowExcludes<Result<Family>>(
+  return BuildWindowExcludes<Result<Family>, P>(
     memory, exclude_terms, exclude_filters, nullptr, segment, candidates,
     [&]<typename Excludes>(auto&& excludes) -> Result<Family> {
-      return MakeWindowOfTerms<Family, Excludes>(
-        terms, *doc, std::forward<decltype(excludes)>(excludes), ctx);
+      return MakeWindowOfTerms<Family, Excludes, P>(
+        terms, *doc, !DenseConjunction(terms, docs_count),
+        std::forward<decltype(excludes)>(excludes), ctx);
     });
 }
 
-template<typename Family, typename Scoring, typename Ctx>
+template<typename Family, typename P = NoPins, typename Scoring, typename Ctx>
 Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
-                                   const IndexInput* doc,
+                                   const duckdb::InputFile* doc,
                                    memory::ArenaVector<FillNode::ptr>& rest,
                                    uint32_t min_match, const Scoring& scoring,
                                    const Ctx& ctx, score_t absorbed) {
@@ -407,7 +482,7 @@ Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
   };
   if (min_match > kBitplaneMaxMatch && rest.empty() &&
       scoring.uniformity != Terms::Mixed) {
-    auto counted = ResolveCountLeaves<Result<Family>>(
+    auto counted = ResolveCountLeaves<Result<Family>, P>(
       *doc, scoring, [&]<typename Leaf, typename Plain> -> Result<Family> {
         return BuildWindowTerms<Result<Family>, Leaf, Plain>(
           memory, terms, nullptr, doc, scoring,
@@ -420,7 +495,7 @@ Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
       return counted;
     }
   }
-  return BuildWindowSet<Result<Family>>(
+  return BuildWindowSet<Result<Family>, P>(
     memory, terms, nullptr, doc, rest, scoring,
     [&]<typename Set>(auto&&... args) -> Result<Family> {
       return window.template operator()<ThresholdGroup, Set>(
@@ -428,7 +503,8 @@ Result<Family> MakeWindowThreshold(std::span<const PostingClause> terms,
     });
 }
 
-template<typename Family, typename Scoring, typename Make, typename Ctx>
+template<typename Family, typename P = NoPins, typename Scoring, typename Make,
+         typename Ctx>
 Result<Family> BuildSparseConjunction(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters, const SubReader& segment,
@@ -436,7 +512,7 @@ Result<Family> BuildSparseConjunction(
   auto& memory = Family::MemoryOf(ctx);
   if constexpr (kScores<Scoring>) {
     const auto& child = Family::Scoring(ctx);
-    return BuildConjunction<Result<Family>>(
+    return BuildConjunction<Result<Family>, P>(
       memory, terms, filters, nullptr, segment, scoring,
       probe::ScoredClauseOf(segment, child, scoring.recipe),
       [&](const QueryBuilder& filter) -> LeadNode::ptr {
@@ -444,19 +520,20 @@ Result<Family> BuildSparseConjunction(
       },
       std::forward<Make>(make));
   } else {
-    return BuildConjunction<Result<Family>>(
+    return BuildConjunction<Result<Family>, P>(
       memory, terms, filters, nullptr, segment, scoring,
       ProbeClauseOf(memory, segment), PlanLeadDocs(memory),
       std::forward<Make>(make));
   }
 }
 
-template<typename Family, typename Scoring, typename Score, typename Ctx>
+template<typename Family, typename P = NoPins, typename Scoring, typename Score,
+         typename Ctx>
 Result<Family> MakeSparseConjunction(std::span<const PostingClause> terms,
                                      std::span<const QueryBuilder::ptr> filters,
                                      const SubReader& segment, const Ctx& ctx,
                                      const Scoring& scoring, Score score) {
-  return BuildSparseConjunction<Family>(
+  return BuildSparseConjunction<Family, P>(
     terms, filters, segment, ctx, scoring,
     [&]<typename Head, typename Tail>(auto&& head,
                                       auto&& tail) -> Result<Family> {
@@ -468,13 +545,13 @@ Result<Family> MakeSparseConjunction(std::span<const PostingClause> terms,
     });
 }
 
-template<typename Family, typename Score, typename Ctx>
+template<typename Family, typename P = NoPins, typename Score, typename Ctx>
 Result<Family> MakeSparseExclusionOf(
   LeadNode::ptr include, std::span<const PostingClause> exclude_terms,
   std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
   uint64_t candidates, const Ctx& ctx, ScoreMergeType merge, Score score) {
   SDB_ASSERT(include);
-  return BuildExcludeSide<Result<Family>>(
+  return BuildExcludeSide<Result<Family>, P>(
     Family::MemoryOf(ctx), exclude_terms, exclude_filters, nullptr, segment,
     candidates, [&]<typename Exclude>(auto&& exclude) -> Result<Family> {
       return Family::template MakeSparse<lead::Erased, utils::Empty,
@@ -522,7 +599,7 @@ Result<Family> MakeSparseNegation(
     });
 }
 
-template<typename Family, typename Ctx>
+template<typename Family, typename P, typename Ctx>
 Result<Family> MakeSparseExclusion(
   std::span<const PostingClause> terms,
   std::span<const QueryBuilder::ptr> filters,
@@ -532,17 +609,17 @@ Result<Family> MakeSparseExclusion(
   SDB_ASSERT(!terms.empty() || !filters.empty());
   auto& memory = Family::MemoryOf(ctx);
   if (terms.size() + filters.size() > 1) {
-    if (auto folded = MakeConjunctionBitset<LeadNode::ptr>(
+    if (auto folded = MakeConjunctionBitset<LeadNode::ptr, P>(
           memory, terms, filters, nullptr, segment, nullptr)) {
-      return MakeSparseExclusionOf<Family>(
+      return MakeSparseExclusionOf<Family, P>(
         std::move(folded), exclude_terms, exclude_filters, segment, candidates,
         ctx, ScoreMergeType::Noop, utils::Empty{});
     }
-    return BuildSparseConjunction<Family>(
+    return BuildSparseConjunction<Family, P>(
       terms, filters, segment, ctx, NoScoring{},
       [&]<typename Head, typename Tail>(auto&& head,
                                         auto&& tail) -> Result<Family> {
-        return BuildExcludeSide<Result<Family>>(
+        return BuildExcludeSide<Result<Family>, P>(
           memory, exclude_terms, exclude_filters, nullptr, segment, candidates,
           [&]<typename Exclude>(auto&& exclude) -> Result<Family> {
             return Family::template MakeSparse<Head, Tail, utils::Empty,
@@ -559,15 +636,15 @@ Result<Family> MakeSparseExclusion(
     if (!lead) {
       return {};
     }
-    return MakeSparseExclusionOf<Family>(
+    return MakeSparseExclusionOf<Family, P>(
       std::move(lead), exclude_terms, exclude_filters, segment, candidates, ctx,
       ScoreMergeType::Noop, utils::Empty{});
   }
   const auto& own = *terms.front().state.reader;
   const auto& meta = terms.front().state.cookie;
-  return ResolveInput(*DocOf(own), [&]<typename Input> -> Result<Family> {
+  return Resolve<P>(*DocOf(own), [&]<typename Input> -> Result<Family> {
     using Include = PostingLead<Input>;
-    return BuildExcludeSideOf<Result<Family>, Input>(
+    return BuildExcludeSideOf<Result<Family>, Input, P>(
       memory, exclude_terms, exclude_filters, nullptr, segment, candidates,
       [&]<typename Exclude>(auto&& exclude) -> Result<Family> {
         return Family::template MakeSparse<Include, utils::Empty, utils::Empty,
@@ -581,14 +658,15 @@ Result<Family> MakeSparseExclusion(
   });
 }
 
-template<typename Family, typename Term, typename Scoring, typename Ctx>
+template<typename Family, typename P = NoPins, typename Term, typename Scoring,
+         typename Ctx>
 Result<Family> MakeDisjunction(std::span<const Term> terms,
                                std::span<const QueryBuilder::ptr> filters,
                                const TermReader* field,
                                const SubReader& segment, const Scoring& scoring,
                                const Ctx& ctx, score_t absorbed) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
-  const IndexInput* doc = nullptr;
+  const duckdb::InputFile* doc = nullptr;
   memory::ArenaVector<FillNode::ptr> rest{Family::MemoryOf(ctx).Scratch()};
   if (!CollectDense(terms, filters, field, doc, rest,
                     [&](const QueryBuilder& child) {
@@ -597,24 +675,24 @@ Result<Family> MakeDisjunction(std::span<const Term> terms,
     return {};
   }
   if constexpr (!kScores<Scoring>) {
-    if (auto folded = MakeBitset<Family>(
+    if (auto folded = MakeBitset<Family, P>(
           {.should = terms, .should_filters = filters, .should_fills = &rest},
           segment, ctx)) {
       return folded;
     }
   }
-  return MakeWindowDisjunction<Family>(terms, field, doc, rest, scoring, ctx,
-                                       absorbed);
+  return MakeWindowDisjunction<Family, P>(terms, field, doc, rest, scoring, ctx,
+                                          absorbed);
 }
 
-template<typename Family, typename Scoring, typename Ctx>
+template<typename Family, typename P = NoPins, typename Scoring, typename Ctx>
 Result<Family> MakeThreshold(std::span<const PostingClause> terms,
                              std::span<const QueryBuilder::ptr> filters,
                              const SubReader& segment, uint32_t min_match,
                              const Scoring& scoring, const Ctx& ctx,
                              score_t absorbed) {
   SDB_ASSERT(min_match > 1);
-  const IndexInput* doc = nullptr;
+  const duckdb::InputFile* doc = nullptr;
   memory::ArenaVector<FillNode::ptr> rest{Family::MemoryOf(ctx).Scratch()};
   if (!CollectDense(terms, filters, nullptr, doc, rest,
                     [&](const QueryBuilder& child) {
@@ -622,8 +700,8 @@ Result<Family> MakeThreshold(std::span<const PostingClause> terms,
                     })) {
     return {};
   }
-  return MakeWindowThreshold<Family>(terms, doc, rest, min_match, scoring, ctx,
-                                     absorbed);
+  return MakeWindowThreshold<Family, P>(terms, doc, rest, min_match, scoring,
+                                        ctx, absorbed);
 }
 
 }  // namespace irs::detail::builder

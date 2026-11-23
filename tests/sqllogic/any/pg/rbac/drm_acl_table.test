@@ -57,7 +57,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -88,7 +88,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -119,7 +119,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -150,7 +150,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -181,7 +181,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -212,7 +212,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -243,7 +243,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -274,7 +274,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -305,7 +305,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -336,7 +336,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Revoke just SELECT -- INSERT and UPDATE remain, so still refused.
@@ -355,7 +355,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Revoke INSERT too -- UPDATE still remains, still refused.
@@ -374,7 +374,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # REVOKE ALL sweeps the remaining UPDATE -- now the drop succeeds.
@@ -406,7 +406,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_kostya;
 ----
-db error: ERROR: Cannot drop entry "dat_kostya" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_kostya" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -445,7 +445,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dat_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Revoking vedernikoff's grant frees only vedernikoff.
@@ -469,7 +469,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_clickclack;
 ----
-db error: ERROR: Cannot drop entry "dat_clickclack" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -518,7 +518,7 @@ onlyif serenedb
 statement error
 DROP ROLE dat_kostya;
 ----
-db error: ERROR: Cannot drop entry "dat_kostya" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dat_kostya" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Dropping the table drops the ACL with it, removing the dependency.

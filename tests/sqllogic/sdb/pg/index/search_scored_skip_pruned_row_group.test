@@ -9,7 +9,7 @@ CREATE TEXT SEARCH DICTIONARY sspr_dict AS split_text_csv(' ')
 
 statement ok
 CREATE TABLE sspr_t (id INT PRIMARY KEY, body TEXT, g INT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+WITH (compaction_interval = 0,
       row_group_size = 2048)
 
 
@@ -23,10 +23,6 @@ SELECT i,
        CASE WHEN i < 1024 THEN 'a b c d' WHEN i < 6144 THEN 'a b c' ELSE 'a' END,
        CASE WHEN i BETWEEN 2048 AND 4095 THEN 1 ELSE 0 END
 FROM range(8192) t(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sspr_t
 
 
 query
@@ -64,7 +60,7 @@ DROP TABLE sspr_t
 
 statement ok
 CREATE TABLE sspr_sparse (id INT PRIMARY KEY, body TEXT, g INT)
-WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0,
+WITH (compaction_interval = 0,
       row_group_size = 2048)
 
 
@@ -81,10 +77,6 @@ SELECT i,
             ELSE 'z' END,
        CASE WHEN i BETWEEN 6144 AND 8191 THEN 1 ELSE 0 END
 FROM range(10240) t(i)
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sspr_sparse
 
 
 query
@@ -153,10 +145,6 @@ n	changed
 
 statement ok
 DELETE FROM sspr_sparse WHERE id % 32 = 0 AND id >= 5000
-
-
-statement ok
-VACUUM (REFRESH_TABLE) sspr_sparse
 
 
 query

@@ -192,9 +192,17 @@ class ByPhrase : public FilterWithField<ByPhraseOptions> {
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                    const PrepareContext& ctx) const final;
 
+  bool Prefetch(const SubReader& segment) const final;
+
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,
                                           uint32_t threads) const final;
+
+  void ExplainStats(const PrepareCollector* collector,
+                    explain::StatsIndex& out) const final;
+
+  void ExplainTerms(const SubReader& segment,
+                    explain::TermNames& out) const final;
 };
 
 Filter::ptr PartFilter(field_id field, DictRef dict,

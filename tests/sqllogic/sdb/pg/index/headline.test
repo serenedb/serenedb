@@ -278,9 +278,6 @@ INSERT INTO hl_docs VALUES
     (4, 'First sentence here. The quick brown fox is in this sentence. Third one.'),
     (5, 'lorem ipsum dolor sit amet quick consectetur adipiscing elit fox sed do')
 
-statement ok
-VACUUM (REFRESH_TABLE) hl_docs
-
 
 # Single-term match: search scan emits ts_offsets(body); piped into
 # ts_highlight to render the snippet. The canonical use case.
@@ -400,9 +397,6 @@ INSERT INTO hl_corpus VALUES
     (29, 'just plain text no fox at all in this row'),
     (30, 'fox in socks by dr seuss is a classic')
 
-statement ok
-VACUUM (REFRESH_TABLE) hl_corpus
-
 # BM25 ORDER BY + LIMIT: top-3 most relevant snippets. Pure-fox doc (5)
 # scores highest by raw frequency. We take top 3 and render with
 # ts_highlight; this is the load-bearing real-world pattern.
@@ -517,7 +511,7 @@ id	ts_highlight
 statement error
 SELECT ts_highlight(body) FROM hl_docs WHERE body LIKE '%fox%'
 ----
-db error: ERROR: ts_offsets(body) requires an inverted index scan in the same sub-query
+db error: ERROR: ts_offsets() requires an inverted index scan in the same sub-query
 
 
 # Error: virtual-column form without a WHERE predicate on the FTS column.
@@ -607,9 +601,6 @@ CREATE INDEX hl_no_offs_idx ON hl_no_offs_docs USING inverted(id, body hl_no_off
 statement ok
 INSERT INTO hl_no_offs_docs VALUES (1, 'the quick brown fox')
 
-statement ok
-VACUUM (REFRESH_TABLE) hl_no_offs_docs
-
 query
 SELECT id, ts_highlight(body)
 FROM hl_no_offs_idx WHERE body @@ ts_phrase('quick')
@@ -627,9 +618,6 @@ INSERT INTO hl_no_offs_docs VALUES
     (2, 'no match here'),
     (3, 'quick red fox runs quick'),
     (4, 'a slow brown bear')
-
-statement ok
-VACUUM (REFRESH_TABLE) hl_no_offs_docs
 
 query
 SELECT id, ts_highlight(body)
@@ -727,7 +715,7 @@ QUERY PLAN
 ╰───────────────────┬──────────────────╯
 ╭─ IRESEARCH_SCAN ──┴──────────────────╮
 │ Index: hl_docs_idx                   │
-│ Lookup: table                        │
+│ Lookup: search                       │
 │ Index Filter:                        │
 │ ╭─ Term ──────────────╮              │
 │ │ Field: body(string) │              │
@@ -761,7 +749,7 @@ QUERY PLAN
 ╰──────────────────────────────┬─────────────────────────────╯
 ╭─ IRESEARCH_SCAN ─────────────┴─────────────────────────────╮
 │ Index: hl_docs_idx                                         │
-│ Lookup: table                                              │
+│ Lookup: search                                             │
 │ Index Filter:                                              │
 │ ╭─ Term ──────────────╮                                    │
 │ │ Field: body(string) │                                    │
@@ -812,9 +800,6 @@ INSERT INTO hl_multi VALUES
     (1, 'fox news', 'fox fox fox fox fox fox fox fox fox fox'),
     (2, 'cat news', 'cat is here')
 
-statement ok
-VACUUM (REFRESH_TABLE) hl_multi
-
 # Two ts_offsets() projections on different columns with different
 # limits. The per-FieldEntry cap in FillRowOffsets keeps the
 # truncations independent.
@@ -849,7 +834,7 @@ QUERY PLAN
 ╰─────────────────────────┬─────────────────────────╯
 ╭─ IRESEARCH_SCAN ────────┴─────────────────────────╮
 │ Index: hl_multi_idx                               │
-│ Lookup: table                                     │
+│ Lookup: search                                    │
 │ Index Filter:                                     │
 │ ╭─ And ────────────────╮                          │
 │ ╰───────────┬──────────╯                          │
@@ -1193,9 +1178,8 @@ QUERY PLAN
 │ ts_highlight(doc, ts_offsets('hl_inplace_dict', doc, NULL::TSQUERY)) │
 │ ~2 rows                                                              │
 ╰───────────────────────────────────┬──────────────────────────────────╯
-╭─ SEQ_SCAN ────────────────────────┴──────────────────────────────────╮
+╭─ IRESEARCH_SCAN ──────────────────┴──────────────────────────────────╮
 │ Table: hl_dyn                                                        │
-│ Type: Sequential Scan                                                │
 │ Projections: doc                                                     │
 │ ~2 rows                                                              │
 ╰──────────────────────────────────────────────────────────────────────╯
@@ -1215,9 +1199,8 @@ QUERY PLAN
 │ ts_highlight(doc, ts_offsets('hl_inplace_dict', doc, NULL::TSQUERY, 2), 'MaxOffsets=2') │
 │ ~2 rows                                                                                 │
 ╰────────────────────────────────────────────┬────────────────────────────────────────────╯
-╭─ SEQ_SCAN ─────────────────────────────────┴────────────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ───────────────────────────┴────────────────────────────────────────────╮
 │ Table: hl_dyn                                                                           │
-│ Type: Sequential Scan                                                                   │
 │ Projections: doc                                                                        │
 │ ~2 rows                                                                                 │
 ╰─────────────────────────────────────────────────────────────────────────────────────────╯

@@ -105,21 +105,21 @@ id	body
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vitv_idx_a');
+SELECT * FROM sdb_reindex('vitv_idx_a');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vitv_idx_b');
+SELECT * FROM sdb_reindex('vitv_idx_b');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vitv_idx_u');
+SELECT * FROM sdb_reindex('vitv_idx_u');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -130,14 +130,14 @@ INSERT INTO vitv.${__DATABASE__}.t VALUES (4, 'fourth title', 'after the restart
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vitv_idx_a');
+SELECT * FROM sdb_reindex('vitv_idx_a');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vitv_idx_b');
+SELECT * FROM sdb_reindex('vitv_idx_b');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0

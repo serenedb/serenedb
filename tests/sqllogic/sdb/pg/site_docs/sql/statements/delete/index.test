@@ -135,15 +135,12 @@ statement ok
 DROP TABLE IF EXISTS events;
 
 statement ok
-CREATE TABLE events (at TIMESTAMP, body TEXT) WITH (storage = 'search');
+CREATE TABLE events (at TIMESTAMP, body TEXT);
 
 statement ok
 INSERT INTO events VALUES
     (now()::TIMESTAMP - INTERVAL '40 days', 'old'),
     (now()::TIMESTAMP - INTERVAL '1 day', 'recent');
-
-statement ok
-VACUUM (REFRESH_TABLE) events;
 
 # DOCS_TEST_BODY
 
@@ -153,9 +150,6 @@ CREATE JOB events_retention EVERY 1 HOUR AS
 
 statement ok
 EXECUTE JOB events_retention;
-
-statement ok
-VACUUM (REFRESH_TABLE) events;
 
 query
 SELECT body FROM events ORDER BY body;

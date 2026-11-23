@@ -40,6 +40,8 @@ class Collector {
 
   uint32_t K() const noexcept { return _k; }
 
+  size_t Size() const noexcept { return _hits.size(); }
+
   score_t Floor() const noexcept { return _floor->Load(); }
 
   void Append(const doc_id_t* docs, const score_t* scores,

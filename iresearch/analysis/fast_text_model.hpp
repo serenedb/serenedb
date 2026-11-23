@@ -24,6 +24,7 @@
 
 #include <duckdb/storage/shared_object_cache.hpp>
 #include <memory>
+#include <streambuf>
 #include <string>
 #include <string_view>
 
@@ -31,6 +32,14 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::fast_text {
+
+class TextBuf final : public std::streambuf {
+ public:
+  explicit TextBuf(std::string_view text) noexcept {
+    auto* data = const_cast<char*>(text.data());
+    setg(data, data, data + text.size());
+  }
+};
 
 class Model final : public fasttext::ImmutableFastText,
                     public duckdb::ObjectCacheEntry {
@@ -56,10 +65,12 @@ duckdb::shared_ptr<const T> GetOrBuildModel(duckdb::SharedObjectCache& cache,
     const T* raw = model.get();
     return duckdb::shared_ptr<const T>{std::move(model), raw};
   } catch (const std::exception& e) {
-    THROW_SQL_ERROR(ERR_MSG("failed to load fasttext model from: ", location,
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONFIG_FILE_ERROR),
+                    ERR_MSG("failed to load fasttext model from: ", location,
                             ", error: ", e.what()));
   } catch (...) {
-    THROW_SQL_ERROR(ERR_MSG("failed to load fasttext model from: ", location));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_CONFIG_FILE_ERROR),
+                    ERR_MSG("failed to load fasttext model from: ", location));
   }
 }
 

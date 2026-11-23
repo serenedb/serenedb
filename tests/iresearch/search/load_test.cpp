@@ -19,7 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/strings/escaping.h>
 #include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
@@ -27,6 +29,7 @@
 #include <absl/strings/str_replace.h>
 #include <absl/strings/str_split.h>
 #include <fcntl.h>
+#include <openssl/evp.h>
 #include <simdjson.h>
 #include <unistd.h>
 #include <zlib.h>
@@ -34,6 +37,8 @@
 #include <bit>
 #include <chrono>
 #include <cstdio>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/query_context.hpp>
 #include <fstream>
 #include <functional>
 #include <iresearch/analysis/token_attributes.hpp>
@@ -47,6 +52,7 @@
 #include <iresearch/search/lead/node.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/search/top/root.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <memory>
@@ -61,7 +67,6 @@
 #include "insert_field.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "search/search_fields.hpp"
-#include "server/utils/files.h"
 #include "server/utils/simdjson_sink.h"
 #include "tests_shared.hpp"
 
@@ -325,7 +330,7 @@ IteratorFactory QueryIterator(bench::Executor& executor,
 }
 
 template<typename Body>
-void ForEachCombination(const irs::DirectoryReader& reader,
+void ForEachCombination(const irs::CompositeReader& reader,
                         const std::vector<IteratorFactory>& factories,
                         std::span<const irs::doc_id_t> window_sizes,
                         Body&& body) {
@@ -347,7 +352,7 @@ void ForEachCombination(const irs::DirectoryReader& reader,
   }
 }
 
-void TestAdvanceVsFillBlock(const irs::DirectoryReader& reader,
+void TestAdvanceVsFillBlock(const irs::CompositeReader& reader,
                             const std::vector<IteratorFactory>& factories,
                             std::span<const irs::doc_id_t> window_sizes) {
   ForEachCombination(
@@ -380,7 +385,7 @@ void TestAdvanceVsFillBlock(const irs::DirectoryReader& reader,
     });
 }
 
-void TestAdvanceVsEmitDocs(const irs::DirectoryReader& reader,
+void TestAdvanceVsEmitDocs(const irs::CompositeReader& reader,
                            const std::vector<IteratorFactory>& factories,
                            std::span<const irs::doc_id_t> window_sizes) {
   ForEachCombination(
@@ -412,7 +417,7 @@ void TestAdvanceVsEmitDocs(const irs::DirectoryReader& reader,
     });
 }
 
-void TestSeekVsFillBlock(const irs::DirectoryReader& reader,
+void TestSeekVsFillBlock(const irs::CompositeReader& reader,
                          const std::vector<IteratorFactory>& factories,
                          std::span<const irs::doc_id_t> window_sizes) {
   ForEachCombination(reader, factories, window_sizes,
@@ -435,7 +440,7 @@ void TestSeekVsFillBlock(const irs::DirectoryReader& reader,
                      });
 }
 
-void TestInterleavedSeekFillBlock(const irs::DirectoryReader& reader,
+void TestInterleavedSeekFillBlock(const irs::CompositeReader& reader,
                                   const std::vector<IteratorFactory>& factories,
                                   std::span<const irs::doc_id_t> window_sizes) {
   ForEachCombination(
@@ -462,7 +467,7 @@ void TestInterleavedSeekFillBlock(const irs::DirectoryReader& reader,
     });
 }
 
-void TestAdvanceSkipFillBlock(const irs::DirectoryReader& reader,
+void TestAdvanceSkipFillBlock(const irs::CompositeReader& reader,
                               const std::vector<IteratorFactory>& factories,
                               std::span<const irs::doc_id_t> window_sizes,
                               std::span<const size_t> skip_counts) {
@@ -493,7 +498,7 @@ void TestAdvanceSkipFillBlock(const irs::DirectoryReader& reader,
     });
 }
 
-void TestSeekSkipFillBlock(const irs::DirectoryReader& reader,
+void TestSeekSkipFillBlock(const irs::CompositeReader& reader,
                            const std::vector<IteratorFactory>& factories,
                            std::span<const irs::doc_id_t> window_sizes,
                            std::span<const irs::doc_id_t> skip_deltas) {
@@ -545,13 +550,32 @@ struct ParsedQuery {
 
 constexpr std::string_view kSkipTopK = "skip:topk";
 
-std::string HashIds(const std::vector<std::string>& ids) {
-  sdb::Sha256Functor sha;
-  for (const auto& id : ids) {
-    sha(id.data(), id.size());
-    sha("\n", 1);
+bool SlurpGzipFile(const char* path, std::string& result) {
+  const gzFile file = gzopen(path, "rb");
+  if (!file) {
+    return false;
   }
-  return sha.Finalize();
+  absl::Cleanup guard = [file] { gzclose(file); };
+  char buffer[8192];
+  int n = 0;
+  while ((n = gzread(file, buffer, sizeof(buffer))) > 0) {
+    result.append(buffer, static_cast<size_t>(n));
+  }
+  return n == 0;
+}
+
+std::string HashIds(const std::vector<std::string>& ids) {
+  const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> context{
+    EVP_MD_CTX_new(), &EVP_MD_CTX_free};
+  EVP_DigestInit_ex(context.get(), EVP_sha256(), nullptr);
+  for (const auto& id : ids) {
+    EVP_DigestUpdate(context.get(), id.data(), id.size());
+    EVP_DigestUpdate(context.get(), "\n", 1);
+  }
+  unsigned char hash[EVP_MAX_MD_SIZE];
+  unsigned int size = 0;
+  EVP_DigestFinal_ex(context.get(), hash, &size);
+  return absl::BytesToHexString({reinterpret_cast<const char*>(hash), size});
 }
 
 void HashIdsInPlace(std::vector<std::string>& ids) {
@@ -659,7 +683,6 @@ void BuildIndex(const std::string& corpus_path,
   bench::IndexBuilderOptions builder_options{
     .batch_size = 100000,
     .indexer_threads = 1,
-    .refresh_interval_ms = 0,
     .compaction_interval_ms = 5000,
     .compaction_threads = 0,
     .compact_all = gSegmentDocs == 0,
@@ -677,7 +700,7 @@ void BuildIndex(const std::string& corpus_path,
   });
 }
 
-std::vector<std::string> BuildDocIdMap(const irs::DirectoryReader& reader) {
+std::vector<std::string> BuildDocIdMap(const irs::CompositeReader& reader) {
   std::vector<std::string> id_map(reader.docs_count());
   uint64_t base = 0;
   for (auto& segment : reader) {
@@ -866,8 +889,8 @@ void WarmUp(bench::Executor& executor, const std::vector<ParsedQuery>& queries,
   } while (std::chrono::steady_clock::now() < deadline);
 }
 
-bool DeleteBuckets(irs::IndexWriter& writer, size_t from, size_t to) {
-  const auto reader = writer.GetSnapshot();
+void DeleteBuckets(bench::IndexBuilder& builder, size_t from, size_t to) {
+  const auto reader = builder.GetReader();
   irs::DocRemovalBuilder removal;
   for (uint32_t index = 0; index != reader.size(); ++index) {
     const auto* field = reader[index].field(kBucketId);
@@ -883,9 +906,7 @@ bool DeleteBuckets(irs::IndexWriter& writer, size_t from, size_t to) {
                       });
     }
   }
-  auto ctx = writer.GetBatch();
-  ctx.Remove(std::move(removal).Finish(reader));
-  return ctx.Commit();
+  builder.Remove(*std::move(removal).Finish(reader));
 }
 
 std::vector<size_t> ParseRatios(std::string_view spec) {
@@ -931,7 +952,7 @@ struct ScoredPrepare {
   std::vector<irs::QueryBuilder::ptr> queries;
 
   ScoredPrepare(bench::Executor& executor, std::string_view query,
-                const irs::Scorer& scorer, const irs::DirectoryReader& reader)
+                const irs::Scorer& scorer, const irs::CompositeReader& reader)
     : filter{executor.ParseFilter(query, true)},
       stats{duckdb::Allocator::DefaultAllocator()} {
     SDB_ASSERT(filter);
@@ -955,7 +976,7 @@ std::vector<irs::doc_id_t> WindowBounds(irs::doc_id_t max_doc,
   return bounds;
 }
 
-void TestCountRangeMatchesWhole(const irs::DirectoryReader& reader,
+void TestCountRangeMatchesWhole(const irs::CompositeReader& reader,
                                 const std::vector<IteratorFactory>& factories,
                                 std::span<const irs::doc_id_t> window_sizes) {
   ForEachCombination(
@@ -982,7 +1003,7 @@ void TestCountRangeMatchesWhole(const irs::DirectoryReader& reader,
     });
 }
 
-void TestDocsRangeMatchesWhole(const irs::DirectoryReader& reader,
+void TestDocsRangeMatchesWhole(const irs::CompositeReader& reader,
                                const std::vector<IteratorFactory>& factories,
                                std::span<const irs::doc_id_t> window_sizes) {
   ForEachCombination(
@@ -1021,7 +1042,7 @@ void TestDocsRangeMatchesWhole(const irs::DirectoryReader& reader,
     });
 }
 
-void TestHitsRangeMatchesWhole(const irs::DirectoryReader& reader,
+void TestHitsRangeMatchesWhole(const irs::CompositeReader& reader,
                                const std::vector<IteratorFactory>& factories,
                                std::span<const irs::doc_id_t> window_sizes,
                                bench::Executor& executor,
@@ -1091,7 +1112,7 @@ void TestHitsRangeMatchesWhole(const irs::DirectoryReader& reader,
   }
 }
 
-void TestTopRangeMatchesWhole(const irs::DirectoryReader& reader,
+void TestTopRangeMatchesWhole(const irs::CompositeReader& reader,
                               const std::vector<IteratorFactory>& factories,
                               std::span<const irs::doc_id_t> window_sizes,
                               bench::Executor& executor,
@@ -1350,12 +1371,13 @@ class LoadTest : public TestBase {
     std::string ref_str;
     auto gz_path = res_dir / "reference.json.gz";
     if (std::filesystem::exists(gz_path)) {
-      ASSERT_TRUE(sdb::SlurpGzipFile(gz_path.c_str(), ref_str))
+      ASSERT_TRUE(SlurpGzipFile(gz_path.c_str(), ref_str))
         << "Cannot read: " << gz_path;
     } else {
       auto raw_path = res_dir / "reference.json";
-      ASSERT_TRUE(sdb::SlurpFile(raw_path.c_str(), ref_str))
-        << "Reference file not found: " << raw_path;
+      ref_str = irs::ReadWhole<std::string>(duckdb::QueryContext{},
+                                            *duckdb::FileSystem::CreateLocal(),
+                                            raw_path.string());
     }
     auto expected = DeserializeResults(ref_str);
 
@@ -1489,9 +1511,7 @@ TEST_F(LoadTest, DeleteRatioLatency) {
   for (const auto per_mille : steps) {
     if (per_mille != 0) {
       const auto start = std::chrono::steady_clock::now();
-      ASSERT_TRUE(
-        DeleteBuckets(gBuilder->GetWriter(), deleted_upto, per_mille));
-      gBuilder->GetWriter().RefreshCommit();
+      DeleteBuckets(*gBuilder, deleted_upto, per_mille);
       deleted_upto = per_mille;
       std::cout << absl::StrCat(
         "deleted up to ", per_mille, " per-mille in ",
@@ -1500,7 +1520,7 @@ TEST_F(LoadTest, DeleteRatioLatency) {
         " s\n");
     }
 
-    gExecutor = std::make_unique<bench::Executor>(gIndexDir.string());
+    gExecutor = std::make_unique<bench::Executor>(gBuilder->GetReader());
     gExecutor->SetPrintSink(_null_sink);
     const auto& reader = gExecutor->GetReader();
     ASSERT_GT(reader.size(), 0);

@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <array>
+#include <duckdb/common/serializer/write_stream.hpp>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/index/field_meta.hpp"
@@ -31,7 +32,6 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -62,7 +62,7 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
     _producer.Produce(docs, freqs, _levels.front());
   }
 
-  void WriteRoot(DataOutput& out) final {
+  void WriteRoot(duckdb::WriteStream& out) final {
     Producer::Write(_levels.front(), out);
   }
 
@@ -131,10 +131,8 @@ class FreqNormProducer {
     SDB_ASSERT(0.f < avg_dl);
     SDB_ASSERT(0 < tf_1);
     SDB_ASSERT(0 < dl_1);
-    SDB_ASSERT(tf_1 <= dl_1);
     SDB_ASSERT(0 < tf_2);
     SDB_ASSERT(0 < dl_2);
-    SDB_ASSERT(tf_2 <= dl_2);
     // idf * tf / (k * (1 - b + b * dl / avg_dl) + tf)
     // 1. idf -- doesn't affect compare
     // tf_1 / (k * (1 - b + b * dl_1 / avg_dl) + tf_1)
@@ -176,15 +174,13 @@ class FreqNormProducer {
     }
   }
 
-  template<typename Output>
-  static void Write(Entry entry, Output& out) {
+  static void Write(Entry entry, duckdb::WriteStream& out) {
     // TODO(mbkkt) Compute difference second time looks unnecessary.
     SDB_ASSERT(entry.freq >= 1);
-    out.WriteV32(entry.freq);
+    out.WriteVarint<uint32_t>(entry.freq);
     if constexpr (kNorm) {
-      SDB_ASSERT(entry.norm >= entry.freq);
       if (entry.norm != entry.freq) {
-        out.WriteV32(entry.norm - entry.freq);
+        out.WriteVarint<uint32_t>(entry.norm - entry.freq);
       }
     }
   }
@@ -202,7 +198,6 @@ class FreqNormProducer {
     SDB_ASSERT(entry.freq >= 1);
     size_t size = bytes_io<uint32_t>::vsize(entry.freq);
     if constexpr (kNorm) {
-      SDB_ASSERT(entry.norm >= entry.freq);
       if (entry.norm != entry.freq) {
         size += bytes_io<uint32_t>::vsize(entry.norm - entry.freq);
       }
@@ -237,7 +232,8 @@ class FreqNormProducer {
       if (docs.size() == kPostingBlock) {
         _norm_it->GetPostingBlock(
           std::span<const doc_id_t, kPostingBlock>{docs.data(), kPostingBlock},
-          std::span<uint32_t, kPostingBlock>{norms, kPostingBlock});
+          std::span<uint32_t, kPostingBlock>{norms, kPostingBlock},
+          doc_limits::invalid());
       } else {
         _norm_it->Get(docs, std::span<uint32_t>{norms, docs.size()});
       }
@@ -332,17 +328,15 @@ class FreqNormSource : public ScoreBoundSource {
     return nullptr;
   }
 
-  void Read(DataInput& in, size_t size) final {
-    _freq = in.ReadV32();
-    // TODO(mbkkt) don't compute vsize here
-    const auto read = bytes_io<uint32_t>::vsize(_freq);
+  void Read(bytes_view bytes) final {
+    const auto* p = bytes.data();
+    _freq = vread<uint32_t>(p);
     // We need to always try to read norm, because we have compatibility
     // between BM25 in the index and TFIDF in the query
     [[maybe_unused]] auto norm = _freq;
-    SDB_ASSERT(read <= size);
-    if (read != size) {
-      // TODO(mbkkt) if (!kNorm) in.skip(read - size);
-      norm += in.ReadV32();
+    SDB_ASSERT(p <= bytes.data() + bytes.size());
+    if (p != bytes.data() + bytes.size()) {
+      norm += vread<uint32_t>(p);
     }
     if constexpr (kNorm) {
       _norm.value = norm;

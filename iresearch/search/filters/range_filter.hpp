@@ -46,8 +46,10 @@ struct ByRangeOptions : ByRangeFilterOptions {
   using FilterType = ByRange;
   using filter_options = ByRangeFilterOptions;
 
+  ScoreMergeType merge{ScoreMergeType::Max};
+
   bool operator==(const ByRangeOptions& rhs) const noexcept {
-    return filter_options::operator==(rhs);
+    return filter_options::operator==(rhs) && merge == rhs.merge;
   }
 };
 
@@ -104,8 +106,7 @@ class ByRange : public FilterWithField<ByRangeOptions> {
   static QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                           const PrepareContext& ctx,
                                           const TermReader* reader,
-                                          const options_type::range_type& rng,
-                                          score_t boost);
+                                          const options_type& options);
 
   PrepareCollector::ptr MakeCollectorImpl(const Scorer* scorer,
                                           StatsArena& stats,

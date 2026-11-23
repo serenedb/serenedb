@@ -39,9 +39,6 @@ CREATE INDEX wc_score_idx ON wc_score_t
     USING inverted(body wc_score_dict)
     INCLUDE (body)
 
-statement ok
-VACUUM (REFRESH_TABLE) wc_score_t
-
 # All three docs match the wildcard. Compute scores per hit in a subquery,
 # then count distinct values -- BM25() must stay inside the scan, so we
 # wrap it in a derived table before aggregating.

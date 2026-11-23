@@ -43,6 +43,7 @@
 #include "pg/catalog/tables/tables.h"
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
+#include "search/store.h"
 
 namespace sdb::pg {
 namespace {
@@ -62,10 +63,9 @@ constexpr SystemIndex kIndexes[] = {
 std::optional<std::vector<std::string>> Reloptions(
   const catalog::SearchTableEntry& table) {
   std::vector<std::string> result;
-  for (const auto name : catalog::kSearchTableOptions) {
-    if (const auto value = table.Option(name); !value.IsNull()) {
-      result.emplace_back(absl::StrCat(name, "=", value.ToString()));
-    }
+  for (const auto& option : table.ExplicitOptions()) {
+    result.emplace_back(
+      absl::StrCat(option.name, "=", option.value.ToString()));
   }
   return NonEmpty(std::move(result));
 }
@@ -122,8 +122,17 @@ struct KeyIndex {
 
 struct Index {
   const duckdb::IndexCatalogEntry& index;
-  const irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t>& owners;
+  const irs::containers::FlatHashMap<duckdb::idx_t,
+                                     const duckdb::TableCatalogEntry*>& tables;
 };
+
+const duckdb::CatalogEntry* TableOf(const Index& row, const SystemScan& scan) {
+  if (const auto it = row.tables.find(row.index.table_oid);
+      it != row.tables.end()) {
+    return it->second;
+  }
+  return scan.FindById(row.index.table_oid).get();
+}
 
 auto Shown(const SystemScan& scan, const duckdb::CatalogEntry& owner,
            std::string_view name) {
@@ -179,8 +188,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relowner">(
       [](const auto& row) { return row.table.permissions.owner; }),
     Col<"relkind">([](const auto&) { return 'r'; }), kRelationState,
-    Col<"relam">(
-      [](const auto& row) { return row.search ? kPgAmIResearch : kPgAmHeap; }),
+    Col<"relam">([](const auto&) { return kPgAmIResearch; }),
     Col<"relnatts">([](const auto& row) {
       return row.table.GetColumns().LogicalColumnCount();
     }),
@@ -188,6 +196,9 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"reltype">([](const auto& row) { return RelationRowType(row.table); }),
     Col<"reloptions">([](const auto& row) {
       return row.search ? Reloptions(*row.search) : std::nullopt;
+    }),
+    Col<"reltablespace">([](const auto& row) {
+      return row.search ? row.search->Tablespace() : duckdb::idx_t{0};
     }),
     Col<"relchecks">([](const auto& row) {
       return absl::c_count_if(
@@ -207,9 +218,13 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
              scan.Triggered(row.table);
     }),
     Col<"reltuples">([](const auto& row) {
-      return row.table.IsDuckTable()
-               ? static_cast<float>(row.table.GetStorage().GetTotalRows())
-               : -1.0F;
+      if (row.table.IsDuckTable()) {
+        return static_cast<float>(row.table.GetStorage().GetTotalRows());
+      }
+      if (row.search && row.search->Storage()->HasTable()) {
+        return static_cast<float>(row.search->Storage()->GetTable().LiveDocs());
+      }
+      return -1.0F;
     }),
     Col<"relacl">([](const auto& row) -> const auto& {
       return row.table.permissions.acl;
@@ -225,7 +240,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relowner">(
       [](const auto& row) { return row.table.permissions.owner; }),
     Col<"relkind">([](const auto&) { return 'i'; }),
-    Col<"relam">([](const auto&) { return kPgAmSecondary; }),
+    Col<"relam">([](const auto&) { return kPgAmInverted; }),
     Col<"relnatts">([](const auto& row) {
       return KeyAttnums(row.table.GetColumns(), row.key).size();
     }));
@@ -237,11 +252,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relnamespace">(
       [](const auto& row) { return row.index.ParentSchemaOid(); }),
     Col<"relkind">([](const auto&) { return 'i'; }),
-    Col<"relam">([](const auto& row) {
-      return row.index.index_type == catalog::kInvertedIndexTypeName
-               ? kPgAmInverted
-               : kPgAmSecondary;
-    }),
+    Col<"relam">([](const auto&) { return kPgAmInverted; }),
     Col<"relnatts">(
       [](const auto& row) { return row.index.parsed_expressions.size(); }),
     Col<"reloptions">([](const auto& row) {
@@ -249,14 +260,16 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
                ? Reloptions(row.index)
                : std::nullopt;
     }),
+    Col<"reltablespace">([](const auto& row, SystemScan& scan) {
+      const auto* search =
+        dynamic_cast<const catalog::SearchTableEntry*>(TableOf(row, scan));
+      return search ? search->Tablespace()
+                    : row.index.template Cast<catalog::InvertedIndexEntry>()
+                        .Tablespace();
+    }),
     Col<"relowner">([](const auto& row, SystemScan& scan) {
-      if (const auto it = row.owners.find(row.index.table_oid);
-          it != row.owners.end()) {
-        return it->second;
-      }
-      const auto relation = scan.FindById(row.index.table_oid);
-      return relation ? relation->permissions.owner
-                      : row.index.permissions.owner;
+      const auto* table = TableOf(row, scan);
+      return table ? table->permissions.owner : row.index.permissions.owner;
     }));
 
   static constexpr auto kView = Shape<kSql, duckdb::ViewCatalogEntry>(
@@ -313,11 +326,11 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
       Emit<kSystem>(table.Cast<catalog::SystemTableEntry>(), shown);
       return;
     }
-    Emit<kOrdinary>(
-      {table, dynamic_cast<const catalog::SearchTableEntry*>(&table)}, shown);
+    const auto* search = dynamic_cast<const catalog::SearchTableEntry*>(&table);
+    Emit<kOrdinary>({table, search}, shown);
     if (Allows<"relkind">('i')) {
-      if (Reads<"relowner">()) {
-        _owners.emplace(table.oid, table.permissions.owner);
+      if (Reads<"relowner">() || Reads<"reltablespace">()) {
+        _tables.emplace(table.oid, &table);
       }
       for (const auto& key : KeyIndexes(table)) {
         Emit<kKeyIndex>({table, key}, Shown(*this, table, key.constraint_name));
@@ -330,7 +343,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
   }
 
   void Row(const duckdb::IndexCatalogEntry& index) {
-    Emit<kIndex>({index, _owners},
+    Emit<kIndex>({index, _tables},
                  Shown(*this, index, index.name.GetIdentifierName()));
   }
 
@@ -346,7 +359,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
   }
 
  private:
-  irs::containers::FlatHashMap<duckdb::idx_t, duckdb::idx_t> _owners;
+  irs::containers::FlatHashMap<duckdb::idx_t, const duckdb::TableCatalogEntry*>
+    _tables;
 };
 
 }  // namespace

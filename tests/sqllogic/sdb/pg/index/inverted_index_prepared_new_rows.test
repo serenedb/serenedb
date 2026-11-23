@@ -11,7 +11,7 @@ CREATE INDEX pnr_idx ON pnr
 
 statement ok
 CREATE TABLE pnrs (pk INTEGER PRIMARY KEY, v INTEGER, b VARCHAR, emb FLOAT[2])
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX pnrs_idx ON pnrs
@@ -24,12 +24,6 @@ INSERT INTO pnr SELECT i, i % 10, CASE WHEN i = 7 THEN 'zeta alpha' ELSE 'alpha'
 statement ok
 INSERT INTO pnrs SELECT i, i % 10, CASE WHEN i = 7 THEN 'zeta alpha' ELSE 'alpha' END,
   [i, 0]::FLOAT[2] FROM range(100) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) pnr;
-
-statement ok
-VACUUM (REFRESH_TABLE) pnrs;
 
 statement ok
 PREPARE pnr_count AS SELECT count(*) AS n FROM pnr_idx;
@@ -164,12 +158,6 @@ statement ok
 INSERT INTO pnrs SELECT i, i, CASE WHEN i % 2 = 0 THEN 'zeta omega' ELSE 'alpha' END,
   [i, 0]::FLOAT[2] FROM range(100, 200) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) pnr;
-
-statement ok
-VACUUM (REFRESH_TABLE) pnrs;
-
 query
 EXECUTE pnr_count;
 ----
@@ -264,9 +252,6 @@ pk
 
 statement ok
 DELETE FROM pnr WHERE pk = 7;
-
-statement ok
-VACUUM (REFRESH_TABLE) pnr;
 
 query
 EXECUTE pnr_match;

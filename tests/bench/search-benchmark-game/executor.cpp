@@ -28,9 +28,11 @@
 #include <cmath>
 #include <cstdio>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/index/segment_list.hpp>
 #include <iresearch/parser/parser.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/docs/make.hpp>
@@ -43,7 +45,7 @@
 #include <iresearch/search/hits/root.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <stdexcept>
 #include <tuple>
@@ -81,6 +83,14 @@ bool StripSuffix(std::string_view& name, std::string_view suffix) {
 }
 
 }  // namespace
+
+irs::CompositeReader OpenIndex(duckdb::DatabaseInstance& db,
+                               duckdb::FileSystem& fs, std::string_view root,
+                               const irs::IndexReaderOptions& options) {
+  const auto text = irs::ReadWhole<std::string>(
+    duckdb::QueryContext{}, fs, fs.JoinPath(root, kSegmentListFile));
+  return irs::OpenSegmentList(db, fs, root, text, options);
+}
 
 Command ParseCommand(std::string_view name) {
   Command cmd{.kind = Kind::Count};
@@ -131,10 +141,16 @@ Executor::Executor(std::string_view path)
   : _scorer{irs::BM25::Make(irs::BM25::Options{})},
     _tokenizer{irs::analysis::TextTokenizer::Make(
       irs::analysis::TextTokenizer::Options{})},
-    _dir{path},
-    _reader{irs::DirectoryReader(
-      _dir, {.scorer = _scorer_ptr,
-             .db = &::irs::DuckDBEngine::Instance().instance()})} {}
+    _reader{OpenIndex(::irs::DuckDBEngine::Instance().instance(),
+                      duckdb::FileSystem::GetFileSystem(
+                        ::irs::DuckDBEngine::Instance().instance()),
+                      path, {.scorer = _scorer_ptr})} {}
+
+Executor::Executor(irs::CompositeReader reader)
+  : _scorer{irs::BM25::Make(irs::BM25::Options{})},
+    _tokenizer{irs::analysis::TextTokenizer::Make(
+      irs::analysis::TextTokenizer::Options{})},
+    _reader{std::move(reader)} {}
 
 size_t Executor::ExecuteTopK(size_t k, std::string_view query) {
   ResetResults(k);

@@ -54,10 +54,6 @@ statement ok
 INSERT INTO rir SELECT 1, 'rir_s.rir_target'::REGCLASS::OID;
 
 
-statement ok
-VACUUM (REFRESH_TABLE) rir;
-
-
 query
 SELECT id FROM rir_idx WHERE r = 'rir_s.rir_target'::REGCLASS;
 ----

@@ -128,7 +128,7 @@ id	body
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vkh_idx');
+SELECT * FROM sdb_reindex('vkh_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -151,7 +151,7 @@ id
 
 connection after_shutdown
 query
-SELECT * FROM serenedb_reindex('vkh_idx');
+SELECT * FROM sdb_reindex('vkh_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -162,7 +162,7 @@ INSERT INTO vkh.${__DATABASE__}.docs VALUES (4618, 'doc 4618 red fox', [sin(4618
 
 connection after_shutdown
 query
-SELECT * FROM serenedb_reindex('vkh_idx');
+SELECT * FROM sdb_reindex('vkh_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0

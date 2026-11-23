@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <pcg_random.hpp>
@@ -42,7 +43,6 @@
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -363,7 +363,7 @@ TermOnlyIterator::ptr IvfTermReader::iterator() const {
   return memory::to_managed<TermOnlyIterator>(*_it);
 }
 
-void IvfTermReader::WriteTermPayload(IndexOutput& out,
+void IvfTermReader::WriteTermPayload(duckdb::WriteStream& out,
                                      std::span<const doc_id_t> docs) {
   SDB_ASSERT(_qw && _vectors && _vectors->Child() && _ctx);
   const size_t cluster = _term_idx++;
@@ -396,7 +396,7 @@ void IvfTermReader::WriteTermPayload(IndexOutput& out,
   }
 }
 
-void IvfTermReader::Finish(IndexOutput& out) {
+void IvfTermReader::Finish(duckdb::WriteStream& out) {
   SDB_ASSERT(_qw);
   _qw->Finish(out);
 }
@@ -427,12 +427,9 @@ void IvfWriter::Flush() {
   const auto tree_span = _result.data.centroids.Serialize(out);
   const uint64_t stats_offset = out.Position();
   _result.qw->Serialize(out);
-  const uint64_t stats_byte_size = out.Position() - stats_offset;
   _idx->AddIvf(_info.index_id, IvfCentroidMeta{
                                  .tree_offset = tree_span.offset,
-                                 .tree_byte_size = tree_span.byte_size,
                                  .stats_offset = stats_offset,
-                                 .stats_byte_size = stats_byte_size,
                                  .root_byte_size = tree_span.root_byte_size,
                                });
 }

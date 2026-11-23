@@ -20,7 +20,6 @@
 
 #include "iresearch/formats/column/variant_column_reader.hpp"
 
-#include <duckdb/common/string_util.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
@@ -59,15 +58,33 @@ VariantColumnReader::VariantColumnReader(field_id id, duckdb::LogicalType type,
     if (vrg.shredded) {
       duckdb::VariantStats::SetShreddedStats(rg_s,
                                              vrg.shredded->MergedStatistics());
+    } else {
+      duckdb::VariantStats::MarkAsNotShredded(rg_s);
     }
-    // Like duckdb's checkpoint stats, an unshredded row group stays
-    // UNINITIALIZED so mixed segments merge to SHREDDED, not INCONSISTENT.
     stats.Merge(rg_s);
     _row_count += rg.row_count;
     _variant_offsets.push_back(_row_count);
     _variant_rgs.push_back(std::move(vrg));
   }
   FinishStats(std::move(stats));
+}
+
+void VariantColumnReader::CollectBlocks(
+  uint64_t first, uint64_t last, std::vector<duckdb::FileRange>& out) const {
+  ColumnReader::CollectBlocks(first, last, out);
+  if (first >= _row_count) {
+    return;
+  }
+  const auto count = std::min(last, _row_count - 1) - first + 1;
+  ForEachVariantRun(
+    first, count,
+    [&](size_t rg, duckdb::idx_t local, duckdb::idx_t run, duckdb::idx_t) {
+      const auto& vrg = _variant_rgs[rg];
+      vrg.unshredded->CollectBlocks(local, local + run - 1, out);
+      if (vrg.shredded) {
+        vrg.shredded->CollectBlocks(local, local + run - 1, out);
+      }
+    });
 }
 
 void VariantColumnReader::NewOutputVector(ScanState& s) const {
@@ -139,8 +156,7 @@ const ColumnReader* VariantColumnReader::FindShreddedLeaf(
   }
   const auto& fields = duckdb::StructType::GetChildTypes(tv.Type());
   for (size_t fi = 0; fi < fields.size(); ++fi) {
-    if (duckdb::StringUtil::CIEquals(path[0],
-                                     fields[fi].first.GetIdentifierName())) {
+    if (path[0] == fields[fi].first.GetIdentifierName()) {
       return FindShreddedLeaf(tv.StructField(fi), path.subspan(1));
     }
   }
@@ -269,10 +285,14 @@ void VariantColumnReader::Skip(ScanState& s, duckdb::idx_t count) const {
     _validity->ColumnReader::Skip(s.child_states[0], count);
   }
   auto& vs = VariantState(s);
-  ForEachVariantRun(
-    vs.cursor, count,
-    [&](size_t rg, duckdb::idx_t local_start, duckdb::idx_t run,
-        duckdb::idx_t /*done*/) { SeekVariantRg(s, rg, local_start + run); });
+  ForEachVariantRun(vs.cursor, count,
+                    [&](size_t rg, duckdb::idx_t local_start, duckdb::idx_t run,
+                        duckdb::idx_t /*done*/) {
+                      if (_variant_offsets[rg] + local_start + run !=
+                          _variant_offsets[rg + 1]) {
+                        SeekVariantRg(s, rg, local_start + run);
+                      }
+                    });
   vs.cursor += count;
 }
 

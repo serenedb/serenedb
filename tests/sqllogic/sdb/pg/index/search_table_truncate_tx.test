@@ -5,7 +5,7 @@
 
 statement ok
 CREATE TABLE tt (id BIGINT PRIMARY KEY, r TEXT)
-WITH (storage = 'search', compaction_interval = 0);
+WITH (compaction_interval = 0);
 
 statement ok
 CREATE INDEX tt_r ON tt USING inverted (r);
@@ -22,9 +22,6 @@ TRUNCATE tt;
 statement ok
 COMMIT;
 
-statement ok
-VACUUM (REFRESH_TABLE) tt;
-
 query
 SELECT count(*) AS unpublished_rows_truncated FROM tt;
 ----
@@ -35,7 +32,7 @@ statement ok
 INSERT INTO tt VALUES (3, 'c');
 
 statement ok
-VACUUM (REFRESH_TABLE) tt;
+VACUUM (FLUSH_TABLE) tt;
 
 statement ok
 BEGIN;
@@ -51,9 +48,6 @@ INSERT INTO tt VALUES (5, 'e'), (6, 'f');
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) tt;
 
 query
 SELECT id, r FROM tt ORDER BY id;
@@ -81,9 +75,6 @@ INSERT INTO tt VALUES (7, 'g');
 statement ok
 ROLLBACK;
 
-statement ok
-VACUUM (REFRESH_TABLE) tt;
-
 query
 SELECT id, r FROM tt ORDER BY id;
 ----
@@ -93,9 +84,6 @@ id	r
 
 statement ok
 TRUNCATE tt;
-
-statement ok
-VACUUM (REFRESH_TABLE) tt;
 
 query
 SELECT count(*) AS autocommit_truncated FROM tt;
@@ -107,7 +95,7 @@ statement ok
 INSERT INTO tt VALUES (8, 'h'), (9, 'i');
 
 statement ok
-VACUUM (REFRESH_TABLE) tt;
+VACUUM (FLUSH_TABLE) tt;
 
 statement ok
 PREPARE tt_truncate AS TRUNCATE tt;
@@ -124,9 +112,6 @@ INSERT INTO tt VALUES (10, 'j');
 statement ok
 COMMIT;
 
-statement ok
-VACUUM (REFRESH_TABLE) tt;
-
 query
 SELECT id, r FROM tt ORDER BY id;
 ----
@@ -137,7 +122,7 @@ statement ok
 INSERT INTO tt VALUES (11, 'k');
 
 statement ok
-VACUUM (REFRESH_TABLE) tt;
+VACUUM (FLUSH_TABLE) tt;
 
 statement ok
 BEGIN;
@@ -151,9 +136,6 @@ DELETE FROM tt WHERE id = 11;
 statement ok
 COMMIT;
 
-statement ok
-VACUUM (REFRESH_TABLE) tt;
-
 query
 SELECT count(*) AS prepared_truncated FROM tt;
 ----
@@ -164,13 +146,7 @@ statement ok
 INSERT INTO tt VALUES (12, 'l');
 
 statement ok
-VACUUM (REFRESH_TABLE) tt;
-
-statement ok
 EXECUTE tt_truncate;
-
-statement ok
-VACUUM (REFRESH_TABLE) tt;
 
 query
 SELECT count(*) AS prepared_autocommit_truncated FROM tt;

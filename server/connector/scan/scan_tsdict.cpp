@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
+
 #include <array>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_reader.hpp>
@@ -25,6 +27,7 @@
 #include <iresearch/search/detail/lazy_bitset.hpp>
 #include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/docs/family.hpp>
+#include <iresearch/search/fill/make.hpp>
 #include <iresearch/search/queries/term_state.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -38,26 +41,16 @@
 namespace sdb::connector {
 
 struct TsDictLocalState final : public ScanLocalState {
-  struct FieldState {
-    irs::field_id field_id = irs::field_limits::invalid();
-    irs::DictLayout layout = irs::DictLayout::String;
-    bool nulls = false;
-    duckdb::idx_t term_slot = duckdb::DConstants::INVALID_INDEX;
-    duckdb::idx_t term_raw_slot = duckdb::DConstants::INVALID_INDEX;
-    duckdb::idx_t count_slot = duckdb::DConstants::INVALID_INDEX;
-    duckdb::idx_t freq_slot = duckdb::DConstants::INVALID_INDEX;
-    duckdb::idx_t score_slot = duckdb::DConstants::INVALID_INDEX;
-    TsDictTermUses term_uses = TsDictTermUses::None;
-    const irs::Filter* having_filter = nullptr;
-  };
-
   enum class CountMode {
     Meta,
     Masked,
     Where,
   };
 
-  std::vector<FieldState> fields;
+  explicit TsDictLocalState(std::span<const TsDictField> fields) noexcept
+    : fields{fields} {}
+
+  std::span<const TsDictField> fields;
   CountMode count_mode = CountMode::Meta;
   const irs::QueryBuilder* where_query = nullptr;
 
@@ -68,16 +61,22 @@ struct TsDictLocalState final : public ScanLocalState {
   uint32_t LiveDocs(irs::TermIterator& it, bool count_all,
                     uint32_t ordinal = irs::count::TermCounts::kNoOrdinal);
 
+  void ReleasePlans() final {
+    _live.reset();
+    _term_counts = nullptr;
+    _term_counts_cache.clear();
+  }
+
  private:
   bool NextField();
-  irs::TermIterator::ptr MakeDictSource(const FieldState& field,
+  irs::TermIterator::ptr MakeDictSource(const TsDictField& field,
                                         const irs::TermReader& reader);
-  irs::TermIterator::ptr MakeTermSource(const FieldState& field,
+  irs::TermIterator::ptr MakeTermSource(const TsDictField& field,
                                         const irs::TermReader& reader);
   duckdb::idx_t EmitField(duckdb::DataChunk& output, duckdb::idx_t output_start,
                           duckdb::idx_t capacity);
   duckdb::idx_t AppendNullRow(duckdb::DataChunk& output,
-                              const FieldState& field, duckdb::idx_t row);
+                              const TsDictField& field, duckdb::idx_t row);
   irs::detail::LazyBitset& Live();
   uint32_t WalkLive(const irs::TermReader& reader, irs::TermIterator& it,
                     bool count_all);
@@ -94,8 +93,8 @@ struct TsDictLocalState final : public ScanLocalState {
   std::vector<irs::count::TermCounts::ptr> _term_counts_cache;
   irs::QueryBuilder::ptr _all_query;
   bool _null_pending = false;
-  const FieldState* _field = nullptr;
-  const FieldState* _next_field = nullptr;
+  const TsDictField* _field = nullptr;
+  const TsDictField* _next_field = nullptr;
   CountMode _cursor_mode = CountMode::Meta;
   irs::TermIterator::ptr _cursor;
 
@@ -117,7 +116,7 @@ struct TsDictLocalState final : public ScanLocalState {
   irs::DocRange _range;
   ScanGlobalState* _g = nullptr;
   const ScanGlobalState::TsDictCounts* _counts = nullptr;
-  const FieldState* _emit_fields = nullptr;
+  const TsDictField* _emit_fields = nullptr;
   uint32_t _seg_idx = 0;
   uint32_t _bound_seg = std::numeric_limits<uint32_t>::max();
   irs::doc_id_t _bound_end = 0;
@@ -161,53 +160,6 @@ class MinMaxTermsIterator : public irs::TermIterator {
   size_t _count;
   size_t _next = 0;
 };
-
-void BuildTsDictSlots(TsDictLocalState& lstate,
-                      duckdb::TableFunctionInitInput& input,
-                      const ScanBindData& bd) {
-  using duckdb::DConstants;
-  using Req = TsDictRequest;
-  using Field = TsDictLocalState::FieldState;
-
-  struct SlotKind {
-    ColumnId cat;
-    duckdb::idx_t Req::* req;
-    duckdb::idx_t Field::* slot;
-    size_t next = 0;
-  };
-  std::array<SlotKind, 5> kinds{{
-    {kInvertedIndexTermId, &Req::term_col_idx, &Field::term_slot},
-    {kInvertedIndexTermRawId, &Req::term_raw_col_idx, &Field::term_raw_slot},
-    {kInvertedIndexTermCountId, &Req::count_col_idx, &Field::count_slot},
-    {kInvertedIndexTermFreqId, &Req::freq_col_idx, &Field::freq_slot},
-    {kInvertedIndexTermScoreId, &Req::score_col_idx, &Field::score_slot},
-  }};
-
-  duckdb::idx_t out_slot = 0;
-  for (auto col_id : input.column_ids) {
-    if (col_id == duckdb::COLUMN_IDENTIFIER_ROW_ID ||
-        col_id >= duckdb::VIRTUAL_COLUMN_START) {
-      ++out_slot;
-      continue;
-    }
-    if (col_id >= bd.columns.ids.size()) {
-      continue;
-    }
-    const auto cat = bd.columns.ids[col_id];
-    for (auto& kind : kinds) {
-      if (cat != kind.cat) {
-        continue;
-      }
-      while (bd.ts_dict.requests[kind.next].*kind.req ==
-             DConstants::INVALID_INDEX) {
-        ++kind.next;
-      }
-      lstate.fields[kind.next++].*kind.slot = out_slot;
-      break;
-    }
-    ++out_slot;
-  }
-}
 
 struct TsDictEmitContext {
   duckdb::string_t* term_data;
@@ -275,9 +227,7 @@ struct TsDictEmitter {
 void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
                                     ScanGlobalState& g) {
   _seg = &seg;
-  _term_counts = nullptr;
-  _term_counts_cache.clear();
-  _live.reset();
+  ReleasePlans();
   _all_query = {};
   plan_memory.Rewind();
   _query_memory.Rewind();
@@ -293,7 +243,7 @@ void TsDictLocalState::StartSegment(const irs::SubReader& seg, uint32_t seg_idx,
   where_query = nullptr;
   _next_field = fields.empty() ? nullptr : fields.data();
   if (g.filter) {
-    where_query = &EnsureSegmentQuery(g, *this, seg_idx);
+    where_query = &EnsureSegmentQuery(g, this, seg_idx);
     if (irs::QueryBuilder::IsEmpty(*where_query)) {
       _next_field = nullptr;
       return;
@@ -334,8 +284,7 @@ irs::detail::LazyBitset& TsDictLocalState::Live() {
   if (!_live) {
     const auto& query = where_query ? *where_query : *_all_query;
     SDB_ASSERT(!irs::QueryBuilder::IsEmpty(query));
-    auto node =
-      query.PlanFill({.memory = plan_memory}, irs::ScoreMergeType::Noop);
+    auto node = irs::fill::MakeRoot(plan_memory, query);
     EnsurePlanned(node != nullptr);
     if (auto* folded = node->Folded()) {
       _live.emplace(std::move(*folded), irs::MakeGenericDocsMask(*_seg));
@@ -453,7 +402,7 @@ void TsDictLocalState::CountUnit(ScanGlobalState& g) {
       continue;
     }
     const bool count_all =
-      _field->count_slot != duckdb::DConstants::INVALID_INDEX;
+      _field->slots[TsDictColumn::Count] != duckdb::DConstants::INVALID_INDEX;
     uint32_t ordinal = 0;
     while (_cursor->next()) {
       const bool known =
@@ -491,9 +440,7 @@ void TsDictLocalState::BeginEmit(ScanGlobalState& g) {
   emitting = true;
   counting = false;
   _range = {};
-  _live.reset();
-  _term_counts = nullptr;
-  _term_counts_cache.clear();
+  ReleasePlans();
   plan_memory.Rewind();
   _cursor.reset();
   _field = nullptr;
@@ -534,7 +481,7 @@ uint32_t TsDictLocalState::LiveDocs(irs::TermIterator& it, bool count_all,
 }
 
 irs::TermIterator::ptr TsDictLocalState::MakeDictSource(
-  const FieldState& field, const irs::TermReader& reader) {
+  const TsDictField& field, const irs::TermReader& reader) {
   if (!field.having_filter) {
     return reader.iterator();
   }
@@ -546,7 +493,7 @@ irs::TermIterator::ptr TsDictLocalState::MakeDictSource(
 }
 
 irs::TermIterator::ptr TsDictLocalState::MakeTermSource(
-  const FieldState& field, const irs::TermReader& reader) {
+  const TsDictField& field, const irs::TermReader& reader) {
   if (field.having_filter) {
     return MakeDictSource(field, reader);
   }
@@ -628,21 +575,22 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
     return 0;
   }
   const auto& field = *_field;
-  const auto vec = [&](duckdb::idx_t slot) -> duckdb::Vector* {
+  const auto vec = [&](TsDictColumn kind) -> duckdb::Vector* {
+    const auto slot = field.slots[kind];
     return slot == DConstants::INVALID_INDEX ? nullptr : &output.data[slot];
   };
-  const auto data = [&]<typename T>(duckdb::idx_t slot) -> T* {
-    auto* v = vec(slot);
+  const auto data = [&]<typename T>(TsDictColumn kind) -> T* {
+    auto* v = vec(kind);
     return v ? duckdb::FlatVector::GetDataMutable<T>(*v) : nullptr;
   };
 
-  auto* term_vec = vec(field.term_slot);
-  auto* raw_vec = vec(field.term_raw_slot);
-  auto* term_data = data.operator()<duckdb::string_t>(field.term_slot);
-  auto* raw_data = data.operator()<duckdb::string_t>(field.term_raw_slot);
-  auto* count_data = data.operator()<int32_t>(field.count_slot);
-  auto* freq_data = data.operator()<int64_t>(field.freq_slot);
-  auto* score_data = data.operator()<float>(field.score_slot);
+  auto* term_vec = vec(TsDictColumn::Term);
+  auto* raw_vec = vec(TsDictColumn::TermRaw);
+  auto* term_data = data.operator()<duckdb::string_t>(TsDictColumn::Term);
+  auto* raw_data = data.operator()<duckdb::string_t>(TsDictColumn::TermRaw);
+  auto* count_data = data.operator()<int32_t>(TsDictColumn::Count);
+  auto* freq_data = data.operator()<int64_t>(TsDictColumn::Freq);
+  auto* score_data = data.operator()<float>(TsDictColumn::Score);
 
   const bool min_only = field.term_uses == TsDictTermUses::Min;
   const auto field_capacity = min_only ? duckdb::idx_t{1} : capacity;
@@ -684,27 +632,18 @@ duckdb::idx_t TsDictLocalState::EmitField(duckdb::DataChunk& output,
     return 0;
   }
 
-  for (const auto& other : fields) {
-    if (&other == _field) {
-      continue;
-    }
-    for (const auto slot :
-         {other.term_slot, other.term_raw_slot, other.count_slot,
-          other.freq_slot, other.score_slot}) {
-      if (slot == DConstants::INVALID_INDEX) {
-        continue;
-      }
-      auto& validity = duckdb::FlatVector::ValidityMutable(output.data[slot]);
-      for (duckdb::idx_t i = 0; i < n; ++i) {
-        validity.SetInvalid(output_start + i);
-      }
+  for (const auto slot : field.foreign_slots) {
+    auto& validity = duckdb::FlatVector::ValidityMutable(output.data[slot]);
+    validity.EnsureWritable();
+    for (auto row = output_start, end = output_start + n; row != end; ++row) {
+      validity.SetInvalidUnsafe(row);
     }
   }
   return n;
 }
 
 duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
-                                              const FieldState& field,
+                                              const TsDictField& field,
                                               duckdb::idx_t row) {
   const auto* reader = _seg->field(
     field.field_id, {.layout = field.layout, .member = irs::DictMember::Nulls});
@@ -719,24 +658,26 @@ duckdb::idx_t TsDictLocalState::AppendNullRow(duckdb::DataChunk& output,
   } else if (count_mode == CountMode::Meta) {
     nulls = static_cast<uint32_t>(reader->docs_count());
   } else {
-    nulls =
-      NullDocs(*reader, field.count_slot != duckdb::DConstants::INVALID_INDEX);
+    nulls = NullDocs(*reader, field.slots[TsDictColumn::Count] !=
+                                duckdb::DConstants::INVALID_INDEX);
   }
   if (nulls == 0) {
     return 0;
   }
-  const auto set_null = [&](duckdb::idx_t slot) {
-    if (slot != duckdb::DConstants::INVALID_INDEX) {
+  const auto set_null = [&](TsDictColumn kind) {
+    if (const auto slot = field.slots[kind];
+        slot != duckdb::DConstants::INVALID_INDEX) {
       duckdb::FlatVector::SetNull(output.data[slot], row, true);
     }
   };
-  set_null(field.term_slot);
-  set_null(field.term_raw_slot);
-  set_null(field.freq_slot);
-  set_null(field.score_slot);
-  if (field.count_slot != duckdb::DConstants::INVALID_INDEX) {
-    duckdb::FlatVector::GetDataMutable<int32_t>(
-      output.data[field.count_slot])[row] = static_cast<int32_t>(nulls);
+  set_null(TsDictColumn::Term);
+  set_null(TsDictColumn::TermRaw);
+  set_null(TsDictColumn::Freq);
+  set_null(TsDictColumn::Score);
+  if (const auto slot = field.slots[TsDictColumn::Count];
+      slot != duckdb::DConstants::INVALID_INDEX) {
+    duckdb::FlatVector::GetDataMutable<int32_t>(output.data[slot])[row] =
+      static_cast<int32_t>(nulls);
   }
   return 1;
 }
@@ -773,21 +714,41 @@ void BuildTsDictCounts(ScanGlobalState& g) {
   }
 }
 
-duckdb::unique_ptr<duckdb::LocalTableFunctionState> MakeTsDictLocal(
-  ScanGlobalState& g, duckdb::TableFunctionInitInput& input) {
-  auto lstate = duckdb::make_uniq<TsDictLocalState>();
-  const auto& ss = g.Bind();
-  lstate->fields.resize(ss.ts_dict.requests.size());
-  for (size_t i = 0; i < ss.ts_dict.requests.size(); ++i) {
-    lstate->fields[i].field_id = ss.ts_dict.requests[i].field_id;
-    lstate->fields[i].layout = ss.ts_dict.requests[i].layout;
-    lstate->fields[i].nulls = ss.ts_dict.requests[i].nulls;
-    lstate->fields[i].term_uses = ss.ts_dict.requests[i].term_uses;
-    lstate->fields[i].having_filter =
-      ss.ts_dict.requests[i].having_filter.get();
+void BuildTsDictFields(ScanGlobalState& g) {
+  const auto& requests = g.Bind().ts_dict.requests;
+  g.ts_dict_fields.resize(requests.size());
+  for (size_t i = 0; i != requests.size(); ++i) {
+    const auto& req = requests[i];
+    auto& field = g.ts_dict_fields[i];
+    field.field_id = req.field_id;
+    field.layout = req.layout;
+    field.nulls = req.nulls;
+    field.term_uses = req.term_uses;
+    field.having_filter = req.having_filter.get();
+    for (const auto kind : magic_enum::enum_values<TsDictColumn>()) {
+      if (const auto column = req.bind_columns[kind];
+          column != duckdb::DConstants::INVALID_INDEX) {
+        field.slots[kind] = g.bind_slots[column];
+      }
+    }
   }
-  BuildTsDictSlots(*lstate, input, ss);
-  return lstate;
+  for (auto& field : g.ts_dict_fields) {
+    for (const auto& other : g.ts_dict_fields) {
+      if (&other == &field) {
+        continue;
+      }
+      for (const auto slot : other.slots) {
+        if (slot != duckdb::DConstants::INVALID_INDEX) {
+          field.foreign_slots.push_back(slot);
+        }
+      }
+    }
+  }
+}
+
+duckdb::unique_ptr<duckdb::LocalTableFunctionState> MakeTsDictLocal(
+  const ScanGlobalState& g) {
+  return duckdb::make_uniq<TsDictLocalState>(g.ts_dict_fields);
 }
 
 void RunTsDictScan(duckdb::ClientContext&, ScanGlobalState& g,

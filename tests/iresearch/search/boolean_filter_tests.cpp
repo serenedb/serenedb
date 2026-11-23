@@ -168,7 +168,6 @@ struct SegmentReaderMock final : irs::SubReader {
     _meta.docs_count = docs_count;
     _meta.live_docs_count = docs_count;
   }
-  uint64_t CountMappedMemory() const final { return 0; }
   const irs::SegmentInfo& Meta() const final { return _meta; }
   const irs::DocumentMask* docs_mask() const final { return nullptr; }
   irs::lead::Node::ptr docs_iterator(irs::PlanMemory&) const final {
@@ -352,16 +351,6 @@ class FillDocs : public irs::fill::Node {
     return next;
   }
 
-  irs::doc_id_t FillAnd(irs::doc_id_t min, irs::doc_id_t max,
-                        uint64_t* IRS_RESTRICT mask) final {
-    const auto words = irs::detail::WindowWords(min, max);
-    const auto next = _list.Window(min, max, _own.data());
-    for (size_t w = 0; w != words; ++w) {
-      mask[w] &= _own[w];
-    }
-    return next;
-  }
-
   irs::doc_id_t FillAndNot(irs::doc_id_t min, irs::doc_id_t max,
                            uint64_t* IRS_RESTRICT mask) final {
     const auto words = irs::detail::WindowWords(min, max);
@@ -404,7 +393,7 @@ class FillScored : public irs::fill::Node {
       .boost = _boost,
     });
     const auto value = score.Score();
-    irs::ResolveMergeType(_merge, [&]<irs::ScoreMergeType Merge> {
+    irs::Resolve(_merge, [&]<irs::ScoreMergeType Merge> {
       for (size_t w = 0; w != words; ++w) {
         auto word = _own[w];
         mask[w] |= word;
@@ -2747,6 +2736,20 @@ irs::ByPrefix& AddPrefix(irs::BooleanFilter& root, irs::Occur occur,
   return prefix;
 }
 
+irs::ByEditDistance& AddFuzzy(irs::BooleanFilter& root, irs::Occur occur,
+                              std::string_view term, uint8_t distance,
+                              bool starts_with, size_t max_terms) {
+  auto& fuzzy = AddChild<irs::ByEditDistance>(root, occur);
+  *fuzzy.mutable_field_id() = kFieldTestField;
+  auto& options = *fuzzy.mutable_options();
+  options.term = irs::bstring{irs::ViewCast<irs::byte_type>(term)};
+  options.max_distance = distance;
+  options.with_transpositions = true;
+  options.starts_with = starts_with;
+  options.max_terms = max_terms;
+  return fuzzy;
+}
+
 irs::bstring OnlyTerm(const irs::BooleanFilter& node) {
   std::vector<irs::bstring> found;
   for (const auto occur : {irs::Occur::Must, irs::Occur::Should}) {
@@ -2802,7 +2805,7 @@ TEST(CrossSubsume_test, excluded_prefixes_keep_the_wider) {
                                     .term);
 }
 
-TEST(CrossSubsume_test, required_prefix_drops_an_optional_term) {
+TEST(CrossSubsume_test, required_prefix_keeps_optional_terms) {
   auto root = std::make_unique<irs::BooleanFilter>();
   AddPrefix(*root, irs::Occur::Must, kFieldTestField, "ab");
   AddTerm(*root, irs::Occur::Should, kFieldTestField, "abc");
@@ -2813,8 +2816,9 @@ TEST(CrossSubsume_test, required_prefix_drops_an_optional_term) {
   irs::Optimize(filter, {});
 
   ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
-  EXPECT_EQ(irs::bstring{B("zzz")},
-            OnlyTerm(irs::utils::downCast<irs::BooleanFilter>(*filter)));
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  EXPECT_EQ(2, node.Terms(irs::Occur::Should).size());
+  EXPECT_EQ(1, node.Filters(irs::Occur::Must).size());
 }
 
 TEST(AndSubsume_test, required_term_drops_a_wider_prefix) {
@@ -2991,6 +2995,399 @@ TEST(OrSubsume_test, equal_optional_prefixes_keep_one) {
   ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filter->type());
   EXPECT_EQ(irs::bstring{B("ab")},
             irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
+}
+
+size_t OptionalFilters(irs::Filter::ptr& filter) {
+  if (filter->type() != irs::Type<irs::BooleanFilter>::id()) {
+    return 1;
+  }
+  return irs::utils::downCast<irs::BooleanFilter>(*filter)
+    .Filters(irs::Occur::Should)
+    .size();
+}
+
+TEST(OrSubsume_test, uncapped_fuzzy_prefix_drops_a_prefix_of_its_text) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Should, kFieldTestField, "runing");
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, true, 0);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), filter->type());
+  EXPECT_TRUE(irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*filter)
+                .options()
+                .starts_with);
+}
+
+TEST(OrSubsume_test, capped_fuzzy_prefix_keeps_the_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Should, kFieldTestField, "runing");
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, true, 50);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(2, OptionalFilters(filter));
+}
+
+TEST(OrSubsume_test, fuzzy_prefix_keeps_a_wider_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Should, kFieldTestField, "run");
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, true, 0);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(2, OptionalFilters(filter));
+}
+
+TEST(OrSubsume_test, whole_term_fuzzy_keeps_a_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Should, kFieldTestField, "runin");
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, false, 0);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(2, OptionalFilters(filter));
+}
+
+TEST(OrSubsume_test, uncapped_fuzzy_prefix_drops_terms_at_distance_zero) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto term : {"runin", "runing", "ruin"}) {
+    AddTerm(*root, irs::Occur::Should, kFieldTestField, term);
+  }
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, true, 0);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("ruin")},
+            OnlyTerm(irs::utils::downCast<irs::BooleanFilter>(*filter)));
+}
+
+TEST(OrSubsume_test, uncapped_whole_term_fuzzy_drops_only_its_text) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto term : {"runin", "runing"}) {
+    AddTerm(*root, irs::Occur::Should, kFieldTestField, term);
+  }
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, false, 0);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("runing")},
+            OnlyTerm(irs::utils::downCast<irs::BooleanFilter>(*filter)));
+}
+
+TEST(OrSubsume_test, uncapped_fuzzy_covers_terms_under_its_literal_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto term : {"runing", "rxning"}) {
+    AddTerm(*root, irs::Occur::Should, kFieldTestField, term);
+  }
+  auto& options =
+    *AddFuzzy(*root, irs::Occur::Should, "nin", 1, true, 0).mutable_options();
+  options.prefix = irs::bstring{B("ru")};
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("rxning")},
+            OnlyTerm(irs::utils::downCast<irs::BooleanFilter>(*filter)));
+}
+
+TEST(OrSubsume_test, uncapped_fuzzy_prefix_drops_a_narrower_fuzzy) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, false, 50);
+  AddFuzzy(*root, irs::Occur::Should, "runin", 2, true, 0);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), filter->type());
+  const auto& options =
+    irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*filter).options();
+  EXPECT_TRUE(options.starts_with);
+  EXPECT_EQ(3, options.no_distance);
+}
+
+TEST(OrSubsume_test, uncapped_fuzzy_keeps_a_fuzzy_it_does_not_cover) {
+  const auto kept = [](bool wider_starts_with, auto&& narrow) {
+    auto root = std::make_unique<irs::BooleanFilter>();
+    narrow(*AddFuzzy(*root, irs::Occur::Should, "runin", 1, false, 0)
+              .mutable_options());
+    AddFuzzy(*root, irs::Occur::Should, "runin", 2, wider_starts_with, 0);
+    root->SetMinShouldMatch(1);
+    irs::Filter::ptr filter = std::move(root);
+    irs::Optimize(filter, {});
+    return OptionalFilters(filter);
+  };
+  EXPECT_EQ(2, kept(true, [](irs::ByEditDistanceOptions& options) {
+              options.term = irs::bstring{B("runix")};
+            }));
+  EXPECT_EQ(2, kept(true, [](irs::ByEditDistanceOptions& options) {
+              options.prefix = irs::bstring{B("x")};
+            }));
+  EXPECT_EQ(2, kept(true, [](irs::ByEditDistanceOptions& options) {
+              options.provider = &irs::DefaultPDP;
+            }));
+  EXPECT_EQ(2, kept(true, [](irs::ByEditDistanceOptions& options) {
+              options.with_transpositions = false;
+            }));
+  EXPECT_EQ(2, kept(true, [](irs::ByEditDistanceOptions& options) {
+              options.max_distance = 3;
+            }));
+  EXPECT_EQ(2, kept(false, [](irs::ByEditDistanceOptions& options) {
+              options.starts_with = true;
+            }));
+}
+
+TEST(OrSubsume_test, equal_uncapped_fuzzies_keep_one) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, true, 0);
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, true, 0)
+    .mutable_options()
+    ->merge = irs::ScoreMergeType::Sum;
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), filter->type());
+}
+
+TEST(OrSubsume_test, uncapped_fuzzy_keeps_what_another_field_or_dict_holds) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Should, kFieldName, "runing");
+  *AddPrefix(*root, irs::Occur::Should, kFieldTestField, "runing")
+     .mutable_dict() = irs::DictRef{.member = irs::DictMember::Numbers};
+  AddRange(*root, irs::Occur::Should, kFieldTestField);
+  Append<irs::ByWildcard>(*root, irs::Occur::Should, kFieldTestField,
+                          "runin_%");
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, true, 0);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(5, OptionalFilters(filter));
+}
+
+TEST(OrSubsume_test, uncapped_whole_term_fuzzy_drops_a_narrower_one) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddFuzzy(*root, irs::Occur::Should, "runin", 1, false, 50);
+  AddFuzzy(*root, irs::Occur::Should, "runin", 2, false, 0);
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), filter->type());
+  const auto& options =
+    irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*filter).options();
+  EXPECT_FALSE(options.starts_with);
+  EXPECT_EQ(3, options.no_distance);
+}
+
+TEST(CrossSubsume_test, excluded_uncapped_fuzzy_kills_a_required_term) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddTerm(*root, irs::Occur::Must, kFieldTestField, "running");
+  AddFuzzy(*root, irs::Occur::MustNot, "runn", 1, true, 0);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(irs::Type<irs::Empty>::id(), filter->type());
+}
+
+TEST(AndSubsume_test, required_term_drops_an_uncapped_fuzzy_that_accepts_it) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddTerm(*root, irs::Occur::Must, kFieldTestField, "running");
+  AddFuzzy(*root, irs::Occur::Must, "runn", 1, true, 0);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(irs::Type<irs::ByTerm>::id(), filter->type());
+}
+
+TEST(AndSubsume_test, required_prefix_drops_an_uncapped_fuzzy_prefix_over_it) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Must, kFieldTestField, "runing");
+  AddFuzzy(*root, irs::Occur::Must, "runin", 1, true, 0);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("runing")},
+            irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
+}
+
+TEST(AndSubsume_test, required_prefix_keeps_a_capped_fuzzy_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Must, kFieldTestField, "runing");
+  AddFuzzy(*root, irs::Occur::Must, "runin", 1, true, 50);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(2, irs::utils::downCast<irs::BooleanFilter>(*filter).Size(
+                 irs::Occur::Must));
+}
+
+TEST(AndSubsume_test, required_fuzzy_under_a_prefix_drops_the_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Must, kFieldTestField, "ru");
+  AddFuzzy(*root, irs::Occur::Must, "nin", 1, false, 50)
+    .mutable_options()
+    ->prefix = irs::bstring{B("run")};
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), filter->type());
+}
+
+TEST(AndSubsume_test, required_fuzzies_keep_the_narrower) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddFuzzy(*root, irs::Occur::Must, "runin", 2, true, 0);
+  AddFuzzy(*root, irs::Occur::Must, "runin", 1, false, 50);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), filter->type());
+  const auto& options =
+    irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*filter).options();
+  EXPECT_FALSE(options.starts_with);
+  EXPECT_EQ(2, options.no_distance);
+}
+
+TEST(AndSubsume_test, equal_required_uncapped_fuzzies_keep_one) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddFuzzy(*root, irs::Occur::Must, "runin", 1, true, 0);
+  AddFuzzy(*root, irs::Occur::Must, "runin", 1, true, 0)
+    .mutable_options()
+    ->merge = irs::ScoreMergeType::Sum;
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), filter->type());
+}
+
+TEST(OrSubsume_test, optional_prefix_drops_a_fuzzy_under_it) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Should, kFieldTestField, "ru");
+  AddFuzzy(*root, irs::Occur::Should, "nin", 1, false, 50)
+    .mutable_options()
+    ->prefix = irs::bstring{B("run")};
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), filter->type());
+  EXPECT_EQ(irs::bstring{B("ru")},
+            irs::utils::downCast<irs::ByPrefix>(*filter).options().term);
+}
+
+TEST(OrSubsume_test, optional_prefix_keeps_a_fuzzy_beyond_it) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Should, kFieldTestField, "run");
+  AddFuzzy(*root, irs::Occur::Should, "nin", 1, false, 50)
+    .mutable_options()
+    ->prefix = irs::bstring{B("ru")};
+  root->SetMinShouldMatch(1);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(2, OptionalFilters(filter));
+}
+
+TEST(CrossSubsume_test, excluded_uncapped_fuzzy_kills_a_required_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Must, kFieldTestField, "runing");
+  AddFuzzy(*root, irs::Occur::MustNot, "runin", 1, true, 0);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(irs::Type<irs::Empty>::id(), filter->type());
+}
+
+TEST(CrossSubsume_test, excluded_capped_fuzzy_keeps_a_required_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Must, kFieldTestField, "runing");
+  AddFuzzy(*root, irs::Occur::MustNot, "runin", 1, true, 50);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  EXPECT_EQ(1, node.Size(irs::Occur::Must));
+  EXPECT_EQ(1, node.Size(irs::Occur::MustNot));
+}
+
+TEST(CrossSubsume_test, excluded_prefix_kills_a_required_fuzzy_under_it) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddFuzzy(*root, irs::Occur::Must, "nin", 1, false, 50)
+    .mutable_options()
+    ->prefix = irs::bstring{B("run")};
+  AddPrefix(*root, irs::Occur::MustNot, kFieldTestField, "ru");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  EXPECT_EQ(irs::Type<irs::Empty>::id(), filter->type());
+}
+
+TEST(CrossSubsume_test, excluded_uncapped_fuzzy_drops_an_optional_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddPrefix(*root, irs::Occur::Should, kFieldTestField, "runing");
+  AddTerm(*root, irs::Occur::Should, kFieldTestField, "zzz");
+  root->SetMinShouldMatch(1);
+  AddFuzzy(*root, irs::Occur::MustNot, "runin", 1, true, 0);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  EXPECT_EQ(0, node.Filters(irs::Occur::Should).size());
+  EXPECT_EQ(irs::bstring{B("zzz")}, OnlyTerm(node));
+}
+
+TEST(CrossSubsume_test, excluded_uncapped_fuzzy_drops_an_excluded_prefix) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  AddTerm(*root, irs::Occur::Must, kFieldTestField, "zzz");
+  AddFuzzy(*root, irs::Occur::MustNot, "runin", 1, true, 0);
+  AddPrefix(*root, irs::Occur::MustNot, kFieldTestField, "runing");
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  const auto& node = irs::utils::downCast<irs::BooleanFilter>(*filter);
+  ASSERT_EQ(1, node.Filters(irs::Occur::MustNot).size());
+  EXPECT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(),
+            node.Filters(irs::Occur::MustNot).front()->type());
 }
 
 TEST(AndRangeMerge_test, merges_two_lower_bounds) {
@@ -3418,11 +3815,15 @@ TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
     EXPECT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
   }
   {
+    irs::TFIDF tfidf;
     auto root = std::make_unique<irs::BooleanFilter>();
-    Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax")
-      .SetBoost(2.f);
-    Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ban")
-      .SetBoost(2.f);
+    for (const auto* prefix : {"ax", "ban"}) {
+      auto& child = Append<irs::ByPrefix>(*root, irs::Occur::Should,
+                                          kFieldTestField, prefix);
+      child.SetBoost(2.f);
+      child.SetScorer(&tfidf);
+      child.mutable_options()->merge = irs::ScoreMergeType::Sum;
+    }
     root->SetBoost(3.f);
     AsDisjunction(*root);
 
@@ -3433,6 +3834,53 @@ TEST(OrAcceptorFusion_test, scored_requires_uniform_boosts) {
     ASSERT_NE(nullptr, fused);
     EXPECT_EQ(6.f, fused->GetBoost());
   }
+}
+
+TEST(OrAcceptorFusion_test, scored_constants_stay_clauses) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax");
+  Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ban");
+  AsDisjunction(*root);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(2, irs::utils::downCast<irs::BooleanFilter>(*filter).Size(
+                 irs::Occur::Should));
+}
+
+TEST(OrAcceptorFusion_test, scored_constants_fuse_under_max) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ax");
+  Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, "ban");
+  AsDisjunction(*root);
+  root->SetMergeType(irs::ScoreMergeType::Max);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
+
+  EXPECT_NE(nullptr, FusedOf(filter));
+}
+
+TEST(OrAcceptorFusion_test, scored_merge_mismatch_stays_clauses) {
+  irs::TFIDF tfidf;
+  auto root = std::make_unique<irs::BooleanFilter>();
+  for (const auto* prefix : {"ax", "ban"}) {
+    auto& child =
+      Append<irs::ByPrefix>(*root, irs::Occur::Should, kFieldTestField, prefix);
+    child.SetScorer(&tfidf);
+    child.mutable_options()->merge = irs::ScoreMergeType::Sum;
+  }
+  AsDisjunction(*root);
+  root->SetMergeType(irs::ScoreMergeType::Max);
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.scored = true, .fuse_seekable_acceptors = true});
+
+  ASSERT_EQ(irs::Type<irs::BooleanFilter>::id(), filter->type());
+  EXPECT_EQ(2, irs::utils::downCast<irs::BooleanFilter>(*filter).Size(
+                 irs::Occur::Should));
 }
 
 TEST(OrAcceptorFusion_test, flattens_nested_or_on_search_path) {
@@ -4157,7 +4605,7 @@ TEST_P(BooleanFilterTestCase, or_sequential) {
 TEST_P(BooleanFilterTestCase, and_schemas) {
   // write segments
   {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
 
     std::vector<DocGeneratorBase::ptr> gens;
 
@@ -4287,10 +4735,10 @@ TEST_P(BooleanFilterTestCase, not_standalone_sequential_ordered) {
     };
 
     tests::PreparedFilter prepared_filter{
-      *tests::Optimized(std::move(not_node), &sort), *rdr, &sort};
+      *tests::Optimized(std::move(not_node), &sort), rdr, &sort};
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
-    ASSERT_EQ(1, rdr->size());
+    ASSERT_EQ(1, rdr.size());
 
     ASSERT_EQ(26, prepared_filter.Estimate(0));
 
@@ -4386,10 +4834,10 @@ TEST_P(BooleanFilterTestCase, not_sequential_ordered) {
     };
 
     tests::PreparedFilter prepared_filter{
-      *tests::Optimized(std::move(root), &sort), *rdr, &sort};
+      *tests::Optimized(std::move(root), &sort), rdr, &sort};
     std::multimap<irs::score_t, irs::doc_id_t, std::greater<>> scored_result;
 
-    ASSERT_EQ(1, rdr->size());
+    ASSERT_EQ(1, rdr.size());
 
     ASSERT_EQ(26, prepared_filter.Estimate(0));
 
@@ -5200,7 +5648,6 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
   }
 
   auto rdr = open_reader();
-  ASSERT_TRUE(bool(rdr));
 
   {
     irs::BooleanFilter root;
@@ -5224,7 +5671,7 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
     irs::TFIDF tfidf_scorer;
 
     tests::PreparedFilter prepared{
-      *tests::Optimized(std::move(root), &tfidf_scorer), *rdr, &tfidf_scorer};
+      *tests::Optimized(std::move(root), &tfidf_scorer), rdr, &tfidf_scorer};
     ASSERT_NE(nullptr, prepared.Query(0));
 
     std::vector<irs::doc_id_t> expected_docs{
@@ -5455,7 +5902,7 @@ TEST_P(BooleanFilterTestCase, excluded_only_child_is_discarded) {
   EXPECT_TRUE(CollectDocs(root, rdr, nullptr).empty());
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(boolean_filter_test, BooleanFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

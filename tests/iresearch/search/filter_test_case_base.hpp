@@ -300,7 +300,7 @@ struct CustomSort : public irs::ScorerBase<CustomSort, void> {
   };
 
   void collect(irs::byte_type* filter_attrs, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final {
+               const irs::TermCollector* term, irs::StatsArena&) const final {
     if (collectors_collect) {
       collectors_collect(filter_attrs, field, term);
     }
@@ -368,7 +368,7 @@ struct FrequencySort : public irs::ScorerBase<FrequencySort, StatsT> {
   };
 
   void collect(irs::byte_type* stats_buf, const irs::FieldCollector* /*field*/,
-               const irs::TermCollector* term) const final {
+               const irs::TermCollector* term, irs::StatsArena&) const final {
     if (term) {
       stats_cast(stats_buf)->count =
         static_cast<irs::doc_id_t>(term->docs_with_term);
@@ -495,6 +495,10 @@ class PreparedFilter {
   }
 
   const irs::Scorer* Scorer() const noexcept { return _scorer; }
+
+  const irs::PrepareCollector* Collector() const noexcept {
+    return _collector ? _collector->Get() : nullptr;
+  }
 
   irs::detail::StatsRecord Stats() const noexcept {
     return _queries.empty() || !_queries.front() ? irs::detail::StatsRecord{}

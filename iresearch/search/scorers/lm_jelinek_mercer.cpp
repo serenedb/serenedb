@@ -20,9 +20,11 @@
 
 #include "lm_jelinek_mercer.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 
 #include <cmath>
+#include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
@@ -31,71 +33,87 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
+#include "iresearch/search/scorers/lm_similarity.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
 namespace {
 
-template<ScoreMergeType MergeType, bool HasScale>
-IRS_FORCE_INLINE void LmJmImpl(
-  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
-  const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t num,
-  score_t denom_inv, score_t const_boost) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
-    SDB_ASSERT(norm[i] != 0);
-    const score_t dl = TermCountToScore(norm[i]);
-    const score_t ratio = (num * tf / dl) * denom_inv;
-    score_t r = std::log1p(ratio);
-    r *= const_boost;
-    Merge<MergeType>(res[i], r);
-  }
-}
-
-template<bool HasScale>
-struct LmJmScore : public ScoreOperatorOf<LmJmScore<HasScale>> {
-  LmJmScore(score_t boost, score_t lambda, const LMStats& stats,
-            const FreqBlockAttr* freq, const uint32_t* norm,
-            const score_t* scale) noexcept
-    : freq{freq},
-      norm{norm},
-      scale{scale},
-      boost{boost},
-      num{1.f - lambda},
-      denom_inv{1.f / (lambda * stats.collection_prob)} {}
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    LmJmImpl<MergeType, HasScale>(res, n, freq->value, norm, TryGetValue(scale),
-                                  num, denom_inv, boost);
+struct LmJmFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    SDB_ASSERT(dl != 0.f);
+    return std::log1p((num * tf / dl) * denom_inv) * boost;
   }
 
-  const FreqBlockAttr* freq;
-  const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t boost;
   score_t num;
   score_t denom_inv;
 };
 
+LmJmFormula LmJmOf(score_t boost, score_t lambda, score_t share) noexcept {
+  return {boost, 1.f - lambda, 1.f / (lambda * share)};
+}
+
+struct LmJmTermsFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    SDB_ASSERT(dl != 0.f);
+    const double x = num * tf / dl;
+    const double* const denom_inv = denom_invs.data();
+    return static_cast<score_t>(
+             LogOfProduct(denom_invs.size(),
+                          [&](size_t i) { return 1 + x * denom_inv[i]; })) *
+           boost;
+  }
+
+  score_t boost;
+  score_t num;
+  absl::InlinedVector<double, 4> denom_invs;
+};
+
+LmJmTermsFormula LmJmTermsOf(score_t boost, score_t lambda,
+                             std::span<const score_t> shares) {
+  LmJmTermsFormula formula{.boost = boost, .num = 1.f - lambda};
+  formula.denom_invs.reserve(shares.size());
+  for (const auto share : shares) {
+    formula.denom_invs.push_back(1 / (static_cast<double>(lambda) * share));
+  }
+  return formula;
+}
+
 }  // namespace
 
 void LMJelinekMercer::collect(byte_type* stats_buf, const FieldCollector* field,
-                              const TermCollector* term) const {
-  CollectLMStats(*stats_cast(stats_buf), field, term);
+                              const TermCollector* term,
+                              StatsArena& arena) const {
+  CollectShare(*stats_cast(stats_buf), field, term, arena);
 }
 
 ScoreFunction LMJelinekMercer::PrepareScorer(const ScoreContext& ctx) const {
-  return PrepareLMScorer<LmJmScore>(ctx, *stats_cast(ctx.stats), _lambda);
+  return PrepareShareScorer(
+    ctx, *stats_cast(ctx.stats),
+    [&](score_t share) { return LmJmOf(ctx.boost, _lambda, share); },
+    [&](std::span<const score_t> shares) {
+      return LmJmTermsOf(ctx.boost, _lambda, shares);
+    });
+}
+
+void LMJelinekMercer::Explain(const ScoreContext& ctx,
+                              const explain::SlotStats* stats,
+                              explain::Node& out) const {
+  explain::ExplainLanguageModel(
+    ctx, SharesOf(*stats_cast(ctx.stats)), stats,
+    {.key = "lambda", .value = _lambda},
+    "boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))",
+    [&](score_t tf, score_t dl, score_t share) {
+      return LmJmOf(ctx.boost, _lambda, share)(tf, dl);
+    },
+    out);
 }
 
 std::string LMJelinekMercer::ToString() const {

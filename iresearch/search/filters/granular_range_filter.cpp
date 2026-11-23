@@ -59,7 +59,7 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   const bstring to =
     has_max ? RangeUpper(rng.max, rng.max_type) : UpperBoundOf(type_tag);
   auto query = ctx.memory.Make<MultiTermQuery>(ctx.memory, segment, ctx.boost,
-                                               ScoreMergeType::Sum);
+                                               ScoreMergeType::Max);
   MultiTermVisitor mtv{ctx, query->State(), *reader};
   reader->VisitRange(from, to, [&](bytes_view term, const PostingMeta& meta) {
     mtv.Visit(term, meta, kNoBoost);
@@ -69,10 +69,7 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
 
 PrepareCollector::ptr ByGranularRange::MakeCollectorImpl(
   const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
-  if (!ScoresPerDoc(scorer)) {
-    return std::make_unique<AllCollector>(scorer, stats);
-  }
-  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
+  return MakeMultiTermCollector(scorer, stats, threads);
 }
 
 }  // namespace irs

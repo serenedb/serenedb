@@ -1,13 +1,9 @@
 statement ok
-CREATE TABLE strn (id INT) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE strn (id INT) WITH (compaction_interval = 0);
 
 
 statement ok
 INSERT INTO strn VALUES (1), (2), (3);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) strn;
 
 
 statement error
@@ -33,15 +29,11 @@ INSERT INTO strn VALUES (10), (20), (30);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) strn;
+VACUUM (FLUSH_TABLE) strn;
 
 
 statement ok
 DELETE FROM strn WHERE id = 10;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) strn;
 
 
 query
@@ -83,7 +75,7 @@ CREATE SEQUENCE strn_other.strn_far_pk_seq;
 
 
 statement ok
-CREATE TABLE strn_far (id INT, n BIGINT DEFAULT nextval('strn_other.strn_far_pk_seq')) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+CREATE TABLE strn_far (id INT, n BIGINT DEFAULT nextval('strn_other.strn_far_pk_seq')) WITH (compaction_interval = 0);
 
 
 statement ok
@@ -98,10 +90,6 @@ db error: ERROR: Sequence with name strn_far_pk_seq does not exist!<slt:ignore>
 
 statement ok
 INSERT INTO strn_far (id) VALUES (1);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) strn_far;
 
 
 query

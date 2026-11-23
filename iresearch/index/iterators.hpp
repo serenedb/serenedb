@@ -34,6 +34,7 @@
 #include <cstring>
 #include <limits>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "iresearch/formats/posting_meta.hpp"
@@ -111,6 +112,10 @@ class LoserScoreCollector {
 
   IRS_FORCE_INLINE uint64_t TotalMatches() const noexcept { return _count; }
 
+  IRS_FORCE_INLINE bool Admits(score_t score) const noexcept {
+    return score > ScoreThreshold();
+  }
+
   IRS_FORCE_INLINE void Add(score_t score, doc_id_t doc) noexcept {
     ++_count;
     const auto old_threshold = ScoreThreshold();
@@ -153,6 +158,41 @@ class LoserScoreCollector {
 
       std::memset(score_base, 0, BitsRequired<uint64_t>() * sizeof(score_t));
     }
+    if (old_threshold < new_threshold) {
+      RaiseScoreThreshold(old_threshold, new_threshold);
+    }
+  }
+
+  template<bool Keep = false>
+  IRS_FORCE_INLINE void ConsumeConstant(
+    score_t score, uint64_t* mask, doc_id_t min, size_t num_blocks,
+    utils::Need<Keep, const uint64_t*> keep) noexcept {
+    const auto take = [&](size_t i) IRS_FORCE_INLINE {
+      const auto word = std::exchange(mask[i], 0);
+      if constexpr (Keep) {
+        return word != 0 ? keep[i] : 0;
+      } else {
+        return word;
+      }
+    };
+    const auto old_threshold = ScoreThreshold();
+    auto new_threshold = old_threshold;
+    size_t i = 0;
+    for (; i != num_blocks && score > new_threshold; ++i) {
+      auto word = take(i);
+      _count += std::popcount(word);
+      const doc_id_t doc_base = min + i * BitsRequired<uint64_t>();
+      while (word != 0) {
+        const doc_id_t bit = std::countr_zero(word);
+        word = PopBit(word);
+        TryPush(new_threshold, score, doc_base + bit);
+      }
+    }
+    uint64_t count = 0;
+    for (; i != num_blocks; ++i) {
+      count += std::popcount(take(i));
+    }
+    _count += count;
     if (old_threshold < new_threshold) {
       RaiseScoreThreshold(old_threshold, new_threshold);
     }

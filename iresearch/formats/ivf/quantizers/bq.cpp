@@ -20,6 +20,7 @@
 
 #include <absl/random/distributions.h>
 
+#include <cmath>
 #include <limits>
 #include <pcg_random.hpp>
 
@@ -413,7 +414,7 @@ class BinaryQuantizerWriter final : public QuantizerWriter {
     return {.group_size = 1, .record_size = _lay.record_size};
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(duckdb::WriteStream& out, const float* vecs, size_t n) final {
     Finalize();
     _row.resize(_lay.record_size);
     for (size_t r = 0; r < n; ++r) {
@@ -439,12 +440,12 @@ class BinaryQuantizerWriter final : public QuantizerWriter {
     return out;
   }
 
-  void Finish(IndexOutput& /*out*/) final {}
+  void Finish(duckdb::WriteStream& /*out*/) final {}
 
-  void Serialize(DataOutput& out) const final {
-    out.WriteU64(sizeof(BqStatsHeader) + _model.size() * sizeof(float));
-    WritePod(out, BqStatsHeader{
-                    .layout = kBqLayout,
+  void Serialize(duckdb::WriteStream& out) const final {
+    out.Write<uint64_t>(sizeof(BqStatsHeader) + _model.size() * sizeof(float));
+    out.Write(
+      BqStatsHeader{.layout = kBqLayout,
                     .bits = static_cast<uint8_t>(_lay.bits),
                     .half = static_cast<uint8_t>(_lay.half ? 1 : 0),
                     .query_bits = static_cast<uint8_t>(_query_bits),
@@ -693,10 +694,10 @@ class BinaryQuantizerCodebook final : public QuantizerCodebook {
  private:
   static void Quantize(std::span<const float> w, float scale,
                        std::vector<int8_t>& q) noexcept {
-    constexpr auto kTop = static_cast<float>(kBqQueryTop);
+    constexpr int64_t kTop = kBqQueryTop;
     for (size_t k = 0; k < w.size(); ++k) {
       q[k] = static_cast<int8_t>(
-        std::clamp(std::nearbyint(w[k] * scale), -kTop, kTop));
+        std::clamp<int64_t>(std::lrint(w[k] * scale), -kTop, kTop));
     }
   }
 

@@ -37,6 +37,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <functional>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/dispatch.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -2165,9 +2166,11 @@ class TextWriter {
 
   void Number(double value) {
     char buffer[kNumberStrMaxLen];
-    _write({buffer, _extra_float_digits > 0
-                      ? WriteFloat<true>(value, _extra_float_digits, buffer)
-                      : WriteFloat<false>(value, _extra_float_digits, buffer)});
+    _write(
+      {buffer,
+       irs::Resolve(_extra_float_digits > 0, [&]<bool Extra> IRS_FORCE_INLINE {
+         return WriteFloat<Extra>(value, _extra_float_digits, buffer);
+       })});
   }
 
   void Pair(const Point& point) {
@@ -2472,8 +2475,7 @@ bool GeometricToText(duckdb::Vector& source, duckdb::Vector& result,
     text.clear();
     WriteGeometric(K, values, index, extra_float_digits,
                    [&](std::string_view part) { text.append(part); });
-    writer.WriteValue(
-      duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())});
+    writer.WriteValue(duckdb::string_t::Safe(text));
   }
   return true;
 }
@@ -2989,7 +2991,7 @@ std::optional<irs::pg::SqlErrorData> ParseGeometric(Geometric kind,
                                                     std::string_view text,
                                                     duckdb::Vector& result,
                                                     duckdb::idx_t row) {
-  return VisitGeometric(
+  return irs::Resolve(
     kind, [&]<Geometric K>() -> std::optional<irs::pg::SqlErrorData> {
       typename geo::Kind<K>::Value value{};
       if (auto error = geo::Parse(text, value)) {
@@ -3002,7 +3004,7 @@ std::optional<irs::pg::SqlErrorData> ParseGeometric(Geometric kind,
 
 bool RecvGeometric(Geometric kind, std::string_view data,
                    duckdb::Vector& result, duckdb::idx_t row) {
-  return VisitGeometric(kind, [&]<Geometric K>() {
+  return irs::Resolve(kind, [&]<Geometric K>() {
     typename geo::Kind<K>::Value value{};
     if (!geo::Recv(data, value) || geo::Check(value)) {
       return false;
@@ -3017,7 +3019,7 @@ void WriteGeometric(Geometric kind,
                     duckdb::idx_t index, int8_t extra_float_digits,
                     absl::FunctionRef<void(std::string_view)> write) {
   geo::TextWriter writer{extra_float_digits, write};
-  VisitGeometric(kind, [&]<Geometric K>() {
+  irs::Resolve(kind, [&]<Geometric K>() {
     geo::Write(writer, geo::Read<typename geo::Kind<K>::View>(value, index));
   });
 }
@@ -3026,7 +3028,7 @@ void SendGeometric(Geometric kind,
                    const duckdb::RecursiveUnifiedVectorFormat& value,
                    duckdb::idx_t index,
                    absl::FunctionRef<uint8_t*(size_t)> alloc) {
-  VisitGeometric(kind, [&]<Geometric K>() {
+  irs::Resolve(kind, [&]<Geometric K>() {
     geo::Send(geo::Read<typename geo::Kind<K>::View>(value, index), alloc);
   });
 }

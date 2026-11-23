@@ -36,6 +36,7 @@
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/detail/doc_collector.hpp>
+#include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/utils/index_utils.hpp>
@@ -44,6 +45,7 @@
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
 #include "token_sink_utils.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -111,8 +113,8 @@ class NormField final : public tests::Ifield {
   irs::IndexFeatures GetIndexFeatures() const noexcept final {
     return irs::IndexFeatures::Freq | irs::IndexFeatures::Norm;
   }
-  bool Write(irs::DataOutput& out) const final {
-    irs::WriteStr(out, _value);
+  bool Write(duckdb::WriteStream& out) const final {
+    tests::WriteStr(out, _value);
     return true;
   }
 
@@ -135,8 +137,8 @@ class IdField final : public tests::Ifield {
   irs::IndexFeatures GetIndexFeatures() const noexcept final {
     return irs::IndexFeatures::None;
   }
-  bool Write(irs::DataOutput& out) const final {
-    irs::WriteStr(out, _value);
+  bool Write(duckdb::WriteStream& out) const final {
+    tests::WriteStr(out, _value);
     return true;
   }
 
@@ -166,13 +168,12 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
   }
 
   irs::IndexReaderOptions MakeReaderOpts(irs::Scorer* scorer) {
-    return irs::IndexReaderOptions{
-      .scorer = scorer, .db = &::irs::DuckDBEngine::Instance().instance()};
+    return irs::IndexReaderOptions{.scorer = scorer};
   }
 
   // doc with one NormField "body" of `count` tokens + a unique id.
   // tf("x") == dl == count.
-  bool InsertNormDoc(irs::IndexWriter& writer, std::string_view id_value,
+  bool InsertNormDoc(tests::IndexWriter& writer, std::string_view id_value,
                      size_t count) {
     tests::Particle p;
     p.push_back(std::make_shared<IdField>(std::string{id_value}));
@@ -183,7 +184,7 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
   // Realistic: tf("x") = `target` but dl = `target + filler`. BM25 length
   // normalisation now varies independently of tf, which is the shape real
   // corpora hit.
-  bool InsertMixedDoc(irs::IndexWriter& writer, std::string_view id_value,
+  bool InsertMixedDoc(tests::IndexWriter& writer, std::string_view id_value,
                       size_t target, size_t filler) {
     tests::Particle p;
     p.push_back(std::make_shared<IdField>(std::string{id_value}));
@@ -192,7 +193,7 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
   }
 
   // doc with TWO NormFields ("body" count1, "body2" count2) + id.
-  bool InsertDualNormDoc(irs::IndexWriter& writer, std::string_view id_value,
+  bool InsertDualNormDoc(tests::IndexWriter& writer, std::string_view id_value,
                          size_t count1, size_t count2) {
     tests::Particle p;
     p.push_back(std::make_shared<IdField>(std::string{id_value}));
@@ -227,13 +228,18 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
 
   // Run BM25 ExecuteTopK twice and assert pruned == unpruned. Returns the
   // pruning-off baseline so callers can diff across snapshots.
-  std::vector<irs::ScoreDoc> RunBM25(const irs::DirectoryReader& reader,
+  std::vector<irs::ScoreDoc> RunBM25(const irs::CompositeReader& reader,
                                      const irs::Scorer& scorer,
                                      irs::field_id field, size_t k) {
     irs::ByTerm filter;
     *filter.mutable_field_id() = field;
     filter.mutable_options()->term = irs::ViewCast<irs::byte_type>(kTerm);
+    return RunBM25(reader, scorer, filter, k);
+  }
 
+  std::vector<irs::ScoreDoc> RunBM25(const irs::CompositeReader& reader,
+                                     const irs::Scorer& scorer,
+                                     const irs::Filter& filter, size_t k) {
     std::vector<irs::ScoreDoc> hits_unpruned(k);
     std::vector<irs::ScoreDoc> hits_pruned(k);
 
@@ -256,8 +262,7 @@ class ScorePruneNormMergeCase : public tests::IndexTestBase {
     canon(hits_unpruned);
 
     EXPECT_EQ(hits_unpruned, hits_pruned)
-      << "pruning returned a different top-K than the baseline on field="
-      << field;
+      << "pruning returned a different top-K than the baseline";
 
     return hits_unpruned;
   }
@@ -289,7 +294,7 @@ TEST_P(ScorePruneNormMergeCase, BasicBM25PruneRoundTripAcrossCompact) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   for (auto c : kCountsA) {
     ASSERT_TRUE(InsertNormDoc(*writer, "a", c));
@@ -347,7 +352,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgInOneSegment) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get(), kRgSize);
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   for (size_t i = 0; i < std::size(kCounts); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("doc_", i), kCounts[i]));
@@ -396,7 +401,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiRgAcrossMerge) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get(), kRgSize);
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
@@ -444,7 +449,7 @@ TEST_P(ScorePruneNormMergeCase, NormMixedWidthsMerge) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());  // default large RG
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
@@ -494,7 +499,7 @@ TEST_P(ScorePruneNormMergeCase, NormMergeWithMask) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kA); ++i) {
     ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
   }
@@ -550,7 +555,7 @@ TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   for (size_t i = 0; i < std::size(kBodyA); ++i) {
     ASSERT_TRUE(
       InsertDualNormDoc(*writer, absl::StrCat("a_", i), kBodyA[i], kBody2A[i]));
@@ -611,7 +616,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentCompact) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
   // Build N segments. Per-doc tf grows monotonically across the whole
@@ -684,7 +689,7 @@ TEST_P(ScorePruneNormMergeCase, NormMultiSegmentMultiRgMixedWidthsCompact) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get(), kRgSize);
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
   std::vector<uint32_t> expected_counts;
@@ -751,7 +756,7 @@ TEST_P(ScorePruneNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
   auto bm25 = std::make_unique<irs::BM25>();
   auto opts = MakeOpts(bm25.get());
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
 
   // Record per-doc expected norm value (dl = tf + filler). Per-segment
@@ -816,7 +821,40 @@ TEST_P(ScorePruneNormMergeCase, BenchShape16SegmentsRealisticTfDl) {
     << " independent tf/dl";
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+TEST_P(ScorePruneNormMergeCase, NonEssentialSingleBlockTermInLaterSegment) {
+  auto bm25 = std::make_unique<irs::BM25>();
+  auto writer = open_writer(tests::kOmCreate, MakeOpts(bm25.get()));
+  ASSERT_NE(nullptr, writer);
+  for (size_t d = 0; d < 1000; ++d) {
+    ASSERT_TRUE(
+      InsertMixedDoc(*writer, absl::StrCat("a", d), d < 100 ? 1 : 0, 1));
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+  for (size_t d = 0; d < 100; ++d) {
+    ASSERT_TRUE(
+      InsertMixedDoc(*writer, absl::StrCat("b", d), d < 50 ? 5 : 0, 1));
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  auto reader = open_reader(MakeReaderOpts(bm25.get()));
+  ASSERT_EQ(2, reader.size());
+
+  irs::BooleanFilter filter;
+  for (const std::string_view term : {std::string_view{"f"}, kTerm}) {
+    filter.Add(
+      irs::TermClause{
+        .field = kBody,
+        .term = irs::bstring{irs::ViewCast<irs::byte_type>(term)}},
+      irs::Occur::Should);
+  }
+  filter.SetMinShouldMatch(1);
+
+  for (const auto& hit : RunBM25(reader, *bm25, filter, 10)) {
+    EXPECT_EQ(1, hit.segment_idx);
+  }
+}
+
+static constexpr auto kTestDirs = tests::kDirParams;
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));
 INSTANTIATE_TEST_SUITE_P(ScorePruneNormMergeTest, ScorePruneNormMergeCase,

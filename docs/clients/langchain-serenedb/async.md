@@ -78,7 +78,6 @@ store = await AsyncSereneDBVectorStore.create(
 | `index_query_options` | `Optional[QueryOptions]` | `None` | See [`IVFQueryOptions`](./indexes.md#ivfqueryoptions). |
 | `hybrid_search_config` | `Optional[HybridSearchConfig]` | `None` | Query-time fusion settings; the combined index must already exist. See [Hybrid Search](./hybrid-search.md). |
 | `metadata_index` | `Optional[MetadataIndexConfig]` | `None` | See [Metadata index configuration](./indexes.md#metadata-index). |
-| `sync_load` | `bool` | `True` | When `False`, writes do not auto-refresh the inverted index. |
 
 The column validation and its error messages are the same as for the synchronous factory — see [Creating a store](./vector-store.md#creating).
 
@@ -106,7 +105,7 @@ Calling `AsyncSereneDBVectorStore(...)` directly raises — always go through `c
 | [`apply_vector_index()`](./indexes.md#apply_vector_index) | `aapply_vector_index()` | |
 | [`apply_hybrid_search_index()`](./indexes.md#apply_hybrid_search_index) | `aapply_hybrid_search_index()` | `index_config` and `concurrently` are keyword-only on the sync form, positional-or-keyword on the async one. |
 | [`drop_vector_index()`](./indexes.md#drop_vector_index) | `adrop_vector_index()` | |
-| [`reindex()`](./indexes.md#reindex) | `areindex()` | Both raise `NotImplementedError` for now. |
+| [`reindex()`](./indexes.md#reindex) | `areindex()` | Both raise `NotImplementedError`. |
 | [`is_valid_index()`](./indexes.md#is_valid_index) | `is_valid_index()` | Same name; on this class it is a coroutine. |
 | — | [`afrom_texts()`](#afrom_texts) / [`afrom_documents()`](#afrom_texts) | Async only. The sync `from_texts()` raises. |
 
@@ -135,7 +134,7 @@ ids = await store.aadd_embeddings(texts, embeddings, metadatas=None, ids=None)
 
 Writes rows with vectors you already have, skipping the embeddings model entirely — useful when embeddings arrive from a batch job or another service. This is the method [`aadd_texts()`](#methods) delegates to.
 
-The vector dimension is taken from `embeddings[0]` and bound as `%(embedding)s::FLOAT[N]`, so every vector in the batch must have the same length as the column. Like the other writes, it upserts on the id column and refreshes the index unless `sync_load=False`.
+The vector dimension is taken from `embeddings[0]` and bound as `%(embedding)s::FLOAT[N]`, so every vector in the batch must have the same length as the column. Like the other writes, it upserts on the id column.
 
 ### `asimilarity_search_with_score_by_vector()` {#asimilarity_search_with_score_by_vector}
 
@@ -197,7 +196,6 @@ Every configuration value is a plain public attribute on the store, readable aft
 | `index_query_options` | `Optional[QueryOptions]` | |
 | `hybrid_search_config` | `Optional[HybridSearchConfig]` | |
 | `metadata_index` | `Optional[MetadataIndexConfig]` | |
-| `sync_load` | `bool` | |
 
 Assigning to these after construction is not supported — the store derives internal state (the distance-column alias, for one) from them at construction time.
 

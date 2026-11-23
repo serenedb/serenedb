@@ -71,6 +71,22 @@ struct ScoreRecipe {
   }
 };
 
+inline ScoreFunction PrepareScore(const ScoreArgs& args,
+                                  const NormProvider& segment,
+                                  const FieldProperties& field,
+                                  const AttributeProvider& attrs) {
+  SDB_ASSERT(args.memory && args.scorer && args.fetcher);
+  return args.scorer->PrepareScorer({
+    .memory = *args.memory,
+    .segment = segment,
+    .field = field,
+    .doc_attrs = attrs,
+    .fetcher = *args.fetcher,
+    .stats = args.stats,
+    .boost = args.boost,
+  });
+}
+
 template<typename Out>
 void AppendScorer(Out& out, ScoreFunction&& score) {
   if (!score.IsDefault()) {

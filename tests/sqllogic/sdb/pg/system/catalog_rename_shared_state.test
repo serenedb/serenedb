@@ -37,7 +37,8 @@ connection s2
 statement error
 ALTER TABLE crs.t RENAME TO t3;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "t"
+db error: ERROR: table "t" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
 
 connection s1
@@ -46,11 +47,11 @@ COMMIT;
 
 connection s2
 query
-SELECT table_name, sql FROM duckdb_indexes()
+SELECT table_name, sql FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name	sql
-t2	CREATE INDEX crs_t_v ON crs.t2(v);
+t2	CREATE INDEX crs_t_v ON crs.t2 USING inverted (v);
 
 connection s2
 statement ok
@@ -72,7 +73,7 @@ statement ok
 ALTER TABLE crs.t2 RENAME TO t9;
 
 query
-SELECT table_name FROM duckdb_indexes()
+SELECT table_name FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name
@@ -82,11 +83,11 @@ statement ok
 ROLLBACK;
 
 query
-SELECT table_name, sql FROM duckdb_indexes()
+SELECT table_name, sql FROM sdb_indexes()
 WHERE database_name = current_database() AND index_name = 'crs_t_v';
 ----
 table_name	sql
-t2	CREATE INDEX crs_t_v ON crs.t2(v);
+t2	CREATE INDEX crs_t_v ON crs.t2 USING inverted (v);
 
 statement ok
 DROP INDEX crs.crs_t_v;
@@ -109,7 +110,7 @@ connection s2
 statement error
 ALTER INDEX crs.i RENAME TO i3;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "i"
+db error: ERROR: could not serialize access due to concurrent update of "i"
 
 
 connection s1
@@ -126,7 +127,7 @@ statement ok
 ROLLBACK;
 
 query
-SELECT index_name FROM duckdb_indexes() WHERE table_name = 't2' AND database_name = current_database();
+SELECT index_name FROM sdb_indexes() WHERE table_name = 't2' AND database_name = current_database();
 ----
 index_name
 i2
@@ -138,8 +139,6 @@ statement ok
 CREATE INDEX i ON crs.t2 (v);
 
 
-# A dependency created against the old name while a rename is pending fails at
-# the second commit, in either order.
 connection s2
 statement ok
 BEGIN;
@@ -149,45 +148,39 @@ statement ok
 CREATE INDEX i4 ON crs.t2 (id, v);
 
 connection s1
+statement error
+ALTER TABLE crs.t2 RENAME TO t5;
+----
+db error: ERROR: table "t2" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
+
+
+connection s2
+statement ok
+COMMIT;
+
+connection s1
+statement ok
+BEGIN;
+
+connection s1
 statement ok
 ALTER TABLE crs.t2 RENAME TO t5;
 
 connection s2
 statement error
-COMMIT;
+CREATE INDEX i5 ON crs.t2 (id);
 ----
-db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "t2" has been deleted
+db error: ERROR: table "t2" is being changed by another transaction
+HINT: Retry once that transaction commits or rolls back.
 
-
-connection s2
-statement ok
-BEGIN;
-
-connection s2
-statement ok
-CREATE INDEX i4 ON crs.t5 (id, v);
 
 connection s1
-statement ok
-BEGIN;
-
-connection s1
-statement ok
-ALTER TABLE crs.t5 RENAME TO t6;
-
-connection s2
 statement ok
 COMMIT;
-
-connection s1
-statement error
-COMMIT;
-----
-db error: ERROR: Failed to commit: Could not commit DROP of "t5" because a dependency was created after the transaction started
-
 
 query
-SELECT index_name FROM duckdb_indexes() WHERE table_name = 't5' AND database_name = current_database() ORDER BY 1;
+SELECT index_name FROM sdb_indexes() WHERE table_name = 't5' AND database_name = current_database() ORDER BY 1;
 ----
 index_name
 i
@@ -211,17 +204,17 @@ ALTER TABLE crs.r RENAME COLUMN b TO c;
 
 connection s1
 query
-SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+SELECT sql FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
 ----
 sql
-CREATE INDEX crs_r_b ON crs.r(c);
+CREATE INDEX crs_r_b ON crs.r USING inverted (c);
 
 connection s2
 query
-SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+SELECT sql FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
 ----
 sql
-CREATE INDEX crs_r_b ON crs.r(b);
+CREATE INDEX crs_r_b ON crs.r USING inverted (b);
 
 connection s1
 statement ok
@@ -229,10 +222,10 @@ ROLLBACK;
 
 connection s2
 query
-SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+SELECT sql FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
 ----
 sql
-CREATE INDEX crs_r_b ON crs.r(b);
+CREATE INDEX crs_r_b ON crs.r USING inverted (b);
 
 connection s1
 statement ok
@@ -240,10 +233,10 @@ ALTER TABLE crs.r RENAME COLUMN b TO c;
 
 connection s2
 query
-SELECT sql FROM duckdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
+SELECT sql FROM sdb_indexes() WHERE database_name = current_database() AND index_name = 'crs_r_b';
 ----
 sql
-CREATE INDEX crs_r_b ON crs.r(c);
+CREATE INDEX crs_r_b ON crs.r USING inverted (c);
 
 connection s2
 statement ok

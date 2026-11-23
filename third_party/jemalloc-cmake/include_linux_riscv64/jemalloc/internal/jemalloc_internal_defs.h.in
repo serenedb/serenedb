@@ -98,6 +98,9 @@
 /* Defined if pthread_get_name_np(3) is available. */
 /* #undef JEMALLOC_HAVE_PTHREAD_GET_NAME_NP */
 
+/* Defined if pthread_condattr_setclock(..., CLOCK_MONOTONIC) is available. */
+#define JEMALLOC_HAVE_PTHREAD_COND_TIMEDWAIT_MONOTONIC
+
 /*
  * Defined if clock_gettime(CLOCK_MONOTONIC_COARSE, ...) is available.
  */
@@ -148,7 +151,14 @@
 
 /* Non-empty if the tls_model attribute is supported. */
 #define JEMALLOC_TLS_MODEL __attribute__((tls_model("initial-exec")))
-#define JEMALLOC_TLS_MODEL_INITIAL_EXEC 
+
+/*
+ * Route TSD thread-local address computation through a noinline
+ * optimization-barrier accessor so the compiler cannot cache it across a
+ * user-space context switch (fibers migrating between OS threads).  See
+ * tsd_tls_addr.h.
+ */
+/* #undef JEMALLOC_EXPERIMENTAL_FIBER_SAFE_TLS */
 
 /*
  * JEMALLOC_DEBUG enables assertions and other sanity checks, and disables
@@ -173,9 +183,6 @@
 
 /* Use gcc intrinsics for profile backtracing if defined. */
 /* #undef JEMALLOC_PROF_GCC */
-
-/* Use frame pointer for profile backtracing if defined. Linux only. */
-/* #undef JEMALLOC_PROF_FRAME_POINTER */
 
 /* JEMALLOC_PAGEID enabled page id */
 /* #undef JEMALLOC_PAGEID */
@@ -212,6 +219,12 @@
 
 /* One page is 2^LG_PAGE bytes. */
 #define LG_PAGE 16
+
+/* The minimum dynamic page size is 2^MIN_LG_PAGE bytes. */
+#define MIN_LG_PAGE 12
+
+/* The maximum dynamic page size is 2^MAX_LG_PAGE bytes. */
+#define MAX_LG_PAGE 16
 
 /* Maximum number of regions in a slab. */
 /* #undef CONFIG_LG_SLAB_MAXREGS */
@@ -292,15 +305,6 @@
  */
 /* #undef JEMALLOC_ZONE */
 
-/*
- * Methods for determining whether the OS overcommits.
- * JEMALLOC_PROC_SYS_VM_OVERCOMMIT_MEMORY: Linux's
- *                                         /proc/sys/vm.overcommit_memory file.
- * JEMALLOC_SYSCTL_VM_OVERCOMMIT: FreeBSD's vm.overcommit sysctl.
- */
-/* #undef JEMALLOC_SYSCTL_VM_OVERCOMMIT */
-#define JEMALLOC_PROC_SYS_VM_OVERCOMMIT_MEMORY 
-
 /* Defined if madvise(2) is available. */
 #define JEMALLOC_HAVE_MADVISE 
 
@@ -348,7 +352,7 @@
 /* #undef JEMALLOC_MADVISE_NOCORE */
 
 /* Defined if process_madvise(2) is available. */
-/* #undef JEMALLOC_HAVE_PROCESS_MADVISE */
+#define JEMALLOC_HAVE_PROCESS_MADVISE
 
 /* #undef EXPERIMENTAL_SYS_PROCESS_MADVISE_NR */
 
@@ -465,13 +469,26 @@
 /* #undef JEMALLOC_OPT_SAFETY_CHECKS */
 
 /* Is C++ support being built? */
-#define JEMALLOC_ENABLE_CXX 
+#define JEMALLOC_ENABLE_CXX
+
+/* Are C++ exceptions enabled? */
+#define JEMALLOC_HAVE_CXX_EXCEPTIONS
+
+/*
+ * If defined, throwing operator new aborts on OOM (with size logged) instead
+ * of throwing std::bad_alloc. Nothrow new still returns null. With LTO this
+ * lets the compiler prove operator new is no-throw and elide exception cleanup.
+ */
+/* #undef JEMALLOC_INFALLIBLE_NEW */
 
 /* Performs additional size checks when defined. */
 /* #undef JEMALLOC_OPT_SIZE_CHECKS */
 
 /* Allows sampled junk and stash for checking use-after-free when defined. */
 /* #undef JEMALLOC_UAF_DETECTION */
+
+/* If defined, enable dynamic page size. */
+/* #undef DYNAMIC_PAGE_SIZE */
 
 /* Darwin VM_MAKE_TAG support */
 /* #undef JEMALLOC_HAVE_VM_MAKE_TAG */

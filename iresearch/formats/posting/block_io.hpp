@@ -21,14 +21,14 @@
 #pragma once
 
 #include <cstring>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <string_view>
 
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/formats/posting/common.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -44,11 +44,7 @@ inline constexpr uint32_t kEncWords =
 inline constexpr uint32_t kStreamAhead = 128;
 inline constexpr uint32_t kHoleWords = 8;
 inline constexpr uint32_t kFreqBias = 1;
-inline constexpr block_codec::EncodeOptions kFreqOptions{
-  .exception_cost_eighths = 12,
-  .narrow_highs = true,
-};
-
+static_assert(kFreqBias < block_codec::kValueBiases);
 static_assert(kBlock == doc_limits::kBlockSize);
 static_assert(kBlock == pos_limits::kBlockSize);
 static_assert(block_codec::kOutSlack <= doc_limits::kDocsSlack);
@@ -59,22 +55,17 @@ IRS_FORCE_INLINE inline void PrefetchStream(const byte_type* at) noexcept {
 }
 
 template<typename InputType>
-IRS_FORCE_INLINE BytesViewInput* View(InputType& in) noexcept {
-  if constexpr (InputType::kVolatileAlways) {
-    return &in;
-  } else if (in.GetType() == DataInput::Type::BytesViewInput) {
-    return static_cast<BytesViewInput*>(&in);
-  } else {
-    return nullptr;
-  }
-}
+struct Encoded {
+  const byte_type* begin;
+  InputType* in;
+};
 
 template<typename InputType, typename Prefix, typename Size>
-const byte_type* Fetch(InputType& in, uint32_t* buf, Prefix&& prefix,
-                       Size&& size) {
+const byte_type* FetchStraddling(InputType& in, uint32_t* buf, Prefix&& prefix,
+                                 Size&& size) {
   SDB_ASSERT(buf != nullptr);
   auto* const data = reinterpret_cast<byte_type*>(buf);
-  data[0] = in.ReadByte();
+  data[0] = in.template Read<byte_type>();
   data[1] = 0;
   data[2] = 0;
   const uint32_t head = prefix(data[0]);
@@ -90,18 +81,40 @@ const byte_type* Fetch(InputType& in, uint32_t* buf, Prefix&& prefix,
   return data;
 }
 
+template<typename InputType, typename Prefix>
+const byte_type* PeekHeader(InputType& in, Prefix& prefix) {
+  const auto* const token = in.Peek(1);
+  return token ? in.Peek(std::max<uint32_t>(prefix(token[0]), 3)) : nullptr;
+}
+
 template<typename InputType, typename Prefix, typename Size>
-IRS_FORCE_INLINE const byte_type* Begin(InputType& in, uint32_t* buf,
-                                        Prefix&& prefix, Size&& size) {
-  if (auto* view = View(in)) {
-    return view->Current();
+IRS_NO_INLINE Encoded<InputType> BeginShort(InputType& in, uint32_t* buf,
+                                            Prefix prefix, Size size) {
+  if (const auto* const header = PeekHeader(in, prefix)) {
+    if (const auto* const block =
+          in.Peek(size(header) + block_codec::kInSlack)) {
+      return {block, &in};
+    }
   }
-  return Fetch(in, buf, std::forward<Prefix>(prefix), std::forward<Size>(size));
+  return {FetchStraddling(in, buf, prefix, size), nullptr};
+}
+
+template<typename InputType, typename Prefix, typename Size>
+IRS_FORCE_INLINE Encoded<InputType> Begin(InputType& in, uint32_t* buf,
+                                          Prefix&& prefix, Size&& size) {
+  if constexpr (InputType::CONTIGUOUS) {
+    return {in.Current(), &in};
+  } else if (const auto* const window = in.Peek(kEncBytes)) {
+    return {window, &in};
+  } else {
+    return BeginShort(in, buf, std::forward<Prefix>(prefix),
+                      std::forward<Size>(size));
+  }
 }
 
 template<typename InputType>
-IRS_FORCE_INLINE const byte_type* BeginDelta(InputType& in, uint32_t* buf,
-                                             bool full, uint32_t len) {
+IRS_FORCE_INLINE Encoded<InputType> BeginDelta(InputType& in, uint32_t* buf,
+                                               bool full, uint32_t len) {
   return Begin(
     in, buf, [](uint32_t token) { return Codec::DeltaPrefix(token); },
     [full, len](const byte_type* p) {
@@ -110,55 +123,43 @@ IRS_FORCE_INLINE const byte_type* BeginDelta(InputType& in, uint32_t* buf,
 }
 
 template<typename InputType>
-IRS_FORCE_INLINE void End(InputType& in, const byte_type* begin,
+IRS_FORCE_INLINE void End(Encoded<InputType> encoded,
                           const byte_type* end) noexcept {
-  if (auto* view = View(in)) {
+  if constexpr (InputType::CONTIGUOUS) {
     PrefetchStream(end);
-    view->ReadStable(static_cast<uint64_t>(end - begin));
+  }
+  if (encoded.in) {
+    encoded.in->Consume(static_cast<uint64_t>(end - encoded.begin));
   }
 }
 
-template<typename Output>
-void WriteSlack(Output& out) {
-  static constexpr byte_type kZeros[block_codec::kInSlack]{};
-  out.WriteData(kZeros, sizeof(kZeros));
+template<typename InputType, typename Prefix, typename Size>
+IRS_NO_INLINE void PassShort(InputType& in, Prefix prefix, Size size) {
+  if (const auto* const header = PeekHeader(in, prefix)) {
+    if (const auto total = size(header); in.Peek(total)) {
+      in.Consume(total);
+      return;
+    }
+  }
+  uint32_t buf[kEncWords];
+  FetchStraddling(in, buf, prefix, size);
 }
 
-template<typename Output>
-IRS_FORCE_INLINE void WriteTailDelta(uint32_t len, Output& out,
-                                     const uint32_t* in, uint32_t prev,
-                                     uint32_t* buf) {
-  SDB_ASSERT(1 <= len && len <= kBlock);
-  SDB_ASSERT(std::is_sorted(in, in + len));
-  SDB_ASSERT(std::adjacent_find(in, in + len) == in + len);
-  SDB_ASSERT(prev < in[0]);
-  auto* const bytes = reinterpret_cast<byte_type*>(buf);
-  out.WriteData(bytes, len == kBlock
-                         ? Codec::EncodeDeltaBlock(in, prev, bytes)
-                         : Codec::EncodeDeltaTail(in, len, prev, bytes));
-}
-
-IRS_FORCE_INLINE inline uint32_t EncodeBlock(
-  const uint32_t* in, uint32_t* buf,
-  const block_codec::EncodeOptions& options = {}) {
-  return Codec::EncodeValuesBlock(in, reinterpret_cast<byte_type*>(buf),
-                                  options);
-}
-
-template<typename Output>
-IRS_FORCE_INLINE void WriteTail(
-  uint32_t len, Output& out, const uint32_t* in, uint32_t* buf,
-  const block_codec::EncodeOptions& options = {}) {
-  SDB_ASSERT(1 <= len && len <= kBlock);
-  auto* const bytes = reinterpret_cast<byte_type*>(buf);
-  out.WriteData(bytes, len == kBlock
-                         ? Codec::EncodeValuesBlock(in, bytes, options)
-                         : Codec::EncodeValuesTail(in, len, bytes, options));
+template<typename InputType, typename Prefix, typename Size>
+IRS_FORCE_INLINE void Pass(InputType& in, Prefix&& prefix, Size&& size) {
+  if constexpr (InputType::CONTIGUOUS) {
+    in.Consume(size(in.Current()));
+  } else if (const auto* const window = in.Peek(kEncBytes)) {
+    in.Consume(size(window));
+  } else {
+    PassShort(in, std::forward<Prefix>(prefix), std::forward<Size>(size));
+  }
 }
 
 struct FillLeaf {
   enum class Kind : uint32_t {
-    Docs = 0,
+    DocsBlock = 0,
+    DocsTail,
     Bitset,
     Run,
   };
@@ -168,86 +169,43 @@ struct FillLeaf {
   doc_id_t max;
   Kind kind;
 
-  bool Maskable() const noexcept { return kind != Kind::Docs; }
   bool IsRun() const noexcept { return kind == Kind::Run; }
   bool IsBitset() const noexcept { return kind == Kind::Bitset; }
 };
 
-IRS_FORCE_INLINE inline uint32_t* MaterializeBitsetFrom(
-  uint32_t prev, const UnalignedWord* IRS_RESTRICT bitset, uint32_t first_word,
-  uint64_t first_mask, uint32_t words, uint32_t* IRS_RESTRICT out) {
-  SDB_ASSERT(first_word < words);
+inline IRS_FORCE_INLINE bool IsDocs(FillLeaf::Kind kind) noexcept {
+  return kind <= FillLeaf::Kind::DocsTail;
+}
+
+inline IRS_FORCE_INLINE FillLeaf::Kind DocsKind(uint32_t len) noexcept {
+  return len == kBlock ? FillLeaf::Kind::DocsBlock : FillLeaf::Kind::DocsTail;
+}
+
+template<typename Input>
+IRS_FORCE_INLINE const UnalignedWord* StableBitset(const FillLeaf& leaf,
+                                                   doc_id_t* scratch) noexcept {
+  if constexpr (!Input::CONTIGUOUS) {
+    if (leaf.IsBitset()) {
+      std::memcpy(scratch, leaf.bitset, size_t{leaf.words} * sizeof(uint64_t));
+      return reinterpret_cast<const UnalignedWord*>(scratch);
+    }
+  }
+  return leaf.bitset;
+}
+
+IRS_FORCE_INLINE inline uint32_t* MaterializeBitset(
+  uint32_t prev, const UnalignedWord* IRS_RESTRICT bitset, uint32_t words,
+  uint32_t* IRS_RESTRICT out) {
+  SDB_ASSERT(words != 0);
   constexpr auto kBits = BitsRequired<uint64_t>();
-  auto word = first_mask;
-  for (auto i = first_word;;) {
+  uint64_t word = bitset[0];
+  for (uint32_t i = 0;;) {
     out = block_codec::MaterializeBits(prev + 1 + i * kBits, word, out);
     if (++i == words) {
       return out;
     }
     word = bitset[i];
   }
-}
-
-template<bool Clear>
-IRS_FORCE_INLINE uint32_t MaskLeaf(FillLeaf leaf, uint32_t prev, uint32_t len,
-                                   doc_id_t min, doc_id_t max,
-                                   uint64_t* IRS_RESTRICT mask,
-                                   uint32_t* IRS_RESTRICT docs_end) {
-  SDB_ASSERT(leaf.Maskable());
-  SDB_ASSERT(min <= prev && prev < max);
-  constexpr auto kBits = BitsRequired<uint64_t>();
-  const uint64_t first = uint64_t{prev} + 1 - min;
-  const auto range = [&](uint64_t begin, uint64_t end) IRS_FORCE_INLINE {
-    if constexpr (Clear) {
-      ClearBitRange(mask, begin, end);
-    } else {
-      SetBitRange(mask, begin, end);
-    }
-  };
-  const auto bitset_at = [&](const UnalignedWord* IRS_RESTRICT src,
-                             uint32_t words, uint64_t last) IRS_FORCE_INLINE {
-    if constexpr (Clear) {
-      AndNotBitsetAt(mask, first, src, words, last);
-    } else {
-      OrBitsetAt(mask, first, src, words, last);
-    }
-  };
-
-  if (leaf.IsRun()) {
-    if (leaf.max < max) {
-      range(first, first + len);
-      return 0;
-    }
-    const auto inside = max - prev - 1;
-    if (inside != 0) {
-      range(first, first + inside);
-    }
-    const auto live = len - inside;
-    block_codec::FillProgression(docs_end - live, live, max - 1, 1);
-    return live;
-  }
-
-  const auto* const bitset = leaf.bitset;
-  if (leaf.max < max) {
-    bitset_at(bitset, leaf.words, bitset[leaf.words - 1]);
-    return 0;
-  }
-  const uint64_t below = max - prev - 1;
-  if (below != 0) {
-    const auto head = static_cast<uint32_t>((below - 1) / kBits + 1);
-    bitset_at(bitset, head,
-              bitset[head - 1] & (~uint64_t{0} >> (head * kBits - below)));
-  }
-  const auto split = static_cast<uint32_t>(below / kBits);
-  SDB_ASSERT(split < leaf.words);
-  const auto rest = bitset[split] & (~uint64_t{0} << (below % kBits));
-  auto live = static_cast<uint32_t>(std::popcount(rest));
-  for (auto i = split + 1; i != leaf.words; ++i) {
-    live += static_cast<uint32_t>(std::popcount(bitset[i]));
-  }
-  SDB_ASSERT(live != 0 && live <= len);
-  MaterializeBitsetFrom(prev, bitset, split, rest, leaf.words, docs_end - live);
-  return live;
 }
 
 IRS_FORCE_INLINE inline bool HoleToken(uint32_t token) noexcept {
@@ -305,9 +263,11 @@ inline uint64_t HolesToBitset(const byte_type* in, uint32_t len,
 
 inline uint64_t HolesToBitset(const byte_type* in, uint32_t len,
                               uint64_t* IRS_RESTRICT bitset) noexcept {
-  return in[0] == block_codec::Code(block_codec::DeltaEncoding::PatchByte)
-           ? HolesToBitset<true>(in, len, bitset)
-           : HolesToBitset<false>(in, len, bitset);
+  return Resolve(
+    in[0] == block_codec::Code(block_codec::DeltaEncoding::PatchByte),
+    [&]<bool Patched> IRS_FORCE_INLINE {
+      return HolesToBitset<Patched>(in, len, bitset);
+    });
 }
 
 IRS_FORCE_INLINE inline doc_id_t BitsetMax(
@@ -350,7 +310,7 @@ IRS_FORCE_INLINE inline FillLeaf FillAt(uint32_t len, const byte_type* begin,
   auto* const at = out + (kBlock - len);
   end = full ? Codec::DecodeDeltaBlock(begin, prev, at)
              : Codec::DecodeDeltaTail(begin, len, prev, at);
-  return {nullptr, 0, out[kBlock - 1], FillLeaf::Kind::Docs};
+  return {nullptr, 0, out[kBlock - 1], DocsKind(len)};
 }
 
 template<typename InputType>
@@ -358,14 +318,14 @@ IRS_FORCE_INLINE FillLeaf ReadTailForFill(uint32_t len, InputType& in,
                                           uint32_t* buf, uint64_t* holes,
                                           uint32_t* out, uint32_t prev) {
   SDB_ASSERT(1 <= len && len <= kBlock);
-  const auto* const begin = BeginDelta(in, buf, len == kBlock, len);
+  const auto encoded = BeginDelta(in, buf, len == kBlock, len);
   const byte_type* end;
-  const auto leaf = FillAt(len, begin, holes, out, prev, end);
-  End(in, begin, end);
+  const auto leaf = FillAt(len, encoded.begin, holes, out, prev, end);
+  End(encoded, end);
   return leaf;
 }
 
-IRS_FORCE_INLINE inline FillLeaf FillView(BytesViewInput& view,
+IRS_FORCE_INLINE inline FillLeaf FillView(duckdb::MemoryReader& view,
                                           const byte_type*& at, uint32_t len,
                                           uint64_t* holes, uint32_t* out,
                                           uint32_t prev, bool freqs) {
@@ -375,7 +335,7 @@ IRS_FORCE_INLINE inline FillLeaf FillView(BytesViewInput& view,
     end += Codec::ValuesBlockSize(end);
   }
   PrefetchStream(end);
-  view.ReadStable(static_cast<uint64_t>(end - at));
+  view.Consume(static_cast<uint64_t>(end - at));
   at = end;
   return leaf;
 }
@@ -383,10 +343,10 @@ IRS_FORCE_INLINE inline FillLeaf FillView(BytesViewInput& view,
 template<typename InputType>
 IRS_FORCE_INLINE void ReadBlockDelta(InputType& in, uint32_t* buf,
                                      uint32_t* out, uint32_t prev) {
-  const auto* const begin = Begin(
+  const auto encoded = Begin(
     in, buf, [](uint32_t token) { return Codec::DeltaPrefix(token); },
     [](const byte_type* p) { return Codec::DeltaBlockSize(p); });
-  End(in, begin, Codec::DecodeDeltaBlock(begin, prev, out));
+  End(encoded, Codec::DecodeDeltaBlock(encoded.begin, prev, out));
 }
 
 template<typename InputType>
@@ -398,8 +358,8 @@ IRS_FORCE_INLINE void ReadTailDeltaAt(uint32_t len, InputType& in,
     ReadBlockDelta(in, buf, out, prev);
     return;
   }
-  const auto* const begin = BeginDelta(in, buf, false, len);
-  End(in, begin, Codec::DecodeDeltaTail(begin, len, prev, out));
+  const auto encoded = BeginDelta(in, buf, false, len);
+  End(encoded, Codec::DecodeDeltaTail(encoded.begin, len, prev, out));
 }
 
 template<typename InputType>
@@ -410,10 +370,10 @@ IRS_FORCE_INLINE void ReadTailDelta(uint32_t len, InputType& in, uint32_t* buf,
 
 template<uint32_t Add = 0, typename InputType>
 IRS_FORCE_INLINE void ReadBlock(InputType& in, uint32_t* buf, uint32_t* out) {
-  const auto* const begin = Begin(
+  const auto encoded = Begin(
     in, buf, [](uint32_t token) { return Codec::ValuesPrefix(token); },
     [](const byte_type* p) { return Codec::ValuesBlockSize(p); });
-  End(in, begin, Codec::DecodeValuesBlock<Add>(begin, out));
+  End(encoded, Codec::DecodeValuesBlock<Add>(encoded.begin, out));
 }
 
 template<uint32_t Add = 0, typename InputType>
@@ -424,23 +384,29 @@ IRS_FORCE_INLINE void ReadTail(uint32_t len, InputType& in, uint32_t* buf,
     ReadBlock<Add>(in, buf, out);
     return;
   }
-  const auto* const begin = Begin(
+  const auto encoded = Begin(
     in, buf, [](uint32_t token) { return Codec::ValuesPrefix(token); },
     [len](const byte_type* p) { return Codec::ValuesTailSize(p, len); });
-  End(in, begin,
-      Codec::DecodeValuesTail<Add>(begin, len, out + (kBlock - len)));
+  End(encoded,
+      Codec::DecodeValuesTail<Add>(encoded.begin, len, out + (kBlock - len)));
+}
+
+template<uint32_t Add = 0>
+IRS_FORCE_INLINE void DecodeTail(const byte_type* in, uint32_t len,
+                                 uint32_t* out) {
+  SDB_ASSERT(1 <= len && len <= kBlock);
+  if (len == kBlock) {
+    Codec::DecodeValuesBlock<Add>(in, out);
+    return;
+  }
+  Codec::DecodeValuesTail<Add>(in, len, out + (kBlock - len));
 }
 
 template<typename InputType>
 IRS_FORCE_INLINE void SkipBlock(InputType& in) {
-  if (auto* view = View(in)) {
-    view->Skip(Codec::ValuesBlockSize(view->Current()));
-  } else {
-    uint32_t buf[kEncWords];
-    Fetch(
-      in, buf, [](uint32_t token) { return Codec::ValuesPrefix(token); },
-      [](const byte_type* p) { return Codec::ValuesBlockSize(p); });
-  }
+  Pass(
+    in, [](uint32_t token) { return Codec::ValuesPrefix(token); },
+    [](const byte_type* p) { return Codec::ValuesBlockSize(p); });
 }
 
 template<typename InputType>
@@ -448,14 +414,11 @@ IRS_FORCE_INLINE void SkipTail(uint32_t len, InputType& in) {
   SDB_ASSERT(1 <= len && len <= kBlock);
   if (len == kBlock) {
     SkipBlock(in);
-  } else if (auto* view = View(in)) {
-    view->Skip(Codec::ValuesTailSize(view->Current(), len));
-  } else {
-    uint32_t buf[kEncWords];
-    Fetch(
-      in, buf, [](uint32_t token) { return Codec::ValuesPrefix(token); },
-      [len](const byte_type* p) { return Codec::ValuesTailSize(p, len); });
+    return;
   }
+  Pass(
+    in, [](uint32_t token) { return Codec::ValuesPrefix(token); },
+    [len](const byte_type* p) { return Codec::ValuesTailSize(p, len); });
 }
 
 }  // namespace irs::block_io

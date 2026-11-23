@@ -24,14 +24,14 @@ query
 SELECT objoid::regclass::text AS relation, objsubid, privtype, initprivs
 FROM pg_init_privs
 WHERE classoid = 'pg_class'::regclass
-  AND objoid IN ('pg_class'::regclass, 'pg_authid'::regclass, 'pg_tables'::regclass, 'sdb_settings'::regclass)
+  AND objoid IN ('pg_class'::regclass, 'pg_authid'::regclass, 'pg_tables'::regclass, 'sdb_flags'::regclass)
 ORDER BY 1;
 ----
 relation	objsubid	privtype	initprivs
 pg_authid	0	i	{postgres=arwdDxtm/postgres}
 pg_class	0	i	{postgres=arwdDxtm/postgres,=r/postgres}
 pg_tables	0	i	{postgres=arwdDxtm/postgres,=r/postgres}
-sdb_settings	0	i	{postgres=arwdDxtm/postgres,=r/postgres}
+sdb_flags	0	i	{postgres=arwdDxtm/postgres,=r/postgres}
 
 
 query

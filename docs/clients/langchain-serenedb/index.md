@@ -19,7 +19,7 @@ split: page
 | Hybrid retrieval | One inverted index over the content **and** embedding columns, scored with `BM25()` | [Hybrid search](../../sql/indexes/inverted/hybrid-search.md) |
 | Metadata | A `JSON` column, plus optional typed columns | [Indexes and Tuning](./indexes.md#metadata-index) |
 | Metadata filters | Index-covered predicates, including `@@` full-text matches | [Metadata Filtering](./filtering.md) |
-| Write visibility | `VACUUM (REFRESH_TABLE)` | [Maintenance](../../sql/indexes/inverted/maintenance.md) |
+| Write visibility | A committed row is searchable at once | [Visibility](../../sql/indexes/inverted/maintenance.md#visibility) |
 
 ## Install {#install}
 
@@ -36,7 +36,7 @@ The distribution is named `langchain-serenedb`; the import name is `langchain_se
 | `psycopg[binary]` | `>= 3, < 4` |
 | `psycopg-pool` | `>= 3.2.1, < 4` |
 | `numpy` | `>= 1.21, < 3` |
-| SereneDB server | `>= 26.11.2` |
+| SereneDB server | `>= 26.11.3` |
 
 You also need a running SereneDB server. Note the port: SereneDB listens on **7890** by default, not PostgreSQL's 5432. The engine checks the server version when it is created and refuses an older server — see [Server version check](./engine.md#version-check).
 
@@ -77,7 +77,7 @@ This gives you a `my_docs` table holding both documents — each with its text, 
 
 | Page | Contents |
 | :--- | :--- |
-| [Engine and Tables](./engine.md) | `SereneDBEngine`, `Column`, `ColumnDict` — connecting, creating the table, publishing writes |
+| [Engine and Tables](./engine.md) | `SereneDBEngine`, `Column`, `ColumnDict` — connecting, creating the table, write visibility |
 | [Vector Store](./vector-store.md) | `SereneDBVectorStore` — adding documents, searching, scores, retrievers |
 | [Metadata Filtering](./filtering.md) | The `filter` dict: comparison, set, pattern, logical and full-text operators |
 | [Hybrid Search](./hybrid-search.md) | `HybridIndexConfig`, `HybridSearchConfig`, `FusionStrategy` — fusing BM25 and vector rankings in one query |

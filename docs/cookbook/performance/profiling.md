@@ -116,6 +116,52 @@ When the `profiling_mode` is set to `detailed`, an extra set of metrics are enab
 These include all the metrics in the Phase timing metric group.
 It is possible to toggle each of these additional metrics individually.
 
+## Inverted Index Scans
+
+In `EXPLAIN ANALYZE` and in the profiling output, a scan over an inverted index shows what the index did in sections of the scan's own box, and the box's time covers the whole scan.
+
+<SqlLogicTest id="cookbook/performance/profiling/example_005" />
+
+`Index Filter Prepare` is the time the index spends getting ready for the query, summed over threads:
+
+| Line | Meaning |
+|---|---|
+| `Total` | The whole preparation, the filters included |
+| `Snapshot` | Opening the index for the query |
+| `Segments` | How many index segments the query reads, of how many the index has: a segment none of whose rows can pass the scan's column filters is skipped |
+| `Stats` | Gathering the statistics a ranking function needs |
+
+Below these lines is the filter the index ran, drawn as `EXPLAIN` draws the scan's `Index Filter`, with the numbers of each filter: how many posting lists it opened (`Posting Lists`) and how many documents they hold (`Postings`), the index's estimate of the documents it matches (`Estimated Matches`) and the time spent preparing it, such as looking up its terms or expanding a pattern (`Time`; `Total` adds the filters below it). Filters over n-grams, geo shapes or vectors, and filters that match every row, leave `Posting Lists` and `Postings` out. In a vector search, the tree starts with the vector search, with the scan's other index filters below it.
+
+`Index Filter Execute` is the time spent choosing and running the index's execution plans (`Total`) and the documents they produced (`Rows`). Below these lines is one tree per kind of execution plan that ran. Each plan shows how many times the scan chose it (`Plans`) and the time that took (`Plan`), how many times the scan called it (`Calls`), the time spent running it (`Time`; `Total` adds the parts below it) and how many documents it produced (`Rows`). Both counts depend on how the scan's threads split the work. In a query that orders by a ranking function with a `LIMIT`, `Rows` counts the documents offered to the top results. The plans do not follow the shape of the filter: one filter can run as several kinds of plan, and one plan can run several filters. The plan names identify the plans the index chose and can change between releases.
+
+A query over the term dictionary, such as `ts_dict_agg`, has one plan per segment: the one that finds the documents its `WHERE` matches, as the walk over the dictionary asks for them. Its `Rows` counts those documents, and walking the dictionary is the scan's own time. Without a `WHERE`, and with no deleted rows, the counts come from the dictionary itself and `Index Filter Execute` is left out.
+
+`SET sdb_index_profile_nodes = true` adds the nested parts of each execution plan below it. Each part shows the filter it runs (`Filter`), how many times its plan called it (`Calls`) and the documents it matched (`Rows`). A part that marks a window of documents at a time counts the documents it added to the window, or removed from it when it excludes them, so in an `OR` a part counts only the documents the parts before it had not marked. Their times are estimated from the calls they timed (`Timed`), about one in 32, and the query runs slower while the setting is on, so they compare the parts of a plan rather than measure them exactly. Parts that are called very often for very little work each time can add up to more than the time of the plan they belong to; the plan then shows no time of its own.
+
+`Column Filter` draws the checks the scan runs on column values: its column filters (`Column`, or `Dynamic Column` for a filter the query tightens while it runs), the column form of filters that can run either way when the scan checks them on columns (`EXPLAIN` shows them as `Index or Column Filter`), the exact checks behind index filters that the index can only approximate (`Verify: table filter`, which `EXPLAIN` shows as `Table Filter`), filters over several columns of a row (`Row`), filters on the ranking score (`Score`) and filters on columns the index does not store, which run when the scan looks the rows up (`Verify: lookup`). Above them:
+
+| Line | Meaning |
+|---|---|
+| `Rows` | The rows the index handed to the checks |
+| `Rows Removed` | The rows the checks removed |
+| `Time` | The time spent checking them |
+
+`Rows`, `Rows Removed` and `Time` appear when the query counts rows, orders by a ranking function with a `LIMIT` or searches vectors. Other scans check the filters while they read the columns and leave them out.
+
+`Lookup` appears when the scan looks its rows up in the indexed table or view:
+
+| Line | Meaning |
+|---|---|
+| `Source` | Where the scan looks the rows up, as `EXPLAIN` shows it in `Lookup` |
+| `Rows` | The rows the scan looked up |
+| `Rows Removed` | The rows that did not come back: a filter on a column the index does not store removed them, or they are no longer in the source |
+| `Time` | The time spent looking the rows up |
+
+`EXPLAIN (ANALYZE, FORMAT compact)` prints each section on its own line below the scan, with its trees indented below it, and the JSON output has each section as an object among the scan's details.
+
+Removing `operator.index_profile` from [`tracked_metrics`](../../configuration/overview.md#logging-metrics-and-profiling) leaves the sections out.
+
 ## Notation in Query Plans
 
 In query plans, the [hash join](https://en.wikipedia.org/wiki/Hash_join) operators adhere to the following convention:
@@ -131,12 +177,11 @@ A `LOOKUP_JOIN` reads columns of rows its left input picked — after a `TOP_N`,
 
 | Scan on the right | `Key` |
 |---|---|
-| A table | `rowid` |
 | Parquet files | `file_index, file_row_number` |
 | DuckDB files (`read_duckdb`) | `file_index, rowid` |
 | CSV and JSON files | `file_index, file_offset`, the byte offset of the row in its file |
 | A PostgreSQL table | `ctid` |
-| A search table, or an inverted index on one | `rowid` |
+| A table, or an inverted index on one | `rowid` |
 | An inverted index | `iresearch_pk`, the row's address in the index |
 | The source of an inverted index (`INDEX_SOURCE`) | the [row identity](../../sql/indexes/inverted/views.md#row-identity) the index stores, named as its source names it: `rowid` for a table, `ctid` for a PostgreSQL view, `file_index, file_row_number` for a Parquet glob |
 

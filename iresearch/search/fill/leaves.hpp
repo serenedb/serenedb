@@ -48,19 +48,50 @@ class AndLeaves {
 
   doc_id_t Restrict(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     const auto words = detail::WindowWords(min, max);
-    const auto last = _leaves.size() - 1;
     doc_id_t next = 0;
-    for (size_t i = 0;; ++i) {
-      detail::Clear(_own.data(), words);
-      next = std::max(next, _leaves[i].FillOr(min, max, _own.data()));
-      if (detail::FoldAnd(mask, _own.data(), words) == 0 || i == last) {
+    auto card = detail::Cardinality(mask, words);
+    detail::Scratch own;
+    for (size_t i = 0, last = _leaves.size() - 1;; ++i) {
+      if (card == 0) {
         return next;
       }
+      if (Probes(card, _leaves[i], min, max)) {
+        SlackBuf<doc_id_t, detail::kProbeWindow, doc_limits::kDocsSlack> docs;
+        auto n = detail::TakeDocs(min, mask, words, docs.data());
+        n = Keep(docs.data(), n, docs.data(), i);
+        detail::PutDocs(min, docs.data(), n, mask);
+        return next;
+      }
+      detail::Clear(own.data(), words);
+      next = std::max(next, _leaves[i].FillOr(min, max, own.data()));
+      if (i == last) {
+        detail::And(mask, own.data(), words);
+        return next;
+      }
+      card = detail::FoldAnd(mask, own.data(), words);
     }
   }
 
+  uint32_t Keep(const doc_id_t* in, uint32_t n, doc_id_t* out,
+                size_t from = 0) {
+    SDB_ASSERT(from < _leaves.size());
+    for (auto i = from; i != _leaves.size(); ++i) {
+      n = _leaves[i].Keep(in, n, out);
+      in = out;
+      if (n == 0) {
+        return 0;
+      }
+    }
+    return n;
+  }
+
  private:
-  detail::Scratch _own;
+  IRS_FORCE_INLINE static bool Probes(uint32_t card, Leaf& leaf, doc_id_t min,
+                                      doc_id_t max) {
+    return card < detail::kProbeWindow &&
+           leaf.FillCostAbove(card * detail::kProbeSteps, min, max);
+  }
+
   containers::Fixed<Leaf, N> _leaves;
 };
 
@@ -78,8 +109,20 @@ class ProbedAndNot {
     return _probe.Probe(target);
   }
 
+  IRS_FORCE_INLINE bool Test(doc_id_t doc)
+    requires requires(Leaf& probe) { probe.Test(doc); }
+  {
+    return _probe.Test(doc);
+  }
+
   void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     const auto words = detail::WindowWords(min, max);
+    if constexpr (kWords) {
+      for (size_t w = 0; w != words; ++w) {
+        mask[w] &= ~Excluded(min, w);
+      }
+      return;
+    }
     auto base = min;
     for (size_t w = 0; w != words; ++w, base += detail::kWindowBits) {
       auto word = mask[w];
@@ -117,6 +160,19 @@ class ProbedAndNot {
   }
 
  private:
+  static constexpr bool kWords = requires(const Leaf& probe) {
+    probe.Words();
+    probe.WordCount();
+    Leaf::kMin;
+  };
+
+  IRS_FORCE_INLINE uint64_t Excluded(doc_id_t min, size_t w) const noexcept {
+    return detail::WordAt(_probe.Words(), _probe.WordCount(),
+                          static_cast<int64_t>(min) -
+                            static_cast<int64_t>(Leaf::kMin) +
+                            static_cast<int64_t>(w * detail::kWindowBits));
+  }
+
   Leaf _probe;
 };
 
@@ -133,6 +189,18 @@ class FilledAndNot {
   void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask) {
     _leaves.Visit(max,
                   [&](auto& leaf) { return leaf.FillAndNot(min, max, mask); });
+  }
+
+  uint32_t Drop(const doc_id_t* in, uint32_t n, doc_id_t* out) {
+    if (in != out) {
+      std::copy_n(in, n, out);
+    }
+    _leaves.Each([&](auto& leaf) {
+      if (n != 0) {
+        n = leaf.Drop(out, n, out);
+      }
+    });
+    return n;
   }
 
   void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT mask,

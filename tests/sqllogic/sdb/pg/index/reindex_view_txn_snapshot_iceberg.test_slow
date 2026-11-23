@@ -50,7 +50,7 @@ count
 
 connection reader user=postgres
 query
-SELECT * FROM serenedb_reindex('rts_idx');
+SELECT * FROM sdb_reindex('rts_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -67,7 +67,7 @@ id
 2
 
 query
-SELECT * FROM serenedb_reindex('rts_idx');
+SELECT * FROM sdb_reindex('rts_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0

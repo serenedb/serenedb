@@ -27,24 +27,27 @@
 
 namespace irs::offsets {
 
-bool Resolve(const TermReader* field, Handles& out) {
+bool HandlesOf(const TermReader* field, Handles& out) {
   return detail::ResolvePhrase(field, out) && out.HasOffsets() &&
          out.pay != nullptr;
 }
 
 Root::ptr Make(PlanMemory& memory, const FixedPhraseQuery& query) {
-  return detail::ResolveMatch(
-    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(memory, query); });
+  return Resolve<detail::PhraseMatchAxis>(query, [&]<detail::PhraseMatch M> {
+    return PhraseMaker<M, FixedPhraseQuery>::Make(memory, query);
+  });
 }
 
 Root::ptr Make(PlanMemory& memory, const VariadicPhraseQuery& query) {
-  return detail::ResolveMatch(
-    query, [&]<detail::PhraseMatch M> { return MakePhrase<M>(memory, query); });
+  return Resolve<detail::PhraseMatchAxis>(query, [&]<detail::PhraseMatch M> {
+    return PhraseMaker<M, VariadicPhraseQuery>::Make(memory, query);
+  });
 }
 
 Root::ptr Make(PlanMemory& memory, const NGramSimilarityQuery& query) {
-  return detail::ResolveNGram(
-    query, [&]<detail::NGramMatch M> { return MakeNGram<M>(memory, query); });
+  return Resolve<detail::NGramMatchAxis>(query, [&]<detail::NGramMatch M> {
+    return NGramMaker<M>::Make(memory, query);
+  });
 }
 
 }  // namespace irs::offsets

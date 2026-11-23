@@ -22,6 +22,7 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <duckdb/common/identifier.hpp>
 #include <duckdb/common/shared_ptr.hpp>
 #include <duckdb/common/typedefs.hpp>
 #include <duckdb/common/types.hpp>
@@ -30,6 +31,7 @@
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <limits>
 #include <memory>
+#include <span>
 #include <tz_calendar.hpp>
 
 #include "pg/catalog/utils/session.h"
@@ -121,11 +123,17 @@ inline bool IsUtcTimeZoneName(std::string_view name) noexcept {
   return name == "UTC" || name == "GMT" || name == "Etc/UTC";
 }
 
-void FillContext(const Config& config, SerializationContext& context);
+void FillContext(duckdb::ClientContext& client, SerializationContext& context);
 
 SerializationFunction GetSerialization(const duckdb::LogicalType& type,
                                        VarFormat format,
                                        SerializationContext& context);
+
+void SetCopyText(SerializationContext& context, char delim,
+                 std::string null_str);
+
+void SerializeCopyTextHeader(SerializationContext& context,
+                             std::span<const duckdb::Identifier> names);
 
 void ByteaOutHex(char* buf, std::string_view value);
 

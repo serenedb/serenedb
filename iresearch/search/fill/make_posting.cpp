@@ -38,7 +38,7 @@ Node::ptr MakePostingDocs(PlanMemory& memory,
   SDB_ASSERT(posting.state.reader != nullptr);
   const auto& own = *posting.state.reader;
   const auto& doc = *detail::DocOf(own);
-  return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+  return Resolve(doc, [&]<typename Input> -> Node::ptr {
     return memory.Make<Impl<detail::PostingFill<Input>>>(
       posting.state.cookie, doc, detail::LayoutOf(own), detail::BoundsOf(own),
       detail::FreqOf(own));
@@ -66,7 +66,7 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   const auto freq = detail::FreqOf(own);
 
   if (posting.stats.stats == nullptr) {
-    return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+    return Resolve(doc, [&]<typename Input> -> Node::ptr {
       using Leaf = detail::PlainFillScored<Input>;
       return memory.Make<Impl<Leaf>>(meta, doc, detail::LayoutOf(own), bounds,
                                      freq);
@@ -74,14 +74,9 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   }
 
   if (const auto constant =
-        detail::ConstantOf(segment, own,
-                           detail::ScoreArgs{.memory = &memory,
-                                             .scorer = posting.stats.scorer,
-                                             .stats = posting.stats.stats,
-                                             .fetcher = ctx.fetcher,
-                                             .boost = posting.boost})) {
+        detail::ConstantOf(segment, own, posting.Args(memory, ctx.fetcher))) {
     const auto value = *constant;
-    return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
+    return Resolve(doc, [&]<typename Input> -> Node::ptr {
       using Approx = detail::PostingFill<Input>;
       using Node = ConstantScored<Approx>;
       return memory.Make<Impl<Node>>(merge, value, meta, doc,
@@ -92,13 +87,8 @@ Node::ptr MakePostingScored(const detail::PostingClause& posting,
   return detail::ResolveFillScored<Node::ptr>(
     doc, freq && ScoresPerDoc(posting.stats.scorer), merge,
     [&]<typename Leaf, typename> -> Node::ptr {
-      return memory.Make<Impl<Leaf>>(
-        meta, doc, bounds, segment, own,
-        detail::ScoreArgs{.memory = &memory,
-                          .scorer = posting.stats.scorer,
-                          .stats = posting.stats.stats,
-                          .fetcher = ctx.fetcher,
-                          .boost = posting.boost});
+      return memory.Make<Impl<Leaf>>(meta, doc, bounds, segment, own,
+                                     posting.Args(memory, ctx.fetcher));
     });
 }
 
@@ -115,11 +105,7 @@ Node::ptr MakeSinglePostingScored(const detail::PostingClause& posting,
   }
   const auto value =
     detail::SingleDocScore(segment, *posting.state.reader, doc, meta.freq,
-                           detail::ScoreArgs{.memory = &ctx.memory,
-                                             .scorer = posting.stats.scorer,
-                                             .stats = posting.stats.stats,
-                                             .fetcher = ctx.fetcher,
-                                             .boost = posting.boost});
+                           posting.Args(ctx.memory, ctx.fetcher));
   return ctx.memory.Make<Impl<ConstantScored<SingleDocs>>>(merge, value, doc);
 }
 

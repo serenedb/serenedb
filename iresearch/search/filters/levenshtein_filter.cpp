@@ -24,9 +24,11 @@
 
 #include <absl/algorithm/container.h>
 
+#include <algorithm>
 #include <array>
 #include <memory>
 #include <optional>
+#include <type_traits>
 #include <vector>
 
 #include "iresearch/index/index_reader.hpp"
@@ -35,9 +37,11 @@
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/top_terms_selector.hpp"
 #include "iresearch/search/filters/automaton_filter.hpp"
+#include "iresearch/search/filters/field_target.hpp"
 #include "iresearch/search/filters/filter_visitor.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/hash_utils.hpp"
 #include "iresearch/utils/levenshtein_default_pdp.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
@@ -51,11 +55,10 @@ namespace irs {
 namespace {
 
 IRS_FORCE_INLINE score_t Similarity(uint32_t distance, uint32_t size) noexcept {
-  SDB_ASSERT(size);
-
   static_assert(sizeof(score_t) == sizeof(uint32_t));
 
-  return 1.f - static_cast<score_t>(distance) / static_cast<score_t>(size);
+  return 1.f - static_cast<score_t>(distance) /
+                 static_cast<score_t>(std::max(size, uint32_t{1}));
 }
 
 struct AggregatedStatsVisitor : util::Noncopyable {
@@ -177,7 +180,7 @@ void WalkTopTerms(const TermReader& reader,
   on_terms(it->GetImpl());
   const auto prefix = options.parametric->LowerBound();
   const auto term = bytes_view{options.target}.substr(prefix.size());
-  std::unique_ptr<const LevenshteinAcceptor> narrow;
+  std::unique_ptr<const LevenshteinPrefixAcceptor> narrow;
   bstring past;
   auto distance = static_cast<uint8_t>(options.no_distance - 1);
   std::array<size_t, ParametricDescription::kMaxDistance + 1> reached{};
@@ -204,9 +207,12 @@ void WalkTopTerms(const TermReader& reader,
       if (description) {
         distance = narrowed;
         AssignAfterKey(past, it->value());
-        auto acceptor = std::make_unique<const LevenshteinAcceptor>(
-          description, prefix, term);
-        it.emplace(reader.iterator(*acceptor), options);
+        auto acceptor = std::make_unique<const LevenshteinPrefixAcceptor>(
+          std::make_shared<const LevenshteinAcceptor>(description, prefix,
+                                                      term));
+        it.emplace(options.starts_with ? reader.iterator(*acceptor)
+                                       : reader.iterator(*acceptor->Inner()),
+                   options);
         narrow = std::move(acceptor);
         if (!it->SeekGe(past)) {
           return;
@@ -309,7 +315,7 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
   }
 
   auto query = ctx.memory.Make<MultiTermQuery>(
-    ctx.memory, segment, ctx.boost * boost, ScoreMergeType::Max);
+    ctx.memory, segment, ctx.boost * boost, options.merge);
   auto* collector =
     ctx.collector ? &irs::utils::downCast<BlendedTermsCollector>(*ctx.collector)
                   : nullptr;
@@ -378,14 +384,15 @@ PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollectorImpl(
 
 LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
   const ParametricDescription& d, ByEditDistanceAllOptions::pdp_f provider,
-  bool with_transpositions, bytes_view prefix, bytes_view term,
-  size_t max_terms)
+  bool with_transpositions, bool starts_with, bytes_view prefix,
+  bytes_view term, size_t max_terms)
   : parametric{std::make_shared<const LevenshteinAcceptor>(d, prefix, term)},
-    source{MakeFuzzySource(parametric)},
+    source{MakeFuzzySource(parametric, starts_with)},
     provider{provider ? provider : &DefaultPDP},
     utf8_target_size{Utf8TargetSize(prefix, term)},
     no_distance{static_cast<byte_type>(d.max_distance() + 1)},
     with_transpositions{with_transpositions},
+    starts_with{starts_with},
     max_terms{max_terms} {
   target.reserve(prefix.size() + term.size());
   target += prefix;
@@ -394,42 +401,44 @@ LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
 
 Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
                              const ByEditDistanceOptions& opts, score_t boost) {
+  const FieldTarget target{
+    .id = id, .dict = dict, .boost = boost, .merge = opts.merge};
   return ExecuteLevenshtein(
     opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
     opts.term, [] -> Filter::ptr { return std::make_unique<Empty>(); },
-    [&] -> Filter::ptr {
-      auto filter = std::make_unique<ByTerm>();
-      *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
-      auto& target = filter->mutable_options()->term;
-      target.reserve(opts.prefix.size() + opts.term.size());
-      target += opts.prefix;
-      target += opts.term;
-      filter->SetBoost(boost);
-      return filter;
-    },
+    [&] { return LowerExactLevenshtein(target, opts); },
     [&](const ParametricDescription& d, const bytes_view prefix,
         const bytes_view term) -> Filter::ptr {
-      LevenshteinAutomatonOptions lowered{
-        d,      opts.provider, opts.with_transpositions,
-        prefix, term,          opts.max_terms};
-      auto filter = std::make_unique<LevenshteinAutomatonFilter>();
-      *filter->mutable_field_id() = id;
-      *filter->mutable_dict() = dict;
-      *filter->mutable_options() = std::move(lowered);
-      filter->SetBoost(boost);
+      auto filter = target.Make<LevenshteinAutomatonFilter>();
+      *filter->mutable_options() = LevenshteinAutomatonOptions{
+        d,    opts.provider, opts.with_transpositions, opts.starts_with, prefix,
+        term, opts.max_terms};
+      filter->mutable_options()->merge = target.merge;
       return filter;
     });
 }
 
+Filter::ptr LowerExactLevenshtein(const FieldTarget& target,
+                                  const ByEditDistanceOptions& opts) {
+  return Resolve(opts.starts_with, [&]<bool kStartsWith> -> Filter::ptr {
+    auto filter =
+      target.Make<std::conditional_t<kStartsWith, ByPrefix, ByTerm>>();
+    auto& options = *filter->mutable_options();
+    options.term.reserve(opts.prefix.size() + opts.term.size());
+    options.term += opts.prefix;
+    options.term += opts.term;
+    if constexpr (kStartsWith) {
+      options.merge = target.merge;
+    }
+    return filter;
+  });
+}
+
 TermPredicate::ptr LevenshteinAutomatonFilter::CompileTermPredicate() const {
-  if (!options().parametric) {
+  if (!options().source) {
     return nullptr;
   }
-  return MakeTermPredicate(
-    [acceptor = options().parametric](bytes_view term) noexcept {
-      return acceptor->Matches(term);
-    });
+  return options().source->Predicate();
 }
 
 TermPredicate::ptr ByEditDistance::CompileTermPredicate() const {

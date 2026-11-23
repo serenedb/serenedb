@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "iresearch/search/ann/family.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 
 namespace irs::ann {
 namespace {
@@ -36,7 +37,9 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
     return MakeEmpty(ctx.memory);
   }
-  return query.PlanAnn(ctx);
+  return ProfileRoot(query, ctx, [&](const Context& profiled) {
+    return query.PlanAnn(profiled);
+  });
 }
 
 }  // namespace irs::ann

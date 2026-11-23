@@ -20,9 +20,12 @@
 
 #include "lm_dirichlet.hpp"
 
+#include <absl/container/inlined_vector.h>
 #include <absl/strings/str_cat.h>
 
+#include <algorithm>
 #include <cmath>
+#include <span>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/score_bound_writer.hpp"
@@ -31,77 +34,94 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
+#include "iresearch/search/scorers/lm_similarity.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
-#include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
 namespace {
 
-template<ScoreMergeType MergeType, bool HasScale>
-IRS_FORCE_INLINE void LmDirImpl(
-  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
-  const uint32_t* IRS_RESTRICT norm,
-  [[maybe_unused]] const score_t* IRS_RESTRICT scale, score_t mu_p_inv,
-  score_t mu_inv, score_t const_boost) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    const score_t tf = ScaledFreq<HasScale>(freq, scale, i);
-    const score_t dl = TermCountToScore(norm[i]);
+struct LmDirFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
     const score_t weight = std::log1p(tf * mu_p_inv);
     const score_t doc_norm = std::log1p(dl * mu_inv);
-    score_t r = weight - doc_norm;
-    if (r < 0.f) {
-      r = 0.f;
-    }
-    r *= const_boost;
-    Merge<MergeType>(res[i], r);
-  }
-}
-
-template<bool HasScale>
-struct LmDirScore : public ScoreOperatorOf<LmDirScore<HasScale>> {
-  LmDirScore(score_t boost, score_t mu, const LMStats& stats,
-             const FreqBlockAttr* freq, const uint32_t* norm,
-             const score_t* scale) noexcept
-    : freq{freq},
-      norm{norm},
-      scale{scale},
-      boost{boost},
-      mu_inv{1.f / mu},
-      mu_p_inv{1.f / (mu * stats.collection_prob)} {}
-
-  template<ScoreMergeType MergeType = ScoreMergeType::Noop>
-  IRS_FORCE_INLINE void ScoreImpl(score_t* res,
-                                  scores_size_t n) const noexcept {
-    LmDirImpl<MergeType, HasScale>(res, n, freq->value, norm,
-                                   TryGetValue(scale), mu_p_inv, mu_inv, boost);
+    return std::max(weight - doc_norm, 0.f) * boost;
   }
 
-  const FreqBlockAttr* freq;
-  const uint32_t* norm;
-  [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   score_t boost;
   score_t mu_inv;
   score_t mu_p_inv;
 };
 
+LmDirFormula LmDirOf(score_t boost, score_t mu, score_t share) noexcept {
+  return {boost, 1.f / mu, 1.f / (mu * share)};
+}
+
+struct LmDirTermsFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    const double doc_norm = 1 / (1 + dl * mu_inv);
+    const double* const mu_p_inv = mu_p_invs.data();
+    return static_cast<score_t>(LogOfProduct(
+             mu_p_invs.size(),
+             [&](size_t i) {
+               return std::max((1 + tf * mu_p_inv[i]) * doc_norm, 1.0);
+             })) *
+           boost;
+  }
+
+  score_t boost;
+  double mu_inv;
+  absl::InlinedVector<double, 4> mu_p_invs;
+};
+
+LmDirTermsFormula LmDirTermsOf(score_t boost, score_t mu,
+                               std::span<const score_t> shares) {
+  LmDirTermsFormula formula{.boost = boost, .mu_inv = 1 / double{mu}};
+  formula.mu_p_invs.reserve(shares.size());
+  for (const auto share : shares) {
+    formula.mu_p_invs.push_back(1 / (double{mu} * share));
+  }
+  return formula;
+}
+
 }  // namespace
 
 void LMDirichlet::collect(byte_type* stats_buf, const FieldCollector* field,
-                          const TermCollector* term) const {
-  CollectLMStats(*stats_cast(stats_buf), field, term);
+                          const TermCollector* term, StatsArena& arena) const {
+  CollectShare(*stats_cast(stats_buf), field, term, arena);
 }
 
 ScoreFunction LMDirichlet::PrepareScorer(const ScoreContext& ctx) const {
   if (_mu <= 0.f) {
     return ScoreFunction::Default();
   }
-  return PrepareLMScorer<LmDirScore>(ctx, *stats_cast(ctx.stats), _mu);
+  return PrepareShareScorer(
+    ctx, *stats_cast(ctx.stats),
+    [&](score_t share) { return LmDirOf(ctx.boost, _mu, share); },
+    [&](std::span<const score_t> shares) {
+      return LmDirTermsOf(ctx.boost, _mu, shares);
+    });
+}
+
+void LMDirichlet::Explain(const ScoreContext& ctx,
+                          const explain::SlotStats* stats,
+                          explain::Node& out) const {
+  if (_mu <= 0.f) {
+    out.note = "mu is not positive, so the clause scores 0";
+    return;
+  }
+  explain::ExplainLanguageModel(
+    ctx, SharesOf(*stats_cast(ctx.stats)), stats, {.key = "mu", .value = _mu},
+    "boost * max(0, log(1 + freq / (mu * p)) - log(1 + dl / mu))",
+    [&](score_t tf, score_t dl, score_t share) {
+      return LmDirOf(ctx.boost, _mu, share)(tf, dl);
+    },
+    out);
 }
 
 std::string LMDirichlet::ToString() const {

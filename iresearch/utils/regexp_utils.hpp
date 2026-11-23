@@ -35,9 +35,6 @@ enum class RegexpType {
 };
 
 // Regexp syntax dialect.  Controls how the pattern is parsed by RE2.
-// Only affects the Complex path - Literal/Prefix classification and
-// fast-path matching are syntax-agnostic (both dialects share the same
-// interpretation of literal characters and .*).
 enum class RegexpSyntax {
   // Perl-compatible dialect.  The default.  Supports the full RE2
   // feature set: \d \w \s, \b \B, (?:...), (?i:...), \Q...\E,
@@ -101,7 +98,7 @@ constexpr bool IsRegexpMeta(byte_type c) noexcept {
 // is an RE2 feature that must go through the full automaton path.
 constexpr bool IsSimpleEscape(byte_type c) noexcept { return IsRegexpMeta(c); }
 
-RegexpType ComputeRegexpType(bytes_view pattern) noexcept;
+RegexpType ComputeRegexpType(bytes_view pattern, RegexpSyntax syntax) noexcept;
 
 bytes_view ExtractRegexpPrefix(bytes_view pattern) noexcept;
 

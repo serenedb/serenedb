@@ -24,7 +24,6 @@
 #include <type_traits>
 
 #include "iresearch/formats/posting/block_io.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -47,11 +46,11 @@ struct HoleBuf {
 };
 
 template<typename InputType>
-using NeedEnc = utils::Need<!InputType::kVolatileAlways, EncBuf>;
+using NeedEnc = utils::Need<!InputType::CONTIGUOUS, EncBuf>;
 
 template<typename InputType, typename Enc>
 IRS_FORCE_INLINE uint32_t* EncOf(Enc& enc) noexcept {
-  if constexpr (InputType::kVolatileAlways) {
+  if constexpr (InputType::CONTIGUOUS) {
     return nullptr;
   } else {
     return enc.data;

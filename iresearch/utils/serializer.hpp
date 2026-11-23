@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 
@@ -57,12 +58,12 @@ static_assert(false);
 #endif
 static_assert(BOOST_PFR_ENABLED);
 
-#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
 #include <duckdb/common/types/string_type.hpp>
 
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/pg/error_mapping.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::utils {
@@ -231,8 +232,7 @@ void WriteString(Sink& sink, std::string_view v) {
   if constexpr (requires { sink.WriteValue(v); }) {
     sink.WriteValue(v);
   } else {
-    sink.WriteValue(
-      duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())});
+    sink.WriteValue(duckdb::string_t::Unsafe(v));
   }
 }
 
@@ -525,6 +525,7 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
       src.OnObjectEnd();
     } else if constexpr (!std::is_empty_v<T>) {
       const size_t count = src.OnListBegin();
+      absl::Cleanup end_list = [&] { src.OnListEnd(); };
       auto check_size = [&](size_t expected) {
         if (count != expected) {
           THROW_SQL_ERROR(ERR_MSG("Failed to read: serialized data has ", count,
@@ -593,15 +594,9 @@ void ReadTuple(Source& src, U& out, const A& arg = {}) {
           }
         }
       } catch (const std::exception& e) {
-        src.OnListEnd();
-        THROW_SQL_ERROR(ERR_MSG("Failed to read element ", element_idx, ": ",
-                                duckdb::ErrorData{e}.RawMessage()));
-      } catch (...) {
-        src.OnListEnd();
-        THROW_SQL_ERROR(ERR_MSG("Failed to read element ", element_idx,
-                                ": unspecified error"));
+        irs::pg::ThrowWithContext(
+          absl::StrCat("Failed to read element ", element_idx), e);
       }
-      src.OnListEnd();
     } else {
       static_assert(std::is_empty_v<T>, "Other types are not supported");
       [[maybe_unused]] const bool present = src.OnNullableBegin();

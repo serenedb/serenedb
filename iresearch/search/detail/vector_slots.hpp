@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <limits>
 #include <memory>
 #include <span>
@@ -47,15 +48,12 @@
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
 #include "iresearch/utils/memory.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -63,37 +61,56 @@ namespace irs::detail {
 
 class VectorBlockReader {
  public:
-  VectorBlockReader(IndexInput::ptr&& in,
+  VectorBlockReader(const duckdb::InputFile& file,
                     const PayloadBlockSetting& setting) noexcept
-    : _in{std::move(in)},
+    : _in{file},
       _record_size{setting.record_size},
       _alignment{setting.alignment} {
-    SDB_ASSERT(_in);
     SDB_ASSERT(std::has_single_bit(_alignment));
     SDB_ASSERT(_alignment <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
   }
 
   void Reset(uint64_t base_offset) noexcept { _base = base_offset; }
 
-  std::span<const byte_type> Read(size_t index, size_t count) {
+  void ReadAheadUntil(uint64_t records) {
+    _in.ReadAheadUntil(_base + records * _record_size);
+  }
+
+  std::span<const byte_type> Read(size_t index, size_t count, size_t group) {
     const uint64_t offset = _base + static_cast<uint64_t>(index) * _record_size;
-    const size_t bytes = count * size_t{_record_size};
-    if (const byte_type* p = _in->ReadVolatile(offset, bytes)) {
-      SDB_ASSERT(reinterpret_cast<uintptr_t>(p) % _alignment == 0);
-      return {p, bytes};
+    size_t bytes = count * size_t{_record_size};
+    _in.Seek(offset);
+    const auto* view = _in.Peek(bytes);
+    if (!view) {
+      bytes = std::min(count, group) * size_t{_record_size};
+      view = _in.Peek(bytes);
+      if (view) {
+        bytes = _in.Available() / bytes * bytes;
+      } else {
+        _pin = _in.Pin(offset, bytes);
+        view = _pin.Ptr();
+      }
     }
-    _buf.resize(bytes);
-    _in->ReadData(offset, _buf.data(), bytes);
-    return _buf;
+    SDB_ASSERT(reinterpret_cast<uintptr_t>(view) % _alignment == 0);
+    return {view, bytes};
+  }
+
+  uint32_t Records(std::span<const byte_type> block) const noexcept {
+    return static_cast<uint32_t>(block.size() / _record_size);
   }
 
  private:
-  IndexInput::ptr _in;
-  std::vector<byte_type> _buf;
+  duckdb::InputFileReader _in;
+  duckdb::FilePin _pin;
   uint64_t _base = 0;
   uint32_t _record_size;
   uint32_t _alignment;
 };
+
+inline bool MayHaveNullRows(const ColumnReader& column) {
+  return (column.HasValidity() || column.InMemory()) &&
+         column.MergedStatistics().CanHaveNull();
+}
 
 struct RawRecipe {
   const ColumnReader* column = nullptr;
@@ -111,7 +128,8 @@ class RawVectorReader {
     : _read_ctx{col_reader, true},
       _vreader{vector_column, _read_ctx},
       _column{&vector_column},
-      _d{d} {}
+      _d{d},
+      _in_memory{vector_column.InMemory()} {}
 
   explicit RawVectorReader(const RawRecipe& recipe)
     : RawVectorReader{*recipe.column, *recipe.reader, recipe.d} {
@@ -133,7 +151,6 @@ class RawVectorReader {
       i += run;
     }
     const auto* q = reinterpret_cast<const byte_type*>(_query.data());
-    const auto d = static_cast<uint16_t>(_d);
     for (size_t i = 0; i < docs.size();) {
       size_t run = ConsecutiveRunLength(docs, i);
       if (run == 1 && i + 2 < docs.size()) {
@@ -152,7 +169,7 @@ class RawVectorReader {
               __builtin_prefetch(ahead + off, 0, 3);
             }
           }
-          out[i + k] = _dist(q, base + k * stride, d);
+          out[i + k] = _dist(q, base + k * stride, _d);
         }
         i += got;
         run -= got;
@@ -166,12 +183,14 @@ class RawVectorReader {
       size_t got = 0;
       row = ReadSome(doc, 1, got);
     }
-    return _dist(reinterpret_cast<const byte_type*>(_query.data()), row,
-                 static_cast<uint16_t>(_d));
+    return _dist(reinterpret_cast<const byte_type*>(_query.data()), row, _d);
   }
 
   template<int Locality = 3>
   const byte_type* PrefetchRow(doc_id_t doc) noexcept {
+    if (_in_memory) {
+      return nullptr;
+    }
     const auto* child = _column->Child();
     const uint64_t elem = (static_cast<uint64_t>(doc) - doc_limits::min()) * _d;
     const auto w = child->Locate(elem, _win);
@@ -186,8 +205,8 @@ class RawVectorReader {
       return nullptr;
     }
     const uint64_t off = m.file_offset + (elem - w.begin) * sizeof(float);
-    if (_read_ctx.HasIn()) {
-      file_utils::Hint(_read_ctx.In(), off, span);
+    if (const auto* file = _read_ctx.File()) {
+      file->Hint(off, span);
     }
     const auto* q = _read_ctx.TryReadStable(off, span);
     if (!q) {
@@ -208,7 +227,8 @@ class RawVectorReader {
 
  private:
   void HintRun(doc_id_t first, size_t count) noexcept {
-    if (!_read_ctx.HasIn()) {
+    const auto* file = _read_ctx.File();
+    if (_in_memory || !file) {
       return;
     }
     const auto* child = _column->Child();
@@ -226,12 +246,16 @@ class RawVectorReader {
         elem < w.begin || end <= elem) {
       return;
     }
-    file_utils::Hint(_read_ctx.In(),
-                     m.file_offset + (elem - w.begin) * sizeof(float),
-                     (end - elem) * sizeof(float));
+    file->Hint(m.file_offset + (elem - w.begin) * sizeof(float),
+               (end - elem) * sizeof(float));
   }
 
   const byte_type* ReadSome(doc_id_t first, size_t count, size_t& got) {
+    if (_in_memory) {
+      got = count;
+      return reinterpret_cast<const byte_type*>(
+        _vreader.ReadDocBatch(first, count));
+    }
     const auto* child = _column->Child();
     SDB_ASSERT(child);
     const uint64_t elem =
@@ -292,6 +316,7 @@ class RawVectorReader {
   VectorDistanceFn _dist = nullptr;
   std::vector<float> _query;
   uint32_t _d;
+  bool _in_memory;
 };
 
 struct AcceptAll {
@@ -319,8 +344,9 @@ class VectorCluster {
   static constexpr uint32_t kRun = doc_limits::kBlockSize;
 
   VectorCluster(PlanMemory& memory, const PostingMeta& meta,
-                const IndexInput& doc_in, QuantizerReader::ptr&& quantizer,
-                VectorBlockReader&& payload, uint32_t lane)
+                const duckdb::InputFile& doc_in,
+                QuantizerReader::ptr&& quantizer, VectorBlockReader&& payload,
+                uint32_t lane)
     : _quantizer{std::move(quantizer)},
       _pay{std::move(payload)},
       _total{meta.docs_count},
@@ -333,6 +359,7 @@ class VectorCluster {
     SDB_ASSERT(_lane < std::max<uint32_t>(1, _setting.group_size));
     _end = _lane + _total;
     _records = static_cast<uint32_t>(_setting.RecordCount(_end));
+    _pay.ReadAheadUntil(_records);
     _list.Prepare(meta, doc_in, IndexFeatures::None, false);
   }
 
@@ -445,7 +472,7 @@ class VectorCluster {
       const uint32_t gs = _setting.group_size;
       const uint32_t first = lane / gs * gs;
       const uint32_t records = GroupRecords(first);
-      ScoreBlock(_pay.Read(first, records), records, _cache.data(),
+      ScoreBlock(_pay.Read(first, records, gs), records, _cache.data(),
                  _cache.data() + gs);
       _cached_first = first;
       _cached_end = first + std::min<uint32_t>(records, _end - first);
@@ -470,18 +497,21 @@ class VectorCluster {
       err += take;
       len -= take;
     }
-    if (const uint32_t full = len / gs * gs; full != 0) {
-      ScoreBlock(_pay.Read(lane, full), full, out, err);
-      lane += full;
-      out += full;
-      err += full;
-      len -= full;
+    for (uint32_t full = len / gs * gs; full != 0;) {
+      const auto block = _pay.Read(lane, full, gs);
+      const uint32_t records = _pay.Records(block);
+      ScoreBlock(block, records, out, err);
+      lane += records;
+      out += records;
+      err += records;
+      len -= records;
+      full -= records;
     }
     if (len == 0) {
       return;
     }
     if (const uint32_t records = GroupRecords(lane); records == len) {
-      ScoreBlock(_pay.Read(lane, records), records, out, err);
+      ScoreBlock(_pay.Read(lane, records, gs), records, out, err);
       return;
     }
     ServeGroup(lane, len, out, err);

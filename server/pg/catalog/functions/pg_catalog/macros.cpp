@@ -46,7 +46,7 @@ constexpr SystemMacro kMacros[] = {
                      WHEN bool_or(keyword_category = 'type_function') THEN 'T'
                      ELSE 'C'
                    END::"char" AS catcode
-            FROM duckdb_keywords()
+            FROM sdb_keywords()
             GROUP BY keyword_name)
       ORDER BY word)"},
 
@@ -60,11 +60,10 @@ constexpr SystemMacro kMacros[] = {
              S.query AS query,
              NULL::TEXT AS wait_event_type,
              NULL::TEXT AS wait_event,
-             NULL::TIMESTAMPTZ AS xact_start,
-             CASE WHEN S.query_start_us <> 0
-                  THEN to_timestamp(S.query_start_us / 1000000.0) END AS query_start,
+             to_timestamp(S.xact_start_us / 1000000.0) AS xact_start,
+             to_timestamp(S.query_start_us / 1000000.0) AS query_start,
              to_timestamp(S.backend_start_us / 1000000.0) AS backend_start,
-             NULL::TIMESTAMPTZ AS state_change,
+             to_timestamp(S.state_change_us / 1000000.0) AS state_change,
              NULL::INET AS client_addr,
              NULL::TEXT AS client_hostname,
              NULL::INTEGER AS client_port,
@@ -346,7 +345,6 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog", "pg_get_expr", "(node_text, rel_oid) AS CAST(node_text AS TEXT)"},
   {"pg_catalog", "pg_get_expr",
    "(node_text, rel_oid, pretty_bool) AS CAST(node_text AS TEXT)"},
-  {"pg_catalog", "pg_tablespace_location", "(oid) AS CAST('' AS TEXT)"},
 
   {"pg_catalog", "oidvectortypes",
    R"((v) AS array_to_string(
@@ -355,12 +353,8 @@ constexpr SystemMacro kMacros[] = {
   {"pg_catalog", "pg_indexam_has_property",
    R"((am, property) AS
       CASE (SELECT amname FROM pg_catalog.pg_am WHERE oid = am AND amtype = 'i')
-        WHEN 'secondary' THEN CASE lower(property)
-          WHEN 'can_order' THEN false WHEN 'can_unique' THEN true
-          WHEN 'can_multi_col' THEN true WHEN 'can_exclude' THEN false
-          WHEN 'can_include' THEN false END
         WHEN 'inverted' THEN CASE lower(property)
-          WHEN 'can_order' THEN false WHEN 'can_unique' THEN false
+          WHEN 'can_order' THEN false WHEN 'can_unique' THEN true
           WHEN 'can_multi_col' THEN true WHEN 'can_exclude' THEN false
           WHEN 'can_include' THEN true END
       END)"},

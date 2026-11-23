@@ -41,7 +41,7 @@ Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
     irs::detail::DocOf(irs::detail::FieldOf(required, nullptr));
   SDB_ASSERT(doc != nullptr);
   const auto size = optional.size() + 1;
-  return irs::detail::ResolveInput(*doc, [&]<typename Input> -> Root::ptr {
+  return Resolve(*doc, [&]<typename Input> -> Root::ptr {
     using Lead = PostingPrunedLead<Input>;
     using Clause = PostingPrunedClause<Input>;
     const auto init = [&](auto& leaf, size_t i) {
@@ -49,12 +49,7 @@ Root::ptr MakePrunedReqOpt(const irs::detail::PostingClause& required,
       const auto& own = *posting.state.reader;
       SDB_ASSERT(irs::detail::DocOf(own) == doc);
       leaf.Prepare(posting.state.cookie, *doc, irs::detail::LayoutOf(own),
-                   segment, own,
-                   irs::detail::ScoreArgs{.memory = &ctx.memory,
-                                          .scorer = posting.stats.scorer,
-                                          .stats = posting.stats.stats,
-                                          .fetcher = &ctx.fetcher,
-                                          .boost = posting.boost});
+                   segment, own, posting.Args(ctx.memory, &ctx.fetcher));
     };
     if (size == 2) {
       return MakeShape<PrunedReqOpt, Lead, PrunedLeaves<Clause, 1>>(

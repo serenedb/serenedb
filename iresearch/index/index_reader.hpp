@@ -98,9 +98,6 @@ struct IndexReader {
 
   virtual ~IndexReader() = default;
 
-  // count memory
-  virtual uint64_t CountMappedMemory() const = 0;
-
   // number of live documents
   virtual uint64_t live_docs_count() const = 0;
 
@@ -153,9 +150,7 @@ struct SubReader : public IndexReader, public NormProvider {
 
   virtual const DocumentMask* docs_mask() const = 0;
 
-  DocumentMask::Iterator MaskedDocs() const noexcept {
-    return DocumentMask::Iterator{docs_mask()};
-  }
+  virtual uint64_t PatchedDocs() const noexcept { return 0; }
 
   virtual lead::Node::ptr docs_iterator(PlanMemory& memory) const = 0;
 
@@ -180,7 +175,6 @@ struct SubReader : public IndexReader, public NormProvider {
     return nullptr;
   }
   virtual const AnnIndex* Ann(field_id /*field*/) const { return nullptr; }
-  virtual IndexInput::ptr ReopenAnn() const { return nullptr; }
 };
 
 }  // namespace irs

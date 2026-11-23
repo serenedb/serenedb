@@ -48,7 +48,7 @@ DELETE FROM guard.people WHERE age = 42;
 # it has to resolve age_ok through the table's own schema. Scoped to this
 # database: the scan walks every attachment on the shared server.
 query
-SELECT count(*) FROM duckdb_constraints()
+SELECT count(*) FROM sdb_constraints()
 WHERE constraint_type = 'CHECK' AND database_name = current_database();
 ----
 count

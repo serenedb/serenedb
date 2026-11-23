@@ -257,11 +257,6 @@ def reindex_index(index_key):
     return Op("reindex_index", [f"REINDEX INDEX {index_key[1]}"], key=index_key)
 
 
-def vacuum_refresh_index(index_key):
-    return Op("vacuum_refresh_index",
-              [f"VACUUM (REFRESH_INDEX) {index_key[1]}"], key=index_key)
-
-
 def create_foreign_server(names, host, port):
     name = names.fresh("s")
     return Op("create_foreign_server", [

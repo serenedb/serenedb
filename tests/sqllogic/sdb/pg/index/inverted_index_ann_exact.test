@@ -16,9 +16,6 @@ INSERT INTO ax SELECT i, [i::FLOAT, (i % 7)::FLOAT, 0, 0, 0, 0, 0, 0]::FLOAT[8],
   CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END FROM range(3000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ax;
-
-statement ok
 SET sdb_ann_force_exact = true;
 
 query
@@ -28,7 +25,7 @@ EXPLAIN SELECT pk FROM ax_idx
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────────╮
 │ Index: ax_idx                       │
-│ Lookup: table                       │
+│ Lookup: search                      │
 │ Score: l2_distance(emb, FLOAT[8])   │
 │ Exact:                              │
 │ brute force over the stored vectors │
@@ -109,9 +106,6 @@ INSERT INTO axl SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8], i % 10
   FROM range(2000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) axl;
-
-statement ok
 SET sdb_ann_force_exact = true;
 
 query
@@ -145,12 +139,6 @@ INSERT INTO axn
 
 statement ok
 INSERT INTO axr SELECT * FROM axn;
-
-statement ok
-VACUUM (REFRESH_TABLE) axn;
-
-statement ok
-VACUUM (REFRESH_TABLE) axr;
 
 query
 SELECT pk FROM axn_idx ORDER BY emb <-> [0, 1, 2, 3]::FLOAT[4] LIMIT 20;

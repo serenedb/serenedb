@@ -20,8 +20,6 @@
 
 #include "pg/command_tag.h"
 
-#include <absl/strings/match.h>
-
 #include <duckdb/common/enums/catalog_type.hpp>
 #include <duckdb/common/enums/set_type.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -35,7 +33,6 @@
 #include <duckdb/parser/parsed_data/drop_info.hpp>
 #include <duckdb/parser/parsed_data/extra_drop_info.hpp>
 #include <duckdb/parser/statement/alter_statement.hpp>
-#include <duckdb/parser/statement/attach_statement.hpp>
 #include <duckdb/parser/statement/create_statement.hpp>
 #include <duckdb/parser/statement/delete_statement.hpp>
 #include <duckdb/parser/statement/drop_statement.hpp>
@@ -44,8 +41,6 @@
 #include <duckdb/parser/statement/transaction_statement.hpp>
 #include <duckdb/parser/statement/vacuum_statement.hpp>
 #include <iresearch/utils/system_compiler.hpp>
-
-#include "catalog/catalog.h"
 
 namespace sdb::pg {
 namespace {
@@ -79,6 +74,8 @@ ObjectTags TagsOf(duckdb::CatalogType type, bool procedure) {
       return {"CREATE FUNCTION", "DROP FUNCTION", "ALTER FUNCTION"};
     case DATABASE_ENTRY:
       return {"CREATE DATABASE", "DROP DATABASE", "ALTER DATABASE"};
+    case TABLESPACE_ENTRY:
+      return {"CREATE TABLESPACE", "DROP TABLESPACE", "ALTER TABLESPACE"};
     case TRIGGER_ENTRY:
       return {"CREATE TRIGGER", "DROP TRIGGER", "ALTER TRIGGER"};
     case ROLE_ENTRY:
@@ -129,6 +126,8 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       return "COMMENT";
     case ALTER_DATABASE:
       return "ALTER DATABASE";
+    case ALTER_TABLESPACE:
+      return "ALTER TABLESPACE";
     case ALTER_SCHEMA:
       return "ALTER SCHEMA";
     case ALTER_INDEX:
@@ -176,7 +175,7 @@ CommandTag ExecuteTag(const duckdb::SQLStatement* unbound,
     return {"EXECUTE", duckdb::StatementType::EXECUTE_STATEMENT};
   }
   using duckdb::StatementType;
-  const auto inner = it->second->statement_type;
+  const auto inner = it->second->plan->statement_type;
   switch (inner) {
     case StatementType::SELECT_STATEMENT:
       return {"SELECT", inner, true};
@@ -235,16 +234,6 @@ CommandTag BuildCommandTagImpl(duckdb::StatementType stmt_type,
     case StatementType::ANALYZE_STATEMENT:
       return make("ANALYZE");
     case StatementType::ATTACH_STATEMENT:
-      if (unbound) {
-        const auto& options =
-          unbound->Cast<duckdb::AttachStatement>().info->options;
-        const auto type = options.find("type");
-        if (type != options.end() &&
-            absl::EqualsIgnoreCase(type->second.ToString(),
-                                   catalog::SereneDBCatalog::kStorageType)) {
-          return make("CREATE DATABASE");
-        }
-      }
       return make("ATTACH");
     case StatementType::DETACH_STATEMENT:
       return make("DETACH");
@@ -354,7 +343,7 @@ const duckdb::SQLStatement* UnboundStatement(
     duckdb::ClientData::Get(*context).prepared_statements;
   const auto it = statements.find(prepared.GetName());
   return it != statements.end() && it->second
-           ? it->second->unbound_statement.get()
+           ? it->second->plan->unbound_statement.get()
            : nullptr;
 }
 

@@ -33,10 +33,12 @@
 
 namespace irs::probe {
 
-template<typename Scoring>
-Node::ptr MakeExclusion(const BooleanQuery& query, uint64_t interrogations,
-                        const Scoring& scoring, const detail::ScoredCtx& ctx,
-                        score_t absorbed) {
+template<typename Scoring, typename P>
+Node::ptr ExclusionMaker<Scoring, P>::Make(const BooleanQuery& query,
+                                           uint64_t interrogations,
+                                           const Scoring& scoring,
+                                           const detail::ScoredCtx& ctx,
+                                           score_t absorbed) {
   auto& memory = ctx.memory;
   const auto& segment = query.Segment();
   const std::span must = query.Terms(Occur::Must);
@@ -64,8 +66,8 @@ Node::ptr MakeExclusion(const BooleanQuery& query, uint64_t interrogations,
       const auto& posting = must.front();
       const auto& own = *posting.state.reader;
       const auto& doc = *detail::DocOf(own);
-      return detail::ResolveInput(doc, [&]<typename Input> -> Node::ptr {
-        return detail::BuildExcludeSideOf<Node::ptr, Input>(
+      return Resolve<P>(doc, [&]<typename Input> -> Node::ptr {
+        return detail::BuildExcludeSideOf<Node::ptr, Input, P>(
           memory, excludes, exclude_filters, nullptr, segment, reach, lead,
           [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
             return MakeSparse<detail::PostingProbeScored<Input>, utils::Empty,
@@ -79,11 +81,12 @@ Node::ptr MakeExclusion(const BooleanQuery& query, uint64_t interrogations,
           });
       });
     }
-    auto include = MakeIncluded(query, interrogations, scoring, ctx, absorbed);
+    auto include =
+      MakeIncluded<P>(query, interrogations, scoring, ctx, absorbed);
     if (!include) {
       return {};
     }
-    return detail::BuildExcludeSide<Node::ptr>(
+    return detail::BuildExcludeSide<Node::ptr, P>(
       memory, excludes, exclude_filters, nullptr, segment, reach, lead,
       [&]<typename Exclude>(auto&& excluded) -> Node::ptr {
         return MakeSparse<Erased, utils::Empty, Exclude>(
@@ -103,7 +106,7 @@ Node::ptr MakeExclusion(const BooleanQuery& query, uint64_t interrogations,
     }
     const auto excluded = [&]<typename Musts, typename Optional>(
                             auto&& musts, auto&& optional_args) -> Node::ptr {
-      return detail::BuildExcludeSide<Node::ptr>(
+      return detail::BuildExcludeSide<Node::ptr, P>(
         memory, excludes, exclude_filters, nullptr, segment, reach, lead,
         [&]<typename Exclude>(auto&& exclude) -> Node::ptr {
           return MakeSparse<Musts, Optional, Exclude>(
@@ -123,7 +126,7 @@ Node::ptr MakeExclusion(const BooleanQuery& query, uint64_t interrogations,
       return excluded.template operator()<utils::Empty, Erased>(
         std::forward_as_tuple(), std::forward_as_tuple(std::move(optional)));
     }
-    return BuildMusts(
+    return BuildMusts<P>(
       must, must_filters, segment, interrogations, scoring, ctx,
       [&]<typename Musts>(auto&& musts) -> Node::ptr {
         if (!optional) {

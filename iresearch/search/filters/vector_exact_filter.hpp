@@ -43,6 +43,12 @@ struct ByVectorExactOptions {
   bool operator==(const ByVectorExactOptions& rhs) const noexcept = default;
 };
 
+QueryBuilder::ptr PrepareExactVectors(
+  const SubReader& segment, const PrepareContext& ctx, field_id column_id,
+  std::span<const float> query, field_id ann_id, VectorMetric metric,
+  const std::shared_ptr<const Filter>& inner_filter, float radius,
+  bool inclusive, score_t boost);
+
 class ByVectorExact final : public FilterWithField<ByVectorExactOptions> {
  public:
   QueryBuilder::ptr PrepareSegment(const SubReader& segment,

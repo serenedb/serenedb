@@ -35,13 +35,12 @@ TermCounts::ptr MakeTermCounts(PlanMemory& memory, detail::LazyBitset& set,
   if (terms < 2) {
     return {};
   }
-  return detail::ResolveInput(
-    *detail::DocOf(field), [&]<typename Input> -> TermCounts::ptr {
-      using Shape = TermCountsOf<Input>;
-      return memory.Make<TermCounts, Shape>(memory, set, *detail::DocOf(field),
-                                            detail::LayoutOf(field),
-                                            detail::BoundsOf(field));
-    });
+  return Resolve(*detail::DocOf(field), [&]<typename Input> -> TermCounts::ptr {
+    using Shape = TermCountsOf<Input>;
+    return memory.Make<TermCounts, Shape>(memory, set, *detail::DocOf(field),
+                                          detail::LayoutOf(field),
+                                          detail::BoundsOf(field));
+  });
 }
 
 }  // namespace irs::count

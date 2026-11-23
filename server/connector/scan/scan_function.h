@@ -20,12 +20,20 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+#include <absl/functional/function_ref.h>
+
+#include <algorithm>
 #include <duckdb.hpp>
 #include <duckdb/common/explain_value.hpp>
 #include <duckdb/function/table_function.hpp>
 #include <duckdb/storage/table/row_group_reorderer.hpp>
+#include <iresearch/index/index_reader.hpp>
+#include <span>
+#include <vector>
 
 #include "connector/scan/scan_plan.h"
+#include "connector/search_filter_printer.hpp"
 
 namespace sdb::connector {
 
@@ -68,6 +76,9 @@ duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue> ScanToStringValue(
 duckdb::InsertionOrderPreservingMap<duckdb::ExplainValue>
 IndexLookupToStringValue(duckdb::TableFunctionToStringInput& input);
 
+irs::FilterTree IndexFilterTree(const ScanBindData& bind,
+                                const irs::Filter& filter);
+
 bool IResearchSupportsPushdownExtract(const duckdb::FunctionData& bind_data,
                                       const duckdb::LogicalIndex& col_idx);
 
@@ -85,6 +96,45 @@ duckdb::unique_ptr<duckdb::BaseStatistics> IResearchScanStatistics(
 
 duckdb::vector<duckdb::PartitionStatistics> IResearchScanPartitionStats(
   duckdb::ClientContext& context, duckdb::GetPartitionStatsInput& input);
+
+struct ScanRowGroup {
+  uint32_t seg = 0;
+  uint32_t rg = 0;
+
+  auto operator<=>(const ScanRowGroup&) const = default;
+};
+
+struct SegmentRowGroups {
+  SegmentRowGroups() = default;
+  SegmentRowGroups(const irs::SubReader& segment, uint64_t row_group_size);
+
+  uint32_t Count() const noexcept {
+    return starts.empty() ? static_cast<uint32_t>(std::max<uint64_t>(
+                              1, (docs + row_group_size - 1) / row_group_size))
+                          : static_cast<uint32_t>(starts.size());
+  }
+  uint64_t Begin(uint32_t rg) const noexcept {
+    return std::min(
+      docs, starts.empty() ? uint64_t{rg} * row_group_size : starts[rg]);
+  }
+  uint64_t End(uint32_t rg) const noexcept {
+    return rg + 1 < Count() ? Begin(rg + 1) : docs;
+  }
+  uint32_t Of(uint64_t row) const noexcept {
+    return static_cast<uint32_t>(
+      starts.empty() ? row / row_group_size
+                     : absl::c_upper_bound(starts, row) - starts.begin() - 1);
+  }
+
+  std::span<const uint64_t> starts;
+  uint64_t row_group_size = 0;
+  uint64_t docs = 0;
+};
+
+void SelectScannedRowGroups(const ScanBindData& bind,
+                            const irs::IndexReader& reader, bool order_prunes,
+                            bool limit_prunes,
+                            absl::FunctionRef<void(ScanRowGroup)> scan);
 
 duckdb::vector<duckdb::column_t> IResearchGetRowIdColumns(
   duckdb::ClientContext& context,

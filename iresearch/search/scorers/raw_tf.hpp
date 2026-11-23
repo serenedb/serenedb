@@ -57,6 +57,9 @@ class RawTF final : public irs::ScorerBase<RawTF, void> {
   bool Compatible(const ScorerOptions& persisted) const noexcept final;
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+
+  void Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+               explain::Node& out) const final;
 };
 
 }  // namespace irs

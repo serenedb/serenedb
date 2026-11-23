@@ -3,8 +3,10 @@ target_link_libraries(
     serenedb-bench-micro
     PRIVATE
         sereneserver
+        serene_listeners
         benchmark
         search-benchmark-common
+        iresearch-test-writer
         simdutf
         simdjson
         faiss
@@ -31,6 +33,7 @@ function(add_bench name)
 endfunction()
 
 add_bench(bm25_byte_norm)
+add_bench(numeric_term_encoding)
 add_bench(ascii_probe)
 add_bench(vector_access)
 add_bench(crc32c)
@@ -45,7 +48,6 @@ add_bench(invert_kernels)
 add_bench(lower_bound)
 add_bench(exclude_costs)
 add_bench(hits_window_skip)
-add_bench(memory_file)
 add_bench(multi_delimited_tokenizer)
 add_bench(posting_fill_seek)
 add_bench(posting_block_codec)
@@ -76,6 +78,7 @@ add_bench(path_hierarchy_tokenizer)
 add_bench(regexp_vs_wildcard)
 add_bench(regexp_engines)
 add_bench(packed_key_agg)
+add_bench(order_keys)
 add_bench(http_codecs)
 add_bench(http_compression)
 set_property(
@@ -113,6 +116,8 @@ add_bench(stringzilla_kernels)
 add_bench(vector_distances)
 add_bench(quant_quality)
 add_bench(table_fetch)
+add_bench(vfs_path_calls)
+add_bench(external_file_cache_pins)
 
 if(ARCH_AMD64)
     add_bench(ci_lower)

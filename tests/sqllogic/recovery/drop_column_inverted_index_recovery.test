@@ -32,7 +32,7 @@ INSERT INTO dcr_t VALUES (3, 'echo foxtrot', 30);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) dcr_t;
+VACUUM (FLUSH_TABLE) dcr_t;
 
 
 query
@@ -80,7 +80,7 @@ INSERT INTO dcr_t VALUES (4, 'golf hotel', 40);
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) dcr_t;
+VACUUM (FLUSH_TABLE) dcr_t;
 
 
 connection after_crash

@@ -417,7 +417,7 @@ static_assert(static_cast<size_t>(TokenLayout::Terms) == 0 &&
 
 inline PostingLogVariant MakePostingLog(duckdb::ArenaAllocator& blocks,
                                         TokenLayout layout) {
-  return ResolveLayout(layout, [&]<TokenLayout L>() {
+  return Resolve(layout, [&]<TokenLayout L>() {
     return PostingLogVariant{std::in_place_type<PostingLog<L>>, blocks};
   });
 }

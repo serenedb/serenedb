@@ -1,0 +1,35 @@
+statement ok
+DROP DATABASE IF EXISTS mehod_other
+
+
+statement ok
+CREATE DATABASE mehod_other
+
+
+statement ok
+CREATE TABLE mehod_other.public.mehod_orders (a INTEGER)
+
+
+statement ok
+CREATE INDEX mehod_orders_idx ON mehod_other.public.mehod_orders (a)
+
+
+statement error
+SELECT * FROM mehod_order
+----
+db error: ERROR: Table with name mehod_order does not exist!
+Did you mean "pg_trigger"?
+
+
+statement error
+DROP INDEX mehod_orders_ix
+----
+db error: ERROR: Index with name mehod_orders_ix does not exist!
+
+
+statement ok
+SELECT count(*) FROM mehod_other.public.mehod_orders
+
+
+statement ok
+DROP DATABASE mehod_other

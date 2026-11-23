@@ -30,6 +30,7 @@
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/filters/filter.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/search/queries/docs_mask_query.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -91,8 +92,7 @@ struct AnnIndex {
                                          uint32_t effort,
                                          AnnQueryCache* cache) const = 0;
 
-  virtual AnnExactCodes PrepareExact(const SubReader& /*segment*/,
-                                     std::span<const float> /*query*/,
+  virtual AnnExactCodes PrepareExact(std::span<const float> /*query*/,
                                      VectorMetric /*metric*/) const {
     return {};
   }
@@ -105,7 +105,7 @@ inline bool PrepareInnerFilter(const std::shared_ptr<const Filter>& inner,
   auto inner_ctx = ctx;
   inner_ctx.collector = nullptr;
   if (inner) {
-    out = inner->PrepareSegment(segment, inner_ctx);
+    out = PrepareFilter(*inner, segment, inner_ctx);
     if (out == nullptr || QueryBuilder::IsEmpty(*out)) {
       return false;
     }

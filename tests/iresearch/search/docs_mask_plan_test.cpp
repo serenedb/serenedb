@@ -142,7 +142,7 @@ std::vector<Query> Queries() {
   return queries;
 }
 
-std::vector<irs::ScoreDoc> ScoreHits(const irs::DirectoryReader& reader,
+std::vector<irs::ScoreDoc> ScoreHits(const irs::CompositeReader& reader,
                                      const irs::Filter& filter,
                                      const irs::Scorer& scorer, bool masked,
                                      bool prune, size_t k) {
@@ -176,6 +176,7 @@ std::vector<irs::ScoreDoc> ScoreHits(const irs::DirectoryReader& reader,
                                        .scorer = scorer,
                                        .fetcher = fetcher,
                                        .prune = prune,
+                                       .bounds = true,
                                        .k = static_cast<uint32_t>(k)});
     if (plan) {
       plan->Run(irs::doc_limits::min(), irs::doc_limits::eof(), collector);
@@ -214,7 +215,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
   void Build(Pattern pattern, uint32_t segment_docs) {
     auto options = tests::CsDefaultWriterOptions();
     options.segment_docs_max = segment_docs;
-    auto writer = open_writer(irs::kOmCreate, std::move(options));
+    auto writer = open_writer(tests::kOmCreate, std::move(options));
     std::vector<std::shared_ptr<tests::StringField>> fields;
     tests::Document doc;
     for (const auto id :
@@ -297,7 +298,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
   }
 
  private:
-  void CheckQueries(const irs::DirectoryReader& reader) {
+  void CheckQueries(const irs::CompositeReader& reader) {
     const auto scorer = irs::BM25::Make(irs::BM25::Options{});
     for (const auto& query : Queries()) {
       SCOPED_TRACE(query.name);
@@ -307,18 +308,20 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
         const auto expected = Expected(*query.filter, segment);
         total += expected.size();
         CheckSegment(*query.filter, segment, expected);
+        CheckUnmaskedCount(*query.filter, segment);
       }
-      for (const bool prune : {false, true}) {
-        std::vector<irs::ScoreDoc> hits(10);
-        ASSERT_EQ(total, irs::ExecuteTopK(reader, *query.filter, *scorer,
-                                          hits.size(), prune, hits));
-      }
+      std::vector<irs::ScoreDoc> hits(10);
+      ASSERT_EQ(total, irs::ExecuteTopK(reader, *query.filter, *scorer,
+                                        hits.size(), false, hits));
+      ASSERT_LE(irs::ExecuteTopK(reader, *query.filter, *scorer, hits.size(),
+                                 true, hits),
+                total);
       CheckScores(reader, *query.filter, *scorer, total);
     }
     CheckFlattened(reader, *scorer);
   }
 
-  static void CheckScores(const irs::DirectoryReader& reader,
+  static void CheckScores(const irs::CompositeReader& reader,
                           const irs::Filter& filter, const irs::Scorer& scorer,
                           uint64_t total) {
     const auto unmasked_k = static_cast<size_t>(reader.docs_count()) + 1;
@@ -352,7 +355,7 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
     }
   }
 
-  static void CheckFlattened(const irs::DirectoryReader& reader,
+  static void CheckFlattened(const irs::CompositeReader& reader,
                              const irs::Scorer& scorer) {
     irs::BooleanFilter filter;
     filter.Add(Clause(kThird, "y"), irs::Occur::Should);
@@ -392,6 +395,32 @@ class DocsMaskPlanTest : public tests::IndexTestBase {
       ASSERT_EQ(irs::QueryKind::DocsMask, excludes.front()->Kind());
     }
     collector_tree.Finish();
+  }
+
+  static void CheckUnmaskedCount(const irs::Filter& filter,
+                                 const irs::SubReader& segment) {
+    irs::QueryMemory query_memory;
+    irs::PlanMemory plan_memory;
+    auto query = filter.PrepareSegment(segment, {.memory = query_memory});
+    if (!query) {
+      return;
+    }
+    auto lead = query->PlanLead({.memory = plan_memory});
+    const uint64_t expected = lead ? Drain(*lead).size() : 0;
+    auto count = query->PlanCount({.memory = plan_memory});
+    ASSERT_NE(nullptr, count);
+    ASSERT_EQ(expected,
+              count->Run(irs::doc_limits::min(), irs::doc_limits::eof()) +
+                count->Finish());
+    auto split = query->PlanCount({.memory = plan_memory, .partial = true});
+    ASSERT_NE(nullptr, split);
+    constexpr doc_id_t kBounds[]{
+      irs::doc_limits::min(), 777, 30001, 65536, 70001, irs::doc_limits::eof()};
+    uint64_t parts = 0;
+    for (size_t i = 1; i != std::size(kBounds); ++i) {
+      parts += split->Run(kBounds[i - 1], kBounds[i]);
+    }
+    ASSERT_EQ(expected, parts + split->Finish());
   }
 
   static std::vector<doc_id_t> Expected(const irs::Filter& filter,
@@ -576,9 +605,9 @@ TEST_P(DocsMaskPlanTest, small_segments_clustered) {
   Check(std::nullopt);
 }
 
-INSTANTIATE_TEST_SUITE_P(docs_mask_plan_test, DocsMaskPlanTest,
-                         ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>)),
-                         DocsMaskPlanTest::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  docs_mask_plan_test, DocsMaskPlanTest,
+  ::testing::Combine(::testing::Values(tests::kMemoryDirParam)),
+  DocsMaskPlanTest::to_string);
 
 }  // namespace

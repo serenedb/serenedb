@@ -29,6 +29,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <utility>
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/posting/common.hpp"
@@ -53,19 +54,20 @@ struct TermInterval {
 template<bool Offs>
 using FixedTermTraits = IteratorTraitsImpl<true, true, Offs>;
 
-template<bool Offs>
-using FixedTermPositionImpl = PositionImpl<FixedTermTraits<Offs>>;
+template<bool Offs, typename Input>
+using FixedTermPositionImpl = PositionImpl<FixedTermTraits<Offs>, Input>;
 
-template<bool Offs>
-using FixedTermPosition = std::pair<FixedTermPositionImpl<Offs>*, TermInterval>;
+template<bool Offs, typename Input>
+using FixedTermPosition =
+  std::pair<FixedTermPositionImpl<Offs, Input>*, TermInterval>;
 
 template<typename T>
 struct TermPositionTraits;
 
-template<bool Offs>
-struct TermPositionTraits<FixedTermPosition<Offs>> {
-  using T = FixedTermPosition<Offs>;
-  using PositionImpl = FixedTermPositionImpl<Offs>;
+template<typename Pos>
+struct TermPositionTraits<std::pair<Pos*, TermInterval>> {
+  using T = std::pair<Pos*, TermInterval>;
+  using PositionImpl = Pos;
 
   static PosAttr::value_t Position(T& pos) noexcept {
     return pos.first->value();
@@ -78,10 +80,19 @@ struct TermPositionTraits<FixedTermPosition<Offs>> {
   static void ResetPos(const T& pos) { pos.first->reset(); }
 
   static const OffsAttr& Offsets(const T& pos) noexcept {
-    static_assert(Offs);
-    const auto* offs = irs::get<OffsAttr>(*pos.first);
-    SDB_ASSERT(offs);
-    return *offs;
+    if constexpr (requires(const Pos& p) { p.Offsets(); }) {
+      return pos.first->Offsets();
+    } else {
+      const auto* offs = irs::get<OffsAttr>(*pos.first);
+      SDB_ASSERT(offs);
+      return *offs;
+    }
+  }
+
+  static score_t Boost(const T& pos) noexcept
+    requires requires(const Pos& p) { p.Boost(); }
+  {
+    return pos.first->Boost();
   }
 };
 
@@ -665,6 +676,10 @@ class PhraseMatcher {
         absl::c_reverse(_pos);
         _reversed = !_reversed;
       }
+    } else if constexpr (N == 2) {
+      if (kByDocFreq(_pos.back(), _pos.front())) {
+        std::swap(_pos.front(), _pos.back());
+      }
     } else {
       absl::c_sort(_pos, kByDocFreq);
     }
@@ -720,8 +735,9 @@ class PhraseMatcher {
   bool _reversed = false;
 };
 
-template<bool Offs, bool HasFreq, bool HasIntervals, size_t N = 0>
-using FixedPhraseMatcher =
-  PhraseMatcher<FixedTermPosition<Offs>, Offs, HasFreq, HasIntervals, false, N>;
+template<typename Input, bool Offs, bool HasFreq, bool HasIntervals,
+         size_t N = 0>
+using FixedPhraseMatcher = PhraseMatcher<FixedTermPosition<Offs, Input>, Offs,
+                                         HasFreq, HasIntervals, false, N>;
 
 }  // namespace irs

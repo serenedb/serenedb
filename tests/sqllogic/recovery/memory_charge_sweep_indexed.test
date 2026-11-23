@@ -1,4 +1,4 @@
-# INSERT, UPDATE, DELETE and COPY on a search table with an inverted index,
+# INSERT, UPDATE, DELETE and COPY on a table with an inverted index,
 # each run once for every memory charge it makes with that charge failing, into
 # a segment that already holds committed rows: a statement either succeeds or
 # fails with out-of-memory and leaves nothing behind, the index stays in sync

@@ -1978,6 +1978,7 @@ void RegisterToRegFunction(duckdb::ExtensionLoader& loader,
   duckdb::ScalarFunction scalar{
     {duckdb::LogicalType::VARCHAR}, std::move(type), std::move(function)};
   scalar.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
+  scalar.SetFallible();
   RegisterScalar(loader, irs::StaticStrings::kPgCatalogSchema, name,
                  duckdb::FunctionStability::CONSISTENT_WITHIN_QUERY,
                  InitSession, {scalar});

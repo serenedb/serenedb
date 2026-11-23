@@ -53,7 +53,6 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <string>
@@ -61,6 +60,8 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -70,7 +71,8 @@ namespace {
 // apply to the new cs, so the parameter is unused.
 class Columnstore2TestCase : public ::testing::TestWithParam<bool> {
  protected:
-  irs::MemoryDirectory _dir;
+  tests::IndexDir _dir{::irs::DuckDBEngine::Instance().instance(),
+                       TestEnv::MemoryRoot()};
   duckdb::DatabaseInstance& Db() {
     return ::irs::DuckDBEngine::Instance().instance();
   }
@@ -86,7 +88,7 @@ class Columnstore2TestCase : public ::testing::TestWithParam<bool> {
   }
 };
 
-// Sanity: a fresh `MemoryDirectory` has no `.col` file, so `MakeCsReader`
+// Sanity: a fresh in-memory directory has no `.col` file, so `MakeCsReader`
 // returns nullptr (legacy `Reader::prepare` -> empty result). Also covers
 // (d) repeated calls remain stable, (e) probing different non-existent
 // segment names returns nullptr each time, (f) after a real segment is
@@ -138,7 +140,7 @@ TEST_P(Columnstore2TestCase, reader_ctor) {
 TEST_P(Columnstore2TestCase, empty_columnstore) {
   constexpr std::string_view kSegment = "empty_cs";
   {
-    irs::ColWriter w{_dir, kSegment, Db()};
+    irs::ColWriter w{Db(), _dir.Tracker(kSegment)};
     w.Commit(/*target_row=*/0);
   }
   // (a) First open: no file was written, so no reader.
@@ -326,7 +328,7 @@ TEST_P(Columnstore2TestCase, sparse_mask_column) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
       irs::tests::AppendBlob(cw, doc, {});
     }
@@ -523,7 +525,7 @@ TEST_P(Columnstore2TestCase, sparse_column_m) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
       const auto s = std::to_string(doc);
       irs::tests::AppendBlob(
@@ -681,7 +683,7 @@ TEST_P(Columnstore2TestCase, sparse_column_mr) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
       const auto s = std::to_string(doc);
       irs::tests::AppendBlob(
@@ -807,7 +809,7 @@ TEST_P(Columnstore2TestCase, SparseColumn) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; doc += 2) {
       const auto s = std::to_string(doc);
       irs::tests::AppendBlob(
@@ -993,7 +995,7 @@ TEST_P(Columnstore2TestCase, sparse_column_gap) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       if (doc <= kGapBegin || doc > kGapEnd) {
         irs::tests::AppendBlob(
@@ -1170,7 +1172,7 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::doc_id_t bytes[2] = {doc, doc};
       const size_t sz = (doc > kTailBegin) ? sizeof(bytes) : sizeof(bytes[0]);
@@ -1319,7 +1321,7 @@ TEST_P(Columnstore2TestCase, sparse_column_tail_block_last_value) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::byte_type buf[sizeof(irs::doc_id_t) + 1];
       std::memcpy(buf, &doc, sizeof(doc));
@@ -1457,7 +1459,7 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       std::string s{kValue.data(), kValue.size()};
       if (doc <= kTailBegin) {
@@ -1599,7 +1601,7 @@ TEST_P(Columnstore2TestCase, sparse_column_full_blocks_all_equal) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     const irs::byte_type* p =
       reinterpret_cast<const irs::byte_type*>(kValue.data());
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
@@ -1717,7 +1719,7 @@ TEST_P(Columnstore2TestCase, dense_mask_column) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     WriteEmptyBlobRange(cw, irs::doc_limits::min(), kMax);
     w->Commit(kMax);
   }
@@ -1843,7 +1845,7 @@ TEST_P(Columnstore2TestCase, dense_column) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       const auto s = std::to_string(doc);
       irs::tests::AppendBlob(
@@ -1976,7 +1978,7 @@ TEST_P(Columnstore2TestCase, dense_column_range) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = kMin; doc <= kMax; ++doc) {
       const auto s = std::to_string(doc);
       irs::tests::AppendBlob(
@@ -2132,14 +2134,12 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_m) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw_a =
-      w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                    /*skip_validity=*/false, kRgSize,
-                    duckdb::CompressionType::COMPRESSION_AUTO, false);
-    auto& cw_b =
-      w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
-                    /*skip_validity=*/false, kRgSize,
-                    duckdb::CompressionType::COMPRESSION_AUTO, false);
+    auto& cw_a = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
+                               /*skip_validity=*/false, kRgSize,
+                               duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw_b = w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
+                               /*skip_validity=*/false, kRgSize,
+                               duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::tests::AppendBlob(
         cw_a, doc,
@@ -2283,14 +2283,12 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_mr) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw_a =
-      w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                    /*skip_validity=*/false, kRgSize,
-                    duckdb::CompressionType::COMPRESSION_AUTO, false);
-    auto& cw_b =
-      w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
-                    /*skip_validity=*/false, kRgSize,
-                    duckdb::CompressionType::COMPRESSION_AUTO, false);
+    auto& cw_a = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
+                               /*skip_validity=*/false, kRgSize,
+                               duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw_b = w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
+                               /*skip_validity=*/false, kRgSize,
+                               duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::tests::AppendBlob(
         cw_a, doc,
@@ -2433,14 +2431,12 @@ TEST_P(Columnstore2TestCase, DenseFixedLengthColumn) {
   constexpr uint32_t kRgSize = 512;
   {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
-    auto& cw_a =
-      w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
-                    /*skip_validity=*/false, kRgSize,
-                    duckdb::CompressionType::COMPRESSION_AUTO, false);
-    auto& cw_b =
-      w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
-                    /*skip_validity=*/false, kRgSize,
-                    duckdb::CompressionType::COMPRESSION_AUTO, false);
+    auto& cw_a = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
+                               /*skip_validity=*/false, kRgSize,
+                               duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw_b = w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
+                               /*skip_validity=*/false, kRgSize,
+                               duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::tests::AppendBlob(
         cw_a, doc,
@@ -2585,11 +2581,10 @@ TEST_P(Columnstore2TestCase, dense_fixed_length_column_empty_tail) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     w->OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
                   /*skip_validity=*/false, kRgSize,
-                  duckdb::CompressionType::COMPRESSION_AUTO,
-                  false);  // never written
+                  duckdb::CompressionType::COMPRESSION_AUTO);  // never written
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       irs::tests::AppendBlob(
         cw, doc, {reinterpret_cast<const irs::byte_type*>(&doc), sizeof(doc)});
@@ -2721,7 +2716,7 @@ TEST_P(Columnstore2TestCase, dense_fixed_large_values) {
     auto w = irs::tests::MakeCsWriter(_dir, kSegment);
     auto& cw = w->OpenColumn(/*id=*/0, duckdb::LogicalType::BLOB,
                              /*skip_validity=*/false, kRgSize,
-                             duckdb::CompressionType::COMPRESSION_AUTO, false);
+                             duckdb::CompressionType::COMPRESSION_AUTO);
     for (irs::doc_id_t doc = irs::doc_limits::min(); doc <= kMax; ++doc) {
       auto s = std::to_string(doc);
       s.resize(kValueSize, 'a');

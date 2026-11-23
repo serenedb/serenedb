@@ -31,7 +31,8 @@ namespace {
 
 std::string CollationName(const duckdb::text::Locale& locale) {
   if (locale.IsBogus()) {
-    THROW_SQL_ERROR(ERR_MSG("collate_tokens: invalid locale"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("collate_tokens: invalid locale"));
   }
   std::string collation;
   locale.GetCollation(collation);

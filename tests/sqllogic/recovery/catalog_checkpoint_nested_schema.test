@@ -82,7 +82,7 @@ DROP TABLE cpns_inner.cpns_t;
 
 connection after_checkpoint
 query
-SELECT sequence_name FROM duckdb_sequences() WHERE database_name = current_database() AND starts_with(sequence_name, 'cpns_') ORDER BY 1;
+SELECT sequence_name FROM sdb_sequences() WHERE database_name = current_database() AND starts_with(sequence_name, 'cpns_') ORDER BY 1;
 ----
 sequence_name
 cpns_nested_seq
@@ -101,7 +101,7 @@ DROP TABLE cpns_outer.cpns_inner.cpns_serial;
 
 connection after_checkpoint
 query
-SELECT count(*) AS sequences FROM duckdb_sequences() WHERE database_name = current_database() AND starts_with(sequence_name, 'cpns_');
+SELECT count(*) AS sequences FROM sdb_sequences() WHERE database_name = current_database() AND starts_with(sequence_name, 'cpns_');
 ----
 sequences
 0

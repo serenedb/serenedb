@@ -48,6 +48,8 @@ constexpr doc_id_t invalid() noexcept { return 0; }
 constexpr doc_id_t min() noexcept { return 1; }
 constexpr bool valid(doc_id_t id) noexcept { return invalid() != id; }
 
+inline constexpr doc_id_t kMaxDocs = eof() - min();
+
 inline constexpr uint32_t kBlockSize = 256;
 inline constexpr uint32_t kDocsSlack = 16;
 inline constexpr uint32_t kScoresSlack = 8;
@@ -94,12 +96,6 @@ constexpr field_id invalid() noexcept {
 constexpr bool valid(field_id id) noexcept { return invalid() != id; }
 
 }  // namespace field_limits
-namespace index_gen_limits {
-
-constexpr uint64_t invalid() noexcept { return 0; }
-constexpr bool valid(uint64_t id) noexcept { return invalid() != id; }
-
-}  // namespace index_gen_limits
 namespace pos_limits {
 
 constexpr uint32_t invalid() noexcept { return 0; }
@@ -113,11 +109,4 @@ constexpr uint32_t min() noexcept { return 1; }
 inline constexpr uint32_t kBlockSize = 256;
 
 }  // namespace pos_limits
-namespace writer_limits {
-
-inline constexpr uint64_t kMinTick = 0;
-inline constexpr uint64_t kMaxTick = std::numeric_limits<uint64_t>::max();
-inline constexpr size_t kInvalidOffset = std::numeric_limits<size_t>::max();
-
-}  // namespace writer_limits
 }  // namespace irs

@@ -122,18 +122,18 @@ INSERT INTO clickclack_dashboard (payload) VALUES ('r1');
 statement error
 DROP TABLE clickclack_ingest_job;
 ----
-db error: ERROR: Cannot drop entry "clickclack_ingest_job_id_seq" because there are entries that depend on it.
-table "clickclack_dashboard" depends on sequence "clickclack_ingest_job_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table clickclack_ingest_job because other objects depend on it
+DETAIL: default value for column id of table clickclack_dashboard depends on sequence clickclack_ingest_job_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
 statement error
 DROP TABLE clickclack_ingest_job RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "clickclack_ingest_job_id_seq" because there are entries that depend on it.
-table "clickclack_dashboard" depends on sequence "clickclack_ingest_job_id_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table clickclack_ingest_job because other objects depend on it
+DETAIL: default value for column id of table clickclack_dashboard depends on sequence clickclack_ingest_job_id_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -206,9 +206,8 @@ INSERT INTO iceberg_manifest_b (v) VALUES ('b');
 statement error
 DROP TABLE iceberg_snapshot;
 ----
-db error: ERROR: Cannot drop entry "iceberg_snapshot_id_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop table iceberg_snapshot because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -294,9 +293,9 @@ INSERT INTO solid_violations_log (v) VALUES ('m');
 statement error
 DROP TABLE solid_principle;
 ----
-db error: ERROR: Cannot drop entry "solid_principle_b_seq" because there are entries that depend on it.
-table "solid_violations_log" depends on sequence "solid_principle_b_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table solid_principle because other objects depend on it
+DETAIL: default value for column id of table solid_violations_log depends on sequence solid_principle_b_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 

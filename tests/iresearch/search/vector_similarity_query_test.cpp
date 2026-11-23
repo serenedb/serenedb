@@ -24,8 +24,10 @@
 #include <atomic>
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/ann/family.hpp>
@@ -38,11 +40,12 @@
 #include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <map>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "search_fields.hpp"
 #include "tests_shared.hpp"
@@ -112,10 +115,11 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc, float x) {
 }
 
 // Docs 1..n with emb = [doc, 0, 0, 0].
-irs::DirectoryReader BuildIndex(
-  irs::Directory& dir, irs::doc_id_t n,
+irs::CompositeReader BuildIndex(
+  const ::tests::IndexDir& dir, irs::doc_id_t n,
   irs::IndexWriterOptions opts = MakeWriterOptions()) {
-  auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate, std::move(opts));
+  auto writer =
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(opts));
   EXPECT_NE(nullptr, writer);
 
   {
@@ -153,17 +157,21 @@ irs::ByVectorSimilarity MakeKnnFilter() {
 // The bug only exists on the quantized path; assert the segment provides
 // everything PrepareSegment needs to stay on it, so the test cannot silently
 // degrade to the raw-rerank path and pass vacuously.
-void AssertQuantizedPath(const irs::SubReader& segment) {
+void AssertQuantizedPath(const ::tests::IndexDir& dir,
+                         const irs::SubReader& segment) {
   const auto* ann = segment.Ann(kVec);
   ASSERT_NE(nullptr, ann);
   ASSERT_FALSE(ann->Empty());
   ASSERT_EQ(irs::AnnKind::Ivf, ann->Kind());
-  auto idx_in = segment.ReopenAnn();
-  ASSERT_NE(nullptr, idx_in);
+  const auto idx_file =
+    dir.Open(irs::FileName(segment.Meta().name, irs::kIdxFormatExt),
+             duckdb::MappedFileAccess::RANDOM);
+  ASSERT_TRUE(idx_file);
+  duckdb::InputFileReader idx_in{*idx_file};
   const std::vector<float> query(kDim, 0.f);
   ASSERT_NE(nullptr,
             irs::ReadQuantizerCodebook(
-              static_cast<const irs::IvfIndex*>(ann)->Tree(), *idx_in,
+              static_cast<const irs::IvfIndex*>(ann)->Tree(), idx_in,
               irs::VectorQuantization::SQ8, kDim, irs::VectorMetric::L2Sqr,
               query, irs::CodebookUse::Search));
   const auto* postings = segment.field(kVec);
@@ -178,12 +186,11 @@ class VectorSimilarityQueryTest : public ::testing::Test {
   void Build(irs::doc_id_t n) {
     _docs = n;
     _reader = BuildIndex(_dir, n);
-    ASSERT_NE(nullptr, _reader);
-    ASSERT_EQ(1U, _reader->size());
-    ASSERT_EQ(n, _reader->docs_count());
-    AssertQuantizedPath((*_reader)[0]);
+    ASSERT_EQ(1U, _reader.size());
+    ASSERT_EQ(n, _reader.docs_count());
+    AssertQuantizedPath(_dir, _reader[0]);
     _filter = MakeKnnFilter();
-    _prepared.emplace(_filter, *_reader, nullptr, nullptr,
+    _prepared.emplace(_filter, _reader, nullptr, nullptr,
                       ::tests::PreparedFilter::CollectMode::Single);
     ASSERT_EQ(1U, _prepared->size());
   }
@@ -197,8 +204,9 @@ class VectorSimilarityQueryTest : public ::testing::Test {
   }
 
   irs::doc_id_t _docs = 0;
-  irs::MemoryDirectory _dir;
-  irs::DirectoryReader _reader;
+  ::tests::IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
+  irs::CompositeReader _reader;
   irs::ByVectorSimilarity _filter;
   irs::ColumnArgsFetcher _fetcher;
   std::optional<::tests::PreparedFilter> _prepared;
@@ -239,7 +247,7 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
   opts.quant = irs::VectorQuantization::SQ8;
   opts.radius = 100000.f;
   irs::VectorSimilarityScorer scorer;
-  tests::PreparedFilter prepared{filter, *_reader, &scorer};
+  tests::PreparedFilter prepared{filter, _reader, &scorer};
 
   const auto check_scores = [](auto& node, auto&& seek) {
     constexpr std::array<irs::doc_id_t, 6> kDocs{1, 2, 127, 128, 129, 300};
@@ -276,7 +284,7 @@ TEST_F(VectorSimilarityQueryTest, ScoredLeadAndProbe) {
 TEST_F(VectorSimilarityQueryTest, KnnScoresAreTheSameInHitsLeadAndTop) {
   Build(300);
   irs::VectorSimilarityScorer scorer;
-  tests::PreparedFilter prepared{_filter, *_reader, &scorer};
+  tests::PreparedFilter prepared{_filter, _reader, &scorer};
   const auto* query = prepared.Query(0);
   ASSERT_NE(nullptr, query);
 
@@ -414,7 +422,7 @@ irs::ByVectorExact MakeExactFilter(float x, float radius, bool inclusive) {
 
 TEST_F(VectorSimilarityQueryTest, ExactRadius) {
   Build(300);
-  const auto& segment = (*_reader)[0];
+  const auto& segment = (_reader)[0];
   irs::VectorSimilarityScorer scorer;
   for (const bool inclusive : {false, true}) {
     SCOPED_TRACE(inclusive);
@@ -473,9 +481,8 @@ class RerankExactDistancesTest
 
   void Build(irs::doc_id_t n) {
     _reader = BuildIndex(_dir, n, MakeWriterOptions(GetParam(), kRowGroup));
-    ASSERT_NE(nullptr, _reader);
-    ASSERT_EQ(1U, _reader->size());
-    const auto* column = (*_reader)[0].Column(kVec);
+    ASSERT_EQ(1U, _reader.size());
+    const auto* column = (_reader)[0].Column(kVec);
     ASSERT_NE(nullptr, column);
     const auto* child = column->Child();
     ASSERT_NE(nullptr, child);
@@ -485,13 +492,14 @@ class RerankExactDistancesTest
     }
   }
 
-  irs::MemoryDirectory _dir;
-  irs::DirectoryReader _reader;
+  ::tests::IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
+  irs::CompositeReader _reader;
 };
 
 TEST_P(RerankExactDistancesTest, Rerank) {
   Build(300);
-  const auto& segment = (*_reader)[0];
+  const auto& segment = (_reader)[0];
   const std::vector<float> query(kDim, 0.f);
   std::vector<irs::ScoreDoc> hits;
   for (irs::doc_id_t doc :

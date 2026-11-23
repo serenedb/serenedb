@@ -21,17 +21,21 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <span>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
 #include "iresearch/index/docs_mask/docs_mask.hpp"
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/exclude_block.hpp"
+#include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/filters/filter.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs::detail {
@@ -54,6 +58,35 @@ bool OnlyMask(std::span<const Term> terms,
               std::span<const QueryBuilder::ptr> filters) noexcept {
   return terms.empty() && filters.size() == 1 &&
          filters.front()->Kind() == QueryKind::DocsMask;
+}
+
+template<typename Make>
+decltype(auto) ResolveExcludePins(std::span<const QueryBuilder::ptr> filters,
+                                  const SubReader& segment, Make&& make) {
+  const auto* doc = SegmentDoc(segment);
+  if (!SplitMask(filters).masked) {
+    return ResolvePinsFrom<Pins<Pin<MaskedAxis, false>>, InputAxis>(
+      std::forward_as_tuple(doc), std::forward<Make>(make));
+  }
+  return ResolvePinsFrom<Pins<Pin<MaskedAxis, true>>, DocsMaskAxis, InputAxis>(
+    std::forward_as_tuple(DocsMaskOf{segment.docs_mask()}, doc),
+    std::forward<Make>(make));
+}
+
+template<typename P, typename Result, typename Unmasked, typename Make>
+Result ResolveMask(bool masked, const SubReader& segment, Unmasked&& unmasked,
+                   Make&& make) {
+  if constexpr (P::template Pinned<MaskedAxis>(false)) {
+    SDB_ASSERT(!masked);
+    return unmasked();
+  } else if constexpr (P::template Pinned<MaskedAxis>(true)) {
+    SDB_ASSERT(masked);
+    return ResolveDocsMask<P>(segment, make);
+  } else if (masked) {
+    return ResolveDocsMask<P>(segment, make);
+  } else {
+    return unmasked();
+  }
 }
 
 template<DocsMaskType Mask>
@@ -93,6 +126,11 @@ class WithMask {
                        score_t* IRS_RESTRICT scores, uint32_t len) {
     len = _mask.FilterBlock(docs, scores, len);
     return ExcludeBlock(_rest, docs, scores, len);
+  }
+
+  uint32_t Drop(const doc_id_t* in, uint32_t n, doc_id_t* out) {
+    n = DropExcluded(_mask, in, n, out);
+    return DropExcluded(_rest, out, n, out);
   }
 
   void Remove(doc_id_t min, doc_id_t max, uint64_t* IRS_RESTRICT words) {

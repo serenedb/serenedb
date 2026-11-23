@@ -18,7 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "pg/catalog/functions/pg_catalog/objectaddress.h"
+
 #include <absl/algorithm/container.h>
+#include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -41,6 +44,7 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/engine/builtin_functions.h"
 #include "pg/catalog/functions/functions.h"
@@ -79,8 +83,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ObjectEntry(const Session& session,
   if (!session.database || oid == kInvalidOid) {
     return nullptr;
   }
-  return session.database->GetOidIndex().GetVisible(oid,
-                                                    session.transaction->view);
+  return session.database->LookupOid(*session.transaction, oid);
 }
 
 std::string_view RelationKind(const RelationAccess& relation) {
@@ -335,8 +338,7 @@ ObjectIdentity IdentifyTrigger(const Session& session, uint64_t oid) {
     return Missing("trigger");
   }
   const auto& trigger = entry->Cast<duckdb::TriggerCatalogEntry>();
-  const auto& table =
-    SiblingTable(*session.transaction, trigger, trigger.base_table->Table());
+  const auto& table = TriggerTable(*session.transaction, trigger);
   const auto [schema, table_name] = NameOf(*session.transaction, table);
   const auto& name = trigger.name.GetIdentifierName();
   return ObjectIdentity{
@@ -381,6 +383,15 @@ ObjectIdentity IdentifyDatabase(const Session& session, uint64_t oid) {
   return database
            ? IdentifyNamed("database", database->name.GetIdentifierName())
            : Missing("database");
+}
+
+ObjectIdentity IdentifyTablespace(const Session& session, uint64_t oid) {
+  auto& cluster = catalog::ClusterOf(*session.context);
+  const auto tablespace = cluster.FindIn<catalog::TablespaceCatalogEntry>(
+    cluster.GetCatalogTransaction(*session.context), oid);
+  return tablespace
+           ? IdentifyNamed("tablespace", tablespace->name.GetIdentifierName())
+           : Missing("tablespace");
 }
 
 std::optional<ObjectIdentity> IdentifyObject(const Session& session,
@@ -430,7 +441,7 @@ std::optional<ObjectIdentity> IdentifyObject(const Session& session,
     return IdentifyNamed("access method", kSystemAccessMethods, objid);
   }
   if (classid == kPgTablespaceTable) {
-    return IdentifyNamed("tablespace", kSystemTablespaces, objid);
+    return IdentifyTablespace(session, objid);
   }
   return std::nullopt;
 }
@@ -557,6 +568,61 @@ void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 }
 
 }  // namespace
+
+std::string DescribeObject(duckdb::ClientContext& context,
+                           const duckdb::CatalogEntry& entry, int32_t column) {
+  using enum duckdb::CatalogType;
+  uint64_t classid = 0;
+  switch (entry.type) {
+    case TABLE_ENTRY:
+    case VIEW_ENTRY:
+    case INDEX_ENTRY:
+    case SEQUENCE_ENTRY:
+      classid = kPgClassTable;
+      break;
+    case MACRO_ENTRY:
+    case TABLE_MACRO_ENTRY:
+      classid = kPgProcTable;
+      break;
+    case TYPE_ENTRY:
+      classid = kPgTypeTable;
+      break;
+    case SCHEMA_ENTRY:
+      classid = kPgNamespaceTable;
+      break;
+    case TOKENIZER_ENTRY:
+      return absl::StrCat("text search dictionary ",
+                          entry.name.GetIdentifierName());
+    case TRIGGER_ENTRY:
+      classid = kPgTriggerTable;
+      break;
+    case FOREIGN_SERVER_ENTRY:
+      return absl::StrCat("server ", entry.name.GetIdentifierName());
+    default:
+      return absl::StrCat(
+        absl::AsciiStrToLower(duckdb::CatalogTypeToString(entry.type)), " ",
+        entry.name.GetIdentifierName());
+  }
+  const auto session = MakeSession(&context);
+  auto identity = IdentifyObject(
+    session, {.classid = classid, .objid = entry.oid, .objsubid = column});
+  if (identity && identity->description) {
+    return std::move(*identity->description);
+  }
+  auto described =
+    absl::StrCat(absl::AsciiStrToLower(duckdb::CatalogTypeToString(entry.type)),
+                 " ", entry.name.GetIdentifierName());
+  if (column > 0 && entry.type == TABLE_ENTRY) {
+    const auto& columns = entry.Cast<duckdb::TableCatalogEntry>().GetColumns();
+    const duckdb::LogicalIndex index{static_cast<duckdb::idx_t>(column - 1)};
+    if (index.index < columns.LogicalColumnCount()) {
+      return absl::StrCat("column ",
+                          columns.GetColumn(index).Name().GetIdentifierName(),
+                          " of ", described);
+    }
+  }
+  return described;
+}
 
 void RegisterObjectAddressFunctions(duckdb::ExtensionLoader& loader) {
   using enum duckdb::FunctionStability;

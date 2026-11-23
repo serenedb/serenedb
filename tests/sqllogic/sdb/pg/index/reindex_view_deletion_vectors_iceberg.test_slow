@@ -33,7 +33,7 @@ count
 6
 
 query
-SELECT action FROM serenedb_reindex('rvdv_one_idx');
+SELECT action FROM sdb_reindex('rvdv_one_idx');
 ----
 action
 up_to_date
@@ -42,7 +42,7 @@ system ok
 printf 2 > $__TEST_DIR__/rvdv_one/metadata/version-hint.text && printf 00003-multi-blob > $__TEST_DIR__/rvdv_two/metadata/version-hint.text
 
 query
-SELECT * FROM serenedb_reindex('rvdv_one_idx');
+SELECT * FROM sdb_reindex('rvdv_one_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	1	0	0
@@ -60,7 +60,7 @@ count
 0
 
 query
-SELECT * FROM serenedb_reindex('rvdv_two_idx');
+SELECT * FROM sdb_reindex('rvdv_two_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	0	2	0	0
@@ -81,13 +81,13 @@ count
 0
 
 query
-SELECT action FROM serenedb_reindex('rvdv_one_idx');
+SELECT action FROM sdb_reindex('rvdv_one_idx');
 ----
 action
 up_to_date
 
 query
-SELECT action FROM serenedb_reindex('rvdv_two_idx');
+SELECT action FROM sdb_reindex('rvdv_two_idx');
 ----
 action
 up_to_date

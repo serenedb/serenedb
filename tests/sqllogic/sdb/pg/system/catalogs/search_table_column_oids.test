@@ -3,7 +3,7 @@ CREATE SEQUENCE stco_seq;
 
 
 statement ok
-CREATE TABLE stco_s (id INT, n BIGINT DEFAULT nextval('stco_seq'), m INT DEFAULT 5) WITH (storage = 'search');
+CREATE TABLE stco_s (id INT, n BIGINT DEFAULT nextval('stco_seq'), m INT DEFAULT 5);
 
 
 statement ok
@@ -35,7 +35,7 @@ stco_d	3	5
 
 
 statement ok
-CREATE TABLE stco_so (body TEXT, id INT) WITH (storage = 'search');
+CREATE TABLE stco_so (body TEXT, id INT);
 
 
 statement ok

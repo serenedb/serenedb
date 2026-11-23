@@ -25,24 +25,24 @@
 
 #include <atomic>
 #include <boost/iterator/iterator_facade.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iresearch/analysis/keyword_tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/iterator.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
 #include "insert_field.hpp"
+#include "test_index_writer.hpp"
 #include "test_resources.hpp"
 #include "text_chain.hpp"
 
 namespace irs {
 
-class DataOutput;
 class Tokenizer;
 
 }  // namespace irs
@@ -236,7 +236,7 @@ struct Ifield {
   virtual irs::field_id Id() const = 0;
   virtual irs::DictRef Dict() const { return irs::StringLayout::kStrings; }
   virtual std::string_view Name() const = 0;
-  virtual bool Write(irs::DataOutput& out) const = 0;
+  virtual bool Write(duckdb::WriteStream& out) const = 0;
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -281,7 +281,7 @@ class LongField : public FieldBase {
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
   irs::DictRef Dict() const noexcept final {
     return irs::NumericLayout::kNumbers;
   }
@@ -311,7 +311,7 @@ class IntField : public FieldBase {
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
   irs::DictRef Dict() const noexcept final {
     return irs::NumericLayout::kNumbers;
   }
@@ -322,11 +322,11 @@ class IntField : public FieldBase {
 
 //////////////////////////////////////////////////////////////////////////////
 /// @class double_field
-/// @brief provides capabilities for storing & indexing double_t values
+/// @brief provides capabilities for storing & indexing double values
 //////////////////////////////////////////////////////////////////////////////
 class DoubleField : public FieldBase {
  public:
-  typedef double_t value_t;
+  typedef double value_t;
 
   DoubleField() { index_features = irs::IndexFeatures::Ranges; }
 
@@ -334,22 +334,22 @@ class DoubleField : public FieldBase {
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
   irs::DictRef Dict() const noexcept final {
     return irs::NumericLayout::kNumbers;
   }
 
  private:
-  double_t _value{};
+  double _value{};
 };
 
 //////////////////////////////////////////////////////////////////////////////
 /// @class float_field
-/// @brief provides capabilities for storing & indexing double_t values
+/// @brief provides capabilities for storing & indexing double values
 //////////////////////////////////////////////////////////////////////////////
 class FloatField : public FieldBase {
  public:
-  typedef float_t value_t;
+  typedef float value_t;
 
   FloatField() { index_features = irs::IndexFeatures::Ranges; }
 
@@ -357,13 +357,13 @@ class FloatField : public FieldBase {
   std::optional<std::vector<irs::bstring>> BlockTerms() const final;
   void value(value_t value) { _value = value; }
   value_t value() const { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
   irs::DictRef Dict() const noexcept final {
     return irs::NumericLayout::kNumbers;
   }
 
  private:
-  float_t _value{};
+  float _value{};
 };
 
 //////////////////////////////////////////////////////////////////////////////
@@ -387,7 +387,7 @@ class BinaryField : public FieldBase {
     _value = bytes(first, last);
   }
 
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
 
  private:
   mutable irs::KeywordTokenizer _stream;
@@ -740,7 +740,7 @@ class JsonDocGenerator : public DocGeneratorBase {
       unsigned ui;
       int64_t i64;
       uint64_t ui64;
-      double_t dbl;
+      double dbl;
       JsonString str;
     };
 
@@ -846,7 +846,7 @@ class TextField : public tests::FieldBase {
   std::string_view Value() const final { return _value; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   irs::analysis::Tokenizer::ptr _token_stream;
   T _value;
@@ -866,7 +866,7 @@ class StringField : public tests::FieldBase {
 
   irs::analysis::Tokenizer& GetTokens() const final;
   std::string_view Value() const final { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
 
  private:
   mutable irs::KeywordTokenizer _stream;
@@ -888,7 +888,7 @@ class StringViewField : public tests::FieldBase {
 
   irs::analysis::Tokenizer& GetTokens() const final;
   std::string_view Value() const final { return _value; }
-  bool Write(irs::DataOutput& out) const final;
+  bool Write(duckdb::WriteStream& out) const final;
 
  private:
   mutable irs::KeywordTokenizer _stream;
@@ -925,7 +925,7 @@ void NormStringJsonFieldFactory(tests::Document& doc, const std::string& name,
                                 const JsonDocGenerator::JsonValue& data);
 
 template<typename Indexed>
-bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend) {
+bool Insert(tests::IndexWriter& writer, Indexed ibegin, Indexed iend) {
   auto ctx = writer.GetBatch();
   if (!tests::InsertFields(ctx.Insert(), ibegin, iend)) {
     return false;
@@ -935,7 +935,7 @@ bool Insert(irs::IndexWriter& writer, Indexed ibegin, Indexed iend) {
 }
 
 template<typename Doc>
-bool Insert(irs::IndexWriter& writer, const Doc& doc, size_t count = 1) {
+bool Insert(tests::IndexWriter& writer, const Doc& doc, size_t count = 1) {
   for (; count; --count) {
     if (!Insert(writer, std::begin(doc.indexed), std::end(doc.indexed))) {
       return false;
@@ -945,14 +945,14 @@ bool Insert(irs::IndexWriter& writer, const Doc& doc, size_t count = 1) {
 }
 
 template<typename DocGenerator, typename ExpectedSegment>
-bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
+bool InsertBatch(tests::IndexWriter& writer, DocGenerator& gen,
                  ExpectedSegment& segment, size_t batch_size) {
   auto ctx = writer.GetBatch();
 
   const tests::Document* src = nullptr;
   do {
     auto doc = ctx.Insert(false, batch_size);
-    const auto current_last_doc_id = writer.BufferedDocs();
+    const auto current_last_doc_id = doc.Writer().buffered_docs();
 
     size_t inserted_docs = 0;
 
@@ -974,7 +974,7 @@ bool InsertBatch(irs::IndexWriter& writer, DocGenerator& gen,
 }
 
 template<typename Indexed>
-bool Update(irs::IndexWriter& writer,
+bool Update(tests::IndexWriter& writer,
             std::shared_ptr<const irs::DocRemoval> removal, Indexed ibegin,
             Indexed iend) {
   auto ctx = writer.GetBatch();
@@ -988,14 +988,8 @@ bool Update(irs::IndexWriter& writer,
 
 // One-shot removal: opens a batch, queues the removal and commits it.
 // Equivalent to `auto b = writer.GetBatch(); b.Remove(removal); b.Commit();`.
-inline void Remove(irs::IndexWriter& writer,
+inline void Remove(tests::IndexWriter& writer,
                    std::shared_ptr<const irs::DocRemoval> removal) {
-  auto trx = writer.GetBatch();
-  trx.Remove(std::move(removal));
-  trx.Commit();
-}
-
-inline void Remove(irs::IndexWriter& writer, irs::KeyRemoval removal) {
   auto trx = writer.GetBatch();
   trx.Remove(std::move(removal));
   trx.Commit();
@@ -1007,21 +1001,35 @@ struct Terms {
 };
 
 std::shared_ptr<const irs::DocRemoval> RemovalOf(
-  const irs::DirectoryReader& reader, const Terms& terms);
+  const irs::CompositeReader& reader, const Terms& terms);
 
 inline std::shared_ptr<const irs::DocRemoval> RemovalOf(
-  const irs::IndexWriter& writer, const Terms& terms) {
+  const tests::IndexWriter& writer, const Terms& terms) {
   return RemovalOf(writer.GetSnapshot(), terms);
 }
 
-inline void Remove(irs::IndexWriter& writer, const Terms& terms) {
-  Remove(writer, RemovalOf(writer, terms));
+inline LazyRemoval RemovalOfTerms(Terms terms) {
+  return [terms = std::move(terms)](const irs::CompositeReader& reader) {
+    return RemovalOf(reader, terms);
+  };
+}
+
+inline void Remove(tests::IndexWriter& writer, const Terms& terms) {
+  auto trx = writer.GetBatch();
+  trx.Remove(RemovalOfTerms(terms));
+  trx.Commit();
 }
 
 template<typename Indexed>
-bool Update(irs::IndexWriter& writer, const Terms& terms, Indexed ibegin,
+bool Update(tests::IndexWriter& writer, const Terms& terms, Indexed ibegin,
             Indexed iend) {
-  return Update(writer, RemovalOf(writer, terms), ibegin, iend);
+  auto ctx = writer.GetBatch();
+  ctx.Remove(RemovalOfTerms(terms));
+  if (!tests::InsertFields(ctx.Insert(), ibegin, iend)) {
+    return false;
+  }
+  ctx.Commit();
+  return true;
 }
 
 }  // namespace tests

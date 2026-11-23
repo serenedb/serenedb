@@ -10,7 +10,8 @@ def keyed(keys, table):
 
 
 def shaped(label, inner):
-    return f"SELECT '{lit(label)}' AS shape, k::VARCHAR AS k, c, s FROM ({inner})"
+    return (f"SELECT '{lit(label)}' AS shape, regexp_replace(k::VARCHAR, '^-0$', '0') AS k, c, s "
+            f"FROM ({inner})")
 
 
 def labelled(label, expr, table):

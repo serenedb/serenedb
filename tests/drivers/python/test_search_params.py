@@ -25,11 +25,9 @@ DDL = [
         WITH (frequency, position)""",
     "CREATE TABLE {schema}.sp(a INTEGER PRIMARY KEY, b VARCHAR)",
     """CREATE INDEX sp_idx ON {schema}.sp
-        USING inverted(a, b {schema}.sp_english)
-        WITH (refresh_interval=0)""",
+        USING inverted(a, b {schema}.sp_english)""",
     """INSERT INTO {schema}.sp VALUES (1, 'quick brown fox'),
         (2, 'lazy dog'), (3, NULL), (4, 'quick dog')""",
-    "VACUUM (REFRESH_TABLE) {schema}.sp",
 ]
 
 MATCH_SQL = "SELECT a FROM {schema}.sp_idx WHERE b @@ $1 ORDER BY a"

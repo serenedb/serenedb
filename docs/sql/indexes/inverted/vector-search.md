@@ -43,6 +43,8 @@ SELECT id FROM index_name ORDER BY emb <-> $query_vector LIMIT k;
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/example_004" />
 
+[`ts_explain`](../../functions/search/scoring.md#ts_explain-vector) shows how a returned row's distance was computed and how the search found it.
+
 The named distance functions [`l2_distance`](../../functions/vector.md), `cosine_distance`, `l1_distance` and `negative_inner_product` are equivalent to the matching operator and can be used explicitly:
 
 <SqlLogicTest id="sql/indexes/inverted/vector-search/example_003" />
@@ -79,9 +81,11 @@ The two forms combine: add `ORDER BY emb <-> $query_vector LIMIT k` to a range q
 
 On a quantized index the codes pick the candidates and each candidate is then checked against its exact distance, so every returned row is inside the radius. A row whose code places it farther away than it really is can still be missed, more often with coarser codes. With [`sdb_ann_force_exact`](./maintenance.md#session-settings) on, the radius is answered by scoring every row from its stored vector, so no row inside it is missed.
 
+On an index with `quant = 'none'`, a row whose distance equals the radius exactly may be returned by `<` or left out by `<=`.
+
 ### Distances without a limit
 
-A distance selected without `ORDER BY ... LIMIT` and without a radius, such as `SELECT id, emb <-> $query_vector FROM index_name` or an aggregate over it, is computed exactly from the stored vector of every row the `WHERE` admits. The index is not walked, and `EXPLAIN` shows the scan as `Exact`.
+A distance selected without `ORDER BY ... LIMIT` and without a radius, such as `SELECT id, emb <-> $query_vector FROM index_name` or an aggregate over it, is computed exactly from the stored vector of every row the `WHERE` admits; a row whose vector is `NULL` is returned with a `NULL` distance. The index is not walked, and `EXPLAIN` shows the scan as `Exact`.
 
 ## Quantization {#quantization}
 
@@ -101,6 +105,8 @@ An `l2`, `ip` or `cosine` index stores its codes quantized with `sq8` unless `qu
 | `osq` | `nb_bits` (1, 2, 4, 7 or 8, default 1) bits per dimension relative to the centroid, on a quantization interval fitted to each vector, with a few correction terms stored beside the codes; the query is quantized to `query_bits` | Scores estimate the real distance; per-vector intervals pay off most at 1 to 4 bits. Each vector carries 16 extra bytes |
 
 Quantization applies to `l2`, `ip` and `cosine` indexes; `l1` indexes are always unquantized.
+
+`fp16` holds components up to ±65504: a larger component is stored as infinity, and its row is left out of k-nearest answers. A vector with a `NaN` or infinite component, or with components so large that a squared distance overflows a float (beyond about 10^19), can be stored and indexed, but a k-nearest query on an index segment that holds one can return fewer rows than its `LIMIT`, or none.
 
 Quantization makes queries faster as well as the index smaller: a quantized `ivf` index scans its clusters faster, so [`sdb_ivf_search_nprobe`](./maintenance.md#session-settings) can probe more of them at the same latency.
 
@@ -158,7 +164,7 @@ Every walk is capped at what the scan would have cost and falls back to it, forc
 
 A predicate on an `INCLUDE`d column -- one the index stores but does not index -- is answered from the columnstore, in one of two ways. The predicate is either folded over the whole segment before the walk starts, a vectorised compare per row, or the walk reads the columns of each row it reaches, one positioned read per row at the cost of a few dozen rows of the fold. The walk reads while it is expected to reach few enough rows for that to be the cheaper -- a narrow beam over a large segment -- and folds otherwise. A column compressed with `zstd`, whose read decompresses its block up to the row, is priced at a few hundred rows of the fold. [`sdb_hnsw_column_filter`](./maintenance.md#session-settings) forces either for measurement.
 
-A predicate on an indexed column of a search table (`CREATE TABLE ... WITH (storage = 'search')`), which stores every column, can be answered from either side: from the index, at a cost that grows with the rows the predicate admits, or from the columnstore, reading the columns of each row the walk reaches. Each segment takes the cheaper: the columnstore when the predicate admits a large share of the segment and the beam is narrow, the index otherwise. Predicates the index alone can answer, such as a full-text `@@` match, are always taken from the index. `EXPLAIN` lists the predicates answered either way as the scan's `Index or Column Filter`, and [`sdb_hnsw_column_filter`](./maintenance.md#session-settings) forces either side for measurement.
+A predicate on an indexed column of a table, which stores every column, can be answered from either side: from the index, at a cost that grows with the rows the predicate admits, or from the columnstore, reading the columns of each row the walk reaches. Each segment takes the cheaper: the columnstore when the predicate admits a large share of the segment and the beam is narrow, the index otherwise. Predicates the index alone can answer, such as a full-text `@@` match, are always taken from the index. `EXPLAIN` lists the predicates answered either way as the scan's `Index or Column Filter`, and [`sdb_hnsw_column_filter`](./maintenance.md#session-settings) forces either side for measurement.
 
 The predicate need not be a single comparison. An `IN` list or an `OR` on one `INCLUDE`d column, an expression over several of them, and `AND`s and `OR`s that mix them with predicates on indexed fields are all answered inside the walk too:
 

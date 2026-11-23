@@ -41,6 +41,6 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnView(
 duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   duckdb::Binder& binder, duckdb::CreateStatement& stmt,
   catalog::SearchTableEntry& table,
-  duckdb::unique_ptr<duckdb::LogicalOperator> plan);
+  duckdb::unique_ptr<duckdb::LogicalOperator> plan, bool plain);
 
 }  // namespace sdb::connector

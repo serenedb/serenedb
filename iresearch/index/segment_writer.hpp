@@ -23,24 +23,23 @@
 
 #pragma once
 
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
 #include <optional>
+#include <string>
+#include <string_view>
 
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
-#include "iresearch/index/doc_contexts.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
+#include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/type_limits.hpp"
-
-namespace duckdb {
-
-class DatabaseInstance;
-}
 
 namespace irs {
 
@@ -54,10 +53,11 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
 
  public:
   static std::unique_ptr<SegmentWriter> make(
-    Directory& dir, const SegmentWriterOptions& options);
+    duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+    const SegmentWriterOptions& options);
 
   // Begin a batch. Returns first valid doc_id in the batch.
-  doc_id_t begin(uint64_t tick, doc_id_t batch_size = 1);
+  doc_id_t begin(doc_id_t batch_size = 1);
 
   // WithField/WithTokens are the only ingest doors: the FieldInverter
   // Invert* entries are the vocabulary, run under the writer's failure
@@ -125,16 +125,18 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     _valid = false;
   }
 
-  DocContexts& docs_context() noexcept { return _docs_context; }
+  WrittenSegment flush(SegmentMeta& meta, DocumentMaskBuilder& docs_mask);
 
-  void flush(IndexSegment& segment, DocumentMaskBuilder& docs_mask);
+  std::shared_ptr<const SegmentReaderImpl> SealPiece(uint64_t id);
+
+  void CopyRows(const ColReader& source, std::span<const field_id> columns,
+                uint64_t first, uint64_t count);
 
   size_t FlushBound();
   void ReserveFlush();
-  bool TryReserveFlush() noexcept;
 
   const std::string& name() const noexcept { return _seg_name; }
-  size_t buffered_docs() const noexcept { return _docs_context.size(); }
+  size_t buffered_docs() const noexcept { return _docs; }
   bool initialized() const noexcept { return _initialized; }
   bool valid() const noexcept { return _valid; }
   std::string_view Error() const noexcept { return _error; }
@@ -151,8 +153,9 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     return _batch_first_doc_id;
   }
 
-  SegmentWriter(ConstructToken, Directory& dir,
-                const SegmentWriterOptions& options) noexcept;
+  SegmentWriter(ConstructToken, duckdb::DatabaseInstance& db,
+                duckdb::FileSystem& fs, std::string_view root,
+                const SegmentWriterOptions& options);
 
   NormReader::ptr norms(field_id id) const final {
     if (_col_reader == nullptr) {
@@ -177,6 +180,15 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   }
 
   ColWriter* GetColWriter() noexcept { return _col_writer.get(); }
+  const ColWriter* GetColWriter() const noexcept { return _col_writer.get(); }
+
+  void SetDeferredColumns(bool deferred) noexcept {
+    _deferred_columns = deferred;
+  }
+
+  size_t StagedColumnBytes() const noexcept {
+    return _col_writer ? _col_writer->StagedBytes() : 0;
+  }
 
   // Owning per-op encoding config (the snapshot's InvertedIndex): flush encodes
   // against the schema the rows were written under, not the live catalog.
@@ -270,18 +282,28 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
     FieldInverter* slot;
   };
 
+  struct CopiedRows {
+    const ColReader* source;
+    uint64_t first;
+    uint64_t count;
+  };
+
   void FlushFields(FlushState& state,
                    std::span<const BasicTermReader* const> extra);
+  void CopyColumns();
 
   // Reset body that keeps _field_options; reset() drops them, reset(meta)
   // keeps.
   void ResetState() noexcept;
 
   duckdb::TempBufferPoolReservation _budget{EmptyBudget()};
-  TrackingDirectory _dir;
+  std::shared_ptr<FileTracker> _tracker;
+  duckdb::FileSystem& _fs;
+  std::string _root;
+  std::shared_ptr<ReleasedSegments> _released;
   ScorerPtr _scorer;
   std::unique_ptr<ColReader> _col_reader;
-  DocContexts _docs_context;
+  size_t _docs = 0;
   DocumentMaskBuilder _docs_mask;
   FieldsInverter _fields;
   std::unique_ptr<TokenSink> _token_sink;
@@ -297,9 +319,12 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // Owning per-op override; null falls back to _fallback_field_options.
   std::shared_ptr<const IndexFieldOptions> _field_options;
   std::unique_ptr<ColWriter> _col_writer;
+  std::vector<field_id> _copied_columns;
+  std::vector<CopiedRows> _copied_rows;
   doc_id_t _batch_first_doc_id = doc_limits::eof();
   bool _initialized = false;
   bool _valid = true;
+  bool _deferred_columns = false;
 };
 
 }  // namespace irs

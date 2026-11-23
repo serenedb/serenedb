@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/algorithm/container.h>
+
 #include <algorithm>
 #include <limits>
 #include <span>
@@ -144,9 +146,18 @@ bool DenseConjunction(std::span<const Term> terms,
 }
 
 template<typename Term>
+bool BatchedConjunction(std::span<const Term> terms,
+                        doc_id_t segment_docs_count) noexcept {
+  return terms.size() >= 2 && absl::c_all_of(terms, [&](const Term& term) {
+           return CookieOf(term).docs_count >=
+                  segment_docs_count / kBatchThresholdInverse;
+         });
+}
+
+template<typename Term>
 bool WindowTerms(std::span<const Term> terms,
                  std::span<const QueryBuilder::ptr> filters,
-                 const TermReader* field, const IndexInput*& doc) {
+                 const TermReader* field, const duckdb::InputFile*& doc) {
   if (terms.empty() || !filters.empty()) {
     return false;
   }

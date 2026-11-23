@@ -26,10 +26,6 @@ statement ok
 CREATE INDEX opt_cars_bare_idx ON opt_cars USING inverted (id, body opt_syn)
 
 
-statement ok
-VACUUM (REFRESH_TABLE) opt_cars
-
-
 query
 SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"car"') ORDER BY id
 ----
@@ -50,8 +46,8 @@ SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"b*"')
 ORDER BY BM25(opt_cars_idx.tableoid) DESC, id
 ----
 id
-4
 3
+4
 
 query
 SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"bro?n"')
@@ -80,8 +76,8 @@ SELECT id FROM opt_cars_bare_idx WHERE body @@ to_tsquery('"b*"')
 ORDER BY BM25(opt_cars_bare_idx.tableoid) DESC, id
 ----
 id
-4
 3
+4
 
 query
 SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"car" OR bike')
@@ -134,14 +130,14 @@ SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE bo
 ----
 id	s
 3	2
-4	4
+4	2
 
 query
 SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE body @@ to_tsquery('b*^2') ORDER BY id
 ----
 id	s
 3	2
-4	4
+4	2
 
 query
 SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx
@@ -157,7 +153,7 @@ WHERE (body @@ to_tsquery('"b*"'))::score('constant(5)') ORDER BY id
 ----
 id	s
 3	5
-4	10
+4	5
 
 query
 SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx
@@ -165,7 +161,7 @@ WHERE (body @@ to_tsquery('b*'))::score('constant(5)') ORDER BY id
 ----
 id	s
 3	5
-4	10
+4	5
 
 query
 SELECT id, round(BM25(opt_cars_pos_idx.tableoid), 4) AS s FROM opt_cars_pos_idx WHERE body @@ to_tsquery('"car"') ORDER BY id
@@ -186,21 +182,21 @@ SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE bo
 ----
 id	s
 3	1
-4	2
+4	1
 
 query
 SELECT id, round(BM25(opt_cars_idx.tableoid), 4) AS s FROM opt_cars_idx WHERE body @@ to_tsquery('b*') ORDER BY id
 ----
 id	s
 3	1
-4	2
+4	1
 
 query
 SELECT id, round(BM25(opt_cars_pos_idx.tableoid), 4) AS s FROM opt_cars_pos_idx WHERE body @@ to_tsquery('"b*"') ORDER BY id
 ----
 id	s
 3	1
-4	2
+4	1
 
 query
 EXPLAIN SELECT id FROM opt_cars_idx WHERE body @@ to_tsquery('"car"')
@@ -213,7 +209,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: opt_cars_idx                    │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Or ──────────────────╮              │
 │ │ Merge: max            │              │

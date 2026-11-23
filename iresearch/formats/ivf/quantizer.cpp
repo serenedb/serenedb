@@ -155,6 +155,15 @@ std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   return nullptr;
 }
 
+std::shared_ptr<const QuantizerStats> ReadQuantizerStats(
+  duckdb::InputFileReader& in, VectorQuantization quant, uint32_t d,
+  VectorMetric metric, bool row_major) {
+  const size_t size = in.Read<uint64_t>();
+  const auto stats = in.Pin(in.Position(), size);
+  in.Skip(size);
+  return MakeQuantizerStats(quant, d, {stats.Ptr(), size}, metric, row_major);
+}
+
 void QuantizerReader::ComputeGathered(const byte_type* base,
                                       uint32_t record_size,
                                       std::span<const uint32_t> ids,

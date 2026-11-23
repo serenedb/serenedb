@@ -5,13 +5,13 @@ SET GLOBAL checkpoint_threshold = '1MB';
 
 statement ok
 CREATE TABLE wdel (id BIGINT, body TEXT)
-  WITH (storage = 'search', compaction_interval = 0);
+  WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO wdel SELECT i, 'seed' FROM range(0, 20000) r(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) wdel;
+VACUUM (FLUSH_TABLE) wdel;
 
 statement ok
 CHECKPOINT;
@@ -54,7 +54,7 @@ query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 SELECT count(*) AS n, count(DISTINCT id) AS d, min(id) AS lo, max(id) AS hi FROM wdel;
 ----
 n	d	lo	hi
-19941	19941	5010	300000
+19891	19891	5010	300000
 
 connection after
 query
@@ -73,4 +73,4 @@ SELECT count(*) FILTER (WHERE body = 'seed') AS seed,
 FROM wdel;
 ----
 seed	p1	p2	tail
-9940	5000	5000	1
+9940	4950	5000	1

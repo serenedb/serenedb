@@ -1,0 +1,42 @@
+statement ok
+SET threads = 4
+
+statement error
+SELECT count(*), max(s), max(m) FROM (
+  SELECT g, sum(v) AS s, median(i) AS m
+  FROM (
+    SELECT ARRAY[CASE WHEN i IN (0, 25000) THEN -1 ELSE i END]::FLOAT[1] AS g,
+           CASE WHEN i IN (0, 25000) THEN 90000000000000000000000000000000000000::NUMERIC(38,0) ELSE 1::NUMERIC(38,0) END AS v,
+           i
+    FROM range_st(0, 25001) s(i)) t
+  GROUP BY g) q
+----
+db error: ERROR: Overflow in HUGEINT addition: 90000000000000000000000000000000000000 + 90000000000000000000000000000000000000
+
+
+statement error
+SELECT count(*), max(s), max(m) FROM (
+  SELECT g, sum(v) AS s, median(i) AS m
+  FROM (
+    SELECT CASE WHEN i IN (0, 25000) THEN -1 ELSE i END AS g,
+           CASE WHEN i IN (0, 25000) THEN 90000000000000000000000000000000000000::NUMERIC(38,0) ELSE 1::NUMERIC(38,0) END AS v,
+           i
+    FROM range_st(0, 25001) s(i)) t
+  GROUP BY g) q
+----
+db error: ERROR: Overflow in HUGEINT addition: 90000000000000000000000000000000000000 + 90000000000000000000000000000000000000
+
+
+query
+SELECT count(*), max(s), max(m) FROM (
+  SELECT g, sum(v) AS s, median(i) AS m
+  FROM (
+    SELECT ARRAY[CASE WHEN i IN (0, 25000) THEN -1 ELSE i END]::FLOAT[1] AS g, 1::NUMERIC(38,0) AS v, i
+    FROM range_st(0, 25001) s(i)) t
+  GROUP BY g) q
+----
+count	max	max
+25000	2	24999
+
+statement ok
+RESET threads

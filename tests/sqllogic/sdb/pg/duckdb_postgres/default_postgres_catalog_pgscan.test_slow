@@ -34,7 +34,7 @@ db error: ERROR: subscriptions are not supported by database "<slt:ignore>"
 
 
 statement ok
-PRAGMA serenedb_reindex_by_id(999999);
+PRAGMA sdb_reindex_by_id(999999);
 
 statement ok
 USE ${__DATABASE__};

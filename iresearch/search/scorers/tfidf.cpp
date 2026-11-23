@@ -36,67 +36,88 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
 namespace {
 
-IRS_FORCE_INLINE score_t TfIdf(score_t tf, score_t idf) noexcept {
-  return std::sqrt(tf) * idf;
-}
-
-template<ScoreMergeType MergeType, bool HasNorm, bool HasScale>
-IRS_FORCE_INLINE void TfIdf(score_t* IRS_RESTRICT res, scores_size_t n,
-                            const uint32_t* IRS_RESTRICT freq,
-                            [[maybe_unused]] const uint32_t* IRS_RESTRICT norm,
-                            [[maybe_unused]] const score_t* IRS_RESTRICT scale,
-                            score_t idf) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    const auto r = TfIdf(ScaledFreq<HasScale>(freq, scale, i), idf);
-    if constexpr (HasNorm) {
-      Merge<MergeType>(res[i], r / std::sqrt(TermCountToScore(norm[i])));
-    } else {
-      Merge<MergeType>(res[i], r);
-    }
+template<bool HasNorm>
+struct TfIdfFormula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf) const noexcept
+    requires(!HasNorm)
+  {
+    return std::sqrt(tf) * idf;
   }
-}
+
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept
+    requires HasNorm
+  {
+    return std::sqrt(tf) * idf / std::sqrt(dl);
+  }
+
+  score_t idf;
+};
 
 template<bool HasNorm, bool HasScale>
 struct TfIdfScore : public ScoreOperatorOf<TfIdfScore<HasNorm, HasScale>> {
   TfIdfScore(const uint32_t* norm, score_t boost, TFIDFStats idf,
              const FreqBlockAttr* freq, const score_t* scale = nullptr) noexcept
-    : freq{freq}, scale{scale}, norm{norm}, idf{boost * idf.value} {}
+    : freq{freq}, scale{scale}, norm{norm}, formula{boost * idf.value} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* IRS_RESTRICT res,
                                   scores_size_t n) const noexcept {
-    TfIdf<MergeType, HasNorm, HasScale>(res, n, freq->value, TryGetValue(norm),
-                                        TryGetValue(scale), idf);
+    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, TryGetValue(norm),
+                                    TryGetValue(scale), formula);
   }
 
   const FreqBlockAttr* freq;
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
   [[no_unique_address]] utils::Need<HasNorm, const uint32_t*> norm;
-  score_t idf;
+  TfIdfFormula<HasNorm> formula;
 };
 
 }  // namespace
 
 void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
-                    const TermCollector* term) const {
+                    const TermCollector* term, StatsArena&) const {
   const auto docs_with_field = field ? field->docs_with_field : 0;
   const auto docs_with_term = term ? term->docs_with_term : 0;
 
   auto* idf = stats_cast(stats_buf);
-  idf->value += static_cast<score_t>(
-    std::log1p((docs_with_field + 1.0) / (docs_with_term + 1.0)));
+  idf->value += TfIdfIdf(docs_with_field, docs_with_term);
+}
+
+void TFIDF::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+                    explain::Node& out) const {
+  if (!explain::FreqOf(ctx)) {
+    explain::ExplainNoFreq(ctx, _boost_as_score, out);
+    return;
+  }
+  explain::AddBoost(out, ctx.boost);
+  explain::AddIdf(out, stats_cast(ctx.stats)->value, stats,
+                  "log(1 + (N + 1) / (df + 1))", &TfIdfIdf);
+  auto& tf = explain::AddDetail(out, "tf", score_t{0});
+  tf.expression = "sqrt(freq)";
+  tf.value = std::sqrt(explain::AddFreq(tf, ctx));
+  const uint32_t* norm = _normalize ? FieldNormsOf(ctx) : nullptr;
+  if (!norm) {
+    out.expression = "boost * idf * tf";
+    return;
+  }
+  auto& length = explain::AddDetail(out, "norm", score_t{0});
+  length.expression = "1 / sqrt(dl)";
+  length.value =
+    1.f / std::sqrt(TermCountToScore(explain::AddLength(length, ctx)));
+  out.expression = "boost * idf * tf * norm";
 }
 
 ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
@@ -114,8 +135,8 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
 
   const uint32_t* norm = _normalize ? FieldNormsOf(ctx) : nullptr;
 
-  return ResolveBool(norm, [&]<bool HasNorms>() {
-    return ResolveBool(scale, [&]<bool HasScale>() {
+  return Resolve(norm, [&]<bool HasNorms>() {
+    return Resolve(scale, [&]<bool HasScale>() {
       const auto* stats = stats_cast(ctx.stats);
       return ScoreFunction::Make<TfIdfScore<HasNorms, HasScale>>(
         ctx.memory, norm, ctx.boost, *stats, freq, scale);

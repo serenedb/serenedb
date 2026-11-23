@@ -71,8 +71,9 @@ class LiveTermCount : public Root,
   using Base::SkipFreqs;
 
  public:
-  LiveTermCount(Mask mask, const PostingMeta& meta, const IndexInput& doc,
-                IndexFeatures layout, bool bounds, bool freq)
+  LiveTermCount(Mask mask, const PostingMeta& meta,
+                const duckdb::InputFile& doc, IndexFeatures layout, bool bounds,
+                bool freq)
     : _mask{std::move(mask)}, _docs_count{meta.docs_count} {
     if (_docs_count == 1) {
       _block[0] = doc_limits::min() + meta.doc_delta;
@@ -80,8 +81,7 @@ class LiveTermCount : public Root,
       return;
     }
     this->SetFreqLen(freq);
-    this->OpenInput(meta, doc, bounds);
-    this->ArmWalk(meta, layout, bounds);
+    this->OpenList(meta, doc, layout, bounds, true);
   }
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {

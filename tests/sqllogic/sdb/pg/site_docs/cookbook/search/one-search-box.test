@@ -29,9 +29,6 @@ INSERT INTO machines (id, name, brand, owner, notes) VALUES
   (3, 'D254 SW', 'Giant', 'Wouter Thys', NULL),
   (4, '714', 'Fendt', 'Beel', 'gearbox rebuilt');
 
-statement ok
-VACUUM (REFRESH_TABLE) machines;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY
@@ -64,9 +61,6 @@ id	name	owner
 
 statement ok
 UPDATE machines SET owner = 'Vandamme' WHERE id = 3;
-
-statement ok
-VACUUM (REFRESH_TABLE) machines;
 
 query
 SELECT id, name, owner FROM machines_idx

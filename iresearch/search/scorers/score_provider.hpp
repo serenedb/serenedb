@@ -31,13 +31,16 @@ struct TermReader;
 
 namespace detail {
 
-struct LeafProvider final : AttributeProvider {
+template<typename Base>
+struct FreqProvider final : Base {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
     return type == irs::Type<FreqBlockAttr>::id() ? &freq : nullptr;
   }
 
   FreqBlockAttr freq;
 };
+
+using LeafProvider = FreqProvider<AttributeProvider>;
 
 struct ScaleProvider final : AttributeProvider {
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
@@ -52,23 +55,18 @@ inline ScoreFunction PrepareBlockScorer(const ScoreArgs& args,
                                         const FieldProperties& field,
                                         ScaleProvider& provider,
                                         score_t* block) {
-  SDB_ASSERT(args.scorer && args.fetcher);
   provider.attr.value = block;
-  return args.scorer->PrepareScorer({
-    .memory = *args.memory,
-    .segment = segment,
-    .field = field,
-    .doc_attrs = provider,
-    .fetcher = *args.fetcher,
-    .stats = args.stats,
-    .boost = args.boost,
-  });
+  return PrepareScore(args, segment, field, provider);
 }
 
 struct LeafRecipe {
   const SubReader* segment = nullptr;
   const TermReader* field = nullptr;
   ScoreArgs args;
+};
+
+struct ScoreInputs : AttributeProvider {
+  LeafRecipe recipe;
 };
 
 }  // namespace detail

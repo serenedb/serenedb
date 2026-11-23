@@ -81,9 +81,6 @@ DELETE FROM ret_idx WHERE a = 2 RETURNING a, body;
 a	body
 2	green pear
 
-statement ok
-VACUUM (REFRESH_TABLE) ret_idx;
-
 # The index reflects the post-DML state: 'apple' matches the updated row 1,
 # 'pear' (deleted row 2) matches nothing.
 query

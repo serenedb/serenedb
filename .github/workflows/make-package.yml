@@ -90,17 +90,19 @@ jobs:
       image_digest: ${{ steps.docker_push.outputs.image_digest }}
     runs-on:
       - ${{ inputs.LOCATION }}
+      - lan
     permissions:
       contents: read
 
     steps:
-      - name: Reap containers left on this runner
+      - name: Reap the containers and git locks left on this runner
         run: |
           echo "SDB_DOCKER_OWNER=ci-${RUNNER_NAME}" >> "$GITHUB_ENV"
           filter="label=serenedb.owner=ci-${RUNNER_NAME}"
           docker ps -a --filter "$filter" --format '{{.Names}}' | xargs -r docker rm -fv || true
           docker network ls --filter "$filter" --format '{{.Name}}' | xargs -r docker network rm || true
           docker volume ls --filter "$filter" --format '{{.Name}}' | xargs -r docker volume rm || true
+          [ ! -d .git ] || find .git -name '*.lock' -type f -delete
 
       - name: Set build flags
         run: |

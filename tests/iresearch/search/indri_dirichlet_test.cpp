@@ -108,7 +108,7 @@ void IndriDirichletIndexTest::BuildFixture() {
 
   irs::IndexWriterOptions opts;
 
-  auto writer = open_writer(irs::kOmCreate, std::move(opts));
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
   ASSERT_NE(nullptr, writer);
   ASSERT_TRUE(tests::Insert(*writer, doc1.indexed.begin(), doc1.indexed.end()));
   ASSERT_TRUE(tests::Insert(*writer, doc2.indexed.begin(), doc2.indexed.end()));
@@ -124,14 +124,14 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
   auto impl = std::make_unique<irs::IndriDirichlet>(5.f);
 
   auto index = open_reader();
-  ASSERT_EQ(1, index->size());
+  ASSERT_EQ(1, index.size());
 
   irs::ByTerm filter;
   *filter.mutable_field_id() = kBodyFieldId;
   filter.mutable_options()->term =
     irs::ViewCast<irs::byte_type>(std::string_view("fox"));
 
-  tests::PreparedFilter prepared{filter, *index, impl.get()};
+  tests::PreparedFilter prepared{filter, index, impl.get()};
 
   irs::ColumnArgsFetcher fetcher;
   auto docs = prepared.ExecuteScored(0, fetcher);
@@ -151,7 +151,7 @@ TEST_P(IndriDirichletIndexTest, scores_are_finite) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(indri_dirichlet_test, IndriDirichletIndexTest,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

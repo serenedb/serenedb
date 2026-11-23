@@ -22,9 +22,6 @@ INSERT INTO items VALUES
 (4, 'wireless earbuds',   [0.0, 0.0, 1.0]::FLOAT[3]),
 (5, 'marathon racer',     [0.95, 0.05, 0.0]::FLOAT[3]);
 
-statement ok
-VACUUM (REFRESH_TABLE) items;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

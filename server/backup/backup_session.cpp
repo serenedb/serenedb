@@ -23,104 +23,47 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/clock.h>
 
-#include <duckdb/main/attached_database.hpp>
-#include <duckdb/main/database_manager.hpp>
-#include <duckdb/storage/storage_lock.hpp>
-#include <duckdb/storage/storage_manager.hpp>
-#include <duckdb/storage/write_ahead_log.hpp>
-#include <duckdb/transaction/duck_transaction_manager.hpp>
-#include <iresearch/index/directory_reader.hpp>
-#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
-#include <span>
+#include <optional>
 #include <utility>
 
 #include "backup/backup_label.h"
 #include "backup/commit_gate.h"
 #include "backup/pg_control.h"
-#include "catalog/boot.h"
-#include "catalog/catalog.h"
 #include "catalog/cluster.h"
 #include "catalog/database_directory.h"
-#include "catalog/entry/inverted_index.h"
-#include "catalog/entry/search_table.h"
-#include "connector/duckdb_storage_extension.h"
+#include "catalog/log.h"
+#include "catalog/transaction.h"
+#include "search/engine.h"
 #include "search/store.h"
-#include "storage_engine/search_engine.h"
-#include "utils/file_utils.h"
+#include "search/task.h"
 
 namespace sdb::backup {
 namespace {
 
-bool LeftByFailedCheckpoint(duckdb::StorageManager& storage) {
-  const auto wal = storage.GetWAL();
-  SDB_ASSERT(wal);
-  return wal->GetPath() != storage.GetWALPath();
-}
-
-uint64_t RetainedRunStart(duckdb::StorageManager& storage, uint64_t end) {
-  auto start = end;
-  while (start > 0) {
-    const auto path = storage.GetRetainedWALPath(start - 1);
-    std::error_code ec;
-    const bool exists = std::filesystem::exists(path, ec);
-    if (ec) {
-      utils::file_utils::ThrowFileError("check", path, ec);
-    }
-    if (!exists) {
-      break;
-    }
-    --start;
-  }
-  return start;
-}
-
-uint64_t GenerationOf(const irs::DirectoryReader& reader) {
-  return reader ? reader.Meta().index_meta.gen : 0;
-}
-
-void CollectStores(catalog::SereneDBCatalog& catalog, duckdb::idx_t database,
-                   std::vector<StoreCut>& stores) {
-  catalog::ForEachSearchStorage(
-    catalog,
-    [&](catalog::SearchTableEntry& table) {
-      stores.push_back({database, table.oid,
-                        GenerationOf(table.Storage()->GetDirectoryReader())});
-    },
-    [&](catalog::InvertedIndexEntry& index) {
-      stores.push_back({database, index.oid,
-                        GenerationOf(index.Storage()->GetDirectoryReader())});
-    });
-}
-
-Cut RecordCut(
-  duckdb::ClientContext& context, const std::filesystem::path& backup_dir,
-  std::span<const duckdb::shared_ptr<duckdb::AttachedDatabase>> pins,
-  pg::ProgressMetrics& progress) {
+Cut RecordCut(duckdb::ClientContext& context, const std::string& backup_dir,
+              pg::ProgressMetrics& progress) {
   Cut cut;
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCommits);
   const auto commits = CommitGate().Close(context);
-  cut.catalog_link = backup_dir / kCatalogLink;
-  cut.catalog_log_size =
-    catalog::ClusterOf().SnapshotCatalogLog(cut.catalog_link);
-  for (const auto& db : pins) {
-    auto& storage = db->GetStorageManager();
-    auto& entry = cut.databases.emplace_back();
-    entry.oid = db->oid;
-    auto commit_lock = storage.GetCommitLock();
-    entry.with_failed_checkpoint = LeftByFailedCheckpoint(storage);
-    entry.wal_size = storage.GetWALSize();
-    entry.checkpoint_iteration =
-      storage.GetBlockManager().GetCheckpointIteration();
-    entry.retained_from = RetainedRunStart(storage, entry.checkpoint_iteration);
-  }
-  for (const auto& db : pins) {
-    CollectStores(db->GetCatalog().Cast<catalog::SereneDBCatalog>(), db->oid,
-                  cut.stores);
-  }
+  auto* log = catalog::Transactions::Get().GetLog();
+  SDB_ENSURE(log, "cannot start a backup of a server without a log");
+  cut.log_size = log->Link(backup_dir);
   return cut;
+}
+
+std::optional<duckdb::Identifier> UserTablespace() {
+  std::optional<duckdb::Identifier> found;
+  catalog::ClusterOf()
+    .Set(duckdb::CatalogType::TABLESPACE_ENTRY)
+    .ScanCommitted([&](duckdb::CatalogEntry& entry) {
+      if (!found && !entry.internal) {
+        found = entry.name;
+      }
+    });
+  return found;
 }
 
 }  // namespace
@@ -130,9 +73,9 @@ BackupSession& BackupSession::Instance() {
   return gSession;
 }
 
-StartedBackup BackupSession::Begin(duckdb::ClientContext& context,
-                                   BackupOwner owner, std::string_view label,
-                                   pg::ProgressMetrics& progress) {
+uint64_t BackupSession::Begin(duckdb::ClientContext& context, BackupOwner owner,
+                              std::string_view label,
+                              pg::ProgressMetrics& progress) {
   progress.SetCommand(pg::ProgressCommand::BaseBackup);
   progress.SetPhase(pg::progress_phase::BaseBackup::Initializing);
   absl::MutexLock lock{&_mutex};
@@ -147,80 +90,50 @@ StartedBackup BackupSession::Begin(duckdb::ClientContext& context,
       ERR_MSG("a backup is already in progress"),
       ERR_DETAIL("It is held by the session with PID ", holder, "."));
   }
-  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
-  auto checkpoints = CheckpointGate().Close(context);
-  auto pins = catalog::SereneDBDatabases(
-    duckdb::DatabaseManager::Get(irs::DuckDBEngine::Instance().instance()));
-  std::erase_if(pins,
-                [](const auto& db) { return db->GetCatalog().InMemory(); });
-  std::vector<duckdb::unique_ptr<duckdb::StorageLockKey>> checkpoint_keys;
-  for (auto& db : pins) {
-    checkpoint_keys.push_back(
-      duckdb::DuckTransactionManager::Get(*db).SharedCheckpointLock());
-  }
-  std::vector<std::string> with_failed_checkpoint;
-  for (auto& db : pins) {
-    auto& storage = db->GetStorageManager();
-    const bool failed_checkpoint = [&] {
-      auto commit_lock = storage.GetCommitLock();
-      if (!storage.GetWAL()) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-          ERR_MSG("cannot start a backup: database \"",
-                  db->GetName().GetIdentifierName(),
-                  "\" has no active WAL after a failed checkpoint"),
-          ERR_HINT("Restart the server, then retry."));
-      }
-      return LeftByFailedCheckpoint(storage);
-    }();
-    if (failed_checkpoint) {
-      with_failed_checkpoint.push_back(db->GetName().GetIdentifierName());
-      continue;
-    }
-    for (const auto& storage : connector::InvertedStorages(*db)) {
-      SDB_ENSURE(!storage->HasPendingCheckpoint(),
-                 "cannot start a backup: inverted index ", storage->GetId(),
-                 " in database \"", db->GetName().GetIdentifierName(),
-                 "\" has an unfinished checkpoint save");
-    }
-  }
-  const auto& layout =
-    catalog::ClusterLayout(catalog::ClusterOf().GetAttached());
-  auto backup_dir = layout.EngineDir() / kBackupDir;
-  std::error_code ec;
-  std::filesystem::remove_all(backup_dir, ec);
-  if (ec) {
-    utils::file_utils::ThrowFileError("remove directory", backup_dir.string(),
-                                      ec);
+  auto& fs = catalog::StorageFileSystem();
+  auto backup_dir =
+    fs.JoinPath(catalog::ClusterOf().Layout().engine, kBackupDir);
+  if (!catalog::Log::Remove(fs, backup_dir)) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
+                    ERR_MSG("could not remove the leftover backup directory '",
+                            backup_dir, "'"));
   }
   catalog::CreateDirectory(backup_dir);
   absl::Cleanup remove_backup_dir = [&]() noexcept {
-    catalog::RemoveTree(backup_dir);
+    catalog::Log::Remove(fs, backup_dir);
   };
 
+  progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForCheckpoint);
+  auto checkpoints = catalog::Transactions::Get().CloseCheckpoints(context);
   catalog::DeferRemovals();
   absl::Cleanup resume_removals = [] { catalog::ResumeRemovals(); };
   progress.SetPhase(pg::progress_phase::BaseBackup::WaitingForMaintenance);
+  absl::Cleanup resume_cleanups = [] { search::RequestCleanups(); };
   auto maintenance = search::GetSearchEngine().Maintenance().Close(context);
-  auto cut = RecordCut(context, backup_dir, pins, progress);
+  auto cut = RecordCut(context, backup_dir, progress);
+  if (const auto tablespace = UserTablespace()) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG("cannot start a backup: tablespace \"",
+                            tablespace->GetIdentifierName(),
+                            "\" keeps its files outside the data directory"),
+                    ERR_DETAIL("A backup copies only the data directory."));
+  }
   auto& positions = PositionSource::Instance();
   const auto start_lsn = positions.Issue();
-  cut.catalog_link = cut.catalog_link.lexically_relative(layout.directory);
   auto label_file = BuildBackupLabel(
     label, start_lsn, positions.SystemIdentifier(), absl::Now(), cut);
+  std::move(resume_cleanups).Cancel();
   std::move(resume_removals).Cancel();
   std::move(remove_backup_dir).Cancel();
 
   // Noexcept committing of backup start
   _checkpoints = std::move(checkpoints);
   _maintenance = std::move(maintenance);
-  _pins = std::move(pins);
-  _checkpoint_keys = std::move(checkpoint_keys);
   _backup_dir = std::move(backup_dir);
   _owner = owner;
   _label_file = std::move(label_file);
   _active = true;
-  return StartedBackup{start_lsn, std::move(with_failed_checkpoint)};
+  return start_lsn;
 }
 
 FinishedBackup BackupSession::Finish(const void* session) {
@@ -254,11 +167,10 @@ void BackupSession::End() noexcept {
 
 void BackupSession::Stop() noexcept {
   _maintenance.reset();
-  catalog::ResumeRemovals();
+  search::RequestCleanups();
   _checkpoints.reset();
-  _checkpoint_keys.clear();
-  _pins.clear();
-  catalog::RemoveTree(_backup_dir);
+  catalog::ResumeRemovals();
+  catalog::Log::Remove(catalog::StorageFileSystem(), _backup_dir);
   _backup_dir.clear();
   _owner = {};
   _label_file.clear();

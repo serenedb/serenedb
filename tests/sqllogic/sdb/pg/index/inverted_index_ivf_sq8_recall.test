@@ -53,9 +53,6 @@ statement ok
 CREATE INDEX vecs_sq8_l2 ON vecs USING inverted(id, emb ivf (metric = 'l2', quant = 'sq8'));
 
 statement ok
-VACUUM (REFRESH_TABLE) vecs;
-
-statement ok
 SET sdb_ivf_search_nprobe TO 512;
 
 # pure kNN -> quantized SQ8 path
@@ -88,9 +85,6 @@ SET sdb_ivf_search_nprobe TO 512;
 
 statement ok
 CREATE INDEX vecs_sq8_ip ON vecs USING inverted(id, emb ivf (metric = 'ip', quant = 'sq8'));
-
-statement ok
-VACUUM (REFRESH_TABLE) vecs;
 
 query
 WITH

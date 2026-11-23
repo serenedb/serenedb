@@ -67,7 +67,7 @@ class VariantColumnReader final : public ColumnReader {
 
   bool CachedUniformShreddedLeaf(ScanState& s,
                                  std::span<const std::string_view> path,
-                                 duckdb::LogicalType& leaf_type) const {
+                                 duckdb::LogicalType& leaf_type) const final {
     auto& vs = VariantState(s);
     if (vs.leaf_resolved < 0) {
       vs.leaf_resolved =
@@ -91,6 +91,9 @@ class VariantColumnReader final : public ColumnReader {
     VariantRgSpan(row, begin, end);
     return end;
   }
+
+  void CollectBlocks(uint64_t first, uint64_t last,
+                     std::vector<duckdb::FileRange>& out) const final;
 
   size_t VariantRgSpan(uint64_t row, uint64_t& begin, uint64_t& end) const {
     const auto it =

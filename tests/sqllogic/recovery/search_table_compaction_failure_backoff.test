@@ -8,31 +8,31 @@
 # slot; without it, merges fail thousands of times.
 
 statement ok
-CREATE TABLE cb (id INT PRIMARY KEY, body TEXT) WITH (storage = 'search', compaction_interval = 0);
+CREATE TABLE cb (id INT PRIMARY KEY, body TEXT) WITH (compaction_interval = 0);
 
 statement ok
 INSERT INTO cb SELECT i, 'fox dog' FROM generate_series(1, 100) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) cb;
+VACUUM (FLUSH_TABLE) cb;
 
 statement ok
 INSERT INTO cb SELECT i, 'fox dog' FROM generate_series(101, 200) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) cb;
+VACUUM (FLUSH_TABLE) cb;
 
 statement ok
 INSERT INTO cb SELECT i, 'fox dog' FROM generate_series(201, 300) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) cb;
+VACUUM (FLUSH_TABLE) cb;
 
 statement ok
 INSERT INTO cb SELECT i, 'fox dog' FROM generate_series(301, 400) s(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) cb;
+VACUUM (FLUSH_TABLE) cb;
 
 statement ok
 SET sdb_faults = 'MergeWriter::Reserve';

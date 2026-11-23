@@ -22,6 +22,7 @@
 
 #include "iresearch/search/detail/make.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/filters/query_profile.hpp"
 
 namespace irs::detail {
 
@@ -76,7 +77,15 @@ typename Family::Result MakeQuery(const RangeVectorQuery& query,
                                   const Ctx& ctx);
 
 template<typename Family, typename Ctx>
-typename Family::Result MakeQuery(const BooleanQuery& query, const Ctx& ctx);
+struct BooleanMaker {
+  static typename Family::Result Make(const BooleanQuery& query,
+                                      const Ctx& ctx);
+};
+
+template<typename Family, typename Ctx>
+typename Family::Result MakeQuery(const BooleanQuery& query, const Ctx& ctx) {
+  return BooleanMaker<Family, Ctx>::Make(query, ctx);
+}
 
 template<typename Family, typename Parser, typename Acceptor, typename Ctx>
 typename Family::Result MakeQuery(const GeoQuery<Parser, Acceptor>& query,
@@ -104,10 +113,11 @@ typename Family::Result MakeQuery(const EmptyQueryBuilder&, const Ctx&) {
 
 template<typename Family, typename Query, typename Ctx>
 typename Family::Result Plan(const Query& query, const Ctx& ctx) {
+  auto& memory = Family::MemoryOf(ctx);
   if constexpr (requires { Family::Make(query, ctx); }) {
-    return Family::Make(query, ctx);
+    return ProfilePlan(memory, query, Family::Make(query, ctx));
   } else {
-    return MakeQuery<Family>(query, ctx);
+    return ProfilePlan(memory, query, MakeQuery<Family>(query, ctx));
   }
 }
 

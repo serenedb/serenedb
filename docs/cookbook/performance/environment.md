@@ -89,6 +89,14 @@ Based on user reports, running read-write workloads on network-attached storage 
 as well as spurious errors caused by the underlying file system.
 Instead of using SereneDB's native database format, consider using the [DuckLake lakehouse format](https://ducklake.select/).
 
+### Object Storage
+
+The files of tables and inverted indexes can live in an S3 bucket, an S3-compatible store or an Azure Blob Storage container ([Index Storage](../../configuration/index_storage.md)); the log stays on the local disk. A query reads index data from memory when the cache holds it and from the store otherwise:
+
+* Run the server in the same region as the bucket or container: a query over uncached data waits for a few round trips to the store.
+* Give the cache memory (`memory_limit`) for the parts of the indexes that queries touch: it uses the memory queries leave free. A query over cached data runs about as fast as over local files.
+* Put the temporary directory (`temp_directory`) on a local SSD or NVMe disk: it keeps blocks evicted from memory, so reading them again costs a disk read instead of a request.
+
 ## Operating System
 
 We recommend using the latest stable version of operating systems: macOS, Windows, and Linux are all well-tested and SereneDB can run on them with high performance.
@@ -107,7 +115,7 @@ Therefore, it's recommended to use a Linux distribution with glibc for performan
 
 #### File Descriptors and Memory Maps
 
-SereneDB keeps many files open at once — the database file, the write-ahead log, external Parquet, CSV and JSON sources and, above all, the per-segment files of [inverted indexes](../../sql/indexes/inverted/index.md) — and it memory-maps those index segments. Two Linux limits therefore matter for search-heavy and large workloads.
+SereneDB keeps many files open at once — the write-ahead log, attached DuckDB database files, external Parquet, CSV and JSON sources and, above all, the per-segment files of tables and of [inverted indexes](../../sql/indexes/inverted/index.md) on views — and it memory-maps those segment files. Two Linux limits therefore matter for search-heavy and large workloads.
 
 **Open files (`RLIMIT_NOFILE`).**
 On startup SereneDB raises its own _soft_ open-file limit to 65535, or to the _hard_ limit if that is lower. Raising the hard limit requires elevated privileges, so set it before starting the server if it sits below that. The `.deb` package's service does this for you (`LimitNOFILE=131072`); for a [shell-script](../../installation/shell-script.md) or [tarball](../../installation/tarball.md) install, raise it yourself first:
@@ -119,7 +127,7 @@ ulimit -n 131072
 A limit that is too low surfaces as `Too many open files` errors under load. See the [installation notes](../../installation/index.md) for more.
 
 **Memory maps (`vm.max_map_count`).**
-Inverted indexes are backed by [IResearch](https://github.com/serenedb/serenedb/tree/main/iresearch), which memory-maps every index segment. A workload that produces many segments can exhaust the kernel's default cap on memory-map areas (65530 on most distributions), and further `mmap` calls then fail. SereneDB checks this value at startup and warns when it is below the recommended minimum of **262144**. Raise it with:
+Inverted indexes are backed by [IResearch](https://github.com/serenedb/serenedb/tree/main/iresearch), which memory-maps every index segment on a local disk; index files on an object store are not memory-mapped. A workload that produces many segments can exhaust the kernel's default cap on memory-map areas (65530 on most distributions), and further `mmap` calls then fail. SereneDB checks this value at startup and warns when it is below the recommended minimum of **262144**. Raise it with:
 
 ```sh
 sudo sysctl -w vm.max_map_count=262144

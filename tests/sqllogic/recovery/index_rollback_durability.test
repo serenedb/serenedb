@@ -85,7 +85,7 @@ CREATE INDEX irb_ok_inv ON irb_t USING inverted(id, body irb_dict);
 
 
 statement ok
-VACUUM (REFRESH_TABLE) irb_t;
+VACUUM (FLUSH_TABLE) irb_t;
 
 
 # ----------------------------------------------------------------------
@@ -131,7 +131,7 @@ n
 
 
 query
-SELECT index_name FROM duckdb_indexes()
+SELECT index_name FROM sdb_indexes()
 WHERE index_name IN ('irb_ok_sec', 'irb_ok_inv', 'irb_rb_sec', 'irb_rb_inv')
 ORDER BY 1;
 ----
@@ -178,7 +178,7 @@ db error: ERROR: Table with name irb_rb_inv does not exist!<slt:ignore>
 # The committed ones did, with the comment the rollback left them.
 connection after_crash
 query
-SELECT index_name || ' ' || comment AS c FROM duckdb_indexes()
+SELECT index_name || ' ' || comment AS c FROM sdb_indexes()
 WHERE index_name IN ('irb_ok_sec', 'irb_ok_inv') ORDER BY 1;
 ----
 c
@@ -200,7 +200,7 @@ INSERT INTO irb_t VALUES (3, 30, 'echo foxtrot', 'note three');
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) irb_t;
+VACUUM (FLUSH_TABLE) irb_t;
 
 
 connection after_crash
@@ -242,7 +242,7 @@ CREATE INDEX irb_rb_inv ON irb_t USING inverted(id, note irb_dict);
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) irb_t;
+VACUUM (FLUSH_TABLE) irb_t;
 
 
 connection after_crash

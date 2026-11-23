@@ -130,7 +130,7 @@ statement count 1
 DELETE FROM srv_${__DATABASE__}.${__DATABASE__}.vqs_t WHERE id = 2;
 
 query
-SELECT action, files_added, files_changed FROM serenedb_reindex('vqs_idx');
+SELECT action, files_added, files_changed FROM sdb_reindex('vqs_idx');
 ----
 action	files_added	files_changed
 delta	1	1

@@ -19,9 +19,6 @@ INSERT INTO articles VALUES
 (2, 'a dog runs fast'),
 (3, 'running shoes for runners');
 
-statement ok
-VACUUM (REFRESH_TABLE) articles;
-
 # DOCS_TEST: example_001
 
 # DOCS_TEST_BODY

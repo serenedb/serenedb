@@ -94,7 +94,7 @@ struct OffsetMatch {
 
 template<typename PhraseQueryT>
 std::vector<OffsetMatch> CollectOffsets(const tests::PreparedFilter& prepared,
-                                        const irs::DirectoryReader& rdr) {
+                                        const irs::CompositeReader& rdr) {
   std::vector<OffsetMatch> out;
   size_t i = 0;
   for (auto sub = rdr.begin(); sub != rdr.end(); ++sub, ++i) {
@@ -443,7 +443,7 @@ TEST_P(PhraseSlopMatcherTestCase, set_slot_stats_keep_terms_apart) {
       R"([{"name":"D","phrase":"aa reo"},{"name":"E","phrase":"aa reo"},)"
       R"({"name":"F","phrase":"aa reo"}])",
       &tests::PayloadedJsonFieldFactory);
-    add_segment(g2, irs::kOmAppend);
+    add_segment(g2, tests::kOmAppend);
   }
   auto rdr = open_reader();
   ASSERT_EQ(2, rdr.size());
@@ -522,7 +522,7 @@ TEST_P(PhraseSlopMatcherTestCase, variadic_slot_stats_merge_by_term) {
       R"([{"name":"D","phrase":"aa reo"},{"name":"E","phrase":"aa rep"},)"
       R"({"name":"F","phrase":"aa rep"},{"name":"G","phrase":"aa rep"}])",
       &tests::PayloadedJsonFieldFactory);
-    add_segment(g2, irs::kOmAppend);
+    add_segment(g2, tests::kOmAppend);
   }
   auto rdr = open_reader();
   ASSERT_EQ(2, rdr.size());
@@ -556,7 +556,7 @@ TEST_P(PhraseSlopMatcherTestCase, variadic_slot_stats_merge_by_term) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(phrase_slop_matcher_test, PhraseSlopMatcherTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

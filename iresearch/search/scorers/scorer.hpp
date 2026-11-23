@@ -24,21 +24,31 @@
 
 #include <absl/strings/str_cat.h>
 
+#include <bit>
 #include <cstddef>
+#include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <limits>
 #include <optional>
+#include <span>
+#include <type_traits>
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/search/detail/stats_arena.hpp"
+#include "iresearch/search/explain/explanation.hpp"
+#include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
+#include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/math_utils.hpp"
+#include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-class DataOutput;
 struct IndexReader;
 struct SubReader;
 struct ScorerOptions;
@@ -81,7 +91,7 @@ struct TermCollector;
 struct ScoreBoundSource : AttributeProvider, memory::ArenaOnly {
   using ptr = memory::managed_ptr<ScoreBoundSource>;
 
-  virtual void Read(DataInput& in, size_t size) = 0;
+  virtual void Read(bytes_view bytes) = 0;
 
   virtual void Set(uint32_t freq, uint32_t norm) = 0;
 };
@@ -99,7 +109,7 @@ struct ScoreBoundWriter {
   virtual void Update(std::span<const doc_id_t> docs,
                       const uint32_t* freqs) = 0;
 
-  virtual void WriteRoot(DataOutput& out) = 0;
+  virtual void WriteRoot(duckdb::WriteStream& out) = 0;
   virtual void Take(size_t level, uint32_t* out) = 0;
 
   virtual byte_type SizeRoot() const = 0;
@@ -121,11 +131,14 @@ struct Scorer {
   virtual ~Scorer() = default;
 
   virtual void collect(byte_type* stats, const FieldCollector* field,
-                       const TermCollector* term) const = 0;
+                       const TermCollector* term, StatsArena& arena) const = 0;
 
   virtual IndexFeatures GetIndexFeatures() const = 0;
 
   virtual ScoreFunction PrepareScorer(const ScoreContext& ctx) const = 0;
+
+  virtual void Explain(const ScoreContext&, const explain::SlotStats*,
+                       explain::Node&) const {}
 
   virtual bool ScoresPerDoc() const noexcept { return true; }
 
@@ -165,15 +178,6 @@ struct Scorer {
   virtual TypeInfo::type_id type() const noexcept = 0;
 };
 
-template<typename Visitor>
-IRS_FORCE_INLINE auto ResolveMergeType(ScoreMergeType type, Visitor&& visitor) {
-  SDB_ASSERT(type != ScoreMergeType::Noop);
-  if (type == ScoreMergeType::Max) {
-    return visitor.template operator()<ScoreMergeType::Max>();
-  }
-  return visitor.template operator()<ScoreMergeType::Sum>();
-}
-
 inline bool ScoresPerDoc(const Scorer* scorer) noexcept {
   return scorer != nullptr && scorer->ScoresPerDoc();
 }
@@ -200,8 +204,8 @@ class ScorerBase : public Scorer {
     return irs::Type<Impl>::id();
   }
 
-  void collect(byte_type*, const FieldCollector*,
-               const TermCollector*) const override {}
+  void collect(byte_type*, const FieldCollector*, const TermCollector*,
+               StatsArena&) const override {}
 
   IRS_FORCE_INLINE static const StatsType* stats_cast(
     const byte_type* buf) noexcept {
@@ -269,6 +273,43 @@ IRS_FORCE_INLINE void Merge(score_t* IRS_RESTRICT res,
   }
 }
 
+template<ScoreMergeType MergeType>
+IRS_FORCE_INLINE void MergeAtBits(score_t* IRS_RESTRICT res,
+                                  const uint64_t* IRS_RESTRICT bits,
+                                  size_t words, score_t arg) noexcept {
+  static constexpr uint32_t kUnrolled = 4;
+  SDB_ASSERT(words <= BitsRequired<uint64_t>());
+  uint64_t held = 0;
+  for (size_t w = 0; w != words; ++w) {
+    held |= uint64_t{bits[w] != 0} << w;
+  }
+  uint16_t at[BitsRequired<uint64_t>() * BitsRequired<uint64_t>() + kUnrolled];
+  uint32_t n = 0;
+  while (held != 0) {
+    const auto w = static_cast<uint32_t>(std::countr_zero(held));
+    held = PopBit(held);
+    auto word = bits[w];
+    const auto base = static_cast<uint16_t>(w * BitsRequired<uint64_t>());
+    const auto count = static_cast<uint32_t>(std::popcount(word));
+    for (uint32_t k = 0; k != kUnrolled; ++k) {
+      at[n + k] = static_cast<uint16_t>(base + std::countr_zero(word));
+      word &= word - 1;
+    }
+    if (count > kUnrolled) [[unlikely]] {
+      n += kUnrolled;
+      do {
+        at[n++] = static_cast<uint16_t>(base + std::countr_zero(word));
+        word = PopBit(word);
+      } while (word != 0);
+    } else {
+      n += count;
+    }
+  }
+  for (uint32_t i = 0; i != n; ++i) {
+    Merge<MergeType>(res[at[i]], arg);
+  }
+}
+
 template<ScoreMergeType MergeType, size_t N>
 IRS_FORCE_INLINE void Merge(score_t* res, std::span<score_t, N> args) noexcept {
   Merge<MergeType>(res, args.data(), args.size());
@@ -279,6 +320,22 @@ IRS_FORCE_INLINE void Merge(score_t* res, std::span<const I, N> hits,
                             std::span<const score_t, N> args) noexcept {
   SDB_ASSERT(hits.size() <= args.size());
   Merge<MergeType>(res, hits.data(), args.data(), hits.size());
+}
+
+template<ScoreMergeType MergeType, bool HasScale, typename Formula>
+IRS_FORCE_INLINE void ScoreFreqs(
+  score_t* IRS_RESTRICT res, scores_size_t n, const uint32_t* IRS_RESTRICT freq,
+  [[maybe_unused]] const uint32_t* IRS_RESTRICT norm,
+  [[maybe_unused]] const score_t* IRS_RESTRICT scale,
+  Formula formula) noexcept {
+  for (scores_size_t i = 0; i != n; ++i) {
+    const auto tf = ScaledFreq<HasScale>(freq, scale, i);
+    if constexpr (std::is_invocable_v<Formula, score_t, score_t>) {
+      Merge<MergeType>(res[i], formula(tf, TermCountToScore(norm[i])));
+    } else {
+      Merge<MergeType>(res[i], formula(tf));
+    }
+  }
 }
 
 }  // namespace irs

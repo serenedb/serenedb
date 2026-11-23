@@ -1,0 +1,58 @@
+# A commit whose rows were written before CREATE INDEX changed the table's
+# indexes fails: its rows lack the new index's fields, and the index the
+# CREATE INDEX built stays complete.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY dic_ciapc AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE ciapc (id BIGINT, body TEXT);
+
+statement ok
+INSERT INTO ciapc VALUES (1, 'fox before');
+
+connection ciapc_writer
+statement ok
+BEGIN;
+
+connection ciapc_writer
+statement ok
+INSERT INTO ciapc VALUES (2, 'fox after');
+
+statement ok
+SET sdb_faults = 'search_commit_prepared';
+
+connection ciapc_writer
+statement async error
+COMMIT;
+----
+db error: ERROR: could not serialize access due to concurrent update
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_commit_prepared:parked';
+
+statement ok
+CREATE INDEX ciapc_body ON ciapc USING inverted (body dic_ciapc);
+
+statement ok
+SET sdb_faults = 'search_commit_prepared:release';
+
+wait
+
+query
+SELECT count(*) AS n FROM ciapc_body WHERE body @@ 'fox';
+----
+n
+1
+
+statement ok
+INSERT INTO ciapc VALUES (3, 'fox later');
+
+query
+SELECT count(*) AS n FROM ciapc_body WHERE body @@ 'fox';
+----
+n
+2

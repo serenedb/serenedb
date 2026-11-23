@@ -1,0 +1,20 @@
+query
+SELECT current_schemas(true)
+----
+current_schemas
+{pg_catalog,public}
+
+
+statement ok
+CREATE TEMP TABLE cst_temp (a int)
+
+
+query
+SELECT (current_schemas(true))[1] LIKE 'pg_temp%' AS temp_first, (current_schemas(true))[2:3] AS rest
+----
+temp_first	rest
+t	{pg_catalog,public}
+
+
+statement ok
+DROP TABLE cst_temp

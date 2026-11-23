@@ -1,4 +1,4 @@
-# CREATE INDEX over a search table's rows, a merge and a refresh, each run once
+# CREATE INDEX over a table's rows, a merge and a flush, each run once
 # for every memory charge it makes with that charge failing: the work either
 # completes or fails with out-of-memory and leaves nothing behind, the index
 # stays in sync with its table, CHECKPOINT works, and a restart keeps it.
@@ -10,5 +10,5 @@ port=$(tr '\0' '\n' < /proc/$PPID/cmdline | grep -A1 -x -- --port | tail -1); py
 ----
 create index: ok
 compact: ok
-refresh: ok
+flush: ok
 restart: ok

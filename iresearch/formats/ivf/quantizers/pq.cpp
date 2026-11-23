@@ -27,6 +27,7 @@
 #include <limits>
 #include <pcg_random.hpp>
 
+#include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -137,6 +138,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     if (niter != 0) {
       _pq.cp.niter = static_cast<int>(niter);
     }
+    _pq.cp.check_input_data_for_NaNs = false;
     _packed.resize(kFastScanBbs * FastScanNsq(_pq.M) / 2);
     _res_tile.resize(kFastScanBbs * size_t{_d});
     _codes_tile.resize(kFastScanBbs * _pq.code_size);
@@ -153,6 +155,10 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     if (n == 0) {
       return;
     }
+    std::vector<float> kept;
+    const auto rows = TrainableRows({vecs, n * _d}, _d, kept);
+    vecs = rows.data();
+    n = rows.size() / _d;
     const size_t ksub = _pq.ksub;
     if (n >= ksub) {
       _pq.train(n, vecs);
@@ -182,7 +188,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     };
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(duckdb::WriteStream& out, const float* vecs, size_t n) final {
     SDB_ASSERT(_trained);
     SDB_ASSERT(_centroid.size() == _d);
     for (size_t i = 0; i < n; ++i) {
@@ -197,7 +203,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  void Finish(IndexOutput& out) final {
+  void Finish(duckdb::WriteStream& out) final {
     if (_lane != 0) {
       WriteGroup(out, _lane);
     }
@@ -207,16 +213,16 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     return static_cast<uint32_t>(_lane);
   }
 
-  void Serialize(DataOutput& out) const final {
+  void Serialize(duckdb::WriteStream& out) const final {
     if (!_trained) {
-      out.WriteU64(0);
+      out.Write<uint64_t>(0);
       return;
     }
     const auto cents = FloatSpan(_pq.centroids);
     const auto errors = FloatSpan(_errors);
-    out.WriteU64(sizeof(PqStatsHeader) + cents.size() + errors.size());
-    WritePod(out, PqStatsHeader{static_cast<uint32_t>(_pq.M),
-                                static_cast<uint32_t>(_pq.ksub)});
+    out.Write<uint64_t>(sizeof(PqStatsHeader) + cents.size() + errors.size());
+    out.Write(PqStatsHeader{static_cast<uint32_t>(_pq.M),
+                            static_cast<uint32_t>(_pq.ksub)});
     out.WriteData(cents.data(), cents.size());
     out.WriteData(errors.data(), errors.size());
   }
@@ -245,7 +251,7 @@ class ProductQuantizerWriter final : public QuantizerWriter {
     _coded = _lane;
   }
 
-  void WriteGroup(IndexOutput& out, size_t count) {
+  void WriteGroup(duckdb::WriteStream& out, size_t count) {
     CodePending();
     faiss::pq4_pack_codes(_codes_tile.data(), count, _pq.M, kFastScanBbs,
                           kFastScanBbs, FastScanNsq(_pq.M), _packed.data(),
@@ -383,8 +389,8 @@ class ProductQuantizerReader : public QuantizerReader {
     const std::span<const float> query = _cb->Query();
     // IP(q, c + r) = IP(q, c) + IP(q, r); the packed LUT for IP(q, r) is
     // query-only and precomputed once per query in the codebook.
-    _qc = ComputeDistance<VectorMetric::InnerProduct>(
-      query.data(), centroid, static_cast<uint16_t>(query.size()));
+    _qc = ComputeDistance<VectorMetric::InnerProduct>(query.data(), centroid,
+                                                      query.size());
   }
 
   void ComputeBlock(std::span<const byte_type> block, score_t /*threshold*/,
@@ -772,6 +778,10 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
     if (n == 0) {
       return;
     }
+    std::vector<float> kept;
+    const auto rows = TrainableRows({vecs, n * _d}, _d, kept);
+    vecs = rows.data();
+    n = rows.size() / _d;
     const size_t ksub = _pq.ksub;
     std::vector<float> padded;
     if (n < ksub) {
@@ -806,7 +816,7 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
             .record_size = static_cast<uint32_t>(_pq.code_size)};
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(duckdb::WriteStream& out, const float* vecs, size_t n) final {
     SDB_ASSERT(_trained);
     _codes.resize(n * _pq.code_size);
     EncodeRows(vecs, n, _codes.data());
@@ -834,18 +844,18 @@ class ProductQuantizer8Writer final : public QuantizerWriter {
     return _pq.dsub == 1 ? 1U : static_cast<uint32_t>(kPq8Ksub);
   }
 
-  void Finish(IndexOutput& /*out*/) final {}
+  void Finish(duckdb::WriteStream& /*out*/) final {}
 
-  void Serialize(DataOutput& out) const final {
+  void Serialize(duckdb::WriteStream& out) const final {
     if (!_trained) {
-      out.WriteU64(0);
+      out.Write<uint64_t>(0);
       return;
     }
     const auto cents = FloatSpan(_pq.centroids);
     const auto errors = FloatSpan(_errors);
-    out.WriteU64(sizeof(PqStatsHeader) + cents.size() + errors.size());
-    WritePod(out, PqStatsHeader{static_cast<uint32_t>(_pq.M),
-                                static_cast<uint32_t>(_pq.ksub)});
+    out.Write<uint64_t>(sizeof(PqStatsHeader) + cents.size() + errors.size());
+    out.Write(PqStatsHeader{static_cast<uint32_t>(_pq.M),
+                            static_cast<uint32_t>(_pq.ksub)});
     out.WriteData(cents.data(), cents.size());
     out.WriteData(errors.data(), errors.size());
   }

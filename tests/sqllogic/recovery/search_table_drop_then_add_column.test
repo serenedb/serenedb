@@ -1,0 +1,74 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+CREATE TABLE dtac (id INT, v TEXT);
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+INSERT INTO dtac VALUES (1, 'a');
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+ALTER TABLE dtac DROP COLUMN v;
+
+
+statement ok
+ALTER TABLE dtac ADD COLUMN w TEXT;
+
+
+statement ok
+INSERT INTO dtac VALUES (2, 'w');
+
+
+statement ok
+COMMIT;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) dtac;
+
+
+query
+SELECT id, w FROM dtac ORDER BY id;
+----
+id	w
+1	NULL
+2	w
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection restarted
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection restarted
+query
+SELECT id, w FROM dtac ORDER BY id;
+----
+id	w
+1	NULL
+2	w

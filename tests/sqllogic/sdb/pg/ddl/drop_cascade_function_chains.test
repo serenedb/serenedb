@@ -35,36 +35,33 @@ vedernikoff_step5
 statement error
 DROP FUNCTION vedernikoff_step1(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_step1" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_step1(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP FUNCTION vedernikoff_step2(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_step2" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_step2(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP FUNCTION vedernikoff_step3(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_step3" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_step3(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
 statement error
 DROP FUNCTION vedernikoff_step4(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_step4" because there are entries that depend on it.
-macro function "vedernikoff_step5" depends on macro function "vedernikoff_step4".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop function vedernikoff_step4(integer) because other objects depend on it
+DETAIL: function vedernikoff_step5(integer) depends on function vedernikoff_step4(integer)
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -142,9 +139,9 @@ vedernikoff_iceberg_next_snap
 statement error
 DROP SEQUENCE vedernikoff_iceberg_snap_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_snap_seq" because there are entries that depend on it.
-macro function "vedernikoff_iceberg_next_snap" depends on sequence "vedernikoff_iceberg_snap_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence vedernikoff_iceberg_snap_seq because other objects depend on it
+DETAIL: function vedernikoff_iceberg_next_snap() depends on sequence vedernikoff_iceberg_snap_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -191,9 +188,8 @@ count
 statement error
 DROP SEQUENCE vedernikoff_solid_partition_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_partition_seq" because there are entries that depend on it.
+db error: ERROR: cannot drop sequence vedernikoff_solid_partition_seq because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -245,9 +241,8 @@ CREATE VIEW vedernikoff_clickclack_view_c AS
 statement error
 DROP FUNCTION vedernikoff_clickclack_fan_root();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_clickclack_fan_root" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_clickclack_fan_root() because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -303,9 +298,8 @@ INSERT INTO vedernikoff_mop_archived (body) VALUES ('arch1');
 statement error
 DROP FUNCTION vedernikoff_mop_next_listing();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_mop_next_listing" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_mop_next_listing() because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -395,9 +389,8 @@ db error: ERROR: CHECK constraint failed on table "vedernikoff_iceberg_t_charlie
 statement error
 DROP FUNCTION vedernikoff_iceberg_threshold(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_iceberg_threshold" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_iceberg_threshold(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -461,9 +454,8 @@ INSERT INTO vedernikoff_grand_records (payload) VALUES ('start');
 statement error
 DROP FUNCTION vedernikoff_grand_master_next();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_grand_master_next" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_grand_master_next() because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -530,9 +522,8 @@ v
 statement error
 DROP FUNCTION vedernikoff_solid_root_fn();
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_solid_root_fn" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_solid_root_fn() because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 
@@ -574,9 +565,10 @@ INSERT INTO vedernikoff_ml_journal (body) VALUES ('entry_alpha');
 statement error
 DROP SEQUENCE vedernikoff_ml_journal_seq;
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_ml_journal_seq" because there are entries that depend on it.
-table "vedernikoff_ml_journal" depends on sequence "vedernikoff_ml_journal_seq".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence vedernikoff_ml_journal_seq because other objects depend on it
+DETAIL: default value for column id of table vedernikoff_ml_journal depends on sequence vedernikoff_ml_journal_seq
+constraint body_window on table vedernikoff_ml_journal depends on sequence vedernikoff_ml_journal_seq
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 
@@ -625,9 +617,8 @@ id	name
 statement error
 DROP FUNCTION vedernikoff_ml_base(INT);
 ----
-db error: ERROR: Cannot drop entry "vedernikoff_ml_base" because there are entries that depend on it.
+db error: ERROR: cannot drop function vedernikoff_ml_base(integer) because other objects depend on it
 <slt:ignore>
-Use DROP...CASCADE to drop all dependents.
 
 
 

@@ -372,7 +372,7 @@ class NestedFilterTestCase : public tests::FilterTestCaseBase {
     std::vector<Item> items;
   };
 
-  static void InsertItemDocument(irs::IndexWriter::Transaction& trx,
+  static void InsertItemDocument(tests::IndexWriter::Transaction& trx,
                                  std::string_view item, int32_t price,
                                  int32_t count) {
     auto doc = trx.Insert();
@@ -388,7 +388,7 @@ class NestedFilterTestCase : public tests::FilterTestCaseBase {
     ASSERT_TRUE(doc);
   }
 
-  static void InsertOrderDocument(irs::IndexWriter::Transaction& trx,
+  static void InsertOrderDocument(tests::IndexWriter::Transaction& trx,
                                   std::string_view customer,
                                   std::string_view date) {
     auto doc = trx.Insert();
@@ -406,7 +406,7 @@ class NestedFilterTestCase : public tests::FilterTestCaseBase {
     ASSERT_TRUE(doc);
   }
 
-  static void InsertOrder(irs::IndexWriter& writer, const Order& order) {
+  static void InsertOrder(tests::IndexWriter& writer, const Order& order) {
     auto trx = writer.GetBatch();
     for (const auto& [item, price, count] : order.items) {
       InsertItemDocument(trx, item, price, count);
@@ -419,7 +419,8 @@ class NestedFilterTestCase : public tests::FilterTestCaseBase {
 };
 
 void NestedFilterTestCase::InitDataSet() {
-  auto writer = open_writer(irs::kOmCreate, irs::tests::DefaultWriterOptions());
+  auto writer =
+    open_writer(tests::kOmCreate, irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   // Parent document: 6
@@ -458,7 +459,6 @@ void NestedFilterTestCase::InitDataSet() {
   AssertSnapshotEquality(*writer);
 
   auto reader = open_reader(irs::tests::DefaultReaderOptions());
-  ASSERT_NE(nullptr, reader);
   ASSERT_EQ(1, reader.size());
 }
 
@@ -1457,7 +1457,7 @@ TEST_P(NestedFilterTestCase, JoinNone3) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 static const auto kDirectories = ::testing::ValuesIn(kTestDirs);
 

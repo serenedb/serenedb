@@ -34,7 +34,7 @@ template<typename Input>
 class TermCountsOf : public TermCounts {
  public:
   TermCountsOf(PlanMemory& memory, detail::LazyBitset& set,
-               const IndexInput& doc, IndexFeatures layout, bool bounds)
+               const duckdb::InputFile& doc, IndexFeatures layout, bool bounds)
     : _scratch{memory.Scratch()},
       _set{set},
       _probes{memory.Scratch()},
@@ -131,7 +131,7 @@ class TermCountsOf : public TermCounts {
   detail::LazyBitset& _set;
   memory::ArenaVector<Probe> _probes;
   detail::PostingReader<Input> _reader;
-  const IndexInput* _doc;
+  const duckdb::InputFile* _doc;
   IndexFeatures _layout;
   bool _bounds;
 };

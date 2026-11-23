@@ -195,7 +195,7 @@ TEST_P(TermsFilterTestCase, boost) {
       MakeFilter(kDuplicatedId, {{"abcd", 0.5f}, {"vczc", 0.25f}});
     q.SetBoost(boost);
 
-    tests::PreparedFilter prepared{q, *rdr, nullptr};
+    tests::PreparedFilter prepared{q, rdr, nullptr};
     ASSERT_EQ(boost, prepared.Query(0)->Boost());
   }
 }
@@ -466,7 +466,7 @@ struct ScoreOperator : public irs::ScoreOperator {
 
 TEST_P(TermsFilterTestCase, min_match) {
   // write segments
-  auto writer = open_writer(irs::kOmCreate);
+  auto writer = open_writer(tests::kOmCreate);
 
   {
     tests::JsonDocGenerator gen{resource("AdventureWorks2014.json"),
@@ -721,7 +721,7 @@ TEST_P(TermsFilterTestCase, levenshtein_iterator_boosts) {
   EXPECT_TRUE(exact_scored_highest);
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(terms_filter_test, TermsFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

@@ -44,7 +44,6 @@
 #include <vector>
 
 #include "catalog/entry/tokenizer.h"
-#include "connector/duckdb_client_state.h"
 #include "connector/functions/list_token_sink.hpp"
 #include "pg/connection_context.h"
 #include "pg/tokenizer_options.h"

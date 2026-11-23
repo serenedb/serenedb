@@ -50,7 +50,7 @@ body
 pudge goes mid
 
 query
-SELECT count(*) AS secrets FROM duckdb_secrets()
+SELECT count(*) AS secrets FROM sdb_secrets()
 WHERE contains(name, '__internal_ic_') AND storage = 'transaction';
 ----
 secrets
@@ -60,7 +60,7 @@ statement ok
 COMMIT;
 
 query
-SELECT count(*) AS secrets FROM duckdb_secrets() WHERE contains(name, '__internal_ic_');
+SELECT count(*) AS secrets FROM sdb_secrets() WHERE contains(name, '__internal_ic_');
 ----
 secrets
 0
@@ -99,7 +99,7 @@ id	body
 
 connection after_crash
 query
-SELECT count(*) AS secrets FROM duckdb_secrets()
+SELECT count(*) AS secrets FROM sdb_secrets()
 WHERE contains(name, '__internal_ic_') AND storage = 'transaction';
 ----
 secrets
@@ -111,14 +111,14 @@ COMMIT;
 
 connection after_crash
 query
-SELECT count(*) AS secrets FROM duckdb_secrets() WHERE contains(name, '__internal_ic_');
+SELECT count(*) AS secrets FROM sdb_secrets() WHERE contains(name, '__internal_ic_');
 ----
 secrets
 0
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vivc_idx');
+SELECT * FROM sdb_reindex('vivc_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 up_to_date	0	0	0	0
@@ -129,7 +129,7 @@ INSERT INTO vivc.${__DATABASE__}.t VALUES (4, 'after the restart too');
 
 connection after_crash
 query
-SELECT * FROM serenedb_reindex('vivc_idx');
+SELECT * FROM sdb_reindex('vivc_idx');
 ----
 action	files_added	files_changed	files_removed	files_rescanned
 delta	1	0	0	0
@@ -152,7 +152,7 @@ id	body
 
 connection reader user=postgres
 query
-SELECT count(*) AS secrets FROM duckdb_secrets() WHERE contains(name, '__internal_ic_');
+SELECT count(*) AS secrets FROM sdb_secrets() WHERE contains(name, '__internal_ic_');
 ----
 secrets
 0

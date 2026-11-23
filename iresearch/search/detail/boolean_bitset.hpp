@@ -74,7 +74,7 @@ bool CollectConjunctionBuckets(std::span<const Term> terms,
     });
 }
 
-template<typename Result, typename Term>
+template<typename Result, typename P = NoPins, typename Term>
 Result MakeConjunctionBitset(PlanMemory& memory, std::span<const Term> terms,
                              std::span<const QueryBuilder::ptr> filters,
                              const TermReader* field, const SubReader& segment,
@@ -93,8 +93,8 @@ Result MakeConjunctionBitset(PlanMemory& memory, std::span<const Term> terms,
                            HeadEstimate(terms, filters))) {
     return {};
   }
-  return MakeBitsetNode<Result>(memory, std::move(buckets), *doc, docs_count,
-                                table);
+  return MakeBitsetNode<Result, P>(memory, std::move(buckets), *doc, docs_count,
+                                   table);
 }
 
 struct ExcludeFills {
@@ -140,7 +140,7 @@ inline bool PlanExcludeFills(PlanMemory& memory, const ExcludeFills& fills,
 inline bool TakeExclusionFold(const BitsetBuckets& buckets,
                               const ExcludeFills& fills, const FoldEmit& emit,
                               const ExcludeCosts<PostingClause>& exclusion,
-                              const IndexInput& doc, doc_id_t docs_count,
+                              const duckdb::InputFile& doc, doc_id_t docs_count,
                               uint64_t candidates) noexcept {
   if (fills.children.empty() && buckets.masked == nullptr &&
       !buckets.NeedsSet() && !buckets.DenseLead(docs_count)) {
@@ -178,7 +178,7 @@ inline bool TakeExclusionFold(const BitsetBuckets& buckets,
   return TakeFold(cost < walk, terms, doc, docs_count);
 }
 
-template<typename Result>
+template<typename Result, typename P = NoPins>
 Result MakeBooleanBitset(PlanMemory& memory, const BooleanGroups& groups,
                          const SubReader& segment, TableFilter* table,
                          doc_id_t span) {
@@ -201,8 +201,8 @@ Result MakeBooleanBitset(PlanMemory& memory, const BooleanGroups& groups,
     if (groups.should_fills != nullptr) {
       buckets.fills = std::move(*groups.should_fills);
     }
-    return MakeBitsetNode<Result>(memory, std::move(buckets), *doc, docs_count,
-                                  table);
+    return MakeBitsetNode<Result, P>(memory, std::move(buckets), *doc,
+                                     docs_count, table);
   }
   if (!groups.should.empty() || !groups.should_filters.empty()) {
     return {};
@@ -223,8 +223,8 @@ Result MakeBooleanBitset(PlanMemory& memory, const BooleanGroups& groups,
                              HeadEstimate(groups.must, groups.must_filters))) {
       return {};
     }
-    return MakeBitsetNode<Result>(memory, std::move(buckets), *doc, docs_count,
-                                  table);
+    return MakeBitsetNode<Result, P>(memory, std::move(buckets), *doc,
+                                     docs_count, table);
   }
   const auto candidates =
     IncludeCandidates(groups.must, groups.must_filters, segment);
@@ -244,8 +244,8 @@ Result MakeBooleanBitset(PlanMemory& memory, const BooleanGroups& groups,
       !PlanExcludeFills(memory, fills, buckets)) {
     return {};
   }
-  return MakeBitsetNode<Result>(memory, std::move(buckets), *doc, docs_count,
-                                table);
+  return MakeBitsetNode<Result, P>(memory, std::move(buckets), *doc, docs_count,
+                                   table);
 }
 
 }  // namespace irs::detail

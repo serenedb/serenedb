@@ -23,24 +23,22 @@
 #pragma once
 
 #include <cstddef>
-#include <string_view>
 
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/tracked.hpp"
 
 namespace irs {
 
-struct Directory;
 struct NormProvider;
 
 struct FlushState {
-  Directory* const dir{};
+  FileTracker& tracker;
   // In-flight norm reader source (SegmentWriter during initial flush,
   // null during merge). Posting writers consult it to read per-doc norms
   // for score bounds while the segment is still being written.
   const NormProvider* norms{};
-  const std::string_view name;  // segment name
   ScorerPtr scorer = nullptr;
   const size_t doc_count;
   IndexFeatures index_features{IndexFeatures::None};

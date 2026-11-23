@@ -57,6 +57,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/planner_extension.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -71,9 +72,11 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
+#include "catalog/dependency.h"
+#include "catalog/entry/database.h"
 #include "catalog/entry/search_table.h"
 #include "connector/common.h"
-#include "connector/duckdb_client_state.h"
 #include "network/cancel_registry.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/functions/functions.h"
@@ -97,7 +100,6 @@ namespace sdb::pg {
 namespace {
 
 using connector::AsView;
-using connector::GetSereneDBContext;
 using duckdb::CatalogType;
 using duckdb::Identifier;
 
@@ -225,10 +227,13 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
         *RegIn(session, RegKind::Class, AsView(table_name), nullptr);
       auto relation = EntryByOid(session, oid);
       if (!relation) {
-        relation = duckdb::Catalog::GetCatalog(
-                     context, duckdb::Identifier::TempCatalog())
-                     .Cast<duckdb::DuckCatalog>()
-                     .FindEntryById(&context, CatalogType::TABLE_ENTRY, oid);
+        auto& temporary = duckdb::Catalog::GetCatalog(
+                            context, duckdb::Identifier::TempCatalog())
+                            .Cast<catalog::BaseCatalog>();
+        relation = temporary
+                     .FindIn<duckdb::TableCatalogEntry>(
+                       temporary.GetCatalogTransaction(context), oid)
+                     .get();
       }
       if (!relation) {
         return duckdb::nullopt;
@@ -257,13 +262,13 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
       }
       const auto& column = columns.GetColumn(column_key);
       auto& catalog = relation->ParentCatalog();
-      auto& dependency_manager = *catalog.GetDependencyManager();
       const auto transaction = catalog.GetCatalogTransaction(context);
       const duckdb::IdentifierEquality equals{catalog.IsCaseSensitive()};
-      for (const auto& owned :
-           dependency_manager.OwnedEntries(transaction, *relation)) {
+      for (const auto& owned : catalog::OwnedEntries(transaction, *relation)) {
         const auto& sequence = owned.get();
-        SDB_ASSERT(sequence.type == CatalogType::SEQUENCE_ENTRY);
+        if (sequence.type != CatalogType::SEQUENCE_ENTRY) {
+          continue;
+        }
         const auto& schema = sequence.ParentSchema(transaction);
         const auto& owner =
           sequence.Cast<duckdb::SequenceCatalogEntry>().owner_column;
@@ -311,12 +316,10 @@ void PgColumnIsUpdatableFunction(duckdb::DataChunk& args,
 void StatementTimestampFunction(duckdb::DataChunk& args,
                                 duckdb::ExpressionState& state,
                                 duckdb::Vector& result) {
-  const auto client =
-    state.GetContext().registered_state->Get<connector::SereneDBClientState>(
-      connector::kSereneDBClientStateKey);
-  SDB_ASSERT(client);
-  const auto start =
-    client->progress_source->query_start_us.load(std::memory_order_relaxed);
+  const auto start = ConnectionContext::Get(state.GetContext())
+                       .ProgressSource()
+                       ->status.Read()
+                       .query_start_us;
   result.Reference(duckdb::Value::TIMESTAMPTZ(duckdb::timestamp_tz_t{start}),
                    duckdb::count_t(args.size()));
 }
@@ -356,11 +359,10 @@ int64_t LiveTuples(const Session& session, int64_t oid) {
     return 0;
   }
   auto& table = entry->Cast<duckdb::TableCatalogEntry>();
-  if (table.GetLogStorage()) {
-    return static_cast<int64_t>(table.Cast<catalog::SearchTableEntry>()
-                                  .Storage()
-                                  ->GetStats()
-                                  .numLiveDocs);
+  if (catalog::IsSearchTable(table)) {
+    const auto stats =
+      table.Cast<catalog::SearchTableEntry>().Storage()->GetStats();
+    return static_cast<int64_t>(stats.numLiveDocs + stats.numBufferedDocs);
   }
   SDB_ASSERT(table.IsDuckTable());
   return static_cast<int64_t>(table.GetStorage().GetTotalRows());
@@ -457,24 +459,23 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
 void CurrentUserFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
-  auto& context = state.GetContext();
-  const auto& conn_ctx = GetSereneDBContext(context);
-  auto value = duckdb::Value(conn_ctx.EffectiveUserName());
+  auto value = duckdb::Value(
+    ConnectionContext::Get(state.GetContext()).EffectiveUserName());
   result.Reference(value, duckdb::count_t(args.size()));
 }
 
 void SessionUserFunction(duckdb::DataChunk& args,
                          duckdb::ExpressionState& state,
                          duckdb::Vector& result) {
-  auto& context = state.GetContext();
-  const auto& conn_ctx = GetSereneDBContext(context);
-  auto value = duckdb::Value(conn_ctx.SessionUserName());
+  auto value =
+    duckdb::Value(ConnectionContext::Get(state.GetContext()).SessionUserName());
   result.Reference(value, duckdb::count_t(args.size()));
 }
 
 void SystemUserFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                         duckdb::Vector& result) {
-  const auto& system_user = GetSereneDBContext(state.GetContext()).SystemUser();
+  const auto& system_user =
+    ConnectionContext::Get(state.GetContext()).SystemUser();
   result.Reference(system_user.empty()
                      ? duckdb::Value{duckdb::LogicalType::VARCHAR}
                      : duckdb::Value{system_user},
@@ -484,7 +485,7 @@ void SystemUserFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
 void PgBackendPidFunction(duckdb::DataChunk& args,
                           duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
-  const auto& conn_ctx = GetSereneDBContext(state.GetContext());
+  const auto& conn_ctx = ConnectionContext::Get(state.GetContext());
   result.Reference(duckdb::Value::INTEGER(conn_ctx.GetBackendPid()),
                    duckdb::count_t(args.size()));
 }
@@ -502,7 +503,7 @@ void SignalBackendFunction(duckdb::DataChunk& args,
                            duckdb::ExpressionState& state,
                            duckdb::Vector& result) {
   auto& context = state.GetContext();
-  auto& conn_ctx = GetSereneDBContext(context);
+  auto& conn_ctx = ConnectionContext::Get(context);
   auto* registry = conn_ctx.GetCancelRegistry();
   const auto roles = auth::RolesOf(&context);
   const auto caller = auth::ClosureFor(&context, conn_ctx.GetRoleId());
@@ -514,20 +515,18 @@ void SignalBackendFunction(duckdb::DataChunk& args,
       out.WriteNull();
       continue;
     }
-    const auto match =
+    const auto token =
       registry ? registry->FindByPid(static_cast<uint32_t>(pid.GetValue()))
-               : network::CancelRegistry::PidMatch{nullptr, false};
-    if (!match.token) {
-      conn_ctx.AddNotice(SQL_ERROR_DATA(
-        ERR_CODE(ERRCODE_WARNING),
-        ERR_MSG("PID ", pid.GetValue(),
-                match.ambiguous
-                  ? " matches more than one backend; not cancelling any"
-                  : " is not a PostgreSQL backend process")));
+               : nullptr;
+    if (!token) {
+      conn_ctx.AddNotice(
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_WARNING),
+                       ERR_MSG("PID ", pid.GetValue(),
+                               " is not a PostgreSQL backend process")));
       out.WriteValue(false);
       continue;
     }
-    const auto role = match.token->role.load(std::memory_order_relaxed);
+    const auto role = token->role.load(std::memory_order_relaxed);
     const auto* node = roles->Find(role);
     if (role == kInvalidOid || (node && node->is_superuser)) {
       if (!caller->is_superuser) {
@@ -548,9 +547,9 @@ void SignalBackendFunction(duckdb::DataChunk& args,
             "cancel this query.");
     }
     if constexpr (kTerminate) {
-      match.token->Terminate();
+      token->Terminate();
     } else {
-      match.token->Cancel();
+      token->Cancel();
     }
     out.WriteValue(true);
   }
@@ -883,18 +882,38 @@ void LoadTablespaceDatabases(duckdb::ClientContext& context,
                              duckdb::DataChunk& input,
                              std::vector<int64_t>& rows) {
   const auto oids = input.data[0].Values<int64_t>();
+  auto& cluster = catalog::ClusterOf(context);
+  const auto transaction = cluster.GetCatalogTransaction(context);
   for (duckdb::idx_t row = 0; row < input.size(); ++row) {
     const auto oid = oids[row];
     if (!oid.IsValid()) {
       continue;
     }
-    if (oid.GetValue() == static_cast<int64_t>(kPgDefaultTablespace)) {
+    auto tablespace =
+      oid.GetValue() == static_cast<int64_t>(kPgGlobalTablespace)
+        ? nullptr
+        : cluster.FindIn<catalog::TablespaceCatalogEntry>(
+            transaction, static_cast<duckdb::idx_t>(oid.GetValue()));
+    if (tablespace) {
+      irs::containers::FlatHashSet<duckdb::idx_t> placed;
+      catalog::ScanDependents(
+        transaction, *tablespace,
+        [&](duckdb::CatalogEntry& dependent,
+            const duckdb::DependencyDependentFlags&) {
+          placed.emplace(dependent.type == duckdb::CatalogType::DATABASE_ENTRY
+                           ? dependent.oid
+                           : dependent.ParentCatalog().GetAttached().oid);
+        });
       for (const auto& database : Databases(context)) {
-        rows.emplace_back(static_cast<int64_t>(database.get().oid));
+        if (placed.contains(database.get().oid) ||
+            database.get().Cast<catalog::DatabaseCatalogEntry>().Tablespace() ==
+              tablespace->oid) {
+          rows.emplace_back(static_cast<int64_t>(database.get().oid));
+        }
       }
       continue;
     }
-    GetSereneDBContext(context).AddNotice(SQL_ERROR_DATA(
+    ConnectionContext::Get(context).AddNotice(SQL_ERROR_DATA(
       ERR_CODE(ERRCODE_WARNING),
       ERR_MSG(oid.GetValue() == static_cast<int64_t>(kPgGlobalTablespace)
                 ? std::string{"global tablespace never has databases"}
@@ -1283,8 +1302,7 @@ void CurrentLogfileFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       }
     }
   }
-  result.Reference(duckdb::Value{duckdb::LogicalType::VARCHAR},
-                   duckdb::count_t(args.size()));
+  duckdb::ConstantVector::SetNull(result, duckdb::count_t(args.size()));
 }
 
 template<const std::string_view& kKind,
@@ -1402,7 +1420,6 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   const auto float8 = duckdb::LogicalType::DOUBLE;
   const auto any = duckdb::LogicalType::ANY;
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;
-  const std::string_view main = DEFAULT_SCHEMA;
 
   for (const auto& [name, function] : {
          NamedScalar{.name = "pg_table_is_visible",
@@ -1487,16 +1504,17 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunction function{{any}, REGTYPE(), PgTypeofFunction};
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
     function.SetBindExpressionCallback(BindPgTypeof);
-    RegisterScalar(loader, main, "pg_typeof", CONSISTENT_WITHIN_QUERY, nullptr,
-                   {function});
+    ExtendScalar(loader, "pg_typeof", CONSISTENT_WITHIN_QUERY, nullptr,
+                 {function});
   }
 
   {
     duckdb::ScalarFunction function{
       {text, boolean}, text, CurrentSetting2Function};
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    RegisterScalar(loader, main, "current_setting", CONSISTENT_WITHIN_QUERY,
-                   nullptr, {function});
+    function.SetFallible();
+    ExtendScalar(loader, "current_setting", CONSISTENT_WITHIN_QUERY, nullptr,
+                 {function});
   }
 
   {
@@ -1504,40 +1522,43 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
       {text, text, boolean}, text, SetConfigFunction};
     function.SetFallible();
     function.SetRequiresOrderedExecution(true);
-    RegisterScalar(loader, main, "set_config", VOLATILE, nullptr, {function});
+    ExtendScalar(loader, "set_config", VOLATILE, nullptr, {function});
   }
 
-  RegisterScalar(
-    loader, main, "search_path_canonical", CONSISTENT_WITHIN_QUERY, nullptr,
-    {duckdb::ScalarFunction{{}, text, SearchPathCanonicalFunction}});
+  ExtendScalar(loader, "search_path_canonical", CONSISTENT_WITHIN_QUERY,
+               nullptr,
+               {duckdb::ScalarFunction{{}, text, SearchPathCanonicalFunction}});
 
-  RegisterScalar(loader, main, "version", CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{}, text, VersionFunction}});
+  ExtendScalar(loader, "version", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, text, VersionFunction}});
 
-  RegisterScalar(loader, main, "pg_backend_pid", CONSISTENT_WITHIN_QUERY,
-                 nullptr,
-                 {duckdb::ScalarFunction{{}, int4, PgBackendPidFunction}});
+  ExtendScalar(loader, "pg_backend_pid", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, int4, PgBackendPidFunction}});
 
-  RegisterScalar(
-    loader, main, "pg_cancel_backend", VOLATILE, nullptr,
-    {duckdb::ScalarFunction{{int4}, boolean, SignalBackendFunction<false>}});
-  RegisterScalar(
-    loader, main, "pg_terminate_backend", VOLATILE, nullptr,
-    {duckdb::ScalarFunction{{int4}, boolean, SignalBackendFunction<true>}});
+  {
+    duckdb::ScalarFunction cancel{
+      {int4}, boolean, SignalBackendFunction<false>};
+    cancel.SetFallible();
+    ExtendScalar(loader, "pg_cancel_backend", VOLATILE, nullptr, {cancel});
+    duckdb::ScalarFunction terminate{
+      {int4}, boolean, SignalBackendFunction<true>};
+    terminate.SetFallible();
+    ExtendScalar(loader, "pg_terminate_backend", VOLATILE, nullptr,
+                 {terminate});
+  }
 
   {
     duckdb::ScalarFunction function{{any}, int4, CountNullsFunction<false>};
     function.GetSignature().AddArgs("args", any).AddKwargs("kwargs", any);
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    RegisterScalar(loader, main, "num_nonnulls", CONSISTENT, nullptr,
-                   {function});
+    ExtendScalar(loader, "num_nonnulls", CONSISTENT, nullptr, {function});
   }
 
   {
     duckdb::ScalarFunction function{{any}, int4, CountNullsFunction<true>};
     function.GetSignature().AddArgs("args", any).AddKwargs("kwargs", any);
     function.SetNullHandling(duckdb::FunctionNullHandling::SPECIAL_HANDLING);
-    RegisterScalar(loader, main, "num_nulls", CONSISTENT, nullptr, {function});
+    ExtendScalar(loader, "num_nulls", CONSISTENT, nullptr, {function});
   }
 
   {
@@ -1549,23 +1570,21 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
                                       WidthBucketThresholdsFunction,
                                       WidthBucketThresholdsBind};
     thresholds.SetFallible();
-    RegisterScalar(loader, main, "width_bucket", CONSISTENT, nullptr,
-                   {function, thresholds});
+    ExtendScalar(loader, "width_bucket", CONSISTENT, nullptr,
+                 {function, thresholds});
   }
 
-  RegisterScalar(loader, main, "pg_current_xact_id", CONSISTENT_WITHIN_QUERY,
-                 nullptr,
-                 {duckdb::ScalarFunction{{}, XID8(), NotSupportedFunction}});
-  RegisterScalar(
-    loader, main, "pg_xact_status", VOLATILE, nullptr,
-    {duckdb::ScalarFunction{{XID8()}, text, NotSupportedFunction}});
+  ExtendScalar(loader, "pg_current_xact_id", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, XID8(), NotSupportedFunction}});
+  ExtendScalar(loader, "pg_xact_status", VOLATILE, nullptr,
+               {duckdb::ScalarFunction{{XID8()}, text, NotSupportedFunction}});
 
-  RegisterScalar(loader, main, "current_user", CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
-  RegisterScalar(loader, main, "current_role", CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
-  RegisterScalar(loader, main, "session_user", CONSISTENT_WITHIN_QUERY, nullptr,
-                 {duckdb::ScalarFunction{{}, text, SessionUserFunction}});
+  ExtendScalar(loader, "current_user", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
+  ExtendScalar(loader, "current_role", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, text, CurrentUserFunction}});
+  ExtendScalar(loader, "session_user", CONSISTENT_WITHIN_QUERY, nullptr,
+               {duckdb::ScalarFunction{{}, text, SessionUserFunction}});
 
   RegisterScalar(
     loader, pg_catalog, "pg_basetype", CONSISTENT_WITHIN_QUERY, InitSession,

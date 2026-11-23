@@ -4,7 +4,6 @@ add_executable(
     # SDB_* macro fires -- see tests_main.cpp comment.
     tests_main.cpp
     assertions_tests.cpp
-    background_scheduler_test.cpp
     backup/backup_label_test.cpp
     backup/pg_control_test.cpp
     backup/restore_test.cpp
@@ -18,6 +17,7 @@ add_executable(
     duckdb_wal_block_reuse_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp
+    lifecycle_test.cpp
     meta_transaction_snapshot_test.cpp
     metrics_test.cpp
     network_duck_executor_test.cpp
@@ -44,13 +44,16 @@ add_executable(
     number_of_cores_test.cpp
     pointer_union_test.cpp
     query_prepared_cache_test.cpp
+    registry_test.cpp
+    runtime_test.cpp
     scorer_bounds_test.cpp
     search_engine_test.cpp
     search_table_changes_test.cpp
-    search_wal_tail_keys_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
     storage_version_test.cpp
+    striped_counters_test.cpp
+    catalog/log_test.cpp
     catalog/entry/tokenizer_test.cpp
     catalog/entry/inverted_index_config_test.cpp
     connector/ai_functions_test.cpp
@@ -65,24 +68,29 @@ add_executable(
     connector/pgoutput_test.cpp
     connector/reindex_removes_test.cpp
     connector/row_position_deduplicator_test.cpp
-    connector/scan_segment_work_test.cpp
+    connector/row_position_test.cpp
+    connector/scan_profile_test.cpp
     connector/scram_client_test.cpp
-    connector/search_key_unique_test.cpp
-    connector/search_row_removal_test.cpp
-    connector/search_unique_probe_test.cpp
+    connector/search_filter_printer_test.cpp
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
-    connector/writer_generations_test.cpp
+    connector/vector_explain_test.cpp
 )
 
 target_link_libraries(
     serenedb-tests
-    PRIVATE sereneserver gtest serene_docs_corpus
+    PRIVATE
+        sereneserver
+        serene_listeners
+        gtest
+        serene_docs_corpus
+        iresearch-test-object-store
+        iresearch-test-writer
 )
 sdb_link_duckdb_extensions(serenedb-tests)
 
 if(SDB_EMBEDDED_DOCS)
     target_link_libraries(serenedb-tests PRIVATE serene_docs_index)
-    add_dependencies(serenedb-tests serened)
+    add_dependencies(serenedb-tests serenedb)
     sdb_embed_docs_index(serenedb-tests)
 endif()

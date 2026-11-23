@@ -1,0 +1,93 @@
+control substitution on
+
+
+statement ok
+CREATE TABLE cccd_keep (id INT);
+
+
+statement ok
+INSERT INTO cccd_keep VALUES (1), (2);
+
+
+connection checkpointer
+statement ok
+SET sdb_faults = 'pause_cover_before_collect';
+
+
+connection checkpointer
+statement async ok
+CHECKPOINT;
+
+
+connection creator
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_cover_before_collect:parked';
+
+
+connection creator
+statement ok
+CREATE DATABASE cccd_db;
+
+
+connection creator
+statement ok
+CREATE TABLE cccd_db.public.t (id INT, body TEXT);
+
+
+connection creator
+statement ok
+INSERT INTO cccd_db.public.t VALUES (1, 'one'), (2, 'two');
+
+
+connection creator
+statement ok
+CREATE TABLE cccd_late (id INT);
+
+
+connection creator
+statement ok
+INSERT INTO cccd_late VALUES (3);
+
+
+connection creator
+statement ok
+SET sdb_faults = 'pause_cover_before_collect:release';
+
+
+wait
+
+
+connection creator
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection creator
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id FROM cccd_keep ORDER BY id;
+----
+id
+1
+2
+
+
+connection after_crash
+query
+SELECT id, body FROM cccd_db.public.t ORDER BY id;
+----
+id	body
+1	one
+2	two
+
+
+connection after_crash
+query
+SELECT id FROM cccd_late;
+----
+id
+3

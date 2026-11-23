@@ -42,6 +42,8 @@
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/docs/root.hpp"
+#include "iresearch/search/explain/names.hpp"
+#include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/fill/node.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/lead/node.hpp"
@@ -59,15 +61,16 @@ namespace irs {
 
 struct IndexReader;
 struct PreparedStateVisitor;
+class QueryProfile;
 
 struct PrepareContext {
   QueryMemory& memory;
   PrepareCollector* collector = nullptr;
   const AttributeProvider* ctx = nullptr;
-  const DocumentMaskBuilder* pending_docs_mask = nullptr;
   score_t boost = kNoBoost;
   uint32_t thread = 0;
   bool needs_terms = false;
+  QueryProfile* profile = nullptr;
 
   void Boost(score_t b) noexcept { boost *= b; }
 
@@ -88,6 +91,7 @@ enum class QueryKind : uint32_t {
   Terms,
   Boolean,
   Phrase,
+  NGram,
   DocsMask,
   Ann,
 };
@@ -135,6 +139,15 @@ class QueryBuilder : public memory::Managed, public memory::ArenaOnly {
     return _stats.scorer != nullptr && !IsUnscored(*_stats.scorer);
   }
 
+  void SetProfile(QueryProfile& profile, uint32_t node) const noexcept {
+    _profile = &profile;
+    _profile_node = node;
+  }
+
+  QueryProfile* Profile() const noexcept { return _profile; }
+
+  uint32_t ProfileNode() const noexcept { return _profile_node; }
+
   ~QueryBuilder() override = default;
 
   static QueryBuilder::ptr Empty();
@@ -180,6 +193,8 @@ class QueryBuilder : public memory::Managed, public memory::ArenaOnly {
 
  private:
   detail::StatsRecord _stats;
+  mutable QueryProfile* _profile = nullptr;
+  mutable uint32_t _profile_node = 0;
 };
 
 class Filter {
@@ -194,6 +209,8 @@ class Filter {
 
   virtual QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const = 0;
+
+  virtual bool Prefetch(const SubReader& segment) const { return false; }
 
   const Scorer* GetScorer() const noexcept { return _scorer; }
 
@@ -212,6 +229,11 @@ class Filter {
     }
     return MakeCollectorImpl(own, stats, threads);
   }
+
+  virtual void ExplainStats(const PrepareCollector*,
+                            explain::StatsIndex&) const {}
+
+  virtual void ExplainTerms(const SubReader&, explain::TermNames&) const {}
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 
@@ -301,6 +323,24 @@ class FilterWithField : public FilterWithOptions<Options> {
   irs::field_id* mutable_field_id() noexcept { return &_field_id; }
   DictRef dict() const noexcept { return _dict; }
   DictRef* mutable_dict() noexcept { return &_dict; }
+
+  void ExplainStats(const PrepareCollector* collector,
+                    explain::StatsIndex& out) const override {
+    if (collector) {
+      collector->Describe(_field_id, [](size_t) { return bytes_view{}; }, out);
+    }
+  }
+
+  void ExplainTerms(const SubReader& segment,
+                    explain::TermNames& out) const override {
+    const auto* reader = segment.field(_field_id, _dict);
+    if (!reader) {
+      return;
+    }
+    if (auto terms = this->CompileTermIterator(*reader)) {
+      out.AddAll(*reader, *terms);
+    }
+  }
 
  protected:
   bool equals(const Filter& rhs) const noexcept final {

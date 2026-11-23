@@ -25,13 +25,13 @@
 
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
-#include <iresearch/index/directory_reader_impl.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
 #include "assert_format.hpp"
 #include "doc_generator.hpp"
+#include "hook_file_system.hpp"
 #include "postings_cursor.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
@@ -47,99 +47,33 @@ namespace tests {
 irs::IndexWriterOptions CsDefaultWriterOptions();
 irs::IndexReaderOptions CsDefaultReaderOptions();
 
-// `db` is mandatory at IndexWriter::Make. Fixtures that build their own
-// IndexWriterOptions (e.g. to set a custom scorer) often leave `db` unset;
-// fill it from the shared CsDb() so they keep working. Also fills
-// `norm_column_id` from the shared monotonic allocator when the caller
+// Fills `norm_column_id` from the shared monotonic allocator when the caller
 // didn't set one -- with a cs writer present, a Norm-featured field requires
 // a norm_column_id callback (FieldsData::emplace asserts it).
-irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts);
+irs::IndexWriterOptions EnsureNormColumnId(irs::IndexWriterOptions opts);
 
-class DirectoryMock : public irs::Directory {
- public:
-  DirectoryMock(irs::Directory& impl)
-    : Directory{impl.ResourceManager()}, _impl(impl) {}
+duckdb::FileSystem& DatabaseFileSystem();
 
-  using Directory::attributes;
+struct BlockingFileSystem : HookFileSystem {
+  explicit BlockingFileSystem(const std::string& blocker)
+    : HookFileSystem{DatabaseFileSystem()}, blocker(blocker) {}
 
-  irs::DirectoryAttributes& attributes() noexcept final {
-    return _impl.attributes();
-  }
-
-  irs::IndexOutput::ptr create(std::string_view name) override {
-    return _impl.create(name);
-  }
-
-  bool exists(bool& result, std::string_view name) const noexcept override {
-    return _impl.exists(result, name);
-  }
-
-  bool length(uint64_t& result, std::string_view name) const noexcept override {
-    return _impl.length(result, name);
-  }
-
-  irs::IndexLock::ptr make_lock(std::string_view name) noexcept override {
-    return _impl.make_lock(name);
-  }
-
-  bool mtime(std::time_t& result,
-             std::string_view name) const noexcept override {
-    return _impl.mtime(result, name);
-  }
-
-  irs::IndexInput::ptr open(std::string_view name,
-                            irs::IOAdvice advice) const override {
-    return _impl.open(name, advice);
-  }
-
-  bool remove(std::string_view name) noexcept override {
-    return _impl.remove(name);
-  }
-
-  bool rename(std::string_view src, std::string_view dst) noexcept override {
-    return _impl.rename(src, dst);
-  }
-
-  bool sync(std::span<const std::string_view> files) noexcept override {
-    return _impl.sync(files);
-  }
-
-  bool visit(const irs::Directory::visitor_f& visitor) const final {
-    return _impl.visit(visitor);
-  }
-
- private:
-  irs::Directory& _impl;
-};
-
-struct BlockingDirectory : DirectoryMock {
-  explicit BlockingDirectory(irs::Directory& impl, const std::string& blocker)
-    : tests::DirectoryMock(impl), blocker(blocker) {}
-
-  irs::IndexOutput::ptr create(std::string_view name) final {
-    auto stream = tests::DirectoryMock::create(name);
-
+  void OnCreated(std::string_view name) final {
     if (name == blocker) {
       {
         auto guard = std::unique_lock(policy_lock);
+        created = true;
         policy_applied.notify_all();
       }
 
       // wait for intermediate commits to be applied
       auto guard = std::unique_lock(intermediate_commits_lock);
     }
-
-    return stream;
   }
 
   void wait_for_blocker() {
-    bool has = false;
-    exists(has, blocker);
-
-    while (!has) {
-      exists(has, blocker);
-
-      auto policy_guard = std::unique_lock(policy_lock);
+    auto policy_guard = std::unique_lock(policy_lock);
+    while (!created) {
       policy_applied.wait_for(policy_guard, std::chrono::seconds{1});
     }
   }
@@ -147,27 +81,25 @@ struct BlockingDirectory : DirectoryMock {
   std::string blocker;
   std::mutex policy_lock;
   std::condition_variable policy_applied;
+  bool created = false;
   std::mutex intermediate_commits_lock;
 };
 
-struct CallbackDirectory : DirectoryMock {
-  typedef std::function<void()> AfterCallback;
+struct CallbackFileSystem : HookFileSystem {
+  using AfterCallback = std::function<void()>;
 
-  explicit CallbackDirectory(irs::Directory& impl, AfterCallback&& p)
-    : tests::DirectoryMock(impl), after(p) {}
+  explicit CallbackFileSystem(AfterCallback&& p)
+    : HookFileSystem{DatabaseFileSystem()}, after(std::move(p)) {}
 
-  irs::IndexOutput::ptr create(std::string_view name) final {
-    auto stream = tests::DirectoryMock::create(name);
-    after();
-    return stream;
-  }
+  void OnCreated(std::string_view) final { after(); }
 
   AfterCallback after;
 };
 
-typedef std::tuple<tests::dir_param_f> index_test_context;
+typedef std::tuple<tests::DirParam> index_test_context;
 
-void AssertSnapshotEquality(irs::DirectoryReader lhs, irs::DirectoryReader rhs);
+void AssertSnapshotEquality(const irs::CompositeReader& lhs,
+                            const irs::CompositeReader& rhs);
 
 // A posting list is written before anything is deleted, so a reader walking
 // one sees documents the segment no longer has. Only a plan knows about the
@@ -176,7 +108,7 @@ inline std::unique_ptr<PostingsCursor> MaskPostings(
   const irs::SubReader& segment, irs::TermPostings::ptr&& postings,
   irs::IndexFeatures features = irs::IndexFeatures::None) {
   return std::make_unique<PostingsCursor>(std::move(postings), features,
-                                          segment.MaskedDocs());
+                                          segment.docs_mask());
 }
 
 class IndexTestBase : public virtual TestParamBase<index_test_context> {
@@ -185,45 +117,45 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
     const testing::TestParamInfo<index_test_context>& info);
 
  protected:
-  std::shared_ptr<irs::Directory> get_directory(const TestBase& ctx) const;
+  std::shared_ptr<IndexDir> get_directory(const TestBase& ctx) const;
 
-  irs::Directory& dir() const { return *_dir; }
+  IndexDir& dir() const { return *_dir; }
   const index_t& index() const { return _index; }
   index_t& index() { return _index; }
 
   irs::doc_id_t GetPostingsBlockSize() const;
 
-  irs::IndexWriter::ptr open_writer(
-    irs::Directory& dir, irs::OpenMode mode = irs::kOmCreate,
+  tests::IndexWriter::ptr open_writer(
+    const IndexDir& dir, tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(dir, mode,
-                                  EnsureWriterDb(std::move(options)));
+    return tests::IndexWriter::Make(dir, mode,
+                                    EnsureNormColumnId(std::move(options)));
   }
 
-  irs::IndexWriter::ptr open_writer(
-    irs::OpenMode mode = irs::kOmCreate,
+  tests::IndexWriter::ptr open_writer(
+    tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
-    return irs::IndexWriter::Make(*_dir, mode,
-                                  EnsureWriterDb(std::move(options)));
+    return tests::IndexWriter::Make(*_dir, mode,
+                                    EnsureNormColumnId(std::move(options)));
   }
 
-  irs::DirectoryReader open_reader(
+  irs::CompositeReader open_reader(
     const irs::IndexReaderOptions& options = CsDefaultReaderOptions()) const {
-    return irs::DirectoryReader{*_dir, options};
+    return tests::OpenReader(*_dir, options);
   }
 
-  void AssertSnapshotEquality(const irs::IndexWriter& writer);
+  void AssertSnapshotEquality(const tests::IndexWriter& writer);
 
   void assert_index(irs::IndexFeatures features, size_t skip = 0,
                     const irs::RegexpAcceptor* acceptor = nullptr) const {
-    tests::AssertIndex(open_reader().GetImpl(), index(), features, skip,
-                       acceptor);
+    tests::AssertIndex(open_reader(), index(), features, skip, acceptor);
   }
 
   void SetUp() final {
     TestBase::SetUp();
 
     // set directory
+    _dir = nullptr;
     _dir = get_directory(*this);
     ASSERT_NE(nullptr, _dir);
   }
@@ -240,31 +172,31 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   using StoreHook =
     std::function<void(irs::IndexWriter::Document&, const tests::Document&)>;
 
-  void write_segment(irs::IndexWriter& writer, tests::IndexSegment& segment,
+  void write_segment(tests::IndexWriter& writer, tests::IndexSegment& segment,
                      tests::DocGeneratorBase& gen, const StoreHook& store = {});
 
-  void write_segment_batched(irs::IndexWriter& writer,
+  void write_segment_batched(tests::IndexWriter& writer,
                              tests::IndexSegment& segment,
                              tests::DocGeneratorBase& gen, size_t batch_size);
 
-  void add_segment(irs::IndexWriter& writer, tests::DocGeneratorBase& gen,
+  void add_segment(tests::IndexWriter& writer, tests::DocGeneratorBase& gen,
                    const StoreHook& store = {});
 
-  void add_segments(irs::IndexWriter& writer,
+  void add_segments(tests::IndexWriter& writer,
                     std::vector<DocGeneratorBase::ptr>& gens);
 
   void add_segment(tests::DocGeneratorBase& gen,
-                   irs::OpenMode mode = irs::kOmCreate,
+                   tests::OpenMode mode = tests::kOmCreate,
                    irs::IndexWriterOptions opts = CsDefaultWriterOptions(),
                    const StoreHook& store = {});
   void add_segment_batched(
     tests::DocGeneratorBase& gen, size_t batch_size,
-    irs::OpenMode mode = irs::kOmCreate,
+    tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions opts = CsDefaultWriterOptions());
 
  private:
   index_t _index;
-  std::shared_ptr<irs::Directory> _dir;
+  std::shared_ptr<IndexDir> _dir;
 };
 
 }  // namespace tests

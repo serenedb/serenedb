@@ -58,6 +58,14 @@ class Impl : public Node {
     }
   }
 
+  const detail::ScoreInputs* Inputs() const final {
+    if constexpr (requires(const L& leaf) { leaf.Inputs(); }) {
+      return _leaf.Inputs();
+    } else {
+      return nullptr;
+    }
+  }
+
  private:
   L _leaf;
 };

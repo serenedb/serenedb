@@ -19,7 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <algorithm>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/detail/collectors.hpp>
@@ -28,13 +28,13 @@
 #include <iresearch/search/scorers/raw_boost.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/store_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/geo/geo_json.hpp>
 #include <set>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "geo_test_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "s2/s2point_region.h"
 #include "s2/s2polygon.h"
@@ -90,7 +90,7 @@ struct CustomSort final : public irs::ScorerBase<void> {
   };
 
   void collect(irs::byte_type* stats, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final {
+               const irs::TermCollector* term, irs::StatsArena&) const final {
     if (collector_finish) {
       collector_finish(stats, field, term);
     }
@@ -122,7 +122,6 @@ struct WithoutColumns final : irs::SubReader {
   explicit WithoutColumns(const irs::SubReader& segment) noexcept
     : segment{segment} {}
 
-  uint64_t CountMappedMemory() const final { return 0; }
   const irs::SegmentInfo& Meta() const final { return segment.Meta(); }
   const irs::DocumentMask* docs_mask() const final {
     return segment.docs_mask();
@@ -268,11 +267,12 @@ TEST(GeoFilterTest, check_reads_the_stored_shape) {
     {"S", R"({"type": "Point", "coordinates": [37.607, 55.709]})", " "},
   };
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::IndexWriter::Make(
+      dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -299,8 +299,7 @@ TEST(GeoFilterTest, check_reads_the_stored_shape) {
     writer->RefreshCommit();
     reader = writer->GetSnapshot();
   }
-  ASSERT_NE(nullptr, reader);
-  ASSERT_EQ(1, reader->size());
+  ASSERT_EQ(1, reader.size());
 
   auto json = irs::tests::FromJson(R"({
     "type": "Polygon",
@@ -321,8 +320,8 @@ TEST(GeoFilterTest, check_reads_the_stored_shape) {
 
   const auto execute = [&](const irs::Filter& filter) {
     std::set<std::string> names;
-    ::tests::PreparedFilter prepared{filter, *reader};
-    const auto& segment = (*reader)[0];
+    ::tests::PreparedFilter prepared{filter, reader};
+    const auto& segment = (reader)[0];
     const auto* column = segment.Column(kName);
     EXPECT_NE(nullptr, column);
     irs::tests::BlobPointReader values{segment, *column};
@@ -340,13 +339,13 @@ TEST(GeoFilterTest, check_reads_the_stored_shape) {
   q.mutable_options()->store_field_id = kGeo;
   EXPECT_EQ(std::set<std::string>{"Q"}, execute(q));
 
-  const WithoutColumns without_columns{(*reader)[0]};
+  const WithoutColumns without_columns{(reader)[0]};
   ::tests::PreparedFilter unstored{q, without_columns};
   EXPECT_TRUE(irs::QueryBuilder::IsEmpty(*unstored.Query(0)));
 
   constexpr irs::field_id kAbsent = 3;
   q.mutable_options()->store_field_id = kAbsent;
-  ::tests::PreparedFilter absent{q, *reader};
+  ::tests::PreparedFilter absent{q, reader};
   EXPECT_TRUE(irs::QueryBuilder::IsEmpty(*absent.Query(0)));
 }
 
@@ -419,13 +418,14 @@ TEST(GeoFilterTest, query) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
 
   // index data
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::IndexWriter::Make(
+      dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -458,19 +458,18 @@ TEST(GeoFilterTest, query) {
     reader = writer->GetSnapshot();
   }
 
-  ASSERT_NE(nullptr, reader);
-  ASSERT_EQ(2U, reader->size());
-  ASSERT_EQ(docs.size(), reader->docs_count());
-  ASSERT_EQ(docs.size(), reader->live_docs_count());
+  ASSERT_EQ(2U, reader.size());
+  ASSERT_EQ(docs.size(), reader.docs_count());
+  ASSERT_EQ(docs.size(), reader.live_docs_count());
 
   auto execute_query = [&reader](const irs::Filter& q,
                                  const std::vector<uint64_t>& costs) {
     std::set<std::string> actual_results;
 
-    std::optional<::tests::PreparedFilter> prepared{std::in_place, q, *reader,
+    std::optional<::tests::PreparedFilter> prepared{std::in_place, q, reader,
                                                     nullptr};
     auto expected_cost = costs.begin();
-    for (size_t i = 0; auto& segment : *reader) {
+    for (size_t i = 0; auto& segment : reader) {
       const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
@@ -776,13 +775,14 @@ TEST(GeoFilterTest, checkScorer) {
     { "name": "2", "geometry": { "type": "Point", "coordinates": [ 37.525177, 55.802825 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
 
   // index data
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::IndexWriter::Make(
+      dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -815,16 +815,15 @@ TEST(GeoFilterTest, checkScorer) {
     reader = writer->GetSnapshot();
   }
 
-  ASSERT_NE(nullptr, reader);
-  ASSERT_EQ(2, reader->size());
-  ASSERT_EQ(docs.size(), reader->docs_count());
-  ASSERT_EQ(docs.size(), reader->live_docs_count());
+  ASSERT_EQ(2, reader.size());
+  ASSERT_EQ(docs.size(), reader.docs_count());
+  ASSERT_EQ(docs.size(), reader.live_docs_count());
 
   auto execute_query = [&](const irs::Filter& q, const irs::Scorer& ord) {
     std::map<std::string, score_t> actual_results;
 
-    ::tests::PreparedFilter prepared{q, *reader, &ord};
-    for (size_t i = 0; [[maybe_unused]] auto& segment : *reader) {
+    ::tests::PreparedFilter prepared{q, reader, &ord};
+    for (size_t i = 0; [[maybe_unused]] auto& segment : reader) {
       const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};
@@ -1014,11 +1013,12 @@ TEST(GeoFilterTest, per_node_scorer_override) {
     { "name": "C", "geometry": { "type": "Point", "coordinates": [ 37.75589,  55.798193 ] } }
   ])");
 
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  ::tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  irs::CompositeReader reader;
   {
-    auto writer = irs::IndexWriter::Make(dir, irs::kOmCreate,
-                                         irs::tests::DefaultWriterOptions());
+    auto writer = ::tests::IndexWriter::Make(
+      dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
     ASSERT_NE(nullptr, writer);
     GeoField geo_field;
     geo_field.field_name = "geometry";
@@ -1044,8 +1044,7 @@ TEST(GeoFilterTest, per_node_scorer_override) {
     writer->RefreshCommit();
     reader = writer->GetSnapshot();
   }
-  ASSERT_NE(nullptr, reader);
-  ASSERT_EQ(1, reader->size());
+  ASSERT_EQ(1, reader.size());
 
   auto make_filter = [] {
     auto json = irs::tests::FromJson(R"({
@@ -1070,8 +1069,8 @@ TEST(GeoFilterTest, per_node_scorer_override) {
 
   auto run = [&](const irs::Filter& q, const irs::Scorer& ord) {
     std::map<std::string, irs::score_t> results;
-    ::tests::PreparedFilter prepared{q, *reader, &ord};
-    for (size_t i = 0; auto& segment : *reader) {
+    ::tests::PreparedFilter prepared{q, reader, &ord};
+    for (size_t i = 0; auto& segment : reader) {
       const auto* column = segment.Column(kName);
       EXPECT_NE(nullptr, column);
       irs::tests::BlobPointReader values{segment, *column};

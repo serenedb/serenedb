@@ -182,7 +182,7 @@ struct Family {
 
   static Result WrapMerge(PlanMemory& memory, ScoreMergeType merge,
                           Result child) {
-    return irs::ResolveMergeType(merge, [&]<ScoreMergeType Merge> -> Result {
+    return Resolve(merge, [&]<ScoreMergeType Merge> -> Result {
       return memory.Make<ByWindowScored<Erased, Merge>>(
         Erased{std::move(child)});
     });

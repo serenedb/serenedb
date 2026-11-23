@@ -26,10 +26,6 @@
 
 namespace irs::analysis::dict {
 
-inline constexpr char kStopwordPathEnvVariable[] =
-  "IRESEARCH_TEXT_STOPWORD_PATH";
-
-void LoadStopwords(StringSet<std::string>& buf, std::string_view language,
-                   std::string_view path = {});
+void LoadStopwords(StringSet<std::string>& buf, std::string_view path);
 
 }  // namespace irs::analysis::dict

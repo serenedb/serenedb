@@ -57,7 +57,7 @@ t	t	t	t	t
 
 
 # sqlite_schema is a view over sqlite_master, which is itself a view over
-# duckdb_tables / duckdb_views / duckdb_indexes: two nesting levels resolve.
+# sdb_tables / sdb_views / sdb_indexes: two nesting levels resolve.
 
 query
 SELECT (SELECT count(*) FROM sqlite_master WHERE name = 'zebrafin_vault') AS master,
@@ -80,9 +80,9 @@ table	zebrafin_vault
 # ride the same rule.
 
 query
-SELECT (SELECT count(*) FROM system.main.sdb_tables
+SELECT (SELECT count(*) FROM pg_catalog.sdb_tables
           WHERE table_name = 'zebrafin_vault') AS alias_rows,
-       (SELECT count(*) FROM system.main.duckdb_tables
+       (SELECT count(*) FROM pg_catalog.sdb_tables
           WHERE table_name = 'zebrafin_vault') AS source_rows
 ----
 alias_rows	source_rows
@@ -100,9 +100,9 @@ db error: ERROR: permission denied for view sqlite_master<slt:ignore>
 
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
 statement error
-SELECT count(*) FROM duckdb_tables;
+SELECT count(*) FROM sdb_tables;
 ----
-db error: ERROR: permission denied for view duckdb_tables<slt:ignore>
+db error: ERROR: permission denied for view sdb_tables<slt:ignore>
 
 
 connection c_clerk user=zebrafin_clerk password=zebrafin_clerk_pw
@@ -127,12 +127,12 @@ CREATE VIEW zebrafin_pub.w_owned AS SELECT id, secret FROM zebrafin_vault
 
 statement ok
 CREATE VIEW zebrafin_pub.w_source AS
-SELECT * FROM system.main.duckdb_tables WHERE table_name = 'zebrafin_vault'
+SELECT * FROM pg_catalog.sdb_tables WHERE table_name = 'zebrafin_vault'
 
 
 statement ok
 CREATE VIEW zebrafin_pub.w_alias AS
-SELECT * FROM system.main.sdb_tables WHERE table_name = 'zebrafin_vault'
+SELECT * FROM pg_catalog.sdb_tables WHERE table_name = 'zebrafin_vault'
 
 
 statement ok

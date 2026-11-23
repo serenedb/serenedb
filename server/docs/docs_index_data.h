@@ -27,10 +27,11 @@
 namespace sdb::docs {
 
 inline constexpr std::string_view kLayoutFile = "sdb_docs.layout";
+inline constexpr std::string_view kSegmentsFile = "sdb_docs.segments";
 
 struct IndexFile {
   std::string_view name;
-  std::span<const std::uint8_t> bytes;
+  std::span<std::uint8_t> bytes;
 };
 
 std::span<const IndexFile> GetDocsIndex();

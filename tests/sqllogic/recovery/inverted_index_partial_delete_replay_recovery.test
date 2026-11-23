@@ -5,12 +5,11 @@ RESET sdb_faults;
 
 
 statement ok
-CREATE TABLE pdr (id BIGINT, body TEXT);
+CREATE TABLE pdr (id BIGINT, body TEXT) WITH (compaction_interval = 0);
 
 
 statement ok
-CREATE INDEX pdr_idx ON pdr USING inverted (id, body)
-  WITH (refresh_interval = 0, compaction_interval = 0) WHERE id % 2 = 0;
+CREATE INDEX pdr_idx ON pdr USING inverted (id, body) WHERE id % 2 = 0;
 
 
 statement ok
@@ -51,7 +50,7 @@ n
 
 connection after_crash
 statement ok
-VACUUM (REFRESH_TABLE) pdr;
+VACUUM (FLUSH_TABLE) pdr;
 
 
 connection after_crash

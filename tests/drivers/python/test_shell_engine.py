@@ -18,25 +18,25 @@ from pathlib import Path
 import pytest
 
 
-SERENED_BIN = os.environ.get(
-    "SDB_DRV_SERENED_BIN",
-    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serened"),
+SERENEDB_BIN = os.environ.get(
+    "SDB_DRV_SERENEDB_BIN",
+    str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serenedb"),
 )
 
 
 def _have_binary() -> bool:
-    return Path(SERENED_BIN).is_file() and os.access(SERENED_BIN, os.X_OK)
+    return Path(SERENEDB_BIN).is_file() and os.access(SERENEDB_BIN, os.X_OK)
 
 
 pytestmark = pytest.mark.skipif(
     not _have_binary(),
-    reason=f"serened binary not found or not executable: {SERENED_BIN}",
+    reason=f"serenedb binary not found or not executable: {SERENEDB_BIN}",
 )
 
 
 def _shell(script: str, *, timeout: float = 30.0) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [SERENED_BIN, "shell", "-no-agent", ":memory:", "--csv"],
+        [SERENEDB_BIN, "shell", "-no-agent", ":memory:", "--csv"],
         input=script,
         capture_output=True,
         text=True,
@@ -61,7 +61,7 @@ def _interactive(
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, 200, 0, 0))
     process = subprocess.Popen(
-        [SERENED_BIN, "shell", "-dark-mode", ":memory:"],
+        [SERENEDB_BIN, "shell", "-dark-mode", ":memory:"],
         stdin=slave,
         stdout=slave,
         stderr=slave,
@@ -126,7 +126,7 @@ def test_explain_in_a_terminal_prints_the_plan_and_one_analyze_hint() -> None:
         ".web to open it in a browser") == 1, output
 
 
-@pytest.mark.parametrize("shape", ["pg", "duckdb_native"])
+@pytest.mark.parametrize("shape", ["server", "cli"])
 def test_explain_analyze_for_a_browser_prints_no_hint(tmp_path: Path, shape: str) -> None:
     opener = tmp_path / "bin" / "xdg-open"
     opener.parent.mkdir()
@@ -152,7 +152,7 @@ def test_explain_analyze_into_a_file_writes_no_hint(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("highlight", ["on", "off"])
-@pytest.mark.parametrize("shape", ["pg", "duckdb_native"])
+@pytest.mark.parametrize("shape", ["server", "cli"])
 def test_only_a_plan_taller_than_the_terminal_goes_through_the_pager(
     shape: str, highlight: str
 ) -> None:
@@ -171,7 +171,7 @@ def test_a_view_keeps_its_table() -> None:
         "CREATE TABLE t (i INTEGER);\n"
         "CREATE VIEW v AS SELECT i FROM t;\n"
         "DROP TABLE t;\n"
-        "SELECT count(*) AS views FROM duckdb_views() WHERE view_name = 'v';\n"
+        "SELECT count(*) AS views FROM sdb_views() WHERE view_name = 'v';\n"
     )
     assert "depend" in result.stderr, result.stderr
     assert list(csv.reader(io.StringIO(result.stdout))) == [["views"], ["1"]]

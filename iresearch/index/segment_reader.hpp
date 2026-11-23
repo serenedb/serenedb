@@ -52,13 +52,13 @@ class SegmentReader final : public SubReader {
   SegmentReader* operator->() noexcept { return this; }
   const SegmentReader* operator->() const noexcept { return this; }
 
-  uint64_t CountMappedMemory() const final;
-
   const SegmentInfo& Meta() const final;
 
   lead::Node::ptr docs_iterator(PlanMemory& memory) const final;
 
   const DocumentMask* docs_mask() const final;
+
+  uint64_t PatchedDocs() const noexcept final;
 
   std::span<const TermReader* const> fields(field_id id) const final;
   std::span<const field_id> field_ids() const final;
@@ -68,7 +68,6 @@ class SegmentReader final : public SubReader {
 
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;
-  IndexInput::ptr ReopenAnn() const final;
   const ColReader* GetColReader() const final;
 
   const std::shared_ptr<const SegmentReaderImpl>& GetImpl() const noexcept {

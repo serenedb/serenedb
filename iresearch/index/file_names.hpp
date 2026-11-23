@@ -23,31 +23,25 @@
 
 #pragma once
 
+#include <cstdint>
+#include <string>
+#include <vector>
+
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
-// Returns string in the following format : {prefix}{gen}
-std::string FileName(std::string_view prefix, uint64_t gen);
+inline constexpr uint8_t kColFile = 1 << 0;
+inline constexpr uint8_t kIdxFile = 1 << 1;
+inline constexpr uint8_t kDocFile = 1 << 2;
+inline constexpr uint8_t kPosFile = 1 << 3;
+inline constexpr uint8_t kPayFile = 1 << 4;
 
-// Returns string in the following format : _{gen}
-inline std::string FileName(uint64_t gen) { return FileName("_", gen); }
+std::vector<std::string> SegmentFiles(std::string_view segment, uint8_t kinds);
 
-// Returns string in the following format : {name}.{ext}
-void FileName(std::string& out, std::string_view name, std::string_view ext);
+std::string FileName(uint64_t id);
 
-inline std::string FileName(std::string_view name, std::string_view ext) {
-  std::string result;
-  FileName(result, name, ext);
-  return result;
-}
-
-// Returns string in the following format : {name}.{gen}.{ext}
-std::string FileName(std::string_view name, uint64_t gen, std::string_view ext);
-
-// Splits a {name}.{gen}.{ext} file back into its name and generation
-bool ParseFileName(std::string_view file, std::string_view ext,
-                   std::string_view& name, uint64_t& gen) noexcept;
+std::string FileName(std::string_view name, std::string_view ext);
 
 bool ParseSegmentId(std::string_view name, uint64_t& id) noexcept;
 

@@ -32,7 +32,7 @@ DROP DATABASE ddos_db;
 
 connection dropper
 query
-SELECT count(*) AS n FROM duckdb_databases() WHERE database_name = 'ddos_db';
+SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'ddos_db';
 ----
 n
 0

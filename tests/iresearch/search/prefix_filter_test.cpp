@@ -192,7 +192,6 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     irs::BM25 bm25;
     irs::Scorer* score = &bm25;
     irs::IndexWriterOptions opts;
-    opts.reader_options.db = &::irs::DuckDBEngine::Instance().instance();
     if (score_prune) {
       opts.reader_options.scorer = score;
     }
@@ -201,7 +200,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
     {
       tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                   &tests::NormStringJsonFieldFactory);
-      add_segment(gen, irs::kOmCreate, std::move(opts));
+      add_segment(gen, tests::kOmCreate, std::move(opts));
     }
 
     auto rdr = open_reader(reader_options);
@@ -278,7 +277,7 @@ class PrefixFilterTestCase : public tests::FilterTestCaseBase {
   void ByPrefixSchemas() {
     // write segments
     {
-      auto writer = open_writer(irs::kOmCreate);
+      auto writer = open_writer(tests::kOmCreate);
 
       std::vector<tests::DocGeneratorBase::ptr> gens;
       gens.emplace_back(new tests::JsonDocGenerator(
@@ -362,7 +361,7 @@ TEST_P(PrefixFilterTestCase, by_prefix) {
 TEST_P(PrefixFilterTestCase, by_prefixes) { ByPrefixesSequential(); }
 
 TEST_P(PrefixFilterTestCase, by_prefixes_terms) {
-  for (const auto mode : {irs::kOmCreate, irs::kOmAppend}) {
+  for (const auto mode : {tests::kOmCreate, tests::kOmAppend}) {
     tests::JsonDocGenerator gen(resource("simple_sequential.json"),
                                 &tests::GenericJsonFieldFactory);
     add_segment(gen, mode);
@@ -505,7 +504,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
           doc.insert(std::move(f));
         }
       });
-    add_segment(gen, irs::kOmAppend);
+    add_segment(gen, tests::kOmAppend);
   }
 
   auto rdr = open_reader();
@@ -554,7 +553,7 @@ TEST_P(PrefixFilterTestCase, by_prefix_order_partial_field_stats) {
 TEST_P(PrefixFilterTestCase, by_prefix_order_multiple_terms_score) {
   // single field "name", three terms with frequencies 2 / 1 / 3
   {
-    auto writer = open_writer(irs::kOmCreate);
+    auto writer = open_writer(tests::kOmCreate);
     {
       auto ctx = writer->GetBatch();
       for (const auto* value : {"aa", "aa", "ab", "ac", "ac", "ac"}) {
@@ -789,7 +788,7 @@ TEST_P(PrefixFilterTestCase, seek_ge_after_seek_ge_lands_on_the_lower_bound) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(prefix_filter_test, PrefixFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),

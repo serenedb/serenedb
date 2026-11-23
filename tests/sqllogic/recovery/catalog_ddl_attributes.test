@@ -28,6 +28,9 @@ INSERT INTO rda_t
   FROM generate_series(1, 5000) t(i);
 
 statement ok
+VACUUM (FLUSH_ALL);
+
+statement ok
 CHECKPOINT;
 
 query
@@ -99,56 +102,56 @@ nextval
 
 
 query
-SELECT comment FROM duckdb_tables() WHERE table_name = 'rda_t';
+SELECT comment FROM sdb_tables() WHERE table_name = 'rda_t';
 ----
 comment
 table note
 
 
 query
-SELECT comment FROM duckdb_columns() WHERE table_name = 'rda_t' AND column_name = 'a';
+SELECT comment FROM sdb_columns() WHERE table_name = 'rda_t' AND column_name = 'a';
 ----
 comment
 table col note
 
 
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'rda_v';
+SELECT comment FROM sdb_views() WHERE view_name = 'rda_v';
 ----
 comment
 view note
 
 
 query
-SELECT comment FROM duckdb_columns() WHERE table_name = 'rda_v' AND column_name = 'bv';
+SELECT comment FROM sdb_columns() WHERE table_name = 'rda_v' AND column_name = 'bv';
 ----
 comment
 view col note
 
 
 query
-SELECT comment FROM duckdb_sequences() WHERE sequence_name = 'rda_seq';
+SELECT comment FROM sdb_sequences() WHERE sequence_name = 'rda_seq';
 ----
 comment
 seq note
 
 
 query
-SELECT comment FROM duckdb_types() WHERE type_name = 'rda_mood';
+SELECT comment FROM sdb_types() WHERE type_name = 'rda_mood';
 ----
 comment
 type note
 
 
 query
-SELECT DISTINCT comment FROM duckdb_functions() WHERE function_name = 'rda_add1';
+SELECT DISTINCT comment FROM sdb_functions() WHERE function_name = 'rda_add1';
 ----
 comment
 macro note
 
 
 query
-SELECT index_name, comment FROM duckdb_indexes() WHERE index_name LIKE 'rda_%' ORDER BY 1;
+SELECT index_name, comment FROM sdb_indexes() WHERE index_name LIKE 'rda_%' ORDER BY 1;
 ----
 index_name	comment
 rda_inv	inverted note
@@ -176,7 +179,7 @@ SELECT 1;
 
 connection after_crash
 query
-SELECT comment FROM duckdb_tables() WHERE table_name = 'rda_t';
+SELECT comment FROM sdb_tables() WHERE table_name = 'rda_t';
 ----
 comment
 table note
@@ -184,7 +187,7 @@ table note
 
 connection after_crash
 query
-SELECT comment FROM duckdb_columns() WHERE table_name = 'rda_t' AND column_name = 'a';
+SELECT comment FROM sdb_columns() WHERE table_name = 'rda_t' AND column_name = 'a';
 ----
 comment
 table col note
@@ -192,7 +195,7 @@ table col note
 
 connection after_crash
 query
-SELECT comment FROM duckdb_views() WHERE view_name = 'rda_v';
+SELECT comment FROM sdb_views() WHERE view_name = 'rda_v';
 ----
 comment
 view note
@@ -200,7 +203,7 @@ view note
 
 connection after_crash
 query
-SELECT comment FROM duckdb_columns() WHERE table_name = 'rda_v' AND column_name = 'bv';
+SELECT comment FROM sdb_columns() WHERE table_name = 'rda_v' AND column_name = 'bv';
 ----
 comment
 view col note
@@ -208,7 +211,7 @@ view col note
 
 connection after_crash
 query
-SELECT comment FROM duckdb_sequences() WHERE sequence_name = 'rda_seq';
+SELECT comment FROM sdb_sequences() WHERE sequence_name = 'rda_seq';
 ----
 comment
 seq note
@@ -216,7 +219,7 @@ seq note
 
 connection after_crash
 query
-SELECT comment FROM duckdb_types() WHERE type_name = 'rda_mood';
+SELECT comment FROM sdb_types() WHERE type_name = 'rda_mood';
 ----
 comment
 type note
@@ -224,7 +227,7 @@ type note
 
 connection after_crash
 query
-SELECT DISTINCT comment FROM duckdb_functions() WHERE function_name = 'rda_add1';
+SELECT DISTINCT comment FROM sdb_functions() WHERE function_name = 'rda_add1';
 ----
 comment
 macro note
@@ -232,7 +235,7 @@ macro note
 
 connection after_crash
 query
-SELECT index_name, comment FROM duckdb_indexes() WHERE index_name LIKE 'rda_%' ORDER BY 1;
+SELECT index_name, comment FROM sdb_indexes() WHERE index_name LIKE 'rda_%' ORDER BY 1;
 ----
 index_name	comment
 rda_inv	inverted note
@@ -251,7 +254,7 @@ t
 # The reconstructed CREATE TABLE still carries the per-column compression.
 connection after_crash
 query
-SELECT sql LIKE '%USING COMPRESSION ZSTD%' FROM duckdb_tables() WHERE table_name = 'rda_t';
+SELECT sql LIKE '%USING COMPRESSION ZSTD%' FROM sdb_tables() WHERE table_name = 'rda_t';
 ----
 ?column?
 t
@@ -263,6 +266,10 @@ statement ok
 INSERT INTO rda_t
   SELECT i, md5(i::VARCHAR), 'aBc', md5((i * 13)::VARCHAR), 'dEf'
   FROM generate_series(5001, 10000) t(i);
+
+connection after_crash
+statement ok
+VACUUM (FLUSH_ALL);
 
 connection after_crash
 statement ok

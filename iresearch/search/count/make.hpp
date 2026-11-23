@@ -36,8 +36,8 @@ Root::ptr MakeConstant(PlanMemory& memory, uint64_t count);
 
 Root::ptr MakeAllCount(PlanMemory& memory, doc_id_t count);
 
-Root::ptr MakeTermCount(const detail::PostingClause& posting,
-                        const Context& ctx);
+Root::ptr MakeTermCount(PlanMemory& memory,
+                        const detail::PostingClause& posting, bool partial);
 
 Root::ptr MakeSum(PlanMemory& memory, Root::ptr lhs, Root::ptr rhs);
 

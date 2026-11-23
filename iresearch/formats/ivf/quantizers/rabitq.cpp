@@ -149,7 +149,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     return _lay.BlockSetting();
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(duckdb::WriteStream& out, const float* vecs, size_t n) final {
     SDB_ASSERT(_centroid.size() == _lay.rd);
     for (size_t i = 0; i < n; ++i) {
       const float* vec = vecs + i * size_t{_lay.d};
@@ -187,7 +187,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     return clone;
   }
 
-  void Finish(IndexOutput& out) final {
+  void Finish(duckdb::WriteStream& out) final {
     if (!_lay.row_major && _lane != 0) {
       WriteGroup(out, _lane);
     }
@@ -197,10 +197,10 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     return _lay.row_major ? 0U : static_cast<uint32_t>(_lane);
   }
 
-  void Serialize(DataOutput& out) const final {
+  void Serialize(duckdb::WriteStream& out) const final {
     const auto packed = PackSigns(_signs);
-    out.WriteU64(sizeof(RaBitQStatsHeader) + packed.size());
-    WritePod(out, RaBitQStatsHeader{_lay.nb_bits, _lay.d});
+    out.Write<uint64_t>(sizeof(RaBitQStatsHeader) + packed.size());
+    out.Write(RaBitQStatsHeader{_lay.nb_bits, _lay.d});
     out.WriteData(packed.data(), packed.size());
   }
 
@@ -280,7 +280,7 @@ class RaBitQuantizerWriter final : public QuantizerWriter {
     std::memcpy(dst + _lay.RowNormOffset(), &norm, sizeof(float));
   }
 
-  void WriteGroup(IndexOutput& out, size_t count) {
+  void WriteGroup(duckdb::WriteStream& out, size_t count) {
     const size_t storage = _lay.storage;
     std::memset(_aux.data() + count * storage, 0,
                 (kFastScanBbs - count) * storage);
@@ -470,7 +470,7 @@ class RaBitQuantizerReader : public QuantizerReader {
   void RefreshQuery() {
     SDB_ASSERT(_cluster);
     const std::span<const float> query = _cur->Query();
-    const auto d = static_cast<uint16_t>(query.size());
+    const auto d = query.size();
     const float* centroid = _cluster;
 
     _rot_centroid.resize(_rd);

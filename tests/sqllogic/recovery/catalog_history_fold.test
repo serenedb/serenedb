@@ -1,0 +1,504 @@
+control substitution on
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE chf_sizes (phase TEXT, size BIGINT);
+
+
+statement ok
+CREATE TABLE chf_t (id INT, v TEXT, w TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE chf_audit (id INT);
+
+
+statement ok
+CREATE TABLE chf_job_log (id INT);
+
+
+statement ok
+CREATE TRIGGER chf_fire AFTER INSERT ON chf_t FOR EACH ROW INSERT INTO chf_audit VALUES (NEW.id);
+
+
+statement ok
+CREATE SEQUENCE chf_seq;
+
+
+statement ok
+CREATE ROLE chf_role;
+
+
+statement ok
+CREATE VIEW chf_v AS SELECT id, v FROM chf_t;
+
+
+statement ok
+CREATE INDEX chf_idx ON chf_v USING inverted (v);
+
+
+statement ok
+CREATE JOB chf_job AFTER 1 HOUR SUSPENDED AS INSERT INTO chf_job_log VALUES (1);
+
+
+statement ok
+ALTER TABLE chf_t RESET (compaction_interval);
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN v DROP DEFAULT;
+
+
+statement ok
+ALTER TABLE chf_t ENABLE TRIGGER ALL;
+
+
+statement ok
+ALTER INDEX chf_idx RESET (compaction_interval);
+
+
+statement ok
+ALTER ROLE chf_role RESET ALL;
+
+
+statement ok
+ALTER ROLE chf_role RESET work_mem;
+
+
+statement ok
+ALTER TABLE chf_t SET (compaction_interval = 1000);
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN v SET DEFAULT 'd1000';
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN w SET NOT NULL;
+
+
+statement ok
+ALTER TABLE chf_t DISABLE TRIGGER chf_fire;
+
+
+statement ok
+COMMENT ON TABLE chf_t IS 't1000';
+
+
+statement ok
+COMMENT ON COLUMN chf_t.v IS 'v1000';
+
+
+statement ok
+ALTER INDEX chf_idx SET (compaction_interval = 1000);
+
+
+statement ok
+ALTER SEQUENCE chf_seq RESTART WITH 1000;
+
+
+statement ok
+ALTER SEQUENCE chf_seq OWNED BY chf_t.id;
+
+
+statement ok
+ALTER ROLE chf_role CONNECTION LIMIT 1000;
+
+
+statement ok
+ALTER ROLE chf_role VALID UNTIL '2030-01-01 00:00:00+00';
+
+
+statement ok
+ALTER ROLE chf_role PASSWORD 'p1000';
+
+
+statement ok
+ALTER ROLE chf_role NOLOGIN;
+
+
+statement ok
+ALTER ROLE chf_role SET work_mem = '1000kB';
+
+
+statement ok
+ALTER JOB chf_job SET SCHEDULE EVERY 1000 MINUTES;
+
+
+statement ok
+ALTER JOB chf_job SUSPEND;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO chf_sizes SELECT 'base', value FROM sdb_metrics WHERE metric = 'catalog_history_bytes';
+
+
+statement ok
+ALTER TABLE chf_t SET (compaction_interval = 1001);
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN v SET DEFAULT 'd1001';
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN w DROP NOT NULL;
+
+
+statement ok
+ALTER TABLE chf_t ENABLE TRIGGER chf_fire;
+
+
+statement ok
+COMMENT ON TABLE chf_t IS 't1001';
+
+
+statement ok
+COMMENT ON COLUMN chf_t.v IS 'v1001';
+
+
+statement ok
+ALTER INDEX chf_idx SET (compaction_interval = 1001);
+
+
+statement ok
+ALTER SEQUENCE chf_seq RESTART WITH 1001;
+
+
+statement ok
+ALTER SEQUENCE chf_seq OWNED BY NONE;
+
+
+statement ok
+ALTER ROLE chf_role CONNECTION LIMIT 1001;
+
+
+statement ok
+ALTER ROLE chf_role VALID UNTIL '2030-01-02 00:00:00+00';
+
+
+statement ok
+ALTER ROLE chf_role PASSWORD 'p1001';
+
+
+statement ok
+ALTER ROLE chf_role LOGIN;
+
+
+statement ok
+ALTER ROLE chf_role SET work_mem = '1001kB';
+
+
+statement ok
+ALTER JOB chf_job SET SCHEDULE EVERY 1001 MINUTES;
+
+
+statement ok
+ALTER JOB chf_job RESUME;
+
+
+statement ok
+ALTER TABLE chf_t SET (compaction_interval = 1002);
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN v SET DEFAULT 'd1002';
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN w SET NOT NULL;
+
+
+statement ok
+ALTER TABLE chf_t DISABLE TRIGGER chf_fire;
+
+
+statement ok
+COMMENT ON TABLE chf_t IS 't1002';
+
+
+statement ok
+COMMENT ON COLUMN chf_t.v IS 'v1002';
+
+
+statement ok
+ALTER INDEX chf_idx SET (compaction_interval = 1002);
+
+
+statement ok
+ALTER SEQUENCE chf_seq RESTART WITH 1002;
+
+
+statement ok
+ALTER SEQUENCE chf_seq OWNED BY chf_t.id;
+
+
+statement ok
+ALTER ROLE chf_role CONNECTION LIMIT 1002;
+
+
+statement ok
+ALTER ROLE chf_role VALID UNTIL '2030-01-03 00:00:00+00';
+
+
+statement ok
+ALTER ROLE chf_role PASSWORD 'p1002';
+
+
+statement ok
+ALTER ROLE chf_role NOLOGIN;
+
+
+statement ok
+ALTER ROLE chf_role SET work_mem = '1002kB';
+
+
+statement ok
+ALTER JOB chf_job SET SCHEDULE EVERY 1002 MINUTES;
+
+
+statement ok
+ALTER JOB chf_job SUSPEND;
+
+
+statement ok
+ALTER TABLE chf_t SET (compaction_interval = 1003);
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN v SET DEFAULT 'd1003';
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN w DROP NOT NULL;
+
+
+statement ok
+ALTER TABLE chf_t DISABLE TRIGGER chf_fire;
+
+
+statement ok
+COMMENT ON TABLE chf_t IS 't1003';
+
+
+statement ok
+COMMENT ON COLUMN chf_t.v IS 'v1003';
+
+
+statement ok
+ALTER INDEX chf_idx SET (compaction_interval = 1003);
+
+
+statement ok
+ALTER SEQUENCE chf_seq RESTART WITH 1003;
+
+
+statement ok
+ALTER SEQUENCE chf_seq OWNED BY chf_t.id;
+
+
+statement ok
+ALTER ROLE chf_role CONNECTION LIMIT 1003;
+
+
+statement ok
+ALTER ROLE chf_role VALID UNTIL '2030-01-04 00:00:00+00';
+
+
+statement ok
+ALTER ROLE chf_role PASSWORD 'p1003';
+
+
+statement ok
+ALTER ROLE chf_role LOGIN;
+
+
+statement ok
+ALTER ROLE chf_role SET work_mem = '1003kB';
+
+
+statement ok
+ALTER JOB chf_job SET SCHEDULE EVERY 1003 MINUTES;
+
+
+statement ok
+ALTER JOB chf_job RESUME;
+
+
+statement ok
+ALTER TABLE chf_t SET (compaction_interval = 1004);
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN v SET DEFAULT 'd1004';
+
+
+statement ok
+ALTER TABLE chf_t ALTER COLUMN w SET NOT NULL;
+
+
+statement ok
+ALTER TABLE chf_t ENABLE TRIGGER chf_fire;
+
+
+statement ok
+COMMENT ON TABLE chf_t IS 't1004';
+
+
+statement ok
+COMMENT ON COLUMN chf_t.v IS 'v1004';
+
+
+statement ok
+ALTER INDEX chf_idx SET (compaction_interval = 1004);
+
+
+statement ok
+ALTER SEQUENCE chf_seq RESTART WITH 1004;
+
+
+statement ok
+ALTER SEQUENCE chf_seq OWNED BY NONE;
+
+
+statement ok
+ALTER ROLE chf_role CONNECTION LIMIT 1004;
+
+
+statement ok
+ALTER ROLE chf_role VALID UNTIL '2030-01-05 00:00:00+00';
+
+
+statement ok
+ALTER ROLE chf_role PASSWORD 'p1004';
+
+
+statement ok
+ALTER ROLE chf_role NOLOGIN;
+
+
+statement ok
+ALTER ROLE chf_role SET work_mem = '1004kB';
+
+
+statement ok
+ALTER JOB chf_job SET SCHEDULE EVERY 1004 MINUTES;
+
+
+statement ok
+ALTER JOB chf_job SUSPEND;
+
+
+statement ok
+CHECKPOINT;
+
+
+statement ok
+INSERT INTO chf_sizes SELECT 'churn', value FROM sdb_metrics WHERE metric = 'catalog_history_bytes';
+
+
+query
+SELECT (SELECT size FROM chf_sizes WHERE phase = 'churn') - (SELECT size FROM chf_sizes WHERE phase = 'base') < 64 AS bounded;
+----
+bounded
+t
+
+
+statement ok
+CREATE TABLE chf_expect AS
+SELECT
+  (SELECT array_to_string(reloptions, ',') FROM pg_class WHERE relname = 'chf_t') AS t_options,
+  (SELECT array_to_string(reloptions, ',') FROM pg_class WHERE relname = 'chf_idx') AS idx_options,
+  (SELECT string_agg(column_name || '=' || coalesce(column_default, '-') || '/' || is_nullable, ',' ORDER BY ordinal_position)
+   FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'chf_t') AS columns,
+  (SELECT tgenabled FROM pg_trigger WHERE tgname = 'chf_fire') AS trigger,
+  (SELECT rolconnlimit FROM pg_roles WHERE rolname = 'chf_role') AS connlimit,
+  (SELECT rolvaliduntil FROM pg_roles WHERE rolname = 'chf_role') AS valid_until,
+  (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'chf_role') AS login,
+  (SELECT array_to_string(rolconfig, ',') FROM pg_roles WHERE rolname = 'chf_role') AS config,
+  (SELECT schedule || '/' || suspended FROM sdb_jobs() WHERE job_name = 'chf_job') AS job,
+  obj_description('chf_t'::regclass, 'pg_class') AS t_comment,
+  col_description('chf_t'::regclass, 2) AS v_comment;
+
+
+query
+SELECT connlimit, login, t_comment, v_comment, t_options FROM chf_expect;
+----
+connlimit	login	t_comment	v_comment	t_options
+1004	f	t1004	v1004	compaction_interval=1004
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  e.t_options IS NOT DISTINCT FROM s.t_options AS t_options,
+  e.idx_options IS NOT DISTINCT FROM s.idx_options AS idx_options,
+  e.columns IS NOT DISTINCT FROM s.columns AS columns,
+  e.trigger IS NOT DISTINCT FROM s.trigger AS trigger,
+  e.connlimit IS NOT DISTINCT FROM s.connlimit AS connlimit,
+  e.valid_until IS NOT DISTINCT FROM s.valid_until AS valid_until,
+  e.login IS NOT DISTINCT FROM s.login AS login,
+  e.config IS NOT DISTINCT FROM s.config AS config,
+  e.job IS NOT DISTINCT FROM s.job AS job,
+  e.t_comment IS NOT DISTINCT FROM s.t_comment AS t_comment,
+  e.v_comment IS NOT DISTINCT FROM s.v_comment AS v_comment
+FROM chf_expect e, (SELECT
+    (SELECT array_to_string(reloptions, ',') FROM pg_class WHERE relname = 'chf_t') AS t_options,
+    (SELECT array_to_string(reloptions, ',') FROM pg_class WHERE relname = 'chf_idx') AS idx_options,
+    (SELECT string_agg(column_name || '=' || coalesce(column_default, '-') || '/' || is_nullable, ',' ORDER BY ordinal_position)
+     FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'chf_t') AS columns,
+    (SELECT tgenabled FROM pg_trigger WHERE tgname = 'chf_fire') AS trigger,
+    (SELECT rolconnlimit FROM pg_roles WHERE rolname = 'chf_role') AS connlimit,
+    (SELECT rolvaliduntil FROM pg_roles WHERE rolname = 'chf_role') AS valid_until,
+    (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'chf_role') AS login,
+    (SELECT array_to_string(rolconfig, ',') FROM pg_roles WHERE rolname = 'chf_role') AS config,
+    (SELECT schedule || '/' || suspended FROM sdb_jobs() WHERE job_name = 'chf_job') AS job,
+    obj_description('chf_t'::regclass, 'pg_class') AS t_comment,
+    col_description('chf_t'::regclass, 2) AS v_comment) s;
+----
+t_options	idx_options	columns	trigger	connlimit	valid_until	login	config	job	t_comment	v_comment
+t	t	t	t	t	t	t	t	t	t	t
+
+
+connection after_crash
+query
+SELECT nextval('chf_seq') AS n;
+----
+n
+1004
+
+
+connection after_crash
+statement ok
+INSERT INTO chf_t (id, w) VALUES (1, 'x');
+
+
+connection after_crash
+query
+SELECT v FROM chf_t WHERE id = 1;
+----
+v
+d1004
+
+
+connection after_crash
+query
+SELECT id FROM chf_audit ORDER BY id;
+----
+id
+1

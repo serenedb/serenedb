@@ -40,10 +40,6 @@ statement count 1
 INSERT INTO sparse_norm VALUES (6, '{"body":"x"}'::json);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) sparse_norm;
-
-
 query
 SELECT id FROM sparse_norm_idx
 WHERE content->>'body' @@ ts_phrase('t') ORDER BY id;

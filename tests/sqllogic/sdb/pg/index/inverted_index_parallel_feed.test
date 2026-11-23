@@ -10,9 +10,6 @@ CREATE INDEX ipf_idx ON ipf USING inverted(id, (doc->'nested'), body);
 statement ok
 INSERT INTO ipf SELECT g, ('{"nested": ' || g || '}')::JSON, 'word' || (g % 100) FROM generate_series(1, 200000) g;
 
-statement ok
-VACUUM (REFRESH_TABLE) ipf;
-
 query
 SELECT count(*) FROM ipf_idx;
 ----
@@ -45,9 +42,6 @@ count
 
 statement ok
 INSERT INTO ipf SELECT g, ('{"nested": ' || g || '}')::JSON, 'again' FROM generate_series(200001, 400000) g;
-
-statement ok
-VACUUM (REFRESH_TABLE) ipf;
 
 query
 SELECT count(*) FROM ipf_idx;
@@ -87,9 +81,6 @@ CREATE INDEX ipm_d ON ipm USING inverted(body) WHERE id % 2 = 0;
 
 statement ok
 INSERT INTO ipm SELECT g, 'word' || (g % 100), 'title' || (g % 10) FROM generate_series(1, 200000) g;
-
-statement ok
-VACUUM (REFRESH_TABLE) ipm;
 
 query
 SELECT count(*) FROM ipm_a WHERE body @@ 'word7';
@@ -161,9 +152,6 @@ CREATE INDEX ipn_d ON ipn USING inverted(body) WHERE id % 2 = 0;
 
 statement ok
 INSERT INTO ipn SELECT g, ('{"nested": ' || g || '}')::JSON, 'word' || (g % 100), 'title' || (g % 10) FROM generate_series(1, 200000) g;
-
-statement ok
-VACUUM (REFRESH_TABLE) ipn;
 
 query
 SELECT count(*) FROM ipn_a;
@@ -237,9 +225,6 @@ count
 statement ok
 INSERT INTO ipn SELECT g, ('{"nested": ' || g || '}')::JSON, 'again', 'again' FROM generate_series(200001, 400000) g;
 
-statement ok
-VACUUM (REFRESH_TABLE) ipn;
-
 query
 SELECT count(*) FROM ipn_a;
 ----
@@ -276,9 +261,6 @@ CREATE INDEX ipj_idx ON ipj USING inverted(id, doc);
 statement ok
 INSERT INTO ipj SELECT g, ('{"n":' || g || '}')::JSON FROM generate_series(1, 200000) g;
 
-statement ok
-VACUUM (REFRESH_TABLE) ipj;
-
 query
 SELECT count(*) FROM ipj_idx;
 ----
@@ -314,9 +296,6 @@ INSERT INTO ipr SELECT * FROM ipr_src;
 
 statement ok
 COMMIT;
-
-statement ok
-VACUUM (REFRESH_TABLE) ipr;
 
 query
 SELECT count(*) AS n, count(*) FILTER (WHERE id % 1009 <> 7) AS wrong FROM ipr_idx WHERE body @@ 'word7';

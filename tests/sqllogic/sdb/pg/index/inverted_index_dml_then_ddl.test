@@ -44,10 +44,6 @@ statement ok
 CREATE TABLE iidd_unrelated(q INTEGER);
 
 
-statement ok
-VACUUM (REFRESH_TABLE) iidd;
-
-
 # the row committed AND reached the index -- the flush had a usable snapshot
 query
 SELECT id, body FROM iidd_idx WHERE body @@ ts_phrase('alpha bravo');
@@ -71,10 +67,6 @@ INSERT INTO iidd VALUES (2, 'charlie delta');
 onlyif pg-wire-extended
 statement ok
 ALTER TABLE iidd ADD COLUMN extra INTEGER;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) iidd;
 
 
 query
@@ -106,10 +98,6 @@ statement ok
 INSERT INTO iidd(id, body) VALUES (4, 'golf hotel');
 
 
-statement ok
-VACUUM (REFRESH_TABLE) iidd;
-
-
 query
 SELECT id FROM iidd_idx WHERE body @@ ts_phrase('golf hotel');
 ----
@@ -133,10 +121,6 @@ CREATE TABLE iidd_unrelated3(q INTEGER);
 
 statement ok
 COMMIT;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) iidd;
 
 
 query

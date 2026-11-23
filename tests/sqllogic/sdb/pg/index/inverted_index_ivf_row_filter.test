@@ -12,9 +12,6 @@ INSERT INTO ivf_r SELECT i, [i::FLOAT, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8],
   CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END, i % 7, i FROM range(300) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ivf_r;
-
-statement ok
 SET sdb_ivf_search_nprobe = 1000;
 
 query

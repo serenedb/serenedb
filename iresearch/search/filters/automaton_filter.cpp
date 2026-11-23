@@ -58,7 +58,7 @@ QueryBuilder::ptr AutomatonFilter::PrepareSegment(
   }
 
   auto query = ctx.memory.Make<MultiTermQuery>(
-    ctx.memory, segment, ctx.boost * GetBoost(), ScoreMergeType::Sum);
+    ctx.memory, segment, ctx.boost * GetBoost(), options().merge);
   MultiTermVisitor mtv{ctx, query->State(), *reader};
   auto terms = options().source->Iterator(*reader);
   SDB_ASSERT(terms);
@@ -70,10 +70,7 @@ QueryBuilder::ptr AutomatonFilter::PrepareSegment(
 
 PrepareCollector::ptr AutomatonFilter::MakeCollectorImpl(
   const Scorer* scorer, StatsArena& stats, uint32_t threads) const {
-  if (!ScoresPerDoc(scorer)) {
-    return std::make_unique<AllCollector>(scorer, stats);
-  }
-  return std::make_unique<MultiTermCollector>(scorer, stats, threads);
+  return MakeMultiTermCollector(scorer, stats, threads);
 }
 
 TermPredicate::ptr AutomatonFilter::CompileTermPredicate() const {

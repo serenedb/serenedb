@@ -284,7 +284,7 @@ query
 SELECT 'Asia/Beirut' AS zone, width, count(*) AS c, count(DISTINCT b) AS d, min(b)::VARCHAR AS lo, max(b)::VARCHAR AS hi, sum(epoch_us(b)::HUGEINT) AS s FROM (SELECT '15 minutes' AS width, time_bucket(INTERVAL '15 minutes', tstz, 'Asia/Beirut') AS b FROM rnd UNION ALL SELECT '90 minutes' AS width, time_bucket(INTERVAL '90 minutes', tstz, 'Asia/Beirut') AS b FROM rnd UNION ALL SELECT '1 hour' AS width, time_bucket(INTERVAL '1 hour', tstz, 'Asia/Beirut') AS b FROM rnd UNION ALL SELECT '6 hours' AS width, time_bucket(INTERVAL '6 hours', tstz, 'Asia/Beirut') AS b FROM rnd UNION ALL SELECT '1 day' AS width, time_bucket(INTERVAL '1 day', tstz, 'Asia/Beirut') AS b FROM rnd UNION ALL SELECT '3 days' AS width, time_bucket(INTERVAL '3 days', tstz, 'Asia/Beirut') AS b FROM rnd UNION ALL SELECT '7 days' AS width, time_bucket(INTERVAL '7 days', tstz, 'Asia/Beirut') AS b FROM rnd UNION ALL SELECT '1 month' AS width, time_bucket(INTERVAL '1 month', tstz, 'Asia/Beirut') AS b FROM rnd UNION ALL SELECT '3 months' AS width, time_bucket(INTERVAL '3 months', tstz, 'Asia/Beirut') AS b FROM rnd UNION ALL SELECT '1 year' AS width, time_bucket(INTERVAL '1 year', tstz, 'Asia/Beirut') AS b FROM rnd) w GROUP BY 1, 2 ORDER BY 2;
 ----
 zone	width	c	d	lo	hi	s
-Asia/Beirut	1 day	20000	18675	1899-12-31 22:00:00+00	2299-09-20 21:00:00+00	82236647415600000000
+Asia/Beirut	1 day	20000	18675	1899-12-31 22:00:00+00	2299-09-20 21:00:00+00	82236647329200000000
 Asia/Beirut	1 hour	20000	19945	1900-01-01 00:00:00+00	2299-09-21 08:00:00+00	82237476229200000000
 Asia/Beirut	1 month	20000	4741	1899-12-31 22:00:00+00	2299-08-31 21:00:00+00	82211174499600000000
 Asia/Beirut	1 year	20000	400	1899-12-31 22:00:00+00	2298-12-31 22:00:00+00	81921285734400000000
@@ -559,7 +559,7 @@ Asia/Tehran	1 hour	20000	19939	1900-01-01 00:30:00+00	2299-09-21 08:30:00+00	822
 Asia/Tehran	1 month	20000	4741	1899-12-31 20:34:16+00	2299-08-31 20:30:00+00	82211157663432000000
 Asia/Tehran	1 year	20000	400	1899-12-31 20:34:16+00	2298-12-31 20:30:00+00	81921241187200000000
 Asia/Tehran	15 minutes	20000	19988	1900-01-01 00:45:00+00	2299-09-21 08:45:00+00	82237503108600000000
-Asia/Tehran	3 days	20000	16355	1899-12-29 20:34:16+00	2299-09-18 20:30:00+00	82234893419488000000
+Asia/Tehran	3 days	20000	16356	1899-12-29 20:34:16+00	2299-09-18 20:30:00+00	82234893160288000000
 Asia/Tehran	3 months	20000	1599	1899-12-31 20:34:16+00	2299-06-30 20:30:00+00	82158467903232000000
 Asia/Tehran	6 hours	20000	19656	1899-12-31 20:30:00+00	2299-09-21 08:30:00+00	82237296477600000000
 Asia/Tehran	7 days	20000	12869	1899-12-31 20:34:16+00	2299-09-17 20:30:00+00	82231478909232000000

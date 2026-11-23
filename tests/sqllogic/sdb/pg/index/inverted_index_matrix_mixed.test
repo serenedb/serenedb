@@ -54,9 +54,6 @@ INSERT INTO g10_a VALUES
     (1, 'alpha', 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   10),
     (2, 'beta',  'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 50);
 
-statement ok
-VACUUM (REFRESH_TABLE) g10_a;
-
 query
 SELECT pk FROM g10_a_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
 ----
@@ -87,9 +84,6 @@ statement ok
 INSERT INTO g10_b VALUES
     (1, 'alpha', 'wonderful', 10),
     (2, 'beta',  'magnificent', 50);
-
-statement ok
-VACUUM (REFRESH_TABLE) g10_b;
 
 query
 SELECT pk FROM g10_b_mix WHERE v2 @@ ts_ngram('won', 0.5) ORDER BY pk;
@@ -125,9 +119,6 @@ INSERT INTO g10_c VALUES
     (2, [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT], 'beta',  50,
         'POINT(10 20)'::GEOMETRY('OGC:CRS84'));
 
-statement ok
-VACUUM (REFRESH_TABLE) g10_c;
-
 query
 SELECT pk FROM g10_c_mix
 ORDER BY emb <-> [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT]::FLOAT[3]
@@ -161,9 +152,6 @@ statement ok
 INSERT INTO g10_d VALUES
     (1, '"alpha"', '{"type":"Point","coordinates":[0.0, 0.0]}',   10),
     (2, '"beta"',  '{"type":"Point","coordinates":[10.0, 20.0]}', 50);
-
-statement ok
-VACUUM (REFRESH_TABLE) g10_d;
 
 query
 SELECT pk FROM g10_d_mix WHERE j @@ ts_like('alpha') ORDER BY pk;
@@ -206,9 +194,6 @@ INSERT INTO g13_a VALUES
     (1, 'alpha', 'wonderful'),
     (2, 'beta',  'magnificent');
 
-statement ok
-VACUUM (REFRESH_TABLE) g13_a;
-
 query
 SELECT pk FROM g13_a_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
 ----
@@ -244,9 +229,6 @@ statement ok
 INSERT INTO g13_b VALUES
     (1, 'alpha', 'quick brown fox'),
     (2, 'beta',  'lazy yellow dog');
-
-statement ok
-VACUUM (REFRESH_TABLE) g13_b;
 
 query
 SELECT pk FROM g13_b_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
@@ -285,9 +267,6 @@ INSERT INTO g13_c VALUES
         '{"type":"Point","coordinates":[0.0, 0.0]}'),
     (2, '{"type":"Point","coordinates":[10.0, 20.0]}',
         '{"type":"Point","coordinates":[10.0, 20.0]}');
-
-statement ok
-VACUUM (REFRESH_TABLE) g13_c;
 
 query
 SELECT count(*) FROM g13_c_mix;
@@ -330,9 +309,6 @@ statement ok
 INSERT INTO g13_d VALUES
     (1, 'alpha', 'wonderful',   [1.0::FLOAT, 0.0::FLOAT, 0.0::FLOAT], 10, 'first'),
     (2, 'beta',  'magnificent', [0.0::FLOAT, 1.0::FLOAT, 0.0::FLOAT], 50, 'second');
-
-statement ok
-VACUUM (REFRESH_TABLE) g13_d;
 
 query
 SELECT pk, n, tag FROM g13_d_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
@@ -380,9 +356,6 @@ INSERT INTO g13_e VALUES
     (1, '"alpha"', '{"name":"a","lat":55.703900,"lng":37.615895}'),
     (2, '"beta"',  '{"name":"b","lat":55.704831,"lng":37.616297}');
 
-statement ok
-VACUUM (REFRESH_TABLE) g13_e;
-
 query
 SELECT pk FROM g13_e_mix WHERE j @@ ts_like('alpha') ORDER BY pk;
 ----
@@ -423,9 +396,6 @@ statement ok
 INSERT INTO g13_f VALUES
     (1, 'alpha', 'wonderful',   10),
     (2, 'beta',  'magnificent', 50);
-
-statement ok
-VACUUM (REFRESH_TABLE) g13_f;
 
 query
 SELECT pk FROM g13_f_mix WHERE v @@ ts_like('alpha') ORDER BY pk;
@@ -471,9 +441,6 @@ statement ok
 INSERT INTO g13_g VALUES
     (1, 'POINT(0 0)'::GEOMETRY('OGC:CRS84'),   'alpha', '{"meta":"first"}'),
     (2, 'POINT(10 20)'::GEOMETRY('OGC:CRS84'), 'beta',  '{"meta":"second"}');
-
-statement ok
-VACUUM (REFRESH_TABLE) g13_g;
 
 query
 SELECT pk, j FROM g13_g_mix WHERE v @@ ts_like('alpha') ORDER BY pk;

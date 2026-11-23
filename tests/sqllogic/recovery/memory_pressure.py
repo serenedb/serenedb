@@ -13,7 +13,7 @@ DIM = 8
 MAX_HITS = 4000
 LIMIT_STEPS_MB = (1, 2, 4, 8, 16, 32, 64, 128)
 WORDS = "['alpha', 'bravo', 'charlie', 'delta']"
-SEARCH = "storage = 'search', refresh_interval = 0, compaction_interval = 0"
+NO_COMPACTION = "compaction_interval = 0"
 
 
 def connect(port, db):
@@ -153,7 +153,7 @@ def maintenance_steps(model):
         for _ in range(3):
             cur.execute(f"INSERT INTO docs {doc_rows(model.ids(20), 20, 'seg')}")
             model.add(docs=20)
-            cur.execute("VACUUM (REFRESH_TABLE) docs")
+            cur.execute("VACUUM (FLUSH_TABLE) docs")
 
     def pending(cur):
         cur.execute(f"INSERT INTO docs {doc_rows(model.ids(50), 50, 'pend')}")
@@ -161,31 +161,31 @@ def maintenance_steps(model):
 
     return [Step("create index", create_index, prepare=drop_raw_index, verify=raw_index),
             Step("compact", lambda cur: (["VACUUM (COMPACT_TABLE) docs"], None), prepare=segments),
-            Step("refresh", lambda cur: (["VACUUM (REFRESH_TABLE) docs"], None), prepare=pending)]
+            Step("flush", lambda cur: (["VACUUM (FLUSH_TABLE) docs"], None), prepare=pending)]
 
 
 def setup(cur, model, copy_file):
     cur.execute("CREATE TEXT SEARCH DICTIONARY mp_words AS split_text_csv(' ') "
                 "WITH (frequency, position)")
     cur.execute(f"CREATE TABLE docs (id BIGINT, body TEXT, ver INT, emb FLOAT[{DIM}]) "
-                f"WITH ({SEARCH})")
+                f"WITH ({NO_COMPACTION})")
     cur.execute("CREATE INDEX docs_idx ON docs USING inverted "
                 "(id, body mp_words, emb ivf (metric = 'l2'))")
-    cur.execute(f"CREATE TABLE notes (id BIGINT, body TEXT) WITH ({SEARCH})")
-    cur.execute(f"CREATE TABLE raw (id BIGINT, body TEXT) WITH ({SEARCH})")
+    cur.execute(f"CREATE TABLE notes (id BIGINT, body TEXT) WITH ({NO_COMPACTION})")
+    cur.execute(f"CREATE TABLE raw (id BIGINT, body TEXT) WITH ({NO_COMPACTION})")
     cur.execute("INSERT INTO raw SELECT i, 'raw ' || i || ' ' || "
                 f"{WORDS}[i % 4 + 1] FROM range(2000) t(i)")
     cur.execute(f"COPY ({doc_rows(10 ** 9, 300, 'copy')}) TO '{copy_file}' (FORMAT PARQUET)")
     ensure_docs(cur, model, 500)
     ensure_notes(cur, model, 500)
-    cur.execute("VACUUM (REFRESH_TABLE) docs")
-    cur.execute("VACUUM (REFRESH_TABLE) notes")
+    cur.execute("VACUUM (FLUSH_TABLE) docs")
+    cur.execute("VACUUM (FLUSH_TABLE) notes")
     cur.execute("CHECKPOINT")
 
 
 def check(cur, model):
     problems = []
-    for sql in ("VACUUM (REFRESH_TABLE) docs", "VACUUM (REFRESH_TABLE) notes"):
+    for sql in ("VACUUM (FLUSH_TABLE) docs", "VACUUM (FLUSH_TABLE) notes"):
         try:
             cur.execute(sql)
         except psycopg.Error as e:
@@ -341,15 +341,15 @@ def released(cur, model):
     rows = 200000
     cur.execute(f"INSERT INTO docs {doc_rows(model.ids(rows), rows, 'big')}")
     model.add(docs=rows)
-    cur.execute("VACUUM (REFRESH_TABLE) docs")
+    cur.execute("VACUUM (FLUSH_TABLE) docs")
     inserted = allocator_memory(cur)
     cur.execute(f"DELETE FROM docs WHERE id IN (SELECT id FROM docs ORDER BY id DESC LIMIT {rows})")
     model.add(docs=-rows)
-    cur.execute("VACUUM (REFRESH_TABLE) docs")
+    cur.execute("VACUUM (FLUSH_TABLE) docs")
     grown = allocator_memory(cur) - inserted
     print(f"released: a DELETE of {rows} rows grew memory by {grown} bytes", file=sys.stderr)
     if grown >= 2 ** 20:
-        return [f"a DELETE of {rows} rows still holds {grown} bytes after its refresh"]
+        return [f"a DELETE of {rows} rows still holds {grown} bytes after its flush"]
     return check(cur, model)
 
 
@@ -367,7 +367,7 @@ def restart(port, db, model):
         except psycopg.OperationalError:
             time.sleep(0.5)
     else:
-        return ["serened did not come back after the restart"]
+        return ["serenedb did not come back after the restart"]
     with conn, conn.cursor() as cur:
         return check(cur, model)
 

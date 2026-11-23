@@ -47,10 +47,12 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <filesystem>
 #include <fstream>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
@@ -60,8 +62,6 @@
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/offsets/make.hpp>
 #include <iresearch/search/queries/phrase_query.hpp>
-#include <iresearch/store/data_output.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/query_memory.hpp>
 #include <iresearch/utils/string.hpp>
@@ -74,6 +74,7 @@
 #include <utility>
 #include <vector>
 
+#include "index/test_index_writer.hpp"
 #include "insert_field.hpp"
 #include "test_resources.hpp"
 #include "text_chain.hpp"
@@ -98,7 +99,7 @@ struct IField {
   virtual irs::IndexFeatures GetIndexFeatures() const = 0;
   virtual irs::analysis::Tokenizer& GetTokens() const = 0;
   virtual std::string_view Value() const = 0;
-  virtual bool Write(irs::DataOutput& out) const = 0;
+  virtual bool Write(duckdb::WriteStream& out) const = 0;
 };
 
 class FieldBase : public IField {
@@ -134,7 +135,7 @@ class TextField final : public FieldBase {
 
   std::string_view Value() const final { return _value; }
 
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
  private:
   irs::analysis::Tokenizer::ptr _stream;
@@ -359,8 +360,7 @@ constexpr irs::PosAttr::value_t kSlopValues[] = {1, 2, 5};
 
 struct Corpus {
   std::filesystem::path dir_path;
-  std::unique_ptr<irs::MMapDirectory> dir;
-  irs::DirectoryReader reader;
+  irs::CompositeReader reader;
 };
 
 [[noreturn]] void Die(const char* msg) {
@@ -391,15 +391,15 @@ Corpus BuildIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
+  tests::IndexDir dir{*db, fs, root};
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -430,11 +430,8 @@ Corpus BuildIndex() {
     inserted, data_path.string().c_str());
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, reader_opts};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  auto rdr = tests::OpenReader(dir, reader_opts);
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
 // Builds a synthetic corpus where every document is 30x "zzcmn", one
@@ -447,15 +444,15 @@ Corpus BuildSyntheticIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
+  tests::IndexDir dir{*db, fs, root};
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -490,11 +487,8 @@ Corpus BuildSyntheticIndex() {
                kSyntheticDocs);
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, reader_opts};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  auto rdr = tests::OpenReader(dir, reader_opts);
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
 // Builds a dense 3-term corpus: each doc is "aaa bbb ccc" repeated
@@ -507,15 +501,15 @@ Corpus BuildDense3Index() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
+  tests::IndexDir dir{*db, fs, root};
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -546,11 +540,8 @@ Corpus BuildDense3Index() {
                kDense3Docs, kDense3Reps);
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, reader_opts};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  auto rdr = tests::OpenReader(dir, reader_opts);
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
 // Single-term corpus: each doc is "aaa" repeated kAllSameReps times.
@@ -560,15 +551,15 @@ Corpus BuildAllSameIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
+  tests::IndexDir dir{*db, fs, root};
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -599,11 +590,8 @@ Corpus BuildAllSameIndex() {
                kAllSameDocs, kAllSameReps);
 
   irs::IndexReaderOptions reader_opts;
-  reader_opts.db = db;
-  auto rdr = irs::DirectoryReader{*dir, reader_opts};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  auto rdr = tests::OpenReader(dir, reader_opts);
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
 // Never-matching dense pair corpus: each doc is kFarApartReps of "aaa",
@@ -617,15 +605,15 @@ Corpus BuildFarApartIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
+  auto* db = &::irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
+  tests::IndexDir dir{*db, fs, root};
 
   irs::IndexWriterOptions writer_opts;
-  auto* db = &::irs::DuckDBEngine::Instance().instance();
-  writer_opts.db = db;
-  writer_opts.reader_options.db = db;
 
   auto writer =
-    irs::IndexWriter::Make(*dir, irs::kOmCreate, std::move(writer_opts));
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(writer_opts));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -662,11 +650,8 @@ Corpus BuildFarApartIndex() {
                kFarApartDocs, kFarApartReps, kFarApartGap, kFarApartReps);
 
   irs::IndexReaderOptions reader_opts2;
-  reader_opts2.db = db;
-  auto rdr2 = irs::DirectoryReader{*dir, reader_opts2};
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr2)};
+  auto rdr2 = tests::OpenReader(dir, reader_opts2);
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr2)};
 }
 
 const Corpus& GetCorpus() {
@@ -894,7 +879,7 @@ struct BenchPrepared {
 };
 
 template<typename Filter>
-BenchPrepared Prepare(const Filter& q, const irs::DirectoryReader& rdr) {
+BenchPrepared Prepare(const Filter& q, const irs::CompositeReader& rdr) {
   BenchPrepared out;
   out.queries.reserve(rdr.size());
   for (const auto& sub : rdr) {
@@ -905,7 +890,7 @@ BenchPrepared Prepare(const Filter& q, const irs::DirectoryReader& rdr) {
 }
 
 template<typename MakeFn>
-void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
+void BenchPrepare(benchmark::State& state, const irs::CompositeReader& rdr,
                   MakeFn make) {
   {
     auto q = make();
@@ -934,7 +919,7 @@ void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
 
 template<typename MakeFn>
 [[gnu::noinline]] void BenchExecuteOnly(benchmark::State& state,
-                                        const irs::DirectoryReader& rdr,
+                                        const irs::CompositeReader& rdr,
                                         MakeFn make) {
   auto q = make();
   auto prepared = Prepare(q, rdr);
@@ -1032,7 +1017,7 @@ irs::BooleanFilter MakeDisjunctionEquivalentVariadic4(
 // pos->next() per matched doc.
 template<typename PhraseQueryT = irs::FixedPhraseQuery, typename MakeFn>
 [[gnu::noinline]] void BenchExecuteWithOffsets(benchmark::State& state,
-                                               const irs::DirectoryReader& rdr,
+                                               const irs::CompositeReader& rdr,
                                                MakeFn make) {
   auto q = make();
   auto prepared = Prepare(q, rdr);
@@ -1465,7 +1450,7 @@ void RegisterAll() {
 static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
   // iresearch indexes require a process-wide duckdb::DatabaseInstance,
-  // wired into IndexWriterOptions::db / IndexReaderOptions::db. The
+  // passed to IndexWriter::Make and CompositeReader. The
   // corpora are built lazily inside the benchmark lambdas, so the engine
   // must be up before RunSpecifiedBenchmarks. Not torn down here: the
   // cached Corpus statics (reader + directory) outlive main and touch the

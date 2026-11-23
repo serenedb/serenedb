@@ -1,17 +1,28 @@
 target_sources(
     sereneserver
     PRIVATE
+        base_catalog.cpp
         boot.cpp
         catalog.cpp
         cluster.cpp
         database_directory.cpp
+        dependency.cpp
+        entry_set.cpp
+        foreign_database.cpp
+        log.cpp
+        record.cpp
+        schema.cpp
+        secret_store.cpp
+        transaction.cpp
         entry/database.cpp
         entry/foreign_server.cpp
         entry/inverted_index.cpp
         entry/job.cpp
+        entry/replication_lsn.cpp
         entry/role.cpp
         entry/search_table.cpp
         entry/subscription.cpp
         entry/system_table.cpp
+        entry/tablespace.cpp
         entry/tokenizer.cpp
 )

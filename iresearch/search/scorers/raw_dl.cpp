@@ -24,11 +24,12 @@
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
@@ -71,6 +72,17 @@ struct RawDLScore : public ScoreOperatorOf<RawDLScore<HasScale>> {
 
 }  // namespace
 
+void RawDL::Explain(const ScoreContext& ctx, const explain::SlotStats*,
+                    explain::Node& out) const {
+  if (!explain::FreqOf(ctx)) {
+    explain::ExplainNoFreq(ctx, false, out);
+    return;
+  }
+  explain::AddBoost(out, ctx.boost);
+  explain::AddLength(out, ctx);
+  explain::AddScale(out, ctx, "boost * dl", "scale * boost * dl");
+}
+
 ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {
   if (!irs::get<FreqBlockAttr>(ctx.doc_attrs)) {
     return ScoreFunction::Default();
@@ -80,7 +92,7 @@ ScoreFunction RawDL::PrepareScorer(const ScoreContext& ctx) const {
 
   const auto* scale = ScaleOf(ctx);
 
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+  return Resolve(scale != nullptr, [&]<bool HasScale>() {
     return ScoreFunction::Make<RawDLScore<HasScale>>(ctx.memory, ctx.boost,
                                                      norm, scale);
   });

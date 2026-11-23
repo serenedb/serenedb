@@ -351,8 +351,14 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
 
   std::optional<int64_t> arg_slop;
   for (const auto& child : func.GetChildren()) {
-    if (!(child->GetAlias() == "slop")) {
+    if (child->GetAlias().empty()) {
       continue;
+    }
+    if (!(child->GetAlias() == "slop")) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_phrase has no argument named ",
+                              child->GetAlias().GetIdentifierName()),
+                      ERR_HINT(kSyntaxHint));
     }
     int64_t slop_raw = 0;
     GetIntArg(*child, slop_raw, {"ts_phrase slop", kSyntaxHint});
@@ -457,10 +463,8 @@ void EmitPhraseTokens(irs::ByPhraseOptions& options, const FilterContext& ctx,
   auto& analyzer = PhraseAnalyzer(ctx, column_info);
   irs::ValueAnalyzer value_analyzer;
   PositionedTokens tokens{analyzer.Traits()};
-  if (!value_analyzer.Analyze(
-        analyzer,
-        duckdb::string_t{text.data(), static_cast<uint32_t>(text.size())},
-        tokens)) {
+  if (!value_analyzer.Analyze(analyzer, duckdb::string_t::Unsafe(text),
+                              tokens)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("ts_phrase failed to analyse '", text, "'"),
                     ERR_HINT("The column's analyzer rejected the input text."));

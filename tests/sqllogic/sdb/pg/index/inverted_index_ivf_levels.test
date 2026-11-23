@@ -16,9 +16,6 @@ CREATE INDEX lvl3_idx ON lvl3 USING inverted(pk, emb ivf (metric = 'l2', quant =
 statement ok
 INSERT INTO lvl3 SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(10000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) lvl3;
-
 query
 SELECT pk FROM lvl3_idx ORDER BY emb <-> [0.0, 0.0]::FLOAT[2] LIMIT 1;
 ----
@@ -78,9 +75,6 @@ CREATE INDEX samp_idx ON samp USING inverted(pk, emb ivf (metric = 'l2', quant =
 statement ok
 INSERT INTO samp SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(2000) t(i);
 
-statement ok
-VACUUM (REFRESH_TABLE) samp;
-
 query
 SELECT pk FROM samp_idx ORDER BY emb <-> [500.0, 0.0]::FLOAT[2] LIMIT 1;
 ----
@@ -122,7 +116,7 @@ statement ok
 INSERT INTO mrg SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(1000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) mrg;
+VACUUM (FLUSH_TABLE) mrg;
 
 # change the session GUC AFTER the index exists
 statement ok
@@ -131,9 +125,6 @@ RESET sdb_ivf_posting_size;
 # batch 2 -> second segment; still uses the index's captured posting_size (2)
 statement ok
 INSERT INTO mrg SELECT i, [i::FLOAT, 0.0::FLOAT]::FLOAT[2] FROM range(1000, 2000) t(i);
-
-statement ok
-VACUUM (REFRESH_TABLE) mrg;
 
 query
 SELECT pk FROM mrg_idx ORDER BY emb <-> [42.0, 0.0]::FLOAT[2] LIMIT 1;

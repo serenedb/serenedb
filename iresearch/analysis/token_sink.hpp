@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <bit>
 #include <cstdint>
@@ -40,6 +38,7 @@
 #include "iresearch/analysis/text/term_view.hpp"
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/string.hpp"
@@ -65,19 +64,14 @@ struct DispatchValues {
   static constexpr auto kValues = magic_enum::enum_values<T>();
 };
 
-template<typename T, size_t I, typename With>
-IRS_FORCE_INLINE constexpr decltype(auto) ResolveEnum(T value, With& with) {
-  constexpr auto kValues = DispatchValues<T>::kValues;
-  constexpr auto kValue = kValues[I];
-  if constexpr (I + 1 == kValues.size()) {
-    return with(std::integral_constant<T, kValue>{});
-  } else {
-    if (value == kValue) {
-      return with(std::integral_constant<T, kValue>{});
-    }
-    return ResolveEnum<T, I + 1>(value, with);
-  }
-}
+template<typename T>
+struct ValuesAxis : ArrayAxis<DispatchValues<T>::kValues> {};
+
+template<>
+struct ValuesAxis<bool> : BoolAxis {};
+
+template<>
+struct ValuesAxis<TokenLayout> : LayoutAxis {};
 
 template<typename Visitor>
 IRS_FORCE_INLINE constexpr decltype(auto) ResolveValues(Visitor&& visit) {
@@ -97,19 +91,10 @@ IRS_FORCE_INLINE constexpr decltype(auto) ResolveValues(Visitor&& visit,
         rest...);
     }
   };
-  if constexpr (std::is_same_v<T, bool>) {
-    return value ? with(std::true_type{}) : with(std::false_type{});
-  } else if constexpr (std::is_same_v<T, TokenLayout>) {
-    return ResolveLayout(
-      value, [&]<TokenLayout L>() IRS_FORCE_INLINE -> decltype(auto) {
-        return with(std::integral_constant<TokenLayout, L>{});
-      });
-  } else {
-    static_assert(std::is_enum_v<T>);
-    SDB_ASSERT(absl::c_contains(DispatchValues<T>::kValues, value),
-               "fill dispatch: option enum out of range");
-    return ResolveEnum<T, 0>(value, with);
-  }
+  return Resolve<ValuesAxis<T>>(value,
+                                [&]<T V> IRS_FORCE_INLINE -> decltype(auto) {
+                                  return with(std::integral_constant<T, V>{});
+                                });
 }
 
 template<typename Impl, typename Fill, typename... Lead>

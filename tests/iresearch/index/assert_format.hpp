@@ -29,6 +29,7 @@
 #include <unordered_set>
 
 #include "doc_generator.hpp"
+#include "index_dir.hpp"
 
 namespace tests {
 
@@ -235,12 +236,12 @@ void IndexSegment::insert(IndexedFieldIterator indexed_begin,
 
 using index_t = std::vector<IndexSegment>;
 
-void AssertIndex(irs::IndexReader::ptr actual_index,
+void AssertIndex(const irs::IndexReader& actual_index,
                  const index_t& expected_index, irs::IndexFeatures features,
                  size_t skip = 0,
                  const irs::RegexpAcceptor* acceptor = nullptr);
 
-void AssertIndex(const irs::Directory& dir, const index_t& index,
+void AssertIndex(const IndexDir& dir, const index_t& index,
                  irs::IndexFeatures features, size_t skip = 0,
                  const irs::RegexpAcceptor* acceptor = nullptr);
 

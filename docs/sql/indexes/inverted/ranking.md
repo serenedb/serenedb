@@ -47,12 +47,15 @@ The `^` operator multiplies a sub-query's contribution to the score, so you can 
 
 ## Top-K queries and WAND pruning
 
-The common shape `ORDER BY <scorer> DESC LIMIT k` returns the best `k` matches. Building the index with the [`optimize_top_k` index option](../../statements/create_index/inverted.md#index-options) enables **WAND** pruning, which skips candidates that provably cannot reach the top `k`:
+The common shape `ORDER BY <scorer> DESC LIMIT k` returns the best `k` matches. Creating the table with the [`optimize_top_k` table option](../../statements/create_table/index.md#table-options) enables **WAND** pruning, which skips candidates that provably cannot reach the top `k`; an index over a view takes the option in its own [`CREATE INDEX ... WITH`](../../statements/create_index/inverted.md#index-options):
 
 ```sql
-CREATE INDEX movies_idx ON movies
-    USING inverted (id, title ranking_dict, description ranking_dict, genre)
-    WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE TABLE movies (
+    id INTEGER PRIMARY KEY,
+    title VARCHAR,
+    description VARCHAR,
+    genre VARCHAR
+) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 ```
 
 <SqlLogicTest id="sql/indexes/inverted/ranking/example_003" />
@@ -60,10 +63,10 @@ CREATE INDEX movies_idx ON movies
 Pruning engages only when all of the following hold; otherwise the query still runs correctly, just without the optimization:
 
 - the query is `ORDER BY <scorer>(idx.tableoid) DESC` with a `LIMIT`;
-- the scorer can use the score bounds the index stores (see the table below);
-- the filter is a single term, an `OR` of terms that any one term satisfies, an `AND` of terms, one or more terms with `AND NOT` exclusions (`a AND NOT b`), one required term with optional terms that only add to the score (`to_tsquery('+fox quick')`), or a phrase without slop. An `AND` that also holds such `OR`s, like `(a OR b) AND (c OR d)`, is pruned when enough rows match for pruning to pay off. An `OR` prunes only when the scores of its terms add up: one that keeps the best score of its terms is not pruned, such as a fuzzy [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein) match that expands to several terms, a word whose dictionary gives synonyms, or a group with [`::merge('max')`](../../functions/search/scoring.md#merge). Nor are a phrase with slop or with a fuzzy `ts_levenshtein` part that matches words other than its own, an `OR` with a phrase or an `AND` among its branches, and an `OR` that needs more than one but not all of its terms ([`ts_any(list, k)`](../../functions/search/full-text.md#ts_any) or [`::min_match(k)`](../../functions/search/full-text.md#min-match) with `k` above 1). A phrase on a column without `position` ([phrases without positions](./full-text-search.md#phrases-without-positions)) is pruned when at least one of its parts is a plain word, it has no `[min, max]` gaps, and its dictionary puts one token at each position, which synonym and n-gram dictionaries don't.
+- the scorer can use the stored score bounds (see the table below);
+- the filter is a single term, an `OR` of terms that any one term satisfies, an `AND` of terms, one or more terms with `AND NOT` exclusions (`a AND NOT b`), one required term with optional terms that only add to the score (`to_tsquery('+fox quick')`), or a phrase without slop. Such an `OR` may also hold [pattern matches](../../functions/search/scoring.md#patterns) that score their constant, the default, as in `'climate'::tsquery || ts_starts_with('clim')`. An `AND` that also holds such `OR`s, like `(a OR b) AND (c OR d)`, is pruned when enough rows match for pruning to pay off. An `OR` prunes only when the scores of its terms add up: one that keeps the best score of its terms is not pruned, such as a fuzzy [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein) match that expands to several terms, a word whose dictionary gives synonyms, or a group with [`::merge('max')`](../../functions/search/scoring.md#merge). Nor are a phrase with slop or with a fuzzy `ts_levenshtein` part that matches words other than its own, an `OR` with a phrase or an `AND` among its branches, and an `OR` that needs more than one but not all of its terms ([`ts_any(list, k)`](../../functions/search/full-text.md#ts_any) or [`::min_match(k)`](../../functions/search/full-text.md#min-match) with `k` above 1). A phrase on a column without `position` ([phrases without positions](./full-text-search.md#phrases-without-positions)) is pruned when at least one of its parts is a plain word, it has no `[min, max]` gaps, and its dictionary puts one token at each position, which synonym and n-gram dictionaries don't.
 
-The index stores the kind of score bound that the scorer named in `optimize_top_k` needs, and every scorer that needs the same kind can use it. So `lm_dirichlet` with another `mu`, or `BM25` with another `k1`, prunes too:
+`optimize_top_k` stores the kind of score bound that the scorer it names needs, and every scorer that needs the same kind can use it. So `lm_dirichlet` with another `mu`, or `BM25` with another `k1`, prunes too:
 
 | `optimize_top_k` names | `ORDER BY` scorers that prune |
 | :--- | :--- |
@@ -72,7 +75,11 @@ The index stores the kind of score bound that the scorer named in `optimize_top_
 | `lm_dirichlet` or `dfi` | `lm_dirichlet`, `dfi` |
 | `BM25` with any other `b` | `BM25` with the same `b` |
 
-`BM25` with `k1 = 0`, `indri_dirichlet`, `raw_boost`, `raw_dl`, `idf` and `constant` have no score bounds, so they never prune, neither in `ORDER BY` nor in `optimize_top_k`.
+`BM25` with `k1 = 0`, `indri_dirichlet`, `raw_boost`, `raw_dl`, `idf` and `constant` have no score bounds, so naming them in `optimize_top_k` stores none, and ranking by them never uses WAND pruning.
+
+Without WAND pruning (no `optimize_top_k`, or an `ORDER BY` scorer that can't use the stored bounds), a ranked query with a `LIMIT` still stops once it has `k` rows when every match gets the same score, as with a [`ts_like`](../../functions/search/full-text.md#ts_like) pattern. A phrase without slop still skips the rows where its words occur too few times to reach the top `k`. On a column with `norm`, that skip takes a row where the phrase matches `n` times to hold at least `n` positions. A phrase with a `[min, max]` gap counts every combination of positions that fits, so `ts_phrase('a', [0, 4], 'b')` matches `a a a b b b` 9 times in 6 positions, and such a row can be skipped although it ranks higher; with `sdb_disable_top_k_optimization` on, it ranks correctly.
+
+The bounds of `lm_dirichlet` and `dfi` require that no term occurs in a row more often than the row's `norm` counts positions. A dictionary that emits one term more than once at a position, such as a union whose parts produce the same token (`[split_text_csv(' '), keyword()]` on a one-word value), breaks that, and pruning can then skip the best row; without `optimize_top_k`, or with `sdb_disable_top_k_optimization` on, such a column ranks correctly.
 
 `EXPLAIN` shows `Top: k, optimized` on the scan (`Top: k, offset n, optimized` when the query has an `OFFSET`) when the first two conditions hold, plus a `Bounds:` row that names the index's scorer when it differs from the `ORDER BY` scorer; it doesn't check the filter's shape. The scan returns the answer rows already ranked, so no separate `TOP_N` operator sits above it. The [`sdb_disable_top_k_optimization` session setting](./maintenance.md#session-settings) turns it off at query time.
 

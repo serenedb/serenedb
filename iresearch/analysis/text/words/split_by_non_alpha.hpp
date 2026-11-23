@@ -231,6 +231,7 @@ IRS_FORCE_INLINE void ForEachNonSpaceRun(const byte_type* data, size_t size,
 }
 
 #if defined(__x86_64__)
+
 namespace detail {
 
 IRS_TARGET_AVX512 IRS_FORCE_INLINE inline __m512i Load64UpTo(
@@ -516,6 +517,7 @@ IRS_FORCE_INLINE void ForEachAlnumRun(const byte_type* data, size_t size,
 }
 
 #if defined(__x86_64__)
+
 namespace detail {
 
 using Block64 = uint8_t __attribute__((vector_size(64)));

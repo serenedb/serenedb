@@ -29,12 +29,14 @@
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/fs_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <string>
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
+#include "test_index_writer.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 
@@ -120,9 +122,9 @@ TEST(InverterOracleTest, WriteDeterministicIndex) {
   std::filesystem::remove_all(out_dir);
   std::filesystem::create_directories(out_dir);
 
-  FSDirectory dir{out_dir};
-  auto writer =
-    IndexWriter::Make(dir, kOmCreate, irs::tests::DefaultWriterOptions());
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(), out_dir};
+  auto writer = ::tests::IndexWriter::Make(dir, ::tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
   ASSERT_NE(nullptr, writer);
 
   constexpr field_id kText = 1;

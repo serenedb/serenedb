@@ -30,8 +30,12 @@
 
 namespace irs {
 
-WriteContext::WriteContext(duckdb::DatabaseInstance& db, IndexOutput& out)
-  : BlockManager{db, duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE}, _out{&out} {}
+WriteContext::WriteContext(duckdb::DatabaseInstance& db,
+                           duckdb::WriteStream& out,
+                           duckdb::idx_t block_alloc_size)
+  : BlockManager{db, block_alloc_size,
+                 duckdb::Storage::DEFAULT_BLOCK_HEADER_SIZE},
+    _out{&out} {}
 
 WriteContext::~WriteContext() = default;
 
@@ -43,7 +47,7 @@ void WriteContext::WriteString(
   const auto len = string.GetSize();
   SDB_ENSURE(len <= std::numeric_limits<uint32_t>::max(),
              "string too long for overflow format");
-  _out->WriteU32(len);
+  _out->Write<uint32_t>(len);
   _out->WriteData(reinterpret_cast<const byte_type*>(string.GetData()), len);
 }
 

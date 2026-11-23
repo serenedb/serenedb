@@ -32,16 +32,16 @@
 
 namespace irs {
 
-size_t MinMatchCount(size_t terms_count, float_t threshold) noexcept {
+size_t MinMatchCount(size_t terms_count, float threshold) noexcept {
   threshold = std::clamp(threshold, 0.f, 1.f);
-  return std::clamp(static_cast<size_t>(
-                      std::ceil(static_cast<float_t>(terms_count) * threshold)),
-                    size_t{1}, terms_count);
+  return std::clamp(
+    static_cast<size_t>(std::ceil(static_cast<float>(terms_count) * threshold)),
+    size_t{1}, terms_count);
 }
 
 QueryBuilder::ptr ByNGramSimilarity::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id field_name,
-  DictRef dict, const std::vector<irs::bstring>& ngrams, float_t threshold,
+  DictRef dict, const std::vector<irs::bstring>& ngrams, float threshold,
   score_t boost) {
   SDB_ASSERT(irs::field_limits::valid(field_name));
   SDB_ASSERT(!ngrams.empty());
@@ -113,6 +113,16 @@ PrepareCollector::ptr ByNGramSimilarity::MakeCollectorImpl(
     return std::make_unique<ByTermsCollector>(scorer, 1, stats, threads);
   }
   return std::make_unique<SlotsCollector>(scorer, terms_count, stats, threads);
+}
+
+void ByNGramSimilarity::ExplainStats(const PrepareCollector* collector,
+                                     explain::StatsIndex& out) const {
+  if (collector == nullptr) {
+    return;
+  }
+  const auto& ngrams = options().ngrams;
+  collector->Describe(
+    field_id(), [&](size_t i) { return bytes_view{ngrams[i]}; }, out);
 }
 
 }  // namespace irs

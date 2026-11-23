@@ -26,14 +26,14 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <memory>
 #include <vector>
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/types.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -227,11 +227,20 @@ class BlockIndex {
     return PairAt(_run_bound, r);
   }
 
-  uint32_t Find(uint32_t from, doc_id_t target) const noexcept {
-    const auto n = _blocks;
-    if (from >= n || Last(from) >= target) {
+  IRS_FORCE_INLINE uint32_t Find(uint32_t from,
+                                 doc_id_t target) const noexcept {
+    if (from >= _blocks || Last(from) >= target) {
       return from;
     }
+    return FindAfter(from, target);
+  }
+
+ private:
+  static constexpr uint32_t kWindow = 64;
+
+  IRS_NO_INLINE uint32_t FindAfter(uint32_t from,
+                                   doc_id_t target) const noexcept {
+    const auto n = _blocks;
     if (_narrow) {
       return FindNarrow(from, target);
     }
@@ -271,9 +280,6 @@ class BlockIndex {
     }
     return b;
   }
-
- private:
-  static constexpr uint32_t kWindow = 64;
 
   doc_id_t RunBase(uint32_t r) const noexcept {
     return r == 0 ? _base : _run_last[r - 1];
@@ -339,9 +345,11 @@ class BlockIndex {
   bool _narrow_bounds = false;
 };
 
+template<typename InputType>
 class BlockCursor {
  public:
-  static constexpr uint64_t kPrefetchBytes = 4 * file_utils::kPage;
+  static constexpr uint64_t kPrefetchBytes =
+    4 * duckdb::PageResidency::PAGE_SIZE;
 
   void Arm(const PostingMeta& meta, BlockIndexShape shape) noexcept {
     SDB_ASSERT(meta.docs_count > doc_limits::kBlockSize);
@@ -394,18 +402,28 @@ class BlockCursor {
     return _block == 0 ? doc_limits::invalid() : _index.Last(_block - 1);
   }
 
+  bool Pending() const noexcept { return _pending; }
+
+  uint32_t NextBlock(uint32_t left) const noexcept {
+    SDB_ASSERT(left <= _docs_count);
+    return (_docs_count - left) / doc_limits::kBlockSize;
+  }
+
+  uint64_t BlockStart(uint32_t block) const noexcept {
+    SDB_ASSERT(!_pending && block < _index.Size());
+    return _doc_start + (block == 0 ? 0 : _index.End(block - 1));
+  }
+
   const BlockIndex& Index() const noexcept { return _index; }
 
-  template<typename Input>
-  const BlockIndex& Loaded(Input& in) {
+  const BlockIndex& Loaded(const InputType& in) {
     if (_pending) [[unlikely]] {
       Load(in);
     }
     return _index;
   }
 
-  template<typename Input>
-  uint32_t Seek(doc_id_t target, Input& in) {
+  uint32_t Seek(doc_id_t target, const InputType& in) {
     if (_pending) [[unlikely]] {
       Load(in);
     }
@@ -424,40 +442,34 @@ class BlockCursor {
     return _docs_count - b * doc_limits::kBlockSize;
   }
 
-  template<typename Input>
-  void Load(Input& in) {
+  void Load(const InputType& in) {
     _pending = false;
     const auto blocks = BlockIndex::Blocks(_docs_count);
-    const auto pad = BlockIndex::Pad(_offs + 1);
-    if (in.GetType() == DataInput::Type::BytesViewInput) {
-      const auto& view = static_cast<const BytesViewInput&>(in);
-      const auto* const p = view.At(_offs);
-      const auto flags = p[0];
-      const auto extent = 1 + pad + BlockIndex::Bytes(blocks, _shape, flags);
-      if (extent > kPrefetchBytes && !view.Resident(_offs + extent - 1, 1)) {
-        view.Prefetch(_offs, extent);
+    const auto data = _offs + 1 + BlockIndex::Pad(_offs + 1);
+    const byte_type* index;
+    byte_type flags;
+    if constexpr (InputType::CONTIGUOUS) {
+      flags = in.Data()[_offs];
+      const auto& file = *in.File().get();
+      if (const auto extent =
+            data + BlockIndex::Bytes(blocks, _shape, flags) - _offs;
+          extent > kPrefetchBytes && !file.IsResident(_offs + extent - 1, 1)) {
+        file.Prefetch(_offs, extent);
       }
-      const auto* const data = p + 1 + pad;
-      if (reinterpret_cast<uintptr_t>(data) % sizeof(uint32_t) == 0)
-        [[likely]] {
-        _index.Reset(data, blocks, _shape, flags);
-        return;
-      }
+      index = in.Data() + data;
+    } else {
+      flags = *in.Pin(_offs, 1).Ptr();
+      _pin = in.PinShared(data, BlockIndex::Bytes(blocks, _shape, flags));
+      index = _pin.Ptr();
     }
-    auto dup = in.Dup();
-    dup->Seek(_offs);
-    const auto flags = dup->ReadByte();
-    dup->Skip(pad);
-    const auto bytes = BlockIndex::Bytes(blocks, _shape, flags);
-    _owned = std::make_unique_for_overwrite<uint32_t[]>((bytes + 3) / 4);
-    auto* const data = reinterpret_cast<byte_type*>(_owned.get());
-    dup->ReadData(data, bytes);
-    _index.Reset(data, blocks, _shape, flags);
+    SDB_ASSERT(reinterpret_cast<uintptr_t>(index) % sizeof(uint32_t) == 0);
+    _index.Reset(index, blocks, _shape, flags);
   }
 
  private:
   BlockIndex _index;
-  std::unique_ptr<uint32_t[]> _owned;
+  [[no_unique_address]] utils::Need<!InputType::CONTIGUOUS, duckdb::FilePin>
+    _pin;
   uint64_t _doc_start = 0;
   uint64_t _pos_start = 0;
   uint64_t _pay_start = 0;
@@ -505,7 +517,7 @@ class BlockIndexWriter {
 
   uint32_t* Root() noexcept { return _root; }
 
-  void Write(IndexOutput& out, BlockIndexShape shape) const {
+  void Write(duckdb::WriteStream& out, BlockIndexShape shape) const {
     const auto n = Size();
     SDB_ASSERT(n != 0);
     const auto m = n - 1;
@@ -514,56 +526,58 @@ class BlockIndexWriter {
     SDB_ASSERT(!shape.bounds || _bound.size() == 2 * size_t{n});
     SDB_ASSERT(!shape.bounds || _run_bound.size() == 2 * size_t{r});
     const auto flags = Flags();
-    out.WriteByte(flags);
+    out.Write<byte_type>(flags);
     for (auto pad = BlockIndex::Pad(out.Position()); pad != 0; --pad) {
-      out.WriteByte(0);
+      out.Write<byte_type>(0);
     }
     if (shape.bounds) {
-      out.WriteU32(_root[0]);
-      out.WriteU32(_root[1]);
+      out.Write<uint32_t>(_root[0]);
+      out.Write<uint32_t>(_root[1]);
     }
     const bool narrow = (flags & BlockIndex::kNarrowRuns) != 0;
     if (narrow) {
-      out.WriteU32(RunBase(0));
+      out.Write<uint32_t>(RunBase(0));
     } else {
       for (const auto last : _last) {
-        out.WriteU32(last);
+        out.Write<uint32_t>(last);
       }
     }
     for (uint32_t i = 0; i != r; ++i) {
-      out.WriteU32(_last[std::min(n, (i + 1) * BlockIndex::kRun) - 1]);
+      out.Write<uint32_t>(_last[std::min(n, (i + 1) * BlockIndex::kRun) - 1]);
     }
     if (narrow) {
       for (uint32_t i = 0; i != r; ++i) {
-        out.WriteU32(static_cast<uint32_t>(RunEnd(i * BlockIndex::kRun)));
+        out.Write<uint32_t>(
+          static_cast<uint32_t>(RunEnd(i * BlockIndex::kRun)));
       }
       for (uint32_t k = 0, end = r * BlockIndex::kRun; k != end; ++k) {
         const auto first = k / BlockIndex::kRun * BlockIndex::kRun;
-        out.WriteU16(k < n ? static_cast<uint16_t>(_last[k] - RunBase(first))
-                           : std::numeric_limits<uint16_t>::max());
+        out.Write<uint16_t>(k < n
+                              ? static_cast<uint16_t>(_last[k] - RunBase(first))
+                              : std::numeric_limits<uint16_t>::max());
       }
     }
     const bool wide_end = (flags & BlockIndex::kWideEnd) != 0;
     const bool wide_group = (flags & BlockIndex::kWideGroup) != 0;
     const auto group = [&](uint64_t value) {
       if (wide_group) {
-        out.WriteU64(value);
+        out.Write<uint64_t>(value);
       } else {
-        out.WriteU32(static_cast<uint32_t>(value));
+        out.Write<uint32_t>(static_cast<uint32_t>(value));
       }
     };
     for (uint32_t k = 0; k != m; ++k) {
       if (narrow) {
-        out.WriteU16(static_cast<uint16_t>(
+        out.Write<uint16_t>(static_cast<uint16_t>(
           _end[k] - RunEnd(k / BlockIndex::kRun * BlockIndex::kRun)));
       } else if (wide_end) {
-        out.WriteU32(static_cast<uint32_t>(_end[k]));
+        out.Write<uint32_t>(static_cast<uint32_t>(_end[k]));
       } else {
-        out.WriteU16(static_cast<uint16_t>(_end[k]));
+        out.Write<uint16_t>(static_cast<uint16_t>(_end[k]));
       }
       if (shape.pos) {
         group(_pos_group[k]);
-        out.WriteU16(_pos_index[k]);
+        out.Write<uint16_t>(_pos_index[k]);
         if (shape.offs) {
           group(_pay_group[k]);
         }
@@ -572,9 +586,9 @@ class BlockIndexWriter {
     if (shape.bounds) {
       const auto bound = [&](uint32_t value) {
         if ((flags & BlockIndex::kNarrowBounds) != 0) {
-          out.WriteU16(static_cast<uint16_t>(value));
+          out.Write<uint16_t>(static_cast<uint16_t>(value));
         } else {
-          out.WriteU32(value);
+          out.Write<uint32_t>(value);
         }
       };
       for (const auto value : _bound) {

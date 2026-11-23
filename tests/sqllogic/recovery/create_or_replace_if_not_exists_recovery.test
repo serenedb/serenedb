@@ -180,7 +180,7 @@ connection w2
 statement error
 CREATE OR REPLACE VIEW coinr_v_ww AS SELECT 3 AS k;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coinr_v_ww"
+db error: ERROR: could not serialize access due to concurrent update of "coinr_v_ww"
 
 
 connection w2
@@ -258,9 +258,9 @@ CREATE VIEW coinr_t_dep_v AS SELECT a FROM coinr_t_dep;
 statement error
 CREATE OR REPLACE TABLE coinr_t_dep (z INT);
 ----
-db error: ERROR: Cannot drop entry "coinr_t_dep" because there are entries that depend on it.
-view "coinr_t_dep_v" depends on table "coinr_t_dep".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table coinr_t_dep because other objects depend on it
+DETAIL: view coinr_t_dep_v depends on table coinr_t_dep
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 statement ok
@@ -374,7 +374,7 @@ connection w2
 statement error
 CREATE TABLE IF NOT EXISTS coinr_t_race (b TEXT);
 ----
-db error: ERROR: Catalog write-write conflict on create with "coinr_t_race"
+db error: ERROR: could not serialize access due to concurrent update of "coinr_t_race"
 
 
 connection w1
@@ -410,7 +410,7 @@ connection w2
 statement error
 INSERT INTO coinr_t_ww VALUES (2);
 ----
-db error: ERROR: Failed to commit: Attempting to modify table "coinr_t_ww" but another transaction has no changes this table
+db error: ERROR: Attempting to write to table coinr_t_ww but another transaction is dropping it
 
 
 connection w1
@@ -555,7 +555,7 @@ connection w2
 statement error
 CREATE OR REPLACE MACRO coinr_m_ww(x) AS x + 3;
 ----
-db error: ERROR: Catalog write-write conflict on alter with "coinr_m_ww"
+db error: ERROR: could not serialize access due to concurrent update of "coinr_m_ww"
 
 
 connection w2
@@ -685,9 +685,9 @@ INSERT INTO coinr_s_user (v) VALUES ('first');
 statement error
 CREATE OR REPLACE SEQUENCE coinr_s_used START 100;
 ----
-db error: ERROR: Cannot drop entry "coinr_s_used" because there are entries that depend on it.
-table "coinr_s_user" depends on sequence "coinr_s_used".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop sequence coinr_s_used because other objects depend on it
+DETAIL: default value for column id of table coinr_s_user depends on sequence coinr_s_used
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # ----------------------------------------------------------------------
@@ -751,9 +751,9 @@ INSERT INTO coinr_ty_user VALUES ('on');
 statement error
 CREATE OR REPLACE TYPE coinr_ty_used AS ENUM ('other');
 ----
-db error: ERROR: Cannot drop entry "coinr_ty_used" because there are entries that depend on it.
-table "coinr_ty_user" depends on type "coinr_ty_used".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop type coinr_ty_used because other objects depend on it
+DETAIL: column s of table coinr_ty_user depends on type coinr_ty_used
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 # ----------------------------------------------------------------------
@@ -845,7 +845,7 @@ INSERT INTO coinr_trt4 VALUES (9);
 
 query
 SELECT trigger_name, table_name, event_manipulation, for_each
-  FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_trg%' ORDER BY trigger_name;
+  FROM sdb_triggers() WHERE trigger_name LIKE 'coinr_trg%' ORDER BY trigger_name;
 ----
 trigger_name	table_name	event_manipulation	for_each
 coinr_trg	coinr_trt	DELETE	ROW
@@ -948,7 +948,7 @@ hello,world
 # ----------------------------------------------------------------------
 
 statement ok
-CREATE TABLE coinr_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st (id INT, body TEXT);
 
 
 statement ok
@@ -956,7 +956,7 @@ INSERT INTO coinr_st VALUES (1, 'old one'), (2, 'old two');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st;
+VACUUM (FLUSH_TABLE) coinr_st;
 
 
 statement ok
@@ -964,7 +964,7 @@ BEGIN;
 
 
 statement ok
-CREATE OR REPLACE TABLE coinr_st (id INT, body TEXT, extra INT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st (id INT, body TEXT, extra INT);
 
 
 statement ok
@@ -976,7 +976,7 @@ COMMIT;
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st;
+VACUUM (FLUSH_TABLE) coinr_st;
 
 
 query
@@ -992,7 +992,7 @@ INSERT INTO coinr_st VALUES (12, 'new twelve', 120);
 
 
 statement ok
-CREATE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_rb (id INT, body TEXT);
 
 
 statement ok
@@ -1000,7 +1000,7 @@ INSERT INTO coinr_st_rb VALUES (1, 'kept one'), (2, 'kept two');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_rb;
+VACUUM (FLUSH_TABLE) coinr_st_rb;
 
 
 statement ok
@@ -1008,7 +1008,7 @@ BEGIN;
 
 
 statement ok
-CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT);
 
 
 statement ok
@@ -1020,7 +1020,7 @@ ROLLBACK;
 
 
 statement ok
-CREATE TABLE coinr_st_ine (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_ine (id INT, body TEXT);
 
 
 statement ok
@@ -1028,11 +1028,7 @@ INSERT INTO coinr_st_ine VALUES (1, 'kept');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_ine;
-
-
-statement ok
-CREATE TABLE IF NOT EXISTS coinr_st_ine (x INT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS coinr_st_ine (x INT);
 
 
 # A plain table replaced by a search table, and the other way round.
@@ -1045,7 +1041,7 @@ INSERT INTO coinr_st_to_search VALUES (1, 'plain');
 
 
 statement ok
-CREATE OR REPLACE TABLE coinr_st_to_search (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_to_search (id INT, body TEXT);
 
 
 statement ok
@@ -1053,11 +1049,7 @@ INSERT INTO coinr_st_to_search VALUES (2, 'searchable');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_to_search;
-
-
-statement ok
-CREATE TABLE coinr_st_to_plain (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_to_plain (id INT, body TEXT);
 
 
 statement ok
@@ -1065,7 +1057,7 @@ INSERT INTO coinr_st_to_plain VALUES (1, 'searchable');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_to_plain;
+VACUUM (FLUSH_TABLE) coinr_st_to_plain;
 
 
 statement ok
@@ -1094,7 +1086,7 @@ CREATE PERSISTENT SECRET IF NOT EXISTS coinr_sec (TYPE s3, KEY_ID 'coinr_k3', SE
 
 query
 SELECT name, persistent, secret_string LIKE '%key_id=coinr_k2;%region=coinr_r2;%' AS second_def
-  FROM duckdb_secrets() WHERE name LIKE 'coinr%';
+  FROM sdb_secrets() WHERE name LIKE 'coinr%';
 ----
 name	persistent	second_def
 coinr_sec	t	t
@@ -1150,7 +1142,7 @@ CREATE INDEX IF NOT EXISTS coinr_fr_idx ON coinr_fr_trt (a);
 
 
 statement ok
-CREATE TABLE IF NOT EXISTS coinr_fr_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS coinr_fr_st (id INT, body TEXT);
 
 
 statement ok
@@ -1264,9 +1256,9 @@ ROLLBACK;
 
 query
 SELECT (SELECT count(*) FROM pg_class WHERE relname LIKE 'coinr_gone%') AS rels,
-       (SELECT count(*) FROM duckdb_functions() WHERE function_name LIKE 'coinr_gone%') AS funcs,
+       (SELECT count(*) FROM sdb_functions() WHERE function_name LIKE 'coinr_gone%') AS funcs,
        (SELECT count(*) FROM pg_type WHERE typname LIKE 'coinr_gone%') AS types,
-       (SELECT count(*) FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_gone%') AS trgs,
+       (SELECT count(*) FROM sdb_triggers() WHERE trigger_name LIKE 'coinr_gone%') AS trgs,
        (SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'coinr_gone%') AS schemas;
 ----
 rels	funcs	types	trgs	schemas
@@ -1472,7 +1464,8 @@ INSERT INTO coinr_pk (id) VALUES (1);
 statement error
 INSERT INTO coinr_pk (id) VALUES (1);
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "coinr_pk_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 # The old table's indexes go with it, which frees their names.
@@ -1501,10 +1494,10 @@ INSERT INTO coinr_ixr VALUES (1, 1), (1, 2);
 
 
 query
-SELECT index_name, is_unique, sql FROM duckdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
+SELECT index_name, is_unique, sql FROM sdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
 ----
 index_name	is_unique	sql
-coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr(b);
+coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr USING inverted (b);
 
 
 # The serial column of a replaced table draws from a new sequence of its own,
@@ -1526,7 +1519,7 @@ INSERT INTO coinr_ser (v) VALUES ('new1');
 
 
 query
-SELECT id, v, (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
+SELECT id, v, (SELECT count(*) FROM sdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
   FROM coinr_ser;
 ----
 id	v	seqs
@@ -1559,7 +1552,7 @@ CREATE OR REPLACE TRIGGER coinr_tg AFTER INSERT ON coinr_tg_a FOR EACH STATEMENT
 
 
 query
-SELECT table_name, event_manipulation, for_each FROM duckdb_triggers()
+SELECT table_name, event_manipulation, for_each FROM sdb_triggers()
   WHERE trigger_name = 'coinr_tg' ORDER BY table_name;
 ----
 table_name	event_manipulation	for_each
@@ -1797,7 +1790,7 @@ CREATE TRIGGER coinr_trg_open AFTER DELETE ON coinr_trt_open FOR EACH ROW
 
 
 statement ok
-CREATE TABLE coinr_st_open (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_st_open (id INT, body TEXT);
 
 
 statement ok
@@ -1805,7 +1798,7 @@ INSERT INTO coinr_st_open VALUES (1, 'committed');
 
 
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_open;
+VACUUM (FLUSH_TABLE) coinr_st_open;
 
 
 connection w_open
@@ -1859,7 +1852,7 @@ CREATE OR REPLACE TRIGGER coinr_trg_open AFTER DELETE ON coinr_trt_open FOR EACH
 
 connection w_open
 statement ok
-CREATE OR REPLACE TABLE coinr_st_open (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_open (id INT, body TEXT);
 
 
 connection w_open
@@ -1984,12 +1977,12 @@ kept across replace	t	t
 connection after_replay
 query
 SELECT (SELECT count(*) FROM pg_class WHERE relname = 'coinr_v') AS v,
-       (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'coinr_t') AS t,
-       (SELECT count(*) FROM duckdb_functions() WHERE function_name = 'coinr_m') AS m,
-       (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name = 'coinr_s') AS s,
+       (SELECT count(*) FROM sdb_tables() WHERE table_name = 'coinr_t') AS t,
+       (SELECT count(*) FROM sdb_functions() WHERE function_name = 'coinr_m') AS m,
+       (SELECT count(*) FROM sdb_sequences() WHERE sequence_name = 'coinr_s') AS s,
        (SELECT count(*) FROM pg_type WHERE typname = 'coinr_ty') AS ty,
-       (SELECT count(*) FROM duckdb_triggers() WHERE trigger_name = 'coinr_trg') AS trg,
-       (SELECT count(*) FROM duckdb_tables() WHERE table_name = 'coinr_st') AS st;
+       (SELECT count(*) FROM sdb_triggers() WHERE trigger_name = 'coinr_trg') AS trg,
+       (SELECT count(*) FROM sdb_tables() WHERE table_name = 'coinr_st') AS st;
 ----
 v	t	m	s	ty	trg	st
 1	1	1	1	1	1	1
@@ -2009,7 +2002,7 @@ v_rb	v_ine	v_twice	v_open	v_ww
 
 connection after_replay
 query
-SELECT column_name FROM duckdb_columns()
+SELECT column_name FROM sdb_columns()
   WHERE table_name = 'coinr_v_ine' ORDER BY column_index;
 ----
 column_name
@@ -2031,9 +2024,9 @@ connection after_replay
 statement error
 DROP VIEW coinr_v_inner;
 ----
-db error: ERROR: Cannot drop entry "coinr_v_inner" because there are entries that depend on it.
-view "coinr_v_outer" depends on view "coinr_v_inner".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view coinr_v_inner because other objects depend on it
+DETAIL: view coinr_v_outer depends on view coinr_v_inner
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_replay
@@ -2226,7 +2219,7 @@ on
 connection after_replay
 query
 SELECT trigger_name, table_name, event_manipulation, for_each
-  FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_trg%' ORDER BY trigger_name;
+  FROM sdb_triggers() WHERE trigger_name LIKE 'coinr_trg%' ORDER BY trigger_name;
 ----
 trigger_name	table_name	event_manipulation	for_each
 coinr_trg	coinr_trt	DELETE	ROW
@@ -2315,7 +2308,7 @@ hello,world
 # The replaced search table holds its own documents and none of the old ones.
 connection after_replay
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st;
+VACUUM (FLUSH_TABLE) coinr_st;
 
 
 connection after_replay
@@ -2365,7 +2358,7 @@ searchable	plain
 connection after_replay
 query
 SELECT name, persistent, secret_string LIKE '%key_id=coinr_k2;%region=coinr_r2;%' AS second_def
-  FROM duckdb_secrets() WHERE name LIKE 'coinr%';
+  FROM sdb_secrets() WHERE name LIKE 'coinr%';
 ----
 name	persistent	second_def
 coinr_sec	t	t
@@ -2408,7 +2401,7 @@ a	b
 
 connection after_replay
 statement ok
-VACUUM (REFRESH_TABLE) coinr_fr_st;
+VACUUM (FLUSH_TABLE) coinr_fr_st;
 
 
 connection after_replay
@@ -2421,7 +2414,7 @@ id	body
 
 connection after_replay
 query
-SELECT trigger_name, event_manipulation FROM duckdb_triggers()
+SELECT trigger_name, event_manipulation FROM sdb_triggers()
   WHERE table_name = 'coinr_fr_trt' ORDER BY trigger_name;
 ----
 trigger_name	event_manipulation
@@ -2443,9 +2436,9 @@ DELETE FROM coinr_fr_trt WHERE a = 7;
 connection after_replay
 query
 SELECT (SELECT count(*) FROM pg_class WHERE relname LIKE 'coinr_gone%') AS rels,
-       (SELECT count(*) FROM duckdb_functions() WHERE function_name LIKE 'coinr_gone%') AS funcs,
+       (SELECT count(*) FROM sdb_functions() WHERE function_name LIKE 'coinr_gone%') AS funcs,
        (SELECT count(*) FROM pg_type WHERE typname LIKE 'coinr_gone%') AS types,
-       (SELECT count(*) FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_gone%') AS trgs,
+       (SELECT count(*) FROM sdb_triggers() WHERE trigger_name LIKE 'coinr_gone%') AS trgs,
        (SELECT count(*) FROM pg_namespace WHERE nspname LIKE 'coinr_gone%') AS schemas;
 ----
 rels	funcs	types	trgs	schemas
@@ -2491,9 +2484,9 @@ connection after_replay
 statement error
 DROP TABLE coinr_dep_b;
 ----
-db error: ERROR: Cannot drop entry "coinr_dep_b" because there are entries that depend on it.
-view "coinr_dep_v" depends on table "coinr_dep_b".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop table coinr_dep_b because other objects depend on it
+DETAIL: view coinr_dep_v depends on table coinr_dep_b
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_replay
@@ -2505,7 +2498,8 @@ connection after_replay
 statement error
 INSERT INTO coinr_pk (id) VALUES (1);
 ----
-db error: ERROR: Duplicate key "id: 1" violates primary key constraint.
+db error: ERROR: duplicate key value violates unique constraint "coinr_pk_pkey"
+DETAIL: Key (id)=(1) already exists.
 
 
 connection after_replay
@@ -2532,10 +2526,10 @@ id	v
 # Only the new table's index came back: the old unique one no longer refuses.
 connection after_replay
 query
-SELECT index_name, is_unique, sql FROM duckdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
+SELECT index_name, is_unique, sql FROM sdb_indexes() WHERE index_name LIKE 'coinr_ixr%';
 ----
 index_name	is_unique	sql
-coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr(b);
+coinr_ixr_uq	f	CREATE INDEX coinr_ixr_uq ON public.coinr_ixr USING inverted (b);
 
 
 connection after_replay
@@ -2558,7 +2552,7 @@ INSERT INTO coinr_ser (v) VALUES ('new2');
 
 connection after_replay
 query
-SELECT id, v, (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
+SELECT id, v, (SELECT count(*) FROM sdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
   FROM coinr_ser ORDER BY id;
 ----
 id	v	seqs
@@ -2568,7 +2562,7 @@ id	v	seqs
 
 connection after_replay
 query
-SELECT table_name, event_manipulation, for_each FROM duckdb_triggers()
+SELECT table_name, event_manipulation, for_each FROM sdb_triggers()
   WHERE trigger_name = 'coinr_tg' ORDER BY table_name;
 ----
 table_name	event_manipulation	for_each
@@ -2738,7 +2732,7 @@ CREATE OR REPLACE FUNCTION coinr_pf(x INTEGER) RETURNS INTEGER AS 'SELECT x * 9'
 
 connection after_replay
 statement ok
-CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_st_rb (id INT, body TEXT);
 
 
 connection after_replay
@@ -2817,7 +2811,7 @@ pf
 # replace's document is nowhere.
 connection after_before_commit
 statement ok
-VACUUM (REFRESH_TABLE) coinr_st_rb;
+VACUUM (FLUSH_TABLE) coinr_st_rb;
 
 
 connection after_before_commit
@@ -2854,7 +2848,7 @@ DELETE FROM coinr_audit;
 
 connection after_before_commit
 statement ok
-CREATE TABLE coinr_ac_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_ac_st (id INT, body TEXT);
 
 
 connection after_before_commit
@@ -2864,7 +2858,7 @@ INSERT INTO coinr_ac_st VALUES (1, 'old');
 
 connection after_before_commit
 statement ok
-VACUUM (REFRESH_TABLE) coinr_ac_st;
+VACUUM (FLUSH_TABLE) coinr_ac_st;
 
 
 connection after_before_commit
@@ -2884,7 +2878,7 @@ CREATE OR REPLACE MACRO coinr_ac_new(x) AS x * 11;
 
 connection after_before_commit
 statement ok
-CREATE OR REPLACE TABLE coinr_ac_st (id INT, body TEXT, extra INT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_ac_st (id INT, body TEXT, extra INT);
 
 
 connection after_before_commit
@@ -3001,13 +2995,13 @@ pf	new_m
 # definition; the old table's documents went with it.
 connection after_after_commit
 statement ok
-VACUUM (REFRESH_TABLE) coinr_ac_st;
+VACUUM (FLUSH_TABLE) coinr_ac_st;
 
 
 connection after_after_commit
 query
 SELECT (SELECT count(*) FROM coinr_ac_st) AS docs,
-       (SELECT count(*) FROM duckdb_columns() WHERE table_name = 'coinr_ac_st') AS cols;
+       (SELECT count(*) FROM sdb_columns() WHERE table_name = 'coinr_ac_st') AS cols;
 ----
 docs	cols
 0	3
@@ -3182,7 +3176,7 @@ CREATE TRIGGER IF NOT EXISTS coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH RO
 
 connection after_after_commit
 statement ok
-CREATE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection after_after_commit
@@ -3192,12 +3186,7 @@ INSERT INTO coinr_c_st VALUES (1, 'old one');
 
 connection after_after_commit
 statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
-
-
-connection after_after_commit
-statement ok
-CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection after_after_commit
@@ -3207,12 +3196,7 @@ INSERT INTO coinr_c_st VALUES (20, 'checkpoint twenty'), (21, 'checkpoint twenty
 
 connection after_after_commit
 statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
-
-
-connection after_after_commit
-statement ok
-CREATE TABLE IF NOT EXISTS coinr_c_st (x INT) WITH (storage = 'search');
+CREATE TABLE IF NOT EXISTS coinr_c_st (x INT);
 
 
 connection after_after_commit
@@ -3321,7 +3305,7 @@ CREATE OR REPLACE TRIGGER coinr_c_trg AFTER DELETE ON coinr_c_trt FOR EACH ROW
 
 connection ckpt_open
 statement ok
-CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection ckpt_open
@@ -3337,13 +3321,9 @@ s	m
 60	11
 
 
-# A plain CHECKPOINT does not run over the open replaces, so it cannot write
-# them either.
 connection after_after_commit
-statement error
+statement ok
 CHECKPOINT;
-----
-db error: ERROR: Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait until all active transactions are finished
 
 
 skipif pg-wire-extended
@@ -3487,9 +3467,9 @@ connection after_checkpoint
 statement error
 DROP VIEW coinr_v_inner;
 ----
-db error: ERROR: Cannot drop entry "coinr_v_inner" because there are entries that depend on it.
-view "coinr_v_outer" depends on view "coinr_v_inner".
-Use DROP...CASCADE to drop all dependents.
+db error: ERROR: cannot drop view coinr_v_inner because other objects depend on it
+DETAIL: view coinr_v_outer depends on view coinr_v_inner
+HINT: Use DROP ... CASCADE to drop the dependent objects too.
 
 
 connection after_checkpoint
@@ -3510,7 +3490,7 @@ INSERT INTO coinr_ser (v) VALUES ('new3');
 connection after_checkpoint
 query
 SELECT max(id) AS id,
-       (SELECT count(*) FROM duckdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
+       (SELECT count(*) FROM sdb_sequences() WHERE sequence_name LIKE 'coinr_ser%') AS seqs
   FROM coinr_ser;
 ----
 id	seqs
@@ -3530,7 +3510,7 @@ id	body	extra
 connection after_checkpoint
 query
 SELECT trigger_name, table_name, event_manipulation
-  FROM duckdb_triggers() WHERE trigger_name LIKE 'coinr_%' ORDER BY trigger_name, table_name;
+  FROM sdb_triggers() WHERE trigger_name LIKE 'coinr_%' ORDER BY trigger_name, table_name;
 ----
 trigger_name	table_name	event_manipulation
 coinr_c_trg	coinr_c_trt	DELETE
@@ -3706,7 +3686,7 @@ COMMIT;
 
 connection after_checkpoint
 statement ok
-CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT) WITH (storage = 'search');
+CREATE OR REPLACE TABLE coinr_c_st (id INT, body TEXT);
 
 
 connection after_checkpoint
@@ -3716,7 +3696,7 @@ INSERT INTO coinr_c_st VALUES (30, 'tail thirty');
 
 connection after_checkpoint
 statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
+VACUUM (FLUSH_TABLE) coinr_c_st;
 
 
 connection after_checkpoint
@@ -3775,7 +3755,7 @@ CREATE TABLE coinr_c_s_seen AS SELECT currval('coinr_c_s') AS n;
 
 connection after_tail
 query
-SELECT count(*) AS c FROM duckdb_functions() WHERE function_name = 'coinr_c_m_gone';
+SELECT count(*) AS c FROM sdb_functions() WHERE function_name = 'coinr_c_m_gone';
 ----
 c
 0
@@ -3810,7 +3790,7 @@ DELETE FROM coinr_audit;
 
 connection after_tail
 statement ok
-VACUUM (REFRESH_TABLE) coinr_c_st;
+VACUUM (FLUSH_TABLE) coinr_c_st;
 
 
 connection after_tail
@@ -3907,7 +3887,7 @@ n	tag
 connection after_tail_checkpoint
 query
 SELECT name, persistent, secret_string LIKE '%key_id=coinr_k2;%region=coinr_r2;%' AS second_def
-  FROM duckdb_secrets() WHERE name LIKE 'coinr%';
+  FROM sdb_secrets() WHERE name LIKE 'coinr%';
 ----
 name	persistent	second_def
 coinr_sec	t	t

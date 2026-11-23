@@ -24,14 +24,15 @@
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/segment_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -53,21 +54,22 @@ TEST_F(SegmentWriterTests, memory_index_field) {
 
   FieldT field;
 
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
+  const irs::SegmentWriterOptions options;
 
   {
     irs::SegmentMeta segment;
     segment.name = "tmp";
 
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     writer->reset(segment);
 
     ASSERT_EQ(0, writer->memory_active());
 
     for (size_t i = 0; i < 100; ++i) {
-      writer->begin(0);
+      writer->begin();
       ASSERT_TRUE(writer->valid());
       ASSERT_TRUE(tests::InsertField(*writer, writer->LastDocId(), field));
       ASSERT_TRUE(writer->valid());
@@ -85,13 +87,15 @@ TEST_F(SegmentWriterTests, memory_index_field) {
     irs::SegmentMeta segment;
     segment.name = "tmp";
 
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     writer->reset(segment);
 
     ASSERT_EQ(0, writer->memory_active());
 
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, 100));
+    ASSERT_EQ(irs::doc_limits::min(), writer->begin(100));
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
@@ -128,8 +132,8 @@ struct StoredField {
   irs::IndexFeatures GetIndexFeatures() const {
     return irs::IndexFeatures::None;
   }
-  bool Write(irs::DataOutput& out) const {
-    irs::WriteStr(out, value_);
+  bool Write(duckdb::WriteStream& out) const {
+    tests::WriteStr(out, value_);
     return true;
   }
 };
@@ -137,15 +141,16 @@ struct StoredField {
 }  // namespace
 
 TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
+  const irs::SegmentWriterOptions options;
 
   StoredField field{.name_ = "test_field", .value_ = "hello"};
 
   // --- (1) Per-doc loop: begin() / store / commit ------------------------
   {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
@@ -153,29 +158,31 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
     ASSERT_EQ(0u, writer->memory_active());
 
     for (size_t i = 0; i < 100; ++i) {
-      writer->begin(0);
+      writer->begin();
       ASSERT_TRUE(writer->valid());
       irs::tests::StoreFieldAt(*writer->GetColWriter(), /*id=*/0,
                                writer->LastDocId(), field);
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
-    ASSERT_LT(0u, writer->memory_active());
+    ASSERT_LT(0u, writer->StagedColumnBytes());
     ASSERT_EQ(100u, writer->buffered_docs());
     writer->reset();
-    ASSERT_EQ(0u, writer->memory_active());
+    ASSERT_EQ(0u, writer->StagedColumnBytes());
   }
 
   // --- (2) Batched: one begin(ctx, 100), then store/commit per row ------
   {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
     writer->reset(segment);
 
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, 100));
+    ASSERT_EQ(irs::doc_limits::min(), writer->begin(100));
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100u, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {
@@ -184,9 +191,9 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
       ASSERT_TRUE(writer->valid());
       writer->commit();
     }
-    ASSERT_LT(0u, writer->memory_active());
+    ASSERT_LT(0u, writer->StagedColumnBytes());
     writer->reset();
-    ASSERT_EQ(0u, writer->memory_active());
+    ASSERT_EQ(0u, writer->StagedColumnBytes());
   }
 }
 
@@ -194,8 +201,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
   // Index + store: indexed field uses insert(field), stored bytes go to
   // the cs blob column. Same setup as memory_store_field_unsorted but
   // with a real tokenizer-bearing field driven through insert().
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
+  const irs::SegmentWriterOptions options;
 
   struct IndexedField {
     irs::IndexFeatures GetIndexFeatures() const {
@@ -205,8 +211,8 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
     std::string_view Value() const { return "true"; }
     std::string_view Name() const { return "indexed_field"; }
     irs::field_id Id() const noexcept { return 1; }
-    bool Write(irs::DataOutput& out) const {
-      irs::WriteStr(out, std::string_view{"hello"});
+    bool Write(duckdb::WriteStream& out) const {
+      tests::WriteStr(out, std::string_view{"hello"});
       return true;
     }
     mutable irs::KeywordTokenizer _stream;
@@ -216,14 +222,16 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
 
   // --- (1) Per-doc loop: begin() / insert / store / commit ----------------
   {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     irs::SegmentMeta segment;
     segment.name = "foo";
     writer->reset(segment);
 
     for (size_t i = 0; i < 100; ++i) {
-      writer->begin(0);
+      writer->begin();
       ASSERT_TRUE(writer->valid());
       ASSERT_TRUE(::tests::InsertField(*writer, writer->LastDocId(), field));
       irs::tests::StoreFieldAt(*writer->GetColWriter(), /*id=*/0,
@@ -239,13 +247,15 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
 
   // --- (2) Batched: one begin(ctx, 100), per-doc insert+store+commit -----
   {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     irs::SegmentMeta segment;
     segment.name = "foo";
     writer->reset(segment);
 
-    ASSERT_EQ(irs::doc_limits::min(), writer->begin(0, 100));
+    ASSERT_EQ(irs::doc_limits::min(), writer->begin(100));
     ASSERT_TRUE(writer->valid());
     ASSERT_EQ(100u, writer->buffered_docs());
     for (irs::doc_id_t i = 0; i < 100; ++i) {

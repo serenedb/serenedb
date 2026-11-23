@@ -34,7 +34,6 @@ class DuckDBEngine {
   static void NoopMutator(duckdb::DBConfig&) noexcept {}
 
   static void Configure(duckdb::DBConfig& config);
-  static void ConfigureExtensions(duckdb::DatabaseInstance& db);
 
   void Initialize(DBConfigMutator mutator = &NoopMutator);
 
@@ -56,7 +55,8 @@ class DuckDBEngine {
 
  private:
   DuckDBEngine() = default;
-  std::unique_ptr<duckdb::DuckDB> _db;
+
+  duckdb::shared_ptr<duckdb::DatabaseInstance> _instance;
   inline static constinit std::atomic<duckdb::BufferManager*> gBufferManager{
     nullptr};
 };

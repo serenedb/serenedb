@@ -33,6 +33,7 @@
 #include <string_view>
 
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -120,6 +121,12 @@ inline constexpr VectorMetric EffectiveQuantMetric(
   return metric == VectorMetric::Cosine ? VectorMetric::InnerProduct : metric;
 }
 
+struct QuantMetricAxis : Axis<VectorMetric::L2Sqr, VectorMetric::InnerProduct> {
+  static constexpr VectorMetric Of(VectorMetric metric) noexcept {
+    return EffectiveQuantMetric(metric);
+  }
+};
+
 enum class FieldKind : uint8_t {
   None = 0,
   Index,
@@ -178,12 +185,18 @@ struct AnnInfo {
   friend bool operator==(const AnnInfo&, const AnnInfo&) = default;
 };
 
+enum class DistinctStats : uint8_t {
+  None,
+  Sampled,
+  Exact,
+};
+
 struct ColumnOptions {
   bool skip_validity = false;
   duckdb::CompressionType compression =
     duckdb::CompressionType::COMPRESSION_AUTO;
   std::optional<AnnInfo> ann_info;
-  bool hyperloglog = false;
+  DistinctStats distinct = DistinctStats::None;
 };
 
 using ColumnOptionsProvider = std::function<ColumnOptions(field_id)>;
@@ -199,6 +212,7 @@ using AnnFieldsByColumn =
 class IndexFieldOptions {
  public:
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
+  uint32_t block_size = DEFAULT_BLOCK_ALLOC_SIZE;
   AnnFieldsByColumn anns;
 
   std::span<const field_id> AnnFields(field_id column) const noexcept {

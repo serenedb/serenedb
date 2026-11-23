@@ -32,7 +32,7 @@ CREATE TEXT SEARCH DICTIONARY en_prune AS
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TABLE prune_small (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_small (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement count 1
@@ -56,12 +56,7 @@ INSERT INTO prune_small VALUES (5, 'rabbit fox');
 
 
 statement ok
-CREATE INDEX prune_small_idx ON prune_small USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) prune_small;
+CREATE INDEX prune_small_idx ON prune_small USING inverted(id, body en_prune);
 
 
 # Term-only filter + matching scorer + LIMIT -> pruning engages.
@@ -72,7 +67,7 @@ EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY B
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: prune_small_idx      │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Term ──────────────╮     │
 │ │ Field: body(string) │     │
@@ -93,7 +88,7 @@ EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_any(['fox', 'rabbit']) O
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────╮
 │ Index: prune_small_idx      │
-│ Lookup: table               │
+│ Lookup: search              │
 │ Index Filter:               │
 │ ╭─ Or ────────────────────╮ │
 │ ╰────────────┬────────────╯ │
@@ -120,7 +115,7 @@ QUERY PLAN
 ╰────────────────────┬───────────────────╯
 ╭─ IRESEARCH_SCAN ───┴───────────────────╮
 │ Index: prune_small_idx                 │
-│ Lookup: table                          │
+│ Lookup: search                         │
 │ Index Filter:                          │
 │ ╭─ Term ──────────────╮                │
 │ │ Field: body(string) │                │
@@ -146,7 +141,7 @@ QUERY PLAN
 ╰────────────────────────────┬────────────────────────────╯
 ╭─ IRESEARCH_SCAN ───────────┴────────────────────────────╮
 │ Index: prune_small_idx                                  │
-│ Lookup: table                                           │
+│ Lookup: search                                          │
 │ Index Filter:                                           │
 │ ╭─ Term ──────────────╮                                 │
 │ │ Field: body(string) │                                 │
@@ -170,7 +165,7 @@ EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY B
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: prune_small_idx       │
-│ Lookup: table                │
+│ Lookup: search               │
 │ Index Filter:                │
 │ ╭─ Term ──────────────╮      │
 │ │ Field: body(string) │      │
@@ -196,7 +191,7 @@ EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY B
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────╮
 │ Index: prune_small_idx     │
-│ Lookup: table              │
+│ Lookup: search             │
 │ Index Filter:              │
 │ ╭─ Term ──────────────╮    │
 │ │ Field: body(string) │    │
@@ -219,7 +214,7 @@ EXPLAIN SELECT id FROM prune_small_idx WHERE body @@ ts_phrase('fox') ORDER BY T
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ───────────────╮
 │ Index: prune_small_idx         │
-│ Lookup: table                  │
+│ Lookup: search                 │
 │ Index Filter:                  │
 │ ╭─ Term ──────────────╮        │
 │ │ Field: body(string) │        │
@@ -242,7 +237,7 @@ QUERY PLAN
 # ---------------------------------------------------------------------------
 
 statement ok
-CREATE TABLE prune_big (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE prune_big (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'bm25(1.2, 0.75)');
 
 
 statement ok
@@ -270,20 +265,11 @@ INSERT INTO plain_big SELECT * FROM prune_big;
 
 
 statement ok
-CREATE INDEX prune_big_idx ON prune_big USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'bm25(1.2, 0.75)');
+CREATE INDEX prune_big_idx ON prune_big USING inverted(id, body en_prune);
 
 
 statement ok
 CREATE INDEX plain_big_idx ON plain_big USING inverted(id, body en_prune);
-
-
-statement ok
-VACUUM (REFRESH_TABLE) prune_big;
-
-
-statement ok
-VACUUM (REFRESH_TABLE) plain_big;
 
 
 # Sanity: both indexes match the same population.
@@ -449,6 +435,99 @@ missing	extra
 0	0
 
 
+# === A term or a pattern -- top-K equivalence ===
+#
+# A pattern scores its constant once per row, so a pruned disjunction bounds it
+# by that constant. Every lazy row holds fox, so the best rows need the pattern
+# as well as the term; rare_token rows hold no word starting with f, so the term
+# alone fills the top-K and the pattern only adds to the rows it finds; fox is
+# in most rows and weighs little next to the constant of ra*, which leads.
+# Without a tie-break the top-K runs in the scan, pruned on the score-bound
+# index; rows tie, so the two indexes are compared by their top-K scores.
+
+query
+EXPLAIN SELECT round(BM25(prune_big_idx.tableoid), 5) AS score
+FROM prune_big_idx
+WHERE body @@ (ts_phrase('lazy') || ts_starts_with('f'))
+ORDER BY BM25(prune_big_idx.tableoid) DESC LIMIT 100;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────╮
+│ Projections: score                               │
+│ ~10,000 rows                                     │
+╰─────────────────────────┬────────────────────────╯
+╭─ IRESEARCH_SCAN ────────┴────────────────────────╮
+│ Index: prune_big_idx                             │
+│ Lookup: search                                   │
+│ Index Filter:                                    │
+│ ╭─ Or ────────────────╮                          │
+│ ╰──────────┬──────────╯                          │
+│            ├────────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Starts With ───────╮ │
+│ │ Field: body(string) │  │ Field: body(string) │ │
+│ │ Values: 'lazy'      │  │ Prefix: f           │ │
+│ ╰─────────────────────╯  ╰─────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                      │
+│ Top: 100, optimized                              │
+│ Projections: sdb_inverted_index_score            │
+│ ~10,000 rows                                     │
+╰──────────────────────────────────────────────────╯
+
+
+query
+WITH w AS (SELECT round(BM25(prune_big_idx.tableoid), 5) AS score
+           FROM prune_big_idx
+           WHERE body @@ (ts_phrase('lazy') || ts_starts_with('f'))
+           ORDER BY BM25(prune_big_idx.tableoid) DESC
+           LIMIT 100),
+     p AS (SELECT round(BM25(plain_big_idx.tableoid), 5) AS score
+           FROM plain_big_idx
+           WHERE body @@ (ts_phrase('lazy') || ts_starts_with('f'))
+           ORDER BY BM25(plain_big_idx.tableoid) DESC
+           LIMIT 100)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT ALL SELECT * FROM p) d) AS missing,
+       (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT ALL SELECT * FROM w) d) AS extra;
+----
+missing	extra
+0	0
+
+
+query
+WITH w AS (SELECT round(BM25(prune_big_idx.tableoid), 5) AS score
+           FROM prune_big_idx
+           WHERE body @@ (ts_phrase('rare_token') || ts_starts_with('f'))
+           ORDER BY BM25(prune_big_idx.tableoid) DESC
+           LIMIT 100),
+     p AS (SELECT round(BM25(plain_big_idx.tableoid), 5) AS score
+           FROM plain_big_idx
+           WHERE body @@ (ts_phrase('rare_token') || ts_starts_with('f'))
+           ORDER BY BM25(plain_big_idx.tableoid) DESC
+           LIMIT 100)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT ALL SELECT * FROM p) d) AS missing,
+       (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT ALL SELECT * FROM w) d) AS extra;
+----
+missing	extra
+0	0
+
+
+query
+WITH w AS (SELECT round(BM25(prune_big_idx.tableoid), 5) AS score
+           FROM prune_big_idx
+           WHERE body @@ (ts_phrase('fox') || ts_starts_with('ra'))
+           ORDER BY BM25(prune_big_idx.tableoid) DESC
+           LIMIT 100),
+     p AS (SELECT round(BM25(plain_big_idx.tableoid), 5) AS score
+           FROM plain_big_idx
+           WHERE body @@ (ts_phrase('fox') || ts_starts_with('ra'))
+           ORDER BY BM25(plain_big_idx.tableoid) DESC
+           LIMIT 100)
+SELECT (SELECT COUNT(*) FROM (SELECT * FROM w EXCEPT ALL SELECT * FROM p) d) AS missing,
+       (SELECT COUNT(*) FROM (SELECT * FROM p EXCEPT ALL SELECT * FROM w) d) AS extra;
+----
+missing	extra
+0	0
+
+
 # === Non-engaging shapes still correct on the score-bound index ===
 
 # No LIMIT -- whole result set, ordered. Pruning is impossible (no k);
@@ -551,7 +630,7 @@ count
 # ============================================================================
 
 statement ok
-CREATE TABLE bnd (id INTEGER PRIMARY KEY, body VARCHAR);
+CREATE TABLE bnd (id INTEGER PRIMARY KEY, body VARCHAR) WITH (optimize_top_k = 'lm_jm(0.7)');
 
 
 statement ok
@@ -572,32 +651,23 @@ CREATE INDEX bnd_plain_idx ON bnd USING inverted(id, body en_prune);
 
 
 statement ok
-CREATE INDEX bnd_jm_idx ON bnd USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'lm_jm(0.7)');
+CREATE INDEX bnd_jm_idx ON bnd USING inverted(id, body en_prune);
 
 
 statement ok
-CREATE INDEX bnd_dir_idx ON bnd USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'lm_dirichlet(2000)');
+CREATE INDEX bnd_dir_idx ON bnd USING inverted(id, body en_prune);
 
 
 statement ok
-CREATE INDEX bnd_dfi_idx ON bnd USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'dfi()');
+CREATE INDEX bnd_dfi_idx ON bnd USING inverted(id, body en_prune);
 
 
 statement ok
-CREATE INDEX bnd_rtf_idx ON bnd USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'raw_tf()');
+CREATE INDEX bnd_rtf_idx ON bnd USING inverted(id, body en_prune);
 
 
 statement ok
-CREATE INDEX bnd_ind_idx ON bnd USING inverted(id, body en_prune)
-  WITH (optimize_top_k = 'indri_dirichlet(2000)');
-
-
-statement ok
-VACUUM (REFRESH_TABLE) bnd;
+CREATE INDEX bnd_ind_idx ON bnd USING inverted(id, body en_prune);
 
 
 # lm_jm: DivNorm -- log1p(c * tf/dl) is monotone in tf/dl, and the constant folds
@@ -610,7 +680,7 @@ EXPLAIN SELECT id FROM bnd_jm_idx WHERE body @@ ts_phrase('fox')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────╮
 │ Index: bnd_jm_idx        │
-│ Lookup: table            │
+│ Lookup: search           │
 │ Index Filter:            │
 │ ╭─ Term ──────────────╮  │
 │ │ Field: body(string) │  │
@@ -653,14 +723,14 @@ EXPLAIN SELECT id FROM bnd_dir_idx WHERE body @@ ts_phrase('fox')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────╮
 │ Index: bnd_dir_idx           │
-│ Lookup: table                │
+│ Lookup: search               │
 │ Index Filter:                │
 │ ╭─ Term ──────────────╮      │
 │ │ Field: body(string) │      │
 │ │ Value: fox          │      │
 │ ╰─────────────────────╯      │
 │ Score: lm_dirichlet(mu=2000) │
-│ Top: 3, optimized            │
+│ Top: 3                       │
 │ Projections: id              │
 │ ~4,000 rows                  │
 ╰──────────────────────────────╯
@@ -695,14 +765,14 @@ EXPLAIN SELECT id FROM bnd_dfi_idx WHERE body @@ ts_phrase('fox')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ─────────────────╮
 │ Index: bnd_dfi_idx               │
-│ Lookup: table                    │
+│ Lookup: search                   │
 │ Index Filter:                    │
 │ ╭─ Term ──────────────╮          │
 │ │ Field: body(string) │          │
 │ │ Value: fox          │          │
 │ ╰─────────────────────╯          │
 │ Score: dfi(measure=standardized) │
-│ Top: 3, optimized                │
+│ Top: 3                           │
 │ Projections: id                  │
 │ ~4,000 rows                      │
 ╰──────────────────────────────────╯
@@ -737,14 +807,14 @@ EXPLAIN SELECT id FROM bnd_rtf_idx WHERE body @@ ts_phrase('fox')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────╮
 │ Index: bnd_rtf_idx      │
-│ Lookup: table           │
+│ Lookup: search          │
 │ Index Filter:           │
 │ ╭─ Term ──────────────╮ │
 │ │ Field: body(string) │ │
 │ │ Value: fox          │ │
 │ ╰─────────────────────╯ │
 │ Score: raw_tf()         │
-│ Top: 3, optimized       │
+│ Top: 3                  │
 │ Projections: id         │
 │ ~4,000 rows             │
 ╰─────────────────────────╯
@@ -783,7 +853,7 @@ EXPLAIN SELECT id FROM bnd_ind_idx WHERE body @@ ts_phrase('fox')
 QUERY PLAN
 ╭─ IRESEARCH_SCAN ────────────────╮
 │ Index: bnd_ind_idx              │
-│ Lookup: table                   │
+│ Lookup: search                  │
 │ Index Filter:                   │
 │ ╭─ Term ──────────────╮         │
 │ │ Field: body(string) │         │

@@ -1,0 +1,176 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2014-2023 ArangoDB GmbH, Cologne, Germany
+/// Copyright 2004-2014 triAGENS GmbH, Cologne, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is ArangoDB GmbH, Cologne, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#pragma once
+
+#include <absl/status/status.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <iresearch/formats/ann_build_env.hpp>
+#include <memory>
+#include <yaclib/algo/wait_group.hpp>
+
+#include "utils/drain_gate.h"
+
+namespace sdb {
+
+class Runtime;
+
+namespace search {
+
+class Store;
+
+class SearchEngine;
+
+const irs::AnnBuildEnv& AnnBuildEnv();
+
+class SearchEngine final {
+ public:
+  inline static SearchEngine* gInstance = nullptr;
+
+  static uint32_t MaxAnnBuildWorkers() noexcept;
+  static uint32_t MaxAnnWorkersPerBuild() noexcept {
+    return std::clamp<uint32_t>(
+      static_cast<uint32_t>(MaxConcurrentCompactions()), 1, 16);
+  }
+
+  static int MaxConcurrentCompactions() noexcept;
+
+  explicit SearchEngine(Runtime& runtime);
+  ~SearchEngine() { gInstance = nullptr; }
+
+  void Start();
+  void Stop();
+
+  void StartTasks(const std::shared_ptr<Store>& store);
+
+  bool IsStopping() const noexcept;
+
+  const irs::AnnBuildEnv& AnnEnv() const noexcept { return _ann_env; }
+  const irs::AnnBuildEnv& ManualAnnEnv() const noexcept {
+    return _manual_ann_env;
+  }
+
+  // Reserve / release one of the MaxConcurrentCompactions() slots. A fan-out
+  // sub-task holds a slot only while CompactUnsafe runs.
+  bool TryAcquireCompaction() noexcept {
+    const int cap = MaxConcurrentCompactions();
+    auto cur = _running_compactions.load(std::memory_order_relaxed);
+    while (cur < cap) {
+      if (_running_compactions.compare_exchange_weak(
+            cur, cur + 1, std::memory_order_acq_rel,
+            std::memory_order_relaxed)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  void ReleaseCompaction() noexcept {
+    _running_compactions.fetch_sub(1, std::memory_order_release);
+  }
+
+  uint32_t AcquireAnnWorkers(uint32_t want, uint32_t held,
+                             uint32_t most = MaxAnnWorkersPerBuild()) noexcept {
+    const uint32_t cap = MaxAnnBuildWorkers();
+    const uint32_t least = held == 0 ? 1U : 0U;
+    const uint32_t room = most > held ? most - held : 0U;
+    const uint32_t ceiling = std::max(least, std::min(want, room));
+    auto cur = _running_ann_workers.load(std::memory_order_relaxed);
+    for (;;) {
+      const uint32_t grant =
+        std::clamp(cur < cap ? cap - cur : 0U, least, ceiling);
+      if (grant == 0) {
+        return 0;
+      }
+      if (_running_ann_workers.compare_exchange_weak(
+            cur, cur + grant, std::memory_order_acq_rel,
+            std::memory_order_relaxed)) {
+        return grant;
+      }
+    }
+  }
+  void ReleaseAnnWorkers(uint32_t n) noexcept {
+    _running_ann_workers.fetch_sub(n, std::memory_order_release);
+  }
+
+  // Free global slots right now. The coordinator throttles merge size when this
+  // is low (occupancy backpressure) so the pool always drains.
+  int FreeCompactionSlots() const noexcept {
+    const int cur = _running_compactions.load(std::memory_order_acquire);
+    return std::max(0, MaxConcurrentCompactions() - cur);
+  }
+
+  bool IsBackupActive() const noexcept { return _maintenance.IsClosed(); }
+  utils::DrainGate& Maintenance() noexcept { return _maintenance; }
+
+ private:
+  Runtime& _runtime;
+  irs::AnnBuildEnv _ann_env;
+  irs::AnnBuildEnv _manual_ann_env;
+  utils::DrainGate _maintenance;
+  std::atomic<int> _running_compactions{0};
+  std::atomic<uint32_t> _running_ann_workers{0};
+  // Live loop futures plus one baseline token held for the engine's lifetime:
+  // loops come and go with CREATE/DROP, and a transient zero would complete the
+  // group for good. Stop() Done()s the token, then Waits.
+  yaclib::WaitGroup<> _loops{1};
+};
+
+inline SearchEngine& GetSearchEngine() { return *SearchEngine::gInstance; }
+
+inline bool IsBackupActive() noexcept {
+  return GetSearchEngine().IsBackupActive();
+}
+
+inline utils::DrainGate::Pass ClaimMaintenance() noexcept {
+  return GetSearchEngine().Maintenance().TryEnter();
+}
+
+inline absl::Status BackupInProgressError() {
+  return absl::UnavailableError("a backup is in progress");
+}
+
+inline uint32_t AnnAcquireWorkers(uint32_t want, uint32_t held) noexcept {
+  return GetSearchEngine().AcquireAnnWorkers(want, held);
+}
+
+inline void AnnReleaseWorkers(uint32_t n) noexcept {
+  GetSearchEngine().ReleaseAnnWorkers(n);
+}
+
+class [[nodiscard]] ManualCompactionSlot {
+ public:
+  ManualCompactionSlot() noexcept;
+  ~ManualCompactionSlot();
+
+  ManualCompactionSlot(const ManualCompactionSlot&) = delete;
+  ManualCompactionSlot& operator=(const ManualCompactionSlot&) = delete;
+
+  const irs::AnnBuildEnv* AnnEnv() const noexcept;
+
+ private:
+  bool _held;
+};
+
+}  // namespace search
+}  // namespace sdb

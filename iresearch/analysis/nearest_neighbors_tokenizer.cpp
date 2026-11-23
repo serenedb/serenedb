@@ -22,11 +22,11 @@
 
 #include <fasttext.h>
 
+#include <istream>
 #include <string_view>
 
 #include "iresearch/analysis/fast_text_model.hpp"
 #include "iresearch/analysis/token_batch.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/fasttext_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -35,10 +35,12 @@ namespace irs::analysis {
 Tokenizer::ptr NearestNeighborsTokenizer::Make(
   Options opts, duckdb::SharedObjectCache& cache) {
   if (opts.model_location.empty()) {
-    THROW_SQL_ERROR(ERR_MSG("find_nearest_words: empty model location"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("find_nearest_words: empty model location"));
   }
   if (opts.top_k <= 0) {
-    THROW_SQL_ERROR(ERR_MSG("find_nearest_words: top_k must be positive"));
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("find_nearest_words: top_k must be positive"));
   }
   auto model = irs::fast_text::GetOrBuildModel<fasttext::ImmutableFastText>(
     cache, opts.model_location);
@@ -56,11 +58,8 @@ NearestNeighborsTokenizer::NearestNeighborsTokenizer(const Options& options,
 
 template<TokenLayout Layout>
 bool NearestNeighborsTokenizer::DoFill(duckdb::string_t raw, TokenSink& sink) {
-  const auto size = static_cast<uint32_t>(raw.GetSize());
-  BytesViewInput s_input{
-    bytes_view{reinterpret_cast<const byte_type*>(raw.GetData()), size}};
-  InputBuf in_buf{&s_input};
-  std::istream ss{&in_buf};
+  fast_text::TextBuf text{std::string_view{raw.GetData(), raw.GetSize()}};
+  std::istream ss{&text};
 
   _model_dict->getLine(ss, _line_token_ids, _line_token_label_ids);
 

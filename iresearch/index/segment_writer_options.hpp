@@ -22,14 +22,12 @@
 
 #pragma once
 
+#include <memory>
+
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/store/storage.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
 class IndexFieldOptions;
@@ -37,15 +35,13 @@ struct AnnBuildEnv;
 
 struct SegmentWriterOptions {
   ScorerPtr scorer = nullptr;
-  // Enables the typed .col on the segment. Lifetime of `*db` must
-  // extend at least until SegmentWriter::flush() returns.
-  duckdb::DatabaseInstance* db = nullptr;
   // Non-owning. For a segment writer just the fallback (the owning override
   // comes via SetFieldOptions); for a merge writer the whole config.
   const IndexFieldOptions* field_options = nullptr;
   // Non-owning. Null builds the segment's ANN graph on the flushing thread.
   const AnnBuildEnv* ann_env = nullptr;
   HnswBases* hnsw_bases = nullptr;
+  std::shared_ptr<ReleasedSegments> released;
 };
 
 }  // namespace irs

@@ -30,6 +30,7 @@
 #include <cstddef>
 #include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/client_data.hpp>
@@ -37,7 +38,9 @@
 #include <duckdb/main/prepared_statement.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <exception>
-#include <filesystem>
+#include <iresearch/index/file_names.hpp>
+#include <iresearch/index/segment_list.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -52,13 +55,11 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
 #include "connector/column_id.h"
-#include "connector/duckdb_client_state.h"
 #include "docs/builder/docs_data.h"
 #include "docs/docs_index_data.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "search/store.h"
-#include "utils/file_utils.h"
 
 namespace sdb::docs {
 namespace {
@@ -88,7 +89,7 @@ CREATE TABLE sdb_docs_build.docs (
   title TEXT NOT NULL,
   breadcrumb TEXT NOT NULL,
   content TEXT NOT NULL USING COMPRESSION zstd
-) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+) WITH (compaction_interval = 0);
 
 CREATE INDEX docs_fts ON sdb_docs_build.docs USING inverted (
   title sdb_docs_build.tokenizer,
@@ -107,7 +108,7 @@ CREATE TABLE sdb_docs_build.objects (
   category TEXT,
   breadcrumb TEXT,
   names TEXT[]
-) WITH (storage = 'search', refresh_interval = 0, compaction_interval = 0);
+) WITH (compaction_interval = 0);
 
 CREATE INDEX objects_names ON sdb_docs_build.objects USING inverted (
   names, kind);
@@ -251,26 +252,22 @@ class Loader {
                .database = database,
                .database_id = database_id},
               {.what = "embedded docs in database", .name = database}},
-      _docs{docs} {
-    connector::SetDefaultSearchPath(*_system.conn->context, database);
-  }
+      _docs{docs} {}
 
   std::vector<IndexBlob> Build() {
     if (!Run(Sql(kBuildSql)) || !Insert() ||
-        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kTable)) ||
         !Run(absl::StrCat(
           "INSERT INTO ", kObjectsTable,
           " SELECT *, list_filter(list_prepend(lower(name), "
           "list_transform(string_split(coalesce(aliases, ''), ','), "
           "lambda part: lower(trim(part)))), lambda term: term <> '') FROM (",
-          Sql(kObjectsSql), ")")) ||
-        !Run(absl::StrCat("VACUUM (REFRESH_TABLE) ", kObjectsTable))) {
+          Sql(kObjectsSql), ")"))) {
       return {};
     }
-    auto image =
-      ExportImage(*_system.conn->context, _system.ctx->GetDatabase(), "docs");
-    auto objects = ExportImage(*_system.conn->context,
-                               _system.ctx->GetDatabase(), "objects");
+    auto& context = *_system.conn->context;
+    const auto& database = ConnectionContext::Get(context).GetDatabase();
+    auto image = ExportImage(context, database, "docs");
+    auto objects = ExportImage(context, database, "objects");
     if (image.empty() || objects.empty()) {
       return {};
     }
@@ -341,14 +338,14 @@ class Loader {
     return true;
   }
 
-  connector::SystemConnection _system;
+  SystemConnection _system;
   std::span<const Doc> _docs;
 };
 
 std::vector<IndexBlob> BuildImage(std::span<const Doc> docs) {
   std::string name;
   duckdb::idx_t oid = 0;
-  if (!catalog::ReadDatabase(
+  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
         irs::StaticStrings::kDefaultDatabase,
         [&](const catalog::DatabaseCatalogEntry& database) {
           name = database.name.GetIdentifierName();
@@ -412,54 +409,68 @@ std::vector<IndexBlob> ExportImage(duckdb::ClientContext& context,
       dynamic_cast<const catalog::SearchTableEntry*>(entry.get());
     if (!table) {
       SDB_ERROR(STARTUP, "cannot build the docs index: ", kSchema, ".",
-                table_name, " is not a search table in the catalog");
+                table_name, " is not a table in the catalog");
       return;
     }
-    const auto store = table->Storage()->Path();
-    for (const auto& file : std::filesystem::directory_iterator{store}) {
-      if (file.is_regular_file()) {
-        image.push_back(
-          {.name =
-             absl::StrCat(table_name, "/", file.path().filename().string()),
-           .bytes = utils::file_utils::Slurp(file.path().string())});
-      }
+    auto& store = *table->Storage();
+    store.Settle();
+    const auto& path = store.Path();
+    auto& fs =
+      duckdb::DatabaseInstance::GetDatabase(context).GetInternalFileSystem();
+    const auto add = [&](std::string_view file) {
+      image.push_back({.name = fs.JoinPath(table_name, file),
+                       .bytes = irs::ReadWhole<std::string>(
+                         context, fs, fs.JoinPath(path, file))});
+    };
+    std::string segments;
+    for (const auto& unit : store.GetTable().State()->units) {
+      SDB_ENSURE(!unit->piece && (!unit->deleted || unit->deleted->Empty()),
+                 "the documentation table ", table_name,
+                 " keeps rows in memory or deletes after settling");
+      absl::c_for_each(irs::SegmentFiles(unit->meta.name, unit->meta.kinds),
+                       add);
+      irs::AppendSegmentList(segments, unit->id, unit->meta.kinds, unit->docs);
     }
-    image.push_back({.name = absl::StrCat(table_name, "/", kLayoutFile),
+    image.push_back({.name = fs.JoinPath(table_name, kSegmentsFile),
+                     .bytes = std::move(segments)});
+    image.push_back({.name = fs.JoinPath(table_name, kLayoutFile),
                      .bytes = DescribeLayout(*table)});
   });
   return image;
 }
 
-bool WriteImage(std::span<const IndexBlob> image,
-                const std::filesystem::path& out) {
+bool WriteImage(std::span<const IndexBlob> image, const std::string& out) {
+  auto& fs = irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
   try {
-    if (std::filesystem::exists(out) && !std::filesystem::is_empty(out)) {
-      SDB_ERROR(STARTUP, "cannot build the docs index: ", out.string(),
-                " already exists and is not empty; point --build_docs_index at "
-                "a new or empty directory");
+    bool holds = false;
+    fs.ListFiles(out, [&](duckdb::OpenFileInfo&) { holds = true; }, nullptr,
+                 {.strict = true});
+    if (holds) {
+      SDB_ERROR(STARTUP, "cannot build the docs index: ", out,
+                " already exists and is not empty; give docs-index a new or "
+                "empty directory");
       return false;
     }
     size_t bytes = 0;
     for (const auto& blob : image) {
-      const auto path = out / blob.name;
-      std::filesystem::create_directories(path.parent_path());
-      utils::file_utils::Spit(path.string(), blob.bytes);
+      const auto path = fs.JoinPath(out, blob.name);
+      fs.CreateDirectoriesRecursive(fs.JoinPath(path, ".."));
+      irs::WriteWhole(fs, path, blob.bytes, false);
       bytes += blob.bytes.size();
     }
-    SDB_INFO(STARTUP, "docs index written to ", out.string(), ": ",
-             image.size(), " files, ", bytes, " bytes");
+    SDB_INFO(STARTUP, "docs index written to ", out, ": ", image.size(),
+             " files, ", bytes, " bytes");
     return true;
   } catch (const std::exception& e) {
-    SDB_ERROR(STARTUP, "cannot build the docs index: writing ", out.string(),
-              " failed: ", e.what());
+    SDB_ERROR(STARTUP, "cannot build the docs index: writing ", out,
+              " failed: ", duckdb::ErrorData{e}.RawMessage());
     return false;
   }
 }
 
 }  // namespace
 
-bool BuildEmbeddedIndex(const std::filesystem::path& out,
-                        std::span<const Doc> docs) {
+bool BuildEmbeddedIndex(const std::string& out, std::span<const Doc> docs) {
   const auto image = BuildImage(docs);
   return !image.empty() && WriteImage(image, out);
 }

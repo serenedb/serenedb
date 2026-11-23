@@ -36,6 +36,7 @@
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/expression/type_expression.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -49,6 +50,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <span>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -162,11 +164,6 @@ bool WhitelistWalk(const duckdb::ParsedExpression& expr, size_t depth,
         return false;
       }
       return absl::c_all_of(func.GetArguments(), [&](const auto& arg) {
-        if (arg.HasName() && (op != TSQueryOp::Phrase ||
-                              !absl::EqualsIgnoreCase(
-                                arg.GetName().GetIdentifierName(), "slop"))) {
-          return false;
-        }
         return WhitelistWalk(arg.GetExpression(), depth + 1, nodes);
       });
     }
@@ -193,7 +190,8 @@ bool WhitelistWalk(const duckdb::ParsedExpression& expr, size_t depth,
 
 duckdb::unique_ptr<duckdb::ParsedExpression> ParseWhitelisted(
   std::string_view text) {
-  if (text.size() > kMaxTSQueryStructuredTextSize) {
+  if (text.size() > kMaxTSQueryStructuredTextSize ||
+      text.find_first_of("(:'[+-") == std::string_view::npos) {
     return nullptr;
   }
   try {
@@ -375,11 +373,13 @@ bool IsStringishTypeId(duckdb::LogicalTypeId id) {
          id == duckdb::LogicalTypeId::STRING_LITERAL;
 }
 
-std::optional<duckdb::Value> TryEvaluateScalar(duckdb::ClientContext& context,
-                                               const duckdb::Expression& expr) {
+std::optional<duckdb::Value> TryFold(duckdb::ClientContext& context,
+                                     const duckdb::Expression& expr) {
   duckdb::Value result;
   if (!expr.IsFoldable() ||
-      !duckdb::ExpressionExecutor::TryEvaluateScalar(context, expr, result)) {
+      !duckdb::ExpressionExecutor::TryEvaluateFoldable(
+        context, expr, result,
+        duckdb::NumericLimits<duckdb::idx_t>::Maximum())) {
     return std::nullopt;
   }
   return result;
@@ -470,6 +470,12 @@ std::optional<std::string> RenderJoinedArgs(
     if (i != 0) {
       out += ", ";
     }
+    if (const auto& alias = children[i]->GetAlias(); !alias.empty()) {
+      absl::StrAppend(
+        &out,
+        duckdb::KeywordHelper::WriteOptionallyQuoted(alias.GetIdentifierName()),
+        " := ");
+    }
     out += *rendered;
   }
   out += close;
@@ -487,7 +493,7 @@ void FoldStructuredConstants(duckdb::ClientContext& context,
                                !IsTSQueryStructType(type) &&
                                duckdb::BoundCastExpression::IsCast(*expr);
   if (!IsTSQueryishType(type) || list_of_tsquery) {
-    if (auto value = TryEvaluateScalar(context, *expr)) {
+    if (auto value = TryFold(context, *expr)) {
       auto alias = expr->GetAlias();
       expr =
         duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*value));
@@ -532,7 +538,7 @@ std::optional<std::string> RenderTSQueryExpression(
   if (IsTSQueryishType(expr.GetReturnType())) {
     return std::nullopt;
   }
-  if (auto value = TryEvaluateScalar(context, expr)) {
+  if (auto value = TryFold(context, expr)) {
     return RenderPlainValue(*value);
   }
   return std::nullopt;
@@ -544,33 +550,15 @@ std::optional<std::string> RenderTSQueryCall(
   if (name == "list_value" || name == "array_value") {
     return RenderJoinedArgs(context, children, "[", "]");
   }
-  switch (ClassifyTSQueryFunction(name)) {
+  switch (const auto op = ClassifyTSQueryFunction(name); op) {
     case TSQueryOp::Unknown:
       return std::nullopt;
-    case TSQueryOp::Phrase: {
-      std::string out = absl::StrCat(name, "(");
-      for (size_t i = 0; i < children.size(); ++i) {
-        auto rendered = RenderTSQueryExpression(context, *children[i]);
-        if (!rendered) {
-          return std::nullopt;
-        }
-        if (i != 0) {
-          out += ", ";
-        }
-        if (children[i]->GetAlias() == "slop") {
-          out += "slop := ";
-        }
-        out += std::move(*rendered);
-      }
-      out += ")";
-      return out;
-    }
     case TSQueryOp::Boost: {
       if (children.size() != 2) {
         return std::nullopt;
       }
       auto inner = RenderTSQueryExpression(context, *children[0]);
-      auto factor = TryEvaluateScalar(context, *children[1]);
+      auto factor = TryFold(context, *children[1]);
       if (!inner || !factor || factor->IsNull()) {
         return std::nullopt;
       }

@@ -13,7 +13,6 @@ split: headings
 | [`from_connection_string()`](#from_connection_string) | Build an engine from a libpq connection string. |
 | [`from_pool()`](#from_pool) | Wrap an `AsyncConnectionPool` you already own. |
 | [`init_vectorstore_table()`](#init_vectorstore_table) | Create the table, and optionally its index, in one call. |
-| [`refresh_table()`](#refresh_table) | Publish buffered writes to the inverted index. |
 | [`drop_table()`](#drop_table) | Drop the table. |
 | [`close()`](#close) | Dispose of the connection pool. |
 
@@ -72,10 +71,10 @@ An engine created with `loop=None` can only be used through the `a`-prefixed met
 
 ### Server version check {#version-check}
 
-The integration supports SereneDB **26.11.2** and later. Each engine reads the server's release from `SELECT version()` — which reports, for example, `PostgreSQL 18.6 (SereneDB 26.11.2)` — and raises `UnsupportedServerVersionError` when it is older, or when the reply names no SereneDB release at all (a plain PostgreSQL server, for instance):
+The integration supports SereneDB **26.11.3** and later. Each engine reads the server's release from `SELECT version()` — which reports, for example, `PostgreSQL 18.6 (SereneDB 26.11.3)` — and raises `UnsupportedServerVersionError` when it is older, or when the reply names no SereneDB release at all (a plain PostgreSQL server, for instance):
 
 ```text
-UnsupportedServerVersionError: version 26.10.0 is not supported. Minimum supported version is 26.11.2. To disable version check use ignore_db_version=True
+UnsupportedServerVersionError: version 26.10.0 is not supported. Minimum supported version is 26.11.3. To disable version check use ignore_db_version=True
 ```
 
 The check runs once per engine: when the engine is created, or before its first query for an engine from [`from_pool()`](#from_pool) that cannot wait during creation. `UnsupportedServerVersionError` is a `RuntimeError`, importable from `langchain_serenedb`.
@@ -226,28 +225,9 @@ For a large bulk load, SereneDB trains better IVF clusters if the index is creat
 `if_not_exists=True` does **not** reconcile an existing table's shape. If a table with that name already exists, its columns are left exactly as they are, whatever you passed. Use the store's factory ([`create_sync()`](./vector-store.md#create_sync)) to validate that the columns are what you expect.
 :::
 
-## Publishing writes {#eventual-consistency}
+## Write visibility {#visibility}
 
-### `refresh_table()` / `arefresh_table()` {#refresh_table}
-
-```python
-engine.refresh_table(table_name, *, schema_name="public")
-```
-
-| Parameter | Type | Default | Meaning |
-| :--- | :--- | :--- | :--- |
-| `table_name` | `str` | — | Table whose pending writes should be published. |
-| `schema_name` | `str` | `"public"` | Schema the table lives in. |
-
-SereneDB's inverted index is **eventually consistent**: rows written since the last refresh are invisible to full-text queries and to vector queries routed through the index. This method issues `VACUUM (REFRESH_TABLE)` on the table, publishing them immediately. See [Visibility and the refresh model](../../sql/indexes/inverted/maintenance.md#visibility-and-the-refresh-model) for the underlying mechanics, including the background `refresh_interval` that publishes writes on its own.
-
-You rarely need to call this by hand: the store refreshes after every write. It becomes your responsibility when the store was created with `sync_load=False`, which is the recommended setting for bulk loads:
-
-```python
-store = SereneDBVectorStore.create_sync(engine, embeddings, "my_docs", sync_load=False)
-store.add_texts(big_batch)          # no refresh per batch
-engine.refresh_table("my_docs")     # publish once, at the end
-```
+A write is visible to every search that starts after its call returns, full-text and vector alike: each write commits, and SereneDB shows a committed row through the table and through its index at once. See [Visibility](../../sql/indexes/inverted/maintenance.md#visibility).
 
 ## Dropping and closing {#lifecycle}
 

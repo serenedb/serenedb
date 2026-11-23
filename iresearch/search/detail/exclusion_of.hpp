@@ -45,7 +45,8 @@ namespace irs::detail {
 template<typename Term>
 bool ExcludeTerms(std::span<const Term> terms,
                   std::span<const QueryBuilder::ptr> filters,
-                  const TermReader* field, const IndexInput*& doc) noexcept {
+                  const TermReader* field,
+                  const duckdb::InputFile*& doc) noexcept {
   if (!filters.empty() || terms.empty()) {
     return false;
   }
@@ -68,92 +69,21 @@ class ExcludeCosts {
     : _candidates{static_cast<double>(candidates)},
       _words{static_cast<double>(SegmentWords(docs_count))},
       _windows{static_cast<double>(SegmentWindows(docs_count))} {
-    const double c = _candidates;
-    const double s = static_cast<double>(std::max<uint64_t>(span, 1));
-    const double n = static_cast<double>(std::max<doc_id_t>(docs_count, 1));
-    const double block = kCostBlock;
-    const double blocks = c / block;
-    const bool per_doc = use == ExcludeUse::PerDoc;
-    const double touched =
-      per_doc
-        ? _windows * (1.0 - std::exp(-c / _windows))
-        : std::min(
-            _windows,
-            blocks * (1.0 + block * n / s / static_cast<double>(kWindowDocs)));
-    const auto dirty = [&](double sparse) {
-      return 1.0 - std::exp(-block * sparse / s);
-    };
-    double eager = 0;
-    double sparse = 0;
-    double hits = 0;
-    double exact = 0;
-    const auto add = [&](const ClauseCost& clause) {
-      const auto d = static_cast<double>(clause.docs);
-      const auto leaves = static_cast<double>(clause.leaves);
-      if (clause.mask) {
-        _probes += per_doc ? c * clause.probe
-                           : blocks * clause.block_probe +
-                               c * dirty(clause.sparse) * clause.probe;
-        const double refill = touched * kMaskWindowCost;
-        _lazy += refill + clause.lazy_fill * (touched / _windows);
-        _filled += clause.fill + refill;
-        eager += clause.fill;
-        sparse += clause.sparse;
-        return;
-      }
-      const double reach = d * std::min(1.0, c / s);
-      const double steps = std::min(reach, c);
-      const double r = c > 0 ? reach / c : 0.0;
-      const double step =
-        kStepBaseCost + kStepJumpCost * std::max(0.0, 1.0 - r);
-      const double share = std::min(1.0, c / n);
-      const double block_probe =
-        clause.block_probe +
-        (clause.exact ? kBlockSeekCost * std::min(1.0, 4.0 * d / s) : 0.0);
-      double probes = per_doc ? c * clause.probe
-                              : blocks * block_probe +
-                                  c * dirty(clause.sparse) * clause.probe;
-      probes += steps * step +
-                kDecodeCost * std::min(reach, c * block * leaves) +
-                clause.matches * share * clause.hit;
-      _probes += probes;
-      const double refill =
-        touched * (clause.exact ? kWindowRefillCost * leaves
-                   : clause.nested
-                     ? kWindowNestedRefillCost
-                     : kWindowChildRefillCost +
-                         kWindowChildSeekCost * (1.0 - touched / _windows));
-      _lazy += refill + clause.lazy_fill * (touched / _windows);
-      _filled += (clause.exact ? kFilledCost * d : clause.fill) + refill;
-      eager += clause.exact    ? clause.fill
-               : clause.nested ? clause.fill + _windows * kEagerNestedWindowCost
-                               : clause.fill + _windows * kEagerChildWindowCost;
-      sparse += clause.sparse;
-      hits += d * share;
-      exact += clause.exact ? 1.0 : 0.0;
-    };
-    for (size_t i = 0; i != terms.size(); ++i) {
-      add(TermClauseCost(CookieOf(terms[i]).docs_count, docs_count));
-    }
+    double sparse = static_cast<double>(SumDocs(terms));
     for (const auto& child : filters) {
       SDB_ASSERT(child);
-      add(ChildClauseCost(*child, docs_count));
+      sparse += ChildClauseCost(*child, docs_count).sparse;
     }
-    if (exact > 1.0) {
-      _probes += (per_doc ? c : c * dirty(sparse)) * kLeafProbeCost * exact;
+    const Reach reach{_candidates, _windows, span, docs_count, use, sparse};
+    Totals totals;
+    for (size_t i = 0; i != terms.size(); ++i) {
+      Add(reach, TermClauseCost(CookieOf(terms[i]).docs_count, docs_count),
+          totals);
     }
-    _window = _lazy + (per_doc ? c * kWindowTestCost
-                               : blocks * kWindowBlockCost +
-                                   c * dirty(sparse) * kWindowDirtyTestCost);
-    const double built = _words * kBitClearCost + eager;
-    _bitset =
-      built +
-      (per_doc ? c * kBitTestCost + hits * kHitCost
-               : blocks * (kBitsetBlockCost +
-                           kBitsetBlockWordCost *
-                             std::min(block, _words / std::max(sparse, 1.0))) +
-                   c * dirty(sparse) * kBitsetDirtyTestCost);
-    _bitset_lead = built + c * kBitsetProbeCost;
+    for (const auto& child : filters) {
+      Add(reach, ChildClauseCost(*child, docs_count), totals);
+    }
+    Finish(reach, totals);
   }
 
   double Best(bool bitsets) const noexcept {
@@ -175,7 +105,7 @@ class ExcludeCosts {
   }
 
   ExcludeForm Probed(bool bitsets) const noexcept {
-    return Form(bitsets, _window, _bitset, _probes);
+    return Form(bitsets, _probed_window, _bitset, _probed_probes);
   }
 
   ExcludeForm Windowed(bool bitsets) const noexcept {
@@ -190,6 +120,147 @@ class ExcludeCosts {
   }
 
  private:
+  struct Reach {
+    Reach(double candidates, double windows, uint64_t span, doc_id_t docs_count,
+          ExcludeUse use, double sparse_docs) noexcept
+      : c{candidates},
+        s{static_cast<double>(std::max<uint64_t>(span, 1))},
+        n{static_cast<double>(std::max<doc_id_t>(docs_count, 1))},
+        blocks{c / kCostBlock},
+        per_doc{use == ExcludeUse::PerDoc},
+        sparse{sparse_docs} {
+      touched =
+        per_doc ? windows * (1.0 - std::exp(-c / windows))
+                : std::min(windows,
+                           blocks * (1.0 + kCostBlock * n / s /
+                                             static_cast<double>(kWindowDocs)));
+      const double lead_blocks = std::max(1.0, s / kCostBlock);
+      batches = per_doc ? c : lead_blocks * (1.0 - std::exp(-c / lead_blocks));
+      probed = per_doc ? c
+                       : batches + std::max(c - batches, 0.0) *
+                                     Dirty(*this, sparse_docs);
+      spread = windows * (1.0 - std::exp(-c / windows));
+    }
+
+    double c;
+    double s;
+    double n;
+    double blocks;
+    bool per_doc;
+    double sparse;
+    double touched = 0;
+    double batches = 0;
+    double probed = 0;
+    double spread = 0;
+  };
+
+  struct Totals {
+    double probed_lazy = 0;
+    double eager = 0;
+    double hits = 0;
+    double exact = 0;
+  };
+
+  static double Dirty(const Reach& reach, double docs) noexcept {
+    return 1.0 - std::exp(-kCostBlock * docs / reach.s);
+  }
+
+  void Add(const Reach& reach, const ClauseCost& clause, Totals& totals) {
+    if (clause.mask) {
+      AddMask(reach, clause, totals);
+      return;
+    }
+    const double c = reach.c;
+    const auto d = static_cast<double>(clause.docs);
+    const auto leaves = static_cast<double>(clause.leaves);
+    const double reached = d * std::min(1.0, c / reach.s);
+    const double steps = std::min(reached, c);
+    const double r = c > 0 ? reached / c : 0.0;
+    const double step = kStepBaseCost + kStepJumpCost * std::max(0.0, 1.0 - r);
+    const double share = std::min(1.0, c / reach.n);
+    const double block_probe =
+      clause.block_probe +
+      (clause.exact ? kBlockSeekCost * std::min(1.0, 4.0 * d / reach.s) : 0.0);
+    double probes = reach.per_doc
+                      ? c * clause.probe
+                      : reach.blocks * block_probe +
+                          c * Dirty(reach, clause.sparse) * clause.probe;
+    probes += steps * step +
+              kDecodeCost * std::min(reached, c * kCostBlock * leaves) +
+              clause.matches * share * clause.hit;
+    _probes += probes;
+    const double refill =
+      reach.touched * (clause.exact    ? kWindowRefillCost * leaves
+                       : clause.nested ? kWindowNestedRefillCost
+                                       : kWindowChildRefillCost +
+                                           kWindowChildSeekCost *
+                                             (1.0 - reach.touched / _windows));
+    const double lazy = refill + clause.lazy_fill * (reach.touched / _windows);
+    _lazy += lazy;
+    if (clause.exact && clause.leaves == 1) {
+      _probed_probes += ProbedTermCost(reach, d, share, clause);
+      totals.probed_lazy += reach.spread * kWindowRefillCost +
+                            clause.lazy_fill * (reach.spread / _windows);
+    } else {
+      _probed_probes += probes;
+      totals.probed_lazy += lazy;
+    }
+    _filled += (clause.exact ? kFilledCost * d : clause.fill) + refill;
+    totals.eager += clause.exact ? clause.fill
+                    : clause.nested
+                      ? clause.fill + _windows * kEagerNestedWindowCost
+                      : clause.fill + _windows * kEagerChildWindowCost;
+    totals.hits += d * share;
+    totals.exact += clause.exact ? 1.0 : 0.0;
+  }
+
+  void AddMask(const Reach& reach, const ClauseCost& clause,
+               Totals& totals) noexcept {
+    const double probes =
+      reach.per_doc ? reach.c * clause.probe
+                    : reach.blocks * clause.block_probe +
+                        reach.c * Dirty(reach, clause.sparse) * clause.probe;
+    const double refill = reach.touched * kMaskWindowCost;
+    const double lazy = refill + clause.lazy_fill * (reach.touched / _windows);
+    _probes += probes;
+    _probed_probes += probes;
+    _lazy += lazy;
+    totals.probed_lazy += lazy;
+    _filled += clause.fill + refill;
+    totals.eager += clause.fill;
+  }
+
+  static double ProbedTermCost(const Reach& reach, double d, double share,
+                               const ClauseCost& clause) noexcept {
+    const double leaf = static_cast<double>(doc_limits::kBlockSize);
+    const double probed = reach.probed;
+    const double advances =
+      probed > 0 ? probed * (1.0 - std::exp(-d / probed)) : 0.0;
+    return probed * kLeafProbeCost +
+           advances * static_cast<double>(kProbeSteps) +
+           std::min(advances, std::max(1.0, d / leaf)) * kLeafDocsReadCost +
+           clause.matches * share * clause.hit;
+  }
+
+  void Finish(const Reach& reach, const Totals& totals) noexcept {
+    const double c = reach.c;
+    if (totals.exact > 1.0) {
+      _probes += (reach.per_doc ? c : c * Dirty(reach, reach.sparse)) *
+                 kLeafProbeCost * totals.exact;
+    }
+    const double tests =
+      reach.per_doc ? c * kWindowTestCost
+                    : reach.blocks * kWindowBlockCost +
+                        c * Dirty(reach, reach.sparse) * kWindowDirtyTestCost;
+    _window = _lazy + tests;
+    _probed_window = totals.probed_lazy + tests;
+    const double built = _words * kBitClearCost + totals.eager;
+    _bitset = built + (reach.per_doc ? c * kBitTestCost + totals.hits * kHitCost
+                                     : reach.batches * kBitsetBatchCost +
+                                         c * kBitsetCandidateCost);
+    _bitset_lead = built + c * kBitsetProbeCost;
+  }
+
   double ProbedLead() const noexcept { return _candidates * kProbedLeadCost; }
 
   double WindowedCost(bool bitsets) const noexcept {
@@ -213,21 +284,23 @@ class ExcludeCosts {
   double _words = 0;
   double _windows = 0;
   double _probes = 0;
+  double _probed_probes = 0;
   double _lazy = 0;
   double _filled = 0;
   double _window = 0;
+  double _probed_window = 0;
   double _bitset = 0;
   double _bitset_lead = 0;
 };
 
-template<typename Result, typename Input, bool kConcrete = true, typename Term,
-         typename Make>
+template<typename Result, typename Input, bool kConcrete = true,
+         typename P = NoPins, typename Term, typename Make>
 Result BuildExcludeProbes(PlanMemory& memory, std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
                           uint64_t candidates, Make&& make) {
   if constexpr (kConcrete) {
-    const IndexInput* doc = nullptr;
+    const duckdb::InputFile* doc = nullptr;
     if (ExcludeTerms(metas, filters, field, doc)) {
       const auto concrete = [&]<typename In> -> Result {
         using Probe = PostingProbe<In>;
@@ -246,7 +319,7 @@ Result BuildExcludeProbes(PlanMemory& memory, std::span<const Term> metas,
                                 }));
       };
       if constexpr (std::is_void_v<Input>) {
-        return ResolveInput(*doc, concrete);
+        return Resolve<P>(*doc, concrete);
       } else {
         return concrete.template operator()<Input>();
       }
@@ -298,8 +371,8 @@ Result BuildExcludeFills(PlanMemory& memory, std::span<const Term> metas,
 
 inline constexpr auto kNoMaskFold = [](BitsetStorage&) noexcept {};
 
-template<typename Result, typename Input, bool kConcrete, typename Term,
-         typename Fold, typename Make>
+template<typename Result, typename Input, bool kConcrete, typename P = NoPins,
+         typename Term, typename Fold, typename Make>
 Result BuildRestExcludes(PlanMemory& memory, ExcludeUse use,
                          std::span<const Term> metas,
                          std::span<const QueryBuilder::ptr> filters,
@@ -314,10 +387,10 @@ Result BuildRestExcludes(PlanMemory& memory, ExcludeUse use,
                                  span,  docs_count, use};
   switch (costs.Probed(doc != nullptr)) {
     case ExcludeForm::Probes:
-      return BuildExcludeProbes<Result, Input, kConcrete>(
+      return BuildExcludeProbes<Result, Input, kConcrete, P>(
         memory, metas, filters, field, segment, candidates, make);
     case ExcludeForm::Bitset:
-      return BuildExcludeBitset<Result>(
+      return BuildExcludeBitset<Result, P>(
         memory, metas, filters, field, segment, *doc,
         [&](auto&& set) -> Result {
           fold(set);
@@ -335,18 +408,17 @@ Result BuildRestExcludes(PlanMemory& memory, ExcludeUse use,
     });
 }
 
-template<typename Result, typename Folded, typename Term, typename Build,
-         typename Make>
+template<typename Result, typename Folded, typename P, typename Term,
+         typename Build, typename Make>
 Result PeelMask(std::span<const Term> metas,
                 std::span<const QueryBuilder::ptr> filters,
                 const SubReader& segment, Build&& build, Make&& make) {
   SDB_ASSERT(!metas.empty() || !filters.empty());
   const auto split = SplitMask(filters);
-  if (!split.masked) {
-    return build.template operator()<true>(filters, kNoMaskFold, make);
-  }
-  return ResolveDocsMask(
-    segment, [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
+  return ResolveMask<P, Result>(
+    split.masked, segment,
+    [&] { return build.template operator()<true>(filters, kNoMaskFold, make); },
+    [&]<DocsMaskType Mask>(Mask docs_mask) -> Result {
       if (metas.empty() && split.rest.empty()) {
         return make.template operator()<Mask>(
           std::forward_as_tuple(std::move(docs_mask)));
@@ -370,88 +442,92 @@ Result PeelMask(std::span<const Term> metas,
     });
 }
 
-template<typename Result, typename Input, typename Term, typename Make>
+template<typename Result, typename Input, typename P = NoPins, typename Term,
+         typename Make>
 Result BuildExcludesOf(PlanMemory& memory, ExcludeUse use,
                        std::span<const Term> metas,
                        std::span<const QueryBuilder::ptr> filters,
                        const TermReader* field, const SubReader& segment,
                        uint64_t candidates, uint64_t span, Make&& make) {
-  return PeelMask<Result, probe::BitsetDocs>(
+  return PeelMask<Result, probe::BitsetDocs, P>(
     metas, filters, segment,
     [&]<bool kConcrete>(std::span<const QueryBuilder::ptr> rest, auto&& fold,
                         auto&& wrap) -> Result {
-      return BuildRestExcludes<Result, Input, kConcrete>(
+      return BuildRestExcludes<Result, Input, kConcrete, P>(
         memory, use, metas, rest, filters, field, segment, candidates, span,
         fold, wrap);
     },
     make);
 }
 
-template<typename Result, typename Input, typename Term, typename Make>
+template<typename Result, typename Input, typename P = NoPins, typename Term,
+         typename Make>
 Result BuildExcludeSideOf(PlanMemory& memory, std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
                           uint64_t candidates, uint64_t span, Make&& make) {
-  return BuildExcludesOf<Result, Input, Term>(
+  return BuildExcludesOf<Result, Input, P, Term>(
     memory, ExcludeUse::PerDoc, metas, filters, field, segment, candidates,
     span, std::forward<Make>(make));
 }
 
-template<typename Result, typename Input, typename Term, typename Make>
+template<typename Result, typename Input, typename P = NoPins, typename Term,
+         typename Make>
 Result BuildExcludeSideOf(PlanMemory& memory, std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
                           uint64_t candidates, Make&& make) {
-  return BuildExcludeSideOf<Result, Input, Term>(
+  return BuildExcludeSideOf<Result, Input, P, Term>(
     memory, metas, filters, field, segment, candidates, candidates,
     std::forward<Make>(make));
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildExcludeSide(PlanMemory& memory, std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
                         uint64_t candidates, uint64_t span, Make&& make) {
-  return BuildExcludesOf<Result, void, Term>(
+  return BuildExcludesOf<Result, void, P, Term>(
     memory, ExcludeUse::PerDoc, terms, filters, field, segment, candidates,
     span, std::forward<Make>(make));
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildExcludeSide(PlanMemory& memory, std::span<const Term> terms,
                         std::span<const QueryBuilder::ptr> filters,
                         const TermReader* field, const SubReader& segment,
                         uint64_t candidates, Make&& make) {
-  return BuildExcludeSide<Result, Term>(memory, terms, filters, field, segment,
-                                        candidates, candidates,
-                                        std::forward<Make>(make));
+  return BuildExcludeSide<Result, P, Term>(memory, terms, filters, field,
+                                           segment, candidates, candidates,
+                                           std::forward<Make>(make));
 }
 
-template<typename Result, typename Input, typename Term, typename Make>
+template<typename Result, typename Input, typename P = NoPins, typename Term,
+         typename Make>
 Result BuildBlockExcludesOf(PlanMemory& memory, std::span<const Term> metas,
                             std::span<const QueryBuilder::ptr> filters,
                             const TermReader* field, const SubReader& segment,
                             uint64_t candidates, uint64_t lead, Make&& make) {
-  return BuildExcludesOf<Result, Input, Term>(
+  return BuildExcludesOf<Result, Input, P, Term>(
     memory, ExcludeUse::PerBlock, metas, filters, field, segment, candidates,
     lead, std::forward<Make>(make));
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildBlockExcludes(PlanMemory& memory, std::span<const Term> terms,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
                           uint64_t candidates, uint64_t lead, Make&& make) {
-  return BuildExcludesOf<Result, void, Term>(
+  return BuildExcludesOf<Result, void, P, Term>(
     memory, ExcludeUse::PerBlock, terms, filters, field, segment, candidates,
     lead, std::forward<Make>(make));
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildExcludeBitset(PlanMemory& memory, std::span<const Term> metas,
                           std::span<const QueryBuilder::ptr> filters,
                           const TermReader* field, const SubReader& segment,
-                          const IndexInput& doc, Make&& make) {
+                          const duckdb::InputFile& doc, Make&& make) {
   BitsetBuckets buckets{memory};
   auto& clause = buckets.must.emplace_back(buckets.must.get_allocator());
   clause.reserve(metas.size());
@@ -469,12 +545,12 @@ Result BuildExcludeBitset(PlanMemory& memory, std::span<const Term> metas,
   if (clause.empty()) {
     buckets.must.clear();
   }
-  return make(BuildBitset(memory, buckets, doc,
-                          static_cast<doc_id_t>(segment.docs_count())));
+  return make(BuildBitset<P>(memory, buckets, doc,
+                             static_cast<doc_id_t>(segment.docs_count())));
 }
 
-template<typename Result, bool kConcrete, typename Term, typename Fold,
-         typename Make>
+template<typename Result, bool kConcrete, typename P = NoPins, typename Term,
+         typename Fold, typename Make>
 Result BuildRestWindowExcludes(PlanMemory& memory, std::span<const Term> metas,
                                std::span<const QueryBuilder::ptr> filters,
                                std::span<const QueryBuilder::ptr> costed,
@@ -493,10 +569,10 @@ Result BuildRestWindowExcludes(PlanMemory& memory, std::span<const Term> metas,
   };
   switch (costs.Windowed(doc != nullptr)) {
     case ExcludeForm::Probes:
-      return BuildExcludeProbes<Result, void, kConcrete>(
+      return BuildExcludeProbes<Result, void, kConcrete, P>(
         memory, metas, filters, field, segment, candidates, probed);
     case ExcludeForm::Bitset:
-      return BuildExcludeBitset<Result>(
+      return BuildExcludeBitset<Result, P>(
         memory, metas, filters, field, segment, *doc,
         [&](auto&& set) -> Result {
           fold(set);
@@ -514,16 +590,16 @@ Result BuildRestWindowExcludes(PlanMemory& memory, std::span<const Term> metas,
     });
 }
 
-template<typename Result, typename Term, typename Make>
+template<typename Result, typename P = NoPins, typename Term, typename Make>
 Result BuildWindowExcludes(PlanMemory& memory, std::span<const Term> metas,
                            std::span<const QueryBuilder::ptr> filters,
                            const TermReader* field, const SubReader& segment,
                            uint64_t candidates, Make&& make) {
-  return PeelMask<Result, fill::ProbedAndNot<probe::BitsetDocs>>(
+  return PeelMask<Result, fill::ProbedAndNot<probe::BitsetDocs>, P>(
     metas, filters, segment,
     [&]<bool kConcrete>(std::span<const QueryBuilder::ptr> rest, auto&& fold,
                         auto&& wrap) -> Result {
-      return BuildRestWindowExcludes<Result, kConcrete>(
+      return BuildRestWindowExcludes<Result, kConcrete, P>(
         memory, metas, rest, filters, field, segment, candidates, fold, wrap);
     },
     make);

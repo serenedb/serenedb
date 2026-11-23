@@ -37,6 +37,7 @@
 #include "iresearch/search/filters/all_filter.hpp"
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
+#include "iresearch/search/scorers/constant_score.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -59,7 +60,14 @@ void PrefetchPostings(const TermReader& reader,
 
 QueryBuilder::ptr MultiTermQuery::Finish(
   memory::managed_ptr<MultiTermQuery> query, const PrepareContext& ctx) {
-  absl::c_sort(query->_state.Walked(), [](const auto& l, const auto& r) {
+  auto& walked = query->_state.Walked();
+  const auto* const scorer = ctx.Record().scorer;
+  if (IsConstantScore(scorer)) {
+    for (auto& entry : walked) {
+      entry.boost = kNoBoost;
+    }
+  }
+  absl::c_sort(walked, [](const auto& l, const auto& r) {
     if (l.cookie.docs_count != r.cookie.docs_count) {
       return l.cookie.docs_count > r.cookie.docs_count;
     }
@@ -79,8 +87,7 @@ QueryBuilder::ptr MultiTermQuery::Finish(
   query->_estimate_matches = query->_estimate_max;
   query->_postings = sum;
   query->_leaves = static_cast<uint32_t>(terms.size());
-  if (terms.size() > 1 && ctx.Record().scorer == nullptr &&
-      query->_state.Reader() != nullptr) {
+  if (terms.size() > 1 && !scorer && query->_state.Reader() != nullptr) {
     PrefetchPostings(*query->_state.Reader(), terms);
   }
 
@@ -93,7 +100,7 @@ QueryBuilder::ptr MultiTermQuery::Finish(
     }
     return MakeTermQuery(ctx.memory, query->_segment, query->_state.Reader(),
                          entry.cookie, entry.boost * query->_boost,
-                         detail::StatsRecord{entry.stats, ctx.Record().scorer});
+                         detail::StatsRecord{entry.stats, scorer});
   }
   query->SetStats(ctx.Record());
   return query;

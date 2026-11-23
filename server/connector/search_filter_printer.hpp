@@ -20,10 +20,13 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/common/explain_value.hpp>
 #include <functional>
 #include <iresearch/search/filters/filter.hpp>
+#include <limits>
 #include <string>
+#include <vector>
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/term_dict.h"
@@ -34,6 +37,10 @@ using FieldNameResolver =
   std::function<std::string(sdb::connector::ColumnId, DictRef)>;
 using FieldTypeResolver =
   std::function<duckdb::LogicalType(sdb::connector::ColumnId, DictRef)>;
+using FieldKeyResolver = std::function<bool(sdb::connector::ColumnId)>;
+
+std::string DictTermValue(DictRef dict, bytes_view term,
+                          const duckdb::LogicalType& type);
 
 // Builds the structured filter tree for EXPLAIN: one node per filter with its
 // attributes (field, decoded terms/bounds, max_terms, min_match, boost, ...)
@@ -42,6 +49,24 @@ using FieldTypeResolver =
 duckdb::ExplainNode ToExplainNode(const Filter& f);
 duckdb::ExplainNode ToExplainNode(const Filter& f,
                                   const FieldNameResolver& name_of,
-                                  const FieldTypeResolver& type_of);
+                                  const FieldTypeResolver& type_of,
+                                  const FieldKeyResolver& key_of);
+
+struct FilterBox {
+  static constexpr uint32_t kRoot = std::numeric_limits<uint32_t>::max();
+
+  const Filter* filter = nullptr;
+  uint32_t parent = kRoot;
+  uint32_t node = 0;
+};
+
+struct FilterTree {
+  duckdb::ExplainNode root;
+  std::vector<FilterBox> boxes;
+};
+
+FilterTree ToFilterTree(const Filter& f, const FieldNameResolver& name_of,
+                        const FieldTypeResolver& type_of,
+                        const FieldKeyResolver& key_of);
 
 }  // namespace irs

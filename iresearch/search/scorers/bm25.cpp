@@ -39,6 +39,7 @@
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/scale_score.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -52,38 +53,24 @@
 namespace irs {
 namespace {
 
-template<ScoreMergeType MergeType, bool HasScale>
-IRS_FORCE_INLINE void Bm15(score_t* IRS_RESTRICT res, scores_size_t n,
-                           const uint32_t* IRS_RESTRICT freq,
-                           [[maybe_unused]] const score_t* IRS_RESTRICT scale,
-                           score_t num, score_t c1_inv) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    const auto tf = ScaledFreq<HasScale>(freq, scale, i);
-    Merge<MergeType>(res[i], num - num / (1.f + tf * c1_inv));
-  }
-}
+constexpr std::string_view kIdfExpression =
+  "log(1 + (N - df + 0.5) / (df + 0.5))";
 
-template<ScoreMergeType MergeType, bool HasScale>
-IRS_FORCE_INLINE void Bm25(score_t* IRS_RESTRICT res, scores_size_t n,
-                           const uint32_t* IRS_RESTRICT freq,
-                           const uint32_t* IRS_RESTRICT norm,
-                           [[maybe_unused]] const score_t* IRS_RESTRICT scale,
-                           score_t num, score_t norm_const,
-                           score_t norm_length) noexcept {
-  for (scores_size_t i = 0; i != n; ++i) {
-    const score_t c1 = norm_const + norm_length * TermCountToScore(norm[i]);
-    const auto tf = ScaledFreq<HasScale>(freq, scale, i);
-    Merge<MergeType>(res[i], num - num * c1 / (c1 + tf));
+struct Bm15Formula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf) const noexcept {
+    return num - num / (1.f + tf * norm_const_inv);
   }
-}
+
+  score_t num;
+  score_t norm_const_inv;
+};
 
 template<bool HasScale>
 struct Bm15Score : public ScoreOperatorOf<Bm15Score<HasScale>> {
   Bm15Score(score_t boost, const BM25Stats& stats, const FreqBlockAttr* freq,
             const score_t* scale) noexcept
     : scale{scale},
-      num{boost * stats.idf},
-      norm_const_inv{1.f / stats.norm_const},
+      formula{boost * stats.idf, 1.f / stats.norm_const},
       freq{freq} {
     SDB_ASSERT(stats.norm_const != 0.f);
     SDB_ASSERT(this->freq);
@@ -92,14 +79,24 @@ struct Bm15Score : public ScoreOperatorOf<Bm15Score<HasScale>> {
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    Bm15<MergeType, HasScale>(res, n, freq->value, TryGetValue(scale), num,
-                              norm_const_inv);
+    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, nullptr,
+                                    TryGetValue(scale), formula);
   }
 
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  score_t num;
-  score_t norm_const_inv;
+  Bm15Formula formula;
   const FreqBlockAttr* freq;
+};
+
+struct Bm25Formula {
+  IRS_FORCE_INLINE score_t operator()(score_t tf, score_t dl) const noexcept {
+    const score_t c1 = norm_const + norm_length * dl;
+    return num - num * c1 / (c1 + tf);
+  }
+
+  score_t num;
+  score_t norm_const;
+  score_t norm_length;
 };
 
 template<bool HasScale>
@@ -107,40 +104,34 @@ struct Bm25Score : public ScoreOperatorOf<Bm25Score<HasScale>> {
   Bm25Score(score_t boost, const BM25Stats& stats, const FreqBlockAttr* freq,
             const uint32_t* norm, const score_t* scale) noexcept
     : scale{scale},
-      num{boost * stats.idf},
-      norm_const{stats.norm_const},
+      formula{boost * stats.idf, stats.norm_const, stats.norm_length},
       freq{freq},
-      norm{norm},
-      norm_length{stats.norm_length} {}
+      norm{norm} {}
 
   template<ScoreMergeType MergeType = ScoreMergeType::Noop>
   IRS_FORCE_INLINE void ScoreImpl(score_t* res,
                                   scores_size_t n) const noexcept {
-    Bm25<MergeType, HasScale>(res, n, freq->value, norm, TryGetValue(scale),
-                              num, norm_const, norm_length);
+    ScoreFreqs<MergeType, HasScale>(res, n, freq->value, norm,
+                                    TryGetValue(scale), formula);
   }
 
   [[no_unique_address]] utils::Need<HasScale, const score_t*> scale;
-  score_t num;
-  score_t norm_const;
+  Bm25Formula formula;
   const FreqBlockAttr* freq;
   const uint32_t* norm;
-  score_t norm_length;
 };
 
 }  // namespace
 
 void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
-                   const irs::TermCollector* term) const {
+                   const irs::TermCollector* term, StatsArena&) const {
   auto* stats = stats_cast(stats_buf);
 
   const auto docs_with_field = field ? field->docs_with_field : 0;
   const auto docs_with_term = term ? term->docs_with_term : 0;
   const auto total_term_freq = field ? field->total_term_freq : 0;
 
-  stats->idf += score_t(
-    std::log1p((static_cast<double>(docs_with_field - docs_with_term) + 0.5) /
-               (static_cast<double>(docs_with_term) + 0.5)));
+  stats->idf += Bm25Idf(docs_with_field, docs_with_term);
   SDB_ASSERT(stats->idf >= 0.f);
 
   if (!NeedsNorm()) {
@@ -161,8 +152,6 @@ void BM25::collect(byte_type* stats_buf, const irs::FieldCollector* field,
 }
 
 ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
-  const auto* scale = ScaleOf(ctx);
-
   if (IsBM1()) {
     return MakeScaleScore(ctx, ctx.boost * stats_cast(ctx.stats)->idf);
   }
@@ -178,8 +167,9 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
   }
 
   auto* stats = stats_cast(ctx.stats);
+  const auto* scale = ScaleOf(ctx);
 
-  return ResolveBool(scale != nullptr, [&]<bool HasScale>() {
+  return Resolve(scale != nullptr, [&]<bool HasScale>() {
     if (IsBM15()) {
       return ScoreFunction::Make<Bm15Score<HasScale>>(ctx.memory, ctx.boost,
                                                       *stats, freq, scale);
@@ -190,6 +180,43 @@ ScoreFunction BM25::PrepareScorer(const ScoreContext& ctx) const {
     return ScoreFunction::Make<Bm25Score<HasScale>>(ctx.memory, ctx.boost,
                                                     *stats, freq, norm, scale);
   });
+}
+
+void ExplainBm25Idf(const ScoreContext& ctx, score_t idf,
+                    const explain::SlotStats* stats, explain::Node& out) {
+  explain::AddBoost(out, ctx.boost);
+  explain::AddIdf(out, idf, stats, kIdfExpression, &Bm25Idf);
+  explain::AddScale(out, ctx, "boost * idf", "scale * boost * idf");
+}
+
+void BM25::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+                   explain::Node& out) const {
+  const auto& own = *stats_cast(ctx.stats);
+  if (IsBM1()) {
+    ExplainBm25Idf(ctx, own.idf, stats, out);
+    return;
+  }
+  if (!explain::FreqOf(ctx)) {
+    explain::ExplainNoFreq(ctx, _boost_as_score, out);
+    return;
+  }
+  explain::AddBoost(out, ctx.boost);
+  explain::AddIdf(out, own.idf, stats, kIdfExpression, &Bm25Idf);
+  auto& tf = explain::AddDetail(out, "tf", score_t{0});
+  const auto freq = explain::AddFreq(tf, ctx);
+  explain::AddDetail(tf, "k1", _k);
+  if (IsBM15()) {
+    tf.value = freq / (freq + own.norm_const);
+    tf.expression = "freq / (freq + k1)";
+  } else {
+    explain::AddDetail(tf, "b", _b);
+    const auto length = TermCountToScore(explain::AddLength(tf, ctx));
+    explain::AddAverageLength(tf, _k * _b / own.norm_length, stats);
+    const auto c1 = own.norm_const + own.norm_length * length;
+    tf.value = freq / (freq + c1);
+    tf.expression = "freq / (freq + k1 * (1 - b + b * dl / avgdl))";
+  }
+  out.expression = "boost * idf * tf";
 }
 
 ScoreBoundWriter::ptr BM25::PrepareScoreBoundWriter() const {

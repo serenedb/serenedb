@@ -16,9 +16,6 @@ INSERT INTO ff SELECT i,
   FROM range(3000) t(i);
 
 statement ok
-VACUUM (REFRESH_TABLE) ff;
-
-statement ok
 SET sdb_hnsw_ef_search = 64;
 
 query

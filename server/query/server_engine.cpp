@@ -27,9 +27,13 @@
 #include <duckdb/catalog/default/default_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
+#include <duckdb/parser/expression/function_expression.hpp>
 
 #include "catalog/boot.h"
-#include "connector/duckdb_copy_filesystem.h"
+#include "catalog/entry/inverted_index.h"
+#include "catalog/secret_store.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "connector/duckdb_physical_create_index.h"
@@ -41,7 +45,6 @@
 #include "connector/functions/array.h"
 #include "connector/functions/backup.h"
 #include "connector/functions/catalog_introspect.h"
-#include "connector/functions/duckdb_aliases.h"
 #include "connector/functions/encode_key.h"
 #include "connector/functions/es.h"
 #include "connector/functions/formatting.h"
@@ -54,19 +57,20 @@
 #include "connector/functions/otel.h"
 #include "connector/functions/search.h"
 #include "connector/functions/string.h"
-#include "connector/inverted_store_index.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/scan/scan_function.h"
 #include "docs/docs_functions.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/engine/scan_function.h"
 #include "pg/catalog/functions/functions.h"
+#include "pg/connection_context.h"
 #include "pg/types/register.h"
 #include "query/config.h"
 #include "query/config_variable_names.h"
 #include "replication/functions.h"
 #include "replication/repl_source.h"
-#include "server/utils/file_utils.h"
+#include "server/utils/build.h"
+#include "server/utils/build_info.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
 
@@ -82,65 +86,76 @@ ABSL_FLAG(uint64_t, cpu_threads, 0,
           "auto-detect from cpu_count. `SET GLOBAL threads = N` resizes the "
           "pool at runtime.");
 
-ABSL_FLAG(uint32_t, recovery_replay_depth, 0,
-          "Maximum WAL chunks in flight per inverted index during recovery "
-          "replay (the prefetch window; bounds replay memory). 0 = auto "
-          "(4 x cpu threads).");
-
 ABSL_DECLARE_FLAG(std::string, server_directory);
 
 namespace sdb::server::query {
+namespace {
 
-void ConfigureServerDBConfig(duckdb::DBConfig& config) {
-  // Server-mode DuckDB state lives under the datadir, never in cwd-relative
-  // temp files or ~/.duckdb fallbacks (shell/psql subcommands return before
-  // this mutator runs and keep DuckDB defaults).
-  const auto datadir =
-    lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory));
-  auto layout = duckdb::make_shared_ptr<catalog::DataDirectory>(datadir);
-  connector::RegisterSereneDBStorage(config, layout);
-  catalog::RegisterClusterStorage(config, std::move(layout));
+void ConfigureEngineDBConfig(duckdb::DBConfig& config,
+                             const std::string& datadir) {
+  duckdb::FunctionExpression::SetBuiltinPrefix({});
+  config.options.system_object_prefix = "sdb_";
+  config.options.product_name = "SereneDB";
+  config.options.product_version = SERENEDB_VERSION;
+  config.options.product_source_id = build::Commit();
+  config.options.manage_extensions = false;
+  config.create_internal_catalog =
+    [layout = catalog::DataDirectory{datadir}](duckdb::AttachedDatabase& db) {
+      return catalog::CreateInternalCatalog(db, layout);
+    };
+  config.create_client_context = CreateClientContext;
+  config.create_secret_storage = catalog::CreateSecretStorage;
+  connector::RegisterSereneDBStorage(config);
   connector::RegisterConfigVariables(config);
   config.AddExtensionOption(
     duckdb::Identifier{"data_directory"}, "Shows the data directory.",
     duckdb::LogicalType::VARCHAR, duckdb::Value{datadir}, nullptr, nullptr,
     duckdb::SetScope::AUTOMATIC, true);
   connector::RegisterIResearchReplacementScan(config);
+}
+
+}  // namespace
+
+void ConfigureShellDBConfig(duckdb::DBConfig& config) {
+  ConfigureEngineDBConfig(config, {});
+}
+
+void ConfigureServerDBConfig(duckdb::DBConfig& config) {
+  // Server-mode DuckDB state lives under the datadir, never in cwd-relative
+  // temp files or ~/.duckdb fallbacks.
+  const auto datadir =
+    lifecycle::ResolveDataDir(absl::GetFlag(FLAGS_server_directory));
+  ConfigureEngineDBConfig(config, datadir);
   config.SetOptionByName(
     "temp_directory",
-    duckdb::Value{utils::file_utils::BuildFilename(datadir, "tmp")});
+    duckdb::Value{duckdb::FileSystem::JoinPath(datadir, "tmp")});
   config.SetOptionByName(
     "secret_directory",
-    duckdb::Value{utils::file_utils::BuildFilename(datadir, "secrets")});
-  config.SetOptionByName(
-    "extension_directory",
-    duckdb::Value{utils::file_utils::BuildFilename(datadir, "extensions")});
+    duckdb::Value{duckdb::FileSystem::JoinPath(datadir, "secrets")});
   // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
   // ignores cgroup CPU limits and would over-thread in a container. Pin it to
   // our cgroup-aware logical core count when unset, and publish the resolved
   // value into the flag.
   auto threads = absl::GetFlag(FLAGS_cpu_threads);
   if (threads == 0) {
-    threads = CountLogicalCores();
+    threads = std::min<uint64_t>(CountLogicalCores(),
+                                 duckdb::TaskScheduler::MAX_WORKERS);
     absl::SetFlag(&FLAGS_cpu_threads, threads);
   }
   config.SetOptionByName("threads", duckdb::Value::UBIGINT(threads));
-  if (const auto depth = absl::GetFlag(FLAGS_recovery_replay_depth);
-      depth != 0) {
-    config.SetOptionByName(duckdb::Identifier{kRecoveryReplayDepthSetting},
-                           duckdb::Value::UINTEGER(depth));
-  }
   // serenedb runs every query on the internal pool (sessions are scheduled as
   // tasks; the driver is itself a pool worker), so there is no external thread
   // feeding the scheduler. Default external_threads=1 would over-count
   // parallelism by one and make `threads`/`cpu_threads` resolve to N-1 internal
   // workers; zero makes the count exact and `threads=1` a true single worker.
   // Sessions run as tasks on that pool, so it must never be left empty; the
-  // value is refused for the lifetime of the process (kUnchangeableSettings in
-  // connector/duckdb_client_state.cpp), which is what keeps `threads -
+  // value is refused for the lifetime of the process (IsUnchangeableSetting),
+  // which is what keeps `threads -
   // external_threads` from ever resolving to zero internal workers.
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
 }
+
+namespace {
 
 void RegisterEngineModules(duckdb::DatabaseInstance& db) {
   connector::RegisterPgMathFunctions(db);
@@ -165,10 +180,10 @@ void RegisterEngineModules(duckdb::DatabaseInstance& db) {
 
   docs::RegisterDocsFunctions(db);
 
-  connector::RegisterDuckDBAliases(db);
-
   connector::RegisterAIFunctions(db);
 }
+
+}  // namespace
 
 void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   RegisterEngineModules(db);
@@ -205,17 +220,10 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
 
   connector::RegisterSereneDBOptimizers(db);
 
-  // The inverted index: its build plan and its store-side instance are
-  // serenedb's. A plain CREATE INDEX is duckdb's ART end to end -- the bind
-  // normalizes every non-inverted spelling to it.
-  auto& index_types = db.config.GetIndexTypes();
-  index_types.RegisterIndexType(
-    connector::InvertedStoreIndex::GetInvertedIndexType());
-
-  // Register filesystem for COPY FROM STDIN support.
-  // Intercepts "/dev/stdin" and reads from PG CopyData messages.
-  auto& fs = duckdb::FileSystem::GetFileSystem(db);
-  fs.RegisterSubSystem(duckdb::make_uniq<connector::SereneDBCopyFileSystem>());
+  duckdb::IndexType inverted;
+  inverted.name = catalog::kInvertedIndexTypeName;
+  inverted.create_plan = &connector::SereneDBCreateIndexPlan;
+  db.config.GetIndexTypes().RegisterIndexType(inverted);
 
   // Parse and cache system functions/views for serving from our attached
   // catalog.

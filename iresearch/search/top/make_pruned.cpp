@@ -22,6 +22,7 @@
 
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/make_query.hpp"
+#include "iresearch/search/detail/with_mask.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/top/family.hpp"
 #include "iresearch/search/top/make.hpp"
@@ -29,9 +30,32 @@
 namespace irs::top {
 namespace {
 
+Root::ptr PinnedConjunction(const BooleanQuery& query, const Context& ctx) {
+  const std::span exclude_filters = query.Queries(Occur::MustNot);
+  return irs::detail::ResolveExcludePins(
+    exclude_filters, query.Segment(), [&]<typename P> -> Root::ptr {
+      return PrunedConjunctionMaker<P>::Make(
+        query.Terms(Occur::Must), query.Queries(Occur::Must),
+        query.Uniformity(Occur::Must), query.Terms(Occur::MustNot),
+        exclude_filters, query.Segment(), ctx, query.MergeType());
+    });
+}
+
+Root::ptr PinnedDisjunction(const BooleanQuery& query, const Context& ctx) {
+  const std::span exclude_filters = query.Queries(Occur::MustNot);
+  return irs::detail::ResolveExcludePins(
+    exclude_filters, query.Segment(), [&]<typename P> -> Root::ptr {
+      return PrunedDisjunctionMaker<true, irs::detail::PostingClause, P>::Make(
+        query.Terms(Occur::Should), query.Queries(Occur::Should),
+        query.Uniformity(Occur::Should), nullptr, nullptr, kNoBoost,
+        query.Terms(Occur::MustNot), exclude_filters, query.Segment(), ctx,
+        query.MergeType(), query.MinShouldMatch());
+    });
+}
+
 Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
   const auto merge = query.MergeType();
-  if (!ctx.prune || merge != ScoreMergeType::Sum ||
+  if (!PruneByBounds(ctx) || merge != ScoreMergeType::Sum ||
       query.Absorbed(ctx.memory, ctx.fetcher) != 0) {
     return {};
   }
@@ -52,9 +76,7 @@ Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
         should.size() + should_filters.size() == 1) {
       return {};
     }
-    return MakePrunedDisjunction(
-      should, should_filters, query.Uniformity(Occur::Should), excludes,
-      exclude_filters, segment, ctx, merge, min_match);
+    return PinnedDisjunction(query, ctx);
   }
   if (!optional) {
     if (must.size() == 1 && must_filters.empty() &&
@@ -62,9 +84,7 @@ Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
       return MakePrunedPosting(must.front(), excludes, exclude_filters, segment,
                                ctx);
     }
-    return MakePrunedConjunction(must, must_filters,
-                                 query.Uniformity(Occur::Must), excludes,
-                                 exclude_filters, segment, ctx, merge);
+    return PinnedConjunction(query, ctx);
   }
   if (excludes.empty() && exclude_filters.empty() && min_match == 0 &&
       must.size() == 1 && must_filters.empty() && should_filters.empty() &&
@@ -75,11 +95,30 @@ Root::ptr MakePruned(const BooleanQuery& query, const Context& ctx) {
   return {};
 }
 
+Root::ptr MakeDenseConjunction(const BooleanQuery& query, const Context& ctx) {
+  const auto merge = query.MergeType();
+  const auto& segment = query.Segment();
+  const std::span must = query.Terms(Occur::Must);
+  const std::span must_filters = query.Queries(Occur::Must);
+  if (PruneByBounds(ctx) || merge != ScoreMergeType::Sum ||
+      query.Absorbed(ctx.memory, ctx.fetcher) != 0 || !must_filters.empty() ||
+      !query.Terms(Occur::Should).empty() ||
+      !query.Queries(Occur::Should).empty() ||
+      !irs::detail::DenseConjunction(
+        must, static_cast<doc_id_t>(segment.docs_count()))) {
+    return {};
+  }
+  return PinnedConjunction(query, ctx);
+}
+
 }  // namespace
 
 Root::ptr Family::Make(const BooleanQuery& query, const Context& ctx) {
   if (auto pruned = MakePruned(query, ctx)) {
     return pruned;
+  }
+  if (auto dense = MakeDenseConjunction(query, ctx)) {
+    return dense;
   }
   return irs::detail::MakeQuery<Family>(query, ctx);
 }

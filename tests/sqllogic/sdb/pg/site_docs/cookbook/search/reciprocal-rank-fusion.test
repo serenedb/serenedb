@@ -32,9 +32,6 @@ statement ok
 CREATE INDEX movies_idx ON movies
     USING inverted (id, title basic_dict, description basic_dict, genre);
 
-statement ok
-VACUUM (REFRESH_TABLE) movies;
-
 # DOCS_TEST_BODY
 
 query
@@ -79,9 +76,6 @@ INSERT INTO articles VALUES
 statement ok
 CREATE INDEX articles_idx ON articles
     USING inverted (id, title basic_dict, body basic_dict);
-
-statement ok
-VACUUM (REFRESH_TABLE) articles;
 
 # DOCS_TEST: example_002
 

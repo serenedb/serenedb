@@ -21,9 +21,6 @@ INSERT INTO docs VALUES
     (4, 'something else entirely', 'comedy', 'z');
 
 statement ok
-VACUUM (REFRESH_TABLE) docs;
-
-statement ok
 CREATE TABLE titles (id INTEGER PRIMARY KEY, title VARCHAR);
 
 statement ok
@@ -36,9 +33,6 @@ statement ok
 INSERT INTO titles VALUES (1, 'hello'), (2, 'help'), (3, 'world'), (4, 'held');
 
 statement ok
-VACUUM (REFRESH_TABLE) titles;
-
-statement ok
 CREATE TABLE vecs (id INTEGER, emb FLOAT[3]);
 
 statement ok
@@ -46,9 +40,6 @@ CREATE INDEX vecs_l2 ON vecs USING inverted (id, emb ivf (metric = 'l2'));
 
 statement ok
 INSERT INTO vecs VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [0, 0, 1]::FLOAT[3]);
-
-statement ok
-VACUUM (REFRESH_TABLE) vecs;
 
 statement ok
 CREATE TABLE vecs_c (id INTEGER, emb FLOAT[3]);
@@ -60,9 +51,6 @@ statement ok
 INSERT INTO vecs_c VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 1, 0]::FLOAT[3]), (3, [1, 1, 0]::FLOAT[3]);
 
 statement ok
-VACUUM (REFRESH_TABLE) vecs_c;
-
-statement ok
 CREATE TABLE vecs_l (id INTEGER, emb FLOAT[3]);
 
 statement ok
@@ -72,9 +60,6 @@ statement ok
 INSERT INTO vecs_l VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [0, 0, 1]::FLOAT[3]);
 
 statement ok
-VACUUM (REFRESH_TABLE) vecs_l;
-
-statement ok
 CREATE TABLE vecs_i (id INTEGER, emb FLOAT[3]);
 
 statement ok
@@ -82,9 +67,6 @@ CREATE INDEX vecs_ip ON vecs_i USING inverted (id, emb ivf (metric = 'ip'));
 
 statement ok
 INSERT INTO vecs_i VALUES (1, [1, 0, 0]::FLOAT[3]), (2, [0, 5, 0]::FLOAT[3]), (3, [2, 2, 2]::FLOAT[3]);
-
-statement ok
-VACUUM (REFRESH_TABLE) vecs_i;
 
 statement ok
 CREATE TABLE geo (id INTEGER PRIMARY KEY, geo GEOMETRY('OGC:CRS84'));
@@ -99,9 +81,6 @@ statement ok
 INSERT INTO geo VALUES
     (1, 'POINT(37.6 55.7)'::GEOMETRY('OGC:CRS84')),
     (2, 'POINT(37.7 55.8)'::GEOMETRY('OGC:CRS84'));
-
-statement ok
-VACUUM (REFRESH_TABLE) geo;
 
 statement ok
 CREATE TABLE scored (id INTEGER PRIMARY KEY, body VARCHAR);
@@ -123,9 +102,6 @@ INSERT INTO scored VALUES
     (5, 'the lazy dog sleeps all day');
 
 statement ok
-VACUUM (REFRESH_TABLE) scored;
-
-statement ok
 CREATE TABLE geo_demo (id INTEGER PRIMARY KEY, name VARCHAR, shape JSON);
 
 statement ok
@@ -141,9 +117,6 @@ INSERT INTO geo_demo VALUES
     (3, 'edge_point',  '{"type":"Point","coordinates":[10,5]}'),
     (4, 'far_point',   '{"type":"Point","coordinates":[50,50]}'),
     (5, 'overlap_box', '{"type":"Polygon","coordinates":[[[5,5],[15,5],[15,15],[5,15],[5,5]]]}');
-
-statement ok
-VACUUM (REFRESH_TABLE) geo_demo;
 
 statement ok
 CREATE TABLE cities (id INTEGER PRIMARY KEY, name VARCHAR, loc GEOMETRY('OGC:CRS84'));
@@ -162,9 +135,6 @@ INSERT INTO cities VALUES
     (4, 'spb_palace', 'POINT(30.314611 59.939095)'::GEOMETRY('OGC:CRS84'));
 
 statement ok
-VACUUM (REFRESH_TABLE) cities;
-
-statement ok
 CREATE TABLE passages (id INTEGER PRIMARY KEY, body VARCHAR);
 
 statement ok
@@ -180,9 +150,6 @@ INSERT INTO passages VALUES
     (1, 'the quick brown fox jumps over the lazy dog'),
     (2, 'a quick red fox runs fast'),
     (3, 'First sentence here. The quick brown fox is in this sentence. Third one.');
-
-statement ok
-VACUUM (REFRESH_TABLE) passages;
 
 
 # DOCS_TEST: column--tsquery
@@ -386,6 +353,14 @@ SELECT id FROM docs_idx WHERE body @@ to_tsquery('+fox -red') ORDER BY id;
 id
 1
 
+# DOCS_TEST: to_tsquery_fuzzy_prefix
+# DOCS_TEST_BODY
+query
+SELECT id FROM docs_idx WHERE body @@ to_tsquery('trutl*~1') ORDER BY id;
+----
+id
+3
+
 # DOCS_TEST: plainto_tsquery
 # DOCS_TEST_BODY
 query
@@ -508,6 +483,47 @@ id	score
 2	0.38499752
 1	0.2449984
 3	0.2449984
+
+# DOCS_TEST: ts_explain
+# DOCS_TEST_BODY
+query
+SELECT id,
+       BM25(scored_idx.tableoid) AS score,
+       ts_explain(scored_idx.tableoid) AS why
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY score DESC, id
+LIMIT 1;
+----
+id	score	why
+2	0.38217354	{"column":"body","expression":"boost * idf * tf","inputs":{"idf":{"expression":"log(1 + (N - df + 0.5) / (df + 0.5))","inputs":{"N":{"value":5},"df":{"value":3}},"value":0.5389965},"tf":{"expression":"freq / (freq + k1 * (1 - b + b * dl / avgdl))","inputs":{"avgdl":{"expression":"L / N","inputs":{"L":{"value":29},"N":{"value":5}},"value":5.8},"b":{"value":0.75},"dl":{"value":6},"freq":{"value":3},"k1":{"value":1.2}},"value":0.7090465}},"scorer":"bm25(k1=1.2, b=0.75)","term":"fox","value":0.38217354}
+
+# DOCS_TEST: ts_explain_json
+# DOCS_TEST_BODY
+query
+SELECT id, ts_explain_json(ts_explain(scored_idx.tableoid)) AS why
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(scored_idx.tableoid) DESC, id
+LIMIT 1;
+----
+id	why
+2	{"value":0.38217354,"description":"weight(body:fox) [bm25(k1=1.2, b=0.75)], computed as boost * idf * tf from:","details":[{"value":0.5389965,"description":"idf, computed as log(1 + (N - df + 0.5) / (df + 0.5)) from:","details":[{"value":5,"description":"N, number of rows with the column","details":[]},{"value":3,"description":"df, number of rows containing the term","details":[]}]},{"value":0.7090465,"description":"tf, computed as freq / (freq + k1 * (1 - b + b * dl / avgdl)) from:","details":[{"value":5.8,"description":"avgdl, average length of the column, computed as L / N from:","details":[{"value":29,"description":"L, total length of the column over all rows","details":[]},{"value":5,"description":"N, number of rows with the column","details":[]}]},{"value":0.75,"description":"b, length normalization parameter","details":[]},{"value":6,"description":"dl, length of the column in the row","details":[]},{"value":3,"description":"freq, occurrences of the term in the row","details":[]},{"value":1.2,"description":"k1, term saturation parameter","details":[]}]}]}
+
+# DOCS_TEST: ts_explain_paths
+# DOCS_TEST_BODY
+query
+SELECT id,
+       ts_explain(scored_idx.tableoid).inputs.idf.value::FLOAT AS idf,
+       ts_explain(scored_idx.tableoid).inputs.tf.inputs.freq.value::INTEGER AS freq
+FROM scored_idx
+WHERE body @@ ts_phrase('fox')
+ORDER BY BM25(scored_idx.tableoid) DESC, id;
+----
+id	idf	freq
+2	0.5389965	3
+1	0.5389965	1
+3	0.5389965	1
 
 # DOCS_TEST: tfidf
 # DOCS_TEST_BODY
@@ -1040,6 +1056,42 @@ id	score
 1	0.84187967
 3	0.599651
 
+# DOCS_TEST: pattern_constant_score
+# DOCS_TEST_BODY
+query
+SELECT id, BM25(scored_idx.tableoid) AS score
+FROM scored_idx
+WHERE body @@ ts_starts_with('d')
+ORDER BY id;
+----
+id	score
+4	1
+5	1
+
+# DOCS_TEST: pattern_term_score
+# DOCS_TEST_BODY
+query
+SELECT id, BM25(scored_idx.tableoid) AS score
+FROM scored_idx
+WHERE body @@ ts_starts_with('d')::score('bm25(1.2, 0.75)')
+ORDER BY score DESC, id;
+----
+id	score
+5	0.6213684
+4	0.45580956
+
+# DOCS_TEST: pattern_term_sum
+# DOCS_TEST_BODY
+query
+SELECT id, BM25(scored_idx.tableoid) AS score
+FROM scored_idx
+WHERE body @@ ts_starts_with('d')::score('bm25(1.2, 0.75)')::merge('sum')
+ORDER BY score DESC, id;
+----
+id	score
+5	1.0137732
+4	0.45580956
+
 # DOCS_TEST: ts_phrase_gap
 # DOCS_TEST_BODY
 query
@@ -1080,12 +1132,23 @@ id
 query
 SELECT id
 FROM docs_idx
-WHERE body @@ ts_levenshtein('X', 1, true, 'quic')
+WHERE body @@ ts_levenshtein('X', 1, prefix := 'quic')
 ORDER BY id;
 ----
 id
 1
 2
+
+# DOCS_TEST: ts_levenshtein_starts_with
+# DOCS_TEST_BODY
+query
+SELECT id
+FROM docs_idx
+WHERE body @@ ts_levenshtein('trutl', 1, starts_with := true)
+ORDER BY id;
+----
+id
+3
 
 # DOCS_TEST: ts_between_unbounded
 # DOCS_TEST_BODY

@@ -36,7 +36,7 @@ The table below shows the available mathematical operators for [numeric types](.
 
 There are two division operators: `/` and `//`.
 They are equivalent when at least one of the operands is a `FLOAT` or a `DOUBLE`.
-When both operands are integers, `//` performs integer division (`5 // 2 = 2`) and `/` follows the [`integer_division`](../../configuration/overview.md) setting: a server truncates like PostgreSQL (`5 / 2 = 2`), while `serened shell` divides as floats (`5 / 2 = 2.5`). Write `5 / 2.0` for a fractional result on both. A division or modulo by zero fails with a `Division by zero` error, SQLSTATE `22012` as in PostgreSQL. To return `NULL` instead, wrap the expression in `TRY(...)`, or run `SET error_on_division_by_zero = false` to return `NULL` for all divisions by zero:
+When both operands are integers, `//` performs integer division (`5 // 2 = 2`) and `/` follows the [`integer_division`](../../configuration/overview.md) setting: a server truncates like PostgreSQL (`5 / 2 = 2`), while `serenedb shell` divides as floats (`5 / 2 = 2.5`). Write `5 / 2.0` for a fractional result on both. A division or modulo by zero fails with a `Division by zero` error, SQLSTATE `22012` as in PostgreSQL. To return `NULL` instead, wrap the expression in `TRY(...)`, or run `SET error_on_division_by_zero = false` to return `NULL` for all divisions by zero:
 
 <SqlLogicTest id="sql/functions/numeric/division_by_zero" />
 
@@ -45,6 +45,8 @@ When both operands are integers, `//` performs integer division (`5 // 2 = 2`) a
 Integer `+`, `-`, `*` and unary minus fail with an overflow error when the result does not fit the type. After `SET integer_overflow = 'wrap'` they keep the low bits of the result instead, the two's complement wraparound of machine arithmetic and of ClickHouse; `RESET integer_overflow` restores the error. Casts and division are always checked:
 
 <SqlLogicTest id="sql/functions/numeric/integer_overflow" />
+
+`wrap` trades exactness on overflow for speed: comparisons and sums are still rewritten as if integer arithmetic could not overflow. When a result does wrap, a comparison or a sum over it may see the exact value instead of the wrapped one. For example, `x + 1 < 0` can be `false` for the largest `INTEGER` while `x + 1` itself returns a negative number, and `SUM(x + 1)` can return the exact sum. Queries whose arithmetic does not overflow return the same results in both modes.
 
 ### Supported Types
 

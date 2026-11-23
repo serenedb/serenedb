@@ -28,6 +28,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/serializer/memory_stream.hpp>
 #include <map>
 #include <memory>
 #include <random>
@@ -43,7 +44,6 @@
 #include "iresearch/search/detail/bitset_storage.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/probe/bitset_docs.hpp"
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -954,10 +954,10 @@ void BmDocumentMaskSeekRaw(benchmark::State& state) {
   size_t hits = 0;
 
   for (auto _ : state) {
-    const irs::DocumentMask::Iterator it{&mask.Set()};
+    const auto& set = mask.Set();
     hits = 0;
     for (const auto doc : candidates) {
-      hits += static_cast<size_t>(it.Contains(doc));
+      hits += static_cast<size_t>(set.Contains(doc));
     }
     benchmark::DoNotOptimize(hits);
   }
@@ -1072,8 +1072,9 @@ void BmDeserializeFrozen(benchmark::State& state) {
   const auto blob = SerializeMask(mask.Set());
 
   for (auto _ : state) {
-    irs::BytesViewInput in{
-      irs::ViewCast<irs::byte_type>(std::string_view{blob})};
+    duckdb::MemoryStream in{
+      reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(blob.data())),
+      blob.size()};
     auto restored = irs::DocumentMask::ReadFrozen(in, blob.size());
     benchmark::DoNotOptimize(restored.Count());
   }
@@ -1210,10 +1211,9 @@ BENCHMARK_TEMPLATE(BmLookupScale, 2)->Name("Scale/hashset")->Apply(ScaleArgs);
 BENCHMARK_TEMPLATE(BmLookupScale, 3)->Name("Scale/bitset")->Apply(ScaleArgs);
 
 size_t ScanWithIterator(const irs::DocumentMask& mask, doc_id_t end) {
-  const irs::DocumentMask::Iterator it_mask{&mask};
   size_t live = 0;
   for (auto doc = kBegin; doc < end; ++doc) {
-    live += static_cast<size_t>(!it_mask.Contains(doc));
+    live += static_cast<size_t>(!mask.Contains(doc));
   }
   return live;
 }

@@ -60,11 +60,11 @@ statement ok
 ALTER SEQUENCE dseq_mop_seq OWNER TO dseq_vedernikoff;
 
 
-# PG: 2BP01, DETAIL "owner of sequence dseq_mop_seq" -> ignored.
 statement error
 DROP ROLE dseq_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dseq_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dseq_vedernikoff" cannot be dropped because some objects depend on it
+DETAIL: owner of sequence dseq_mop_seq
 
 
 # Drop the sequence -> dependency gone -> the role drops.
@@ -109,7 +109,7 @@ DROP ROLE dseq_vedernikoff;
 statement error
 DROP ROLE dseq_clickclack;
 ----
-db error: ERROR: Cannot drop entry "dseq_clickclack" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dseq_clickclack" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -148,7 +148,7 @@ ALTER SEQUENCE dseq_log_seq OWNER TO dseq_vedernikoff;
 statement error
 DROP ROLE dseq_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dseq_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dseq_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Drop one sequence; the other still pins the role.
@@ -159,7 +159,7 @@ DROP SEQUENCE dseq_mop_seq;
 statement error
 DROP ROLE dseq_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dseq_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dseq_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Drop the last sequence -> role drops.
@@ -191,7 +191,7 @@ GRANT USAGE ON SEQUENCE dseq_mop_seq TO dseq_vedernikoff;
 statement error
 DROP ROLE dseq_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dseq_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dseq_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 statement ok
@@ -235,7 +235,7 @@ GRANT USAGE ON SEQUENCE dseq_log_seq TO dseq_vedernikoff;
 statement error
 DROP ROLE dseq_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dseq_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dseq_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Revoke the grant; ownership of dseq_mop_seq still pins the role.
@@ -246,7 +246,7 @@ REVOKE USAGE ON SEQUENCE dseq_log_seq FROM dseq_vedernikoff;
 statement error
 DROP ROLE dseq_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dseq_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dseq_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # Drop the owned sequence -> last dependency gone -> role drops.
@@ -288,7 +288,7 @@ CREATE TABLE dseq_log (id int DEFAULT nextval('dseq_mop_seq'), msg text);
 statement error
 DROP ROLE dseq_vedernikoff;
 ----
-db error: ERROR: Cannot drop entry "dseq_vedernikoff" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: role "dseq_vedernikoff" cannot be dropped because some objects depend on it<slt:ignore>
 
 
 # The column default depends on the sequence -> plain/RESTRICT drop is refused.
@@ -296,7 +296,7 @@ db error: ERROR: Cannot drop entry "dseq_vedernikoff" because there are entries 
 statement error
 DROP SEQUENCE dseq_mop_seq RESTRICT;
 ----
-db error: ERROR: Cannot drop entry "dseq_mop_seq" because there are entries that depend on it.<slt:ignore>
+db error: ERROR: cannot drop sequence dseq_mop_seq because other objects depend on it<slt:ignore>
 
 
 # CASCADE drops the sequence and its dependent default in one shot.

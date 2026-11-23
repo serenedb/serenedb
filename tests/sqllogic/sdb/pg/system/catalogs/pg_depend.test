@@ -443,7 +443,7 @@ pg_proc	0	n
 
 
 statement ok
-CREATE TABLE roshan_dep_search (txt text) WITH (storage = 'search');
+CREATE TABLE roshan_dep_search (txt text);
 
 
 query
@@ -461,7 +461,7 @@ DROP TABLE roshan_dep_search;
 
 
 statement ok
-CREATE TABLE roshan_dep_search_serial (id serial, txt text) WITH (storage = 'search');
+CREATE TABLE roshan_dep_search_serial (id serial, txt text);
 
 
 query

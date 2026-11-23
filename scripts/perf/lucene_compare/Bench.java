@@ -482,7 +482,7 @@ public final class Bench {
       sst.execute("CREATE INDEX " + index + " ON " + table + " USING inverted(" + ds.column() + ")");
       final long s1 = System.nanoTime();
       sst.execute("COPY " + table + " FROM '" + csv + "' (FORMAT CSV, HEADER false)");
-      sst.execute("VACUUM (REFRESH_TABLE) " + table);
+      sst.execute("VACUUM (FLUSH_TABLE) " + table);
       final double sdbIngest = (System.nanoTime() - s1) / 1e9;
       final long sdbBytes = sdbIndexSize(sst, Paths.get(env("SDB_DATA")), index);
       WALL[SERENEDB] += System.nanoTime() - s0;
@@ -842,16 +842,8 @@ public final class Bench {
       rs.next();
       oid = rs.getLong(1);
     }
-    long bytes = 0;
-    try (Stream<Path> dbs = Files.list(sdbData.resolve("engine_v1"))) {
-      for (Path db : dbs.toList()) {
-        final Path dir = db.resolve(Long.toString(oid));
-        if (Files.isDirectory(dir)) {
-          bytes += dirSize(dir);
-        }
-      }
-    }
-    return bytes;
+    final Path dir = sdbData.resolve("engine_v1").resolve("store").resolve(Long.toString(oid));
+    return Files.isDirectory(dir) ? dirSize(dir) : 0;
   }
 
   static long dirSize(Path dir) throws IOException {

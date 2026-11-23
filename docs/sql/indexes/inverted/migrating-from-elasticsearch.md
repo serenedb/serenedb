@@ -43,7 +43,7 @@ Existing Elasticsearch clients can also talk to SereneDB directly: the [Elastics
 | [`bool`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-bool-query.html) | ✅ | [`&&`](../../functions/search/full-text.md#a--b-and) [`\|\|`](../../functions/search/full-text.md#a--b-or) [`!!`](../../functions/search/full-text.md#-a-not), [`ts_compound`](../../functions/search/full-text.md#ts_compound) |
 | [`term`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-term-query.html) / [`terms`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-terms-query.html) | ✅ | verbatim columns; [`ts_any`](../../functions/search/full-text.md#ts_any) / [`ts_all`](../../functions/search/full-text.md#ts_all) |
 | [`range`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-range-query.html) | ✅ | [`ts_between`](../../functions/search/full-text.md#ts_between), [`ts_lt`](../../functions/search/full-text.md#ts_lt)/[`le`](../../functions/search/full-text.md#ts_le)/[`gt`](../../functions/search/full-text.md#ts_gt)/[`ge`](../../functions/search/full-text.md#ts_ge) |
-| [`query_string`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query.html) | ✅ | [`to_tsquery`](../../functions/search/full-text.md#to_tsquery), [`websearch_to_tsquery`](../../functions/search/full-text.md#websearch_to_tsquery) |
+| [`query_string`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-query-string-query.html) | ✅ | [`to_tsquery`](../../functions/search/full-text.md#to_tsquery), [`websearch_to_tsquery`](../../functions/search/full-text.md#websearch_to_tsquery); `a*~N` is a fuzzy prefix in `to_tsquery`, where `query_string` drops the `~N` |
 | [`more_like_this`](https://www.elastic.co/guide/en/elasticsearch/reference/current/query-dsl-mlt-query.html) | ⚠️ | No direct function; use the [`minhash`](../../functions/search/tokenizers/minhash.md) scalar function or [vector](./vector-search.md) similarity |
 
 ## Function mapping
@@ -115,7 +115,7 @@ Elasticsearch suggesters read a field's terms to complete and correct what a use
 
 | Elasticsearch | SereneDB | Notes |
 |---|:---:|---|
-| [`completion` suggester](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters#completion-suggester) | ✅ | prefix match over the dictionary, ranked by document frequency ([Autocomplete](../../../cookbook/search/autocomplete.md)) |
+| [`completion` suggester](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters#completion-suggester) | ✅ | prefix match over the dictionary, ranked by document frequency; `fuzzy` is [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein) with `starts_with := true` ([Autocomplete](../../../cookbook/search/autocomplete.md)) |
 | [`term` suggester](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters#term-suggester) | ✅ | [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein) over the dictionary, ranked by [`ts_dict_score`](../../functions/search/term-dictionary.md) ([Spell Correction](../../../cookbook/search/spell-correction.md)) |
 | [`phrase` suggester](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters#phrase-suggester) | ⚠️ | correct each term with [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein); no whole-phrase language model ([Spell Correction](../../../cookbook/search/spell-correction.md)) |
 | [context suggester](https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters#context-suggester) | ✅ | autocomplete with a `WHERE` filter on another indexed column |
@@ -184,7 +184,7 @@ Aggregates run **over the inverted index itself** — `GROUP BY` and aggregate f
 |---|:---:|---|
 | [Create / delete index](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-create-index.html) | ✅ | [`CREATE INDEX … USING inverted`](../../statements/create_index/inverted.md) / [`DROP INDEX`](../../statements/drop/index.md) |
 | [Reindex](https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-reindex.html) | ✅ | [`REINDEX INDEX`](./views.md#refreshing-the-index) for indexes over views, files and lakes; an index on a table follows its writes |
-| [Refresh](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-refresh.html) | ✅ | [`VACUUM (REFRESH_TABLE)`](../../statements/vacuum/index.md) ([Maintenance](./maintenance.md)) |
+| [Refresh](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-refresh.html) | ✅ | Not needed: a search through an index on a table finds every row committed before its snapshot was taken ([Maintenance](./maintenance.md#visibility)) |
 | [Force merge](https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-forcemerge.html) | ✅ | [`VACUUM (COMPACT_TABLE)`](../../statements/vacuum/index.md) |
 | [Aliases](https://www.elastic.co/guide/en/elasticsearch/reference/current/aliases.html) | ✅ | Use a [view](../../statements/create_view/index.md) |
 | [Pagination](https://www.elastic.co/guide/en/elasticsearch/reference/current/paginate-search-results.html) (`from`/`size`, `search_after`) | ✅ | [`LIMIT` / `OFFSET`](../../query_syntax/limit/index.md), keyset pagination |

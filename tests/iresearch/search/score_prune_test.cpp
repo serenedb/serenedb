@@ -80,11 +80,11 @@ class ScorePruneTestCase : public tests::IndexTestBase {
   static irs::IndexWriterOptions GetWriterOptions(irs::ScorerPtr scorer,
                                                   bool write_norms);
 
-  std::vector<Doc> Collect(const irs::DirectoryReader& index,
+  std::vector<Doc> Collect(const irs::CompositeReader& index,
                            const irs::Filter& filter, irs::ScorerPtr scorer,
                            bool score_prune, bool can_prune, size_t limit);
 
-  void AssertResults(const irs::DirectoryReader& index,
+  void AssertResults(const irs::CompositeReader& index,
                      const irs::Filter& filter, irs::ScorerPtr scorer,
                      bool score_prune, bool can_prune, size_t limit);
 
@@ -134,7 +134,7 @@ class ScorePruneTestCase : public tests::IndexTestBase {
   void AssertWithNewSegmentsDense(irs::Scorer* scorer);
 };
 
-std::vector<Doc> ScorePruneTestCase::Collect(const irs::DirectoryReader& index,
+std::vector<Doc> ScorePruneTestCase::Collect(const irs::CompositeReader& index,
                                              const irs::Filter& filter,
                                              irs::ScorerPtr scorer,
                                              bool score_prune, bool can_prune,
@@ -195,7 +195,7 @@ std::vector<Doc> ScorePruneTestCase::Collect(const irs::DirectoryReader& index,
   return {std::begin(sorted), std::end(sorted)};
 }
 
-void ScorePruneTestCase::AssertResults(const irs::DirectoryReader& index,
+void ScorePruneTestCase::AssertResults(const irs::CompositeReader& index,
                                        const irs::Filter& filter,
                                        irs::ScorerPtr scorer, bool score_prune,
                                        bool can_prune, size_t limit) {
@@ -208,7 +208,7 @@ void ScorePruneTestCase::AssertResults(const irs::DirectoryReader& index,
 void ScorePruneTestCase::CompactAll(irs::ScorerPtr scorer, bool write_norms) {
   const irs::index_utils::CompactionCount compact_all;
   auto writer =
-    open_writer(irs::kOmAppend, GetWriterOptions(scorer, write_norms));
+    open_writer(tests::kOmAppend, GetWriterOptions(scorer, write_norms));
   ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(compact_all)));
   ASSERT_TRUE(writer->RefreshCommit());
   ASSERT_EQ(1, writer->GetSnapshot().size());
@@ -240,9 +240,9 @@ void ScorePruneTestCase::GenerateSegment(irs::ScorerPtr scorer,
       }
     });
 
-  auto open_mode = irs::kOmCreate;
+  auto open_mode = tests::kOmCreate;
   if (append_data) {
-    open_mode |= irs::kOmAppend;
+    open_mode |= tests::kOmAppend;
   }
 
   add_segment(gen, open_mode, GetWriterOptions(scorer, write_norms));
@@ -264,7 +264,7 @@ void ScorePruneTestCase::GenerateSegmentMinNorm(irs::ScorerPtr scorer) {
       }
     });
 
-  auto open_mode = irs::kOmCreate;
+  auto open_mode = tests::kOmCreate;
   // if (append_data) {
   //   open_mode |= irs::OM_APPEND;
   // }
@@ -279,11 +279,8 @@ void ScorePruneTestCase::AssertTermFilter(const irs::Scorer& scorer,
   irs::ByTerm filter;
   *filter.mutable_field_id() = kFieldId;
 
-  auto reader = irs::DirectoryReader{
-    dir(),
-    irs::IndexReaderOptions{.scorer = &scorer,
-                            .db = &::irs::DuckDBEngine::Instance().instance()}};
-  ASSERT_NE(nullptr, reader);
+  auto reader =
+    tests::OpenReader(dir(), irs::IndexReaderOptions{.scorer = &scorer});
 
   for (const auto& segment : reader) {
     const auto* field = segment.field(kFieldId);
@@ -306,11 +303,8 @@ void ScorePruneTestCase::AssertConjunctionFilter(const irs::Scorer& scorer,
                                                  bool score_prune) {
   static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
-  auto reader = irs::DirectoryReader{
-    dir(),
-    irs::IndexReaderOptions{.scorer = &scorer,
-                            .db = &::irs::DuckDBEngine::Instance().instance()}};
-  ASSERT_NE(nullptr, reader);
+  auto reader =
+    tests::OpenReader(dir(), irs::IndexReaderOptions{.scorer = &scorer});
 
   for (const auto& segment : reader) {
     const auto* field = segment.field(kFieldId);
@@ -340,11 +334,8 @@ void ScorePruneTestCase::AssertDisjunctionFilter(const irs::Scorer& scorer,
                                                  bool score_prune) {
   static const irs::field_id kFieldId = tests::FieldIdFor("name");
 
-  auto reader = irs::DirectoryReader{
-    dir(),
-    irs::IndexReaderOptions{.scorer = &scorer,
-                            .db = &::irs::DuckDBEngine::Instance().instance()}};
-  ASSERT_NE(nullptr, reader);
+  auto reader =
+    tests::OpenReader(dir(), irs::IndexReaderOptions{.scorer = &scorer});
 
   for (const auto& segment : reader) {
     const auto* field = segment.field(kFieldId);
@@ -513,7 +504,7 @@ TEST_P(ScorePruneTestCase, TermFilterBM04) {
   AssertWithNewSegmentsDense(scorer);
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 static const auto kTestValues =
   ::testing::Combine(::testing::ValuesIn(kTestDirs));

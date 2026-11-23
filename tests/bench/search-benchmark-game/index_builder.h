@@ -20,10 +20,19 @@
 
 #pragma once
 
+#include <absl/synchronization/mutex.h>
+
 #include <array>
+#include <duckdb/common/file_system.hpp>
 #include <iresearch/analysis/text_tokenizer.hpp>
+#include <iresearch/index/index_meta.hpp>
+#include <iresearch/index/index_reader_options.hpp>
+#include <iresearch/store/storage.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <memory>
 #include <span>
+#include <string>
 
 #include "executor.h"
 #include "line_source.h"
@@ -66,7 +75,6 @@ using BatchHandlerFactory = std::unique_ptr<IBatchHandler> (*)();
 struct IndexBuilderOptions {
   size_t batch_size = 100000;
   size_t indexer_threads = 1;
-  size_t refresh_interval_ms = 0;
   size_t compaction_interval_ms = 5000;
   size_t compaction_threads = 0;
   bool compact_all = true;
@@ -81,18 +89,28 @@ class IndexBuilder {
 
   void IndexFrom(LineSource& source, BatchHandlerFactory factory);
 
-  irs::MMapDirectory& GetDirectory() { return _dir; }
-  irs::IndexWriter& GetWriter() { return *_writer; }
-  auto GetReader() { return _writer->GetSnapshot(); }
+  irs::CompositeReader GetReader();
+  void Remove(const irs::DocRemoval& removal);
 
  private:
-  void CompactAll();
+  void Add(std::span<const irs::IndexWriter::FlushedSegment> flushed);
+  void Compact(const irs::CompactionPolicy& policy);
+  void WriteSegmentList();
 
   IndexBuilderOptions _opts;
   irs::Scorer::ptr _scorer;
   irs::Scorer* _scorer_ptr{_scorer.get()};
-  irs::MMapDirectory _dir;
+  duckdb::FileSystem& _fs;
+  std::string _root;
+  irs::IndexReaderOptions _reader_options;
+  std::shared_ptr<irs::ReleasedSegments> _released =
+    std::make_shared<irs::ReleasedSegments>();
   irs::IndexWriter::ptr _writer;
+  absl::Mutex _mutex;
+  std::vector<irs::SegmentMeta> _segments ABSL_GUARDED_BY(_mutex);
+  irs::containers::FlatHashMap<std::string,
+                               std::shared_ptr<const irs::FileTracker>>
+    _files ABSL_GUARDED_BY(_mutex);
 };
 
 inline constexpr auto kTextIndexFeatures =
@@ -117,7 +135,7 @@ struct TextField {
     return kTextIndexFeatures;
   }
 
-  bool Write(irs::DataOutput& out) const;
+  bool Write(duckdb::WriteStream& out) const;
 };
 
 struct Document {

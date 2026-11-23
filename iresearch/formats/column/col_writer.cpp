@@ -232,9 +232,7 @@ bool ColWriter::HasAnn(field_id column_id) const noexcept {
 
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
   for (auto& entry : _ann_writers) {
-    if (entry.writer) {
-      entry.writer->SetIdxWriter(idx);
-    }
+    entry.writer->SetIdxWriter(idx);
   }
 }
 
@@ -242,9 +240,7 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   std::vector<std::unique_ptr<AnnWriter>> out;
   out.reserve(_ann_writers.size());
   for (auto& entry : _ann_writers) {
-    if (entry.writer) {
-      out.push_back(std::move(entry.writer));
-    }
+    out.push_back(std::move(entry.writer));
   }
   return out;
 }
@@ -293,9 +289,7 @@ std::vector<NormColumnSpec> ColWriter::SealNorms(uint64_t rows) {
 size_t ColWriter::StagedBytes() const noexcept {
   size_t bytes = 0;
   for (const auto& entry : _columns) {
-    if (entry.writer) {
-      bytes += entry.writer->StagedBytes();
-    }
+    bytes += entry.writer->StagedBytes();
   }
   return bytes;
 }
@@ -342,9 +336,6 @@ bool ColWriter::Commit(uint64_t target_row,
   }
   EnsureOut();
   for (auto& entry : _columns) {
-    if (!entry.writer) {
-      continue;
-    }
     if (!progress()) {
       return false;
     }

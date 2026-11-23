@@ -1,0 +1,59 @@
+control substitution on
+
+statement ok
+DROP SERVER IF EXISTS asl_s;
+
+
+statement ok
+DROP ROLE IF EXISTS asl_alice;
+
+
+statement ok
+CREATE SERVER asl_s FOREIGN DATA WRAPPER duckdb_fdw OPTIONS (path '${__TEST_DIR__}/asl_a.duckdb');
+
+
+statement ok
+CREATE ROLE asl_alice LOGIN PASSWORD 'asl_pw';
+
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER asl_s TO asl_alice;
+
+
+statement ok
+DETACH asl_s;
+
+
+statement ok
+ATTACH '${__TEST_DIR__}/asl_b.duckdb' AS asl_s;
+
+
+statement ok
+CREATE OR REPLACE TABLE asl_s.main.secret AS SELECT 42 AS x;
+
+
+connection c_alice user=asl_alice password=asl_pw
+statement error
+SELECT x FROM asl_s.main.secret;
+----
+db error: ERROR: permission denied for database "asl_s"
+DETAIL: Only roles with the SUPERUSER attribute may use a database attached without a foreign server.
+
+
+statement ok
+DROP SERVER asl_s;
+
+
+query
+SELECT x FROM asl_s.main.secret;
+----
+x
+42
+
+
+statement ok
+DETACH asl_s;
+
+
+statement ok
+DROP ROLE asl_alice;

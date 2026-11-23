@@ -140,7 +140,7 @@ void ForeignServerCatalogEntry::Attach(
   }
   if (!restricted) {
     catalog::Attach(context, info, type, access_mode,
-                    duckdb::AttachVisibility::SHOWN);
+                    duckdb::AttachVisibility::SHOWN, oid);
     return;
   }
   const auto owner = context.AccessOf(permissions.owner);
@@ -150,7 +150,7 @@ void ForeignServerCatalogEntry::Attach(
       context.access_scope = previous;
     };
   catalog::Attach(context, info, type, access_mode,
-                  duckdb::AttachVisibility::SHOWN);
+                  duckdb::AttachVisibility::SHOWN, oid);
 }
 
 void ForeignServerCatalogEntry::FollowOwner(
@@ -190,7 +190,11 @@ void ForeignServerCatalogEntry::OnDrop() {
   if (catalog.GetAttached().IsReadOnly()) {
     return;
   }
-  duckdb::DatabaseManager::Get(catalog.GetDatabase()).DetachInternal(name);
+  auto& manager = duckdb::DatabaseManager::Get(catalog.GetDatabase());
+  if (auto attached = manager.GetDatabase(name);
+      attached && attached->ForeignServer() == duckdb::optional_idx{oid}) {
+    manager.DetachInternal(name);
+  }
 }
 
 ForeignServerCatalogEntry::ForeignServerCatalogEntry(

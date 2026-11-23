@@ -54,7 +54,8 @@ struct DataDirectory {
 
 void Attach(duckdb::ClientContext& context, duckdb::AttachInfo& info,
             std::string_view type, duckdb::AccessMode access_mode,
-            duckdb::AttachVisibility visibility);
+            duckdb::AttachVisibility visibility,
+            duckdb::optional_idx foreign_server);
 
 duckdb::unique_ptr<duckdb::TransactionManager> CreateTransactionManager(
   duckdb::optional_ptr<duckdb::StorageExtensionInfo> info,

@@ -105,8 +105,7 @@ TEST(sorted_docs_test, append_docs_expands_runs_and_bitsets) {
   sink.Bitset(100, words, 3, 0);
   sink.Term();
   sink.Doc(500);
-  ASSERT_EQ((std::vector<doc_id_t>{10, 11, 12, 101, 102, 104, 292, 500}),
-            docs);
+  ASSERT_EQ((std::vector<doc_id_t>{10, 11, 12, 101, 102, 104, 292, 500}), docs);
   ASSERT_EQ((std::vector<uint32_t>{0, 7}), starts);
 }
 

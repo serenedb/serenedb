@@ -354,7 +354,7 @@ struct DictionaryScan final : SegmentScanState {
 
   void Admit() {
     full = true;
-    if (!nullable && entries.header.entry_count > kFirstEntry) {
+    if (!nullable) {
       entries.values[kNullEntry] = entries.values[kFirstEntry];
     }
     if (!SecondTouch(cache_slot)) {

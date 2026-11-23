@@ -837,6 +837,10 @@ Value RepeatedText(uint64_t g) {
                                           "/a longer suffix")};
 }
 
+Value TextWithoutNulls(uint64_t g) {
+  return Value{absl::StrCat("status-", (g * 7919) % 200, "/a longer suffix")};
+}
+
 TEST_F(ColCodecCorruptionTest,
        TextCodecsWithSymbolTablesRejectDamagedSegments) {
   Sweep({"fsst",
@@ -1046,6 +1050,19 @@ TEST_F(ColCodecCorruptionTest, TextDictionariesRejectDamagedSegments) {
           "Corrupted text segment: frame table is inconsistent",
           "Corrupted text segment: header is inconsistent",
           "Corrupted text segment: unsupported version #"}});
+  Sweep({"dict lz4 without nulls",
+         LogicalType::VARCHAR,
+         CodecType::DictLz4,
+         TextWithoutNulls,
+         {"Corrupted numeric segment: frame table is inconsistent",
+          "Corrupted numeric segment: header is inconsistent",
+          "Corrupted numeric segment: unsupported version #",
+          "Corrupted text segment: dictionary code is out of range",
+          "Corrupted text segment: entry lengths are inconsistent",
+          "Corrupted text segment: frame is inconsistent",
+          "Corrupted text segment: frame table is inconsistent",
+          "Corrupted text segment: header is inconsistent",
+          "Corrupted text segment: unsupported version #"}});
   Sweep({"dict zstd",
          LogicalType::VARCHAR,
          CodecType::DictZstd,
@@ -1125,6 +1142,59 @@ TEST_F(ColCodecCorruptionTest, TextDictionariesRejectDamagedSegments) {
           "Corrupted text segment: header is inconsistent",
           "Corrupted text segment: symbol table is inconsistent",
           "Corrupted text segment: unsupported version #"}});
+}
+
+TEST_F(ColCodecCorruptionTest,
+       ADictionaryWithoutValuesIsRefusedUnlessItsBlockHasNulls) {
+  const auto valueless = [&](const Case& c, std::string_view rejected) {
+    SCOPED_TRACE(c.name);
+    const auto path =
+      test_dir() / absl::StrCat("col_codec_corruption_valueless_", _next++);
+    std::filesystem::create_directories(path);
+    uint64_t offset = 0;
+    uint64_t size = 0;
+    ASSERT_NO_FATAL_FAILURE(Write(path, c, offset, size));
+    {
+      std::fstream io{path / irs::FileName(kSeg),
+                      std::ios::in | std::ios::out | std::ios::binary};
+      ASSERT_TRUE(io.good());
+      irs::codecs::Header h;
+      ASSERT_GE(size, sizeof(h));
+      io.seekg(static_cast<std::streamoff>(offset));
+      io.read(reinterpret_cast<char*>(&h), sizeof(h));
+      ASSERT_GT(h.entry_count, 1);
+      h.entry_count = 1;
+      h.frame_count = 0;
+      h.raw_bytes = 0;
+      io.seekp(static_cast<std::streamoff>(offset));
+      io.write(reinterpret_cast<const char*>(&h), sizeof(h));
+    }
+    tests::IndexDir dir{Db(), path.string()};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    std::set<std::string> messages;
+    Guarded(messages, [&] {
+      auto state = col->InitScan(r.Ctx());
+      duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, STANDARD_VECTOR_SIZE);
+    });
+    Guarded(messages, [&] {
+      irs::ColumnReader::PointReader reader{r, *col};
+      duckdb::Vector out{c.type, 1};
+      reader.FetchRow(1, out, 0);
+    });
+    EXPECT_EQ(absl::StrJoin(messages, "\n"), rejected);
+  };
+  valueless({"no nulls",
+             LogicalType::VARCHAR,
+             CodecType::DictLz4,
+             TextWithoutNulls,
+             {}},
+            "Corrupted text segment: header is inconsistent");
+  valueless(
+    {"nulls", LogicalType::VARCHAR, CodecType::DictLz4, RepeatedText, {}},
+    "Corrupted text segment: dictionary code is out of range");
 }
 
 TEST_F(ColCodecCorruptionTest,

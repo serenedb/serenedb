@@ -80,7 +80,8 @@ Header SegmentHeader(duckdb::const_data_ptr_t base,
   const uint64_t first_entry = shape == Shape::Dictionary ? 1 : 0;
   if (!(h.row_count == segment.count &&
         uint64_t{h.entry_count} <= uint64_t{h.row_count} + first_entry &&
-        (shape == Shape::Dictionary || h.entry_count == h.row_count)))
+        (shape == Shape::Dictionary || h.entry_count == h.row_count) &&
+        (h.entry_count > first_entry || segment.stats.CanHaveNull())))
     [[unlikely]] {
     ThrowCorrupted("text", "header is inconsistent");
   }

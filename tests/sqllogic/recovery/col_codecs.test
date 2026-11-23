@@ -137,6 +137,44 @@ statement ok
 RESET GLOBAL force_compression;
 
 
+statement ok
+SET GLOBAL force_compression = 'dict_fsst';
+
+
+statement ok
+CREATE TABLE cc_forced_text (a BIGINT PRIMARY KEY, v TEXT)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO cc_forced_text SELECT a, 'v' || (a % 300) FROM range(10000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) cc_forced_text;
+
+
+statement ok
+RESET GLOBAL force_compression;
+
+
+query
+SELECT column_name, bool_and(compression = 'DICT_FSST') AS forced
+FROM pragma_storage_info('cc_forced_text') WHERE segment_type <> 'VALIDITY'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	forced
+a	f
+v	t
+
+
+query
+SELECT count(*) AS mismatches FROM cc_forced_text WHERE v IS DISTINCT FROM 'v' || (a % 300);
+----
+mismatches
+0
+
+
 query
 SELECT current_setting('sdb_object_cache_size') AS bytes;
 ----

@@ -662,8 +662,10 @@ TEST_F(ColCodecPathsTest, BitpackingReadsEveryIntegerTypeInEveryMode) {
       const auto lowest = Value::MinimumValue(type).GetValue<int64_t>() + 1;
       Check({name("a sawtooth across the range"), type, CodecType::Bitpacking,
              All, [&, step, lowest](uint64_t g) {
-               return Int(type, lowest + static_cast<int64_t>(g % 2048) * step +
-                                  static_cast<int64_t>(Mix(g) % 2));
+               return Int(
+                 type, static_cast<int64_t>(
+                         static_cast<uint64_t>(lowest) +
+                         g % 2048 * static_cast<uint64_t>(step) + Mix(g) % 2));
              }});
     }
     if (type.id() == duckdb::LogicalTypeId::BIGINT) {

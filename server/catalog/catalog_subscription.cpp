@@ -52,10 +52,6 @@
 namespace sdb::catalog {
 namespace {
 
-bool IsSuperuser(ConnectionContext& conn_ctx) {
-  return conn_ctx.CurrentRole().is_superuser;
-}
-
 bool ParseBool(std::string_view option, const duckdb::Value& value) {
   if (value.type().id() == duckdb::LogicalTypeId::BOOLEAN) {
     return value.GetValue<bool>();
@@ -251,8 +247,7 @@ void RequireExclusive(bool conflict, std::string_view a, std::string_view b) {
   }
 }
 
-void ApplySetOptions(ConnectionContext& conn_ctx,
-                     const SubscriptionOptions& options,
+void ApplySetOptions(const SubscriptionOptions& options,
                      duckdb::CreateSubscriptionInfo& info) {
   if (options.slot_name) {
     info.slot_name = *options.slot_name;
@@ -267,9 +262,6 @@ void ApplySetOptions(ConnectionContext& conn_ctx,
     info.disable_on_error = *options.disable_on_error;
   }
   if (options.password_required) {
-    if (!*options.password_required && !IsSuperuser(conn_ctx)) {
-      ThrowPasswordNotRequired();
-    }
     info.password_required = *options.password_required;
   }
   if (options.run_as_owner) {
@@ -286,19 +278,26 @@ void ApplySetOptions(ConnectionContext& conn_ctx,
   }
 }
 
-void CheckConnInfo(ConnectionContext& conn_ctx,
-                   const duckdb::CreateSubscriptionInfo& info) {
-  if (replication::NamesServerFiles(info.conninfo) &&
-      !conn_ctx.CurrentRole().Has(duckdb::RoleCapability::ReadServerFiles)) {
+void RequirePasswordOption(const duckdb::RoleAccess& role,
+                           const SubscriptionOptions& options) {
+  if (options.password_required && !*options.password_required &&
+      !role.is_superuser) {
+    ThrowPasswordNotRequired();
+  }
+}
+
+void RequireConnInfo(const duckdb::RoleAccess& role, std::string_view conninfo,
+                     bool must_use_password) {
+  if (replication::NamesServerFiles(conninfo) &&
+      !role.Has(duckdb::RoleCapability::ReadServerFiles)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to use server files in the connection string"),
       ERR_DETAIL("Only roles with privileges of the \"pg_read_server_files\" "
                  "role may use the passfile, service and SSL file options."));
   }
-  const auto conninfo = replication::ParseConnInfo(info.conninfo);
-  if (info.password_required && conninfo.password.empty() &&
-      !IsSuperuser(conn_ctx)) {
+  if (must_use_password &&
+      replication::ParseConnInfo(conninfo).password.empty()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_S_R_E_PROHIBITED_SQL_STATEMENT_ATTEMPTED),
                     ERR_MSG("password is required"),
                     ERR_DETAIL("Non-superuser subscriptions must set a "
@@ -642,6 +641,44 @@ void CheckPublicationNames(std::span<const std::string> publications) {
 
 }  // namespace
 
+void SereneDBCatalog::RequireSubscription(
+  duckdb::ClientContext&, const duckdb::RoleAccess& role,
+  const duckdb::CreateSubscriptionInfo& info) {
+  const auto options = ParseOptions(info.options, kCreateOptions);
+  RequirePasswordOption(role, options);
+  RequireConnInfo(
+    role, info.conninfo,
+    options.password_required.value_or(true) && !role.is_superuser);
+}
+
+void SereneDBCatalog::RequireSubscription(
+  duckdb::ClientContext& context, const duckdb::RoleAccess& role,
+  duckdb::CatalogEntry& subscription,
+  const duckdb::AlterSubscriptionInfo& alter) {
+  using enum duckdb::AlterSubscriptionType;
+  switch (alter.alter_subscription_type) {
+    case SET_CONNECTION:
+      RequireConnInfo(
+        role, alter.connection,
+        subscription.Cast<SubscriptionCatalogEntry>()
+            .Config()
+            .password_required &&
+          !context.AccessOf(subscription.permissions.owner).is_superuser);
+      return;
+    case SET_OPTIONS:
+      RequirePasswordOption(role, ParseOptions(alter.options, kSetOptions));
+      return;
+    case SKIP:
+      if (ParseOptions(alter.options, Allowed::Lsn).lsn && !role.is_superuser) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+                        ERR_MSG("must be superuser to skip transaction"));
+      }
+      return;
+    default:
+      return;
+  }
+}
+
 duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSubscription(
   duckdb::CatalogTransaction transaction,
   duckdb::CreateSubscriptionInfo& info) {
@@ -685,8 +722,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSubscription(
   info.create_slot = options.create_slot.value_or(true);
   info.copy_data = options.copy_data.value_or(true);
   info.streaming = "parallel";
-  ApplySetOptions(conn_ctx, options, info);
-  CheckConnInfo(conn_ctx, info);
+  ApplySetOptions(options, info);
   if (info.create_slot) {
     conn_ctx.PreventInTransactionBlock(
       "CREATE SUBSCRIPTION ... WITH (create_slot = true)");
@@ -794,7 +830,6 @@ void SereneDBCatalog::AlterSubscription(duckdb::CatalogTransaction transaction,
     }
     case SET_CONNECTION:
       definition->conninfo = alter.connection;
-      CheckConnInfo(conn_ctx, *definition);
       break;
     case SET_PUBLICATION:
     case ADD_PUBLICATION:
@@ -864,10 +899,6 @@ void SereneDBCatalog::AlterSubscription(duckdb::CatalogTransaction transaction,
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYNTAX_ERROR),
                         ERR_MSG("unrecognized subscription parameter"));
       }
-      if (!IsSuperuser(conn_ctx)) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-                        ERR_MSG("must be superuser to skip transaction"));
-      }
       if (*options.lsn != 0 && *options.lsn <= subscription.RemoteLsn()) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -912,7 +943,7 @@ void SereneDBCatalog::AlterSubscription(duckdb::CatalogTransaction transaction,
         conn_ctx.PreventInTransactionBlock(
           "ALTER SUBSCRIPTION ... SET (failover)");
       }
-      ApplySetOptions(conn_ctx, options, *definition);
+      ApplySetOptions(options, *definition);
       if (failover_changed) {
         AlterSlotFailover(conn_ctx, *definition);
       }

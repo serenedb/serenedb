@@ -86,7 +86,10 @@ class SereneDBCatalog final : public BaseCatalog {
                           const duckdb::CatalogEntry& entry,
                           duckdb::idx_t tablespace);
   void Place(duckdb::CatalogTransaction transaction, duckdb::CreateInfo& info,
-             std::string_view refusal);
+             duckdb::optional_ptr<const duckdb::CatalogEntry> indexed);
+  duckdb::optional_ptr<duckdb::CatalogEntry> PlacementTablespace(
+    duckdb::ClientContext& context, const duckdb::CreateInfo& info,
+    duckdb::optional_ptr<const duckdb::CatalogEntry> indexed) final;
   CatalogSnapshots& Snapshots() noexcept { return _snapshots; }
   EntrySet& Servers() noexcept { return _servers; }
   EntrySet& Subscriptions() noexcept { return _subscriptions; }
@@ -94,6 +97,13 @@ class SereneDBCatalog final : public BaseCatalog {
                    absl::FunctionRef<void(duckdb::CatalogEntry&)> callback);
 
   bool SupportsSubscriptions() const final { return true; }
+  void RequireSubscription(duckdb::ClientContext& context,
+                           const duckdb::RoleAccess& role,
+                           const duckdb::CreateSubscriptionInfo& info) final;
+  void RequireSubscription(duckdb::ClientContext& context,
+                           const duckdb::RoleAccess& role,
+                           duckdb::CatalogEntry& subscription,
+                           const duckdb::AlterSubscriptionInfo& info) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSubscription(
     duckdb::CatalogTransaction transaction,
     duckdb::CreateSubscriptionInfo& info) final;

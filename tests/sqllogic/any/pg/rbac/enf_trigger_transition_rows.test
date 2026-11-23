@@ -3,12 +3,26 @@ DROP TABLE IF EXISTS ett_t;
 
 
 statement ok
+DROP TABLE IF EXISTS ett_r;
+
+
+statement ok
 DROP TABLE IF EXISTS ett_log;
 
 
 onlyif postgres
 statement ok
 DROP FUNCTION IF EXISTS ett_note();
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION IF EXISTS ett_row_note();
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION IF EXISTS ett_row_gone();
 
 
 statement ok
@@ -82,6 +96,54 @@ db error: ERROR: permission denied for table ett_t
 
 
 statement ok
+CREATE TABLE ett_r (a integer, secret text);
+
+
+onlyif postgres
+statement ok
+CREATE FUNCTION ett_row_note() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN INSERT INTO ett_log VALUES (NEW.a); RETURN NULL; END';
+
+
+onlyif postgres
+statement ok
+CREATE FUNCTION ett_row_gone() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN INSERT INTO ett_log VALUES (-OLD.a); RETURN NULL; END';
+
+
+onlyif postgres
+statement ok
+CREATE TRIGGER ett_row_trg AFTER INSERT ON ett_r FOR EACH ROW EXECUTE FUNCTION ett_row_note();
+
+
+onlyif postgres
+statement ok
+CREATE TRIGGER ett_row_del AFTER DELETE ON ett_r FOR EACH ROW EXECUTE FUNCTION ett_row_gone();
+
+
+skipif postgres
+statement ok
+CREATE TRIGGER ett_row_trg AFTER INSERT ON ett_r FOR EACH ROW INSERT INTO ett_log VALUES (NEW.a);
+
+
+skipif postgres
+statement ok
+CREATE TRIGGER ett_row_del AFTER DELETE ON ett_r FOR EACH ROW INSERT INTO ett_log VALUES (-OLD.a);
+
+
+statement ok
+GRANT INSERT, DELETE ON ett_r TO ett_writer;
+
+
+connection c_ett user=ett_writer password=ett_pw
+statement ok
+INSERT INTO ett_r VALUES (6, 'six');
+
+
+connection c_ett user=ett_writer password=ett_pw
+statement ok
+DELETE FROM ett_r;
+
+
+statement ok
 REVOKE INSERT ON ett_log FROM ett_writer;
 
 
@@ -96,12 +158,18 @@ query
 SELECT a FROM ett_log ORDER BY a;
 ----
 a
+-6
 1
 3
+6
 
 
 statement ok
 DROP TABLE ett_t;
+
+
+statement ok
+DROP TABLE ett_r;
 
 
 statement ok
@@ -111,6 +179,16 @@ DROP TABLE ett_log;
 onlyif postgres
 statement ok
 DROP FUNCTION ett_note();
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION ett_row_note();
+
+
+onlyif postgres
+statement ok
+DROP FUNCTION ett_row_gone();
 
 
 statement ok

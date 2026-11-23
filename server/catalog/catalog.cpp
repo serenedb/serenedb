@@ -221,21 +221,29 @@ std::string SereneDBCatalog::StoragePath(duckdb::CatalogTransaction transaction,
     cluster.GetCatalogTransaction(context), tablespace));
 }
 
-void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
-                            duckdb::CreateInfo& info,
-                            std::string_view refusal) {
-  const auto requested = std::exchange(info.tablespace, duckdb::Identifier{});
-  if (info.oid != 0 || !transaction.HasContext()) {
-    return;
+void SereneDBCatalog::Place(
+  duckdb::CatalogTransaction transaction, duckdb::CreateInfo& info,
+  duckdb::optional_ptr<const duckdb::CatalogEntry> indexed) {
+  if (info.oid == 0 && transaction.HasContext()) {
+    auto tablespace =
+      PlacementTablespace(transaction.GetContext(), info, indexed);
+    info.tablespace_oid = tablespace ? tablespace->oid : 0;
+    if (tablespace) {
+      info.dependencies.AddDependency(*tablespace);
+    }
   }
-  info.tablespace_oid = 0;
-  auto& context = transaction.GetContext();
+  info.tablespace = {};
+}
+
+duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::PlacementTablespace(
+  duckdb::ClientContext& context, const duckdb::CreateInfo& info,
+  duckdb::optional_ptr<const duckdb::CatalogEntry> indexed) {
   auto& cluster = ClusterOf(context);
   const auto at = cluster.GetCatalogTransaction(context);
-  const bool named = !requested.empty();
+  const bool named = !info.tablespace.empty();
   duckdb::optional_ptr<duckdb::CatalogEntry> tablespace;
   if (named) {
-    tablespace = &cluster.Tablespace(at, requested);
+    tablespace = &cluster.Tablespace(at, info.tablespace);
   } else if (const auto name = ConnectionContext::Get(context)
                                  .Get(kDefaultTablespaceSetting)
                                  .value_or("");
@@ -244,12 +252,18 @@ void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
                    .Get(at, duckdb::Identifier{name});
   }
   if (!tablespace) {
-    return;
+    return nullptr;
   }
   if (tablespace->oid == pg::kPgGlobalTablespace) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
       ERR_MSG("only shared relations can be placed in pg_global tablespace"));
+  }
+  std::string_view refusal;
+  if (indexed && indexed->type == duckdb::CatalogType::TABLE_ENTRY) {
+    refusal =
+      "an index on a table is stored with the table and cannot be placed in a "
+      "tablespace";
   }
   duckdb::idx_t own = pg::kPgDefaultTablespace;
   if (InMemory()) {
@@ -258,20 +272,15 @@ void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
     own = database->Cast<DatabaseCatalogEntry>().Tablespace();
   }
   if (tablespace->oid == own) {
-    return;
+    return nullptr;
   }
   if (!refusal.empty()) {
     if (!named) {
-      return;
+      return nullptr;
     }
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), ERR_MSG(refusal));
   }
-  if (!duckdb::Allowed(context.CurrentRole(), *tablespace,
-                       duckdb::AclMode::Create)) {
-    duckdb::ThrowPermissionDenied(*tablespace);
-  }
-  info.dependencies.AddDependency(*tablespace);
-  info.tablespace_oid = tablespace->oid;
+  return tablespace;
 }
 
 void SereneDBCatalog::LogSequenceValue(const duckdb::SequenceValue& value) {
@@ -544,7 +553,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBCatalog::MakeTable(
   SDB_IF_FAILURE("unable_to_create") {
     THROW_SQL_ERROR(ERR_MSG("internal error"));
   }
-  Place(transaction, info.Base(), {});
+  Place(transaction, info.Base(), nullptr);
   auto entry =
     duckdb::make_uniq<SearchTableEntry>(*this, schema, info, transaction);
   if (info.Base().oid == 0) {
@@ -565,10 +574,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBCatalog::MakeIndex(
   if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
     table = &relation.Cast<duckdb::TableCatalogEntry>();
   }
-  Place(transaction, info,
-        table ? "an index on a table is stored with the table and cannot be "
-                "placed in a tablespace"
-              : std::string_view{});
+  Place(transaction, info, relation);
   auto entry =
     duckdb::make_uniq<InvertedIndexEntry>(*this, schema, info, table);
   if (info.oid == 0) {

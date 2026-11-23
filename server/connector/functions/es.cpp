@@ -451,6 +451,7 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   auto binder = duckdb::Binder::CreateBinder(context);
   binder->acting = state.acting;
   auto bound = binder->BindCreateTableInfo(std::move(options));
+  binder->RequirePlacement(db_catalog, bound->Base(), nullptr);
   auto table = db_catalog.CreateTable(context, *bound);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DUPLICATE_TABLE),

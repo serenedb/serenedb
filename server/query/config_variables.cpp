@@ -1647,11 +1647,13 @@ constexpr VariableEntry kVariableDescription[] = {
   {
     kDefaultTablespaceSetting,
     {
-      LogicalTypeId::VARCHAR,
-      "The tablespace tables and inverted indexes on views are created in "
-      "when CREATE names none. Default: '' (the database's own tablespace).",
-      [] { return duckdb::Value{""}; },
-      SetDefaultTablespace,
+      .type = LogicalTypeId::VARCHAR,
+      .description =
+        "The tablespace tables and inverted indexes on views are created in "
+        "when CREATE names none. Default: '' (the database's own tablespace).",
+      .default_value = [] { return duckdb::Value{""}; },
+      .set_callback = SetDefaultTablespace,
+      .rebind = true,
     },
     kUserSetting,
   },

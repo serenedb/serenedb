@@ -58,10 +58,7 @@ void TrainDictionary(std::string_view frames, std::span<const size_t> sizes,
   }
   const auto header =
     ZDICT_getDictHeaderSize(dictionary.data(), dictionary.size());
-  if (ZDICT_isError(header) || header >= dictionary.size()) {
-    dictionary.clear();
-    return;
-  }
+  SDB_ASSERT(!ZDICT_isError(header) && header < dictionary.size());
   dictionary.erase(0, header);
 }
 

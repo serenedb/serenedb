@@ -374,9 +374,14 @@ class RunsReader final : public FrameReader<T> {
       ExpandRuns(pos, count, out);
       return;
     }
-    Resolve<BoolAxis>(_long_runs, [&]<bool Long>() IRS_FORCE_INLINE {
-      CopyRuns<Long ? kLongBurst : kBurst>(pos, count, out);
-    });
+    if constexpr (kExpandsRuns && kExpandedRunRows >= kBurst) {
+      SDB_ASSERT(_long_runs);
+      CopyRuns<kLongBurst>(pos, count, out);
+    } else {
+      Resolve<BoolAxis>(_long_runs, [&]<bool Long>() IRS_FORCE_INLINE {
+        CopyRuns<Long ? kLongBurst : kBurst>(pos, count, out);
+      });
+    }
   }
 
   uint64_t DecodeDirect(uint64_t, uint64_t, U*) const noexcept { return 0; }
@@ -566,8 +571,9 @@ class RunsReader final : public FrameReader<T> {
       reinterpret_cast<const uint8_t*>(_ends.data()), _ends.size(), 0, 0,
       _ends.data());
     _long_runs = total >= uint64_t{kBurst} * _ends.size();
-    _short_runs =
-      kExpandsRuns && total < uint64_t{kExpandedRunRows} * _ends.size();
+    if constexpr (kExpandsRuns) {
+      _short_runs = total < uint64_t{kExpandedRunRows} * _ends.size();
+    }
     _hint = 0;
   }
 

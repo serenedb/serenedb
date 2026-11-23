@@ -1,0 +1,63 @@
+statement ok
+DROP ROLE IF EXISTS arsv_r;
+
+
+statement ok
+CREATE ROLE arsv_r;
+
+
+statement error
+ALTER ROLE arsv_r SET arsv_nosuch = 1;
+----
+db error: ERROR: unrecognized configuration parameter "arsv_nosuch"<slt:ignore>
+
+
+statement error
+ALTER ROLE arsv_r IN DATABASE postgres SET arsv_nosuch = 1;
+----
+db error: ERROR: unrecognized configuration parameter "arsv_nosuch"<slt:ignore>
+
+
+statement error
+ALTER ROLE ALL SET arsv_nosuch = 1;
+----
+db error: ERROR: unrecognized configuration parameter "arsv_nosuch"<slt:ignore>
+
+
+statement error
+ALTER DATABASE postgres SET arsv_nosuch = 1;
+----
+db error: ERROR: unrecognized configuration parameter "arsv_nosuch"<slt:ignore>
+
+
+onlyif postgres
+statement error
+ALTER ROLE arsv_r SET extra_float_digits = 'abc';
+----
+db error: ERROR: invalid value for parameter "extra_float_digits": "abc"
+
+
+skipif postgres
+statement error
+ALTER ROLE arsv_r SET extra_float_digits = 'abc';
+----
+db error: ERROR: Failed to cast value: Could not convert string 'abc' to INT32
+
+
+statement ok
+ALTER ROLE arsv_r SET arsv.custom = 'x';
+
+
+statement ok
+ALTER ROLE arsv_r SET extra_float_digits = 2;
+
+
+query
+SELECT setconfig FROM pg_db_role_setting WHERE setrole = 'arsv_r'::regrole AND setdatabase = 0;
+----
+setconfig
+{arsv.custom=x,extra_float_digits=2}
+
+
+statement ok
+DROP ROLE arsv_r;

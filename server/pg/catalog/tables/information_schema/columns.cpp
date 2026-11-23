@@ -314,7 +314,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
 
   std::string_view _database = Database().GetName().GetIdentifierName();
   ArrayTypeNames _arrays{*this};
-  const duckdb::RoleAccess& _role = Context().CurrentRole();
+  const duckdb::RoleAccess& _role = Role();
 };
 
 }  // namespace

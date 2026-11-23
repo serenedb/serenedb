@@ -177,7 +177,7 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
   }
 
  private:
-  const duckdb::RoleAccess& _role = Context().CurrentRole();
+  const duckdb::RoleAccess& _role = Role();
   duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles =
     !_role.Has(duckdb::RoleCapability::ReadAllStats)
       ? catalog::RolesOf(&Context())

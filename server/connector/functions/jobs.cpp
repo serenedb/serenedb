@@ -112,10 +112,11 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
   const auto holds_jobs = [](duckdb::AttachedDatabase& database) {
     return catalog::IsSereneDB(database.GetCatalog()) && !database.IsReadOnly();
   };
+  const auto role = context.CallerAccess(input.caller_role);
   for (auto& schema :
-       duckdb::Catalog::GetAllSchemas(context, false, holds_jobs)) {
+       duckdb::Catalog::GetAllSchemas(context, role, false, holds_jobs)) {
     duckdb::Catalog::ScanListedEntries(
-      context, schema.get(), duckdb::CatalogType::JOB_ENTRY,
+      context, role, schema.get(), duckdb::CatalogType::JOB_ENTRY,
       [&](duckdb::CatalogEntry& entry) {
         result->entries.emplace_back(entry.Cast<catalog::JobCatalogEntry>());
       });
@@ -203,26 +204,26 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
     return result;
   }
   absl::flat_hash_map<duckdb::idx_t, catalog::SereneDBCatalog*> databases;
+  const auto role = context.CallerAccess(input.caller_role);
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     if (catalog::IsSereneDB(database->GetCatalog()) &&
-        context.CanSeeDatabase(*database)) {
+        context.CanSeeDatabase(role, *database)) {
       databases.emplace(
         database->oid,
         &database->GetCatalog().Cast<catalog::SereneDBCatalog>());
     }
   }
-  const bool superuser = context.CurrentRole().is_superuser;
   for (auto& run : scheduler->GetHistory()) {
     const auto database = databases.find(run.database_oid);
     if (database == databases.end()) {
       continue;
     }
-    if (!superuser) {
+    if (!role.is_superuser) {
       auto& catalog = *database->second;
       auto job = catalog.FindIn<catalog::JobCatalogEntry>(
         catalog.GetCatalogTransaction(context), run.job_oid);
-      if (!job || !context.CanSee(*job)) {
+      if (!job || !context.CanSee(role, *job)) {
         continue;
       }
     }

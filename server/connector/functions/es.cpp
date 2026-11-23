@@ -562,10 +562,13 @@ struct EsCatIndicesState final : duckdb::GlobalTableFunctionState {
   std::vector<std::pair<std::string, uint64_t>> rows;
   size_t offset = 0;
   bool loaded = false;
+  duckdb::RoleAccess role;
 
   static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
-    duckdb::ClientContext&, duckdb::TableFunctionInitInput&) {
-    return duckdb::make_uniq<EsCatIndicesState>();
+    duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
+    auto state = duckdb::make_uniq<EsCatIndicesState>();
+    state->role = context.CallerAccess(input.caller_role);
+    return state;
   }
 };
 
@@ -580,7 +583,7 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     std::vector<duckdb::reference<duckdb::TableCatalogEntry>> tables;
     if (auto schema = EsSchema(context)) {
       duckdb::Catalog::ScanListedEntries(
-        context, *schema, duckdb::CatalogType::TABLE_ENTRY,
+        context, state.role, *schema, duckdb::CatalogType::TABLE_ENTRY,
         [&](duckdb::CatalogEntry& entry) {
           if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
             tables.emplace_back(entry.Cast<duckdb::TableCatalogEntry>());

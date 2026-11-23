@@ -193,7 +193,7 @@ class PgShowAllSettings final : public SystemTableScan<kPgShowAllSettingsSql> {
     }
     if ((option ? option->is_debug || option->is_deprecated
                 : extension.is_debug || extension.is_deprecated) ||
-        !duckdb::Settings::IsVisible(context, name)) {
+        !duckdb::Settings::IsVisible(context, Role(), name)) {
       return;
     }
     Emit<kSetting>({.context = context,

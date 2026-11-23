@@ -1,0 +1,119 @@
+statement ok
+DROP SCHEMA IF EXISTS sdbl_s CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS sdbl_hidden;
+
+
+statement ok
+DROP TABLE IF EXISTS sdbl_shown;
+
+
+statement ok
+DROP ROLE IF EXISTS sdbl_caller;
+
+
+statement ok
+DROP ROLE IF EXISTS sdbl_owner;
+
+
+statement ok
+CREATE ROLE sdbl_owner;
+
+
+statement ok
+CREATE ROLE sdbl_caller LOGIN PASSWORD 'sdbl_pw';
+
+
+statement ok
+CREATE TABLE sdbl_hidden (caller_column int);
+
+
+statement ok
+GRANT SELECT ON sdbl_hidden TO sdbl_caller;
+
+
+statement ok
+CREATE TABLE sdbl_shown (owner_column int);
+
+
+statement ok
+GRANT SELECT ON sdbl_shown TO sdbl_owner;
+
+
+statement ok
+CREATE SCHEMA sdbl_s AUTHORIZATION sdbl_owner;
+
+
+statement ok
+GRANT USAGE ON SCHEMA sdbl_s TO sdbl_caller;
+
+
+statement ok
+SET ROLE sdbl_owner;
+
+
+statement ok
+CREATE FUNCTION sdbl_s.listed_tables() RETURNS text LANGUAGE sql SECURITY DEFINER
+AS 'SELECT string_agg(table_name, '','' ORDER BY table_name) FROM sdb_tables() WHERE table_name IN (''sdbl_hidden'', ''sdbl_shown'')';
+
+
+statement ok
+CREATE FUNCTION sdbl_s.listed_columns() RETURNS text LANGUAGE sql SECURITY DEFINER
+AS 'SELECT string_agg(column_name, '','' ORDER BY column_name) FROM sdb_columns() WHERE table_name IN (''sdbl_hidden'', ''sdbl_shown'')';
+
+
+statement ok
+RESET ROLE;
+
+
+connection c_caller user=sdbl_caller password=sdbl_pw
+query
+SELECT string_agg(table_name, ',' ORDER BY table_name) AS listed FROM sdb_tables() WHERE table_name IN ('sdbl_hidden', 'sdbl_shown');
+----
+listed
+sdbl_hidden
+
+
+connection c_caller user=sdbl_caller password=sdbl_pw
+query
+SELECT sdbl_s.listed_tables() AS listed;
+----
+listed
+sdbl_shown
+
+
+connection c_caller user=sdbl_caller password=sdbl_pw
+query
+SELECT sdbl_s.listed_columns() AS listed;
+----
+listed
+owner_column
+
+
+query
+SELECT sdbl_s.listed_tables() AS listed;
+----
+listed
+sdbl_shown
+
+
+statement ok
+DROP SCHEMA sdbl_s CASCADE;
+
+
+statement ok
+DROP TABLE sdbl_hidden;
+
+
+statement ok
+DROP TABLE sdbl_shown;
+
+
+statement ok
+DROP ROLE sdbl_caller;
+
+
+statement ok
+DROP ROLE sdbl_owner;

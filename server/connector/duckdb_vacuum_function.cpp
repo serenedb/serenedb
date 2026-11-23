@@ -302,7 +302,7 @@ CollectMaintainTargets(duckdb::ClientContext& context,
         // Tables and views share one set, so the scan hands
         // back both.
         if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal ||
-            !context.CanSee(entry)) {
+            !context.CanSee(context.CurrentRole(), entry)) {
           return;
         }
         auto& table = entry.Cast<duckdb::TableCatalogEntry>();

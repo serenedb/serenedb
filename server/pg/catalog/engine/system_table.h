@@ -601,6 +601,7 @@ class SystemScan {
   SystemScan& operator=(const SystemScan&) = delete;
 
   duckdb::ClientContext& Context() const noexcept { return _context; }
+  const duckdb::RoleAccess& Role() const noexcept { return _role; }
   catalog::BaseCatalog& Database() const noexcept { return _database; }
   const duckdb::CatalogTransaction& Transaction() const noexcept {
     return _transaction;
@@ -1016,6 +1017,7 @@ class SystemScan {
   catalog::BaseCatalog& _database;
   duckdb::CatalogTransaction _transaction;
   const SystemTable& _table;
+  duckdb::RoleAccess _role;
   duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles;
   std::vector<SystemFilter> _filters;
   std::array<uint32_t, 64> _slots{};

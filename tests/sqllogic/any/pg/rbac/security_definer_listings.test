@@ -1,0 +1,119 @@
+statement ok
+DROP SCHEMA IF EXISTS sdl_s CASCADE;
+
+
+statement ok
+DROP TABLE IF EXISTS sdl_hidden;
+
+
+statement ok
+DROP TABLE IF EXISTS sdl_shown;
+
+
+statement ok
+DROP ROLE IF EXISTS sdl_caller;
+
+
+statement ok
+DROP ROLE IF EXISTS sdl_owner;
+
+
+statement ok
+CREATE ROLE sdl_owner;
+
+
+statement ok
+CREATE ROLE sdl_caller LOGIN PASSWORD 'sdl_pw';
+
+
+statement ok
+CREATE TABLE sdl_hidden (caller_column int);
+
+
+statement ok
+GRANT SELECT ON sdl_hidden TO sdl_caller;
+
+
+statement ok
+CREATE TABLE sdl_shown (owner_column int);
+
+
+statement ok
+GRANT SELECT ON sdl_shown TO sdl_owner;
+
+
+statement ok
+CREATE SCHEMA sdl_s AUTHORIZATION sdl_owner;
+
+
+statement ok
+GRANT USAGE ON SCHEMA sdl_s TO sdl_caller;
+
+
+statement ok
+SET ROLE sdl_owner;
+
+
+statement ok
+CREATE FUNCTION sdl_s.listed_columns() RETURNS text LANGUAGE sql SECURITY DEFINER
+AS 'SELECT string_agg(column_name::text, '','' ORDER BY column_name::text) FROM information_schema.columns WHERE table_name::text IN (''sdl_hidden'', ''sdl_shown'')';
+
+
+statement ok
+CREATE FUNCTION sdl_s.invoker_columns() RETURNS text LANGUAGE sql
+AS 'SELECT string_agg(column_name::text, '','' ORDER BY column_name::text) FROM information_schema.columns WHERE table_name::text IN (''sdl_hidden'', ''sdl_shown'')';
+
+
+statement ok
+RESET ROLE;
+
+
+connection c_caller user=sdl_caller password=sdl_pw
+query
+SELECT string_agg(column_name::text, ',' ORDER BY column_name::text) AS listed FROM information_schema.columns WHERE table_name::text IN ('sdl_hidden', 'sdl_shown');
+----
+listed
+caller_column
+
+
+connection c_caller user=sdl_caller password=sdl_pw
+query
+SELECT sdl_s.listed_columns() AS listed;
+----
+listed
+owner_column
+
+
+connection c_caller user=sdl_caller password=sdl_pw
+query
+SELECT sdl_s.invoker_columns() AS listed;
+----
+listed
+caller_column
+
+
+query
+SELECT sdl_s.listed_columns() AS listed;
+----
+listed
+owner_column
+
+
+statement ok
+DROP SCHEMA sdl_s CASCADE;
+
+
+statement ok
+DROP TABLE sdl_hidden;
+
+
+statement ok
+DROP TABLE sdl_shown;
+
+
+statement ok
+DROP ROLE sdl_caller;
+
+
+statement ok
+DROP ROLE sdl_owner;

@@ -681,8 +681,9 @@ class TrialSizes final : public State {
 template<typename Codec, typename Rows>
 Config FrameConfig(const ColumnDataCheckpointData& data) noexcept {
   auto config = NamedConfig(Rows::kShape, Codec::kCodec, data.params);
-  config.sorted =
-    Rows::kShape == Shape::Dictionary && (data.option & kSorted) != 0;
+  if constexpr (Rows::kShape == Shape::Dictionary) {
+    config.sorted = (data.option & kSorted) != 0;
+  }
   if ((data.option & kWide) != 0) {
     config.layout = FrameDictionary::None;
   }

@@ -33,6 +33,7 @@ DUCKDB_CHECKOUT = "third_party/duckdb/.git"
 DUCKDB_DIRS = ("third_party/duckdb/src", "third_party/duckdb/extension")
 DUCKDB_FAULTS = frozenset(
     {
+        "grant_first_grantor_with_an_option",
         "remote_write_cache_block",
         "scheduler_enqueue_finds_no_free_slot",
         "slow_expression_bind",

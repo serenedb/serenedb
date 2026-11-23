@@ -93,7 +93,7 @@ An object whose `*acl` column is `NULL` has its default privileges, such as `EXE
 
 ## Revoking
 
-[`REVOKE`](../sql/statements/revoke/index.md) removes grants — but only the grants the revoker (or a role it can act for) made. Revoking a direct grant does not remove access that still flows from `PUBLIC`, and a grant made by another grantor survives until that grantor revokes it:
+[`REVOKE`](../sql/statements/revoke/index.md) removes grants — but only the grants made by the role it revokes as: the revoker, or the role whose grant options it inherits, picked as for `GRANT`. Revoking a direct grant does not remove access that still flows from `PUBLIC`, and a grant made by another grantor survives until that grantor revokes it:
 
 <SqlLogicTest id="security/privileges/example_007" />
 

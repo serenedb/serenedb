@@ -1124,11 +1124,13 @@ def test_partial_grant_and_revoke_warn_as_postgresql():
     suffix = os.getpid()
     grantor = f"pgw_grantor_{suffix}"
     grantee = f"pgw_grantee_{suffix}"
+    other = f"pgw_other_{suffix}"
     table = f"pgw_ledger_{suffix}"
     admin = psycopg.connect(**conn_kwargs(), autocommit=True)
     try:
         admin.execute(f"CREATE ROLE {grantor} LOGIN PASSWORD 'pgw_pw'")
         admin.execute(f"CREATE ROLE {grantee}")
+        admin.execute(f"CREATE ROLE {other}")
         admin.execute(f"CREATE TABLE {table} (a integer, b integer)")
         admin.execute(f"GRANT SELECT ON {table} TO {grantor}")
         admin.execute(f"GRANT INSERT ON {table} TO {grantor} WITH GRANT OPTION")
@@ -1145,6 +1147,7 @@ def test_partial_grant_and_revoke_warn_as_postgresql():
             c.execute(f"GRANT UPDATE (a, b) ON {table} TO {grantee}")
             c.execute(f"REVOKE SELECT ON {table} FROM {grantee}")
             c.execute(f"REVOKE INSERT ON {table} FROM {grantee}")
+            c.execute(f"GRANT SELECT ON {table} TO {grantee}, {other}")
         finally:
             c.close()
         assert diags == [
@@ -1152,6 +1155,9 @@ def test_partial_grant_and_revoke_warn_as_postgresql():
             ("WARNING", "01007", f'not all privileges were granted for "{table}"'),
             ("WARNING", "01007", f'no privileges were granted for column "b" of relation "{table}"'),
             ("WARNING", "01006", f'no privileges could be revoked for "{table}"'),
+            ("WARNING", "01006", f'no privileges could be revoked for column "a" of relation "{table}"'),
+            ("WARNING", "01006", f'no privileges could be revoked for column "b" of relation "{table}"'),
+            ("WARNING", "01007", f'no privileges were granted for "{table}"'),
         ], diags
         held = admin.execute(
             f"SELECT has_table_privilege('{grantee}', '{table}', 'SELECT'),"
@@ -1162,6 +1168,7 @@ def test_partial_grant_and_revoke_warn_as_postgresql():
         assert held == (False, False, True, False), held
     finally:
         admin.execute(f"DROP TABLE IF EXISTS {table}")
+        admin.execute(f"DROP ROLE IF EXISTS {other}")
         admin.execute(f"DROP ROLE IF EXISTS {grantee}")
         admin.execute(f"DROP ROLE IF EXISTS {grantor}")
         admin.close()

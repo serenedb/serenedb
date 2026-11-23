@@ -81,7 +81,8 @@ Granting to a role that does not exist is an error:
 
 ## Notes
 
-- Granting a privilege requires owning the object or holding the privilege `WITH GRANT OPTION`; granting membership requires `ADMIN OPTION` on the role, or superuser.
+- Granting a privilege requires owning the object or holding the privilege `WITH GRANT OPTION`; granting membership requires `ADMIN OPTION` on the role, or superuser. A role that holds some privilege on the object but not the grant options for all it grants gets the warning `no privileges were granted for "t"` or `not all privileges were granted for "t"` and grants only what it can; a role that holds nothing on it is refused. A table-level grant counts only the table's privileges; a column grant counts the table's and that column's.
+- A role that is not the owner grants as the role holding the grant options: itself, or a role whose privileges it inherits, taking the first that holds every option the grant needs, or else the one holding the most. That role is recorded as the grantor, and each column of a column grant picks its own.
 - The object's owner holds all privileges on it unless it revokes some from itself, and may always grant them; a granted role's privileges flow to its members automatically.
 - A database, tablespace, foreign server, foreign-data wrapper or language is named without qualification: `GRANT CONNECT ON DATABASE other.db TO r` is a syntax error. A schema can be qualified with its database, and a nested schema is named by its path, as in `GRANT USAGE ON SCHEMA outer.inner TO r`.
 - Several objects, grantees, granted roles and members can be listed, separated by commas: `GRANT SELECT ON t1, t2 TO r1, r2` grants on every pair, and if any part fails, such as a missing table, nothing is granted. `ALTER DEFAULT PRIVILEGES FOR ROLE` and `IN SCHEMA` take lists the same way.

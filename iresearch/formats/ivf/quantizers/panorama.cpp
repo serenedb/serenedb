@@ -22,11 +22,18 @@
 #include <faiss/impl/Panorama.h>
 #include <faiss/utils/ordered_key_value.h>
 
+#include <algorithm>
 #include <core_functions/array_kernels.hpp>
+#include <cstdlib>
+#include <duckdb/common/vector_size.hpp>
 #include <limits>
+#include <memory>
 #include <optional>
 
 #include "iresearch/formats/ivf/clustering.hpp"
+#ifdef SDB_IVF_BUILD_CUDA
+#include "iresearch/formats/ivf/ivf_cuda.hpp"
+#endif
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/utils/dispatch.hpp"
@@ -77,6 +84,14 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     }
     _rotation = TrainPcaRotation(vecs, n, _d);
     SDB_ASSERT(!_rotation.A.empty());
+#ifdef SDB_IVF_BUILD_CUDA
+    static const bool cuda = std::getenv("SDB_IVF_PCA_CUDA") != nullptr;
+    if (cuda && _metric == VectorMetric::InnerProduct) {
+      SDB_ASSERT(!_rotation.have_bias);
+      _cuda_pca = std::make_unique<IvfCudaPca>(
+        static_cast<int32_t>(_d), STANDARD_VECTOR_SIZE, _rotation.A.data());
+    }
+#endif
     _pano = MakePanorama(_d, faiss::Panorama::kDefaultBatchSize);
     SDB_ASSERT(_pano->n_levels == PanoramaLevels(_d));
   }
@@ -99,14 +114,32 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
                     n * size_t{_d} * sizeof(float));
       return;
     }
+    const float* transformed = nullptr;
+#ifdef SDB_IVF_BUILD_CUDA
+    if (_cuda_pca) {
+      _cuda_output.resize(n * size_t{_d});
+      for (size_t off = 0; off < n;) {
+        const auto take = std::min<size_t>(STANDARD_VECTOR_SIZE, n - off);
+        _cuda_pca->Apply(static_cast<int32_t>(take), vecs + off * _d,
+                         _cuda_output.data() + off * _d);
+        off += take;
+      }
+      transformed = _cuda_output.data();
+    }
+#endif
     const size_t batch = _pano->batch_size;
     if (_stage.empty()) {
       _stage.resize(batch * size_t{_d});
     }
     for (size_t off = 0; off < n;) {
       const size_t take = std::min(batch - _pending, n - off);
-      _rotation.apply_noalloc(static_cast<faiss::idx_t>(take), vecs + off * _d,
-                              _stage.data() + _pending * size_t{_d});
+      float* destination = _stage.data() + _pending * size_t{_d};
+      if (transformed) {
+        std::copy_n(transformed + off * _d, take * size_t{_d}, destination);
+      } else {
+        _rotation.apply_noalloc(static_cast<faiss::idx_t>(take),
+                                vecs + off * _d, destination);
+      }
       _pending += take;
       off += take;
       if (_pending == batch) {
@@ -168,6 +201,10 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
   std::vector<float> _stage;
   std::vector<float> _cums;
   std::vector<float> _codes;
+#ifdef SDB_IVF_BUILD_CUDA
+  std::unique_ptr<IvfCudaPca> _cuda_pca;
+  std::vector<float> _cuda_output;
+#endif
 };
 
 template<VectorMetric M>

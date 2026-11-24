@@ -23,12 +23,15 @@
 #include <absl/random/random.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <pcg_random.hpp>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <yaclib/async/make.hpp>
 
@@ -40,10 +43,12 @@
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/formats/ivf/centroids.hpp"
 #include "iresearch/formats/ivf/clustering.hpp"
+#include "iresearch/formats/ivf/ivf_cuda.hpp"
 #include "iresearch/formats/ivf/ivf_reader.hpp"
 #include "iresearch/formats/ivf/quantizer.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/log.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -85,12 +90,37 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
   const bool sample_train = train_cap != 0 && !stream_train;
   const bool train_residuals = sample_train && needs_centroid;
 
+  using Clock = std::chrono::steady_clock;
+  static const bool profile =
+    static_cast<bool>(std::getenv("SDB_IVF_BUILD_PROFILE"));
+  Clock::duration training_time{};
+  Clock::duration assignment_time{};
+  size_t gpu_batches = 0;
+  std::unique_ptr<IvfCudaIndex> assignment;
+  IvfCudaIndex* root_assignment = nullptr;
+#ifdef SDB_IVF_BUILD_CUDA
+  static const bool cpu_training =
+    static_cast<bool>(std::getenv("SDB_IVF_CPU_TRAINING"));
+  static const bool assign_root_on_cuda = [] {
+    const auto* mode = std::getenv("SDB_IVF_FINAL_ASSIGNMENT_CUDA");
+    return mode && std::string_view{mode} == "root";
+  }();
+  if (!cpu_training && _info.metric == VectorMetric::InnerProduct &&
+      _info.quant.kind == VectorQuantization::None) {
+    assignment = MakeIvfCudaIndex(d, profile ? &gpu_batches : nullptr);
+    if (assign_root_on_cuda) {
+      root_assignment = assignment.get();
+    }
+  }
+#endif
   auto centroids = CentroidsBuilder::Create(
     vector_column, ctx, rows, _info.metric, d,
     CentroidsBuildParams{
       .posting_size = _info.posting_size,
       .sample_factor = _info.sample_factor,
       .min_train_sample = needs_centroid ? kMinCentroidTrainSample : 0,
+      .assignment = assignment.get(),
+      .training_time = profile ? &training_time : nullptr,
     });
   const size_t n_clusters = centroids.NumClusters();
 
@@ -126,10 +156,15 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
       if (normalize) {
         NormalizeRows(gather.data(), gathered, d);
       }
+      const auto start = profile ? Clock::now() : Clock::time_point{};
       auto assigned = centroids.AssignCentroids(
         {gather.data(), gathered * d}, d,
         needs_centroid ? std::span{cents.data(), gathered}
-                       : std::span<std::span<const float>>{});
+                       : std::span<std::span<const float>>{},
+        root_assignment);
+      if (profile) {
+        assignment_time += Clock::now() - start;
+      }
       SDB_ASSERT(assigned.ids.size() == gathered);
       const size_t base = doc_cluster.size();
       doc_cluster.resize(base + gathered);
@@ -203,6 +238,23 @@ BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
 
   result.centroids = std::move(centroids);
   result.empty = false;
+  if (profile) {
+    using std::chrono::duration_cast;
+    using std::chrono::microseconds;
+    const auto stats =
+      assignment ? assignment->TrainingStats() : sdb_ivf_cuda_training_stats{};
+    SDB_DEBUG(
+      IRESEARCH, "IVF build profile rows=", valid_rows.size(),
+      " train_us=", duration_cast<microseconds>(training_time).count(),
+      " assign_us=", duration_cast<microseconds>(assignment_time).count(),
+      " gpu_batches=", gpu_batches,
+      " small_sample_bytes=", stats.small_sample_bytes,
+      " large_sample_bytes=", stats.large_sample_bytes,
+      " large_sample_uploads=", stats.large_sample_uploads,
+      " paged_sample_bytes=", stats.paged_sample_bytes,
+      " largest_sample_bytes=", stats.largest_sample_bytes,
+      " large_cache_fallbacks=", stats.large_cache_fallbacks);
+  }
   return result;
 }
 

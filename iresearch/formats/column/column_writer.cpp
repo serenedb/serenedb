@@ -213,6 +213,11 @@ bool SelfContained(const ColumnBlockMeta& block) noexcept {
            duckdb::PhysicalType::VARCHAR;
 }
 
+bool CopyableWithoutNulls(const ColumnReader& column) {
+  return !column.InMemory() && !column.Patched() &&
+         !column.MergedStatistics().CanHaveNull();
+}
+
 bool EmptyValidity(const ColumnBlockMeta& block) noexcept {
   return block.byte_size == 0 &&
          block.codec->type == duckdb::CompressionType::COMPRESSION_EMPTY;
@@ -786,17 +791,17 @@ bool ColumnWriter::LayoutMatches(const ColumnReader& column) const noexcept {
          !(_skip_validity && column.HasValidity());
 }
 
-duckdb::CompressionType ColumnWriter::ForcedCodec() const {
+duckdb::CompressionType ColumnWriter::ForcedCodec(
+  duckdb::PhysicalType type) const {
   const auto& config = duckdb::DBConfig::GetConfig(WriteCtx().Database());
-  return ResolveForced(config, _forced,
-                       config.GetCompressionFunctions(_type.InternalType()));
+  return ResolveForced(config, _forced, config.GetCompressionFunctions(type));
 }
 
 bool ColumnWriter::CopyableFrom(const ColumnReader& column) const {
   if (!LayoutMatches(column) || column.RowCount() < _row_group_size) {
     return false;
   }
-  const auto forced = ForcedCodec();
+  const auto forced = ForcedCodec(_type.InternalType());
   if (!absl::c_all_of(column.DataBlocks(), [&](const ColumnBlockMeta& block) {
         return SelfContained(block) && InCodec(forced, block);
       })) {
@@ -921,37 +926,109 @@ void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
   SDB_ASSERT(_row_start + _staged_rows <= start_row);
   SDB_ASSERT(first + count <= column.RowCount());
   PadNullsTo(start_row);
+  if (count == 0) {
+    return;
+  }
+
+  const auto* elements =
+    _type.id() == duckdb::LogicalTypeId::ARRAY ? column.Child() : nullptr;
+  const bool layout_matches =
+    elements ? !_deferred && column.Type() == _type &&
+                 elements->Type().id() == duckdb::LogicalTypeId::FLOAT &&
+                 CopyableWithoutNulls(column) && CopyableWithoutNulls(*elements)
+             : LayoutMatches(column);
+  const auto& data = elements ? *elements : column;
+  const auto blocks = data.DataBlocks();
+  if (!layout_matches || _distinct != DistinctStats::None || blocks.empty()) {
+    DecodeRows(column, source, first, count);
+    return;
+  }
+
+  const uint64_t row_width = elements ? duckdb::ArrayType::GetSize(_type) : 1;
+  const auto forced = ForcedCodec(data.Type().InternalType());
+  const auto compatible = [forced](const ColumnBlockMeta& block) {
+    return SelfContained(block) && InCodec(forced, block);
+  };
   const auto end = first + count;
+  const auto first_value = first * row_width;
+  const auto end_value = end * row_width;
   auto written = first;
-  if (LayoutMatches(column) && _distinct == DistinctStats::None &&
-      !_owner->HasAnn(_id)) {
-    const auto forced = ForcedCodec();
-    const auto blocks = column.DataBlocks();
-    for (auto b = column.Locate(first).block; b < blocks.size(); ++b) {
-      const auto block_first = column.DataBlockFirstRow(b);
-      const auto block_end = block_first + blocks[b].tuple_count;
-      if (block_first >= end) {
-        break;
-      }
-      if (block_first < first || block_end > end || !SelfContained(blocks[b]) ||
-          !InCodec(forced, blocks[b]) ||
-          !ValidityCopyable(column, block_first, block_end)) {
-        continue;
-      }
-      if (written < block_first) {
-        DecodeRows(column, source, written, block_first - written);
-        written = block_first;
-      }
-      if (blocks[b].tuple_count > _rg_rows - _staged_rows) {
-        continue;
-      }
-      SealRowGroup();
-      CopyBlock(blocks[b], source, _meta.data);
-      CopyValidity(column, source, block_first, block_end);
-      _row_start += blocks[b].tuple_count;
-      OpenRowGroup();
-      written = block_end;
+  for (auto next = data.Locate(first_value).block; next < blocks.size();) {
+    const auto block = next++;
+    const auto block_first = data.DataBlockFirstRow(block);
+    const auto block_end = block_first + blocks[block].tuple_count;
+    if (block_first >= end_value) {
+      break;
     }
+    if (block_first < first_value || block_end > end_value ||
+        !compatible(blocks[block]) ||
+        (elements ? block_first % row_width != 0
+                  : !ValidityCopyable(column, block_first, block_end))) {
+      continue;
+    }
+
+    const auto copy_first = elements ? block_first / row_width : block_first;
+    if (written < copy_first) {
+      DecodeRows(column, source, written, copy_first - written);
+      written = copy_first;
+    }
+    const auto limit =
+      (written + std::min(end - written, _rg_rows - _staged_rows)) * row_width;
+    if (block_end > limit) {
+      continue;
+    }
+
+    auto copy_end = block_end;
+    auto stop = next;
+    if (elements) {
+      if (copy_end % row_width != 0) {
+        copy_end = block_first;
+      }
+      for (auto i = next; i < blocks.size(); ++i) {
+        const auto value_end =
+          data.DataBlockFirstRow(i) + blocks[i].tuple_count;
+        if (value_end > limit || !compatible(blocks[i])) {
+          break;
+        }
+        if (value_end % row_width == 0) {
+          copy_end = value_end;
+          stop = i + 1;
+        }
+      }
+      if (copy_end == block_first) {
+        continue;
+      }
+    }
+
+    SealRowGroup();
+    const auto copy_end_row = elements ? copy_end / row_width : copy_end;
+    const auto rows = copy_end_row - copy_first;
+    if (elements) {
+      _meta.children.resize(1);
+      auto& child = _meta.children.front();
+      child.id = _id;
+      child.type = elements->Type();
+      const auto copied = blocks.subspan(block, stop - block);
+      BlockReadAhead ahead{source, copied};
+      for (size_t i = 0; i < copied.size(); ++i) {
+        ahead.At(i);
+        CopyBlock(copied[i], source, child.data);
+      }
+      auto& config = duckdb::DBConfig::GetConfig(WriteCtx().Database());
+      const duckdb::LogicalType validity_type{duckdb::LogicalTypeId::VALIDITY};
+      if (!_skip_validity) {
+        EmitEmptyValidity(validity_type, rows, config, _meta.validity);
+      }
+      EmitEmptyValidity(validity_type, rows * row_width, config,
+                        child.validity);
+    } else {
+      CopyBlock(blocks[block], source, _meta.data);
+      CopyValidity(column, source, copy_first, copy_end_row);
+    }
+    _row_start += rows;
+    OpenRowGroup();
+    written = copy_end_row;
+    next = stop;
   }
   if (written < end) {
     DecodeRows(column, source, written, end - written);

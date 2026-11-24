@@ -112,7 +112,7 @@ class ColumnWriter final {
   WriteChunk& OpenChunk();
 
   bool LayoutMatches(const ColumnReader& column) const noexcept;
-  duckdb::CompressionType ForcedCodec() const;
+  duckdb::CompressionType ForcedCodec(duckdb::PhysicalType type) const;
   bool ValidityCopyable(const ColumnReader& column, uint64_t first,
                         uint64_t end) const noexcept;
   void CopyBlock(const ColumnBlockMeta& block, ReadContext& source,

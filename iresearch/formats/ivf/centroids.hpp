@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/storage/external_file_cache/input_file_reader.hpp>
@@ -30,6 +31,7 @@
 #include <span>
 #include <vector>
 
+#include "iresearch/formats/ivf/ivf_cuda.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
@@ -193,6 +195,8 @@ struct CentroidsBuildParams {
   size_t max_fanout = 0;
   double sample_factor = 0;
   uint64_t min_train_sample = 0;
+  IvfCudaIndex* assignment = nullptr;
+  std::chrono::steady_clock::duration* training_time = nullptr;
 };
 
 class CentroidsBuilder {
@@ -220,22 +224,24 @@ class CentroidsBuilder {
 
   AssignedCentroids AssignCentroids(
     std::span<float> data, size_t d,
-    std::span<std::span<const float>> centroids_out = {}) const;
+    std::span<std::span<const float>> centroids_out = {},
+    IvfCudaIndex* root_assignment = nullptr) const;
 
   size_t NumClusters() const noexcept { return _nodes.empty() ? 1 : _n_rows; }
 
  private:
   static CentroidsBuilder BuildFromSample(std::vector<float> sample, uint32_t d,
                                           VectorMetric metric, size_t leaf_size,
-                                          size_t max_fanout);
+                                          size_t max_fanout,
+                                          IvfCudaIndex* assignment);
 
-  void BuildTree(std::vector<float> sample, size_t leaf_size,
-                 size_t max_fanout);
+  void BuildTree(std::vector<float> sample, size_t leaf_size, size_t max_fanout,
+                 IvfCudaIndex* assignment);
 
-  void AssignCentroidsImpl(
-    size_t node_index, std::span<float> data, size_t d, std::span<size_t> ids,
-    std::span<size_t> perm,
-    std::span<std::span<const float>> centroids_out) const;
+  void AssignCentroidsImpl(size_t node_index, std::span<float> data, size_t d,
+                           std::span<size_t> ids, std::span<size_t> perm,
+                           std::span<std::span<const float>> centroids_out,
+                           IvfCudaIndex* assignment) const;
 
   std::vector<Node> _nodes;
   std::vector<size_t> _row_bases;

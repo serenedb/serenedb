@@ -105,6 +105,15 @@ option(
 )
 
 option(SDB_EMBEDDED_DOCS "embed the documentation from docs/ into serenedb" ON)
+option(
+    SDB_IVF_BUILD_CUDA
+    "use CUDA to build uncompressed inner-product IVF indexes"
+    OFF
+)
+
+if(SDB_IVF_BUILD_CUDA AND NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "SDB_IVF_BUILD_CUDA requires Linux")
+endif()
 
 option(
     SDB_TPC_EXTENSIONS
@@ -261,7 +270,11 @@ option(
     OFF
 )
 
-option(SDB_STATIC "link executables statically" OFF)
+option(
+    SDB_STATIC
+    "link executables statically, or link CUDA libraries statically into the shared IVF module"
+    OFF
+)
 
 option(
     SDB_VTUNE
@@ -519,7 +532,7 @@ else()
     # TODO(mbkkt) think about -lrt -lpthread -ldl
     string(APPEND SDB_DEFAULT_LIBS " -lc -lm")
 endif()
-if(SDB_STATIC)
+if(SDB_STATIC AND NOT SDB_IVF_BUILD_CUDA)
     set(SDB_DEFAULT_LIBS "-static ${SDB_DEFAULT_LIBS}")
 endif()
 set(CMAKE_CXX_STANDARD_LIBRARIES ${SDB_DEFAULT_LIBS})

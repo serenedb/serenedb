@@ -1,0 +1,4 @@
+{
+  global: sdb_ivf_cuda_*;
+  local: *;
+};

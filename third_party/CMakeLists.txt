@@ -322,7 +322,7 @@ else()
         )
     endif()
 endif()
-set(NEED_PIC OFF CACHE BOOL "" FORCE)
+set(NEED_PIC ${SDB_IVF_BUILD_CUDA} CACHE BOOL "" FORCE)
 sdb_add_module(OpenBLAS NO_WARNINGS)
 target_link_libraries(sdb_blas INTERFACE openblas)
 if(ARCH_AMD64 AND DYNAMIC_ARCH)
@@ -345,11 +345,16 @@ target_include_directories(
 ################################################################################
 set(FAISS_OPT_LEVEL "dd")
 set(FAISS_ENABLE_GPU OFF CACHE BOOL "" FORCE)
+set(FAISS_ENABLE_METAL OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
 set(FAISS_ENABLE_EXTRAS OFF CACHE BOOL "" FORCE)
 sdb_add_module(faiss)
 set_property(TARGET faiss PROPERTY INTERFACE_COMPILE_OPTIONS "")
 target_link_libraries(faiss PUBLIC pcg)
+
+if(SDB_IVF_BUILD_CUDA)
+    include(IvfCuda)
+endif()
 
 ################################################################################
 ## snowball stemmer

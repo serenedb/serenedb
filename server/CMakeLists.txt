@@ -71,6 +71,20 @@ add_custom_command(
 include(Licenses)
 cmake_language(DEFER DIRECTORY ${serenedb_SOURCE_DIR} CALL sdb_licenses)
 
+if(SDB_IVF_BUILD_CUDA)
+    file(
+        RELATIVE_PATH
+        sdb_ivf_cuda_libdir
+        "${CMAKE_INSTALL_FULL_BINDIR}"
+        "${CMAKE_INSTALL_FULL_LIBDIR}"
+    )
+    set_property(
+        TARGET serenedb
+        APPEND
+        PROPERTY INSTALL_RPATH "$ORIGIN/${sdb_ivf_cuda_libdir}"
+    )
+endif()
+
 install(TARGETS serenedb RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
 install(
     PROGRAMS $<TARGET_FILE_DIR:serenedb>/serened

@@ -260,7 +260,7 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
         const auto copy =
           owner.Copy(owner.InlineBegin() + _inline_base, inline_size + kSlack);
         _small_inline = {copy.data(),
-                         std::min(inline_size, copy.size() - kSlack)};
+                         std::min<uint64_t>(inline_size, copy.size() - kSlack)};
       }
     }
   }

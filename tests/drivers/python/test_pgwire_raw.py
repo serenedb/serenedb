@@ -941,6 +941,42 @@ def test_parse_param_oid_unknown_is_inferred(conn):
     assert first_field(m) == b"42"
 
 
+def test_parse_skipped_parameter_number_needs_a_declared_type(conn):
+    conn.parse("", "select $2::int4")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["42P18"], errors(m)
+    assert errors(m)[0]["M"] == "could not determine data type of parameter $1"
+    conn.parse("", "select $3::int4", oids=(25,))
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["42P18"], errors(m)
+    assert errors(m)[0]["M"] == "could not determine data type of parameter $2"
+    conn.parse("", "select $2::int4", oids=(25,))
+    conn.describe("S", "")
+    conn.bind("", "", params=(b"unused", b"7"))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert "E" not in types(m), errors(m)
+    assert parameter_types(m) == [25, 23], parameter_types(m)
+    assert first_field(m) == b"7"
+
+
+def test_parse_with_an_unknown_type_oid_does_not_define_the_name(conn):
+    conn.parse("raw_bad_oid", "select $1", oids=(1000000000,))
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["XX000"], errors(m)
+    conn.parse("raw_bad_oid", "select $1::int4")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert not errors(m), errors(m)
+    conn.send("C", b"S" + _cstr("raw_bad_oid"))
+    conn.sync()
+    conn.drain_to_ready()
+
+
 @pytest.mark.parametrize(
     "query, expected",
     [("select $1", b"abc"), ("select $1 || 'x'", b"abcx")],

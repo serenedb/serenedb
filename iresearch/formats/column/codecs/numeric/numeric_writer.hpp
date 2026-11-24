@@ -109,8 +109,8 @@ inline uint32_t FrameTableEnd(const Geometry& geometry) noexcept {
   return geometry.off_frames + geometry.frames * geometry.meta;
 }
 
-inline double ScoreOf(uint64_t bytes, size_t rows, double price) noexcept {
-  return static_cast<double>(bytes) / static_cast<double>(rows) * price;
+inline double ScoreOf(uint64_t bytes, size_t rows) noexcept {
+  return static_cast<double>(bytes) / static_cast<double>(rows);
 }
 
 struct LeafSamples {
@@ -381,10 +381,9 @@ class Frames final : public State {
     const uint32_t item = ItemBytes(items);
     const auto geometry =
       GeometryOf(Transform::kShape, items, sizeof(T), leaf, values.Scale() > 1);
-    const auto price = _data.price;
     const uint64_t stream = uint64_t{items.count} * item;
     if (leaf == ByteCodec::None) {
-      return ScoreOf(geometry.off_data + stream, rows, price);
+      return ScoreOf(geometry.off_data + stream, rows);
     }
     auto& samples = _data.Get<NumericScratch>().samples;
     const auto size = EstimateLeaf(
@@ -410,10 +409,10 @@ class Frames final : public State {
       },
       [&](uint64_t projected, uint32_t frames) {
         return frames >= kLeastFramesToStop &&
-               ScoreOf(projected, rows, price) >=
+               ScoreOf(projected, rows) >=
                  bound * (1.0 + kUnlikelyMargin / frames);
       });
-    const auto score = ScoreOf(size, rows, price);
+    const auto score = ScoreOf(size, rows);
     if (score < bound) {
       std::swap(samples, analysis.samples);
       analysis.leaf = leaf;
@@ -582,7 +581,7 @@ class Blocks final : public State {
     }
     auto& values = _data.Get<Values<T>>();
     return ScoreOf(GeometryOf(items).off_data + _transform.Bytes(),
-                   values.Size(), _data.price);
+                   values.Size());
   }
 
   bool Compress(const Codec& codec) {

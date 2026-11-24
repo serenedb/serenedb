@@ -27,6 +27,11 @@
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 
 namespace irs::codecs {
+namespace numeric {
+
+inline constexpr uint8_t kLongRuns = 1;
+
+}  // namespace numeric
 
 struct ColumnTuning {
   Hint hints[magic_enum::enum_count<CodecType>()];

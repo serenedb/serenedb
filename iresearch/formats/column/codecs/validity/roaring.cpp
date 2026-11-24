@@ -1717,7 +1717,7 @@ constexpr CompressionFunction kFunction{
     [](ColumnDataCheckpointData& data, double) {
       return static_cast<double>(
                data.Get<Containers<kPhysical>>().state.total_size) /
-             static_cast<double>(std::max<uint64_t>(data.rows, 1)) * data.price;
+             static_cast<double>(std::max<uint64_t>(data.rows, 1));
     },
   .compress =
     [](const Codec& codec, ColumnDataCheckpointData& data) {

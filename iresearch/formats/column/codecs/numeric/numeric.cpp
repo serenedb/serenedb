@@ -176,8 +176,8 @@ class DeltaBitpacking {
       return;
     }
     const auto rows = _values.Rows();
-    if (ScoreOf(BitpackingBlocks<U>::SampledDeltaBytes(rows), rows.size(),
-                data.price) >= bound) {
+    if (ScoreOf(BitpackingBlocks<U>::SampledDeltaBytes(rows), rows.size()) >=
+        bound) {
       return;
     }
     if (const auto& steps = data.Get<Steps<T>>(); steps.bits == 0) {
@@ -1232,11 +1232,9 @@ double AnalyzeWide(ColumnDataCheckpointData& data, double bound) {
   if (!wide.Offers(StoresHalves(kCodec), ShapeOf(kCodec), data)) {
     return kNoScore;
   }
-  wide.low->data.price = data.price;
   if (wide.narrow) {
     return kInner.analyze(wide.low->data, bound);
   }
-  wide.high->data.price = data.price;
   const auto limit = std::min(bound, static_cast<double>(sizeof(W)));
   constexpr double price = 8.0 * sizeof(W) / kWideHalvesBits;
   const auto low = kInner.analyze(wide.low->data, limit / price);
@@ -1599,11 +1597,11 @@ template<typename T, ByteCodec kLeaf>
 consteval auto RunsFunctions() {
   if constexpr (kLeaf != ByteCodec::None) {
     return std::array{
-      Of<T, Shape::Runs, kLeaf, kRunFrames<Inner<T>, kLeaf>>(),
+      Of<T, Shape::Runs, kLeaf, kFrames<Rle<Inner<T>>, kLeaf, false>>(),
     };
   } else {
     return std::array{
-      Of<T, Shape::Runs, kLeaf, kRunFrames<Inner<T>, kLeaf>>(),
+      Of<T, Shape::Runs, kLeaf, kFrames<Rle<Inner<T>>, kLeaf, false>>(),
       Of<T, Shape::Runs, kLeaf, kBlocks<RleBitpacking<Inner<T>>>>(),
     };
   }

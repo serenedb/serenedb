@@ -43,8 +43,6 @@ using duckdb::string_t;
 
 constexpr double kEntriesFirstRatio = 0.5;
 constexpr double kMispredicted = 2.0;
-constexpr uint32_t kPackedCodeRunRows = 4;
-constexpr double kCodeRunPrice = 1.5;
 
 uint64_t PrefixKey(const string_t& value, size_t skip) noexcept {
   char buf[8] = {};
@@ -128,12 +126,9 @@ void CompressCodes(
     .chunks = {&chunk, 1},
     .flush = flush,
     .tuning = column,
-    .disabled = ~kCodesGroup,
-    .min_packed_run = kPackedCodeRunRows,
-    .run_price = kCodeRunPrice,
     .rows = codes.size(),
   };
-  Compress(CodecType::Auto, data);
+  CompressAutoCodes(data);
   ratio = static_cast<double>(written) /
           static_cast<double>(codes.size() * sizeof(uint32_t));
 }

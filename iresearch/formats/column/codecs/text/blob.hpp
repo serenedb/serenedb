@@ -855,7 +855,7 @@ double EstimateFrames(ColumnDataCheckpointData& data) {
     Trial(data.Get<CodecState<CompressionState<Codec, Rows>>>(), config, values,
           window, data.params.segment_target);
   }
-  return Score(values, window, kShape, data.price,
+  return Score(values, window, kShape,
                data.Get<TrialSizes<Codec>>().Estimate(kShape, config));
 }
 
@@ -874,7 +874,7 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, double bound) {
     Trial(state, config, values, window, target);
   }
   const auto priced = [&](uint64_t bytes) {
-    return Score(values, window, kShape, data.price, bytes);
+    return Score(values, window, kShape, bytes);
   };
   if (!data.contested) {
     return priced(Trial(state, config, values, window, target).Size());

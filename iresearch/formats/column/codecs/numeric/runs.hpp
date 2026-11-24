@@ -238,16 +238,7 @@ class Rle {
   uint8_t _run_width = 0;
 };
 
-template<typename T, ByteCodec kLeaf>
-inline constexpr CompressionFunction kRunFrames{
-  .analyze =
-    [](ColumnDataCheckpointData& data, double bound) {
-      return data.run_price *
-             data.Get<Frames<Rle<T>>>(bound).Analyze(bound / data.run_price,
-                                                     FrameStore{kLeaf, false});
-    },
-  .compress = kFrames<Rle<T>, kLeaf, false>.compress,
-};
+inline constexpr uint32_t kLongRunRows = 4;
 
 template<typename T>
 class RleBitpacking {
@@ -264,7 +255,8 @@ class RleBitpacking {
       return;
     }
     const auto& values = data.Get<Values<T>>();
-    if (uint64_t{values.RunCount()} * data.min_packed_run > values.Size()) {
+    if ((data.option & kLongRuns) != 0 &&
+        uint64_t{values.RunCount()} * kLongRunRows > values.Size()) {
       return;
     }
     _value_blocks.template PlanStream<Values<T>::kSigned>(RunValues());

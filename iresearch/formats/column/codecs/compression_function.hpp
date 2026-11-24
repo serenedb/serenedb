@@ -213,10 +213,7 @@ struct ColumnDataCheckpointData {
   ColumnTuning& tuning;
   CodecSet disabled;
   bool contested = false;
-  double price = 1.0;
   uint8_t option = 0;
-  uint32_t min_packed_run = 1;
-  double run_price = 1.0;
   uint64_t rows = 0;
   std::array<std::unique_ptr<State>, magic_enum::enum_count<StateId>()> states;
 };
@@ -224,7 +221,7 @@ struct ColumnDataCheckpointData {
 inline double ScoreOfBytes(uint64_t bytes,
                            const ColumnDataCheckpointData& data) noexcept {
   return static_cast<double>(bytes) /
-         static_cast<double>(data.rows != 0 ? data.rows : 1) * data.price;
+         static_cast<double>(data.rows != 0 ? data.rows : 1);
 }
 
 struct CompressionFunction {
@@ -295,6 +292,8 @@ struct Codec {
 };
 
 void CompressAuto(ColumnDataCheckpointData& data);
+
+void CompressAutoCodes(ColumnDataCheckpointData& data);
 
 bool CompressAs(const Codec& codec, ColumnDataCheckpointData& data);
 

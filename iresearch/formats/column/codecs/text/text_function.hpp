@@ -79,9 +79,9 @@ struct Window final : State {
 };
 
 inline double Score(const Values& values, const Window& window, Shape shape,
-                    double price, uint64_t bytes) {
-  return ShapeCost(shape, values.Repeats(), static_cast<double>(bytes)) *
-         price / static_cast<double>(std::max<uint64_t>(window.input, 1));
+                    uint64_t bytes) {
+  return ShapeCost(shape, values.Repeats(), static_cast<double>(bytes)) /
+         static_cast<double>(std::max<uint64_t>(window.input, 1));
 }
 
 inline bool Contends(const Values& values, const CodecSet& disabled,
@@ -238,7 +238,7 @@ double AnalyzeTrial(ColumnDataCheckpointData& data, double) {
   const auto bytes = Trial(state, kTrialConfig<Compression>, values, window,
                            data.params.segment_target)
                        .Size();
-  return Score(values, window, kShape, data.price, bytes);
+  return Score(values, window, kShape, bytes);
 }
 
 template<typename Compression>

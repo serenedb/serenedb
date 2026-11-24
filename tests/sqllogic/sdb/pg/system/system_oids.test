@@ -129,6 +129,38 @@ relations	row_type_elsewhere	array_type_elsewhere	first	last
 
 
 query
+SELECT r.ev_class::regclass::text AS view, r.oid AS rule
+FROM pg_rewrite r
+WHERE r.ev_class IN ('pg_roles'::regclass, 'information_schema.columns'::regclass,
+                     'pg_stat_progress_create_table_as'::regclass)
+ORDER BY r.oid;
+----
+view	rule
+pg_roles	12458
+information_schema."columns"	12551
+pg_stat_progress_create_table_as	16790
+
+
+query
+SELECT count(*) AS rules, count(DISTINCT oid) AS distinct_rules, min(oid) AS first, max(oid) AS last
+FROM pg_rewrite WHERE oid >= 12000 AND oid < 16384;
+----
+rules	distinct_rules	first	last
+145	145	12458	12602
+
+
+query
+SELECT (SELECT ev_class::regclass::text FROM pg_rewrite WHERE oid = 12458) AS sql_view,
+       (SELECT ev_class::regclass::text FROM pg_rewrite WHERE oid = 12551) AS native_view,
+       (SELECT ev_class::regclass::text FROM pg_rewrite WHERE oid = 16790) AS sdb_view,
+       pg_describe_object('pg_rewrite'::regclass, 12551, 0) AS native_rule,
+       pg_get_ruledef(12458) LIKE 'CREATE RULE "_RETURN" AS%ON SELECT TO pg_catalog.pg_roles DO INSTEAD%' AS ruledef;
+----
+sql_view	native_view	sdb_view	native_rule	ruledef
+pg_roles	information_schema."columns"	pg_stat_progress_create_table_as	rule _RETURN on view information_schema."columns"	t
+
+
+query
 SELECT t.typname, t.oid, t.typarray, b.typname AS base
 FROM pg_type t JOIN pg_type b ON b.oid = t.typbasetype
 WHERE t.typnamespace = 'information_schema'::regnamespace AND t.typtype = 'd'

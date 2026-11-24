@@ -154,7 +154,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
 
   void Row(duckdb::TableCatalogEntry& table) {
     Namespace(table);
-    RowType(table.oid);
+    RowType(table);
     for (const auto& constraint : table.GetConstraints()) {
       if (IsPgConstraint(constraint)) {
         Constraint(table, *constraint);
@@ -200,8 +200,8 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
 
   void Row(duckdb::ViewCatalogEntry& view) {
     Namespace(view);
-    Depend(kPgRewriteTable, view.oid, 0, kPgClassTable, view.oid, 0, 'i');
-    RowType(view.oid);
+    Depend(kPgRewriteTable, view.rule_oid, 0, kPgClassTable, view.oid, 0, 'i');
+    RowType(view);
     if (!Allows<"deptype">('n')) {
       return;
     }
@@ -214,7 +214,7 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
           object.type == duckdb::CatalogType::VIEW_ENTRY) {
         relations.push_back(&object);
       } else {
-        Reference(kPgRewriteTable, view.oid, object, 'n');
+        Reference(kPgRewriteTable, view.rule_oid, object, 'n');
       }
     });
     for (auto* relation : relations) {
@@ -327,9 +327,10 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
            entry.ParentSchemaOid(), 0, 'n');
   }
 
-  void RowType(duckdb::idx_t relation) {
+  void RowType(const duckdb::CatalogEntry& relation) {
     const auto row = RowTypeOid(relation);
-    Depend(kPgTypeTable, row, 0, kPgClassTable, relation, 0, 'i');
+    SDB_ASSERT(row != kInvalidOid);
+    Depend(kPgTypeTable, row, 0, kPgClassTable, relation.oid, 0, 'i');
     Depend(kPgTypeTable, TypeArrayOid(row), 0, kPgTypeTable, row, 0, 'i');
   }
 
@@ -461,8 +462,8 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
     bool any = false;
     const auto depend = [&](int32_t attnum) {
       any = true;
-      Depend(kPgRewriteTable, view.oid, 0, kPgClassTable, relation.oid, attnum,
-             'n');
+      Depend(kPgRewriteTable, view.rule_oid, 0, kPgClassTable, relation.oid,
+             attnum, 'n');
     };
     if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
       for (const auto& column :
@@ -480,7 +481,8 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
       }
     }
     if (!any) {
-      Depend(kPgRewriteTable, view.oid, 0, kPgClassTable, relation.oid, 0, 'n');
+      Depend(kPgRewriteTable, view.rule_oid, 0, kPgClassTable, relation.oid, 0,
+             'n');
     }
   }
 

@@ -1,0 +1,119 @@
+control substitution on
+
+statement ok
+CREATE TABLE rtro_t (id INT);
+
+
+statement ok
+CREATE VIEW rtro_v AS SELECT id FROM rtro_t;
+
+
+statement ok
+CREATE VIEW rtro_now AS
+SELECT 'type' AS kind, c.oid AS rel, c.reltype AS oid FROM pg_class c
+UNION ALL
+SELECT 'array', c.oid, t.typarray FROM pg_class c JOIN pg_type t ON t.oid = c.reltype
+UNION ALL
+SELECT 'rule', r.ev_class, r.oid FROM pg_rewrite r;
+
+
+statement ok
+CREATE TABLE rtro_oids AS SELECT * FROM rtro_now WHERE rel IN ('rtro_t'::regclass, 'rtro_v'::regclass);
+
+
+query
+SELECT kind, count(*) AS n, count(DISTINCT oid) AS oids FROM rtro_oids GROUP BY kind ORDER BY kind;
+----
+kind	n	oids
+array	2	2
+rule	1	1
+type	2	2
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+ALTER TABLE rtro_t ADD COLUMN w INT;
+
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+statement ok
+CREATE OR REPLACE VIEW rtro_v AS SELECT id, w FROM rtro_t;
+
+
+statement ok
+ALTER VIEW rtro_v RENAME TO rtro_w;
+
+
+query
+SELECT o.kind, count(*) AS kept
+FROM rtro_oids o JOIN rtro_now n ON n.kind = o.kind AND n.rel = o.rel AND n.oid = o.oid
+GROUP BY o.kind ORDER BY o.kind;
+----
+kind	kept
+array	2
+rule	1
+type	2
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT o.kind, count(*) AS kept
+FROM rtro_oids o JOIN rtro_now n ON n.kind = o.kind AND n.rel = o.rel AND n.oid = o.oid
+GROUP BY o.kind ORDER BY o.kind;
+----
+kind	kept
+array	2
+rule	1
+type	2
+
+
+connection after_crash
+query
+SELECT c.relname, c.reltype::regtype::text AS row_type, t.typarray::regtype::text AS array_type
+FROM pg_class c JOIN pg_type t ON t.oid = c.reltype
+WHERE c.relname IN ('rtro_t', 'rtro_w')
+ORDER BY 1;
+----
+relname	row_type	array_type
+rtro_t	rtro_t	rtro_t[]
+rtro_w	rtro_w	rtro_w[]
+
+
+connection after_crash
+query
+SELECT pg_describe_object('pg_rewrite'::regclass, oid, 0) AS rule,
+       pg_get_ruledef(oid) LIKE 'CREATE RULE "_RETURN" AS%ON SELECT TO public.rtro_w DO INSTEAD%' AS ruledef
+FROM pg_rewrite WHERE ev_class = 'rtro_w'::regclass;
+----
+rule	ruledef
+rule _RETURN on view rtro_w	t
+
+
+connection after_crash
+statement ok
+CREATE VIEW rtro_after AS SELECT 1 AS one;
+
+
+connection after_crash
+query
+SELECT count(*) AS reused
+FROM rtro_oids o
+WHERE o.oid = 'rtro_after'::regclass::oid
+   OR o.oid IN (SELECT oid FROM rtro_now WHERE rel = 'rtro_after'::regclass);
+----
+reused
+0

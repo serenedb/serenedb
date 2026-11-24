@@ -459,6 +459,50 @@ def test_execute_in_a_named_statement_runs_the_statement_as_it_is_now(conn):
     conn.run_ok("DROP TABLE named_exec_kv")
 
 
+def test_untyped_parameters_keep_their_numeric_value(conn):
+    conn.run_ok("DROP TABLE IF EXISTS untyped_price")
+    conn.run_ok("CREATE TABLE untyped_price (price NUMERIC(5,2))")
+    conn.run_ok("INSERT INTO untyped_price VALUES (100.00)")
+    assert all_fields(_run_with(
+        conn, "SELECT price * $1 = 15 FROM untyped_price", (b"0.15",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price + $1 = 1100.255 FROM untyped_price",
+        (b"1000.255",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT 1.5 + $1 = 1001.75", (b"1000.25",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT $1 * price = 15 FROM untyped_price", (b"0.15",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price - $1 = 99.001 FROM untyped_price",
+        (b"0.999",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price % $1 = 0.1 FROM untyped_price", (b"0.3",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT mod(price, $1) = 0.1 FROM untyped_price",
+        (b"0.3",))) == [b"t"]
+    _run_with(conn, "UPDATE untyped_price SET price = price * $1", (b"1.10",))
+    assert first_field(conn.run_ok("SELECT price FROM untyped_price")) == b"110.00"
+    conn.run_ok("DROP TABLE untyped_price")
+
+
+def test_untyped_parameters_compared_with_a_column_take_its_type(conn):
+    conn.run_ok("DROP TABLE IF EXISTS untyped_scale")
+    conn.run_ok("CREATE TABLE untyped_scale (price NUMERIC(5,2))")
+    conn.run_ok("INSERT INTO untyped_scale VALUES (100.00)")
+    assert all_fields(_run_with(
+        conn, "SELECT price = $1 FROM untyped_scale", (b"100.001",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price = ANY($1) FROM untyped_scale",
+        (b"{100.001}",))) == [b"t"]
+    assert all_fields(_run_with(
+        conn, "SELECT price <> ALL($1) FROM untyped_scale",
+        (b"{100.001}",))) == [b"f"]
+    assert all_fields(_run_with(
+        conn, "SELECT price = $1::numeric FROM untyped_scale",
+        (b"100.001",))) == [b"f"]
+    conn.run_ok("DROP TABLE untyped_scale")
+
+
 def test_empty_query_extended(conn):
     conn.parse("", "")
     conn.bind("", "")

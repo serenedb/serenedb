@@ -70,7 +70,7 @@ Using the CLI client, the statement is executed as follows.
 
 ### Declared Parameter Types
 
-`PREPARE name(type, ...)` declares the types of the positional parameters `$1`, `$2`, and so on. `EXECUTE` converts each argument to the declared type and fails when an argument cannot be converted. Declared parameters count toward the arguments `EXECUTE` expects, even when the query does not use them, and `EXECUTE` with a different number of arguments fails. Parameters without a declared type get their type from the query.
+`PREPARE name(type, ...)` declares the types of the positional parameters `$1`, `$2`, and so on. `EXECUTE` converts each argument to the declared type and fails when an argument cannot be converted. A declared type keeps no modifier: `NUMERIC(5, 2)` declares `NUMERIC` and `TIMESTAMP(0)` declares `TIMESTAMP`, so the argument is not rounded to it. Declared parameters count toward the arguments `EXECUTE` expects, even when the query does not use them, and `EXECUTE` with a different number of arguments fails. Parameters without a declared type get their type from the query.
 
 <SqlLogicTest id="sql/query_syntax/prepared_statements/example_011" />
 

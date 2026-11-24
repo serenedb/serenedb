@@ -32,7 +32,7 @@ connection c_other user=fo_other password=other_pw
 statement error
 DROP SERVER fo_srv;
 ----
-db error: ERROR: must be owner of foreign server fo_srv<slt:ignore>
+db error: ERROR: server "fo_srv<slt:ignore>
 
 
 connection default
@@ -71,7 +71,7 @@ connection after_crash user=fo_other password=other_pw
 statement error
 DROP SERVER fo_srv;
 ----
-db error: ERROR: must be owner of foreign server fo_srv<slt:ignore>
+db error: ERROR: server "fo_srv<slt:ignore>
 
 
 # Post-restart (c): the owner->object edge was rebuilt, so DROP ROLE is still

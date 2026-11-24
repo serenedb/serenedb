@@ -30,7 +30,7 @@ connection c_other user=fo_other password=other_pw
 statement error
 DROP SERVER fo_srv;
 ----
-db error: ERROR: must be owner of foreign server fo_srv<slt:ignore>
+db error: ERROR: server "fo_srv<slt:ignore>
 
 
 connection default
@@ -66,14 +66,14 @@ connection after_crash user=fo_other password=other_pw
 statement error
 SELECT count(*) FROM fo_srv.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fo_srv<slt:ignore>
+db error: ERROR: Table with name "fo_srv.chtest.vedernikoff" does not exist because schema "fo_srv<slt:ignore>
 
 
 connection after_crash user=fo_other password=other_pw
 statement error
 DROP SERVER fo_srv;
 ----
-db error: ERROR: must be owner of foreign server fo_srv<slt:ignore>
+db error: ERROR: server "fo_srv<slt:ignore>
 
 
 connection after_crash

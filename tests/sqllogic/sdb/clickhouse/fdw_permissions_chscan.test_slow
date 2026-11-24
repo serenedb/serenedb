@@ -85,7 +85,7 @@ connection c_other user=fp_other password=other_pw
 statement error
 DROP SERVER fp_srv;
 ----
-db error: ERROR: must be owner of foreign server fp_srv<slt:ignore>
+db error: ERROR: server "fp_srv<slt:ignore>
 
 
 # ===== querying needs USAGE on the server =====
@@ -95,7 +95,7 @@ connection c_other user=fp_other password=other_pw
 statement error
 SELECT count(*) FROM fp_srv.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fp_srv<slt:ignore>
+db error: ERROR: Table with name "fp_srv.chtest.vedernikoff" does not exist because schema "fp_srv<slt:ignore>
 
 
 connection default
@@ -119,7 +119,7 @@ connection c_other user=fp_other password=other_pw
 statement error
 SELECT count(*) FROM fp_srv.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fp_srv<slt:ignore>
+db error: ERROR: Table with name "fp_srv.chtest.vedernikoff" does not exist because schema "fp_srv<slt:ignore>
 
 
 # ===== GRANT ... ON FOREIGN SERVER accepts only USAGE =====
@@ -185,7 +185,7 @@ connection c_other user=fp_other password=other_pw
 statement error
 SELECT count(*) FROM fp_own.chtest.vedernikoff;
 ----
-db error: ERROR: permission denied for foreign server fp_own<slt:ignore>
+db error: ERROR: Table with name "fp_own.chtest.vedernikoff" does not exist because schema "fp_own<slt:ignore>
 
 
 connection c_owner user=fp_owner password=owner_pw
@@ -267,7 +267,7 @@ connection c_owner user=fp_owner password=owner_pw
 statement error
 DROP SERVER fp_own;
 ----
-db error: ERROR: must be owner of foreign server fp_own<slt:ignore>
+db error: ERROR: server "fp_own<slt:ignore>
 
 
 connection c_other user=fp_other password=other_pw

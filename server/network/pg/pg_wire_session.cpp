@@ -1999,17 +1999,11 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
                     ERR_MSG("malformed Parse message"));
   }
 
-  duckdb::case_insensitive_map_t<duckdb::LogicalType> type_hints;
   std::vector<uint64_t> param_oids;
   param_oids.reserve(num_params);
   for (uint16_t i = 0; i < num_params; ++i) {
-    const uint64_t oid = absl::big_endian::Load32(payload.data());
+    param_oids.push_back(absl::big_endian::Load32(payload.data()));
     payload.remove_prefix(sizeof(uint32_t));
-    param_oids.push_back(oid);
-    if (oid != 0 && oid != sdb::pg::kUnknown && !IsNumericOid(oid)) {
-      type_hints.emplace(absl::StrCat(i + 1),
-                         sdb::pg::Oid2Type(oid, *_connection_ctx));
-    }
   }
 
   StatementPtr* slot = &_proto.statements.Anon();
@@ -2092,16 +2086,28 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     _connection_ctx->RefreshCatalogEpoch();
     const auto bind_epoch = _connection_ctx->CatalogEpoch();
     const duckdb::Identifier alias{statement_name};
+    absl::Cleanup undefine = [&] {
+      _proto.statements.Undefine(statement_name);
+    };
+    duckdb::case_insensitive_map_t<duckdb::LogicalType> type_hints;
+    for (size_t i = 0; i < param_oids.size(); ++i) {
+      const auto oid = param_oids[i];
+      if (oid == 0 || oid == sdb::pg::kUnknown) {
+        continue;
+      }
+      const auto number = absl::StrCat(i + 1);
+      extracted[0]->named_param_map.try_emplace(number, i + 1);
+      if (!IsNumericOid(oid)) {
+        type_hints.emplace(number, sdb::pg::Oid2Type(oid, *_connection_ctx));
+      }
+    }
     auto prepared = _conn->Prepare(std::move(extracted[0]),
                                    type_hints.empty() ? nullptr : &type_hints,
                                    statement_name.empty() ? nullptr : &alias);
     if (prepared->HasError()) {
-      // A failed prepare must not define the name (the slot is dropped below;
-      // the unnamed slot stays Unbound).
-      const auto error = prepared->GetErrorObject();
-      _proto.statements.Undefine(statement_name);
-      error.Throw();
+      prepared->GetErrorObject().Throw();
     }
+    std::move(undefine).Cancel();
     statement.SetPrepared(std::move(prepared), bind_epoch);
     statement.SetTypeHints(std::move(type_hints));
     statement.SetParamOids(std::move(param_oids));

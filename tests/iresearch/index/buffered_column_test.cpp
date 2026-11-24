@@ -76,6 +76,9 @@ void AssertNormReads(const irs::NormColumnReader& col,
   for (uint64_t i = 0; i < expected.size(); ++i) {
     ASSERT_EQ(reader->Get(doc(i)), expected[i]) << "i=" << i;
   }
+  for (uint64_t i = expected.size(); i-- != 0;) {
+    ASSERT_EQ(reader->Get(doc(i)), expected[i]) << "backward i=" << i;
+  }
 
   std::array<irs::doc_id_t, irs::kPostingBlock> block_docs;
   std::array<uint32_t, irs::kPostingBlock> block_values;
@@ -140,6 +143,42 @@ TEST_P(BufferedColumnTestCase, Ctor) {
   nw.Append(1, 5);
   nw.Append(2, 7);
   EXPECT_EQ(nw.RowCount(), 3u);
+}
+
+TEST_P(BufferedColumnTestCase, BufferedNormsLifecycle) {
+  irs::BufferedNorms w{duckdb::Allocator::DefaultAllocator()};
+  EXPECT_EQ(w.Bytes(), 0u);
+  EXPECT_EQ(w.Capacity(), 0u);
+
+  auto& nw = w.Writer().Open(/*id=*/1, /*row_group_size=*/128);
+  EXPECT_EQ(&w.Writer().Open(/*id=*/1, /*row_group_size=*/128), &nw);
+  w.Writer().Open(/*id=*/2, /*row_group_size=*/128);
+  for (uint64_t row = 0; row < 300; ++row) {
+    nw.Append(row, static_cast<uint32_t>(1 + row % 7));
+  }
+  EXPECT_LT(0u, w.Bytes());
+  EXPECT_LE(w.Bytes(), w.Capacity());
+
+  const auto sealed = std::move(w).Seal(/*rows=*/300);
+  ASSERT_EQ(sealed.columns.size(), 2u);
+  ASSERT_TRUE(sealed.file);
+  const irs::NormColumns columns{sealed.file, sealed.columns};
+  ASSERT_NE(columns.Column(1), nullptr);
+  ASSERT_NE(columns.Column(2), nullptr);
+  std::vector<uint32_t> expected(300);
+  for (uint64_t row = 0; row < expected.size(); ++row) {
+    expected[row] = static_cast<uint32_t>(1 + row % 7);
+  }
+  AssertNormReads(*columns.Column(1), expected);
+  AssertNormReads(*columns.Column(2), std::vector<uint32_t>(300, 0));
+}
+
+TEST_P(BufferedColumnTestCase, SealNoRows) {
+  irs::BufferedNorms w{duckdb::Allocator::DefaultAllocator()};
+  w.Writer().Open(/*id=*/1, /*row_group_size=*/128);
+  const auto sealed = std::move(w).Seal(/*rows=*/0);
+  EXPECT_TRUE(sealed.columns.empty());
+  EXPECT_FALSE(sealed.file);
 }
 
 TEST_P(BufferedColumnTestCase, FlushEmpty) {
@@ -306,9 +345,13 @@ TEST_P(BufferedColumnTestCase, ConcatenatedColumns) {
     concat.Append(*column_a, r);
   }
   concat.AppendZeros(kZeros);
+  concat.AppendZeros(0);
+  concat.Append(std::span<const uint32_t>{});
   for (const auto& values : owned) {
     concat.Append(values);
   }
+  ASSERT_TRUE(column_a->Region(0).exceptions);
+  concat.Append(*column_a, 0);
   for (size_t r = 0; r < column_b->RegionCount(); ++r) {
     concat.Append(*column_b, r);
   }
@@ -319,6 +362,9 @@ TEST_P(BufferedColumnTestCase, ConcatenatedColumns) {
   for (const auto& values : owned) {
     expected.insert(expected.end(), values.begin(), values.end());
   }
+  const auto& region_a = column_a->Region(0);
+  expected.insert(expected.end(), first.begin(),
+                  first.begin() + (region_a.end_doc - region_a.first_doc));
   expected.insert(expected.end(), second.begin(), second.end());
   EXPECT_EQ(view->Id(), 9);
   EXPECT_FALSE(view->Paged());

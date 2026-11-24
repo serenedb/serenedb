@@ -227,9 +227,7 @@ void SegmentWriter::CopyColumns() {
 }
 
 SealedNorms SegmentWriter::SealNorms() {
-  if (!_norms) {
-    return {};
-  }
+  SDB_ASSERT(_norms);
   _fields.FinalizeNorms();
   auto sealed = std::move(*_norms).Seal(buffered_docs());
   _norms.reset();

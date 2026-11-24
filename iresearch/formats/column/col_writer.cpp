@@ -235,7 +235,8 @@ bool ColWriter::Commit(uint64_t target_row,
   if (_committed) {
     return true;
   }
-  if (Empty() && !_out) {
+  if (Empty()) {
+    SDB_ASSERT(!_out);
     _reader = std::make_unique<ColReader>(*_db, nullptr, ColFooter{});
     _committed = true;
     return true;

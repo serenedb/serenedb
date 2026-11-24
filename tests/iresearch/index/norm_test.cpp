@@ -24,9 +24,12 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/common/serializer/memory_stream.hpp>
+#include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/norm.hpp>
+#include <iresearch/index/segment_reader_impl.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/type_limits.hpp>
 
@@ -1074,5 +1077,20 @@ static constexpr auto kTestDirs = tests::kDirParams;
 INSTANTIATE_TEST_SUITE_P(NormTest, NormTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),
                          NormTestCase::to_string);
+
+TEST(NormReaderTest, ReadersWithoutAnInvertedIndexHaveNoNorms) {
+  EXPECT_EQ(nullptr, irs::SubReader::empty().NormColumn(1));
+
+  irs::SegmentMeta meta;
+  meta.docs_count = 1;
+  meta.live_docs_count = 1;
+  const auto rows = irs::SegmentReaderImpl::OpenInMemory(
+    meta, /*id=*/1,
+    std::make_unique<irs::ColReader>(
+      irs::DuckDBEngine::Instance().instance(),
+      std::vector<std::unique_ptr<irs::ColumnReader>>{}));
+  EXPECT_EQ(nullptr, rows->NormColumn(1));
+  EXPECT_FALSE(rows->norms(1));
+}
 
 }  // namespace

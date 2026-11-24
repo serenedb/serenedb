@@ -600,6 +600,43 @@ TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
   RunBM25(reader, *bm25, kBody2, 5);
 }
 
+TEST_P(ScorePruneNormMergeCase, NormMergeSourceWithoutField) {
+  static constexpr uint32_t kBodyA[] = {1, 2, 3};
+  static constexpr uint32_t kBody2A[] = {10, 20, 30};
+  static constexpr uint32_t kBodyB[] = {4, 5};
+
+  auto bm25 = std::make_unique<irs::BM25>();
+  auto opts = MakeOpts(bm25.get());
+
+  auto writer = open_writer(tests::kOmCreate, std::move(opts));
+  for (size_t i = 0; i < std::size(kBodyA); ++i) {
+    ASSERT_TRUE(
+      InsertDualNormDoc(*writer, absl::StrCat("a_", i), kBodyA[i], kBody2A[i]));
+  }
+  writer->RefreshCommit();
+  for (size_t i = 0; i < std::size(kBodyB); ++i) {
+    ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("b_", i), kBodyB[i]));
+  }
+  writer->RefreshCommit();
+  {
+    auto reader = open_reader(MakeReaderOpts(bm25.get()));
+    ASSERT_EQ(2, reader.size());
+    ASSERT_EQ(nullptr, reader[1].field(kBody2));
+  }
+
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  auto reader = open_reader(MakeReaderOpts(bm25.get()));
+  ASSERT_EQ(1, reader.size());
+  AssertNorms(
+    reader[0], kBody2,
+    {{1, kBody2A[0]}, {2, kBody2A[1]}, {3, kBody2A[2]}, {4, 0}, {5, 0}});
+  RunBM25(reader, *bm25, kBody, 5);
+  RunBM25(reader, *bm25, kBody2, 3);
+}
+
 // -------------------------------------------------------------------------
 // 16 source segments compacted in one shot. Mirrors the
 // search-benchmark-game ingest pattern: ~15-17 commit-per-batch segments,

@@ -36,7 +36,7 @@ NormReader::ptr SegmentReader::norms(field_id field) const {
 }
 
 const NormColumnReader* SegmentReader::NormColumn(field_id field) const {
-  return _impl ? _impl->NormColumn(field) : nullptr;
+  return _impl->NormColumn(field);
 }
 
 const ColumnReader* SegmentReader::Column(field_id field) const {

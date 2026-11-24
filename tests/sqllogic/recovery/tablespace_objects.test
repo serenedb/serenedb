@@ -245,13 +245,13 @@ DROP TABLESPACE obj_b_${__DATABASE__};
 statement error
 ALTER TABLE docs_renamed SET TABLESPACE obj_a_${__DATABASE__};
 ----
-db error: ERROR: syntax error at or near "TABLESPACE"
+db error: ERROR: SET TABLESPACE is not supported
 
 
 statement error
 ALTER INDEX events_msg SET TABLESPACE obj_a_${__DATABASE__};
 ----
-db error: ERROR: syntax error at or near "TABLESPACE"
+db error: ERROR: SET TABLESPACE is not supported
 
 
 statement ok

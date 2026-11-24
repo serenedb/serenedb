@@ -836,8 +836,9 @@ void SearchTableEntry::InternalAppend(
     duckdb::DataTable::VerifyRowConstraints(context, *this, constraints, chunk);
     rows.Append(context, target, chunk);
   }
-  rows.Flush();
-  rows.HandOver(context, target, transaction.SearchTxn());
+  auto& writes = transaction.SearchTxn();
+  rows.Combine(context, target, writes);
+  connector::FinishSearchSink(context, target, writes);
 }
 
 namespace {

@@ -313,10 +313,11 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
   return seg;
 }
 
+constinit std::array<std::unique_ptr<Seg>, static_cast<size_t>(Codec::kCount)>
+  gSegs{};
+
 const Seg& GetSeg(Codec codec) {
-  static std::array<std::unique_ptr<Seg>, static_cast<size_t>(Codec::kCount)>
-    cache;
-  auto& seg = cache[static_cast<size_t>(codec)];
+  auto& seg = gSegs[static_cast<size_t>(codec)];
   if (!seg) {
     seg = BuildSeg(codec);
   }
@@ -441,6 +442,7 @@ static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+  gSegs = {};
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }

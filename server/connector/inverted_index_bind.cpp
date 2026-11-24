@@ -35,6 +35,7 @@
 #include <duckdb/main/attached_database.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -1011,8 +1012,11 @@ duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassTokenizer(
   duckdb::CatalogEntryRetriever retriever{context};
   retriever.SetSearchPath({{schema.ParentCatalog().GetName(), schema.name}});
   auto dict = retriever.GetEntry(
-    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
-                            duckdb::QualifiedName::Parse(name)},
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::TOKENIZER_ENTRY,
+      duckdb::QualifiedName::Parse(
+        name,
+        duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(context))},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     return nullptr;

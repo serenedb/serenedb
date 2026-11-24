@@ -192,7 +192,8 @@ struct ProgressSource {
   std::atomic<int64_t> xact_rollback{0};
   ProgressMetrics metrics;
 
-  void BeginQuery(std::string query_text);
+  void BeginQuery(std::string_view query_text, int64_t start_us,
+                  bool continues);
   void ReportIdle(BackendState state);
   void Detach();
 };

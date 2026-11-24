@@ -38,6 +38,7 @@
 
 #include <benchmark/benchmark.h>
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>

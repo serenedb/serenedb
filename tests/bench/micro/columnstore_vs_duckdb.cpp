@@ -293,10 +293,20 @@ const char* TableName(Shape shape, bool nullable) {
   return nullable ? "vc_n" : "vc_v";
 }
 
+struct Native {
+  duckdb::DuckDB db{nullptr};
+  std::unique_ptr<duckdb::Connection> con;
+};
+
+constinit std::unique_ptr<Native> gNative;
+
 duckdb::Connection& NativeCon() {
-  static duckdb::DuckDB db(nullptr);
-  static std::unique_ptr<duckdb::Connection> con = [] {
-    auto c = std::make_unique<duckdb::Connection>(db);
+  if (gNative) {
+    return *gNative->con;
+  }
+  gNative = std::make_unique<Native>();
+  gNative->con = [] {
+    auto c = std::make_unique<duckdb::Connection>(gNative->db);
     c->Query("CREATE SCHEMA IF NOT EXISTS main");
     c->Query("SET search_path = 'main'");
     const auto n = std::to_string(Rows());
@@ -318,7 +328,7 @@ duckdb::Connection& NativeCon() {
        "END)::VARCHAR");
     return c;
   }();
-  return *con;
+  return *gNative->con;
 }
 
 uint64_t StreamDrain(duckdb::ClientContext& ctx, const std::string& sql) {
@@ -382,6 +392,7 @@ static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+  gNative.reset();
   gSegs = {};
   irs::DuckDBEngine::Instance().Shutdown();
   return 0;

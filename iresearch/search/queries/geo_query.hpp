@@ -107,8 +107,6 @@ class GeoQuery : public QueryBuilderImpl<GeoQuery<Parser, Acceptor>> {
 
   score_t Boost() const noexcept final { return _boost; }
 
-  void SetBoost(score_t value) noexcept final { _boost = value; }
-
  private:
   QueryBuilder::ptr _cells;
   [[no_unique_address]] Parser _parser;

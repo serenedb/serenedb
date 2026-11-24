@@ -83,8 +83,6 @@ class TokenPhraseQuery : public QueryBuilderImpl<TokenPhraseQuery> {
 
   score_t Boost() const noexcept final { return _boost; }
 
-  void SetBoost(score_t value) noexcept final { _boost = value; }
-
  private:
   QueryBuilder::ptr _approx;
   const TermReader* _reader;

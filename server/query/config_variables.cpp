@@ -32,7 +32,9 @@
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/string.hpp>
+#include <duckdb/common/types/time.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database.hpp>
@@ -57,6 +59,7 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/role.h"
 #include "catalog/transaction.h"
+#include "icu-helpers.hpp"
 #include "iresearch/utils/log.hpp"
 #include "jobs/scheduler.h"
 #include "pg/connection_context.h"
@@ -495,6 +498,38 @@ void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,
                           "from \"",
                           got_current ? current.ToString() : std::string{},
                           "\" to \"", new_str, "\""));
+}
+
+void CheckTimeZone(duckdb::ClientContext&, duckdb::SetScope,
+                   duckdb::Value& value) {
+  if (value.IsNull()) {
+    return;
+  }
+  const auto& raw = duckdb::StringValue::Get(value);
+  const auto text = absl::StripAsciiWhitespace(raw);
+  double hours = 0;
+  const auto parsed = fast_float::from_chars_advanced(
+    text.data(), text.data() + text.size(), hours,
+    fast_float::parse_options{fast_float::chars_format::general |
+                              fast_float::chars_format::allow_leading_plus});
+  std::string zone;
+  if (!text.empty() && parsed.ec == std::errc{} &&
+      parsed.ptr == text.data() + text.size()) {
+    const auto minutes = std::lround(hours * duckdb::Interval::MINS_PER_HOUR);
+    zone = absl::StrCat(
+      "GMT", duckdb::Time::ToUTCOffset(
+               static_cast<int>(minutes / duckdb::Interval::MINS_PER_HOUR),
+               static_cast<int>(minutes % duckdb::Interval::MINS_PER_HOUR)));
+  } else {
+    zone = raw;
+  }
+  std::string error;
+  if (!duckdb::ICUHelpers::GetTimeZone(zone, &error)) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"TimeZone\": \"", raw, "\""));
+  }
+  value = duckdb::Value{std::move(zone)};
 }
 
 void CheckDateStyle(duckdb::ClientContext&, duckdb::SetScope,
@@ -1646,9 +1681,11 @@ constexpr std::pair<std::string_view, VariableDescription>
     {
       "TimeZone",
       {
-        LogicalTypeId::VARCHAR,
-        "Sets the time zone for displaying and interpreting time stamps.",
-        [] { return duckdb::Value{"Etc/UTC"}; },
+        .type = LogicalTypeId::VARCHAR,
+        .description =
+          "Sets the time zone for displaying and interpreting time stamps.",
+        .default_value = [] { return duckdb::Value{"Etc/UTC"}; },
+        .set_callback = CheckTimeZone,
       },
     },
     {

@@ -119,8 +119,6 @@ class WildcardNGramQuery : public QueryBuilderImpl<WildcardNGramQuery> {
 
   score_t Boost() const noexcept final { return _boost; }
 
-  void SetBoost(score_t value) noexcept final { _boost = value; }
-
  private:
   std::shared_ptr<const re2::RE2> _matcher;
   QueryBuilder::ptr _approx;

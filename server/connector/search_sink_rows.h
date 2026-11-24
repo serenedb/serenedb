@@ -20,7 +20,8 @@
 
 #pragma once
 
-#include <atomic>
+#include <absl/synchronization/mutex.h>
+
 #include <cstdint>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
@@ -38,6 +39,12 @@
 
 namespace sdb::connector {
 
+struct SearchSinkWriter {
+  std::unique_ptr<irs::IndexWriter::Transaction> trx;
+  std::unique_ptr<SearchSinkInsertBaseImpl> sink;
+  uint64_t version = 0;
+};
+
 struct SearchSinkTable {
   std::shared_ptr<search::Store> store;
   duckdb::Catalog* catalog = nullptr;
@@ -45,24 +52,26 @@ struct SearchSinkTable {
   std::vector<ColumnId> column_ids;
   duckdb::vector<duckdb::LogicalType> types;
   uint64_t buffer_bytes = 0;
-  std::atomic_uint64_t inline_bytes{0};
+  absl::Mutex pool_mutex;
+  std::unique_ptr<duckdb::ColumnDataCollection> pool
+    ABSL_GUARDED_BY(pool_mutex);
+  uint64_t pool_bytes ABSL_GUARDED_BY(pool_mutex) = 0;
 };
 
 class SearchSinkRows {
  public:
   void Append(duckdb::ClientContext& context, SearchSinkTable& table,
               duckdb::DataChunk& rows);
-  void Flush();
-  void HandOver(duckdb::ClientContext& context, const SearchSinkTable& table,
-                search::Writes& writes);
+  void Combine(duckdb::ClientContext& context, SearchSinkTable& table,
+               search::Writes& writes);
 
  private:
   uint64_t _bytes = 0;
   std::unique_ptr<duckdb::ColumnDataCollection> _rows;
-  std::unique_ptr<irs::IndexWriter::Transaction> _trx;
-  std::unique_ptr<SearchSinkInsertBaseImpl> _sink;
-  std::span<const irs::IndexWriter::FlushedSegment> _flushed;
-  uint64_t _version = 0;
+  SearchSinkWriter _writer;
 };
+
+void FinishSearchSink(duckdb::ClientContext& context, SearchSinkTable& table,
+                      search::Writes& writes);
 
 }  // namespace sdb::connector

@@ -1,0 +1,59 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY rvss_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'slow search'), (2, 'empty index')) AS t(id, body)) TO '${__TEST_DIR__}/rvss_v1.parquet' (FORMAT parquet, COMPRESSION uncompressed);
+
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'fast search'), (2, 'empty index')) AS t(id, body)) TO '${__TEST_DIR__}/rvss_v2.parquet' (FORMAT parquet, COMPRESSION uncompressed);
+
+
+query
+SELECT count(DISTINCT size) AS sizes FROM read_blob('${__TEST_DIR__}/rvss_v*.parquet');
+----
+sizes
+1
+
+
+system ok
+cp $__TEST_DIR__/rvss_v1.parquet $__TEST_DIR__/rvss_live.parquet
+
+
+statement ok
+CREATE VIEW rvss_tickets AS SELECT * FROM read_parquet('${__TEST_DIR__}/rvss_live.parquet');
+
+
+system ok
+python3 -c 'import time; time.sleep(1.05 - time.time() % 1)' && cp $__TEST_DIR__/rvss_v1.parquet $__TEST_DIR__/rvss_live.parquet
+
+
+statement ok
+CREATE INDEX rvss_idx ON rvss_tickets USING inverted (id, body rvss_dict);
+
+
+system ok
+cp $__TEST_DIR__/rvss_v2.parquet $__TEST_DIR__/rvss_live.parquet
+
+
+statement ok
+REINDEX INDEX rvss_idx;
+
+
+query
+SELECT id, body FROM rvss_idx WHERE body @@ 'fast' ORDER BY id;
+----
+id	body
+1	fast search
+
+
+query
+SELECT count(*) AS n FROM rvss_idx WHERE body @@ 'slow';
+----
+n
+0

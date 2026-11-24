@@ -26,6 +26,7 @@ extern constexpr SystemView kPgStatProgressCreateTableAs{
   .schema = "pg_catalog",
   .name = "pg_stat_progress_create_table_as",
   .oid = kPgStatProgressCreateTableAsView,
+  .rule = kPgStatProgressCreateTableAsRule,
   .sql = R"sql(SELECT
     S.pid AS pid, S.datid AS datid, S.datname AS datname,
     S.relid AS relid,

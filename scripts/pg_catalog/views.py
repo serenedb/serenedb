@@ -25,10 +25,10 @@ def qualify(sql, names):
         else 'information_schema.' + match.group(match.lastindex), sql)
 
 
-def entry(schema, name, oid, row_type, row_array_type, superuser, options,
-          body):
+def entry(schema, name, oid, row_type, row_array_type, rule, superuser,
+          options, body):
     head = (f'{{"{schema}", "{name}", {oid}, {row_type}, {row_array_type}, '
-            f'{cpp_bool(superuser)}, "{options}",')
+            f'{rule}, {cpp_bool(superuser)}, "{options}",')
     if body is None:
         return f'{head} {{}}}},'
     lines = dedent(body)
@@ -55,7 +55,7 @@ def generate(gen):
         if body is not None:
             bodies.append(body)
         out.append(entry(view.schema, view.name, view.oid, view.row_type,
-                         view.row_array_type,
+                         view.row_array_type, view.rule,
                          gen.initdb.superuser_only(view.schema, view.name),
                          view.options, body))
     if stale := sorted(files - defined):

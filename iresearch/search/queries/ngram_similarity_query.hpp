@@ -72,8 +72,6 @@ class NGramSimilarityQuery : public QueryBuilderImpl<NGramSimilarityQuery> {
 
   score_t Boost() const noexcept final { return _boost; }
 
-  void SetBoost(score_t value) noexcept final { _boost = value; }
-
  private:
   size_t _min_match_count;
   size_t _total_terms;

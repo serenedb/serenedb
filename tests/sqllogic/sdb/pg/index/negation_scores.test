@@ -1,0 +1,65 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY ngs_d AS split_text() WITH (frequency, position, norm);
+
+
+statement ok
+CREATE TABLE ngs (id INT PRIMARY KEY, body TEXT, tag TEXT);
+
+
+statement ok
+CREATE INDEX ngs_idx ON ngs USING inverted (id, body ngs_d, tag ngs_d);
+
+
+statement ok
+INSERT INTO ngs VALUES (1, 'dot zzz', 'dog zzz'), (2, 'zzz', 'cat'), (3, 'dot', 'dog'), (4, 'fig', 'fig');
+
+
+query
+SELECT id, BM25(ngs_idx.tableoid) AS score FROM ngs_idx
+WHERE NOT body @@ 'dot'::tsquery::score('constant(1)')
+ORDER BY id;
+----
+id	score
+2	0
+4	0
+
+
+query
+SELECT id, BM25(ngs_idx.tableoid) AS score FROM ngs_idx
+WHERE NOT body @@ 'dot'::tsquery::score('constant(1)') OR NOT tag @@ 'dog'::tsquery::score('constant(1)')
+ORDER BY id;
+----
+id	score
+2	0
+4	0
+
+
+query
+SELECT id, BM25(ngs_idx.tableoid) AS score FROM ngs_idx
+WHERE NOT (body @@ 'dot'::tsquery::score('constant(1)') AND tag @@ 'dog'::tsquery::score('constant(1)'))
+ORDER BY id;
+----
+id	score
+2	0
+4	0
+
+
+query
+SELECT id, BM25(ngs_idx.tableoid) AS score FROM ngs_idx
+WHERE (NOT body @@ 'dot')::score('constant(2)')
+ORDER BY id;
+----
+id	score
+2	2
+4	2
+
+
+query
+SELECT id, BM25(ngs_idx.tableoid) AS score FROM ngs_idx
+WHERE body @@ 'zzz'::tsquery::score('constant(1)') OR NOT tag @@ 'dog'::tsquery::score('constant(1)')
+ORDER BY id;
+----
+id	score
+1	1
+2	1
+4	0

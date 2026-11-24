@@ -162,6 +162,17 @@ def test_without_create_schema_mistyped_column_answers_503(
         server.close()
 
 
+def test_db_param_creates_the_database(tmp_path: Path) -> None:
+    server = _Server(tmp_path, "api=otel&db=telemetry")
+    try:
+        body = (FIXTURES / "logs/basic.json").read_bytes()
+        assert server.post("/v1/logs", body, "application/json") == 200
+        assert server.count("telemetry.public.otel_logs") > 0
+        assert server.count("telemetry.public.otel_traces") == 0
+    finally:
+        server.close()
+
+
 def test_without_create_schema_missing_database_refuses_startup(
         tmp_path: Path) -> None:
     result = _start_otel(tmp_path, "api=otel&db=telemetry&create_schema=false")

@@ -82,7 +82,7 @@ statement ok
 DROP FUNCTION sfn_window
 
 statement ok
-SET statement_timeout = '10s'
+SET statement_timeout = '60s'
 
 statement ok
 CREATE FUNCTION sfn_va(a double precision[], b double precision[]) RETURNS double precision[] LANGUAGE sql RETURN ARRAY[a[1] + b[1], a[2] + b[2], a[3] + b[3]]

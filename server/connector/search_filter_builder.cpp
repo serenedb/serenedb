@@ -456,10 +456,24 @@ void AddNegated(BoolTarget parent, const SearchColumnInfo& info,
 
 namespace {
 
+duckdb::unique_ptr<duckdb::Expression> NegatedComparison(
+  const duckdb::Expression& cmp) {
+  auto negated = cmp.Copy();
+  duckdb::BoundComparisonExpression::SetType(
+    negated->Cast<duckdb::BoundFunctionExpression>(),
+    duckdb::NegateComparisonExpression(cmp.GetExpressionType()));
+  return negated;
+}
+
 void CollectNullableMarkers(const FilterContext& ctx,
                             const duckdb::Expression& expr,
                             std::vector<NullMarker>& markers) {
-  if (const auto* info = FindIndexedExpressionInfo(ctx, expr)) {
+  const auto* info = FindIndexedExpressionInfo(ctx, expr);
+  if (!info && ctx.expr_getter &&
+      duckdb::BoundComparisonExpression::IsComparison(expr)) {
+    info = FindIndexedExpressionInfo(ctx, *NegatedComparison(expr));
+  }
+  if (info) {
     if (info->nullable) {
       markers.push_back(NullMarkerOf(*info));
     }
@@ -1885,7 +1899,11 @@ bool HasScorableLeaf(const irs::Filter& filter) {
   return false;
 }
 
-void ApplyScoreOverride(irs::BooleanFilter& scope, const irs::Scorer* scorer) {
+void ApplyScoreOverride(const FilterContext& ctx, irs::BooleanFilter& scope,
+                        const irs::Scorer* scorer) {
+  if (ctx.negated) {
+    return;
+  }
   const auto scored_clauses =
     scope.Size(irs::Occur::Must) + scope.Size(irs::Occur::Should);
   if (scored_clauses == 1) {
@@ -2033,7 +2051,7 @@ bool TryDispatchScoreCast(BoolTarget parent, const FilterContext& ctx,
   auto scope = OpenScope();
   BuildTSQuery(ScopeTarget(scope), ctx, column_info,
                duckdb::BoundCastExpression::Child(cast_expr));
-  ApplyScoreOverride(*scope, scorer);
+  ApplyScoreOverride(ctx, *scope, scorer);
   CloseScope(parent, std::move(scope));
   return true;
 }
@@ -2119,7 +2137,7 @@ bool TryDispatchSqlScoreCast(BoolTarget filter, const FilterContext& ctx,
     ctx, duckdb::BoundCastExpression::Child(cast_expr), "::score(...)",
     "score is only meaningful inside an inverted-index match. Move it into an "
     "`@@` match or remove it.");
-  ApplyScoreOverride(*scope, scorer);
+  ApplyScoreOverride(ctx, *scope, scorer);
   CloseScope(filter, std::move(scope));
   return true;
 }
@@ -2334,10 +2352,7 @@ absl::Status FromComparisonExpression(
       const duckdb::BoundConstantExpression value{duckdb::Value::BOOLEAN(true)};
       return FromBinaryEq<true>(filter, ctx, cmp, value, false);
     }
-    auto negated = cmp.Copy();
-    duckdb::BoundComparisonExpression::SetType(
-      negated->Cast<duckdb::BoundFunctionExpression>(),
-      duckdb::NegateComparisonExpression(cmp_type));
+    const auto negated = NegatedComparison(cmp);
     if (FindColumnInfoForExpr(ctx, *negated)) {
       const duckdb::BoundConstantExpression value{
         duckdb::Value::BOOLEAN(false)};
@@ -3221,7 +3236,7 @@ void BuildTSQueryValue(BoolTarget parent, const FilterContext& ctx,
     return;
   }
   if (scorer) {
-    ApplyScoreOverride(*scope, scorer);
+    ApplyScoreOverride(ctx, *scope, scorer);
   }
   ApplyMerge(*scope, parts->merge);
   CloseScope(parent, std::move(scope));

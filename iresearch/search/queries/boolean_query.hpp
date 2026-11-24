@@ -98,8 +98,6 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
 
   score_t Boost() const noexcept final { return _boost; }
 
-  void SetBoost(score_t value) noexcept final { _boost = value; }
-
   const PreparedBucket& Bucket(Occur occur) const noexcept {
     return _clauses[OccurIndex(occur)];
   }
@@ -201,7 +199,7 @@ class BooleanBuilder {
 
   void Merge(const BooleanQuery& nested, Occur to);
 
-  void MergeBucket(BooleanQuery::PreparedBucket& from, Occur to, score_t boost);
+  void MergeBucket(BooleanQuery::PreparedBucket& from, Occur to);
 
   void Order(BooleanQuery::PreparedBucket& bucket, bool ascending);
 

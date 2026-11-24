@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <benchmark/benchmark.h>
 
 #include <array>
@@ -126,9 +127,14 @@ struct CachedIndex {
   std::vector<std::string> terms;
 };
 
+std::array<std::map<size_t, CachedIndex>, 3>& Indexes() {
+  static std::array<std::map<size_t, CachedIndex>, 3> indexes;
+  return indexes;
+}
+
 const CachedIndex& IndexOf(size_t num_terms, Shape shape = Shape::Hex) {
-  static std::array<std::map<size_t, CachedIndex>, 3> gCache;
-  auto [it, added] = gCache[static_cast<size_t>(shape)].try_emplace(num_terms);
+  auto [it, added] =
+    Indexes()[static_cast<size_t>(shape)].try_emplace(num_terms);
   auto& cached = it->second;
   if (!added) {
     return cached;
@@ -1000,6 +1006,12 @@ BENCHMARK(OrRegexpsOverlapFusedWalk)->Apply(ApplySizes);
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
+  absl::Cleanup shutdown = [] {
+    for (auto& indexes : Indexes()) {
+      indexes.clear();
+    }
+    irs::DuckDBEngine::Instance().Shutdown();
+  };
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -1007,8 +1019,6 @@ static int Main(int argc, char** argv) {
   }
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-
-  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
 

@@ -811,6 +811,26 @@ two one
 
 
 query
+SELECT format('Testing %3$s, %2$s, %s', 'one', 'two', 'three');
+----
+format
+Testing three, two, three
+
+
+query
+SELECT format('%2$s %s %1$s %s', 'one', 'two', 'three');
+----
+format
+two three one two
+
+
+statement error
+SELECT format('%0$s', 'one');
+----
+db error: ERROR: format specifies argument 0, but arguments are numbered from 1
+
+
+query
 SELECT format('%L', NULL::text);
 ----
 format

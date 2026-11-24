@@ -237,3 +237,30 @@ SELECT date_part('year', TIMESTAMP '2021-08-03 11:59:44.123456') AS finite,
 ----
 finite	infinite
 2021	NULL
+
+
+# DOCS_TEST: integer_and_real
+
+# DOCS_TEST_BODY
+
+query
+SELECT 16777217 = 16777217::REAL AS mixed,
+       pg_typeof(16777217 + 1::REAL) AS mixed_type,
+       16777217::DOUBLE PRECISION = 16777217::REAL AS as_double;
+----
+mixed	mixed_type	as_double
+t	real	f
+
+
+# DOCS_TEST: text_forms
+
+# DOCS_TEST_BODY
+
+query
+SELECT ARRAY[1, 2]::TEXT AS array_text,
+       ROW(true, 1)::TEXT AS row_text,
+       concat(true, '') AS concat_text,
+       array_to_string(ARRAY[true, false], ',') AS joined;
+----
+array_text	row_text	concat_text	joined
+[1, 2]	(true, 1)	true	true,false

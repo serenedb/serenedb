@@ -88,8 +88,6 @@ class PhraseQuery : public QueryBuilder {
 
   score_t Boost() const noexcept final { return boost; }
 
-  void SetBoost(score_t value) noexcept final { boost = value; }
-
   PhraseState state;
   Positions positions;
   score_t boost;

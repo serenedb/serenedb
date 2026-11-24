@@ -83,12 +83,7 @@ score_t AbsorbedOf(const BooleanQuery::Clauses& clauses,
       if (record.stats == nullptr) {
         continue;
       }
-      const auto one = detail::AllDocsScore(segment, detail::ScoreArgs{
-                                                       .scorer = record.scorer,
-                                                       .stats = record.stats,
-                                                       .fetcher = &fetcher,
-                                                       .boost = clause.boost,
-                                                     });
+      const auto one = detail::AllDocsScore(segment, clause, &fetcher);
       if (!any) {
         any = true;
         out = one;
@@ -309,16 +304,8 @@ void BooleanBuilder::FlattenAll() {
   }
 }
 
-void BooleanBuilder::MergeBucket(BooleanQuery::PreparedBucket& from, Occur to,
-                                 score_t boost) {
+void BooleanBuilder::MergeBucket(BooleanQuery::PreparedBucket& from, Occur to) {
   auto& bucket = _clauses[OccurIndex(to)];
-  const auto fold = [boost](auto& clauses) {
-    for (auto& clause : clauses) {
-      clause.boost *= boost;
-    }
-  };
-  fold(from.postings);
-  fold(from.all_docs);
   const uint32_t base = _groups;
   for (auto& clause : from.postings) {
     if (clause.group != 0) {
@@ -329,10 +316,6 @@ void BooleanBuilder::MergeBucket(BooleanQuery::PreparedBucket& from, Occur to,
   Append(bucket.postings, from.postings);
   Append(bucket.all_docs, from.all_docs);
   for (auto& clause : from.filters) {
-    if (clause && boost != kNoBoost && !QueryBuilder::IsEmpty(*clause)) {
-      auto& child = const_cast<QueryBuilder&>(*clause);
-      child.SetBoost(child.Boost() * boost);
-    }
     Add(std::move(clause), to);
   }
   from.filters.clear();
@@ -340,23 +323,19 @@ void BooleanBuilder::MergeBucket(BooleanQuery::PreparedBucket& from, Occur to,
 
 void BooleanBuilder::Inherit(const BooleanQuery& nested) {
   for (const auto occur : kAllOccur) {
-    MergeBucket(BooleanQuery::Steal(nested, occur), occur, kNoBoost);
+    MergeBucket(BooleanQuery::Steal(nested, occur), occur);
   }
 }
 
 void BooleanBuilder::Merge(const BooleanQuery& nested, Occur to) {
-  const auto boost = nested.Boost();
   switch (to) {
     case Occur::Must:
-      MergeBucket(BooleanQuery::Steal(nested, Occur::Must), Occur::Must, boost);
-      MergeBucket(BooleanQuery::Steal(nested, Occur::MustNot), Occur::MustNot,
-                  kNoBoost);
+      MergeBucket(BooleanQuery::Steal(nested, Occur::Must), Occur::Must);
+      MergeBucket(BooleanQuery::Steal(nested, Occur::MustNot), Occur::MustNot);
       return;
     case Occur::Should:
-      MergeBucket(BooleanQuery::Steal(nested, Occur::Should), to, boost);
-      return;
     case Occur::MustNot:
-      MergeBucket(BooleanQuery::Steal(nested, Occur::Should), to, kNoBoost);
+      MergeBucket(BooleanQuery::Steal(nested, Occur::Should), to);
       return;
   }
   SDB_UNREACHABLE();

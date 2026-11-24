@@ -147,6 +147,13 @@ CREATE TABLE bad_setof(c SETOF INT);
 db error: ERROR: column "c" cannot be declared SETOF
 
 
+onlyif serenedb
+statement error
+CREATE TABLE bad_setof(c SETOF INT);
+----
+db error: ERROR: syntax error at or near "INT"
+
+
 # ROWS FROM zips several set-returning functions
 
 skipif serenedb

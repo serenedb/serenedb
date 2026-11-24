@@ -1550,7 +1550,6 @@ TEST_F(ColumnReaderTest, FrontCodedRowsGatherForEverySmallSelectionOfAGroup) {
 TEST_F(ColumnReaderTest, AppendingGathersStopAtTheLastStoredRow) {
   constexpr irs::field_id kId = 1;
   constexpr uint64_t kRows = 3 * STANDARD_VECTOR_SIZE;
-  constexpr duckdb::idx_t kStored = 100;
   const ValueOf value_of = [](uint64_t g) {
     return duckdb::Value::BIGINT(static_cast<int64_t>(g / 100));
   };
@@ -1565,23 +1564,26 @@ TEST_F(ColumnReaderTest, AppendingGathersStopAtTheLastStoredRow) {
     irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
     const auto* col = r.Column(kId);
     ASSERT_NE(col, nullptr);
-    auto state = col->InitScan(r.Ctx());
-    duckdb::Vector out{col->Type(), STANDARD_VECTOR_SIZE};
-    duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
-    duckdb::idx_t hits = 0;
-    for (; hits < kStored; ++hits) {
-      sel.set_index(hits, hits * 3);
-    }
-    for (duckdb::idx_t i = 0; i < 5; ++i) {
-      sel.set_index(hits++, 3 * STANDARD_VECTOR_SIZE + i);
-    }
-    const uint64_t anchor = kRows - 3 * kStored;
-    col->GatherScatter(state, anchor, sel, hits, out, 0);
-    for (duckdb::idx_t i = 0; i < kStored; ++i) {
-      const auto row = anchor + sel.get_index(i);
-      ASSERT_TRUE(
-        duckdb::Value::NotDistinctFrom(out.GetValue(i), value_of(row)))
-        << "row " << row << " got " << out.GetValue(i).ToString();
+    for (const duckdb::idx_t stored : {duckdb::idx_t{10}, duckdb::idx_t{100}}) {
+      SCOPED_TRACE(stored);
+      auto state = col->InitScan(r.Ctx());
+      duckdb::Vector out{col->Type(), STANDARD_VECTOR_SIZE};
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      duckdb::idx_t hits = 0;
+      for (; hits < stored; ++hits) {
+        sel.set_index(hits, hits * 3);
+      }
+      for (duckdb::idx_t i = 0; i < 5; ++i) {
+        sel.set_index(hits++, 3 * STANDARD_VECTOR_SIZE + i);
+      }
+      const uint64_t anchor = kRows - 3 * stored;
+      col->GatherScatter(state, anchor, sel, hits, out, 0);
+      for (duckdb::idx_t i = 0; i < stored; ++i) {
+        const auto row = anchor + sel.get_index(i);
+        ASSERT_TRUE(
+          duckdb::Value::NotDistinctFrom(out.GetValue(i), value_of(row)))
+          << "row " << row << " got " << out.GetValue(i).ToString();
+      }
     }
   }
   con.Query("SET force_compression = 'auto'");

@@ -1753,8 +1753,7 @@ class ArrayColumnReader final : public ColumnReader {
       return _validity->ColumnReader::GatherCursor(s.child_states[0]);
     }
     SDB_ASSERT(!_children.empty() && s.child_states.size() > 1);
-    const uint64_t child = _children.front()->GatherCursor(s.child_states[1]);
-    return _array_size != 0 ? child / _array_size : child;
+    return _children.front()->GatherCursor(s.child_states[1]) / _array_size;
   }
 
   uint64_t RowGroupEnd(uint64_t row) const noexcept final {
@@ -1766,10 +1765,8 @@ class ArrayColumnReader final : public ColumnReader {
   void CollectBlocks(uint64_t first, uint64_t last,
                      std::vector<duckdb::FileRange>& out) const final {
     ColumnReader::CollectBlocks(first, last, out);
-    if (_array_size != 0 && !_children.empty()) {
-      _children.front()->CollectBlocks(first * _array_size,
-                                       (last + 1) * _array_size - 1, out);
-    }
+    _children.front()->CollectBlocks(first * _array_size,
+                                     (last + 1) * _array_size - 1, out);
   }
 
   duckdb::idx_t Scan(ScanState& s, duckdb::Vector& result,

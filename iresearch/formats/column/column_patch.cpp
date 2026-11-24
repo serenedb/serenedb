@@ -36,9 +36,6 @@ namespace irs {
 template<typename Visit>
 void ColumnPatch::ForEach(uint64_t first, uint64_t last,
                           const Visit& visit) const {
-  if (first >= last) {
-    return;
-  }
   const auto first_group = first >> (kChunkShift + kGroupShift);
   auto it = absl::c_lower_bound(
     _groups, first_group,

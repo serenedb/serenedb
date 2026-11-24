@@ -2979,13 +2979,21 @@ TEST_F(ColNumericCodecTest, ReadsAcrossTheEndOfARawFrameReadBothFrames) {
   for (const auto& block : col->DataBlocks()) {
     EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Lz4);
   }
-  auto state = col->InitScan(r.Ctx());
-  for (uint64_t pos = 0; pos < kRowGroup; pos += kStep) {
-    const auto take = std::min<uint64_t>(kRowGroup - pos, kStep);
-    duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
-    col->ScanCount(state, out, take, 0);
-    for (uint64_t k = 0; k < take; ++k) {
-      ASSERT_EQ(out.GetValue(k), *At(gen, type, pos + k)) << "row " << pos + k;
+  for (const bool whole : {false, true}) {
+    SCOPED_TRACE(whole ? "scan" : "scan count");
+    auto state = col->InitScan(r.Ctx());
+    for (uint64_t pos = 0; pos < kRowGroup; pos += kStep) {
+      const auto take = std::min<uint64_t>(kRowGroup - pos, kStep);
+      duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+      if (whole) {
+        col->Scan(state, out, take);
+      } else {
+        col->ScanCount(state, out, take, 0);
+      }
+      for (uint64_t k = 0; k < take; ++k) {
+        ASSERT_EQ(out.GetValue(k), *At(gen, type, pos + k))
+          << "row " << pos + k;
+      }
     }
   }
 }
@@ -4642,6 +4650,20 @@ TEST(ColNumericKernelsTest, RunEndsThatOverflowAreBroken) {
     PrefixRunEnds(reinterpret_cast<const uint8_t*>(in_place.data()),
                   in_place.size(), sizeof(uint32_t), in_place.data());
   EXPECT_EQ(ends.total, kBrokenRuns);
+}
+
+TEST(ColNumericKernelsTest, RunEndsOfLongListsThatFitAreNotBroken) {
+  using irs::codecs::numeric::PrefixRunEnds;
+  constexpr size_t kRuns = std::numeric_limits<uint32_t>::max() / 255 + 2;
+  std::vector<uint8_t> in(kRuns, 1);
+  in.front() = 255;
+  in.back() = 255;
+  std::vector<uint32_t> out(kRuns);
+  const auto ends = PrefixRunEnds(in.data(), kRuns, 1, out.data());
+  EXPECT_EQ(ends.total, uint64_t{kRuns} - 2 + 2 * 255);
+  EXPECT_EQ(ends.shortest, 1);
+  EXPECT_EQ(out.front(), 255);
+  EXPECT_EQ(out.back(), ends.total);
 }
 
 TEST(ColNumericKernelsTest, ExpandsRunsOfEveryWidthAndLength) {

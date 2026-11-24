@@ -6815,6 +6815,7 @@ a507aa10ba405f76
 	json_tab_pkey	pgonly	p	f	f	t	t	pgonly.json_tab	-	pgonly.json_tab_pkey	t	-	_	_	_	t	0	t	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	parent_id_not_null	pgonly	n	f	f	t	t	pgonly.parent	-	-	t	-	_	_	_	t	0	f	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	parent_pkey	pgonly	p	f	f	t	t	pgonly.parent	-	pgonly.parent_pkey	t	-	_	_	_	t	0	t	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+	positive_int_check	pgonly	c	f	f	t	t	-	pgonly.positive_int	-	t	-	_	_	_	t	0	f	f	NULL	NULL	NULL	NULL	NULL	NULL	NULL	("value" > 0)
 027154308ccc4d3a
 	seqrelid	seqtypid	seqstart	seqincrement	seqmax	seqmin	seqcache	seqcycle
 	pgonly.identity_tab_id_seq	bigint	1	1	9223372036854775807	1	1	f
@@ -6897,6 +6898,7 @@ e6f6b41914025ec6
 	pg_constraint	json_tab_pkey on pgonly.json_tab	0	pg_class	pgonly.json_tab	1	a
 	pg_constraint	parent_id_not_null on pgonly.parent	0	pg_class	pgonly.parent	1	a
 	pg_constraint	parent_pkey on pgonly.parent	0	pg_class	pgonly.parent	1	a
+	pg_constraint	positive_int_check on pgonly.positive_int	0	pg_type	pgonly.positive_int	0	a
 	pg_type	pgonly.domain_tab	0	pg_class	pgonly.domain_tab	0	i
 	pg_type	pgonly.domain_tab[]	0	pg_type	pgonly.domain_tab	0	i
 	pg_type	pgonly.json_tab	0	pg_class	pgonly.json_tab	0	i
@@ -6984,6 +6986,7 @@ dd3026ed581e0b62
 	db	pgonly	positive_int_check	db	pgonly	positive_int	NO	NO
 87e674448d573e23
 	constraint_catalog	constraint_schema	constraint_name	domain_catalog	domain_schema	domain_name	is_deferrable	initially_deferred
+	db	pgonly	positive_int_check	db	pgonly	positive_int	NO	NO
 61dfb6fec9e993be
 	constraint_catalog	constraint_schema	constraint_name	unique_constraint_catalog	unique_constraint_schema	unique_constraint_name	match_option	update_rule	delete_rule
 	db	pgonly	cascade_child_parent_id_fkey	db	pgonly	parent_pkey	NONE	NO ACTION	CASCADE
@@ -7027,7 +7030,7 @@ ec9a6bc39c705602
 	CHECK ((VALUE > 0))
 8659ba1219e55731
 	domain_check
-	NULL
+	CHECK (("value" > 0))
 6113c0ade5eb98c8
 	jsonb_column
 	jsonb

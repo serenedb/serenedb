@@ -1,0 +1,91 @@
+# A comparison of a domain column with a constant of another width is pushed into the scan as a
+# filter on the column, and the constant keeps the type of the column.
+
+statement ok
+CREATE DOMAIN d_plan_pos AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN d_plan_small AS int2;
+
+statement ok
+CREATE DOMAIN d_plan_big AS int8 CHECK (VALUE > 0);
+
+statement ok
+CREATE TABLE t_plan (id int, v d_plan_pos, s d_plan_small, b d_plan_big);
+
+statement ok
+INSERT INTO t_plan SELECT i, i, (i % 100)::int2, i FROM generate_series(1, 5000) g(i);
+
+query
+SELECT count(*) FILTER (WHERE v = 2::int8) AS eq, count(*) FILTER (WHERE v = (-1)::int8) AS neg,
+       count(*) FILTER (WHERE v > 4995::int8) AS gt, count(*) FILTER (WHERE v BETWEEN 1::int8 AND 3::int8) AS btw,
+       count(*) FILTER (WHERE v IN (2::int8, 3::int8)) AS inlist
+FROM t_plan;
+----
+eq	neg	gt	btw	inlist
+1	0	5	3	2
+
+query
+SELECT count(*) FROM t_plan WHERE v = 2::int8;
+----
+count
+1
+
+query
+SELECT count(*) FROM t_plan WHERE v > 4995::int8;
+----
+count
+5
+
+query
+SELECT count(*) FROM t_plan WHERE s = 5::int8;
+----
+count
+50
+
+query
+SELECT count(*) FROM t_plan WHERE b = 7::int2;
+----
+count
+1
+
+query
+EXPLAIN SELECT count(*) FROM t_plan WHERE v = 2::int8;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Table: t_plan            │
+│ Output: row-count only   │
+│ Column Filter: v = 2     │
+│ ~1 row                   │
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM t_plan WHERE v = -1;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ EMPTY_RESULT ───────────╮
+╰──────────────────────────╯
+
+query
+EXPLAIN SELECT count(*) FROM t_plan WHERE b = 7::int2;
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────╮
+│ Aggregates: count_star() │
+│ ~1 row                   │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Table: t_plan            │
+│ Output: row-count only   │
+│ Column Filter: b = 7     │
+│ ~1 row                   │
+╰──────────────────────────╯

@@ -1,0 +1,237 @@
+# A domain takes part in comparisons and in common type resolution as its base type, as in PostgreSQL:
+# the other operand is never cast to the domain, so its constraints never reject it. Only values of
+# one and the same domain keep the domain as the type of COALESCE, CASE, UNION and VALUES.
+
+statement ok
+CREATE DOMAIN d_cmp_pos AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE TABLE t_cmp (id int, v d_cmp_pos, a d_cmp_pos[]);
+
+statement ok
+INSERT INTO t_cmp VALUES (1, 1, ARRAY[1]), (2, 2, ARRAY[2]);
+
+statement ok
+CREATE TABLE t_cmp_other (x int4);
+
+statement ok
+INSERT INTO t_cmp_other VALUES (-1), (2);
+
+query
+SELECT count(*) FROM t_cmp WHERE v = -1;
+----
+count
+0
+
+query
+SELECT count(*) FROM t_cmp WHERE -1 = v;
+----
+count
+0
+
+query
+SELECT count(*) FROM t_cmp WHERE v > -1;
+----
+count
+2
+
+query
+SELECT count(*) FROM t_cmp WHERE v <> 0;
+----
+count
+2
+
+query
+SELECT count(*) FROM t_cmp WHERE v IN (-1, 2);
+----
+count
+1
+
+query
+SELECT count(*) FROM t_cmp WHERE v BETWEEN -5 AND 1;
+----
+count
+1
+
+query
+SELECT count(*) FROM t_cmp WHERE v IS DISTINCT FROM -1;
+----
+count
+2
+
+query
+SELECT count(*) FROM t_cmp WHERE v = '-5';
+----
+count
+0
+
+query
+SELECT count(*) FROM t_cmp WHERE v = ANY(ARRAY[-1, 2]);
+----
+count
+1
+
+query
+SELECT count(*) FROM t_cmp JOIN t_cmp_other o ON t_cmp.v = o.x;
+----
+count
+1
+
+query
+SELECT count(*) FROM t_cmp JOIN t_cmp_other o ON o.x = t_cmp.v;
+----
+count
+1
+
+query
+SELECT count(*) FROM t_cmp, t_cmp_other o WHERE t_cmp.v < o.x;
+----
+count
+1
+
+statement ok
+PREPARE p_cmp(int) AS SELECT count(*) FROM t_cmp WHERE v = $1;
+
+query
+EXECUTE p_cmp(-1);
+----
+count
+0
+
+query
+SELECT CASE v WHEN -1 THEN 'neg' ELSE 'pos' END AS c FROM t_cmp ORDER BY id;
+----
+c
+pos
+pos
+
+query
+SELECT COALESCE(v, -1) AS c, greatest(v, -1) AS g, NULLIF(v, -1) AS n FROM t_cmp ORDER BY id;
+----
+c	g	n
+1	1	1
+2	2	2
+
+query
+SELECT x FROM (SELECT 1::d_cmp_pos AS x UNION ALL SELECT -2) s ORDER BY x;
+----
+x
+-2
+1
+
+query
+SELECT x FROM (VALUES (1::d_cmp_pos), (-1)) s(x) ORDER BY x;
+----
+x
+-1
+1
+
+query
+SELECT ARRAY[v, -1] AS arr, array_append(a, -5) AS app, -5 = ANY(a) AS has FROM t_cmp ORDER BY id;
+----
+arr	app	has
+{1,-1}	{1,-5}	f
+{2,-1}	{2,-5}	f
+
+# The type of the result: the base type, unless every input is the same domain.
+
+query
+SELECT pg_typeof(COALESCE(v, 1)) AS c1, pg_typeof(COALESCE(v, NULL)) AS c2, pg_typeof(COALESCE(v, '7')) AS c3,
+       pg_typeof(COALESCE(v, v)) AS c4 FROM t_cmp LIMIT 1;
+----
+c1	c2	c3	c4
+integer	integer	integer	d_cmp_pos
+
+query
+SELECT pg_typeof(CASE WHEN id = 1 THEN v ELSE NULL END) AS c1, pg_typeof(CASE WHEN id = 1 THEN v ELSE v END) AS c2
+FROM t_cmp LIMIT 1;
+----
+c1	c2
+integer	d_cmp_pos
+
+query
+SELECT pg_typeof(array_append(a, 5)) AS t1, pg_typeof(ARRAY[v, -1]) AS t2, pg_typeof(ARRAY[v, v]) AS t3 FROM t_cmp LIMIT 1;
+----
+t1	t2	t3
+integer[]	integer[]	d_cmp_pos[]
+
+query
+SELECT pg_typeof(x) FROM (SELECT v AS x FROM t_cmp UNION ALL SELECT v FROM t_cmp) s LIMIT 1;
+----
+pg_typeof
+d_cmp_pos
+
+query
+SELECT pg_typeof(x) FROM (SELECT v AS x FROM t_cmp UNION ALL SELECT 3) s LIMIT 1;
+----
+pg_typeof
+integer
+
+query
+SELECT pg_typeof(x) FROM (VALUES (1::d_cmp_pos), (-1)) s(x) LIMIT 1;
+----
+pg_typeof
+integer
+
+# Domains over domains and different domains over one base type compare as that base type.
+
+statement ok
+CREATE DOMAIN d_cmp_1 AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN d_cmp_2 AS d_cmp_1 CHECK (VALUE < 100);
+
+statement ok
+CREATE DOMAIN d_cmp_3 AS int4 CHECK (VALUE < 0);
+
+statement ok
+CREATE TABLE t_cmp_dd (a d_cmp_1, b d_cmp_2, c d_cmp_3, x int4);
+
+statement ok
+INSERT INTO t_cmp_dd VALUES (500, 50, -5, 500);
+
+query
+SELECT count(*) FILTER (WHERE b = x) AS bx, count(*) FILTER (WHERE x = b) AS xb, count(*) FILTER (WHERE b = 500) AS bc,
+       count(*) FILTER (WHERE b = a) AS ba, count(*) FILTER (WHERE a = b) AS ab, count(*) FILTER (WHERE a = c) AS ac,
+       count(*) FILTER (WHERE c = a) AS ca, count(*) FILTER (WHERE b = b) AS bb
+FROM t_cmp_dd;
+----
+bx	xb	bc	ba	ab	ac	ca	bb
+0	0	0	0	0	0	0	1
+
+query
+SELECT pg_typeof(COALESCE(b, a)) AS ba, pg_typeof(COALESCE(a, b)) AS ab, pg_typeof(COALESCE(b, b)) AS bb FROM t_cmp_dd;
+----
+ba	ab	bb
+integer	integer	d_cmp_2
+
+# A domain over an enum combines with the enum over the enum.
+
+statement ok
+CREATE TYPE e_cmp AS ENUM ('a', 'b');
+
+statement ok
+CREATE DOMAIN d_cmp_enum AS e_cmp;
+
+query
+SELECT pg_typeof(COALESCE('a'::d_cmp_enum, 'b'::e_cmp)) AS t1, pg_typeof(COALESCE('a'::d_cmp_enum, 'b')) AS t2;
+----
+t1	t2
+e_cmp	e_cmp
+
+# A composite type and arrays keep their identity when a field or an element is a domain.
+
+statement ok
+CREATE TYPE comp_cmp AS (f d_cmp_pos, g text);
+
+statement ok
+CREATE TABLE t_cmp_comp (c comp_cmp, ca comp_cmp[], da d_cmp_pos[]);
+
+query
+SELECT attname, format_type(atttypid, atttypmod) AS type, attndims FROM pg_attribute
+WHERE attrelid = 't_cmp_comp'::regclass AND attnum > 0 ORDER BY attnum;
+----
+attname	type	attndims
+c	comp_cmp	0
+ca	comp_cmp[]	1
+da	d_cmp_pos[]	1

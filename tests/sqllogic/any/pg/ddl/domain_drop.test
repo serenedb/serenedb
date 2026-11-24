@@ -1,0 +1,107 @@
+# DROP DOMAIN ... CASCADE drops the columns of the domain, of its arrays and of the domains over it,
+# and leaves their tables in place, even with no columns left.
+
+statement ok
+CREATE DOMAIN d_drop AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE TABLE t_drop_arr (id int, a d_drop[]);
+
+statement ok
+CREATE TABLE t_drop_mix (id int, v d_drop, a d_drop[], w int);
+
+statement ok
+INSERT INTO t_drop_mix VALUES (1, 1, ARRAY[1], 2);
+
+statement error
+DROP DOMAIN d_drop;
+
+statement ok
+DROP DOMAIN d_drop CASCADE;
+
+query
+SELECT table_name, column_name FROM information_schema.columns
+WHERE table_name IN ('t_drop_arr', 't_drop_mix') ORDER BY table_name, ordinal_position;
+----
+table_name	column_name
+t_drop_arr	id
+t_drop_mix	id
+t_drop_mix	w
+
+query
+SELECT * FROM t_drop_mix;
+----
+id	w
+1	2
+
+statement ok
+CREATE DOMAIN d_drop_1 AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN d_drop_2 AS d_drop_1 CHECK (VALUE < 100);
+
+statement ok
+CREATE DOMAIN d_drop_3 AS d_drop_2;
+
+statement ok
+CREATE TABLE t_drop_dd (id int, x d_drop_2, y d_drop_3, z d_drop_1);
+
+statement ok
+INSERT INTO t_drop_dd VALUES (1, 5, 6, 7);
+
+statement error
+DROP DOMAIN d_drop_1;
+
+statement ok
+DROP DOMAIN d_drop_1 CASCADE;
+
+query
+SELECT column_name FROM information_schema.columns WHERE table_name = 't_drop_dd' ORDER BY ordinal_position;
+----
+column_name
+id
+
+query
+SELECT count(*) FROM pg_type WHERE typname IN ('d_drop_1', 'd_drop_2', 'd_drop_3');
+----
+count
+0
+
+statement ok
+CREATE DOMAIN d_drop_single AS int4;
+
+statement ok
+CREATE TABLE t_drop_single (v d_drop_single);
+
+statement ok
+INSERT INTO t_drop_single VALUES (1), (2);
+
+statement ok
+DROP DOMAIN d_drop_single CASCADE;
+
+query
+SELECT count(*) FROM information_schema.columns WHERE table_name = 't_drop_single';
+----
+count
+0
+
+query
+SELECT count(*) FROM t_drop_single;
+----
+count
+2
+
+statement ok
+CREATE DOMAIN d_drop_single_arr AS int4;
+
+statement ok
+CREATE TABLE t_drop_single_arr (a d_drop_single_arr[]);
+
+statement ok
+DROP DOMAIN d_drop_single_arr CASCADE;
+
+query
+SELECT count(*) FROM information_schema.columns WHERE table_name = 't_drop_single_arr';
+----
+count
+0

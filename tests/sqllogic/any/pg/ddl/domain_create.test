@@ -101,3 +101,16 @@ CREATE FUNCTION f_dom_bad() RETURNS d_fn LANGUAGE sql AS 'SELECT -1';
 
 statement error
 SELECT f_dom_bad();
+
+# A type cannot be defined as a domain: it would drop the constraints of the domain.
+
+statement error
+CREATE TYPE t_dom_alias AS d_fn;
+
+onlyif serenedb
+statement ok
+CREATE TYPE t_dom_alias_arr AS d_fn[];
+
+onlyif serenedb
+statement error
+SELECT ARRAY[-1]::t_dom_alias_arr;

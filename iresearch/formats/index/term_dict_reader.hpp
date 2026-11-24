@@ -50,7 +50,7 @@ struct PinnedRange {
 class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
-                 const Separators& separators, const IndexSections& sections,
+                 const Separators& separators, duckdb::ReadStream& in,
                  std::span<const TermReaderImpl> levels = {});
 
   SeekTermIterator::ptr iterator() const final;

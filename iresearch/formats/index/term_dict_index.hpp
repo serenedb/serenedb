@@ -22,6 +22,8 @@
 
 #include <array>
 #include <cstdint>
+#include <duckdb/common/serializer/read_stream.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <string>
 #include <vector>
 
@@ -47,16 +49,21 @@ constexpr bool GatesTerms(DictMember member, uint32_t width) noexcept {
   return width == 0 && member == DictMember::Strings;
 }
 
-struct IndexSections {
-  bytes_view prefixes;
-  bytes_view mask_bytes;
-  bytes_view masks;
+struct DictSections {
+  PrefixTrie trie;
+  ByteSet held;
+  std::vector<byte_type> selected;
+  std::vector<uint64_t> masks;
 };
 
 class DictIndex {
  public:
   DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-            const Separators& separators, const IndexSections& sections);
+            const Separators& separators, DictSections sections);
+  DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
+            const Separators& separators, duckdb::ReadStream& in);
+
+  void Write(duckdb::WriteStream& out) const;
 
   uint32_t Blocks() const noexcept { return _blocks; }
   bool Small() const noexcept { return _blocks == 1; }
@@ -135,6 +142,8 @@ class DictIndex {
   }
 
  private:
+  DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks);
+
   bstring _min_key;
   bstring _max_key;
   Root _root;
@@ -177,10 +186,12 @@ class DictIndexBuilder {
     }
   }
 
-  void Finish(FieldHead& head, bstring& sections);
+  bool Gated() const noexcept { return _gated; }
+
+  DictSections Finish();
 
  private:
-  void FinishMasks(FieldHead& head, bstring& sections) const;
+  void FinishMasks(DictSections& sections) const;
 
   PrefixTrieBuilder _trie;
   std::vector<ByteSet> _seen;

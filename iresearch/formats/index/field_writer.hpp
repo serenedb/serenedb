@@ -87,9 +87,8 @@ class FieldWriter final : public FieldSink {
   bstring _key_prefix;
   bstring _min;
   bstring _last;
-  bstring _separator;
-  bstring _separators;
-  bstring _sections;
+  Separators _separators;
+  std::vector<DictSections> _sections;
   PostingMeta _single;
   IdxWriter* _idx = nullptr;
   duckdb::WriteStream* _out = nullptr;

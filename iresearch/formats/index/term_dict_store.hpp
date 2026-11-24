@@ -69,7 +69,6 @@ class BlockStore {
 
   bytes_view Copy(uint64_t offset, uint64_t size);
   const byte_type* CopyBlock(uint32_t block);
-  bytes_view Read(uint64_t offset, uint64_t size, bstring& buffer) const;
 
  private:
   struct PendingCopy {

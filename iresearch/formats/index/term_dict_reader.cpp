@@ -139,13 +139,13 @@ class TermIteratorImpl : public SeekTermIterator {
 
 TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
                                bytes_view prefix, const Separators& separators,
-                               const IndexSections& sections,
+                               duckdb::ReadStream& in,
                                std::span<const TermReaderImpl> levels)
   : _owner{&owner},
     _meta{head.id, head.features},
     _terms{head.term_count},
     _docs{head.doc_count},
-    _index{head, prefix, BlocksOf(owner.Store(), head), separators, sections},
+    _index{head, prefix, BlocksOf(owner.Store(), head), separators, in},
     _has_score_bounds{head.text.has_score_bounds},
     _range_levels{levels} {
   _meta.norm = head.text.norm;

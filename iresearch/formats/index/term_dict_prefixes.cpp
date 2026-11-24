@@ -35,54 +35,16 @@ constexpr size_t kWindow = kTrieMaxSpan + 1;
 
 }  // namespace
 
-PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
-  const auto corrupted = [&] { Corrupted("prefix trie", id); };
-  const auto* p = encoded.data();
-  const auto* const end = p + encoded.size();
-  const auto chain = ReadVarint<uint32_t>(p, end);
-  if (!chain || *chain > static_cast<size_t>(end - p)) {
-    corrupted();
-  }
-  _chain.assign(p, *chain);
-  p += *chain;
-  const auto count = ReadVarint<uint32_t>(p, end);
-  if (!count || *count == 0 || *count > encoded.size()) {
-    corrupted();
-  }
-  const uint32_t nodes = *count;
-  std::vector<byte_type> flags(nodes);
-  std::vector<byte_type> labels(nodes);
-  std::vector<uint32_t> depths(nodes);
-  std::vector<uint32_t> first(size_t{nodes} + 1);
-  uint32_t next = 1;
-  for (uint32_t node = 0; node != nodes; ++node) {
-    if (p == end || (node != 0 && node >= next)) {
-      corrupted();
-    }
-    const byte_type flag = *p++;
-    const auto children = ReadVarint<uint32_t>(p, end);
-    if (!children || (flag & ~(kTrieTerminal | kTrieOpen)) != 0 ||
-        *children > static_cast<size_t>(end - p) || *children > nodes - next ||
-        ((flag & kTrieOpen) != 0 && *children != 0) ||
-        (*children != 0 && depths[node] >= kTrieDepth)) {
-      corrupted();
-    }
-    flags[node] = flag;
-    first[node] = next;
-    for (uint32_t i = 0; i != *children; ++i) {
-      if (i != 0 && p[i] <= p[i - 1]) {
-        corrupted();
-      }
-      labels[next + i] = p[i];
-      depths[next + i] = depths[node] + 1;
-    }
-    p += *children;
-    next += *children;
-  }
-  first[nodes] = next;
-  if (next != nodes || p != end) {
-    corrupted();
-  }
+PrefixTrie::PrefixTrie(const TrieShape& shape) {
+  const auto nodes = static_cast<uint32_t>(shape.flags.size());
+  SDB_ASSERT(nodes != 0 && shape.labels.size() == nodes &&
+             shape.depths.size() == nodes &&
+             shape.first.size() == size_t{nodes} + 1);
+  const auto flags = shape.flags;
+  const auto labels = shape.labels;
+  const auto depths = shape.depths;
+  const auto first = shape.first;
+  _chain.assign(shape.chain);
 
   uint32_t dense = 0;
   while (dense != nodes) {
@@ -136,6 +98,34 @@ PrefixTrie::PrefixTrie(bytes_view encoded, field_id id) {
       _open[node / 64] |= uint64_t{1} << (node % 64);
     }
   }
+}
+
+PrefixTrie::PrefixTrie(duckdb::ReadStream& in) {
+  _nodes = in.Read<uint32_t>();
+  _dense = in.Read<uint32_t>();
+  ReadArray(in, _dense_words);
+  ReadArray(in, _dense_first);
+  ReadArray(in, _chain);
+  ReadArray(in, _labels);
+  ReadArray(in, _inner);
+  ReadArray(in, _inner_rank);
+  ReadArray(in, _first);
+  ReadArray(in, _terminal);
+  ReadArray(in, _open);
+}
+
+void PrefixTrie::Write(duckdb::WriteStream& out) const {
+  out.Write<uint32_t>(_nodes);
+  out.Write<uint32_t>(_dense);
+  WriteArray(out, _dense_words);
+  WriteArray(out, _dense_first);
+  WriteArray(out, _chain);
+  WriteArray(out, _labels);
+  WriteArray(out, _inner);
+  WriteArray(out, _inner_rank);
+  WriteArray(out, _first);
+  WriteArray(out, _terminal);
+  WriteArray(out, _open);
 }
 
 uint32_t PrefixTrieBuilder::AppendChild(uint32_t parent, byte_type label) {
@@ -239,9 +229,9 @@ void PrefixTrieBuilder::Add(bytes_view term) {
   }
 }
 
-void PrefixTrieBuilder::Finish(bstring& out) {
+PrefixTrie PrefixTrieBuilder::Finish() {
   if (_nodes.empty()) {
-    return;
+    return {};
   }
   const auto chain = bytes_view{_first}.substr(0, _origin);
   uint32_t root = 0;
@@ -267,33 +257,42 @@ void PrefixTrieBuilder::Finish(bstring& out) {
       }
     }
   }
-  auto it = std::back_inserter(out);
-  WriteVarint(static_cast<uint32_t>(chain.size()), it);
-  out.append(chain);
-  WriteVarint(static_cast<uint32_t>(queue.size()), it);
-  for (const auto id : queue) {
-    const auto& node = _nodes[id];
+  const size_t count = queue.size();
+  std::vector<byte_type> flags(count);
+  std::vector<byte_type> labels(count);
+  std::vector<uint32_t> depths(count);
+  std::vector<uint32_t> first(count + 1);
+  uint32_t next = 1;
+  for (size_t at = 0; at != count; ++at) {
+    const auto& node = _nodes[queue[at]];
+    first[at] = next;
     uint32_t children = 0;
     if (inner(node)) {
       for (auto child = node.first; child != kNoNode;
            child = _nodes[child].next) {
+        labels[next + children] = _nodes[child].label;
+        depths[next + children] = depths[at] + 1;
         ++children;
       }
     }
-    byte_type flags = node.terminal ? kTrieTerminal : 0;
+    byte_type flag = node.terminal ? kTrieTerminal : 0;
     if (children == 0 && node.count > (node.terminal ? 1U : 0U)) {
-      flags |= kTrieOpen;
+      flag |= kTrieOpen;
     }
-    out.push_back(flags);
-    WriteVarint(children, it);
-    if (children != 0) {
-      for (auto child = node.first; child != kNoNode;
-           child = _nodes[child].next) {
-        out.push_back(_nodes[child].label);
-      }
-    }
+    flags[at] = flag;
+    next += children;
   }
+  first[count] = next;
+  SDB_ASSERT(next == count);
+  PrefixTrie trie{TrieShape{
+    .chain = chain,
+    .flags = flags,
+    .labels = labels,
+    .depths = depths,
+    .first = first,
+  }};
   Reset();
+  return trie;
 }
 
 void PrefixTrieBuilder::Reset() noexcept {

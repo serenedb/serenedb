@@ -26,6 +26,8 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <duckdb/common/serializer/read_stream.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <memory>
 #include <span>
 #include <variant>
@@ -48,8 +50,6 @@ struct SeparatorsView {
   const byte_type* arena = nullptr;
   std::span<const uint32_t> offsets{kNoSeparators};
 };
-
-Separators DecodeSeparators(bytes_view encoded, size_t count);
 
 inline SeparatorsView Slice(const Separators& separators, size_t from,
                             size_t count) noexcept {
@@ -106,8 +106,11 @@ class EytzingerRoot : public SeparatorRoot {
 
   EytzingerRoot() = default;
   explicit EytzingerRoot(SeparatorsView separators);
+  EytzingerRoot(SeparatorsView separators, duckdb::ReadStream& in);
   EytzingerRoot(EytzingerRoot&&) noexcept = default;
   EytzingerRoot& operator=(EytzingerRoot&&) noexcept = default;
+
+  void Write(duckdb::WriteStream& out) const;
 
   using SeparatorRoot::NotAfter;
   size_t Find(Probe key) const noexcept;
@@ -117,6 +120,7 @@ class EytzingerRoot : public SeparatorRoot {
   }
 
  private:
+  Node* Place();
   bool NotAfter(const Node& node, Probe key) const noexcept;
   size_t Outside(bytes_view key) const noexcept;
   size_t Resolve(size_t k) const noexcept;
@@ -131,6 +135,9 @@ class TreeRoot : public SeparatorRoot {
  public:
   TreeRoot() = default;
   explicit TreeRoot(SeparatorsView separators);
+  TreeRoot(SeparatorsView separators, duckdb::ReadStream& in);
+
+  void Write(duckdb::WriteStream& out) const;
 
   static size_t Height(size_t count) { return LevelSizes(count).size(); }
 
@@ -174,6 +181,9 @@ class ArtRoot : public SeparatorRoot {
  public:
   ArtRoot() = default;
   explicit ArtRoot(SeparatorsView separators);
+  ArtRoot(SeparatorsView separators, duckdb::ReadStream& in);
+
+  void Write(duckdb::WriteStream& out) const;
 
   size_t Find(Probe key) const noexcept;
   size_t FindFrom(size_t from, Probe key) const noexcept {
@@ -206,6 +216,9 @@ class Root {
  public:
   Root() = default;
   Root(SeparatorsView separators, bool fixed);
+  Root(SeparatorsView separators, duckdb::ReadStream& in);
+
+  void Write(duckdb::WriteStream& out) const;
 
   size_t Blocks() const noexcept {
     return Visit([](const auto& root) { return root.Blocks(); });

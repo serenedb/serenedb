@@ -23,7 +23,10 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <duckdb/common/serializer/read_stream.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <limits>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -42,6 +45,14 @@ inline constexpr uint32_t kNoLabel = 256;
 inline constexpr byte_type kTrieTerminal = 1;
 inline constexpr byte_type kTrieOpen = 2;
 inline constexpr uint32_t kDenseFanout = 16;
+
+struct TrieShape {
+  bytes_view chain;
+  std::span<const byte_type> flags;
+  std::span<const byte_type> labels;
+  std::span<const uint32_t> depths;
+  std::span<const uint32_t> first;
+};
 
 class PrefixTrie {
  public:
@@ -93,7 +104,10 @@ class PrefixTrie {
   };
 
   PrefixTrie() = default;
-  PrefixTrie(bytes_view encoded, field_id id);
+  explicit PrefixTrie(const TrieShape& shape);
+  explicit PrefixTrie(duckdb::ReadStream& in);
+
+  void Write(duckdb::WriteStream& out) const;
 
   bool Empty() const noexcept { return _nodes == 0; }
   uint32_t Nodes() const noexcept { return _nodes; }
@@ -213,7 +227,7 @@ class PrefixTrieBuilder {
  public:
   void Add(bytes_view term);
   void SetSpan(uint32_t span) noexcept { _span = span; }
-  void Finish(bstring& out);
+  PrefixTrie Finish();
   void Reset() noexcept;
 
  private:

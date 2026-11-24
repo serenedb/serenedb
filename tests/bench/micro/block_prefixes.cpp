@@ -81,8 +81,7 @@ void Build(benchmark::State& state, const std::vector<irs::bstring>& terms) {
     for (const auto& term : terms) {
       builder.Add(term);
     }
-    irs::bstring trie;
-    builder.Finish(trie);
+    auto trie = builder.Finish();
     benchmark::DoNotOptimize(trie);
     builder.Reset();
   }

@@ -32,9 +32,7 @@
 
 namespace irs::term_dict {
 
-DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-                     const Separators& separators,
-                     const IndexSections& sections)
+DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks)
   : _prefix_size{static_cast<uint32_t>(prefix.size())},
     _blocks{blocks},
     _gated{GatesTerms(head.member, head.width)} {
@@ -45,33 +43,61 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
   if (_max_key <= _min_key) {
     Corrupted("record", head.id);
   }
-  if (blocks == 1 || !_gated) {
-    if (!sections.prefixes.empty() || !sections.masks.empty() ||
-        !sections.mask_bytes.empty()) {
-      Corrupted("record", head.id);
-    }
+}
+
+DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
+                     const Separators& separators, duckdb::ReadStream& in)
+  : DictIndex{head, prefix, blocks} {
+  if (blocks == 1) {
+    return;
   }
+  _root = Root{Slice(separators, head.first_block, blocks - 1), in};
+  if (!_gated) {
+    return;
+  }
+  _trie = PrefixTrie{in};
+  ReadArray(in, _link_nodes);
+  ReadArray(in, _link_depths);
+  ReadArray(in, _masks);
+  in.ReadData(reinterpret_cast<duckdb::data_ptr_t>(_held.words.data()),
+              sizeof(_held.words));
+  in.ReadData(reinterpret_cast<duckdb::data_ptr_t>(_masked.words.data()),
+              sizeof(_masked.words));
+  in.ReadData(_bits.data(), _bits.size());
+}
+
+void DictIndex::Write(duckdb::WriteStream& out) const {
+  SDB_ASSERT(!Small());
+  _root.Write(out);
+  if (!_gated) {
+    return;
+  }
+  _trie.Write(out);
+  WriteArray(out, _link_nodes);
+  WriteArray(out, _link_depths);
+  WriteArray(out, _masks);
+  out.WriteData(reinterpret_cast<duckdb::const_data_ptr_t>(_held.words.data()),
+                sizeof(_held.words));
+  out.WriteData(
+    reinterpret_cast<duckdb::const_data_ptr_t>(_masked.words.data()),
+    sizeof(_masked.words));
+  out.WriteData(_bits.data(), _bits.size());
+}
+
+DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
+                     const Separators& separators, DictSections sections)
+  : DictIndex{head, prefix, blocks} {
   if (blocks == 1) {
     return;
   }
   SDB_ASSERT(size_t{head.first_block} + blocks <= separators.offsets.size());
   _root =
     Root{Slice(separators, head.first_block, blocks - 1), head.width != 0};
-  for (uint32_t block = 0; block != blocks; ++block) {
-    const auto bounds = Bounds(block);
-    if ((bounds.last ? bounds.upper < bounds.lower
-                     : bounds.upper <= bounds.lower) ||
-        CommonPrefixLength(bounds.lower, bounds.upper) < prefix.size()) {
-      Corrupted("separators", head.id);
-    }
-  }
   if (!_gated) {
     return;
   }
-  if (sections.prefixes.empty()) {
-    Corrupted("block prefixes", head.id);
-  }
-  _trie = PrefixTrie{sections.prefixes, head.id};
+  _trie = std::move(sections.trie);
+  SDB_ASSERT(!_trie.Empty());
   _link_nodes.reserve(blocks);
   _link_depths.reserve(blocks);
   const size_t chain = _trie.Chain().size();
@@ -88,59 +114,23 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
         break;
       }
       const uint32_t child = _trie.ChildOf(node, term[at]);
-      if (child == kNoNode) {
-        Corrupted("block prefixes", head.id);
-      }
+      SDB_ASSERT(child != kNoNode);
       path.push_back(child);
     }
-    if (path.size() <= chain) {
-      Corrupted("block prefixes", head.id);
-    }
+    SDB_ASSERT(path.size() > chain);
     previous.assign(term);
     _link_nodes.push_back(path.back());
     _link_depths.push_back(static_cast<uint8_t>(path.size() - 1 - chain));
   }
-  const auto masks = sections.masks;
-  const auto bytes = sections.mask_bytes;
-  if (masks.empty() && bytes.empty()) {
-    return;
-  }
-  if (bytes.size() < kMaskUnionBytes ||
-      bytes.size() > kMaskUnionBytes + kMaskBits) {
-    Corrupted("block masks", head.id);
-  }
-  ByteSet held;
-  for (size_t i = 0; i != held.words.size(); ++i) {
-    held.words[i] =
-      absl::little_endian::Load64(bytes.data() + i * sizeof(uint64_t));
-  }
-  const auto selected = bytes.substr(kMaskUnionBytes);
-  if (masks.size() !=
-      (selected.empty() ? 0 : size_t{blocks} * sizeof(uint64_t))) {
-    Corrupted("block masks", head.id);
-  }
-  _held = held;
-  if (selected.empty()) {
-    return;
-  }
-  uint64_t valid = 0;
-  for (size_t bit = 0; bit != selected.size(); ++bit) {
-    const byte_type b = selected[bit];
-    if ((bit != 0 && b <= selected[bit - 1]) || !held.Contains(b)) {
-      Corrupted("block masks", head.id);
-    }
+  _held = sections.held;
+  for (size_t bit = 0; bit != sections.selected.size(); ++bit) {
+    const byte_type b = sections.selected[bit];
     _bits[b] = static_cast<uint8_t>(bit);
     _masked.Add(b);
-    valid |= uint64_t{1} << bit;
   }
-  _masks.resize(blocks);
-  for (uint32_t block = 0; block != blocks; ++block) {
-    _masks[block] = absl::little_endian::Load64(
-      masks.data() + size_t{block} * sizeof(uint64_t));
-    if ((_masks[block] & ~valid) != 0) {
-      Corrupted("block masks", head.id);
-    }
-  }
+  SDB_ASSERT(sections.masks.size() ==
+             (sections.selected.empty() ? 0 : size_t{blocks}));
+  _masks = std::move(sections.masks);
 }
 
 BlockNeed DictIndex::NeedOf(const ByteSet& bytes) const noexcept {
@@ -181,21 +171,18 @@ uint32_t DictIndex::BlockEnd(bytes_view upper) const {
   return BlockOf(key.Assign(KeyPrefix(), upper)) + 1;
 }
 
-void DictIndexBuilder::FinishMasks(FieldHead& head, bstring& sections) const {
-  if (_seen.empty()) {
-    return;
-  }
-  ByteSet held;
+void DictIndexBuilder::FinishMasks(DictSections& sections) const {
+  SDB_ASSERT(!_seen.empty());
   std::array<uint64_t, 256> present{};
   for (const auto& seen : _seen) {
-    AddAll(held, seen);
+    AddAll(sections.held, seen);
     for (size_t i = 0; i != seen.words.size(); ++i) {
       for (uint64_t word = seen.words[i]; word != 0; word &= word - 1) {
         ++present[i * 64 + static_cast<size_t>(std::countr_zero(word))];
       }
     }
   }
-  std::vector<byte_type> selected;
+  auto& selected = sections.selected;
   for (size_t b = 0; b != present.size(); ++b) {
     if (present[b] != 0 && present[b] != _seen.size()) {
       selected.push_back(static_cast<byte_type>(b));
@@ -206,19 +193,10 @@ void DictIndexBuilder::FinishMasks(FieldHead& head, bstring& sections) const {
   });
   selected.resize(std::min(selected.size(), kMaskBits));
   absl::c_sort(selected);
-  const auto bytes_at = sections.size();
-  sections.resize(bytes_at + kMaskUnionBytes);
-  for (size_t i = 0; i != held.words.size(); ++i) {
-    absl::little_endian::Store64(
-      sections.data() + bytes_at + i * sizeof(uint64_t), held.words[i]);
-  }
-  sections.append(selected.data(), selected.size());
-  head.block_mask_bytes.size = sections.size() - bytes_at;
   if (selected.empty()) {
     return;
   }
-  const auto masks_at = sections.size();
-  sections.resize(masks_at + _seen.size() * sizeof(uint64_t));
+  sections.masks.resize(_seen.size());
   for (size_t block = 0; block != _seen.size(); ++block) {
     uint64_t mask = 0;
     for (size_t bit = 0; bit != selected.size(); ++bit) {
@@ -226,18 +204,16 @@ void DictIndexBuilder::FinishMasks(FieldHead& head, bstring& sections) const {
         mask |= uint64_t{1} << bit;
       }
     }
-    absl::little_endian::Store64(
-      sections.data() + masks_at + block * sizeof(uint64_t), mask);
+    sections.masks[block] = mask;
   }
-  head.block_masks.size = sections.size() - masks_at;
 }
 
-void DictIndexBuilder::Finish(FieldHead& head, bstring& sections) {
-  const auto at = sections.size();
-  _trie.Finish(sections);
-  head.block_prefixes.size = sections.size() - at;
-  FinishMasks(head, sections);
+DictSections DictIndexBuilder::Finish() {
+  SDB_ASSERT(_gated);
+  DictSections sections{.trie = _trie.Finish()};
+  FinishMasks(sections);
   _seen.clear();
+  return sections;
 }
 
 }  // namespace irs::term_dict

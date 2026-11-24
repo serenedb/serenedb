@@ -30,10 +30,10 @@
 #include <iterator>
 #include <limits>
 
+#include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/lower_bound.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string_utils.hpp"
 
 namespace irs::term_dict {
@@ -169,63 +169,22 @@ bytes_view SharedPrefix(SeparatorsView separators) noexcept {
     0, CommonPrefixLength(first, SeparatorAt(separators, count - 1)));
 }
 
+bytes_view PrefixOf(SeparatorsView separators, uint32_t size) noexcept {
+  return SeparatorCount(separators) == 0
+           ? bytes_view{}
+           : SeparatorAt(separators, 0).substr(0, size);
+}
+
 }  // namespace
 
-Separators DecodeSeparators(bytes_view encoded, size_t count) {
-  const auto corrupted = [] {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG("term dictionary: bad separators"));
-  };
-  struct Step {
-    uint32_t shared;
-    uint32_t suffix;
-  };
-  const auto* const end = encoded.data() + encoded.size();
-  const auto next = [&](const byte_type*& p) {
-    const auto shared = ReadVarint<uint32_t>(p, end);
-    const auto suffix = ReadVarint<uint32_t>(p, end);
-    if (!shared || !suffix || *suffix == 0 ||
-        *suffix > static_cast<size_t>(end - p)) {
-      corrupted();
-    }
-    return Step{.shared = *shared, .suffix = *suffix};
-  };
-  uint64_t total = 0;
-  size_t last = 0;
-  const auto* p = encoded.data();
-  for (size_t i = 0; i != count; ++i) {
-    const auto [shared, suffix] = next(p);
-    if (shared > last) {
-      corrupted();
-    }
-    p += suffix;
-    last = shared + suffix;
-    total += last;
-  }
-  if (p != end || total > std::numeric_limits<uint32_t>::max()) {
-    corrupted();
-  }
-  Separators separators;
-  auto& arena = separators.arena;
-  utils::StrResize(arena, total);
-  separators.offsets.resize(count + 1);
-  p = encoded.data();
-  last = 0;
-  for (size_t i = 0, at = 0; i != count; ++i) {
-    const auto [shared, suffix] = next(p);
-    auto* out = arena.data() + at;
-    const auto* previous = out - last;
-    if (shared != last && *p <= previous[shared]) {
-      corrupted();
-    }
-    std::memcpy(out, previous, shared);
-    std::memcpy(out + shared, p, suffix);
-    p += suffix;
-    last = shared + suffix;
-    at += last;
-    separators.offsets[i + 1] = static_cast<uint32_t>(at);
-  }
-  return separators;
+EytzingerRoot::Node* EytzingerRoot::Place() {
+  constexpr size_t kLine = 64 / sizeof(Node);
+  _storage.resize(_count + 1 + kLine);
+  const auto misaligned =
+    reinterpret_cast<uintptr_t>(_storage.data()) % 64 / sizeof(Node);
+  auto* nodes = _storage.data() + (kLine - misaligned) % kLine;
+  _nodes = nodes;
+  return nodes;
 }
 
 EytzingerRoot::EytzingerRoot(SeparatorsView separators)
@@ -233,12 +192,7 @@ EytzingerRoot::EytzingerRoot(SeparatorsView separators)
     _prefix{SharedPrefix(_separators)},
     _count{SeparatorCount(_separators)} {
   const size_t count = _count;
-  constexpr size_t kLine = 64 / sizeof(Node);
-  _storage.resize(count + 1 + kLine);
-  const auto misaligned =
-    reinterpret_cast<uintptr_t>(_storage.data()) % 64 / sizeof(Node);
-  auto* nodes = _storage.data() + (kLine - misaligned) % kLine;
-  _nodes = nodes;
+  auto* nodes = Place();
   size_t next = 0;
   const auto fill = [&](this auto& self,
                         size_t k) -> std::pair<size_t, size_t> {
@@ -265,6 +219,20 @@ EytzingerRoot::EytzingerRoot(SeparatorsView separators)
   };
   fill(1);
   SDB_ASSERT(next == count);
+}
+
+EytzingerRoot::EytzingerRoot(SeparatorsView separators, duckdb::ReadStream& in)
+  : SeparatorRoot{separators},
+    _prefix{PrefixOf(separators, in.Read<uint32_t>())},
+    _count{SeparatorCount(separators)} {
+  in.ReadData(reinterpret_cast<duckdb::data_ptr_t>(Place()),
+              (_count + 1) * sizeof(Node));
+}
+
+void EytzingerRoot::Write(duckdb::WriteStream& out) const {
+  out.Write<uint32_t>(static_cast<uint32_t>(_prefix.size()));
+  out.WriteData(reinterpret_cast<duckdb::const_data_ptr_t>(_nodes),
+                (_count + 1) * sizeof(Node));
 }
 
 IRS_FORCE_INLINE bool EytzingerRoot::NotAfter(const Node& node,
@@ -344,6 +312,22 @@ TreeRoot::TreeRoot(SeparatorsView separators)
         _nodes[_levels[level] + child].heads[0];
     }
   }
+}
+
+TreeRoot::TreeRoot(SeparatorsView separators, duckdb::ReadStream& in)
+  : SeparatorRoot{separators},
+    _prefix{PrefixOf(separators, in.Read<uint32_t>())},
+    _count{SeparatorCount(separators)} {
+  static_assert(sizeof(size_t) == sizeof(uint64_t));
+  ReadArray(in, _nodes);
+  ReadArray(in, _levels);
+  _leaves = _levels.back();
+}
+
+void TreeRoot::Write(duckdb::WriteStream& out) const {
+  out.Write<uint32_t>(static_cast<uint32_t>(_prefix.size()));
+  WriteArray(out, _nodes);
+  WriteArray(out, _levels);
 }
 
 TreeRoot::Located TreeRoot::Locate(bytes_view key) const noexcept {
@@ -522,6 +506,13 @@ ArtRoot::ArtRoot(SeparatorsView separators) : SeparatorRoot{separators} {
   _words.shrink_to_fit();
 }
 
+ArtRoot::ArtRoot(SeparatorsView separators, duckdb::ReadStream& in)
+  : SeparatorRoot{separators} {
+  ReadArray(in, _words);
+}
+
+void ArtRoot::Write(duckdb::WriteStream& out) const { WriteArray(out, _words); }
+
 IRS_FORCE_INLINE size_t ArtRoot::Leaf(const uint64_t* child, size_t depth,
                                       bytes_view key) const noexcept {
   const auto first = static_cast<uint32_t>(child[0]);
@@ -631,6 +622,25 @@ Root::Root(SeparatorsView separators, bool fixed) {
   } else {
     _root.emplace<TreeRoot>(separators);
   }
+}
+
+Root::Root(SeparatorsView separators, duckdb::ReadStream& in) {
+  switch (in.Read<uint8_t>()) {
+    case 0:
+      _root.emplace<TreeRoot>(separators, in);
+      break;
+    case 1:
+      _root.emplace<EytzingerRoot>(separators, in);
+      break;
+    default:
+      _root.emplace<ArtRoot>(separators, in);
+      break;
+  }
+}
+
+void Root::Write(duckdb::WriteStream& out) const {
+  out.Write<uint8_t>(static_cast<uint8_t>(_root.index()));
+  std::visit([&](const auto& root) { root.Write(out); }, _root);
 }
 
 }  // namespace irs::term_dict

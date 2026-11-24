@@ -52,19 +52,6 @@ bytes_view BlockStore::Copy(uint64_t offset, uint64_t size) {
   return {copy.get(), size};
 }
 
-bytes_view BlockStore::Read(uint64_t offset, uint64_t size,
-                            bstring& buffer) const {
-  SDB_ASSERT(offset + size <= _in->GetSize());
-  if (_base) {
-    return {_base + offset, size};
-  }
-  buffer.resize(size);
-  duckdb::InputFileReader in{*_in};
-  in.Seek(offset);
-  in.ReadData(buffer.data(), size);
-  return buffer;
-}
-
 const byte_type* BlockStore::CopyBlock(uint32_t block) {
   const uint64_t offset = BlockOffset(block);
   return Copy(offset, BlockOffset(block + 1) - offset).data();

@@ -85,9 +85,7 @@ constexpr duckdb::field_id_t kDictText = 12;
 constexpr duckdb::field_id_t kDictSingleValued = 13;
 constexpr duckdb::field_id_t kDictFsst = 14;
 constexpr duckdb::field_id_t kDictLevels = 15;
-constexpr duckdb::field_id_t kDictBlockMasks = 16;
-constexpr duckdb::field_id_t kDictBlockPrefixes = 17;
-constexpr duckdb::field_id_t kDictBlockMaskBytes = 18;
+constexpr duckdb::field_id_t kDictIndex = 16;
 
 constexpr duckdb::field_id_t kTextTotalFreq = 0;
 constexpr duckdb::field_id_t kTextScoreBounds = 1;
@@ -178,15 +176,9 @@ void WriteKeyed(duckdb::BinarySerializer& out, const FieldHead& head) {
         WriteKeyed(level, head.levels[i]);
       });
     });
-  SDB_ASSERT(head.term_count != 1 ||
-             (head.block_masks.size == 0 && head.block_prefixes.size == 0 &&
-              head.block_mask_bytes.size == 0));
-  out.WritePropertyWithDefault<uint64_t>(kDictBlockMasks, "block_masks",
-                                         head.block_masks.size, 0);
-  out.WritePropertyWithDefault<uint64_t>(kDictBlockPrefixes, "block_prefixes",
-                                         head.block_prefixes.size, 0);
-  out.WritePropertyWithDefault<uint64_t>(
-    kDictBlockMaskBytes, "block_mask_bytes", head.block_mask_bytes.size, 0);
+  SDB_ASSERT(head.term_count != 1 || head.index.size == 0);
+  out.WritePropertyWithDefault<uint64_t>(kDictIndex, "index", head.index.size,
+                                         0);
 }
 
 void WriteField(duckdb::BinarySerializer& out,
@@ -294,19 +286,13 @@ void ReadKeyed(duckdb::BinaryDeserializer& in, FieldHead& head) {
         }
       });
     });
-  head.block_masks.size = in.ReadPropertyWithExplicitDefault<uint64_t>(
-    kDictBlockMasks, "block_masks", 0);
-  head.block_prefixes.size = in.ReadPropertyWithExplicitDefault<uint64_t>(
-    kDictBlockPrefixes, "block_prefixes", 0);
-  head.block_mask_bytes.size = in.ReadPropertyWithExplicitDefault<uint64_t>(
-    kDictBlockMaskBytes, "block_mask_bytes", 0);
+  head.index.size =
+    in.ReadPropertyWithExplicitDefault<uint64_t>(kDictIndex, "index", 0);
   const bool ranged =
     IsSubsetOf(IndexFeatures::Ranges, head.features) && head.width != 0;
   if ((!head.levels.empty() && (!ranged || head.term_count == 1 ||
                                 head.member != DictMember::Numbers)) ||
-      (head.term_count == 1 &&
-       (head.block_prefixes.size != 0 || head.block_masks.size != 0 ||
-        head.block_mask_bytes.size != 0)) ||
+      (head.term_count == 1 && head.index.size != 0) ||
       (field_limits::valid(head.text.norm) &&
        !IsSubsetOf(IndexFeatures::Norm, head.features))) {
     Corrupted("dictionary", head.id);
@@ -436,14 +422,6 @@ TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size) {
   if (terms.blocks_end > data_size) {
     Corrupted("block directory");
   }
-  for (const auto& head : terms.fields) {
-    for (const auto& level : head.levels) {
-      if (level.block_prefixes.size != 0 || level.block_mask_bytes.size != 0 ||
-          level.block_masks.size != 0) {
-        Corrupted("range level", head.id);
-      }
-    }
-  }
   if (!PlaceSections(terms, data_size)) {
     Corrupted("sections");
   }
@@ -461,13 +439,20 @@ bool PlaceSections(TermsMeta& terms, uint64_t end) noexcept {
     at += section.size;
     return true;
   };
+  if (!place(terms.separators)) {
+    return false;
+  }
   for (auto& head : terms.fields) {
-    if (!place(head.block_prefixes) || !place(head.block_mask_bytes) ||
-        !place(head.block_masks)) {
+    if (!place(head.index)) {
       return false;
     }
+    for (auto& level : head.levels) {
+      if (!place(level.index)) {
+        return false;
+      }
+    }
   }
-  return place(terms.separators);
+  return true;
 }
 
 }  // namespace irs::term_dict

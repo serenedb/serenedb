@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <iterator>
 #include <span>
 
 #include "iresearch/utils/assert.hpp"
@@ -260,15 +259,10 @@ void FieldWriter::Cut() {
   }
   const auto first = _encoder.Key(0);
   if (_blocks != 0) {
-    const auto separator =
-      first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1);
-    const auto shared = CommonPrefixLength(bytes_view{_separator}, separator);
-    const auto suffix = separator.substr(shared);
-    auto out = std::back_inserter(_separators);
-    WriteVarint(static_cast<uint32_t>(shared), out);
-    WriteVarint(static_cast<uint32_t>(suffix.size()), out);
-    _separators.append(suffix);
-    _separator.assign(separator);
+    _separators.arena.append(
+      first.substr(0, CommonPrefixLength(bytes_view{_last}, first) + 1));
+    _separators.offsets.push_back(
+      static_cast<uint32_t>(_separators.arena.size()));
   }
   _last.assign(_encoder.Key(_encoder.Count() - 1));
   _records.Close();
@@ -344,7 +338,9 @@ void FieldWriter::EndKeyed(FieldHead& head) {
   head.last_entry = last;
   if (_first_block != _blocks) {
     FeedIndex();
-    _index.Finish(head, _sections);
+    if (_index.Gated()) {
+      _sections.push_back(_index.Finish());
+    }
   }
 }
 
@@ -363,8 +359,7 @@ void FieldWriter::Reset() noexcept {
   _spans.clear();
   _heads.clear();
   _last.clear();
-  _separator.clear();
-  _separators.clear();
+  _separators = {};
   _sections.clear();
   _first_page = 0;
   _blocks = 0;
@@ -379,20 +374,50 @@ void FieldWriter::end() {
   _pw.End();
   if (!_heads.empty()) {
     auto& out = *_out;
+    const auto blocks_end = out.Position();
+    WriteArray(out, _separators.offsets);
+    WriteArray(out, _separators.arena);
+    const auto separators_size = out.Position() - blocks_end;
+    uint32_t ordinal = 0;
+    size_t gated = 0;
+    bstring prefix;
+    const auto write_index = [&](FieldHead& head) {
+      prefix.clear();
+      AppendOrdinal(prefix, ordinal++, _ordinal_bytes);
+      const uint32_t blocks = head.last_block - head.first_block + 1;
+      if (blocks == 1) {
+        return;
+      }
+      DictSections sections;
+      if (GatesTerms(head.member, head.width)) {
+        sections = std::move(_sections[gated++]);
+      }
+      const auto at = out.Position();
+      DictIndex{head, prefix, blocks, _separators, std::move(sections)}.Write(
+        out);
+      head.index.size = out.Position() - at;
+    };
+    for (auto& head : _heads) {
+      if (head.term_count == 1) {
+        continue;
+      }
+      write_index(head);
+      for (auto& level : head.levels) {
+        write_index(level);
+      }
+    }
+    SDB_ASSERT(gated == _sections.size());
     TermsMeta terms{
       .blocks = _blocks,
       .first_page = _first_page,
       .spans = std::move(_spans),
-      .blocks_end = out.Position(),
+      .blocks_end = blocks_end,
       .fields = std::move(_heads),
-      .separators = {.size = _separators.size()},
+      .separators = {.size = separators_size},
       .ordinal_bytes = _ordinal_bytes,
     };
-    out.WriteData(_sections.data(), _sections.size());
-    out.WriteData(_separators.data(), _separators.size());
     [[maybe_unused]] const bool placed = PlaceSections(terms, out.Position());
-    SDB_ASSERT(placed && terms.separators.offset + terms.separators.size ==
-                           out.Position());
+    SDB_ASSERT(placed);
     _idx->SetTerms(std::move(terms));
   }
   Reset();

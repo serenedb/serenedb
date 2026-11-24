@@ -60,9 +60,7 @@ struct FieldHead {
   uint32_t last_block = 0;
   uint32_t last_entry = 0;
   std::string fsst_table;
-  Section block_prefixes;
-  Section block_mask_bytes;
-  Section block_masks;
+  Section index;
   TextHead text;
   std::vector<FieldHead> levels;
   bool single_valued = false;

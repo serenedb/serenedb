@@ -26,9 +26,12 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <duckdb/common/serializer/read_stream.hpp>
 #include <duckdb/common/serializer/write_stream.hpp>
+#include <iterator>
 #include <limits>
 #include <string_view>
+#include <type_traits>
 
 #include "iresearch/formats/posting/block_codec.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -41,6 +44,23 @@
 namespace irs::term_dict {
 
 inline constexpr uint32_t kPage = 4096;
+
+void WriteArray(duckdb::WriteStream& out, const auto& values) {
+  using T = std::remove_cvref_t<decltype(*std::data(values))>;
+  static_assert(std::is_trivially_copyable_v<T>);
+  out.Write<uint64_t>(std::size(values));
+  out.WriteData(reinterpret_cast<duckdb::const_data_ptr_t>(std::data(values)),
+                std::size(values) * sizeof(T));
+}
+
+void ReadArray(duckdb::ReadStream& in, auto& values) {
+  using T = std::remove_cvref_t<decltype(*std::data(values))>;
+  static_assert(std::is_trivially_copyable_v<T>);
+  values.resize(in.Read<uint64_t>());
+  in.ReadData(reinterpret_cast<duckdb::data_ptr_t>(std::data(values)),
+              std::size(values) * sizeof(T));
+}
+
 constexpr uint64_t PackedBytes(uint64_t count, uint32_t bits) noexcept {
   return (count * bits + 7) / 8;
 }

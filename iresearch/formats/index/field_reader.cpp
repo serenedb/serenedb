@@ -20,11 +20,13 @@
 
 #include "iresearch/formats/index/field_reader.hpp"
 
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "iresearch/formats/index/idx_reader.hpp"
+#include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs::term_dict {
@@ -41,23 +43,14 @@ void FieldReader::prepare(const ReaderState& state) {
   }
 
   const auto& heads = terms.fields;
-  auto& separators = _separators;
-  bstring copy;
-  bytes_view area;
-  const auto section = [&](const Section& at) {
-    return area.substr(at.offset - terms.blocks_end, at.size);
-  };
+  const auto& separators = _separators;
+  duckdb::InputFileReader in{_store.Input()};
   if (!heads.empty()) {
     _store.Bind(terms);
-    area = _store.Read(
-      terms.blocks_end,
-      terms.separators.offset + terms.separators.size - terms.blocks_end, copy);
-    if (const auto blocks = _store.BlockCount(); blocks != 0) {
-      separators = DecodeSeparators(section(terms.separators), blocks - 1);
-      _store.Account(SeparatorBytes(separators));
-    } else if (terms.separators.size != 0) {
-      Corrupted("separators");
-    }
+    in.Seek(terms.separators.offset);
+    ReadArray(in, _separators.offsets);
+    ReadArray(in, _separators.arena);
+    _store.Account(SeparatorBytes(separators));
   }
 
   IndexFeatures features = IndexFeatures::None;
@@ -84,19 +77,16 @@ void FieldReader::prepare(const ReaderState& state) {
       for (const auto& level : head.levels) {
         prefix.clear();
         AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
-        _keyed.emplace_back(*this, level, prefix, separators, IndexSections{});
+        in.Seek(level.index.offset);
+        _keyed.emplace_back(*this, level, prefix, separators, in);
       }
       const std::span<const TermReaderImpl> levels{_keyed.data() + first,
                                                    head.levels.size()};
       prefix.clear();
       AppendOrdinal(prefix, own, terms.ordinal_bytes);
-      const IndexSections sections{
-        .prefixes = section(head.block_prefixes),
-        .mask_bytes = section(head.block_mask_bytes),
-        .masks = section(head.block_masks),
-      };
-      _dicts.push_back(&_keyed.emplace_back(*this, head, prefix, separators,
-                                            sections, levels));
+      in.Seek(head.index.offset);
+      _dicts.push_back(
+        &_keyed.emplace_back(*this, head, prefix, separators, in, levels));
     }
     ++_by_id
         .try_emplace(

@@ -81,6 +81,7 @@ add_executable(
     analysis/wordnet_synonyms_tokenizer_tests.cpp
     duckdb/immutable_strings_tests.cpp
     duckdb/validity_mask_tests.cpp
+    formats/ann_build_env_test.cpp
     formats/column/column_reader_test.cpp
     formats/columnstore2_test.cpp
     formats/docs_slack_test.cpp
@@ -187,6 +188,7 @@ add_executable(
     utils/bitset_tests.cpp
     utils/bitvector_tests.cpp
     utils/blocking_once_test.cpp
+    utils/compression_test.cpp
     utils/group_commit_test.cpp
     utils/huge_page_allocator_test.cpp
     utils/json_leaf_test.cpp

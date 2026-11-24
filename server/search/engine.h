@@ -70,6 +70,7 @@ class SearchEngine final {
   const irs::AnnBuildEnv& ManualAnnEnv() const noexcept {
     return _manual_ann_env;
   }
+  const irs::AnnBuildEnv& SnapshotEnv() const noexcept { return _snapshot_env; }
 
   // Reserve / release one of the MaxConcurrentCompactions() slots. A fan-out
   // sub-task holds a slot only while CompactUnsafe runs.
@@ -87,6 +88,19 @@ class SearchEngine final {
   }
   void ReleaseCompaction() noexcept {
     _running_compactions.fetch_sub(1, std::memory_order_release);
+  }
+
+  uint32_t AcquireCompactionWorkers(uint32_t want, uint32_t held) noexcept {
+    uint32_t grant = held == 0 ? 1U : 0U;
+    while (grant < want && TryAcquireCompaction()) {
+      ++grant;
+    }
+    return grant;
+  }
+  void ReleaseCompactionWorkers(uint32_t held) noexcept {
+    for (uint32_t worker = 1; worker < held; ++worker) {
+      ReleaseCompaction();
+    }
   }
 
   uint32_t AcquireAnnWorkers(uint32_t want, uint32_t held,
@@ -127,6 +141,7 @@ class SearchEngine final {
   Runtime& _runtime;
   irs::AnnBuildEnv _ann_env;
   irs::AnnBuildEnv _manual_ann_env;
+  irs::AnnBuildEnv _snapshot_env;
   utils::DrainGate _maintenance;
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};
@@ -156,6 +171,14 @@ inline uint32_t AnnAcquireWorkers(uint32_t want, uint32_t held) noexcept {
 
 inline void AnnReleaseWorkers(uint32_t n) noexcept {
   GetSearchEngine().ReleaseAnnWorkers(n);
+}
+
+inline uint32_t SnapshotAcquireWorkers(uint32_t want, uint32_t held) noexcept {
+  return GetSearchEngine().AcquireCompactionWorkers(want, held);
+}
+
+inline void SnapshotReleaseWorkers(uint32_t held) noexcept {
+  GetSearchEngine().ReleaseCompactionWorkers(held);
 }
 
 class [[nodiscard]] ManualCompactionSlot {

@@ -669,7 +669,8 @@ std::shared_ptr<const TableState> Store::SnapshotState(
   return version.tick <= snapshot ? version.state : nullptr;
 }
 
-catalog::RecordBuffer Store::SnapshotRecord(const TableState& state) const {
+catalog::RecordBuffer Store::SnapshotRecord(const TableState& state,
+                                            irs::ParallelFor parallel) const {
   irs::containers::FlatHashSet<irs::field_id> stored;
   {
     absl::ReaderMutexLock lock{&_layout_mutex};
@@ -733,6 +734,7 @@ catalog::RecordBuffer Store::SnapshotRecord(const TableState& state) const {
       }
     };
   }
+  PackDelta(delta, irs::compression::kFrameBytes, parallel);
   delta.manifest = state.manifest;
   return catalog::SearchRecord(_db_id, _id, delta);
 }

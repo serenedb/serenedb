@@ -1,6 +1,7 @@
 target_sources(
     iresearch
     PRIVATE
+        ann_build_env.cpp
         column/col_reader.cpp
         column/col_writer.cpp
         column/column_patch.cpp

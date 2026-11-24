@@ -41,6 +41,7 @@
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
+#include <iresearch/utils/compression.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/parallel_for.hpp>
 #include <limits>
@@ -115,13 +116,18 @@ struct LoggedRows {
   std::vector<connector::ColumnId> columns;
   size_t chunks = 0;
   absl::AnyInvocable<void(ChunkVisit visit) const> scan;
+  irs::compression::Compressed staged;
 };
+
+using StagedValues =
+  std::vector<std::shared_ptr<const irs::compression::Compressed>>;
 
 struct UnitDelta {
   uint64_t unit = 0;
   std::shared_ptr<const irs::DocumentMask> deleted;
   std::vector<irs::FieldPatch> patches;
   std::shared_ptr<const irs::DocumentMask> patched;
+  StagedValues staged;
 };
 
 struct TableDelta {
@@ -141,6 +147,7 @@ struct UnitPatch {
   std::vector<irs::FieldPatch> fields;
   bool same_rows = false;
   std::vector<std::shared_ptr<const irs::DocumentMask>> rows;
+  StagedValues staged;
 };
 
 void UniteRows(UnitPatch& patch);

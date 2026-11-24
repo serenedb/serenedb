@@ -41,7 +41,6 @@
 #include "backup/pg_control.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
-#include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
 #include "network/credentials.h"
 #include "network/listen_protocol.h"

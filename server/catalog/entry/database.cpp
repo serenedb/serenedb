@@ -90,8 +90,6 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::AlterEntry(
   }
   auto copy = GetInfo();
   auto& next = copy->Cast<duckdb::CreateDatabaseInfo>();
-  next.oid = oid;
-  next.permissions = permissions;
   if (alter.set_connection_limit) {
     next.connection_limit = alter.connection_limit;
   }

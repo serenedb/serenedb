@@ -30,8 +30,6 @@
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
 #include <iresearch/analysis/tokenizer_config.hpp>
-#include <iresearch/utils/pg/errcodes.hpp>
-#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <optional>

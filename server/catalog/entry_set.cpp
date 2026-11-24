@@ -131,7 +131,6 @@ void ForEachSubject(
   if (version.type == duckdb::CatalogType::ROLE_ENTRY) {
     for (const auto& membership : version.Cast<RoleCatalogEntry>().MemberOf()) {
       subject(membership.role, nullptr);
-      subject(membership.grantor, nullptr);
     }
   }
 }

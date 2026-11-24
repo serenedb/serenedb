@@ -673,9 +673,7 @@ void ClusterCatalog::DropDbRoleSettings(
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) {
   DeclareModified(transaction, *this);
-  if (!IsPredefinedRole(info.oid)) {
-    RequireUnreservedRoleName(info.GetQualifiedName().Name());
-  }
+  RequireUnreservedRoleName(info.GetQualifiedName().Name());
   AssignObjectOid(*this, info);
   auto& context = transaction.GetContext();
   if (!info.password.empty()) {

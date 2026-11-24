@@ -23,7 +23,6 @@
 #include <duckdb/catalog/catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
-#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/optional_ptr.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/main/client_context.hpp>

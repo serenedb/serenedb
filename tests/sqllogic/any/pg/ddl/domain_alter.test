@@ -450,3 +450,80 @@ ALTER DOMAIN dom_alt_ns VALIDATE CONSTRAINT dom_alt_ns_lt;
 skipif serenedb
 statement ok
 ALTER DOMAIN dom_alt_ns VALIDATE CONSTRAINT dom_alt_ns_lt;
+
+# ALTER DOMAIN registers the functions its new CHECK and DEFAULT call, keeps those of the constraints
+# it does not touch, and releases the ones it drops.
+
+statement ok
+CREATE FUNCTION f_dfd_keep(x int4) RETURNS boolean LANGUAGE sql AS 'SELECT x <> 13';
+
+statement ok
+CREATE FUNCTION f_dfd_check(x int4) RETURNS boolean LANGUAGE sql AS 'SELECT x > 0';
+
+statement ok
+CREATE FUNCTION f_dfd_default() RETURNS int4 LANGUAGE sql AS 'SELECT 7';
+
+statement ok
+CREATE DOMAIN d_dfd AS int4 CONSTRAINT d_dfd_keep CHECK (f_dfd_keep(VALUE));
+
+statement ok
+ALTER DOMAIN d_dfd ADD CONSTRAINT d_dfd_pos CHECK (f_dfd_check(VALUE)) NOT VALID;
+
+statement ok
+ALTER DOMAIN d_dfd SET DEFAULT f_dfd_default();
+
+statement error
+DROP FUNCTION f_dfd_check(int4);
+
+statement error
+DROP FUNCTION f_dfd_default();
+
+statement error
+DROP FUNCTION f_dfd_keep(int4);
+
+statement ok
+ALTER DOMAIN d_dfd DROP CONSTRAINT d_dfd_pos;
+
+statement ok
+DROP FUNCTION f_dfd_check(int4);
+
+statement error
+DROP FUNCTION f_dfd_keep(int4);
+
+statement ok
+ALTER DOMAIN d_dfd DROP DEFAULT;
+
+statement ok
+DROP FUNCTION f_dfd_default();
+
+statement error
+DROP FUNCTION f_dfd_keep(int4);
+
+statement ok
+ALTER DOMAIN d_dfd DROP CONSTRAINT d_dfd_keep;
+
+statement ok
+DROP FUNCTION f_dfd_keep(int4);
+
+# After ALTER DOMAIN a domain still depends on the domain or enum it is based on.
+
+statement ok
+CREATE TYPE e_dfd AS ENUM ('a', 'b');
+
+statement ok
+CREATE DOMAIN d_dfd_enum AS e_dfd;
+
+statement ok
+CREATE DOMAIN d_dfd_over AS d_dfd;
+
+statement ok
+ALTER DOMAIN d_dfd_enum SET DEFAULT 'a';
+
+statement ok
+ALTER DOMAIN d_dfd_over SET DEFAULT 1;
+
+statement error
+DROP TYPE e_dfd;
+
+statement error
+DROP DOMAIN d_dfd;

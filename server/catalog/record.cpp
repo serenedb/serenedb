@@ -29,6 +29,7 @@
 #include <compare>
 #include <cstring>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -752,6 +753,10 @@ void WriteChangeBody(const Change& change, RecordBuffer& out) {
             object.WriteProperty(101, "oid", created[i].oid);
           });
         });
+    } else if (subject.type == duckdb::CatalogType::TYPE_ENTRY) {
+      serializer.WriteProperty(
+        102, "dependencies",
+        subject.Cast<duckdb::TypeCatalogEntry>().dependencies);
     }
   }
   serializer.End();
@@ -830,10 +835,12 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
       }
       catalog.Alter(context, info);
       if (!content.dependencies.Set().empty()) {
-        auto& table = LoggedTable(catalog, transaction, oid);
-        catalog.Oids().RemoveDependents(table, table.oid);
-        table.dependencies = std::move(content.dependencies);
-        catalog.Oids().AddDependents(table, table.oid);
+        auto entry = catalog.LookupOid(transaction, oid);
+        SDB_ENSURE(entry, "the log changes a missing entry ", oid);
+        auto& standard = entry->Cast<duckdb::StandardEntry>();
+        catalog.Oids().RemoveDependents(standard, standard.oid);
+        standard.dependencies = std::move(content.dependencies);
+        catalog.Oids().AddDependents(standard, standard.oid);
       }
       if (!content.constraints.empty()) {
         auto& oids = catalog.GetDatabase().GetDatabaseManager();

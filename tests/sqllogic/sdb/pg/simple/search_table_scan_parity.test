@@ -573,3 +573,122 @@ SELECT a FROM ssp_topn_upd ORDER BY a LIMIT 1;
 ----
 a
 5
+
+
+statement ok
+CREATE TABLE ssp_sample_segs (id BIGINT PRIMARY KEY, v INTEGER) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(0, 100) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(100, 200) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(200, 300) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(300, 400) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(400, 500) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(500, 600) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(600, 700) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(700, 800) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(800, 900) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+statement ok
+INSERT INTO ssp_sample_segs SELECT i, i FROM range(900, 1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ssp_sample_segs;
+
+
+query
+SELECT count(*) AS n FROM ssp_sample_segs USING SAMPLE 1 ROWS (system, 1);
+----
+n
+1
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+CREATE TEMP TABLE ssp_sample_one_thread AS SELECT v FROM ssp_sample_segs USING SAMPLE 10 ROWS (system, 1);
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+CREATE TEMP TABLE ssp_sample_four_threads AS SELECT v FROM ssp_sample_segs USING SAMPLE 10 ROWS (system, 1);
+
+
+statement ok
+RESET threads
+
+
+query
+SELECT (SELECT count(*) FROM ssp_sample_one_thread) AS n,
+       (SELECT count(*) FROM (SELECT v FROM ssp_sample_one_thread EXCEPT SELECT v FROM ssp_sample_four_threads) d) AS differ;
+----
+n	differ
+10	0

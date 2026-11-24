@@ -468,9 +468,15 @@ uint64_t ResolveSchema(const Session& session, std::string_view name) {
 
 std::optional<ObjectTarget> SchemaTarget(
   const Session& session, uint64_t oid,
-  duckdb::optional_ptr<duckdb::CatalogEntry>) {
+  duckdb::optional_ptr<duckdb::CatalogEntry> entry) {
   if (FindSystemObject(kSystemNamespaces, oid)) {
     return ObjectTarget{&SchemaPermissions()};
+  }
+  if (entry) {
+    if (entry->type != CatalogType::SCHEMA_ENTRY) {
+      return std::nullopt;
+    }
+    return ObjectTarget{&PrivilegePermissions(*entry)};
   }
   if (const auto schema = SchemaByOid(session, oid)) {
     return ObjectTarget{&PrivilegePermissions(*schema)};
@@ -836,9 +842,6 @@ class ObjectAcls final : public duckdb::FunctionLocalState {
   std::optional<ObjectTarget> Find(uint64_t classid, uint64_t objid,
                                    int32_t objsubid) const {
     auto entry = EntryByOid(_session, objid);
-    if (entry && !Shown(_session, *entry)) {
-      return std::nullopt;
-    }
     if (classid == kPgClassTable) {
       if (objsubid < 0 || objsubid > std::numeric_limits<int16_t>::max()) {
         return std::nullopt;
@@ -1150,20 +1153,17 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
                               column);
       }
       const auto oid = *RegIn(_session, RegKind::Class, name, nullptr);
-      return FindRelation(oid, EntryByOid(_session, oid), column);
+      return FindRelation(oid, InternalEntryByOid(_session, oid), column);
     }
     if (_kind.find_named) {
       return _kind.find_named(_session, name);
     }
     const auto oid = _kind.resolve(_session, name);
-    return _kind.find(_session, oid, EntryByOid(_session, oid));
+    return _kind.find(_session, oid, InternalEntryByOid(_session, oid));
   }
 
   std::optional<ObjectTarget> FindByOid(uint64_t oid, const Column* column) {
     auto entry = EntryByOid(_session, oid);
-    if (entry && !Shown(_session, *entry)) {
-      return std::nullopt;
-    }
     if (_kind.relation) {
       return FindRelation(oid, entry, column);
     }

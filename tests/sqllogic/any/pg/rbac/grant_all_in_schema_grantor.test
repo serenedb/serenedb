@@ -78,10 +78,8 @@ db error: ERROR: permission denied for table gaig_theirs
 
 
 skipif postgres
-statement error
+statement ok
 GRANT SELECT ON ALL TABLES IN SCHEMA gaig_s TO gaig_bob;
-----
-db error: ERROR: Table with name gaig_theirs does not exist!<slt:ignore>
 
 
 statement ok
@@ -92,6 +90,7 @@ statement ok
 RESET ROLE;
 
 
+onlyif postgres
 query
 SELECT c.relname, array_to_string(c.relacl, ',') AS acl
 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -100,6 +99,18 @@ ORDER BY c.relname;
 ----
 relname	acl
 gaig_mine	NULL
+gaig_theirs	NULL
+
+
+skipif postgres
+query
+SELECT c.relname, array_to_string(c.relacl, ',') AS acl
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'gaig_s' AND c.relkind = 'r'
+ORDER BY c.relname;
+----
+relname	acl
+gaig_mine	gaig_alice=arwdDxtm/gaig_alice,gaig_bob=r/gaig_alice
 gaig_theirs	NULL
 
 

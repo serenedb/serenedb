@@ -29,6 +29,7 @@
 #include <fast_float/fast_float.h>
 
 #include <cmath>
+#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
 #include <duckdb/common/enums/trigger_type.hpp>
@@ -53,7 +54,6 @@
 
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
-#include "catalog/entry/role.h"
 #include "catalog/transaction.h"
 #include "iresearch/utils/log.hpp"
 #include "jobs/scheduler.h"
@@ -357,19 +357,6 @@ void SetCreateroleSelfGrant(duckdb::ClientContext&, duckdb::SetScope,
   ParseCreateroleSelfGrant(value.ToString());
 }
 
-const catalog::RoleCatalogEntry& RoleNamed(duckdb::ClientContext& ctx,
-                                           std::string_view name) {
-  auto& cluster = catalog::ClusterOf(ctx);
-  auto entry =
-    cluster.Set(duckdb::CatalogType::ROLE_ENTRY)
-      .Get(cluster.GetCatalogTransaction(ctx), duckdb::Identifier{name});
-  if (!entry) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
-                    ERR_MSG("role \"", name, "\" does not exist"));
-  }
-  return entry->Cast<catalog::RoleCatalogEntry>();
-}
-
 void SetDefaultTablespace(duckdb::ClientContext& ctx, duckdb::SetScope,
                           duckdb::Value& value) {
   const auto name = value.ToString();
@@ -387,15 +374,9 @@ void SetDefaultTablespace(duckdb::ClientContext& ctx, duckdb::SetScope,
   }
 }
 
-void RefreshSuperuser(ConnectionContext& conn) {
-  conn.SetSetting("is_superuser",
-                  conn.CurrentRole().is_superuser ? "on" : "off", false);
-}
-
 void ResetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
   auto& conn = ConnectionContext::Get(ctx);
   conn.SetEffectiveRole(conn.GetSessionRoleId());
-  RefreshSuperuser(conn);
 }
 
 void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
@@ -407,36 +388,33 @@ void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
     return;
   }
   auto& conn = ConnectionContext::Get(ctx);
-  const auto& role = RoleNamed(ctx, name);
-  if (!ctx.AccessOf(conn.GetSessionRoleId()).CanSet(role.oid)) {
+  const auto role = duckdb::RoleId(ctx, duckdb::Identifier{name});
+  if (!ctx.AccessOf(conn.GetSessionRoleId()).CanSet(role)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied to set role \"", name, "\""));
   }
-  conn.SetEffectiveRole(role.oid);
-  RefreshSuperuser(conn);
+  conn.SetEffectiveRole(role);
 }
 
 void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
                             duckdb::Value& value) {
   const auto name = value.ToString();
   auto& conn = ConnectionContext::Get(ctx);
-  const auto& role = RoleNamed(ctx, name);
+  const auto role = duckdb::RoleId(ctx, duckdb::Identifier{name});
   const auto login = conn.GetLoginRoleId();
-  if (role.oid != login && !ctx.AccessOf(login).is_superuser) {
+  if (role != login && !ctx.AccessOf(login).is_superuser) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
       ERR_MSG("permission denied to set session authorization \"", name, "\""));
   }
-  conn.SetSessionRole(role.oid);
+  conn.SetSessionRole(role);
   conn.SetSetting("role", "none", false);
-  RefreshSuperuser(conn);
 }
 
 void ResetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope) {
   auto& conn = ConnectionContext::Get(ctx);
   conn.ResetIdentity();
   conn.SetSetting("role", "none", false);
-  RefreshSuperuser(conn);
 }
 
 void NoOverwriteClientEncoding(duckdb::ClientContext& ctx, duckdb::SetScope,

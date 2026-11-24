@@ -153,14 +153,11 @@ struct DescribedObject {
 std::optional<DescribedObject> Described(const Session& session, uint64_t oid) {
   if (auto entry = EntryByOid(session, oid);
       entry && duckdb::ObjectKindOf(entry->type).pg_class != kPgProcTable) {
-    if (!Shown(session, *entry)) {
-      return std::nullopt;
-    }
     return DescribedObject{duckdb::ObjectKindOf(entry->type).pg_class,
                            entry->comment};
   }
   const auto found = FindMacro(session, oid);
-  if (!found.macro || !OwnerShown(session, oid)) {
+  if (!found.macro) {
     return std::nullopt;
   }
   return DescribedObject{kPgProcTable,
@@ -235,7 +232,7 @@ void ColDescriptionFunction(duckdb::DataChunk& args,
   duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t, int32_t>(
     args, result,
     [&](int64_t oid, int32_t column) -> duckdb::optional<duckdb::string_t> {
-      auto entry = ShownEntryByOid(session, oid);
+      auto entry = EntryByOid(session, oid);
       if (!entry || column < 0 ||
           (column == 0 &&
            duckdb::ObjectKindOf(entry->type).pg_class != kPgClassTable)) {
@@ -339,7 +336,7 @@ void PgGetSerialSequenceFunction(duckdb::DataChunk& args,
 constexpr int32_t kAllUpdateEvents = (1 << 2) | (1 << 3) | (1 << 4);
 
 int32_t UpdatableEvents(const Session& session, int64_t oid) {
-  auto entry = ShownEntryByOid(session, oid);
+  auto entry = EntryByOid(session, oid);
   return entry && entry->type == CatalogType::TABLE_ENTRY ? kAllUpdateEvents
                                                           : 0;
 }
@@ -404,7 +401,7 @@ void PgEncodingMaxLengthFunction(duckdb::DataChunk& args,
 }
 
 int64_t LiveTuples(const Session& session, int64_t oid) {
-  auto entry = ShownEntryByOid(session, oid);
+  auto entry = EntryByOid(session, oid);
   if (!entry || entry->type != CatalogType::TABLE_ENTRY) {
     return 0;
   }
@@ -1387,15 +1384,14 @@ void CurrentLogfileFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 }
 
 template<const std::string_view& kKind,
-         bool (*Exists)(duckdb::ClientContext&, int64_t)>
+         bool (*Exists)(duckdb::ExpressionState&, int64_t)>
 void ActualVersionFunction(duckdb::DataChunk& args,
                            duckdb::ExpressionState& state,
                            duckdb::Vector& result) {
-  auto& context = state.GetContext();
   duckdb::UnaryExecutor::Execute<int64_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](int64_t oid) -> duckdb::optional<duckdb::string_t> {
-      if (!Exists(context, oid)) {
+      if (!Exists(state, oid)) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
                         ERR_MSG(kKind, " with OID ", oid, " does not exist"));
       }
@@ -1403,13 +1399,17 @@ void ActualVersionFunction(duckdb::DataChunk& args,
     });
 }
 
-bool CollationExists(duckdb::ClientContext&, int64_t oid) {
+bool CollationExists(duckdb::ExpressionState&, int64_t oid) {
   return static_cast<bool>(FindBuiltinCollation(oid));
 }
 
-bool DatabaseExists(duckdb::ClientContext& context, int64_t oid) {
-  return oid >= 0 && static_cast<bool>(FindDatabaseById(
-                       context, static_cast<duckdb::idx_t>(oid)));
+bool DatabaseExists(duckdb::ExpressionState& state, int64_t oid) {
+  if (oid < 0) {
+    return false;
+  }
+  auto& context = state.GetContext();
+  auto database = FindDatabaseById(context, static_cast<duckdb::idx_t>(oid));
+  return database && context.CanSee(CallerAccess(state), *database);
 }
 
 constexpr std::string_view kCollationKind = "collation";
@@ -1784,7 +1784,8 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(loader, pg_catalog, "pg_collation_actual_version", VOLATILE,
                  nullptr, {collation_version});
   duckdb::ScalarFunction database_collation_version{
-    {oid}, text, ActualVersionFunction<kDatabaseKind, &DatabaseExists>};
+    {oid}, text, ActualVersionFunction<kDatabaseKind, &DatabaseExists>,
+    BindCaller};
   database_collation_version.SetFallible();
   RegisterScalar(loader, pg_catalog, "pg_database_collation_actual_version",
                  VOLATILE, nullptr, {database_collation_version});

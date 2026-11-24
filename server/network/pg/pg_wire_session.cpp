@@ -45,8 +45,6 @@
 #include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
-#include "catalog/cluster.h"
-#include "catalog/entry/role.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
@@ -445,7 +443,6 @@ bool PgWireSession<Kind>::SetupConnection() {
   SDB_PARK_ONCE_ON_FAILURE("pause_login_before_register");
   const auto role = login.role;
   const auto database_id = login.database;
-  const bool superuser = login.superuser;
 
   _conn =
     MakeConnection(irs::DuckDBEngine::Instance().instance(),
@@ -511,7 +508,6 @@ bool PgWireSession<Kind>::SetupConnection() {
   _connection_ctx->SetSetting("session_authorization", std::string{UserName()},
                               false);
   keep_as_default("session_authorization");
-  _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
 
   const auto apply = [&](const std::string& name, const std::string& value) {
     try {
@@ -890,13 +886,6 @@ void PgWireSession<Kind>::WriteCommandTag(
 }
 
 template<SocketKind Kind>
-void PgWireSession<Kind>::CapturePeerAddress() {
-  if (const auto address = this->ClientAddress()) {
-    _peer_addr = *address;
-  }
-}
-
-template<SocketKind Kind>
 void PgWireSession<Kind>::WriteCommandTag(
   const sdb::pg::CommandTag& tag, duckdb::QueryResult& result,
   duckdb::StatementReturnType return_type) {
@@ -915,7 +904,6 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   SDB_IF_FAILURE("authenticate_throw") {
     THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
   }
-  CapturePeerAddress();
 
   // Consult the HBA ruleset first: it decides trust / reject / which method,
   // for every connection, regardless of whether a stored credential exists.

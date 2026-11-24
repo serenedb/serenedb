@@ -211,6 +211,7 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
   session_user = _user;
   session_role = identity.role;
   SetCurrentRole(identity.role);
+  PublishSuperuser();
   _progress->pid = _backend_pid;
   _progress->datid = static_cast<int64_t>(_database_id);
   _progress->user = _user;

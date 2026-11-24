@@ -41,6 +41,7 @@ constexpr auto kRoutes = std::to_array<Route>({
   {HttpMethod::Post, "/_test/fuzz", Handler<Endpoint::Fuzz>},
   {HttpMethod::Get, "/_test/status", Handler<Endpoint::Status>},
   {HttpMethod::Get, "/_test/session_user", Handler<Endpoint::SessionUser>},
+  {HttpMethod::Get, "/_test/is_superuser", Handler<Endpoint::IsSuperuser>},
 });
 
 SDB_HTTP_API kTest{"test", kRoutes, kEsMaxBodyBytes};

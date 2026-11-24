@@ -447,7 +447,7 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
 }
 
 duckdb::LogicalType UserType(const Session& session, uint64_t oid) {
-  if (auto entry = EntryByOid(session, oid);
+  if (auto entry = InternalEntryByOid(session, oid);
       entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
     return entry->Cast<duckdb::TypeCatalogEntry>().user_type;
   }

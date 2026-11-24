@@ -146,7 +146,7 @@ duckdb::DatabaseSize DatabaseStorageSize(duckdb::ClientContext& context,
 std::optional<int64_t> RelationBytes(const Session& session, uint64_t oid,
                                      bool data, bool indexes) {
   auto relation = FindRelation(session, oid);
-  if (!relation || !RelationShown(session, *relation)) {
+  if (!relation) {
     return std::nullopt;
   }
   if (relation->key || !relation->entry) {
@@ -260,9 +260,10 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaEntry(
   const Session& session, duckdb::string_t name) {
-  return session.database->GetSchema(
+  auto schema = session.database->GetSchema(
     *session.transaction, duckdb::Identifier{connector::AsView(name)},
     duckdb::OnEntryNotFound::RETURN_NULL);
+  return schema && Shown(session, *schema) ? schema : nullptr;
 }
 
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaEntry(
@@ -277,7 +278,7 @@ void SchemaSizeFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   duckdb::UnaryExecutor::Execute<Key, int64_t>(
     args.data[0], result, args.size(), [&](Key key) -> int64_t {
       auto schema = session.database ? SchemaEntry(session, key) : nullptr;
-      if (!schema || !Shown(session, *schema)) {
+      if (!schema) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_SCHEMA),
                         ERR_MSG("schema ", KeyText(key), " does not exist"));
       }
@@ -303,10 +304,8 @@ int64_t TablespaceBytes(const Session& session,
   if (tablespace.oid != SessionTablespace(session)) {
     if (const auto& role = session.role;
         !role.Has(duckdb::RoleCapability::ReadAllStats) &&
-        !role.Owns(kRootUser) &&
-        !role.CanAny(duckdb::CatalogType::TABLESPACE_ENTRY,
-                     PrivilegePermissions(tablespace),
-                     duckdb::AclMode::Create)) {
+        !role.Can(duckdb::CatalogType::TABLESPACE_ENTRY,
+                  PrivilegePermissions(tablespace), duckdb::AclMode::Create)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied for tablespace ",
                               tablespace.name.GetIdentifierName()));

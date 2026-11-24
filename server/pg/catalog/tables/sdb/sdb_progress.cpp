@@ -19,11 +19,9 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string_view>
 
-#include "catalog/cluster.h"
 #include "pg/catalog/engine/system_table.h"
 #include "pg/catalog/tables/tables.h"
 #include "pg/progress_registry.h"
@@ -159,12 +157,10 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
     kProgressBase, kProgressSession, kProgressActive, kProgressCommand);
 
   void Row(const ProgressSnapshot& s) {
-    if (!_role.Has(duckdb::RoleCapability::ReadAllStats)) {
-      const auto role = _roles->FindByName(s.user);
-      if (!role.IsValid() || !_role.MemberOf(role.GetIndex())) {
-        Emit<kHidden>(s);
-        return;
-      }
+    if (!_role.Has(duckdb::RoleCapability::ReadAllStats) &&
+        !_role.MemberOf(s.role)) {
+      Emit<kHidden>(s);
+      return;
     }
     if (s.status.state != BackendState::Active) {
       Emit<kIdle>(s);
@@ -178,10 +174,6 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
 
  private:
   const duckdb::RoleAccess& _role = Role();
-  duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles =
-    !_role.Has(duckdb::RoleCapability::ReadAllStats)
-      ? catalog::RolesOf(&Context())
-      : duckdb::shared_ptr<const duckdb::SecuritySnapshot>{};
 };
 
 }  // namespace

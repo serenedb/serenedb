@@ -92,6 +92,15 @@ def test_each_request_runs_as_the_role_it_authenticated_as(role, http_conn):
     assert all(s is sockets[0] for s in sockets)
 
 
+def test_is_superuser_follows_the_role_a_request_runs_as(role, http_conn):
+    answers = []
+    for auth in (SUPERUSER_AUTH, ROLE_AUTH, SUPERUSER_AUTH):
+        http_conn.request("GET", "/_test/is_superuser", headers={"Authorization": auth})
+        response = http_conn.getresponse()
+        answers.append((response.status, response.read().decode()))
+    assert answers == [(200, "on"), (200, "off"), (200, "on")]
+
+
 @pytest.mark.skipif(not TOKEN, reason="the server has no bearer token")
 def test_the_bearer_token_is_masked_in_settings():
     with psycopg.connect(**conn_kwargs(), autocommit=True) as conn:

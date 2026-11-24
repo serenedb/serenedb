@@ -232,9 +232,10 @@ MacroOverload FindMacro(const Session& session, uint64_t oid) {
   if (!session.database || oid == kInvalidOid) {
     return {};
   }
-  const auto entry = session.database->LookupOwner(*session.transaction, oid);
+  auto entry = session.database->LookupOwner(*session.transaction, oid);
   if (!entry || entry->internal ||
-      duckdb::ObjectKindOf(entry->type).pg_class != kPgProcTable) {
+      duckdb::ObjectKindOf(entry->type).pg_class != kPgProcTable ||
+      !Shown(session, *entry)) {
     return {};
   }
   const auto& macro = entry->Cast<duckdb::MacroCatalogEntry>();
@@ -1128,7 +1129,7 @@ OutText ClassOut(const Session& session, uint64_t oid) {
     return absl::StrCat(oid);
   }
   const auto relation = FindRelation(session, oid);
-  if (!relation || !RelationShown(session, *relation)) {
+  if (!relation) {
     return absl::StrCat(oid);
   }
   const auto object = NameOf(*session.transaction, *relation);
@@ -1273,7 +1274,7 @@ std::optional<ProcInfo> FindProc(const Session& session,
     return std::nullopt;
   }
   const auto found = FindMacro(session, oid);
-  if (!found.entry || !OwnerShown(session, oid)) {
+  if (!found.entry) {
     return std::nullopt;
   }
   const auto object = NameOf(*session.transaction, *found.entry);
@@ -1573,7 +1574,7 @@ std::optional<uint64_t> DictionaryIn(const Session& session,
 }
 
 OutText DictionaryOut(const Session& session, uint64_t oid) {
-  auto entry = ShownEntryByOid(session, oid);
+  auto entry = EntryByOid(session, oid);
   if (!entry || entry->type != duckdb::CatalogType::TOKENIZER_ENTRY) {
     return absl::StrCat(oid);
   }
@@ -1623,8 +1624,7 @@ OutText NamespaceOut(const Session& session, uint64_t oid) {
   if (const auto* system = FindSystemObject(kSystemNamespaces, oid)) {
     return system->name;
   }
-  if (auto schema = SchemaByOid(session, oid);
-      schema && Shown(session, *schema)) {
+  if (auto schema = SchemaByOid(session, oid)) {
     return OutName(schema->name.GetIdentifierName());
   }
   return absl::StrCat(oid);

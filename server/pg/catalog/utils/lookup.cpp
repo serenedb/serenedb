@@ -50,8 +50,8 @@ bool Shown(const Session& session, duckdb::CatalogEntry& entry) {
   return !session.context || session.context->CanSee(session.role, entry);
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
-                                                      uint64_t oid) {
+duckdb::optional_ptr<duckdb::CatalogEntry> InternalEntryByOid(
+  const Session& session, uint64_t oid) {
   if (!session.database || oid == kInvalidOid) {
     return nullptr;
   }
@@ -62,22 +62,10 @@ duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
   return entry;
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> ShownEntryByOid(
-  const Session& session, uint64_t oid) {
-  auto entry = EntryByOid(session, oid);
+duckdb::optional_ptr<duckdb::CatalogEntry> EntryByOid(const Session& session,
+                                                      uint64_t oid) {
+  auto entry = InternalEntryByOid(session, oid);
   return entry && Shown(session, *entry) ? entry : nullptr;
-}
-
-bool RelationShown(const Session& session, const Relation& relation) {
-  return !relation.entry || Shown(session, *relation.entry.get_mutable());
-}
-
-bool OwnerShown(const Session& session, uint64_t oid) {
-  if (!session.database) {
-    return true;
-  }
-  auto owner = session.database->LookupOwner(*session.transaction, oid);
-  return !owner || Shown(session, *owner);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> TemporaryEntryByOid(
@@ -102,7 +90,8 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> SchemaByOid(
     return nullptr;
   }
   auto entry = session.database->LookupOid(*session.transaction, oid);
-  if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY) {
+  if (!entry || entry->type != duckdb::CatalogType::SCHEMA_ENTRY ||
+      !Shown(session, *entry)) {
     return nullptr;
   }
   return entry->Cast<duckdb::SchemaCatalogEntry>();
@@ -114,7 +103,8 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> OwnerTable(
     return nullptr;
   }
   auto owner = session.database->LookupOwner(*session.transaction, oid);
-  if (!owner || owner->type != duckdb::CatalogType::TABLE_ENTRY) {
+  if (!owner || owner->type != duckdb::CatalogType::TABLE_ENTRY ||
+      !Shown(session, *owner)) {
     return nullptr;
   }
   return owner->Cast<duckdb::TableCatalogEntry>();
@@ -342,7 +332,7 @@ std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
       return std::nullopt;
     }
     const auto relation = RowTypeOwner(session, oid);
-    if (!relation || !RelationShown(session, *relation)) {
+    if (!relation) {
       return std::nullopt;
     }
     return NameOf(*session.transaction, *relation);
@@ -353,7 +343,7 @@ std::optional<ObjectName> TypeObject(const Session& session, uint64_t oid) {
                         builtin->name};
     }
   }
-  if (auto entry = ShownEntryByOid(session, oid);
+  if (auto entry = EntryByOid(session, oid);
       entry && entry->type == duckdb::CatalogType::TYPE_ENTRY) {
     return NameOf(*session.transaction, *entry);
   }
@@ -365,7 +355,7 @@ uint64_t ArrayElementOid(const Session& session, uint64_t oid) {
     return oid & kRowArrayTypeOidBit ? TypeElementOid(oid) : kInvalidOid;
   }
   const auto element = TypeElementOid(oid);
-  const auto entry = EntryByOid(session, element);
+  const auto entry = InternalEntryByOid(session, element);
   return entry && entry->type == duckdb::CatalogType::TYPE_ENTRY ? element
                                                                  : kInvalidOid;
 }

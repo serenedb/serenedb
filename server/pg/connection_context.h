@@ -146,6 +146,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   void SetEffectiveRole(duckdb::idx_t role) {
     SetCurrentRole(role);
     session_user = EffectiveUserName();
+    PublishSuperuser();
   }
   void SetSessionRole(duckdb::idx_t role) {
     session_role = role;
@@ -281,6 +282,11 @@ class ConnectionContext final : public duckdb::ClientContext {
     irs::pg::SqlErrorData data;
     NoticeNode* next;
   };
+
+  void PublishSuperuser() {
+    SetSetting("is_superuser", CurrentRole().is_superuser ? "on" : "off",
+               false);
+  }
 
   struct TxnVariable {
     duckdb::Value rollback_restore;

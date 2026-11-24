@@ -342,6 +342,7 @@ std::vector<ProgressSnapshot> ProgressRegistry::GetSnapshots() const {
     auto& s = result.emplace_back();
     s.pid = source->pid;
     s.datid = source->datid;
+    s.role = source->role;
     s.user = source->user;
     s.database = source->database;
     s.backend_start_us = source->backend_start_us;

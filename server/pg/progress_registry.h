@@ -208,6 +208,7 @@ struct DatabaseStats {
 struct ProgressSnapshot {
   int32_t pid{0};
   int64_t datid{0};
+  duckdb::idx_t role{0};
   std::string user;
   std::string database;
   std::string query;

@@ -7,6 +7,14 @@ DROP ROLE IF EXISTS pudge_activity_spy;
 
 
 statement ok
+DROP ROLE IF EXISTS pudge_activity_twin;
+
+
+statement ok
+DROP ROLE IF EXISTS pudge_activity_twin_old;
+
+
+statement ok
 CREATE ROLE pudge_activity_spy LOGIN PASSWORD 'pudge_activity_pw';
 
 
@@ -108,8 +116,54 @@ query
 
 connection default
 statement ok
+CREATE ROLE pudge_activity_twin LOGIN PASSWORD 'pudge_activity_twin_pw';
+
+
+connection twin user=pudge_activity_twin password=pudge_activity_twin_pw
+query
+SELECT 'first twin' AS pudge_activity_twin_marker;
+----
+pudge_activity_twin_marker
+first twin
+
+
+connection default
+statement ok
+ALTER ROLE pudge_activity_twin RENAME TO pudge_activity_twin_old;
+
+
+connection default
+statement ok
+CREATE ROLE pudge_activity_twin;
+
+
+connection default
+statement ok
+GRANT pudge_activity_twin TO chin_activity_boss;
+
+
+connection boss user=chin_activity_boss password=chin_activity_pw
+query
+SELECT query
+FROM sdb_progress
+WHERE usename = 'pudge_activity_twin';
+----
+query
+<insufficient privilege>
+
+
+connection default
+statement ok
 DROP ROLE chin_activity_boss;
 
 
 statement ok
 DROP ROLE pudge_activity_spy;
+
+
+statement ok
+DROP ROLE pudge_activity_twin;
+
+
+statement ok
+DROP ROLE pudge_activity_twin_old;

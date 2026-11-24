@@ -179,29 +179,22 @@ void InstallHandlers() {
 
 bool SignalBlocked(pid_t tid, int signal) {
   const auto path = absl::StrCat("/proc/self/task/", tid, "/status");
-  const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
-  if (fd < 0) {
-    return true;
-  }
   std::array<char, 4096> buffer{};
-  const auto size = ::read(fd, buffer.data(), buffer.size());
-  close(fd);
-  if (size <= 0) {
-    return true;
+  ssize_t size = -1;
+  if (const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC); fd >= 0) {
+    size = ::read(fd, buffer.data(), buffer.size());
+    close(fd);
   }
   constexpr std::string_view kKey = "\nSigBlk:";
-  const std::string_view status{buffer.data(), static_cast<size_t>(size)};
-  const auto key = status.find(kKey);
-  if (key == std::string_view::npos) {
-    return true;
+  const std::string_view status{buffer.data(),
+                                size > 0 ? static_cast<size_t>(size) : 0};
+  uint64_t mask = ~uint64_t{0};
+  if (const auto key = status.find(kKey); key != std::string_view::npos) {
+    const auto value =
+      absl::StripLeadingAsciiWhitespace(status.substr(key + kKey.size()));
+    fast_float::from_chars(value.data(), value.data() + value.size(), mask, 16);
   }
-  const auto value =
-    absl::StripLeadingAsciiWhitespace(status.substr(key + kKey.size()));
-  uint64_t mask = 0;
-  return fast_float::from_chars(value.data(), value.data() + value.size(), mask,
-                                16)
-             .ec != std::errc{} ||
-         (mask >> (signal - 1) & 1) != 0;
+  return (mask >> (signal - 1) & 1) != 0;
 }
 
 std::vector<uintptr_t> SignalAndWait(pid_t tid, int signal)

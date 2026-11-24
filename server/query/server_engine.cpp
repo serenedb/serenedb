@@ -27,6 +27,8 @@
 #include <duckdb/catalog/default/default_functions.hpp>
 #include <duckdb/catalog/default/default_types.hpp>
 #include <duckdb/catalog/default/default_views.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/parser/expression/function_expression.hpp>
 
 #include "catalog/boot.h"
@@ -71,7 +73,6 @@
 #include "replication/repl_source.h"
 #include "server/utils/build.h"
 #include "server/utils/build_info.h"
-#include "server/utils/file_utils.h"
 #include "server/utils/lifecycle.h"
 #include "server/utils/number_of_cores.h"
 
@@ -129,17 +130,18 @@ void ConfigureServerDBConfig(duckdb::DBConfig& config) {
   ConfigureEngineDBConfig(config, datadir);
   config.SetOptionByName(
     "temp_directory",
-    duckdb::Value{utils::file_utils::BuildFilename(datadir, "tmp")});
+    duckdb::Value{duckdb::FileSystem::JoinPath(datadir, "tmp")});
   config.SetOptionByName(
     "secret_directory",
-    duckdb::Value{utils::file_utils::BuildFilename(datadir, "secrets")});
+    duckdb::Value{duckdb::FileSystem::JoinPath(datadir, "secrets")});
   // DuckDB's own auto-detect uses std::thread::hardware_concurrency(), which
   // ignores cgroup CPU limits and would over-thread in a container. Pin it to
   // our cgroup-aware logical core count when unset, and publish the resolved
   // value into the flag.
   auto threads = absl::GetFlag(FLAGS_cpu_threads);
   if (threads == 0) {
-    threads = CountLogicalCores();
+    threads = std::min<uint64_t>(CountLogicalCores(),
+                                 duckdb::TaskScheduler::MAX_WORKERS);
     absl::SetFlag(&FLAGS_cpu_threads, threads);
   }
   config.SetOptionByName("threads", duckdb::Value::UBIGINT(threads));

@@ -443,7 +443,7 @@ class PrunedTopTest : public tests::IndexTestBase {
   irs::BM25 _scorer;
   const irs::Scorer* _ranking = &_scorer;
   irs::StatsArena _stats{duckdb::Allocator::DefaultAllocator()};
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
   irs::QueryProfile* _profile = nullptr;
 };
 
@@ -1142,8 +1142,8 @@ TEST_P(PrunedTopTest, required_term_with_sparser_optional_ones) {
 
 INSTANTIATE_TEST_SUITE_P(pruned_top_test, PrunedTopTest,
                          ::testing::Combine(::testing::Values(
-                           &tests::Directory<&tests::MemoryDirectory>,
-                           &tests::Directory<&tests::MmapDirectory>)),
+                           tests::kMemoryDirParam,
+                           tests::DirParam{"local", &tests::LocalDirectory})),
                          PrunedTopTest::to_string);
 
 }  // namespace

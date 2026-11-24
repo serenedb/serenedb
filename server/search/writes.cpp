@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/inlined_vector.h>
+#include <absl/functional/function_ref.h>
 #include <absl/hash/hash.h>
 
 #include <bitset>
@@ -171,8 +172,8 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
     projections.push_back({.output_slot = i, .column_id = column_ids[i]});
   }
   irs::ColFilterStateCache filter_states;
-  connector::FullScanner scanner{
-    *columns, projections, {}, &context, filter_states};
+  connector::FullScanner scanner{*columns, projections, {},
+                                 {},       &context,    filter_states};
   duckdb::DataChunk chunk;
   chunk.Initialize(duckdb::Allocator::Get(context), types);
   duckdb::SelectionVector rows{STANDARD_VECTOR_SIZE};
@@ -670,7 +671,7 @@ void Writes::RewriteOwn(
 
 void Writes::TakeIndexedPatches(
   duckdb::ClientContext& context, Store& store,
-  absl::FunctionRef<void(const irs::DirectoryReader&, size_t,
+  absl::FunctionRef<void(const irs::CompositeReader&, size_t,
                          const irs::DocumentMask&)>
     feed) {
   auto* w = FindStoreWrites(store.GetId());
@@ -797,7 +798,7 @@ Tick Writes::LayoutVersion(const Store& store) {
            : store.GetTable().VersionAt(Snapshot(), _walks).state->layout;
 }
 
-const irs::DirectoryReader& Writes::PinnedReader(duckdb::ClientContext& context,
+const irs::CompositeReader& Writes::PinnedReader(duckdb::ClientContext& context,
                                                  Store& store) {
   auto* w = FindStoreWrites(store.GetId());
   SDB_ENSURE(w, "table ", store.GetId(),
@@ -1170,13 +1171,14 @@ std::vector<duckdb::string_t> OwnKeys(const StoreWrites& w, irs::field_id field,
   return keys;
 }
 
-void CheckVerifiedKeys(duckdb::ClientContext& context, const StoreWrites& w) {
+void CheckVerifiedKeys(duckdb::ClientContext& context, const StoreWrites& w,
+                       absl::FunctionRef<bool(const KeySpec&)> enforced) {
   if (w.verified_keys.empty()) {
     return;
   }
   const LiveUnits now{w.store->GetTable().State(), w.changes.removals};
   for (const auto& verified : w.verified_keys) {
-    if (verified.state == now.State()) {
+    if (verified.state == now.State() || !enforced(verified.spec)) {
       continue;
     }
     const LiveUnits seen{verified.state, {}};
@@ -1476,7 +1478,7 @@ std::unique_ptr<ConflictArbiter> Writes::ArbitrateConflicts(
 
 ConflictArbiter::ConflictArbiter(duckdb::ClientContext& context,
                                  const StoreWrites& w,
-                                 const irs::DirectoryReader& reader,
+                                 const irs::CompositeReader& reader,
                                  std::span<const irs::field_id> fields)
   : _context{context}, _w{w} {
   _arbiters.reserve(fields.size());
@@ -1863,7 +1865,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       fresh.AddLive(now(), w.checked && !spec.deferred && i < known
                              ? &*w.checked
                              : nullptr);
-      if (fresh.Empty() && !spec.deferred) {
+      if (fresh.Empty() && !spec.deferred && i < known) {
         continue;
       }
       if (auto duplicate = FindDuplicate(context, spec, segments, {}, fresh)) {
@@ -2103,7 +2105,10 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
     if (w.prepared) {
       CatchUpKeys(context, w);
     }
-    CheckVerifiedKeys(context, w);
+    CheckVerifiedKeys(context, w, [&](const KeySpec& spec) {
+      return !w.dropping &&
+             (!w.table || IndexKeySpec(*w.table, spec.key, Latest(*w.table)));
+    });
   }
   const auto latest = [&](const ReferenceCheck& check) {
     const auto* parent =

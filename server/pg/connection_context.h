@@ -104,6 +104,7 @@ struct SessionIdentity {
   int32_t backend_pid = 0;
   network::CancelRegistry* cancel_registry = nullptr;
   bool client_backend = false;
+  duckdb::shared_ptr<duckdb::AttachedDatabase> temporary;
 };
 
 class ConnectionContext final : public duckdb::ClientContext {
@@ -235,6 +236,7 @@ class ConnectionContext final : public duckdb::ClientContext {
     return _progress;
   }
   void ReportIdle();
+  absl::Mutex& SettingWritesMutex() noexcept { return _setting_writes; }
 
   int copy_stdin_open_count = 0;
   bool copy_stdin_done = false;
@@ -307,6 +309,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   irs::containers::NodeHashMap<std::string, TxnVariable> _variables;
   catalog::SessionSlot& _slot;
   absl::Mutex _transaction_mutex;
+  absl::Mutex _setting_writes;
   std::shared_ptr<catalog::SessionTransaction> _transaction;
   duckdb::transaction_t _transaction_owner = duckdb::MAX_TRANSACTION_ID;
   utils::DrainGate::Pass _commit_pass;
@@ -346,6 +349,7 @@ struct SystemSession {
   std::string_view database;
   duckdb::idx_t database_id = 0;
   int32_t backend_pid = 0;
+  duckdb::shared_ptr<duckdb::AttachedDatabase> temporary;
 };
 
 struct SystemConnection {

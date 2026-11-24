@@ -50,7 +50,7 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
 
   PostingPrunedLead() = default;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                IndexFeatures layout, const SubReader& segment,
                const TermReader& field, const detail::ScoreArgs& args) {
     if (Base::PrepareCommon(meta, doc_in, layout, segment, field, args)) {
@@ -58,7 +58,7 @@ class PostingPrunedLead : public PrunedLeafBase<InputType, false> {
     }
   }
 
-  PostingPrunedLead(const PostingMeta& meta, const IndexInput& doc_in,
+  PostingPrunedLead(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                     IndexFeatures layout, const SubReader& segment,
                     const TermReader& field, const detail::ScoreArgs& args) {
     Prepare(meta, doc_in, layout, segment, field, args);

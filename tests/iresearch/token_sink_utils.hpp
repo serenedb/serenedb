@@ -69,7 +69,7 @@ inline std::optional<std::vector<AnalyzerToken>> Analyze(
     value.empty()
       ? duckdb::string_t{}
       : duckdb::string_t{value.data(), static_cast<uint32_t>(value.size())};
-  return irs::ResolveLayout(
+  return irs::Resolve(
     layout,
     [&]<irs::TokenLayout L>() -> std::optional<std::vector<AnalyzerToken>> {
       irs::ValueAnalyzer analyzer;

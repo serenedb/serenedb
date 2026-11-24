@@ -36,7 +36,7 @@ namespace irs::offsets {
 
 using Handles = detail::PhraseHandles;
 
-bool Resolve(const TermReader* field, Handles& out);
+bool HandlesOf(const TermReader* field, Handles& out);
 
 Root::ptr MakePosting(const PostingMeta& meta, const Handles& handles);
 
@@ -45,9 +45,13 @@ Root::ptr Make(const VariadicPhraseQuery& query);
 Root::ptr Make(const NGramSimilarityQuery& query);
 
 template<detail::PhraseMatch M, typename Query>
-Root::ptr MakePhrase(const Query& query);
+struct PhraseMaker {
+  static Root::ptr Make(const Query& query);
+};
 
 template<detail::NGramMatch M>
-Root::ptr MakeNGram(const NGramSimilarityQuery& query);
+struct NGramMaker {
+  static Root::ptr Make(const NGramSimilarityQuery& query);
+};
 
 }  // namespace irs::offsets

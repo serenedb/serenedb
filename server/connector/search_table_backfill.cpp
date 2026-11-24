@@ -37,7 +37,7 @@
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/docs_mask/docs_mask.hpp>
 #include <iresearch/index/document_mask.hpp>
@@ -555,7 +555,7 @@ void RewriteIndexedPatches(duckdb::ClientContext& context,
   std::optional<RowSource> source;
   writes.TakeIndexedPatches(
     context, *target.shard,
-    [&](const irs::DirectoryReader& reader, size_t index,
+    [&](const irs::CompositeReader& reader, size_t index,
         const irs::DocumentMask& docs) {
       if (!source) {
         InitRowSource(context, target, source.emplace());
@@ -580,9 +580,9 @@ void RewriteIndexedPatches(duckdb::ClientContext& context,
   if (positions.Empty()) {
     return;
   }
-  rows.Flush();
   writes.AddRemoval(context, target.shard, std::move(positions));
-  rows.HandOver(context, table, writes);
+  rows.Combine(context, table, writes);
+  FinishSearchSink(context, table, writes);
 }
 
 }  // namespace

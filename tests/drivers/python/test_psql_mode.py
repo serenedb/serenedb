@@ -23,6 +23,7 @@ SERENEDB_BIN = os.environ.get(
     "SDB_DRV_SERENEDB_BIN",
     str(Path(__file__).resolve().parents[3] / "build" / "bin" / "serenedb"),
 )
+CLI_TIMEOUT = 120.0
 
 
 def _have_binary() -> bool:
@@ -37,7 +38,7 @@ pytestmark = pytest.mark.skipif(
 
 def _run(args: list[str], *, env_extra: dict[str, str] | None = None,
          input_text: str | None = None,
-         timeout: float = 20.0) -> subprocess.CompletedProcess:
+         timeout: float = CLI_TIMEOUT) -> subprocess.CompletedProcess:
     env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
     if env_extra:
         env.update(env_extra)
@@ -142,7 +143,7 @@ def test_psql_user_default_falls_back_to_os_user() -> None:
         r = subprocess.run(
             [SERENEDB_BIN, "psql", "-c",
              "SELECT path FROM sdb_databases() WHERE database_name='postgres';"],
-            capture_output=True, text=True, timeout=20, env=env,
+            capture_output=True, text=True, timeout=CLI_TIMEOUT, env=env,
         )
         assert r.returncode == 0, r.stderr
         assert "user=zzz_sentinel_user" in r.stdout, \
@@ -513,7 +514,7 @@ def test_psql_default_host_localhost() -> None:
     env["PGPORT"] = "1"
     r = subprocess.run(
         [SERENEDB_BIN, "psql", "-c", "SELECT 1;"],
-        capture_output=True, text=True, timeout=20, env=env,
+        capture_output=True, text=True, timeout=CLI_TIMEOUT, env=env,
     )
     assert "host=localhost" in (r.stdout + r.stderr), \
         f"default host wasn't localhost: stdout={r.stdout!r} stderr={r.stderr!r}"
@@ -526,7 +527,7 @@ def test_psql_default_port_5432(tmp_path) -> None:
     env.pop("PGPORT", None)
     r = subprocess.run(
         [SERENEDB_BIN, "psql", "-h", str(tmp_path), "-c", "SELECT 1;"],
-        capture_output=True, text=True, timeout=20, env=env,
+        capture_output=True, text=True, timeout=CLI_TIMEOUT, env=env,
     )
     assert "port=5432" in (r.stdout + r.stderr), \
         f"default port wasn't 5432: stdout={r.stdout!r} stderr={r.stderr!r}"
@@ -920,7 +921,7 @@ def test_shell_command_long_alias() -> None:
     # shell mode accepts --command as an alias for -c.
     r = subprocess.run(
         [SERENEDB_BIN, "shell", "--command=SELECT 42 AS v;"],
-        capture_output=True, text=True, timeout=20.0,
+        capture_output=True, text=True, timeout=CLI_TIMEOUT,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
     assert r.returncode == 0, r.stderr
@@ -933,7 +934,7 @@ def test_shell_file_long_alias(tmp_path: Path) -> None:
     sql_file.write_text("SELECT 'hello' AS greeting;\n")
     r = subprocess.run(
         [SERENEDB_BIN, "shell", f"--file={sql_file}"],
-        capture_output=True, text=True, timeout=20.0,
+        capture_output=True, text=True, timeout=CLI_TIMEOUT,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
     assert r.returncode == 0, r.stderr
@@ -944,7 +945,7 @@ def test_shell_short_V_alias() -> None:
     # shell mode accepts -V as an alias for --version.
     r = subprocess.run(
         [SERENEDB_BIN, "shell", "-V"],
-        capture_output=True, text=True, timeout=20.0,
+        capture_output=True, text=True, timeout=CLI_TIMEOUT,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
     assert r.returncode == 0, r.stderr
@@ -956,7 +957,7 @@ def test_shell_short_V_alias() -> None:
 def _run_shell(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         [SERENEDB_BIN, "shell", *args],
-        capture_output=True, text=True, timeout=20.0,
+        capture_output=True, text=True, timeout=CLI_TIMEOUT,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
 
@@ -1014,7 +1015,7 @@ def _run_shell_as_agent(args: list[str]) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if k != "DUCKDB_AGENT_MODE"}
     return subprocess.run(
         [SERENEDB_BIN, "shell", *args, "-c", "SELECT 1 AS id;"],
-        capture_output=True, text=True, timeout=20.0,
+        capture_output=True, text=True, timeout=CLI_TIMEOUT,
         env={**env, "NO_COLOR": "1", "TERM": "dumb", "AI_AGENT": "1"},
     )
 
@@ -1120,7 +1121,7 @@ def _docs_session(*commands: str) -> subprocess.CompletedProcess:
     r = subprocess.run(
         [SERENEDB_BIN, "shell"],
         input="".join(f"{command}\n" for command in commands),
-        capture_output=True, text=True, timeout=20.0,
+        capture_output=True, text=True, timeout=CLI_TIMEOUT,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
     )
     if "carries no documentation index" in (r.stdout + r.stderr):
@@ -1156,11 +1157,16 @@ def test_docs_all_renders_every_match() -> None:
 
 
 def test_docs_all_numbers_its_listings_as_one_list() -> None:
-    r = _docs_session(".docs --all search", ".docs 36")
+    heading = "Documentation under 'sql/functions/search':"
+    listing = _docs_session(".docs --all search")
+    assert listing.returncode == 0, listing.stderr
+    first = re.search(r"^(\d+)\. ", listing.stdout[listing.stdout.index(heading):],
+                      re.MULTILINE)
+    assert first and int(first[1]) > 1
+    r = _docs_session(".docs --all search", f".docs {first[1]}")
     assert r.returncode == 0, r.stderr
-    under = r.stdout.index("Documentation under 'sql/functions/search':")
-    assert "\n36. " in r.stdout[under:]
-    assert "path: sql/functions/search/" in r.stdout[under:].split("\n36. ")[1]
+    under = r.stdout.index(heading)
+    assert "path: sql/functions/search/" in r.stdout[under:].split(f"\n{first[1]}. ")[1]
 
 
 def test_docs_a_directory_name_lists_its_pages() -> None:

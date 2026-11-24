@@ -3,6 +3,7 @@ add_library(
     OBJECT
     EXCLUDE_FROM_ALL
     iresearch/index/test_index_writer.cpp
+    iresearch/index_dir.cpp
 )
 target_include_directories(
     iresearch-test-writer

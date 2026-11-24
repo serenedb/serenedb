@@ -32,7 +32,6 @@
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
-#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 
@@ -88,8 +87,6 @@ class PhraseQuery : public QueryBuilder {
   }
 
   score_t Boost() const noexcept final { return boost; }
-
-  void SetBoost(score_t value) noexcept final { boost = value; }
 
   PhraseState state;
   Positions positions;

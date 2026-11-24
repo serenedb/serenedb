@@ -54,7 +54,7 @@ Size the thread pool of the whole instance to `4` threads:
 
 ### Threads
 
-What `threads` changes depends on the scope it is set in. `SET GLOBAL threads` sizes the pool of worker threads the whole instance runs queries on. A session value (`SET threads`, `SET SESSION threads`) or a transaction value (`SET LOCAL threads`) leaves the pool alone and caps how many of its threads each query of that session or transaction runs on; a cap larger than the pool has no effect until the pool grows. `SHOW threads` returns the cap when one is set and the pool size otherwise. `RESET threads` drops the session's cap, `RESET GLOBAL threads` sizes the pool back to the size the server started with.
+What `threads` changes depends on the scope it is set in. `SET GLOBAL threads` sizes the pool of worker threads the whole instance runs queries on. The pool holds at most `1024` threads: a larger `SET GLOBAL threads` is an error, and on a machine with more CPU cores the pool starts with `1024`. A session value (`SET threads`, `SET SESSION threads`) or a transaction value (`SET LOCAL threads`) leaves the pool alone and caps how many of its threads each query of that session or transaction runs on; a cap larger than the pool has no effect until the pool grows. `SHOW threads` returns the cap when one is set and the pool size otherwise. `RESET threads` drops the session's cap, `RESET GLOBAL threads` sizes the pool back to the size the server started with.
 
 Run the queries of one transaction on at most `2` threads:
 
@@ -67,6 +67,12 @@ Run the queries of one transaction on at most `2` threads:
 Run the I/O of one transaction's queries without async tasks:
 
 <SqlLogicTest id="sql/statements/set/index/example_012" />
+
+### Time Zone
+
+`SET TIME ZONE` sets the `TimeZone` option. It takes a zone name such as `'Europe/Berlin'` or `'UTC'`, a number of hours east of Greenwich such as `5` or `-3.5`, or an interval such as `INTERVAL '+05:30' HOUR TO MINUTE` or `INTERVAL '5' HOUR` for a fixed offset east of Greenwich. A zone name written as an offset, such as `'+05:00'`, counts hours west of Greenwich, as POSIX time zone names do. A zone the server does not know is an error.
+
+<SqlLogicTest id="sql/statements/set/index/time_zone" />
 
 ## Syntax
 

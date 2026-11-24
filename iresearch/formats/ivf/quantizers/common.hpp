@@ -39,8 +39,8 @@
 #endif
 
 #include "iresearch/formats/ivf/quantizer.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::quantizers {
 
@@ -116,11 +116,6 @@ inline void RotateInto(const float* signs, const float* in, float* out,
   for (uint32_t i = 0; i < rotated_d; ++i) {
     out[i] *= scale;
   }
-}
-
-template<typename H>
-void WritePod(DataOutput& out, const H& h) {
-  out.WriteData(reinterpret_cast<const byte_type*>(&h), sizeof(H));
 }
 
 template<typename H>
@@ -480,33 +475,19 @@ inline bool BqBit(const uint8_t* bits, uint32_t i) noexcept {
 template<template<VectorMetric> typename Writer, typename... Args>
 std::unique_ptr<QuantizerWriter> MakeWriterWithMetric(VectorMetric metric,
                                                       Args&&... args) {
-  switch (EffectiveQuantMetric(metric)) {
-    case VectorMetric::L2Sqr:
-      return std::make_unique<Writer<VectorMetric::L2Sqr>>(
-        std::forward<Args>(args)...);
-    case VectorMetric::InnerProduct:
-      return std::make_unique<Writer<VectorMetric::InnerProduct>>(
-        std::forward<Args>(args)...);
-    default:
-      SDB_ASSERT(false);
-      return nullptr;
-  }
+  return Resolve<QuantMetricAxis>(
+    metric, [&]<VectorMetric M> -> std::unique_ptr<QuantizerWriter> {
+      return std::make_unique<Writer<M>>(std::forward<Args>(args)...);
+    });
 }
 
 template<template<VectorMetric> typename Stats, typename... Args>
 std::shared_ptr<const QuantizerStats> MakeStatsWithMetric(VectorMetric metric,
                                                           Args&&... args) {
-  switch (EffectiveQuantMetric(metric)) {
-    case VectorMetric::L2Sqr:
-      return std::make_shared<const Stats<VectorMetric::L2Sqr>>(
-        std::forward<Args>(args)...);
-    case VectorMetric::InnerProduct:
-      return std::make_shared<const Stats<VectorMetric::InnerProduct>>(
-        std::forward<Args>(args)...);
-    default:
-      SDB_ASSERT(false);
-      return nullptr;
-  }
+  return Resolve<QuantMetricAxis>(
+    metric, [&]<VectorMetric M> -> std::shared_ptr<const QuantizerStats> {
+      return std::make_shared<const Stats<M>>(std::forward<Args>(args)...);
+    });
 }
 
 std::unique_ptr<QuantizerWriter> MakePanoramaWriter(uint32_t d,

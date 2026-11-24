@@ -26,12 +26,19 @@
 
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/search/detail/scale_score.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
 
 ScoreFunction RawBoost::PrepareScorer(const ScoreContext& ctx) const {
   return MakeScaleScore(ctx, ctx.boost);
+}
+
+void RawBoost::Explain(const ScoreContext& ctx, const explain::SlotStats*,
+                       explain::Node& out) const {
+  explain::AddDetail(out, "boost", ctx.boost);
+  explain::AddScale(out, ctx, "boost", "scale * boost");
 }
 
 }  // namespace irs

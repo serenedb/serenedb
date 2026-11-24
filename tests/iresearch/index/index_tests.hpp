@@ -23,17 +23,15 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-#include <absl/synchronization/mutex.h>
-
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/utils/timer_utils.hpp>
 
 #include "assert_format.hpp"
 #include "doc_generator.hpp"
+#include "hook_file_system.hpp"
 #include "postings_cursor.hpp"
 #include "tests_param.hpp"
 #include "tests_shared.hpp"
@@ -49,207 +47,33 @@ namespace tests {
 irs::IndexWriterOptions CsDefaultWriterOptions();
 irs::IndexReaderOptions CsDefaultReaderOptions();
 
-// `db` is mandatory at IndexWriter::Make. Fixtures that build their own
-// IndexWriterOptions (e.g. to set a custom scorer) often leave `db` unset;
-// fill it from the shared CsDb() so they keep working. Also fills
-// `norm_column_id` from the shared monotonic allocator when the caller
+// Fills `norm_column_id` from the shared monotonic allocator when the caller
 // didn't set one -- with a cs writer present, a Norm-featured field requires
 // a norm_column_id callback (FieldsData::emplace asserts it).
-irs::IndexWriterOptions EnsureWriterDb(irs::IndexWriterOptions opts);
+irs::IndexWriterOptions EnsureNormColumnId(irs::IndexWriterOptions opts);
 
-class DirectoryMock : public irs::Directory {
- public:
-  DirectoryMock(irs::Directory& impl)
-    : Directory{impl.ResourceManager()}, _impl(impl) {}
+duckdb::FileSystem& DatabaseFileSystem();
 
-  using Directory::attributes;
+struct BlockingFileSystem : HookFileSystem {
+  explicit BlockingFileSystem(const std::string& blocker)
+    : HookFileSystem{DatabaseFileSystem()}, blocker(blocker) {}
 
-  irs::DirectoryAttributes& attributes() noexcept final {
-    return _impl.attributes();
-  }
-
-  irs::IndexOutput::ptr create(std::string_view name) override {
-    return _impl.create(name);
-  }
-
-  bool exists(bool& result, std::string_view name) const noexcept override {
-    return _impl.exists(result, name);
-  }
-
-  bool length(uint64_t& result, std::string_view name) const noexcept override {
-    return _impl.length(result, name);
-  }
-
-  bool mtime(std::time_t& result,
-             std::string_view name) const noexcept override {
-    return _impl.mtime(result, name);
-  }
-
-  irs::IndexInput::ptr open(std::string_view name,
-                            irs::IOAdvice advice) const override {
-    return _impl.open(name, advice);
-  }
-
-  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr out,
-                              irs::IOAdvice advice) const override {
-    return _impl.Finish(std::move(out), advice);
-  }
-
-  bool remove(std::string_view name) noexcept override {
-    return _impl.remove(name);
-  }
-
-  bool rename(std::string_view src, std::string_view dst) noexcept override {
-    return _impl.rename(src, dst);
-  }
-
-  bool visit(const irs::Directory::visitor_f& visitor) const final {
-    return _impl.visit(visitor);
-  }
-
- private:
-  irs::Directory& _impl;
-};
-
-class ForwardingIndexInput : public irs::IndexInput {
- public:
-  explicit ForwardingIndexInput(irs::IndexInput::ptr impl) noexcept
-    : _impl(std::move(impl)) {}
-
-  const irs::byte_type* ReadStable(uint64_t count) final {
-    return _impl->ReadStable(count);
-  }
-  const irs::byte_type* ReadStable(uint64_t offset, uint64_t count) final {
-    return _impl->ReadStable(offset, count);
-  }
-  const irs::byte_type* ReadVolatile(uint64_t offset, uint64_t count) final {
-    return _impl->ReadVolatile(offset, count);
-  }
-  const irs::byte_type* ReadVolatile(uint64_t count) final {
-    return _impl->ReadVolatile(count);
-  }
-
-  irs::byte_type ReadByte() final { return _impl->ReadByte(); }
-  using DataInput::ReadData;
-  void ReadData(irs::byte_type* b, uint64_t count) final {
-    _impl->ReadData(b, count);
-  }
-  void ReadData(duckdb::QueryContext context, irs::byte_type* b,
-                uint64_t count) final {
-    _impl->ReadData(context, b, count);
-  }
-  void ReadData(uint64_t offset, irs::byte_type* b, size_t count) final {
-    _impl->ReadData(offset, b, count);
-  }
-
-  int16_t ReadI16() final { return _impl->ReadI16(); }
-  int32_t ReadI32() final { return _impl->ReadI32(); }
-  int64_t ReadI64() final { return _impl->ReadI64(); }
-  uint32_t ReadV32() final { return _impl->ReadV32(); }
-  uint64_t ReadV64() final { return _impl->ReadV64(); }
-
-  void SkipV32() final { _impl->SkipV32(); }
-  void SkipV64() final { _impl->SkipV64(); }
-  void Skip(uint64_t count) final { _impl->Skip(count); }
-  void Seek(uint64_t pos) final { _impl->Seek(pos); }
-
-  uint64_t Position() const noexcept final { return _impl->Position(); }
-  uint64_t Length() const noexcept final { return _impl->Length(); }
-  bool IsEOF() const noexcept final { return _impl->IsEOF(); }
-
-  ptr Dup() const override { return _impl->Dup(); }
-  ptr Reopen() const override { return _impl->Reopen(); }
-
-  uint32_t Checksum(uint64_t offset) const final {
-    return _impl->Checksum(offset);
-  }
-
-  uint64_t CountMappedMemory() const final {
-    return _impl->CountMappedMemory();
-  }
-  void Prefetch(uint64_t offset, uint64_t size) const noexcept final {
-    _impl->Prefetch(offset, size);
-  }
-  void Evict(uint64_t offset, uint64_t size) const noexcept final {
-    _impl->Evict(offset, size);
-  }
-  bool Resident(uint64_t offset, uint64_t size) const noexcept final {
-    return _impl->Resident(offset, size);
-  }
-  uint64_t Warm(uint64_t offset, uint64_t size) const noexcept final {
-    return _impl->Warm(offset, size);
-  }
-  void MarkWarm(uint64_t offset, uint64_t size) const noexcept final {
-    _impl->MarkWarm(offset, size);
-  }
-  void StartWriteback() const noexcept final { _impl->StartWriteback(); }
-  bool Sync() const noexcept override { return _impl->Sync(); }
-
- private:
-  irs::IndexInput::ptr _impl;
-};
-
-class FinishHookDirectory : public DirectoryMock {
- public:
-  using DirectoryMock::DirectoryMock;
-
-  irs::IndexOutput::ptr create(std::string_view name) override {
-    auto out = DirectoryMock::create(name);
-    absl::MutexLock lock{&_mutex};
-    _names.insert_or_assign(out.get(), std::string{name});
-    return out;
-  }
-
-  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr out,
-                              irs::IOAdvice advice) const final {
-    std::string name;
-    {
-      absl::MutexLock lock{&_mutex};
-      if (auto node = _names.extract(out.get())) {
-        name = std::move(node.mapped());
-      }
-    }
-    return Finished(DirectoryMock::Finish(std::move(out), advice), name);
-  }
-
- protected:
-  virtual irs::IndexInput::ptr Finished(irs::IndexInput::ptr in,
-                                        std::string_view name) const = 0;
-
- private:
-  mutable absl::Mutex _mutex;
-  mutable absl::flat_hash_map<const irs::IndexOutput*, std::string> _names
-    ABSL_GUARDED_BY(_mutex);
-};
-
-struct BlockingDirectory : DirectoryMock {
-  explicit BlockingDirectory(irs::Directory& impl, const std::string& blocker)
-    : tests::DirectoryMock(impl), blocker(blocker) {}
-
-  irs::IndexOutput::ptr create(std::string_view name) final {
-    auto stream = tests::DirectoryMock::create(name);
-
+  void OnCreated(std::string_view name) final {
     if (name == blocker) {
       {
         auto guard = std::unique_lock(policy_lock);
+        created = true;
         policy_applied.notify_all();
       }
 
       // wait for intermediate commits to be applied
       auto guard = std::unique_lock(intermediate_commits_lock);
     }
-
-    return stream;
   }
 
   void wait_for_blocker() {
-    bool has = false;
-    exists(has, blocker);
-
-    while (!has) {
-      exists(has, blocker);
-
-      auto policy_guard = std::unique_lock(policy_lock);
+    auto policy_guard = std::unique_lock(policy_lock);
+    while (!created) {
       policy_applied.wait_for(policy_guard, std::chrono::seconds{1});
     }
   }
@@ -257,28 +81,25 @@ struct BlockingDirectory : DirectoryMock {
   std::string blocker;
   std::mutex policy_lock;
   std::condition_variable policy_applied;
+  bool created = false;
   std::mutex intermediate_commits_lock;
 };
 
-struct CallbackDirectory : DirectoryMock {
-  typedef std::function<void()> AfterCallback;
+struct CallbackFileSystem : HookFileSystem {
+  using AfterCallback = std::function<void()>;
 
-  explicit CallbackDirectory(irs::Directory& impl, AfterCallback&& p)
-    : tests::DirectoryMock(impl), after(p) {}
+  explicit CallbackFileSystem(AfterCallback&& p)
+    : HookFileSystem{DatabaseFileSystem()}, after(std::move(p)) {}
 
-  irs::IndexOutput::ptr create(std::string_view name) final {
-    auto stream = tests::DirectoryMock::create(name);
-    after();
-    return stream;
-  }
+  void OnCreated(std::string_view) final { after(); }
 
   AfterCallback after;
 };
 
-typedef std::tuple<tests::dir_param_f> index_test_context;
+typedef std::tuple<tests::DirParam> index_test_context;
 
-void AssertSnapshotEquality(const irs::DirectoryReader& lhs,
-                            const irs::DirectoryReader& rhs);
+void AssertSnapshotEquality(const irs::CompositeReader& lhs,
+                            const irs::CompositeReader& rhs);
 
 // A posting list is written before anything is deleted, so a reader walking
 // one sees documents the segment no longer has. Only a plan knows about the
@@ -296,29 +117,29 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
     const testing::TestParamInfo<index_test_context>& info);
 
  protected:
-  std::shared_ptr<irs::Directory> get_directory(const TestBase& ctx) const;
+  std::shared_ptr<IndexDir> get_directory(const TestBase& ctx) const;
 
-  irs::Directory& dir() const { return *_dir; }
+  IndexDir& dir() const { return *_dir; }
   const index_t& index() const { return _index; }
   index_t& index() { return _index; }
 
   irs::doc_id_t GetPostingsBlockSize() const;
 
   tests::IndexWriter::ptr open_writer(
-    irs::Directory& dir, tests::OpenMode mode = tests::kOmCreate,
+    const IndexDir& dir, tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
     return tests::IndexWriter::Make(dir, mode,
-                                    EnsureWriterDb(std::move(options)));
+                                    EnsureNormColumnId(std::move(options)));
   }
 
   tests::IndexWriter::ptr open_writer(
     tests::OpenMode mode = tests::kOmCreate,
     irs::IndexWriterOptions options = CsDefaultWriterOptions()) const {
     return tests::IndexWriter::Make(*_dir, mode,
-                                    EnsureWriterDb(std::move(options)));
+                                    EnsureNormColumnId(std::move(options)));
   }
 
-  irs::DirectoryReader open_reader(
+  irs::CompositeReader open_reader(
     const irs::IndexReaderOptions& options = CsDefaultReaderOptions()) const {
     return tests::OpenReader(*_dir, options);
   }
@@ -375,7 +196,7 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
 
  private:
   index_t _index;
-  std::shared_ptr<irs::Directory> _dir;
+  std::shared_ptr<IndexDir> _dir;
 };
 
 }  // namespace tests

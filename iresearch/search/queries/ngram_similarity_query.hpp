@@ -53,6 +53,7 @@ class NGramSimilarityQuery : public QueryBuilderImpl<NGramSimilarityQuery> {
     }
     _estimate_max =
       ClampEstimate(sum / std::max<size_t>(_min_match_count, 1), segment);
+    _kind = QueryKind::NGram;
   }
 
   void Visit(PreparedStateVisitor& visitor, score_t boost) const final {
@@ -70,8 +71,6 @@ class NGramSimilarityQuery : public QueryBuilderImpl<NGramSimilarityQuery> {
   size_t TotalTerms() const noexcept { return _total_terms; }
 
   score_t Boost() const noexcept final { return _boost; }
-
-  void SetBoost(score_t value) noexcept final { _boost = value; }
 
  private:
   size_t _min_match_count;

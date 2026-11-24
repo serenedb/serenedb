@@ -5,6 +5,7 @@ Almaz Shaimerdanov
 Andrei Akselrod
 Andrei Lobov
 Andrey Abramov
+Daniel Lemire
 deymon-d
 Egor Danilov
 Evgenii Orlov

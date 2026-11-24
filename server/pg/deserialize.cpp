@@ -52,6 +52,7 @@
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_context.hpp>
 #include <icu-zone-lut.hpp>
+#include <iresearch/utils/dispatch.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
@@ -796,17 +797,13 @@ struct UbigintBin {
 struct BoolText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    if (data == "t" || data == "1" || data == "on" || data == "yes" ||
-        data == "true") {
-      sink.Fixed(true);
-      return true;
+    bool value = false;
+    if (!duckdb::TryCastStringBool(data.data(), data.size(), value,
+                                   /*strict=*/false)) {
+      return false;
     }
-    if (data == "f" || data == "0" || data == "off" || data == "no" ||
-        data == "false") {
-      sink.Fixed(false);
-      return true;
-    }
-    return false;
+    sink.Fixed(value);
+    return true;
   }
 };
 
@@ -1117,16 +1114,31 @@ struct DecimalText {
 // Types without a dedicated binary recv (scaled time/timestamp text): route
 // through DuckDB's string->type cast, which parses the column's exact
 // precision.
-template<typename T>
+template<typename T, bool kStrict = true>
 struct CastText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     T result;
     if (!duckdb::TryCast::Operation<duckdb::string_t, T>(
-          duckdb::string_t::Unsafe(data), result, /*strict=*/true)) {
+          duckdb::string_t::Unsafe(data), result, kStrict)) {
       return false;
     }
     sink.Fixed(result);
+    return true;
+  }
+};
+
+struct TimeText {
+  template<typename Sink>
+  static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
+    duckdb::dtime_tz_t result;
+    duckdb::idx_t pos = 0;
+    bool has_offset = false;
+    if (!duckdb::Time::TryConvertTimeTZ(data.data(), data.size(), pos, result,
+                                        has_offset, /*strict=*/true)) {
+      return false;
+    }
+    sink.Fixed(result.time());
     return true;
   }
 };
@@ -1272,31 +1284,9 @@ struct RegText {
 
 template<typename Sink>
 DeserializationFunction<Sink> RegTextDecoder(RegKind kind) {
-  switch (kind) {
-    case RegKind::Proc:
-      return &RegText<RegKind::Proc>::template Decode<Sink>;
-    case RegKind::Procedure:
-      return &RegText<RegKind::Procedure>::template Decode<Sink>;
-    case RegKind::Oper:
-      return &RegText<RegKind::Oper>::template Decode<Sink>;
-    case RegKind::Operator:
-      return &RegText<RegKind::Operator>::template Decode<Sink>;
-    case RegKind::Class:
-      return &RegText<RegKind::Class>::template Decode<Sink>;
-    case RegKind::Type:
-      return &RegText<RegKind::Type>::template Decode<Sink>;
-    case RegKind::Collation:
-      return &RegText<RegKind::Collation>::template Decode<Sink>;
-    case RegKind::Config:
-      return &RegText<RegKind::Config>::template Decode<Sink>;
-    case RegKind::Dictionary:
-      return &RegText<RegKind::Dictionary>::template Decode<Sink>;
-    case RegKind::Role:
-      return &RegText<RegKind::Role>::template Decode<Sink>;
-    case RegKind::Namespace:
-      return &RegText<RegKind::Namespace>::template Decode<Sink>;
-  }
-  SDB_UNREACHABLE();
+  return irs::Resolve(kind, [&]<RegKind K> -> DeserializationFunction<Sink> {
+    return &RegText<K>::template Decode<Sink>;
+  });
 }
 
 struct DefaultBin {
@@ -2479,9 +2469,10 @@ DeserializationFunction<Sink> GetDeserialization(
     case BLOB:
       return SelectDecoder<BlobBin, BlobText, Sink>(binary);
     case DATE:
-      return SelectDecoder<DateBin, CastText<duckdb::date_t>, Sink>(binary);
+      return SelectDecoder<DateBin, CastText<duckdb::date_t, false>, Sink>(
+        binary);
     case TIME:
-      return SelectDecoder<TimeBin, CastText<duckdb::dtime_t>, Sink>(binary);
+      return SelectDecoder<TimeBin, TimeText, Sink>(binary);
     case TIME_NS:
       return SelectDecoder<TimeNsBin, CastText<duckdb::dtime_ns_t>, Sink>(
         binary);
@@ -2550,9 +2541,9 @@ DeserializationFunction<Sink> GetDeserialization(
                              Nested<DeserializeTextRange>, Sink>(binary);
       }
       if (const auto geometric = GeometricOf(type)) {
-        return VisitGeometric(*geometric, [&]<Geometric kKind>() {
-          return SelectDecoder<Nested<DeserializeBinaryGeometric<kKind>>,
-                               Nested<DeserializeTextGeometric<kKind>>, Sink>(
+        return irs::Resolve(*geometric, [&]<Geometric Kind>() {
+          return SelectDecoder<Nested<DeserializeBinaryGeometric<Kind>>,
+                               Nested<DeserializeTextGeometric<Kind>>, Sink>(
             binary);
         });
       }

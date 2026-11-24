@@ -24,12 +24,12 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <memory>
 #include <span>
 
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/iterators.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/conjunction_acceptor.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
@@ -40,13 +40,10 @@ namespace irs {
 
 struct FieldMeta;
 
-// The streams a posting list lives in. Handed to whatever decodes a term's
-// postings so it can reopen what it needs; `pos` and `pay` are null for a
-// field that stores neither.
 struct PostingsHandles {
-  const IndexInput* doc = nullptr;
-  const IndexInput* pos = nullptr;
-  const IndexInput* pay = nullptr;
+  const duckdb::InputFile* doc = nullptr;
+  const duckdb::InputFile* pos = nullptr;
+  const duckdb::InputFile* pay = nullptr;
 };
 
 struct TermReader : public AttributeProvider {
@@ -79,6 +76,8 @@ struct TermReader : public AttributeProvider {
   // has nowhere to walk to afterwards.
   virtual PostingMeta Lookup(bytes_view term) const = 0;
 
+  virtual bool Prefetch(bytes_view term) const { return false; }
+
   virtual void LookupBatch(size_t count, TermAt term,
                            FoundTerm found) const = 0;
 
@@ -92,12 +91,13 @@ struct TermReader : public AttributeProvider {
     const LevenshteinAcceptor& acceptor) const = 0;
 
   virtual SeekTermIterator::ptr iterator(
+    const LevenshteinPrefixAcceptor& acceptor) const = 0;
+
+  virtual SeekTermIterator::ptr iterator(
     const RegexpConjunction& acceptor) const = 0;
 
   virtual SeekTermIterator::ptr iterator(
     const FuzzyConjunction& acceptor) const = 0;
-
-  virtual std::unique_ptr<IndexInput> ReopenPayload() const { return nullptr; }
 
   // Returns field metadata.
   virtual const FieldMeta& meta() const = 0;

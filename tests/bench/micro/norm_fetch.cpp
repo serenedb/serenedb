@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
@@ -27,6 +28,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/file_system.hpp>
 #include <map>
 #include <memory>
 #include <random>
@@ -39,12 +41,10 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/term_reader.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/index/composite_reader.hpp"
 #include "iresearch/utils/duckdb_engine.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "memory_output.hpp"
 
 namespace {
 
@@ -79,10 +79,10 @@ const std::vector<uint32_t>& IndexNorms() {
       return out;
     }
     const char* field = std::getenv("NORM_FIELD");
-    irs::MMapDirectory dir{path};
-    const auto reader = bench::OpenIndex(
-      dir,
-      irs::IndexReaderOptions{.db = &irs::DuckDBEngine::Instance().instance()});
+    auto& db = irs::DuckDBEngine::Instance().instance();
+    const auto reader =
+      bench::OpenIndex(db, duckdb::FileSystem::GetFileSystem(db), path,
+                       irs::IndexReaderOptions{});
     for (const auto& segment : reader) {
       for (const auto id : segment.field_ids()) {
         if (field != nullptr && id != std::strtoul(field, nullptr, 10)) {
@@ -253,25 +253,26 @@ struct MainColumn {
 };
 
 struct PackedColumn {
-  irs::MemoryFile file{irs::IResourceManager::gNoop};
-  std::unique_ptr<irs::MemoryIndexInput> in;
+  duckdb::MemoryStream file;
+  irs::bstring data;
+  duckdb::shared_ptr<duckdb::InputFile> in;
   std::unique_ptr<irs::NormColumnReader> column;
   irs::NormReader::ptr reader;
   size_t bytes = 0;
 
   void Build(const std::vector<uint32_t>& values) {
-    irs::MemoryIndexOutput out{file};
-    irs::NormColumnWriter writer{1, kRgRows, out};
+    irs::NormColumnWriter writer{
+      1, kRgRows, [&]() -> duckdb::WriteStream& { return file; }};
     for (size_t i = 0; i != values.size(); ++i) {
       writer.Append(i, values[i]);
     }
     writer.Finalize();
-    out.Flush();
     for (const auto& region : writer.Meta().regions) {
       bytes += irs::NormSlotsSize(region) +
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
     }
-    in = std::make_unique<irs::MemoryIndexInput>(file);
+    data = tests::Bytes(file);
+    in = tests::OpenBytes(data);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);
   }
@@ -565,9 +566,13 @@ struct Fixture {
   }
 };
 
+std::map<std::pair<int, uint32_t>, std::unique_ptr<Fixture>>& Fixtures() {
+  static std::map<std::pair<int, uint32_t>, std::unique_ptr<Fixture>> fixtures;
+  return fixtures;
+}
+
 Fixture& GetFixture(Shape shape, uint32_t rows) {
-  static std::map<std::pair<int, uint32_t>, std::unique_ptr<Fixture>> cache;
-  auto& f = cache[{static_cast<int>(shape), rows}];
+  auto& f = Fixtures()[{static_cast<int>(shape), rows}];
   if (!f) {
     f = std::make_unique<Fixture>();
     f->values = MakeValues(shape, rows);
@@ -681,13 +686,16 @@ BENCHMARK(Bench<Mode::Score>)->Apply(Args);
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
+  absl::Cleanup shutdown = [] {
+    Fixtures().clear();
+    irs::DuckDBEngine::Instance().Shutdown();
+  };
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
     return 1;
   }
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
 

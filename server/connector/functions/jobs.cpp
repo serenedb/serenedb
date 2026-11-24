@@ -33,6 +33,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -252,8 +253,9 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
                     ERR_MSG("Job name cannot be NULL"));
   }
-  const auto name = input.binder->BindTableName(
-    duckdb::QualifiedName::Parse(duckdb::StringValue::Get(input.inputs[0])));
+  const auto name = input.binder->BindTableName(duckdb::QualifiedName::Parse(
+    duckdb::StringValue::Get(input.inputs[0]),
+    duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(context)));
   auto entry = input.binder->EntryRetriever().GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name},
     duckdb::OnEntryNotFound::THROW_EXCEPTION);

@@ -23,6 +23,7 @@
 #include <absl/functional/function_ref.h>
 
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -35,7 +36,6 @@
 #include "iresearch/formats/column/internal/write_context.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
@@ -116,11 +116,9 @@ class ColumnWriter final {
   bool ValidityCopyable(const ColumnReader& column, uint64_t first,
                         uint64_t end) const noexcept;
   void CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
-                 std::vector<ColumnBlockMeta>& sink,
-                 std::vector<byte_type>& buffer);
+                 std::vector<ColumnBlockMeta>& sink);
   void CopyValidity(const ColumnReader& column, ReadContext& source,
-                    uint64_t first, uint64_t end,
-                    std::vector<byte_type>& buffer);
+                    uint64_t first, uint64_t end);
   void DecodeRows(const ColumnReader& column, ReadContext& source,
                   uint64_t first, uint64_t count);
 
@@ -167,7 +165,7 @@ class ColumnWriter final {
                   duckdb::CompressionType forced, ColumnMeta& meta);
 
   WriteContext& WriteCtx() const noexcept;
-  IndexOutput& Out() const noexcept;
+  duckdb::WriteStream& Out() const noexcept;
 
   ColWriter* _owner;
   field_id _id;

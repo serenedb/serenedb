@@ -73,6 +73,8 @@ constexpr auto kRoutes = std::to_array<Route>({
   {HttpMethod::Get, "/:index/_refresh", Handler<Endpoint::Refresh>},
   {HttpMethod::Get, "/:index/_count", Handler<Endpoint::Count>},
   {HttpMethod::Post, "/:index/_count", Handler<Endpoint::Count>},
+  {HttpMethod::Get, "/:index/_explain/:id", Handler<Endpoint::Explain>},
+  {HttpMethod::Post, "/:index/_explain/:id", Handler<Endpoint::Explain>},
   {HttpMethod::Get, "/:index/_search", Handler<Endpoint::Search>},
   {HttpMethod::Post, "/:index/_search", Handler<Endpoint::Search>},
   {HttpMethod::Get, "/_search/scroll", Handler<Endpoint::Scroll>},

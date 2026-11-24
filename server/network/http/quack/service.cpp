@@ -67,35 +67,30 @@ class BodyReader final : public duckdb::ReadStream {
   explicit BodyReader(const message::SequenceView& body)
     : _next{body.begin()}, _end{body.end()} {}
 
-  void ReadData(duckdb::data_ptr_t buffer, duckdb::idx_t read_size) final {
-    while (read_size != 0) {
-      if (_left.empty()) {
-        if (_next == _end) {
-          THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
-                          ERR_MSG("the Quack request ends early"));
-        }
-        const auto chunk = *_next;
-        ++_next;
-        _left = {static_cast<const uint8_t*>(chunk.data()), chunk.size()};
-        continue;
-      }
-      const auto n = std::min<size_t>(read_size, _left.size());
-      std::memcpy(buffer, _left.data(), n);
-      _left = _left.subspan(n);
+ private:
+  void Underflow(duckdb::QueryContext, duckdb::data_ptr_t buffer,
+                 duckdb::idx_t read_size) final {
+    while (true) {
+      const auto n = std::min<size_t>(read_size, ReadWindowRoom());
+      std::memcpy(buffer, read_pos, n);
+      read_pos += n;
       buffer += n;
       read_size -= n;
+      if (read_size == 0) {
+        return;
+      }
+      if (_next == _end) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_PROTOCOL_VIOLATION),
+                        ERR_MSG("the Quack request ends early"));
+      }
+      const auto chunk = *_next;
+      ++_next;
+      SetReadWindow(static_cast<const uint8_t*>(chunk.data()), chunk.size());
     }
   }
 
-  void ReadData(duckdb::QueryContext, duckdb::data_ptr_t buffer,
-                duckdb::idx_t read_size) final {
-    ReadData(buffer, read_size);
-  }
-
- private:
   message::SequenceView::ConstIterator _next;
   message::SequenceView::ConstIterator _end;
-  std::span<const uint8_t> _left;
 };
 
 std::string Hex(std::span<const uint8_t> bytes) {

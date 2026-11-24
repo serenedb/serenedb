@@ -54,13 +54,16 @@ class IndriDirichlet final : public irs::ScorerBase<IndriDirichlet, LMStats> {
   explicit IndriDirichlet(score_t mu = MU()) noexcept : _mu{mu} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final;
+               const irs::TermCollector* term, StatsArena& arena) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq | IndexFeatures::Norm;
   }
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+
+  void Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+               explain::Node& out) const final;
 
   bool equals(const Scorer& other) const noexcept final;
 

@@ -50,8 +50,9 @@ class SlotsScore {
     requires(const Slots& slots) { slots.Spread(); };
 
   SlotsScore(const SubReader& segment, const TermReader& field,
-             const ScoreArgs& args)
-    : _recipe{&segment, &field, args} {}
+             const ScoreArgs& args) {
+    _provider.recipe = {.segment = &segment, .field = &field, .args = args};
+  }
 
   SlotsScore(SlotsScore&&) = delete;
   SlotsScore& operator=(SlotsScore&&) = delete;
@@ -65,7 +66,7 @@ class SlotsScore {
       _scales[slot] = slots.Scale();
     }
     if constexpr (kHasSpread) {
-      _spreads[slot] = slots.Spread() * _recipe.args.boost;
+      _spreads[slot] = slots.Spread() * _provider.recipe.args.boost;
     }
   }
 
@@ -82,10 +83,13 @@ class SlotsScore {
     if constexpr (kHasScale) {
       std::get<ScaleBlockAttr>(_provider.attrs).value = _scales;
     }
-    SDB_ASSERT(_recipe.segment != nullptr && _recipe.field != nullptr);
-    return PrepareScore(_recipe.args, *_recipe.segment, _recipe.field->meta(),
+    const auto& recipe = _provider.recipe;
+    SDB_ASSERT(recipe.segment != nullptr && recipe.field != nullptr);
+    return PrepareScore(recipe.args, *recipe.segment, recipe.field->meta(),
                         _provider);
   }
+
+  const ScoreInputs* Inputs() const noexcept { return &_provider; }
 
  private:
   template<bool Want, typename T>
@@ -95,7 +99,7 @@ class SlotsScore {
     decltype(std::tuple_cat(std::declval<Maybe<kHasFreq, FreqBlockAttr>>(),
                             std::declval<Maybe<kHasScale, ScaleBlockAttr>>()));
 
-  struct Provider final : AttributeProvider {
+  struct Provider final : ScoreInputs {
     Attribute* GetMutable(TypeInfo::type_id type) noexcept final {
       if constexpr (std::tuple_size_v<Attrs> == 0) {
         return nullptr;
@@ -112,7 +116,6 @@ class SlotsScore {
   [[no_unique_address]] utils::Need<kHasSpread, score_t[kScoreBlock]>
     _spreads{};
   Provider _provider;
-  LeafRecipe _recipe;
 };
 
 template<typename Slots, bool Scored>
@@ -142,6 +145,12 @@ class TwoPhaseBase {
     requires Scored
   {
     return _score.Prepare();
+  }
+
+  const ScoreInputs* Inputs() const noexcept
+    requires Scored
+  {
+    return _score.Inputs();
   }
 
   const score_t* Spreads() const noexcept

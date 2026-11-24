@@ -26,7 +26,6 @@
 #include <absl/container/flat_hash_map.h>
 #include <absl/hash/hash.h>
 
-#include "iresearch/store/store_utils.hpp"
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
@@ -366,48 +365,6 @@ ParametricDescription MakeParametricDescription(uint8_t max_distance,
   }
 
   return {std::move(transitions), std::move(distance), max_distance};
-}
-
-void ParametricDescription::Write(DataOutput& out) const {
-  uint32_t last_state = 0;
-  uint32_t last_offset = 0;
-
-  out.WriteByte(this->max_distance());
-
-  const auto transitions = this->transitions();
-  out.WriteV64(transitions.size());
-  for (auto& transition : transitions) {
-    WriteZV32(out, transition.first - last_state);
-    WriteZV32(out, transition.second - last_offset);
-    last_state = transition.first;
-    last_offset = transition.second;
-  }
-
-  const auto distances = this->distances();
-  out.WriteV64(distances.size_bytes());
-  out.WriteData(distances.data(), distances.size_bytes());
-}
-
-ParametricDescription ParametricDescription::Read(DataInput& in) {
-  const uint8_t max_distance = in.ReadByte();
-
-  const size_t tcount = in.ReadV64();
-  std::vector<ParametricDescription::transition_t> transitions(tcount);
-
-  uint32_t last_state = 0;
-  uint32_t last_offset = 0;
-  for (auto& transition : transitions) {
-    transition.first = last_state + ReadZV32(in);
-    transition.second = last_offset + ReadZV32(in);
-    last_state = transition.first;
-    last_offset = transition.second;
-  }
-
-  const size_t dcount = in.ReadV64();
-  std::vector<byte_type> distances(dcount);
-  in.ReadData(distances.data(), distances.size());
-
-  return {std::move(transitions), std::move(distances), max_distance};
 }
 
 size_t EditDistance(const ParametricDescription& description,

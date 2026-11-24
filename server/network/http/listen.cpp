@@ -225,16 +225,16 @@ std::unique_ptr<AcceptorBase> ListenHttp(const ListenContext& context,
   const std::string_view database = options.database.empty()
                                       ? irs::StaticStrings::kDefaultDatabase
                                       : std::string_view{options.database};
-  if (!catalog::ReadDatabase(database,
-                             [](const catalog::DatabaseCatalogEntry&) {})) {
-    SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
-              "' does not exist");
-  }
   std::vector<std::shared_ptr<void>> started;
   for (const auto* api : options.apis) {
     if (api->start) {
       started.push_back(api->start(context, spec));
     }
+  }
+  if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
+        database, [](const catalog::DatabaseCatalogEntry&) {})) {
+    SDB_FATAL(GENERAL, "endpoint '", spec.url, "': database '", database,
+              "' does not exist");
   }
   SetTimeouts();
   return std::make_unique<HttpListener>(context, spec, std::move(started));

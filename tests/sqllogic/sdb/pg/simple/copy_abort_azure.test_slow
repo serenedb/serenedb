@@ -1,0 +1,41 @@
+control substitution on
+
+# A COPY to an object store that fails part way through, with blocks of its
+# upload already staged, leaves no blob behind; one with no rows writes an
+# empty blob.
+
+statement ok
+CREATE OR REPLACE SECRET azurite_${__DATABASE__} (
+  TYPE azure,
+  CONNECTION_STRING '${AZURITE_CONNECTION_STRING}',
+  SCOPE 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_'
+);
+
+
+statement error
+COPY (SELECT CASE WHEN i = 30000 THEN error('boom') ELSE repeat('x', 1000) END AS v FROM range(40000) t(i))
+TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_failed.csv' (FORMAT csv);
+----
+db error: ERROR: boom
+
+
+query
+SELECT count(*) AS n FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_failed*');
+----
+n
+0
+
+
+statement count 0
+COPY (SELECT 1 AS v WHERE false) TO 'az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_empty.csv' (FORMAT csv, HEADER false);
+
+
+query
+SELECT count(*) AS n FROM glob('az://${AZURITE_BLOB_CONTAINER}/${__DATABASE__}_empty*');
+----
+n
+1
+
+
+statement ok
+DROP SECRET azurite_${__DATABASE__};

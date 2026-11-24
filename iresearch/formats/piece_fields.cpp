@@ -231,6 +231,11 @@ SeekTermIterator::ptr PieceTermReader::iterator(
 }
 
 SeekTermIterator::ptr PieceTermReader::iterator(
+  const LevenshteinPrefixAcceptor& a) const {
+  return Filtered(*this, a);
+}
+
+SeekTermIterator::ptr PieceTermReader::iterator(
   const RegexpConjunction& a) const {
   return Filtered(*this, a);
 }
@@ -293,10 +298,6 @@ void PieceTermReader::SampleTerms(
     }
     visit({run.data(), n});
   }
-}
-
-std::unique_ptr<IndexInput> PieceTermReader::ReopenPayload() const {
-  return _owner->Postings().ReopenPayload();
 }
 
 PostingsHandles PieceTermReader::Handles() const noexcept {

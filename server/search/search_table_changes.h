@@ -26,7 +26,7 @@
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/utils/assert.hpp>
@@ -71,7 +71,7 @@ struct UnitRows {
 };
 
 inline void ForEachUnitRows(
-  const irs::DirectoryReader& reader, UnitRows& scratch,
+  const irs::CompositeReader& reader, UnitRows& scratch,
   absl::FunctionRef<void(uint64_t unit, std::span<const uint64_t> rows,
                          const duckdb::SelectionVector& sel)>
     visit) {
@@ -91,6 +91,19 @@ inline void ForEachUnitRows(
     visit(
       irs::utils::downCast<irs::SegmentReader>(reader[index]).GetImpl()->Id(),
       rows, sel);
+  }
+}
+
+inline void AppendRows(std::unique_ptr<duckdb::ColumnDataCollection>& into,
+                       std::unique_ptr<duckdb::ColumnDataCollection> rows) {
+  if (!into) {
+    into = std::move(rows);
+  } else if (rows->Count() < STANDARD_VECTOR_SIZE) {
+    for (auto& chunk : rows->Chunks()) {
+      into->Append(chunk);
+    }
+  } else {
+    into->Combine(*rows);
   }
 }
 
@@ -117,14 +130,8 @@ struct LocalTableChangesEntry {
     if (collection == nullptr) {
       column_ids.assign(cols.begin(), cols.end());
       catalog = &cat;
-      collection = std::move(rows);
-    } else if (rows->Count() < STANDARD_VECTOR_SIZE) {
-      for (auto& chunk : rows->Chunks()) {
-        collection->Append(chunk);
-      }
-    } else {
-      collection->Combine(*rows);
     }
+    AppendRows(collection, std::move(rows));
   }
 
   void AppendTruncate(std::shared_ptr<const irs::DocRemoval> visible) {

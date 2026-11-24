@@ -157,7 +157,8 @@ def check_orphan_files(snap):
     return [{
         "kind": "orphan_artifact",
         "key": None,
-        "detail": f"{where}/{entry} names an oid with no catalog entry",
+        "detail": f"{where} holds {entry} more segment files than the live "
+                  "tables and indexes own",
         "candidates": None, "observed": entry,
     } for where, entry in snap.orphan_files]
 

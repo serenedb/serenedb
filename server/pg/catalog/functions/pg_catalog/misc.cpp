@@ -57,6 +57,7 @@
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/planner_extension.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/static_strings.hpp>
@@ -71,7 +72,9 @@
 
 #include "auth/role_closure.h"
 #include "catalog/catalog.h"
+#include "catalog/cluster.h"
 #include "catalog/dependency.h"
+#include "catalog/entry/database.h"
 #include "catalog/entry/search_table.h"
 #include "connector/common.h"
 #include "network/cancel_registry.h"
@@ -555,6 +558,7 @@ void SignalBackendFunction(duckdb::DataChunk& args,
 void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        duckdb::Vector& result) {
   auto& context = state.GetContext();
+  absl::MutexLock lock{&ConnectionContext::Get(context).SettingWritesMutex()};
   duckdb::TernaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool,
                                    duckdb::string_t>(
     args.data[0], args.data[1], args.data[2], result, args.size(),
@@ -879,14 +883,34 @@ void LoadTablespaceDatabases(duckdb::ClientContext& context,
                              duckdb::DataChunk& input,
                              std::vector<int64_t>& rows) {
   const auto oids = input.data[0].Values<int64_t>();
+  auto& cluster = catalog::ClusterOf(context);
+  const auto transaction = cluster.GetCatalogTransaction(context);
   for (duckdb::idx_t row = 0; row < input.size(); ++row) {
     const auto oid = oids[row];
     if (!oid.IsValid()) {
       continue;
     }
-    if (oid.GetValue() == static_cast<int64_t>(kPgDefaultTablespace)) {
+    auto tablespace =
+      oid.GetValue() == static_cast<int64_t>(kPgGlobalTablespace)
+        ? nullptr
+        : cluster.FindIn<catalog::TablespaceCatalogEntry>(
+            transaction, static_cast<duckdb::idx_t>(oid.GetValue()));
+    if (tablespace) {
+      irs::containers::FlatHashSet<duckdb::idx_t> placed;
+      catalog::ScanDependents(
+        transaction, *tablespace,
+        [&](duckdb::CatalogEntry& dependent,
+            const duckdb::DependencyDependentFlags&) {
+          placed.emplace(dependent.type == duckdb::CatalogType::DATABASE_ENTRY
+                           ? dependent.oid
+                           : dependent.ParentCatalog().GetAttached().oid);
+        });
       for (const auto& database : Databases(context)) {
-        rows.emplace_back(static_cast<int64_t>(database.get().oid));
+        if (placed.contains(database.get().oid) ||
+            database.get().Cast<catalog::DatabaseCatalogEntry>().Tablespace() ==
+              tablespace->oid) {
+          rows.emplace_back(static_cast<int64_t>(database.get().oid));
+        }
       }
       continue;
     }

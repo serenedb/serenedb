@@ -78,7 +78,8 @@ enum class KeyKinds : uint8_t {
 
 bool OfKinds(const search::KeySpec& spec, KeyKinds kinds) {
   return catalog::IsSingleColumnKey(spec.key) &&
-         (kinds == KeyKinds::All || spec.kind == search::KeyKind::Unique);
+         (kinds == KeyKinds::All ||
+          (spec.kind == search::KeyKind::Unique && !spec.deferred));
 }
 
 FieldSet KeyTermFields(const ScanBindData& bind, KeyKinds kinds) {
@@ -529,15 +530,16 @@ bool ScanBindData::ReadsParametersAtExecution() const {
          !offsets.Active();
 }
 
-search::ReadView ScanBindData::Read(duckdb::ClientContext& context) const {
-  auto& transaction = ConnectionContext::Get(context).Transaction();
+search::Store& ScanBindData::Storage() const {
   if (relation.kind == ScanEntryKind::InvertedIndex) {
-    return transaction.SearchTxn().Read(context,
-                                        *relation.inverted_index->Storage());
+    return *relation.inverted_index->Storage();
   }
-  return transaction.SearchTxn().Read(
-    context,
-    *relation.table_entry->Cast<catalog::SearchTableEntry>().Storage());
+  return *relation.table_entry->Cast<catalog::SearchTableEntry>().Storage();
+}
+
+search::ReadView ScanBindData::Read(duckdb::ClientContext& context) const {
+  return ConnectionContext::Get(context).Transaction().SearchTxn().Read(
+    context, Storage());
 }
 
 duckdb::idx_t ScanColumnOfStorage(const ScanBindData& bind,
@@ -648,6 +650,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
     filter ? EstimateFilterMatchCount(*filter, live,
                                       KeyTermFields(*this, KeyKinds::Unique))
            : live;
+  if (IsPointRead()) {
+    return duckdb::make_uniq<duckdb::NodeStatistics>(estimate);
+  }
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, live);
 }
 
@@ -765,7 +770,7 @@ std::optional<uint64_t> UniqueColumnBound(const ScanBindData& scan,
 
 DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                                   const ScanBindData& scan,
-                                  const irs::DirectoryReader& reader) {
+                                  const irs::CompositeReader& reader) {
   SDB_ASSERT(scan.plan_cache.deferred);
   const auto& claim = *scan.plan_cache.deferred;
   const auto bound = [&](const std::shared_ptr<const duckdb::Expression>& e) {

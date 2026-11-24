@@ -1885,6 +1885,15 @@ id	score
 3	0
 
 
+query
+SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score
+FROM score_idx WHERE (body @@ 'dog')::score(NULL)
+ORDER BY id;
+----
+id	score
+1	0
+
+
 # Doc 1 matches both 'dog' and the unscored group, and scores 'dog' alone.
 query
 SELECT id, round(BM25(score_idx.tableoid)::DOUBLE, 4) AS score

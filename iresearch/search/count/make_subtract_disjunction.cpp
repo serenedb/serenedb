@@ -33,6 +33,7 @@ Root::ptr MakeSubtractDisjunction(const detail::PostingClause& first,
                                   const detail::PostingClause& second,
                                   const SubReader& segment,
                                   const Context& ctx) {
+  SDB_ASSERT(!ctx.table);
   const auto* rarest = &first;
   const auto* densest = &second;
   if (rarest->state.cookie.docs_count > densest->state.cookie.docs_count) {
@@ -45,7 +46,8 @@ Root::ptr MakeSubtractDisjunction(const detail::PostingClause& first,
     return {};
   }
   return memory::make_managed<Subtract>(
-    MakeSum(MakeTermCount(*rarest, ctx), MakeTermCount(*densest, ctx)),
+    MakeSum(MakeTermCount(*rarest, ctx.partial),
+            MakeTermCount(*densest, ctx.partial)),
     std::move(conjunction), ctx.partial);
 }
 

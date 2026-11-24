@@ -21,33 +21,29 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <memory>
-#include <span>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/store/data_input.hpp"  // IndexInput
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/type_limits.hpp"  // field_limits
 
 namespace irs {
 
-struct Directory;
 struct AnnIndex;
-struct IResourceManager;
 
 struct IvfCentroidMeta {
   uint64_t tree_offset = 0;
-  uint64_t tree_byte_size = 0;
   uint64_t stats_offset = 0;
-  uint64_t stats_byte_size = 0;
   uint64_t root_byte_size = 0;
 };
 
@@ -63,7 +59,6 @@ struct HnswHeader {
 
 struct HnswMeta {
   uint64_t offset = 0;
-  uint64_t byte_size = 0;
   HnswHeader header;
 };
 
@@ -91,28 +86,29 @@ struct IdxFooter {
 
 class IdxReader final {
  public:
-  IdxReader(const Directory& dir, std::string_view segment_name,
-            HnswBases* hnsw_bases, bool keep_terms = true);
-  IdxReader(IndexInput::ptr in, IdxFooter footer, HnswBases* hnsw_bases);
+  IdxReader(duckdb::FileSystem& fs, std::string_view root,
+            std::string_view segment_name, bool present, HnswBases* hnsw_bases);
+  IdxReader(duckdb::shared_ptr<duckdb::InputFile> file, IdxFooter footer,
+            HnswBases* hnsw_bases);
   ~IdxReader();
 
   IdxReader(const IdxReader&) = delete;
   IdxReader& operator=(const IdxReader&) = delete;
 
-  bool HasAnn(field_id id) const noexcept;
   const AnnIndex* Ann(field_id id) const noexcept;
 
-  term_dict::TermsMeta TakeTerms() noexcept;
+  term_dict::TermsMeta TakeTerms() noexcept {
+    return std::exchange(_terms, {});
+  }
 
-  std::span<const uint64_t> AnnEnds() const noexcept;
-
-  IndexInput::ptr ReopenIn() const;
+  const duckdb::InputFile* File() const noexcept { return _file.get(); }
 
  private:
   void Adopt(IdxFooter footer, HnswBases* hnsw_bases);
 
-  struct Impl;
-  std::unique_ptr<Impl> _impl;
+  duckdb::shared_ptr<duckdb::InputFile> _file;
+  containers::FlatHashMap<field_id, std::unique_ptr<AnnIndex>> _anns;
+  term_dict::TermsMeta _terms;
 };
 
 }  // namespace irs

@@ -42,6 +42,8 @@
 #include "iresearch/search/detail/term_iterator.hpp"
 #include "iresearch/search/detail/term_predicate.hpp"
 #include "iresearch/search/docs/root.hpp"
+#include "iresearch/search/explain/names.hpp"
+#include "iresearch/search/explain/stats.hpp"
 #include "iresearch/search/fill/node.hpp"
 #include "iresearch/search/hits/root.hpp"
 #include "iresearch/search/lead/node.hpp"
@@ -87,6 +89,7 @@ enum class QueryKind : uint32_t {
   Terms,
   Boolean,
   Phrase,
+  NGram,
   DocsMask,
   Ann,
 };
@@ -153,10 +156,6 @@ class QueryBuilder : public memory::Managed {
 
   virtual score_t Boost() const noexcept = 0;
 
-  virtual void SetBoost(score_t boost) noexcept {
-    SDB_ASSERT(boost == kNoBoost);
-  }
-
   virtual count::Root::ptr PlanCount(const count::Context& ctx) const = 0;
 
   virtual docs::Root::ptr PlanDocs(const docs::Context& ctx) const = 0;
@@ -205,6 +204,8 @@ class Filter {
   virtual QueryBuilder::ptr PrepareSegment(const SubReader& segment,
                                            const PrepareContext& ctx) const = 0;
 
+  virtual bool Prefetch(const SubReader& segment) const { return false; }
+
   const Scorer* GetScorer() const noexcept { return _scorer; }
 
   void SetScorer(const Scorer* scorer) noexcept { _scorer = scorer; }
@@ -222,6 +223,11 @@ class Filter {
     }
     return MakeCollectorImpl(own, stats, threads);
   }
+
+  virtual void ExplainStats(const PrepareCollector*,
+                            explain::StatsIndex&) const {}
+
+  virtual void ExplainTerms(const SubReader&, explain::TermNames&) const {}
 
   virtual TypeInfo::type_id type() const noexcept = 0;
 
@@ -311,6 +317,24 @@ class FilterWithField : public FilterWithOptions<Options> {
   irs::field_id* mutable_field_id() noexcept { return &_field_id; }
   DictRef dict() const noexcept { return _dict; }
   DictRef* mutable_dict() noexcept { return &_dict; }
+
+  void ExplainStats(const PrepareCollector* collector,
+                    explain::StatsIndex& out) const override {
+    if (collector) {
+      collector->Describe(_field_id, [](size_t) { return bytes_view{}; }, out);
+    }
+  }
+
+  void ExplainTerms(const SubReader& segment,
+                    explain::TermNames& out) const override {
+    const auto* reader = segment.field(_field_id, _dict);
+    if (!reader) {
+      return;
+    }
+    if (auto terms = this->CompileTermIterator(*reader)) {
+      out.AddAll(*reader, *terms);
+    }
+  }
 
  protected:
   bool equals(const Filter& rhs) const noexcept final {

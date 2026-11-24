@@ -29,7 +29,7 @@
 #include "iresearch/formats/ivf/clustering.hpp"
 #include "iresearch/formats/ivf/quantizers/common.hpp"
 #include "iresearch/index/vector_distance.hpp"
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::quantizers {
 namespace {
@@ -90,7 +90,7 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     };
   }
 
-  void Encode(IndexOutput& out, const float* vecs, size_t n) final {
+  void Encode(duckdb::WriteStream& out, const float* vecs, size_t n) final {
     if (n == 0) {
       return;
     }
@@ -116,7 +116,7 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     }
   }
 
-  void Finish(IndexOutput& out) final {
+  void Finish(duckdb::WriteStream& out) final {
     if (_pending == 0) {
       return;
     }
@@ -130,14 +130,14 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
     return static_cast<uint32_t>(_pending);
   }
 
-  void Serialize(DataOutput& out) const final {
+  void Serialize(duckdb::WriteStream& out) const final {
     if (!_pano) {
-      out.WriteU64(0);
+      out.Write<uint64_t>(0);
       return;
     }
     const auto a = FloatSpan(_rotation.A);
-    out.WriteU64(sizeof(PanoramaStatsHeader) + a.size());
-    WritePod(out, PanoramaStatsHeader{PanoramaLevels(_d), _d});
+    out.Write<uint64_t>(sizeof(PanoramaStatsHeader) + a.size());
+    out.Write(PanoramaStatsHeader{PanoramaLevels(_d), _d});
     out.WriteData(a.data(), a.size());
   }
 
@@ -146,7 +146,7 @@ class PanoramaQuantizerWriter final : public QuantizerWriter {
   }
 
  private:
-  void WriteBatch(IndexOutput& out, const float* src, size_t count) {
+  void WriteBatch(duckdb::WriteStream& out, const float* src, size_t count) {
     auto pano = MakePanorama(_d, count);
     _cums.assign(count * (pano.n_levels + 1), 0.f);
     _codes.resize(count * size_t{_d});
@@ -372,7 +372,7 @@ PanoramaQuantizerStats<M>::MakeCodebook(std::span<const float> query) const {
 std::shared_ptr<const QuantizerStats> MakePanoramaStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> blob) {
   std::shared_ptr<const QuantizerStats> stats;
-  ResolveEnum<VectorMetric>(EffectiveQuantMetric(metric), [&]<VectorMetric M> {
+  Resolve(EffectiveQuantMetric(metric), [&]<VectorMetric M> {
     stats = std::make_shared<const PanoramaQuantizerStats<M>>(d, blob);
   });
   return stats;

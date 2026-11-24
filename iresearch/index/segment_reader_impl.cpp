@@ -67,70 +67,51 @@ class SegmentAllDocs : public lead::Node {
   doc_id_t _doc = doc_limits::invalid();
 };
 
-FileRefs GetRefs(const Directory& dir, const SegmentMeta& meta) {
-  FileRefs file_refs;
-  auto& refs = dir.attributes().refs();
-  for (const auto& file : SegmentFiles(meta.name, meta.kinds)) {
-    file_refs.emplace_back(refs.add(file));
-  }
-  return file_refs;
-}
-
 }  // namespace
 
-std::vector<IndexInput::ptr> WrittenFiles(const SegmentInputs& inputs) {
-  std::vector<IndexInput::ptr> files;
-  const auto add = [&](IndexInput::ptr in) {
-    if (in) {
-      files.push_back(std::move(in));
-    }
-  };
-  if (inputs.col) {
-    add(inputs.col->ReopenIn());
-  }
-  if (inputs.idx) {
-    add(inputs.idx->ReopenIn());
-  }
-  for (const auto* in : {inputs.postings.doc.get(), inputs.postings.pos.get(),
-                         inputs.postings.pay.get()}) {
-    if (in) {
-      add(in->Dup());
-    }
-  }
-  return files;
-}
-
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
-  const Directory& dir, const SegmentMeta& meta,
-  const IndexReaderOptions& options) {
-  SDB_ASSERT(options.db);
+  duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+  const SegmentMeta& meta, const IndexReaderOptions& options,
+  std::shared_ptr<const FileTracker> files) {
   SegmentInputs inputs{
-    .col = std::make_unique<ColReader>(dir, meta.name, *options.db,
-                                       IOAdvice::RANDOM),
-    .idx = std::make_unique<IdxReader>(dir, meta.name, options.hnsw_bases,
-                                       options.index),
+    .col = std::make_unique<ColReader>(db, fs, root, meta.name,
+                                       (meta.kinds & kColFile) != 0,
+                                       duckdb::MappedFileAccess::RANDOM),
+    .idx = std::make_unique<IdxReader>(
+      fs, root, meta.name, (meta.kinds & kIdxFile) != 0, options.hnsw_bases),
   };
-  return Open(dir, meta, options, std::move(inputs));
+  return Open(db, fs, root, meta, options, std::move(files), std::move(inputs));
 }
 
 std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::Open(
-  const Directory& dir, const SegmentMeta& meta,
-  const IndexReaderOptions& options, SegmentInputs inputs) {
+  duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+  const SegmentMeta& meta, const IndexReaderOptions& options,
+  std::shared_ptr<const FileTracker> files, SegmentInputs inputs) {
+  SDB_ASSERT(inputs.col && inputs.idx);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = GetRefs(dir, meta);
+  reader->_files = std::move(files);
   ParseSegmentId(meta.name, reader->_id);
-  reader->_data = std::make_shared<ColumnData>();
-  reader->_data->col_reader = std::move(inputs.col);
-  reader->_data->idx_reader = std::move(inputs.idx);
-  reader->_field_reader =
-    std::make_shared<term_dict::FieldReader>(*dir.ResourceManager().readers);
-  if (options.index) {
-    reader->_field_reader->prepare(ReaderState{
-      .dir = &dir,
-      .meta = &meta,
-      .idx = reader->_data->idx_reader.get(),
-      .postings = inputs.postings.doc ? &inputs.postings : nullptr,
-    });
+  reader->_readers = std::make_shared<Readers>();
+  reader->_readers->col_reader = std::move(inputs.col);
+  reader->_readers->idx_reader = std::move(inputs.idx);
+  reader->_field_reader = std::make_shared<term_dict::FieldReader>();
+  reader->_field_reader->prepare(ReaderState{
+    .db = db,
+    .fs = fs,
+    .root = root,
+    .meta = meta,
+    .idx = reader->_readers->idx_reader.get(),
+    .postings = inputs.postings.doc ? &inputs.postings : nullptr,
+  });
+  if (reader->_info.byte_size == 0) {
+    const auto handles = reader->_field_reader->Postings().Handles();
+    for (const auto* file : {reader->_readers->col_reader->File(),
+                             reader->_readers->idx_reader->File(), handles.doc,
+                             handles.pos, handles.pay}) {
+      if (file) {
+        reader->_info.byte_size += file->GetSize();
+      }
+    }
   }
   return reader;
 }
@@ -139,8 +120,8 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenInMemory(
   const SegmentMeta& meta, uint64_t id, std::unique_ptr<ColReader> columns) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_id = id;
-  reader->_data = std::make_shared<ColumnData>();
-  reader->_data->col_reader = std::move(columns);
+  reader->_readers = std::make_shared<Readers>();
+  reader->_readers->col_reader = std::move(columns);
   return reader;
 }
 
@@ -149,8 +130,8 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::OpenPiece(
   std::shared_ptr<const PieceFields> fields) {
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
   reader->_id = id;
-  reader->_data = std::make_shared<ColumnData>();
-  reader->_data->col_reader = std::move(columns);
+  reader->_readers = std::make_shared<Readers>();
+  reader->_readers->col_reader = std::move(columns);
   reader->_pieces = std::move(fields);
   return reader;
 }
@@ -162,14 +143,14 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithDocsMask(
   meta.docs_mask = std::move(mask);
   meta.live_docs_count = meta.docs_count - RemovalCount(meta);
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = _refs;
+  reader->_files = _files;
   reader->_id = _id;
   reader->_patch_tick = _patch_tick;
   reader->_patched_docs = _patched_docs;
   reader->_patches = _patches;
   reader->_field_reader = _field_reader;
   reader->_pieces = _pieces;
-  reader->_data = _data;
+  reader->_readers = _readers;
   return reader;
 }
 
@@ -179,13 +160,13 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
   static_cast<SegmentInfo&>(meta) = _info;
   meta.docs_mask = _docs_mask;
   auto reader = std::make_shared<SegmentReaderImpl>(PrivateTag{}, meta);
-  reader->_refs = _refs;
+  reader->_files = _files;
   reader->_id = _id;
   reader->_field_reader = _field_reader;
   reader->_pieces = _pieces;
-  const auto& root = _data->base ? _data->base : _data;
+  const auto& root = _readers->base ? _readers->base : _readers;
   if (patches.empty()) {
-    reader->_data = root;
+    reader->_readers = root;
     return reader;
   }
   reader->_patches.assign(patches.begin(), patches.end());
@@ -204,27 +185,19 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
                                          patch->Type(), _info.docs_count),
       patch));
   }
-  auto data = std::make_shared<ColumnData>();
-  data->col_reader =
+  auto readers = std::make_shared<Readers>();
+  readers->col_reader =
     std::make_unique<ColReader>(*root->col_reader, std::move(replaced));
-  data->base = root;
-  reader->_data = std::move(data);
+  readers->base = root;
+  reader->_readers = std::move(readers);
   return reader;
 }
 
-uint64_t SegmentReaderImpl::CountMappedMemory() const {
-  uint64_t bytes = 0;
-  if (_field_reader != nullptr) {
-    bytes += _field_reader->CountMappedMemory();
-  }
-  return bytes;
-}
-
 NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
-  if (!_data) {
+  if (!_readers) {
     return {};
   }
-  const auto* nc = _data->col_reader->NormColumn(field);
+  const auto* nc = _readers->col_reader->NormColumn(field);
   if (!nc) {
     return {};
   }
@@ -232,23 +205,15 @@ NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
 }
 
 const ColumnReader* SegmentReaderImpl::Column(field_id field) const {
-  return _data->col_reader->Column(field);
+  return _readers->col_reader->Column(field);
 }
 
 const AnnIndex* SegmentReaderImpl::Ann(field_id field) const {
-  const auto* idx = _data ? _data->Idx() : nullptr;
+  const auto* idx = _readers ? _readers->Idx() : nullptr;
   if (!idx) {
     return nullptr;
   }
   return idx->Ann(field);
-}
-
-IndexInput::ptr SegmentReaderImpl::ReopenAnn() const {
-  const auto* idx = _data ? _data->Idx() : nullptr;
-  if (!idx) {
-    return nullptr;
-  }
-  return idx->ReopenIn();
 }
 
 lead::Node::ptr SegmentReaderImpl::docs_iterator() const {

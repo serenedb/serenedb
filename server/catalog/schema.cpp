@@ -39,6 +39,8 @@
 #include <duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
+#include <duckdb/main/attached_database.hpp>
+#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/alter_scalar_function_info.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -746,18 +748,25 @@ duckdb::optional_ptr<duckdb::CatalogEntry> Schema::CreateTokenizer(
 
 duckdb::optional_ptr<duckdb::CatalogEntry> Schema::CreateJob(
   duckdb::CatalogTransaction transaction, duckdb::CreateJobInfo& info) {
-  if (catalog.IsTemporaryCatalog()) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG("Jobs are not supported by this catalog"));
-  }
   if (info.on_conflict == duckdb::OnCreateConflict::IGNORE_ON_CONFLICT &&
       Set(duckdb::CatalogType::JOB_ENTRY)
         .Get(transaction, info.GetQualifiedName().Name())) {
     return nullptr;
   }
   VerifySchedule(info.schedule);
-  auto job = duckdb::make_uniq<JobCatalogEntry>(catalog, *this, info,
-                                                std::make_shared<JobState>());
+  auto state = std::make_shared<JobState>();
+  if (catalog.IsTemporaryCatalog()) {
+    auto& context = transaction.GetContext();
+    state->session_database =
+      duckdb::Catalog::GetCatalog(
+        context, duckdb::DatabaseManager::GetDefaultDatabase(context))
+        .GetAttached()
+        .oid;
+    absl::MutexLock lock{&state->mutex};
+    state->temporary = catalog.GetAttached().shared_from_this();
+  }
+  auto job =
+    duckdb::make_uniq<JobCatalogEntry>(catalog, *this, info, std::move(state));
   if (transaction.context) {
     job->ScheduleAtCommit(*transaction.context);
   }

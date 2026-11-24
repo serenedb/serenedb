@@ -37,13 +37,15 @@ hba::Decision DecideLogin(const LoginPeer& peer, std::string_view user,
                                          std::string_view group) {
     duckdb::idx_t member_oid = 0;
     duckdb::idx_t group_oid = 0;
-    if (!catalog::ReadRole(member,
-                           [&](const catalog::RoleCatalogEntry& role) {
-                             member_oid = role.oid;
-                           }) ||
-        !catalog::ReadRole(group, [&](const catalog::RoleCatalogEntry& role) {
-          group_oid = role.oid;
-        })) {
+    if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
+          member,
+          [&](const catalog::RoleCatalogEntry& role) {
+            member_oid = role.oid;
+          }) ||
+        !catalog::ReadEntry<catalog::RoleCatalogEntry>(
+          group, [&](const catalog::RoleCatalogEntry& role) {
+            group_oid = role.oid;
+          })) {
       return false;
     }
     return auth::ClosureFor(nullptr, member_oid)->IsMember(group_oid);
@@ -70,12 +72,13 @@ hba::Decision DecideLogin(const LoginPeer& peer, std::string_view user,
 
 RoleLogin ReadRoleLogin(std::string_view user) {
   RoleLogin login;
-  catalog::ReadRole(user, [&](const catalog::RoleCatalogEntry& role) {
-    login.can_login = role.CanLogin();
-    login.password_expired =
-      role.HasValidUntil() &&
-      duckdb::Timestamp::GetCurrentTimestamp().value >= role.ValidUntil();
-  });
+  catalog::ReadEntry<catalog::RoleCatalogEntry>(
+    user, [&](const catalog::RoleCatalogEntry& role) {
+      login.can_login = role.CanLogin();
+      login.password_expired =
+        role.HasValidUntil() &&
+        duckdb::Timestamp::GetCurrentTimestamp().value >= role.ValidUntil();
+    });
   return login;
 }
 

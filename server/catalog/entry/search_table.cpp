@@ -66,7 +66,8 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -307,7 +308,8 @@ SearchTableEntry::SearchTableEntry(
     _triggers{triggers ? std::move(triggers)
                        : std::make_shared<EntrySet>(
                            catalog.IsCaseSensitive(),
-                           catalog.Cast<BaseCatalog>().Oids(), oid, true)} {
+                           catalog.Cast<BaseCatalog>().Oids(), oid, true)},
+    _tablespace{info.Base().tablespace_oid} {
   auto& oids = catalog.GetDatabase().GetDatabaseManager();
   for (duckdb::idx_t i = 0; i < _columns.LogicalColumnCount(); ++i) {
     auto& column = _columns.GetColumnMutable(duckdb::LogicalIndex{i});
@@ -332,7 +334,7 @@ SearchTableEntry::SearchTableEntry(
   }
   auto& base = info.Base();
   if (base.oid == 0) {
-    ReadDatabase(
+    ReadEntry<DatabaseCatalogEntry>(
       catalog.GetName().GetIdentifierName(),
       [&](const DatabaseCatalogEntry& database) {
         const auto& defaults = database.Options();
@@ -348,10 +350,11 @@ SearchTableEntry::SearchTableEntry(
   _options = ResolveOptions(base.options);
   const bool fresh = !_storage;
   if (fresh) {
+    auto& serene = catalog.Cast<SereneDBCatalog>();
     _storage = std::make_shared<search::Store>(
-      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
-      catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
-      _options, GetColumns());
+      serene.Directory(), serene.StoragePath(transaction, *this, _tablespace),
+      catalog.InMemory(), catalog.GetAttached().IsReadOnly(), catalog.GetOid(),
+      oid, _options, GetColumns());
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
   auto [specs, referencing] = search::ResolveTableKeys(*this, transaction);
@@ -463,7 +466,7 @@ void WalkIResearchColumn(const duckdb::QueryContext& context,
 }  // namespace
 
 duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
-  const duckdb::QueryContext& context, const irs::DirectoryReader& reader,
+  const duckdb::QueryContext& context, const irs::CompositeReader& reader,
   const duckdb::TableCatalogEntry& table, duckdb::column_t key_column,
   bool segment_info) {
   duckdb::vector<duckdb::ColumnSegmentInfo> result;
@@ -625,6 +628,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
   for (auto& [name, value] : ExplicitOptions()) {
     options.insert_or_assign(name, OptionConstant(value));
   }
+  info->tablespace_oid = _tablespace;
   return info;
 }
 
@@ -755,8 +759,9 @@ void SearchTableEntry::InternalAppend(
     duckdb::DataTable::VerifyRowConstraints(context, *this, constraints, chunk);
     rows.Append(context, target, chunk);
   }
-  rows.Flush();
-  rows.HandOver(context, target, transaction.SearchTxn());
+  auto& writes = transaction.SearchTxn();
+  rows.Combine(context, target, writes);
+  connector::FinishSearchSink(context, target, writes);
 }
 
 namespace {
@@ -1133,6 +1138,11 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Altered(
   auto bound = binder->BindCreateTableInfo(
     std::move(definition), ParentSchema(context),
     bound_defaults ? *bound_defaults : unused_defaults, info.bind_mode);
+  for (const auto& dependency : dependencies.Set()) {
+    if (dependency.entry.type == duckdb::CatalogType::TABLESPACE_ENTRY) {
+      bound->Base().dependencies.AddDependency(dependency);
+    }
+  }
   return Successor(context, *bound);
 }
 

@@ -18,18 +18,19 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <filesystem>
 #include <iresearch/analysis/delimited_tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/detail/exclude_block.hpp>
 #include <iresearch/search/detail/exclusion_of.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <map>
@@ -78,7 +79,7 @@ struct BodyField {
     return irs::IndexFeatures::Freq;
   }
 
-  bool Write(irs::DataOutput&) const { return true; }
+  bool Write(duckdb::WriteStream&) const { return true; }
 
   std::string value;
   mutable irs::analysis::DelimitedTokenizer stream{" "};
@@ -86,28 +87,30 @@ struct BodyField {
 
 struct Index {
   std::filesystem::path path;
-  std::unique_ptr<irs::MMapDirectory> dir;
-  irs::DirectoryReader reader;
+  irs::CompositeReader reader;
 };
 
+constinit std::unique_ptr<Index> gIndex;
+
 const Index& IndexOf() {
-  static Index index;
-  if (index.dir) {
-    return index;
+  if (gIndex) {
+    return *gIndex;
   }
+  gIndex = std::make_unique<Index>();
+  auto& index = *gIndex;
   index.path =
     std::filesystem::temp_directory_path() / "serenedb-bench-exclude-costs";
   std::filesystem::remove_all(index.path);
   std::filesystem::create_directories(index.path);
-  index.dir = std::make_unique<irs::MMapDirectory>(index.path);
-
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = index.path.string();
+  tests::IndexDir dir{*db, fs, root};
+
   irs::IndexWriterOptions opts;
-  opts.db = db;
-  opts.reader_options.db = db;
   opts.column_options = [](irs::field_id) -> irs::ColumnOptions { return {}; };
   auto writer =
-    tests::IndexWriter::Make(*index.dir, tests::kOmCreate, std::move(opts));
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(opts));
   {
     auto trx = writer->GetBatch();
     BodyField field;
@@ -126,8 +129,7 @@ const Index& IndexOf() {
     trx.Commit();
   }
   writer->RefreshCommit();
-  index.reader =
-    tests::OpenReader(*index.dir, irs::IndexReaderOptions{.db = db});
+  index.reader = tests::OpenReader(dir, irs::IndexReaderOptions{});
   SDB_ASSERT(index.reader.size() == 1);
   return index;
 }
@@ -329,6 +331,10 @@ BENCHMARK(BmExclude)->Apply(Args)->Unit(benchmark::kMicrosecond);
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
+  absl::Cleanup shutdown = [] {
+    gIndex.reset();
+    irs::DuckDBEngine::Instance().Shutdown();
+  };
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -336,8 +342,6 @@ static int Main(int argc, char** argv) {
   }
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-
-  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
 

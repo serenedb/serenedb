@@ -30,17 +30,17 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/filters/regexp_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
-#include <iresearch/store/data_output.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
@@ -76,7 +76,7 @@ struct IField {
   virtual irs::IndexFeatures GetIndexFeatures() const = 0;
   virtual irs::analysis::Tokenizer& GetTokens() const = 0;
   virtual std::string_view Value() const = 0;
-  virtual bool Write(irs::DataOutput& out) const = 0;
+  virtual bool Write(duckdb::WriteStream& out) const = 0;
 };
 
 class FieldBase : public IField {
@@ -116,7 +116,7 @@ class TextField final : public FieldBase {
 
   std::string_view Value() const final { return _value; }
 
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
  private:
   irs::analysis::Tokenizer::ptr _stream;
@@ -310,8 +310,7 @@ constexpr int kRepetitions = 5;
 
 struct Corpus {
   std::filesystem::path dir_path;
-  std::unique_ptr<irs::MMapDirectory> dir;
-  irs::DirectoryReader reader;
+  irs::CompositeReader reader;
 };
 
 [[noreturn]] void Die(const char* msg) {
@@ -342,14 +341,14 @@ Corpus BuildIndex() {
   std::filesystem::remove_all(tmp_root);
   std::filesystem::create_directories(tmp_root);
 
-  auto dir = std::make_unique<irs::MMapDirectory>(tmp_root);
-
   auto* db = &irs::DuckDBEngine::Instance().instance();
+  auto& fs = duckdb::FileSystem::GetFileSystem(*db);
+  const auto root = tmp_root.string();
+  tests::IndexDir dir{*db, fs, root};
+
   irs::IndexWriterOptions options;
-  options.db = db;
-  options.reader_options.db = db;
   auto writer =
-    tests::IndexWriter::Make(*dir, tests::kOmCreate, std::move(options));
+    tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(options));
   if (!writer) {
     Die("IndexWriter::Make returned null");
   }
@@ -380,15 +379,17 @@ Corpus BuildIndex() {
                "regexp_vs_wildcard bench: indexed %zu documents from %s\n",
                inserted, data_path.string().c_str());
 
-  auto rdr = tests::OpenReader(*dir, irs::IndexReaderOptions{.db = db});
-  return Corpus{.dir_path = std::move(tmp_root),
-                .dir = std::move(dir),
-                .reader = std::move(rdr)};
+  auto rdr = tests::OpenReader(dir, irs::IndexReaderOptions{});
+  return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
+constinit std::unique_ptr<const Corpus> gCorpus;
+
 const Corpus& GetCorpus() {
-  static const Corpus corpus = BuildIndex();
-  return corpus;
+  if (!gCorpus) {
+    gCorpus = std::make_unique<const Corpus>(BuildIndex());
+  }
+  return *gCorpus;
 }
 
 // Fixture
@@ -434,7 +435,7 @@ irs::ByRegexp MakeRegexp(std::string_view pattern) {
 // gNoop
 
 template<typename MakeFn>
-void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
+void BenchPrepare(benchmark::State& state, const irs::CompositeReader& rdr,
                   MakeFn make) {
   // Sanity check before entering the timed loop. A null prepared
   // filter means an invalid pattern slipped through. The timed loop
@@ -463,7 +464,7 @@ void BenchPrepare(benchmark::State& state, const irs::DirectoryReader& rdr,
 }
 
 template<typename MakeFn>
-void BenchExecuteOnly(benchmark::State& state, const irs::DirectoryReader& rdr,
+void BenchExecuteOnly(benchmark::State& state, const irs::CompositeReader& rdr,
                       MakeFn make) {
   auto q = make();
   std::vector<irs::QueryBuilder::ptr> prepared;
@@ -703,3 +704,14 @@ REGISTER(RegexpOnlyPerlClassPrepare);
 #undef REGISTER
 
 }  // namespace
+
+static int Main(int argc, char** argv) {
+  irs::DuckDBEngine::Instance().Initialize();
+  const int rc = sdb::bench::RunBenchmarks(argc, argv);
+  gCorpus.reset();
+  irs::DuckDBEngine::Instance().Shutdown();
+  return rc;
+}
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

@@ -38,6 +38,7 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/config.hpp>
 #include <duckdb/main/database_manager.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/planner/expression/bound_columnref_expression.hpp>
 #include <duckdb/planner/expression/bound_lambda_expression.hpp>
 #include <duckdb/planner/expression_iterator.hpp>
@@ -1060,20 +1061,26 @@ bool TermDictIndexable(const duckdb::LogicalType& type) {
 
 // An opclass names a dictionary of the index's own schema first -- the index
 // and its dictionary are created together and that schema need not be on the
-// reader's search path -- and otherwise resolves like any other name.
+// reader's search path -- and otherwise resolves like any other name. A
+// temporary schema holds no dictionaries: its indexes use the session
+// database's.
 duckdb::optional_ptr<TokenizerCatalogEntry> ResolveOpclassTokenizer(
   duckdb::ClientContext& context, duckdb::SchemaCatalogEntry& schema,
   std::string_view name) {
   duckdb::CatalogEntryRetriever retriever{context};
   retriever.SetSearchPath({{schema.ParentCatalog().GetName(), schema.name}});
   auto dict = retriever.GetEntry(
-    duckdb::EntryLookupInfo{duckdb::CatalogType::TOKENIZER_ENTRY,
-                            duckdb::QualifiedName::Parse(name)},
+    duckdb::EntryLookupInfo{
+      duckdb::CatalogType::TOKENIZER_ENTRY,
+      duckdb::QualifiedName::Parse(
+        name,
+        duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(context))},
     duckdb::OnEntryNotFound::RETURN_NULL);
   if (!dict) {
     return nullptr;
   }
-  if (&dict->ParentCatalog() != &schema.ParentCatalog()) {
+  if (&dict->ParentCatalog() !=
+      catalog::DictionaryCatalog(context, schema.ParentCatalog()).get()) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("cross-database references are not implemented: \"",

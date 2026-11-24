@@ -54,7 +54,8 @@ class PgDatabase final : public SystemTableScan<kPgDatabaseSql> {
       Col<"datlocprovider">([](const auto&) { return 'c'; }),
       Col<"datallowconn">([](const auto&) { return true; }),
       Col<"datconnlimit">([](const auto&) { return -1; }),
-      Col<"dattablespace">([](const auto&) { return kPgDefaultTablespace; }),
+      Col<"dattablespace">(
+        [](const auto& database) { return database.Tablespace(); }),
       Col<"datcollate">(kLocale), Col<"datctype">(kLocale),
       Col<"datacl">([](const auto& database) -> const auto& {
         return database.permissions.acl;

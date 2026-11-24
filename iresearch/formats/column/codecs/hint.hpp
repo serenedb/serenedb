@@ -29,7 +29,6 @@
 namespace irs::codecs {
 
 inline constexpr double kNoScore = std::numeric_limits<double>::infinity();
-inline constexpr double kFeaturesMove = 1.1;
 inline constexpr double kWorthSwitching = 1.02;
 inline constexpr uint32_t kOldHint = 8;
 inline constexpr uint64_t kMoreInput = 2;
@@ -66,18 +65,18 @@ constexpr double Shift(const Features& now, const Features& then) noexcept {
   return shift;
 }
 
-constexpr bool Measures(double remembered, double best, double shift) noexcept {
+constexpr bool Measures(double remembered, double best, double shift,
+                        double least_shift) noexcept {
   if (remembered == kNoScore) {
-    return best == kNoScore || shift >= kFeaturesMove;
+    return best == kNoScore || shift >= least_shift;
   }
-  return remembered * kWorthSwitching <= best * shift;
+  return remembered * kWorthSwitching <=
+         best * (shift >= least_shift ? shift : 1.0);
 }
 
 constexpr bool Measures(const Hint& hint, double best, const Features& now,
                         double least_shift) noexcept {
-  const auto shift = Shift(now, hint.features);
-  return Measures(hint.score, best,
-                  hint.score == kNoScore || shift >= least_shift ? shift : 1.0);
+  return Measures(hint.score, best, Shift(now, hint.features), least_shift);
 }
 
 }  // namespace irs::codecs

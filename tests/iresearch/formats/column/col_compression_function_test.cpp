@@ -908,8 +908,9 @@ TEST(ColHintTest, AShiftBelowTheLeastOneDoesNotCount) {
   EXPECT_TRUE(Measures(hint, 0.95, Features{14, 0.5F, 0}, 1.0));
 
   const Hint nothing{.features = {10, 0.5F, 0}, .forced = 1};
-  EXPECT_FALSE(Measures(nothing, 0.95, Features{10.5F, 0.5F, 0}, 1.5));
-  EXPECT_TRUE(Measures(nothing, 0.95, Features{12, 0.5F, 0}, 1.5));
+  EXPECT_FALSE(Measures(nothing, 0.95, Features{12, 0.5F, 0}, 1.5));
+  EXPECT_TRUE(Measures(nothing, 0.95, Features{15, 0.5F, 0}, 1.5));
+  EXPECT_TRUE(Measures(nothing, 0.95, Features{12, 0.5F, 0}, 1.1));
 }
 
 TEST(ColHintTest, ACandidateIsAskedAgainOnceItsLastForcedAskIsOld) {
@@ -926,22 +927,24 @@ TEST(ColHintTest, ACandidateIsAskedAgainOnceItsLastForcedAskIsOld) {
 TEST(ColHintTest, AFormMeasuresWhenItsCreditedAnswerWouldWin) {
   using irs::codecs::kNoScore;
   using irs::codecs::Measures;
-  EXPECT_TRUE(Measures(0.9, 1.0, 1.0));
-  EXPECT_FALSE(Measures(1.0, 1.0, 1.0));
-  EXPECT_FALSE(Measures(0.99, 1.0, 1.0));
-  EXPECT_TRUE(Measures(1.5, 1.0, 1.6));
-  EXPECT_FALSE(Measures(1.5, 1.0, 1.4));
-  EXPECT_TRUE(Measures(100.0, kNoScore, 1.0));
-  EXPECT_TRUE(Measures(100.0, 1.0, kNoScore));
+  EXPECT_TRUE(Measures(0.9, 1.0, 1.0, 1.0));
+  EXPECT_FALSE(Measures(1.0, 1.0, 1.0, 1.0));
+  EXPECT_FALSE(Measures(0.99, 1.0, 1.0, 1.0));
+  EXPECT_TRUE(Measures(1.5, 1.0, 1.6, 1.0));
+  EXPECT_FALSE(Measures(1.5, 1.0, 1.4, 1.0));
+  EXPECT_FALSE(Measures(1.5, 1.0, 1.6, 2.0));
+  EXPECT_TRUE(Measures(100.0, kNoScore, 1.0, 1.0));
+  EXPECT_TRUE(Measures(100.0, 1.0, kNoScore, 1.0));
 }
 
 TEST(ColHintTest, AFormWithNothingToOfferLooksAgainOnceTheRowGroupMoves) {
   using irs::codecs::kNoScore;
   using irs::codecs::Measures;
-  EXPECT_FALSE(Measures(kNoScore, 1.0, 1.0));
-  EXPECT_FALSE(Measures(kNoScore, 1.0, 1.05));
-  EXPECT_TRUE(Measures(kNoScore, 1.0, 1.1));
-  EXPECT_TRUE(Measures(kNoScore, kNoScore, 1.0));
+  EXPECT_FALSE(Measures(kNoScore, 1.0, 1.0, 1.1));
+  EXPECT_FALSE(Measures(kNoScore, 1.0, 1.05, 1.1));
+  EXPECT_TRUE(Measures(kNoScore, 1.0, 1.1, 1.1));
+  EXPECT_FALSE(Measures(kNoScore, 1.0, 1.2, 1.5));
+  EXPECT_TRUE(Measures(kNoScore, kNoScore, 1.0, 1.1));
 }
 
 TEST_F(ColCompressionFunctionTest, ACodecIsWritableWhenItMayBeNamedForAType) {

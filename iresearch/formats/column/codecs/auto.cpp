@@ -51,11 +51,13 @@ struct Candidate {
   std::span<const Variant> variants = {};
 };
 
+constexpr double kLeastShift = 1.1;
+
 struct Candidates {
   std::span<const Candidate> flush;
   std::span<const Candidate> merge;
   Features (*features)(ColumnDataCheckpointData& data) = nullptr;
-  double least_shift = 1.0;
+  double least_shift = kLeastShift;
   uint64_t (*input)(ColumnDataCheckpointData& data) = nullptr;
 };
 

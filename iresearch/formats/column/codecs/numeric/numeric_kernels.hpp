@@ -778,17 +778,35 @@ IRS_FORCE_INLINE void UnpackLane(
   (UnpackStep<U, W, J>(in, out, base, l), ...);
 }
 
+template<typename U, unsigned W, unsigned J>
+IRS_FORCE_INLINE void UnpackRow(const LaneWord<U>* IRS_RESTRICT in,
+                                U* IRS_RESTRICT out, U base) noexcept {
+  for (unsigned l = 0; l < kLanes<U>; ++l) {
+    UnpackStep<U, W, J>(in, out, base, l);
+  }
+}
+
+template<typename U, unsigned W, unsigned... J>
+IRS_FORCE_INLINE void UnpackRows(
+  const LaneWord<U>* IRS_RESTRICT in, U* IRS_RESTRICT out, U base,
+  std::integer_sequence<unsigned, J...>) noexcept {
+  (UnpackRow<U, W, J>(in, out, base), ...);
+}
+
 template<typename U, unsigned W>
 void UnpackBlock(const LaneWord<U>* IRS_RESTRICT in, U* IRS_RESTRICT out,
                  U base) noexcept {
+  constexpr unsigned kRows = 8 * sizeof(LaneWord<U>);
   if constexpr (W == 0) {
     std::fill_n(out, kBlockValues, base);
-  } else if constexpr (W == 8 * sizeof(LaneWord<U>)) {
+  } else if constexpr (W == kRows) {
     for (unsigned i = 0; i < kBlockValues; ++i) {
       out[i] = static_cast<U>(in[i] + base);
     }
+  } else if constexpr (kRows == 64 && W > 32) {
+    UnpackRows<U, W>(in, out, base,
+                     std::make_integer_sequence<unsigned, kRows>{});
   } else {
-    constexpr unsigned kRows = 8 * sizeof(LaneWord<U>);
     for (unsigned l = 0; l < kLanes<U>; ++l) {
       UnpackLane<U, W>(in, out, base, l,
                        std::make_integer_sequence<unsigned, kRows>{});

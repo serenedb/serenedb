@@ -1,0 +1,41 @@
+statement ok
+CREATE TABLE iuas (b INT, k BIGINT) WITH (compaction_interval = 0, compaction_floor_segment_bytes = 262144)
+
+
+statement ok
+INSERT INTO iuas
+SELECT 1, k FROM range(2000) t(k)
+UNION ALL SELECT 2, k FROM range(2000) t(k)
+UNION ALL SELECT 3, k FROM range(2000) t(k)
+UNION ALL SELECT 4, k FROM range(2000) t(k)
+UNION ALL SELECT 5, k FROM range(2000) t(k)
+UNION ALL SELECT 6, k FROM range(2000) t(k)
+UNION ALL SELECT 7, k FROM range(2000) t(k)
+UNION ALL SELECT 8, k FROM range(2000) t(k)
+UNION ALL SELECT 9, k FROM range(2000) t(k)
+UNION ALL SELECT 10, k FROM range(2000) t(k)
+UNION ALL SELECT 11, k FROM range(2000) t(k)
+UNION ALL SELECT 12, k FROM range(2000) t(k)
+UNION ALL SELECT 13, k FROM range(2000) t(k)
+UNION ALL SELECT 14, k FROM range(2000) t(k)
+UNION ALL SELECT 15, k FROM range(2000) t(k)
+UNION ALL SELECT 16, k FROM range(2000) t(k)
+UNION ALL SELECT 17, k FROM range(2000) t(k)
+UNION ALL SELECT 18, k FROM range(2000) t(k)
+UNION ALL SELECT 19, k FROM range(2000) t(k)
+UNION ALL SELECT 20, k FROM range(2000) t(k)
+
+
+query
+SELECT count(*) AS n, count(DISTINCT b) AS branches, sum(k) AS total FROM iuas
+----
+n	branches	total
+40000	20	39980000
+
+
+query
+SELECT max(value) FILTER (WHERE metric = 'num_segments') <= 2 AS few_segments
+FROM sdb_metrics WHERE relation_id = 'iuas'::regclass
+----
+few_segments
+t

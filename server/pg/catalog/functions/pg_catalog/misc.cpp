@@ -558,6 +558,7 @@ void SignalBackendFunction(duckdb::DataChunk& args,
 void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        duckdb::Vector& result) {
   auto& context = state.GetContext();
+  absl::MutexLock lock{&ConnectionContext::Get(context).SettingWritesMutex()};
   duckdb::TernaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool,
                                    duckdb::string_t>(
     args.data[0], args.data[1], args.data[2], result, args.size(),

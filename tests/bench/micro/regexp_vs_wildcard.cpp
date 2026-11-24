@@ -383,9 +383,13 @@ Corpus BuildIndex() {
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr)};
 }
 
+constinit std::unique_ptr<const Corpus> gCorpus;
+
 const Corpus& GetCorpus() {
-  static const Corpus corpus = BuildIndex();
-  return corpus;
+  if (!gCorpus) {
+    gCorpus = std::make_unique<const Corpus>(BuildIndex());
+  }
+  return *gCorpus;
 }
 
 // Fixture
@@ -703,13 +707,10 @@ REGISTER(RegexpOnlyPerlClassPrepare);
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
-  benchmark::Initialize(&argc, argv);
-  if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
-    return 1;
-  }
-  benchmark::RunSpecifiedBenchmarks();
-  benchmark::Shutdown();
-  return 0;
+  const int rc = sdb::bench::RunBenchmarks(argc, argv);
+  gCorpus.reset();
+  irs::DuckDBEngine::Instance().Shutdown();
+  return rc;
 }
 
 [[maybe_unused]] static const bool kMain =

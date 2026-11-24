@@ -52,7 +52,9 @@ namespace {
 bool NamesSequence(const duckdb::ParsedExpression& expression,
                    const duckdb::Identifier& sequence) {
   if (const auto argument = NextvalArgument(expression)) {
-    return duckdb::QualifiedName::Parse(*argument).Name() == sequence;
+    return duckdb::QualifiedName::Parse(*argument,
+                                        duckdb::IdentifierCaseMode::LOWERCASE)
+             .Name() == sequence;
   }
   bool named = false;
   duckdb::ParsedExpressionIterator::EnumerateChildren(

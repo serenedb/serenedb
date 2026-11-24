@@ -158,10 +158,6 @@ class QueryBuilder : public memory::Managed {
 
   virtual score_t Boost() const noexcept = 0;
 
-  virtual void SetBoost(score_t boost) noexcept {
-    SDB_ASSERT(boost == kNoBoost);
-  }
-
   virtual count::Root::ptr PlanCount(const count::Context& ctx) const = 0;
 
   virtual docs::Root::ptr PlanDocs(const docs::Context& ctx) const = 0;

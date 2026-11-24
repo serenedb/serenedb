@@ -317,14 +317,13 @@ duckdb::SinkCombineResultType SereneDBSearchUpdate::Combine(
   duckdb::OperatorSinkCombineInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   auto& lstate = input.local_state.Cast<SearchUpdateLocalState>();
-  lstate.rows.Flush();
   auto& search_txn = gstate.sdb_txn->SearchTxn();
   if (lstate.patches && !lstate.patches->Empty()) {
     search_txn.AddPatches(gstate.table.store,
                           std::move(*lstate.patches).Finish());
   }
+  lstate.rows.Combine(context.client, gstate.table, search_txn);
   absl::MutexLock lock{&gstate.mutex};
-  lstate.rows.HandOver(context.client, gstate.table, search_txn);
   if (!lstate.positions.Empty()) {
     gstate.positions.push_back(std::move(lstate.positions));
   }
@@ -367,6 +366,7 @@ duckdb::SinkFinalizeType SereneDBSearchUpdate::Finalize(
   duckdb::OperatorSinkFinalizeInput& input) const {
   auto& gstate = input.global_state.Cast<SearchUpdateGlobalState>();
   auto& search_txn = gstate.sdb_txn->SearchTxn();
+  FinishSearchSink(context, gstate.table, search_txn);
   auto positions = !_patch && gstate.updated_rows
                      ? std::move(*gstate.updated_rows).Positions()
                      : irs::DocRemovalBuilder::Union(

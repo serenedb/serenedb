@@ -1,0 +1,81 @@
+statement ok
+CREATE TABLE stak (id INT PRIMARY KEY, n INT)
+WITH (compaction_interval = 0, compaction_floor_segment_bytes = 1);
+
+
+statement ok
+CREATE INDEX stak_expr ON stak USING inverted ((id % 10));
+
+
+statement ok
+INSERT INTO stak
+SELECT i, i % 100
+FROM generate_series(1, 20000) g(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stak;
+
+
+statement ok
+SET VARIABLE stak_segments = (
+  SELECT value
+  FROM sdb_metrics
+  WHERE relation_id = 'stak'::regclass
+    AND metric = 'num_segments'
+);
+
+
+statement ok
+SET VARIABLE stak_files = (
+  SELECT value
+  FROM sdb_metrics
+  WHERE relation_id = 'stak'::regclass
+    AND metric = 'num_files'
+);
+
+
+statement ok
+ALTER TABLE stak ADD COLUMN c INT DEFAULT 7;
+
+
+query
+SELECT
+  (
+    SELECT value
+    FROM sdb_metrics
+    WHERE relation_id = 'stak'::regclass
+      AND metric = 'num_segments'
+  ) = getvariable('stak_segments') AS same_segments,
+  (
+    SELECT value
+    FROM sdb_metrics
+    WHERE relation_id = 'stak'::regclass
+      AND metric = 'num_files'
+  ) > getvariable('stak_files') AS more_files;
+----
+same_segments	more_files
+t	t
+
+
+query
+SELECT sum(c) AS c FROM stak;
+----
+c
+140000
+
+
+query
+SELECT count(*) AS hits
+FROM stak_expr
+WHERE id % 10 = 3;
+----
+hits
+2000
+
+
+statement error
+INSERT INTO stak (id, n) VALUES (5, 0);
+----
+db error: ERROR: duplicate key value violates unique constraint "stak_pkey"
+DETAIL: Key (id)=(5) already exists.

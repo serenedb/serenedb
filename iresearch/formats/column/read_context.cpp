@@ -75,6 +75,7 @@ ReadContext::ReadContext(const ColReader& reader, bool random_access)
                  /*block_header_size=*/0} {
   ResetFile(reader.File());
   _random_access = random_access;
+  _owner = &reader.Owner();
 }
 
 ReadContext::ReadContext(duckdb::DatabaseInstance& db,
@@ -93,7 +94,20 @@ void ReadContext::Reset(const ColReader& reader) {
              "ReadContext::Reset: Database mismatch");
   SDB_ASSERT(_live_handles == 0, "ReadContext::Reset with live block handles");
   SDB_ASSERT(GetBlockAllocSize() == reader.BlockAllocSize());
+  _attachments.clear();
   ResetFile(reader.File());
+  _owner = &reader.Owner();
+}
+
+ReadContext& ReadContext::For(const ColReader* owner) {
+  if (owner == nullptr || owner == _owner) {
+    return *this;
+  }
+  auto& attachment = _attachments[owner];
+  if (!attachment) {
+    attachment = std::make_unique<ReadContext>(*owner, _random_access);
+  }
+  return *attachment;
 }
 
 void ReadContext::ResetFile(const duckdb::InputFile* file) {

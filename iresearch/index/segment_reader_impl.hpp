@@ -91,6 +91,9 @@ class SegmentReaderImpl final : public SubReader {
     std::shared_ptr<const DocumentMask> mask) const;
   std::shared_ptr<const SegmentReaderImpl> WithPatches(
     std::span<const FieldPatch> patches) const;
+  std::shared_ptr<const SegmentReaderImpl> WithAttachments(
+    std::span<const std::shared_ptr<const SegmentReaderImpl>> attachments)
+    const;
 
   const SegmentInfo& Meta() const final { return _info; }
 
@@ -107,6 +110,11 @@ class SegmentReaderImpl final : public SubReader {
   const std::shared_ptr<const FileTracker>& Files() const noexcept {
     return _files;
   }
+  std::span<const std::shared_ptr<const SegmentReaderImpl>> Attachments()
+    const noexcept {
+    SDB_ASSERT(_root);
+    return _root->attached;
+  }
   std::span<const FieldPatch> Patches() const noexcept { return _patches; }
 
   lead::Node::ptr docs_iterator() const final;
@@ -114,6 +122,12 @@ class SegmentReaderImpl final : public SubReader {
   std::span<const TermReader* const> fields(field_id id) const final {
     if (_pieces) {
       return _pieces->fields(id);
+    }
+    if (_attached_fields) {
+      const auto it = _attached_fields->by_id.find(id);
+      if (it != _attached_fields->by_id.end()) {
+        return it->second->fields(id);
+      }
     }
     if (!_field_reader) {
       return {};
@@ -124,6 +138,9 @@ class SegmentReaderImpl final : public SubReader {
   std::span<const field_id> field_ids() const final {
     if (_pieces) {
       return _pieces->field_ids();
+    }
+    if (_attached_fields) {
+      return _attached_fields->ids;
     }
     if (!_field_reader) {
       return {};
@@ -144,10 +161,17 @@ class SegmentReaderImpl final : public SubReader {
     std::unique_ptr<ColReader> col_reader;
     std::unique_ptr<IdxReader> idx_reader;
     std::shared_ptr<Readers> base;
+    std::vector<std::shared_ptr<const SegmentReaderImpl>> attached;
 
     const IdxReader* Idx() const noexcept {
       return idx_reader ? idx_reader.get() : base ? base->Idx() : nullptr;
     }
+  };
+
+  struct AttachedFields {
+    std::vector<std::shared_ptr<term_dict::FieldReader>> readers;
+    std::vector<field_id> ids;
+    irs::containers::FlatHashMap<field_id, const term_dict::FieldReader*> by_id;
   };
 
   std::shared_ptr<const FileTracker> _files;
@@ -158,7 +182,9 @@ class SegmentReaderImpl final : public SubReader {
   uint64_t _patched_docs = 0;
   std::vector<FieldPatch> _patches;
   std::shared_ptr<Readers> _readers;
+  std::shared_ptr<Readers> _root;
   std::shared_ptr<term_dict::FieldReader> _field_reader;
+  std::shared_ptr<const AttachedFields> _attached_fields;
   std::shared_ptr<const PieceFields> _pieces;
 };
 

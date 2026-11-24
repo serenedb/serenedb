@@ -199,6 +199,7 @@ void ColReader::Adopt(ColFooter footer) {
   _ctx.SetBlockAllocSize(footer.block_size);
   for (auto& meta : footer.columns) {
     auto col = ColumnReader::Make(std::move(meta));
+    col->SetOwner(this);
     const auto id = col->Id();
     const bool ok = _by_id.emplace(id, col.get()).second;
     SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
@@ -259,6 +260,27 @@ ColReader::ColReader(const ColReader& base,
   for (const auto& column : _replaced) {
     if (!base.HasColumn(column->Id())) {
       Index(*column);
+    }
+  }
+}
+
+ColReader::ColReader(const ColReader& base,
+                     std::span<const ColReader* const> attached)
+  : _db{base._db},
+    _ctx{*base._db},
+    _base{&base},
+    _norm_by_id{base._norm_by_id} {
+  for (const auto* column : base._columns) {
+    Index(*column);
+  }
+  for (const auto* file : attached) {
+    SDB_ASSERT(file->_db == _db);
+    for (const auto* column : file->_columns) {
+      Index(*column);
+    }
+    for (const auto& [id, norm] : file->_norm_by_id) {
+      const bool ok = _norm_by_id.emplace(id, norm).second;
+      SDB_ASSERT(ok);
     }
   }
 }

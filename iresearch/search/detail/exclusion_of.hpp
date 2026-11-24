@@ -50,7 +50,7 @@ bool ExcludeTerms(std::span<const Term> terms,
   if (!filters.empty() || terms.empty()) {
     return false;
   }
-  doc = DocOf(FieldOf(terms.front(), field));
+  doc = SharedDoc(terms, field);
   return doc != nullptr;
 }
 
@@ -370,6 +370,13 @@ Result BuildExcludeFills(std::span<const Term> metas,
 
 inline constexpr auto kNoMaskFold = [](BitsetStorage&) noexcept {};
 
+template<typename Term>
+const duckdb::InputFile* ExcludeDoc(std::span<const Term> metas,
+                                    const TermReader* field,
+                                    const SubReader& segment) {
+  return metas.empty() ? SegmentDoc(segment) : SharedDoc(metas, field);
+}
+
 template<typename Result, typename Input, bool kConcrete, typename P = NoPins,
          typename Term, typename Fold, typename Make>
 Result BuildRestExcludes(ExcludeUse use, std::span<const Term> metas,
@@ -380,7 +387,7 @@ Result BuildRestExcludes(ExcludeUse use, std::span<const Term> metas,
                          Make&& make) {
   SDB_ASSERT(!metas.empty() || !filters.empty());
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  const auto* const doc = SegmentDoc(segment);
+  const auto* const doc = ExcludeDoc(metas, field, segment);
   const ExcludeCosts<Term> costs{metas, costed,     candidates,
                                  span,  docs_count, use};
   switch (costs.Probed(doc != nullptr)) {
@@ -555,7 +562,7 @@ Result BuildRestWindowExcludes(std::span<const Term> metas,
                                Fold&& fold, Make&& make) {
   SDB_ASSERT(!metas.empty() || !filters.empty());
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  const auto* const doc = SegmentDoc(segment);
+  const auto* const doc = ExcludeDoc(metas, field, segment);
   const ExcludeCosts<Term> costs{metas,      costed,     candidates,
                                  candidates, docs_count, ExcludeUse::PerDoc};
   const auto probed = [&]<typename Probe>(auto&& probe) -> Result {

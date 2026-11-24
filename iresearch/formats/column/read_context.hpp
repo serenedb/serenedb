@@ -23,9 +23,11 @@
 #include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
 #include <duckdb/storage/external_file_cache/input_file_reader.hpp>
+#include <memory>
 #include <vector>
 
 #include "iresearch/formats/column/internal/block_manager.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace duckdb {
 
@@ -51,6 +53,8 @@ class ReadContext final : public BlockManager,
   ReadContext& operator=(ReadContext&&) = delete;
 
   void Reset(const ColReader& reader);
+
+  ReadContext& For(const ColReader* owner);
 
   const duckdb::InputFile* File() const noexcept { return _in.File().get(); }
   bool RandomAccess() const noexcept { return _random_access; }
@@ -94,6 +98,9 @@ class ReadContext final : public BlockManager,
   duckdb::InputFileReader _in;
   duckdb::MemoryMappedFile* _mapping = nullptr;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
+  const ColReader* _owner = nullptr;
+  irs::containers::FlatHashMap<const ColReader*, std::unique_ptr<ReadContext>>
+    _attachments;
   bool _random_access = false;
   size_t _live_handles = 0;
 };

@@ -63,6 +63,17 @@ void TableReplay::Add(const LoggedSegment& segment) {
   auto& added = _segments[segment.id];
   added.kinds = segment.kinds;
   added.rows = segment.rows;
+  added.attachments = segment.attachments;
+  for (const auto& files : segment.attachments) {
+    _top = std::max(_top, files.id);
+  }
+}
+
+void TableReplay::AddAttachment(uint64_t segment,
+                                const irs::SegmentAttachment& files) {
+  _replayed = true;
+  _top = std::max(_top, files.id);
+  Find(segment).attachments.push_back(files);
 }
 
 void TableReplay::Append(

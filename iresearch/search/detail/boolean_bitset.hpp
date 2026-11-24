@@ -73,18 +73,40 @@ bool CollectConjunctionBuckets(std::span<const Term> terms,
     });
 }
 
+inline const duckdb::InputFile* BucketsDoc(
+  const BitsetBuckets& buckets) noexcept {
+  const duckdb::InputFile* doc = nullptr;
+  const auto same = [&](std::span<const PostingClause> clauses) noexcept {
+    if (clauses.empty()) {
+      return true;
+    }
+    const auto* const own = SharedDoc(clauses, nullptr);
+    if (!own || (doc && own != doc)) {
+      return false;
+    }
+    doc = own;
+    return true;
+  };
+  for (const auto& clause : buckets.must) {
+    if (!same(clause)) {
+      return nullptr;
+    }
+  }
+  return same(buckets.must_not) ? doc : nullptr;
+}
+
 template<typename Result, typename P = NoPins, typename Term>
 Result MakeConjunctionBitset(std::span<const Term> terms,
                              std::span<const QueryBuilder::ptr> filters,
                              const TermReader* field, const SubReader& segment,
                              TableFilter* table) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
-  const auto* const doc = SegmentDoc(segment);
-  if (doc == nullptr) {
-    return {};
-  }
   BitsetBuckets buckets;
   if (!CollectConjunctionBuckets(terms, filters, field, buckets)) {
+    return {};
+  }
+  const auto* const doc = BucketsDoc(buckets);
+  if (!doc) {
     return {};
   }
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
@@ -186,9 +208,8 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
         (!groups.should_filters.empty() && groups.should_fills == nullptr)) {
       return {};
     }
-    const auto* const doc = DocOf(FieldOf(groups.should.front(), nullptr));
-    if (doc == nullptr ||
-        !TakeBitset<Result>(groups.should, *doc, docs_count)) {
+    const auto* const doc = SharedDoc(groups.should, nullptr);
+    if (!doc || !TakeBitset<Result>(groups.should, *doc, docs_count)) {
       return {};
     }
     auto buckets = DisjunctionBuckets(groups.should, nullptr);
@@ -203,13 +224,13 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
   }
   SDB_ASSERT(groups.must.size() + groups.must_filters.size() > 1 ||
              !groups.must_not.empty() || !groups.must_not_filters.empty());
-  const auto* const doc = SegmentDoc(segment);
-  if (doc == nullptr) {
-    return {};
-  }
   BitsetBuckets buckets;
   if (!CollectConjunctionBuckets(groups.must, groups.must_filters, nullptr,
                                  buckets)) {
+    return {};
+  }
+  const auto* const doc = BucketsDoc(buckets);
+  if (!doc) {
     return {};
   }
   if (groups.must_not.empty() && groups.must_not_filters.empty()) {
@@ -226,6 +247,9 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
   ExcludeFills fills;
   CollectExcludeBuckets(groups.must_not, split.rest, nullptr, docs_count,
                         buckets, fills);
+  if (BucketsDoc(buckets) != doc) {
+    return {};
+  }
   if (split.masked) {
     buckets.masked = &segment;
     fills.cost += MaskClauseCost(segment, docs_count).fill;

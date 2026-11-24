@@ -365,6 +365,15 @@ std::shared_ptr<const TableState> InitialState(
   return initial;
 }
 
+irs::SegmentMeta FilesMeta(uint64_t id, uint8_t kinds, irs::doc_id_t rows) {
+  irs::SegmentMeta meta;
+  meta.name = irs::FileName(id);
+  meta.kinds = kinds;
+  meta.docs_count = rows;
+  meta.live_docs_count = rows;
+  return meta;
+}
+
 bool DeletesAll(const irs::DocumentMask* deleted, const irs::DocumentMask& docs,
                 irs::doc_id_t rows) {
   auto count = docs.Count();
@@ -457,7 +466,7 @@ void SlicePatches(std::span<const irs::FieldPatch> patches, uint64_t first,
 bool Empty(const TableDelta& delta) noexcept {
   return delta.drop.empty() && delta.drop_memory == 0 && delta.add.empty() &&
          delta.rows.empty() && delta.segments.empty() && delta.pieces.empty() &&
-         !delta.manifest;
+         !delta.manifest && delta.add_attachments.empty();
 }
 
 std::shared_ptr<TableUnit> PieceUnit(
@@ -716,6 +725,10 @@ irs::CompositeReader Table::BuildReader(const TableState& prev,
       added.emplace_back(unit->reader);
       continue;
     }
+    if (it->second->meta.attachments != unit->meta.attachments) {
+      added.emplace_back(unit->reader);
+      continue;
+    }
     if (it->second->reader->PatchTick() != unit->reader->PatchTick()) {
       patched.push_back({
         .before = irs::SegmentReader{it->second->reader},
@@ -758,20 +771,31 @@ std::shared_ptr<TableState> Table::SameUnits() const {
   return std::make_shared<TableState>(*Head().state);
 }
 
-OwnSegment Table::OpenSegment(uint64_t id, uint8_t kinds,
-                              irs::doc_id_t rows) const {
+OwnSegment Table::OpenSegment(
+  uint64_t id, uint8_t kinds, irs::doc_id_t rows,
+  std::span<const irs::SegmentAttachment> attachments) const {
   OwnSegment opened;
-  auto& meta = opened.meta;
-  meta.name = irs::FileName(id);
-  meta.kinds = kinds;
-  meta.docs_count = rows;
-  meta.live_docs_count = rows;
-  opened.reader = irs::SegmentReaderImpl::Open(
-    irs::DuckDBEngine::Instance().instance(), _fs, _root, meta, _options,
-    std::make_shared<const irs::FileTracker>(_fs, _root, meta.name, kinds,
-                                             _released));
-  meta.byte_size = opened.reader->Meta().byte_size;
+  opened.meta = FilesMeta(id, kinds, rows);
+  opened.reader = OpenFiles(opened.meta);
+  if (!attachments.empty()) {
+    std::vector<std::shared_ptr<const irs::SegmentReaderImpl>> readers;
+    readers.reserve(attachments.size());
+    for (const auto& files : attachments) {
+      readers.push_back(OpenFiles(FilesMeta(files.id, files.kinds, rows)));
+    }
+    opened.meta.attachments.assign(attachments.begin(), attachments.end());
+    opened.reader = opened.reader->WithAttachments(readers);
+  }
+  opened.meta.byte_size = opened.reader->Meta().byte_size;
   return opened;
+}
+
+std::shared_ptr<const irs::SegmentReaderImpl> Table::OpenFiles(
+  const irs::SegmentMeta& meta) const {
+  return irs::SegmentReaderImpl::Open(
+    irs::DuckDBEngine::Instance().instance(), _fs, _root, meta, _options,
+    std::make_shared<const irs::FileTracker>(_fs, _root, meta.name, meta.kinds,
+                                             _released));
 }
 
 irs::CompositeReader Table::View(const TableState& state,
@@ -890,6 +914,9 @@ StoreStats Table::Stats() const {
   for (const auto& unit : state->units) {
     if (!unit->piece) {
       stats.numFiles += std::popcount(unit->meta.kinds);
+      for (const auto& attachment : unit->meta.attachments) {
+        stats.numFiles += std::popcount(attachment.kinds);
+      }
     }
   }
   return stats;
@@ -1223,6 +1250,41 @@ std::shared_ptr<TableUnit> Table::SegmentUnit(OwnSegment&& segment) const {
   return unit;
 }
 
+TableDelta Table::PrepareAttach(std::span<const Attachment> attachments) const {
+  absl::MutexLock lock{&_state_mutex};
+  const auto& state = *Head().state;
+  TableDelta delta;
+  for (const auto& attachment : attachments) {
+    const auto* unit = FindUnit(state, attachment.segment);
+    if (unit && !unit->piece) {
+      delta.add_attachments.push_back(
+        {.segment = attachment.segment, .files = attachment.files});
+    }
+  }
+  return delta;
+}
+
+std::shared_ptr<const TableState> Table::Attach(
+  Tick tick, std::span<const Attachment> attachments) {
+  absl::MutexLock lock{&_state_mutex};
+  auto next = std::make_shared<TableState>(*Head().state);
+  auto& units = next->units;
+  for (const auto& attachment : attachments) {
+    const auto i = IndexOf(units, attachment.segment);
+    if (i == units.size() || units[i]->piece) {
+      continue;
+    }
+    auto unit = std::make_shared<TableUnit>(*units[i]);
+    const std::array readers{attachment.reader};
+    unit->reader = unit->reader->WithAttachments(readers);
+    unit->meta.attachments.push_back(attachment.files);
+    unit->meta.byte_size = unit->reader->Meta().byte_size;
+    units[i] = std::move(unit);
+  }
+  Publish(next, tick, tick);
+  return next;
+}
+
 Table::Replacement Table::PrepareReplace(
   std::span<const uint64_t> replaced,
   std::span<const std::span<const irs::FieldPatch>> folded,
@@ -1378,13 +1440,23 @@ void Table::Reopen(Tick tick, std::span<const uint64_t> units) {
       continue;
     }
     auto unit = std::make_shared<TableUnit>(*next->units[i]);
-    irs::SegmentMeta meta;
-    meta.name = irs::FileName(id);
-    meta.kinds = unit->meta.kinds;
-    meta.docs_count = unit->docs;
-    meta.live_docs_count = unit->docs;
-    unit->reader = irs::SegmentReaderImpl::Open(db, _fs, _root, meta, _options,
-                                                unit->reader->Files());
+    const auto attachments = unit->reader->Attachments();
+    SDB_ASSERT(attachments.size() == unit->meta.attachments.size());
+    std::vector<std::shared_ptr<const irs::SegmentReaderImpl>> attached;
+    attached.reserve(attachments.size());
+    for (size_t a = 0; a != attachments.size(); ++a) {
+      const auto& files = unit->meta.attachments[a];
+      attached.push_back(irs::SegmentReaderImpl::Open(
+        db, _fs, _root, FilesMeta(files.id, files.kinds, unit->docs), _options,
+        attachments[a]->Files()));
+    }
+    auto reader = irs::SegmentReaderImpl::Open(
+      db, _fs, _root, FilesMeta(id, unit->meta.kinds, unit->docs), _options,
+      unit->reader->Files());
+    if (!attached.empty()) {
+      reader = reader->WithAttachments(attached);
+    }
+    unit->reader = std::move(reader);
     if (unit->deleted) {
       unit->reader = unit->reader->WithDocsMask(unit->deleted);
     }

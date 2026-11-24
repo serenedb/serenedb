@@ -23,11 +23,13 @@
 
 #include "file_names.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
 #include <fast_float/fast_float.h>
 
 #include <array>
+#include <iterator>
 #include <system_error>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -59,6 +61,15 @@ std::vector<std::string> SegmentFiles(std::string_view segment, uint8_t kinds) {
     if ((kinds & kind) != 0) {
       files.push_back(FileName(segment, ext));
     }
+  }
+  return files;
+}
+
+std::vector<std::string> SegmentFiles(const SegmentMeta& meta) {
+  auto files = SegmentFiles(meta.name, meta.kinds);
+  for (const auto& attachment : meta.attachments) {
+    absl::c_move(SegmentFiles(FileName(attachment.id), attachment.kinds),
+                 std::back_inserter(files));
   }
   return files;
 }

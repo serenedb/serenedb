@@ -106,6 +106,12 @@ struct LoggedSegment {
   uint64_t id = 0;
   uint8_t kinds = 0;
   irs::doc_id_t rows = 0;
+  std::vector<irs::SegmentAttachment> attachments;
+};
+
+struct LoggedAttachment {
+  uint64_t segment = 0;
+  irs::SegmentAttachment files;
 };
 
 using ChunkVisit = absl::FunctionRef<void(duckdb::DataChunk& chunk)>;
@@ -132,6 +138,7 @@ struct TableDelta {
   std::vector<UnitDelta> segments;
   std::vector<UnitDelta> pieces;
   std::shared_ptr<const FileManifest> manifest;
+  std::vector<LoggedAttachment> add_attachments;
 };
 
 bool Empty(const TableDelta& delta) noexcept;
@@ -317,7 +324,11 @@ class Table final {
   StoreStats Stats() const;
   uint64_t LiveDocs() const;
   uint64_t ByteSize() const;
-  OwnSegment OpenSegment(uint64_t id, uint8_t kinds, irs::doc_id_t rows) const;
+  OwnSegment OpenSegment(
+    uint64_t id, uint8_t kinds, irs::doc_id_t rows,
+    std::span<const irs::SegmentAttachment> attachments = {}) const;
+  std::shared_ptr<const irs::SegmentReaderImpl> OpenFiles(
+    const irs::SegmentMeta& meta) const;
 
   struct Memory {
     std::vector<std::shared_ptr<const TableUnit>> pieces;
@@ -368,6 +379,14 @@ class Table final {
                                             Replacement&& replacement);
   std::shared_ptr<TableUnit> SegmentUnit(OwnSegment&& segment) const;
 
+  struct Attachment {
+    uint64_t segment = 0;
+    irs::SegmentAttachment files;
+    std::shared_ptr<const irs::SegmentReaderImpl> reader;
+  };
+  TableDelta PrepareAttach(std::span<const Attachment> attachments) const;
+  std::shared_ptr<const TableState> Attach(
+    Tick tick, std::span<const Attachment> attachments);
   void Reopen(Tick tick, std::span<const uint64_t> units)
     ABSL_LOCKS_EXCLUDED(_state_mutex);
 

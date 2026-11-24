@@ -20,14 +20,21 @@
 
 #pragma once
 
+#include <cstdint>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/vector.hpp>
+#include <span>
 
 namespace irs {
 
 struct WriteChunk {
   duckdb::Vector data;
   duckdb::idx_t count;
+};
+
+struct WriteRows {
+  std::span<WriteChunk> chunks;
+  uint64_t count = 0;
 };
 
 }  // namespace irs

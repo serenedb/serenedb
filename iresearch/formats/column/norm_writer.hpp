@@ -42,10 +42,6 @@ constexpr uint32_t NormFirstCode(uint32_t bits) noexcept {
   return static_cast<uint32_t>((uint64_t{1} << bits) - kNormCodes);
 }
 
-constexpr uint32_t NormOverflowCode(uint32_t bits) noexcept {
-  return static_cast<uint32_t>((uint64_t{1} << bits) - 1);
-}
-
 struct NormStats {
   uint64_t rows = 0;
   uint64_t sum = 0;

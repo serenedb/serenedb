@@ -32,6 +32,45 @@
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
+
+template<typename Visit>
+void ColumnPatch::ForEach(uint64_t first, uint64_t last,
+                          const Visit& visit) const {
+  if (first >= last) {
+    return;
+  }
+  const auto first_group = first >> (kChunkShift + kGroupShift);
+  auto it = absl::c_lower_bound(
+    _groups, first_group,
+    [](const auto& entry, uint64_t group) { return entry.first < group; });
+  for (; it != _groups.end(); ++it) {
+    const uint64_t group_row = it->first << (kChunkShift + kGroupShift);
+    if (group_row >= last) {
+      return;
+    }
+    for (size_t c = 0; c < kGroupChunks; ++c) {
+      const auto* chunk = it->second->chunks[c].get();
+      const uint64_t chunk_row = group_row + (uint64_t{c} << kChunkShift);
+      if (!chunk || chunk_row + kChunkRows <= first) {
+        continue;
+      }
+      if (chunk_row >= last) {
+        return;
+      }
+      const auto& offsets = chunk->offsets;
+      for (size_t i = 0; i < offsets.size(); ++i) {
+        const uint64_t row = chunk_row + offsets[i];
+        if (row >= last) {
+          return;
+        }
+        if (row >= first) {
+          visit(row, *chunk, i);
+        }
+      }
+    }
+  }
+}
+
 namespace {
 
 constexpr uint32_t kGroupRowShift =

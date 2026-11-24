@@ -18,11 +18,10 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#include "iresearch/formats/column/codecs/text/fsst_plus.hpp"
-
 #include <absl/strings/match.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/types.hpp>
@@ -30,6 +29,7 @@
 #include <duckdb/common/vector/string_vector.hpp>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -42,13 +42,68 @@
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/fsst.hpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
+#include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
+#include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text::fsst_plus {
+
+template<typename Rows>
+class CompressionState final : public SortedCompressionState<Rows> {
+  using Base = SortedCompressionState<Rows>;
+
+ public:
+  static constexpr ByteCodec kCodec = ByteCodec::FsstPlus;
+
+  CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
+    : Base{kCodec, data.type, dedup, data.tuning.strings,
+           data.params.segment_target},
+      _codec{data.Get<fsst::SharedEncoder<fsst::Fsst8, kCodec>>().encoder} {}
+
+  void FinalizeCompress();
+
+ private:
+  using Base::_frames;
+  using Base::_out;
+  using Base::_rows;
+  using Base::_target;
+  using Base::Written;
+
+  struct Node {
+    uint32_t left;
+    uint32_t right;
+  };
+
+  struct Range {
+    uint32_t first;
+    uint32_t last;
+    uint32_t node;
+  };
+
+  void Cleave(uint32_t first_entry);
+
+  fsst::Encoder<fsst::Fsst8>& _codec;
+  std::string _encoded;
+  std::string _prefixes;
+  std::string _side;
+  std::vector<uint32_t> _encoded_lengths;
+  std::vector<std::string_view> _codes;
+  std::vector<uint32_t> _shared;
+  std::vector<uint32_t> _ids;
+  std::vector<uint32_t> _ends;
+  std::vector<uint32_t> _lcp;
+  std::vector<Node> _tree;
+  std::vector<uint32_t> _order;
+  std::vector<uint32_t> _size;
+  std::vector<uint64_t> _saved;
+  std::vector<uint8_t> _whole;
+  std::vector<Range> _ranges;
+};
 
 class Prefixes {
  public:

@@ -50,6 +50,20 @@
 namespace irs {
 namespace {
 
+uint64_t AlignedPosition(duckdb::WriteStream& out) {
+  constexpr duckdb::data_t kZeros[8]{};
+  if (const auto misalign = out.Position() % sizeof(kZeros); misalign != 0) {
+    out.WriteData(kZeros, sizeof(kZeros) - misalign);
+  }
+  return out.Position();
+}
+
+uint64_t AppendAligned(duckdb::WriteStream& out, std::string_view bytes) {
+  const auto offset = AlignedPosition(out);
+  out.WriteData(duckdb::const_data_ptr_cast(bytes.data()), bytes.size());
+  return offset;
+}
+
 void WriteBytes(ReadContext& source, uint64_t offset, uint64_t size,
                 duckdb::WriteStream& out) {
   if (const auto* bytes = source.TryReadStable(offset, size)) {
@@ -271,38 +285,43 @@ WriteContext& ColumnWriter::WriteCtx() const noexcept {
 }
 
 bool ColumnWriter::Compress(const duckdb::LogicalType& type,
-                            std::span<const WriteChunk> chunks,
-                            codecs::CodecType method,
+                            const WriteRows& rows, codecs::CodecType method,
                             codecs::ColumnTuning& tuning,
                             std::vector<ColumnBlockMeta>& sink) {
+  SDB_ASSERT(absl::c_accumulate(rows.chunks, uint64_t{0},
+                                [](uint64_t sum, const WriteChunk& chunk) {
+                                  return sum + chunk.data.size();
+                                }) == rows.count);
   auto& ctx = WriteCtx();
   bool flushed = false;
   bool needs_validity = false;
   std::string shared;
   SharedBlock staged;
-  const auto flush =
-    [&](const codecs::Codec& codec, duckdb::BaseStatistics stats, uint64_t rows,
-        std::string_view bytes, std::string_view shared_bytes) {
-      flushed = true;
-      needs_validity =
-        needs_validity || codec.decompression.validity ==
-                            codecs::CompressionValidity::RequiresValidity;
-      if (!shared_bytes.empty() && shared != shared_bytes) {
-        staged = {AppendAligned(ctx.Out(), shared_bytes), shared_bytes.size()};
-        shared = shared_bytes;
-      }
-      CaptureBlock(codec, std::move(stats), rows, bytes,
-                   shared_bytes.empty() ? SharedBlock{} : staged, ctx.Out(),
-                   sink);
-    };
+  const auto flush = [&](const codecs::Codec& codec,
+                         duckdb::BaseStatistics stats, uint64_t block_rows,
+                         std::string_view bytes,
+                         std::string_view shared_bytes) {
+    flushed = true;
+    needs_validity =
+      needs_validity || codec.decompression.validity ==
+                          codecs::CompressionValidity::RequiresValidity;
+    if (!shared_bytes.empty() && shared != shared_bytes) {
+      staged = {AppendAligned(ctx.Out(), shared_bytes), shared_bytes.size()};
+      shared = shared_bytes;
+    }
+    CaptureBlock(codec, std::move(stats), block_rows, bytes,
+                 shared_bytes.empty() ? SharedBlock{} : staged, ctx.Out(),
+                 sink);
+  };
   codecs::ColumnDataCheckpointData data{
     .type = type,
-    .chunks = chunks,
+    .chunks = rows.chunks,
     .ctx = &ctx,
     .flush = flush,
     .params = _options.codec_params,
     .tuning = tuning,
     .disabled = _disabled,
+    .rows = rows.count,
   };
   codecs::Compress(Enabled(method, type) ? method : codecs::CodecType::Auto,
                    data);
@@ -315,15 +334,14 @@ bool ColumnWriter::Enabled(codecs::CodecType method,
          codecs::Writes(method, type.InternalType());
 }
 
-void ColumnWriter::SealValidity(std::span<WriteChunk> chunks,
-                                uint64_t row_count,
+void ColumnWriter::SealValidity(const WriteRows& rows,
                                 std::vector<ColumnBlockMeta>& sink) {
-  if (row_count == 0) {
-    EmitEmptyValidity(row_count, sink);
+  if (rows.count == 0) {
+    EmitEmptyValidity(rows.count, sink);
     return;
   }
   codecs::ColumnTuning tuning;
-  Compress(duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY}, chunks,
+  Compress(duckdb::LogicalType{duckdb::LogicalTypeId::VALIDITY}, rows,
            _global_method, tuning, sink);
 }
 
@@ -335,33 +353,30 @@ void ColumnWriter::Claim(ColumnMeta& meta,
   }
 }
 
-void ColumnWriter::SealNestedValidity(std::span<WriteChunk> chunks,
-                                      uint64_t row_count, bool skip_validity,
+void ColumnWriter::SealNestedValidity(const WriteRows& rows, bool skip_validity,
                                       size_t child_count, ColumnMeta& meta,
                                       ColumnWriteState& state) {
   if (!skip_validity) {
-    SealValidity(chunks, row_count, meta.validity);
+    SealValidity(rows, meta.validity);
   }
   meta.children.resize(child_count);
   state.children.resize(child_count);
 }
 
 void ColumnWriter::SealStruct(
-  const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-  uint64_t row_count, bool skip_validity, ColumnMeta& meta,
-  ColumnWriteState& state,
+  const duckdb::LogicalType& type, const WriteRows& rows, bool skip_validity,
+  ColumnMeta& meta, ColumnWriteState& state,
   std::span<const std::unique_ptr<ListIngest>> ingest) {
   const auto& child_types = duckdb::StructType::GetChildTypes(type);
-  SealNestedValidity(chunks, row_count, skip_validity, child_types.size(), meta,
-                     state);
+  SealNestedValidity(rows, skip_validity, child_types.size(), meta, state);
   for (size_t i = 0; i < child_types.size(); ++i) {
     std::vector<WriteChunk> field_chunks;
-    field_chunks.reserve(chunks.size());
-    for (auto& c : chunks) {
+    field_chunks.reserve(rows.chunks.size());
+    for (auto& c : rows.chunks) {
       field_chunks.push_back(
         RefChunk(duckdb::StructVector::GetEntries(c.data)[i], c.count));
     }
-    SealColumn(child_types[i].second, field_chunks, row_count,
+    SealColumn(child_types[i].second, {field_chunks, rows.count},
                /*skip_validity=*/false, meta.children[i], state.children[i],
                i < ingest.size() && ingest[i] ? ingest.subspan(i, 1)
                                               : decltype(ingest){});
@@ -369,41 +384,38 @@ void ColumnWriter::SealStruct(
 }
 
 void ColumnWriter::SealArray(const duckdb::LogicalType& type,
-                             std::span<WriteChunk> chunks, uint64_t row_count,
-                             bool skip_validity, ColumnMeta& meta,
-                             ColumnWriteState& state) {
-  SealNestedValidity(chunks, row_count, skip_validity, 1, meta, state);
+                             const WriteRows& rows, bool skip_validity,
+                             ColumnMeta& meta, ColumnWriteState& state) {
+  SealNestedValidity(rows, skip_validity, 1, meta, state);
   const auto array_size =
     static_cast<uint64_t>(duckdb::ArrayType::GetSize(type));
   std::vector<WriteChunk> elem_chunks;
-  for (auto& c : chunks) {
+  for (auto& c : rows.chunks) {
     SliceChunks(elem_chunks, duckdb::ArrayVector::GetChildMutable(c.data), 0,
                 c.count * array_size);
   }
-  SealColumn(duckdb::ArrayType::GetChildType(type), elem_chunks,
-             row_count * array_size, /*skip_validity=*/false, meta.children[0],
-             state.children[0]);
+  SealColumn(duckdb::ArrayType::GetChildType(type),
+             {elem_chunks, rows.count * array_size}, /*skip_validity=*/false,
+             meta.children[0], state.children[0]);
 }
 
 void ColumnWriter::SealList(const duckdb::LogicalType& type,
-                            std::span<WriteChunk> chunks, uint64_t row_count,
-                            bool skip_validity, ColumnMeta& meta,
-                            ColumnWriteState& state) {
+                            const WriteRows& rows, bool skip_validity,
+                            ColumnMeta& meta, ColumnWriteState& state) {
   ListIngest ingest{type, /*borrow=*/true, state.list_distinct,
                     state.list_running};
-  for (const auto& c : chunks) {
+  for (const auto& c : rows.chunks) {
     ingest.Add(c.data, 0, c.count);
     ingest.CheckDistinct();
   }
-  SealListParts(type, chunks, row_count, skip_validity, ingest, meta, state);
+  SealListParts(type, rows, skip_validity, ingest, meta, state);
 }
 
 void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
-                                 std::span<WriteChunk> chunks,
-                                 uint64_t row_count, bool skip_validity,
+                                 const WriteRows& rows, bool skip_validity,
                                  ListIngest& ingest, ColumnMeta& meta,
                                  ColumnWriteState& state) {
-  SealNestedValidity(chunks, row_count, skip_validity, 2, meta, state);
+  SealNestedValidity(rows, skip_validity, 2, meta, state);
   auto parts = ingest.Take();
   state.list_running = parts.running;
   state.list_distinct = parts.next_code;
@@ -412,11 +424,12 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
                    reinterpret_cast<duckdb::data_ptr_t>(parts.codes.data()),
                    parts.codes.size()},
     parts.codes.size()};
-  CompressPlain(type, CodesCodec(parts, row_count),
-                {&codes, parts.codes.empty() ? 0U : 1U}, meta.data);
-  SealColumn(duckdb::ListType::GetChildType(type), parts.elems,
-             parts.elem_count, /*skip_validity=*/false, meta.children[0],
-             state.children[0]);
+  CompressPlain(type, CodesCodec(parts, rows.count),
+                {{&codes, parts.codes.empty() ? 0U : 1U}, parts.codes.size()},
+                meta.data);
+  SealColumn(duckdb::ListType::GetChildType(type),
+             {parts.elems, parts.elem_count}, /*skip_validity=*/false,
+             meta.children[0], state.children[0]);
   auto& ends = meta.children[1];
   Claim(ends, duckdb::LogicalType::UBIGINT);
   WriteChunk end_chunk{
@@ -425,33 +438,32 @@ void ColumnWriter::SealListParts(const duckdb::LogicalType& type,
                    parts.ends.size()},
     parts.ends.size()};
   CompressPlain(duckdb::LogicalType::UBIGINT, codecs::CodecType::Delta,
-                {&end_chunk, parts.ends.empty() ? 0U : 1U}, ends.data);
+                {{&end_chunk, parts.ends.empty() ? 0U : 1U}, parts.ends.size()},
+                ends.data);
 }
 
 void ColumnWriter::CompressPlain(const duckdb::LogicalType& type,
-                                 codecs::CodecType codec,
-                                 std::span<WriteChunk> chunks,
+                                 codecs::CodecType codec, const WriteRows& rows,
                                  std::vector<ColumnBlockMeta>& sink) {
   codecs::ColumnTuning tuning;
-  Compress(type, chunks, Enabled(_global_method, type) ? _global_method : codec,
+  Compress(type, rows, Enabled(_global_method, type) ? _global_method : codec,
            tuning, sink);
 }
 
 void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
-                               std::span<WriteChunk> chunks, uint64_t row_count,
-                               bool skip_validity, ColumnMeta& meta,
-                               ColumnWriteState& state) {
+                               const WriteRows& rows, bool skip_validity,
+                               ColumnMeta& meta, ColumnWriteState& state) {
   if (!skip_validity) {
-    SealValidity(chunks, row_count, meta.validity);
+    SealValidity(rows, meta.validity);
   }
   duckdb::LogicalType shredded_type;
   if (_variant_min_shred_size != -1 &&
-      row_count >= static_cast<uint64_t>(_variant_min_shred_size)) {
+      rows.count >= static_cast<uint64_t>(_variant_min_shred_size)) {
     if (_force_variant_shredding.id() != duckdb::LogicalTypeId::INVALID) {
       shredded_type = _force_variant_shredding;
     } else {
       duckdb::VariantShreddingStats stats;
-      for (auto& c : chunks) {
+      for (auto& c : rows.chunks) {
         stats.Update(c.data, c.count);
       }
       shredded_type = stats.GetShreddedType();
@@ -474,24 +486,24 @@ void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
     return state;
   };
   auto& layout = meta.variant_rgs.emplace_back();
-  layout.row_count = row_count;
+  layout.row_count = rows.count;
   if (shredded_type.id() != duckdb::LogicalTypeId::STRUCT ||
       duckdb::StructType::GetChildCount(shredded_type) != 2) {
     const auto unshredded_type = duckdb::VariantShredding::GetUnshreddedType();
     layout.unshredded = std::make_unique<ColumnMeta>();
-    SealColumn(unshredded_type, chunks, row_count,
+    SealColumn(unshredded_type, rows,
                /*skip_validity=*/true, *layout.unshredded,
                next(state.children[0], prev_unshredded, unshredded_type));
     return;
   }
 
   std::vector<duckdb::Vector> shredded_hold;
-  shredded_hold.reserve(chunks.size());
+  shredded_hold.reserve(rows.chunks.size());
   std::vector<WriteChunk> unshredded_chunks;
   std::vector<WriteChunk> shredded_chunks;
-  unshredded_chunks.reserve(chunks.size());
-  shredded_chunks.reserve(chunks.size());
-  for (auto& c : chunks) {
+  unshredded_chunks.reserve(rows.chunks.size());
+  shredded_chunks.reserve(rows.chunks.size());
+  for (auto& c : rows.chunks) {
     auto& shredded_out = shredded_hold.emplace_back(shredded_type, c.count);
     duckdb::VariantColumnData::ShredVariantData(c.data, shredded_out, c.count);
     auto& shred_entries = duckdb::StructVector::GetEntries(shredded_out);
@@ -506,55 +518,52 @@ void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
   const auto& typed_type = shredded_children[1].second;
   layout.unshredded = std::make_unique<ColumnMeta>();
   layout.shredded = std::make_unique<ColumnMeta>();
-  SealColumn(unshredded_type, unshredded_chunks, row_count,
+  SealColumn(unshredded_type, {unshredded_chunks, rows.count},
              /*skip_validity=*/false, *layout.unshredded,
              next(state.children[0], prev_unshredded, unshredded_type));
-  SealColumn(typed_type, shredded_chunks, row_count, /*skip_validity=*/false,
-             *layout.shredded,
+  SealColumn(typed_type, {shredded_chunks, rows.count},
+             /*skip_validity=*/false, *layout.shredded,
              next(state.children[1], prev_shredded, typed_type));
 }
 
 void ColumnWriter::SealColumn(
-  const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-  uint64_t row_count, bool skip_validity, ColumnMeta& meta,
-  ColumnWriteState& state,
+  const duckdb::LogicalType& type, const WriteRows& rows, bool skip_validity,
+  ColumnMeta& meta, ColumnWriteState& state,
   std::span<const std::unique_ptr<ListIngest>> ingest) {
   Claim(meta, type);
   if (type.id() == duckdb::LogicalTypeId::VARIANT) {
-    SealVariant(type, chunks, row_count, skip_validity, meta, state);
+    SealVariant(type, rows, skip_validity, meta, state);
     return;
   }
   if (duckdb::StructType::IsStruct(type) ||
       type.id() == duckdb::LogicalTypeId::UNION) {
-    SealStruct(type, chunks, row_count, skip_validity, meta, state, ingest);
+    SealStruct(type, rows, skip_validity, meta, state, ingest);
     return;
   }
   if (type.id() == duckdb::LogicalTypeId::ARRAY) {
-    SealArray(type, chunks, row_count, skip_validity, meta, state);
+    SealArray(type, rows, skip_validity, meta, state);
     return;
   }
   if (type.id() == duckdb::LogicalTypeId::LIST ||
       type.id() == duckdb::LogicalTypeId::MAP) {
     if (ingest.empty()) {
-      SealList(type, chunks, row_count, skip_validity, meta, state);
+      SealList(type, rows, skip_validity, meta, state);
     } else {
-      SealListParts(type, chunks, row_count, skip_validity, *ingest.front(),
-                    meta, state);
+      SealListParts(type, rows, skip_validity, *ingest.front(), meta, state);
     }
     return;
   }
 
-  SDB_ASSERT(row_count == codecs::CountRows(chunks));
   const bool nulls_covered_by_data =
-    Compress(type, chunks, _method, state.tuning, meta.data);
+    Compress(type, rows, _method, state.tuning, meta.data);
   if (skip_validity) {
     return;
   }
   if (nulls_covered_by_data) {
-    EmitEmptyValidity(row_count, meta.validity);
+    EmitEmptyValidity(rows.count, meta.validity);
     return;
   }
-  SealValidity(chunks, row_count, meta.validity);
+  SealValidity(rows, meta.validity);
 }
 
 ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
@@ -953,10 +962,9 @@ void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
   }
 }
 
-void ColumnWriter::SealStaged(std::span<WriteChunk> chunks, uint64_t rows) {
-  SealColumn(_type, chunks, rows, _options.skip_validity, _meta, _state,
-             _ingest);
-  _row_start += rows;
+void ColumnWriter::SealStaged(const WriteRows& rows) {
+  SealColumn(_type, rows, _options.skip_validity, _meta, _state, _ingest);
+  _row_start += rows.count;
 }
 
 void ColumnWriter::SealRowGroup() {
@@ -984,18 +992,17 @@ void ColumnWriter::SealRowGroup() {
     }
   }
   if (!_deferred) {
-    SealStaged(chunks, _staged_rows);
+    SealStaged({chunks, _staged_rows});
   } else {
     const size_t per_seal = std::max<size_t>(
       1, size_t{_options.row_group_size} / size_t{STANDARD_VECTOR_SIZE});
     for (size_t begin = 0; begin < chunks.size(); begin += per_seal) {
-      const auto slice =
-        chunks.subspan(begin, std::min(per_seal, chunks.size() - begin));
-      uint64_t rows = 0;
-      for (const auto& chunk : slice) {
-        rows += chunk.count;
+      WriteRows slice{
+        chunks.subspan(begin, std::min(per_seal, chunks.size() - begin))};
+      for (const auto& chunk : slice.chunks) {
+        slice.count += chunk.count;
       }
-      SealStaged(slice, rows);
+      SealStaged(slice);
     }
   }
   for (duckdb::idx_t c = 0; c != _staged_chunks; ++c) {

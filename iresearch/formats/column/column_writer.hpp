@@ -152,56 +152,47 @@ class ColumnWriter final {
                   uint64_t first, uint64_t count);
 
   void SealRowGroup();
-  void SealStaged(std::span<WriteChunk> chunks, uint64_t rows);
+  void SealStaged(const WriteRows& rows);
   void OpenRowGroup() noexcept;
 
-  bool Compress(const duckdb::LogicalType& type,
-                std::span<const WriteChunk> chunks, codecs::CodecType method,
-                codecs::ColumnTuning& tuning,
+  bool Compress(const duckdb::LogicalType& type, const WriteRows& rows,
+                codecs::CodecType method, codecs::ColumnTuning& tuning,
                 std::vector<ColumnBlockMeta>& sink);
 
   bool Enabled(codecs::CodecType method,
                const duckdb::LogicalType& type) const noexcept;
 
   void CompressPlain(const duckdb::LogicalType& type, codecs::CodecType codec,
-                     std::span<WriteChunk> chunks,
-                     std::vector<ColumnBlockMeta>& sink);
+                     const WriteRows& rows, std::vector<ColumnBlockMeta>& sink);
 
-  void SealValidity(std::span<WriteChunk> chunks, uint64_t row_count,
-                    std::vector<ColumnBlockMeta>& sink);
+  void SealValidity(const WriteRows& rows, std::vector<ColumnBlockMeta>& sink);
 
   void Claim(ColumnMeta& meta, const duckdb::LogicalType& type) const;
 
-  void SealNestedValidity(std::span<WriteChunk> chunks, uint64_t row_count,
-                          bool skip_validity, size_t child_count,
-                          ColumnMeta& meta, ColumnWriteState& state);
+  void SealNestedValidity(const WriteRows& rows, bool skip_validity,
+                          size_t child_count, ColumnMeta& meta,
+                          ColumnWriteState& state);
 
-  void SealStruct(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                  uint64_t row_count, bool skip_validity, ColumnMeta& meta,
-                  ColumnWriteState& state,
+  void SealStruct(const duckdb::LogicalType& type, const WriteRows& rows,
+                  bool skip_validity, ColumnMeta& meta, ColumnWriteState& state,
                   std::span<const std::unique_ptr<ListIngest>> ingest);
 
-  void SealArray(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                 uint64_t row_count, bool skip_validity, ColumnMeta& meta,
-                 ColumnWriteState& state);
+  void SealArray(const duckdb::LogicalType& type, const WriteRows& rows,
+                 bool skip_validity, ColumnMeta& meta, ColumnWriteState& state);
 
-  void SealList(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                uint64_t row_count, bool skip_validity, ColumnMeta& meta,
-                ColumnWriteState& state);
+  void SealList(const duckdb::LogicalType& type, const WriteRows& rows,
+                bool skip_validity, ColumnMeta& meta, ColumnWriteState& state);
 
-  void SealListParts(const duckdb::LogicalType& type,
-                     std::span<WriteChunk> chunks, uint64_t row_count,
+  void SealListParts(const duckdb::LogicalType& type, const WriteRows& rows,
                      bool skip_validity, ListIngest& ingest, ColumnMeta& meta,
                      ColumnWriteState& state);
 
-  void SealVariant(const duckdb::LogicalType& type,
-                   std::span<WriteChunk> chunks, uint64_t row_count,
+  void SealVariant(const duckdb::LogicalType& type, const WriteRows& rows,
                    bool skip_validity, ColumnMeta& meta,
                    ColumnWriteState& state);
 
-  void SealColumn(const duckdb::LogicalType& type, std::span<WriteChunk> chunks,
-                  uint64_t row_count, bool skip_validity, ColumnMeta& meta,
-                  ColumnWriteState& state,
+  void SealColumn(const duckdb::LogicalType& type, const WriteRows& rows,
+                  bool skip_validity, ColumnMeta& meta, ColumnWriteState& state,
                   std::span<const std::unique_ptr<ListIngest>> ingest = {});
 
   WriteContext& WriteCtx() const noexcept;

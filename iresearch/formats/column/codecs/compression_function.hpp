@@ -293,10 +293,6 @@ struct Codec {
   const DecompressionFunction& decompression;
 };
 
-duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept;
-
-bool HasRows(std::span<const WriteChunk> chunks) noexcept;
-
 void CompressAuto(ColumnDataCheckpointData& data);
 
 bool CompressAs(const Codec& codec, ColumnDataCheckpointData& data);

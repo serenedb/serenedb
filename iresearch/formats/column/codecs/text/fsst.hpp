@@ -21,13 +21,13 @@
 #pragma once
 
 #include <fsst.h>
-#include <fsst12.h>
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/types/string_type.hpp>
+#include <duckdb/storage/object_cache.hpp>
 #include <memory>
 #include <span>
 #include <string>
@@ -36,7 +36,6 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
-#include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -97,73 +96,6 @@ struct Fsst8 {
                                  unsigned char* out, size_t bytes) noexcept {
     return duckdb_fsst_decompress_prefix(const_cast<Table*>(&imported), size,
                                          in, bytes, out);
-  }
-};
-
-struct Fsst12 {
-  static constexpr ByteCodec kCodec = ByteCodec::Fsst12;
-  static constexpr bool kSharedTable = true;
-
-  using Encoding = duckdb_fsst12_encoder_t;
-  using Table = duckdb_fsst12_decoder_t;
-  using Exported = std::vector<unsigned char>;
-
-  static Encoding* Create(size_t n, size_t* lengths,
-                          const unsigned char** strings) {
-    return duckdb_fsst12_create(n, lengths, strings, 0);
-  }
-
-  static void Destroy(Encoding* encoder) noexcept {
-    duckdb_fsst12_destroy(encoder);
-  }
-
-  static size_t Export(Encoding* encoder, Exported& table) {
-    table.resize(sizeof(Table));
-    return duckdb_fsst12_export(encoder, table.data());
-  }
-
-  static size_t Compress(Encoding* encoder, size_t n, size_t* lengths,
-                         const unsigned char** strings, size_t capacity,
-                         unsigned char* out, size_t* out_lengths,
-                         unsigned char** out_strings) {
-    return duckdb_fsst12_compress(encoder, n, lengths, strings, capacity, out,
-                                  out_lengths, out_strings);
-  }
-
-  struct Symbols {
-    static constexpr std::string_view kCacheType = "col-fsst12";
-
-    bool Open(std::string_view table) noexcept {
-      return duckdb_fsst12_import(
-               &decoder, reinterpret_cast<const unsigned char*>(table.data()),
-               table.size()) == table.size();
-    }
-
-    Table decoder;
-  };
-
-  using Imported = duckdb::shared_ptr<CachedSymbolTable<Symbols>>;
-
-  static bool Import(Imported& imported, duckdb::ObjectCache* cache,
-                     std::string_view table) {
-    imported = OpenSymbolTable<Symbols>(cache, table);
-    return static_cast<bool>(imported);
-  }
-
-  static size_t Decompress(const Imported& imported, const unsigned char* in,
-                           size_t size, unsigned char* out,
-                           size_t capacity) noexcept {
-    return imported ? duckdb_fsst12_decompress(&imported->Table().decoder, size,
-                                               in, capacity, out)
-                    : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
-  }
-
-  static size_t DecompressPrefix(const Imported& imported,
-                                 const unsigned char* in, size_t size,
-                                 unsigned char* out, size_t bytes) noexcept {
-    return imported ? duckdb_fsst12_decompress_prefix(
-                        &imported->Table().decoder, size, in, bytes, out)
-                    : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
   }
 };
 

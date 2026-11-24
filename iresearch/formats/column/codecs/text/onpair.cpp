@@ -43,13 +43,45 @@
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
+#include "iresearch/formats/column/codecs/text/segment_rows.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
+#include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs::text::onpair {
+
+template<typename Rows>
+class CompressionState final : public SortedCompressionState<Rows> {
+  using Base = SortedCompressionState<Rows>;
+
+ public:
+  static constexpr ByteCodec kCodec = ByteCodec::OnPair;
+
+  CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
+    : Base{kCodec, data.type, dedup, data.tuning.strings,
+           data.params.segment_target} {}
+
+  void FinalizeCompress();
+
+ private:
+  using Base::_frames;
+  using Base::_out;
+  using Base::_rows;
+  using Base::_target;
+  using Base::Written;
+
+  void Pack(std::span<const duckdb::string_t> entries,
+            std::span<const uint32_t> lengths, size_t first, size_t end,
+            uint64_t region);
+
+  Codec _codec;
+  std::string _side;
+  std::vector<uint16_t> _codes;
+};
 
 inline std::string_view SymbolTable(const Header& h,
                                     duckdb::const_data_ptr_t base) noexcept {

@@ -256,6 +256,7 @@ class ColCompressionFunctionTest : public ::testing::Test {
       .params = {.tier = tier},
       .tuning = _tuning,
       .disabled = disabled,
+      .rows = _values->size(),
     };
     irs::codecs::Compress(method, data);
     return blocks;

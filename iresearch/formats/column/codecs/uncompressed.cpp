@@ -90,7 +90,7 @@ double AnalyzeBytes([[maybe_unused]] ColumnDataCheckpointData& data, double) {
   if constexpr (kBytes == nullptr) {
     return kNoScore;
   } else {
-    return ScoreOfBytes(kBytes(data.chunks), data);
+    return ScoreOfBytes(kBytes(data.rows), data);
   }
 }
 
@@ -196,8 +196,8 @@ const T* FixedSizeRows(const ColumnSegment& segment, const_data_ptr_t base,
 }
 
 template<typename T>
-idx_t FixedSizeBytes(std::span<const WriteChunk> chunks) {
-  return sizeof(T) * CountRows(chunks);
+constexpr uint64_t FixedSizeBytes(uint64_t rows) noexcept {
+  return sizeof(T) * rows;
 }
 
 template<typename T>
@@ -286,8 +286,8 @@ struct ValidityAppender {
   }
 };
 
-idx_t ValidityBytes(std::span<const WriteChunk> chunks) {
-  return (CountRows(chunks) + 7) / 8;
+constexpr uint64_t ValidityBytes(uint64_t rows) noexcept {
+  return (rows + 7) / 8;
 }
 
 const validity_t* ValidityEntries(const ColumnSegment& segment,

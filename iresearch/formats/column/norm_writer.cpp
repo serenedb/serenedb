@@ -37,6 +37,10 @@ namespace {
 
 constexpr size_t kStagingRows = 4096;
 
+constexpr uint32_t NormOverflowCode(uint32_t bits) noexcept {
+  return static_cast<uint32_t>((uint64_t{1} << bits) - 1);
+}
+
 uint8_t PickShift(uint64_t rows, uint64_t exceptions) noexcept {
   const auto span =
     std::max<uint64_t>(rows * kNormBucketTarget / exceptions, 1);

@@ -21,26 +21,9 @@
 #pragma once
 
 #include <duckdb/common/serializer/write_stream.hpp>
-#include <duckdb/common/typedefs.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
-#include <string_view>
 
 namespace irs {
-
-inline uint64_t AlignedPosition(duckdb::WriteStream& out) {
-  constexpr duckdb::data_t kZeros[8]{};
-  if (const auto misalign = out.Position() % sizeof(kZeros); misalign != 0) {
-    out.WriteData(kZeros, sizeof(kZeros) - misalign);
-  }
-  return out.Position();
-}
-
-inline uint64_t AppendAligned(duckdb::WriteStream& out,
-                              std::string_view bytes) {
-  const auto offset = AlignedPosition(out);
-  out.WriteData(duckdb::const_data_ptr_cast(bytes.data()), bytes.size());
-  return offset;
-}
 
 class WriteContext final {
  public:

@@ -98,13 +98,13 @@ void SortByBytes(std::span<SortScratch::Key> order,
   }
 }
 
-}  // namespace
-
 uint64_t CodesBytes(uint64_t rows, uint64_t entries, double ratio) noexcept {
   return ratio != 0 ? static_cast<uint64_t>(
                         static_cast<double>(rows * sizeof(uint32_t)) * ratio)
                     : Packed(rows, entries);
 }
+
+}  // namespace
 
 void CompressCodes(
   std::span<uint32_t> codes, double& ratio,
@@ -131,6 +131,7 @@ void CompressCodes(
     .disabled = ~kCodesGroup,
     .min_packed_run = kPackedCodeRunRows,
     .run_price = kCodeRunPrice,
+    .rows = codes.size(),
   };
   Compress(CodecType::Auto, data);
   ratio = static_cast<double>(written) /

@@ -1215,6 +1215,13 @@ std::vector<irs::WriteChunk> WriteChunks(
   return out;
 }
 
+uint64_t RowsOf(std::span<const irs::WriteChunk> chunks) {
+  return absl::c_accumulate(chunks, uint64_t{0},
+                            [](uint64_t sum, const irs::WriteChunk& chunk) {
+                              return sum + chunk.data.size();
+                            });
+}
+
 std::vector<irs::codecs::CodecType> SealAuto(
   duckdb::DatabaseInstance& db, std::span<const irs::WriteChunk> chunks,
   const irs::ColCodecParams& params, irs::codecs::ColumnTuning& tuning,
@@ -1233,6 +1240,7 @@ std::vector<irs::codecs::CodecType> SealAuto(
     .params = params,
     .tuning = tuning,
     .disabled = disabled,
+    .rows = RowsOf(chunks),
   };
   irs::codecs::Compress(irs::codecs::CodecType::Auto, checkpoint);
   return types;
@@ -1318,6 +1326,7 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
       .flush = flush,
       .params = {.segment_target = 16 * 1024},
       .tuning = tuning,
+      .rows = RowsOf(write_chunks),
     };
     irs::codecs::Compress(irs::codecs::CodecOf(choice.shape, choice.leaf),
                           checkpoint);
@@ -5041,6 +5050,7 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
       .ctx = &ctx,
       .flush = flush,
       .tuning = tuning,
+      .rows = RowsOf(rows),
     };
     irs::codecs::Compress(fn.type, checkpoint);
     return flushed;
@@ -5277,6 +5287,7 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
     .flush = flush,
     .params = {.segment_target = kTarget},
     .tuning = tuning,
+    .rows = kRows,
   };
   irs::codecs::Compress(irs::codecs::CodecType::Fsst, checkpoint);
   ASSERT_GT(sizes.size(), 8u);

@@ -38,7 +38,7 @@ using duckdb::string_t;
 
 Values::Values(ColumnDataCheckpointData& data) {
   auto& last_distinct = data.tuning.strings.last_distinct;
-  const uint64_t rows = CountRows(data.chunks);
+  const uint64_t rows = data.rows;
   codes.reserve(rows);
   const auto expected =
     last_distinct == 0 ? rows : std::min(rows, last_distinct);

@@ -20,8 +20,6 @@
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 
-#include <absl/algorithm/container.h>
-
 #include <algorithm>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/string_type.hpp>
@@ -58,19 +56,6 @@ duckdb::BufferHandle& ColumnFetchState::GetOrInsertHandle(
   return handle;
 }
 
-duckdb::idx_t CountRows(std::span<const WriteChunk> chunks) noexcept {
-  duckdb::idx_t rows = 0;
-  for (const auto& chunk : chunks) {
-    rows += chunk.data.size();
-  }
-  return rows;
-}
-
-bool HasRows(std::span<const WriteChunk> chunks) noexcept {
-  return absl::c_any_of(
-    chunks, [](const WriteChunk& chunk) { return chunk.data.size() != 0; });
-}
-
 void CompressUncompressed(ColumnDataCheckpointData& data) {
   SDB_ENSURE(CompressAs(CodecType::Uncompressed, data),
              "column writer: no codec writes the physical type ",
@@ -78,7 +63,6 @@ void CompressUncompressed(ColumnDataCheckpointData& data) {
 }
 
 void Compress(CodecType method, ColumnDataCheckpointData& data) {
-  data.rows = CountRows(data.chunks);
   if (CompressAs(CodecType::Empty, data) ||
       (!data.disabled.test(std::to_underlying(CodecType::Constant)) &&
        CompressAs(CodecType::Constant, data))) {

@@ -33,8 +33,6 @@
 #include "iresearch/search/detail/exclusion_of.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
-#include "iresearch/search/detail/with_mask.hpp"
-#include "iresearch/search/fill/make.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 #include "iresearch/utils/down_cast.hpp"
 
@@ -82,7 +80,7 @@ Result MakeConjunctionBitset(std::span<const Term> terms,
                              TableFilter* table) {
   SDB_ASSERT(terms.size() + filters.size() > 1);
   const auto* const doc = SegmentDoc(segment);
-  if (!doc) {
+  if (doc == nullptr) {
     return {};
   }
   BitsetBuckets buckets;
@@ -90,11 +88,11 @@ Result MakeConjunctionBitset(std::span<const Term> terms,
     return {};
   }
   const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  if (!TakeConjunctionFold(buckets, docs_count, HeadEstimate(terms, filters))) {
+  if (!TakeConjunctionFold(buckets, *doc, docs_count,
+                           HeadEstimate(terms, filters))) {
     return {};
   }
-  return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count,
-                                   docs_count, table);
+  return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count, table);
 }
 
 struct ExcludeFills {
@@ -137,7 +135,7 @@ inline bool PlanExcludeFills(const ExcludeFills& fills, BitsetBuckets& out) {
 inline bool TakeExclusionFold(const BitsetBuckets& buckets,
                               const ExcludeFills& fills, const FoldEmit& emit,
                               const ExcludeCosts<PostingClause>& exclusion,
-                              doc_id_t docs_count,
+                              const duckdb::InputFile& doc, doc_id_t docs_count,
                               uint64_t candidates) noexcept {
   if (fills.children.empty() && buckets.masked == nullptr &&
       !buckets.NeedsSet() && !buckets.DenseLead(docs_count)) {
@@ -168,58 +166,11 @@ inline bool TakeExclusionFold(const BitsetBuckets& buckets,
   if (single) {
     walk = std::min(walk, exclusion.WindowLead(docs, emit.docs, true, true));
   }
-  return TakeFold(cost < walk, docs_count);
-}
-
-inline bool TakeNegationFold(std::span<const PostingClause> terms,
-                             std::span<const QueryBuilder::ptr> filters,
-                             const ExcludeFills& fills,
-                             doc_id_t docs_count) noexcept {
-  const auto windows = static_cast<double>(SegmentWindows(docs_count));
-  const auto words = static_cast<double>(SegmentWords(docs_count));
-  const auto leaves = static_cast<double>(terms.size() + filters.size());
-  double window = windows * leaves * kWindowTestCost;
-  double fold = words * (kBitClearCost + kFoldWordCost) + fills.cost;
-  for (const auto& term : terms) {
-    const auto docs = term.state.cookie.docs_count;
-    const auto d = static_cast<double>(docs);
-    window += std::min(windows, d) * kWindowRefillCost + d * kFilledCost;
-    fold += PostingBuildCost(docs, docs_count, kClearCost);
+  size_t terms = buckets.must_not.size();
+  for (const auto& clause : buckets.must) {
+    terms += clause.size();
   }
-  for (const auto& child : filters) {
-    const auto clause = ChildClauseCost(*child, docs_count);
-    window += clause.fill + windows * (clause.nested ? kWindowNestedRefillCost
-                                                     : kWindowChildRefillCost);
-  }
-  return TakeFold(fold < window, docs_count);
-}
-
-template<typename Result, typename P = NoPins>
-Result MakeNegationBitset(const BooleanGroups& groups, const SubReader& segment,
-                          TableFilter* table) {
-  SDB_ASSERT(!groups.must_not.empty() || !groups.must_not_filters.empty());
-  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  const auto* const doc = SegmentDoc(segment);
-  if (!doc) {
-    return {};
-  }
-  BitsetBuckets buckets;
-  const auto split = SplitMask(groups.must_not_filters);
-  ExcludeFills fills;
-  CollectExcludeBuckets(groups.must_not, split.rest, nullptr, docs_count,
-                        buckets, fills);
-  if (!TakeNegationFold(groups.must_not, split.rest, fills, docs_count)) {
-    return {};
-  }
-  buckets.fills.emplace_back(fill::MakeAllDocs(segment));
-  if (split.masked) {
-    buckets.masked = &segment;
-  }
-  if (!PlanExcludeFills(fills, buckets)) {
-    return {};
-  }
-  return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count,
-                                   docs_count, table);
+  return TakeFold(cost < walk, terms, doc, docs_count);
 }
 
 template<typename Result, typename P = NoPins>
@@ -230,16 +181,14 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
     return {};
   }
   if (groups.must.empty() && groups.must_filters.empty()) {
-    if (groups.should.empty() && groups.should_filters.empty()) {
-      return MakeNegationBitset<Result, P>(groups, segment, table);
-    }
     if (groups.should.empty() || !groups.must_not.empty() ||
         !groups.must_not_filters.empty() ||
         (!groups.should_filters.empty() && groups.should_fills == nullptr)) {
       return {};
     }
     const auto* const doc = DocOf(FieldOf(groups.should.front(), nullptr));
-    if (!doc || !TakeBitset<Result>(groups.should, docs_count)) {
+    if (doc == nullptr ||
+        !TakeBitset<Result>(groups.should, *doc, docs_count)) {
       return {};
     }
     auto buckets = DisjunctionBuckets(groups.should, nullptr);
@@ -247,7 +196,7 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
       buckets.fills = std::move(*groups.should_fills);
     }
     return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count,
-                                     docs_count, table);
+                                     table);
   }
   if (!groups.should.empty() || !groups.should_filters.empty()) {
     return {};
@@ -255,7 +204,7 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
   SDB_ASSERT(groups.must.size() + groups.must_filters.size() > 1 ||
              !groups.must_not.empty() || !groups.must_not_filters.empty());
   const auto* const doc = SegmentDoc(segment);
-  if (!doc) {
+  if (doc == nullptr) {
     return {};
   }
   BitsetBuckets buckets;
@@ -264,12 +213,12 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
     return {};
   }
   if (groups.must_not.empty() && groups.must_not_filters.empty()) {
-    if (!TakeConjunctionFold(buckets, docs_count,
+    if (!TakeConjunctionFold(buckets, *doc, docs_count,
                              HeadEstimate(groups.must, groups.must_filters))) {
       return {};
     }
     return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count,
-                                     docs_count, table);
+                                     table);
   }
   const auto candidates =
     IncludeCandidates(groups.must, groups.must_filters, segment);
@@ -284,13 +233,12 @@ Result MakeBooleanBitset(const BooleanGroups& groups, const SubReader& segment,
   const ExcludeCosts<PostingClause> exclusion{
     groups.must_not, groups.must_not_filters, candidates, candidates,
     docs_count,      ExcludeUse::PerDoc};
-  if (!TakeExclusionFold(buckets, fills, kFoldEmit<Result>, exclusion,
+  if (!TakeExclusionFold(buckets, fills, kFoldEmit<Result>, exclusion, *doc,
                          docs_count, candidates) ||
       !PlanExcludeFills(fills, buckets)) {
     return {};
   }
-  return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count,
-                                   docs_count, table);
+  return MakeBitsetNode<Result, P>(std::move(buckets), *doc, docs_count, table);
 }
 
 }  // namespace irs::detail

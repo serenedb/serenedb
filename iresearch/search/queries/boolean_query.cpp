@@ -40,8 +40,7 @@ namespace {
 
 bool SamePosting(const PostingMeta& l, const PostingMeta& r) noexcept {
   return l.doc_start == r.doc_start && l.docs_count > 1 && r.docs_count > 1 &&
-         l.pos_start == r.pos_start && l.pos_offset == r.pos_offset &&
-         l.Inline() == r.Inline();
+         l.pos_start == r.pos_start && l.pos_offset == r.pos_offset;
 }
 
 bool SameStats(const detail::StatsRecord& lhs,
@@ -185,7 +184,7 @@ void BooleanBuilder::Push(BooleanQuery::PreparedBucket& bucket,
                           score_t boost, detail::StatsRecord stats,
                           uint32_t group) {
   SDB_ASSERT(meta.docs_count != 0);
-  bucket.postings.emplace_back(TermState{reader, meta}, boost, stats, group);
+  bucket.postings.emplace_back(TermState{reader, meta}, boost, group, stats);
 }
 
 bool BooleanBuilder::Absorb(QueryKind kind, Occur occur) {

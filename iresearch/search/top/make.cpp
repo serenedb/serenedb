@@ -190,8 +190,8 @@ UnionMember::ptr MakeConstantMember(const QueryBuilder& query,
   const std::span<const MultiTermState::Entry> terms{state.Terms()};
   const auto* const doc = irs::detail::DocOf(*field);
   const auto docs_count = static_cast<doc_id_t>(multi.Segment().docs_count());
-  if (doc &&
-      irs::detail::TakeBitset<irs::detail::LeadNode::ptr>(terms, docs_count)) {
+  if (doc && irs::detail::TakeBitset<irs::detail::LeadNode::ptr>(terms, *doc,
+                                                                 docs_count)) {
     auto buckets = irs::detail::DisjunctionBuckets(terms, field);
     return memory::make_managed<ConstantUnionMember<lead::BitsetDocs>>(
       score, irs::detail::BuildBitset(buckets, *doc, docs_count));

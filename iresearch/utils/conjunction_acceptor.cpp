@@ -110,7 +110,7 @@ void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
              std::span<std::shared_ptr<const RegexpAcceptor>> owned,
              RegexpConjunction::Parts& start, bytes_view& lower,
              std::span<const bstring>& suffixes, bytes_view& infix,
-             ByteSet& required) {
+             KeyBytes& bytes) {
   SDB_ASSERT(patterns.size() <= owned.size());
   const auto shortest = [](std::span<const bstring> set) {
     size_t size = set.empty() ? 0 : std::numeric_limits<size_t>::max();
@@ -132,7 +132,7 @@ void Collect(std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
     if (pattern.RequiredInfix().size() > infix.size()) {
       infix = pattern.RequiredInfix();
     }
-    AddAll(required, pattern.RequiredBytes());
+    Join(bytes, pattern.Bytes());
   }
 }
 
@@ -156,12 +156,9 @@ std::byte* RowArena::Allocate(size_t bytes) {
 RegexpConjunction::RegexpConjunction(
   std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
   size_t max_mem)
-  : _size{patterns.size()}, _max_mem{max_mem} {
+  : _size{patterns.size()}, _bytes{.dead = {}}, _max_mem{max_mem} {
   Parts start{};
-  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _required);
-  for (size_t i = 0; i != _size; ++i) {
-    AddAll(_dead_bytes, _patterns[i]->DeadBytes());
-  }
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _bytes);
   _classes =
     Refine([&](uint32_t label) { return PatternsKey(patterns, label); },
            _bytemap, _representative);
@@ -266,16 +263,16 @@ RegexpConjunction::State RegexpConjunction::InternLocked(
 
 FuzzyConjunction::FuzzyConjunction(
   std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
-  bytes_view lower, const ByteSet& required,
+  bytes_view lower, const KeyBytes& bytes,
   const std::array<uint8_t, 256>& fuzzy_bytemap, size_t max_mem,
   bool starts_with)
   : _size{patterns.size()},
     _starts_with{starts_with},
     _lower{lower},
-    _required{required},
+    _bytes{bytes},
     _max_mem{max_mem} {
   Parts start{};
-  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _required);
+  Collect(patterns, _patterns, start, _lower, _suffixes, _infix, _bytes);
   if (patterns.empty()) {
     _bytemap = fuzzy_bytemap;
     for (uint32_t label = 0; label != kLabels; ++label) {

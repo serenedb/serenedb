@@ -106,6 +106,9 @@ Root::ptr Family::Make(const BooleanQuery& query, const Context& ctx) {
   if (auto shortcut = MakeShortcut(query, ctx)) {
     return shortcut;
   }
+  for (const auto occur : {Occur::Must, Occur::Should, Occur::MustNot}) {
+    HintPostings(nullptr, query.Terms(occur));
+  }
   return detail::MakeQuery<Family>(query, ctx);
 }
 

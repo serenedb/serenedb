@@ -197,13 +197,28 @@ irs::bstring Bytes(std::string_view str) {
   return irs::bstring{irs::ViewCast<irs::byte_type>(str)};
 }
 
+struct IndexBytes {
+  irs::bstring prefixes;
+  irs::bstring mask_bytes;
+  irs::bstring masks;
+
+  irs::term_dict::IndexSections View() const {
+    return {.prefixes = prefixes, .mask_bytes = mask_bytes, .masks = masks};
+  }
+};
+
+struct TermsImage {
+  irs::term_dict::TermsMeta meta;
+  std::vector<IndexBytes> sections;
+  irs::bstring separators;
+};
+
 void AssertSameMeta(const irs::PostingMeta& expected,
                     const irs::PostingMeta& actual) {
   ASSERT_EQ(expected.docs_count, actual.docs_count);
   ASSERT_EQ(expected.freq, actual.freq);
   ASSERT_EQ(expected.doc_start, actual.doc_start);
   ASSERT_EQ(expected.doc_delta, actual.doc_delta);
-  ASSERT_EQ(expected.Inline(), actual.Inline());
 }
 
 uint32_t KeyWidth(const std::vector<Entry>& entries) {
@@ -421,6 +436,51 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
       .TakeTerms();
   }
 
+  TermsImage TakeImage() {
+    TermsImage image{.meta = TakeTerms()};
+    const auto file =
+      dir().Open(absl::StrCat(kSegment, ".", irs::kIdxFormatExt),
+                 duckdb::MappedFileAccess::RANDOM);
+    EXPECT_TRUE(file);
+    duckdb::InputFileReader in{*file};
+    const auto read = [&](const irs::term_dict::Section& section) {
+      irs::bstring bytes(section.size, 0);
+      in.Seek(section.offset);
+      in.ReadData(bytes.data(), bytes.size());
+      return bytes;
+    };
+    for (const auto& head : image.meta.fields) {
+      image.sections.push_back({
+        .prefixes = read(head.block_prefixes),
+        .mask_bytes = read(head.block_mask_bytes),
+        .masks = read(head.block_masks),
+      });
+    }
+    image.separators = read(image.meta.separators);
+    return image;
+  }
+
+  void RewriteImage(TermsImage image) {
+    auto& meta = image.meta;
+    irs::bstring tail;
+    const auto append = [&](irs::term_dict::Section& section,
+                            const irs::bstring& bytes) {
+      section.size = bytes.size();
+      tail.append(bytes);
+    };
+    for (size_t i = 0; i != meta.fields.size(); ++i) {
+      auto& head = meta.fields[i];
+      const auto& bytes = image.sections[i];
+      append(head.block_prefixes, bytes.prefixes);
+      append(head.block_mask_bytes, bytes.mask_bytes);
+      append(head.block_masks, bytes.masks);
+    }
+    append(meta.separators, image.separators);
+    RewriteFile(meta.blocks_end, tail, [&](duckdb::BinarySerializer& object) {
+      irs::term_dict::WriteTerms(object, meta);
+    });
+  }
+
   void RewriteTerms(const irs::term_dict::TermsMeta& terms) {
     RewriteTermsWith([&](duckdb::BinarySerializer& object) {
       irs::term_dict::WriteTerms(object, terms);
@@ -429,6 +489,11 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
 
   void RewriteTermsWith(
     absl::FunctionRef<void(duckdb::BinarySerializer&)> write) {
+    RewriteFile(std::numeric_limits<uint64_t>::max(), {}, write);
+  }
+
+  void RewriteFile(uint64_t keep, irs::bytes_view tail,
+                   absl::FunctionRef<void(duckdb::BinarySerializer&)> write) {
     _reader.reset();
     _idx.reset();
     const auto name = absl::StrCat(kSegment, ".", irs::kIdxFormatExt);
@@ -440,10 +505,11 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
       const uint64_t length = file->GetSize();
       in.Seek(length - sizeof(uint32_t));
       const uint64_t footer = in.Read<uint32_t>();
-      data.resize(length - 2 * sizeof(uint32_t) - footer);
+      data.resize(std::min(keep, length - 2 * sizeof(uint32_t) - footer));
       in.Seek(0);
       in.ReadData(data.data(), data.size());
     }
+    data.append(tail);
     ASSERT_TRUE(dir().Remove(name));
     auto out = dir().Create(name);
     ASSERT_NE(nullptr, out);
@@ -718,7 +784,7 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
     }
     for (size_t k = 0; k != levels.size(); ++k) {
       SCOPED_TRACE(testing::Message("level ") << k);
-      const auto& level = *levels[k];
+      const auto& level = levels[k];
       ASSERT_EQ(reader.key_width, level.key_width);
       std::vector<irs::bstring> keys;
       std::vector<irs::PostingMeta> metas;
@@ -763,19 +829,19 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
                     const std::vector<Entry>& entries, size_t rounds) const {
     constexpr size_t kLeafFanout = 64;
     constexpr size_t kFanout = 16;
-    std::span<const irs::term_dict::TermReaderImpl* const> levels;
+    std::span<const irs::term_dict::TermReaderImpl> levels;
     if (reader.size() > 1) {
       levels = Blocks(reader).RangeLevels();
     }
     const size_t bound = levels.empty() ? entries.size()
-                                        : levels.back()->size() +
+                                        : levels.back().size() +
                                             2 * kFanout * (levels.size() - 1) +
                                             2 * kLeafFanout;
     auto bounds = Probes(entries);
     std::vector<std::vector<irs::bstring>> starts;
-    for (const auto* level : levels) {
+    for (const auto& level : levels) {
       auto& level_starts = starts.emplace_back();
-      for (auto it = level->iterator(); it->next();) {
+      for (auto it = level.iterator(); it->next();) {
         irs::bstring start{it->value()};
         level_starts.push_back(start);
         bounds.push_back(start + irs::byte_type{0});
@@ -898,9 +964,9 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
       }
     }
     ASSERT_EQ(irs::bytes_view{OrdinalPrefix(ordinal, width)}, impl.KeyPrefix());
-    for (const auto* level : impl.RangeLevels()) {
+    for (const auto& level : impl.RangeLevels()) {
       ASSERT_EQ(irs::bytes_view{OrdinalPrefix(++ordinal, width)},
-                level->KeyPrefix());
+                level.KeyPrefix());
     }
     AssertField(*reader, field.entries);
     if (IsNumbers(field.dict)) {
@@ -1098,46 +1164,8 @@ TEST_P(TermDictTest, fixed_keys_split_low_and_high_bits) {
   }
 }
 
-TEST_P(TermDictTest, fixed_keys_fill_multi_page_blocks) {
-  constexpr uint64_t kInlined = 40000;
-  constexpr uint64_t kSingles = 100000;
-  constexpr irs::doc_id_t kSpread = 300;
-  constexpr irs::doc_id_t kListDocs = 16;
-  const auto key = [](uint64_t value) {
-    irs::bstring key(sizeof(uint64_t), irs::byte_type{0});
-    absl::big_endian::Store64(key.data(), value);
-    return key;
-  };
-  std::vector<Entry> entries;
-  entries.reserve(kInlined + kSingles);
-  for (uint64_t i = 0; i != kInlined; ++i) {
-    Docs docs;
-    for (irs::doc_id_t j = 0; j != kListDocs; ++j) {
-      docs.emplace_back(irs::doc_limits::min() + j * kSpread +
-                          static_cast<irs::doc_id_t>(i % kSpread),
-                        1);
-    }
-    entries.push_back({.key = key(i), .docs = std::move(docs)});
-  }
-  for (uint64_t i = 0; i != kSingles; ++i) {
-    const auto doc = irs::doc_limits::min() +
-                     static_cast<irs::doc_id_t>(i % (kListDocs * kSpread));
-    entries.push_back({.key = key(kInlined + i), .docs = {{doc, 1}}});
-  }
-  const Field field{.id = 1, .entries = std::move(entries)};
-  Write({&field, 1});
-  const auto& impl = Blocks(*Get(field));
-  uint64_t widest = 0;
-  for (uint32_t block = 0; block != impl.Blocks(); ++block) {
-    widest =
-      std::max(widest, impl.BlockOffset(block + 1) - impl.BlockOffset(block));
-  }
-  ASSERT_GT(widest, 8 * uint64_t{irs::term_dict::kPage});
-  AssertField(impl, field.entries);
-}
-
 TEST_P(TermDictTest, fixed_keys_stay_within_their_samples_reach) {
-  constexpr uint64_t kInlined = 40000;
+  constexpr uint64_t kLists = 40000;
   constexpr uint64_t kShared = 200000;
   constexpr irs::doc_id_t kSpread = 300;
   constexpr irs::doc_id_t kListDocs = 16;
@@ -1147,8 +1175,8 @@ TEST_P(TermDictTest, fixed_keys_stay_within_their_samples_reach) {
     return key;
   };
   std::vector<Entry> entries;
-  entries.reserve(kInlined + kShared);
-  for (uint64_t i = 0; i != kInlined; ++i) {
+  entries.reserve(kLists + kShared);
+  for (uint64_t i = 0; i != kLists; ++i) {
     Docs docs;
     for (irs::doc_id_t j = 0; j != kListDocs; ++j) {
       docs.emplace_back(irs::doc_limits::min() + j * kSpread +
@@ -1159,7 +1187,7 @@ TEST_P(TermDictTest, fixed_keys_stay_within_their_samples_reach) {
   }
   for (uint64_t i = 0; i != kShared; ++i) {
     entries.push_back(
-      {.key = key(kInlined + i), .docs = {{irs::doc_limits::min(), 1}}});
+      {.key = key(kLists + i), .docs = {{irs::doc_limits::min(), 1}}});
   }
   const Field field{.id = 1, .entries = std::move(entries)};
   Write({&field, 1});
@@ -1790,49 +1818,6 @@ TEST_P(TermDictTest, open_readers_count_against_the_memory_limit) {
   EXPECT_EQ(decoded, used(duckdb::MemoryTag::EXTENSION));
 }
 
-TEST_P(TermDictTest, inline_postings_live_in_their_block) {
-  std::vector<std::pair<int64_t, irs::doc_id_t>> values;
-  for (irs::doc_id_t doc = 1; doc <= 40000; ++doc) {
-    values.emplace_back(int64_t{doc % 5000} * 7, doc);
-  }
-  const Field fields[]{
-    {.id = 1, .entries = MakeEntries({Bytes("x"), Bytes("y"), Bytes("z")})},
-    {.id = 2, .entries = MakeEntries(Words(20000, 5))},
-    {.id = 3, .entries = NumericEntries(std::move(values))},
-    {.id = 4, .entries = MakeEntries({Bytes("only")})},
-    {.id = 5, .entries = MakeEntries({Bytes("p"), Bytes("q")})},
-  };
-  Write(fields);
-
-  size_t inlined = 0;
-  for (const auto& field : fields) {
-    if (Get(field)->size() == 1) {
-      continue;
-    }
-    SCOPED_TRACE(testing::Message("field ") << field.id);
-    const auto& impl = Blocks(*Get(field));
-    irs::term_dict::Cursor cursor{impl};
-    cursor.First();
-    do {
-      const auto& meta = cursor.Meta();
-      if (meta.inline_size == 0) {
-        continue;
-      }
-      ++inlined;
-      const uint32_t block = cursor.BlockIndex();
-      irs::term_dict::PinnedRange pinned;
-      const auto bytes = impl.Block(block, pinned);
-      const auto inline_bytes = meta.Inline();
-      ASSERT_NE(bytes.end(), absl::c_search(bytes, inline_bytes));
-    } while (cursor.Advance());
-  }
-  ASSERT_GT(inlined, 100);
-  for (const auto& field : fields) {
-    SCOPED_TRACE(testing::Message("field ") << field.id);
-    AssertField(*Get(field), field.entries);
-  }
-}
-
 TEST_P(TermDictTest, corrupt_block_prefixes_are_refused) {
   std::vector<std::pair<int64_t, irs::doc_id_t>> values;
   for (irs::doc_id_t doc = 1; doc <= 20000; ++doc) {
@@ -1858,30 +1843,29 @@ TEST_P(TermDictTest, corrupt_block_prefixes_are_refused) {
     }
   }
   ASSERT_NE(0, prefix_label);
-  const auto terms = TakeTerms();
-  ASSERT_EQ(2, terms.fields.size());
-  for (const auto& head : terms.fields) {
+  const auto image = TakeImage();
+  ASSERT_EQ(2, image.meta.fields.size());
+  for (const auto& head : image.meta.fields) {
     ASSERT_LT(head.first_block, head.last_block);
   }
   const auto refused = [&](auto&& corrupt) {
-    auto copy = terms;
+    auto copy = image;
     corrupt(copy);
-    RewriteTerms(copy);
+    RewriteImage(copy);
     ASSERT_SQL_ERROR(Open(dir()), ERRCODE_INDEX_CORRUPTED);
   };
-  using Terms = irs::term_dict::TermsMeta;
-  ASSERT_TRUE(terms.fields[0].block_prefixes.empty());
-  ASSERT_FALSE(terms.fields[1].block_prefixes.empty());
-  refused([](Terms& t) { t.fields[1].block_prefixes.clear(); });
-  refused([](Terms& t) { t.fields[1].block_prefixes.pop_back(); });
-  refused([](Terms& t) { t.fields[1].block_prefixes.push_back('\0'); });
+  ASSERT_TRUE(image.sections[0].prefixes.empty());
+  ASSERT_FALSE(image.sections[1].prefixes.empty());
+  refused([](TermsImage& t) { t.sections[1].prefixes.clear(); });
+  refused([](TermsImage& t) { t.sections[1].prefixes.pop_back(); });
+  refused([](TermsImage& t) { t.sections[1].prefixes.push_back(0); });
   refused(
-    [](Terms& t) { t.fields[0].block_prefixes = t.fields[1].block_prefixes; });
-  refused([](Terms& t) {
-    std::swap(t.fields[0].block_prefixes, t.fields[1].block_prefixes);
+    [](TermsImage& t) { t.sections[0].prefixes = t.sections[1].prefixes; });
+  refused([](TermsImage& t) {
+    std::swap(t.sections[0].prefixes, t.sections[1].prefixes);
   });
-  refused([&](Terms& t) {
-    auto& trie = t.fields[1].block_prefixes;
+  refused([&](TermsImage& t) {
+    auto& trie = t.sections[1].prefixes;
     size_t at = 0;
     const auto varint = [&] {
       uint32_t value = 0;
@@ -1897,10 +1881,10 @@ TEST_P(TermDictTest, corrupt_block_prefixes_are_refused) {
     varint();
     ++at;
     const auto labels = varint();
-    ASSERT_NE('\xFF', trie[at + labels - 1]);
+    ASSERT_NE(0xFF, trie[at + labels - 1]);
     size_t shifted = 0;
     for (size_t i = at; i != at + labels; ++i) {
-      auto& label = reinterpret_cast<irs::byte_type&>(trie[i]);
+      auto& label = trie[i];
       if (label >= prefix_label) {
         ++label;
         ++shifted;
@@ -1909,7 +1893,7 @@ TEST_P(TermDictTest, corrupt_block_prefixes_are_refused) {
     ASSERT_NE(0, shifted);
   });
 
-  RewriteTerms(terms);
+  RewriteImage(image);
   Open(dir());
   AssertField(*Get(fields[0]), fields[0].entries);
   AssertField(*Get(fields[1]), fields[1].entries);
@@ -2120,7 +2104,6 @@ struct RecordShape {
   irs::IndexFeatures features;
   uint32_t count;
   uint32_t singles;
-  uint32_t inlines;
   uint32_t big;
   uint32_t excess;
   uint32_t many_positions;
@@ -2128,12 +2111,13 @@ struct RecordShape {
 
 struct EncodedRecord {
   irs::PostingMeta meta;
-  irs::bstring inline_bytes;
 };
 
 std::vector<EncodedRecord> MakeRecords(const RecordShape& shape,
                                        std::mt19937_64& rng) {
-  const irs::PostingFeatures features{shape.features};
+  const auto has = [&](irs::IndexFeatures feature) {
+    return irs::IsSubsetOf(feature, shape.features);
+  };
   const auto percent = [&](uint32_t p) { return rng() % 100 < p; };
   const auto below = [&](uint64_t bound) { return rng() % bound; };
   std::vector<EncodedRecord> records;
@@ -2144,17 +2128,9 @@ std::vector<EncodedRecord> MakeRecords(const RecordShape& shape,
   uint64_t at = below(irs::PosGroup::kPositions);
   for (uint32_t i = 0; i != shape.count; ++i) {
     irs::PostingMeta meta;
-    irs::bstring inline_bytes;
     if (percent(shape.singles)) {
       meta.docs_count = 1;
       meta.doc_delta = static_cast<uint32_t>(below(uint64_t{1} << 31));
-    } else if (percent(shape.inlines)) {
-      meta.docs_count = 2 + static_cast<uint32_t>(below(127));
-      meta.inline_size =
-        static_cast<uint8_t>(1 + below(irs::PostingMeta::kInlineBytes));
-      for (uint32_t b = 0; b != meta.inline_size; ++b) {
-        inline_bytes.push_back(static_cast<irs::byte_type>(below(256)));
-      }
     } else {
       const bool big = percent(shape.big);
       meta.docs_count = big ? irs::doc_limits::kBlockSize + 1 +
@@ -2166,18 +2142,18 @@ std::vector<EncodedRecord> MakeRecords(const RecordShape& shape,
         meta.doc_delta = 1 + static_cast<uint32_t>(below(uint64_t{1} << 31));
       }
     }
-    if (features.freq) {
+    if (has(irs::IndexFeatures::Freq)) {
       meta.freq = meta.docs_count;
       if (percent(shape.excess)) {
         meta.freq += 1 + static_cast<uint32_t>(below(1000));
       }
-      if (features.pos && percent(shape.many_positions)) {
+      if (has(irs::IndexFeatures::Pos) && percent(shape.many_positions)) {
         meta.freq +=
           irs::pos_limits::kBlockSize + 1 +
           static_cast<uint32_t>(below(3 * irs::PosGroup::kPositions));
       }
     }
-    if (features.pos) {
+    if (has(irs::IndexFeatures::Pos)) {
       meta.pos_offset = static_cast<uint16_t>(at % irs::PosGroup::kPositions);
       if (i != 0 &&
           records.back().meta.pos_offset + uint64_t{records.back().meta.freq} >=
@@ -2186,47 +2162,38 @@ std::vector<EncodedRecord> MakeRecords(const RecordShape& shape,
         pay_start += 1 + below(1 << 16);
       }
       meta.pos_start = pos_start;
-      if (features.offs) {
+      if (has(irs::IndexFeatures::Offs)) {
         meta.pay_start = pay_start;
       }
       if (meta.freq > irs::pos_limits::kBlockSize) {
         meta.pos_extent = static_cast<uint32_t>(below(uint64_t{1} << 31));
-        if (features.offs) {
+        if (has(irs::IndexFeatures::Offs)) {
           meta.pay_extent = static_cast<uint32_t>(below(uint64_t{1} << 31));
         }
       }
       at = at % irs::PosGroup::kPositions + meta.freq;
-    } else if (features.vec) {
+    } else if (has(irs::IndexFeatures::Vec)) {
       vec_start += below(1 << 12);
       meta.pay_start = vec_start;
       meta.pos_offset = static_cast<uint16_t>(below(64));
     }
-    records.push_back({.meta = meta, .inline_bytes = std::move(inline_bytes)});
-  }
-  for (auto& record : records) {
-    record.meta.SetInline(record.inline_bytes);
+    records.push_back({.meta = meta});
   }
   return records;
 }
 
 void ExpectRecord(const EncodedRecord& expected,
-                  const irs::term_dict::RecordDecoder& decoder,
                   const irs::PostingMeta& actual) {
   auto meta = expected.meta;
   ASSERT_EQ(meta.docs_count, actual.docs_count);
   ASSERT_EQ(meta.freq, actual.freq);
   ASSERT_EQ(meta.doc_delta, actual.doc_delta);
   ASSERT_EQ(meta.doc_start, actual.doc_start);
-  ASSERT_EQ(meta.inline_size, actual.inline_size);
   ASSERT_EQ(meta.pos_start, actual.pos_start);
   ASSERT_EQ(meta.pay_start, actual.pay_start);
   ASSERT_EQ(meta.pos_offset, actual.pos_offset);
   ASSERT_EQ(meta.pos_extent, actual.pos_extent);
   ASSERT_EQ(meta.pay_extent, actual.pay_extent);
-  if (meta.inline_size != 0) {
-    ASSERT_EQ(irs::bytes_view{expected.inline_bytes},
-              (irs::bytes_view{decoder.InlineData(), meta.inline_size}));
-  }
 }
 
 TEST(TermDictRecordsTest, runs_decode_every_record_in_any_order) {
@@ -2237,37 +2204,23 @@ TEST(TermDictRecordsTest, runs_decode_every_record_in_any_order) {
   constexpr auto kVec = irs::IndexFeatures::Vec;
   const RecordShape shapes[]{
     {.features = kDocs, .count = 1, .singles = 100},
-    {.features = kDocs, .count = 1, .singles = 0, .inlines = 100},
     {.features = kDocs, .count = 1, .singles = 0, .big = 100},
     {.features = kDocs, .count = 300, .singles = 100},
-    {.features = kDocs, .count = 300, .singles = 0, .inlines = 100},
     {.features = kDocs, .count = 300, .singles = 0, .big = 100},
     {.features = kDocs, .count = 300, .singles = 0, .big = 0},
-    {.features = kDocs, .count = 300, .singles = 30, .inlines = 50, .big = 30},
-    {.features = kFreq,
-     .count = 257,
-     .singles = 60,
-     .inlines = 50,
-     .big = 10,
-     .excess = 5},
-    {.features = kFreq,
-     .count = 64,
-     .singles = 0,
-     .inlines = 0,
-     .big = 100,
-     .excess = 100},
+    {.features = kDocs, .count = 300, .singles = 30, .big = 30},
+    {.features = kFreq, .count = 257, .singles = 60, .big = 10, .excess = 5},
+    {.features = kFreq, .count = 64, .singles = 0, .big = 100, .excess = 100},
     {.features = kPos, .count = 1, .singles = 100},
     {.features = kPos,
      .count = 500,
      .singles = 60,
-     .inlines = 60,
      .big = 5,
      .excess = 2,
      .many_positions = 1},
     {.features = kPos,
      .count = 200,
      .singles = 20,
-     .inlines = 30,
      .big = 20,
      .excess = 60,
      .many_positions = 20},
@@ -2275,16 +2228,11 @@ TEST(TermDictRecordsTest, runs_decode_every_record_in_any_order) {
     {.features = kOffs,
      .count = 333,
      .singles = 50,
-     .inlines = 50,
      .big = 10,
      .excess = 10,
      .many_positions = 5},
-    {.features = kVec, .count = 150, .singles = 40, .inlines = 40, .big = 10},
-    {.features = kVec | kFreq,
-     .count = 70,
-     .singles = 40,
-     .inlines = 40,
-     .excess = 30},
+    {.features = kVec, .count = 150, .singles = 40, .big = 10},
+    {.features = kVec | kFreq, .count = 70, .singles = 40, .excess = 30},
   };
   std::mt19937_64 rng{42};
   for (const auto& shape : shapes) {
@@ -2311,17 +2259,17 @@ TEST(TermDictRecordsTest, runs_decode_every_record_in_any_order) {
       } else {
         decoder.Next(meta);
       }
-      ASSERT_NO_FATAL_FAILURE(ExpectRecord(records[i], decoder, meta));
+      ASSERT_NO_FATAL_FAILURE(ExpectRecord(records[i], meta));
     }
     std::vector<uint32_t> order(records.size());
     absl::c_iota(order, 0);
     absl::c_shuffle(order, rng);
     for (const auto i : order) {
       decoder.Seek(i, meta);
-      ASSERT_NO_FATAL_FAILURE(ExpectRecord(records[i], decoder, meta));
+      ASSERT_NO_FATAL_FAILURE(ExpectRecord(records[i], meta));
       if (i + 1 != records.size()) {
         decoder.Next(meta);
-        ASSERT_NO_FATAL_FAILURE(ExpectRecord(records[i + 1], decoder, meta));
+        ASSERT_NO_FATAL_FAILURE(ExpectRecord(records[i + 1], meta));
       }
     }
     ASSERT_SQL_ERROR(decoder.Seek(static_cast<uint32_t>(records.size()), meta),
@@ -2332,7 +2280,7 @@ TEST(TermDictRecordsTest, runs_decode_every_record_in_any_order) {
 }
 
 TEST(TermDictRecordsTest, runs_refuse_corruption) {
-  const irs::PostingFeatures features{irs::IndexFeatures::Freq};
+  constexpr auto features = irs::IndexFeatures::Freq;
   irs::term_dict::RecordRun run;
   run.Start(irs::IndexFeatures::Freq);
   for (uint32_t i = 0; i != 3; ++i) {
@@ -2356,8 +2304,6 @@ TEST(TermDictRecordsTest, runs_refuse_corruption) {
   };
   refused(0, 0);
   refused(1, 0);
-  refused(1, irs::term_dict::kRunInline);
-  refused(1, irs::term_dict::kRunSingles | irs::term_dict::kRunMultis);
   refused(1, 0x10 | bytes[1]);
   refused(3, irs::term_dict::kMaxRecordBits + 1);
   const auto view = irs::term_dict::ParseRun(bytes.data(), features);
@@ -2384,24 +2330,7 @@ TEST(TermDictRecordsTest, runs_refuse_records_their_columns_lack) {
   };
 
   {
-    const irs::PostingFeatures features{irs::IndexFeatures::None};
-    const irs::bstring data(3, irs::byte_type{9});
-    irs::PostingMeta metas[2];
-    metas[0].docs_count = 3;
-    metas[0].inline_size = static_cast<uint8_t>(data.size());
-    metas[0].SetInline(data);
-    metas[1].docs_count = 4;
-    metas[1].doc_start = 100;
-    auto bytes = encode(irs::IndexFeatures::None, metas);
-    const auto view = irs::term_dict::ParseRun(bytes.data(), features);
-    ASSERT_TRUE(view.inline_bits);
-    bytes[offset(bytes, view.inline_bits)] = 0;
-    ASSERT_SQL_ERROR(irs::term_dict::ParseRun(bytes.data(), features),
-                     ERRCODE_INDEX_CORRUPTED);
-  }
-
-  {
-    const irs::PostingFeatures features{irs::IndexFeatures::None};
+    constexpr auto features = irs::IndexFeatures::None;
     irs::PostingMeta metas[2];
     metas[0].docs_count = 5;
     metas[0].doc_start = 100;
@@ -2431,7 +2360,7 @@ TEST(TermDictRecordsTest, runs_refuse_records_their_columns_lack) {
 
   {
     constexpr auto kIndex = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos;
-    const irs::PostingFeatures features{kIndex};
+    constexpr auto features = kIndex;
     irs::PostingMeta metas[2];
     metas[0].docs_count = 2;
     metas[0].freq = 2;
@@ -2469,31 +2398,6 @@ TEST(TermDictRecordsTest, runs_refuse_records_their_columns_lack) {
   }
 }
 
-TEST(TermDictRecordsTest, runs_refuse_inline_sizes_past_the_limit) {
-  const irs::PostingFeatures features{irs::IndexFeatures::None};
-  irs::term_dict::RecordRun run;
-  run.Start(irs::IndexFeatures::None);
-  const irs::bstring data(irs::PostingMeta::kInlineBytes, irs::byte_type{7});
-  irs::PostingMeta meta;
-  meta.docs_count = 2;
-  meta.inline_size = static_cast<uint8_t>(data.size());
-  meta.SetInline(data);
-  run.Commit(meta, run.Stage(meta));
-  duckdb::MemoryStream out;
-  run.Write(out);
-  irs::bstring bytes{out.GetData(), out.GetPosition()};
-  bytes.resize(bytes.size() + irs::term_dict::kSlack);
-  ASSERT_EQ(irs::term_dict::kRunMultis | irs::term_dict::kRunInline, bytes[1]);
-  ASSERT_EQ(1, irs::term_dict::ParseRun(bytes.data(), features).count);
-  constexpr auto kSizeBits = 3;
-  ASSERT_EQ(std::bit_width(irs::PostingMeta::kInlineBytes - 1),
-            bytes[kSizeBits]);
-  bytes[kSizeBits] = static_cast<irs::byte_type>(
-    std::bit_width(irs::PostingMeta::kInlineBytes - 1) + 1);
-  ASSERT_SQL_ERROR(irs::term_dict::ParseRun(bytes.data(), features),
-                   ERRCODE_INDEX_CORRUPTED);
-}
-
 TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
   std::vector<std::pair<int64_t, irs::doc_id_t>> values;
   for (irs::doc_id_t doc = 1; doc <= 5000; ++doc) {
@@ -2519,6 +2423,14 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
     corrupt(copy);
     RewriteTerms(copy);
     ASSERT_SQL_ERROR(Open(dir()), code);
+  };
+  const auto image = TakeImage();
+  const auto refused_bytes = [&](auto&& corrupt) {
+    auto copy = image;
+    corrupt(copy);
+    RewriteImage(copy);
+    ASSERT_SQL_ERROR(Open(dir()), ERRCODE_INDEX_CORRUPTED);
+    RewriteImage(image);
   };
   using Terms = irs::term_dict::TermsMeta;
   refused([](Terms& t) { std::swap(t.fields[0].id, t.fields[1].id); },
@@ -2548,19 +2460,16 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
     ERRCODE_INDEX_CORRUPTED);
   refused([](Terms& t) { t.blocks_end = std::numeric_limits<uint64_t>::max(); },
           ERRCODE_INDEX_CORRUPTED);
-  ASSERT_FALSE(terms.separators.empty());
-  refused([](Terms& t) { t.separators.pop_back(); }, ERRCODE_INDEX_CORRUPTED);
-  refused([](Terms& t) { t.separators.push_back('\x01'); },
-          ERRCODE_INDEX_CORRUPTED);
-  ASSERT_LT(2, terms.separators.size());
-  refused([](Terms& t) { t.separators[2] = '\xFF'; }, ERRCODE_INDEX_CORRUPTED);
+  ASSERT_FALSE(image.separators.empty());
+  refused_bytes([](TermsImage& t) { t.separators.pop_back(); });
+  refused_bytes([](TermsImage& t) { t.separators.push_back(1); });
+  ASSERT_LT(2, image.separators.size());
+  refused_bytes([](TermsImage& t) { t.separators[2] = 0xFF; });
   refused([](Terms& t) { t.fields[1].fsst_table = "garbage"; },
           ERRCODE_INDEX_CORRUPTED);
-  ASSERT_FALSE(terms.fields[1].block_prefixes.empty());
-  refused([](Terms& t) { t.fields[1].block_prefixes.pop_back(); },
-          ERRCODE_INDEX_CORRUPTED);
-  refused([](Terms& t) { t.fields[1].block_prefixes.push_back('\0'); },
-          ERRCODE_INDEX_CORRUPTED);
+  ASSERT_FALSE(image.sections[1].prefixes.empty());
+  refused_bytes([](TermsImage& t) { t.sections[1].prefixes.pop_back(); });
+  refused_bytes([](TermsImage& t) { t.sections[1].prefixes.push_back(0); });
   refused([](Terms& t) { t.fields[1].max = t.fields[1].min; },
           ERRCODE_INDEX_CORRUPTED);
   refused([](Terms& t) { t.fields[1].max = t.fields[1].min + '\x01'; },
@@ -2624,7 +2533,7 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
     dict.WriteProperty(5, "record", std::string{"r"});
   };
   const auto levels = [](duckdb::BinarySerializer& dict) {
-    dict.WriteList(16, "levels", 1,
+    dict.WriteList(15, "levels", 1,
                    [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
                      list.WriteObject([](duckdb::BinarySerializer& level) {
                        level.WriteProperty(5, "record", std::string{"r"});
@@ -2632,7 +2541,7 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
                    });
   };
   const auto text = [](duckdb::BinarySerializer& dict) {
-    dict.WriteObject(13, "text", [](duckdb::BinarySerializer& object) {
+    dict.WriteObject(12, "text", [](duckdb::BinarySerializer& object) {
       object.WriteProperty<uint64_t>(2, "norm", 7);
     });
   };
@@ -2713,15 +2622,14 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
     field.WriteProperty<uint64_t>(0, "id", 1);
     member(field, 0, "string", [&](duckdb::BinarySerializer& dict) {
       single_record(dict);
-      dict.WriteProperty(15, "fsst_table", std::string{"table"});
+      dict.WriteProperty(14, "fsst_table", std::string{"table"});
     });
   });
   refused_field([&](duckdb::BinarySerializer& field) {
     field.WriteProperty<uint64_t>(0, "id", 1);
     member(field, 0, "string", [&](duckdb::BinarySerializer& dict) {
       single_record(dict);
-      dict.WriteProperty(18, "block_prefixes",
-                         std::string{"\x00\x00\x01\x00\x00\x00", 6});
+      dict.WriteProperty<uint64_t>(17, "block_prefixes", 6);
     });
   });
   refused_field(
@@ -2731,16 +2639,6 @@ TEST_P(TermDictTest, footer_refuses_corrupt_fields) {
       member(field, 0, "string", single_record);
     },
     ERRCODE_FEATURE_NOT_SUPPORTED);
-  for (const uint32_t size : {0U, irs::PostingMeta::kInlineBytes + 1}) {
-    refused_field([&](duckdb::BinarySerializer& field) {
-      field.WriteProperty<uint64_t>(0, "id", 1);
-      member(field, 0, "string", [&](duckdb::BinarySerializer& dict) {
-        dict.WriteProperty(5, "record",
-                           std::string{'\x0A', static_cast<char>(size)});
-        dict.WriteProperty(6, "record_inline", std::string(size, 'x'));
-      });
-    });
-  }
 
   RewriteTerms(terms);
   Open(dir());
@@ -2800,9 +2698,9 @@ TEST_P(TermDictTest, json_layout_holds_six_dictionaries) {
       const auto& impl = Blocks(*reader);
       ASSERT_EQ(irs::bytes_view(&ordinal, 1), impl.KeyPrefix());
       ASSERT_EQ(IsNumbers(field.dict), !impl.RangeLevels().empty());
-      for (const auto* level : impl.RangeLevels()) {
+      for (const auto& level : impl.RangeLevels()) {
         ++ordinal;
-        ASSERT_EQ(irs::bytes_view(&ordinal, 1), level->KeyPrefix());
+        ASSERT_EQ(irs::bytes_view(&ordinal, 1), level.KeyPrefix());
       }
       ++ordinal;
     } else {
@@ -3512,7 +3410,7 @@ TEST_P(TermDictTest, walks_skip_blocks_missing_required_bytes) {
   const irs::RegexpAcceptor rare{
     irs::ViewCast<irs::byte_type>(std::string_view{".*q.*"})};
   uint32_t holding = 0;
-  const auto need = impl.Index().NeedOf(rare.RequiredBytes());
+  const auto need = impl.Index().NeedOf(rare.Bytes().required);
   for (uint32_t block = 0; block != impl.Blocks(); ++block) {
     holding += impl.Index().Holds(block, need);
   }
@@ -3738,39 +3636,6 @@ TEST_P(TermDictTest, walks_match_short_and_edge_byte_terms) {
   }
 }
 
-TEST_P(TermDictTest, inline_postings_follow_iterators) {
-  const Field fields[]{{.id = 2, .entries = MakeEntries(Words(20000, 13))}};
-  Write(fields);
-  const auto* reader = Get(2);
-  ASSERT_NE(nullptr, reader);
-  const auto& entries = fields[0].entries;
-  const auto docs = [](const Entry& entry) {
-    std::vector<irs::doc_id_t> out;
-    for (const auto& [doc, freq] : entry.docs) {
-      out.push_back(doc);
-    }
-    return out;
-  };
-  size_t inlined = 0;
-  auto it = reader->iterator();
-  size_t i = 0;
-  for (; it->next(); ++i) {
-    ASSERT_LT(i, entries.size());
-    inlined += it->cookie().inline_size != 0;
-    ASSERT_EQ(docs(entries[i]), DocsOf(*reader, it->cookie()));
-  }
-  ASSERT_EQ(entries.size(), i);
-  ASSERT_GT(inlined, 0);
-  auto seeker = reader->iterator();
-  for (size_t k = entries.size(); k-- != 0;) {
-    if (k % 13 != 0) {
-      continue;
-    }
-    ASSERT_EQ(irs::SeekResult::Found, seeker->seek_ge(entries[k].key));
-    ASSERT_EQ(docs(entries[k]), DocsOf(*reader, seeker->cookie()));
-  }
-}
-
 TEST_P(TermDictTest, cookies_outlive_their_iterators) {
   std::vector<std::pair<int64_t, irs::doc_id_t>> values;
   for (irs::doc_id_t doc = 1; doc <= 50000; ++doc) {
@@ -3852,12 +3717,9 @@ TEST_P(TermDictTest, cookies_outlive_their_iterators) {
       }
     }
 
-    size_t inlined = 0;
     for (const auto& [meta, docs] : saved) {
-      inlined += meta.inline_size != 0;
       ASSERT_EQ(docs, DocsOf(*reader, meta));
     }
-    ASSERT_GT(inlined, 0);
     for (const auto& visit : visits) {
       std::vector<irs::doc_id_t> actual;
       for (const auto& meta : visit.metas) {
@@ -3871,65 +3733,7 @@ TEST_P(TermDictTest, cookies_outlive_their_iterators) {
   }
 }
 
-TEST_P(TermDictTest, inline_postings_at_the_blocks_end) {
-  auto words = MakeEntries(Words(20000, 5));
-  words.back().docs = MakeDocs(3, 1);
-  const Field fields[]{
-    {.id = 1,
-     .entries = {{.key = Bytes("a"), .docs = MakeDocs(1, 0)},
-                 {.key = Bytes("b"), .docs = MakeDocs(3, 2)}}},
-    {.id = 2, .entries = {{.key = Bytes("solo"), .docs = MakeDocs(4, 5)}}},
-    {.id = 3, .entries = std::move(words)},
-  };
-  Write(fields);
-  const auto terms = TakeTerms();
-  const auto& small = Blocks(*Get(1));
-  ASSERT_TRUE(small.Small());
-  ASSERT_NE(0, small.Lookup(Bytes("b")).inline_size);
-  const auto* single = Get(2);
-  ASSERT_EQ(1, single->size());
-  ASSERT_NE(0, single->Lookup(Bytes("solo")).inline_size);
-  const auto& large = Blocks(*Get(3));
-  {
-    irs::term_dict::Cursor cursor{large};
-    ASSERT_EQ(irs::SeekResult::Found,
-              cursor.SeekGe(fields[2].entries.back().key));
-    const auto& meta = cursor.Meta();
-    ASSERT_NE(0, meta.inline_size);
-    ASSERT_EQ(large.Blocks() - 1, cursor.BlockIndex());
-  }
-  for (const auto& field : fields) {
-    SCOPED_TRACE(testing::Message("field ") << field.id);
-    AssertField(*Get(field), field.entries);
-  }
-  ASSERT_EQ(terms.blocks_end, large.BlockOffset(large.Blocks()));
-}
-
-TEST_P(TermDictTest, first_terms_keep_their_inline_postings) {
-  auto words = MakeEntries(Words(20000, 7));
-  words[0].docs = MakeDocs(3, 1);
-  words[1].docs = MakeDocs(5, 4);
-  const Field fields[]{
-    {.id = 1,
-     .entries = {{.key = Bytes("a"), .docs = MakeDocs(3, 1)},
-                 {.key = Bytes("b"), .docs = MakeDocs(5, 4)}}},
-    {.id = 2, .entries = std::move(words)},
-  };
-  for (const bool compaction : {false, true}) {
-    SCOPED_TRACE(testing::Message("compaction ") << compaction);
-    Write(fields, compaction);
-    for (const auto& field : fields) {
-      SCOPED_TRACE(testing::Message("field ") << field.id);
-      const auto* reader = Get(field);
-      ASSERT_NE(nullptr, reader);
-      ASSERT_NE(0, reader->Lookup(field.entries[0].key).inline_size);
-      ASSERT_NE(0, reader->Lookup(field.entries[1].key).inline_size);
-      AssertField(*reader, field.entries);
-    }
-  }
-}
-
-TEST_P(TermDictTest, held_range_postings_keep_their_inline_postings) {
+TEST_P(TermDictTest, held_range_postings_read_back) {
   constexpr irs::doc_id_t kHeavy = 17000;
   std::vector<std::pair<int64_t, irs::doc_id_t>> values;
   int64_t value = 0;
@@ -3962,13 +3766,7 @@ TEST_P(TermDictTest, held_range_postings_keep_their_inline_postings) {
     Write(fields, compaction);
     const auto* reader = Get(fields[0]);
     ASSERT_NE(nullptr, reader);
-    const auto levels = Blocks(*reader).RangeLevels();
-    ASSERT_GT(levels.size(), 1);
-    size_t inlined = 0;
-    for (auto it = levels[1]->iterator(); it->next();) {
-      inlined += it->cookie().inline_size != 0;
-    }
-    ASSERT_GT(inlined, 0);
+    ASSERT_GT(Blocks(*reader).RangeLevels().size(), 1);
     AssertField(*reader, fields[0].entries);
     AssertLevels(*reader, fields[0].entries);
     AssertVisits(*reader, fields[0].entries, 200);
@@ -4099,7 +3897,7 @@ TEST_P(TermDictTest, range_top_level_is_capped_by_segment_docs) {
   ASSERT_NE(nullptr, reader);
   const auto levels = Blocks(*reader).RangeLevels();
   ASSERT_EQ(4, levels.size());
-  ASSERT_LE(levels.back()->size(), 16);
+  ASSERT_LE(levels.back().size(), 16);
   AssertLevels(*reader, fields[0].entries);
   AssertVisits(*reader, fields[0].entries, 1000);
 }
@@ -4242,11 +4040,30 @@ irs::term_dict::PrefixTrie DecodeTrie(std::string_view encoded) {
   return irs::term_dict::PrefixTrie{irs::ViewCast<irs::byte_type>(encoded), 7};
 }
 
+IndexBytes FinishIndex(irs::term_dict::DictIndexBuilder& builder,
+                       irs::term_dict::FieldHead& head) {
+  irs::bstring sections;
+  builder.Finish(head, sections);
+  irs::bytes_view rest{sections};
+  const auto take = [&](uint64_t size) {
+    irs::bstring out{rest.substr(0, size)};
+    rest.remove_prefix(size);
+    return out;
+  };
+  IndexBytes out;
+  out.prefixes = take(head.block_prefixes.size);
+  out.mask_bytes = take(head.block_mask_bytes.size);
+  out.masks = take(head.block_masks.size);
+  EXPECT_TRUE(rest.empty());
+  return out;
+}
+
 struct Prefixed {
   std::vector<irs::bstring> terms;
   std::vector<uint32_t> blocks;
   irs::term_dict::Separators separators;
   irs::term_dict::FieldHead head;
+  IndexBytes bytes;
   std::unique_ptr<irs::term_dict::DictIndex> index;
 };
 
@@ -4277,9 +4094,11 @@ std::unique_ptr<Prefixed> MakePrefixed(std::vector<irs::bstring> terms,
   head.term_count = out->terms.size();
   head.min = irs::ViewCast<char>(irs::bytes_view{out->terms.front()});
   head.max = irs::ViewCast<char>(irs::bytes_view{out->terms.back()});
-  head.block_prefixes = builder.Finish();
+  builder.Finish(out->bytes.prefixes);
+  head.block_prefixes.size = out->bytes.prefixes.size();
   out->index = std::make_unique<irs::term_dict::DictIndex>(
-    head, key_prefix, out->blocks.back() + 1, out->separators);
+    head, key_prefix, out->blocks.back() + 1, out->separators,
+    out->bytes.View());
   return out;
 }
 
@@ -4792,7 +4611,9 @@ void AssertSpans(std::vector<irs::bstring> terms, std::span<const size_t> runs,
       builder.Add(terms[at]);
     }
   }
-  const auto trie = DecodeTrie(builder.Finish());
+  irs::bstring encoded;
+  builder.Finish(encoded);
+  const auto trie = DecodeTrie(irs::ViewCast<char>(irs::bytes_view{encoded}));
   irs::bstring path;
   ASSERT_EQ(terms.size(), AssertTrieNode(trie, trie.Root(), path, terms,
                                          *absl::c_max_element(spans)));
@@ -4825,6 +4646,7 @@ TEST(TermDictPrefixTrieTest, split_children_keep_their_own_terms) {
 struct MaskedIndex {
   irs::term_dict::FieldHead head;
   irs::term_dict::Separators separators;
+  IndexBytes bytes;
   std::unique_ptr<irs::term_dict::DictIndex> index;
 };
 
@@ -4850,10 +4672,10 @@ std::unique_ptr<MaskedIndex> IndexBlocks(
   head.term_count = terms;
   head.min = irs::ViewCast<char>(irs::bytes_view{blocks.front().front()});
   head.max = irs::ViewCast<char>(irs::bytes_view{blocks.back().back()});
-  builder.Finish(head);
+  out->bytes = FinishIndex(builder, head);
   out->index = std::make_unique<irs::term_dict::DictIndex>(
     head, irs::bytes_view{}, static_cast<uint32_t>(blocks.size()),
-    out->separators);
+    out->separators, out->bytes.View());
   return out;
 }
 
@@ -4920,21 +4742,21 @@ TEST(TermDictIndexTest, refuses_corrupt_masks) {
     {Bytes("ca2"), Bytes("cc2")},
   });
   constexpr size_t kUnion = irs::term_dict::kMaskUnionBytes;
-  ASSERT_LE(kUnion + 2, dict->head.block_mask_bytes.size());
-  ASSERT_GT(kUnion + 57, dict->head.block_mask_bytes.size());
+  ASSERT_LE(kUnion + 2, dict->bytes.mask_bytes.size());
+  ASSERT_GT(kUnion + 57, dict->bytes.mask_bytes.size());
   const auto refused = [&](auto&& corrupt) {
-    auto head = dict->head;
-    corrupt(head);
-    ASSERT_SQL_ERROR((irs::term_dict::DictIndex{head, {}, 3, dict->separators}),
+    auto bytes = dict->bytes;
+    corrupt(bytes);
+    ASSERT_SQL_ERROR((irs::term_dict::DictIndex{
+                       dict->head, {}, 3, dict->separators, bytes.View()}),
                      ERRCODE_INDEX_CORRUPTED);
   };
-  using Head = irs::term_dict::FieldHead;
-  refused([](Head& head) { head.block_mask_bytes.resize(kUnion - 1); });
-  refused([](Head& head) { head.block_masks.pop_back(); });
-  refused([](Head& head) {
-    std::swap(head.block_mask_bytes[kUnion], head.block_mask_bytes[kUnion + 1]);
+  refused([](IndexBytes& bytes) { bytes.mask_bytes.resize(kUnion - 1); });
+  refused([](IndexBytes& bytes) { bytes.masks.pop_back(); });
+  refused([](IndexBytes& bytes) {
+    std::swap(bytes.mask_bytes[kUnion], bytes.mask_bytes[kUnion + 1]);
   });
-  refused([](Head& head) { head.block_masks[7] = '\xFF'; });
+  refused([](IndexBytes& bytes) { bytes.masks[7] = 0xFF; });
 }
 
 TEST(TermDictPrefixTrieTest, refuses_chain_outside_block_bounds) {
@@ -4943,11 +4765,11 @@ TEST(TermDictPrefixTrieTest, refuses_chain_outside_block_bounds) {
     MakePrefixed({Bytes("aa"), Bytes("ab"), Bytes("ba"), Bytes("bb")}, 2);
   const uint32_t blocks = dict->blocks.back() + 1;
   ASSERT_EQ(2U, blocks);
-  auto head = dict->head;
-  head.block_prefixes = "\x02zz\x01\x00\x00"s;
-  ASSERT_SQL_ERROR(
-    (irs::term_dict::DictIndex{head, {}, blocks, dict->separators}),
-    ERRCODE_INDEX_CORRUPTED);
+  auto bytes = dict->bytes;
+  bytes.prefixes = Bytes("\x02zz\x01\x00\x00"s);
+  ASSERT_SQL_ERROR((irs::term_dict::DictIndex{
+                     dict->head, {}, blocks, dict->separators, bytes.View()}),
+                   ERRCODE_INDEX_CORRUPTED);
 }
 
 }  // namespace

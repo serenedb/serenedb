@@ -2561,12 +2561,13 @@ TEST_F(RegexpUtilsTest, required_bytes) {
     return out;
   };
   const auto perl = [&](std::string_view pattern) {
-    return bytes(FromPerl(pattern).RequiredBytes());
+    return bytes(FromPerl(pattern).Bytes().required);
   };
   const auto wildcard = [&](std::string_view pattern) {
     return bytes(irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
                                      ToBytesView(pattern)}
-                   .RequiredBytes());
+                   .Bytes()
+                   .required);
   };
   EXPECT_EQ("inot", wildcard("%tion"));
   EXPECT_EQ("inot", wildcard("%tion%"));
@@ -2592,31 +2593,34 @@ TEST_F(RegexpUtilsTest, required_bytes) {
     {Kind::Wildcard, ToBytesView("%ska")},
     {Kind::Term, ToBytesView("zeta")},
   };
-  EXPECT_EQ("a", bytes(irs::RegexpAcceptor{parts}.RequiredBytes()));
+  EXPECT_EQ("a", bytes(irs::RegexpAcceptor{parts}.Bytes().required));
 
   const std::shared_ptr<const irs::RegexpAcceptor> patterns[]{
     std::make_shared<const irs::RegexpAcceptor>(ToBytesView("a.*")),
     std::make_shared<const irs::RegexpAcceptor>(ToBytesView(".*b")),
   };
-  EXPECT_EQ("ab", bytes(irs::RegexpConjunction{patterns}.RequiredBytes()));
+  EXPECT_EQ("ab", bytes(irs::RegexpConjunction{patterns}.Bytes().required));
 
   const auto description = irs::MakeParametricDescription(1, false);
   const irs::LevenshteinAcceptor fuzzy{description, ToBytesView("x"),
                                        ToBytesView("aabc")};
-  EXPECT_EQ("ax", bytes(fuzzy.RequiredBytes()));
+  EXPECT_EQ("ax", bytes(fuzzy.Bytes().required));
   EXPECT_EQ("abx", bytes(irs::FuzzyConjunctionOf<irs::LevenshteinAcceptor>{
                      std::span{patterns}.last(1),
                      std::make_shared<const irs::LevenshteinAcceptor>(
                        description, ToBytesView("x"), ToBytesView("aabc"))}
-                           .RequiredBytes()));
+                           .Bytes()
+                           .required));
   const auto inner = std::make_shared<const irs::LevenshteinAcceptor>(
     description, ToBytesView("x"), ToBytesView("aabc"));
-  EXPECT_EQ("ax", bytes(irs::LevenshteinPrefixAcceptor{inner}.RequiredBytes()));
+  EXPECT_EQ("ax",
+            bytes(irs::LevenshteinPrefixAcceptor{inner}.Bytes().required));
   EXPECT_EQ("abx",
             bytes(irs::FuzzyConjunctionOf<irs::LevenshteinPrefixAcceptor>{
               std::span{patterns}.last(1),
               std::make_shared<const irs::LevenshteinPrefixAcceptor>(inner)}
-                    .RequiredBytes()));
+                    .Bytes()
+                    .required));
 }
 
 TEST_F(RegexpUtilsTest, required_bytes_hold_in_every_match) {
@@ -2636,7 +2640,7 @@ TEST_F(RegexpUtilsTest, required_bytes_hold_in_every_match) {
         ".*a.*b.*", "(xy)*1", "a?b?x", "(?i)AB1", "(a1|1a)(y|y0)"}) {
     const auto a = FromPerl(pattern);
     ASSERT_TRUE(a.ok()) << pattern;
-    const auto& required = a.RequiredBytes();
+    const auto& required = a.Bytes().required;
     size_t hits = 0;
     for (const auto& term : terms) {
       if (!Accepts(a, term)) {
@@ -2657,7 +2661,7 @@ TEST_F(RegexpUtilsTest, required_bytes_hold_in_every_match) {
   const irs::LevenshteinPrefixAcceptor prefix{
     std::make_shared<const irs::LevenshteinAcceptor>(
       description, ToBytesView("x"), ToBytesView("aab1"))};
-  const auto& required = prefix.RequiredBytes();
+  const auto& required = prefix.Bytes().required;
   ASSERT_TRUE(required.Contains('a'));
   ASSERT_TRUE(required.Contains('x'));
   size_t hits = 0;
@@ -2705,17 +2709,18 @@ TEST_F(RegexpUtilsTest, dead_bytes) {
   };
   constexpr uint32_t kLeads = 0xF4 - 0xC2 + 1;
   const auto perl = [&](std::string_view pattern) {
-    return dead(FromPerl(pattern).DeadBytes());
+    return dead(FromPerl(pattern).Bytes().dead);
   };
   const auto wildcard = [&](std::string_view pattern) {
     return dead(irs::RegexpAcceptor{irs::RegexpAcceptor::WildcardTag{},
                                     ToBytesView(pattern)}
-                  .DeadBytes());
+                  .Bytes()
+                  .dead);
   };
   const auto bytes = [&](std::string_view pattern) {
     const irs::RegexpAcceptor::Part parts[]{
       {irs::RegexpAcceptor::PartKind::WildcardBytes, ToBytesView(pattern)}};
-    return dead(irs::RegexpAcceptor{parts}.DeadBytes());
+    return dead(irs::RegexpAcceptor{parts}.Bytes().dead);
   };
   EXPECT_EQ(Dead{}, wildcard("%tion"));
   EXPECT_EQ(Dead{}, wildcard("%nnec%"));
@@ -2737,7 +2742,7 @@ TEST_F(RegexpUtilsTest, dead_bytes) {
       std::make_shared<const irs::RegexpAcceptor>(ToBytesView(l)),
       std::make_shared<const irs::RegexpAcceptor>(ToBytesView(r)),
     };
-    return dead(irs::RegexpConjunction{patterns}.DeadBytes());
+    return dead(irs::RegexpConjunction{patterns}.Bytes().dead);
   };
   EXPECT_EQ(Dead{}, conjunction("(?s).*a.*", "(?s).*b"));
   EXPECT_EQ(Dead{"\n"}, conjunction(".*a.*", "(?s).*b"));
@@ -2762,7 +2767,7 @@ TEST_F(RegexpUtilsTest, an_automaton_dies_only_on_its_dead_bytes) {
         "(?s)(x\xD0\xB4)*.*", "^a|b$", "a\\b.*", "(?s).*\\bx", "[a-z]+0"}) {
     const auto a = FromPerl(pattern);
     ASSERT_TRUE(a.ok()) << pattern;
-    const auto& dead = a.DeadBytes();
+    const auto& dead = a.Bytes().dead;
     for (const auto& term : terms) {
       auto state = a.Start();
       for (const char c : term) {

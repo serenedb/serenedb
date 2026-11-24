@@ -42,13 +42,20 @@ void FieldReader::prepare(const ReaderState& state) {
 
   const auto& heads = terms.fields;
   auto& separators = _separators;
+  bstring copy;
+  bytes_view area;
+  const auto section = [&](const Section& at) {
+    return area.substr(at.offset - terms.blocks_end, at.size);
+  };
   if (!heads.empty()) {
     _store.Bind(terms);
+    area = _store.Read(
+      terms.blocks_end,
+      terms.separators.offset + terms.separators.size - terms.blocks_end, copy);
     if (const auto blocks = _store.BlockCount(); blocks != 0) {
-      separators = DecodeSeparators(
-        ViewCast<byte_type>(std::string_view{terms.separators}), blocks - 1);
+      separators = DecodeSeparators(section(terms.separators), blocks - 1);
       _store.Account(SeparatorBytes(separators));
-    } else if (!terms.separators.empty()) {
+    } else if (terms.separators.size != 0) {
       Corrupted("separators");
     }
   }
@@ -61,6 +68,11 @@ void FieldReader::prepare(const ReaderState& state) {
 
   _by_id.reserve(heads.size());
   _dicts.reserve(heads.size());
+  size_t keyed = 0;
+  for (const auto& head : heads) {
+    keyed += head.term_count == 1 ? 0 : 1 + head.levels.size();
+  }
+  _keyed.reserve(keyed);
   bstring prefix;
   uint32_t ordinal = 0;
   for (const auto& head : heads) {
@@ -68,18 +80,23 @@ void FieldReader::prepare(const ReaderState& state) {
       _dicts.push_back(&_singles.emplace_back(*this, head));
     } else {
       const uint32_t own = ordinal++;
-      std::vector<const TermReaderImpl*> levels;
-      levels.reserve(head.levels.size());
+      const auto first = _keyed.size();
       for (const auto& level : head.levels) {
         prefix.clear();
         AppendOrdinal(prefix, ordinal++, terms.ordinal_bytes);
-        levels.push_back(
-          &_keyed.emplace_back(*this, level, prefix, separators));
+        _keyed.emplace_back(*this, level, prefix, separators, IndexSections{});
       }
+      const std::span<const TermReaderImpl> levels{_keyed.data() + first,
+                                                   head.levels.size()};
       prefix.clear();
       AppendOrdinal(prefix, own, terms.ordinal_bytes);
+      const IndexSections sections{
+        .prefixes = section(head.block_prefixes),
+        .mask_bytes = section(head.block_mask_bytes),
+        .masks = section(head.block_masks),
+      };
       _dicts.push_back(&_keyed.emplace_back(*this, head, prefix, separators,
-                                            std::move(levels)));
+                                            sections, levels));
     }
     ++_by_id
         .try_emplace(

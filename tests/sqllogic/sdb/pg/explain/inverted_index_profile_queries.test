@@ -464,15 +464,15 @@ QUERY PLAN
 │ │ Time: 0µs                           │                                                                        │
 │ │ Rows: 2,223                         │                                                                        │
 │ ╰──────────────────┬──────────────────╯                                                                        │
-│                    ├───────────────────────────────────────╮                                                   │
-│ ╭─ probe::Impl<probe::BooleanSparse> ─╮  ╭─ lead::Impl<lead::BooleanWindow> ─╮                                 │
-│ │ Filter: Or                          │  │ Filter: Granular Range            │                                 │
-│ │ Plans: 1                            │  │ Plans: 1                          │                                 │
-│ │ Calls: 17,665                       │  │ Calls: 17,953                     │                                 │
-│ │ Timed: 564                          │  │ Timed: 574                        │                                 │
-│ │ Total: 0µs                          │  │ Time: 0µs                         │                                 │
-│ │ Time: 0µs                           │  │ Rows: 17,952                      │                                 │
-│ │ Rows: 14,288                        │  ╰───────────────────────────────────╯                                 │
+│                    ├──────────────────────────────────────╮                                                    │
+│ ╭─ probe::Impl<probe::BooleanSparse> ─╮  ╭─ lead::Impl<lead::BitsetDocs> ─╮                                    │
+│ │ Filter: Or                          │  │ Filter: Granular Range         │                                    │
+│ │ Plans: 1                            │  │ Plans: 1                       │                                    │
+│ │ Calls: 17,665                       │  │ Calls: 18,048                  │                                    │
+│ │ Timed: 564                          │  │ Timed: 577                     │                                    │
+│ │ Total: 0µs                          │  │ Time: 0µs                      │                                    │
+│ │ Time: 0µs                           │  │ Rows: 18,047                   │                                    │
+│ │ Rows: 14,288                        │  ╰────────────────────────────────╯                                    │
 │ ╰──────────────────┬──────────────────╯                                                                        │
 │ ╭─ probe::Impl<probe::TwoPhase> ──────╮                                                                        │
 │ │ Filter: Phrase                      │                                                                        │

@@ -31,6 +31,7 @@
 #include <string_view>
 
 #include "iresearch/formats/posting/block_codec.hpp"
+#include "iresearch/index/index_features.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
@@ -99,6 +100,10 @@ class RecordOutput final : public duckdb::WriteStream {
 };
 
 inline constexpr size_t kMaxRangeLevels = 8;
+
+constexpr uint64_t KeyedDictsOf(IndexFeatures features) noexcept {
+  return IsSubsetOf(IndexFeatures::Ranges, features) ? 1 + kMaxRangeLevels : 1;
+}
 
 [[noreturn]] inline void Corrupted(std::string_view what) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),

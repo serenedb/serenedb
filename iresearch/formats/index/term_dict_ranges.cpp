@@ -145,7 +145,7 @@ class StartBuffer {
 template<size_t Width>
 class LevelWalk {
  public:
-  LevelWalk(std::span<const TermReaderImpl* const> levels, bytes_view from,
+  LevelWalk(std::span<const TermReaderImpl> levels, bytes_view from,
             bytes_view to, RangeVisitor visit) noexcept
     : _levels{levels}, _visit{visit}, _from{from}, _to{to} {
     SDB_ASSERT(!_levels.empty());
@@ -193,8 +193,8 @@ class LevelWalk {
   bool Seek(size_t level, bytes_view key, bytes_view end) {
     auto& slot = _cursors[level];
     if (!slot) {
-      slot.emplace(*_levels[level]);
-      _ahead[level].emplace(*_levels[level]);
+      slot.emplace(_levels[level]);
+      _ahead[level].emplace(_levels[level]);
     }
     auto& cursor = *slot;
     _ahead[level]->Arm(cursor, end);
@@ -242,7 +242,7 @@ class LevelWalk {
     }
   }
 
-  std::span<const TermReaderImpl* const> _levels;
+  std::span<const TermReaderImpl> _levels;
   std::array<std::optional<Cursor>, kMaxRangeLevels> _cursors;
   std::array<std::optional<RangeAhead>, kMaxRangeLevels> _ahead;
   std::array<Entry, kMaxRangeLevels> _entries;
@@ -330,7 +330,6 @@ void RangeWriter::Add(bytes_view term, const PostingMeta& meta) {
 void RangeWriter::Push(size_t level, const Child& child) {
   auto& range = _levels[level];
   if (child.docs_count >= _heavy) {
-    SDB_ASSERT(child.meta.inline_size == 0);
     Close(level);
     Release(level);
     auto& held = range.held;

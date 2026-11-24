@@ -172,10 +172,9 @@ dense	full_range	negated	dense_filtered
 287369775	379800000	52897500	2565
 
 
-# The scan hands count(*) its counts in chunks of any size instead of one empty
-# row per match: several count(*) in one aggregate, an aggregate over nothing,
-# and the aggregates that still need the rows (FILTER, GROUP BY, count(column))
-# agree with the table.
+# Several count(*) in one aggregate, an aggregate over nothing, and the
+# aggregates that read the rows (FILTER, GROUP BY, count(column)) agree with the
+# table.
 query
 SELECT count(*) AS c, count(*) + 1 AS c1,
   count(*) FILTER (WHERE id % 2 = 0) AS even
@@ -265,7 +264,6 @@ statement ok
 SET profiling_renderer_settings = {'deterministic': true};
 
 
-# One worker hands its whole count over in one chunk.
 query
 EXPLAIN ANALYZE SELECT count(*) FROM csv_idx WHERE v BETWEEN 10 AND 4000
 ----
@@ -351,8 +349,7 @@ oids	c
 1	17955
 
 
-# Three rows per value keep every posting inline in the dictionary: a term that
-# several overlapping clauses select still counts its rows once.
+# A term that several overlapping clauses select still counts its rows once.
 statement ok
 CREATE TABLE csv_dup (id INT PRIMARY KEY, v INT)
   WITH (compaction_interval = 0)

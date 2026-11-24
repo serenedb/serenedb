@@ -63,6 +63,17 @@ inline void AddBytes(ByteSet& to, bytes_view bytes) noexcept {
   }
 }
 
+struct KeyBytes {
+  ByteSet required;
+  ByteSet dead{
+    .words = {~uint64_t{0}, ~uint64_t{0}, ~uint64_t{0}, ~uint64_t{0}}};
+};
+
+inline void Join(KeyBytes& to, const KeyBytes& from) noexcept {
+  AddAll(to.required, from.required);
+  AddAll(to.dead, from.dead);
+}
+
 IRS_FORCE_INLINE inline uint32_t ClassifyByteSet16(
   const byte_type* block, const ByteSet& set) noexcept {
 #if defined(__SSE4_1__)

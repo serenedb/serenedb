@@ -35,15 +35,11 @@ class Walk : public Root {
   explicit Walk(Args&&... args) : _node{std::forward<Args>(args)...} {}
 
   uint32_t Run(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out) final {
-    if (_next >= max) {
-      return 0;
-    }
-    return lead::GatherAll(_node, min, max, out, _next);
+    return lead::GatherAll(_node, min, max, out);
   }
 
  private:
   Node _node;
-  doc_id_t _next = doc_limits::invalid();
 };
 
 }  // namespace irs::docs

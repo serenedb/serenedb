@@ -46,8 +46,9 @@ inline constexpr bool kProbePlan =
 template<typename Family, typename Ctx>
 typename Family::Result MakeQuery(const TermQuery& query, const Ctx& ctx) {
   if constexpr (kScoredPlan<Family, Ctx>) {
-    const PostingClause posting{query.State(), query.Boost(),
-                                query.Stats(Family::Scoring(ctx))};
+    const PostingClause posting{.state = query.State(),
+                                .boost = query.Boost(),
+                                .stats = query.Stats(Family::Scoring(ctx))};
     return Family::MakePosting(posting, query.Segment(), ctx,
                                MergeOf(query, ctx));
   } else {
@@ -107,10 +108,11 @@ typename Family::Result MakeConstantBitset(
     return {};
   }
   if constexpr (kProbePlan<Family>) {
-    if (!TakeProbeBitset(terms, docs_count, Family::Interrogations(ctx))) {
+    if (!TakeProbeBitset(terms, *doc, docs_count,
+                         Family::Interrogations(ctx))) {
       return {};
     }
-  } else if (!TakeBitset<Result>(terms, docs_count)) {
+  } else if (!TakeBitset<Result>(terms, *doc, docs_count)) {
     return {};
   }
   return MakeConstantBitsetNode<Result>(

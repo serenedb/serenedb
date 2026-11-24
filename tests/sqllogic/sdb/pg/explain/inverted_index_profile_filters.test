@@ -538,7 +538,7 @@ QUERY PLAN
 │ Total: 0µs                   │
 │ Rows: 997                    │
 │                              │
-│ ╭─ count::BooleanWindow ─╮   │
+│ ╭─ count::BooleanBitset ─╮   │
 │ │ Plans: 1               │   │
 │ │ Calls: 3               │   │
 │ │ Plan: 0µs              │   │
@@ -602,7 +602,7 @@ QUERY PLAN
 │ Total: 0µs                 │
 │ Rows: 111                  │
 │                            │
-│ ╭─ count::BooleanWindow ─╮ │
+│ ╭─ count::BooleanBitset ─╮ │
 │ │ Plans: 1               │ │
 │ │ Calls: 3               │ │
 │ │ Plan: 0µs              │ │

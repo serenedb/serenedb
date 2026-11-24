@@ -33,7 +33,8 @@
 namespace irs::term_dict {
 
 DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-                     const Separators& separators)
+                     const Separators& separators,
+                     const IndexSections& sections)
   : _prefix_size{static_cast<uint32_t>(prefix.size())},
     _blocks{blocks},
     _gated{GatesTerms(head.member, head.width)} {
@@ -45,8 +46,8 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
     Corrupted("record", head.id);
   }
   if (blocks == 1 || !_gated) {
-    if (!head.block_prefixes.empty() || !head.block_masks.empty() ||
-        !head.block_mask_bytes.empty()) {
+    if (!sections.prefixes.empty() || !sections.masks.empty() ||
+        !sections.mask_bytes.empty()) {
       Corrupted("record", head.id);
     }
   }
@@ -67,11 +68,10 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
   if (!_gated) {
     return;
   }
-  if (head.block_prefixes.empty()) {
+  if (sections.prefixes.empty()) {
     Corrupted("block prefixes", head.id);
   }
-  _trie = PrefixTrie{ViewCast<byte_type>(std::string_view{head.block_prefixes}),
-                     head.id};
+  _trie = PrefixTrie{sections.prefixes, head.id};
   _link_nodes.reserve(blocks);
   _link_depths.reserve(blocks);
   const size_t chain = _trie.Chain().size();
@@ -100,8 +100,8 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
     _link_nodes.push_back(path.back());
     _link_depths.push_back(static_cast<uint8_t>(path.size() - 1 - chain));
   }
-  const auto& masks = head.block_masks;
-  const auto& bytes = head.block_mask_bytes;
+  const auto masks = sections.masks;
+  const auto bytes = sections.mask_bytes;
   if (masks.empty() && bytes.empty()) {
     return;
   }
@@ -114,8 +114,7 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
     held.words[i] =
       absl::little_endian::Load64(bytes.data() + i * sizeof(uint64_t));
   }
-  const auto selected =
-    ViewCast<byte_type>(std::string_view{bytes}).substr(kMaskUnionBytes);
+  const auto selected = bytes.substr(kMaskUnionBytes);
   if (masks.size() !=
       (selected.empty() ? 0 : size_t{blocks} * sizeof(uint64_t))) {
     Corrupted("block masks", head.id);
@@ -182,7 +181,7 @@ uint32_t DictIndex::BlockEnd(bytes_view upper) const {
   return BlockOf(key.Assign(KeyPrefix(), upper)) + 1;
 }
 
-void DictIndexBuilder::FinishMasks(FieldHead& head) const {
+void DictIndexBuilder::FinishMasks(FieldHead& head, bstring& sections) const {
   if (_seen.empty()) {
     return;
   }
@@ -207,17 +206,19 @@ void DictIndexBuilder::FinishMasks(FieldHead& head) const {
   });
   selected.resize(std::min(selected.size(), kMaskBits));
   absl::c_sort(selected);
-  head.block_mask_bytes.resize(kMaskUnionBytes);
+  const auto bytes_at = sections.size();
+  sections.resize(bytes_at + kMaskUnionBytes);
   for (size_t i = 0; i != held.words.size(); ++i) {
     absl::little_endian::Store64(
-      head.block_mask_bytes.data() + i * sizeof(uint64_t), held.words[i]);
+      sections.data() + bytes_at + i * sizeof(uint64_t), held.words[i]);
   }
-  head.block_mask_bytes.append(
-    ViewCast<char>(bytes_view{selected.data(), selected.size()}));
+  sections.append(selected.data(), selected.size());
+  head.block_mask_bytes.size = sections.size() - bytes_at;
   if (selected.empty()) {
     return;
   }
-  head.block_masks.resize(_seen.size() * sizeof(uint64_t));
+  const auto masks_at = sections.size();
+  sections.resize(masks_at + _seen.size() * sizeof(uint64_t));
   for (size_t block = 0; block != _seen.size(); ++block) {
     uint64_t mask = 0;
     for (size_t bit = 0; bit != selected.size(); ++bit) {
@@ -226,13 +227,16 @@ void DictIndexBuilder::FinishMasks(FieldHead& head) const {
       }
     }
     absl::little_endian::Store64(
-      head.block_masks.data() + block * sizeof(uint64_t), mask);
+      sections.data() + masks_at + block * sizeof(uint64_t), mask);
   }
+  head.block_masks.size = sections.size() - masks_at;
 }
 
-void DictIndexBuilder::Finish(FieldHead& head) {
-  head.block_prefixes = _trie.Finish();
-  FinishMasks(head);
+void DictIndexBuilder::Finish(FieldHead& head, bstring& sections) {
+  const auto at = sections.size();
+  _trie.Finish(sections);
+  head.block_prefixes.size = sections.size() - at;
+  FinishMasks(head, sections);
   _seen.clear();
 }
 

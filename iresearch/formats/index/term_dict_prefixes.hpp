@@ -213,7 +213,7 @@ class PrefixTrieBuilder {
  public:
   void Add(bytes_view term);
   void SetSpan(uint32_t span) noexcept { _span = span; }
-  std::string Finish();
+  void Finish(bstring& out);
   void Reset() noexcept;
 
  private:

@@ -139,14 +139,15 @@ class TermIteratorImpl : public SeekTermIterator {
 
 TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
                                bytes_view prefix, const Separators& separators,
-                               std::vector<const TermReaderImpl*> levels)
+                               const IndexSections& sections,
+                               std::span<const TermReaderImpl> levels)
   : _owner{&owner},
     _meta{head.id, head.features},
     _terms{head.term_count},
     _docs{head.doc_count},
-    _index{head, prefix, BlocksOf(owner.Store(), head), separators},
+    _index{head, prefix, BlocksOf(owner.Store(), head), separators, sections},
     _has_score_bounds{head.text.has_score_bounds},
-    _range_levels{std::move(levels)} {
+    _range_levels{levels} {
   _meta.norm = head.text.norm;
   _meta.dict = {.layout = head.layout, .member = head.member};
   SDB_ENSURE(head.text.total_freq <= std::numeric_limits<uint32_t>::max(),
@@ -167,7 +168,6 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   _first_entry = head.first_entry;
   _first_record = head.first_record;
   _last_entry = head.last_entry;
-  bytes += _range_levels.capacity() * sizeof(const TermReaderImpl*);
   if (const auto& table = head.fsst_table; !table.empty()) {
     _fsst = std::make_unique<duckdb_fsst_decoder_t>();
     const auto consumed = duckdb_fsst_import(

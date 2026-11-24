@@ -34,6 +34,7 @@
 #include "iresearch/search/detail/collect.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/plan.hpp"
+#include "iresearch/search/detail/posting_fill.hpp"
 #include "iresearch/search/fill/bitset_docs.hpp"
 #include "iresearch/search/lead/bitset_docs.hpp"
 #include "iresearch/search/lead/constant_scored.hpp"
@@ -41,6 +42,8 @@
 #include "iresearch/search/probe/constant_scored.hpp"
 
 namespace irs::detail {
+
+inline constexpr bool kFoldOnlyWhenSmaller = false;
 
 inline constexpr double kCostBlock = 512.0;
 inline constexpr double kSparseProbeCost = 0.3;
@@ -286,15 +289,12 @@ struct FoldEmit {
 };
 
 template<typename Result>
-inline constexpr bool kRangeBitset = false;
-
-template<typename Result>
-inline constexpr bool kFoldWhenDense = false;
+inline constexpr uint64_t kFoldPostings = 0;
 
 template<>
-inline constexpr bool kFoldWhenDense<FillNode::ptr> = true;
-
-inline constexpr uint64_t kFoldPostings = 4;
+inline constexpr uint64_t kFoldPostings<FillNode::ptr> = 4;
+template<>
+inline constexpr uint64_t kFoldPostings<LeadNode::ptr> = 4;
 
 template<typename Result>
 inline constexpr FoldEmit kFoldEmit{0.0, 1.0, true};
@@ -321,27 +321,48 @@ uint64_t FoldReadClause(std::span<const Term> terms, doc_id_t docs_count,
   return cost;
 }
 
-inline bool TakeFold(bool faster, doc_id_t docs_count) noexcept {
-  return faster && FoldReachesSegment(docs_count);
-}
-
-inline bool FoldIsFaster(size_t terms, uint64_t docs,
+inline bool FoldIsFaster(uint64_t per_window, size_t terms, uint64_t docs,
                          doc_id_t docs_count) noexcept {
   const uint64_t windows = docs_count / kWindowDocs + 1;
-  return terms * docs >= kFoldPostings * windows;
+  return terms * docs >= per_window * windows;
+}
+
+template<typename Leaf>
+inline constexpr size_t kWindowLeafBytes =
+  sizeof(Leaf) + sizeof(Leaf*) + sizeof(doc_id_t);
+
+inline bool FoldIsSmaller(size_t terms, const duckdb::InputFile& doc,
+                          doc_id_t docs_count) noexcept {
+  const uint64_t leaf = Resolve(doc, []<typename Input> -> uint64_t {
+    return kWindowLeafBytes<PostingFill<Input>>;
+  });
+  return terms * leaf >= (uint64_t{docs_count} + doc_limits::min()) / 8;
+}
+
+inline bool TakeFold(bool faster, size_t terms, const duckdb::InputFile& doc,
+                     doc_id_t docs_count) noexcept {
+  if (!faster || !FoldReachesSegment(docs_count)) {
+    return false;
+  }
+  if constexpr (kFoldOnlyWhenSmaller) {
+    return FoldIsSmaller(terms, doc, docs_count);
+  }
+  return true;
 }
 
 template<typename Result, typename Terms>
-bool TakeBitset(Terms terms, doc_id_t docs_count) {
-  if (terms.size() >= kWindowWords) {
-    return kRangeBitset<Result> || FoldReachesSegment(docs_count);
+bool TakeBitset(Terms terms, const duckdb::InputFile& doc,
+                doc_id_t docs_count) {
+  static_assert(kFoldPostings<Result> != 0,
+                "this position has not said what a window costs it; a probed "
+                "one is decided by TakeProbeBitset");
+  if (terms.size() < 2) {
+    return false;
   }
-  if constexpr (kFoldWhenDense<Result>) {
-    return terms.size() > 1 &&
-           TakeFold(FoldIsFaster(terms.size(), SumDocs(terms), docs_count),
-                    docs_count);
-  }
-  return false;
+  const auto docs = SumDocs(terms);
+  const auto faster =
+    FoldIsFaster(kFoldPostings<Result>, terms.size(), docs, docs_count);
+  return TakeFold(faster, terms.size(), doc, docs_count);
 }
 
 inline bool FoldProbeIsFaster(uint64_t interrogations, size_t terms,
@@ -350,14 +371,14 @@ inline bool FoldProbeIsFaster(uint64_t interrogations, size_t terms,
 }
 
 template<typename Terms>
-bool TakeProbeBitset(Terms terms, doc_id_t docs_count,
-                     uint64_t interrogations) noexcept {
+bool TakeProbeBitset(Terms terms, const duckdb::InputFile& doc,
+                     doc_id_t docs_count, uint64_t interrogations) noexcept {
   if (terms.size() < 2) {
     return false;
   }
   const auto faster =
     FoldProbeIsFaster(interrogations, terms.size(), SumDocs(terms), docs_count);
-  return TakeFold(faster, docs_count);
+  return TakeFold(faster, terms.size(), doc, docs_count);
 }
 
 inline uint64_t FoldConjunctionCost(
@@ -390,6 +411,7 @@ inline uint64_t WalkConjunctionCost(
 }
 
 inline bool TakeConjunctionFold(const BitsetBuckets& buckets,
+                                const duckdb::InputFile& doc,
                                 doc_id_t docs_count,
                                 uint64_t candidates) noexcept {
   if (!buckets.NeedsSet()) {
@@ -399,8 +421,12 @@ inline bool TakeConjunctionFold(const BitsetBuckets& buckets,
   SDB_ASSERT(clauses.size() > 1);
   const auto cost =
     FoldConjunctionCost(clauses, 0, buckets.Seed(docs_count), docs_count);
-  return TakeFold(WalkConjunctionCost(clauses, 0, candidates) >= cost,
-                  docs_count);
+  size_t terms = 0;
+  for (const auto& clause : clauses) {
+    terms += clause.size();
+  }
+  return TakeFold(WalkConjunctionCost(clauses, 0, candidates) >= cost, terms,
+                  doc, docs_count);
 }
 
 template<typename Result>
@@ -411,7 +437,7 @@ struct BitsetNode<FillNode::ptr> {
   template<typename P>
   static FillNode::ptr Make(BitsetBuckets&& buckets,
                             const duckdb::InputFile& doc, doc_id_t docs_count,
-                            doc_id_t, TableFilter*) {
+                            TableFilter*) {
     return memory::make_managed<fill::Impl<fill::BitsetDocs>>(
       BuildBitset<P>(buckets, doc, docs_count));
   }
@@ -422,7 +448,7 @@ struct BitsetNode<ProbeNode::ptr> {
   template<typename P>
   static ProbeNode::ptr Make(BitsetBuckets&& buckets,
                              const duckdb::InputFile& doc, doc_id_t docs_count,
-                             doc_id_t, TableFilter*) {
+                             TableFilter*) {
     return memory::make_managed<probe::Impl<probe::BitsetDocs>>(
       BuildBitset<P>(buckets, doc, docs_count));
   }
@@ -433,7 +459,7 @@ struct BitsetNode<LeadNode::ptr> {
   template<typename P>
   static LeadNode::ptr Make(BitsetBuckets&& buckets,
                             const duckdb::InputFile& doc, doc_id_t docs_count,
-                            doc_id_t, TableFilter*) {
+                            TableFilter*) {
     return memory::make_managed<lead::Impl<lead::BitsetDocs>>(
       BuildBitset<P>(buckets, doc, docs_count));
   }
@@ -441,9 +467,9 @@ struct BitsetNode<LeadNode::ptr> {
 
 template<typename Result, typename P = NoPins>
 Result MakeBitsetNode(BitsetBuckets&& buckets, const duckdb::InputFile& doc,
-                      doc_id_t docs_count, doc_id_t span, TableFilter* table) {
+                      doc_id_t docs_count, TableFilter* table) {
   return BitsetNode<Result>::template Make<P>(std::move(buckets), doc,
-                                              docs_count, span, table);
+                                              docs_count, table);
 }
 
 template<typename Term>
@@ -461,12 +487,12 @@ BitsetBuckets DisjunctionBuckets(std::span<const Term> terms,
 template<typename Result, typename P = NoPins, typename Term>
 Result MakeBitsetOf(std::span<const Term> terms, const TermReader* field,
                     const duckdb::InputFile& doc, doc_id_t docs_count,
-                    doc_id_t span, TableFilter* table) {
-  if (!TakeBitset<Result>(terms, docs_count)) {
+                    TableFilter* table) {
+  if (!TakeBitset<Result>(terms, doc, docs_count)) {
     return {};
   }
   return MakeBitsetNode<Result, P>(DisjunctionBuckets(terms, field), doc,
-                                   docs_count, span, table);
+                                   docs_count, table);
 }
 
 template<typename Result>

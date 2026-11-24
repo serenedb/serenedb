@@ -169,13 +169,13 @@ add_executable(
     search/scorer_to_string_test.cpp
     search/shingle_phrase_test.cpp
     search/sort_tests.cpp
-    search/sorted_docs_test.cpp
     search/term_filter_tests.cpp
     search/term_predicate_test.cpp
     search/terms_filter_test.cpp
     search/tfidf_test.cpp
     search/token_phrase_test.cpp
     search/top_terms_selector_test.cpp
+    search/union_docs_test.cpp
     search/vector_similarity_query_test.cpp
     search/wildcard_filter_test.cpp
     search/wildcard_ngram_filter_test.cpp

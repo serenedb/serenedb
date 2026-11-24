@@ -140,11 +140,9 @@ SingleTermReader::SingleTermReader(FieldReader& owner, const FieldHead& head)
   }
   std::array<byte_type, kMaxRecordBytes> record{};
   std::memcpy(record.data(), head.record.data(), size);
-  if (PostingsReader::decode(record.data(), head.features, _single) != size ||
-      head.record_inline.size() != _single.inline_size) {
+  if (PostingsReader::decode(record.data(), head.features, _single) != size) {
     corrupted();
   }
-  _single.SetInline(ViewCast<byte_type>(std::string_view{head.record_inline}));
 }
 
 SeekTermIterator::ptr SingleTermReader::iterator() const {

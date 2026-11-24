@@ -81,7 +81,9 @@ void Build(benchmark::State& state, const std::vector<irs::bstring>& terms) {
     for (const auto& term : terms) {
       builder.Add(term);
     }
-    benchmark::DoNotOptimize(builder.Finish());
+    irs::bstring trie;
+    builder.Finish(trie);
+    benchmark::DoNotOptimize(trie);
     builder.Reset();
   }
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *

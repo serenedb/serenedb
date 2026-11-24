@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <iterator>
 #include <span>
 
@@ -31,20 +30,6 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::term_dict {
-namespace {
-
-constexpr byte_type kZeros[kPage]{};
-constexpr uint64_t kMaxBlockPages = 16;
-static_assert(kPage * kMaxBlockPages <= uint64_t{1} << (8 * kVarRestart));
-
-uint32_t PagesFor(const BlockShare& share) noexcept {
-  const uint64_t keyed = share.bytes - share.inline_bytes;
-  SDB_ASSERT(keyed != 0);
-  return static_cast<uint32_t>(
-    std::clamp<uint64_t>((share.bytes + keyed / 2) / keyed, 1, kMaxBlockPages));
-}
-
-}  // namespace
 
 bool FieldWriter::OwnsBlock() const noexcept {
   return _first_block != kNoBlock &&
@@ -99,7 +84,6 @@ void FieldWriter::BeginSlot(field_id id, DictRef dict) {
 }
 
 void FieldWriter::EndSlot(field_id id, const PostingMeta& meta) {
-  std::string record_inline{ViewCast<char>(meta.Inline())};
   _pw.EndField();
   if (meta.docs_count == 0) {
     return;
@@ -113,7 +97,6 @@ void FieldWriter::EndSlot(field_id id, const PostingMeta& meta) {
     .term_count = 1,
     .doc_count = meta.docs_count,
     .record = std::string{ViewCast<char>(record.View())},
-    .record_inline = std::move(record_inline),
   });
 }
 
@@ -124,10 +107,9 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   const auto props = reader.properties();
   _pw.SetTermPayloadWriter(reader.PayloadWriter());
   _pw.BeginField(props);
-  _records.run.Start(props.index_features);
+  _records.Start(props.index_features);
   _width = reader.key_width <= kMaxStride ? reader.key_width : 0;
   _encoder.StartField(reader, _width);
-  StartBlocks();
   _index.Reset(GatesTerms(_dict.member, _width));
   if (IsSubsetOf(IndexFeatures::Ranges, props.index_features) && _width != 0) {
     SDB_ASSERT(!IsSubsetOf(IndexFeatures::Pos, props.index_features));
@@ -185,7 +167,7 @@ void FieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   if (_encoder.Coded()) {
     Cut();
   }
-  CloseRun();
+  _records.Close();
   if (_ranges.Active() && _ranges.Height() != 0) {
     WriteLevels(_heads.back());
   }
@@ -200,8 +182,7 @@ void FieldWriter::WriteLevels(FieldHead& head) {
     _terms = 0;
     _first_block = kNoBlock;
     _index.Reset(GatesTerms(_dict.member, _width));
-    _records.run.Start(head.features);
-    StartBlocks();
+    _records.Start(head.features);
     const uint32_t count = _ranges.Count(level);
     for (uint32_t i = 0; i != count; ++i) {
       const auto entry = _ranges.At(level, i);
@@ -218,7 +199,7 @@ void FieldWriter::WriteLevels(FieldHead& head) {
     dict.width = head.width;
     dict.min = ViewCast<char>(bytes_view{_min});
     EndKeyed(dict);
-    CloseRun();
+    _records.Close();
   }
 }
 
@@ -250,31 +231,14 @@ void FieldWriter::Commit(bytes_view term, const PostingMeta& meta) {
   if (_first_block == kNoBlock) {
     _first_block = _blocks;
     _first_entry = _encoder.Count() - 1;
-    _first_record = static_cast<uint32_t>(_records.bytes.size());
+    _first_record = static_cast<uint32_t>(_records.Bytes());
   }
-}
-
-void FieldWriter::CloseRun() {
-  auto& run = _records.run;
-  auto& bytes = _records.bytes;
-  if (run.Empty()) {
-    return;
-  }
-  const auto at = bytes.size();
-  const uint64_t size = run.Bytes();
-  bytes.resize(at + size);
-  duckdb::MemoryStream out{bytes.data() + at, size};
-  run.Write(out);
-  SDB_ENSURE(out.GetPosition() == size, "term dictionary: posting run of ",
-             out.GetPosition(), " bytes, sized as ", size);
-  _records.inline_bytes += run.InlineBytes();
-  run.Clear();
 }
 
 bool FieldWriter::Append(bytes_view term, const PostingMeta& meta) {
-  auto& run = _records.run;
+  auto& run = _records.Open();
   const auto staged = run.Stage(meta);
-  const uint64_t records = _records.bytes.size() + run.SizeOf(staged);
+  const uint64_t records = _records.Bytes() + run.SizeOf(staged);
   if (!_encoder.Append(_key_prefix, term, records, OwnsBlock())) {
     return false;
   }
@@ -303,32 +267,23 @@ void FieldWriter::Cut() {
     auto out = std::back_inserter(_separators);
     WriteVarint(static_cast<uint32_t>(shared), out);
     WriteVarint(static_cast<uint32_t>(suffix.size()), out);
-    _separators.append(ViewCast<char>(suffix));
+    _separators.append(suffix);
     _separator.assign(separator);
   }
   _last.assign(_encoder.Key(_encoder.Count() - 1));
-  CloseRun();
-  const uint64_t size = _encoder.Seal(_records.bytes.size());
+  _records.Close();
+  const uint64_t size = _encoder.Seal(_records.Bytes());
   WriteBlock(size);
-  _share.bytes += size;
-  _share.inline_bytes += _records.inline_bytes;
   _encoder.Reset();
-  _encoder.SetPages(PagesFor(_share));
-  _records.bytes.clear();
-  _records.inline_bytes = 0;
-}
-
-void FieldWriter::StartBlocks() noexcept {
-  _share = {};
-  if (_encoder.Empty()) {
-    _encoder.SetPages(1);
-  }
+  _records.Restart();
 }
 
 void FieldWriter::WriteBlock(uint64_t size) {
   const uint64_t position = _out->Position();
   const uint64_t pad = (kPage - position % kPage) % kPage;
-  _out->WriteData(kZeros, pad);
+  for (uint64_t i = 0; i != pad; ++i) {
+    _out->Write<byte_type>(0);
+  }
   if (_blocks == 0) {
     _first_page = (position + pad) / kPage;
   }
@@ -336,7 +291,7 @@ void FieldWriter::WriteBlock(uint64_t size) {
   if (pages != 1) {
     _spans.push_back({.block = _blocks, .extra = pages - 1});
   }
-  _encoder.Serialize(*_out, _records.bytes);
+  _encoder.Serialize(*_out, _records);
   SDB_ENSURE(_out->Position() == position + pad + size,
              "term dictionary: block of ", _out->Position() - position - pad,
              " bytes, sized as ", size);
@@ -373,7 +328,6 @@ void FieldWriter::EndField(field_id id, const FieldProperties& props,
     RecordOutput record;
     _pw.Encode(record, _single);
     head.record = ViewCast<char>(record.View());
-    head.record_inline = ViewCast<char>(_single.Inline());
     return;
   }
   head.fsst_table = _encoder.TakeFsstTable();
@@ -390,7 +344,7 @@ void FieldWriter::EndKeyed(FieldHead& head) {
   head.last_entry = last;
   if (_first_block != _blocks) {
     FeedIndex();
-    _index.Finish(head);
+    _index.Finish(head, _sections);
   }
 }
 
@@ -405,16 +359,13 @@ void FieldWriter::ResetField() noexcept {
 void FieldWriter::Reset() noexcept {
   ResetField();
   _encoder.Reset();
-  _encoder.SetPages(1);
-  _share = {};
-  _records.run.Clear();
-  _records.bytes.clear();
-  _records.inline_bytes = 0;
+  _records.Clear();
   _spans.clear();
   _heads.clear();
   _last.clear();
   _separator.clear();
   _separators.clear();
+  _sections.clear();
   _first_page = 0;
   _blocks = 0;
   _ordinal = 0;
@@ -434,9 +385,14 @@ void FieldWriter::end() {
       .spans = std::move(_spans),
       .blocks_end = out.Position(),
       .fields = std::move(_heads),
-      .separators = std::move(_separators),
+      .separators = {.size = _separators.size()},
       .ordinal_bytes = _ordinal_bytes,
     };
+    out.WriteData(_sections.data(), _sections.size());
+    out.WriteData(_separators.data(), _separators.size());
+    [[maybe_unused]] const bool placed = PlaceSections(terms, out.Position());
+    SDB_ASSERT(placed && terms.separators.offset + terms.separators.size ==
+                           out.Position());
     _idx->SetTerms(std::move(terms));
   }
   Reset();

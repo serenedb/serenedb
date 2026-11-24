@@ -201,7 +201,7 @@ class PostingsWriter final {
   }
 
   FieldStats EndField() {
-    if (_features.vec && _term_pay) {
+    if (IsSubsetOf(IndexFeatures::Vec, _features) && _term_pay) {
       SDB_ASSERT(_pay_out);
       _term_pay->Finish(*_pay_out);
     }
@@ -273,7 +273,6 @@ class PostingsWriter final {
   }
 
   BlockIndexWriter _index;
-  duckdb::MemoryStream _tail;
   PostingMeta _last_state;  // Last final term state
   bitset _docs;             // Set of all processed documents
   size_t _docs_first_word = std::numeric_limits<size_t>::max();
@@ -291,7 +290,7 @@ class PostingsWriter final {
   const NormProvider* _norms{};
   ScoreBoundWriter::ptr _writer;      // Score bound writer
   ScoreBoundWriter* _valid_writer{};  // Valid score bound writer
-  PostingFeatures _features;          // Features supported by current field
+  IndexFeatures _features = IndexFeatures::None;
   // Per-term payload writer for IndexFeatures::Vec fields (e.g. IVF codes).
   TermPayloadWriter* _term_pay{};
   // Scratch list of the current term's document ids (collected when
@@ -306,7 +305,8 @@ inline void PostingsWriter::PrepareWriters(const FieldProperties& meta) {
     return;
   }
 
-  if (_writer && _writer->Prepare(*_norms, meta, _features.freq)) {
+  if (_writer && _writer->Prepare(*_norms, meta,
+                                  IsSubsetOf(IndexFeatures::Freq, _features))) {
     _valid_writer = _writer.get();
   }
 }
@@ -316,11 +316,11 @@ inline void PostingsWriter::AddBlock(const PostingMeta& meta, doc_id_t last) {
   uint64_t pos_group = 0;
   uint32_t pos_index = 0;
   uint64_t pay_group = 0;
-  if (_features.pos) {
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
     SDB_ASSERT(_pos_out);
     pos_group = _pos_out->Position() - meta.pos_start;
     pos_index = PosIndex();
-    if (_features.offs) {
+    if (IsSubsetOf(IndexFeatures::Offs, _features)) {
       SDB_ASSERT(_pay_out);
       pay_group = _pay_out->Position() - meta.pay_start;
     }
@@ -376,50 +376,49 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
 
 inline void PostingsWriter::Encode(duckdb::WriteStream& out,
                                    const PostingMeta& meta) {
-  SDB_ASSERT(!_features.vec || (!_features.pos && !_features.offs));
+  SDB_ASSERT(!IsSubsetOf(IndexFeatures::Vec, _features) ||
+             (!IsSubsetOf(IndexFeatures::Pos, _features) &&
+              !IsSubsetOf(IndexFeatures::Offs, _features)));
 
-  const bool inlined = meta.inline_size != 0;
   const bool single = meta.docs_count == 1;
   SDB_ASSERT(meta.docs_count != 0);
-  SDB_ASSERT(!single || !inlined);
-  const bool same_freq = _features.freq && meta.freq == meta.docs_count;
+  const bool same_freq =
+    IsSubsetOf(IndexFeatures::Freq, _features) && meta.freq == meta.docs_count;
   const uint64_t next = uint64_t{_last_state.pos_offset} + _last_state.freq;
   const bool follows =
-    _features.pos && _last_state.docs_count != 0 &&
+    IsSubsetOf(IndexFeatures::Pos, _features) && _last_state.docs_count != 0 &&
     meta.pos_offset == next % PosGroup::kPositions &&
     (next >= PosGroup::kPositions || meta.pos_start == _last_state.pos_start);
-  const auto layout = RecordLayoutOf(_features.freq, _features.pos);
+  const auto layout = RecordLayoutOf(IsSubsetOf(IndexFeatures::Freq, _features),
+                                     IsSubsetOf(IndexFeatures::Pos, _features));
   const uint64_t flags =
     uint64_t{follows} << layout.follows | uint64_t{same_freq} << 1;
   out.WriteVarint<uint64_t>(
-    single
-      ? uint64_t{meta.doc_delta} << layout.payload | flags | 1
-      : (uint64_t{meta.docs_count} << 1 | uint64_t{inlined}) << layout.payload |
-          flags);
-  if (_features.freq && !same_freq) {
+    single ? uint64_t{meta.doc_delta} << layout.payload | flags | 1
+           : uint64_t{meta.docs_count} << layout.payload | flags);
+  if (IsSubsetOf(IndexFeatures::Freq, _features) && !same_freq) {
     SDB_ASSERT(meta.freq > meta.docs_count);
     out.WriteVarint<uint32_t>(meta.freq - meta.docs_count - 1);
   }
 
   const auto doc_start = _last_state.doc_start;
-  if (inlined) {
-    out.Write<byte_type>(meta.inline_size);
-  } else if (!single) {
+  if (!single) {
     out.WriteVarint<uint64_t>(meta.doc_start - doc_start);
   }
-  if (_features.pos) {
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
     if (!follows || next >= PosGroup::kPositions) {
       out.WriteVarint<uint64_t>(meta.pos_start - _last_state.pos_start);
-      if (_features.offs) {
+      if (IsSubsetOf(IndexFeatures::Offs, _features)) {
         out.WriteVarint<uint64_t>(meta.pay_start - _last_state.pay_start);
       }
     } else {
-      SDB_ASSERT(!_features.offs || meta.pay_start == _last_state.pay_start);
+      SDB_ASSERT(!IsSubsetOf(IndexFeatures::Offs, _features) ||
+                 meta.pay_start == _last_state.pay_start);
     }
     if (!follows) {
       out.WriteVarint<uint32_t>(meta.pos_offset);
     }
-  } else if (_features.vec) {
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
     out.WriteVarint<uint64_t>(meta.pay_start - _last_state.pay_start);
     out.WriteVarint<uint32_t>(meta.pos_offset);
   }
@@ -428,15 +427,16 @@ inline void PostingsWriter::Encode(duckdb::WriteStream& out,
     out.WriteVarint<uint32_t>(meta.doc_delta);
   }
 
-  if (_features.pos && pos_limits::kBlockSize < meta.freq) {
+  if (IsSubsetOf(IndexFeatures::Pos, _features) &&
+      pos_limits::kBlockSize < meta.freq) {
     out.WriteVarint<uint32_t>(meta.pos_extent);
-    if (_features.offs) {
+    if (IsSubsetOf(IndexFeatures::Offs, _features)) {
       out.WriteVarint<uint32_t>(meta.pay_extent);
     }
   }
 
   _last_state = meta;
-  if (inlined || single) {
+  if (single) {
     _last_state.doc_start = doc_start;
   }
 }
@@ -444,10 +444,10 @@ inline void PostingsWriter::Encode(duckdb::WriteStream& out,
 inline void PostingsWriter::BeginTerm(PostingMeta& meta) {
   _index.Reset();
   meta.doc_start = _doc_out->Position();
-  if (_features.pos) {
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
     SDB_ASSERT(_pos_out);
     meta.pos_start = _pos_out->Position();
-    if (_features.offs) {
+    if (IsSubsetOf(IndexFeatures::Offs, _features)) {
       SDB_ASSERT(_pay_out);
       meta.pay_start = _pay_out->Position();
     }
@@ -460,7 +460,6 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     return;  // no documents to write
   }
 
-  meta.inline_size = 0;
   const bool has_index = doc_limits::kBlockSize < meta.docs_count;
 
   if (1 == meta.docs_count) {
@@ -468,18 +467,11 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     MarkDocs(_doc.docs[0], _doc.docs[0]);
   } else if (!has_index) {
     UpdateBounds();
-    _tail.Rewind();
     ApplyToWriter([&](auto& writer) {
-      _tail.Write<byte_type>(writer.SizeRoot());
-      writer.WriteRoot(_tail);
+      _doc_out->Write<byte_type>(writer.SizeRoot());
+      writer.WriteRoot(*_doc_out);
     });
-    WriteDocBlock(_tail);
-    const auto tail = irs::bytes_view{_tail.GetData(), _tail.GetPosition()};
-    if (tail.size() <= PostingMeta::kInlineBytes) {
-      meta.SetInline(tail);
-    } else {
-      _doc_out->WriteData(tail.data(), tail.size());
-    }
+    WriteDocBlock(*_doc_out);
   } else {
     UpdateBounds();
     WriteDocBlock(*_doc_out);
@@ -498,12 +490,13 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
                std::numeric_limits<uint32_t>::max(), " byte limit");
     meta.doc_delta = static_cast<uint32_t>(index_start);
     ApplyToWriter([&](auto& writer) { writer.Take(2, _index.Root()); });
-    _index.Write(*_doc_out, {.pos = _features.pos,
-                             .offs = _features.offs,
+    _index.Write(*_doc_out, {.pos = IsSubsetOf(IndexFeatures::Pos, _features),
+                             .offs = IsSubsetOf(IndexFeatures::Offs, _features),
                              .bounds = _valid_writer != nullptr});
   }
 
-  if (_features.pos && pos_limits::kBlockSize < meta.freq) {
+  if (IsSubsetOf(IndexFeatures::Pos, _features) &&
+      pos_limits::kBlockSize < meta.freq) {
     const auto extent = [](const duckdb::WriteStream& out, uint64_t start,
                            const BlockGroup& group, bool partial,
                            uint32_t blocks) {
@@ -518,7 +511,7 @@ inline void PostingsWriter::EndTerm(PostingMeta& meta) {
     };
     meta.pos_extent =
       extent(*_pos_out, meta.pos_start, _pos_group, _pos.size != 0, 1);
-    if (_features.offs) {
+    if (IsSubsetOf(IndexFeatures::Offs, _features)) {
       meta.pay_extent =
         extent(*_pay_out, meta.pay_start, _pay_group, _pay.size != 0, 2);
     }
@@ -539,7 +532,7 @@ inline void PostingsWriter::WriteDocBlock(duckdb::WriteStream& out) {
   MarkDocs(_doc.docs[0], _doc.docs[size - 1]);
   uint32_t enc_buf[block_io::kEncWords];
   block_io::WriteTailDelta(size, out, _doc.docs, _doc.block_last, enc_buf);
-  if (_features.freq) {
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
     uint32_t freqs[doc_limits::kBlockSize];
     for (uint32_t i = 0; i != size; ++i) {
       freqs[i] = _doc.freqs[i] - block_io::kFreqBias;
@@ -597,7 +590,7 @@ inline void PostingsWriter::WritePayBlock() {
 }
 
 inline void PostingsWriter::BeginField(const FieldProperties& meta) {
-  _features = PostingFeatures{meta.index_features};
+  _features = meta.index_features;
   PrepareWriters(meta);
   _docs.clear(_docs_first_word, _docs_end_word);
   ForgetDocs();
@@ -608,7 +601,7 @@ inline void PostingsWriter::BeginField(const FieldProperties& meta) {
   // So if it was case when we didn't have offsets we need to flush positions.
   // And if we had positions and offsets and now we will write only positions
   // we need to flush positions and offsets.
-  if (_features.offs) {
+  if (IsSubsetOf(IndexFeatures::Offs, _features)) {
     if (_pos.size != _pay.size || _pos_group.Blocks() != _pay_group.Blocks())
       [[unlikely]] {
       SDB_ASSERT(_pay.size == 0);
@@ -637,8 +630,8 @@ template<bool HasOffs>
 void PostingsWriter::PushPosition(uint32_t pos, uint32_t offs_start,
                                   uint32_t offs_end) {
   // at least positions stream should be created
-  SDB_ASSERT(_features.pos);
-  SDB_ASSERT(_features.offs == HasOffs);
+  SDB_ASSERT(IsSubsetOf(IndexFeatures::Pos, _features));
+  SDB_ASSERT(IsSubsetOf(IndexFeatures::Offs, _features) == HasOffs);
 
   SDB_ASSERT(_pos.size == _pay.size || _pay.size == 0);
   _pos.Next(pos);
@@ -664,8 +657,8 @@ template<bool HasOffs>
 void PostingsWriter::PushPositions(const uint32_t* pos,
                                    const uint32_t* offs_start,
                                    const uint32_t* offs_end, size_t n) {
-  SDB_ASSERT(_features.pos);
-  SDB_ASSERT(_features.offs == HasOffs);
+  SDB_ASSERT(IsSubsetOf(IndexFeatures::Pos, _features));
+  SDB_ASSERT(IsSubsetOf(IndexFeatures::Offs, _features) == HasOffs);
 
   size_t k = 0;
   while (k < n) {
@@ -712,8 +705,8 @@ void PostingsWriter::PushPositions(const uint32_t* pos,
 
 template<bool HasOffs>
 void PostingsWriter::PushDeltas(TermPostings& docs, uint64_t n) {
-  SDB_ASSERT(_features.pos);
-  SDB_ASSERT(_features.offs == HasOffs);
+  SDB_ASSERT(IsSubsetOf(IndexFeatures::Pos, _features));
+  SDB_ASSERT(IsSubsetOf(IndexFeatures::Offs, _features) == HasOffs);
 
   while (n != 0) {
     SDB_ASSERT(_pos.size < pos_limits::kBlockSize);
@@ -821,13 +814,13 @@ inline void PostingsWriter::Write(TermPostings& docs, PostingMeta& meta,
   BeginTerm(meta);
   ApplyToWriter([&](auto& writer) { writer.Reset(); });
 
-  const bool has_vec = _features.vec;
+  const bool has_vec = IsSubsetOf(IndexFeatures::Vec, _features);
   if (has_vec) {
     _term_docs.clear();
   }
-  const bool has_freq = _features.freq;
-  const bool has_pos = _features.pos;
-  const bool has_offs = _features.offs;
+  const bool has_freq = IsSubsetOf(IndexFeatures::Freq, _features);
+  const bool has_pos = IsSubsetOf(IndexFeatures::Pos, _features);
+  const bool has_offs = IsSubsetOf(IndexFeatures::Offs, _features);
 
   uint32_t docs_count = 0;
   uint32_t total_freq = 0;
@@ -905,13 +898,13 @@ inline void PostingsWriter::WritePostings(const PostingRows& postings,
   BeginTerm(meta);
   ApplyToWriter([&](auto& writer) { writer.Reset(); });
 
-  const bool has_vec = _features.vec;
+  const bool has_vec = IsSubsetOf(IndexFeatures::Vec, _features);
   if (has_vec) {
     _term_docs.clear();
   }
-  const bool has_freq = _features.freq;
-  const bool has_pos = _features.pos;
-  const bool has_offs = _features.offs;
+  const bool has_freq = IsSubsetOf(IndexFeatures::Freq, _features);
+  const bool has_pos = IsSubsetOf(IndexFeatures::Pos, _features);
+  const bool has_offs = IsSubsetOf(IndexFeatures::Offs, _features);
 
   uint32_t docs_count = 0;
   uint32_t total_freq = 0;

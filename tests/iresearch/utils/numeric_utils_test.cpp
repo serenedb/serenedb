@@ -22,6 +22,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/numeric/int128.h>
 
 #include <bit>
 #include <cmath>
@@ -37,6 +38,14 @@ namespace {
 
 namespace nu = irs::numeric_utils;
 
+duckdb::hugeint_t Wide(__int128 value) {
+  return duckdb::hugeint_t::FromInt128(absl::int128{value});
+}
+
+duckdb::uhugeint_t Wide(unsigned __int128 value) {
+  return duckdb::uhugeint_t::FromUint128(absl::uint128{value});
+}
+
 template<typename T>
 irs::bstring Term(T value) {
   irs::byte_type buf[nu::kNumericTermMaxSize];
@@ -48,8 +57,7 @@ void AssertTermsSortLikeValues(std::span<const T> values) {
   std::vector<irs::bstring> terms;
   for (const auto value : values) {
     auto term = Term(value);
-    ASSERT_EQ(nu::kNumericTermSize<T>, term.size());
-    ASSERT_EQ(sizeof(nu::NumericKey<T>), term.size());
+    ASSERT_EQ(sizeof(T), term.size());
     ASSERT_TRUE(value == nu::DecodeNumericTerm<T>(term));
     terms.emplace_back(std::move(term));
   }
@@ -77,6 +85,10 @@ void AssertRandomTermsSortLikeValues(uint64_t seed) {
       if (!std::isnan(value)) {
         values.push_back(value);
       }
+    } else if constexpr (sizeof(Bits) > sizeof(uint64_t)) {
+      values.push_back(Wide(
+        static_cast<std::conditional_t<std::is_same_v<T, duckdb::hugeint_t>,
+                                       __int128, unsigned __int128>>(bits)));
     } else {
       values.push_back(static_cast<T>(bits));
     }
@@ -126,17 +138,20 @@ TEST(numeric_utils_test, terms_sort_like_their_values) {
 
   constexpr auto kI128Min = std::numeric_limits<__int128>::min();
   constexpr auto kI128Max = std::numeric_limits<__int128>::max();
-  const __int128 i128[]{
-    kI128Min, kI128Min + 1,      -(__int128{1} << 64), -1,      0,
-    1,        __int128{1} << 64, kI128Max - 1,         kI128Max};
-  AssertTermsSortLikeValues<__int128>(i128);
+  const duckdb::hugeint_t i128[]{
+    Wide(kI128Min),          Wide(kI128Min + 1), Wide(-(__int128{1} << 64)),
+    Wide(__int128{-1}),      Wide(__int128{0}),  Wide(__int128{1}),
+    Wide(__int128{1} << 64), Wide(kI128Max - 1), Wide(kI128Max)};
+  AssertTermsSortLikeValues<duckdb::hugeint_t>(i128);
 
   using U128 = unsigned __int128;
   constexpr auto kU128Max = std::numeric_limits<U128>::max();
   constexpr U128 kU128Half = U128{1} << 127;
-  const U128 u128[]{
-    0, 1, U128{1} << 64, kU128Half - 1, kU128Half, kU128Max - 1, kU128Max};
-  AssertTermsSortLikeValues<U128>(u128);
+  const duckdb::uhugeint_t u128[]{Wide(U128{0}),       Wide(U128{1}),
+                                  Wide(U128{1} << 64), Wide(kU128Half - 1),
+                                  Wide(kU128Half),     Wide(kU128Max - 1),
+                                  Wide(kU128Max)};
+  AssertTermsSortLikeValues<duckdb::uhugeint_t>(u128);
 
   using F = std::numeric_limits<float>;
   const float f32[]{
@@ -155,8 +170,8 @@ TEST(numeric_utils_test, random_terms_sort_like_their_values) {
   AssertRandomTermsSortLikeValues<int32_t, uint32_t>(1);
   AssertRandomTermsSortLikeValues<int64_t, uint64_t>(2);
   AssertRandomTermsSortLikeValues<uint64_t, uint64_t>(3);
-  AssertRandomTermsSortLikeValues<__int128, unsigned __int128>(4);
-  AssertRandomTermsSortLikeValues<unsigned __int128, unsigned __int128>(5);
+  AssertRandomTermsSortLikeValues<duckdb::hugeint_t, unsigned __int128>(4);
+  AssertRandomTermsSortLikeValues<duckdb::uhugeint_t, unsigned __int128>(5);
   AssertRandomTermsSortLikeValues<float, uint32_t>(6);
   AssertRandomTermsSortLikeValues<double, uint64_t>(7);
 }

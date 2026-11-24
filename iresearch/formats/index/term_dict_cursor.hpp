@@ -175,9 +175,6 @@ class RecordCursor {
       }
       _decoder.Seek(entry - first, _meta);
     }
-    if (_meta.inline_size != 0) {
-      _meta.SetInline({_decoder.InlineData(), _meta.inline_size});
-    }
     _entry = entry;
     return _meta;
   }

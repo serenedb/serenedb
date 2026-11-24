@@ -62,16 +62,11 @@ inline Records ReadRecords(duckdb::InputFileReader& in) {
 inline void WriteRecord(irs::PostingsWriter& writer, duckdb::WriteStream& out,
                         const irs::PostingMeta& meta) {
   writer.Encode(out, meta);
-  if (meta.inline_size != 0) {
-    out.WriteData(meta.inline_bytes.data(), meta.inline_size);
-  }
 }
 
 inline size_t ReadRecord(const irs::byte_type* in, irs::IndexFeatures features,
                          irs::PostingMeta& meta) {
-  const auto size = irs::PostingsReader::decode(in, features, meta);
-  meta.SetInline({in + size, meta.inline_size});
-  return size + meta.inline_size;
+  return irs::PostingsReader::decode(in, features, meta);
 }
 
 class SeekPostings : public irs::lead::Node {

@@ -79,17 +79,16 @@ class BooleanBitset : public Root {
 namespace irs::detail {
 
 template<>
-inline constexpr FoldEmit kFoldEmit<docs::Root::ptr>{0.0, 1.0, true};
-
+inline constexpr uint64_t kFoldPostings<docs::Root::ptr> = 4;
 template<>
-inline constexpr bool kFoldWhenDense<docs::Root::ptr> = true;
+inline constexpr FoldEmit kFoldEmit<docs::Root::ptr>{0.0, 1.0, true};
 
 template<>
 struct BitsetNode<docs::Root::ptr> {
   template<typename P>
   static docs::Root::ptr Make(BitsetBuckets&& buckets,
                               const duckdb::InputFile& doc, doc_id_t docs_count,
-                              doc_id_t, TableFilter*) {
+                              TableFilter*) {
     return memory::make_managed<docs::BooleanBitset>(
       BuildBitset<P>(buckets, doc, docs_count));
   }

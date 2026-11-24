@@ -42,17 +42,6 @@
 
 namespace irs::term_dict {
 
-struct BlockRecords {
-  RecordRun run;
-  bstring bytes;
-  uint64_t inline_bytes = 0;
-};
-
-struct BlockShare {
-  uint64_t bytes = 0;
-  uint64_t inline_bytes = 0;
-};
-
 class FieldWriter final : public FieldSink {
  public:
   explicit FieldWriter(bool compaction) noexcept : _compaction{compaction} {}
@@ -79,7 +68,6 @@ class FieldWriter final : public FieldSink {
   void Commit(bytes_view term, const PostingMeta& meta);
   void FeedIndex();
   bool Append(bytes_view term, const PostingMeta& meta);
-  void CloseRun();
   void Cut();
   void WriteBlock(uint64_t size);
   void EndField(field_id id, const FieldProperties& props, uint64_t total_freq,
@@ -88,12 +76,10 @@ class FieldWriter final : public FieldSink {
   void WriteLevels(FieldHead& head);
   void ResetField() noexcept;
   void Reset() noexcept;
-  void StartBlocks() noexcept;
 
   PostingsWriter _pw;
   BlockEncoder _encoder;
   BlockRecords _records;
-  BlockShare _share;
   RangeWriter _ranges;
   std::vector<SpanningBlock> _spans;
   std::vector<FieldHead> _heads;
@@ -102,7 +88,8 @@ class FieldWriter final : public FieldSink {
   bstring _min;
   bstring _last;
   bstring _separator;
-  std::string _separators;
+  bstring _separators;
+  bstring _sections;
   PostingMeta _single;
   IdxWriter* _idx = nullptr;
   duckdb::WriteStream* _out = nullptr;

@@ -146,8 +146,8 @@ bool TakeTermSetsWindow(std::span<const Term> terms,
     return false;
   }
   return detail::TakeFold(
-    detail::FoldProbeIsFaster(interrogations, leaves, docs, docs_count),
-    docs_count);
+    detail::FoldProbeIsFaster(interrogations, leaves, docs, docs_count), leaves,
+    *doc, docs_count);
 }
 
 template<typename Term, typename Scoring>
@@ -173,7 +173,7 @@ Node::ptr MakeDisjunction(std::span<const Term> terms,
       detail::DocOf(detail::FieldOf(terms.front(), field));
     const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
     if (doc != nullptr &&
-        detail::TakeProbeBitset(terms, docs_count, interrogations)) {
+        detail::TakeProbeBitset(terms, *doc, docs_count, interrogations)) {
       if constexpr (detail::kScores<Scoring>) {
         if (auto windowed = MakeWindowDisjunction(terms, filters, field,
                                                   scoring, ctx, absorbed)) {
@@ -181,8 +181,7 @@ Node::ptr MakeDisjunction(std::span<const Term> terms,
         }
       } else {
         return detail::MakeBitsetNode<Node::ptr>(
-          detail::DisjunctionBuckets(terms, field), *doc, docs_count,
-          docs_count, nullptr);
+          detail::DisjunctionBuckets(terms, field), *doc, docs_count, nullptr);
       }
     }
   }

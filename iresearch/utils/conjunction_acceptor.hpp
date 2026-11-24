@@ -106,9 +106,7 @@ class RegexpConjunction {
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
 
-  const ByteSet& RequiredBytes() const noexcept { return _required; }
-
-  const ByteSet& DeadBytes() const noexcept { return _dead_bytes; }
+  const KeyBytes& Bytes() const noexcept { return _bytes; }
 
   static bool Alive(State state) noexcept { return !state->dead; }
 
@@ -164,8 +162,7 @@ class RegexpConjunction {
   bytes_view _lower;
   std::span<const bstring> _suffixes;
   bytes_view _infix;
-  ByteSet _required;
-  ByteSet _dead_bytes;
+  KeyBytes _bytes;
   size_t _max_mem;
   mutable std::mutex _mutex;
   mutable absl::flat_hash_map<Parts, Row*> _rows;
@@ -220,7 +217,7 @@ class FuzzyConjunction {
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
 
-  const ByteSet& RequiredBytes() const noexcept { return _required; }
+  const KeyBytes& Bytes() const noexcept { return _bytes; }
 
   static bool Alive(State state) noexcept { return !state->dead; }
 
@@ -257,7 +254,7 @@ class FuzzyConjunction {
  protected:
   FuzzyConjunction(
     std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
-    bytes_view lower, const ByteSet& required,
+    bytes_view lower, const KeyBytes& bytes,
     const std::array<uint8_t, 256>& fuzzy_bytemap, size_t max_mem,
     bool starts_with);
   ~FuzzyConjunction() = default;
@@ -296,7 +293,7 @@ class FuzzyConjunction {
   bytes_view _lower;
   std::span<const bstring> _suffixes;
   bytes_view _infix;
-  ByteSet _required;
+  KeyBytes _bytes;
   size_t _max_mem;
   mutable RowArena _arena;
 };
@@ -310,7 +307,7 @@ class FuzzyConjunctionOf final : public FuzzyConjunction {
     size_t max_mem = RegexpAcceptor::kDefaultMaxDfaMem)
     : FuzzyConjunction{patterns,
                        fuzzy->LowerBound(),
-                       fuzzy->RequiredBytes(),
+                       fuzzy->Bytes(),
                        fuzzy->Bytemap(),
                        max_mem,
                        std::is_same_v<A, LevenshteinPrefixAcceptor>},

@@ -129,7 +129,7 @@ class LevenshteinAcceptor {
         }
       }
     }
-    AddBytes(_required, _prefix);
+    AddBytes(_bytes.required, _prefix);
     std::array<uint32_t, 0x80> counts{};
     for (const auto c : _target) {
       if (c < counts.size()) {
@@ -138,7 +138,7 @@ class LevenshteinAcceptor {
     }
     for (uint32_t c = 0; c != counts.size(); ++c) {
       if (counts[c] > description.max_distance()) {
-        _required.Add(static_cast<byte_type>(c));
+        _bytes.required.Add(static_cast<byte_type>(c));
       }
     }
     absl::c_sort(_partials);
@@ -165,7 +165,7 @@ class LevenshteinAcceptor {
 
   uint32_t MaxDistance() const noexcept { return _no_distance - 1U; }
 
-  const ByteSet& RequiredBytes() const noexcept { return _required; }
+  const KeyBytes& Bytes() const noexcept { return _bytes; }
 
   static bool Alive(const State& state) noexcept {
     return state.pstate != kDeadState;
@@ -491,7 +491,7 @@ class LevenshteinAcceptor {
   std::vector<uint64_t> _partials;
   std::array<int32_t, kNarrowMax> _narrow;
   std::array<bool, 256> _leads{};
-  ByteSet _required;
+  KeyBytes _bytes;
   mutable std::vector<uint32_t> _steps;
   size_t _slots{0};
   size_t _offsets{0};
@@ -533,9 +533,7 @@ class LevenshteinPrefixAcceptor {
 
   bytes_view LowerBound() const noexcept { return _inner->LowerBound(); }
 
-  const ByteSet& RequiredBytes() const noexcept {
-    return _inner->RequiredBytes();
-  }
+  const KeyBytes& Bytes() const noexcept { return _inner->Bytes(); }
 
   std::array<uint8_t, 256> Bytemap() const { return _inner->Bytemap(); }
 

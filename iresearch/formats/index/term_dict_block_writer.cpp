@@ -42,7 +42,6 @@ namespace {
 
 constexpr uint64_t kFsstSampleBytes = 32 << 10;
 constexpr uint64_t kFsstMinRatioPct = 115;
-constexpr byte_type kZeros[kSlack]{};
 
 struct Packing {
   uint32_t base;
@@ -262,6 +261,7 @@ void Clear(VarColumns& columns) noexcept {
   columns.lcps.clear();
   columns.lens.clear();
   columns.suffixes.clear();
+  columns.suffix_bytes = 0;
   columns.restarts.clear();
   columns.misfits = {};
   columns.base = kNoBase;
@@ -309,9 +309,9 @@ bool Compresses(duckdb_fsst_encoder_t* encoder, bstring& arena,
 }
 
 void AppendEntry(VarColumns& columns, bool restart, size_t lcp,
-                 bytes_view suffix) {
+                 bytes_view suffix, bool coded) {
   if (restart) {
-    columns.restarts.push_back(static_cast<uint32_t>(columns.suffixes.size()));
+    columns.restarts.push_back(static_cast<uint32_t>(columns.suffix_bytes));
   }
   const auto len = static_cast<uint32_t>(suffix.size() - (restart ? lcp : 0));
   columns.max_lcp = std::max(columns.max_lcp, static_cast<uint32_t>(lcp));
@@ -326,7 +326,10 @@ void AppendEntry(VarColumns& columns, bool restart, size_t lcp,
   }
   columns.lcps.push_back(static_cast<uint32_t>(lcp));
   columns.lens.push_back(len);
-  columns.suffixes.append(suffix);
+  columns.suffix_bytes += suffix.size();
+  if (coded) {
+    columns.suffixes.append(suffix);
+  }
 }
 
 uint64_t SizeWith(const VarColumns& columns, uint32_t count,
@@ -334,7 +337,7 @@ uint64_t SizeWith(const VarColumns& columns, uint32_t count,
                   uint64_t records) noexcept {
   const auto len =
     static_cast<uint32_t>(suffix - (entry.restart ? entry.lcp : 0));
-  return VarBytes(count + 1, entry.head_skip, columns.suffixes.size() + suffix,
+  return VarBytes(count + 1, entry.head_skip, columns.suffix_bytes + suffix,
                   records,
                   ShapeWith(columns, static_cast<uint32_t>(entry.lcp), len));
 }
@@ -430,7 +433,7 @@ void WriteEfKeys(duckdb::WriteStream& out, const BlockBuilder& block,
               [&](uint64_t i) { return value(i) & mask; });
 }
 
-void Serialize(const BlockBuilder& block, bytes_view records,
+void Serialize(const BlockBuilder& block, const BlockRecords& records,
                duckdb::WriteStream& out) {
   const auto count = static_cast<uint32_t>(block.ends.size());
   out.Write<byte_type>(static_cast<byte_type>(block.kind));
@@ -447,7 +450,7 @@ void Serialize(const BlockBuilder& block, bytes_view records,
     out.WriteVarint<uint32_t>(static_cast<uint32_t>(restarts.size()));
     out.Write<byte_type>(static_cast<byte_type>(shape.lcp_width));
     out.Write<byte_type>(static_cast<byte_type>(shape.len_width));
-    out.WriteVarint<uint64_t>(columns.suffixes.size() - restarts.size() * skip);
+    out.WriteVarint<uint64_t>(columns.suffix_bytes - restarts.size() * skip);
     out.WriteVarint<uint32_t>(skip);
     if (packed) {
       out.Write<byte_type>(static_cast<byte_type>(len_bits));
@@ -469,12 +472,20 @@ void Serialize(const BlockBuilder& block, bytes_view records,
       WriteColumn(out, columns.lcps, shape.lcp_width);
       WriteColumn(out, columns.lens, shape.len_width);
     }
-    const bytes_view suffixes{columns.suffixes};
-    for (size_t i = 0; i != restarts.size(); ++i) {
-      const size_t end =
-        i + 1 == restarts.size() ? suffixes.size() : restarts[i + 1];
-      out.WriteData(suffixes.data() + restarts[i] + skip,
-                    end - restarts[i] - skip);
+    if (block.kind == BlockKind::VarFsst) {
+      const bytes_view suffixes{columns.suffixes};
+      for (size_t i = 0; i != restarts.size(); ++i) {
+        const size_t end =
+          i + 1 == restarts.size() ? suffixes.size() : restarts[i + 1];
+        out.WriteData(suffixes.data() + restarts[i] + skip,
+                      end - restarts[i] - skip);
+      }
+    } else {
+      for (uint32_t i = 0; i != count; ++i) {
+        const auto key = KeyAt(block, i);
+        const size_t from = i % kRestartInterval == 0 ? skip : columns.lcps[i];
+        out.WriteData(key.data() + from, key.size() - from);
+      }
     }
   } else {
     const uint32_t stride = FixedWidth(block) - block.prefix;
@@ -497,8 +508,10 @@ void Serialize(const BlockBuilder& block, bytes_view records,
       }
     }
   }
-  out.WriteData(records.data(), records.size());
-  out.WriteData(kZeros, kSlack);
+  records.Write(out);
+  for (uint32_t i = 0; i != kSlack; ++i) {
+    out.Write<byte_type>(0);
+  }
 }
 
 }  // namespace
@@ -583,11 +596,11 @@ void BlockEncoder::EncodeEntries(VarColumns& columns, uint32_t from,
   size_t coded = 0;
   for (const auto& entry : _scratch.entries) {
     if (entry.restart) {
-      AppendEntry(columns, true, entry.lcp, entry.suffix);
+      AppendEntry(columns, true, entry.lcp, entry.suffix, true);
     } else {
-      AppendEntry(
-        columns, false, entry.lcp,
-        {_scratch.coded_starts[coded], _scratch.coded_lengths[coded]});
+      AppendEntry(columns, false, entry.lcp,
+                  {_scratch.coded_starts[coded], _scratch.coded_lengths[coded]},
+                  true);
       ++coded;
     }
   }
@@ -667,7 +680,7 @@ bool BlockEncoder::AppendFixedKey(bytes_view key, uint64_t records) {
   const uint64_t universe =
     count == 0 ? 0 : KeyRange(KeyAt(block, 0), key, prefix);
   const uint64_t size = FixedBytes(count + 1, records, width, prefix, universe);
-  if (count != 0 && (size > Budget() ||
+  if (count != 0 && (size > kPage ||
                      (PacksKeys(width - prefix) &&
                       !EfFits(count + 1, EfShapeOf(count + 1, universe))))) {
     return false;
@@ -689,13 +702,13 @@ bool BlockEncoder::AppendVarKey(bytes_view key, uint64_t records, bool codes) {
     for (uint32_t i = 0; i != count; ++i) {
       const auto entry = VarEntryAt(block, i, KeyAt(block, i));
       block.head_skip = entry.head_skip;
-      AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix);
+      AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix, false);
     }
   }
   const auto entry = VarEntryAt(block, count, key);
   const uint64_t size =
     SizeWith(block.columns, count, entry, entry.suffix.size(), records);
-  if (count != 0 && size > Budget()) {
+  if (count != 0 && size > kPage) {
     if (converts) {
       Clear(block.columns);
       block.head_skip = 0;
@@ -704,7 +717,7 @@ bool BlockEncoder::AppendVarKey(bytes_view key, uint64_t records, bool codes) {
     return codes && EncodeBlock(entry, records);
   }
   block.kind = BlockKind::Var;
-  AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix);
+  AppendEntry(block.columns, entry.restart, entry.lcp, entry.suffix, false);
   block.size = size;
   block.head_skip = entry.head_skip;
   return true;
@@ -720,9 +733,9 @@ bool BlockEncoder::EncodeBlock(const VarEntry& entry, uint64_t records) {
   EncodeEntries(_scratch.encoded, 0, count + 1, &entry);
   const auto head_skip = entry.head_skip;
   const uint64_t size =
-    VarBytes(count + 1, head_skip, _scratch.encoded.suffixes.size(), records,
+    VarBytes(count + 1, head_skip, _scratch.encoded.suffix_bytes, records,
              ShapeOf(_scratch.encoded));
-  if (size > Budget()) {
+  if (size > kPage) {
     return false;
   }
   std::swap(block.columns, _scratch.encoded);
@@ -748,8 +761,8 @@ bool BlockEncoder::AppendCodedKey(const VarEntry& entry, uint64_t records) {
   };
   const uint64_t bound = VarBytes(
     count + 1, entry.head_skip,
-    block.columns.suffixes.size() + block.deferred + worst, records, shape);
-  if (bound <= Budget()) {
+    block.columns.suffix_bytes + block.deferred + worst, records, shape);
+  if (bound <= kPage) {
     Lower(block.columns, lcp);
     block.columns.max_lcp = std::max(block.columns.max_lcp, lcp);
     block.deferred += worst;
@@ -762,31 +775,29 @@ bool BlockEncoder::AppendCodedKey(const VarEntry& entry, uint64_t records) {
   const auto suffix = entry.restart ? entry.suffix : EncodeSuffix(entry.suffix);
   const uint64_t size =
     SizeWith(block.columns, count, entry, suffix.size(), records);
-  if (size > Budget()) {
+  if (size > kPage) {
     return false;
   }
-  AppendEntry(block.columns, entry.restart, entry.lcp, suffix);
+  AppendEntry(block.columns, entry.restart, entry.lcp, suffix, true);
   block.coded = count + 1;
   block.size = size;
   block.head_skip = entry.head_skip;
   return true;
 }
 
-uint64_t BlockEncoder::Budget() const noexcept { return kPage * _pages; }
-
 uint64_t BlockEncoder::Seal(uint64_t records) {
   auto& block = _block;
   if (block.kind == BlockKind::VarFsst) {
     EncodeDeferred();
     block.size =
-      VarBytes(block.ends.size(), block.head_skip,
-               block.columns.suffixes.size(), records, ShapeOf(block.columns));
+      VarBytes(block.ends.size(), block.head_skip, block.columns.suffix_bytes,
+               records, ShapeOf(block.columns));
   }
   return block.size;
 }
 
 void BlockEncoder::Serialize(duckdb::WriteStream& out,
-                             bytes_view records) const {
+                             const BlockRecords& records) const {
   term_dict::Serialize(_block, records, out);
 }
 

@@ -116,13 +116,12 @@ std::string NumericTermValue(bytes_view term, const LogicalType& type) {
       return;
     }
     const auto value = nu::DecodeNumericTerm<T>(term);
-    if constexpr (std::is_same_v<T, __int128>) {
-      const auto huge = duckdb::hugeint_t::FromInt128(absl::int128{value});
-      out = K == LogicalTypeId::UUID ? duckdb::UUID::ToString(huge)
-            : decimal ? duckdb::Decimal::ToString(huge, width, scale)
-                      : huge.ToString();
-    } else if constexpr (std::is_same_v<T, unsigned __int128>) {
-      out = duckdb::uhugeint_t::FromUint128(absl::uint128{value}).ToString();
+    if constexpr (std::is_same_v<T, duckdb::hugeint_t>) {
+      out = K == LogicalTypeId::UUID ? duckdb::UUID::ToString(value)
+            : decimal ? duckdb::Decimal::ToString(value, width, scale)
+                      : value.ToString();
+    } else if constexpr (std::is_same_v<T, duckdb::uhugeint_t>) {
+      out = value.ToString();
     } else if constexpr (std::is_same_v<T, int32_t> ||
                          std::is_same_v<T, int64_t>) {
       out = decimal ? duckdb::Decimal::ToString(value, width, scale)

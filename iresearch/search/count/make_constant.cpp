@@ -196,9 +196,23 @@ class TermCount : public Root {
   bool _partial;
 };
 
-class SumOfMany : public Root {
+class AllCount : public Root {
  public:
-  explicit SumOfMany(std::vector<Root::ptr> parts) noexcept
+  explicit AllCount(doc_id_t count) noexcept
+    : _end{doc_limits::min() + count} {}
+
+  uint64_t Run(doc_id_t min, doc_id_t max) final {
+    const auto stop = std::min(max, _end);
+    return stop > min ? stop - min : 0;
+  }
+
+ private:
+  doc_id_t _end;
+};
+
+class Sum : public Root {
+ public:
+  explicit Sum(std::vector<Root::ptr> parts) noexcept
     : _parts{std::move(parts)} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
@@ -221,36 +235,6 @@ class SumOfMany : public Root {
   std::vector<Root::ptr> _parts;
 };
 
-class AllCount : public Root {
- public:
-  explicit AllCount(doc_id_t count) noexcept
-    : _end{doc_limits::min() + count} {}
-
-  uint64_t Run(doc_id_t min, doc_id_t max) final {
-    const auto stop = std::min(max, _end);
-    return stop > min ? stop - min : 0;
-  }
-
- private:
-  doc_id_t _end;
-};
-
-class Sum : public Root {
- public:
-  Sum(Root::ptr lhs, Root::ptr rhs) noexcept
-    : _lhs{std::move(lhs)}, _rhs{std::move(rhs)} {}
-
-  uint64_t Run(doc_id_t min, doc_id_t max) final {
-    return _lhs->Run(min, max) + _rhs->Run(min, max);
-  }
-
-  uint64_t Finish() final { return _lhs->Finish() + _rhs->Finish(); }
-
- private:
-  Root::ptr _lhs;
-  Root::ptr _rhs;
-};
-
 }  // namespace
 
 Root::ptr MakeAllCount(doc_id_t count) {
@@ -261,12 +245,16 @@ Root::ptr MakeTermCount(const detail::PostingClause& posting, bool partial) {
   return memory::make_managed<TermCount>(posting, partial);
 }
 
-Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs) {
-  return memory::make_managed<Sum>(std::move(lhs), std::move(rhs));
+Root::ptr MakeSum(std::vector<Root::ptr> parts) {
+  return memory::make_managed<Sum>(std::move(parts));
 }
 
-Root::ptr MakeSum(std::vector<Root::ptr> parts) {
-  return memory::make_managed<SumOfMany>(std::move(parts));
+Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs) {
+  std::vector<Root::ptr> parts;
+  parts.reserve(2);
+  parts.push_back(std::move(lhs));
+  parts.push_back(std::move(rhs));
+  return MakeSum(std::move(parts));
 }
 
 Root::ptr Family::MakePosting(const detail::PostingClause& posting,

@@ -21,23 +21,15 @@
 #include <absl/strings/str_cat.h>
 
 #include <iresearch/index/doc_removal.hpp>
-#include <iresearch/search/count/boolean_bitset.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/count/root.hpp>
-#include <iresearch/search/detail/bitset_build.hpp>
-#include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
-#include <iresearch/search/queries/multiterm_query.hpp>
-#include <iresearch/search/queries/term_query.hpp>
-#include <iresearch/utils/down_cast.hpp>
-#include <iresearch/utils/empty.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iterator>
 #include <memory>
-#include <optional>
 #include <vector>
 
 #include "filter_test_case_base.hpp"
@@ -162,16 +154,12 @@ class CountSingleValuedTest : public tests::IndexTestBase {
     });
   }
 
-  void CheckCount(const irs::Filter& filter, uint64_t expected,
-                  std::optional<bool> constant) {
+  void CheckCount(const irs::Filter& filter, uint64_t expected) {
     auto reader = open_reader();
     ASSERT_EQ(1, reader.size());
     const auto& segment = reader[0];
     auto query = irs::PrepareMasked(filter, segment, {});
     ASSERT_NE(nullptr, query);
-    if (constant) {
-      ASSERT_EQ(*constant, irs::count::IsConstant(*query));
-    }
 
     auto whole = query->PlanCount({});
     ASSERT_NE(nullptr, whole);
@@ -216,12 +204,12 @@ TEST_P(CountSingleValuedTest, ranges_count_from_term_statistics) {
   };
   for (const auto [lo, hi] : kRanges) {
     SCOPED_TRACE(absl::StrCat(lo, "..", hi));
-    CheckCount(*Range(kSingle, lo, hi), SingleIn(lo, hi), true);
+    CheckCount(*Range(kSingle, lo, hi), SingleIn(lo, hi));
   }
   for (const auto [lo, hi] :
        {std::pair{100, 2000}, std::pair{500, 2999}, std::pair{2998, 2999}}) {
     SCOPED_TRACE(absl::StrCat("multi ", lo, "..", hi));
-    CheckCount(*Range(kMulti, lo, hi), MultiIn(lo, hi), false);
+    CheckCount(*Range(kMulti, lo, hi), MultiIn(lo, hi));
   }
   CheckDocs(*Range(kUnique, 100, 110), 11);
 }
@@ -239,8 +227,7 @@ TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {
     filter.SetMinShouldMatch(1);
     CheckCount(filter, Rows([&](doc_id_t row) {
                  return absl::c_linear_search(kIn, SingleOf(row));
-               }),
-               true);
+               }));
   }
   {
     SCOPED_TRACE("repeated one-document term");
@@ -249,7 +236,7 @@ TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {
     filter.Add(Term(kUnique, 5), irs::Occur::Should);
     filter.Add(Term(kUnique, 9), irs::Occur::Should);
     filter.SetMinShouldMatch(1);
-    CheckCount(filter, 2, std::nullopt);
+    CheckCount(filter, 2);
   }
   {
     SCOPED_TRACE("range and a term inside it");
@@ -257,7 +244,7 @@ TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {
     filter.Add(Range(kSingle, 0, 3000), irs::Occur::Should);
     filter.Add(Term(kSingle, 5), irs::Occur::Should);
     filter.SetMinShouldMatch(1);
-    CheckCount(filter, SingleIn(0, 3000), false);
+    CheckCount(filter, SingleIn(0, 3000));
   }
   {
     SCOPED_TRACE("overlapping ranges");
@@ -265,7 +252,7 @@ TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {
     filter.Add(Range(kSingle, 0, 3000), irs::Occur::Should);
     filter.Add(Range(kSingle, 2000, 5000), irs::Occur::Should);
     filter.SetMinShouldMatch(1);
-    CheckCount(filter, SingleIn(0, 5000), false);
+    CheckCount(filter, SingleIn(0, 5000));
   }
   {
     SCOPED_TRACE("terms of a multi-valued field");
@@ -276,8 +263,7 @@ TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {
     ASSERT_NE(0, Rows([](doc_id_t row) { return HasBoth(row, 2100, 300); }));
     CheckCount(filter,
                MultiIn(2100, 2100) + MultiIn(300, 300) -
-                 Rows([](doc_id_t row) { return HasBoth(row, 2100, 300); }),
-               false);
+                 Rows([](doc_id_t row) { return HasBoth(row, 2100, 300); }));
   }
 }
 
@@ -288,21 +274,20 @@ TEST_P(CountSingleValuedTest, conjunctions_of_different_terms_are_empty) {
     irs::BooleanFilter filter;
     filter.Add(Term(kSingle, 5), irs::Occur::Must);
     filter.Add(Term(kSingle, 6), irs::Occur::Must);
-    CheckCount(filter, 0, true);
+    CheckCount(filter, 0);
   }
   {
     irs::BooleanFilter filter;
     filter.Add(Range(kSingle, 0, 3000), irs::Occur::Must);
     filter.Add(Range(kSingle, 2000, 5000), irs::Occur::Must);
-    CheckCount(filter, SingleIn(2000, 3000), std::nullopt);
+    CheckCount(filter, SingleIn(2000, 3000));
   }
   {
     irs::BooleanFilter filter;
     filter.Add(Term(kMulti, 2100), irs::Occur::Must);
     filter.Add(Term(kMulti, 300), irs::Occur::Must);
     CheckCount(filter,
-               Rows([](doc_id_t row) { return HasBoth(row, 2100, 300); }),
-               false);
+               Rows([](doc_id_t row) { return HasBoth(row, 2100, 300); }));
   }
 }
 
@@ -314,21 +299,21 @@ TEST_P(CountSingleValuedTest, negations_subtract_term_statistics) {
     irs::BooleanFilter filter;
     filter.Add(std::make_unique<irs::All>(), irs::Occur::Must);
     filter.Add(Range(kSingle, 1000, 2000), irs::Occur::MustNot);
-    CheckCount(filter, kRows - SingleIn(1000, 2000), true);
+    CheckCount(filter, kRows - SingleIn(1000, 2000));
   }
   {
     SCOPED_TRACE("dense range");
     irs::BooleanFilter filter;
     filter.Add(std::make_unique<irs::All>(), irs::Occur::Must);
     filter.Add(Range(kSingle, 1000, 8000), irs::Occur::MustNot);
-    CheckCount(filter, kRows - SingleIn(1000, 8000), std::nullopt);
+    CheckCount(filter, kRows - SingleIn(1000, 8000));
   }
   {
     SCOPED_TRACE("multi-valued range");
     irs::BooleanFilter filter;
     filter.Add(std::make_unique<irs::All>(), irs::Occur::Must);
     filter.Add(Range(kMulti, 100, 2000), irs::Occur::MustNot);
-    CheckCount(filter, kRows - MultiIn(100, 2000), false);
+    CheckCount(filter, kRows - MultiIn(100, 2000));
   }
   {
     SCOPED_TRACE("overlapping exclusions");
@@ -336,7 +321,7 @@ TEST_P(CountSingleValuedTest, negations_subtract_term_statistics) {
     filter.Add(std::make_unique<irs::All>(), irs::Occur::Must);
     filter.Add(Range(kSingle, 0, 3000), irs::Occur::MustNot);
     filter.Add(Term(kSingle, 5), irs::Occur::MustNot);
-    CheckCount(filter, kRows - SingleIn(0, 3000), false);
+    CheckCount(filter, kRows - SingleIn(0, 3000));
   }
 }
 
@@ -344,7 +329,7 @@ TEST_P(CountSingleValuedTest, deleted_documents_are_counted_out) {
   auto writer = open_writer(tests::kOmCreate);
   Build(*writer);
   Remove(*writer, 1000, 2999);
-  CheckCount(*Range(kSingle, 100, 4100), SingleIn(100, 4100), false);
+  CheckCount(*Range(kSingle, 100, 4100), SingleIn(100, 4100));
   irs::BooleanFilter filter;
   for (const auto value : {1, 2, 3, 5, 17}) {
     filter.Add(Term(kSingle, value), irs::Occur::Should);
@@ -354,8 +339,7 @@ TEST_P(CountSingleValuedTest, deleted_documents_are_counted_out) {
                const auto value = SingleOf(row);
                return value == 1 || value == 2 || value == 3 || value == 5 ||
                       value == 17;
-             }),
-             false);
+             }));
 }
 
 TEST_P(CountSingleValuedTest, dense_ranges_visit_the_documents_they_match) {
@@ -367,7 +351,7 @@ TEST_P(CountSingleValuedTest, dense_ranges_visit_the_documents_they_match) {
     for (const auto [lo, hi] : kRanges) {
       SCOPED_TRACE(absl::StrCat(lo, "..", hi));
       CheckDocs(*Range(kSingle, lo, hi), SingleIn(lo, hi));
-      CheckCount(*Range(kSingle, lo, hi), SingleIn(lo, hi), std::nullopt);
+      CheckCount(*Range(kSingle, lo, hi), SingleIn(lo, hi));
     }
   };
   check();
@@ -414,7 +398,7 @@ TEST_P(CountSingleValuedTest,
     ASSERT_NE(nullptr, query);
     EXPECT_EQ(kind, query->Kind());
     CheckDocs(*range, SingleIn(lo, kValues - 1));
-    CheckCount(*range, SingleIn(lo, kValues - 1), true);
+    CheckCount(*range, SingleIn(lo, kValues - 1));
   }
 }
 
@@ -426,27 +410,18 @@ TEST_P(CountSingleValuedTest, split_counts_fill_their_range_of_many_terms) {
   constexpr struct {
     int64_t lo;
     int64_t hi;
-    bool bitset;
   } kRanges[]{
-    {100, 109, false},
-    {1000, 1999, false},
-    {100, 1500, true},
+    {100, 109},
+    {1000, 1999},
+    {100, 1500},
   };
-  for (const auto& [lo, hi, bitset] : kRanges) {
+  for (const auto& [lo, hi] : kRanges) {
     SCOPED_TRACE(absl::StrCat(lo, "..", hi));
     auto query = irs::PrepareMasked(*Range(kMulti, lo, hi), reader[0], {});
     ASSERT_NE(nullptr, query);
     ASSERT_EQ(irs::QueryKind::Terms, query->Kind());
-    ASSERT_EQ(
-      bitset,
-      irs::utils::downCast<irs::MultiTermQuery>(*query).State().TermsSize() >=
-        irs::detail::kWindowWords);
     auto count = irs::count::MakeRoot(*query, {.span = 10000, .partial = true});
     ASSERT_NE(nullptr, count);
-    EXPECT_EQ(
-      bitset,
-      nullptr != dynamic_cast<irs::count::BooleanBitset<irs::utils::Empty>*>(
-                   count.get()));
     constexpr doc_id_t kBounds[]{
       irs::doc_limits::min(), 777, 9001, 16384, 20001, irs::doc_limits::eof()};
     uint64_t parts = 0;
@@ -455,91 +430,6 @@ TEST_P(CountSingleValuedTest, split_counts_fill_their_range_of_many_terms) {
     }
     EXPECT_EQ(MultiIn(lo, hi), parts + count->Finish());
   }
-}
-
-TEST_P(CountSingleValuedTest, bitset_fills_skip_what_earlier_clauses_emptied) {
-  auto writer = open_writer(tests::kOmCreate);
-  Build(*writer);
-  Remove(*writer, 2000, 2099);
-  auto reader = open_reader();
-  ASSERT_EQ(1, reader.size());
-  const auto& segment = reader[0];
-  const auto* const doc = irs::detail::SegmentDoc(segment);
-  ASSERT_NE(nullptr, doc);
-  const auto docs_count = static_cast<doc_id_t>(segment.docs_count());
-  std::vector<irs::Filter::ptr> filters;
-  std::vector<irs::QueryBuilder::ptr> queries;
-  const auto prepare = [&](irs::field_id field, int64_t lo,
-                           int64_t hi) -> const irs::QueryBuilder& {
-    const auto& filter = *filters.emplace_back(Range(field, lo, hi));
-    return *queries.emplace_back(filter.PrepareSegment(segment, {}));
-  };
-  const auto clauses = [&](irs::field_id field, int64_t lo, int64_t hi) {
-    const auto& query = prepare(field, lo, hi);
-    std::vector<irs::detail::PostingClause> out;
-    if (query.Kind() == irs::QueryKind::Term) {
-      out.emplace_back(irs::utils::downCast<irs::TermQuery>(query).State());
-      return out;
-    }
-    EXPECT_EQ(irs::QueryKind::Terms, query.Kind());
-    if (query.Kind() == irs::QueryKind::Terms) {
-      const auto& state =
-        irs::utils::downCast<irs::MultiTermQuery>(query).State();
-      for (const auto& entry : state.Terms()) {
-        out.emplace_back(irs::detail::ClauseOf(entry, state.Reader()));
-      }
-    }
-    return out;
-  };
-  const auto make = [&] {
-    irs::detail::BitsetBuckets buckets;
-    auto seed = clauses(kUnique, 0, 2999);
-    auto late = clauses(kUnique, 20000, 20999);
-    seed.insert(seed.end(), late.begin(), late.end());
-    buckets.must.push_back(std::move(seed));
-    buckets.must.push_back(clauses(kMulti, 0, 1499));
-    buckets.must.push_back(clauses(kParity, 0, 0));
-    buckets.must_not = clauses(kHead, 0, 0);
-    buckets.exclude_fills.push_back(
-      prepare(kSingle, 5000, 5999).PlanFill({}, irs::ScoreMergeType::Noop));
-    buckets.masked = &segment;
-    return buckets;
-  };
-  const auto expected = [&](doc_id_t d) {
-    const auto row = d - irs::doc_limits::min();
-    const auto single = SingleOf(row);
-    return _live[row] && (row < 3000 || (20000 <= row && row < 21000)) &&
-           absl::c_any_of(MultiOf(row), [](int64_t v) { return v < 1500; }) &&
-           row % 2 == 0 && row >= kHeadRows && (single < 5000 || single > 5999);
-  };
-  const auto check = [&](irs::detail::BitsetBuckets& buckets, doc_id_t min,
-                         doc_id_t max) {
-    SCOPED_TRACE(absl::StrCat(min, "..", max));
-    irs::detail::BitsetStorage bits{max - min};
-    irs::detail::FillBitset(buckets, *doc, docs_count, min, max, bits.Words());
-    uint64_t found = 0;
-    for (auto d = min; d != max; ++d) {
-      const auto offset = d - min;
-      const bool bit = ((bits.Words()[offset / 64] >> (offset % 64)) & 1) != 0;
-      EXPECT_EQ(expected(d), bit) << d;
-      found += bit;
-    }
-    return found;
-  };
-
-  const auto end = irs::doc_limits::min() + docs_count;
-  auto whole = make();
-  ASSERT_EQ(1, whole.must.back().size());
-  ASSERT_EQ(1, whole.must_not.size());
-  EXPECT_NE(0, check(whole, irs::doc_limits::min(), end));
-
-  auto split = make();
-  constexpr doc_id_t kParts[][2]{
-    {irs::doc_limits::min(), 500}, {9001, 16384}, {16384, 20001}};
-  for (const auto& [min, max] : kParts) {
-    check(split, min, max);
-  }
-  check(split, 20001, end);
 }
 
 INSTANTIATE_TEST_SUITE_P(

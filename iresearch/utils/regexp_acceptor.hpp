@@ -132,9 +132,7 @@ class RegexpAcceptor {
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
 
-  const ByteSet& RequiredBytes() const noexcept { return _required; }
-
-  const ByteSet& DeadBytes() const noexcept { return _dead_bytes; }
+  const KeyBytes& Bytes() const noexcept { return _bytes; }
 
   bool Finite() const noexcept { return _finite; }
 
@@ -259,8 +257,7 @@ class RegexpAcceptor {
   std::vector<ExemptKey> _exempt;
   bstring _infix;
   std::vector<bstring> _literals;
-  ByteSet _required;
-  ByteSet _dead_bytes;
+  KeyBytes _bytes;
   std::string _error;
   bool _finite{false};
   bool _text{true};

@@ -1101,7 +1101,7 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
     } else {
       _literals.clear();
     }
-    _required = RequiredBytesOf(re, 0);
+    _bytes.required = RequiredBytesOf(re, 0);
     _prog.reset(re->CompileToProg(max_mem));
     re->Decref();
     if (!_prog) {
@@ -1220,9 +1220,9 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
   }
 
   if (trees[0] || trees[1]) {
-    _required = RequiredBytesOf(trees[0] ? trees[0] : trees[1], 0);
+    _bytes.required = RequiredBytesOf(trees[0] ? trees[0] : trees[1], 0);
     if (trees[0] && trees[1]) {
-      KeepCommon(_required, RequiredBytesOf(trees[1], 0));
+      KeepCommon(_bytes.required, RequiredBytesOf(trees[1], 0));
     }
   }
 
@@ -1330,9 +1330,7 @@ void RegexpAcceptor::Setup() {
     if (absl::c_all_of(pending, [](const Row* row) {
           return row->built.load(std::memory_order_relaxed);
         })) {
-      _dead_bytes = DeadBytesLocked();
-    } else {
-      _dead_bytes.words.fill(~uint64_t{0});
+      _bytes.dead = DeadBytesLocked();
     }
   }
 

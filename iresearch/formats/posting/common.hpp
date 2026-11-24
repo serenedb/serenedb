@@ -49,20 +49,6 @@
 
 namespace irs {
 
-struct PostingFeatures {
-  PostingFeatures() = default;
-  explicit PostingFeatures(IndexFeatures features) noexcept
-    : freq{IsSubsetOf(IndexFeatures::Freq, features)},
-      pos{IsSubsetOf(IndexFeatures::Pos, features)},
-      offs{IsSubsetOf(IndexFeatures::Offs, features)},
-      vec{IsSubsetOf(IndexFeatures::Vec, features)} {}
-
-  bool freq = false;
-  bool pos = false;
-  bool offs = false;
-  bool vec = false;
-};
-
 struct RecordLayout {
   uint32_t follows;
   uint32_t payload;
@@ -147,16 +133,8 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
   }
 }
 
-static_assert(block_codec::kInSlack <= PostingMeta::kInlineSlack);
-
-inline bytes_view InlineInput(const PostingMeta& meta,
-                              PostingMeta::InlineBytes& copy) noexcept {
-  copy = meta.inline_bytes;
-  return {copy.data(), meta.inline_size + block_codec::kInSlack};
-}
-
 inline uint64_t DocExtent(const PostingMeta& meta) noexcept {
-  if (meta.inline_size != 0 || meta.docs_count <= 1) {
+  if (meta.docs_count <= 1) {
     return 0;
   }
   return meta.docs_count > doc_limits::kBlockSize

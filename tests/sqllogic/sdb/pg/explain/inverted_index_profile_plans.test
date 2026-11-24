@@ -561,62 +561,62 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ────────────────────────────────────────────────────────────────────────────────────────╮
-│ Index: plans_idx                                                                                    │
-│ Lookup: search                                                                                      │
-│ Score: bm25(k1=1.2, b=0.75)                                                                         │
-│ Top: 3, optimized                                                                                   │
-│ Projections: id                                                                                     │
-│                                                                                                     │
-├─ Index Filter Prepare ──────────────────────────────────────────────────────────────────────────────┤
-│                                                                                                     │
-│ Total: 0µs                                                                                          │
-│ Snapshot: 0µs                                                                                       │
-│ Segments: 1 of 1                                                                                    │
-│ Stats: 0µs                                                                                          │
-│                                                                                                     │
-│ ╭─ Or ───────────────────────────────╮                                                              │
-│ │ Estimated Matches: 100,000         │                                                              │
-│ │ Total: 0µs                         │                                                              │
-│ │ Time: 0µs                          │                                                              │
-│ ╰──────────────────┬─────────────────╯                                                              │
-│                    ├───────────────────────────────────╮                                            │
-│ ╭─ Phrase ─────────┴─────────────────╮  ╭─ Automaton ──┴─────────────╮                              │
-│ │ Field: body(string)                │  │ Field: body(string)        │                              │
-│ │ Parts:                             │  │ Pattern: %w%               │                              │
-│ │ Term:york(0, 0); Term:city(1, 1);  │  │ Posting Lists: 3           │                              │
-│ │ Posting Lists: 2                   │  │ Estimated Matches: 100,000 │                              │
-│ │ Estimated Matches: 27,368          │  │ Postings: 101,816          │                              │
-│ │ Postings: 91,430                   │  │ Time: 0µs                  │                              │
-│ │ Time: 0µs                          │  ╰────────────────────────────╯                              │
-│ ╰────────────────────────────────────╯                                                              │
-│                                                                                                     │
-├─ Index Filter Execute ──────────────────────────────────────────────────────────────────────────────┤
-│                                                                                                     │
-│ Total: 0µs                                                                                          │
-│ Rows: 39,718                                                                                        │
-│                                                                                                     │
-│ ╭─ top::PrunedDisjunction ─╮                                                                        │
-│ │ Plans: 1                 │                                                                        │
-│ │ Calls: 1                 │                                                                        │
-│ │ Plan: 0µs                │                                                                        │
-│ │ Total: 0µs               │                                                                        │
-│ │ Time: 0µs                │                                                                        │
-│ │ Rows: 39,718             │                                                                        │
-│ ╰─────────────┬────────────╯                                                                        │
-│               ├─────────────────────────────────┬───────────────────────────────────╮               │
-│ ╭─ top::PhraseUnionMember ─╮  ╭─ lead::Impl<lead::BooleanWindow> ─╮  ╭─ top::ConstantUnionMember ─╮ │
-│ │ Filter: Phrase           │  │ Filter: Automaton                 │  │ Filter: Automaton          │ │
-│ │ Plans: 1                 │  │ Plans: 1                          │  │ Plans: 1                   │ │
-│ │ Calls: 8                 │  │ Calls: 35,547                     │  │ Calls: 1,120               │ │
-│ │ Timed: 2                 │  │ Timed: 1,093                      │  │ Timed: 1,115               │ │
-│ │ Time: 0µs                │  │ Time: 0µs                         │  │ Time: 0µs                  │ │
-│ │ Rows: 36,473             │  │ Rows: 35,546                      │  │ Rows: 38,869               │ │
-│ ╰──────────────────────────╯  ╰───────────────────────────────────╯  ╰────────────────────────────╯ │
-│                                                                                                     │
-├─────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 3 rows                                                                                          0µs │
-╰─────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────────────────────────────────────╮
+│ Index: plans_idx                                                       │
+│ Lookup: search                                                         │
+│ Score: bm25(k1=1.2, b=0.75)                                            │
+│ Top: 3, optimized                                                      │
+│ Projections: id                                                        │
+│                                                                        │
+├─ Index Filter Prepare ─────────────────────────────────────────────────┤
+│                                                                        │
+│ Total: 0µs                                                             │
+│ Snapshot: 0µs                                                          │
+│ Segments: 1 of 1                                                       │
+│ Stats: 0µs                                                             │
+│                                                                        │
+│ ╭─ Or ───────────────────────────────╮                                 │
+│ │ Estimated Matches: 100,000         │                                 │
+│ │ Total: 0µs                         │                                 │
+│ │ Time: 0µs                          │                                 │
+│ ╰──────────────────┬─────────────────╯                                 │
+│                    ├───────────────────────────────────╮               │
+│ ╭─ Phrase ─────────┴─────────────────╮  ╭─ Automaton ──┴─────────────╮ │
+│ │ Field: body(string)                │  │ Field: body(string)        │ │
+│ │ Parts:                             │  │ Pattern: %w%               │ │
+│ │ Term:york(0, 0); Term:city(1, 1);  │  │ Posting Lists: 3           │ │
+│ │ Posting Lists: 2                   │  │ Estimated Matches: 100,000 │ │
+│ │ Estimated Matches: 27,368          │  │ Postings: 101,816          │ │
+│ │ Postings: 91,430                   │  │ Time: 0µs                  │ │
+│ │ Time: 0µs                          │  ╰────────────────────────────╯ │
+│ ╰────────────────────────────────────╯                                 │
+│                                                                        │
+├─ Index Filter Execute ─────────────────────────────────────────────────┤
+│                                                                        │
+│ Total: 0µs                                                             │
+│ Rows: 39,718                                                           │
+│                                                                        │
+│ ╭─ top::PrunedDisjunction ─╮                                           │
+│ │ Plans: 1                 │                                           │
+│ │ Calls: 1                 │                                           │
+│ │ Plan: 0µs                │                                           │
+│ │ Total: 0µs               │                                           │
+│ │ Time: 0µs                │                                           │
+│ │ Rows: 39,718             │                                           │
+│ ╰─────────────┬────────────╯                                           │
+│               ├──────────────────────────────╮                         │
+│ ╭─ top::PhraseUnionMember ─╮  ╭─ top::ConstantUnionMember ─╮           │
+│ │ Filter: Phrase           │  │ Filter: Automaton          │           │
+│ │ Plans: 1                 │  │ Plans: 1                   │           │
+│ │ Calls: 8                 │  │ Calls: 1,120               │           │
+│ │ Timed: 2                 │  │ Timed: 1,115               │           │
+│ │ Time: 0µs                │  │ Time: 0µs                  │           │
+│ │ Rows: 36,473             │  │ Rows: 38,869               │           │
+│ ╰──────────────────────────╯  ╰────────────────────────────╯           │
+│                                                                        │
+├────────────────────────────────────────────────────────────────────────┤
+│ 3 rows                                                             0µs │
+╰────────────────────────────────────────────────────────────────────────╯
 
 
 # Next to a word without score bounds (the column keeps no norms), the pattern

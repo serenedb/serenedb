@@ -33,6 +33,7 @@
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 
 namespace irs::term_dict {
@@ -42,13 +43,10 @@ inline constexpr uint32_t kMaxRecordBits = 57;
 
 inline constexpr byte_type kRunSingles = 1;
 inline constexpr byte_type kRunMultis = 2;
-inline constexpr byte_type kRunInline = 4;
-inline constexpr byte_type kRunStored = 8;
-inline constexpr byte_type kRunKinds =
-  kRunSingles | kRunMultis | kRunInline | kRunStored;
+inline constexpr byte_type kRunKinds = kRunSingles | kRunMultis;
 
-constexpr uint32_t PositionValues(const PostingFeatures& features) noexcept {
-  return features.offs ? 2 : 1;
+constexpr uint32_t PositionValues(IndexFeatures features) noexcept {
+  return IsSubsetOf(IndexFeatures::Offs, features) ? 2 : 1;
 }
 
 struct Packed {
@@ -127,22 +125,11 @@ struct RunView {
   bool Multi(uint32_t i) const noexcept {
     return multi_bits ? BitAt(multi_bits, i) : multis == count;
   }
-  uint32_t InlineRank(uint32_t multi) const noexcept {
-    return inline_bits         ? RankAt(inline_bits, multi)
-           : inlines == multis ? multi
-                               : 0;
-  }
-  bool Inline(uint32_t multi) const noexcept {
-    return inline_bits ? BitAt(inline_bits, multi) : inlines == multis;
-  }
 
   const byte_type* multi_bits = nullptr;
-  const byte_type* inline_bits = nullptr;
   Packed singles;
   Packed docs;
   Packed excess;
-  Packed sizes;
-  Packed inline_anchors;
   Packed starts;
   Packed freq_anchors;
   Packed vec_starts;
@@ -151,18 +138,16 @@ struct RunView {
   Sparse crossings;
   Sparse extents;
   uint64_t single_base = 0;
-  const byte_type* inline_area = nullptr;
   uint64_t start_base = 0;
   uint64_t pos_start = 0;
   uint64_t pay_start = 0;
   uint64_t vec_base = 0;
   uint32_t count = 0;
   uint32_t multis = 0;
-  uint32_t inlines = 0;
   uint32_t pos_offset = 0;
 };
 
-RunView ParseRun(const byte_type* p, PostingFeatures features);
+RunView ParseRun(const byte_type* p, IndexFeatures features);
 
 class RecordDecoder {
  public:
@@ -171,30 +156,19 @@ class RecordDecoder {
 
   void Reset(const byte_type* run) { _view = ParseRun(run, _features); }
 
-  const byte_type* InlineData() const noexcept {
-    return _view.inline_area + _bytes;
-  }
-
   void Seek(uint32_t i, PostingMeta& meta) {
     if (i >= _view.count) [[unlikely]] {
       Corrupted("posting record");
     }
     _i = i;
     _multi = _view.MultiRank(i);
-    _inline = _view.InlineRank(_multi);
-    if (_features.pos) {
+    if (IsSubsetOf(IndexFeatures::Pos, _features)) {
       const uint32_t anchor = i / kRecordAnchor;
       const uint32_t from = anchor * kRecordAnchor;
       const uint32_t multi = _view.MultiRank(from);
       _freq = (anchor == 0 ? 0 : _view.freq_anchors.At(anchor - 1)) +
               (i - from) + (_multi - multi) + _view.docs.Sum(multi, _multi) +
               _view.excess.Sum(from, i);
-    }
-    if (_view.inlines != 0) {
-      const uint32_t anchor = _inline / kRecordAnchor;
-      const uint32_t from = anchor * kRecordAnchor;
-      _bytes = (anchor == 0 ? 0 : _view.inline_anchors.At(anchor - 1)) +
-               (_inline - from) + _view.sizes.Sum(from, _inline);
     }
     Decode(meta);
   }
@@ -204,9 +178,7 @@ class RecordDecoder {
       Corrupted("posting record");
     }
     _freq += _last_freq;
-    _bytes += _size;
     _multi += uint32_t{_was_multi};
-    _inline += uint32_t{_size != 0};
     ++_i;
     Decode(meta);
   }
@@ -216,40 +188,33 @@ class RecordDecoder {
     const auto& view = _view;
     meta.clear();
     _was_multi = view.Multi(_i);
-    _size = 0;
     if (_was_multi) {
       meta.docs_count = static_cast<uint32_t>(view.docs.At(_multi)) + 2;
-      if (view.Inline(_multi)) {
-        _size = static_cast<uint32_t>(view.sizes.At(_inline)) + 1;
-        meta.inline_size = static_cast<uint8_t>(_size);
-      } else {
-        const uint32_t stored = _multi - _inline;
-        meta.doc_start = view.start_base + view.starts.At(stored);
-        if (meta.docs_count > doc_limits::kBlockSize) {
-          const uint32_t j = view.big.Find(stored);
-          if (j == view.big.count) [[unlikely]] {
-            Corrupted("posting record");
-          }
-          meta.doc_delta = static_cast<uint32_t>(view.big.values[0].At(j));
+      meta.doc_start = view.start_base + view.starts.At(_multi);
+      if (meta.docs_count > doc_limits::kBlockSize) {
+        const uint32_t j = view.big.Find(_multi);
+        if (j == view.big.count) [[unlikely]] {
+          Corrupted("posting record");
         }
+        meta.doc_delta = static_cast<uint32_t>(view.big.values[0].At(j));
       }
     } else {
       meta.docs_count = 1;
       meta.doc_delta =
         static_cast<uint32_t>(view.single_base + view.singles.At(_i - _multi));
     }
-    if (_features.freq) {
+    if (IsSubsetOf(IndexFeatures::Freq, _features)) {
       meta.freq = meta.docs_count + static_cast<uint32_t>(view.excess.At(_i));
     }
     _last_freq = meta.freq;
-    if (_features.pos) {
+    if (IsSubsetOf(IndexFeatures::Pos, _features)) {
       const uint64_t at = view.pos_offset + _freq;
       meta.pos_offset = static_cast<uint16_t>(at % PosGroup::kPositions);
       meta.pos_start = view.pos_start;
       meta.pay_start = view.pay_start;
       if (const uint32_t up_to = view.crossings.UpTo(_i); up_to != 0) {
         meta.pos_start += view.crossings.values[0].At(up_to - 1);
-        if (_features.offs) {
+        if (IsSubsetOf(IndexFeatures::Offs, _features)) {
           meta.pay_start += view.crossings.values[1].At(up_to - 1);
         }
       }
@@ -259,24 +224,21 @@ class RecordDecoder {
           Corrupted("posting record");
         }
         meta.pos_extent = static_cast<uint32_t>(view.extents.values[0].At(j));
-        if (_features.offs) {
+        if (IsSubsetOf(IndexFeatures::Offs, _features)) {
           meta.pay_extent = static_cast<uint32_t>(view.extents.values[1].At(j));
         }
       }
-    } else if (_features.vec) {
+    } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
       meta.pay_start = view.vec_base + view.vec_starts.At(_i);
       meta.pos_offset = static_cast<uint16_t>(view.lanes.At(_i));
     }
   }
 
-  PostingFeatures _features;
+  IndexFeatures _features;
   RunView _view;
   uint64_t _freq = 0;
-  uint64_t _bytes = 0;
   uint32_t _i = 0;
   uint32_t _multi = 0;
-  uint32_t _inline = 0;
-  uint32_t _size = 0;
   uint32_t _last_freq = 0;
   bool _was_multi = false;
 };
@@ -323,9 +285,6 @@ class RecordRun {
     SparseStats extents;
     uint64_t docs = 0;
     uint64_t excess = 0;
-    uint64_t sizes = 0;
-    uint64_t inline_bytes = 0;
-    uint64_t inline_anchor = 0;
     uint64_t pos_start = 0;
     uint64_t pay_start = 0;
     uint64_t freq = 0;
@@ -334,19 +293,17 @@ class RecordRun {
     uint64_t lanes = 0;
     uint32_t count = 0;
     uint32_t multis = 0;
-    uint32_t inlines = 0;
     uint32_t pos_offset = 0;
   };
 
   void Start(IndexFeatures features) noexcept {
-    _features = PostingFeatures{features};
+    _features = features;
     Clear();
   }
 
   void Clear() noexcept;
   bool Empty() const noexcept { return _stats.count == 0; }
   uint64_t Bytes() const noexcept { return SizeOf(_stats); }
-  uint64_t InlineBytes() const noexcept { return _stats.inline_bytes; }
   Stats Stage(const PostingMeta& meta) const;
   uint64_t SizeOf(const Stats& stats) const noexcept;
   void Commit(const PostingMeta& meta, const Stats& staged);
@@ -374,16 +331,12 @@ class RecordRun {
   void WriteSparse(duckdb::WriteStream& out, const SparseStats& stats,
                    const SparseColumn& column, uint32_t values) const;
 
-  PostingFeatures _features;
+  IndexFeatures _features = IndexFeatures::None;
   Stats _stats;
   std::vector<uint8_t> _multi_bits;
-  std::vector<uint8_t> _inline_bits;
   std::vector<uint64_t> _singles;
   std::vector<uint64_t> _docs;
   std::vector<uint64_t> _excess;
-  std::vector<uint64_t> _sizes;
-  std::vector<uint64_t> _inline_anchors;
-  bstring _inline;
   std::vector<uint64_t> _starts;
   std::vector<uint64_t> _freq_anchors;
   std::vector<uint64_t> _vec_starts;
@@ -391,6 +344,58 @@ class RecordRun {
   SparseColumn _big;
   SparseColumn _crossings;
   SparseColumn _extents;
+};
+
+class BlockRecords {
+ public:
+  BlockRecords() { _runs.emplace_back(); }
+
+  RecordRun& Open() noexcept { return _runs[_closed]; }
+
+  void Start(IndexFeatures features) noexcept {
+    _features = features;
+    Open().Start(features);
+  }
+
+  void Close() {
+    auto& run = Open();
+    if (run.Empty()) {
+      return;
+    }
+    _bytes += run.Bytes();
+    if (++_closed == _runs.size()) {
+      _runs.emplace_back();
+    }
+    _runs[_closed].Start(_features);
+  }
+
+  void Write(duckdb::WriteStream& out) const {
+    for (size_t i = 0; i != _closed; ++i) {
+      _runs[i].Write(out);
+    }
+  }
+
+  void Restart() noexcept {
+    SDB_ASSERT(Open().Empty());
+    _closed = 0;
+    _bytes = 0;
+    Open().Start(_features);
+  }
+
+  void Clear() noexcept {
+    _runs.erase(_runs.begin() + 1, _runs.end());
+    _runs.front().Clear();
+    _closed = 0;
+    _bytes = 0;
+  }
+
+  uint64_t Bytes() const noexcept { return _bytes; }
+
+ private:
+  std::vector<RecordRun> _runs;
+  size_t _closed = 0;
+  uint64_t _bytes = 0;
+  IndexFeatures _features = IndexFeatures::None;
 };
 
 }  // namespace irs::term_dict

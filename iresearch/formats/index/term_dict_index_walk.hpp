@@ -174,13 +174,7 @@ Branch NextBranch(const A& a, const PrefixTrie* trie, uint32_t node,
 
 template<typename A>
 bool UsesPrefixes(const DictIndex& index, const A& a) noexcept {
-  if (index.Trie().Empty()) {
-    return false;
-  }
-  if constexpr (requires { a.DeadBytes(); }) {
-    return index.MayHoldAny(a.DeadBytes());
-  }
-  return true;
+  return !index.Trie().Empty() && index.MayHoldAny(a.Bytes().dead);
 }
 
 template<typename A>
@@ -371,7 +365,7 @@ class BlockFilter {
   bool Explores() const noexcept { return _trie && !_index->Small(); }
   bool Holds(uint32_t block) noexcept {
     if (!_needed) [[unlikely]] {
-      _need = _index->NeedOf(_a->RequiredBytes());
+      _need = _index->NeedOf(_a->Bytes().required);
       _needed = true;
     }
     return _index->Holds(block, _need);

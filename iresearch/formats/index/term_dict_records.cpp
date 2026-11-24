@@ -40,16 +40,14 @@ uint64_t Anchors(uint64_t count) noexcept {
 
 }  // namespace
 
-RunView ParseRun(const byte_type* p, PostingFeatures features) {
+RunView ParseRun(const byte_type* p, IndexFeatures features) {
   RunView view;
   view.count = vread<uint32_t>(p);
   const byte_type shape = *p++;
   const bool singles = (shape & kRunSingles) != 0;
   const bool multis = (shape & kRunMultis) != 0;
-  const bool inlines = (shape & kRunInline) != 0;
-  const bool stored = (shape & kRunStored) != 0;
-  if (view.count == 0 || (shape & ~kRunKinds) != 0 || (!singles && !multis) ||
-      multis != (inlines || stored)) [[unlikely]] {
+  if (view.count == 0 || (shape & ~kRunKinds) != 0 || (!singles && !multis))
+    [[unlikely]] {
     Corrupted("posting run");
   }
   const auto bits = [&] {
@@ -75,35 +73,27 @@ RunView ParseRun(const byte_type* p, PostingFeatures features) {
   if (multis) {
     view.docs.bits = bits();
   }
-  if (features.freq) {
+  if (IsSubsetOf(IndexFeatures::Freq, features)) {
     view.excess.bits = bits();
   }
-  if (inlines) {
-    view.sizes.bits = bits();
-    if (view.sizes.bits > std::bit_width(PostingMeta::kInlineBytes - 1))
-      [[unlikely]] {
-      Corrupted("posting run width");
-    }
-    view.inline_anchors.bits = bits();
-  }
-  if (stored) {
+  if (multis) {
     view.start_base = vread<uint64_t>(p);
     view.starts.bits = bits();
     sparse(view.big, 1);
   }
-  if (features.pos) {
+  if (IsSubsetOf(IndexFeatures::Pos, features)) {
     view.pos_start = vread<uint64_t>(p);
     view.pos_offset = vread<uint32_t>(p);
     if (view.pos_offset >= PosGroup::kPositions) [[unlikely]] {
       Corrupted("posting run position");
     }
-    if (features.offs) {
+    if (IsSubsetOf(IndexFeatures::Offs, features)) {
       view.pay_start = vread<uint64_t>(p);
     }
     view.freq_anchors.bits = bits();
     sparse(view.crossings, PositionValues(features));
     sparse(view.extents, PositionValues(features));
-  } else if (features.vec) {
+  } else if (IsSubsetOf(IndexFeatures::Vec, features)) {
     view.vec_base = vread<uint64_t>(p);
     view.vec_starts.bits = bits();
     view.lanes.bits = bits();
@@ -120,17 +110,6 @@ RunView ParseRun(const byte_type* p, PostingFeatures features) {
   } else {
     view.multis = multis ? count : 0;
   }
-  if (inlines && stored) {
-    view.inline_bits = p;
-    p += PackedBytes(view.multis, 1);
-    view.inlines = RankAt(view.inline_bits, view.multis);
-    if (view.inlines == 0 || view.inlines == view.multis) [[unlikely]] {
-      Corrupted("posting run kinds");
-    }
-  } else {
-    view.inlines = inlines ? view.multis : 0;
-  }
-  const uint32_t stored_count = view.multis - view.inlines;
   const auto column = [&](Packed& packed, uint64_t size) {
     packed.data = p;
     p += PackedBytes(size, packed.bits);
@@ -147,33 +126,26 @@ RunView ParseRun(const byte_type* p, PostingFeatures features) {
   };
   column(view.singles, count - view.multis);
   column(view.docs, view.multis);
-  column(view.excess, features.freq ? count : 0);
-  column(view.sizes, view.inlines);
-  column(view.inline_anchors, Anchors(view.inlines));
-  column(view.starts, stored_count);
-  sparse_data(view.big, stored_count, 1);
-  if (features.pos) {
+  column(view.excess, IsSubsetOf(IndexFeatures::Freq, features) ? count : 0);
+  column(view.starts, view.multis);
+  sparse_data(view.big, view.multis, 1);
+  if (IsSubsetOf(IndexFeatures::Pos, features)) {
     column(view.freq_anchors, Anchors(count));
     sparse_data(view.crossings, count, PositionValues(features));
     sparse_data(view.extents, count, PositionValues(features));
-  } else if (features.vec) {
+  } else if (IsSubsetOf(IndexFeatures::Vec, features)) {
     column(view.vec_starts, count);
     column(view.lanes, count);
   }
-  view.inline_area = p;
   return view;
 }
 
 void RecordRun::Clear() noexcept {
   _stats = {};
   _multi_bits.clear();
-  _inline_bits.clear();
   _singles.clear();
   _docs.clear();
   _excess.clear();
-  _sizes.clear();
-  _inline_anchors.clear();
-  _inline.clear();
   _starts.clear();
   _freq_anchors.clear();
   _vec_starts.clear();
@@ -188,31 +160,20 @@ RecordRun::Stats RecordRun::Stage(const PostingMeta& meta) const {
   Stats s = _stats;
   const uint32_t i = s.count++;
   if (meta.docs_count == 1) {
-    SDB_ASSERT(meta.inline_size == 0);
     s.singles.Add(meta.doc_delta);
   } else {
-    const uint32_t stored = s.multis - s.inlines;
-    ++s.multis;
+    const uint32_t multi = s.multis++;
     s.docs = std::max<uint64_t>(s.docs, meta.docs_count - 2);
-    if (meta.inline_size != 0) {
-      if (s.inlines != 0 && s.inlines % kRecordAnchor == 0) {
-        s.inline_anchor = s.inline_bytes;
-      }
-      ++s.inlines;
-      s.sizes = std::max<uint64_t>(s.sizes, meta.inline_size - 1);
-      s.inline_bytes += meta.inline_size;
-    } else {
-      s.starts.Add(meta.doc_start);
-      if (meta.docs_count > doc_limits::kBlockSize) {
-        s.big.Add(stored, meta.doc_delta, 0);
-      }
+    s.starts.Add(meta.doc_start);
+    if (meta.docs_count > doc_limits::kBlockSize) {
+      s.big.Add(multi, meta.doc_delta, 0);
     }
   }
-  if (_features.freq) {
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
     SDB_ASSERT(meta.freq >= meta.docs_count);
     s.excess = std::max<uint64_t>(s.excess, meta.freq - meta.docs_count);
   }
-  if (_features.pos) {
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
     if (i == 0) {
       s.pos_start = meta.pos_start;
       s.pay_start = meta.pay_start;
@@ -229,7 +190,9 @@ RecordRun::Stats RecordRun::Stage(const PostingMeta& meta) const {
         "term's");
       if (crossed) {
         s.crossings.Add(i, meta.pos_start - s.pos_start,
-                        _features.offs ? meta.pay_start - s.pay_start : 0);
+                        IsSubsetOf(IndexFeatures::Offs, _features)
+                          ? meta.pay_start - s.pay_start
+                          : 0);
       }
       s.last_group = group;
     }
@@ -238,9 +201,11 @@ RecordRun::Stats RecordRun::Stage(const PostingMeta& meta) const {
     }
     s.freq += meta.freq;
     if (meta.freq > pos_limits::kBlockSize) {
-      s.extents.Add(i, meta.pos_extent, _features.offs ? meta.pay_extent : 0);
+      s.extents.Add(
+        i, meta.pos_extent,
+        IsSubsetOf(IndexFeatures::Offs, _features) ? meta.pay_extent : 0);
     }
-  } else if (_features.vec) {
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
     s.vec_starts.Add(meta.pay_start);
     s.lanes = std::max<uint64_t>(s.lanes, meta.pos_offset);
   }
@@ -258,36 +223,30 @@ void RecordRun::Commit(const PostingMeta& meta, const Stats& staged) {
     _singles.push_back(meta.doc_delta);
   } else {
     _docs.push_back(meta.docs_count - 2);
-    const bool inlined = meta.inline_size != 0;
-    _inline_bits.push_back(uint8_t{inlined});
-    if (inlined) {
-      _sizes.push_back(meta.inline_size - 1);
-      _inline.append(meta.Inline());
-      if (old.inlines != 0 && old.inlines % kRecordAnchor == 0) {
-        _inline_anchors.push_back(old.inline_bytes);
-      }
-    } else {
-      _starts.push_back(meta.doc_start);
-      if (s.big.count != old.big.count) {
-        _big.Add(s.big.last_key, meta.doc_delta, 0);
-      }
+    _starts.push_back(meta.doc_start);
+    if (s.big.count != old.big.count) {
+      _big.Add(s.big.last_key, meta.doc_delta, 0);
     }
   }
-  if (_features.freq) {
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
     _excess.push_back(meta.freq - meta.docs_count);
   }
-  if (_features.pos) {
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
     if (i != 0 && i % kRecordAnchor == 0) {
       _freq_anchors.push_back(old.freq);
     }
     if (s.crossings.count != old.crossings.count) {
       _crossings.Add(i, meta.pos_start - s.pos_start,
-                     _features.offs ? meta.pay_start - s.pay_start : 0);
+                     IsSubsetOf(IndexFeatures::Offs, _features)
+                       ? meta.pay_start - s.pay_start
+                       : 0);
     }
     if (s.extents.count != old.extents.count) {
-      _extents.Add(i, meta.pos_extent, _features.offs ? meta.pay_extent : 0);
+      _extents.Add(
+        i, meta.pos_extent,
+        IsSubsetOf(IndexFeatures::Offs, _features) ? meta.pay_extent : 0);
     }
-  } else if (_features.vec) {
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
     _vec_starts.push_back(meta.pay_start);
     _lanes.push_back(meta.pos_offset);
   }
@@ -309,39 +268,28 @@ uint64_t RecordRun::SparseBytes(const SparseStats& stats,
 uint64_t RecordRun::SizeOf(const Stats& s) const noexcept {
   SDB_ASSERT(s.count != 0);
   const uint32_t singles = s.count - s.multis;
-  const uint32_t stored = s.multis - s.inlines;
   uint64_t size = VSize(s.count) + 1;
   if (singles != 0) {
     size += VSize(s.singles.min) + 1 + PackedBytes(singles, s.singles.Bits());
   }
   if (s.multis != 0) {
-    size += 1 + PackedBytes(s.multis, Bits(s.docs));
+    size += 1 + PackedBytes(s.multis, Bits(s.docs)) + VSize(s.starts.min) + 1 +
+            PackedBytes(s.multis, s.starts.Bits()) + SparseBytes(s.big, 1);
   }
   if (singles != 0 && s.multis != 0) {
     size += PackedBytes(s.count, 1);
   }
-  if (_features.freq) {
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
     size += 1 + PackedBytes(s.count, Bits(s.excess));
   }
-  if (s.inlines != 0) {
-    size += 2 + PackedBytes(s.inlines, Bits(s.sizes)) +
-            PackedBytes(Anchors(s.inlines), Bits(s.inline_anchor)) +
-            s.inline_bytes;
-  }
-  if (s.inlines != 0 && stored != 0) {
-    size += PackedBytes(s.multis, 1);
-  }
-  if (stored != 0) {
-    size += VSize(s.starts.min) + 1 + PackedBytes(stored, s.starts.Bits()) +
-            SparseBytes(s.big, 1);
-  }
-  if (_features.pos) {
-    size += VSize(s.pos_start) + VSize(s.pos_offset) +
-            (_features.offs ? VSize(s.pay_start) : 0) + 1 +
-            PackedBytes(Anchors(s.count), Bits(s.freq_anchor)) +
-            SparseBytes(s.crossings, PositionValues(_features)) +
-            SparseBytes(s.extents, PositionValues(_features));
-  } else if (_features.vec) {
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
+    size +=
+      VSize(s.pos_start) + VSize(s.pos_offset) +
+      (IsSubsetOf(IndexFeatures::Offs, _features) ? VSize(s.pay_start) : 0) +
+      1 + PackedBytes(Anchors(s.count), Bits(s.freq_anchor)) +
+      SparseBytes(s.crossings, PositionValues(_features)) +
+      SparseBytes(s.extents, PositionValues(_features));
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
     size += VSize(s.vec_starts.min) + 2 +
             PackedBytes(s.count, s.vec_starts.Bits()) +
             PackedBytes(s.count, Bits(s.lanes));
@@ -364,7 +312,6 @@ void RecordRun::Write(duckdb::WriteStream& out) const {
   const auto& s = _stats;
   SDB_ASSERT(s.count != 0);
   const uint32_t singles = s.count - s.multis;
-  const uint32_t stored = s.multis - s.inlines;
   const uint32_t extras = PositionValues(_features);
   const auto sparse_header = [&](const SparseStats& stats, uint32_t values) {
     out.WriteVarint<uint32_t>(stats.count);
@@ -378,8 +325,7 @@ void RecordRun::Write(duckdb::WriteStream& out) const {
 
   out.WriteVarint<uint32_t>(s.count);
   out.Write<byte_type>(static_cast<byte_type>(
-    (singles != 0 ? kRunSingles : 0) | (s.multis != 0 ? kRunMultis : 0) |
-    (s.inlines != 0 ? kRunInline : 0) | (stored != 0 ? kRunStored : 0)));
+    (singles != 0 ? kRunSingles : 0) | (s.multis != 0 ? kRunMultis : 0)));
   if (singles != 0) {
     out.WriteVarint<uint64_t>(s.singles.min);
     out.Write<byte_type>(static_cast<byte_type>(s.singles.Bits()));
@@ -387,28 +333,24 @@ void RecordRun::Write(duckdb::WriteStream& out) const {
   if (s.multis != 0) {
     out.Write<byte_type>(static_cast<byte_type>(Bits(s.docs)));
   }
-  if (_features.freq) {
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
     out.Write<byte_type>(static_cast<byte_type>(Bits(s.excess)));
   }
-  if (s.inlines != 0) {
-    out.Write<byte_type>(static_cast<byte_type>(Bits(s.sizes)));
-    out.Write<byte_type>(static_cast<byte_type>(Bits(s.inline_anchor)));
-  }
-  if (stored != 0) {
+  if (s.multis != 0) {
     out.WriteVarint<uint64_t>(s.starts.min);
     out.Write<byte_type>(static_cast<byte_type>(s.starts.Bits()));
     sparse_header(s.big, 1);
   }
-  if (_features.pos) {
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
     out.WriteVarint<uint64_t>(s.pos_start);
     out.WriteVarint<uint32_t>(s.pos_offset);
-    if (_features.offs) {
+    if (IsSubsetOf(IndexFeatures::Offs, _features)) {
       out.WriteVarint<uint64_t>(s.pay_start);
     }
     out.Write<byte_type>(static_cast<byte_type>(Bits(s.freq_anchor)));
     sparse_header(s.crossings, extras);
     sparse_header(s.extents, extras);
-  } else if (_features.vec) {
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
     out.WriteVarint<uint64_t>(s.vec_starts.min);
     out.Write<byte_type>(static_cast<byte_type>(s.vec_starts.Bits()));
     out.Write<byte_type>(static_cast<byte_type>(Bits(s.lanes)));
@@ -417,37 +359,28 @@ void RecordRun::Write(duckdb::WriteStream& out) const {
   if (singles != 0 && s.multis != 0) {
     WritePacked(out, s.count, 1, [&](uint64_t j) { return _multi_bits[j]; });
   }
-  if (s.inlines != 0 && stored != 0) {
-    WritePacked(out, s.multis, 1, [&](uint64_t j) { return _inline_bits[j]; });
-  }
   WritePacked(out, singles, s.singles.Bits(),
               [&](uint64_t j) { return _singles[j] - s.singles.min; });
   WritePacked(out, s.multis, Bits(s.docs),
               [&](uint64_t j) { return _docs[j]; });
-  if (_features.freq) {
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
     WritePacked(out, s.count, Bits(s.excess),
                 [&](uint64_t j) { return _excess[j]; });
   }
-  WritePacked(out, s.inlines, Bits(s.sizes),
-              [&](uint64_t j) { return _sizes[j]; });
-  WritePacked(out, _inline_anchors.size(), Bits(s.inline_anchor),
-              [&](uint64_t j) { return _inline_anchors[j]; });
-  WritePacked(out, stored, s.starts.Bits(),
+  WritePacked(out, s.multis, s.starts.Bits(),
               [&](uint64_t j) { return _starts[j] - s.starts.min; });
   WriteSparse(out, s.big, _big, 1);
-  if (_features.pos) {
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
     WritePacked(out, _freq_anchors.size(), Bits(s.freq_anchor),
                 [&](uint64_t j) { return _freq_anchors[j]; });
     WriteSparse(out, s.crossings, _crossings, extras);
     WriteSparse(out, s.extents, _extents, extras);
-  } else if (_features.vec) {
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
     WritePacked(out, s.count, s.vec_starts.Bits(),
                 [&](uint64_t j) { return _vec_starts[j] - s.vec_starts.min; });
     WritePacked(out, s.count, Bits(s.lanes),
                 [&](uint64_t j) { return _lanes[j]; });
   }
-  SDB_ASSERT(_inline.size() == s.inline_bytes);
-  out.WriteData(_inline.data(), _inline.size());
 }
 
 }  // namespace irs::term_dict

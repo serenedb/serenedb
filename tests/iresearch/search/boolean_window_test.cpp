@@ -18,20 +18,24 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
 #include <bit>
-#include <iresearch/search/count/make.hpp>
 #include <iresearch/search/count/root.hpp>
+#include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/detail/table_filter.hpp>
 #include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/lead/posting_docs.hpp>
+#include <iresearch/search/lead/union_docs.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
+#include <iresearch/utils/dispatch.hpp>
 #include <iterator>
 #include <memory>
 #include <span>
@@ -465,17 +469,6 @@ TEST_P(BooleanWindowTest, sparse_prefixes_walk_their_documents) {
   ASSERT_EQ(expected, std::vector<doc_id_t>(buf.begin(), buf.begin() + n));
 }
 
-TEST_P(BooleanWindowTest, phrase_counts_are_not_constant) {
-  Build();
-  auto reader = open_reader();
-  ASSERT_EQ(1, reader.size());
-  auto query = irs::PrepareMasked(
-    *PhraseOf({.first = "half", .second = "dense"}), reader[0], {});
-  ASSERT_NE(nullptr, query);
-  ASSERT_EQ(irs::QueryKind::Phrase, query->Kind());
-  ASSERT_FALSE(irs::count::IsConstant(*query));
-}
-
 TEST_P(BooleanWindowTest, conjunctions_of_unions) {
   Build();
   for (const auto& shape : std::vector<Shape>{
@@ -541,6 +534,71 @@ TEST_P(BooleanWindowTest, sifting_leaves_the_next_window_intact) {
       }
       from = max;
     }
+  }
+}
+
+TEST_P(BooleanWindowTest, union_merges_every_block_kind) {
+  Build();
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  const auto* field = reader[0].field(kBodyId);
+  ASSERT_NE(nullptr, field);
+  const auto* doc = irs::detail::DocOf(*field);
+  ASSERT_NE(nullptr, doc);
+  std::vector<std::string_view> all;
+  for (const auto& spec : kSpecs) {
+    all.push_back(spec.term);
+  }
+  for (const auto& terms : std::vector<std::vector<std::string_view>>{
+         {"run", "holes", "gap"},
+         {"dense", "half"},
+         {"rare", "single", "gap"},
+         {"sparse", "cluster", "mid"},
+         all,
+       }) {
+    SCOPED_TRACE(absl::StrJoin(terms, " "));
+    std::vector<irs::PostingMeta> metas;
+    std::vector<doc_id_t> expected;
+    for (const auto term : terms) {
+      auto it = field->iterator();
+      ASSERT_TRUE(it && it->seek(irs::ViewCast<irs::byte_type>(term)));
+      metas.push_back(it->cookie());
+    }
+    for (doc_id_t i = 0; i != kDocs; ++i) {
+      if (absl::c_any_of(terms, [&](auto term) { return Has(term, i); })) {
+        expected.push_back(irs::doc_limits::min() + i);
+      }
+    }
+    irs::Resolve(*doc, [&]<typename Input> {
+      using Leaf = irs::detail::PostingLead<Input>;
+      const auto make = [&] {
+        return std::make_unique<irs::lead::UnionDocs<Leaf>>(
+          metas.size(), [&](Leaf& leaf, size_t i) {
+            leaf.Prepare(
+              metas[i], *doc, irs::detail::LayoutOf(*field),
+              metas[i].docs_count != 1 && irs::detail::BoundsOf(*field));
+          });
+      };
+      for (const doc_id_t window : {1, 7, 4096}) {
+        auto docs = make();
+        std::vector<doc_id_t> buf(window);
+        std::vector<doc_id_t> actual;
+        const auto end = irs::doc_limits::min() + kDocs;
+        for (auto min = irs::doc_limits::min(); min < end; min += window) {
+          const auto n =
+            irs::lead::GatherAll(*docs, min, min + window, buf.data());
+          actual.insert(actual.end(), buf.begin(), buf.begin() + n);
+        }
+        ASSERT_EQ(expected, actual) << window;
+      }
+      auto docs = make();
+      for (doc_id_t target = 1; target < kDocs; target += 1 + target % 5003) {
+        const auto it = absl::c_lower_bound(expected, target);
+        ASSERT_EQ(it == expected.end() ? irs::doc_limits::eof() : *it,
+                  docs->Seek(target))
+          << target;
+      }
+    });
   }
 }
 

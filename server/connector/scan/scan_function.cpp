@@ -259,7 +259,6 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> IResearchScanInitGlobal(
   };
 
   InitScanState(*state, &context, bind_data, input);
-  state->row_count_only = input.row_count_only;
 
   const auto& ss = bind_data;
   if (!ss.offsets.requests.empty() && !ss.search.filter) {
@@ -518,10 +517,22 @@ duckdb::RandomEngine& SampleRandom(const ScanGlobalState& g,
   return l.sample_random;
 }
 
-namespace {
-
-void RunShape(duckdb::ClientContext& context, duckdb::TableFunctionInput& data,
-              ScanGlobalState& g, duckdb::DataChunk& out) {
+void IResearchScanFunction(duckdb::ClientContext& context,
+                           duckdb::TableFunctionInput& data,
+                           duckdb::DataChunk& output) {
+  auto& g = data.global_state->Cast<ScanGlobalState>();
+  if (g.empty_answer) {
+    return;
+  }
+  const bool reorder = !g.output_projection_ids.empty();
+  auto& base = data.local_state->Cast<ScanLocalState>();
+  if (reorder) {
+    if (base.scan_chunk.ColumnCount() == 0) {
+      base.scan_chunk.Initialize(context, g.projected_types);
+    }
+    base.scan_chunk.Reset();
+  }
+  auto& out = reorder ? base.scan_chunk : output;
   switch (g.shape) {
     case ScanShape::TsDict:
       RunTsDictScan(context, g, *data.local_state, out);
@@ -546,30 +557,6 @@ void RunShape(duckdb::ClientContext& context, duckdb::TableFunctionInput& data,
                     data.local_state->Cast<StreamLocalState>(), out);
       break;
   }
-}
-
-duckdb::DataChunk& ScanChunk(duckdb::ClientContext& context,
-                             const ScanGlobalState& g, ScanLocalState& base) {
-  if (base.scan_chunk.ColumnCount() == 0) {
-    base.scan_chunk.Initialize(context, g.projected_types);
-  }
-  base.scan_chunk.Reset();
-  return base.scan_chunk;
-}
-
-}  // namespace
-
-void IResearchScanFunction(duckdb::ClientContext& context,
-                           duckdb::TableFunctionInput& data,
-                           duckdb::DataChunk& output) {
-  auto& g = data.global_state->Cast<ScanGlobalState>();
-  if (g.empty_answer) {
-    return;
-  }
-  auto& base = data.local_state->Cast<ScanLocalState>();
-  const bool reorder = !g.output_projection_ids.empty();
-  auto& out = reorder ? ScanChunk(context, g, base) : output;
-  RunShape(context, data, g, out);
   base.produced_rows += out.size();
   if (reorder) {
     output.ReferenceColumns(out, g.output_projection_ids);

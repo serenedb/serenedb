@@ -32,6 +32,11 @@
 
 namespace irs::term_dict {
 
+struct Section {
+  uint64_t offset = 0;
+  uint64_t size = 0;
+};
+
 struct TextHead {
   uint64_t total_freq = 0;
   field_id norm = field_limits::invalid();
@@ -49,16 +54,15 @@ struct FieldHead {
   std::string min;
   std::string max;
   std::string record;
-  std::string record_inline;
   uint32_t first_block = 0;
   uint32_t first_entry = 0;
   uint32_t first_record = 0;
   uint32_t last_block = 0;
   uint32_t last_entry = 0;
   std::string fsst_table;
-  std::string block_masks;
-  std::string block_mask_bytes;
-  std::string block_prefixes;
+  Section block_prefixes;
+  Section block_mask_bytes;
+  Section block_masks;
   TextHead text;
   std::vector<FieldHead> levels;
   bool single_valued = false;
@@ -75,12 +79,14 @@ struct TermsMeta {
   std::vector<SpanningBlock> spans;
   uint64_t blocks_end = 0;
   std::vector<FieldHead> fields;
-  std::string separators;
+  Section separators;
   uint32_t ordinal_bytes = 1;
 };
 
 void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms);
 
 TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size);
+
+bool PlaceSections(TermsMeta& terms, uint64_t end) noexcept;
 
 }  // namespace irs::term_dict

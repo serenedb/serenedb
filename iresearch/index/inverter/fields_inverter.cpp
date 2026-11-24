@@ -51,7 +51,7 @@ void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
                    _terms[entry.terms + TermIndex(member)].field;
                  HasTerms(field)) {
         if (field->Dictionary().Size() != 1) {
-          keyed_dicts += KeyedDictsOf(field->Meta().index_features);
+          keyed_dicts += term_dict::KeyedDictsOf(field->Meta().index_features);
         }
         index_features |= field->Meta().index_features;
         used = true;

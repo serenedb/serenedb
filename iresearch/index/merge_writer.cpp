@@ -565,7 +565,7 @@ uint64_t KeyedDicts(const FieldMetaMapT& field_meta_map) noexcept {
   uint64_t count = 0;
   for (const auto& [id, field] : field_meta_map) {
     for (const auto& member : field.members) {
-      count += member.keyed ? KeyedDictsOf(member.features) : 0;
+      count += member.keyed ? term_dict::KeyedDictsOf(member.features) : 0;
     }
   }
   return count;

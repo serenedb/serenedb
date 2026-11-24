@@ -96,6 +96,11 @@ struct VectorScorerOptions {
     return exact && top_k == 0 && radius == std::numeric_limits<float>::max();
   }
 
+  bool ChecksColumns() const noexcept {
+    return exact || kind != irs::AnnKind::Hnsw ||
+           radius == std::numeric_limits<float>::max();
+  }
+
   float EffectiveRadius() const {
     if (radius == std::numeric_limits<float>::max()) {
       return radius;

@@ -32,6 +32,7 @@
 
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/index/term_dict_block_format.hpp"
+#include "iresearch/formats/index/term_dict_records.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
@@ -50,6 +51,7 @@ struct VarColumns {
   std::vector<uint32_t> lcps;
   std::vector<uint32_t> lens;
   bstring suffixes;
+  uint64_t suffix_bytes = 0;
   std::vector<uint32_t> restarts;
   Misfits misfits{};
   uint32_t base = kNoBase;
@@ -89,11 +91,10 @@ class BlockEncoder {
   }
   bytes_view Key(uint32_t entry) const noexcept;
   bool Coded() const noexcept { return _block.kind == BlockKind::VarFsst; }
-  void SetPages(uint32_t pages) noexcept { _pages = pages; }
 
   bool Append(bytes_view prefix, bytes_view term, uint64_t records, bool codes);
   uint64_t Seal(uint64_t records);
-  void Serialize(duckdb::WriteStream& out, bytes_view records) const;
+  void Serialize(duckdb::WriteStream& out, const BlockRecords& records) const;
   void Reset() noexcept;
 
  private:
@@ -125,13 +126,11 @@ class BlockEncoder {
   bool AppendVarKey(bytes_view key, uint64_t records, bool codes);
   bool EncodeBlock(const VarEntry& entry, uint64_t records);
   bool AppendCodedKey(const VarEntry& entry, uint64_t records);
-  uint64_t Budget() const noexcept;
 
   BlockBuilder _block;
   Fsst _fsst;
   Scratch _scratch;
   uint32_t _width = 0;
-  uint32_t _pages = 1;
 };
 
 }  // namespace irs::term_dict

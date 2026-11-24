@@ -20,9 +20,14 @@
 
 #pragma once
 
+#include <algorithm>
+#include <bit>
 #include <cstdint>
+#include <cstring>
+#include <duckdb/common/radix.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <span>
+#include <type_traits>
 
 #include "iresearch/analysis/token_batch.hpp"
 #include "iresearch/utils/numeric_utils.hpp"
@@ -35,26 +40,44 @@ inline constexpr bool kInlineNumericTerm =
 
 template<typename T, typename ValueAt>
 void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
-                             ValueAt&& value_at, byte_type* keys = nullptr) {
+                             ValueAt&& value_at) {
+  using Key =
+    std::conditional_t<sizeof(T) == sizeof(uint64_t), uint64_t, uint32_t>;
+  static_assert(sizeof(Key) == sizeof(T));
+  static_assert(std::endian::native == std::endian::little);
+  static_assert(sizeof(duckdb::string_t) == 2 * sizeof(uint64_t));
+  static_assert(kInlineNumericTerm<T>);
+  constexpr uint64_t kHead = numeric_utils::kNumericTermSize<T>;
+  Key keys[TokenBatch::kCapacity];
+  for (size_t base = 0; base < count; base += TokenBatch::kCapacity) {
+    const auto n = std::min(count - base, TokenBatch::kCapacity);
+    for (size_t i = 0; i < n; ++i) {
+      duckdb::Radix::EncodeData<T>(
+        reinterpret_cast<duckdb::data_ptr_t>(keys + i), value_at(base + i));
+    }
+    for (size_t i = 0; i < n; ++i) {
+      const uint64_t key = keys[i];
+      const uint64_t words[] = {kHead | key << 32, key >> 32};
+      std::memcpy(static_cast<void*>(out + base + i), words, sizeof(words));
+    }
+  }
+}
+
+template<typename T, typename ValueAt>
+void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
+                             ValueAt&& value_at, byte_type* keys) {
+  static_assert(!kInlineNumericTerm<T>);
   constexpr auto kSize =
     static_cast<uint32_t>(numeric_utils::kNumericTermSize<T>);
   for (size_t i = 0; i < count; ++i) {
-    if constexpr (kInlineNumericTerm<T>) {
-      out[i] = duckdb::string_t{kSize};
-      numeric_utils::EncodeNumericTerm<T>(
-        reinterpret_cast<byte_type*>(out[i].GetDataWriteable()), value_at(i));
-    } else {
-      SDB_ASSERT(keys);
-      auto* bytes = keys + i * kSize;
-      numeric_utils::EncodeNumericTerm<T>(bytes, value_at(i));
-      out[i] = duckdb::string_t{reinterpret_cast<const char*>(bytes), kSize};
-    }
+    auto* key = keys + i * kSize;
+    numeric_utils::EncodeNumericTerm<T>(key, value_at(i));
+    out[i] = duckdb::string_t{reinterpret_cast<const char*>(key), kSize};
   }
 }
 
 template<typename T>
 void AppendNumericTermsBlock(duckdb::string_t* out, std::span<const T> values) {
-  static_assert(kInlineNumericTerm<T>);
   AppendNumericTermsBlock<T>(out, values.size(),
                              [values](size_t i) noexcept { return values[i]; });
 }

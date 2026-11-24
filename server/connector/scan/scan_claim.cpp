@@ -21,8 +21,6 @@
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
-#include <atomic>
-#include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
@@ -32,11 +30,7 @@
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/table_filter_iterator.hpp>
-#include <iresearch/search/count/make.hpp>
-#include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
-#include <iresearch/search/filters/filter.hpp>
-#include <iresearch/search/filters/granular_range_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/down_cast.hpp>
@@ -306,29 +300,6 @@ bool ConstantCount(const irs::Filter& filter) {
     }
   }
   return terms == 1 && others == 0;
-}
-
-bool CheapToPrepare(const irs::Filter& filter) {
-  const auto type = filter.type();
-  if (type == irs::Type<irs::ByTerm>::id() ||
-      type == irs::Type<irs::ByGranularRange>::id() ||
-      type == irs::Type<irs::All>::id() ||
-      type == irs::Type<irs::Empty>::id()) {
-    return true;
-  }
-  if (type != irs::Type<irs::BooleanFilter>::id()) {
-    return false;
-  }
-  const auto& boolean = irs::utils::downCast<irs::BooleanFilter>(filter);
-  for (const auto occur :
-       {irs::Occur::Must, irs::Occur::Should, irs::Occur::MustNot}) {
-    for (const auto& child : boolean.Filters(occur)) {
-      if (!child || !CheapToPrepare(*child)) {
-        return false;
-      }
-    }
-  }
-  return true;
 }
 
 std::optional<uint64_t> UniqueBound(const ScanGlobalState& g,
@@ -614,65 +585,6 @@ bool ClaimStart(ScanGlobalState& g, ScanLocalState& l) {
   return false;
 }
 
-bool SegmentStaysWhole(ScanShape shape, const irs::QueryBuilder& query,
-                       bool exact_counts, uint64_t rg_size) {
-  if (query.Kind() == irs::QueryKind::Empty) {
-    return true;
-  }
-  if (shape == ScanShape::Count) {
-    return (exact_counts && irs::count::IsConstant(query)) ||
-           query.Postings() < rg_size;
-  }
-  return std::max<uint64_t>(query.Postings(), query.EstimateMax()) <
-         STANDARD_VECTOR_SIZE;
-}
-
-struct EagerSegments {
-  ScanGlobalState& g;
-  std::vector<uint32_t> segments;
-  std::atomic_uint32_t next = 0;
-};
-
-void PrepareNext(EagerSegments& eager) {
-  const auto size = static_cast<uint32_t>(eager.segments.size());
-  for (auto i = eager.next.fetch_add(1, std::memory_order_relaxed); i < size;
-       i = eager.next.fetch_add(1, std::memory_order_relaxed)) {
-    PrepareSegmentNow(eager.g, eager.segments[i]);
-  }
-}
-
-class EagerPrepareTask final : public duckdb::BaseExecutorTask {
- public:
-  EagerPrepareTask(duckdb::TaskExecutor& executor, EagerSegments& eager)
-    : BaseExecutorTask{executor}, _eager{eager} {}
-
-  void ExecuteTask() final { PrepareNext(_eager); }
-
- private:
-  EagerSegments& _eager;
-};
-
-void PrepareSplitSegments(ScanGlobalState& g, duckdb::ClientContext& context,
-                          uint64_t threads) {
-  EagerSegments eager{.g = g};
-  for (const auto seg : g.segment_order) {
-    if (g.Segment(seg).rg_count > 1) {
-      eager.segments.push_back(seg);
-    }
-  }
-  const auto helpers = std::min<uint64_t>(threads, eager.segments.size());
-  if (helpers < 2) {
-    PrepareNext(eager);
-    return;
-  }
-  duckdb::TaskExecutor executor{context};
-  for (uint64_t i = 1; i < helpers; ++i) {
-    executor.ScheduleTask(duckdb::make_uniq<EagerPrepareTask>(executor, eager));
-  }
-  PrepareNext(eager);
-  executor.WorkOnTasks();
-}
-
 bool EveryRowQualifies(const ScanGlobalState& g) {
   if (!g.Bind().ReadsEveryRow()) {
     return false;
@@ -762,16 +674,9 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
   }
 
   const auto where = g.ClaimedWhere();
-  const bool eager =
-    !ordered && (g.shape == ScanShape::Count || g.shape == ScanShape::Stream) &&
-    !g.scorer_obj && !g.vector_scorer && g.splittable &&
-    g.live_segments < threads && CheapToPrepare(*g.filter);
-  const bool constant_count = !eager && g.shape == ScanShape::Count &&
+  const bool constant_count = g.shape == ScanShape::Count &&
                               g.col_filters.empty() && where &&
                               ConstantCount(*where);
-  if (eager) {
-    PrepareSplitSegments(g, context, threads);
-  }
   const auto unique = UniqueBound(g, where.get());
   const bool single = unique && *unique <= STANDARD_VECTOR_SIZE;
   irs::ColFilterStateCache states;
@@ -785,15 +690,9 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
     const auto seg = g.segment_order[i];
     auto& work = g.Segment(seg);
     const auto& sub = (*g.reader)[seg];
-    const bool exact_counts =
-      g.col_filters.empty() && sub.live_docs_count() == sub.docs_count();
-    bool split = g.splittable && work.rg_count > 1 &&
-                 !(constant_count && !work.skips && exact_counts);
-    if (split && eager && !work.skips) {
-      SDB_ASSERT(g.queries[seg]);
-      split =
-        !SegmentStaysWhole(g.shape, *g.queries[seg], exact_counts, g.rg_size);
-    }
+    const bool split = g.splittable && work.rg_count > 1 &&
+                       !(constant_count && !work.skips &&
+                         sub.live_docs_count() == sub.docs_count());
     SDB_ASSERT(split || !work.skips || !bind.partitions_to_scan);
     work.done_rgs.store(
       work.skips ? work.rg_count - static_cast<uint32_t>(work.live_rgs.size())
@@ -823,10 +722,6 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context) {
       continue;
     }
     rgs += work.rg_count;
-    if (const auto& query = g.queries[seg];
-        query && query->Kind() == irs::QueryKind::Empty) {
-      continue;
-    }
     const auto& sub = (*g.reader)[seg];
     if (split) {
       parallel += live;

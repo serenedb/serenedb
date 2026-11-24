@@ -287,9 +287,7 @@ struct ScanBindData final : duckdb::FunctionData {
     return offsets.requests.empty() && !score.vector;
   }
   bool KeepsColumnForms() const noexcept {
-    return score.vector &&
-           (score.vector->exact || score.vector->kind == irs::AnnKind::Ivf ||
-            score.vector->radius == std::numeric_limits<float>::max());
+    return score.vector && score.vector->ChecksColumns();
   }
   bool ReadsRowsOnlySegments() const noexcept {
     return relation.kind != ScanEntryKind::InvertedIndex && !score.vector;

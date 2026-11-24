@@ -49,60 +49,36 @@ uint64_t ClaimCounted(ScanGlobalState& g) {
   return take;
 }
 
-void Emit(ScanGlobalState& g, uint64_t batch, duckdb::DataChunk& output) {
-  if (batch != 0) {
-    WriteVirtualColumns(g, batch, nullptr, output);
-  }
-  if (batch > STANDARD_VECTOR_SIZE) {
-    for (auto& column : output.data) {
-      if (column.GetVectorType() != duckdb::VectorType::CONSTANT_VECTOR) {
-        duckdb::ConstantVector::SetNull(column, duckdb::count_t(batch));
-      }
-    }
-  }
-  output.SetChildCardinality(batch);
-}
-
-bool CountUnit(ScanGlobalState& g, CountLocalState& l) {
-  if (!NextLiveUnit(g, l)) {
-    FinishRoot(l);
-    return false;
-  }
-  const auto& unit = l.unit;
-  const auto& sub = (*g.reader)[unit.seg];
-  if (unit.whole && l.seg_cls.active.empty() && !g.ClaimedWhere() &&
-      !g.vector_scorer) {
-    l.local_count += sub.live_docs_count();
-  } else {
-    const auto range = g.RangeOf(unit);
-    if (l.root_seg != unit.seg || range.begin < l.root_end) {
-      FinishRoot(l);
-      const auto& seg_query = EnsureSegmentQuery(g, &l, unit.seg);
-      auto* table = BeginVerify(l.col_verify, sub, g, l);
-      auto plan = irs::count::MakeRoot(
-        seg_query, {.table = table, .span = g.UnitSpan(unit), .partial = true});
-      EnsurePlanned(plan != nullptr);
-      l.root = std::move(plan);
-      l.root_seg = unit.seg;
-    }
-    l.local_count += l.root->Run(range.begin, range.end);
-    l.local_count += l.root->Finish();
-    l.root_end = range.end;
-  }
-  FinishUnit(g, l);
-  return true;
-}
-
 }  // namespace
 
 void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
                   CountLocalState& l, duckdb::DataChunk& output) {
-  while (CountUnit(g, l)) {
+  while (NextLiveUnit(g, l)) {
+    const auto& unit = l.unit;
+    const auto& sub = (*g.reader)[unit.seg];
+    if (unit.whole && l.seg_cls.active.empty() && !g.ClaimedWhere() &&
+        !g.vector_scorer) {
+      l.local_count += sub.live_docs_count();
+    } else {
+      const auto range = g.RangeOf(unit);
+      if (l.root_seg != unit.seg || range.begin < l.root_end) {
+        FinishRoot(l);
+        const auto& seg_query = EnsureSegmentQuery(g, &l, unit.seg);
+        auto* table = BeginVerify(l.col_verify, sub, g, l);
+        auto plan = irs::count::MakeRoot(
+          seg_query,
+          {.table = table, .span = g.UnitSpan(unit), .partial = true});
+        EnsurePlanned(plan != nullptr);
+        l.root = std::move(plan);
+        l.root_seg = unit.seg;
+      }
+      l.local_count += l.root->Run(range.begin, range.end);
+      l.local_count += l.root->Finish();
+      l.root_end = range.end;
+    }
+    FinishUnit(g, l);
   }
-  if (g.row_count_only) {
-    Emit(g, std::exchange(l.local_count, 0), output);
-    return;
-  }
+  FinishRoot(l);
   if (l.local_count != 0) {
     g.counted.fetch_add(std::exchange(l.local_count, 0),
                         std::memory_order_relaxed);
@@ -112,7 +88,10 @@ void RunCountScan(duckdb::TableFunctionInput&, ScanGlobalState& g,
   }
   const auto batch = std::min<uint64_t>(l.to_emit, STANDARD_VECTOR_SIZE);
   l.to_emit -= batch;
-  Emit(g, batch, output);
+  if (batch != 0) {
+    WriteVirtualColumns(g, batch, nullptr, output);
+  }
+  output.SetChildCardinality(batch);
 }
 
 }  // namespace sdb::connector

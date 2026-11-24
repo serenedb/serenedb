@@ -44,7 +44,6 @@ struct MemberClauses {
 struct TermKey {
   enum class Kind : uint8_t {
     Single,
-    Inline,
     Stored,
   };
 
@@ -62,11 +61,6 @@ TermKey KeyOf(const detail::PostingClause& clause) noexcept {
     return {
       .member = member, .kind = TermKey::Kind::Single, .at = cookie.doc_delta};
   }
-  if (cookie.inline_size != 0) {
-    return {.member = member,
-            .kind = TermKey::Kind::Inline,
-            .at = absl::HashOf(ViewCast<char>(cookie.Inline()))};
-  }
   return {
     .member = member, .kind = TermKey::Kind::Stored, .at = cookie.doc_start};
 }
@@ -83,15 +77,6 @@ bool DistinctTerms(std::span<const detail::PostingClause> clauses) {
   }
   absl::c_sort(keys);
   return absl::c_adjacent_find(keys) == keys.end();
-}
-
-bool NegationSums(const BooleanQuery& query) {
-  return query.Terms(Occur::Must).empty() &&
-         query.Queries(Occur::Must).empty() &&
-         query.Bucket(Occur::Should).empty() &&
-         query.Queries(Occur::MustNot).empty() &&
-         !query.Terms(Occur::MustNot).empty() &&
-         query.Bucket(Occur::MustNot).disjoint;
 }
 
 }  // namespace
@@ -140,27 +125,6 @@ bool ShouldSums(const BooleanQuery& query, const Context& ctx) {
          query.Bucket(Occur::Should).all_docs.empty() &&
          !query.Terms(Occur::Should).empty() &&
          query.Bucket(Occur::Should).disjoint;
-}
-
-bool IsConstant(const QueryBuilder& query) {
-  switch (query.Kind()) {
-    case QueryKind::Empty:
-    case QueryKind::All:
-    case QueryKind::Term:
-      return true;
-    case QueryKind::Terms: {
-      const auto* reader =
-        irs::utils::downCast<MultiTermQuery>(query).State().Reader();
-      SDB_ASSERT(reader);
-      return reader->single_valued;
-    }
-    case QueryKind::Boolean: {
-      const auto& boolean = irs::utils::downCast<BooleanQuery>(query);
-      return ShouldSums(boolean, {}) || NegationSums(boolean);
-    }
-    default:
-      return false;
-  }
 }
 
 }  // namespace irs::count

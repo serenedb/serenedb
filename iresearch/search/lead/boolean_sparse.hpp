@@ -100,14 +100,11 @@ class BooleanSparse {
     }
   }
 
-  uint32_t GatherAll(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out,
-                     doc_id_t& next)
+  uint32_t GatherAll(doc_id_t min, doc_id_t max, doc_id_t* IRS_RESTRICT out)
     requires(!kScored && !kInherited)
   {
     auto doc = _lead.Seek(min);
-    const auto n = Gather<false>(doc, max, out, 0);
-    next = doc;
-    return n;
+    return Gather<false>(doc, max, out, 0);
   }
 
   template<bool Capped = true>

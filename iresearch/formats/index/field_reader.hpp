@@ -70,7 +70,7 @@ class FieldReader final {
   };
 
   Separators _separators;
-  std::deque<TermReaderImpl> _keyed;
+  std::vector<TermReaderImpl> _keyed;
   std::deque<SingleTermReader> _singles;
   std::vector<const TermReader*> _dicts;
   containers::FlatHashMap<field_id, FieldDicts> _by_id;

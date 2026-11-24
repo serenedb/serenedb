@@ -68,7 +68,6 @@ struct PrepareContext {
   score_t boost = kNoBoost;
   uint32_t thread = 0;
   bool needs_terms = false;
-  bool prefetch = true;
   QueryProfile* profile = nullptr;
 
   void Boost(score_t b) noexcept { boost *= b; }

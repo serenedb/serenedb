@@ -239,10 +239,9 @@ void PrefixTrieBuilder::Add(bytes_view term) {
   }
 }
 
-std::string PrefixTrieBuilder::Finish() {
-  std::string out;
+void PrefixTrieBuilder::Finish(bstring& out) {
   if (_nodes.empty()) {
-    return out;
+    return;
   }
   const auto chain = bytes_view{_first}.substr(0, _origin);
   uint32_t root = 0;
@@ -270,7 +269,7 @@ std::string PrefixTrieBuilder::Finish() {
   }
   auto it = std::back_inserter(out);
   WriteVarint(static_cast<uint32_t>(chain.size()), it);
-  out.append(ViewCast<char>(chain));
+  out.append(chain);
   WriteVarint(static_cast<uint32_t>(queue.size()), it);
   for (const auto id : queue) {
     const auto& node = _nodes[id];
@@ -285,17 +284,16 @@ std::string PrefixTrieBuilder::Finish() {
     if (children == 0 && node.count > (node.terminal ? 1U : 0U)) {
       flags |= kTrieOpen;
     }
-    out.push_back(static_cast<char>(flags));
+    out.push_back(flags);
     WriteVarint(children, it);
     if (children != 0) {
       for (auto child = node.first; child != kNoNode;
            child = _nodes[child].next) {
-        out.push_back(static_cast<char>(_nodes[child].label));
+        out.push_back(_nodes[child].label);
       }
     }
   }
   Reset();
-  return out;
 }
 
 void PrefixTrieBuilder::Reset() noexcept {

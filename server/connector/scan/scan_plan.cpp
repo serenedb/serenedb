@@ -760,8 +760,9 @@ ScanShape DecideShape(const ScanGlobalState& g, const ScanBindData& ss) {
 void WriteVirtualColumns(ScanGlobalState& g, duckdb::idx_t num_rows,
                          duckdb::Vector* scores, duckdb::DataChunk& output) {
   if (g.tableoid_output_idx != duckdb::DConstants::INVALID_INDEX) {
-    output.data[g.tableoid_output_idx].Reference(
-      duckdb::Value::BIGINT(g.tableoid_value), duckdb::count_t(num_rows));
+    auto* tableoid_data = duckdb::FlatVector::GetDataMutable<int64_t>(
+      output.data[g.tableoid_output_idx]);
+    std::fill_n(tableoid_data, num_rows, g.tableoid_value);
   }
   if (g.empty_output_idx != duckdb::DConstants::INVALID_INDEX) {
     duckdb::ConstantVector::SetNull(output.data[g.empty_output_idx],

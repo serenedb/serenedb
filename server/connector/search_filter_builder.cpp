@@ -201,8 +201,8 @@ enum class Encoded : uint8_t {
   Unsupported,
 };
 
-Encoded TryEncodeTerm(irs::DictLayout layout, const duckdb::LogicalType& type,
-                      const duckdb::Value& value, irs::TermClause& out);
+Encoded EncodeTerm(const duckdb::LogicalType& type, const duckdb::Value& value,
+                   irs::bstring& term);
 
 ComparisonOp GetComparisonOp(duckdb::ExpressionType type) {
   switch (type) {
@@ -1212,7 +1212,6 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   }
 
   const auto target = MaybeNegated(filter, ctx, *column_info);
-  const auto layout = column_info->layout;
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
     std::array<bool, 2> seen{};
     for (const auto* value : values) {
@@ -1234,11 +1233,11 @@ absl::Status FromIn(BoolTarget filter, const FilterContext& ctx,
   }
   std::vector<irs::bstring> terms;
   terms.reserve(values.size());
-  irs::TermClause clause;
   for (const auto* value : values) {
-    switch (TryEncodeTerm(layout, column_info->logical_type, *value, clause)) {
+    irs::bstring term;
+    switch (EncodeTerm(column_info->logical_type, *value, term)) {
       case Encoded::Term:
-        terms.push_back(std::move(clause.term));
+        terms.push_back(std::move(term));
         break;
       case Encoded::NoValue:
         break;
@@ -2872,28 +2871,34 @@ void SetNumericBound(irs::ByGranularRangeOptions::range_type& range, bool upper,
   type = bound.strict ? irs::BoundType::Exclusive : irs::BoundType::Inclusive;
 }
 
-Encoded TryEncodeTerm(irs::DictLayout layout, const duckdb::LogicalType& type,
-                      const duckdb::Value& value, irs::TermClause& out) {
+Encoded EncodeTerm(const duckdb::LogicalType& type, const duckdb::Value& value,
+                   irs::bstring& term) {
   const auto type_id = type.id();
   if (type_id == duckdb::LogicalTypeId::VARCHAR ||
       type_id == duckdb::LogicalTypeId::BLOB) {
-    out.dict = {.layout = layout, .member = irs::DictMember::Strings};
-    out.term.assign(AsRawBytes(value));
+    term.assign(AsRawBytes(value));
     return Encoded::Term;
   }
   if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
-    out.dict = {.layout = layout,
-                .member = irs::BoolMember(BoolConstant(value))};
-    out.term.clear();
+    term.clear();
     return Encoded::Term;
   }
   if (term_dict::IsNumeric(type_id)) {
-    out.dict = {.layout = layout, .member = irs::DictMember::Numbers};
     const bool exact = WithExactNumericValue(
-      type, value, [&](auto v) { irs::SetGranularNumericTerm(out.term, v); });
+      type, value, [&](auto v) { irs::SetGranularNumericTerm(term, v); });
     return exact ? Encoded::Term : Encoded::NoValue;
   }
   return Encoded::Unsupported;
+}
+
+irs::DictMember MemberOf(const duckdb::LogicalType& type,
+                         const duckdb::Value& value) {
+  const auto type_id = type.id();
+  if (type_id == duckdb::LogicalTypeId::BOOLEAN) {
+    return irs::BoolMember(BoolConstant(value));
+  }
+  return term_dict::IsNumeric(type_id) ? irs::DictMember::Numbers
+                                       : irs::DictMember::Strings;
 }
 
 }  // namespace
@@ -2939,13 +2944,14 @@ absl::StatusOr<bool> SetupTermClause(irs::TermClause& clause,
       "Unsupported type id ", static_cast<int>(type_id), " for filter"));
   }
 
-  const auto encoded =
-    TryEncodeTerm(column_info.layout, column_info.logical_type, value, clause);
+  const auto encoded = EncodeTerm(column_info.logical_type, value, clause.term);
   if (encoded == Encoded::Unsupported) {
     return absl::UnimplementedError(absl::StrCat(
       "Unsupported type for term filter: ", static_cast<int>(type_id)));
   }
 
+  clause.dict = {.layout = column_info.layout,
+                 .member = MemberOf(column_info.logical_type, value)};
   clause.field = column_info.field_id;
   return encoded == Encoded::Term;
 }

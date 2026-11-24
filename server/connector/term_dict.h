@@ -175,11 +175,9 @@ auto NumericValueOf(Load&& load) {
     return load.template operator()<uint64_t>();
   } else if constexpr (Kind == duckdb::LogicalTypeId::HUGEINT ||
                        Kind == duckdb::LogicalTypeId::UUID) {
-    return static_cast<__int128>(
-      load.template operator()<duckdb::hugeint_t>().ToInt128());
+    return load.template operator()<duckdb::hugeint_t>();
   } else if constexpr (Kind == duckdb::LogicalTypeId::UHUGEINT) {
-    return static_cast<unsigned __int128>(
-      load.template operator()<duckdb::uhugeint_t>().ToUint128());
+    return load.template operator()<duckdb::uhugeint_t>();
   } else if constexpr (Kind == duckdb::LogicalTypeId::FLOAT) {
     return load.template operator()<float>();
   } else {

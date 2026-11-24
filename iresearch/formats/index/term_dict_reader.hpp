@@ -50,8 +50,8 @@ struct PinnedRange {
 class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
-                 const Separators& separators,
-                 std::vector<const TermReaderImpl*> levels = {});
+                 const Separators& separators, const IndexSections& sections,
+                 std::span<const TermReaderImpl> levels = {});
 
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
@@ -101,7 +101,7 @@ class TermReaderImpl final : public TermReader {
   bytes_view Block(size_t block, PinnedRange& pinned) const;
   void HintBlock(uint32_t block) const noexcept;
   uint64_t BlockOffset(size_t block) const noexcept;
-  std::span<const TermReaderImpl* const> RangeLevels() const noexcept {
+  std::span<const TermReaderImpl> RangeLevels() const noexcept {
     return _range_levels;
   }
 
@@ -121,7 +121,7 @@ class TermReaderImpl final : public TermReader {
   uint32_t _last_entry = 0;
   bool _has_score_bounds;
   FreqAttr _freq;
-  std::vector<const TermReaderImpl*> _range_levels;
+  std::span<const TermReaderImpl> _range_levels;
   std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
 };
 

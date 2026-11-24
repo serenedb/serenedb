@@ -376,13 +376,13 @@ void Layout(benchmark::State& state, const Data& data) {
   const auto levels = field.RangeLevels();
   uint64_t level_index_bytes = 0;
   uint64_t level_blocks = 0;
-  for (const auto* level : levels) {
-    level_index_bytes += index_bytes(*level);
-    level_blocks += level->Blocks();
+  for (const auto& level : levels) {
+    level_index_bytes += index_bytes(level);
+    level_blocks += level.Blocks();
   }
   state.counters["levels"] = static_cast<double>(levels.size());
   state.counters["level0_entries"] =
-    static_cast<double>(levels.empty() ? 0 : levels.front()->size());
+    static_cast<double>(levels.empty() ? 0 : levels.front().size());
   state.counters["level_blocks"] = static_cast<double>(level_blocks);
   state.counters["index_bytes"] = static_cast<double>(index_bytes(field));
   state.counters["level_index_bytes"] = static_cast<double>(level_index_bytes);

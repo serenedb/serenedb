@@ -137,6 +137,7 @@ void ScanOwnable(SereneDBCatalog& catalog,
                  absl::FunctionRef<void(duckdb::CatalogEntry&)> visit) {
   catalog.ScanEntries(transaction, [&](duckdb::CatalogEntry& entry) {
     if (entry.internal || !TracksOwner(entry.type) ||
+        entry.type == duckdb::CatalogType::INDEX_ENTRY ||
         (entry.type == duckdb::CatalogType::SEQUENCE_ENTRY &&
          OwnerOf(transaction, entry))) {
       return;
@@ -180,7 +181,7 @@ void RevokeShared(ClusterCatalog& cluster, duckdb::ClientContext& context,
         if (!local || entry.name != *local) {
           continue;
         }
-        if (absl::c_any_of(permissions.defaults,
+        if (absl::c_any_of(entry.Cast<DatabaseCatalogEntry>().DefaultAcls(),
                            [&](const duckdb::DefaultAcl& row) {
                              return row.role == role || GrantsTo(row.acl, role);
                            })) {

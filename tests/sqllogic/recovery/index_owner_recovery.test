@@ -1,0 +1,113 @@
+control substitution on
+
+statement ok
+CREATE ROLE ior_kostya;
+
+
+statement ok
+CREATE ROLE ior_vova;
+
+
+statement ok
+CREATE TABLE ior_t (id INTEGER);
+
+
+statement ok
+ALTER TABLE ior_t OWNER TO ior_kostya;
+
+
+statement ok
+CREATE INDEX ior_before ON ior_t (id);
+
+
+statement ok
+CREATE VIEW ior_v AS SELECT id FROM ior_t;
+
+
+statement ok
+CREATE INDEX ior_view_index ON ior_v USING inverted (id);
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE ROLE ior_compaction;
+
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+statement ok
+ALTER TABLE ior_t OWNER TO ior_vova;
+
+
+statement ok
+ALTER VIEW ior_v OWNER TO ior_kostya;
+
+
+statement ok
+CREATE INDEX ior_after ON ior_t (id);
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('ior_t', 'ior_before', 'ior_after', 'ior_v', 'ior_view_index') ORDER BY relname;
+----
+relname	owner
+ior_after	ior_vova
+ior_before	ior_vova
+ior_t	ior_vova
+ior_v	ior_kostya
+ior_view_index	ior_kostya
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('ior_t', 'ior_before', 'ior_after', 'ior_v', 'ior_view_index') ORDER BY relname;
+----
+relname	owner
+ior_after	ior_vova
+ior_before	ior_vova
+ior_t	ior_vova
+ior_v	ior_kostya
+ior_view_index	ior_kostya
+
+
+connection after_crash
+statement ok
+SET ROLE ior_vova;
+
+
+connection after_crash
+statement ok
+DROP INDEX ior_before;
+
+
+connection after_crash
+statement ok
+RESET ROLE;
+
+
+connection after_crash
+query
+SELECT relname FROM pg_class WHERE relname IN ('ior_before', 'ior_after') ORDER BY relname;
+----
+relname
+ior_after

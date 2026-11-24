@@ -24,7 +24,6 @@
 #include <absl/strings/str_cat.h>
 
 #include <duckdb/catalog/catalog.hpp>
-#include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
@@ -258,15 +257,6 @@ std::optional<RelationAccess> RelationByOid(
     }
     relation->entry = entry;
     return RelationAccess{{*relation}, &PrivilegePermissions(*entry)};
-  }
-  if (relation->entry->type == duckdb::CatalogType::INDEX_ENTRY) {
-    const auto table_oid =
-      relation->entry->Cast<duckdb::IndexCatalogEntry>().table_oid;
-    const auto owner = IsTemporary(*relation)
-                         ? TemporaryEntryByOid(session, table_oid)
-                         : EntryByOid(session, table_oid);
-    return RelationAccess{
-      {*relation}, &PrivilegePermissions(owner ? *owner : *relation->entry)};
   }
   return RelationAccess{{*relation}, &PrivilegePermissions(*relation->entry)};
 }

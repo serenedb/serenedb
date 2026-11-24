@@ -265,10 +265,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
                     : row.index.template Cast<catalog::InvertedIndexEntry>()
                         .Tablespace();
     }),
-    Col<"relowner">([](const auto& row, SystemScan& scan) {
-      const auto* table = TableOf(row, scan);
-      return table ? table->permissions.owner : row.index.permissions.owner;
-    }));
+    Col<"relowner">(
+      [](const auto& row) { return row.index.permissions.owner; }));
 
   static constexpr auto kView = Shape<kSql, duckdb::ViewCatalogEntry>(
     kRelation<'v'>, Col<"relhasrules">([](const auto&) { return true; }),
@@ -325,7 +323,7 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     const auto* search = dynamic_cast<const catalog::SearchTableEntry*>(&table);
     Emit<kOrdinary>({table, search}, shown);
     if (Allows<"relkind">('i')) {
-      if (Reads<"relowner">() || Reads<"reltablespace">()) {
+      if (Reads<"reltablespace">()) {
         _tables.emplace(table.oid, &table);
       }
       for (const auto& key : KeyIndexes(table)) {

@@ -427,7 +427,7 @@ void SereneDBCatalog::DropSchemaEntry(
     return;
   }
   std::vector<duckdb::unique_ptr<duckdb::AlterPermissionsInfo>> revokes;
-  for (const auto& row : database->permissions.defaults) {
+  for (const auto& row : database->Cast<DatabaseCatalogEntry>().DefaultAcls()) {
     if (row.scope != schema.oid) {
       continue;
     }
@@ -512,10 +512,9 @@ void SereneDBCatalog::AlterWrapper(duckdb::CatalogTransaction transaction,
   }
   duckdb::CreateForeignDataWrapperInfo create;
   create.SetName(name);
-  create.oid = duckdb::DBConfig::GetConfig(GetDatabase())
-                 .GetForeignDataWrapper(name.GetIdentifierName())
-                 .oid;
-  create.permissions.owner = info.object_owner_id;
+  const auto& config = duckdb::DBConfig::GetConfig(GetDatabase());
+  create.oid = config.GetForeignDataWrapper(name.GetIdentifierName()).oid;
+  create.permissions.owner = config.bootstrap_role;
   info.ApplyTo(create.permissions,
                duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, nullptr);
   AddTo(_wrappers, transaction,

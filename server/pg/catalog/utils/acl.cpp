@@ -243,7 +243,8 @@ void VisitDefaultAcls(
   }
   auto& catalog = attached->GetCatalog().Cast<catalog::BaseCatalog>();
   const auto transaction = catalog.GetCatalogTransaction(context);
-  for (const auto& row : database.permissions.defaults) {
+  for (const auto& row :
+       database.Cast<catalog::DatabaseCatalogEntry>().DefaultAcls()) {
     if (row.scope == kInvalidOid || catalog.LookupOid(transaction, row.scope)) {
       visitor(row);
     }

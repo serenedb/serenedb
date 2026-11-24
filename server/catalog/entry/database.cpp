@@ -22,7 +22,6 @@
 
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/fault_points.hpp>
-#include <duckdb/main/database_manager.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -39,8 +38,7 @@ namespace sdb::catalog {
 DatabaseCatalogEntry::DatabaseCatalogEntry(
   duckdb::Catalog& catalog, duckdb::CreateDatabaseInfo& info,
   std::shared_ptr<DatabaseDirectory> directory)
-  : duckdb::InCatalogEntry{duckdb::CatalogType::DATABASE_ENTRY, catalog,
-                           info.GetQualifiedName().Name(), info.oid},
+  : duckdb::DatabaseEntry{catalog, info},
     _options{info.options},
     _tablespace{info.tablespace_oid == 0 ? pg::kPgDefaultTablespace
                                          : info.tablespace_oid},
@@ -51,10 +49,6 @@ DatabaseCatalogEntry::DatabaseCatalogEntry(
   tags = info.tags;
   dependencies = info.dependencies;
   permissions = info.permissions;
-  auto& oids = catalog.GetDatabase().GetDatabaseManager();
-  for (auto& row : permissions.defaults) {
-    row.oid = row.oid ? oids.ClaimOid(row.oid) : oids.NextOid();
-  }
 }
 
 duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {
@@ -62,6 +56,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {
   info->SetName(name);
   info->oid = oid;
   info->permissions = permissions;
+  info->permissions.defaults = default_acls;
   info->comment = comment;
   info->tags = tags;
   info->options = _options;
@@ -77,8 +72,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::AlterEntry(
   duckdb::ClientContext& context, duckdb::AlterInfo& info) {
   if (info.type == duckdb::AlterType::ALTER_PERMISSIONS) {
     auto next = GetInfo();
-    info.Cast<duckdb::AlterPermissionsInfo>().ApplyTo(next->permissions, type,
-                                                      nullptr);
+    info.Cast<duckdb::AlterPermissionsInfo>().ApplyToDatabase(
+      next->permissions);
     return duckdb::make_uniq<DatabaseCatalogEntry>(
       catalog, next->Cast<duckdb::CreateDatabaseInfo>(), _directory);
   }

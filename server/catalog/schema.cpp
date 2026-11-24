@@ -216,20 +216,34 @@ bool MoveOverload(Schema& schema, Schema& target_schema,
   return true;
 }
 
-void ReownSequences(duckdb::CatalogTransaction transaction,
-                    duckdb::CatalogEntry& table,
-                    const duckdb::AlterPermissionsInfo& info) {
-  for (auto& owned : OwnedEntries(transaction, table)) {
+void Reown(duckdb::CatalogTransaction transaction, Schema& schema,
+           duckdb::CatalogType type, const duckdb::Identifier& name,
+           const duckdb::AlterPermissionsInfo& info) {
+  duckdb::AlterPermissionsInfo reown{type, schema.GetQualifiedName(name)};
+  reown.new_owner = info.new_owner;
+  reown.new_owner_id = info.new_owner_id;
+  schema.Alter(transaction, reown);
+}
+
+void ReownDependents(duckdb::CatalogTransaction transaction, Schema& schema,
+                     duckdb::CatalogEntry& relation,
+                     const duckdb::AlterPermissionsInfo& info) {
+  for (auto& owned : OwnedEntries(transaction, relation)) {
     auto& sequence = owned.get();
-    if (sequence.type != duckdb::CatalogType::SEQUENCE_ENTRY) {
-      continue;
+    if (sequence.type == duckdb::CatalogType::SEQUENCE_ENTRY) {
+      Reown(transaction, sequence.ParentSchema(transaction).Cast<Schema>(),
+            duckdb::CatalogType::SEQUENCE_ENTRY, sequence.name, info);
     }
-    auto& schema = sequence.ParentSchema(transaction).Cast<Schema>();
-    duckdb::AlterPermissionsInfo reown{duckdb::CatalogType::SEQUENCE_ENTRY,
-                                       schema.GetQualifiedName(sequence.name)};
-    reown.new_owner = info.new_owner;
-    reown.new_owner_id = info.new_owner_id;
-    schema.Alter(transaction, reown);
+  }
+  std::vector<duckdb::Identifier> indexes;
+  schema.Set(duckdb::CatalogType::INDEX_ENTRY)
+    .Scan(transaction, [&](duckdb::CatalogEntry& index) {
+      if (index.Cast<duckdb::IndexCatalogEntry>().table_oid == relation.oid) {
+        indexes.push_back(index.name);
+      }
+    });
+  for (const auto& name : indexes) {
+    Reown(transaction, schema, duckdb::CatalogType::INDEX_ENTRY, name, info);
   }
 }
 
@@ -686,6 +700,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> Schema::CreateIndex(
     return nullptr;
   }
   info.table_oid = relation.oid;
+  info.permissions.owner = relation.permissions.owner;
   auto index =
     catalog.Cast<BaseCatalog>().MakeIndex(transaction, *this, info, relation);
   return Add(transaction, std::move(index), info.on_conflict);
@@ -1119,11 +1134,13 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
                                    rename.old_name, rename.new_name);
     }
   }
-  if (!replay && result && result->type == duckdb::CatalogType::TABLE_ENTRY &&
+  if (!replay && result &&
+      (result->type == duckdb::CatalogType::TABLE_ENTRY ||
+       result->type == duckdb::CatalogType::VIEW_ENTRY) &&
       info.type == duckdb::AlterType::ALTER_PERMISSIONS &&
       !info.Cast<duckdb::AlterPermissionsInfo>().new_owner.empty()) {
-    ReownSequences(transaction, *result,
-                   info.Cast<duckdb::AlterPermissionsInfo>());
+    ReownDependents(transaction, *this, *result,
+                    info.Cast<duckdb::AlterPermissionsInfo>());
   }
   if (result && info.type == duckdb::AlterType::CHANGE_OWNERSHIP) {
     auto& owned = result->Cast<duckdb::StandardEntry>();

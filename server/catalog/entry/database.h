@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <duckdb/catalog/catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/database_entry.hpp>
 #include <duckdb/parser/parsed_data/create_database_info.hpp>
 #include <memory>
 #include <string>
@@ -29,12 +29,8 @@
 
 namespace sdb::catalog {
 
-class DatabaseCatalogEntry final : public duckdb::InCatalogEntry {
+class DatabaseCatalogEntry final : public duckdb::DatabaseEntry {
  public:
-  static constexpr duckdb::CatalogType Type =
-    duckdb::CatalogType::DATABASE_ENTRY;
-  static constexpr const char* Name = "database";
-
   DatabaseCatalogEntry(duckdb::Catalog& catalog,
                        duckdb::CreateDatabaseInfo& info,
                        std::shared_ptr<DatabaseDirectory> directory);

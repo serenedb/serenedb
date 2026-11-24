@@ -584,9 +584,11 @@ void ClusterCatalog::AlterParameter(duckdb::CatalogTransaction transaction,
   if (!existing && info.revoke) {
     return;
   }
-  auto permissions = existing
-                       ? existing->permissions
-                       : duckdb::Permissions{.owner = info.object_owner_id};
+  auto permissions =
+    existing
+      ? existing->permissions
+      : duckdb::Permissions{
+          .owner = duckdb::DBConfig::GetConfig(GetDatabase()).bootstrap_role};
   info.ApplyTo(permissions, duckdb::CatalogType::PARAMETER_ENTRY, nullptr);
   if (permissions.UsesDefaultAcl() ||
       permissions.acl ==

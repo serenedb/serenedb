@@ -10,7 +10,15 @@ DROP ROLE IF EXISTS oif_vedernikoff;
 
 
 statement ok
+DROP ROLE IF EXISTS oif_kostya;
+
+
+statement ok
 CREATE ROLE oif_vedernikoff;
+
+
+statement ok
+CREATE ROLE oif_kostya;
 
 
 statement ok
@@ -37,8 +45,25 @@ oif_ix	oif_vedernikoff
 
 
 statement ok
+ALTER TABLE oif_clickclack OWNER TO oif_kostya;
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('oif_clickclack','oif_ix') ORDER BY relname;
+----
+relname	owner
+oif_clickclack	oif_kostya
+oif_ix	oif_kostya
+
+
+statement ok
 DROP TABLE oif_clickclack CASCADE;
 
 
 statement ok
 DROP ROLE oif_vedernikoff;
+
+
+statement ok
+DROP ROLE oif_kostya;

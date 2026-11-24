@@ -133,10 +133,9 @@ SingleTermReader::SingleTermReader(FieldReader& owner, const FieldHead& head)
   if (head.width > kMaxStride || size > kMaxRecordBytes) {
     corrupted();
   }
-  RecordBytes record{};
-  std::memcpy(record.bytes.data(), head.record.data(), size);
-  if (PostingsReader::decode(record.bytes.data(), head.features, _single) !=
-        size ||
+  std::array<byte_type, kMaxRecordBytes> record{};
+  std::memcpy(record.data(), head.record.data(), size);
+  if (PostingsReader::decode(record.data(), head.features, _single) != size ||
       head.record_inline.size() != _single.inline_size) {
     corrupted();
   }
@@ -157,6 +156,11 @@ SeekTermIterator::ptr SingleTermReader::iterator(
 
 SeekTermIterator::ptr SingleTermReader::iterator(
   const LevenshteinAcceptor& a) const {
+  return SingleFor(*this, a);
+}
+
+SeekTermIterator::ptr SingleTermReader::iterator(
+  const LevenshteinPrefixAcceptor& a) const {
   return SingleFor(*this, a);
 }
 
@@ -184,10 +188,6 @@ void SingleTermReader::VisitRange(bytes_view from, bytes_view to,
   if ((from.empty() || from <= min()) && (to.empty() || min() < to)) {
     visit(min(), _single);
   }
-}
-
-std::unique_ptr<IndexInput> SingleTermReader::ReopenPayload() const {
-  return _owner->Postings().ReopenPayload();
 }
 
 PostingsHandles SingleTermReader::Handles() const noexcept {

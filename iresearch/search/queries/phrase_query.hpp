@@ -32,7 +32,6 @@
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
-#include "iresearch/utils/misc.hpp"
 
 namespace irs {
 

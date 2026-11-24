@@ -376,6 +376,64 @@ PrepareCollector::ptr BooleanFilter::MakeCollectorImpl(const Scorer* scorer,
   return compound;
 }
 
+void BooleanFilter::ExplainStats(const PrepareCollector* collector,
+                                 explain::StatsIndex& out) const {
+  if (collector == nullptr) {
+    return;
+  }
+  const auto& compound = utils::downCast<CompoundCollector>(*collector);
+  size_t idx = 0;
+  WalkClauses(
+    *this,
+    [&](std::span<const TermClause> run, Occur) {
+      if (const auto* child = compound.Child(idx++)) {
+        child->Describe(
+          run.front().field, [&](size_t i) { return bytes_view{run[i].term}; },
+          out);
+      }
+    },
+    [&](const Filter& filter, Occur) {
+      filter.ExplainStats(compound.Child(idx++), out);
+    });
+}
+
+void BooleanFilter::ExplainTerms(const SubReader& segment,
+                                 explain::TermNames& out) const {
+  WalkClauses(
+    *this,
+    [&](std::span<const TermClause> run, Occur occur) {
+      if (occur == Occur::MustNot) {
+        return;
+      }
+      const auto& front = run.front();
+      if (const auto* reader = segment.field(front.field, front.dict)) {
+        TermsIterator terms{*reader, run};
+        out.AddAll(*reader, terms);
+      }
+    },
+    [&](const Filter& filter, Occur occur) {
+      if (occur != Occur::MustNot) {
+        filter.ExplainTerms(segment, out);
+      }
+    });
+}
+
+bool BooleanFilter::Prefetch(const SubReader& segment) const {
+  bool fetching = false;
+  for (const auto occur : kAllOccur) {
+    const auto& bucket = Bucket(occur);
+    for (const auto& clause : bucket.terms) {
+      if (const auto* reader = segment.field(clause.field)) {
+        fetching |= reader->Prefetch(clause.term);
+      }
+    }
+    for (const auto& child : bucket.filters) {
+      fetching |= child->Prefetch(segment);
+    }
+  }
+  return fetching;
+}
+
 QueryBuilder::ptr BooleanFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
   SDB_ASSERT(Valid());
@@ -436,7 +494,7 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
             collector->Term(ctx.thread, i).Collect(meta);
           }
           if (const auto extent = DocExtent(meta); extent != 0) {
-            AppendRange(docs, meta.doc_start, meta.doc_start + extent);
+            docs.push_back({.offset = meta.doc_start, .size = extent});
           }
           add(i, meta);
           ++next;
@@ -445,7 +503,7 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
         add(next, kNoPosting);
       }
       if (const auto* doc = reader->Handles().doc; doc && run.size() > 1) {
-        HintRanges(*doc, docs);
+        doc->Hint(docs);
       }
     },
     [&](const Filter& filter, Occur occur) {

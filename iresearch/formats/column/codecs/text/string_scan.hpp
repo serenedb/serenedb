@@ -31,7 +31,7 @@
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/main/client_context.hpp>
-#include <duckdb/planner/expression.hpp>
+#include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/storage/arena_allocator.hpp>
 #include <limits>
 #include <span>
@@ -47,7 +47,6 @@
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text {
 
@@ -136,7 +135,9 @@ class ChainGroups {
     uint32_t groups = 0;
     for (uint32_t f = 0; f < frame_count; ++f) {
       const auto [first, end] = entries(f);
-      SDB_ENSURE(end > first, "col codec: corrupted frame table");
+      if (end <= first) [[unlikely]] {
+        ThrowCorrupted("text", "frame table is inconsistent");
+      }
       _base[f] = groups;
       groups += (end - first + kChainRestart - 1) / kChainRestart;
     }
@@ -164,7 +165,9 @@ class ChainGroups {
       const auto from = m.first_entry + (known - 1) * kChainRestart;
       const auto offset =
         offsets[known - 1] + lengths.Sum(from, from + kChainRestart);
-      SDB_ENSURE(offset <= end, "col codec: corrupted front coding");
+      if (offset > end) [[unlikely]] {
+        ThrowCorrupted("text", "front coding is inconsistent");
+      }
       offsets[known] = offset;
     }
     return offsets[g];
@@ -201,7 +204,8 @@ EntryRanges Normalize(EntryRanges ranges);
 
 EntryRanges Intersect(const EntryRanges& a, const EntryRanges& b);
 
-const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept;
+const duckdb::Value* StringConstant(
+  const duckdb::BoundConstantExpression& constant) noexcept;
 
 inline uint64_t DictionaryBytes(const Header& h) noexcept {
   return h.raw_bytes + uint64_t{h.entry_count} * (sizeof(duckdb::string_t) + 1);

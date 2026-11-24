@@ -36,13 +36,14 @@
 #include "iresearch/index/norm.hpp"
 #include "iresearch/search/detail/collectors.hpp"
 #include "iresearch/search/detail/column_collector.hpp"
+#include "iresearch/search/explain/factors.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/score_inputs.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/search/scorers/scorer_options.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/empty.hpp"
-#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
@@ -87,13 +88,36 @@ struct TfIdfScore : public ScoreOperatorOf<TfIdfScore<HasNorm, HasScale>> {
 }  // namespace
 
 void TFIDF::collect(byte_type* stats_buf, const FieldCollector* field,
-                    const TermCollector* term) const {
+                    const TermCollector* term, StatsArena&) const {
   const auto docs_with_field = field ? field->docs_with_field : 0;
   const auto docs_with_term = term ? term->docs_with_term : 0;
 
   auto* idf = stats_cast(stats_buf);
-  idf->value += static_cast<score_t>(
-    std::log1p((docs_with_field + 1.0) / (docs_with_term + 1.0)));
+  idf->value += TfIdfIdf(docs_with_field, docs_with_term);
+}
+
+void TFIDF::Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+                    explain::Node& out) const {
+  if (!explain::FreqOf(ctx)) {
+    explain::ExplainNoFreq(ctx, _boost_as_score, out);
+    return;
+  }
+  explain::AddBoost(out, ctx.boost);
+  explain::AddIdf(out, stats_cast(ctx.stats)->value, stats,
+                  "log(1 + (N + 1) / (df + 1))", &TfIdfIdf);
+  auto& tf = explain::AddDetail(out, "tf", score_t{0});
+  tf.expression = "sqrt(freq)";
+  tf.value = std::sqrt(explain::AddFreq(tf, ctx));
+  const uint32_t* norm = _normalize ? FieldNormsOf(ctx) : nullptr;
+  if (!norm) {
+    out.expression = "boost * idf * tf";
+    return;
+  }
+  auto& length = explain::AddDetail(out, "norm", score_t{0});
+  length.expression = "1 / sqrt(dl)";
+  length.value =
+    1.f / std::sqrt(TermCountToScore(explain::AddLength(length, ctx)));
+  out.expression = "boost * idf * tf * norm";
 }
 
 ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
@@ -111,8 +135,8 @@ ScoreFunction TFIDF::PrepareScorer(const ScoreContext& ctx) const {
 
   const uint32_t* norm = _normalize ? FieldNormsOf(ctx) : nullptr;
 
-  return ResolveBool(norm, [&]<bool HasNorms>() {
-    return ResolveBool(scale, [&]<bool HasScale>() {
+  return Resolve(norm, [&]<bool HasNorms>() {
+    return Resolve(scale, [&]<bool HasScale>() {
       const auto* stats = stats_cast(ctx.stats);
       return ScoreFunction::Make<TfIdfScore<HasNorms, HasScale>>(
         norm, ctx.boost, *stats, freq, scale);

@@ -73,6 +73,7 @@ struct PlainScan final : SegmentScanState {
   using Fetch = PlainFetch<Leaf>;
   static constexpr Shape kShape = Shape::Plain;
   static constexpr ByteCodec kCodec = Leaf::kCodec;
+  static constexpr bool kDecodesWhole = Sorted(kCodec);
   static constexpr auto kValidity = CompressionValidity::RequiresValidity;
 
   PlainScan(const ColumnSegment& segment, duckdb::BufferHandle handle)
@@ -86,10 +87,25 @@ struct PlainScan final : SegmentScanState {
       Stream(result, result_offset, start, count);
       return;
     }
-    const auto entry_at = [&](idx_t i) { return start + i; };
-    entries.leaf->Ensure(entries, count, entry_at, static_cast<uint32_t>(start),
-                         static_cast<uint32_t>(start + count));
-    entries.WriteRefs(result, result_offset, count, entry_at);
+    const auto first = static_cast<uint32_t>(start);
+    const auto end = static_cast<uint32_t>(start + count);
+    if constexpr (requires(Leaf& leaf) {
+                    leaf.DecodeInto(entries, result, result_offset, first, end);
+                  }) {
+      if (!entries.leaf->DecodeInto(entries, result, result_offset, first,
+                                    end)) {
+        ScanCached(result, result_offset, first, end);
+      }
+    } else {
+      ScanCached(result, result_offset, first, end);
+    }
+  }
+
+  void ScanCached(duckdb::Vector& result, idx_t result_offset, uint32_t first,
+                  uint32_t end) {
+    const auto entry_at = [&](idx_t i) { return first + i; };
+    entries.leaf->Ensure(entries, end - first, entry_at, first, end);
+    entries.WriteRefs(result, result_offset, end - first, entry_at);
   }
 
   void ScanVector(duckdb::Vector& result, idx_t start, idx_t count) {

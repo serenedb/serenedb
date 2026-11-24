@@ -39,8 +39,9 @@
 #include <variant>
 #include <vector>
 
-#include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs {
@@ -449,11 +450,10 @@ void PackBooleans(ValidityMask& packed,
                   const duckdb::UnifiedVectorFormat& input, idx_t count) {
   packed.EnsureWritable();
   auto* dst = reinterpret_cast<data_ptr_t>(packed.GetData());
-  if (input.validity.CannotHaveNull()) {
-    BitPackBooleans<true>(dst, input, count);
-  } else {
-    BitPackBooleans<false>(dst, input, count);
-  }
+  Resolve<BoolAxis>(input.validity.CannotHaveNull(),
+                    [&]<bool AllValid>() IRS_FORCE_INLINE {
+                      BitPackBooleans<AllValid>(dst, input, count);
+                    });
 }
 
 struct RoaringAnalyzeState {
@@ -620,8 +620,9 @@ void AppendBitset(ContainerCompressionState& state, bool null,
 void AppendRun(ContainerCompressionState& state, bool null, uint16_t) {
   const auto run_idx = state.run_idx;
   const auto appended_count = state.appended_count;
-  if (!null && run_idx < kMaxRunIdx && appended_count &&
-      null != state.last_is_null) {
+  SDB_ASSERT(run_idx < kMaxRunIdx);
+  SDB_ASSERT(!appended_count || null != state.last_is_null);
+  if (!null && appended_count) {
     if (run_idx < kCompressedRunThreshold) {
       auto& last_run = state.runs[run_idx];
       last_run.length =
@@ -631,8 +632,7 @@ void AppendRun(ContainerCompressionState& state, bool null, uint16_t) {
       static_cast<uint8_t>(appended_count & (kCompressedSegmentSize - 1));
     ++state.run_counts[appended_count >> kCompressedSegmentShift];
     ++state.run_idx;
-  } else if (null && run_idx < kMaxRunIdx &&
-             (!appended_count || null != state.last_is_null)) {
+  } else if (null) {
     if (run_idx < kCompressedRunThreshold) {
       state.runs[run_idx].start = appended_count;
     }
@@ -649,9 +649,7 @@ void AppendToArray(ContainerCompressionState& state, bool null,
     return;
   }
   const auto current_array_idx = state.array_idx[null];
-  if (current_array_idx + amount > kMaxArrayIdx) {
-    return;
-  }
+  SDB_ASSERT(current_array_idx + amount <= kMaxArrayIdx);
   const auto appended_count = state.appended_count;
   auto* array_count = state.array_counts[null];
   auto* compressed_array = state.compressed_arrays[null];
@@ -738,9 +736,9 @@ void OverrideUncompressed(ContainerCompressionState& state, data_ptr_t base,
 }
 
 void Finalize(ContainerCompressionState& state) {
-  SDB_ASSERT(!state.finalized);
-  if (state.appended_count && state.last_is_null &&
-      state.run_idx < kMaxRunIdx) {
+  SDB_ASSERT(!state.finalized && state.appended_count != 0 &&
+             state.run_idx < kMaxRunIdx);
+  if (state.last_is_null) {
     if (state.run_idx < kCompressedRunThreshold) {
       auto& last_run = state.runs[state.run_idx];
       last_run.length =
@@ -787,7 +785,8 @@ void Reset(ContainerCompressionState& state) {
 }
 
 struct RoaringCompressState {
-  RoaringCompressState(ColumnDataCheckpointData& checkpoint_data,
+  RoaringCompressState(const Codec& codec,
+                       ColumnDataCheckpointData& checkpoint_data,
                        const RoaringAnalyzeState& analyze_state);
 
   ColumnDataCheckpointData& checkpoint_data;
@@ -898,10 +897,11 @@ void FlushContainer(RoaringCompressState& state) {
   state.total_count += container.appended_count;
   const bool has_nulls = container.null_count != 0;
   const bool has_non_nulls = container.null_count != container.appended_count;
-  if (has_nulls || container.uncompressed) {
+  SDB_ASSERT(!container.uncompressed || (has_nulls && has_non_nulls));
+  if (has_nulls) {
     state.stats_writer.SetHasNull();
   }
-  if (has_non_nulls || container.uncompressed) {
+  if (has_non_nulls) {
     state.stats_writer.SetHasValid();
   }
   state.segment.count += container.appended_count;
@@ -952,11 +952,11 @@ void Finalize(RoaringCompressState& state) {
 }
 
 RoaringCompressState::RoaringCompressState(
-  ColumnDataCheckpointData& checkpoint_data,
+  const Codec& codec, ColumnDataCheckpointData& checkpoint_data,
   const RoaringAnalyzeState& analyze_state)
   : checkpoint_data{checkpoint_data},
     analyze_state{analyze_state},
-    segment{CodecType::Roaring, checkpoint_data.type} {
+    segment{codec, checkpoint_data.type} {
   CreateEmptySegment(*this);
   InitializeContainer(*this);
 }
@@ -1469,11 +1469,7 @@ struct RoaringScanState final : SegmentScanState {
 void SkipContainer(ContainerScan& container, idx_t skip_count) {
   std::visit(
     [&](auto& state) {
-      SDB_ASSERT(state.scanned_count + skip_count <= state.container_size);
-      if (state.scanned_count + skip_count == state.container_size) {
-        state.scanned_count = state.container_size;
-        return;
-      }
+      SDB_ASSERT(state.scanned_count + skip_count < state.container_size);
       state.Skip(skip_count);
     },
     container);
@@ -1663,10 +1659,10 @@ void CountContainers(RoaringAnalyzeState& state,
 }
 
 template<duckdb::PhysicalType kPhysical>
-void EncodeChunks(ColumnDataCheckpointData& checkpoint_data,
+void EncodeChunks(const Codec& codec, ColumnDataCheckpointData& checkpoint_data,
                   std::span<const WriteChunk> chunks,
                   const RoaringAnalyzeState& analyze_state) {
-  RoaringCompressState state{checkpoint_data, analyze_state};
+  RoaringCompressState state{codec, checkpoint_data, analyze_state};
   for (const auto& chunk : chunks) {
     const auto count = chunk.data.size();
     duckdb::UnifiedVectorFormat unified;
@@ -1709,16 +1705,14 @@ constexpr CompressionFunction kFunction{
     [](ColumnDataCheckpointData& data, double) {
       return static_cast<double>(
                data.Get<Containers<kPhysical>>().state.total_size) /
-             static_cast<double>(std::max<uint64_t>(data.rows, 1)) *
-             data.preferences->roaring_price;
+             static_cast<double>(std::max<uint64_t>(data.rows, 1)) * data.price;
     },
   .compress =
-    [](ColumnDataCheckpointData& data) {
-      EncodeChunks<kPhysical>(data, data.chunks,
+    [](const Codec& codec, ColumnDataCheckpointData& data) {
+      EncodeChunks<kPhysical>(codec, data, data.chunks,
                               data.Get<Containers<kPhysical>>().state);
       return true;
     },
-  .codec = CodecType::Roaring,
 };
 
 std::unique_ptr<SegmentScanState> InitScan(const ColumnSegment& segment) {
@@ -1789,8 +1783,8 @@ constexpr DecompressionFunction kValidityDecompression{
 
 constexpr Codec kValidity{
   .type = CodecType::Roaring,
-  .compression = &kFunction<duckdb::PhysicalType::BIT>,
-  .decompression = &kValidityDecompression,
+  .compression = {&kFunction<duckdb::PhysicalType::BIT>, 1},
+  .decompression = kValidityDecompression,
 };
 
 constexpr DecompressionFunction kBooleanDecompression{
@@ -1801,8 +1795,8 @@ constexpr DecompressionFunction kBooleanDecompression{
 
 constexpr Codec kBoolean{
   .type = CodecType::Roaring,
-  .compression = &kFunction<duckdb::PhysicalType::BOOL>,
-  .decompression = &kBooleanDecompression,
+  .compression = {&kFunction<duckdb::PhysicalType::BOOL>, 1},
+  .decompression = kBooleanDecompression,
 };
 
 }  // namespace

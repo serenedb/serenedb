@@ -286,6 +286,297 @@ a	k	l	p
 42	k-42	NULL	row 42 of the plain column
 59999	k-2999	l-499	row 59999 of the plain column
 
+query
+SELECT column_name, bool_and(segment_info LIKE '%sorted: true%') AS every_sorted, bool_or(segment_info LIKE '%sorted: true%') AS any_sorted
+FROM pragma_storage_info('df_s', include_segment_info = true)
+WHERE column_name IN ('k', 'l') AND segment_type <> 'VALIDITY'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	every_sorted	any_sorted
+k	t	t
+l	f	f
+
+statement ok
+CREATE VIEW df_v AS SELECT a::INTEGER AS a, CASE WHEN a % 11 = 0 THEN NULL WHEN a % 13 = 0 THEN '' ELSE repeat(md5(((hash(a) % 4000) - (hash(a) % 4000) % 4)::TEXT), 6) || '/' || ((hash(a) % 4000) % 4) END AS v FROM range(60000) t(a);
+
+statement ok
+CREATE TABLE df_f (a INTEGER PRIMARY KEY,
+                   z TEXT USING COMPRESSION dict_lz4,
+                   s TEXT USING COMPRESSION dict_zstd,
+                   x TEXT USING COMPRESSION dict_zxc)
+  WITH (compaction_interval = 0, row_group_size = 16384);
+
+statement ok
+SET threads = 1;
+
+statement ok
+INSERT INTO df_f SELECT a, v, v, v FROM df_v;
+
+statement ok
+RESET threads;
+
+statement ok
+VACUUM (FLUSH_TABLE) df_f;
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression, count(*) > 1 AS several,
+       bool_and(segment_info LIKE '%sorted: true%') AS every_sorted
+FROM pragma_storage_info('df_f', include_segment_info = true)
+WHERE column_name IN ('z', 's', 'x') AND segment_type <> 'VALIDITY'
+GROUP BY column_name ORDER BY column_name;
+----
+column_name	compression	several	every_sorted
+s	DICT_ZSTD	t	t
+x	DICT_ZXC	t	t
+z	DICT_LZ4	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') = (SELECT count(*) FROM df_v WHERE v = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') AS z,
+       (SELECT count(*) FROM df_f WHERE s = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') = (SELECT count(*) FROM df_v WHERE v = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') AS s,
+       (SELECT count(*) FROM df_f WHERE x = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') = (SELECT count(*) FROM df_v WHERE v = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z = '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') = (SELECT count(*) FROM df_v WHERE v = '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') AS z,
+       (SELECT count(*) FROM df_f WHERE s = '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') = (SELECT count(*) FROM df_v WHERE v = '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') AS s,
+       (SELECT count(*) FROM df_f WHERE x = '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') = (SELECT count(*) FROM df_v WHERE v = '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/0x') = (SELECT count(*) FROM df_v WHERE v = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/0x') AS z,
+       (SELECT count(*) FROM df_f WHERE s = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/0x') = (SELECT count(*) FROM df_v WHERE v = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/0x') AS s,
+       (SELECT count(*) FROM df_f WHERE x = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/0x') = (SELECT count(*) FROM df_v WHERE v = 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/0x') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z = 'd645920e395fedad7bbbed0eca3fe2e0') = (SELECT count(*) FROM df_v WHERE v = 'd645920e395fedad7bbbed0eca3fe2e0') AS z,
+       (SELECT count(*) FROM df_f WHERE s = 'd645920e395fedad7bbbed0eca3fe2e0') = (SELECT count(*) FROM df_v WHERE v = 'd645920e395fedad7bbbed0eca3fe2e0') AS s,
+       (SELECT count(*) FROM df_f WHERE x = 'd645920e395fedad7bbbed0eca3fe2e0') = (SELECT count(*) FROM df_v WHERE v = 'd645920e395fedad7bbbed0eca3fe2e0') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z = '') = (SELECT count(*) FROM df_v WHERE v = '') AS z,
+       (SELECT count(*) FROM df_f WHERE s = '') = (SELECT count(*) FROM df_v WHERE v = '') AS s,
+       (SELECT count(*) FROM df_f WHERE x = '') = (SELECT count(*) FROM df_v WHERE v = '') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z = 'zzz') = (SELECT count(*) FROM df_v WHERE v = 'zzz') AS z,
+       (SELECT count(*) FROM df_f WHERE s = 'zzz') = (SELECT count(*) FROM df_v WHERE v = 'zzz') AS s,
+       (SELECT count(*) FROM df_f WHERE x = 'zzz') = (SELECT count(*) FROM df_v WHERE v = 'zzz') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z <> 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') = (SELECT count(*) FROM df_v WHERE v <> 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') AS z,
+       (SELECT count(*) FROM df_f WHERE s <> 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') = (SELECT count(*) FROM df_v WHERE v <> 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') AS s,
+       (SELECT count(*) FROM df_f WHERE x <> 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') = (SELECT count(*) FROM df_v WHERE v <> 'd645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0d645920e395fedad7bbbed0eca3fe2e0/2') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z <> '') = (SELECT count(*) FROM df_v WHERE v <> '') AS z,
+       (SELECT count(*) FROM df_f WHERE s <> '') = (SELECT count(*) FROM df_v WHERE v <> '') AS s,
+       (SELECT count(*) FROM df_f WHERE x <> '') = (SELECT count(*) FROM df_v WHERE v <> '') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z < '1') = (SELECT count(*) FROM df_v WHERE v < '1') AS z,
+       (SELECT count(*) FROM df_f WHERE s < '1') = (SELECT count(*) FROM df_v WHERE v < '1') AS s,
+       (SELECT count(*) FROM df_f WHERE x < '1') = (SELECT count(*) FROM df_v WHERE v < '1') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z <= 'cfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764da/0') = (SELECT count(*) FROM df_v WHERE v <= 'cfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764da/0') AS z,
+       (SELECT count(*) FROM df_f WHERE s <= 'cfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764da/0') = (SELECT count(*) FROM df_v WHERE v <= 'cfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764da/0') AS s,
+       (SELECT count(*) FROM df_f WHERE x <= 'cfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764da/0') = (SELECT count(*) FROM df_v WHERE v <= 'cfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764dacfcd208495d565ef66e7dff9f98764da/0') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z > 'f') = (SELECT count(*) FROM df_v WHERE v > 'f') AS z,
+       (SELECT count(*) FROM df_f WHERE s > 'f') = (SELECT count(*) FROM df_v WHERE v > 'f') AS s,
+       (SELECT count(*) FROM df_f WHERE x > 'f') = (SELECT count(*) FROM df_v WHERE v > 'f') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z >= '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') = (SELECT count(*) FROM df_v WHERE v >= '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') AS z,
+       (SELECT count(*) FROM df_f WHERE s >= '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') = (SELECT count(*) FROM df_v WHERE v >= '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') AS s,
+       (SELECT count(*) FROM df_f WHERE x >= '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') = (SELECT count(*) FROM df_v WHERE v >= '43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a43e04dd08bb1305428b0c9c8d8a2660a/3') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z < '') = (SELECT count(*) FROM df_v WHERE v < '') AS z,
+       (SELECT count(*) FROM df_f WHERE s < '') = (SELECT count(*) FROM df_v WHERE v < '') AS s,
+       (SELECT count(*) FROM df_f WHERE x < '') = (SELECT count(*) FROM df_v WHERE v < '') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z > '') = (SELECT count(*) FROM df_v WHERE v > '') AS z,
+       (SELECT count(*) FROM df_f WHERE s > '') = (SELECT count(*) FROM df_v WHERE v > '') AS s,
+       (SELECT count(*) FROM df_f WHERE x > '') = (SELECT count(*) FROM df_v WHERE v > '') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z BETWEEN '4' AND 'c') = (SELECT count(*) FROM df_v WHERE v BETWEEN '4' AND 'c') AS z,
+       (SELECT count(*) FROM df_f WHERE s BETWEEN '4' AND 'c') = (SELECT count(*) FROM df_v WHERE v BETWEEN '4' AND 'c') AS s,
+       (SELECT count(*) FROM df_f WHERE x BETWEEN '4' AND 'c') = (SELECT count(*) FROM df_v WHERE v BETWEEN '4' AND 'c') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE '8' < z) = (SELECT count(*) FROM df_v WHERE '8' < v) AS z,
+       (SELECT count(*) FROM df_f WHERE '8' < s) = (SELECT count(*) FROM df_v WHERE '8' < v) AS s,
+       (SELECT count(*) FROM df_f WHERE '8' < x) = (SELECT count(*) FROM df_v WHERE '8' < v) AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE 'a1' >= z) = (SELECT count(*) FROM df_v WHERE 'a1' >= v) AS z,
+       (SELECT count(*) FROM df_f WHERE 'a1' >= s) = (SELECT count(*) FROM df_v WHERE 'a1' >= v) AS s,
+       (SELECT count(*) FROM df_f WHERE 'a1' >= x) = (SELECT count(*) FROM df_v WHERE 'a1' >= v) AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', 'a3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87db/2', 'missing', NULL)) = (SELECT count(*) FROM df_v WHERE v IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', 'a3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87db/2', 'missing', NULL)) AS z,
+       (SELECT count(*) FROM df_f WHERE s IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', 'a3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87db/2', 'missing', NULL)) = (SELECT count(*) FROM df_v WHERE v IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', 'a3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87db/2', 'missing', NULL)) AS s,
+       (SELECT count(*) FROM df_f WHERE x IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', 'a3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87db/2', 'missing', NULL)) = (SELECT count(*) FROM df_v WHERE v IN ('a87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122ca87ff679a2f3e71d9181a67b7542122c/3', 'a3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87dba3f390d88e4c41f2747bfa2f1b5f87db/2', 'missing', NULL)) AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z IS NULL) = (SELECT count(*) FROM df_v WHERE v IS NULL) AS z,
+       (SELECT count(*) FROM df_f WHERE s IS NULL) = (SELECT count(*) FROM df_v WHERE v IS NULL) AS s,
+       (SELECT count(*) FROM df_f WHERE x IS NULL) = (SELECT count(*) FROM df_v WHERE v IS NULL) AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z IS NOT NULL) = (SELECT count(*) FROM df_v WHERE v IS NOT NULL) AS z,
+       (SELECT count(*) FROM df_f WHERE s IS NOT NULL) = (SELECT count(*) FROM df_v WHERE v IS NOT NULL) AS s,
+       (SELECT count(*) FROM df_f WHERE x IS NOT NULL) = (SELECT count(*) FROM df_v WHERE v IS NOT NULL) AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z = '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1' OR z < '05' OR z IS NULL) = (SELECT count(*) FROM df_v WHERE v = '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1' OR v < '05' OR v IS NULL) AS z,
+       (SELECT count(*) FROM df_f WHERE s = '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1' OR s < '05' OR s IS NULL) = (SELECT count(*) FROM df_v WHERE v = '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1' OR v < '05' OR v IS NULL) AS s,
+       (SELECT count(*) FROM df_f WHERE x = '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1' OR x < '05' OR x IS NULL) = (SELECT count(*) FROM df_v WHERE v = '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1' OR v < '05' OR v IS NULL) AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z >= '2' AND z < '3' AND z <> '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1') = (SELECT count(*) FROM df_v WHERE v >= '2' AND v < '3' AND v <> '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1') AS z,
+       (SELECT count(*) FROM df_f WHERE s >= '2' AND s < '3' AND s <> '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1') = (SELECT count(*) FROM df_v WHERE v >= '2' AND v < '3' AND v <> '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1') AS s,
+       (SELECT count(*) FROM df_f WHERE x >= '2' AND x < '3' AND x <> '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1') = (SELECT count(*) FROM df_v WHERE v >= '2' AND v < '3' AND v <> '1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f1ff1de774005f8da13f42943881c655f/1') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z LIKE 'a1%') = (SELECT count(*) FROM df_v WHERE v LIKE 'a1%') AS z,
+       (SELECT count(*) FROM df_f WHERE s LIKE 'a1%') = (SELECT count(*) FROM df_v WHERE v LIKE 'a1%') AS s,
+       (SELECT count(*) FROM df_f WHERE x LIKE 'a1%') = (SELECT count(*) FROM df_v WHERE v LIKE 'a1%') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT (SELECT count(*) FROM df_f WHERE z LIKE '%9/3') = (SELECT count(*) FROM df_v WHERE v LIKE '%9/3') AS z,
+       (SELECT count(*) FROM df_f WHERE s LIKE '%9/3') = (SELECT count(*) FROM df_v WHERE v LIKE '%9/3') AS s,
+       (SELECT count(*) FROM df_f WHERE x LIKE '%9/3') = (SELECT count(*) FROM df_v WHERE v LIKE '%9/3') AS x;
+----
+z	s	x
+t	t	t
+
+query
+SELECT count(*) AS mismatches FROM (
+  (SELECT a, z, s, x FROM df_f WHERE z BETWEEN '4' AND 'c' EXCEPT SELECT a, v, v, v FROM df_v WHERE v BETWEEN '4' AND 'c')
+  UNION ALL
+  (SELECT a, v, v, v FROM df_v WHERE v BETWEEN '4' AND 'c' EXCEPT SELECT a, z, s, x FROM df_f WHERE x BETWEEN '4' AND 'c')
+  UNION ALL
+  (SELECT a, z, s, x FROM df_f WHERE s >= 'c' EXCEPT SELECT a, v, v, v FROM df_v WHERE v >= 'c')
+  UNION ALL
+  (SELECT a, z, s, x FROM df_f WHERE a % 997 = 3 EXCEPT SELECT a, v, v, v FROM df_v WHERE a % 997 = 3)
+);
+----
+mismatches
+0
+
+query
+SELECT count(*) AS n, count(z) AS z, count(s) AS s, count(x) AS x, count(*) FILTER (WHERE z = '') AS empty FROM df_f;
+----
+n	z	s	x	empty
+60000	54545	54545	54545	4196
+
+statement ok
+DROP TABLE df_f;
+
+statement ok
+DROP VIEW df_v;
+
+statement ok
+CREATE TABLE df_n (a INTEGER PRIMARY KEY,
+                   k TEXT USING COMPRESSION dict_fsst,
+                   z TEXT USING COMPRESSION dict_lz4)
+  WITH (compaction_interval = 0, row_group_size = 16384);
+
+statement ok
+INSERT INTO df_n SELECT a, (100 + a * 7919 % 300)::TEXT, (100 + a * 7919 % 300)::TEXT FROM range(60000) t(a);
+
+statement ok
+VACUUM (FLUSH_TABLE) df_n;
+
+query
+SELECT (SELECT count(*) FROM df_n WHERE k::INTEGER > 250) AS k,
+       (SELECT count(*) FROM df_n WHERE z::INTEGER > 250) AS z,
+       (SELECT count(*) FROM range(60000) t(a) WHERE 100 + a * 7919 % 300 > 250) AS expected;
+----
+k	z	expected
+29800	29800	29800
+
+query
+SELECT count(*) AS n, count(k) AS k, count(z) AS z, min(k::INTEGER) AS low, max(z::INTEGER) AS high FROM df_n;
+----
+n	k	z	low	high
+60000	60000	60000	100	399
+
+statement ok
+DROP TABLE df_n;
+
 statement ok
 DROP TABLE df_s;
 

@@ -14,7 +14,9 @@ add_library(
     iresearch-test-writer
     OBJECT
     EXCLUDE_FROM_ALL
+    iresearch/hook_file_system.cpp
     iresearch/index/test_index_writer.cpp
+    iresearch/index_dir.cpp
 )
 target_include_directories(
     iresearch-test-writer

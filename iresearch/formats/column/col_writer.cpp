@@ -38,6 +38,7 @@
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -125,9 +126,12 @@ void SerializeNormColumn(duckdb::BinarySerializer& s,
 
 }  // namespace
 
-ColWriter::ColWriter(Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db, WriteTier tier)
-  : _dir{&dir}, _segment_name{segment_name}, _db{&db}, _tier{tier} {}
+ColWriter::ColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
+                     WriteTier tier)
+  : _tracker{tracker},
+    _filename{FileName(tracker.Name())},
+    _db{&db},
+    _tier{tier} {}
 
 ColWriter::~ColWriter() {
   if (_file && !_committed) {
@@ -139,8 +143,9 @@ void ColWriter::EnsureOut() {
   if (_file) {
     return;
   }
-  _file =
-    std::make_unique<ColFileWriter>(_dir->create(FileName(_segment_name)));
+  _file = std::make_unique<ColFileWriter>(
+    format_utils::OpenOutput(_tracker.Fs(), _tracker.Root(), _filename));
+  _tracker.Add(kColFile);
   _write_ctx = std::make_unique<WriteContext>(_db->GetBufferManager(), *_file);
 }
 
@@ -351,9 +356,7 @@ bool ColWriter::HasAnn(field_id column_id) const noexcept {
 
 void ColWriter::SetIdxWriter(IdxWriter& idx) noexcept {
   for (auto& entry : _ann_writers) {
-    if (entry.writer) {
-      entry.writer->SetIdxWriter(idx);
-    }
+    entry.writer->SetIdxWriter(idx);
   }
 }
 
@@ -361,9 +364,7 @@ std::vector<std::unique_ptr<AnnWriter>> ColWriter::TakeAnnWriters() noexcept {
   std::vector<std::unique_ptr<AnnWriter>> out;
   out.reserve(_ann_writers.size());
   for (auto& entry : _ann_writers) {
-    if (entry.writer) {
-      out.push_back(std::move(entry.writer));
-    }
+    out.push_back(std::move(entry.writer));
   }
   return out;
 }
@@ -409,28 +410,28 @@ std::vector<irs::StagedColumn> ColWriter::Snapshot(uint64_t rows) const {
   return columns;
 }
 
-SealedNorms ColWriter::SealNorms(uint64_t rows) {
+std::vector<NormColumnSpec> ColWriter::SealNorms(uint64_t rows) {
   if (_deferred && !_norms_reordered) {
     ReorderNorms(rows, {});
   }
-  SealedNorms sealed;
-  sealed.columns.reserve(_norms.size());
+  std::vector<NormColumnSpec> norms;
+  norms.reserve(_norms.size());
   for (auto& writer : _norms) {
     if (writer->RowCount() < rows) {
       writer->PadTo(rows);
     }
     writer->Finalize();
     if (!writer->Meta().regions.empty()) {
-      sealed.columns.push_back({.id = writer->Id(), .meta = writer->Meta()});
+      norms.push_back({.id = writer->Id(), .meta = writer->Meta()});
     }
   }
-  if (!sealed.columns.empty()) {
+  if (!norms.empty()) {
     EnsureOut();
-    sealed.in = _dir->Finish(_file->Finish(), IOAdvice::RANDOM);
-  } else if (_file) {
+  }
+  if (_file) {
     _file->Flush();
   }
-  return sealed;
+  return norms;
 }
 
 size_t ColWriter::StagedBytes() const noexcept {
@@ -538,8 +539,9 @@ bool ColWriter::Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
         list.WriteElement(footer.row_group_starts[i]);
       });
   });
-  _reader = std::make_unique<ColReader>(
-    *_db, _dir->Finish(std::move(out), IOAdvice::RANDOM), std::move(footer));
+  _tracker.Written(out->Position());
+  _reader = std::make_unique<ColReader>(*_db, format_utils::CloseOutput(*out),
+                                        std::move(footer));
   _committed = true;
   return true;
 }

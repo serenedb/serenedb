@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <absl/strings/str_cat.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/bitpacking.hpp>
@@ -28,9 +30,9 @@
 #include <utility>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs {
 
@@ -57,6 +59,8 @@ inline constexpr size_t kFsstFrameRawBytes = 16 * 1024;
 inline constexpr size_t kFrameDictionaryBytes = 32 * 1024;
 inline constexpr size_t kDictionaryFrameBytes = 16 * 1024;
 inline constexpr size_t kZstdDictionaryFrameBytes = 32 * 1024;
+inline constexpr size_t kZstdFrameBytes = 128 * 1024;
+inline constexpr size_t kZstdSplitBytes = 96 * 1024;
 inline constexpr size_t kMaxDictionaryBytes = 64 * 1024;
 inline constexpr uint32_t kChainRestart = 16;
 inline constexpr uint32_t kMeanChainWalk = 4;
@@ -133,7 +137,8 @@ kDefaultColSegmentTarget encoded bytes:
 |   +----------------------------------------------+   |
 |   |   bitpacked length[entry_count]              |   |
 |   +----------------------------------------------+   |
-|   entry 0 is NULL, then each distinct value in       |
+|   entry 0 is NULL, then each distinct value: in      |
+|   byte order when the header says sorted, else in    |
 |   the order the rows first use it                    |
 +------------------------------------------------------+
 |                      Row codes                       |
@@ -166,7 +171,7 @@ struct Header {
   CodecType codes = CodecType::Auto;
   uint8_t reserved2 = 0;
   uint8_t level = 0;
-  uint8_t reserved0 = 0;
+  uint8_t sorted = 0;
   uint8_t length_width = 0;
   uint8_t reserved1[2] = {};
   uint32_t row_count = 0;
@@ -190,37 +195,41 @@ struct Header {
   static Header Parse(duckdb::const_data_ptr_t p, duckdb::idx_t segment_size,
                       CodecType codec) {
     using duckdb::BitpackingPrimitives;
-    SDB_ENSURE(segment_size >= kHeaderSize,
-               "col codec: segment smaller than its header");
+    if (segment_size < kHeaderSize) [[unlikely]] {
+      ThrowCorrupted("text", "segment is smaller than its header");
+    }
     const auto h = duckdb::Load<Header>(p);
     const auto leaf = LeafOf(codec);
-    SDB_ENSURE(h.version == kSegmentVersion,
-               "col codec: unsupported segment version ", h.version);
-    SDB_ENSURE(
-      (ShapeOf(codec) == Shape::Dictionary ? CodesCodec(h.codes)
-                                           : h.codes == CodecType::Auto) &&
-        h.length_width <= 32 && h.lcp_width <= 32 &&
-        (h.flags == FrameDictionary::None ||
-         (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
-          !Sorted(leaf)) ||
-         (h.flags == FrameDictionary::Local && h.symtab_size != 0 &&
-          h.dictionary_size != 0 && h.dictionary_size <= kMaxDictionaryBytes &&
-          !Sorted(leaf))) &&
-        (leaf != ByteCodec::FsstPlus ||
-         h.symtab_size >= uint64_t{h.dictionary_size} + sizeof(uint32_t)) &&
-        static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
-        h.off_frames >= kHeaderSize &&
-        h.off_frames + static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=
-          h.off_lengths &&
-        h.off_lengths + BitpackingPrimitives::GetRequiredSize(h.entry_count,
-                                                              h.length_width) <=
-          h.off_lcps &&
-        h.off_lcps +
-            BitpackingPrimitives::GetRequiredSize(h.entry_count, h.lcp_width) <=
-          h.off_codes &&
-        h.off_codes <= h.off_symtab &&
-        h.off_symtab + static_cast<uint64_t>(h.symtab_size) <= h.off_data,
-      "col codec: corrupted segment header");
+    if (h.version != kSegmentVersion) [[unlikely]] {
+      ThrowCorrupted("text", absl::StrCat("unsupported version ", h.version));
+    }
+    if (!((ShapeOf(codec) == Shape::Dictionary ? CodesCodec(h.codes)
+                                               : h.codes == CodecType::Auto) &&
+          h.length_width <= 32 && h.lcp_width <= 32 && h.sorted <= 1 &&
+          (h.flags == FrameDictionary::None ||
+           (h.flags == FrameDictionary::FirstFrame && h.frame_count > 1 &&
+            !Sorted(leaf)) ||
+           (h.flags == FrameDictionary::Local && h.symtab_size != 0 &&
+            h.dictionary_size != 0 &&
+            h.dictionary_size <= kMaxDictionaryBytes && !Sorted(leaf))) &&
+          (leaf != ByteCodec::FsstPlus ||
+           h.symtab_size >= uint64_t{h.dictionary_size} + sizeof(uint32_t)) &&
+          static_cast<uint64_t>(h.off_data) + h.data_size <= segment_size &&
+          h.off_frames >= kHeaderSize &&
+          h.off_frames +
+              static_cast<uint64_t>(h.frame_count) * kFrameMetaSize <=
+            h.off_lengths &&
+          h.off_lengths + BitpackingPrimitives::GetRequiredSize(
+                            h.entry_count, h.length_width) <=
+            h.off_lcps &&
+          h.off_lcps + BitpackingPrimitives::GetRequiredSize(h.entry_count,
+                                                             h.lcp_width) <=
+            h.off_codes &&
+          h.off_codes <= h.off_symtab &&
+          h.off_symtab + static_cast<uint64_t>(h.symtab_size) <= h.off_data))
+      [[unlikely]] {
+      ThrowCorrupted("text", "header is inconsistent");
+    }
     return h;
   }
 };
@@ -230,7 +239,7 @@ static_assert(offsetof(Header, version) == 0);
 static_assert(offsetof(Header, codes) == 1);
 static_assert(offsetof(Header, reserved2) == 2);
 static_assert(offsetof(Header, level) == 3);
-static_assert(offsetof(Header, reserved0) == 4);
+static_assert(offsetof(Header, sorted) == 4);
 static_assert(offsetof(Header, length_width) == 5);
 static_assert(offsetof(Header, reserved1) == 6);
 static_assert(offsetof(Header, row_count) == 8);

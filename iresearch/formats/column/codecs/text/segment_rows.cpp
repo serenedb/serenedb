@@ -28,6 +28,8 @@
 #include <duckdb/common/bitpacking.hpp>
 #include <duckdb/common/helper.hpp>
 #include <limits>
+#include <span>
+#include <string_view>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
@@ -42,6 +44,7 @@ using duckdb::string_t;
 constexpr double kEntriesFirstRatio = 0.5;
 constexpr double kMispredicted = 2.0;
 constexpr uint32_t kPackedCodeRunRows = 4;
+constexpr double kCodeRunPrice = 1.5;
 
 uint64_t PrefixKey(const string_t& value, size_t skip) noexcept {
   char buf[8] = {};
@@ -53,43 +56,71 @@ uint64_t PrefixKey(const string_t& value, size_t skip) noexcept {
   return absl::big_endian::Load64(buf);
 }
 
-bool Less(const string_t& a, const string_t& b) noexcept {
-  const size_t a_size = a.GetSize();
-  const size_t b_size = b.GetSize();
-  const int cmp =
-    std::memcmp(a.GetData(), b.GetData(), std::min(a_size, b_size));
-  return cmp < 0 || (cmp == 0 && a_size < b_size);
+void SortByBytes(std::span<SortScratch::Key> order,
+                 std::span<const string_t> entries, size_t skip) {
+  absl::c_sort(
+    order, [](const auto& a, const auto& b) { return a.prefix < b.prefix; });
+  const size_t next = skip + sizeof(uint64_t);
+  for (size_t first = 0; first < order.size();) {
+    auto end = first + 1;
+    while (end < order.size() && order[end].prefix == order[first].prefix) {
+      ++end;
+    }
+    const auto tied = order.subspan(first, end - first);
+    first = end;
+    if (tied.size() == 1) {
+      continue;
+    }
+    const auto longer = absl::c_partition(tied, [&](const auto& key) {
+      return entries[key.entry].GetSize() <= next;
+    });
+    const std::span ended{tied.begin(), longer};
+    absl::c_sort(ended, [&](const auto& a, const auto& b) {
+      return entries[a.entry].GetSize() < entries[b.entry].GetSize();
+    });
+    const std::span rest{longer, tied.end()};
+    if (rest.empty()) {
+      continue;
+    }
+    const auto tail = [&](const SortScratch::Key& key) {
+      const auto& entry = entries[key.entry];
+      return std::string_view{entry.GetData() + next, entry.GetSize() - next};
+    };
+    auto shared = tail(rest.front());
+    for (const auto& key : rest.subspan(1)) {
+      shared = absl::FindLongestCommonPrefix(shared, tail(key));
+    }
+    const auto deeper = next + shared.size();
+    for (auto& key : rest) {
+      key.prefix = PrefixKey(entries[key.entry], deeper);
+    }
+    SortByBytes(rest, entries, deeper);
+  }
 }
 
 }  // namespace
 
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
-                    const ReusePolicy& reuse) noexcept {
-  if (shape != Shape::Dictionary) {
-    return 0;
-  }
-  return reuse.calibrated
-           ? static_cast<uint64_t>(
-               static_cast<double>(rows * sizeof(uint32_t)) * reuse.reference)
-           : Packed(rows, entries);
+uint64_t CodesBytes(uint64_t rows, uint64_t entries, double ratio) noexcept {
+  return ratio != 0 ? static_cast<uint64_t>(
+                        static_cast<double>(rows * sizeof(uint32_t)) * ratio)
+                    : Packed(rows, entries);
 }
 
 void CompressCodes(
-  std::span<uint32_t> codes, ReusePolicy& reuse,
+  std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write) {
-  if (codes.empty()) {
-    write(CodecType::Auto, {});
-    return;
-  }
+  SDB_ASSERT(!codes.empty());
   const WriteChunk chunk{
     duckdb::Vector{duckdb::LogicalType::UINTEGER,
                    reinterpret_cast<duckdb::data_ptr_t>(codes.data()),
                    codes.size()},
     codes.size()};
-  ColumnTuning column{.reuse = reuse};
+  ColumnTuning column;
+  uint64_t written = 0;
   const auto flush = [&](const Codec& codec, duckdb::BaseStatistics, uint64_t,
-                         std::string_view bytes) {
+                         std::string_view bytes, std::string_view) {
     SDB_ASSERT(CodesCodec(codec.type));
+    written += bytes.size();
     write(codec.type, bytes);
   };
   ColumnDataCheckpointData data{
@@ -99,9 +130,11 @@ void CompressCodes(
     .tuning = column,
     .disabled = ~kCodesGroup,
     .min_packed_run = kPackedCodeRunRows,
+    .run_price = kCodeRunPrice,
   };
   Compress(CodecType::Auto, data);
-  reuse = column.reuse;
+  ratio = static_cast<double>(written) /
+          static_cast<double>(codes.size() * sizeof(uint32_t));
 }
 
 uint64_t EstimateEntries(const SegmentEntries& rows,
@@ -134,43 +167,47 @@ uint64_t PlainRows::Estimate() const noexcept {
 
 uint64_t DictionaryRows::Estimate() const noexcept {
   return kHeaderSize + Packed(EntryCount(), _max_len) +
-         CodesBytes(kShape, _rows, _entries.size(), _codes_tuning);
+         CodesBytes(_rows, _entries.size(), _codes_ratio);
 }
 
-void DictionaryRows::Sort(SortScratch& scratch) {
-  const auto n = static_cast<uint32_t>(_entries.size());
-  uint32_t common = _entries.empty() ? 0 : _entries[0].GetSize();
+void SortEntries(std::span<const string_t> entries, SortScratch& scratch) {
+  const auto n = static_cast<uint32_t>(entries.size());
+  uint32_t common = entries.empty() ? 0 : entries[0].GetSize();
   for (uint32_t i = 1; i < n && common != 0; ++i) {
-    common = std::min(common, CommonPrefix(_entries[0], _entries[i]));
+    common = std::min(common, CommonPrefix(entries[0], entries[i]));
   }
   auto& order = scratch.order;
   order.resize(n);
   for (uint32_t i = 0; i < n; ++i) {
-    order[i] = {PrefixKey(_entries[i], common), i};
+    order[i] = {PrefixKey(entries[i], common), i};
   }
-  absl::c_sort(order,
-               [&](const SortScratch::Key& a, const SortScratch::Key& b) {
-                 if (a.prefix != b.prefix) {
-                   return a.prefix < b.prefix;
-                 }
-                 return Less(_entries[a.entry], _entries[b.entry]);
-               });
+  SortByBytes(order, entries, common);
   auto& remap = scratch.remap;
   auto& sorted = scratch.sorted;
   remap.assign(n + 1, 0);
   sorted.resize(n);
   for (uint32_t pos = 0; pos < n; ++pos) {
     remap[order[pos].entry + 1] = pos + 1;
-    sorted[pos] = _entries[order[pos].entry];
-  }
-  _entries.swap(sorted);
-  for (auto& code : _codes) {
-    code = remap[code];
+    sorted[pos] = entries[order[pos].entry];
   }
 }
 
+void DictionaryRows::Sort(SortScratch& scratch) {
+  SortEntries(_entries, scratch);
+  _entries.swap(scratch.sorted);
+  SDB_ASSERT((absl::c_adjacent_find(
+                _entries, [](const string_t& left, const string_t& right) {
+                  return std::string_view{right.GetData(), right.GetSize()} <=
+                         std::string_view{left.GetData(), left.GetSize()};
+                }) == _entries.end()));
+  for (auto& code : _codes) {
+    code = scratch.remap[code];
+  }
+  _sorted = true;
+}
+
 void SegmentRows::Assemble(const EncodedFrames& frames, CodecType codes_codec,
-                           std::string_view codes, Segment& out) {
+                           std::string_view codes, bool sorted, Segment& out) {
   const auto entry_count = EntryCount();
   const auto data_size = out.bytes.Size();
   SDB_ENSURE(_rows <= std::numeric_limits<uint32_t>::max() &&
@@ -180,6 +217,7 @@ void SegmentRows::Assemble(const EncodedFrames& frames, CodecType codes_codec,
   Header h{
     .codes = codes_codec,
     .level = _level,
+    .sorted = sorted,
     .length_width =
       BitpackingPrimitives::MinimumBitWidth<uint32_t>(frames.max_length),
     .row_count = static_cast<uint32_t>(_rows),
@@ -224,12 +262,14 @@ void SegmentRows::Assemble(const EncodedFrames& frames, CodecType codes_codec,
 
 void SegmentRows::Finish(const EncodedFrames& frames, Shape shape,
                          Segment& out) {
-  _stats.Merge(out.stats.emplace(duckdb::BaseStatistics::CreateEmpty(_type)));
+  out.stats = duckdb::BaseStatistics::CreateEmpty(_type);
+  _stats.Merge(out.stats);
   out.config = {
     .shape = shape,
     .leaf = frames.codec,
     .level = _level,
     .layout = _layout,
+    .sorted = _ordered,
   };
   out.begin = _next - _rows;
   out.rows = _rows;
@@ -249,17 +289,18 @@ void SegmentRows::Finish(const EncodedFrames& frames, Shape shape,
 }
 
 void PlainRows::Write(const EncodedFrames& frames, Segment& out) {
-  Assemble(frames, CodecType::Auto, {}, out);
+  Assemble(frames, CodecType::Auto, {}, false, out);
   Finish(frames, kShape, out);
 }
 
 void DictionaryRows::Write(const EncodedFrames& frames, Segment& out) {
-  CompressCodes(_codes, _codes_tuning,
+  CompressCodes(_codes, _codes_ratio,
                 [&](CodecType codec, std::string_view codes) {
-                  Assemble(frames, codec, codes, out);
+                  Assemble(frames, codec, codes, _sorted, out);
                 });
   Finish(frames, kShape, out);
   _codes.clear();
+  _sorted = false;
 }
 
 }  // namespace irs::codecs::text

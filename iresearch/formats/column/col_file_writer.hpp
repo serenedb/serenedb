@@ -25,13 +25,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/serializer/buffered_file_writer.hpp>
 #include <memory>
 #include <span>
 #include <string_view>
 #include <vector>
 
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/store/data_output.hpp"
 #include "iresearch/types.hpp"
 
 namespace irs {
@@ -41,7 +41,9 @@ class ColFileWriter final {
   static constexpr size_t kChunkSize = size_t{64} << 10;
   static constexpr size_t kMaxQueued = size_t{64} << 20;
 
-  explicit ColFileWriter(IndexOutput::ptr out);
+  using Output = std::unique_ptr<duckdb::BufferedFileWriter>;
+
+  explicit ColFileWriter(Output out);
 
   uint64_t Position();
 
@@ -53,9 +55,9 @@ class ColFileWriter final {
 
   void Flush();
 
-  IndexOutput::ptr Finish();
+  Output Finish();
 
-  IndexOutput::ptr Finish(format_utils::FooterWriter footer);
+  Output Finish(format_utils::FooterWriter footer);
 
  private:
   struct Chunk {
@@ -71,7 +73,7 @@ class ColFileWriter final {
   bool HasRoom() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   bool Idle() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
 
-  IndexOutput::ptr _out;
+  Output _out;
   absl::Mutex _mutex;
   uint64_t _end ABSL_GUARDED_BY(_mutex);
   size_t _queued ABSL_GUARDED_BY(_mutex) = 0;

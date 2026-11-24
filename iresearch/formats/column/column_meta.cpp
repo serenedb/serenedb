@@ -56,7 +56,7 @@ ColumnBlockMeta DeserializeColumnBlockMeta(duckdb::BinaryDeserializer& d,
     d.ReadPropertyWithExplicitDefault<uint64_t>(6, "shared_size", 0);
   const auto* codec =
     codecs::GetCodec(codecs::CodecType{compression_type}, physical);
-  if (!codec || !codec->decompression) [[unlikely]] {
+  if (!codec) [[unlikely]] {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG("Column block uses compression ",

@@ -68,7 +68,8 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/enum_name.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -291,6 +292,8 @@ irs::containers::FlatHashSet<duckdb::PhysicalType> LeafPhysicalTypes(
       case duckdb::LogicalTypeId::MAP:
         return self(duckdb::ListType::GetChildType(t));
       case duckdb::LogicalTypeId::STRUCT:
+      case duckdb::LogicalTypeId::TUPLE:
+      case duckdb::LogicalTypeId::UNION:
         for (const auto& field : duckdb::StructType::GetChildTypes(t)) {
           self(field.second);
         }
@@ -370,8 +373,7 @@ irs::codecs::CodecType CheckColumnCodec(
     return codec;
   }
   const auto compresses = [&](duckdb::PhysicalType physical) {
-    const auto* written = irs::codecs::GetCodec(codec, physical);
-    return written && written->compression;
+    return irs::codecs::Writes(codec, physical);
   };
   const auto physical = column_type.InternalType();
   if (compresses(physical)) {
@@ -396,7 +398,8 @@ SearchTableEntry::SearchTableEntry(
     _triggers{triggers ? std::move(triggers)
                        : std::make_shared<EntrySet>(
                            catalog.IsCaseSensitive(),
-                           catalog.Cast<BaseCatalog>().Oids(), oid, true)} {
+                           catalog.Cast<BaseCatalog>().Oids(), oid, true)},
+    _tablespace{info.Base().tablespace_oid} {
   auto& oids = catalog.GetDatabase().GetDatabaseManager();
   for (duckdb::idx_t i = 0; i < _columns.LogicalColumnCount(); ++i) {
     auto& column = _columns.GetColumnMutable(duckdb::LogicalIndex{i});
@@ -421,7 +424,7 @@ SearchTableEntry::SearchTableEntry(
   }
   auto& base = info.Base();
   if (base.oid == 0) {
-    ReadDatabase(
+    ReadEntry<DatabaseCatalogEntry>(
       catalog.GetName().GetIdentifierName(),
       [&](const DatabaseCatalogEntry& database) {
         const auto& defaults = database.Options();
@@ -438,10 +441,11 @@ SearchTableEntry::SearchTableEntry(
   _sort_keys = ResolveSortKeys(_columns, base.sort_keys);
   const bool fresh = !_storage;
   if (fresh) {
+    auto& serene = catalog.Cast<SereneDBCatalog>();
     _storage = std::make_shared<search::Store>(
-      catalog.Cast<SereneDBCatalog>().Directory(), catalog.InMemory(),
-      catalog.GetAttached().IsReadOnly(), catalog.GetOid(), oid, base.oid == 0,
-      _options, GetColumns());
+      serene.Directory(), serene.StoragePath(transaction, *this, _tablespace),
+      catalog.InMemory(), catalog.GetAttached().IsReadOnly(), catalog.GetOid(),
+      oid, _options, GetColumns());
     _storage->MergeIndexConfig(oid, PrimaryKeyConfig(*this));
   }
   auto [specs, referencing] = search::ResolveTableKeys(*this, transaction);
@@ -498,8 +502,9 @@ void AppendIResearchBlockRows(
     info.segment_type = type_name;
     info.segment_start = row_base + node.DataBlockFirstRow(block);
     info.segment_count = meta.tuple_count;
-    info.compression_type = std::string{magic_enum::enum_name(
-      meta.codec ? meta.codec->type : irs::codecs::CodecType::Uncompressed)};
+    SDB_ASSERT(meta.codec);
+    info.compression_type =
+      std::string{magic_enum::enum_name(meta.codec->type)};
     info.segment_stats = meta.statistics.ToStruct();
     info.has_updates = false;
     info.persistent = true;
@@ -511,11 +516,11 @@ void AppendIResearchBlockRows(
                       ", shared_offset: ", meta.shared_offset,
                       ", shared_size: ", meta.shared_size);
     }
-    if (read && meta.byte_size != 0 && meta.codec &&
-        meta.codec->decompression->get_segment_info) {
+    if (read && meta.byte_size != 0 &&
+        meta.codec->decompression.get_segment_info) {
       const auto opened = node.OpenSegment(block, *read);
       for (const auto& [mode, count] :
-           meta.codec->decompression->get_segment_info(*opened)) {
+           meta.codec->decompression.get_segment_info(*opened)) {
         absl::StrAppend(&info.segment_info, ", ", mode, ": ", count);
       }
     }
@@ -541,7 +546,7 @@ void WalkIResearchColumn(irs::ReadContext* read, const irs::ColumnReader& node,
 }  // namespace
 
 duckdb::vector<duckdb::ColumnSegmentInfo> SearchTableEntry::ColumnSegmentRows(
-  const duckdb::QueryContext&, const irs::DirectoryReader& reader,
+  const duckdb::QueryContext&, const irs::CompositeReader& reader,
   const duckdb::TableCatalogEntry& table, duckdb::column_t key_column,
   bool segment_info) {
   duckdb::vector<duckdb::ColumnSegmentInfo> result;
@@ -703,6 +708,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
     create.options.insert_or_assign(name, OptionConstant(value));
   }
   create.sort_keys = SortOrdersOf(_sort_keys, GetColumns());
+  info->tablespace_oid = _tablespace;
   return info;
 }
 
@@ -1211,6 +1217,11 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::Altered(
   auto bound = binder->BindCreateTableInfo(
     std::move(definition), ParentSchema(context),
     bound_defaults ? *bound_defaults : unused_defaults, info.bind_mode);
+  for (const auto& dependency : dependencies.Set()) {
+    if (dependency.entry.type == duckdb::CatalogType::TABLESPACE_ENTRY) {
+      bound->Base().dependencies.AddDependency(dependency);
+    }
+  }
   return Successor(context, *bound);
 }
 

@@ -26,18 +26,18 @@
 #include <cstdint>
 #include <functional>
 #include <iresearch/formats/hnsw/hnsw_bases.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/merge_profile.hpp>
 #include <iresearch/index/merge_writer.hpp>
-#include <iresearch/store/directory.hpp>
-#include <iresearch/store/directory_attributes.hpp>
 #include <memory>
 #include <optional>
 #include <thread>
 #include <vector>
+
+#include "index_dir.hpp"
 
 namespace tests {
 
@@ -71,7 +71,7 @@ struct CompactionResult {
 };
 
 using LazyRemoval = std::function<std::shared_ptr<const irs::DocRemoval>(
-  const irs::DirectoryReader&)>;
+  const irs::CompositeReader&)>;
 
 class IndexWriter {
   struct Span {
@@ -135,11 +135,12 @@ class IndexWriter {
     std::vector<Removal> _removals;
   };
 
-  static ptr Make(irs::Directory& dir, OpenMode mode,
+  static ptr Make(const IndexDir& dir, OpenMode mode,
                   irs::IndexWriterOptions options = {});
 
-  IndexWriter(irs::Directory& dir, OpenMode mode,
+  IndexWriter(const IndexDir& dir, OpenMode mode,
               irs::IndexWriterOptions options);
+  ~IndexWriter();
 
   Transaction GetBatch(bool exclusive = false) {
     return Transaction{*this, exclusive};
@@ -151,7 +152,7 @@ class IndexWriter {
   bool RefreshCommit();
   bool Commit() { return RefreshCommit(); }
 
-  irs::DirectoryReader GetSnapshot() const;
+  irs::CompositeReader GetSnapshot() const;
 
   CompactionResult Compact(
     const irs::CompactionPolicy& policy,
@@ -176,20 +177,18 @@ class IndexWriter {
  private:
   struct Change {
     uint64_t seq = 0;
-    std::vector<irs::SegmentMeta> added;
-    irs::FileRefs pins;
+    std::vector<CommittedSegment> added;
     std::vector<Removal> removals;
   };
 
   struct Flushed {
-    std::vector<irs::SegmentMeta> metas;
+    std::vector<CommittedSegment> segments;
     std::vector<uint64_t> starts;
     std::vector<Span> spans;
-    irs::FileRefs pins;
   };
 
   struct Staged {
-    std::vector<irs::SegmentMeta> segments;
+    std::vector<CommittedSegment> segments;
     uint64_t cut = 0;
     std::vector<size_t> flushed;
     size_t merges = 0;
@@ -197,18 +196,17 @@ class IndexWriter {
 
   OpenSegment& Acquire() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
   void FlushFree() ABSL_EXCLUSIVE_LOCKS_REQUIRED(_mutex);
-  std::vector<irs::SegmentMeta> Apply(
-    std::vector<irs::SegmentMeta> segments, std::span<const Change> changes,
+  std::vector<CommittedSegment> Apply(
+    std::vector<CommittedSegment> segments, std::span<const Change> changes,
     std::span<const Flushed* const> flushed,
     std::span<irs::IndexWriter::Merged> merges) const;
 
-  irs::Directory& _dir;
+  IndexDir _dir;
   std::unique_ptr<irs::HnswBases> _hnsw_bases;
   irs::IndexReaderOptions _reader_options;
   irs::IndexWriter::ptr _writer;
   mutable absl::Mutex _mutex;
   uint64_t _seq ABSL_GUARDED_BY(_mutex) = 0;
-  irs::FileRefs _pins ABSL_GUARDED_BY(_mutex);
   std::vector<std::unique_ptr<OpenSegment>> _open ABSL_GUARDED_BY(_mutex);
   std::vector<Flushed> _flushed ABSL_GUARDED_BY(_mutex);
   std::vector<Change> _pending ABSL_GUARDED_BY(_mutex);
@@ -218,7 +216,7 @@ class IndexWriter {
   std::optional<Staged> _staged ABSL_GUARDED_BY(_mutex);
 };
 
-irs::DirectoryReader OpenReader(const irs::Directory& dir,
+irs::CompositeReader OpenReader(const IndexDir& dir,
                                 const irs::IndexReaderOptions& options = {});
 
 }  // namespace tests

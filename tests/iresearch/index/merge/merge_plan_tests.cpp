@@ -38,7 +38,6 @@
 #include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iterator>
 #include <numeric>
@@ -111,10 +110,10 @@ class MergePlanTest : public ::testing::Test {
     }
   }
 
-  irs::MergePlan MakePlan(irs::Directory& out,
+  irs::MergePlan MakePlan(const tests::IndexDir& out,
                           const irs::IndexFieldOptions* options = nullptr,
                           const irs::MergeProgress& progress = {}) {
-    return irs::MergePlan{out,
+    return irs::MergePlan{out.Tracker(_meta.name),
                           _doc_map,
                           _meta,
                           nullptr,
@@ -132,18 +131,18 @@ class MergePlanTest : public ::testing::Test {
     }
   }
 
-  std::string MergedDifference(irs::Directory& out) {
-    const auto merged = irs::SegmentReaderImpl::Open(
-      out, _meta, irs::tests::DefaultReaderOptions());
+  std::string MergedDifference(const tests::IndexDir& out) {
+    const auto merged =
+      OpenSegment(out, _meta, irs::tests::DefaultReaderOptions());
     if (merged == nullptr) {
       return "merged segment did not open";
     }
     return FirstDifference(ExpectedMerge(_inputs), Dump(*merged));
   }
 
-  irs::MemoryDirectory _dir;
+  tests::IndexDir _dir = MemoryDir();
   tests::IndexWriter::ptr _writer;
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   irs::FunctionFieldOptions _field_options{
     PlainColumns,
@@ -162,7 +161,7 @@ class MergePlanTest : public ::testing::Test {
 };
 
 TEST_F(MergePlanTest, UnitsComeInDependencyOrder) {
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out);
   ASSERT_TRUE(plan.Prepare(MergePool(1)));
   std::vector<MergeUnitKind> kinds;
@@ -193,7 +192,7 @@ TEST_F(MergePlanTest, OnlyDeletedDocsGiveNoSegment) {
     ASSERT_EQ(0, deleted.back()->live_docs_count());
     _doc_map.emplace_back(deleted.back().get(), irs::IResourceManager::gNoop);
   }
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out);
   ASSERT_TRUE(plan.Prepare(MergePool(1)));
   EXPECT_EQ(0, _meta.docs_count);
@@ -208,8 +207,6 @@ class OversizedSegment final : public irs::SubReader {
     _meta.docs_count = docs;
     _meta.live_docs_count = docs;
   }
-
-  uint64_t CountMappedMemory() const final { return 0; }
 
   const irs::SegmentInfo& Meta() const final { return _meta; }
 
@@ -235,7 +232,7 @@ TEST_F(MergePlanTest, MergeUpToTheDocIdLimitIsPlanned) {
   _doc_map.clear();
   _doc_map.emplace_back(&most, irs::IResourceManager::gNoop);
   _doc_map.emplace_back(&one, irs::IResourceManager::gNoop);
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out);
   ASSERT_TRUE(plan.Prepare(MergePool(1)));
   EXPECT_EQ(irs::kMergeDocsMax, _meta.docs_count);
@@ -248,7 +245,7 @@ TEST_F(MergePlanTest, MergePastTheDocIdLimitIsRefused) {
   _doc_map.clear();
   _doc_map.emplace_back(&most, irs::IResourceManager::gNoop);
   _doc_map.emplace_back(&one, irs::IResourceManager::gNoop);
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out);
   EXPECT_FALSE(plan.Prepare(MergePool(1)));
   EXPECT_TRUE(plan.Units().empty());
@@ -261,7 +258,7 @@ TEST_F(MergePlanTest, NormAndColumnUnitsMergeInAnyOrder) {
   for (const uint64_t seed : {1, 2, 3, 4}) {
     SCOPED_TRACE(seed);
     ResetMerge();
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     auto plan = MakePlan(out);
     ASSERT_TRUE(plan.Prepare(MergePool(1)));
     const auto units = plan.Units();
@@ -280,7 +277,7 @@ TEST_F(MergePlanTest, NormAndColumnUnitsMergeInAnyOrder) {
 }
 
 TEST_F(MergePlanTest, ColumnsKeepThePlanOrderWhateverOrderTheyMergeIn) {
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out);
   ASSERT_TRUE(plan.Prepare(MergePool(1)));
   const auto units = plan.Units();
@@ -300,8 +297,8 @@ TEST_F(MergePlanTest, ColumnsKeepThePlanOrderWhateverOrderTheyMergeIn) {
   for (const auto unit : order) {
     ASSERT_TRUE(plan.RunUnit(unit)) << "unit " << unit;
   }
-  const auto merged = irs::SegmentReaderImpl::Open(
-    out, _meta, irs::tests::DefaultReaderOptions());
+  const auto merged =
+    OpenSegment(out, _meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);
   std::vector<irs::field_id> written;
   for (const auto& column : merged->GetColReader()->Columns()) {
@@ -311,7 +308,7 @@ TEST_F(MergePlanTest, ColumnsKeepThePlanOrderWhateverOrderTheyMergeIn) {
 }
 
 TEST_F(MergePlanTest, OneThreadKeepsEveryColumnWhole) {
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out, &_small_row_groups);
   ASSERT_TRUE(plan.Prepare(MergePool(1)));
   const auto units = plan.Units();
@@ -320,7 +317,7 @@ TEST_F(MergePlanTest, OneThreadKeepsEveryColumnWhole) {
 }
 
 TEST_F(MergePlanTest, BigColumnsSplitIntoRowRanges) {
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out, &_small_row_groups);
   ASSERT_TRUE(plan.Prepare(MergePool(64)));
   const auto units = plan.Units();
@@ -355,7 +352,7 @@ TEST_F(MergePlanTest, SplitUnitsMergeInAnyOrder) {
     for (const uint64_t seed : {1, 2}) {
       SCOPED_TRACE(absl::StrCat(threads, " threads, seed ", seed));
       ResetMerge();
-      irs::MemoryDirectory out;
+      const auto out = MemoryDir();
       auto plan = MakePlan(out, &_small_row_groups);
       ASSERT_TRUE(plan.Prepare(MergePool(threads)));
       const ShuffledUnits shuffle;
@@ -366,7 +363,7 @@ TEST_F(MergePlanTest, SplitUnitsMergeInAnyOrder) {
 }
 
 TEST_F(MergePlanTest, SplitTextWithoutATrainedCodecMerges) {
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out, &_uncompressed_text);
   ASSERT_TRUE(plan.Prepare(MergePool(64)));
   const auto units = plan.Units();
@@ -380,7 +377,7 @@ TEST_F(MergePlanTest, CancelledSplitUnitsStopTheMerge) {
   for (size_t fail_at = 1;; ++fail_at) {
     SCOPED_TRACE(fail_at);
     ResetMerge();
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     std::atomic<size_t> calls{0};
     auto plan =
       MakePlan(out, &_small_row_groups, [&] { return ++calls < fail_at; });
@@ -478,7 +475,7 @@ class ColumnSplitTest : public ::testing::Test {
   }
 
   std::shared_ptr<const irs::SegmentReaderImpl> Merge(
-    irs::Directory& out, uint32_t row_group, size_t threads,
+    const tests::IndexDir& out, uint32_t row_group, size_t threads,
     std::span<const irs::MergeUnit>* units = nullptr) {
     TakeSnapshot();
     return MergeInputs(out, row_group, threads, units);
@@ -490,14 +487,14 @@ class ColumnSplitTest : public ::testing::Test {
   }
 
   std::shared_ptr<const irs::SegmentReaderImpl> MergeSegments(
-    irs::Directory& out, std::vector<const irs::SubReader*> inputs,
+    const tests::IndexDir& out, std::vector<const irs::SubReader*> inputs,
     uint32_t row_group, size_t threads = 1,
     std::span<const irs::MergeUnit>* units = nullptr) {
     _inputs = std::move(inputs);
     return MergeInputs(out, row_group, threads, units);
   }
 
-  std::span<const irs::MergeUnit> PrepareInputs(irs::Directory& out,
+  std::span<const irs::MergeUnit> PrepareInputs(const tests::IndexDir& out,
                                                 uint32_t row_group,
                                                 size_t threads) {
     _meta = {};
@@ -509,14 +506,15 @@ class ColumnSplitTest : public ::testing::Test {
       _merge_columns, irs::tests::MakeNormColumnIdProvider(), row_group,
       _merge_anns);
     _plan = std::make_unique<irs::MergePlan>(
-      out, _doc_map, _meta, nullptr, irs::DuckDBEngine::Instance().instance(),
+      out.Tracker(_meta.name), _doc_map, _meta, nullptr,
+      irs::DuckDBEngine::Instance().instance(),
       _with_options ? _options.get() : nullptr, _progress, nullptr);
     EXPECT_TRUE(_plan->Prepare(MergePool(threads)));
     return _plan->Units();
   }
 
   std::shared_ptr<const irs::SegmentReaderImpl> MergeInputs(
-    irs::Directory& out, uint32_t row_group, size_t threads,
+    const tests::IndexDir& out, uint32_t row_group, size_t threads,
     std::span<const irs::MergeUnit>* units) {
     const auto planned = PrepareInputs(out, row_group, threads);
     if (units != nullptr) {
@@ -524,8 +522,7 @@ class ColumnSplitTest : public ::testing::Test {
     }
     const ShuffledUnits shuffle{!_serial};
     EXPECT_TRUE(irs::ExecuteMerge(*_plan));
-    return irs::SegmentReaderImpl::Open(out, _meta,
-                                        irs::tests::DefaultReaderOptions());
+    return OpenSegment(out, _meta, irs::tests::DefaultReaderOptions());
   }
 
   void ExpectEveryPartTrains(size_t docs_per_segment, bool deletes,
@@ -543,7 +540,7 @@ class ColumnSplitTest : public ::testing::Test {
     }
     RemoveTerms(*_writer, kIdField, removed);
     _merge_columns = Lz4Column(kText);
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     std::span<const irs::MergeUnit> units;
     const auto merged = Merge(out, static_cast<uint32_t>(row_group), 4, &units);
     ASSERT_NE(nullptr, merged);
@@ -568,10 +565,10 @@ class ColumnSplitTest : public ::testing::Test {
     EXPECT_TRUE(last) << ::testing::PrintToString(dictionaries);
   }
 
-  irs::MemoryDirectory _dir;
+  tests::IndexDir _dir = MemoryDir();
   tests::IndexWriter::ptr _writer;
   size_t _next = 0;
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   irs::MergeDocMap _doc_map{{irs::IResourceManager::gNoop}};
   irs::SegmentMeta _meta;
@@ -620,7 +617,7 @@ TEST_F(ColumnSplitTest, RangesPadInputsWithoutTheColumn) {
   TakeSnapshot();
   const WithoutColumnStore storeless{*_inputs[4]};
   _inputs[4] = &storeless;
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged = MergeInputs(out, kInputRowGroup, 16, &units);
   ASSERT_NE(nullptr, merged);
@@ -648,7 +645,7 @@ TEST_F(ColumnSplitTest, ArrayColumnsSplitIntoRowRanges) {
   for (size_t s = 0; s != 2; ++s) {
     AddSegment(300, FillVectorRow);
   }
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged = Merge(out, kInputRowGroup, 16, &units);
   ASSERT_NE(nullptr, merged);
@@ -670,7 +667,7 @@ TEST_F(ColumnSplitTest, VectorIndexColumnsStayWhole) {
   };
   _merge_anns[kVector].push_back(kVector);
   TakeSnapshot();
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto units = PrepareInputs(out, kInputRowGroup, 16);
   EXPECT_EQ(1, UnitsOf(units, MergeUnitKind::Column, kVector).size());
   EXPECT_LT(1, UnitsOf(units, MergeUnitKind::Column, kVectorNumber).size());
@@ -749,7 +746,7 @@ class NestedTextSplitTest : public ColumnSplitTest {
     }
     RemoveTerms(*_writer, kIdField, removed);
     _merge_columns = Lz4Column(kMap);
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     std::span<const irs::MergeUnit> units;
     const auto merged = Merge(out, row_group, 4, &units);
     ASSERT_NE(nullptr, merged);
@@ -838,7 +835,7 @@ TEST_F(ColumnSplitTest, NestedColumnsSplitIntoRowRanges) {
     removed.emplace_back(absl::StrCat("doc-", row));
   }
   RemoveTerms(*_writer, kIdField, removed);
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged = Merge(out, 256, 16, &units);
   ASSERT_NE(nullptr, merged);
@@ -912,7 +909,7 @@ class ColumnCopyTest : public ColumnSplitTest {
 
   template<typename Fill>
   std::shared_ptr<const irs::SegmentReaderImpl> MergeWritten(
-    irs::Directory& dir, Fill&& fill) {
+    const tests::IndexDir& dir, Fill&& fill) {
     for (size_t s = 0; s != 5; ++s) {
       AddSegment(600, fill);
     }
@@ -921,7 +918,7 @@ class ColumnCopyTest : public ColumnSplitTest {
   }
 
   std::shared_ptr<const irs::SegmentReaderImpl> MergeWritten(
-    irs::Directory& dir) {
+    const tests::IndexDir& dir) {
     return MergeWritten(dir, FillRow);
   }
 
@@ -934,7 +931,7 @@ class ColumnCopyTest : public ColumnSplitTest {
   static constexpr uint32_t kTrainingRowGroup = 8192;
 
   std::shared_ptr<const irs::SegmentReaderImpl> TrainedSegment(
-    irs::Directory& dir, size_t rows = 60000) {
+    const tests::IndexDir& dir, size_t rows = 60000) {
     AddSegment(rows, [](auto& doc, size_t row) {
       WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
                  duckdb::Value{TemplatedLine(row)});
@@ -949,9 +946,9 @@ class ColumnCopyTest : public ColumnSplitTest {
 };
 
 TEST_F(ColumnCopyTest, MergeWrittenInputsCopyTheirBlocks) {
-  irs::MemoryDirectory dir_a;
-  irs::MemoryDirectory dir_b;
-  irs::MemoryDirectory out;
+  const auto dir_a = MemoryDir();
+  const auto dir_b = MemoryDir();
+  const auto out = MemoryDir();
   const auto a = MergeWritten(dir_a);
   const auto b = MergeWritten(dir_b);
   std::span<const irs::MergeUnit> units;
@@ -969,9 +966,9 @@ TEST_F(ColumnCopyTest, MergeWrittenInputsCopyTheirBlocks) {
 }
 
 TEST_F(ColumnCopyTest, CopiedColumnsKeepTheirNulls) {
-  irs::MemoryDirectory dir_a;
-  irs::MemoryDirectory dir_b;
-  irs::MemoryDirectory out;
+  const auto dir_a = MemoryDir();
+  const auto dir_b = MemoryDir();
+  const auto out = MemoryDir();
   const auto a = MergeWritten(dir_a);
   const auto b = MergeWritten(dir_b, FillRowWithNulls);
   ASSERT_TRUE(b->GetColReader()->Column(kNumber)->HasValidity());
@@ -988,9 +985,9 @@ TEST_F(ColumnCopyTest, CopiedColumnsKeepTheirNulls) {
 }
 
 TEST_F(ColumnCopyTest, CopiesSitBesideSplitEncodedRanges) {
-  irs::MemoryDirectory dir_a;
-  irs::MemoryDirectory dir_b;
-  irs::MemoryDirectory out;
+  const auto dir_a = MemoryDir();
+  const auto dir_b = MemoryDir();
+  const auto out = MemoryDir();
   const auto a = MergeWritten(dir_a);
   const auto b = MergeWritten(dir_b);
   std::vector<std::string> removed;
@@ -1011,8 +1008,8 @@ TEST_F(ColumnCopyTest, CopiesSitBesideSplitEncodedRanges) {
 }
 
 TEST_F(ColumnCopyTest, CopiesKeepTheirRowGroupsBetweenReencodedInputs) {
-  irs::MemoryDirectory dir_a;
-  irs::MemoryDirectory out;
+  const auto dir_a = MemoryDir();
+  const auto out = MemoryDir();
   const auto a = MergeWritten(dir_a, FillRowWithNulls);
   const auto kept = a->GetColReader()->RowGroupStarts();
   ASSERT_FALSE(kept.empty());
@@ -1101,7 +1098,7 @@ TEST_F(ColumnCopyTest, StretchesBetweenCopiesCostTheirOwnInputs) {
   copy(bytes[2]);
   stretch(sparse_cost, rows[3]);
   ASSERT_LT(1, dense_parts);
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged = MergeSegments(out, inputs, kRowGroup, kThreads, &units);
   ASSERT_NE(nullptr, merged);
@@ -1136,7 +1133,7 @@ TEST_F(ColumnCopyTest, CopyUnitsReencodeWhenThatPays) {
                 1);
     });
   }
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged = Merge(out, kRowGroup, 1, &units);
   ASSERT_NE(nullptr, merged);
@@ -1155,11 +1152,8 @@ TEST_F(ColumnCopyTest, ReencodedTextCopiesTrainTheirSegments) {
                  duckdb::Value{TemplatedLine(row)});
     });
   }
-  _merge_columns = [](irs::field_id) {
-    return irs::ColumnOptions{.compression =
-                                irs::codecs::CodecType::DictZstd};
-  };
-  irs::MemoryDirectory out;
+  _merge_columns = Lz4Column(kText);
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged = Merge(out, kTrainingRowGroup, 1, &units);
   ASSERT_NE(nullptr, merged);
@@ -1172,8 +1166,8 @@ TEST_F(ColumnCopyTest, ReencodedTextCopiesTrainTheirSegments) {
 
 TEST_F(ColumnCopyTest, InputsThatCannotBeCopiedAreReencoded) {
   FlushRowGroups(kRowGroup);
-  irs::MemoryDirectory dir_a;
-  irs::MemoryDirectory out;
+  const auto dir_a = MemoryDir();
+  const auto out = MemoryDir();
   const auto a = MergeWritten(dir_a);
   AddSegment(kEligibleRows, FillRow);
   std::vector<std::string> removed;
@@ -1206,14 +1200,14 @@ TEST_F(ColumnCopyTest, InputsThatCannotBeCopiedAreReencoded) {
 }
 
 TEST_F(ColumnCopyTest, NestedSketchedAndOptionlessColumnsAreNotCopied) {
-  irs::MemoryDirectory dir_a;
+  const auto dir_a = MemoryDir();
   const auto a = MergeWritten(dir_a, FillRowWithNulls);
   _merge_columns = [](irs::field_id id) {
     return irs::ColumnOptions{.distinct = id == kNumber
                                             ? irs::DistinctStats::Exact
                                             : irs::DistinctStats::None};
   };
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged = MergeSegments(out, {a.get()}, kRowGroup, 1, &units);
   ASSERT_NE(nullptr, merged);
@@ -1222,28 +1216,28 @@ TEST_F(ColumnCopyTest, NestedSketchedAndOptionlessColumnsAreNotCopied) {
   EXPECT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnCopy, kReal).size());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
   _with_options = false;
-  irs::MemoryDirectory bare;
+  const auto bare = MemoryDir();
   ASSERT_NE(nullptr, MergeSegments(bare, {a.get()}, kRowGroup, 1, &units));
   EXPECT_EQ(0, std::ranges::count(units, MergeUnitKind::ColumnCopy,
                                   &irs::MergeUnit::kind));
 }
 
 TEST_F(ColumnCopyTest, SkippedValidityCopiesOnlyColumnsWithoutNulls) {
-  irs::MemoryDirectory dir_a;
-  irs::MemoryDirectory dir_b;
+  const auto dir_a = MemoryDir();
+  const auto dir_b = MemoryDir();
   const auto a = MergeWritten(dir_a);
   const auto b = MergeWritten(dir_b, FillRowWithNulls);
   _merge_columns = [](irs::field_id id) {
     return irs::ColumnOptions{.skip_validity = id == kNumber};
   };
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged = MergeSegments(out, {a.get()}, kRowGroup, 1, &units);
   ASSERT_NE(nullptr, merged);
   EXPECT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnCopy, kNumber).size());
   EXPECT_FALSE(merged->GetColReader()->Column(kNumber)->HasValidity());
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
-  irs::MemoryDirectory nulls;
+  const auto nulls = MemoryDir();
   ASSERT_NE(nullptr, MergeSegments(nulls, {b.get()}, kRowGroup, 1, &units));
   EXPECT_TRUE(UnitsOf(units, MergeUnitKind::ColumnCopy, kNumber).empty());
   EXPECT_EQ(1, UnitsOf(units, MergeUnitKind::ColumnCopy, kReal).size());
@@ -1262,7 +1256,7 @@ TEST_F(ColumnCopyTest, BlocksThatPointOutsideThemselvesAreReencoded) {
                 1);
     });
   }
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged = Merge(out, kRowGroup, 1, &units);
   ASSERT_NE(nullptr, merged);
@@ -1271,15 +1265,15 @@ TEST_F(ColumnCopyTest, BlocksThatPointOutsideThemselvesAreReencoded) {
 }
 
 TEST_F(ColumnCopyTest, ABlockCopyStopsWithTheMerge) {
-  irs::MemoryDirectory dir_a;
-  irs::MemoryDirectory dir_b;
+  const auto dir_a = MemoryDir();
+  const auto dir_b = MemoryDir();
   const auto a = MergeWritten(dir_a);
   const auto b = MergeWritten(dir_b);
   bool stopping = false;
   size_t calls = 0;
   _progress = [&] { return !stopping || calls++ == 0; };
   _inputs = {a.get(), b.get()};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto copies =
     UnitsOf(PrepareInputs(out, kRowGroup, 1), MergeUnitKind::ColumnCopy, kReal);
   ASSERT_FALSE(copies.empty());
@@ -1289,12 +1283,12 @@ TEST_F(ColumnCopyTest, ABlockCopyStopsWithTheMerge) {
 }
 
 TEST_F(ColumnCopyTest, AnAbortedPlanStopsItsUnits) {
-  irs::MemoryDirectory dir_a;
-  irs::MemoryDirectory dir_b;
+  const auto dir_a = MemoryDir();
+  const auto dir_b = MemoryDir();
   const auto a = MergeWritten(dir_a);
   const auto b = MergeWritten(dir_b);
   _inputs = {a.get(), b.get()};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto units = PrepareInputs(out, kRowGroup, 1);
   ASSERT_FALSE(units.empty());
   _plan->Abort();
@@ -1304,11 +1298,11 @@ TEST_F(ColumnCopyTest, AnAbortedPlanStopsItsUnits) {
 }
 
 TEST_F(ColumnCopyTest, CopiedTextKeepsItsTrainedDictionaries) {
-  irs::MemoryDirectory dir_a;
-  irs::MemoryDirectory dir_b;
+  const auto dir_a = MemoryDir();
+  const auto dir_b = MemoryDir();
   const auto a = TrainedSegment(dir_a);
   const auto b = TrainedSegment(dir_b);
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged =
     MergeSegments(out, {a.get(), b.get()}, kTrainedRowGroup, 1, &units);
@@ -1323,8 +1317,8 @@ TEST_F(ColumnCopyTest, CopiedTextKeepsItsTrainedDictionaries) {
 }
 
 TEST_F(ColumnCopyTest, CopiedBlocksWithAndWithoutADictionaryStayAsTheyAre) {
-  irs::MemoryDirectory dir_a;
-  irs::MemoryDirectory dir_b;
+  const auto dir_a = MemoryDir();
+  const auto dir_b = MemoryDir();
   const auto a = TrainedSegment(dir_a, 70000);
   AddSegment(35000, [](auto& doc, size_t row) {
     WriteValue(doc, kText, duckdb::LogicalType::VARCHAR,
@@ -1341,7 +1335,7 @@ TEST_F(ColumnCopyTest, CopiedBlocksWithAndWithoutADictionaryStayAsTheyAre) {
   ASSERT_TRUE(absl::c_any_of(
     mixed, [](const std::string& dictionary) { return dictionary != "local"; }))
     << ::testing::PrintToString(mixed);
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   std::span<const irs::MergeUnit> units;
   const auto merged =
     MergeSegments(out, {a.get(), b.get()}, kTrainedRowGroup, 1, &units);

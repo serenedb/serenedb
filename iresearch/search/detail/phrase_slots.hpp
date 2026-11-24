@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <span>
 #include <tuple>
 #include <type_traits>
@@ -30,7 +31,6 @@
 #include "iresearch/search/detail/conjunction_leaves.hpp"
 #include "iresearch/search/detail/phrase_matcher.hpp"
 #include "iresearch/search/detail/phrase_variadic_pos.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -79,8 +79,8 @@ class PhraseSlots {
  public:
   template<typename... Args>
   PhraseSlots(const PhraseTerms& terms, std::span<const TermInterval> intervals,
-              const IndexInput& doc_in, IndexFeatures layout,
-              const IndexInput& pos_in, const IndexInput* pay_in,
+              const duckdb::InputFile& doc_in, IndexFeatures layout,
+              const duckdb::InputFile& pos_in, const duckdb::InputFile* pay_in,
               Args&&... args)
     : _matcher{terms.metas.size(), std::forward<Args>(args)...},
       _repeats{terms.repeats.size()},
@@ -118,9 +118,10 @@ class PhraseSlots {
   PhraseSlots(std::span<const PostingMeta> metas,
               std::span<const uint32_t> offsets,
               std::span<const score_t> boosts,
-              std::span<const TermInterval> intervals, const IndexInput& doc_in,
-              IndexFeatures layout, const IndexInput& pos_in,
-              const IndexInput* pay_in, Args&&... args)
+              std::span<const TermInterval> intervals,
+              const duckdb::InputFile& doc_in, IndexFeatures layout,
+              const duckdb::InputFile& pos_in, const duckdb::InputFile* pay_in,
+              Args&&... args)
     : _terms{metas.size(), std::piecewise_construct,
              [&](size_t i) {
                return std::forward_as_tuple(metas[i], doc_in, layout, pos_in,

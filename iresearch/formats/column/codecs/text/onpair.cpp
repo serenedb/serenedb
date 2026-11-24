@@ -38,15 +38,15 @@
 #include <vector>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/codecs.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/codecs/text/dictionary_scan.tpp"
 #include "iresearch/formats/column/codecs/text/plain_scan.tpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs::text::onpair {
@@ -79,7 +79,9 @@ IRS_FORCE_INLINE std::string_view DecodeEntry(
   const auto tokens = TokenFrame(m, table.Bits());
   const auto first = FirstToken(groups, counts, tokens, f, e);
   const uint64_t count = counts.At(e);
-  SDB_ENSURE(first + count <= tokens.comp_len, "col codec: corrupted entry");
+  if (first + count > tokens.comp_len) [[unlikely]] {
+    ThrowCorrupted("text", "entry is inconsistent");
+  }
   const auto capacity = table.Capacity(count);
   auto* at = Reserve(out, capacity);
   const auto n =
@@ -99,7 +101,9 @@ struct Scan {
   Scan(const ColumnSegment& segment, const Frames& s)
     : table{OpenSymbolTable<Table>(segment.cache_slot.cache,
                                    SymbolTable(s.header, s.base))} {
-    SDB_ENSURE(table, "col codec: corrupted symbol table");
+    if (!table) [[unlikely]] {
+      ThrowCorrupted("text", "symbol table is inconsistent");
+    }
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
       return std::pair{s.frames[f].first_entry, s.FrameEnd(f)};
     });
@@ -117,24 +121,24 @@ struct Scan {
     uint64_t off = 0;
     for (auto e = m.first_entry; e < end; ++e) {
       const uint64_t count = s.length_reader.At(e);
-      SDB_ENSURE(token + count <= tokens.comp_len,
-                 "col codec: corrupted entry");
+      if (token + count > tokens.comp_len) [[unlikely]] {
+        ThrowCorrupted("text", "entry is inconsistent");
+      }
       const auto n =
         table->Table().Decode(stream, token, count, out + off, m.raw_len - off);
       visit(e, std::string_view{out + off, n});
       off += n;
       token += count;
     }
-    SDB_ENSURE(off == m.raw_len, "col codec: corrupted frame");
+    if (off != m.raw_len) [[unlikely]] {
+      ThrowCorrupted("text", "frame is inconsistent");
+    }
   }
 
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
-    const auto first = s.frames[f].first_entry;
-    WalkFrame(s, f, out, [&](uint32_t e, std::string_view v) {
-      SDB_ASSERT(!Frames::kDedup || e == first || View(s.values[e - 1]) < v);
-      s.Keep(e, v);
-    });
+    WalkFrame(s, f, out,
+              [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
   }
 
   template<typename Frames>
@@ -163,9 +167,8 @@ struct Scan {
   }
 
   template<typename Frames, typename Entry>
-  void Ensure(Frames& s, duckdb::idx_t count, Entry entry_at, uint32_t,
-              uint32_t) {
-    s.EnsureEach(count, entry_at);
+  void Ensure(Frames& s, duckdb::idx_t, Entry, uint32_t first, uint32_t end) {
+    s.EnsureRange(first, end);
   }
 
   template<typename Frames, typename Entry>
@@ -178,9 +181,7 @@ struct Scan {
 
   template<typename Frames, typename Before>
   uint32_t Bound(Frames& s, Before before) {
-    if (s.frames.empty()) {
-      return s.header.entry_count;
-    }
+    SDB_ASSERT(!s.frames.empty());
     return static_cast<uint32_t>(PartitionIndex(
       s.frames[0].first_entry, s.header.entry_count, [&](size_t i) {
         const auto e = static_cast<uint32_t>(i);
@@ -233,7 +234,9 @@ struct Fetch {
   void Open(duckdb::ObjectCache* cache, const Header& h,
             duckdb::const_data_ptr_t base) {
     table = OpenSymbolTable<Table>(cache, SymbolTable(h, base));
-    SDB_ENSURE(table, "col codec: corrupted symbol table");
+    if (!table) [[unlikely]] {
+      ThrowCorrupted("text", "symbol table is inconsistent");
+    }
     const auto* frames = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
       return std::pair{FrameAt(frames, i).first_entry,
@@ -282,16 +285,16 @@ class Controller {
     }
     const auto entries = _created - _created_at;
     const auto bytes = _scanned - _scanned_at;
+    SDB_ASSERT(bytes > 0 && _capacity > _created);
     const double recent =
-      bytes > 0 ? static_cast<double>(entries) / static_cast<double>(bytes)
-                : 1e9;
-    const uint64_t entries_left =
-      _capacity > _created ? _capacity - _created : 1;
+      static_cast<double>(entries) / static_cast<double>(bytes);
+    const uint64_t entries_left = _capacity - _created;
     const uint64_t bytes_left = _budget > _scanned ? _budget - _scanned : 1;
     const double target =
       static_cast<double>(entries_left) / static_cast<double>(bytes_left);
-    const double ratio = target > 0.0 ? recent / target : 1e9;
-    if (ratio > 2.0 && _threshold < kMaxThreshold) {
+    const double ratio = recent / target;
+    if (ratio > 2.0) {
+      SDB_ASSERT(_threshold < kMaxThreshold);
       ++_threshold;
     } else if (ratio < 0.5 && _threshold > kMinThreshold) {
       --_threshold;
@@ -351,10 +354,7 @@ bool Table::Open(std::string_view table) {
   return true;
 }
 
-void Table::Corrupted() {
-  SDB_ENSURE(false, "col codec: corrupted entry");
-  SDB_UNREACHABLE();
-}
+void Table::Corrupted() { ThrowCorrupted("text", "entry is inconsistent"); }
 
 Codec::Codec() : _lengths{std::make_unique<std::array<uint16_t, 65536>>()} {}
 
@@ -372,9 +372,7 @@ void Codec::Reset() {
 uint32_t Codec::Insert(std::string_view token) {
   const auto [it, fresh] =
     _ids.try_emplace(token, static_cast<uint32_t>(_tokens.size()));
-  if (!fresh) {
-    return it->second;
-  }
+  SDB_ASSERT(fresh);
   _tokens.emplace_back(token);
   if (token.size() > 1) {
     (*_lengths)[static_cast<uint8_t>(token[0]) |
@@ -435,7 +433,8 @@ void Codec::Train(std::span<const duckdb::string_t> entries, uint64_t raw) {
         if (pair_len <= kMaxToken) {
           const auto key = PairKey(prev.id, cur.id);
           auto& count = _pairs[key];
-          count = count == kMaxThreshold ? count : count + 1;
+          SDB_ASSERT(count < kMaxThreshold);
+          ++count;
           if (count >= ctrl.Threshold()) {
             const auto id = Insert({data + pos - prev.len, pair_len});
             if (_tokens.size() == cap) {

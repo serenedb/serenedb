@@ -93,8 +93,9 @@ class CapturingScorer final : public irs::Scorer {
   void Target(BlockAttrs& attrs) noexcept { _attrs = &attrs; }
 
   void collect(irs::byte_type* stats, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final {
-    _impl.collect(stats, field, term);
+               const irs::TermCollector* term,
+               irs::StatsArena& arena) const final {
+    _impl.collect(stats, field, term, arena);
   }
 
   irs::IndexFeatures GetIndexFeatures() const final {
@@ -131,7 +132,7 @@ class CapturingScorer final : public irs::Scorer {
 class TermOrderScorer final : public irs::ScorerBase<TermOrderScorer, void> {
  public:
   void collect(irs::byte_type*, const irs::FieldCollector*,
-               const irs::TermCollector* term) const final {
+               const irs::TermCollector* term, irs::StatsArena&) const final {
     if (term != nullptr) {
       docs_with_term.push_back(term->docs_with_term);
     }
@@ -7472,7 +7473,7 @@ TEST_P(PhraseFilterTestCase, sequential_negation_regression) {
   }
 }
 
-static constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
+static constexpr auto kTestDirs = tests::kDirParams;
 
 INSTANTIATE_TEST_SUITE_P(phrase_filter_test, PhraseFilterTestCase,
                          ::testing::Combine(::testing::ValuesIn(kTestDirs)),
@@ -9233,7 +9234,7 @@ class OverlapField : public tests::FieldBase {
   std::string_view Value() const final { return _value; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   std::string _value{"foo"};
   irs::analysis::Tokenizer::ptr _stream;
@@ -9442,7 +9443,7 @@ class RepeatOverlapField : public tests::FieldBase {
   std::string_view Value() const final { return {}; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   static constexpr std::array<FixedTokensStream::Token, 3> kTokens{{
     {"foo", 1, 0, 3},
@@ -9630,7 +9631,7 @@ class OverlapPrefixField : public tests::FieldBase {
   std::string_view Value() const final { return _value; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   std::string _value{"foo"};
   irs::analysis::Tokenizer::ptr _stream;
@@ -9734,7 +9735,7 @@ class VariadicOverlapField : public tests::FieldBase {
   std::string_view Value() const final { return {}; }
 
  private:
-  bool Write(irs::DataOutput&) const final { return false; }
+  bool Write(duckdb::WriteStream&) const final { return false; }
 
   static constexpr std::array<FixedTokensStream::Token, 3> kTokens{{
     {"aa", 1, 0, 2},

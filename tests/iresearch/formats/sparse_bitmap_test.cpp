@@ -45,7 +45,6 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/types.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/type_limits.hpp>
@@ -55,13 +54,15 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
+#include "tests_shared.hpp"
 
 namespace {
 
 // Single-bool parametrisation preserved so TEST_P syntax works; the
 // legacy `<DirectoryFactory, SparseBitmapVersion>` parameter pair is
 // gone (the on-disk shape no longer has a "version" knob, and the
-// directory is always MemoryDirectory for these tests).
+// directory is always in memory for these tests).
 class SparseBitmapTestCase : public ::testing::TestWithParam<bool> {
  protected:
   duckdb::DatabaseInstance& Db() {
@@ -168,9 +169,9 @@ bool DocInRanges(const RangeType (&ranges)[N], irs::doc_id_t doc) {
 // per doc inside `ranges` (payload = `PayloadFor(doc)`) and a null row
 // for every doc in between. The column ends one row past the max range.
 template<size_t N>
-void WriteRanges(duckdb::DatabaseInstance& db, irs::Directory& dir,
+void WriteRanges(duckdb::DatabaseInstance& db, const tests::IndexDir& dir,
                  std::string_view name, const RangeType (&ranges)[N]) {
-  irs::ColWriter w{dir, name, db};
+  irs::ColWriter w{db, dir.Tracker(name)};
   // Use the override that lets us pick the row-group size. We pass
   // skip_validity=false (we *want* the validity bits) and
   // COMPRESSION_AUTO so the codec picks an appropriate validity
@@ -214,11 +215,11 @@ void ExpectPayloadEq(irs::bytes_view payload, irs::doc_id_t doc) {
 // equals the last-row-exclusive of the ranges (legacy `cost()`).
 template<size_t N>
 void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{db, TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_next";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::ColReader r{dir, kName, db, irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kName);
   ASSERT_TRUE(r.HasColumn(1));
   // An id that was never written must report HasColumn=false and
   // Column()=nullptr. Legacy `read_write_empty` covered the empty-
@@ -236,7 +237,7 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   // reached docs in the hundreds of thousands; the cs equivalent
   // must still fragment across many rgs to exercise cross-rg
   // bookkeeping.)
-  EXPECT_GE(col->DataRgCount(), 8u);
+  EXPECT_GE(col->DataBlocks().size(), 8u);
 
   // ---------- Pass 1: full per-row walk, fresh reader. -----------
   // Legacy iterator walks every "row" (= every doc index in
@@ -314,11 +315,11 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
 // confirms `IsNullDoc(RowCount)` (past-end) returns true.
 template<size_t N>
 void TestRwSeek(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{db, TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_seek";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::ColReader r{dir, kName, db, irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kName);
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), LastRowExclusive(ranges));
@@ -377,11 +378,11 @@ void TestRwSeek(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
 template<size_t N>
 void TestRwSeekNext(duckdb::DatabaseInstance& db,
                     const RangeType (&ranges)[N]) {
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{db, TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_seek_next";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::ColReader r{dir, kName, db, irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kName);
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
 
@@ -524,11 +525,11 @@ template<size_t N, size_t K>
 void TestRwSeekRandom(duckdb::DatabaseInstance& db,
                       const RangeType (&ranges)[N],
                       const SeekType (&seeks)[K]) {
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{db, TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "tmp_seek_rand";
   WriteRanges(db, dir, kName, ranges);
 
-  irs::ColReader r{dir, kName, db, irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kName);
   // HasColumn / Column on an *unused* id must report false / nullptr.
   // Legacy `read_write_empty` covered that for an empty column; the
   // stronger invariant is "any id we did not write returns false".
@@ -627,17 +628,17 @@ void TestRwSeekRandom(duckdb::DatabaseInstance& db,
 // We test both. Past-end IsNullDoc on the empty column also returns
 // true, mirroring "next() past eof".
 TEST_P(SparseBitmapTestCase, read_write_empty) {
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
 
   // Shape (a): segment with no columns at all.
   constexpr std::string_view kName = "empty_seg";
   {
-    irs::ColWriter w{dir, kName, Db()};
+    irs::ColWriter w{Db(), dir.Tracker(kName)};
     // No OpenColumn -> footer has zero column entries; the segment
     // still commits with a valid .col file.
     w.Commit(/*target_row=*/0);
   }
-  irs::ColReader r{dir, kName, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kName);
   EXPECT_FALSE(r.HasColumn(1));
   EXPECT_EQ(r.Column(1), nullptr);
   // HasColumn(unused_id) == false on a column-less segment is the
@@ -650,11 +651,11 @@ TEST_P(SparseBitmapTestCase, read_write_empty) {
   // Shape (b): segment with a column that has zero rows.
   constexpr std::string_view kName2 = "empty_col";
   {
-    irs::ColWriter w{dir, kName2, Db()};
+    irs::ColWriter w{Db(), dir.Tracker(kName2)};
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Commit(/*target_row=*/0);
   }
-  irs::ColReader r2{dir, kName2, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r2 = irs::tests::OpenColReader(dir, kName2);
   ASSERT_TRUE(r2.HasColumn(1));
   // Other ids on a segment that has id=1 must still report false.
   EXPECT_FALSE(r2.HasColumn(2));
@@ -781,10 +782,10 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   ASSERT_EQ(valid_docs.back(),
             irs::doc_limits::min() + (kStepCount - 1) * kStep);
 
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "sparse_blocks";
   {
-    irs::ColWriter w{dir, kName, Db()};
+    irs::ColWriter w{Db(), dir.Tracker(kName)};
     auto& cw = w.OpenColumn(1, duckdb::LogicalType::BLOB,
                             {.row_group_size = kRowGroupSize});
     for (auto doc : valid_docs) {
@@ -798,7 +799,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
       static_cast<uint64_t>(valid_docs.back()) + 1 - irs::doc_limits::min();
     w.Commit(target_row);
   }
-  irs::ColReader r{dir, kName, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kName);
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   // Stored rows are all-valid (nulls are implicit in the sparse doc-id
@@ -810,7 +811,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   // Sanity check the scale-down: row count divided by row-group size
   // must produce many row groups, otherwise this test isn't testing
   // cross-row-group seeks at all.
-  EXPECT_GE(col->DataRgCount(),
+  EXPECT_GE(col->DataBlocks().size(),
             static_cast<size_t>(kStepCount));  // (4194304 / 4096 >= 64)
 
   // Pass 1: point-fetch each valid doc with one warm reader.
@@ -1054,7 +1055,7 @@ TEST_P(SparseBitmapTestCase, rw_all_seek_random) {
 // regressions where a flushed row group is mis-reported (e.g. doc 42
 // is itself a row in row-group 0, doc 50 is the second).
 TEST_P(SparseBitmapTestCase, insert_erase) {
-  irs::MemoryDirectory dir{};
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   constexpr std::string_view kName = "insert_erase";
   constexpr irs::doc_id_t kErasedDoc = 42;
   constexpr irs::doc_id_t kSurvivorEarlyA = 50;    // valid, same RG as 42
@@ -1062,7 +1063,7 @@ TEST_P(SparseBitmapTestCase, insert_erase) {
   constexpr irs::doc_id_t kSurvivingDoc = 70000;   // valid, later RG
 
   {
-    irs::ColWriter w{dir, kName, Db()};
+    irs::ColWriter w{Db(), dir.Tracker(kName)};
     auto& cw = w.OpenColumn(1, duckdb::LogicalType::BLOB,
                             {.row_group_size = kRowGroupSize});
     // Skip kErasedDoc -- ColumnWriter auto-pads the gap with nulls.
@@ -1076,7 +1077,7 @@ TEST_P(SparseBitmapTestCase, insert_erase) {
     w.Commit(static_cast<uint64_t>(kSurvivingDoc) + 1 - irs::doc_limits::min());
   }
 
-  irs::ColReader r{dir, kName, Db(), irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kName);
   ASSERT_TRUE(r.HasColumn(1));
   EXPECT_FALSE(r.HasColumn(2));  // unused id -> false.
   EXPECT_EQ(r.Column(2), nullptr);

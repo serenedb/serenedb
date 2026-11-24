@@ -36,6 +36,7 @@
 #include <duckdb/parser/expression/function_expression.hpp>
 #include <duckdb/parser/expression/operator_expression.hpp>
 #include <duckdb/parser/expression/type_expression.hpp>
+#include <duckdb/parser/keyword_helper.hpp>
 #include <duckdb/parser/parser.hpp>
 #include <duckdb/planner/binder.hpp>
 #include <duckdb/planner/expression/bound_cast_expression.hpp>
@@ -49,6 +50,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <span>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -162,11 +164,6 @@ bool WhitelistWalk(const duckdb::ParsedExpression& expr, size_t depth,
         return false;
       }
       return absl::c_all_of(func.GetArguments(), [&](const auto& arg) {
-        if (arg.HasName() && (op != TSQueryOp::Phrase ||
-                              !absl::EqualsIgnoreCase(
-                                arg.GetName().GetIdentifierName(), "slop"))) {
-          return false;
-        }
         return WhitelistWalk(arg.GetExpression(), depth + 1, nodes);
       });
     }
@@ -473,6 +470,12 @@ std::optional<std::string> RenderJoinedArgs(
     if (i != 0) {
       out += ", ";
     }
+    if (const auto& alias = children[i]->GetAlias(); !alias.empty()) {
+      absl::StrAppend(
+        &out,
+        duckdb::KeywordHelper::WriteOptionallyQuoted(alias.GetIdentifierName()),
+        " := ");
+    }
     out += *rendered;
   }
   out += close;
@@ -547,27 +550,9 @@ std::optional<std::string> RenderTSQueryCall(
   if (name == "list_value" || name == "array_value") {
     return RenderJoinedArgs(context, children, "[", "]");
   }
-  switch (ClassifyTSQueryFunction(name)) {
+  switch (const auto op = ClassifyTSQueryFunction(name); op) {
     case TSQueryOp::Unknown:
       return std::nullopt;
-    case TSQueryOp::Phrase: {
-      std::string out = absl::StrCat(name, "(");
-      for (size_t i = 0; i < children.size(); ++i) {
-        auto rendered = RenderTSQueryExpression(context, *children[i]);
-        if (!rendered) {
-          return std::nullopt;
-        }
-        if (i != 0) {
-          out += ", ";
-        }
-        if (children[i]->GetAlias() == "slop") {
-          out += "slop := ";
-        }
-        out += std::move(*rendered);
-      }
-      out += ")";
-      return out;
-    }
     case TSQueryOp::Boost: {
       if (children.size() != 2) {
         return std::nullopt;

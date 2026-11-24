@@ -20,14 +20,19 @@
 
 #pragma once
 
-#include "iresearch/formats/column/codecs/reuse_policy.hpp"
+#include <magic_enum/magic_enum.hpp>
+
+#include "iresearch/formats/column/codecs/codec_type.hpp"
+#include "iresearch/formats/column/codecs/hint.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
 
 namespace irs::codecs {
 
 struct ColumnTuning {
-  ReusePolicy reuse;
+  Hint hints[magic_enum::enum_count<CodecType>()];
   StringTuning strings;
+  uint32_t dictionary_entries = 0;
+  uint32_t row_group = 0;
 };
 
 }  // namespace irs::codecs

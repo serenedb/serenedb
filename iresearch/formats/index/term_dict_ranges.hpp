@@ -32,6 +32,10 @@ namespace irs::term_dict {
 
 class RangeWriter final {
  public:
+  RangeWriter() = default;
+  RangeWriter(const RangeWriter&) = delete;
+  RangeWriter& operator=(const RangeWriter&) = delete;
+
   bool Active() const noexcept { return _pw != nullptr; }
   DocTee Tee() noexcept;
   void Begin(PostingsWriter& pw, uint64_t docs,

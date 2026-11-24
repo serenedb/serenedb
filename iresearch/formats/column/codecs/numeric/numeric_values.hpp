@@ -32,7 +32,6 @@
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
 #include <numeric>
-#include <optional>
 #include <span>
 #include <type_traits>
 #include <vector>
@@ -40,56 +39,37 @@
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/bitpacking_blocks.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
+#include "iresearch/utils/assert.hpp"
 
-namespace irs::codecs {
-
-template<typename T>
-struct Runs final : State {
-  static constexpr StateId kId = StateId::Runs;
-
-  explicit Runs(ColumnDataCheckpointData&) {}
-
-  ScratchVector<numeric::Bits<sizeof(T)>> values;
-  ScratchVector<uint32_t> lengths;
-  ScratchVector<uint32_t> rows;
-  bool checked = false;
-  bool none = false;
-  bool located = false;
-};
+namespace irs::codecs::numeric {
 
 template<typename T>
 class Values final : public State {
  public:
   static constexpr StateId kId = StateId::NumericValues;
 
-  using U = numeric::Bits<sizeof(T)>;
+  using U = Bits<sizeof(T)>;
 
-  struct Facts {
+  struct Reference {
     U lo = 0;
-    uint8_t for_stored = 0;
-    uint8_t for_bits = 0;
-  };
-
-  struct Steps {
-    U offset = 0;
     uint8_t stored = 0;
-    uint8_t bits = 0;
   };
 
   explicit Values(ColumnDataCheckpointData& data) : _chunks{data.chunks} {
     if (!ReadInPlace()) {
       Gather(data.rows);
     }
-    if (const auto* runs = data.template Find<Runs<T>>();
-        runs && runs->located) {
-      MeasureRuns(*runs);
-    } else {
-      Measure();
-    }
+    Measure();
+  }
+
+  Values(ColumnDataCheckpointData& data, std::span<const U> run_values,
+         std::span<const uint32_t> run_rows)
+    : _chunks{data.chunks} {
+    SDB_VERIFY(ReadInPlace());
+    MeasureRuns(run_values, run_rows);
   }
 
   static constexpr bool kSigned = std::is_integral_v<T> && std::is_signed_v<T>;
-  static constexpr size_t kScaleSeeds = 8;
 
   static bool Less(U a, U b) noexcept {
     if constexpr (kSigned) {
@@ -116,42 +96,38 @@ class Values final : public State {
 
   std::span<const uint8_t> NullBlocks() const noexcept { return _null_blocks; }
 
-  U Scale() const noexcept {
+  std::span<const U> Contiguous() {
+    if constexpr (std::is_integral_v<T>) {
+      if (_values.size() != _size) {
+        Own();
+      }
+    } else {
+      SDB_ASSERT(_values.size() == _size);
+    }
+    return _values;
+  }
+
+  U Scale() noexcept {
     if (_scale == 0) {
       _scale = FoundScale();
     }
     return _scale;
   }
 
-  U Scale(std::span<const U> every_value) const noexcept {
+  U Scale(std::span<const U> every_value) noexcept {
     if (_scale == 0) {
       _scale = _sequence ? FoundScale() : ScaleOf(every_value);
     }
     return _scale;
   }
 
-  static U ScaleOf(std::span<const U> values) noexcept {
-    U gcd = 0;
-    if constexpr (std::is_integral_v<T>) {
-      size_t at = 0;
-      for (; at < values.size() && at < kScaleSeeds; ++at) {
-        gcd = std::gcd(gcd, Magnitude(values[at]));
-      }
-      for (; at < values.size() && gcd > 1; at += numeric::kBlockValues) {
-        gcd = Dividing(gcd, values.data() + at,
-                       std::min(numeric::kBlockValues, values.size() - at));
-      }
-    }
-    return gcd > 1 ? gcd : U{1};
-  }
-
-  U Step() const noexcept {
+  U Step() noexcept {
     return _size < 2 ? U{0}
                      : static_cast<U>(Divided(static_cast<U>(_first + _step)) -
                                       Divided(_first));
   }
 
-  BlockRows<U> Rows() const {
+  BlockRows<U> Rows() {
     if (Scale() == 1) {
       return Raw();
     }
@@ -159,9 +135,8 @@ class Values final : public State {
       const auto rows = Raw();
       _divided.resize(_size);
       for (size_t b = 0; b < rows.Blocks(); ++b) {
-        numeric::DivideExact<kSigned>(
-          rows.Block(b), rows.BlockSize(b), _scale,
-          _divided.data() + b * numeric::kBlockValues);
+        DivideExact<kSigned>(rows.Block(b), rows.BlockSize(b), _scale,
+                             _divided.data() + b * kBlockValues);
       }
     }
     return BlockRows<U>{std::span<const U>{_divided}};
@@ -172,13 +147,10 @@ class Values final : public State {
       Rows();
       return _divided;
     }
-    if (_values.size() != _size) {
-      Own();
-    }
-    return _values;
+    return Contiguous();
   }
 
-  std::span<const BlockBounds<U>> Bounds() const {
+  std::span<const BlockBounds<U>> Bounds() {
     if (Scale() == 1) {
       return _bounds;
     }
@@ -191,16 +163,16 @@ class Values final : public State {
     return _divided_bounds;
   }
 
-  BlockBounds<U> Bounds(size_t first, size_t end) const noexcept {
+  BlockBounds<U> Bounds(size_t first, size_t end) noexcept {
     const auto rows = Raw();
     BlockBounds<U> bounds;
     for (size_t row = first; row < end;) {
-      const size_t block = row / numeric::kBlockValues;
-      const size_t stop = std::min(end, (block + 1) * numeric::kBlockValues);
+      const size_t block = row / kBlockValues;
+      const size_t stop = std::min(end, (block + 1) * kBlockValues);
       const auto part =
-        row % numeric::kBlockValues == 0 && stop - row == rows.BlockSize(block)
+        row % kBlockValues == 0 && stop - row == rows.BlockSize(block)
           ? _bounds[block]
-          : BoundsOf<kSigned>(rows.Block(block) + row % numeric::kBlockValues,
+          : BoundsOf<kSigned>(rows.Block(block) + row % kBlockValues,
                               stop - row);
       if (row == first || Less(part.lo, bounds.lo)) {
         bounds.lo = part.lo;
@@ -213,8 +185,29 @@ class Values final : public State {
     return Divided(bounds);
   }
 
-  uint64_t PackedBytes() const noexcept {
-    return _any_valid ? (uint64_t{_size} * GetFacts().for_bits + 7) / 8 : 0;
+  Reference GetReference() noexcept {
+    const auto bounds = Divided(BlockBounds<U>{_lo, _hi});
+    const auto range = static_cast<U>(bounds.hi - bounds.lo);
+    return {
+      .lo = bounds.lo,
+      .stored = BytesFor(range),
+    };
+  }
+
+  Features GetFeatures() {
+    if (!_any_valid) {
+      return {};
+    }
+    uint64_t bits = 0;
+    const auto bounds = Bounds();
+    for (const auto& block : bounds) {
+      bits += std::bit_width(static_cast<U>(block.hi - block.lo));
+    }
+    return {
+      static_cast<float>(bits) / static_cast<float>(bounds.size()),
+      static_cast<float>(_runs) / static_cast<float>(_size),
+      static_cast<float>(GetReference().stored),
+    };
   }
 
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
@@ -225,70 +218,16 @@ class Values final : public State {
     return stats;
   }
 
-  Facts GetFacts() const noexcept {
-    const auto bounds = Divided(BlockBounds<U>{_lo, _hi});
-    const auto range = static_cast<U>(bounds.hi - bounds.lo);
-    return {
-      .lo = bounds.lo,
-      .for_stored = numeric::BytesFor(range),
-      .for_bits = static_cast<uint8_t>(std::bit_width(range)),
-    };
-  }
-
-  const Steps& GetSteps() {
-    if (_steps) {
-      return *_steps;
-    }
-    if (_sequence) {
-      return _steps.emplace(Steps{
-        .offset = Step(),
-        .stored = numeric::BytesFor(U{0}),
-        .bits = 0,
-      });
-    }
-    using S = std::make_signed_t<U>;
-    S lo = std::numeric_limits<S>::max();
-    S hi = std::numeric_limits<S>::min();
-    const auto fold = [&](U step) {
-      lo = std::min(lo, static_cast<S>(step));
-      hi = std::max(hi, static_cast<S>(step));
-    };
-    const auto rows = Rows();
-    U last = 0;
-    for (size_t b = 0; b < rows.Blocks(); ++b) {
-      const U* values = rows.Block(b);
-      const size_t count = rows.BlockSize(b);
-      if (b != 0) {
-        fold(static_cast<U>(values[0] - last));
-      }
-      for (size_t i = 1; i < count; ++i) {
-        fold(static_cast<U>(values[i] - values[i - 1]));
-      }
-      last = values[count - 1];
-    }
-    if (_size < 2) {
-      lo = 0;
-      hi = 0;
-    }
-    const auto offset = static_cast<U>(lo);
-    const auto range = static_cast<U>(static_cast<U>(hi) - offset);
-    return _steps.emplace(Steps{
-      .offset = offset,
-      .stored = numeric::BytesFor(range),
-      .bits = static_cast<uint8_t>(std::bit_width(range)),
-    });
-  }
-
  private:
   bool ReadInPlace() {
     if constexpr (std::is_integral_v<T>) {
       size_t rows = 0;
       for (size_t c = 0; c < _chunks.size(); ++c) {
         const auto& input = _chunks[c].data;
-        if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-            !duckdb::FlatVector::Validity(input).CheckAllValid(input.size()) ||
-            (c + 1 != _chunks.size() &&
-             input.size() % numeric::kBlockValues != 0)) {
+        SDB_ASSERT(input.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
+                   input.size() != 0);
+        if (!duckdb::FlatVector::Validity(input).CheckAllValid(input.size()) ||
+            (c + 1 != _chunks.size() && input.size() % kBlockValues != 0)) {
           return false;
         }
         rows += input.size();
@@ -300,8 +239,7 @@ class Values final : public State {
           _values = {bits, rows};
           break;
         }
-        for (size_t at = 0; at < chunk.data.size();
-             at += numeric::kBlockValues) {
+        for (size_t at = 0; at < chunk.data.size(); at += kBlockValues) {
           _blocks.push_back(bits + at);
         }
       }
@@ -321,16 +259,15 @@ class Values final : public State {
     _values = _owned;
     _size = _owned.size();
     if (!_null_blocks.empty()) {
-      _null_blocks.resize((_size + numeric::kBlockValues - 1) /
-                          numeric::kBlockValues);
+      _null_blocks.resize((_size + kBlockValues - 1) / kBlockValues);
     }
   }
 
   void MarkNulls(size_t row, size_t end) {
     _null_blocks.resize(
-      std::max(_null_blocks.size(), (end - 1) / numeric::kBlockValues + 1));
-    for (size_t block = row / numeric::kBlockValues;
-         block <= (end - 1) / numeric::kBlockValues; ++block) {
+      std::max(_null_blocks.size(), (end - 1) / kBlockValues + 1));
+    for (size_t block = row / kBlockValues; block <= (end - 1) / kBlockValues;
+         ++block) {
       _null_blocks[block] = 1;
     }
   }
@@ -340,8 +277,8 @@ class Values final : public State {
     constexpr size_t kWord = duckdb::ValidityMask::BITS_PER_VALUE;
     const auto* words = validity.GetData();
     for (size_t row = 0; row < count;) {
-      const size_t stop = std::min(count, row + numeric::kBlockValues -
-                                            (at + row) % numeric::kBlockValues);
+      const size_t stop =
+        std::min(count, row + kBlockValues - (at + row) % kBlockValues);
       bool null = false;
       size_t i = row;
       for (; i % kWord != 0 && i < stop; ++i) {
@@ -362,9 +299,7 @@ class Values final : public State {
   }
 
   void Own() {
-    if (!_owned.empty()) {
-      return;
-    }
+    SDB_ASSERT(_owned.empty());
     _owned.reserve(_size);
     const auto rows = Raw();
     for (size_t b = 0; b < rows.Blocks(); ++b) {
@@ -386,10 +321,6 @@ class Values final : public State {
 
   bool Descends() const noexcept {
     return static_cast<std::make_signed_t<U>>(_step) < 0;
-  }
-
-  U StepMagnitude() const noexcept {
-    return Descends() ? static_cast<U>(U{0} - _step) : _step;
   }
 
   bool Monotone() const noexcept {
@@ -428,62 +359,58 @@ class Values final : public State {
       }
       stepped = stepped && EveryStepIs(values, count, last, _step);
       last = values[count - 1];
-      if (b == 0 || Less(bounds.lo, _lo)) {
-        _lo = bounds.lo;
-      }
-      if (b == 0 || Less(_hi, bounds.hi)) {
-        _hi = bounds.hi;
-      }
+      ExtendBounds(b, bounds);
       if constexpr (std::is_floating_point_v<T>) {
         MeasureFloats(values, count);
       }
     }
     _runs = runs;
     _sequence = stepped && Monotone();
+    UpdateStatsBounds();
+  }
+
+  IRS_FORCE_INLINE void ExtendBounds(size_t b,
+                                     const BlockBounds<U>& bounds) noexcept {
+    if (b == 0 || Less(bounds.lo, _lo)) {
+      _lo = bounds.lo;
+    }
+    if (b == 0 || Less(_hi, bounds.hi)) {
+      _hi = bounds.hi;
+    }
+  }
+
+  void UpdateStatsBounds() {
     if constexpr (std::is_integral_v<T>) {
       _stats.Update(std::bit_cast<T>(_lo));
       _stats.Update(std::bit_cast<T>(_hi));
     }
   }
 
-  void MeasureRuns(const Runs<T>& runs) {
-    const size_t count = runs.rows.size();
-    const U* values = runs.values.data();
-    _bounds.resize((_size + numeric::kBlockValues - 1) / numeric::kBlockValues);
+  void MeasureRuns(std::span<const U> run_values,
+                   std::span<const uint32_t> run_rows) {
+    const size_t count = run_rows.size();
+    const U* values = run_values.data();
+    _bounds.resize((_size + kBlockValues - 1) / kBlockValues);
     size_t r = 0;
     for (size_t b = 0; b < _bounds.size(); ++b) {
-      const size_t first = b * numeric::kBlockValues;
-      const size_t end = std::min(_size, first + numeric::kBlockValues);
-      while (r + 1 < count && runs.rows[r + 1] <= first) {
+      const size_t first = b * kBlockValues;
+      const size_t end = std::min(_size, first + kBlockValues);
+      while (r + 1 < count && run_rows[r + 1] <= first) {
         ++r;
       }
       BlockBounds<U> bounds{values[r], values[r]};
-      for (; r + 1 < count && runs.rows[r + 1] < end; ++r) {
+      for (; r + 1 < count && run_rows[r + 1] < end; ++r) {
         const U value = values[r + 1];
         bounds.lo = Less(value, bounds.lo) ? value : bounds.lo;
         bounds.hi = Less(bounds.hi, value) ? value : bounds.hi;
       }
       _bounds[b] = bounds;
-      if (b == 0 || Less(bounds.lo, _lo)) {
-        _lo = bounds.lo;
-      }
-      if (b == 0 || Less(_hi, bounds.hi)) {
-        _hi = bounds.hi;
-      }
+      ExtendBounds(b, bounds);
     }
+    SDB_ASSERT(count > 1 && count < _size);
     _first = values[0];
-    _step = count > 1 && runs.rows[1] == 1 ? static_cast<U>(values[1] - _first)
-                                           : U{0};
-    bool stepped = count == 1 || count == _size;
-    for (size_t i = 1; i < count && count == _size && stepped; ++i) {
-      stepped = static_cast<U>(values[i] - values[i - 1]) == _step;
-    }
     _runs = static_cast<uint32_t>(count);
-    _sequence = stepped && Monotone();
-    if constexpr (std::is_integral_v<T>) {
-      _stats.Update(std::bit_cast<T>(_lo));
-      _stats.Update(std::bit_cast<T>(_hi));
-    }
+    UpdateStatsBounds();
   }
 
   void MeasureFloats(const U* values, size_t count) {
@@ -540,17 +467,13 @@ class Values final : public State {
     }
   }
 
-  bool AddFlat(const duckdb::Vector& input) {
-    if (input.GetVectorType() != duckdb::VectorType::FLAT_VECTOR) {
-      return false;
-    }
+  void Add(const duckdb::Vector& input) {
     const size_t count = input.size();
+    SDB_ASSERT(input.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
+               count != 0);
     const T* data = duckdb::FlatVector::GetData<T>(input);
     const auto& validity = duckdb::FlatVector::Validity(input);
     if (validity.CheckAllValid(count)) {
-      if (count == 0) {
-        return true;
-      }
       if (!_any_valid) {
         absl::c_fill(_owned, std::bit_cast<U>(data[0]));
         _any_valid = true;
@@ -559,7 +482,7 @@ class Values final : public State {
       _owned.resize(at + count);
       std::memcpy(_owned.data() + at, data, count * sizeof(T));
       _last = _owned.back();
-      return true;
+      return;
     }
     _stats.SetHasNull();
     if (!_any_valid) {
@@ -570,7 +493,7 @@ class Values final : public State {
       if (first == count) {
         MarkNulls(_owned.size(), _owned.size() + count);
         _owned.insert(_owned.end(), count, _last);
-        return true;
+        return;
       }
       _last = std::bit_cast<U>(data[first]);
       absl::c_fill(_owned, _last);
@@ -585,28 +508,12 @@ class Values final : public State {
       _owned[at + i] = last;
     }
     _last = last;
-    return true;
   }
 
-  void Add(const duckdb::Vector& input) {
-    if (AddFlat(input)) {
-      return;
-    }
-    for (const auto value : input.Values<T>()) {
-      if (!value.IsValid()) {
-        _stats.SetHasNull();
-        MarkNulls(_owned.size(), _owned.size() + 1);
-        _owned.push_back(_last);
-        continue;
-      }
-      const auto bits = std::bit_cast<U>(value.GetValue());
-      if (!_any_valid) {
-        absl::c_fill(_owned, bits);
-        _any_valid = true;
-      }
-      _last = bits;
-      _owned.push_back(bits);
-    }
+  static constexpr size_t kScaleSeeds = 8;
+
+  U StepMagnitude() const noexcept {
+    return Descends() ? static_cast<U>(U{0} - _step) : _step;
   }
 
   static U Magnitude(U bits) noexcept {
@@ -621,42 +528,18 @@ class Values final : public State {
   static bool Multiples(const U* values, size_t count, U divisor) noexcept {
     const auto shift = std::countr_zero(divisor);
     const auto odd = static_cast<U>(divisor >> shift);
-    const U inverse = numeric::OddInverse(odd);
+    const U inverse = OddInverse(odd);
     const auto most = static_cast<U>(std::numeric_limits<U>::max() / odd);
     const auto low = static_cast<U>((U{1} << shift) - 1);
     U other = 0;
     for (size_t i = 0; i < count; ++i) {
       const U magnitude = Magnitude(values[i]);
       const auto quotient = static_cast<U>(
-        static_cast<numeric::WideWord<U>>(static_cast<U>(magnitude >> shift)) *
-        static_cast<numeric::WideWord<U>>(inverse));
+        static_cast<WideWord<U>>(static_cast<U>(magnitude >> shift)) *
+        static_cast<WideWord<U>>(inverse));
       other = static_cast<U>(other | (magnitude & low) | U{quotient > most});
     }
     return other == 0;
-  }
-
-  U FoundScale() const noexcept {
-    U gcd = 0;
-    if constexpr (std::is_integral_v<T>) {
-      if (_sequence) {
-        gcd = std::gcd(Magnitude(_first), StepMagnitude());
-      } else {
-        for (const auto& bounds : _bounds) {
-          gcd =
-            std::gcd(gcd, std::gcd(Magnitude(bounds.lo), Magnitude(bounds.hi)));
-          if (gcd == 1) {
-            break;
-          }
-        }
-        const auto rows = Raw();
-        for (size_t b = 0; b < rows.Blocks() && gcd > 1; ++b) {
-          if (_bounds[b].lo != _bounds[b].hi) {
-            gcd = Dividing(gcd, rows.Block(b), rows.BlockSize(b));
-          }
-        }
-      }
-    }
-    return gcd > 1 ? gcd : U{1};
   }
 
   static U Dividing(U gcd, const U* values, size_t count) noexcept {
@@ -669,14 +552,54 @@ class Values final : public State {
     return gcd;
   }
 
-  U Divided(U value) const noexcept {
+  static U ScaleOf(std::span<const U> values) noexcept {
+    U gcd = 0;
+    if constexpr (std::is_integral_v<T>) {
+      size_t at = 0;
+      for (; at < values.size() && at < kScaleSeeds; ++at) {
+        gcd = std::gcd(gcd, Magnitude(values[at]));
+      }
+      for (; at < values.size() && gcd > 1; at += kBlockValues) {
+        gcd = Dividing(gcd, values.data() + at,
+                       std::min(kBlockValues, values.size() - at));
+      }
+    }
+    return gcd > 1 ? gcd : U{1};
+  }
+
+  U FoundScale() const noexcept {
+    U gcd = 0;
+    if constexpr (std::is_integral_v<T>) {
+      if (_sequence) {
+        gcd = std::gcd(Magnitude(_first), StepMagnitude());
+      } else {
+        const std::span<const BlockBounds<U>> bounds{_bounds};
+        for (const auto& block : bounds) {
+          gcd =
+            std::gcd(gcd, std::gcd(Magnitude(block.lo), Magnitude(block.hi)));
+          if (gcd == 1) {
+            break;
+          }
+        }
+        const auto rows = Raw();
+        for (size_t b = 0; b < rows.Blocks() && gcd > 1; ++b) {
+          if (bounds[b].lo != bounds[b].hi) {
+            gcd = Dividing(gcd, rows.Block(b), rows.BlockSize(b));
+          }
+        }
+      }
+    }
+    return gcd > 1 ? gcd : U{1};
+  }
+
+  U Divided(U value) noexcept {
     if (const auto scale = Scale(); scale > 1) {
-      numeric::DivideExact<kSigned>(&value, 1, scale, &value);
+      DivideExact<kSigned>(&value, 1, scale, &value);
     }
     return value;
   }
 
-  BlockBounds<U> Divided(BlockBounds<U> bounds) const noexcept {
+  BlockBounds<U> Divided(BlockBounds<U> bounds) noexcept {
     return {Divided(bounds.lo), Divided(bounds.hi)};
   }
 
@@ -684,22 +607,21 @@ class Values final : public State {
   duckdb::StatsWriter<T> _stats;
   std::vector<const U*> _blocks;
   std::vector<BlockBounds<U>> _bounds;
-  mutable std::vector<BlockBounds<U>> _divided_bounds;
   std::vector<uint8_t> _null_blocks;
   ScratchVector<U> _owned;
-  mutable ScratchVector<U> _divided;
   std::span<const U> _values;
-  std::optional<Steps> _steps;
   size_t _size = 0;
   U _lo = 0;
   U _hi = 0;
   U _first = 0;
   U _step = 0;
   U _last = 0;
-  mutable U _scale = 0;
   uint32_t _runs = 0;
   bool _any_valid = false;
   bool _sequence = false;
+  std::vector<BlockBounds<U>> _divided_bounds;
+  ScratchVector<U> _divided;
+  U _scale = 0;
 };
 
-}  // namespace irs::codecs
+}  // namespace irs::codecs::numeric

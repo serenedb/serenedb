@@ -21,9 +21,12 @@
 #include "iresearch/index/merge/term_ranges.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
+#include <atomic>
+#include <duckdb/common/memory_file_system.hpp>
+#include <duckdb/main/database.hpp>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -35,7 +38,6 @@
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/merge/merged_postings.hpp"
-#include "iresearch/store/memory_directory.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -43,7 +45,10 @@
 namespace irs {
 namespace {
 
-constexpr std::string_view kPartName = "part";
+uint64_t NextSinkId() noexcept {
+  static std::atomic_uint64_t gNext{0};
+  return gNext.fetch_add(1, std::memory_order_relaxed);
+}
 
 std::vector<duckdb::shared_ptr<TermKeys>> KeysOf(
   std::span<const TermRangeMerge::Input> inputs) {
@@ -73,7 +78,7 @@ class TermRangeWriter {
   TermRangeWriter(std::span<const TermRangeMerge::Input> sources,
                   std::span<const duckdb::shared_ptr<TermKeys>> keys,
                   const FieldProperties& props,
-                  const TermRangeMerge::Target& target, Directory& dir,
+                  const TermRangeMerge::Target& target, FileTracker& files,
                   const MergeProgress& progress, term_dict::RangeWriter* ranges)
     : _sources{sources},
       _keys{keys},
@@ -83,9 +88,8 @@ class TermRangeWriter {
       _terms{props.index_features},
       _ranges{ranges} {
     const FlushState state{
-      .dir = &dir,
+      .tracker = files,
       .norms = target.norms,
-      .name = kPartName,
       .scorer = target.scorer,
       .doc_count = target.doc_count,
       .index_features = props.index_features,
@@ -219,32 +223,24 @@ class TermRangeWriter {
 
 }  // namespace
 
-TermRangeSink::TermRangeSink(Directory& dir, std::string_view segment,
+TermRangeSink::TermRangeSink(FileTracker& tracker,
+                             duckdb::DatabaseInstance& db,
                              IndexFeatures features)
-  : _dir{dir}, _segment{segment} {
-  absl::Cleanup remove = [this]() noexcept { Remove(); };
+  : _part_fs{db.GetInternalFileSystem()},
+    _part_root{absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "merge/",
+                            NextSinkId())} {
   PostingsWriter::PrepareOutputs(_out, {
-                                         .dir = &dir,
-                                         .name = _segment,
+                                         .tracker = tracker,
                                          .doc_count = 0,
                                          .index_features = features,
                                        });
-  std::move(remove).Cancel();
 }
 
-TermRangeSink::~TermRangeSink() { Remove(); }
-
-void TermRangeSink::Remove() noexcept {
-  const auto remove = [&](IndexOutput::ptr& out, std::string_view ext) {
-    if (!out) {
-      return;
-    }
-    out.reset();
-    _dir.remove(FileName(_segment, ext));
-  };
-  remove(_out.doc, PostingsWriter::kDocExt);
-  remove(_out.pos, PostingsWriter::kPosExt);
-  remove(_out.pay, PostingsWriter::kPayExt);
+std::unique_ptr<FileTracker> TermRangeSink::PartFiles(DictKey key,
+                                                      size_t part) const {
+  return std::make_unique<FileTracker>(
+    _part_fs, _part_root,
+    absl::StrCat(key.id, "_", static_cast<uint32_t>(key.member), "_", part));
 }
 
 TermRangeMerge::TermRangeMerge(DictKey key, FieldProperties props,
@@ -276,6 +272,14 @@ TermRangeMerge::TermRangeMerge(DictKey key, FieldProperties props,
   _parts = std::vector<Part>(_merge.PartitionCount());
 }
 
+TermRangeMerge::~TermRangeMerge() {
+  for (auto& part : _parts) {
+    if (part.files) {
+      part.files->Remove();
+    }
+  }
+}
+
 TermRangeMerge* FindTermRange(
   std::span<const std::unique_ptr<TermRangeMerge>> ranges,
   DictKey key) noexcept {
@@ -305,12 +309,12 @@ template<typename Postings>
 bool TermRangeMerge::WritePart(size_t index) {
   SDB_ASSERT(_target.sink);
   auto& part = _parts[index];
-  part.dir = std::make_unique<MemoryDirectory>();
+  part.files = _target.sink->PartFiles(_key, index);
   TermRangeWriter<Postings> writer{_inputs,
                                    _keys,
                                    _props,
                                    _target,
-                                   *part.dir,
+                                   *part.files,
                                    _progress,
                                    _ranged ? &part.ranges : nullptr};
   const auto state = _merge.BeginMerge(index);
@@ -341,21 +345,24 @@ bool TermRangeMerge::WritePart(size_t index) {
   for (; _appended != _parts.size() && _parts[_appended].done; ++_appended) {
     auto& next = _parts[_appended];
     if (next.out.term_count != 0) {
-      const auto open = [&](std::string_view ext) -> IndexInput::ptr {
-        const auto name = FileName(kPartName, ext);
-        bool exists = false;
-        if (!next.dir->exists(exists, name) || !exists) {
+      const auto& files = *next.files;
+      const auto open = [&](std::string_view ext, uint8_t kind)
+        -> duckdb::shared_ptr<duckdb::InputFile> {
+        if ((files.Kinds() & kind) == 0) {
           return nullptr;
         }
-        return next.dir->open(name, IOAdvice::SEQUENTIAL);
+        return files.Fs().OpenInputFile(
+          files.Fs().JoinPath(files.Root(), FileName(files.Name(), ext)),
+          duckdb::MappedFileAccess::SEQUENTIAL);
       };
-      const auto doc = open(PostingsWriter::kDocExt);
-      const auto pos = open(PostingsWriter::kPosExt);
-      const auto pay = open(PostingsWriter::kPayExt);
+      const auto doc = open(PostingsWriter::kDocExt, kDocFile);
+      const auto pos = open(PostingsWriter::kPosExt, kPosFile);
+      const auto pay = open(PostingsWriter::kPayExt, kPayFile);
       next.out.bases = AppendPostings(_target.sink->Outputs(), doc.get(),
                                       pos.get(), pay.get());
     }
-    next.dir.reset();
+    next.files->Remove();
+    next.files.reset();
   }
   return true;
 }

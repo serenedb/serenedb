@@ -48,9 +48,10 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -548,11 +549,15 @@ void Decompress(duckdb::const_data_ptr_t for_encoded, T* output, idx_t count,
     .exponent = vector_exponent,
     .factor = vector_factor,
   };
-  if (const auto base = static_cast<int64_t>(frame_of_reference);
-      std::is_same_v<T, double> && bit_width != 0 && bit_width < 32 &&
-      base >= std::numeric_limits<int32_t>::min() &&
-      base <=
-        std::numeric_limits<int32_t>::max() - ((int64_t{1} << bit_width) - 1)) {
+  const auto base = static_cast<int64_t>(frame_of_reference);
+  bool fits_int32 = false;
+  if constexpr (std::is_same_v<T, double>) {
+    fits_int32 = bit_width != 0 && bit_width < 32 &&
+                 base >= std::numeric_limits<int32_t>::min() &&
+                 base <= std::numeric_limits<int32_t>::max() -
+                           ((int64_t{1} << bit_width) - 1);
+  }
+  if (fits_int32) {
     ABSL_CACHELINE_ALIGNED uint32_t narrow[kVectorSize];
     duckdb::BitpackingPrimitives::UnPackBuffer<uint32_t>(
       reinterpret_cast<duckdb::data_ptr_t>(narrow), for_encoded, count,
@@ -656,9 +661,18 @@ std::unique_ptr<AlpAnalyzeState<T>> AlpSampleRowGroup(
 }
 
 template<typename T>
-idx_t AlpAnalyzeChunks(std::span<const WriteChunk> chunks) {
-  const auto sampled = AlpSampleRowGroup<T>(chunks);
-  auto& analyze_state = *sampled;
+struct RowGroupSample final : State {
+  static constexpr StateId kId = StateId::AlpSample;
+
+  explicit RowGroupSample(ColumnDataCheckpointData& data)
+    : state{AlpSampleRowGroup<T>(data.chunks)} {}
+
+  std::unique_ptr<AlpAnalyzeState<T>> state;
+};
+
+template<typename T>
+idx_t AlpAnalyzeChunks(ColumnDataCheckpointData& data) {
+  auto& analyze_state = *data.template Get<RowGroupSample<T>>().state;
 
   idx_t total_bytes_used = 0;
   idx_t current_bytes_used_in_segment = 0;
@@ -682,9 +696,7 @@ idx_t AlpAnalyzeChunks(std::span<const WriteChunk> chunks) {
   }
   total_bytes_used += current_bytes_used_in_segment + kMetadataPointerSize;
 
-  if (!compressed_values) {
-    return duckdb::DConstants::INVALID_INDEX;
-  }
+  SDB_ASSERT(compressed_values != 0);
   const auto factor_of_sampling =
     analyze_state.total_values_count / compressed_values;
   return duckdb::AlignValue(total_bytes_used) * factor_of_sampling;
@@ -693,10 +705,10 @@ idx_t AlpAnalyzeChunks(std::span<const WriteChunk> chunks) {
 template<typename T>
 class AlpCompressionState {
  public:
-  AlpCompressionState(ColumnDataCheckpointData& checkpoint_data,
+  AlpCompressionState(const Codec& codec,
+                      ColumnDataCheckpointData& checkpoint_data,
                       AlpAnalyzeState<T>& analyze_state)
-    : _checkpoint_data{checkpoint_data},
-      _segment{CodecType::Alp, checkpoint_data.type} {
+    : _checkpoint_data{checkpoint_data}, _segment{codec, checkpoint_data.type} {
     _compression_data.best_k_combinations =
       std::move(analyze_state.compression_data.best_k_combinations);
   }
@@ -737,6 +749,8 @@ class AlpCompressionState {
     }
     FlushSegment();
   }
+
+  uint64_t Stored() const noexcept { return _segment.stored; }
 
  private:
   idx_t UsedSpace() const noexcept {
@@ -881,13 +895,16 @@ class AlpCompressionState {
 };
 
 template<typename T>
-void AlpCompressChunks(ColumnDataCheckpointData& checkpoint_data,
-                       std::span<const WriteChunk> chunks) {
-  AlpCompressionState<T> state{checkpoint_data, *AlpSampleRowGroup<T>(chunks)};
-  for (const auto& chunk : chunks) {
+uint64_t AlpCompressChunks(const Codec& codec,
+                           ColumnDataCheckpointData& checkpoint_data) {
+  AlpCompressionState<T> state{
+    codec, checkpoint_data,
+    *checkpoint_data.template Get<RowGroupSample<T>>().state};
+  for (const auto& chunk : checkpoint_data.chunks) {
     state.Append(chunk.data);
   }
   state.Finalize();
+  return state.Stored();
 }
 
 template<typename T>
@@ -1164,7 +1181,7 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                   const idx_t* rows, idx_t count, duckdb::Vector& result,
                   const duckdb::SelectionVector& result_sel,
                   idx_t result_offset) {
-  SDB_ASSERT(!count || rows[count - 1] < segment.count);
+  SDB_ASSERT(count != 0 && rows[count - 1] < segment.count);
   auto& fetch_state =
     state.GetOrCreateSegmentState<alp::FetchState<AlpScanState<T>>>([&] {
       return std::make_unique<alp::FetchState<AlpScanState<T>>>(segment.Pin(),
@@ -1175,7 +1192,7 @@ void AlpFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   if (alp::CopyOneDecoded(fetch_state, rows, count, result_data, result_sel)) {
     return;
   }
-  const idx_t last_vector = count ? rows[count - 1] / kVectorSize : 0;
+  const idx_t last_vector = rows[count - 1] / kVectorSize;
   for (idx_t i = 0; i < count;) {
     if (rows[i] / kVectorSize == fetch_state.decoded_vector ||
         alp::Dense(fetch_state, rows, i, count, last_vector)) {
@@ -1201,22 +1218,21 @@ constexpr DecompressionFunction kDecompression{
 template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Alp,
-  .compression = &kStreamed<CodecType::Alp, AlpAnalyzeChunks<T>,
-                            AlpCompressChunks<T>, HasRows>,
-  .decompression = &kDecompression<T>,
+  .compression =
+    {&kSampled<CodecType::Alp, AlpAnalyzeChunks<T>, AlpCompressChunks<T>>, 1},
+  .decompression = kDecompression<T>,
 };
 
 }  // namespace
 
 const Codec* AlpCodec(duckdb::PhysicalType physical) {
-  switch (physical) {
-    case duckdb::PhysicalType::FLOAT:
-      return &kCodec<float>;
-    case duckdb::PhysicalType::DOUBLE:
-      return &kCodec<double>;
-    default:
+  return Resolve<NumericAxis>(physical, [&]<typename T>() -> const Codec* {
+    if constexpr (std::is_floating_point_v<T>) {
+      return &kCodec<T>;
+    } else {
       return nullptr;
-  }
+    }
+  });
 }
 
 }  // namespace irs::codecs

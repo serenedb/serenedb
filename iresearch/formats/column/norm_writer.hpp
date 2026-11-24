@@ -21,6 +21,7 @@
 #pragma once
 
 #include <cstdint>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <functional>
 #include <limits>
 #include <span>

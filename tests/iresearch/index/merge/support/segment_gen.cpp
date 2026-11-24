@@ -28,11 +28,13 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/utils/down_cast.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <memory>
 
 #include "index/doc_generator.hpp"
 #include "insert_field.hpp"
+#include "tests_shared.hpp"
 
 namespace tests::merge {
 namespace {
@@ -297,12 +299,23 @@ irs::ColumnOptions SketchedColumns(irs::field_id id) {
 }
 
 std::vector<const irs::SubReader*> Segments(
-  const irs::DirectoryReader& reader) {
+  const irs::CompositeReader& reader) {
   std::vector<const irs::SubReader*> out;
   for (const auto& segment : reader) {
     out.push_back(&segment);
   }
   return out;
+}
+
+tests::IndexDir MemoryDir() {
+  return {irs::DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
+}
+
+std::shared_ptr<const irs::SegmentReaderImpl> OpenSegment(
+  const tests::IndexDir& dir, const irs::SegmentMeta& meta,
+  const irs::IndexReaderOptions& options) {
+  return irs::SegmentReaderImpl::Open(dir.Db(), dir.Fs(), dir.Root(), meta,
+                                      options, nullptr);
 }
 
 std::shared_ptr<const irs::SegmentReaderImpl> AllDeleted(

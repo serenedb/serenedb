@@ -24,6 +24,7 @@
 #include <absl/numeric/int128.h>
 
 #include <algorithm>
+#include <duckdb/common/memory_file_system.hpp>
 #include <memory>
 #include <span>
 
@@ -32,7 +33,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
-#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {
@@ -78,8 +79,9 @@ ReencodeEstimate TrialReencode(const ColReader& reader,
   const uint64_t groups = (rows + group_rows - 1) / group_rows;
   const uint64_t picks = std::min<uint64_t>(kReencodeSampleRowGroups, groups);
 
-  MemoryDirectory dir;
-  ColWriter trial{dir, "copy_check", reader.Database(), WriteTier::Merge};
+  duckdb::MemoryFileSystem fs;
+  FileTracker files{fs, duckdb::MemoryFileSystem::PREFIX, "copy_check"};
+  ColWriter trial{reader.Database(), files, WriteTier::Merge};
   auto& writer =
     trial.OpenColumn(column.Id(), column.Type(),
                      {

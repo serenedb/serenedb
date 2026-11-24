@@ -22,6 +22,7 @@
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
+#include "iresearch/utils/dispatch.hpp"
 
 namespace irs::ann {
 namespace {
@@ -47,11 +48,7 @@ class VectorChain : public Root {
   }
 
   void Run(Collector& collector) final {
-    if (_width > 0.f) {
-      Scan<true>(collector);
-    } else {
-      Scan<false>(collector);
-    }
+    Resolve(_width > 0.f, [&]<bool Width> { Scan<Width>(collector); });
   }
 
  private:
@@ -183,10 +180,7 @@ ann::Root::ptr KnnVectorQuery::PlanAnn(const ann::Context& ctx) const {
 }
 
 ann::Root::ptr RangeVectorQuery::PlanAnn(const ann::Context& ctx) const {
-  return detail::ResolveBool(Inclusive(), [&]<bool Inclusive>() {
-    return detail::MakeVectorScored<ann::Family, detail::RadiusGate<Inclusive>>(
-      *this, ctx, Threshold());
-  });
+  return detail::MakeQuery<ann::Family>(*this, ctx);
 }
 
 }  // namespace irs

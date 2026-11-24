@@ -51,9 +51,10 @@
 #include "iresearch/index/merge/postings_unit.hpp"
 #include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/index/merge/term_ranges.hpp"
+#include "iresearch/index/segment_reader_impl.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -97,7 +98,7 @@ using MergedFieldMap = absl::flat_hash_map<field_id, MergedField>;
 
 class MergePlan {
  public:
-  MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
+  MergePlan(FileTracker& tracker, MergeDocMap& doc_map, SegmentMeta& segment,
             ScorerPtr scorer, duckdb::DatabaseInstance& db,
             const IndexFieldOptions* field_options,
             const MergeProgress& progress, const AnnBuildEnv* env,
@@ -116,6 +117,8 @@ class MergePlan {
   void Abort() noexcept { _aborted.store(true, std::memory_order_relaxed); }
 
   const MergeProfile& Profile() const noexcept { return _profile; }
+
+  SegmentInputs TakeInputs() noexcept { return std::move(_inputs); }
 
   MergeWorkers Workers() const {
     return {duckdb::TaskScheduler::GetScheduler(_db), _pool, _threads};
@@ -165,8 +168,7 @@ class MergePlan {
 
   bool WriteIndex(MergeStepClock& clock);
 
-  TrackingDirectory _col_dir;
-  TrackingDirectory _idx_dir;
+  FileTracker& _tracker;
   MergeDocMap& _doc_map;
   SegmentMeta& _segment;
   ScorerPtr _scorer;
@@ -193,9 +195,9 @@ class MergePlan {
   std::vector<MergeUnit> _units;
   bool _ivf = false;
   std::unique_ptr<IdxWriter> _idx;
-  std::unique_ptr<ColReader> _ann_reader;
   std::vector<std::unique_ptr<AnnWriter>> _ann_writers;
   std::unique_ptr<ColReader> _col_reader;
+  SegmentInputs _inputs;
   std::optional<InputNormProvider> _norms;
   std::optional<ReadContext> _ivf_ctx;
   std::unique_ptr<TermRangeSink> _term_sink;

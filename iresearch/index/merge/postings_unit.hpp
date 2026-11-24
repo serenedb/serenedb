@@ -26,6 +26,7 @@
 #include "iresearch/formats/basic_term_reader.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/reader_state.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -54,6 +55,7 @@ bool WritePostings(const FlushState& flush_state, PostingsOutputs outputs,
                    const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                    std::span<const BasicTermReader* const> extra,
                    std::span<const std::unique_ptr<TermRangeMerge>> ranges,
-                   uint64_t keyed_dicts, const MergeWorkers& workers);
+                   uint64_t keyed_dicts, const MergeWorkers& workers,
+                   PostingsInputs& postings);
 
 }  // namespace irs

@@ -24,7 +24,7 @@
 #include <cstdint>
 #include <duckdb/common/types/value.hpp>
 #include <iresearch/index/column_info.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_features.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -115,7 +115,13 @@ SegmentShape RandomShape(Generator& gen);
 
 irs::ColumnOptions SketchedColumns(irs::field_id id);
 
-std::vector<const irs::SubReader*> Segments(const irs::DirectoryReader& reader);
+std::vector<const irs::SubReader*> Segments(const irs::CompositeReader& reader);
+
+tests::IndexDir MemoryDir();
+
+std::shared_ptr<const irs::SegmentReaderImpl> OpenSegment(
+  const tests::IndexDir& dir, const irs::SegmentMeta& meta,
+  const irs::IndexReaderOptions& options);
 
 std::shared_ptr<const irs::SegmentReaderImpl> AllDeleted(
   const irs::SubReader& segment);
@@ -124,8 +130,6 @@ class WithoutColumnStore final : public irs::SubReader {
  public:
   explicit WithoutColumnStore(const irs::SubReader& segment) noexcept
     : _segment{segment} {}
-
-  uint64_t CountMappedMemory() const final { return 0; }
 
   const irs::SegmentInfo& Meta() const final { return _segment.Meta(); }
 

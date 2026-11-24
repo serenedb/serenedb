@@ -43,6 +43,7 @@
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs {
 
@@ -161,7 +162,7 @@ class ListKeys {
         case Kind::Array:
           return children[0].HashRange(std::move(h), Index(e) * width, width);
       }
-      return h;
+      SDB_UNREACHABLE();
     }
 
     template<typename H>
@@ -193,8 +194,7 @@ class ListKeys {
         }
         return h;
       }
-      if (kind == Kind::Fixed && width <= kMaxHashedWidth &&
-          RangeValid(e, length)) {
+      if (kind == Kind::Fixed && RangeValid(e, length)) {
         return HashFixedRange(std::move(h), e, length);
       }
       if (all_valid && flat && kind == Kind::String) {
@@ -241,7 +241,7 @@ class ListKeys {
           return children[0].EqualRange(Index(e) * width, other.children[0],
                                         other.Index(f) * width, width);
       }
-      return false;
+      SDB_UNREACHABLE();
     }
 
     bool EqualRange(uint64_t e, const Node& other, uint64_t f,

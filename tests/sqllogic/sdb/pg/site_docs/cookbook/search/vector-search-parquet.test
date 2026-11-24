@@ -1,0 +1,253 @@
+control substitution on
+
+# DOCS_TEST: make_sample
+
+# DOCS_TEST_RAW
+#| COPY (
+#|     SELECT * FROM (VALUES
+#|         (1, 'Search results are empty after the index rebuild', [0.9, 0.1, 0.0]::FLOAT[]),
+#|         (2, 'Invoice PDF shows the wrong company address',      [0.0, 0.0, 1.0]::FLOAT[]),
+#|         (3, 'Slow search when the query has many words',        [0.7, 0.7, 0.0]::FLOAT[]),
+#|         (4, 'Export endpoint times out on large result sets',   [0.1, 0.95, 0.0]::FLOAT[]),
+#|         (5, 'Typo on the search settings page',                 [0.6, 0.0, 0.1]::FLOAT[])
+#|     ) AS t(id, body, emb)
+#| ) TO '/data/tickets.parquet' (FORMAT parquet);
+
+# DOCS_TEST_BODY
+
+statement ok
+COPY (
+    SELECT * FROM (VALUES
+        (1, 'Search results are empty after the index rebuild', [0.9, 0.1, 0.0]::FLOAT[]),
+        (2, 'Invoice PDF shows the wrong company address',      [0.0, 0.0, 1.0]::FLOAT[]),
+        (3, 'Slow search when the query has many words',        [0.7, 0.7, 0.0]::FLOAT[]),
+        (4, 'Export endpoint times out on large result sets',   [0.1, 0.95, 0.0]::FLOAT[]),
+        (5, 'Typo on the search settings page',                 [0.6, 0.0, 0.1]::FLOAT[])
+    ) AS t(id, body, emb)
+) TO '${__TEST_DIR__}/tickets.parquet' (FORMAT parquet);
+
+# DOCS_TEST: describe
+
+# DOCS_TEST_RAW
+#| DESCRIBE SELECT * FROM '/data/tickets.parquet';
+
+# DOCS_TEST_BODY
+
+query
+DESCRIBE SELECT * FROM '${__TEST_DIR__}/tickets.parquet';
+----
+column_name	column_type	null	key	default	extra
+id	INTEGER	YES	NULL	NULL	NULL
+body	VARCHAR	YES	NULL	NULL	NULL
+emb	FLOAT[]	YES	NULL	NULL	NULL
+
+# DOCS_TEST: view
+
+# DOCS_TEST_RAW
+#| CREATE VIEW tickets AS
+#|     SELECT id, body, emb::FLOAT[3] AS emb
+#|     FROM read_parquet('/data/tickets.parquet');
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE VIEW tickets AS
+    SELECT id, body, emb::FLOAT[3] AS emb
+    FROM read_parquet('${__TEST_DIR__}/tickets.parquet');
+
+# DOCS_TEST: dictionary
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY english_dict AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false) | stem_words('en_US.UTF-8')
+    WITH (frequency, position, offset);
+
+# DOCS_TEST: index
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX tickets_idx ON tickets
+    USING inverted (id, body english_dict, emb ivf (metric = 'cosine'));
+
+# DOCS_TEST: knn
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body,
+       round((emb <=> [0.5, 0.85, 0.0]::FLOAT[3])::numeric, 3) AS distance
+FROM tickets_idx
+ORDER BY distance, id
+LIMIT 3;
+----
+id	body	distance
+3	Slow search when the query has many words	0.032
+4	Export endpoint times out on large result sets	0.090
+1	Search results are empty after the index rebuild	0.401
+
+# DOCS_TEST: filter_rank
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body
+FROM tickets_idx
+WHERE body @@ 'search'
+ORDER BY emb <=> [0.5, 0.85, 0.0]::FLOAT[3], id
+LIMIT 3;
+----
+id	body
+3	Slow search when the query has many words
+1	Search results are empty after the index rebuild
+5	Typo on the search settings page
+
+# DOCS_TEST: bm25_only
+
+# DOCS_TEST_BODY
+
+query
+SELECT id, body
+FROM tickets_idx
+WHERE body @@ 'slow search'
+ORDER BY BM25(tickets_idx.tableoid) DESC, id;
+----
+id	body
+3	Slow search when the query has many words
+1	Search results are empty after the index rebuild
+5	Typo on the search settings page
+
+# DOCS_TEST: rrf
+
+# DOCS_TEST_BODY
+
+query
+WITH fused AS (
+    SELECT id, RANK() OVER (ORDER BY s DESC) AS rank FROM (
+        SELECT id, BM25(tickets_idx.tableoid) AS s FROM tickets_idx
+        WHERE body @@ 'slow search'
+        ORDER BY s DESC LIMIT 100
+    ) t
+    UNION ALL
+    SELECT id, RANK() OVER (ORDER BY d) AS rank FROM (
+        SELECT id, emb <=> [0.5, 0.85, 0.0]::FLOAT[3] AS d FROM tickets_idx
+        ORDER BY d LIMIT 100
+    ) t
+)
+SELECT f.id, t.body, round(SUM(1.0 / (60 + f.rank)), 4) AS rrf_score
+FROM fused f JOIN tickets t USING (id)
+GROUP BY f.id, t.body
+ORDER BY rrf_score DESC, f.id;
+----
+id	body	rrf_score
+3	Slow search when the query has many words	0.0328
+1	Search results are empty after the index rebuild	0.032
+5	Typo on the search settings page	0.0318
+4	Export endpoint times out on large result sets	0.0161
+2	Invoice PDF shows the wrong company address	0.0154
+
+# DOCS_TEST: hnsw
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE INDEX tickets_hnsw ON tickets
+    USING inverted (id, emb hnsw (metric = 'cosine'));
+
+# DOCS_TEST: embed_secret
+
+# DOCS_TEST_RAW
+#| CREATE SECRET local_ai (
+#|     TYPE openai,
+#|     base_url 'http://localhost:11434',
+#|     embeddings_path '/v1/embeddings'
+#| );
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_vector_search_parquet_embed_secret (x INTEGER);
+
+# DOCS_TEST: embed_files
+
+# DOCS_TEST_RAW
+#| COPY (
+#|     SELECT id, body, ai_embed(body, 'all-minilm', 'local_ai') AS emb
+#|     FROM read_parquet('/data/tickets.parquet')
+#| ) TO '/data/tickets_minilm.parquet' (FORMAT parquet);
+#|
+#| CREATE VIEW tickets_minilm AS
+#|     SELECT id, body, emb::FLOAT[384] AS emb
+#|     FROM read_parquet('/data/tickets_minilm.parquet');
+#|
+#| CREATE INDEX tickets_minilm_idx ON tickets_minilm
+#|     USING inverted (id, emb ivf (metric = 'cosine'));
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_vector_search_parquet_embed_files (x INTEGER);
+
+# DOCS_TEST: embed_query
+
+# DOCS_TEST_RAW
+#| SELECT id, body
+#| FROM tickets_minilm_idx
+#| ORDER BY emb <=> ai_embed('billing problem', 'all-minilm', 'local_ai')::FLOAT[384]
+#| LIMIT 2;
+#| ----
+#| id	body
+#| 2	Invoice PDF shows the wrong company address
+#| 5	Typo on the search settings page
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE __docs_vector_search_parquet_embed_query (x INTEGER);
+
+# DOCS_TEST: glob_view
+
+statement ok
+COPY (SELECT * FROM '${__TEST_DIR__}/tickets.parquet' WHERE id <= 3)
+TO '${__TEST_DIR__}/batch_1.parquet' (FORMAT parquet);
+
+# DOCS_TEST_RAW
+#| CREATE VIEW all_tickets AS
+#|     SELECT id, body, emb::FLOAT[3] AS emb
+#|     FROM read_parquet('s3://⟨my-bucket⟩/tickets/*.parquet');
+#|
+#| CREATE INDEX all_tickets_idx ON all_tickets
+#|     USING inverted (id, body english_dict, emb ivf (metric = 'cosine'));
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE VIEW all_tickets AS
+    SELECT id, body, emb::FLOAT[3] AS emb
+    FROM read_parquet('${__TEST_DIR__}/batch_*.parquet');
+
+statement ok
+CREATE INDEX all_tickets_idx ON all_tickets
+    USING inverted (id, body english_dict, emb ivf (metric = 'cosine'));
+
+# DOCS_TEST: reindex
+
+statement ok
+COPY (SELECT * FROM '${__TEST_DIR__}/tickets.parquet' WHERE id > 3)
+TO '${__TEST_DIR__}/batch_2.parquet' (FORMAT parquet);
+
+# DOCS_TEST_BODY
+
+statement ok
+REINDEX INDEX all_tickets_idx;
+
+query
+SELECT id
+FROM all_tickets_idx
+ORDER BY emb <=> [0.0, 0.0, 1.0]::FLOAT[3]
+LIMIT 1;
+----
+id
+2

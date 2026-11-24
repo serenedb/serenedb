@@ -23,6 +23,10 @@
 
 #pragma once
 
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/main/database.hpp>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "iresearch/formats/column/col_reader.hpp"
@@ -36,14 +40,7 @@
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/string.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-}
-
 namespace irs {
-
-struct TrackingDirectory;
 
 class MergeWriter : public util::Noncopyable {
  public:
@@ -58,14 +55,12 @@ class MergeWriter : public util::Noncopyable {
     DocRemap remap;
   };
 
-  explicit MergeWriter(Directory& dir,
-                       const SegmentWriterOptions& options) noexcept
-    : _dir{dir},
-      _readers{{options.resource_manager}},
-      _db{[db = options.db] -> duckdb::DatabaseInstance& {
-        SDB_ASSERT(db);
-        return *db;
-      }()},
+  MergeWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+              std::string_view root, const SegmentWriterOptions& options)
+    : _fs{fs},
+      _root{root},
+      _readers{{IResourceManager::gNoop}},
+      _db{db},
       _field_options{options.field_options},
       _hnsw_bases{options.hnsw_bases} {}
   MergeWriter(MergeWriter&&) = default;
@@ -88,7 +83,8 @@ class MergeWriter : public util::Noncopyable {
   }
 
  private:
-  Directory& _dir;
+  duckdb::FileSystem& _fs;
+  std::string _root;
   ManagedVector<ReaderCtx> _readers;
   duckdb::DatabaseInstance& _db;
   // Non-owning; the caller pins it for the whole merge.

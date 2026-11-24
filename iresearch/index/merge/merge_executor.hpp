@@ -26,19 +26,19 @@
 #include "iresearch/index/merge/merge_plan.hpp"
 #include "iresearch/index/merge/merge_profile.hpp"
 #include "iresearch/index/merge/merge_progress.hpp"
+#include "iresearch/index/segment_reader_impl.hpp"
 #include "iresearch/index/segment_writer_options.hpp"
-#include "iresearch/store/directory.hpp"
 
 namespace irs {
 
 [[nodiscard]] bool ExecuteMerge(MergePlan& plan);
 
-[[nodiscard]] bool MergeSegments(Directory& dir, MergeDocMap& doc_map,
-                                 SegmentMeta& segment,
-                                 const SegmentWriterOptions& options,
-                                 duckdb::shared_ptr<duckdb::DedicatedPool> pool,
-                                 const MergeProgress& progress = {},
-                                 const AnnBuildEnv* env = nullptr,
-                                 MergeProfile* profile = nullptr);
+[[nodiscard]] WrittenSegment MergeSegments(
+  duckdb::DatabaseInstance& db, duckdb::FileSystem& fs, std::string_view root,
+  MergeDocMap& doc_map, SegmentMeta& segment,
+  const SegmentWriterOptions& options,
+  duckdb::shared_ptr<duckdb::DedicatedPool> pool,
+  const MergeProgress& progress = {}, const AnnBuildEnv* env = nullptr,
+  MergeProfile* profile = nullptr);
 
 }  // namespace irs

@@ -85,12 +85,6 @@ void VisitPart(const TermPart& part, IndexFeatures features,
 
 }  // namespace
 
-void RecordOutput::WriteDirect(const byte_type*, size_t) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
-                  ERR_MSG("term dictionary: posting record exceeds ",
-                          kMaxRecordBytes, " bytes"));
-}
-
 PartBlocks::PartBlocks(const PartsField& field, size_t part)
   : blocks{field.inline_bases[part]} {
   blocks.SetFsst(field.fsst);

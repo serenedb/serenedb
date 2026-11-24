@@ -134,23 +134,37 @@ def take(conn, run_tag, datadir=None, scan_artifacts=False):
     if datadir:
         # Artifact reclamation is deferred to a background pool after the commit
         # that decided the drop, so mid-run a just-dropped index legitimately
-        # still has its directory. Boot's orphan sweep is the real contract, so
+        # still has its files. Boot's orphan sweep is the real contract, so
         # this only runs where that contract applies: after a restart.
         if scan_artifacts:
-            snap.orphan_files = scan_datadir(datadir, snap.all_oids)
+            try:
+                snap.orphan_files = scan_datadir(datadir, owned_files(conn))
+            except Exception as exc:
+                snap.errors.append(f"store scan failed: {exc}")
     return snap
 
 
-def scan_datadir(datadir, live_oids):
-    findings = []
+SEGMENT_FILE = re.compile(r"[0-9a-f]{16}\.")
+
+
+def owned_files(conn):
+    owned = 0
+    for (name,) in _rows(conn, "SELECT datname FROM pg_database"):
+        rows = _rows(conn, "SELECT coalesce(sum(value), 0) FROM "
+                     f'"{name}".pg_catalog.sdb_metrics WHERE metric = %s',
+                     ("num_files",))
+        owned += int(rows[0][0])
+    return owned
+
+
+def scan_datadir(datadir, owned):
     store = os.path.join(datadir, "engine_v1", "store")
     if not os.path.isdir(store):
-        return findings
-    for entry in os.listdir(store):
-        if (entry.isdigit() and os.path.isdir(os.path.join(store, entry))
-                and int(entry) not in live_oids):
-            findings.append((os.path.join("engine_v1", "store"), entry))
-    return findings
+        return []
+    files = sum(1 for entry in os.listdir(store) if SEGMENT_FILE.match(entry))
+    if files == owned:
+        return []
+    return [(os.path.join("engine_v1", "store"), files - owned)]
 
 
 def observed_states(snap):

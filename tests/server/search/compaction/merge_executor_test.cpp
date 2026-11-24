@@ -20,6 +20,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/strings/str_cat.h>
 #include <absl/synchronization/notification.h>
 #include <absl/time/time.h>
 
@@ -36,13 +37,12 @@
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/merge/doc_map.hpp>
 #include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -56,8 +56,10 @@
 #include "connector/column_id.h"
 #include "connector/search_sink_writer.hpp"
 #include "gtest/gtest.h"
+#include "hook_file_system.hpp"
 #include "index/merge/support/parallel_merge.hpp"
 #include "index/test_index_writer.hpp"
+#include "index_dir.hpp"
 
 namespace {
 
@@ -66,6 +68,13 @@ using namespace sdb::connector;
 
 duckdb::DatabaseInstance& TestDb() {
   return ::irs::DuckDBEngine::Instance().instance();
+}
+
+tests::IndexDir MemoryDir() {
+  static constinit std::atomic<uint64_t> gDirs{0};
+  return {TestDb(),
+          absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "merge_executor/",
+                       gDirs.fetch_add(1, std::memory_order_relaxed))};
 }
 
 duckdb::ClientContext& TestContext() {
@@ -101,58 +110,22 @@ const irs::CompactionPolicy& FullMerge() {
   return kPolicy;
 }
 
-class NoPostingsDirectory final : public irs::Directory {
+class NoPostingsFileSystem final : public tests::HookFileSystem {
  public:
-  explicit NoPostingsDirectory(irs::Directory& impl) noexcept
-    : irs::Directory{impl.ResourceManager()}, _impl{impl} {}
+  using tests::HookFileSystem::HookFileSystem;
 
-  irs::DirectoryAttributes& attributes() noexcept final {
-    return _impl.attributes();
-  }
-  irs::IndexOutput::ptr create(std::string_view name) final {
+  void OnCreate(std::string_view name) final {
     if (name.ends_with(".doc")) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                       ERR_MSG("cannot create ", name));
     }
-    return _impl.create(name);
   }
-  bool exists(bool& result, std::string_view name) const noexcept final {
-    return _impl.exists(result, name);
-  }
-  bool length(uint64_t& result, std::string_view name) const noexcept final {
-    return _impl.length(result, name);
-  }
-  bool mtime(std::time_t& result, std::string_view name) const noexcept final {
-    return _impl.mtime(result, name);
-  }
-  irs::IndexInput::ptr open(std::string_view name,
-                            irs::IOAdvice advice) const noexcept final {
-    return _impl.open(name, advice);
-  }
-  bool remove(std::string_view name) noexcept final {
-    return _impl.remove(name);
-  }
-  bool rename(std::string_view src, std::string_view dst) noexcept final {
-    return _impl.rename(src, dst);
-  }
-  irs::IndexInput::ptr Finish(irs::IndexOutput::ptr out,
-                              irs::IOAdvice advice) const final {
-    return _impl.Finish(std::move(out), advice);
-  }
-  bool visit(const visitor_f& visitor) const final {
-    return _impl.visit(visitor);
-  }
-
- private:
-  irs::Directory& _impl;
 };
 
 class MergeExecutorTest : public ::testing::Test {
  protected:
   void SetUp() override {
     irs::IndexWriterOptions options;
-    options.db = &TestDb();
-    options.reader_options.db = &TestDb();
     _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(options));
     for (int64_t segment = 0; segment != 4; ++segment) {
       std::vector<int64_t> rowids(3000 + segment * 700);
@@ -167,8 +140,6 @@ class MergeExecutorTest : public ::testing::Test {
               duckdb::shared_ptr<duckdb::DedicatedPool> pool = nullptr) {
     _writer.reset();
     irs::IndexWriterOptions options;
-    options.db = &TestDb();
-    options.reader_options.db = &TestDb();
     options.sort = std::move(sort);
     options.merge_pool = std::move(pool);
     _writer = tests::IndexWriter::Make(_dir, tests::kOmCreate, std::move(options));
@@ -280,7 +251,7 @@ class MergeExecutorTest : public ::testing::Test {
     return out;
   }
 
-  irs::MemoryDirectory _dir;
+  tests::IndexDir _dir = MemoryDir();
   tests::IndexWriter::ptr _writer;
 };
 
@@ -350,9 +321,9 @@ TEST_F(MergeExecutorTest, UnitsLeaveTheSchedulerWorkersToOtherTasks) {
     }
     return true;
   };
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   irs::SegmentMeta meta;
-  irs::MergePlan plan{out,      doc_map, meta,     nullptr,
+  irs::MergePlan plan{out.Tracker(meta.name),      doc_map, meta,     nullptr,
                       TestDb(), nullptr, progress, nullptr};
   ASSERT_TRUE(plan.Prepare(tests::merge::MergePool(1)));
   const auto restore = PinWorkers(1, 0);
@@ -390,9 +361,9 @@ TEST_F(MergeExecutorTest, StopAtAnyPointFailsTheMerge) {
     for (const auto& segment : reader) {
       doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
     }
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     irs::SegmentMeta meta;
-    irs::MergePlan plan{out,      doc_map, meta,     nullptr,
+    irs::MergePlan plan{out.Tracker(meta.name),      doc_map, meta,     nullptr,
                         TestDb(), nullptr, progress, nullptr};
     if (!plan.Prepare(tests::merge::MergePool(8))) {
       return false;
@@ -468,9 +439,9 @@ TEST_F(MergeExecutorTest, AnUnsortedInputFailsTheSortedMerge) {
   for (const auto& segment : reader) {
     doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
   }
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   irs::SegmentMeta meta;
-  irs::MergePlan plan{out,     doc_map, meta,    nullptr, TestDb(),
+  irs::MergePlan plan{out.Tracker(meta.name),     doc_map, meta,    nullptr, TestDb(),
                       nullptr, {},      nullptr, &spec};
   EXPECT_THROW(plan.Prepare(tests::merge::MergePool(4)), irs::SqlException);
   EXPECT_TRUE(plan.Units().empty());
@@ -492,9 +463,9 @@ TEST_F(MergeExecutorTest, AnIncompleteOrderFailsTheSortedMerge) {
   for (const auto& segment : reader) {
     doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
   }
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   irs::SegmentMeta meta;
-  irs::MergePlan plan{out,     doc_map, meta,    nullptr, TestDb(),
+  irs::MergePlan plan{out.Tracker(meta.name),     doc_map, meta,    nullptr, TestDb(),
                       nullptr, {},      nullptr, &spec};
   EXPECT_THROW(plan.Prepare(tests::merge::MergePool(4)), irs::SqlException);
   EXPECT_TRUE(plan.Units().empty());
@@ -506,9 +477,9 @@ TEST_F(MergeExecutorTest, PostingsMergeInTermRanges) {
   for (const auto& segment : reader) {
     doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
   }
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   irs::SegmentMeta meta;
-  irs::MergePlan plan{out,      doc_map, meta, nullptr,
+  irs::MergePlan plan{out.Tracker(meta.name),      doc_map, meta, nullptr,
                       TestDb(), nullptr, {},   nullptr};
   ASSERT_TRUE(plan.Prepare(tests::merge::MergePool(8)));
   const auto units = plan.Units();
@@ -548,9 +519,9 @@ TEST_F(MergeExecutorTest, AFailedUnitStopsTheTermRangePartsStillRunning) {
     }
     return true;
   };
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   irs::SegmentMeta meta;
-  irs::MergePlan plan{out,      doc_map, meta,     nullptr,
+  irs::MergePlan plan{out.Tracker(meta.name),      doc_map, meta,     nullptr,
                       TestDb(), nullptr, progress, nullptr};
   ASSERT_TRUE(plan.Prepare(tests::merge::MergePool(8)));
   const auto units = plan.Units();
@@ -597,9 +568,9 @@ TEST_F(MergeExecutorTest, AFailedUnitStopsTheUnitsStillRunning) {
     }
     return true;
   };
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   irs::SegmentMeta meta;
-  irs::MergePlan plan{out,      doc_map, meta,     nullptr,
+  irs::MergePlan plan{out.Tracker(meta.name),      doc_map, meta,     nullptr,
                       TestDb(), nullptr, progress, nullptr};
   ASSERT_TRUE(plan.Prepare(tests::merge::MergePool(1)));
   const auto units = plan.Units();
@@ -629,11 +600,18 @@ TEST_F(MergeExecutorTest, UnitErrorReachesTheCaller) {
   for (const auto& segment : reader) {
     doc_map.emplace_back(&segment, irs::IResourceManager::gNoop);
   }
-  irs::MemoryDirectory out;
-  NoPostingsDirectory failing{out};
+  const auto out = MemoryDir();
+  NoPostingsFileSystem failing_fs{out.Fs()};
+  const tests::IndexDir failing{out.Db(), failing_fs, out.Root()};
   irs::SegmentMeta meta;
-  irs::MergePlan plan{failing,  doc_map, meta, nullptr,
-                      TestDb(), nullptr, {},   nullptr};
+  irs::MergePlan plan{failing.Tracker(meta.name),
+                      doc_map,
+                      meta,
+                      nullptr,
+                      TestDb(),
+                      nullptr,
+                      {},
+                      nullptr};
   ASSERT_TRUE(plan.Prepare(tests::merge::MergePool(1)));
   EXPECT_THROW(std::ignore = irs::ExecuteMerge(plan), irs::SqlException);
 }

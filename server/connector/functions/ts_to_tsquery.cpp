@@ -272,7 +272,8 @@ void FromToTsquery(BoolTarget parent, const FilterContext& ctx,
                    const duckdb::BoundFunctionExpression& func) {
   static constexpr std::string_view kSyntaxHint =
     "Example: to_tsquery('foo AND bar*'). Lucene syntax: "
-    "AND/OR/NOT, +/-, prefix/wildcard/regex, ranges, ^N, ~N. A field prefix "
+    "AND/OR/NOT, +/-, prefix/wildcard/regex, ranges, ^N, ~N, prefix*~N. A "
+    "field prefix "
     "(name:term) needs a whole-index operand: tableoid @@ to_tsquery(...).";
   SDB_ASSERT(func.GetChildren().size() == 1);
   std::string text;

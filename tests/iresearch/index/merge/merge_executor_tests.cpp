@@ -27,7 +27,6 @@
 #include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -108,19 +107,20 @@ class MergeExecutorTest : public ::testing::Test {
   }
 
   std::unique_ptr<irs::MergePlan> MakePlan(
-    irs::Directory& out, const irs::IndexFieldOptions& field_options,
+    const tests::IndexDir& out, const irs::IndexFieldOptions& field_options,
     duckdb::shared_ptr<duckdb::DedicatedPool> pool = MergePool(1),
     const irs::MergeProgress& progress = {}) {
     auto plan = std::make_unique<irs::MergePlan>(
-      out, _doc_map, _meta, nullptr, irs::DuckDBEngine::Instance().instance(),
-      &field_options, progress, nullptr);
+      out.Tracker(_meta.name), _doc_map, _meta, nullptr,
+      irs::DuckDBEngine::Instance().instance(), &field_options, progress,
+      nullptr);
     EXPECT_TRUE(plan->Prepare(std::move(pool)));
     return plan;
   }
 
-  std::string MergedDifference(irs::Directory& out) {
-    const auto merged = irs::SegmentReaderImpl::Open(
-      out, _meta, irs::tests::DefaultReaderOptions());
+  std::string MergedDifference(const tests::IndexDir& out) {
+    const auto merged =
+      OpenSegment(out, _meta, irs::tests::DefaultReaderOptions());
     if (merged == nullptr) {
       return "merged segment did not open";
     }
@@ -128,9 +128,9 @@ class MergeExecutorTest : public ::testing::Test {
   }
 
   size_t _docs = 300;
-  irs::MemoryDirectory _dir;
+  tests::IndexDir _dir = MemoryDir();
   tests::IndexWriter::ptr _writer;
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   irs::FunctionFieldOptions _plain{PlainColumns,
                                    irs::tests::MakeNormColumnIdProvider(),
@@ -182,7 +182,7 @@ std::vector<size_t> Roots(const irs::MergePlan& plan) {
 }
 
 TEST_F(MergeExecutorTest, NormsChainBeforeTheColumnsBesidePostings) {
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto plan = MakePlan(out, _plain);
   const auto units = plan->Units();
   const auto norms = static_cast<size_t>(
@@ -207,7 +207,7 @@ TEST_F(MergeExecutorTest, NormsChainBeforeTheColumnsBesidePostings) {
 }
 
 TEST_F(MergeExecutorTest, ColumnsAndPostingsCarryTheirCost) {
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto plan = MakePlan(out, _plain);
   const auto units = plan->Units();
   for (const auto& unit : units) {
@@ -219,7 +219,7 @@ TEST_F(MergeExecutorTest, ColumnsAndPostingsCarryTheirCost) {
 }
 
 TEST_F(MergeExecutorTest, VectorUnitsRunOneAfterAnotherAfterTheFooter) {
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto plan = MakePlan(out, _vectors);
   const auto footer = Find(*plan, MergeUnitKind::ColumnsFooter);
   const auto hnsw = Find(*plan, MergeUnitKind::Ann, kHnswColumn);
@@ -256,7 +256,7 @@ TEST_F(MergeExecutorTest, VectorUnitsWithoutIvfLeavePostingsFree) {
     },
     irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE,
     std::move(hnsw_anns)};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto plan = MakePlan(out, hnsw_only);
   EXPECT_TRUE(
     absl::c_linear_search(Roots(*plan), Find(*plan, MergeUnitKind::Postings)));
@@ -270,7 +270,7 @@ TEST_F(MergeExecutorTest, FailedUnitStopsTheOthers) {
     duckdb::FaultPoints::Disarm("irs::MergeUnit");
   };
   std::atomic<size_t> calls{0};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto plan = MakePlan(out, _plain, MergePool(1), [&] {
     calls.fetch_add(1);
     return true;
@@ -287,7 +287,7 @@ TEST_F(MergeExecutorTest, FailedUnitStopsTheOthers) {
 TEST_F(MergeExecutorTest, NoUnitStartsAfterAFailure) {
   const auto merge = [&](const irs::MergeProgress& progress) {
     ResetDocMap();
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     std::atomic_bool prepared{false};
     const auto plan = MakePlan(out, _plain, MergePool(1),
                                [&] { return !prepared.load() || progress(); });
@@ -310,7 +310,7 @@ TEST_F(MergeExecutorTest, NoUnitStartsAfterAFailure) {
 
 TEST_F(MergeExecutorTest, AnAbortedPlanRunsNoUnit) {
   std::atomic<size_t> calls{0};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto plan = MakePlan(out, _plain, MergePool(1), [&] {
     calls.fetch_add(1);
     return true;
@@ -323,7 +323,7 @@ TEST_F(MergeExecutorTest, AnAbortedPlanRunsNoUnit) {
 
 TEST_F(MergeExecutorTest, StoppedMergeFails) {
   std::atomic<size_t> calls{0};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto plan =
     MakePlan(out, _plain, MergePool(1), [&] { return calls.fetch_add(1) < 3; });
   EXPECT_FALSE(irs::ExecuteMerge(*plan));
@@ -348,7 +348,7 @@ TEST_F(MergeExecutorTest, FailedMergeReleasesItsInputs) {
 }
 
 TEST_F(MergeExecutorRangesTest, PostingsWaitForEveryTermRangePart) {
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto plan = MakePlan(out, _plain, MergePool(kRangeThreads));
   const auto units = plan->Units();
   const auto parts = TermRangeParts(*plan);
@@ -363,7 +363,7 @@ TEST_F(MergeExecutorRangesTest, PostingsWaitForEveryTermRangePart) {
 }
 
 TEST_F(MergeExecutorRangesTest, PostingsWaitForTheIvfBuildAfterTheirParts) {
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto plan = MakePlan(out, _vectors, MergePool(kRangeThreads));
   const auto units = plan->Units();
   auto deps = TermRangeParts(*plan);
@@ -386,7 +386,7 @@ TEST_F(MergeExecutorRangesTest, AFailedUnitStopsTheTermRangeParts) {
   const absl::Cleanup disarm = [] {
     duckdb::FaultPoints::Disarm("irs::MergeUnit");
   };
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto plan = MakePlan(out, _plain, MergePool(kRangeThreads));
   const auto parts = TermRangeParts(*plan);
   ASSERT_LT(0, parts.size());
@@ -401,7 +401,7 @@ TEST_F(MergeExecutorTest, ThreadedMergesMatchTheInputs) {
   for (const size_t threads : {1, 2, 3, 8, 64}) {
     SCOPED_TRACE(threads);
     ResetDocMap();
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     const auto plan = MakePlan(out, _plain, MergePool(threads));
     ASSERT_TRUE(irs::ExecuteMerge(*plan));
     EXPECT_EQ("", MergedDifference(out));
@@ -412,7 +412,7 @@ TEST_F(MergeExecutorTest, ShuffledMergesMatchTheInputs) {
   for (const uint64_t seed : {1, 2, 3, 4, 5, 6, 7, 8}) {
     SCOPED_TRACE(seed);
     ResetDocMap();
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     const auto plan = MakePlan(out, _plain, MergePool(1 + seed % 4));
     const ShuffledUnits shuffle;
     ASSERT_TRUE(irs::ExecuteMerge(*plan));
@@ -424,7 +424,7 @@ TEST_F(MergeExecutorTest, SerialShuffledMergesMatchTheInputs) {
   for (const uint64_t seed : {1, 2, 3, 4}) {
     SCOPED_TRACE(seed);
     ResetDocMap();
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     const auto pool = NewMergePool(seed);
     const auto plan = MakePlan(out, _plain, pool);
     pool->SetThreads(1);

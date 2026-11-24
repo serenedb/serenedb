@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <duckdb/common/memory_file_system.hpp>
 #include <iresearch/formats/flush_state.hpp>
 #include <iresearch/formats/index/term_dict_reader.hpp>
 #include <iresearch/formats/index/term_parts.hpp>
@@ -35,7 +36,7 @@
 #include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <duckdb/storage/external_file_cache/input_file_reader.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
@@ -50,6 +51,7 @@
 
 #include "formats/column/test_cs_helpers.hpp"
 #include "formats/formats_test_case_base.hpp"
+#include "hook_file_system.hpp"
 #include "index/doc_generator.hpp"
 #include "index/merge/support/parallel_merge.hpp"
 #include "index/merge/support/segment_dump.hpp"
@@ -91,14 +93,14 @@ size_t ExpectSeeksFindEveryDoc(const irs::SubReader& segment,
       docs.push_back(doc);
     }
     EXPECT_EQ(meta.docs_count, docs.size());
-    irs::BlockCursor cursor;
+    irs::BlockCursor<duckdb::InputFileReader> cursor;
     cursor.Arm(meta, {.pos = irs::IndexFeatures::None !=
                              (features & irs::IndexFeatures::Pos),
                       .offs = irs::IndexFeatures::None !=
                               (features & irs::IndexFeatures::Offs),
                       .bounds = terms->HasScoreBounds()});
-    auto in = terms->Handles().doc->Reopen();
-    const auto& index = cursor.Loaded(*in);
+    const duckdb::InputFileReader in{*terms->Handles().doc};
+    const auto& index = cursor.Loaded(in);
     EXPECT_EQ(irs::BlockIndex::Blocks(meta.docs_count), index.Size());
     for (uint32_t k = 0; k < index.Size(); ++k) {
       const auto last = std::min<size_t>(
@@ -157,28 +159,34 @@ std::vector<irs::doc_id_t> Docs(size_t count, irs::doc_id_t step) {
   return docs;
 }
 
-std::vector<std::string> PostingsFiles(const irs::Directory& dir) {
+std::vector<std::string> PostingsFiles(const tests::IndexDir& dir) {
   std::vector<std::string> files;
-  dir.visit([&](std::string_view name) {
+  for (auto& name : dir.Files()) {
     if (name.ends_with(".doc") || name.ends_with(".pos") ||
         name.ends_with(".pay")) {
-      files.emplace_back(name);
+      files.push_back(std::move(name));
     }
-    return true;
-  });
+  }
   return files;
 }
 
-class NoPositionsDirectory final : public tests::DirectoryMock {
- public:
-  using tests::DirectoryMock::DirectoryMock;
+std::vector<std::string> MergePartFiles() {
+  std::vector<std::string> files;
+  irs::DuckDBEngine::Instance().instance().GetInternalFileSystem().ListFiles(
+    absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "merge"),
+    [&](const std::string& name, bool) { files.push_back(name); });
+  return files;
+}
 
-  irs::IndexOutput::ptr create(std::string_view name) final {
+class NoPositionsFileSystem final : public tests::HookFileSystem {
+ public:
+  using tests::HookFileSystem::HookFileSystem;
+
+  void OnCreate(std::string_view name) final {
     if (name.ends_with(".pos")) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
                       ERR_MSG("cannot create ", name));
     }
-    return tests::DirectoryMock::create(name);
   }
 };
 
@@ -186,11 +194,10 @@ TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
   constexpr auto kFeatures = irs::IndexFeatures::Freq;
   irs::FieldProperties props;
   props.index_features = kFeatures;
-  const auto write_part = [&](irs::Directory& dir,
+  const auto write_part = [&](const tests::IndexDir& dir,
                               std::span<const irs::doc_id_t> docs) {
     irs::PostingsWriter writer;
-    const irs::FlushState state{.dir = &dir,
-                                .name = "part",
+    const irs::FlushState state{.tracker = dir.Tracker("part"),
                                 .doc_count = 4000,
                                 .index_features = kFeatures};
     writer.Prepare(state);
@@ -203,22 +210,23 @@ TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
     return meta;
   };
   const auto long_docs = Docs(1000, 3);
-  irs::MemoryDirectory part_dir;
+  const auto part_dir = MemoryDir();
   const auto part_meta = write_part(part_dir, long_docs);
   ASSERT_LT(irs::doc_limits::kBlockSize, part_meta.docs_count);
-  const auto part_doc = part_dir.open("part.doc", irs::IOAdvice::SEQUENTIAL);
-  ASSERT_NE(nullptr, part_doc);
+  const auto part_doc =
+    part_dir.Open("part.doc", duckdb::MappedFileAccess::SEQUENTIAL);
+  ASSERT_TRUE(part_doc);
   for (size_t lead = 20; lead != 140; ++lead) {
     SCOPED_TRACE(lead);
-    irs::MemoryDirectory lead_dir;
+    const auto lead_dir = MemoryDir();
     write_part(lead_dir, Docs(lead, 7));
-    const auto lead_doc = lead_dir.open("part.doc", irs::IOAdvice::SEQUENTIAL);
-    ASSERT_NE(nullptr, lead_doc);
-    irs::MemoryDirectory dir;
+    const auto lead_doc =
+      lead_dir.Open("part.doc", duckdb::MappedFileAccess::SEQUENTIAL);
+    ASSERT_TRUE(lead_doc);
+    const auto dir = MemoryDir();
     uint64_t base = 0;
     {
-      const irs::FlushState created{.dir = &dir,
-                                    .name = "final",
+      const irs::FlushState created{.tracker = dir.Tracker("final"),
                                     .doc_count = 4000,
                                     .index_features = kFeatures};
       irs::PostingsOutputs outputs;
@@ -226,8 +234,7 @@ TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
       irs::AppendPostings(outputs, lead_doc.get(), nullptr, nullptr);
       base = irs::AppendPostings(outputs, part_doc.get(), nullptr, nullptr).doc;
       irs::PostingsWriter writer;
-      const irs::FlushState adopted{.dir = &dir,
-                                    .name = "final",
+      const irs::FlushState adopted{.tracker = dir.Tracker("final"),
                                     .doc_count = 4000,
                                     .index_features = kFeatures};
       writer.Prepare(adopted, std::move(outputs));
@@ -239,11 +246,12 @@ TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
     EXPECT_EQ(0, irs::BlockIndex::Pad(base));
     auto meta = part_meta;
     meta.doc_start += base;
-    auto in = dir.open("final.doc", irs::IOAdvice::RANDOM);
-    ASSERT_NE(nullptr, in);
-    irs::BlockCursor cursor;
+    const auto file = dir.Open("final.doc", duckdb::MappedFileAccess::RANDOM);
+    ASSERT_TRUE(file);
+    const duckdb::InputFileReader in{*file};
+    irs::BlockCursor<duckdb::InputFileReader> cursor;
     cursor.Arm(meta, irs::BlockIndexShapeOf(kFeatures, false));
-    const auto& index = cursor.Loaded(*in);
+    const auto& index = cursor.Loaded(in);
     ASSERT_EQ(irs::BlockIndex::Blocks(meta.docs_count), index.Size());
     for (uint32_t k = 0; k != index.Size(); ++k) {
       const auto last = std::min<size_t>(
@@ -255,10 +263,10 @@ TEST(PostingsAppendTest, AppendedSkipIndexesReadBack) {
 
 class TailPayloads final : public irs::TermPayloadWriter {
  public:
-  void WriteTermPayload(irs::IndexOutput&,
+  void WriteTermPayload(duckdb::WriteStream&,
                         std::span<const irs::doc_id_t>) final {}
 
-  void Finish(irs::IndexOutput& out) final {
+  void Finish(duckdb::WriteStream& out) final {
     constexpr irs::byte_type kTail[3]{};
     out.WriteData(kTail, std::size(kTail));
   }
@@ -268,11 +276,10 @@ class TailPayloads final : public irs::TermPayloadWriter {
 
 TEST(PostingsAppendTest, AFieldWithoutPayloadWriterKeepsThePayStreamUnpadded) {
   const auto pay_length = [](bool then_terms) {
-    irs::MemoryDirectory dir;
+    const auto dir = MemoryDir();
     irs::PostingsWriter writer;
     const irs::FlushState state{
-      .dir = &dir,
-      .name = "final",
+      .tracker = dir.Tracker("final"),
       .doc_count = 16,
       .index_features = irs::IndexFeatures::Freq | irs::IndexFeatures::Vec,
     };
@@ -289,26 +296,25 @@ TEST(PostingsAppendTest, AFieldWithoutPayloadWriterKeepsThePayStreamUnpadded) {
       writer.EndField();
     }
     writer.End();
-    uint64_t length = 0;
-    EXPECT_TRUE(dir.length(length, "final.pay"));
-    return length;
+    const auto pay = dir.Open("final.pay", duckdb::MappedFileAccess::RANDOM);
+    EXPECT_TRUE(pay);
+    return pay ? pay->GetSize() : uint64_t{0};
   };
   EXPECT_EQ(pay_length(false), pay_length(true));
 }
 
 TEST(PostingsAppendTest, PrepareCreatesOnlyTheOutputsItIsNotHanded) {
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   const auto features = irs::IndexFeatures::Freq | irs::IndexFeatures::Pos |
                         irs::IndexFeatures::Offs;
-  irs::PostingsOutputs outputs{.doc = dir.create("final.doc")};
+  irs::PostingsOutputs outputs{.doc = dir.Create("final.doc")};
   constexpr irs::byte_type kLead[]{1, 2, 3};
   outputs.doc->WriteData(kLead, std::size(kLead));
   {
     irs::PostingsWriter writer;
     writer.Prepare(
       {
-        .dir = &dir,
-        .name = "final",
+        .tracker = dir.Tracker("final"),
         .doc_count = 16,
         .index_features = features,
       },
@@ -321,15 +327,11 @@ TEST(PostingsAppendTest, PrepareCreatesOnlyTheOutputsItIsNotHanded) {
     writer.End();
   }
   for (const std::string_view name : {"final.pos", "final.pay"}) {
-    bool exists = false;
-    EXPECT_TRUE(dir.exists(exists, name));
-    EXPECT_TRUE(exists) << name;
+    EXPECT_TRUE(dir.Has(name)) << name;
   }
-  const auto doc = dir.open("final.doc", irs::IOAdvice::SEQUENTIAL);
-  ASSERT_NE(nullptr, doc);
-  irs::byte_type lead[std::size(kLead)];
-  doc->ReadData(lead, std::size(lead));
-  EXPECT_TRUE(absl::c_equal(kLead, lead));
+  const auto doc = dir.ReadWhole("final.doc");
+  ASSERT_LE(std::size(kLead), doc.size());
+  EXPECT_TRUE(absl::c_equal(kLead, irs::bytes_view{doc}.substr(0, std::size(kLead))));
 }
 
 class TermPartsTest : public ::testing::TestWithParam<irs::IndexFeatures> {};
@@ -473,7 +475,7 @@ class TermRangeMergeTest : public ::testing::Test {
     return Segments(_reader);
   }
 
-  irs::MergePlan MakePlan(irs::Directory& out,
+  irs::MergePlan MakePlan(const tests::IndexDir& out,
                           std::span<const irs::SubReader* const> inputs,
                           const std::vector<irs::SortKey>* spec,
                           const irs::MergeProgress& progress = {},
@@ -483,7 +485,7 @@ class TermRangeMergeTest : public ::testing::Test {
       _doc_map.emplace_back(input, irs::IResourceManager::gNoop);
     }
     _meta = {};
-    return irs::MergePlan{out,
+    return irs::MergePlan{out.Tracker(_meta.name),
                           _doc_map,
                           _meta,
                           scorer,
@@ -494,19 +496,34 @@ class TermRangeMergeTest : public ::testing::Test {
                           spec};
   }
 
-  std::string MergedDifference(irs::Directory& out,
+  bool Merge(const tests::IndexDir& out,
+             std::span<const irs::SubReader* const> inputs,
+             const irs::MergeProgress& progress) {
+    _doc_map.clear();
+    for (const auto* input : inputs) {
+      _doc_map.emplace_back(input, irs::IResourceManager::gNoop);
+    }
+    _meta = {};
+    return static_cast<bool>(
+      irs::MergeSegments(out.Db(), out.Fs(), out.Root(), _doc_map, _meta,
+                         {.field_options = &_field_options}, MergePool(4),
+                         progress)
+        .files);
+  }
+
+  std::string MergedDifference(const tests::IndexDir& out,
                                const tests::merge::SegmentDump& expected) {
-    const auto merged = irs::SegmentReaderImpl::Open(
-      out, _meta, irs::tests::DefaultReaderOptions());
+    const auto merged =
+      OpenSegment(out, _meta, irs::tests::DefaultReaderOptions());
     if (merged == nullptr) {
       return "merged segment did not open";
     }
     return FirstDifference(expected, Dump(*merged));
   }
 
-  irs::MemoryDirectory _dir;
+  tests::IndexDir _dir = MemoryDir();
   tests::IndexWriter::ptr _writer;
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
   irs::FunctionFieldOptions _field_options{
     SketchedColumns,
     irs::tests::MakeNormColumnIdProvider(),
@@ -531,7 +548,7 @@ TEST_P(TermRangeMergeOracleTest, PartsMatchTheOracle) {
                             " threads, ", shuffled ? "shuffled" : "scheduled"));
   const auto expected =
     sorted ? ExpectedSortedMerge(inputs, spec) : ExpectedMerge(inputs);
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const irs::BM25 bm25;
   auto plan = MakePlan(out, inputs, sorted ? &spec : nullptr, {}, &bm25);
   ASSERT_TRUE(plan.Prepare(MergePool(threads)));
@@ -543,8 +560,8 @@ TEST_P(TermRangeMergeOracleTest, PartsMatchTheOracle) {
   const ShuffledUnits shuffle{shuffled};
   ASSERT_TRUE(irs::ExecuteMerge(plan));
   EXPECT_EQ("", MergedDifference(out, expected));
-  const auto merged = irs::SegmentReaderImpl::Open(
-    out, _meta, irs::tests::DefaultReaderOptions());
+  const auto merged =
+    OpenSegment(out, _meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);
   const auto* text = merged->field(kTextField);
   ASSERT_NE(nullptr, text);
@@ -561,7 +578,7 @@ TEST_F(TermRangeMergeTest, OneThreadMergesTermsWithoutParts) {
   Open();
   AddSegments(3);
   const auto inputs = Snapshot();
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out, inputs, nullptr);
   ASSERT_TRUE(plan.Prepare(MergePool(1)));
   EXPECT_TRUE(TermRangeParts(plan).empty());
@@ -573,7 +590,7 @@ TEST_F(TermRangeMergeTest, SerialRunsMergeEveryPart) {
   Open();
   AddSegments(4);
   const auto inputs = Snapshot();
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out, inputs, nullptr);
   const auto pool = NewMergePool(4);
   ASSERT_TRUE(plan.Prepare(pool));
@@ -590,7 +607,7 @@ TEST_F(TermRangeMergeTest, StoppedPartsFailTheMerge) {
   for (const size_t stop_after : {1, 3, 10, 40}) {
     SCOPED_TRACE(stop_after);
     std::atomic<size_t> calls{0};
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     auto plan = MakePlan(out, inputs, nullptr,
                          [&] { return calls.fetch_add(1) < stop_after; });
     if (!plan.Prepare(MergePool(4))) {
@@ -607,8 +624,8 @@ TEST_F(TermRangeMergeTest, PartsAppendInPartOrderWhicheverFinishesFirst) {
   const auto inputs = Snapshot();
   const auto expected = ExpectedMerge(inputs);
   auto doc_map = irs::MakeMergeDocMap(inputs, irs::IResourceManager::gNoop);
-  irs::MemoryDirectory out;
-  irs::MergePlan plan{out,
+  const auto out = MemoryDir();
+  irs::MergePlan plan{out.Tracker(_meta.name),
                       doc_map,
                       _meta,
                       nullptr,
@@ -640,32 +657,40 @@ TEST_F(TermRangeMergeTest, PartsAppendInPartOrderWhicheverFinishesFirst) {
   EXPECT_EQ("", MergedDifference(out, expected));
 }
 
+TEST_F(TermRangeMergeTest, AnAbortedPlanRemovesItsPendingParts) {
+  Open();
+  AddSegments(4);
+  const auto inputs = Snapshot();
+  const auto out = MemoryDir();
+  {
+    auto plan = MakePlan(out, inputs, nullptr);
+    ASSERT_TRUE(plan.Prepare(MergePool(4)));
+    const auto units = plan.Units();
+    const auto later = absl::c_find_if(units, [](const irs::MergeUnit& unit) {
+      return unit.kind == irs::MergeUnitKind::TermRange && unit.part != 0;
+    });
+    ASSERT_NE(units.end(), later);
+    ASSERT_TRUE(plan.RunUnit(later - units.begin()));
+    EXPECT_FALSE(MergePartFiles().empty());
+    plan.Abort();
+  }
+  EXPECT_EQ(std::vector<std::string>{}, MergePartFiles());
+}
+
 TEST_F(TermRangeMergeTest, AnAbortedMergeLeavesNoPostingsFiles) {
   Open();
   AddSegments(4);
   const auto inputs = Snapshot();
-  irs::MemoryDirectory out;
-  {
-    auto plan = MakePlan(out, inputs, nullptr);
-    ASSERT_TRUE(plan.Prepare(MergePool(4)));
-    EXPECT_FALSE(PostingsFiles(out).empty());
-    const auto units = plan.Units();
-    std::vector<size_t> later;
-    for (size_t unit = 0; unit != units.size(); ++unit) {
-      if (units[unit].kind != irs::MergeUnitKind::TermRange) {
-        continue;
-      }
-      if (units[unit].part == 0) {
-        ASSERT_TRUE(plan.RunUnit(unit));
-      } else {
-        later.push_back(unit);
-      }
-    }
-    ASSERT_FALSE(later.empty());
-    plan.Abort();
-    EXPECT_FALSE(plan.RunUnit(later.front()));
+  std::atomic_size_t total{0};
+  ASSERT_TRUE(Merge(MemoryDir(), inputs, [&] { return ++total != 0; }));
+  for (const auto stop_at : {total / 4, total / 2, total * 3 / 4}) {
+    SCOPED_TRACE(stop_at);
+    const auto out = MemoryDir();
+    std::atomic_size_t calls{0};
+    EXPECT_FALSE(Merge(out, inputs, [&] { return ++calls < stop_at; }));
+    EXPECT_EQ(std::vector<std::string>{}, PostingsFiles(out));
+    EXPECT_EQ(std::vector<std::string>{}, MergePartFiles());
   }
-  EXPECT_EQ(std::vector<std::string>{}, PostingsFiles(out));
 }
 
 TEST_F(TermRangeMergeTest, EmptyThinAndLongTermPartsMatchTheOracle) {
@@ -699,7 +724,7 @@ TEST_F(TermRangeMergeTest, EmptyThinAndLongTermPartsMatchTheOracle) {
   }
   RemoveTerms(*_writer, kIdField, removed);
   const auto inputs = Snapshot();
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out, inputs, nullptr);
   ASSERT_TRUE(plan.Prepare(MergePool(8)));
   EXPECT_LE(8, TermRangeParts(plan)[kIdField]);
@@ -728,7 +753,7 @@ TEST_F(TermRangeMergeTest, ARangedFieldLeftWithOneTermMatchesTheOracle) {
   }
   RemoveTerms(*_writer, kIdField, removed);
   const auto inputs = Snapshot();
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   auto plan = MakePlan(out, inputs, nullptr);
   ASSERT_TRUE(plan.Prepare(MergePool(4)));
   EXPECT_LE(2, TermRangeParts(plan)[kIdField]);
@@ -769,23 +794,23 @@ TEST_F(TermRangeMergeTest, RangedNumbersMatchASerialMerge) {
   }
   RemoveTerms(*_writer, kIdField, removed);
   const auto inputs = Snapshot();
-  const auto merge = [&](irs::Directory& out, size_t threads) {
+  const auto merge = [&](const tests::IndexDir& out, size_t threads) {
     auto plan = MakePlan(out, inputs, nullptr);
     EXPECT_TRUE(plan.Prepare(MergePool(threads)));
     const auto parts = TermRangeParts(plan)[kNumberField];
     EXPECT_TRUE(irs::ExecuteMerge(plan));
     return std::pair{parts, _meta};
   };
-  irs::MemoryDirectory serial_dir;
-  irs::MemoryDirectory parallel_dir;
+  const auto serial_dir = MemoryDir();
+  const auto parallel_dir = MemoryDir();
   const auto [serial_parts, serial_meta] = merge(serial_dir, 1);
   const auto [parallel_parts, parallel_meta] = merge(parallel_dir, 8);
   EXPECT_EQ(0, serial_parts);
   EXPECT_LE(2, parallel_parts);
-  const auto serial = irs::SegmentReaderImpl::Open(
-    serial_dir, serial_meta, irs::tests::DefaultReaderOptions());
-  const auto parallel = irs::SegmentReaderImpl::Open(
-    parallel_dir, parallel_meta, irs::tests::DefaultReaderOptions());
+  const auto serial =
+    OpenSegment(serial_dir, serial_meta, irs::tests::DefaultReaderOptions());
+  const auto parallel = OpenSegment(parallel_dir, parallel_meta,
+                                    irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, serial);
   ASSERT_NE(nullptr, parallel);
   EXPECT_EQ("", FirstDifference(Dump(*serial), Dump(*parallel)));
@@ -844,13 +869,12 @@ TEST_F(TermRangeMergeTest, PostingsFilesThatCannotBeCreatedFailThePlan) {
   Open();
   AddSegments(4);
   const auto inputs = Snapshot();
-  irs::MemoryDirectory out;
-  NoPositionsDirectory failing{out};
-  {
-    auto plan = MakePlan(failing, inputs, nullptr);
-    EXPECT_THROW(plan.Prepare(MergePool(4)), irs::SqlException);
-  }
+  const auto out = MemoryDir();
+  NoPositionsFileSystem failing_fs{out.Fs()};
+  const tests::IndexDir failing{out.Db(), failing_fs, out.Root()};
+  EXPECT_THROW(std::ignore = Merge(failing, inputs, {}), irs::SqlException);
   EXPECT_EQ(std::vector<std::string>{}, PostingsFiles(out));
+  EXPECT_EQ(std::vector<std::string>{}, MergePartFiles());
 }
 
 }  // namespace

@@ -279,15 +279,6 @@ irs::ColumnOptions InvertedIndexConfig::GetColumnOptions(
         declared.compression_level = options.compression_level;
       }
     }
-    if (declared.type == irs::codecs::CodecType::Auto) {
-      for (const auto ann : AnnFields(id)) {
-        if (const auto& options = FindEntry(ann)->column_options;
-            options.compression != irs::codecs::CodecType::Auto) {
-          declared.type = options.compression;
-          declared.compression_level = options.compression_level;
-        }
-      }
-    }
     return {.compression = declared.type,
             .distinct = distinct,
             .compression_level = declared.compression_level};
@@ -329,16 +320,34 @@ const irs::AnnInfo* InvertedIndexConfig::FindAnn(
   return nullptr;
 }
 
+duckdb::optional_ptr<duckdb::Catalog> DictionaryCatalog(
+  duckdb::ClientContext& context, duckdb::Catalog& catalog) {
+  if (catalog.GetAttached().IsTemporary()) {
+    return DefaultSereneDBCatalog(context).get();
+  }
+  return catalog;
+}
+
 IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
                                  duckdb::Catalog& catalog,
                                  const InvertedIndexConfig& config)
   : _context{&context} {
-  auto& serene = catalog.Cast<SereneDBCatalog>();
+  const bool temporary = catalog.GetAttached().IsTemporary();
+  auto dictionaries = DictionaryCatalog(context, catalog);
   for (const auto& [field_id, field] : config.fields) {
     Field resolved;
     if (field.HasTextDictionary()) {
-      const auto dict = serene.FindIn<TokenizerCatalogEntry>(
-        serene.GetCatalogTransaction(context), field.text_dictionary);
+      const auto dict =
+        dictionaries
+          ? dictionaries->Cast<SereneDBCatalog>().FindIn<TokenizerCatalogEntry>(
+              dictionaries->GetCatalogTransaction(context),
+              field.text_dictionary)
+          : nullptr;
+      if (!dict && temporary) {
+        THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
+                        ERR_MSG("text search dictionary with OID ",
+                                field.text_dictionary, " does not exist"));
+      }
       if (!dict) {
         continue;
       }
@@ -402,6 +411,7 @@ InvertedIndexConfig::InvertedIndexConfig(
     const auto* entry = FindEntry(key.field_id);
     SDB_ASSERT(entry);
     if (const auto& ann = entry->column_options.ann_info) {
+      SDB_ASSERT(entry->IsStored());
       auto& ids = anns[ann->column_id];
       if (!absl::c_linear_search(ids, ann->index_id)) {
         ids.push_back(ann->index_id);
@@ -555,7 +565,8 @@ InvertedIndexEntry::InvertedIndexEntry(
   duckdb::CreateIndexInfo& info,
   duckdb::optional_ptr<duckdb::TableCatalogEntry> table)
   : duckdb::IndexCatalogEntry{catalog, schema, info},
-    _relation_name{info.table} {
+    _relation_name{info.table},
+    _tablespace{info.tablespace_oid} {
   const duckdb::IdentifierEquality same_name{catalog.IsCaseSensitive()};
   const auto unqualify = [&](duckdb::ParsedExpression& expression) {
     duckdb::ParsedExpressionIterator::VisitExpressionMutable<
@@ -588,6 +599,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> InvertedIndexEntry::GetInfo() const {
   auto info = duckdb::IndexCatalogEntry::GetInfo();
   info->Cast<duckdb::CreateIndexInfo>().options.insert_or_assign(
     kPayloadOption, Pack(ToPersisted()));
+  info->tablespace_oid = _tablespace;
   return info;
 }
 
@@ -763,6 +775,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> InvertedIndexEntry::Copy(
   duckdb::ClientContext& context) const {
   auto info_copy = duckdb::IndexCatalogEntry::GetInfo();
   auto& index_info = info_copy->Cast<duckdb::CreateIndexInfo>();
+  index_info.tablespace_oid = _tablespace;
   auto result = duckdb::make_uniq<InvertedIndexEntry>(
     catalog, ParentSchema(context), index_info, nullptr);
   result->_storage = _storage;

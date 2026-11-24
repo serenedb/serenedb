@@ -29,7 +29,6 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
@@ -50,14 +49,14 @@ namespace {
 
 using namespace tests::merge;
 
-tests::IndexWriter::ptr MakeWriter(irs::Directory& dir) {
+tests::IndexWriter::ptr MakeWriter(const tests::IndexDir& dir) {
   auto options = irs::tests::DefaultWriterOptions();
   options.column_options = SketchedColumns;
   return tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(options));
 }
 
 std::shared_ptr<const irs::SegmentReaderImpl> MergeAll(
-  irs::Directory& out, std::span<const irs::SubReader* const> inputs,
+  const tests::IndexDir& out, std::span<const irs::SubReader* const> inputs,
   bool& flushed, size_t threads = 1) {
   irs::FunctionFieldOptions field_options{
     SketchedColumns,
@@ -66,23 +65,25 @@ std::shared_ptr<const irs::SegmentReaderImpl> MergeAll(
     {}};
   irs::SegmentMeta meta;
   const irs::SegmentWriterOptions options{
-    .db = &irs::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,
   };
-  auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
-  flushed = irs::MergeSegments(out, doc_map, meta, options, MergePool(threads));
+  auto doc_map = irs::MakeMergeDocMap(inputs, irs::IResourceManager::gNoop);
+  auto written = irs::MergeSegments(out.Db(), out.Fs(), out.Root(), doc_map,
+                                    meta, options, MergePool(threads));
+  flushed = written.files != nullptr;
   if (!flushed) {
     return nullptr;
   }
-  return irs::SegmentReaderImpl::Open(out, meta,
-                                      irs::tests::DefaultReaderOptions());
+  return irs::SegmentReaderImpl::Open(
+    out.Db(), out.Fs(), out.Root(), meta, irs::tests::DefaultReaderOptions(),
+    std::move(written.files), std::move(written.inputs));
 }
 
 class MergeOracleTest : public ::testing::TestWithParam<uint64_t> {};
 
 TEST_P(MergeOracleTest, RandomSegmentSets) {
   Generator gen{GetParam()};
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir);
   size_t next_id = 0;
   const auto segments = gen.Uniform(1, 6);
@@ -99,7 +100,7 @@ TEST_P(MergeOracleTest, RandomSegmentSets) {
     absl::StrCat("seed ", GetParam(), ", ", inputs.size(), " input segments"));
 
   const auto expected = ExpectedMerge(inputs);
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   bool flushed = false;
   const auto merged = MergeAll(out, inputs, flushed);
   ASSERT_EQ(expected.docs != 0, flushed);
@@ -120,7 +121,7 @@ class ParallelMergeOracleTest
 TEST_P(ParallelMergeOracleTest, RandomSegmentSets) {
   const auto [seed, threads] = GetParam();
   Generator gen{seed};
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir);
   size_t next_id = 0;
   const auto segments = gen.Uniform(1, 6);
@@ -140,7 +141,7 @@ TEST_P(ParallelMergeOracleTest, RandomSegmentSets) {
   for (const bool shuffled : {false, true}) {
     SCOPED_TRACE(shuffled ? "shuffled" : "scheduled");
     const ShuffledUnits shuffle{shuffled};
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     bool flushed = false;
     const auto merged = MergeAll(out, inputs, flushed, threads);
     ASSERT_EQ(expected.docs != 0, flushed);
@@ -182,7 +183,7 @@ TEST(MergeGoldenTest, MergedContentMatchesTheRecording) {
   for (const auto& golden : kGoldenCases) {
     SCOPED_TRACE(golden.seed);
     Generator gen{golden.seed};
-    irs::MemoryDirectory dir;
+    const auto dir = MemoryDir();
     auto writer = MakeWriter(dir);
     size_t next_id = 0;
     for (size_t s = 0; s != 4; ++s) {
@@ -192,7 +193,7 @@ TEST(MergeGoldenTest, MergedContentMatchesTheRecording) {
     const auto inputs = Segments(reader);
     ASSERT_FALSE(inputs.empty());
 
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     bool flushed = false;
     const auto merged = MergeAll(out, inputs, flushed);
     ASSERT_TRUE(flushed);
@@ -210,7 +211,7 @@ TEST(MergeGoldenTest, MergedContentMatchesTheRecording) {
 TEST(MergeGoldenTest, ParallelMergesMatchTheRecording) {
   for (const auto& golden : kGoldenCases) {
     Generator gen{golden.seed};
-    irs::MemoryDirectory dir;
+    const auto dir = MemoryDir();
     auto writer = MakeWriter(dir);
     size_t next_id = 0;
     for (size_t s = 0; s != 4; ++s) {
@@ -222,7 +223,7 @@ TEST(MergeGoldenTest, ParallelMergesMatchTheRecording) {
     for (const size_t threads : {2, 4, 16}) {
       SCOPED_TRACE(
         absl::StrCat("seed ", golden.seed, ", ", threads, " threads"));
-      irs::MemoryDirectory out;
+      const auto out = MemoryDir();
       bool flushed = false;
       const auto merged = MergeAll(out, inputs, flushed, threads);
       ASSERT_TRUE(flushed);
@@ -243,13 +244,13 @@ uint64_t ScoredMergeBytes(std::span<const irs::SubReader* const> inputs,
   irs::SegmentMeta meta;
   const irs::SegmentWriterOptions options{
     .scorer = &bm25,
-    .db = &irs::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,
   };
-  irs::MemoryDirectory out;
-  auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
-  EXPECT_TRUE(
-    irs::MergeSegments(out, doc_map, meta, options, MergePool(threads)));
+  const auto out = MemoryDir();
+  auto doc_map = irs::MakeMergeDocMap(inputs, irs::IResourceManager::gNoop);
+  EXPECT_TRUE(irs::MergeSegments(out.Db(), out.Fs(), out.Root(), doc_map, meta,
+                                 options, MergePool(threads))
+                .files);
   const auto names = irs::SegmentFiles(meta.name, meta.kinds);
   std::vector<std::string> files(names.begin(), names.end());
   std::ranges::sort(files);
@@ -258,12 +259,8 @@ uint64_t ScoredMergeBytes(std::span<const irs::SubReader* const> inputs,
     if (file.ends_with(".col")) {
       continue;
     }
-    auto in = out.open(file, irs::IOAdvice::SEQUENTIAL);
-    EXPECT_NE(nullptr, in) << file;
-    const auto at = bytes.size();
-    bytes.resize(at + in->Length());
-    in->ReadData(reinterpret_cast<duckdb::data_ptr_t>(bytes.data() + at),
-                 in->Length());
+    EXPECT_TRUE(out.Has(file)) << file;
+    bytes += irs::ViewCast<char>(irs::bytes_view{out.ReadWhole(file)});
   }
   return Fnv1a(bytes);
 }
@@ -272,7 +269,7 @@ TEST(MergeGoldenTest, ScoredMergeBytesDoNotDependOnTheExecutor) {
   for (const uint64_t seed : {101, 202, 303, 404}) {
     SCOPED_TRACE(seed);
     Generator gen{seed};
-    irs::MemoryDirectory dir;
+    const auto dir = MemoryDir();
     auto writer = MakeWriter(dir);
     size_t next_id = 0;
     for (size_t s = 0; s != 4; ++s) {

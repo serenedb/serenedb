@@ -20,6 +20,8 @@
 
 #pragma once
 
+#include <duckdb/common/serializer/write_stream.hpp>
+#include <duckdb/common/typedefs.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <string_view>
 

@@ -25,18 +25,20 @@
 #include <filesystem>
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/store/mmap_directory.hpp>
 #include <iresearch/utils/async.hpp>
-#include <iresearch/utils/directory_utils.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iterator>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
 #include "index/doc_generator.hpp"
 #include "index/index_tests.hpp"
+#include "index_dir.hpp"
 #include "tests_shared.hpp"
 
 namespace {
@@ -59,25 +61,20 @@ class IndexAdoptTest : public TestBase {
   void TearDown() override {
     _writer.reset();
     _dir.reset();
-    _impl.reset();
     TestBase::TearDown();
     std::filesystem::remove_all(_path);
   }
 
   void Open(tests::OpenMode mode, uint32_t segment_docs_max = 0) {
-    _impl = std::make_unique<irs::MMapDirectory>(
-      _path, irs::DirectoryAttributes{}, GetResourceManager().options);
-    _dir = std::make_unique<tests::DirectoryMock>(*_impl);
-    auto options = tests::EnsureWriterDb(tests::CsDefaultWriterOptions());
+    _dir.emplace(irs::DuckDBEngine::Instance().instance(), _path.string());
+    auto options = tests::EnsureNormColumnId(tests::CsDefaultWriterOptions());
     options.segment_docs_max = segment_docs_max;
     _writer = tests::IndexWriter::Make(*_dir, mode, std::move(options));
   }
 
-  // Drops the Directory too, so no in-memory IndexFileRefs survive.
   void Restart(uint32_t segment_docs_max = 0) {
     _writer.reset();
     _dir.reset();
-    _impl.reset();
     Open(tests::kOmAppend | tests::kOmCreate, segment_docs_max);
   }
 
@@ -92,10 +89,7 @@ class IndexAdoptTest : public TestBase {
     return tests::InsertFields(trx.Insert(), &field, &field + 1);
   }
 
-  bool Exists(std::string_view name) const {
-    bool exists = false;
-    return _dir->exists(exists, name) && exists;
-  }
+  bool Exists(std::string_view name) const { return _dir->Has(name); }
 
   static std::vector<std::string> FilesOf(
     std::span<const irs::IndexWriter::FlushedSegment> flushed) {
@@ -108,8 +102,7 @@ class IndexAdoptTest : public TestBase {
   }
 
   std::filesystem::path _path;
-  std::unique_ptr<irs::MMapDirectory> _impl;
-  std::unique_ptr<tests::DirectoryMock> _dir;
+  std::optional<tests::IndexDir> _dir;
   tests::IndexWriter::ptr _writer;
 };
 
@@ -216,7 +209,7 @@ TEST_F(IndexAdoptTest, AbortLeavesFlushedFilesUnreferenced) {
   }
   ASSERT_FALSE(files.empty());
 
-  irs::directory_utils::RemoveAllUnreferenced(*_dir);
+  _dir->RemoveReleased();
   for (const auto& file : files) {
     EXPECT_FALSE(Exists(file)) << file << " is still pinned after Abort";
   }

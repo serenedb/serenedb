@@ -23,8 +23,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/types/value.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -34,7 +36,6 @@
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <map>
@@ -219,11 +220,12 @@ void BM_Flush(benchmark::State& state) {
     state.PauseTiming();
     const auto base_kb = ResetPeakKb();
     state.ResumeTiming();
-    irs::MemoryDirectory dir;
-    auto* db = &irs::DuckDBEngine::Instance().instance();
+    static constinit std::atomic<uint64_t> dirs{0};
+    const tests::IndexDir dir{
+      irs::DuckDBEngine::Instance().instance(),
+      absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "sorted_flush/",
+                   dirs.fetch_add(1, std::memory_order_relaxed))};
     irs::IndexWriterOptions options;
-    options.db = db;
-    options.reader_options.db = db;
     options.segment_memory_max = std::numeric_limits<size_t>::max();
     options.column_options = [](irs::field_id) -> irs::ColumnOptions {
       return {};

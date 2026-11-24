@@ -30,8 +30,8 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/levenshtein_acceptor.hpp>
 #include <iresearch/utils/levenshtein_utils.hpp>
 #include <string>
@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "test_index_writer.hpp"
 #include "tests_shared.hpp"
@@ -269,7 +270,9 @@ TEST(PieceTest, WrittenPiecesReadLikeFlushedSegment) {
   constexpr uint32_t kDocs = 300;
   constexpr uint32_t kPieceDocs = 100;
 
-  MemoryDirectory flushed_dir;
+  ::tests::IndexDir flushed_dir{DuckDBEngine::Instance().instance(),
+
+                                TestEnv::MemoryRoot()};
   auto flushed_writer = ::tests::IndexWriter::Make(
     flushed_dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
   {
@@ -281,9 +284,12 @@ TEST(PieceTest, WrittenPiecesReadLikeFlushedSegment) {
   const auto flushed = flushed_writer->GetSnapshot();
   ASSERT_EQ(1, flushed.size());
 
-  MemoryDirectory piece_dir;
+  ::tests::IndexDir piece_dir{DuckDBEngine::Instance().instance(),
+
+                              TestEnv::MemoryRoot()};
   auto piece_writer =
-    IndexWriter::Make(piece_dir, irs::tests::DefaultWriterOptions());
+    IndexWriter::Make(piece_dir.Db(), piece_dir.Fs(), piece_dir.Root(),
+                      irs::tests::DefaultWriterOptions());
   std::vector<SegmentReader> pieces;
   for (uint32_t first = 0; first != kDocs; first += kPieceDocs) {
     auto trx = piece_writer->GetBatch();
@@ -294,18 +300,15 @@ TEST(PieceTest, WrittenPiecesReadLikeFlushedSegment) {
     ASSERT_NE(nullptr, piece);
     pieces.emplace_back(std::move(piece));
   }
-  size_t files = 0;
-  piece_dir.visit([&](std::string_view) {
-    ++files;
-    return true;
-  });
+  const auto files = piece_dir.Files().size();
   EXPECT_EQ(0, files);
 
-  DirectoryReader source{piece_dir, irs::tests::DefaultReaderOptions(),
-                         std::move(pieces), /*stats=*/false};
-  MemoryDirectory written_dir;
+  CompositeReader source{std::move(pieces), /*stats=*/false};
+  ::tests::IndexDir written_dir{DuckDBEngine::Instance().instance(),
+                                TestEnv::MemoryRoot()};
   auto writer =
-    IndexWriter::Make(written_dir, irs::tests::DefaultWriterOptions());
+    IndexWriter::Make(written_dir.Db(), written_dir.Fs(), written_dir.Root(),
+                      irs::tests::DefaultWriterOptions());
   auto written = GetBlocking(writer->WriteAsync(
     std::move(source), writer->NextSegmentId(), nullptr, [] { return true; },
     nullptr));
@@ -318,7 +321,9 @@ TEST(PieceTest, MergedPiecesReadLikeFlushedSegment) {
   constexpr std::array<uint32_t, 5> kPieceDocs{1, 1, 37, 100, 161};
   constexpr uint32_t kDocs = 300;
 
-  MemoryDirectory flushed_dir;
+  ::tests::IndexDir flushed_dir{DuckDBEngine::Instance().instance(),
+
+                                TestEnv::MemoryRoot()};
   auto flushed_writer = ::tests::IndexWriter::Make(
     flushed_dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
   {
@@ -330,9 +335,12 @@ TEST(PieceTest, MergedPiecesReadLikeFlushedSegment) {
   const auto flushed = flushed_writer->GetSnapshot();
   ASSERT_EQ(1, flushed.size());
 
-  MemoryDirectory piece_dir;
+  ::tests::IndexDir piece_dir{DuckDBEngine::Instance().instance(),
+
+                              TestEnv::MemoryRoot()};
   auto piece_writer =
-    IndexWriter::Make(piece_dir, irs::tests::DefaultWriterOptions());
+    IndexWriter::Make(piece_dir.Db(), piece_dir.Fs(), piece_dir.Root(),
+                      irs::tests::DefaultWriterOptions());
   std::vector<SegmentReader> pieces;
   uint32_t first = 0;
   for (const auto docs : kPieceDocs) {
@@ -347,28 +355,27 @@ TEST(PieceTest, MergedPiecesReadLikeFlushedSegment) {
   }
   ASSERT_EQ(kDocs, first);
 
-  DirectoryReader source{piece_dir, irs::tests::DefaultReaderOptions(),
-                         std::move(pieces), /*stats=*/false};
-  MemoryDirectory merged_dir;
+  CompositeReader source{std::move(pieces), /*stats=*/false};
+  ::tests::IndexDir merged_dir{DuckDBEngine::Instance().instance(),
+                               TestEnv::MemoryRoot()};
   auto writer =
-    IndexWriter::Make(merged_dir, irs::tests::DefaultWriterOptions());
+    IndexWriter::Make(merged_dir.Db(), merged_dir.Fs(), merged_dir.Root(),
+                      irs::tests::DefaultWriterOptions());
   const auto merged =
     writer->MergePieces(std::move(source), writer->NextSegmentId(), nullptr);
   ASSERT_NE(nullptr, merged.reader);
   EXPECT_EQ(kPieceDocs.size(), merged.maps.size());
   ExpectSameSegment(flushed[0], *merged.reader);
-  size_t files = 0;
-  merged_dir.visit([&](std::string_view) {
-    ++files;
-    return true;
-  });
+  const auto files = merged_dir.Files().size();
   EXPECT_EQ(0, files);
 }
 
 TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {
   constexpr uint32_t kDocs = 300;
 
-  MemoryDirectory flushed_dir;
+  ::tests::IndexDir flushed_dir{DuckDBEngine::Instance().instance(),
+
+                                TestEnv::MemoryRoot()};
   auto flushed_writer = ::tests::IndexWriter::Make(
     flushed_dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
   {
@@ -381,9 +388,12 @@ TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {
   ASSERT_EQ(1, flushed.size());
   const auto& expected = flushed[0];
 
-  MemoryDirectory piece_dir;
+  ::tests::IndexDir piece_dir{DuckDBEngine::Instance().instance(),
+
+                              TestEnv::MemoryRoot()};
   auto piece_writer =
-    IndexWriter::Make(piece_dir, irs::tests::DefaultWriterOptions());
+    IndexWriter::Make(piece_dir.Db(), piece_dir.Fs(), piece_dir.Root(),
+                      irs::tests::DefaultWriterOptions());
   std::shared_ptr<const SegmentReaderImpl> piece;
   {
     auto trx = piece_writer->GetBatch();
@@ -423,8 +433,10 @@ TEST(PieceTest, SealedPieceReadsLikeFlushedSegment) {
 }
 
 TEST(PieceTest, AbortedPieceRemovesItsFiles) {
-  MemoryDirectory dir;
-  auto writer = IndexWriter::Make(dir, irs::tests::DefaultWriterOptions());
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  auto writer = IndexWriter::Make(dir.Db(), dir.Fs(), dir.Root(),
+                                  irs::tests::DefaultWriterOptions());
   {
     auto trx = writer->GetBatch();
     trx.SetHot(0);
@@ -440,17 +452,15 @@ TEST(PieceTest, AbortedPieceRemovesItsFiles) {
     }
     trx.Abort();
   }
-  size_t files = 0;
-  dir.visit([&](std::string_view) {
-    ++files;
-    return true;
-  });
+  const auto files = dir.Files().size();
   EXPECT_EQ(0, files);
 }
 
 TEST(PieceTest, SealsSingleDocumentPieces) {
-  MemoryDirectory dir;
-  auto writer = IndexWriter::Make(dir, irs::tests::DefaultWriterOptions());
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  auto writer = IndexWriter::Make(dir.Db(), dir.Fs(), dir.Root(),
+                                  irs::tests::DefaultWriterOptions());
   for (uint64_t id = 1; id != 4; ++id) {
     auto trx = writer->GetBatch();
     trx.SetHot(0);
@@ -473,7 +483,8 @@ TEST(PieceTest, SealsSingleDocumentPieces) {
 
 TEST(PieceTest, FuzzyWalksPublishTheirDistanceFromTheStart) {
   constexpr uint32_t kDocs = 50;
-  MemoryDirectory flushed_dir;
+  ::tests::IndexDir flushed_dir{DuckDBEngine::Instance().instance(),
+                                TestEnv::MemoryRoot()};
   auto flushed_writer = ::tests::IndexWriter::Make(
     flushed_dir, ::tests::kOmCreate, irs::tests::DefaultWriterOptions());
   {
@@ -485,9 +496,12 @@ TEST(PieceTest, FuzzyWalksPublishTheirDistanceFromTheStart) {
   const auto flushed = flushed_writer->GetSnapshot();
   ASSERT_EQ(1, flushed.size());
 
-  MemoryDirectory piece_dir;
+  ::tests::IndexDir piece_dir{DuckDBEngine::Instance().instance(),
+
+                              TestEnv::MemoryRoot()};
   auto piece_writer =
-    IndexWriter::Make(piece_dir, irs::tests::DefaultWriterOptions());
+    IndexWriter::Make(piece_dir.Db(), piece_dir.Fs(), piece_dir.Root(),
+                      irs::tests::DefaultWriterOptions());
   auto trx = piece_writer->GetBatch();
   trx.SetHot(0);
   InsertDocs(trx, kDocs);
@@ -519,8 +533,10 @@ TEST(PieceTest, FuzzyWalksPublishTheirDistanceFromTheStart) {
 }
 
 TEST(PieceTest, SeeksAndRangesFollowTheSortedTerms) {
-  MemoryDirectory dir;
-  auto writer = IndexWriter::Make(dir, irs::tests::DefaultWriterOptions());
+  ::tests::IndexDir dir{DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+  auto writer = IndexWriter::Make(dir.Db(), dir.Fs(), dir.Root(),
+                                  irs::tests::DefaultWriterOptions());
   auto trx = writer->GetBatch();
   trx.SetHot(0);
   InsertDocs(trx, 50);

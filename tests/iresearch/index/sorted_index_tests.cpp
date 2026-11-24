@@ -35,7 +35,6 @@
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <limits>
@@ -197,7 +196,7 @@ size_t ValueCount(const irs::SubReader& segment, irs::field_id column) {
     [](const duckdb::Value& value) { return !value.IsNull(); }));
 }
 
-uint64_t LiveMatches(const irs::DirectoryReader& reader, irs::field_id field,
+uint64_t LiveMatches(const irs::CompositeReader& reader, irs::field_id field,
                      std::span<const std::string> terms) {
   uint64_t matches = 0;
   for (const auto& segment : reader) {
@@ -277,7 +276,7 @@ class SortedIndexTestCase : public tests::IndexTestBase {
     return open_writer(tests::kOmCreate, std::move(options));
   }
 
-  tests::IndexWriter::ptr OpenPlain(irs::Directory& dir) {
+  tests::IndexWriter::ptr OpenPlain(const tests::IndexDir& dir) {
     auto options = tests::CsDefaultWriterOptions();
     options.column_options = SketchedColumns;
     return open_writer(dir, tests::kOmCreate, std::move(options));
@@ -444,15 +443,15 @@ class SortedIndexTestCase : public tests::IndexTestBase {
   }
 };
 
-const auto kTestValuesSorted = ::testing::Combine(
-  ::testing::ValuesIn(tests::GetDirectories<tests::kTypesDefault>()));
+const auto kTestValuesSorted =
+  ::testing::Combine(::testing::ValuesIn(tests::kDirParams));
 
 }  // namespace
 
 TEST_P(SortedIndexTestCase, simple_sequential) {
   const std::vector<irs::SortKey> spec{
     {{.column = kNameColumn, .order = duckdb::OrderType::DESCENDING}}};
-  irs::MemoryDirectory plain_dir;
+  const auto plain_dir = MemoryDir();
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
   WriteJson(*plain);
@@ -499,25 +498,20 @@ TEST_P(SortedIndexTestCase, reader_components) {
   WriteJson(*writer);
   AssertSnapshotEquality(*writer);
 
-  auto check = [](const irs::DirectoryReader& reader, uint64_t live,
-                  bool has_index) {
+  auto check = [](const irs::CompositeReader& reader, uint64_t live) {
     ASSERT_EQ(1, reader.size());
     const auto& segment = reader[0];
     EXPECT_EQ(32, segment.docs_count());
     EXPECT_EQ(live, segment.live_docs_count());
-    EXPECT_EQ(has_index, nullptr != segment.field(kNameField));
+    EXPECT_NE(nullptr, segment.field(kNameField));
     ASSERT_NE(nullptr, segment.Column(kNameColumn));
     const auto names = LiveNames(segment);
     EXPECT_EQ(live, names.size());
     EXPECT_TRUE(std::ranges::is_sorted(names, std::greater{}));
   };
 
-  auto options = tests::CsDefaultReaderOptions();
-  auto full = tests::OpenReader(dir(), options);
-  options.index = false;
-  auto columns_only = tests::OpenReader(dir(), options);
-  check(full, 32, true);
-  check(columns_only, 32, false);
+  auto full = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
+  check(full, 32);
 
   {
     auto trx = writer->GetBatch();
@@ -528,9 +522,7 @@ TEST_P(SortedIndexTestCase, reader_components) {
   AssertSnapshotEquality(*writer);
 
   full = tests::OpenReader(dir(), tests::CsDefaultReaderOptions());
-  columns_only = tests::OpenReader(dir(), options);
-  check(full, 30, true);
-  check(columns_only, 30, false);
+  check(full, 30);
   const auto names = LiveNames(full[0]);
   EXPECT_EQ(names.end(), std::ranges::find(names, "A"));
   EXPECT_EQ("Z", names.front());
@@ -565,7 +557,7 @@ TEST_P(SortedIndexTestCase, simple_sequential_compact) {
   const std::vector<irs::SortKey> spec{
     {{.column = kText, .null_order = duckdb::OrderByNullType::NULLS_FIRST},
      {.column = kKey}}};
-  irs::MemoryDirectory plain_dir;
+  const auto plain_dir = MemoryDir();
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
   for (auto* writer : {plain.get(), sorted.get()}) {
@@ -594,7 +586,7 @@ TEST_P(SortedIndexTestCase, simple_sequential_compact) {
 TEST_P(SortedIndexTestCase, simple_sequential_already_sorted) {
   const std::vector<irs::SortKey> spec{
     {{.column = kSameColumn}, {.column = kSeqColumn}}};
-  irs::MemoryDirectory plain_dir;
+  const auto plain_dir = MemoryDir();
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
   WriteJson(*plain);
@@ -610,7 +602,7 @@ TEST_P(SortedIndexTestCase, europarl) {
   const std::vector<irs::SortKey> spec{
     {{.column = kDateColumn, .order = duckdb::OrderType::DESCENDING},
      {.column = kTitleColumn}}};
-  irs::MemoryDirectory plain_dir;
+  const auto plain_dir = MemoryDir();
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
   WriteEuroparl(*plain, 0);
@@ -624,7 +616,7 @@ TEST_P(SortedIndexTestCase, europarl_docs_batched) {
     {{.column = kTitleColumn,
       .null_order = duckdb::OrderByNullType::NULLS_FIRST},
      {.column = kDateColumn}}};
-  irs::MemoryDirectory plain_dir;
+  const auto plain_dir = MemoryDir();
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
   WriteEuroparl(*plain, 64);
@@ -677,7 +669,7 @@ TEST_P(SortedIndexTestCase, multi_valued_sorting_field) {
     {{.column = kList, .null_order = duckdb::OrderByNullType::NULLS_FIRST},
      {.column = kStruct, .order = duckdb::OrderType::DESCENDING},
      {.column = kKey}}};
-  irs::MemoryDirectory plain_dir;
+  const auto plain_dir = MemoryDir();
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
   for (auto* writer : {plain.get(), sorted.get()}) {
@@ -777,7 +769,7 @@ TEST_P(SortedIndexTestCase, sorted_flush_of_every_column_kind) {
     chunks.push_back(std::move(chunk));
   }
   ASSERT_LT(2, chunks.size());
-  irs::MemoryDirectory plain_dir;
+  const auto plain_dir = MemoryDir();
   auto plain = OpenPlain(plain_dir);
   auto sorted = OpenSorted(spec);
   for (auto* writer : {plain.get(), sorted.get()}) {

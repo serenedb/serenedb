@@ -39,12 +39,14 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_primitives.hpp"
 #include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/lower_bound.hpp"
@@ -341,20 +343,30 @@ void AlpRdSample(AlpRdAnalyzeState<T>& analyze_state,
 }
 
 template<typename T>
-idx_t AlpRdAnalyzeChunks(std::span<const WriteChunk> chunks) {
-  AlpRdAnalyzeState<T> analyze_state;
-  for (const auto& chunk : chunks) {
-    AlpRdSample(analyze_state, chunk.data);
+struct RowGroupSample final : State {
+  static constexpr StateId kId = StateId::AlprdSample;
+
+  explicit RowGroupSample(ColumnDataCheckpointData& data) {
+    for (const auto& chunk : data.chunks) {
+      AlpRdSample(state, chunk.data);
+    }
+    bits_per_value =
+      FindBestDictionary<T>(state.rowgroup_sample, state.dictionary);
   }
-  if (!analyze_state.total_values_count) {
-    return duckdb::DConstants::INVALID_INDEX;
-  }
+
+  AlpRdAnalyzeState<T> state;
+  double bits_per_value = 0;
+};
+
+template<typename T>
+idx_t AlpRdAnalyzeChunks(ColumnDataCheckpointData& data) {
+  auto& sample = data.template Get<RowGroupSample<T>>();
+  auto& analyze_state = sample.state;
   const double factor_of_sampling =
     1 / (static_cast<double>(analyze_state.rowgroup_sample.size()) /
          static_cast<double>(analyze_state.total_values_count));
 
-  const double estimated_bits_per_value = FindBestDictionary<T>(
-    analyze_state.rowgroup_sample, analyze_state.dictionary);
+  const double estimated_bits_per_value = sample.bits_per_value;
   const double estimated_compressed_bits =
     estimated_bits_per_value *
     static_cast<double>(analyze_state.rowgroup_sample.size());
@@ -384,10 +396,11 @@ class AlpRdCompressionState {
  public:
   using Exact = alp::ExactType<T>;
 
-  AlpRdCompressionState(ColumnDataCheckpointData& checkpoint_data,
+  AlpRdCompressionState(const Codec& codec,
+                        ColumnDataCheckpointData& checkpoint_data,
                         AlpRdAnalyzeState<T>& analyze_state)
     : _checkpoint_data{checkpoint_data},
-      _segment{CodecType::Alprd, checkpoint_data.type},
+      _segment{codec, checkpoint_data.type},
       _dictionary{std::move(analyze_state.dictionary)},
       _actual_dictionary_size_bytes{_dictionary.actual_dictionary_size *
                                     kDictionaryElementSize},
@@ -431,6 +444,8 @@ class AlpRdCompressionState {
     }
     FlushSegment();
   }
+
+  uint64_t Stored() const noexcept { return _segment.stored; }
 
  private:
   idx_t UsedSpace() const noexcept {
@@ -623,19 +638,16 @@ class AlpRdCompressionState {
 };
 
 template<typename T>
-void AlpRdCompressChunks(ColumnDataCheckpointData& checkpoint_data,
-                         std::span<const WriteChunk> chunks) {
-  AlpRdAnalyzeState<T> analyze_state;
-  for (const auto& chunk : chunks) {
-    AlpRdSample(analyze_state, chunk.data);
-  }
-  FindBestDictionary<T>(analyze_state.rowgroup_sample,
-                        analyze_state.dictionary);
-  AlpRdCompressionState<T> state{checkpoint_data, analyze_state};
-  for (const auto& chunk : chunks) {
+uint64_t AlpRdCompressChunks(const Codec& codec,
+                             ColumnDataCheckpointData& checkpoint_data) {
+  AlpRdCompressionState<T> state{
+    codec, checkpoint_data,
+    checkpoint_data.template Get<RowGroupSample<T>>().state};
+  for (const auto& chunk : checkpoint_data.chunks) {
     state.Append(chunk.data);
   }
   state.Finalize();
+  return state.Stored();
 }
 
 template<typename T>
@@ -852,7 +864,7 @@ void AlpRdFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
                     const idx_t* rows, idx_t count, duckdb::Vector& result,
                     const duckdb::SelectionVector& result_sel,
                     idx_t result_offset) {
-  SDB_ASSERT(!count || rows[count - 1] < segment.count);
+  SDB_ASSERT(count != 0 && rows[count - 1] < segment.count);
   auto& fetch_state =
     state.GetOrCreateSegmentState<alp::FetchState<AlpRdScanState<T>>>([&] {
       return std::make_unique<alp::FetchState<AlpRdScanState<T>>>(segment.Pin(),
@@ -864,7 +876,7 @@ void AlpRdFetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   if (alp::CopyOneDecoded(fetch_state, rows, count, result_data, result_sel)) {
     return;
   }
-  const idx_t last_vector = count ? rows[count - 1] / kVectorSize : 0;
+  const idx_t last_vector = rows[count - 1] / kVectorSize;
   for (idx_t i = 0; i < count;) {
     if (rows[i] / kVectorSize == fetch_state.decoded_vector ||
         alp::Dense(fetch_state, rows, i, count, last_vector)) {
@@ -889,22 +901,22 @@ constexpr DecompressionFunction kDecompression{
 template<typename T>
 constexpr Codec kCodec{
   .type = CodecType::Alprd,
-  .compression = &kStreamed<CodecType::Alprd, AlpRdAnalyzeChunks<T>,
-                            AlpRdCompressChunks<T>, HasRows>,
-  .decompression = &kDecompression<T>,
+  .compression =
+    {&kSampled<CodecType::Alprd, AlpRdAnalyzeChunks<T>, AlpRdCompressChunks<T>>,
+     1},
+  .decompression = kDecompression<T>,
 };
 
 }  // namespace
 
 const Codec* AlpRdCodec(duckdb::PhysicalType physical) {
-  switch (physical) {
-    case duckdb::PhysicalType::FLOAT:
-      return &kCodec<float>;
-    case duckdb::PhysicalType::DOUBLE:
-      return &kCodec<double>;
-    default:
+  return Resolve<NumericAxis>(physical, [&]<typename T>() -> const Codec* {
+    if constexpr (std::is_floating_point_v<T>) {
+      return &kCodec<T>;
+    } else {
       return nullptr;
-  }
+    }
+  });
 }
 
 }  // namespace irs::codecs

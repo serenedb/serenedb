@@ -31,7 +31,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
-#include "iresearch/store/data_input.hpp"
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
@@ -39,31 +39,23 @@ namespace {
 
 constinit std::atomic<uint64_t> gNextFileId{1};
 
-IndexInput::ptr OpenColFile(const Directory& dir, std::string_view segment_name,
-                            IOAdvice advice) {
-  const std::string filename = FileName(segment_name);
-  bool exists = false;
-  if (!dir.exists(exists, filename)) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_IO_ERROR),
-                    ERR_MSG("col reader: cannot stat .col file: ", filename));
-  }
-  if (!exists) {
-    return nullptr;
-  }
-  return dir.open(filename, advice);
-}
-
 bool InRange(uint64_t offset, uint64_t size, uint64_t end) noexcept {
   return size <= end && offset <= end - size;
 }
 
+template<typename... Parts>
+[[noreturn]] void ThrowCorruptedFooter(const Parts&... parts) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED), ERR_MSG(parts...));
+}
+
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
                      uint64_t footer_offset) {
-  SDB_ENSURE(InRange(m.file_offset, m.byte_size, footer_offset) &&
-               InRange(m.shared_offset, m.shared_size, footer_offset),
-             ".col reader: column data on column id ", id,
-             " out of range (offset ", m.file_offset, ", size ", m.byte_size,
-             ")");
+  if (!(InRange(m.file_offset, m.byte_size, footer_offset) &&
+        InRange(m.shared_offset, m.shared_size, footer_offset))) [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: column data on column id ", id,
+                         " out of range (offset ", m.file_offset, ", size ",
+                         m.byte_size, ")");
+  }
 }
 
 void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
@@ -95,19 +87,23 @@ NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   r.stats.min = d.ReadProperty<uint32_t>(5, "min");
   r.stats.max = d.ReadProperty<uint32_t>(6, "max");
   r.bits = d.ReadProperty<uint8_t>(7, "bits");
-  SDB_ENSURE(r.stats.rows != 0 && r.stats.rows <= doc_limits::kMaxDocs &&
-               r.stats.min <= r.stats.max &&
-               (r.bits == 0 || r.bits == 8 || r.bits == 16 || r.bits == 32),
-             ".col reader: norm region on column id ", id, " is corrupt");
+  if (!(r.stats.rows != 0 && r.stats.rows <= doc_limits::kMaxDocs &&
+        r.stats.min <= r.stats.max &&
+        (r.bits == 0 || r.bits == 8 || r.bits == 16 || r.bits == 32)))
+    [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: norm region on column id ", id,
+                         " is corrupt");
+  }
   if (r.bits == 0) {
     r.value = d.ReadProperty<uint32_t>(8, "value");
     return r;
   }
   r.file_offset = d.ReadProperty<uint64_t>(9, "file_offset");
   const auto slots = NormSlotsSize(r);
-  SDB_ENSURE(InRange(r.file_offset, slots, footer_offset),
-             ".col reader: norm data on column id ", id,
-             " out of range (offset ", r.file_offset, ")");
+  if (!InRange(r.file_offset, slots, footer_offset)) [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: norm data on column id ", id,
+                         " out of range (offset ", r.file_offset, ")");
+  }
   r.exceptions =
     d.ReadPropertyWithExplicitDefault<uint32_t>(10, "exceptions", 0);
   if (r.exceptions == 0) {
@@ -117,14 +113,17 @@ NormRegionMeta DeserializeNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   r.shift = d.ReadProperty<uint8_t>(12, "shift");
   r.exception_bytes = d.ReadProperty<uint8_t>(13, "exception_bytes");
   r.table_offset = d.ReadProperty<uint64_t>(14, "table_offset");
-  SDB_ENSURE(r.bits != 32 && r.exceptions <= r.stats.rows &&
-               r.overflow <= r.exceptions && r.shift <= kNormMaxShift &&
-               (r.exception_bytes == 2 || r.exception_bytes == 4),
-             ".col reader: norm exceptions on column id ", id, " are corrupt");
+  if (!(r.bits != 32 && r.exceptions <= r.stats.rows &&
+        r.overflow <= r.exceptions && r.shift <= kNormMaxShift &&
+        (r.exception_bytes == 2 || r.exception_bytes == 4))) [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: norm exceptions on column id ", id,
+                         " are corrupt");
+  }
   const auto table = NormTableSize(r);
-  SDB_ENSURE(InRange(r.table_offset, table, footer_offset),
-             ".col reader: norm exceptions on column id ", id,
-             " out of range (offset ", r.table_offset, ")");
+  if (!InRange(r.table_offset, table, footer_offset)) [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: norm exceptions on column id ", id,
+                         " out of range (offset ", r.table_offset, ")");
+  }
   return r;
 }
 
@@ -139,25 +138,32 @@ NormColumnMeta DeserializeNormMeta(duckdb::BinaryDeserializer& d, field_id id,
                  meta.row_count += r.stats.rows;
                });
              });
-  SDB_ENSURE(!meta.regions.empty() && meta.row_count <= doc_limits::kMaxDocs,
-             ".col reader: norm column id ", id, " holds ", meta.row_count,
-             " rows across ", meta.regions.size(), " regions");
+  if (meta.regions.empty() || meta.row_count > doc_limits::kMaxDocs)
+    [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: norm column id ", id, " holds ",
+                         meta.row_count, " rows across ", meta.regions.size(),
+                         " regions");
+  }
   return meta;
 }
 
 }  // namespace
 
-ColReader::ColReader(const Directory& dir, std::string_view segment_name,
-                     duckdb::DatabaseInstance& db, IOAdvice advice)
-  : _db{&db}, _ctx{db, OpenColFile(dir, segment_name, advice)} {
+ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
+                     std::string_view root, std::string_view segment_name,
+                     bool present, duckdb::MappedFileAccess access)
+  : _db{&db},
+    _file{present ? fs.OpenInputFile(fs.JoinPath(root, FileName(segment_name)),
+                                     access)
+                  : nullptr},
+    _ctx{db, _file.get()} {
   ColFooter footer;
-  if (!_ctx.HasIn()) {
+  if (!_file) {
     Adopt(std::move(footer));
     return;
   }
-  auto fin = _ctx.In().Dup();
   format_utils::ReadFooter(
-    *fin, FileName(segment_name),
+    *_file, FileName(segment_name),
     [&](duckdb::BinaryDeserializer& in, uint64_t data_size) {
       in.Set<duckdb::DatabaseInstance&>(db);
       in.ReadOptionalList(
@@ -183,10 +189,12 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
         kColFieldRowGroupStarts, "row_group_starts",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           const auto start = list.ReadElement<uint64_t>();
-          SDB_ENSURE(footer.row_group_starts.empty()
-                       ? start == 0
-                       : start > footer.row_group_starts.back(),
-                     ".col footer: row group starts are not increasing from 0");
+          if (!(footer.row_group_starts.empty()
+                  ? start == 0
+                  : start > footer.row_group_starts.back())) [[unlikely]] {
+            ThrowCorruptedFooter(
+              ".col footer: row group starts are not increasing from 0");
+          }
           footer.row_group_starts.push_back(start);
         });
       in.Unset<duckdb::DatabaseInstance>();
@@ -194,9 +202,10 @@ ColReader::ColReader(const Directory& dir, std::string_view segment_name,
   Adopt(std::move(footer));
 }
 
-ColReader::ColReader(duckdb::DatabaseInstance& db, IndexInput::ptr in,
+ColReader::ColReader(duckdb::DatabaseInstance& db,
+                     duckdb::shared_ptr<duckdb::InputFile> file,
                      ColFooter footer)
-  : _db{&db}, _ctx{db, std::move(in)} {
+  : _db{&db}, _file{std::move(file)}, _ctx{db, _file.get()} {
   Adopt(std::move(footer));
 }
 
@@ -206,12 +215,13 @@ void ColReader::Adopt(ColFooter footer) {
   for (auto& meta : footer.columns) {
     Index(*_owned.emplace_back(ColumnReader::Make(std::move(meta), file_id)));
   }
-  SDB_ASSERT(footer.norms.empty() || _ctx.HasIn());
+  SDB_ASSERT(footer.norms.empty() || _file);
   for (auto& norm : footer.norms) {
-    auto column = std::make_unique<NormColumnReader>(
-      norm.id, std::move(norm.meta), _ctx.In());
-    const bool ok = _norm_by_id.emplace(norm.id, column.get()).second;
-    SDB_ENSURE(ok, ".col footer: duplicate norm field_id ", norm.id);
+    auto column =
+      std::make_unique<NormColumnReader>(norm.id, std::move(norm.meta), *_file);
+    if (!_norm_by_id.emplace(norm.id, column.get()).second) [[unlikely]] {
+      ThrowCorruptedFooter(".col footer: duplicate norm field_id ", norm.id);
+    }
     _norm_columns.push_back(std::move(column));
   }
   _row_group_starts = std::move(footer.row_group_starts);
@@ -219,24 +229,23 @@ void ColReader::Adopt(ColFooter footer) {
 
 ColReader::ColReader(duckdb::DatabaseInstance& db,
                      std::vector<std::unique_ptr<ColumnReader>> columns)
-  : _db{&db}, _ctx{db}, _owned{std::move(columns)} {
-  for (const auto& col : _owned) {
-    Index(*col);
-  }
-}
+  : ColReader{db, std::move(columns), nullptr, {}} {}
 
 ColReader::ColReader(duckdb::DatabaseInstance& db,
                      std::vector<std::unique_ptr<ColumnReader>> columns,
-                     IndexInput::ptr norms_in,
+                     duckdb::shared_ptr<duckdb::InputFile> norms_file,
                      std::vector<NormColumnSpec> norms)
-  : _db{&db}, _ctx{db, std::move(norms_in)}, _owned{std::move(columns)} {
+  : _db{&db},
+    _file{std::move(norms_file)},
+    _ctx{db, _file.get()},
+    _owned{std::move(columns)} {
   for (const auto& col : _owned) {
     Index(*col);
   }
-  SDB_ASSERT(norms.empty() || _ctx.HasIn());
+  SDB_ASSERT(norms.empty() || _file);
   for (auto& norm : norms) {
-    auto column = std::make_unique<NormColumnReader>(
-      norm.id, std::move(norm.meta), _ctx.In());
+    auto column =
+      std::make_unique<NormColumnReader>(norm.id, std::move(norm.meta), *_file);
     const bool ok = _norm_by_id.emplace(norm.id, column.get()).second;
     SDB_ENSURE(ok, "in-memory columns: duplicate norm field_id ", norm.id);
     _norm_columns.push_back(std::move(column));

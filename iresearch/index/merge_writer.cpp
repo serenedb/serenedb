@@ -24,6 +24,7 @@
 #include "merge_writer.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
@@ -52,11 +53,11 @@
 #include "iresearch/formats/piece_fields.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/field_meta.hpp"
+#include "iresearch/index/file_names.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
-#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -826,8 +827,7 @@ bool ComputeDocMappingsAndFieldMeta(
   return true;
 }
 
-void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
-                   std::string_view segment_name,
+void OpenColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
                    ManagedVector<MergeWriter::ReaderCtx>& readers,
                    std::vector<MergeSource>& sources,
                    std::unique_ptr<ColWriter>& col_writer,
@@ -841,8 +841,7 @@ void OpenColWriter(duckdb::DatabaseInstance& db, TrackingDirectory& dir,
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
-  col_writer =
-    std::make_unique<ColWriter>(dir, segment_name, db, WriteTier::Merge);
+  col_writer = std::make_unique<ColWriter>(db, tracker, WriteTier::Merge);
   col_writer->SetFieldOptions(field_options);
   col_writer->SetHnswBases(hnsw_bases);
 }
@@ -857,8 +856,8 @@ MergeWriter::ReaderCtx::ReaderCtx(const SubReader* reader,
 
 std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
   SegmentMeta& segment, uint64_t id) {
-  MemoryDirectory scratch{DirectoryAttributes{}, _dir.ResourceManager()};
-  TrackingDirectory track_dir{scratch};
+  FileTracker tracker{_fs, _root, segment.name};
+  const absl::Cleanup remove = [&] { tracker.Remove(); };
   FieldMetaMapT field_meta_map;
   CompoundFieldIterator fields_itr{_readers.size(), kProgressNoop,
                                    _field_options};
@@ -872,18 +871,22 @@ std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
 
   std::vector<MergeSource> sources;
   std::unique_ptr<ColWriter> col_writer;
-  OpenColWriter(_db, track_dir, segment.name, _readers, sources, col_writer,
-                _field_options, _hnsw_bases);
+  OpenColWriter(_db, tracker, _readers, sources, col_writer, _field_options,
+                _hnsw_bases);
   const auto merged_norm_ids =
     MergeNorms(*col_writer, sources, field_meta_map, _field_options);
   auto norms = col_writer->SealNorms(segment.docs_count);
+  duckdb::shared_ptr<duckdb::InputFile> col_file;
+  if (!norms.empty()) {
+    col_file = _fs.OpenInputFile(_fs.JoinPath(_root, FileName(segment.name)),
+                                 duckdb::MappedFileAccess::RANDOM);
+  }
   auto columns = ConcatInMemory(_db, sources, _field_options);
 
   auto fields = std::make_shared<PieceFields>();
   PieceFieldWriter field_writer{*fields, /*compaction=*/true};
   const FlushState state{
-    .dir = &track_dir,
-    .name = segment.name,
+    .tracker = tracker,
     .doc_count = segment.docs_count,
     .index_features = index_features,
   };
@@ -893,7 +896,7 @@ std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
   }
   col_writer.reset();
 
-  track_dir.FlushTracked(segment.byte_size);
+  segment.byte_size = tracker.Bytes() + (col_file ? col_file->GetSize() : 0);
   for (const auto& column : columns) {
     segment.byte_size += utils::downCast<HotColumnReader>(*column).Bytes();
   }
@@ -901,15 +904,17 @@ std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
   auto postings = field_writer.TakePostings();
   fields->Open(
     ReaderState{
-      .dir = &scratch,
-      .meta = &segment,
+      .db = _db,
+      .fs = _fs,
+      .root = _root,
+      .meta = segment,
       .postings = postings.doc ? &postings : nullptr,
     },
     field_writer.Features());
   return SegmentReaderImpl::OpenPiece(
     segment, id,
-    std::make_unique<ColReader>(_db, std::move(columns), std::move(norms.in),
-                                std::move(norms.columns)),
+    std::make_unique<ColReader>(_db, std::move(columns), std::move(col_file),
+                                std::move(norms)),
     std::move(fields));
 }
 

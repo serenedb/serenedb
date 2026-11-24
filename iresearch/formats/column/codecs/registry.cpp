@@ -28,7 +28,9 @@
 #include "iresearch/formats/column/codecs/bytes/lz4.hpp"
 #include "iresearch/formats/column/codecs/bytes/zstd.hpp"
 #include "iresearch/formats/column/codecs/bytes/zxc.hpp"
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -60,7 +62,7 @@ const Codec* TextCodecOf(CodecType type) {
 const Codec* GetCodec(CodecType type, PhysicalType physical) {
   switch (type) {
     case CodecType::Auto:
-      return AutoCodec(physical);
+      return nullptr;
     case CodecType::Uncompressed:
       return UncompressedCodec(physical);
     case CodecType::Alp:
@@ -84,24 +86,9 @@ const Codec* GetCodec(CodecType type, PhysicalType physical) {
                          : nullptr;
 }
 
-CompressionFunctions Contenders(CodecType type, PhysicalType physical) {
-  if (!IsForm(type)) {
-    return {};
-  }
-  if (physical == PhysicalType::VARCHAR) {
-    switch (LeafOf(type)) {
-      case ByteCodec::Lz4:
-        return Lz4TextContenders(ShapeOf(type));
-      case ByteCodec::Fsst:
-        return FsstTextContenders(ShapeOf(type));
-      default:
-        return {};
-    }
-  }
-  if (!IsNumeric(type)) {
-    return {};
-  }
-  return NumericContenders(ShapeOf(type), LeafOf(type), physical);
+bool Writes(CodecType type, PhysicalType physical) noexcept {
+  return type != CodecType::Constant && type != CodecType::Empty &&
+         GetCodec(type, physical);
 }
 
 CodecType FindCodec(std::string_view name) {
@@ -139,7 +126,7 @@ uint8_t MaxLevel(CodecType type) noexcept {
     case ByteCodec::Fsst12:
       return 0;
   }
-  return 0;
+  SDB_UNREACHABLE();
 }
 
 }  // namespace irs::codecs

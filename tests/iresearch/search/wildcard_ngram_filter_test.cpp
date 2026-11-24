@@ -20,16 +20,21 @@
 
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/wildcard_tokenizer.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/search/filters/wildcard_ngram_filter.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/type_limits.hpp>
+#include <map>
+#include <ranges>
 #include <span>
 
 #include "filter_test_case_base.hpp"
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
+#include "phrase_families.hpp"
+#include "tests_param.hpp"
 #include "tests_shared.hpp"
 #include "token_sink_utils.hpp"
 
@@ -42,7 +47,7 @@ struct WildcardField final {
 
   std::string_view Value() const noexcept { return value; }
 
-  bool Write(irs::DataOutput& out) const {
+  bool Write(duckdb::WriteStream& out) const {
     irs::ValueAnalyzer value_analyzer;
     irs::ValueTokens tokens;
     if (value_analyzer.Analyze(*analyzer, tests::ToStringT(value), tokens) &&
@@ -103,6 +108,41 @@ irs::ByWildcardNGram MakeRegexpFilter(
     MakeRegexpOptions(pattern, analyzer, has_positions, syntax);
   filter.mutable_options()->store_field_id = kStoreId;
   return filter;
+}
+
+class WildcardIndex : public tests::FamilyIndex {
+ public:
+  WildcardIndex(std::span<const std::string_view> values,
+                irs::analysis::WildcardTokenizer& analyzer,
+                std::shared_ptr<tests::IndexDir> dir)
+    : _owned{std::move(dir)} {
+    _dir = *_owned;
+    auto writer = tests::IndexWriter::Make(_dir, tests::kOmCreate,
+                                           irs::tests::DefaultWriterOptions());
+    EXPECT_NE(nullptr, writer);
+    WildcardField field;
+    field.id = kTextId;
+    field.analyzer = &analyzer;
+    auto ctx = writer->GetBatch();
+    for (const auto value : values) {
+      field.value = value;
+      auto doc = ctx.Insert();
+      EXPECT_TRUE(tests::InsertField(doc, field));
+      irs::tests::StoreFieldAt(*doc.GetColWriter(), kStoreId, doc.DocId(),
+                               field);
+    }
+    ctx.Commit();
+    writer->RefreshCommit();
+    Open();
+  }
+
+ private:
+  std::shared_ptr<tests::IndexDir> _owned;
+};
+
+std::vector<irs::doc_id_t> Keys(
+  const std::map<irs::doc_id_t, irs::score_t>& scores) {
+  return std::ranges::to<std::vector>(std::views::keys(scores));
 }
 
 }  // namespace
@@ -311,7 +351,8 @@ TEST(WildcardNGramFilterTest, query) {
 
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
 
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
 
   {
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
@@ -450,7 +491,8 @@ TEST(WildcardNGramFilterTest, without_matcher_returns_candidates) {
   static constexpr irs::doc_id_t kBase = irs::doc_limits::min();
 
   irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
-  irs::MemoryDirectory dir;
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
   {
     auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                            irs::tests::DefaultWriterOptions());
@@ -503,6 +545,37 @@ TEST(WildcardNGramFilterTest, without_matcher_returns_candidates) {
   EXPECT_EQ(Docs{1}, execute(regexp));
   regexp.mutable_options()->matcher = nullptr;
   EXPECT_EQ((Docs{0, 1}), execute(regexp));
+}
+
+TEST(WildcardNGramFilterTest, every_plan_family_checks_the_candidates) {
+  static constexpr std::string_view kValues[]{"foobar",  "foox",  "foo", "xfoo",
+                                              "barfoo1", "hello", "zoo", "oxo"};
+  using Docs = std::vector<irs::doc_id_t>;
+  const std::pair<std::string_view, Docs> cases[]{
+    {"%foo_", {1, 4}},
+    {"%o_", {1, 2, 3, 4, 6}},
+  };
+  irs::analysis::WildcardTokenizer analyzer{nullptr, 3};
+  for (const auto& dir : {tests::kMemoryDirParam, tests::kDirParams[2]}) {
+    SCOPED_TRACE(dir.name);
+    const WildcardIndex index{kValues, analyzer, dir.factory(nullptr)};
+    for (const auto& [pattern, expected] : cases) {
+      SCOPED_TRACE(pattern);
+      const auto filter = MakeFilter(kTextId, pattern, analyzer, false);
+      ASSERT_NE(nullptr, filter.options().matcher);
+      const auto families = index.Run(filter);
+      EXPECT_EQ(expected.size(), families.count);
+      EXPECT_EQ(expected, families.docs);
+      EXPECT_EQ(expected, families.fill);
+      EXPECT_EQ(expected, families.probe);
+      EXPECT_EQ(expected, Keys(families.hits));
+      EXPECT_EQ(expected, Keys(families.fill_scores));
+      EXPECT_EQ(expected, Keys(families.probe_scores));
+      EXPECT_EQ(expected.size(), families.top_total);
+      EXPECT_EQ(expected, index.Docs(filter));
+      EXPECT_EQ(expected, Keys(index.ScoresBy(irs::BM25{}, filter)));
+    }
+  }
 }
 
 TEST(WildcardNGramFilterTest, match_stored_terms) {
@@ -706,7 +779,8 @@ TEST(WildcardNGramFilterTest, query_matches_re2) {
 
   for (const auto n : {size_t{2}, size_t{3}}) {
     irs::analysis::WildcardTokenizer analyzer{nullptr, n};
-    irs::MemoryDirectory dir;
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
     {
       auto writer = tests::IndexWriter::Make(
         dir, tests::kOmCreate, irs::tests::DefaultWriterOptions());

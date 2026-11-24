@@ -34,7 +34,6 @@
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/detail/ann_index.hpp>
 #include <iresearch/search/scorers/bm25.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
@@ -81,7 +80,7 @@ struct MergeResult {
 };
 
 MergeResult RunMerge(
-  irs::Directory& out, std::span<const irs::SubReader* const> inputs,
+  const tests::IndexDir& out, std::span<const irs::SubReader* const> inputs,
   const irs::IndexFieldOptions* field_options,
   const irs::MergeProgress& progress = {},
   irs::IResourceManager& memory = irs::IResourceManager::gNoop,
@@ -89,16 +88,18 @@ MergeResult RunMerge(
   MergeResult result;
   const irs::SegmentWriterOptions options{
     .scorer = scorer,
-    .resource_manager = memory,
-    .db = &irs::DuckDBEngine::Instance().instance(),
     .field_options = field_options,
   };
-  auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
-  result.flushed = irs::MergeSegments(out, doc_map, result.meta, options,
-                                      MergePool(threads), progress);
+  auto doc_map = irs::MakeMergeDocMap(inputs, memory);
+  auto written =
+    irs::MergeSegments(out.Db(), out.Fs(), out.Root(), doc_map, result.meta,
+                       options, MergePool(threads), progress);
+  result.flushed = written.files != nullptr;
   if (result.flushed) {
     result.reader = irs::SegmentReaderImpl::Open(
-      out, result.meta, irs::tests::DefaultReaderOptions());
+      out.Db(), out.Fs(), out.Root(), result.meta,
+      irs::tests::DefaultReaderOptions(), std::move(written.files),
+      std::move(written.inputs));
   }
   return result;
 }
@@ -148,20 +149,19 @@ class MergeCharacterizationTest : public ::testing::Test {
              irs::IResourceManager& memory = irs::IResourceManager::gNoop,
              const irs::IndexFieldOptions* field_options = nullptr) {
     const irs::SegmentWriterOptions options{
-      .resource_manager = memory,
-      .db = &irs::DuckDBEngine::Instance().instance(),
       .field_options =
         field_options != nullptr ? field_options : &_field_options,
     };
-    auto doc_map = irs::MakeMergeDocMap(_inputs, options.resource_manager);
-    return irs::MergeSegments(_out, doc_map, meta, options, MergePool(1),
-                              progress);
+    auto doc_map = irs::MakeMergeDocMap(_inputs, memory);
+    return irs::MergeSegments(_out.Db(), _out.Fs(), _out.Root(), doc_map, meta,
+                              options, MergePool(1), progress)
+             .files != nullptr;
   }
 
-  irs::MemoryDirectory _dir;
-  irs::MemoryDirectory _out;
+  tests::IndexDir _dir = MemoryDir();
+  tests::IndexDir _out = MemoryDir();
   tests::IndexWriter::ptr _writer;
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   irs::FunctionFieldOptions _field_options{
     PlainColumns,
@@ -176,8 +176,7 @@ TEST_F(MergeCharacterizationTest, CompleteMergeMatchesTheInputs) {
   meta.name = "merged";
   ASSERT_TRUE(Merge(meta, [&] { return ++calls != 0; }));
   EXPECT_GT(calls, 6U);
-  auto merged = irs::SegmentReaderImpl::Open(
-    _out, meta, irs::tests::DefaultReaderOptions());
+  auto merged = OpenSegment(_out, meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);
   EXPECT_EQ("", FirstDifference(ExpectedMerge(_inputs), Dump(*merged)));
 }
@@ -203,7 +202,7 @@ TEST_F(MergeCharacterizationTest, AbortsAtEveryProgressCall) {
 }
 
 TEST_F(MergeCharacterizationTest, MergeWithoutFieldOptionsDropsNorms) {
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   const auto merged = RunMerge(dir, _inputs, nullptr);
   ASSERT_TRUE(merged.flushed);
   ASSERT_NE(nullptr, merged.reader);
@@ -222,11 +221,11 @@ TEST_F(MergeCharacterizationTest, MergeWithoutFieldOptionsDropsNorms) {
 
 TEST_F(MergeCharacterizationTest, ScoredMergeReadsTheMergedNorms) {
   const irs::BM25 bm25;
-  irs::MemoryDirectory scored_dir;
+  const auto scored_dir = MemoryDir();
   const auto scored = RunMerge(scored_dir, _inputs, &_field_options, {},
                                irs::IResourceManager::gNoop, &bm25);
   ASSERT_TRUE(scored.flushed);
-  irs::MemoryDirectory unnormed_dir;
+  const auto unnormed_dir = MemoryDir();
   const auto unnormed = RunMerge(unnormed_dir, _inputs, nullptr, {},
                                  irs::IResourceManager::gNoop, &bm25);
   ASSERT_TRUE(unnormed.flushed);
@@ -273,13 +272,13 @@ TEST_F(MergeCharacterizationTest, FullyDeletedInputYieldsNoSegment) {
   const auto deleted = AllDeleted(_reader[_reader.size() - 1]);
   ASSERT_EQ(0, deleted->live_docs_count());
   const irs::SubReader* inputs[] = {deleted.get()};
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   const auto merged = RunMerge(dir, inputs, &_field_options);
   EXPECT_FALSE(merged.flushed);
   EXPECT_EQ(0, merged.meta.kinds);
 }
 
-tests::IndexWriter::ptr MakeWriter(irs::Directory& dir,
+tests::IndexWriter::ptr MakeWriter(const tests::IndexDir& dir,
                                  irs::ColumnOptionsProvider columns,
                                  irs::AnnFieldsByColumn anns = {}) {
   auto options = irs::tests::DefaultWriterOptions();
@@ -289,7 +288,7 @@ tests::IndexWriter::ptr MakeWriter(irs::Directory& dir,
 }
 
 TEST(MergeColumnsTest, InputWithoutColumnsIsPaddedWithNulls) {
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir, SketchedColumns);
   Generator gen{77};
   size_t next_id = 0;
@@ -316,7 +315,7 @@ TEST(MergeColumnsTest, InputWithoutColumnsIsPaddedWithNulls) {
   const irs::SubReader* firsts[] = {&reader[0], &storeless};
   for (const auto* first : firsts) {
     const irs::SubReader* inputs[] = {first, &reader[1]};
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     const auto merged = RunMerge(out, inputs, &field_options);
     ASSERT_TRUE(merged.flushed);
     EXPECT_EQ("", FirstDifference(ExpectedMerge(inputs), Dump(*merged.reader)));
@@ -324,7 +323,7 @@ TEST(MergeColumnsTest, InputWithoutColumnsIsPaddedWithNulls) {
 }
 
 TEST(MergeNormsTest, InputsWithoutNormColumnsGiveZeroNorms) {
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir, PlainColumns);
   Generator gen{91};
   size_t next_id = 0;
@@ -335,11 +334,11 @@ TEST(MergeNormsTest, InputsWithoutNormColumnsGiveZeroNorms) {
   const auto reader = writer->GetSnapshot();
   ASSERT_EQ(2, reader.size());
 
-  irs::MemoryDirectory first_dir;
+  const auto first_dir = MemoryDir();
   const irs::SubReader* first[] = {&reader[0]};
   const auto first_merged = RunMerge(first_dir, first, nullptr);
   ASSERT_TRUE(first_merged.flushed);
-  irs::MemoryDirectory second_dir;
+  const auto second_dir = MemoryDir();
   const irs::SubReader* second[] = {&reader[1]};
   const auto second_merged = RunMerge(second_dir, second, nullptr);
   ASSERT_TRUE(second_merged.flushed);
@@ -361,7 +360,7 @@ TEST(MergeNormsTest, InputsWithoutNormColumnsGiveZeroNorms) {
     {&storeless_deleted, &reader[1]},
   };
   for (size_t c = 0; c != cases.size(); ++c) {
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     const auto merged = RunMerge(out, cases[c], &field_options);
     ASSERT_TRUE(merged.flushed) << "case " << c;
     EXPECT_EQ("",
@@ -371,7 +370,7 @@ TEST(MergeNormsTest, InputsWithoutNormColumnsGiveZeroNorms) {
 }
 
 TEST(MergeColumnsTest, SketchesStartAtTheMerge) {
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir, PlainColumns);
   Generator gen{78};
   size_t next_id = 0;
@@ -395,7 +394,7 @@ TEST(MergeColumnsTest, SketchesStartAtTheMerge) {
     irs::tests::MakeNormColumnIdProvider(),
     DEFAULT_ROW_GROUP_SIZE,
     {}};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
   const auto* cs = merged.reader->GetColReader();
@@ -406,7 +405,7 @@ TEST(MergeColumnsTest, SketchesStartAtTheMerge) {
 
 TEST(MergeColumnsTest, EachColumnEndsBeforeTheNextOneStarts) {
   constexpr uint32_t kRowGroup = 128;
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir, PlainColumns);
   Generator gen{79};
   size_t next_id = 0;
@@ -423,7 +422,7 @@ TEST(MergeColumnsTest, EachColumnEndsBeforeTheNextOneStarts) {
 
   irs::FunctionFieldOptions field_options{
     PlainColumns, irs::tests::MakeNormColumnIdProvider(), kRowGroup, {}};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
   EXPECT_EQ("", FirstDifference(ExpectedMerge(inputs), Dump(*merged.reader)));
@@ -495,7 +494,7 @@ void AppendStringRows(tests::IndexWriter& writer, irs::field_id column,
 TEST(MergeColumnsTest, DictionarySamplingStopsAtTheWindowBytes) {
   constexpr irs::field_id kLog = kFirstColumn + 2;
   constexpr size_t kRows = 80000;
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir, PlainColumns);
   AppendStringRows(*writer, kLog, kRows, LogLine);
   const auto reader = writer->GetSnapshot();
@@ -508,7 +507,7 @@ TEST(MergeColumnsTest, DictionarySamplingStopsAtTheWindowBytes) {
     irs::tests::MakeNormColumnIdProvider(),
     DEFAULT_ROW_GROUP_SIZE,
     {}};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
   EXPECT_EQ("", FirstDifference(ExpectedMerge(inputs), Dump(*merged.reader)));
@@ -519,7 +518,7 @@ TEST(MergeColumnsTest, DictionarySamplingStopsAtTheWindowVectors) {
   constexpr size_t kRows = 32 * 66 * STANDARD_VECTOR_SIZE;
   static constexpr std::string_view kLevels[] = {"debug", "info", "warn",
                                                  "error"};
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir, PlainColumns);
   AppendStringRows(*writer, kLevel, kRows, [](size_t row) {
     return kLevels[row % std::size(kLevels)];
@@ -534,7 +533,7 @@ TEST(MergeColumnsTest, DictionarySamplingStopsAtTheWindowVectors) {
     irs::tests::MakeNormColumnIdProvider(),
     DEFAULT_ROW_GROUP_SIZE,
     {}};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
   ASSERT_EQ(kRows, merged.reader->docs_count());
@@ -603,7 +602,7 @@ void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs,
   irs::FunctionFieldOptions field_options{
     IvfColumns, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE,
     IvfAnns()};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto merged = RunMerge(out, inputs, &field_options, {},
                                irs::IResourceManager::gNoop, nullptr, threads);
   ASSERT_TRUE(merged.flushed);
@@ -643,7 +642,7 @@ void ExpectIvfMerge(std::span<const irs::SubReader* const> inputs) {
 }
 
 TEST(MergeIvfTest, ClusterPostingsReplaceTheInputs) {
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir, IvfColumns, IvfAnns());
   WriteVectors(*writer, 700, 1);
   WriteVectors(*writer, 500, 2);
@@ -655,7 +654,7 @@ TEST(MergeIvfTest, ClusterPostingsReplaceTheInputs) {
 }
 
 TEST(MergeIvfTest, ClusterPostingsAreWrittenAroundTheOtherFields) {
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir, PlainColumns);
   WriteVectors(*writer, 700, 3);
   WriteVectors(*writer, 500, 4);
@@ -667,7 +666,7 @@ TEST(MergeIvfTest, ClusterPostingsAreWrittenAroundTheOtherFields) {
 }
 
 TEST(MergeIvfTest, OnlyDeletedVectorsGiveNoSegment) {
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir, IvfColumns, IvfAnns());
   WriteVectors(*writer, 300, 7);
   WriteVectors(*writer, 200, 8);
@@ -683,12 +682,12 @@ TEST(MergeIvfTest, OnlyDeletedVectorsGiveNoSegment) {
   irs::FunctionFieldOptions field_options{
     IvfColumns, irs::tests::MakeNormColumnIdProvider(), DEFAULT_ROW_GROUP_SIZE,
     IvfAnns()};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   EXPECT_FALSE(RunMerge(out, inputs, &field_options).flushed);
 }
 
 TEST(MergeIvfTest, ClusterFieldsWithoutIvfOptionsAreDropped) {
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto writer = MakeWriter(dir, IvfColumns, IvfAnns());
   WriteVectors(*writer, 700, 5);
   WriteVectors(*writer, 500, 6);
@@ -702,7 +701,7 @@ TEST(MergeIvfTest, ClusterFieldsWithoutIvfOptionsAreDropped) {
     irs::tests::MakeNormColumnIdProvider(),
     DEFAULT_ROW_GROUP_SIZE,
     {}};
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   const auto merged = RunMerge(out, inputs, &field_options);
   ASSERT_TRUE(merged.flushed);
   for (const auto id : {kLowVector, kHighVector}) {

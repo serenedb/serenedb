@@ -58,7 +58,7 @@ db error: ERROR: Failed to commit: Cannot write SET_COLUMN_COMPRESSION to a data
 
 
 query
-SELECT sql FROM duckdb_tables() WHERE database_name = 'codecs_v13_${__DATABASE__}' AND table_name = 't_zstd';
+SELECT sql FROM sdb_tables() WHERE database_name = 'codecs_v13_${__DATABASE__}' AND table_name = 't_zstd';
 ----
 sql
 CREATE TABLE t_zstd(v VARCHAR USING COMPRESSION ZSTD);
@@ -101,3 +101,118 @@ beta
 
 statement ok
 DETACH codecs_v11_${__DATABASE__};
+
+
+statement ok
+ATTACH ':memory:' AS codecs_mem_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE codecs_mem_${__DATABASE__}.main.t_indexed (a INTEGER, v TEXT);
+
+
+statement ok
+INSERT INTO codecs_mem_${__DATABASE__}.main.t_indexed SELECT i, 'v' || (i % 7) FROM range(5000) t(i);
+
+
+statement ok
+CREATE INDEX t_indexed_a ON codecs_mem_${__DATABASE__}.main.t_indexed (a);
+
+
+statement ok
+ALTER TABLE codecs_mem_${__DATABASE__}.main.t_indexed ALTER COLUMN a SET COMPRESSION rle;
+
+
+query
+SELECT sql FROM sdb_tables() WHERE database_name = 'codecs_mem_${__DATABASE__}' AND table_name = 't_indexed';
+----
+sql
+CREATE TABLE t_indexed(a INTEGER USING COMPRESSION RLE, v VARCHAR);
+
+
+query
+SELECT a, v FROM codecs_mem_${__DATABASE__}.main.t_indexed WHERE a = 4321;
+----
+a	v
+4321	v2
+
+
+statement ok
+DETACH codecs_mem_${__DATABASE__};
+
+
+statement ok
+ATTACH ':memory:' AS codecs_rle_${__DATABASE__} (COMPRESS);
+
+
+statement ok
+CREATE TABLE codecs_rle_${__DATABASE__}.main.runs (
+  i8 TINYINT USING COMPRESSION rle,
+  i16 SMALLINT USING COMPRESSION rle,
+  u8 UTINYINT USING COMPRESSION rle,
+  u16 USMALLINT USING COMPRESSION rle,
+  u32 UINTEGER USING COMPRESSION rle,
+  f32_long FLOAT USING COMPRESSION rle,
+  f32_short FLOAT USING COMPRESSION rle,
+  f64_long DOUBLE USING COMPRESSION rle,
+  f64_short DOUBLE USING COMPRESSION rle);
+
+
+statement ok
+SET threads = 1;
+
+
+statement ok
+INSERT INTO codecs_rle_${__DATABASE__}.main.runs SELECT
+  ((i // 5) % 100)::TINYINT,
+  ((i // 20) % 1000)::SMALLINT,
+  ((i // 40) % 200)::UTINYINT,
+  ((i // 20) % 1000)::USMALLINT,
+  ((i // 10) % 100000)::UINTEGER,
+  ((i // 10) % 1000)::FLOAT,
+  ((i // 3) % 1000)::FLOAT,
+  ((i // 5) % 1000)::DOUBLE,
+  ((i // 2) % 1000)::DOUBLE
+FROM range(200000) t(i);
+
+
+statement ok
+RESET threads;
+
+
+statement ok
+CHECKPOINT codecs_rle_${__DATABASE__};
+
+
+query
+SELECT count(*) AS other_codecs FROM pragma_storage_info('codecs_rle_${__DATABASE__}.main.runs')
+WHERE segment_type <> 'VALIDITY' AND compression <> 'RLE';
+----
+other_codecs
+0
+
+
+query
+SELECT sum(i8) AS i8, sum(i16) AS i16, sum(u8) AS u8, sum(u16) AS u16, sum(u32) AS u32,
+       sum(f32_long) AS f32_long, sum(f32_short) AS f32_short, sum(f64_long) AS f64_long, sum(f64_short) AS f64_short
+FROM codecs_rle_${__DATABASE__}.main.runs;
+----
+i8	i16	u8	u16	u32	f32_long	f32_short	f64_long	f64_short
+9900000	99900000	19900000	99900000	1999900000	99900000	99566667	99900000	99900000
+
+
+query
+SELECT count(*) AS mismatches FROM (
+  SELECT * FROM codecs_rle_${__DATABASE__}.main.runs
+  EXCEPT ALL
+  SELECT ((i // 5) % 100)::TINYINT, ((i // 20) % 1000)::SMALLINT, ((i // 40) % 200)::UTINYINT,
+         ((i // 20) % 1000)::USMALLINT, ((i // 10) % 100000)::UINTEGER, ((i // 10) % 1000)::FLOAT,
+         ((i // 3) % 1000)::FLOAT, ((i // 5) % 1000)::DOUBLE, ((i // 2) % 1000)::DOUBLE
+  FROM range(200000) t(i));
+----
+mismatches
+0
+
+
+statement ok
+DETACH codecs_rle_${__DATABASE__};

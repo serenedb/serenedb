@@ -36,11 +36,20 @@ namespace sdb::connector {
 FullScanner::FullScanner(
   const irs::ColReader& reader,
   std::span<const irs::ColumnstoreProjection> projections,
-  std::span<const irs::ColFilterSpec> filters, duckdb::ClientContext* context,
+  std::span<const irs::ColFilterSpec> filters,
+  std::span<const MultiColumnCheck> multi, duckdb::ClientContext* context,
   irs::ColFilterStateCache& states, bool share_payloads)
-  : _ctx{std::make_shared<irs::ReadContext>(reader)} {
+  : _ctx{std::make_shared<irs::ReadContext>(reader)}, _context{context} {
   _sel_data = duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
   _sel.Initialize(_sel_data);
+  _multi.reserve(multi.size());
+  for (const auto& check : multi) {
+    _multi.push_back({
+      .filter = check.filter,
+      .readers = check.readers,
+      .windows = std::vector<irs::BlockWindow>(check.readers.size()),
+    });
+  }
 
   // `.col` filters (the score is computed, not stored -- never a bulk filter).
   _filters.Bind(reader, *_ctx, filters, *context, states);
@@ -82,10 +91,10 @@ FullScanner::FullScanner(
   _filters.FinishBind();
 }
 
-duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
-                                duckdb::DataChunk& output,
-                                const duckdb::SelectionVector* live,
-                                duckdb::idx_t live_count) {
+duckdb::idx_t FullScanner::Filter(uint64_t start_row, duckdb::idx_t count,
+                                  duckdb::DataChunk& output,
+                                  const duckdb::SelectionVector* live,
+                                  duckdb::idx_t live_count) {
   _selection = nullptr;
   if (count == 0) {
     return 0;
@@ -103,8 +112,36 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
       live = nullptr;
     }
   }
+  if (_filters.Empty()) {
+    _selection = live;
+    return live != nullptr ? live_count : count;
+  }
 
-  if (_filters.Empty() && live == nullptr) {
+  duckdb::idx_t survivors = live != nullptr ? live_count : count;
+  _sel.Initialize(_sel_data);
+  if (live != nullptr) {
+    for (duckdb::idx_t i = 0; i < survivors; ++i) {
+      _sel.set_index(i, live->get_index(i));
+    }
+  } else {
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      _sel.set_index(i, i);
+    }
+  }
+  survivors = _filters.FilterWindow(start_row, count, _sel, survivors, &output);
+  if (survivors == 0) {
+    return 0;
+  }
+  _filters.FinishOutputs(start_row, count, _sel, survivors, output);
+  _selection = &_sel;
+  return survivors;
+}
+
+void FullScanner::Project(uint64_t start_row, duckdb::idx_t count,
+                          duckdb::idx_t survivors, duckdb::DataChunk& output) {
+  SDB_ASSERT(survivors != 0);
+  if (_selection == nullptr) {
+    SDB_ASSERT(survivors == count);
     for (auto& b : _bound) {
       auto& out = output.data[b.output_slot];
       if (b.extract) {
@@ -126,49 +163,60 @@ duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
       b.reader->Scan(*b.state, out, count);
     }
     FillAbsent(output);
-    return count;
+    return;
   }
-
-  const duckdb::SelectionVector* sel = live;
-  duckdb::idx_t survivors = live != nullptr ? live_count : count;
-  if (!_filters.Empty()) {
-    _sel.Initialize(_sel_data);
-    if (live != nullptr) {
-      for (duckdb::idx_t i = 0; i < survivors; ++i) {
-        _sel.set_index(i, live->get_index(i));
-      }
-    } else {
-      for (duckdb::idx_t i = 0; i < count; ++i) {
-        _sel.set_index(i, i);
-      }
-    }
-    survivors =
-      _filters.FilterWindow(start_row, count, _sel, survivors, &output);
-    if (survivors == 0) {
-      return 0;
-    }
-    _filters.FinishOutputs(start_row, count, _sel, survivors, output);
-    sel = &_sel;
-  }
-  SDB_ASSERT(sel != nullptr);
-  _selection = sel;
   for (auto& b : _bound) {
     auto& out = output.data[b.output_slot];
     if (b.extract) {
       if (survivors == count) {
         b.extract->MaterializeContiguous(start_row, count, out);
       } else {
-        b.extract->MaterializeSelected(start_row, *sel, survivors, out);
+        b.extract->MaterializeSelected(start_row, *_selection, survivors, out);
       }
       continue;
     }
     if (b.is_list_like) {
       duckdb::ListVector::SetListSize(out, 0);
     }
-    b.reader->GatherDense(*b.state, start_row, *sel, survivors, count, out);
+    b.reader->GatherDense(*b.state, start_row, *_selection, survivors, count,
+                          out);
   }
   FillAbsent(output);
-  return survivors;
+}
+
+uint64_t FullScanner::MultiDeadUntil(uint64_t row) {
+  uint64_t dead_end = 0;
+  for (auto& multi : _multi) {
+    if (multi.live_begin <= row && row < multi.live_end) {
+      continue;
+    }
+    auto end = std::numeric_limits<uint64_t>::max();
+    _multi_stats.clear();
+    for (size_t i = 0; i != multi.readers.size(); ++i) {
+      const auto* reader = multi.readers[i];
+      if (row >= reader->RowCount()) {
+        _multi_stats.clear();
+        break;
+      }
+      multi.windows[i] = reader->Locate(row, multi.windows[i]);
+      end = std::min<uint64_t>(end, multi.windows[i].end);
+      _multi_stats.push_back(
+        reader->DataBlocks()[multi.windows[i].block].statistics.Copy());
+    }
+    if (_multi_stats.size() != multi.readers.size()) {
+      continue;
+    }
+    if (irs::ZoneDead(duckdb::ExpressionFilter::CheckExpressionStatistics(
+          *_context, *multi.filter->expr,
+          duckdb::array_ptr<const duckdb::BaseStatistics>(
+            _multi_stats.data(), _multi_stats.size())))) {
+      dead_end = std::max(dead_end, end);
+    } else {
+      multi.live_begin = row;
+      multi.live_end = end;
+    }
+  }
+  return dead_end;
 }
 
 void FullScanner::FillAbsent(duckdb::DataChunk& output) const {
@@ -177,6 +225,17 @@ void FullScanner::FillAbsent(duckdb::DataChunk& output) const {
     out.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
     duckdb::ConstantVector::SetNull(out, true);
   }
+}
+
+duckdb::idx_t FullScanner::Scan(uint64_t start_row, duckdb::idx_t count,
+                                duckdb::DataChunk& output,
+                                const duckdb::SelectionVector* live,
+                                duckdb::idx_t live_count) {
+  const auto survivors = Filter(start_row, count, output, live, live_count);
+  if (survivors != 0) {
+    Project(start_row, count, survivors, output);
+  }
+  return survivors;
 }
 
 void ScanLiveRows(duckdb::ClientContext& context, const irs::SubReader& segment,
@@ -190,7 +249,7 @@ void ScanLiveRows(duckdb::ClientContext& context, const irs::SubReader& segment,
   const auto* col_reader = segment.GetColReader();
   SDB_ENSURE(col_reader, "table segment has no columnstore");
   SDB_ASSERT(begin <= end && end <= segment.Meta().docs_count);
-  FullScanner scanner{*col_reader, projections,   {},
+  FullScanner scanner{*col_reader, projections,   {},   {},
                       &context,    filter_states, false};
   const bool has_mask = segment.docs_mask() != nullptr;
   auto mask = irs::MakeGenericDocsMask(segment.docs_mask());

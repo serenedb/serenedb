@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <duckdb/common/enums/order_type.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/sorting/presorted_merge.hpp>
 #include <duckdb/common/sorting/sort.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
@@ -49,14 +50,13 @@
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/key_merge.hpp>
 #include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/merge_workers.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/enum_name.hpp>
@@ -105,7 +105,7 @@ struct KeywordField {
     return irs::IndexFeatures::Freq;
   }
 
-  bool Write(irs::DataOutput&) const { return true; }
+  bool Write(duckdb::WriteStream&) const { return true; }
 
   irs::field_id id{irs::field_limits::invalid()};
   std::string_view value;
@@ -141,9 +141,16 @@ std::vector<int64_t> KeysOf(Layout layout, size_t segment) {
   return keys;
 }
 
+tests::IndexDir MemoryDir() {
+  static constinit std::atomic<uint64_t> gDirs{0};
+  return {irs::DuckDBEngine::Instance().instance(),
+          absl::StrCat(duckdb::MemoryFileSystem::PREFIX, "sorted_merge/",
+                       gDirs.fetch_add(1, std::memory_order_relaxed))};
+}
+
 struct Inputs {
-  irs::MemoryDirectory dir;
-  irs::DirectoryReader reader;
+  tests::IndexDir dir = MemoryDir();
+  irs::CompositeReader reader;
 };
 
 std::map<Layout, std::unique_ptr<Inputs>>& Cache() {
@@ -157,10 +164,7 @@ const Inputs& InputsOf(Layout layout) {
     return *cached;
   }
   cached = std::make_unique<Inputs>();
-  auto* db = &irs::DuckDBEngine::Instance().instance();
   irs::IndexWriterOptions options;
-  options.db = db;
-  options.reader_options.db = db;
   options.segment_memory_max = std::numeric_limits<size_t>::max();
   options.column_options = [](irs::field_id) -> irs::ColumnOptions {
     return {};
@@ -239,18 +243,18 @@ void BM_Merge(benchmark::State& state) {
     state.PauseTiming();
     const auto base_kb = ResetPeakKb();
     state.ResumeTiming();
-    irs::MemoryDirectory out;
+    const auto out = MemoryDir();
     irs::SegmentMeta meta;
     const irs::SegmentWriterOptions options{
-      .db = &irs::DuckDBEngine::Instance().instance(),
       .field_options = &field_options,
       .sort = sorted ? &spec : nullptr,
     };
     auto doc_map =
-      irs::MakeMergeDocMap(inputs.reader, options.resource_manager);
+      irs::MakeMergeDocMap(inputs.reader, irs::IResourceManager::gNoop);
     irs::MergeProfile profile;
-    if (!irs::MergeSegments(out, doc_map, meta, options, pool, {}, nullptr,
-                            &profile)) {
+    if (!irs::MergeSegments(out.Db(), out.Fs(), out.Root(), doc_map, meta,
+                            options, pool, {}, nullptr, &profile)
+           .files) {
       state.SkipWithError("merge failed");
       return;
     }

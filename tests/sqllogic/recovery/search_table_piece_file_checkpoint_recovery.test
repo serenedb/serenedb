@@ -1,0 +1,94 @@
+control substitution on
+
+# A checkpoint while a table still holds, in memory, a piece merged from
+# enough rows to be written as a segment: the checkpoint records its rows, and
+# a restart brings them back.
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE pfc (id BIGINT, body TEXT)
+  WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+INSERT INTO pfc SELECT i, 'w' || (i % 97) FROM range(0, 300) t(i);
+
+
+statement ok
+INSERT INTO pfc SELECT i, 'w' || (i % 97) FROM range(300, 600) t(i);
+
+
+statement ok
+INSERT INTO pfc SELECT i, 'w' || (i % 97) FROM range(600, 900) t(i);
+
+
+statement ok
+INSERT INTO pfc SELECT i, 'w' || (i % 97) FROM range(900, 1200) t(i);
+
+
+statement ok
+INSERT INTO pfc SELECT i, 'w' || (i % 97) FROM range(1200, 1500) t(i);
+
+
+statement ok
+INSERT INTO pfc SELECT i, 'w' || (i % 97) FROM range(1500, 1800) t(i);
+
+
+statement ok
+INSERT INTO pfc SELECT i, 'w' || (i % 97) FROM range(1800, 2100) t(i);
+
+
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged';
+
+
+statement ok
+INSERT INTO pfc SELECT i, 'w' || (i % 97) FROM range(2100, 2400) t(i);
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_search_pieces_merged:parked';
+
+
+statement ok
+SET sdb_faults = 'pause_search_pieces_merged:release';
+
+
+query
+SELECT value AS files FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'pfc') AND metric = 'num_files';
+----
+files
+0
+
+
+statement ok
+CHECKPOINT;
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE body = 'w5') AS fives FROM pfc;
+----
+n	fives
+2400	25
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_restart
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT count(*) AS n, count(DISTINCT id) AS ids, min(id) AS lo, max(id) AS hi,
+       count(*) FILTER (WHERE body = 'w5') AS fives
+FROM pfc;
+----
+n	ids	lo	hi	fives
+2400	2400	0	2399	25

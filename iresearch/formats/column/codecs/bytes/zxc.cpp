@@ -104,10 +104,9 @@ std::string_view Zxc::Decompressor::Inflate(const char* src, size_t size,
   const auto capacity = zxc_decompress_block_bound(raw_size);
   auto* out = FrameAfterDictionary(capacity);
   const auto dictionary = ZxcDictionary(Dictionary());
-  if (zxc_dctx_ref_dict(_blocks.get(), dictionary.data(), dictionary.size()) !=
-      ZXC_OK) {
-    return {};
-  }
+  const auto referenced =
+    zxc_dctx_ref_dict(_blocks.get(), dictionary.data(), dictionary.size());
+  SDB_ASSERT(referenced == ZXC_OK);
   const auto n = zxc_decompress_block(_blocks.get(), src, size, out, capacity);
   return n >= 0 && static_cast<size_t>(n) == raw_size
            ? std::string_view{out, raw_size}

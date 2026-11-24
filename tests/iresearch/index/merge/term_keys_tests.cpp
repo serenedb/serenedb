@@ -32,7 +32,6 @@
 #include <iresearch/index/merge/merge_plan.hpp>
 #include <iresearch/index/merge/term_keys.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
@@ -189,9 +188,9 @@ class TermKeysTest : public ::testing::Test {
     return {terms.begin() + begin, terms.begin() + begin + count};
   }
 
-  irs::MemoryDirectory _dir;
+  tests::IndexDir _dir = MemoryDir();
   tests::IndexWriter::ptr _writer;
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
   duckdb::DataChunk _chunk;
 };
 
@@ -498,15 +497,16 @@ TEST_P(TermMergeTest, LongRunsAndSharedTermsMatchTheOracle) {
     DEFAULT_ROW_GROUP_SIZE,
     {}};
   const irs::SegmentWriterOptions options{
-    .db = &irs::DuckDBEngine::Instance().instance(),
     .field_options = &field_options,
   };
-  irs::MemoryDirectory out;
+  const auto out = MemoryDir();
   irs::SegmentMeta meta;
-  auto doc_map = irs::MakeMergeDocMap(inputs, options.resource_manager);
-  ASSERT_TRUE(irs::MergeSegments(out, doc_map, meta, options, MergePool(1)));
+  auto doc_map = irs::MakeMergeDocMap(inputs, irs::IResourceManager::gNoop);
+  ASSERT_TRUE(irs::MergeSegments(out.Db(), out.Fs(), out.Root(), doc_map, meta,
+                                 options, MergePool(1))
+                .files);
   const auto merged =
-    irs::SegmentReaderImpl::Open(out, meta, irs::tests::DefaultReaderOptions());
+    OpenSegment(out, meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);
   EXPECT_EQ("", FirstDifference(ExpectedMerge(inputs), Dump(*merged)));
 }

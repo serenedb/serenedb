@@ -23,6 +23,8 @@
 
 #include "formats_test_case_base.hpp"
 
+#include <absl/crc/crc32c.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
@@ -42,10 +44,8 @@
 #include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/norm.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/crc.hpp>
+#include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/resource_manager.hpp>
 #include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <roaring/roaring.hh>
@@ -348,8 +348,7 @@ TEST_P(FormatTestCase, fields_read_write) {
   // write fields
   {
     irs::FlushState state{
-      .dir = &dir(),
-      .name = "segment_name",
+      .tracker = dir().Tracker("segment_name"),
       .doc_count = 100,
       .index_features = field.index_features,
     };
@@ -360,7 +359,7 @@ TEST_P(FormatTestCase, fields_read_write) {
     tests::MockTermReader term_reader{
       terms, irs::FieldMeta{field.id, field.index_features}};
 
-    irs::IdxWriter idx{dir(), "segment_name"};
+    irs::IdxWriter idx{dir().Tracker("segment_name")};
     irs::term_dict::FieldWriter writer{/*compaction=*/false};
     writer.SetIdxWriter(idx);
     writer.prepare(state, 1);
@@ -374,11 +373,14 @@ TEST_P(FormatTestCase, fields_read_write) {
     irs::SegmentMeta meta;
     meta.name = "segment_name";
 
-    irs::IdxReader idx{dir(), "segment_name", nullptr};
-    irs::term_dict::FieldReader reader_obj{irs::IResourceManager::gNoop};
+    irs::IdxReader idx{dir().Fs(), dir().Root(), "segment_name", true, nullptr};
+    irs::term_dict::FieldReader reader_obj;
     auto* reader = &reader_obj;
-    reader->prepare(
-      irs::ReaderState{.dir = &dir(), .meta = &meta, .idx = &idx});
+    reader->prepare(irs::ReaderState{.db = dir().Db(),
+                                     .fs = dir().Fs(),
+                                     .root = dir().Root(),
+                                     .meta = meta,
+                                     .idx = &idx});
     ASSERT_EQ(1, reader->size());
 
     // check terms
@@ -546,7 +548,7 @@ TEST_P(FormatTestCase, fields_read_write) {
 TEST_P(FormatTestCase, format_utils_footer) {
   constexpr std::string_view kData = "segment data";
   const auto write = [&](std::string_view name, std::string_view data) {
-    auto stream = dir().create(name);
+    auto stream = dir().Create(name);
     ASSERT_NE(nullptr, stream);
     if (!data.empty()) {
       stream->WriteData(reinterpret_cast<const irs::byte_type*>(data.data()),
@@ -555,23 +557,25 @@ TEST_P(FormatTestCase, format_utils_footer) {
     irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
+    stream->Close();
   };
   const auto read = [&](std::string_view name, std::string_view data) {
-    auto stream = dir().open(name, irs::IOAdvice::RANDOM);
-    ASSERT_NE(nullptr, stream);
+    const auto file = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
+    ASSERT_TRUE(file);
     uint32_t value = 0;
     uint64_t data_size = 0;
     const auto footer = irs::format_utils::ReadFooter(
-      *stream, name, [&](duckdb::BinaryDeserializer& meta, uint64_t size) {
+      *file, name, [&](duckdb::BinaryDeserializer& meta, uint64_t size) {
         value = meta.ReadProperty<uint32_t>(0, "value");
         data_size = size;
       });
-    irs::Crc32c crc;
-    crc.process_bytes(data.data(), data.size());
+    absl::crc32c_t crc{0};
+    crc = absl::ExtendCrc32c(
+      crc, {reinterpret_cast<const char*>(data.data()), data.size()});
     ASSERT_EQ(42, value);
     ASSERT_EQ(data.size(), data_size);
     ASSERT_EQ(data.size(), footer.data_len);
-    ASSERT_EQ(crc.checksum(), footer.data_expected_crc32c);
+    ASSERT_EQ(static_cast<uint32_t>(crc), footer.data_expected_crc32c);
   };
 
   write("file", kData);
@@ -583,34 +587,37 @@ TEST_P(FormatTestCase, format_utils_footer) {
 
 TEST_P(FormatTestCase, format_utils_footer_damaged) {
   {
-    auto stream = dir().create("file");
+    auto stream = dir().Create("file");
     ASSERT_NE(nullptr, stream);
-    stream->WriteU64(7);
+    stream->Write<uint64_t>(7);
     irs::format_utils::WriteFooter(*stream, [](duckdb::BinarySerializer& meta) {
       meta.WriteProperty<uint32_t>(0, "value", 42);
     });
+    stream->Close();
   }
 
   irs::bstring bytes;
   {
-    auto stream = dir().open("file", irs::IOAdvice::RANDOM);
-    ASSERT_NE(nullptr, stream);
-    bytes.resize(stream->Length());
-    stream->ReadData(0, bytes.data(), bytes.size());
+    const auto file = dir().Open("file", duckdb::MappedFileAccess::NORMAL);
+    duckdb::InputFileReader stream{*file};
+    ASSERT_TRUE(stream);
+    bytes.resize(file->GetSize());
+    stream.ReadData(bytes.data(), bytes.size());
   }
 
   const auto write = [&](std::string_view name, irs::bytes_view data) {
-    auto stream = dir().create(name);
+    auto stream = dir().Create(name);
     ASSERT_NE(nullptr, stream);
     if (!data.empty()) {
       stream->WriteData(data.data(), data.size());
     }
+    stream->Close();
   };
   const auto read = [&](std::string_view name) {
-    auto stream = dir().open(name, irs::IOAdvice::RANDOM);
-    ASSERT_NE(nullptr, stream);
+    const auto file = dir().Open(name, duckdb::MappedFileAccess::NORMAL);
+    ASSERT_TRUE(file);
     irs::format_utils::ReadFooter(
-      *stream, name, [](duckdb::BinaryDeserializer& meta, uint64_t) {
+      *file, name, [](duckdb::BinaryDeserializer& meta, uint64_t) {
         meta.ReadProperty<uint32_t>(0, "value");
       });
   };
@@ -646,14 +653,14 @@ namespace {
 template<typename Populate, typename Verify>
 void RoundTrip(std::string_view segment_name, uint64_t row_count,
                Populate&& populate, Verify&& verify) {
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  tests::IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, segment_name, db};
+    irs::ColWriter w{db, dir.Tracker(segment_name)};
     populate(w);
     w.Commit(row_count);
   }
-  irs::ColReader r{dir, segment_name, db, irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, segment_name);
   verify(r);
 }
 
@@ -770,8 +777,8 @@ TEST_P(FormatTestCase, columns_rw) {
   //  * multi-valued payloads (length-prefixed WriteStr concatenation),
   //  * "wrong column / wrong doc / can't find" lookups,
   //  * visit + partial-visit (early-stop) checks.
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  IndexDir dir{db, TestEnv::MemoryRoot()};
 
   // Build segment _1 -----------------------------------------------------
   // ids in this segment: 0,1,2 (empty),3,4,5; segment row count = 34.
@@ -785,7 +792,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
   auto write_str = [](irs::bstring& buf, std::string_view s) {
     irs::tests::BstringDataOutput out{buf};
-    irs::WriteStr(out, s);
+    tests::WriteStr(out, s);
   };
   auto append_str_blob = [&](irs::ColumnWriter& cw, irs::doc_id_t doc,
                              std::string_view s) {
@@ -797,13 +804,13 @@ TEST_P(FormatTestCase, columns_rw) {
                                  std::string_view a, std::string_view b) {
     irs::bstring buf;
     irs::tests::BstringDataOutput out{buf};
-    irs::WriteStr(out, a);
-    irs::WriteStr(out, b);
+    tests::WriteStr(out, a);
+    tests::WriteStr(out, b);
     irs::tests::AppendBlob(cw, doc, {buf.data(), buf.size()});
   };
 
   {
-    irs::ColWriter w{dir, "_1", db};
+    irs::ColWriter w{db, dir.Tracker("_1")};
     auto& f0 = irs::tests::OpenBlobColumn(w, kF0);
     auto& f1 = irs::tests::OpenBlobColumn(w, kF1);
     irs::tests::OpenBlobColumn(w, kEmpty);  // empty column in the middle
@@ -842,7 +849,7 @@ TEST_P(FormatTestCase, columns_rw) {
   static constexpr irs::field_id kS2F1 = 1;
   static constexpr irs::field_id kS2F2 = 2;
   {
-    irs::ColWriter w{dir, "_2", db};
+    irs::ColWriter w{db, dir.Tracker("_2")};
     auto& f0 = irs::tests::OpenBlobColumn(w, kS2F0);
     irs::tests::OpenBlobColumn(w, kS2F1);  // pushed but never written
     auto& f2 = irs::tests::OpenBlobColumn(w, kS2F2);
@@ -862,7 +869,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
   // Read segment _1 ------------------------------------------------------
   {
-    irs::ColReader r{dir, "_1", db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "_1");
     ASSERT_EQ(r.Columns().size(), 6u);
     // Try to get an invalid column id (`field_limits::invalid()`).
     EXPECT_EQ(r.Column(irs::field_limits::invalid()), nullptr);
@@ -952,7 +959,7 @@ TEST_P(FormatTestCase, columns_rw) {
     }
 
     // Multi-value f1: two WriteStrs per populated row, concatenated
-    // under one doc id. Read both back through a BytesViewInput on
+    // under one doc id. Read both back through a MemoryReader on
     // top of the blob.
     {
       const auto* col = r.Column(kF1);
@@ -961,7 +968,7 @@ TEST_P(FormatTestCase, columns_rw) {
       {
         const auto v = pr.FetchDoc(1);
         ASSERT_FALSE(v.empty());
-        irs::BytesViewInput in{v};
+        duckdb::MemoryReader in{v};
         EXPECT_EQ("field1_doc0", irs::ReadString<std::string>(in));
         EXPECT_EQ("field1_doc0_1", irs::ReadString<std::string>(in));
       }
@@ -969,7 +976,7 @@ TEST_P(FormatTestCase, columns_rw) {
       {
         const auto v = pr.FetchDoc(12);
         ASSERT_FALSE(v.empty());
-        irs::BytesViewInput in{v};
+        duckdb::MemoryReader in{v};
         EXPECT_EQ("field1_doc12_1", irs::ReadString<std::string>(in));
         EXPECT_EQ("field1_doc12_2", irs::ReadString<std::string>(in));
       }
@@ -1027,7 +1034,7 @@ TEST_P(FormatTestCase, columns_rw) {
 
   // Read segment _2 ------------------------------------------------------
   {
-    irs::ColReader r{dir, "_2", db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "_2");
     ASSERT_EQ(r.Columns().size(), 3u);
 
     EXPECT_EQ(r.Column(irs::field_limits::invalid()), nullptr);
@@ -1074,7 +1081,7 @@ TEST_P(FormatTestCase, columns_rw) {
   // Segment _1 -- new sub-scenarios (multi-column independence,
   // random-order point access, boundary docs, wrong-column-id sweep).
   {
-    irs::ColReader r{dir, "_1", db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "_1");
     const auto* col_f0 = r.Column(kF0);
     const auto* col_f2 = r.Column(kF2);
     ASSERT_NE(col_f0, nullptr);
@@ -1147,10 +1154,10 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   constexpr uint64_t kRowCount = 500;
   constexpr irs::field_id kIntId = 2;
   constexpr irs::field_id kStrId = 3;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "columns_rw_typed", db};
+    irs::ColWriter w{db, dir.Tracker("columns_rw_typed")};
 
     // Typed BIGINT column.
     auto& cw_int = w.OpenColumn(kIntId, duckdb::LogicalType::BIGINT);
@@ -1173,7 +1180,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
       irs::bstring buf;
       irs::tests::BstringDataOutput out{buf};
       const auto s = std::string{"row_"} + std::to_string(i);
-      irs::WriteStr(out, s);
+      tests::WriteStr(out, s);
       irs::tests::AppendBlob(
         cw_str, static_cast<irs::doc_id_t>(i + irs::doc_limits::min()),
         {buf.data(), buf.size()});
@@ -1182,7 +1189,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     w.Commit(kRowCount);
   }
 
-  irs::ColReader r{dir, "columns_rw_typed", db, irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader r = irs::tests::OpenColReader(dir, "columns_rw_typed");
   ASSERT_TRUE(r.HasColumn(kIntId));
   ASSERT_TRUE(r.HasColumn(kStrId));
   EXPECT_FALSE(r.HasColumn(0));  // wrong column id
@@ -1339,7 +1346,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   constexpr irs::field_id kRgIntId = 100;
   constexpr irs::field_id kRgStrId = 101;
   {
-    irs::ColWriter w{dir, "columns_rw_typed_rg", db};
+    irs::ColWriter w{db, dir.Tracker("columns_rw_typed_rg")};
     auto& cw_int = w.OpenColumn(kRgIntId, duckdb::LogicalType::BIGINT,
                                 {.row_group_size = 512});
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
@@ -1361,7 +1368,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
       irs::bstring buf;
       irs::tests::BstringDataOutput out{buf};
       const auto s = std::string{"row_"} + std::to_string(i);
-      irs::WriteStr(out, s);
+      tests::WriteStr(out, s);
       irs::tests::AppendBlob(
         cw_str, static_cast<irs::doc_id_t>(i + irs::doc_limits::min()),
         {buf.data(), buf.size()});
@@ -1369,8 +1376,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     w.Commit(kRgRowCount);
   }
   {
-    irs::ColReader rr{dir, "columns_rw_typed_rg", db,
-                      irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader rr = irs::tests::OpenColReader(dir, "columns_rw_typed_rg");
     const auto* col_int = rr.Column(kRgIntId);
     const auto* col_str = rr.Column(kRgStrId);
     ASSERT_NE(col_int, nullptr);
@@ -1378,8 +1384,8 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     EXPECT_EQ(col_int->RowCount(), kRgRowCount);
     EXPECT_EQ(col_str->RowCount(), kRgRowCount);
     // Multiple data row groups expected at this scale (4 of 512).
-    EXPECT_GE(col_int->DataRgCount(), 2u);
-    EXPECT_GE(col_str->DataRgCount(), 2u);
+    EXPECT_GE(col_int->DataBlocks().size(), 2u);
+    EXPECT_GE(col_str->DataBlocks().size(), 2u);
 
     // Fetch at row-group boundaries; each probe on a fresh reader.
     const std::vector<uint64_t> boundary_rows = {
@@ -1550,10 +1556,10 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
   // each contain a mix of live and null rows.
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigId = 200;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "columns_rw_bit_mask_rg", db};
+    irs::ColWriter w{db, dir.Tracker("columns_rw_bit_mask_rg")};
     auto& cw =
       w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
@@ -1567,13 +1573,12 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_bit_mask_rg", db,
-                     irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "columns_rw_bit_mask_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
     EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
-    EXPECT_GE(col->DataRgCount(), 2u);  // at least 2 row groups
+    EXPECT_GE(col->DataBlocks().size(), 2u);  // at least 2 row groups
 
     // Probes spanning row-group boundaries (511/512/513 etc).
     const std::vector<uint64_t> boundary_rows = {
@@ -1720,10 +1725,10 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
   // kBigRows=2048 the column has 4 row groups.
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigId = 300;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "columns_rw_dense_mask_rg", db};
+    irs::ColWriter w{db, dir.Tracker("columns_rw_dense_mask_rg")};
     auto& cw =
       w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
@@ -1734,12 +1739,12 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_dense_mask_rg", db,
-                     irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r =
+      irs::tests::OpenColReader(dir, "columns_rw_dense_mask_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Probes at row-group boundaries.
     const std::vector<uint64_t> boundary_rows = {
@@ -1915,10 +1920,10 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
   constexpr uint64_t kBigRows = 1500;
   constexpr size_t kSmallPayloadSize = 1024;
   constexpr irs::field_id kBigId = 400;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "columns_rw_big_document_rg", db};
+    irs::ColWriter w{db, dir.Tracker("columns_rw_big_document_rg")};
     auto& cw =
       w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     std::string payload(kSmallPayloadSize, '\0');
@@ -1933,12 +1938,12 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "columns_rw_big_document_rg", db,
-                     irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r =
+      irs::tests::OpenColReader(dir, "columns_rw_big_document_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Probes at row-group boundaries.
     const std::vector<uint64_t> boundary_rows = {
@@ -1971,21 +1976,15 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   //  * Rollback (writer never committed) leaves the dir untouched,
   //  * a fresh writer at the rolled-back name produces a clean file,
   //  * three independent segments with id+name BLOB columns round-trip.
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  IndexDir dir{db, TestEnv::MemoryRoot()};
 
-  // Rollback path: the eagerly-created `.col` stays on disk as an orphan;
-  // the directory cleaner sweeps it later.
   {
-    irs::ColWriter w{dir, "_rollback_seg", db};
+    irs::ColWriter w{db, dir.Tracker("_rollback_seg")};
     irs::tests::OpenBlobColumn(w, /*id=*/1);
     w.Rollback();
   }
-  {
-    bool exists = false;
-    ASSERT_TRUE(dir.exists(exists, "_rollback_seg.col"));
-    EXPECT_TRUE(exists);
-  }
+  EXPECT_FALSE(dir.Has("_rollback_seg.col"));
 
   // Three sequential segments.
   struct SegSpec {
@@ -1997,7 +1996,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   static constexpr irs::field_id kIdCol = 7;
   static constexpr irs::field_id kNameCol = 8;
   auto write_seg = [&](const SegSpec& seg, uint64_t prefix) {
-    irs::ColWriter w{dir, seg.name, db};
+    irs::ColWriter w{db, dir.Tracker(seg.name)};
     auto& id_w = irs::tests::OpenBlobColumn(w, kIdCol);
     auto& name_w = irs::tests::OpenBlobColumn(w, kNameCol);
     for (uint64_t i = 0; i < seg.row_count; ++i) {
@@ -2006,11 +2005,11 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
       irs::bstring name_buf;
       {
         irs::tests::BstringDataOutput out{id_buf};
-        irs::WriteStr(out, std::to_string(prefix + i));
+        tests::WriteStr(out, std::to_string(prefix + i));
       }
       {
         irs::tests::BstringDataOutput out{name_buf};
-        irs::WriteStr(out, std::string{"name_"} + std::to_string(prefix + i));
+        tests::WriteStr(out, std::string{"name_"} + std::to_string(prefix + i));
       }
       irs::tests::AppendBlob(id_w, doc, {id_buf.data(), id_buf.size()});
       irs::tests::AppendBlob(name_w, doc, {name_buf.data(), name_buf.size()});
@@ -2028,7 +2027,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   for (size_t s = 0; s < segs.size(); ++s) {
     const auto& seg = segs[s];
     const uint64_t prefix = s == 0 ? 0 : s == 1 ? 1000 : 2000;
-    irs::ColReader r{dir, seg.name, db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, seg.name);
     ASSERT_TRUE(r.HasColumn(kIdCol)) << "seg=" << seg.name;
     ASSERT_TRUE(r.HasColumn(kNameCol)) << "seg=" << seg.name;
     // Wrong-column-id negative lookups (sweep).
@@ -2104,7 +2103,7 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   constexpr uint64_t kBigRows = 2048;
   constexpr std::string_view kBigSeg = "_big";
   {
-    irs::ColWriter w{dir, kBigSeg, db};
+    irs::ColWriter w{db, dir.Tracker(kBigSeg)};
     auto& id_w =
       w.OpenColumn(kIdCol, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     auto& name_w = w.OpenColumn(kNameCol, duckdb::LogicalType::BLOB,
@@ -2115,11 +2114,11 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
       irs::bstring name_buf;
       {
         irs::tests::BstringDataOutput out{id_buf};
-        irs::WriteStr(out, std::to_string(3000 + i));
+        tests::WriteStr(out, std::to_string(3000 + i));
       }
       {
         irs::tests::BstringDataOutput out{name_buf};
-        irs::WriteStr(out, std::string{"name_"} + std::to_string(3000 + i));
+        tests::WriteStr(out, std::string{"name_"} + std::to_string(3000 + i));
       }
       irs::tests::AppendBlob(id_w, doc, {id_buf.data(), id_buf.size()});
       irs::tests::AppendBlob(name_w, doc, {name_buf.data(), name_buf.size()});
@@ -2127,15 +2126,15 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, kBigSeg, db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, kBigSeg);
     const auto* id_col = r.Column(kIdCol);
     const auto* name_col = r.Column(kNameCol);
     ASSERT_NE(id_col, nullptr);
     ASSERT_NE(name_col, nullptr);
     EXPECT_EQ(id_col->RowCount(), kBigRows);
     EXPECT_EQ(name_col->RowCount(), kBigRows);
-    EXPECT_GE(id_col->DataRgCount(), 2u);
-    EXPECT_GE(name_col->DataRgCount(), 2u);
+    EXPECT_GE(id_col->DataBlocks().size(), 2u);
+    EXPECT_GE(name_col->DataBlocks().size(), 2u);
     // Sample probes at row-group boundaries on both columns.
     const std::vector<uint64_t> boundary_rows = {
       0, 1, 511, 512, 513, 1023, 1024, 1025, 1535, 1536, 1537, kBigRows - 1};
@@ -2184,14 +2183,14 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
         irs::bstring name_buf;
         if (with_byte) {
           irs::tests::BstringDataOutput out{id_buf};
-          irs::WriteStr(out, std::string_view{"x", 1});
+          tests::WriteStr(out, std::string_view{"x", 1});
           irs::tests::BstringDataOutput out2{name_buf};
-          irs::WriteStr(out2, std::string_view{"y", 1});
+          tests::WriteStr(out2, std::string_view{"y", 1});
         } else {
           irs::tests::BstringDataOutput out{id_buf};
-          irs::WriteStr(out, std::string_view{});
+          tests::WriteStr(out, std::string_view{});
           irs::tests::BstringDataOutput out2{name_buf};
-          irs::WriteStr(out2, std::string_view{});
+          tests::WriteStr(out2, std::string_view{});
         }
         irs::tests::AppendBlob(id_w, doc, {id_buf.data(), id_buf.size()});
         irs::tests::AppendBlob(name_w, doc, {name_buf.data(), name_buf.size()});
@@ -2292,10 +2291,10 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigIdCol = 500;
   constexpr irs::field_id kBigNameCol = 501;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "same_col_empty_repeat_rg", db};
+    irs::ColWriter w{db, dir.Tracker("same_col_empty_repeat_rg")};
     auto& id_w = w.OpenColumn(kBigIdCol, duckdb::LogicalType::BLOB,
                               {.row_group_size = 512});
     auto& name_w = w.OpenColumn(kBigNameCol, duckdb::LogicalType::BLOB,
@@ -2307,12 +2306,12 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
       irs::bstring name_buf;
       {
         irs::tests::BstringDataOutput out{id_buf};
-        irs::WriteStr(
+        tests::WriteStr(
           out, with_byte ? std::string_view{"x", 1} : std::string_view{});
       }
       {
         irs::tests::BstringDataOutput out{name_buf};
-        irs::WriteStr(
+        tests::WriteStr(
           out, with_byte ? std::string_view{"y", 1} : std::string_view{});
       }
       irs::tests::AppendBlob(id_w, doc, {id_buf.data(), id_buf.size()});
@@ -2321,16 +2320,16 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "same_col_empty_repeat_rg", db,
-                     irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r =
+      irs::tests::OpenColReader(dir, "same_col_empty_repeat_rg");
     const auto* id_col = r.Column(kBigIdCol);
     const auto* name_col = r.Column(kBigNameCol);
     ASSERT_NE(id_col, nullptr);
     ASSERT_NE(name_col, nullptr);
     EXPECT_EQ(id_col->RowCount(), kBigRows);
     EXPECT_EQ(name_col->RowCount(), kBigRows);
-    EXPECT_GE(id_col->DataRgCount(), 2u);
-    EXPECT_GE(name_col->DataRgCount(), 2u);
+    EXPECT_GE(id_col->DataBlocks().size(), 2u);
+    EXPECT_GE(name_col->DataBlocks().size(), 2u);
 
     // Probes at row-group boundaries on both columns.
     const std::vector<uint64_t> boundary_rows = {
@@ -2486,10 +2485,10 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
   // kBigRows=2049 we span 5 row groups (4 full, 1 partial).
   constexpr uint64_t kBigRows = 2049;
   constexpr irs::field_id kBigId = 600;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "sparse_dense_block_rg", db};
+    irs::ColWriter w{db, dir.Tracker("sparse_dense_block_rg")};
     auto& cw =
       w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
@@ -2504,13 +2503,12 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "sparse_dense_block_rg", db,
-                     irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "sparse_dense_block_rg");
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
     EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Per-row check across the rg-boundary gap.
     {
@@ -2724,10 +2722,10 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
   constexpr uint64_t kBigRows = 2048;
   constexpr irs::field_id kBigDenseId = 700;
   constexpr irs::field_id kBigSparseId = 701;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "border_case_rg", db};
+    irs::ColWriter w{db, dir.Tracker("border_case_rg")};
     auto& dense = w.OpenColumn(kBigDenseId, duckdb::LogicalType::BLOB,
                                {.row_group_size = 512});
     auto& sparse = w.OpenColumn(kBigSparseId, duckdb::LogicalType::BLOB,
@@ -2752,15 +2750,15 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "border_case_rg", db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "border_case_rg");
     const auto* dense_col = r.Column(kBigDenseId);
     const auto* sparse_col = r.Column(kBigSparseId);
     ASSERT_NE(dense_col, nullptr);
     ASSERT_NE(sparse_col, nullptr);
     EXPECT_EQ(dense_col->RowCount(), kBigRows);
     EXPECT_EQ(sparse_col->RowCount(), kBigRows);
-    EXPECT_GE(dense_col->DataRgCount(), 2u);
-    EXPECT_GE(sparse_col->DataRgCount(), 2u);
+    EXPECT_GE(dense_col->DataBlocks().size(), 2u);
+    EXPECT_GE(sparse_col->DataBlocks().size(), 2u);
 
     // Dense column at boundaries.
     const std::vector<uint64_t> boundary_rows = {
@@ -2922,10 +2920,10 @@ TEST_P(FormatTestCase, columns_issue700) {
   // spans multiple row groups within the same scale (8 rgs for 4097 rows).
   constexpr uint64_t kBigRows = STANDARD_VECTOR_SIZE * 2 + 1;  // 4097
   constexpr irs::field_id kBigColId = 800;
-  irs::MemoryDirectory dir;
   auto& db = ::irs::DuckDBEngine::Instance().instance();
+  IndexDir dir{db, TestEnv::MemoryRoot()};
   {
-    irs::ColWriter w{dir, "issue700_rg", db};
+    irs::ColWriter w{db, dir.Tracker("issue700_rg")};
     auto& cw = w.OpenColumn(kBigColId, duckdb::LogicalType::BLOB,
                             {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
@@ -2938,11 +2936,11 @@ TEST_P(FormatTestCase, columns_issue700) {
     w.Commit(kBigRows);
   }
   {
-    irs::ColReader r{dir, "issue700_rg", db, irs::IOAdvice::SEQUENTIAL};
+    irs::ColReader r = irs::tests::OpenColReader(dir, "issue700_rg");
     const auto* col = r.Column(kBigColId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Probes at row-group + vector-size boundaries.
     const std::vector<uint64_t> boundary_rows = {0,

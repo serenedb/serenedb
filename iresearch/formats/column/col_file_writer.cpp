@@ -45,7 +45,7 @@ void FaultIn(std::string_view bytes) noexcept {
   }
 }
 
-void WriteOut(IndexOutput& out, const auto& chunks) {
+void WriteOut(duckdb::BufferedFileWriter& out, const auto& chunks) {
   for (const auto& chunk : chunks) {
     out.WriteData(chunk.data.get(), chunk.size);
   }
@@ -53,7 +53,7 @@ void WriteOut(IndexOutput& out, const auto& chunks) {
 
 }  // namespace
 
-ColFileWriter::ColFileWriter(IndexOutput::ptr out)
+ColFileWriter::ColFileWriter(Output out)
   : _out{std::move(out)}, _end{_out->Position()} {}
 
 uint64_t ColFileWriter::Position() {
@@ -83,12 +83,13 @@ void ColFileWriter::Flush() {
   _out->Flush();
 }
 
-IndexOutput::ptr ColFileWriter::Finish() {
+ColFileWriter::Output ColFileWriter::Finish() {
   Drain();
   return std::move(_out);
 }
 
-IndexOutput::ptr ColFileWriter::Finish(format_utils::FooterWriter footer) {
+ColFileWriter::Output ColFileWriter::Finish(
+  format_utils::FooterWriter footer) {
   Drain();
   format_utils::WriteFooter(*_out, footer);
   return std::move(_out);

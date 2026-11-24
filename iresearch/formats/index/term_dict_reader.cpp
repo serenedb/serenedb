@@ -43,11 +43,15 @@ constexpr size_t kBatchKeyBytes = 4096;
 
 template<typename Ranges>
 void DropBefore(Ranges& ranges, uint64_t at) {
-  const auto rest = absl::c_find_if(
-    ranges, [&](const FileRange& range) { return range.second > at; });
+  const auto rest =
+    absl::c_find_if(ranges, [&](const duckdb::FileRange& range) {
+      return range.offset + range.size > at;
+    });
   ranges.erase(ranges.begin(), rest);
-  if (!ranges.empty()) {
-    ranges.front().first = std::max(ranges.front().first, at);
+  if (!ranges.empty() && ranges.front().offset < at) {
+    auto& first = ranges.front();
+    first.size -= at - first.offset;
+    first.offset = at;
   }
 }
 
@@ -99,23 +103,6 @@ uint32_t Find(const BlockView& view, Probe key,
     return kNoEntry;
   }
   return entry;
-}
-
-const byte_type* MapAt(IndexInput& in, uint64_t offset, uint64_t size,
-                       bstring& copy) {
-  if (const auto* p = in.ReadStable(offset, size)) {
-    return p;
-  }
-  copy.resize(size);
-  in.ReadData(offset, copy.data(), size);
-  return copy.data();
-}
-
-IndexInput& Reopened(BlockBuffer& buffer, const IndexInput& in) {
-  if (!buffer.in) {
-    buffer.in = in.Reopen();
-  }
-  return *buffer.in;
 }
 
 PostingMeta DecodeRecord(const TermReaderImpl& field, const BlockView& view,
@@ -208,8 +195,7 @@ class TermIteratorImpl : public SeekTermIterator {
 }  // namespace
 
 TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
-                               bytes_view prefix, IndexInput& in,
-                               const Separators& separators)
+                               bytes_view prefix, const Separators& separators)
   : _owner{&owner},
     _meta{head.id, head.features},
     _terms{head.term_count},
@@ -227,7 +213,6 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   }
   _prefix_size = static_cast<uint32_t>(prefix.size());
   key_width = head.width;
-  uint64_t bytes = 0;
   _min_key.assign(prefix);
   _min_key.append(ViewCast<byte_type>(std::string_view{head.min}));
   _max_key.assign(prefix);
@@ -245,11 +230,9 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
   uint64_t inline_size = 0;
   if (_blocks > 1) {
     _root = Root{Slice(separators, _first_block, _blocks - 1), key_width != 0};
-    bytes += _root.MemoryBytes();
     if (!head.text.prefixes.empty()) {
       _prefixes = std::make_unique<PrefixIndex>(DecodePrefixes(
         ViewCast<byte_type>(std::string_view{head.text.prefixes}), head.id));
-      bytes += _prefixes->MemoryBytes();
     }
   } else if (!head.text.prefixes.empty()) {
     corrupted();
@@ -262,12 +245,12 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
     }
   }
   if (!head.ranges.counts.empty()) {
-    bytes += ReadRanges(owner, in, head.ranges);
+    ReadRanges(owner, head.ranges);
   } else if (head.ranges.size != 0) {
     corrupted();
   }
   if (_blocks == 1) {
-    _small = owner.CopyBlock(_first_block, in.Length());
+    _small = owner.CopyBlock(_first_block, owner.Input().GetSize());
     if (inline_size != 0) {
       _small_inline = {owner.InlineRegion() + _inline_base, inline_size};
       if (owner.Base()) {
@@ -278,11 +261,9 @@ TermReaderImpl::TermReaderImpl(FieldReader& owner, const FieldHead& head,
       }
     }
   }
-  owner.Account(bytes);
 }
 
-uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
-                                    const RangesHead& ranges) {
+void TermReaderImpl::ReadRanges(FieldReader& owner, const RangesHead& ranges) {
   const auto corrupted = [&] { Corrupted("range levels", _meta.id); };
   const auto offset = ranges.offset;
   const auto size = ranges.size;
@@ -294,7 +275,7 @@ uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
       min().substr(0, _range_prefix) != max().substr(0, _range_prefix)) {
     corrupted();
   }
-  const auto* p = owner.Load(in, owner.RangesBegin() + offset, size).data();
+  const auto* p = owner.Load(owner.RangesBegin() + offset, size).data();
   const auto* const end = p + size;
   const uint64_t stride = key_width - _range_prefix;
   _levels.reserve(height);
@@ -329,7 +310,6 @@ uint64_t TermReaderImpl::ReadRanges(FieldReader& owner, IndexInput& in,
   if (static_cast<uint64_t>(end - p) != kSlack) {
     corrupted();
   }
-  return _levels.capacity() * sizeof(RangeLevel);
 }
 
 void TermReaderImpl::SampleTerms(
@@ -366,7 +346,7 @@ void TermReaderImpl::SampleTerms(
 }
 
 const byte_type* TermReaderImpl::Block(size_t block,
-                                       BlockBuffer& buffer) const {
+                                       PinnedRange& pinned) const {
   if (_small) {
     return _small;
   }
@@ -374,25 +354,36 @@ const byte_type* TermReaderImpl::Block(size_t block,
   if (const auto* base = _owner->Base()) {
     return base + offset;
   }
-  auto& in = Reopened(buffer, _owner->Input());
-  return MapAt(in, offset,
-               std::min(BlockOffset(block + 1), in.Length()) - offset,
-               buffer.copy);
+  const auto& in = _owner->Input();
+  const uint64_t end = std::min(BlockOffset(block + 1), in.GetSize());
+  if (offset < pinned.start || end - pinned.start > pinned.pinned.Size()) {
+    const uint64_t cached = in.BlockSize();
+    const uint64_t first = offset - offset % cached;
+    const uint64_t last = std::min(first + cached, in.GetSize());
+    pinned.start = end <= last ? first : offset;
+    pinned.pinned = in.Pin(pinned.start, std::max(end, last) - pinned.start);
+  }
+  return pinned.pinned.Ptr() + (offset - pinned.start);
 }
 
 void TermReaderImpl::PrefetchLookup(uint32_t block) const {
   if (Small() || !_owner->Base()) {
     return;
   }
-  const auto span = InlineSpan(block);
-  if (span.from == span.to) {
-    return;
+  if (const auto span = InlineSpan(block); span.from != span.to) {
+    HintBlock(block, span);
   }
-  const std::array ranges{
-    FileRange{BlockOffset(block), BlockOffset(block + 1)},
-    FileRange{span.from, span.to},
-  };
-  HintRanges(_owner->Input(), ranges);
+}
+
+bool TermReaderImpl::HintBlock(uint32_t block, InlinePages::Span span) const {
+  const auto& in = _owner->Input();
+  const uint64_t offset = BlockOffset(block);
+  bool hinted =
+    in.Hint(offset, std::min(BlockOffset(block + 1), in.GetSize()) - offset);
+  if (span.from != span.to) {
+    hinted |= in.Hint(span.from, span.to - span.from);
+  }
+  return hinted;
 }
 
 SeekTermIterator::ptr TermReaderImpl::iterator() const {
@@ -428,8 +419,8 @@ PostingMeta TermReaderImpl::Lookup(bytes_view term) const {
   const auto probe = padded.Assign(KeyPrefix(), term);
   const uint32_t block = BlockOf(probe);
   PrefetchLookup(block);
-  BlockBuffer buffer;
-  const auto view = Parse(Block(block, buffer), Fsst());
+  PinnedRange pinned;
+  const auto view = Parse(Block(block, pinned), Fsst());
   const auto entry = Find(view, probe, Fsst());
   if (entry == kNoEntry) {
     return {};
@@ -447,8 +438,8 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   };
   containers::SmallVector<Probed, kBatchTerms> probes;
   containers::SmallVector<byte_type, kBatchKeyBytes> keys;
-  containers::SmallVector<FileRange, kBatchTerms> blocks;
-  containers::SmallVector<FileRange, kBatchTerms> inlines;
+  containers::SmallVector<duckdb::FileRange, kBatchTerms> blocks;
+  containers::SmallVector<duckdb::FileRange, kBatchTerms> inlines;
   const auto prefix = KeyPrefix();
   const bool mapped = _owner->Base() != nullptr;
   uint32_t last = kNoBlock;
@@ -486,10 +477,13 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
       block = last == kNoBlock ? BlockOf(probe) : BlockFrom(last, probe);
       if (block != last) {
         ++visited;
-        AppendRange(blocks, BlockOffset(block), BlockOffset(block + 1));
+        const uint64_t offset = BlockOffset(block);
+        blocks.push_back(
+          {.offset = offset, .size = BlockOffset(block + 1) - offset});
         if (mapped) {
           if (const auto span = InlineSpan(block); span.from != span.to) {
-            AppendRange(inlines, span.from, span.to);
+            inlines.push_back(
+              {.offset = span.from, .size = span.to - span.from});
           }
         }
       }
@@ -505,12 +499,11 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   const auto& in = _owner->Input();
   const bool hinted = visited > 1 || !inlines.empty();
   if (hinted) {
-    const auto budget = HintRanges(in, blocks);
-    HintRanges(in, inlines, budget);
+    in.Hint(inlines, in.Hint(blocks));
   }
-  auto epoch = file_utils::ResidencyEpoch();
+  auto epoch = duckdb::PageResidency::Epoch();
 
-  BlockBuffer buffer;
+  PinnedRange pinned;
   BlockView view{};
   uint32_t parsed = kNoBlock;
   auto decoded = kNoEntry;
@@ -521,16 +514,15 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
     if (probe.block != parsed) {
       parsed = probe.block;
       const uint64_t offset = BlockOffset(parsed);
-      if (hinted && file_utils::Evicted(
-                      in, offset, BlockOffset(parsed + 1) - offset, epoch)) {
+      if (hinted &&
+          in.Evicted(offset, BlockOffset(parsed + 1) - offset, epoch)) {
         DropBefore(blocks, offset);
         if (!inlines.empty()) {
           DropBefore(inlines, InlineSpan(parsed).from);
         }
-        const auto budget = HintRanges(in, blocks);
-        HintRanges(in, inlines, budget);
+        in.Hint(inlines, in.Hint(blocks));
       }
-      view = Parse(Block(parsed, buffer), Fsst());
+      view = Parse(Block(parsed, pinned), Fsst());
       decoded = kNoEntry;
     }
     const auto entry =
@@ -557,8 +549,14 @@ void TermReaderImpl::LookupBatch(size_t count, TermAt term,
   }
 }
 
-std::unique_ptr<IndexInput> TermReaderImpl::ReopenPayload() const {
-  return _owner->Postings().ReopenPayload();
+bool TermReaderImpl::Prefetch(bytes_view term) const {
+  if (Small() || Excludes(term)) {
+    return false;
+  }
+  PaddedKey padded;
+  const auto block = BlockOf(padded.Assign(KeyPrefix(), term));
+  return HintBlock(block,
+                   _owner->Base() ? InlineSpan(block) : InlinePages::Span{});
 }
 
 PostingsHandles TermReaderImpl::Handles() const noexcept {

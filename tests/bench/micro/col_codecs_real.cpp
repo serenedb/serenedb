@@ -30,6 +30,11 @@
 #include <duckdb.hpp>
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/duck_table_entry.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/memory_file_system.hpp>
+#include <duckdb/common/memory_mapped_file.hpp>
+#include <duckdb/common/page_residency.hpp>
+#include <duckdb/common/query_context.hpp>
 #include <duckdb/common/types/vector_cache.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/scalar/string_functions.hpp>
@@ -42,6 +47,7 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/data_table.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/storage_index.hpp>
 #include <duckdb/storage/table/scan_state.hpp>
@@ -54,9 +60,9 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/string.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <map>
@@ -82,6 +88,7 @@ uint64_t RequestedRows() {
 
 constexpr irs::field_id kField = 0;
 constexpr std::string_view kSeg = "bench_seg";
+constexpr std::string_view kRoot = "memory://bench";
 
 duckdb::DatabaseInstance& CsDb() {
   return irs::DuckDBEngine::Instance().instance();
@@ -292,7 +299,6 @@ bool Cold() { return std::getenv("SDB_BENCH_COLD") != nullptr; }
 bool Stale() { return std::getenv("SDB_BENCH_STALE") != nullptr; }
 
 struct ColSeg {
-  std::unique_ptr<irs::Directory> dir;
   std::filesystem::path path;
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
@@ -317,12 +323,12 @@ void MakeSegDirectory(ColSeg& seg, const ColArm& arm) {
   seg.path = SegRoot() / (std::string{numeric ? "num_" : "col_"} + arm.name);
   std::filesystem::remove_all(seg.path);
   std::filesystem::create_directories(seg.path);
-  seg.dir = std::make_unique<irs::MMapDirectory>(seg.path);
 }
 
 void OpenReader(ColSeg& seg) {
-  seg.reader = std::make_unique<irs::ColReader>(*seg.dir, std::string{kSeg},
-                                                CsDb(), irs::IOAdvice::RANDOM);
+  seg.reader = std::make_unique<irs::ColReader>(
+    CsDb(), duckdb::FileSystem::GetFileSystem(CsDb()), seg.path.string(), kSeg,
+    true, duckdb::MappedFileAccess::RANDOM);
   seg.col = seg.reader->Column(kField);
   if (seg.col == nullptr) {
     std::fprintf(stderr, "col_codecs_real: column missing\n");
@@ -353,9 +359,8 @@ void EvictUnderWarmMap(ColSeg& seg) {
     ::fdatasync(fd);
     ::close(fd);
   }
-  irs::ReadContext ctx{*seg.reader};
-  auto& in = ctx.In();
-  const uint64_t length = in.Length();
+  const auto* file = seg.reader->File();
+  const uint64_t length = file->GetSize();
   uint64_t from = 0;
   if (const char* e = std::getenv("SDB_BENCH_STALE_FROM")) {
     from = length * std::strtoull(e, nullptr, 10) / 100;
@@ -364,17 +369,19 @@ void EvictUnderWarmMap(ColSeg& seg) {
   if (const char* e = std::getenv("SDB_BENCH_STALE_BYTES")) {
     bytes = std::min<uint64_t>(bytes, std::strtoull(e, nullptr, 10));
   }
-  in.Evict(from, bytes);
+  file->Evict(from, bytes);
   static bool reported = false;
   if (!reported) {
     reported = true;
+    const bool resident = bytes != 0 && duckdb::PageResidency::IsResident(
+                                          file->Data() + from, bytes);
     std::fprintf(stderr,
                  "stale: evicted from %llu of %llu, resident after evict %d, "
                  "warm bytes %llu\n",
                  static_cast<unsigned long long>(from),
                  static_cast<unsigned long long>(length),
-                 static_cast<int>(in.Resident(from, bytes)),
-                 static_cast<unsigned long long>(in.Warm(0, length)));
+                 static_cast<int>(resident),
+                 static_cast<unsigned long long>(file->Warm(0, length)));
   }
 }
 
@@ -408,9 +415,9 @@ struct Built {
   uint64_t ours = 0;
 };
 
-void ColBuild(irs::Directory& dir, const ColArm& arm) {
+void ColBuild(irs::FileTracker& tracker, const ColArm& arm) {
   const auto& data = Data();
-  irs::ColWriter w{dir, kSeg, CsDb(), Tier()};
+  irs::ColWriter w{CsDb(), tracker, Tier()};
   auto& cw = w.OpenColumn(
     kField, data.type,
     {.row_group_size = RowGroupSize(),
@@ -425,10 +432,11 @@ void ColBuild(irs::Directory& dir, const ColArm& arm) {
   w.Commit(pos);
 }
 
-Built Measure(irs::Directory& dir, const ColArm& arm) {
+Built Measure(duckdb::FileSystem& fs, std::string_view root,
+              const ColArm& arm) {
   const auto& data = Data();
-  irs::ColReader reader{dir, std::string{kSeg}, CsDb(),
-                        irs::IOAdvice::SEQUENTIAL};
+  irs::ColReader reader{CsDb(), fs,   root,
+                        kSeg,   true, duckdb::MappedFileAccess::SEQUENTIAL};
   const auto* col = reader.Column(kField);
   if (col == nullptr) {
     std::fprintf(stderr, "col_codecs_real: column missing\n");
@@ -440,9 +448,9 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
                                  : std::span<const irs::ColumnBlockMeta>{};
   if (std::getenv("SDB_BENCH_BREAKDOWN") &&
       data.type.InternalType() == duckdb::PhysicalType::VARCHAR) {
-    auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
-    std::vector<uint8_t> file(in->Length());
-    in->ReadData(file.data(), file.size());
+    const auto file = irs::ReadWhole<irs::bstring>(
+      duckdb::QueryContext{}, fs,
+      duckdb::FileSystem::JoinPath(root, irs::FileName(kSeg)));
     uint64_t parts[7]{};
     for (const auto& block : data_blocks) {
       if (!block.codec || block.byte_size == 0 ||
@@ -473,9 +481,9 @@ Built Measure(irs::Directory& dir, const ColArm& arm) {
                  static_cast<unsigned long long>(parts[6]));
   }
   if (std::getenv("SDB_BENCH_HASH")) {
-    auto in = dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
-    std::vector<uint8_t> file(in->Length());
-    in->ReadData(file.data(), file.size());
+    const auto file = irs::ReadWhole<irs::bstring>(
+      duckdb::QueryContext{}, fs,
+      duckdb::FileSystem::JoinPath(root, irs::FileName(kSeg)));
     uint64_t hash = 0xcbf29ce484222325ULL;
     const auto mix = [&](const auto& blocks) {
       auto shared = std::numeric_limits<uint64_t>::max();
@@ -702,10 +710,10 @@ void PrintSegmentInfo(const ColArm& arm, const ColSeg& seg) {
   uint64_t row = 0;
   for (const auto& block : seg.col->DataBlocks()) {
     std::string key{magic_enum::enum_name(block.codec->type)};
-    if (block.codec->decompression->get_segment_info && block.byte_size != 0) {
+    if (block.codec->decompression.get_segment_info && block.byte_size != 0) {
       window = seg.col->Locate(row, window);
       auto segment = seg.col->OpenSegment(window.block, ctx);
-      auto info = block.codec->decompression->get_segment_info(*segment);
+      auto info = block.codec->decompression.get_segment_info(*segment);
       for (const auto* name :
            {"transform", "leaf", "stored", "shuffled", "codec", "shape",
             "dictionary", "codes_transform"}) {
@@ -732,11 +740,11 @@ void PrintBlocks(const ColArm& arm, const ColSeg& seg) {
   uint64_t row = 0;
   for (const auto& block : seg.col->DataBlocks()) {
     std::string info;
-    if (block.codec->decompression->get_segment_info && block.byte_size != 0) {
+    if (block.codec->decompression.get_segment_info && block.byte_size != 0) {
       window = seg.col->Locate(row, window);
       const auto segment = seg.col->OpenSegment(window.block, ctx);
       for (const auto& [name, value] :
-           block.codec->decompression->get_segment_info(*segment)) {
+           block.codec->decompression.get_segment_info(*segment)) {
         info += " " + name + "=" + value;
       }
     }
@@ -756,8 +764,11 @@ ColSeg& GetColSeg(const ColArm* arm) {
   if (!slot) {
     slot = std::make_unique<ColSeg>();
     MakeSegDirectory(*slot, *arm);
-    ColBuild(*slot->dir, *arm);
-    const auto built = Measure(*slot->dir, *arm);
+    auto& fs = duckdb::FileSystem::GetFileSystem(CsDb());
+    const auto root = slot->path.string();
+    irs::FileTracker tracker{fs, root, kSeg};
+    ColBuild(tracker, *arm);
+    const auto built = Measure(fs, root, *arm);
     slot->bytes = built.bytes;
     slot->ours = built.ours;
     OpenReader(*slot);
@@ -781,13 +792,15 @@ void Counters(benchmark::State& state, const ColSeg& seg) {
 
 void ColSeal(benchmark::State& state, const ColArm* arm) {
   for (auto _ : state) {
-    irs::MemoryDirectory dir{};
-    ColBuild(dir, *arm);
-    benchmark::DoNotOptimize(&dir);
+    duckdb::MemoryFileSystem fs;
+    irs::FileTracker tracker{fs, kRoot, kSeg};
+    ColBuild(tracker, *arm);
+    benchmark::DoNotOptimize(&fs);
   }
-  irs::MemoryDirectory dir{};
-  ColBuild(dir, *arm);
-  const auto built = Measure(dir, *arm);
+  duckdb::MemoryFileSystem fs;
+  irs::FileTracker tracker{fs, kRoot, kSeg};
+  ColBuild(tracker, *arm);
+  const auto built = Measure(fs, kRoot, *arm);
   Counters(state, built.bytes, built.ours);
 }
 

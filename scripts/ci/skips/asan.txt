@@ -62,8 +62,8 @@ gtest:iresearch-tests:Families/TokenizerFuzzLoad.ManyValues/nearest_neighbors_3	
 gtest:iresearch-tests:Families/TokenizerInversionLoad.ManyDocuments/nearest_neighbors	slow	takes 6 min under asan; dev runs it
 gtest:iresearch-tests:Families/TokenizerInversionLoad.ManyDocuments/ngram	slow	takes 5 min under asan; dev runs it
 gtest:iresearch-tests:Families/TokenizerInversionLoad.ManyDocuments/path_hierarchy	slow	takes 6 min under asan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/fs	slow	takes 4 min under asan; dev runs it
-gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs3/fs	slow	takes 3 min under asan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/local	slow	takes 3 min under asan; dev runs it
+gtest:iresearch-tests:Format15Test/Format15TestCase.LongPostingsStressOffs1/sim	slow	takes 3 min under asan; dev runs it
 gtest:iresearch-tests:TokenizerFuzz.BlockFillMatchesPerValue	slow	takes 8 min under asan; dev runs it
 gtest:iresearch-tests:TokenizerFuzz.EdgeCases	slow	takes 9 min under asan; dev runs it
 gtest:iresearch-tests:TokenizerInversion.PostingsMatchEmittedTokens	slow	takes 6 min under asan; dev runs it
@@ -71,10 +71,7 @@ gtest:iresearch-tests:TokenizerLifecycle.PooledInstancesStayEquivalent	slow	take
 gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.conjunction_walk_is_the_intersection/memory	slow	takes 6 min under asan; dev runs it
 gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.walks_match_re2_perl0/memory	slow	takes 9 min under asan; dev runs it
 gtest:iresearch-tests:acceptor_walk_index_test/AcceptorWalkIndexTestCase.walks_match_re2_perl2/memory	slow	takes 6 min under asan; dev runs it
-gtest:iresearch-tests:index_test_15/IndexTestCase.compact_progress/mmap	slow	takes 3 min under asan; dev runs it
-gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs/fs	slow	takes 7 min under asan; dev runs it
 gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_batched/memory	slow	takes 4 min under asan; dev runs it
-gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_batched/mmap	slow	takes 5 min under asan; dev runs it
 gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_big/memory	slow	takes 15 min under asan; dev runs it
-gtest:iresearch-tests:index_test_15/IndexTestCase.s2sequence/fs	slow	takes 6 min under asan; dev runs it
+gtest:iresearch-tests:index_test_15/IndexTestCase.europarl_docs_big/sim	slow	takes 7 min under asan; dev runs it
 iresearch-load:LoadTest	slow	takes 12 min under asan; dev runs it

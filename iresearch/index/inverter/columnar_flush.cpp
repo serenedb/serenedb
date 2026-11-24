@@ -32,6 +32,7 @@
 #include <variant>
 
 #include "iresearch/analysis/text/term_view.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -223,11 +224,8 @@ void ScatteredField::Reset(const FieldInverter& field, const DocOrder& order) {
   const auto nocc = PrefixSums();
   SDB_ASSERT(nocc == field.Log().Size());
   field.VisitLog([&](const auto& log) {
-    if (log.Refs().Size() != 0) {
-      Scatter<true>(log, nocc);
-    } else {
-      Scatter<false>(log, nocc);
-    }
+    Resolve(log.Refs().Size() != 0,
+            [&]<bool Refs> { Scatter<Refs>(log, nocc); });
     if (!order.Empty()) {
       RemapLogDocs<std::decay_t<decltype(log)>::kLayout>(order);
     }

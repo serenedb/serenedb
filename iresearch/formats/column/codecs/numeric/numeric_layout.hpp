@@ -37,6 +37,7 @@
 #include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
 /*
 Data layout per segment, one block of one column holding a whole row group:
@@ -254,7 +255,7 @@ constexpr uint32_t OwnHeaderSize(Shape shape, bool packed) noexcept {
     case Shape::Dictionary:
       return sizeof(DictionaryHeader);
   }
-  return 0;
+  SDB_UNREACHABLE();
 }
 
 constexpr std::string_view TransformName(Shape shape,
@@ -270,7 +271,7 @@ constexpr std::string_view TransformName(Shape shape,
     case Shape::Dictionary:
       return packed ? "dict_bitpacking" : "dict";
   }
-  return "raw";
+  SDB_UNREACHABLE();
 }
 
 inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,
@@ -296,8 +297,7 @@ inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,
          (LeafOf(codec) == ByteCodec::None && !(f.flags & kNumericShuffled) &&
           f.stored == f.width && f.frame_log2 == kBitpackingFrameLog2)) &&
         f.frame_log2 >= 10 && f.frame_log2 <= 20 &&
-        rows <= std::numeric_limits<uint32_t>::max() &&
-        (f.frame_count != 0 || rows == 0) &&
+        rows <= std::numeric_limits<uint32_t>::max() && f.frame_count != 0 &&
         (!packed || shape == Shape::Runs ||
          f.frame_count == (rows + kBitpackingFrameRows - 1) /
                             kBitpackingFrameRows))) [[unlikely]] {
@@ -324,41 +324,6 @@ inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,
   f.off_frames = static_cast<uint32_t>(frames);
   f.off_data = static_cast<uint32_t>(data);
   return f;
-}
-
-template<typename F>
-std::invoke_result_t<F&, std::type_identity<int8_t>> WithNumericType(
-  duckdb::PhysicalType physical, F&& f) {
-  switch (physical) {
-    case duckdb::PhysicalType::BOOL:
-    case duckdb::PhysicalType::INT8:
-      return f(std::type_identity<int8_t>{});
-    case duckdb::PhysicalType::INT16:
-      return f(std::type_identity<int16_t>{});
-    case duckdb::PhysicalType::INT32:
-      return f(std::type_identity<int32_t>{});
-    case duckdb::PhysicalType::INT64:
-      return f(std::type_identity<int64_t>{});
-    case duckdb::PhysicalType::UINT8:
-      return f(std::type_identity<uint8_t>{});
-    case duckdb::PhysicalType::UINT16:
-      return f(std::type_identity<uint16_t>{});
-    case duckdb::PhysicalType::UINT32:
-      return f(std::type_identity<uint32_t>{});
-    case duckdb::PhysicalType::UINT64:
-    case duckdb::PhysicalType::LIST:
-      return f(std::type_identity<uint64_t>{});
-    case duckdb::PhysicalType::INT128:
-      return f(std::type_identity<duckdb::hugeint_t>{});
-    case duckdb::PhysicalType::UINT128:
-      return f(std::type_identity<duckdb::uhugeint_t>{});
-    case duckdb::PhysicalType::FLOAT:
-      return f(std::type_identity<float>{});
-    case duckdb::PhysicalType::DOUBLE:
-      return f(std::type_identity<double>{});
-    default:
-      return {};
-  }
 }
 
 }  // namespace irs::codecs

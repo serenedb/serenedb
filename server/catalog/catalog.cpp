@@ -59,9 +59,11 @@
 #include <utility>
 #include <vector>
 
+#include "auth/enforce.h"
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/inverted_index.h"
+#include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/system_table.h"
 #include "catalog/foreign_database.h"
@@ -77,7 +79,9 @@
 #include "connector/view_index_bind.h"
 #include "pg/catalog/engine/registry.h"
 #include "pg/catalog/oids.h"
+#include "pg/connection_context.h"
 #include "query/config.h"
+#include "query/config_variable_names.h"
 #include "search/store.h"
 #include "search/table_keys.h"
 #include "search/writes.h"
@@ -193,7 +197,78 @@ void RefuseViewAlter(const duckdb::AlterTableInfo& info,
 }  // namespace
 
 std::string SereneDBCatalog::GetDBPath() {
-  return _directory ? _directory->Path().string() : std::string{};
+  return _directory ? _directory->Path() : std::string{};
+}
+
+std::string SereneDBCatalog::StoragePath(duckdb::CatalogTransaction transaction,
+                                         const duckdb::CatalogEntry& entry,
+                                         duckdb::idx_t tablespace) {
+  if (tablespace == 0 || InMemory()) {
+    return _directory->Path();
+  }
+  if (_foreign) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG(
+        "cannot attach \"", GetName().GetIdentifierName(), "\" read-only: ",
+        entry.type == duckdb::CatalogType::TABLE_ENTRY ? "table"
+                                                       : "inverted index",
+        " \"", entry.name.GetIdentifierName(), "\" is placed in a tablespace"));
+  }
+  auto& context = transaction.GetContext();
+  auto& cluster = ClusterOf(context);
+  return StoreDirOf(cluster.TablespaceDirectoryOf(
+    cluster.GetCatalogTransaction(context), tablespace));
+}
+
+void SereneDBCatalog::Place(duckdb::CatalogTransaction transaction,
+                            duckdb::CreateInfo& info,
+                            std::string_view refusal) {
+  const auto requested = std::exchange(info.tablespace, duckdb::Identifier{});
+  if (info.oid != 0 || !transaction.HasContext()) {
+    return;
+  }
+  info.tablespace_oid = 0;
+  auto& context = transaction.GetContext();
+  auto& cluster = ClusterOf(context);
+  const auto at = cluster.GetCatalogTransaction(context);
+  const bool named = !requested.empty();
+  duckdb::optional_ptr<duckdb::CatalogEntry> tablespace;
+  if (named) {
+    tablespace = &cluster.Tablespace(at, requested);
+  } else if (const auto name = ConnectionContext::Get(context)
+                                 .Get(kDefaultTablespaceSetting)
+                                 .value_or("");
+             !name.empty()) {
+    tablespace = cluster.Set(duckdb::CatalogType::TABLESPACE_ENTRY)
+                   .Get(at, duckdb::Identifier{name});
+  }
+  if (!tablespace) {
+    return;
+  }
+  if (tablespace->oid == pg::kPgGlobalTablespace) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("only shared relations can be placed in pg_global tablespace"));
+  }
+  duckdb::idx_t own = pg::kPgDefaultTablespace;
+  if (InMemory()) {
+    refusal = "temporary objects cannot be placed in a tablespace";
+  } else if (const auto database = cluster.LookupOid(at, GetAttached().oid)) {
+    own = database->Cast<DatabaseCatalogEntry>().Tablespace();
+  }
+  if (tablespace->oid == own) {
+    return;
+  }
+  if (!refusal.empty()) {
+    if (!named) {
+      return;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED), ERR_MSG(refusal));
+  }
+  auth::RequireTablespaceCreate(context, *tablespace);
+  info.dependencies.AddDependency(*tablespace);
+  info.tablespace_oid = tablespace->oid;
 }
 
 void SereneDBCatalog::LogSequenceValue(const duckdb::SequenceValue& value) {
@@ -226,6 +301,9 @@ void SereneDBCatalog::FinalizeLoad(
 
 void SereneDBCatalog::OnDetach(duckdb::ClientContext& context) {
   _detached.store(true, std::memory_order_release);
+  if (IsTemporaryCatalog()) {
+    ForEachJob(*this, [](JobCatalogEntry& job) { job.OnDrop(); });
+  }
   if (!_foreign) {
     std::vector<duckdb::Identifier> servers;
     _servers.ScanCommitted(
@@ -390,6 +468,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBCatalog::MakeTable(
   SDB_IF_FAILURE("unable_to_create") {
     THROW_SQL_ERROR(ERR_MSG("internal error"));
   }
+  Place(transaction, info.Base(), {});
   auto entry =
     duckdb::make_uniq<SearchTableEntry>(*this, schema, info, transaction);
   if (info.Base().oid == 0) {
@@ -410,6 +489,10 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBCatalog::MakeIndex(
   if (relation.type == duckdb::CatalogType::TABLE_ENTRY) {
     table = &relation.Cast<duckdb::TableCatalogEntry>();
   }
+  Place(transaction, info,
+        table ? "an index on a table is stored with the table and cannot be "
+                "placed in a tablespace"
+              : std::string_view{});
   auto entry =
     duckdb::make_uniq<InvertedIndexEntry>(*this, schema, info, table);
   if (info.oid == 0) {
@@ -419,7 +502,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SereneDBCatalog::MakeIndex(
     store->MergeIndexConfig(entry->oid, entry->Config());
   } else {
     entry->AdoptStorage(std::make_shared<search::Store>(
-      _directory, InMemory(), GetAttached().IsReadOnly(), GetOid(), entry->oid,
+      _directory, StoragePath(transaction, *entry, entry->Tablespace()),
+      InMemory(), GetAttached().IsReadOnly(), GetOid(), entry->oid,
       ResolveSettings(entry->options), entry->Config()->top_k_scorer, false));
   }
   return entry;
@@ -761,14 +845,14 @@ duckdb::DatabaseSize SereneDBCatalog::GetDatabaseSize(
   duckdb::DatabaseSize size;
   size.block_size =
     duckdb::Settings::Get<duckdb::DefaultBlockSizeSetting>(context);
-  ReadDatabase(GetName().GetIdentifierName(),
-               [&](const DatabaseCatalogEntry& database) {
-                 const auto& options = database.Options();
-                 if (const auto it = options.find(kBlockSizeSetting);
-                     it != options.end()) {
-                   size.block_size = it->second.GetValue<duckdb::idx_t>();
-                 }
-               });
+  ReadEntry<DatabaseCatalogEntry>(
+    GetName().GetIdentifierName(), [&](const DatabaseCatalogEntry& database) {
+      const auto& options = database.Options();
+      if (const auto it = options.find(kBlockSizeSetting);
+          it != options.end()) {
+        size.block_size = it->second.GetValue<duckdb::idx_t>();
+      }
+    });
   ForEachSearchStorage(
     *this,
     [&](SearchTableEntry& table) {

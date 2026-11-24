@@ -30,7 +30,7 @@
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/hnsw/hnsw_graph.hpp>
 #include <iresearch/formats/hnsw/hnsw_reader.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/search/ann/collector.hpp>
@@ -39,7 +39,6 @@
 #include <iresearch/search/detail/doc_collector.hpp>
 #include <iresearch/search/filters/vector_similarity_filter.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <memory>
@@ -50,6 +49,7 @@
 #include <yaclib/runtime/fair_thread_pool.hpp>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index/merge/support/segment_gen.hpp"
 #include "index/test_index_writer.hpp"
 #include "tests_shared.hpp"
 
@@ -131,7 +131,7 @@ float Distance(const std::vector<float>& l, const std::vector<float>& r) {
 std::shared_ptr<const irs::HnswData> Graph(const irs::SubReader& segment) {
   const auto* ann = segment.Ann(kVec);
   EXPECT_NE(nullptr, ann);
-  return irs::utils::downCast<const irs::HnswIndex>(*ann).Load(segment);
+  return irs::utils::downCast<const irs::HnswIndex>(*ann).Load();
 }
 
 double NeighborDistanceRatio(const irs::HnswGraph& graph, const Vectors& vecs) {
@@ -156,7 +156,7 @@ double NeighborDistanceRatio(const irs::HnswGraph& graph, const Vectors& vecs) {
          (spread / static_cast<double>(graph.Size()));
 }
 
-double Recall(const irs::DirectoryReader& reader, const Vectors& vecs,
+double Recall(const irs::CompositeReader& reader, const Vectors& vecs,
               const std::vector<bool>& present, uint32_t ef) {
   EXPECT_EQ(1U, reader.size());
   irs::VectorSimilarityScorer scorer;
@@ -226,7 +226,7 @@ TEST(MergeAnnTest, SortedMergeBuildsTheGraphOverTheSortedRows) {
   const auto vecs = MakeVectors(kRows, 53);
   const std::vector<bool> all(kRows, true);
 
-  irs::MemoryDirectory dir;
+  const auto dir = tests::merge::MemoryDir();
   auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate,
                                        HnswWriterOptions({{.column = kKey}}));
   ASSERT_NE(nullptr, writer);
@@ -245,7 +245,7 @@ TEST(MergeAnnTest, SortedMergeBuildsTheGraphOverTheSortedRows) {
   const auto merged = writer->GetSnapshot();
   ASSERT_EQ(1U, merged.size());
 
-  irs::MemoryDirectory fresh_dir;
+  const auto fresh_dir = tests::merge::MemoryDir();
   auto fresh_writer =
     tests::IndexWriter::Make(fresh_dir, tests::kOmCreate, HnswWriterOptions());
   ASSERT_NE(nullptr, fresh_writer);
@@ -286,7 +286,7 @@ TEST(MergeAnnTest, MergeUnitsBuildTheGraphOnAnnWorkers) {
     present[row] = row % kNullEvery != 3;
   }
 
-  irs::MemoryDirectory dir;
+  const auto dir = tests::merge::MemoryDir();
   auto writer =
     tests::IndexWriter::Make(dir, tests::kOmCreate, HnswWriterOptions());
   ASSERT_NE(nullptr, writer);

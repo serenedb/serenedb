@@ -33,7 +33,6 @@
 #include "iresearch/search/top/admit.hpp"
 #include "iresearch/search/top/root.hpp"
 #include "iresearch/search/top/term_block.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -55,7 +54,7 @@ class Posting : public Root {
   Posting(Posting&&) = delete;
   Posting& operator=(Posting&&) = delete;
 
-  void Prepare(const PostingMeta& meta, const IndexInput& doc_in,
+  void Prepare(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                const SubReader& segment, const TermReader& field,
                const irs::detail::ScoreArgs& args, IndexFeatures layout,
                bool bounds) {

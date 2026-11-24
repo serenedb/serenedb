@@ -26,16 +26,17 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/serializer/read_stream.hpp>
 #include <memory>
 #include <roaring/roaring.hh>
 #include <span>
 #include <vector>
 
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/parallel_for.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -88,7 +89,7 @@ class DocumentMask final {
 
   friend bool operator==(const DocumentMask& lhs, const DocumentMask& rhs);
 
-  static DocumentMask ReadFrozen(IndexInput& in, uint64_t size);
+  static DocumentMask ReadFrozen(duckdb::ReadStream& in, uint64_t size);
 
   static DocumentMask Union(const std::shared_ptr<const DocumentMask>& base,
                             const DocumentMask& added,

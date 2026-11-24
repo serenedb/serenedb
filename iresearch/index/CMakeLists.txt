@@ -2,7 +2,7 @@ target_sources(
     iresearch
     PRIVATE
         column_extract.cpp
-        directory_reader.cpp
+        composite_reader.cpp
         doc_removal.cpp
         docs_mask/chunks.cpp
         document_mask.cpp

@@ -26,7 +26,6 @@
 
 #include <array>
 #include <exception>
-#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <type_traits>
 
@@ -114,29 +113,5 @@ class OnceFlag {
   absl::once_flag _once;
   std::exception_ptr _error;
 };
-
-template<typename Func>
-IRS_FORCE_INLINE auto ResolveBool(bool value, Func&& func) {
-  if (value) {
-    return std::forward<Func>(func).template operator()<true>();
-  } else {
-    return std::forward<Func>(func).template operator()<false>();
-  }
-}
-
-template<typename Enum, typename Func, size_t I = 0>
-IRS_FORCE_INLINE decltype(auto) ResolveEnum(Enum value, Func&& func) {
-  constexpr auto kValues = magic_enum::enum_values<Enum>();
-  if constexpr (I < kValues.size()) {
-    constexpr Enum kValue = kValues[I];
-    if (value == kValue) {
-      return std::forward<Func>(func).template operator()<kValue>();
-    } else {
-      return ResolveEnum<Enum, Func, I + 1>(value, std::forward<Func>(func));
-    }
-  } else {
-    SDB_UNREACHABLE();
-  }
-}
 
 }  // namespace irs

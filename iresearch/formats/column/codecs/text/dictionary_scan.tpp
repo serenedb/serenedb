@@ -46,8 +46,8 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
-#include "iresearch/formats/column/codecs/numeric/delta.hpp"
 #include "iresearch/formats/column/codecs/numeric/plain.hpp"
 #include "iresearch/formats/column/codecs/numeric/runs.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
@@ -55,6 +55,7 @@
 #include "iresearch/formats/column/codecs/text/string_scan.tpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -69,36 +70,35 @@ class RowCodes {
     const auto frames =
       ParseFrames(codes, h.off_symtab - h.off_codes, h.row_count, h.codes);
     _shape = ShapeOf(h.codes);
-    switch (_shape) {
-      case Shape::Plain:
+    Resolve<CodesAxis>(_shape, [&]<Shape S>() {
+      if constexpr (S == Shape::Plain) {
         _plain.emplace(codes, frames, h.codes);
-        break;
-      case Shape::Delta:
-        _delta.emplace(codes, frames, h.codes);
-        break;
-      default:
+      } else {
         _runs.emplace(codes, frames, h.codes);
-        break;
-    }
+      }
+    });
   }
 
   template<typename F>
   IRS_FORCE_INLINE decltype(auto) Visit(F&& f) {
-    switch (_shape) {
-      case Shape::Plain:
-        return f(*_plain);
-      case Shape::Delta:
-        return f(*_delta);
-      default:
-        return f(*_runs);
-    }
+    return Resolve<CodesAxis>(
+      _shape, [&]<Shape S>() IRS_FORCE_INLINE -> decltype(auto) {
+        if constexpr (S == Shape::Plain) {
+          return f(*_plain);
+        } else {
+          return f(*_runs);
+        }
+      });
   }
 
  private:
+  struct CodesAxis : Axis<Shape::Plain, Shape::Runs> {
+    static constexpr Shape Of(Shape shape) noexcept { return shape; }
+  };
+
   Shape _shape = Shape::Plain;
-  std::optional<PlainReader<uint32_t>> _plain;
-  std::optional<DeltaReader<uint32_t>> _delta;
-  std::optional<RunsReader<uint32_t>> _runs;
+  std::optional<numeric::PlainReader<uint32_t>> _plain;
+  std::optional<numeric::RunsReader<uint32_t>> _runs;
 };
 
 template<typename Leaf>
@@ -130,7 +130,9 @@ struct DictionaryFetch final : SegmentScanState {
           validity.SetInvalid(at);
           continue;
         }
-        SDB_ENSURE(code < entries, "col codec: corrupted row codes");
+        if (code >= entries) [[unlikely]] {
+          ThrowCorrupted("text", "dictionary code is out of range");
+        }
         out[kept++] = {.entry = code, .at = at};
       }
       return kept;
@@ -142,8 +144,9 @@ struct DictionaryFetch final : SegmentScanState {
     SDB_ENSURE(row < h.row_count, "col codec: row out of range");
     const auto code = Numeric(base).Visit(
       [&](auto& codes) IRS_FORCE_INLINE { return codes.Fetch(row, kNoRow); });
-    SDB_ENSURE(code == 0 || code < h.entry_count,
-               "col codec: corrupted row codes");
+    if (code != 0 && code >= h.entry_count) [[unlikely]] {
+      ThrowCorrupted("text", "dictionary code is out of range");
+    }
     return code;
   }
 
@@ -286,7 +289,11 @@ struct DictionaryScan final : SegmentScanState {
   using Fetch = DictionaryFetch<Leaf>;
   static constexpr Shape kShape = Shape::Dictionary;
   static constexpr ByteCodec kCodec = Leaf::kCodec;
+  static constexpr bool kDecodesWhole = true;
   static constexpr auto kValidity = CompressionValidity::NoValidityRequired;
+  static constexpr uint32_t kNullEntry = 0;
+  static constexpr uint32_t kFirstEntry =
+    EntryFrames<Shape::Dictionary, Leaf>::kFirstEntry;
 
   DictionaryScan(const ColumnSegment& segment, duckdb::BufferHandle handle)
     : DictionaryScan{segment, std::move(handle),
@@ -295,6 +302,7 @@ struct DictionaryScan final : SegmentScanState {
   DictionaryScan(const ColumnSegment& segment, duckdb::BufferHandle handle,
                  const duckdb::shared_ptr<DecodedDictionary>& cached)
     : entries{segment, std::move(handle), !cached},
+      nullable{segment.stats.CanHaveNull()},
       cache_slot{segment.cache_slot},
       room{HasRoom(segment.cache_slot, DictionaryBytes(entries.header))},
       code_frames{entries.base, entries.header} {
@@ -302,8 +310,11 @@ struct DictionaryScan final : SegmentScanState {
       AdoptDictionary(*cached);
       return;
     }
-    entries.values[0] = string_t{};
-    duckdb::FlatVector::ValidityMutable(entries.dictionary->data).SetInvalid(0);
+    entries.values[kNullEntry] = string_t{};
+    if (nullable) {
+      duckdb::FlatVector::ValidityMutable(entries.dictionary->data)
+        .SetInvalid(kNullEntry);
+    }
     full = entries.frames.empty();
   }
 
@@ -312,9 +323,11 @@ struct DictionaryScan final : SegmentScanState {
     const auto count = entries.header.entry_count;
     duckdb::Vector view{entries.type,
                         duckdb::FlatVector::GetDataMutable(owner->data), count};
-    auto& validity = duckdb::FlatVector::ValidityMutable(view);
-    validity.Initialize(count);
-    validity.SetInvalid(0);
+    if (nullable) {
+      auto& validity = duckdb::FlatVector::ValidityMutable(view);
+      validity.Initialize(count);
+      validity.SetInvalid(kNullEntry);
+    }
     duckdb::StringVector::AddAuxiliaryData(
       view, duckdb::make_uniq<duckdb::VectorBufferHolder>(
               owner->data.GetBufferRef()));
@@ -342,7 +355,10 @@ struct DictionaryScan final : SegmentScanState {
 
   void Admit() {
     full = true;
-    if (!cache_slot.touched || !SecondTouch(cache_slot)) {
+    if (!nullable) {
+      entries.values[kNullEntry] = entries.values[kFirstEntry];
+    }
+    if (!SecondTouch(cache_slot)) {
       return;
     }
     const auto bytes = entries.CacheBytes();
@@ -387,8 +403,12 @@ struct DictionaryScan final : SegmentScanState {
 
   template<typename Before>
   uint32_t Bound(Before before) {
-    if (!full) {
-      return entries.leaf->Bound(entries, before);
+    if constexpr (requires { entries.leaf->Bound(entries, before); }) {
+      if (!full) {
+        return entries.leaf->Bound(entries, before);
+      }
+    } else {
+      EnsureDictionary();
     }
     return static_cast<uint32_t>(PartitionIndex(
       1, entries.header.entry_count,
@@ -425,12 +445,9 @@ struct DictionaryScan final : SegmentScanState {
         return true;
       }
       case duckdb::ExpressionClass::BOUND_FUNCTION:
-        if constexpr (Sorted(Leaf::kCodec)) {
-          return ResolveComparison(expr.Cast<duckdb::BoundFunctionExpression>(),
-                                   out);
-        } else {
-          return false;
-        }
+        return entries.header.sorted != 0 &&
+               ResolveComparison(expr.Cast<duckdb::BoundFunctionExpression>(),
+                                 out);
       case duckdb::ExpressionClass::BOUND_CONJUNCTION: {
         const auto& conjunction =
           expr.Cast<duckdb::BoundConjunctionExpression>();
@@ -712,12 +729,14 @@ struct DictionaryScan final : SegmentScanState {
     for (idx_t i = 0; i < count; ++i) {
       max_code = std::max(max_code, codes[i]);
     }
-    SDB_ENSURE(max_code < entries.header.entry_count,
-               "col codec: corrupted row codes");
+    if (max_code >= entries.header.entry_count) [[unlikely]] {
+      ThrowCorrupted("text", "dictionary code is out of range");
+    }
     batch_max = max_code;
   }
 
   EntryFrames<Shape::Dictionary, Leaf> entries;
+  bool nullable;
   ReadContext::CacheSlot cache_slot;
   duckdb::sel_t batch_max = 0;
   uint32_t next_frame = 0;

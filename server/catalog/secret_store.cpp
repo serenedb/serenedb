@@ -20,6 +20,7 @@
 
 #include "catalog/secret_store.h"
 
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/secret/secret_manager.hpp>
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
@@ -101,9 +102,13 @@ class SecretStore final : public duckdb::SecretStorage {
   duckdb::SecretMatch LookupSecret(
     const std::string& path, const std::string& type,
     duckdb::optional_ptr<duckdb::CatalogTransaction> transaction) final {
+    const bool outside_sessions = SeesAllCommitted(transaction);
     return Read(transaction, [&](duckdb::CatalogTransaction view) {
       duckdb::SecretMatch best;
       _set.Scan(view, [&](duckdb::CatalogEntry& entry) {
+        if (outside_sessions) {
+          SDB_PARK_ONCE_ON_FAILURE("pause_secret_lookup_outside_sessions");
+        }
         auto& secret = *entry.Cast<duckdb::SecretCatalogEntry>().secret;
         if (secret.secret->GetType() == type) {
           best = SelectBestMatch(secret, path, tie_break_offset, best);
@@ -125,10 +130,16 @@ class SecretStore final : public duckdb::SecretStorage {
   }
 
  private:
+  static bool SeesAllCommitted(
+    duckdb::optional_ptr<duckdb::CatalogTransaction> transaction) {
+    return !transaction || transaction->view.visibility_bound ==
+                             duckdb::VisibilityBound::AllCommitted();
+  }
+
   template<typename Body>
   std::invoke_result_t<Body&, duckdb::CatalogTransaction> Read(
     duckdb::optional_ptr<duckdb::CatalogTransaction> transaction, Body&& body) {
-    if (transaction) {
+    if (!SeesAllCommitted(transaction)) {
       return body(*transaction);
     }
     const CommittedView view;

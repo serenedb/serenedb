@@ -221,7 +221,8 @@ bool WriteFields(const FlushState& flush_state, PostingsOutputs outputs,
                  const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                  std::span<const BasicTermReader* const> extra,
                  std::span<const std::unique_ptr<TermRangeMerge>> ranges,
-                 uint64_t keyed_dicts, const MergeWorkers& workers) {
+                 uint64_t keyed_dicts, const MergeWorkers& workers,
+                 PostingsInputs& postings) {
   CompoundFieldIterator<Postings> field_itr{inputs, progress, field_options};
   term_dict::FieldWriter field_writer{/*compaction=*/true};
   field_writer.SetIdxWriter(idx);
@@ -292,6 +293,7 @@ bool WriteFields(const FlushState& flush_state, PostingsOutputs outputs,
   }
 
   field_writer.end();
+  postings = field_writer.TakePostings();
   return !field_itr.Aborted();
 }
 
@@ -315,11 +317,13 @@ bool WritePostings(const FlushState& flush_state, PostingsOutputs outputs,
                    const MergedNormIdMap& merged_norm_ids, IdxWriter& idx,
                    std::span<const BasicTermReader* const> extra,
                    std::span<const std::unique_ptr<TermRangeMerge>> ranges,
-                   uint64_t keyed_dicts, const MergeWorkers& workers) {
+                   uint64_t keyed_dicts, const MergeWorkers& workers,
+                   PostingsInputs& postings) {
   const auto write =
     sorted ? WriteFields<SortedPostings> : WriteFields<CompoundPostings>;
   return write(flush_state, std::move(outputs), inputs, field_options, progress,
-               merged_norm_ids, idx, extra, ranges, keyed_dicts, workers);
+               merged_norm_ids, idx, extra, ranges, keyed_dicts, workers,
+               postings);
 }
 
 }  // namespace irs

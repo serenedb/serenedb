@@ -54,7 +54,6 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
-#include "iresearch/utils/directory_utils.hpp"
 #include "iresearch/utils/log.hpp"
 #include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -206,13 +205,13 @@ RowGroupPlan PlanRowGroups(std::span<const MergeSource> sources,
 
 }  // namespace
 
-MergePlan::MergePlan(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
-                     ScorerPtr scorer, duckdb::DatabaseInstance& db,
+MergePlan::MergePlan(FileTracker& tracker, MergeDocMap& doc_map,
+                     SegmentMeta& segment, ScorerPtr scorer,
+                     duckdb::DatabaseInstance& db,
                      const IndexFieldOptions* field_options,
                      const MergeProgress& progress, const AnnBuildEnv* env,
                      const std::vector<SortKey>* sort, HnswBases* hnsw_bases)
-  : _col_dir{dir},
-    _idx_dir{dir},
+  : _tracker{tracker},
     _doc_map{doc_map},
     _segment{segment},
     _scorer{scorer},
@@ -492,8 +491,8 @@ uint64_t MergePlan::PlanTermRanges() {
       continue;
     }
     if (!_term_sink) {
-      _term_sink = std::make_unique<TermRangeSink>(_idx_dir, _segment.name,
-                                                   _index_features);
+      _term_sink =
+        std::make_unique<TermRangeSink>(_tracker, _db, _index_features);
     }
     _term_ranges.emplace_back(std::make_unique<TermRangeMerge>(
       key,
@@ -529,8 +528,6 @@ bool MergePlan::MergePostings(MergeStepClock& clock) {
   std::vector<const BasicTermReader*> cluster_readers;
   if (_ivf && _segment.docs_count != 0) {
     _ann_writers = _col_writer->TakeAnnWriters();
-    _col_reader = std::make_unique<ColReader>(_col_dir, _segment.name, _db,
-                                              IOAdvice::SEQUENTIAL);
     cluster_readers =
       PrepareIvfClusterReaders(_ann_writers, _col_reader.get(), _ivf_ctx);
     for (const auto* reader : cluster_readers) {
@@ -542,9 +539,8 @@ bool MergePlan::MergePostings(MergeStepClock& clock) {
     return false;
   }
   const FlushState state{
-    .dir = &_idx_dir,
+    .tracker = _tracker,
     .norms = &*_norms,
-    .name = _segment.name,
     .scorer = _scorer,
     .doc_count = _segment.docs_count,
     .index_features = _index_features,
@@ -555,28 +551,23 @@ bool MergePlan::MergePostings(MergeStepClock& clock) {
            _term_sink ? std::move(_term_sink->Outputs()) : PostingsOutputs{},
            _doc_map, static_cast<bool>(_key_order), _field_options, _progress,
            _merged_norm_ids, *_idx, cluster_readers, _term_ranges,
-           KeyedDicts(_field_meta_map), Workers());
+           KeyedDicts(_field_meta_map), Workers(), _inputs.postings);
 }
 
 bool MergePlan::WriteIndex(MergeStepClock& clock) {
-  _ann_reader.reset();
   if (_ann_writers.empty()) {
     _ann_writers = _col_writer->TakeAnnWriters();
   }
   for (const auto& writer : _ann_writers) {
     writer->Flush();
   }
-  _idx->Commit(_hnsw_bases);
+  _inputs.col = std::move(_col_reader);
+  _inputs.idx = _idx->Commit(_hnsw_bases);
   if (!_progress()) {
     return false;
   }
-  uint64_t col_bytes = 0;
-  auto files = _col_dir.FlushTracked(col_bytes);
-  auto idx_files = _idx_dir.FlushTracked(_segment.byte_size);
-  files.insert(files.end(), std::make_move_iterator(idx_files.begin()),
-               std::make_move_iterator(idx_files.end()));
-  _segment.kinds = SegmentFileKinds(files);
-  _segment.byte_size += col_bytes;
+  _segment.kinds = _tracker.Kinds();
+  _segment.byte_size = _tracker.Bytes();
   clock.Lap(MergeStep::Commit);
   if (_segment.live_docs_count == 0) {
     return false;
@@ -651,8 +642,7 @@ bool MergePlan::Prepare(duckdb::shared_ptr<duckdb::DedicatedPool> pool) {
       .remap = &input.remap,
     });
   }
-  _col_writer =
-    std::make_unique<ColWriter>(_col_dir, _segment.name, _db, WriteTier::Merge);
+  _col_writer = std::make_unique<ColWriter>(_db, _tracker, WriteTier::Merge);
   _col_writer->SetFieldOptions(_field_options);
   _col_writer->SetHnswBases(_hnsw_bases);
   _columns =
@@ -668,7 +658,7 @@ bool MergePlan::Prepare(duckdb::shared_ptr<duckdb::DedicatedPool> pool) {
   _col_writer->SetRowGroupStarts(std::move(row_groups.starts));
   _row_groups = std::move(row_groups.kept);
   _norms.emplace(_sources, _doc_map.get_allocator().Manager(), Order());
-  _idx = std::make_unique<IdxWriter>(_idx_dir, _segment.name);
+  _idx = std::make_unique<IdxWriter>(_tracker);
 
   std::vector<field_id> norm_fields;
   if (_field_options) {
@@ -730,15 +720,14 @@ bool MergePlan::RunUnit(size_t unit) {
       return MergeColumn(work) && lap(MergeStep::Columns);
     case MergeUnitKind::ColumnsFooter:
       _col_writer->SetIdxWriter(*_idx);
-      return _col_writer->Commit(_segment.docs_count, _progress) &&
-             lap(MergeStep::ColumnsCommit);
-    case MergeUnitKind::Ann:
-      if (!_ann_reader) {
-        _ann_reader = std::make_unique<ColReader>(_col_dir, _segment.name, _db,
-                                                  IOAdvice::SEQUENTIAL);
+      if (!_col_writer->Commit(_segment.docs_count, _progress)) {
+        return false;
       }
+      _col_reader = _col_writer->TakeReader();
+      return lap(MergeStep::ColumnsCommit);
+    case MergeUnitKind::Ann:
       GetBlocking(
-        _col_writer->ComputeAnn(work.id, *_ann_reader, _env).ToFuture());
+        _col_writer->ComputeAnn(work.id, *_col_reader, _env).ToFuture());
       return lap(MergeStep::Ann);
     case MergeUnitKind::TermRange: {
       auto* range =

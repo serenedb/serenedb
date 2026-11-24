@@ -51,7 +51,7 @@ bool StoresColumnStats(const ScanBindData& bind, ColumnId col_id) {
 }
 
 const duckdb::BaseStatistics* StoredColumnStats(
-  const ScanBindData& bind, const irs::DirectoryReader& reader,
+  const ScanBindData& bind, const irs::CompositeReader& reader,
   ColumnId col_id) {
   return StoresColumnStats(bind, col_id) ? reader.GetColumnStats(col_id)
                                          : nullptr;
@@ -62,7 +62,7 @@ duckdb::string_t AsStringT(irs::bytes_view bytes) {
           static_cast<uint32_t>(bytes.size())};
 }
 
-uint64_t RowsOnlyDocs(const irs::DirectoryReader& reader) {
+uint64_t RowsOnlyDocs(const irs::CompositeReader& reader) {
   uint64_t docs = 0;
   for (const auto& segment : reader) {
     if (RowsOnlySegment(segment)) {
@@ -93,7 +93,7 @@ bool ExactBounds(const duckdb::BaseStatistics& stats) {
 }
 
 duckdb::unique_ptr<duckdb::BaseStatistics> KeywordBounds(
-  const ScanBindData& bind, const irs::DirectoryReader& reader,
+  const ScanBindData& bind, const irs::CompositeReader& reader,
   duckdb::idx_t column_index, uint64_t& distinct) {
   if (!bind.relation.inverted_config ||
       bind.columns.types[column_index] != duckdb::LogicalType::VARCHAR) {
@@ -130,7 +130,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> KeywordBounds(
 }
 
 uint64_t KeyDistinct(const ScanBindData& bind,
-                     const irs::DirectoryReader& reader, ColumnId column) {
+                     const irs::CompositeReader& reader, ColumnId column) {
   if (!bind.relation.IsSearchTable() || !bind.relation.inverted_config) {
     return 0;
   }
@@ -155,7 +155,7 @@ uint64_t KeyDistinct(const ScanBindData& bind,
 }
 
 duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
-  const ScanBindData& bind, const irs::DirectoryReader& reader,
+  const ScanBindData& bind, const irs::CompositeReader& reader,
   duckdb::idx_t column_index) {
   if (column_index >= bind.columns.ids.size()) {
     return nullptr;
@@ -190,7 +190,7 @@ duckdb::unique_ptr<duckdb::BaseStatistics> ColumnStats(
 
 class ScanPartition final : public duckdb::PartitionRowGroup {
  public:
-  ScanPartition(const ScanBindData& bind, const irs::DirectoryReader& reader)
+  ScanPartition(const ScanBindData& bind, const irs::CompositeReader& reader)
     : _bind{bind}, _reader{reader} {}
 
   duckdb::optionally_owned_ptr<const duckdb::BaseStatistics>
@@ -208,7 +208,7 @@ class ScanPartition final : public duckdb::PartitionRowGroup {
 
  private:
   const ScanBindData& _bind;
-  const irs::DirectoryReader& _reader;
+  const irs::CompositeReader& _reader;
 };
 
 uint64_t DeletedRows(const irs::SubReader& segment, uint64_t begin,
@@ -256,7 +256,7 @@ const irs::ColumnReader* StatsColumn(const ScanBindData& bind,
   const auto col_id = bind.columns.ids[column_index];
   const auto* column =
     StoresColumnStats(bind, col_id) ? columns->Column(col_id) : nullptr;
-  if (!column || column->DataRgCount() == 0 || column->RowCount() < end ||
+  if (!column || column->DataBlocks().size() == 0 || column->RowCount() < end ||
       column->Type().IsNested() ||
       column->Type() != bind.columns.types[column_index]) {
     return nullptr;
@@ -276,14 +276,14 @@ struct CoveringBlocks {
   }
 
   const duckdb::BaseStatistics& FirstStatistics() const noexcept {
-    return column->RowGroupStatistics(first.block);
+    return column->DataBlocks()[first.block].statistics;
   }
 
   bool OneBlock() const noexcept { return first.block == last.block; }
 
   void MergeOthers(duckdb::BaseStatistics& stats) const {
     for (auto block = first.block + 1; block <= last.block; ++block) {
-      stats.Merge(column->RowGroupStatistics(block));
+      stats.Merge(column->DataBlocks()[block].statistics);
     }
   }
 

@@ -52,6 +52,7 @@ namespace irs::codecs::text {
 inline constexpr uint64_t kEstimateEvery = 64;
 inline constexpr uint64_t kEstimateSteps = 16;
 inline constexpr uint64_t kDriftMinFraction = 4;
+inline constexpr uint64_t kVectorAlignedRows = 4 * STANDARD_VECTOR_SIZE;
 
 struct SegmentEntries {
   std::span<const duckdb::string_t> entries;
@@ -111,12 +112,14 @@ inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
   return code == 0 ? duckdb::string_t{} : *p.values[code - 1];
 }
 
-uint64_t CodesBytes(Shape shape, uint64_t rows, uint64_t entries,
-                    const ReusePolicy& reuse) noexcept;
+uint64_t CodesBytes(uint64_t rows, uint64_t entries, double ratio) noexcept;
 
 void CompressCodes(
-  std::span<uint32_t> codes, ReusePolicy& reuse,
+  std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write);
+
+void SortEntries(std::span<const duckdb::string_t> entries,
+                 SortScratch& scratch);
 
 uint64_t EstimateEntries(const SegmentEntries& rows,
                          const RatioHistory& hist) noexcept;
@@ -161,6 +164,7 @@ class SegmentRows {
   void Begin(const Config& config, uint64_t first_row) {
     _level = config.level;
     _layout = config.layout;
+    _ordered = config.sorted;
     _next = first_row;
     _estimated_raw = _raw;
   }
@@ -178,7 +182,7 @@ class SegmentRows {
   }
 
   void Assemble(const EncodedFrames& frames, CodecType codes_codec,
-                std::string_view codes, Segment& out);
+                std::string_view codes, bool sorted, Segment& out);
 
   void Finish(const EncodedFrames& frames, Shape shape, Segment& out);
 
@@ -187,6 +191,7 @@ class SegmentRows {
   uint32_t _first_entry;
   uint8_t _level = 0;
   FrameDictionary _layout = FrameDictionary::FirstFrame;
+  bool _ordered = false;
   uint64_t _next = 0;
 
   std::vector<duckdb::string_t> _entries;
@@ -242,8 +247,8 @@ class DictionaryRows final : public SegmentRows {
   static constexpr Shape kShape = Shape::Dictionary;
 
   DictionaryRows(const duckdb::LogicalType& type, DedupScratch& dedup,
-                 ReusePolicy& codes_tuning)
-    : SegmentRows{type, 1}, _dedup{dedup}, _codes_tuning{codes_tuning} {}
+                 double& codes_ratio)
+    : SegmentRows{type, 1}, _dedup{dedup}, _codes_ratio{codes_ratio} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t distinct) {
     SegmentRows::Begin(config, first_row);
@@ -284,15 +289,16 @@ class DictionaryRows final : public SegmentRows {
 
  private:
   DedupScratch& _dedup;
-  ReusePolicy& _codes_tuning;
+  double& _codes_ratio;
   ScratchVector<uint32_t> _codes;
+  bool _sorted = false;
 };
 
 template<typename Rows>
 Rows MakeRows(const duckdb::LogicalType& type, DedupScratch& dedup,
-              ReusePolicy& codes_tuning) {
+              double& codes_ratio) {
   if constexpr (Rows::kShape == Shape::Dictionary) {
-    return Rows{type, dedup, codes_tuning};
+    return Rows{type, dedup, codes_ratio};
   } else {
     return Rows{type};
   }
@@ -306,7 +312,7 @@ class SortedCompressionState {
   SortedCompressionState(ByteCodec codec, const duckdb::LogicalType& type,
                          DedupScratch& dedup, StringTuning& tuning,
                          uint32_t target)
-    : _rows{MakeRows<Rows>(type, dedup, tuning.codes)},
+    : _rows{MakeRows<Rows>(type, dedup, tuning.codes_ratio)},
       _history{tuning.history[static_cast<size_t>(codec)]},
       _target{target} {}
 

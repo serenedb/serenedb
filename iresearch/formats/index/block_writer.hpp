@@ -23,6 +23,8 @@
 #include <fsst.h>
 
 #include <cstdint>
+#include <duckdb/common/serializer/memory_stream.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <limits>
 #include <memory>
 #include <string>
@@ -32,8 +34,6 @@
 #include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/posting/writer.hpp"
-#include "iresearch/store/data_output.hpp"
-#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
@@ -78,7 +78,7 @@ class BlockWriter final {
   BlockWriter(const BlockWriter&) = delete;
   BlockWriter& operator=(const BlockWriter&) = delete;
 
-  void Open(IndexOutput& out) noexcept;
+  void Open(duckdb::WriteStream& out) noexcept;
   void SetFsst(duckdb_fsst_encoder_t* fsst);
   void Recode();
   void BeginField(uint32_t width, bool encode, IndexFeatures features) noexcept;
@@ -125,9 +125,8 @@ class BlockWriter final {
   std::string _separators;
   bstring _separator;
   bstring _last;
-  bstring _pages;
-  BytesOutput _pages_out{_pages};
-  DataOutput* _out = nullptr;
+  duckdb::MemoryStream _pages;
+  duckdb::WriteStream* _out = nullptr;
   uint64_t _position = 0;
   uint64_t _first_page = 0;
   uint64_t _inline_base = 0;

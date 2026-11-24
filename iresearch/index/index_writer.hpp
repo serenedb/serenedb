@@ -28,10 +28,12 @@
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/file_system.hpp>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -40,7 +42,7 @@
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
 #include "iresearch/index/column_info.hpp"
-#include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/composite_reader.hpp"
 #include "iresearch/index/doc_removal.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/index/index_features.hpp"
@@ -56,14 +58,7 @@
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/object_pool.hpp"
 
-namespace duckdb {
-
-class DatabaseInstance;
-}
-
 namespace irs {
-
-struct Directory;
 
 using Compaction = std::vector<const SubReader*>;
 using CompactionView = std::span<const SubReader* const>;
@@ -85,8 +80,6 @@ struct IndexWriterOptions : public SegmentOptions {
 
   size_t segment_pool_size = 128;
 
-  duckdb::DatabaseInstance* db = nullptr;
-
   ColumnOptionsProvider column_options;
   NormColumnIdProvider norm_column_id;
   uint32_t row_group_size = DEFAULT_ROW_GROUP_SIZE;
@@ -98,8 +91,16 @@ struct IndexWriterOptions : public SegmentOptions {
 
   duckdb::shared_ptr<duckdb::DedicatedPool> merge_pool;
 
+  std::shared_ptr<std::atomic_uint64_t> segment_ids;
+
+  std::shared_ptr<ReleasedSegments> released;
+
+  bool pack = false;
+
   IndexWriterOptions() {}
 };
+
+void ReserveSegmentId(std::atomic_uint64_t& ids, uint64_t id) noexcept;
 
 class IndexWriter : private util::Noncopyable {
   struct ConstructToken {
@@ -113,7 +114,6 @@ class IndexWriter : private util::Noncopyable {
     SegmentMeta meta;
     DocumentMaskBuilder docs_mask;
     std::shared_ptr<const SegmentReaderImpl> reader;
-    std::vector<IndexInput::ptr> files;
   };
 
   class Document : private util::Noncopyable {
@@ -275,26 +275,25 @@ class IndexWriter : private util::Noncopyable {
   };
 
   struct Merged {
-    DirectoryReader source;
+    CompositeReader source;
     MergeClaim claim;
     SegmentMeta meta;
     std::shared_ptr<const SegmentReaderImpl> reader;
     std::vector<DocMap> maps;
-    FileRefs refs;
     MergeProfile profile;
   };
 
-  auto MergeAsync(const CompactionPolicy& policy, DirectoryReader source,
+  auto MergeAsync(const CompactionPolicy& policy, CompositeReader source,
                   const IndexFieldOptions* field_options,
                   const MergeWriter::FlushProgress& progress,
                   const AnnBuildEnv* env) -> yaclib::Future<Merged>;
 
-  auto WriteAsync(DirectoryReader source, uint64_t id,
+  auto WriteAsync(CompositeReader source, uint64_t id,
                   const IndexFieldOptions* field_options,
                   const MergeWriter::FlushProgress& progress,
                   const AnnBuildEnv* env) -> yaclib::Future<Merged>;
 
-  Merged MergePieces(DirectoryReader source, uint64_t id,
+  Merged MergePieces(CompositeReader source, uint64_t id,
                      const IndexFieldOptions* field_options);
 
   class [[nodiscard]] CompactionFloorGuard : private util::Noncopyable {
@@ -337,29 +336,31 @@ class IndexWriter : private util::Noncopyable {
     std::vector<DocMap> absorbed;
   };
 
-  static IndexWriter::ptr Make(Directory& dir, IndexWriterOptions opts = {});
+  static IndexWriter::ptr Make(duckdb::DatabaseInstance& db,
+                               duckdb::FileSystem& fs, std::string_view root,
+                               IndexWriterOptions opts = {});
 
   void Options(const SegmentOptions& opts) noexcept { _segment_limits = opts; }
 
   bool FlushRequired(const SegmentWriter& writer,
                      doc_id_t batch_size) const noexcept;
 
-  IndexWriter(ConstructToken, Directory& dir, size_t segment_pool_size,
-              const SegmentOptions& segment_limits,
+  IndexWriter(ConstructToken, duckdb::DatabaseInstance& db,
+              duckdb::FileSystem& fs, std::string_view root,
+              size_t segment_pool_size, const SegmentOptions& segment_limits,
               const IndexReaderOptions& reader_options);
 
   struct SegmentContext {
     using ptr = std::unique_ptr<SegmentContext>;
 
-    RefTrackingDirectory dir;
+    IndexWriter& owner;
     ManagedVector<FlushedSegment> flushed;
     std::unique_ptr<SegmentWriter> writer;
     SegmentMeta writer_meta;
-    IndexReaderOptions reader_options;
 
-    static ptr make(Directory& dir, const SegmentWriterOptions& options);
+    static ptr make(IndexWriter& owner, const SegmentWriterOptions& options);
 
-    SegmentContext(Directory& dir, const SegmentWriterOptions& options);
+    SegmentContext(IndexWriter& owner, const SegmentWriterOptions& options);
 
     void Flush();
 
@@ -413,8 +414,13 @@ class IndexWriter : private util::Noncopyable {
                   const MergeWriter::FlushProgress& progress,
                   const AnnBuildEnv* env) -> yaclib::Future<Merged>;
 
+  std::shared_ptr<const SegmentReaderImpl> OpenWritten(const SegmentMeta& meta,
+                                                       WrittenSegment written);
+
   ScorerPtr _topk_scorer;
-  duckdb::DatabaseInstance* _db = nullptr;
+  duckdb::DatabaseInstance& _db;
+  duckdb::FileSystem& _fs;
+  std::string _root;
   const AnnBuildEnv* _ann_env = nullptr;
   std::vector<SortKey> _sort;
   duckdb::shared_ptr<duckdb::DedicatedPool> _merge_pool;
@@ -428,11 +434,12 @@ class IndexWriter : private util::Noncopyable {
     CompactingSegments segments;
     uint64_t floor = 0;
   } _compacting;
-  Directory& _dir;
   IndexReaderOptions _reader_options;
+  std::shared_ptr<ReleasedSegments> _released;
+  bool _pack = false;
   SegmentLimits _segment_limits;
   SegmentPool _segment_writer_pool;
-  std::atomic_uint64_t _seg_counter{0};
+  std::shared_ptr<std::atomic_uint64_t> _seg_counter;
 };
 
 }  // namespace irs

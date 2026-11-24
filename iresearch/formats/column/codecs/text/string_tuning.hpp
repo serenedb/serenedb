@@ -21,10 +21,8 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
 
 #include "iresearch/formats/column/codecs/codec_type.hpp"
-#include "iresearch/formats/column/codecs/reuse_policy.hpp"
 
 namespace irs::codecs {
 
@@ -48,44 +46,24 @@ constexpr double Ratio(const RatioHistory& hist, double empty) noexcept {
 
 namespace text {
 
+inline constexpr uint8_t kSorted = 1;
+inline constexpr uint8_t kWide = 2;
+
 struct Config {
   Shape shape = Shape::Dictionary;
   ByteCodec leaf = ByteCodec::Lz4;
   uint8_t level = 0;
   FrameDictionary layout = FrameDictionary::FirstFrame;
+  bool sorted = false;
 
   bool operator==(const Config&) const = default;
 };
 
 }  // namespace text
 
-struct TextStatistics {
-  double value_bytes = 0;
-  double distinct_share = 0;
-};
-
-constexpr bool Moved(const TextStatistics& now, const TextStatistics& then,
-                     double factor) noexcept {
-  const auto moved = [&](double a, double b) {
-    return a > b * factor || a * factor < b;
-  };
-  return moved(now.value_bytes, then.value_bytes) ||
-         moved(now.distinct_share, then.distinct_share);
-}
-
-struct Lz4Tuning {
-  bool tuned = false;
-  uint8_t level = 0;
-  FrameDictionary layout = FrameDictionary::None;
-  uint64_t tuned_on = 0;
-};
-
 struct StringTuning {
-  std::optional<text::Config> config;
-  TextStatistics contested_on;
-  Lz4Tuning lz4[kTextShapeCount];
   RatioHistory history[kByteCodecCount][kShapeCount]{};
-  ReusePolicy codes;
+  double codes_ratio = 0;
   uint64_t last_distinct = 0;
 };
 

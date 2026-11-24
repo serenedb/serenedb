@@ -32,6 +32,8 @@
 #include <ranges>
 #include <utility>
 
+#include "iresearch/utils/assert.hpp"
+
 namespace irs {
 
 WriteChunk RefChunk(const duckdb::Vector& vec, duckdb::idx_t count) {
@@ -88,6 +90,7 @@ void ListKeys::Node::Assign(const duckdb::Vector& vec) {
     default:
       kind = Kind::Fixed;
       width = duckdb::GetTypeIdSize(type.InternalType());
+      SDB_ASSERT(width <= kMaxHashedWidth);
       break;
   }
 }

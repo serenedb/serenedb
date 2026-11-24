@@ -181,22 +181,26 @@ bool ExecuteMerge(MergePlan& plan) {
   return !run.Failed();
 }
 
-bool MergeSegments(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
-                   const SegmentWriterOptions& options,
-                   duckdb::shared_ptr<duckdb::DedicatedPool> pool,
-                   const MergeProgress& progress, const AnnBuildEnv* env,
-                   MergeProfile* profile) {
-  SDB_ASSERT(options.db);
+WrittenSegment MergeSegments(duckdb::DatabaseInstance& db,
+                             duckdb::FileSystem& fs, std::string_view root,
+                             MergeDocMap& doc_map, SegmentMeta& segment,
+                             const SegmentWriterOptions& options,
+                             duckdb::shared_ptr<duckdb::DedicatedPool> pool,
+                             const MergeProgress& progress,
+                             const AnnBuildEnv* env, MergeProfile* profile) {
+  auto tracker =
+    std::make_shared<FileTracker>(fs, root, segment.name, 0, options.released);
   bool merged = false;
-  absl::Cleanup invalidate = [&merged, &segment]() noexcept {
+  absl::Cleanup invalidate = [&]() noexcept {
     if (!merged) [[unlikely]] {
+      tracker->Remove();
       segment.kinds = 0;
       static_cast<SegmentInfo&>(segment) = SegmentInfo{};
     }
   };
-  MergePlan plan{dir,          doc_map,
+  MergePlan plan{*tracker,     doc_map,
                  segment,      options.scorer,
-                 *options.db,  options.field_options,
+                 db,           options.field_options,
                  progress,     env,
                  options.sort, options.hnsw_bases};
   absl::Cleanup report = [&plan, profile]() noexcept {
@@ -205,7 +209,10 @@ bool MergeSegments(Directory& dir, MergeDocMap& doc_map, SegmentMeta& segment,
     }
   };
   merged = plan.Prepare(std::move(pool)) && ExecuteMerge(plan);
-  return merged;
+  if (!merged) {
+    return {};
+  }
+  return {.files = std::move(tracker), .inputs = plan.TakeInputs()};
 }
 
 }  // namespace irs

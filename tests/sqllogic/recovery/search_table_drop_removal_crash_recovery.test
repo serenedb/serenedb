@@ -23,9 +23,23 @@ VACUUM (FLUSH_TABLE) rmc_kept;
 
 
 statement ok
-CREATE TABLE rmc_oids AS
-  SELECT table_oid AS oid FROM sdb_tables()
-  WHERE database_name = current_database() AND table_name = 'rmc_gone';
+CREATE TEMP TABLE rmc_before AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*');
+
+
+statement ok
+VACUUM (FLUSH_TABLE) rmc_gone;
+
+
+statement ok
+CREATE TABLE rmc_files AS SELECT file FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+  WHERE file NOT IN (SELECT file FROM rmc_before);
+
+
+query
+SELECT count(*) > 0 AS stored FROM rmc_files;
+----
+stored
+t
 
 
 statement ok
@@ -58,8 +72,8 @@ n
 
 connection after_crash
 query
-SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*/*')
-WHERE file LIKE '%/engine_v1/store/' || (SELECT oid FROM rmc_oids) || '/%';
+SELECT count(*) AS leftover FROM glob('${SDB_DATADIR:-/nonexistent-datadir}/engine_v1/store/*')
+WHERE file IN (SELECT file FROM rmc_files);
 ----
 leftover
 0

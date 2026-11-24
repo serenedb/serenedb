@@ -40,15 +40,15 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
-#include "iresearch/formats/column/codecs/text/text_encoder.hpp"
+#include "iresearch/formats/column/codecs/text/text_function.hpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::text {
@@ -106,20 +106,23 @@ struct EntryFrames {
     uint64_t raw = 0;
     for (uint32_t i = 0; i < header.frame_count; ++i) {
       const auto f = FrameAt(base + header.off_frames, i);
-      SDB_ENSURE(
-        (i == 0 ? f.first_entry == kFirstEntry
-                : f.first_entry > frames[i - 1].first_entry) &&
-          f.first_entry < header.entry_count &&
-          static_cast<uint64_t>(f.comp_off) + f.comp_len <= header.data_size &&
-          raw + f.raw_len <= header.raw_bytes,
-        "col codec: corrupted frame table");
+      if (!((i == 0 ? f.first_entry == kFirstEntry
+                    : f.first_entry > frames[i - 1].first_entry) &&
+            f.first_entry < header.entry_count &&
+            static_cast<uint64_t>(f.comp_off) + f.comp_len <=
+              header.data_size &&
+            raw + f.raw_len <= header.raw_bytes)) [[unlikely]] {
+        ThrowCorrupted("text", "frame table is inconsistent");
+      }
       frames[i] = f;
       frame_off[i] = raw;
       raw += f.raw_len;
     }
-    SDB_ENSURE(raw == header.raw_bytes &&
-                 (header.frame_count != 0 || header.entry_count == kFirstEntry),
-               "col codec: corrupted frame table");
+    if (!(raw == header.raw_bytes &&
+          (header.frame_count != 0 || header.entry_count == kFirstEntry)))
+      [[unlikely]] {
+      ThrowCorrupted("text", "frame table is inconsistent");
+    }
   }
 
   uint32_t FrameEnd(uint32_t f) const noexcept {
@@ -164,10 +167,14 @@ struct EntryFrames {
     return out;
   }
 
-  IRS_FORCE_INLINE void EnsureEntry(uint32_t e, uint32_t& f, bool sparse) {
+  void LocateFrame(uint32_t e, uint32_t& f) const noexcept {
     if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
       f = FrameOf(e);
     }
+  }
+
+  void EnsureEntry(uint32_t e, uint32_t& f, bool sparse) {
+    LocateFrame(e, f);
     if (decoded[f]) {
       return;
     }
@@ -180,11 +187,23 @@ struct EntryFrames {
     DecodeFrame(f);
   }
 
-  template<typename Entry>
-  void EnsureEach(idx_t count, Entry entry_at) {
+  void EnsureRange(uint32_t first, uint32_t end) {
+    SDB_ASSERT(first < end);
     if (Complete()) {
       return;
     }
+    for (auto f = FrameOf(first);; ++f) {
+      if (!decoded[f]) {
+        DecodeFrame(f);
+      }
+      if (FrameEnd(f) >= end) {
+        return;
+      }
+    }
+  }
+
+  template<typename Entry>
+  void EnsureEach(idx_t count, Entry entry_at) {
     const bool sparse = count <= kSparseEntries;
     uint32_t f = kNoFrame;
     for (idx_t i = 0; i < count; ++i) {
@@ -203,9 +222,7 @@ struct EntryFrames {
       if (e < kFirstEntry) {
         continue;
       }
-      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
-        f = FrameOf(e);
-      }
+      LocateFrame(e, f);
       if (!decoded[f]) {
         leaf->EnsureRow(*this, e, f);
       }
@@ -221,7 +238,8 @@ struct EntryFrames {
     auto f = sparse_frame;
     for (idx_t i = 0; i < count;) {
       const auto e = static_cast<uint32_t>(entry_at(i));
-      if (f == kNoFrame || e < frames[f].first_entry || e >= FrameEnd(f)) {
+      SDB_ASSERT(f == kNoFrame || e >= frames[f].first_entry);
+      if (f == kNoFrame || e >= FrameEnd(f)) {
         f = FrameOf(e);
       }
       const auto first = frames[f].first_entry;
@@ -231,7 +249,8 @@ struct EntryFrames {
       auto j = i + 1;
       for (; j < count; ++j) {
         const auto next = static_cast<uint32_t>(entry_at(j));
-        if (next < first || next >= end) {
+        SDB_ASSERT(next >= first);
+        if (next >= end) {
           break;
         }
         distinct += next != last;
@@ -320,7 +339,9 @@ struct FetchFrames {
   IRS_FORCE_INLINE void Emit(const ColumnSegment& segment, data_ptr_t base,
                              uint32_t entry, duckdb::Vector& result, idx_t at,
                              bool batched) {
-    SDB_ENSURE(header.frame_count != 0, "col codec: corrupted row codes");
+    if (header.frame_count == 0) [[unlikely]] {
+      ThrowCorrupted("text", "frame table is inconsistent");
+    }
     if (entry < frame.first_entry || entry >= frame_end) {
       const auto* table = base + header.off_frames;
       frame_index = FrameOfEntry(table, header.frame_count, entry);
@@ -328,10 +349,11 @@ struct FetchFrames {
       frame_end = frame_index + 1 < header.frame_count
                     ? FrameAt(table, frame_index + 1).first_entry
                     : header.entry_count;
-      SDB_ENSURE(
-        frame.first_entry <= entry && frame.raw_len <= header.raw_bytes &&
-          uint64_t{frame.comp_off} + frame.comp_len <= header.data_size,
-        "col codec: corrupted frame table");
+      if (!(frame.first_entry <= entry && frame.raw_len <= header.raw_bytes &&
+            uint64_t{frame.comp_off} + frame.comp_len <= header.data_size))
+        [[unlikely]] {
+        ThrowCorrupted("text", "frame table is inconsistent");
+      }
     }
     leaf.Emit(segment, header, base, lengths, frame_index, frame, entry, result,
               at, batched);
@@ -414,12 +436,16 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
   if (count == 1) {
     const auto at = result_offset + result_sel.get_index(0);
     const auto entry = fetch.ReadOne(base, rows[0]);
-    if (Scan::kShape == Shape::Dictionary && entry == 0) {
-      duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
-      return;
+    if constexpr (Scan::kShape == Shape::Dictionary) {
+      if (entry == 0) {
+        duckdb::FlatVector::ValidityMutable(result).SetInvalid(at);
+        return;
+      }
     }
-    if (!frames.decoded && fetch.Whole()) {
-      frames.decoded = DecodeWhole<Scan>(segment);
+    if constexpr (Scan::kDecodesWhole) {
+      if (!frames.decoded && fetch.Whole()) {
+        frames.decoded = DecodeWhole<Scan>(segment);
+      }
     }
     if (frames.decoded) {
       const EntryAt one{.entry = entry, .at = at};
@@ -428,23 +454,29 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
       return;
     }
     frames.Emit(segment, base, entry, result, at, false);
-    if (fetch.Whole()) {
-      frames.decoded = DecodeWhole<Scan>(segment);
+    if constexpr (Scan::kDecodesWhole) {
+      if (fetch.Whole()) {
+        frames.decoded = DecodeWhole<Scan>(segment);
+      }
     }
     return;
   }
   fetch.Read(base, rows, count, result, result_sel, result_offset);
   auto& order = frames.order;
-  if (!frames.decoded && fetch.Whole()) {
-    frames.decoded = DecodeWhole<Scan>(segment);
+  const bool batched = order.size() > 1;
+  if constexpr (Scan::kDecodesWhole) {
+    if (!frames.decoded) {
+      if (fetch.Whole()) {
+        frames.decoded = DecodeWhole<Scan>(segment);
+      } else if (batched && fetch.PlanBatch(base)) {
+        frames.decoded = DecodeWhole<Scan>(segment);
+      }
+    }
+  } else {
+    [[maybe_unused]] const bool whole = fetch.PlanBatch(base);
+    SDB_ASSERT(!whole);
   }
   if (frames.decoded) {
-    EmitDecoded(*frames.decoded, order, result, frames.heap_reference);
-    return;
-  }
-  const bool batched = order.size() > 1;
-  if (batched && fetch.PlanBatch(base)) {
-    frames.decoded = DecodeWhole<Scan>(segment);
     EmitDecoded(*frames.decoded, order, result, frames.heap_reference);
     return;
   }
@@ -455,12 +487,14 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
       continue;
     }
     frames.Emit(segment, base, order[i].entry, result, order[i].at, batched);
-    if (fetch.Whole()) {
-      frames.decoded = DecodeWhole<Scan>(segment);
-      EmitDecoded(*frames.decoded,
-                  std::span<const EntryAt>{order}.subspan(i + 1), result,
-                  frames.heap_reference);
-      return;
+    if constexpr (Scan::kDecodesWhole) {
+      if (fetch.Whole()) {
+        frames.decoded = DecodeWhole<Scan>(segment);
+        EmitDecoded(*frames.decoded,
+                    std::span<const EntryAt>{order}.subspan(i + 1), result,
+                    frames.heap_reference);
+        return;
+      }
     }
   }
 }
@@ -481,14 +515,15 @@ inline constexpr DecompressionFunction kStringDecompression = [] consteval {
   return f;
 }();
 
-template<typename Scan, typename Compression>
+template<typename Scan, typename Compression,
+         const CompressionFunction& kFunction = kTextFunction<Compression>>
 consteval Codec StringCodec() {
   static_assert(Compression::kCodec == Scan::kCodec);
   static_assert(Compression::kShape == Scan::kShape);
   return {
     .type = CodecOf(Scan::kShape, Scan::kCodec),
-    .compression = &kNamedTextFunction<Compression>,
-    .decompression = &kStringDecompression<Scan>,
+    .compression = {&kFunction, 1},
+    .decompression = kStringDecompression<Scan>,
   };
 }
 

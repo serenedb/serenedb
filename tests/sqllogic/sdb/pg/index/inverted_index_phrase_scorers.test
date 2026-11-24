@@ -1,0 +1,284 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY phrase_words AS split_text(case := 'lower') WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE phrase_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX phrase_idx ON phrase_docs USING inverted (id, body phrase_words);
+
+statement ok
+INSERT INTO phrase_docs VALUES (1, 'red fox red'), (2, 'red red red red'), (3, 'a fox and a dog');
+
+query
+SELECT a.scorer, a.score = b.score AS same
+FROM (
+    SELECT 'lm_jm' AS scorer, lm_jm(phrase_idx.tableoid) AS score FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'lm_dirichlet', lm_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'indri_dirichlet', indri_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'dfi', dfi(phrase_idx.tableoid) FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'dfi saturated', dfi(phrase_idx.tableoid, 'saturated') FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'dfi chi_squared', dfi(phrase_idx.tableoid, 'chi_squared') FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+) a
+JOIN (
+    SELECT 'lm_jm' AS scorer, lm_jm(phrase_idx.tableoid) AS score FROM phrase_idx WHERE body @@ ts_phrase('fox red')
+    UNION ALL
+    SELECT 'lm_dirichlet', lm_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('fox red')
+    UNION ALL
+    SELECT 'indri_dirichlet', indri_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('fox red')
+    UNION ALL
+    SELECT 'dfi', dfi(phrase_idx.tableoid) FROM phrase_idx WHERE body @@ ts_phrase('fox red')
+    UNION ALL
+    SELECT 'dfi saturated', dfi(phrase_idx.tableoid, 'saturated') FROM phrase_idx WHERE body @@ ts_phrase('fox red')
+    UNION ALL
+    SELECT 'dfi chi_squared', dfi(phrase_idx.tableoid, 'chi_squared') FROM phrase_idx WHERE body @@ ts_phrase('fox red')
+) b ON a.scorer = b.scorer
+ORDER BY a.scorer;
+----
+scorer	same
+dfi	t
+dfi chi_squared	t
+dfi saturated	t
+indri_dirichlet	t
+lm_dirichlet	t
+lm_jm	t
+
+query
+SELECT id,
+       round(lm_jm(phrase_idx.tableoid), 4) AS score,
+       round(ln(1 + (0.9 * 1 / 3) / (0.1 * 7 / 13)) + ln(1 + (0.9 * 1 / 3) / (0.1 * 3 / 13)), 4) AS sum_of_terms
+FROM phrase_idx
+WHERE body @@ ts_phrase('red fox')
+ORDER BY id;
+----
+id	score	sum_of_terms
+1	4.5218	4.5218
+
+query
+SELECT id,
+       round(lm_jm(phrase_idx.tableoid), 4) AS score,
+       round(2 * ln(1 + (0.9 * 1 / 3) / (0.1 * 7 / 13)) + ln(1 + (0.9 * 1 / 3) / (0.1 * 3 / 13)), 4) AS sum_of_terms
+FROM phrase_idx
+WHERE body @@ ts_phrase('red fox red')
+ORDER BY id;
+----
+id	score	sum_of_terms
+1	6.4045	6.4045
+
+query
+SELECT id, round(lm_jm(phrase_idx.tableoid), 4) AS score, regexp_replace(ts_explain(phrase_idx.tableoid)::JSON::VARCHAR, '(\.[0-9]{4})[0-9]+', '\1', 'g') AS why
+FROM phrase_idx
+WHERE body @@ ts_phrase('red fox')
+ORDER BY id;
+----
+id	score	why
+1	4.5218	{"column":"body","expression":"sum","parts":[{"column":"body","expression":"boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))","inputs":{"dl":{"value":3},"freq":{"value":1},"lambda":{"value":0.1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":6}},"value":0.5384}},"term":"red","value":1.8827},{"column":"body","expression":"boost * log(1 + ((1 - lambda) * freq / dl) / (lambda * p))","inputs":{"dl":{"value":3},"freq":{"value":1},"lambda":{"value":0.1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":2}},"value":0.2307}},"term":"fox","value":2.6390}],"phrase":["red","fox"],"scorer":"lm_jm(lambda=0.1)","value":4.5217}
+
+query
+SELECT id, round(dfi(phrase_idx.tableoid), 4) AS score, regexp_replace(ts_explain(phrase_idx.tableoid)::JSON::VARCHAR, '(\.[0-9]{4})[0-9]+', '\1', 'g') AS why
+FROM phrase_idx
+WHERE body @@ ts_phrase('red fox')
+ORDER BY id;
+----
+id	score	why
+1	0.454	{"column":"body","expression":"sum","parts":[{"column":"body","inputs":{"expected":{"expression":"p * dl","inputs":{"dl":{"value":3}},"value":1.6153},"freq":{"value":1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":6}},"value":0.5384}},"note":"the term occurs no more often than expected, so it scores 0","term":"red","value":0},{"column":"body","expression":"boost * log2(1 + (freq - expected) / sqrt(expected))","inputs":{"expected":{"expression":"p * dl","inputs":{"dl":{"value":3}},"value":0.6923},"freq":{"value":1},"p":{"expression":"(ttf + 1) / (L + 1)","inputs":{"L":{"value":12},"ttf":{"value":2}},"value":0.2307}},"term":"fox","value":0.4539}],"phrase":["red","fox"],"scorer":"dfi(measure=standardized)","value":0.4539}
+
+query
+SELECT 'dfi' AS scorer, id, dfi(phrase_idx.tableoid) AS score FROM phrase_idx WHERE body @@ ts_phrase('a fox')
+UNION ALL
+SELECT 'dfi saturated', id, dfi(phrase_idx.tableoid, 'saturated') FROM phrase_idx WHERE body @@ ts_phrase('a fox')
+UNION ALL
+SELECT 'dfi chi_squared', id, dfi(phrase_idx.tableoid, 'chi_squared') FROM phrase_idx WHERE body @@ ts_phrase('a fox')
+ORDER BY scorer;
+----
+scorer	id	score
+dfi	3	0
+dfi chi_squared	3	0
+dfi saturated	3	0
+
+query
+SELECT a.scorer, a.score = b.score AS same
+FROM (
+    SELECT 'lm_jm' AS scorer, lm_jm(phrase_idx.tableoid) AS score FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+    UNION ALL
+    SELECT 'lm_dirichlet', lm_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+    UNION ALL
+    SELECT 'indri_dirichlet', indri_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+    UNION ALL
+    SELECT 'dfi', dfi(phrase_idx.tableoid) FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+    UNION ALL
+    SELECT 'dfi saturated', dfi(phrase_idx.tableoid, 'saturated') FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+    UNION ALL
+    SELECT 'dfi chi_squared', dfi(phrase_idx.tableoid, 'chi_squared') FROM phrase_idx WHERE body @@ ts_phrase('red fox', slop := 1)
+) a
+JOIN (
+    SELECT 'lm_jm' AS scorer, lm_jm(phrase_idx.tableoid) AS score FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'lm_dirichlet', lm_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'indri_dirichlet', indri_dirichlet(phrase_idx.tableoid, 10) FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'dfi', dfi(phrase_idx.tableoid) FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'dfi saturated', dfi(phrase_idx.tableoid, 'saturated') FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+    UNION ALL
+    SELECT 'dfi chi_squared', dfi(phrase_idx.tableoid, 'chi_squared') FROM phrase_idx WHERE body @@ ts_phrase('red fox')
+) b ON a.scorer = b.scorer
+ORDER BY a.scorer;
+----
+scorer	same
+dfi	t
+dfi chi_squared	t
+dfi saturated	t
+indri_dirichlet	t
+lm_dirichlet	t
+lm_jm	t
+
+query
+SELECT id,
+       round(indri_dirichlet(phrase_idx.tableoid, 10), 4) AS score,
+       round(ln((1.0 / 3 + 10.0 * 3 / 13) / 15) + ln((1.0 / 3 + 10.0 * 2 / 13) / 15), 4) AS sum_of_terms
+FROM phrase_idx
+WHERE body @@ ts_phrase('fox dog', slop := 2)
+ORDER BY id;
+----
+id	score	sum_of_terms
+3	-3.818	-3.818
+
+query
+SELECT shape, scorer, id, same FROM (
+    SELECT 'any' AS shape, 'lm_jm' AS scorer, id, abs(lm_jm(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'any' AS shape, 'lm_dirichlet' AS scorer, id, abs(lm_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'any' AS shape, 'indri_dirichlet' AS scorer, id, abs(indri_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'any' AS shape, 'dfi' AS scorer, id, abs(dfi(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'any' AS shape, 'dfi saturated' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'saturated') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'any' AS shape, 'dfi chi_squared' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'chi_squared') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ 'red' OR body @@ 'fox'
+    UNION ALL
+    SELECT 'best' AS shape, 'lm_jm' AS scorer, id, abs(lm_jm(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'best' AS shape, 'lm_dirichlet' AS scorer, id, abs(lm_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'best' AS shape, 'indri_dirichlet' AS scorer, id, abs(indri_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'best' AS shape, 'dfi' AS scorer, id, abs(dfi(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'best' AS shape, 'dfi saturated' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'saturated') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'best' AS shape, 'dfi chi_squared' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'chi_squared') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE (body @@ 'red' OR body @@ 'fox')::merge('max')
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'lm_jm' AS scorer, id, abs(lm_jm(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'lm_dirichlet' AS scorer, id, abs(lm_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'indri_dirichlet' AS scorer, id, abs(indri_dirichlet(phrase_idx.tableoid, 10) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'dfi' AS scorer, id, abs(dfi(phrase_idx.tableoid) - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'dfi saturated' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'saturated') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+    UNION ALL
+    SELECT 'fuzzy' AS shape, 'dfi chi_squared' AS scorer, id, abs(dfi(phrase_idx.tableoid, 'chi_squared') - (ts_explain(phrase_idx.tableoid)::JSON->>'value')::DOUBLE) < 1e-5 AS same FROM phrase_idx WHERE body @@ ts_levenshtein('fax', 1)
+) t
+ORDER BY shape, scorer, id;
+----
+shape	scorer	id	same
+any	dfi	1	t
+any	dfi	2	t
+any	dfi	3	t
+any	dfi chi_squared	1	t
+any	dfi chi_squared	2	t
+any	dfi chi_squared	3	t
+any	dfi saturated	1	t
+any	dfi saturated	2	t
+any	dfi saturated	3	t
+any	indri_dirichlet	1	t
+any	indri_dirichlet	2	t
+any	indri_dirichlet	3	t
+any	lm_dirichlet	1	t
+any	lm_dirichlet	2	t
+any	lm_dirichlet	3	t
+any	lm_jm	1	t
+any	lm_jm	2	t
+any	lm_jm	3	t
+best	dfi	1	t
+best	dfi	2	t
+best	dfi	3	t
+best	dfi chi_squared	1	t
+best	dfi chi_squared	2	t
+best	dfi chi_squared	3	t
+best	dfi saturated	1	t
+best	dfi saturated	2	t
+best	dfi saturated	3	t
+best	indri_dirichlet	1	t
+best	indri_dirichlet	2	t
+best	indri_dirichlet	3	t
+best	lm_dirichlet	1	t
+best	lm_dirichlet	2	t
+best	lm_dirichlet	3	t
+best	lm_jm	1	t
+best	lm_jm	2	t
+best	lm_jm	3	t
+fuzzy	dfi	1	t
+fuzzy	dfi	3	t
+fuzzy	dfi chi_squared	1	t
+fuzzy	dfi chi_squared	3	t
+fuzzy	dfi saturated	1	t
+fuzzy	dfi saturated	3	t
+fuzzy	indri_dirichlet	1	t
+fuzzy	indri_dirichlet	3	t
+fuzzy	lm_dirichlet	1	t
+fuzzy	lm_dirichlet	3	t
+fuzzy	lm_jm	1	t
+fuzzy	lm_jm	3	t
+
+statement ok
+CREATE TABLE long_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX long_idx ON long_docs USING inverted (id, body phrase_words);
+
+statement ok
+INSERT INTO long_docs SELECT 1, repeat('x ', 2000) || 'a b c d e f g h i j k l m n o p';
+
+query
+SELECT id,
+       round(indri_dirichlet(long_idx.tableoid, 10), 3) AS score,
+       round(16 * ln((1 + 10 * 2.0 / 2017) / (2016 + 10)), 3) AS sum_of_terms
+FROM long_idx
+WHERE body @@ ts_phrase('a b c d e f g h i j k l m n o p')
+ORDER BY id;
+----
+id	score	sum_of_terms
+1	-121.663	-121.663
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY phrase_words_no_norm AS split_text(case := 'lower') WITH (frequency, position);
+
+statement ok
+CREATE TABLE repeated_docs (id INTEGER PRIMARY KEY, body VARCHAR);
+
+statement ok
+CREATE INDEX repeated_idx ON repeated_docs USING inverted (id, body phrase_words_no_norm);
+
+statement ok
+INSERT INTO repeated_docs SELECT 1, repeat('a b c d e f g h i j k l m n o p q r s t ', 100);
+
+query
+SELECT id,
+       round(indri_dirichlet(repeated_idx.tableoid, 0.01), 3) AS score,
+       round(20 * ln((100 + 0.01 * 101.0 / 2001) / (1 + 0.01)), 3) AS sum_of_terms
+FROM repeated_idx
+WHERE body @@ ts_phrase('a b c d e f g h i j k l m n o p q r s t')
+ORDER BY id;
+----
+id	score	sum_of_terms
+1	91.904	91.904

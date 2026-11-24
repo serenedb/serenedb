@@ -27,6 +27,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <map>
 #include <memory>
 #include <random>
@@ -35,17 +37,16 @@
 #include <vector>
 
 #include "executor.h"
+#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
-#include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/term_reader.hpp"
-#include "iresearch/index/directory_reader.hpp"
-#include "iresearch/store/memory_directory.hpp"
-#include "iresearch/store/mmap_directory.hpp"
+#include "iresearch/index/composite_reader.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/duckdb_engine.hpp"
-#include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/type_limits.hpp"
+#include "memory_output.hpp"
 
 namespace {
 
@@ -80,10 +81,10 @@ const std::vector<uint32_t>& IndexNorms() {
       return out;
     }
     const char* field = std::getenv("NORM_FIELD");
-    irs::MMapDirectory dir{path};
-    const auto reader = bench::OpenIndex(
-      dir,
-      irs::IndexReaderOptions{.db = &irs::DuckDBEngine::Instance().instance()});
+    auto& db = irs::DuckDBEngine::Instance().instance();
+    const auto reader =
+      bench::OpenIndex(db, duckdb::FileSystem::GetFileSystem(db), path,
+                       irs::IndexReaderOptions{});
     for (const auto& segment : reader) {
       for (const auto id : segment.field_ids()) {
         if (field != nullptr && id != std::strtoul(field, nullptr, 10)) {
@@ -254,27 +255,32 @@ struct MainColumn {
 };
 
 struct PackedColumn {
-  irs::MemoryDirectory dir;
-  irs::IndexInput::ptr in;
+  static constexpr std::string_view kName = "norms";
+
+  duckdb::MemoryFileSystem fs;
+  irs::ColFileWriter file{
+    irs::format_utils::OpenOutput(fs, duckdb::MemoryFileSystem::PREFIX, kName)};
+  irs::bstring data;
+  duckdb::shared_ptr<duckdb::InputFile> in;
   std::unique_ptr<irs::NormColumnReader> column;
   irs::NormReader::ptr reader;
   size_t bytes = 0;
 
   void Build(const std::vector<uint32_t>& values) {
-    auto file = dir.create("norms");
-    irs::NormColumnWriter writer{1, kRgRows,
-                                 [&]() -> irs::IndexOutput& { return *file; }};
+    irs::NormColumnWriter writer{
+      1, kRgRows, [&]() -> irs::ColFileWriter& { return file; }};
     for (size_t i = 0; i != values.size(); ++i) {
       writer.Append(i, values[i]);
     }
     writer.Finalize();
-    irs::format_utils::WriteFooter(*file, [](duckdb::BinarySerializer&) {});
-    file.reset();
     for (const auto& region : writer.Meta().regions) {
       bytes += irs::NormSlotsSize(region) +
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
     }
-    in = dir.open("norms", irs::IOAdvice::RANDOM);
+    file.Finish()->Close();
+    data = irs::ReadWhole<irs::bstring>(
+      {}, fs, fs.JoinPath(duckdb::MemoryFileSystem::PREFIX, kName));
+    in = tests::OpenBytes(data);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);
   }

@@ -282,6 +282,7 @@ struct ScanBindData final : duckdb::FunctionData {
   bool RegistersDataVersions() const final { return true; }
   bool IsPointRead() const final;
 
+  search::Store& Storage() const;
   search::ReadView Read(duckdb::ClientContext& context) const;
 
   bool IsViewBacked() const noexcept { return view.has_value(); }
@@ -309,6 +310,7 @@ struct ScanBindData final : duckdb::FunctionData {
 
   std::string_view ColumnNameById(ColumnId col_id) const;
   duckdb::LogicalType ColumnTypeById(ColumnId col_id) const;
+  duckdb::LogicalType FieldType(ColumnId col_id, irs::DictRef dict) const;
   std::string DisplayColumnName(ColumnId col_id) const;
   bool IsColumnNotNull(ColumnId col_id) const;
   void IterateColumns(const ColumnVisitor& cb) const;
@@ -383,7 +385,7 @@ struct DeferredBuild {
 
 DeferredBuild BuildDeferredFilter(duckdb::ClientContext& context,
                                   const ScanBindData& scan,
-                                  const irs::DirectoryReader& reader);
+                                  const irs::CompositeReader& reader);
 
 bool RowsOnlySegment(const irs::SubReader& segment);
 

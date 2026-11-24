@@ -81,7 +81,9 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
         if (!column.point) {
           column.point =
             std::make_unique<ColumnReader::PointReader>(*_cs, *column.reader);
-          column.point->SetCache(_cache);
+          if (_cache) {
+            column.point->SetCache(_cache);
+          }
         }
         auto& value = column.value.Reset();
         column.point->FetchRow(begin, value, 0);
@@ -141,7 +143,9 @@ class SegmentKeyReader final : public duckdb::PresortedMergeReader {
   void ProbeRow(Column& column, uint64_t row, duckdb::Vector& out) {
     if (!column.probe.ctx) {
       auto ctx = std::make_shared<ReadContext>(*_cs);
-      ctx->SetCache(_cache);
+      if (_cache) {
+        ctx->SetCache(_cache);
+      }
       column.probe = column.reader->InitScan(std::move(ctx));
     } else if (row < column.probe_position) {
       column.probe = column.reader->InitScan(column.probe.ctx);

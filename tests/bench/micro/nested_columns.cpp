@@ -26,6 +26,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <duckdb.hpp>
+#include <duckdb/common/file_system.hpp>
+#include <duckdb/common/memory_file_system.hpp>
+#include <duckdb/common/memory_mapped_file.hpp>
+#include <duckdb/common/query_context.hpp>
 #include <filesystem>
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -34,9 +38,9 @@
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/formats/column/internal/gather_arms.hpp>
 #include <iresearch/formats/column/read_context.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/store/mmap_directory.hpp>
+#include <iresearch/store/storage.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/string.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <map>
 #include <memory>
@@ -62,6 +66,7 @@ enum class Shape : uint8_t {
 constexpr size_t kShapes = 11;
 constexpr irs::field_id kField = 0;
 constexpr std::string_view kSeg = "bench_seg";
+constexpr std::string_view kRoot = "memory://bench";
 
 uint64_t Rows() {
   static const uint64_t rows = [] {
@@ -167,8 +172,8 @@ const Data& GetData(Shape shape) {
   return *slot;
 }
 
-void Write(irs::Directory& dir, const Data& data, uint64_t gap = 0) {
-  irs::ColWriter w{dir, kSeg, CsDb(), irs::WriteTier::Merge};
+void Write(irs::FileTracker& tracker, const Data& data, uint64_t gap = 0) {
+  irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
   auto& cw = w.OpenColumn(kField, data.type);
   uint64_t row = 0;
   for (size_t i = 0; i < data.chunks.size(); ++i) {
@@ -201,14 +206,14 @@ std::filesystem::path SegPath(Shape shape) {
 }
 
 struct Seg {
-  explicit Seg(Shape shape) : dir{SegPath(shape)} {}
+  explicit Seg(Shape shape) : root{SegPath(shape).string()} {}
 
-  irs::MMapDirectory dir;
+  std::string root;
   std::unique_ptr<irs::ColReader> reader;
   const irs::ColumnReader* col = nullptr;
 };
 
-void HashBlocks(const irs::ColumnReader& col, const std::vector<uint8_t>& file,
+void HashBlocks(const irs::ColumnReader& col, irs::bytes_view file,
                 uint64_t& hash) {
   const auto mix = [&](uint64_t byte) {
     hash = (hash ^ byte) * 0x100000001b3ULL;
@@ -229,9 +234,9 @@ void PrintHash(Shape shape, const Seg& seg) {
   if (!std::getenv("SDB_BENCH_HASH")) {
     return;
   }
-  auto in = seg.dir.open(irs::FileName(kSeg), irs::IOAdvice::SEQUENTIAL);
-  std::vector<uint8_t> file(in->Length());
-  in->ReadData(file.data(), file.size());
+  const auto file = irs::ReadWhole<irs::bstring>(
+    duckdb::QueryContext{}, duckdb::FileSystem::GetFileSystem(CsDb()),
+    duckdb::FileSystem::JoinPath(seg.root, irs::FileName(kSeg)));
   uint64_t hash = 0xcbf29ce484222325ULL;
   HashBlocks(*seg.col, file, hash);
   std::fprintf(stderr, "hash shape%d %016llx\n", static_cast<int>(shape),
@@ -247,10 +252,10 @@ void PrintSegmentInfo(const Seg& seg, const irs::ColumnReader& col,
   uint64_t row = 0;
   for (const auto& block : col.DataBlocks()) {
     std::string key{magic_enum::enum_name(block.codec->type)};
-    if (block.codec->decompression->get_segment_info && block.byte_size != 0) {
+    if (block.codec->decompression.get_segment_info && block.byte_size != 0) {
       window = col.Locate(row, window);
       auto segment = col.OpenSegment(window.block, ctx);
-      auto info = block.codec->decompression->get_segment_info(*segment);
+      auto info = block.codec->decompression.get_segment_info(*segment);
       for (const auto* name :
            {"transform", "leaf", "stored", "shuffled", "codec", "shape",
             "dictionary", "codes_transform"}) {
@@ -281,9 +286,11 @@ const Seg& GetSeg(Shape shape) {
     return *slot;
   }
   slot = std::make_unique<Seg>(shape);
-  Write(slot->dir, GetData(shape));
+  auto& fs = duckdb::FileSystem::GetFileSystem(CsDb());
+  irs::FileTracker tracker{fs, slot->root, kSeg};
+  Write(tracker, GetData(shape));
   slot->reader = std::make_unique<irs::ColReader>(
-    slot->dir, std::string{kSeg}, CsDb(), irs::IOAdvice::RANDOM);
+    CsDb(), fs, slot->root, kSeg, true, duckdb::MappedFileAccess::RANDOM);
   slot->col = slot->reader->Column(kField);
   if (slot->col == nullptr) {
     std::fprintf(stderr, "column missing\n");
@@ -295,18 +302,6 @@ const Seg& GetSeg(Shape shape) {
                      "shape" + std::to_string(static_cast<int>(shape)));
   }
   return *slot;
-}
-
-uint64_t DirBytes(const irs::MemoryDirectory& dir) {
-  uint64_t total = 0;
-  dir.visit([&](std::string_view name) {
-    uint64_t size = 0;
-    if (dir.length(size, name)) {
-      total += size;
-    }
-    return true;
-  });
-  return total;
 }
 
 const std::vector<uint64_t>& ScatteredRows() {
@@ -331,10 +326,11 @@ void WriteSealGap(benchmark::State& state, Shape shape, uint64_t gap) {
   const auto& data = GetData(shape);
   uint64_t bytes = 0;
   for (auto _ : state) {
-    irs::MemoryDirectory dir{};
-    Write(dir, data, gap);
-    bytes = DirBytes(dir);
-    benchmark::DoNotOptimize(&dir);
+    duckdb::MemoryFileSystem fs;
+    irs::FileTracker tracker{fs, kRoot, kSeg};
+    Write(tracker, data, gap);
+    bytes = tracker.Bytes();
+    benchmark::DoNotOptimize(&fs);
   }
   state.counters["bytes"] = static_cast<double>(bytes);
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *
@@ -374,8 +370,9 @@ void Rewrite(benchmark::State& state, Shape shape) {
   irs::ReadContext ctx{*seg.reader};
   uint64_t bytes = 0;
   for (auto _ : state) {
-    irs::MemoryDirectory dir{};
-    irs::ColWriter w{dir, kSeg, CsDb(), irs::WriteTier::Merge};
+    duckdb::MemoryFileSystem fs;
+    irs::FileTracker tracker{fs, kRoot, kSeg};
+    irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
     auto& cw = w.OpenColumn(kField, seg.col->Type());
     auto st = seg.col->InitScan(ctx);
     uint64_t pos = 0;
@@ -387,8 +384,8 @@ void Rewrite(benchmark::State& state, Shape shape) {
       pos += take;
     }
     w.Commit(rows);
-    bytes = DirBytes(dir);
-    benchmark::DoNotOptimize(&dir);
+    bytes = tracker.Bytes();
+    benchmark::DoNotOptimize(&fs);
   }
   state.counters["bytes"] = static_cast<double>(bytes);
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations()) *

@@ -33,9 +33,9 @@
 #include <duckdb/storage/buffer/buffer_handle.hpp>
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
 #include "iresearch/utils/enum_name.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text {
 
@@ -43,7 +43,8 @@ using duckdb::string_t;
 
 duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
   const ReadContext::CacheSlot& slot) {
-  if (!slot.touched || !Touched(slot)) {
+  SDB_ASSERT(slot.touched && slot.cache);
+  if (!Touched(slot)) {
     return nullptr;
   }
   return slot.cache->Get<DecodedDictionary>(
@@ -66,8 +67,9 @@ std::string_view SymbolTable(const ColumnSegment& segment, const Header& h,
 }
 
 bool HasRoom(const ReadContext::CacheSlot& slot, uint64_t bytes) {
-  return slot.touched && slot.cache->GetCurrentMemoryRacy() + bytes <=
-                           slot.cache->GetMaxMemoryRacy();
+  SDB_ASSERT(slot.cache);
+  return slot.cache->GetCurrentMemoryRacy() + bytes <=
+         slot.cache->GetMaxMemoryRacy();
 }
 
 Header SegmentHeader(duckdb::const_data_ptr_t base,
@@ -76,10 +78,13 @@ Header SegmentHeader(duckdb::const_data_ptr_t base,
   SDB_ASSERT(segment.codec == CodecOf(shape, codec));
   const auto h = Header::Parse(base, segment.size, segment.codec);
   const uint64_t first_entry = shape == Shape::Dictionary ? 1 : 0;
-  SDB_ENSURE(h.row_count == segment.count &&
-               uint64_t{h.entry_count} <= uint64_t{h.row_count} + first_entry &&
-               (shape == Shape::Dictionary || h.entry_count == h.row_count),
-             "col codec: corrupted segment header");
+  if (!(h.row_count == segment.count &&
+        uint64_t{h.entry_count} <= uint64_t{h.row_count} + first_entry &&
+        (shape == Shape::Dictionary || h.entry_count == h.row_count) &&
+        (h.entry_count > first_entry || segment.stats.CanHaveNull())))
+    [[unlikely]] {
+    ThrowCorrupted("text", "header is inconsistent");
+  }
   return h;
 }
 
@@ -119,11 +124,9 @@ EntryRanges Intersect(const EntryRanges& a, const EntryRanges& b) {
   return out;
 }
 
-const duckdb::Value* StringConstant(const duckdb::Expression& expr) noexcept {
-  if (expr.GetExpressionType() != duckdb::ExpressionType::VALUE_CONSTANT) {
-    return nullptr;
-  }
-  const auto& value = expr.Cast<duckdb::BoundConstantExpression>().GetValue();
+const duckdb::Value* StringConstant(
+  const duckdb::BoundConstantExpression& constant) noexcept {
+  const auto& value = constant.GetValue();
   if (value.type().id() != duckdb::LogicalTypeId::VARCHAR) {
     return nullptr;
   }
@@ -216,6 +219,7 @@ duckdb::InsertionOrderPreservingMap<std::string> SegmentInfo(
       TransformName(ShapeOf(h.codes),
                     ParseFrames(base + h.off_codes, h.off_symtab - h.off_codes,
                                 h.row_count, h.codes))};
+    info["sorted"] = h.sorted != 0 ? "true" : "false";
   }
   info["entries"] = absl::StrCat(h.entry_count);
   info["frames"] = absl::StrCat(h.frame_count);

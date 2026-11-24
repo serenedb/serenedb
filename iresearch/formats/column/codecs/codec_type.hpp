@@ -64,7 +64,7 @@ enum class CodecType : uint8_t {
 namespace magic_enum {
 
 template<>
-constexpr customize::customize_t customize::enum_name<irs::codecs::CodecType>(
+consteval customize::customize_t customize::enum_name<irs::codecs::CodecType>(
   irs::codecs::CodecType value) noexcept {
   using CodecType = irs::codecs::CodecType;
   switch (value) {
@@ -201,7 +201,8 @@ constexpr bool IsText(CodecType type) noexcept {
 }
 
 constexpr bool IsNumeric(CodecType type) noexcept {
-  return IsForm(type) && std::to_underlying(LeafOf(type)) < kNumericLeafCount;
+  return IsForm(type) && std::to_underlying(ShapeOf(type)) < kShapeCount &&
+         std::to_underlying(LeafOf(type)) < kNumericLeafCount;
 }
 
 constexpr bool Sorted(ByteCodec leaf) noexcept {

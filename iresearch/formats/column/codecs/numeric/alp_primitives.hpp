@@ -30,9 +30,38 @@
 #include <duckdb/storage/storage_info.hpp>
 #include <type_traits>
 
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
 
+namespace irs::codecs {
+
+template<CodecType kCodec, auto kAnalyze, auto kCompress>
+struct Sampled {
+  static double Analyze(ColumnDataCheckpointData& data, double) {
+    if (!HasRows(data.chunks)) {
+      return kNoScore;
+    }
+    return ScoreOfBytes(kAnalyze(data), data);
+  }
+
+  static bool Compress(const Codec& codec, ColumnDataCheckpointData& data) {
+    if (!HasRows(data.chunks)) {
+      return false;
+    }
+    data.tuning.hints[std::to_underlying(kCodec)].score =
+      ScoreOfBytes(kCompress(codec, data), data);
+    return true;
+  }
+};
+
+template<CodecType kCodec, auto kAnalyze, auto kCompress>
+inline constexpr CompressionFunction kSampled{
+  .analyze = Sampled<kCodec, kAnalyze, kCompress>::Analyze,
+  .compress = Sampled<kCodec, kAnalyze, kCompress>::Compress,
+};
+
+}  // namespace irs::codecs
 namespace irs::codecs::alp {
 
 inline constexpr uint32_t kVectorSize = 1024;

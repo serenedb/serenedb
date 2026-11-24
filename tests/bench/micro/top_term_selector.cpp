@@ -86,8 +86,6 @@ struct SubReader final : irs::SubReader {
   explicit SubReader(uint32_t num_docs)
     : info{.docs_count = num_docs, .live_docs_count = num_docs} {}
 
-  uint64_t CountMappedMemory() const final { return 0; }
-
   const irs::SegmentInfo& Meta() const noexcept final { return info; }
   const irs::DocumentMask* docs_mask() const noexcept final { return nullptr; }
   irs::lead::Node::ptr docs_iterator() const final {

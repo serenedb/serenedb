@@ -32,7 +32,6 @@
 #include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/index/segment_writer.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/string.hpp>
 #include <memory>
@@ -42,8 +41,10 @@
 #include "formats/column/test_cs_helpers.hpp"
 #include "index/index_tests.hpp"
 #include "index/merge/support/segment_dump.hpp"
+#include "index_dir.hpp"
 #include "insert_field.hpp"
 #include "tests_shared.hpp"
+#include "utils/write_helpers.hpp"
 
 namespace {
 
@@ -57,7 +58,7 @@ constexpr irs::doc_id_t kStagedDocs = 3 * STANDARD_VECTOR_SIZE + 17;
 struct RawField {
   std::string_view value;
   std::string_view Name() const { return "raw"; }
-  bool Write(irs::DataOutput& out) const {
+  bool Write(duckdb::WriteStream& out) const {
     out.WriteData(irs::ViewCast<irs::byte_type>(value).data(), value.size());
     return true;
   }
@@ -77,18 +78,23 @@ struct KeyField {
 };
 
 irs::SegmentWriterOptions SortedOptions(const std::vector<irs::SortKey>* spec) {
-  return {.db = &::irs::DuckDBEngine::Instance().instance(), .sort = spec};
+  return {.sort = spec};
+}
+
+tests::IndexDir MemoryDir() {
+  return {irs::DuckDBEngine::Instance().instance(), TestEnv::MemoryRoot()};
 }
 
 std::shared_ptr<const irs::SegmentReaderImpl> OpenFlushed(
-  irs::Directory& dir, irs::SegmentMeta& meta,
-  irs::DocumentMaskBuilder&& mask) {
+  const tests::IndexDir& dir, irs::SegmentMeta& meta,
+  irs::WrittenSegment written, irs::DocumentMaskBuilder&& mask) {
   if (!mask.Empty()) {
     meta.docs_mask =
       std::make_shared<irs::DocumentMask>(std::move(mask).Finish());
   }
-  return irs::SegmentReaderImpl::Open(dir, meta,
-                                      irs::tests::DefaultReaderOptions());
+  return irs::SegmentReaderImpl::Open(
+    dir.Db(), dir.Fs(), dir.Root(), meta, irs::tests::DefaultReaderOptions(),
+    std::move(written.files), std::move(written.inputs));
 }
 
 std::vector<std::string> BlobValues(const irs::SubReader& segment,
@@ -116,15 +122,16 @@ TEST_F(SegmentWriterTests, memory_index_field) {
 
   FieldT field;
 
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
+  const irs::SegmentWriterOptions options;
 
   {
     irs::SegmentMeta segment;
     segment.name = "tmp";
 
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     writer->reset(segment);
 
     ASSERT_EQ(0, writer->memory_active());
@@ -148,8 +155,10 @@ TEST_F(SegmentWriterTests, memory_index_field) {
     irs::SegmentMeta segment;
     segment.name = "tmp";
 
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     writer->reset(segment);
 
     ASSERT_EQ(0, writer->memory_active());
@@ -185,8 +194,8 @@ struct StoredField {
   irs::IndexFeatures GetIndexFeatures() const {
     return irs::IndexFeatures::None;
   }
-  bool Write(irs::DataOutput& out) const {
-    irs::WriteStr(out, value_);
+  bool Write(duckdb::WriteStream& out) const {
+    tests::WriteStr(out, value_);
     return true;
   }
 };
@@ -194,15 +203,16 @@ struct StoredField {
 }  // namespace
 
 TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
+  const irs::SegmentWriterOptions options;
 
   StoredField field{.name_ = "test_field", .value_ = "hello"};
 
   // --- (1) Per-doc loop: begin() / store / commit ------------------------
   {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
@@ -225,8 +235,10 @@ TEST_F(SegmentWriterTests, memory_store_field_unsorted) {
 
   // --- (2) Batched: one begin(ctx, 100), then store/commit per row ------
   {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
@@ -251,8 +263,7 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
   // Index + store: indexed field uses insert(field), stored bytes go to
   // the cs blob column. Same setup as memory_store_field_unsorted but
   // with a real tokenizer-bearing field driven through insert().
-  const irs::SegmentWriterOptions options{
-    .db = &::irs::DuckDBEngine::Instance().instance()};
+  const irs::SegmentWriterOptions options;
 
   struct IndexedField {
     irs::IndexFeatures GetIndexFeatures() const {
@@ -262,8 +273,8 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
     std::string_view Value() const { return "true"; }
     std::string_view Name() const { return "indexed_field"; }
     irs::field_id Id() const noexcept { return 1; }
-    bool Write(irs::DataOutput& out) const {
-      irs::WriteStr(out, std::string_view{"hello"});
+    bool Write(duckdb::WriteStream& out) const {
+      tests::WriteStr(out, std::string_view{"hello"});
       return true;
     }
     mutable irs::KeywordTokenizer _stream;
@@ -273,8 +284,10 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
 
   // --- (1) Per-doc loop: begin() / insert / store / commit ----------------
   {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     irs::SegmentMeta segment;
     segment.name = "foo";
     writer->reset(segment);
@@ -296,8 +309,10 @@ TEST_F(SegmentWriterTests, memory_index_store_field_unsorted) {
 
   // --- (2) Batched: one begin(ctx, 100), per-doc insert+store+commit -----
   {
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, options);
+    tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                        TestEnv::MemoryRoot()};
+    auto writer =
+      irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(), options);
     irs::SegmentMeta segment;
     segment.name = "foo";
     writer->reset(segment);
@@ -322,8 +337,9 @@ TEST_F(SegmentWriterTests, memory_store_sorted_field) {
   const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   for (const bool batched : {false, true}) {
     SCOPED_TRACE(batched);
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
+    const auto dir = MemoryDir();
+    auto writer = irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(),
+                                           SortedOptions(&spec));
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
@@ -369,8 +385,9 @@ TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
   absl::c_sort(expected, std::greater{});
   for (const bool batched : {false, true}) {
     SCOPED_TRACE(batched);
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
+    const auto dir = MemoryDir();
+    auto writer = irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(),
+                                           SortedOptions(&spec));
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
@@ -401,11 +418,11 @@ TEST_F(SegmentWriterTests, memory_index_store_sorted_field) {
     irs::SegmentMeta flushed;
     flushed.name = segment.name;
     irs::DocumentMaskBuilder mask;
-    writer->flush(flushed, mask);
+    auto written = writer->flush(flushed, mask);
     EXPECT_EQ(0u, mask.Count());
     EXPECT_EQ(kDocs, flushed.docs_count);
     EXPECT_EQ(kDocs, flushed.live_docs_count);
-    const auto reader = OpenFlushed(dir, flushed, std::move(mask));
+    const auto reader = OpenFlushed(dir, flushed, std::move(written), std::move(mask));
     ASSERT_NE(nullptr, reader);
     const auto keys = BlobValues(*reader, kKeyColumn);
     ASSERT_EQ(kDocs, keys.size());
@@ -435,8 +452,9 @@ TEST_F(SegmentWriterTests, memory_store_field_sorted) {
   const std::vector<irs::SortKey> spec{{{.column = kKeyColumn}}};
   for (const bool batched : {false, true}) {
     SCOPED_TRACE(batched);
-    irs::MemoryDirectory dir;
-    auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
+    const auto dir = MemoryDir();
+    auto writer = irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(),
+                                           SortedOptions(&spec));
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
@@ -469,11 +487,11 @@ TEST_F(SegmentWriterTests, memory_store_field_sorted) {
     irs::SegmentMeta flushed;
     flushed.name = segment.name;
     irs::DocumentMaskBuilder mask;
-    writer->flush(flushed, mask);
+    auto written = writer->flush(flushed, mask);
     EXPECT_EQ(0u, mask.Count());
     EXPECT_EQ(kStagedDocs, flushed.docs_count);
     EXPECT_EQ(kStagedDocs, flushed.live_docs_count);
-    const auto reader = OpenFlushed(dir, flushed, std::move(mask));
+    const auto reader = OpenFlushed(dir, flushed, std::move(written), std::move(mask));
     ASSERT_NE(nullptr, reader);
     const auto keys = BlobValues(*reader, kKeyColumn);
     ASSERT_EQ(kStagedDocs, keys.size());
@@ -494,9 +512,9 @@ TEST_F(SegmentWriterTests, insert_sorted_without_comparator) {
   for (const bool sorted : {true, false}) {
     SCOPED_TRACE(sorted);
     const auto column = sorted ? kPayloadColumn : kKeyColumn;
-    irs::MemoryDirectory dir;
-    auto writer =
-      irs::SegmentWriter::make(dir, SortedOptions(sorted ? &spec : nullptr));
+    const auto dir = MemoryDir();
+    auto writer = irs::SegmentWriter::make(
+      dir.Db(), dir.Fs(), dir.Root(), SortedOptions(sorted ? &spec : nullptr));
     ASSERT_EQ(0u, writer->memory_active());
     irs::SegmentMeta segment;
     segment.name = "foo";
@@ -517,13 +535,13 @@ TEST_F(SegmentWriterTests, insert_sorted_without_comparator) {
     irs::SegmentMeta flushed;
     flushed.name = segment.name;
     irs::DocumentMaskBuilder mask;
-    writer->flush(flushed, mask);
+    auto written = writer->flush(flushed, mask);
     EXPECT_EQ(1u, mask.Count());
     EXPECT_TRUE(irs::DocumentMaskBuilder{mask}.Finish().Contains(
       irs::doc_limits::min() + 7));
     EXPECT_EQ(kDocs, flushed.docs_count);
     EXPECT_EQ(kDocs - 1, flushed.live_docs_count);
-    const auto reader = OpenFlushed(dir, flushed, std::move(mask));
+    const auto reader = OpenFlushed(dir, flushed, std::move(written), std::move(mask));
     ASSERT_NE(nullptr, reader);
     std::vector<std::string> expected;
     for (irs::doc_id_t i = 0; i < kDocs; ++i) {
@@ -548,8 +566,9 @@ TEST_F(SegmentWriterTests, reorder) {
     for (const bool remove : {false, true}) {
       SCOPED_TRACE(
         absl::StrCat(absl::StrJoin(inserted, ","), remove ? " without D" : ""));
-      irs::MemoryDirectory dir;
-      auto writer = irs::SegmentWriter::make(dir, SortedOptions(&spec));
+      const auto dir = MemoryDir();
+      auto writer = irs::SegmentWriter::make(dir.Db(), dir.Fs(), dir.Root(),
+                                             SortedOptions(&spec));
       ASSERT_EQ(0u, writer->memory_active());
       irs::SegmentMeta segment;
       segment.name = "foo";
@@ -574,13 +593,13 @@ TEST_F(SegmentWriterTests, reorder) {
       irs::SegmentMeta flushed;
       flushed.name = segment.name;
       irs::DocumentMaskBuilder mask;
-      writer->flush(flushed, mask);
+      auto written = writer->flush(flushed, mask);
       EXPECT_EQ(remove ? 1u : 0u, mask.Count());
       EXPECT_EQ(remove, irs::DocumentMaskBuilder{mask}.Finish().Contains(
                           irs::doc_limits::min() + 3));
       EXPECT_EQ(5u, flushed.docs_count);
       EXPECT_EQ(remove ? 4u : 5u, flushed.live_docs_count);
-      const auto reader = OpenFlushed(dir, flushed, std::move(mask));
+      const auto reader = OpenFlushed(dir, flushed, std::move(written), std::move(mask));
       ASSERT_NE(nullptr, reader);
       std::vector<std::string> expected{"A", "B", "C", "D", "E"};
       if (remove) {

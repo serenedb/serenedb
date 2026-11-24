@@ -46,6 +46,7 @@ struct Lz4 {
   static constexpr uint8_t kDefaultLevel = 1;
   static constexpr uint8_t kMaxLevel = LZ4HC_CLEVEL_MAX;
   static constexpr size_t kDictionaryCap = 64 * 1024;
+  static constexpr bool kInflatesPrefix = true;
 
   static size_t Bound(size_t raw_size) noexcept;
 

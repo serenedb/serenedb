@@ -55,59 +55,23 @@ class Values final : public State {
   Values(const Values&) = delete;
   Values& operator=(const Values&) = delete;
 
-  struct Trial {
-    uint64_t rows = 0;
-    uint64_t input = 0;
-    uint64_t nulls = 0;
-    uint32_t max_len = 0;
-  };
-
-  struct Spans {
-    blob::FrameShape frame;
-    blob::FrameSpans spans;
-  };
-
-  struct ShapeRows {
-    bool done = false;
-    bool assembled = false;
-    bool coded = false;
-    Profile profile;
-    std::vector<uint32_t> codes;
-    ScratchVector<uint32_t> locals;
-    uint64_t codes_bytes = 0;
-    std::string bytes;
-    std::vector<Spans> spans;
-  };
-
   uint64_t Rows() const noexcept { return codes.size(); }
 
-  TextStatistics Statistics() const noexcept {
+  Features GetFeatures() const noexcept {
     const auto valid =
-      static_cast<double>(std::max<uint64_t>(Rows() - null_count, 1));
+      static_cast<float>(std::max<uint64_t>(Rows() - null_count, 1));
     return {
-      .value_bytes = static_cast<double>(raw) / valid,
-      .distinct_share = static_cast<double>(distinct.size()) / valid,
+      static_cast<float>(raw) / valid,
+      static_cast<float>(distinct.size()) / valid,
+      0.F,
     };
   }
-
-  ShapeRows& TrialRows(Shape shape);
-
-  uint64_t TrialEntries() { return TrialRows(Shape::Dictionary).codes.size(); }
 
   bool Repeats() const noexcept {
     const uint64_t null_values = null_count != 0 ? 1 : 0;
     return (distinct.size() + null_values) * kMinRepeat <= Rows();
   }
 
-  uint64_t CodesSize(ShapeRows& rows);
-
-  static std::string_view Bytes(ShapeRows& rows);
-
-  static const blob::FrameSpans& Split(ShapeRows& rows, blob::FrameShape frame);
-
-  Trial trial;
-  bool shapes_measured = false;
-  bool contends[kTextShapeCount] = {};
   uint64_t null_count = 0;
   uint64_t raw = 0;
   std::vector<const duckdb::string_t*> distinct;
@@ -154,9 +118,6 @@ class Values final : public State {
 
   containers::FlatHashSet<uint32_t, Hash, Eq> _codes{0, Hash{&distinct},
                                                      Eq{&distinct}};
-  const ReusePolicy& _codes_tuning;
-  DedupScratch _dedup;
-  ShapeRows _rows[kTextShapeCount];
   uint32_t _last_code = 0;
   const duckdb::string_t* _last = nullptr;
 };

@@ -47,15 +47,15 @@
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_layout.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_scan.tpp"
-#include "iresearch/formats/column/codecs/numeric/numeric_values.hpp"
-#include "iresearch/formats/column/codecs/preferences.hpp"
+#include "iresearch/formats/column/codecs/numeric/runs.hpp"
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/system_compiler.hpp"
 
-namespace irs::codecs {
+namespace irs::codecs::numeric {
 
 inline constexpr uint8_t kWideOffsets = 1;
 inline constexpr uint8_t kWideHalves = 2;
@@ -64,6 +64,7 @@ inline constexpr size_t kWideSampledBlocks = 16;
 inline constexpr size_t kWideSampledRows = 64;
 inline constexpr unsigned kWideHalvesBits = 113;
 inline constexpr size_t kWideRunRows = 8;
+inline constexpr uint32_t kMostWideDictionaryEntries = 2048;
 
 struct WideHeader {
   uint8_t form = 0;
@@ -105,14 +106,13 @@ struct WideSample {
 };
 
 constexpr WideSample WideSampleOf(size_t rows) noexcept {
-  const size_t blocks =
-    (rows + numeric::kBlockValues - 1) / numeric::kBlockValues;
+  const size_t blocks = (rows + kBlockValues - 1) / kBlockValues;
   const size_t every =
     std::clamp<size_t>(blocks / kWideSampledBlocks, 1, kWideSampleEvery);
   const size_t sampled = std::max<size_t>((blocks + every - 1) / every, 1);
   return {
     .every = every,
-    .rows = std::max(kWideSampledRows, numeric::kBlockValues / sampled),
+    .rows = std::max(kWideSampledRows, kBlockValues / sampled),
   };
 }
 
@@ -141,9 +141,8 @@ inline unsigned SampledBits(std::span<const absl::uint128> block,
 struct WidePart {
   struct Keep {
     void operator()(const Codec&, duckdb::BaseStatistics, uint64_t,
-                    std::string_view segment) const {
+                    std::string_view segment, std::string_view) const {
       part->bytes = segment;
-      part->flushed = true;
     }
 
     WidePart* part;
@@ -154,30 +153,24 @@ struct WidePart {
                            reinterpret_cast<duckdb::data_ptr_t>(values.data()),
                            values.size()},
             values.size()},
-      preferences{*outer.preferences},
       data{
         .type = type,
         .chunks = {&chunk, 1},
-        .ctx = outer.ctx,
         .flush = keep,
         .params = outer.params,
         .tuning = tuning,
-        .preferences = &preferences,
-        .disabled = outer.disabled,
+        .contested = outer.contested,
         .min_packed_run = outer.min_packed_run,
+        .run_price = outer.run_price,
         .rows = values.size(),
       } {
     duckdb::FlatVector::SetSize(chunk.data, values.size());
-    preferences.contest_grown = false;
-    data.disabled.set(std::to_underlying(CodecType::Constant));
   }
 
   duckdb::LogicalType type{duckdb::LogicalTypeId::UBIGINT};
   WriteChunk chunk;
   ColumnTuning tuning;
-  Preferences preferences;
   std::string_view bytes;
-  bool flushed = false;
   Keep keep{this};
   ColumnDataCheckpointData data;
 };
@@ -202,7 +195,8 @@ struct WideValues final : State {
       }
       Read(data);
     }
-    return low && (narrow || (high && halves && MayPack(shape, data)));
+    SDB_ASSERT(!low || narrow || high);
+    return low && (narrow || (halves && MayPack(shape, data)));
   }
 
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
@@ -222,7 +216,6 @@ struct WideValues final : State {
   bool usable = false;
   bool narrow = false;
   bool has_null = false;
-  bool contested = false;
   bool started = false;
   bool read = false;
   bool sampled = false;
@@ -254,12 +247,11 @@ struct WideValues final : State {
     W last{};
     for (const auto& chunk : data.chunks) {
       const size_t count = chunk.data.size();
-      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-          !duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
+      SDB_ASSERT(chunk.data.GetVectorType() ==
+                   duckdb::VectorType::FLAT_VECTOR &&
+                 count != 0);
+      if (!duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
         return false;
-      }
-      if (count == 0) {
-        continue;
       }
       const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
       bool repeats = any && values[0] == last;
@@ -292,7 +284,9 @@ struct WideValues final : State {
           }
           const auto most = std::min(
             static_cast<double>(data.rows) / 2,
-            static_cast<double>(data.preferences->max_wide_dictionary_entries));
+            static_cast<double>(data.contested
+                                  ? kMostWideDictionaryEntries
+                                  : std::numeric_limits<uint32_t>::max()));
           sample_few =
             static_cast<double>(distinct.size()) <=
             most * -std::expm1(-static_cast<double>(sample.size()) / most);
@@ -300,7 +294,7 @@ struct WideValues final : State {
         }
         return sample_few;
     }
-    return false;
+    SDB_UNREACHABLE();
   }
 
   bool ReadRuns(ColumnDataCheckpointData& data) {
@@ -312,10 +306,9 @@ struct WideValues final : State {
     size_t row = 0;
     for (const auto& chunk : data.chunks) {
       const size_t size = chunk.data.size();
-      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-          !duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
-        return false;
-      }
+      SDB_ASSERT(
+        chunk.data.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
+        size != 0 && duckdb::FlatVector::Validity(chunk.data).CannotHaveNull());
       const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
       for (size_t i = 0; i < size; ++i) {
         const auto key = WideKey<W>(values[i]);
@@ -331,9 +324,7 @@ struct WideValues final : State {
       }
       row += size;
     }
-    if (count == 0) {
-      return false;
-    }
+    SDB_ASSERT(count != 0);
     const std::span<const absl::uint128> found{keys.data(), count};
     const auto [lowest, highest] = absl::c_minmax_element(found);
     if (absl::Uint128High64(*highest - *lowest) != 0) {
@@ -348,17 +339,17 @@ struct WideValues final : State {
              : least;
     lows.resize(data.rows);
     low.emplace(data, lows);
-    auto& runs = low->data.template Get<Runs<uint64_t>>();
-    runs.values.resize(count);
+    ScratchVector<uint64_t> values(count);
     rows.resize(count);
     for (size_t r = 0; r < count; ++r) {
       const uint64_t value = absl::Uint128Low64(keys[r] - base);
-      runs.values[r] = value;
+      values[r] = value;
       std::fill(lows.data() + rows[r],
                 lows.data() + (r + 1 < count ? rows[r + 1] : data.rows), value);
     }
-    runs.rows = std::move(rows);
-    runs.located = true;
+    low->data.template Get<Values<uint64_t>>(std::span<const uint64_t>{values},
+                                             std::span<const uint32_t>{rows});
+    low->data.template Get<Runs<uint64_t>>(std::move(values), std::move(rows));
     return true;
   }
 
@@ -370,10 +361,10 @@ struct WideValues final : State {
     uint64_t last = 0;
     size_t at = 0;
     for (const auto& chunk : data.chunks) {
-      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR) {
-        return false;
-      }
       const size_t count = chunk.data.size();
+      SDB_ASSERT(chunk.data.GetVectorType() ==
+                   duckdb::VectorType::FLAT_VECTOR &&
+                 count != 0);
       const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
       const auto& validity = duckdb::FlatVector::Validity(chunk.data);
       const bool all_valid = validity.CannotHaveNull();
@@ -384,7 +375,7 @@ struct WideValues final : State {
           ++first;
         }
         if (first == count) {
-          has_null |= count != 0;
+          has_null = true;
           at += count;
           continue;
         }
@@ -403,7 +394,7 @@ struct WideValues final : State {
           hi = std::max(hi, lower);
           lows[at + i] = lower;
         }
-        last = count != 0 ? uint64_t{values[count - 1].lower} : last;
+        last = values[count - 1].lower;
       } else {
         bool nulls = false;
         for (size_t i = first; i < count; ++i) {
@@ -439,19 +430,18 @@ struct WideValues final : State {
     size_t row = 0;
     for (const auto& chunk : data.chunks) {
       const size_t count = chunk.data.size();
-      if (count == 0) {
-        continue;
-      }
-      if (chunk.data.GetVectorType() != duckdb::VectorType::FLAT_VECTOR ||
-          !duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
+      SDB_ASSERT(chunk.data.GetVectorType() ==
+                   duckdb::VectorType::FLAT_VECTOR &&
+                 count != 0);
+      if (!duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
         sample.clear();
         return;
       }
       const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
       for (size_t i = 0; i < count;) {
-        const size_t block = (row + i) / numeric::kBlockValues;
-        const size_t at = (row + i) % numeric::kBlockValues;
-        const size_t stop = std::min(count, i + numeric::kBlockValues - at);
+        const size_t block = (row + i) / kBlockValues;
+        const size_t at = (row + i) % kBlockValues;
+        const size_t stop = std::min(count, i + kBlockValues - at);
         if (block % every == 0 && at < rows) {
           for (size_t k = i, end = std::min(stop, i + rows - at); k < end;
                ++k) {
@@ -504,15 +494,10 @@ struct WideValues final : State {
     lows.resize(data.rows);
     highs.resize(data.rows);
     ReadHalves(data);
-    if (!usable) {
-      sampled = true;
-      sample_narrow = false;
-      return;
-    }
+    SDB_ASSERT(usable);
     if (!sampled) {
       const auto [every, rows] = WideSampleOf(lows.size());
-      for (size_t at = 0; at < lows.size();
-           at += every * numeric::kBlockValues) {
+      for (size_t at = 0; at < lows.size(); at += every * kBlockValues) {
         for (size_t i = at, stop = std::min(lows.size(), at + rows); i < stop;
              ++i) {
           sample.push_back(absl::MakeUint128(highs[i], lows[i]));
@@ -568,9 +553,10 @@ struct WideValues final : State {
     };
     for (const auto& chunk : data.chunks) {
       const size_t count = chunk.data.size();
-      if (count != 0 &&
-          chunk.data.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
-          duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
+      SDB_ASSERT(chunk.data.GetVectorType() ==
+                   duckdb::VectorType::FLAT_VECTOR &&
+                 count != 0);
+      if (duckdb::FlatVector::Validity(chunk.data).CannotHaveNull()) {
         const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
         start(static_cast<uint64_t>(values[0].upper) ^ kWideBias<W>,
               values[0].lower);
@@ -608,16 +594,17 @@ struct WideValues final : State {
   }
 };
 
-template<typename W, const CompressionFunction& kInner>
+template<typename W, CodecType kCodec, const CompressionFunction& kInner>
 double AnalyzeWide(ColumnDataCheckpointData& data, double bound) {
   auto& wide = data.Get<WideValues<W>>();
-  wide.contested = true;
-  if (!wide.Offers(StoresHalves(kInner.codec), ShapeOf(kInner.codec), data)) {
+  if (!wide.Offers(StoresHalves(kCodec), ShapeOf(kCodec), data)) {
     return kNoScore;
   }
+  wide.low->data.price = data.price;
   if (wide.narrow) {
     return kInner.analyze(wide.low->data, bound);
   }
+  wide.high->data.price = data.price;
   const auto limit = std::min(bound, static_cast<double>(sizeof(W)));
   constexpr double price = 8.0 * sizeof(W) / kWideHalvesBits;
   const auto low = kInner.analyze(wide.low->data, limit / price);
@@ -629,16 +616,16 @@ double AnalyzeWide(ColumnDataCheckpointData& data, double bound) {
   return score < limit ? score : kNoScore;
 }
 
-inline bool CompressPart(const CompressionFunction& inner, WidePart& part) {
-  part.flushed = false;
-  return inner.compress(part.data) && part.flushed;
+inline bool CompressPart(const CompressionFunction& inner, const Codec& codec,
+                         WidePart& part) {
+  return inner.compress(codec, part.data);
 }
 
-template<typename W, const CompressionFunction& kInner>
-bool CompressWide(ColumnDataCheckpointData& data) {
+template<typename W, CodecType kCodec, const CompressionFunction& kInner>
+bool CompressWide(const Codec& codec, ColumnDataCheckpointData& data) {
   auto& wide = data.Get<WideValues<W>>();
-  if (!wide.Offers(StoresHalves(kInner.codec), ShapeOf(kInner.codec), data) ||
-      !CompressPart(kInner, *wide.low)) {
+  if (!wide.Offers(StoresHalves(kCodec), ShapeOf(kCodec), data) ||
+      !CompressPart(kInner, codec, *wide.low)) {
     return false;
   }
   WideHeader header{
@@ -652,7 +639,7 @@ bool CompressWide(ColumnDataCheckpointData& data) {
     out.resize(sizeof(WideHeader));
     out.append(low);
   } else {
-    if (!CompressPart(kInner, *wide.high)) {
+    if (!CompressPart(kInner, codec, *wide.high)) {
       return false;
     }
     header = {.form = kWideHalves, .low_size = low.size()};
@@ -662,20 +649,14 @@ bool CompressWide(ColumnDataCheckpointData& data) {
     out.append(wide.high->bytes);
   }
   std::memcpy(out.data(), &header, sizeof(WideHeader));
-  if (!wide.contested && data.preferences->contest_grown &&
-      data.tuning.reuse.Grew(static_cast<double>(out.size()),
-                             static_cast<double>(RawInput(data)))) {
-    return false;
-  }
-  data.FlushSegment(kInner.codec, wide.Stats(data.type), data.rows, out);
+  data.flush(codec, wide.Stats(data.type), data.rows, out, {});
   return true;
 }
 
-template<typename W, const CompressionFunction& kInner>
+template<typename W, CodecType kCodec, const CompressionFunction& kInner>
 inline constexpr CompressionFunction kWide{
-  .analyze = AnalyzeWide<W, kInner>,
-  .compress = CompressWide<W, kInner>,
-  .codec = kInner.codec,
+  .analyze = AnalyzeWide<W, kCodec, kInner>,
+  .compress = CompressWide<W, kCodec, kInner>,
 };
 
 template<typename W, typename R>
@@ -901,12 +882,12 @@ duckdb::InsertionOrderPreservingMap<std::string> WideSegmentInfo(
 
 template<typename R>
 inline constexpr DecompressionFunction kWideDecompression{
-  .init_scan = numeric::InitScan<R>,
-  .scan = numeric::Scan<R>,
-  .select = numeric::Select<R>,
-  .filter = numeric::Filter<R>,
-  .fetch_rows = numeric::FetchRows<R>,
+  .init_scan = InitScan<R>,
+  .scan = Scan<R>,
+  .select = Select<R>,
+  .filter = Filter<R>,
+  .fetch_rows = FetchRows<R>,
   .get_segment_info = WideSegmentInfo<R>,
 };
 
-}  // namespace irs::codecs
+}  // namespace irs::codecs::numeric

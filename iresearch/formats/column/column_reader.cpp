@@ -24,11 +24,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <duckdb/common/page_residency.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/storage/buffer/buffer_handle.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <functional>
 #include <limits>
@@ -43,9 +45,8 @@
 #include "iresearch/formats/column/list_column_reader.hpp"
 #include "iresearch/formats/column/struct_column_reader.hpp"
 #include "iresearch/formats/column/variant_column_reader.hpp"
-#include "iresearch/store/data_input.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/file_utils_ext.hpp"
+#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -57,7 +58,15 @@ using column_internal::BorrowsBlockStrings;
 using column_internal::FetchSegmentRows;
 
 constexpr duckdb::idx_t kMaxFetchHits = 64;
-constexpr uint64_t kTrustedRunBytes = 32 * file_utils::kPage;
+constexpr uint64_t kTrustedRunBytes = 256 * duckdb::PageResidency::PAGE_SIZE;
+constexpr size_t kBlocksAhead = 32;
+
+bool BytesInMemory(const duckdb::InputFile& file, uint64_t offset,
+                   uint64_t size) noexcept {
+  return file.IsPaged()
+           ? duckdb::PageResidency::IsResident(file.Data() + offset, size)
+           : file.IsResident(offset, size);
+}
 
 struct GatherBands {
   uint32_t flat;
@@ -110,7 +119,7 @@ bool ScatterWins(const ColumnBlockMeta& block, const duckdb::LogicalType& type,
 bool SelectsNatively(const ColumnBlockMeta& block,
                      const duckdb::LogicalType& type, duckdb::idx_t hits,
                      duckdb::idx_t span) noexcept {
-  return block.codec->decompression->select &&
+  return block.codec->decompression.select &&
          hits * 1000 <= BandsFor(block.codec->type, type).native * span;
 }
 
@@ -220,6 +229,28 @@ BlockWindow ColumnReader::Locate(uint64_t row,
   return BlockWindow{rg, _offsets[rg], _offsets[rg + 1]};
 }
 
+void ColumnReader::CollectBlocks(uint64_t first, uint64_t last,
+                                 std::vector<duckdb::FileRange>& out) const {
+  if (!_segments.empty() && first < _row_count) {
+    const auto from = Locate(first).block;
+    const auto to = Locate(std::min(last, _row_count - 1)).block;
+    auto shared = std::numeric_limits<uint64_t>::max();
+    for (auto block = from; block <= to; ++block) {
+      const auto& m = _segments[block];
+      if (m.shared_size != 0 && m.shared_offset != shared) {
+        shared = m.shared_offset;
+        out.push_back({.offset = shared, .size = m.shared_size});
+      }
+      if (m.byte_size != 0) {
+        out.push_back({.offset = m.file_offset, .size = m.byte_size});
+      }
+    }
+  }
+  if (_validity) {
+    _validity->CollectBlocks(first, last, out);
+  }
+}
+
 bool ColumnReader::NextSegment(BlockWindow& w) const noexcept {
   const auto next = w.block + 1;
   if (next >= _segments.size()) {
@@ -238,7 +269,7 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(size_t block,
   const auto& m = _segments[block];
   const auto& codec = *m.codec;
   auto segment = std::make_unique<codecs::ColumnSegment>(codecs::ColumnSegment{
-    .function = *codec.decompression,
+    .function = codec.decompression,
     .type = m.statistics.GetType(),
     .stats = m.statistics,
     .ctx = ctx,
@@ -259,10 +290,8 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(size_t block,
   auto& slot = segment->cache_slot;
   slot.file_id = _file_id;
   slot.file_offset = m.file_offset;
-  if (auto* cache = ctx.Cache()) {
-    slot.touched = &_touched[block];
-    slot.cache = cache;
-  }
+  slot.touched = &_touched[block];
+  slot.cache = ctx.Cache();
   slot.streams = ctx.Streams();
   segment->block = ctx.RegisterColBlock(m.file_offset, m.byte_size);
   return segment;
@@ -270,15 +299,15 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(size_t block,
 
 void ColumnReader::Readahead(size_t block, ReadContext& ctx,
                              ScanState* s) const noexcept {
-  if (ctx.RandomAccess()) {
+  const auto* file = ctx.File();
+  if (ctx.RandomAccess() || file == nullptr) {
     return;
   }
-  auto& in = ctx.In();
   const auto& first = _segments[block];
   if (s == nullptr) {
-    file_utils::Hint(in, first.file_offset, first.byte_size);
+    file->Hint(first.file_offset, first.byte_size);
     if (first.shared_size != 0) {
-      file_utils::Hint(in, first.shared_offset, first.shared_size);
+      file->Hint(first.shared_offset, first.shared_size);
     }
     return;
   }
@@ -286,16 +315,15 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
   if (block < s->advised_end || first.byte_size == 0) {
     return;
   }
-  if (in.Resident(first.file_offset, first.byte_size)) {
-    if (first.byte_size <= kTrustedRunBytes) {
-      in.MarkWarm(first.file_offset, first.byte_size);
-    }
+  if (first.byte_size <= kTrustedRunBytes &&
+      file->Warm(first.file_offset, first.byte_size) == first.byte_size) {
     auto end = block + 1;
     auto tail = block;
-    for (uint64_t budget = kTrustedRunBytes; end < _segments.size(); ++end) {
+    for (auto budget = kTrustedRunBytes - first.byte_size;
+         end < _segments.size(); ++end) {
       const auto& next = _segments[end];
       if (next.byte_size > budget ||
-          in.Warm(next.file_offset, next.byte_size) != next.byte_size) {
+          file->Warm(next.file_offset, next.byte_size) != next.byte_size) {
         break;
       }
       budget -= next.byte_size;
@@ -303,33 +331,60 @@ void ColumnReader::Readahead(size_t block, ReadContext& ctx,
         tail = end;
       }
     }
-    if (tail != block &&
-        !in.Resident(_segments[tail].file_offset, _segments[tail].byte_size)) {
-      file_utils::InvalidateResidency();
-      end = block + 1;
+    const auto& last = _segments[tail];
+    if (BytesInMemory(*file, first.file_offset, 1) &&
+        BytesInMemory(*file, last.file_offset + last.byte_size - 1, 1)) {
+      s->advised_end = end;
+      return;
     }
-    s->advised_end = end;
+    if (file->IsPaged()) {
+      duckdb::PageResidency::Invalidate();
+    }
+  }
+  if (BytesInMemory(*file, first.file_offset, first.byte_size)) {
+    file->MarkWarm(first.file_offset, first.byte_size);
+    s->advised_end = block + 1;
     return;
   }
-  if (in.Warm(first.file_offset, first.byte_size) == first.byte_size) {
-    file_utils::InvalidateResidency();
+  if (file->IsPaged() &&
+      file->Warm(first.file_offset, first.byte_size) == first.byte_size) {
+    duckdb::PageResidency::Invalidate();
   }
-  uint64_t budget = sequential ? file_utils::kMaxReadahead : 0;
+  if (!sequential) {
+    file->Prefetch(first.file_offset, first.byte_size);
+    if (first.shared_size != 0) {
+      file->Prefetch(first.shared_offset, first.shared_size);
+    }
+    s->advised_end = block + 1;
+    return;
+  }
+  containers::SmallVector<duckdb::FileRange, kBlocksAhead> ahead;
+  uint64_t budget = duckdb::InputFile::MAX_HINT;
   auto shared = std::numeric_limits<uint64_t>::max();
   auto b = block;
   do {
     const auto& m = _segments[b++];
-    in.Prefetch(m.file_offset, m.byte_size);
     if (m.shared_size != 0 && m.shared_offset != shared) {
       shared = m.shared_offset;
-      in.Prefetch(shared, m.shared_size);
+      ahead.push_back({.offset = shared, .size = m.shared_size});
     }
-    const auto cost = std::max<uint64_t>(m.byte_size, file_utils::kPage);
+    if (m.byte_size != 0) {
+      ahead.push_back({.offset = m.file_offset, .size = m.byte_size});
+    }
+    const auto cost =
+      std::max<uint64_t>(m.byte_size, duckdb::PageResidency::PAGE_SIZE);
     if (budget <= cost) {
       break;
     }
     budget -= cost;
   } while (b < _segments.size());
+  if (file->IsMapped()) {
+    for (const auto& range : ahead) {
+      file->Prefetch(range.offset, range.size);
+    }
+  } else {
+    file->Hint(ahead);
+  }
   s->advised_end = b;
 }
 
@@ -658,10 +713,10 @@ void ColumnReader::GatherWindow(ScanState& s, uint64_t anchor,
                                 const duckdb::SelectionVector& sel,
                                 duckdb::idx_t hits, duckdb::idx_t span,
                                 duckdb::Vector& out, duckdb::idx_t at) const {
-  SDB_ASSERT(hits > 0 && hits <= span && span <= STANDARD_VECTOR_SIZE);
-  if (hits != span && anchor < _row_count &&
-      !ScatterWins(_segments[Locate(anchor, s.window).block], _type, hits,
-                   span)) {
+  SDB_ASSERT(hits > 0 && hits <= span && span <= STANDARD_VECTOR_SIZE &&
+             anchor < _row_count);
+  if (hits != span && !ScatterWins(_segments[Locate(anchor, s.window).block],
+                                   _type, hits, span)) {
     SkipTo(s, anchor);
     if (SelectNative(s, sel, hits, span, out, at,
                      duckdb::ScanVectorType::SCAN_FLAT_VECTOR)) {
@@ -772,7 +827,7 @@ bool ColumnReader::SelectNative(ScanState& s,
   BeginScanVector(s);
   const bool within = RowsLeft(s) >= span;
   const auto& codec = *_segments[s.window.block].codec;
-  const auto& function = *codec.decompression;
+  const auto& function = codec.decompression;
   if (hits * 1000 > BandsFor(codec.type, _type).native * span ||
       !function.select || (!within && !SelectsAcross(s, span))) {
     return false;
@@ -783,7 +838,7 @@ bool ColumnReader::SelectNative(ScanState& s,
     auto& vs = s.child_states[0];
     _validity->BeginScanVector(vs);
     if (RowsLeft(vs) < span ||
-        !_validity->_segments[vs.window.block].codec->decompression->select) {
+        !_validity->_segments[vs.window.block].codec->decompression.select) {
       return false;
     }
   }
@@ -834,7 +889,7 @@ bool ColumnReader::FiltersByBlock(const ScanState& s, uint64_t anchor,
     return true;
   }
   for (size_t block = s.window.block; _offsets[block] < end; ++block) {
-    if (_segments[block].codec->decompression->filter) {
+    if (_segments[block].codec->decompression.filter) {
       return true;
     }
   }

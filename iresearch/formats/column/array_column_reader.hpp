@@ -36,13 +36,12 @@ class ArrayColumnReader final : public ColumnReader {
                     std::vector<std::unique_ptr<ColumnReader>> children)
     : ColumnReader{
         id, std::move(type), {}, std::move(validity), std::move(children)} {
+    SDB_ASSERT(_children.size() == 1 && _array_size != 0);
+    const auto& child = *_children.front();
+    _row_count = child.RowCount() / _array_size;
     auto stats = duckdb::ArrayStats::CreateEmpty(_type);
-    if (!_children.empty()) {
-      const auto& child = *_children.front();
-      _row_count = _array_size ? child.RowCount() / _array_size : 0;
-      duckdb::ArrayStats::SetChildStats(stats,
-                                        child.MergedStatistics().ToUnique());
-    }
+    duckdb::ArrayStats::SetChildStats(stats,
+                                      child.MergedStatistics().ToUnique());
     FinishStats(std::move(stats));
   }
 
@@ -59,6 +58,15 @@ class ArrayColumnReader final : public ColumnReader {
     SDB_ASSERT(_array_size != 0 && !_children.empty());
     const auto end = _children.front()->RowGroupEnd(row * _array_size);
     return (end + _array_size - 1) / _array_size;
+  }
+
+  void CollectBlocks(uint64_t first, uint64_t last,
+                     std::vector<duckdb::FileRange>& out) const final {
+    ColumnReader::CollectBlocks(first, last, out);
+    if (_array_size != 0 && !_children.empty()) {
+      _children.front()->CollectBlocks(first * _array_size,
+                                       (last + 1) * _array_size - 1, out);
+    }
   }
 
   duckdb::idx_t Scan(ScanState& s, duckdb::Vector& result,

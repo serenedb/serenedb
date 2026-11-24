@@ -185,7 +185,6 @@ class ColumnReader {
   uint64_t RowCount() const noexcept { return _row_count; }
   bool InMemory() const noexcept { return _in_memory; }
   bool Patched() const noexcept { return _patched; }
-  size_t DataRgCount() const noexcept { return _segments.size(); }
   bool HasValidity() const noexcept { return _validity_view != nullptr; }
   const ColumnReader* Validity() const noexcept { return _validity_view; }
   std::span<const ColumnBlockMeta> DataBlocks() const noexcept {
@@ -236,11 +235,10 @@ class ColumnReader {
     }
   }
 
-  const duckdb::BaseStatistics& RowGroupStatistics(size_t rg) const noexcept {
-    SDB_ASSERT(rg < _segments.size());
-    return _segments[rg].statistics;
-  }
   BlockWindow Locate(uint64_t row, BlockWindow hint = {}) const noexcept;
+
+  virtual void CollectBlocks(uint64_t first, uint64_t last,
+                             std::vector<duckdb::FileRange>& out) const;
 
   virtual uint64_t RowGroupEnd(uint64_t row) const noexcept;
 

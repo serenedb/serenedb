@@ -54,7 +54,7 @@ class LMJelinekMercer final : public irs::ScorerBase<LMJelinekMercer, LMStats> {
     : _lambda{lambda} {}
 
   void collect(byte_type* stats_buf, const irs::FieldCollector* field,
-               const irs::TermCollector* term) const final;
+               const irs::TermCollector* term, StatsArena& arena) const final;
 
   IndexFeatures GetIndexFeatures() const noexcept final {
     return IndexFeatures::Freq | IndexFeatures::Norm;
@@ -69,6 +69,9 @@ class LMJelinekMercer final : public irs::ScorerBase<LMJelinekMercer, LMStats> {
   bool Compatible(const ScorerOptions& persisted) const noexcept final;
 
   ScoreFunction PrepareScorer(const ScoreContext& ctx) const final;
+
+  void Explain(const ScoreContext& ctx, const explain::SlotStats* stats,
+               explain::Node& out) const final;
 
   bool equals(const Scorer& other) const noexcept final;
 

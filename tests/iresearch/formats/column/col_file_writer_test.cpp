@@ -21,6 +21,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/crc/crc32c.h>
 #include <absl/strings/str_cat.h>
 #include <absl/time/clock.h>
 
@@ -28,13 +29,13 @@
 #include <cstdint>
 #include <cstring>
 #include <duckdb.hpp>
+#include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <filesystem>
 #include <iresearch/formats/column/col_file_writer.hpp>
 #include <iresearch/formats/format_utils.hpp>
-#include <iresearch/store/fs_directory.hpp>
-#include <iresearch/store/memory_directory.hpp>
-#include <iresearch/utils/crc.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
+#include <iresearch/utils/pg/error_mapping.hpp>
 #include <iterator>
 #include <string>
 #include <string_view>
@@ -51,32 +52,26 @@ constexpr std::string_view kFile = "blocks";
 
 constexpr auto kNoFooter = [](duckdb::BinarySerializer&) {};
 
-std::string ReadAll(irs::Directory& dir) {
-  auto in = dir.open(kFile, irs::IOAdvice::SEQUENTIAL);
-  EXPECT_NE(in, nullptr);
-  std::string bytes(in->Length(), '\0');
-  in->ReadData(reinterpret_cast<duckdb::data_ptr_t>(bytes.data()),
-               bytes.size());
-  return bytes;
+std::string ReadAll(const tests::IndexDir& dir) {
+  const auto bytes = dir.ReadWhole(kFile);
+  return std::string{irs::ViewCast<char>(irs::bytes_view{bytes})};
 }
 
-irs::format_utils::Footer ReadFooter(irs::Directory& dir) {
-  auto in = dir.open(kFile, irs::IOAdvice::SEQUENTIAL);
+irs::format_utils::Footer ReadFooter(const tests::IndexDir& dir) {
+  const auto in = dir.Open(kFile, duckdb::MappedFileAccess::SEQUENTIAL);
   EXPECT_NE(in, nullptr);
   return irs::format_utils::ReadFooter(
     *in, kFile, [](duckdb::BinaryDeserializer&, uint64_t) {});
 }
 
-std::string ReadData(irs::Directory& dir) {
+std::string ReadData(const tests::IndexDir& dir) {
   return ReadAll(dir).substr(0, ReadFooter(dir).data_len);
 }
 
-class ColFileWriterTest : public tests::DirectoryTestCaseBase<> {};
+class ColFileWriterTest : public tests::DirectoryTestCaseBase {};
 
 uint32_t Crc(std::string_view bytes) {
-  irs::Crc32c crc;
-  crc.process_bytes(bytes.data(), bytes.size());
-  return crc.checksum();
+  return static_cast<uint32_t>(absl::ComputeCrc32c(bytes));
 }
 
 struct Written {
@@ -166,7 +161,7 @@ void ExpectLaidOut(std::string_view file, uint64_t begin, uint64_t end,
 }
 
 TEST_P(ColFileWriterTest, AlignedAppendsStartAtMultiplesOfEight) {
-  irs::ColFileWriter file{dir().create(kFile)};
+  irs::ColFileWriter file{dir().Create(kFile)};
   EXPECT_EQ(0U, file.Append("abc"));
   const std::string_view parts[] = {"xy", "z"};
   EXPECT_EQ(8U, file.AppendAligned(parts));
@@ -176,7 +171,7 @@ TEST_P(ColFileWriterTest, AlignedAppendsStartAtMultiplesOfEight) {
   EXPECT_EQ(24U, file.AppendAligned(nothing));
   EXPECT_EQ(24U, file.Append("q"));
   EXPECT_EQ(32U, file.AppendAligned(parts));
-  file.Finish(kNoFooter);
+  file.Finish(kNoFooter)->Close();
   std::string expected = "abc";
   expected.append(5, '\0');
   expected += "xyz";
@@ -190,12 +185,12 @@ TEST_P(ColFileWriterTest, AlignedAppendsStartAtMultiplesOfEight) {
 }
 
 TEST_P(ColFileWriterTest, AppendStringWritesItsLengthFirst) {
-  irs::ColFileWriter file{dir().create(kFile)};
+  irs::ColFileWriter file{dir().Create(kFile)};
   EXPECT_EQ(0U, file.Append("ab"));
   EXPECT_EQ(2U, file.AppendString("hello"));
   EXPECT_EQ(11U, file.AppendString(""));
   EXPECT_EQ(15U, file.Position());
-  file.Finish(kNoFooter);
+  file.Finish(kNoFooter)->Close();
   const auto bytes = ReadData(dir());
   ASSERT_EQ(15U, bytes.size());
   uint32_t length = 0;
@@ -207,7 +202,7 @@ TEST_P(ColFileWriterTest, AppendStringWritesItsLengthFirst) {
 }
 
 TEST_P(ColFileWriterTest, OneProducersAppendsFollowEachOther) {
-  irs::ColFileWriter file{dir().create(kFile)};
+  irs::ColFileWriter file{dir().Create(kFile)};
   EXPECT_EQ(0U, file.Append("head"));
   uint64_t at = file.Position();
   ASSERT_EQ(4U, at);
@@ -219,14 +214,14 @@ TEST_P(ColFileWriterTest, OneProducersAppendsFollowEachOther) {
     ASSERT_EQ(at, file.Position());
     expected += bytes;
   }
-  file.Finish(kNoFooter);
+  file.Finish(kNoFooter)->Close();
   EXPECT_EQ(expected, ReadData(dir()));
 }
 
 TEST_P(ColFileWriterTest, ConcurrentAppendsKeepEveryBlockWhole) {
   constexpr size_t kThreads = 8;
   constexpr size_t kBlocks = 500;
-  irs::ColFileWriter file{dir().create(kFile)};
+  irs::ColFileWriter file{dir().Create(kFile)};
   std::vector<std::vector<std::pair<uint64_t, std::string>>> written(kThreads);
   std::vector<std::thread> threads;
   threads.reserve(kThreads);
@@ -244,7 +239,7 @@ TEST_P(ColFileWriterTest, ConcurrentAppendsKeepEveryBlockWhole) {
   for (auto& thread : threads) {
     thread.join();
   }
-  file.Finish(kNoFooter);
+  file.Finish(kNoFooter)->Close();
   const auto bytes = ReadData(dir());
   std::vector<std::pair<uint64_t, uint64_t>> ranges;
   for (const auto& blocks_of_thread : written) {
@@ -263,10 +258,10 @@ TEST_P(ColFileWriterTest, ConcurrentAppendsKeepEveryBlockWhole) {
 }
 
 TEST_P(ColFileWriterTest, ConcurrentProducersWriteEveryByteAndItsChecksum) {
-  irs::ColFileWriter file{dir().create(kFile)};
+  irs::ColFileWriter file{dir().Create(kFile)};
   const auto written = AppendConcurrently(file, 4, 60);
   const auto end = file.Position();
-  file.Finish(kNoFooter);
+  file.Finish(kNoFooter)->Close();
   const auto footer = ReadFooter(dir());
   const auto bytes = ReadData(dir());
   ASSERT_EQ(end, footer.data_len);
@@ -275,27 +270,26 @@ TEST_P(ColFileWriterTest, ConcurrentProducersWriteEveryByteAndItsChecksum) {
 }
 
 TEST_P(ColFileWriterTest, TheFooterChecksumCoversEveryAppend) {
-  irs::ColFileWriter file{dir().create(kFile)};
+  irs::ColFileWriter file{dir().Create(kFile)};
   file.Append("dictionary");
   const std::string_view parts[] = {"block", "-part"};
   file.AppendAligned(parts);
   file.Append(Content(1, 2, 3 * irs::ColFileWriter::kChunkSize + 100000));
   file.AppendString("overflow");
   file.AppendAligned(parts);
-  file.Finish(kNoFooter);
+  file.Finish(kNoFooter)->Close();
   EXPECT_EQ(Crc(ReadData(dir())), ReadFooter(dir()).data_expected_crc32c);
 }
 
 TEST_P(ColFileWriterTest, BytesWrittenBeforeTheBlocksKeepTheirPlace) {
-  auto out = dir().create(kFile);
+  auto out = dir().Create(kFile);
   ASSERT_NE(out, nullptr);
   const std::string header = "header";
-  out->WriteData(reinterpret_cast<const irs::byte_type*>(header.data()),
-                 header.size());
+  out->WriteData(duckdb::const_data_ptr_cast(header.data()), header.size());
   irs::ColFileWriter file{std::move(out)};
   const auto written = AppendConcurrently(file, 3, 20);
   const auto data_end = file.Position();
-  file.Finish(kNoFooter);
+  file.Finish(kNoFooter)->Close();
   const auto footer = ReadFooter(dir());
   const auto bytes = ReadAll(dir());
   ASSERT_EQ(data_end, footer.data_len);
@@ -309,12 +303,26 @@ TEST(ColFileWriterWriteErrorTest, AFailedWriteReachesItsWriterAndFreesTheRole) {
   if (!std::filesystem::exists("/dev/full")) {
     GTEST_SKIP() << "no /dev/full";
   }
-  irs::FSDirectory dev{"/dev"};
-  irs::ColFileWriter file{dev.create("full")};
+  tests::IndexDir dev{irs::DuckDBEngine::Instance().instance(), "/dev"};
+  irs::ColFileWriter file{dev.Create("full")};
   const auto chunk = Content(0, 0, irs::ColFileWriter::kChunkSize);
-  ASSERT_SQL_ERROR(file.Append(chunk), ERRCODE_DISK_FULL);
-  ASSERT_SQL_ERROR(file.Append(chunk), ERRCODE_DISK_FULL);
-  EXPECT_EQ(2 * irs::ColFileWriter::kChunkSize, file.Position());
+  const auto append = [&] {
+    try {
+      file.Append(chunk);
+    } catch (const duckdb::Exception& e) {
+      EXPECT_EQ(ERRCODE_DISK_FULL,
+                irs::pg::ToSqlError(duckdb::ErrorData{e}).errcode)
+        << e.what();
+      return false;
+    }
+    return true;
+  };
+  size_t appends = 1;
+  for (; append(); ++appends) {
+    ASSERT_LT(appends, 16U) << "expected a disk-full error";
+  }
+  EXPECT_FALSE(append());
+  EXPECT_EQ((appends + 1) * irs::ColFileWriter::kChunkSize, file.Position());
 }
 
 TEST(ColFileWriterWriterTest,
@@ -330,8 +338,9 @@ TEST(ColFileWriterWriterTest,
   };
   constexpr auto kChunk = irs::ColFileWriter::kChunkSize;
   constexpr auto kChunks = irs::ColFileWriter::kMaxQueued / kChunk + 1;
-  irs::MemoryDirectory dir;
-  irs::ColFileWriter file{dir.create(kFile)};
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  irs::ColFileWriter file{dir.Create(kFile)};
   const auto first = Content(0, 0, kChunk);
   std::thread writer{[&] { file.Append(first); }};
   while (!duckdb::FaultPoints::Armed(parked)) {
@@ -355,14 +364,12 @@ TEST(ColFileWriterWriterTest,
   writer.join();
   filler.join();
   EXPECT_TRUE(filled.load());
-  file.Finish(kNoFooter);
+  file.Finish(kNoFooter)->Close();
   EXPECT_TRUE(ReadData(dir) == expected);
 }
 
-constexpr auto kTestDirs = tests::GetDirectories<tests::kTypesDefault>();
-
 INSTANTIATE_TEST_SUITE_P(ColFileWriter, ColFileWriterTest,
-                         ::testing::Combine(::testing::ValuesIn(kTestDirs)),
-                         tests::DirectoryTestCaseBase<>::to_string);
+                         ::testing::Combine(::testing::ValuesIn(tests::kDirParams)),
+                         tests::DirectoryTestCaseBase::to_string);
 
 }  // namespace

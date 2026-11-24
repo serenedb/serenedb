@@ -31,7 +31,6 @@
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/index/column_info.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <optional>
@@ -40,6 +39,8 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "index_dir.hpp"
+#include "tests_shared.hpp"
 
 namespace {
 
@@ -92,7 +93,7 @@ irs::FunctionFieldOptions UncompressedText() {
 class ColCopyCheckTest : public ::testing::Test {
  protected:
   void Write(const Written& spec) {
-    irs::ColWriter writer{_dir, kSegment, Db(), spec.tier};
+    irs::ColWriter writer{Db(), _dir.Tracker(kSegment), spec.tier};
     const irs::ColCodecParams params{.tier = spec.tier};
     auto& text = writer.OpenColumn(kText, duckdb::LogicalType::VARCHAR,
                                    {.row_group_size = kRowGroup,
@@ -149,8 +150,7 @@ class ColCopyCheckTest : public ::testing::Test {
       }
     }
     ASSERT_TRUE(writer.Commit(spec.rows));
-    _reader = std::make_unique<irs::ColReader>(_dir, kSegment, Db(),
-                                               irs::IOAdvice::SEQUENTIAL);
+    _reader = writer.TakeReader();
   }
 
   const irs::ColumnReader& Column(irs::field_id id) const {
@@ -164,7 +164,8 @@ class ColCopyCheckTest : public ::testing::Test {
     return irs::EstimateReencode(*_reader, Column(id), options, nullptr);
   }
 
-  irs::MemoryDirectory _dir;
+  tests::IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                       TestEnv::MemoryRoot()};
   std::unique_ptr<irs::ColReader> _reader;
 };
 

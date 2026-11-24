@@ -26,8 +26,6 @@
 #include "iresearch/formats/index/term_dict_ranges.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/index/index_features.hpp"
-#include "iresearch/store/store_utils.hpp"
-#include "iresearch/utils/bytes_output.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
@@ -56,7 +54,6 @@ class TermPartWriter {
 
  private:
   bstring _terms;
-  BytesOutput _out{_terms};
   bstring _last;
   PostingBases _prev;
   uint64_t _count = 0;
@@ -79,7 +76,8 @@ class TermPartReader {
   const PostingMeta& Meta() const noexcept { return _meta; }
 
  private:
-  BytesViewInput _in;
+  const byte_type* _in;
+  const byte_type* _end;
   bstring _term;
   PostingMeta _meta;
   bool _has_freq;

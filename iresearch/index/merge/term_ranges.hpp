@@ -42,8 +42,7 @@
 #include "iresearch/index/merge/merge_progress.hpp"
 #include "iresearch/index/merge/merge_workers.hpp"
 #include "iresearch/index/merge/term_keys.hpp"
-#include "iresearch/store/directory.hpp"
-#include "iresearch/store/memory_directory.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -60,9 +59,8 @@ uint64_t TermVolume(const TermReader& terms) noexcept;
 
 class TermRangeSink {
  public:
-  TermRangeSink(Directory& dir, std::string_view segment,
+  TermRangeSink(FileTracker& tracker, duckdb::DatabaseInstance& db,
                 IndexFeatures features);
-  ~TermRangeSink();
 
   TermRangeSink(const TermRangeSink&) = delete;
   TermRangeSink& operator=(const TermRangeSink&) = delete;
@@ -71,13 +69,13 @@ class TermRangeSink {
 
   PostingsOutputs& Outputs() noexcept { return _out; }
 
- private:
-  void Remove() noexcept;
+  std::unique_ptr<FileTracker> PartFiles(DictKey key, size_t part) const;
 
-  Directory& _dir;
-  std::string _segment;
+ private:
   absl::Mutex _mutex;
   PostingsOutputs _out;
+  duckdb::FileSystem& _part_fs;
+  std::string _part_root;
 };
 
 class TermRangeMerge {
@@ -98,6 +96,8 @@ class TermRangeMerge {
                  bool sorted, const MergeProgress& progress, size_t parts,
                  const Target& target, const MergeWorkers& workers);
 
+  ~TermRangeMerge();
+
   TermRangeMerge(const TermRangeMerge&) = delete;
   TermRangeMerge& operator=(const TermRangeMerge&) = delete;
 
@@ -117,7 +117,7 @@ class TermRangeMerge {
 
  private:
   struct Part {
-    std::unique_ptr<MemoryDirectory> dir;
+    std::unique_ptr<FileTracker> files;
     bstring terms;
     term_dict::RangeWriter ranges;
     TermPart out;

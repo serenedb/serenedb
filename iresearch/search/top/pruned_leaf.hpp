@@ -45,6 +45,7 @@
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/attribute_provider.hpp"
 #include "iresearch/utils/bit_utils.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -91,13 +92,11 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   using Base::_docs;
   using Base::_enc;
   using Base::_freqs;
-  using Base::_hint;
   using Base::_in;
   using Base::_last;
   using Base::_left_in_leaf;
   using Base::_left_in_list;
   using Base::_provider;
-  using Base::_recipe;
   using Base::_score;
   using Base::_walk;
   using Base::In;
@@ -106,12 +105,12 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   class NoBoundSource final : public ScoreBoundSource {
    public:
     Attribute* GetMutable(TypeInfo::type_id) noexcept final { return nullptr; }
-    void Read(DataInput& in, size_t size) final { in.Skip(size); }
+    void Read(bytes_view) final {}
     void Set(uint32_t, uint32_t) noexcept final {}
   };
 
  public:
-  bool PrepareCommon(const PostingMeta& meta, const IndexInput& doc_in,
+  bool PrepareCommon(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                      IndexFeatures layout, const SubReader& segment,
                      const TermReader& field, const detail::ScoreArgs& args) {
     SDB_ASSERT(meta.docs_count != 0);
@@ -149,19 +148,30 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
       return true;
     }
 
-    _in = OpenDocInput(meta, doc_in);
+    _in =
+      OpenDocInput<InputType>(meta, doc_in, duckdb::ReadAheadSteps::SKIPPING);
     auto& in = In();
     *(std::end(_docs) - 1) = doc_limits::invalid();
     _left_in_list = meta.docs_count;
-    _hint.Arm(meta);
 
     if (meta.docs_count > doc_limits::kBlockSize) {
       _walk.Arm(meta, BlockIndexShapeOf(layout, true));
       _walk.Load(in);
       _root_score = BoundScore(_walk.Index().Root());
     } else {
-      const auto size = in.ReadByte();
-      _bound_source->Read(in, size);
+      const auto size = in.template Read<byte_type>();
+      if constexpr (InputType::CONTIGUOUS) {
+        _bound_source->Read({in.Current(), size});
+        in.Consume(size);
+      } else if (const auto* const view = in.Peek(size)) {
+        _bound_source->Read({view, size});
+        in.Consume(size);
+      } else {
+        byte_type bound[std::numeric_limits<byte_type>::max() +
+                        bytes_io<uint32_t>::kMaxVSize];
+        in.ReadData(bound, size);
+        _bound_source->Read({bound, size});
+      }
       _root_score = _bound_func.Score();
     }
     return false;
@@ -447,7 +457,6 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
   using Base::_docs;
   using Base::_enc;
   using Base::_freqs;
-  using Base::_hint;
   using Base::_last;
   using Base::_left_in_list;
   using Base::_needs_reposition;
@@ -514,7 +523,7 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
   }
 
   IRS_FORCE_INLINE void DecodeLazyFreqs(bool needed = true) noexcept {
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::CONTIGUOUS) {
       if (_lazy != nullptr) [[unlikely]] {
         if (needed) {
           DecodeFreqs();
@@ -539,12 +548,12 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
        .upper = _needs_reposition ? doc_limits::invalid() : _last,
        .cap = n},
       in, n, blocks, [&](uint32_t landed) IRS_FORCE_INLINE {
-        if constexpr (InputType::kVolatileAlways) {
+        if constexpr (InputType::CONTIGUOUS) {
           const auto begin =
-            reinterpret_cast<uintptr_t>(In().At(_walk.BlockStart(landed)));
+            reinterpret_cast<uintptr_t>(In().Data() + _walk.BlockStart(landed));
           const auto end = landed + 1 != size
                              ? reinterpret_cast<uintptr_t>(
-                                 In().At(_walk.BlockStart(landed + 1)))
+                                 In().Data() + _walk.BlockStart(landed + 1))
                              : begin + 1;
           for (auto line = begin & ~uintptr_t{ABSL_CACHELINE_SIZE - 1};
                line < end; line += ABSL_CACHELINE_SIZE) {
@@ -589,14 +598,14 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
   void ReadFill(doc_id_t prev) {
     ++_reads;
     auto& in = In();
-    _hint.Advance(in, in.Position());
+    in.Advance();
     const auto len = std::min(_left_in_list, kBlock);
     const auto leaf =
       block_io::ReadTailForFill(len, in, _enc.data, nullptr, _docs, prev);
     _left_in_list -= len;
     const auto* const bitset =
       block_io::StableBitset<InputType>(leaf, std::begin(_docs));
-    if constexpr (InputType::kVolatileAlways) {
+    if constexpr (InputType::CONTIGUOUS) {
       _lazy = in.Current();
       block_io::SkipTail(len, in);
     } else {

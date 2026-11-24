@@ -31,6 +31,7 @@
 #include <cmath>
 #include <cstdint>
 #include <fstream>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/operating_system.hpp>
 #include <optional>
 #include <string>

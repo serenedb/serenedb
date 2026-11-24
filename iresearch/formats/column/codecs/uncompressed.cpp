@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <duckdb/common/helper.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/common/types/hugeint.hpp>
 #include <duckdb/common/types/interval.hpp>
 #include <duckdb/common/types/null_value.hpp>
@@ -33,7 +34,8 @@
 #include <duckdb/storage/statistics/stats_writer.hpp>
 #include <limits>
 
-#include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/codecs.hpp"
+#include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -47,11 +49,11 @@ using duckdb::idx_t;
 using duckdb::validity_t;
 
 template<typename Appender>
-void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
-                    std::span<const WriteChunk> chunks) {
-  CompressedSegment segment{CodecType::Uncompressed, checkpoint_data.type};
+bool CompressChunks(const Codec& codec,
+                    ColumnDataCheckpointData& checkpoint_data) {
+  CompressedSegment segment{codec, checkpoint_data.type};
   Appender::Begin(segment);
-  for (const auto& chunk : chunks) {
+  for (const auto& chunk : checkpoint_data.chunks) {
     duckdb::UnifiedVectorFormat data;
     chunk.data.ToUnifiedFormat(data);
     idx_t offset = 0;
@@ -69,7 +71,23 @@ void CompressChunks(ColumnDataCheckpointData& checkpoint_data,
     }
   }
   segment.Flush(checkpoint_data, Appender::Finish(segment));
+  return true;
 }
+
+template<auto kBytes>
+double AnalyzeBytes([[maybe_unused]] ColumnDataCheckpointData& data, double) {
+  if constexpr (kBytes == nullptr) {
+    return kNoScore;
+  } else {
+    return ScoreOfBytes(kBytes(data.chunks), data);
+  }
+}
+
+template<auto kBytes, typename Appender>
+constexpr CompressionFunction kChunks{
+  .analyze = AnalyzeBytes<kBytes>,
+  .compress = CompressChunks<Appender>,
+};
 
 struct PinnedScan final : SegmentScanState {
   explicit PinnedScan(duckdb::BufferHandle handle_p)
@@ -167,7 +185,7 @@ const T* FixedSizeRows(const ColumnSegment& segment, const_data_ptr_t base,
 }
 
 template<typename T>
-idx_t FixedSizeAnalyze(std::span<const WriteChunk> chunks) {
+idx_t FixedSizeBytes(std::span<const WriteChunk> chunks) {
   return sizeof(T) * CountRows(chunks);
 }
 
@@ -212,9 +230,8 @@ constexpr DecompressionFunction kFixedSizeDecompression{
 template<typename T, bool kStats = true>
 constexpr Codec kFixedSize{
   .type = CodecType::Uncompressed,
-  .compression = &kStreamed<CodecType::Uncompressed, FixedSizeAnalyze<T>,
-                            CompressChunks<FixedSizeAppender<T, kStats>>>,
-  .decompression = &kFixedSizeDecompression<T>,
+  .compression = {&kChunks<FixedSizeBytes<T>, FixedSizeAppender<T, kStats>>, 1},
+  .decompression = kFixedSizeDecompression<T>,
 };
 
 constexpr idx_t kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
@@ -258,7 +275,7 @@ struct ValidityAppender {
   }
 };
 
-idx_t ValidityAnalyze(std::span<const WriteChunk> chunks) {
+idx_t ValidityBytes(std::span<const WriteChunk> chunks) {
   return (CountRows(chunks) + 7) / 8;
 }
 
@@ -340,9 +357,8 @@ constexpr DecompressionFunction kValidityDecompression{
 
 constexpr Codec kValidity{
   .type = CodecType::Uncompressed,
-  .compression = &kStreamed<CodecType::Uncompressed, ValidityAnalyze,
-                            CompressChunks<ValidityAppender>>,
-  .decompression = &kValidityDecompression,
+  .compression = {&kChunks<ValidityBytes, ValidityAppender>, 1},
+  .decompression = kValidityDecompression,
 };
 
 constexpr uint32_t kDictionaryHeaderSize = 2 * sizeof(uint32_t);
@@ -578,9 +594,8 @@ constexpr DecompressionFunction kStringDecompression{
 
 constexpr Codec kString{
   .type = CodecType::Uncompressed,
-  .compression = &kStreamed<CodecType::Uncompressed, nullptr,
-                            CompressChunks<StringAppender>>,
-  .decompression = &kStringDecompression,
+  .compression = {&kChunks<nullptr, StringAppender>, 1},
+  .decompression = kStringDecompression,
 };
 
 }  // namespace
@@ -588,31 +603,6 @@ constexpr Codec kString{
 const Codec* UncompressedCodec(duckdb::PhysicalType physical) {
   using enum duckdb::PhysicalType;
   switch (physical) {
-    case BOOL:
-    case INT8:
-      return &kFixedSize<int8_t>;
-    case INT16:
-      return &kFixedSize<int16_t>;
-    case INT32:
-      return &kFixedSize<int32_t>;
-    case INT64:
-      return &kFixedSize<int64_t>;
-    case UINT8:
-      return &kFixedSize<uint8_t>;
-    case UINT16:
-      return &kFixedSize<uint16_t>;
-    case UINT32:
-      return &kFixedSize<uint32_t>;
-    case UINT64:
-      return &kFixedSize<uint64_t>;
-    case INT128:
-      return &kFixedSize<duckdb::hugeint_t>;
-    case UINT128:
-      return &kFixedSize<duckdb::uhugeint_t>;
-    case FLOAT:
-      return &kFixedSize<float>;
-    case DOUBLE:
-      return &kFixedSize<double>;
     case INTERVAL:
       return &kFixedSize<duckdb::interval_t>;
     case LIST:
@@ -622,7 +612,8 @@ const Codec* UncompressedCodec(duckdb::PhysicalType physical) {
     case VARCHAR:
       return &kString;
     default:
-      return nullptr;
+      return Resolve<NumericAxis>(
+        physical, [&]<typename T>() -> const Codec* { return &kFixedSize<T>; });
   }
 }
 

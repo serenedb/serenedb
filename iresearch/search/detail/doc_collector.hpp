@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-#include "iresearch/index/directory_reader.hpp"
+#include "iresearch/index/composite_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/index/norm.hpp"
@@ -45,7 +45,7 @@
 
 namespace irs {
 
-inline uint64_t ExecuteTopK(const DirectoryReader& reader, const Filter& filter,
+inline uint64_t ExecuteTopK(const CompositeReader& reader, const Filter& filter,
                             const Scorer& scorer, size_t k, bool score_prune,
                             std::span<ScoreDoc> hits) {
   SDB_ASSERT(k == hits.size());

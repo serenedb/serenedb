@@ -18,19 +18,23 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <algorithm>
+#include <array>
 #include <span>
 #include <type_traits>
 #include <utility>
 
+#include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/numeric/delta.hpp"
 #include "iresearch/formats/column/codecs/numeric/dictionary.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_scan.tpp"
 #include "iresearch/formats/column/codecs/numeric/plain.hpp"
 #include "iresearch/formats/column/codecs/numeric/runs.hpp"
 #include "iresearch/formats/column/codecs/numeric/wide.hpp"
-#include "iresearch/formats/column/codecs/registry.hpp"
+#include "iresearch/formats/column/codecs/numeric_axis.hpp"
 
 namespace irs::codecs {
+namespace numeric {
 namespace {
 
 template<typename T>
@@ -42,111 +46,112 @@ using Inner = std::conditional_t<kIsWide<T>, uint64_t, T>;
 template<typename T>
 constexpr bool kPacks = std::is_integral_v<T> || kIsWide<T>;
 
-template<typename T, const CompressionFunction& kInner>
-constexpr const CompressionFunction& Of() noexcept {
+template<typename T, Shape kShape, ByteCodec kLeaf,
+         const CompressionFunction& kInner>
+consteval const CompressionFunction& Of() noexcept {
   if constexpr (kIsWide<T>) {
-    return kWide<T, kInner>;
+    return kWide<T, CodecOf(kShape, kLeaf), kInner>;
   } else {
     return kInner;
   }
 }
 
 template<typename T, ByteCodec kLeaf>
-CompressionFunctions PlainContenders() {
-  if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kRaw<Inner<T>, kLeaf, false>>(),
-      &Of<T, kRaw<Inner<T>, kLeaf, true>>(),
-      &Of<T, kFor<Inner<T>, kLeaf, false>>(),
-      &Of<T, kFor<Inner<T>, kLeaf, true>>(),
+consteval auto PlainFunctions() {
+  if constexpr (sizeof(Inner<T>) == 1 && kLeaf != ByteCodec::None) {
+    return std::array{
+      Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, true>>(),
     };
-    return kContenders;
+  } else if constexpr (sizeof(Inner<T>) == 1) {
+    return std::array{
+      Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Plain, kLeaf, kBlocks<Bitpacking<Inner<T>>>>(),
+    };
+  } else if constexpr (kLeaf != ByteCodec::None) {
+    return std::array{
+      Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, true>>(),
+      Of<T, Shape::Plain, kLeaf, kFrames<For<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Plain, kLeaf, kFrames<For<Inner<T>>, kLeaf, true>>(),
+    };
   } else if constexpr (kPacks<T>) {
-    static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kRaw<Inner<T>, kLeaf, false>>(),
-      &Of<T, kFor<Inner<T>, kLeaf, false>>(),
-      &Of<T, kBitpacking<Inner<T>>>(),
+    return std::array{
+      Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Plain, kLeaf, kFrames<For<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Plain, kLeaf, kBlocks<Bitpacking<Inner<T>>>>(),
     };
-    return kContenders;
   } else {
-    static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kRaw<Inner<T>, kLeaf, false>>(),
-      &Of<T, kFor<Inner<T>, kLeaf, false>>(),
+    return std::array{
+      Of<T, Shape::Plain, kLeaf, kFrames<Raw<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Plain, kLeaf, kFrames<For<Inner<T>>, kLeaf, false>>(),
     };
-    return kContenders;
   }
 }
 
 template<typename T, ByteCodec kLeaf>
-CompressionFunctions DeltaContenders() {
+consteval auto DeltaFunctions() {
   if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kDelta<Inner<T>, kLeaf, false>>(),
-      &Of<T, kDelta<Inner<T>, kLeaf, true>>(),
+    return std::array{
+      Of<T, Shape::Delta, kLeaf, kFrames<Delta<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Delta, kLeaf, kFrames<Delta<Inner<T>>, kLeaf, true>>(),
     };
-    return kContenders;
   } else if constexpr (kPacks<T>) {
-    static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kDeltaBitpacking<Inner<T>>>(),
-      &Of<T, kDelta<Inner<T>, kLeaf, false>>(),
+    return std::array{
+      Of<T, Shape::Delta, kLeaf, kBlocks<DeltaBitpacking<Inner<T>>>>(),
+      Of<T, Shape::Delta, kLeaf, kFrames<Delta<Inner<T>>, kLeaf, false>>(),
     };
-    return kContenders;
   } else {
-    static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kDelta<Inner<T>, kLeaf, false>>(),
+    return std::array{
+      Of<T, Shape::Delta, kLeaf, kFrames<Delta<Inner<T>>, kLeaf, false>>(),
     };
-    return kContenders;
   }
 }
 
 template<typename T, ByteCodec kLeaf>
-CompressionFunctions RunsContenders() {
+consteval auto RunsFunctions() {
   if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kRle<Inner<T>, kLeaf>>(),
+    return std::array{
+      Of<T, Shape::Runs, kLeaf, kRunFrames<Inner<T>, kLeaf>>(),
     };
-    return kContenders;
   } else {
-    static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kRle<Inner<T>, kLeaf>>(),
-      &Of<T, kRleBitpacking<Inner<T>>>(),
+    return std::array{
+      Of<T, Shape::Runs, kLeaf, kRunFrames<Inner<T>, kLeaf>>(),
+      Of<T, Shape::Runs, kLeaf, kBlocks<RleBitpacking<Inner<T>>>>(),
     };
-    return kContenders;
   }
 }
 
 template<typename T, ByteCodec kLeaf>
-CompressionFunctions DictionaryContenders() {
+consteval auto DictionaryFunctions() {
   if constexpr (kLeaf != ByteCodec::None) {
-    static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kDict<Inner<T>, kLeaf, false>>(),
-      &Of<T, kDict<Inner<T>, kLeaf, true>>(),
+    return std::array{
+      Of<T, Shape::Dictionary, kLeaf, kFrames<Dict<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Dictionary, kLeaf, kFrames<Dict<Inner<T>>, kLeaf, true>>(),
     };
-    return kContenders;
   } else {
-    static constexpr const CompressionFunction* kContenders[] = {
-      &Of<T, kDict<Inner<T>, kLeaf, false>>(),
-      &Of<T, kDictBitpacking<Inner<T>>>(),
+    return std::array{
+      Of<T, Shape::Dictionary, kLeaf, kFrames<Dict<Inner<T>>, kLeaf, false>>(),
+      Of<T, Shape::Dictionary, kLeaf, kBlocks<DictBitpacking<Inner<T>>>>(),
     };
-    return kContenders;
   }
 }
 
 template<typename T, Shape kShape, ByteCodec kLeaf>
-CompressionFunctions ContendersOf() {
+consteval auto FunctionsOf() {
   if constexpr (kShape == Shape::Plain) {
-    return PlainContenders<T, kLeaf>();
+    return PlainFunctions<T, kLeaf>();
   } else if constexpr (kShape == Shape::Delta) {
-    return DeltaContenders<T, kLeaf>();
+    return DeltaFunctions<T, kLeaf>();
   } else if constexpr (kShape == Shape::Runs) {
-    return RunsContenders<T, kLeaf>();
+    return RunsFunctions<T, kLeaf>();
   } else {
-    return DictionaryContenders<T, kLeaf>();
+    return DictionaryFunctions<T, kLeaf>();
   }
 }
 
 template<typename T, Shape kShape>
-constexpr auto ReaderType() {
+consteval auto ReaderType() {
   if constexpr (kShape == Shape::Plain) {
     return std::type_identity<PlainReader<Inner<T>>>{};
   } else if constexpr (kShape == Shape::Delta) {
@@ -159,29 +164,22 @@ constexpr auto ReaderType() {
 }
 
 template<typename T, Shape kShape>
-constexpr const DecompressionFunction* DecompressionOf() noexcept {
+consteval const DecompressionFunction& DecompressionOf() noexcept {
   using Reader = typename decltype(ReaderType<T, kShape>())::type;
   if constexpr (kIsWide<T>) {
-    return &kWideDecompression<WideReader<T, Reader>>;
+    return kWideDecompression<WideReader<T, Reader>>;
   } else {
-    return &numeric::kDecompression<Reader>;
+    return kDecompression<Reader>;
   }
 }
 
 template<typename T, Shape kShape, ByteCodec kLeaf>
-constexpr CompressionFunction kContest{
-  .compress =
-    [](ColumnDataCheckpointData& data) {
-      Contest(ContendersOf<T, kShape, kLeaf>(), data);
-      return true;
-    },
-  .codec = CodecOf(kShape, kLeaf),
-};
+constexpr auto kFunctions = FunctionsOf<T, kShape, kLeaf>();
 
 template<typename T, Shape kShape, ByteCodec kLeaf>
 constexpr Codec kCodec{
   .type = CodecOf(kShape, kLeaf),
-  .compression = &kContest<T, kShape, kLeaf>,
+  .compression = kFunctions<T, kShape, kLeaf>,
   .decompression = DecompressionOf<T, kShape>(),
 };
 
@@ -192,95 +190,40 @@ constexpr const Codec* kCodecs[] = {
   &kCodec<T, kShape, ByteCodec::Zstd>,
 };
 
-template<typename T, Shape kShape>
-CompressionFunctions LeafContenders(ByteCodec leaf) {
-  switch (leaf) {
-    case ByteCodec::None:
-      return ContendersOf<T, kShape, ByteCodec::None>();
-    case ByteCodec::Lz4:
-      return ContendersOf<T, kShape, ByteCodec::Lz4>();
-    case ByteCodec::Zstd:
-      return ContendersOf<T, kShape, ByteCodec::Zstd>();
-    default:
-      return {};
-  }
-}
-
-template<typename T>
-CompressionFunctions ShapeContenders(Shape shape, ByteCodec leaf) {
-  switch (shape) {
-    case Shape::Plain:
-      return LeafContenders<T, Shape::Plain>(leaf);
-    case Shape::Delta:
-      return LeafContenders<T, Shape::Delta>(leaf);
-    case Shape::Runs:
-      return LeafContenders<T, Shape::Runs>(leaf);
-    case Shape::Dictionary:
-      if constexpr (sizeof(T) > 1) {
-        return LeafContenders<T, Shape::Dictionary>(leaf);
-      }
-      break;
-  }
-  return {};
-}
-
 template<typename T>
 const Codec* FormCodec(Shape shape, ByteCodec leaf) {
   const auto index = std::to_underlying(leaf);
   SDB_ASSERT(index < kNumericLeafCount);
-  switch (shape) {
-    case Shape::Plain:
-      return kCodecs<T, Shape::Plain>[index];
-    case Shape::Delta:
-      return kCodecs<T, Shape::Delta>[index];
-    case Shape::Runs:
-      return kCodecs<T, Shape::Runs>[index];
-    case Shape::Dictionary:
-      if constexpr (sizeof(T) > 1) {
-        return kCodecs<T, Shape::Dictionary>[index];
-      }
-      break;
-  }
-  return nullptr;
-}
-
-}  // namespace
-
-uint64_t PackedBytes(ColumnDataCheckpointData& data) {
-  const auto physical = data.type.InternalType();
-  return WithNumericType(physical,
-                         [&]<typename T>(std::type_identity<T>) -> uint64_t {
-                           if constexpr (std::is_integral_v<T>) {
-                             return data.Get<Values<T>>().PackedBytes();
-                           } else {
-                             return 0;
-                           }
-                         });
-}
-
-uint64_t SampledLz4Bytes(ColumnDataCheckpointData& data) {
-  const auto physical = data.type.InternalType();
-  return WithNumericType(physical,
-                         [&]<typename T>(std::type_identity<T>) -> uint64_t {
-                           if constexpr (std::is_integral_v<T>) {
-                             return SampledForLz4Bytes<T>(data);
-                           } else {
-                             return 0;
-                           }
-                         });
-}
-
-CompressionFunctions NumericContenders(Shape shape, ByteCodec leaf,
-                                       duckdb::PhysicalType physical) {
-  return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
-    return ShapeContenders<T>(shape, leaf);
+  return Resolve<EnumAxis<Shape>>(shape, [&]<Shape S>() -> const Codec* {
+    if constexpr (S == Shape::Dictionary && sizeof(T) == 1) {
+      return nullptr;
+    } else {
+      return kCodecs<T, S>[index];
+    }
   });
 }
 
+template<typename T>
+Features FeaturesOf(ColumnDataCheckpointData& data) {
+  if constexpr (kIsWide<T>) {
+    return {};
+  } else {
+    return data.Get<Values<T>>().GetFeatures();
+  }
+}
+
+}  // namespace
+}  // namespace numeric
+
 const Codec* NumericCodecOf(Shape shape, ByteCodec leaf,
                             duckdb::PhysicalType physical) {
-  return WithNumericType(physical, [&]<typename T>(std::type_identity<T>) {
-    return FormCodec<T>(shape, leaf);
+  return Resolve<NumericAxis>(
+    physical, [&]<typename T>() { return numeric::FormCodec<T>(shape, leaf); });
+}
+
+Features NumericFeatures(ColumnDataCheckpointData& data) {
+  return Resolve<NumericAxis>(data.type.InternalType(), [&]<typename T>() {
+    return numeric::FeaturesOf<T>(data);
   });
 }
 

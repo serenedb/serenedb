@@ -31,7 +31,6 @@
 #include <iresearch/index/merge/sort_spec.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
-#include <iresearch/store/memory_directory.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <memory>
 #include <optional>
@@ -129,7 +128,7 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
       _doc_map.emplace_back(_inputs[i], irs::IResourceManager::gNoop);
     }
 
-    irs::MergePlan plan{_out,
+    irs::MergePlan plan{_out.Tracker(_meta.name),
                         _doc_map,
                         _meta,
                         nullptr,
@@ -150,8 +149,7 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
                                      irs::DuckDBEngine::Instance().instance()),
                                    MergePool(1)}));
     }
-    _merged = irs::SegmentReaderImpl::Open(_out, _meta,
-                                           irs::tests::DefaultReaderOptions());
+    _merged = OpenSegment(_out, _meta, irs::tests::DefaultReaderOptions());
     ASSERT_NE(nullptr, _merged);
     const auto* field = _merged->field(kNormField);
     ASSERT_NE(nullptr, field);
@@ -195,10 +193,10 @@ class InputNormsTest : public ::testing::TestWithParam<bool> {
 
   static constexpr uint32_t kRegionRows = 256;
 
-  irs::MemoryDirectory _dir;
-  irs::MemoryDirectory _out;
+  tests::IndexDir _dir = MemoryDir();
+  tests::IndexDir _out = MemoryDir();
   tests::IndexWriter::ptr _writer;
-  irs::DirectoryReader _reader;
+  irs::CompositeReader _reader;
   std::vector<const irs::SubReader*> _inputs;
   std::shared_ptr<const irs::SegmentReaderImpl> _deleted;
   irs::FunctionFieldOptions _field_options{
@@ -328,7 +326,7 @@ TEST_P(InputNormsTest, InputsCoverEveryRegionShape) {
 }
 
 TEST(InputNormsWideTest, FarApartPostingBlocksReadTheMergedValues) {
-  irs::MemoryDirectory dir;
+  const auto dir = MemoryDir();
   auto options = irs::tests::DefaultWriterOptions();
   options.column_options = PlainColumns;
   auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(options));
@@ -350,8 +348,8 @@ TEST(InputNormsWideTest, FarApartPostingBlocksReadTheMergedValues) {
     DEFAULT_ROW_GROUP_SIZE,
     {}};
   irs::SegmentMeta meta;
-  irs::MemoryDirectory out;
-  irs::MergePlan plan{out,
+  const auto out = MemoryDir();
+  irs::MergePlan plan{out.Tracker(meta.name),
                       doc_map,
                       meta,
                       nullptr,
@@ -361,8 +359,7 @@ TEST(InputNormsWideTest, FarApartPostingBlocksReadTheMergedValues) {
                       nullptr};
   ASSERT_TRUE(plan.Prepare(MergePool(1)));
   ASSERT_TRUE(irs::ExecuteMerge(plan));
-  const auto merged =
-    irs::SegmentReaderImpl::Open(out, meta, irs::tests::DefaultReaderOptions());
+  const auto merged = OpenSegment(out, meta, irs::tests::DefaultReaderOptions());
   ASSERT_NE(nullptr, merged);
   const auto column = NormColumnOf(*merged);
   ASSERT_TRUE(irs::field_limits::valid(column));

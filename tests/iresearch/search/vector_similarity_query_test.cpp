@@ -25,13 +25,17 @@
 #include <duckdb.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/formats/column/col_writer.hpp>
+#include <iresearch/formats/index/idx_reader.hpp>
 #include <iresearch/formats/ivf/centroids.hpp>
-#include <iresearch/index/directory_reader.hpp>
+#include <iresearch/index/composite_reader.hpp>
+#include <iresearch/index/file_names.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/iterators.hpp>
 #include <iresearch/search/ann/family.hpp>
 #include <iresearch/search/count/make.hpp>
 #include <iresearch/search/detail/vector_filter_util.hpp>
+#include <iresearch/search/detail/vector_slots.hpp>
 #include <iresearch/search/docs/make.hpp>
 #include <iresearch/search/filters/vector_exact_filter.hpp>
 #include <iresearch/search/filters/vector_radius_filter.hpp>
@@ -39,12 +43,13 @@
 #include <iresearch/search/hits/make.hpp>
 #include <iresearch/search/queries/vector_similarity_query.hpp>
 #include <iresearch/search/scorers/vector_similarity_scorer.hpp>
-#include <iresearch/store/memory_directory.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <limits>
 #include <magic_enum/magic_enum.hpp>
 #include <map>
 
 #include "formats/column/test_cs_helpers.hpp"
+#include "index_dir.hpp"
 #include "search/filter_test_case_base.hpp"
 #include "search_fields.hpp"
 #include "tests_shared.hpp"
@@ -113,8 +118,8 @@ void WriteVectorAt(irs::ColWriter& cs, irs::doc_id_t doc, float x) {
 }
 
 // Docs 1..n with emb = [doc, 0, 0, 0].
-irs::DirectoryReader BuildIndex(
-  irs::Directory& dir, irs::doc_id_t n,
+irs::CompositeReader BuildIndex(
+  const ::tests::IndexDir& dir, irs::doc_id_t n,
   irs::IndexWriterOptions opts = MakeWriterOptions()) {
   auto writer =
     tests::IndexWriter::Make(dir, tests::kOmCreate, std::move(opts));
@@ -155,17 +160,21 @@ irs::ByVectorSimilarity MakeKnnFilter() {
 // The bug only exists on the quantized path; assert the segment provides
 // everything PrepareSegment needs to stay on it, so the test cannot silently
 // degrade to the raw-rerank path and pass vacuously.
-void AssertQuantizedPath(const irs::SubReader& segment) {
+void AssertQuantizedPath(const ::tests::IndexDir& dir,
+                         const irs::SubReader& segment) {
   const auto* ann = segment.Ann(kVec);
   ASSERT_NE(nullptr, ann);
   ASSERT_FALSE(ann->Empty());
   ASSERT_EQ(irs::AnnKind::Ivf, ann->Kind());
-  auto idx_in = segment.ReopenAnn();
-  ASSERT_NE(nullptr, idx_in);
+  const auto idx_file =
+    dir.Open(irs::FileName(segment.Meta().name, irs::kIdxFormatExt),
+             duckdb::MappedFileAccess::RANDOM);
+  ASSERT_TRUE(idx_file);
+  duckdb::InputFileReader idx_in{*idx_file};
   const std::vector<float> query(kDim, 0.f);
   ASSERT_NE(nullptr,
             irs::ReadQuantizerCodebook(
-              static_cast<const irs::IvfIndex*>(ann)->Tree(), *idx_in,
+              static_cast<const irs::IvfIndex*>(ann)->Tree(), idx_in,
               irs::VectorQuantization::SQ8, kDim, irs::VectorMetric::L2Sqr,
               query, irs::CodebookUse::Search));
   const auto* postings = segment.field(kVec);
@@ -182,7 +191,7 @@ class VectorSimilarityQueryTest : public ::testing::Test {
     _reader = BuildIndex(_dir, n);
     ASSERT_EQ(1U, _reader.size());
     ASSERT_EQ(n, _reader.docs_count());
-    AssertQuantizedPath((_reader)[0]);
+    AssertQuantizedPath(_dir, _reader[0]);
     _filter = MakeKnnFilter();
     _prepared.emplace(_filter, _reader, nullptr, irs::IResourceManager::gNoop,
                       nullptr, ::tests::PreparedFilter::CollectMode::Single);
@@ -198,8 +207,9 @@ class VectorSimilarityQueryTest : public ::testing::Test {
   }
 
   irs::doc_id_t _docs = 0;
-  irs::MemoryDirectory _dir;
-  irs::DirectoryReader _reader;
+  ::tests::IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
+  irs::CompositeReader _reader;
   irs::ByVectorSimilarity _filter;
   irs::ColumnArgsFetcher _fetcher;
   std::optional<::tests::PreparedFilter> _prepared;
@@ -476,8 +486,9 @@ class RerankExactDistancesTest
     }
   }
 
-  irs::MemoryDirectory _dir;
-  irs::DirectoryReader _reader;
+  ::tests::IndexDir _dir{irs::DuckDBEngine::Instance().instance(),
+                         TestEnv::MemoryRoot()};
+  irs::CompositeReader _reader;
 };
 
 TEST_P(RerankExactDistancesTest, Rerank) {
@@ -500,5 +511,76 @@ TEST_P(RerankExactDistancesTest, Rerank) {
 INSTANTIATE_TEST_SUITE_P(Codec, RerankExactDistancesTest,
                          ::testing::Values(irs::codecs::CodecType::Uncompressed,
                                            irs::codecs::CodecType::Alp));
+
+TEST(RawVectorReaderTest, RowsAcrossBlocksThatDoNotContinueTheirBytesScore) {
+  constexpr irs::field_id kId = 1;
+  constexpr uint32_t kDims = 3;
+  constexpr uint32_t kRowGroup = 1001;
+  constexpr uint64_t kRows = 3 * kRowGroup;
+  const auto vtype =
+    duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, kDims);
+  const auto coord = [](uint64_t row, uint32_t i) {
+    return row >= 2 * kRowGroup
+             ? 1.f
+             : static_cast<float>((row * 7919 + i * 104729) % 1000) / 8;
+  };
+  auto& db = irs::DuckDBEngine::Instance().instance();
+  ::tests::IndexDir dir{db, TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{db, dir.Tracker("seg")};
+    auto& cw =
+      w.OpenColumn(kId, vtype,
+                   {.row_group_size = kRowGroup,
+                    .compression = irs::codecs::CodecType::Uncompressed});
+    for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+      const auto take = std::min<uint64_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{vtype, STANDARD_VECTOR_SIZE};
+      auto* data = duckdb::FlatVector::GetDataMutable<float>(
+        duckdb::ArrayVector::GetChildMutable(v));
+      for (uint64_t k = 0; k < take; ++k) {
+        for (uint32_t i = 0; i < kDims; ++i) {
+          data[k * kDims + i] = coord(pos + k, i);
+        }
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+    }
+    ASSERT_TRUE(w.Commit(0));
+  }
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kId);
+  ASSERT_NE(nullptr, col);
+  ASSERT_NE(nullptr, col->Child());
+  const auto blocks = col->Child()->DataBlocks();
+  ASSERT_EQ(3U, blocks.size());
+  ASSERT_EQ(irs::codecs::CodecType::Uncompressed, blocks[0].codec->type);
+  ASSERT_EQ(irs::codecs::CodecType::Uncompressed, blocks[1].codec->type);
+  ASSERT_NE(blocks[0].file_offset + blocks[0].byte_size, blocks[1].file_offset);
+  ASSERT_EQ(irs::codecs::CodecType::Constant, blocks[2].codec->type);
+  const std::vector<float> query{1.f, 2.f, 3.f};
+  irs::detail::RawVectorReader reader{*col, r, kDims};
+  reader.SetQuery(query, irs::VectorMetric::L2Sqr);
+  const auto distance = irs::ResolveScoringDistance(irs::VectorMetric::L2Sqr);
+  for (const uint64_t first : {kRowGroup - 11, 2 * kRowGroup - 11}) {
+    SCOPED_TRACE(first);
+    std::vector<irs::doc_id_t> docs;
+    for (uint64_t row = first; row < first + 21; ++row) {
+      docs.push_back(static_cast<irs::doc_id_t>(row + irs::doc_limits::min()));
+    }
+    std::vector<irs::score_t> scores(docs.size());
+    reader.ComputeDistances(docs, scores);
+    for (size_t k = 0; k < docs.size(); ++k) {
+      std::array<float, kDims> row;
+      for (uint32_t i = 0; i < kDims; ++i) {
+        row[i] = coord(first + k, i);
+      }
+      EXPECT_EQ(
+        distance(reinterpret_cast<const irs::byte_type*>(query.data()),
+                 reinterpret_cast<const irs::byte_type*>(row.data()), kDims),
+        scores[k])
+        << "row " << first + k;
+    }
+  }
+}
 
 }  // namespace

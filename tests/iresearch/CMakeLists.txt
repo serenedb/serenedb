@@ -1,6 +1,13 @@
 set(IRS_TEST_RESOURCE_DIR ${CMAKE_SOURCE_DIR}/resources/tests/iresearch)
 configure_file(tests_config.hpp.in tests_config.hpp)
 
+add_library(iresearch-test-object-store STATIC store/simulated_object_store.cpp)
+target_include_directories(
+    iresearch-test-object-store
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(iresearch-test-object-store PUBLIC iresearch)
+
 add_library(
     iresearch-test-support
     OBJECT
@@ -15,7 +22,7 @@ target_include_directories(
 )
 target_link_libraries(
     iresearch-test-support
-    PUBLIC iresearch gtest simdjson simdutf
+    PUBLIC iresearch iresearch-test-object-store gtest simdjson simdutf
 )
 
 add_executable(
@@ -79,6 +86,7 @@ add_executable(
     formats/column/col_codecs_test.cpp
     formats/column/col_compression_function_test.cpp
     formats/column/col_copy_check_test.cpp
+    formats/column/col_file_writer_test.cpp
     formats/column/col_numeric_codec_test.cpp
     formats/column/column_reader_test.cpp
     formats/columnstore2_test.cpp
@@ -93,7 +101,6 @@ add_executable(
     formats/ivf/centroids_test.cpp
     formats/ivf/quantizer_test.cpp
     formats/posting/block_codec_test.cpp
-    formats/posting/growing_hint_test.cpp
     formats/posting_alloc_test.cpp
     formats/sparse_bitmap_test.cpp
     formats/term_dict_test.cpp
@@ -124,6 +131,7 @@ add_executable(
     index/merge_writer_tests.cpp
     index/norm_column_test.cpp
     index/norm_test.cpp
+    index/object_store_index_tests.cpp
     index/piece_tests.cpp
     index/segment_writer_tests.cpp
     index/sorted_index_tests.cpp
@@ -144,6 +152,7 @@ add_executable(
     search/docs_mask_plan_test.cpp
     search/document_mask_test.cpp
     search/empty_filter_tests.cpp
+    search/explain_test.cpp
     search/geo_distance_filter_test.cpp
     search/geo_filter_test.cpp
     search/geo_tokenizer_test.cpp
@@ -187,20 +196,14 @@ add_executable(
     search/verified_batch_test.cpp
     search/wildcard_filter_test.cpp
     search/wildcard_ngram_filter_test.cpp
-    store/directory_cleaner_tests.cpp
-    store/directory_test_case.cpp
-    store/memory_directory_tests.cpp
-    store/memory_index_output_tests.cpp
-    store/overlay_directory_tests.cpp
+    store/directory_tests.cpp
+    store/index_input_tests.cpp
+    store/simulated_object_store_tests.cpp
     store/store_utils_tests.cpp
-    utils/bit_packing_tests.cpp
     utils/bit_utils_tests.cpp
     utils/bitset_tests.cpp
     utils/bitvector_tests.cpp
-    utils/container_utils_tests.cpp
-    utils/crc_test.cpp
-    utils/directory_utils_tests.cpp
-    utils/file_utils_tests.cpp
+    utils/blocking_once_test.cpp
     utils/group_commit_test.cpp
     utils/huge_page_allocator_test.cpp
     utils/json_leaf_test.cpp
@@ -212,18 +215,16 @@ add_executable(
     utils/ngram_match_utils_tests.cpp
     utils/numeric_utils_test.cpp
     utils/object_pool_tests.cpp
+    utils/pg_errcodes_test.cpp
     utils/re2_literal_finder_test.cpp
     utils/re2_owned_dfa_test.cpp
     utils/re2_required_literal_test.cpp
     utils/re2_segment_plan_test.cpp
-    utils/ref_counter_tests.cpp
     utils/regexp_ngram_test.cpp
     utils/regexp_utils_test.cpp
     utils/serializer_tests.cpp
-    utils/simd_utils_test.cpp
     utils/std_test.cpp
     utils/string_tests.cpp
-    utils/utf8_path_tests.cpp
     utils/utf8_utils_test.cpp
     utils/wildcard_utils_test.cpp
     utils/wkb_parser_test.cpp
@@ -250,6 +251,10 @@ sdb_link_duckdb_extensions(iresearch-tests)
 add_executable(iresearch-load-tests search/load_test.cpp)
 target_link_libraries(
     iresearch-load-tests
-    PRIVATE iresearch-test-support search-benchmark-common serene
+    PRIVATE
+        iresearch-test-support
+        iresearch-test-writer
+        search-benchmark-common
+        serene
 )
 sdb_link_duckdb_extensions(iresearch-load-tests)

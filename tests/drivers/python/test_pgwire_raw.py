@@ -406,6 +406,59 @@ def test_startup_utf8_client_encoding_no_warning():
         )
 
 
+def _run_with(conn, query: str, params=()):
+    conn.parse("", query)
+    conn.bind("", "", params=params)
+    conn.execute("")
+    conn.sync()
+    msgs = conn.drain_to_ready()
+    assert not errors(msgs), (query, errors(msgs))
+    return msgs
+
+
+def test_execute_in_a_named_statement_runs_the_statement_as_it_is_now(conn):
+    conn.run_ok("DROP TABLE IF EXISTS named_exec_kv")
+    conn.run_ok("CREATE TABLE named_exec_kv (k INT PRIMARY KEY, v TEXT)")
+    conn.run_ok("INSERT INTO named_exec_kv VALUES (1, 'one'), (2, 'two')")
+    conn.run_ok(
+        "PREPARE named_exec_byk(INT) AS SELECT v FROM named_exec_kv WHERE k = $1")
+    conn.parse("named_exec_s1", "EXECUTE named_exec_byk(1)")
+    conn.sync()
+    assert not errors(conn.drain_to_ready())
+
+    def run_named():
+        conn.bind("", "named_exec_s1")
+        conn.execute("")
+        conn.sync()
+        msgs = conn.drain_to_ready()
+        assert not errors(msgs), errors(msgs)
+        return all_fields(msgs)
+
+    def executions(name: str) -> bytes:
+        return first_field(conn.run_ok(
+            "SELECT generic_plans + custom_plans FROM pg_prepared_statements "
+            f"WHERE name = '{name}'"))
+
+    assert run_named() == [b"one"]
+    conn.run_ok("EXECUTE named_exec_byk(2)")
+    assert run_named() == [b"one"]
+    assert executions("named_exec_byk") == b"3"
+    conn.run_ok("DEALLOCATE named_exec_byk")
+    conn.run_ok(
+        "PREPARE named_exec_byk(INT) AS "
+        "SELECT upper(v) FROM named_exec_kv WHERE k = $1")
+    assert run_named() == [b"ONE"]
+    assert run_named() == [b"ONE"]
+    assert executions("named_exec_byk") == b"2"
+
+    conn.run_ok("PREPARE named_exec_now AS SELECT now() IS NOT NULL AS ok")
+    assert all_fields(_run_with(conn, "EXECUTE named_exec_now")) == [b"t"]
+    assert all_fields(_run_with(conn, "EXECUTE named_exec_now")) == [b"t"]
+    assert executions("named_exec_now") == b"2"
+    conn.run_ok("DEALLOCATE ALL")
+    conn.run_ok("DROP TABLE named_exec_kv")
+
+
 def test_empty_query_extended(conn):
     conn.parse("", "")
     conn.bind("", "")

@@ -1,0 +1,36 @@
+control substitution on
+
+statement ok
+CREATE TYPE icp_pair AS (a inet, b int)
+
+statement ok
+CREATE TABLE icp_rt (id int, p icp_pair)
+
+statement ok
+INSERT INTO icp_rt VALUES (1, ROW('10.0.0.1', 1)), (2, ROW('2001:db8::1', 2)), (3, NULL)
+
+statement ok
+COPY icp_rt TO '${__TEST_DIR__}/icp_rt.parquet' (FORMAT parquet)
+
+statement ok
+CREATE TABLE icp_back (id int, p icp_pair)
+
+statement ok
+COPY icp_back FROM '${__TEST_DIR__}/icp_rt.parquet' (FORMAT parquet)
+
+query
+SELECT id, p FROM icp_back ORDER BY id
+----
+id	p
+1	(10.0.0.1,1)
+2	(2001:db8::1,2)
+3	NULL
+
+statement ok
+DROP TABLE icp_back
+
+statement ok
+DROP TABLE icp_rt
+
+statement ok
+DROP TYPE icp_pair

@@ -351,6 +351,11 @@ struct Scan {
       SDB_ASSERT(f == kNoFrame || e >= s.frames[f].first_entry);
       if (f == kNoFrame || e >= s.FrameEnd(f)) {
         f = s.FrameOf(e);
+        if (f + 1 < s.frames.size()) {
+          const auto* next = s.Data() + s.frames[f + 1].comp_off;
+          __builtin_prefetch(next);
+          __builtin_prefetch(next + 64);
+        }
       }
       const auto first = s.frames[f].first_entry;
       const auto end = s.FrameEnd(f);
@@ -464,6 +469,13 @@ struct Scan {
     uint64_t need = 0;
     uint64_t capacity = 0;
     for (uint32_t i = n; i-- > 0;) {
+      if (need == 0) {
+        const uint32_t below = rows & ((uint32_t{2} << i) - 1);
+        if (below == 0) {
+          break;
+        }
+        i = static_cast<uint32_t>(std::bit_width(below)) - 1;
+      }
       const uint32_t row = rows >> i & 1;
       const uint32_t wanted = row | uint32_t{lcp[i] < need};
       const uint32_t source = wanted & (kept >> i);
@@ -476,11 +488,19 @@ struct Scan {
       capacity +=
         (decode & row) * (lcp[i] + uint64_t{enc[i]} * fsst::kMaxExpansion);
     }
-    auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
+    auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity + kCopyChunk));
     uint64_t written = 0;
     const char* prev = nullptr;
     uint64_t prev_len = 0;
     bool chained = false;
+    bool padded = false;
+    const auto copy = [&](char* to, uint64_t bytes) IRS_FORCE_INLINE {
+      if (padded) {
+        CopyChunks(to, prev, bytes);
+      } else {
+        std::memcpy(to, prev, bytes);
+      }
+    };
     for (auto left = whole | heads | sources; left != 0; left &= left - 1) {
       const auto i = static_cast<uint32_t>(std::countr_zero(left));
       if ((sources >> i & 1) != 0) {
@@ -488,6 +508,7 @@ struct Scan {
         prev = value.data();
         prev_len = value.size();
         chained = false;
+        padded = false;
         continue;
       }
       if (lcp[i] > prev_len) [[unlikely]] {
@@ -496,18 +517,19 @@ struct Scan {
       if ((heads >> i & 1) != 0) {
         auto* head = Reserve(chain, shared[i] + fsst::kPrefixSlack);
         if (!chained && lcp[i] != 0) {
-          std::memcpy(head, prev, lcp[i]);
+          copy(head, lcp[i]);
         }
         prev_len = DecodeShared(decoder, s.Data() + off[i], enc[i], lcp[i],
                                 shared[i], head);
         prev = head;
         chained = true;
+        padded = true;
         continue;
       }
       chained = false;
       auto* at = out + written;
       if (lcp[i] != 0) {
-        std::memcpy(at, prev, lcp[i]);
+        copy(at, lcp[i]);
       }
       const auto room = capacity - (written + lcp[i]);
       const auto dec = enc[i] == 0 ? 0
@@ -518,10 +540,11 @@ struct Scan {
       }
       prev = at;
       prev_len = lcp[i] + dec;
+      padded = true;
       written += prev_len;
       visit(i, std::string_view{at, prev_len});
     }
-    arena.ShrinkHead(capacity - written);
+    arena.ShrinkHead(capacity + kCopyChunk - written);
   }
 
   template<typename Frames>

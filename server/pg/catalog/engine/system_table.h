@@ -154,6 +154,7 @@ struct SystemSql {
   std::string_view name;
   int32_t row_type;
   int32_t row_array_type;
+  duckdb::idx_t rule;
   char relkind;
   char replident;
   bool superuser_only;

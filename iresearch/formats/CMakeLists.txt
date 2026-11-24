@@ -25,6 +25,8 @@ target_sources(
         column/codecs/uncompressed.cpp
         column/codecs/validity/empty_validity.cpp
         column/codecs/validity/roaring.cpp
+        column/col_copy_check.cpp
+        column/col_file_writer.cpp
         column/col_reader.cpp
         column/col_writer.cpp
         column/column_meta.cpp
@@ -40,6 +42,7 @@ target_sources(
         column/read_context.cpp
         column/variant_column_reader.cpp
         format_utils.cpp
+        index/block_writer.cpp
         index/field_reader.cpp
         index/field_writer.cpp
         index/idx_reader.cpp
@@ -52,6 +55,7 @@ target_sources(
         index/term_dict_root.cpp
         index/term_dict_single.cpp
         index/term_dict_walk.cpp
+        index/term_parts.cpp
         piece_fields.cpp
         posting/block_codec.cpp
 )

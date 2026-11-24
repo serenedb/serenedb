@@ -15,6 +15,8 @@ add_executable(
     duckdb_roundtrip_test.cpp
     duckdb_threads_test.cpp
     duckdb_wal_block_reuse_test.cpp
+    presorted_merge_test.cpp
+    row_sort_test.cpp
     json_serde_test.cpp
     json_serde_types_test.cpp
     lifecycle_test.cpp
@@ -75,6 +77,7 @@ add_executable(
     connector/subscription_lsn_test.cpp
     connector/ts_query_codec_test.cpp
     connector/vector_explain_test.cpp
+    search/compaction/merge_executor_test.cpp
 )
 
 target_link_libraries(
@@ -84,6 +87,7 @@ target_link_libraries(
         serene_listeners
         gtest
         serene_docs_corpus
+        iresearch-merge-support
         iresearch-test-object-store
         iresearch-test-writer
 )

@@ -20,7 +20,12 @@
 /// @author Andrey Abramov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <atomic>
+#include <chrono>
 #include <iresearch/utils/misc.hpp>
+#include <stdexcept>
+#include <thread>
+#include <vector>
 
 #include "tests_shared.hpp"
 
@@ -54,4 +59,51 @@ TEST(misc_test, cached_func) {
   ASSERT_EQ(4, calls);
   ASSERT_EQ(5, cached_func.get<true>(4));
   ASSERT_EQ(5, calls);
+}
+
+TEST(misc_test, once_flag_runs_its_function_once) {
+  irs::OnceFlag once;
+  size_t calls = 0;
+  for (size_t i = 0; i < 3; ++i) {
+    once.Call([&] { ++calls; });
+  }
+  ASSERT_EQ(1, calls);
+}
+
+TEST(misc_test, once_flag_rethrows_a_failed_call) {
+  irs::OnceFlag once;
+  size_t calls = 0;
+  const auto fail = [&] {
+    ++calls;
+    throw std::runtime_error{"load failed"};
+  };
+  ASSERT_THROW(once.Call(fail), std::runtime_error);
+  ASSERT_THROW(once.Call(fail), std::runtime_error);
+  ASSERT_THROW(once.Call([&] { ++calls; }), std::runtime_error);
+  ASSERT_EQ(1, calls);
+}
+
+TEST(misc_test, once_flag_rethrows_to_concurrent_callers) {
+  irs::OnceFlag once;
+  std::atomic<size_t> calls{0};
+  std::atomic<size_t> failures{0};
+  std::vector<std::thread> threads;
+  for (size_t i = 0; i < 8; ++i) {
+    threads.emplace_back([&] {
+      try {
+        once.Call([&] {
+          calls.fetch_add(1);
+          std::this_thread::sleep_for(std::chrono::milliseconds{10});
+          throw std::runtime_error{"load failed"};
+        });
+      } catch (const std::runtime_error&) {
+        failures.fetch_add(1);
+      }
+    });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+  ASSERT_EQ(1, calls.load());
+  ASSERT_EQ(8, failures.load());
 }

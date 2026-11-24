@@ -281,6 +281,7 @@ void Store::Open() {
 
   irs::IndexWriterOptions writer_options;
   writer_options.ann_env = &AnnBuildEnv();
+  writer_options.merge_pool = GetSearchEngine().MergePool();
   writer_options.segment_ids = catalog::SegmentIds();
   writer_options.segment_memory_max = _segment_memory_max;
   writer_options.segment_docs_max = _segment_docs_max;
@@ -305,6 +306,7 @@ void Store::Open() {
     _piece_root = fs.JoinPath(memory, "pieces");
     irs::IndexWriterOptions piece_options;
     piece_options.ann_env = &AnnBuildEnv();
+    piece_options.merge_pool = GetSearchEngine().MergePool();
     piece_options.reader_options = ReaderOptions();
     piece_options.pack = true;
     _piece_writer =

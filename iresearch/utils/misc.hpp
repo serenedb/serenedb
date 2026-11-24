@@ -22,7 +22,10 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
+
 #include <array>
+#include <exception>
 #include <memory>
 #include <type_traits>
 
@@ -89,5 +92,26 @@ template<typename Input, size_t Size, typename Func>
 constexpr CachedFunc<Input, Size, Func> CacheFunc(Input offset, Func&& func) {
   return CachedFunc<Input, Size, Func>{offset, std::forward<Func>(func)};
 }
+
+class OnceFlag {
+ public:
+  template<typename Func>
+  void Call(Func&& func) {
+    absl::call_once(_once, [&] {
+      try {
+        std::forward<Func>(func)();
+      } catch (...) {
+        _error = std::current_exception();
+      }
+    });
+    if (_error) [[unlikely]] {
+      std::rethrow_exception(_error);
+    }
+  }
+
+ private:
+  absl::once_flag _once;
+  std::exception_ptr _error;
+};
 
 }  // namespace irs

@@ -1,0 +1,143 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "catalog/sort_keys.h"
+
+#include <absl/algorithm/container.h>
+
+#include <duckdb/common/enums/order_type.hpp>
+#include <duckdb/common/types.hpp>
+#include <duckdb/parser/expression/columnref_expression.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
+
+#include "connector/column_id.h"
+
+namespace sdb::catalog {
+namespace {
+
+bool OrdersThroughConversion(const duckdb::LogicalType& type) {
+  if (!type.HasAlias()) {
+    if (duckdb::StructType::IsStruct(type)) {
+      return absl::c_any_of(duckdb::StructType::GetChildTypes(type),
+                            [](const auto& child) {
+                              return OrdersThroughConversion(child.second);
+                            });
+    }
+    if (type.id() == duckdb::LogicalTypeId::LIST) {
+      return OrdersThroughConversion(duckdb::ListType::GetChildType(type));
+    }
+    if (type.id() == duckdb::LogicalTypeId::ARRAY) {
+      return OrdersThroughConversion(duckdb::ArrayType::GetChildType(type));
+    }
+  }
+  switch (type.id()) {
+    case duckdb::LogicalTypeId::VARCHAR:
+      return !duckdb::StringType::GetCollation(type).empty();
+    case duckdb::LogicalTypeId::VARIANT:
+    case duckdb::LogicalTypeId::INTERVAL:
+    case duckdb::LogicalTypeId::TIME_TZ:
+    case duckdb::LogicalTypeId::BIT:
+      return true;
+    default:
+      return false;
+  }
+}
+
+}  // namespace
+
+std::vector<SortKey> ResolveSortKeys(
+  const duckdb::ColumnList& columns,
+  std::span<const duckdb::OrderByNode> orders) {
+  std::vector<SortKey> keys;
+  keys.reserve(orders.size());
+  for (const auto& order : orders) {
+    const auto& expr = *order.expression;
+    if (expr.GetExpressionClass() != duckdb::ExpressionClass::COLUMN_REF ||
+        expr.Cast<duckdb::ColumnRefExpression>().IsQualified()) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("SORTED BY takes column names, not \"", expr.ToString(), "\""));
+    }
+    const auto& name = expr.Cast<duckdb::ColumnRefExpression>().GetColumnName();
+    if (!columns.ColumnExists(name)) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_UNDEFINED_COLUMN),
+        ERR_MSG("column \"", name.GetIdentifierName(), "\" does not exist"));
+    }
+    const auto& column = columns.GetColumn(name);
+    if (column.Generated()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG("SORTED BY cannot use generated column \"",
+                              name.GetIdentifierName(), "\""));
+    }
+    if (column.Type().id() == duckdb::LogicalTypeId::VARCHAR) {
+      if (const auto collation =
+            duckdb::StringType::GetCollation(column.Type());
+          !collation.empty()) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("SORTED BY cannot use column \"", name.GetIdentifierName(),
+                  "\" with collation \"", collation, "\""));
+      }
+    }
+    if (OrdersThroughConversion(column.Type())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG("SORTED BY cannot use column \"", name.GetIdentifierName(),
+                "\" of type ", column.Type().ToString()));
+    }
+    const bool desc = order.type == duckdb::OrderType::DESCENDING;
+    keys.emplace_back(
+      column.Logical(),
+      desc ? duckdb::OrderType::DESCENDING : duckdb::OrderType::ASCENDING,
+      order.null_order != duckdb::OrderByNullType::ORDER_DEFAULT
+        ? order.null_order
+      : desc ? duckdb::OrderByNullType::NULLS_FIRST
+             : duckdb::OrderByNullType::NULLS_LAST);
+  }
+  return keys;
+}
+
+duckdb::vector<duckdb::OrderByNode> SortOrdersOf(
+  std::span<const SortKey> keys, const duckdb::ColumnList& columns) {
+  duckdb::vector<duckdb::OrderByNode> orders;
+  orders.reserve(keys.size());
+  for (const auto& key : keys) {
+    orders.emplace_back(key.order, key.null_order,
+                        duckdb::make_uniq<duckdb::ColumnRefExpression>(
+                          columns.GetColumn(key.column).Name()));
+  }
+  return orders;
+}
+
+std::vector<irs::SortKey> SortSpecOf(std::span<const SortKey> keys,
+                                     const duckdb::ColumnList& columns) {
+  std::vector<irs::SortKey> spec;
+  spec.reserve(keys.size());
+  for (const auto& key : keys) {
+    spec.emplace_back(static_cast<irs::field_id>(connector::TableColumnId(
+                        columns.GetColumn(key.column))),
+                      key.order, key.null_order);
+  }
+  return spec;
+}
+
+}  // namespace sdb::catalog

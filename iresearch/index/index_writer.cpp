@@ -39,6 +39,8 @@
 #include <yaclib/coro/future.hpp>
 
 #include "iresearch/index/file_names.hpp"
+#include "iresearch/index/merge/doc_map.hpp"
+#include "iresearch/index/merge/merge_executor.hpp"
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
@@ -66,6 +68,35 @@ std::vector<DocMap> MergeMaps(CompactionView candidates,
                     .mask = segment.SharedDocsMask(),
                     .rank_end = segment.Meta().live_docs_count,
                     .base = merger[i].remap.base_id});
+  }
+  return maps;
+}
+
+std::vector<DocMap> MergeMaps(CompactionView candidates,
+                              const MergeDocMap& doc_map,
+                              const SegmentReaderImpl& merged, bool sorted) {
+  std::vector<DocMap> maps;
+  maps.reserve(candidates.size());
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    const auto& segment =
+      *utils::downCast<SegmentReader>(*candidates[i]).GetImpl();
+    const DocMap map{.source = segment.Id(),
+                     .target = merged.Id(),
+                     .mask = segment.SharedDocsMask()};
+    const auto& remap = doc_map[i].remap;
+    if (!sorted) {
+      auto& whole = maps.emplace_back(map);
+      whole.rank_end = segment.Meta().live_docs_count;
+      whole.base = remap.base_id;
+      continue;
+    }
+    DocMapRuns runs{map, maps};
+    doc_id_t rank = 0;
+    for (const auto target : remap.id_map) {
+      if (!doc_limits::eof(target)) {
+        runs.Add(rank++, target);
+      }
+    }
   }
   return maps;
 }
@@ -302,6 +333,11 @@ IndexWriter::ptr IndexWriter::Make(duckdb::DatabaseInstance& db,
     SegmentOptions{options}, options.reader_options);
   writer->_ann_env = options.ann_env;
   writer->_hnsw_bases = std::move(hnsw_bases);
+  writer->_sort = std::move(options.sort);
+  writer->_merge_pool =
+    options.merge_pool
+      ? std::move(options.merge_pool)
+      : duckdb::TaskScheduler::GetScheduler(db).CreateDedicatedPool(1);
   writer->_released = std::move(options.released);
   writer->_pack = options.pack;
   writer->_seg_counter = options.segment_ids
@@ -450,19 +486,22 @@ auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
   const auto& candidates = merged.claim.candidates;
   SegmentMeta meta;
   meta.name = FileName(id);
-  MergeWriter merger{_db, _fs, _root,
-                     GetSegmentWriterOptions(true, field_options)};
-  merger.Reset(candidates.begin(), candidates.end());
-  auto files = co_await merger.Flush(meta, progress, env);
-  if (!files) {
+  const auto options = GetSegmentWriterOptions(true, field_options);
+  auto doc_map = MakeMergeDocMap(candidates, IResourceManager::gNoop);
+  auto written = MergeSegments(_db, _fs, _root, doc_map, meta, options,
+                               _merge_pool, progress, env, &merged.profile);
+  if (!written.files) {
     co_return merged;
   }
-  merged.reader = OpenWritten(
-    meta, {.files = std::move(files), .inputs = merger.TakeInputs()});
-  merged.maps = MergeMaps(candidates, merger, *merged.reader);
+  merged.reader = OpenWritten(meta, std::move(written));
+  merged.maps =
+    MergeMaps(candidates, doc_map, *merged.reader, options.sort != nullptr);
   SyncFiles sync{.fs = &_fs};
   AddSyncFiles(sync, _root, meta);
-  _fs.SyncFiles(sync.paths);
+  {
+    duckdb::TaskScheduler::BlockingScope blocking;
+    _fs.SyncFiles(sync.paths);
+  }
   merged.meta = std::move(meta);
   co_return merged;
 }
@@ -535,6 +574,7 @@ SegmentWriterOptions IndexWriter::GetSegmentWriterOptions(
     .scorer = _topk_scorer,
     .field_options = field_options ? field_options : _field_options.get(),
     .ann_env = compaction ? nullptr : _ann_env,
+    .sort = _sort.empty() ? nullptr : &_sort,
     .hnsw_bases = _reader_options.hnsw_bases,
     .released = _released,
   };

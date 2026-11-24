@@ -48,17 +48,6 @@ using duckdb::data_ptr_t;
 using duckdb::idx_t;
 using duckdb::validity_t;
 
-duckdb::block_id_t WriteOverflowString(duckdb::WriteStream& out,
-                                       duckdb::string_t string) {
-  const auto size = string.GetSize();
-  SDB_ENSURE(size <= std::numeric_limits<uint32_t>::max(),
-             "string too long for overflow format");
-  const auto block = static_cast<duckdb::block_id_t>(out.Position());
-  out.Write<uint32_t>(static_cast<uint32_t>(size));
-  out.WriteData(duckdb::const_data_ptr_cast(string.GetData()), size);
-  return block;
-}
-
 template<typename Appender>
 bool CompressChunks(const Codec& codec,
                     ColumnDataCheckpointData& checkpoint_data) {
@@ -429,8 +418,9 @@ struct StringAppender {
       remaining -= required;
       auto* position = base + dictionary_end - *dictionary_size;
       if (overflow) {
-        const auto block =
-          WriteOverflowString(checkpoint_data.ctx->Out(), value);
+        const auto block = static_cast<duckdb::block_id_t>(
+          checkpoint_data.ctx->Blocks().AppendString(
+            {value.GetData(), value.GetSize()}));
         const int32_t block_offset = 0;
         std::memcpy(position, &block, sizeof(block));
         std::memcpy(position + sizeof(block), &block_offset,

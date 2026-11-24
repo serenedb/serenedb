@@ -25,38 +25,28 @@
 #include <duckdb/storage/buffer_manager.hpp>
 #include <string_view>
 
+#include "iresearch/formats/column/col_file_writer.hpp"
+
 namespace irs {
 
-inline uint64_t AlignedPosition(duckdb::WriteStream& out) {
-  constexpr duckdb::data_t kZeros[8]{};
-  if (const auto misalign = out.Position() % sizeof(kZeros); misalign != 0) {
-    out.WriteData(kZeros, sizeof(kZeros) - misalign);
-  }
-  return out.Position();
-}
-
-inline uint64_t AppendAligned(duckdb::WriteStream& out,
-                              std::string_view bytes) {
-  const auto offset = AlignedPosition(out);
-  out.WriteData(duckdb::const_data_ptr_cast(bytes.data()), bytes.size());
-  return offset;
+inline uint64_t AppendAligned(ColFileWriter& out, std::string_view bytes) {
+  return out.AppendAligned({&bytes, 1});
 }
 
 class WriteContext final {
  public:
-  WriteContext(duckdb::BufferManager& buffers,
-               duckdb::WriteStream& out) noexcept
-    : _buffers{&buffers}, _out{&out} {}
+  WriteContext(duckdb::BufferManager& buffers, ColFileWriter& blocks) noexcept
+    : _buffers{&buffers}, _blocks{&blocks} {}
 
   WriteContext(const WriteContext&) = delete;
   WriteContext& operator=(const WriteContext&) = delete;
 
   duckdb::BufferManager& BufferManager() noexcept { return *_buffers; }
-  duckdb::WriteStream& Out() noexcept { return *_out; }
+  ColFileWriter& Blocks() noexcept { return *_blocks; }
 
  private:
   duckdb::BufferManager* _buffers;
-  duckdb::WriteStream* _out;
+  ColFileWriter* _blocks;
 };
 
 }  // namespace irs

@@ -208,12 +208,7 @@ void ExpectSameField(const TermReader& expected, const TermReader& actual) {
   EXPECT_EQ(expected.meta().norm, actual.meta().norm);
   EXPECT_EQ(expected.meta().dict, actual.meta().dict);
   EXPECT_EQ(expected.key_width, actual.key_width);
-  const auto* expected_freq = irs::get<FreqAttr>(expected);
-  const auto* actual_freq = irs::get<FreqAttr>(actual);
-  ASSERT_EQ(expected_freq == nullptr, actual_freq == nullptr);
-  if (expected_freq) {
-    EXPECT_EQ(expected_freq->value, actual_freq->value);
-  }
+  EXPECT_EQ(expected.total_term_freq(), actual.total_term_freq());
   const auto features = expected.meta().index_features;
   auto e = expected.iterator();
   auto a = actual.iterator();

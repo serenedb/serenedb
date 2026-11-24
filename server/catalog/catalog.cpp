@@ -747,6 +747,10 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(
   duckdb::BoundCreateTableInfo& info) {
+  if (!info.Base().partition_keys.empty()) {
+    return duckdb::ErrorData{
+      duckdb::NotImplementedException("PARTITIONED BY is not supported")};
+  }
   for (const auto name : connector::SortedOptionNames(info.Base().options)) {
     if (!absl::c_contains(kSearchTableOptions, name)) {
       return duckdb::ErrorData{duckdb::BinderException(

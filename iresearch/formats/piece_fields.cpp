@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 
 #include <array>
-#include <limits>
 #include <utility>
 
 #include "iresearch/formats/index/term_dict_reader.hpp"
@@ -187,10 +186,8 @@ void PieceTermReader::Add(bytes_view term, const PostingMeta& meta) {
 }
 
 void PieceTermReader::Seal(uint64_t docs, uint64_t total_freq) {
-  SDB_ENSURE(total_freq <= std::numeric_limits<uint32_t>::max(),
-             "piece: total frequency ", total_freq, " exceeds uint32_t::max");
   _docs = docs;
-  _freq.value = static_cast<uint32_t>(total_freq);
+  _total_term_freq = total_freq;
   _inline.append(term_dict::kSlack, 0);
   for (auto& entry : _entries) {
     entry.meta.inline_data =
@@ -304,13 +301,6 @@ PostingsHandles PieceTermReader::Handles() const noexcept {
   return _owner->Postings().Handles();
 }
 
-Attribute* PieceTermReader::GetMutable(TypeInfo::type_id type) noexcept {
-  return type == irs::Type<FreqAttr>::id() &&
-             _meta.dict.member == DictMember::Strings
-           ? &_freq
-           : nullptr;
-}
-
 TermPostings::ptr PieceTermReader::PostingsOf(IndexFeatures features,
                                               const PostingMeta& meta,
                                               TermPostings::ptr reuse) const {
@@ -368,8 +358,7 @@ void PieceFieldWriter::prepare(const FlushState& state, uint64_t) {
 
 void PieceFieldWriter::write(DictRef dict, const BasicTermReader& reader) {
   const auto props = reader.properties();
-  _pw.SetTermPayloadWriter(reader.PayloadWriter());
-  _pw.BeginField(props);
+  _pw.BeginField(props, reader.PayloadWriter());
   FieldMeta meta{reader.id(), props.index_features};
   meta.norm = props.norm;
   meta.dict = dict;
@@ -426,7 +415,6 @@ void PieceFieldWriter::WriteSlot(field_id id, DictRef dict,
 }
 
 PieceTermReader& PieceFieldWriter::BeginSlot(field_id id, DictRef dict) {
-  _pw.SetTermPayloadWriter(nullptr);
   _pw.BeginField({});
   FieldMeta meta{id, IndexFeatures::None};
   meta.dict = dict;

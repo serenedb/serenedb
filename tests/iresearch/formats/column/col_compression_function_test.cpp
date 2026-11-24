@@ -24,7 +24,6 @@
 #include <cstdint>
 #include <cstring>
 #include <duckdb.hpp>
-#include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/types/string_type.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -40,6 +39,7 @@
 #include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/codecs/text/string_tuning.hpp>
 #include <iresearch/formats/column/codecs/tuning.hpp>
+#include <iresearch/formats/column/col_file_writer.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/internal/write_context.hpp>
@@ -242,8 +242,9 @@ class ColCompressionFunctionTest : public ::testing::Test {
   std::vector<CodecType> Blocks(const duckdb::LogicalType& type,
                                 CodecType method, irs::WriteTier tier,
                                 irs::codecs::CodecSet disabled = {}) {
-    duckdb::MemoryStream out;
-    irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
+    tests::IndexDir dir{*_db.instance, TestEnv::MemoryRoot()};
+    irs::ColFileWriter file{dir.Create("blocks")};
+    irs::WriteContext ctx{_db.instance->GetBufferManager(), file};
     std::vector<CodecType> blocks;
     const auto flush = [&](const irs::codecs::Codec& codec,
                            duckdb::BaseStatistics, uint64_t, std::string_view,
@@ -276,8 +277,9 @@ class ColCompressionFunctionTest : public ::testing::Test {
   void Checkpoint(const duckdb::LogicalType& type, const Rows& rows,
                   irs::ColCodecParams params, irs::codecs::CodecSet disabled,
                   bool contested, FlushedBlocks& blocks, Run&& run) {
-    duckdb::MemoryStream out;
-    irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
+    tests::IndexDir dir{*_db.instance, TestEnv::MemoryRoot()};
+    irs::ColFileWriter file{dir.Create("blocks")};
+    irs::WriteContext ctx{_db.instance->GetBufferManager(), file};
     const auto flush = [&](const irs::codecs::Codec& codec,
                            duckdb::BaseStatistics stats, uint64_t count,
                            std::string_view bytes, std::string_view shared) {

@@ -222,6 +222,22 @@ Two expressions that PostgreSQL rejects are accepted by SereneDB:
 
 A user-defined function called in a `DEFAULT` value, a `CHECK` constraint or a generated column is looked up through the `search_path` of the statement that defines it, `CREATE TABLE` or `ALTER TABLE`. A function from a schema other than the table's own is kept with its schema: `CHECK (is_positive(v))` on a table in `public`, written while the function's schema `app` is on the `search_path`, is kept and shown as `CHECK (app.is_positive(v))`; a function from another database is kept with its database too, and so is a function of a nested schema, with its full schema path: `CHECK (n1.n2.is_positive(v))` is kept as `CHECK (<database>.n1.n2.is_positive(v))`. Writes, later `ALTER TABLE` statements of the table and a restart call that function whatever the session's `search_path` is. A built-in function or a function of the table's own schema stays the one the expression was written with: a temporary function or a function of a schema on the session's `search_path` with the same name doesn't replace it in writes, generated columns or indexes, and neither does a function with a built-in's name created later in the table's schema. A function of the table's schema named like a built-in is kept with its schema, since built-ins are looked up first. The `USING` expression of `ALTER COLUMN TYPE` and the `DEFAULT` of a field added to a struct column (`ADD COLUMN s.f ... DEFAULT ...`) are looked up the same way. A temporary function, such as one created with `CREATE TEMPORARY MACRO`, cannot be used in these expressions or in an index of a non-temporary table: the statement fails with `Cannot use temporary function "<name>" in a non-temporary relation`. A sequence named in `nextval`, `currval` or `setval`, also as `'<name>'::regclass`, is looked up the same way and kept with its schema when it isn't the one the table's schema holds: `DEFAULT nextval('ids')`, written while the sequence's schema `app` is on the `search_path`, is kept and shown as `nextval('app.ids')`. A temporary sequence can't be used in the expressions of a non-temporary table: the statement fails with `Cannot use temporary sequence "<name>" in a non-temporary relation`. A user-defined type named in such an expression, as in `DEFAULT 'a'::mood`, is not looked up through the `search_path`: it has to be in the table's schema or in `public`, or be written with its schema, as in `'a'::app.mood`; otherwise the statement fails with `Type with name mood does not exist!`. Column types are looked up through the `search_path` as usual.
 
+## Sort Keys
+
+A table can declare a sort key after the column list as `SORTED BY (column [ASC | DESC] [NULLS FIRST | NULLS LAST], ...)`:
+
+<SqlLogicTest id="sql/statements/create_table/index/example_031" />
+
+-   Each key is a column of the table, listed in key order. A key is ascending unless it says `DESC`. NULLs come last in an ascending key and first in a descending one, as in PostgreSQL's `ORDER BY`, unless `NULLS FIRST` or `NULLS LAST` says otherwise. The table's definition always shows both, as in `SORTED BY (service ASC NULLS LAST, ts DESC NULLS FIRST)`.
+-   The key is kept in the table's definition. Rows are stored in the order they are written, not in key order.
+-   The key is set when the table is created, also by `CREATE TABLE ... AS SELECT`. `ALTER TABLE ... SET SORTED BY` and `RESET SORTED BY` are not supported. Renaming a key column keeps it in the key.
+-   A key is a stored column: an expression, a `COLLATE` clause, a column declared with a collation or a generated column is rejected.
+-   A column of type `VARIANT`, `INTERVAL`, `TIMETZ` or `BIT`, or a struct, list or array holding one, is rejected as a key, because `ORDER BY` orders these values by a normalized form rather than as stored; a `MAP` or `UNION` holding one is accepted.
+
+## Partition Keys
+
+The syntax below includes `PARTITIONED BY (...)`, which is not supported. `CREATE TABLE` rejects a definition that uses it, including `CREATE TABLE ... AS SELECT`.
+
 ## Syntax
 
 <RailroadDiagram source={RailroadSource} production="rrdiagram" />

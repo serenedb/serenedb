@@ -129,23 +129,6 @@ constexpr uint32_t ArtTerminal(uint64_t meta) noexcept {
 
 constexpr uint64_t ArtPath(uint64_t meta) noexcept { return meta >> 56; }
 
-IRS_FORCE_INLINE uint64_t LoadHead(const byte_type* p, size_t size) noexcept {
-  if (size >= sizeof(uint64_t)) {
-    return absl::big_endian::Load64(p);
-  }
-  if (size >= sizeof(uint32_t)) {
-    return uint64_t{absl::big_endian::Load32(p)} << 32 |
-           uint64_t{absl::big_endian::Load32(p + size - sizeof(uint32_t))}
-             << (64 - 8 * size);
-  }
-  if (size >= sizeof(uint16_t)) {
-    return uint64_t{absl::big_endian::Load16(p)} << 48 |
-           uint64_t{absl::big_endian::Load16(p + size - sizeof(uint16_t))}
-             << (64 - 8 * size);
-  }
-  return size == 0 ? 0 : uint64_t{*p} << 56;
-}
-
 IRS_FORCE_INLINE size_t CountNotAfter(const uint64_t* heads,
                                       uint64_t head) noexcept {
   U64x8 lanes;
@@ -169,11 +152,6 @@ bytes_view SharedPrefix(SeparatorsView separators) noexcept {
 }
 
 }  // namespace
-
-uint64_t HeadAt(bytes_view key, size_t skip) noexcept {
-  return skip >= key.size() ? 0
-                            : LoadHead(key.data() + skip, key.size() - skip);
-}
 
 Separators DecodeSeparators(bytes_view encoded, size_t count) {
   const auto corrupted = [] {

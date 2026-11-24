@@ -86,6 +86,7 @@
 #include "catalog/entry/inverted_index.h"
 #include "catalog/record.h"
 #include "catalog/schema.h"
+#include "catalog/sort_keys.h"
 #include "catalog/transaction.h"
 #include "connector/column_id.h"
 #include "connector/constraint_keys.h"
@@ -437,6 +438,7 @@ SearchTableEntry::SearchTableEntry(
   }
   BindOptions(*transaction.context, base.options, base.oid == 0);
   _options = ResolveOptions(base.options);
+  _sort_keys = ResolveSortKeys(_columns, base.sort_keys);
   const bool fresh = !_storage;
   if (fresh) {
     auto& serene = catalog.Cast<SereneDBCatalog>();
@@ -701,10 +703,11 @@ duckdb::unique_ptr<duckdb::CreateInfo> SearchTableEntry::GetInfo() const {
     RefreshTypeNames(view.Transaction(catalog.GetDatabase()), catalog,
                      info->dependencies);
   }
-  auto& options = info->Cast<duckdb::CreateTableInfo>().options;
+  auto& create = info->Cast<duckdb::CreateTableInfo>();
   for (auto& [name, value] : ExplicitOptions()) {
-    options.insert_or_assign(name, OptionConstant(value));
+    create.options.insert_or_assign(name, OptionConstant(value));
   }
+  create.sort_keys = SortOrdersOf(_sort_keys, GetColumns());
   info->tablespace_oid = _tablespace;
   return info;
 }
@@ -1343,6 +1346,7 @@ duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterRenameColumn(
   }
   auto definition = Definition();
   RenameColumn(definition->columns, definition->constraints, info);
+  definition->sort_keys = SortOrdersOf(_sort_keys, definition->columns);
   auto altered = Altered(context, info, std::move(definition));
   AlterTriggers(context, info, duckdb::Identifier{});
   return altered;

@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <map>
 #include <memory>
 #include <random>
@@ -36,11 +37,13 @@
 #include <vector>
 
 #include "executor.h"
+#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/composite_reader.hpp"
+#include "iresearch/store/storage.hpp"
 #include "iresearch/utils/duckdb_engine.hpp"
 #include "iresearch/utils/type_limits.hpp"
 #include "memory_output.hpp"
@@ -252,7 +255,11 @@ struct MainColumn {
 };
 
 struct PackedColumn {
-  duckdb::MemoryStream file;
+  static constexpr std::string_view kName = "norms";
+
+  duckdb::MemoryFileSystem fs;
+  irs::ColFileWriter file{
+    irs::format_utils::OpenOutput(fs, duckdb::MemoryFileSystem::PREFIX, kName)};
   irs::bstring data;
   duckdb::shared_ptr<duckdb::InputFile> in;
   std::unique_ptr<irs::NormColumnReader> column;
@@ -261,7 +268,7 @@ struct PackedColumn {
 
   void Build(const std::vector<uint32_t>& values) {
     irs::NormColumnWriter writer{
-      1, kRgRows, [&]() -> duckdb::WriteStream& { return file; }};
+      1, kRgRows, [&]() -> irs::ColFileWriter& { return file; }};
     for (size_t i = 0; i != values.size(); ++i) {
       writer.Append(i, values[i]);
     }
@@ -270,7 +277,9 @@ struct PackedColumn {
       bytes += irs::NormSlotsSize(region) +
                (region.exceptions == 0 ? 0 : irs::NormTableSize(region));
     }
-    data = tests::Bytes(file);
+    file.Finish()->Close();
+    data = irs::ReadWhole<irs::bstring>(
+      {}, fs, fs.JoinPath(duckdb::MemoryFileSystem::PREFIX, kName));
     in = tests::OpenBytes(data);
     column = std::make_unique<irs::NormColumnReader>(1, writer.Meta(), *in);
     reader = irs::MakePersistedNormReader(*column);

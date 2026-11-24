@@ -594,7 +594,8 @@ irs::CompositeReader IndexWriter::GetSnapshot() const {
 CompactionResult IndexWriter::Compact(
   const irs::CompactionPolicy& policy,
   const irs::IndexFieldOptions* field_options,
-  const irs::MergeWriter::FlushProgress& progress) {
+  const irs::MergeWriter::FlushProgress& progress,
+  const irs::AnnBuildEnv* env) {
   const irs::CompactionPolicy guarded =
     [&](irs::Compaction& candidates, const irs::IndexReader& reader,
         const irs::CompactingSegments& compacting) {
@@ -604,7 +605,7 @@ CompactionResult IndexWriter::Compact(
     };
   auto merged = irs::GetBlocking(_writer->MergeAsync(guarded, GetSnapshot(),
                                                      field_options, progress,
-                                                     /*env=*/nullptr));
+                                                     env));
   std::vector<irs::IndexWriter::Merged> retired;
   {
     absl::MutexLock lock{&_mutex};
@@ -626,9 +627,10 @@ CompactionResult IndexWriter::Compact(
       return {.size = 0, .error = CompactionError::Busy};
     }
   }
+  irs::MergeProfile profile = merged.profile;
   absl::MutexLock lock{&_mutex};
   _merges.push_back(std::move(merged));
-  return {.size = size, .error = CompactionError::Ok};
+  return {.size = size, .error = CompactionError::Ok, .profile = profile};
 }
 
 irs::CompositeReader OpenReader(const IndexDir& dir,

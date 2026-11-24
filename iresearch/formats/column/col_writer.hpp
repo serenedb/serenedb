@@ -36,6 +36,7 @@
 
 #include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/formats/ann_writer.hpp"
+#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/write_context.hpp"
@@ -68,6 +69,10 @@ class ColWriter final {
     _deferred = deferred;
   }
 
+  ColumnWriter* StagedColumn(field_id id) noexcept;
+
+  void Reorder(uint64_t rows, std::span<const uint32_t> new2old);
+
   void SetRowGroupStarts(std::vector<uint64_t> starts) noexcept {
     SDB_ASSERT(_columns.empty());
     _row_group_starts = std::move(starts);
@@ -75,7 +80,7 @@ class ColWriter final {
 
   uint64_t RowGroupRows(uint64_t row, uint64_t uniform) const noexcept;
 
-  std::vector<StagedColumn> Snapshot(uint64_t rows) const;
+  std::vector<irs::StagedColumn> Snapshot(uint64_t rows) const;
   std::vector<NormColumnSpec> SealNorms(uint64_t rows);
   size_t StagedBytes() const noexcept;
 
@@ -83,6 +88,18 @@ class ColWriter final {
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
                            ColumnWriterOptions options);
+
+  ColumnWriter& OpenedColumn(field_id id) noexcept;
+
+  void CloseColumn(field_id id);
+
+  void PlanParts(field_id id, uint32_t parts);
+
+  ColumnWriter& OpenColumnPart(field_id id, uint32_t part, uint64_t first_row,
+                               duckdb::LogicalType type,
+                               const ColumnWriterOptions& options);
+
+  void CloseColumnPart(field_id id, uint32_t part);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
@@ -100,17 +117,19 @@ class ColWriter final {
     return std::move(_reader);
   }
 
-  bool Commit(uint64_t target_row);
-  bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress);
+  bool Commit(uint64_t target_row, std::span<const uint32_t> new2old = {});
+  bool Commit(uint64_t target_row, absl::FunctionRef<bool()> progress,
+              std::span<const uint32_t> new2old = {});
 
   yaclib::Task<bool> ComputeAnn(const AnnBuildEnv* env);
   yaclib::Task<bool> ComputeAnn(const AnnBuildEnv* env,
                                 absl::FunctionRef<bool()> progress);
+  yaclib::Task<> ComputeAnn(field_id column, ColReader& reader,
+                            const AnnBuildEnv* env);
 
   void Rollback() noexcept;
 
   WriteContext& WriteCtx() const noexcept { return *_write_ctx; }
-  duckdb::WriteStream& Out() const noexcept { return *_out; }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
 
  private:
@@ -125,10 +144,26 @@ class ColWriter final {
     ColumnMeta meta;
   };
 
+  struct Column {
+    Column(uint32_t count, bool whole) : parts(count), whole{whole} {}
+
+    std::vector<ColumnEntry> parts;
+    bool whole;
+  };
+
+  Column& AddColumn(field_id id, uint32_t parts, bool whole);
+
+  Column& ColumnOf(field_id id);
+
+  ColumnEntry& PartOf(field_id id, uint32_t part);
+
   static void Close(ColumnEntry& entry);
+
+  static ColumnMeta Assemble(Column& column);
 
   void EnsureOut();
   NormColumnWriter& AddNormColumn(field_id id, uint32_t row_group_size);
+  void ReorderNorms(uint64_t rows, std::span<const uint32_t> new2old);
   bool Empty() const noexcept;
 
   FileTracker& _tracker;
@@ -137,18 +172,20 @@ class ColWriter final {
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
-  std::unique_ptr<duckdb::BufferedFileWriter> _out;
+  std::unique_ptr<ColFileWriter> _file;
   std::unique_ptr<ColReader> _reader;
   std::unique_ptr<WriteContext> _write_ctx;
-  std::vector<ColumnEntry> _columns;
+  std::vector<std::unique_ptr<Column>> _columns;
   irs::containers::FlatHashMap<field_id, size_t> _by_id;
   std::vector<std::unique_ptr<NormColumnWriter>> _norms;
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
   std::vector<AnnEntry> _ann_writers;
   irs::containers::FlatHashMap<field_id, size_t> _ann_by_id;
+  uint32_t _norm_row_group_size = 0;
   std::vector<uint64_t> _row_group_starts;
   bool _committed = false;
   bool _deferred = false;
+  bool _norms_reordered = false;
 };
 
 }  // namespace irs

@@ -29,6 +29,7 @@
 #include <duckdb.hpp>
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
@@ -4805,7 +4806,9 @@ VariantSegment CompressVariant(duckdb::DatabaseInstance& db,
   for (const auto& v : vectors) {
     chunks.push_back(irs::RefChunk(v, v.size()));
   }
-  duckdb::MemoryStream out;
+  duckdb::MemoryFileSystem fs;
+  irs::ColFileWriter out{irs::format_utils::OpenOutput(
+    fs, duckdb::MemoryFileSystem::PREFIX, "blocks")};
   irs::WriteContext ctx{db.GetBufferManager(), out};
   VariantSegment segment{.rows = values.size()};
   size_t flushed = 0;
@@ -4934,7 +4937,9 @@ TEST_F(ColNumericCodecTest, BitPackedFramesAtAnUnalignedAddressAreRejected) {
 
 TEST_F(ColNumericCodecTest, WideValuesGiveEmptyStatisticsForANonNumericType) {
   const duckdb::LogicalType type = duckdb::LogicalType::HUGEINT;
-  duckdb::MemoryStream out;
+  duckdb::MemoryFileSystem fs;
+  irs::ColFileWriter out{irs::format_utils::OpenOutput(
+    fs, duckdb::MemoryFileSystem::PREFIX, "blocks")};
   irs::WriteContext ctx{Db().GetBufferManager(), out};
   const auto flush = [](const irs::codecs::Codec&, duckdb::BaseStatistics,
                         uint64_t, std::string_view, std::string_view) {};

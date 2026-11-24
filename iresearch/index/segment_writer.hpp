@@ -33,6 +33,7 @@
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
+#include "iresearch/index/flush_order.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
 #include "iresearch/index/segment_reader_impl.hpp"
@@ -273,7 +274,8 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   };
 
   void FlushFields(FlushState& state,
-                   std::span<const BasicTermReader* const> extra);
+                   std::span<const BasicTermReader* const> extra,
+                   const DocOrder& order);
   void CopyColumns();
 
   // Reset body that keeps _field_options; reset() drops them, reset(meta)
@@ -298,6 +300,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // set.
   const IndexFieldOptions* _fallback_field_options = nullptr;
   const AnnBuildEnv* _ann_env = nullptr;
+  const std::vector<SortKey>* _sort = nullptr;
   HnswBases* _hnsw_bases = nullptr;
   // Owning per-op override; null falls back to _fallback_field_options.
   std::shared_ptr<const IndexFieldOptions> _field_options;

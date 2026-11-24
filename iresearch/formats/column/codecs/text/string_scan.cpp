@@ -173,6 +173,22 @@ void ReferenceOnce(HeapReference& reference, const duckdb::Vector& source,
   reference.source = heap.get();
 }
 
+void ReferenceFrame(FrameLink& link,
+                    const duckdb::shared_ptr<const FrameBytes>& frame,
+                    duckdb::Vector& result) {
+  if (const auto& held = result.GetBufferRef()->GetAuxiliaryData();
+      frame.get() == link.frame && held && held.get() == link.target &&
+      !link.target_weak.expired()) {
+    return;
+  }
+  duckdb::StringVector::AddAuxiliaryData(
+    result, duckdb::make_uniq<FrameReference>(frame));
+  const auto& held = result.GetBufferRef()->GetAuxiliaryData();
+  link.target_weak = held;
+  link.target = held.get();
+  link.frame = frame.get();
+}
+
 void EmitDecoded(const DecodedDictionary& decoded,
                  std::span<const EntryAt> order, duckdb::Vector& result,
                  HeapReference& reference) {

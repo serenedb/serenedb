@@ -104,8 +104,6 @@ IRS_FORCE_INLINE inline size_t PaddedMismatch(const byte_type* lhs,
   return size;
 }
 
-uint64_t HeadAt(bytes_view key, size_t skip) noexcept;
-
 struct Separators {
   bstring arena;
   std::vector<uint32_t> offsets{0};

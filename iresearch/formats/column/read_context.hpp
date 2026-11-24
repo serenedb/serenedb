@@ -38,6 +38,8 @@ namespace irs {
 
 class ColReader;
 
+bool StreamsFrames(const duckdb::LogicalType& type);
+
 class ReadContext final : public BlockManager {
  public:
   explicit ReadContext(duckdb::DatabaseInstance& db);
@@ -54,7 +56,14 @@ class ReadContext final : public BlockManager {
 
   const duckdb::InputFile* File() const noexcept { return _in.File().get(); }
   bool RandomAccess() const noexcept { return _random_access; }
+  bool ReadAhead() const noexcept { return _read_ahead; }
+  void SetReadAhead(bool read_ahead) noexcept { _read_ahead = read_ahead; }
+  bool MergeRead() const noexcept { return _merge_read; }
+  void SetMergeRead(bool merge_read) noexcept { _merge_read = merge_read; }
   duckdb::ObjectCache* Cache() const noexcept { return _cache; }
+  void SetCache(duckdb::ObjectCache* cache) noexcept { _cache = cache; }
+  bool Streams() const noexcept { return _merge_read && _streams; }
+  void SetStreams(bool streams) noexcept { _streams = streams; }
 
   duckdb::string_t ReadString(duckdb::Vector& result, duckdb::block_id_t block,
                               int32_t offset);
@@ -69,6 +78,7 @@ class ReadContext final : public BlockManager {
     uint64_t file_offset = 0;
     std::atomic<bool>* touched = nullptr;
     duckdb::ObjectCache* cache = nullptr;
+    bool streams = false;
   };
 
   duckdb::shared_ptr<duckdb::BlockHandle> RegisterColBlock(uint64_t offset,
@@ -102,8 +112,15 @@ class ReadContext final : public BlockManager {
   duckdb::MemoryMappedFile* _mapping = nullptr;
   std::vector<std::pair<uint64_t, uint64_t>> _ranges;
   bool _random_access = false;
+  bool _read_ahead = true;
+  bool _merge_read = false;
   duckdb::ObjectCache* _cache;
+  bool _streams = false;
 };
+
+std::shared_ptr<ReadContext> MergeReadContext(const ColReader& reader,
+                                              duckdb::ObjectCache* cache,
+                                              bool streams = false);
 
 inline bool Touched(const ReadContext::CacheSlot& slot) noexcept {
   return slot.touched->load(std::memory_order_relaxed);

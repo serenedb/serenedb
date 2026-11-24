@@ -23,6 +23,8 @@
 #pragma once
 
 #include <cstddef>
+#include <duckdb/common/serializer/buffered_file_writer.hpp>
+#include <memory>
 
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader_options.hpp"
@@ -31,6 +33,12 @@
 namespace irs {
 
 struct NormProvider;
+
+struct PostingsOutputs {
+  std::unique_ptr<duckdb::BufferedFileWriter> doc;
+  std::unique_ptr<duckdb::BufferedFileWriter> pos;
+  std::unique_ptr<duckdb::BufferedFileWriter> pay;
+};
 
 struct FlushState {
   FileTracker& tracker;

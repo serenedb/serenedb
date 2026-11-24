@@ -74,7 +74,9 @@ class PieceTermReader final : public TermReader {
     uint64_t bytes,
     absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final;
   bool HasScoreBounds() const noexcept final { return false; }
-  Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
+  uint64_t total_term_freq() const noexcept final {
+    return _meta.dict.member == DictMember::Strings ? _total_term_freq : 0;
+  }
 
   bytes_view TermOf(size_t i) const noexcept {
     const auto& entry = _entries[i];
@@ -108,7 +110,7 @@ class PieceTermReader final : public TermReader {
   bstring _inline;
   std::vector<Entry> _entries;
   uint64_t _docs = 0;
-  FreqAttr _freq;
+  uint64_t _total_term_freq = 0;
 };
 
 class PieceFields final {

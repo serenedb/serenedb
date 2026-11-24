@@ -29,6 +29,12 @@
 
 namespace irs {
 
+struct PostingBases {
+  uint64_t doc = 0;
+  uint64_t pos = 0;
+  uint64_t pay = 0;
+};
+
 struct PostingMeta {
   static constexpr uint32_t kInlineBytes = 32;
 

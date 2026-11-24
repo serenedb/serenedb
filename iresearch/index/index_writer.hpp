@@ -36,6 +36,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <vector>
 #include <yaclib/async/future.hpp>
 
@@ -47,6 +48,9 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/index/index_reader_options.hpp"
+#include "iresearch/index/merge/merge_profile.hpp"
+#include "iresearch/index/merge/merge_progress.hpp"
+#include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/index/merge_writer.hpp"
 #include "iresearch/index/segment_reader.hpp"
 #include "iresearch/index/segment_writer.hpp"
@@ -82,6 +86,10 @@ struct IndexWriterOptions : public SegmentOptions {
   AnnFieldsByColumn anns;
 
   const AnnBuildEnv* ann_env = nullptr;
+
+  std::vector<SortKey> sort;
+
+  duckdb::shared_ptr<duckdb::DedicatedPool> merge_pool;
 
   std::shared_ptr<std::atomic_uint64_t> segment_ids;
 
@@ -272,6 +280,7 @@ class IndexWriter : private util::Noncopyable {
     SegmentMeta meta;
     std::shared_ptr<const SegmentReaderImpl> reader;
     std::vector<DocMap> maps;
+    MergeProfile profile;
   };
 
   auto MergeAsync(const CompactionPolicy& policy, CompositeReader source,
@@ -413,6 +422,8 @@ class IndexWriter : private util::Noncopyable {
   duckdb::FileSystem& _fs;
   std::string _root;
   const AnnBuildEnv* _ann_env = nullptr;
+  std::vector<SortKey> _sort;
+  duckdb::shared_ptr<duckdb::DedicatedPool> _merge_pool;
   std::unique_ptr<HnswBases> _hnsw_bases;
   std::shared_ptr<const IndexFieldOptions> _field_options;
   static constexpr uint64_t kPendingFloor =

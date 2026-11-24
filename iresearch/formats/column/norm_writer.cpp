@@ -29,6 +29,7 @@
 #include <span>
 #include <utility>
 
+#include "iresearch/formats/column/col_file_writer.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
@@ -56,6 +57,19 @@ void NormStats::Add(std::span<const uint32_t> values) noexcept {
     min = std::min(min, v);
     max = std::max(max, v);
   }
+}
+
+void NormStats::AddRepeated(uint64_t count, uint32_t value) noexcept {
+  if (count == 0) {
+    return;
+  }
+  rows += count;
+  sum += count * value;
+  non_zero += value != 0 ? count : 0;
+  wide8 += value >= NormFirstCode(8) ? count : 0;
+  wide16 += value >= NormFirstCode(16) ? count : 0;
+  min = std::min(min, value);
+  max = std::max(max, value);
 }
 
 void NormStats::Merge(const NormStats& other) noexcept {
@@ -112,6 +126,31 @@ void NormColumnWriter::PadTo(uint64_t target) {
   }
 }
 
+void NormColumnWriter::Reorder(std::span<const uint32_t> new2old,
+                               uint32_t row_group_size) {
+  SDB_ASSERT(_row_group_size == 0 && row_group_size != 0);
+  SDB_ASSERT(_meta.row_count == 0);
+  SDB_ASSERT(new2old.empty() || _values.size() == new2old.size());
+  _row_group_size = row_group_size;
+  if (new2old.empty()) {
+    const std::span<const uint32_t> staged = _values;
+    const auto sealed = staged.size() - staged.size() % _row_group_size;
+    for (size_t at = 0; at != sealed; at += _row_group_size) {
+      EncodeRowGroup(staged.subspan(at, _row_group_size));
+    }
+    _values.erase(_values.begin(), _values.begin() + sealed);
+    return;
+  }
+  const auto values = std::exchange(_values, {});
+  _values.reserve(std::min<size_t>(values.size(), _row_group_size));
+  for (const auto old : new2old) {
+    _values.push_back(values[old]);
+    if (_values.size() == _row_group_size) {
+      FlushRowGroup();
+    }
+  }
+}
+
 void NormColumnWriter::FlushRowGroup() {
   EncodeRowGroup(_values);
   _values.clear();
@@ -144,6 +183,12 @@ void NormColumnWriter::Write(std::span<const uint32_t> values) {
   EncodeValues(values, first_row);
 }
 
+void NormColumnWriter::WriteRepeated(uint64_t rows, uint32_t value) {
+  SDB_ASSERT(rows == 0 ||
+             (_open_region && _region.bits == 0 && _region.value == value));
+  _region.stats.AddRepeated(rows, value);
+}
+
 void NormColumnWriter::CloseRegion() {
   _open_region = false;
   auto region = std::exchange(_region, {});
@@ -159,26 +204,37 @@ void NormColumnWriter::CloseRegion() {
                "norm column ", _id, " has ", exceptions, " exceptions");
     region.exceptions = static_cast<uint32_t>(exceptions);
     region.overflow = static_cast<uint32_t>(_overflow_rows.size());
-    region.table_offset = _out->Position();
     _bases.resize(NormBuckets(region), static_cast<uint32_t>(_direct.size()));
+    const auto bytes = NormTableSize(region);
+    if (_staging.size() < bytes) {
+      _staging.resize(bytes);
+    }
+    auto* at = _staging.data();
+    const auto put32 = [&at](uint32_t v) {
+      absl::little_endian::Store32(at, v);
+      at += sizeof(uint32_t);
+    };
     for (const auto base : _bases) {
-      _out->Write<uint32_t>(base);
+      put32(base);
     }
     for (const auto row : _overflow_rows) {
-      _out->Write<uint32_t>(row);
+      put32(row);
     }
     for (const auto v : _overflow_values) {
-      _out->Write<uint32_t>(v);
+      put32(v);
     }
     for (const auto v : _direct) {
       if (region.exception_bytes == 2) {
-        _out->Write<uint16_t>(static_cast<uint16_t>(v));
+        absl::little_endian::Store16(at, static_cast<uint16_t>(v));
+        at += sizeof(uint16_t);
       } else {
-        _out->Write<uint32_t>(v);
+        put32(v);
       }
     }
-    _out->Write<uint32_t>(0);
-    SDB_ASSERT(_out->Position() - region.table_offset == NormTableSize(region));
+    put32(0);
+    SDB_ASSERT(at == _staging.data() + bytes);
+    region.table_offset =
+      _out->Append({reinterpret_cast<const char*>(_staging.data()), bytes});
   }
   _meta.row_count += region.stats.rows;
   _meta.regions.push_back(region);
@@ -247,7 +303,7 @@ void NormColumnWriter::EncodeSlots(std::span<const uint32_t> values,
         absl::little_endian::Store32(out + i * 4, v);
       }
     }
-    _out->WriteData(out, bytes);
+    _out->Append({reinterpret_cast<const char*>(out), bytes});
   }
 }
 

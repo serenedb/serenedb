@@ -89,6 +89,12 @@ struct ColumnBlockMeta {
   uint64_t shared_size = 0;
 };
 
+struct ListPart {
+  uint64_t row = 0;
+  uint64_t code = 0;
+  uint64_t elem = 0;
+};
+
 struct ColumnMeta;
 
 struct VariantRgMeta {
@@ -104,6 +110,7 @@ struct ColumnMeta {
   std::vector<ColumnBlockMeta> validity;
   std::vector<ColumnMeta> children;
   std::vector<VariantRgMeta> variant_rgs;
+  std::vector<ListPart> list_parts;
   duckdb::shared_ptr<duckdb::DistinctStatistics> distinct;
   uint8_t compression_level = 0;
 };
@@ -296,6 +303,8 @@ class ColumnReader {
 
     PointReader(const PointReader&) = delete;
     PointReader& operator=(const PointReader&) = delete;
+
+    void SetCache(duckdb::ObjectCache* cache) noexcept { _ctx.SetCache(cache); }
 
     bool FetchRow(uint64_t row, duckdb::Vector& out, duckdb::idx_t out_offset) {
       return _stored ? FetchStored(row, out, out_offset)
@@ -517,5 +526,9 @@ inline duckdb::Vector& ResetScratch(
   }
   return slot->Reset();
 }
+
+uint64_t BlockBytes(std::span<const ColumnBlockMeta> blocks) noexcept;
+
+uint64_t StoredBytes(const ColumnReader& column);
 
 }  // namespace irs

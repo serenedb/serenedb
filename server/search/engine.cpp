@@ -90,6 +90,16 @@ const irs::AnnBuildEnv* ManualCompactionSlot::AnnEnv() const noexcept {
   return &GetSearchEngine().ManualAnnEnv();
 }
 
+const duckdb::shared_ptr<duckdb::DedicatedPool>& SearchEngine::MergePool() {
+  absl::call_once(_merge_pool_once, [this] {
+    _merge_pool = duckdb::TaskScheduler::GetScheduler(
+                    irs::DuckDBEngine::Instance().instance())
+                    .CreateDedicatedPool(
+                      static_cast<duckdb::idx_t>(MaxConcurrentCompactions()));
+  });
+  return _merge_pool;
+}
+
 void SearchEngine::Start() {
   _loops.Consume(MaintenanceLoop(_loops));
   StartSearchStorageTasks();

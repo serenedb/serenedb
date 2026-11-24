@@ -561,7 +561,13 @@ struct DictionaryScan final : SegmentScanState {
                 idx_t count) {
     const auto& codes = Codes(start, count);
     if (!full) {
-      if (count * 2 >= STANDARD_VECTOR_SIZE) {
+      if (entries.streams) {
+        if constexpr (Sorted(Leaf::kCodec)) {
+          EnsureDictionary();
+        } else {
+          EnsureThrough(batch_max);
+        }
+      } else if (count * 2 >= STANDARD_VECTOR_SIZE) {
         EnsureDictionary();
       } else {
         EnsureCodes(codes, count, count);
@@ -571,7 +577,7 @@ struct DictionaryScan final : SegmentScanState {
   }
 
   void ScanVector(duckdb::Vector& result, idx_t start, idx_t count) {
-    if (count != STANDARD_VECTOR_SIZE) {
+    if (count != STANDARD_VECTOR_SIZE || entries.streams) {
       ScanFlat(result, 0, start, count);
       return;
     }
@@ -579,9 +585,25 @@ struct DictionaryScan final : SegmentScanState {
     result.Dictionary(entries.dictionary, Codes(start, count), count);
   }
 
+  void EnsureThrough(uint32_t code) {
+    if (code < entries.kFirstEntry) {
+      return;
+    }
+    const auto last = entries.FrameOf(code);
+    for (; next_frame <= last; ++next_frame) {
+      if (!entries.decoded[next_frame]) {
+        entries.DecodeFrame(next_frame);
+      }
+    }
+    if (entries.Complete()) {
+      Admit();
+    }
+  }
+
   void Select(duckdb::Vector& result, idx_t result_offset, idx_t start,
               idx_t vector_count, const duckdb::SelectionVector& sel,
               idx_t sel_count, duckdb::ScanVectorType scan_type) {
+    SDB_ASSERT(!entries.streams);
     if (scan_type == duckdb::ScanVectorType::SCAN_FLAT_VECTOR ||
         (!full && sel_count * 4 < vector_count)) {
       const auto& codes = Codes(start, vector_count, sel, sel_count);
@@ -598,6 +620,7 @@ struct DictionaryScan final : SegmentScanState {
               duckdb::SelectionVector& sel, idx_t& sel_count,
               const duckdb::TableFilter& filter,
               duckdb::TableFilterState& filter_state) {
+    SDB_ASSERT(!entries.streams);
     const auto dict_count = entries.header.entry_count;
     const bool dense = sel_count * 4 >= vector_count;
     if (verdicts.Empty()) {
@@ -709,11 +732,14 @@ struct DictionaryScan final : SegmentScanState {
     if (max_code >= entries.header.entry_count) [[unlikely]] {
       ThrowCorrupted("text", "dictionary code is out of range");
     }
+    batch_max = max_code;
   }
 
   EntryFrames<Shape::Dictionary, Leaf> entries;
   bool nullable;
   ReadContext::CacheSlot cache_slot;
+  duckdb::sel_t batch_max = 0;
+  uint32_t next_frame = 0;
   bool room;
   bool full = false;
   duckdb::buffer_ptr<duckdb::SelectionVector> code_sel;

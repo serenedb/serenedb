@@ -42,6 +42,7 @@
 #include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/index/inverter/columnar_flush.hpp"
+#include "iresearch/index/merge/sort_spec.hpp"
 #include "iresearch/store/storage.hpp"
 #include "iresearch/utils/async.hpp"
 #include "iresearch/utils/down_cast.hpp"
@@ -73,7 +74,8 @@ std::unique_ptr<SegmentWriter> SegmentWriter::make(
 }
 
 size_t SegmentWriter::memory_active() const noexcept {
-  return _docs_mask.ByteSize() + _fields.MemoryActive();
+  return _docs_mask.ByteSize() + _fields.MemoryActive() +
+         (_col_writer ? _col_writer->StagedBytes() : 0);
 }
 
 size_t SegmentWriter::memory_reserved() const noexcept {
@@ -104,14 +106,18 @@ SegmentWriter::SegmentWriter(ConstructToken, duckdb::DatabaseInstance& db,
     _db{db},
     _fallback_field_options{options.field_options},
     _ann_env{options.ann_env},
-    _hnsw_bases{options.hnsw_bases} {}
+    _sort{options.sort},
+    _hnsw_bases{options.hnsw_bases} {
+  SDB_ASSERT(!_sort || !_sort->empty());
+}
 
 void SegmentWriter::FlushFields(FlushState& state,
-                                std::span<const BasicTermReader* const> extra) {
+                                std::span<const BasicTermReader* const> extra,
+                                const DocOrder& order) {
   SDB_ASSERT(_field_writer);
 
   try {
-    _fields.Flush(*_field_writer, state, extra);
+    _fields.Flush(*_field_writer, state, extra, order);
   } catch (...) {
     _field_writer.reset();
     throw;
@@ -121,6 +127,7 @@ void SegmentWriter::FlushFields(FlushState& state,
 WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
                                     DocumentMaskBuilder& docs_mask) {
   SDB_ASSERT(_tracker);
+  DocOrder order;
   FlushState state{
     .tracker = *_tracker,
     .norms = this,
@@ -135,7 +142,10 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
     _col_writer->SetIdxWriter(idx);
     _fields.FinalizeNorms();
     CopyColumns();
-    _col_writer->Commit(buffered_docs());
+    if (_sort) {
+      order = MakeDocOrder(FlushOrder(*_sort, *_col_writer, buffered_docs()));
+    }
+    _col_writer->Commit(buffered_docs(), order.new2old);
     if (_ann_env != nullptr) {
       GetBlocking(_col_writer->ComputeAnn(_ann_env).ToFuture());
     } else {
@@ -154,7 +164,7 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
     std::optional<ReadContext> ivf_ctx;
     const auto cluster_readers =
       PrepareIvfClusterReaders(ann_writers, _col_reader.get(), ivf_ctx);
-    FlushFields(state, cluster_readers);
+    FlushFields(state, cluster_readers, order);
     postings = _field_writer->TakePostings();
   }
 
@@ -170,7 +180,17 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
     .postings = std::move(postings),
   };
 
-  docs_mask = std::move(_docs_mask);
+  if (order.Empty()) {
+    docs_mask = std::move(_docs_mask);
+  } else {
+    std::move(_docs_mask)
+      .Take()
+      .ForEachRun([&](doc_id_t first, doc_id_t end) {
+        order.MaskRows(docs_mask, first - doc_limits::min(),
+                       end - doc_limits::min());
+        return true;
+      });
+  }
 
   meta.docs_count = state.doc_count;
   meta.live_docs_count =
@@ -244,7 +264,7 @@ std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
   SDB_ASSERT(_tracker);
   FlushState state{.tracker = *_tracker, .doc_count = docs};
   PieceFieldWriter field_writer{*fields, /*compaction=*/false};
-  _fields.Flush(field_writer, state, {});
+  _fields.Flush(field_writer, state, {}, {});
   SegmentMeta meta;
   meta.name = _seg_name;
   meta.docs_count = static_cast<doc_id_t>(docs);
@@ -337,7 +357,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   const auto* active = ActiveFieldOptions();
   _tracker = std::make_shared<FileTracker>(_fs, _root, meta.name, 0, _released);
   _col_writer = std::make_unique<ColWriter>(_db, *_tracker);
-  _col_writer->SetDeferredSeal(_deferred_columns);
+  _col_writer->SetDeferredSeal(_deferred_columns || _sort);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
   _fields.SetColWriter(_col_writer.get());

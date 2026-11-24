@@ -28,6 +28,8 @@
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/common/vector/immutable_strings.hpp>
+#include <duckdb/common/vector/list_vector.hpp>
+#include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
 #include <duckdb/common/vector_operations/vector_operations.hpp>
 #include <duckdb/function/variant/variant_shredding.hpp>
@@ -44,29 +46,33 @@
 
 #include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/col_writer.hpp"
+#include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
 
-void WriteBytes(ReadContext& source, uint64_t offset, uint64_t size,
-                duckdb::WriteStream& out) {
+uint64_t AppendBytes(ReadContext& source, uint64_t offset, uint64_t size,
+                     ColFileWriter& out) {
   if (const auto* bytes = source.TryReadStable(offset, size)) {
-    out.WriteData(bytes, size);
-    return;
+    const std::string_view part{reinterpret_cast<const char*>(bytes), size};
+    return out.AppendAligned({&part, 1});
   }
   const auto* file = source.File();
   SDB_ASSERT(file != nullptr);
   const auto& blocks = file->Blocks();
+  std::vector<duckdb::FilePin> pins;
+  std::vector<std::string_view> parts;
   for (const auto end = offset + size; offset != end;) {
     const auto piece =
       std::min<uint64_t>(end, blocks.BlockStart(blocks.BlockOf(offset) + 1)) -
       offset;
-    const auto pin = file->Pin(offset, piece);
-    out.WriteData(pin.Ptr(), piece);
+    const auto& pin = pins.emplace_back(file->Pin(offset, piece));
+    parts.emplace_back(reinterpret_cast<const char*>(pin.Ptr()), piece);
     offset += piece;
   }
+  return out.AppendAligned(parts);
 }
 
 class BlockReadAhead {
@@ -141,7 +147,7 @@ struct SharedBlock {
 
 void CaptureBlock(const codecs::Codec& codec, duckdb::BaseStatistics stats,
                   uint64_t tuple_count, std::string_view bytes,
-                  SharedBlock shared, duckdb::WriteStream& blocks,
+                  SharedBlock shared, ColFileWriter& blocks,
                   std::vector<ColumnBlockMeta>& sink) {
   if (tuple_count == 0) {
     return;
@@ -159,6 +165,25 @@ void CaptureBlock(const codecs::Codec& codec, duckdb::BaseStatistics stats,
     m.shared_size = shared.size;
   }
   sink.push_back(std::move(m));
+}
+
+void CertifyStaged(duckdb::Vector& vector) {
+  switch (vector.GetType().InternalType()) {
+    case duckdb::PhysicalType::VARCHAR:
+      duckdb::StringVector::AddAuxiliaryData(
+        vector, std::make_unique<ImmutablePayloads>());
+      return;
+    case duckdb::PhysicalType::STRUCT:
+      for (auto& child : duckdb::StructVector::GetEntries(vector)) {
+        CertifyStaged(child);
+      }
+      return;
+    case duckdb::PhysicalType::LIST:
+      CertifyStaged(duckdb::ListVector::GetChildMutable(vector));
+      return;
+    default:
+      return;
+  }
 }
 
 void SetInvalidRows(duckdb::Vector& vec, duckdb::idx_t begin,
@@ -226,12 +251,6 @@ codecs::CodecType CodesCodec(const ListParts& parts, uint64_t rows) noexcept {
                             : codecs::CodecType::Bitpacking;
 }
 
-bool SelfContained(const ColumnBlockMeta& block) noexcept {
-  return block.codec->type != codecs::CodecType::Uncompressed ||
-         block.statistics.GetType().InternalType() !=
-           duckdb::PhysicalType::VARCHAR;
-}
-
 bool EmptyValidity(const ColumnBlockMeta& block) noexcept {
   return block.byte_size == 0 && block.codec->type == codecs::CodecType::Empty;
 }
@@ -258,6 +277,12 @@ void EmitEmptyValidity(uint64_t rows, std::vector<ColumnBlockMeta>& sink) {
 }
 
 }  // namespace
+
+bool SelfContained(const ColumnBlockMeta& block) noexcept {
+  return block.codec->type != codecs::CodecType::Uncompressed ||
+         block.statistics.GetType().InternalType() !=
+           duckdb::PhysicalType::VARCHAR;
+}
 
 void DropAllValidMask(WriteChunk& chunk) {
   auto& validity = duckdb::FlatVector::ValidityMutable(chunk.data);
@@ -288,11 +313,12 @@ bool ColumnWriter::Compress(const duckdb::LogicalType& type,
         needs_validity || codec.decompression.validity ==
                             codecs::CompressionValidity::RequiresValidity;
       if (!shared_bytes.empty() && shared != shared_bytes) {
-        staged = {AppendAligned(ctx.Out(), shared_bytes), shared_bytes.size()};
+        staged = {AppendAligned(ctx.Blocks(), shared_bytes),
+                  shared_bytes.size()};
         shared = shared_bytes;
       }
       CaptureBlock(codec, std::move(stats), rows, bytes,
-                   shared_bytes.empty() ? SharedBlock{} : staged, ctx.Out(),
+                   shared_bytes.empty() ? SharedBlock{} : staged, ctx.Blocks(),
                    sink);
     };
   codecs::ColumnDataCheckpointData data{
@@ -559,11 +585,13 @@ void ColumnWriter::SealColumn(
 
 ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
                            duckdb::LogicalType type,
-                           const ColumnWriterOptions& options, bool deferred)
+                           const ColumnWriterOptions& options, bool deferred,
+                           uint64_t first_row)
   : _owner{&owner},
     _id{id},
     _type{std::move(type)},
     _options{options},
+    _row_start{first_row},
     _deferred{deferred} {
   if (_type.id() == duckdb::LogicalTypeId::VARIANT) {
     const auto& config = duckdb::DBConfig::GetConfig(_owner->Database());
@@ -596,6 +624,42 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
     _ingest.resize(fields.size());
     _ingest[i] =
       std::make_unique<ListIngest>(fields[i].second, /*borrow=*/false);
+  }
+}
+
+void ColumnWriter::Reorder(std::span<const uint32_t> new2old) {
+  SDB_ASSERT(_deferred && _row_start == 0 && _ingest.empty());
+  SDB_ASSERT(new2old.empty() || _staged_rows == new2old.size());
+  if (new2old.empty()) {
+    return;
+  }
+  const auto rows = static_cast<duckdb::idx_t>(_staged_rows);
+  auto staged = std::exchange(_staged, {});
+  auto caches = std::exchange(_staged_caches, {});
+  const auto chunks = std::exchange(_staged_chunks, 0);
+  _staged_rows = 0;
+  duckdb::Vector all{_type, rows};
+  duckdb::idx_t at = 0;
+  for (duckdb::idx_t c = 0; c != chunks; ++c) {
+    CertifyStaged(staged[c].data);
+    duckdb::ImmutableStrings::Copy(staged[c].data, all, staged[c].count, 0, at);
+    at += staged[c].count;
+  }
+  duckdb::FlatVector::SetSize(all, rows);
+  staged.clear();
+  caches.clear();
+  duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+  for (duckdb::idx_t first = 0; first < rows; first += STANDARD_VECTOR_SIZE) {
+    const auto n = std::min<duckdb::idx_t>(STANDARD_VECTOR_SIZE, rows - first);
+    for (duckdb::idx_t i = 0; i != n; ++i) {
+      sel.set_index(i, new2old[first + i]);
+    }
+    const duckdb::Vector slice{all, sel, n};
+    Stage(n, [&](WriteChunk& back, duckdb::idx_t off, duckdb::idx_t take) {
+      duckdb::ImmutableStrings::Copy(slice, back.data, off + take,
+                                     /*source_offset=*/off,
+                                     /*target_offset=*/back.count);
+    });
   }
 }
 
@@ -801,11 +865,11 @@ void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
     .tuple_count = block.tuple_count,
     .codec = block.codec,
   };
-  auto& out = WriteCtx().Out();
+  auto& out = WriteCtx().Blocks();
   if (block.shared_size != 0) {
     if (_shared_source != &source || _shared_from != block.shared_offset) {
-      _shared_to = AlignedPosition(out);
-      WriteBytes(source, block.shared_offset, block.shared_size, out);
+      _shared_to =
+        AppendBytes(source, block.shared_offset, block.shared_size, out);
       _shared_source = &source;
       _shared_from = block.shared_offset;
     }
@@ -813,9 +877,9 @@ void ColumnWriter::CopyBlock(const ColumnBlockMeta& block, ReadContext& source,
     m.shared_size = block.shared_size;
   }
   if (block.byte_size != 0) {
-    m.file_offset = AlignedPosition(out);
+    m.file_offset =
+      AppendBytes(source, block.file_offset, block.byte_size, out);
     m.byte_size = block.byte_size;
-    WriteBytes(source, block.file_offset, block.byte_size, out);
   }
   sink.push_back(std::move(m));
 }

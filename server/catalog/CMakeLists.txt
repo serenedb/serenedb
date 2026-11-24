@@ -25,4 +25,5 @@ target_sources(
         entry/system_table.cpp
         entry/tablespace.cpp
         entry/tokenizer.cpp
+        sort_keys.cpp
 )

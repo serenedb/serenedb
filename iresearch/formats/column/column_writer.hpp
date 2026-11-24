@@ -49,6 +49,7 @@ namespace irs {
 
 class ColWriter;
 
+bool SelfContained(const ColumnBlockMeta& block) noexcept;
 void DropAllValidMask(WriteChunk& chunk);
 
 void UpdateDistinct(duckdb::DistinctStatistics& distinct, DistinctStats mode,
@@ -82,7 +83,8 @@ struct ColumnWriteState {
 class ColumnWriter final {
  public:
   ColumnWriter(ColWriter& owner, field_id id, duckdb::LogicalType type,
-               const ColumnWriterOptions& options, bool deferred);
+               const ColumnWriterOptions& options, bool deferred,
+               uint64_t first_row);
 
   ColumnWriter(const ColumnWriter&) = delete;
   ColumnWriter& operator=(const ColumnWriter&) = delete;
@@ -109,6 +111,12 @@ class ColumnWriter final {
   }
 
   void PadNullsTo(uint64_t target_row);
+
+  std::span<const WriteChunk> Staged() const noexcept {
+    return {_staged.data(), _staged_chunks};
+  }
+
+  void Reorder(std::span<const uint32_t> new2old);
 
   bool CopyableFrom(const ColumnReader& column) const;
   [[nodiscard]] bool CopyBlocks(const ColumnReader& column, ReadContext& source,

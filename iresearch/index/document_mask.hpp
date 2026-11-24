@@ -23,6 +23,7 @@
 #include <roaring/containers/bitset.h>
 #include <roaring/roaring.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <duckdb/common/serializer/read_stream.hpp>
@@ -124,6 +125,20 @@ class DocumentMask final {
   void Words(uint32_t first_word, std::span<uint64_t> words) const noexcept {
     roaring::api::roaring_bitmap_word_range_to_bitset(
       &_set, first_word, static_cast<uint32_t>(words.size()), words.data());
+  }
+
+  template<typename Visitor>
+  void ForEachRun(const Visitor& visitor) const {
+    Cursor cursor{*this};
+    std::array<MaskRun, 64> runs;
+    while (const auto count = cursor.ReadRuns(runs)) {
+      for (const auto& run : std::span{runs}.first(count)) {
+        if (!visitor(static_cast<doc_id_t>(run.min),
+                     static_cast<doc_id_t>(run.max + 1))) {
+          return;
+        }
+      }
+    }
   }
 
   size_t Count() const noexcept { return _count; }

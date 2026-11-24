@@ -46,8 +46,10 @@ struct PostingsHandles {
   const duckdb::InputFile* pay = nullptr;
 };
 
-struct TermReader : public AttributeProvider {
+struct TermReader {
   using ptr = std::unique_ptr<TermReader>;
+
+  virtual ~TermReader() = default;
   using Acceptor = absl::FunctionRef<bool(doc_id_t)>;
   using RangeVisitor = absl::FunctionRef<void(bytes_view, const PostingMeta&)>;
   using TermAt = absl::FunctionRef<bytes_view(size_t)>;
@@ -107,6 +109,8 @@ struct TermReader : public AttributeProvider {
 
   // Returns total number of documents with at least 1 term in a field.
   virtual uint64_t docs_count() const = 0;
+
+  virtual uint64_t total_term_freq() const = 0;
 
   // Returns the least significant term.
   virtual bytes_view min() const = 0;

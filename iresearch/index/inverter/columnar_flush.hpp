@@ -21,9 +21,11 @@
 #pragma once
 
 #include <algorithm>
+#include <compare>
 #include <limits>
 #include <span>
 
+#include "iresearch/index/flush_order.hpp"
 #include "iresearch/index/inverter/fields_inverter.hpp"
 
 namespace irs {
@@ -38,8 +40,23 @@ struct ScatterScratch {
     uint32_t id;
   };
 
+  struct Occurrence {
+    uint32_t doc;
+    uint32_t pos;
+    uint32_t offs_start;
+    uint32_t offs_end;
+
+    auto operator<=>(const Occurrence&) const = default;
+  };
+
   explicit ScatterScratch(IResourceManager& rm)
-    : blocks{ManagedTypedAllocator<duckdb::AllocatedData>{rm}},
+    : doc_keys{ManagedTypedAllocator<uint32_t>{rm}},
+      doc_keys_alt{ManagedTypedAllocator<uint32_t>{rm}},
+      doc_pos{ManagedTypedAllocator<uint64_t>{rm}},
+      doc_pos_alt{ManagedTypedAllocator<uint64_t>{rm}},
+      occurrences{ManagedTypedAllocator<Occurrence>{rm}},
+      occurrences_alt{ManagedTypedAllocator<Occurrence>{rm}},
+      blocks{ManagedTypedAllocator<duckdb::AllocatedData>{rm}},
       cursors{ManagedTypedAllocator<uint32_t>{rm}},
       bounds{ManagedTypedAllocator<uint32_t>{rm}},
       ranked{ManagedTypedAllocator<RankedTerm>{rm}},
@@ -50,6 +67,12 @@ struct ScatterScratch {
       offs_start{ManagedTypedAllocator<uint32_t*>{rm}},
       offs_end{ManagedTypedAllocator<uint32_t*>{rm}} {}
 
+  ManagedVector<uint32_t> doc_keys;
+  ManagedVector<uint32_t> doc_keys_alt;
+  ManagedVector<uint64_t> doc_pos;
+  ManagedVector<uint64_t> doc_pos_alt;
+  ManagedVector<Occurrence> occurrences;
+  ManagedVector<Occurrence> occurrences_alt;
   ManagedVector<duckdb::AllocatedData> blocks;
   ManagedVector<uint32_t> cursors;
   ManagedVector<uint32_t> bounds;
@@ -67,7 +90,7 @@ class ScatteredField : util::Noncopyable {
   ScatteredField(InverterMemory& mem, ScatterScratch& scratch) noexcept
     : _mem{&mem}, _s{&scratch} {}
 
-  void Reset(const FieldInverter& field);
+  void Reset(const FieldInverter& field, const DocOrder& order = {});
 
   const FieldInverter& Field() const noexcept { return *_field; }
   size_t TermCount() const noexcept { return _s->ranked.size(); }
@@ -117,6 +140,8 @@ class ScatteredField : util::Noncopyable {
   uint32_t** AssignBlocks(ManagedVector<uint32_t*>& col, size_t nblocks,
                           size_t& next);
   void RadixSortByKey();
+  template<TokenLayout kLayout>
+  void RemapLogDocs(const DocOrder& order);
 
   template<bool kRefs, typename Log>
   void Scatter(const Log& log, uint64_t nocc);

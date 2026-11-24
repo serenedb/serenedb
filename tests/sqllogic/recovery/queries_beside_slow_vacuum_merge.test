@@ -1,0 +1,86 @@
+statement ok
+SET GLOBAL threads = 1;
+
+statement ok
+CREATE TABLE qsv (id INTEGER, body VARCHAR) WITH (compaction_interval = 0);
+
+statement ok
+CREATE INDEX qsv_idx ON qsv USING inverted (body);
+
+statement ok
+INSERT INTO qsv SELECT i, 'w' || (i % 13) FROM range(0, 5000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) qsv;
+
+statement ok
+INSERT INTO qsv SELECT i, 'w' || (i % 13) FROM range(5000, 10000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) qsv;
+
+statement ok
+INSERT INTO qsv SELECT i, 'w' || (i % 13) FROM range(10000, 15000) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) qsv;
+
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'qsv')
+  AND metric = 'num_segments';
+----
+segments
+3
+
+statement ok
+SET sdb_faults = 'pause_merge_unit';
+
+connection vacuum
+statement async ok
+VACUUM (COMPACT_TABLE) qsv;
+
+connection default
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-pause_merge_unit:parked';
+
+connection reader
+query
+SELECT count(*) AS docs FROM qsv WHERE body = 'w3';
+----
+docs
+1154
+
+connection default
+query
+SELECT count(*) AS compacting FROM pg_stat_activity
+WHERE query LIKE 'VACUUM (COMPACT_TABLE) qsv%' AND state = 'active';
+----
+compacting
+1
+
+connection default
+statement ok
+SET sdb_faults = 'pause_merge_unit:release';
+
+wait
+
+connection default
+query
+SELECT value AS segments FROM sdb_metrics
+WHERE relation_id = (SELECT oid FROM pg_class WHERE relname = 'qsv')
+  AND metric = 'num_segments';
+----
+segments
+1
+
+connection default
+query
+SELECT count(*) AS docs, count(*) FILTER (WHERE body = 'w3') AS w3 FROM qsv;
+----
+docs	w3
+15000	1154
+
+connection default
+statement ok
+RESET sdb_faults;

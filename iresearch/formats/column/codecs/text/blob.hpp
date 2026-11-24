@@ -1016,6 +1016,17 @@ struct Scan {
   }
 
   template<typename Frames>
+  void Stream(Frames& s, uint32_t f, char* out, uint32_t* ends) {
+    InflateFrame(s.header, s.base, s.frames[f], f, out);
+    uint32_t end = 0;
+    FrameEntries(s, f, out,
+                 [&](uint32_t k, duckdb::string_t value) IRS_FORCE_INLINE {
+                   end += static_cast<uint32_t>(value.GetSize());
+                   ends[k] = end;
+                 });
+  }
+
+  template<typename Frames>
   bool DecodeInto(Frames& s, duckdb::Vector& result,
                   duckdb::idx_t result_offset, uint32_t first, uint32_t end)
     requires(kCodec == ByteCodec::Zstd)

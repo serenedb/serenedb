@@ -292,6 +292,7 @@ std::unique_ptr<codecs::ColumnSegment> ColumnReader::Open(size_t block,
   slot.file_offset = m.file_offset;
   slot.touched = &_touched[block];
   slot.cache = ctx.Cache();
+  slot.streams = ctx.Streams();
   segment->block = ctx.RegisterColBlock(m.file_offset, m.byte_size);
   return segment;
 }
@@ -1082,7 +1083,7 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
     case duckdb::LogicalTypeId::MAP:
       col = std::make_unique<ListColumnReader>(
         meta.id, std::move(meta.type), std::move(meta.data),
-        std::move(validity), std::move(children));
+        std::move(validity), std::move(children), std::move(meta.list_parts));
       break;
     default:
       col.reset(new ColumnReader{
@@ -1098,6 +1099,22 @@ std::unique_ptr<ColumnReader> ColumnReader::Make(ColumnMeta&& meta,
   col->_compression_level = meta.compression_level;
   col->_file_id = file_id;
   return col;
+}
+
+uint64_t BlockBytes(std::span<const ColumnBlockMeta> blocks) noexcept {
+  uint64_t bytes = 0;
+  for (const auto& block : blocks) {
+    bytes += block.byte_size;
+  }
+  return bytes;
+}
+
+uint64_t StoredBytes(const ColumnReader& column) {
+  uint64_t bytes = BlockBytes(column.DataBlocks());
+  column.VisitSubColumns([&](const ColumnReader::SubColumn& sub) {
+    bytes += StoredBytes(sub.column);
+  });
+  return bytes;
 }
 
 }  // namespace irs

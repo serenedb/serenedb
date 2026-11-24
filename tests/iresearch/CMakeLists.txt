@@ -12,7 +12,6 @@ add_library(
     iresearch-test-support
     OBJECT
     formats/column/test_cs_helpers.cpp
-    hook_file_system.cpp
     search/filter_test_case_base.cpp
     tests_main.cpp
     tests_param.cpp
@@ -86,6 +85,8 @@ add_executable(
     formats/column/col_byte_codecs_test.cpp
     formats/column/col_codecs_test.cpp
     formats/column/col_compression_function_test.cpp
+    formats/column/col_copy_check_test.cpp
+    formats/column/col_file_writer_test.cpp
     formats/column/col_numeric_codec_test.cpp
     formats/column/column_reader_test.cpp
     formats/columnstore2_test.cpp
@@ -116,6 +117,17 @@ add_executable(
     index/index_tests.cpp
     index/inverter_oracle_test.cpp
     index/inverter_tests.cpp
+    index/merge/input_norms_tests.cpp
+    index/merge/merge_ann_tests.cpp
+    index/merge/merge_characterization_tests.cpp
+    index/merge/merge_executor_tests.cpp
+    index/merge/merge_oracle_tests.cpp
+    index/merge/merge_plan_tests.cpp
+    index/merge/sorted_merge_tests.cpp
+    index/merge/support/segment_dump.cpp
+    index/merge/support/segment_gen.cpp
+    index/merge/term_keys_tests.cpp
+    index/merge/term_ranges_tests.cpp
     index/merge_writer_tests.cpp
     index/norm_column_test.cpp
     index/norm_test.cpp
@@ -222,6 +234,7 @@ target_link_libraries(
     iresearch-tests
     PRIVATE
         iresearch-test-support
+        iresearch-merge-support
         iresearch-test-writer
         search-benchmark-common
         zxc::zxc_lib

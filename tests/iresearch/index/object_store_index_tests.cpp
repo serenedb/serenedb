@@ -38,7 +38,7 @@
 #include <iresearch/formats/ivf/centroids.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/index/merge_writer.hpp>
+#include <iresearch/index/merge/merge_executor.hpp>
 #include <iresearch/search/detail/bitset_build.hpp>
 #include <iresearch/search/detail/enc_buf.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
@@ -970,10 +970,13 @@ TEST(ObjectStoreIndexTest, a_merge_reads_its_segments_ahead) {
   store.ResetRequests();
   const tests::IndexDir merged{Db(), TestEnv::MemoryRoot()};
   irs::SegmentMeta meta;
-  irs::MergeWriter merger{merged.Db(), merged.Fs(), merged.Root(),
-                          irs::SegmentWriterOptions{}};
-  merger.Reset(reader.begin(), reader.end());
-  ASSERT_TRUE(irs::GetReady(merger.Flush(meta)));
+  auto doc_map = irs::MakeMergeDocMap(reader, irs::IResourceManager::gNoop);
+  ASSERT_TRUE(
+    irs::MergeSegments(
+      merged.Db(), merged.Fs(), merged.Root(), doc_map, meta,
+      irs::SegmentWriterOptions{},
+      duckdb::TaskScheduler::GetScheduler(merged.Db()).CreateDedicatedPool(1))
+      .files);
   EXPECT_LT(store.Requests().get, blocks / 3);
 }
 

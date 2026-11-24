@@ -169,6 +169,48 @@ struct DocTee {
   size_t limit = 0;
 };
 
+class PostingFeatures {
+ public:
+  void Reset(IndexFeatures features) noexcept {
+    _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
+    _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
+    _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
+    _has_vec = (IndexFeatures::None != (features & IndexFeatures::Vec));
+  }
+
+  bool HasFrequency() const noexcept { return _has_freq; }
+  bool HasPosition() const noexcept { return _has_pos; }
+  bool HasOffset() const noexcept { return _has_offs; }
+  bool HasVector() const noexcept { return _has_vec; }
+
+ private:
+  bool _has_freq{};
+  bool _has_pos{};
+  bool _has_offs{};
+  bool _has_vec{};
+};
+
+class RecordEncoder final {
+ public:
+  explicit RecordEncoder(
+    IndexFeatures features = IndexFeatures::None) noexcept {
+    Reset(features);
+  }
+
+  void Reset(IndexFeatures features) noexcept {
+    _features.Reset(features);
+    _last.clear();
+  }
+
+  void BeginBlock() noexcept { _last.clear(); }
+
+  void Encode(duckdb::WriteStream& out, const PostingMeta& meta);
+
+ private:
+  PostingMeta _last;
+  PostingFeatures _features;
+};
+
 class PostingsWriter final {
  public:
   static constexpr std::string_view kDocExt = "doc";
@@ -180,32 +222,15 @@ class PostingsWriter final {
     doc_id_t docs_count;
   };
 
-  void Prepare(const FlushState& state);
-  void BeginField(const FieldProperties& meta);
+  static void PrepareOutputs(PostingsOutputs& out, const FlushState& state);
 
-  void SetTermPayloadWriter(TermPayloadWriter* writer) noexcept {
-    _term_pay = writer;
-  }
+  void Prepare(const FlushState& state, PostingsOutputs out = {});
+  void BeginField(const FieldProperties& meta,
+                  TermPayloadWriter* term_pay = nullptr);
 
   void Write(TermPostings& docs, PostingMeta& meta, DocTee tee = {});
   void WritePostings(const PostingRows& postings, PostingMeta& meta,
                      DocTee tee = {});
-
-  void BeginBlock() noexcept {
-    // clear state in order to write
-    // absolute address of the first
-    // entry in the block
-    _last_state.clear();
-  }
-
-  void Encode(duckdb::WriteStream& out, const PostingMeta& meta);
-
-  void EncodeAbsolute(duckdb::WriteStream& out, const PostingMeta& meta) {
-    const auto last = _last_state;
-    _last_state.clear();
-    Encode(out, meta);
-    _last_state = last;
-  }
 
   FieldStats EndField() {
     if (_features.HasVector() && _term_pay != nullptr) {
@@ -218,32 +243,15 @@ class PostingsWriter final {
             .docs_count = static_cast<doc_id_t>(count)};
   }
 
+  const bitset& Docs() const noexcept { return _docs; }
+
+  void FinishPart();
+
   void End();
 
   PostingsInputs TakeInputs() noexcept { return std::move(_inputs); }
 
  private:
-  class Features {
-   public:
-    void Reset(IndexFeatures features) noexcept {
-      _has_freq = (IndexFeatures::None != (features & IndexFeatures::Freq));
-      _has_pos = (IndexFeatures::None != (features & IndexFeatures::Pos));
-      _has_offs = (IndexFeatures::None != (features & IndexFeatures::Offs));
-      _has_vec = (IndexFeatures::None != (features & IndexFeatures::Vec));
-    }
-
-    bool HasFrequency() const noexcept { return _has_freq; }
-    bool HasPosition() const noexcept { return _has_pos; }
-    bool HasOffset() const noexcept { return _has_offs; }
-    bool HasVector() const noexcept { return _has_vec; }
-
-   private:
-    bool _has_freq{};
-    bool _has_pos{};
-    bool _has_offs{};
-    bool _has_vec{};
-  };
-
   void AddBlock(const PostingMeta& meta, doc_id_t last);
   void BeginTerm(PostingMeta& meta);
   void EndTerm(PostingMeta& meta);
@@ -283,6 +291,16 @@ class PostingsWriter final {
     }
   }
 
+  void FlushTails() {
+    if (_pos.size != 0) {
+      FlushTailPos();
+    }
+    if (_pay.size != 0) {
+      FlushTailPay();
+    }
+    FlushGroups();
+  }
+
   template<typename Func>
   void ApplyToWriter(Func&& func) {
     if (_valid_writer) {
@@ -302,7 +320,6 @@ class PostingsWriter final {
 
   BlockIndexWriter _index;
   duckdb::MemoryStream _tail;
-  PostingMeta _last_state;  // Last final term state
   bitset _docs;             // Set of all processed documents
   size_t _docs_first_word = std::numeric_limits<size_t>::max();
   size_t _docs_end_word = 0;
@@ -319,7 +336,7 @@ class PostingsWriter final {
   const NormProvider* _norms{};
   ScoreBoundWriter::ptr _writer;      // Score bound writer
   ScoreBoundWriter* _valid_writer{};  // Valid score bound writer
-  Features _features;                 // Features supported by current field
+  PostingFeatures _features;          // Features supported by current field
   // Per-term payload writer for IndexFeatures::Vec fields (e.g. IVF codes).
   TermPayloadWriter* _term_pay{};
   // Scratch list of the current term's document ids (collected when
@@ -366,35 +383,43 @@ inline void PostingsWriter::AddBlock(const PostingMeta& meta, doc_id_t last) {
   });
 }
 
-inline void PostingsWriter::Prepare(const FlushState& state) {
-  _tracker = &state.tracker;
-  _inputs = {};
+inline void PostingsWriter::PrepareOutputs(PostingsOutputs& out,
+                                           const FlushState& state) {
+  if (!out.doc) {
+    out.doc = format_utils::PrepareOutput(state, kDocExt, kDocFile);
+  }
 
-  // Prepare document stream
-  SDB_ASSERT(!_doc_out);
-  _doc_out = format_utils::PrepareOutput(state, kDocExt, kDocFile);
-
-  if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos)) {
-    // Prepare proximity stream
-    _pos.Reset();
-    _pos_group.Reset();
-    SDB_ASSERT(!_pos_out);
-    _pos_out = format_utils::PrepareOutput(state, kPosExt, kPosFile);
+  if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos) &&
+      !out.pos) {
+    out.pos = format_utils::PrepareOutput(state, kPosExt, kPosFile);
   }
 
   // The ".pay" stream holds position-level offsets (IndexFeatures::Offs) and/or
   // fixed-width per-document payloads (IndexFeatures::Vec, e.g. IVF codes).
-  const bool has_offs =
-    IndexFeatures::None != (state.index_features & IndexFeatures::Offs);
-  const bool has_vec =
-    IndexFeatures::None != (state.index_features & IndexFeatures::Vec);
-  if (has_offs) {
+  if (IndexFeatures::None !=
+        (state.index_features & (IndexFeatures::Offs | IndexFeatures::Vec)) &&
+      !out.pay) {
+    out.pay = format_utils::PrepareOutput(state, kPayExt, kPayFile);
+  }
+}
+
+inline void PostingsWriter::Prepare(const FlushState& state,
+                                    PostingsOutputs out) {
+  PrepareOutputs(out, state);
+  _tracker = &state.tracker;
+  _inputs = {};
+  _doc_out = std::move(out.doc);
+  _pos_out = std::move(out.pos);
+  _pay_out = std::move(out.pay);
+
+  if (IndexFeatures::None != (state.index_features & IndexFeatures::Pos)) {
+    _pos.Reset();
+    _pos_group.Reset();
+  }
+
+  if (IndexFeatures::None != (state.index_features & IndexFeatures::Offs)) {
     _pay.Reset();
     _pay_group.Reset();
-  }
-  if (has_offs || has_vec) {
-    SDB_ASSERT(!_pay_out);
-    _pay_out = format_utils::PrepareOutput(state, kPayExt, kPayFile);
   }
 
   _writer = PrepareScoreBoundWriter(state.scorer);
@@ -405,8 +430,8 @@ inline void PostingsWriter::Prepare(const FlushState& state) {
   ForgetDocs();
 }
 
-inline void PostingsWriter::Encode(duckdb::WriteStream& out,
-                                   const PostingMeta& meta) {
+inline void RecordEncoder::Encode(duckdb::WriteStream& out,
+                                  const PostingMeta& meta) {
   SDB_ASSERT(!_features.HasVector() ||
              (!_features.HasPosition() && !_features.HasOffset()));
 
@@ -416,11 +441,11 @@ inline void PostingsWriter::Encode(duckdb::WriteStream& out,
   SDB_ASSERT(!single || !inlined);
   const bool same_freq =
     _features.HasFrequency() && meta.freq == meta.docs_count;
-  const uint64_t next = uint64_t{_last_state.pos_offset} + _last_state.freq;
+  const uint64_t next = uint64_t{_last.pos_offset} + _last.freq;
   const bool follows =
-    _features.HasPosition() && _last_state.docs_count != 0 &&
+    _features.HasPosition() && _last.docs_count != 0 &&
     meta.pos_offset == next % PosGroup::kPositions &&
-    (next >= PosGroup::kPositions || meta.pos_start == _last_state.pos_start);
+    (next >= PosGroup::kPositions || meta.pos_start == _last.pos_start);
   const uint64_t flags = uint64_t{follows} << 2 | uint64_t{same_freq} << 1;
   out.WriteVarint<uint64_t>(single ? uint64_t{meta.doc_delta} << 3 | flags | 1
                                    : uint64_t{meta.docs_count} << 4 |
@@ -430,7 +455,7 @@ inline void PostingsWriter::Encode(duckdb::WriteStream& out,
     out.WriteVarint<uint32_t>(meta.freq - meta.docs_count - 1);
   }
 
-  const auto doc_start = _last_state.doc_start;
+  const auto doc_start = _last.doc_start;
   if (inlined) {
     out.Write<byte_type>(meta.inline_size);
   } else if (!single) {
@@ -438,19 +463,18 @@ inline void PostingsWriter::Encode(duckdb::WriteStream& out,
   }
   if (_features.HasPosition()) {
     if (!follows || next >= PosGroup::kPositions) {
-      out.WriteVarint<uint64_t>(meta.pos_start - _last_state.pos_start);
+      out.WriteVarint<uint64_t>(meta.pos_start - _last.pos_start);
       if (_features.HasOffset()) {
-        out.WriteVarint<uint64_t>(meta.pay_start - _last_state.pay_start);
+        out.WriteVarint<uint64_t>(meta.pay_start - _last.pay_start);
       }
     } else {
-      SDB_ASSERT(!_features.HasOffset() ||
-                 meta.pay_start == _last_state.pay_start);
+      SDB_ASSERT(!_features.HasOffset() || meta.pay_start == _last.pay_start);
     }
     if (!follows) {
       out.WriteVarint<uint32_t>(meta.pos_offset);
     }
   } else if (_features.HasVector()) {
-    out.WriteVarint<uint64_t>(meta.pay_start - _last_state.pay_start);
+    out.WriteVarint<uint64_t>(meta.pay_start - _last.pay_start);
     out.WriteVarint<uint32_t>(meta.pos_offset);
   }
 
@@ -465,9 +489,9 @@ inline void PostingsWriter::Encode(duckdb::WriteStream& out,
     }
   }
 
-  _last_state = meta;
+  _last = meta;
   if (inlined || single) {
-    _last_state.doc_start = doc_start;
+    _last.doc_start = doc_start;
   }
 }
 
@@ -625,12 +649,13 @@ inline void PostingsWriter::WritePayBlock() {
   _pay.size = 0;
 }
 
-inline void PostingsWriter::BeginField(const FieldProperties& meta) {
+inline void PostingsWriter::BeginField(const FieldProperties& meta,
+                                       TermPayloadWriter* term_pay) {
+  _term_pay = term_pay;
   _features.Reset(meta.index_features);
   PrepareWriters(meta);
   _docs.clear(_docs_first_word, _docs_end_word);
   ForgetDocs();
-  _last_state.clear();
 
   // It's needed because offsets block should be aligned with positions block.
   // But it's possible that fields have different features set.
@@ -787,33 +812,62 @@ inline duckdb::shared_ptr<duckdb::InputFile> PostingsWriter::CloseOutput(
 }
 
 inline void PostingsWriter::End() {
+  FlushTails();
   _inputs.doc = CloseOutput(_doc_out);
-
   if (_pos_out) {
-    if (_pos.size != 0) {
-      FlushTailPos();
-    }
-    if (!_pos_group.Empty()) {
-      _pos_group.Flush(*_pos_out);
-    }
     _inputs.pos = CloseOutput(_pos_out);
-  } else {
-    SDB_ASSERT(_pos.size == 0);
   }
-
   // ".pay" may be open for offsets (with positions) and/or for fixed-width
   // per-document payloads (IndexFeatures::Vec, no positions).
   if (_pay_out) {
-    if (_pay.size != 0) {
-      FlushTailPay();
-    }
-    if (!_pay_group.Empty()) {
-      _pay_group.Flush(*_pay_out);
-    }
     _inputs.pay = CloseOutput(_pay_out);
-  } else {
-    SDB_ASSERT(_pay.size == 0);
   }
+}
+
+inline void PostingsWriter::FinishPart() {
+  FlushTails();
+  for (auto* out : {&_doc_out, &_pos_out, &_pay_out}) {
+    if (*out) {
+      (*out)->Close();
+      out->reset();
+    }
+  }
+}
+
+inline PostingBases AppendPostings(PostingsOutputs& out,
+                                   const duckdb::InputFile* doc,
+                                   const duckdb::InputFile* pos,
+                                   const duckdb::InputFile* pay) {
+  SDB_ASSERT(out.doc);
+  for (auto pad = BlockIndex::Pad(out.doc->Position()); pad != 0; --pad) {
+    out.doc->Write<byte_type>(0);
+  }
+  const PostingBases bases{
+    .doc = out.doc->Position(),
+    .pos = out.pos ? out.pos->Position() : 0,
+    .pay = out.pay ? out.pay->Position() : 0,
+  };
+  const auto copy = [](const duckdb::InputFile* in,
+                       duckdb::BufferedFileWriter* to) {
+    if (!in) {
+      return;
+    }
+    SDB_ASSERT(to);
+    const auto& blocks = in->Blocks();
+    const auto length = in->GetSize();
+    for (uint64_t offset = 0; offset < length;) {
+      const auto n =
+        std::min<uint64_t>(length, blocks.BlockStart(blocks.BlockOf(offset) + 1)) -
+        offset;
+      const auto pin = in->Pin(offset, n);
+      to->WriteData(pin.Ptr(), n);
+      offset += n;
+    }
+  };
+  copy(doc, out.doc.get());
+  copy(pos, out.pos.get());
+  copy(pay, out.pay.get());
+  return bases;
 }
 
 IRS_FORCE_INLINE inline void PostingsWriter::BeginDocInTerm(doc_id_t doc,

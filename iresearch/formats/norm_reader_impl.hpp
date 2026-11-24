@@ -108,6 +108,37 @@ IRS_FORCE_INLINE inline void PatchNormSlots(const NormRegion& region,
   }
 }
 
+IRS_FORCE_INLINE inline void ReadNorms(const NormRegion& region,
+                                       const doc_id_t* docs, uint32_t* values,
+                                       size_t n) {
+  ReadNormSlots(region, docs, values, n);
+  if (region.exceptions) {
+    PatchNormSlots(region, docs, values, n);
+  }
+}
+
+IRS_FORCE_INLINE inline uint32_t ReadNorm(const NormRegion& region,
+                                          doc_id_t doc) {
+  const auto value = region.Slot(doc);
+  return region.exceptions && value >= region.first_code
+           ? region.Exception(doc, value)
+           : value;
+}
+
+inline constexpr uint64_t kNormAheadBytes = 16 * 1024;
+
+IRS_FORCE_INLINE inline void PrefetchNorms(const byte_type* first,
+                                           const byte_type* last) noexcept {
+  const auto span = static_cast<uint64_t>(last - first);
+  if (span > kNormAheadBytes) {
+    return;
+  }
+  for (uint64_t offset = ABSL_CACHELINE_SIZE; offset <= span;
+       offset += ABSL_CACHELINE_SIZE) {
+    __builtin_prefetch(last + offset);
+  }
+}
+
 class NormReaderBase : public NormReader {
  public:
   score_t GetAvg() const noexcept final { return _avg; }
@@ -404,14 +435,6 @@ class NormReaderBase : public NormReader {
     return count;
   }
 
-  IRS_FORCE_INLINE void Read(const doc_id_t* docs, uint32_t* values,
-                             size_t n) const {
-    ReadNormSlots(*_region, docs, values, n);
-    if (_region->exceptions) {
-      PatchNormSlots(*_region, docs, values, n);
-    }
-  }
-
   IRS_FORCE_INLINE void Prefetch(doc_id_t doc, doc_id_t last) const noexcept {
     const auto* const at = At(doc);
     const auto span = static_cast<uint64_t>(At(last) - at);
@@ -422,13 +445,6 @@ class NormReaderBase : public NormReader {
          offset += ABSL_CACHELINE_SIZE) {
       __builtin_prefetch(at + offset);
     }
-  }
-
-  IRS_FORCE_INLINE uint32_t ReadOne(doc_id_t doc) const {
-    const auto value = _region->Slot(doc);
-    return _region->exceptions && value >= _region->first_code
-             ? _region->Exception(doc, value)
-             : value;
   }
 
   void Position(const NormRegion& region) noexcept {
@@ -483,7 +499,7 @@ class PersistedNormReader : public NormReaderBase {
       }
     }
     Track(&doc, 1);
-    return ReadOne(doc);
+    return ReadNorm(*_region, doc);
   }
 
   void GetScoreBlock(std::span<const doc_id_t, kScoreBlock> docs,
@@ -524,7 +540,7 @@ class PersistedNormReader : public NormReaderBase {
       }
     }
     Track(docs, n);
-    Read(docs, values, n);
+    ReadNorms(*_region, docs, values, n);
   }
 
   void Split(const doc_id_t* IRS_RESTRICT docs, uint32_t* IRS_RESTRICT values,
@@ -538,7 +554,7 @@ class PersistedNormReader : public NormReaderBase {
         ++j;
       }
       Track(docs + i, j - i);
-      Read(docs + i, values + i, j - i);
+      ReadNorms(*_region, docs + i, values + i, j - i);
       i = j;
     }
   }

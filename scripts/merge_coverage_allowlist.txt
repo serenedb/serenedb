@@ -1,0 +1,7 @@
+# Lines the merge coverage gate accepts as uncovered: path:line or path:first-last, then the reason.
+iresearch/index/merge/merged_terms.hpp:82-85 CompoundTermIterator::GetMutable exists for the Attribute interface; merges read attributes only through get()
+iresearch/index/merge/merged_postings.hpp:170 only zero-doc terms give the shared empty postings, and only IVF cluster fields have them, which a merge rebuilds or drops before their terms are read
+iresearch/index/merge/merge_plan.cpp:607 the refusal of an invalid norm column id is covered by MergeCharacterizationTest.InvalidNormColumnIdIsRefused, a death test whose child process dies before it writes its profile
+iresearch/index/merge/merge_plan.cpp:636 the implicit default of an exhaustive switch over MergeUnitKind
+iresearch/index/merge/merge_plan.cpp:661-662 the return after an exhaustive switch over MergeUnitKind
+iresearch/formats/column/col_file_writer.cpp:72-73 a string over 4 GiB cannot be built in a test; the check guards the 32-bit length prefix of an overflow string

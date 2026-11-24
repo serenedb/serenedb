@@ -59,9 +59,9 @@ inline Records ReadRecords(duckdb::InputFileReader& in) {
   return {std::move(data), end};
 }
 
-inline void WriteRecord(irs::PostingsWriter& writer, duckdb::WriteStream& out,
+inline void WriteRecord(irs::RecordEncoder& encoder, duckdb::WriteStream& out,
                         const irs::PostingMeta& meta) {
-  writer.Encode(out, meta);
+  encoder.Encode(out, meta);
   if (meta.inline_size != 0) {
     out.WriteData(meta.inline_data, meta.inline_size);
   }

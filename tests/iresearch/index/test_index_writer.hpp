@@ -30,6 +30,7 @@
 #include <iresearch/index/doc_removal.hpp>
 #include <iresearch/index/index_meta.hpp>
 #include <iresearch/index/index_writer.hpp>
+#include <iresearch/index/merge/merge_profile.hpp>
 #include <iresearch/index/merge_writer.hpp>
 #include <memory>
 #include <optional>
@@ -64,6 +65,7 @@ enum class CompactionError : uint32_t {
 struct CompactionResult {
   size_t size = 0;
   CompactionError error = CompactionError::Fail;
+  irs::MergeProfile profile;
 
   operator bool() const noexcept { return error != CompactionError::Fail; }
 };
@@ -155,7 +157,8 @@ class IndexWriter {
   CompactionResult Compact(
     const irs::CompactionPolicy& policy,
     const irs::IndexFieldOptions* field_options = nullptr,
-    const irs::MergeWriter::FlushProgress& progress = {});
+    const irs::MergeWriter::FlushProgress& progress = {},
+    const irs::AnnBuildEnv* env = nullptr);
 
   void Options(const irs::SegmentOptions& options) noexcept {
     _writer->Options(options);

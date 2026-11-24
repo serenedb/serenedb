@@ -49,6 +49,7 @@
 
 #include "catalog/entry_set.h"
 #include "catalog/persistence/search_table.h"
+#include "catalog/sort_keys.h"
 #include "connector/search_table_backfill.h"
 #include "query/config_variable_names.h"
 #include "search/key_spec.h"
@@ -284,6 +285,7 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
   uint64_t _schema_epoch = 0;
   std::vector<search::KeySpec> _keys;
   std::vector<std::shared_ptr<const search::Referencing>> _referencing;
+  std::vector<SortKey> _sort_keys;
 };
 
 inline bool IsSearchTable(const duckdb::CatalogEntry& entry) {

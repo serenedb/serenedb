@@ -21,11 +21,13 @@
 
 #pragma once
 
+#include <absl/base/call_once.h>
 #include <absl/status/status.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <duckdb/parallel/task_scheduler.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <memory>
 #include <yaclib/algo/wait_group.hpp>
@@ -123,11 +125,15 @@ class SearchEngine final {
   bool IsBackupActive() const noexcept { return _maintenance.IsClosed(); }
   utils::DrainGate& Maintenance() noexcept { return _maintenance; }
 
+  const duckdb::shared_ptr<duckdb::DedicatedPool>& MergePool();
+
  private:
   Runtime& _runtime;
   irs::AnnBuildEnv _ann_env;
   irs::AnnBuildEnv _manual_ann_env;
   utils::DrainGate _maintenance;
+  absl::once_flag _merge_pool_once;
+  duckdb::shared_ptr<duckdb::DedicatedPool> _merge_pool;
   std::atomic<int> _running_compactions{0};
   std::atomic<uint32_t> _running_ann_workers{0};
   // Live loop futures plus one baseline token held for the engine's lifetime:

@@ -123,6 +123,12 @@ void SerializeColumnMeta(duckdb::BinarySerializer& s, const ColumnMeta& meta) {
   s.WritePropertyWithDefault(7, "distinct", meta.distinct);
   s.WritePropertyWithDefault<uint8_t>(8, "compression_level",
                                       meta.compression_level, 0);
+  WriteObjects(s, 9, "list_parts", meta.list_parts,
+               [](duckdb::BinarySerializer& obj, const ListPart& part) {
+                 obj.WriteProperty(0, "row", part.row);
+                 obj.WriteProperty(1, "code", part.code);
+                 obj.WriteProperty(2, "elem", part.elem);
+               });
 }
 
 ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
@@ -148,6 +154,12 @@ ColumnMeta DeserializeColumnMeta(duckdb::BinaryDeserializer& d) {
   d.ReadPropertyWithDefault(7, "distinct", meta.distinct);
   meta.compression_level =
     d.ReadPropertyWithExplicitDefault<uint8_t>(8, "compression_level", 0);
+  ReadObjects(d, 9, "list_parts", [&](duckdb::BinaryDeserializer& obj) {
+    auto& part = meta.list_parts.emplace_back();
+    obj.ReadProperty(0, "row", part.row);
+    obj.ReadProperty(1, "code", part.code);
+    obj.ReadProperty(2, "elem", part.elem);
+  });
   return meta;
 }
 

@@ -77,6 +77,7 @@ class Format10TestCase : public tests::FormatTestCase {
       writer.Prepare(state);
 
       writer.BeginField(field);
+      irs::RecordEncoder encoder{field.index_features};
 
       // write postings for term
       {
@@ -84,7 +85,7 @@ class Format10TestCase : public tests::FormatTestCase {
         writer.Write(it, posting_meta);
 
         // write attributes to out
-        tests::WriteRecord(writer, *out, posting_meta);
+        tests::WriteRecord(encoder, *out, posting_meta);
       }
 
       auto stats = writer.EndField();
@@ -274,6 +275,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
     // begin field
     writer.BeginField(field);
+    irs::RecordEncoder encoder{field.index_features};
 
     // write postings for term0
     {
@@ -288,7 +290,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      tests::WriteRecord(writer, *out, meta0);
+      tests::WriteRecord(encoder, *out, meta0);
     }
 
     // write postings for term0
@@ -304,7 +306,7 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
       }
 
       // write term0 attributes to out
-      tests::WriteRecord(writer, *out, meta1);
+      tests::WriteRecord(encoder, *out, meta1);
     }
 
     // check doc positions for term0 & term1
@@ -431,6 +433,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 
     // begin field
     writer.BeginField(field);
+    irs::RecordEncoder encoder{field.index_features};
 
     // write postings for term0
     {
@@ -438,7 +441,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       writer.Write(docs, meta0);
 
       // write attributes to out
-      tests::WriteRecord(writer, *out, meta0);
+      tests::WriteRecord(encoder, *out, meta0);
       inline0.assign(meta0.Inline());
       meta0.inline_data = inline0.data();
     }
@@ -448,7 +451,7 @@ TEST_P(Format10TestCase, postings_read_write) {
       writer.Write(docs, meta1);
 
       // write attributes to out
-      tests::WriteRecord(writer, *out, meta1);
+      tests::WriteRecord(encoder, *out, meta1);
       inline1.assign(meta1.Inline());
       meta1.inline_data = inline1.data();
     }
@@ -958,11 +961,12 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
 
         writer.Prepare(state);
         writer.BeginField(field);
+        irs::RecordEncoder encoder{field.index_features};
 
         {
           TestPostings it(docs, field.index_features);
           writer.Write(it, posting_meta);
-          tests::WriteRecord(writer, *out, posting_meta);
+          tests::WriteRecord(encoder, *out, posting_meta);
         }
 
         writer.EndField();

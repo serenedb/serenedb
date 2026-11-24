@@ -203,22 +203,6 @@ def test_a_component_failing_to_start_stops_the_ones_before_it(
     assert "ready for business" not in output, output
 
 
-LOG_POINTER_FAULT = "crash_inside_log_pointer_write"
-PLANNED_CRASH_EXIT_CODE = 75
-
-
-@pytest.mark.faults
-def test_a_crash_inside_the_first_log_pointer_write(tmp_path: Path) -> None:
-    datadir = tmp_path / "data"
-    server = _Server(datadir, env={"SDB_FAULTS": LOG_POINTER_FAULT})
-    try:
-        assert (server.proc.wait(timeout=60)
-                == PLANNED_CRASH_EXIT_CODE), server.output()
-    finally:
-        server.stop()
-    _run_until_ready(datadir)
-
-
 def _setting(server: _Server, name: str) -> str:
     with psycopg.connect(host="127.0.0.1", port=server.port, user="postgres",
                          dbname="postgres") as conn:

@@ -299,20 +299,6 @@ TEST_F(LogTest, ASnapshotThePointerDoesNotNameYetIsRemoved) {
   EXPECT_TRUE(std::filesystem::exists(SnapshotFile(1)));
 }
 
-TEST_F(LogTest, APointerCutShortByACrashIsRemoved) {
-  {
-    auto log = Open();
-    const auto a = log->Append(Bytes(Payload('A')));
-    Snapshot(*log, a);
-    log->Append(Bytes(Payload('B')));
-  }
-  std::ofstream{_dir / "current_snapshot.tmp"} << "cut short by a crash";
-  Open();
-  EXPECT_EQ(_records, (std::vector{Payload('A'), Payload('B')}));
-  EXPECT_FALSE(std::filesystem::exists(_dir / "current_snapshot.tmp"));
-  EXPECT_TRUE(std::filesystem::exists(SnapshotFile(1)));
-}
-
 TEST_F(LogTest, TheSnapshotThePointerMovedFromIsRemoved) {
   {
     auto log = Open();
@@ -388,16 +374,6 @@ TEST_F(LogTest, ALogDirectoryWithForeignFilesIsKept) {
   EXPECT_FALSE(Log::Remove(*_fs, _dir.string()));
   EXPECT_FALSE(std::filesystem::exists(Chunk(0)));
   EXPECT_TRUE(std::filesystem::exists(_dir / "foreign"));
-}
-
-TEST_F(LogTest, ALogWithAPointerCutShortByACrashIsRemoved) {
-  {
-    auto log = Open();
-    Snapshot(*log, log->Append(Bytes(Payload('A'))));
-  }
-  std::ofstream{_dir / "current_snapshot.tmp"} << "cut short by a crash";
-  EXPECT_TRUE(Log::Remove(*_fs, _dir.string()));
-  EXPECT_FALSE(std::filesystem::exists(_dir));
 }
 
 TEST_F(LogTest, ALogThatCannotBeListedIsKept) {

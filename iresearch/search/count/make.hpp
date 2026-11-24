@@ -21,11 +21,9 @@
 #pragma once
 
 #include <cstdint>
-#include <ranges>
 #include <span>
 #include <vector>
 
-#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/search/count/root.hpp"
 #include "iresearch/search/detail/plan.hpp"
 #include "iresearch/search/detail/resolve.hpp"
@@ -59,20 +57,5 @@ Root::ptr MakeTermsSum(std::span<const Term> terms, const TermReader* field,
 
 Root::ptr MakeLiveTerm(const detail::PostingClause& term,
                        const SubReader& segment);
-
-template<typename Term>
-void HintPostings(const TermReader* field, std::span<const Term> terms) {
-  if (terms.size() < 2) {
-    return;
-  }
-  const auto* const doc = detail::DocOf(detail::FieldOf(terms.front(), field));
-  if (!doc) {
-    return;
-  }
-  PrefetchDocExtents(
-    *doc, terms | std::views::transform([](const Term& term) -> decltype(auto) {
-            return detail::CookieOf(term);
-          }));
-}
 
 }  // namespace irs::count

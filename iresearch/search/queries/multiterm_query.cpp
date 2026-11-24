@@ -26,10 +26,12 @@
 
 #include <algorithm>
 #include <limits>
+#include <ranges>
 #include <span>
 #include <utility>
 #include <vector>
 
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/filters/all_filter.hpp"
@@ -40,6 +42,21 @@
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
+namespace {
+
+void PrefetchPostings(const TermReader& reader,
+                      std::span<const MultiTermState::Entry> terms) {
+  if (const auto* doc = reader.Handles().doc; doc != nullptr) {
+    PrefetchDocExtents(
+      *doc,
+      terms | std::views::transform(
+                [](const MultiTermState::Entry& entry) -> const PostingMeta& {
+                  return entry.cookie;
+                }));
+  }
+}
+
+}  // namespace
 
 QueryBuilder::ptr MultiTermQuery::Finish(
   memory::managed_ptr<MultiTermQuery> query, const PrepareContext& ctx) {
@@ -68,6 +85,9 @@ QueryBuilder::ptr MultiTermQuery::Finish(
   query->_estimate_matches = query->_estimate_max;
   query->_postings = sum;
   query->_leaves = static_cast<uint32_t>(terms.size());
+  if (terms.size() > 1 && !scorer && query->_state.Reader() != nullptr) {
+    PrefetchPostings(*query->_state.Reader(), terms);
+  }
 
   if (terms.size() == 1) {
     const auto& entry = terms.front();

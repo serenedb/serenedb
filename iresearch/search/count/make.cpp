@@ -48,7 +48,6 @@ Root::ptr PlanTerms(const MultiTermQuery& query, const Context& ctx) {
       return subtracted;
     }
   }
-  HintPostings(field, terms);
   return detail::MakeQuery<Family>(query, ctx);
 }
 

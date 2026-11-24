@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "iresearch/formats/posting/doc_input.hpp"
 #include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
@@ -481,6 +482,7 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
           occur,
           collector != nullptr ? collector->Record(i) : detail::StatsRecord{});
       };
+      FileRanges docs;
       size_t next = 0;
       reader->LookupBatch(
         run.size(), [&](size_t i) -> bytes_view { return run[i].term; },
@@ -491,11 +493,17 @@ QueryBuilder::ptr BooleanFilter::PrepareSegment(
           if (collector) {
             collector->Term(ctx.thread, i).Collect(meta);
           }
+          if (const auto extent = DocExtent(meta); extent != 0) {
+            docs.push_back({.offset = meta.doc_start, .size = extent});
+          }
           add(i, meta);
           ++next;
         });
       for (; next != run.size(); ++next) {
         add(next, kNoPosting);
+      }
+      if (const auto* doc = reader->Handles().doc; doc && run.size() > 1) {
+        doc->Hint(docs);
       }
     },
     [&](const Filter& filter, Occur occur) {

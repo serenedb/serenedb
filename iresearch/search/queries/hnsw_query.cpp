@@ -32,13 +32,16 @@
 #include <utility>
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/docs/make.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/dispatch.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -353,6 +356,28 @@ inline constexpr uint64_t kHnswColumnScanShare = 16;
 
 inline constexpr double kWalkCandidateOverhead = 192;
 
+inline constexpr uint64_t kPostingsPerFoldedWord = 4;
+
+uint64_t AllDocsClauses(const QueryBuilder& query) noexcept {
+  if (query.Kind() != QueryKind::Boolean) {
+    return 0;
+  }
+  const auto& boolean = irs::utils::downCast<BooleanQuery>(query);
+  uint64_t clauses = 0;
+  for (const auto occur : {Occur::Must, Occur::Should, Occur::MustNot}) {
+    clauses += boolean.Bucket(occur).all_docs.size();
+    for (const auto& child : boolean.Queries(occur)) {
+      clauses += AllDocsClauses(*child);
+    }
+  }
+  return clauses;
+}
+
+uint64_t FoldPostings(const QueryBuilder& query, doc_id_t docs_count) noexcept {
+  return query.Postings() + AllDocsClauses(query) * kPostingsPerFoldedWord *
+                              detail::SegmentWords(docs_count);
+}
+
 double ScanCandidateCost(uint32_t record_size) noexcept {
   const auto r = static_cast<double>(record_size);
   return r / (r + kWalkCandidateOverhead);
@@ -573,7 +598,8 @@ HnswQuery::HnswQuery(const SubReader& segment,
     _inner{std::move(inner)},
     _index_part{std::move(index_part)},
     _index_part_postings{opts.index_part && _index_part
-                           ? _index_part->Postings()
+                           ? FoldPostings(*_index_part, static_cast<doc_id_t>(
+                                                          segment.docs_count()))
                            : segment.docs_count() - segment.live_docs_count()},
     _exact{segment.Column(opts.column_id)},
     _query{opts.query.size(),
@@ -631,7 +657,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
     return plan.ask_per_hop &&
            (_column_filter == HnswColumnFilter::Read ||
             plan.read_cost + static_cast<double>(_index_part_postings) <
-              static_cast<double>(_inner->Postings()));
+              static_cast<double>(FoldPostings(*_inner, docs_count)));
   };
   const auto expected = [rest = table ? table->Share() : 1.0](uint64_t count) {
     return static_cast<uint64_t>(

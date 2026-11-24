@@ -102,7 +102,7 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> EsSchema(
 
 duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
   duckdb::ClientContext& context, duckdb::CatalogEntryRetriever& retriever,
-  const duckdb::RoleAccess& role, std::string_view index) {
+  std::string_view index) {
   auto entry = retriever.GetEntry(
     duckdb::EntryLookupInfo{
       duckdb::CatalogType::TABLE_ENTRY,
@@ -113,7 +113,6 @@ duckdb::optional_ptr<duckdb::TableCatalogEntry> FindEsTable(
   if (!entry || entry->type != duckdb::CatalogType::TABLE_ENTRY) {
     return nullptr;
   }
-  context.CheckEntryReference(role, *entry);
   return &entry->Cast<duckdb::TableCatalogEntry>();
 }
 
@@ -529,7 +528,7 @@ void EsMappingExecute(duckdb::ClientContext& context,
   auto& data = input.bind_data->Cast<EsIndexBindData>();
 
   duckdb::CatalogEntryRetriever retriever{context, state.acting};
-  auto table = FindEsTable(context, retriever, state.role, data.index);
+  auto table = FindEsTable(context, retriever, data.index);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
@@ -687,9 +686,7 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
 
   duckdb::CatalogEntryRetriever own{context};
   auto table =
-    binder ? FindEsTable(context, binder->EntryRetriever(), binder->CheckAs(),
-                         data->index)
-           : FindEsTable(context, own, context.CurrentRole(), data->index);
+    FindEsTable(context, binder ? binder->EntryRetriever() : own, data->index);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data->index, "]"));
@@ -1460,8 +1457,7 @@ void EsRefreshExecute(duckdb::ClientContext& context,
   state.done = true;
   auto& data = input.bind_data->Cast<EsIndexBindData>();
   duckdb::CatalogEntryRetriever retriever{context, state.acting};
-  if (!data.index.empty() &&
-      !FindEsTable(context, retriever, state.role, data.index)) {
+  if (!data.index.empty() && !FindEsTable(context, retriever, data.index)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
   }

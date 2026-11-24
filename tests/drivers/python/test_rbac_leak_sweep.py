@@ -87,6 +87,7 @@ NAME_STATEMENTS = [
     "SELECT * FROM zqvis_outer.{m}_inner.{m}_t_inner", "CREATE TABLE zqvis_outer.{m}_inner.probe_t2 (a INTEGER)",
     "GRANT USAGE ON SCHEMA zqvis_outer.{m}_inner TO probe", "COMMENT ON SCHEMA zqvis_outer.{m}_inner IS 'x'",
     "ALTER SCHEMA zqvis_outer.{m}_inner OWNER TO probe", "DROP SCHEMA zqvis_outer.{m}_inner",
+    "SET search_path TO zqvis_outer.{m}_inner", "RESET search_path",
     "INSERT INTO public.{m}_t VALUES (2, 'x')", "UPDATE public.{m}_t SET {m}_body = 'y'", "DELETE FROM public.{m}_t",
     "TRUNCATE public.{m}_t", "DROP TABLE public.{m}_t", "DROP TABLE {m}_t", "DROP TABLE IF EXISTS public.{m}_t",
     "DROP VIEW public.{m}_v", "DROP SEQUENCE public.{m}_seq", "ALTER TABLE public.{m}_t ADD COLUMN extra INTEGER",

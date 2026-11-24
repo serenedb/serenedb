@@ -70,9 +70,9 @@ constexpr FrameShape FrameShapeOf(FrameDictionary layout) noexcept {
     return {kFrameRawBytes, 0};
   }
   if constexpr (Codec::kCodec == ByteCodec::Zstd) {
-    return {kZstdDictionaryFrameBytes, kFrameDictionaryBytes};
+    return {kFrameDictionaryBytes, kFrameDictionaryBytes};
   } else {
-    return {kDictionaryFrameBytes, kFrameDictionaryBytes};
+    return {kFsstFrameRawBytes, kFrameDictionaryBytes};
   }
 }
 
@@ -166,7 +166,6 @@ class FrameSpans {
   std::vector<Span> _spans;
 };
 
-inline constexpr size_t kProbeFrames = 1;
 inline constexpr size_t kLocalMinFrames = 8;
 inline constexpr uint64_t kLocalDictionaryPacking = 2;
 
@@ -449,7 +448,7 @@ class CompressionState {
     uint64_t sampled_trained = 0;
     uint64_t sampled_first = 0;
     _spans.Sample(
-      kProbeFrames, [](size_t) { return 0.5; },
+      1, [](size_t) { return 0.5; },
       [&](size_t i) {
         const auto raw = Slice(i);
         sampled_raw += raw.size();
@@ -613,7 +612,7 @@ class TrialSizes final : public State {
     if (const auto* trial = Find(state, config)) {
       return trial->Size();
     }
-    if (Codec::HighCompression(config.level)) {
+    if (HighCompression<Codec>(config.level)) {
       return Estimate(kShape, config);
     }
     SDB_ASSERT(config.shape == kShape);
@@ -777,8 +776,8 @@ class TrialSizes final : public State {
   }
 
   static const FrameSpans& Split(ShapeRows& rows, FrameShape frame) {
-    static_assert(kFrameRawBytes != kDictionaryFrameBytes &&
-                  kFrameRawBytes != kZstdDictionaryFrameBytes);
+    static_assert(kFrameRawBytes != kFsstFrameRawBytes &&
+                  kFrameRawBytes != kFrameDictionaryBytes);
     const auto it = absl::c_find_if(rows.spans, [&](const Spans& s) {
       SDB_ASSERT(s.frame.frame != frame.frame || s.frame.first == frame.first);
       return s.frame.frame == frame.frame;
@@ -883,7 +882,7 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, double bound) {
   auto bytes = data.Get<TrialSizes<Codec>>().Size(state, config);
   if (!Find(state, config)) {
     const auto estimate = priced(bytes);
-    if (Codec::HighCompression(config.level)
+    if (HighCompression<Codec>(config.level)
           ? estimate < bound
           : estimate <= bound * (1.0 + kEstimateSlack)) {
       bytes = Trial(state, config, values, window, target).Size();
@@ -1069,10 +1068,9 @@ struct Fetch {
 };
 
 inline constexpr uint64_t kInflateByteCost = 6;
-inline constexpr uint64_t kFrameCopyByteCost = 2;
+inline constexpr uint64_t kCopyByteCost = 2;
 inline constexpr uint64_t kFrameEntryCost = 72;
 inline constexpr uint64_t kPrefixEntryCost = 16;
-inline constexpr uint64_t kHitByteCost = 2;
 inline constexpr uint64_t kHitCost = 128;
 inline constexpr uint64_t kInlineHitCost = 32;
 
@@ -1197,7 +1195,7 @@ struct Scan {
         const uint64_t entry_bytes = s.frames[f].raw_len / rows;
         const uint64_t frame_byte_cost =
           kInflateByteCost +
-          (s.header.flags == FrameDictionary::None ? 0 : kFrameCopyByteCost);
+          (s.header.flags == FrameDictionary::None ? 0 : kCopyByteCost);
         const uint64_t inflated = Codec::kInflatesPrefix ? prefix : rows;
         const uint64_t hit_cost = entry_bytes <= duckdb::string_t::INLINE_LENGTH
                                     ? kInlineHitCost
@@ -1208,7 +1206,7 @@ struct Scan {
         if (done &&
             inflated * entry_bytes * kInflateByteCost +
                 prefix * kPrefixEntryCost +
-                hits * (entry_bytes * kHitByteCost + hit_cost) <=
+                hits * (entry_bytes * kCopyByteCost + hit_cost) <=
               rows * (entry_bytes * frame_byte_cost + kFrameEntryCost)) {
           EmitRows(s, f, i, j, entry_at, arena, writer);
           i = j;

@@ -64,8 +64,7 @@ constexpr double kZstdPrice = 1.15;
 constexpr double kRoaringPrice = 2.0;
 constexpr double kLeastTextShift = 1.5;
 constexpr double kHigherLevelPrice = 1.02;
-constexpr double kWideFramesPrice = 1.03;
-constexpr double kNamedSortedPrice = 1.03;
+constexpr double kSlowerVariantPrice = 1.03;
 
 constexpr Variant kFrames[] = {
   {.level = 4},
@@ -81,21 +80,21 @@ constexpr Variant kDictionaryFrames[] = {
 
 constexpr Variant kFreshFrames[] = {
   {.level = 1},
-  {.option = text::kWide, .level = 1, .price = kWideFramesPrice},
+  {.option = text::kWide, .level = 1, .price = kSlowerVariantPrice},
 };
 
 constexpr Variant kFreshDictionaryFrames[] = {
   {.level = 1},
   {.option = text::kSorted, .level = 1},
-  {.option = text::kWide, .level = 1, .price = kWideFramesPrice},
+  {.option = text::kWide, .level = 1, .price = kSlowerVariantPrice},
   {.option = text::kSorted | text::kWide,
    .level = 1,
-   .price = kWideFramesPrice},
+   .price = kSlowerVariantPrice},
 };
 
 constexpr Variant kNamedDictionaryFrames[] = {
   {},
-  {.option = text::kSorted, .price = kNamedSortedPrice},
+  {.option = text::kSorted, .price = kSlowerVariantPrice},
 };
 
 constexpr Candidate kLightweightRows[] = {

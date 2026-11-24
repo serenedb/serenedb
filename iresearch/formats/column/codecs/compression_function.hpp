@@ -237,6 +237,7 @@ struct CompressionFunction {
 using CompressionFunctions = std::span<const CompressionFunction>;
 
 inline constexpr uint64_t kBlockSize = duckdb::Storage::DEFAULT_BLOCK_SIZE;
+inline constexpr duckdb::idx_t kSparseRows = 64;
 
 class CompressedSegment {
  public:

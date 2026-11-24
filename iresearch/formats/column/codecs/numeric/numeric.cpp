@@ -1221,8 +1221,6 @@ inline constexpr DecompressionFunction kDecompression{
   .get_segment_info = SegmentInfo,
 };
 
-inline constexpr uint8_t kWideOffsets = 1;
-
 constexpr bool StoresHalves(CodecType codec) noexcept {
   return codec == CodecType::Bitpacking || codec == CodecType::Delta ||
          codec == CodecType::Rle || codec == CodecType::Dict;
@@ -1263,7 +1261,7 @@ bool CompressWide(const Codec& codec, ColumnDataCheckpointData& data) {
     return false;
   }
   WideHeader header{
-    .form = kWideOffsets,
+    .form = WideForm::Offsets,
     .base_low = absl::Uint128Low64(wide.base),
     .base_high = absl::Uint128High64(wide.base),
   };
@@ -1276,7 +1274,7 @@ bool CompressWide(const Codec& codec, ColumnDataCheckpointData& data) {
     if (!CompressPart(kInner, codec, *wide.high)) {
       return false;
     }
-    header = {.form = kWideHalves, .low_size = low.size()};
+    header = {.form = WideForm::Halves, .low_size = low.size()};
     out.assign(sizeof(WideHeader) + duckdb::AlignValue<size_t, 8>(low.size()),
                '\0');
     std::memcpy(out.data() + sizeof(WideHeader), low.data(), low.size());
@@ -1307,13 +1305,13 @@ class WideReader {
   WideReader(duckdb::const_data_ptr_t base, const ColumnSegment& segment)
     : _header{Header(base, segment.size)},
       _low_frames{Frames(base + sizeof(WideHeader),
-                         _header.form == kWideHalves
+                         _header.form == WideForm::Halves
                            ? _header.low_size
                            : segment.size - sizeof(WideHeader),
                          segment.count, segment.codec)},
       _low{base + sizeof(WideHeader), _low_frames, segment.codec,
            segment.cache_slot} {
-    if (_header.form == kWideHalves) {
+    if (_header.form == WideForm::Halves) {
       const auto at = HighOffset(_header);
       auto high_slot = segment.cache_slot;
       high_slot.file_offset += at;
@@ -1324,7 +1322,7 @@ class WideReader {
     }
   }
 
-  bool Halves() const noexcept { return _header.form == kWideHalves; }
+  bool Halves() const noexcept { return _header.form == WideForm::Halves; }
 
   FrameHeader LowFrames() const noexcept { return _low_frames; }
 
@@ -1473,8 +1471,8 @@ class WideReader {
       ThrowCorrupted("numeric", "segment is smaller than its header");
     }
     const auto header = duckdb::Load<WideHeader>(base);
-    if (!(header.form == kWideOffsets ||
-          (header.form == kWideHalves && header.low_size <= size &&
+    if (!(header.form == WideForm::Offsets ||
+          (header.form == WideForm::Halves && header.low_size <= size &&
            HighOffset(header) <= size))) [[unlikely]] {
       ThrowCorrupted("numeric", "header is inconsistent");
     }

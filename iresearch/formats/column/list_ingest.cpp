@@ -32,6 +32,7 @@
 #include <ranges>
 #include <utility>
 
+#include "iresearch/formats/column/list_ingest.tpp"
 #include "iresearch/utils/assert.hpp"
 
 namespace irs {

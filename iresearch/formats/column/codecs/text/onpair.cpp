@@ -30,6 +30,7 @@
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
+#include <limits>
 #include <numeric>
 #include <optional>
 #include <string>
@@ -53,6 +54,7 @@
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs::text::onpair {
+namespace {
 
 template<typename Rows>
 class CompressionState final : public SortedCompressionState<Rows> {
@@ -83,19 +85,19 @@ class CompressionState final : public SortedCompressionState<Rows> {
   std::vector<uint16_t> _codes;
 };
 
-inline std::string_view SymbolTable(const Header& h,
-                                    duckdb::const_data_ptr_t base) noexcept {
+std::string_view SymbolTable(const Header& h,
+                             duckdb::const_data_ptr_t base) noexcept {
   return {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size};
 }
 
-inline FrameMeta TokenFrame(const FrameMeta& m, uint8_t bits) noexcept {
+FrameMeta TokenFrame(const FrameMeta& m, uint8_t bits) noexcept {
   const auto stream = m.comp_len < kPadding ? 0 : m.comp_len - kPadding;
   return {m.first_entry, m.raw_len, 0,
           static_cast<uint32_t>(uint64_t{stream} * 8 / bits)};
 }
 
-inline uint64_t FirstToken(ChainGroups& groups, PackedReader& counts,
-                           const FrameMeta& tokens, uint32_t f, uint32_t e) {
+uint64_t FirstToken(ChainGroups& groups, PackedReader& counts,
+                    const FrameMeta& tokens, uint32_t f, uint32_t e) {
   const auto g = (e - tokens.first_entry) / kChainRestart;
   uint64_t first = groups.Offset(counts, tokens, f, g);
   for (auto k = tokens.first_entry + g * kChainRestart; k < e; ++k) {
@@ -272,11 +274,8 @@ struct Fetch {
   uint64_t walked = 0;
 };
 
-namespace {
-
 constexpr double kTrainFraction = 0.15;
 constexpr uint64_t kTrainMinBytes = 64 * 1024;
-constexpr uint8_t kMaxThreshold = 255;
 constexpr uint8_t kMinThreshold = 2;
 constexpr uint32_t kSingles = 256;
 
@@ -314,7 +313,7 @@ class Controller {
       static_cast<double>(entries_left) / static_cast<double>(bytes_left);
     const double ratio = recent / target;
     if (ratio > 2.0) {
-      SDB_ASSERT(_threshold < kMaxThreshold);
+      SDB_ASSERT(_threshold < std::numeric_limits<uint8_t>::max());
       ++_threshold;
     } else if (ratio < 0.5 && _threshold > kMinThreshold) {
       --_threshold;
@@ -453,7 +452,7 @@ void Codec::Train(std::span<const duckdb::string_t> entries, uint64_t raw) {
         if (pair_len <= kMaxToken) {
           const auto key = PairKey(prev.id, cur.id);
           auto& count = _pairs[key];
-          SDB_ASSERT(count < kMaxThreshold);
+          SDB_ASSERT(count < std::numeric_limits<uint8_t>::max());
           ++count;
           if (count >= ctrl.Threshold()) {
             const auto id = Insert({data + pos - prev.len, pair_len});
@@ -640,6 +639,8 @@ void Codec::Export(std::string& table) const {
   }
 }
 
+namespace {
+
 template<typename Rows>
 void CompressionState<Rows>::FinalizeCompress() {
   this->Sort();
@@ -727,6 +728,7 @@ void CompressionState<Rows>::Pack(std::span<const duckdb::string_t> entries,
   std::memset(out, 0, kPadding);
 }
 
+}  // namespace
 }  // namespace irs::codecs::text::onpair
 namespace irs::codecs {
 

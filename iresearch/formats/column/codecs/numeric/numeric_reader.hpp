@@ -50,8 +50,6 @@
 
 namespace irs::codecs::numeric {
 
-inline constexpr uint64_t kNoRow = std::numeric_limits<uint64_t>::max();
-
 template<typename T>
 class FrameReader {
  public:
@@ -131,7 +129,6 @@ class FrameReader {
   }
 
  protected:
-  static constexpr uint32_t kNoFrame = std::numeric_limits<uint32_t>::max();
   static constexpr uint64_t kNearShare = 32;
   static constexpr uint64_t kScanCacheDivisor = 2;
 

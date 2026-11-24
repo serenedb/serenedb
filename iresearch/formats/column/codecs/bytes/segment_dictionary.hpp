@@ -32,6 +32,7 @@ namespace irs::codecs {
 
 inline constexpr uint64_t kSegmentDictionaryShare = 25;
 inline constexpr uint64_t kSegmentDictionaryMinBytes = 256;
+inline constexpr size_t kMaxDictionaryBytes = 64 * 1024;
 
 constexpr size_t SegmentDictionaryBytes(uint64_t raw, uint64_t cap) noexcept {
   return static_cast<size_t>(

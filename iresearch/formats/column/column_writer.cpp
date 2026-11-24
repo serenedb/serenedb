@@ -98,7 +98,9 @@ class BlockReadAhead {
     auto shared = std::numeric_limits<uint64_t>::max();
     const auto from = std::max(block, _end);
     auto end = from;
-    for (; end != _blocks.size() && bytes < kWindow; ++end) {
+    for (; end != _blocks.size() &&
+           bytes < duckdb::ExternalFileCache::MAX_READ_AHEAD;
+         ++end) {
       const auto& m = _blocks[end];
       if (m.shared_size != 0 && m.shared_offset != shared) {
         shared = m.shared_offset;
@@ -116,8 +118,6 @@ class BlockReadAhead {
   }
 
  private:
-  static constexpr uint64_t kWindow = duckdb::ExternalFileCache::MAX_READ_AHEAD;
-
   const duckdb::InputFile* _file;
   std::span<const ColumnBlockMeta> _blocks;
   size_t _next = 0;

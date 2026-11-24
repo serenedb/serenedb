@@ -29,6 +29,7 @@
 #include <duckdb/common/typedefs.hpp>
 #include <utility>
 
+#include "iresearch/formats/column/codecs/bytes/segment_dictionary.hpp"
 #include "iresearch/formats/column/codecs/codec_type.hpp"
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/frame_meta.hpp"
@@ -57,11 +58,8 @@ inline constexpr size_t kHeaderSize = 72;
 inline constexpr size_t kFrameRawBytes = 64 * 1024;
 inline constexpr size_t kFsstFrameRawBytes = 16 * 1024;
 inline constexpr size_t kFrameDictionaryBytes = 32 * 1024;
-inline constexpr size_t kDictionaryFrameBytes = 16 * 1024;
-inline constexpr size_t kZstdDictionaryFrameBytes = 32 * 1024;
 inline constexpr size_t kZstdFrameBytes = 128 * 1024;
 inline constexpr size_t kZstdSplitBytes = 96 * 1024;
-inline constexpr size_t kMaxDictionaryBytes = 64 * 1024;
 inline constexpr uint32_t kChainRestart = 16;
 inline constexpr uint32_t kMeanChainWalk = 4;
 inline constexpr duckdb::idx_t kGroup =

@@ -52,6 +52,7 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::codecs::text::fsst_plus {
+namespace {
 
 template<typename Rows>
 class CompressionState final : public SortedCompressionState<Rows> {
@@ -154,13 +155,13 @@ class Prefixes {
   uint32_t _count = 0;
 };
 
-inline std::string_view SymbolTable(const Header& h,
-                                    duckdb::const_data_ptr_t base) noexcept {
+std::string_view SymbolTable(const Header& h,
+                             duckdb::const_data_ptr_t base) noexcept {
   return {reinterpret_cast<const char*>(base + h.off_symtab), h.symtab_size};
 }
 
-inline uint64_t EntryOffset(ChainGroups& groups, PackedReader& lengths,
-                            const FrameMeta& m, uint32_t f, uint32_t e) {
+uint64_t EntryOffset(ChainGroups& groups, PackedReader& lengths,
+                     const FrameMeta& m, uint32_t f, uint32_t e) {
   const auto g = (e - m.first_entry) / kChainRestart;
   uint64_t offset = groups.Offset(lengths, m, f, g);
   for (auto k = m.first_entry + g * kChainRestart; k < e; ++k) {
@@ -400,12 +401,8 @@ struct Fetch {
   uint64_t walked = 0;
 };
 
-namespace {
-
 constexpr uint32_t kNoNode = std::numeric_limits<uint32_t>::max();
 constexpr uint64_t kGroupCost = sizeof(uint32_t);
-constexpr uint64_t kEncodeExpansion = 2;
-constexpr uint64_t kEncodeSlack = 8;
 
 size_t SharedCodes(std::string_view a, std::string_view b) noexcept {
   auto n = absl::FindLongestCommonPrefix(a, b).size();
@@ -420,8 +417,6 @@ void AppendU32(std::string& out, uint32_t value) {
   duckdb::Store<uint32_t>(value, duckdb::data_ptr_cast(bytes));
   out.append(bytes, sizeof(bytes));
 }
-
-}  // namespace
 
 template<typename Rows>
 void CompressionState<Rows>::FinalizeCompress() {
@@ -439,7 +434,8 @@ void CompressionState<Rows>::FinalizeCompress() {
   }
   fsst::Encoded encoded;
   _encoded.resize_and_overwrite(
-    kEncodeExpansion * total + kEncodeSlack, [&](char* out, size_t capacity) {
+    fsst::kEncodeExpansion * total + fsst::kEncodeSlack,
+    [&](char* out, size_t capacity) {
       encoded =
         _codec.Encode(entries, _shared, out, capacity, _encoded_lengths);
       return encoded.bytes;
@@ -592,6 +588,7 @@ void CompressionState<Rows>::Cleave(uint32_t first_entry) {
   }
 }
 
+}  // namespace
 }  // namespace irs::codecs::text::fsst_plus
 namespace irs::codecs {
 

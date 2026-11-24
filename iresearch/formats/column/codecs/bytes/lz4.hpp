@@ -45,14 +45,10 @@ struct Lz4 {
   static constexpr ByteCodec kCodec = ByteCodec::Lz4;
   static constexpr uint8_t kDefaultLevel = 1;
   static constexpr uint8_t kMaxLevel = LZ4HC_CLEVEL_MAX;
-  static constexpr size_t kDictionaryCap = 64 * 1024;
+  static constexpr size_t kDictionaryCap = kMaxDictionaryBytes;
   static constexpr bool kInflatesPrefix = true;
 
   static size_t Bound(size_t raw_size) noexcept;
-
-  static constexpr bool HighCompression(uint8_t level) noexcept {
-    return EffectiveLevel<Lz4>(level) > 1;
-  }
 
   class Compressor final : public DictionaryCompressor {
    public:

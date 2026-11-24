@@ -245,8 +245,6 @@ constexpr Codec kFixedSize{
   .decompression = kFixedSizeDecompression<T>,
 };
 
-constexpr idx_t kBitsPerEntry = duckdb::ValidityMask::BITS_PER_VALUE;
-
 struct ValidityAppender {
   static void Begin(CompressedSegment& segment) {
     std::memset(segment.Data(), 0xFF, kBlockSize);
@@ -273,7 +271,8 @@ struct ValidityAppender {
         continue;
       }
       const auto row = segment.count + i;
-      entries[row / kBitsPerEntry] &= ~(validity_t{1} << (row % kBitsPerEntry));
+      entries[row / duckdb::ValidityMask::BITS_PER_VALUE] &=
+        ~(validity_t{1} << (row % duckdb::ValidityMask::BITS_PER_VALUE));
       stats.SetHasNullFast();
     }
     segment.count += append;
@@ -295,7 +294,8 @@ const validity_t* ValidityEntries(const ColumnSegment& segment,
                                   idx_t count) {
   SDB_ASSERT(count != 0);
   SDB_ASSERT(start <= segment.count && count <= segment.count - start);
-  const auto last_entry = (start + count - 1) / kBitsPerEntry;
+  const auto last_entry =
+    (start + count - 1) / duckdb::ValidityMask::BITS_PER_VALUE;
   if ((last_entry + 1) * sizeof(validity_t) > segment.size) [[unlikely]] {
     ThrowCorrupted("validity", "rows exceed the segment size");
   }
@@ -303,8 +303,9 @@ const validity_t* ValidityEntries(const ColumnSegment& segment,
 }
 
 bool RowValid(const validity_t* entries, idx_t row) noexcept {
-  return duckdb::ValidityMask::RowIsValid(entries[row / kBitsPerEntry],
-                                          row % kBitsPerEntry);
+  return duckdb::ValidityMask::RowIsValid(
+    entries[row / duckdb::ValidityMask::BITS_PER_VALUE],
+    row % duckdb::ValidityMask::BITS_PER_VALUE);
 }
 
 void ValidityScan(const ColumnSegment& segment, ColumnScanState& state,
@@ -319,7 +320,7 @@ void ValidityScan(const ColumnSegment& segment, ColumnScanState& state,
     ValidityEntries(segment, ScanBase(state), start, scan_count),
     segment.size / sizeof(validity_t)};
   auto& result_mask = duckdb::FlatVector::ValidityMutable(result);
-  if (entire && start % kBitsPerEntry == 0) {
+  if (entire && start % duckdb::ValidityMask::BITS_PER_VALUE == 0) {
     duckdb::ValidityUncompressed::AlignedScan(input, start, result_mask,
                                               scan_count);
     return;

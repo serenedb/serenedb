@@ -43,15 +43,11 @@ struct Zxc {
   static constexpr ByteCodec kCodec = ByteCodec::Zxc;
   static constexpr uint8_t kDefaultLevel = 3;
   static constexpr uint8_t kMaxLevel = 7;
-  static constexpr size_t kDictionaryCap = 32 * 1024;
+  static constexpr size_t kDictionaryCap = kMaxDictionaryBytes / 2;
   static constexpr bool kInflatesPrefix = false;
 
   static size_t Bound(size_t raw_size) noexcept {
     return zxc_compress_bound(raw_size);
-  }
-
-  static constexpr bool HighCompression(uint8_t level) noexcept {
-    return EffectiveLevel<Zxc>(level) > kDefaultLevel;
   }
 
   class Compressor final : public DictionaryCompressor {

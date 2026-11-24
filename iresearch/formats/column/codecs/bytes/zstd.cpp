@@ -56,7 +56,7 @@ void Zstd::Compressor::Attach() {
   const auto dictionary = Dictionary();
   _attached.reset(ZSTD_createCDict_advanced(
     dictionary.data(), dictionary.size(), ZSTD_dlm_byRef, ZSTD_dct_rawContent,
-    ZSTD_getCParams(_level, kZstdDictionaryFrameBytes, dictionary.size()),
+    ZSTD_getCParams(_level, kFrameDictionaryBytes, dictionary.size()),
     ZSTD_defaultCMem));
   SDB_ENSURE(_attached, "zstd: cannot create a compression dictionary");
 }

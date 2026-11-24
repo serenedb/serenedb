@@ -60,17 +60,16 @@
 namespace irs::codecs {
 namespace {
 
+using alp::kExceptionPositionSize;
+using alp::kExceptionsCountSize;
 using alp::kMetadataPointerSize;
 using alp::kVectorSize;
 using duckdb::idx_t;
 
 constexpr uint8_t kUncompressedModeSentinel =
   std::numeric_limits<uint8_t>::max();
-constexpr uint32_t kHeaderSize = sizeof(uint32_t);
 constexpr uint32_t kExponentSize = sizeof(uint8_t);
 constexpr uint32_t kFactorSize = sizeof(uint8_t);
-constexpr uint32_t kExceptionsCountSize = sizeof(uint16_t);
-constexpr uint32_t kExceptionPositionSize = sizeof(uint16_t);
 constexpr uint32_t kForSize = sizeof(uint64_t);
 constexpr uint32_t kBitWidthSize = sizeof(uint8_t);
 constexpr uint32_t kVectorHeaderSize =
@@ -878,7 +877,7 @@ class AlpCompressionState {
 
     _data_bytes_used = 0;
     _metadata_offset = kBlockSize;
-    _next_vector_byte_index_start = kHeaderSize;
+    _next_vector_byte_index_start = kMetadataPointerSize;
   }
 
   ColumnDataCheckpointData& _checkpoint_data;
@@ -888,7 +887,7 @@ class AlpCompressionState {
   idx_t _nulls_idx = 0;
   idx_t _data_bytes_used = 0;
   idx_t _metadata_offset = kBlockSize;
-  uint32_t _next_vector_byte_index_start = kHeaderSize;
+  uint32_t _next_vector_byte_index_start = kMetadataPointerSize;
   T _input_vector[kVectorSize] = {};
   uint16_t _vector_null_positions[kVectorSize] = {};
   AlpCompressionData<T> _compression_data;
@@ -974,9 +973,9 @@ IRS_FORCE_INLINE AlpVector OpenVector(const alp::SegmentLayout& layout,
 
 alp::SegmentLayout ReadAlpSegmentLayout(duckdb::const_data_ptr_t base,
                                         idx_t size, idx_t count) {
-  return alp::ReadLayout(base, kHeaderSize,
-                         alp::MetadataEnd(base, size, kHeaderSize, "ALP"),
-                         count, "ALP");
+  return alp::ReadLayout(
+    base, kMetadataPointerSize,
+    alp::MetadataEnd(base, size, kMetadataPointerSize, "ALP"), count, "ALP");
 }
 
 template<typename T>
@@ -1168,7 +1167,7 @@ IRS_FORCE_INLINE T ValueAt(const AlpScanState<T>&, const AlpVector& vector,
       return duckdb::Load<T>(vector.exceptions + found * sizeof(T));
     }
   }
-  static_assert(kHeaderSize + kVectorHeaderSize >= alp::kWordReach);
+  static_assert(kMetadataPointerSize + kVectorHeaderSize >= alp::kWordReach);
   const auto encoded =
     alp::PackedValue<uint64_t>(vector.packed, index, vector.bit_width);
   return DecodeValue<T>(

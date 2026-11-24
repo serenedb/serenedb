@@ -66,6 +66,8 @@ namespace irs::codecs::alp {
 
 inline constexpr uint32_t kVectorSize = 1024;
 inline constexpr uint32_t kMetadataPointerSize = sizeof(uint32_t);
+inline constexpr uint32_t kExceptionsCountSize = sizeof(uint16_t);
+inline constexpr uint32_t kExceptionPositionSize = sizeof(uint16_t);
 inline constexpr uint8_t kMaxWordBitWidth = 57;
 inline constexpr uint32_t kWordReach = sizeof(uint64_t) - 1;
 inline constexpr uint32_t kRowGroupSamples = 8;

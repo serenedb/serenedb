@@ -187,7 +187,7 @@ struct EntryFrames {
 
   template<typename Entry>
   void EnsureEach(idx_t count, Entry entry_at) {
-    const bool sparse = count <= kSparseEntries;
+    const bool sparse = count <= kSparseRows;
     uint32_t f = kNoFrame;
     for (idx_t i = 0; i < count; ++i) {
       const auto e = static_cast<uint32_t>(entry_at(i));
@@ -245,7 +245,7 @@ struct EntryFrames {
         SDB_ASSERT(lo < hi);
         const uint64_t range = hi - lo;
         const uint64_t entry_bytes = frames[f].raw_len / (end - first);
-        if ((distinct <= kSparseEntries && range < end - first) ||
+        if ((distinct <= kSparseRows && range < end - first) ||
             distinct * (entry_bytes + entry_bytes / 8 + kSingleRowCost) <=
               range * (entry_bytes + kFrameRowCost)) {
           for (auto k = i; k < j; ++k) {

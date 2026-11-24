@@ -274,19 +274,19 @@ class Values final : public State {
 
   void MarkNulls(const duckdb::ValidityMask& validity, size_t at,
                  size_t count) {
-    constexpr size_t kWord = duckdb::ValidityMask::BITS_PER_VALUE;
     const auto* words = validity.GetData();
     for (size_t row = 0; row < count;) {
       const size_t stop =
         std::min(count, row + kBlockValues - (at + row) % kBlockValues);
       bool null = false;
       size_t i = row;
-      for (; i % kWord != 0 && i < stop; ++i) {
+      for (; i % duckdb::ValidityMask::BITS_PER_VALUE != 0 && i < stop; ++i) {
         null |= !validity.RowIsValidUnsafe(i);
       }
-      for (; i + kWord <= stop; i += kWord) {
-        null |=
-          words[i / kWord] != duckdb::ValidityMask::ValidityBuffer::MAX_ENTRY;
+      for (; i + duckdb::ValidityMask::BITS_PER_VALUE <= stop;
+           i += duckdb::ValidityMask::BITS_PER_VALUE) {
+        null |= words[i / duckdb::ValidityMask::BITS_PER_VALUE] !=
+                duckdb::ValidityMask::ValidityBuffer::MAX_ENTRY;
       }
       for (; i < stop; ++i) {
         null |= !validity.RowIsValidUnsafe(i);

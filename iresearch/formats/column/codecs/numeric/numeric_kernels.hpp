@@ -31,6 +31,7 @@
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/helper.hpp>
+#include <duckdb/common/vector_size.hpp>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -659,16 +660,14 @@ void ExpandMarkedRuns(const uint8_t* ended, const U* runs, size_t rows,
   }
 }
 
-inline constexpr uint32_t kExpandedRows = 2048;
-
 template<typename U, typename T>
 uint32_t ExpandRuns(std::span<const uint32_t> ends, const U* values,
                     uint32_t run, uint32_t row, uint64_t count,
                     T* out) noexcept {
-  uint8_t ended[kExpandedRows];
+  uint8_t ended[STANDARD_VECTOR_SIZE];
   while (count != 0) {
     const auto rows =
-      static_cast<uint32_t>(std::min<uint64_t>(count, kExpandedRows));
+      static_cast<uint32_t>(std::min<uint64_t>(count, STANDARD_VECTOR_SIZE));
     const auto stop = row + rows;
     std::memset(ended, 0, rows);
     auto next = run;

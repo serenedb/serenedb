@@ -157,9 +157,11 @@ enum class ByteCodec : uint8_t {
 
 inline constexpr size_t kByteCodecCount = magic_enum::enum_count<ByteCodec>();
 
-inline constexpr size_t kTextShapeCount = 2;
+inline constexpr size_t kTextShapeCount =
+  std::to_underlying(Shape::Dictionary) + 1;
 inline constexpr size_t kTextShapeForms = kTextShapeCount * kByteCodecCount;
-inline constexpr size_t kNumericLeafCount = 3;
+inline constexpr size_t kNumericLeafCount =
+  std::to_underlying(ByteCodec::Zstd) + 1;
 
 constexpr bool IsForm(CodecType type) noexcept {
   return type >= CodecType::Bitpacking;
@@ -210,8 +212,6 @@ constexpr bool Sorted(ByteCodec leaf) noexcept {
          leaf == ByteCodec::OnPair || leaf == ByteCodec::Fsst12;
 }
 
-static_assert(std::to_underlying(Shape::Dictionary) + 1 == kTextShapeCount);
-static_assert(std::to_underlying(ByteCodec::Zstd) + 1 == kNumericLeafCount);
 static_assert(CodecOf(Shape::Dictionary, ByteCodec::Fsst12) ==
               CodecType::DictFsst12);
 static_assert(CodecOf(Shape::Delta, ByteCodec::None) == CodecType::Delta);

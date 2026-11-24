@@ -23,10 +23,14 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace irs::codecs {
 
 static_assert(std::endian::native == std::endian::little);
+
+inline constexpr uint64_t kNoRow = std::numeric_limits<uint64_t>::max();
+inline constexpr uint32_t kNoFrame = std::numeric_limits<uint32_t>::max();
 
 struct FrameMeta {
   uint32_t first_entry = 0;

@@ -67,7 +67,6 @@ namespace {
 using column_internal::BorrowsBlockStrings;
 using column_internal::FetchSegmentRows;
 
-constexpr duckdb::idx_t kMaxFetchHits = 64;
 constexpr uint64_t kTrustedRunBytes = 256 * duckdb::PageResidency::PAGE_SIZE;
 constexpr size_t kBlocksAhead = 32;
 
@@ -629,8 +628,8 @@ void ColumnReader::SkipTo(ScanState& s, uint64_t row) const {
 void ColumnReader::FetchInto(ScanState& s, std::span<const uint64_t> rows,
                              duckdb::sel_t* positions, duckdb::Vector& out,
                              duckdb::idx_t at) const {
-  SDB_ASSERT(rows.size() <= kMaxFetchHits);
-  std::array<duckdb::idx_t, kMaxFetchHits> in_block;
+  SDB_ASSERT(rows.size() <= codecs::kSparseRows);
+  std::array<duckdb::idx_t, codecs::kSparseRows> in_block;
   for (duckdb::idx_t i = 0; i < rows.size();) {
     if (!s.fetch.segment || rows[i] < s.fetch_window.begin ||
         rows[i] >= s.fetch_window.end) {
@@ -657,7 +656,7 @@ bool ColumnReader::FetchSparse(ScanState& s, uint64_t anchor,
                                duckdb::idx_t at) const {
   const uint64_t first = anchor + sel.get_index(0);
   const uint64_t last = anchor + sel.get_index(hits - 1);
-  if (hits >= kMaxFetchHits || last >= _row_count) {
+  if (hits >= codecs::kSparseRows || last >= _row_count) {
     return false;
   }
   const auto window = Locate(first, s.window);
@@ -669,8 +668,8 @@ bool ColumnReader::FetchSparse(ScanState& s, uint64_t anchor,
     out.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
   }
   auto& mask = duckdb::FlatVector::ValidityMutable(out);
-  std::array<uint64_t, kMaxFetchHits> rows;
-  std::array<duckdb::sel_t, kMaxFetchHits> positions;
+  std::array<uint64_t, codecs::kSparseRows> rows;
+  std::array<duckdb::sel_t, codecs::kSparseRows> positions;
   for (duckdb::idx_t i = 0; i < hits; ++i) {
     rows[i] = anchor + sel.get_index(i);
     positions[i] = static_cast<duckdb::sel_t>(i);

@@ -42,7 +42,7 @@ size_t Lz4::Bound(size_t raw_size) noexcept {
 
 Lz4::Compressor::Compressor(uint8_t level)
   : DictionaryCompressor{kDictionaryCap}, _level{EffectiveLevel<Lz4>(level)} {
-  if (HighCompression(level)) {
+  if (HighCompression<Lz4>(level)) {
     _high.reset(LZ4_createStreamHC());
     SDB_ENSURE(_high, "lz4: cannot create a compression stream");
     return;

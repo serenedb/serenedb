@@ -37,6 +37,11 @@ constexpr uint8_t EffectiveLevel(uint8_t level) noexcept {
   return level ? std::min(level, Codec::kMaxLevel) : Codec::kDefaultLevel;
 }
 
+template<typename Codec>
+constexpr bool HighCompression(uint8_t level) noexcept {
+  return EffectiveLevel<Codec>(level) > Codec::kDefaultLevel;
+}
+
 class DictionaryCompressor {
  public:
   template<typename Self>

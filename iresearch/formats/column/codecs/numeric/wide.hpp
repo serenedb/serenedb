@@ -56,7 +56,11 @@
 
 namespace irs::codecs::numeric {
 
-inline constexpr uint8_t kWideHalves = 2;
+enum class WideForm : uint8_t {
+  Offsets = 1,
+  Halves = 2,
+};
+
 inline constexpr size_t kWideSampleEvery = 8;
 inline constexpr size_t kWideSampledBlocks = 16;
 inline constexpr size_t kWideSampledRows = 64;
@@ -65,7 +69,7 @@ inline constexpr size_t kWideRunRows = 8;
 inline constexpr uint32_t kMostWideDictionaryEntries = 2048;
 
 struct WideHeader {
-  uint8_t form = 0;
+  WideForm form{};
   uint8_t reserved[7] = {};
   uint64_t low_size = 0;
   uint64_t base_low = 0;

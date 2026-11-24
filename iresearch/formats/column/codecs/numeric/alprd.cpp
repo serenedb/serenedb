@@ -56,21 +56,21 @@
 namespace irs::codecs {
 namespace {
 
+using alp::kExceptionPositionSize;
+using alp::kExceptionsCountSize;
 using alp::kMetadataPointerSize;
 using alp::kVectorSize;
 using duckdb::idx_t;
 
 constexpr uint8_t kMaxDictionaryBitWidth = 3;
 constexpr uint8_t kMaxDictionarySize = 1 << kMaxDictionaryBitWidth;
-constexpr idx_t kCuttingLimit = 16;
 constexpr uint32_t kDictionaryElementSize = sizeof(uint16_t);
+constexpr idx_t kCuttingLimit = 8 * kDictionaryElementSize;
 constexpr uint32_t kMaxDictionarySizeBytes =
   kMaxDictionarySize * kDictionaryElementSize;
 constexpr uint32_t kExceptionSize = sizeof(uint16_t);
-constexpr uint32_t kExceptionsCountSize = sizeof(uint16_t);
 constexpr uint16_t kUncompressedModeSentinel =
   std::numeric_limits<uint16_t>::max();
-constexpr uint32_t kExceptionPositionSize = sizeof(uint16_t);
 constexpr uint32_t kRightBitWidthSize = sizeof(uint8_t);
 constexpr uint32_t kLeftBitWidthSize = sizeof(uint8_t);
 constexpr uint32_t kNDictionaryElementsSize = sizeof(uint8_t);

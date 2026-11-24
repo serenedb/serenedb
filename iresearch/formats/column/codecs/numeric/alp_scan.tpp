@@ -42,7 +42,6 @@ namespace irs::codecs::alp {
 
 inline constexpr duckdb::idx_t kDecodeDistance = kVectorSize / 64;
 inline constexpr uint32_t kDecodeRun = 8;
-inline constexpr uint32_t kDecodeRows = 64;
 
 struct SegmentLayout {
   duckdb::const_data_ptr_t base = nullptr;
@@ -240,8 +239,8 @@ IRS_FORCE_INLINE bool Dense(FetchState<State>& fetch_state,
                             duckdb::idx_t count, duckdb::idx_t last_vector) {
   const auto row = rows[i];
   const auto vector_index = row / kVectorSize;
-  if (i + kDecodeRows <= count &&
-      rows[i + kDecodeRows - 1] / kVectorSize == vector_index) {
+  if (i + kSparseRows <= count &&
+      rows[i + kSparseRows - 1] / kVectorSize == vector_index) {
     return true;
   }
   if (vector_index != fetch_state.opened_vector) {
@@ -251,7 +250,7 @@ IRS_FORCE_INLINE bool Dense(FetchState<State>& fetch_state,
                             ? fetch_state.near_rows + 1
                             : 0;
   fetch_state.previous_row = row;
-  return ++fetch_state.opened_rows >= kDecodeRows ||
+  return ++fetch_state.opened_rows >= kSparseRows ||
          (fetch_state.near_rows >= kDecodeRun && vector_index == last_vector);
 }
 

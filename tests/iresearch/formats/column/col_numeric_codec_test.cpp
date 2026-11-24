@@ -4306,7 +4306,7 @@ TEST_F(ColNumericCodecTest, SegmentsWithOffsetsOutsideTheirBytesAreRejected) {
      CodecType::Bitpacking, two_highs,
      [](duckdb::data_ptr_t block, uint64_t size) {
        auto header = duckdb::Load<irs::codecs::numeric::WideHeader>(block);
-       ASSERT_EQ(header.form, irs::codecs::numeric::kWideHalves);
+       ASSERT_EQ(header.form, irs::codecs::numeric::WideForm::Halves);
        header.low_size = size - 1;
        duckdb::Store(header, block);
      },
@@ -4626,7 +4626,7 @@ TEST(ColNumericKernelsTest, ExpandsRunsOfEveryWidthAndLength) {
 }
 
 TEST(ColNumericKernelsTest, ExpandsRunsFromAnyRowOverAnyCount) {
-  constexpr uint32_t kRows = 3 * irs::codecs::numeric::kExpandedRows + 77;
+  constexpr uint32_t kRows = 3 * STANDARD_VECTOR_SIZE + 77;
   const auto check = []<typename U>() {
     std::vector<uint32_t> ends;
     std::vector<U> values;
@@ -4883,7 +4883,7 @@ TEST_F(ColNumericCodecTest, AFrameOpenedByItsStartIsInflatedWholeForAScan) {
   ASSERT_EQ(frames.flags & irs::codecs::kNumericShuffled, 0);
   irs::codecs::numeric::PlainReader<int64_t> reader{
     base, frames, irs::codecs::CodecType::Lz4};
-  EXPECT_EQ(reader.FetchApart(5, irs::codecs::numeric::kNoRow), values[5]);
+  EXPECT_EQ(reader.FetchApart(5, irs::codecs::kNoRow), values[5]);
   std::vector<int64_t> read(values.size());
   reader.Read(0, read.size(), read.data());
   EXPECT_EQ(read, values);
@@ -4931,7 +4931,7 @@ TEST_F(ColNumericCodecTest, ABitPackedRowFetchedApartIsUnpackedFromItsBlock) {
     base, frames, irs::codecs::CodecType::Bitpacking};
   for (const uint64_t row :
        {kBlock + 5, uint64_t{3}, 2 * kBlock + 100, 3 * kBlock - 1}) {
-    EXPECT_EQ(reader.FetchApart(row, irs::codecs::numeric::kNoRow), values[row])
+    EXPECT_EQ(reader.FetchApart(row, irs::codecs::kNoRow), values[row])
       << "row " << row;
   }
 }

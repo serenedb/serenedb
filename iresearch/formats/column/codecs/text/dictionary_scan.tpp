@@ -202,10 +202,11 @@ class FilterVerdicts {
   idx_t Matches() const noexcept { return _matches; }
 
   void Accept(const EntryRanges& ranges, uint32_t entries) {
-    _verdicts.assign(entries, kRejected);
+    _verdicts.assign(entries, Verdict::Rejected);
     _matches = 0;
     for (const auto& [lo, hi] : ranges) {
-      std::memset(_verdicts.data() + lo, kAccepted, hi - lo);
+      std::memset(_verdicts.data() + lo, std::to_underlying(Verdict::Accepted),
+                  hi - lo);
       _matches += hi - lo;
     }
     _lazy = false;
@@ -213,16 +214,16 @@ class FilterVerdicts {
 
   void Accept(const duckdb::SelectionVector& accepted, idx_t count,
               uint32_t entries) {
-    _verdicts.assign(entries, kRejected);
+    _verdicts.assign(entries, Verdict::Rejected);
     for (idx_t i = 0; i < count; ++i) {
-      _verdicts[accepted.get_index(i)] = kAccepted;
+      _verdicts[accepted.get_index(i)] = Verdict::Accepted;
     }
     _matches = count;
     _lazy = false;
   }
 
   void Defer(uint32_t entries) {
-    _verdicts.assign(entries, kUnfiltered);
+    _verdicts.assign(entries, Verdict::Unfiltered);
     _lazy = true;
   }
 
@@ -232,8 +233,8 @@ class FilterVerdicts {
     _pending.clear();
     for (idx_t i = 0; i < count; ++i) {
       const auto code = codes.get_index(rows.get_index(i));
-      if (_verdicts[code] == kUnfiltered) {
-        _verdicts[code] = kPending;
+      if (_verdicts[code] == Verdict::Unfiltered) {
+        _verdicts[code] = Verdict::Pending;
         _pending.emplace_back(static_cast<uint32_t>(code));
       }
     }
@@ -242,10 +243,10 @@ class FilterVerdicts {
 
   void AcceptPending(const duckdb::SelectionVector& kept, idx_t kept_count) {
     for (const auto code : _pending) {
-      _verdicts[code] = kRejected;
+      _verdicts[code] = Verdict::Rejected;
     }
     for (idx_t i = 0; i < kept_count; ++i) {
-      _verdicts[_pending[kept.get_index(i)]] = kAccepted;
+      _verdicts[_pending[kept.get_index(i)]] = Verdict::Accepted;
     }
     _filtered += _pending.size();
   }
@@ -258,13 +259,13 @@ class FilterVerdicts {
                      duckdb::SelectionVector& rows, idx_t count) const {
     const auto* matches = _verdicts.data();
     idx_t kept = 0;
-    while (kept < count &&
-           matches[codes.get_index(rows.get_index(kept))] == kAccepted) {
+    while (kept < count && matches[codes.get_index(rows.get_index(kept))] ==
+                             Verdict::Accepted) {
       ++kept;
     }
     for (idx_t i = kept + 1; i < count; ++i) {
       const auto row = rows.get_index(i);
-      if (matches[codes.get_index(row)] == kAccepted) {
+      if (matches[codes.get_index(row)] == Verdict::Accepted) {
         rows.set_index(kept++, row);
       }
     }
@@ -272,12 +273,14 @@ class FilterVerdicts {
   }
 
  private:
-  static constexpr uint8_t kUnfiltered = 0;
-  static constexpr uint8_t kRejected = 1;
-  static constexpr uint8_t kAccepted = 2;
-  static constexpr uint8_t kPending = 3;
+  enum class Verdict : uint8_t {
+    Unfiltered,
+    Rejected,
+    Accepted,
+    Pending,
+  };
 
-  std::vector<uint8_t> _verdicts;
+  std::vector<Verdict> _verdicts;
   std::vector<uint32_t> _pending;
   idx_t _matches = 0;
   uint64_t _filtered = 0;

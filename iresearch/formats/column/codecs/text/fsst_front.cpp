@@ -60,6 +60,7 @@
 #include "iresearch/utils/shared.hpp"
 
 namespace irs::codecs::text::fsst {
+namespace {
 
 struct Fsst12 {
   static constexpr ByteCodec kCodec = ByteCodec::Fsst12;
@@ -128,8 +129,10 @@ struct Fsst12 {
   }
 };
 
+}  // namespace
 }  // namespace irs::codecs::text::fsst
 namespace irs::codecs::text::fsst_front {
+namespace {
 
 constexpr uint64_t kChainGroupCost = 180;
 constexpr uint64_t kChainMinRowBytes = 8;
@@ -152,8 +155,8 @@ struct ChainEnd {
   uint64_t enc_off;
 };
 
-inline uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
-                              uint32_t first, uint32_t end) {
+uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
+                       uint32_t first, uint32_t end) {
   uint64_t capacity = 0;
   for (auto e = first; e < end; ++e) {
     capacity += (e == first ? 0 : lcps.At(e)) +
@@ -354,7 +357,7 @@ struct Scan {
   template<typename Frames, typename Entry>
   void Ensure(Frames& s, duckdb::idx_t count, Entry entry_at,
               uint32_t window_first, uint32_t window_end) {
-    if (count <= kSparseEntries) {
+    if (count <= kSparseRows) {
       EnsureGroups(s, count, entry_at, window_first, window_end);
     } else {
       s.EnsureRange(window_first, window_end);
@@ -460,7 +463,7 @@ struct Scan {
           s.frames[f].raw_len / (end - first), kChainMinRowBytes);
         const uint64_t total =
           (end - first + kChainRestart - 1) / kChainRestart;
-        if ((touched * kChainRestart <= kSparseEntries && range < total) ||
+        if ((touched * kChainRestart <= kSparseRows && range < total) ||
             (j - i) * entry_bytes + touched * kChainGroupCost <=
               range * kChainRestart * entry_bytes) {
           while (i < j) {
@@ -775,9 +778,6 @@ class CompressionState final : public SortedCompressionState<Rows> {
   using Base::_rows;
   using Base::_target;
 
-  static constexpr uint64_t kEncodeExpansion = 2;
-  static constexpr uint64_t kEncodeSlack = 8;
-
   fsst::Encoder<Impl>& _codec;
   std::vector<uint32_t> _lcp_stream;
 };
@@ -830,9 +830,9 @@ void CompressionState<Impl, Rows>::FinalizeCompress() {
     }
     done += encoded.strings;
   };
-  encode(suffixes + kEncodeSlack);
+  encode(suffixes + fsst::kEncodeSlack);
   if (done != entries.size()) {
-    encode(kEncodeExpansion * suffixes + kEncodeSlack);
+    encode(fsst::kEncodeExpansion * suffixes + fsst::kEncodeSlack);
     SDB_ENSURE(done == entries.size(), "fsst: compression ran out of space");
   }
   size_t off = 0;
@@ -868,6 +868,7 @@ void CompressionState<Impl, Rows>::FinalizeCompress() {
     *_out);
 }
 
+}  // namespace
 }  // namespace irs::codecs::text::fsst_front
 namespace irs::codecs {
 

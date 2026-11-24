@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <duckdb/common/bitpacking.hpp>
@@ -55,7 +56,8 @@ using duckdb::validity_t;
 using duckdb::ValidityMask;
 
 constexpr uint16_t kCompressedSegmentSize = 256;
-constexpr uint16_t kCompressedSegmentShift = 8;
+constexpr uint16_t kCompressedSegmentShift =
+  std::countr_zero(kCompressedSegmentSize);
 constexpr idx_t kContainerSize = 2048;
 constexpr bool kNulls = true;
 constexpr bool kNonNulls = false;
@@ -74,9 +76,6 @@ constexpr uint8_t kRunContainerSizeWidth = 7;
 constexpr uint8_t kArrayContainerSizeWidth = 8;
 constexpr uint8_t kIsRunFlag = 1 << 1;
 constexpr uint8_t kIsInvertedFlag = 1 << 0;
-constexpr idx_t kBitsPerValue = ValidityMask::BITS_PER_VALUE;
-constexpr idx_t kPackGroupSize =
-  BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE;
 constexpr validity_t kAllValid = ~validity_t{0};
 
 static_assert(kMaxRunIdx < std::numeric_limits<uint8_t>::max());
@@ -86,12 +85,12 @@ static_assert((1 << kRunContainerSizeWidth) - 1 >= kMaxRunIdx);
 static_assert((1 << kArrayContainerSizeWidth) - 1 >= kMaxArrayIdx + 1);
 
 constexpr validity_t LowerMask(idx_t bits) noexcept {
-  SDB_ASSERT(bits < kBitsPerValue);
+  SDB_ASSERT(bits < ValidityMask::BITS_PER_VALUE);
   return (validity_t{1} << bits) - 1;
 }
 
 constexpr validity_t UpperMask(idx_t bits) noexcept {
-  return bits == 0 ? 0 : kAllValid << (kBitsPerValue - bits);
+  return bits == 0 ? 0 : kAllValid << (ValidityMask::BITS_PER_VALUE - bits);
 }
 
 void SetInvalidRange(ValidityMask& result, idx_t start, idx_t end) {
@@ -100,9 +99,9 @@ void SetInvalidRange(ValidityMask& result, idx_t start, idx_t end) {
   result.EnsureWritable();
   auto* result_data = result.GetData();
   idx_t index = start;
-  if (index % kBitsPerValue != 0) {
-    const idx_t right_bits = index % kBitsPerValue;
-    idx_t bits_to_set = kBitsPerValue - right_bits;
+  if (index % ValidityMask::BITS_PER_VALUE != 0) {
+    const idx_t right_bits = index % ValidityMask::BITS_PER_VALUE;
+    idx_t bits_to_set = ValidityMask::BITS_PER_VALUE - right_bits;
     idx_t left_bits = 0;
     if (index + bits_to_set > end) {
       left_bits = (index + bits_to_set) - end;
@@ -112,19 +111,20 @@ void SetInvalidRange(ValidityMask& result, idx_t start, idx_t end) {
     if (left_bits) {
       mask |= UpperMask(left_bits);
     }
-    const idx_t entry_idx = index / kBitsPerValue;
+    const idx_t entry_idx = index / ValidityMask::BITS_PER_VALUE;
     index += bits_to_set;
     result_data[entry_idx] &= mask;
   }
   const idx_t remaining_bits = end - index;
-  const idx_t full_entries = remaining_bits / kBitsPerValue;
-  const idx_t entry_idx = index / kBitsPerValue;
+  const idx_t full_entries = remaining_bits / ValidityMask::BITS_PER_VALUE;
+  const idx_t entry_idx = index / ValidityMask::BITS_PER_VALUE;
   for (idx_t i = 0; i < full_entries; ++i) {
     result_data[entry_idx + i] = 0;
   }
-  if (remaining_bits % kBitsPerValue != 0) {
-    const idx_t bits_to_set = end % kBitsPerValue;
-    result_data[end / kBitsPerValue] &= UpperMask(kBitsPerValue - bits_to_set);
+  if (remaining_bits % ValidityMask::BITS_PER_VALUE != 0) {
+    const idx_t bits_to_set = end % ValidityMask::BITS_PER_VALUE;
+    result_data[end / ValidityMask::BITS_PER_VALUE] &=
+      UpperMask(ValidityMask::BITS_PER_VALUE - bits_to_set);
   }
 }
 
@@ -185,9 +185,9 @@ ContainerMetadata CreateMetadata(uint16_t count, uint16_t array_null,
     runs < kCompressedRunThreshold
       ? runs * sizeof(uint32_t)
       : kCompressedSegmentCount + runs * sizeof(uint16_t));
-  const auto bitset_cost =
-    static_cast<uint16_t>(duckdb::AlignValue<uint16_t, kBitsPerValue>(count) /
-                          kBitsPerValue * sizeof(validity_t));
+  const auto bitset_cost = static_cast<uint16_t>(
+    duckdb::AlignValue<uint16_t, ValidityMask::BITS_PER_VALUE>(count) /
+    ValidityMask::BITS_PER_VALUE * sizeof(validity_t));
   if (std::min(lowest_array_cost, lowest_run_cost) > bitset_cost) {
     return BitsetContainer(count);
   }
@@ -202,7 +202,7 @@ ContainerMetadata CreateMetadata(uint16_t count, uint16_t array_null,
 
 idx_t DataSizeInBytes(const ContainerMetadata& metadata, idx_t container_size) {
   if (metadata.type == ContainerType::Bitset) {
-    return container_size / kBitsPerValue * sizeof(validity_t);
+    return container_size / ValidityMask::BITS_PER_VALUE * sizeof(validity_t);
   }
   if (metadata.type == ContainerType::Run) {
     return metadata.count >= kCompressedRunThreshold
@@ -318,7 +318,9 @@ void Deserialize(ContainerMetadataCollection& collection, const_data_ptr_t src,
     available -= size;
   };
   collection.container_type.resize(
-    duckdb::AlignValue<idx_t, kPackGroupSize>(container_count));
+    duckdb::AlignValue<idx_t,
+                       BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE>(
+      container_count));
   collection.count_in_segment = container_count;
 
   const idx_t types_size = BitpackingPrimitives::GetRequiredSize(
@@ -335,7 +337,9 @@ void Deserialize(ContainerMetadataCollection& collection, const_data_ptr_t src,
   }
   collection.runs_in_segment = runs_count;
   collection.number_of_runs.resize(
-    duckdb::AlignValue<idx_t, kPackGroupSize>(runs_count));
+    duckdb::AlignValue<idx_t,
+                       BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE>(
+      runs_count));
   collection.cardinality.resize(container_count - runs_count);
 
   if (runs_count) {
@@ -917,7 +921,7 @@ void InitializeContainer(RoaringCompressState& state) {
   const auto metadata = state.analyze_state.container_metadata[container_index];
 
   const auto container_size =
-    duckdb::AlignValue<idx_t, kBitsPerValue>(std::min<idx_t>(
+    duckdb::AlignValue<idx_t, ValidityMask::BITS_PER_VALUE>(std::min<idx_t>(
       state.analyze_state.total_count - state.container_state.appended_count,
       kContainerSize));
   if (!CanStore(state, container_size, metadata)) {
@@ -929,8 +933,9 @@ void InitializeContainer(RoaringCompressState& state) {
   if (metadata.type == ContainerType::Bitset) {
     OverrideUncompressed(state.container_state, base, state.data_ptr,
                          container_size);
-    std::memset(state.data_ptr, ~0,
-                sizeof(validity_t) * (container_size / kBitsPerValue));
+    std::memset(
+      state.data_ptr, ~0,
+      sizeof(validity_t) * (container_size / ValidityMask::BITS_PER_VALUE));
   } else if (metadata.type == ContainerType::Run) {
     OverrideRun(state.container_state, base, state.data_ptr, metadata.count);
   } else {
@@ -1017,7 +1022,7 @@ void Flush(RoaringCompressState& state) { NextContainer(state); }
 
 template<typename State>
 void AppendBytes(State& state, validity_t entry, idx_t bits) {
-  SDB_ASSERT(bits <= kBitsPerValue);
+  SDB_ASSERT(bits <= ValidityMask::BITS_PER_VALUE);
   const idx_t full_bytes = bits / 8;
   const idx_t last_bits = bits % 8;
   for (idx_t i = 0; i < full_bytes; ++i) {
@@ -1052,11 +1057,13 @@ void AppendValidity(State& state, const ValidityMask& validity,
       std::min<idx_t>(kContainerSize - Count(state), input_size - appended);
     on_rows(appended, to_append);
 
-    idx_t entry_offset = appended / kBitsPerValue;
-    const idx_t previous_entry_remainder = appended % kBitsPerValue;
+    idx_t entry_offset = appended / ValidityMask::BITS_PER_VALUE;
+    const idx_t previous_entry_remainder =
+      appended % ValidityMask::BITS_PER_VALUE;
     if (previous_entry_remainder != 0) [[unlikely]] {
       const auto validity_entry = validity.GetValidityEntry(entry_offset);
-      idx_t to_process = kBitsPerValue - previous_entry_remainder;
+      idx_t to_process =
+        ValidityMask::BITS_PER_VALUE - previous_entry_remainder;
       validity_t mask = UpperMask(to_process);
       if (to_append < to_process) {
         const idx_t left_bits = to_process - to_append;
@@ -1077,20 +1084,20 @@ void AppendValidity(State& state, const ValidityMask& validity,
       ++entry_offset;
     }
 
-    const idx_t entry_count = to_append / kBitsPerValue;
+    const idx_t entry_count = to_append / ValidityMask::BITS_PER_VALUE;
     for (idx_t entry_index = 0; entry_index < entry_count; ++entry_index) {
       const auto validity_entry =
         validity.GetValidityEntry(entry_offset + entry_index);
       if (ValidityMask::AllValid(validity_entry)) {
-        HandleAllValid(state, kBitsPerValue);
+        HandleAllValid(state, ValidityMask::BITS_PER_VALUE);
       } else if (ValidityMask::NoneValid(validity_entry)) {
-        HandleNoneValid(state, kBitsPerValue);
+        HandleNoneValid(state, ValidityMask::BITS_PER_VALUE);
       } else {
-        AppendBytes(state, validity_entry, kBitsPerValue);
+        AppendBytes(state, validity_entry, ValidityMask::BITS_PER_VALUE);
       }
     }
 
-    const idx_t remainder = to_append % kBitsPerValue;
+    const idx_t remainder = to_append % ValidityMask::BITS_PER_VALUE;
     if (remainder != 0) [[unlikely]] {
       const auto validity_entry =
         validity.GetValidityEntry(entry_offset + entry_count);
@@ -1139,18 +1146,19 @@ void UnalignedScan(const validity_t* input, idx_t input_size, idx_t input_start,
   SDB_ASSERT(input_start < input_size);
   SDB_ASSERT(scan_count <= input_size - input_start);
   auto* result_data = result_mask.GetData();
-  idx_t result_entry = result_offset / kBitsPerValue;
-  idx_t result_idx = result_offset - result_entry * kBitsPerValue;
-  idx_t input_entry = input_start / kBitsPerValue;
-  idx_t input_idx = input_start - input_entry * kBitsPerValue;
+  idx_t result_entry = result_offset / ValidityMask::BITS_PER_VALUE;
+  idx_t result_idx =
+    result_offset - result_entry * ValidityMask::BITS_PER_VALUE;
+  idx_t input_entry = input_start / ValidityMask::BITS_PER_VALUE;
+  idx_t input_idx = input_start - input_entry * ValidityMask::BITS_PER_VALUE;
   idx_t pos = 0;
   while (pos < scan_count) {
     validity_t input_mask = input[input_entry];
     const idx_t bits_left = scan_count - pos;
     const idx_t input_window_size =
-      std::min(bits_left, kBitsPerValue - input_idx);
+      std::min(bits_left, ValidityMask::BITS_PER_VALUE - input_idx);
     const idx_t result_window_size =
-      std::min(bits_left, kBitsPerValue - result_idx);
+      std::min(bits_left, ValidityMask::BITS_PER_VALUE - result_idx);
     const idx_t window_size = std::min(input_window_size, result_window_size);
     if (result_idx < input_idx) {
       input_mask >>= input_idx - result_idx;
@@ -1158,7 +1166,8 @@ void UnalignedScan(const validity_t* input, idx_t input_size, idx_t input_start,
       const idx_t shift_amount = result_idx - input_idx;
       input_mask = (input_mask & ~UpperMask(shift_amount)) << shift_amount;
     }
-    input_mask |= UpperMask(kBitsPerValue - result_idx - window_size);
+    input_mask |=
+      UpperMask(ValidityMask::BITS_PER_VALUE - result_idx - window_size);
     input_mask |= LowerMask(result_idx);
     if (input_mask != kAllValid) {
       if (!result_data) {
@@ -1168,8 +1177,8 @@ void UnalignedScan(const validity_t* input, idx_t input_size, idx_t input_start,
       result_data[result_entry] &= input_mask;
     }
     pos += window_size;
-    input_idx = (input_idx + window_size) % kBitsPerValue;
-    result_idx = (result_idx + window_size) % kBitsPerValue;
+    input_idx = (input_idx + window_size) % ValidityMask::BITS_PER_VALUE;
+    result_idx = (result_idx + window_size) % ValidityMask::BITS_PER_VALUE;
     if (input_idx == 0) {
       ++input_entry;
     }
@@ -1181,9 +1190,9 @@ void UnalignedScan(const validity_t* input, idx_t input_size, idx_t input_start,
 
 void AlignedScan(const validity_t* input, idx_t input_start,
                  ValidityMask& result_mask, idx_t scan_count) {
-  SDB_ASSERT(input_start % kBitsPerValue == 0);
+  SDB_ASSERT(input_start % ValidityMask::BITS_PER_VALUE == 0);
   auto* result_data = result_mask.GetData();
-  const idx_t start_offset = input_start / kBitsPerValue;
+  const idx_t start_offset = input_start / ValidityMask::BITS_PER_VALUE;
   const idx_t entry_scan_count = ValidityMask::EntryCount(scan_count);
   for (idx_t i = 0; i < entry_scan_count; ++i) {
     const auto input_entry = input[start_offset + i];
@@ -1375,8 +1384,8 @@ struct BitsetContainerScanState : ContainerScanState {
 
   void ScanPartial(ValidityMask& result_mask, idx_t result_offset,
                    idx_t to_scan) {
-    if (!result_offset && to_scan % kBitsPerValue == 0 &&
-        scanned_count % kBitsPerValue == 0) {
+    if (!result_offset && to_scan % ValidityMask::BITS_PER_VALUE == 0 &&
+        scanned_count % ValidityMask::BITS_PER_VALUE == 0) {
       AlignedScan(bitset, scanned_count, result_mask, to_scan);
     } else {
       UnalignedScan(bitset, container_size, scanned_count, result_mask,
@@ -1448,7 +1457,8 @@ struct RoaringScanState final : SegmentScanState {
       const auto rows =
         std::min<idx_t>(kContainerSize, count - i * kContainerSize);
       position += DataSizeInBytes(
-        metadata, duckdb::AlignValue<idx_t, kBitsPerValue>(rows));
+        metadata,
+        duckdb::AlignValue<idx_t, ValidityMask::BITS_PER_VALUE>(rows));
       if (position > metadata_offset) [[unlikely]] {
         ThrowCorrupted("roaring", "container data extends into the metadata");
       }
@@ -1463,7 +1473,7 @@ struct RoaringScanState final : SegmentScanState {
   std::vector<idx_t> data_start_position;
   idx_t lookup_container = duckdb::DConstants::INVALID_INDEX;
   std::array<idx_t, kCompressedSegmentCount + 1> lookup_starts = {};
-  validity_t boolean_words[STANDARD_VECTOR_SIZE / kBitsPerValue];
+  validity_t boolean_words[STANDARD_VECTOR_SIZE / ValidityMask::BITS_PER_VALUE];
 };
 
 void SkipContainer(ContainerScan& container, idx_t skip_count) {
@@ -1570,9 +1580,10 @@ bool RowIsValid(RoaringScanState& scan, idx_t row) {
   const auto metadata = scan.container_metadata[container_index];
   const auto* data = scan.data_ptr + scan.data_start_position[container_index];
   if (metadata.type == ContainerType::Bitset) {
-    const auto entry = duckdb::Load<validity_t>(data + offset / kBitsPerValue *
-                                                         sizeof(validity_t));
-    return ValidityMask::RowIsValid(entry, offset % kBitsPerValue);
+    const auto entry = duckdb::Load<validity_t>(
+      data + offset / ValidityMask::BITS_PER_VALUE * sizeof(validity_t));
+    return ValidityMask::RowIsValid(entry,
+                                    offset % ValidityMask::BITS_PER_VALUE);
   }
   const auto segment = offset / kCompressedSegmentSize;
   const auto low = static_cast<uint8_t>(offset % kCompressedSegmentSize);
@@ -1626,13 +1637,14 @@ void ExtractValidityMaskToData(const ValidityMask& validity,
     return;
   }
   const auto* src = reinterpret_cast<const_data_ptr_t>(validity.GetData());
-  const idx_t aligned =
-    duckdb::AlignValueFloor<idx_t, kPackGroupSize>(scan_count);
+  const idx_t aligned = duckdb::AlignValueFloor<
+    idx_t, BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE>(scan_count);
   BitpackingPrimitives::UnPackBuffer<uint8_t>(write_ptr, src, aligned, 1);
   if (aligned == scan_count) {
     return;
   }
-  std::array<uint8_t, kPackGroupSize> tail = {};
+  std::array<uint8_t, BitpackingPrimitives::BITPACKING_ALGORITHM_GROUP_SIZE>
+    tail = {};
   BitpackingPrimitives::UnPackBlock<uint8_t>(tail.data(), src + aligned / 8, 1);
   std::memcpy(write_ptr + aligned, tail.data(), scan_count - aligned);
 }

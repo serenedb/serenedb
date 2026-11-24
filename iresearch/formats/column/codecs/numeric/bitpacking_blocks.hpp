@@ -257,10 +257,9 @@ class BitpackingBlocks {
   }
 
   static uint64_t SampledDeltaBytes(BlockRows<V> rows) noexcept {
-    constexpr size_t kEvery = 8;
     uint64_t sampled = 0;
     size_t samples = 0;
-    for (size_t b = 0; b < rows.Blocks(); b += kEvery, ++samples) {
+    for (size_t b = 0; b < rows.Blocks(); b += kSampleStride, ++samples) {
       const auto [lo, hi] = StepBounds(rows.Block(b), rows.BlockSize(b));
       sampled += PackedBytes(std::bit_width(static_cast<V>(hi - lo)));
     }
@@ -387,6 +386,7 @@ class BitpackingBlocks {
 
   static constexpr size_t kFrameBlocks = kBitpackingFrameRows / kBlockValues;
   static constexpr size_t kSampledSteps = 64;
+  static constexpr size_t kSampleStride = 8;
   static constexpr uint64_t kNoShare = std::numeric_limits<uint64_t>::max();
 
   void Resize(size_t rows) {
@@ -539,8 +539,7 @@ class BitpackingBlocks {
   }
 
   bool DifferencesNarrower(BlockRows<V> rows) const noexcept {
-    constexpr size_t kEvery = 8;
-    for (size_t b = 0; b < _bits.size(); b += kEvery) {
+    for (size_t b = 0; b < _bits.size(); b += kSampleStride) {
       const auto [lo, hi] = StepBounds(rows.Block(b), rows.BlockSize(b));
       if (std::bit_width(static_cast<V>(hi - lo)) < _bits[b]) {
         return true;

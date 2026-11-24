@@ -249,8 +249,6 @@ class ConnectionContext final : public duckdb::ClientContext {
 
   uint32_t job_depth = 0;
 
-  bool lists_system_schemas = true;
-
   std::unique_ptr<replication::OriginSession> replication_origin;
 
   void ValidateIsolationLevel(duckdb::TransactionIsolationLevel level) final;

@@ -489,6 +489,7 @@ void AddUnitPatch(std::vector<UnitPatch>& patches, uint64_t unit,
 void UnitPatchBuilder::Add(
   uint64_t unit, std::span<const uint64_t> rows,
   absl::FunctionRef<duckdb::Vector(size_t column)> values) {
+  SDB_ASSERT(!_columns.empty());
   if (_last >= _units.size() || _units[_last].unit != unit) {
     const auto it = absl::c_find_if(
       _units, [&](const Unit& entry) { return entry.unit == unit; });

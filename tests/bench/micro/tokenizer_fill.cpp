@@ -785,11 +785,19 @@ std::vector<duckdb::string_t> AsValues(const std::vector<std::string>& corpus) {
   return values;
 }
 
+struct Binder {
+  duckdb::DuckDB db{nullptr};
+  duckdb::Connection con{db};
+};
+
+constinit std::unique_ptr<Binder> gBinder;
+
 irs::analysis::Tokenizer::ptr MakeBound(Factory make) {
-  static duckdb::DuckDB gDb{nullptr};
-  static duckdb::Connection gCon{gDb};
+  if (!gBinder) {
+    gBinder = std::make_unique<Binder>();
+  }
   auto stream = make();
-  stream->Bind(*gCon.context);
+  stream->Bind(*gBinder->con.context);
   return stream;
 }
 
@@ -1814,13 +1822,10 @@ TOKENIZER_BENCH(wordnet_synonyms_large, MakeWordnetSynonymsLarge,
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
-  benchmark::Initialize(&argc, argv);
-  if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
-    return 1;
-  }
-  benchmark::RunSpecifiedBenchmarks();
-  benchmark::Shutdown();
-  return 0;
+  const int rc = sdb::bench::RunBenchmarks(argc, argv);
+  gBinder.reset();
+  irs::DuckDBEngine::Instance().Shutdown();
+  return rc;
 }
 
 [[maybe_unused]] static const bool kMain =

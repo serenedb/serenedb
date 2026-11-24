@@ -1,0 +1,174 @@
+statement ok
+CREATE TABLE uicc_empty (id INT PRIMARY KEY, x INT)
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE UNIQUE INDEX uicc_empty_x ON uicc_empty (x)
+
+connection b
+statement ok
+BEGIN
+
+connection b
+statement ok
+INSERT INTO uicc_empty VALUES (1, 10), (2, 10)
+
+connection a
+statement ok
+COMMIT
+
+connection b
+statement error
+COMMIT
+----
+db error: ERROR: duplicate key value violates unique constraint "uicc_empty_x"
+DETAIL: Key (x)=(10) already exists.
+
+
+query
+SELECT count(*) AS n FROM uicc_empty
+----
+n
+0
+
+statement ok
+CREATE TABLE uicc_nulls (id INT PRIMARY KEY, x INT)
+
+statement ok
+INSERT INTO uicc_nulls VALUES (1, NULL)
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE UNIQUE INDEX uicc_nulls_x ON uicc_nulls (x)
+
+connection b
+statement ok
+BEGIN
+
+connection b
+statement ok
+INSERT INTO uicc_nulls VALUES (2, 20), (3, 20)
+
+connection a
+statement ok
+COMMIT
+
+connection b
+statement error
+COMMIT
+----
+db error: ERROR: duplicate key value violates unique constraint "uicc_nulls_x"
+DETAIL: Key (x)=(20) already exists.
+
+
+query
+SELECT count(*) AS n FROM uicc_nulls
+----
+n
+1
+
+statement ok
+CREATE TABLE uicc_drop (id INT PRIMARY KEY, x INT)
+
+statement ok
+INSERT INTO uicc_drop VALUES (1, 10)
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE UNIQUE INDEX uicc_drop_x ON uicc_drop (x)
+
+connection b
+statement ok
+INSERT INTO uicc_drop VALUES (2, 10)
+
+connection a
+statement ok
+DROP INDEX uicc_drop_x
+
+connection a
+statement ok
+COMMIT
+
+query
+SELECT id, x FROM uicc_drop ORDER BY id
+----
+id	x
+1	10
+2	10
+
+statement ok
+CREATE TABLE uicc_replace (id INT PRIMARY KEY, x INT)
+
+statement ok
+INSERT INTO uicc_replace VALUES (1, 10)
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE UNIQUE INDEX uicc_replace_x ON uicc_replace (x)
+
+connection b
+statement ok
+INSERT INTO uicc_replace VALUES (2, 10)
+
+connection a
+statement ok
+CREATE OR REPLACE INDEX uicc_replace_x ON uicc_replace (x)
+
+connection a
+statement ok
+COMMIT
+
+query
+SELECT id, x FROM uicc_replace ORDER BY id
+----
+id	x
+1	10
+2	10
+
+statement ok
+CREATE TABLE uicc_dropped_table (id INT PRIMARY KEY, x INT)
+
+statement ok
+INSERT INTO uicc_dropped_table VALUES (1, 10)
+
+connection a
+statement ok
+BEGIN
+
+connection a
+statement ok
+CREATE UNIQUE INDEX uicc_dropped_table_x ON uicc_dropped_table (x)
+
+connection b
+statement ok
+INSERT INTO uicc_dropped_table VALUES (2, 10)
+
+connection a
+statement ok
+DROP TABLE uicc_dropped_table
+
+connection a
+statement ok
+COMMIT
+
+statement error
+SELECT count(*) FROM uicc_dropped_table
+----
+db error: ERROR: Table with name uicc_dropped_table does not exist!
+Did you mean "uicc_drop"?

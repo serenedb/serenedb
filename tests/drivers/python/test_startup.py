@@ -368,6 +368,19 @@ def test_unknown_unix_socket_group(tmp_path: Path, socket_dir: Path) -> None:
         server.stop()
 
 
+@pytest.mark.parametrize("port", ["0", "65536", "70000"])
+def test_unix_socket_port_out_of_range(tmp_path: Path, socket_dir: Path,
+                                       port: str) -> None:
+    server = _Server(tmp_path / "data",
+                     f"postgres://{socket_dir}?port={port}")
+    try:
+        assert server.proc.wait(timeout=60) != 0, server.output()
+        assert f"invalid port '{port}'" in server.output(), server.output()
+        assert not list(socket_dir.iterdir()), server.output()
+    finally:
+        server.stop()
+
+
 def test_cleartext_password_on_a_unix_socket(tmp_path: Path,
                                              socket_dir: Path) -> None:
     server = _Server(tmp_path / "data", f"postgres://{socket_dir}?port=5432")

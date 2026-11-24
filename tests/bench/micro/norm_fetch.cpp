@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/base/internal/endian.h>
+#include <absl/cleanup/cleanup.h>
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
@@ -564,9 +565,13 @@ struct Fixture {
   }
 };
 
+std::map<std::pair<int, uint32_t>, std::unique_ptr<Fixture>>& Fixtures() {
+  static std::map<std::pair<int, uint32_t>, std::unique_ptr<Fixture>> fixtures;
+  return fixtures;
+}
+
 Fixture& GetFixture(Shape shape, uint32_t rows) {
-  static std::map<std::pair<int, uint32_t>, std::unique_ptr<Fixture>> cache;
-  auto& f = cache[{static_cast<int>(shape), rows}];
+  auto& f = Fixtures()[{static_cast<int>(shape), rows}];
   if (!f) {
     f = std::make_unique<Fixture>();
     f->values = MakeValues(shape, rows);
@@ -680,13 +685,16 @@ BENCHMARK(Bench<Mode::Score>)->Apply(Args);
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
+  absl::Cleanup shutdown = [] {
+    Fixtures().clear();
+    irs::DuckDBEngine::Instance().Shutdown();
+  };
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
     return 1;
   }
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
 

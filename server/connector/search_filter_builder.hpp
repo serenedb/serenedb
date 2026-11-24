@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/status/status.h>
-#include <absl/status/statusor.h>
 
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/planner/expression.hpp>
@@ -276,8 +275,11 @@ bool ContainsIndexOnlyPredicate(const duckdb::Expression& expr);
 // functions, excluding the index-only match sugar.
 bool IsStrictComparisonShape(const duckdb::Expression& expr);
 
-absl::StatusOr<bool> SetupTermClause(irs::TermClause& clause,
-                                     const SearchColumnInfo& column_info,
-                                     const duckdb::Value& value);
+std::optional<duckdb::Value> ExactColumnValue(const duckdb::LogicalType& type,
+                                              const duckdb::Value& value);
+
+absl::Status SetupTermClause(irs::TermClause& clause,
+                             const SearchColumnInfo& column_info,
+                             const duckdb::Value& value);
 
 }  // namespace sdb::connector

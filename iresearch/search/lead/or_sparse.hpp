@@ -30,10 +30,10 @@
 namespace irs::lead {
 
 template<Type Leaf>
-class UnionDocs {
+class OrSparse {
  public:
   template<typename Init>
-  UnionDocs(size_t size, Init&& init)
+  OrSparse(size_t size, Init&& init)
     : _leaves{size, std::forward<Init>(init)},
       _heads{size,
              [this](Head& head, size_t i) noexcept {
@@ -41,8 +41,8 @@ class UnionDocs {
              }},
       _size{size} {}
 
-  UnionDocs(UnionDocs&&) = delete;
-  UnionDocs& operator=(UnionDocs&&) = delete;
+  OrSparse(OrSparse&&) = delete;
+  OrSparse& operator=(OrSparse&&) = delete;
 
   doc_id_t Next() {
     if (doc_limits::eof(_doc)) [[unlikely]] {

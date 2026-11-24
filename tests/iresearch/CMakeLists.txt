@@ -150,6 +150,7 @@ add_executable(
     search/nested_filter_test.cpp
     search/ngram_similarity_filter_tests.cpp
     search/optimizer_scorer_test.cpp
+    search/or_sparse_test.cpp
     search/pattern_cache_test.cpp
     search/per_node_scorer_test.cpp
     search/phrase_filter_tests.cpp
@@ -175,7 +176,6 @@ add_executable(
     search/tfidf_test.cpp
     search/token_phrase_test.cpp
     search/top_terms_selector_test.cpp
-    search/union_docs_test.cpp
     search/vector_similarity_query_test.cpp
     search/wildcard_filter_test.cpp
     search/wildcard_ngram_filter_test.cpp

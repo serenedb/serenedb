@@ -32,8 +32,8 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/lead/or_sparse.hpp>
 #include <iresearch/search/lead/posting_docs.hpp>
-#include <iresearch/search/lead/union_docs.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
 #include <iresearch/utils/dispatch.hpp>
 #include <iterator>
@@ -572,7 +572,7 @@ TEST_P(BooleanWindowTest, union_merges_every_block_kind) {
     irs::Resolve(*doc, [&]<typename Input> {
       using Leaf = irs::detail::PostingLead<Input>;
       const auto make = [&] {
-        return std::make_unique<irs::lead::UnionDocs<Leaf>>(
+        return std::make_unique<irs::lead::OrSparse<Leaf>>(
           metas.size(), [&](Leaf& leaf, size_t i) {
             leaf.Prepare(
               metas[i], *doc, irs::detail::LayoutOf(*field),

@@ -47,8 +47,8 @@
 #include "iresearch/search/fill/leaves.hpp"
 #include "iresearch/search/fill/set_leaves.hpp"
 #include "iresearch/search/lead/make.hpp"
+#include "iresearch/search/lead/or_sparse.hpp"
 #include "iresearch/search/lead/posting_docs.hpp"
-#include "iresearch/search/lead/union_docs.hpp"
 #include "iresearch/search/probe/plan.hpp"
 #include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/utils/empty.hpp"
@@ -137,24 +137,24 @@ Result<Family> MakeWindowDisjunctionOfTerms(std::span<const Term> terms,
   });
 }
 
-inline bool UnionIsCheaper(size_t terms, uint64_t docs,
-                           doc_id_t docs_count) noexcept {
+inline bool OrSparseIsCheaper(size_t terms, uint64_t docs,
+                              doc_id_t docs_count) noexcept {
   const uint64_t windows = docs_count / kWindowDocs + 1;
   return docs * std::bit_width(terms) <=
          std::min(SegmentWords(docs_count), terms * windows);
 }
 
 template<typename Family, typename P = NoPins, typename Term, typename Ctx>
-Result<Family> MakeUnionOfTerms(std::span<const Term> terms,
-                                const TermReader* field,
-                                const duckdb::InputFile& doc,
-                                doc_id_t docs_count, const Ctx& ctx) {
-  if (!UnionIsCheaper(terms.size(), SumDocs(terms), docs_count)) {
+Result<Family> MakeOrSparseOfTerms(std::span<const Term> terms,
+                                   const TermReader* field,
+                                   const duckdb::InputFile& doc,
+                                   doc_id_t docs_count, const Ctx& ctx) {
+  if (!OrSparseIsCheaper(terms.size(), SumDocs(terms), docs_count)) {
     return {};
   }
   return Resolve<P>(doc, [&]<typename Input> -> Result<Family> {
     using Leaf = PostingLead<Input>;
-    return Family::template Docs<lead::UnionDocs<Leaf>>(
+    return Family::template Docs<lead::OrSparse<Leaf>>(
       ctx, terms.size(), [&](Leaf& leaf, size_t i) {
         const auto& own = FieldOf(terms[i], field);
         const auto& meta = CookieOf(terms[i]);
@@ -172,7 +172,7 @@ Result<Family> MakeDisjunctionOfTerms(std::span<const Term> terms,
                                       doc_id_t docs_count, const Ctx& ctx) {
   SDB_ASSERT(terms.size() > 1);
   if (auto merged =
-        MakeUnionOfTerms<Family, P>(terms, field, doc, docs_count, ctx)) {
+        MakeOrSparseOfTerms<Family, P>(terms, field, doc, docs_count, ctx)) {
     return merged;
   }
   if (Family::BitsetSpan(ctx, docs_count) >= docs_count) {
@@ -700,7 +700,7 @@ Result<Family> MakeDisjunction(std::span<const Term> terms,
   }
   if constexpr (!kScores<Scoring>) {
     if (filters.empty()) {
-      if (auto merged = MakeUnionOfTerms<Family, P>(
+      if (auto merged = MakeOrSparseOfTerms<Family, P>(
             terms, field, *doc, static_cast<doc_id_t>(segment.docs_count()),
             ctx)) {
         return merged;

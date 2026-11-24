@@ -32,6 +32,7 @@
 #include <cstring>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/vector_size.hpp>
+#include <limits>
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -506,6 +507,90 @@ U WidenPrefixSum(const uint8_t* in, size_t n, uint8_t stored, U acc, U offset,
     stored, [&]<typename S>() IRS_FORCE_INLINE {
       return WidenPrefixSumAs<U, S, kWrite>(in, n, acc, offset, out);
     });
+}
+
+inline constexpr uint64_t kBrokenRuns = std::numeric_limits<uint64_t>::max();
+
+struct RunEnds {
+  uint64_t total = 0;
+  uint32_t shortest = 0;
+};
+
+#ifdef __AVX2__
+template<typename S>
+size_t PrefixRunEndsLanes(const uint8_t* in, size_t n, uint32_t* out,
+                          uint32_t& acc, uint32_t& shortest,
+                          uint32_t& longest) noexcept {
+  const auto last = _mm256_set1_epi32(7);
+  auto carry = _mm256_setzero_si256();
+  auto low = _mm256_set1_epi32(-1);
+  auto high = _mm256_setzero_si256();
+  size_t i = 0;
+  for (; i + 8 <= n; i += 8) {
+    const auto length = WidenHalfLanes<S>(in + i * sizeof(S));
+    low = _mm256_min_epu32(low, length);
+    high = _mm256_max_epu32(high, length);
+    auto x = _mm256_add_epi32(length, _mm256_slli_si256(length, 4));
+    x = _mm256_add_epi32(x, _mm256_slli_si256(x, 8));
+    x = _mm256_add_epi32(
+      x, _mm256_shuffle_epi32(_mm256_permute2x128_si256(x, x, 0x08), 0xFF));
+    _mm256_storeu_si256(reinterpret_cast<__m256i*>(out + i),
+                        _mm256_add_epi32(x, carry));
+    carry = _mm256_add_epi32(carry, _mm256_permutevar8x32_epi32(x, last));
+  }
+  if (i == 0) {
+    return 0;
+  }
+  auto low4 = _mm_min_epu32(_mm256_castsi256_si128(low),
+                            _mm256_extracti128_si256(low, 1));
+  low4 = _mm_min_epu32(low4, _mm_shuffle_epi32(low4, 0x4E));
+  low4 = _mm_min_epu32(low4, _mm_shuffle_epi32(low4, 0xB1));
+  auto high4 = _mm_max_epu32(_mm256_castsi256_si128(high),
+                             _mm256_extracti128_si256(high, 1));
+  high4 = _mm_max_epu32(high4, _mm_shuffle_epi32(high4, 0x4E));
+  high4 = _mm_max_epu32(high4, _mm_shuffle_epi32(high4, 0xB1));
+  acc = static_cast<uint32_t>(_mm256_extract_epi32(carry, 0));
+  shortest = static_cast<uint32_t>(_mm_cvtsi128_si32(low4));
+  longest = static_cast<uint32_t>(_mm_cvtsi128_si32(high4));
+  return i;
+}
+#endif
+
+template<typename S>
+RunEnds PrefixRunEndsAs(const uint8_t* in, size_t n, uint32_t* out) noexcept {
+  uint32_t acc = 0;
+  uint32_t shortest = std::numeric_limits<uint32_t>::max();
+  uint32_t longest = 0;
+  size_t i = 0;
+#ifdef __AVX2__
+  i = PrefixRunEndsLanes<S>(in, n, out, acc, shortest, longest);
+#endif
+  for (; i < n; ++i) {
+    const auto length =
+      static_cast<uint32_t>(duckdb::Load<S>(in + i * sizeof(S)));
+    shortest = std::min(shortest, length);
+    longest = std::max(longest, length);
+    acc += length;
+    out[i] = acc;
+  }
+  if (n == 0) {
+    return {};
+  }
+  if (uint64_t{longest} * n > std::numeric_limits<uint32_t>::max()) {
+    for (size_t k = 1; k < n; ++k) {
+      if (out[k] <= out[k - 1]) {
+        return {.total = kBrokenRuns, .shortest = shortest};
+      }
+    }
+  }
+  return {.total = acc, .shortest = shortest};
+}
+
+inline RunEnds PrefixRunEnds(const uint8_t* in, size_t n, uint8_t width,
+                             uint32_t* out) noexcept {
+  return Resolve<StoredAxis<sizeof(uint32_t)>>(
+    width, [&]<typename S>()
+             IRS_FORCE_INLINE { return PrefixRunEndsAs<S>(in, n, out); });
 }
 
 template<typename U>

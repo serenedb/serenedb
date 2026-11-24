@@ -4590,6 +4590,60 @@ TEST(ColNumericKernelsTest, PrefixSumOfEveryWidthAndLength) {
   check.template operator()<uint32_t>();
 }
 
+TEST(ColNumericKernelsTest, RunEndsOfEveryWidthAndLength) {
+  using irs::codecs::numeric::PrefixRunEnds;
+  for (const uint8_t width : {1, 2, 4}) {
+    for (size_t n = 0; n <= 37; ++n) {
+      SCOPED_TRACE(testing::Message() << int{width} << " " << n);
+      std::vector<uint8_t> in(n * width);
+      std::vector<uint32_t> lengths(n);
+      for (size_t i = 0; i != n; ++i) {
+        lengths[i] = 1 + static_cast<uint32_t>(Mix(i + n * 131 + width) % 200);
+        std::memcpy(in.data() + i * width, &lengths[i], width);
+      }
+      std::vector<uint32_t> out(n + 1, 0x5a);
+      const auto ends = PrefixRunEnds(in.data(), n, width, out.data());
+      uint64_t total = 0;
+      uint32_t shortest = n == 0 ? 0 : std::numeric_limits<uint32_t>::max();
+      for (size_t i = 0; i != n; ++i) {
+        total += lengths[i];
+        shortest = std::min(shortest, lengths[i]);
+        ASSERT_EQ(out[i], total) << i;
+      }
+      EXPECT_EQ(ends.total, total);
+      EXPECT_EQ(ends.shortest, shortest);
+      EXPECT_EQ(out[n], 0x5a);
+      if (n != 0) {
+        in[(n / 2) * width] = 0;
+        if (width > 1) {
+          in[(n / 2) * width + 1] = 0;
+        }
+        EXPECT_EQ(PrefixRunEnds(in.data(), n, width, out.data()).shortest, 0);
+      }
+    }
+  }
+}
+
+TEST(ColNumericKernelsTest, RunEndsThatOverflowAreBroken) {
+  using irs::codecs::numeric::kBrokenRuns;
+  using irs::codecs::numeric::PrefixRunEnds;
+  for (const size_t n : {3, 9, 17}) {
+    SCOPED_TRACE(n);
+    std::vector<uint32_t> lengths(n, 1U << 30);
+    std::vector<uint32_t> out(n);
+    const auto ends =
+      PrefixRunEnds(reinterpret_cast<const uint8_t*>(lengths.data()), n,
+                    sizeof(uint32_t), out.data());
+    EXPECT_EQ(ends.total, n < 4 ? uint64_t{n} << 30 : kBrokenRuns);
+    EXPECT_EQ(ends.shortest, 1U << 30);
+  }
+  std::vector<uint32_t> in_place(9, 1U << 30);
+  const auto ends =
+    PrefixRunEnds(reinterpret_cast<const uint8_t*>(in_place.data()),
+                  in_place.size(), sizeof(uint32_t), in_place.data());
+  EXPECT_EQ(ends.total, kBrokenRuns);
+}
+
 TEST(ColNumericKernelsTest, ExpandsRunsOfEveryWidthAndLength) {
   const auto check = []<typename U, typename T>() {
     for (const uint64_t one_in : {0, 1, 2, 5, 23}) {

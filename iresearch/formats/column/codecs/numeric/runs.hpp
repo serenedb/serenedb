@@ -504,10 +504,8 @@ class RunsReader final : public FrameReader<T> {
     WidenAdd(src, runs, this->_f.stored, static_cast<U>(_own.base),
              _values.data());
     std::fill_n(_values.data() + runs, kRunPad, U{});
-    Widen(src + size_t{runs} * this->_f.stored, runs, _own.run_width,
-          _ends.data());
     _length_bound = (uint64_t{1} << (8 * _own.run_width)) - 1;
-    EndRuns(rows);
+    EndRuns(src + size_t{runs} * this->_f.stored, _own.run_width, rows);
   }
 
   void LoadPacked(const NumericFrameMeta& m, uint32_t rows) {
@@ -531,7 +529,8 @@ class RunsReader final : public FrameReader<T> {
     _values.resize(size_t{runs} + kRunPad);
     std::fill_n(_values.data() + runs, kRunPad, U{});
     _ends.resize(runs);
-    EndRuns(rows);
+    EndRuns(reinterpret_cast<const uint8_t*>(_ends.data()), sizeof(uint32_t),
+            rows);
   }
 
   static uint64_t LengthBound(const uint8_t* lengths, size_t blocks) noexcept {
@@ -549,22 +548,14 @@ class RunsReader final : public FrameReader<T> {
     return bound;
   }
 
-  void EndRuns(uint32_t rows) {
-    uint64_t total = 0;
-    bool empty = false;
-    for (const auto length : _ends) {
-      total += length;
-      empty |= length == 0;
-    }
-    if (empty || total != rows) [[unlikely]] {
+  void EndRuns(const uint8_t* lengths, uint8_t width, uint32_t rows) {
+    const auto ends = PrefixRunEnds(lengths, _ends.size(), width, _ends.data());
+    if (ends.shortest == 0 || ends.total != rows) [[unlikely]] {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
-    WidenPrefixSumAs<uint32_t, uint32_t, true>(
-      reinterpret_cast<const uint8_t*>(_ends.data()), _ends.size(), 0, 0,
-      _ends.data());
-    _long_runs = total >= uint64_t{kBurst} * _ends.size();
+    _long_runs = ends.total >= uint64_t{kBurst} * _ends.size();
     if constexpr (kExpandsRuns) {
-      _short_runs = total < uint64_t{kExpandedRunRows} * _ends.size();
+      _short_runs = ends.total < uint64_t{kExpandedRunRows} * _ends.size();
     }
     _hint = 0;
   }

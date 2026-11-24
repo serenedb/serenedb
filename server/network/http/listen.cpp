@@ -32,6 +32,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
@@ -167,8 +168,10 @@ std::shared_ptr<const ListenOptions> ParseHttps(
 
 class HttpListener final : public AcceptorBase {
  public:
-  HttpListener(const ListenContext& context, const ListenSpec& spec)
-    : _ssl{HttpOptions(spec).https ? MakeTls(context, spec, {.required = true})
+  HttpListener(const ListenContext& context, const ListenSpec& spec,
+               std::vector<std::shared_ptr<void>> started)
+    : _started{std::move(started)},
+      _ssl{HttpOptions(spec).https ? MakeTls(context, spec, {.required = true})
                                    : nullptr},
       _api_keys{MakeApiKeyValidator()},
       _bearer{MakeBearerValidator()},
@@ -205,6 +208,8 @@ class HttpListener final : public AcceptorBase {
   void Stop() noexcept final { _acceptor->Stop(); }
 
  private:
+  // What the APIs' start hooks returned, released after the acceptor
+  std::vector<std::shared_ptr<void>> _started;
   HttpRouter _router;
   std::unique_ptr<asio_ns::ssl::context> _ssl;
   std::unique_ptr<http::ApiKeyValidator> _api_keys;
@@ -220,9 +225,10 @@ std::unique_ptr<AcceptorBase> ListenHttp(const ListenContext& context,
   const std::string_view database = options.database.empty()
                                       ? irs::StaticStrings::kDefaultDatabase
                                       : std::string_view{options.database};
+  std::vector<std::shared_ptr<void>> started;
   for (const auto* api : options.apis) {
     if (api->start) {
-      api->start(spec);
+      started.push_back(api->start(context, spec));
     }
   }
   if (!catalog::ReadEntry<catalog::DatabaseCatalogEntry>(
@@ -231,7 +237,7 @@ std::unique_ptr<AcceptorBase> ListenHttp(const ListenContext& context,
               "' does not exist");
   }
   SetTimeouts();
-  return std::make_unique<HttpListener>(context, spec);
+  return std::make_unique<HttpListener>(context, spec, std::move(started));
 }
 
 SDB_LISTEN_PROTOCOL kHttp{"http", &ParseHttp, &ListenHttp};

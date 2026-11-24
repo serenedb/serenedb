@@ -23,6 +23,7 @@
 #include <duckdb/catalog/default/default_schemas.hpp>
 #include <duckdb/catalog/entry_lookup_info.hpp>
 #include <duckdb/common/exception/catalog_exception.hpp>
+#include <duckdb/main/client_config.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
 #include <duckdb/parser/parsed_data/alter_schema_info.hpp>
 #include <duckdb/parser/parsed_data/create_function_info.hpp>
@@ -235,9 +236,15 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> BaseCatalog::LookupSchema(
 void BaseCatalog::ScanSchemas(
   duckdb::ClientContext& context,
   std::function<void(duckdb::SchemaCatalogEntry&)> callback) {
+  // A DuckDB client's ATTACH must bind every table it is shown; ours use types
+  // it lacks.
+  const bool system_schemas =
+    !duckdb::ClientConfig::GetConfig(context).serves_duckdb_client;
   const auto transaction = GetCatalogTransaction(context);
   _schemas.Scan(transaction, [&](duckdb::CatalogEntry& entry) {
-    entry.Cast<Schema>().ScanSchemaTree(transaction, callback);
+    if (system_schemas || !entry.internal) {
+      entry.Cast<Schema>().ScanSchemaTree(transaction, callback);
+    }
   });
 }
 

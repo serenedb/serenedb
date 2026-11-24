@@ -45,7 +45,8 @@ constexpr auto kRoutes = std::to_array<network::http::Route>({
   {network::HttpMethod::Post, "/v1/metrics", Handler<Endpoint::Metrics>},
 });
 
-void Start(const network::ListenSpec& spec) {
+std::shared_ptr<void> Start(const network::ListenContext&,
+                            const network::ListenSpec& spec) {
   const auto& options = network::HttpOptions(spec);
   const std::string_view database = options.database.empty()
                                       ? irs::StaticStrings::kDefaultDatabase
@@ -63,6 +64,7 @@ void Start(const network::ListenSpec& spec) {
              "': OpenTelemetry schema: ", status.message(),
              ". Exports answer 503 until it matches.");
   }
+  return nullptr;
 }
 
 SDB_HTTP_API kOtel{"otel", kRoutes, network::http::kOtelMaxBodyBytes, &Start};

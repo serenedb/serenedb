@@ -53,11 +53,6 @@ DOCS_PER_BULK = 50
 READERS = 3
 
 
-# A TSan build exits 66 once it has findings to report, and CI reads those from
-# the sanitizer logs rather than the exit status, so it is not a test signal.
-_CLEAN_EXITS = (0, -15) + ((66,) if os.environ.get("TSAN_OPTIONS") else ())
-
-
 def _body(fixture: str, content_type: str) -> bytes:
     suffix = ".pb" if content_type == "application/x-protobuf" else ".json"
     return (FIXTURES / (fixture + suffix)).read_bytes()
@@ -83,9 +78,7 @@ def server(tmp_path: Path):
         yield serened.proc, pg, serened.http_port
     finally:
         pg.close()
-        returncode = serened.graceful_stop(timeout=60)
-        serened.stop()
-        assert returncode in _CLEAN_EXITS, serened.log.tail(0)
+        serened.stop_cleanly()
 
 
 def _counts(pg: psycopg.Connection) -> dict[str, int]:

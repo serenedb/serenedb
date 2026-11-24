@@ -19,6 +19,10 @@ SANITIZER_RE = re.compile(
 PROTO_V3 = 196608
 DEFAULT_START_TIMEOUT = 120.0
 
+# A TSan build exits 66 once it has findings to report, and CI reads those from
+# the sanitizer logs rather than the exit status, so it is not a test signal.
+CLEAN_EXITS = (0, -15) + ((66,) if os.environ.get("TSAN_OPTIONS") else ())
+
 
 def reserve_port():
     sock = socket.socket()
@@ -229,6 +233,15 @@ class Serened:
             self.keep_logs()
         if self.owns_datadir and not keep_datadir:
             shutil.rmtree(self.datadir, ignore_errors=True)
+
+    def stop_cleanly(self, timeout=60):
+        self.graceful_stop(timeout=timeout)
+        returncode = self.proc.poll() if self.proc else self.last_exit
+        self.stop()
+        if returncode not in CLEAN_EXITS:
+            raise AssertionError(
+                f"serened exited {returncode}; log:\n"
+                + (self.log.tail(0) if self.log else "(no log)"))
 
     def keep_logs(self):
         dest = os.environ.get("SDB_DRV_JUNIT")

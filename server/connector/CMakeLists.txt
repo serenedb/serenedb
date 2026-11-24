@@ -11,6 +11,7 @@ target_sources(
         search_sink_writer.cpp
         search_table_backfill.cpp
         duckdb_storage_extension.cpp
+        quack.cpp
         index_expression.cpp
         inverted_index_bind.cpp
         search_filter_builder.cpp

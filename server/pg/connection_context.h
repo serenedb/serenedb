@@ -72,13 +72,13 @@ namespace sdb::pg {
 class CopyInBatches;
 
 struct LoginCheck {
-  duckdb::idx_t role;
+  duckdb::idx_t database = 0;
+  duckdb::idx_t role = 0;
   bool superuser = false;
   irs::pg::SqlErrorData error;
 };
 
-LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
-                            const duckdb::Permissions& perm);
+LoginCheck RequireLogin(std::string_view user, std::string_view dbname);
 
 }  // namespace sdb::pg
 namespace sdb::network {
@@ -169,6 +169,10 @@ class ConnectionContext final : public duckdb::ClientContext {
   }
 
   bool HasNotices() const { return _notices.load(std::memory_order_relaxed); }
+
+  void DiscardNotices() {
+    ConsumeNotices([](const irs::pg::SqlErrorData&) {});
+  }
 
   template<typename Fn>
   void ConsumeNotices(Fn&& fn) {
@@ -317,6 +321,16 @@ duckdb::shared_ptr<duckdb::ClientContext> CreateClientContext(
 
 duckdb::unique_ptr<duckdb::Connection> MakeConnection(
   duckdb::DatabaseInstance& db, const SessionIdentity& identity);
+
+// The current value of setting `name` is what RESET and DISCARD return it to.
+void KeepAsSessionDefault(ConnectionContext& ctx, std::string_view name);
+
+void StartSession(ConnectionContext& ctx, bool superuser);
+
+duckdb::unique_ptr<duckdb::Connection> OpenClientSession(
+  std::string_view user, std::string_view database, int32_t backend_pid,
+  network::CancelRegistry* cancel_registry,
+  duckdb::shared_ptr<duckdb::SchedulerAccount> account);
 
 struct NoticeTarget {
   std::string_view what;

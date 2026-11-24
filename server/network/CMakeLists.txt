@@ -28,6 +28,11 @@ target_sources(
         http/otel/handlers.cpp
         http/otel/schema.cpp
         http/mcp/tools.cpp
+        http/quack/functions.cpp
+        http/quack/handlers.cpp
+        http/quack/service.cpp
+        http/quack/session.cpp
+        http/quack/statement.cpp
         http/test/handlers.cpp
         pg/pg_frame_codec.cpp
         pg/wire_frames.cpp
@@ -38,11 +43,18 @@ target_sources(
         pg/scram_messages.cpp
         pg/scram_client.cpp
         pg/hba.cpp
+        pg/login.cpp
         credentials.cpp
         server.cpp
 )
 
 target_link_libraries(sereneserver PUBLIC ada::ada simdutf::simdutf re2::re2)
+
+target_include_directories(
+    sereneserver
+    SYSTEM
+    PUBLIC "${CMAKE_SOURCE_DIR}/third_party/duckdb_quack/src/include"
+)
 
 add_library(
     serene_listeners
@@ -52,6 +64,7 @@ add_library(
     http/es/api.cpp
     http/mcp/api.cpp
     http/otel/api.cpp
+    http/quack/api.cpp
     http/test/api.cpp
 )
 target_link_libraries(serene_listeners PRIVATE sereneserver)

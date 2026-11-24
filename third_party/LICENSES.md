@@ -99,6 +99,7 @@ SereneDB and the libraries below are built into serened. `SELECT * FROM sdb_lice
 * [duckdb-inet](https://github.com/duckdb/duckdb-inet): `third_party/duckdb_inet/LICENSE`
 * [duckdb-markdown](https://github.com/teaguesterling/duckdb_markdown): `third_party/duckdb_markdown/LICENSE`
 * [duckdb-postgres](https://github.com/duckdb/duckdb-postgres): `third_party/duckdb_postgres/LICENSE`
+* [duckdb-quack](https://github.com/duckdb/duckdb-quack): `third_party/duckdb_quack/LICENSE`
 * [duckdb-spatial](https://github.com/duckdb/duckdb-spatial): `third_party/duckdb_spatial/LICENSE`
 * [Faiss](https://github.com/facebookresearch/faiss): `third_party/faiss/LICENSE`
 * [fastText](https://github.com/facebookresearch/fastText): `third_party/fastText/LICENSE`

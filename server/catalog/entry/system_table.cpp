@@ -49,6 +49,8 @@ duckdb::unique_ptr<duckdb::CatalogEntry> MakeTable(
   const pg::SystemTable& table) {
   duckdb::CreateTableInfo info{schema, duckdb::Identifier{table.Sql().name}};
   info.oid = table.Sql().oid;
+  info.internal = true;
+  info.row_type_oid = static_cast<duckdb::idx_t>(table.Sql().row_type);
   for (duckdb::idx_t i = 0; i < table.Sql().columns.size(); ++i) {
     if (table.Sql().columns[i].not_null) {
       info.constraints.emplace_back(

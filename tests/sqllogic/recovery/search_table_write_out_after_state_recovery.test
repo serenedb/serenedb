@@ -4,6 +4,9 @@ statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 RESET sdb_faults;
 
 statement ok
+SET sdb_faults = 'search_log_plain';
+
+statement ok
 CREATE TABLE wos (id BIGINT, v TEXT) WITH (compaction_interval = 0);
 
 statement ok

@@ -1,0 +1,124 @@
+control substitution on
+
+statement ok
+CREATE TABLE ru (id INT PRIMARY KEY, payload TEXT, other TEXT)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO ru SELECT i, 'orig' || i::TEXT, 'o' || i::TEXT
+  FROM range(0, 100) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ru;
+
+
+statement ok
+INSERT INTO ru SELECT i, 'orig' || i::TEXT, 'o' || i::TEXT
+  FROM range(100, 200) t(i);
+
+
+statement ok
+BEGIN;
+
+
+statement ok
+UPDATE ru SET payload = 'first' || id::TEXT WHERE id IN (5, 6, 105, 106);
+
+
+statement ok
+CREATE INDEX ru_idx ON ru USING inverted (other);
+
+
+statement ok
+UPDATE ru SET payload = 'second' || id::TEXT WHERE id IN (5, 7, 105, 107);
+
+
+query
+SELECT id, payload FROM ru WHERE id IN (4, 5, 6, 7, 104, 105, 106, 107)
+ORDER BY id;
+----
+id	payload
+4	orig4
+5	second5
+6	first6
+7	second7
+104	orig104
+105	second105
+106	first106
+107	second107
+
+
+statement ok
+COMMIT;
+
+
+query
+SELECT id, payload FROM ru WHERE id IN (4, 5, 6, 7, 104, 105, 106, 107)
+ORDER BY id;
+----
+id	payload
+4	orig4
+5	second5
+6	first6
+7	second7
+104	orig104
+105	second105
+106	first106
+107	second107
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_log
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, payload FROM ru WHERE id IN (4, 5, 6, 7, 104, 105, 106, 107)
+ORDER BY id;
+----
+id	payload
+4	orig4
+5	second5
+6	first6
+7	second7
+104	orig104
+105	second105
+106	first106
+107	second107
+
+
+connection after_log
+statement ok
+CHECKPOINT;
+
+
+connection after_log
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_log
+statement error connection closed
+SELECT 1;
+
+
+connection after_snapshot
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT id, payload FROM ru WHERE id IN (4, 5, 6, 7, 104, 105, 106, 107)
+ORDER BY id;
+----
+id	payload
+4	orig4
+5	second5
+6	first6
+7	second7
+104	orig104
+105	second105
+106	first106
+107	second107

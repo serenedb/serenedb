@@ -32,6 +32,6 @@ struct ThreadStack {
   std::vector<uintptr_t> frames;
 };
 
-std::vector<ThreadStack> CollectStacks();
+[[nodiscard]] std::vector<ThreadStack> CollectStacks();
 
 }  // namespace sdb

@@ -26,7 +26,6 @@
 #include <absl/base/const_init.h>
 #include <absl/base/thread_annotations.h>
 #include <absl/strings/ascii.h>
-#include <absl/strings/numbers.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
@@ -161,7 +160,10 @@ void InstallHandlers() {
   struct sigaction action = {};
   action.sa_sigaction = &StackHandler;
   action.sa_flags = SA_SIGINFO | SA_RESTART;
-  sigemptyset(&action.sa_mask);
+  sigfillset(&action.sa_mask);
+  for (const int fault : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP}) {
+    sigdelset(&action.sa_mask, fault);
+  }
   sigaction(SIGRTMIN, &action, nullptr);
 
   auto chain = [](int signal, struct sigaction& previous) {
@@ -182,22 +184,23 @@ bool SignalBlocked(pid_t tid, int signal) {
     return true;
   }
   std::array<char, 4096> buffer{};
-  const auto read = ::read(fd, buffer.data(), buffer.size());
+  const auto size = ::read(fd, buffer.data(), buffer.size());
   close(fd);
-  if (read <= 0) {
+  if (size <= 0) {
     return true;
   }
   constexpr std::string_view kKey = "\nSigBlk:";
-  std::string_view status{buffer.data(), static_cast<size_t>(read)};
+  const std::string_view status{buffer.data(), static_cast<size_t>(size)};
   const auto key = status.find(kKey);
   if (key == std::string_view::npos) {
     return true;
   }
-  status.remove_prefix(key + kKey.size());
+  const auto value =
+    absl::StripLeadingAsciiWhitespace(status.substr(key + kKey.size()));
   uint64_t mask = 0;
-  return !absl::SimpleHexAtoi(
-           absl::StripAsciiWhitespace(status.substr(0, status.find('\n'))),
-           &mask) ||
+  return fast_float::from_chars(value.data(), value.data() + value.size(), mask,
+                                16)
+             .ec != std::errc{} ||
          (mask >> (signal - 1) & 1) != 0;
 }
 
@@ -262,7 +265,8 @@ std::vector<ThreadStack> CollectStacks() {
   for (auto& stack : stacks) {
     if (stack.tid == self) {
       std::array<uintptr_t, kMaxFrames> frames{};
-      const auto own = Unwind(frames, 0);
+      const auto own = Unwind(
+        frames, reinterpret_cast<uintptr_t>(__builtin_return_address(0)));
       stack.frames.assign(own.begin(), own.end());
     } else if (!SignalBlocked(stack.tid, signal)) {
       stack.frames = SignalAndWait(stack.tid, signal);

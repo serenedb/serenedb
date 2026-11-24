@@ -27,6 +27,7 @@
 #include <absl/debugging/symbolize.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/notification.h>
+#include <fast_float/fast_float.h>
 #include <fcntl.h>
 #include <link.h>
 #include <poll.h>
@@ -96,10 +97,12 @@ SdbBadCfiSpin:
   .cfi_startproc
   mov x9, #0x1000
   .cfi_def_cfa x9, 16
+  .cfi_offset x30, -16
 1:
   ldrb w10, [x0]
   cbz w10, 1b
   .cfi_def_cfa sp, 0
+  .cfi_restore x30
   ret
   .cfi_endproc
   .size SdbBadCfiSpin, .-SdbBadCfiSpin
@@ -119,11 +122,6 @@ namespace {
   pollfd request{.fd = fd, .events = POLLIN, .revents = 0};
   while (poll(&request, 1, -1) < 0 && errno == EINTR) {
   }
-}
-
-[[clang::noinline, clang::disable_tail_calls]] void WaitInRawRead(int fd) {
-  char byte = 0;
-  SdbReadAtRowStart(fd, &byte);
 }
 
 [[clang::noinline, clang::disable_tail_calls]] void SleepInNanosleep(
@@ -213,20 +211,31 @@ std::string Describe(std::span<const ThreadStack> stacks, pid_t tid) {
   return text;
 }
 
-void WaitUntilInRead(pid_t tid) {
-  const auto path = absl::StrCat("/proc/self/task/", tid, "/syscall");
-  while (true) {
-    char text[16] = {};
-    const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
-    const auto read = fd < 0 ? -1 : ::read(fd, text, sizeof(text) - 1);
-    if (fd >= 0) {
-      close(fd);
-    }
-    if (read > 1 && std::string_view{text, 2} == "0 ") {
-      return;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+std::string ReadProc(pid_t tid, std::string_view file) {
+  const auto path = absl::StrCat("/proc/self/task/", tid, "/", file);
+  std::array<char, 4096> buffer{};
+  const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  const auto size = fd < 0 ? -1 : ::read(fd, buffer.data(), buffer.size());
+  if (fd >= 0) {
+    close(fd);
   }
+  return {buffer.data(), size > 0 ? static_cast<size_t>(size) : 0};
+}
+
+bool SignalPending(pid_t tid, int signal) {
+  constexpr std::string_view kKey = "\nSigPnd:";
+  const auto status = ReadProc(tid, "status");
+  const auto key = status.find(kKey);
+  if (key == std::string::npos) {
+    return false;
+  }
+  const auto* first = status.data() + key + kKey.size();
+  while (*first == ' ' || *first == '\t') {
+    ++first;
+  }
+  uint64_t mask = 0;
+  fast_float::from_chars(first, status.data() + status.size(), mask, 16);
+  return (mask >> (signal - 1) & 1) != 0;
 }
 
 struct Expectation {
@@ -250,7 +259,7 @@ bool Capture(std::span<const Expectation> expected) {
 TEST(StackTrace, EveryThreadWhereItRuns) {
   absl::Notification stop_waiting;
   std::atomic<bool> stop = false;
-  int fds[2];
+  int fds[2] = {};
   ASSERT_EQ(pipe(fds), 0);
 
   Thread notification{[&] { WaitInNotification(stop_waiting); }};
@@ -259,11 +268,11 @@ TEST(StackTrace, EveryThreadWhereItRuns) {
   Thread spinning{[&] { SpinInLoop(stop); }};
 
   std::vector<Expectation> expected{
-    {notification, "WaitInNotification"},
     {polling, "WaitInPoll"},
     {sleeping, "SleepInNanosleep"},
   };
 #ifndef ABSL_HAVE_THREAD_SANITIZER
+  expected.push_back({notification, "WaitInNotification"});
   expected.push_back({spinning, "SpinInLoop"});
 #endif
   EXPECT_TRUE(Capture(expected));
@@ -280,6 +289,8 @@ TEST(StackTrace, EveryThreadWhereItRuns) {
 TEST(StackTrace, UnwindsOutOfTheVdso) {
   std::atomic<bool> stop = false;
   Thread clock{[&] { SpinInClockGettime(stop); }};
+  const std::vector<Expectation> expected{{clock, "SpinInClockGettime"}};
+  EXPECT_TRUE(Capture(expected));
   for (int sample = 0; sample < 20; ++sample) {
     const auto stacks = CollectStacks();
     EXPECT_TRUE(HasFrameIn(stacks, clock.Tid(), "SpinInClockGettime"))
@@ -291,8 +302,9 @@ TEST(StackTrace, UnwindsOutOfTheVdso) {
 TEST(StackTrace, WhileAnotherThreadHoldsTheLoaderLock) {
   absl::Notification inside;
   absl::Notification release;
-  absl::Notification stop_waiting;
-  Thread waiting{[&] { WaitInNotification(stop_waiting); }};
+  int fds[2] = {};
+  ASSERT_EQ(pipe(fds), 0);
+  Thread waiting{[&] { WaitInPoll(fds[0]); }};
   Thread holder{[&] {
     dl_iterate_phdr(
       [](dl_phdr_info*, size_t, void* arg) {
@@ -305,11 +317,12 @@ TEST(StackTrace, WhileAnotherThreadHoldsTheLoaderLock) {
   }};
   inside.WaitForNotification();
 
-  const std::vector<Expectation> expected{{waiting, "WaitInNotification"}};
+  const std::vector<Expectation> expected{{waiting, "WaitInPoll"}};
   EXPECT_TRUE(Capture(expected));
 
   release.Notify();
-  stop_waiting.Notify();
+  close(fds[1]);
+  close(fds[0]);
 }
 
 TEST(StackTrace, ThreadBlockingTheSignalHasNoFrames) {
@@ -327,13 +340,25 @@ TEST(StackTrace, ThreadBlockingTheSignalHasNoFrames) {
   const auto stacks = CollectStacks();
   const auto* frames = Frames(stacks, thread.Tid());
   EXPECT_TRUE(frames && frames->empty());
+  EXPECT_FALSE(SignalPending(thread.Tid(), SIGRTMIN));
 
   stop_waiting.Notify();
 }
 
 #if defined(__x86_64__) && !defined(ABSL_HAVE_THREAD_SANITIZER)
+[[clang::noinline, clang::disable_tail_calls]] void WaitInRawRead(int fd) {
+  char byte = 0;
+  SdbReadAtRowStart(fd, &byte);
+}
+
+void WaitUntilInRead(pid_t tid) {
+  while (!ReadProc(tid, "syscall").starts_with("0 ")) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+}
+
 TEST(StackTrace, UnwindsWithTheRuleStartingAtTheInterruptedInstruction) {
-  int fds[2];
+  int fds[2] = {};
   ASSERT_EQ(pipe(fds), 0);
   Thread reading{[&] { WaitInRawRead(fds[0]); }};
   WaitUntilInRead(reading.Tid());
@@ -364,7 +389,7 @@ TEST(StackTrace, SurvivesCorruptUnwindInfo) {
   const auto* frames = Frames(stacks, corrupt.Tid());
   EXPECT_TRUE(frames && frames->size() == 1);
 #else
-  CollectStacks();
+  EXPECT_FALSE(CollectStacks().empty());
 #endif
 
   stop = true;

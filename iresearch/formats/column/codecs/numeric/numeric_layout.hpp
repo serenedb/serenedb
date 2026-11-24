@@ -148,6 +148,7 @@ inline constexpr uint8_t kNumericVersion = 1;
 inline constexpr size_t kNumericFrameMetaSize = 40;
 inline constexpr uint8_t kNumericFrameLog2 = 14;
 inline constexpr uint8_t kNumericLeafFrameLog2 = 16;
+inline constexpr uint8_t kNumericMaxFrameLog2 = 20;
 inline constexpr uint32_t kNumericDictMax = 65536;
 inline constexpr uint8_t kNumericShuffled = 1;
 inline constexpr uint8_t kNumericPacked = 2;
@@ -296,7 +297,7 @@ inline FrameHeader ParseFrames(duckdb::const_data_ptr_t p, uint64_t size,
         (!packed ||
          (LeafOf(codec) == ByteCodec::None && !(f.flags & kNumericShuffled) &&
           f.stored == f.width && f.frame_log2 == kBitpackingFrameLog2)) &&
-        f.frame_log2 >= 10 && f.frame_log2 <= 20 &&
+        f.frame_log2 >= 10 && f.frame_log2 <= kNumericMaxFrameLog2 &&
         rows <= std::numeric_limits<uint32_t>::max() && f.frame_count != 0 &&
         (!packed || shape == Shape::Runs ||
          f.frame_count == (rows + kBitpackingFrameRows - 1) /

@@ -67,11 +67,9 @@ constexpr uint32_t FramesOffset(Shape shape, bool packed,
          OwnHeaderSize(shape, packed);
 }
 
-inline Geometry BytesGeometry(Shape shape, ByteCodec leaf, uint32_t items,
+inline Geometry BytesGeometry(Shape shape, uint8_t log2, uint32_t items,
                               uint32_t item_bytes, size_t dictionary,
                               bool scaled) noexcept {
-  const uint8_t log2 =
-    leaf == ByteCodec::None ? kNumericFrameLog2 : kNumericLeafFrameLog2;
   const uint32_t per = (uint32_t{1} << log2) / item_bytes;
   const uint32_t frames = (items + per - 1) / per;
   const auto off_frames = FramesOffset(shape, false, scaled);
@@ -351,9 +349,13 @@ inline uint32_t ItemBytes(const Items& items) noexcept {
   return uint32_t{items.stored} + items.run_width;
 }
 
-inline Geometry GeometryOf(Shape shape, const Items& items, ByteCodec leaf,
-                           bool scaled) noexcept {
-  return BytesGeometry(shape, leaf, items.count, ItemBytes(items),
+inline Geometry GeometryOf(Shape shape, const Items& items, size_t width,
+                           ByteCodec leaf, bool scaled) noexcept {
+  const uint8_t log2 = leaf != ByteCodec::None ? kNumericLeafFrameLog2
+                       : shape == Shape::Plain && items.stored == width
+                         ? kNumericMaxFrameLog2
+                         : kNumericFrameLog2;
+  return BytesGeometry(shape, log2, items.count, ItemBytes(items),
                        items.dictionary.size(), scaled);
 }
 
@@ -378,7 +380,7 @@ class Frames final : public State {
     const auto rows = values.Size();
     const uint32_t item = ItemBytes(items);
     const auto geometry =
-      GeometryOf(Transform::kShape, items, leaf, values.Scale() > 1);
+      GeometryOf(Transform::kShape, items, sizeof(T), leaf, values.Scale() > 1);
     const auto price = _data.price;
     const uint64_t stream = uint64_t{items.count} * item;
     if (leaf == ByteCodec::None) {
@@ -428,7 +430,7 @@ class Frames final : public State {
     const auto& analysis = _analysis[store.shuffled];
     auto& scratch = _data.Get<NumericScratch>();
     const uint32_t item = ItemBytes(items);
-    const auto geometry = GeometryOf(Transform::kShape, items, leaf,
+    const auto geometry = GeometryOf(Transform::kShape, items, sizeof(T), leaf,
                                      _data.Get<Values<T>>().Scale() > 1);
     const uint64_t raw_bytes = uint64_t{items.count} * item;
     SegmentWriter<T> writer{Transform::kShape, geometry,
@@ -443,10 +445,16 @@ class Frames final : public State {
       auto& m = writer.Open(f, begin);
       _transform.Open(m, begin);
       if (leaf == ByteCodec::None) {
-        const std::span<const uint8_t> raw =
-          _transform.Frame(begin, count, scratch.frame);
-        scratch.out.append(reinterpret_cast<const char*>(raw.data()),
-                           raw.size());
+        if constexpr (requires {
+                        _transform.Append(begin, count, scratch.out);
+                      }) {
+          _transform.Append(begin, count, scratch.out);
+        } else {
+          const std::span<const uint8_t> raw =
+            _transform.Frame(begin, count, scratch.frame);
+          scratch.out.append(reinterpret_cast<const char*>(raw.data()),
+                             raw.size());
+        }
         writer.Close(m);
         continue;
       }

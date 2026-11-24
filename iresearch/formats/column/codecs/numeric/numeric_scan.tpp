@@ -146,12 +146,35 @@ IRS_FORCE_INLINE bool ScanConstant(R& reader, uint64_t start,
 }
 
 template<typename R>
+IRS_FORCE_INLINE bool ScanStored(R& reader, uint64_t start, idx_t scan_count,
+                                 duckdb::ScanVectorType scan_type,
+                                 duckdb::Vector& result) {
+  if constexpr (requires { reader.StoredRows(start, scan_count); }) {
+    if (scan_type != duckdb::ScanVectorType::SCAN_ENTIRE_VECTOR) {
+      return false;
+    }
+    const auto* rows = reader.StoredRows(start, scan_count);
+    if (!rows) {
+      return false;
+    }
+    result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+    duckdb::FlatVector::SetData(
+      result, duckdb::data_ptr_cast(const_cast<typename R::Value*>(rows)),
+      duckdb::count_t(scan_count));
+    return true;
+  } else {
+    return false;
+  }
+}
+
+template<typename R>
 void Scan(const ColumnSegment&, ColumnScanState& state, idx_t scan_count,
           duckdb::Vector& result, idx_t result_offset,
           duckdb::ScanVectorType scan_type) {
   auto& frames = state.scan_state->Cast<ScanState<R>>().frames;
   const uint64_t start = state.GetPositionInSegment();
-  if (ScanConstant(frames, start, scan_count, scan_type, result)) {
+  if (ScanConstant(frames, start, scan_count, scan_type, result) ||
+      ScanStored(frames, start, scan_count, scan_type, result)) {
     return;
   }
   frames.Read(start, scan_count,

@@ -2885,6 +2885,81 @@ TEST_F(ColNumericCodecTest, ForcedBitpackingStoresARangeThatOverflowsTheType) {
             std::set{CodecType::Bitpacking});
 }
 
+TEST_F(ColNumericCodecTest, FullWidthIntegersUnderBitpackingStoreOneRawFrame) {
+  constexpr uint32_t kRowGroup = 16384;
+  constexpr uint64_t kRows = 3 * kRowGroup + 1000;
+  const Gen full = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g));
+  };
+  using Cmp = duckdb::ExpressionType;
+  duckdb::Connection con{_db};
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    for (const duckdb::LogicalType type :
+         {duckdb::LogicalType::TINYINT, duckdb::LogicalType::SMALLINT,
+          duckdb::LogicalType::INTEGER, duckdb::LogicalType::BIGINT,
+          duckdb::LogicalType::UINTEGER, duckdb::LogicalType::UBIGINT}) {
+      SCOPED_TRACE(type.ToString());
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      Write(dir, type, {.tier = tier}, kRows, kRowGroup, full,
+            irs::codecs::CodecType::Bitpacking);
+      Verify(dir, type, kRows, full);
+      for (const auto& transform : Transforms(dir)) {
+        EXPECT_EQ(transform, "raw/none");
+      }
+      for (const auto& frames : SegmentInfo(dir, "frames")) {
+        EXPECT_EQ(frames, "1");
+      }
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      const uint64_t width = duckdb::GetTypeIdSize(type.InternalType());
+      for (const auto& block : col->DataBlocks()) {
+        EXPECT_EQ(block.byte_size, irs::codecs::kNumericHeaderSize +
+                                     sizeof(irs::codecs::PlainHeader) +
+                                     irs::codecs::kNumericFrameMetaSize +
+                                     block.tuple_count * width);
+      }
+      const auto key = *At(full, type, kRows / 2);
+      for (const auto cmp : {Cmp::COMPARE_EQUAL, Cmp::COMPARE_GREATERTHAN}) {
+        const duckdb::ExpressionFilter filter{
+          duckdb::BoundComparisonExpression::Create(
+            cmp, duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0),
+            duckdb::make_uniq<duckdb::BoundConstantExpression>(key))};
+        auto filter_state =
+          duckdb::TableFilterState::Initialize(*con.context, filter);
+        auto state = col->InitScan(r.Ctx());
+        for (uint64_t anchor = 0; anchor < kRows;
+             anchor += STANDARD_VECTOR_SIZE) {
+          const auto span =
+            std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+          duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+          for (duckdb::idx_t i = 0; i < span; ++i) {
+            sel.set_index(i, i);
+          }
+          duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+          const auto kept =
+            col->GatherFilter(state, anchor, span, sel, span, filter,
+                              *filter_state, irs::NullCheckKind::None, out);
+          duckdb::idx_t next = 0;
+          for (duckdb::idx_t i = 0; i < span; ++i) {
+            const auto v = *At(full, type, anchor + i);
+            const bool expected =
+              cmp == Cmp::COMPARE_EQUAL ? v == key : key < v;
+            const bool got = next < kept && sel.get_index(next) == i;
+            next += got ? 1 : 0;
+            ASSERT_EQ(got, expected) << "row " << anchor + i << " cmp "
+                                     << duckdb::EnumUtil::ToString(cmp);
+            if (got) {
+              ASSERT_EQ(out.GetValue(i), v);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, ValidityIsRoaringOnlyBelowHalfTheBitmap) {
   constexpr uint32_t kRowGroup = 8192;
   constexpr uint64_t kRows = 4 * kRowGroup;
@@ -3892,6 +3967,10 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
   const Gen packed = [](uint64_t g) -> std::optional<int64_t> {
     return static_cast<int64_t>(Mix(g) % 100);
   };
+  const Gen four_byte_doubles = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(
+      ((uint64_t{1} << 52) + Mix(g) % (uint64_t{1} << 32)) * 16);
+  };
   const Gen noise_then_pattern = [](uint64_t g) -> std::optional<int64_t> {
     return static_cast<int64_t>(g % 32768 < 16384 ? Mix(g) : Mix(g % 8));
   };
@@ -3939,7 +4018,7 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
   };
   const Corruption cases[] = {
     {"frames that cover fewer rows than the block", duckdb::LogicalType::DOUBLE,
-     CodecType::Bitpacking, random, 4096, "raw",
+     CodecType::Bitpacking, four_byte_doubles, 8192, "for",
      [&](Block& b) {
        ASSERT_EQ(b.header.frame_count, 2);
        b.header.frame_count = 1;
@@ -3947,7 +4026,7 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
      },
      "Corrupted numeric segment: frame table is inconsistent"},
     {"a frame that does not start at its row", duckdb::LogicalType::DOUBLE,
-     CodecType::Bitpacking, random, 4096, "raw",
+     CodecType::Bitpacking, four_byte_doubles, 8192, "for",
      [&](Block& b) {
        ASSERT_EQ(b.header.frame_count, 2);
        auto m = duckdb::Load<NumericFrameMeta>(frame(b, 1));
@@ -5323,18 +5402,20 @@ TEST_F(ColNumericCodecTest, AFrameCachedAtAnotherSizeIsDecodedAgain) {
 }
 
 TEST_F(ColNumericCodecTest, PointReadsOfNeighboursInTwoFramesReadBack) {
-  constexpr uint64_t kRows = 8192;
-  const Gen random = [](uint64_t g) -> std::optional<int64_t> {
-    return static_cast<int64_t>(Mix(g));
+  constexpr uint64_t kFrameRows =
+    (uint64_t{1} << irs::codecs::kNumericFrameLog2) / sizeof(uint32_t);
+  constexpr uint64_t kRows = 4 * kFrameRows;
+  const Gen four_bytes = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(
+      ((uint64_t{1} << 52) + Mix(g) % (uint64_t{1} << 32)) * 16);
   };
   const auto type = duckdb::LogicalType::DOUBLE;
   tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  Write(dir, type, {}, kRows, kRows, random,
+  Write(dir, type, {}, kRows, kRows, four_bytes,
         irs::codecs::CodecType::Bitpacking);
-  Verify(dir, type, kRows, random);
-  ASSERT_EQ(Transforms(dir), std::vector<std::string>{"raw/none"});
+  Verify(dir, type, kRows, four_bytes);
+  ASSERT_EQ(Transforms(dir), std::vector<std::string>{"for/none"});
   ASSERT_EQ(SegmentInfo(dir, "frames"), std::vector<std::string>{"4"});
-  constexpr uint64_t kFrameRows = kRows / 4;
   irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
@@ -5349,7 +5430,7 @@ TEST_F(ColNumericCodecTest, PointReadsOfNeighboursInTwoFramesReadBack) {
   duckdb::Vector batch{type, STANDARD_VECTOR_SIZE};
   cursor.FetchRows(std::span<const uint32_t>{picked}, 0, batch, 0);
   for (size_t k = 0; k < picked.size(); ++k) {
-    ExpectRow(batch, k, picked[k], random, type);
+    ExpectRow(batch, k, picked[k], four_bytes, type);
   }
 }
 

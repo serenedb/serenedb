@@ -213,6 +213,8 @@ A statement that sets or resets several options fails as a whole when one of the
 
 <SqlLogicTest id="sql/statements/alter_table/index/example_031" />
 
+`SET TABLESPACE`, on a table or an index, is not supported and fails with `SET TABLESPACE is not supported`.
+
 ## `DROP CONSTRAINT`
 
 The `DROP CONSTRAINT` clause removes a named constraint from a table, a `CHECK`, `UNIQUE`, `PRIMARY KEY` or `FOREIGN KEY` constraint alike:

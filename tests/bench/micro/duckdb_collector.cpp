@@ -35,6 +35,7 @@
 #include <duckdb/main/query_result.hpp>
 #include <duckdb/main/query_result_stream.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
+#include <memory>
 #include <string>
 
 namespace {
@@ -55,25 +56,27 @@ int64_t Rows() {
 // One shared in-memory DB with the test table built once. Per-query settings
 // (threads, preserve_insertion_order) are applied on the per-benchmark
 // connection, so the table stays put across cases.
+constinit std::unique_ptr<duckdb::DuckDB> gDb;
+
 duckdb::DuckDB& Db() {
-  static duckdb::DuckDB db = [] {
-    duckdb::DuckDB d(nullptr);
-    duckdb::Connection con(d);
-    // A bare in-memory DuckDB under the SereneDB build has no schema selected
-    // for CREATE; create one and pin the search path before building the table.
-    con.Query("CREATE SCHEMA IF NOT EXISTS main");
-    con.Query("SET search_path = 'main'");
-    auto r = con.Query(
-      "CREATE TABLE main.t AS SELECT i::BIGINT k, (i*2)::BIGINT a, "
-      "'row_' || i::VARCHAR s FROM range(" +
-      std::to_string(Rows()) + ") tbl(i)");
-    if (r->HasError()) {
-      std::fprintf(stderr, "table build failed: %s\n", r->GetError().c_str());
-      std::abort();
-    }
-    return d;
-  }();
-  return db;
+  if (gDb) {
+    return *gDb;
+  }
+  gDb = std::make_unique<duckdb::DuckDB>(nullptr);
+  duckdb::Connection con(*gDb);
+  // A bare in-memory DuckDB under the SereneDB build has no schema selected
+  // for CREATE; create one and pin the search path before building the table.
+  con.Query("CREATE SCHEMA IF NOT EXISTS main");
+  con.Query("SET search_path = 'main'");
+  auto r = con.Query(
+    "CREATE TABLE main.t AS SELECT i::BIGINT k, (i*2)::BIGINT a, "
+    "'row_' || i::VARCHAR s FROM range(" +
+    std::to_string(Rows()) + ") tbl(i)");
+  if (r->HasError()) {
+    std::fprintf(stderr, "table build failed: %s\n", r->GetError().c_str());
+    std::abort();
+  }
+  return *gDb;
 }
 
 // Approximate the bytes a wire encoder would push: 2 BIGINTs + the string. Used
@@ -220,3 +223,12 @@ COLLECTOR_CASE(parallel_unordered_orderby, Mode::ParallelUnordered,
                Order::OrderBy);
 COLLECTOR_CASE(ordered_plain, Mode::Ordered, Order::Plain);
 COLLECTOR_CASE(ordered_orderby, Mode::Ordered, Order::OrderBy);
+
+static int Main(int argc, char** argv) {
+  const int rc = sdb::bench::RunBenchmarks(argc, argv);
+  gDb.reset();
+  return rc;
+}
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

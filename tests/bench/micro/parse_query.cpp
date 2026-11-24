@@ -53,13 +53,18 @@
 #include <benchmark/benchmark.h>
 
 #include <duckdb.hpp>
+#include <memory>
 #include <string>
 
 namespace {
 
+constinit std::unique_ptr<duckdb::DuckDB> gDb;
+
 duckdb::DuckDB& Db() {
-  static duckdb::DuckDB db(nullptr);
-  return db;
+  if (!gDb) {
+    gDb = std::make_unique<duckdb::DuckDB>(nullptr);
+  }
+  return *gDb;
 }
 
 // "SELECT 1, 1, ... " with n projection items -- a token count that grows
@@ -129,3 +134,12 @@ BENCHMARK_CAPTURE(Parse, parse_rows, std::string{kRows});
 // Parse vs parse+bind+plan, same statements: the gap is bind/plan.
 BENCHMARK_CAPTURE(Prepare, prepare_select1, std::string{"SELECT 1"});
 BENCHMARK_CAPTURE(Prepare, prepare_rows, std::string{kRows});
+
+static int Main(int argc, char** argv) {
+  const int rc = sdb::bench::RunBenchmarks(argc, argv);
+  gDb.reset();
+  return rc;
+}
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

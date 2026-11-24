@@ -175,6 +175,9 @@ struct SealedNorms {
   std::vector<NormColumnSpec> columns;
 };
 
+duckdb::shared_ptr<duckdb::InputFile> OpenNormBytes(
+  duckdb::AllocatedData bytes);
+
 class NormsWriter final {
  public:
   explicit NormsWriter(absl::AnyInvocable<duckdb::WriteStream&()> open) noexcept

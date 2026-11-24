@@ -28,8 +28,11 @@
 // Each test exercises: write -> read-norm -> BM25 pruned vs unpruned -> ...
 // optional compact -> read-norm -> BM25 pruned vs unpruned.
 
+#include <absl/cleanup/cleanup.h>
 #include <gtest/gtest.h>
 
+#include <duckdb/common/fault_points.hpp>
+#include <duckdb/main/database_file_opener.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_features.hpp>
@@ -599,6 +602,59 @@ TEST_P(ScorePruneNormMergeCase, NormTwoFieldsAcrossMerge) {
   RunBM25(reader, *bm25, kBody, 5);
   RunBM25(reader, *bm25, kBody2, 5);
 }
+
+TEST_P(ScorePruneNormMergeCase, NormMergeConstantNorms) {
+  auto bm25 = std::make_unique<irs::BM25>();
+  auto writer = open_writer(tests::kOmCreate, MakeOpts(bm25.get()));
+  for (size_t i = 0; i < 3; ++i) {
+    ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), 1));
+  }
+  writer->RefreshCommit();
+  for (size_t i = 0; i < 2; ++i) {
+    ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("b_", i), 1));
+  }
+  writer->RefreshCommit();
+
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  auto reader = open_reader(MakeReaderOpts(bm25.get()));
+  ASSERT_EQ(1, reader.size());
+  AssertNorms(reader[0], kBody, {{1, 1}, {2, 1}, {3, 1}, {4, 1}, {5, 1}});
+  RunBM25(reader, *bm25, kBody, 5);
+}
+
+#ifdef SDB_FAULT_INJECTION
+TEST_P(ScorePruneNormMergeCase, NormMergeWhenTheCacheDropsTheWrite) {
+  if (!duckdb::DatabaseFileSystem::IsRemote(dir().Root())) {
+    GTEST_SKIP();
+  }
+  static constexpr size_t kDocsPerSegment = 75000;
+  auto bm25 = std::make_unique<irs::BM25>();
+  auto writer = open_writer(tests::kOmCreate, MakeOpts(bm25.get()));
+  for (size_t s = 0; s < 2; ++s) {
+    for (size_t d = 0; d < kDocsPerSegment; ++d) {
+      ASSERT_TRUE(
+        InsertNormDoc(*writer, absl::StrCat(s, "_", d), 1 + (s + d) % 5));
+    }
+    writer->RefreshCommit();
+  }
+
+  absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
+  ASSERT_TRUE(duckdb::FaultPoints::Arm("remote_write_cache_block"));
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
+  duckdb::FaultPoints::Clear();
+
+  auto reader = open_reader(MakeReaderOpts(bm25.get()));
+  ASSERT_EQ(1, reader.size());
+  AssertNorms(reader[0], kBody,
+              {{1, 1}, {2, 2}, {kDocsPerSegment, 5}, {kDocsPerSegment + 1, 2}});
+  RunBM25(reader, *bm25, kBody, 100);
+}
+#endif
 
 TEST_P(ScorePruneNormMergeCase, NormMergeSourceWithoutField) {
   static constexpr uint32_t kBodyA[] = {1, 2, 3};

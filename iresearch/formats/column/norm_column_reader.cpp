@@ -130,11 +130,6 @@ NormReader::ptr NormColumns::norms(field_id field) const {
   return column ? MakePersistedNormReader(*column) : NormReader::ptr{};
 }
 
-NormReader::ptr MakeNormReader(std::unique_ptr<const NormColumnReader> column) {
-  const auto& reader = *column;
-  return MakePersistedNormReader(reader, std::move(column));
-}
-
 uint32_t NormRegion::Overflow(uint32_t row) const {
   uint32_t lo = 0;
   uint32_t hi = overflow;
@@ -263,101 +258,6 @@ void NormColumnReader::IndexEnds() {
   for (const auto& region : _regions) {
     _ends.push_back(region.end_doc);
   }
-}
-
-NormColumnReader::NormColumnReader(field_id id, std::vector<NormRegion> regions,
-                                   std::vector<NormStats> stats,
-                                   std::vector<std::vector<byte_type>> owned)
-  : _file{nullptr},
-    _id{id},
-    _regions{std::move(regions)},
-    _stats{std::move(stats)},
-    _owned{std::move(owned)} {
-  SDB_ASSERT(_regions.size() == _stats.size());
-  for (const auto& stats : _stats) {
-    _row_count += stats.rows;
-    _sum += stats.sum;
-    _non_zero += stats.non_zero;
-  }
-  IndexEnds();
-}
-
-void NormColumnConcat::Add(NormRegion region, const NormStats& stats) {
-  if (stats.rows == 0) {
-    return;
-  }
-  const auto end = static_cast<doc_id_t>(_next + stats.rows);
-  if (!_regions.empty()) {
-    auto& last = _regions.back();
-    if (!last.exceptions && !region.exceptions && last.bits == region.bits &&
-        (last.bits == 0 ? last.value == region.value
-                        : last.base == region.base)) {
-      last.end_doc = end;
-      _stats.back().Merge(stats);
-      _next = end;
-      return;
-    }
-  }
-  region.first_doc = _next;
-  region.end_doc = end;
-  region.window = 0;
-  region.windows = 0;
-  region.page = 0;
-  region.first_page = 0;
-  _next = end;
-  _regions.push_back(region);
-  _stats.push_back(stats);
-}
-
-void NormColumnConcat::Append(const NormColumnReader& column, size_t region) {
-  auto moved = column.Region(region);
-  if (moved.bits != 0) {
-    moved.base +=
-      (int64_t{moved.first_doc} - int64_t{_next}) * (moved.bits / 8);
-  }
-  Add(moved, column.Stats(region));
-}
-
-void NormColumnConcat::AppendZeros(uint64_t rows) {
-  Add({}, {.rows = rows, .min = 0});
-}
-
-void NormColumnConcat::Append(std::span<const uint32_t> values) {
-  if (values.empty()) {
-    return;
-  }
-  NormStats stats;
-  stats.Add(values);
-  if (stats.min == stats.max) {
-    Add({.value = stats.max}, stats);
-    return;
-  }
-  const uint32_t bytes = stats.max <= std::numeric_limits<uint8_t>::max() ? 1
-                         : stats.max <= std::numeric_limits<uint16_t>::max()
-                           ? 2
-                           : 4;
-  auto& slots = _owned.emplace_back(values.size() * bytes);
-  auto* out = slots.data();
-  for (const auto value : values) {
-    switch (bytes) {
-      case 1:
-        *out = static_cast<byte_type>(value);
-        break;
-      case 2:
-        absl::little_endian::Store16(out, static_cast<uint16_t>(value));
-        break;
-      default:
-        absl::little_endian::Store32(out, value);
-    }
-    out += bytes;
-  }
-  Add({.base = slots.data() - uint64_t{_next} * bytes, .bits = bytes * 8},
-      stats);
-}
-
-std::unique_ptr<NormColumnReader> NormColumnConcat::Finish(field_id id) && {
-  return std::make_unique<NormColumnReader>(
-    id, std::move(_regions), std::move(_stats), std::move(_owned));
 }
 
 const NormRegion& NormColumnReader::Locate(doc_id_t doc) const noexcept {

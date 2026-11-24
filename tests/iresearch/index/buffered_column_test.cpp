@@ -308,69 +308,6 @@ TEST_P(BufferedColumnTestCase, SparseRows) {
   AssertNormReads(*col, expected);
 }
 
-TEST_P(BufferedColumnTestCase, ConcatenatedColumns) {
-  constexpr uint32_t kRowGroupSize = 1024;
-  std::vector<uint32_t> first(3000);
-  for (size_t i = 0; i < first.size(); ++i) {
-    first[i] = static_cast<uint32_t>(1 + i % 200);
-  }
-  first[700] = 70000;
-  std::vector<uint32_t> second(2000);
-  for (size_t i = 0; i < second.size(); ++i) {
-    second[i] = static_cast<uint32_t>(300 + i % 5000);
-  }
-  const std::vector<std::vector<uint32_t>> owned{
-    {7, 7, 7}, {5, 0, 77, 255}, {300, 1, 65535}, {5, 0, 77, 100000}};
-  constexpr uint64_t kZeros = 500;
-
-  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  const auto commit = [&](std::string_view name, irs::field_id id,
-                          const std::vector<uint32_t>& values) {
-    irs::BufferedNorms w{duckdb::Allocator::DefaultAllocator()};
-    auto& nw = w.Writer().Open(id, kRowGroupSize);
-    for (uint64_t i = 0; i < values.size(); ++i) {
-      nw.Append(i, values[i]);
-    }
-    return irs::tests::CommitNorms(dir, name, std::move(w), values.size());
-  };
-  const auto a = commit("concat_a", 1, first);
-  const auto b = commit("concat_b", 2, second);
-  const auto* column_a = a->Norms().Column(1);
-  const auto* column_b = b->Norms().Column(2);
-  ASSERT_NE(column_a, nullptr);
-  ASSERT_NE(column_b, nullptr);
-
-  irs::NormColumnConcat concat;
-  for (size_t r = 0; r < column_a->RegionCount(); ++r) {
-    concat.Append(*column_a, r);
-  }
-  concat.AppendZeros(kZeros);
-  concat.AppendZeros(0);
-  concat.Append(std::span<const uint32_t>{});
-  for (const auto& values : owned) {
-    concat.Append(values);
-  }
-  ASSERT_TRUE(column_a->Region(0).exceptions);
-  concat.Append(*column_a, 0);
-  for (size_t r = 0; r < column_b->RegionCount(); ++r) {
-    concat.Append(*column_b, r);
-  }
-  const auto view = std::move(concat).Finish(9);
-
-  std::vector<uint32_t> expected = first;
-  expected.insert(expected.end(), kZeros, 0);
-  for (const auto& values : owned) {
-    expected.insert(expected.end(), values.begin(), values.end());
-  }
-  const auto& region_a = column_a->Region(0);
-  expected.insert(expected.end(), first.begin(),
-                  first.begin() + (region_a.end_doc - region_a.first_doc));
-  expected.insert(expected.end(), second.begin(), second.end());
-  EXPECT_EQ(view->Id(), 9);
-  EXPECT_FALSE(view->Paged());
-  AssertNormReads(*view, expected);
-}
-
 TEST_P(BufferedColumnTestCase, RareLargeValues) {
   constexpr uint32_t kRowGroupSize = 1024;
   constexpr uint64_t kRowCount = 3000;

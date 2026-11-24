@@ -23,6 +23,7 @@
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/common/types.hpp>
+#include <duckdb/main/database_file_opener.hpp>
 #include <utility>
 #include <vector>
 
@@ -47,6 +48,7 @@ void IdxWriter::EnsureOut() {
 duckdb::WriteStream& IdxWriter::NormsOut() {
   EnsureOut();
   SDB_ASSERT(_out->Position() == 0);
+  _out->Hold();
   return *_out;
 }
 
@@ -54,8 +56,29 @@ void IdxWriter::WriteNorms(SealedNorms norms) {
   if (norms.columns.empty()) {
     return;
   }
-  NormsOut().WriteData(norms.file->Data(), norms.file->GetSize());
+  EnsureOut();
+  SDB_ASSERT(_out->Position() == 0);
+  _out->WriteData(norms.file->Data(), norms.file->GetSize());
   SetNorms(std::move(norms.columns));
+}
+
+duckdb::shared_ptr<duckdb::InputFile> IdxWriter::ReadNorms(
+  duckdb::Allocator& allocator) {
+  SDB_ASSERT(_out);
+  const auto size = _out->Position();
+  if (duckdb::DatabaseFileSystem::IsRemote(_out->path)) {
+    auto bytes = size == 0 ? duckdb::AllocatedData{} : allocator.Allocate(size);
+    if (!_out->CopyHeld(bytes.get(), size)) {
+      return nullptr;
+    }
+    return OpenNormBytes(std::move(bytes));
+  }
+  if (size == 0) {
+    return OpenNormBytes({});
+  }
+  _out->Flush();
+  return _tracker.Fs().OpenInputFile(_out->path,
+                                     duckdb::MappedFileAccess::RANDOM);
 }
 
 duckdb::WriteStream& IdxWriter::BlocksOut() {

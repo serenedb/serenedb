@@ -102,9 +102,6 @@ class NormColumnReader final {
  public:
   NormColumnReader(field_id id, const NormColumnMeta& meta,
                    const duckdb::InputFile& file);
-  NormColumnReader(field_id id, std::vector<NormRegion> regions,
-                   std::vector<NormStats> stats,
-                   std::vector<std::vector<byte_type>> owned);
 
   field_id Id() const noexcept { return _id; }
   uint64_t RowCount() const noexcept { return _row_count; }
@@ -171,32 +168,12 @@ class NormColumnReader final {
   std::vector<std::span<const byte_type>> _windows;
   duckdb::PageResidencyMap _residency;
   std::vector<duckdb::FilePin> _pins;
-  std::vector<std::vector<byte_type>> _owned;
   uint64_t _row_count = 0;
   uint64_t _sum = 0;
   uint64_t _non_zero = 0;
   size_t _pages = 0;
   bool _paged = false;
 };
-
-class NormColumnConcat final {
- public:
-  void Append(const NormColumnReader& column, size_t region);
-  void AppendZeros(uint64_t rows);
-  void Append(std::span<const uint32_t> values);
-
-  std::unique_ptr<NormColumnReader> Finish(field_id id) &&;
-
- private:
-  void Add(NormRegion region, const NormStats& stats);
-
-  std::vector<NormRegion> _regions;
-  std::vector<NormStats> _stats;
-  std::vector<std::vector<byte_type>> _owned;
-  doc_id_t _next = doc_limits::min();
-};
-
-NormReader::ptr MakeNormReader(std::unique_ptr<const NormColumnReader> column);
 
 std::vector<NormColumnSpec> ReadNormColumns(duckdb::BinaryDeserializer& in,
                                             duckdb::field_id_t field,

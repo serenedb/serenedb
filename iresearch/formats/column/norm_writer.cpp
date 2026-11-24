@@ -378,9 +378,14 @@ SealedNorms BufferedNorms::Seal(uint64_t rows) && {
     std::memcpy(bytes.get(), _buffer->GetData(), size);
   }
   _buffer.reset();
-  sealed.file = duckdb::make_shared_ptr<duckdb::InputFile>(
-    duckdb::make_uniq<NormBytes>(std::move(bytes)));
+  sealed.file = OpenNormBytes(std::move(bytes));
   return sealed;
+}
+
+duckdb::shared_ptr<duckdb::InputFile> OpenNormBytes(
+  duckdb::AllocatedData bytes) {
+  return duckdb::make_shared_ptr<duckdb::InputFile>(
+    duckdb::make_uniq<NormBytes>(std::move(bytes)));
 }
 
 }  // namespace irs

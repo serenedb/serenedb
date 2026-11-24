@@ -57,7 +57,6 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/memory.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -651,32 +650,6 @@ void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
                [&](std::span<const uint32_t> live) { writer.Write(live); });
 }
 
-std::unique_ptr<NormColumnReader> ViewMergedNorm(
-  field_id out_id, field_id id, DictRef dict,
-  std::span<const MergeSource> sources) {
-  NormColumnConcat concat;
-  std::vector<uint32_t> values;
-  for (const auto& src : sources) {
-    const auto* column = SourceNormColumn(src, id, dict);
-    if (!column) {
-      concat.AppendZeros(src.alive_count);
-      continue;
-    }
-    if (!HasRemovals(src.reader->Meta())) {
-      for (size_t r = 0; r != column->RegionCount(); ++r) {
-        concat.Append(*column, r);
-      }
-      continue;
-    }
-    for (size_t r = 0; r != column->RegionCount(); ++r) {
-      ForLiveNorms(
-        src, *column, r, values,
-        [&](std::span<const uint32_t> live) { concat.Append(live); });
-    }
-  }
-  return std::move(concat).Finish(out_id);
-}
-
 field_id MergeNormColumnFromSources(NormsWriter& norms, field_id id,
                                     DictRef dict,
                                     std::span<const MergeSource> sources,
@@ -752,39 +725,6 @@ MergedNormIdMap MergeNorms(NormsWriter& norms,
   }
   return out;
 }
-
-class MergedNormViews final : public NormProvider {
- public:
-  MergedNormViews(std::span<const MergeSource> sources,
-                  const FieldMetaMapT& field_meta_map,
-                  const MergedNormIdMap& merged_norm_ids)
-    : _sources{sources} {
-    _fields.reserve(merged_norm_ids.size());
-    for (const auto& [id, out_id] : merged_norm_ids) {
-      _fields.try_emplace(out_id, id,
-                          DictRef{.layout = *field_meta_map.at(id).layout,
-                                  .member = DictMember::Strings});
-    }
-  }
-
-  NormReader::ptr norms(field_id out_id) const final {
-    const auto it = _fields.find(out_id);
-    if (it == _fields.end()) {
-      return {};
-    }
-    const auto& [id, dict] = it->second;
-    return MakeNormReader(ViewMergedNorm(out_id, id, dict, _sources));
-  }
-
- private:
-  struct Field {
-    field_id id;
-    DictRef dict;
-  };
-
-  std::span<const MergeSource> _sources;
-  containers::FlatHashMap<field_id, Field> _fields;
-};
 
 bool WriteFields(FieldSink& field_writer, const irs::FlushState& flush_state,
                  CompoundFieldIterator& field_itr,
@@ -954,7 +894,20 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     [&idx] -> duckdb::WriteStream& { return idx.NormsOut(); }};
   const auto merged_norm_ids =
     MergeNorms(norms_writer, sources, field_meta_map, _field_options);
-  idx.SetNorms(std::move(norms_writer).Seal(segment.docs_count));
+  auto norm_specs = std::move(norms_writer).Seal(segment.docs_count);
+  auto& allocator =
+    duckdb::BufferManager::GetBufferManager(_db).GetBufferAllocator();
+  SealedNorms readable;
+  if (!norm_specs.empty()) {
+    readable = {.file = idx.ReadNorms(allocator), .columns = norm_specs};
+    if (!readable.file) {
+      BufferedNorms in_memory{allocator};
+      MergeNorms(in_memory.Writer(), sources, field_meta_map, _field_options);
+      readable = std::move(in_memory).Seal(segment.docs_count);
+    }
+  }
+  const NormColumns norms{readable.file, readable.columns};
+  idx.SetNorms(std::move(norm_specs));
 
   if (!progress_callback()) {
     co_return nullptr;
@@ -989,7 +942,6 @@ auto MergeWriter::Flush(SegmentMeta& segment,
     co_return nullptr;
   }
 
-  const MergedNormViews norms{sources, field_meta_map, merged_norm_ids};
   const FlushState state{
     .tracker = *tracker,
     .norms = &norms,

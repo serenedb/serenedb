@@ -53,6 +53,8 @@ class IdxWriter final {
 
   void WriteNorms(SealedNorms norms);
 
+  duckdb::shared_ptr<duckdb::InputFile> ReadNorms(duckdb::Allocator& allocator);
+
   duckdb::WriteStream& BlocksOut();
 
   void AddIvf(field_id id, IvfCentroidMeta meta);

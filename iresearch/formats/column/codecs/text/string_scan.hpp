@@ -223,12 +223,6 @@ inline char* Reserve(duckdb::ArenaAllocator& arena, uint64_t bytes) {
   return duckdb::char_ptr_cast(arena.Allocate(bytes));
 }
 
-inline void Trim(std::string&, uint64_t) noexcept {}
-
-inline void Trim(duckdb::ArenaAllocator& arena, uint64_t bytes) {
-  arena.ShrinkHead(bytes);
-}
-
 struct EntryAt {
   uint32_t entry;
   duckdb::idx_t at;

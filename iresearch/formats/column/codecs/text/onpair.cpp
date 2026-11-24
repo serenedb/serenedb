@@ -35,6 +35,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -121,7 +122,9 @@ IRS_FORCE_INLINE std::string_view DecodeEntry(
   const auto n =
     table.Decode(reinterpret_cast<const uint8_t*>(data) + m.comp_off, first,
                  count, at, capacity);
-  Trim(out, capacity - n);
+  if constexpr (std::is_same_v<Out, duckdb::ArenaAllocator>) {
+    out.ShrinkHead(capacity - n);
+  }
   return {at, n};
 }
 

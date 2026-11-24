@@ -32,6 +32,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -271,7 +272,9 @@ struct Scan {
     if (dec > room) [[unlikely]] {
       ThrowCorrupted("text", "entry is inconsistent");
     }
-    Trim(out, room - dec);
+    if constexpr (std::is_same_v<Out, duckdb::ArenaAllocator>) {
+      out.ShrinkHead(room - dec);
+    }
     return {at, prefix.size() + dec};
   }
 

@@ -124,7 +124,7 @@ QUERY PLAN
 │ ╭─ Not ─────────────────────╮                        │
 │ │ Posting Lists: 1          │                        │
 │ │ Estimated Matches: 62,856 │                        │
-│ │ Postings: 43,396          │                        │
+│ │ Postings: 37,144          │                        │
 │ │ Time: 0µs                 │                        │
 │ ╰─────────────┬─────────────╯                        │
 │               ├──────────────────────────╮           │
@@ -1335,7 +1335,7 @@ QUERY PLAN
 │ │ Parts: Term:red(0, 0); Term:blue(1, 1);  │  │ Range: <50000             │ │
 │ │ Posting Lists: 2                         │  │ Posting Lists: 60         │ │
 │ │ Estimated Matches: 60,000                │  │ Estimated Matches: 50,000 │ │
-│ │ Postings: 120,000                        │  │ Postings: 13,752          │ │
+│ │ Postings: 120,000                        │  │ Postings: 10,000          │ │
 │ │ Time: 0µs                                │  │ Time: 0µs                 │ │
 │ ╰──────────────────────────────────────────╯  ╰───────────────────────────╯ │
 │                                                                             │

@@ -579,7 +579,7 @@ QUERY PLAN
 │ │ Values: 4                │  │ Values: 'even'     │  │ Range: <2000             │ │
 │ ╰──────────────────────────╯  ╰────────────────────╯  │ Posting Lists: 49        │ │
 │                                                       │ Estimated Matches: 2,000 │ │
-│                                                       │ Postings: 1,188          │ │
+│                                                       │ Postings: 1,000          │ │
 │                                                       │ Time: 0µs                │ │
 │                                                       ╰──────────────────────────╯ │
 │                                                                                    │
@@ -679,7 +679,7 @@ QUERY PLAN
 │ │ Values: 4                │  │ Values: 'even'     │  │ Range: <2000             │ │
 │ ╰──────────────────────────╯  ╰────────────────────╯  │ Posting Lists: 49        │ │
 │                                                       │ Estimated Matches: 2,000 │ │
-│                                                       │ Postings: 1,188          │ │
+│                                                       │ Postings: 1,000          │ │
 │                                                       │ Time: 0µs                │ │
 │                                                       ╰──────────────────────────╯ │
 │                                                                                    │

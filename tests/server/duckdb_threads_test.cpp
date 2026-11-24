@@ -528,13 +528,10 @@ TEST(DuckDBScheduler, ListedAccountWithoutWorkerArrivesWithItsNextTask) {
 }
 
 TEST(DuckDBScheduler, LeavingAClaimedAccountWakesAWorkerForTheTaskItKept) {
+#ifdef SDB_FAULT_INJECTION
   constexpr std::string_view kNoFreeSlot =
     "scheduler_enqueue_finds_no_free_slot";
   constexpr std::string_view kWakeInFlight = "scheduler_woken_worker_pauses";
-  if (!duckdb::FaultPoints::Arm(kNoFreeSlot)) {
-    GTEST_SKIP() << "this build has no fault injection";
-  }
-  duckdb::FaultPoints::Disarm(kNoFreeSlot);
   absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
   auto db = SchedulerDB(3);
   auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
@@ -584,6 +581,9 @@ TEST(DuckDBScheduler, LeavingAClaimedAccountWakesAWorkerForTheTaskItKept) {
   ASSERT_TRUE(kept_ran);
   EXPECT_LT(kept_start.load() - claimed_end.load(),
             std::chrono::milliseconds(100));
+#else
+  GTEST_SKIP() << "this build has no fault injection";
+#endif
 }
 
 TEST(DuckDBScheduler, TwoHeavyQueriesShareWorkers) {

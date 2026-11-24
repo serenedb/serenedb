@@ -183,6 +183,7 @@ class RestoreTest : public ::testing::Test {
     return tree;
   }
 
+#ifdef SDB_FAULT_INJECTION
   void ExpectACrashedRestoreFinishes(bool (*arm)()) {
     WriteLabel();
     const auto reference =
@@ -193,9 +194,7 @@ class RestoreTest : public ::testing::Test {
     absl::Cleanup drop = [&] { std::filesystem::remove_all(reference); };
     PrepareDataDirectory(catalog::DataDirectory{reference.string()});
 
-    if (!arm()) {
-      GTEST_SKIP() << "this build has no fault injection";
-    }
+    ASSERT_TRUE(arm());
     EXPECT_EXIT(Prepare(),
                 ::testing::ExitedWithCode(irs::kPlannedCrashExitCode), "");
     duckdb::FaultPoints::Clear();
@@ -207,6 +206,7 @@ class RestoreTest : public ::testing::Test {
     ASSERT_TRUE(control);
     EXPECT_EQ(control->checkpoint, kStartLsn);
   }
+#endif
 
   std::filesystem::path _root;
   std::unique_ptr<catalog::DataDirectory> _layout;
@@ -285,6 +285,7 @@ TEST_F(RestoreTest, TheRestoredLogStartsAtItsSnapshot) {
   EXPECT_EQ(Content(Chunk(0)), std::string(500, 'X'));
 }
 
+#ifdef SDB_FAULT_INJECTION
 TEST_F(RestoreTest, ACrashAfterTheLogIsFinishedByTheNextBoot) {
   ExpectACrashedRestoreFinishes(
     [] { return duckdb::FaultPoints::Arm("crash_in_restore_after_log"); });
@@ -304,6 +305,7 @@ TEST_F(RestoreTest, ACrashBeforeTheLabelIsRetiredIsFinishedByTheNextBoot) {
   ExpectACrashedRestoreFinishes(
     [] { return duckdb::FaultPoints::Arm("crash_in_restore_before_retire"); });
 }
+#endif
 
 TEST_F(RestoreTest, WithoutALabelOnlyTheLeftoverBackupDirectoryGoes) {
   std::filesystem::remove(_root / kPgControlFile);

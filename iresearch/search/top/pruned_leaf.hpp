@@ -148,8 +148,8 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
       return true;
     }
 
-    _in = OpenDocInput<InputType>(meta, doc_in,
-                                  duckdb::ReadAheadSteps::SKIPPING);
+    _in =
+      OpenDocInput<InputType>(meta, doc_in, duckdb::ReadAheadSteps::SKIPPING);
     auto& in = In();
     *(std::end(_docs) - 1) = doc_limits::invalid();
     _left_in_list = meta.docs_count;

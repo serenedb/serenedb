@@ -1,0 +1,99 @@
+statement ok
+DROP DATABASE IF EXISTS nss_src_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE IF EXISTS nss_dst_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE nss_src_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE nss_dst_${__DATABASE__};
+
+
+statement ok
+USE nss_src_${__DATABASE__};
+
+
+statement ok
+CREATE SCHEMA nss_c1;
+
+
+statement ok
+CREATE SCHEMA nss_c1.nss_c2;
+
+
+statement ok
+CREATE FUNCTION nss_c1.nss_c2.nss_pos(x INT) RETURNS BOOLEAN LANGUAGE sql AS 'SELECT x > 0';
+
+
+statement ok
+CREATE TABLE nss_c1.nss_c2.nss_w (id SERIAL, a INT CHECK (nss_c1.nss_c2.nss_pos(a)));
+
+
+statement ok
+INSERT INTO nss_c1.nss_c2.nss_w (a) VALUES (1);
+
+
+statement ok
+CREATE TYPE nss_c1.nss_c2.nss_mood AS ENUM ('ok', 'bad');
+
+
+statement ok
+CREATE TABLE nss_c1.nss_c2.nss_m (m TEXT CHECK (m::nss_c1.nss_c2.nss_mood IS NOT NULL));
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+COPY FROM DATABASE nss_src_${__DATABASE__} TO nss_dst_${__DATABASE__};
+
+
+statement ok
+DROP DATABASE nss_src_${__DATABASE__};
+
+
+statement ok
+USE nss_dst_${__DATABASE__};
+
+
+statement ok
+INSERT INTO nss_c1.nss_c2.nss_w (a) VALUES (2);
+
+
+statement ok
+INSERT INTO nss_c1.nss_c2.nss_m VALUES ('ok');
+
+
+query
+SELECT m FROM nss_c1.nss_c2.nss_m;
+----
+m
+ok
+
+
+statement error
+INSERT INTO nss_c1.nss_c2.nss_w (a) VALUES (-1);
+----
+db error: ERROR: CHECK constraint failed on table "nss_w" with expression CHECK(nss_dst_<slt:ignore>.nss_c1.nss_c2.nss_pos(a))
+
+
+query
+SELECT id, a FROM nss_c1.nss_c2.nss_w ORDER BY a;
+----
+id	a
+1	1
+2	2
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+DROP DATABASE nss_dst_${__DATABASE__};

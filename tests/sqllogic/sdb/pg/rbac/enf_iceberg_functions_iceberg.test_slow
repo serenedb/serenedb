@@ -32,56 +32,56 @@ connection c_ved user=eifn_vedernikoff password=eifn_pw
 statement error
 SELECT count(*) FROM eifn_${__DATABASE__}.${__DATABASE__}.eifn_t;
 ----
-db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+db error: ERROR: Table with name "eifn_<slt:ignore>.<slt:ignore>.eifn_t" does not exist because schema "eifn_<slt:ignore>
 
 
 connection c_ved user=eifn_vedernikoff password=eifn_pw
 statement error
 SELECT count(*) FROM iceberg_snapshots('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
 ----
-db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+db error: ERROR: permission denied to access "eifn_<slt:ignore>.<slt:ignore>.eifn_<slt:ignore>
 
 
 connection c_ved user=eifn_vedernikoff password=eifn_pw
 statement error
 SELECT count(*) FROM iceberg_metadata('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
 ----
-db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+db error: ERROR: permission denied to access "eifn_<slt:ignore>.<slt:ignore>.eifn_<slt:ignore>
 
 
 connection c_ved user=eifn_vedernikoff password=eifn_pw
 statement error
 SELECT count(*) FROM iceberg_column_stats('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
 ----
-db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+db error: ERROR: permission denied to access "eifn_<slt:ignore>.<slt:ignore>.eifn_<slt:ignore>
 
 
 connection c_ved user=eifn_vedernikoff password=eifn_pw
 statement error
 SELECT count(*) FROM iceberg_partition_stats('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
 ----
-db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+db error: ERROR: permission denied to access "eifn_<slt:ignore>.<slt:ignore>.eifn_<slt:ignore>
 
 
 connection c_ved user=eifn_vedernikoff password=eifn_pw
 statement error
 SELECT count(*) FROM iceberg_scan_plan('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
 ----
-db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+db error: ERROR: permission denied to access "eifn_<slt:ignore>.<slt:ignore>.eifn_<slt:ignore>
 
 
 connection c_ved user=eifn_vedernikoff password=eifn_pw
 statement error
 SELECT count(*) FROM iceberg_table_properties('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
 ----
-db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+db error: ERROR: Catalog "eifn_<slt:ignore>
 
 
 connection c_ved user=eifn_vedernikoff password=eifn_pw
 statement error
 SELECT count(*) FROM iceberg_schema_properties('eifn_${__DATABASE__}.${__DATABASE__}');
 ----
-db error: ERROR: permission denied for foreign server eifn_<slt:ignore>
+db error: ERROR: Catalog with name eifn_<slt:ignore>
 
 
 connection c_ved user=eifn_vedernikoff password=eifn_pw

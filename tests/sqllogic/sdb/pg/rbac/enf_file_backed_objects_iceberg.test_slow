@@ -56,7 +56,7 @@ connection c_ved user=efbi_vedernikoff password=efbi_pw
 statement error
 SELECT id, body FROM efbi_${__DATABASE__}.${__DATABASE__}.efbi_t ORDER BY id;
 ----
-db error: ERROR: permission denied for foreign server efbi_<slt:ignore>
+db error: ERROR: Table with name "efbi_<slt:ignore>.<slt:ignore>.efbi_t" does not exist because schema "efbi_<slt:ignore>
 
 
 statement ok

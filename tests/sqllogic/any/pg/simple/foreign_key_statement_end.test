@@ -43,3 +43,98 @@ SELECT (SELECT count(*) FROM fks_parent) AS parents, (SELECT count(*) FROM fks_c
 ----
 parents	children
 0	0
+
+
+statement ok
+CREATE TABLE fks_perm_parent (a int, b int, PRIMARY KEY (a, b));
+
+
+statement ok
+CREATE TABLE fks_perm_child (x int, y int, FOREIGN KEY (x, y) REFERENCES fks_perm_parent (b, a));
+
+
+statement ok
+INSERT INTO fks_perm_parent VALUES (1, 2);
+
+
+statement ok
+INSERT INTO fks_perm_child VALUES (2, 1);
+
+
+statement error violates foreign key constraint "fks_perm_child_x_y_fkey"
+INSERT INTO fks_perm_child VALUES (1, 2);
+
+
+query
+SELECT conname, conindid = 'fks_perm_parent_pkey'::regclass AS uses_pkey
+FROM pg_constraint WHERE conrelid = 'fks_perm_child'::regclass AND contype = 'f';
+----
+conname	uses_pkey
+fks_perm_child_x_y_fkey	t
+
+
+statement ok
+DROP TABLE fks_perm_child;
+
+
+statement ok
+DROP TABLE fks_perm_parent;
+
+
+statement ok
+CREATE TABLE fks_both_parent (x int, y int, UNIQUE (x, y), UNIQUE (y, x));
+
+
+statement ok
+CREATE TABLE fks_both_child (a int, b int, FOREIGN KEY (a, b) REFERENCES fks_both_parent (y, x));
+
+
+query
+SELECT c.conname, i.relname AS uses_index
+FROM pg_constraint c JOIN pg_class i ON i.oid = c.conindid
+WHERE c.conrelid = 'fks_both_child'::regclass AND c.contype = 'f';
+----
+conname	uses_index
+fks_both_child_a_b_fkey	fks_both_parent_x_y_key
+
+
+query
+SELECT column_name, ordinal_position, position_in_unique_constraint
+FROM information_schema.key_column_usage
+WHERE table_name = 'fks_both_child' ORDER BY ordinal_position;
+----
+column_name	ordinal_position	position_in_unique_constraint
+a	1	2
+b	2	1
+
+
+statement ok
+INSERT INTO fks_both_parent VALUES (1, 2);
+
+
+statement ok
+INSERT INTO fks_both_child VALUES (2, 1);
+
+
+statement error violates foreign key constraint "fks_both_child_a_b_fkey"
+INSERT INTO fks_both_child VALUES (1, 2);
+
+
+statement error cannot drop constraint fks_both_parent_x_y_key on table fks_both_parent because other objects depend on it
+ALTER TABLE fks_both_parent DROP CONSTRAINT fks_both_parent_x_y_key;
+
+
+statement ok
+ALTER TABLE fks_both_parent DROP CONSTRAINT fks_both_parent_y_x_key;
+
+
+statement error (must not contain duplicates|does not have a primary key or unique constraint)
+CREATE TABLE fks_both_twice (a int, b int, FOREIGN KEY (a, b) REFERENCES fks_both_parent (x, x));
+
+
+statement ok
+DROP TABLE fks_both_child;
+
+
+statement ok
+DROP TABLE fks_both_parent;

@@ -667,6 +667,75 @@ TEST_F(ColumnReaderTest, CopiesOnlyBlocksInTheForcedCodec) {
   }
 }
 
+TEST_F(ColumnReaderTest, ForcedCodecTheTypeCannotUseKeepsBlocksCopyable) {
+  constexpr uint32_t kRgSize = 4096;
+  constexpr uint64_t kRows = 3 * kRgSize;
+  constexpr irs::field_id kId = 1;
+  const auto value_of = [](uint64_t g) {
+    return g % 5 == 0
+             ? duckdb::Value{duckdb::LogicalType::BIGINT}
+             : duckdb::Value::BIGINT(static_cast<int64_t>(g * 7919 % 1000));
+  };
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), dir.Tracker("src")};
+    auto& cw = w.OpenColumn(kId, duckdb::LogicalType::BIGINT,
+                            {.row_group_size = kRgSize});
+    for (uint64_t pos = 0; pos < kRows;) {
+      const auto take =
+        std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector v{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t k = 0; k < take; ++k) {
+        v.SetValue(k, value_of(pos + k));
+      }
+      duckdb::FlatVector::SetSize(v, take);
+      cw.Append(v, take);
+      pos += take;
+    }
+    w.Commit(0);
+  }
+  irs::ColReader src = irs::tests::OpenColReader(dir, "src");
+  const auto& source = *src.Column(kId);
+  ASSERT_TRUE(absl::c_none_of(source.DataBlocks(), [](const auto& block) {
+    return block.codec->type == irs::codecs::CodecType::Constant;
+  }));
+
+  {
+    irs::ColWriter w{Db(), dir.Tracker("dst")};
+    auto& cw = w.OpenColumn(
+      kId, duckdb::LogicalType::BIGINT,
+      {.row_group_size = kRgSize, .compression = irs::codecs::CodecType::Fsst});
+    EXPECT_TRUE(cw.CopyableFrom(source));
+    irs::ReadContext context{src};
+    cw.CopyRows(0, source, context, 0, kRows);
+    w.Commit(0);
+  }
+  irs::ColReader dst = irs::tests::OpenColReader(dir, "dst");
+  const auto* column = dst.Column(kId);
+  ASSERT_NE(nullptr, column);
+  ASSERT_EQ(kRows, column->RowCount());
+  const auto blocks = source.DataBlocks();
+  const auto copied = column->DataBlocks();
+  ASSERT_EQ(blocks.size(), copied.size());
+  for (size_t b = 0; b != blocks.size(); ++b) {
+    EXPECT_EQ(blocks[b].byte_size, copied[b].byte_size) << "block " << b;
+    EXPECT_EQ(blocks[b].codec, copied[b].codec) << "block " << b;
+  }
+  auto state = column->InitScan(dst.Ctx());
+  for (uint64_t pos = 0; pos < kRows;) {
+    const auto take =
+      std::min<duckdb::idx_t>(kRows - pos, STANDARD_VECTOR_SIZE);
+    duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
+    column->Scan(state, batch, take);
+    for (duckdb::idx_t k = 0; k < take; ++k) {
+      EXPECT_TRUE(
+        duckdb::Value::NotDistinctFrom(value_of(pos + k), batch.GetValue(k)))
+        << "row " << pos + k;
+    }
+    pos += take;
+  }
+}
+
 TEST_F(ColumnReaderTest, CopiesBlocksOfAnyTierAtItsLevel) {
   constexpr uint32_t kRgSize = 4096;
   constexpr uint64_t kRows = 3 * kRgSize;

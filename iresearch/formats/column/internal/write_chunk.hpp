@@ -33,7 +33,7 @@ struct WriteChunk {
 };
 
 struct WriteRows {
-  std::span<WriteChunk> chunks;
+  std::span<const WriteChunk> chunks;
   uint64_t count = 0;
 };
 

@@ -664,7 +664,7 @@ struct RowGroupSample final : State {
   static constexpr StateId kId = StateId::AlpSample;
 
   explicit RowGroupSample(ColumnDataCheckpointData& data)
-    : state{AlpSampleRowGroup<T>(data.chunks)} {}
+    : state{AlpSampleRowGroup<T>(data.rows.chunks)} {}
 
   std::unique_ptr<AlpAnalyzeState<T>> state;
 };
@@ -899,7 +899,7 @@ uint64_t AlpCompressChunks(const Codec& codec,
   AlpCompressionState<T> state{
     codec, checkpoint_data,
     *checkpoint_data.template Get<RowGroupSample<T>>().state};
-  for (const auto& chunk : checkpoint_data.chunks) {
+  for (const auto& chunk : checkpoint_data.rows.chunks) {
     state.Append(chunk.data);
   }
   state.Finalize();

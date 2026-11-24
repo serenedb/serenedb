@@ -64,7 +64,7 @@ bool CompressChunks(const Codec& codec,
                     ColumnDataCheckpointData& checkpoint_data) {
   CompressedSegment segment{codec, checkpoint_data.type};
   Appender::Begin(segment);
-  for (const auto& chunk : checkpoint_data.chunks) {
+  for (const auto& chunk : checkpoint_data.rows.chunks) {
     duckdb::UnifiedVectorFormat data;
     chunk.data.ToUnifiedFormat(data);
     idx_t offset = 0;
@@ -90,7 +90,7 @@ double AnalyzeBytes([[maybe_unused]] ColumnDataCheckpointData& data, double) {
   if constexpr (kBytes == nullptr) {
     return kNoScore;
   } else {
-    return ScoreOfBytes(kBytes(data.rows), data);
+    return ScoreOfBytes(kBytes(data.rows.count), data);
   }
 }
 

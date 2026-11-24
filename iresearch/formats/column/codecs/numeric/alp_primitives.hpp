@@ -39,14 +39,14 @@ namespace irs::codecs {
 template<CodecType kCodec, auto kAnalyze, auto kCompress>
 struct Sampled {
   static double Analyze(ColumnDataCheckpointData& data, double) {
-    if (data.rows == 0) {
+    if (data.rows.count == 0) {
       return kNoScore;
     }
     return ScoreOfBytes(kAnalyze(data), data);
   }
 
   static bool Compress(const Codec& codec, ColumnDataCheckpointData& data) {
-    if (data.rows == 0) {
+    if (data.rows.count == 0) {
       return false;
     }
     data.tuning.hints[std::to_underlying(kCodec)].score =

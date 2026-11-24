@@ -123,10 +123,9 @@ void CompressCodes(
   };
   ColumnDataCheckpointData data{
     .type = chunk.data.GetType(),
-    .chunks = {&chunk, 1},
     .flush = flush,
     .tuning = column,
-    .rows = codes.size(),
+    .rows = {{&chunk, 1}, codes.size()},
   };
   CompressAutoCodes(data);
   ratio = static_cast<double>(written) /

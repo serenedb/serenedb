@@ -1234,13 +1234,12 @@ std::vector<irs::codecs::CodecType> SealAuto(
                          std::string_view) { types.push_back(codec.type); };
   irs::codecs::ColumnDataCheckpointData checkpoint{
     .type = duckdb::LogicalType::VARCHAR,
-    .chunks = chunks,
     .ctx = &ctx,
     .flush = flush,
     .params = params,
     .tuning = tuning,
     .disabled = disabled,
-    .rows = RowsOf(chunks),
+    .rows = {chunks, RowsOf(chunks)},
   };
   irs::codecs::Compress(irs::codecs::CodecType::Auto, checkpoint);
   return types;
@@ -1321,12 +1320,11 @@ TEST_F(ColCodecsTest, NamedCodecSealsEverySegment) {
     };
     irs::codecs::ColumnDataCheckpointData checkpoint{
       .type = duckdb::LogicalType::VARCHAR,
-      .chunks = write_chunks,
       .ctx = &ctx,
       .flush = flush,
       .params = {.segment_target = 16 * 1024},
       .tuning = tuning,
-      .rows = RowsOf(write_chunks),
+      .rows = {write_chunks, RowsOf(write_chunks)},
     };
     irs::codecs::Compress(irs::codecs::CodecOf(choice.shape, choice.leaf),
                           checkpoint);
@@ -5046,11 +5044,10 @@ TEST_F(ColCodecsTest, RoaringBooleanSegmentsCarryTheirOwnStats) {
     irs::codecs::ColumnTuning tuning;
     irs::codecs::ColumnDataCheckpointData checkpoint{
       .type = duckdb::LogicalType::BOOLEAN,
-      .chunks = rows,
       .ctx = &ctx,
       .flush = flush,
       .tuning = tuning,
-      .rows = RowsOf(rows),
+      .rows = {rows, RowsOf(rows)},
     };
     irs::codecs::Compress(fn.type, checkpoint);
     return flushed;
@@ -5282,12 +5279,11 @@ TEST_F(ColCodecsTest, FsstSegmentsFollowAChangeInCompressibility) {
                          std::string_view) { sizes.push_back(bytes.size()); };
   irs::codecs::ColumnDataCheckpointData checkpoint{
     .type = duckdb::LogicalType::VARCHAR,
-    .chunks = chunks,
     .ctx = &ctx,
     .flush = flush,
     .params = {.segment_target = kTarget},
     .tuning = tuning,
-    .rows = kRows,
+    .rows = {chunks, kRows},
   };
   irs::codecs::Compress(irs::codecs::CodecType::Fsst, checkpoint);
   ASSERT_GT(sizes.size(), 8u);

@@ -157,7 +157,7 @@ struct Runs final : State {
 
   explicit Runs(ColumnDataCheckpointData& data) {
     if constexpr (!std::is_integral_v<T>) {
-      if (!data.Find<Values<T>>() && EveryRowDiffers<T>(data.chunks)) {
+      if (!data.Find<Values<T>>() && EveryRowDiffers<T>(data.rows.chunks)) {
         return;
       }
     }

@@ -347,7 +347,7 @@ struct RowGroupSample final : State {
   static constexpr StateId kId = StateId::AlprdSample;
 
   explicit RowGroupSample(ColumnDataCheckpointData& data) {
-    for (const auto& chunk : data.chunks) {
+    for (const auto& chunk : data.rows.chunks) {
       AlpRdSample(state, chunk.data);
     }
     bits_per_value =
@@ -643,7 +643,7 @@ uint64_t AlpRdCompressChunks(const Codec& codec,
   AlpRdCompressionState<T> state{
     codec, checkpoint_data,
     checkpoint_data.template Get<RowGroupSample<T>>().state};
-  for (const auto& chunk : checkpoint_data.chunks) {
+  for (const auto& chunk : checkpoint_data.rows.chunks) {
     state.Append(chunk.data);
   }
   state.Finalize();

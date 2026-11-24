@@ -269,7 +269,8 @@ const Candidates& CandidatesOf(PhysicalType physical) noexcept {
 
 std::span<const Variant> NamedVariants(
   CodecType type, const ColumnDataCheckpointData& data) noexcept {
-  if (data.type.InternalType() != PhysicalType::VARCHAR || data.rows == 0) {
+  if (data.type.InternalType() != PhysicalType::VARCHAR ||
+      data.rows.count == 0) {
     return {};
   }
   switch (type) {

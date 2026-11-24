@@ -1705,7 +1705,7 @@ struct Containers final : State {
   static constexpr StateId kId = StateId::RoaringContainers;
 
   explicit Containers(ColumnDataCheckpointData& data) {
-    CountContainers<kPhysical>(state, data.chunks);
+    CountContainers<kPhysical>(state, data.rows.chunks);
   }
 
   RoaringAnalyzeState state;
@@ -1717,11 +1717,11 @@ constexpr CompressionFunction kFunction{
     [](ColumnDataCheckpointData& data, double) {
       return static_cast<double>(
                data.Get<Containers<kPhysical>>().state.total_size) /
-             static_cast<double>(std::max<uint64_t>(data.rows, 1));
+             static_cast<double>(std::max<uint64_t>(data.rows.count, 1));
     },
   .compress =
     [](const Codec& codec, ColumnDataCheckpointData& data) {
-      EncodeChunks<kPhysical>(codec, data, data.chunks,
+      EncodeChunks<kPhysical>(codec, data, data.rows.chunks,
                               data.Get<Containers<kPhysical>>().state);
       return true;
     },

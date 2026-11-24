@@ -315,13 +315,12 @@ bool ColumnWriter::Compress(const duckdb::LogicalType& type,
   };
   codecs::ColumnDataCheckpointData data{
     .type = type,
-    .chunks = rows.chunks,
     .ctx = &ctx,
     .flush = flush,
     .params = _options.codec_params,
     .tuning = tuning,
     .disabled = _disabled,
-    .rows = rows.count,
+    .rows = rows,
   };
   codecs::Compress(Enabled(method, type) ? method : codecs::CodecType::Auto,
                    data);
@@ -391,7 +390,7 @@ void ColumnWriter::SealArray(const duckdb::LogicalType& type,
     static_cast<uint64_t>(duckdb::ArrayType::GetSize(type));
   std::vector<WriteChunk> elem_chunks;
   for (auto& c : rows.chunks) {
-    SliceChunks(elem_chunks, duckdb::ArrayVector::GetChildMutable(c.data), 0,
+    SliceChunks(elem_chunks, duckdb::ArrayVector::GetChild(c.data), 0,
                 c.count * array_size);
   }
   SealColumn(duckdb::ArrayType::GetChildType(type),

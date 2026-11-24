@@ -52,14 +52,14 @@ constexpr DecompressionFunction kDecompression{
 };
 
 bool Compress(const Codec& codec, ColumnDataCheckpointData& data) {
-  if (absl::c_any_of(data.chunks, [](const WriteChunk& chunk) {
+  if (absl::c_any_of(data.rows.chunks, [](const WriteChunk& chunk) {
         return !duckdb::FlatVector::Validity(chunk.data)
                   .CheckAllValid(chunk.data.size());
       })) {
     return false;
   }
-  data.flush(codec, duckdb::BaseStatistics::CreateEmpty(data.type), data.rows,
-             {}, {});
+  data.flush(codec, duckdb::BaseStatistics::CreateEmpty(data.type),
+             data.rows.count, {}, {});
   return true;
 }
 

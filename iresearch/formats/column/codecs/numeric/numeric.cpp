@@ -1279,7 +1279,7 @@ bool CompressWide(const Codec& codec, ColumnDataCheckpointData& data) {
     out.append(wide.high->bytes);
   }
   std::memcpy(out.data(), &header, sizeof(WideHeader));
-  data.flush(codec, wide.Stats(data.type), data.rows, out, {});
+  data.flush(codec, wide.Stats(data.type), data.rows.count, out, {});
   return true;
 }
 

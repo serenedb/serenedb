@@ -206,7 +206,6 @@ struct ColumnDataCheckpointData {
   }
 
   const duckdb::LogicalType& type;
-  std::span<const WriteChunk> chunks;
   WriteContext* ctx = nullptr;
   FlushSegmentFn flush;
   ColCodecParams params;
@@ -214,14 +213,14 @@ struct ColumnDataCheckpointData {
   CodecSet disabled;
   bool contested = false;
   uint8_t option = 0;
-  uint64_t rows = 0;
+  WriteRows rows;
   std::array<std::unique_ptr<State>, magic_enum::enum_count<StateId>()> states;
 };
 
 inline double ScoreOfBytes(uint64_t bytes,
                            const ColumnDataCheckpointData& data) noexcept {
   return static_cast<double>(bytes) /
-         static_cast<double>(data.rows != 0 ? data.rows : 1);
+         static_cast<double>(data.rows.count != 0 ? data.rows.count : 1);
 }
 
 struct CompressionFunction {

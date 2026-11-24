@@ -242,12 +242,12 @@ bool EveryRowIsNull(std::span<const WriteChunk> chunks) {
 }
 
 bool CompressValidity(const Codec& codec, ColumnDataCheckpointData& data) {
-  if (!EveryRowIsNull(data.chunks)) {
+  if (!EveryRowIsNull(data.rows.chunks)) {
     return false;
   }
   auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);
   stats.SetHasNullFast();
-  data.flush(codec, std::move(stats), data.rows, {}, {});
+  data.flush(codec, std::move(stats), data.rows.count, {}, {});
   return true;
 }
 
@@ -311,7 +311,7 @@ bool EveryValueIsEqual(std::span<const WriteChunk> chunks,
 }
 
 bool CompressRows(const Codec& codec, ColumnDataCheckpointData& data) {
-  if (data.rows == 0) {
+  if (data.rows.count == 0) {
     return false;
   }
   auto stats = duckdb::BaseStatistics::CreateEmpty(data.type);
@@ -319,14 +319,14 @@ bool CompressRows(const Codec& codec, ColumnDataCheckpointData& data) {
   const auto physical = data.type.InternalType();
   const bool constant =
     physical == duckdb::PhysicalType::VARCHAR
-      ? EveryValueIsEqual<duckdb::string_t>(data.chunks, stats, bytes)
+      ? EveryValueIsEqual<duckdb::string_t>(data.rows.chunks, stats, bytes)
       : Resolve<NumericAxis>(physical, [&]<typename T>() {
-          return EveryValueIsEqual<T>(data.chunks, stats, bytes);
+          return EveryValueIsEqual<T>(data.rows.chunks, stats, bytes);
         });
   if (!constant) {
     return false;
   }
-  data.flush(codec, std::move(stats), data.rows, bytes, {});
+  data.flush(codec, std::move(stats), data.rows.count, bytes, {});
   return true;
 }
 

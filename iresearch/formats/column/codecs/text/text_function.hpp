@@ -162,7 +162,7 @@ IRS_NO_INLINE void SealRows(Compression& builder, const Config& config,
   uint64_t row = 0;
   uint64_t first = 0;
   builder.InitCompression(config, first, 0, seg);
-  for (const auto& chunk : data.chunks) {
+  for (const auto& chunk : data.rows.chunks) {
     for (const auto entry : chunk.data.Values<duckdb::string_t>()) {
       builder.Compress(entry.IsValid() ? &entry.GetValueUnsafe() : nullptr);
       ++row;

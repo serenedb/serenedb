@@ -55,16 +55,16 @@ class Values final : public State {
     uint8_t stored = 0;
   };
 
-  explicit Values(ColumnDataCheckpointData& data) : _chunks{data.chunks} {
+  explicit Values(ColumnDataCheckpointData& data) : _chunks{data.rows.chunks} {
     if (!ReadInPlace()) {
-      Gather(data.rows);
+      Gather(data.rows.count);
     }
     Measure();
   }
 
   Values(ColumnDataCheckpointData& data, std::span<const U> run_values,
          std::span<const uint32_t> run_rows)
-    : _chunks{data.chunks} {
+    : _chunks{data.rows.chunks} {
     SDB_VERIFY(ReadInPlace());
     MeasureRuns(run_values, run_rows);
   }

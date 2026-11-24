@@ -38,13 +38,13 @@ using duckdb::string_t;
 
 Values::Values(ColumnDataCheckpointData& data) {
   auto& last_distinct = data.tuning.strings.last_distinct;
-  const uint64_t rows = data.rows;
+  const uint64_t rows = data.rows.count;
   codes.reserve(rows);
   const auto expected =
     last_distinct == 0 ? rows : std::min(rows, last_distinct);
   distinct.reserve(expected);
   _codes.reserve(expected);
-  for (const auto& chunk : data.chunks) {
+  for (const auto& chunk : data.rows.chunks) {
     Add(chunk.data);
   }
   last_distinct = distinct.size();

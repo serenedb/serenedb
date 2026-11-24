@@ -152,12 +152,11 @@ struct WidePart {
             values.size()},
       data{
         .type = type,
-        .chunks = {&chunk, 1},
         .flush = keep,
         .params = outer.params,
         .tuning = tuning,
         .contested = outer.contested,
-        .rows = values.size(),
+        .rows = {{&chunk, 1}, values.size()},
       } {
     duckdb::FlatVector::SetSize(chunk.data, values.size());
   }
@@ -240,7 +239,7 @@ struct WideValues final : State {
     runs_checked = true;
     bool any = false;
     W last{};
-    for (const auto& chunk : data.chunks) {
+    for (const auto& chunk : data.rows.chunks) {
       const size_t count = chunk.data.size();
       SDB_ASSERT(chunk.data.GetVectorType() ==
                    duckdb::VectorType::FLAT_VECTOR &&
@@ -278,7 +277,7 @@ struct WideValues final : State {
             distinct.insert(key);
           }
           const auto most = std::min(
-            static_cast<double>(data.rows) / 2,
+            static_cast<double>(data.rows.count) / 2,
             static_cast<double>(data.contested
                                   ? kMostWideDictionaryEntries
                                   : std::numeric_limits<uint32_t>::max()));
@@ -293,13 +292,13 @@ struct WideValues final : State {
   }
 
   bool ReadRuns(ColumnDataCheckpointData& data) {
-    const size_t limit = data.rows / kWideRunRows * 2;
+    const size_t limit = data.rows.count / kWideRunRows * 2;
     ScratchVector<absl::uint128> keys(limit);
     ScratchVector<uint32_t> rows(limit);
     absl::uint128 last = 0;
     size_t count = 0;
     size_t row = 0;
-    for (const auto& chunk : data.chunks) {
+    for (const auto& chunk : data.rows.chunks) {
       const size_t size = chunk.data.size();
       SDB_ASSERT(
         chunk.data.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
@@ -332,7 +331,7 @@ struct WideValues final : State {
     base = absl::Uint128High64(most) == absl::Uint128High64(least)
              ? absl::MakeUint128(absl::Uint128High64(least), 0)
              : least;
-    lows.resize(data.rows);
+    lows.resize(data.rows.count);
     low.emplace(data, lows);
     ScratchVector<uint64_t> values(count);
     rows.resize(count);
@@ -340,7 +339,8 @@ struct WideValues final : State {
       const uint64_t value = absl::Uint128Low64(keys[r] - base);
       values[r] = value;
       std::fill(lows.data() + rows[r],
-                lows.data() + (r + 1 < count ? rows[r + 1] : data.rows), value);
+                lows.data() + (r + 1 < count ? rows[r + 1] : data.rows.count),
+                value);
     }
     low->data.template Get<Values<uint64_t>>(std::span<const uint64_t>{values},
                                              std::span<const uint32_t>{rows});
@@ -349,13 +349,13 @@ struct WideValues final : State {
   }
 
   bool ReadLowerHalves(ColumnDataCheckpointData& data) {
-    lows.resize(data.rows);
+    lows.resize(data.rows.count);
     uint64_t upper = 0;
     uint64_t lo = std::numeric_limits<uint64_t>::max();
     uint64_t hi = 0;
     uint64_t last = 0;
     size_t at = 0;
-    for (const auto& chunk : data.chunks) {
+    for (const auto& chunk : data.rows.chunks) {
       const size_t count = chunk.data.size();
       SDB_ASSERT(chunk.data.GetVectorType() ==
                    duckdb::VectorType::FLAT_VECTOR &&
@@ -421,9 +421,9 @@ struct WideValues final : State {
   }
 
   void SampleChunks(ColumnDataCheckpointData& data) {
-    const auto [every, rows] = WideSampleOf(data.rows);
+    const auto [every, rows] = WideSampleOf(data.rows.count);
     size_t row = 0;
-    for (const auto& chunk : data.chunks) {
+    for (const auto& chunk : data.rows.chunks) {
       const size_t count = chunk.data.size();
       SDB_ASSERT(chunk.data.GetVectorType() ==
                    duckdb::VectorType::FLAT_VECTOR &&
@@ -486,8 +486,8 @@ struct WideValues final : State {
     }
     usable = false;
     has_null = false;
-    lows.resize(data.rows);
-    highs.resize(data.rows);
+    lows.resize(data.rows.count);
+    highs.resize(data.rows.count);
     ReadHalves(data);
     SDB_ASSERT(usable);
     if (!sampled) {
@@ -546,7 +546,7 @@ struct WideValues final : State {
       hi_upper = above ? upper : hi_upper;
       hi_lower = above ? lower : hi_lower;
     };
-    for (const auto& chunk : data.chunks) {
+    for (const auto& chunk : data.rows.chunks) {
       const size_t count = chunk.data.size();
       SDB_ASSERT(chunk.data.GetVectorType() ==
                    duckdb::VectorType::FLAT_VECTOR &&

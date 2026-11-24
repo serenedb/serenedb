@@ -250,13 +250,12 @@ class ColCompressionFunctionTest : public ::testing::Test {
                            std::string_view) { blocks.push_back(codec.type); };
     ColumnDataCheckpointData data{
       .type = type,
-      .chunks = _chunks,
       .ctx = &ctx,
       .flush = flush,
       .params = {.tier = tier},
       .tuning = _tuning,
       .disabled = disabled,
-      .rows = _values->size(),
+      .rows = {_chunks, _values->size()},
     };
     irs::codecs::Compress(method, data);
     return blocks;
@@ -287,14 +286,13 @@ class ColCompressionFunctionTest : public ::testing::Test {
     irs::codecs::ColumnTuning tuning;
     ColumnDataCheckpointData data{
       .type = type,
-      .chunks = rows.Chunks(),
       .ctx = &ctx,
       .flush = flush,
       .params = params,
       .tuning = tuning,
       .disabled = disabled,
       .contested = contested,
-      .rows = rows.Count(),
+      .rows = {rows.Chunks(), rows.Count()},
     };
     run(data);
   }

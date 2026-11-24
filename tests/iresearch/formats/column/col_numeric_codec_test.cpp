@@ -4849,11 +4849,10 @@ VariantSegment CompressVariant(duckdb::DatabaseInstance& db,
   irs::codecs::ColumnTuning tuning;
   irs::codecs::ColumnDataCheckpointData data{
     .type = type,
-    .chunks = chunks,
     .ctx = &ctx,
     .flush = flush,
     .tuning = tuning,
-    .rows = values.size(),
+    .rows = {chunks, values.size()},
   };
   const auto& codec = *irs::codecs::GetCodec(codec_type, type.InternalType());
   const auto& fn = codec.compression[variant];

@@ -1,0 +1,29 @@
+statement ok
+CREATE TABLE jnt_calls (n int);
+
+
+statement ok
+CREATE JOB jnt_called AFTER 1 HOUR AS INSERT INTO jnt_calls VALUES (1);
+
+
+statement ok
+CALL execute_job('JNT_CALLED');
+
+
+statement ok
+CALL execute_job('Jnt_Called');
+
+
+query
+SELECT count(*) AS n FROM jnt_calls;
+----
+n
+2
+
+
+statement ok
+DROP JOB jnt_called;
+
+
+statement ok
+DROP TABLE jnt_calls;

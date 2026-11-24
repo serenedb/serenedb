@@ -191,17 +191,6 @@ class Socket final {
     _tls = true;
   }
 
-  // The ALPN protocol negotiated during the TLS handshake (empty if none) --
-  // lets the HTTP session pick H1 vs a future H2 codec.
-  [[nodiscard]] std::string_view AlpnProtocol() const
-    requires(kSslBacked)
-  {
-    const unsigned char* data = nullptr;
-    unsigned int len = 0;
-    SSL_get0_alpn_selected(_stream.native_handle(), &data, &len);
-    return {reinterpret_cast<const char*>(data), len};
-  }
-
   // RFC 5929 tls-server-end-point, for SCRAM-SHA-256-PLUS. The cert's signature
   // hash is upgraded to SHA-256 when it is MD5/SHA-1/absent (RFC 5929 4.1).
   // X509_get_signature_info (not the sig OID) so RSA-PSS resolves to the real

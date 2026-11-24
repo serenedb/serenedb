@@ -27,6 +27,8 @@
 
 namespace sdb::bench {
 
+int RunBenchmarks(int argc, char** argv);
+
 bool AddMain(std::string_view module, int (*main)(int argc, char** argv));
 bool AddMain(std::string_view module,
              int (*main)(int argc, const char* argv[]));

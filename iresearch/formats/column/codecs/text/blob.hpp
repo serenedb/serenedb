@@ -894,13 +894,8 @@ double AnalyzeFrames(ColumnDataCheckpointData& data, double bound) {
 template<typename Codec, typename Rows>
 bool CompressFrames(const codecs::Codec& codec,
                     ColumnDataCheckpointData& data) {
-  using Compression = CompressionState<Codec, Rows>;
-  const auto config = FrameConfig<Codec, Rows>(data);
-  if (data.contested) {
-    return CompressContested<Compression>(config, codec, data);
-  }
-  CompressAs<Compression>(config, codec, data);
-  return true;
+  return CompressSegments<CompressionState<Codec, Rows>>(
+    FrameConfig<Codec, Rows>(data), codec, data);
 }
 
 template<typename Codec, typename Rows>

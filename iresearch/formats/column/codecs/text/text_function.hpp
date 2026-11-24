@@ -242,53 +242,38 @@ double AnalyzeTrial(ColumnDataCheckpointData& data, double) {
 }
 
 template<typename Compression>
-void CompressAs(const Config& config, const Codec& codec,
-                ColumnDataCheckpointData& data) {
+bool CompressSegments(const Config& config, const Codec& codec,
+                      ColumnDataCheckpointData& data) {
   auto& state = data.Get<CodecState<Compression>>();
-  if constexpr (Compression::kShape == Shape::Plain) {
-    SealRows(state.builder, config, codec, data, state.segment);
-  } else {
-    const auto& values = data.Get<Values>();
-    uint64_t begin = 0;
-    if (Find(state, config)) {
-      auto& first = Trial(state, config, values, data.Get<Window>(),
-                          data.params.segment_target);
-      Flush(codec, data, first);
-      begin = first.begin + first.rows;
+  auto* trial = data.contested
+                  ? &Trial(state, config, data.Get<Values>(),
+                           data.Get<Window>(), data.params.segment_target)
+                  : Find(state, config);
+  if (!trial) {
+    if constexpr (Compression::kShape == Shape::Plain) {
+      SealRows(state.builder, config, codec, data, state.segment);
+    } else {
+      CompressRows(state.builder, config, data.Get<Values>(), 0, state.segment,
+                   codec, data);
     }
-    CompressRows(state.builder, config, values, begin, state.segment, codec,
-                 data);
+    return true;
   }
-}
-
-template<typename Compression>
-bool CompressContested(const Config& config, const Codec& codec,
-                       ColumnDataCheckpointData& data) {
-  auto& state = data.Get<CodecState<Compression>>();
-  const auto& values = data.Get<Values>();
-  auto& window = data.Get<Window>();
-  SDB_ASSERT(window.rows != 0);
-  auto& first =
-    Trial(state, config, values, window, data.params.segment_target);
-  if (first.Size() > PlainStorageBytes(first)) {
+  if (data.contested && trial->Size() > PlainStorageBytes(*trial)) {
     return false;
   }
-  const auto rest = first.begin + first.rows;
-  Flush(codec, data, first);
-  CompressRows(state.builder, config, values, rest, first, codec, data);
+  Flush(codec, data, *trial);
+  CompressRows(state.builder, config, data.Get<Values>(),
+               trial->begin + trial->rows, *trial, codec, data);
   return true;
 }
 
 template<typename Compression>
 bool CompressText(const Codec& codec, ColumnDataCheckpointData& data) {
-  if (data.contested) {
-    return CompressContested<Compression>(kTrialConfig<Compression>, codec,
-                                          data);
-  }
-  CompressAs<Compression>(
-    NamedConfig(Compression::kShape, Compression::kCodec, data.params), codec,
-    data);
-  return true;
+  return CompressSegments<Compression>(
+    data.contested
+      ? kTrialConfig<Compression>
+      : NamedConfig(Compression::kShape, Compression::kCodec, data.params),
+    codec, data);
 }
 
 template<typename Compression>

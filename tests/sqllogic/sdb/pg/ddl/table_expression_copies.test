@@ -1,0 +1,188 @@
+statement ok
+CREATE TEMP TABLE tec_tg (id INT, g INT GENERATED ALWAYS AS (abs(id)) STORED)
+
+statement ok
+INSERT INTO tec_tg (id) VALUES (-1)
+
+query
+SELECT id, g FROM tec_tg
+----
+id	g
+-1	1
+
+statement ok
+CREATE TEMP TABLE tec_td (id SERIAL, a INT)
+
+statement ok
+INSERT INTO tec_td VALUES (DEFAULT, 1)
+
+query
+SELECT id, a FROM tec_td
+----
+id	a
+1	1
+
+statement ok
+CREATE TEMP TABLE tec_tv (id INT, v TEXT GENERATED ALWAYS AS (lower('X')))
+
+statement ok
+INSERT INTO tec_tv (id) VALUES (1)
+
+query
+SELECT id, v FROM tec_tv
+----
+id	v
+1	x
+
+statement ok
+CREATE SEQUENCE "Tec_Ids"
+
+statement ok
+CREATE TABLE tec_q (id BIGINT DEFAULT nextval('"Tec_Ids"'), a INT)
+
+statement ok
+INSERT INTO tec_q VALUES (DEFAULT, 1)
+
+query
+SELECT id, a FROM tec_q
+----
+id	a
+1	1
+
+statement ok
+CREATE SCHEMA "Tec_Sales"
+
+statement ok
+CREATE TABLE "Tec_Sales".tec_kv (id SERIAL, k INT PRIMARY KEY, v TEXT)
+
+statement ok
+INSERT INTO "Tec_Sales".tec_kv VALUES (DEFAULT, 1, 'a')
+
+statement ok
+INSERT INTO "Tec_Sales".tec_kv (k, v) VALUES (1, 'b') ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v
+
+query
+SELECT id, k, v FROM "Tec_Sales".tec_kv
+----
+id	k	v
+1	1	b
+
+statement ok
+CREATE TABLE "Tec_Orders" (id SERIAL, a INT)
+
+statement ok
+INSERT INTO "Tec_Orders" (a) VALUES (1)
+
+statement ok
+INSERT INTO "Tec_Orders" VALUES (DEFAULT, 2)
+
+query
+SELECT id, a FROM "Tec_Orders" ORDER BY a
+----
+id	a
+1	1
+2	2
+
+statement ok
+CREATE SCHEMA tec_shop
+
+statement ok
+CREATE FUNCTION public.tec_code() RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 1'
+
+statement ok
+CREATE FUNCTION tec_shop.tec_code() RETURNS INT LANGUAGE sql IMMUTABLE AS 'SELECT 2'
+
+statement ok
+CREATE TABLE tec_shop.tec_items (id INT)
+
+statement ok
+INSERT INTO tec_shop.tec_items VALUES (1)
+
+statement ok
+SET search_path = public
+
+statement ok
+ALTER TABLE tec_shop.tec_items ADD COLUMN c INT DEFAULT tec_code()
+
+statement ok
+INSERT INTO tec_shop.tec_items (id) VALUES (2)
+
+query
+SELECT id, c FROM tec_shop.tec_items ORDER BY id
+----
+id	c
+1	1
+2	1
+
+statement ok
+RESET search_path
+
+statement ok
+CREATE TABLE tec_m (n INT, g INT GENERATED ALWAYS AS (n.abs()) STORED, v INT GENERATED ALWAYS AS (n.abs()))
+
+connection tec_shadow
+statement ok
+CREATE TEMPORARY MACRO abs(x) AS 1000
+
+connection tec_shadow
+statement ok
+INSERT INTO tec_m (n) VALUES (-5)
+
+connection tec_shadow
+query
+SELECT n, g, v FROM tec_m
+----
+n	g	v
+-5	5	5
+
+statement ok
+CREATE SCHEMA tec_ty
+
+statement ok
+CREATE TYPE tec_ty.tec_mood AS ENUM ('a', 'b')
+
+statement ok
+CREATE TABLE tec_ty.tec_p (id INT, m TEXT DEFAULT 'a'::tec_mood::TEXT, g TEXT GENERATED ALWAYS AS ('b'::tec_mood::TEXT) STORED)
+
+statement ok
+INSERT INTO tec_ty.tec_p (id) VALUES (1)
+
+statement ok
+INSERT INTO tec_ty.tec_p (id, m) VALUES (2, DEFAULT)
+
+query
+SELECT id, m, g FROM tec_ty.tec_p ORDER BY id
+----
+id	m	g
+1	a	b
+2	a	b
+
+statement ok
+CREATE SCHEMA tec_ty7
+
+statement ok
+CREATE TYPE tec_ty7.tec_mood7 AS ENUM ('a', 'b')
+
+statement ok
+SET search_path = tec_ty7, public
+
+statement error
+CREATE TABLE public.tec_g7 (id INT, g TEXT GENERATED ALWAYS AS ('a'::tec_mood7::TEXT) STORED)
+----
+db error: ERROR: Type with name tec_mood7 does not exist!
+Did you mean "tec_ty7.tec_mood7"?
+
+
+statement ok
+RESET search_path
+
+statement error
+SELECT nextval('')
+----
+db error: ERROR: invalid name syntax
+
+
+statement error
+CREATE TABLE tec_empty_seq (id BIGINT DEFAULT nextval(''))
+----
+db error: ERROR: invalid name syntax

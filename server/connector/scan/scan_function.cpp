@@ -668,7 +668,6 @@ void IResearchSetPartitionsToScan(
 
 bool IResearchConsumeTopN(duckdb::ClientContext&,
                           duckdb::FunctionData& bind_data,
-                          const duckdb::TableFilterSet&,
                           const duckdb::BoundLimitNode& limit,
                           const duckdb::BoundLimitNode& offset) {
   auto& bd = bind_data.Cast<ScanBindData>();

@@ -224,7 +224,8 @@ class Transactions final {
   }
 
   absl::Status TruncateLog(
-    duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT);
+    duckdb::CheckpointAbort abort = duckdb::CheckpointAbort::NO_ABORT,
+    duckdb::ClientContext* context = nullptr);
   void SettleLog();
   [[nodiscard]] utils::DrainGate::Closed CloseCheckpoints(
     duckdb::ClientContext& context) {

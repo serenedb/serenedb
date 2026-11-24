@@ -1,6 +1,7 @@
 target_sources(
     iresearch
     PRIVATE
+        ann_build_env.cpp
         column/codecs/auto.cpp
         column/codecs/bytes/lz4.cpp
         column/codecs/bytes/segment_dictionary.cpp

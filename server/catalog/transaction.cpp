@@ -731,7 +731,8 @@ void Transactions::TruncateInBackground() {
     .Detach();
 }
 
-absl::Status Transactions::TruncateLog(duckdb::CheckpointAbort abort) {
+absl::Status Transactions::TruncateLog(duckdb::CheckpointAbort abort,
+                                       duckdb::ClientContext* context) {
   if (!_log || _replaying) {
     return absl::OkStatus();
   }
@@ -762,7 +763,7 @@ absl::Status Transactions::TruncateLog(duckdb::CheckpointAbort abort) {
     tables = search::CaptureSnapshot(view);
   }
   SDB_PARK_ONCE_ON_FAILURE("pause_cover_after_collect");
-  const auto records = search::SnapshotRecords(tables);
+  const auto records = search::SnapshotRecords(tables, context);
   tables.clear();
   _log->Sync(covered);
   if (abort == duckdb::CheckpointAbort::DEBUG_ABORT_BEFORE_TRUNCATE ||
@@ -1007,7 +1008,8 @@ void TransactionManager::Checkpoint(duckdb::ClientContext& context, bool) {
                     ERR_HINT("Retry after pg_backup_stop()."));
   }
   if (const auto status = Transactions::Get().TruncateLog(
-        duckdb::Settings::Get<duckdb::DebugCheckpointAbortSetting>(context));
+        duckdb::Settings::Get<duckdb::DebugCheckpointAbortSetting>(context),
+        &context);
       !status.ok()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INTERNAL_ERROR),
                     ERR_MSG("Checkpoint failed for database ",

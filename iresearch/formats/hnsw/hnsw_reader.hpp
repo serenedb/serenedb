@@ -31,6 +31,7 @@
 #include "iresearch/search/detail/ann_index.hpp"
 #include "iresearch/utils/blocking_once.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
+#include "iresearch/utils/parallel_for.hpp"
 
 namespace irs {
 
@@ -57,7 +58,7 @@ class HnswIndex final : public AnnIndex {
  public:
   HnswIndex(HnswMeta meta, field_id field, HnswBases* bases,
             const duckdb::InputFile& file) noexcept
-    : _meta{meta}, _field{field}, _bases{bases}, _file{file} {}
+    : _meta{std::move(meta)}, _field{field}, _bases{bases}, _file{file} {}
 
   AnnKind Kind() const noexcept final { return AnnKind::Hnsw; }
 
@@ -80,10 +81,11 @@ class HnswIndex final : public AnnIndex {
                                  bool inclusive, uint32_t effort,
                                  AnnQueryCache* cache) const final;
 
-  AnnExactCodes PrepareExact(std::span<const float> query,
+  AnnExactCodes PrepareExact(const PrepareContext& ctx,
+                             std::span<const float> query,
                              VectorMetric metric) const final;
 
-  std::shared_ptr<const HnswData> Load() const;
+  std::shared_ptr<const HnswData> Load(ParallelFor parallel) const;
 
   const HnswHeader& Header() const noexcept { return _meta.header; }
 

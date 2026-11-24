@@ -102,6 +102,8 @@ The two spellings are mutually exclusive — combining `slop := N` with `::slop(
 
 Raising the budget to `1` would then admit anything one step off that declaration — adjacent tokens, or two tokens apart. Interval gaps are the exception: `[min, max]` already expresses a range, so pairing it with `slop` is rejected rather than compounded.
 
+[Phrases with gaps, intervals and slop](https://serenedb.com/blog/phrases-gaps-intervals-slop) explains how the positional index answers each of these forms and what each check costs inside a document.
+
 ## Combine with analytics
 
 The power of SereneDB: search and aggregate in a single query:

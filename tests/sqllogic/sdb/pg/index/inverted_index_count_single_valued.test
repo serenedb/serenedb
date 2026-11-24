@@ -291,7 +291,7 @@ QUERY PLAN
 │ │ Range: >=10, <=4000       │ │
 │ │ Posting Lists: 132        │ │
 │ │ Estimated Matches: 21,546 │ │
-│ │ Postings: 10,334          │ │
+│ │ Postings: 8,454           │ │
 │ │ Time: 0µs                 │ │
 │ ╰───────────────────────────╯ │
 │                               │

@@ -30,10 +30,10 @@
 namespace irs::lead {
 
 template<Type Leaf>
-class OrSparse {
+class DisjointDisjunction {
  public:
   template<typename Init>
-  OrSparse(size_t size, Init&& init)
+  DisjointDisjunction(size_t size, Init&& init)
     : _leaves{size, std::forward<Init>(init)},
       _heads{size,
              [this](Head& head, size_t i) noexcept {
@@ -41,8 +41,8 @@ class OrSparse {
              }},
       _size{size} {}
 
-  OrSparse(OrSparse&&) = delete;
-  OrSparse& operator=(OrSparse&&) = delete;
+  DisjointDisjunction(DisjointDisjunction&&) = delete;
+  DisjointDisjunction& operator=(DisjointDisjunction&&) = delete;
 
   doc_id_t Next() {
     if (doc_limits::eof(_doc)) [[unlikely]] {

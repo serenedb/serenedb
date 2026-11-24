@@ -22,7 +22,7 @@
 
 #include <algorithm>
 #include <iresearch/search/lead/concept.hpp>
-#include <iresearch/search/lead/or_sparse.hpp>
+#include <iresearch/search/lead/disjoint_disjunction.hpp>
 #include <random>
 #include <span>
 #include <vector>
@@ -78,11 +78,12 @@ std::vector<doc_id_t> Merged(const Lists& lists) {
   return docs;
 }
 
-class Union : public irs::lead::OrSparse<ListLead> {
+class Union : public irs::lead::DisjointDisjunction<ListLead> {
  public:
   explicit Union(const Lists& lists)
-    : OrSparse{lists.size(),
-               [&](ListLead& lead, size_t i) { lead.Reset(lists[i]); }} {}
+    : DisjointDisjunction{lists.size(), [&](ListLead& lead, size_t i) {
+                            lead.Reset(lists[i]);
+                          }} {}
 };
 
 std::vector<doc_id_t> Random(std::mt19937& rng, size_t size, doc_id_t from,
@@ -125,7 +126,7 @@ std::vector<Lists> Cases() {
   return cases;
 }
 
-TEST(or_sparse_test, next_walks_the_merged_lists) {
+TEST(disjoint_disjunction_test, next_walks_the_merged_lists) {
   for (const auto& lists : Cases()) {
     SCOPED_TRACE(lists.size());
     const auto expected = Merged(lists);
@@ -139,7 +140,8 @@ TEST(or_sparse_test, next_walks_the_merged_lists) {
   }
 }
 
-TEST(or_sparse_test, seek_lands_on_the_first_doc_at_or_past_the_target) {
+TEST(disjoint_disjunction_test,
+     seek_lands_on_the_first_doc_at_or_past_the_target) {
   std::mt19937 rng{23};
   for (const auto& lists : Cases()) {
     const auto expected = Merged(lists);
@@ -172,7 +174,7 @@ TEST(or_sparse_test, seek_lands_on_the_first_doc_at_or_past_the_target) {
   }
 }
 
-TEST(or_sparse_test, gather_fills_each_window) {
+TEST(disjoint_disjunction_test, gather_fills_each_window) {
   for (const auto& lists : Cases()) {
     const auto expected = Merged(lists);
     for (const doc_id_t window : {1, 7, 64, 4096}) {

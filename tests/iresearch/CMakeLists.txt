@@ -131,6 +131,7 @@ add_executable(
     search/count_single_valued_test.cpp
     search/count_subtract_test.cpp
     search/dfi_test.cpp
+    search/disjoint_disjunction_test.cpp
     search/doc_collector_test.cpp
     search/docs_mask_plan_test.cpp
     search/document_mask_test.cpp
@@ -150,7 +151,6 @@ add_executable(
     search/nested_filter_test.cpp
     search/ngram_similarity_filter_tests.cpp
     search/optimizer_scorer_test.cpp
-    search/or_sparse_test.cpp
     search/pattern_cache_test.cpp
     search/per_node_scorer_test.cpp
     search/phrase_filter_tests.cpp

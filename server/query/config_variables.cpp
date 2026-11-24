@@ -1653,6 +1653,7 @@ constexpr std::pair<std::string_view, VariableDescription>
           "Sets the time zone for displaying and interpreting time stamps.",
         .default_value = [] { return duckdb::Value{"Etc/UTC"}; },
         .set_callback = CheckTimeZone,
+        .rebind = true,
       },
     },
     {

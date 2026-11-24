@@ -33,6 +33,8 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -45,6 +47,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include "server/utils/stack_trace.h"
@@ -211,8 +214,7 @@ std::string Describe(std::span<const ThreadStack> stacks, pid_t tid) {
   return text;
 }
 
-std::string ReadProc(pid_t tid, std::string_view file) {
-  const auto path = absl::StrCat("/proc/self/task/", tid, "/", file);
+std::string ReadFile(const std::string& path) {
   std::array<char, 4096> buffer{};
   const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
   const auto size = fd < 0 ? -1 : ::read(fd, buffer.data(), buffer.size());
@@ -224,7 +226,8 @@ std::string ReadProc(pid_t tid, std::string_view file) {
 
 bool SignalPending(pid_t tid, int signal) {
   constexpr std::string_view kKey = "\nSigPnd:";
-  const auto status = ReadProc(tid, "status");
+  const auto status =
+    ReadFile(absl::StrCat("/proc/self/task/", tid, "/status"));
   const auto key = status.find(kKey);
   if (key == std::string::npos) {
     return false;
@@ -345,23 +348,63 @@ TEST(StackTrace, ThreadBlockingTheSignalHasNoFrames) {
   stop_waiting.Notify();
 }
 
+TEST(StackTrace, IgnoresTheSignalFromElsewhere) {
+  ASSERT_FALSE(CollectStacks().empty());
+  ASSERT_EQ(syscall(SYS_tgkill, getpid(), gettid(), SIGRTMIN), 0);
+  const auto stacks = CollectStacks();
+  EXPECT_TRUE(HasFrameIn(stacks, gettid(), "IgnoresTheSignalFromElsewhere"));
+}
+
+#ifndef ABSL_HAVE_THREAD_SANITIZER
+void WaitUntilInRead(const std::string& proc) {
+  const auto in_read = absl::StrCat(SYS_read, " ");
+  while (!ReadFile(absl::StrCat(proc, "/syscall")).starts_with(in_read)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+}
+
+TEST(StackTrace, AThreadThatCannotTakeTheSignalTimesOut) {
+  int fds[2] = {};
+  ASSERT_EQ(pipe(fds), 0);
+  std::atomic<pid_t> child = 0;
+  Thread forking{[&] {
+    const pid_t pid = vfork();
+    if (pid == 0) {
+      child = getpid();
+      char byte = 0;
+      std::ignore = ::read(fds[0], &byte, 1);
+      _exit(0);
+    }
+    int status = 0;
+    waitpid(pid, &status, 0);
+  }};
+  while (child == 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  WaitUntilInRead(absl::StrCat("/proc/", child.load()));
+
+  const auto stacks = CollectStacks();
+  const auto* frames = Frames(stacks, forking.Tid());
+  EXPECT_TRUE(frames && frames->empty());
+  EXPECT_TRUE(SignalPending(forking.Tid(), SIGRTMIN));
+
+  EXPECT_EQ(write(fds[1], "x", 1), 1);
+  close(fds[1]);
+  close(fds[0]);
+}
+#endif
+
 #if defined(__x86_64__) && !defined(ABSL_HAVE_THREAD_SANITIZER)
 [[clang::noinline, clang::disable_tail_calls]] void WaitInRawRead(int fd) {
   char byte = 0;
   SdbReadAtRowStart(fd, &byte);
 }
 
-void WaitUntilInRead(pid_t tid) {
-  while (!ReadProc(tid, "syscall").starts_with("0 ")) {
-    std::this_thread::sleep_for(std::chrono::milliseconds{1});
-  }
-}
-
 TEST(StackTrace, UnwindsWithTheRuleStartingAtTheInterruptedInstruction) {
   int fds[2] = {};
   ASSERT_EQ(pipe(fds), 0);
   Thread reading{[&] { WaitInRawRead(fds[0]); }};
-  WaitUntilInRead(reading.Tid());
+  WaitUntilInRead(absl::StrCat("/proc/self/task/", reading.Tid()));
 
   const auto stacks = CollectStacks();
   EXPECT_TRUE(HasFrameIn(stacks, reading.Tid(), "WaitInRawRead"))

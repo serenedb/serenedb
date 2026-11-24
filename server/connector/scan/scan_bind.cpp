@@ -680,8 +680,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
   auto& index = found->Cast<duckdb::IndexCatalogEntry>();
   if (input.binder) {
     auto& properties = input.binder->GetStatementProperties();
-    properties.RegisterDBRead(index.ParentCatalog(), context,
-                              input.binder->CheckAs());
+    properties.RegisterDBRead(index.ParentCatalog(), context);
     properties.RegisterDataRead(index, context, input.table_index);
   }
   const auto& role =

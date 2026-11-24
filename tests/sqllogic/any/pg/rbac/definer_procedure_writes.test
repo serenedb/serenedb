@@ -1,0 +1,117 @@
+statement ok
+DROP TABLE IF EXISTS dpw_ledger;
+
+
+statement ok
+DROP ROLE IF EXISTS dpw_caller;
+
+
+statement ok
+DROP ROLE IF EXISTS dpw_owner;
+
+
+statement ok
+CREATE ROLE dpw_owner;
+
+
+statement ok
+CREATE ROLE dpw_caller LOGIN PASSWORD 'dpw_pw';
+
+
+statement ok
+CREATE TABLE dpw_ledger (a integer);
+
+
+statement ok
+GRANT SELECT, INSERT, UPDATE, DELETE ON dpw_ledger TO dpw_owner;
+
+
+statement ok
+CREATE PROCEDURE dpw_put(x integer) LANGUAGE sql SECURITY DEFINER AS 'INSERT INTO dpw_ledger VALUES (x)';
+
+
+statement ok
+ALTER PROCEDURE dpw_put(integer) OWNER TO dpw_owner;
+
+
+statement ok
+CREATE PROCEDURE dpw_bump() LANGUAGE sql SECURITY DEFINER AS 'UPDATE dpw_ledger SET a = a + 10';
+
+
+statement ok
+ALTER PROCEDURE dpw_bump() OWNER TO dpw_owner;
+
+
+statement ok
+CREATE PROCEDURE dpw_clear() LANGUAGE sql SECURITY DEFINER AS 'DELETE FROM dpw_ledger WHERE a > 100';
+
+
+statement ok
+ALTER PROCEDURE dpw_clear() OWNER TO dpw_owner;
+
+
+onlyif postgres
+connection c_caller user=dpw_caller password=dpw_pw
+statement error
+INSERT INTO dpw_ledger VALUES (1);
+----
+db error: ERROR: permission denied for table dpw_ledger
+
+
+skipif postgres
+connection c_caller user=dpw_caller password=dpw_pw
+statement error
+INSERT INTO dpw_ledger VALUES (1);
+----
+db error: ERROR: Table with name dpw_ledger does not exist!<slt:ignore>
+
+
+connection c_caller user=dpw_caller password=dpw_pw
+statement ok
+CALL dpw_put(2);
+
+
+connection c_caller user=dpw_caller password=dpw_pw
+statement ok
+CALL dpw_put(200);
+
+
+connection c_caller user=dpw_caller password=dpw_pw
+statement ok
+CALL dpw_bump();
+
+
+connection c_caller user=dpw_caller password=dpw_pw
+statement ok
+CALL dpw_clear();
+
+
+query
+SELECT a FROM dpw_ledger ORDER BY a;
+----
+a
+12
+
+
+statement ok
+DROP PROCEDURE dpw_clear();
+
+
+statement ok
+DROP PROCEDURE dpw_bump();
+
+
+statement ok
+DROP PROCEDURE dpw_put(integer);
+
+
+statement ok
+DROP TABLE dpw_ledger;
+
+
+statement ok
+DROP ROLE dpw_caller;
+
+
+statement ok
+DROP ROLE dpw_owner;

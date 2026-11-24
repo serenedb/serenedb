@@ -1,0 +1,79 @@
+control substitution on
+
+statement ok
+DROP ROLE IF EXISTS dodw_caller;
+
+
+statement ok
+DROP ROLE IF EXISTS dodw_owner;
+
+
+statement ok
+CREATE ROLE dodw_owner;
+
+
+statement ok
+CREATE ROLE dodw_caller LOGIN PASSWORD 'dodw_pw';
+
+
+statement ok
+CREATE DATABASE dodw_other_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE dodw_other_${__DATABASE__}.public.dodw_t (a integer);
+
+
+statement ok
+GRANT SELECT, INSERT ON dodw_other_${__DATABASE__}.public.dodw_t TO dodw_owner;
+
+
+statement ok
+REVOKE CONNECT ON DATABASE dodw_other_${__DATABASE__} FROM PUBLIC;
+
+
+statement ok
+GRANT CONNECT ON DATABASE dodw_other_${__DATABASE__} TO dodw_owner;
+
+
+statement ok
+CREATE PROCEDURE dodw_put(x integer) LANGUAGE sql SECURITY DEFINER AS 'INSERT INTO dodw_other_${__DATABASE__}.public.dodw_t VALUES (x)';
+
+
+statement ok
+ALTER PROCEDURE dodw_put(integer) OWNER TO dodw_owner;
+
+
+connection c_caller user=dodw_caller password=dodw_pw
+statement error
+INSERT INTO dodw_other_${__DATABASE__}.public.dodw_t VALUES (1);
+----
+db error: ERROR: Table with name "dodw_other_<slt:ignore>.public.dodw_t" does not exist because schema "dodw_other_<slt:ignore>.public" does not exist.
+
+
+connection c_caller user=dodw_caller password=dodw_pw
+statement ok
+CALL dodw_put(2);
+
+
+query
+SELECT a FROM dodw_other_${__DATABASE__}.public.dodw_t ORDER BY a;
+----
+a
+2
+
+
+statement ok
+DROP PROCEDURE dodw_put(integer);
+
+
+statement ok
+DROP DATABASE dodw_other_${__DATABASE__};
+
+
+statement ok
+DROP ROLE dodw_caller;
+
+
+statement ok
+DROP ROLE dodw_owner;

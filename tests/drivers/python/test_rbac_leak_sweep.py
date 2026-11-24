@@ -395,6 +395,25 @@ def test_drop_counts_hidden_dependents(sweep):
         "ok", "[] NOTICE: drop cascades to 1 other object")
 
 
+def test_search_path_into_revoked_database_answers_as_dropped(sweep):
+    answers = []
+    for db, cut in (("zqrev_db", "REVOKE CONNECT ON DATABASE zqrev_db FROM PUBLIC"), ("zqcut_db", "DROP DATABASE zqcut_db")):
+        for sql in (f"CREATE DATABASE {db}", f"CREATE TABLE {db}.public.zqsp_t (a INTEGER)",
+                    f"GRANT SELECT ON {db}.public.zqsp_t TO probe"):
+            assert sweep.superuser.run(sql)[0] == "ok", sql
+        session = connect(sweep.port, "probe", "probe")
+        try:
+            assert session.run(f"SET search_path TO {db}.public")[0] == "ok"
+            assert session.run("SELECT count(*) FROM zqsp_t") == ("ok", "[(0,)]")
+            assert sweep.superuser.run(cut)[0] == "ok", cut
+            status, text = session.run("SELECT count(*) FROM zqsp_t")
+            answers.append((status, text.replace(db, "<db>")))
+        finally:
+            session.conn.close()
+    assert answers[0] == answers[1], answers
+    assert answers[0][0] == "error", answers
+
+
 def test_connecting_to_hidden_database_answers_missing(sweep):
     answers = []
     for dbname in ("zqhid_db", "zqnon_db"):

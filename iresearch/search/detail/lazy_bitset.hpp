@@ -36,24 +36,6 @@
 
 namespace irs::detail {
 
-inline IRS_FORCE_INLINE uint64_t CountBitRange(
-  const uint64_t* IRS_RESTRICT words, uint64_t begin, uint64_t end) noexcept {
-  constexpr auto kBits = BitsRequired<uint64_t>();
-  SDB_ASSERT(begin < end);
-  const auto first = begin / kBits;
-  const auto last = (end - 1) / kBits;
-  const uint64_t head = ~uint64_t{0} << (begin % kBits);
-  const uint64_t tail = ~uint64_t{0} >> (kBits - 1 - (end - 1) % kBits);
-  if (first == last) {
-    return static_cast<uint64_t>(std::popcount(words[first] & head & tail));
-  }
-  auto total = static_cast<uint64_t>(std::popcount(words[first] & head));
-  for (auto i = first + 1; i != last; ++i) {
-    total += static_cast<uint64_t>(std::popcount(words[i]));
-  }
-  return total + static_cast<uint64_t>(std::popcount(words[last] & tail));
-}
-
 class LazyBitset {
  public:
   static constexpr auto kBits = BitsetStorage::kBits;
@@ -198,20 +180,10 @@ class LazyBitset {
     if (from >= stop) {
       return doc_limits::invalid();
     }
-    const auto offset = from - kMin;
-    auto word = static_cast<uint32_t>(offset / kBits);
-    const auto last = static_cast<uint32_t>((stop - 1 - kMin) / kBits);
-    auto rest = words[word] & (~uint64_t{0} << (offset % kBits));
-    while (rest == 0) {
-      if (word == last) {
-        return doc_limits::invalid();
-      }
-      rest = words[++word];
-    }
-    const auto doc =
-      static_cast<doc_id_t>(kMin + size_t{word} * kBits +
-                            static_cast<size_t>(std::countr_zero(rest)));
-    return doc < stop ? doc : doc_limits::invalid();
+    const auto count = (stop - 1 - kMin) / kBits + 1;
+    const auto at = NextSetBit(words, from - kMin, count);
+    const auto doc = kMin + at;
+    return doc < stop ? static_cast<doc_id_t>(doc) : doc_limits::invalid();
   }
 
   void Zero(doc_id_t from, doc_id_t to) noexcept {
@@ -302,16 +274,15 @@ class CountAgainst {
     }
     const auto* const live = _set->Words();
     for (uint32_t i = 0; i != n; ++i) {
-      for (auto word = src[i]; word != 0; word &= word - 1) {
-        const auto doc = begin + uint64_t{i} * kBits +
-                         static_cast<uint64_t>(std::countr_zero(word));
+      ForEachSetBit(src[i], [&](uint32_t bit) IRS_FORCE_INLINE {
+        const auto doc = begin + uint64_t{i} * kBits + bit;
         if (doc < _min || doc >= _max) {
-          continue;
+          return;
         }
         const auto offset = doc - kMin;
         _total +=
           static_cast<uint64_t>(CheckBit(live[offset / kBits], offset % kBits));
-      }
+      });
     }
   }
 

@@ -117,20 +117,17 @@ inline IRS_FORCE_INLINE void Clear(uint64_t* IRS_RESTRICT dst,
 inline void ClearScored(uint64_t* IRS_RESTRICT words,
                         score_t* IRS_RESTRICT window) noexcept {
   for (uint32_t w = 0; w != kWindowWords; ++w) {
-    auto word = words[w];
-    words[w] = 0;
     const auto base = w * kWindowBits;
-    while (word != 0) {
-      window[base + std::countr_zero(word)] = 0;
-      word = PopBit(word);
-    }
+    ForEachSetBit(
+      words[w], [&](uint32_t bit) IRS_FORCE_INLINE { window[base + bit] = 0; });
+    words[w] = 0;
   }
 }
 
 inline doc_id_t FindSet(const uint64_t* IRS_RESTRICT mask,
                         doc_id_t offset) noexcept {
   auto word = offset / kWindowBits;
-  auto bits = mask[word] & (~uint64_t{0} << (offset % kWindowBits));
+  auto bits = mask[word] & HeadMask(offset);
   for (;;) {
     if (bits != 0) {
       return static_cast<doc_id_t>(word * kWindowBits + std::countr_zero(bits));
@@ -140,15 +137,6 @@ inline doc_id_t FindSet(const uint64_t* IRS_RESTRICT mask,
     }
     bits = mask[word];
   }
-}
-
-inline IRS_FORCE_INLINE uint32_t Cardinality(const uint64_t* IRS_RESTRICT src,
-                                             size_t words) noexcept {
-  uint32_t card = 0;
-  for (size_t w = 0; w != words; ++w) {
-    card += static_cast<uint32_t>(std::popcount(src[w]));
-  }
-  return card;
 }
 
 inline IRS_FORCE_INLINE uint32_t CountAndClear(uint64_t* IRS_RESTRICT dst,
@@ -169,14 +157,12 @@ inline uint32_t TakeDocs(doc_id_t min, uint64_t* IRS_RESTRICT words,
     live |= static_cast<uint64_t>(words[w] != 0) << w;
   }
   uint32_t n = 0;
-  for (; live != 0; live = PopBit(live)) {
-    const auto w = static_cast<uint32_t>(std::countr_zero(live));
+  ForEachSetBit(live, [&](uint32_t w) IRS_FORCE_INLINE {
     const auto base = min + w * kWindowBits;
-    for (auto word = words[w]; word != 0; word = PopBit(word)) {
-      out[n++] = base + static_cast<doc_id_t>(std::countr_zero(word));
-    }
+    ForEachSetBit(
+      words[w], [&](uint32_t bit) IRS_FORCE_INLINE { out[n++] = base + bit; });
     words[w] = 0;
-  }
+  });
   return n;
 }
 
@@ -258,23 +244,6 @@ inline IRS_FORCE_INLINE uint64_t WordAt(const UnalignedWord* IRS_RESTRICT src,
     return lo;
   }
   return (lo >> shift) | (word(idx + 1) << (kWindowBits - shift));
-}
-
-inline IRS_FORCE_INLINE void ClearInclusive(uint64_t* IRS_RESTRICT words,
-                                            uint64_t lo, uint64_t hi) noexcept {
-  const auto first = static_cast<uint32_t>(lo / kWindowBits);
-  const auto last = static_cast<uint32_t>(hi / kWindowBits);
-  const uint64_t head = ~uint64_t{0} << (lo % kWindowBits);
-  const uint64_t tail = ~uint64_t{0} >> (kWindowBits - 1 - hi % kWindowBits);
-  if (first == last) {
-    words[first] &= ~(head & tail);
-    return;
-  }
-  words[first] &= ~head;
-  for (auto i = first + 1; i != last; ++i) {
-    words[i] = 0;
-  }
-  words[last] &= ~tail;
 }
 
 inline IRS_FORCE_INLINE void FoldCarry(uint64_t* IRS_RESTRICT planes,

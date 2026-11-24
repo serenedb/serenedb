@@ -80,15 +80,13 @@ inline void TallyMask(const uint64_t* touched, uint64_t* mask,
         std::fill_n(slots, kWindowBits, score_t{0});
       }
     } else {
-      while (rest != 0) {
-        const auto bit = static_cast<uint32_t>(std::countr_zero(rest));
+      ForEachSetBit(rest, [&](uint32_t bit) IRS_FORCE_INLINE {
         if (word_counts[bit] < min_match) {
           answer ^= uint64_t{1} << bit;
           slots[bit] = 0;
         }
         word_counts[bit] = 0;
-        rest = PopBit(rest);
-      }
+      });
     }
     mask[w] &= answer;
   }
@@ -104,10 +102,8 @@ inline IRS_FORCE_INLINE void ResetTouched(uint64_t touched,
     std::fill_n(scores, kWindowBits, constant);
     return;
   }
-  while (touched != 0) {
-    scores[static_cast<uint32_t>(std::countr_zero(touched))] = constant;
-    touched = PopBit(touched);
-  }
+  ForEachSetBit(touched,
+                [&](uint32_t bit) IRS_FORCE_INLINE { scores[bit] = constant; });
 }
 
 inline IRS_FORCE_INLINE void ResetRetracted(uint64_t retract, uint64_t answer,
@@ -122,10 +118,8 @@ inline IRS_FORCE_INLINE void ResetRetracted(uint64_t retract, uint64_t answer,
     }
     return;
   }
-  while (retract != 0) {
-    scores[static_cast<uint32_t>(std::countr_zero(retract))] = constant;
-    retract = PopBit(retract);
-  }
+  ForEachSetBit(retract,
+                [&](uint32_t bit) IRS_FORCE_INLINE { scores[bit] = constant; });
 }
 
 template<typename Leaves>
@@ -350,16 +344,14 @@ class TallyGroup {
           }
         }
       } else {
-        while (touched != 0) {
-          const auto bit = static_cast<uint32_t>(std::countr_zero(touched));
+        ForEachSetBit(touched, [&](uint32_t bit) IRS_FORCE_INLINE {
           const bool keep = counts[bit] >= min_match;
           answer |= uint64_t{keep} << bit;
           counts[bit] = 0;
           if constexpr (!Lazy) {
             slots[bit] = keep ? slots[bit] : constant;
           }
-          touched = PopBit(touched);
-        }
+        });
       }
       words[w] |= answer;
     }

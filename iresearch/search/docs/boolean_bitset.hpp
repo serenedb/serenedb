@@ -49,26 +49,18 @@ class BooleanBitset : public Root {
     if (lo >= hi) {
       return 0;
     }
-    auto w = static_cast<uint32_t>(lo / kBits);
-    auto word = words[w] & (~uint64_t{0} << (lo % kBits));
+    const auto first = static_cast<uint32_t>(lo / kBits);
     const auto last = static_cast<uint32_t>((hi - 1) / kBits);
-    uint32_t n = 0;
-    for (;; word = words[++w]) {
-      if (w == last) [[unlikely]] {
-        if (const auto tail = hi % kBits; tail != 0) {
-          word &= (uint64_t{1} << tail) - 1;
-        }
-        if (word != 0) {
-          n = static_cast<uint32_t>(
-            MaterializeWord(kMin + w * kBits, word, out + n) - out);
-        }
-        return n;
-      }
-      if (word != 0) {
-        n = static_cast<uint32_t>(
-          MaterializeWord(kMin + w * kBits, word, out + n) - out);
-      }
+    const auto head = words[first] & HeadMask(lo);
+    if (first == last) {
+      return static_cast<uint32_t>(
+        MaterializeWord(kMin + first * kBits, head & TailMask(hi), out) - out);
     }
+    auto* end = MaterializeWord(kMin + first * kBits, head, out);
+    end = MaterializeRange(kMin + (first + 1) * kBits, words + first + 1,
+                           last - first - 1, end);
+    end = MaterializeWord(kMin + last * kBits, words[last] & TailMask(hi), end);
+    return static_cast<uint32_t>(end - out);
   }
 
  private:

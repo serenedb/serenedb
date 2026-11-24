@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 
 #include "iresearch/search/detail/window.hpp"
@@ -71,14 +72,11 @@ class Emit {
     const uint64_t avail = end > _base ? end - _base : 0;
     const auto limit = static_cast<uint32_t>(
       std::min<uint64_t>(_words_end, avail / detail::kWindowBits));
-    for (; _word != limit; ++_word) {
-      const auto word = _words[_word];
-      if (word == 0) {
-        continue;
-      }
-      _words[_word] = 0;
-      const auto base = _base + _word * detail::kWindowBits;
-      n = static_cast<uint32_t>(MaterializeWord(base, word, out + n) - out);
+    if (_word < limit) {
+      n = static_cast<uint32_t>(
+        MaterializeRange(Next(), _words + _word, limit - _word, out + n) - out);
+      std::fill(_words + _word, _words + limit, uint64_t{0});
+      _word = limit;
     }
     if (_word == _words_end) {
       return;

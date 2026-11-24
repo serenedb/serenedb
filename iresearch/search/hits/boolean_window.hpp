@@ -128,8 +128,7 @@ class BooleanWindow
               return static_cast<uint32_t*>(nullptr);
             }
           }();
-          while (word != 0) {
-            const auto bit = static_cast<uint32_t>(std::countr_zero(word));
+          ForEachSetBit(word, [&](uint32_t bit) IRS_FORCE_INLINE {
             const auto offset = base + bit;
             bool take = true;
             if constexpr (kTally) {
@@ -144,8 +143,7 @@ class BooleanWindow
             if constexpr (kTally || kResets) {
               _window[offset] = _constant;
             }
-            word = PopBit(word);
-          }
+          });
         }
         return n;
       }
@@ -192,14 +190,12 @@ class BooleanWindow
         std::fill_n(_window + base, width, _constant);
         return;
       }
-      do {
-        const auto bit = static_cast<uint32_t>(std::countr_zero(bits));
+      ForEachSetBit(bits, [&](uint32_t bit) IRS_FORCE_INLINE {
         if constexpr (kTally) {
           _optional.Counts()[base + bit] = 0;
         }
         _window[base + bit] = _constant;
-        bits = PopBit(bits);
-      } while (bits != 0);
+      });
     }
   }
 
@@ -230,8 +226,7 @@ class BooleanWindow
         std::fill_n(_window + base, BitsRequired<uint64_t>(), _constant);
         return;
       }
-      while (word != 0) {
-        const auto bit = static_cast<uint32_t>(std::countr_zero(word));
+      ForEachSetBit(word, [&](uint32_t bit) IRS_FORCE_INLINE {
         const auto offset = base + bit;
         if (counts[bit] >= min_match) {
           out[n] = min + static_cast<doc_id_t>(offset);
@@ -240,22 +235,19 @@ class BooleanWindow
         }
         counts[bit] = 0;
         _window[offset] = _constant;
-        word = PopBit(word);
-      }
+      });
       return;
     }
     if (std::popcount(word) < kSparseWord) {
-      while (word != 0) {
-        const auto offset =
-          base + static_cast<uint32_t>(std::countr_zero(word));
+      ForEachSetBit(word, [&](uint32_t bit) IRS_FORCE_INLINE {
+        const auto offset = base + bit;
         out[n] = min + static_cast<doc_id_t>(offset);
         scores[n] = _window[offset];
         if constexpr (kResets) {
           _window[offset] = _constant;
         }
         ++n;
-        word = PopBit(word);
-      }
+      });
       return;
     }
     const auto first = n;

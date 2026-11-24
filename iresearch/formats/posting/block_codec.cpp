@@ -24,13 +24,10 @@ namespace irs::block_codec {
 
 const DeltaDecoders kDeltaDecoders = [] {
 #ifdef __AVX2__
-  __builtin_cpu_init();
-  if (__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512vl") &&
-      __builtin_cpu_supports("avx512bw") &&
-      __builtin_cpu_supports("avx512dq")) {
-    if (__builtin_cpu_supports("avx512vbmi2")) {
-      return kDeltaDecodersOf<true, true>;
-    }
+  if (HasVbmi2()) {
+    return kDeltaDecodersOf<true, true>;
+  }
+  if (HasAvx512()) {
     return kDeltaDecodersOf<true>;
   }
 #endif

@@ -70,10 +70,7 @@ inline IRS_FORCE_INLINE uint32_t* LiveWord(
 #ifdef __AVX2__
   return MaterializeWord(offset, live, out);
 #else
-  for (; live != 0; live &= live - 1) {
-    *out++ = offset + static_cast<uint32_t>(std::countr_zero(live));
-  }
-  return out;
+  return MaterializeBits(offset, live, out);
 #endif
 }
 
@@ -107,11 +104,10 @@ inline void ApplyWords(const uint64_t* IRS_RESTRICT src, uint32_t src_words,
     }
   }
   if (last > full) {
-    const uint32_t rest = (max - min) % 64;
     Apply<kAndNot>(
       dst[full],
       detail::WordAt(src, src_words, offset + static_cast<int64_t>(full) * 64) &
-        (~uint64_t{0} >> (64 - rest)));
+        TailMask(max - min));
   }
 }
 

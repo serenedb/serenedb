@@ -136,8 +136,8 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
       _wide = dest[len - 1] - dest[0] >= capacity;
       auto keep = len;
       if (dest[0] < min) [[unlikely]] {
-        const auto below =
-          static_cast<uint32_t>(std::lower_bound(dest, dest + len, min) - dest);
+        const auto below = static_cast<uint32_t>(
+          LeafLowerBound<kBlock>(dest, dest + len, min) - dest);
         keep = len - below;
         std::copy_n(dest + below, keep, dest);
       }
@@ -146,7 +146,7 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
         continue;
       }
       const auto stop = static_cast<uint32_t>(
-        LeafLowerBound<kBlock>(dest, keep, dest, max) - dest);
+        LeafLowerBound<kBlock>(dest, dest + keep, max) - dest);
       _len = keep - stop;
       _at = 0;
       std::copy_n(dest + stop, _len, _block.data());
@@ -156,8 +156,8 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
     return emitted;
   }
 
-  IRS_FORCE_INLINE uint32_t Drain(doc_id_t* IRS_RESTRICT out, doc_id_t min,
-                                  doc_id_t max) noexcept {
+  IRS_NO_INLINE uint32_t Drain(doc_id_t* IRS_RESTRICT out, doc_id_t min,
+                               doc_id_t max) noexcept {
     if (_at == _len) {
       return 0;
     }
@@ -165,9 +165,7 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
     const auto* first = begin + _at;
     const auto* last = begin + _len;
     if (*first < min) [[unlikely]] {
-      do {
-        ++first;
-      } while (first != last && *first < min);
+      first = ScanNotBelow(first, last, min);
       if (first == last) [[unlikely]] {
         _at = _len;
         _next = doc_limits::invalid();

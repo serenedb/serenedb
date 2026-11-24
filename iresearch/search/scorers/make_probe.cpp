@@ -98,19 +98,15 @@ class ProbeScore : public ScoreOperatorOf<ProbeScore<Inner, HasConst>, false> {
         continue;
       }
       _probed[i].Score(_scratch, n);
-      auto fresh = held & ~covered;
-      auto again = held & covered;
+      const auto fresh = held & ~covered;
+      const auto again = held & covered;
       covered |= held;
-      while (fresh != 0) {
-        const auto slot = static_cast<uint32_t>(std::countr_zero(fresh));
-        fresh = PopBit(fresh);
+      ForEachSetBit(fresh, [&](uint32_t slot) IRS_FORCE_INLINE {
         _gathered[slot] = _scratch[slot];
-      }
-      while (again != 0) {
-        const auto slot = static_cast<uint32_t>(std::countr_zero(again));
-        again = PopBit(again);
+      });
+      ForEachSetBit(again, [&](uint32_t slot) IRS_FORCE_INLINE {
         irs::Merge<Inner>(_gathered[slot], _scratch[slot]);
-      }
+      });
     }
     for (scores_size_t i = 0; i != n; ++i) {
       if (CheckBit(covered, i)) {

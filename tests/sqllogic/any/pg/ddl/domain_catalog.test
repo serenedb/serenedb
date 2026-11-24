@@ -29,6 +29,20 @@ SELECT constraint_name FROM information_schema.domain_constraints WHERE domain_n
 constraint_name
 d_is_pos
 
+# pg_get_constraintdef, pg_constraint.conbin and information_schema.check_constraints print VALUE.
+
+query
+SELECT pg_get_constraintdef(oid) AS def, pg_get_expr(conbin, conrelid) AS bin FROM pg_constraint WHERE conname = 'd_is_pos';
+----
+def	bin
+CHECK ((VALUE > 0))	(VALUE > 0)
+
+query
+SELECT check_clause FROM information_schema.check_constraints WHERE constraint_name = 'd_is_pos';
+----
+check_clause
+(VALUE > 0)
+
 query
 SELECT table_name, column_name FROM information_schema.column_domain_usage WHERE domain_name = 'd_is';
 ----
@@ -87,3 +101,125 @@ SELECT pg_typeof(a) AS a, pg_typeof(b) AS b, pg_typeof(c) AS c, pg_typeof(d) AS 
 ----
 a	b	c	d	e
 dom_cat	dom_cat_txt	dom_cat[]	dom_cat_e	dom_cat_over
+
+# A domain reports the output and send functions and the category of its base type, an enum or
+# a composite type included.
+
+statement ok
+CREATE TYPE e_tio AS ENUM ('a');
+
+statement ok
+CREATE TYPE c_tio AS (x int4);
+
+statement ok
+CREATE DOMAIN de_tio AS e_tio;
+
+statement ok
+CREATE DOMAIN dc_tio AS c_tio;
+
+statement ok
+CREATE DOMAIN di_tio AS int4;
+
+query
+SELECT typname, typtype, typcategory, typinput, typoutput, typreceive, typsend, typanalyze
+FROM pg_type WHERE typname IN ('de_tio', 'dc_tio', 'di_tio') ORDER BY typname;
+----
+typname	typtype	typcategory	typinput	typoutput	typreceive	typsend	typanalyze
+dc_tio	d	C	domain_in	record_out	domain_recv	record_send	-
+de_tio	d	E	domain_in	enum_out	domain_recv	enum_send	-
+di_tio	d	N	domain_in	int4out	domain_recv	int4send	-
+
+# pg_describe_object and pg_identify_object describe a domain constraint.
+
+statement ok
+CREATE SCHEMA s_obj;
+
+statement ok
+CREATE DOMAIN s_obj.d_obj AS int4 CONSTRAINT d_obj_pos CHECK (VALUE > 0) NOT NULL;
+
+query
+SELECT conname, pg_describe_object('pg_constraint'::regclass, oid, 0) AS description
+FROM pg_constraint WHERE contypid = 's_obj.d_obj'::regtype ORDER BY conname;
+----
+conname	description
+d_obj_not_null	constraint d_obj_not_null
+d_obj_pos	constraint d_obj_pos
+
+query
+SELECT conname, (pg_identify_object('pg_constraint'::regclass, oid, 0)).type AS type,
+       (pg_identify_object('pg_constraint'::regclass, oid, 0)).schema AS schema,
+       (pg_identify_object('pg_constraint'::regclass, oid, 0)).name AS name,
+       (pg_identify_object('pg_constraint'::regclass, oid, 0)).identity AS identity
+FROM pg_constraint WHERE contypid = 's_obj.d_obj'::regtype ORDER BY conname;
+----
+conname	type	schema	name	identity
+d_obj_not_null	domain constraint	s_obj	NULL	d_obj_not_null on s_obj.d_obj
+d_obj_pos	domain constraint	s_obj	NULL	d_obj_pos on s_obj.d_obj
+
+# pg_depend ties a domain to a user-defined base type: an enum, a composite type, a domain or an array.
+
+statement ok
+CREATE TYPE e_dep AS ENUM ('a');
+
+statement ok
+CREATE TYPE c_dep AS (x int4);
+
+statement ok
+CREATE DOMAIN d_dep_int AS int4;
+
+statement ok
+CREATE DOMAIN d_dep_enum AS e_dep;
+
+statement ok
+CREATE DOMAIN d_dep_comp AS c_dep;
+
+statement ok
+CREATE DOMAIN d_dep_dd AS d_dep_int;
+
+statement ok
+CREATE DOMAIN d_dep_arr AS e_dep[];
+
+query
+SELECT pg_describe_object(classid, objid, objsubid) AS obj, pg_describe_object(refclassid, refobjid, refobjsubid) AS ref, deptype
+FROM pg_depend WHERE objid IN (SELECT oid FROM pg_type WHERE typname LIKE 'd\_dep\_%') AND refclassid <> 'pg_namespace'::regclass
+ORDER BY 1, 2;
+----
+obj	ref	deptype
+type d_dep_arr	type e_dep[]	n
+type d_dep_comp	type c_dep	n
+type d_dep_dd	type d_dep_int	n
+type d_dep_enum	type e_dep	n
+
+# pg_constraint filters by contypid: a domain, zero for the constraints of tables, or both.
+
+statement ok
+CREATE TABLE t_idx (x int4 CONSTRAINT t_idx_pos CHECK (x > 0));
+
+statement ok
+CREATE DOMAIN d_idx AS int4 CONSTRAINT d_idx_pos CHECK (VALUE > 0);
+
+query
+SELECT conname FROM pg_constraint WHERE contypid = 'd_idx'::regtype;
+----
+conname
+d_idx_pos
+
+query
+SELECT conname FROM pg_constraint WHERE contypid = 0 AND conname IN ('t_idx_pos', 'd_idx_pos');
+----
+conname
+t_idx_pos
+
+query
+SELECT conname FROM pg_constraint WHERE contypid IN ('d_idx'::regtype, 0) AND conname IN ('t_idx_pos', 'd_idx_pos')
+ORDER BY conname;
+----
+conname
+d_idx_pos
+t_idx_pos
+
+query
+SELECT count(*) FROM pg_constraint WHERE contypid = 't_idx'::regclass::oid;
+----
+count
+0

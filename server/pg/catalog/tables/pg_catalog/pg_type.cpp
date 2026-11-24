@@ -81,6 +81,9 @@ constexpr SystemFact kBuiltinFacts[] = {
 const BuiltinType kComposite = *FindBuiltinRowType(kPgClassTable);
 constexpr BuiltinType kArray = *FindByOid(kBuiltinTypes, kInt4Array);
 constexpr BuiltinType kDomain = *FindByOid(kBuiltinTypes, kCardinalNumber);
+constexpr BuiltinType kEnumBase{.category = 'E',
+                                .output = static_cast<int32_t>(kEnumOut),
+                                .send = static_cast<int32_t>(kEnumSend)};
 
 consteval auto TypeColumns(auto base, auto align) {
   return std::tuple{
@@ -120,10 +123,17 @@ class UserType {
 
   const BuiltinType& Builtin() const {
     if (!_builtin) {
-      const auto oid = _entry.domain_info ? Logical2Pg(_entry.user_type).oid
-                                          : Base().oid;
-      const auto* builtin = FindBuiltinType(oid);
-      _builtin = builtin ? builtin : &kNoBuiltin;
+      const auto id = _entry.user_type.id();
+      if (_entry.domain_info && id == duckdb::LogicalTypeId::ENUM) {
+        _builtin = &kEnumBase;
+      } else if (_entry.domain_info && duckdb::StructType::IsStruct(id)) {
+        _builtin = &kComposite;
+      } else {
+        const auto oid =
+          _entry.domain_info ? Logical2Pg(_entry.user_type).oid : Base().oid;
+        const auto* builtin = FindBuiltinType(oid);
+        _builtin = builtin ? builtin : &kNoBuiltin;
+      }
     }
     return *_builtin;
   }

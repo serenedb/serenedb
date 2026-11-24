@@ -272,27 +272,43 @@ ObjectIdentity IdentifyRole(const Session& session, uint64_t oid) {
 }
 
 ObjectIdentity IdentifyConstraint(const Session& session, uint64_t oid) {
-  const auto table = OwnerTable(session, oid);
-  if (!table) {
+  if (!session.database || oid == kInvalidOid) {
     return Missing("constraint");
   }
-  const auto& constraints = table->GetConstraints();
+  const auto owner = session.database->LookupOwner(*session.transaction, oid);
+  const auto* constraints = owner ? ConstraintsOf(*owner) : nullptr;
+  if (!constraints) {
+    return Missing("constraint");
+  }
   const auto constraint = absl::c_find_if(
-    constraints,
+    *constraints,
     [&](const auto& constraint) { return constraint->oid == oid; });
-  if (constraint == constraints.end()) {
+  if (constraint == constraints->end()) {
     return Missing("constraint");
   }
-  const auto name =
-    absl::StrJoin(ConstraintName(*table, **constraint).parts, "");
-  const auto [schema, table_name] = NameOf(*session.transaction, *table);
-  return ObjectIdentity{
-    .type = "table constraint",
-    .description = absl::StrCat("constraint ", name, " on table ",
-                                RegOut(session, RegKind::Class, table->oid)),
-    .schema = std::string{schema},
-    .identity = absl::StrCat(QuoteIdentifier(name), " on ",
-                             QualifiedOutName(schema, table_name))};
+  const auto [schema, owner_name] = NameOf(*session.transaction, *owner);
+  if (owner->type == duckdb::CatalogType::TYPE_ENTRY) {
+    const auto& name = (*constraint)->constraint_name;
+    return ObjectIdentity{
+      .type = "domain constraint",
+      .description = absl::StrCat("constraint ", name),
+      .schema = std::string{schema},
+      .identity = absl::StrCat(QuoteIdentifier(name), " on ",
+                               QualifiedOutName(schema, owner_name))};
+  } else if (owner->type == duckdb::CatalogType::TABLE_ENTRY) {
+    const auto& table = owner->Cast<duckdb::TableCatalogEntry>();
+    const auto name =
+      absl::StrJoin(ConstraintName(table, **constraint).parts, "");
+    return ObjectIdentity{
+      .type = "table constraint",
+      .description = absl::StrCat("constraint ", name, " on table ",
+                                  RegOut(session, RegKind::Class, table.oid)),
+      .schema = std::string{schema},
+      .identity = absl::StrCat(QuoteIdentifier(name), " on ",
+                               QualifiedOutName(schema, owner_name))};
+  } else {
+    return Missing("constraint");
+  }
 }
 
 ObjectIdentity IdentifyDefault(const Session& session, uint64_t oid) {

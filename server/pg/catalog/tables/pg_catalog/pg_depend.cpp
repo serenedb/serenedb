@@ -313,9 +313,15 @@ class PgDepend final : public SystemTableScan<kPgDependSql> {
         }
       }
     }
+    if (type.domain_info && Allows<"deptype">('n')) {
+      const auto base = CatalogLogical2Pg(type.domain_info->base_type).oid;
+      if (base >= kMaxSystem) {
+        Depend(kPgTypeTable, type.oid, 0, kPgTypeTable, base, 0, 'n');
+      }
+    }
     Depend(kPgTypeTable, TypeArrayOid(type.oid), 0, kPgTypeTable, type.oid, 0,
            'i');
-    if (duckdb::StructType::IsStruct(type.user_type)) {
+    if (!type.domain_info && duckdb::StructType::IsStruct(type.user_type)) {
       Depend(kPgClassTable, type.oid, 0, kPgTypeTable, type.oid, 0, 'i');
     }
   }

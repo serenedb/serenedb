@@ -75,13 +75,6 @@ CREATE DOMAIN d_full AS text COLLATE "C" DEFAULT 'x'
     NOT NULL
     CHECK(length(VALUE) > 0);
 
-# TODO: typdefault renders a text default as 'x' instead of 'x'::text
-# query
-# SELECT typcollation::regcollation, typdefault, typnotnull FROM pg_type WHERE typname = 'd_full';
-# ----
-# typcollation	typdefault	typnotnull
-# "C"	'x'::text	t
-#
 # A domain over a base type value checks it on every cast, including casts the optimizer pushes into a scan.
 
 statement ok

@@ -273,12 +273,13 @@ Definition ConstraintDefinition(const Session& session, int64_t oid) {
   const auto& constraint = **found;
   std::string definition;
   switch (constraint.type) {
-    case duckdb::ConstraintType::CHECK:
+    case duckdb::ConstraintType::CHECK: {
+      const auto& expression =
+        *constraint.Cast<duckdb::CheckConstraint>().expression;
       definition = absl::StrCat(
         "CHECK (",
-        ExpressionText(*constraint.Cast<duckdb::CheckConstraint>().expression),
-        ")");
-      break;
+        table ? ExpressionText(expression) : DomainCheckText(expression), ")");
+    } break;
     case duckdb::ConstraintType::NOT_NULL:
       definition =
         table ? absl::StrCat(

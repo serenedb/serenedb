@@ -35,6 +35,7 @@ namespace {
 constexpr SystemIndex kIndexes[] = {
   {kPgConstraintSql["oid"], SystemLookup::Object},
   {kPgConstraintSql["conrelid"], SystemLookup::Object},
+  {kPgConstraintSql["contypid"], SystemLookup::Object},
 };
 
 constexpr duckdb::CatalogType kOwnerTypes[] = {duckdb::CatalogType::TABLE_ENTRY,
@@ -117,7 +118,9 @@ class PgConstraint final : public SystemTableScan<kPgConstraintSql> {
                    : std::nullopt;
     }),
     Col<"conbin">([](const ConstraintRow& row) {
-      return ExpressionText(*row.As<duckdb::CheckConstraint>().expression);
+      const auto& expression = *row.As<duckdb::CheckConstraint>().expression;
+      return row.Table() ? ExpressionText(expression)
+                         : DomainCheckText(expression);
     }));
 
   static constexpr auto kNotNull = Shape<kSql, const ConstraintRow>(

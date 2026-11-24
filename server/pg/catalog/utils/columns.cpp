@@ -22,6 +22,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
+#include <absl/strings/str_replace.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
@@ -255,6 +256,19 @@ std::string ExpressionText(const duckdb::ParsedExpression& expression) {
     }
   });
   return copy->ToString();
+}
+
+std::string DomainCheckText(const duckdb::ParsedExpression& expression) {
+  static constexpr std::string_view kValue = "sdb__domain_value__";
+  auto copy = expression.Copy();
+  duckdb::ParsedExpressionIterator::VisitExpressionMutable<
+    duckdb::ColumnRefExpression>(*copy, [](duckdb::ColumnRefExpression& ref) {
+    auto& names = ref.ColumnNamesMutable();
+    if (names.size() == 1 && names[0] == "value") {
+      names[0] = duckdb::Identifier{kValue};
+    }
+  });
+  return absl::StrReplaceAll(ExpressionText(*copy), {{kValue, "VALUE"}});
 }
 
 const duckdb::TableCatalogEntry& SiblingTable(

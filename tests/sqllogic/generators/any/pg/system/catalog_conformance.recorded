@@ -6815,7 +6815,7 @@ a507aa10ba405f76
 	json_tab_pkey	pgonly	p	f	f	t	t	pgonly.json_tab	-	pgonly.json_tab_pkey	t	-	_	_	_	t	0	t	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	parent_id_not_null	pgonly	n	f	f	t	t	pgonly.parent	-	-	t	-	_	_	_	t	0	f	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 	parent_pkey	pgonly	p	f	f	t	t	pgonly.parent	-	pgonly.parent_pkey	t	-	_	_	_	t	0	t	f	{1}	NULL	NULL	NULL	NULL	NULL	NULL	NULL
-	positive_int_check	pgonly	c	f	f	t	t	-	pgonly.positive_int	-	t	-	_	_	_	t	0	f	f	NULL	NULL	NULL	NULL	NULL	NULL	NULL	("value" > 0)
+	positive_int_check	pgonly	c	f	f	t	t	-	pgonly.positive_int	-	t	-	_	_	_	t	0	f	f	NULL	NULL	NULL	NULL	NULL	NULL	NULL	(VALUE > 0)
 027154308ccc4d3a
 	seqrelid	seqtypid	seqstart	seqincrement	seqmax	seqmin	seqcache	seqcycle
 	pgonly.identity_tab_id_seq	bigint	1	1	9223372036854775807	1	1	f
@@ -7030,7 +7030,7 @@ ec9a6bc39c705602
 	CHECK ((VALUE > 0))
 8659ba1219e55731
 	domain_check
-	CHECK (("value" > 0))
+	CHECK ((VALUE > 0))
 6113c0ade5eb98c8
 	jsonb_column
 	jsonb

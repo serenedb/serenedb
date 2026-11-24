@@ -1,0 +1,52 @@
+control substitution on
+
+statement ok
+CREATE TABLE lvw (a TEXT, b INT) WITH (compaction_interval = 0)
+
+statement ok
+COPY (SELECT repeat('x', 8388608) AS a, 1 AS b) TO '${__TEST_DIR__}/lvw_long.csv' (FORMAT csv)
+
+statement ok
+COPY (SELECT repeat('x', 8388608) AS a, 1 AS b) TO '${__TEST_DIR__}/lvw_long.txt' (FORMAT text)
+
+statement ok
+INSERT INTO lvw SELECT * FROM read_csv('${__TEST_DIR__}/lvw_long.csv', header = false, columns = {'a': 'VARCHAR', 'b': 'INTEGER'}, max_line_size = 16777216)
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = 'lvw'::regclass AND metric IN ('num_buffered_docs', 'num_segments')
+ORDER BY metric
+----
+metric	value
+num_buffered_docs	0
+num_segments	1
+
+statement ok
+COPY lvw FROM '${__TEST_DIR__}/lvw_long.txt' (FORMAT text)
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = 'lvw'::regclass AND metric IN ('num_buffered_docs', 'num_segments')
+ORDER BY metric
+----
+metric	value
+num_buffered_docs	0
+num_segments	2
+
+statement ok
+INSERT INTO lvw VALUES (repeat('y', 100), 2)
+
+query
+SELECT metric, value FROM sdb_metrics
+WHERE relation_id = 'lvw'::regclass AND metric IN ('num_buffered_docs', 'num_segments')
+ORDER BY metric
+----
+metric	value
+num_buffered_docs	1
+num_segments	2
+
+query
+SELECT count(*) AS n, sum(length(a)) AS bytes, sum(b) AS b FROM lvw
+----
+n	bytes	b
+3	16777316	4

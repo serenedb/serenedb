@@ -112,7 +112,7 @@ duckdb::RowGroupOrderKey RowGroupKey(const ScanGlobalState& g,
   auto best = duckdb::RowGroupOrderKey();
   for (auto row = begin; row < end; row = w.end) {
     w = column.Locate(row, w);
-    const auto block = OrderKey(g, column.RowGroupStatistics(w.block));
+    const auto block = OrderKey(g, column.DataBlocks()[w.block].statistics);
     if (IsNullKey(g, block)) {
       return block;
     }
@@ -824,7 +824,7 @@ bool MultiColumnDead(duckdb::ClientContext& context, RowGroupChecks& checks,
       bool first = true;
       for (auto row = begin; row < end; row = window.end) {
         window = reader->Locate(row, window);
-        const auto& block = reader->RowGroupStatistics(window.block);
+        const auto& block = reader->DataBlocks()[window.block].statistics;
         if (first) {
           checks.stats.push_back(block.Copy());
           first = false;
@@ -847,7 +847,7 @@ bool RowGroupDead(RowGroupCheck& check, uint64_t begin, uint64_t end) {
   for (auto row = begin; row < end; row = check.window.end) {
     check.window = check.reader->Locate(row, check.window);
     if (!irs::ZoneDead(check.filter->CheckStatistics(
-          check.reader->RowGroupStatistics(check.window.block),
+          check.reader->DataBlocks()[check.window.block].statistics,
           *check.state))) {
       return false;
     }

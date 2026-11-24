@@ -1,0 +1,51 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY cfes_en AS
+    split_text(case := 'lower') | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE cfes AS
+SELECT i AS id,
+       CASE WHEN i % 2 = 0 THEN 'alpha' ELSE 'gamma' END AS body,
+       CASE WHEN i % 3 = 0 THEN NULL ELSE struct_pack() END AS s
+FROM generate_series(1, 5000) t(i);
+
+
+statement ok
+CREATE INDEX cfes_idx ON cfes USING inverted(id, body cfes_en) INCLUDE (s);
+
+
+query
+SELECT count(*) AS n FROM cfes_idx WHERE body @@ 'alpha' AND s IS NOT NULL;
+----
+n
+1667
+
+
+query
+SELECT count(*) AS n FROM cfes_idx WHERE body @@ 'alpha' AND s IS NULL;
+----
+n
+833
+
+
+query
+SELECT id FROM cfes_idx WHERE body @@ 'alpha' AND s IS NULL AND id > 4980 ORDER BY id;
+----
+id
+4986
+4992
+4998
+
+
+statement ok
+DROP INDEX cfes_idx;
+
+
+statement ok
+DROP TABLE cfes;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY cfes_en;

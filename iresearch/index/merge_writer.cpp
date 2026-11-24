@@ -856,7 +856,7 @@ void OpenColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
-  col_writer = std::make_unique<ColWriter>(db, tracker);
+  col_writer = std::make_unique<ColWriter>(db, tracker, WriteTier::Merge);
   col_writer->SetFieldOptions(field_options);
   col_writer->SetHnswBases(hnsw_bases);
 }

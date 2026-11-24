@@ -107,8 +107,7 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
   persistence::InvertedIndexData data,
   const duckdb::case_insensitive_map_t<duckdb::Value>& options,
   const duckdb::vector<duckdb::unique_ptr<duckdb::ParsedExpression>>&
-    parsed_expressions,
-  const duckdb::Identifier& catalog) {
+    parsed_expressions) {
   InvertedIndexFields fields;
   fields.reserve(data.fields.size());
   for (auto& [field_id, record] : data.fields) {
@@ -137,19 +136,7 @@ std::shared_ptr<const InvertedIndexConfig> FromPersisted(
        .columns = std::move(data.unique_key->columns),
        .expressions = std::move(data.unique_key->expressions)});
   }
-  config->calls.reserve(data.calls.size());
-  for (auto& record : data.calls) {
-    auto& call = config->calls.emplace_back();
-    call.type = record.type;
-    call.name = std::move(record.name);
-    call.capability = record.capability;
-    call.catalog = record.catalog.empty()
-                     ? catalog
-                     : duckdb::Identifier{std::move(record.catalog)};
-    if (record.macro_overload) {
-      call.macro_overload = record.macro_overload;
-    }
-  }
+  config->called_overloads = std::move(data.called_overloads);
   return config;
 }
 
@@ -573,19 +560,7 @@ persistence::InvertedIndexData InvertedIndexEntry::ToPersisted() const {
                                    .columns = key.columns,
                                    .expressions = key.expressions};
   }
-  data.calls.reserve(_config->calls.size());
-  for (const auto& call : _config->calls) {
-    data.calls.push_back({
-      .type = call.type,
-      .name = call.name,
-      .capability = call.capability,
-      .catalog = call.catalog == catalog.GetName()
-                   ? std::string{}
-                   : call.catalog.GetIdentifierName(),
-      .macro_overload =
-        call.macro_overload.IsValid() ? call.macro_overload.GetIndex() : 0,
-    });
-  }
+  data.called_overloads = _config->called_overloads;
   return data;
 }
 
@@ -619,8 +594,7 @@ InvertedIndexEntry::InvertedIndexEntry(
   }
   if (auto data =
         Unpack(info.GetIndexName().GetIdentifierName(), info.options)) {
-    _config = FromPersisted(std::move(*data), options, parsed_expressions,
-                            catalog.GetName());
+    _config = FromPersisted(std::move(*data), options, parsed_expressions);
     options.erase(kPayloadOption);
   }
 }

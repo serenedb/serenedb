@@ -57,6 +57,6 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>&
     bound_expressions,
   const duckdb::LogicalType& generated_pk_type,
-  std::vector<duckdb::FunctionCall> calls);
+  std::vector<duckdb::idx_t> called_overloads);
 
 }  // namespace sdb::connector

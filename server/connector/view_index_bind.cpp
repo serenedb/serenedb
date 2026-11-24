@@ -294,7 +294,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
         dependencies.AddDependency(entry);
       }
     };
-  duckdb::vector<duckdb::FunctionCall> calls;
+  duckdb::RecordedCalls calls{.catalog = catalog};
   binder.RecordCalls(&calls);
   absl::Cleanup stop_recording = [&] { binder.RecordCalls(nullptr); };
   duckdb::IndexBinder index_binder(binder, context, &table, info.get());
@@ -345,7 +345,7 @@ duckdb::unique_ptr<duckdb::LogicalOperator> BindCreateIndexOnSearchTable(
   plan = duckdb::make_uniq<duckdb::LogicalEmptyResult>(std::move(plan));
   auto result = duckdb::make_uniq<duckdb::LogicalCreateIndex>(
     std::move(info), std::move(expressions), table, nullptr);
-  result->function_calls = std::move(calls);
+  result->called_overloads = std::move(calls.overloads);
   result->children.emplace_back(std::move(plan));
   return std::move(result);
 }

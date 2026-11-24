@@ -150,7 +150,7 @@ SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
   duckdb::idx_t database_id, duckdb::unique_ptr<duckdb::CreateIndexInfo> info,
   duckdb::vector<duckdb::unique_ptr<duckdb::Expression>> bound_expressions,
   duckdb::SchemaCatalogEntry& schema_entry, duckdb::idx_t estimated_cardinality,
-  std::vector<duckdb::FunctionCall> calls)
+  std::vector<duckdb::idx_t> called_overloads)
   : duckdb::PhysicalOperator(plan, duckdb::PhysicalOperatorType::EXTENSION,
                              {duckdb::LogicalType::BIGINT},
                              estimated_cardinality),
@@ -158,7 +158,7 @@ SereneDBPhysicalCreateIndex::SereneDBPhysicalCreateIndex(
     _database_id(database_id),
     _info(std::move(info)),
     _bound_expressions(std::move(bound_expressions)),
-    _calls(std::move(calls)),
+    _called_overloads(std::move(called_overloads)),
     _schema_entry(schema_entry) {}
 
 duckdb::unique_ptr<duckdb::GlobalSinkState>
@@ -257,8 +257,9 @@ SereneDBPhysicalCreateIndex::GetGlobalSinkState(
     auto entry = _schema_entry.CreateIndex(transaction, *_info, _relation);
     if (entry) {
       auto& index_entry = entry->Cast<catalog::InvertedIndexEntry>();
-      auto config = BindInvertedIndexConfig(
-        context, index_entry, _relation, _bound_expressions, pk_type, _calls);
+      auto config =
+        BindInvertedIndexConfig(context, index_entry, _relation,
+                                _bound_expressions, pk_type, _called_overloads);
       if (_info->constraint_type == duckdb::IndexConstraintType::UNIQUE &&
           catalog::IsSearchTable(_relation)) {
         auto& table = _relation.Cast<catalog::SearchTableEntry>();
@@ -616,7 +617,7 @@ duckdb::PhysicalOperator& SereneDBCreateIndexPlan(
   auto& create_index = input.planner.Make<SereneDBPhysicalCreateIndex>(
     op.table, database_id, std::move(op.info),
     std::move(op.unbound_expressions), schema_entry, op.estimated_cardinality,
-    std::move(op.function_calls));
+    std::move(op.called_overloads));
   if (catalog::IsSearchTable(op.table)) {
     create_index.children.push_back(
       input.planner.Make<duckdb::PhysicalEmptyResult>(input.table_scan.types,

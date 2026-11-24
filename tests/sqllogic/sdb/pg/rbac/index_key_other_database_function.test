@@ -1,0 +1,42 @@
+control substitution on
+
+
+statement ok
+DROP DATABASE IF EXISTS ikod_other_${__DATABASE__};
+
+
+statement ok
+CREATE DATABASE ikod_other_${__DATABASE__};
+
+
+statement ok
+CREATE FUNCTION ikod_other_${__DATABASE__}.public.ikod_double(x INTEGER) RETURNS INTEGER AS $$ SELECT x * 2 $$ LANGUAGE sql IMMUTABLE;
+
+
+statement ok
+CREATE TABLE ikod_items (a INTEGER);
+
+
+statement error
+CREATE INDEX ikod_items_double ON ikod_items (ikod_other_${__DATABASE__}.public.ikod_double(a));
+----
+db error: ERROR: cross-database references are not implemented: "ikod_other_<slt:ignore>.public.ikod_double"
+
+
+statement ok
+INSERT INTO ikod_items VALUES (1);
+
+
+query
+SELECT ikod_other_${__DATABASE__}.public.ikod_double(a) AS doubled FROM ikod_items;
+----
+doubled
+2
+
+
+statement ok
+DROP TABLE ikod_items;
+
+
+statement ok
+DROP DATABASE ikod_other_${__DATABASE__};

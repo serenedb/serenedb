@@ -1405,7 +1405,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   const duckdb::vector<duckdb::unique_ptr<duckdb::Expression>>&
     bound_expressions,
   const duckdb::LogicalType& generated_pk_type,
-  std::vector<duckdb::FunctionCall> calls) {
+  std::vector<duckdb::idx_t> called_overloads) {
   const bool table_backed = relation.type == duckdb::CatalogType::TABLE_ENTRY;
   auto top_k_scorer = catalog::TopKScorer(context, entry.options);
   const auto pk = ResolvePkColumn(
@@ -1420,7 +1420,7 @@ std::shared_ptr<const catalog::InvertedIndexConfig> BindInvertedIndexConfig(
   }
   config->top_k_scorer = std::move(top_k_scorer);
   config->pk = pk;
-  config->calls = std::move(calls);
+  config->called_overloads = std::move(called_overloads);
   return config;
 }
 

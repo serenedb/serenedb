@@ -1,0 +1,20 @@
+statement ok
+CREATE SCHEMA "Jdpqs Dept"
+
+statement ok
+CREATE JOB jdpqs_job AFTER 1 HOUR AS ALTER DEFAULT PRIVILEGES IN SCHEMA "Jdpqs Dept" GRANT SELECT ON TABLES TO PUBLIC
+
+statement ok
+EXECUTE JOB jdpqs_job
+
+query
+SELECT count(*) AS n FROM pg_default_acl WHERE defaclnamespace = '"Jdpqs Dept"'::regnamespace
+----
+n
+1
+
+statement ok
+DROP JOB jdpqs_job
+
+statement ok
+DROP SCHEMA "Jdpqs Dept" CASCADE

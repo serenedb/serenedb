@@ -51,6 +51,7 @@ add_executable(
     search_table_changes_test.cpp
     serializer_binary_test.cpp
     serializer_test.cpp
+    stack_trace_test.cpp
     storage_version_test.cpp
     striped_counters_test.cpp
     catalog/log_test.cpp

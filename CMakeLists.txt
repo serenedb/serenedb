@@ -532,7 +532,6 @@ set(CMAKE_C_STANDARD_LIBRARIES ${SDB_DEFAULT_LIBS})
 set(SDB_SANITIZE_FLAGS "")
 set(SDB_SANITIZE_EXTRA "")
 set(SDB_LLVM_SANITIZER "${SDB_SANITIZE}")
-set(SDB_LLVM_UNWINDER ON)
 if(NOT SDB_SANITIZE STREQUAL "")
     # TODO(mbkkt) we also can apply sanitize-recover
     if(SDB_SANITIZE STREQUAL "Leak")
@@ -565,7 +564,6 @@ if(NOT SDB_SANITIZE STREQUAL "")
         endif()
     elseif(SDB_SANITIZE STREQUAL "Thread")
         set(SDB_SANITIZE_FLAGS -fsanitize=thread)
-        set(SDB_LLVM_UNWINDER OFF) # crashes with llvm libunwinder
     elseif(SDB_SANITIZE MATCHES "^Memory(WithOrigins)?$")
         # TODO(mbkkt) patch libc++ to be able work with -fsanitize-memory-track-origins=1 (default is 2)
         # TODO(mbkkt) add ability to apply -fno-sanitize-memory-use-after-dtor
@@ -577,7 +575,6 @@ if(NOT SDB_SANITIZE STREQUAL "")
         if(SDB_SANITIZE STREQUAL "MemoryWithOrigins")
             list(APPEND SDB_SANITIZE_EXTRA -fsanitize-memory-track-origins)
         endif()
-        set(SDB_LLVM_UNWINDER OFF) # crashes with llvm libunwinder
     else()
         # TODO(mbkkt) Maybe support cfi, safe-stack?
         message(FATAL_ERROR "SDB_SANITIZE=${SDB_SANITIZE} not supported yet")
@@ -597,10 +594,8 @@ if(NOT SDB_SANITIZE STREQUAL "")
     )
 endif()
 
-if(SDB_LLVM_UNWINDER)
-    link_libraries($<BUILD_LOCAL_INTERFACE:unwind_static>)
-endif()
 link_libraries(
+    $<BUILD_LOCAL_INTERFACE:unwind_static>
     $<BUILD_LOCAL_INTERFACE:cxxabi_static>
     $<BUILD_LOCAL_INTERFACE:cxx_static>
 )

@@ -292,6 +292,11 @@ struct CoveringBlocks {
   irs::BlockWindow last;
 };
 
+bool ExactBounds(const irs::SubReader& segment, const CoveringBlocks& blocks) {
+  return blocks.column && !blocks.column->Patched() &&
+         DeletedRows(segment, blocks.first.begin, blocks.last.end) == 0;
+}
+
 class RowGroupPartition final : public duckdb::PartitionRowGroup {
  public:
   RowGroupPartition(const ScanBindData& bind, const irs::SubReader& segment,
@@ -318,12 +323,8 @@ class RowGroupPartition final : public duckdb::PartitionRowGroup {
   }
 
   bool MinMaxIsExact(const duckdb::StorageIndex& index) final {
-    if (_live != _end - _begin || index.HasChildren()) {
-      return false;
-    }
-    const auto& blocks = Blocks(index.GetPrimaryIndex());
-    return blocks.column && !blocks.column->Patched() &&
-           DeletedRows(_segment, blocks.first.begin, blocks.last.end) == 0;
+    return _live == _end - _begin && !index.HasChildren() &&
+           ExactBounds(_segment, Blocks(index.GetPrimaryIndex()));
   }
 
   bool HasPendingWrites() final { return false; }
@@ -450,6 +451,8 @@ void SelectScannedRowGroups(const ScanBindData& bind,
   struct Partition {
     ScanRowGroup position;
     uint64_t rows;
+    bool whole;
+    CoveringBlocks blocks;
   };
   const auto row_groups = RowGroupCount(bind, reader);
   std::vector<Partition> partitions;
@@ -461,11 +464,14 @@ void SelectScannedRowGroups(const ScanBindData& bind,
   ForEachPartition(
     bind, reader,
     [&](ScanRowGroup position, uint64_t begin, uint64_t end, uint64_t live) {
-      partitions.push_back({position, live});
-      const CoveringBlocks blocks{
-        StatsColumn(bind, reader[position.seg].GetColReader(), column_index,
-                    end),
-        begin, end};
+      const auto& blocks =
+        partitions
+          .emplace_back(position, live, live == end - begin,
+                        CoveringBlocks{
+                          StatsColumn(bind, reader[position.seg].GetColReader(),
+                                      column_index, end),
+                          begin, end})
+          .blocks;
       if (!blocks.column) {
         statistics.emplace_back();
       } else if (blocks.OneBlock()) {
@@ -478,7 +484,11 @@ void SelectScannedRowGroups(const ScanBindData& bind,
     });
   auto kept = duckdb::RowGroupReorderer::OrderPartitions(
     options, statistics,
-    [&](duckdb::idx_t partition) { return partitions[partition].rows; });
+    [&](duckdb::idx_t partition) { return partitions[partition].rows; },
+    [&](duckdb::idx_t partition) {
+      const auto& part = partitions[partition];
+      return part.whole && ExactBounds(reader[part.position.seg], part.blocks);
+    });
   absl::c_sort(kept);
   for (const auto partition : kept) {
     if (is_chosen(partition)) {

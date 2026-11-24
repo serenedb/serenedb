@@ -922,12 +922,15 @@ void ColFilter(benchmark::State& state, const ColArm* arm, bool like) {
     duckdb::VectorCache cache{duckdb::Allocator::DefaultAllocator(),
                               Data().type, STANDARD_VECTOR_SIZE};
     duckdb::Vector out{cache};
-    duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+    const auto sel_data =
+      duckdb::make_buffer<duckdb::SelectionData>(STANDARD_VECTOR_SIZE);
+    duckdb::SelectionVector sel;
     state.ResumeTiming();
     kept = 0;
     for (uint64_t anchor = 0; anchor < rows; anchor += STANDARD_VECTOR_SIZE) {
       const auto span = static_cast<duckdb::idx_t>(
         std::min<uint64_t>(rows - anchor, STANDARD_VECTOR_SIZE));
+      sel.Initialize(sel_data);
       for (duckdb::idx_t i = 0; i < span; ++i) {
         sel.set_index(i, i);
       }

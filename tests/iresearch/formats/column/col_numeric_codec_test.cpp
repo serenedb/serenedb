@@ -2960,6 +2960,36 @@ TEST_F(ColNumericCodecTest, FullWidthIntegersUnderBitpackingStoreOneRawFrame) {
   }
 }
 
+TEST_F(ColNumericCodecTest, ReadsAcrossTheEndOfARawFrameReadBothFrames) {
+  constexpr uint32_t kRowGroup = 40 * STANDARD_VECTOR_SIZE;
+  constexpr uint64_t kRawRows = 65536;
+  constexpr uint64_t kStep = 700;
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    return g < kRawRows ? static_cast<int64_t>(Mix(g)) : int64_t{7};
+  };
+  const auto type = duckdb::LogicalType::TINYINT;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  Write(dir, type, {}, kRowGroup, kRowGroup, gen, irs::codecs::CodecType::Lz4);
+  for (const auto& frames : SegmentInfo(dir, "frames")) {
+    EXPECT_EQ(frames, "2");
+  }
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  for (const auto& block : col->DataBlocks()) {
+    EXPECT_EQ(block.codec->type, irs::codecs::CodecType::Lz4);
+  }
+  auto state = col->InitScan(r.Ctx());
+  for (uint64_t pos = 0; pos < kRowGroup; pos += kStep) {
+    const auto take = std::min<uint64_t>(kRowGroup - pos, kStep);
+    duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+    col->ScanCount(state, out, take, 0);
+    for (uint64_t k = 0; k < take; ++k) {
+      ASSERT_EQ(out.GetValue(k), *At(gen, type, pos + k)) << "row " << pos + k;
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, ValidityIsRoaringOnlyBelowHalfTheBitmap) {
   constexpr uint32_t kRowGroup = 8192;
   constexpr uint64_t kRows = 4 * kRowGroup;

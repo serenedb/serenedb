@@ -48,7 +48,7 @@ duckdb::shared_ptr<DecodedDictionary> CachedDictionary(
     return nullptr;
   }
   return slot.cache->Get<DecodedDictionary>(
-    DictionaryCacheKey(slot.file_id, slot.file_offset));
+    SegmentCacheKey<DecodedDictionary>(slot.file_id, slot.file_offset));
 }
 
 std::string_view SymbolTable(const ColumnSegment& segment, const Header& h,

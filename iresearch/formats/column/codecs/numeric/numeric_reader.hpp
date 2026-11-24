@@ -300,7 +300,8 @@ class FrameReader {
     ScratchVector<uint8_t> admitted;
     if (_cache && Admitted()) {
       if (_segment_key.empty()) {
-        _segment_key = DictionaryCacheKey(_slot.file_id, _slot.file_offset);
+        _segment_key =
+          SegmentCacheKey<DecodedFrame>(_slot.file_id, _slot.file_offset);
       }
       FrameCacheKey(_segment_key, frame, _key);
       if (auto hit = _cache->Get<DecodedFrame>(_key);

@@ -395,7 +395,8 @@ struct DictionaryScan final : SegmentScanState {
     const auto bytes = entries.CacheBytes();
     if (HasRoom(cache_slot, bytes)) {
       cache_slot.cache->Put(
-        DictionaryCacheKey(cache_slot.file_id, cache_slot.file_offset),
+        SegmentCacheKey<DecodedDictionary>(cache_slot.file_id,
+                                           cache_slot.file_offset),
         duckdb::make_shared_ptr<DecodedDictionary>(entries.dictionary, bytes));
     }
   }

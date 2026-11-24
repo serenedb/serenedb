@@ -134,7 +134,8 @@ class ColCodecsTest : public TestBase {
     std::vector<std::string> keys;
     for (const auto& block : col.DataBlocks()) {
       keys.push_back(
-        irs::codecs::DictionaryCacheKey(file_id, block.file_offset));
+        irs::codecs::SegmentCacheKey<irs::codecs::DecodedDictionary>(
+          file_id, block.file_offset));
     }
     return keys;
   }

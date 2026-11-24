@@ -483,7 +483,8 @@ class ColNumericCodecTest : public TestBase {
     std::string key;
     for (const auto& block : col.DataBlocks()) {
       const auto segment =
-        irs::codecs::DictionaryCacheKey(file_id, block.file_offset);
+        irs::codecs::SegmentCacheKey<irs::codecs::DecodedFrame>(
+          file_id, block.file_offset);
       for (uint32_t frame = 0; frame < 256; ++frame) {
         irs::codecs::FrameCacheKey(segment, frame, key);
         f(key);
@@ -5476,7 +5477,7 @@ TEST_F(ColNumericCodecTest, AFrameCachedAtAnotherSizeIsDecodedAgain) {
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
   auto& cache = Db().GetObjectCache();
-  const auto segment = irs::codecs::DictionaryCacheKey(
+  const auto segment = irs::codecs::SegmentCacheKey<irs::codecs::DecodedFrame>(
     irs::tests::ColFileId(r, *col), col->DataBlocks().front().file_offset);
   std::vector<std::string> keys(frames);
   for (uint32_t f = 0; f < frames; ++f) {

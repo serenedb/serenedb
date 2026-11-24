@@ -59,10 +59,6 @@ class DecodedDictionary final : public duckdb::ObjectCacheEntry {
   uint64_t _bytes;
 };
 
-inline std::string DictionaryCacheKey(uint64_t scope, size_t block) {
-  return absl::StrCat("col-dict:", scope, ":", block);
-}
-
 class DecodedFrame final : public duckdb::ObjectCacheEntry {
  public:
   static std::string ObjectType() { return "col-frame"; }
@@ -81,6 +77,11 @@ class DecodedFrame final : public duckdb::ObjectCacheEntry {
  private:
   ScratchVector<uint8_t> _bytes;
 };
+
+template<typename Entry>
+std::string SegmentCacheKey(uint64_t scope, size_t block) {
+  return absl::StrCat(Entry::ObjectType(), ":", scope, ":", block);
+}
 
 inline void FrameCacheKey(std::string_view segment, uint32_t frame,
                           std::string& key) {

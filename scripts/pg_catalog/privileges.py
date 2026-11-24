@@ -8,7 +8,7 @@ CATALOG_TYPE = os.path.join(DUCKDB_INCLUDE, 'common', 'enums',
                             'catalog_type.hpp')
 PRIVILEGES = os.path.join(DUCKDB_INCLUDE, 'catalog', 'privileges.hpp')
 
-CONTAINERS = ('NONE', 'CLUSTER', 'DATABASE', 'SCHEMA', 'RELATION', 'REGISTRY')
+CONTAINERS = ('NONE', 'CLUSTER', 'DATABASE', 'SCHEMA', 'RELATION')
 
 USES = (('See', 32), ('Own', 33), ('Drop', 34), ('Rename', 35), ('Admin', 36),
         ('SetRole', 37), ('GrantOption', 40))
@@ -27,7 +27,7 @@ KINDS = (
     ('OBJECT_TABLESPACE', 'CLUSTER', ('TABLESPACE_ENTRY',)),
     ('OBJECT_ROLE', 'CLUSTER', ('ROLE_ENTRY',)),
     ('OBJECT_FDW', 'DATABASE', ('FOREIGN_DATA_WRAPPER_ENTRY',)),
-    ('OBJECT_LANGUAGE', 'REGISTRY', ('LANGUAGE_ENTRY',)),
+    ('OBJECT_LANGUAGE', 'DATABASE', ('LANGUAGE_ENTRY',)),
     ('OBJECT_PARAMETER_ACL', 'CLUSTER', ('PARAMETER_ENTRY',)),
     (None, 'SCHEMA', ('JOB_ENTRY',)),
     (None, 'CLUSTER', ('DB_ROLE_SETTING_ENTRY',)),

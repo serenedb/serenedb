@@ -255,14 +255,6 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   pg::VisitSystemViews("pg_catalog", [&](const pg::StaticView& view) {
     config.builtin_relations.emplace(view.name);
   });
-  for (const auto& wrapper : pg::kForeignDataWrappers) {
-    config.foreign_data_wrappers.emplace(
-      wrapper.name, duckdb::ForeignDataWrapper{.oid = wrapper.oid});
-  }
-  for (const auto& language : pg::kSystemLanguages) {
-    config.languages.emplace(language.name,
-                             duckdb::Language{.oid = language.oid});
-  }
 }
 
 }  // namespace sdb::server::query

@@ -31,7 +31,6 @@
 #include <duckdb/execution/expression_executor.hpp>
 #include <duckdb/execution/operator/persistent/physical_merge_into.hpp>
 #include <duckdb/execution/physical_plan_generator.hpp>
-#include <duckdb/main/config.hpp>
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parser/expression/constant_expression.hpp>
 #include <duckdb/parser/parsed_data/alter_info.hpp>
@@ -88,6 +87,46 @@
 
 namespace sdb::catalog {
 namespace {
+
+duckdb::unique_ptr<duckdb::CatalogEntry> MakeWrapper(
+  duckdb::Catalog& catalog, const duckdb::Identifier& name, duckdb::idx_t oid) {
+  duckdb::CreateForeignDataWrapperInfo info;
+  info.SetName(name);
+  info.oid = oid;
+  info.permissions.owner = pg::kRootUser;
+  return duckdb::make_uniq<ForeignDataWrapperCatalogEntry>(catalog, info);
+}
+
+duckdb::unique_ptr<duckdb::CatalogEntry> MakeLanguage(
+  duckdb::Catalog& catalog, const duckdb::Identifier& name, duckdb::idx_t oid) {
+  auto entry = duckdb::make_uniq<duckdb::InCatalogEntry>(
+    duckdb::CatalogType::LANGUAGE_ENTRY, catalog, name, oid);
+  entry->internal = true;
+  entry->permissions.owner = pg::kRootUser;
+  return std::move(entry);
+}
+
+template<const auto& kObjects, auto kMake>
+class BuiltinEntries final : public duckdb::DefaultGenerator {
+ public:
+  explicit BuiltinEntries(duckdb::Catalog& catalog)
+    : duckdb::DefaultGenerator{catalog} {}
+
+  duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
+    duckdb::CatalogTransaction, const duckdb::Identifier& name) final {
+    const auto* object =
+      pg::FindSystemObject(kObjects, name.GetIdentifierName());
+    return object ? kMake(catalog, name, object->oid) : nullptr;
+  }
+
+  duckdb::vector<duckdb::Identifier> GetDefaultEntries() final {
+    duckdb::vector<duckdb::Identifier> names;
+    for (const auto& object : kObjects) {
+      names.emplace_back(object.name);
+    }
+    return names;
+  }
+};
 
 const SearchTableEntry& SearchTable(const duckdb::TableCatalogEntry& table) {
   if (!IsSearchTable(table)) {
@@ -290,6 +329,12 @@ void SereneDBCatalog::LogSequenceValue(const duckdb::SequenceValue& value) {
 }
 
 void SereneDBCatalog::Initialize(bool) {
+  _wrappers.SetDefaults(
+    duckdb::make_uniq<BuiltinEntries<pg::kForeignDataWrappers, MakeWrapper>>(
+      *this));
+  _languages.SetDefaults(
+    duckdb::make_uniq<BuiltinEntries<pg::kSystemLanguages, MakeLanguage>>(
+      *this));
   auto data = duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase());
   duckdb::CreateSchemaInfo info;
   info.SetQualifiedName(
@@ -338,6 +383,8 @@ EntrySet* SereneDBCatalog::FindSet(duckdb::CatalogType type) {
       return &_subscriptions;
     case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
       return &_wrappers;
+    case duckdb::CatalogType::LANGUAGE_ENTRY:
+      return &_languages;
     default:
       return BaseCatalog::FindSet(type);
   }
@@ -483,7 +530,7 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
   }
   if (info.GetCatalogType() ==
       duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
-    AlterWrapper(transaction, info.Cast<duckdb::AlterPermissionsInfo>());
+    AlterIn(_wrappers, transaction, info);
     return;
   }
   if (info.GetCatalogType() == duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
@@ -501,25 +548,6 @@ void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
     RefuseUnsupportedAlter(transaction.GetContext(), info);
   }
   BaseCatalog::Alter(transaction, info);
-}
-
-void SereneDBCatalog::AlterWrapper(duckdb::CatalogTransaction transaction,
-                                   duckdb::AlterPermissionsInfo& info) {
-  const auto& name = info.GetQualifiedName().Name();
-  if (_wrappers.Get(transaction, name)) {
-    AlterIn(_wrappers, transaction, info);
-    return;
-  }
-  duckdb::CreateForeignDataWrapperInfo create;
-  create.SetName(name);
-  const auto& config = duckdb::DBConfig::GetConfig(GetDatabase());
-  create.oid = config.GetForeignDataWrapper(name.GetIdentifierName()).oid;
-  create.permissions.owner = config.bootstrap_role;
-  info.ApplyTo(create.permissions,
-               duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, nullptr);
-  AddTo(_wrappers, transaction,
-        duckdb::make_uniq<ForeignDataWrapperCatalogEntry>(*this, create),
-        duckdb::OnCreateConflict::ERROR_ON_CONFLICT);
 }
 
 void SereneDBCatalog::RefuseUnsupportedAlter(duckdb::ClientContext& context,

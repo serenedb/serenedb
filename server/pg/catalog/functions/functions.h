@@ -108,11 +108,6 @@ inline const Session& SessionOf(duckdb::ExpressionState& state) {
     .session;
 }
 
-void WriteAclTexts(
-  duckdb::VectorWriter<duckdb::VectorListType<duckdb::string_t>>& writer,
-  std::span<const duckdb::AclItem> items, const duckdb::SecuritySnapshot& roles,
-  std::string& text);
-
 template<typename Row>
 struct RowsState final : duckdb::LocalTableFunctionState {
   std::vector<Row> rows;

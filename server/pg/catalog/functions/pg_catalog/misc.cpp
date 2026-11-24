@@ -1784,7 +1784,9 @@ void RegisterMiscFunctions(duckdb::ExtensionLoader& loader) {
   RegisterScalar(loader, pg_catalog, "pg_collation_actual_version", VOLATILE,
                  nullptr, {collation_version});
   duckdb::ScalarFunction database_collation_version{
-    {oid}, text, ActualVersionFunction<kDatabaseKind, &DatabaseExists>,
+    {oid},
+    text,
+    ActualVersionFunction<kDatabaseKind, &DatabaseExists>,
     BindCaller};
   database_collation_version.SetFallible();
   RegisterScalar(loader, pg_catalog, "pg_database_collation_actual_version",

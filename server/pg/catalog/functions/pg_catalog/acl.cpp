@@ -65,7 +65,6 @@
 #include "pg/catalog/oids.h"
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
-#include "pg/connection_context.h"
 #include "pg/types/char.h"
 #include "pg/types/logical.h"
 
@@ -106,6 +105,18 @@ duckdb::unique_ptr<duckdb::FunctionData> AclDefaultBind(
     input.GetBoundFunction().SetFallible();
   }
   return nullptr;
+}
+
+void WriteAclTexts(
+  duckdb::VectorWriter<duckdb::VectorListType<duckdb::string_t>>& writer,
+  std::span<const duckdb::AclItem> items, const duckdb::SecuritySnapshot& roles,
+  std::string& text) {
+  auto item = items.begin();
+  for (auto& child : writer.WriteList(items.size())) {
+    text.clear();
+    AppendAcl(text, *item++, roles);
+    child.WriteValue(duckdb::string_t{text});
+  }
 }
 
 void AclDefaultFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
@@ -993,13 +1004,6 @@ Column ColumnAt(const duckdb::UnifiedVectorFormat& argument,
   return duckdb::UnifiedVectorFormat::GetDataUnsafe<int16_t>(argument)[index];
 }
 
-duckdb::idx_t ActingRole(duckdb::ClientContext& context,
-                         const duckdb::BoundFunctionExpression& expr) {
-  const auto caller = CallerRole(expr);
-  return caller.IsValid() ? caller.GetIndex()
-                          : ConnectionContext::Get(context).GetRoleId();
-}
-
 class PrivilegeCheck final : public duckdb::FunctionLocalState {
  public:
   PrivilegeCheck(duckdb::ClientContext& context,
@@ -1007,8 +1011,8 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     : _session{MakeSession(&context, CallerRole(expr))},
       _roles{catalog::RolesOf(&context)},
       _kind{
-        expr.Function().GetExtraFunctionInfo().Cast<PrivilegeKindInfo>().kind},
-      _acting_role{ActingRole(context, expr)} {}
+        expr.Function().GetExtraFunctionInfo().Cast<PrivilegeKindInfo>().kind} {
+  }
 
   void Execute(duckdb::DataChunk& args, duckdb::Vector& result) {
     _named.reset();
@@ -1094,7 +1098,7 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
       return duckdb::nullopt;
     }
     const auto member =
-      arguments.role ? Role(*arguments.role, role) : _acting_role;
+      arguments.role ? Role(*arguments.role, role) : _session.role.role;
     const auto& text = NameAt(arguments.privileges, privileges);
     if (_kind.type == CatalogType::ROLE_ENTRY) {
       return DecideRole(
@@ -1215,21 +1219,22 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     if (mask.set && closure.CanSet(role)) {
       return true;
     }
-    if (!mask.member && !mask.admin) {
+    if (mask.admin && closure.AdminOf(role)) {
+      return true;
+    }
+    if (!mask.member) {
       return false;
     }
     if (_member != member) {
       _memberships = _roles->MembershipsOf(member);
       _member = member;
     }
-    return (mask.member && _memberships.IsMember(role)) ||
-           (mask.admin && _memberships.IsAdminOf(role));
+    return _memberships.IsMember(role);
   }
 
   Session _session;
   duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles;
   const PrivilegeKind& _kind;
-  duckdb::idx_t _acting_role;
   std::optional<Named> _named;
   std::optional<duckdb::RoleAccess> _closure;
   std::optional<ParsedModes> _modes;
@@ -1280,18 +1285,6 @@ void RegisterPrivilegeFunctions(
 }
 
 }  // namespace
-
-void WriteAclTexts(
-  duckdb::VectorWriter<duckdb::VectorListType<duckdb::string_t>>& writer,
-  std::span<const duckdb::AclItem> items, const duckdb::SecuritySnapshot& roles,
-  std::string& text) {
-  auto item = items.begin();
-  for (auto& child : writer.WriteList(items.size())) {
-    text.clear();
-    AppendAcl(text, *item++, roles);
-    child.WriteValue(duckdb::string_t{text});
-  }
-}
 
 void RegisterAclFunctions(duckdb::ExtensionLoader& loader) {
   const std::string_view pg_catalog = irs::StaticStrings::kPgCatalogSchema;

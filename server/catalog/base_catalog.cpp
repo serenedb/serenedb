@@ -44,6 +44,7 @@
 #include <duckdb/storage/database_size.hpp>
 #include <duckdb/transaction/meta_transaction.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 
@@ -446,42 +447,34 @@ void BaseCatalog::RefuseDroppingTogether(
 duckdb::catalog_entry_vector_t BaseCatalog::DropOrder(
   duckdb::CatalogTransaction transaction,
   const duckdb::catalog_entry_vector_t& entries) {
-  std::vector<std::vector<size_t>> subjects(entries.size());
+  irs::containers::FlatHashMap<duckdb::idx_t, size_t> positions;
+  for (size_t i = 0; i < entries.size(); ++i) {
+    positions.try_emplace(entries[i].get().oid, i);
+  }
+  std::vector<std::vector<size_t>> dependents(entries.size());
   for (size_t i = 0; i < entries.size(); ++i) {
     ScanSubjects(transaction, entries[i], [&](duckdb::CatalogEntry& subject) {
-      for (size_t j = 0; j < entries.size(); ++j) {
-        if (j != i && entries[j].get().oid == subject.oid) {
-          subjects[i].push_back(j);
-        }
+      if (const auto it = positions.find(subject.oid);
+          it != positions.end() && it->second != i) {
+        dependents[it->second].push_back(i);
       }
     });
   }
   duckdb::catalog_entry_vector_t order;
-  std::vector<bool> dropped(entries.size(), false);
-  while (order.size() < entries.size()) {
-    bool progressed = false;
-    for (size_t i = 0; i < entries.size(); ++i) {
-      if (dropped[i]) {
-        continue;
-      }
-      bool needed = false;
-      for (size_t k = 0; k < entries.size() && !needed; ++k) {
-        needed = !dropped[k] && absl::c_linear_search(subjects[k], i);
-      }
-      if (!needed) {
-        dropped[i] = true;
-        order.push_back(entries[i]);
-        progressed = true;
-      }
+  order.reserve(entries.size());
+  std::vector<bool> visited(entries.size(), false);
+  const auto visit = [&](this const auto& self, size_t i) -> void {
+    if (visited[i]) {
+      return;
     }
-    if (!progressed) {
-      for (size_t i = 0; i < entries.size(); ++i) {
-        if (!dropped[i]) {
-          order.push_back(entries[i]);
-        }
-      }
-      break;
+    visited[i] = true;
+    for (const auto dependent : dependents[i]) {
+      self(dependent);
     }
+    order.push_back(entries[i]);
+  };
+  for (size_t i = 0; i < entries.size(); ++i) {
+    visit(i);
   }
   return order;
 }

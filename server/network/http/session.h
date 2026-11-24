@@ -383,6 +383,7 @@ class HttpSession final
   std::chrono::steady_clock::time_point _busy_at;
   size_t _written_seen = 0;
   bool _peer_is_loopback = false;
+  pg::hba::ClientInfo _hba_client;
   // Lazily created on first handler use; lives (and dies) on the session
   // task like the pg session's connection.
   duckdb::unique_ptr<duckdb::Connection> _conn;
@@ -446,6 +447,7 @@ yaclib::Task<> HttpSession<Kind>::Run() {
   if (co_await Negotiate()) {
     const auto client = this->ClientAddress();
     _peer_is_loopback = client && client->is_loopback();
+    _hba_client = this->HbaClient();
     cpu = SessionMain();
     _handed_off = true;
     _task->Start();
@@ -724,7 +726,7 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
         }
 
-        auto client = this->HbaClient();
+        auto client = _hba_client;
         client.database =
           _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
         auto auth = _auth.Authenticate(

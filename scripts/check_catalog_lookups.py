@@ -15,7 +15,6 @@ SERVER = "server"
 DIRECT_LOOKUP = re.compile(r"Catalog::(?:GetEntry(?:<[\w:]+>)?|GetSchema)\(\s*([^,()]*)")
 ROUTED_ARGUMENTS = frozenset({"retriever", "entry_retriever"})
 ALLOWED = {
-    f"{PLANNER}/binder.cpp": 1,
     f"{PLANNER}/binder/expression/bind_window_expression.cpp": 1,
     f"{PLANNER}/binder/statement/bind_copy.cpp": 1,
     f"{PLANNER}/binder/statement/bind_create.cpp": 2,

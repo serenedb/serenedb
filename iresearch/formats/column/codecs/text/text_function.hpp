@@ -22,7 +22,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <duckdb/common/helper.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
+#include <limits>
 #include <memory>
 #include <span>
 #include <utility>
@@ -114,41 +116,30 @@ struct CodecState final : State {
 };
 
 template<typename Compression>
-bool EndsSegment(uint64_t begin, uint64_t end) noexcept {
+uint64_t SegmentEnd(uint64_t begin, uint64_t row) noexcept {
   if constexpr (Compression::kShape == Shape::Dictionary) {
-    return end % STANDARD_VECTOR_SIZE == 0 || end - begin < kVectorAlignedRows;
-  } else {
-    return true;
+    if (row - begin >= kVectorAlignedRows) {
+      return duckdb::AlignValue<uint64_t, STANDARD_VECTOR_SIZE>(row);
+    }
   }
+  return row;
 }
+
+inline constexpr uint32_t kNoCut = std::numeric_limits<uint32_t>::max();
 
 template<typename Compression>
 IRS_NO_INLINE void CutRows(Compression& builder, const Config& config,
-                           const Values& values, uint64_t begin,
+                           const Values& values, uint64_t begin, uint64_t end,
                            uint32_t target, Segment& seg) {
   const std::span<const uint32_t> codes = values.codes;
   const std::span<const duckdb::string_t* const> distinct = values.distinct;
   builder.InitCompression(config, begin, distinct.size(), seg);
-  bool full = false;
-  for (auto row = begin; row < codes.size();) {
+  for (auto row = begin; row < end;) {
     builder.Compress(codes[row++], distinct);
-    full = full || builder.Full(target);
-    if (full && EndsSegment<Compression>(begin, row)) {
-      break;
+    if (target != kNoCut && builder.Full(target)) {
+      end = std::min(end, SegmentEnd<Compression>(begin, row));
+      target = kNoCut;
     }
-  }
-  builder.FinalizeCompress();
-}
-
-template<typename Compression>
-IRS_NO_INLINE void CompressRange(Compression& builder, const Config& config,
-                                 const Values& values, uint64_t begin,
-                                 uint64_t end, Segment& seg) {
-  const std::span<const uint32_t> codes = values.codes;
-  const std::span<const duckdb::string_t* const> distinct = values.distinct;
-  builder.InitCompression(config, begin, distinct.size(), seg);
-  for (auto row = begin; row < end; ++row) {
-    builder.Compress(codes[row], distinct);
   }
   builder.FinalizeCompress();
 }
@@ -194,7 +185,7 @@ IRS_NO_INLINE void CompressRows(Compression& builder, const Config& config,
                                 ColumnDataCheckpointData& data) {
   const auto target = data.params.segment_target;
   for (auto row = begin; row < values.Rows(); row = seg.begin + seg.rows) {
-    CutRows(builder, config, values, row, target, seg);
+    CutRows(builder, config, values, row, values.Rows(), target, seg);
     Flush(codec, data, seg);
   }
 }
@@ -218,9 +209,9 @@ Segment& Trial(CodecState<Compression>& state, const Config& config,
   auto& seg = *state.trials.emplace_back(
     std::make_unique<Segment>(state.buffers, state.type));
   if (window.rows != 0) {
-    CompressRange(state.builder, config, values, 0, window.rows, seg);
+    CutRows(state.builder, config, values, 0, window.rows, kNoCut, seg);
   } else {
-    CutRows(state.builder, config, values, 0, target, seg);
+    CutRows(state.builder, config, values, 0, values.Rows(), target, seg);
     window.rows = seg.rows;
     window.input = seg.input;
     window.nulls = seg.nulls;

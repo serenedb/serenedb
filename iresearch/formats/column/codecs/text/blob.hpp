@@ -909,15 +909,24 @@ struct Fetch {
     if (offsets.size() < need) {
       offsets.resize(need);
     }
-    auto k = known;
+    auto* out = offsets.data();
+    const uint64_t base = first_entry;
+    uint64_t k = known;
     if (k == 0) {
-      offsets[0] = 0;
+      out[0] = 0;
       k = 1;
     }
-    uint64_t offset = offsets[k - 1];
-    for (; k < need; ++k) {
-      offset += lengths.At(first_entry + k - 1);
-      offsets[k] = static_cast<uint32_t>(offset);
+    uint64_t offset = out[k - 1];
+    while (k < need) {
+      const auto group = (base + k - 1) / kGroup;
+      lengths.Load(group);
+      const uint32_t* group_lengths = lengths.values;
+      const auto stop =
+        std::min<uint64_t>(need, (group + 1) * kGroup - base + 1);
+      for (; k < stop; ++k) {
+        offset += group_lengths[(base + k - 1) % kGroup];
+        out[k] = static_cast<uint32_t>(offset);
+      }
     }
     if (offset > f.raw_len) [[unlikely]] {
       ThrowCorrupted("text", "entry lengths are inconsistent");
@@ -958,6 +967,7 @@ inline constexpr uint64_t kFrameEntryCost = 72;
 inline constexpr uint64_t kPrefixEntryCost = 16;
 inline constexpr uint64_t kHitByteCost = 2;
 inline constexpr uint64_t kHitCost = 128;
+inline constexpr uint64_t kInlineHitCost = 32;
 
 template<typename Codec>
 struct Scan {
@@ -970,17 +980,50 @@ struct Scan {
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
     InflateFrame(s.header, s.base, s.frames[f], f, out);
-    Entries(s, f, [&](uint32_t e, uint64_t off, uint32_t len) {
-      s.values[e] = duckdb::string_t{out + off, len};
-    });
+    auto* values = s.values + s.frames[f].first_entry;
+    FrameEntries(s, f, out,
+                 [values](uint32_t k, duckdb::string_t value)
+                   IRS_FORCE_INLINE { values[k] = value; });
+  }
+
+  template<typename Frames, typename Emit>
+  IRS_FORCE_INLINE void FrameEntries(Frames& s, uint32_t f, const char* out,
+                                     Emit&& emit) {
+    const auto& m = s.frames[f];
+    const uint32_t first = m.first_entry;
+    const uint32_t end = s.FrameEnd(f);
+    const uint64_t raw_len = m.raw_len;
+    auto& reader = s.length_reader;
+    uint64_t off = 0;
+    for (uint32_t e = first; e < end;) {
+      const auto group = e / kGroup;
+      reader.Load(group);
+      const uint32_t* lengths = reader.values;
+      const auto stop =
+        static_cast<uint32_t>(std::min<uint64_t>(end, (group + 1) * kGroup));
+      for (; e < stop; ++e) {
+        const auto len = lengths[e % kGroup];
+        if (off + len > raw_len) [[unlikely]] {
+          ThrowCorrupted("text", "entry lengths are inconsistent");
+        }
+        emit(e - first, duckdb::string_t{out + off, len});
+        off += len;
+      }
+    }
+    if (off != raw_len) [[unlikely]] {
+      ThrowCorrupted("text", "entry lengths are inconsistent");
+    }
   }
 
   template<typename Frames>
   void Stream(Frames& s, uint32_t f, char* out, uint32_t* ends) {
     InflateFrame(s.header, s.base, s.frames[f], f, out);
-    Entries(s, f, [&](uint32_t, uint64_t off, uint32_t len) {
-      *ends++ = static_cast<uint32_t>(off + len);
-    });
+    uint32_t end = 0;
+    FrameEntries(s, f, out,
+                 [&](uint32_t k, duckdb::string_t value) IRS_FORCE_INLINE {
+                   end += static_cast<uint32_t>(value.GetSize());
+                   ends[k] = end;
+                 });
   }
 
   template<typename Frames>
@@ -1004,11 +1047,11 @@ struct Scan {
     auto writer = duckdb::FlatVector::Writer<duckdb::string_t>(
       result, end - first, result_offset);
     for (; f <= last; ++f) {
-      auto* raw = s.FrameOut(f);
-      InflateFrame(s.header, s.base, s.frames[f], f, raw);
-      Entries(s, f, [&](uint32_t, uint64_t off, uint32_t len) {
-        writer.WriteStringRef(duckdb::string_t{raw + off, len});
-      });
+      auto* out = s.FrameOut(f);
+      InflateFrame(s.header, s.base, s.frames[f], f, out);
+      FrameEntries(s, f, out,
+                   [&writer](uint32_t, duckdb::string_t value)
+                     IRS_FORCE_INLINE { writer.WriteStringRef(value); });
     }
     return true;
   }
@@ -1021,24 +1064,6 @@ struct Scan {
     }
     if (got.data() != out) {
       std::memcpy(out, got.data(), m.raw_len);
-    }
-  }
-
-  template<typename Frames, typename Visit>
-  static void Entries(Frames& s, uint32_t f, Visit&& visit) {
-    const auto& m = s.frames[f];
-    const auto end = s.FrameEnd(f);
-    uint64_t off = 0;
-    for (uint32_t e = m.first_entry; e < end; ++e) {
-      const auto len = s.length_reader.At(e);
-      if (off + len > m.raw_len) [[unlikely]] {
-        ThrowCorrupted("text", "entry lengths are inconsistent");
-      }
-      visit(e, off, len);
-      off += len;
-    }
-    if (off != m.raw_len) [[unlikely]] {
-      ThrowCorrupted("text", "entry lengths are inconsistent");
     }
   }
 
@@ -1078,13 +1103,16 @@ struct Scan {
           kInflateByteCost +
           (s.header.flags == FrameDictionary::None ? 0 : kFrameCopyByteCost);
         const uint64_t inflated = Codec::kInflatesPrefix ? prefix : rows;
+        const uint64_t hit_cost = entry_bytes <= duckdb::string_t::INLINE_LENGTH
+                                    ? kInlineHitCost
+                                    : kHitCost;
         const bool done =
           end <= window_end ||
           count * uint64_t{end - window_end} < window_end - window_first;
         if (done &&
             inflated * entry_bytes * kInflateByteCost +
                 prefix * kPrefixEntryCost +
-                hits * (entry_bytes * kHitByteCost + kHitCost) <=
+                hits * (entry_bytes * kHitByteCost + hit_cost) <=
               rows * (entry_bytes * frame_byte_cost + kFrameEntryCost)) {
           EmitRows(s, f, i, j, entry_at, arena, writer);
           i = j;
@@ -1093,8 +1121,9 @@ struct Scan {
         s.DecodeFrame(f);
       }
       referenced = true;
+      const auto* values = s.values;
       for (; i < j; ++i) {
-        writer.WriteStringRef(s.values[entry_at(i)]);
+        writer.WriteStringRef(values[entry_at(i)]);
       }
     }
     if (referenced) {

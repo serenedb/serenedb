@@ -516,9 +516,24 @@ class StringLayout {
   }
 
   duckdb::string_t Read(duckdb::Vector& result, idx_t row) const {
-    const auto current = _offsets[row];
+    return Entry(result, _offsets[row],
+                 row > 0 ? DictionaryOffset(_offsets[row - 1]) : 0);
+  }
+
+  void Scan(duckdb::Vector& result, idx_t start, idx_t count,
+            duckdb::string_t* target) const {
+    auto previous = start > 0 ? DictionaryOffset(_offsets[start - 1]) : 0;
+    for (idx_t i = 0; i < count; ++i) {
+      const auto current = _offsets[start + i];
+      target[i] = Entry(result, current, previous);
+      previous = DictionaryOffset(current);
+    }
+  }
+
+ private:
+  duckdb::string_t Entry(duckdb::Vector& result, int32_t current,
+                         uint32_t previous) const {
     const auto offset = DictionaryOffset(current);
-    const auto previous = row > 0 ? DictionaryOffset(_offsets[row - 1]) : 0;
     const auto length = offset - previous;
     const auto* data = _dictionary_end - offset;
     if (current >= 0 || length == 0) [[likely]] {
@@ -533,7 +548,6 @@ class StringLayout {
     return _ctx.ReadString(result, block, block_offset);
   }
 
- private:
   ReadContext& _ctx;
   const int32_t* _offsets = nullptr;
   const_data_ptr_t _dictionary_end = nullptr;
@@ -557,9 +571,12 @@ void ReadStrings(const ColumnSegment& segment, ColumnScanState& state,
 void StringScan(const ColumnSegment& segment, ColumnScanState& state,
                 idx_t scan_count, duckdb::Vector& result, idx_t result_offset,
                 duckdb::ScanVectorType) {
-  ReadStrings(
-    segment, state, scan_count, scan_count, [](idx_t i) { return i; }, result,
-    result_offset);
+  const StringLayout layout{segment, ScanBase(state)};
+  const auto start = state.GetPositionInSegment();
+  layout.Validate(start, scan_count);
+  layout.Scan(result, start, scan_count,
+              duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result) +
+                result_offset);
 }
 
 void StringSelect(const ColumnSegment& segment, ColumnScanState& state,

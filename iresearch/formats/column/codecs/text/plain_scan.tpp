@@ -116,7 +116,9 @@ struct PlainScan final : SegmentScanState {
               idx_t span, const duckdb::SelectionVector& rows, idx_t count,
               duckdb::ScanVectorType) {
     SDB_ASSERT(!entries.streams);
-    const auto entry_at = [&](idx_t i) { return start + rows.get_index(i); };
+    const auto entry_at = [start, sel = rows](idx_t i) {
+      return start + sel.get_index(i);
+    };
     entries.leaf->Select(entries, result, result_offset, count, entry_at,
                          static_cast<uint32_t>(start),
                          static_cast<uint32_t>(start + span));

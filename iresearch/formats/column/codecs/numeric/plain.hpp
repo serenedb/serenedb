@@ -58,6 +58,18 @@ class Raw {
             size_t{count} * sizeof(T)};
   }
 
+  void Append(uint32_t begin, uint32_t count, std::string& out) {
+    const auto rows = _values.Rows();
+    for (size_t row = begin, end = size_t{begin} + count; row < end;) {
+      const size_t block = row / kBlockValues;
+      const size_t at = row % kBlockValues;
+      const size_t take = std::min(end - row, rows.BlockSize(block) - at);
+      out.append(reinterpret_cast<const char*>(rows.Block(block) + at),
+                 take * sizeof(T));
+      row += take;
+    }
+  }
+
   PlainHeader Header(const Geometry&) const noexcept { return {}; }
 
   void Open(NumericFrameMeta&, uint32_t) const noexcept {}
@@ -248,6 +260,23 @@ class PlainReader final : public FrameReader<T> {
     DecodeInto(this->Meta(f), rows, out, f);
     this->_next = end;
     return rows;
+  }
+
+  const T* StoredRows(uint64_t row, uint64_t count) {
+    if (this->Packed() || For() || this->Shuffled() ||
+        (this->_f.flags & kNumericScaled) != 0) {
+      return nullptr;
+    }
+    const auto f = this->FrameOf(row);
+    const auto m = this->Meta(f);
+    const auto end = this->EndRow(f);
+    const auto* rows = this->Data(m) + (row - m.frame.first_entry) * sizeof(T);
+    if (m.frame.comp_len != m.frame.raw_len || row + count > end ||
+        reinterpret_cast<uintptr_t>(rows) % alignof(T) != 0) {
+      return nullptr;
+    }
+    this->_next = end;
+    return reinterpret_cast<const T*>(rows);
   }
 
   IRS_FORCE_INLINE T FetchApart(uint64_t row, uint64_t next) {

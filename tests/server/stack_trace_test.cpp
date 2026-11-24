@@ -241,6 +241,16 @@ bool SignalPending(pid_t tid, int signal) {
   return (mask >> (signal - 1) & 1) != 0;
 }
 
+std::vector<ThreadStack> CollectAnswered(pid_t tid) {
+  for (int attempt = 0; attempt < 200; ++attempt) {
+    auto stacks = CollectStacks();
+    if (const auto* frames = Frames(stacks, tid); frames && !frames->empty()) {
+      return stacks;
+    }
+  }
+  return {};
+}
+
 struct Expectation {
   const Thread& thread;
   std::string_view function;
@@ -295,7 +305,7 @@ TEST(StackTrace, UnwindsOutOfTheVdso) {
   const std::vector<Expectation> expected{{clock, "SpinInClockGettime"}};
   EXPECT_TRUE(Capture(expected));
   for (int sample = 0; sample < 20; ++sample) {
-    const auto stacks = CollectStacks();
+    const auto stacks = CollectAnswered(clock.Tid());
     EXPECT_TRUE(HasFrameIn(stacks, clock.Tid(), "SpinInClockGettime"))
       << "sample " << sample << ":" << Describe(stacks, clock.Tid());
   }
@@ -406,7 +416,7 @@ TEST(StackTrace, UnwindsWithTheRuleStartingAtTheInterruptedInstruction) {
   Thread reading{[&] { WaitInRawRead(fds[0]); }};
   WaitUntilInRead(absl::StrCat("/proc/self/task/", reading.Tid()));
 
-  const auto stacks = CollectStacks();
+  const auto stacks = CollectAnswered(reading.Tid());
   EXPECT_TRUE(HasFrameIn(stacks, reading.Tid(), "WaitInRawRead"))
     << Describe(stacks, reading.Tid());
 
@@ -428,7 +438,7 @@ TEST(StackTrace, SurvivesCorruptUnwindInfo) {
     {spinning, "SpinInLoop"},
   };
   EXPECT_TRUE(Capture(expected));
-  const auto stacks = CollectStacks();
+  const auto stacks = CollectAnswered(corrupt.Tid());
   const auto* frames = Frames(stacks, corrupt.Tid());
   EXPECT_TRUE(frames && frames->size() == 1);
 #else

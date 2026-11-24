@@ -3,7 +3,15 @@ DROP ROLE IF EXISTS pfc_vedernikoff;
 
 
 statement ok
+DROP ROLE IF EXISTS pfc_outsider_role;
+
+
+statement ok
 CREATE ROLE pfc_vedernikoff LOGIN PASSWORD 'pfc_pw';
+
+
+statement ok
+CREATE ROLE pfc_outsider_role;
 
 
 statement ok
@@ -176,6 +184,95 @@ allowed	denied
 1500	0
 
 
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied,
+  count(*) FILTER (WHERE allowed IS NULL) AS unknown
+FROM (
+  SELECT has_table_privilege(CASE i % 3 WHEN 0 THEN 'pfc_vedernikoff' WHEN 1 THEN 'pfc_outsider_role' END, 'public.pfc_granted', 'SELECT') AS allowed
+  FROM range(3000) AS r(i)
+);
+----
+allowed	denied	unknown
+1000	1000	1000
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied,
+  count(*) FILTER (WHERE allowed IS NULL) AS unknown
+FROM (
+  SELECT has_table_privilege(CASE WHEN i < 2048 THEN NULL WHEN i % 2 = 0 THEN 'public.pfc_granted' ELSE 'public.pfc_granted_i' END, 'SELECT') AS allowed
+  FROM range(3000) AS r(i)
+);
+----
+allowed	denied	unknown
+476	476	2048
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied,
+  count(*) FILTER (WHERE allowed IS NULL) AS unknown
+FROM (
+  SELECT has_column_privilege('public.pfc_granted', CASE WHEN i % 3 = 0 THEN NULL ELSE 'a' END, 'SELECT') AS allowed
+  FROM range(3000) AS r(i)
+);
+----
+allowed	denied	unknown
+2000	0	1000
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE NOT allowed) AS denied,
+  count(*) FILTER (WHERE allowed IS NULL) AS unknown
+FROM (
+  SELECT has_column_privilege('pfc_granted'::regclass::oid, CASE WHEN i % 2 = 0 THEN 1::smallint END, CASE WHEN i % 4 = 0 THEN 'SELECT' ELSE 'UPDATE' END) AS allowed
+  FROM range(3000) AS r(i)
+);
+----
+allowed	denied	unknown
+750	750	1500
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE member) AS member,
+  count(*) FILTER (WHERE NOT member) AS other,
+  count(*) FILTER (WHERE member IS NULL) AS unknown
+FROM (
+  SELECT pg_has_role(CASE i % 3 WHEN 0 THEN 'pfc_vedernikoff' WHEN 1 THEN 'pfc_outsider_role' END, 'MEMBER') AS member
+  FROM range(3000) AS r(i)
+);
+----
+member	other	unknown
+1000	1000	1000
+
+
+connection c_ved user=pfc_vedernikoff password=pfc_pw
+query
+SELECT
+  count(*) FILTER (WHERE allowed) AS allowed,
+  count(*) FILTER (WHERE member) AS member
+FROM (
+  SELECT has_table_privilege('public.pfc_granted', 'SELECT') AS allowed, pg_has_role('pfc_outsider_role', 'pfc_vedernikoff', 'USAGE') AS member
+  FROM range(3000)
+);
+----
+allowed	member
+3000	0
+
+
 statement ok
 DROP TABLE pfc_objects;
 
@@ -210,3 +307,7 @@ DROP TABLE pfc_hidden;
 
 statement ok
 DROP ROLE pfc_vedernikoff;
+
+
+statement ok
+DROP ROLE pfc_outsider_role;

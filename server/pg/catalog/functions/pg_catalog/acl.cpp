@@ -34,6 +34,7 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
+#include <duckdb/catalog/column_acls.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
@@ -41,6 +42,7 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
+#include <iresearch/utils/shared.hpp>
 #include <iresearch/utils/static_strings.hpp>
 #include <limits>
 #include <optional>
@@ -187,10 +189,8 @@ duckdb::unique_ptr<duckdb::FunctionData> AclExplodeBind(
 void LoadAcls(duckdb::ClientContext& context, duckdb::DataChunk& input,
               std::vector<ExplodedAcl>& rows) {
   const auto roles = catalog::RolesOf(&context);
-  const auto lists =
-    input.data[0].Values<duckdb::VectorListType<duckdb::string_t>>();
-  for (duckdb::idx_t row = 0; row < input.size(); ++row) {
-    const auto list = lists[row];
+  auto lists = input.data[0].Values<duckdb::VectorListType<duckdb::string_t>>();
+  for (const auto list : lists) {
     if (!list.IsValid()) {
       continue;
     }
@@ -897,11 +897,12 @@ void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
   const auto classids = args.data[0].Values<int64_t>();
   const auto objids = args.data[1].Values<int64_t>();
   const auto objsubids = args.data[2].Values<int32_t>();
+  const auto count = args.size();
   auto writer =
-    duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(
-      result, args.size());
+    duckdb::FlatVector::Writer<duckdb::VectorListType<duckdb::string_t>>(result,
+                                                                         count);
   std::string text;
-  for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+  for (duckdb::idx_t row = 0; row < count; ++row) {
     const auto classid = classids[row];
     const auto objid = objids[row];
     const auto objsubid = objsubids[row];
@@ -966,26 +967,27 @@ struct PrivilegeKindInfo final : duckdb::ScalarFunctionInfo {
   const PrivilegeKind& kind;
 };
 
-using Argument = std::variant<duckdb::string_t, int64_t, int16_t>;
-
-Argument ReadArgument(const duckdb::UnifiedVectorFormat& format,
-                      duckdb::idx_t index) {
-  switch (format.physical_type) {
-    case duckdb::PhysicalType::VARCHAR:
-      return duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
-        format)[index];
-    case duckdb::PhysicalType::INT16:
-      return duckdb::UnifiedVectorFormat::GetDataUnsafe<int16_t>(format)[index];
-    default:
-      return duckdb::UnifiedVectorFormat::GetDataUnsafe<int64_t>(format)[index];
-  }
+bool ByName(const duckdb::UnifiedVectorFormat& argument) {
+  return argument.physical_type == duckdb::PhysicalType::VARCHAR;
 }
 
-Column ColumnOf(const Argument& argument) {
-  if (const auto* name = std::get_if<duckdb::string_t>(&argument)) {
-    return AsView(*name);
+const duckdb::string_t& NameAt(const duckdb::UnifiedVectorFormat& argument,
+                               duckdb::idx_t index) {
+  return duckdb::UnifiedVectorFormat::GetDataUnsafe<duckdb::string_t>(
+    argument)[index];
+}
+
+int64_t OidAt(const duckdb::UnifiedVectorFormat& argument,
+              duckdb::idx_t index) {
+  return duckdb::UnifiedVectorFormat::GetDataUnsafe<int64_t>(argument)[index];
+}
+
+Column ColumnAt(const duckdb::UnifiedVectorFormat& argument,
+                duckdb::idx_t index) {
+  if (ByName(argument)) {
+    return AsView(NameAt(argument, index));
   }
-  return std::get<int16_t>(argument);
+  return duckdb::UnifiedVectorFormat::GetDataUnsafe<int16_t>(argument)[index];
 }
 
 duckdb::idx_t ActingRole(duckdb::ClientContext& context,
@@ -1010,23 +1012,37 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     _modes.reset();
     _role_modes.reset();
     std::array<duckdb::UnifiedVectorFormat, 4> formats;
-    const std::span arguments{formats.data(), args.ColumnCount()};
-    for (duckdb::idx_t i = 0; i < arguments.size(); ++i) {
-      args.data[i].ToUnifiedFormat(arguments[i]);
+    const auto width = args.ColumnCount();
+    for (duckdb::idx_t i = 0; i < width; ++i) {
+      args.data[i].ToUnifiedFormat(formats[i]);
     }
+    const bool role_given = width == (_kind.column ? 4 : 3);
+    const duckdb::idx_t object = role_given ? 1 : 0;
+    const Arguments arguments{
+      .role = role_given ? &formats[0] : nullptr,
+      .object = formats[object],
+      .column = _kind.column ? &formats[object + 1] : nullptr,
+      .privileges = formats[width - 1],
+      .nullable =
+        absl::c_any_of(std::span{formats.data(), width},
+                       [](const duckdb::UnifiedVectorFormat& argument) {
+                         return !argument.validity.AllValid();
+                       }),
+    };
+    const auto count = args.size();
     if (absl::c_all_of(args.data, [](const duckdb::Vector& vector) {
           return vector.GetVectorType() == duckdb::VectorType::CONSTANT_VECTOR;
         })) {
       if (const auto answer = Row(arguments, 0)) {
         result.Reference(duckdb::Value::BOOLEAN(*answer),
-                         duckdb::count_t(args.size()));
+                         duckdb::count_t(count));
       } else {
-        duckdb::ConstantVector::SetNull(result, duckdb::count_t(args.size()));
+        duckdb::ConstantVector::SetNull(result, duckdb::count_t(count));
       }
       return;
     }
-    auto writer = duckdb::FlatVector::Writer<bool>(result, args.size());
-    for (duckdb::idx_t row = 0; row < args.size(); ++row) {
+    auto writer = duckdb::FlatVector::Writer<bool>(result, count);
+    for (duckdb::idx_t row = 0; row < count; ++row) {
       if (const auto answer = Row(arguments, row)) {
         writer.WriteValue(*answer);
       } else {
@@ -1051,40 +1067,52 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     RoleModes modes;
   };
 
-  duckdb::optional<bool> Row(
-    std::span<const duckdb::UnifiedVectorFormat> arguments, duckdb::idx_t row) {
-    std::array<Argument, 4> values;
-    for (duckdb::idx_t i = 0; i < arguments.size(); ++i) {
-      const auto index = arguments[i].sel->get_index(row);
-      if (!arguments[i].validity.RowIsValid(index)) {
-        return duckdb::nullopt;
-      }
-      values[i] = ReadArgument(arguments[i], index);
+  struct Arguments {
+    const duckdb::UnifiedVectorFormat* role;
+    const duckdb::UnifiedVectorFormat& object;
+    const duckdb::UnifiedVectorFormat* column;
+    const duckdb::UnifiedVectorFormat& privileges;
+    bool nullable;
+  };
+
+  IRS_FORCE_INLINE duckdb::optional<bool> Row(const Arguments& arguments,
+                                              duckdb::idx_t row) {
+    const auto object = arguments.object.sel->get_index(row);
+    const auto privileges = arguments.privileges.sel->get_index(row);
+    const auto role = arguments.role ? arguments.role->sel->get_index(row) : 0;
+    const auto column =
+      arguments.column ? arguments.column->sel->get_index(row) : 0;
+    if (arguments.nullable &&
+        (!arguments.object.validity.RowIsValid(object) ||
+         !arguments.privileges.validity.RowIsValid(privileges) ||
+         (arguments.role && !arguments.role->validity.RowIsValid(role)) ||
+         (arguments.column &&
+          !arguments.column->validity.RowIsValid(column)))) {
+      return duckdb::nullopt;
     }
-    const auto first = arguments.size() - (_kind.column ? 3 : 2);
-    const auto role = first ? Role(values[0]) : _acting_role;
-    const auto text = std::get<duckdb::string_t>(values[arguments.size() - 1]);
-    const auto& object = values[first];
+    const auto member =
+      arguments.role ? Role(*arguments.role, role) : _acting_role;
+    const auto& text = NameAt(arguments.privileges, privileges);
     if (_kind.type == CatalogType::ROLE_ENTRY) {
-      const auto* oid = std::get_if<int64_t>(&object);
       return DecideRole(
-        role, text,
-        oid
-          ? static_cast<duckdb::idx_t>(*oid)
-          : RoleIdByName(*_roles, AsView(std::get<duckdb::string_t>(object))));
+        member, text,
+        ByName(arguments.object)
+          ? RoleIdByName(*_roles, AsView(NameAt(arguments.object, object)))
+          : static_cast<duckdb::idx_t>(OidAt(arguments.object, object)));
     }
-    if (!_kind.column) {
-      return Decide(role, text, Find(object, nullptr));
+    if (!arguments.column) {
+      return Decide(member, text, Find(arguments.object, object, nullptr));
     }
-    const auto column = ColumnOf(values[first + 1]);
-    return Decide(role, text, Find(object, &column));
+    const auto target = ColumnAt(*arguments.column, column);
+    return Decide(member, text, Find(arguments.object, object, &target));
   }
 
-  duckdb::idx_t Role(const Argument& role) {
-    if (const auto* oid = std::get_if<int64_t>(&role)) {
-      return static_cast<duckdb::idx_t>(*oid);
+  IRS_FORCE_INLINE duckdb::idx_t Role(const duckdb::UnifiedVectorFormat& role,
+                                      duckdb::idx_t index) {
+    if (!ByName(role)) {
+      return static_cast<duckdb::idx_t>(OidAt(role, index));
     }
-    const auto& name = std::get<duckdb::string_t>(role);
+    const auto& name = NameAt(role, index);
     if (!_named || name != _named->name) {
       const auto text = AsView(name);
       _named = Named{.name = name,
@@ -1103,12 +1131,17 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
     return *_closure;
   }
 
-  std::optional<ObjectTarget> Find(const Argument& object,
-                                   const Column* column) {
-    if (const auto* oid = std::get_if<int64_t>(&object)) {
-      return FindByOid(static_cast<uint64_t>(*oid), column);
+  IRS_FORCE_INLINE std::optional<ObjectTarget> Find(
+    const duckdb::UnifiedVectorFormat& object, duckdb::idx_t index,
+    const Column* column) {
+    if (ByName(object)) {
+      return FindNamed(AsView(NameAt(object, index)), column);
     }
-    const auto name = AsView(std::get<duckdb::string_t>(object));
+    return FindByOid(static_cast<uint64_t>(OidAt(object, index)), column);
+  }
+
+  std::optional<ObjectTarget> FindNamed(std::string_view name,
+                                        const Column* column) {
     if (_kind.relation) {
       if (const auto entry = AttachedRelation(_session, name)) {
         return _kind.relation(_session,

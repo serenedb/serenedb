@@ -30,6 +30,7 @@
 
 #include <array>
 #include <cmath>
+#include <duckdb/common/stack_depth.hpp>
 #include <duckdb/common/types/variant/variant_builder.hpp>
 #include <duckdb/common/types/variant_iterator.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -594,6 +595,7 @@ void AppendNumber(Builder& out, const VariantNode& node) {
 }
 
 void AppendLucene(Builder& out, const Fields& node, std::string_view key) {
+  duckdb::StackDepth::Check();
   const bool has_clauses = Is(node.clauses, VariantLogicalType::ARRAY);
   const bool has_parts = Is(node.parts, VariantLogicalType::ARRAY);
   const bool has_inputs = Is(node.inputs, VariantLogicalType::OBJECT);

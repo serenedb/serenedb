@@ -20,6 +20,7 @@
 
 #include "pg/types/domain.h"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_format.h>
 
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
@@ -39,6 +40,7 @@
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace sdb::pg {
 namespace {
@@ -252,17 +254,33 @@ duckdb::BoundCastInfo BindDomainCast(duckdb::BindCastInput& input,
     throw duckdb::InternalException("domain of type %s is not found",
                                     target.ToString());
   }
-  const auto& domain_info = *domain->domain_info;
-  if (domain_info.base_type.id() == duckdb::LogicalTypeId::INVALID) {
-    throw duckdb::InternalException("domain %s has no base type",
-                                    domain->name.GetIdentifierName());
-  }
 
-  auto base_cast = input.GetCastFunction(source, domain_info.base_type);
+  std::vector<const duckdb::TypeCatalogEntry*> chain{domain.get()};
+  while (duckdb::ExtensionTypeInfo::IsDomain(
+    chain.back()->domain_info->base_type.GetExtensionInfo())) {
+    auto base = duckdb::TypeCatalogEntry::TryGetDomain(
+      context, chain.back()->domain_info->base_type);
+    if (!base) {
+      throw duckdb::InternalException("base domain of %s is not found",
+                                      chain.back()->name.GetIdentifierName());
+    }
+    chain.push_back(base.get());
+  }
+  const auto& base_type = chain.back()->domain_info->base_type;
+  if (base_type.id() == duckdb::LogicalTypeId::INVALID) {
+    throw duckdb::InternalException("domain %s has no base type",
+                                    chain.back()->name.GetIdentifierName());
+  }
+  const bool not_null = absl::c_any_of(
+    chain, [](const auto* entry) { return entry->domain_info->IsNotNull(); });
+
+  auto base_cast = input.GetCastFunction(source, base_type);
   auto data = duckdb::make_uniq<DomainCastData>(
-    std::move(base_cast), domain_info.base_type,
-    domain->name.GetIdentifierName(), domain_info.IsNotNull());
-  BindDomainChecks(context, *domain, *data);
+    std::move(base_cast), base_type, domain->name.GetIdentifierName(),
+    not_null);
+  for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+    BindDomainChecks(context, **it, *data);
+  }
 
   duckdb::BoundCastInfo result(DomainCast, std::move(data),
                                InitDomainCastLocalState);

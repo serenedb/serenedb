@@ -213,3 +213,45 @@ SELECT TRY_CAST(NULL AS dom_nn) IS NULL AS a, TRY_CAST(-1 AS dom_pos) IS NULL AS
 ----
 a	b	c
 t	t	5
+
+# A domain over a domain checks the constraints of its base domains as its own: the errors name the domain
+# the value is cast to.
+
+statement ok
+CREATE DOMAIN d_msg_1 AS int4 NOT NULL CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN d_msg_2 AS d_msg_1 CHECK (VALUE < 100);
+
+statement ok
+CREATE DOMAIN d_msg_3 AS d_msg_2;
+
+statement error db error: ERROR: value for domain d_msg_2 violates check constraint "d_msg_1_check"
+SELECT 0::d_msg_2;
+
+statement error db error: ERROR: domain d_msg_2 does not allow null values
+SELECT NULL::d_msg_2;
+
+statement error db error: ERROR: value for domain d_msg_2 violates check constraint "d_msg_2_check"
+SELECT 100::d_msg_2;
+
+statement error db error: ERROR: value for domain d_msg_3 violates check constraint "d_msg_1_check"
+SELECT 0::d_msg_3;
+
+statement error db error: ERROR: domain d_msg_3 does not allow null values
+SELECT NULL::d_msg_3;
+
+statement ok
+CREATE TABLE t_msg (v d_msg_2);
+
+statement error db error: ERROR: value for domain d_msg_2 violates check constraint "d_msg_1_check"
+INSERT INTO t_msg VALUES (0);
+
+statement error db error: ERROR: domain d_msg_2 does not allow null values
+INSERT INTO t_msg VALUES (NULL);
+
+statement error db error: ERROR: value for domain d_msg_2 violates check constraint "d_msg_2_check"
+INSERT INTO t_msg VALUES (100);
+
+statement ok
+INSERT INTO t_msg VALUES (50);

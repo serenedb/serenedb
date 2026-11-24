@@ -53,7 +53,7 @@ SELECT 42::small_positive_int AS v;
 v
 42
 
-statement error db error: ERROR: value for domain positive_int violates check constraint "positive_int_check"
+statement error db error: ERROR: value for domain small_positive_int violates check constraint "positive_int_check"
 SELECT 0::small_positive_int;
 
 statement error db error: ERROR: value for domain small_positive_int violates check constraint "small_positive_int_check"

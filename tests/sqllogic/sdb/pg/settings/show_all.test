@@ -244,6 +244,7 @@ profiling_output	(empty)	The file to which profiler output is written. When empt
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output, e.g. {'max_extra_lines': 100}. Settings not recognized by the active renderer are ignored.
 progress_bar_time	2000	Configures how long (in milliseconds) a query needs to take before we start printing a progress bar.
 quack_cache_max_rows	100000	Maximum rows the server retains in the result cache (0 = unlimited)
+quack_check_peer_data	on	Check every batch a peer sends: its indexes, offsets and lengths, and on a server its values too. Turn it off only when every peer is trusted
 quack_default_client_id	<slt:ignore>	client_id used when ATTACH / quack_query omit one; precomputed at load from $QUACK_CLIENT_ID (empty opts out) or a random per-instance id. Set to '' to opt out.
 quack_default_heartbeat_timeout	60	Heartbeat lease timeout in seconds requested by clients when ATTACH / quack_query omit heartbeat_timeout
 quack_default_statement_timeout	3600000	Milliseconds a statement without statement_timeout may wait for a SereneDB Quack server before it fails, so a server that is gone cannot hold it (0 = no limit)
@@ -607,6 +608,7 @@ profiling_output	(empty)	The file to which profiler output is written. When empt
 profiling_renderer_settings	{}	A map of settings passed to the renderer of the profiler output, e.g. {'max_extra_lines': 100}. Settings not recognized by the active renderer are ignored.
 progress_bar_time	2000	Configures how long (in milliseconds) a query needs to take before we start printing a progress bar.
 quack_cache_max_rows	100000	Maximum rows the server retains in the result cache (0 = unlimited)
+quack_check_peer_data	on	Check every batch a peer sends: its indexes, offsets and lengths, and on a server its values too. Turn it off only when every peer is trusted
 quack_default_client_id	<slt:ignore>	client_id used when ATTACH / quack_query omit one; precomputed at load from $QUACK_CLIENT_ID (empty opts out) or a random per-instance id. Set to '' to opt out.
 quack_default_heartbeat_timeout	60	Heartbeat lease timeout in seconds requested by clients when ATTACH / quack_query omit heartbeat_timeout
 quack_default_statement_timeout	3600000	Milliseconds a statement without statement_timeout may wait for a SereneDB Quack server before it fails, so a server that is gone cannot hold it (0 = no limit)

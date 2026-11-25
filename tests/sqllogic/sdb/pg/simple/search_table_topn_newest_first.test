@@ -179,3 +179,121 @@ id	ts
 0	2026-01-01 00:00:00
 3	2026-01-01 00:00:03
 6	2026-01-01 00:00:06
+
+
+statement ok
+CREATE TABLE tnf_gap (id BIGINT, ts BIGINT, k TEXT)
+WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO tnf_gap SELECT i, CASE WHEN i / 2048 <> 3 THEN i END,
+  CASE WHEN i % 4 = 0 THEN 'even' ELSE 'odd' END
+FROM range(0, 10240) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) tnf_gap;
+
+
+statement ok
+RESET threads
+
+
+query
+SELECT id, ts FROM tnf_gap ORDER BY ts DESC NULLS LAST LIMIT 3;
+----
+id	ts
+10239	10239
+10238	10238
+10237	10237
+
+
+query
+SELECT id, ts FROM tnf_gap WHERE k = 'even' ORDER BY ts DESC NULLS FIRST, id LIMIT 3;
+----
+id	ts
+6144	NULL
+6148	NULL
+6152	NULL
+
+
+query
+SELECT id, ts FROM tnf_gap WHERE k = 'even' ORDER BY ts DESC NULLS LAST, id LIMIT 3;
+----
+id	ts
+10236	10236
+10232	10232
+10228	10228
+
+
+statement ok
+CREATE TABLE tnf_vec (id BIGINT, ts TIMESTAMP, v BIGINT, emb FLOAT[2])
+WITH (compaction_interval = 0, row_group_size = 2048);
+
+
+statement ok
+CREATE INDEX tnf_vec_emb ON tnf_vec USING inverted(emb hnsw (metric = 'l2'));
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO tnf_vec SELECT i, TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '1 second', 100000 - i,
+  [(i % 50)::FLOAT, (i % 37)::FLOAT]::FLOAT[2]
+FROM range(0, 20480) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) tnf_vec;
+
+
+statement ok
+RESET threads
+
+
+statement ok
+SET sdb_ann_force_exact = true
+
+
+query
+SELECT id, ts FROM tnf_vec WHERE emb <-> [0.0, 0.0]::FLOAT[2] < 1.5 ORDER BY ts DESC LIMIT 12;
+----
+id	ts
+20351	2026-01-01 05:39:11
+20350	2026-01-01 05:39:10
+19500	2026-01-01 05:25:00
+19351	2026-01-01 05:22:31
+18501	2026-01-01 05:08:21
+18500	2026-01-01 05:08:20
+17650	2026-01-01 04:54:10
+17501	2026-01-01 04:51:41
+16651	2026-01-01 04:37:31
+16650	2026-01-01 04:37:30
+15800	2026-01-01 04:23:20
+15651	2026-01-01 04:20:51
+
+
+query
+SELECT count(*) AS n, sum(id) AS ids, min(id) AS lo, max(id) AS hi FROM (
+  SELECT id FROM tnf_vec WHERE emb <-> [0.0, 0.0]::FLOAT[2] < 1.5 ORDER BY ts DESC LIMIT 20) s;
+----
+n	ids	lo	hi
+20	323760	11951	20351
+
+
+query
+SELECT id, v FROM tnf_vec WHERE emb <-> [0.0, 0.0]::FLOAT[2] < 1.5 ORDER BY v DESC LIMIT 5;
+----
+id	v
+0	100000
+1	99999
+851	99149
+1000	99000
+1850	98150

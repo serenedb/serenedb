@@ -523,15 +523,15 @@ bool PgWireSession<Kind>::SetupConnection() {
   keep_as_default("session_authorization");
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
 
-  const auto set = [&](const std::string& name, const std::string& value) {
+  const auto set = [&](std::string_view name, std::string_view value) {
     try {
-      _connection_ctx->SetSettingChecked(name, value, false);
+      _connection_ctx->SetSettingChecked(name, std::string{value}, false);
     } catch (const duckdb::InternalException&) {
-      _connection_ctx->SetSetting(name, value, false);
+      _connection_ctx->SetSetting(name, std::string{value}, false);
     }
     keep_as_default(name);
   };
-  const auto apply = [&](const std::string& name, const std::string& value) {
+  const auto apply = [&](std::string_view name, std::string_view value) {
     try {
       set(name, value);
     } catch (const std::exception& exception) {
@@ -559,8 +559,7 @@ bool PgWireSession<Kind>::SetupConnection() {
     for (const std::string_view setting : login.settings) {
       const auto eq = setting.find('=');
       try {
-        set(std::string{setting.substr(0, eq)},
-            std::string{setting.substr(eq + 1)});
+        set(setting.substr(0, eq), setting.substr(eq + 1));
       } catch (const std::exception& exception) {
         auto notice = irs::pg::ToSqlError(exception);
         notice.errcode = ERRCODE_WARNING;

@@ -256,6 +256,12 @@ std::optional<std::string> RenderPlainValue(const duckdb::Value& value) {
     return std::nullopt;
   }
   const auto type_id = value.type().id();
+  if (type_id == duckdb::LogicalTypeId::FLOAT) {
+    return absl::StrCat("'", value.ToString(), "'::REAL");
+  }
+  if (type_id == duckdb::LogicalTypeId::DOUBLE) {
+    return absl::StrCat("'", value.ToString(), "'::DOUBLE");
+  }
   if (type_id != duckdb::LogicalTypeId::LIST &&
       type_id != duckdb::LogicalTypeId::ARRAY) {
     return value.ToSQLString();

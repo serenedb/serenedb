@@ -145,9 +145,10 @@ IRS_FORCE_INLINE U8x16 Zip(U8x16 a, U8x16 b,
                            std::index_sequence<I...>) noexcept {
   using Units = Unit __attribute__((vector_size(16)));
   constexpr size_t kUnits = sizeof...(I);
-  return std::bit_cast<U8x16>(__builtin_shufflevector(
-    std::bit_cast<Units>(a), std::bit_cast<Units>(b),
-    ((kHigh ? kUnits / 2 : 0) + I / 2 + I % 2 * kUnits)...));
+  constexpr size_t kFirst = size_t{kHigh} * (kUnits / 2);
+  return std::bit_cast<U8x16>(
+    __builtin_shufflevector(std::bit_cast<Units>(a), std::bit_cast<Units>(b),
+                            (kFirst + I / 2 + I % 2 * kUnits)...));
 }
 
 inline U8x16 EvenBytes(U8x16 a, U8x16 b) noexcept {

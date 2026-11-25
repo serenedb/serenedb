@@ -55,18 +55,22 @@ class Raw {
   std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
                                  ScratchVector<uint8_t>& scratch) {
     const auto rows = _values.Rows();
-    if (const auto* base = rows.Data()) {
-      return {reinterpret_cast<const uint8_t*>(base + begin),
-              size_t{count} * sizeof(T)};
+    const auto* base = rows.Data();
+    if constexpr (std::is_integral_v<T>) {
+      if (!base) {
+        scratch.resize(size_t{count} * sizeof(T));
+        auto* out = scratch.data();
+        rows.ForEachPart(begin, size_t{begin} + count,
+                         [&](const auto* part, size_t take) {
+                           std::memcpy(out, part, take * sizeof(T));
+                           out += take * sizeof(T);
+                         });
+        return scratch;
+      }
     }
-    scratch.resize(size_t{count} * sizeof(T));
-    auto* out = scratch.data();
-    rows.ForEachPart(begin, size_t{begin} + count,
-                     [&](const auto* part, size_t take) {
-                       std::memcpy(out, part, take * sizeof(T));
-                       out += take * sizeof(T);
-                     });
-    return scratch;
+    SDB_ASSERT(base);
+    return {reinterpret_cast<const uint8_t*>(base + begin),
+            size_t{count} * sizeof(T)};
   }
 
   void Append(uint32_t begin, uint32_t count, std::string& out) {

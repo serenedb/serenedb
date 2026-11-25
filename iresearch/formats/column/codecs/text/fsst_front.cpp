@@ -92,40 +92,56 @@ struct Fsst12 {
                                   out_lengths, out_strings);
   }
 
-  struct Symbols {
-    static constexpr std::string_view kCacheType = "col-fsst12";
+  using Imported = std::shared_ptr<const ImportedFsst12>;
 
-    bool Open(std::string_view table) noexcept {
-      return duckdb_fsst12_import(
-               &decoder, reinterpret_cast<const unsigned char*>(table.data()),
-               table.size()) == table.size();
+  static bool Import(Imported& imported, std::string_view table) {
+    auto fresh = std::make_shared<ImportedFsst12>();
+    fresh->valid =
+      duckdb_fsst12_import(&fresh->table,
+                           reinterpret_cast<const unsigned char*>(table.data()),
+                           table.size()) == table.size();
+    imported = std::move(fresh);
+    return imported->valid;
+  }
+
+  static bool Import(Imported& imported, std::string_view table,
+                     const ColumnSegment& segment, bool shared) {
+    auto* slot = shared ? segment.symbols : nullptr;
+    if (!slot) {
+      return Import(imported, table);
     }
-
-    Table decoder;
-  };
-
-  using Imported = duckdb::shared_ptr<CachedSymbolTable<Symbols>>;
-
-  static bool Import(Imported& imported, duckdb::ObjectCache* cache,
-                     std::string_view table) {
-    imported = OpenSymbolTable<Symbols>(cache, table);
-    return static_cast<bool>(imported);
+    if (slot->fsst12 && slot->file_id == segment.cache_slot.file_id &&
+        slot->offset == segment.shared_offset &&
+        slot->size == segment.shared_size) {
+      imported = slot->fsst12;
+      return imported->valid;
+    }
+    Import(imported, table);
+    *slot = {
+      .file_id = segment.cache_slot.file_id,
+      .offset = segment.shared_offset,
+      .size = segment.shared_size,
+      .fsst12 = imported,
+    };
+    return imported->valid;
   }
 
   static size_t Decompress(const Imported& imported, const unsigned char* in,
                            size_t size, unsigned char* out,
                            size_t capacity) noexcept {
-    return imported ? duckdb_fsst12_decompress(&imported->Table().decoder, size,
-                                               in, capacity, out)
-                    : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
+    return imported && imported->valid
+             ? duckdb_fsst12_decompress(&imported->table, size, in, capacity,
+                                        out)
+             : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
   }
 
   static size_t DecompressPrefix(const Imported& imported,
                                  const unsigned char* in, size_t size,
                                  unsigned char* out, size_t bytes) noexcept {
-    return imported ? duckdb_fsst12_decompress_prefix(
-                        &imported->Table().decoder, size, in, bytes, out)
-                    : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
+    return imported && imported->valid
+             ? duckdb_fsst12_decompress_prefix(&imported->table, size, in,
+                                               bytes, out)
+             : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
   }
 };
 
@@ -318,6 +334,10 @@ ChainTail DecodeChainHeads(const fsst::Decoder<Impl>& fsst, const char* in,
   return {.in = in + off[n - 1], .enc = enc[n - 1], .lcp = lcp[n - 1]};
 }
 
+bool SharedTable(const Header& h, const ColumnSegment& segment) noexcept {
+  return h.symtab_size == 0 && segment.shared_size != 0;
+}
+
 template<typename Impl>
 struct Fetch;
 
@@ -330,7 +350,8 @@ struct Scan {
   Scan(const ColumnSegment& segment, const Frames& s)
     : lcps{s.base + s.header.off_lcps, s.header.lcp_width} {
     const auto table = SymbolTable(segment, s.header, s.base, probe);
-    if (!table.empty() && !decoder.Import(segment.cache_slot.cache, table))
+    if (!table.empty() &&
+        !decoder.Import(table, segment, SharedTable(s.header, segment)))
       [[unlikely]] {
       ThrowCorrupted("text", "symbol table is inconsistent");
     }
@@ -821,7 +842,8 @@ struct Fetch {
             duckdb::const_data_ptr_t base) {
     decoder.emplace();
     const auto symbols = SymbolTable(segment, h, base, chain);
-    if (!symbols.empty() && !decoder->Import(segment.cache_slot.cache, symbols))
+    if (!symbols.empty() &&
+        !decoder->Import(symbols, segment, SharedTable(h, segment)))
       [[unlikely]] {
       ThrowCorrupted("text", "symbol table is inconsistent");
     }

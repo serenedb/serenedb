@@ -135,10 +135,8 @@ struct Scan {
   using Fetch = onpair::Fetch;
 
   template<typename Frames>
-  Scan(const ColumnSegment& segment, const Frames& s)
-    : table{OpenSymbolTable<Table>(segment.cache_slot.cache,
-                                   SymbolTable(s.header, s.base))} {
-    if (!table) [[unlikely]] {
+  Scan(const ColumnSegment&, const Frames& s) {
+    if (!table.Open(SymbolTable(s.header, s.base))) [[unlikely]] {
       ThrowCorrupted("text", "symbol table is inconsistent");
     }
     groups.Reset(static_cast<uint32_t>(s.frames.size()), [&](uint32_t f) {
@@ -150,7 +148,7 @@ struct Scan {
   template<typename Frames>
   void DecodeFrame(Frames& s, uint32_t f, char* out) {
     const auto& m = s.frames[f];
-    const auto tokens = TokenFrame(m, table->Table().Bits());
+    const auto tokens = TokenFrame(m, table.Bits());
     const auto* stream =
       reinterpret_cast<const uint8_t*>(s.Data()) + m.comp_off;
     const auto end = s.FrameEnd(f);
@@ -162,7 +160,7 @@ struct Scan {
         ThrowCorrupted("text", "entry is inconsistent");
       }
       const auto n =
-        table->Table().Decode(stream, token, count, out + off, m.raw_len - off);
+        table.Decode(stream, token, count, out + off, m.raw_len - off);
       const std::string_view v{out + off, n};
       s.Keep(e, v);
       off += n;
@@ -175,8 +173,8 @@ struct Scan {
 
   template<typename Frames, typename Out>
   std::string_view Decode(Frames& s, uint32_t e, uint32_t f, Out& out) {
-    return DecodeEntry(table->Table(), groups, s.length_reader, s.frames[f], f,
-                       e, s.Data(), out);
+    return DecodeEntry(table, groups, s.length_reader, s.frames[f], f, e,
+                       s.Data(), out);
   }
 
   template<typename Frames>
@@ -220,10 +218,10 @@ struct Scan {
   }
 
   uint64_t HeapBytes() const noexcept {
-    return entry_heap_bytes + table->Table().Bytes();
+    return entry_heap_bytes + table.Bytes();
   }
 
-  duckdb::shared_ptr<CachedSymbolTable<Table>> table;
+  Table table;
   ChainGroups groups;
   std::vector<uint8_t> entry_decoded;
   uint64_t entry_heap_bytes = 0;
@@ -232,7 +230,7 @@ struct Scan {
 
 struct Fetch {
   void Reset(const Header&, duckdb::data_ptr_t) {
-    table.reset();
+    opened = false;
     groups.Clear();
     walked = 0;
   }
@@ -241,15 +239,15 @@ struct Fetch {
 
   uint64_t DecodedBytes() const noexcept { return 0; }
 
-  void Emit(const ColumnSegment& segment, const Header& h,
-            duckdb::data_ptr_t base, PackedReader& counts, uint32_t lo,
-            const FrameMeta& f, uint32_t entry, duckdb::Vector& result,
-            duckdb::idx_t result_idx, bool) {
-    if (!table) {
-      Open(segment.cache_slot.cache, h, base);
+  void Emit(const ColumnSegment&, const Header& h, duckdb::data_ptr_t base,
+            PackedReader& counts, uint32_t lo, const FrameMeta& f,
+            uint32_t entry, duckdb::Vector& result, duckdb::idx_t result_idx,
+            bool) {
+    if (!opened) {
+      Open(h, base);
     }
     const auto value =
-      DecodeEntry(table->Table(), groups, counts, f, lo, entry,
+      DecodeEntry(table, groups, counts, f, lo, entry,
                   reinterpret_cast<const char*>(base + h.off_data), buf);
     ++walked;
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
@@ -257,12 +255,11 @@ struct Fetch {
       duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
   }
 
-  void Open(duckdb::ObjectCache* cache, const Header& h,
-            duckdb::const_data_ptr_t base) {
-    table = OpenSymbolTable<Table>(cache, SymbolTable(h, base));
-    if (!table) [[unlikely]] {
+  void Open(const Header& h, duckdb::const_data_ptr_t base) {
+    if (!table.Open(SymbolTable(h, base))) [[unlikely]] {
       ThrowCorrupted("text", "symbol table is inconsistent");
     }
+    opened = true;
     const auto* frames = base + h.off_frames;
     groups.Reset(h.frame_count, [&](uint32_t i) {
       return std::pair{FrameAt(frames, i).first_entry,
@@ -272,10 +269,11 @@ struct Fetch {
     });
   }
 
-  duckdb::shared_ptr<CachedSymbolTable<Table>> table;
+  Table table;
   ChainGroups groups;
   std::string buf;
   uint64_t walked = 0;
+  bool opened = false;
 };
 
 constexpr double kTrainFraction = 0.15;
@@ -360,18 +358,32 @@ bool Table::Open(std::string_view table) {
   }
   const auto bytes = rest.substr(nibbles);
   _tokens.resize(count);
+  auto* tokens = _tokens.data();
+  const auto* lengths = reinterpret_cast<const uint8_t*>(rest.data());
   uint32_t at = 0;
-  for (uint32_t t = 0; t < count; ++t) {
-    const auto packed = static_cast<uint8_t>(rest[t / 2]) >> (4 * (t % 2));
-    const uint32_t len = (packed & 0xF) + 1;
-    _tokens[t] = at | (len << 24);
+  uint32_t t = 0;
+  for (; t + 1 < count; t += 2) {
+    const uint32_t packed = lengths[t / 2];
+    const uint32_t lo = (packed & 0xF) + 1;
+    const uint32_t hi = (packed >> 4) + 1;
+    tokens[t] = at | (lo << 24);
+    tokens[t + 1] = (at + lo) | (hi << 24);
+    at += lo + hi;
+  }
+  if (t < count) {
+    const uint32_t len = (lengths[t / 2] & 0xF) + 1;
+    tokens[t] = at | (len << 24);
     at += len;
   }
   if (at != bytes.size()) {
     return false;
   }
-  _bytes.assign(bytes);
-  _bytes.append(kMaxToken, '\0');
+  _bytes.resize_and_overwrite(bytes.size() + kMaxToken,
+                              [&](char* out, size_t size) {
+                                std::memcpy(out, bytes.data(), bytes.size());
+                                std::memset(out + bytes.size(), 0, kMaxToken);
+                                return size;
+                              });
   _count = count;
   _mask = static_cast<uint32_t>((uint64_t{1} << _bits) - 1);
   return true;

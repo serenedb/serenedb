@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
 
@@ -45,8 +46,6 @@ inline constexpr uint8_t kDictionaryBits = 12;
 
 class Table {
  public:
-  static constexpr std::string_view kCacheType = "col-onpair";
-
   bool Open(std::string_view table);
 
   uint8_t Bits() const noexcept { return _bits; }
@@ -123,7 +122,7 @@ class Table {
   [[noreturn]] static void Corrupted();
 
   std::string _bytes;
-  std::vector<uint32_t> _tokens;
+  ScratchVector<uint32_t> _tokens;
   uint32_t _count = 0;
   uint32_t _mask = 0;
   uint8_t _bits = 0;

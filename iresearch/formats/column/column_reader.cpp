@@ -470,14 +470,21 @@ void CertifyStrings(const ColumnReader::ScanState& s,
     result, duckdb::make_uniq<ScannedStrings>(s.ctx, segment.Pin()));
 }
 
+codecs::SharedSymbols* SymbolsOf(ColumnReader::ScanState& s) {
+  if (!s.symbols) {
+    s.symbols = std::make_unique<codecs::SharedSymbols>();
+  }
+  return s.symbols.get();
+}
+
 }  // namespace
 
 void ColumnReader::OpenScanSegment(ScanState& s) const {
   if (s.st.scan_state) {
     s.st.previous_states.emplace_back(std::move(s.st.scan_state));
   }
-  const auto& segment =
-    *s.segments.emplace_back(Open(s.window.block, *s.ctx, &s));
+  auto& segment = *s.segments.emplace_back(Open(s.window.block, *s.ctx, &s));
+  segment.symbols = SymbolsOf(s);
   s.opened_block = s.window.block;
   s.st.scan_state = segment.function.init_scan(segment);
   s.st.internal_index = 0;
@@ -642,6 +649,7 @@ void ColumnReader::FetchInto(ScanState& s, std::span<const uint64_t> rows,
       }
       s.fetch_window = Locate(rows[i], s.window);
       s.fetch.segment = Open(s.fetch_window.block, *s.ctx);
+      s.fetch.segment->symbols = SymbolsOf(s);
     }
     auto end = i;
     for (; end < rows.size() && rows[end] < s.fetch_window.end; ++end) {

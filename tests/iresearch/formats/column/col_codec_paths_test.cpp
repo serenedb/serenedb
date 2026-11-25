@@ -1197,6 +1197,17 @@ TEST_F(ColCodecPathsTest, TextCodecsReadEveryShape) {
            /*stored=*/true, irs::WriteTier::Flush, 2 * kLargeGroup + 517,
            kLargeGroup});
   }
+  for (const auto codec : {CodecType::Fsst, CodecType::Fsst12}) {
+    Check({absl::StrCat(magic_enum::enum_name(codec),
+                        " frames of mostly empty strings longer than a vector"),
+           LogicalType::VARCHAR, codec, Periodic,
+           [](uint64_t g) {
+             return g % 16 == 3 ? Value{absl::StrCat("value_", g % 997)}
+                                : Value{""};
+           },
+           /*stored=*/true, irs::WriteTier::Flush, 2 * kLargeGroup + 517,
+           kLargeGroup});
+  }
 }
 
 TEST_F(ColCodecPathsTest, AllNullBlocksFillTheirPartOfAVector) {

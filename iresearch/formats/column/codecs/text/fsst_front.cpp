@@ -151,8 +151,10 @@ IRS_FORCE_INLINE void CopyChunks(char* to, const char* from,
 }
 
 struct ChainEnd {
+  uint32_t entry;
   uint64_t written;
   uint64_t enc_off;
+  uint64_t prev_len;
 };
 
 uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
@@ -191,15 +193,22 @@ uint64_t DecodeShared(const fsst::Decoder<Impl>& fsst, const char* in,
 
 template<typename Impl, typename Visit>
 ChainEnd WalkChain(const fsst::Decoder<Impl>& fsst, const char* in,
-                   PackedReader& lengths, PackedReader& lcps, uint32_t first,
-                   uint32_t end, uint64_t enc_off, uint64_t enc_end, char* out,
-                   uint64_t capacity, Visit&& visit) {
-  uint64_t off = 0;
-  uint64_t prev_off = 0;
-  uint64_t prev_len = 0;
-  for (auto e = first; e < end; ++e) {
-    const uint64_t lcp = e == first ? 0 : lcps.At(e);
+                   PackedReader& lengths, PackedReader& lcps, ChainEnd from,
+                   uint32_t end, uint64_t enc_end, char* out, uint64_t capacity,
+                   Visit&& visit) {
+  uint64_t off = from.written;
+  uint64_t prev_len = from.prev_len;
+  uint64_t prev_off = off - prev_len;
+  uint64_t enc_off = from.enc_off;
+  for (auto e = from.entry; e < end; ++e) {
+    const uint64_t lcp = lcps.At(e);
     const uint64_t enc = lengths.At(e);
+    if ((lcp | enc) == 0) {
+      visit(e, std::string_view{out + off, 0});
+      prev_off = off;
+      prev_len = 0;
+      continue;
+    }
     if (!(lcp <= prev_len && enc_off + enc <= enc_end && off + lcp <= capacity))
       [[unlikely]] {
       ThrowCorrupted("text", "front coding is inconsistent");
@@ -229,7 +238,8 @@ ChainEnd WalkChain(const fsst::Decoder<Impl>& fsst, const char* in,
     off += value.size();
     enc_off += enc;
   }
-  return {off, enc_off};
+  return {
+    .entry = end, .written = off, .enc_off = enc_off, .prev_len = prev_len};
 }
 
 template<typename Impl, typename Visit>
@@ -323,21 +333,78 @@ struct Scan {
     group_decoded.assign(groups.Count(), 0);
   }
 
-  template<typename Frames, typename Visit>
-  void WalkFrame(Frames& s, uint32_t f, char* out, Visit&& visit) {
+  template<typename Frames>
+  ChainEnd Advance(Frames& s, uint32_t f, uint32_t end, char* out) {
     const auto& m = s.frames[f];
-    const uint64_t enc_end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
-    const auto chain =
-      WalkChain(decoder, s.Data(), s.length_reader, lcps, m.first_entry,
-                s.FrameEnd(f), m.comp_off, enc_end, out, m.raw_len, visit);
-    if (chain.written != m.raw_len || chain.enc_off != enc_end) [[unlikely]] {
+    return WalkChain(decoder, s.Data(), s.length_reader, lcps,
+                     prefixes.empty() ? ChainEnd{.entry = m.first_entry,
+                                                 .written = 0,
+                                                 .enc_off = m.comp_off,
+                                                 .prev_len = 0}
+                                      : prefixes[f],
+                     end, static_cast<uint64_t>(m.comp_off) + m.comp_len, out,
+                     m.raw_len,
+                     [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
+  }
+
+  template<typename Frames>
+  void DecodeFrame(Frames& s, uint32_t f, char* out) {
+    const auto& m = s.frames[f];
+    const auto chain = Advance(s, f, s.FrameEnd(f), out);
+    if (chain.written != m.raw_len ||
+        chain.enc_off != static_cast<uint64_t>(m.comp_off) + m.comp_len)
+      [[unlikely]] {
       ThrowCorrupted("text", "frame is inconsistent");
     }
   }
 
   template<typename Frames>
-  void DecodeFrame(Frames& s, uint32_t f, char* out) {
-    WalkFrame(s, f, out, [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
+  void DecodeSpan(Frames& s, uint32_t f, uint32_t lo, uint32_t hi) {
+    SDB_ASSERT(!s.decoded[f] && lo < hi);
+    const auto prefix =
+      prefixes.empty() ? s.frames[f].first_entry : prefixes[f].entry;
+    if (lo > prefix) {
+      DecodeDetached(s, f, lo, hi);
+      return;
+    }
+    if (hi == s.FrameEnd(f)) {
+      s.DecodeFrame(f);
+      return;
+    }
+    if (prefixes.empty()) {
+      prefixes.resize(s.frames.size());
+      for (uint32_t i = 0; i < s.frames.size(); ++i) {
+        prefixes[i] = {.entry = s.frames[i].first_entry,
+                       .written = 0,
+                       .enc_off = s.frames[i].comp_off,
+                       .prev_len = 0};
+      }
+    }
+    prefixes[f] = Advance(s, f, std::max(hi, prefix), s.FrameOut(f));
+  }
+
+  template<typename Frames>
+  void DecodeDetached(Frames& s, uint32_t f, uint32_t lo, uint32_t hi) {
+    const auto& m = s.frames[f];
+    const auto g = (lo - m.first_entry) / kChainRestart;
+    auto& arena = duckdb::StringVector::GetStringAllocator(s.dictionary->data);
+    auto* out = duckdb::char_ptr_cast(arena.Allocate(m.raw_len));
+    const auto chain = WalkChain(
+      decoder, s.Data(), s.length_reader, lcps,
+      {.entry = m.first_entry + g * kChainRestart,
+       .written = 0,
+       .enc_off = groups.Offset(s.length_reader, m, f, g),
+       .prev_len = 0},
+      hi, static_cast<uint64_t>(m.comp_off) + m.comp_len, out, m.raw_len,
+      [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
+    arena.ShrinkHead(m.raw_len - chain.written);
+    group_heap_bytes += chain.written;
+    const auto done = hi == s.FrameEnd(f)
+                        ? groups.Groups(f)
+                        : (hi - m.first_entry) / kChainRestart;
+    for (auto k = g; k < done; ++k) {
+      group_decoded[groups.Base(f) + k] = 1;
+    }
   }
 
   template<typename Frames>
@@ -354,68 +421,52 @@ struct Scan {
     EnsureRows(s, f, at / kChainRestart, uint32_t{1} << at % kChainRestart);
   }
 
-  template<typename Frames, typename Entry>
-  void Ensure(Frames& s, duckdb::idx_t count, Entry entry_at,
-              uint32_t window_first, uint32_t window_end) {
-    if (count <= kSparseRows) {
-      EnsureGroups(s, count, entry_at, window_first, window_end);
-    } else {
-      s.EnsureRange(window_first, window_end);
+  template<typename Frames>
+  void DecodeInto(Frames& s, duckdb::Vector& result,
+                  duckdb::idx_t result_offset, uint32_t first, uint32_t end) {
+    SDB_ASSERT(first < end);
+    const auto head = s.FrameOf(first);
+    auto last = head;
+    uint64_t capacity = s.frames[head].raw_len;
+    while (s.FrameEnd(last) < end) {
+      ++last;
+      capacity += s.frames[last].raw_len;
     }
-  }
-
-  template<typename Frames, typename Entry>
-  void EnsureGroups(Frames& s, duckdb::idx_t count, Entry entry_at,
-                    uint32_t window_first, uint32_t window_end) {
-    if (s.Complete()) {
-      return;
+    auto& arena = duckdb::StringVector::GetStringAllocator(result);
+    auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
+    auto writer = duckdb::FlatVector::Writer<duckdb::string_t>(
+      result, end - first, result_offset);
+    const auto visit = [&](uint32_t e, std::string_view v) IRS_FORCE_INLINE {
+      if (e >= first) {
+        writer.WriteStringRef(
+          duckdb::string_t{v.data(), static_cast<uint32_t>(v.size())});
+      }
+    };
+    const auto g = (first - s.frames[head].first_entry) / kChainRestart;
+    uint64_t written = 0;
+    for (auto f = head; f <= last; ++f) {
+      const auto& m = s.frames[f];
+      const auto frame_end = s.FrameEnd(f);
+      const auto from =
+        f == head ? m.first_entry + g * kChainRestart : m.first_entry;
+      const auto to = std::min(end, frame_end);
+      const uint64_t enc_end = static_cast<uint64_t>(m.comp_off) + m.comp_len;
+      const auto chain = WalkChain(
+        decoder, s.Data(), s.length_reader, lcps,
+        {.entry = from,
+         .written = written,
+         .enc_off =
+           f == head ? groups.Offset(s.length_reader, m, f, g) : m.comp_off,
+         .prev_len = 0},
+        to, enc_end, out, capacity, visit);
+      if (from == m.first_entry && to == frame_end &&
+          (chain.written - written != m.raw_len || chain.enc_off != enc_end))
+        [[unlikely]] {
+        ThrowCorrupted("text", "frame is inconsistent");
+      }
+      written = chain.written;
     }
-    auto f = group_frame;
-    for (duckdb::idx_t i = 0; i < count;) {
-      const auto e = static_cast<uint32_t>(entry_at(i));
-      SDB_ASSERT(f == kNoFrame || e >= s.frames[f].first_entry);
-      if (f == kNoFrame || e >= s.FrameEnd(f)) {
-        f = s.FrameOf(e);
-      }
-      const auto first = s.frames[f].first_entry;
-      const auto end = s.FrameEnd(f);
-      auto j = i + 1;
-      for (; j < count; ++j) {
-        const auto next = static_cast<uint32_t>(entry_at(j));
-        SDB_ASSERT(next >= first);
-        if (next >= end) {
-          break;
-        }
-      }
-      if (!s.decoded[f]) {
-        const auto lo = std::max(window_first, first);
-        const auto hi = std::min(window_end, end);
-        SDB_ASSERT(lo < hi);
-        const uint64_t range =
-          (hi - 1 - first) / kChainRestart - (lo - first) / kChainRestart + 1;
-        const uint64_t total =
-          (end - first + kChainRestart - 1) / kChainRestart;
-        if (range < total) {
-          const auto group_of = [&](duckdb::idx_t k) {
-            return (static_cast<uint32_t>(entry_at(k)) - first) / kChainRestart;
-          };
-          for (auto k = i; k < j;) {
-            const auto group = group_of(k);
-            uint32_t rows = 0;
-            for (; k < j && group_of(k) == group; ++k) {
-              rows |=
-                uint32_t{1}
-                << (static_cast<uint32_t>(entry_at(k)) - first) % kChainRestart;
-            }
-            EnsureRows(s, f, group, rows);
-          }
-        } else {
-          s.DecodeFrame(f);
-        }
-      }
-      i = j;
-    }
-    group_frame = f;
+    arena.ShrinkHead(capacity - written);
   }
 
   template<typename Frames, typename Entry>
@@ -485,7 +536,7 @@ struct Scan {
           }
           continue;
         }
-        s.DecodeFrame(f);
+        DecodeSpan(s, f, lo, hi);
       }
       referenced = true;
       for (; i < j; ++i) {
@@ -635,10 +686,14 @@ struct Scan {
     const auto capacity = ChainCapacity(s.length_reader, lcps, first, end);
     auto& arena = duckdb::StringVector::GetStringAllocator(s.dictionary->data);
     auto* out = duckdb::char_ptr_cast(arena.Allocate(capacity));
-    const auto chain = WalkChain(
-      decoder, s.Data(), s.length_reader, lcps, first, end,
-      groups.Offset(s.length_reader, s.frames[f], f, g), s.header.data_size,
-      out, capacity, [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
+    const auto chain =
+      WalkChain(decoder, s.Data(), s.length_reader, lcps,
+                {.entry = first,
+                 .written = 0,
+                 .enc_off = groups.Offset(s.length_reader, s.frames[f], f, g),
+                 .prev_len = 0},
+                end, s.header.data_size, out, capacity,
+                [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
     arena.ShrinkHead(capacity - chain.written);
     group_heap_bytes += chain.written;
     group_decoded[groups.Base(f) + g] = 1;
@@ -697,6 +752,7 @@ struct Scan {
   ChainGroups groups;
   std::vector<uint8_t> group_decoded;
   std::vector<uint16_t> group_rows;
+  std::vector<ChainEnd> prefixes;
   static_assert(kChainRestart <= 8 * sizeof(uint16_t));
   uint64_t group_heap_bytes = 0;
   uint32_t group_frame = kNoFrame;

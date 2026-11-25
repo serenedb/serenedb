@@ -290,9 +290,10 @@ struct Scan {
     entry_decoded[e] = 1;
   }
 
-  template<typename Frames, typename Entry>
-  void Ensure(Frames& s, duckdb::idx_t, Entry, uint32_t first, uint32_t end) {
-    s.EnsureRange(first, end);
+  template<typename Frames>
+  void DecodeInto(Frames& s, duckdb::Vector& result,
+                  duckdb::idx_t result_offset, uint32_t first, uint32_t end) {
+    s.WriteRange(result, result_offset, first, end);
   }
 
   template<typename Frames, typename Entry>

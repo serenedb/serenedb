@@ -185,6 +185,13 @@ struct EntryFrames {
     }
   }
 
+  void WriteRange(duckdb::Vector& result, idx_t result_offset, uint32_t first,
+                  uint32_t end) {
+    EnsureRange(first, end);
+    WriteRefs(result, result_offset, end - first,
+              [first](idx_t i) { return first + i; });
+  }
+
   template<typename Entry>
   void EnsureEach(idx_t count, Entry entry_at) {
     const bool sparse = count <= kSparseRows;

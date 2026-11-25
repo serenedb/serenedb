@@ -161,6 +161,7 @@ enum class StateId : uint8_t {
   TextZxcSizes,
   AlpSample,
   AlprdSample,
+  WideEntries,
 };
 
 consteval StateId TextState(Shape shape, ByteCodec leaf) noexcept {

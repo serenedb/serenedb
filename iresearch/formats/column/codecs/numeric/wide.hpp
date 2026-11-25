@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/helper.hpp>
 #include <duckdb/common/hugeint.hpp>
 #include <duckdb/common/insertion_order_preserving_map.hpp>
@@ -42,6 +43,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <vector>
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_kernels.hpp"
@@ -50,6 +52,7 @@
 #include "iresearch/formats/column/codecs/tuning.hpp"
 #include "iresearch/formats/column/internal/write_chunk.hpp"
 #include "iresearch/formats/column/read_context.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/system_compiler.hpp"
@@ -59,6 +62,7 @@ namespace irs::codecs::numeric {
 enum class WideForm : uint8_t {
   Offsets = 1,
   Halves = 2,
+  Entries = 3,
 };
 
 inline constexpr size_t kWideSampleEvery = 8;
@@ -70,7 +74,9 @@ inline constexpr uint32_t kMostWideDictionaryEntries = 2048;
 
 struct WideHeader {
   WideForm form{};
-  uint8_t reserved[7] = {};
+  CodecType codes{};
+  uint8_t reserved[2] = {};
+  uint32_t entries = 0;
   uint64_t low_size = 0;
   uint64_t base_low = 0;
   uint64_t base_high = 0;
@@ -95,6 +101,22 @@ constexpr W WideValue(absl::uint128 key) noexcept {
   value.upper =
     static_cast<decltype(value.upper)>(absl::Uint128High64(key) ^ kWideBias<W>);
   return value;
+}
+
+template<typename W>
+duckdb::BaseStatistics WideStats(const duckdb::LogicalType& type,
+                                 const W& least, const W& most, bool has_null) {
+  auto stats = duckdb::BaseStatistics::CreateEmpty(type);
+  duckdb::StatsWriter<W> writer;
+  writer.Update(least);
+  writer.Update(most);
+  if (has_null) {
+    writer.SetHasNull();
+  }
+  if (stats.GetStatsType() == duckdb::StatisticsType::NUMERIC_STATS) {
+    writer.Merge(stats);
+  }
+  return stats;
 }
 
 struct WideSample {
@@ -175,11 +197,30 @@ struct WideValues final : State {
 
   explicit WideValues(ColumnDataCheckpointData&) {}
 
-  bool Offers(bool halves, Shape shape, ColumnDataCheckpointData& data) {
+  void Sample(ColumnDataCheckpointData& data) {
     if (!started) {
       started = true;
       SampleChunks(data);
     }
+  }
+
+  bool FewInSample(double cap, const ColumnDataCheckpointData& data) {
+    if (!counted) {
+      containers::FlatHashSet<absl::uint128> distinct;
+      distinct.reserve(sample.size());
+      for (const auto key : sample) {
+        distinct.insert(key);
+      }
+      sample_distinct = distinct.size();
+      counted = true;
+    }
+    const auto most = std::min(static_cast<double>(data.rows.count) / 2, cap);
+    return static_cast<double>(sample_distinct) <=
+           most * -std::expm1(-static_cast<double>(sample.size()) / most);
+  }
+
+  bool Offers(bool halves, Shape shape, ColumnDataCheckpointData& data) {
+    Sample(data);
     if (!read) {
       if (sampled && !sample_narrow && !(halves && MayPack(shape, data))) {
         return false;
@@ -194,17 +235,8 @@ struct WideValues final : State {
   }
 
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
-    auto stats = duckdb::BaseStatistics::CreateEmpty(type);
-    duckdb::StatsWriter<W> writer;
-    writer.Update(WideValue<W>(least));
-    writer.Update(WideValue<W>(most));
-    if (has_null) {
-      writer.SetHasNull();
-    }
-    if (stats.GetStatsType() == duckdb::StatisticsType::NUMERIC_STATS) {
-      writer.Merge(stats);
-    }
-    return stats;
+    return WideStats<W>(type, WideValue<W>(least), WideValue<W>(most),
+                        has_null);
   }
 
   bool usable = false;
@@ -217,7 +249,7 @@ struct WideValues final : State {
   bool runs_absent = false;
   bool sample_narrow = true;
   bool counted = false;
-  bool sample_few = false;
+  uint64_t sample_distinct = 0;
   uint64_t sample_bits = 0;
   uint64_t sample_rows = 0;
   uint64_t sample_pairs = 0;
@@ -270,23 +302,10 @@ struct WideValues final : State {
       case Shape::Runs:
         return sample_repeats * 2 >= sample_pairs;
       case Shape::Dictionary:
-        if (!counted) {
-          containers::FlatHashSet<absl::uint128> distinct;
-          distinct.reserve(sample.size());
-          for (const auto key : sample) {
-            distinct.insert(key);
-          }
-          const auto most = std::min(
-            static_cast<double>(data.rows.count) / 2,
-            static_cast<double>(data.contested
-                                  ? kMostWideDictionaryEntries
-                                  : std::numeric_limits<uint32_t>::max()));
-          sample_few =
-            static_cast<double>(distinct.size()) <=
-            most * -std::expm1(-static_cast<double>(sample.size()) / most);
-          counted = true;
-        }
-        return sample_few;
+        return FewInSample(data.contested
+                             ? kMostWideDictionaryEntries
+                             : std::numeric_limits<uint32_t>::max(),
+                           data);
     }
     SDB_UNREACHABLE();
   }
@@ -586,6 +605,135 @@ struct WideValues final : State {
     }
     least = absl::MakeUint128(lo_upper, lo_lower);
     most = absl::MakeUint128(hi_upper, hi_lower);
+  }
+};
+
+template<typename W>
+struct WideEntries final : State {
+  static constexpr StateId kId = StateId::WideEntries;
+
+  explicit WideEntries(ColumnDataCheckpointData& data) {
+    SDB_IF_FAILURE("irs::WideDictionaryOfHalves") { return; }
+    fits = Few(data) && Collect(data) && Pack();
+  }
+
+  duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
+    return WideStats<W>(type, values.front(), values.back(), has_null);
+  }
+
+  bool fits = false;
+  bool has_null = false;
+  std::vector<W> values;
+  ScratchVector<uint32_t> codes;
+  std::string out;
+
+ private:
+  static uint32_t Cap(const ColumnDataCheckpointData& data) noexcept {
+    return static_cast<uint32_t>(
+      std::min<uint64_t>(kMostWideDictionaryEntries, data.rows.count / 2));
+  }
+
+  static bool Few(ColumnDataCheckpointData& data) {
+    auto& wide = data.Get<WideValues<W>>();
+    wide.Sample(data);
+    return !wide.sampled ||
+           (!wide.sample_narrow && wide.FewInSample(Cap(data), data));
+  }
+
+  bool Collect(const ColumnDataCheckpointData& data) {
+    const auto cap = Cap(data);
+    const uint64_t rows = data.rows.count;
+    containers::FlatHashMap<absl::uint128, uint32_t> index;
+    std::vector<absl::uint128> keys;
+    codes.resize(rows);
+    uint64_t at = 0;
+    uint64_t first = rows;
+    absl::uint128 last = 0;
+    uint32_t code = 0;
+    for (const auto& chunk : data.rows.chunks) {
+      const size_t count = chunk.data.size();
+      const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
+      const auto& validity = duckdb::FlatVector::Validity(chunk.data);
+      const bool all_valid = validity.CannotHaveNull();
+      for (size_t i = 0; i < count; ++i, ++at) {
+        if (!all_valid && !validity.RowIsValidUnsafe(i)) {
+          has_null = true;
+          codes[at] = code;
+          continue;
+        }
+        const auto key = WideKey<W>(values[i]);
+        if (key != last || first == rows) {
+          const auto [it, added] =
+            index.try_emplace(key, static_cast<uint32_t>(keys.size()));
+          if (added) {
+            if (keys.size() == cap) {
+              return false;
+            }
+            keys.push_back(key);
+          }
+          code = it->second;
+          last = key;
+          first = std::min(first, at);
+        }
+        codes[at] = code;
+      }
+    }
+    if (first == rows) {
+      return false;
+    }
+    std::fill_n(codes.data(), first, codes[first]);
+    ScratchVector<uint32_t> order(keys.size());
+    absl::c_iota(order, uint32_t{0});
+    absl::c_sort(order,
+                 [&](uint32_t l, uint32_t r) { return keys[l] < keys[r]; });
+    if (absl::Uint128High64(keys[order.back()] - keys[order.front()]) == 0) {
+      return false;
+    }
+    ScratchVector<uint32_t> ranks(keys.size());
+    values.resize(keys.size());
+    for (uint32_t k = 0; k < order.size(); ++k) {
+      ranks[order[k]] = k;
+      values[k] = WideValue<W>(keys[order[k]]);
+    }
+    for (auto& c : codes) {
+      c = ranks[c];
+    }
+    return true;
+  }
+
+  bool Pack() {
+    WideHeader header{
+      .form = WideForm::Entries,
+      .entries = static_cast<uint32_t>(values.size()),
+    };
+    out.resize(sizeof(WideHeader) + values.size() * sizeof(W));
+    WriteChunk chunk{
+      duckdb::Vector{duckdb::LogicalType::UINTEGER,
+                     reinterpret_cast<duckdb::data_ptr_t>(codes.data()),
+                     codes.size()},
+      codes.size()};
+    duckdb::FlatVector::SetSize(chunk.data, codes.size());
+    ColumnTuning tuning;
+    const auto flush = [&](const Codec& codec, duckdb::BaseStatistics, uint64_t,
+                           std::string_view bytes, std::string_view) {
+      header.codes = codec.type;
+      out.append(bytes);
+    };
+    ColumnDataCheckpointData nested{
+      .type = chunk.data.GetType(),
+      .flush = flush,
+      .tuning = tuning,
+      .rows = {{&chunk, 1}, codes.size()},
+    };
+    CompressAutoCodes(nested);
+    if (header.codes != CodecType::Bitpacking &&
+        header.codes != CodecType::Rle) {
+      return false;
+    }
+    std::memcpy(out.data(), &header, sizeof(WideHeader));
+    std::memcpy(out.data() + sizeof(WideHeader), values.data(),
+                values.size() * sizeof(W));
+    return true;
   }
 };
 

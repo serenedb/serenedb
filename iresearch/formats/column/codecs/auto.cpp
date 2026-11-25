@@ -369,7 +369,8 @@ double Analyze(const Asked& asked, uint8_t level, const Candidates& type,
     best = std::min(best, score);
   };
   ask(last);
-  for (size_t i = 0; every && !estimated && i < count; ++i) {
+  const bool all = every || (!data.contested && smallest == kNoScore);
+  for (size_t i = 0; all && !estimated && i < count; ++i) {
     if (i != last) {
       ask(i);
     }

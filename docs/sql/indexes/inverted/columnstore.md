@@ -39,7 +39,7 @@ A column's codec is either picked automatically (`auto`, the default) or named e
 
 A row group whose values are all equal is stored as `constant` whatever the codec, and so is a text row group of only `NULL`s.
 
-Filters and expressions on a text column stored with a dictionary codec (`dict_fsst`, `dict_lz4`, `dict_zstd`) get cheaper the more its values repeat.
+Filters and expressions on a text column stored with a dictionary codec (`dict_fsst`, `dict_lz4`, `dict_zstd`) get cheaper the more its values repeat, and so do filters on a `UUID` column stored with `dict`.
 
 Decompressed data that queries read again stays in memory while there is room, so repeated scans and lookups of the same columns do not decompress it each time. `SET GLOBAL sdb_object_cache_size = <bytes>` sets how much memory that takes (by default an eighth of `memory_limit`, at least 256 MB; `0` restores the default): a smaller value saves memory and makes repeated reads slower.
 

@@ -33,16 +33,18 @@
 namespace sdb::connector {
 namespace {
 
-bool Resumes(const StreamLocalState& l) noexcept {
-  return l.hit_batcher->Bound(l.unit.seg) && l.piece.begin >= l.stop_row;
+bool Resumes(const ScanGlobalState& g, const StreamLocalState& l) noexcept {
+  return l.hit_batcher->Bound(l.unit.seg) &&
+         g.RowsOf(l.unit).begin >= l.stop_row;
 }
 
 void StartUnit(ScanGlobalState& g, StreamLocalState& l) {
   const auto seg_idx = l.unit.seg;
   const auto& seg = (*g.reader)[seg_idx];
-  const bool resume = Resumes(l);
-  l.next_row = l.piece.begin;
-  l.stop_row = l.piece.end;
+  const bool resume = Resumes(g, l);
+  const auto rows = g.RowsOf(l.unit);
+  l.next_row = rows.begin;
+  l.stop_row = rows.end;
   l.unit_done = false;
   l.started = true;
   if (!resume) {
@@ -225,7 +227,7 @@ void RunStreamScan(duckdb::ClientContext& ctx,
   for (;;) {
     if (l.has_unit) {
       if (!l.started) {
-        if (!Resumes(l)) {
+        if (!Resumes(g, l)) {
           if (const auto added = EmitChunk(ctx, g, l, output, true);
               added != 0) {
             if (Deliver(ctx, g, l, output, added)) {
@@ -240,10 +242,6 @@ void RunStreamScan(duckdb::ClientContext& ctx,
         if (Deliver(ctx, g, l, output, added)) {
           return;
         }
-        continue;
-      }
-      if (PreviousPiece(g, l)) {
-        l.started = false;
         continue;
       }
       FinishUnit(g, l);

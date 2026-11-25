@@ -206,84 +206,6 @@ ScanUnit WholeUnit(uint32_t seg, const SegmentWork& work) {
           .whole = true};
 }
 
-constexpr uint64_t kPieceRows = 8 * STANDARD_VECTOR_SIZE;
-
-struct OrderBounds {
-  duckdb::RowGroupOrderKey low;
-  duckdb::RowGroupOrderKey high;
-  bool known = false;
-};
-
-OrderBounds BoundsOf(const ScanGlobalState& g, const irs::ColumnReader& column,
-                     uint64_t begin, uint64_t end, irs::BlockWindow& w) {
-  const auto null_order = g.Bind().scan_order->null_order;
-  OrderBounds bounds;
-  for (auto row = begin; row < end; row = w.end) {
-    w = column.Locate(row, w);
-    const auto& stats = column.DataBlocks()[w.block].statistics;
-    const auto low =
-      duckdb::RowGroupOrderKeys::Get(stats, duckdb::OrderByStatistics::MIN,
-                                     duckdb::OrderType::ASCENDING, null_order);
-    if (IsNullKey(g, low)) {
-      continue;
-    }
-    const auto high =
-      duckdb::RowGroupOrderKeys::Get(stats, duckdb::OrderByStatistics::MAX,
-                                     duckdb::OrderType::ASCENDING, null_order);
-    if (!bounds.known || low < bounds.low) {
-      bounds.low = low;
-    }
-    if (!bounds.known || bounds.high < high) {
-      bounds.high = high;
-    }
-    bounds.known = true;
-  }
-  return bounds;
-}
-
-bool Rises(const OrderBounds& before, const OrderBounds& after) {
-  return before.known && after.known && !(after.low < before.low) &&
-         !(after.high < before.high) &&
-         (before.low < after.low || before.high < after.high);
-}
-
-OrderBounds LiveRowGroupBounds(const ScanGlobalState& g,
-                               const SegmentWork& work,
-                               const irs::ColumnReader& column, uint32_t unit) {
-  const auto rg = work.UnitRowGroup(unit);
-  irs::BlockWindow w;
-  return BoundsOf(g, column, work.groups.Begin(rg), work.groups.End(rg), w);
-}
-
-bool WalksBackward(const ScanGlobalState& g, const SegmentWork& work,
-                   uint32_t seg, const ScanUnit& unit) {
-  const auto* column = OrderColumn(g, seg);
-  if (!column ||
-      g.Bind().scan_order->order_type != duckdb::OrderType::DESCENDING ||
-      work.LiveCount() < 2) {
-    return false;
-  }
-  if (unit.whole) {
-    auto before = LiveRowGroupBounds(g, work, *column, 0);
-    for (uint32_t next = 1; next != work.LiveCount(); ++next) {
-      auto after = LiveRowGroupBounds(g, work, *column, next);
-      if (!Rises(before, after)) {
-        return false;
-      }
-      before = std::move(after);
-    }
-    return true;
-  }
-  const auto at = work.skips
-                    ? static_cast<uint32_t>(std::distance(
-                        work.live_rgs.begin(),
-                        absl::c_lower_bound(work.live_rgs, unit.rg_begin)))
-                    : unit.rg_begin;
-  const auto before = at != 0 ? at - 1 : at;
-  return Rises(LiveRowGroupBounds(g, work, *column, before),
-               LiveRowGroupBounds(g, work, *column, before + 1));
-}
-
 std::unique_ptr<OrderedUnits> BuildSegmentOrderedUnits(
   const ScanGlobalState& g, const SegmentWork& work, uint32_t seg,
   const duckdb::RowGroupOrderKey& segment_key) {
@@ -534,8 +456,7 @@ bool ClaimOrderedUnit(ScanGlobalState& g, ScanLocalState& l) {
   auto& heap = g.ordered_heap;
   absl::MutexLock lock{&g.ordered_mutex};
   for (;;) {
-    const auto* bound = OrderBound(g);
-    if (DropPruned(g, bound)) {
+    if (DropPruned(g, OrderBound(g))) {
       g.ordered_exhausted.store(true, std::memory_order_relaxed);
       return false;
     }
@@ -552,11 +473,7 @@ bool ClaimOrderedUnit(ScanGlobalState& g, ScanLocalState& l) {
       continue;
     }
     auto& ordered = *work.ordered;
-    auto unit = ordered.units[ordered.next++];
-    unit.backward = !bound && g.backward_units < g.workers &&
-                    WalksBackward(g, work, top.id, unit);
-    g.backward_units += unit.backward;
-    TakeUnit(l, unit);
+    TakeUnit(l, ordered.units[ordered.next++]);
     if (ordered.next < ordered.units.size()) {
       heap.push_back({ordered.keys[ordered.next], top.id});
       absl::c_push_heap(heap, std::greater{});
@@ -1071,29 +988,11 @@ bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l) {
       if (!g.ahead_fields.empty()) {
         StartReadAhead(g, l);
       }
-      StartPieces(g, l);
       return true;
     }
     FinishUnit(g, l);
   }
   return false;
-}
-
-void StartPieces(const ScanGlobalState& g, ScanLocalState& l) {
-  const auto rows = g.RowsOf(l.unit);
-  l.piece = rows;
-  if (l.unit.backward && rows.end - rows.begin > kPieceRows) {
-    l.piece.begin += (rows.end - rows.begin - 1) / kPieceRows * kPieceRows;
-  }
-}
-
-bool PreviousPiece(const ScanGlobalState& g, ScanLocalState& l) noexcept {
-  if (l.piece.begin == g.RowsOf(l.unit).begin) {
-    return false;
-  }
-  l.piece.end = l.piece.begin;
-  l.piece.begin -= kPieceRows;
-  return true;
 }
 
 bool FinishUnit(ScanGlobalState& g, ScanLocalState& l) {

@@ -92,19 +92,6 @@ FullScanner::FullScanner(
   _filters.FinishBind();
 }
 
-void FullScanner::Rewind() {
-  _filters.Rewind(*_ctx);
-  for (auto& b : _bound) {
-    if (b.extract) {
-      b.extract->Rewind(*_ctx);
-      continue;
-    }
-    auto ctx = std::move(b.state->ctx);
-    *b.state = b.reader->InitScan(std::move(ctx));
-  }
-  _scanned_end = 0;
-}
-
 duckdb::idx_t FullScanner::Filter(uint64_t start_row, duckdb::idx_t count,
                                   duckdb::DataChunk& output,
                                   const duckdb::SelectionVector* live,

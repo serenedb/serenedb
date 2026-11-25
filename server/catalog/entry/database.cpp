@@ -28,7 +28,6 @@
 #include <utility>
 
 #include "catalog/boot.h"
-#include "catalog/cluster.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"

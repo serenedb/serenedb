@@ -65,7 +65,6 @@
 #include "pg/catalog/oids.h"
 #include "pg/catalog/utils/columns.h"
 #include "pg/catalog/utils/lookup.h"
-#include "pg/types/char.h"
 #include "pg/types/logical.h"
 
 namespace sdb::pg {

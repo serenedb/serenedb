@@ -68,7 +68,6 @@
 #include "catalog/transaction.h"
 #include "network/asio_awaitable.h"
 #include "network/pg/wire_frames.h"
-#include "network/server.h"
 #include "pg/connection_context.h"
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"

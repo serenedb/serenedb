@@ -1661,7 +1661,11 @@ class WideDictionaryReader {
     _frames = ParseFrames(base + at, segment.size - at, segment.count, _codec);
     auto slot = segment.cache_slot;
     slot.file_offset += at;
-    _row_codes.emplace(base + at, _frames, _codec, slot);
+    if (ShapeOf(_codec) == Shape::Plain) {
+      _plain.emplace(base + at, _frames, _codec, slot);
+    } else {
+      _runs.emplace(base + at, _frames, _codec, slot);
+    }
   }
 
   bool Halves() const noexcept { return _parts->Halves(); }
@@ -1692,16 +1696,14 @@ class WideDictionaryReader {
     if (_parts) {
       return _parts->Get(row);
     }
-    return Entry(
-      _row_codes->Visit([&](auto& codes) { return codes.Get(row); }));
+    return Entry(Visit([&](auto& codes) { return codes.Get(row); }));
   }
 
   W Fetch(uint64_t row, uint64_t next) {
     if (_parts) {
       return _parts->Fetch(row, next);
     }
-    return Entry(
-      _row_codes->Visit([&](auto& codes) { return codes.Fetch(row, next); }));
+    return Entry(Visit([&](auto& codes) { return codes.Fetch(row, next); }));
   }
 
   void FetchRows(const duckdb::idx_t* rows, duckdb::idx_t count, W* out,
@@ -1772,8 +1774,21 @@ class WideDictionaryReader {
   }
 
  private:
+  template<typename F>
+  IRS_FORCE_INLINE decltype(auto) Visit(F&& f) {
+    if (_plain) {
+      return f(*_plain);
+    }
+    return f(*_runs);
+  }
+
   void ReadCodes(uint64_t row, uint64_t count, uint32_t* out) {
-    if (!_row_codes->ReadInRange(row, count, out, _count)) [[unlikely]] {
+    Visit([&](auto& codes) { codes.Read(row, count, out); });
+    uint32_t worst = 0;
+    for (uint64_t i = 0; i < count; ++i) {
+      worst = std::max(worst, out[i]);
+    }
+    if (worst >= _count) [[unlikely]] {
       ThrowCorrupted("numeric", "dictionary code is out of range");
     }
   }
@@ -1790,7 +1805,8 @@ class WideDictionaryReader {
   uint32_t _count = 0;
   CodecType _codec = CodecType::Bitpacking;
   FrameHeader _frames;
-  std::optional<RowCodes> _row_codes;
+  std::optional<PlainReader<uint32_t>> _plain;
+  std::optional<RunsReader<uint32_t>> _runs;
   ScratchVector<uint32_t> _codes;
   std::vector<uint8_t> _verdicts;
   duckdb::buffer_ptr<duckdb::SelectionVector> _sel;

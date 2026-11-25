@@ -25,7 +25,6 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
-#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -34,7 +33,6 @@
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_reader.hpp"
 #include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
-#include "iresearch/formats/column/codecs/numeric/plain.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 
@@ -635,52 +633,6 @@ class RunsReader final : public FrameReader<T> {
   uint32_t _hint = 0;
   bool _long_runs = false;
   bool _short_runs = false;
-};
-
-class RowCodes {
- public:
-  explicit RowCodes(duckdb::const_data_ptr_t codes, const FrameHeader& frames,
-                    CodecType codec, const ReadContext::CacheSlot& slot = {})
-    : _shape{ShapeOf(codec)} {
-    Resolve<CodesAxis>(_shape, [&]<Shape S>() {
-      if constexpr (S == Shape::Plain) {
-        _plain.emplace(codes, frames, codec, slot);
-      } else {
-        _runs.emplace(codes, frames, codec, slot);
-      }
-    });
-  }
-
-  template<typename F>
-  IRS_FORCE_INLINE decltype(auto) Visit(F&& f) {
-    return Resolve<CodesAxis>(
-      _shape, [&]<Shape S>() IRS_FORCE_INLINE -> decltype(auto) {
-        if constexpr (S == Shape::Plain) {
-          return f(*_plain);
-        } else {
-          return f(*_runs);
-        }
-      });
-  }
-
-  bool ReadInRange(uint64_t row, uint64_t count, uint32_t* out,
-                   uint32_t entries) {
-    Visit([&](auto& codes) { codes.Read(row, count, out); });
-    uint32_t largest = 0;
-    for (uint64_t i = 0; i < count; ++i) {
-      largest = std::max(largest, out[i]);
-    }
-    return largest < entries;
-  }
-
- private:
-  struct CodesAxis : Axis<Shape::Plain, Shape::Runs> {
-    static constexpr Shape Of(Shape shape) noexcept { return shape; }
-  };
-
-  Shape _shape = Shape::Plain;
-  std::optional<PlainReader<uint32_t>> _plain;
-  std::optional<RunsReader<uint32_t>> _runs;
 };
 
 }  // namespace irs::codecs::numeric

@@ -6673,3 +6673,75 @@ TEST_F(ColCodecsTest, ZstdTextWithoutALevelCompressesAtLevelThree) {
   EXPECT_EQ(unset, blocks(3));
   EXPECT_NE(unset, blocks(1));
 }
+
+TEST_F(ColCodecsTest, RowFiltersOfEveryRowKeepTheSurvivorsInOrder) {
+  constexpr duckdb::idx_t kCount = STANDARD_VECTOR_SIZE;
+  duckdb::Connection con{_db};
+  duckdb::Vector values{duckdb::LogicalType::BIGINT, kCount};
+  auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(values);
+  auto& validity = duckdb::FlatVector::ValidityMutable(values);
+  for (duckdb::idx_t i = 0; i < kCount; ++i) {
+    data[i] = static_cast<int64_t>(i % 10);
+    if (i % 37 == 0) {
+      validity.SetInvalid(i);
+    }
+  }
+  duckdb::FlatVector::SetSize(values, kCount);
+  using Cmp = duckdb::ExpressionType;
+  const auto compare = [](Cmp cmp, int64_t key) {
+    return duckdb::BoundComparisonExpression::Create(
+      cmp,
+      duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        duckdb::LogicalType::BIGINT, 0),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(
+        duckdb::Value::BIGINT(key)));
+  };
+  const auto check = [&](const duckdb::Expression& expression,
+                         const auto& holds) {
+    const duckdb::ExpressionFilter filter{expression.Copy()};
+    auto state = duckdb::TableFilterState::Initialize(*con.context, filter);
+    for (const duckdb::idx_t count : {kCount, duckdb::idx_t{1000}}) {
+      for (const duckdb::idx_t every : {duckdb::idx_t{1}, duckdb::idx_t{3}}) {
+        SCOPED_TRACE(absl::StrCat(expression.ToString(), ", ", count,
+                                  " rows, every ", every));
+        duckdb::SelectionVector sel{kCount};
+        duckdb::idx_t offered = 0;
+        for (duckdb::idx_t row = 0; row < count; row += every) {
+          sel.set_index(offered++, row);
+        }
+        duckdb::idx_t kept = offered;
+        ASSERT_EQ(irs::codecs::FilterRows(sel, values, *state, count, kept),
+                  kept);
+        duckdb::idx_t next = 0;
+        for (duckdb::idx_t row = 0; row < count; ++row) {
+          if (row % every == 0 && validity.RowIsValid(row) &&
+              holds(data[row])) {
+            ASSERT_LT(next, kept);
+            ASSERT_EQ(sel.get_index(next++), row);
+          }
+        }
+        ASSERT_EQ(next, kept);
+      }
+    }
+  };
+  check(*compare(Cmp::COMPARE_EQUAL, 3), [](int64_t v) { return v == 3; });
+  check(*compare(Cmp::COMPARE_GREATERTHANOREQUALTO, 0),
+        [](int64_t v) { return v >= 0; });
+  check(*compare(Cmp::COMPARE_EQUAL, 99), [](int64_t v) { return v == 99; });
+  check(*compare(Cmp::COMPARE_NOTEQUAL, 3), [](int64_t v) { return v != 3; });
+  check(
+    duckdb::BoundConjunctionExpression{
+      Cmp::CONJUNCTION_AND, compare(Cmp::COMPARE_GREATERTHANOREQUALTO, 2),
+      compare(Cmp::COMPARE_LESSTHANOREQUALTO, 5)},
+    [](int64_t v) { return v >= 2 && v <= 5; });
+  check(duckdb::BoundConjunctionExpression{Cmp::CONJUNCTION_OR,
+                                           compare(Cmp::COMPARE_EQUAL, 1),
+                                           compare(Cmp::COMPARE_EQUAL, 7)},
+        [](int64_t v) { return v == 1 || v == 7; });
+  duckdb::BoundOperatorExpression not_null{Cmp::OPERATOR_IS_NOT_NULL,
+                                           duckdb::LogicalType::BOOLEAN};
+  not_null.GetChildrenMutable().push_back(
+    duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+      duckdb::LogicalType::BIGINT, 0));
+  check(not_null, [](int64_t) { return true; });
+}

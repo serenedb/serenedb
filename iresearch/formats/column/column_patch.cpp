@@ -648,9 +648,7 @@ duckdb::idx_t NullColumnReader::GatherFilter(
   s.st.offset_in_column = anchor + span;
   duckdb::ConstantVector::SetNull(scratch, duckdb::count_t{span});
   duckdb::idx_t approved = sel_count;
-  duckdb::ColumnSegment::FilterSelection(sel, scratch, filter_state, span,
-                                         approved);
-  return approved;
+  return codecs::FilterRows(sel, scratch, filter_state, span, approved);
 }
 
 bool NullColumnReader::FetchPoint(PointReader&, uint64_t, duckdb::Vector& out,
@@ -784,9 +782,7 @@ duckdb::idx_t PatchedColumnReader::GatherFilter(
   }
   ApplyRange(*_patch, anchor, span, scratch, 0);
   duckdb::idx_t approved = sel_count;
-  duckdb::ColumnSegment::FilterSelection(sel, scratch, filter_state, span,
-                                         approved);
-  return approved;
+  return codecs::FilterRows(sel, scratch, filter_state, span, approved);
 }
 
 bool PatchedColumnReader::FetchPoint(PointReader& reader, uint64_t row,

@@ -1227,8 +1227,7 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
   if (every_row) {
     return;
   }
-  duckdb::ColumnSegment::FilterSelection(sel, result, filter_state,
-                                         vector_count, sel_count);
+  FilterRows(sel, result, filter_state, vector_count, sel_count);
 }
 
 template<typename R>

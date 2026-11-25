@@ -26,6 +26,7 @@
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <duckdb/storage/table/column_segment.hpp>
 
 #include "iresearch/formats/column/codecs/codecs.hpp"
 #include "iresearch/formats/column/codecs/registry.hpp"
@@ -79,6 +80,25 @@ void Compress(CodecType method, ColumnDataCheckpointData& data) {
 void ThrowCorrupted(std::string_view codec, std::string_view what) {
   THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
                   ERR_MSG("Corrupted ", codec, " segment: ", what));
+}
+
+duckdb::idx_t FilterRows(duckdb::SelectionVector& sel, duckdb::Vector& values,
+                         duckdb::TableFilterState& filter_state,
+                         duckdb::idx_t count, duckdb::idx_t& sel_count) {
+  if (values.GetVectorType() == duckdb::VectorType::FLAT_VECTOR) {
+    duckdb::FlatVector::SetSize(values, count);
+  }
+  if (sel_count != count || !sel.IsSet()) {
+    return duckdb::ColumnSegment::FilterSelection(sel, values, filter_state,
+                                                  count, sel_count);
+  }
+  duckdb::SelectionVector every_row;
+  duckdb::ColumnSegment::FilterSelection(every_row, values, filter_state, count,
+                                         sel_count);
+  if (sel_count != count) {
+    sel.Initialize(every_row);
+  }
+  return sel_count;
 }
 
 CompressedSegment::CompressedSegment(const Codec& codec,

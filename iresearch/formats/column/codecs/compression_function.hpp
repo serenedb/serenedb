@@ -317,4 +317,8 @@ void Compress(CodecType method, ColumnDataCheckpointData& data);
 
 [[noreturn]] void ThrowCorrupted(std::string_view codec, std::string_view what);
 
+duckdb::idx_t FilterRows(duckdb::SelectionVector& sel, duckdb::Vector& values,
+                         duckdb::TableFilterState& filter_state,
+                         duckdb::idx_t count, duckdb::idx_t& sel_count);
+
 }  // namespace irs::codecs

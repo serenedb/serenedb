@@ -1048,8 +1048,7 @@ duckdb::idx_t ColumnReader::FilterBlock(
   } else {
     ResetAllValid(result, span);
     ColumnReader::ScanCount(s, result, span, 0);
-    duckdb::ColumnSegment::FilterSelection(sel, result, filter_state, span,
-                                           approved);
+    codecs::FilterRows(sel, result, filter_state, span, approved);
   }
   return approved;
 }

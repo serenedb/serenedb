@@ -1146,8 +1146,7 @@ void AlpFilter(const ColumnSegment& segment, ColumnScanState& state,
   if (verdict == duckdb::FilterPropagateResult::FILTER_ALWAYS_TRUE) {
     return;
   }
-  duckdb::ColumnSegment::FilterSelection(sel, result, filter_state,
-                                         vector_count, sel_count);
+  FilterRows(sel, result, filter_state, vector_count, sel_count);
 }
 
 template<typename T>

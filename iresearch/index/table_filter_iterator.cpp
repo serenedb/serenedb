@@ -35,6 +35,7 @@
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/lower_bound.hpp"
 
 namespace irs {
 namespace {
@@ -540,11 +541,11 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
     const uint64_t rg_end = window_col != nullptr
                               ? window_col->RowGroupEnd(anchor)
                               : std::numeric_limits<uint64_t>::max();
-    duckdb::idx_t j = i;
-    while (j < n && (docs[j] - irs::doc_limits::min()) < rg_end &&
-           (docs[j] - irs::doc_limits::min()) - anchor < STANDARD_VECTOR_SIZE) {
-      ++j;
-    }
+    const auto limit =
+      std::min<uint64_t>(rg_end, anchor + STANDARD_VECTOR_SIZE);
+    const auto j = static_cast<duckdb::idx_t>(GallopIndex(i, n, [&](size_t k) {
+      return docs[k] - irs::doc_limits::min() < limit;
+    }));
     const duckdb::idx_t run = j - i;
     const auto span = static_cast<duckdb::idx_t>(
       (docs[j - 1] - irs::doc_limits::min()) - anchor + 1);
@@ -920,6 +921,14 @@ void ColFilterChain::CompactByOffsets(const duckdb::SelectionVector& sel,
                                       const irs::score_t* scores_in,
                                       irs::doc_id_t* docs_out,
                                       irs::score_t* scores_out) {
+  if (scores_out == nullptr) {
+    const auto first =
+      static_cast<irs::doc_id_t>(anchor) + irs::doc_limits::min();
+    for (duckdb::idx_t s = 0; s < survivors; ++s) {
+      docs_out[s] = first + static_cast<irs::doc_id_t>(sel.get_index(s));
+    }
+    return;
+  }
   duckdb::idx_t k = 0;
   for (duckdb::idx_t s = 0; s < survivors; ++s) {
     const uint64_t want = sel.get_index(s);
@@ -927,9 +936,7 @@ void ColFilterChain::CompactByOffsets(const duckdb::SelectionVector& sel,
       ++k;
     }
     docs_out[s] = docs_in[k];
-    if (scores_out != nullptr) {
-      scores_out[s] = scores_in[k];
-    }
+    scores_out[s] = scores_in[k];
   }
 }
 

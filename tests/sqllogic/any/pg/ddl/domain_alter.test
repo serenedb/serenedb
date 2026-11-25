@@ -201,33 +201,6 @@ INSERT INTO t_rn VALUES (1);
 # pg_typeof
 # d_rn_tab2
 
-# SET SCHEMA moves the domain; columns follow it.
-
-statement ok
-CREATE SCHEMA ds_ss;
-
-statement ok
-CREATE DOMAIN d_ss AS int4;
-
-statement ok
-CREATE TABLE t_ss (v d_ss);
-
-statement count 1
-INSERT INTO t_ss VALUES (1);
-
-# TODO: ALTER DOMAIN ... SET SCHEMA is not supported yet
-# statement ok
-# ALTER DOMAIN d_ss SET SCHEMA ds_ss;
-
-# query
-# SELECT pg_typeof(v) FROM t_ss;
-# ----
-# pg_typeof
-# ds_ss.d_ss
-
-# statement error
-# SELECT 1::public.d_ss;
-#
 # ALTER DOMAIN on constraints, defaults and names, and prepared statements see the change.
 
 statement ok

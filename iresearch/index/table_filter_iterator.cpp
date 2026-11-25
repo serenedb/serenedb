@@ -564,21 +564,12 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
 }
 
 detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
-  const auto frames = [](const irs::ColumnReader& reader) {
-    return reader.Type().InternalType() == duckdb::PhysicalType::VARCHAR &&
-           absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
-             const auto type = block.codec->type;
-             return codecs::IsText(type) &&
-                    codecs::ShapeOf(type) == codecs::Shape::Plain &&
-                    !codecs::Sorted(codecs::LeafOf(type));
-           });
-  };
   auto read = detail::PointRead::Row;
   for (const auto& c : _cols) {
     if (c.nested) {
       return detail::PointRead::None;
     }
-    if (frames(*c.reader)) {
+    if (c.reader->PointReadsDecodeFrames()) {
       read = detail::PointRead::Vector;
     }
   }
@@ -590,7 +581,7 @@ detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
       if (reader->Type().IsNested()) {
         return detail::PointRead::None;
       }
-      if (frames(*reader)) {
+      if (reader->PointReadsDecodeFrames()) {
         read = detail::PointRead::Vector;
       }
     }

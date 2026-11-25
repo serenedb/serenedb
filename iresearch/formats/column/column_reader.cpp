@@ -225,10 +225,15 @@ ColumnReader::ColumnReader(field_id id, duckdb::LogicalType type,
     _segments.empty() ? _type : _segments.front().statistics.GetType());
   _offsets.reserve(_segments.size() + 1);
   _offsets.push_back(0);
+  const bool text = _type.InternalType() == duckdb::PhysicalType::VARCHAR;
   for (const auto& m : _segments) {
     _row_count += m.tuple_count;
     _offsets.push_back(_row_count);
     stats.Merge(m.statistics);
+    const auto codec = m.codec->type;
+    _frame_point_reads |= text && codecs::IsText(codec) &&
+                          codecs::ShapeOf(codec) == codecs::Shape::Plain &&
+                          !codecs::Sorted(codecs::LeafOf(codec));
   }
   FinishStats(std::move(stats));
 }

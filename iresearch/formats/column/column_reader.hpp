@@ -192,6 +192,7 @@ class ColumnReader {
     return _distinct.get();
   }
   uint8_t CompressionLevel() const noexcept { return _compression_level; }
+  bool PointReadsDecodeFrames() const noexcept { return _frame_point_reads; }
   uint64_t FileId() const noexcept { return _file_id; }
 
   const duckdb::BaseStatistics& MergedStatistics() const noexcept {
@@ -507,6 +508,7 @@ class ColumnReader {
   std::vector<ColumnBlockMeta> _segments;
   std::vector<uint64_t> _offsets;
   uint8_t _compression_level = 0;
+  bool _frame_point_reads = false;
 };
 
 inline duckdb::Vector& ResetScratch(

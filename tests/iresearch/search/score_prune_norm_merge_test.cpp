@@ -31,8 +31,10 @@
 #include <absl/cleanup/cleanup.h>
 #include <gtest/gtest.h>
 
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/main/database_file_opener.hpp>
+#include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/formats/norm_reader_impl.hpp>
 #include <iresearch/index/index_features.hpp>
@@ -625,8 +627,64 @@ TEST_P(ScorePruneNormMergeCase, NormMergeConstantNorms) {
   RunBM25(reader, *bm25, kBody, 5);
 }
 
+TEST_P(ScorePruneNormMergeCase, NormsWithoutTheFileCache) {
+  if (!duckdb::DatabaseFileSystem::IsRemote(dir().Root())) {
+    GTEST_SKIP();
+  }
+  auto& cache = duckdb::ExternalFileCache::Get(dir().Db());
+  cache.SetEnabled(false);
+  absl::Cleanup enable = [&] { cache.SetEnabled(true); };
+  static constexpr uint32_t kA[] = {1, 2, 3};
+  static constexpr uint32_t kB[] = {4, 5};
+  auto bm25 = std::make_unique<irs::BM25>();
+  auto writer = open_writer(tests::kOmCreate, MakeOpts(bm25.get()));
+  for (size_t i = 0; i < std::size(kA); ++i) {
+    ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), kA[i]));
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+  for (size_t i = 0; i < std::size(kB); ++i) {
+    ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("b_", i), kB[i]));
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+  {
+    auto reader = open_reader(MakeReaderOpts(bm25.get()));
+    ASSERT_EQ(2, reader.size());
+    AssertNorms(reader[0], kBody, {{1, kA[0]}, {2, kA[1]}, {3, kA[2]}});
+    AssertNorms(reader[1], kBody, {{1, kB[0]}, {2, kB[1]}});
+  }
+
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  auto reader = open_reader(MakeReaderOpts(bm25.get()));
+  ASSERT_EQ(1, reader.size());
+  AssertNorms(reader[0], kBody,
+              {{1, kA[0]}, {2, kA[1]}, {3, kA[2]}, {4, kB[0]}, {5, kB[1]}});
+  RunBM25(reader, *bm25, kBody, 5);
+}
+
 #ifdef SDB_FAULT_INJECTION
-TEST_P(ScorePruneNormMergeCase, NormMergeWhenTheCacheDropsTheWrite) {
+TEST_P(ScorePruneNormMergeCase, NormFlushOutOfCacheMemory) {
+  if (!duckdb::DatabaseFileSystem::IsRemote(dir().Root())) {
+    GTEST_SKIP();
+  }
+  auto bm25 = std::make_unique<irs::BM25>();
+  auto writer = open_writer(tests::kOmCreate, MakeOpts(bm25.get()));
+  absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
+  ASSERT_TRUE(duckdb::FaultPoints::Arm("remote_write_cache_block"));
+  const auto write = [&] {
+    for (size_t d = 0; d < 150000; ++d) {
+      if (!InsertNormDoc(*writer, absl::StrCat(d), 1 + d % 5)) {
+        return false;
+      }
+    }
+    return writer->RefreshCommit();
+  };
+  EXPECT_THROW(write(), duckdb::OutOfMemoryException);
+}
+
+TEST_P(ScorePruneNormMergeCase, NormMergeOutOfCacheMemory) {
   if (!duckdb::DatabaseFileSystem::IsRemote(dir().Root())) {
     GTEST_SKIP();
   }
@@ -638,21 +696,14 @@ TEST_P(ScorePruneNormMergeCase, NormMergeWhenTheCacheDropsTheWrite) {
       ASSERT_TRUE(
         InsertNormDoc(*writer, absl::StrCat(s, "_", d), 1 + (s + d) % 5));
     }
-    writer->RefreshCommit();
+    ASSERT_TRUE(writer->RefreshCommit());
   }
 
   absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
   ASSERT_TRUE(duckdb::FaultPoints::Arm("remote_write_cache_block"));
   const irs::index_utils::CompactionCount all;
-  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
-  ASSERT_TRUE(writer->RefreshCommit());
-  duckdb::FaultPoints::Clear();
-
-  auto reader = open_reader(MakeReaderOpts(bm25.get()));
-  ASSERT_EQ(1, reader.size());
-  AssertNorms(reader[0], kBody,
-              {{1, 1}, {2, 2}, {kDocsPerSegment, 5}, {kDocsPerSegment + 1, 2}});
-  RunBM25(reader, *bm25, kBody, 100);
+  EXPECT_THROW(writer->Compact(irs::index_utils::MakePolicy(all)),
+               duckdb::OutOfMemoryException);
 }
 #endif
 

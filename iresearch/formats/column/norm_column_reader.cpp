@@ -83,9 +83,9 @@ NormRegionMeta ReadNormRegion(duckdb::BinaryDeserializer& d, field_id id,
 
 }  // namespace
 
-std::vector<NormColumnSpec> ReadNormColumns(duckdb::BinaryDeserializer& in,
-                                            duckdb::field_id_t field,
-                                            uint64_t data_size) {
+std::vector<NormColumnSpec> ReadNormSpecs(duckdb::BinaryDeserializer& in,
+                                          duckdb::field_id_t field,
+                                          uint64_t data_size) {
   std::vector<NormColumnSpec> columns;
   in.ReadOptionalList(
     field, "norm_columns",
@@ -250,22 +250,16 @@ NormColumnReader::NormColumnReader(field_id id, const NormColumnMeta& meta,
   if (_paged) {
     _residency.Reset(_pages);
   }
-  IndexEnds();
-}
-
-void NormColumnReader::IndexEnds() {
-  _ends.reserve(_regions.size());
-  for (const auto& region : _regions) {
-    _ends.push_back(region.end_doc);
-  }
 }
 
 const NormRegion& NormColumnReader::Locate(doc_id_t doc) const noexcept {
   SDB_ASSERT(doc >= doc_limits::min());
   SDB_ASSERT(doc - doc_limits::min() < _row_count);
-  const auto it = absl::c_upper_bound(_ends, doc);
-  SDB_ASSERT(it != _ends.end());
-  return _regions[static_cast<size_t>(it - _ends.begin())];
+  const auto it = std::upper_bound(
+    _regions.begin(), _regions.end(), doc,
+    [](doc_id_t d, const NormRegion& r) { return d < r.end_doc; });
+  SDB_ASSERT(it != _regions.end());
+  return *it;
 }
 
 void NormColumnReader::Decode(doc_id_t first, size_t n,

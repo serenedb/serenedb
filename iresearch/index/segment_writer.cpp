@@ -73,13 +73,12 @@ std::unique_ptr<SegmentWriter> SegmentWriter::make(
 }
 
 size_t SegmentWriter::memory_active() const noexcept {
-  return _docs_mask.ByteSize() + _fields.MemoryActive() +
-         (_norms ? _norms->Bytes() : 0);
+  return _docs_mask.ByteSize() + _fields.MemoryActive();
 }
 
 size_t SegmentWriter::memory_reserved() const noexcept {
   return sizeof(SegmentWriter) + _docs_mask.ByteCapacity() +
-         _fields.MemoryReserved() + (_norms ? _norms->Capacity() : 0);
+         _fields.MemoryReserved();
 }
 
 bool SegmentWriter::remove(doc_id_t doc_id) noexcept {
@@ -122,17 +121,15 @@ void SegmentWriter::FlushFields(FlushState& state,
 WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
                                     DocumentMaskBuilder& docs_mask) {
   SDB_ASSERT(_tracker);
-  auto sealed = SealNorms();
+  const auto sealed = SealNorms();
   const NormColumns norms{sealed.file, sealed.columns};
+  auto& idx = *_idx;
   FlushState state{
     .tracker = *_tracker,
     .norms = &norms,
     .scorer = _scorer,
     .doc_count = buffered_docs(),
   };
-
-  IdxWriter idx{*_tracker};
-  idx.WriteNorms(std::move(sealed));
 
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   if (_col_writer) {
@@ -172,6 +169,7 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
     .idx = idx.Commit(_hnsw_bases),
     .postings = std::move(postings),
   };
+  _idx.reset();
 
   docs_mask = std::move(_docs_mask);
 
@@ -227,11 +225,8 @@ void SegmentWriter::CopyColumns() {
 }
 
 SealedNorms SegmentWriter::SealNorms() {
-  SDB_ASSERT(_norms);
   _fields.FinalizeNorms();
-  auto sealed = std::move(*_norms).Seal(buffered_docs());
-  _norms.reset();
-  return sealed;
+  return _idx->SealNorms(buffered_docs());
 }
 
 std::shared_ptr<const SegmentReaderImpl> SegmentWriter::SealPiece(uint64_t id) {
@@ -308,7 +303,7 @@ void SegmentWriter::ResetState() noexcept {
     _col_writer->Rollback();
     _col_writer.reset();
   }
-  _norms.reset();
+  _idx.reset();
   _copied_columns.clear();
   _copied_rows.clear();
   if (_tracker) {
@@ -343,7 +338,8 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
   _col_writer->SetDeferredSeal(_deferred_columns);
   _col_writer->SetFieldOptions(active);
   _col_writer->SetHnswBases(_hnsw_bases);
-  _fields.SetNormsWriter(&_norms.emplace(_fields.Allocator()).Writer());
+  _fields.SetNormColumnsWriter(
+    &_idx.emplace(*_tracker).Norms(_fields.Allocator()));
   _fields.SetFieldOptions(active);
 
   _initialized = true;

@@ -25,7 +25,6 @@
 #include <algorithm>
 #include <bit>
 #include <cstdint>
-#include <cstring>
 #include <limits>
 #include <span>
 #include <utility>
@@ -80,8 +79,8 @@ void WriteNormRegion(duckdb::BinarySerializer& s, const NormRegionMeta& r) {
 
 }  // namespace
 
-void WriteNormColumns(duckdb::BinarySerializer& out, duckdb::field_id_t field,
-                      std::span<const NormColumnSpec> columns) {
+void WriteNormSpecs(duckdb::BinarySerializer& out, duckdb::field_id_t field,
+                    std::span<const NormColumnSpec> columns) {
   out.WriteOptionalList(
     field, "norm_columns", columns.size(),
     [&](duckdb::BinarySerializer::List& list, duckdb::idx_t i) {
@@ -331,7 +330,7 @@ void NormColumnWriter::Finalize() {
   _staging = {};
 }
 
-NormColumnWriter& NormsWriter::Add(field_id id, uint32_t row_group_size) {
+NormColumnWriter& NormColumnsWriter::Add(field_id id, uint32_t row_group_size) {
   if (!_out) {
     _out = &_open();
   }
@@ -339,7 +338,8 @@ NormColumnWriter& NormsWriter::Add(field_id id, uint32_t row_group_size) {
     std::make_unique<NormColumnWriter>(id, row_group_size, *_out));
 }
 
-NormColumnWriter& NormsWriter::Open(field_id id, uint32_t row_group_size) {
+NormColumnWriter& NormColumnsWriter::Open(field_id id,
+                                          uint32_t row_group_size) {
   SDB_ASSERT(row_group_size != 0);
   auto [it, added] = _by_id.try_emplace(id, nullptr);
   if (added) {
@@ -348,12 +348,12 @@ NormColumnWriter& NormsWriter::Open(field_id id, uint32_t row_group_size) {
   return *it->second;
 }
 
-NormColumnWriter& NormsWriter::Stream(field_id id) {
+NormColumnWriter& NormColumnsWriter::Stream(field_id id) {
   SDB_ASSERT(!_by_id.contains(id));
   return Add(id, 0);
 }
 
-std::vector<NormColumnSpec> NormsWriter::Seal(uint64_t rows) && {
+std::vector<NormColumnSpec> NormColumnsWriter::Seal(uint64_t rows) && {
   std::vector<NormColumnSpec> columns;
   for (auto& writer : _columns) {
     writer->PadTo(rows);
@@ -364,22 +364,6 @@ std::vector<NormColumnSpec> NormsWriter::Seal(uint64_t rows) && {
     }
   }
   return columns;
-}
-
-SealedNorms BufferedNorms::Seal(uint64_t rows) && {
-  SealedNorms sealed{.columns = std::move(_writer).Seal(rows)};
-  if (sealed.columns.empty()) {
-    return sealed;
-  }
-  SDB_ASSERT(_buffer);
-  duckdb::AllocatedData bytes;
-  if (const auto size = _buffer->GetPosition(); size != 0) {
-    bytes = _allocator.Allocate(size);
-    std::memcpy(bytes.get(), _buffer->GetData(), size);
-  }
-  _buffer.reset();
-  sealed.file = OpenNormBytes(std::move(bytes));
-  return sealed;
 }
 
 duckdb::shared_ptr<duckdb::InputFile> OpenNormBytes(

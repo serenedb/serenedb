@@ -33,6 +33,7 @@
 #include <iresearch/formats/column/norm_writer.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/formats/index/idx_reader.hpp>
+#include <iresearch/formats/index/idx_writer.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_reader_options.hpp>
 #include <iresearch/index/index_writer.hpp>
@@ -79,9 +80,20 @@ std::unique_ptr<ColReader> MakeCsReader(const ::tests::IndexDir& dir,
 ColReader OpenColReader(const ::tests::IndexDir& dir,
                         std::string_view segment_name);
 
-std::unique_ptr<IdxReader> CommitNorms(const ::tests::IndexDir& dir,
-                                       std::string_view segment_name,
-                                       BufferedNorms&& norms, uint64_t rows);
+class NormsFile {
+ public:
+  NormsFile(const ::tests::IndexDir& dir, std::string_view segment_name);
+
+  NormColumnsWriter& Writer() noexcept { return _writer; }
+
+  std::unique_ptr<IdxReader> Commit(uint64_t rows) &&;
+
+ private:
+  const ::tests::IndexDir& _dir;
+  std::string _segment_name;
+  IdxWriter _idx;
+  NormColumnsWriter& _writer;
+};
 
 // Open a BLOB column on the given writer; convenience wrapper around
 // Writer::OpenColumn(id, BLOB, ...). Most legacy tests stored bytes per

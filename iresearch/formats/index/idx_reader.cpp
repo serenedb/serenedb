@@ -99,7 +99,7 @@ IdxReader::IdxReader(duckdb::FileSystem& fs, std::string_view root,
         kIdxFieldTerms, "terms", [&](duckdb::BinaryDeserializer& terms) {
           footer.terms = term_dict::ReadTerms(terms, data_size);
         });
-      footer.norms = ReadNormColumns(in, kIdxFieldNorms, data_size);
+      footer.norms = ReadNormSpecs(in, kIdxFieldNorms, data_size);
     });
   Adopt(std::move(footer), hnsw_bases);
 }

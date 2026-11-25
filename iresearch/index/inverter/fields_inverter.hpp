@@ -63,7 +63,8 @@ class FieldInverter : util::Noncopyable {
 
   FieldInverter(field_id id, duckdb::ArenaAllocator& arena, TermIds term_ids,
                 IResourceManager& rm, IndexFeatures index_features,
-                NormsWriter* norms, const IndexFieldOptions* field_options)
+                NormColumnsWriter* norms,
+                const IndexFieldOptions* field_options)
     : _term_ids{term_ids},
       _dict{arena, rm},
       _log{MakePostingLog(arena, rm, LayoutFromFeatures(index_features))},
@@ -732,7 +733,7 @@ class FieldInverter : util::Noncopyable {
   TermIds _term_ids;
   TermDictionary _dict;
   PostingLogVariant _log;
-  NormsWriter* _norms = nullptr;
+  NormColumnsWriter* _norms = nullptr;
   NormColumnWriter* _norm_writer = nullptr;
   uint32_t _norm_row_group_size = 0;
   FieldMeta _meta;
@@ -839,7 +840,9 @@ class FieldsInverter : util::Noncopyable {
       _terms{ManagedTypedAllocator<TermMember>{mem.rm}},
       _docs{ManagedTypedAllocator<ManagedVector<doc_id_t>>{mem.rm}} {}
 
-  void SetNormsWriter(NormsWriter* norms) noexcept { _norms = norms; }
+  void SetNormColumnsWriter(NormColumnsWriter* norms) noexcept {
+    _norms = norms;
+  }
   void SetFieldOptions(const IndexFieldOptions* field_options) noexcept {
     _field_options = field_options;
   }
@@ -941,7 +944,7 @@ class FieldsInverter : util::Noncopyable {
   TermMembers _terms;
   DocMembers _docs;
   FieldsMap _fields_map;
-  NormsWriter* _norms = nullptr;
+  NormColumnsWriter* _norms = nullptr;
   const IndexFieldOptions* _field_options = nullptr;
 };
 

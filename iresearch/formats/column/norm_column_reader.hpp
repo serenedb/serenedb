@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/algorithm/container.h>
 #include <absl/base/internal/endian.h>
 
 #include <cstdint>
@@ -124,20 +123,6 @@ class NormColumnReader final {
 
   const NormRegion& Locate(doc_id_t doc) const noexcept;
 
-  IRS_FORCE_INLINE const NormRegion& LocateAfter(const NormRegion& region,
-                                                 doc_id_t doc) const noexcept {
-    SDB_ASSERT(doc >= region.end_doc);
-    const auto next = static_cast<size_t>(&region - _regions.data()) + 1;
-    SDB_ASSERT(next < _regions.size());
-    if (doc < _ends[next]) [[likely]] {
-      return _regions[next];
-    }
-    const auto rest = std::span{_ends}.subspan(next + 1);
-    return _regions[next + 1 +
-                    static_cast<size_t>(absl::c_upper_bound(rest, doc) -
-                                        rest.begin())];
-  }
-
   std::span<const byte_type> Window(size_t i) const noexcept {
     SDB_ASSERT(i < _windows.size());
     return _windows[i];
@@ -158,12 +143,9 @@ class NormColumnReader final {
   const byte_type* Map(const duckdb::InputFile& file, uint64_t offset,
                        uint64_t size);
 
-  void IndexEnds();
-
   const duckdb::InputFile* _file;
   field_id _id;
   std::vector<NormRegion> _regions;
-  std::vector<doc_id_t> _ends;
   std::vector<NormStats> _stats;
   std::vector<std::span<const byte_type>> _windows;
   duckdb::PageResidencyMap _residency;
@@ -175,9 +157,9 @@ class NormColumnReader final {
   bool _paged = false;
 };
 
-std::vector<NormColumnSpec> ReadNormColumns(duckdb::BinaryDeserializer& in,
-                                            duckdb::field_id_t field,
-                                            uint64_t data_size);
+std::vector<NormColumnSpec> ReadNormSpecs(duckdb::BinaryDeserializer& in,
+                                          duckdb::field_id_t field,
+                                          uint64_t data_size);
 
 class NormColumns final : public NormProvider {
  public:

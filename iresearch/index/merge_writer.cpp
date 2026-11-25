@@ -650,7 +650,7 @@ void MergeNormPiece(const NormPiece& piece, NormColumnWriter& writer,
                [&](std::span<const uint32_t> live) { writer.Write(live); });
 }
 
-field_id MergeNormColumnFromSources(NormsWriter& norms, field_id id,
+field_id MergeNormColumnFromSources(NormColumnsWriter& norms, field_id id,
                                     DictRef dict,
                                     std::span<const MergeSource> sources,
                                     const IndexFieldOptions* field_options) {
@@ -704,7 +704,7 @@ field_id MergeNormColumnFromSources(NormsWriter& norms, field_id id,
 
 using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
 
-MergedNormIdMap MergeNorms(NormsWriter& norms,
+MergedNormIdMap MergeNorms(NormColumnsWriter& norms,
                            std::span<const MergeSource> sources,
                            const FieldMetaMapT& field_meta_map,
                            const IndexFieldOptions* field_options) {
@@ -890,24 +890,12 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   col_writer->SetHnswBases(_hnsw_bases);
 
   IdxWriter idx{*tracker};
-  NormsWriter norms_writer{
-    [&idx] -> duckdb::WriteStream& { return idx.NormsOut(); }};
-  const auto merged_norm_ids =
-    MergeNorms(norms_writer, sources, field_meta_map, _field_options);
-  auto norm_specs = std::move(norms_writer).Seal(segment.docs_count);
-  auto& allocator =
-    duckdb::BufferManager::GetBufferManager(_db).GetBufferAllocator();
-  SealedNorms readable;
-  if (!norm_specs.empty()) {
-    readable = {.file = idx.ReadNorms(allocator), .columns = norm_specs};
-    if (!readable.file) {
-      BufferedNorms in_memory{allocator};
-      MergeNorms(in_memory.Writer(), sources, field_meta_map, _field_options);
-      readable = std::move(in_memory).Seal(segment.docs_count);
-    }
-  }
+  const auto merged_norm_ids = MergeNorms(
+    idx.Norms(
+      duckdb::BufferManager::GetBufferManager(_db).GetBufferAllocator()),
+    sources, field_meta_map, _field_options);
+  const auto readable = idx.SealNorms(segment.docs_count);
   const NormColumns norms{readable.file, readable.columns};
-  idx.SetNorms(std::move(norm_specs));
 
   if (!progress_callback()) {
     co_return nullptr;
@@ -1003,11 +991,12 @@ std::shared_ptr<const SegmentReaderImpl> MergeWriter::FlushPiece(
   }
 
   const auto sources = MakeSources(_readers);
-  BufferedNorms buffered_norms{
-    duckdb::BufferManager::GetBufferManager(_db).GetBufferAllocator()};
-  const auto merged_norm_ids = MergeNorms(buffered_norms.Writer(), sources,
-                                          field_meta_map, _field_options);
-  auto norms = std::move(buffered_norms).Seal(segment.docs_count);
+  IdxWriter idx{tracker};
+  const auto merged_norm_ids = MergeNorms(
+    idx.Norms(
+      duckdb::BufferManager::GetBufferManager(_db).GetBufferAllocator()),
+    sources, field_meta_map, _field_options);
+  auto norms = idx.SealNorms(segment.docs_count);
   auto columns = ConcatInMemory(_db, sources, _field_options);
 
   auto fields = std::make_shared<PieceFields>();

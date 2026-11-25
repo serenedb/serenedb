@@ -60,15 +60,19 @@ ColReader OpenColReader(const ::tests::IndexDir& dir,
                    duckdb::MappedFileAccess::SEQUENTIAL};
 }
 
-std::unique_ptr<IdxReader> CommitNorms(const ::tests::IndexDir& dir,
-                                       std::string_view segment_name,
-                                       BufferedNorms&& norms, uint64_t rows) {
-  IdxWriter idx{dir.Tracker(segment_name)};
-  idx.WriteNorms(std::move(norms).Seal(rows));
-  idx.Commit(/*hnsw_bases=*/nullptr);
+NormsFile::NormsFile(const ::tests::IndexDir& dir,
+                     std::string_view segment_name)
+  : _dir{dir},
+    _segment_name{segment_name},
+    _idx{dir.Tracker(segment_name)},
+    _writer{_idx.Norms(duckdb::Allocator::DefaultAllocator())} {}
+
+std::unique_ptr<IdxReader> NormsFile::Commit(uint64_t rows) && {
+  _idx.SealNorms(rows);
+  _idx.Commit(/*hnsw_bases=*/nullptr);
   return std::make_unique<IdxReader>(
-    dir.Fs(), dir.Root(), segment_name,
-    dir.Has(FileName(segment_name, kIdxFormatExt)), /*hnsw_bases=*/nullptr);
+    _dir.Fs(), _dir.Root(), _segment_name,
+    _dir.Has(FileName(_segment_name, kIdxFormatExt)), /*hnsw_bases=*/nullptr);
 }
 
 ColumnWriter& OpenBlobColumn(ColWriter& w, field_id id) {

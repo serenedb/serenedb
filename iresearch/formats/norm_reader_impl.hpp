@@ -478,9 +478,7 @@ class PersistedNormReader : public NormReaderBase {
   uint32_t Get(doc_id_t doc) final {
     SDB_ASSERT(doc >= doc_limits::min());
     if constexpr (Multi) {
-      if (doc >= _region->end_doc) [[unlikely]] {
-        Position(_column->LocateAfter(*_region, doc));
-      } else if (doc < _region->first_doc) [[unlikely]] {
+      if (doc < _region->first_doc || doc >= _region->end_doc) [[unlikely]] {
         Position(_column->Locate(doc));
       }
     }
@@ -532,9 +530,7 @@ class PersistedNormReader : public NormReaderBase {
   void Split(const doc_id_t* IRS_RESTRICT docs, uint32_t* IRS_RESTRICT values,
              size_t n) {
     for (size_t i = 0; i != n;) {
-      if (docs[i] >= _region->end_doc) {
-        Position(_column->LocateAfter(*_region, docs[i]));
-      } else if (docs[i] < _region->first_doc) {
+      if (docs[i] < _region->first_doc || docs[i] >= _region->end_doc) {
         Position(_column->Locate(docs[i]));
       }
       size_t j = i + 1;

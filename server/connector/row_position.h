@@ -50,10 +50,10 @@ inline irs::doc_id_t RowPositionDoc(uint64_t position) noexcept {
 inline void FillRowPositions(uint32_t index,
                              std::span<const irs::doc_id_t> docs,
                              duckdb::Vector& out) {
-  auto positions = duckdb::FlatVector::Writer<duckdb::row_t>(out, docs.size());
-  for (const auto doc : docs) {
-    positions.WriteValue(
-      static_cast<duckdb::row_t>(MakeRowPosition(index, doc)));
+  duckdb::FlatVector::SetSize(out, docs.size());
+  auto* positions = duckdb::FlatVector::GetDataMutable<duckdb::row_t>(out);
+  for (size_t i = 0; i < docs.size(); ++i) {
+    positions[i] = static_cast<duckdb::row_t>(MakeRowPosition(index, docs[i]));
   }
 }
 
@@ -65,10 +65,11 @@ inline void FillRowPositions(uint32_t index, irs::doc_id_t first,
                  count);
     return;
   }
-  auto positions = duckdb::FlatVector::Writer<duckdb::row_t>(out, count);
+  duckdb::FlatVector::SetSize(out, count);
+  auto* positions = duckdb::FlatVector::GetDataMutable<duckdb::row_t>(out);
   for (duckdb::idx_t i = 0; i < count; ++i) {
-    positions.WriteValue(static_cast<duckdb::row_t>(MakeRowPosition(
-      index, first + static_cast<irs::doc_id_t>(sel->get_index(i)))));
+    positions[i] = static_cast<duckdb::row_t>(MakeRowPosition(
+      index, first + static_cast<irs::doc_id_t>(sel->get_index(i))));
   }
 }
 

@@ -8434,6 +8434,39 @@ TEST_F(ColumnReaderTest, Fsst12BlocksWithoutTheirSharedSymbolTableAreRejected) {
 }
 
 TEST_F(ColumnReaderTest,
+       Fsst12BlocksThatDisagreeOnTheSizeOfTheirSharedTableAreRejected) {
+  const ValueOf urls = [](uint64_t g) {
+    return duckdb::Value{absl::StrCat("https://example.org/", g % 977, "/item/",
+                                      (g * 7919) % 100003)};
+  };
+  const irs::ColumnWriterOptions fsst12{
+    .compression = irs::codecs::CodecType::Fsst12,
+    .codec_params = {.segment_target = 16 * 1024},
+  };
+  EXPECT_EQ(ReadWithCorruptedFooter(
+              Db(), duckdb::LogicalType::VARCHAR, fsst12, urls,
+              [](irs::ColumnMeta& meta) {
+                ASSERT_GE(meta.data.size(), 2);
+                auto& second = meta.data[1];
+                ASSERT_NE(second.shared_size, 0);
+                ASSERT_EQ(second.shared_offset, meta.data[0].shared_offset);
+                ASSERT_EQ(second.shared_size, meta.data[0].shared_size);
+                --second.shared_size;
+              },
+              [](irs::ColReader& r, const irs::ColumnReader& col) {
+                auto state = col.InitScan(r.Ctx());
+                for (uint64_t pos = 0; pos < col.RowCount();
+                     pos += STANDARD_VECTOR_SIZE) {
+                  duckdb::Vector out{col.Type(), STANDARD_VECTOR_SIZE};
+                  col.Scan(state, out,
+                           std::min<uint64_t>(col.RowCount() - pos,
+                                              STANDARD_VECTOR_SIZE));
+                }
+              }),
+            "Corrupted text segment: symbol table is inconsistent");
+}
+
+TEST_F(ColumnReaderTest,
        BitsetValidityWithAWholeValidWordScansIntoFreshVectors) {
   constexpr irs::field_id kId = 1;
   constexpr uint64_t kRows = 3 * STANDARD_VECTOR_SIZE;

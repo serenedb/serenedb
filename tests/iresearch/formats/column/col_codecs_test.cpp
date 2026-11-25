@@ -511,6 +511,53 @@ TEST_F(ColCodecsTest, PlainFsstRowOrder) {
   RoundTrip(irs::codecs::CodecType::Fsst, {}, 3000, 2048, kLongTextWithNulls);
 }
 
+TEST_F(ColCodecsTest, AnFsst12TableImportedForAnotherFileIsNotReused) {
+  constexpr uint64_t kRows = 4096;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    return absl::StrCat("https://example.org/", g % 977, "/item/",
+                        (g * 7919) % 100003);
+  };
+  tests::IndexDir first_dir{Db(), TestEnv::MemoryRoot()};
+  tests::IndexDir second_dir{Db(), TestEnv::MemoryRoot()};
+  Write(first_dir, irs::codecs::CodecType::Fsst12, {}, kRows, kRows, value);
+  Write(second_dir, irs::codecs::CodecType::Fsst12, {}, kRows, kRows, value);
+  irs::ColReader first = irs::tests::OpenColReader(first_dir, kSeg);
+  irs::ColReader second = irs::tests::OpenColReader(second_dir, kSeg);
+  const auto* first_col = first.Column(kField);
+  const auto* second_col = second.Column(kField);
+  ASSERT_NE(first_col, nullptr);
+  ASSERT_NE(second_col, nullptr);
+  irs::ReadContext first_ctx{first};
+  irs::ReadContext second_ctx{second};
+  const auto first_segment = first_col->OpenSegment(0, first_ctx);
+  const auto second_segment = second_col->OpenSegment(0, second_ctx);
+  ASSERT_NE(first_segment->shared_size, 0);
+  ASSERT_EQ(first_segment->shared_offset, second_segment->shared_offset);
+  ASSERT_EQ(first_segment->shared_size, second_segment->shared_size);
+  ASSERT_NE(first_segment->cache_slot.file_id,
+            second_segment->cache_slot.file_id);
+  irs::codecs::SharedSymbols slot;
+  first_segment->symbols = &slot;
+  second_segment->symbols = &slot;
+  irs::codecs::ColumnScanState first_state;
+  first_state.scan_state = first_segment->function.init_scan(*first_segment);
+  ASSERT_EQ(slot.file_id, first_segment->cache_slot.file_id);
+  const auto first_table = slot.fsst12;
+  ASSERT_TRUE(first_table);
+  irs::codecs::ColumnScanState second_state;
+  second_state.scan_state = second_segment->function.init_scan(*second_segment);
+  EXPECT_EQ(slot.file_id, second_segment->cache_slot.file_id);
+  EXPECT_NE(slot.fsst12, first_table);
+  const auto rows =
+    std::min<duckdb::idx_t>(second_segment->count, STANDARD_VECTOR_SIZE);
+  duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+  second_segment->function.scan(*second_segment, second_state, rows, out, 0,
+                                duckdb::ScanVectorType::SCAN_FLAT_VECTOR);
+  for (duckdb::idx_t k = 0; k < rows; ++k) {
+    ExpectRow(out, k, k, value);
+  }
+}
+
 TEST(FsstEncoderTest, BatchesEncodeLikeSingleStrings) {
   constexpr std::array<std::string_view, 8> kWords{
     "https://", "example.org/", "users/", "profile?",

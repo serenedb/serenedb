@@ -1037,6 +1037,58 @@ TEST_F(ColCodecCorruptionTest, TextSegmentsRejectALargerFieldAtTheirLastEntry) {
     "Corrupted text segment: frame is inconsistent");
 }
 
+TEST_F(ColCodecCorruptionTest,
+       FsstFramesThatClaimMoreBytesThanTheirEntriesTakeAreRejected) {
+  const Case c{
+    "fsst",
+    LogicalType::VARCHAR,
+    CodecType::Fsst,
+    [](uint64_t g) {
+      return Value{absl::StrCat("tenant-", Mix(g) % 100000, "/item-", g % 7)};
+    },
+    {}};
+  const auto path =
+    test_dir() / absl::StrCat("col_codec_corruption_frame_", _next++);
+  std::filesystem::create_directories(path);
+  uint64_t offset = 0;
+  uint64_t size = 0;
+  ASSERT_NO_FATAL_FAILURE(Write(path, c, offset, size));
+  {
+    std::fstream io{path / irs::FileName(kSeg),
+                    std::ios::in | std::ios::out | std::ios::binary};
+    ASSERT_TRUE(io.good());
+    std::string bytes(size, '\0');
+    io.seekg(static_cast<std::streamoff>(offset));
+    io.read(bytes.data(), static_cast<std::streamsize>(size));
+    irs::codecs::Header h;
+    ASSERT_GE(size, sizeof(h));
+    std::memcpy(&h, bytes.data(), sizeof(h));
+    ASSERT_GE(h.frame_count, 2);
+    auto* first = reinterpret_cast<duckdb::data_ptr_t>(bytes.data()) +
+                  h.off_frames + offsetof(irs::codecs::FrameMeta, comp_len);
+    duckdb::Store(duckdb::Load<uint32_t>(first) + 1, first);
+    io.seekp(static_cast<std::streamoff>(offset));
+    io.write(bytes.data(), static_cast<std::streamsize>(size));
+  }
+  tests::IndexDir dir{Db(), path.string()};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  std::set<std::string> messages;
+  Guarded(messages, [&] {
+    auto state = col->InitScan(r.Ctx());
+    for (uint64_t pos = 0; pos < c.rows;) {
+      const auto take =
+        std::min<duckdb::idx_t>(c.rows - pos, STANDARD_VECTOR_SIZE);
+      duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+      col->Scan(state, out, take);
+      pos += take;
+    }
+  });
+  EXPECT_EQ(absl::StrJoin(messages, "\n"),
+            "Corrupted text segment: frame is inconsistent");
+}
+
 TEST_F(ColCodecCorruptionTest, TextDictionariesRejectDamagedSegments) {
   Sweep({"dict lz4",
          LogicalType::VARCHAR,

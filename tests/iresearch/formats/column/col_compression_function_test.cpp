@@ -38,6 +38,7 @@
 #include <iresearch/formats/column/codecs/codec_type.hpp>
 #include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/formats/column/codecs/text/string_layout.hpp>
 #include <iresearch/formats/column/codecs/text/string_tuning.hpp>
 #include <iresearch/formats/column/codecs/tuning.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
@@ -703,6 +704,49 @@ TEST_F(ColCompressionFunctionTest, UncompressedTextIsNeverScoredByAnalysis) {
       EXPECT_TRUE(codec.compression.front().compress(codec, data));
     });
   ASSERT_NO_FATAL_FAILURE(ExpectReadBack(blocks, rows));
+}
+
+TEST_F(ColCompressionFunctionTest,
+       AnFsst12SegmentThatCarriesItsOwnSymbolTableReadsBack) {
+  const duckdb::LogicalType type = duckdb::LogicalType::VARCHAR;
+  const Rows rows{type, RepeatedUrls(5000, 700)};
+  FlushedBlocks blocks{type};
+  size_t segments = 0;
+  duckdb::MemoryStream out;
+  irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
+  const auto flush = [&](const irs::codecs::Codec& codec,
+                         duckdb::BaseStatistics stats, uint64_t count,
+                         std::string_view bytes, std::string_view shared) {
+    ASSERT_FALSE(shared.empty());
+    auto h = duckdb::Load<irs::codecs::Header>(
+      reinterpret_cast<duckdb::const_data_ptr_t>(bytes.data()));
+    ASSERT_EQ(h.symtab_size, 0);
+    std::string segment{bytes.substr(0, h.off_symtab)};
+    segment.append(shared);
+    segment.resize(duckdb::AlignValue<size_t, 8>(segment.size()), '\0');
+    const auto off_data = segment.size();
+    segment.append(bytes.substr(h.off_data, h.data_size));
+    h.symtab_size = static_cast<uint32_t>(shared.size());
+    h.off_data = static_cast<uint32_t>(off_data);
+    std::memcpy(segment.data(), &h, sizeof(h));
+    blocks.Add(codec, std::move(stats), count, segment, {});
+    ++segments;
+  };
+  irs::codecs::ColumnTuning tuning;
+  ColumnDataCheckpointData data{
+    .type = type,
+    .ctx = &ctx,
+    .flush = flush,
+    .tuning = tuning,
+    .rows = {rows.Chunks(), rows.Count()},
+  };
+  irs::codecs::Compress(CodecType::Fsst12, data);
+  ASSERT_NE(segments, 0);
+  for (const auto& block : blocks.Blocks()) {
+    ASSERT_EQ(block.codec->type, CodecType::Fsst12);
+    ASSERT_EQ(block.shared_size, 0);
+  }
+  ExpectReadBack(blocks, rows);
 }
 
 TEST(ColCodecTypeTest, EveryFormIsNamedByItsShapeAndLeaf) {

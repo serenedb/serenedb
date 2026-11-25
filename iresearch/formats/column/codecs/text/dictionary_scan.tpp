@@ -20,10 +20,6 @@
 
 #pragma once
 
-#ifdef __AVX2__
-#include <immintrin.h>
-#endif
-
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
@@ -47,7 +43,6 @@
 #include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 #include <functional>
-#include <limits>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -282,11 +277,18 @@ class FilterVerdicts {
   idx_t KeepAccepted(const duckdb::SelectionVector& codes,
                      duckdb::SelectionVector& rows, idx_t count) const {
     if (_ranged) {
-      return KeepIf(codes, rows, count,
-                    InRange{.lo = _range.lo, .width = _range.hi - _range.lo});
+      return _matches == 0 ? 0
+                           : KeepIf(codes, rows, count,
+                                    InRange{.lo = _range.lo,
+                                            .span = _range.hi - _range.lo - 1});
     }
     if (!_lazy && _verdicts.size() <= kBitEntries) {
-      return KeepIf(codes, rows, count, InBits{.bits = _accepted_bits});
+      return _verdicts.size() <= 8 * sizeof(uint32_t)
+               ? KeepIf(codes, rows, count,
+                        InBits<uint32_t>{
+                          .bits = static_cast<uint32_t>(_accepted_bits)})
+               : KeepIf(codes, rows, count,
+                        InBits<uint64_t>{.bits = _accepted_bits});
     }
     return KeepIf(codes, rows, count, InVerdicts{.verdicts = _verdicts.data()});
   }
@@ -294,44 +296,42 @@ class FilterVerdicts {
  private:
   static constexpr size_t kBitEntries = 64;
 
+  using U32x8 = uint32_t __attribute__((vector_size(32)));
+  using I32x8 = int32_t __attribute__((vector_size(32)));
+  using U8x8 = uint8_t __attribute__((vector_size(8)));
+  using Bools8 = bool __attribute__((ext_vector_type(8)));
+
   struct InRange {
     uint32_t lo;
-    uint32_t width;
+    uint32_t span;
 
     IRS_FORCE_INLINE bool operator()(uint32_t code) const noexcept {
-      return code - lo < width;
+      return code - lo <= span;
     }
 
-#ifdef __AVX2__
-    IRS_FORCE_INLINE __m256i operator()(__m256i codes) const noexcept {
-      const auto sign = _mm256_set1_epi32(std::numeric_limits<int32_t>::min());
-      return _mm256_cmpgt_epi32(
-        _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(width)), sign),
-        _mm256_xor_si256(
-          _mm256_sub_epi32(codes, _mm256_set1_epi32(static_cast<int32_t>(lo))),
-          sign));
+    IRS_FORCE_INLINE I32x8 operator()(U32x8 codes) const noexcept {
+      return codes - lo <= span;
     }
-#endif
   };
 
+  template<typename Word>
   struct InBits {
-    uint64_t bits;
+    Word bits;
 
     IRS_FORCE_INLINE bool operator()(uint32_t code) const noexcept {
       return (bits >> code) & 1;
     }
 
-#ifdef __AVX2__
-    IRS_FORCE_INLINE __m256i operator()(__m256i codes) const noexcept {
-      const auto low =
-        _mm256_sllv_epi32(_mm256_set1_epi32(static_cast<int32_t>(bits)),
-                          _mm256_sub_epi32(_mm256_set1_epi32(31), codes));
-      const auto high =
-        _mm256_sllv_epi32(_mm256_set1_epi32(static_cast<int32_t>(bits >> 32)),
-                          _mm256_sub_epi32(_mm256_set1_epi32(63), codes));
-      return _mm256_or_si256(low, high);
+    IRS_FORCE_INLINE I32x8 operator()(U32x8 codes) const noexcept {
+      if constexpr (sizeof(Word) == sizeof(uint32_t)) {
+        return ((bits >> codes) & 1) != 0;
+      } else {
+        const U32x8 words = codes < 32
+                              ? U32x8{} + static_cast<uint32_t>(bits)
+                              : U32x8{} + static_cast<uint32_t>(bits >> 32);
+        return ((words >> (codes & 31)) & 1) != 0;
+      }
     }
-#endif
   };
 
   struct InVerdicts {
@@ -361,21 +361,25 @@ class FilterVerdicts {
       return kept;
     }
     idx_t i = 0;
-#ifdef __AVX2__
-    if constexpr (std::is_invocable_v<Accepted, __m256i>) {
-      auto row = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
-      for (; i + 8 <= count; i += 8) {
-        const auto mask = static_cast<uint32_t>(
-          _mm256_movemask_ps(_mm256_castsi256_ps(accepted(_mm256_loadu_si256(
-            reinterpret_cast<const __m256i*>(code_of + i))))));
-        _mm256_storeu_si256(
-          reinterpret_cast<__m256i*>(kept_rows + kept),
-          _mm256_permutevar8x32_epi32(row, LeftPackControl(mask)));
-        kept += std::popcount(mask);
-        row = _mm256_add_epi32(row, _mm256_set1_epi32(8));
+    U32x8 first{};
+    for (; i + 8 <= count; i += 8, first += 8) {
+      uint8_t accepts = 0;
+      if constexpr (std::is_invocable_v<Accepted, U32x8>) {
+        U32x8 eight;
+        std::memcpy(&eight, code_of + i, sizeof(eight));
+        accepts = std::bit_cast<uint8_t>(
+          __builtin_convertvector(accepted(eight), Bools8));
+      } else {
+        for (uint32_t lane = 0; lane < 8; ++lane) {
+          accepts |= static_cast<uint8_t>(accepted(code_of[i + lane]) << lane);
+        }
       }
+      U8x8 lanes;
+      std::memcpy(&lanes, kBitsetByteTable[accepts].data(), sizeof(lanes));
+      const U32x8 kept_eight = first + __builtin_convertvector(lanes, U32x8);
+      std::memcpy(kept_rows + kept, &kept_eight, sizeof(kept_eight));
+      kept += std::popcount(accepts);
     }
-#endif
     for (; i < count; ++i) {
       kept_rows[kept] = static_cast<duckdb::sel_t>(i);
       kept += accepted(code_of[i]);

@@ -46,6 +46,8 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/inverted_index.h"
 #include "catalog/entry/search_table.h"
+#include "search/engine.h"
+#include "search/parallel.h"
 #include "search/store.h"
 #include "search/task.h"
 
@@ -173,13 +175,19 @@ std::vector<TableSnapshot> CaptureSnapshot(const catalog::CommittedView& view) {
 }
 
 std::vector<catalog::RecordBuffer> SnapshotRecords(
-  std::span<const TableSnapshot> tables) {
-  std::vector<catalog::RecordBuffer> records;
-  records.reserve(tables.size());
-  for (const auto& [store, state] : tables) {
-    records.push_back(store->SnapshotRecord(*state));
+  std::span<const TableSnapshot> tables, duckdb::ClientContext* context) {
+  const auto records = [&](irs::ParallelFor parallel) {
+    std::vector<catalog::RecordBuffer> out;
+    out.reserve(tables.size());
+    for (const auto& [store, state] : tables) {
+      out.push_back(store->SnapshotRecord(*state, parallel));
+    }
+    return out;
+  };
+  if (context) {
+    return records(ParallelOn(*context));
   }
-  return records;
+  return records(irs::AnnParallelFor(&GetSearchEngine().SnapshotEnv()));
 }
 
 void StartSearchStorageTasks() {

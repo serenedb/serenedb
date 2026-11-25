@@ -39,10 +39,12 @@
 #include <type_traits>
 #include <vector>
 
+#include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/index/vector_distance.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/huge_page_allocator.hpp"
+#include "iresearch/utils/parallel_for.hpp"
 #include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/tracked.hpp"
 
@@ -55,7 +57,6 @@ inline constexpr uint32_t kHnswDefaultEfConstruction = 200;
 inline constexpr uint32_t kHnswDefaultEfSearch = 64;
 inline constexpr uint32_t kHnswSerialWarmup = 256;
 inline constexpr size_t kHnswMinRowsPerWorker = 1024;
-inline constexpr uint32_t kHnswMaxWorkers = 64;
 inline constexpr size_t kHnswInsertGranule = 256;
 inline constexpr uint64_t kHnswTrainSample = 262144;
 inline constexpr uint32_t kHnswMaxLevel = std::numeric_limits<uint8_t>::max();
@@ -384,7 +385,12 @@ class HnswGraph {
   }
 
   void Serialize(duckdb::WriteStream& out) const;
+  HnswGraphFrames SerializePacked(duckdb::WriteStream& out,
+                                  ParallelFor parallel) const;
   static HnswGraph Deserialize(duckdb::InputFileReader& in);
+  static HnswGraph DeserializePacked(duckdb::InputFileReader& in,
+                                     const HnswGraphFrames& frames,
+                                     ParallelFor parallel);
 
  private:
   friend class HnswGraphWriter;
@@ -465,6 +471,10 @@ class HnswGraphWriter {
   }
 
   void Serialize(duckdb::WriteStream& out) const { _graph.Serialize(out); }
+  HnswGraphFrames SerializePacked(duckdb::WriteStream& out,
+                                  ParallelFor parallel) const {
+    return _graph.SerializePacked(out, parallel);
+  }
 
  private:
   HnswGraph _graph;

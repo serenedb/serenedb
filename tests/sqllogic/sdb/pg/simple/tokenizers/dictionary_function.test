@@ -164,6 +164,19 @@ builtin_survives
 AB
 
 
+query
+SELECT ts_lexize('FND_ENGLISH', 'ab cd') AS folded, ts_lexize('public.Fnd_English', 'ab cd') AS qualified;
+----
+folded	qualified
+{ab,cd}	{ab,cd}
+
+
+statement error
+SELECT ts_lexize('"FND_ENGLISH"', 'ab cd');
+----
+db error: ERROR: text search dictionary ""FND_ENGLISH"" does not exist
+
+
 statement ok
 DROP TEXT SEARCH DICTIONARY fnd_stage;
 

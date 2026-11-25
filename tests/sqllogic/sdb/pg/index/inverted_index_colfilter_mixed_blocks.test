@@ -87,7 +87,7 @@ CREATE INDEX mxb_bad_idx ON mxb
     USING inverted(id, body mxb_en)
     INCLUDE (g included (row_group_size = 1000), tag);
 ----
-db error: ERROR: Column 'g': unknown included option 'row_group_size'. Accepted options: compression (string, default 'auto'), distinct (string: 'none', 'sampled' or 'exact', default 'none')
+db error: ERROR: Column 'g': unknown included option 'row_group_size'. Accepted options: compression (string, default 'auto'), compression_level (integer, default the codec's), distinct (string: 'none', 'sampled' or 'exact', default 'none')
 
 
 statement ok

@@ -57,6 +57,7 @@
 // Reported as items/s = documents/s, so the shapes are comparable to each other
 // directly.
 
+#include <absl/cleanup/cleanup.h>
 #include <benchmark/benchmark.h>
 
 #include <bit>
@@ -231,9 +232,13 @@ struct Index {
 
 // One segment, one commit, no compaction: the block encodings a query walks are
 // then a property of the corpus alone.
+std::map<std::pair<size_t, bool>, Index>& Indexes() {
+  static std::map<std::pair<size_t, bool>, Index> indexes;
+  return indexes;
+}
+
 const Index& IndexOf(size_t docs, bool zipf = false) {
-  static std::map<std::pair<size_t, bool>, Index> gCache;
-  auto [it, added] = gCache.try_emplace(std::pair{docs, zipf});
+  auto [it, added] = Indexes().try_emplace(std::pair{docs, zipf});
   auto& index = it->second;
   if (!added) {
     return index;
@@ -591,6 +596,10 @@ BENCHMARK(BmConjGenDense)->Apply(Sizes);
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
+  absl::Cleanup shutdown = [] {
+    Indexes().clear();
+    irs::DuckDBEngine::Instance().Shutdown();
+  };
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -598,8 +607,6 @@ static int Main(int argc, char** argv) {
   }
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-
-  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
 

@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         application_exit.cpp
         attributes.cpp
+        compression.cpp
         conjunction_acceptor.cpp
         cpu_features.cpp
         crash_handler.cpp

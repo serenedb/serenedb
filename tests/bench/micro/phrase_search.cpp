@@ -18,11 +18,13 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/numbers.h>
 #include <absl/strings/str_split.h>
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <duckdb/common/file_system.hpp>
@@ -259,9 +261,10 @@ const std::vector<std::string>& Docs() {
   return docs;
 }
 
+constinit std::array<std::unique_ptr<Index>, std::size(kStrategies)> gIndexes{};
+
 const Index& IndexOf(size_t strategy) {
-  static std::vector<std::unique_ptr<Index>> indexes(std::size(kStrategies));
-  auto& index = indexes[strategy];
+  auto& index = gIndexes[strategy];
   if (!index) {
     index = std::make_unique<Index>(BuildIndex(Docs(), kStrategies[strategy]));
   }
@@ -535,6 +538,10 @@ void RegisterAll() {
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
+  absl::Cleanup shutdown = [] {
+    gIndexes = {};
+    irs::DuckDBEngine::Instance().Shutdown();
+  };
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
     return 1;

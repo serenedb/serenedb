@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
@@ -96,9 +97,13 @@ struct Index {
   irs::CompositeReader reader;
 };
 
+std::map<size_t, Index>& Indexes() {
+  static std::map<size_t, Index> indexes;
+  return indexes;
+}
+
 const Index& IndexOf(size_t docs) {
-  static std::map<size_t, Index> gCache;
-  auto [it, added] = gCache.try_emplace(docs);
+  auto [it, added] = Indexes().try_emplace(docs);
   auto& index = it->second;
   if (!added) {
     return index;
@@ -203,13 +208,16 @@ BENCHMARK_CAPTURE(BmScan, sparse_head, "e", "f", kHead)->Apply(Sizes);
 
 int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
+  absl::Cleanup shutdown = [] {
+    Indexes().clear();
+    irs::DuckDBEngine::Instance().Shutdown();
+  };
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
     return 1;
   }
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
 

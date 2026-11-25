@@ -92,7 +92,7 @@ def keys(gen, table):
 
 
 def table_lines(schema, name, relkind, shared, superuser, row_type,
-                row_array_type, replident, columns, keys, public, types):
+                row_array_type, rule, replident, columns, keys, public, types):
     if len(columns) > MAX_COLUMNS:
         raise SystemExit(f'{schema}.{name} has more than {MAX_COLUMNS} columns')
     const = relation_constant(schema, name)
@@ -104,7 +104,7 @@ def table_lines(schema, name, relkind, shared, superuser, row_type,
             ['};',
              f'inline constexpr SystemSql {const}Sql{{{const}Table, '
              f'{cpp_str(schema)}, {cpp_str(name)}, {row_type}, '
-             f'{row_array_type}, {cpp_char(relkind)}, '
+             f'{row_array_type}, {rule}, {cpp_char(relkind)}, '
              f'{cpp_char(replident)}, {cpp_bool(superuser)}, '
              f'{public_columns:#x}, {cpp_bool(shared)}, {const}Columns}};'])
 
@@ -125,7 +125,7 @@ def function_lines(proc, schema, name, superuser, types, constants):
             [column_line(*column, 'None', constants) for column in columns] +
             ['};',
              f'inline constexpr SystemSql {const}Sql{{{const}Function, '
-             f"{cpp_str(schema)}, {cpp_str(name)}, 0, 0, '\\0', '\\0', "
+             f"{cpp_str(schema)}, {cpp_str(name)}, 0, 0, 0, '\\0', '\\0', "
              f'{cpp_bool(superuser)}, 0x0, false, {const}Columns}};'])
 
 
@@ -203,16 +203,16 @@ def relations(gen, coded, types):
     out = []
     for name, relation in gen.relations.items():
         out.append((relation.oid, 'pg_catalog', name, 'r', relation.shared,
-                    *gen.row_types[name], 'n',
+                    *gen.row_types[name], 0, 'n',
                     catalog_columns(relation, types), keys(gen, name)))
     for table in gen.initdb.tables.values():
         out.append((table.oid, 'information_schema', table.name, 'r', False,
-                    table.row_type, table.row_array_type, 'd',
+                    table.row_type, table.row_array_type, 0, 'd',
                     domain_columns(table.columns, types), {}))
     for view in gen.initdb.views:
         if (view.schema, view.name) in coded:
             out.append((view.oid, view.schema, view.name, 'v', False,
-                        view.row_type, view.row_array_type, 'n',
+                        view.row_type, view.row_array_type, view.rule, 'n',
                         domain_columns(gen.initdb.cast_columns(view), types),
                         {}))
     return sorted(out, key=lambda relation: relation[1:3])
@@ -262,7 +262,7 @@ def generate(gen, constants, all_types):
     coded = table_files()
     tables, all_tables, known = [], [], set()
     for (relation_oid, schema, name, relkind, shared, row_type,
-         row_array_type, replident, columns, indexed) in relations(
+         row_array_type, rule, replident, columns, indexed) in relations(
             gen, set(coded), types):
         known.add((schema, name))
         const = relation_constant(schema, name)
@@ -270,8 +270,9 @@ def generate(gen, constants, all_types):
                     f'{relation_oid};')
         tables += table_lines(schema, name, relkind, shared,
                               gen.initdb.superuser_only(schema, name),
-                              row_type, row_array_type, replident, columns,
-                              indexed, gen.initdb.public_columns.get(name, []),
+                              row_type, row_array_type, rule, replident,
+                              columns, indexed,
+                              gen.initdb.public_columns.get(name, []),
                               constants)
         all_tables.append(f'&{const}Sql,')
     for schema, name in sorted(function_files()):

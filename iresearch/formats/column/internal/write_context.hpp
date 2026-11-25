@@ -21,56 +21,24 @@
 #pragma once
 
 #include <duckdb/common/serializer/write_stream.hpp>
-#include <duckdb/storage/checkpoint/string_checkpoint_state.hpp>
+#include <duckdb/storage/buffer_manager.hpp>
 
-#include "iresearch/formats/column/internal/block_manager.hpp"
-
-namespace duckdb {
-
-class DatabaseInstance;
-
-}  // namespace duckdb
 namespace irs {
 
-class WriteContext final : public BlockManager,
-                           public duckdb::OverflowStringWriter,
-                           public duckdb::ColumnStreamWriter {
+class WriteContext final {
  public:
-  WriteContext(duckdb::DatabaseInstance& db, duckdb::WriteStream& out,
-               duckdb::idx_t block_alloc_size);
-  ~WriteContext() final;
+  WriteContext(duckdb::BufferManager& buffers,
+               duckdb::WriteStream& out) noexcept
+    : _buffers{&buffers}, _out{&out} {}
 
   WriteContext(const WriteContext&) = delete;
   WriteContext& operator=(const WriteContext&) = delete;
-  WriteContext(WriteContext&&) = delete;
-  WriteContext& operator=(WriteContext&&) = delete;
 
-  void WriteString(duckdb::UncompressedStringSegmentState& state,
-                   duckdb::string_t string, duckdb::block_id_t& result_block,
-                   int32_t& result_offset) final;
-  void Flush() final {}
-
-  duckdb::idx_t Position() const final;
-  void Append(duckdb::const_data_ptr_t data, duckdb::idx_t size) final;
-
-  duckdb::block_id_t GetFreeBlockId() final;
-  duckdb::block_id_t PeekFreeBlockId() final;
-  void Write(duckdb::FileBuffer& block, duckdb::block_id_t block_id) final;
-  void Write(duckdb::QueryContext context, duckdb::FileBuffer& block,
-             duckdb::block_id_t block_id) final;
-
-  void Read(duckdb::QueryContext context, duckdb::Block& block) final;
-  void ReadBlocks(duckdb::QueryContext context, duckdb::FileBuffer& buffer,
-                  duckdb::block_id_t start_block,
-                  duckdb::idx_t block_count) final;
-
-  bool IsRootBlock(duckdb::MetaBlockPointer root) final;
-  duckdb::idx_t GetMetaBlock() final;
-  void WriteHeader(duckdb::QueryContext context,
-                   duckdb::DatabaseHeader header) final;
-  duckdb::idx_t TotalBlocks() final;
+  duckdb::BufferManager& BufferManager() noexcept { return *_buffers; }
+  duckdb::WriteStream& Out() noexcept { return *_out; }
 
  private:
+  duckdb::BufferManager* _buffers;
   duckdb::WriteStream* _out;
 };
 

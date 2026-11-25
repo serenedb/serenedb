@@ -48,10 +48,23 @@ Modules& GetModules() {
 
 Module& GetModule(std::string_view name) { return GetModules()[name]; }
 
-int RunBenchmarks(int argc, char** argv) {
+int Run(Module& module, int argc, char** argv) {
+  for (auto& benchmark : module.benchmarks) {
+    (::benchmark::internal::RegisterBenchmarkInternal)(std::move(benchmark));
+  }
+  module.benchmarks.clear();
+  if (module.main) {
+    return module.main(argc, argv);
+  }
   auto& engine = irs::DuckDBEngine::Instance();
   engine.Initialize();
   absl::Cleanup shutdown = [&] { engine.Shutdown(); };
+  return RunBenchmarks(argc, argv);
+}
+
+}  // namespace
+
+int RunBenchmarks(int argc, char** argv) {
   ::benchmark::Initialize(&argc, argv);
   if (::benchmark::ReportUnrecognizedArguments(argc, argv)) {
     return 1;
@@ -60,16 +73,6 @@ int RunBenchmarks(int argc, char** argv) {
   ::benchmark::Shutdown();
   return 0;
 }
-
-int Run(Module& module, int argc, char** argv) {
-  for (auto& benchmark : module.benchmarks) {
-    (::benchmark::internal::RegisterBenchmarkInternal)(std::move(benchmark));
-  }
-  module.benchmarks.clear();
-  return module.main ? module.main(argc, argv) : RunBenchmarks(argc, argv);
-}
-
-}  // namespace
 
 bool AddMain(std::string_view module, int (*main)(int argc, char** argv)) {
   GetModule(module).main = main;

@@ -131,6 +131,8 @@ class Initdb:
             self.add(statement, 'pg_catalog')
         for statement in statements(information_schema):
             self.add(statement, 'information_schema')
+        for view in self.views:
+            view.rule = self.allocate(1)
         self.revoked = set(REVOKE_ALL.findall(system_views + initdb))
         self.granted = set(GRANT_SELECT.findall(information_schema))
         self.public_columns = {

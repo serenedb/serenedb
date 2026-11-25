@@ -1,0 +1,160 @@
+control substitution on
+
+statement ok
+SET TIME ZONE 'UTC';
+
+
+query
+SELECT '2026-10-10 09:55:01.123 +00:00'::timestamptz::text AS spaced_offset,
+       '2026-10-10 09:55:01 +02'::timestamptz::text AS spaced_hours,
+       '2026-10-10 09:55:01 Z'::timestamptz::text AS spaced_z,
+       '2004-02-01 +03'::timestamptz::text AS date_offset;
+----
+spaced_offset	spaced_hours	spaced_z	date_offset
+2026-10-10 09:55:01.123+00	2026-10-10 07:55:01+00	2026-10-10 09:55:01+00	2004-01-31 21:00:00+00
+
+
+query
+SELECT '2004-02-01 +00'::date AS date_zone, '2004-02-01 10:11:12'::date AS date_time, '20240102'::date AS basic;
+----
+date_zone	date_time	basic
+2004-02-01	2004-02-01	2024-01-02
+
+
+query
+SELECT ' true '::bool AS spaced, 'TRUE'::bool AS upper_true, 'Fa'::bool AS prefix, 'YES'::bool AS yes,
+       ' n '::bool AS n, 'of'::bool AS off_prefix, ' on '::bool AS on_spaced;
+----
+spaced	upper_true	prefix	yes	n	off_prefix	on_spaced
+t	t	f	t	f	f	t
+
+
+statement error (invalid input syntax for type boolean|Could not convert string)
+SELECT 'o'::bool;
+
+
+query
+SELECT (timestamptz '2026-10-10 09:55:01+00' AT TIME ZONE '+00:00')::text AS zero,
+       (timestamptz '2026-10-10 09:55:01+00' AT TIME ZONE '+05:00')::text AS posix_west;
+----
+zero	posix_west
+2026-10-10 09:55:01	2026-10-10 04:55:01
+
+
+statement ok
+SET TIME ZONE INTERVAL '+05:30' HOUR TO MINUTE;
+
+
+query
+SELECT '2026-10-10 09:55:01+00'::timestamptz::text AS shifted;
+----
+shifted
+2026-10-10 15:25:01+05:30
+
+
+statement ok
+SET TIME ZONE INTERVAL '+00:00' HOUR TO MINUTE;
+
+
+query
+SELECT '2026-10-10 09:55:01+00'::timestamptz::text AS utc;
+----
+utc
+2026-10-10 09:55:01+00
+
+
+statement ok
+SET TIME ZONE INTERVAL '5' HOUR;
+
+
+query
+SELECT '2026-10-10 09:55:01+00'::timestamptz::text AS five_hours;
+----
+five_hours
+2026-10-10 14:55:01+05
+
+
+statement ok
+SET TIME ZONE INTERVAL(0) '+05:30';
+
+
+query
+SELECT '2026-10-10 09:55:01+00'::timestamptz::text AS with_precision;
+----
+with_precision
+2026-10-10 15:25:01+05:30
+
+
+statement error
+SET TIME ZONE INTERVAL 'fast' HOUR TO MINUTE;
+----
+db error: ERROR: invalid input syntax for type interval: "fast"
+
+
+statement error (invalid interval value for time zone|invalid value for parameter "TimeZone")
+SET TIME ZONE INTERVAL '1 month';
+
+
+statement ok
+SET TIME ZONE 5;
+
+
+query
+SELECT '2026-10-10 09:55:01+00'::timestamptz::text AS east;
+----
+east
+2026-10-10 14:55:01+05
+
+
+statement error
+SET TIME ZONE 'no/such_zone';
+----
+db error: ERROR: invalid value for parameter "TimeZone": "no/such_zone"
+
+
+statement ok
+SET TIME ZONE 'UTC';
+
+
+statement ok
+CREATE TABLE text_input_src (b TEXT, d TEXT, t TEXT, ts TEXT);
+
+
+statement ok
+INSERT INTO text_input_src VALUES
+  ('TRUE', '2004-02-01 00:00:00', '07:08:09+00', '2026-10-10 09:55:01.123 +00:00'),
+  ('False', '20240102', '07:08:09', '2026-10-10 09:55:01 Z'),
+  ('YES', '2004-02-01 +00', '07:08:09 +05', '2026-10-10 09:55:01'),
+  ('n', '2004-02-01', '07:08:09', '2026-10-10 09:55:01+02'),
+  (' on ', '2004-02-01', '07:08:09', '2004-02-01 +03');
+
+
+statement ok
+COPY text_input_src TO '${__TEST_DIR__}/text_input_forms.txt' (FORMAT text);
+
+
+statement ok
+CREATE TABLE text_input_dst (b BOOLEAN, d DATE, t TIME, ts TIMESTAMPTZ);
+
+
+statement ok
+COPY text_input_dst FROM '${__TEST_DIR__}/text_input_forms.txt' (FORMAT text);
+
+
+query
+SELECT b, d, t, ts::text AS ts FROM text_input_dst ORDER BY text_input_dst.ts, b;
+----
+b	d	t	ts
+t	2004-02-01	07:08:09	2004-01-31 21:00:00+00
+f	2004-02-01	07:08:09	2026-10-10 07:55:01+00
+f	2024-01-02	07:08:09	2026-10-10 09:55:01+00
+t	2004-02-01	07:08:09	2026-10-10 09:55:01+00
+t	2004-02-01	07:08:09	2026-10-10 09:55:01.123+00
+
+
+statement ok
+DROP TABLE text_input_src;
+
+
+statement ok
+DROP TABLE text_input_dst;

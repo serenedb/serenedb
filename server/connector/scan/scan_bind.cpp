@@ -26,6 +26,7 @@
 #include <cmath>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
 #include <duckdb/common/fault_points.hpp>
+#include <duckdb/execution/operator/scan/physical_table_scan.hpp>
 #include <duckdb/parser/constraints/not_null_constraint.hpp>
 #include <duckdb/parser/parsed_data/create_view_info.hpp>
 #include <duckdb/planner/binder.hpp>
@@ -78,7 +79,8 @@ enum class KeyKinds : uint8_t {
 
 bool OfKinds(const search::KeySpec& spec, KeyKinds kinds) {
   return catalog::IsSingleColumnKey(spec.key) &&
-         (kinds == KeyKinds::All || spec.kind == search::KeyKind::Unique);
+         (kinds == KeyKinds::All ||
+          (spec.kind == search::KeyKind::Unique && !spec.deferred));
 }
 
 FieldSet KeyTermFields(const ScanBindData& bind, KeyKinds kinds) {
@@ -649,6 +651,9 @@ duckdb::unique_ptr<duckdb::NodeStatistics> ScanBindData::Cardinality(
     filter ? EstimateFilterMatchCount(*filter, live,
                                       KeyTermFields(*this, KeyKinds::Unique))
            : live;
+  if (IsPointRead()) {
+    return duckdb::make_uniq<duckdb::NodeStatistics>(estimate);
+  }
   return duckdb::make_uniq<duckdb::NodeStatistics>(estimate, live);
 }
 
@@ -991,6 +996,19 @@ irs::Filter::ptr MakeVectorFilter(const VectorScorerOptions& vs,
   o->index_only = std::move(index_only);
   o->dual = dual;
   return f;
+}
+
+void ShareScanPayloads(const duckdb::PhysicalOperator& write_input) {
+  for (const auto& source : write_input.GetSources()) {
+    if (source.get().type != duckdb::PhysicalOperatorType::TABLE_SCAN) {
+      continue;
+    }
+    const auto& scan = source.get().Cast<duckdb::PhysicalTableScan>();
+    if (scan.function.bind != &ScanBind) {
+      continue;
+    }
+    scan.bind_data->Cast<ScanBindData>().share_payloads = true;
+  }
 }
 
 }  // namespace sdb::connector

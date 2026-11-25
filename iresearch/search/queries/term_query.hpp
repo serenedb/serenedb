@@ -37,8 +37,6 @@ class TermQuery : public QueryBuilderImpl<TermQuery> {
 
   score_t Boost() const noexcept final { return _boost; }
 
-  void SetBoost(score_t value) noexcept final { _boost = value; }
-
   const TermState& State() const noexcept { return _state; }
 
  private:

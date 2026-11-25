@@ -41,8 +41,6 @@ class AllQuery : public QueryBuilderImpl<AllQuery> {
 
   score_t Boost() const noexcept final { return _boost; }
 
-  void SetBoost(score_t value) noexcept final { _boost = value; }
-
  private:
   score_t _boost;
 };

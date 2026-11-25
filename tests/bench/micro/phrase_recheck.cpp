@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_split.h>
 #include <benchmark/benchmark.h>
 #include <linux/perf_event.h>
@@ -25,6 +26,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -186,9 +188,11 @@ struct Index {
   irs::CompositeReader reader;
 };
 
+constinit std::array<std::unique_ptr<Index>, std::size(kDictionaries)>
+  gIndexes{};
+
 const Index& IndexOf(size_t dictionary) {
-  static std::vector<std::unique_ptr<Index>> indexes(std::size(kDictionaries));
-  auto& index = indexes[dictionary];
+  auto& index = gIndexes[dictionary];
   if (index) {
     return *index;
   }
@@ -606,6 +610,10 @@ bool RegisterAll() {
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
+  absl::Cleanup shutdown = [] {
+    gIndexes = {};
+    irs::DuckDBEngine::Instance().Shutdown();
+  };
   irs::InitOptimizeRules();
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {

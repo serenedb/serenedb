@@ -27,6 +27,7 @@
 #include "iresearch/search/detail/column_collector.hpp"
 #include "iresearch/search/detail/resolve.hpp"
 #include "iresearch/search/detail/scored_context.hpp"
+#include "iresearch/search/queries/term_state.hpp"
 #include "iresearch/search/scorers/score_args.hpp"
 #include "iresearch/search/scorers/score_provider.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
@@ -44,32 +45,27 @@ inline AttributeProvider& NoAttributes() noexcept {
 
 inline const FieldMeta& NoField() noexcept { return FieldMeta::kEmpty; }
 
-inline bool AllDocsConstant(const ScoreArgs& args) noexcept {
-  return args.stats == nullptr || !ScoresPerDoc(args.scorer);
-}
-
-inline ScoreFunction AllDocsScorer(const SubReader& segment,
-                                   const ScoreArgs& args) {
-  SDB_ASSERT(args.stats != nullptr);
-  return PrepareScore(args, segment, NoField(), NoAttributes());
-}
-
-inline score_t AllDocsScore(const SubReader& segment, const ScoreArgs& args) {
-  SDB_ASSERT(args.scorer != nullptr);
-  if (args.stats == nullptr) {
+inline score_t AllDocsScore(const SubReader& segment,
+                            const AllDocsClause& clause, PlanMemory& memory,
+                            ColumnArgsFetcher* fetcher) {
+  const auto& record = clause.stats;
+  if (record.stats == nullptr) {
     return 0;
   }
-  return AllDocsScorer(segment, args).Score();
+  return PrepareScore({.memory = &memory,
+                       .scorer = record.scorer,
+                       .stats = record.stats,
+                       .fetcher = fetcher,
+                       .boost = clause.boost},
+                      segment, NoField(), NoAttributes())
+    .Score();
 }
 
 template<typename Query>
 score_t AllDocsScoreOf(const Query& query, const ScoredCtx& ctx) {
-  const auto record = query.Stats(ctx);
-  return AllDocsScore(query.Segment(), ScoreArgs{.memory = &ctx.memory,
-                                                 .scorer = record.scorer,
-                                                 .stats = record.stats,
-                                                 .fetcher = ctx.fetcher,
-                                                 .boost = query.Boost()});
+  return AllDocsScore(query.Segment(),
+                      {.boost = query.Boost(), .stats = query.Stats(ctx)},
+                      ctx.memory, ctx.fetcher);
 }
 
 inline score_t ConstantTermScore(const SubReader& segment,

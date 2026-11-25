@@ -1,0 +1,72 @@
+# ALTER TABLE | VIEW | SEQUENCE IF EXISTS ... OWNER TO changes the owner of an existing relation and skips a missing one.
+
+statement ok
+CREATE ROLE oie_mop;
+
+
+statement ok
+CREATE TABLE oie_clickclack (id int);
+
+
+statement ok
+CREATE VIEW oie_view AS SELECT 1 AS one;
+
+
+statement ok
+CREATE SEQUENCE oie_seq;
+
+
+statement ok
+ALTER TABLE IF EXISTS oie_clickclack OWNER TO oie_mop;
+
+
+statement ok
+ALTER VIEW IF EXISTS oie_view OWNER TO oie_mop;
+
+
+statement ok
+ALTER SEQUENCE IF EXISTS oie_seq OWNER TO oie_mop;
+
+
+query
+SELECT relname, pg_get_userbyid(relowner) AS owner FROM pg_class
+WHERE relname IN ('oie_clickclack', 'oie_view', 'oie_seq') ORDER BY relname;
+----
+relname	owner
+oie_clickclack	oie_mop
+oie_seq	oie_mop
+oie_view	oie_mop
+
+
+statement ok
+ALTER TABLE IF EXISTS oie_missing OWNER TO oie_mop;
+
+
+statement ok
+ALTER VIEW IF EXISTS oie_missing OWNER TO oie_mop;
+
+
+statement ok
+ALTER SEQUENCE IF EXISTS oie_missing OWNER TO oie_mop;
+
+
+statement error
+ALTER TABLE oie_missing OWNER TO oie_mop;
+----
+db error: ERROR: relation "oie_missing" does not exist
+
+
+statement ok
+DROP TABLE oie_clickclack;
+
+
+statement ok
+DROP VIEW oie_view;
+
+
+statement ok
+DROP SEQUENCE oie_seq;
+
+
+statement ok
+DROP ROLE oie_mop;

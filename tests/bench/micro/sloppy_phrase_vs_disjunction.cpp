@@ -654,29 +654,39 @@ Corpus BuildFarApartIndex() {
   return Corpus{.dir_path = std::move(tmp_root), .reader = std::move(rdr2)};
 }
 
-const Corpus& GetCorpus() {
-  static const Corpus corpus = BuildIndex();
-  return corpus;
+struct Corpora {
+  std::unique_ptr<const Corpus> europarl;
+  std::unique_ptr<const Corpus> synthetic;
+  std::unique_ptr<const Corpus> dense3;
+  std::unique_ptr<const Corpus> all_same;
+  std::unique_ptr<const Corpus> far_apart;
+};
+
+constinit Corpora gCorpora;
+
+const Corpus& Cached(std::unique_ptr<const Corpus>& slot, Corpus (*build)()) {
+  if (!slot) {
+    slot = std::make_unique<const Corpus>(build());
+  }
+  return *slot;
 }
 
+const Corpus& GetCorpus() { return Cached(gCorpora.europarl, &BuildIndex); }
+
 const Corpus& GetSyntheticCorpus() {
-  static const Corpus corpus = BuildSyntheticIndex();
-  return corpus;
+  return Cached(gCorpora.synthetic, &BuildSyntheticIndex);
 }
 
 const Corpus& GetDense3Corpus() {
-  static const Corpus corpus = BuildDense3Index();
-  return corpus;
+  return Cached(gCorpora.dense3, &BuildDense3Index);
 }
 
 const Corpus& GetAllSameCorpus() {
-  static const Corpus corpus = BuildAllSameIndex();
-  return corpus;
+  return Cached(gCorpora.all_same, &BuildAllSameIndex);
 }
 
 const Corpus& GetFarApartCorpus() {
-  static const Corpus corpus = BuildFarApartIndex();
-  return corpus;
+  return Cached(gCorpora.far_apart, &BuildFarApartIndex);
 }
 
 irs::ByPhrase MakeSlopPhrase(std::string_view t0, std::string_view t1,
@@ -1449,17 +1459,12 @@ void RegisterAll() {
 
 static int Main(int argc, char** argv) {
   benchmark::Initialize(&argc, argv);
-  // iresearch indexes require a process-wide duckdb::DatabaseInstance,
-  // passed to IndexWriter::Make and CompositeReader. The
-  // corpora are built lazily inside the benchmark lambdas, so the engine
-  // must be up before RunSpecifiedBenchmarks. Not torn down here: the
-  // cached Corpus statics (reader + directory) outlive main and touch the
-  // db in their destructors, so the instance must survive into the
-  // static-destruction phase.
   irs::DuckDBEngine::Instance().Initialize();
   RegisterAll();
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
+  gCorpora = {};
+  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
 

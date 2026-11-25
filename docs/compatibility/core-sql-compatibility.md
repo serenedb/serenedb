@@ -945,6 +945,16 @@ PostgreSQL's array-to-text conversion leaves the quote unescaped instead:
 
 <SqlLogicTest id="compatibility/postgresql_comparisons_pgscan/example_002" />
 
+An array or a row cast to text, and the functions that turn their arguments into text (`concat`, `concat_ws`, `format` and `array_to_string`), use SereneDB's text form: brackets and spaces for arrays, `true` and `false` for booleans, and the netmask for `inet` values. PostgreSQL writes `{1,2}`, `(t,1)`, `t` and `10.0.0.1` there. Rows sent to a client are not affected: a client receives PostgreSQL's text form for every type.
+
+<SqlLogicTest id="sql/dialect/postgresql_compatibility/text_forms" />
+
+### Integers Mixed with `real`
+
+An integer combined with a `real` value is computed in `real`, where PostgreSQL computes it in `double precision`, so an integer beyond 2^24 loses precision in such a comparison or sum. Cast one operand to `double precision` to compare or add as PostgreSQL does:
+
+<SqlLogicTest id="sql/dialect/postgresql_compatibility/integer_and_real" />
+
 ### Functions
 
 #### `regexp_extract` Function

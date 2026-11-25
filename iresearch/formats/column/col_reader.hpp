@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/serialization_traits.hpp>
+#include <duckdb/main/database.hpp>
 #include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 #include <memory>
 #include <span>
@@ -33,6 +34,7 @@
 #include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
@@ -41,13 +43,10 @@
 
 namespace irs {
 
-class NormColumnReader;
-
 inline constexpr std::string_view kFormatExt = "col";
 
 inline constexpr duckdb::field_id_t kColFieldColumns = 0;
 inline constexpr duckdb::field_id_t kColFieldNormColumns = 1;
-inline constexpr duckdb::field_id_t kColFieldBlockSize = 2;
 inline constexpr duckdb::field_id_t kColFieldRowGroupStarts = 3;
 
 inline std::string FileName(std::string_view segment_name) {
@@ -57,7 +56,6 @@ inline std::string FileName(std::string_view segment_name) {
 struct ColFooter {
   std::vector<ColumnMeta> columns;
   std::vector<NormColumnSpec> norms;
-  uint64_t block_size = DEFAULT_BLOCK_ALLOC_SIZE;
   std::vector<uint64_t> row_group_starts;
 };
 
@@ -94,9 +92,6 @@ class ColReader final {
     return _base ? _base->File() : _file.get();
   }
   duckdb::DatabaseInstance& Database() const noexcept { return *_db; }
-  duckdb::idx_t BlockAllocSize() const noexcept {
-    return _base ? _base->BlockAllocSize() : _ctx.GetBlockAllocSize();
-  }
   std::span<const uint64_t> RowGroupStarts() const noexcept {
     return _base ? _base->RowGroupStarts() : _row_group_starts;
   }

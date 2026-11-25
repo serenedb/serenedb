@@ -129,11 +129,11 @@ statement ok
 CREATE INDEX index_t ON t USING inverted(r test_english);
 
 
-statement async ok
+statement async ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 INSERT INTO t VALUES ('foo'), ('bar');
 
 
-statement async ok
+statement async ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
 INSERT INTO t VALUES ('baz'), ('qux');
 
 

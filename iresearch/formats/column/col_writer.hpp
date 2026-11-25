@@ -22,16 +22,19 @@
 
 #include <absl/functional/function_ref.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/serializer/buffered_file_writer.hpp>
 #include <duckdb/common/types/vector.hpp>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 #include <yaclib/async/future.hpp>
 
+#include "iresearch/formats/ann_build_env.hpp"
 #include "iresearch/formats/ann_writer.hpp"
 #include "iresearch/formats/column/col_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
@@ -40,6 +43,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/formats/index/idx_writer.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
@@ -47,14 +51,12 @@
 
 namespace irs {
 
-class IdxWriter;
-struct AnnBuildEnv;
-
 AnnFlushBound AnnBound(const AnnInfo& info, uint64_t rows);
 
 class ColWriter final {
  public:
-  ColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker);
+  ColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
+            WriteTier tier = WriteTier::Flush);
   ~ColWriter();
 
   ColWriter(const ColWriter&) = delete;
@@ -89,10 +91,7 @@ class ColWriter final {
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type);
 
   ColumnWriter& OpenColumn(field_id id, duckdb::LogicalType type,
-                           bool skip_validity, uint32_t row_group_size,
-                           duckdb::CompressionType compression =
-                             duckdb::CompressionType::COMPRESSION_AUTO,
-                           DistinctStats distinct = DistinctStats::None);
+                           ColumnWriterOptions options);
 
   AnnWriter& AttachAnn(field_id column_id, AnnInfo info);
 
@@ -132,17 +131,21 @@ class ColWriter final {
     std::unique_ptr<AnnWriter> writer;
   };
 
+  struct ColumnEntry {
+    std::unique_ptr<ColumnWriter> writer;
+    ColumnMeta meta;
+  };
+
+  static void Close(ColumnEntry& entry);
+
   void EnsureOut();
   NormColumnWriter& AddNormColumn(field_id id, uint32_t row_group_size);
   bool Empty() const noexcept;
-  ColumnWriter& OpenColumnInternal(field_id id, duckdb::LogicalType type,
-                                   bool skip_validity, uint32_t row_group_size,
-                                   duckdb::CompressionType forced,
-                                   DistinctStats distinct);
 
   FileTracker& _tracker;
   std::string _filename;
   duckdb::DatabaseInstance* _db;
+  WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
   duckdb::TempBufferPoolReservation _own_budget{EmptyBudget()};
@@ -150,12 +153,12 @@ class ColWriter final {
   std::unique_ptr<duckdb::BufferedFileWriter> _out;
   std::unique_ptr<ColReader> _reader;
   std::unique_ptr<WriteContext> _write_ctx;
-  std::vector<std::unique_ptr<ColumnWriter>> _columns;
-  irs::containers::FlatHashMap<field_id, ColumnWriter*> _by_id;
+  std::vector<ColumnEntry> _columns;
+  irs::containers::FlatHashMap<field_id, size_t> _by_id;
   std::vector<std::unique_ptr<NormColumnWriter>> _norms;
   irs::containers::FlatHashMap<field_id, NormColumnWriter*> _norm_by_id;
-  std::vector<std::unique_ptr<AnnEntry>> _ann_writers;
-  irs::containers::FlatHashMap<field_id, AnnEntry*> _ann_by_id;
+  std::vector<AnnEntry> _ann_writers;
+  irs::containers::FlatHashMap<field_id, size_t> _ann_by_id;
   std::vector<uint64_t> _row_group_starts;
   bool _committed = false;
   bool _deferred = false;

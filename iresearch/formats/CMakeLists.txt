@@ -1,13 +1,40 @@
 target_sources(
     iresearch
     PRIVATE
+        ann_build_env.cpp
+        column/codecs/auto.cpp
+        column/codecs/bytes/lz4.cpp
+        column/codecs/bytes/segment_dictionary.cpp
+        column/codecs/bytes/zstd.cpp
+        column/codecs/bytes/zxc.cpp
+        column/codecs/compression_function.cpp
+        column/codecs/constant.cpp
+        column/codecs/numeric/alp.cpp
+        column/codecs/numeric/alprd.cpp
+        column/codecs/numeric/numeric.cpp
+        column/codecs/registry.cpp
+        column/codecs/text/fsst_front.cpp
+        column/codecs/text/fsst_plus.cpp
+        column/codecs/text/lz4.cpp
+        column/codecs/text/onpair.cpp
+        column/codecs/text/segment_buffer.cpp
+        column/codecs/text/segment_rows.cpp
+        column/codecs/text/string_scan.cpp
+        column/codecs/text/values.cpp
+        column/codecs/text/zstd.cpp
+        column/codecs/text/zxc.cpp
+        column/codecs/uncompressed.cpp
+        column/codecs/validity/empty_validity.cpp
+        column/codecs/validity/roaring.cpp
         column/col_reader.cpp
         column/col_writer.cpp
+        column/column_meta.cpp
         column/column_patch.cpp
         column/column_reader.cpp
+        column/column_reader_point.cpp
         column/column_writer.cpp
         column/hot_column_reader.cpp
-        column/internal/write_context.cpp
+        column/list_ingest.cpp
         column/merge.cpp
         column/norm_column_reader.cpp
         column/norm_writer.cpp

@@ -232,8 +232,8 @@ class SegmentRemoves {
     KeyHalf<uint64_t> file_half{files, ctx};
     KeyHalf<int64_t> row_half{key->StructField(1), ctx};
     _rows = &key->StructField(1);
-    SDB_ASSERT(_rows->DataRgCount() == files.DataRgCount());
-    for (size_t block = 0; block != files.DataRgCount(); ++block) {
+    SDB_ASSERT(_rows->DataBlocks().size() == files.DataBlocks().size());
+    for (size_t block = 0; block != files.DataBlocks().size(); ++block) {
       const auto first = files.DataBlockFirstRow(block);
       const auto& meta = files.DataBlocks()[block];
       const auto [min, max] = Bounds<uint64_t>(meta.statistics);

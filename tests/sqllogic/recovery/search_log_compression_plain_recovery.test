@@ -1,0 +1,145 @@
+control substitution on
+
+statement ok
+CREATE TABLE lp (id BIGINT PRIMARY KEY, a TEXT)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+CREATE TABLE ls (id BIGINT PRIMARY KEY, a TEXT)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO lp SELECT i, repeat('a', 100) || i::TEXT FROM range(0, 5000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) lp;
+
+
+statement ok
+INSERT INTO lp VALUES (5000, 'x');
+
+
+statement ok
+INSERT INTO lp SELECT i, repeat('b', 100) || i::TEXT FROM range(5001, 8000) t(i);
+
+
+statement ok
+UPDATE lp SET a = 'y' WHERE id = 7;
+
+
+statement ok
+UPDATE lp SET a = 'z' WHERE id = 5000;
+
+
+statement ok
+UPDATE lp SET a = repeat('u', 100) || id::TEXT WHERE id >= 1000 AND id < 4000;
+
+
+statement ok
+INSERT INTO ls VALUES (1, 's');
+
+
+statement ok
+UPDATE ls SET a = 't' WHERE id = 1;
+
+
+query
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE a = repeat('a', 100) || id::TEXT) AS a_rows,
+  count(*) FILTER (WHERE a = repeat('b', 100) || id::TEXT) AS b_rows,
+  count(*) FILTER (WHERE a = repeat('u', 100) || id::TEXT) AS u_rows
+FROM lp;
+----
+n	a_rows	b_rows	u_rows
+8000	1999	2999	3000
+
+
+query
+SELECT id, a FROM lp WHERE length(a) = 1
+UNION ALL
+SELECT id, a FROM ls
+ORDER BY id;
+----
+id	a
+1	t
+7	y
+5000	z
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_log
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE a = repeat('a', 100) || id::TEXT) AS a_rows,
+  count(*) FILTER (WHERE a = repeat('b', 100) || id::TEXT) AS b_rows,
+  count(*) FILTER (WHERE a = repeat('u', 100) || id::TEXT) AS u_rows
+FROM lp;
+----
+n	a_rows	b_rows	u_rows
+8000	1999	2999	3000
+
+
+connection after_log
+query
+SELECT id, a FROM lp WHERE length(a) = 1
+UNION ALL
+SELECT id, a FROM ls
+ORDER BY id;
+----
+id	a
+1	t
+7	y
+5000	z
+
+
+connection after_log
+statement ok
+CHECKPOINT;
+
+
+connection after_log
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_log
+statement error connection closed
+SELECT 1;
+
+
+connection after_snapshot
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE a = repeat('a', 100) || id::TEXT) AS a_rows,
+  count(*) FILTER (WHERE a = repeat('b', 100) || id::TEXT) AS b_rows,
+  count(*) FILTER (WHERE a = repeat('u', 100) || id::TEXT) AS u_rows
+FROM lp;
+----
+n	a_rows	b_rows	u_rows
+8000	1999	2999	3000
+
+
+connection after_snapshot
+query
+SELECT id, a FROM lp WHERE length(a) = 1
+UNION ALL
+SELECT id, a FROM ls
+ORDER BY id;
+----
+id	a
+1	t
+7	y
+5000	z

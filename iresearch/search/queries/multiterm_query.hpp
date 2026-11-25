@@ -51,8 +51,6 @@ class MultiTermQuery : public QueryBuilderImpl<MultiTermQuery> {
 
   score_t Boost() const noexcept final { return _boost; }
 
-  void SetBoost(score_t value) noexcept final { _boost = value; }
-
  private:
   MultiTermState _state;
   score_t _boost;

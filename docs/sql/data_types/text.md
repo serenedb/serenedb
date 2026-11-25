@@ -30,6 +30,8 @@ For example, to apply zstd compression, run:
 
 <SqlLogicTest id="sql/data_types/text/example_002" />
 
+The codecs a text column takes, and the level some of them accept, are listed in [Columnstore Storage & Compression](../indexes/inverted/columnstore.md#codecs).
+
 ## Text Type Values
 
 Values of the text type are character strings, also known as string values or simply strings. At runtime, string values are constructed in one of the following ways:

@@ -905,7 +905,7 @@ void OpenColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
                    std::unique_ptr<ColWriter>& col_writer,
                    const IndexFieldOptions* field_options,
                    HnswBases* hnsw_bases, MemoryBudget& budget) {
-  col_writer = std::make_unique<ColWriter>(db, tracker);
+  col_writer = std::make_unique<ColWriter>(db, tracker, WriteTier::Merge);
   col_writer->SetBudget(budget);
   col_writer->SetFieldOptions(field_options);
   col_writer->SetHnswBases(hnsw_bases);

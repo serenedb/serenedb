@@ -174,6 +174,10 @@ for name in ("wdm_kw3", "wdm_kw2", "wdm_kw4", "wdm_kw3_pos"):
                     f"SELECT id FROM wdm WHERE {truth} OR id = 7")
         t.same_rows(f"SELECT id FROM {name}_idx WHERE NOT ({pred})",
                     f"SELECT id FROM wdm WHERE NOT ({truth})")
+    t.section(f"Whole values, {DICTS[name]}, under OR, probed for a few ids.")
+    for pred, truth in predicates("msg", whole)[::3]:
+        t.same_rows(f"SELECT id FROM {name}_idx WHERE ({pred} OR id < 0) AND id IN (3, 70, 444, 1201)",
+                    f"SELECT id FROM wdm WHERE ({truth} OR id < 0) AND id IN (3, 70, 444, 1201)")
     t.section(f"Whole values, {DICTS[name]}, two patterns.")
     preds = predicates("msg", whole)
     for (p1, t1), (p2, t2) in zip(preds[::4], preds[1::4]):

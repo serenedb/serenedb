@@ -1,23 +1,5 @@
 control substitution on
 
-# Baseline: every codec name accepted by ParseCompressionName (server/catalog/
-# index.cpp, kMap) must (1) be picked when forced via `compression = '<name>'`
-# at CREATE INDEX time, (2) round-trip its data correctly, and (3) survive a
-# serened restart. This test is the canary for the cs writer's codec-->segment
-# plumbing (column_writer.cpp + the FlushSegment / BlockManager callback hooks
-# on ColumnDataCheckpointData). Any future codec change in that path must keep
-# these green.
-#
-# Names that are NOT in kMap (constant, dictionary, fsst, chimp, patas) are
-# also covered here as `statement error` so a future re-add doesn't quietly
-# regress to an async commit failure. Each table-backed codec is also queried
-# *before* the crash to catch write-time / readback-without-restart bugs, then
-# requeried after `connection after_crash` to catch persistence bugs.
-#
-# zstd's extra-page path (one or more 256 KB blocks beyond the main segment,
-# block_ids embedded inline as next-page pointers) is exercised by the
-# 4096-row varchar case at the tail.
-
 statement ok
 CREATE TEXT SEARCH DICTIONARY cs_eng AS
     split_text() | normalize_tokens('en_US.UTF-8', accent := false)
@@ -72,12 +54,8 @@ n	s
 
 
 # --- 4. DICTIONARY / FSST (catalog rejects: superseded by dict_fsst) ----
-# At storage_version VERSION_NUMBER_UPPER the DuckDB analyzers for both
-# COMPRESSION_DICTIONARY and COMPRESSION_FSST return nullptr from
-# init_analyze (dict_fsst replaces them). kMap omits both names so the
-# catalog gate rejects them with an "unknown compression" parse error;
-# users wanting either behavior go through `compression = 'dict_fsst'`
-# instead (covered later in this file).
+# Both names are rejected as an unknown compression; `compression =
+# 'dict_fsst'` replaces them (covered later in this file).
 statement error
 CREATE INDEX cs_dict_idx ON cs_unc USING inverted(txt cs_eng)
   INCLUDE (pk, v included (compression = 'dictionary'));
@@ -108,13 +86,9 @@ n	s
 # --- 6. (FSST slot intentionally empty -- see section 4) ----------------
 
 
-# --- 7-8. CHIMP / PATAS  (deprecated upstream; names not in kMap) -------
-# DuckDB's Chimp* and Patas* init_compression bodies throw
-# InternalException("...has been deprecated, can no longer be used to
-# compress data"). init_analyze still exists, so a static
-# TryGetCompressionFunction would falsely accept the name. kMap omits
-# both, so the parse-time gate rejects them as "unknown compression"
-# before the writer ever sees the choice.
+# --- 7-8. CHIMP / PATAS  (deprecated upstream) --------------------------
+# Both names are rejected as an unknown compression before anything is
+# written.
 statement error
 CREATE INDEX cs_chimp_idx ON cs_unc USING inverted(txt cs_eng)
   INCLUDE (pk, v included (compression = 'chimp'));

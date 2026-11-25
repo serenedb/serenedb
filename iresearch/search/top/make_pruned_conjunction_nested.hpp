@@ -116,12 +116,13 @@ inline bool ConstantTerms(const QueryBuilder& child, const SubReader& segment,
     if (entry.stats == nullptr) {
       return false;
     }
-    const auto score = irs::detail::AllDocsScore(
-      segment, irs::detail::ScoreArgs{.memory = &ctx.memory,
-                                      .scorer = scorer,
-                                      .stats = entry.stats,
-                                      .fetcher = &ctx.fetcher,
-                                      .boost = entry.boost * boost});
+    const auto score = irs::detail::ConstantTermOf(
+      segment, *field,
+      irs::detail::ScoreArgs{.memory = &ctx.memory,
+                             .scorer = scorer,
+                             .stats = entry.stats,
+                             .fetcher = &ctx.fetcher,
+                             .boost = entry.boost * boost});
     bound =
       merge == ScoreMergeType::Max ? std::max(bound, score) : bound + score;
   }

@@ -26,6 +26,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <simdjson.h>
 
@@ -76,13 +77,6 @@ enum class JsonOutputType {
                   ERR_DETAIL(simdjson::error_message(error)));
 }
 
-simdjson::ondemand::parser JsonValueParser() {
-  simdjson::ondemand::parser parser;
-  parser.allow_trailing_commas = true;
-  parser.allow_inf_and_nan = true;
-  return parser;
-}
-
 simdjson::padded_string_view PadJson(std::string_view json,
                                      std::string& buffer) {
   buffer.assign(json);
@@ -101,10 +95,116 @@ T Unwrap(simdjson::simdjson_result<T>&& result) {
   return value;
 }
 
+std::string_view BuilderView(simdjson::builder::string_builder& builder) {
+  std::string_view view;
+  if (const auto error = builder.view().get(view); error != simdjson::SUCCESS) {
+    ThrowInvalidJson(error);
+  }
+  return view;
+}
+
+bool IsNanOrInfinity(std::string_view token) {
+  token = absl::StripTrailingAsciiWhitespace(token);
+  if (token.starts_with('-')) {
+    token.remove_prefix(1);
+  }
+  return absl::EqualsIgnoreCase(token, "nan") ||
+         absl::EqualsIgnoreCase(token, "inf") ||
+         absl::EqualsIgnoreCase(token, "infinity");
+}
+
+std::string_view RawToken(simdjson::ondemand::value& value) {
+  return value.raw_json_token();
+}
+
+std::string_view RawToken(simdjson::ondemand::document& doc) {
+  return Unwrap(doc.raw_json_token());
+}
+
+template<typename T>
+simdjson::ondemand::json_type TypeOf(T& value) {
+  const auto type = Unwrap(value.type());
+  if ((type == simdjson::ondemand::json_type::null ||
+       type == simdjson::ondemand::json_type::unknown) &&
+      IsNanOrInfinity(RawToken(value))) {
+    return simdjson::ondemand::json_type::number;
+  }
+  return type;
+}
+
+void RelaxTrailingCommas(char* data, size_t size, std::vector<size_t>& commas) {
+  commas.clear();
+  bool in_string = false;
+  char previous = '\0';
+  size_t comma = size;
+  for (size_t i = 0; i < size; ++i) {
+    const char c = data[i];
+    if (in_string) {
+      if (c == '\\') {
+        ++i;
+      } else if (c == '"') {
+        in_string = false;
+        previous = c;
+      }
+      continue;
+    }
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+      continue;
+    }
+    if ((c == ']' || c == '}') && comma != size) {
+      data[comma] = ' ';
+      commas.push_back(comma);
+    }
+    comma = size;
+    if (c == ',' && previous != '\0' && previous != '[' && previous != '{' &&
+        previous != ',' && previous != ':') {
+      comma = i;
+    }
+    in_string = c == '"';
+    previous = c;
+  }
+}
+
 class JsonParser {
  public:
   void PrepareJson(std::string_view json) {
+    _input = json;
+    _commas.clear();
+    _retried = false;
     _padded_input = PadJson(json, _buffer);
+  }
+
+  void Retry() {
+    _retried = true;
+    RelaxTrailingCommas(_buffer.data(), _input.size(), _commas);
+    _relax_first = !_commas.empty();
+  }
+
+  bool RelaxFirst() const { return _relax_first; }
+
+  std::string_view Original(std::string_view view) const {
+    const auto offset = Offset(view);
+    if (_commas.empty() || offset >= _input.size()) {
+      return view;
+    }
+    return _input.substr(offset, view.size());
+  }
+
+  std::string_view Token(std::string_view token) const {
+    const auto offset = Offset(token);
+    if (_commas.empty() || offset >= _input.size()) {
+      return token;
+    }
+    auto end = offset + token.size();
+    if (const auto comma = absl::c_lower_bound(_commas, offset);
+        comma != _commas.end() && *comma < end) {
+      end = *comma;
+    }
+    return _input.substr(offset, end - offset);
+  }
+
+  simdjson::simdjson_result<simdjson::ondemand::document> Iterate() {
+    return _parser.iterate(_padded_input);
   }
 
   simdjson::ondemand::document GetJsonDocument() {
@@ -142,17 +242,17 @@ class JsonParser {
   std::string_view ExtractByIndex(int64_t index) {
     simdjson::ondemand::value value;
     auto doc = GetJsonDocument();
-    if (doc.get_value().get(value)) {
+    if (!Found(doc.get_value().get(value))) {
       return {};
     }
     if (Unwrap(value.type()) != simdjson::ondemand::json_type::array) {
       return {};
     }
     simdjson::ondemand::array arr;
-    if (value.get_array().get(arr)) {
+    if (!Found(value.get_array().get(arr))) {
       return {};
     }
-    if (GetByIndex(arr, index).get(value)) {
+    if (!Found(GetByIndex(arr, index).get(value))) {
       return {};
     }
     return ProcessOutput<Output>(value);
@@ -162,14 +262,14 @@ class JsonParser {
   std::string_view ExtractByField(std::string_view field) {
     simdjson::ondemand::value value;
     auto doc = GetJsonDocument();
-    if (doc.get_value().get(value)) {
+    if (!Found(doc.get_value().get(value))) {
       return {};
     }
     if (Unwrap(value.type()) != simdjson::ondemand::json_type::object) {
       return {};
     }
     auto res = value.find_field(field);
-    if (res.get(value)) {
+    if (!Found(res.get(value))) {
       return {};
     }
     return ProcessOutput<Output>(value);
@@ -182,7 +282,7 @@ class JsonParser {
     if (path.empty()) {
       return ProcessOutput<Output>(doc);
     }
-    if (doc.get_value().get(value)) {
+    if (!Found(doc.get_value().get(value))) {
       return {};
     }
     for (const auto& key : path) {
@@ -193,15 +293,15 @@ class JsonParser {
           return {};
         }
         simdjson::ondemand::array arr;
-        if (value.get_array().get(arr)) {
+        if (!Found(value.get_array().get(arr))) {
           return {};
         }
-        if (GetByIndex(arr, index).get(value)) {
+        if (!Found(GetByIndex(arr, index).get(value))) {
           return {};
         }
       } else if (type == simdjson::ondemand::json_type::object) {
         auto res = value.find_field(key);
-        if (res.get(value)) {
+        if (!Found(res.get(value))) {
           return {};
         }
       } else {
@@ -212,10 +312,26 @@ class JsonParser {
   }
 
  private:
+  bool Found(simdjson::error_code error) const {
+    switch (error) {
+      case simdjson::SUCCESS:
+        return true;
+      case simdjson::NO_SUCH_FIELD:
+      case simdjson::OUT_OF_BOUNDS:
+      case simdjson::INDEX_OUT_OF_BOUNDS:
+        return false;
+      default:
+        if (!_retried) {
+          ThrowInvalidJson(error);
+        }
+        return false;
+    }
+  }
+
   template<JsonOutputType Output, typename T>
   std::string_view ProcessOutput(T& value) {
     if constexpr (Output == JsonOutputType::TEXT) {
-      const auto type = Unwrap(value.type());
+      const auto type = TypeOf(value);
       if (type == simdjson::ondemand::json_type::string) {
         return Unwrap(value.get_string());
       }
@@ -224,16 +340,39 @@ class JsonParser {
       }
     }
     std::string_view str;
-    if (simdjson::to_json_string(value).get(str)) {
+    if (!Found(simdjson::to_json_string(value).get(str))) {
       return {};
     }
-    return str;
+    return Original(str);
   }
 
-  simdjson::ondemand::parser _parser = JsonValueParser();
+  size_t Offset(std::string_view view) const {
+    return reinterpret_cast<uintptr_t>(view.data()) -
+           reinterpret_cast<uintptr_t>(_buffer.data());
+  }
+
+  simdjson::ondemand::parser _parser;
   std::string _buffer;
+  std::string_view _input;
   simdjson::padded_string_view _padded_input;
+  std::vector<size_t> _commas;
+  bool _retried = false;
+  bool _relax_first = false;
 };
+
+template<typename Read>
+decltype(auto) ReadJson(JsonParser& parser, std::string_view json,
+                        Read&& read) {
+  parser.PrepareJson(json);
+  if (!parser.RelaxFirst()) {
+    try {
+      return read();
+    } catch (const irs::SqlException&) {
+    }
+  }
+  parser.Retry();
+  return read();
+}
 
 // ---------------------------------------------------------------------------
 // Validation (::json cast) -- ported from PgJsonInFunction
@@ -320,8 +459,9 @@ void JsonExtractIndexFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json,
         int64_t index) -> duckdb::optional<duckdb::string_t> {
-      parser.PrepareJson({json.GetData(), json.GetSize()});
-      auto str = parser.ExtractByIndex<JsonOutputType::JSON>(index);
+      auto str = ReadJson(parser, {json.GetData(), json.GetSize()}, [&] {
+        return parser.ExtractByIndex<JsonOutputType::JSON>(index);
+      });
       if (str.empty() && !str.data()) {
         return duckdb::nullopt;
       }
@@ -338,9 +478,10 @@ void JsonExtractFieldFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json,
         duckdb::string_t field) -> duckdb::optional<duckdb::string_t> {
-      parser.PrepareJson({json.GetData(), json.GetSize()});
-      auto str = parser.ExtractByField<JsonOutputType::JSON>(
-        {field.GetData(), field.GetSize()});
+      auto str = ReadJson(parser, {json.GetData(), json.GetSize()}, [&] {
+        return parser.ExtractByField<JsonOutputType::JSON>(
+          {field.GetData(), field.GetSize()});
+      });
       if (str.empty() && !str.data()) {
         return duckdb::nullopt;
       }
@@ -361,8 +502,9 @@ void JsonExtractIndexTextFunction(duckdb::DataChunk& args,
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json,
         int64_t index) -> duckdb::optional<duckdb::string_t> {
-      parser.PrepareJson({json.GetData(), json.GetSize()});
-      auto str = parser.ExtractByIndex<JsonOutputType::TEXT>(index);
+      auto str = ReadJson(parser, {json.GetData(), json.GetSize()}, [&] {
+        return parser.ExtractByIndex<JsonOutputType::TEXT>(index);
+      });
       if (str.empty() && !str.data()) {
         return duckdb::nullopt;
       }
@@ -380,9 +522,10 @@ void JsonExtractFieldTextFunction(duckdb::DataChunk& args,
     args.data[0], args.data[1], result, args.size(),
     [&](duckdb::string_t json,
         duckdb::string_t field) -> duckdb::optional<duckdb::string_t> {
-      parser.PrepareJson({json.GetData(), json.GetSize()});
-      auto str = parser.ExtractByField<JsonOutputType::TEXT>(
-        {field.GetData(), field.GetSize()});
+      auto str = ReadJson(parser, {json.GetData(), json.GetSize()}, [&] {
+        return parser.ExtractByField<JsonOutputType::TEXT>(
+          {field.GetData(), field.GetSize()});
+      });
       if (str.empty() && !str.data()) {
         return duckdb::nullopt;
       }
@@ -465,8 +608,8 @@ void JsonExtractPathImpl(duckdb::DataChunk& args, duckdb::ExpressionState&,
     }
 
     {
-      parser.PrepareJson({json.GetData(), json.GetSize()});
-      auto str = parser.ExtractByPath<Output>(path);
+      auto str = ReadJson(parser, {json.GetData(), json.GetSize()},
+                          [&] { return parser.ExtractByPath<Output>(path); });
       if (str.empty() && !str.data()) {
         result_validity.SetInvalid(row);
       } else {
@@ -496,7 +639,7 @@ void JsonExtractPathTextFunction(duckdb::DataChunk& args,
 
 void JsonTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                         duckdb::Vector& result) {
-  auto parser = JsonValueParser();
+  simdjson::ondemand::parser parser;
   std::string buffer;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
@@ -504,6 +647,14 @@ void JsonTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       std::string_view sv(input.GetData(), input.GetSize());
       auto doc = parser.iterate(PadJson(sv, buffer));
       auto tp = doc.type();
+      std::string_view token;
+      if (!tp.error() &&
+          (tp.value() == simdjson::ondemand::json_type::null ||
+           tp.value() == simdjson::ondemand::json_type::unknown) &&
+          doc.raw_json_token().get(token) == simdjson::SUCCESS &&
+          IsNanOrInfinity(token)) {
+        tp = simdjson::ondemand::json_type::number;
+      }
       const char* name = "null";
       if (!tp.error()) {
         switch (tp.value()) {
@@ -534,14 +685,16 @@ void JsonTypeofFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
 // json_strip_nulls -- ported from PgJsonStripNulls
 // ---------------------------------------------------------------------------
 
-void WriteValue(simdjson::ondemand::value val, std::string& out);
+void WriteValue(const JsonParser& parser, simdjson::ondemand::value val,
+                std::string& out);
 
-void WriteObject(simdjson::ondemand::object obj, std::string& out) {
+void WriteObject(const JsonParser& parser, simdjson::ondemand::object obj,
+                 std::string& out) {
   out += '{';
   bool first = true;
   for (auto field : obj) {
     auto val = Unwrap(field.value());
-    if (Unwrap(val.type()) == simdjson::ondemand::json_type::null) {
+    if (TypeOf(val) == simdjson::ondemand::json_type::null) {
       continue;
     }
     if (!first) {
@@ -552,12 +705,13 @@ void WriteObject(simdjson::ondemand::object obj, std::string& out) {
     out += Unwrap(field.escaped_key());
     out += '"';
     out += ':';
-    WriteValue(val, out);
+    WriteValue(parser, val, out);
   }
   out += '}';
 }
 
-void WriteArray(simdjson::ondemand::array arr, std::string& out) {
+void WriteArray(const JsonParser& parser, simdjson::ondemand::array arr,
+                std::string& out) {
   out += '[';
   bool first = true;
   for (auto elem : arr) {
@@ -565,50 +719,52 @@ void WriteArray(simdjson::ondemand::array arr, std::string& out) {
       out += ',';
     }
     first = false;
-    WriteValue(Unwrap(std::move(elem)), out);
+    WriteValue(parser, Unwrap(std::move(elem)), out);
   }
   out += ']';
 }
 
-void WriteValue(simdjson::ondemand::value val, std::string& out) {
-  switch (Unwrap(val.type())) {
+void WriteValue(const JsonParser& parser, simdjson::ondemand::value val,
+                std::string& out) {
+  switch (TypeOf(val)) {
     case simdjson::ondemand::json_type::object:
-      WriteObject(Unwrap(val.get_object()), out);
+      WriteObject(parser, Unwrap(val.get_object()), out);
       break;
     case simdjson::ondemand::json_type::array:
-      WriteArray(Unwrap(val.get_array()), out);
+      WriteArray(parser, Unwrap(val.get_array()), out);
       break;
     default:
-      out += val.raw_json_token();
+      out += parser.Token(val.raw_json_token());
       break;
   }
 }
 
 void JsonStripNullsFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                             duckdb::Vector& result) {
-  auto parser = JsonValueParser();
-  std::string buffer;
+  JsonParser parser;
+  std::string out;
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(),
     [&](duckdb::string_t input) -> duckdb::string_t {
-      std::string_view sv(input.GetData(), input.GetSize());
-      simdjson::ondemand::document doc;
-      if (parser.iterate(PadJson(sv, buffer)).get(doc) != simdjson::SUCCESS) {
-        THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                        ERR_MSG("invalid JSON"));
-      }
-      std::string out;
-      switch (Unwrap(doc.type())) {
-        case simdjson::ondemand::json_type::object:
-          WriteObject(Unwrap(doc.get_object()), out);
-          break;
-        case simdjson::ondemand::json_type::array:
-          WriteArray(Unwrap(doc.get_array()), out);
-          break;
-        default:
-          out += Unwrap(doc.raw_json_token());
-          break;
-      }
+      ReadJson(parser, {input.GetData(), input.GetSize()}, [&] {
+        out.clear();
+        simdjson::ondemand::document doc;
+        if (parser.Iterate().get(doc) != simdjson::SUCCESS) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                          ERR_MSG("invalid JSON"));
+        }
+        switch (TypeOf(doc)) {
+          case simdjson::ondemand::json_type::object:
+            WriteObject(parser, Unwrap(doc.get_object()), out);
+            break;
+          case simdjson::ondemand::json_type::array:
+            WriteArray(parser, Unwrap(doc.get_array()), out);
+            break;
+          default:
+            out += Unwrap(doc.raw_json_token());
+            break;
+        }
+      });
       return duckdb::StringVector::AddString(result, out);
     });
 }
@@ -656,12 +812,14 @@ std::string_view CheckText(std::string_view text) {
   return text;
 }
 
-JsonValue ReadValue(simdjson::ondemand::value value, bool unescape) {
-  const auto kind = KindOf(Unwrap(value.type()));
+JsonValue ReadValue(const JsonParser& parser, simdjson::ondemand::value value,
+                    bool unescape) {
+  const auto kind = KindOf(TypeOf(value));
   if (unescape && kind == JsonKind::String) {
     return {kind, CheckText(Unwrap(value.get_string()))};
   }
-  return {kind, absl::StripTrailingAsciiWhitespace(Unwrap(value.raw_json()))};
+  return {kind, parser.Original(absl::StripTrailingAsciiWhitespace(
+                  Unwrap(value.raw_json())))};
 }
 
 void SetString(duckdb::Vector& vector, duckdb::idx_t row,
@@ -692,9 +850,9 @@ struct JsonItem {
 };
 
 template<JsonSetFunction Function>
-void ExtractItems(simdjson::ondemand::document& doc,
+void ExtractItems(const JsonParser& parser, simdjson::ondemand::document& doc,
                   std::vector<JsonItem>& items) {
-  const auto kind = KindOf(Unwrap(doc.type()));
+  const auto kind = KindOf(TypeOf(doc));
   if constexpr (Function == JsonSetFunction::ArrayElements ||
                 Function == JsonSetFunction::ArrayElementsText) {
     constexpr std::string_view kName =
@@ -711,7 +869,7 @@ void ExtractItems(simdjson::ondemand::document& doc,
     for (auto element : Unwrap(doc.get_array())) {
       items.emplace_back(
         std::string_view{},
-        ReadValue(Unwrap(std::move(element)),
+        ReadValue(parser, Unwrap(std::move(element)),
                   Function == JsonSetFunction::ArrayElementsText));
     }
   } else {
@@ -737,7 +895,7 @@ void ExtractItems(simdjson::ondemand::document& doc,
       auto field = Unwrap(std::move(field_result));
       const auto key = CheckText(Unwrap(field.unescaped_key()));
       if constexpr (Function == JsonSetFunction::EachText) {
-        items.emplace_back(key, ReadValue(field.value(), true));
+        items.emplace_back(key, ReadValue(parser, field.value(), true));
       } else {
         items.emplace_back(key, JsonValue{});
       }
@@ -821,9 +979,11 @@ duckdb::OperatorResultType JsonSetFunctionImpl(duckdb::ExecutionContext&,
     if (!json.validity.RowIsValid(row)) {
       continue;
     }
-    state.parser.PrepareJson(AsView(jsons[row]));
-    auto doc = state.parser.GetJsonDocument();
-    ExtractItems<Function>(doc, state.items);
+    ReadJson(state.parser, AsView(jsons[row]), [&] {
+      state.items.clear();
+      auto doc = state.parser.GetJsonDocument();
+      ExtractItems<Function>(state.parser, doc, state.items);
+    });
   }
   output.SetChildCardinality(count);
   if (count == 0) {
@@ -892,13 +1052,13 @@ class RecordLayout {
 
   std::span<const RecordField> Fields() const { return _fields; }
 
-  void Scan(simdjson::ondemand::object object,
+  void Scan(const JsonParser& parser, simdjson::ondemand::object object,
             std::span<std::optional<JsonValue>> record) const {
     for (auto field_result : object) {
       auto field = Unwrap(std::move(field_result));
       const auto key = CheckText(Unwrap(field.unescaped_key()));
       if (const auto it = _positions.find(key); it != _positions.end()) {
-        record[it->second] = ReadValue(field.value(), true);
+        record[it->second] = ReadValue(parser, field.value(), true);
       }
     }
   }
@@ -1018,7 +1178,7 @@ class RecordWriter {
     }
     _escaped.clear();
     _escaped.escape_and_append_with_quotes(value.text);
-    return Unwrap(_escaped.view());
+    return BuilderView(_escaped);
   }
 
   duckdb::Value TextValue(std::string_view text,
@@ -1040,12 +1200,13 @@ class RecordWriter {
     if (field.kind == FieldKind::Struct && value.kind != JsonKind::Object) {
       ThrowCompositeMismatch(value.kind);
     }
-    _nested.PrepareJson(value.text);
-    auto doc = _nested.GetJsonDocument();
-    if (field.kind == FieldKind::List) {
-      return ListValue(Unwrap(doc.get_array()), field.type, field.name);
-    }
-    return StructValue(Unwrap(doc.get_object()), field.type);
+    return ReadJson(_nested, value.text, [&] {
+      auto doc = _nested.GetJsonDocument();
+      if (field.kind == FieldKind::List) {
+        return ListValue(Unwrap(doc.get_array()), field.type, field.name);
+      }
+      return StructValue(Unwrap(doc.get_object()), field.type);
+    });
   }
 
   duckdb::Value ListValue(simdjson::ondemand::array array,
@@ -1083,12 +1244,12 @@ class RecordWriter {
   duckdb::Value ElementValue(simdjson::ondemand::value element,
                              const duckdb::LogicalType& type,
                              std::string_view key) {
-    const auto value = KindOf(Unwrap(element.type()));
+    const auto value = KindOf(TypeOf(element));
     if (value == JsonKind::Null) {
       return duckdb::Value{type};
     }
     if (type.IsJSONType()) {
-      return TextValue(JsonText(ReadValue(element, true)), type);
+      return TextValue(JsonText(ReadValue(_nested, element, true)), type);
     }
     if (value == JsonKind::String) {
       return TextValue(CheckText(Unwrap(element.get_string())), type);
@@ -1105,8 +1266,9 @@ class RecordWriter {
       }
       return StructValue(Unwrap(element.get_object()), type);
     }
-    return TextValue(
-      absl::StripTrailingAsciiWhitespace(Unwrap(element.raw_json())), type);
+    return TextValue(_nested.Original(absl::StripTrailingAsciiWhitespace(
+                       Unwrap(element.raw_json()))),
+                     type);
   }
 
   duckdb::ClientContext& _context;
@@ -1150,7 +1312,7 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> InitJsonRecordState(
 
 void ParseRecords(simdjson::ondemand::document& doc, const RecordLayout& layout,
                   JsonRecordState& state) {
-  const auto kind = KindOf(Unwrap(doc.type()));
+  const auto kind = KindOf(TypeOf(doc));
   if (kind == JsonKind::Object) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -1162,13 +1324,13 @@ void ParseRecords(simdjson::ondemand::document& doc, const RecordLayout& layout,
   }
   for (auto element_result : Unwrap(doc.get_array())) {
     auto element = Unwrap(std::move(element_result));
-    if (KindOf(Unwrap(element.type())) != JsonKind::Object) {
+    if (KindOf(TypeOf(element)) != JsonKind::Object) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
         ERR_MSG(
           "argument of json_populate_recordset must be an array of objects"));
     }
-    layout.Scan(Unwrap(element.get_object()), state.AddRecord());
+    layout.Scan(state.parser, Unwrap(element.get_object()), state.AddRecord());
   }
 }
 
@@ -1201,9 +1363,12 @@ duckdb::OperatorResultType JsonPopulateRecordsetFunction(
     if (!json.validity.RowIsValid(index)) {
       continue;
     }
-    state.parser.PrepareJson(AsView(jsons[index]));
-    auto doc = state.parser.GetJsonDocument();
-    ParseRecords(doc, layout, state);
+    ReadJson(state.parser, AsView(jsons[index]), [&] {
+      state.fields.clear();
+      state.records = 0;
+      auto doc = state.parser.GetJsonDocument();
+      ParseRecords(doc, layout, state);
+    });
   }
   if (count == 0) {
     output.SetChildCardinality(0);
@@ -1305,13 +1470,15 @@ void JsonPopulateRecordFunction(duckdb::DataChunk& args,
     const auto index = json.sel->get_index(row);
     const bool has_json = json.validity.RowIsValid(index);
     if (has_json) {
-      local.parser.PrepareJson(AsView(jsons[index]));
-      auto doc = local.parser.GetJsonDocument();
-      const auto kind = KindOf(Unwrap(doc.type()));
-      if (kind != JsonKind::Object) {
-        ThrowCompositeMismatch(kind);
-      }
-      layout.Scan(Unwrap(doc.get_object()), local.record);
+      ReadJson(local.parser, AsView(jsons[index]), [&] {
+        absl::c_fill(local.record, std::nullopt);
+        auto doc = local.parser.GetJsonDocument();
+        const auto kind = KindOf(TypeOf(doc));
+        if (kind != JsonKind::Object) {
+          ThrowCompositeMismatch(kind);
+        }
+        layout.Scan(local.parser, Unwrap(doc.get_object()), local.record);
+      });
     }
     local.writer.Write(local.record, record_base, targets, row);
     if (!has_json && record_base.IsNull()) {
@@ -1344,7 +1511,7 @@ std::string_view WriteJsonObject(simdjson::builder::string_builder& out,
     }
   }
   out.append('}');
-  return Unwrap(out.view());
+  return BuilderView(out);
 }
 
 void WriteJsonObjectValue(duckdb::VectorWriter<duckdb::string_t>& writer,

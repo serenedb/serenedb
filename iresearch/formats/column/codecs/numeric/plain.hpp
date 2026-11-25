@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <span>
 #include <string>
 #include <type_traits>
@@ -52,22 +53,27 @@ class Raw {
   }
 
   std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
-                                 ScratchVector<uint8_t>&) {
-    return {reinterpret_cast<const uint8_t*>(_values.Get().data()) +
-              size_t{begin} * sizeof(T),
-            size_t{count} * sizeof(T)};
+                                 ScratchVector<uint8_t>& scratch) {
+    const auto rows = _values.Rows();
+    if (const auto* base = rows.Data()) {
+      return {reinterpret_cast<const uint8_t*>(base + begin),
+              size_t{count} * sizeof(T)};
+    }
+    scratch.resize(size_t{count} * sizeof(T));
+    auto* out = scratch.data();
+    rows.ForEachPart(begin, size_t{begin} + count,
+                     [&](const auto* part, size_t take) {
+                       std::memcpy(out, part, take * sizeof(T));
+                       out += take * sizeof(T);
+                     });
+    return scratch;
   }
 
   void Append(uint32_t begin, uint32_t count, std::string& out) {
-    const auto rows = _values.Rows();
-    for (size_t row = begin, end = size_t{begin} + count; row < end;) {
-      const size_t block = row / kBlockValues;
-      const size_t at = row % kBlockValues;
-      const size_t take = std::min(end - row, rows.BlockSize(block) - at);
-      out.append(reinterpret_cast<const char*>(rows.Block(block) + at),
-                 take * sizeof(T));
-      row += take;
-    }
+    _values.Rows().ForEachPart(
+      begin, size_t{begin} + count, [&](const auto* part, size_t take) {
+        out.append(reinterpret_cast<const char*>(part), take * sizeof(T));
+      });
   }
 
   PlainHeader Header(const Geometry&) const noexcept { return {}; }
@@ -107,12 +113,15 @@ class For {
   std::span<const uint8_t> Frame(uint32_t begin, uint32_t count,
                                  ScratchVector<uint8_t>&) {
     if (_narrowed.empty()) {
-      const auto rows = _values.Get();
+      const auto rows = _values.Rows();
       _narrowed.resize(rows.size() * _stored);
-      Narrow<sizeof(T) / 2>(rows.size(), _stored, _narrowed.data(),
-                            [v = rows.data(), lo = _lo](size_t i) {
-                              return static_cast<U>(v[i] - lo);
-                            });
+      for (size_t b = 0; b < rows.Blocks(); ++b) {
+        Narrow<sizeof(T) / 2>(rows.BlockSize(b), _stored,
+                              _narrowed.data() + b * kBlockValues * _stored,
+                              [v = rows.Block(b), lo = _lo](size_t i) {
+                                return static_cast<U>(v[i] - lo);
+                              });
+      }
     }
     return {_narrowed.data() + size_t{begin} * _stored,
             size_t{count} * _stored};

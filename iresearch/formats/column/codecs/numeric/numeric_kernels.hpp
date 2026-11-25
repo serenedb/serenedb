@@ -411,6 +411,79 @@ void UnshuffleWidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
 }
 
 #ifdef __AVX2__
+struct LanePacks {
+  alignas(32) uint32_t narrow[256][8];
+  alignas(32) uint32_t wide[16][8];
+};
+
+consteval LanePacks MakeLanePacks() {
+  LanePacks packs{};
+  for (uint32_t mask = 0; mask < 256; ++mask) {
+    uint32_t out = 0;
+    for (uint32_t lane = 0; lane < 8; ++lane) {
+      if ((mask >> lane & 1) == 0) {
+        continue;
+      }
+      packs.narrow[mask][out] = lane;
+      if (mask < 16) {
+        packs.wide[mask][2 * out] = 2 * lane;
+        packs.wide[mask][2 * out + 1] = 2 * lane + 1;
+      }
+      ++out;
+    }
+  }
+  return packs;
+}
+
+inline constexpr LanePacks kLanePacks = MakeLanePacks();
+
+template<typename U>
+size_t LocateChangesLanes(const U* values, size_t n, uint32_t first,
+                          U* out_values, uint32_t* out_rows,
+                          uint32_t& run) noexcept {
+  static_assert(sizeof(U) == 4 || sizeof(U) == 8);
+  constexpr uint32_t kLanes = 32 / sizeof(U);
+  auto rows = _mm256_add_epi32(_mm256_set1_epi32(static_cast<int32_t>(first)),
+                               _mm256_setr_epi32(1, 2, 3, 4, 5, 6, 7, 8));
+  const auto step = _mm256_set1_epi32(static_cast<int32_t>(kLanes));
+  size_t i = 1;
+  for (; i + kLanes <= n; i += kLanes) {
+    const auto now =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values + i));
+    const auto before =
+      _mm256_loadu_si256(reinterpret_cast<const __m256i*>(values + i - 1));
+    uint32_t mask = 0;
+    const uint32_t* lanes = nullptr;
+    if constexpr (sizeof(U) == 8) {
+      mask = ~static_cast<uint32_t>(_mm256_movemask_pd(
+               _mm256_castsi256_pd(_mm256_cmpeq_epi64(now, before)))) &
+             0xF;
+      lanes = kLanePacks.wide[mask];
+    } else {
+      mask = ~static_cast<uint32_t>(_mm256_movemask_ps(
+               _mm256_castsi256_ps(_mm256_cmpeq_epi32(now, before)))) &
+             0xFF;
+      lanes = kLanePacks.narrow[mask];
+    }
+    _mm256_storeu_si256(
+      reinterpret_cast<__m256i*>(out_values + run),
+      _mm256_permutevar8x32_epi32(
+        now, _mm256_load_si256(reinterpret_cast<const __m256i*>(lanes))));
+    const auto packed = _mm256_permutevar8x32_epi32(
+      rows, _mm256_load_si256(
+              reinterpret_cast<const __m256i*>(kLanePacks.narrow[mask])));
+    if constexpr (sizeof(U) == 8) {
+      _mm_storeu_si128(reinterpret_cast<__m128i*>(out_rows + run),
+                       _mm256_castsi256_si128(packed));
+    } else {
+      _mm256_storeu_si256(reinterpret_cast<__m256i*>(out_rows + run), packed);
+    }
+    rows = _mm256_add_epi32(rows, step);
+    run += static_cast<uint32_t>(std::popcount(mask));
+  }
+  return i;
+}
+
 template<typename S>
 __m256i WidenLanes(const uint8_t* in) noexcept {
   if constexpr (sizeof(S) == 8) {

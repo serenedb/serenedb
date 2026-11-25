@@ -5564,6 +5564,37 @@ TEST_F(ColNumericCodecTest, ADictionaryOfValuesFirstSeenOutOfOrderReadsBack) {
   }
 }
 
+TEST_F(ColNumericCodecTest, AutoDictionaryOfScaledRunsReadsBack) {
+  constexpr uint32_t kRowGroup = 4096;
+  constexpr uint64_t kRows = 6 * kRowGroup;
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g / 10) % 8 + 1) * 0x9E3779B97F4A * 1000 -
+           7000;
+  };
+  for (const auto tier : {irs::WriteTier::Flush, irs::WriteTier::Merge}) {
+    SCOPED_TRACE(tier == irs::WriteTier::Flush ? "flush" : "merge");
+    const auto type = duckdb::LogicalType::BIGINT;
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, type, {.tier = tier}, kRows, kRowGroup, gen,
+          irs::codecs::CodecType::Auto);
+    {
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      ASSERT_EQ(col->DataBlocks().size(), kRows / kRowGroup);
+      size_t dictionaries = 0;
+      for (const auto& block : col->DataBlocks()) {
+        dictionaries += irs::codecs::ShapeOf(block.codec->type) ==
+                        irs::codecs::Shape::Dictionary;
+      }
+      if (tier == irs::WriteTier::Merge) {
+        EXPECT_EQ(dictionaries, kRows / kRowGroup);
+      }
+    }
+    Verify(dir, type, kRows, gen);
+  }
+}
+
 TEST_F(ColNumericCodecTest, RunsOfFloatsAcrossSeveralLz4FramesReadBack) {
   constexpr uint64_t kRows = DEFAULT_ROW_GROUP_SIZE;
   const Gen pairs = [](uint64_t g) -> std::optional<int64_t> {

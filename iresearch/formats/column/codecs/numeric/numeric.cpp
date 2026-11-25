@@ -361,6 +361,9 @@ class DeltaReader final : public FrameReader<T> {
 };
 
 inline constexpr uint8_t kLeastDictionaryValueBytes = 2;
+inline constexpr size_t kProbeAhead = 16;
+inline constexpr size_t kLeastPrefetchedIndexBytes = size_t{1} << 20;
+inline constexpr size_t kLeastEntryRunRows = 8;
 inline constexpr uint32_t kMostNarrowDictionaryEntries = 256;
 
 template<typename T>
@@ -371,16 +374,59 @@ template<typename T>
 struct Entries;
 
 template<typename T>
-bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
-                    uint32_t expected, Entries<T>& entries) {
+IRS_FORCE_INLINE bool AddEntry(Bits<sizeof(T)> value, uint32_t cap,
+                               Entries<T>& entries, uint32_t& entry) {
+  auto& values = entries.values;
+  const auto [it, added] =
+    entries.index.try_emplace(value, static_cast<uint32_t>(values.size()));
+  if (added) {
+    if (entries.index.size() > cap) {
+      return false;
+    }
+    values.push_back(value);
+  }
+  entry = it->second;
+  return true;
+}
+
+template<typename T>
+IRS_FORCE_INLINE size_t IndexBytes(const Entries<T>& entries) noexcept {
+  using Index = decltype(entries.index);
+  return entries.index.capacity() * sizeof(typename Index::value_type);
+}
+
+template<typename T>
+void SortEntries(Entries<T>& entries, std::span<uint32_t> codes) {
   using U = Bits<sizeof(T)>;
   using Ordered =
     std::conditional_t<Values<T>::kSigned, std::make_signed_t<U>, U>;
-  const auto n = static_cast<uint32_t>(rows.size());
+  auto& values = entries.values;
+  std::span keys{reinterpret_cast<Ordered*>(values.data()), values.size()};
+  if (absl::c_is_sorted(keys)) {
+    return;
+  }
+  absl::c_sort(keys);
+  const auto& index = entries.index;
+  const bool prefetches = IndexBytes(entries) >= kLeastPrefetchedIndexBytes;
+  ScratchVector<uint32_t> ranks(values.size());
+  for (uint32_t k = 0; k < values.size(); ++k) {
+    if (prefetches && k + kProbeAhead < values.size()) {
+      index.prefetch(values[k + kProbeAhead]);
+    }
+    ranks[index.find(values[k])->second] = k;
+  }
+  for (auto& code : codes) {
+    code = ranks[code];
+  }
+}
+
+template<typename T>
+bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
+                    Entries<T>& entries) {
+  using U = Bits<sizeof(T)>;
   auto& values = entries.values;
   auto& codes = entries.codes;
-  codes.resize(n);
-  entries.index.reserve(std::min(cap, expected));
+  codes.resize(rows.size());
   uint32_t entry = 0;
   uint32_t row = 0;
   U previous = 0;
@@ -403,17 +449,28 @@ bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
       codes[row] = entry;
     }
   }
-  std::span keys{reinterpret_cast<Ordered*>(values.data()), values.size()};
-  if (absl::c_is_sorted(keys)) {
-    return true;
+  SortEntries(entries, codes);
+  return true;
+}
+
+template<typename T>
+bool CollectRunEntries(const Runs<T>& runs, uint32_t cap, Entries<T>& entries) {
+  const auto count = runs.values.size();
+  ScratchVector<uint32_t> run_codes(count);
+  const bool prefetches = IndexBytes(entries) >= kLeastPrefetchedIndexBytes;
+  for (size_t r = 0; r < count; ++r) {
+    if (prefetches && r + kProbeAhead < count) {
+      entries.index.prefetch(runs.values[r + kProbeAhead]);
+    }
+    if (!AddEntry(runs.values[r], cap, entries, run_codes[r])) {
+      return false;
+    }
   }
-  absl::c_sort(keys);
-  ScratchVector<uint32_t> ranks(values.size());
-  for (uint32_t k = 0; k < values.size(); ++k) {
-    ranks[entries.index.find(values[k])->second] = k;
-  }
-  for (uint32_t i = 0; i < n; ++i) {
-    codes[i] = ranks[codes[i]];
+  SortEntries(entries, run_codes);
+  auto& codes = entries.codes;
+  codes.resize(size_t{runs.rows[count - 1]} + runs.lengths[count - 1]);
+  for (size_t r = 0; r < count; ++r) {
+    std::fill_n(codes.data() + runs.rows[r], runs.lengths[r], run_codes[r]);
   }
   return true;
 }
@@ -442,12 +499,19 @@ struct Entries final : State {
         affordable > 1 ? static_cast<uint32_t>(std::ceil(affordable)) - 1 : 0;
     }
     auto& expected = data.tuning.dictionary_entries;
-    fits = CollectEntries<T>(rows, cap, expected, *this);
-    expected = static_cast<uint32_t>(index.size());
-    if (const auto scale = input.Scale(); fits && scale > 1) {
-      DivideExact<Values<T>::kSigned>(values.data(), values.size(), scale,
-                                      values.data());
+    index.reserve(std::min(cap, expected));
+    const auto* runs = data.Find<Runs<T>>();
+    if (runs && !runs->rows.empty() &&
+        runs->rows.size() * kLeastEntryRunRows <= rows.size()) {
+      fits = CollectRunEntries<T>(*runs, cap, *this);
+    } else {
+      fits = CollectEntries<T>(rows, cap, *this);
+      if (const auto scale = input.Scale(); fits && scale > 1) {
+        DivideExact<Values<T>::kSigned>(values.data(), values.size(), scale,
+                                        values.data());
+      }
     }
+    expected = static_cast<uint32_t>(index.size());
   }
 
   std::vector<Bits<sizeof(T)>> values;

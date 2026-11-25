@@ -395,8 +395,9 @@ class Frames final : public State {
         }
         const auto begin = f * geometry.per;
         const auto count = std::min(items.count - begin, geometry.per);
-        const std::span<const uint8_t> raw =
-          _transform.Frame(begin, count, copy);
+        const std::span<const uint8_t> raw = _transform.Frame(
+          begin, count,
+          store.shuffled ? _data.Get<NumericScratch>().frame : copy);
         if (store.shuffled) {
           SDB_ASSERT(raw.data() != copy.data());
           copy.resize(raw.size());

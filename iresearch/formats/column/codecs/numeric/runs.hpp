@@ -38,7 +38,14 @@
 
 namespace irs::codecs::numeric {
 
+#ifdef __AVX2__
+template<typename U>
+inline constexpr uint32_t kSparseRunRows = sizeof(U) >= 4 ? 64 : 16;
+#else
+template<typename U>
 inline constexpr uint32_t kSparseRunRows = 16;
+#endif
+inline constexpr uint32_t kRunSlack = 8;
 inline constexpr double kMostRunsPerRow = 0.5;
 
 template<typename T>
@@ -77,9 +84,9 @@ void LocateRuns(const Values<T>& values, uint32_t count, Runs<T>& runs) {
   const auto n = static_cast<uint32_t>(values.Size());
   const auto rows = values.Raw();
   const auto bounds = values.RawBounds();
-  const bool dense = uint64_t{count} * kSparseRunRows >= n;
-  runs.values.resize(size_t{count} + 1);
-  runs.rows.resize(size_t{count} + 1);
+  const bool dense = uint64_t{count} * kSparseRunRows<U> >= n;
+  runs.values.resize(size_t{count} + kRunSlack);
+  runs.rows.resize(size_t{count} + kRunSlack);
   auto* run_values = runs.values.data();
   auto* run_rows = runs.rows.data();
   uint8_t changed[kBlockValues + sizeof(uint64_t)];
@@ -93,13 +100,22 @@ void LocateRuns(const Values<T>& values, uint32_t count, Runs<T>& runs) {
     const auto first = static_cast<uint32_t>(b * kBlockValues);
     const auto size = static_cast<uint32_t>(rows.BlockSize(b));
     if (dense) {
-      for (uint32_t i = 0; i < size; ++i) {
+      run_values[run] = block[0];
+      run_rows[run] = first;
+      run += block[0] != previous;
+      size_t i = 1;
+#ifdef __AVX2__
+      if constexpr (sizeof(U) == 4 || sizeof(U) == 8) {
+        i = LocateChangesLanes(block, size, first, run_values, run_rows, run);
+      }
+#endif
+      for (; i < size; ++i) {
         const U value = block[i];
         run_values[run] = value;
-        run_rows[run] = first + i;
-        run += value != previous;
-        previous = value;
+        run_rows[run] = first + static_cast<uint32_t>(i);
+        run += value != block[i - 1];
       }
+      previous = block[size - 1];
       continue;
     }
     changed[0] = block[0] != previous;

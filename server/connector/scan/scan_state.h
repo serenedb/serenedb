@@ -483,7 +483,6 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   bool has_unit = false;
   ScanUnit unit;
   UnitRows piece;
-  uint64_t piece_floor = 0;
   bool units_exhausted = false;
   bool starts_exhausted = false;
   uint64_t rg_units = 0;
@@ -615,7 +614,7 @@ void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);
 void StartPieces(const ScanGlobalState& g, ScanLocalState& l);
-bool PreviousPiece(ScanLocalState& l) noexcept;
+bool PreviousPiece(const ScanGlobalState& g, ScanLocalState& l) noexcept;
 bool FinishUnit(ScanGlobalState& g, ScanLocalState& l);
 void BuildRowGroupChecks(const ScanGlobalState& g,
                          const irs::ColReader& col_reader,

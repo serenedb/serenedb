@@ -64,16 +64,11 @@ enum class CompressionValidity : uint8_t {
   NoValidityRequired,
 };
 
-struct ImportedFsst12 {
-  duckdb_fsst12_decoder_t table{};
-  bool valid = false;
-};
-
 struct SharedSymbols {
   uint64_t file_id = 0;
   uint64_t offset = 0;
   uint64_t size = 0;
-  std::shared_ptr<const ImportedFsst12> fsst12;
+  std::shared_ptr<const duckdb_fsst12_decoder_t> fsst12;
 };
 
 struct ColumnSegment {

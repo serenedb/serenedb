@@ -301,10 +301,9 @@ class RleBitpacking {
   void Append(NumericFrameMeta& m, uint32_t begin, uint32_t count,
               std::string& out) {
     const size_t first = begin / kBlockValues;
-    const size_t blocks = (size_t{count} + kBlockValues - 1) / kBlockValues;
     m.frame.first_entry = _runs.rows[begin];
     m.base = count;
-    SDB_ASSERT(blocks == 1);
+    SDB_ASSERT(count != 0 && count <= kBlockValues);
     const uint8_t value_kind = _value_blocks.StreamKind(first);
     uint8_t meta[kRunsFrameMetaSize] = {};
     meta[0] = value_kind;

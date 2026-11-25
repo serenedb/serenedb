@@ -92,16 +92,17 @@ struct Fsst12 {
                                   out_lengths, out_strings);
   }
 
-  using Imported = std::shared_ptr<const ImportedFsst12>;
+  using Imported = std::shared_ptr<const duckdb_fsst12_decoder_t>;
 
   static bool Import(Imported& imported, std::string_view table) {
-    auto fresh = std::make_shared<ImportedFsst12>();
-    fresh->valid =
-      duckdb_fsst12_import(&fresh->table,
-                           reinterpret_cast<const unsigned char*>(table.data()),
-                           table.size()) == table.size();
+    auto fresh = std::make_shared<duckdb_fsst12_decoder_t>();
+    if (duckdb_fsst12_import(
+          fresh.get(), reinterpret_cast<const unsigned char*>(table.data()),
+          table.size()) != table.size()) {
+      return false;
+    }
     imported = std::move(fresh);
-    return imported->valid;
+    return true;
   }
 
   static bool Import(Imported& imported, std::string_view table,
@@ -114,34 +115,34 @@ struct Fsst12 {
         slot->offset == segment.shared_offset &&
         slot->size == segment.shared_size) {
       imported = slot->fsst12;
-      return imported->valid;
+      return true;
     }
-    Import(imported, table);
+    if (!Import(imported, table)) {
+      return false;
+    }
     *slot = {
       .file_id = segment.cache_slot.file_id,
       .offset = segment.shared_offset,
       .size = segment.shared_size,
       .fsst12 = imported,
     };
-    return imported->valid;
+    return true;
   }
 
   static size_t Decompress(const Imported& imported, const unsigned char* in,
                            size_t size, unsigned char* out,
                            size_t capacity) noexcept {
-    return imported && imported->valid
-             ? duckdb_fsst12_decompress(&imported->table, size, in, capacity,
-                                        out)
+    return imported
+             ? duckdb_fsst12_decompress(imported.get(), size, in, capacity, out)
              : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
   }
 
   static size_t DecompressPrefix(const Imported& imported,
                                  const unsigned char* in, size_t size,
                                  unsigned char* out, size_t bytes) noexcept {
-    return imported && imported->valid
-             ? duckdb_fsst12_decompress_prefix(&imported->table, size, in,
-                                               bytes, out)
-             : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
+    return imported ? duckdb_fsst12_decompress_prefix(imported.get(), size, in,
+                                                      bytes, out)
+                    : DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT;
   }
 };
 
@@ -361,15 +362,22 @@ struct Scan {
     group_decoded.assign(groups.Count(), 0);
   }
 
+  static ChainEnd FrameStart(const auto& m) noexcept {
+    return {.entry = m.first_entry,
+            .written = 0,
+            .enc_off = m.comp_off,
+            .prev_len = 0};
+  }
+
+  template<typename Frames>
+  ChainEnd FrameChain(const Frames& s, uint32_t f) const noexcept {
+    return prefixes.empty() ? FrameStart(s.frames[f]) : prefixes[f];
+  }
+
   template<typename Frames>
   ChainEnd Advance(Frames& s, uint32_t f, uint32_t end, char* out) {
     const auto& m = s.frames[f];
-    return WalkChain(decoder, s.Data(), s.length_reader, lcps,
-                     prefixes.empty() ? ChainEnd{.entry = m.first_entry,
-                                                 .written = 0,
-                                                 .enc_off = m.comp_off,
-                                                 .prev_len = 0}
-                                      : prefixes[f],
+    return WalkChain(decoder, s.Data(), s.length_reader, lcps, FrameChain(s, f),
                      end, static_cast<uint64_t>(m.comp_off) + m.comp_len, out,
                      m.raw_len,
                      [&](uint32_t e, std::string_view v) { s.Keep(e, v); });
@@ -389,8 +397,7 @@ struct Scan {
   template<typename Frames>
   void DecodeSpan(Frames& s, uint32_t f, uint32_t lo, uint32_t hi) {
     SDB_ASSERT(!s.decoded[f] && lo < hi);
-    const auto prefix =
-      prefixes.empty() ? s.frames[f].first_entry : prefixes[f].entry;
+    const auto prefix = FrameChain(s, f).entry;
     if (lo > prefix) {
       DecodeDetached(s, f, lo, hi);
       return;
@@ -402,10 +409,7 @@ struct Scan {
     if (prefixes.empty()) {
       prefixes.resize(s.frames.size());
       for (uint32_t i = 0; i < s.frames.size(); ++i) {
-        prefixes[i] = {.entry = s.frames[i].first_entry,
-                       .written = 0,
-                       .enc_off = s.frames[i].comp_off,
-                       .prev_len = 0};
+        prefixes[i] = FrameStart(s.frames[i]);
       }
     }
     prefixes[f] = Advance(s, f, std::max(hi, prefix), s.FrameOut(f));

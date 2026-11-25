@@ -242,7 +242,7 @@ void RunStreamScan(duckdb::ClientContext& ctx,
         }
         continue;
       }
-      if (PreviousPiece(l)) {
+      if (PreviousPiece(g, l)) {
         l.started = false;
         continue;
       }

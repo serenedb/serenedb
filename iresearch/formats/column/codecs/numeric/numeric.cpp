@@ -430,7 +430,6 @@ template<typename T>
 bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
                     Entries<T>& entries) {
   using U = Bits<sizeof(T)>;
-  auto& values = entries.values;
   auto& codes = entries.codes;
   codes.resize(rows.size());
   uint32_t entry = 0;
@@ -442,15 +441,9 @@ bool CollectEntries(BlockRows<Bits<sizeof(T)>> rows, uint32_t cap,
     for (size_t i = 0; i < size; ++i, ++row) {
       if (row == 0 || block[i] != previous) {
         previous = block[i];
-        const auto [it, added] = entries.index.try_emplace(
-          previous, static_cast<uint32_t>(values.size()));
-        if (added) {
-          if (entries.index.size() > cap) {
-            return false;
-          }
-          values.push_back(previous);
+        if (!AddEntry(previous, cap, entries, entry)) {
+          return false;
         }
-        entry = it->second;
       }
       codes[row] = entry;
     }

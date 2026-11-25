@@ -1082,14 +1082,13 @@ bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l) {
 void StartPieces(const ScanGlobalState& g, ScanLocalState& l) {
   const auto rows = g.RowsOf(l.unit);
   l.piece = rows;
-  l.piece_floor = rows.begin;
   if (l.unit.backward && rows.end - rows.begin > kPieceRows) {
     l.piece.begin += (rows.end - rows.begin - 1) / kPieceRows * kPieceRows;
   }
 }
 
-bool PreviousPiece(ScanLocalState& l) noexcept {
-  if (l.piece.begin == l.piece_floor) {
+bool PreviousPiece(const ScanGlobalState& g, ScanLocalState& l) noexcept {
+  if (l.piece.begin == g.RowsOf(l.unit).begin) {
     return false;
   }
   l.piece.end = l.piece.begin;

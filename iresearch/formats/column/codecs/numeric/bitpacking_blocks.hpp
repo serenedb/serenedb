@@ -402,7 +402,7 @@ class BitpackingBlocks {
              : duckdb::BitpackingPrimitives::GetRequiredSize(values, bits);
   }
 
-  uint8_t* PackStreamBlock(BlockRows<V> rows, size_t g, uint8_t* packed) {
+  void PackStreamBlock(BlockRows<V> rows, size_t g, uint8_t* packed) {
     const uint8_t kind = _bits[g];
     const size_t n = Values(g);
     const V* in = rows.Block(g);
@@ -411,11 +411,11 @@ class BitpackingBlocks {
       duckdb::Store(uint64_t{_base[g]}, packed);
       packed += sizeof(uint64_t);
       if (kind == kStreamAlternates) {
-        return packed;
+        return;
       }
       bits = kind & kBlockDeltaBits;
       if (bits == 0) {
-        return packed;
+        return;
       }
       _scratch[0] = _base[g];
       for (size_t i = 1; i < n; ++i) {
@@ -432,7 +432,6 @@ class BitpackingBlocks {
       duckdb::BitpackingPrimitives::PackBuffer<V, false>(
         packed, _scratch.data(), n, bits);
     }
-    return packed + StreamBlockBytes(n, bits);
   }
 
   static bool Alternates(const V* values, size_t count) noexcept {

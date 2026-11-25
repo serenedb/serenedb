@@ -614,7 +614,8 @@ struct WideEntries final : State {
 
   explicit WideEntries(ColumnDataCheckpointData& data) {
     SDB_IF_FAILURE("irs::WideDictionaryOfHalves") { return; }
-    fits = Few(data) && Collect(data) && Pack();
+    ScratchVector<uint32_t> codes;
+    fits = Few(data) && Collect(data, codes) && Pack(codes);
   }
 
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
@@ -624,7 +625,6 @@ struct WideEntries final : State {
   bool fits = false;
   bool has_null = false;
   std::vector<W> values;
-  ScratchVector<uint32_t> codes;
   std::string out;
 
  private:
@@ -640,7 +640,8 @@ struct WideEntries final : State {
            (!wide.sample_narrow && wide.FewInSample(Cap(data), data));
   }
 
-  bool Collect(const ColumnDataCheckpointData& data) {
+  bool Collect(const ColumnDataCheckpointData& data,
+               ScratchVector<uint32_t>& codes) {
     const auto cap = Cap(data);
     const uint64_t rows = data.rows.count;
     containers::FlatHashMap<absl::uint128, uint32_t> index;
@@ -701,7 +702,7 @@ struct WideEntries final : State {
     return true;
   }
 
-  bool Pack() {
+  bool Pack(ScratchVector<uint32_t>& codes) {
     WideHeader header{
       .form = WideForm::Entries,
       .entries = static_cast<uint32_t>(values.size()),

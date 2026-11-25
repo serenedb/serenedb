@@ -283,12 +283,14 @@ class FilterVerdicts {
                                             .span = _range.hi - _range.lo - 1});
     }
     if (!_lazy && _verdicts.size() <= kBitEntries) {
-      return _verdicts.size() <= 8 * sizeof(uint32_t)
-               ? KeepIf(codes, rows, count,
-                        InBits<uint32_t>{
-                          .bits = static_cast<uint32_t>(_accepted_bits)})
-               : KeepIf(codes, rows, count,
-                        InBits<uint64_t>{.bits = _accepted_bits});
+      return Resolve(
+        _verdicts.size() <= 8 * sizeof(uint32_t),
+        [&]<bool kNarrow>() IRS_FORCE_INLINE {
+          using Word = std::conditional_t<kNarrow, uint32_t, uint64_t>;
+          return KeepIf(
+            codes, rows, count,
+            InBits<Word>{.bits = static_cast<Word>(_accepted_bits)});
+        });
     }
     return KeepIf(codes, rows, count, InVerdicts{.verdicts = _verdicts.data()});
   }

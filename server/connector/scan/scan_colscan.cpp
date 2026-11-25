@@ -143,7 +143,7 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
         output.SetChildCardinality(added);
         return;
       }
-      if (PreviousPiece(l)) {
+      if (PreviousPiece(g, l)) {
         l.doc_cursor = l.piece.begin;
         l.doc_end = l.piece.end;
         OpenScanner(g, l);

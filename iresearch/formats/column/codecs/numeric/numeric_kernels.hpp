@@ -293,13 +293,9 @@ template<typename U>
 void UnshuffleWidenAdd(const uint8_t* in, size_t n, uint8_t stored, U base,
                        U* out) noexcept {
   SDB_ASSERT(stored < sizeof(U));
-  const size_t done = Resolve<StoredAxis<sizeof(U)>>(
-    stored, [&]<typename S>() IRS_FORCE_INLINE -> size_t {
-      if constexpr (sizeof(S) < sizeof(U)) {
-        return UnshuffleWidenAddAs<U, S>(in, n, base, out);
-      } else {
-        return 0;
-      }
+  const size_t done = Resolve<StoredAxis<sizeof(U) / 2>>(
+    stored, [&]<typename S>() IRS_FORCE_INLINE {
+      return UnshuffleWidenAddAs<U, S>(in, n, base, out);
     });
   for (size_t i = done; i < n; ++i) {
     out[i] =

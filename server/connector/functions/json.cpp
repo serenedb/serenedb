@@ -105,9 +105,6 @@ std::string_view BuilderView(simdjson::builder::string_builder& builder) {
 
 bool IsNanOrInfinity(std::string_view token) {
   token = absl::StripTrailingAsciiWhitespace(token);
-  if (token.starts_with('-')) {
-    token.remove_prefix(1);
-  }
   return absl::EqualsIgnoreCase(token, "nan") ||
          absl::EqualsIgnoreCase(token, "inf") ||
          absl::EqualsIgnoreCase(token, "infinity");
@@ -135,7 +132,6 @@ simdjson::ondemand::json_type TypeOf(T& value) {
 void RelaxTrailingCommas(char* data, size_t size, std::vector<size_t>& commas) {
   commas.clear();
   bool in_string = false;
-  char previous = '\0';
   size_t comma = size;
   for (size_t i = 0; i < size; ++i) {
     const char c = data[i];
@@ -144,7 +140,6 @@ void RelaxTrailingCommas(char* data, size_t size, std::vector<size_t>& commas) {
         ++i;
       } else if (c == '"') {
         in_string = false;
-        previous = c;
       }
       continue;
     }
@@ -155,13 +150,8 @@ void RelaxTrailingCommas(char* data, size_t size, std::vector<size_t>& commas) {
       data[comma] = ' ';
       commas.push_back(comma);
     }
-    comma = size;
-    if (c == ',' && previous != '\0' && previous != '[' && previous != '{' &&
-        previous != ',' && previous != ':') {
-      comma = i;
-    }
+    comma = c == ',' ? i : size;
     in_string = c == '"';
-    previous = c;
   }
 }
 
@@ -183,18 +173,20 @@ class JsonParser {
   bool RelaxFirst() const { return _relax_first; }
 
   std::string_view Original(std::string_view view) const {
-    const auto offset = Offset(view);
-    if (_commas.empty() || offset >= _input.size()) {
+    if (_commas.empty()) {
       return view;
     }
+    const auto offset = Offset(view);
+    SDB_ASSERT(offset < _input.size());
     return _input.substr(offset, view.size());
   }
 
   std::string_view Token(std::string_view token) const {
-    const auto offset = Offset(token);
-    if (_commas.empty() || offset >= _input.size()) {
+    if (_commas.empty()) {
       return token;
     }
+    const auto offset = Offset(token);
+    SDB_ASSERT(offset < _input.size());
     auto end = offset + token.size();
     if (const auto comma = absl::c_lower_bound(_commas, offset);
         comma != _commas.end() && *comma < end) {

@@ -4369,10 +4369,9 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
                                                     true, sizeof(int64_t));
        const auto* at = b.bytes + b.header.off_frames + meta;
        ASSERT_EQ(duckdb::Load<uint16_t>(at + 2 * sizeof(uint32_t)), 1);
-       auto* widths = b.bytes + b.header.off_data + duckdb::Load<uint32_t>(at) +
-                      sizeof(int64_t);
-       ASSERT_EQ(*widths, 0);
-       *widths = irs::codecs::kBlockDelta;
+       auto* kind = b.bytes + b.header.off_data + duckdb::Load<uint32_t>(at);
+       ASSERT_EQ(*kind, 0);
+       *kind = irs::codecs::kBlockDelta;
      },
      "Corrupted numeric segment: blocks are inconsistent"},
     {"a run frame without runs", duckdb::LogicalType::DOUBLE, CodecType::Rle,

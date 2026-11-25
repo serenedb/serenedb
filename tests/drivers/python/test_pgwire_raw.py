@@ -208,11 +208,12 @@ def row_description(msgs):
     return None
 
 
-def await_copied(poller, table, count):
+def await_copied(poller, table, count, at_least=False):
     deadline = time.time() + 10
+    op = ">=" if at_least else "="
     while first_field(poller.run(
             "select count(*) from pg_stat_progress_copy "
-            f"where relid = '{table}'::regclass and tuples_processed = {count}")) != b"1":
+            f"where relid = '{table}'::regclass and tuples_processed {op} {count}")) != b"1":
         assert time.time() < deadline, f"COPY into {table} never took {count} rows"
         time.sleep(0.05)
 
@@ -2353,18 +2354,20 @@ def test_copy_feeder_wake_outlives_the_session(conn):
         conn.run("drop table if exists t_copy_done_wake")
 
 
-@pytest.mark.parametrize("options", ["format csv, sample_size 1000",
-                                     "format csv, auto_detect false"])
-def test_copy_with_a_reader_option_takes_rows_before_its_stream_ends(conn, options):
-    rows = 3072
+@pytest.mark.parametrize("options,row,rows,taken", [
+    ("format csv, sample_size 1000", b"%d,%s\n", 3072, 3072),
+    ("format csv, auto_detect false", b"%d,%s\n", 3072, 3072),
+    ("format json", b'{"a": %d, "b": "%s"}\n', 9216, 1),
+])
+def test_copy_from_stdin_takes_rows_before_its_stream_ends(conn, options, row, rows, taken):
     c = WireConn()
     try:
         conn.run_ok("drop table if exists t_copy_open")
         conn.run_ok("create table t_copy_open(a int, b text)")
         c.send("Q", _cstr(f"copy t_copy_open from stdin ({options})"))
         assert c.read_msg()[0] == "G"
-        c.send("d", b"".join(b"%d,%s\n" % (i, b"x" * 1017) for i in range(rows)))
-        await_copied(conn, "t_copy_open", rows)
+        c.send("d", b"".join(row % (i, b"x" * 1000) for i in range(rows)))
+        await_copied(conn, "t_copy_open", taken, at_least=True)
         c.send("c")
         m = c.drain_to_ready()
         assert tags(m) == [b"COPY %d\x00" % rows], errors(m)

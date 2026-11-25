@@ -54,7 +54,6 @@
 
 #include "iresearch/formats/column/codecs/compression_function.hpp"
 #include "iresearch/formats/column/codecs/dictionary_cache.hpp"
-#include "iresearch/formats/column/codecs/numeric/plain.hpp"
 #include "iresearch/formats/column/codecs/numeric/runs.hpp"
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/codecs/text/string_scan.hpp"
@@ -72,43 +71,10 @@ namespace irs::codecs::text {
 
 inline constexpr uint64_t kInListProbeCost = 8;
 
-class RowCodes {
- public:
-  RowCodes(const_data_ptr_t base, const Header& h) {
-    const auto* codes = base + h.off_codes;
-    const auto frames =
-      ParseFrames(codes, h.off_symtab - h.off_codes, h.row_count, h.codes);
-    _shape = ShapeOf(h.codes);
-    Resolve<CodesAxis>(_shape, [&]<Shape S>() {
-      if constexpr (S == Shape::Plain) {
-        _plain.emplace(codes, frames, h.codes);
-      } else {
-        _runs.emplace(codes, frames, h.codes);
-      }
-    });
-  }
-
-  template<typename F>
-  IRS_FORCE_INLINE decltype(auto) Visit(F&& f) {
-    return Resolve<CodesAxis>(
-      _shape, [&]<Shape S>() IRS_FORCE_INLINE -> decltype(auto) {
-        if constexpr (S == Shape::Plain) {
-          return f(*_plain);
-        } else {
-          return f(*_runs);
-        }
-      });
-  }
-
- private:
-  struct CodesAxis : Axis<Shape::Plain, Shape::Runs> {
-    static constexpr Shape Of(Shape shape) noexcept { return shape; }
-  };
-
-  Shape _shape = Shape::Plain;
-  std::optional<numeric::PlainReader<uint32_t>> _plain;
-  std::optional<numeric::RunsReader<uint32_t>> _runs;
-};
+inline FrameHeader CodeFrames(const_data_ptr_t base, const Header& h) {
+  return ParseFrames(base + h.off_codes, h.off_symtab - h.off_codes,
+                     h.row_count, h.codes);
+}
 
 template<typename Leaf>
 struct DictionaryFetch final : SegmentScanState {
@@ -159,9 +125,10 @@ struct DictionaryFetch final : SegmentScanState {
     return code;
   }
 
-  RowCodes& Numeric(data_ptr_t base) {
+  numeric::RowCodes& Numeric(data_ptr_t base) {
     if (!code_frames) {
-      code_frames.emplace(base, frames.header);
+      code_frames.emplace(base + frames.header.off_codes,
+                          CodeFrames(base, frames.header), frames.header.codes);
     }
     return *code_frames;
   }
@@ -201,7 +168,7 @@ struct DictionaryFetch final : SegmentScanState {
 
   FetchFrames<Leaf> frames;
   bool room = false;
-  std::optional<RowCodes> code_frames;
+  std::optional<numeric::RowCodes> code_frames;
 };
 
 class FilterVerdicts {
@@ -435,7 +402,9 @@ struct DictionaryScan final : SegmentScanState {
       nullable{segment.stats.CanHaveNull()},
       cache_slot{segment.cache_slot},
       room{HasRoom(segment.cache_slot, DictionaryBytes(entries.header))},
-      code_frames{entries.base, entries.header} {
+      code_frames{entries.base + entries.header.off_codes,
+                  CodeFrames(entries.base, entries.header),
+                  entries.header.codes} {
     if (cached) {
       AdoptDictionary(*cached);
       return;
@@ -908,13 +877,8 @@ struct DictionaryScan final : SegmentScanState {
       code_sel_size = count;
       code_sel = duckdb::make_buffer<duckdb::SelectionVector>(count);
     }
-    auto* codes = code_sel->data();
-    code_frames.Visit([&](auto& reader) { reader.Read(start, count, codes); });
-    duckdb::sel_t max_code = 0;
-    for (idx_t i = 0; i < count; ++i) {
-      max_code = std::max(max_code, codes[i]);
-    }
-    if (max_code >= entries.header.entry_count) [[unlikely]] {
+    if (!code_frames.ReadInRange(start, count, code_sel->data(),
+                                 entries.header.entry_count)) [[unlikely]] {
       ThrowCorrupted("text", "dictionary code is out of range");
     }
   }
@@ -926,7 +890,7 @@ struct DictionaryScan final : SegmentScanState {
   bool full = false;
   duckdb::buffer_ptr<duckdb::SelectionVector> code_sel;
   idx_t code_sel_size = 0;
-  RowCodes code_frames;
+  numeric::RowCodes code_frames;
   FilterVerdicts verdicts;
   duckdb::shared_ptr<duckdb::DynamicFilterData> bound;
   duckdb::idx_t bound_version = 0;

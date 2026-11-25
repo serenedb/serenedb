@@ -20,6 +20,7 @@
 
 #include "connector/full_scanner.h"
 
+#include <cstring>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
 #include <duckdb/common/vector/list_vector.hpp>
@@ -120,9 +121,7 @@ duckdb::idx_t FullScanner::Filter(uint64_t start_row, duckdb::idx_t count,
   duckdb::idx_t survivors = live != nullptr ? live_count : count;
   _sel.Initialize(_sel_data);
   if (live != nullptr) {
-    for (duckdb::idx_t i = 0; i < survivors; ++i) {
-      _sel.set_index(i, live->get_index(i));
-    }
+    std::memcpy(_sel.data(), live->data(), survivors * sizeof(duckdb::sel_t));
   } else {
     for (duckdb::idx_t i = 0; i < count; ++i) {
       _sel.set_index(i, i);

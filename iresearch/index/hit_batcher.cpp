@@ -438,8 +438,9 @@ HitBatcher::Batch HitBatcher::EmitFiltered(duckdb::DataChunk& output) {
     // doc/score arrays, compacting in place.
     if (!_filters.Empty()) {
       auto* scores = _track_scores ? ScoreData() : nullptr;
-      ColFilterChain::CompactByOffsets(_sel, survivors, anchor, _docs.data(),
-                                       scores, _docs.data(), scores);
+      ColFilterChain::CompactByOffsets(_sel, count, survivors, anchor,
+                                       _docs.data(), scores, _docs.data(),
+                                       scores);
     }
     _filters.FinishOutputs(anchor, span, _sel, survivors, output);
   }

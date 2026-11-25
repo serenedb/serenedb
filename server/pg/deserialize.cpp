@@ -74,6 +74,7 @@
 #include "pg/types/char.h"
 #include "pg/types/geometric.h"
 #include "pg/types/inet.h"
+#include "pg/types/json.h"
 #include "pg/types/logical.h"
 #include "pg/types/mac.h"
 #include "pg/types/mapping.h"
@@ -234,8 +235,9 @@ struct JsonText {
   template<typename Sink>
   static bool Decode(DeserializeContext& context, std::string_view data,
                      Sink& sink) {
-    if (const auto error = context.json.Check(data)) {
-      ThrowInvalidJson(error);
+    duckdb::JSONParseError error;
+    if (!context.json.IsValid(data.data(), data.size(), error)) {
+      ThrowInvalidJson(error.message);
     }
     sink.Varchar(data);
     return true;

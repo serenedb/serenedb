@@ -22,6 +22,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <duckdb/common/json_document.hpp>
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/types.hpp>
 #include <duckdb/common/types/value.hpp>
@@ -41,7 +42,6 @@
 #include <vector>
 
 #include "pg/serialize.h"
-#include "pg/types/json.h"
 #include "pg/types/xml.h"
 
 namespace sdb::pg {
@@ -62,7 +62,7 @@ struct DeserializeContext {
   duckdb::optional_ptr<duckdb::ClientContext> client;
   std::optional<XmlOption> xml_option;
   std::exception_ptr column_error;
-  JsonInput json;
+  duckdb::JSONTreeParser json{duckdb::JSON_TYPE_READ_FLAGS};
 
   duckdb::Calendar* CalendarFor(std::string_view tz_name);
   XmlOption SessionXmlOption();

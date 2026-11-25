@@ -694,3 +694,44 @@ statement error
 CREATE TABLE lvl_tuple_text (a INTEGER PRIMARY KEY, t TUPLE(INTEGER, VARCHAR) USING COMPRESSION bitpacking);
 ----
 db error: ERROR: Can't compress column "t" with type 'TUPLE(INTEGER, VARCHAR)' (physical: STRUCT) using compression type 'BitPacking'
+
+
+statement ok
+CREATE TABLE lvl_nested_set (a INTEGER, tags TEXT[], attrs MAP(TEXT, INTEGER), nums INTEGER[], counts MAP(INTEGER, BIGINT));
+
+statement error
+ALTER TABLE lvl_nested_set ALTER COLUMN tags SET COMPRESSION rle;
+----
+db error: ERROR: Can't compress column "tags" with type 'VARCHAR[]' (physical: LIST) using compression type 'RLE'
+
+
+statement error
+ALTER TABLE lvl_nested_set ALTER COLUMN attrs SET COMPRESSION bitpacking;
+----
+db error: ERROR: Can't compress column "attrs" with type 'MAP(VARCHAR, INTEGER)' (physical: LIST) using compression type 'BitPacking'
+
+
+statement error
+CREATE INDEX lvl_nested_set_idx ON lvl_nested_set USING inverted (a)
+  INCLUDE (tags included (compression = 'bitpacking'));
+----
+db error: ERROR: Can't compress column "tags" with type 'VARCHAR[]' (physical: LIST) using compression type 'BitPacking'
+
+
+statement error
+CREATE TABLE lvl_map_rle (a INTEGER, attrs MAP(TEXT, INTEGER) USING COMPRESSION rle);
+----
+db error: ERROR: Can't compress column "attrs" with type 'MAP(VARCHAR, INTEGER)' (physical: LIST) using compression type 'RLE'
+
+
+statement ok
+ALTER TABLE lvl_nested_set ALTER COLUMN nums SET COMPRESSION rle;
+
+statement ok
+ALTER TABLE lvl_nested_set ALTER COLUMN counts SET COMPRESSION bitpacking;
+
+statement ok
+ALTER TABLE lvl_nested_set ALTER COLUMN attrs SET COMPRESSION dict_lz4;
+
+statement ok
+DROP TABLE lvl_nested_set;

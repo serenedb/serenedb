@@ -371,19 +371,15 @@ irs::codecs::CodecType CheckColumnCodec(
   if (codec == irs::codecs::CodecType::Auto) {
     return codec;
   }
-  const auto compresses = [&](duckdb::PhysicalType physical) {
-    return irs::codecs::Writes(codec, physical);
-  };
-  const auto physical = column_type.InternalType();
-  if (compresses(physical)) {
-    return codec;
+  const auto leaves = LeafPhysicalTypes(column_type);
+  if (leaves.empty() ||
+      !absl::c_all_of(leaves, [&](duckdb::PhysicalType physical) {
+        return irs::codecs::Writes(codec, physical);
+      })) {
+    ThrowCodecMismatch(column_name, magic_enum::enum_name(codec), column_type,
+                       column_type.InternalType());
   }
-  if (const auto leaves = LeafPhysicalTypes(column_type);
-      !leaves.empty() && absl::c_all_of(leaves, compresses)) {
-    return codec;
-  }
-  ThrowCodecMismatch(column_name, magic_enum::enum_name(codec), column_type,
-                     physical);
+  return codec;
 }
 
 SearchTableEntry::SearchTableEntry(

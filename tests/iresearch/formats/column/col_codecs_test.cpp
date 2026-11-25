@@ -62,6 +62,7 @@
 #include <iresearch/formats/column/codecs/compression_function.hpp>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
 #include <iresearch/formats/column/codecs/registry.hpp>
+#include <iresearch/formats/column/codecs/text/dictionary_scan.tpp>
 #include <iresearch/formats/column/codecs/text/fsst.hpp>
 #include <iresearch/formats/column/codecs/text/onpair.hpp>
 #include <iresearch/formats/column/codecs/text/segment_buffer.hpp>
@@ -638,6 +639,132 @@ TEST(PackedReaderTest, ReadsEveryWidth) {
     for (size_t i = 0; i < kValues; ++i) {
       ASSERT_EQ(values[i], reader.At(i))
         << "width " << int{width} << ", value " << i;
+    }
+  }
+}
+
+TEST(ColTextKernelsTest, DictionaryFiltersKeepTheRowsOfAcceptedCodes) {
+  using irs::codecs::text::EntryRanges;
+  using irs::codecs::text::FilterVerdicts;
+  constexpr duckdb::sel_t kUntouched = 0xDEAD;
+  enum class Kind : uint8_t {
+    Ranges,
+    Selection,
+    Lazy,
+  };
+  std::mt19937_64 rng{23};
+  for (const uint32_t entries :
+       {1U, 2U, 31U, 32U, 33U, 63U, 64U, 65U, 300U, 5000U}) {
+    std::vector<std::vector<bool>> sets;
+    sets.emplace_back(entries, false);
+    sets.emplace_back(entries, true);
+    sets.emplace_back(entries, false).front() = true;
+    sets.emplace_back(entries, false).back() = true;
+    auto& alternate = sets.emplace_back(entries, false);
+    for (uint32_t e = 0; e < entries; e += 2) {
+      alternate[e] = true;
+    }
+    for (const double share : {0.05, 0.5, 0.95}) {
+      std::bernoulli_distribution pick{share};
+      auto& set = sets.emplace_back(entries);
+      for (uint32_t e = 0; e < entries; ++e) {
+        set[e] = pick(rng);
+      }
+    }
+    for (const auto& accepted : sets) {
+      EntryRanges ranges;
+      duckdb::SelectionVector listed{entries};
+      duckdb::idx_t matches = 0;
+      for (uint32_t e = 0; e < entries; ++e) {
+        if (!accepted[e]) {
+          continue;
+        }
+        listed.set_index(matches++, e);
+        if (!ranges.empty() && ranges.back().hi == e) {
+          ++ranges.back().hi;
+        } else {
+          ranges.push_back({e, e + 1});
+        }
+      }
+      for (const duckdb::idx_t span :
+           {1U, 7U, 8U, 9U, 15U, 16U, 17U, 2047U, 2048U}) {
+        duckdb::SelectionVector codes{span};
+        std::uniform_int_distribution<uint32_t> code{0, entries - 1};
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          codes.set_index(i, i % 5 == 0   ? 0
+                             : i % 5 == 1 ? entries - 1
+                                          : code(rng));
+        }
+        std::vector<std::vector<duckdb::sel_t>> row_sets(6);
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          const auto row = static_cast<duckdb::sel_t>(i);
+          row_sets[0].push_back(row);
+          if (i < (span + 1) / 2) {
+            row_sets[1].push_back(row);
+          }
+          if (i != 0) {
+            row_sets[2].push_back(row);
+          }
+          if (i + 1 != span) {
+            row_sets[3].push_back(row);
+          }
+          if (rng() % 4 == 0) {
+            row_sets[4].push_back(row);
+          }
+          if (rng() % 4 != 0) {
+            row_sets[5].push_back(row);
+          }
+        }
+        for (const auto& rows_in : row_sets) {
+          const auto count = rows_in.size();
+          std::vector<duckdb::sel_t> expected;
+          for (const auto row : rows_in) {
+            if (accepted[codes.get_index(row)]) {
+              expected.push_back(row);
+            }
+          }
+          for (const auto kind : {Kind::Ranges, Kind::Selection, Kind::Lazy}) {
+            SCOPED_TRACE(testing::Message()
+                         << "entries " << entries << " matches " << matches
+                         << " span " << span << " count " << count << " kind "
+                         << static_cast<int>(kind));
+            duckdb::SelectionVector rows{STANDARD_VECTOR_SIZE};
+            for (duckdb::idx_t i = 0; i < STANDARD_VECTOR_SIZE; ++i) {
+              rows.set_index(i, i < count ? rows_in[i] : kUntouched);
+            }
+            FilterVerdicts verdicts;
+            switch (kind) {
+              case Kind::Ranges:
+                verdicts.Accept(ranges, entries);
+                break;
+              case Kind::Selection:
+                verdicts.Accept(listed, matches, entries);
+                break;
+              case Kind::Lazy: {
+                verdicts.Defer(entries);
+                const auto pending = verdicts.Unfiltered(codes, rows, count);
+                duckdb::SelectionVector resolved{STANDARD_VECTOR_SIZE};
+                duckdb::idx_t resolved_count = 0;
+                for (size_t k = 0; k < pending.size(); ++k) {
+                  if (accepted[pending[k]]) {
+                    resolved.set_index(resolved_count++, k);
+                  }
+                }
+                verdicts.AcceptPending(resolved, resolved_count);
+                break;
+              }
+            }
+            const auto kept = verdicts.KeepAccepted(codes, rows, count);
+            ASSERT_EQ(kept, expected.size());
+            for (duckdb::idx_t i = 0; i < kept; ++i) {
+              ASSERT_EQ(rows.get_index(i), expected[i]) << "at " << i;
+            }
+            for (auto i = count; i < STANDARD_VECTOR_SIZE; ++i) {
+              ASSERT_EQ(rows.get_index(i), kUntouched) << "at " << i;
+            }
+          }
+        }
+      }
     }
   }
 }

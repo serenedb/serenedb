@@ -20,6 +20,10 @@
 
 #pragma once
 
+#ifdef __AVX2__
+#include <immintrin.h>
+#endif
+
 #include <absl/algorithm/container.h>
 
 #include <algorithm>
@@ -42,11 +46,14 @@
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
+#include <functional>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -59,6 +66,7 @@
 #include "iresearch/formats/column/codecs/text/string_scan.tpp"
 #include "iresearch/formats/column/immutable_payloads.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -207,9 +215,9 @@ class FilterVerdicts {
   bool Lazy() const noexcept { return _lazy; }
   idx_t Matches() const noexcept { return _matches; }
 
-  void Accept(const EntryRanges& ranges, uint32_t entries, bool moving) {
+  void Accept(const EntryRanges& ranges, uint32_t entries) {
     _lazy = false;
-    _ranged = moving && ranges.size() <= 1;
+    _ranged = ranges.size() <= 1;
     if (_ranged) {
       _range = ranges.empty() ? EntryRange{} : ranges.front();
       _matches = _range.hi - _range.lo;
@@ -222,6 +230,7 @@ class FilterVerdicts {
       std::memset(_verdicts.data() + lo, kAccepted, hi - lo);
       _matches += hi - lo;
     }
+    _accepted_bits = AcceptedBits();
   }
 
   void Accept(const duckdb::SelectionVector& accepted, idx_t count,
@@ -233,6 +242,7 @@ class FilterVerdicts {
     }
     _matches = count;
     _lazy = false;
+    _accepted_bits = AcceptedBits();
   }
 
   void Defer(uint32_t entries) {
@@ -272,33 +282,115 @@ class FilterVerdicts {
   idx_t KeepAccepted(const duckdb::SelectionVector& codes,
                      duckdb::SelectionVector& rows, idx_t count) const {
     if (_ranged) {
-      const uint32_t lo = _range.lo;
-      const uint32_t width = _range.hi - lo;
-      return KeepIf(codes, rows, count, [lo, width](idx_t code) {
-        return static_cast<uint32_t>(code - lo) < width;
-      });
+      return KeepIf(codes, rows, count,
+                    InRange{.lo = _range.lo, .width = _range.hi - _range.lo});
     }
-    const auto* matches = _verdicts.data();
-    return KeepIf(codes, rows, count,
-                  [matches](idx_t code) { return matches[code] == kAccepted; });
+    if (!_lazy && _verdicts.size() <= kBitEntries) {
+      return KeepIf(codes, rows, count, InBits{.bits = _accepted_bits});
+    }
+    return KeepIf(codes, rows, count, InVerdicts{.verdicts = _verdicts.data()});
   }
 
  private:
+  static constexpr size_t kBitEntries = 64;
+
+  struct InRange {
+    uint32_t lo;
+    uint32_t width;
+
+    IRS_FORCE_INLINE bool operator()(uint32_t code) const noexcept {
+      return code - lo < width;
+    }
+
+#ifdef __AVX2__
+    IRS_FORCE_INLINE __m256i operator()(__m256i codes) const noexcept {
+      const auto sign = _mm256_set1_epi32(std::numeric_limits<int32_t>::min());
+      return _mm256_cmpgt_epi32(
+        _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(width)), sign),
+        _mm256_xor_si256(
+          _mm256_sub_epi32(codes, _mm256_set1_epi32(static_cast<int32_t>(lo))),
+          sign));
+    }
+#endif
+  };
+
+  struct InBits {
+    uint64_t bits;
+
+    IRS_FORCE_INLINE bool operator()(uint32_t code) const noexcept {
+      return (bits >> code) & 1;
+    }
+
+#ifdef __AVX2__
+    IRS_FORCE_INLINE __m256i operator()(__m256i codes) const noexcept {
+      const auto low =
+        _mm256_sllv_epi32(_mm256_set1_epi32(static_cast<int32_t>(bits)),
+                          _mm256_sub_epi32(_mm256_set1_epi32(31), codes));
+      const auto high =
+        _mm256_sllv_epi32(_mm256_set1_epi32(static_cast<int32_t>(bits >> 32)),
+                          _mm256_sub_epi32(_mm256_set1_epi32(63), codes));
+      return _mm256_or_si256(low, high);
+    }
+#endif
+  };
+
+  struct InVerdicts {
+    const uint8_t* verdicts;
+
+    IRS_FORCE_INLINE bool operator()(uint32_t code) const noexcept {
+      return verdicts[code] == kAccepted;
+    }
+  };
+
   template<typename Accepted>
   IRS_FORCE_INLINE static idx_t KeepIf(const duckdb::SelectionVector& codes,
                                        duckdb::SelectionVector& rows,
                                        idx_t count, Accepted accepted) {
+    const std::span<duckdb::sel_t> listed{rows.data(), count};
+    SDB_ASSERT(absl::c_adjacent_find(listed, std::greater_equal{}) ==
+               listed.end());
+    const auto* code_of = codes.data();
+    auto* kept_rows = listed.data();
     idx_t kept = 0;
-    while (kept < count && accepted(codes.get_index(rows.get_index(kept)))) {
-      ++kept;
+    if (count == 0 || kept_rows[count - 1] != count - 1) {
+      for (idx_t i = 0; i < count; ++i) {
+        const auto row = kept_rows[i];
+        kept_rows[kept] = row;
+        kept += accepted(code_of[row]);
+      }
+      return kept;
     }
-    for (idx_t i = kept + 1; i < count; ++i) {
-      const auto row = rows.get_index(i);
-      if (accepted(codes.get_index(row))) {
-        rows.set_index(kept++, row);
+    idx_t i = 0;
+#ifdef __AVX2__
+    if constexpr (std::is_invocable_v<Accepted, __m256i>) {
+      auto row = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+      for (; i + 8 <= count; i += 8) {
+        const auto mask = static_cast<uint32_t>(
+          _mm256_movemask_ps(_mm256_castsi256_ps(accepted(_mm256_loadu_si256(
+            reinterpret_cast<const __m256i*>(code_of + i))))));
+        _mm256_storeu_si256(
+          reinterpret_cast<__m256i*>(kept_rows + kept),
+          _mm256_permutevar8x32_epi32(row, LeftPackControl(mask)));
+        kept += std::popcount(mask);
+        row = _mm256_add_epi32(row, _mm256_set1_epi32(8));
       }
     }
+#endif
+    for (; i < count; ++i) {
+      kept_rows[kept] = static_cast<duckdb::sel_t>(i);
+      kept += accepted(code_of[i]);
+    }
     return kept;
+  }
+
+  uint64_t AcceptedBits() const noexcept {
+    uint64_t bits = 0;
+    if (_verdicts.size() <= kBitEntries) {
+      for (size_t entry = 0; entry < _verdicts.size(); ++entry) {
+        bits |= uint64_t{_verdicts[entry] == kAccepted} << entry;
+      }
+    }
+    return bits;
   }
 
   static constexpr uint8_t kUnfiltered = 0;
@@ -311,6 +403,7 @@ class FilterVerdicts {
   EntryRange _range{};
   idx_t _matches = 0;
   uint64_t _filtered = 0;
+  uint64_t _accepted_bits = 0;
   bool _lazy = false;
   bool _ranged = false;
 };
@@ -711,7 +804,7 @@ struct DictionaryScan final : SegmentScanState {
     if (verdicts.Empty() || BoundMoved()) {
       if (EntryRanges ranges;
           Resolve(*filter.Cast<duckdb::ExpressionFilter>().expr, ranges)) {
-        verdicts.Accept(ranges, dict_count, static_cast<bool>(bound));
+        verdicts.Accept(ranges, dict_count);
       } else {
         bound = nullptr;
         if (dict_count < kLazyFilterEntries || dense) {

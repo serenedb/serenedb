@@ -224,11 +224,6 @@ class PatchedColumnReader final : public ColumnReader {
   bool ValidPoint(PointReader& reader, uint64_t row,
                   duckdb::Vector& scratch) const final;
 
- protected:
-  void NewOutputVector(ScanState& s) const final {
-    ResetOutput(*_patch_base, s);
-  }
-
  private:
   void ApplySelected(uint64_t anchor, const duckdb::SelectionVector& sel,
                      duckdb::idx_t hits, duckdb::Vector& out,

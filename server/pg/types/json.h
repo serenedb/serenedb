@@ -28,17 +28,6 @@
 
 namespace sdb::pg {
 
-class JsonInput {
- public:
-  JsonInput();
-
-  simdjson::error_code Check(std::string_view text);
-
- private:
-  simdjson::ondemand::parser _parser;
-  std::string _buffer;
-};
-
 #if defined(__has_feature)
 #if __has_feature(memory_sanitizer)
 inline constexpr bool kZeroJsonPadding = true;
@@ -62,6 +51,8 @@ inline simdjson::padded_string_view PadJson(std::string_view json,
   return simdjson::padded_string_view{buffer.data(), json.size(),
                                       buffer.size()};
 }
+
+[[noreturn]] void ThrowInvalidJson(std::string_view detail);
 
 [[noreturn]] void ThrowInvalidJson(simdjson::error_code error);
 

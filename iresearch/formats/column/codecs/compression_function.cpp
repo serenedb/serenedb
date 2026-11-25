@@ -85,6 +85,8 @@ void ThrowCorrupted(std::string_view codec, std::string_view what) {
 duckdb::idx_t FilterRows(duckdb::SelectionVector& sel, duckdb::Vector& values,
                          duckdb::TableFilterState& filter_state,
                          duckdb::idx_t count, duckdb::idx_t& sel_count) {
+  SDB_ASSERT(sel_count != count || count == 0 || !sel.IsSet() ||
+             (sel.get_index(0) == 0 && sel.get_index(count - 1) == count - 1));
   if (values.GetVectorType() == duckdb::VectorType::FLAT_VECTOR) {
     duckdb::FlatVector::SetSize(values, count);
   }

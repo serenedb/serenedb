@@ -1234,14 +1234,27 @@ struct FetchCache final : SegmentScanState {
 };
 
 template<typename R>
-void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
-               const idx_t* rows, idx_t count, duckdb::Vector& result,
-               const duckdb::SelectionVector& result_sel, idx_t result_offset) {
+IRS_FORCE_INLINE std::unique_ptr<FetchCache<R>> MakeFetchCache(
+  const ColumnSegment& segment, ColumnFetchState& state) {
+  return std::make_unique<FetchCache<R>>(state.GetOrInsertHandle(segment).Ptr(),
+                                         segment);
+}
+
+template<typename R>
+IRS_NO_INLINE std::unique_ptr<FetchCache<R>> NewFetchCache(
+  const ColumnSegment& segment, ColumnFetchState& state) {
+  return MakeFetchCache<R>(segment, state);
+}
+
+template<typename R>
+IRS_NO_INLINE void FetchRowList(const ColumnSegment& segment,
+                                ColumnFetchState& state, const idx_t* rows,
+                                idx_t count, duckdb::Vector& result,
+                                const duckdb::SelectionVector& result_sel,
+                                idx_t result_offset) {
   auto& frames = state
-                   .GetOrCreateSegmentState<FetchCache<R>>([&] {
-                     return std::make_unique<FetchCache<R>>(
-                       state.GetOrInsertHandle(segment).Ptr(), segment);
-                   })
+                   .GetOrCreateSegmentState<FetchCache<R>>(
+                     [&] { return MakeFetchCache<R>(segment, state); })
                    .frames;
   auto* data = duckdb::FlatVector::GetDataMutable<typename R::Value>(result);
   if constexpr (requires {
@@ -1257,6 +1270,26 @@ void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
       data[result_offset + result_sel.get_index(i)] = frames.Fetch(row, next);
     }
   }
+}
+
+template<typename R>
+void FetchRows(const ColumnSegment& segment, ColumnFetchState& state,
+               const idx_t* rows, idx_t count, duckdb::Vector& result,
+               const duckdb::SelectionVector& result_sel, idx_t result_offset) {
+  if (count != 1) {
+    return FetchRowList<R>(segment, state, rows, count, result, result_sel,
+                           result_offset);
+  }
+  const auto row = static_cast<uint64_t>(rows[0]);
+  const auto at = result_offset + result_sel.get_index(0);
+  SDB_ASSERT(row < segment.count);
+  auto& frames = state
+                   .GetOrCreateSegmentState<FetchCache<R>>(
+                     [&] { return NewFetchCache<R>(segment, state); })
+                   .frames;
+  auto* data =
+    duckdb::FlatVector::GetDataMutableUnsafe<typename R::Value>(result);
+  data[at] = frames.Fetch(row, kNoRow);
 }
 
 inline uint64_t RawBytes(const_data_ptr_t base, const FrameHeader& h,

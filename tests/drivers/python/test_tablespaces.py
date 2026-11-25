@@ -368,7 +368,7 @@ def test_a_request_that_never_connects_is_retried_whatever_its_method(
                 conn.execute("SET GLOBAL logging_storage = 'memory'")
                 conn.execute("CALL enable_logging('HTTP')")
                 fake.keep_alive = False
-                fake.close_after("HEAD", 2)
+                fake.close_after("HEAD", 1)
                 with pytest.raises(psycopg.Error):
                     conn.execute(
                         "COPY (SELECT i, repeat('x', 100) AS s FROM range(400000) t(i)) "
@@ -379,7 +379,7 @@ def test_a_request_that_never_connects_is_retried_whatever_its_method(
                     ("%uploads%",)).fetchone()[0]
         finally:
             server.stop()
-    assert fake.requests["HEAD"] == 2 and fake.requests["CREATE_UPLOAD"] == 0, fake.requests
+    assert fake.requests["HEAD"] == 1 and fake.requests["CREATE_UPLOAD"] == 0, fake.requests
     assert attempts == 4, attempts
 
 

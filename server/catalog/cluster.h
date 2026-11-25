@@ -79,9 +79,9 @@ class ClusterCatalog final : public BaseCatalog {
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
   void ReassignOwned(duckdb::CatalogTransaction transaction,
-                     const duckdb::ReassignOwnedInfo& info);
+                     const duckdb::AlterOwnedInfo& info);
   void DropOwned(duckdb::CatalogTransaction transaction,
-                 const duckdb::DropOwnedInfo& info);
+                 const duckdb::AlterOwnedInfo& info);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateRole(
     duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) final;

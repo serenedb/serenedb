@@ -228,9 +228,9 @@ class SereneDBCatalog final : public BaseCatalog {
   void ScanOwned(duckdb::CatalogTransaction transaction,
                  absl::FunctionRef<void(duckdb::CatalogEntry&)> callback);
   void ReassignOwned(duckdb::CatalogTransaction transaction,
-                     const duckdb::ReassignOwnedInfo& info);
+                     const duckdb::AlterOwnedInfo& info);
   void DropOwned(duckdb::CatalogTransaction transaction,
-                 const duckdb::DropOwnedInfo& info);
+                 const duckdb::AlterOwnedInfo& info);
 
   std::shared_ptr<DatabaseDirectory> _directory;
   CatalogSnapshots _snapshots{*this};

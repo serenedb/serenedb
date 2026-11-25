@@ -162,26 +162,33 @@ def generate(gen):
         '\tAclMode public_privileges;',
         '\tidx_t pg_class;',
         '\tbool shared;',
+        '\tstd::string_view noun;',
         '};',
         '',
         'constexpr ObjectKind MakeObjectKind(CatalogType type) {',
         '\tswitch (type) {',
     ]
+    unnamed = []
     for objtype, container, kinds in named_kinds():
-        lines += [f'\tcase CatalogType::{kind}:' for kind, _ in kinds]
-        if container == 'NONE':
-            lines.append('\t\tbreak;')
-            continue
         public, owner = defaults.get(objtype, ([], []))
         pg_class = classes.get(objtype, 0)
-        lines.append(f'\t\treturn {{CatalogType::{kinds[0][0]}, '
-                     f'ObjectContainer::{container}, {mode(owner)}, '
-                     f'{mode(public)}, {pg_class}, '
-                     f'{cpp_bool(pg_class in shared)}}};')
+        for kind, name in kinds:
+            if container == 'NONE' and name not in nouns:
+                unnamed.append(kind)
+                continue
+            acl_class = kind if container == 'NONE' else kinds[0][0]
+            lines.append(f'\tcase CatalogType::{kind}:')
+            lines.append(f'\t\treturn {{CatalogType::{acl_class}, '
+                         f'ObjectContainer::{container}, {mode(owner)}, '
+                         f'{mode(public)}, {pg_class}, '
+                         f'{cpp_bool(pg_class in shared)}, '
+                         f'{cpp_str(nouns.get(name, ""))}}};')
+    lines += [f'\tcase CatalogType::{kind}:' for kind in unnamed]
     lines += [
+        '\t\tbreak;',
         '\t}',
         '\treturn {type, ObjectContainer::NONE, AclMode::NoRights, '
-        'AclMode::NoRights, 0, false};',
+        'AclMode::NoRights, 0, false, {}};',
         '}',
         '',
         'inline constexpr auto OBJECT_KINDS = [] {',
@@ -204,30 +211,6 @@ def generate(gen):
         '(container == ObjectContainer::CLUSTER || '
         'container == ObjectContainer::DATABASE);',
         '}',
-        '',
-        'constexpr std::string_view ObjectNoun(CatalogType type) {',
-        '\tswitch (type) {',
-    ]
-    named = {}
-    unnamed = []
-    for _, _, kinds in named_kinds():
-        for kind, name in kinds:
-            if name in nouns:
-                named.setdefault(nouns[name], []).append(kind)
-            else:
-                unnamed.append(kind)
-    for noun, kinds in named.items():
-        lines += [f'\tcase CatalogType::{kind}:' for kind in kinds]
-        lines.append(f'\t\treturn {cpp_str(noun)};')
-    lines += [f'\tcase CatalogType::{kind}:' for kind in unnamed]
-    lines += [
-        '\t\tbreak;',
-        '\t}',
-        '\treturn {};',
-        '}',
-        '',
-        'inline constexpr std::string_view PROCEDURE_NOUN = '
-        f'{cpp_str(nouns["OBJECT_PROCEDURE"])};',
         '',
         '} // namespace duckdb',
     ]

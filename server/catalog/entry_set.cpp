@@ -23,11 +23,15 @@
 #include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_map.h>
 
+#include <duckdb/catalog/acl.hpp>
+#include <duckdb/catalog/catalog_entry/database_entry.hpp>
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/macro_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_entry/role_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_versions.hpp>
-#include <duckdb/catalog/permissions.hpp>
+#include <duckdb/catalog/column_acls.hpp>
 #include <duckdb/catalog/schema_info.hpp>
 #include <duckdb/catalog/standard_entry.hpp>
 #include <duckdb/main/database_manager.hpp>
@@ -98,6 +102,40 @@ void CheckWritable(const duckdb::SnapshotView& view,
             head.name.GetIdentifierName(), "\""));
 }
 
+bool AnyRoleReference(const duckdb::CatalogEntry& entry,
+                      absl::FunctionRef<bool(duckdb::idx_t)> named) {
+  const auto any_acl = [&](std::span<const duckdb::AclItem> acl) {
+    return absl::c_any_of(acl, [&](const duckdb::AclItem& item) {
+      return named(item.grantee) || named(item.grantor);
+    });
+  };
+  if (entry.type == duckdb::CatalogType::MACRO_ENTRY ||
+      entry.type == duckdb::CatalogType::TABLE_MACRO_ENTRY) {
+    const auto& macro = entry.Cast<duckdb::MacroCatalogEntry>();
+    return absl::c_any_of(macro.macros, [&](const auto& overload) {
+      const auto& permissions = macro.OverloadPermissions(*overload);
+      return named(permissions.owner) || any_acl(permissions.acl);
+    });
+  }
+  if (named(entry.permissions.owner) || any_acl(entry.permissions.acl)) {
+    return true;
+  }
+  if (entry.type == duckdb::CatalogType::DATABASE_ENTRY) {
+    return absl::c_any_of(entry.Cast<duckdb::DatabaseEntry>().DefaultAcls(),
+                          [&](const duckdb::DefaultAcl& row) {
+                            return named(row.role) || any_acl(row.acl);
+                          });
+  }
+  if (entry.type == duckdb::CatalogType::ROLE_ENTRY) {
+    return absl::c_any_of(
+      entry.Cast<duckdb::RoleEntry>().MemberOf(),
+      [&](const duckdb::Membership& edge) { return named(edge.grantor); });
+  }
+  return (entry.type == duckdb::CatalogType::VIEW_ENTRY ||
+          entry.type == duckdb::CatalogType::TABLE_ENTRY) &&
+         duckdb::AnyColumnAcl(entry.Cast<duckdb::StandardEntry>(), any_acl);
+}
+
 void ForEachSubject(
   const duckdb::CatalogEntry& version,
   absl::FunctionRef<void(duckdb::idx_t, const duckdb::LogicalDependency*)>
@@ -126,8 +164,8 @@ void ForEachSubject(
       }
     }
   }
-  duckdb::ForEachRoleReference(
-    version, [&](duckdb::idx_t role) { subject(role, nullptr); });
+  ForEachRoleReference(version,
+                       [&](duckdb::idx_t role) { subject(role, nullptr); });
   if (version.type == duckdb::CatalogType::ROLE_ENTRY) {
     for (const auto& membership : version.Cast<RoleCatalogEntry>().MemberOf()) {
       subject(membership.role, nullptr);
@@ -215,6 +253,21 @@ void ForEachSubject(const duckdb::CatalogEntry& version,
   ForEachSubject(
     version,
     [&](duckdb::idx_t oid, const duckdb::LogicalDependency*) { visit(oid); });
+}
+
+void ForEachRoleReference(const duckdb::CatalogEntry& entry,
+                          absl::FunctionRef<void(duckdb::idx_t)> visit) {
+  AnyRoleReference(entry, [&](duckdb::idx_t oid) {
+    if (oid != duckdb::ACL_ID_PUBLIC) {
+      visit(oid);
+    }
+    return false;
+  });
+}
+
+bool ReferencesRole(const duckdb::CatalogEntry& entry, duckdb::idx_t role) {
+  return AnyRoleReference(entry,
+                          [&](duckdb::idx_t oid) { return oid == role; });
 }
 
 void DependentIndex::Add(duckdb::idx_t subject, duckdb::idx_t dependent,
@@ -485,7 +538,7 @@ void OidIndex::CheckCreated(const duckdb::SnapshotView& view,
       roles.CheckLive(view, role, false);
     }
   };
-  duckdb::ForEachRoleReference(version, check_role);
+  ForEachRoleReference(version, check_role);
   if (version.type == duckdb::CatalogType::DB_ROLE_SETTING_ENTRY) {
     const auto& setting = version.Cast<DbRoleSettingCatalogEntry>();
     check_role(setting.Role());

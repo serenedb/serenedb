@@ -423,8 +423,8 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
     duckdb::CreateSchemaInfo info;
     info.SetSchema(duckdb::Identifier{kEsSchema});
     info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;
-    duckdb::AssignOwner(context, info.permissions, db_catalog,
-                        duckdb::CatalogType::SCHEMA_ENTRY, nullptr, owner);
+    db_catalog.AssignOwner(context, info.permissions,
+                           duckdb::CatalogType::SCHEMA_ENTRY, nullptr, owner);
     db_catalog.CreateSchema(db_catalog.GetCatalogTransaction(context), info);
   }
   auto options = duckdb::make_uniq<duckdb::CreateTableInfo>();

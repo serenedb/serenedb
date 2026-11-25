@@ -58,6 +58,11 @@ inline bool IsStandardEntry(const duckdb::CatalogEntry& entry) {
 void ForEachSubject(const duckdb::CatalogEntry& version,
                     absl::FunctionRef<void(duckdb::idx_t)> visit);
 
+void ForEachRoleReference(const duckdb::CatalogEntry& entry,
+                          absl::FunctionRef<void(duckdb::idx_t)> visit);
+
+bool ReferencesRole(const duckdb::CatalogEntry& entry, duckdb::idx_t role);
+
 struct DroppedSubject {
   duckdb::idx_t oid = 0;
   std::string_view name;

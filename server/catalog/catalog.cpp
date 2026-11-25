@@ -516,12 +516,15 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
   switch (info.type) {
-    case duckdb::AlterType::REASSIGN_OWNED:
-      ReassignOwned(transaction, info.Cast<duckdb::ReassignOwnedInfo>());
+    case duckdb::AlterType::ALTER_OWNED: {
+      const auto& owned = info.Cast<duckdb::AlterOwnedInfo>();
+      if (owned.new_owner.empty()) {
+        DropOwned(transaction, owned);
+      } else {
+        ReassignOwned(transaction, owned);
+      }
       return;
-    case duckdb::AlterType::DROP_OWNED:
-      DropOwned(transaction, info.Cast<duckdb::DropOwnedInfo>());
-      return;
+    }
     case duckdb::AlterType::ALTER_TABLE:
     case duckdb::AlterType::ALTER_INDEX:
       if (transaction.HasContext()) {
@@ -578,7 +581,7 @@ void SereneDBCatalog::ScanOwned(
 }
 
 void SereneDBCatalog::ReassignOwned(duckdb::CatalogTransaction transaction,
-                                    const duckdb::ReassignOwnedInfo& info) {
+                                    const duckdb::AlterOwnedInfo& info) {
   auto& context = transaction.GetContext();
   auto& cluster = ClusterOf(context);
   const auto cluster_transaction = cluster.GetCatalogTransaction(context);
@@ -640,7 +643,7 @@ void SereneDBCatalog::ReassignOwned(duckdb::CatalogTransaction transaction,
 }
 
 void SereneDBCatalog::DropOwned(duckdb::CatalogTransaction transaction,
-                                const duckdb::DropOwnedInfo& info) {
+                                const duckdb::AlterOwnedInfo& info) {
   auto& context = transaction.GetContext();
   const auto dropped = [&](duckdb::idx_t owner) {
     return absl::c_linear_search(info.role_ids, owner);
@@ -680,7 +683,7 @@ void SereneDBCatalog::DropOwned(duckdb::CatalogTransaction transaction,
         return;
       }
       for (const auto role : info.role_ids) {
-        if (duckdb::ReferencesRole(entry, role)) {
+        if (ReferencesRole(entry, role)) {
           revoke(role, 0);
         }
       }

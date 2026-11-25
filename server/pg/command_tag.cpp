@@ -156,10 +156,10 @@ std::string_view AlterTag(const duckdb::AlterInfo& info) {
       return TagsOf(info.GetCatalogType(), false).alter;
     case ALTER_SUBSCRIPTION:
       return "ALTER SUBSCRIPTION";
-    case REASSIGN_OWNED:
-      return "REASSIGN OWNED";
-    case DROP_OWNED:
-      return "DROP OWNED";
+    case ALTER_OWNED:
+      return info.Cast<duckdb::AlterOwnedInfo>().new_owner.empty()
+               ? "DROP OWNED"
+               : "REASSIGN OWNED";
     case ALTER_ROLE: {
       const auto& role = info.Cast<duckdb::AlterRoleInfo>();
       if ((role.grant_role.empty() && role.granted_roles.empty()) ||

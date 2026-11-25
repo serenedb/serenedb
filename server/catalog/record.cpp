@@ -29,7 +29,6 @@
 #include <compare>
 #include <cstring>
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
-#include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
 #include <duckdb/common/serializer/binary_serializer.hpp>
 #include <duckdb/common/serializer/memory_stream.hpp>
@@ -496,7 +495,7 @@ duckdb::vector<duckdb::idx_t> References(const Change& change) {
   if (change.set->Members()) {
     ForEachSubject(subject, add);
   } else {
-    duckdb::ForEachRoleReference(subject, add);
+    ForEachRoleReference(subject, add);
   }
   absl::c_sort(references);
   references.erase(std::ranges::unique(references).begin(), references.end());

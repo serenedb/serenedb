@@ -1242,28 +1242,19 @@ EXPLAIN SELECT sev, count(*) FROM cev_idx
 WHERE svc IN ('frontend', 'backend') GROUP BY sev
 ----
 QUERY PLAN
-╭─ HASH_GROUP_BY ────────────────────────────╮
-│ Groups: #0                                 │
-│ Aggregates: count_star()                   │
-│ ~1 row                                     │
-╰──────────────────────┬─────────────────────╯
-╭─ PROJECTION ─────────┴─────────────────────╮
-│ Projections: #1                            │
-│ ~1 row                                     │
-╰──────────────────────┬─────────────────────╯
-╭─ FILTER ─────────────┴─────────────────────╮
-│ Expression:                                │
-│ (svc = 'frontend') OR (svc = 'backend')    │
-│ ~1 row                                     │
-╰──────────────────────┬─────────────────────╯
-╭─ IRESEARCH_SCAN ─────┴─────────────────────╮
-│ Index: cev_idx                             │
-│ Lookup: search                             │
-│ Projections: svc, sev                      │
-│ Column Filter:                             │
-│ optional: (svc IN ('frontend', 'backend')) │
-│ ~8 rows                                    │
-╰────────────────────────────────────────────╯
+╭─ HASH_GROUP_BY ────────────────╮
+│ Groups: #0                     │
+│ Aggregates: count_star()       │
+│ ~1 row                         │
+╰────────────────┬───────────────╯
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: cev_idx                 │
+│ Lookup: search                 │
+│ Projections: sev               │
+│ Column Filter:                 │
+│ svc IN ('frontend', 'backend') │
+│ ~1 row                         │
+╰────────────────────────────────╯
 
 query TI
 SELECT sev, count(*) AS n FROM cev_idx

@@ -1,0 +1,294 @@
+# An IN list of two to 32 constants is a filter of the scan itself, with no filter above it, for every codec; a longer
+# list stays a mark join above the scan with an optional filter in it. One row group, one thread.
+
+statement ok
+SET threads = 1
+
+
+statement ok
+CREATE TABLE inl (id INTEGER PRIMARY KEY,
+                  s TEXT USING COMPRESSION dict_fsst,
+                  l TEXT USING COMPRESSION dict_lz4,
+                  p TEXT USING COMPRESSION fsst,
+                  r BIGINT USING COMPRESSION rle,
+                  c BIGINT USING COMPRESSION bitpacking)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO inl
+SELECT i,
+       CASE WHEN (i // 8) % 13 = 0 THEN NULL ELSE 'svc-' || ((i // 8) * 7919 % 17) END,
+       CASE WHEN (i // 8) % 13 = 0 THEN NULL ELSE 'svc-' || ((i // 8) * 7919 % 17) END,
+       CASE WHEN (i // 8) % 13 = 0 THEN NULL ELSE 'svc-' || ((i // 8) * 7919 % 17) END,
+       CASE WHEN (i // 16) % 37 = 0 THEN NULL ELSE (i // 16) * 7919 % 50 END,
+       7
+FROM range(49152) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) inl;
+
+
+query
+SELECT column_name, compression, count(*) AS segments, sum(count) AS rows
+FROM pragma_storage_info('inl')
+WHERE column_name IN ('s', 'l', 'p', 'r', 'c') AND segment_type <> 'VALIDITY'
+GROUP BY ALL ORDER BY column_name;
+----
+column_name	compression	segments	rows
+c	Constant	1	49152
+l	DICT_LZ4	1	49152
+p	FSST	1	49152
+r	RLE	1	49152
+s	DICT_FSST	1	49152
+
+
+query
+SELECT count(*) FROM inl WHERE s IN ('svc-1', 'svc-5', 'svc-16');
+----
+count
+8016
+
+
+query
+EXPLAIN SELECT count(*) FROM inl WHERE s IN ('svc-1', 'svc-5', 'svc-16');
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────────────╮
+│ Aggregates: count_star()          │
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: inl                        │
+│ Output: row-count only            │
+│ Column Filter:                    │
+│ s IN ('svc-1', 'svc-5', 'svc-16') │
+│ ~9,830 rows                       │
+╰───────────────────────────────────╯
+
+
+query
+SELECT count(*) FROM inl WHERE l IN ('svc-1', 'svc-5', 'svc-16');
+----
+count
+8016
+
+
+query
+EXPLAIN SELECT count(*) FROM inl WHERE l IN ('svc-1', 'svc-5', 'svc-16');
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────────────╮
+│ Aggregates: count_star()          │
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: inl                        │
+│ Output: row-count only            │
+│ Column Filter:                    │
+│ l IN ('svc-1', 'svc-5', 'svc-16') │
+│ ~9,830 rows                       │
+╰───────────────────────────────────╯
+
+
+query
+SELECT count(*) FROM inl WHERE p IN ('svc-1', 'svc-5', 'svc-16');
+----
+count
+8016
+
+
+query
+EXPLAIN SELECT count(*) FROM inl WHERE p IN ('svc-1', 'svc-5', 'svc-16');
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────────────╮
+│ Aggregates: count_star()          │
+│ ~1 row                            │
+╰─────────────────┬─────────────────╯
+╭─ IRESEARCH_SCAN ┴─────────────────╮
+│ Table: inl                        │
+│ Output: row-count only            │
+│ Column Filter:                    │
+│ p IN ('svc-1', 'svc-5', 'svc-16') │
+│ ~9,830 rows                       │
+╰───────────────────────────────────╯
+
+
+query
+SELECT count(*) FROM inl WHERE s = 'svc-1' OR s = 'svc-5' OR s = 'svc-16';
+----
+count
+8016
+
+
+query
+SELECT count(*) FROM inl WHERE s NOT IN ('svc-1', 'svc-5', 'svc-16');
+----
+count
+37352
+
+
+query
+EXPLAIN SELECT count(*) FROM inl WHERE s NOT IN ('svc-1', 'svc-5', 'svc-16');
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ───────────────────╮
+│ Aggregates: count_star()                │
+│ ~1 row                                  │
+╰────────────────────┬────────────────────╯
+╭─ IRESEARCH_SCAN ───┴────────────────────╮
+│ Table: inl                              │
+│ Output: row-count only                  │
+│ Column Filter:                          │
+│ NOT (s IN ('svc-1', 'svc-5', 'svc-16')) │
+│ ~9,830 rows                             │
+╰─────────────────────────────────────────╯
+
+
+query
+SELECT count(*) FROM inl WHERE s IN ('svc-1');
+----
+count
+2664
+
+
+query
+EXPLAIN SELECT count(*) FROM inl WHERE s IN ('svc-1');
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ──────╮
+│ Aggregates: count_star()   │
+│ ~1 row                     │
+╰──────────────┬─────────────╯
+╭─ IRESEARCH_SCAN ───────────╮
+│ Table: inl                 │
+│ Output: row-count only     │
+│ Column Filter: s = 'svc-1' │
+│ ~9,830 rows                │
+╰────────────────────────────╯
+
+
+query
+SELECT count(*) FROM inl WHERE s IN ('svc-1', NULL);
+----
+count
+2664
+
+
+query
+SELECT count(*) FROM inl WHERE s NOT IN ('svc-1', NULL);
+----
+count
+0
+
+
+query
+SELECT count(*) FROM inl WHERE s IN ('svc-0', 'svc-1', 'svc-2', 'svc-3', 'svc-4', 'svc-5', 'svc-6', 'svc-7', 'svc-8', 'svc-9',
+  'x-0', 'x-1', 'x-2', 'x-3', 'x-4', 'x-5', 'x-6', 'x-7', 'x-8', 'x-9', 'y-0', 'y-1', 'y-2', 'y-3', 'y-4', 'y-5', 'y-6', 'y-7',
+  'y-8', 'y-9', 'z-0', 'z-1');
+----
+count
+26680
+
+
+query
+EXPLAIN SELECT count(*) FROM inl WHERE s IN ('svc-0', 'svc-1', 'svc-2', 'svc-3', 'svc-4', 'svc-5', 'svc-6', 'svc-7', 'svc-8', 'svc-9',
+  'x-0', 'x-1', 'x-2', 'x-3', 'x-4', 'x-5', 'x-6', 'x-7', 'x-8', 'x-9', 'y-0', 'y-1', 'y-2', 'y-3', 'y-4', 'y-5', 'y-6', 'y-7',
+  'y-8', 'y-9', 'z-0', 'z-1');
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                                                                                                                                                                                                  │
+│ ~1 row                                                                                                                                                                                                                                                    │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Table: inl                                                                                                                                                                                                                                                │
+│ Output: row-count only                                                                                                                                                                                                                                    │
+│ Column Filter:                                                                                                                                                                                                                                            │
+│ s IN ('svc-0', 'svc-1', 'svc-2', 'svc-3', 'svc-4', 'svc-5', 'svc-6', 'svc-7', 'svc-8', 'svc-9', 'x-0', 'x-1', 'x-2', 'x-3', 'x-4', 'x-5', 'x-6', 'x-7', 'x-8', 'x-9', 'y-0', 'y-1', 'y-2', 'y-3', 'y-4', 'y-5', 'y-6', 'y-7', 'y-8', 'y-9', 'z-0', 'z-1') │
+│ ~9,830 rows                                                                                                                                                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT count(*) FROM inl WHERE s IN ('svc-0', 'svc-1', 'svc-2', 'svc-3', 'svc-4', 'svc-5', 'svc-6', 'svc-7', 'svc-8', 'svc-9',
+  'x-0', 'x-1', 'x-2', 'x-3', 'x-4', 'x-5', 'x-6', 'x-7', 'x-8', 'x-9', 'y-0', 'y-1', 'y-2', 'y-3', 'y-4', 'y-5', 'y-6', 'y-7',
+  'y-8', 'y-9', 'z-0', 'z-1', 'z-2');
+----
+count
+26680
+
+
+query
+EXPLAIN SELECT count(*) FROM inl WHERE s IN ('svc-0', 'svc-1', 'svc-2', 'svc-3', 'svc-4', 'svc-5', 'svc-6', 'svc-7', 'svc-8', 'svc-9',
+  'x-0', 'x-1', 'x-2', 'x-3', 'x-4', 'x-5', 'x-6', 'x-7', 'x-8', 'x-9', 'y-0', 'y-1', 'y-2', 'y-3', 'y-4', 'y-5', 'y-6', 'y-7',
+  'y-8', 'y-9', 'z-0', 'z-1', 'z-2');
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Aggregates: count_star()                                                                                                                                                                                                                                                     │
+│ ~1 row                                                                                                                                                                                                                                                                       │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ FILTER ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Expression: IN (...)                                                                                                                                                                                                                                                         │
+│ ~9,830 rows                                                                                                                                                                                                                                                                  │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭─ HASH_JOIN ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Join Type: MARK                                                                                                                                                                                                                                                              │
+│ Conditions: s = #0                                                                                                                                                                                                                                                           │
+│ ~49,152 rows                                                                                                                                                                                                                                                                 │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+                                                                                                                                        ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+╭─ IRESEARCH_SCAN ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ╭─ COLUMN_DATA_SCAN ─╮
+│ Table: inl                                                                                                                                                                                                                                                                   │  │ ~33 rows           │
+│ Projections: s                                                                                                                                                                                                                                                               │  ╰────────────────────╯
+│ Column Filter:                                                                                                                                                                                                                                                               │
+│ optional: (s IN ('svc-0', 'svc-1', 'svc-2', 'svc-3', 'svc-4', 'svc-5', 'svc-6', 'svc-7', 'svc-8', 'svc-9', 'x-0', 'x-1', 'x-2', 'x-3', 'x-4', 'x-5', 'x-6', 'x-7', 'x-8', 'x-9', 'y-0', 'y-1', 'y-2', 'y-3', 'y-4', 'y-5', 'y-6', 'y-7', 'y-8', 'y-9', 'z-0', 'z-1', 'z-2')) │
+│ ~49,152 rows                                                                                                                                                                                                                                                                 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+query
+SELECT count(*) FROM inl WHERE r IN (3, 17, 41);
+----
+count
+2864
+
+
+query
+EXPLAIN SELECT count(*) FROM inl WHERE r IN (3, 17, 41);
+----
+QUERY PLAN
+╭─ UNGROUPED_AGGREGATE ───────────╮
+│ Aggregates: count_star()        │
+│ ~1 row                          │
+╰────────────────┬────────────────╯
+╭─ IRESEARCH_SCAN ────────────────╮
+│ Table: inl                      │
+│ Output: row-count only          │
+│ Column Filter: r IN (3, 17, 41) │
+│ ~9,830 rows                     │
+╰─────────────────────────────────╯
+
+
+query
+SELECT count(*) FROM inl WHERE c IN (1, 2);
+----
+count
+0
+
+
+query
+SELECT count(*) FROM inl WHERE c IN (7, 8);
+----
+count
+49152
+
+
+query
+SELECT count(*) FROM inl JOIN (VALUES ('svc-1'), ('svc-5')) v(k) ON inl.s = v.k;
+----
+count
+5344

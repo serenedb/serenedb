@@ -175,3 +175,135 @@ RESET sdb_ann_force_exact;
 
 statement error invalid value for parameter "sdb_ann_rescore_width"
 SET sdb_ann_rescore_width = 'inf';
+
+
+# A WHERE that ORs an IS NULL test with a predicate on another column admits
+# exactly its rows on every route: unflushed rows, IVF, the forced exact scan
+# and HNSW, also when the index can't claim the predicate.
+statement ok
+CREATE TABLE axo (id INTEGER, emb FLOAT[2], a INTEGER, c VARCHAR);
+
+statement ok
+CREATE INDEX axo_idx ON axo
+  USING inverted(id, emb ivf (metric = 'l2', quant = 'none'), a, c);
+
+statement ok
+INSERT INTO axo SELECT i, [i, 0]::FLOAT[2],
+  CASE WHEN i % 10 = 0 THEN NULL ELSE i END, 'v' || i FROM range(1, 201) r(i);
+
+query
+SELECT id FROM axo WHERE a IS NULL OR c = 'v3'
+  ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 5;
+----
+id
+3
+10
+20
+30
+40
+
+query
+SELECT id FROM axo WHERE a IS NOT NULL OR c = 'v3'
+  ORDER BY emb <-> [20.4, 0]::FLOAT[2] LIMIT 3;
+----
+id
+21
+19
+22
+
+query
+SELECT id FROM axo WHERE (a + 0) IS NULL OR upper(c) = 'V3'
+  ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 5;
+----
+id
+3
+10
+20
+30
+40
+
+statement ok
+VACUUM (FLUSH_TABLE) axo;
+
+query
+SELECT id FROM axo WHERE a IS NULL OR c = 'v3'
+  ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 5;
+----
+id
+3
+10
+20
+30
+40
+
+query
+SELECT id FROM axo_idx WHERE (a + 0) IS NULL OR upper(c) = 'V3'
+  ORDER BY id LIMIT 5;
+----
+id
+3
+10
+20
+30
+40
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+SELECT id FROM axo WHERE a IS NULL OR c = 'v3'
+  ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 5;
+----
+id
+3
+10
+20
+30
+40
+
+query
+SELECT id FROM axo WHERE a IS NOT NULL OR c = 'v3'
+  ORDER BY emb <-> [20.4, 0]::FLOAT[2] LIMIT 3;
+----
+id
+21
+19
+22
+
+query
+SELECT id FROM axo WHERE (a + 0) IS NULL OR upper(c) = 'V3'
+  ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 5;
+----
+id
+3
+10
+20
+30
+40
+
+statement ok
+CREATE TABLE axoh (id INTEGER, emb FLOAT[2], a INTEGER, c VARCHAR);
+
+statement ok
+CREATE INDEX axoh_idx ON axoh
+  USING inverted(id, emb hnsw (metric = 'l2', quant = 'none'), a, c);
+
+statement ok
+INSERT INTO axoh SELECT * FROM axo;
+
+statement ok
+VACUUM (FLUSH_TABLE) axoh;
+
+query
+SELECT id FROM axoh WHERE a IS NULL OR c = 'v3'
+  ORDER BY emb <-> [0, 0]::FLOAT[2] LIMIT 5;
+----
+id
+3
+10
+20
+30
+40
+
+statement ok
+RESET sdb_ann_force_exact;

@@ -36,6 +36,7 @@
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 
 namespace irs {
@@ -65,15 +66,6 @@ void NarrowSelection(duckdb::SelectionVector& sel, duckdb::idx_t count,
   }
   for (duckdb::idx_t k = 0; k < kept_count; ++k) {
     sel.set_index(k, sel.get_index(kept.get_index(k)));
-  }
-}
-
-void MoveHits(const irs::doc_id_t* docs_in, const irs::score_t* scores_in,
-              irs::doc_id_t* docs_out, irs::score_t* scores_out,
-              duckdb::idx_t count) {
-  std::memmove(docs_out, docs_in, count * sizeof(irs::doc_id_t));
-  if (scores_out != nullptr) {
-    std::memmove(scores_out, scores_in, count * sizeof(irs::score_t));
   }
 }
 
@@ -932,29 +924,30 @@ void ColFilterChain::CompactByOffsets(const duckdb::SelectionVector& sel,
                                       const irs::score_t* scores_in,
                                       irs::doc_id_t* docs_out,
                                       irs::score_t* scores_out) {
-  if (survivors == count) {
-    if (docs_out != docs_in) {
-      MoveHits(docs_in, scores_in, docs_out, scores_out, count);
+  Resolve(scores_out != nullptr, [&]<bool kScores>() IRS_FORCE_INLINE {
+    if (survivors == count) {
+      if (docs_out != docs_in) {
+        std::memmove(docs_out, docs_in, count * sizeof(irs::doc_id_t));
+        if constexpr (kScores) {
+          std::memmove(scores_out, scores_in, count * sizeof(irs::score_t));
+        }
+      }
+      return;
     }
-    return;
-  }
-  const auto first =
-    static_cast<irs::doc_id_t>(anchor) + irs::doc_limits::min();
-  if (scores_out == nullptr) {
+    const auto first =
+      static_cast<irs::doc_id_t>(anchor) + irs::doc_limits::min();
+    [[maybe_unused]] duckdb::idx_t k = 0;
     for (duckdb::idx_t s = 0; s < survivors; ++s) {
-      docs_out[s] = first + static_cast<irs::doc_id_t>(sel.get_index(s));
+      const auto doc = first + static_cast<irs::doc_id_t>(sel.get_index(s));
+      if constexpr (kScores) {
+        while (docs_in[k] != doc) {
+          ++k;
+        }
+        scores_out[s] = scores_in[k];
+      }
+      docs_out[s] = doc;
     }
-    return;
-  }
-  duckdb::idx_t k = 0;
-  for (duckdb::idx_t s = 0; s < survivors; ++s) {
-    const auto doc = first + static_cast<irs::doc_id_t>(sel.get_index(s));
-    while (docs_in[k] != doc) {
-      ++k;
-    }
-    docs_out[s] = doc;
-    scores_out[s] = scores_in[k];
-  }
+  });
 }
 
 }  // namespace irs

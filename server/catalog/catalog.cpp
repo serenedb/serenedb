@@ -515,38 +515,40 @@ duckdb::optional_ptr<duckdb::CatalogEntry> SereneDBCatalog::CreateSchema(
 
 void SereneDBCatalog::Alter(duckdb::CatalogTransaction transaction,
                             duckdb::AlterInfo& info) {
-  if (info.type == duckdb::AlterType::REASSIGN_OWNED) {
-    ReassignOwned(transaction, info.Cast<duckdb::ReassignOwnedInfo>());
-    return;
-  }
-  if (info.type == duckdb::AlterType::DROP_OWNED) {
-    DropOwned(transaction, info.Cast<duckdb::DropOwnedInfo>());
-    return;
+  switch (info.type) {
+    case duckdb::AlterType::REASSIGN_OWNED:
+      ReassignOwned(transaction, info.Cast<duckdb::ReassignOwnedInfo>());
+      return;
+    case duckdb::AlterType::DROP_OWNED:
+      DropOwned(transaction, info.Cast<duckdb::DropOwnedInfo>());
+      return;
+    case duckdb::AlterType::ALTER_TABLE:
+    case duckdb::AlterType::ALTER_INDEX:
+      if (transaction.HasContext()) {
+        RefuseUnsupportedAlter(transaction.GetContext(), info);
+      }
+      break;
+    default:
+      break;
   }
   if (const auto new_name = info.GetNewName();
       new_name && info.GetCatalogType() == duckdb::CatalogType::SCHEMA_ENTRY &&
       IsReservedSchemaName(*new_name)) {
     ThrowReservedSchemaName(*new_name);
   }
-  if (info.GetCatalogType() == duckdb::CatalogType::SUBSCRIPTION_ENTRY) {
-    AlterSubscription(transaction, info);
-    return;
+  switch (info.GetCatalogType()) {
+    case duckdb::CatalogType::SUBSCRIPTION_ENTRY:
+      AlterSubscription(transaction, info);
+      return;
+    case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+      AlterIn(_wrappers, transaction, info);
+      return;
+    case duckdb::CatalogType::FOREIGN_SERVER_ENTRY:
+      AlterForeignServer(transaction, info);
+      return;
+    default:
+      BaseCatalog::Alter(transaction, info);
   }
-  if (info.GetCatalogType() ==
-      duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
-    AlterIn(_wrappers, transaction, info);
-    return;
-  }
-  if (info.GetCatalogType() == duckdb::CatalogType::FOREIGN_SERVER_ENTRY) {
-    AlterForeignServer(transaction, info);
-    return;
-  }
-  if (transaction.HasContext() &&
-      (info.type == duckdb::AlterType::ALTER_TABLE ||
-       info.type == duckdb::AlterType::ALTER_INDEX)) {
-    RefuseUnsupportedAlter(transaction.GetContext(), info);
-  }
-  BaseCatalog::Alter(transaction, info);
 }
 
 void SereneDBCatalog::AlterForeignServer(duckdb::CatalogTransaction transaction,
@@ -1058,9 +1060,8 @@ duckdb::unique_ptr<duckdb::LogicalOperator> SereneDBCatalog::BindAlterAddIndex(
   duckdb::unique_ptr<duckdb::LogicalOperator>,
   duckdb::unique_ptr<duckdb::CreateIndexInfo>,
   duckdb::unique_ptr<duckdb::AlterTableInfo> alter_info) {
-  duckdb::vector<duckdb::unique_ptr<duckdb::AlterInfo>> infos;
-  infos.push_back(std::move(alter_info));
-  return duckdb::make_uniq<duckdb::LogicalAlter>(std::move(infos));
+  return duckdb::make_uniq<duckdb::LogicalAlter>(
+    duckdb::unique_ptr<duckdb::AlterInfo>{std::move(alter_info)});
 }
 
 duckdb::ErrorData SereneDBCatalog::SupportsCreateTable(

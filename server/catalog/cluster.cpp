@@ -424,32 +424,22 @@ void ClusterCatalog::Bootstrap(duckdb::ClientContext& context,
 
 void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
                            duckdb::AlterInfo& info) {
-  if (info.type == duckdb::AlterType::REASSIGN_OWNED) {
-    ReassignOwned(transaction, info.Cast<duckdb::ReassignOwnedInfo>());
-    return;
+  switch (info.type) {
+    case duckdb::AlterType::REASSIGN_OWNED:
+      ReassignOwned(transaction, info.Cast<duckdb::ReassignOwnedInfo>());
+      return;
+    case duckdb::AlterType::DROP_OWNED:
+      DropOwned(transaction, info.Cast<duckdb::DropOwnedInfo>());
+      return;
+    case duckdb::AlterType::ALTER_ROLE:
+      AlterRole(transaction, info.Cast<duckdb::AlterRoleInfo>());
+      return;
+    case duckdb::AlterType::ALTER_TABLESPACE:
+      AlterTablespace(transaction, info);
+      return;
+    default:
+      ApplyAlter(transaction, info);
   }
-  if (info.type == duckdb::AlterType::DROP_OWNED) {
-    DropOwned(transaction, info.Cast<duckdb::DropOwnedInfo>());
-    return;
-  }
-  if (info.type == duckdb::AlterType::ALTER_ROLE) {
-    AlterRole(transaction, info.Cast<duckdb::AlterRoleInfo>());
-    return;
-  }
-  if (info.type == duckdb::AlterType::ALTER_TABLESPACE) {
-    AlterTablespace(transaction, info);
-    return;
-  }
-  if (info.GetCatalogType() == duckdb::CatalogType::PARAMETER_ENTRY) {
-    AlterParameter(transaction, info.Cast<duckdb::AlterPermissionsInfo>());
-    return;
-  }
-  if (info.GetCatalogType() == duckdb::CatalogType::DB_ROLE_SETTING_ENTRY) {
-    AlterDbRoleSetting(transaction,
-                       info.Cast<duckdb::AlterDatabaseSettingsInfo>());
-    return;
-  }
-  ApplyAlter(transaction, info);
 }
 
 void ClusterCatalog::AlterRole(duckdb::CatalogTransaction transaction,
@@ -645,14 +635,22 @@ void ClusterCatalog::RevokeMembership(duckdb::CatalogTransaction transaction,
 
 void ClusterCatalog::ApplyAlter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
-  const auto type = info.GetCatalogType();
-  if (type == duckdb::CatalogType::ROLE_ENTRY ||
-      type == duckdb::CatalogType::DATABASE_ENTRY ||
-      type == duckdb::CatalogType::TABLESPACE_ENTRY) {
-    AlterIn(Set(type), transaction, info);
-    return;
+  switch (const auto type = info.GetCatalogType()) {
+    case duckdb::CatalogType::PARAMETER_ENTRY:
+      AlterParameter(transaction, info.Cast<duckdb::AlterPermissionsInfo>());
+      return;
+    case duckdb::CatalogType::DB_ROLE_SETTING_ENTRY:
+      AlterDbRoleSetting(transaction,
+                         info.Cast<duckdb::AlterDatabaseSettingsInfo>());
+      return;
+    case duckdb::CatalogType::ROLE_ENTRY:
+    case duckdb::CatalogType::DATABASE_ENTRY:
+    case duckdb::CatalogType::TABLESPACE_ENTRY:
+      AlterIn(Set(type), transaction, info);
+      return;
+    default:
+      BaseCatalog::Alter(transaction, info);
   }
-  BaseCatalog::Alter(transaction, info);
 }
 
 void ClusterCatalog::AlterTablespace(duckdb::CatalogTransaction transaction,
@@ -825,20 +823,19 @@ duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
   return role;
 }
 
-void ClusterCatalog::DropRole(
-  duckdb::CatalogTransaction transaction,
-  const duckdb::vector<duckdb::reference<duckdb::DropInfo>>& infos) {
+void ClusterCatalog::DropRole(duckdb::CatalogTransaction transaction,
+                              const duckdb::DropInfo& info) {
   DeclareModified(transaction, *this,
                   duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
   auto& context = transaction.GetContext();
   const auto& session = ConnectionContext::Get(context);
   std::vector<duckdb::idx_t> dropped;
-  const auto check = [&](const duckdb::DropInfo& target) {
-    const auto& name = target.GetQualifiedName().Name();
+  for (const auto& object : info.objects) {
+    const auto& name = object.name.Name();
     auto role = _roles.Get(transaction, name);
     if (!role) {
-      if (target.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL) {
-        return;
+      if (info.if_not_found == duckdb::OnEntryNotFound::RETURN_NULL) {
+        continue;
       }
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
@@ -859,9 +856,6 @@ void ClusterCatalog::DropRole(
     if (!absl::c_linear_search(dropped, role->oid)) {
       dropped.push_back(role->oid);
     }
-  };
-  for (const auto& info : infos) {
-    check(info.get());
   }
   struct Membership {
     duckdb::Identifier member;

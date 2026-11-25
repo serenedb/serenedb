@@ -85,9 +85,8 @@ class ClusterCatalog final : public BaseCatalog {
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateRole(
     duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) final;
-  void DropRole(
-    duckdb::CatalogTransaction transaction,
-    const duckdb::vector<duckdb::reference<duckdb::DropInfo>>& infos) final;
+  void DropRole(duckdb::CatalogTransaction transaction,
+                const duckdb::DropInfo& info) final;
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateDatabase(
     duckdb::CatalogTransaction transaction,

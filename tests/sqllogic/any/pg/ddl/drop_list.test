@@ -376,6 +376,25 @@ DROP FUNCTION dropl_o(BIGINT);
 
 
 statement ok
+CREATE FUNCTION dropl_scalar(x INT) RETURNS INT LANGUAGE SQL BEGIN ATOMIC SELECT x; END;
+
+
+statement ok
+CREATE FUNCTION dropl_rows() RETURNS TABLE(x INT) LANGUAGE SQL BEGIN ATOMIC SELECT 1; END;
+
+
+statement ok
+DROP FUNCTION dropl_scalar(INT), dropl_rows();
+
+
+query
+SELECT count(*) AS n FROM pg_proc WHERE proname IN ('dropl_scalar', 'dropl_rows');
+----
+n
+0
+
+
+statement ok
 CREATE SCHEMA dropl_sa;
 
 

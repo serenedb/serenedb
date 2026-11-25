@@ -705,9 +705,7 @@ void ConnectionContext::OnBoundPlan(duckdb::Binder& binder,
         root->Cast<duckdb::LogicalCreate>().info->GetQualifiedName().Name());
       break;
     case duckdb::LogicalOperatorType::LOGICAL_DROP:
-      if (absl::c_any_of(
-            root->Cast<duckdb::LogicalDrop>().infos,
-            [&](const auto& info) { return discard_all(*info); })) {
+      if (discard_all(*root->Cast<duckdb::LogicalDrop>().info)) {
         PreventInTransactionBlock("DISCARD ALL");
       }
       break;

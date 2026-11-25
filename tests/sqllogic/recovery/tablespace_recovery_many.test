@@ -97,6 +97,7 @@ ORDER BY c.relname;
 relname	spcname
 cold	archive
 hot	fast
+hot_pkey	fast
 notes_fast	fast
 notes_slow	archive
 

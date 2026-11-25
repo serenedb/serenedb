@@ -263,20 +263,24 @@ uint32_t WalkInPlace(const fsst::Decoder<Impl>& fsst, const char* in,
   return end;
 }
 
+struct ChainTail {
+  const char* in;
+  uint64_t enc;
+  uint64_t lcp;
+};
+
 template<typename Impl>
-std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
-                               PackedReader& lengths, PackedReader& lcps,
-                               uint32_t restart, uint32_t entry,
-                               uint64_t enc_off, uint64_t enc_end,
-                               std::string& buf, uint64_t& walked) {
+ChainTail DecodeChainHeads(const fsst::Decoder<Impl>& fsst, const char* in,
+                           PackedReader& lengths, PackedReader& lcps,
+                           uint32_t restart, uint32_t entry, uint64_t enc_off,
+                           uint64_t enc_end, std::string& buf,
+                           uint64_t& walked) {
   const uint32_t n = entry - restart + 1;
   SDB_ASSERT(n <= kChainRestart);
   std::array<uint64_t, kChainRestart + 1> off;
   std::array<uint32_t, kChainRestart> lcp;
   std::array<uint32_t, kChainRestart> enc;
-  lcps.Read(restart, n, lcp.data());
   lengths.Read(restart, n, enc.data());
-  lcp[0] = 0;
   off[0] = enc_off;
   for (uint32_t i = 0; i < n; ++i) {
     off[i + 1] = off[i] + enc[i];
@@ -284,6 +288,12 @@ std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
   if (off[n] > enc_end) [[unlikely]] {
     ThrowCorrupted("text", "front coding is inconsistent");
   }
+  ++walked;
+  if (n == 1 || lcps.At(entry) == 0) {
+    return {.in = in + off[n - 1], .enc = enc[n - 1], .lcp = 0};
+  }
+  lcps.Read(restart, n, lcp.data());
+  lcp[0] = 0;
   std::array<uint32_t, kChainRestart> used;
   uint32_t count = 0;
   uint64_t need = std::numeric_limits<uint64_t>::max();
@@ -305,10 +315,7 @@ std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
     ++walked;
   }
   SDB_ASSERT(lcp[n - 1] <= len);
-  len =
-    DecodeSuffix(fsst, in + off[n - 1], off[n] - off[n - 1], lcp[n - 1], buf);
-  ++walked;
-  return {buf.data(), len};
+  return {.in = in + off[n - 1], .enc = enc[n - 1], .lcp = lcp[n - 1]};
 }
 
 template<typename Impl>
@@ -766,6 +773,7 @@ struct Fetch {
     decoder.reset();
     groups.Clear();
     lcps = PackedReader{base + h.off_lcps, h.lcp_width};
+    offsets = PackedReader{base + h.off_lengths, h.length_width};
     walked = 0;
   }
 
@@ -783,12 +791,30 @@ struct Fetch {
     const auto* in = reinterpret_cast<const char*>(base + h.off_data);
     const uint32_t group = (entry - f.first_entry) / kChainRestart;
     const uint32_t restart = f.first_entry + group * kChainRestart;
-    const auto value = DecodeChained(
+    const auto tail = DecodeChainHeads(
       *decoder, in, lengths, lcps, restart, entry,
-      groups.Offset(lengths, f, lo, group), h.data_size, chain, walked);
+      groups.Offset(offsets, f, lo, group), h.data_size, chain, walked);
     auto* out = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(result);
-    out[result_idx] =
-      duckdb::StringVector::AddStringOrBlob(result, value.data(), value.size());
+    if (tail.lcp + tail.enc == 0) {
+      out[result_idx] = duckdb::string_t{};
+      return;
+    }
+    auto& heap = duckdb::StringVector::GetStringAllocator(result);
+    const auto room = tail.enc * fsst::kMaxExpansion;
+    auto* at = Reserve(heap, tail.lcp + room);
+    if (tail.lcp != 0) {
+      std::memcpy(at, chain.data(), tail.lcp);
+    }
+    const auto dec =
+      tail.enc == 0 ? 0
+                    : decoder->Decode(tail.in, tail.enc, at + tail.lcp, room);
+    if (dec > room) [[unlikely]] {
+      ThrowCorrupted("text", "entry is inconsistent");
+    }
+    const duckdb::string_t value{at, static_cast<uint32_t>(tail.lcp + dec)};
+    heap.ShrinkHead(tail.lcp + room -
+                    (value.IsInlined() ? 0 : value.GetSize()));
+    out[result_idx] = value;
   }
 
   void Open(const ColumnSegment& segment, const Header& h,
@@ -809,6 +835,7 @@ struct Fetch {
 
   std::optional<fsst::Decoder<Impl>> decoder;
   PackedReader lcps{nullptr, 0};
+  PackedReader offsets{nullptr, 0};
   ChainGroups groups;
   std::string chain;
   uint64_t walked = 0;

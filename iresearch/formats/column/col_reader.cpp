@@ -31,29 +31,20 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
 namespace {
 
 constinit std::atomic<uint64_t> gNextFileId{1};
 
-bool InRange(uint64_t offset, uint64_t size, uint64_t end) noexcept {
-  return size <= end && offset <= end - size;
-}
-
-template<typename... Parts>
-[[noreturn]] void ThrowCorruptedFooter(const Parts&... parts) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED), ERR_MSG(parts...));
-}
-
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
                      uint64_t footer_offset) {
-  if (!(InRange(m.file_offset, m.byte_size, footer_offset) &&
-        InRange(m.shared_offset, m.shared_size, footer_offset))) [[unlikely]] {
-    ThrowCorruptedFooter(".col reader: column data on column id ", id,
-                         " out of range (offset ", m.file_offset, ", size ",
-                         m.byte_size, ")");
+  if (!(format_utils::InRange(m.file_offset, m.byte_size, footer_offset) &&
+        format_utils::InRange(m.shared_offset, m.shared_size, footer_offset)))
+    [[unlikely]] {
+    format_utils::ThrowCorruptedFooter(
+      ".col reader: column data on column id ", id, " out of range (offset ",
+      m.file_offset, ", size ", m.byte_size, ")");
   }
 }
 
@@ -110,7 +101,7 @@ ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
           if (!(footer.row_group_starts.empty()
                   ? start == 0
                   : start > footer.row_group_starts.back())) [[unlikely]] {
-            ThrowCorruptedFooter(
+            format_utils::ThrowCorruptedFooter(
               ".col footer: row group starts are not increasing from 0");
           }
           footer.row_group_starts.push_back(start);

@@ -25,6 +25,7 @@
 #include <span>
 #include <utility>
 
+#include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/norm_reader_impl.hpp"
 #include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
@@ -34,15 +35,6 @@ namespace {
 
 constexpr uint32_t kPageShift =
   static_cast<uint32_t>(std::countr_zero(duckdb::PageResidency::PAGE_SIZE));
-
-bool InRange(uint64_t offset, uint64_t size, uint64_t end) noexcept {
-  return size <= end && offset <= end - size;
-}
-
-template<typename... Parts>
-[[noreturn]] void ThrowCorruptedNorms(const Parts&... parts) {
-  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED), ERR_MSG(parts...));
-}
 
 NormRegionMeta ReadNormRegion(duckdb::BinaryDeserializer& d, field_id id,
                               uint64_t data_size) {
@@ -59,8 +51,8 @@ NormRegionMeta ReadNormRegion(duckdb::BinaryDeserializer& d, field_id id,
         r.stats.min <= r.stats.max &&
         (r.bits == 0 || r.bits == 8 || r.bits == 16 || r.bits == 32)))
     [[unlikely]] {
-    ThrowCorruptedNorms(".idx reader: norm region on column id ", id,
-                        " is corrupt");
+    format_utils::ThrowCorruptedFooter(".idx reader: norm region on column id ",
+                                       id, " is corrupt");
   }
   if (r.bits == 0) {
     r.value = d.ReadProperty<uint32_t>(8, "value");
@@ -68,9 +60,10 @@ NormRegionMeta ReadNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   }
   r.file_offset = d.ReadProperty<uint64_t>(9, "file_offset");
   const auto slots = NormSlotsSize(r);
-  if (!InRange(r.file_offset, slots, data_size)) [[unlikely]] {
-    ThrowCorruptedNorms(".idx reader: norm data on column id ", id,
-                        " out of range (offset ", r.file_offset, ")");
+  if (!format_utils::InRange(r.file_offset, slots, data_size)) [[unlikely]] {
+    format_utils::ThrowCorruptedFooter(".idx reader: norm data on column id ",
+                                       id, " out of range (offset ",
+                                       r.file_offset, ")");
   }
   r.exceptions =
     d.ReadPropertyWithExplicitDefault<uint32_t>(10, "exceptions", 0);
@@ -84,13 +77,14 @@ NormRegionMeta ReadNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   if (!(r.bits != 32 && r.exceptions <= r.stats.rows &&
         r.overflow <= r.exceptions && r.shift <= kNormMaxShift &&
         (r.exception_bytes == 2 || r.exception_bytes == 4))) [[unlikely]] {
-    ThrowCorruptedNorms(".idx reader: norm exceptions on column id ", id,
-                        " are corrupt");
+    format_utils::ThrowCorruptedFooter(
+      ".idx reader: norm exceptions on column id ", id, " are corrupt");
   }
   const auto table = NormTableSize(r);
-  if (!InRange(r.table_offset, table, data_size)) [[unlikely]] {
-    ThrowCorruptedNorms(".idx reader: norm exceptions on column id ", id,
-                        " out of range (offset ", r.table_offset, ")");
+  if (!format_utils::InRange(r.table_offset, table, data_size)) [[unlikely]] {
+    format_utils::ThrowCorruptedFooter(
+      ".idx reader: norm exceptions on column id ", id,
+      " out of range (offset ", r.table_offset, ")");
   }
   return r;
 }
@@ -118,9 +112,10 @@ std::vector<NormColumnSpec> ReadNormSpecs(duckdb::BinaryDeserializer& in,
           });
         if (spec.meta.regions.empty() ||
             spec.meta.row_count > doc_limits::kMaxDocs) [[unlikely]] {
-          ThrowCorruptedNorms(".idx reader: norm column id ", spec.id,
-                              " holds ", spec.meta.row_count, " rows across ",
-                              spec.meta.regions.size(), " regions");
+          format_utils::ThrowCorruptedFooter(
+            ".idx reader: norm column id ", spec.id, " holds ",
+            spec.meta.row_count, " rows across ", spec.meta.regions.size(),
+            " regions");
         }
       });
     });
@@ -137,7 +132,8 @@ NormColumns::NormColumns(duckdb::shared_ptr<duckdb::InputFile> file,
            .try_emplace(id,
                         std::make_unique<NormColumnReader>(id, meta, *_file))
            .second) [[unlikely]] {
-      ThrowCorruptedNorms(".idx footer: duplicate norm field_id ", id);
+      format_utils::ThrowCorruptedFooter(
+        ".idx footer: duplicate norm field_id ", id);
     }
   }
 }

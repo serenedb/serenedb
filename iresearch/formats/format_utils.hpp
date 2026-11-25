@@ -30,6 +30,7 @@
 #include <duckdb/storage/external_file_cache/external_file_cache.hpp>
 
 #include "iresearch/formats/flush_state.hpp"
+#include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs::format_utils {
 
@@ -55,6 +56,15 @@ Footer ReadFooter(const duckdb::InputFile& file, std::string_view name);
 
 Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
                   FooterReader read);
+
+inline bool InRange(uint64_t offset, uint64_t size, uint64_t end) noexcept {
+  return size <= end && offset <= end - size;
+}
+
+template<typename... Parts>
+[[noreturn]] void ThrowCorruptedFooter(const Parts&... parts) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED), ERR_MSG(parts...));
+}
 
 std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
                                                        std::string_view root,

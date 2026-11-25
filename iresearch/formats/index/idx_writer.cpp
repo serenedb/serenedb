@@ -104,15 +104,12 @@ duckdb::shared_ptr<duckdb::InputFile> IdxWriter::ReadNorms() {
     _fallback_norms.reset();
     return OpenNormBytes(std::move(bytes));
   }
-  const auto size = _out->Position();
   if (duckdb::DatabaseFileSystem::IsRemote(_out->path)) {
-    auto bytes =
-      size == 0 ? duckdb::AllocatedData{} : _allocator->Allocate(size);
-    [[maybe_unused]] const bool held = _out->CopyHeld(bytes.get(), size);
-    SDB_ASSERT(held);
-    return OpenNormBytes(std::move(bytes));
+    auto file = _out->Input();
+    SDB_ASSERT(file);
+    return file;
   }
-  if (size == 0) {
+  if (_out->Position() == 0) {
     return OpenNormBytes({});
   }
   _out->Flush();

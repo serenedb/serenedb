@@ -336,7 +336,8 @@ ChainTail DecodeChainHeads(const fsst::Decoder<Impl>& fsst, const char* in,
 }
 
 bool SharedTable(const Header& h, const ColumnSegment& segment) noexcept {
-  return h.symtab_size == 0 && segment.shared_size != 0;
+  SDB_ASSERT(h.symtab_size != 0 || segment.shared_size != 0);
+  return h.symtab_size == 0;
 }
 
 template<typename Impl>

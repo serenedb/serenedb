@@ -17,7 +17,7 @@ ROUTED_ARGUMENTS = frozenset({"retriever", "entry_retriever"})
 ALLOWED = {
     f"{PLANNER}/binder/expression/bind_window_expression.cpp": 1,
     f"{PLANNER}/binder/statement/bind_copy.cpp": 1,
-    f"{PLANNER}/binder/statement/bind_create.cpp": 5,
+    f"{PLANNER}/binder/statement/bind_create.cpp": 4,
     f"{PLANNER}/binder/statement/bind_create_table.cpp": 2,
     f"{PLANNER}/binder/statement/bind_detach.cpp": 1,
     f"{PLANNER}/binder/statement/bind_grant.cpp": 2,
@@ -33,6 +33,7 @@ ALLOWED = {
     f"{PLANNER}/operator/logical_insert.cpp": 1,
     f"{PLANNER}/operator/logical_merge_into.cpp": 1,
     f"{PLANNER}/operator/logical_update.cpp": 1,
+    f"{PLANNER}/binder_privileges.cpp": 1,
     f"{PLANNER}/statement_preprocessor.cpp": 2,
     f"{FUNCTIONS}/aggregate/distributive/minmax.cpp": 1,
     f"{FUNCTIONS}/scalar/sequence/nextval.cpp": 1,

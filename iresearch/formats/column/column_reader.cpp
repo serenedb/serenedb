@@ -93,6 +93,9 @@ GatherBands BandsFor(codecs::CodecType codec,
       return {0, 1000};
     case codecs::CodecType::Lz4:
       return {0, 1000};
+    case codecs::CodecType::Alp:
+    case codecs::CodecType::Alprd:
+      return {10, 90};
     default:
       return text ? GatherBands{10, 1000} : GatherBands{10, 0};
   }

@@ -658,6 +658,56 @@ TEST_F(ColNumericCodecTest, EveryNamedCodecStoresEveryOtherTypeAndReadsBack) {
   }
 }
 
+TEST_F(ColNumericCodecTest, AlpGathersSelectRowsInsideTheirVectors) {
+  constexpr uint64_t kRows = 5 * STANDARD_VECTOR_SIZE + 300;
+  const Gen decimals = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g) % 100000);
+  };
+  const Gen with_exceptions = [](uint64_t g) -> std::optional<int64_t> {
+    if (g % 97 == 5) {
+      return static_cast<int64_t>(Mix(g));
+    }
+    return static_cast<int64_t>(Mix(g) % 100000);
+  };
+  using irs::codecs::CodecType;
+  for (const auto codec : {CodecType::Alp, CodecType::Alprd}) {
+    for (const auto& type :
+         {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::FLOAT}) {
+      for (const auto& gen : {decimals, with_exceptions}) {
+        SCOPED_TRACE(std::string{magic_enum::enum_name(codec)} + " " +
+                     duckdb::LogicalType{type}.ToString());
+        tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+        Write(dir, type, {}, kRows, kRows, gen, codec);
+        Verify(dir, type, kRows, gen);
+        irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+        const auto* col = r.Column(kField);
+        ASSERT_NE(col, nullptr);
+        ASSERT_EQ(col->DataBlocks().size(), 1);
+        ASSERT_EQ(col->DataBlocks().front().codec->type, codec);
+        for (const uint64_t stride : {uint64_t{12}, uint64_t{25}}) {
+          for (const uint64_t first : {uint64_t{0}, uint64_t{700}}) {
+            std::vector<uint64_t> picked;
+            for (uint64_t g = first; g < kRows; g += stride) {
+              picked.push_back(g);
+            }
+            auto state = col->InitScan(r.Ctx());
+            duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+            duckdb::FlatVector::ValidityMutable(out).Reset(
+              STANDARD_VECTOR_SIZE);
+            irs::column_internal::GatherRows(
+              *col, state, Rows2{picked.data(), picked.size()}, out, 0,
+              /*whole_output=*/true);
+            out.Flatten(picked.size());
+            for (size_t k = 0; k < picked.size(); ++k) {
+              ExpectRow(out, k, picked[k], gen, type);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest,
        LeafCodecsReadBackRowGroupsOfMoreFramesThanTheySample) {
   using irs::codecs::CodecType;

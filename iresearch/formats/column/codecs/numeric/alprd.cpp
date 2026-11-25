@@ -770,7 +770,8 @@ struct AlpRdScanState final : SegmentScanState {
 };
 
 template<typename T>
-AlpRdVector OpenVector(const AlpRdScanState<T>& state, idx_t vector_index) {
+IRS_FORCE_INLINE AlpRdVector OpenVector(const AlpRdScanState<T>& state,
+                                        idx_t vector_index) {
   return OpenVector<T>(
     state.layout, state.header.left_bit_width, state.header.right_bit_width,
     vector_index,
@@ -894,6 +895,7 @@ template<typename T>
 constexpr DecompressionFunction kDecompression{
   .init_scan = alp::InitScan<AlpRdScanState<T>>,
   .scan = alp::Scan<AlpRdScanState<T>>,
+  .select = alp::Select<AlpRdScanState<T>>,
   .fetch_rows = AlpRdFetchRows<T>,
   .skip = alp::Skip<AlpRdScanState<T>>,
 };

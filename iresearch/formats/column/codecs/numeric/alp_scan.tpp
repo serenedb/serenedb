@@ -198,6 +198,52 @@ void Skip(const ColumnSegment&, ColumnScanState& state,
 }
 
 template<typename State>
+IRS_NO_INLINE const typename State::Value* DecodedVector(
+  State& state, duckdb::idx_t vector_index) {
+  const auto start = state.total_value_count;
+  if (VectorFinished(state) || start / kVectorSize != vector_index) {
+    state.total_value_count = vector_index * kVectorSize;
+    LoadVector(state, state.vector_state->decoded_values);
+    state.total_value_count = start;
+  }
+  return state.vector_state->decoded_values;
+}
+
+template<typename State>
+void Select(const ColumnSegment&, ColumnScanState& state,
+            duckdb::idx_t vector_count, duckdb::Vector& result,
+            duckdb::idx_t result_offset, const duckdb::SelectionVector& sel,
+            duckdb::idx_t sel_count, duckdb::ScanVectorType) {
+  auto& scan_state = state.scan_state->template Cast<State>();
+  SDB_ASSERT(vector_count <= scan_state.count - scan_state.total_value_count);
+  auto* out = ResultValues(scan_state, result) + result_offset;
+  result.SetVectorType(duckdb::VectorType::FLAT_VECTOR);
+  const auto start = scan_state.total_value_count;
+  for (duckdb::idx_t i = 0; i < sel_count;) {
+    const auto vector_index = (start + sel.get_index(i)) / kVectorSize;
+    auto end = i + 1;
+    while (end < sel_count &&
+           (start + sel.get_index(end)) / kVectorSize == vector_index) {
+      ++end;
+    }
+    if (end - i >= kSparseRows ||
+        (!VectorFinished(scan_state) && start / kVectorSize == vector_index)) {
+      const auto* decoded = DecodedVector(scan_state, vector_index);
+      for (; i < end; ++i) {
+        out[i] = decoded[(start + sel.get_index(i)) % kVectorSize];
+      }
+      continue;
+    }
+    const auto vector = OpenVector(scan_state, vector_index);
+    for (; i < end; ++i) {
+      out[i] =
+        ValueAt(scan_state, vector, (start + sel.get_index(i)) % kVectorSize);
+    }
+  }
+  SkipValues(scan_state, vector_count);
+}
+
+template<typename State>
 struct FetchState final : SegmentScanState {
   FetchState(duckdb::BufferHandle handle, const ColumnSegment& segment)
     : scan_state{std::move(handle), segment} {}

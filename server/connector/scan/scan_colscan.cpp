@@ -143,15 +143,20 @@ void RunColScan(duckdb::ClientContext&, duckdb::TableFunctionInput&,
         output.SetChildCardinality(added);
         return;
       }
+      if (PreviousPiece(l)) {
+        l.doc_cursor = l.piece.begin;
+        l.doc_end = l.piece.end;
+        OpenScanner(g, l);
+        continue;
+      }
       FinishUnit(g, l);
     }
     if (!NextLiveUnit(g, l)) {
       break;
     }
     const auto& sub = (*g.reader)[l.unit.seg];
-    const auto rows = g.RowsOf(l.unit);
-    l.doc_cursor = rows.begin;
-    l.doc_end = rows.end;
+    l.doc_cursor = l.piece.begin;
+    l.doc_end = l.piece.end;
     l.has_mask = sub.docs_mask() != nullptr;
     l.mask = irs::MakeGenericDocsMask(sub);
     OpenScanner(g, l);

@@ -1,0 +1,181 @@
+statement ok
+CREATE TABLE tnf (id BIGINT, ts TIMESTAMP, k TEXT, v BIGINT)
+WITH (compaction_interval = 0, row_group_size = 32768);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO tnf SELECT i,
+  CASE WHEN i % 997 <> 5 THEN TIMESTAMP '2026-01-01 00:00:00' + (i - i % 3) * INTERVAL '1 second' END,
+  CASE WHEN i % 5 = 0 THEN 'cart' ELSE 'other' END,
+  (i * 7919) % 100003
+FROM range(0, 100000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) tnf;
+
+
+statement ok
+INSERT INTO tnf SELECT i,
+  CASE WHEN i % 997 <> 5 THEN TIMESTAMP '2026-01-01 00:00:00' + (i - i % 3) * INTERVAL '1 second' END,
+  CASE WHEN i % 5 = 0 THEN 'cart' ELSE 'other' END,
+  (i * 7919) % 100003
+FROM range(100000, 150000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) tnf;
+
+
+statement ok
+RESET threads
+
+
+query
+SELECT id, ts FROM tnf WHERE k = 'cart' ORDER BY ts DESC NULLS LAST, id LIMIT 5;
+----
+id	ts
+149995	2026-01-02 17:39:54
+149990	2026-01-02 17:39:48
+149985	2026-01-02 17:39:45
+149980	2026-01-02 17:39:39
+149975	2026-01-02 17:39:33
+
+
+query
+SELECT id, ts FROM tnf WHERE k = 'cart' ORDER BY ts DESC NULLS FIRST, id LIMIT 5;
+----
+id	ts
+5	NULL
+4990	NULL
+9975	NULL
+14960	NULL
+19945	NULL
+
+
+query
+SELECT id, ts FROM tnf ORDER BY ts DESC NULLS FIRST, id DESC LIMIT 4;
+----
+id	ts
+149555	NULL
+148558	NULL
+147561	NULL
+146564	NULL
+
+
+query
+SELECT id, ts FROM tnf ORDER BY ts DESC NULLS LAST, id DESC LIMIT 4;
+----
+id	ts
+149999	2026-01-02 17:39:57
+149998	2026-01-02 17:39:57
+149997	2026-01-02 17:39:57
+149996	2026-01-02 17:39:54
+
+
+query
+SELECT id, ts FROM tnf WHERE k = 'cart' ORDER BY ts NULLS LAST, id LIMIT 5;
+----
+id	ts
+0	2026-01-01 00:00:00
+10	2026-01-01 00:00:09
+15	2026-01-01 00:00:15
+20	2026-01-01 00:00:18
+25	2026-01-01 00:00:24
+
+
+query
+SELECT id FROM tnf ORDER BY ts DESC NULLS LAST, id LIMIT 3 OFFSET 70000;
+----
+id
+79931
+79926
+79927
+
+
+query
+SELECT id, v FROM tnf WHERE k = 'cart' ORDER BY v DESC, id LIMIT 5;
+----
+id	v
+52685	100002
+105370	100001
+26835	99993
+79520	99992
+132205	99991
+
+
+query
+SELECT sum(id) AS ids, min(id) AS lo, max(id) AS hi FROM (
+  SELECT id FROM tnf WHERE k = 'cart' ORDER BY ts DESC NULLS LAST, id LIMIT 3000) s;
+----
+ids	lo	hi
+427463760	134985	149995
+
+
+query
+SELECT id, ts FROM tnf WHERE k = 'cart' AND id % 2 = 1 ORDER BY ts DESC NULLS FIRST, id LIMIT 5;
+----
+id	ts
+5	NULL
+9975	NULL
+19945	NULL
+29915	NULL
+39885	NULL
+
+
+statement ok
+CREATE TABLE tnf_idx (id BIGINT, ts TIMESTAMP, body TEXT)
+WITH (compaction_interval = 0, row_group_size = 32768);
+
+
+statement ok
+CREATE INDEX tnf_idx_body ON tnf_idx USING inverted(body);
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+INSERT INTO tnf_idx SELECT i, TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL '1 second',
+  CASE WHEN i % 3 = 0 THEN 'alpha' ELSE 'gamma' END
+FROM range(0, 98304) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) tnf_idx;
+
+
+statement ok
+RESET threads
+
+
+query
+SELECT id, ts FROM tnf_idx WHERE body @@ 'alpha' ORDER BY ts DESC NULLS LAST, id LIMIT 4;
+----
+id	ts
+98301	2026-01-02 03:18:21
+98298	2026-01-02 03:18:18
+98295	2026-01-02 03:18:15
+98292	2026-01-02 03:18:12
+
+
+query
+SELECT count(*) AS n, sum(id) AS ids, min(id) AS lo, max(id) AS hi FROM (
+  SELECT id FROM tnf_idx WHERE body @@ 'alpha' ORDER BY ts DESC NULLS LAST, id LIMIT 20000) s;
+----
+n	ids	lo	hi
+20000	1366050000	38304	98301
+
+
+query
+SELECT id, ts FROM tnf_idx WHERE body @@ 'alpha' ORDER BY ts NULLS LAST, id LIMIT 3;
+----
+id	ts
+0	2026-01-01 00:00:00
+3	2026-01-01 00:00:03
+6	2026-01-01 00:00:06

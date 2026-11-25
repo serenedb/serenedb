@@ -109,6 +109,7 @@ struct ScanUnit {
   uint32_t rg_end = 0;
   uint32_t live = 0;
   bool whole = true;
+  bool backward = false;
 };
 
 struct UnitRows {
@@ -365,6 +366,7 @@ struct ScanGlobalState final : public duckdb::GlobalTableFunctionState {
   bool order_strict = false;
   ScanOrderBound order_bound;
   std::vector<ScanOrderKey> ordered_heap;
+  uint32_t backward_units = 0;
 
   bool Ordered() const noexcept { return ordered; }
 
@@ -480,6 +482,8 @@ struct ScanLocalState : public duckdb::LocalTableFunctionState {
   uint32_t finished_segments = 0;
   bool has_unit = false;
   ScanUnit unit;
+  UnitRows piece;
+  uint64_t piece_floor = 0;
   bool units_exhausted = false;
   bool starts_exhausted = false;
   uint64_t rg_units = 0;
@@ -610,6 +614,8 @@ bool RunPrepareStage(duckdb::TableFunctionInput& input, ScanGlobalState& g,
 void BuildClaimPlan(ScanGlobalState& g, duckdb::ClientContext& context);
 bool ClaimUnit(ScanGlobalState& g, ScanLocalState& l);
 bool NextLiveUnit(ScanGlobalState& g, ScanLocalState& l);
+void StartPieces(const ScanGlobalState& g, ScanLocalState& l);
+bool PreviousPiece(ScanLocalState& l) noexcept;
 bool FinishUnit(ScanGlobalState& g, ScanLocalState& l);
 void BuildRowGroupChecks(const ScanGlobalState& g,
                          const irs::ColReader& col_reader,

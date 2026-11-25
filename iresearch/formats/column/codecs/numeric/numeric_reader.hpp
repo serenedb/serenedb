@@ -120,6 +120,18 @@ class FrameReader {
     return self.FetchApart(row, next);
   }
 
+  IRS_FORCE_INLINE void FetchRows(this auto& self, const duckdb::idx_t* rows,
+                                  duckdb::idx_t count, T* out,
+                                  const duckdb::SelectionVector& sel,
+                                  duckdb::idx_t offset) {
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      const auto row = static_cast<uint64_t>(rows[i]);
+      SDB_ASSERT(row < self._f.row_count);
+      out[offset + sel.get_index(i)] =
+        self.Fetch(row, i + 1 < count ? uint64_t{rows[i + 1]} : kNoRow);
+    }
+  }
+
   T At(uint64_t row) const noexcept {
     return Scaled(duckdb::Load<U>(_view + (row - _begin) * sizeof(T)));
   }
@@ -447,10 +459,11 @@ class FrameReader {
            (row ^ next) < kBlockValues;
   }
 
-  IRS_FORCE_INLINE void FetchRows(this auto& self, const duckdb::idx_t* rows,
-                                  duckdb::idx_t count, T* out,
-                                  const duckdb::SelectionVector& sel,
-                                  duckdb::idx_t offset) {
+  IRS_FORCE_INLINE void FetchBlockRows(this auto& self,
+                                       const duckdb::idx_t* rows,
+                                       duckdb::idx_t count, T* out,
+                                       const duckdb::SelectionVector& sel,
+                                       duckdb::idx_t offset) {
     if constexpr (std::remove_reference_t<decltype(self)>::kPacks) {
       if (self.Packed()) {
         self.FetchPackedRows(rows, count, out, sel, offset);

@@ -223,10 +223,16 @@ class DeltaReader final : public FrameReader<T> {
 
  public:
   using Base::ConstantRows;
-  using Base::FetchRows;
   using Base::NarrowBounds;
 
   static constexpr bool kPacks = !std::is_floating_point_v<T>;
+
+  IRS_FORCE_INLINE void FetchRows(const duckdb::idx_t* rows,
+                                  duckdb::idx_t count, T* out,
+                                  const duckdb::SelectionVector& sel,
+                                  duckdb::idx_t offset) {
+    this->FetchBlockRows(rows, count, out, sel, offset);
+  }
 
   DeltaReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
               CodecType codec, const ReadContext::CacheSlot& slot = {})
@@ -1257,19 +1263,7 @@ IRS_NO_INLINE void FetchRowList(const ColumnSegment& segment,
                      [&] { return MakeFetchCache<R>(segment, state); })
                    .frames;
   auto* data = duckdb::FlatVector::GetDataMutable<typename R::Value>(result);
-  if constexpr (requires {
-                  frames.FetchRows(rows, count, data, result_sel,
-                                   result_offset);
-                }) {
-    frames.FetchRows(rows, count, data, result_sel, result_offset);
-  } else {
-    for (idx_t i = 0; i < count; ++i) {
-      const auto row = static_cast<uint64_t>(rows[i]);
-      SDB_ASSERT(row < segment.count);
-      const uint64_t next = i + 1 < count ? rows[i + 1] : kNoRow;
-      data[result_offset + result_sel.get_index(i)] = frames.Fetch(row, next);
-    }
-  }
+  frames.FetchRows(rows, count, data, result_sel, result_offset);
 }
 
 template<typename R>
@@ -1503,11 +1497,7 @@ class WideReader {
   }
 
   void FetchRows(const duckdb::idx_t* rows, duckdb::idx_t count, W* out,
-                 const duckdb::SelectionVector& sel, duckdb::idx_t offset)
-    requires requires(R& half, uint64_t* halves) {
-      half.FetchRows(rows, count, halves, sel, offset);
-    }
-  {
+                 const duckdb::SelectionVector& sel, duckdb::idx_t offset) {
     const duckdb::SelectionVector in_order;
     if (_lows.size() < count) {
       _lows.resize(count);
@@ -1721,6 +1711,14 @@ class WideDictionaryReader {
       return _parts->Fetch(row, next);
     }
     return Entry(Visit([&](auto& codes) { return codes.Fetch(row, next); }));
+  }
+
+  void FetchRows(const duckdb::idx_t* rows, duckdb::idx_t count, W* out,
+                 const duckdb::SelectionVector& sel, duckdb::idx_t offset) {
+    for (duckdb::idx_t i = 0; i < count; ++i) {
+      out[offset + sel.get_index(i)] =
+        Fetch(rows[i], i + 1 < count ? uint64_t{rows[i + 1]} : kNoRow);
+    }
   }
 
   bool ScanEntries(uint64_t row, uint64_t count, duckdb::Vector& result) {

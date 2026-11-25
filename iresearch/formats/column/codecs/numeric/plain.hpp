@@ -194,10 +194,16 @@ class PlainReader final : public FrameReader<T> {
 
  public:
   using Base::ConstantRows;
-  using Base::FetchRows;
   using Base::NarrowBounds;
 
   static constexpr bool kPacks = !std::is_floating_point_v<T>;
+
+  IRS_FORCE_INLINE void FetchRows(const duckdb::idx_t* rows,
+                                  duckdb::idx_t count, T* out,
+                                  const duckdb::SelectionVector& sel,
+                                  duckdb::idx_t offset) {
+    this->FetchBlockRows(rows, count, out, sel, offset);
+  }
 
   PlainReader(duckdb::const_data_ptr_t base, const FrameHeader& frames,
               CodecType codec, const ReadContext::CacheSlot& slot = {})

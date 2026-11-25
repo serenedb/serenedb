@@ -34,6 +34,25 @@
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 
 namespace irs {
+namespace {
+
+void WriteGraphFrames(duckdb::BinarySerializer& graph,
+                      const HnswGraphFrames& frames) {
+  graph.WriteObject(kHnswGraphLevels, "levels",
+                    [&](duckdb::BinarySerializer& object) {
+                      compression::WriteFrames(object, frames.levels);
+                    });
+  graph.WriteObject(kHnswGraphBase, "base",
+                    [&](duckdb::BinarySerializer& object) {
+                      compression::WriteFrames(object, frames.base);
+                    });
+  graph.WriteObject(kHnswGraphUpper, "upper",
+                    [&](duckdb::BinarySerializer& object) {
+                      compression::WriteFrames(object, frames.upper);
+                    });
+}
+
+}  // namespace
 
 IdxWriter::IdxWriter(FileTracker& tracker)
   : _tracker{tracker}, _filename{FileName(tracker.Name(), kIdxFormatExt)} {}
@@ -160,6 +179,12 @@ std::unique_ptr<IdxReader> IdxWriter::Commit(HnswBases* hnsw_bases) {
           obj.WriteProperty<uint32_t>(7, "record_size", h.record_size);
           obj.WriteProperty<uint64_t>(8, "rows", h.rows);
           obj.WriteProperty<bool>(9, "rotated", h.rotated);
+          obj.WriteOptionalObject(
+            kHnswMetaGraphCompression, "graph_compression",
+            e.meta.graph_compression.Packed(),
+            [&](duckdb::BinarySerializer& graph) {
+              WriteGraphFrames(graph, e.meta.graph_compression);
+            });
         });
       });
     footer.WriteOptionalObject(kIdxFieldTerms, "terms",

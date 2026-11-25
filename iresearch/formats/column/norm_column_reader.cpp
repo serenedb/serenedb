@@ -35,6 +35,15 @@ namespace {
 constexpr uint32_t kPageShift =
   static_cast<uint32_t>(std::countr_zero(duckdb::PageResidency::PAGE_SIZE));
 
+bool InRange(uint64_t offset, uint64_t size, uint64_t end) noexcept {
+  return size <= end && offset <= end - size;
+}
+
+template<typename... Parts>
+[[noreturn]] void ThrowCorruptedNorms(const Parts&... parts) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED), ERR_MSG(parts...));
+}
+
 NormRegionMeta ReadNormRegion(duckdb::BinaryDeserializer& d, field_id id,
                               uint64_t data_size) {
   NormRegionMeta r;
@@ -46,20 +55,23 @@ NormRegionMeta ReadNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   r.stats.min = d.ReadProperty<uint32_t>(5, "min");
   r.stats.max = d.ReadProperty<uint32_t>(6, "max");
   r.bits = d.ReadProperty<uint8_t>(7, "bits");
-  SDB_ENSURE(r.stats.rows != 0 && r.stats.rows <= doc_limits::kMaxDocs &&
-               r.stats.min <= r.stats.max &&
-               (r.bits == 0 || r.bits == 8 || r.bits == 16 || r.bits == 32),
-             "norm region of column ", id, " is corrupt");
+  if (!(r.stats.rows != 0 && r.stats.rows <= doc_limits::kMaxDocs &&
+        r.stats.min <= r.stats.max &&
+        (r.bits == 0 || r.bits == 8 || r.bits == 16 || r.bits == 32)))
+    [[unlikely]] {
+    ThrowCorruptedNorms(".idx reader: norm region on column id ", id,
+                        " is corrupt");
+  }
   if (r.bits == 0) {
     r.value = d.ReadProperty<uint32_t>(8, "value");
     return r;
   }
   r.file_offset = d.ReadProperty<uint64_t>(9, "file_offset");
   const auto slots = NormSlotsSize(r);
-  SDB_ENSURE(r.file_offset + slots >= r.file_offset &&
-               r.file_offset + slots <= data_size,
-             "norm data of column ", id, " out of range (offset ",
-             r.file_offset, ")");
+  if (!InRange(r.file_offset, slots, data_size)) [[unlikely]] {
+    ThrowCorruptedNorms(".idx reader: norm data on column id ", id,
+                        " out of range (offset ", r.file_offset, ")");
+  }
   r.exceptions =
     d.ReadPropertyWithExplicitDefault<uint32_t>(10, "exceptions", 0);
   if (r.exceptions == 0) {
@@ -69,15 +81,17 @@ NormRegionMeta ReadNormRegion(duckdb::BinaryDeserializer& d, field_id id,
   r.shift = d.ReadProperty<uint8_t>(12, "shift");
   r.exception_bytes = d.ReadProperty<uint8_t>(13, "exception_bytes");
   r.table_offset = d.ReadProperty<uint64_t>(14, "table_offset");
-  SDB_ENSURE(r.bits != 32 && r.exceptions <= r.stats.rows &&
-               r.overflow <= r.exceptions && r.shift <= kNormMaxShift &&
-               (r.exception_bytes == 2 || r.exception_bytes == 4),
-             "norm exceptions of column ", id, " are corrupt");
+  if (!(r.bits != 32 && r.exceptions <= r.stats.rows &&
+        r.overflow <= r.exceptions && r.shift <= kNormMaxShift &&
+        (r.exception_bytes == 2 || r.exception_bytes == 4))) [[unlikely]] {
+    ThrowCorruptedNorms(".idx reader: norm exceptions on column id ", id,
+                        " are corrupt");
+  }
   const auto table = NormTableSize(r);
-  SDB_ENSURE(r.table_offset + table >= r.table_offset &&
-               r.table_offset + table <= data_size,
-             "norm exceptions of column ", id, " out of range (offset ",
-             r.table_offset, ")");
+  if (!InRange(r.table_offset, table, data_size)) [[unlikely]] {
+    ThrowCorruptedNorms(".idx reader: norm exceptions on column id ", id,
+                        " out of range (offset ", r.table_offset, ")");
+  }
   return r;
 }
 
@@ -102,10 +116,12 @@ std::vector<NormColumnSpec> ReadNormSpecs(duckdb::BinaryDeserializer& in,
               spec.meta.row_count += r.stats.rows;
             });
           });
-        SDB_ENSURE(!spec.meta.regions.empty() &&
-                     spec.meta.row_count <= doc_limits::kMaxDocs,
-                   "norm column ", spec.id, " holds ", spec.meta.row_count,
-                   " rows across ", spec.meta.regions.size(), " regions");
+        if (spec.meta.regions.empty() ||
+            spec.meta.row_count > doc_limits::kMaxDocs) [[unlikely]] {
+          ThrowCorruptedNorms(".idx reader: norm column id ", spec.id,
+                              " holds ", spec.meta.row_count, " rows across ",
+                              spec.meta.regions.size(), " regions");
+        }
       });
     });
   return columns;
@@ -117,11 +133,12 @@ NormColumns::NormColumns(duckdb::shared_ptr<duckdb::InputFile> file,
   SDB_ASSERT(columns.empty() || _file);
   _columns.reserve(columns.size());
   for (const auto& [id, meta] : columns) {
-    const bool added =
-      _columns
-        .try_emplace(id, std::make_unique<NormColumnReader>(id, meta, *_file))
-        .second;
-    SDB_ENSURE(added, "duplicate norm column ", id);
+    if (!_columns
+           .try_emplace(id,
+                        std::make_unique<NormColumnReader>(id, meta, *_file))
+           .second) [[unlikely]] {
+      ThrowCorruptedNorms(".idx footer: duplicate norm field_id ", id);
+    }
   }
 }
 

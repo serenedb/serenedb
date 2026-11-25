@@ -1,0 +1,139 @@
+control substitution on
+
+statement ok
+CREATE TABLE li (
+  id BIGINT PRIMARY KEY,
+  u1 UUID, u2 UUID, u3 UUID, u4 UUID, u5 UUID, u6 UUID, u7 UUID, u8 UUID, u9 UUID
+) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO li
+SELECT id,
+  md5(id::VARCHAR || '-1')::UUID, md5(id::VARCHAR || '-2')::UUID,
+  md5(id::VARCHAR || '-3')::UUID, md5(id::VARCHAR || '-4')::UUID,
+  md5(id::VARCHAR || '-5')::UUID, md5(id::VARCHAR || '-6')::UUID,
+  md5(id::VARCHAR || '-7')::UUID, md5(id::VARCHAR || '-8')::UUID,
+  md5(id::VARCHAR || '-9')::UUID
+FROM (
+  SELECT CAST(hash(i)::HUGEINT - 9223372036854775808 AS BIGINT) AS id
+  FROM range(0, 20000) t(i)
+);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) li;
+
+
+statement ok
+INSERT INTO li
+SELECT id,
+  md5(id::VARCHAR || '-1')::UUID, md5(id::VARCHAR || '-2')::UUID,
+  md5(id::VARCHAR || '-3')::UUID, md5(id::VARCHAR || '-4')::UUID,
+  md5(id::VARCHAR || '-5')::UUID, md5(id::VARCHAR || '-6')::UUID,
+  md5(id::VARCHAR || '-7')::UUID, md5(id::VARCHAR || '-8')::UUID,
+  md5(id::VARCHAR || '-9')::UUID
+FROM (
+  SELECT CAST(hash(i)::HUGEINT - 9223372036854775808 AS BIGINT) AS id
+  FROM range(20000, 22000) t(i)
+);
+
+
+statement ok
+UPDATE li SET u1 = md5(id::VARCHAR || '-x')::UUID;
+
+
+statement ok
+UPDATE li SET u2 = md5(id::VARCHAR || '-y')::UUID
+WHERE id = CAST(hash(7)::HUGEINT - 9223372036854775808 AS BIGINT);
+
+
+query
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE u1 = md5(id::VARCHAR || '-x')::UUID) AS updated,
+  count(*) FILTER (WHERE u2 = md5(id::VARCHAR || '-y')::UUID) AS one,
+  count(*) FILTER (
+    WHERE u3 = md5(id::VARCHAR || '-3')::UUID
+      AND u4 = md5(id::VARCHAR || '-4')::UUID
+      AND u5 = md5(id::VARCHAR || '-5')::UUID
+      AND u6 = md5(id::VARCHAR || '-6')::UUID
+      AND u7 = md5(id::VARCHAR || '-7')::UUID
+      AND u8 = md5(id::VARCHAR || '-8')::UUID
+      AND u9 = md5(id::VARCHAR || '-9')::UUID) AS kept,
+  (SELECT count(*) FROM range(0, 22000) t(i)
+   JOIN li AS known
+     ON known.id = CAST(hash(i)::HUGEINT - 9223372036854775808 AS BIGINT)) AS ids
+FROM li;
+----
+n	updated	one	kept	ids
+22000	22000	1	22000	22000
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_log
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE u1 = md5(id::VARCHAR || '-x')::UUID) AS updated,
+  count(*) FILTER (WHERE u2 = md5(id::VARCHAR || '-y')::UUID) AS one,
+  count(*) FILTER (
+    WHERE u3 = md5(id::VARCHAR || '-3')::UUID
+      AND u4 = md5(id::VARCHAR || '-4')::UUID
+      AND u5 = md5(id::VARCHAR || '-5')::UUID
+      AND u6 = md5(id::VARCHAR || '-6')::UUID
+      AND u7 = md5(id::VARCHAR || '-7')::UUID
+      AND u8 = md5(id::VARCHAR || '-8')::UUID
+      AND u9 = md5(id::VARCHAR || '-9')::UUID) AS kept,
+  (SELECT count(*) FROM range(0, 22000) t(i)
+   JOIN li AS known
+     ON known.id = CAST(hash(i)::HUGEINT - 9223372036854775808 AS BIGINT)) AS ids
+FROM li;
+----
+n	updated	one	kept	ids
+22000	22000	1	22000	22000
+
+
+connection after_log
+statement ok
+CHECKPOINT;
+
+
+connection after_log
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_log
+statement error connection closed
+SELECT 1;
+
+
+connection after_snapshot
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE u1 = md5(id::VARCHAR || '-x')::UUID) AS updated,
+  count(*) FILTER (WHERE u2 = md5(id::VARCHAR || '-y')::UUID) AS one,
+  count(*) FILTER (
+    WHERE u3 = md5(id::VARCHAR || '-3')::UUID
+      AND u4 = md5(id::VARCHAR || '-4')::UUID
+      AND u5 = md5(id::VARCHAR || '-5')::UUID
+      AND u6 = md5(id::VARCHAR || '-6')::UUID
+      AND u7 = md5(id::VARCHAR || '-7')::UUID
+      AND u8 = md5(id::VARCHAR || '-8')::UUID
+      AND u9 = md5(id::VARCHAR || '-9')::UUID) AS kept,
+  (SELECT count(*) FROM range(0, 22000) t(i)
+   JOIN li AS known
+     ON known.id = CAST(hash(i)::HUGEINT - 9223372036854775808 AS BIGINT)) AS ids
+FROM li;
+----
+n	updated	one	kept	ids
+22000	22000	1	22000	22000

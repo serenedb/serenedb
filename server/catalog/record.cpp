@@ -878,7 +878,8 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
 }
 
 void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
-                   duckdb::BinaryDeserializer& object) {
+                   duckdb::BinaryDeserializer& object,
+                   duckdb::MemoryStream& stream) {
   const auto id = object.ReadProperty<duckdb::idx_t>(100, "catalog");
   const auto oid = object.ReadProperty<duckdb::idx_t>(101, "table");
   search::TableReplay* replay = nullptr;
@@ -897,7 +898,7 @@ void ReplaySection(duckdb::ClientContext& context, ReplayTarget target,
     }
   }
   object.ReadObject(102, "delta", [&](duckdb::BinaryDeserializer& delta) {
-    search::ReplayTableDelta(context, replay, catalog, delta);
+    search::ReplayTableDelta(context, replay, catalog, delta, stream);
   });
 }
 
@@ -1442,7 +1443,7 @@ bool ReplayRecord(duckdb::ClientContext& context, ReplayTarget target,
   deserializer.ReadList(
     100, "search", [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
       list.ReadObject([&](duckdb::BinaryDeserializer& object) {
-        ReplaySection(context, target, object);
+        ReplaySection(context, target, object, stream);
       });
     });
   deserializer.End();

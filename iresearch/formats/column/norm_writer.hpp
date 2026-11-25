@@ -48,10 +48,6 @@ constexpr uint32_t NormFirstCode(uint32_t bits) noexcept {
   return static_cast<uint32_t>((uint64_t{1} << bits) - kNormCodes);
 }
 
-constexpr uint32_t NormOverflowCode(uint32_t bits) noexcept {
-  return static_cast<uint32_t>((uint64_t{1} << bits) - 1);
-}
-
 struct NormStats {
   uint64_t rows = 0;
   uint64_t sum = 0;
@@ -145,12 +141,12 @@ class NormColumnWriter final {
 
  private:
   void FlushRowGroup();
-  void Begin(const NormLayout& layout, uint64_t rows, uint32_t max);
-  void Encode(std::span<const uint32_t> values);
+  void EncodeRowGroup(std::span<const uint32_t> values);
+  void Begin(const NormStats& planned);
+  void EncodeValues(std::span<const uint32_t> values, uint64_t first_row);
   template<size_t Bytes>
   void EncodeSlots(std::span<const uint32_t> values, uint64_t first_row);
   uint32_t Escape(uint64_t row, uint32_t value);
-  void End();
 
   field_id _id;
   duckdb::WriteStream* _out;
@@ -159,8 +155,6 @@ class NormColumnWriter final {
   std::vector<uint32_t> _values;
   NormRegionMeta _region;
   bool _open_region = false;
-  uint64_t _bucket = 0;
-  uint32_t _local = 0;
   std::vector<uint32_t> _bases;
   std::vector<uint32_t> _direct;
   std::vector<uint32_t> _overflow_rows;

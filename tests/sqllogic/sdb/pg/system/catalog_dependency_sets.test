@@ -26,9 +26,10 @@ SELECT deptype FROM pg_depend
 WHERE refobjid = (SELECT oid FROM pg_class WHERE relname = 't'
                   AND relnamespace = (SELECT oid FROM pg_namespace
                                       WHERE nspname = 'cds'))
-  AND objid = (SELECT oid FROM pg_class WHERE relname = 'v'
-               AND relnamespace = (SELECT oid FROM pg_namespace
-                                   WHERE nspname = 'cds'))
+  AND objid = (SELECT oid FROM pg_rewrite WHERE ev_class =
+               (SELECT oid FROM pg_class WHERE relname = 'v'
+                AND relnamespace = (SELECT oid FROM pg_namespace
+                                    WHERE nspname = 'cds')))
 ----
 deptype
 n

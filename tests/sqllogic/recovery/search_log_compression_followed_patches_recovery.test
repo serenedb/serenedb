@@ -1,0 +1,126 @@
+control substitution on
+
+statement ok
+CREATE TABLE fp (id BIGINT PRIMARY KEY, payload TEXT)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO fp SELECT i, 'old' || i::TEXT FROM range(0, 1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) fp;
+
+
+statement ok
+INSERT INTO fp SELECT i, 'old' || i::TEXT FROM range(1000, 2000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) fp;
+
+
+connection writer
+statement ok
+BEGIN;
+
+
+connection writer
+statement ok
+INSERT INTO fp SELECT i, 'own' || i::TEXT FROM range(2000, 2100) t(i);
+
+
+connection writer
+statement ok
+UPDATE fp SET payload = 'updated' || id::TEXT WHERE id % 10 = 3;
+
+
+statement ok
+SET sdb_faults = 'search_commit_prepared';
+
+
+connection writer
+statement async ok
+COMMIT;
+
+
+statement ok retry 40 backoff 250ms
+SET sdb_faults = '-search_commit_prepared:parked';
+
+
+connection other
+statement ok
+VACUUM (COMPACT_TABLE) fp;
+
+
+statement ok
+SET sdb_faults = 'search_commit_prepared:release';
+
+
+wait
+
+
+statement ok
+RESET sdb_faults;
+
+
+query
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE payload = 'old' || id::TEXT) AS old,
+  count(*) FILTER (WHERE payload = 'own' || id::TEXT) AS own,
+  count(*) FILTER (WHERE payload = 'updated' || id::TEXT) AS updated
+FROM fp;
+----
+n	old	own	updated
+2100	1800	90	210
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_log
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE payload = 'old' || id::TEXT) AS old,
+  count(*) FILTER (WHERE payload = 'own' || id::TEXT) AS own,
+  count(*) FILTER (WHERE payload = 'updated' || id::TEXT) AS updated
+FROM fp;
+----
+n	old	own	updated
+2100	1800	90	210
+
+
+connection after_log
+statement ok
+CHECKPOINT;
+
+
+connection after_log
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_log
+statement error connection closed
+SELECT 1;
+
+
+connection after_snapshot
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE payload = 'old' || id::TEXT) AS old,
+  count(*) FILTER (WHERE payload = 'own' || id::TEXT) AS own,
+  count(*) FILTER (WHERE payload = 'updated' || id::TEXT) AS updated
+FROM fp;
+----
+n	old	own	updated
+2100	1800	90	210

@@ -256,7 +256,7 @@ const irs::ColumnReader* StatsColumn(const ScanBindData& bind,
   const auto col_id = bind.columns.ids[column_index];
   const auto* column =
     StoresColumnStats(bind, col_id) ? columns->Column(col_id) : nullptr;
-  if (!column || column->DataRgCount() == 0 || column->RowCount() < end ||
+  if (!column || column->DataBlocks().size() == 0 || column->RowCount() < end ||
       column->Type().IsNested() ||
       column->Type() != bind.columns.types[column_index]) {
     return nullptr;
@@ -276,14 +276,14 @@ struct CoveringBlocks {
   }
 
   const duckdb::BaseStatistics& FirstStatistics() const noexcept {
-    return column->RowGroupStatistics(first.block);
+    return column->DataBlocks()[first.block].statistics;
   }
 
   bool OneBlock() const noexcept { return first.block == last.block; }
 
   void MergeOthers(duckdb::BaseStatistics& stats) const {
     for (auto block = first.block + 1; block <= last.block; ++block) {
-      stats.Merge(column->RowGroupStatistics(block));
+      stats.Merge(column->DataBlocks()[block].statistics);
     }
   }
 

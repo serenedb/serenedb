@@ -23,6 +23,7 @@
 #include <limits>
 #include <optional>
 #include <ostream>
+#include <random>
 #include <span>
 #include <utility>
 #include <vector>

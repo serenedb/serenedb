@@ -21,17 +21,12 @@
 #include "iresearch/formats/column/col_reader.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/strings/str_cat.h>
 
-#include <algorithm>
-#include <cstdio>
-#include <cstdlib>
-#include <duckdb/common/enums/compression_type.hpp>
+#include <atomic>
 #include <duckdb/common/serializer/binary_deserializer.hpp>
-#include <duckdb/common/serializer/serializer.hpp>
 #include <duckdb/main/database.hpp>
-#include <map>
 #include <utility>
+#include <vector>
 
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/format_utils.hpp"
@@ -41,12 +36,25 @@
 namespace irs {
 namespace {
 
+constinit std::atomic<uint64_t> gNextFileId{1};
+
+bool InRange(uint64_t offset, uint64_t size, uint64_t end) noexcept {
+  return size <= end && offset <= end - size;
+}
+
+template<typename... Parts>
+[[noreturn]] void ThrowCorruptedFooter(const Parts&... parts) {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED), ERR_MSG(parts...));
+}
+
 void CheckBlockRange(const ColumnBlockMeta& m, field_id id,
                      uint64_t footer_offset) {
-  SDB_ENSURE(m.file_offset + m.byte_size <= footer_offset,
-             ".col reader: column data on column id ", id,
-             " out of range (offset ", m.file_offset, ", size ", m.byte_size,
-             ")");
+  if (!(InRange(m.file_offset, m.byte_size, footer_offset) &&
+        InRange(m.shared_offset, m.shared_size, footer_offset))) [[unlikely]] {
+    ThrowCorruptedFooter(".col reader: column data on column id ", id,
+                         " out of range (offset ", m.file_offset, ", size ",
+                         m.byte_size, ")");
+  }
 }
 
 void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
@@ -60,9 +68,7 @@ void CheckColumnMetaRanges(const ColumnMeta& meta, uint64_t footer_offset) {
     CheckColumnMetaRanges(c, footer_offset);
   }
   for (const auto& rg : meta.variant_rgs) {
-    if (rg.unshredded) {
-      CheckColumnMetaRanges(*rg.unshredded, footer_offset);
-    }
+    CheckColumnMetaRanges(*rg.unshredded, footer_offset);
     if (rg.shredded) {
       CheckColumnMetaRanges(*rg.shredded, footer_offset);
     }
@@ -92,21 +98,21 @@ ColReader::ColReader(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
         kColFieldColumns, "columns",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           list.ReadObject([&](duckdb::BinaryDeserializer& obj) {
-            auto meta = DeserializeColumnMeta(obj);
+            auto& meta =
+              footer.columns.emplace_back(DeserializeColumnMeta(obj));
             CheckColumnMetaRanges(meta, data_size);
-            footer.columns.push_back(std::move(meta));
           });
         });
-      footer.block_size = in.ReadPropertyWithExplicitDefault<uint64_t>(
-        kColFieldBlockSize, "block_size", DEFAULT_BLOCK_ALLOC_SIZE);
       in.ReadOptionalList(
         kColFieldRowGroupStarts, "row_group_starts",
         [&](duckdb::BinaryDeserializer::List& list, duckdb::idx_t) {
           const auto start = list.ReadElement<uint64_t>();
-          SDB_ENSURE(footer.row_group_starts.empty()
-                       ? start == 0
-                       : start > footer.row_group_starts.back(),
-                     ".col footer: row group starts are not increasing from 0");
+          if (!(footer.row_group_starts.empty()
+                  ? start == 0
+                  : start > footer.row_group_starts.back())) [[unlikely]] {
+            ThrowCorruptedFooter(
+              ".col footer: row group starts are not increasing from 0");
+          }
           footer.row_group_starts.push_back(start);
         });
       in.Unset<duckdb::DatabaseInstance>();
@@ -122,14 +128,10 @@ ColReader::ColReader(duckdb::DatabaseInstance& db,
 }
 
 void ColReader::Adopt(ColFooter footer) {
-  _ctx.SetBlockAllocSize(footer.block_size);
+  const auto file_id = gNextFileId.fetch_add(1, std::memory_order_relaxed);
+  _owned.reserve(footer.columns.size());
   for (auto& meta : footer.columns) {
-    auto col = ColumnReader::Make(std::move(meta));
-    const auto id = col->Id();
-    const bool ok = _by_id.emplace(id, col.get()).second;
-    SDB_ENSURE(ok, ".col footer: duplicate column field_id ", id);
-    _columns.push_back(col.get());
-    _owned.push_back(std::move(col));
+    Index(*_owned.emplace_back(ColumnReader::Make(std::move(meta), file_id)));
   }
   _row_group_starts = std::move(footer.row_group_starts);
 }
@@ -137,7 +139,6 @@ void ColReader::Adopt(ColFooter footer) {
 ColReader::ColReader(duckdb::DatabaseInstance& db,
                      std::vector<std::unique_ptr<ColumnReader>> columns)
   : _db{&db}, _ctx{db, nullptr}, _owned{std::move(columns)} {
-  _ctx.SetBlockAllocSize(DEFAULT_BLOCK_ALLOC_SIZE);
   for (const auto& col : _owned) {
     Index(*col);
   }

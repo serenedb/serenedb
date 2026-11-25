@@ -885,7 +885,8 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
 
   const auto sources = MakeSources(_readers);
-  const auto col_writer = std::make_unique<ColWriter>(_db, *tracker);
+  const auto col_writer =
+    std::make_unique<ColWriter>(_db, *tracker, WriteTier::Merge);
   col_writer->SetFieldOptions(_field_options);
   col_writer->SetHnswBases(_hnsw_bases);
 

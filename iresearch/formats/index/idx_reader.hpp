@@ -35,6 +35,7 @@
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bytes_utils.hpp"  // bstring
+#include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/type_limits.hpp"  // field_limits
 
@@ -58,9 +59,18 @@ struct HnswHeader {
   bool rotated = false;
 };
 
+struct HnswGraphFrames {
+  compression::Frames levels;
+  compression::Frames base;
+  compression::Frames upper;
+
+  bool Packed() const noexcept { return !levels.sizes.empty(); }
+};
+
 struct HnswMeta {
   uint64_t offset = 0;
   HnswHeader header;
+  HnswGraphFrames graph_compression;
 };
 
 inline constexpr std::string_view kIdxFormatExt = "idx";
@@ -69,6 +79,11 @@ inline constexpr duckdb::field_id_t kIdxFieldIvf = 1;
 inline constexpr duckdb::field_id_t kIdxFieldHnsw = 2;
 inline constexpr duckdb::field_id_t kIdxFieldTerms = 3;
 inline constexpr duckdb::field_id_t kIdxFieldNorms = 4;
+
+inline constexpr duckdb::field_id_t kHnswMetaGraphCompression = 10;
+inline constexpr duckdb::field_id_t kHnswGraphLevels = 0;
+inline constexpr duckdb::field_id_t kHnswGraphBase = 1;
+inline constexpr duckdb::field_id_t kHnswGraphUpper = 2;
 
 struct IvfCentroidEntry {
   field_id id;

@@ -1,0 +1,94 @@
+control substitution on
+
+statement ok
+CREATE TABLE lf (id BIGINT PRIMARY KEY, a TEXT, b TEXT)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO lf
+SELECT i, repeat('a', 200) || i::TEXT, 'b' || i::TEXT
+FROM range(0, 20000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) lf;
+
+
+statement ok
+INSERT INTO lf
+SELECT i, repeat('c', 400) || i::TEXT, 'b' || i::TEXT
+FROM range(20000, 22000) t(i);
+
+
+statement ok
+UPDATE lf SET a = repeat('u', 250) || id::TEXT WHERE id < 20000;
+
+
+statement ok
+UPDATE lf SET a = repeat('v', 300) || id::TEXT, b = 'w' || id::TEXT
+WHERE id % 2 = 0;
+
+
+query
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE a = repeat('v', 300) || id::TEXT AND b = 'w' || id::TEXT) AS v,
+  count(*) FILTER (WHERE a = repeat('u', 250) || id::TEXT AND b = 'b' || id::TEXT) AS u,
+  count(*) FILTER (WHERE a = repeat('c', 400) || id::TEXT AND b = 'b' || id::TEXT) AS c,
+  sum(length(a)) AS a_bytes
+FROM lf;
+----
+n	v	u	c	a_bytes
+22000	11000	10000	1000	6298890
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_log
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE a = repeat('v', 300) || id::TEXT AND b = 'w' || id::TEXT) AS v,
+  count(*) FILTER (WHERE a = repeat('u', 250) || id::TEXT AND b = 'b' || id::TEXT) AS u,
+  count(*) FILTER (WHERE a = repeat('c', 400) || id::TEXT AND b = 'b' || id::TEXT) AS c,
+  sum(length(a)) AS a_bytes
+FROM lf;
+----
+n	v	u	c	a_bytes
+22000	11000	10000	1000	6298890
+
+
+connection after_log
+statement ok
+CHECKPOINT;
+
+
+connection after_log
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+connection after_log
+statement error connection closed
+SELECT 1;
+
+
+connection after_snapshot
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT
+  count(*) AS n,
+  count(*) FILTER (WHERE a = repeat('v', 300) || id::TEXT AND b = 'w' || id::TEXT) AS v,
+  count(*) FILTER (WHERE a = repeat('u', 250) || id::TEXT AND b = 'b' || id::TEXT) AS u,
+  count(*) FILTER (WHERE a = repeat('c', 400) || id::TEXT AND b = 'b' || id::TEXT) AS c,
+  sum(length(a)) AS a_bytes
+FROM lf;
+----
+n	v	u	c	a_bytes
+22000	11000	10000	1000	6298890

@@ -115,7 +115,7 @@ std::vector<float> GatherTrainingSample(const ColumnReader& vector_column,
 
   const auto* child = vector_column.Child();
   SDB_ASSERT(child);
-  const size_t n_seg = child->DataRgCount();
+  const size_t n_seg = child->DataBlocks().size();
   if (n_seg <= 1 || n_train * kSampleSegmentOversample >= rows) {
     StreamRowBatches(vector_column, rows, ctx, reservoir_sink);
   } else {

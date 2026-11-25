@@ -23,6 +23,8 @@
 // ColumnReader / ColumnOutput interfaces are gone from production; ported
 // tests use BLOB-typed cs columns through this thin layer.
 
+#include <absl/algorithm/container.h>
+
 #include <atomic>
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <duckdb/common/types/vector.hpp>
@@ -79,6 +81,14 @@ std::unique_ptr<ColReader> MakeCsReader(const ::tests::IndexDir& dir,
 
 ColReader OpenColReader(const ::tests::IndexDir& dir,
                         std::string_view segment_name);
+uint64_t ColFileId(ColReader& reader, const ColumnReader& col);
+
+inline bool NullsInData(const ColumnReader& column) {
+  return absl::c_any_of(column.DataBlocks(), [](const ColumnBlockMeta& m) {
+    return m.codec->decompression.validity ==
+           codecs::CompressionValidity::NoValidityRequired;
+  });
+}
 
 class NormsFile {
  public:

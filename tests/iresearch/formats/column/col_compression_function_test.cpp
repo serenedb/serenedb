@@ -827,6 +827,59 @@ TEST_F(ColCompressionFunctionTest,
             (std::vector{CodecType::Empty, CodecType::Constant}));
 }
 
+TEST_F(ColCompressionFunctionTest,
+       AValidityRowGroupReadThroughASelectionStoresWhatItsFlatCopyStores) {
+  const duckdb::LogicalType type{duckdb::LogicalTypeId::VALIDITY};
+  const auto valid = [](uint64_t i) { return i % 7 != 3 && i % 64 != 5; };
+  struct Stored {
+    std::string bytes;
+    bool has_null = false;
+    bool has_valid = false;
+  };
+  const auto store = [&] {
+    Stored stored;
+    duckdb::MemoryStream out;
+    irs::WriteContext ctx{_db.instance->GetBufferManager(), out};
+    const auto flush = [&](const irs::codecs::Codec& codec,
+                           duckdb::BaseStatistics stats, uint64_t,
+                           std::string_view bytes, std::string_view) {
+      EXPECT_EQ(codec.type, CodecType::Uncompressed);
+      stored.bytes.append(bytes);
+      stored.has_null = stored.has_null || stats.CanHaveNull();
+      stored.has_valid = stored.has_valid || stats.CanHaveNoNull();
+    };
+    irs::codecs::ColumnTuning tuning;
+    ColumnDataCheckpointData data{
+      .type = type,
+      .ctx = &ctx,
+      .flush = flush,
+      .tuning = tuning,
+      .rows = {_chunks, kManyRows},
+    };
+    const auto& codec =
+      *irs::codecs::GetCodec(CodecType::Uncompressed, type.InternalType());
+    EXPECT_TRUE(codec.compression.front().compress(codec, data));
+    return stored;
+  };
+  FillValidity(kManyRows, [&](uint64_t i) { return valid(kManyRows - 1 - i); });
+  const auto flat = store();
+  EXPECT_TRUE(flat.has_null);
+  EXPECT_TRUE(flat.has_valid);
+  FillValidity(kManyRows, valid);
+  duckdb::SelectionVector reversed{kManyRows};
+  for (uint64_t i = 0; i < kManyRows; ++i) {
+    reversed.set_index(i, kManyRows - 1 - i);
+  }
+  const duckdb::Vector selected{*_values, reversed, kManyRows};
+  ASSERT_EQ(selected.GetVectorType(), duckdb::VectorType::DICTIONARY_VECTOR);
+  _chunks.clear();
+  _chunks.push_back(irs::RefChunk(selected, kManyRows));
+  const auto through = store();
+  EXPECT_EQ(through.bytes, flat.bytes);
+  EXPECT_EQ(through.has_null, flat.has_null);
+  EXPECT_EQ(through.has_valid, flat.has_valid);
+}
+
 TEST_F(ColCompressionFunctionTest, AutoStoresAConstantRowGroupConstant) {
   Fill(kManyRows, [](uint64_t) { return int64_t{42}; });
   EXPECT_EQ(CompressAs(CodecType::Auto, irs::WriteTier::Merge),

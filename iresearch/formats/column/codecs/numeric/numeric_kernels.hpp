@@ -672,18 +672,29 @@ template<typename U, typename T>
 uint32_t ExpandRuns(std::span<const uint32_t> ends, const U* values,
                     uint32_t run, uint32_t row, uint64_t count,
                     T* out) noexcept {
-  uint8_t ended[STANDARD_VECTOR_SIZE];
+  SDB_ASSERT(count == 0 || row + count <= ends.back());
+  constexpr uint32_t kMarks = 4;
+  uint8_t ended[STANDARD_VECTOR_SIZE + 1];
   while (count != 0) {
     const auto rows =
       static_cast<uint32_t>(std::min<uint64_t>(count, STANDARD_VECTOR_SIZE));
     const auto stop = row + rows;
     std::memset(ended, 0, rows);
     auto next = run;
-    for (; next < ends.size() && ends[next] <= stop; ++next) {
-      ended[ends[next] - row - 1] = 0xFF;
+    for (; next + kMarks <= ends.size() && ends[next + kMarks - 1] < stop;
+         next += kMarks) {
+      for (uint32_t k = 0; k < kMarks; ++k) {
+        ended[ends[next + k] - row - 1] = 0xFF;
+      }
+    }
+    for (uint32_t k = 1; k < kMarks; ++k) {
+      const auto end = ends[next];
+      const bool inside = end < stop;
+      ended[inside ? end - row - 1 : rows] = 0xFF;
+      next += inside;
     }
     ExpandMarkedRuns(ended, values + run, rows, out);
-    run = next;
+    run = next + (ends[next] == stop);
     row = stop;
     out += rows;
     count -= rows;

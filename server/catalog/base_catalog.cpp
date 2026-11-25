@@ -423,7 +423,7 @@ EntrySet* BaseCatalog::FindSet(duckdb::CatalogType type) {
   return type == duckdb::CatalogType::SCHEMA_ENTRY ? &_schemas : nullptr;
 }
 
-void BaseCatalog::ScanTopLevelEntries(
+void BaseCatalog::Scan(
   duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
   const std::function<void(duckdb::CatalogEntry&)>& callback) {
   if (auto* set = FindSet(type)) {
@@ -431,7 +431,7 @@ void BaseCatalog::ScanTopLevelEntries(
   }
 }
 
-duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::LookupTopLevelEntry(
+duckdb::optional_ptr<duckdb::CatalogEntry> BaseCatalog::LookupEntry(
   duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
   const duckdb::Identifier& name) {
   auto* set = FindSet(type);

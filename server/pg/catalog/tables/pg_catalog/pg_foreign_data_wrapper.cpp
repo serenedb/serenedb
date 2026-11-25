@@ -48,7 +48,7 @@ class PgForeignDataWrapper final
     Col<"fdwacl">([](const auto& row) { return row.acl; }));
 
   void Row(const SystemObject& wrapper) {
-    const auto entry = Database().LookupTopLevelEntry(
+    const auto entry = Database().LookupEntry(
       Transaction(), duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
       duckdb::Identifier{wrapper.name});
     Emit<kWrapper>({wrapper, entry ? AclOf(entry->permissions) : std::nullopt});

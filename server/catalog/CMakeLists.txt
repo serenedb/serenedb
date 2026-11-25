@@ -11,7 +11,6 @@ target_sources(
         entry_set.cpp
         foreign_database.cpp
         log.cpp
-        owned.cpp
         record.cpp
         schema.cpp
         secret_store.cpp

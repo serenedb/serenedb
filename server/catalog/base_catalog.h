@@ -59,6 +59,7 @@ class BaseCatalog : public duckdb::Catalog {
 
   using duckdb::Catalog::CreateSchema;
   using duckdb::Catalog::Initialize;
+  using duckdb::Catalog::LookupEntry;
 
   bool CrossCatalogDependencies() const final {
     return !GetAttached().IsSystem();
@@ -124,11 +125,10 @@ class BaseCatalog : public duckdb::Catalog {
   duckdb::optional_ptr<duckdb::CatalogEntry> OwnerOf(
     duckdb::CatalogTransaction transaction, duckdb::CatalogEntry& owned) final;
 
-  void ScanTopLevelEntries(
-    duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
-    const std::function<void(duckdb::CatalogEntry&)>& callback) final;
+  void Scan(duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
+            const std::function<void(duckdb::CatalogEntry&)>& callback) final;
 
-  duckdb::optional_ptr<duckdb::CatalogEntry> LookupTopLevelEntry(
+  duckdb::optional_ptr<duckdb::CatalogEntry> LookupEntry(
     duckdb::CatalogTransaction transaction, duckdb::CatalogType type,
     const duckdb::Identifier& name) final;
 

@@ -311,7 +311,7 @@ bool Holds(const duckdb::RoleAccess& role, CatalogType type,
     return true;
   }
   if (target.owner_only) {
-    return role.Owns(permissions.owner);
+    return role.MemberOf(permissions.owner);
   }
   const auto privileges = requested.privs & target.rights;
   if (privileges != AclMode::NoRights &&
@@ -623,7 +623,7 @@ std::optional<ObjectTarget> WrapperTarget(
   }
   if (session.database) {
     duckdb::Catalog& catalog = *session.database;
-    if (const auto entry = catalog.LookupTopLevelEntry(
+    if (const auto entry = catalog.LookupEntry(
           *session.transaction, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
           Identifier{wrapper->name})) {
       return ObjectTarget{&entry->permissions};

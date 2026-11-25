@@ -432,17 +432,34 @@ void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
     DropOwned(transaction, info.Cast<duckdb::DropOwnedInfo>());
     return;
   }
-  if (info.type != duckdb::AlterType::ALTER_ROLE) {
-    ApplyAlter(transaction, info);
+  if (info.type == duckdb::AlterType::ALTER_ROLE) {
+    AlterRole(transaction, info.Cast<duckdb::AlterRoleInfo>());
     return;
   }
-  auto& alter = info.Cast<duckdb::AlterRoleInfo>();
-  if (alter.revoke && !alter.grant_role.empty() &&
+  if (info.type == duckdb::AlterType::ALTER_TABLESPACE) {
+    AlterTablespace(transaction, info);
+    return;
+  }
+  if (info.GetCatalogType() == duckdb::CatalogType::PARAMETER_ENTRY) {
+    AlterParameter(transaction, info.Cast<duckdb::AlterPermissionsInfo>());
+    return;
+  }
+  if (info.GetCatalogType() == duckdb::CatalogType::DB_ROLE_SETTING_ENTRY) {
+    AlterDbRoleSetting(transaction,
+                       info.Cast<duckdb::AlterDatabaseSettingsInfo>());
+    return;
+  }
+  ApplyAlter(transaction, info);
+}
+
+void ClusterCatalog::AlterRole(duckdb::CatalogTransaction transaction,
+                               duckdb::AlterRoleInfo& info) {
+  if (info.revoke && !info.grant_role.empty() &&
       info.bind_mode == duckdb::AlterBindMode::BIND_ON_ALTER) {
-    RevokeMembership(transaction, alter);
+    RevokeMembership(transaction, info);
     return;
   }
-  if (!HasOption(alter.set_options | alter.clear_options,
+  if (!HasOption(info.set_options | info.clear_options,
                  RoleOption::Superuser) ||
       !transaction.HasContext() ||
       info.bind_mode != duckdb::AlterBindMode::BIND_ON_ALTER) {
@@ -457,6 +474,88 @@ void ClusterCatalog::Alter(duckdb::CatalogTransaction transaction,
   const auto& role = _roles.Get(transaction, name)->Cast<RoleCatalogEntry>();
   if (role.IsSuperuser() != was_superuser) {
     FollowOwnerStatus(transaction.GetContext(), role.oid, role.IsSuperuser());
+  }
+}
+
+void ClusterCatalog::ReassignOwned(duckdb::CatalogTransaction transaction,
+                                   const duckdb::ReassignOwnedInfo& info) {
+  const auto& role = transaction.GetContext().CurrentRole();
+  std::vector<duckdb::unique_ptr<duckdb::AlterPermissionsInfo>> alters;
+  for (const auto type : {duckdb::CatalogType::DATABASE_ENTRY,
+                          duckdb::CatalogType::TABLESPACE_ENTRY}) {
+    Set(type).Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+      const auto owner = entry.permissions.owner;
+      if (entry.internal || owner == info.new_owner_id ||
+          !absl::c_linear_search(info.role_ids, owner)) {
+        return;
+      }
+      if (type == duckdb::CatalogType::DATABASE_ENTRY && !role.is_superuser &&
+          !role.Has(RoleOption::CreateDb)) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
+          ERR_MSG("permission denied to change owner of database"));
+      }
+      auto& alter =
+        *alters.emplace_back(duckdb::make_uniq<duckdb::AlterPermissionsInfo>(
+          type,
+          duckdb::QualifiedName{GetName(), duckdb::Identifier{}, entry.name}));
+      alter.new_owner = info.new_owner;
+      alter.new_owner_id = info.new_owner_id;
+    });
+  }
+  for (auto& alter : alters) {
+    Alter(transaction, *alter);
+  }
+}
+
+void ClusterCatalog::DropOwned(duckdb::CatalogTransaction transaction,
+                               const duckdb::DropOwnedInfo& info) {
+  const auto bootstrap =
+    duckdb::DBConfig::GetConfig(transaction.GetContext()).bootstrap_role;
+  std::vector<duckdb::unique_ptr<duckdb::AlterInfo>> alters;
+  for (const auto type : {duckdb::CatalogType::DATABASE_ENTRY,
+                          duckdb::CatalogType::TABLESPACE_ENTRY,
+                          duckdb::CatalogType::PARAMETER_ENTRY}) {
+    Set(type).Scan(transaction, [&](duckdb::CatalogEntry& entry) {
+      if (entry.internal) {
+        return;
+      }
+      for (const auto role : info.role_ids) {
+        if (entry.permissions.owner == role ||
+            absl::c_none_of(entry.permissions.acl,
+                            [&](const duckdb::AclItem& item) {
+                              return item.grantee == role;
+                            })) {
+          continue;
+        }
+        auto alter = duckdb::make_uniq<duckdb::AlterPermissionsInfo>(
+          type,
+          duckdb::QualifiedName{GetName(), duckdb::Identifier{}, entry.name});
+        alter->privileges = duckdb::ObjectKindOf(type).privileges;
+        alter->revoke = true;
+        alter->cascade = true;
+        alter->grantee_id = role;
+        alter->grantors = info.grantors;
+        alter->best_grantor = true;
+        alters.push_back(std::move(alter));
+      }
+    });
+  }
+  _roles.Scan(transaction, [&](duckdb::CatalogEntry& member) {
+    for (const auto& edge : member.Cast<RoleCatalogEntry>().MemberOf()) {
+      if (edge.grantor == bootstrap ||
+          !absl::c_linear_search(info.role_ids, edge.grantor)) {
+        continue;
+      }
+      auto alter = duckdb::make_uniq<duckdb::AlterRoleInfo>(member.name);
+      alter->grant_role_id = edge.role;
+      alter->grantor_id = edge.grantor;
+      alter->revoke = true;
+      alters.push_back(std::move(alter));
+    }
+  });
+  for (auto& alter : alters) {
+    Alter(transaction, *alter);
   }
 }
 
@@ -547,34 +646,28 @@ void ClusterCatalog::RevokeMembership(duckdb::CatalogTransaction transaction,
 void ClusterCatalog::ApplyAlter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
   const auto type = info.GetCatalogType();
-  if (type == duckdb::CatalogType::PARAMETER_ENTRY) {
-    AlterParameter(transaction, info.Cast<duckdb::AlterPermissionsInfo>());
+  if (type == duckdb::CatalogType::ROLE_ENTRY ||
+      type == duckdb::CatalogType::DATABASE_ENTRY ||
+      type == duckdb::CatalogType::TABLESPACE_ENTRY) {
+    AlterIn(Set(type), transaction, info);
     return;
   }
-  if (type == duckdb::CatalogType::DB_ROLE_SETTING_ENTRY) {
-    AlterDbRoleSetting(transaction,
-                       info.Cast<duckdb::AlterDatabaseSettingsInfo>());
-    return;
+  BaseCatalog::Alter(transaction, info);
+}
+
+void ClusterCatalog::AlterTablespace(duckdb::CatalogTransaction transaction,
+                                     duckdb::AlterInfo& info) {
+  RequireUnreservedTablespaceName(info.GetNewName()->GetIdentifierName());
+  const auto& name = info.GetQualifiedName().Name();
+  if (Tablespace(transaction, name).internal) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("tablespace \"", name.GetIdentifierName(),
+              "\" is a system tablespace"),
+      ERR_DETAIL("A system tablespace cannot be renamed, given to another "
+                 "owner or granted on."));
   }
-  if (type != duckdb::CatalogType::ROLE_ENTRY &&
-      type != duckdb::CatalogType::DATABASE_ENTRY &&
-      type != duckdb::CatalogType::TABLESPACE_ENTRY) {
-    BaseCatalog::Alter(transaction, info);
-    return;
-  }
-  if (info.type == duckdb::AlterType::ALTER_TABLESPACE) {
-    RequireUnreservedTablespaceName(info.GetNewName()->GetIdentifierName());
-    const auto& name = info.GetQualifiedName().Name();
-    if (Tablespace(transaction, name).internal) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("tablespace \"", name.GetIdentifierName(),
-                "\" is a system tablespace"),
-        ERR_DETAIL("A system tablespace cannot be renamed, given to another "
-                   "owner or granted on."));
-    }
-  }
-  AlterIn(Set(type), transaction, info);
+  AlterIn(_tablespaces, transaction, info);
 }
 
 void ClusterCatalog::AlterParameter(duckdb::CatalogTransaction transaction,

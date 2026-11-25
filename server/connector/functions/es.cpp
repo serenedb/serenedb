@@ -414,8 +414,12 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   const auto& role = state.role;
   const auto owner = role.role;
   if (!EsSchema(context)) {
-    duckdb::RequireDatabasePrivilege(context, role, db_catalog.GetName(),
-                                     duckdb::AclMode::Create);
+    auto& system = duckdb::Catalog::GetSystemCatalog(context);
+    if (auto database = system.LookupEntry(
+          system.GetCatalogTransaction(context),
+          duckdb::CatalogType::DATABASE_ENTRY, db_catalog.GetName())) {
+      duckdb::Require(context, role, *database, duckdb::AclMode::Create);
+    }
     duckdb::CreateSchemaInfo info;
     info.SetSchema(duckdb::Identifier{kEsSchema});
     info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;

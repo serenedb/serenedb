@@ -42,7 +42,7 @@ USE giad_mem_${__DATABASE__};
 statement error
 GRANT USAGE ON FOREIGN DATA WRAPPER postgres_fdw TO giad_r;
 ----
-db error: ERROR: database "giad_mem_<slt:ignore>" does not exist
+db error: ERROR: foreign-data wrapper "postgres_fdw" does not exist
 
 
 statement error

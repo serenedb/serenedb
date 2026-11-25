@@ -95,7 +95,6 @@ class SereneDBCatalog final : public BaseCatalog {
   void ScanEntries(duckdb::CatalogTransaction transaction,
                    absl::FunctionRef<void(duckdb::CatalogEntry&)> callback);
 
-  bool SupportsSubscriptions() const final { return true; }
   void RequireSubscription(duckdb::ClientContext& context,
                            const duckdb::RoleAccess& role,
                            const duckdb::CreateSubscriptionInfo& info) final;
@@ -224,6 +223,10 @@ class SereneDBCatalog final : public BaseCatalog {
  private:
   void AlterSubscription(duckdb::CatalogTransaction transaction,
                          duckdb::AlterInfo& info);
+  void AlterForeignServer(duckdb::CatalogTransaction transaction,
+                          duckdb::AlterInfo& info);
+  void ScanOwned(duckdb::CatalogTransaction transaction,
+                 absl::FunctionRef<void(duckdb::CatalogEntry&)> callback);
   void ReassignOwned(duckdb::CatalogTransaction transaction,
                      const duckdb::ReassignOwnedInfo& info);
   void DropOwned(duckdb::CatalogTransaction transaction,

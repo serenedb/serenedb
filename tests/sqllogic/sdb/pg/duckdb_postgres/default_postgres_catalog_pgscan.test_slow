@@ -30,7 +30,7 @@ db error: ERROR: schema with OID 999999 does not exist
 statement error
 CREATE SUBSCRIPTION pgdc_sub CONNECTION 'host=127.0.0.1 port=1' PUBLICATION pgdc_pub WITH (connect = false, slot_name = NONE);
 ----
-db error: ERROR: subscriptions are not supported by database "<slt:ignore>"
+db error: ERROR: CREATE SUBSCRIPTION is not supported by a postgres catalog
 
 
 statement ok

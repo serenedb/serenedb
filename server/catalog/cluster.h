@@ -78,6 +78,10 @@ class ClusterCatalog final : public BaseCatalog {
 
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
+  void ReassignOwned(duckdb::CatalogTransaction transaction,
+                     const duckdb::ReassignOwnedInfo& info);
+  void DropOwned(duckdb::CatalogTransaction transaction,
+                 const duckdb::DropOwnedInfo& info);
 
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateRole(
     duckdb::CatalogTransaction transaction, duckdb::CreateRoleInfo& info) final;
@@ -129,6 +133,10 @@ class ClusterCatalog final : public BaseCatalog {
     duckdb::CatalogTransaction transaction, duckdb::idx_t tablespace);
   void ApplyAlter(duckdb::CatalogTransaction transaction,
                   duckdb::AlterInfo& info);
+  void AlterRole(duckdb::CatalogTransaction transaction,
+                 duckdb::AlterRoleInfo& info);
+  void AlterTablespace(duckdb::CatalogTransaction transaction,
+                       duckdb::AlterInfo& info);
   void AlterParameter(duckdb::CatalogTransaction transaction,
                       duckdb::AlterPermissionsInfo& info);
   void AlterDbRoleSetting(duckdb::CatalogTransaction transaction,
@@ -139,10 +147,6 @@ class ClusterCatalog final : public BaseCatalog {
       matches);
   void RevokeMembership(duckdb::CatalogTransaction transaction,
                         duckdb::AlterRoleInfo& alter);
-  void ReassignOwned(duckdb::CatalogTransaction transaction,
-                     const duckdb::ReassignOwnedInfo& info);
-  void DropOwned(duckdb::CatalogTransaction transaction,
-                 const duckdb::DropOwnedInfo& info);
 
   DataDirectory _layout;
   EntrySet _roles;

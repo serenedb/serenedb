@@ -198,6 +198,13 @@ def generate(gen):
         '(type)];',
         '}',
         '',
+        'constexpr bool IsCatalogLevel(CatalogType type) {',
+        '\tconst auto container = ObjectKindOf(type).container;',
+        '\treturn type != CatalogType::SCHEMA_ENTRY && '
+        '(container == ObjectContainer::CLUSTER || '
+        'container == ObjectContainer::DATABASE);',
+        '}',
+        '',
         'constexpr std::string_view ObjectNoun(CatalogType type) {',
         '\tswitch (type) {',
     ]

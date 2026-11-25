@@ -453,10 +453,10 @@ duckdb::idx_t NativeIndexSource::Materialize(duckdb::ClientContext& context,
         rows.WriteValue(row);
       }
     }
-    _keys.SetCardinality(keys);
+    _keys.SetChildCardinality(keys);
   } else {
     _keys.data[0].Reference(pk);
-    _keys.SetCardinality(count);
+    _keys.SetChildCardinality(count);
   }
 
   auto& target = HasDerivedColumns() ? _lookup_target : _tf_target;
@@ -478,7 +478,7 @@ duckdb::idx_t NativeIndexSource::Materialize(duckdb::ClientContext& context,
       _survivor_idx[r] = _selected[_survivor_idx[r]];
     }
   }
-  _tf_target.SetCardinality(rows);
+  _tf_target.SetChildCardinality(rows);
 
   RunCastPass(output, rows);
   GatherNonLookupColumns(output, rows);

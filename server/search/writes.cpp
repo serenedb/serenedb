@@ -188,7 +188,7 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
     const auto scanned = scanner.Scan(
       window, std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs_count - window),
       chunk, &rows, count);
-    chunk.SetCardinality(scanned);
+    chunk.SetChildCardinality(scanned);
     auto values = encoder.Encode(chunk, column_ids).Values<duckdb::string_t>();
     for (duckdb::idx_t row = 0; row != scanned; ++row) {
       if (const auto entry = values[row]; entry.IsValid()) {

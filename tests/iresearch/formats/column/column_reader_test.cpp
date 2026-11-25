@@ -335,7 +335,6 @@ class MergedSegment final : public irs::SubReader {
   std::span<const irs::TermReader* const> fields(irs::field_id) const final {
     return {};
   }
-  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
 
  private:
   irs::SegmentInfo _meta;

@@ -51,10 +51,4 @@ struct NormReader : public memory::Managed {
   }
 };
 
-struct NormProvider {
-  virtual ~NormProvider() = default;
-
-  virtual NormReader::ptr norms(field_id field) const = 0;
-};
-
 }  // namespace irs

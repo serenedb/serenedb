@@ -125,7 +125,7 @@ NormColumns::NormColumns(duckdb::shared_ptr<duckdb::InputFile> file,
   }
 }
 
-NormReader::ptr NormColumns::norms(field_id field) const {
+NormReader::ptr NormColumns::Reader(field_id field) const {
   const auto* column = Column(field);
   return column ? MakePersistedNormReader(*column) : NormReader::ptr{};
 }

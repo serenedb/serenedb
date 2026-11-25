@@ -193,14 +193,9 @@ std::shared_ptr<const SegmentReaderImpl> SegmentReaderImpl::WithPatches(
   return reader;
 }
 
-NormReader::ptr SegmentReaderImpl::norms(field_id field) const {
+const NormColumns& SegmentReaderImpl::Norms() const {
   const auto* idx = _readers->Idx();
-  return idx ? idx->Norms().norms(field) : NormReader::ptr{};
-}
-
-const NormColumnReader* SegmentReaderImpl::NormColumn(field_id field) const {
-  const auto* idx = _readers->Idx();
-  return idx ? idx->Norms().Column(field) : nullptr;
+  return idx ? idx->Norms() : SubReader::Norms();
 }
 
 const ColumnReader* SegmentReaderImpl::Column(field_id field) const {

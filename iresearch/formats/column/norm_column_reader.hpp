@@ -161,7 +161,7 @@ std::vector<NormColumnSpec> ReadNormSpecs(duckdb::BinaryDeserializer& in,
                                           duckdb::field_id_t field,
                                           uint64_t data_size);
 
-class NormColumns final : public NormProvider {
+class NormColumns final {
  public:
   NormColumns() = default;
   NormColumns(duckdb::shared_ptr<duckdb::InputFile> file,
@@ -172,7 +172,7 @@ class NormColumns final : public NormProvider {
     return it == _columns.end() ? nullptr : it->second.get();
   }
 
-  NormReader::ptr norms(field_id field) const final;
+  NormReader::ptr Reader(field_id field) const;
 
  private:
   duckdb::shared_ptr<duckdb::InputFile> _file;

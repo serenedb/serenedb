@@ -271,8 +271,6 @@ class SubReaderMock final : public irs::SubReader {
     return {};
   }
 
-  irs::NormReader::ptr norms(irs::field_id) const final { return nullptr; }
-
  private:
   irs::SegmentInfo _meta;
 };
@@ -3879,10 +3877,7 @@ TEST_P(IndexTestCase, segment_column_user_system) {
     irs::IsSubsetOf(irs::IndexFeatures::Norm, field->meta().index_features));
   ASSERT_TRUE(irs::field_limits::valid(field->meta().norm));
 
-  // Per-field norm column is exposed through the SubReader::norms()
-  // provider (point reads only -- no iterator). Make sure the segment
-  // actually surfaces it before we move on to the cs read-back path.
-  ASSERT_NE(nullptr, segment.norms(field->meta().norm));
+  ASSERT_NE(nullptr, segment.Norms().Reader(field->meta().norm));
 
   const auto* column = segment.Column(kNameColumnId);
   ASSERT_NE(nullptr, column);
@@ -9250,7 +9245,7 @@ TEST_P(IndexTestCase, ensure_no_empty_norms_written) {
     const auto norm = field_reader->meta().norm;
     ASSERT_TRUE(irs::field_limits::valid(norm));
 
-    auto norm_reader = segment.norms(norm);
+    auto norm_reader = segment.Norms().Reader(norm);
     ASSERT_NE(nullptr, norm_reader);
     EXPECT_EQ(norm_reader->Get(1), 0);
     EXPECT_EQ(norm_reader->Get(2), 1);

@@ -27,7 +27,6 @@
 #include <span>
 
 #include "iresearch/formats/column/norm_column_reader.hpp"
-#include "iresearch/formats/column/norm_reader.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_meta.hpp"
@@ -118,7 +117,7 @@ struct IndexReader {
 };
 
 // Generic interface for accessing an index segment
-struct SubReader : public IndexReader, public NormProvider {
+struct SubReader : public IndexReader {
   using ptr = std::shared_ptr<const SubReader>;
 
   static const SubReader& empty() noexcept;
@@ -163,9 +162,7 @@ struct SubReader : public IndexReader, public NormProvider {
   virtual const ColumnReader* Column(field_id /*field*/) const {
     return nullptr;
   }
-  virtual const NormColumnReader* NormColumn(field_id /*field*/) const {
-    return nullptr;
-  }
+  virtual const NormColumns& Norms() const;
   virtual const AnnIndex* Ann(field_id /*field*/) const { return nullptr; }
 };
 

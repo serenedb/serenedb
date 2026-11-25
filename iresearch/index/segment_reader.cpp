@@ -31,13 +31,7 @@ std::span<const field_id> SegmentReader::field_ids() const {
   return _impl->field_ids();
 }
 
-NormReader::ptr SegmentReader::norms(field_id field) const {
-  return _impl->norms(field);
-}
-
-const NormColumnReader* SegmentReader::NormColumn(field_id field) const {
-  return _impl->NormColumn(field);
-}
+const NormColumns& SegmentReader::Norms() const { return _impl->Norms(); }
 
 const ColumnReader* SegmentReader::Column(field_id field) const {
   return _impl->Column(field);

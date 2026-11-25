@@ -47,7 +47,7 @@ class ScoreBoundWriterImpl final : public ScoreBoundWriter {
   explicit ScoreBoundWriterImpl(Args&&... args)
     : _producer{std::forward<Args>(args)...} {}
 
-  bool Prepare(const NormProvider& norms, const FieldProperties& meta,
+  bool Prepare(const NormColumns& norms, const FieldProperties& meta,
                bool has_freq) final {
     return _producer.Prepare(norms, meta, has_freq);
   }
@@ -207,13 +207,13 @@ class FreqNormProducer {
 
   explicit FreqNormProducer(score_t b = 0.f) : _b{b} {}
 
-  bool Prepare(const NormProvider& norms, const FieldProperties& meta,
+  bool Prepare(const NormColumns& norms, const FieldProperties& meta,
                bool has_freq) {
     if (!has_freq) [[unlikely]] {
       return false;
     }
     if constexpr (kNorm) {
-      _norm_it = norms.norms(meta.norm);
+      _norm_it = norms.Reader(meta.norm);
       if (!_norm_it) [[unlikely]] {
         return false;
       }

@@ -24,7 +24,7 @@
 
 #include <cstddef>
 
-#include "iresearch/formats/column/norm_reader.hpp"
+#include "iresearch/formats/column/norm_column_reader.hpp"
 #include "iresearch/index/index_features.hpp"
 #include "iresearch/index/index_reader_options.hpp"
 #include "iresearch/store/storage.hpp"
@@ -33,7 +33,7 @@ namespace irs {
 
 struct FlushState {
   FileTracker& tracker;
-  const NormProvider* norms{};
+  const NormColumns* norms{};
   ScorerPtr scorer = nullptr;
   const size_t doc_count;
   IndexFeatures index_features{IndexFeatures::None};

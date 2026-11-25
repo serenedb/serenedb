@@ -130,9 +130,7 @@ class SegmentReaderImpl final : public SubReader {
     return _field_reader->field_ids();
   }
 
-  NormReader::ptr norms(field_id field) const final;
-
-  const NormColumnReader* NormColumn(field_id field) const final;
+  const NormColumns& Norms() const final;
   const ColumnReader* Column(field_id field) const final;
   const AnnIndex* Ann(field_id field) const final;
   const ColReader* GetColReader() const final {

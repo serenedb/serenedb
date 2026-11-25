@@ -145,7 +145,7 @@ void NormTestCase::AssertNormColumn(
   ASSERT_EQ(id, meta.id);
   ASSERT_TRUE(irs::field_limits::valid(meta.norm));
 
-  const auto* column = segment.NormColumn(meta.norm);
+  const auto* column = segment.Norms().Column(meta.norm);
   ASSERT_NE(nullptr, column);
   ASSERT_EQ(meta.norm, column->Id());
 
@@ -325,7 +325,7 @@ TEST_P(NormTestCase, RareLongNormsAcrossCompaction) {
   const auto assert_escaped = [&](const irs::SubReader& segment) {
     const auto* field = segment.field(FieldIdFor(kName));
     ASSERT_NE(nullptr, field);
-    const auto* column = segment.NormColumn(field->meta().norm);
+    const auto* column = segment.Norms().Column(field->meta().norm);
     ASSERT_NE(nullptr, column);
     bool exceptions = false;
     for (size_t r = 0; r < column->RegionCount(); ++r) {
@@ -1079,7 +1079,7 @@ INSTANTIATE_TEST_SUITE_P(NormTest, NormTestCase,
                          NormTestCase::to_string);
 
 TEST(NormReaderTest, ReadersWithoutAnInvertedIndexHaveNoNorms) {
-  EXPECT_EQ(nullptr, irs::SubReader::empty().NormColumn(1));
+  EXPECT_EQ(nullptr, irs::SubReader::empty().Norms().Column(1));
 
   irs::SegmentMeta meta;
   meta.docs_count = 1;
@@ -1089,8 +1089,8 @@ TEST(NormReaderTest, ReadersWithoutAnInvertedIndexHaveNoNorms) {
     std::make_unique<irs::ColReader>(
       irs::DuckDBEngine::Instance().instance(),
       std::vector<std::unique_ptr<irs::ColumnReader>>{}));
-  EXPECT_EQ(nullptr, rows->NormColumn(1));
-  EXPECT_FALSE(rows->norms(1));
+  EXPECT_EQ(nullptr, rows->Norms().Column(1));
+  EXPECT_FALSE(rows->Norms().Reader(1));
 }
 
 }  // namespace

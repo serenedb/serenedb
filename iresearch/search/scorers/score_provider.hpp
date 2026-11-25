@@ -51,7 +51,7 @@ struct ScaleProvider final : AttributeProvider {
 };
 
 inline ScoreFunction PrepareBlockScorer(const ScoreArgs& args,
-                                        const NormProvider& segment,
+                                        const SubReader& segment,
                                         const FieldProperties& field,
                                         ScaleProvider& provider,
                                         score_t* block) {

@@ -118,11 +118,6 @@ class SubReaderMock final : public irs::SubReader {
     return {};
   }
 
-  irs::NormReader::ptr norms(irs::field_id) const final {
-    EXPECT_FALSE(true);
-    return nullptr;
-  }
-
  private:
   irs::SegmentInfo _meta;
 };

@@ -350,7 +350,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   {
     const irs::FlushState state{
       .tracker = dir.Tracker("segment_name"),
-      .norms = &irs::SubReader::empty(),
+      .norms = &irs::SubReader::empty().Norms(),
       .scorer = scorer,
       .doc_count = docs.back().first + 1,
       .index_features = features,

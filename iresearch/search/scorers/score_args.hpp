@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -31,7 +32,6 @@
 namespace irs {
 
 class ColumnArgsFetcher;
-struct SubReader;
 
 namespace detail {
 
@@ -69,12 +69,12 @@ struct ScoreRecipe {
 };
 
 inline ScoreFunction PrepareScore(const ScoreArgs& args,
-                                  const NormProvider& segment,
+                                  const SubReader& segment,
                                   const FieldProperties& field,
                                   const AttributeProvider& attrs) {
   SDB_ASSERT(args.scorer != nullptr && args.fetcher != nullptr);
   return args.scorer->PrepareScorer({
-    .segment = segment,
+    .norms = segment.Norms(),
     .field = field,
     .doc_attrs = attrs,
     .fetcher = *args.fetcher,

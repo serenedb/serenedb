@@ -602,7 +602,7 @@ constexpr size_t kNormMergeChunk = 64 * 1024;
 const NormColumnReader* SourceNormColumn(const MergeSource& src, field_id id,
                                          DictRef dict) {
   const auto* terms = src.reader->field(id, dict);
-  return terms ? src.reader->NormColumn(terms->meta().norm) : nullptr;
+  return terms ? src.reader->Norms().Column(terms->meta().norm) : nullptr;
 }
 
 void ForLiveNorms(const MergeSource& src, const NormColumnReader& column,

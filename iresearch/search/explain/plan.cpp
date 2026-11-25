@@ -108,7 +108,7 @@ struct Constant {
 uint32_t ConstantFreq(const SubReader& segment, const TermReader& field,
                       const detail::ScoreArgs& args) {
   if (args.scorer->Constant({
-        .segment = segment,
+        .norms = segment.Norms(),
         .field = field.meta(),
         .doc_attrs = detail::NoAttributes(),
         .fetcher = *args.fetcher,
@@ -188,7 +188,7 @@ class LeafPart {
       SDB_ASSERT(recipe.args.stats == _args.stats);
       Describe(
         {
-          .segment = *recipe.segment,
+          .norms = recipe.segment->Norms(),
           .field = recipe.field->meta(),
           .doc_attrs = *inputs,
           .fetcher = *recipe.args.fetcher,
@@ -216,7 +216,7 @@ class LeafPart {
     const AttributeProvider& attrs =
       freq != 0 ? provider : detail::NoAttributes();
     const ScoreContext ctx{
-      .segment = _segment,
+      .norms = _segment.Norms(),
       .field = _constant.field ? _constant.field->meta() : detail::NoField(),
       .doc_attrs = attrs,
       .fetcher = *_args.fetcher,

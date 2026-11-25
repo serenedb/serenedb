@@ -92,7 +92,7 @@ const std::vector<uint32_t>& IndexNorms() {
         if (terms == nullptr || !irs::field_limits::valid(terms->meta().norm)) {
           continue;
         }
-        auto norms = segment.norms(terms->meta().norm);
+        auto norms = segment.Norms().Reader(terms->meta().norm);
         if (!norms) {
           continue;
         }

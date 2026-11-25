@@ -88,7 +88,7 @@ duckdb::idx_t FilterRows(duckdb::SelectionVector& sel, duckdb::Vector& values,
   if (values.GetVectorType() == duckdb::VectorType::FLAT_VECTOR) {
     duckdb::FlatVector::SetSize(values, count);
   }
-  if (sel_count != count || !sel.IsSet()) {
+  if (sel_count != count) {
     return duckdb::ColumnSegment::FilterSelection(sel, values, filter_state,
                                                   count, sel_count);
   }

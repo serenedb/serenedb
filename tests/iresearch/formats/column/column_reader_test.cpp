@@ -8347,6 +8347,15 @@ TEST_F(ColumnReaderTest, FooterBlocksSmallerThanTheirCodecNeedsAreRejected) {
               data_size(8), fetch),
             "Corrupted numeric segment: segment is smaller than its header");
   EXPECT_EQ(ReadWithCorruptedFooter(
+              Db(), duckdb::LogicalType::HUGEINT,
+              {.compression = irs::codecs::CodecType::Dict},
+              [](uint64_t g) {
+                return duckdb::Value::HUGEINT(duckdb::hugeint_t{
+                  static_cast<int64_t>(g % 3), g % 50 * 7919});
+              },
+              data_size(8), fetch),
+            "Corrupted numeric segment: segment is smaller than its header");
+  EXPECT_EQ(ReadWithCorruptedFooter(
               Db(), duckdb::LogicalType::DOUBLE,
               {.compression = irs::codecs::CodecType::Alp},
               [](uint64_t g) {

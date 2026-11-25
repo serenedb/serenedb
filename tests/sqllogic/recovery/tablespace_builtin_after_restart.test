@@ -1,0 +1,96 @@
+control substitution on
+
+statement ok
+CREATE ROLE builtin_ts_reader LOGIN;
+
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+statement error connection closed
+SELECT 1;
+
+connection after_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+connection after_restart
+query
+SELECT pg_tablespace_location(0) AS own, pg_tablespace_location(1663) AS pg_default,
+       pg_tablespace_location(1664) AS pg_global;
+----
+own	pg_default	pg_global
+(empty)	(empty)	(empty)
+
+connection after_restart
+query
+SELECT pg_tablespace_size(1663) >= 0 AS pg_default, pg_tablespace_size(1664) >= 0 AS pg_global;
+----
+pg_default	pg_global
+t	t
+
+connection after_restart
+query
+SELECT count(*) > 0 AS has_databases FROM pg_tablespace_databases(1663);
+----
+has_databases
+t
+
+connection after_restart
+query
+SELECT pg_describe_object('pg_tablespace'::regclass, 1663, 0) AS described;
+----
+described
+tablespace pg_default
+
+connection after_restart
+statement ok
+SET ROLE builtin_ts_reader;
+
+connection after_restart
+query
+SELECT has_tablespace_privilege(1663, 'CREATE') AS may_create;
+----
+may_create
+f
+
+connection after_restart
+statement ok
+RESET ROLE;
+
+connection after_restart
+statement ok
+SET sdb_faults = 'shutdown_on_packet';
+
+connection after_restart
+statement error connection closed
+SELECT 1;
+
+connection after_second_restart
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+connection after_second_restart
+statement error
+SELECT pg_tablespace_size('PG_GLOBAL');
+----
+db error: ERROR: tablespace "PG_GLOBAL" does not exist
+
+
+connection after_second_restart
+statement error
+CREATE TABLE upper_default (id INT) TABLESPACE "PG_DEFAULT";
+----
+db error: ERROR: tablespace "PG_DEFAULT" does not exist
+
+
+connection after_second_restart
+query
+SELECT oid, spcname FROM pg_tablespace ORDER BY oid, spcname;
+----
+oid	spcname
+1663	pg_default
+1664	pg_global
+
+connection after_second_restart
+statement ok
+DROP ROLE builtin_ts_reader;

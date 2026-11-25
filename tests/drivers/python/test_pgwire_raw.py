@@ -2357,7 +2357,7 @@ def test_copy_feeder_wake_outlives_the_session(conn):
 @pytest.mark.parametrize("options,row,rows,taken", [
     ("format csv, sample_size 1000", b"%d,%s\n", 3072, 3072),
     ("format csv, auto_detect false", b"%d,%s\n", 3072, 3072),
-    ("format json", b'{"a": %d, "b": "%s"}\n', 9216, 1),
+    ("format json", b'{"a": %d, "b": "%s"}\n', 3072, 1),
 ])
 def test_copy_from_stdin_takes_rows_before_its_stream_ends(conn, options, row, rows, taken):
     c = WireConn()

@@ -73,6 +73,10 @@ class ExtractBinding {
             const duckdb::LogicalType& scan_type,
             duckdb::ClientContext* context);
 
+  void Rewind(irs::ReadContext& ctx) {
+    Bind(*_reader, ctx, _extract_path, _extract_scan_type, _context);
+  }
+
   void MaterializeRows(DocRows rows, duckdb::Vector& out_vec, duckdb::idx_t at,
                        bool entire) const;
 

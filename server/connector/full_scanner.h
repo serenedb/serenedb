@@ -65,6 +65,8 @@ class FullScanner {
   // segment out of row order).
   uint64_t ScannedEnd() const noexcept { return _scanned_end; }
 
+  void Rewind();
+
   // Zonemap skip for the bulk loop: no row before the returned end can pass
   // the pushed filters (0 = no skip), so the caller jumps the scan cursor.
   uint64_t DeadUntil(uint64_t row) {

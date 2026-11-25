@@ -36,7 +36,7 @@ void OpenScanner(ScanGlobalState& g, ColScanLocalState& l) {
   }
   auto& slot = l.full_scanners[l.unit.seg];
   if (slot && l.doc_cursor < slot->ScannedEnd()) {
-    slot.reset();
+    slot->Rewind();
   }
   if (!slot) {
     const auto* col_reader = reader[l.unit.seg].GetColReader();

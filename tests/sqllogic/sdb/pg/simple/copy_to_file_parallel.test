@@ -210,6 +210,27 @@ n	total
 300000	44999850000
 
 
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_per_thread' (FORMAT text, PER_THREAD_OUTPUT true);
+
+
+statement ok
+CREATE TABLE ctfp_per_thread (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_per_thread FROM '${__TEST_DIR__}/ctfp_per_thread/*.text' (FORMAT text);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_per_thread
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
 statement error
 COPY ctfp_src TO '/dev/full' (FORMAT text);
 ----

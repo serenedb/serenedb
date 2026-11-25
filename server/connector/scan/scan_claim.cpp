@@ -224,12 +224,12 @@ OrderBounds BoundsOf(const ScanGlobalState& g, const irs::ColumnReader& column,
     const auto low =
       duckdb::RowGroupOrderKeys::Get(stats, duckdb::OrderByStatistics::MIN,
                                      duckdb::OrderType::ASCENDING, null_order);
+    if (IsNullKey(g, low)) {
+      continue;
+    }
     const auto high =
       duckdb::RowGroupOrderKeys::Get(stats, duckdb::OrderByStatistics::MAX,
                                      duckdb::OrderType::ASCENDING, null_order);
-    if (IsNullKey(g, low) || IsNullKey(g, high)) {
-      continue;
-    }
     if (!bounds.known || low < bounds.low) {
       bounds.low = low;
     }

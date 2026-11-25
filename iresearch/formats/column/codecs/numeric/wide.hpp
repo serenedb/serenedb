@@ -615,7 +615,10 @@ struct WideEntries final : State {
   explicit WideEntries(ColumnDataCheckpointData& data) {
     SDB_IF_FAILURE("irs::WideDictionaryOfHalves") { return; }
     ScratchVector<uint32_t> codes;
-    fits = Few(data) && Collect(data, codes) && Pack(codes);
+    fits = Few(data) && Collect(data, codes);
+    if (fits) {
+      Pack(codes);
+    }
   }
 
   duckdb::BaseStatistics Stats(const duckdb::LogicalType& type) const {
@@ -702,7 +705,7 @@ struct WideEntries final : State {
     return true;
   }
 
-  bool Pack(ScratchVector<uint32_t>& codes) {
+  void Pack(ScratchVector<uint32_t>& codes) {
     WideHeader header{
       .form = WideForm::Entries,
       .entries = static_cast<uint32_t>(values.size()),
@@ -727,14 +730,11 @@ struct WideEntries final : State {
       .rows = {{&chunk, 1}, codes.size()},
     };
     CompressAutoCodes(nested);
-    if (header.codes != CodecType::Bitpacking &&
-        header.codes != CodecType::Rle) {
-      return false;
-    }
+    SDB_ASSERT(header.codes == CodecType::Bitpacking ||
+               header.codes == CodecType::Rle);
     std::memcpy(out.data(), &header, sizeof(WideHeader));
     std::memcpy(out.data() + sizeof(WideHeader), values.data(),
                 values.size() * sizeof(W));
-    return true;
   }
 };
 

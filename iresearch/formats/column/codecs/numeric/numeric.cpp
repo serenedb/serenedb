@@ -1209,7 +1209,8 @@ void Filter(const ColumnSegment& segment, ColumnScanState& state,
                          scan.frames.FilterCodes(start, vector_count, result,
                                                  sel, sel_count, filter_state);
                        }) {
-    if (!every_row && !state.dynamic_filter &&
+    static_assert(!std::is_integral_v<typename R::Value>);
+    if (!state.dynamic_filter &&
         scan.frames.FilterCodes(start, vector_count, result, sel, sel_count,
                                 filter_state)) {
       return;

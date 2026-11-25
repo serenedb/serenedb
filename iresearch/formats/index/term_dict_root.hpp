@@ -26,85 +26,18 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include <duckdb/common/serializer/read_stream.hpp>
+#include <duckdb/common/serializer/write_stream.hpp>
+#include <memory>
 #include <span>
 #include <variant>
 #include <vector>
 
+#include "iresearch/formats/index/term_dict_key.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/small_vector.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
-
-inline constexpr size_t kKeyPad = 2 * sizeof(uint64_t);
-inline constexpr size_t kInlineKeyBytes = 256;
-
-struct Probe {
-  const byte_type* data;
-  size_t size;
-};
-
-inline bytes_view KeyOf(Probe probe) noexcept {
-  return {probe.data, probe.size};
-}
-
-class PaddedKey {
- public:
-  PaddedKey() : _bytes(kKeyPad, byte_type{0}) {}
-  explicit PaddedKey(bytes_view key) { Assign(key); }
-  PaddedKey(const PaddedKey&) = delete;
-  PaddedKey& operator=(const PaddedKey&) = delete;
-
-  byte_type* Resize(size_t size) {
-    _bytes.resize(size + kKeyPad, boost::container::default_init);
-    std::memset(_bytes.data() + size, 0, kKeyPad);
-    return _bytes.data();
-  }
-
-  Probe Assign(bytes_view key) {
-    auto* data = Resize(key.size());
-    if (!key.empty()) {
-      std::memcpy(data, key.data(), key.size());
-    }
-    return View();
-  }
-
-  Probe Assign(bytes_view prefix, bytes_view key) {
-    auto* data = Resize(prefix.size() + key.size());
-    std::memcpy(data, prefix.data(), prefix.size());
-    if (!key.empty()) {
-      std::memcpy(data + prefix.size(), key.data(), key.size());
-    }
-    return View();
-  }
-
-  const byte_type* Data() const noexcept { return _bytes.data(); }
-  Probe View() const noexcept { return {_bytes.data(), Size()}; }
-  bytes_view Key() const noexcept { return {_bytes.data(), Size()}; }
-
- private:
-  size_t Size() const noexcept { return _bytes.size() - kKeyPad; }
-
-  containers::SmallVector<byte_type, kInlineKeyBytes> _bytes;
-};
-
-IRS_FORCE_INLINE inline size_t PaddedMismatch(const byte_type* lhs,
-                                              const byte_type* rhs,
-                                              size_t size) noexcept {
-  for (size_t i = 0; i < size; i += sizeof(uint64_t)) {
-    uint64_t diff = absl::little_endian::Load64(lhs + i) ^
-                    absl::little_endian::Load64(rhs + i);
-    if (const size_t left = size - i; left < sizeof(uint64_t)) {
-      diff &= (uint64_t{1} << (8 * left)) - 1;
-    }
-    if (diff != 0) {
-      return i + std::countr_zero(diff) / 8;
-    }
-  }
-  return size;
-}
-
-uint64_t HeadAt(bytes_view key, size_t skip) noexcept;
 
 struct Separators {
   bstring arena;
@@ -117,8 +50,6 @@ struct SeparatorsView {
   const byte_type* arena = nullptr;
   std::span<const uint32_t> offsets{kNoSeparators};
 };
-
-Separators DecodeSeparators(bytes_view encoded, size_t count);
 
 inline SeparatorsView Slice(const Separators& separators, size_t from,
                             size_t count) noexcept {
@@ -175,8 +106,11 @@ class EytzingerRoot : public SeparatorRoot {
 
   EytzingerRoot() = default;
   explicit EytzingerRoot(SeparatorsView separators);
+  EytzingerRoot(SeparatorsView separators, duckdb::ReadStream& in);
   EytzingerRoot(EytzingerRoot&&) noexcept = default;
   EytzingerRoot& operator=(EytzingerRoot&&) noexcept = default;
+
+  void Write(duckdb::WriteStream& out) const;
 
   using SeparatorRoot::NotAfter;
   size_t Find(Probe key) const noexcept;
@@ -186,6 +120,7 @@ class EytzingerRoot : public SeparatorRoot {
   }
 
  private:
+  Node* Place();
   bool NotAfter(const Node& node, Probe key) const noexcept;
   size_t Outside(bytes_view key) const noexcept;
   size_t Resolve(size_t k) const noexcept;
@@ -200,6 +135,9 @@ class TreeRoot : public SeparatorRoot {
  public:
   TreeRoot() = default;
   explicit TreeRoot(SeparatorsView separators);
+  TreeRoot(SeparatorsView separators, duckdb::ReadStream& in);
+
+  void Write(duckdb::WriteStream& out) const;
 
   static size_t Height(size_t count) { return LevelSizes(count).size(); }
 
@@ -243,6 +181,9 @@ class ArtRoot : public SeparatorRoot {
  public:
   ArtRoot() = default;
   explicit ArtRoot(SeparatorsView separators);
+  ArtRoot(SeparatorsView separators, duckdb::ReadStream& in);
+
+  void Write(duckdb::WriteStream& out) const;
 
   size_t Find(Probe key) const noexcept;
   size_t FindFrom(size_t from, Probe key) const noexcept {
@@ -275,6 +216,9 @@ class Root {
  public:
   Root() = default;
   Root(SeparatorsView separators, bool fixed);
+  Root(SeparatorsView separators, duckdb::ReadStream& in);
+
+  void Write(duckdb::WriteStream& out) const;
 
   size_t Blocks() const noexcept {
     return Visit([](const auto& root) { return root.Blocks(); });

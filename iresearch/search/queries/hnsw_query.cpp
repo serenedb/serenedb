@@ -32,13 +32,16 @@
 #include <utility>
 
 #include "iresearch/formats/hnsw/hnsw_bases.hpp"
+#include "iresearch/search/detail/bitset_build.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
 #include "iresearch/search/detail/vector_of.hpp"
 #include "iresearch/search/detail/window.hpp"
 #include "iresearch/search/docs/make.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/vector_similarity_query.hpp"
 #include "iresearch/search/scorers/score_function.hpp"
 #include "iresearch/utils/dispatch.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -353,6 +356,28 @@ inline constexpr uint64_t kHnswColumnScanShare = 16;
 
 inline constexpr double kWalkCandidateOverhead = 192;
 
+inline constexpr uint64_t kPostingsPerFoldedWord = 4;
+
+uint64_t AllDocsClauses(const QueryBuilder& query) noexcept {
+  if (query.Kind() != QueryKind::Boolean) {
+    return 0;
+  }
+  const auto& boolean = irs::utils::downCast<BooleanQuery>(query);
+  uint64_t clauses = 0;
+  for (const auto occur : {Occur::Must, Occur::Should, Occur::MustNot}) {
+    clauses += boolean.Bucket(occur).all_docs.size();
+    for (const auto& child : boolean.Queries(occur)) {
+      clauses += AllDocsClauses(*child);
+    }
+  }
+  return clauses;
+}
+
+uint64_t FoldPostings(const QueryBuilder& query, doc_id_t docs_count) noexcept {
+  return query.Postings() + AllDocsClauses(query) * kPostingsPerFoldedWord *
+                              detail::SegmentWords(docs_count);
+}
+
 double ScanCandidateCost(uint32_t record_size) noexcept {
   const auto r = static_cast<double>(record_size);
   return r / (r + kWalkCandidateOverhead);
@@ -564,16 +589,17 @@ HnswQuery::HnswQuery(const SubReader& segment,
                      std::shared_ptr<const HnswData> data,
                      const VectorFilterOptions& opts, uint32_t record_size,
                      HnswSearchLimits limits, score_t boost,
-                     QueryBuilder::ptr&& inner, QueryBuilder::ptr&& index_only,
+                     QueryBuilder::ptr&& inner, QueryBuilder::ptr&& index_part,
                      AnnQueryCache* cache)
   : QueryBuilderImpl{segment, static_cast<uint32_t>(segment.docs_count()),
                      QueryKind::Ann},
     _data{std::move(data)},
     _cache{cache},
     _inner{std::move(inner)},
-    _index_only{std::move(index_only)},
-    _index_only_postings{opts.index_only && _index_only
-                           ? _index_only->Postings()
+    _index_part{std::move(index_part)},
+    _index_part_postings{opts.index_part && _index_part
+                           ? FoldPostings(*_index_part, static_cast<doc_id_t>(
+                                                          segment.docs_count()))
                            : segment.docs_count() - segment.live_docs_count()},
     _exact{segment.Column(opts.column_id)},
     _query{opts.query.size(),
@@ -589,7 +615,7 @@ HnswQuery::HnswQuery(const SubReader& segment,
     _boost{boost},
     _filter_mode{opts.hnsw_filter_mode},
     _column_filter{opts.hnsw_column_filter},
-    _dual{opts.dual},
+    _has_column_part{opts.has_column_part},
     _inclusive{limits.inclusive} {
   if (_metric == VectorMetric::Cosine) {
     duckdb::L2NormalizeOp::Operation(_query.data(), _query.data(), _d);
@@ -630,8 +656,8 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
                                      record, _ef, estimate, columns);
     return plan.ask_per_hop &&
            (_column_filter == HnswColumnFilter::Read ||
-            plan.read_cost + static_cast<double>(_index_only_postings) <
-              static_cast<double>(_inner->Postings()));
+            plan.read_cost + static_cast<double>(_index_part_postings) <
+              static_cast<double>(FoldPostings(*_inner, docs_count)));
   };
   const auto expected = [rest = table ? table->Share() : 1.0](uint64_t count) {
     return static_cast<uint64_t>(
@@ -647,7 +673,7 @@ void HnswQuery::RunFiltered(Dist& dist, detail::TableFilter* table,
         THROW_SQL_ERROR(ERR_MSG("intentional debug error"));
       }
       most = _inner->EstimateMax();
-      inner = _index_only.get();
+      inner = _index_part.get();
       table = columns;
     }
   }
@@ -835,7 +861,7 @@ std::vector<ScoreDoc> HnswQuery::RunSearch(
   if (table && !table->Foldable()) {
     table = nullptr;
   }
-  if (!_dual || (columns && !columns->Foldable())) {
+  if (!_has_column_part || (columns && !columns->Foldable())) {
     columns = nullptr;
   }
   if (!table && ScansByColumn()) {

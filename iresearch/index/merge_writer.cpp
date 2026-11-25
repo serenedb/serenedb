@@ -564,8 +564,9 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
 uint64_t KeyedDicts(const FieldMetaMapT& field_meta_map) noexcept {
   uint64_t count = 0;
   for (const auto& [id, field] : field_meta_map) {
-    count += static_cast<uint64_t>(absl::c_count_if(
-      field.members, [](const MergedMember& member) { return member.keyed; }));
+    for (const auto& member : field.members) {
+      count += member.keyed ? term_dict::KeyedDictsOf(member.features) : 0;
+    }
   }
   return count;
 }

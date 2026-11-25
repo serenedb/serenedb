@@ -545,76 +545,68 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ─────────────────────────────────────────────────────╮
-│ Table: columns_vectors                                           │
-│ Index or Column Filter: cat = 4                                  │
-│ Score: l2_distance(emb, FLOAT[8])                                │
-│ Top: 4                                                           │
-│ Projections: pk                                                  │
-│                                                                  │
-├─ Index Filter Prepare ───────────────────────────────────────────┤
-│                                                                  │
-│ Total: 0µs                                                       │
-│ Snapshot: 0µs                                                    │
-│ Segments: 1 of 1                                                 │
-│                                                                  │
-│ ╭─ Vector Similarity ──────╮                                     │
-│ │ Field: emb               │                                     │
-│ │ Metric: l2               │                                     │
-│ │ Top: 4                   │                                     │
-│ │ Estimated Matches: 3,000 │                                     │
-│ │ Total: 0µs               │                                     │
-│ │ Time: 0µs                │                                     │
-│ ╰─────────────┬────────────╯                                     │
-│ ╭─ And ───────┴────────────╮                                     │
-│ │ Posting Lists: 2         │                                     │
-│ │ Estimated Matches: 150   │                                     │
-│ │ Postings: 1,800          │                                     │
-│ │ Time: 0µs                │                                     │
-│ ╰─────────────┬────────────╯                                     │
-│               ├──────────────────────────╮                       │
-│ ╭─ Terms ─────┴────────────╮  ╭─ Terms ──┴─────────╮             │
-│ │ Field: cat(numeric)      │  │ Field: tag(string) │             │
-│ │ Values: 4                │  │ Values: 'even'     │             │
-│ ╰──────────────────────────╯  ╰────────────────────╯             │
-│                                                                  │
-├─ Index Filter Execute ───────────────────────────────────────────┤
-│                                                                  │
-│ Total: 0µs                                                       │
-│ Rows: 160                                                        │
-│                                                                  │
-│ ╭─ ann::HnswHits ───────────────────╮                            │
-│ │ Plans: 1                          │                            │
-│ │ Calls: 1                          │                            │
-│ │ Plan: 0µs                         │                            │
-│ │ Total: 0µs                        │                            │
-│ │ Time: 0µs                         │                            │
-│ │ Rows: 160                         │                            │
-│ ╰─────────────────┬─────────────────╯                            │
-│                   ├────────────────────────────────╮             │
-│ ╭─ fill::Impl<fill::BooleanWindow> ─╮  ╭─ docs::BooleanWindow ─╮ │
-│ │ Filter: And                       │  │ Filter: And           │ │
-│ │ Plans: 1                          │  │ Plans: 1              │ │
-│ │ Calls: 0                          │  │ Calls: 1              │ │
-│ │ Time: 0µs                         │  │ Plan: 0µs             │ │
-│ │ Rows: 0                           │  │ Time: 0µs             │ │
-│ ╰───────────────────────────────────╯  │ Rows: 300             │ │
-│                                        ╰───────────────────────╯ │
-│                                                                  │
-├─ Column Filter ──────────────────────────────────────────────────┤
-│                                                                  │
-│ Rows: 300                                                        │
-│ Rows Removed: 100                                                │
-│ Time: 0µs                                                        │
-│                                                                  │
-│ ╭─ Column ──────────╮                                            │
-│ │ Field: num        │                                            │
-│ │ Check: num < 2000 │                                            │
-│ ╰───────────────────╯                                            │
-│                                                                  │
-├──────────────────────────────────────────────────────────────────┤
-│ 4 rows                                                       0µs │
-╰──────────────────────────────────────────────────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────────────────────────────────────────────────╮
+│ Table: columns_vectors                                                             │
+│ Index or Column Filter: num < 2000, cat = 4                                        │
+│ Score: l2_distance(emb, FLOAT[8])                                                  │
+│ Top: 4                                                                             │
+│ Projections: pk                                                                    │
+│                                                                                    │
+├─ Index Filter Prepare ─────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│ Total: 0µs                                                                         │
+│ Snapshot: 0µs                                                                      │
+│ Segments: 1 of 1                                                                   │
+│                                                                                    │
+│ ╭─ Vector Similarity ──────╮                                                       │
+│ │ Field: emb               │                                                       │
+│ │ Metric: l2               │                                                       │
+│ │ Top: 4                   │                                                       │
+│ │ Estimated Matches: 3,000 │                                                       │
+│ │ Total: 0µs               │                                                       │
+│ │ Time: 0µs                │                                                       │
+│ ╰─────────────┬────────────╯                                                       │
+│ ╭─ And ───────┴────────────╮                                                       │
+│ │ Posting Lists: 2         │                                                       │
+│ │ Estimated Matches: 101   │                                                       │
+│ │ Postings: 1,800          │                                                       │
+│ │ Total: 0µs               │                                                       │
+│ │ Time: 0µs                │                                                       │
+│ ╰─────────────┬────────────╯                                                       │
+│               ├──────────────────────────┬──────────────────────────╮              │
+│ ╭─ Terms ─────┴────────────╮  ╭─ Terms ──┴─────────╮  ╭─ Granular Range ─────────╮ │
+│ │ Field: cat(numeric)      │  │ Field: tag(string) │  │ Field: num(numeric)      │ │
+│ │ Values: 4                │  │ Values: 'even'     │  │ Range: <2000             │ │
+│ ╰──────────────────────────╯  ╰────────────────────╯  │ Posting Lists: 49        │ │
+│                                                       │ Estimated Matches: 2,000 │ │
+│                                                       │ Postings: 1,000          │ │
+│                                                       │ Time: 0µs                │ │
+│                                                       ╰──────────────────────────╯ │
+│                                                                                    │
+├─ Index Filter Execute ─────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│ Total: 0µs                                                                         │
+│ Rows: 160                                                                          │
+│                                                                                    │
+│ ╭─ ann::HnswHits ───────────────────╮                                              │
+│ │ Plans: 1                          │                                              │
+│ │ Calls: 1                          │                                              │
+│ │ Plan: 0µs                         │                                              │
+│ │ Total: 0µs                        │                                              │
+│ │ Time: 0µs                         │                                              │
+│ │ Rows: 160                         │                                              │
+│ ╰─────────────────┬─────────────────╯                                              │
+│ ╭─ fill::Impl<fill::BooleanWindow> ─╮                                              │
+│ │ Filter: And                       │                                              │
+│ │ Plans: 1                          │                                              │
+│ │ Calls: 1                          │                                              │
+│ │ Time: 0µs                         │                                              │
+│ │ Rows: 200                         │                                              │
+│ ╰───────────────────────────────────╯                                              │
+│                                                                                    │
+├────────────────────────────────────────────────────────────────────────────────────┤
+│ 4 rows                                                                         0µs │
+╰────────────────────────────────────────────────────────────────────────────────────╯
 
 
 query
@@ -626,11 +618,12 @@ ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8]
 LIMIT 4;
 ----
 QUERY PLAN
-IRESEARCH_SCAN (est=120) Table: columns_vectors; Column Filter: (num < 2000); Index or Column Filter: (cat = 4); Score: l2_distance(emb, FLOAT[8]); Top: 4; Projections: pk
+IRESEARCH_SCAN (est=600) Table: columns_vectors; Index or Column Filter: (num < 2000), (cat = 4); Score: l2_distance(emb, FLOAT[8]); Top: 4; Projections: pk
   Index Filter:
     And
       Terms {Field: cat(numeric); Values: 4}
       Terms {Field: tag(string); Values: 'even'}
+      Granular Range {Field: num(numeric); Range: <2000}
 
 
 statement ok
@@ -653,68 +646,73 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ─────────────────────────────────────────╮
-│ Table: columns_vectors                               │
-│ Score: l2_distance(emb, FLOAT[8])                    │
-│ Top: 4                                               │
-│ Projections: pk                                      │
-│                                                      │
-├─ Index Filter Prepare ───────────────────────────────┤
-│                                                      │
-│ Total: 0µs                                           │
-│ Snapshot: 0µs                                        │
-│ Segments: 1 of 1                                     │
-│                                                      │
-│ ╭─ Vector Similarity ──────╮                         │
-│ │ Field: emb               │                         │
-│ │ Metric: l2               │                         │
-│ │ Top: 4                   │                         │
-│ │ Estimated Matches: 3,000 │                         │
-│ │ Total: 0µs               │                         │
-│ │ Time: 0µs                │                         │
-│ ╰─────────────┬────────────╯                         │
-│ ╭─ And ───────┴────────────╮                         │
-│ │ Posting Lists: 2         │                         │
-│ │ Estimated Matches: 150   │                         │
-│ │ Postings: 1,800          │                         │
-│ │ Time: 0µs                │                         │
-│ ╰─────────────┬────────────╯                         │
-│               ├──────────────────────────╮           │
-│ ╭─ Terms ─────┴────────────╮  ╭─ Terms ──┴─────────╮ │
-│ │ Field: cat(numeric)      │  │ Field: tag(string) │ │
-│ │ Values: 4                │  │ Values: 'even'     │ │
-│ ╰──────────────────────────╯  ╰────────────────────╯ │
-│                                                      │
-├─ Index Filter Execute ───────────────────────────────┤
-│                                                      │
-│ Total: 0µs                                           │
-│ Rows: 160                                            │
-│                                                      │
-│ ╭─ ann::HnswHits ─╮                                  │
-│ │ Plans: 1        │                                  │
-│ │ Calls: 1        │                                  │
-│ │ Plan: 0µs       │                                  │
-│ │ Time: 0µs       │                                  │
-│ │ Rows: 160       │                                  │
-│ ╰─────────────────╯                                  │
-│                                                      │
-├─ Column Filter ──────────────────────────────────────┤
-│                                                      │
-│ Rows: 1,551                                          │
-│ Rows Removed: 1,341                                  │
-│ Time: 0µs                                            │
-│                                                      │
-│ ╭─ And ─────────────╮                                │
-│ ╰─────────┬─────────╯                                │
-│           ├─────────────────────╮                    │
-│ ╭─ Column ┴─────────╮  ╭─ Column ───────╮            │
-│ │ Field: num        │  │ Field: cat     │            │
-│ │ Check: num < 2000 │  │ Check: cat = 4 │            │
-│ ╰───────────────────╯  ╰────────────────╯            │
-│                                                      │
-├──────────────────────────────────────────────────────┤
-│ 4 rows                                           0µs │
-╰──────────────────────────────────────────────────────╯
+╭─ TABLE_SCAN ───────────────────────────────────────────────────────────────────────╮
+│ Table: columns_vectors                                                             │
+│ Score: l2_distance(emb, FLOAT[8])                                                  │
+│ Top: 4                                                                             │
+│ Projections: pk                                                                    │
+│                                                                                    │
+├─ Index Filter Prepare ─────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│ Total: 0µs                                                                         │
+│ Snapshot: 0µs                                                                      │
+│ Segments: 1 of 1                                                                   │
+│                                                                                    │
+│ ╭─ Vector Similarity ──────╮                                                       │
+│ │ Field: emb               │                                                       │
+│ │ Metric: l2               │                                                       │
+│ │ Top: 4                   │                                                       │
+│ │ Estimated Matches: 3,000 │                                                       │
+│ │ Total: 0µs               │                                                       │
+│ │ Time: 0µs                │                                                       │
+│ ╰─────────────┬────────────╯                                                       │
+│ ╭─ And ───────┴────────────╮                                                       │
+│ │ Posting Lists: 2         │                                                       │
+│ │ Estimated Matches: 101   │                                                       │
+│ │ Postings: 1,800          │                                                       │
+│ │ Total: 0µs               │                                                       │
+│ │ Time: 0µs                │                                                       │
+│ ╰─────────────┬────────────╯                                                       │
+│               ├──────────────────────────┬──────────────────────────╮              │
+│ ╭─ Terms ─────┴────────────╮  ╭─ Terms ──┴─────────╮  ╭─ Granular Range ─────────╮ │
+│ │ Field: cat(numeric)      │  │ Field: tag(string) │  │ Field: num(numeric)      │ │
+│ │ Values: 4                │  │ Values: 'even'     │  │ Range: <2000             │ │
+│ ╰──────────────────────────╯  ╰────────────────────╯  │ Posting Lists: 49        │ │
+│                                                       │ Estimated Matches: 2,000 │ │
+│                                                       │ Postings: 1,000          │ │
+│                                                       │ Time: 0µs                │ │
+│                                                       ╰──────────────────────────╯ │
+│                                                                                    │
+├─ Index Filter Execute ─────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│ Total: 0µs                                                                         │
+│ Rows: 160                                                                          │
+│                                                                                    │
+│ ╭─ ann::HnswHits ─╮                                                                │
+│ │ Plans: 1        │                                                                │
+│ │ Calls: 1        │                                                                │
+│ │ Plan: 0µs       │                                                                │
+│ │ Time: 0µs       │                                                                │
+│ │ Rows: 160       │                                                                │
+│ ╰─────────────────╯                                                                │
+│                                                                                    │
+├─ Column Filter ────────────────────────────────────────────────────────────────────┤
+│                                                                                    │
+│ Rows: 1,551                                                                        │
+│ Rows Removed: 1,341                                                                │
+│ Time: 0µs                                                                          │
+│                                                                                    │
+│ ╭─ And ─────────────╮                                                              │
+│ ╰─────────┬─────────╯                                                              │
+│           ├─────────────────────╮                                                  │
+│ ╭─ Column ┴─────────╮  ╭─ Column ───────╮                                          │
+│ │ Field: num        │  │ Field: cat     │                                          │
+│ │ Check: num < 2000 │  │ Check: cat = 4 │                                          │
+│ ╰───────────────────╯  ╰────────────────╯                                          │
+│                                                                                    │
+├────────────────────────────────────────────────────────────────────────────────────┤
+│ 4 rows                                                                         0µs │
+╰────────────────────────────────────────────────────────────────────────────────────╯
 
 
 statement ok

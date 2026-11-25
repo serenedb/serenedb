@@ -31,6 +31,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/utils/byte_set.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
@@ -128,6 +129,18 @@ class LevenshteinAcceptor {
         }
       }
     }
+    AddBytes(_bytes.required, _prefix);
+    std::array<uint32_t, 0x80> counts{};
+    for (const auto c : _target) {
+      if (c < counts.size()) {
+        ++counts[c];
+      }
+    }
+    for (uint32_t c = 0; c != counts.size(); ++c) {
+      if (counts[c] > description.max_distance()) {
+        _bytes.required.Add(static_cast<byte_type>(c));
+      }
+    }
     absl::c_sort(_partials);
     _partials.erase(std::ranges::unique(_partials).begin(), _partials.end());
     _slots = _chi.size() / _words;
@@ -151,6 +164,8 @@ class LevenshteinAcceptor {
   bytes_view LowerBound() const noexcept { return _prefix; }
 
   uint32_t MaxDistance() const noexcept { return _no_distance - 1U; }
+
+  const KeyBytes& Bytes() const noexcept { return _bytes; }
 
   static bool Alive(const State& state) noexcept {
     return state.pstate != kDeadState;
@@ -476,6 +491,7 @@ class LevenshteinAcceptor {
   std::vector<uint64_t> _partials;
   std::array<int32_t, kNarrowMax> _narrow;
   std::array<bool, 256> _leads{};
+  KeyBytes _bytes;
   mutable std::vector<uint32_t> _steps;
   size_t _slots{0};
   size_t _offsets{0};
@@ -516,6 +532,8 @@ class LevenshteinPrefixAcceptor {
   State Start() const noexcept { return Settle({_inner->Start(), kNone}); }
 
   bytes_view LowerBound() const noexcept { return _inner->LowerBound(); }
+
+  const KeyBytes& Bytes() const noexcept { return _inner->Bytes(); }
 
   std::array<uint8_t, 256> Bytemap() const { return _inner->Bytemap(); }
 

@@ -427,14 +427,15 @@ duckdb::TableFilterPushdown SystemPushdown(const SystemTable& table,
 }
 
 void SystemScan::Compile(duckdb::column_t column,
-                         const duckdb::TableFilter& filter) {
+                         const duckdb::TableFilter& filter,
+                         duckdb::optional_idx caller) {
   const auto& expr =
     *duckdb::ExpressionFilter::GetExpressionFilter(filter, "SystemScan").expr;
   SystemFilter compiled;
   const auto claim = Claim(_table, column, expr, compiled);
   if (claim.visibility) {
     SDB_ASSERT(!_session);
-    _session.emplace(MakeSession(&_context));
+    _session.emplace(MakeSession(&_context, caller));
   }
   const bool optional =
     duckdb::ExpressionFilter::IsRootOptionalExpression(expr);

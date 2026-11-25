@@ -54,7 +54,7 @@ constexpr SystemMacro kMacros[] = {
    R"((target_pid) AS TABLE
       SELECT S.datid AS datid,
              S.pid AS pid,
-             U.oid AS usesysid,
+             S.usesysid AS usesysid,
              NULL::TEXT AS application_name,
              S.state AS state,
              S.query AS query,
@@ -84,7 +84,6 @@ constexpr SystemMacro kMacros[] = {
              NULL::INTEGER AS leader_pid,
              NULL::BIGINT AS query_id
       FROM pg_catalog.sdb_progress AS S
-           LEFT JOIN pg_catalog.pg_roles AS U ON (S.usename = U.rolname)
       WHERE target_pid IS NULL OR S.pid = target_pid)"},
 
   {"pg_catalog", "pg_stat_get_progress_info",

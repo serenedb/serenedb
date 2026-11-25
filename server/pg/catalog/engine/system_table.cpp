@@ -116,7 +116,8 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
   const auto& ids = input.column_ids;
   if (input.filters) {
     for (const auto& entry : *input.filters) {
-      Compile(ids[entry.GetIndex()], entry.Filter());
+      Compile(ids[entry.GetIndex()], entry.Filter(),
+              input.bind_data->Cast<SystemTableBindData>().caller_role);
     }
   }
   const auto& projection = input.projection_ids;

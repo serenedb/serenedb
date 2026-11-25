@@ -3,6 +3,10 @@ DROP SCHEMA IF EXISTS sdl_s CASCADE;
 
 
 statement ok
+DROP SCHEMA IF EXISTS sdl_vis CASCADE;
+
+
+statement ok
 DROP TABLE IF EXISTS sdl_hidden;
 
 
@@ -51,6 +55,22 @@ GRANT USAGE ON SCHEMA sdl_s TO sdl_caller;
 
 
 statement ok
+CREATE SCHEMA sdl_vis;
+
+
+statement ok
+CREATE TABLE sdl_vis.sdl_vis_t (a int);
+
+
+statement ok
+GRANT USAGE ON SCHEMA sdl_vis TO sdl_owner;
+
+
+statement ok
+GRANT SELECT ON sdl_vis.sdl_vis_t TO sdl_owner;
+
+
+statement ok
 SET ROLE sdl_owner;
 
 
@@ -62,6 +82,11 @@ AS 'SELECT string_agg(column_name::text, '','' ORDER BY column_name::text) FROM 
 statement ok
 CREATE FUNCTION sdl_s.invoker_columns() RETURNS text LANGUAGE sql
 AS 'SELECT string_agg(column_name::text, '','' ORDER BY column_name::text) FROM information_schema.columns WHERE table_name::text IN (''sdl_hidden'', ''sdl_shown'')';
+
+
+statement ok
+CREATE FUNCTION sdl_s.visible_count() RETURNS int LANGUAGE sql SECURITY DEFINER
+AS 'SELECT count(*)::int FROM pg_class WHERE relname = ''sdl_vis_t'' AND pg_table_is_visible(oid)';
 
 
 statement ok
@@ -99,8 +124,38 @@ listed
 owner_column
 
 
+connection c_caller user=sdl_caller password=sdl_pw
+statement ok
+SET search_path = sdl_vis, public;
+
+
+connection c_caller user=sdl_caller password=sdl_pw
+query
+SELECT count(*)::int AS visible FROM pg_class WHERE relname = 'sdl_vis_t' AND pg_table_is_visible(oid);
+----
+visible
+0
+
+
+connection c_caller user=sdl_caller password=sdl_pw
+query
+SELECT sdl_s.visible_count() AS visible;
+----
+visible
+1
+
+
+connection c_caller user=sdl_caller password=sdl_pw
+statement ok
+RESET search_path;
+
+
 statement ok
 DROP SCHEMA sdl_s CASCADE;
+
+
+statement ok
+DROP SCHEMA sdl_vis CASCADE;
 
 
 statement ok

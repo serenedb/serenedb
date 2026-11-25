@@ -32,6 +32,7 @@ namespace {
 constexpr SystemSqlColumn kSdbProgressColumns[] = {
   {"pid", kInt4, 0, false, false, 0, 0, SystemKey::None},
   {"datid", kOid, 0, false, false, 0, 0, SystemKey::None},
+  {"usesysid", kOid, 0, false, false, 0, 0, SystemKey::None},
   {"usename", kName, 0, false, false, kCCollation, 0, SystemKey::None},
   {"datname", kName, 0, false, false, kCCollation, 0, SystemKey::None},
   {"state", kText, 0, false, false, kCCollation, 0, SystemKey::None},
@@ -73,6 +74,7 @@ SystemRows<ProgressSnapshot> LoadSnapshots(SystemScan&) {
 
 constexpr std::tuple kProgressBase{Col<"pid">(&ProgressSnapshot::pid),
                                    Col<"datid">(&ProgressSnapshot::datid),
+                                   Col<"usesysid">(&ProgressSnapshot::role),
                                    Col<"usename">(&ProgressSnapshot::user),
                                    Col<"datname">(&ProgressSnapshot::database)};
 

@@ -153,6 +153,17 @@ query
 
 
 connection default
+query
+SELECT count(*) AS sessions,
+       bool_and(usesysid = (SELECT oid FROM pg_roles WHERE rolname = 'pudge_activity_twin_old')) AS attributed
+FROM pg_stat_activity
+WHERE usename = 'pudge_activity_twin_old';
+----
+sessions	attributed
+1	t
+
+
+connection default
 statement ok
 DROP ROLE chin_activity_boss;
 

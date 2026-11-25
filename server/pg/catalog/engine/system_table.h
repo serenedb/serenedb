@@ -1001,7 +1001,8 @@ class SystemScan {
 #ifdef SDB_DEV
   bool Declared(uint64_t provided) const;
 #endif
-  void Compile(duckdb::column_t column, const duckdb::TableFilter& filter);
+  void Compile(duckdb::column_t column, const duckdb::TableFilter& filter,
+               duckdb::optional_idx caller);
   const SystemIndex* Choose(std::span<const SystemIndex> indexes,
                             size_t name_probes) const;
   std::string_view NamePrefix(std::span<const SystemIndex> indexes) const;

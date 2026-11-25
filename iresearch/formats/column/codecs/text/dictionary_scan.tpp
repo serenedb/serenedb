@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cstring>
 #include <duckdb/common/types/selection_vector.hpp>
 #include <duckdb/common/vector/dictionary_vector.hpp>
@@ -43,6 +44,7 @@
 #include <duckdb/storage/table/column_segment.hpp>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -64,6 +66,8 @@
 #include "iresearch/utils/system_compiler.hpp"
 
 namespace irs::codecs::text {
+
+inline constexpr uint64_t kInListProbeCost = 8;
 
 class RowCodes {
  public:
@@ -460,6 +464,9 @@ struct DictionaryScan final : SegmentScanState {
       case duckdb::ExpressionClass::BOUND_OPERATOR: {
         const auto& op = expr.Cast<duckdb::BoundOperatorExpression>();
         const auto type = op.GetExpressionType();
+        if (type == duckdb::ExpressionType::COMPARE_IN) {
+          return entries.header.sorted != 0 && ResolveIn(op.GetChildren(), out);
+        }
         if ((type != duckdb::ExpressionType::OPERATOR_IS_NULL &&
              type != duckdb::ExpressionType::OPERATOR_IS_NOT_NULL) ||
             !duckdb::ExpressionFilter::IsSimpleFilterColumnRef(
@@ -476,6 +483,10 @@ struct DictionaryScan final : SegmentScanState {
               duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
           return entries.header.sorted != 0 &&
                  ResolveBound(expr, std::move(data), out);
+        }
+        if (const auto child =
+              duckdb::ExpressionFilter::GetOptionalFilterChild(expr)) {
+          return Resolve(*child, out);
         }
         return entries.header.sorted != 0 &&
                ResolveComparison(expr.Cast<duckdb::BoundFunctionExpression>(),
@@ -505,6 +516,33 @@ struct DictionaryScan final : SegmentScanState {
       default:
         return false;
     }
+  }
+
+  bool ResolveIn(
+    std::span<const duckdb::unique_ptr<duckdb::Expression>> children,
+    EntryRanges& out) {
+    const uint64_t n = entries.header.entry_count;
+    if (!duckdb::ExpressionFilter::IsSimpleFilterColumnRef(*children[0]) ||
+        (children.size() - 1) * kInListProbeCost * std::bit_width(n) > n) {
+      return false;
+    }
+    EntryRanges ranges;
+    for (const auto& child : children.subspan(1)) {
+      if (child->GetExpressionClass() !=
+          duckdb::ExpressionClass::BOUND_CONSTANT) {
+        return false;
+      }
+      const auto* value =
+        StringConstant(child->Cast<duckdb::BoundConstantExpression>());
+      if (!value) {
+        return false;
+      }
+      if (!value->IsNull()) {
+        ranges.push_back(EqualRange(duckdb::StringValue::Get(*value)));
+      }
+    }
+    out = Normalize(std::move(ranges));
+    return true;
   }
 
   bool ResolveComparison(const duckdb::BoundFunctionExpression& fn,

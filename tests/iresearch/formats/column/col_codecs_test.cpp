@@ -5671,6 +5671,117 @@ TEST_F(ColCodecsTest, SparseAndDenseSelectionsOfEveryTextCodecMatchTheValues) {
   }
 }
 
+TEST_F(ColCodecsTest, DictionaryInListsMatchTheValues) {
+  constexpr uint64_t kRows = 30000;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 13 == 0) {
+      return std::nullopt;
+    }
+    return absl::StrCat("tenant-", (g * 7919) % 3000, "/item");
+  };
+  std::vector<std::vector<std::optional<std::string>>> lists = {
+    {"tenant-0/item", "tenant-1499/item", "tenant-2999/item"},
+    {"tenant-17/item", "missing", std::nullopt},
+    {"tenant-42/item", "tenant-42/item"},
+    {"tenant-100/item", "tenant-1000/item", "tenant-10/item", "tenant-1/item"},
+    {"a", "z"},
+    {std::nullopt},
+    {},
+  };
+  for (uint64_t i = 0; i < 300; ++i) {
+    lists.back().emplace_back(absl::StrCat("tenant-", 3 * i, "/item"));
+    lists.back().emplace_back(absl::StrCat("absent-", i));
+  }
+  for (const auto codec :
+       {irs::codecs::CodecType::DictFsst, irs::codecs::CodecType::DictFsstPlus,
+        irs::codecs::CodecType::DictOnpair, irs::codecs::CodecType::DictFsst12,
+        irs::codecs::CodecType::DictLz4, irs::codecs::CodecType::DictZstd,
+        irs::codecs::CodecType::DictZxc}) {
+    SCOPED_TRACE(magic_enum::enum_name(codec));
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, codec, {}, kRows, 8192, value);
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    duckdb::Connection con{_db};
+    const bool sorted = irs::codecs::Sorted(irs::codecs::LeafOf(codec));
+    for (const auto& list : lists) {
+      for (const bool optional : {false, true}) {
+        if (optional && !sorted) {
+          continue;
+        }
+        SCOPED_TRACE(optional ? "optional" : "required");
+        duckdb::vector<duckdb::Value> constants;
+        for (const auto& key : list) {
+          constants.push_back(key
+                                ? duckdb::Value{*key}
+                                : duckdb::Value{duckdb::LogicalType::VARCHAR});
+        }
+        auto in = duckdb::ExpressionFilter::CreateInExpression(
+          duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+            duckdb::LogicalType::VARCHAR, 0),
+          std::move(constants));
+        const duckdb::ExpressionFilter filter{
+          optional ? duckdb::CreateOptionalFilterExpression(
+                       std::move(in), duckdb::LogicalType::VARCHAR)
+                   : std::move(in)};
+        auto filter_state =
+          duckdb::TableFilterState::Initialize(*con.context, filter);
+        auto state = col->InitScan(r.Ctx());
+        for (uint64_t anchor = 0; anchor < kRows;
+             anchor += STANDARD_VECTOR_SIZE) {
+          const auto span =
+            std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+          duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+          for (duckdb::idx_t i = 0; i < span; ++i) {
+            sel.set_index(i, i);
+          }
+          duckdb::Vector out{duckdb::LogicalType::VARCHAR,
+                             STANDARD_VECTOR_SIZE};
+          const auto kept =
+            col->GatherFilter(state, anchor, span, sel, span, filter,
+                              *filter_state, irs::NullCheckKind::None, out);
+          duckdb::idx_t next = 0;
+          for (duckdb::idx_t i = 0; i < span; ++i) {
+            const auto v = value(anchor + i);
+            const bool expected = v && absl::c_linear_search(list, v);
+            const bool got = next < kept && sel.get_index(next) == i;
+            next += got ? 1 : 0;
+            if (optional && list.size() > 4) {
+              ASSERT_TRUE(!expected || got) << "row " << anchor + i;
+            } else {
+              ASSERT_EQ(got, expected) << "row " << anchor + i;
+            }
+          }
+        }
+      }
+    }
+    duckdb::vector<duckdb::Value> constants{duckdb::Value{"tenant-0/item"},
+                                            duckdb::Value{"missing"}};
+    const duckdb::ExpressionFilter over_a_constant{
+      duckdb::ExpressionFilter::CreateInExpression(
+        duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          duckdb::Value{"tenant-0/item"}),
+        std::move(constants))};
+    auto filter_state =
+      duckdb::TableFilterState::Initialize(*con.context, over_a_constant);
+    auto state = col->InitScan(r.Ctx());
+    for (uint64_t anchor = 0; anchor < kRows; anchor += STANDARD_VECTOR_SIZE) {
+      const auto span =
+        std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+      duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+      for (duckdb::idx_t i = 0; i < span; ++i) {
+        sel.set_index(i, i);
+      }
+      duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+      ASSERT_EQ(
+        col->GatherFilter(state, anchor, span, sel, span, over_a_constant,
+                          *filter_state, irs::NullCheckKind::None, out),
+        span);
+    }
+  }
+}
+
 namespace {
 
 using Offered = std::function<bool(uint64_t)>;

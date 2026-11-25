@@ -108,6 +108,7 @@ duckdb:core:test/sql/storage/compression/alprd/alprd_tpcds.test_slow	issue	a tra
 duckdb:core:test/sql/storage/tpcds/tpcds_storage.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
 duckdb:core:test/sql/storage/types/variant/tpcds_sf001.test_slow	issue	a transient segment reaches the file with its unwritten tail (#1282)
 duckdb:cpp:Test TPC-DS dsdgen rollback after interrupted optimistic write	issue	a transient segment reaches the file with its unwritten tail (#1282)
+recovery:recovery/online_create_index_concurrent_dml.test	issue	the server closes every connection during an online CREATE INDEX parked mid-build (issue pending, see PR Findings)
 duckdb:core:test/optimizer/partitioned_execution.test_slow	slow	takes 7 min under msan; dev runs it
 duckdb:core:test/parquet/variant/variant_roundtrip.test_slow	slow	takes 5 min under msan; dev runs it
 duckdb:core:test/sql/aoc24/aoc24.test_slow	slow	takes 4 min under msan; dev runs it

@@ -4374,6 +4374,20 @@ TEST_F(ColNumericCodecTest, DamagedFrameTablesAndFramesAreRejected) {
        *kind = irs::codecs::kBlockDelta;
      },
      "Corrupted numeric segment: blocks are inconsistent"},
+    {"a stepped length block of a single run", duckdb::LogicalType::BIGINT,
+     CodecType::Rle, drifting_runs_of_four, 4 * 1025, "rle_bitpacking",
+     [&](Block& b) {
+       ASSERT_EQ(b.header.frame_count, 2);
+       const auto meta = irs::codecs::FrameMetaSize(irs::codecs::Shape::Runs,
+                                                    true, sizeof(int64_t));
+       const auto* at = b.bytes + b.header.off_frames + meta;
+       ASSERT_EQ(duckdb::Load<uint16_t>(at + 2 * sizeof(uint32_t)), 1);
+       auto* kinds = b.bytes + b.header.off_data + duckdb::Load<uint32_t>(at);
+       ASSERT_EQ(kinds[0], 0);
+       ASSERT_EQ(kinds[1], 0);
+       kinds[1] = irs::codecs::kBlockDelta;
+     },
+     "Corrupted numeric segment: blocks are inconsistent"},
     {"a run frame without runs", duckdb::LogicalType::DOUBLE, CodecType::Rle,
      ragged_runs, 20000, "rle",
      [&](Block& b) {
@@ -5591,6 +5605,32 @@ TEST_F(ColNumericCodecTest, AutoDictionaryOfScaledRunsReadsBack) {
       }
     }
     Verify(dir, type, kRows, gen);
+  }
+}
+
+TEST_F(ColNumericCodecTest,
+       AutoDictionaryOfLongRunsAfterARowGroupOfDistinctValuesReadsBack) {
+  constexpr auto kRowGroup = static_cast<uint32_t>(4 * DEFAULT_ROW_GROUP_SIZE);
+  constexpr uint64_t kRows = 2 * uint64_t{kRowGroup};
+  const Gen gen = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g < kRowGroup ? g : kRowGroup + g / 8));
+  };
+  const auto type = duckdb::LogicalType::BIGINT;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  Write(dir, type, {.tier = irs::WriteTier::Merge}, kRows, kRowGroup, gen);
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  ASSERT_EQ(col->RowCount(), kRows);
+  auto state = col->InitScan(r.Ctx());
+  for (uint64_t pos = 0; pos < kRows; pos += STANDARD_VECTOR_SIZE) {
+    duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+    col->Scan(state, out, STANDARD_VECTOR_SIZE);
+    out.Flatten(STANDARD_VECTOR_SIZE);
+    const auto* got = duckdb::FlatVector::GetData<int64_t>(out);
+    for (duckdb::idx_t k = 0; k < STANDARD_VECTOR_SIZE; ++k) {
+      ASSERT_EQ(got[k], *gen(pos + k)) << "row " << pos + k;
+    }
   }
 }
 

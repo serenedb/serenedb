@@ -158,6 +158,20 @@ a	b	c	d	e
 NULL	NaN	NULL	NULL	{"x":[1,],}
 
 
+query
+SELECT json_strip_nulls(E'[1,\t]') AS a, json_strip_nulls(E'{"a":1,\n}') AS b, json_strip_nulls(E'[1,\r\n]') AS c, json_strip_nulls('{"a":[1,],"b":2}') AS d;
+----
+a	b	c	d
+[1]	{"a":1}	[1]	{"a":[1],"b":2}
+
+
+query
+SELECT '5'::json -> 0 AS a, '5'::json ->> 'a' AS b, '"s"'::json #> '{a}' AS c, '[1,2]'::json #> '{5}' AS d, '{"a":1}'::json #> '{b}' AS e, '{"a":[1,]}'::json #> '{a,5}' AS f, '[1,]'::json #>> '{x}' AS g, '[1,]'::json #> '{}' AS h;
+----
+a	b	c	d	e	f	g	h
+NULL	NULL	NULL	NULL	NULL	NULL	NULL	[1,]
+
+
 statement ok
 CREATE TABLE jl_mix (i int, v json);
 

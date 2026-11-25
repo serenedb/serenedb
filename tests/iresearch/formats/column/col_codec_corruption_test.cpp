@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
@@ -1070,20 +1071,21 @@ TEST_F(ColCodecCorruptionTest,
     io.seekp(static_cast<std::streamoff>(offset));
     io.write(bytes.data(), static_cast<std::streamsize>(size));
   }
+  std::set<std::string> messages;
+  ASSERT_NO_FATAL_FAILURE(Read(path, c, c.value(3), messages));
   tests::IndexDir dir{Db(), path.string()};
   irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
   const auto* col = r.Column(kField);
   ASSERT_NE(col, nullptr);
-  std::set<std::string> messages;
   Guarded(messages, [&] {
+    std::vector<uint64_t> picked(STANDARD_VECTOR_SIZE);
+    absl::c_iota(picked, uint64_t{0});
     auto state = col->InitScan(r.Ctx());
-    for (uint64_t pos = 0; pos < c.rows;) {
-      const auto take =
-        std::min<duckdb::idx_t>(c.rows - pos, STANDARD_VECTOR_SIZE);
-      duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
-      col->Scan(state, out, take);
-      pos += take;
-    }
+    duckdb::Vector out{c.type, STANDARD_VECTOR_SIZE};
+    duckdb::FlatVector::ValidityMutable(out).Reset(STANDARD_VECTOR_SIZE);
+    const Rows dense{picked.data(), picked.size()};
+    irs::column_internal::GatherRows(*col, state, dense, out, 0,
+                                     /*whole_output=*/true);
   });
   EXPECT_EQ(absl::StrJoin(messages, "\n"),
             "Corrupted text segment: frame is inconsistent");

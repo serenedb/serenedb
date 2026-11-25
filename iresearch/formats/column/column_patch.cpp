@@ -671,8 +671,8 @@ PatchedColumnReader::PatchedColumnReader(
                  PatchedBlocks(base, *patch),
                  nullptr,
                  {}},
-    _base{base},
     _patch{std::move(patch)} {
+  _patch_base = &base;
   _validity_view = base.Validity();
   _row_count = base.RowCount();
   auto stats = base.MergedStatistics().Copy();
@@ -682,22 +682,21 @@ PatchedColumnReader::PatchedColumnReader(
   _array_size = base.ArraySize();
   _file_id = base.FileId();
   _in_memory = base.InMemory();
-  _patched = true;
 }
 
 duckdb::idx_t PatchedColumnReader::Scan(ScanState& s, duckdb::Vector& result,
                                         duckdb::idx_t count) const {
-  const auto first = _base.GatherCursor(s);
+  const auto first = _patch_base->GatherCursor(s);
   if (result.GetVectorType() == duckdb::VectorType::FLAT_VECTOR &&
       _patch->Overlaps(first, first + count)) {
-    ResetOutput(_base, s);
-    const auto n = _base.ScanCount(s, result, count, 0);
+    ResetOutput(*_patch_base, s);
+    const auto n = _patch_base->ScanCount(s, result, count, 0);
     if (n != 0) {
       ApplyRange(*_patch, first, n, result, 0);
     }
     return n;
   }
-  const auto n = _base.Scan(s, result, count);
+  const auto n = _patch_base->Scan(s, result, count);
   if (n != 0 && _patch->Overlaps(first, first + n)) {
     Own(result, n);
     ApplyRange(*_patch, first, n, result, 0);
@@ -708,8 +707,8 @@ duckdb::idx_t PatchedColumnReader::Scan(ScanState& s, duckdb::Vector& result,
 duckdb::idx_t PatchedColumnReader::ScanCount(
   ScanState& s, duckdb::Vector& result, duckdb::idx_t count,
   duckdb::idx_t result_offset) const {
-  const auto first = _base.GatherCursor(s);
-  const auto n = _base.ScanCount(s, result, count, result_offset);
+  const auto first = _patch_base->GatherCursor(s);
+  const auto n = _patch_base->ScanCount(s, result, count, result_offset);
   if (n != 0 && _patch->Overlaps(first, first + n)) {
     ApplyRange(*_patch, first, n, result, result_offset);
   }
@@ -744,7 +743,7 @@ void PatchedColumnReader::GatherScatter(ScanState& s, uint64_t anchor,
                                         const duckdb::SelectionVector& sel,
                                         duckdb::idx_t hits, duckdb::Vector& out,
                                         duckdb::idx_t at) const {
-  _base.GatherScatter(s, anchor, sel, hits, out, at);
+  _patch_base->GatherScatter(s, anchor, sel, hits, out, at);
   if (hits != 0 && _patch->Overlaps(anchor + sel.get_index(0),
                                     anchor + sel.get_index(hits - 1) + 1)) {
     ApplySelected(anchor, sel, hits, out, at);
@@ -755,7 +754,7 @@ void PatchedColumnReader::GatherDense(ScanState& s, uint64_t anchor,
                                       const duckdb::SelectionVector& sel,
                                       duckdb::idx_t hits, duckdb::idx_t span,
                                       duckdb::Vector& out) const {
-  _base.GatherDense(s, anchor, sel, hits, span, out);
+  _patch_base->GatherDense(s, anchor, sel, hits, span, out);
   if (hits != 0 && _patch->Overlaps(anchor + sel.get_index(0),
                                     anchor + sel.get_index(hits - 1) + 1)) {
     Own(out, hits);
@@ -769,14 +768,14 @@ duckdb::idx_t PatchedColumnReader::GatherFilter(
   const duckdb::TableFilter& filter, duckdb::TableFilterState& filter_state,
   NullCheckKind null_check, duckdb::Vector& scratch) const {
   if (!_patch->Overlaps(anchor, anchor + span)) {
-    return _base.GatherFilter(s, anchor, span, sel, sel_count, filter,
-                              filter_state, null_check, scratch);
+    return _patch_base->GatherFilter(s, anchor, span, sel, sel_count, filter,
+                                     filter_state, null_check, scratch);
   }
-  const auto cur = _base.GatherCursor(s);
+  const auto cur = _patch_base->GatherCursor(s);
   SDB_ASSERT(anchor >= cur, "GatherFilter requires ascending rows");
-  _base.Skip(s, anchor - cur);
+  _patch_base->Skip(s, anchor - cur);
   scratch.Reference(duckdb::Vector{Type(), span});
-  _base.ScanCount(s, scratch, span, 0);
+  _patch_base->ScanCount(s, scratch, span, 0);
   if (scratch.size() < span) {
     duckdb::FlatVector::SetSize(scratch, span);
   }
@@ -799,7 +798,7 @@ bool PatchedColumnReader::FetchPoint(PointReader& reader, uint64_t row,
       return duckdb::FlatVector::Validity(chunk->values).RowIsValid(index);
     }
   }
-  return _base.FetchPoint(reader, row, out, out_offset);
+  return _patch_base->FetchPoint(reader, row, out, out_offset);
 }
 
 bool PatchedColumnReader::ValidPoint(PointReader& reader, uint64_t row,
@@ -814,7 +813,7 @@ bool PatchedColumnReader::ValidPoint(PointReader& reader, uint64_t row,
           static_cast<size_t>(std::distance(chunk->offsets.begin(), it)));
     }
   }
-  return _base.ValidPoint(reader, row, scratch);
+  return _patch_base->ValidPoint(reader, row, scratch);
 }
 
 }  // namespace irs

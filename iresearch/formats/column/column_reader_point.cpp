@@ -46,7 +46,7 @@ ColumnReader::PointReader::PointReader(const ColReader& col_reader,
   : _ctx{col_reader, random_access},
     _reader{&col},
     _stored{!col.InMemory() && !col.Patched()},
-    _data{&col},
+    _data{col.Patched() ? col.PatchBase() : &col},
     _validity{col.Validity()} {}
 
 ColumnReader::PointReader::OpenBlock& ColumnReader::PointReader::Block(

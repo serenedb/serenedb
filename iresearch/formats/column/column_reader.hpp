@@ -178,7 +178,8 @@ class ColumnReader {
   const duckdb::LogicalType& Type() const noexcept { return _type; }
   uint64_t RowCount() const noexcept { return _row_count; }
   bool InMemory() const noexcept { return _in_memory; }
-  bool Patched() const noexcept { return _patched; }
+  const ColumnReader* PatchBase() const noexcept { return _patch_base; }
+  bool Patched() const noexcept { return _patch_base != nullptr; }
   bool HasValidity() const noexcept { return _validity_view != nullptr; }
   const ColumnReader* Validity() const noexcept { return _validity_view; }
   std::span<const ColumnBlockMeta> DataBlocks() const noexcept {
@@ -445,7 +446,7 @@ class ColumnReader {
   duckdb::shared_ptr<duckdb::DistinctStatistics> _distinct;
   duckdb::unique_ptr<duckdb::BaseStatistics> _stats;
   bool _in_memory = false;
-  bool _patched = false;
+  const ColumnReader* _patch_base = nullptr;
 
  private:
   void SkipRows(ScanState& s, duckdb::idx_t count) const;

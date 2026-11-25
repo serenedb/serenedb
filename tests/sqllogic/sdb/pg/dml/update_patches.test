@@ -912,3 +912,69 @@ SELECT count(*) AS n, sum(a) AS s FROM up_plain WHERE a < 5;
 ----
 n	s
 2500	5000
+
+
+statement ok
+CREATE TABLE up_constant (id INT PRIMARY KEY, v DOUBLE, n BIGINT, s TEXT) WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO up_constant SELECT i, 7.5, 42, NULL FROM range(1000) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) up_constant;
+
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',') AS compression
+FROM pragma_storage_info('up_constant')
+WHERE column_name IN ('v', 'n', 's') AND segment_type <> 'VALIDITY'
+GROUP BY column_name
+ORDER BY column_name;
+----
+column_name	compression
+n	Constant
+s	Constant
+v	Constant
+
+
+statement count 1
+UPDATE up_constant SET v = -1.5 WHERE id = 100;
+
+
+statement count 1
+UPDATE up_constant SET n = 5 WHERE id = 100;
+
+
+statement count 1
+UPDATE up_constant SET s = 'new' WHERE id = 100;
+
+
+query
+SELECT id, v, n, s IS NULL AS s_is_null FROM up_constant WHERE id = 500;
+----
+id	v	n	s_is_null
+500	7.5	42	t
+
+
+query
+SELECT id, v, n, s FROM up_constant WHERE id IN (99, 100, 101) ORDER BY id;
+----
+id	v	n	s
+99	7.5	42	NULL
+100	-1.5	5	new
+101	7.5	42	NULL
+
+
+statement count 1
+UPDATE up_constant SET v = v + 1, n = n + 1 WHERE id = 500;
+
+
+query
+SELECT v, n, s IS NULL AS s_is_null, count(*) AS rows FROM up_constant GROUP BY ALL ORDER BY v, n;
+----
+v	n	s_is_null	rows
+-1.5	5	f	1
+7.5	42	t	998
+8.5	43	t	1

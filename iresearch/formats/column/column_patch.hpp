@@ -188,14 +188,14 @@ class PatchedColumnReader final : public ColumnReader {
                       std::shared_ptr<const ColumnPatch> patch);
 
   uint64_t RowGroupEnd(uint64_t row) const noexcept final {
-    return _base.RowGroupEnd(row);
+    return _patch_base->RowGroupEnd(row);
   }
   using ColumnReader::InitScan;
   ScanState InitScan(std::shared_ptr<ReadContext> ctx) const final {
-    return _base.InitScan(std::move(ctx));
+    return _patch_base->InitScan(std::move(ctx));
   }
   uint64_t GatherCursor(const ScanState& s) const noexcept final {
-    return _base.GatherCursor(s);
+    return _patch_base->GatherCursor(s);
   }
 
   duckdb::idx_t Scan(ScanState& s, duckdb::Vector& result,
@@ -204,7 +204,7 @@ class PatchedColumnReader final : public ColumnReader {
                           duckdb::idx_t count,
                           duckdb::idx_t result_offset) const final;
   void Skip(ScanState& s, duckdb::idx_t count) const final {
-    _base.Skip(s, count);
+    _patch_base->Skip(s, count);
   }
   void GatherScatter(ScanState& s, uint64_t anchor,
                      const duckdb::SelectionVector& sel, duckdb::idx_t hits,
@@ -225,7 +225,9 @@ class PatchedColumnReader final : public ColumnReader {
                   duckdb::Vector& scratch) const final;
 
  protected:
-  void NewOutputVector(ScanState& s) const final { ResetOutput(_base, s); }
+  void NewOutputVector(ScanState& s) const final {
+    ResetOutput(*_patch_base, s);
+  }
 
  private:
   void ApplySelected(uint64_t anchor, const duckdb::SelectionVector& sel,
@@ -233,7 +235,6 @@ class PatchedColumnReader final : public ColumnReader {
                      duckdb::idx_t at) const;
 
   std::unique_ptr<const ColumnReader> _owned;
-  const ColumnReader& _base;
   std::shared_ptr<const ColumnPatch> _patch;
 };
 

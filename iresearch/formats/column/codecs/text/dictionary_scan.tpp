@@ -36,10 +36,12 @@
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/object_cache.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -197,22 +199,30 @@ struct DictionaryFetch final : SegmentScanState {
 
 class FilterVerdicts {
  public:
-  bool Empty() const noexcept { return _verdicts.empty(); }
+  bool Empty() const noexcept { return _verdicts.empty() && !_ranged; }
   bool Lazy() const noexcept { return _lazy; }
   idx_t Matches() const noexcept { return _matches; }
 
-  void Accept(const EntryRanges& ranges, uint32_t entries) {
+  void Accept(const EntryRanges& ranges, uint32_t entries, bool moving) {
+    _lazy = false;
+    _ranged = moving && ranges.size() <= 1;
+    if (_ranged) {
+      _range = ranges.empty() ? EntryRange{} : ranges.front();
+      _matches = _range.hi - _range.lo;
+      _verdicts.clear();
+      return;
+    }
     _verdicts.assign(entries, kRejected);
     _matches = 0;
     for (const auto& [lo, hi] : ranges) {
       std::memset(_verdicts.data() + lo, kAccepted, hi - lo);
       _matches += hi - lo;
     }
-    _lazy = false;
   }
 
   void Accept(const duckdb::SelectionVector& accepted, idx_t count,
               uint32_t entries) {
+    _ranged = false;
     _verdicts.assign(entries, kRejected);
     for (idx_t i = 0; i < count; ++i) {
       _verdicts[accepted.get_index(i)] = kAccepted;
@@ -222,6 +232,7 @@ class FilterVerdicts {
   }
 
   void Defer(uint32_t entries) {
+    _ranged = false;
     _verdicts.assign(entries, kUnfiltered);
     _lazy = true;
   }
@@ -256,22 +267,36 @@ class FilterVerdicts {
 
   idx_t KeepAccepted(const duckdb::SelectionVector& codes,
                      duckdb::SelectionVector& rows, idx_t count) const {
+    if (_ranged) {
+      const uint32_t lo = _range.lo;
+      const uint32_t width = _range.hi - lo;
+      return KeepIf(codes, rows, count, [lo, width](idx_t code) {
+        return static_cast<uint32_t>(code - lo) < width;
+      });
+    }
     const auto* matches = _verdicts.data();
+    return KeepIf(codes, rows, count,
+                  [matches](idx_t code) { return matches[code] == kAccepted; });
+  }
+
+ private:
+  template<typename Accepted>
+  IRS_FORCE_INLINE static idx_t KeepIf(const duckdb::SelectionVector& codes,
+                                       duckdb::SelectionVector& rows,
+                                       idx_t count, Accepted accepted) {
     idx_t kept = 0;
-    while (kept < count &&
-           matches[codes.get_index(rows.get_index(kept))] == kAccepted) {
+    while (kept < count && accepted(codes.get_index(rows.get_index(kept)))) {
       ++kept;
     }
     for (idx_t i = kept + 1; i < count; ++i) {
       const auto row = rows.get_index(i);
-      if (matches[codes.get_index(row)] == kAccepted) {
+      if (accepted(codes.get_index(row))) {
         rows.set_index(kept++, row);
       }
     }
     return kept;
   }
 
- private:
   static constexpr uint8_t kUnfiltered = 0;
   static constexpr uint8_t kRejected = 1;
   static constexpr uint8_t kAccepted = 2;
@@ -279,9 +304,11 @@ class FilterVerdicts {
 
   std::vector<uint8_t> _verdicts;
   std::vector<uint32_t> _pending;
+  EntryRange _range{};
   idx_t _matches = 0;
   uint64_t _filtered = 0;
   bool _lazy = false;
+  bool _ranged = false;
 };
 
 template<typename Leaf>
@@ -445,6 +472,11 @@ struct DictionaryScan final : SegmentScanState {
         return true;
       }
       case duckdb::ExpressionClass::BOUND_FUNCTION:
+        if (auto data =
+              duckdb::ExpressionFilter::GetOptionalDynamicFilterData(expr)) {
+          return entries.header.sorted != 0 &&
+                 ResolveBound(expr, std::move(data), out);
+        }
         return entries.header.sorted != 0 &&
                ResolveComparison(expr.Cast<duckdb::BoundFunctionExpression>(),
                                  out);
@@ -477,7 +509,6 @@ struct DictionaryScan final : SegmentScanState {
 
   bool ResolveComparison(const duckdb::BoundFunctionExpression& fn,
                          EntryRanges& out) {
-    const uint32_t n = entries.header.entry_count;
     auto comparison = fn.GetExpressionType();
     if (!duckdb::BoundComparisonExpression::IsComparison(comparison)) {
       return false;
@@ -485,9 +516,47 @@ struct DictionaryScan final : SegmentScanState {
     const auto constant =
       duckdb::ExpressionFilter::TryGetColumnConstantComparison(fn, comparison);
     const auto* value = constant ? StringConstant(*constant) : nullptr;
-    if (!value) {
+    return value && ResolveConstant(comparison, *value, out);
+  }
+
+  bool ResolveBound(const duckdb::Expression& expr,
+                    duckdb::shared_ptr<duckdb::DynamicFilterData> data,
+                    EntryRanges& out) {
+    const auto& fn = duckdb::ExpressionFilter::GetOptionalFilterChild(expr)
+                       ->Cast<duckdb::BoundFunctionExpression>();
+    if (!duckdb::ExpressionFilter::IsSimpleFilterColumnRef(
+          *fn.GetChildren()[0])) {
       return false;
     }
+    duckdb::Value constant;
+    duckdb::idx_t version = 0;
+    {
+      const std::lock_guard lock{data->lock};
+      version = data->version.load(std::memory_order_relaxed);
+      constant = data->constant;
+    }
+    if (version == 0) {
+      out = Normalize({{0, entries.header.entry_count}});
+    } else if (constant.type().id() != duckdb::LogicalTypeId::VARCHAR) {
+      return false;
+    } else {
+      [[maybe_unused]] const bool resolved =
+        ResolveConstant(data->comparison_type, constant, out);
+      SDB_ASSERT(resolved);
+    }
+    bound = std::move(data);
+    bound_version = version;
+    return true;
+  }
+
+  bool BoundMoved() const noexcept {
+    return bound &&
+           bound->version.load(std::memory_order_acquire) != bound_version;
+  }
+
+  bool ResolveConstant(duckdb::ExpressionType comparison,
+                       const duckdb::Value& value, EntryRanges& out) {
+    const uint32_t n = entries.header.entry_count;
     switch (comparison) {
       case duckdb::ExpressionType::COMPARE_EQUAL:
       case duckdb::ExpressionType::COMPARE_NOTEQUAL:
@@ -499,11 +568,11 @@ struct DictionaryScan final : SegmentScanState {
       default:
         return false;
     }
-    if (value->IsNull()) {
+    if (value.IsNull()) {
       out.clear();
       return true;
     }
-    const std::string_view key = duckdb::StringValue::Get(*value);
+    const std::string_view key = duckdb::StringValue::Get(value);
     switch (comparison) {
       case duckdb::ExpressionType::COMPARE_EQUAL:
         out = Normalize({EqualRange(key)});
@@ -600,14 +669,17 @@ struct DictionaryScan final : SegmentScanState {
               duckdb::TableFilterState& filter_state) {
     const auto dict_count = entries.header.entry_count;
     const bool dense = sel_count * 4 >= vector_count;
-    if (verdicts.Empty()) {
+    if (verdicts.Empty() || BoundMoved()) {
       if (EntryRanges ranges;
           Resolve(*filter.Cast<duckdb::ExpressionFilter>().expr, ranges)) {
-        verdicts.Accept(ranges, dict_count);
-      } else if (dict_count < kLazyFilterEntries || dense) {
-        FilterEveryEntry(filter_state);
+        verdicts.Accept(ranges, dict_count, static_cast<bool>(bound));
       } else {
-        verdicts.Defer(dict_count);
+        bound = nullptr;
+        if (dict_count < kLazyFilterEntries || dense) {
+          FilterEveryEntry(filter_state);
+        } else {
+          verdicts.Defer(dict_count);
+        }
       }
     } else if (verdicts.Lazy() && dense) {
       FilterEveryEntry(filter_state);
@@ -638,17 +710,15 @@ struct DictionaryScan final : SegmentScanState {
     EnsureEntries(row_count, count,
                   [&](idx_t i) { return codes.get_index(rows.get_index(i)); });
     entries.ReferenceHeap(result);
-    auto writer = duckdb::FlatVector::Writer<string_t>(result, count);
-    idx_t next = 0;
-    for (idx_t row = 0; row < count; ++row) {
-      if (next < row_count && rows.get_index(next) == row) {
-        ++next;
-        if (const auto code = codes.get_index(row); code != 0) {
-          writer.WriteStringRef(entries.values[code]);
-          continue;
-        }
+    auto* out = duckdb::FlatVector::GetDataMutable<string_t>(result);
+    auto& validity = duckdb::FlatVector::ValidityMutable(result);
+    validity.SetAllInvalid(count);
+    for (idx_t i = 0; i < row_count; ++i) {
+      const auto row = rows.get_index(i);
+      if (const auto code = codes.get_index(row); code != 0) {
+        out[row] = entries.values[code];
+        validity.SetValid(row);
       }
-      writer.WriteNull();
     }
   }
 
@@ -720,6 +790,8 @@ struct DictionaryScan final : SegmentScanState {
   idx_t code_sel_size = 0;
   RowCodes code_frames;
   FilterVerdicts verdicts;
+  duckdb::shared_ptr<duckdb::DynamicFilterData> bound;
+  duckdb::idx_t bound_version = 0;
 };
 
 }  // namespace irs::codecs::text

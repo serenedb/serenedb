@@ -127,6 +127,82 @@ QUERY PLAN
 ╰─────────────────────────────────────────────╯
 
 
+# The same bound over a sorted text dictionary: t is v as text of five digits, so it sorts like v. Each vector resolves the
+# bound of its moment on the dictionary: the first frame's 16,384 rows, then one vector from each of the other two.
+statement ok
+CREATE TABLE topn_text (id INTEGER PRIMARY KEY,
+                        t TEXT USING COMPRESSION dict_fsst)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO topn_text SELECT id, lpad(v::TEXT, 5, '0') FROM topn_bound;
+
+
+statement ok
+VACUUM (FLUSH_TABLE) topn_text;
+
+
+query
+SELECT compression, count(*) AS segments, sum(count) AS rows
+FROM pragma_storage_info('topn_text')
+WHERE column_name = 't' AND segment_type <> 'VALIDITY'
+GROUP BY ALL;
+----
+compression	segments	rows
+DICT_FSST	1	49152
+
+
+query
+SELECT t FROM topn_text ORDER BY t DESC LIMIT 1;
+----
+t
+50000
+
+
+query
+EXPLAIN ANALYZE SELECT t FROM topn_text ORDER BY t DESC LIMIT 1;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TOP_N ─────────────────────────────────────╮
+│ Top: 1                                      │
+│ Order By: t DESC                            │
+│ 1 row                                   0µs │
+╰──────────────────────┒┎─────────────────────╯
+╭─ TABLE_SCAN ─────────┚┖─────────────────────╮
+│ Table: topn_text                            │
+│ Projections: t                              │
+│                                             │
+├─ Index Filter Prepare ──────────────────────┤
+│                                             │
+│ Total: 0µs                                  │
+│ Snapshot: 0µs                               │
+│ Segments: 1 of 1                            │
+│                                             │
+├─ Column Filter ─────────────────────────────┤
+│                                             │
+│ ╭─ Dynamic Column ────────────────────────╮ │
+│ │ Field: t                                │ │
+│ │ Check: optional: Dynamic Filter (t > ?) │ │
+│ ╰─────────────────────────────────────────╯ │
+│                                             │
+├─────────────────────────────────────────────┤
+│ 20,480 rows                             0µs │
+╰─────────────────────────────────────────────╯
+
+
+query
+SELECT t FROM topn_text WHERE t <> '50000' ORDER BY t LIMIT 3;
+----
+t
+00000
+00001
+00002
+
+
 statement ok
 RESET threads
 

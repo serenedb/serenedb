@@ -43,11 +43,13 @@
 #include <duckdb/main/config.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
 #include <duckdb/planner/expression/bound_comparison_expression.hpp>
+#include <duckdb/planner/expression/bound_conjunction_expression.hpp>
 #include <duckdb/planner/expression/bound_constant_expression.hpp>
 #include <duckdb/planner/expression/bound_function_expression.hpp>
 #include <duckdb/planner/expression/bound_operator_expression.hpp>
 #include <duckdb/planner/expression/bound_reference_expression.hpp>
 #include <duckdb/planner/filter/expression_filter.hpp>
+#include <duckdb/planner/filter/table_filter_functions.hpp>
 #include <duckdb/planner/table_filter_state.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
 #include <duckdb/storage/object_cache.hpp>
@@ -2975,6 +2977,149 @@ TEST_F(ColCodecsTest, DictionaryFiltersMatchTheValues) {
                 << duckdb::EnumUtil::ToString(cmp);
             }
           }
+        }
+      }
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, SortedDictionariesFollowAMovingTopNBound) {
+  constexpr uint64_t kRows = 9 * STANDARD_VECTOR_SIZE + 100;
+  const Value value = [](uint64_t g) -> std::optional<std::string> {
+    if (g % 11 == 0) {
+      return std::nullopt;
+    }
+    if (g % 7 == 0) {
+      return std::string{};
+    }
+    return absl::StrCat("phrase-", (g * 7919) % 5000);
+  };
+  using Cmp = duckdb::ExpressionType;
+  const auto column = [] {
+    return duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+      duckdb::LogicalType::VARCHAR, 0);
+  };
+  const auto not_empty = [&] {
+    return duckdb::BoundComparisonExpression::Create(
+      Cmp::COMPARE_NOTEQUAL, column(),
+      duckdb::make_uniq<duckdb::BoundConstantExpression>(duckdb::Value{""}));
+  };
+  const auto optional = [](duckdb::unique_ptr<duckdb::Expression> dynamic) {
+    return duckdb::CreateSelectivityOptionalFilterExpression(
+      std::move(dynamic), duckdb::LogicalType::VARCHAR, 1, 1);
+  };
+  enum class Shape : uint8_t {
+    Bound,
+    OverAConstant,
+    IntegerBound,
+    BoundFirst,
+  };
+  for (const auto shape : {Shape::Bound, Shape::OverAConstant,
+                           Shape::IntegerBound, Shape::BoundFirst}) {
+    for (const auto cmp :
+         {Cmp::COMPARE_LESSTHANOREQUALTO, Cmp::COMPARE_LESSTHAN,
+          Cmp::COMPARE_GREATERTHAN, Cmp::COMPARE_GREATERTHANOREQUALTO}) {
+      std::vector<std::string> bounds = {
+        "phrase-4", "phrase-3",  "phrase-3", "phrase-2999",
+        "phrase-1", "phrase-00", "phrase-0", "a",
+      };
+      const bool ascending = cmp == Cmp::COMPARE_GREATERTHAN ||
+                             cmp == Cmp::COMPARE_GREATERTHANOREQUALTO;
+      if (ascending) {
+        absl::c_reverse(bounds);
+      }
+      for (const auto codec : {irs::codecs::CodecType::DictFsst,
+                               irs::codecs::CodecType::DictFsst12,
+                               irs::codecs::CodecType::DictLz4}) {
+        SCOPED_TRACE(absl::StrCat(magic_enum::enum_name(codec), " ",
+                                  duckdb::EnumUtil::ToString(cmp), " shape ",
+                                  static_cast<int>(shape)));
+        tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+        Write(dir, codec, {}, kRows, 4 * STANDARD_VECTOR_SIZE, value);
+        irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+        const auto* col = r.Column(kField);
+        ASSERT_NE(col, nullptr);
+        auto bound = duckdb::make_shared_ptr<duckdb::DynamicFilterData>(
+          cmp, shape == Shape::IntegerBound ? duckdb::Value::INTEGER(0)
+                                            : duckdb::Value{""});
+        auto dynamic = shape == Shape::OverAConstant
+                         ? duckdb::CreateDynamicFilterExpression(
+                             bound, duckdb::LogicalType::VARCHAR,
+                             duckdb::make_uniq<duckdb::BoundConstantExpression>(
+                               duckdb::Value{"phrase-2"}))
+                         : duckdb::CreateDynamicFilterExpression(
+                             bound, duckdb::LogicalType::VARCHAR);
+        auto expr = shape == Shape::BoundFirst
+                      ? duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+                          Cmp::CONJUNCTION_AND, optional(std::move(dynamic)),
+                          duckdb::BoundComparisonExpression::Create(
+                            Cmp::COMPARE_EQUAL, column(), column()))
+                      : duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+                          Cmp::CONJUNCTION_AND, not_empty(),
+                          optional(std::move(dynamic)));
+        const duckdb::ExpressionFilter filter{std::move(expr)};
+        duckdb::Connection con{_db};
+        auto filter_state =
+          duckdb::TableFilterState::Initialize(*con.context, filter);
+        auto state = col->InitScan(r.Ctx());
+        const bool exact = shape == Shape::Bound &&
+                           irs::codecs::Sorted(irs::codecs::LeafOf(codec));
+        for (uint64_t anchor = 0; anchor < kRows;
+             anchor += STANDARD_VECTOR_SIZE) {
+          const auto vector = anchor / STANDARD_VECTOR_SIZE;
+          if (vector != 0) {
+            const auto& next = bounds[(vector - 1) % bounds.size()];
+            bound->SetValue(
+              shape == Shape::IntegerBound
+                ? duckdb::Value::INTEGER(static_cast<int32_t>(next.size()))
+                : duckdb::Value{next});
+          }
+          const auto key = shape == Shape::IntegerBound
+                             ? std::string{}
+                             : duckdb::StringValue::Get(bound->constant);
+          const auto span =
+            std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+          duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+          for (duckdb::idx_t i = 0; i < span; ++i) {
+            sel.set_index(i, i);
+          }
+          duckdb::Vector out{duckdb::LogicalType::VARCHAR,
+                             STANDARD_VECTOR_SIZE};
+          const auto kept =
+            col->GatherFilter(state, anchor, span, sel, span, filter,
+                              *filter_state, irs::NullCheckKind::None, out);
+          duckdb::idx_t next = 0;
+          for (duckdb::idx_t i = 0; i < span; ++i) {
+            const auto v = value(anchor + i);
+            const bool candidate =
+              v && (shape == Shape::BoundFirst || !v->empty());
+            bool within = candidate && vector != 0;
+            switch (cmp) {
+              case Cmp::COMPARE_LESSTHANOREQUALTO:
+                within = within && *v <= key;
+                break;
+              case Cmp::COMPARE_LESSTHAN:
+                within = within && *v < key;
+                break;
+              case Cmp::COMPARE_GREATERTHAN:
+                within = within && *v > key;
+                break;
+              default:
+                within = within && *v >= key;
+                break;
+            }
+            const bool got = next < kept && sel.get_index(next) == i;
+            next += got ? 1 : 0;
+            ASSERT_TRUE(!got || candidate) << "row " << anchor + i;
+            if (exact) {
+              ASSERT_EQ(got, vector == 0 ? candidate : within)
+                << "row " << anchor + i << " bound " << key;
+            } else if (shape != Shape::OverAConstant &&
+                       shape != Shape::IntegerBound) {
+              ASSERT_TRUE(!within || got) << "row " << anchor + i;
+            }
+          }
+          ASSERT_EQ(next, kept);
         }
       }
     }

@@ -574,6 +574,39 @@ SELECT count(*) AS n, count(k) AS k, count(z) AS z, min(k::INTEGER) AS low, max(
 n	k	z	low	high
 60000	60000	60000	100	399
 
+query
+SELECT a, k FROM df_s WHERE k <> '' ORDER BY k, a LIMIT 4;
+----
+a	k
+3000	k-0
+6000	k-0
+9000	k-0
+12000	k-0
+
+query
+SELECT (SELECT string_agg(k, ',' ORDER BY k) FROM (SELECT k FROM df_s WHERE k <> '' ORDER BY k LIMIT 50)) = (SELECT string_agg(k, ',' ORDER BY k) FROM (SELECT k FROM df_d WHERE k <> '' ORDER BY k LIMIT 50)) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT string_agg(k, ',' ORDER BY k) FROM (SELECT k FROM df_s WHERE k <> '' ORDER BY k DESC LIMIT 50)) = (SELECT string_agg(k, ',' ORDER BY k) FROM (SELECT k FROM df_d WHERE k <> '' ORDER BY k DESC LIMIT 50)) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT string_agg(coalesce(k, '-'), ',' ORDER BY k NULLS FIRST) FROM (SELECT k FROM df_s ORDER BY k NULLS FIRST LIMIT 50)) = (SELECT string_agg(coalesce(k, '-'), ',' ORDER BY k NULLS FIRST) FROM (SELECT k FROM df_d ORDER BY k NULLS FIRST LIMIT 50)) AS ok;
+----
+ok
+t
+
+query
+SELECT (SELECT string_agg(l, ',' ORDER BY l) FROM (SELECT l FROM df_s WHERE l <> 'l-0' ORDER BY l DESC LIMIT 50)) = (SELECT string_agg(l, ',' ORDER BY l) FROM (SELECT l FROM df_d WHERE l <> 'l-0' ORDER BY l DESC LIMIT 50)) AS ok;
+----
+ok
+t
+
 statement ok
 DROP TABLE df_n;
 

@@ -3111,6 +3111,8 @@ TEST_F(ColCodecsTest, SortedDictionariesFollowAMovingTopNBound) {
       }
       for (const auto codec : {irs::codecs::CodecType::DictFsst,
                                irs::codecs::CodecType::DictFsst12,
+                               irs::codecs::CodecType::DictFsstPlus,
+                               irs::codecs::CodecType::DictOnpair,
                                irs::codecs::CodecType::DictLz4}) {
         SCOPED_TRACE(absl::StrCat(magic_enum::enum_name(codec), " ",
                                   duckdb::EnumUtil::ToString(cmp), " shape ",
@@ -3202,6 +3204,91 @@ TEST_F(ColCodecsTest, SortedDictionariesFollowAMovingTopNBound) {
           }
           ASSERT_EQ(next, kept);
         }
+      }
+    }
+  }
+}
+
+TEST_F(ColCodecsTest, SortedLeafDictionariesFollowAMovingTopNBound) {
+  constexpr uint64_t kRows = 30000;
+  const Value clustered = [](uint64_t g) -> std::optional<std::string> {
+    return Clustered(Scattered(g, 4000));
+  };
+  using Cmp = duckdb::ExpressionType;
+  const auto column = [] {
+    return duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+      duckdb::LogicalType::VARCHAR, 0);
+  };
+  for (const auto codec :
+       {irs::codecs::CodecType::DictLz4, irs::codecs::CodecType::DictZstd,
+        irs::codecs::CodecType::DictZxc}) {
+    tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+    Write(dir, codec, {}, kRows, kRows, clustered);
+    const auto sorted = SegmentInfo(dir, "sorted");
+    ASSERT_FALSE(sorted.empty());
+    ASSERT_TRUE(absl::c_all_of(
+      sorted, [](const std::string& flag) { return flag == "true"; }))
+      << magic_enum::enum_name(codec) << " "
+      << ::testing::PrintToString(sorted);
+    irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+    const auto* col = r.Column(kField);
+    ASSERT_NE(col, nullptr);
+    for (const auto cmp :
+         {Cmp::COMPARE_LESSTHANOREQUALTO, Cmp::COMPARE_GREATERTHAN}) {
+      SCOPED_TRACE(absl::StrCat(magic_enum::enum_name(codec), " ",
+                                duckdb::EnumUtil::ToString(cmp)));
+      std::vector<std::string> bounds = {
+        Clustered(3999), Clustered(2001), Clustered(2001),
+        Clustered(17),   Clustered(4),    "",
+      };
+      if (cmp == Cmp::COMPARE_GREATERTHAN) {
+        absl::c_reverse(bounds);
+      }
+      auto bound = duckdb::make_shared_ptr<duckdb::DynamicFilterData>(
+        cmp, duckdb::Value{""});
+      const duckdb::ExpressionFilter filter{
+        duckdb::make_uniq<duckdb::BoundConjunctionExpression>(
+          Cmp::CONJUNCTION_AND,
+          duckdb::BoundComparisonExpression::Create(
+            Cmp::COMPARE_NOTEQUAL, column(),
+            duckdb::make_uniq<duckdb::BoundConstantExpression>(
+              duckdb::Value{""})),
+          duckdb::CreateSelectivityOptionalFilterExpression(
+            duckdb::CreateDynamicFilterExpression(bound,
+                                                  duckdb::LogicalType::VARCHAR),
+            duckdb::LogicalType::VARCHAR, 1, 1))};
+      duckdb::Connection con{_db};
+      auto filter_state =
+        duckdb::TableFilterState::Initialize(*con.context, filter);
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t anchor = 0; anchor < kRows;
+           anchor += STANDARD_VECTOR_SIZE) {
+        const auto vector = anchor / STANDARD_VECTOR_SIZE;
+        if (vector != 0) {
+          bound->SetValue(duckdb::Value{bounds[(vector - 1) % bounds.size()]});
+        }
+        const auto key = duckdb::StringValue::Get(bound->constant);
+        const auto span =
+          std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+        duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          sel.set_index(i, i);
+        }
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        const auto kept =
+          col->GatherFilter(state, anchor, span, sel, span, filter,
+                            *filter_state, irs::NullCheckKind::None, out);
+        duckdb::idx_t next = 0;
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          const auto v = *clustered(anchor + i);
+          const bool expected =
+            vector == 0 ||
+            (cmp == Cmp::COMPARE_LESSTHANOREQUALTO ? v <= key : v > key);
+          const bool got = next < kept && sel.get_index(next) == i;
+          next += got ? 1 : 0;
+          ASSERT_EQ(got, expected) << "row " << anchor + i << " bound " << key;
+        }
+        ASSERT_EQ(next, kept);
       }
     }
   }
@@ -5859,6 +5946,62 @@ TEST_F(ColCodecsTest, DictionaryInListsMatchTheValues) {
         col->GatherFilter(state, anchor, span, sel, span, over_a_constant,
                           *filter_state, irs::NullCheckKind::None, out),
         span);
+    }
+    const auto column = [] {
+      return duckdb::make_uniq<duckdb::BoundReferenceExpression>(
+        duckdb::LogicalType::VARCHAR, 0);
+    };
+    const auto expect_matches = [&](const duckdb::ExpressionFilter& filter,
+                                    const auto& passes) {
+      auto filter_state =
+        duckdb::TableFilterState::Initialize(*con.context, filter);
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t anchor = 0; anchor < kRows;
+           anchor += STANDARD_VECTOR_SIZE) {
+        const auto span =
+          std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+        duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          sel.set_index(i, i);
+        }
+        duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};
+        const auto kept =
+          col->GatherFilter(state, anchor, span, sel, span, filter,
+                            *filter_state, irs::NullCheckKind::None, out);
+        duckdb::idx_t next = 0;
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          const auto v = value(anchor + i);
+          const bool expected = v && passes(*v);
+          const bool got = next < kept && sel.get_index(next) == i;
+          next += got ? 1 : 0;
+          ASSERT_EQ(got, expected) << "row " << anchor + i;
+        }
+        ASSERT_EQ(next, kept);
+      }
+    };
+    {
+      SCOPED_TRACE("a member that is not a constant");
+      auto in = duckdb::make_uniq<duckdb::BoundOperatorExpression>(
+        duckdb::ExpressionType::COMPARE_IN, duckdb::LogicalType::BOOLEAN);
+      in->GetChildrenMutable().push_back(column());
+      in->GetChildrenMutable().push_back(
+        duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          duckdb::Value{"missing"}));
+      in->GetChildrenMutable().push_back(column());
+      const duckdb::ExpressionFilter filter{std::move(in)};
+      expect_matches(filter, [](std::string_view) { return true; });
+    }
+    {
+      SCOPED_TRACE("a constant that is not text");
+      duckdb::vector<duckdb::Value> constants{
+        duckdb::Value{"tenant-0/item"},
+        duckdb::Value::BLOB_RAW(std::string_view{"tenant-1/item"})};
+      const duckdb::ExpressionFilter filter{
+        duckdb::ExpressionFilter::CreateInExpression(column(),
+                                                     std::move(constants))};
+      expect_matches(filter, [](std::string_view v) {
+        return v == "tenant-0/item" || v == "tenant-1/item";
+      });
     }
   }
 }

@@ -271,7 +271,7 @@ void VisitRoleReferences(
     visitor) {
   using enum duckdb::CatalogType;
   const auto shown = [&](duckdb::CatalogEntry& object) {
-    return !viewer || context.CanSee(*viewer, object);
+    return !viewer || duckdb::EntryVisible(context, *viewer, object);
   };
   const auto names = [&](std::span<const duckdb::AclItem> acl) {
     return absl::c_any_of(acl, [&](const duckdb::AclItem& item) {
@@ -288,7 +288,7 @@ void VisitRoleReferences(
   const auto cluster_transaction = cluster.GetCatalogTransaction(context);
   for (const auto& db :
        catalog::SereneDBDatabases(duckdb::DatabaseManager::Get(context))) {
-    if (viewer && !context.CanSeeDatabase(*viewer, *db)) {
+    if (viewer && !duckdb::DatabaseVisible(context, *viewer, *db)) {
       continue;
     }
     auto& database = db->GetCatalog().Cast<catalog::SereneDBCatalog>();

@@ -47,7 +47,8 @@
 namespace sdb::pg {
 
 bool Shown(const Session& session, duckdb::CatalogEntry& entry) {
-  return !session.context || session.context->CanSee(session.role, entry);
+  return !session.context ||
+         duckdb::EntryVisible(*session.context, session.role, entry);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> InternalEntryByOid(

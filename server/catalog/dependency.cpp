@@ -987,7 +987,7 @@ SearchTableEntry& TriggerTable(duckdb::CatalogTransaction transaction,
 bool Shown(duckdb::CatalogTransaction transaction,
            duckdb::CatalogEntry& entry) {
   auto& context = transaction.GetContext();
-  return context.CanSee(context.CurrentRole(), entry);
+  return duckdb::EntryVisible(context, context.CurrentRole(), entry);
 }
 
 std::string OtherObjects(size_t count) {

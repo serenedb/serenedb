@@ -604,7 +604,7 @@ class SystemScan {
   const duckdb::RoleAccess& Role() const noexcept { return _role; }
   uint64_t Viewer() const noexcept { return _viewer; }
   bool Shows(duckdb::CatalogEntry& entry) const {
-    return _context.CanSee(_role, entry);
+    return duckdb::EntryVisible(_context, _role, entry);
   }
   catalog::BaseCatalog& Database() const noexcept { return _database; }
   const duckdb::CatalogTransaction& Transaction() const noexcept {

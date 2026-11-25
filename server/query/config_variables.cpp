@@ -29,6 +29,7 @@
 #include <fast_float/fast_float.h>
 
 #include <cmath>
+#include <duckdb/catalog/catalog_entry_retriever.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/assert.hpp>
 #include <duckdb/common/case_insensitive_map.hpp>
@@ -388,7 +389,11 @@ void SetRoleCallback(duckdb::ClientContext& ctx, duckdb::SetScope scope,
     return;
   }
   auto& conn = ConnectionContext::Get(ctx);
-  const auto role = duckdb::RoleId(ctx, duckdb::Identifier{name});
+  const auto role = duckdb::CatalogEntryRetriever{ctx}
+                      .GetEntry(duckdb::EntryLookupInfo{
+                        duckdb::CatalogType::ROLE_ENTRY,
+                        duckdb::QualifiedName{duckdb::Identifier{name}}})
+                      ->oid;
   if (!ctx.AccessOf(conn.GetSessionRoleId()).CanSet(role)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                     ERR_MSG("permission denied to set role \"", name, "\""));
@@ -400,7 +405,11 @@ void SetSessionAuthCallback(duckdb::ClientContext& ctx, duckdb::SetScope,
                             duckdb::Value& value) {
   const auto name = value.ToString();
   auto& conn = ConnectionContext::Get(ctx);
-  const auto role = duckdb::RoleId(ctx, duckdb::Identifier{name});
+  const auto role = duckdb::CatalogEntryRetriever{ctx}
+                      .GetEntry(duckdb::EntryLookupInfo{
+                        duckdb::CatalogType::ROLE_ENTRY,
+                        duckdb::QualifiedName{duckdb::Identifier{name}}})
+                      ->oid;
   const auto login = conn.GetLoginRoleId();
   if (role != login && !ctx.AccessOf(login).is_superuser) {
     THROW_SQL_ERROR(

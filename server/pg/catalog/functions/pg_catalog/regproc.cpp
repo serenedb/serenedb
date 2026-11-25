@@ -1000,8 +1000,8 @@ duckdb::optional_ptr<duckdb::CatalogEntry> AttachedRelation(
   }
   auto database = duckdb::Catalog::GetCatalogEntry(
     *session.context, duckdb::Identifier{names->front()});
-  if (!database ||
-      !session.context->CanSeeDatabase(session.role, database->GetAttached())) {
+  if (!database || !duckdb::DatabaseVisible(*session.context, session.role,
+                                            database->GetAttached())) {
     return nullptr;
   }
   const duckdb::QualifiedName name{duckdb::Identifier{(*names)[0]},

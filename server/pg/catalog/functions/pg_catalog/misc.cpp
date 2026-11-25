@@ -203,7 +203,7 @@ void ShobjDescriptionFunction(duckdb::DataChunk& args,
       auto entry = cluster.LookupOid(transaction, static_cast<uint64_t>(oid));
       if (!entry ||
           duckdb::ObjectKindOf(entry->type).pg_class != table->Sql().oid ||
-          !context.CanSee(role, *entry)) {
+          !duckdb::EntryVisible(context, role, *entry)) {
         return duckdb::nullopt;
       }
       return Comment(result, entry->comment);
@@ -1409,7 +1409,8 @@ bool DatabaseExists(duckdb::ExpressionState& state, int64_t oid) {
   }
   auto& context = state.GetContext();
   auto database = FindDatabaseById(context, static_cast<duckdb::idx_t>(oid));
-  return database && context.CanSee(CallerAccess(state), *database);
+  return database &&
+         duckdb::EntryVisible(context, CallerAccess(state), *database);
 }
 
 constexpr std::string_view kCollationKind = "collation";

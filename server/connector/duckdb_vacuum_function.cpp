@@ -220,8 +220,8 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
                                 std::string_view name) {
   auto found =
     duckdb::Catalog::GetCatalogEntry(context, duckdb::Identifier{name});
-  if (!found ||
-      !context.CanSeeDatabase(context.CurrentRole(), found->GetAttached())) {
+  if (!found || !duckdb::DatabaseVisible(context, context.CurrentRole(),
+                                         found->GetAttached())) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
   }
@@ -302,7 +302,7 @@ CollectMaintainTargets(duckdb::ClientContext& context,
         // Tables and views share one set, so the scan hands
         // back both.
         if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal ||
-            !context.CanSee(context.CurrentRole(), entry)) {
+            !duckdb::EntryVisible(context, context.CurrentRole(), entry)) {
           return;
         }
         auto& table = entry.Cast<duckdb::TableCatalogEntry>();

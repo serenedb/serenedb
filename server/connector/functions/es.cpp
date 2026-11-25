@@ -695,7 +695,6 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data->index, "]"));
   }
-  duckdb::Binder::RegisterEntryRead(binder, context, *table);
   size_t i = 0;
   for (const auto& column : table->GetColumns().Logical()) {
     const auto name = column.Name().GetIdentifierName();

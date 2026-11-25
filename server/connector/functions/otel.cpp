@@ -82,7 +82,6 @@ void BindTarget(duckdb::ClientContext& context,
                             "\" does not exist; create the OpenTelemetry "
                             "schema first"));
   }
-  duckdb::Binder::RegisterEntryRead(binder, context, *table);
   size_t index = 0;
   for (const auto& column :
        table->Cast<duckdb::TableCatalogEntry>().GetColumns().Logical()) {

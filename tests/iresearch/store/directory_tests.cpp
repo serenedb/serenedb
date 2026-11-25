@@ -41,6 +41,8 @@
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
 #include <iresearch/utils/misc.hpp>
+#include <limits>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -4197,6 +4199,33 @@ TEST_P(DirectoryTestCase, checksum_covers_bytes_since_previous_call) {
   EXPECT_EQ(static_cast<uint32_t>(footer_crc), out->Checksum());
 
   EXPECT_EQ(uint32_t{0}, out->Checksum());
+}
+
+TEST_P(DirectoryTestCase, large_writes_between_buffered_bytes_round_trip) {
+  std::mt19937_64 rng{17};
+  const size_t sizes[] = {100, 200000, 50, 64 * 1024, 7, 64 * 1024 + 3, 1};
+  std::vector<irs::byte_type> written;
+  absl::crc32c_t crc{0};
+  auto out = _dir->Create("mixed_writes");
+  ASSERT_FALSE(!out);
+  for (const auto size : sizes) {
+    std::vector<irs::byte_type> part(size);
+    for (auto& b : part) {
+      b = static_cast<irs::byte_type>(rng());
+    }
+    out->WriteData(part.data(), part.size());
+    written.insert(written.end(), part.begin(), part.end());
+    crc = absl::ExtendCrc32c(
+      crc, {reinterpret_cast<const char*>(part.data()), part.size()});
+    ASSERT_EQ(written.size(), out->Position());
+  }
+  EXPECT_EQ(static_cast<uint32_t>(crc), out->Checksum());
+  const auto in_file = irs::format_utils::CloseOutput(*out);
+  ASSERT_EQ(written.size(), in_file->GetSize());
+  duckdb::InputFileReader in{*in_file};
+  std::vector<irs::byte_type> read(written.size());
+  in.ReadData(read.data(), read.size());
+  EXPECT_EQ(written, read);
 }
 
 TEST_P(DirectoryTestCase, read_once_reads_range_and_advances) {

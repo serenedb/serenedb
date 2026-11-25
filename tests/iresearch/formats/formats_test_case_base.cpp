@@ -1489,9 +1489,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
   {
     irs::ColWriter w{db, dir.Tracker("columns_rw_typed_rg")};
     auto& cw_int = w.OpenColumn(kRgIntId, duckdb::LogicalType::BIGINT,
-                                /*skip_validity=*/false,
-                                /*row_group_size=*/512,
-                                duckdb::CompressionType::COMPRESSION_AUTO);
+                                {.row_group_size = 512});
     duckdb::Vector batch{duckdb::LogicalType::BIGINT, STANDARD_VECTOR_SIZE};
     auto* data = duckdb::FlatVector::GetDataMutable<int64_t>(batch);
     uint64_t produced = 0;
@@ -1506,9 +1504,7 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     }
 
     auto& cw_str = w.OpenColumn(kRgStrId, duckdb::LogicalType::BLOB,
-                                /*skip_validity=*/false,
-                                /*row_group_size=*/512,
-                                duckdb::CompressionType::COMPRESSION_AUTO);
+                                {.row_group_size = 512});
     for (uint64_t i = 0; i < kRgRowCount; ++i) {
       irs::bstring buf;
       irs::tests::BstringDataOutput out{buf};
@@ -1529,8 +1525,8 @@ TEST_P(FormatTestCase, columns_rw_typed) {
     EXPECT_EQ(col_int->RowCount(), kRgRowCount);
     EXPECT_EQ(col_str->RowCount(), kRgRowCount);
     // Multiple data row groups expected at this scale (4 of 512).
-    EXPECT_GE(col_int->DataRgCount(), 2u);
-    EXPECT_GE(col_str->DataRgCount(), 2u);
+    EXPECT_GE(col_int->DataBlocks().size(), 2u);
+    EXPECT_GE(col_str->DataBlocks().size(), 2u);
 
     // Fetch at row-group boundaries; each probe on a fresh reader.
     const std::vector<uint64_t> boundary_rows = {
@@ -1592,7 +1588,7 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
       const auto* col = r.Column(3);
       ASSERT_NE(col, nullptr);
       EXPECT_EQ(col->RowCount(), kRowCount);
-      EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+      EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
 
       // Pass 1: not-cached random reads.
       {
@@ -1705,10 +1701,8 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{db, dir.Tracker("columns_rw_bit_mask_rg")};
-    auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
-                            /*skip_validity=*/false,
-                            /*row_group_size=*/512,
-                            duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       if (i % 11 == 0) {
@@ -1724,8 +1718,8 @@ TEST_P(FormatTestCase, columns_rw_bit_mask) {
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_TRUE(col->HasValidity() || col->NullsInData());
-    EXPECT_GE(col->DataRgCount(), 2u);  // at least 2 row groups
+    EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
+    EXPECT_GE(col->DataBlocks().size(), 2u);  // at least 2 row groups
 
     // Probes spanning row-group boundaries (511/512/513 etc).
     const std::vector<uint64_t> boundary_rows = {
@@ -1876,10 +1870,8 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{db, dir.Tracker("columns_rw_dense_mask_rg")};
-    auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
-                            /*skip_validity=*/false,
-                            /*row_group_size=*/512,
-                            duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
       irs::tests::AppendBlob(
         cw, static_cast<irs::doc_id_t>(i + irs::doc_limits::min()),
@@ -1893,7 +1885,7 @@ TEST_P(FormatTestCase, columns_rw_dense_mask) {
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Probes at row-group boundaries.
     const std::vector<uint64_t> boundary_rows = {
@@ -2073,10 +2065,8 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{db, dir.Tracker("columns_rw_big_document_rg")};
-    auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
-                            /*skip_validity=*/false,
-                            /*row_group_size=*/512,
-                            duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     std::string payload(kSmallPayloadSize, '\0');
     for (uint64_t i = 0; i < kBigRows; ++i) {
       std::fill(payload.begin(), payload.end(),
@@ -2094,7 +2084,7 @@ TEST_P(FormatTestCase, columns_rw_big_document) {
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Probes at row-group boundaries.
     const std::vector<uint64_t> boundary_rows = {
@@ -2255,12 +2245,10 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
   constexpr std::string_view kBigSeg = "_big";
   {
     irs::ColWriter w{db, dir.Tracker(kBigSeg)};
-    auto& id_w = w.OpenColumn(
-      kIdCol, duckdb::LogicalType::BLOB, /*skip_validity=*/false,
-      /*row_group_size=*/512, duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& id_w =
+      w.OpenColumn(kIdCol, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     auto& name_w = w.OpenColumn(kNameCol, duckdb::LogicalType::BLOB,
-                                /*skip_validity=*/false, /*row_group_size=*/512,
-                                duckdb::CompressionType::COMPRESSION_AUTO);
+                                {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       irs::bstring id_buf;
@@ -2286,8 +2274,8 @@ TEST_P(FormatTestCase, columns_rw_writer_reuse) {
     ASSERT_NE(name_col, nullptr);
     EXPECT_EQ(id_col->RowCount(), kBigRows);
     EXPECT_EQ(name_col->RowCount(), kBigRows);
-    EXPECT_GE(id_col->DataRgCount(), 2u);
-    EXPECT_GE(name_col->DataRgCount(), 2u);
+    EXPECT_GE(id_col->DataBlocks().size(), 2u);
+    EXPECT_GE(name_col->DataBlocks().size(), 2u);
     // Sample probes at row-group boundaries on both columns.
     const std::vector<uint64_t> boundary_rows = {
       0, 1, 511, 512, 513, 1023, 1024, 1025, 1535, 1536, 1537, kBigRows - 1};
@@ -2449,13 +2437,9 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
   {
     irs::ColWriter w{db, dir.Tracker("same_col_empty_repeat_rg")};
     auto& id_w = w.OpenColumn(kBigIdCol, duckdb::LogicalType::BLOB,
-                              /*skip_validity=*/false,
-                              /*row_group_size=*/512,
-                              duckdb::CompressionType::COMPRESSION_AUTO);
+                              {.row_group_size = 512});
     auto& name_w = w.OpenColumn(kBigNameCol, duckdb::LogicalType::BLOB,
-                                /*skip_validity=*/false,
-                                /*row_group_size=*/512,
-                                duckdb::CompressionType::COMPRESSION_AUTO);
+                                {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       const bool with_byte = (i % 2 == 0);
@@ -2485,8 +2469,8 @@ TEST_P(FormatTestCase, columns_rw_same_col_empty_repeat) {
     ASSERT_NE(name_col, nullptr);
     EXPECT_EQ(id_col->RowCount(), kBigRows);
     EXPECT_EQ(name_col->RowCount(), kBigRows);
-    EXPECT_GE(id_col->DataRgCount(), 2u);
-    EXPECT_GE(name_col->DataRgCount(), 2u);
+    EXPECT_GE(id_col->DataBlocks().size(), 2u);
+    EXPECT_GE(name_col->DataBlocks().size(), 2u);
 
     // Probes at row-group boundaries on both columns.
     const std::vector<uint64_t> boundary_rows = {
@@ -2541,7 +2525,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
       const auto* col = r.Column(13);
       ASSERT_NE(col, nullptr);
       EXPECT_EQ(col->RowCount(), kRowCount);
-      EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+      EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
 
       // Pass 1: per-row point read.
       {
@@ -2646,10 +2630,8 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
   IndexDir dir{db, TestEnv::MemoryRoot()};
   {
     irs::ColWriter w{db, dir.Tracker("sparse_dense_block_rg")};
-    auto& cw = w.OpenColumn(kBigId, duckdb::LogicalType::BLOB,
-                            /*skip_validity=*/false,
-                            /*row_group_size=*/512,
-                            duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw =
+      w.OpenColumn(kBigId, duckdb::LogicalType::BLOB, {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
       const auto doc = static_cast<irs::doc_id_t>(i + irs::doc_limits::min());
       // Two gaps: at rg boundary (1024) and mid-rg (1500).
@@ -2666,8 +2648,8 @@ TEST_P(FormatTestCase, columns_rw_sparse_column_dense_block) {
     const auto* col = r.Column(kBigId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_TRUE(col->HasValidity() || col->NullsInData());
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Per-row check across the rg-boundary gap.
     {
@@ -2777,7 +2759,7 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
         EXPECT_EQ(col->RowCount(), kRowCount);
         // Nulls live either in a real validity stream or inside the data
         // codec (NO_VALIDITY_REQUIRED, e.g. dict_fsst) -- both are valid.
-        EXPECT_TRUE(col->HasValidity() || col->NullsInData());
+        EXPECT_TRUE(col->HasValidity() || irs::tests::NullsInData(*col));
 
         // Point-read.
         irs::ColumnReader::BlobPointReader pr{r, *col};
@@ -2886,13 +2868,9 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
   {
     irs::ColWriter w{db, dir.Tracker("border_case_rg")};
     auto& dense = w.OpenColumn(kBigDenseId, duckdb::LogicalType::BLOB,
-                               /*skip_validity=*/false,
-                               /*row_group_size=*/512,
-                               duckdb::CompressionType::COMPRESSION_AUTO);
+                               {.row_group_size = 512});
     auto& sparse = w.OpenColumn(kBigSparseId, duckdb::LogicalType::BLOB,
-                                /*skip_validity=*/false,
-                                /*row_group_size=*/512,
-                                duckdb::CompressionType::COMPRESSION_AUTO);
+                                {.row_group_size = 512});
     // Dense: first half live.
     for (uint64_t i = 0; i < 1024; ++i) {
       irs::tests::AppendBlob(
@@ -2920,8 +2898,8 @@ TEST_P(FormatTestCase, columns_rw_sparse_dense_offset_column_border_case) {
     ASSERT_NE(sparse_col, nullptr);
     EXPECT_EQ(dense_col->RowCount(), kBigRows);
     EXPECT_EQ(sparse_col->RowCount(), kBigRows);
-    EXPECT_GE(dense_col->DataRgCount(), 2u);
-    EXPECT_GE(sparse_col->DataRgCount(), 2u);
+    EXPECT_GE(dense_col->DataBlocks().size(), 2u);
+    EXPECT_GE(sparse_col->DataBlocks().size(), 2u);
 
     // Dense column at boundaries.
     const std::vector<uint64_t> boundary_rows = {
@@ -3088,9 +3066,7 @@ TEST_P(FormatTestCase, columns_issue700) {
   {
     irs::ColWriter w{db, dir.Tracker("issue700_rg")};
     auto& cw = w.OpenColumn(kBigColId, duckdb::LogicalType::BLOB,
-                            /*skip_validity=*/false,
-                            /*row_group_size=*/512,
-                            duckdb::CompressionType::COMPRESSION_AUTO);
+                            {.row_group_size = 512});
     for (uint64_t i = 0; i < kBigRows; ++i) {
       std::string payload(1 + (i % 5), '0' + static_cast<char>(i % 10));
       irs::tests::AppendBlob(
@@ -3105,7 +3081,7 @@ TEST_P(FormatTestCase, columns_issue700) {
     const auto* col = r.Column(kBigColId);
     ASSERT_NE(col, nullptr);
     EXPECT_EQ(col->RowCount(), kBigRows);
-    EXPECT_GE(col->DataRgCount(), 2u);
+    EXPECT_GE(col->DataBlocks().size(), 2u);
 
     // Probes at row-group + vector-size boundaries.
     const std::vector<uint64_t> boundary_rows = {0,

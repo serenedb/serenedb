@@ -20,36 +20,24 @@
 
 #pragma once
 
-#include <tuple>
-#include <utility>
+#include <duckdb/common/enums/compression_type.hpp>
+#include <duckdb/common/types.hpp>
+#include <string_view>
 
-#include "iresearch/search/filters/wildcard_ngram_filter.hpp"
-#include "iresearch/utils/type_limits.hpp"
+#include "iresearch/formats/column/codecs/compression_function.hpp"
 
-namespace irs::detail {
+namespace irs::codecs {
 
-template<typename NGrams>
-class WildcardNGramSlots {
- public:
-  using Recipe = WildcardNGramQuery::Recipe;
+const Codec* GetCodec(CodecType type, duckdb::PhysicalType physical);
 
-  template<typename NGramsArgs>
-  WildcardNGramSlots(std::piecewise_construct_t, NGramsArgs&& ngrams,
-                     const Recipe& recipe)
-    : _ngrams{std::make_from_tuple<NGrams>(std::forward<NGramsArgs>(ngrams))},
-      _pattern{recipe.Make()} {}
+bool Writes(CodecType type, duckdb::PhysicalType physical) noexcept;
 
-  doc_id_t Seek(doc_id_t target) { return _ngrams.Seek(target); }
+inline constexpr auto kNoCodec =
+  static_cast<CodecType>(magic_enum::enum_count<CodecType>());
 
-  doc_id_t Next(doc_id_t) { return _ngrams.Next(); }
+CodecType FindCodec(std::string_view name);
+CodecType FindCodec(duckdb::CompressionType type);
 
-  doc_id_t Probe(doc_id_t target) { return _ngrams.Probe(target); }
+uint8_t MaxLevel(CodecType type) noexcept;
 
-  bool Match(doc_id_t doc) { return _pattern.Check(doc); }
-
- private:
-  NGrams _ngrams;
-  WildcardNGramVerifier _pattern;
-};
-
-}  // namespace irs::detail
+}  // namespace irs::codecs

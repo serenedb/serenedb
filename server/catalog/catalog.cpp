@@ -92,41 +92,29 @@
 namespace sdb::catalog {
 namespace {
 
-duckdb::unique_ptr<duckdb::CatalogEntry> MakeWrapper(
-  duckdb::Catalog& catalog, const duckdb::Identifier& name, duckdb::idx_t oid) {
-  duckdb::CreateForeignDataWrapperInfo info;
-  info.SetName(name);
-  info.oid = oid;
-  info.permissions.owner = pg::kRootUser;
-  return duckdb::make_uniq<ForeignDataWrapperCatalogEntry>(catalog, info);
-}
-
-duckdb::unique_ptr<duckdb::CatalogEntry> MakeLanguage(
-  duckdb::Catalog& catalog, const duckdb::Identifier& name, duckdb::idx_t oid) {
-  auto entry = duckdb::make_uniq<duckdb::InCatalogEntry>(
-    duckdb::CatalogType::LANGUAGE_ENTRY, catalog, name, oid);
-  entry->internal = true;
-  entry->permissions.owner = pg::kRootUser;
-  return std::move(entry);
-}
-
-template<const auto& kObjects, auto kMake>
-class BuiltinEntries final : public duckdb::DefaultGenerator {
+class BuiltinWrappers final : public duckdb::DefaultGenerator {
  public:
-  explicit BuiltinEntries(duckdb::Catalog& catalog)
+  explicit BuiltinWrappers(duckdb::Catalog& catalog)
     : duckdb::DefaultGenerator{catalog} {}
 
   duckdb::unique_ptr<duckdb::CatalogEntry> CreateDefaultEntry(
     duckdb::CatalogTransaction, const duckdb::Identifier& name) final {
-    const auto* object =
-      pg::FindSystemObject(kObjects, name.GetIdentifierName());
-    return object ? kMake(catalog, name, object->oid) : nullptr;
+    const auto* wrapper =
+      pg::FindSystemObject(pg::kForeignDataWrappers, name.GetIdentifierName());
+    if (!wrapper) {
+      return nullptr;
+    }
+    duckdb::CreateForeignDataWrapperInfo info;
+    info.SetName(name);
+    info.oid = wrapper->oid;
+    info.permissions.owner = pg::kRootUser;
+    return duckdb::make_uniq<ForeignDataWrapperCatalogEntry>(catalog, info);
   }
 
   duckdb::vector<duckdb::Identifier> GetDefaultEntries() final {
     duckdb::vector<duckdb::Identifier> names;
-    for (const auto& object : kObjects) {
-      names.emplace_back(object.name);
+    for (const auto& wrapper : pg::kForeignDataWrappers) {
+      names.emplace_back(wrapper.name);
     }
     return names;
   }
@@ -333,12 +321,7 @@ void SereneDBCatalog::LogSequenceValue(const duckdb::SequenceValue& value) {
 }
 
 void SereneDBCatalog::Initialize(bool) {
-  _wrappers.SetDefaults(
-    duckdb::make_uniq<BuiltinEntries<pg::kForeignDataWrappers, MakeWrapper>>(
-      *this));
-  _languages.SetDefaults(
-    duckdb::make_uniq<BuiltinEntries<pg::kSystemLanguages, MakeLanguage>>(
-      *this));
+  _wrappers.SetDefaults(duckdb::make_uniq<BuiltinWrappers>(*this));
   auto data = duckdb::CatalogTransaction::GetSystemTransaction(GetDatabase());
   duckdb::CreateSchemaInfo info;
   info.SetQualifiedName(
@@ -387,8 +370,6 @@ EntrySet* SereneDBCatalog::FindSet(duckdb::CatalogType type) {
       return &_subscriptions;
     case duckdb::CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
       return &_wrappers;
-    case duckdb::CatalogType::LANGUAGE_ENTRY:
-      return &_languages;
     default:
       return BaseCatalog::FindSet(type);
   }

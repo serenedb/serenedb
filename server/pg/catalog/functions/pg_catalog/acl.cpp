@@ -797,8 +797,8 @@ constexpr PrivilegeKind kTablespacePrivileges{
 
 constexpr PrivilegeKind kLanguagePrivileges{
   .name = "has_language_privilege",
-  .type = CatalogType::LANGUAGE_ENTRY,
-  .modes = PrivilegesOf(CatalogType::LANGUAGE_ENTRY),
+  .type = CatalogType::TYPE_ENTRY,
+  .modes = AclMode::Usage,
   .superuser_first = true,
   .resolve = ResolveLanguage,
   .find = LanguageTarget,

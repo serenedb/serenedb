@@ -37,12 +37,6 @@ db error: ERROR: syntax error at or near "."
 
 
 statement error
-GRANT USAGE ON LANGUAGE gqt_nosuch.sql TO gqt_r;
-----
-db error: ERROR: syntax error at or near "."
-
-
-statement error
 ALTER DATABASE gqt_nosuch.postgres OWNER TO gqt_r;
 ----
 db error: ERROR: syntax error at or near "."

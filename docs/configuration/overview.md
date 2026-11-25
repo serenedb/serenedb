@@ -456,6 +456,7 @@ Defaults for the CSV, Parquet, JSON, Arrow and Iceberg readers and writers.
 | `iceberg_use_metadata_log` | Read each Iceberg table as of the transaction start, using the table's metadata log, for snapshot isolation; a table whose metadata has no metadata log then fails to read at an older start. Off, a transaction reads the latest table metadata it resolves. | `BOOLEAN` | `GLOBAL` | `off` |
 | `iceberg_use_server_side_scan_planning` | Let the REST catalog plan Iceberg scans, where it supports it. | `BOOLEAN` | `SESSION` | `off` |
 | `json_geometry_format` | How `GEOMETRY` values are written to JSON: `wkt` for Well-Known Text, `geojson` for GeoJSON geometry objects. `COPY ... TO ... (FORMAT GEOJSON)` always writes GeoJSON. | `VARCHAR` | `SESSION` | `wkt` |
+| `json_strict_paths` | Whether the JSON functions given a path (`->`, `->>`, `json_extract`, `json_value`, ...) check the whole document. Off, they read only the keys on the way and the value the path leads to, so an error elsewhere in the document goes unnoticed. | `BOOLEAN` | `SESSION` | `off` |
 | `parquet_metadata_cache` | Cache Parquet metadata - useful when reading the same files multiple times | `BOOLEAN` | `SESSION` | `false` |
 | `parquet_prefetch_column_gap` | Byte gap under which Parquet prefetch I/O ranges are coalesced (NULL lets the cost model adapt it). | `UBIGINT` | `SESSION` |  |
 | `produce_arrow_string_view` | Deprecated. Whether Arrow strings should be produced by SereneDB in Utf8View format instead of Utf8 | `BOOLEAN` | `GLOBAL` | `false` |

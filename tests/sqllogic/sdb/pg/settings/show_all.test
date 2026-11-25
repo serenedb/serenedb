@@ -173,6 +173,7 @@ integer_division	on	Whether or not the / operator defaults to integer division, 
 integer_overflow	ERROR	What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).
 IntervalStyle	postgres	Sets the display format for interval values.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
+json_strict_paths	off	Whether the JSON path functions (->, ->>, json_extract, json_value, ...) reject a malformed document even when the error is outside the part they read
 late_materialization_lookup_max_rows	2048	The maximum amount of rows in the LIMIT/TOP_N/SAMPLE operator for which a scan that can look up rows by their row id is late materialized through a LOOKUP_JOIN. 0 disables the LOOKUP_JOIN: late materialization then joins on the row ids, up to late_materialization_max_rows.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder.
@@ -525,6 +526,7 @@ integer_division	on	Whether or not the / operator defaults to integer division, 
 integer_overflow	ERROR	What integer +, - and * and unary minus do when the result does not fit its type: ERROR raises an error, WRAP keeps the low bits of the result (two's complement wraparound).
 IntervalStyle	postgres	Sets the display format for interval values.
 json_geometry_format	wkt	How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.
+json_strict_paths	off	Whether the JSON path functions (->, ->>, json_extract, json_value, ...) reject a malformed document even when the error is outside the part they read
 late_materialization_lookup_max_rows	2048	The maximum amount of rows in the LIMIT/TOP_N/SAMPLE operator for which a scan that can look up rows by their row id is late materialized through a LOOKUP_JOIN. 0 disables the LOOKUP_JOIN: late materialization then joins on the row ids, up to late_materialization_max_rows.
 late_materialization_max_rows	50	The maximum amount of rows in the LIMIT/SAMPLE operator for which we trigger late materialization.
 legacy_disable_null_type	off	When enabled, prevent the NULL type from leaving the binder.

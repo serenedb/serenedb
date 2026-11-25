@@ -2353,6 +2353,26 @@ def test_copy_feeder_wake_outlives_the_session(conn):
         conn.run("drop table if exists t_copy_done_wake")
 
 
+@pytest.mark.parametrize("options", ["format csv, sample_size 1000",
+                                     "format csv, auto_detect false"])
+def test_copy_with_a_reader_option_takes_rows_before_its_stream_ends(conn, options):
+    rows = 3072
+    c = WireConn()
+    try:
+        conn.run_ok("drop table if exists t_copy_open")
+        conn.run_ok("create table t_copy_open(a int, b text)")
+        c.send("Q", _cstr(f"copy t_copy_open from stdin ({options})"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", b"".join(b"%d,%s\n" % (i, b"x" * 1017) for i in range(rows)))
+        await_copied(conn, "t_copy_open", rows)
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY %d\x00" % rows], errors(m)
+    finally:
+        c.close()
+        conn.run("drop table if exists t_copy_open")
+
+
 def test_copy_to_stdout_extended(conn):
     # COPY ... TO STDOUT over the extended protocol: Parse/Bind/Execute must
     # route to the wire collector and emit CopyOutResponse(H) + CopyData(d) +

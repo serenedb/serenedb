@@ -32,18 +32,15 @@
 
 namespace irs::term_dict {
 
+struct Section {
+  uint64_t offset = 0;
+  uint64_t size = 0;
+};
+
 struct TextHead {
   uint64_t total_freq = 0;
   field_id norm = field_limits::invalid();
   bool has_score_bounds = false;
-  std::string prefixes;
-};
-
-struct RangesHead {
-  uint64_t offset = 0;
-  uint64_t size = 0;
-  uint32_t prefix = 0;
-  std::vector<uint64_t> counts;
 };
 
 struct FieldHead {
@@ -57,16 +54,16 @@ struct FieldHead {
   std::string min;
   std::string max;
   std::string record;
-  std::string record_inline;
   uint32_t first_block = 0;
   uint32_t first_entry = 0;
   uint32_t first_record = 0;
   uint32_t last_block = 0;
   uint32_t last_entry = 0;
-  uint64_t inline_base = 0;
-  uint64_t inline_size = 0;
+  std::string fsst_table;
+  Section index;
   TextHead text;
-  RangesHead ranges;
+  std::vector<FieldHead> levels;
+  bool single_valued = false;
 };
 
 struct SpanningBlock {
@@ -78,18 +75,16 @@ struct TermsMeta {
   uint32_t blocks = 0;
   uint64_t first_page = 0;
   std::vector<SpanningBlock> spans;
-  std::string separators;
-  std::string fsst_table;
-  uint64_t inline_offset = 0;
-  uint64_t inline_size = 0;
-  uint64_t ranges_size = 0;
+  uint64_t blocks_end = 0;
   std::vector<FieldHead> fields;
-  std::string inline_starts;
+  Section separators;
   uint32_t ordinal_bytes = 1;
 };
 
 void WriteTerms(duckdb::BinarySerializer& out, const TermsMeta& terms);
 
 TermsMeta ReadTerms(duckdb::BinaryDeserializer& in, uint64_t data_size);
+
+bool PlaceSections(TermsMeta& terms, uint64_t end) noexcept;
 
 }  // namespace irs::term_dict

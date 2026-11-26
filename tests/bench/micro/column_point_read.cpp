@@ -29,11 +29,13 @@
 #include <duckdb.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <filesystem>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/column_writer.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <random>
 #include <string>
@@ -53,6 +55,12 @@ enum class Codec {
   Uncompressed,
   NullsSparse,
   NullsDense,
+  Lz4,
+  Zxc,
+  Fsst,
+  DictLz4,
+  DictZstd,
+  AutoText,
   kCount,
 };
 
@@ -78,35 +86,53 @@ duckdb::LogicalType TypeOf(Codec c) {
       return duckdb::LogicalType::DOUBLE;
     case Codec::DictFsst:
     case Codec::Zstd:
+    case Codec::Lz4:
+    case Codec::Zxc:
+    case Codec::Fsst:
+    case Codec::DictLz4:
+    case Codec::DictZstd:
+    case Codec::AutoText:
       return duckdb::LogicalType::VARCHAR;
     default:
       return duckdb::LogicalType::BIGINT;
   }
 }
 
-duckdb::CompressionType CompressionOf(Codec c) {
+irs::codecs::CodecType CompressionOf(Codec c) {
   switch (c) {
     case Codec::BitpackingFor:
     case Codec::BitpackingDeltaFor:
     case Codec::BitpackingConstantDelta:
     case Codec::NullsSparse:
     case Codec::NullsDense:
-      return duckdb::CompressionType::COMPRESSION_BITPACKING;
+      return irs::codecs::CodecType::Bitpacking;
     case Codec::Rle:
-      return duckdb::CompressionType::COMPRESSION_RLE;
+      return irs::codecs::CodecType::Rle;
     case Codec::Alp:
-      return duckdb::CompressionType::COMPRESSION_ALP;
+      return irs::codecs::CodecType::Alp;
     case Codec::AlpRd:
-      return duckdb::CompressionType::COMPRESSION_ALPRD;
+      return irs::codecs::CodecType::Alprd;
     case Codec::DictFsst:
-      return duckdb::CompressionType::COMPRESSION_DICT_FSST;
+      return irs::codecs::CodecType::DictFsst;
     case Codec::Zstd:
-      return duckdb::CompressionType::COMPRESSION_ZSTD;
+      return irs::codecs::CodecType::Zstd;
+    case Codec::Lz4:
+      return irs::codecs::CodecType::Lz4;
+    case Codec::Zxc:
+      return irs::codecs::CodecType::Zxc;
+    case Codec::Fsst:
+      return irs::codecs::CodecType::Fsst;
+    case Codec::DictLz4:
+      return irs::codecs::CodecType::DictLz4;
+    case Codec::DictZstd:
+      return irs::codecs::CodecType::DictZstd;
+    case Codec::AutoText:
+      return irs::codecs::CodecType::Auto;
     case Codec::Uncompressed:
     case Codec::kCount:
-      return duckdb::CompressionType::COMPRESSION_UNCOMPRESSED;
+      return irs::codecs::CodecType::Uncompressed;
   }
-  return duckdb::CompressionType::COMPRESSION_AUTO;
+  return irs::codecs::CodecType::Auto;
 }
 
 uint64_t Mix(uint64_t x) {
@@ -153,12 +179,19 @@ struct Generator {
         return;
       }
       case Codec::DictFsst:
-      case Codec::Zstd: {
+      case Codec::Zstd:
+      case Codec::Lz4:
+      case Codec::Zxc:
+      case Codec::Fsst:
+      case Codec::DictLz4:
+      case Codec::DictZstd:
+      case Codec::AutoText: {
         auto* d = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(vec);
         for (uint64_t k = 0; k < take; ++k) {
           const auto g = base + k;
           std::string str;
-          if (codec == Codec::DictFsst) {
+          if (codec == Codec::DictFsst || codec == Codec::DictLz4 ||
+              codec == Codec::DictZstd) {
             str = "language_" + std::to_string(Mix(g) % 30);
           } else {
             const auto h = Mix(g);
@@ -226,6 +259,13 @@ struct Seg {
   const irs::ColumnReader* col = nullptr;
 };
 
+uint32_t SegmentTarget() {
+  if (const char* e = std::getenv("SDB_BENCH_SEGMENT_TARGET")) {
+    return static_cast<uint32_t>(std::strtoul(e, nullptr, 10));
+  }
+  return irs::kDefaultColSegmentTarget;
+}
+
 std::unique_ptr<Seg> BuildSeg(Codec codec) {
   auto seg = std::make_unique<Seg>();
   auto& fs = duckdb::FileSystem::GetFileSystem(CsDb());
@@ -234,9 +274,11 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
   const auto type = TypeOf(codec);
   {
     irs::FileTracker tracker{fs, root, kSeg};
-    irs::ColWriter w{CsDb(), tracker};
-    auto& cw = w.OpenColumn(kField, type, false, DEFAULT_ROW_GROUP_SIZE,
-                            CompressionOf(codec));
+    irs::ColWriter w{CsDb(), tracker, irs::WriteTier::Merge};
+    auto& cw =
+      w.OpenColumn(kField, type,
+                   {.compression = CompressionOf(codec),
+                    .codec_params = {.segment_target = SegmentTarget()}});
     Generator gen{codec};
     uint64_t pos = 0;
     while (pos < rows) {
@@ -258,12 +300,12 @@ std::unique_ptr<Seg> BuildSeg(Codec codec) {
   }
   std::string codecs;
   for (const auto& block : seg->col->DataBlocks()) {
-    codecs += duckdb::CompressionTypeToString(block.codec->type) + " ";
+    absl::StrAppend(&codecs, magic_enum::enum_name(block.codec->type), " ");
   }
   if (const auto* validity = seg->col->Validity()) {
     codecs += "| validity ";
     for (const auto& block : validity->DataBlocks()) {
-      codecs += duckdb::CompressionTypeToString(block.codec->type) + " ";
+      absl::StrAppend(&codecs, magic_enum::enum_name(block.codec->type), " ");
     }
   }
   std::fprintf(stderr, "codec %d: %s\n", static_cast<int>(codec),
@@ -380,6 +422,12 @@ void DenseWarm(benchmark::State& state, Codec codec) {
   BENCHMARK_CAPTURE(fn, alprd, Codec::AlpRd);                            \
   BENCHMARK_CAPTURE(fn, dict_fsst, Codec::DictFsst);                     \
   BENCHMARK_CAPTURE(fn, zstd, Codec::Zstd);                              \
+  BENCHMARK_CAPTURE(fn, lz4, Codec::Lz4);                                \
+  BENCHMARK_CAPTURE(fn, zxc, Codec::Zxc);                                \
+  BENCHMARK_CAPTURE(fn, fsst, Codec::Fsst);                              \
+  BENCHMARK_CAPTURE(fn, dict_lz4, Codec::DictLz4);                       \
+  BENCHMARK_CAPTURE(fn, dict_zstd, Codec::DictZstd);                     \
+  BENCHMARK_CAPTURE(fn, auto_text, Codec::AutoText);                     \
   BENCHMARK_CAPTURE(fn, uncompressed, Codec::Uncompressed);              \
   BENCHMARK_CAPTURE(fn, nulls_1pct, Codec::NullsSparse);                 \
   BENCHMARK_CAPTURE(fn, nulls_30pct, Codec::NullsDense)

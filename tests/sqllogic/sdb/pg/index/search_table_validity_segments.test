@@ -1,0 +1,61 @@
+statement ok
+SET threads = 1;
+
+
+statement ok
+CREATE TABLE vseg (a INTEGER PRIMARY KEY, v INTEGER)
+WITH (row_group_size = 2097152, compaction_interval = 0);
+
+
+statement ok
+INSERT INTO vseg
+SELECT a, CASE WHEN a < 2000000 AND hash(a) % 2 = 0 THEN NULL ELSE a END
+FROM range(2097152) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) vseg;
+
+
+statement ok
+VACUUM (COMPACT_TABLE) vseg;
+
+
+query
+SELECT compression, start, count FROM pragma_storage_info('vseg')
+WHERE column_name = 'v' AND segment_type = 'VALIDITY'
+ORDER BY start;
+----
+compression	start	count
+Uncompressed	0	2095104
+Empty Validity	2095104	2048
+
+
+query
+SELECT count(*), count(v) FROM vseg WHERE a >= 2095104;
+----
+count	count
+2048	2048
+
+
+query
+SELECT count(*), count(v), sum(v) FROM vseg;
+----
+count	count	sum
+2097152	1096240	1197855920957
+
+
+query
+SELECT count(*) FROM vseg WHERE v IS NULL;
+----
+count
+1000912
+
+
+query
+SELECT a, v FROM vseg WHERE a IN (2095103, 2095104, 2097151) ORDER BY a;
+----
+a	v
+2095103	2095103
+2095104	2095104
+2097151	2097151

@@ -1340,15 +1340,26 @@ QUERY PLAN
 ├─ Index Filter Execute ────────────┤
 │                                   │
 │ Total: 0µs                        │
-│ Rows: 500                         │
+│ Rows: 256                         │
 │                                   │
-│ ╭─ ann::Walk<lead::TwoPhase> ─╮   │
-│ │ Plans: 1                    │   │
-│ │ Calls: 1                    │   │
-│ │ Plan: 0µs                   │   │
-│ │ Time: 0µs                   │   │
-│ │ Rows: 500                   │   │
-│ ╰─────────────────────────────╯   │
+│ ╭─ ann::VectorChain ─╮            │
+│ │ Plans: 1           │            │
+│ │ Calls: 1           │            │
+│ │ Plan: 0µs          │            │
+│ │ Time: 0µs          │            │
+│ │ Rows: 256          │            │
+│ ╰────────────────────╯            │
+│                                   │
+├─ Column Filter ───────────────────┤
+│                                   │
+│ Rows: 512                         │
+│ Rows Removed: 256                 │
+│ Time: 0µs                         │
+│                                   │
+│ ╭─ Column ──────────────╮         │
+│ │ Field: label          │         │
+│ │ Check: label = 'even' │         │
+│ ╰───────────────────────╯         │
 │                                   │
 ├───────────────────────────────────┤
 │ 3 rows                        0µs │
@@ -1442,61 +1453,63 @@ QUERY PLAN
 ╭─ Summary ───────────╮
 │ Total Time: 0.0000s │
 ╰─────────────────────╯
-╭─ TABLE_SCAN ────────────────────────────╮
-│ Index: profile_ivf_idx                  │
-│ Lookup: search                          │
-│ Score: l2_distance(emb, FLOAT[4])       │
-│ Top: 3                                  │
-│ Projections: id                         │
-│                                         │
-├─ Index Filter Prepare ──────────────────┤
-│                                         │
-│ Total: 0µs                              │
-│ Snapshot: 0µs                           │
-│ Segments: 1 of 1                        │
-│                                         │
-│ ╭─ Vector Similarity ──────╮            │
-│ │ Field: emb               │            │
-│ │ Metric: l2               │            │
-│ │ Top: 3                   │            │
-│ │ Estimated Matches: 1,000 │            │
-│ │ Total: 0µs               │            │
-│ │ Time: 0µs                │            │
-│ ╰─────────────┬────────────╯            │
-│ ╭─ Term ──────┴────────────╮            │
-│ │ Field: label(string)     │            │
-│ │ Value: even              │            │
-│ │ Posting Lists: 1         │            │
-│ │ Estimated Matches: 500   │            │
-│ │ Postings: 500            │            │
-│ │ Time: 0µs                │            │
-│ ╰──────────────────────────╯            │
-│                                         │
-├─ Index Filter Execute ──────────────────┤
-│                                         │
-│ Total: 0µs                              │
-│ Rows: 500                               │
-│                                         │
-│ ╭─ ann::Walk<lead::TwoPhase> ─────────╮ │
-│ │ Plans: 1                            │ │
-│ │ Calls: 1                            │ │
-│ │ Plan: 0µs                           │ │
-│ │ Total: 0µs                          │ │
-│ │ Time: 0µs                           │ │
-│ │ Rows: 500                           │ │
-│ ╰──────────────────┬──────────────────╯ │
-│ ╭─ probe::Impl<detail::PostingProbe> ─╮ │
-│ │ Filter: Term                        │ │
-│ │ Plans: 1                            │ │
-│ │ Calls: 1,000                        │ │
-│ │ Timed: 33                           │ │
-│ │ Time: 0µs                           │ │
-│ │ Rows: 500                           │ │
-│ ╰─────────────────────────────────────╯ │
-│                                         │
-├─────────────────────────────────────────┤
-│ 3 rows                              0µs │
-╰─────────────────────────────────────────╯
+╭─ TABLE_SCAN ──────────────────────╮
+│ Index: profile_ivf_idx            │
+│ Lookup: search                    │
+│ Score: l2_distance(emb, FLOAT[4]) │
+│ Top: 3                            │
+│ Projections: id                   │
+│                                   │
+├─ Index Filter Prepare ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Snapshot: 0µs                     │
+│ Segments: 1 of 1                  │
+│                                   │
+│ ╭─ Vector Similarity ──────╮      │
+│ │ Field: emb               │      │
+│ │ Metric: l2               │      │
+│ │ Top: 3                   │      │
+│ │ Estimated Matches: 1,000 │      │
+│ │ Total: 0µs               │      │
+│ │ Time: 0µs                │      │
+│ ╰─────────────┬────────────╯      │
+│ ╭─ Term ──────┴────────────╮      │
+│ │ Field: label(string)     │      │
+│ │ Value: even              │      │
+│ │ Posting Lists: 1         │      │
+│ │ Estimated Matches: 500   │      │
+│ │ Postings: 500            │      │
+│ │ Time: 0µs                │      │
+│ ╰──────────────────────────╯      │
+│                                   │
+├─ Index Filter Execute ────────────┤
+│                                   │
+│ Total: 0µs                        │
+│ Rows: 256                         │
+│                                   │
+│ ╭─ ann::VectorChain ─╮            │
+│ │ Plans: 1           │            │
+│ │ Calls: 1           │            │
+│ │ Plan: 0µs          │            │
+│ │ Time: 0µs          │            │
+│ │ Rows: 256          │            │
+│ ╰────────────────────╯            │
+│                                   │
+├─ Column Filter ───────────────────┤
+│                                   │
+│ Rows: 512                         │
+│ Rows Removed: 256                 │
+│ Time: 0µs                         │
+│                                   │
+│ ╭─ Column ──────────────╮         │
+│ │ Field: label          │         │
+│ │ Check: label = 'even' │         │
+│ ╰───────────────────────╯         │
+│                                   │
+├───────────────────────────────────┤
+│ 3 rows                        0µs │
+╰───────────────────────────────────╯
 
 
 query

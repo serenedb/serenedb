@@ -96,6 +96,11 @@ struct VectorScorerOptions {
     return exact && top_k == 0 && radius == std::numeric_limits<float>::max();
   }
 
+  bool ChecksColumns() const noexcept {
+    return exact || kind != irs::AnnKind::Hnsw ||
+           radius == std::numeric_limits<float>::max();
+  }
+
   float EffectiveRadius() const {
     if (radius == std::numeric_limits<float>::max()) {
       return radius;
@@ -121,7 +126,7 @@ struct VectorScorerOptions {
 
 irs::Filter::ptr MakeVectorFilter(
   const VectorScorerOptions& vs, std::shared_ptr<const irs::Filter> inner,
-  float radius, std::shared_ptr<const irs::Filter> index_only = nullptr,
-  bool dual = false);
+  float radius, std::shared_ptr<const irs::Filter> index_part = nullptr,
+  bool has_column_part = false);
 
 }  // namespace sdb::connector

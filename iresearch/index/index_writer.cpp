@@ -47,6 +47,7 @@
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/group_commit.hpp"
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
 

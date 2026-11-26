@@ -1,0 +1,67 @@
+# A term set means the same at every size: as a phrase part, as a phrase of two
+# sets, and under ts_all, whether or not its constant is folded before planning.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tsz_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE tsz (id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX tsz_idx ON tsz USING inverted(body tsz_dict) INCLUDE (id);
+
+
+statement ok
+INSERT INTO tsz
+SELECT i, w || ' ' || v || ' tail'
+FROM (
+    SELECT i,
+           'w' || translate(lpad(i::TEXT, 5, '0'), '0123456789', 'abcdefghij') AS w,
+           'w' || translate(lpad((4000 + i)::TEXT, 5, '0'), '0123456789', 'abcdefghij') AS v
+    FROM generate_series(0, 9) AS g(i)
+);
+
+
+query
+SELECT count(*) FROM tsz_idx
+WHERE body @@ (ts_any(list_transform(range(4000, 9000), lambda i: 'w' || translate(lpad(i::TEXT, 5, '0'), '0123456789', 'abcdefghij'))) ## 'tail');
+----
+count
+10
+
+
+query
+SELECT count(*) FROM tsz_idx
+WHERE body @@ (ts_any(list_transform(range(0, 4000), lambda i: 'w' || translate(lpad(i::TEXT, 5, '0'), '0123456789', 'abcdefghij')))
+               ## ts_any(list_transform(range(4000, 8000), lambda i: 'w' || translate(lpad(i::TEXT, 5, '0'), '0123456789', 'abcdefghij'))));
+----
+count
+10
+
+
+query
+SELECT count(*) FROM tsz_idx
+WHERE body @@ ts_all(list_transform(range(0, 5000), lambda i: 'w' || translate(lpad(i::TEXT, 5, '0'), '0123456789', 'abcdefghij')));
+----
+count
+0
+
+
+query
+SELECT count(*) FROM tsz_idx
+WHERE body @@ ts_all(['waeaaa', 'tail']);
+----
+count
+1
+
+
+statement ok
+DROP TABLE tsz;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY tsz_dict;

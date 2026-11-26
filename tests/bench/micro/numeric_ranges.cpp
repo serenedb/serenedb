@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/base/internal/endian.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 #include <benchmark/benchmark.h>
@@ -92,8 +93,8 @@ constexpr Shape kShapes[]{
    }},
 };
 
-constexpr std::string_view kWideShapes[]{"dense", "random", "values10k",
-                                         "skewed", "random10k"};
+constexpr std::string_view kWideShapes[]{"dense",     "random", "values100",
+                                         "values10k", "skewed", "random10k"};
 
 const Shape& ShapeNamed(std::string_view name) {
   return *absl::c_find_if(
@@ -130,12 +131,12 @@ constexpr Selectivity kSelectivities[]{
 };
 
 bytes_view Key(irs::byte_type* buf, uint64_t sortable, uint32_t shift) {
-  irs::byte_type key[sizeof(uint64_t)];
-  duckdb::Radix::EncodeData(key, sortable & ~((uint64_t{1} << shift) - 1));
   const size_t size = 1 + (63 - shift) / 8;
-  buf[0] = irs::numeric_utils::kNumericTermMagic<int64_t> + shift;
-  std::memcpy(buf + 1, key, size);
-  return {buf, 1 + size};
+  irs::byte_type value[sizeof(uint64_t)];
+  absl::big_endian::Store64(value, sortable >> shift << shift);
+  buf[0] = static_cast<irs::byte_type>(shift);
+  std::memcpy(buf + 1, value, size);
+  return {buf, size + 1};
 }
 
 struct Terms {
@@ -247,7 +248,8 @@ class TermsIterator : public irs::TermOnlyIterator {
 
 class TermsReader final : public irs::BasicTermReader {
  public:
-  TermsReader(const Terms& terms, Ladder ladder) noexcept : _terms{&terms} {
+  TermsReader(const Terms& terms, Ladder ladder, bool ranges) noexcept
+    : _terms{&terms}, _ranges{ranges} {
     key_width = ladder == Ladder::Adaptive
                   ? static_cast<uint32_t>(terms.keys.front().size())
                   : 0;
@@ -259,15 +261,17 @@ class TermsReader final : public irs::BasicTermReader {
   }
   irs::field_id id() const final { return 1; }
   irs::FieldProperties properties() const final {
-    return {.index_features = irs::IndexFeatures::Ranges};
+    return {.index_features =
+              _ranges ? irs::IndexFeatures::Ranges : irs::IndexFeatures::None};
   }
 
  private:
   const Terms* _terms;
+  bool _ranges;
 };
 
 void Write(std::string_view root, const Terms& terms, Ladder ladder,
-           uint64_t rows) {
+           bool ranges, uint64_t rows) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   irs::FileTracker tracker{fs, root, "segment"};
@@ -279,7 +283,8 @@ void Write(std::string_view root, const Terms& terms, Ladder ladder,
   irs::term_dict::FieldWriter writer{false};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1);
-  writer.write(irs::NumericLayout::kNumbers, TermsReader{terms, ladder});
+  writer.write(irs::NumericLayout::kNumbers,
+               TermsReader{terms, ladder, ranges});
   writer.end();
   idx.Commit(nullptr);
 }
@@ -290,19 +295,34 @@ std::string MemoryRoot() {
                       gNext.fetch_add(1, std::memory_order_relaxed));
 }
 
-uint64_t DirectoryBytes(std::string_view root) {
+struct Bytes {
+  uint64_t docs = 0;
+  uint64_t dict = 0;
+
+  uint64_t Total() const noexcept { return docs + dict; }
+};
+
+Bytes BytesOf(std::string_view root) {
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
-  uint64_t total = 0;
+  Bytes bytes;
   fs.ListFiles(std::string{root},
                [&](duckdb::OpenFileInfo& info) {
                  if (!duckdb::FileSystem::IsDirectory(info)) {
-                   total +=
+                   (std::string_view{info.path}.ends_with(".doc")
+                      ? bytes.docs
+                      : bytes.dict) +=
                      fs.OpenInputFile(fs.JoinPath(root, info.path))->GetSize();
                  }
                },
                nullptr, {.strict = true});
-  return total;
+  return bytes;
+}
+
+void CountBytes(benchmark::State& state, const Bytes& bytes) {
+  state.counters["bytes"] = static_cast<double>(bytes.Total());
+  state.counters["doc_bytes"] = static_cast<double>(bytes.docs);
+  state.counters["dict_bytes"] = static_cast<double>(bytes.dict);
 }
 
 template<typename Visit>
@@ -363,9 +383,11 @@ void VisitAdaptive(const irs::TermReader& field, uint64_t lo, uint64_t hi,
   const auto from = Key(from_buf, lo, 0);
   const auto to = Key(to_buf, hi, 0);
   to_buf[to.size()] = 0;
-  field.VisitRange(
-    from, {to_buf, to.size() + 1},
-    [&](bytes_view, const irs::PostingMeta& meta) { visit(meta); });
+  field.CoverRange(from, {to_buf, to.size() + 1},
+                   [&](bytes_view, const irs::PostingMeta& meta) {
+                     visit(meta);
+                     return true;
+                   });
 }
 
 struct Query {
@@ -494,7 +516,7 @@ void Prepare(Data& data, const Shape& shape,
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   data.root = path.string();
-  Write(data.root, data.terms, data.ladder, data.rows);
+  Write(data.root, data.terms, data.ladder, true, data.rows);
   static const irs::SegmentMeta kMeta{[] {
     irs::SegmentMeta meta;
     meta.name = "segment";
@@ -607,19 +629,25 @@ void Build(benchmark::State& state, const Shape& shape, Ladder ladder) {
     duckdb::FileSystem::GetFileSystem(irs::DuckDBEngine::Instance().instance());
   for (auto _ : state) {
     auto root = MemoryRoot();
-    Write(root, data.terms, ladder, data.rows);
+    Write(root, data.terms, ladder, true, data.rows);
     benchmark::DoNotOptimize(root);
     fs.RemoveDirectory(root);
   }
   const auto root = MemoryRoot();
-  Write(root, data.terms, ladder, data.rows);
+  Write(root, data.terms, ladder, true, data.rows);
   state.SetItemsProcessed(static_cast<int64_t>(state.iterations() * data.rows));
   state.counters["terms"] = static_cast<double>(data.terms.keys.size());
   state.counters["postings"] = static_cast<double>(data.terms.docs.size());
-  state.counters["bytes"] = static_cast<double>(DirectoryBytes(root));
+  const auto bytes = BytesOf(root);
+  CountBytes(state, bytes);
+  const auto plain = MemoryRoot();
+  Write(plain, data.terms, ladder, false, data.rows);
+  state.counters["range_bytes"] = static_cast<double>(bytes.Total()) -
+                                  static_cast<double>(BytesOf(plain).Total());
+  fs.RemoveDirectory(root);
+  fs.RemoveDirectory(plain);
   state.counters["levels"] = Levels(data);
   state.SetLabel(absl::StrJoin(data.shifts, ","));
-  fs.RemoveDirectory(root);
 }
 
 void Search(benchmark::State& state, const Shape& shape, Ladder ladder,
@@ -724,11 +752,13 @@ void Wide(benchmark::State& state, const Shape& shape, Ladder ladder,
     static_cast<double>(state.iterations()) * per_query,
     benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
   state.counters["levels"] = Levels(data);
-  state.counters["bytes"] = static_cast<double>(DirectoryBytes(data.root));
+  CountBytes(state, BytesOf(data.root));
   state.SetLabel(absl::StrJoin(data.shifts, ","));
 }
 
 int Main(int argc, char** argv) {
+  irs::DuckDBEngine::Instance().Initialize();
+
   for (const auto& shape : kShapes) {
     for (size_t l = 0; l != std::size(kLadders); ++l) {
       const auto ladder = static_cast<Ladder>(l);

@@ -1,17 +1,8 @@
-# dict_fsst cut sizing: the plain layout is FSST_ONLY (no selection buffer) while every row is
-# unique, and flips to DICT_FSST -- adding the whole bitpacked selection region at once -- on the
-# first duplicate. NearBlock's growth accumulator only sees the duplicate's ~2 selection bytes, so
-# the flip stayed invisible until the segment was tens of KB past the block, and CutPlain's
-# exclude-one-row recovery (built on "plain size is monotonic in rows") could not walk it back:
-# WriteNative overflowed the block. Same class for bits(max_enc_len) bumps (the 160-char row).
+# Text segment sizing: a long all-unique run, one longer string (a length width bump), then a run
+# of duplicates, which is where a dictionary starts to pay.
 #
-# The shape: a long all-unique run sized near the block boundary, one longer string (length-width
-# bump), then a run of duplicates. Deterministic: single row group, ORDER BY. The window for the
-# unique count is wide (roughly 29k..36k for 12-char md5 values); 33000 sits in the middle.
-#
-# NearBlock is what has to catch this: its byte accumulator only sees the duplicate's ~2 selection
-# bytes, so it also watches bits(max_enc_len) and the all-unique flag for a change. Drop either of
-# those two terms and this test fails at CHECKPOINT.
+# Deterministic: single row group, ORDER BY. 33000 unique 12-char md5 values, a 160-char row, 1600
+# duplicates of one value.
 
 control substitution on
 
@@ -49,13 +40,13 @@ n	rows_match
 34601	t
 
 
-# the column did land in dict_fsst segments, so the sizing path under test is the one that ran
+# the column is stored with an fsst codec
 query
-SELECT count(*) > 0 AS has_dict_fsst
+SELECT bool_and(compression IN ('DICT_FSST', 'FSST')) AS fsst
   FROM pragma_storage_info('dfu_own.flip', include_segment_info=true)
-  WHERE column_name = 's' AND compression = 'DICT_FSST';
+  WHERE column_name = 's' AND segment_type = 'VARCHAR';
 ----
-has_dict_fsst
+fsst
 t
 
 

@@ -18,6 +18,8 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <vector>
+
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/count/constant.hpp"
 #include "iresearch/search/count/family.hpp"
@@ -210,18 +212,27 @@ class AllCount : public Root {
 
 class Sum : public Root {
  public:
-  Sum(Root::ptr lhs, Root::ptr rhs) noexcept
-    : _lhs{std::move(lhs)}, _rhs{std::move(rhs)} {}
+  explicit Sum(std::vector<Root::ptr> parts) noexcept
+    : _parts{std::move(parts)} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
-    return _lhs->Run(min, max) + _rhs->Run(min, max);
+    uint64_t count = 0;
+    for (auto& part : _parts) {
+      count += part->Run(min, max);
+    }
+    return count;
   }
 
-  uint64_t Finish() final { return _lhs->Finish() + _rhs->Finish(); }
+  uint64_t Finish() final {
+    uint64_t count = 0;
+    for (auto& part : _parts) {
+      count += part->Finish();
+    }
+    return count;
+  }
 
  private:
-  Root::ptr _lhs;
-  Root::ptr _rhs;
+  std::vector<Root::ptr> _parts;
 };
 
 }  // namespace
@@ -234,8 +245,16 @@ Root::ptr MakeTermCount(const detail::PostingClause& posting, bool partial) {
   return memory::make_managed<TermCount>(posting, partial);
 }
 
+Root::ptr MakeSum(std::vector<Root::ptr> parts) {
+  return memory::make_managed<Sum>(std::move(parts));
+}
+
 Root::ptr MakeSum(Root::ptr lhs, Root::ptr rhs) {
-  return memory::make_managed<Sum>(std::move(lhs), std::move(rhs));
+  std::vector<Root::ptr> parts;
+  parts.reserve(2);
+  parts.push_back(std::move(lhs));
+  parts.push_back(std::move(rhs));
+  return MakeSum(std::move(parts));
 }
 
 Root::ptr Family::MakePosting(const detail::PostingClause& posting,

@@ -151,7 +151,7 @@ void Clean(RuneSet& set, bool suffix) {
   } else {
     absl::c_sort(set);
   }
-  set.erase(std::unique(set.begin(), set.end()), set.end());
+  set.erase(std::ranges::unique(set).begin(), set.end());
 }
 
 RuneSet Cross(const RuneSet& x, const RuneSet& y, bool suffix) {
@@ -187,15 +187,7 @@ bstring Encode(const Runes& runes, byte_type boundary, bool bytes) {
       out += boundary;
       continue;
     }
-    if (bytes) {
-      out += static_cast<byte_type>(r);
-      continue;
-    }
-    char utf8[re2::UTFmax];
-    const auto rune = static_cast<re2::Rune>(r);
-    const int n = re2::runetochar(utf8, &rune);
-    out.append(reinterpret_cast<const byte_type*>(utf8),
-               static_cast<size_t>(n));
+    AppendRune(out, r, bytes);
   }
   return out;
 }
@@ -817,15 +809,7 @@ class LikeShape {
       if (IsSurrogate(rune)) {
         return false;
       }
-      auto& tail = tails.emplace_back();
-      if (_bytes) {
-        tail += static_cast<byte_type>(rune);
-        continue;
-      }
-      char utf8[re2::UTFmax];
-      const int n = re2::runetochar(utf8, &rune);
-      tail.append(reinterpret_cast<const byte_type*>(utf8),
-                  static_cast<size_t>(n));
+      AppendRune(tails.emplace_back(), rune, _bytes);
     }
     if (tails.size() == 1) {
       for (auto& spelling : spellings) {

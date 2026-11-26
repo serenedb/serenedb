@@ -1,0 +1,135 @@
+# A Top-N tightens its bound while the scan runs. A scan must not keep what it decided for a frame or a dictionary under an
+# earlier bound: one row group, three frames of 16,384 rows, one thread, so the bound moves at known rows.
+# v rises through the first frame, then falls from 40,000 in the second (all of it above the first frame) and from 50,000 in the
+# third: after the second frame's first vector nothing else of that frame can enter the Top-N. d holds 1,000 values per frame,
+# except that the first frame's later vectors reach 1,999: its second vector lies across the bound the first one left.
+
+statement ok
+SET profiling_renderer_settings = {'deterministic': true};
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+CREATE TABLE topn_bound (id INTEGER PRIMARY KEY,
+                         v BIGINT USING COMPRESSION bitpacking,
+                         d BIGINT USING COMPRESSION dict)
+  WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO topn_bound
+SELECT i,
+       CASE WHEN i < 16384 THEN i WHEN i < 32768 THEN 56384 - i ELSE 82768 - i END,
+       CASE WHEN i < 2048 THEN i % 1000 WHEN i < 16384 THEN (i - 2048) % 2000
+            WHEN i < 32768 THEN 5000 + (32767 - i) % 1000 ELSE 9000 + (49151 - i) % 1000 END
+FROM range(49152) t(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) topn_bound;
+
+
+query
+SELECT column_name, compression, count(*) AS segments, sum(count) AS rows
+FROM pragma_storage_info('topn_bound')
+WHERE column_name IN ('v', 'd') AND segment_type <> 'VALIDITY'
+GROUP BY ALL ORDER BY column_name;
+----
+column_name	compression	segments	rows
+d	DICT	1	49152
+v	BitPacking	1	49152
+
+
+query
+SELECT v FROM topn_bound ORDER BY v DESC LIMIT 1;
+----
+v
+50000
+
+
+query
+SELECT d FROM topn_bound ORDER BY d DESC LIMIT 1;
+----
+d
+9999
+
+
+# 16,384 rows of the first frame, then one vector of 2,048 from each of the other two
+query
+EXPLAIN ANALYZE SELECT v FROM topn_bound ORDER BY v DESC LIMIT 1;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TOP_N ─────────────────────────────────────╮
+│ Top: 1                                      │
+│ Order By: v DESC                            │
+│ 1 row                                   0µs │
+╰──────────────────────┒┎─────────────────────╯
+╭─ TABLE_SCAN ─────────┚┖─────────────────────╮
+│ Table: topn_bound                           │
+│ Projections: v                              │
+│                                             │
+├─ Index Filter Prepare ──────────────────────┤
+│                                             │
+│ Total: 0µs                                  │
+│ Snapshot: 0µs                               │
+│ Segments: 1 of 1                            │
+│                                             │
+├─ Column Filter ─────────────────────────────┤
+│                                             │
+│ ╭─ Dynamic Column ────────────────────────╮ │
+│ │ Field: v                                │ │
+│ │ Check: optional: Dynamic Filter (v > ?) │ │
+│ ╰─────────────────────────────────────────╯ │
+│                                             │
+├─────────────────────────────────────────────┤
+│ 20,480 rows                             0µs │
+╰─────────────────────────────────────────────╯
+
+
+# one vector of 2,048 rows from each frame, and the 1,000 rows of the first frame's second vector that are above 999
+query
+EXPLAIN ANALYZE SELECT d FROM topn_bound ORDER BY d DESC LIMIT 1;
+----
+QUERY PLAN
+╭─ Summary ───────────╮
+│ Total Time: 0.0000s │
+╰─────────────────────╯
+╭─ TOP_N ─────────────────────────────────────╮
+│ Top: 1                                      │
+│ Order By: d DESC                            │
+│ 1 row                                   0µs │
+╰──────────────────────┒┎─────────────────────╯
+╭─ TABLE_SCAN ─────────┚┖─────────────────────╮
+│ Table: topn_bound                           │
+│ Projections: d                              │
+│                                             │
+├─ Index Filter Prepare ──────────────────────┤
+│                                             │
+│ Total: 0µs                                  │
+│ Snapshot: 0µs                               │
+│ Segments: 1 of 1                            │
+│                                             │
+├─ Column Filter ─────────────────────────────┤
+│                                             │
+│ ╭─ Dynamic Column ────────────────────────╮ │
+│ │ Field: d                                │ │
+│ │ Check: optional: Dynamic Filter (d > ?) │ │
+│ ╰─────────────────────────────────────────╯ │
+│                                             │
+├─────────────────────────────────────────────┤
+│ 7,144 rows                              0µs │
+╰─────────────────────────────────────────────╯
+
+
+statement ok
+RESET threads
+
+
+statement ok
+RESET profiling_renderer_settings

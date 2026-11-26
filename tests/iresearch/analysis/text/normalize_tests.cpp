@@ -23,6 +23,7 @@
 
 #include <gtest/gtest.h>
 #include <stringzilla/utf8_norm/serial.h>
+#include <util/utf.h>
 #if defined(__x86_64__)
 #include <stringzilla/utf8_norm/haswell.h>
 #include <stringzilla/utf8_norm/icelake.h>
@@ -34,7 +35,6 @@
 #include <fstream>
 #include <iresearch/analysis/text/normalize/normalize.hpp>
 #include <iresearch/analysis/text/sz/stringzilla.hpp>
-#include <iresearch/utils/utf8_utils.hpp>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -99,9 +99,9 @@ std::vector<Case> LoadCases(std::vector<bool>& part1_cps) {
         if (column == 0 && in_part1) {
           part1_cps[cp] = true;
         }
-        irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
-        const auto len = irs::utf8_utils::FromChar32(cp, buf);
-        c.columns[column].append(reinterpret_cast<const char*>(buf), len);
+        const re2::Rune rune = cp;
+        char buf[re2::UTFmax];
+        c.columns[column].append(buf, re2::runetochar(buf, &rune));
       }
       ++column;
     }
@@ -158,9 +158,9 @@ TEST(norm_stringzilla_test, part1_unlisted_codepoints_are_normalization_inert) {
     if (part1_cps[cp] || (cp >= 0xD800 && cp <= 0xDFFF)) {
       continue;
     }
-    irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
-    const auto len = irs::utf8_utils::FromChar32(cp, buf);
-    const std::string_view text{reinterpret_cast<const char*>(buf), len};
+    const re2::Rune rune = cp;
+    char buf[re2::UTFmax];
+    const std::string_view text(buf, re2::runetochar(buf, &rune));
     for (const auto form : kForms) {
       if (!IsNormalized(text, form) || Normalize(text, form) != text) {
         ++failures;
@@ -219,9 +219,9 @@ void CheckQuickCheckEveryCodepoint() {
     if (cp >= 0xD800 && cp <= 0xDFFF) {
       continue;
     }
-    irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
-    const auto len = irs::utf8_utils::FromChar32(cp, buf);
-    const std::string_view c{reinterpret_cast<const char*>(buf), len};
+    const re2::Rune rune = cp;
+    char buf[re2::UTFmax];
+    const std::string_view c(buf, re2::runetochar(buf, &rune));
     const auto check = [&](std::string_view prefix, std::string_view suffix) {
       text.assign(prefix);
       text.append(c);

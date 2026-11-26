@@ -14,11 +14,11 @@ SET threads = 1;
 
 
 statement ok
-CREATE TABLE opt_db.public.t AS SELECT i FROM range(300000) r(i);
+CREATE TABLE opt_db.public.t AS SELECT i, 'row ' || i AS s FROM range(300000) r(i);
 
 
 statement ok
-CREATE TABLE plain_db.public.t AS SELECT i FROM range(300000) r(i);
+CREATE TABLE plain_db.public.t AS SELECT i, 'row ' || i AS s FROM range(300000) r(i);
 
 
 statement ok
@@ -47,12 +47,13 @@ opt_options	plain_options
 
 
 query
-SELECT (SELECT string_agg(DISTINCT compression, ',') FROM pragma_storage_info('opt_db.public.t') WHERE column_name = 'i') AS opt_codec,
-       (SELECT max(count) FROM pragma_storage_info('opt_db.public.t') WHERE column_name = 'i') AS opt_max_rows,
-       (SELECT string_agg(DISTINCT compression, ',') FROM pragma_storage_info('plain_db.public.t') WHERE column_name = 'i') AS plain_codec;
+SELECT (SELECT max(count) FROM pragma_storage_info('opt_db.public.t') WHERE column_name = 'i') AS opt_rows,
+       (SELECT max(count) FROM pragma_storage_info('plain_db.public.t') WHERE column_name = 'i') AS plain_rows,
+       (SELECT count(*) FROM pragma_storage_info('opt_db.public.t') WHERE column_name = 's' AND segment_type = 'VARCHAR')
+         > 4 * (SELECT count(*) FROM pragma_storage_info('plain_db.public.t') WHERE column_name = 's' AND segment_type = 'VARCHAR') AS opt_cuts_text_finer;
 ----
-opt_codec	opt_max_rows	plain_codec
-Uncompressed	2047	BitPacking
+opt_rows	plain_rows	opt_cuts_text_finer
+300000	122880	t
 
 
 statement error option "storage_version" not recognized

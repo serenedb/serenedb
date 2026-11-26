@@ -101,9 +101,6 @@ Type ParseType(simdjson::ondemand::object& object) noexcept;
 ///   "coordinates": [lon, lat]
 void ParsePoint(simdjson::ondemand::value json, S2LatLng& region);
 
-/// Convenience function to build a region from a GeoJson type.
-void ParseRegion(simdjson::ondemand::value json, ShapeContainer& region);
-
 template<bool Valid = true>
 void ParseRegion(simdjson::ondemand::value json, ShapeContainer& region,
                  std::vector<S2LatLng>& cache,

@@ -29,11 +29,13 @@
 #include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/memory_file_system.hpp>
 #include <duckdb/common/types/selection_vector.hpp>
+#include <iresearch/formats/column/codecs/registry.hpp>
 #include <iresearch/formats/column/col_reader.hpp>
 #include <iresearch/formats/column/col_writer.hpp>
 #include <iresearch/formats/column/column_reader.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <random>
 #include <string>
@@ -55,6 +57,7 @@ struct Shape {
   const char* name;
   size_t length;
   const char* codec;
+  uint64_t distinct = 0;
 };
 
 constexpr Shape kShapes[] = {
@@ -68,6 +71,23 @@ constexpr Shape kShapes[] = {
   {"text4096", 4096, "zstd"},
   {"text512", 512, "uncompressed"},
   {"text4096", 4096, "uncompressed"},
+  {"enum25", 0, "auto", 1000},
+  {"enum25", 0, "dict_fsst", 1000},
+  {"enum25", 0, "dict_lz4", 1000},
+  {"text64", 64, "fsst"},
+  {"text512", 512, "fsst"},
+  {"key25", 0, "fsst12"},
+  {"text512", 512, "fsst12"},
+  {"key25", 0, "fsst_plus"},
+  {"text512", 512, "fsst_plus"},
+  {"key25", 0, "onpair"},
+  {"text512", 512, "onpair"},
+  {"text64", 64, "onpair"},
+  {"text64", 64, "fsst_plus"},
+  {"text4096", 4096, "onpair"},
+  {"text4096", 4096, "fsst_plus"},
+  {"text512", 512, "zxc"},
+  {"text4096", 4096, "zxc"},
 };
 
 constexpr uint32_t kPercents[] = {1,  2,  5,  10, 20, 30, 40,
@@ -124,6 +144,13 @@ struct Column {
   uint64_t windows = 0;
 };
 
+uint32_t SegmentTarget() {
+  if (const char* e = std::getenv("SDB_BENCH_SEGMENT_TARGET")) {
+    return static_cast<uint32_t>(std::strtoul(e, nullptr, 10));
+  }
+  return irs::kDefaultColSegmentTarget;
+}
+
 std::unique_ptr<Column> Build(const Shape& shape) {
   auto c = std::make_unique<Column>();
   const auto avg = shape.length ? shape.length : 25;
@@ -136,14 +163,18 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   std::mt19937_64 rng{11};
   {
     irs::FileTracker tracker{c->fs, kRoot, kSegName};
-    irs::ColWriter writer{CsDb(), tracker};
-    auto& cw = writer.OpenColumn(kField, duckdb::LogicalType::VARCHAR);
+    irs::ColWriter writer{CsDb(), tracker, irs::WriteTier::Merge};
+    irs::ColumnWriterOptions options;
+    options.codec_params.segment_target = SegmentTarget();
+    auto& cw = writer.OpenColumn(kField, duckdb::LogicalType::VARCHAR, options);
     for (uint64_t pos = 0; pos < c->windows * kWindow; pos += kWindow) {
       duckdb::Vector v{duckdb::LogicalType::VARCHAR, kWindow};
       auto* d = duckdb::FlatVector::GetDataMutable<duckdb::string_t>(v);
       for (uint64_t k = 0; k < kWindow; ++k) {
         d[k] = duckdb::StringVector::AddString(
-          v, shape.length ? words.Text(rng, shape.length) : Key(pos + k));
+          v, shape.length
+               ? words.Text(rng, shape.length)
+               : Key(shape.distinct ? (pos + k) % shape.distinct : pos + k));
       }
       duckdb::FlatVector::SetSize(v, kWindow);
       cw.Append(pos, v, kWindow);
@@ -163,8 +194,7 @@ std::unique_ptr<Column> Build(const Shape& shape) {
   std::fprintf(
     stderr, "shape %-9s %-4s rows=%llu blocks=%zu codec=%s\n", shape.name,
     shape.codec, static_cast<unsigned long long>(c->windows * kWindow),
-    blocks.size(),
-    duckdb::EnumUtil::ToChars<duckdb::CompressionType>(blocks[0].codec->type));
+    blocks.size(), magic_enum::enum_name(blocks[0].codec->type).data());
   return c;
 }
 

@@ -32,7 +32,6 @@
 
 #include "iresearch/utils/application_exit.hpp"
 #include "iresearch/utils/down_cast.hpp"
-#include "iresearch/utils/geo/geo_params.hpp"
 #include "iresearch/utils/geo/s2/multi_point_region.hpp"
 #include "iresearch/utils/geo/s2/multi_polyline_region.hpp"
 #include "iresearch/utils/log.hpp"
@@ -266,8 +265,8 @@ bool ShapeContainer::intersects(const ShapeContainer& other) const {
 
 void ShapeContainer::reset(std::unique_ptr<S2Region> data, Type type,
                            coding::Options options) noexcept {
-  SDB_ASSERT((data == nullptr) == (type == Type::Empty));
-  SDB_ASSERT(data == nullptr || type != Type::S2Point ||
+  SDB_ASSERT(!data == (type == Type::Empty));
+  SDB_ASSERT(!data || type != Type::S2Point ||
              S2::IsUnitLength(utils::downCast<S2PointRegion>(*data).point()));
   _data = std::move(data);
   _type = type;
@@ -345,11 +344,6 @@ bool ShapeContainer::equals(const ShapeContainer& other) const {
     }
   }
   return false;
-}
-
-double ShapeContainer::distanceFromCentroid(
-  const S2Point& other) const noexcept {
-  return centroid().Angle(other) * geo::kEarthRadiusInMeters;
 }
 
 void ShapeContainer::Encode(Encoder& encoder, coding::Options options) const {

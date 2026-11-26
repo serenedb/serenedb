@@ -130,7 +130,9 @@ class MockPostingsField final : public irs::TermReader {
   void ReadDocs(const irs::PostingMeta&, Acceptor) const final {}
   irs::PostingMeta Lookup(irs::bytes_view) const final { return {}; }
   void LookupBatch(size_t, TermAt, FoundTerm) const final {}
-  void VisitRange(irs::bytes_view, irs::bytes_view, RangeVisitor) const final {}
+  bool CoverRange(irs::bytes_view, irs::bytes_view, TermVisitor) const final {
+    return false;
+  }
   const irs::FieldMeta& meta() const final { return _meta; }
   size_t size() const final { return 1; }
   uint64_t docs_count() const final { return _docs_count; }
@@ -193,8 +195,13 @@ class SkipList {
 SkipList SkipList::Make(tests::FormatTestCase::TestPostings& it,
                         irs::doc_id_t skip_0, irs::doc_id_t skip_n,
                         irs::doc_id_t count) {
-  size_t num_levels =
-    skip_0 < count ? 1 + irs::math::Log(count / skip_0, skip_n) : 0;
+  size_t num_levels = 0;
+  if (skip_0 < count) {
+    num_levels = 1;
+    for (auto n = count / skip_0; n >= skip_n; n /= skip_n) {
+      ++num_levels;
+    }
+  }
   EXPECT_GT(num_levels, 0);
 
   std::vector<Level> skip_list;
@@ -397,10 +404,7 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
 
   {
     EXPECT_EQ(posting_meta.docs_count, read_meta.docs_count);
-    EXPECT_EQ(posting_meta.Inline(), read_meta.Inline());
-    if (posting_meta.inline_size == 0) {
-      EXPECT_EQ(posting_meta.doc_start, read_meta.doc_start);
-    }
+    EXPECT_EQ(posting_meta.doc_start, read_meta.doc_start);
     EXPECT_EQ(posting_meta.pos_start, read_meta.pos_start);
     EXPECT_EQ(posting_meta.pay_start, read_meta.pay_start);
     EXPECT_EQ(posting_meta.pos_offset, read_meta.pos_offset);
@@ -736,15 +740,6 @@ INSTANTIATE_TEST_SUITE_P(Format15Test, FormatTestCase, kTestValues,
 
 TEST_P(Format15TestCase, SingletonPostings) {
   static constexpr size_t kCount = 1;
-  ASSERT_TRUE(kCount < GetPostingsBlockSize());
-
-  const auto docs = GenerateDocs(kCount, 50.f, 14.f, 1);
-
-  AssertStressPostings(docs);
-}
-
-TEST_P(Format15TestCase, InlinePostings) {
-  static constexpr size_t kCount = 5;
   ASSERT_TRUE(kCount < GetPostingsBlockSize());
 
   const auto docs = GenerateDocs(kCount, 50.f, 14.f, 1);

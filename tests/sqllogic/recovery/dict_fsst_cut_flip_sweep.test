@@ -1,15 +1,13 @@
-# dict_fsst cut sizing: losing all-unique at many different distances from the block.
+# Text segment sizing: losing all-unique at many different distances from a segment's end.
 #
-# While every row in a segment is unique the plain layout is FSST_ONLY, which stores no selection
-# buffer -- row i IS entry i. The first row that adds no entry forces DICT_FSST, which must
-# materialise a bitpacked row->entry index for every row already in the segment: tens of KB
-# appearing from a row that contributes about 2 bytes to NearBlock's growth accumulator. Two kinds
-# of row do that, and both are covered here: a DUPLICATE and a NULL.
+# While every row of a segment is unique a dictionary gains nothing; the first row that adds no
+# entry is where a dictionary starts to pay, and where DuckDB's dict_fsst has to add a row -> entry
+# index for every row already in the segment. Two kinds of row do that, and both are covered here:
+# a DUPLICATE and a NULL.
 #
-# dict_fsst_unique_flip_block_overflow.test pins one unique count (33,000). This sweeps the count
-# across the whole window where the flip can land near a block boundary, so the coverage does not
-# depend on one hand-tuned constant staying valid -- if the block size or the encoding changes, some
-# column of this sweep still lands on the boundary.
+# dict_fsst_unique_flip_block_overflow.test pins one unique count (33,000). This sweeps the count,
+# so the coverage does not depend on one hand-tuned constant staying valid -- if the block size or
+# the encoding changes, some column of this sweep still lands on a boundary.
 
 control substitution on
 
@@ -107,12 +105,12 @@ own_nulls	own_one_null	nat_nulls
 1600	1	1600
 
 
-# the sweep really did land in dict_fsst on both storage versions
+# the sweep really did land in an fsst codec in the SereneDB database and in dict_fsst natively
 query
-SELECT (SELECT count(*) > 0 FROM pragma_storage_info('dfs.dup33', include_segment_info=true) WHERE column_name='s' AND compression='DICT_FSST') AS own_dict_fsst,
+SELECT (SELECT bool_and(compression IN ('DICT_FSST', 'FSST')) FROM pragma_storage_info('dfs.dup33', include_segment_info=true) WHERE column_name='s' AND segment_type='VARCHAR') AS own_fsst,
        (SELECT count(*) > 0 FROM pragma_storage_info('dfsn.dup33', include_segment_info=true) WHERE column_name='s' AND compression='DICT_FSST') AS nat_dict_fsst;
 ----
-own_dict_fsst	nat_dict_fsst
+own_fsst	nat_dict_fsst
 t	t
 
 

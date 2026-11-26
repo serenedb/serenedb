@@ -20,20 +20,21 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
+#include <absl/synchronization/mutex.h>
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/byte_set.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "re2/prog.h"
@@ -48,12 +49,11 @@ class RegexpAcceptor {
   static constexpr bool kMayBeUnknown = true;
 
   static constexpr uint32_t kMaxLabel = 255;
-  static constexpr size_t kMaskWords = bitset::bits_to_words(kMaxLabel + 1);
 
-  using Mask = std::array<bitset::word_t, kMaskWords>;
+  using Mask = ByteSet;
 
   struct Row {
-    Mask loop{};
+    Mask loop;
     const int* set{nullptr};
     uint32_t set_size{0};
     uint32_t context{0};
@@ -114,13 +114,15 @@ class RegexpAcceptor {
   RegexpAcceptor& operator=(const RegexpAcceptor&) = delete;
   ~RegexpAcceptor();
 
-  bool ok() const noexcept { return _start != nullptr && !_start->dead; }
+  bool ok() const noexcept { return _start && !_start->dead; }
 
   std::string_view Error() const noexcept { return _error; }
 
   State Start() const noexcept { return _start; }
 
   bytes_view LowerBound() const noexcept { return _lower; }
+
+  bool MatchesByLiteral() const noexcept { return _contained; }
 
   std::span<const bstring> RequiredSuffixes() const noexcept {
     return _suffixes;
@@ -129,6 +131,8 @@ class RegexpAcceptor {
   std::span<const ExemptKey> ExemptKeys() const noexcept { return _exempt; }
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
+
+  const KeyBytes& Bytes() const noexcept { return _bytes; }
 
   bool Finite() const noexcept { return _finite; }
 
@@ -144,8 +148,8 @@ class RegexpAcceptor {
 
   State Step(State from, byte_type label) const {
     const auto c = _bytemap[label];
-    if (const auto* next = from->Next()[c].load(std::memory_order_acquire);
-        next != nullptr) [[likely]] {
+    if (const auto* next = from->Next()[c].load(std::memory_order_acquire))
+      [[likely]] {
       return next;
     }
     return StepSlow(from, c);
@@ -157,20 +161,20 @@ class RegexpAcceptor {
   }
 
   static size_t Stay(const Mask& loop, const byte_type* p, size_t n) noexcept {
-    size_t i = 0;
-    for (; i + kRunChunk <= n; i += kRunChunk) {
-      bitset::word_t moved = 0;
-      for (size_t j = 0; j != kRunChunk; ++j) {
-        const size_t label = p[i + j];
-        moved |= ~(loop[bitset::word(label)] >> bitset::bit(label));
-      }
-      if ((moved & 1) != 0) {
-        break;
+    constexpr size_t kBlock = 16;
+    constexpr uint32_t kAll = (uint32_t{1} << kBlock) - 1;
+    if (n == 0 || !loop.Contains(p[0])) {
+      return 0;
+    }
+    size_t i = 1;
+    for (; i + kBlock <= n; i += kBlock) {
+      const auto stays = ClassifyByteSet16(p + i, loop);
+      if (stays != kAll) {
+        return i + static_cast<size_t>(std::countr_one(stays));
       }
     }
     for (; i != n; ++i) {
-      const size_t label = p[i];
-      if (((loop[bitset::word(label)] >> bitset::bit(label)) & 1) == 0) {
+      if (!loop.Contains(p[i])) {
         return i;
       }
     }
@@ -194,13 +198,7 @@ class RegexpAcceptor {
 
   size_t MemoryUsage() const;
 
-#ifdef SDB_DEV
-  static size_t Builds() noexcept;
-  size_t Rows() const;
-#endif
-
  private:
-  static constexpr size_t kRunChunk = 8;
   static constexpr size_t kMaxBoundLength = 32;
   static constexpr size_t kFloodRows = 256;
   static constexpr size_t kChunkBytes = size_t{64} << 10;
@@ -231,6 +229,7 @@ class RegexpAcceptor {
   }
 
   State StepSlow(State from, uint8_t c) const;
+  ByteSet DeadBytesLocked() const;
   void Build(Row* row) const;
   void BuildLocked(Row* row) const;
   State InternLocked(const std::vector<int>& queue, uint32_t context) const;
@@ -253,12 +252,15 @@ class RegexpAcceptor {
   std::vector<ExemptKey> _exempt;
   bstring _infix;
   std::vector<bstring> _literals;
+  KeyBytes _bytes;
   std::string _error;
   bool _finite{false};
+  bool _text{true};
+  bool _contained{false};
   size_t _max_dfa_mem{kDefaultMaxDfaMem};
 
-  mutable std::mutex _mutex;
-  mutable absl::flat_hash_map<std::string_view, Row*> _rows;
+  mutable absl::Mutex _mutex;
+  mutable containers::FlatHashMap<std::string_view, Row*> _rows;
   mutable std::vector<std::unique_ptr<std::byte[]>> _chunks;
   mutable size_t _chunk_used{kChunkBytes};
   mutable size_t _chunk_size{kChunkBytes};

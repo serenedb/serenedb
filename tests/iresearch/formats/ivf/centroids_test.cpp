@@ -117,7 +117,7 @@ void WriteVectorColumn(const ::tests::IndexDir& dir,
   const uint64_t n = data.size() / d;
   const auto atype = duckdb::LogicalType::ARRAY(duckdb::LogicalType::FLOAT, d);
   ColWriter w{db, dir.Tracker("seg")};
-  auto& cw = w.OpenColumn(id, atype, /*skip_validity=*/false, /*rg_size=*/4096);
+  auto& cw = w.OpenColumn(id, atype, {.row_group_size = 4096});
   uint64_t pos = 0;
   while (pos < n) {
     const auto take = std::min<duckdb::idx_t>(n - pos, STANDARD_VECTOR_SIZE);

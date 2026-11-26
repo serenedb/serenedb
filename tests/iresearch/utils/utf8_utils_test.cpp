@@ -22,10 +22,10 @@
 
 #include <absl/algorithm/container.h>
 
-#include <iresearch/utils/std.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/utf8_character_utils.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
+#include <iterator>
 
 #include "tests_shared.hpp"
 
@@ -76,14 +76,14 @@ TEST(utf8_utils_test, test) {
 
     {
       std::vector<uint32_t> actual;
-      irs::utf8_utils::ToUTF32<false>(str, irs::irstd::BackEmplacer(actual));
+      irs::utf8_utils::ToUTF32<false>(str, std::back_inserter(actual));
       ASSERT_EQ(expected, actual);
     }
 
     {
       std::vector<uint32_t> actual;
       ASSERT_TRUE(
-        irs::utf8_utils::ToUTF32<true>(str, irs::irstd::BackEmplacer(actual)));
+        irs::utf8_utils::ToUTF32<true>(str, std::back_inserter(actual)));
       ASSERT_EQ(expected, actual);
     }
   }
@@ -135,14 +135,14 @@ TEST(utf8_utils_test, test) {
 
     {
       std::vector<uint32_t> actual;
-      irs::utf8_utils::ToUTF32<false>(str, irs::irstd::BackEmplacer(actual));
+      irs::utf8_utils::ToUTF32<false>(str, std::back_inserter(actual));
       ASSERT_EQ(expected, actual);
     }
 
     {
       std::vector<uint32_t> actual;
       ASSERT_TRUE(
-        irs::utf8_utils::ToUTF32<true>(str, irs::irstd::BackEmplacer(actual)));
+        irs::utf8_utils::ToUTF32<true>(str, std::back_inserter(actual)));
       ASSERT_EQ(expected, actual);
     }
 
@@ -203,14 +203,14 @@ TEST(utf8_utils_test, test) {
 
     {
       std::vector<uint32_t> actual;
-      irs::utf8_utils::ToUTF32<false>(str, irs::irstd::BackEmplacer(actual));
+      irs::utf8_utils::ToUTF32<false>(str, std::back_inserter(actual));
       ASSERT_EQ(expected, actual);
     }
 
     {
       std::vector<uint32_t> actual;
       ASSERT_TRUE(
-        irs::utf8_utils::ToUTF32<true>(str, irs::irstd::BackEmplacer(actual)));
+        irs::utf8_utils::ToUTF32<true>(str, std::back_inserter(actual)));
       ASSERT_EQ(expected, actual);
     }
   }
@@ -264,14 +264,14 @@ TEST(utf8_utils_test, test) {
 
     {
       std::vector<uint32_t> actual;
-      irs::utf8_utils::ToUTF32<false>(str, irs::irstd::BackEmplacer(actual));
+      irs::utf8_utils::ToUTF32<false>(str, std::back_inserter(actual));
       ASSERT_EQ(expected, actual);
     }
 
     {
       std::vector<uint32_t> actual;
       ASSERT_TRUE(
-        irs::utf8_utils::ToUTF32<true>(str, irs::irstd::BackEmplacer(actual)));
+        irs::utf8_utils::ToUTF32<true>(str, std::back_inserter(actual)));
       ASSERT_EQ(expected, actual);
     }
   }
@@ -376,44 +376,6 @@ TEST(utf8_utils_test, LengthFromChar32) {
   // Intentionally don't handle this in `cp_length`
   ASSERT_EQ(4,
             irs::utf8_utils::LengthFromChar32(irs::utf8_utils::kInvalidChar32));
-}
-
-TEST(utf8_utils_test, FromChar32) {
-  irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
-
-  // 1 byte
-  {
-    const uint32_t cp = 0x46;
-    ASSERT_EQ(1, irs::utf8_utils::FromChar32(cp, buf));
-    ASSERT_EQ(buf[0], cp);
-  }
-
-  // 2 bytes
-  {
-    const uint32_t cp = 0xA9;
-    ASSERT_EQ(2, irs::utf8_utils::FromChar32(cp, buf));
-    ASSERT_EQ(buf[0], 0xC2);
-    ASSERT_EQ(buf[1], 0xA9);
-  }
-
-  // 3 bytes
-  {
-    const uint32_t cp = 0x08F1;
-    ASSERT_EQ(3, irs::utf8_utils::FromChar32(cp, buf));
-    ASSERT_EQ(buf[0], 0xE0);
-    ASSERT_EQ(buf[1], 0xA3);
-    ASSERT_EQ(buf[2], 0xB1);
-  }
-
-  // 4 bytes
-  {
-    const uint32_t cp = 0x1F996;
-    ASSERT_EQ(4, irs::utf8_utils::FromChar32(cp, buf));
-    ASSERT_EQ(buf[0], 0xF0);
-    ASSERT_EQ(buf[1], 0x9F);
-    ASSERT_EQ(buf[2], 0xA6);
-    ASSERT_EQ(buf[3], 0x96);
-  }
 }
 
 TEST(utf8_utils_test, SimpleCaseStagesMatchTables) {

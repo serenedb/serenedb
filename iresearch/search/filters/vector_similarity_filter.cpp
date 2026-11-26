@@ -33,7 +33,8 @@ QueryBuilder::ptr ByVectorSimilarity::PrepareSegment(
   if (!ann) {
     return PrepareExactVectors(
       segment, ctx, field_id(), opts.query, opts.ann_id, opts.metric,
-      opts.inner, std::numeric_limits<float>::max(), false, GetBoost());
+      opts.inner, opts.index_part, opts.has_column_part,
+      std::numeric_limits<float>::max(), false, GetBoost());
   }
   auto sub_ctx = ctx;
   sub_ctx.Boost(GetBoost());

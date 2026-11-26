@@ -50,12 +50,15 @@ std::vector<float> NormalizedQuery(std::span<const float> query,
 
 }  // namespace
 
-std::shared_ptr<const HnswData> HnswIndex::Load() const {
+std::shared_ptr<const HnswData> HnswIndex::Load(ParallelFor parallel) const {
   _load.Call([&] {
     duckdb::InputFileReader in{_file};
     in.Seek(_meta.offset);
     auto data = std::make_shared<HnswData>();
-    data->graph = HnswGraph::Deserialize(in);
+    data->graph =
+      _meta.graph_compression.Packed()
+        ? HnswGraph::DeserializePacked(in, _meta.graph_compression, parallel)
+        : HnswGraph::Deserialize(in);
     const auto read_floats = [&](auto& out, size_t count) {
       out.resize(count);
       if (count != 0) {
@@ -138,7 +141,7 @@ QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
   if (Empty()) {
     return QueryBuilder::Empty();
   }
-  auto data = Load();
+  auto data = Load(ctx.parallel);
   if (!data || data->graph.Empty()) {
     return QueryBuilder::Empty();
   }
@@ -146,28 +149,29 @@ QueryBuilder::ptr HnswIndex::PrepareSearch(const SubReader& segment,
   if (!PrepareInnerFilter(opts.inner, segment, ctx, inner)) {
     return QueryBuilder::Empty();
   }
-  QueryBuilder::ptr index_only;
-  if (opts.dual) {
+  QueryBuilder::ptr index_part;
+  if (opts.has_column_part) {
     SDB_ASSERT(limits.ef != 0);
     const bool prepared =
-      PrepareInnerFilter(opts.index_only, segment, ctx, index_only);
+      PrepareInnerFilter(opts.index_part, segment, ctx, index_part);
     SDB_ASSERT(prepared);
   }
   auto built = memory::make_tracked<HnswQuery>(
     ctx.memory, segment, std::move(data), opts, _meta.header.record_size,
-    limits, ctx.boost, std::move(inner), std::move(index_only), cache);
+    limits, ctx.boost, std::move(inner), std::move(index_part), cache);
   built->SetStats(ctx.Record());
   return built;
 }
 
-AnnExactCodes HnswIndex::PrepareExact(std::span<const float> query,
+AnnExactCodes HnswIndex::PrepareExact(const PrepareContext& ctx,
+                                      std::span<const float> query,
                                       VectorMetric metric) const {
   if (Empty() || query.size() != _meta.header.d ||
       (metric == VectorMetric::Cosine) !=
         (_meta.header.metric == VectorMetric::Cosine)) {
     return {};
   }
-  auto data = Load();
+  auto data = Load(ctx.parallel);
   if (!data || !data->stats || data->codes.empty()) {
     return {};
   }

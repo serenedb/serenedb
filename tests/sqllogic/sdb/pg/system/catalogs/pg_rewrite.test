@@ -108,6 +108,16 @@ rubick_rw_steal	i
 
 
 query
+SELECT count(*) = count(DISTINCT r.oid) AS distinct_rules,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = r.oid)
+                          OR EXISTS (SELECT 1 FROM pg_type t WHERE t.oid = r.oid)) AS shared
+FROM pg_rewrite r;
+----
+distinct_rules	shared
+t	0
+
+
+query
 SELECT count(*) AS n FROM pg_rules WHERE tablename LIKE 'rubick_rw%';
 ----
 n

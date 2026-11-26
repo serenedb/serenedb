@@ -1,0 +1,99 @@
+statement ok
+SET TimeZone = 'UTC'
+
+statement ok
+PREPARE pssr_tz_const AS SELECT '2024-01-01 23:30:00+00'::timestamptz::date AS d, extract(hour FROM '2024-01-01 23:30:00+00'::timestamptz) AS h
+
+statement ok
+CREATE TABLE pssr_tz (ts TIMESTAMPTZ)
+
+statement ok
+INSERT INTO pssr_tz VALUES ('2024-01-01 23:30:00+00')
+
+statement ok
+PREPARE pssr_tz_col AS SELECT ts::date AS d, ts::text AS t FROM pssr_tz
+
+query
+EXECUTE pssr_tz_const
+----
+d	h
+2024-01-01	23
+
+query
+EXECUTE pssr_tz_col
+----
+d	t
+2024-01-01	2024-01-01 23:30:00+00
+
+statement ok
+SET TimeZone = 'Asia/Tokyo'
+
+query
+EXECUTE pssr_tz_const
+----
+d	h
+2024-01-02	8
+
+query
+EXECUTE pssr_tz_col
+----
+d	t
+2024-01-02	2024-01-02 08:30:00+09
+
+statement ok
+RESET TimeZone
+
+statement ok
+CREATE TABLE pssr_order (x INT, s TEXT)
+
+statement ok
+INSERT INTO pssr_order VALUES (1, 'B'), (NULL, 'a')
+
+statement ok
+PREPARE pssr_nulls AS SELECT x FROM pssr_order ORDER BY x
+
+query
+EXECUTE pssr_nulls
+----
+x
+1
+NULL
+
+statement ok
+SET default_null_order = 'nulls_first'
+
+query
+EXECUTE pssr_nulls
+----
+x
+NULL
+1
+
+statement ok
+RESET default_null_order
+
+statement ok
+PREPARE pssr_collation AS SELECT s FROM pssr_order ORDER BY s
+
+query
+EXECUTE pssr_collation
+----
+s
+B
+a
+
+statement ok
+SET default_collation = 'nocase'
+
+query
+EXECUTE pssr_collation
+----
+s
+a
+B
+
+statement ok
+RESET default_collation
+
+statement ok
+DEALLOCATE ALL

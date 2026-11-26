@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -33,6 +31,7 @@
 #include <string_view>
 #include <vector>
 
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
@@ -99,7 +98,7 @@ class PatternCache {
 
   mutable std::mutex _mutex;
   Entries _entries;
-  absl::flat_hash_map<std::string_view, Entries::iterator> _index;
+  containers::FlatHashMap<std::string_view, Entries::iterator> _index;
   std::atomic_size_t _capacity{kDefaultCapacity};
   size_t _bytes{0};
 };

@@ -24,6 +24,7 @@
 #include <duckdb/common/constants.hpp>
 #include <duckdb/function/macro_function.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/pg/errcodes.hpp>
 #include <string>
 #include <string_view>
 
@@ -38,8 +39,8 @@ void UnpackSqlState(T& buf, int sql_state) {
     SDB_ASSERT(std::size(buf) >= kSqlStateSize);
   }
 
-  for (size_t i = 0; i < 5; i++) {
-    buf[i] = (sql_state & 0x3F) + '0';
+  for (size_t i = 0; i < kSqlStateSize; i++) {
+    buf[i] = PGUNSIXBIT(sql_state);
     sql_state >>= 6;
   }
 }

@@ -6,10 +6,11 @@ control substitution on
 # This section completes the term_dict::Validate coverage matrix for the
 # implicit (opclass-less) role. Three buckets:
 #
-#   (1) LIST<unsupported> / ARRAY<unsupported> rejections that g16 didn't
-#       reach: UBIGINT, UHUGEINT, BIT, ENUM, STRUCT(a INTEGER),
-#       MAP(VARCHAR, INTEGER), VARIANT, UUID, INTERVAL, GEOMETRY('OGC:CRS84').
-#       The GEOMETRY-list/array cases are also pinned by g7_gl / g7_ga; we
+#   (1) LIST / ARRAY of the leaves g16 didn't reach: UBIGINT, UHUGEINT and
+#       UUID are accepted; BIT, ENUM, STRUCT(a INTEGER),
+#       MAP(VARCHAR, INTEGER), VARIANT, INTERVAL and GEOMETRY('OGC:CRS84')
+#       are rejected. The GEOMETRY-list/array cases are also pinned by
+#       g7_gl / g7_ga; we
 #       repeat them here under the g19_ prefix for self-contained matrix
 #       completeness.
 #
@@ -30,10 +31,9 @@ control substitution on
 #       the outer LIST is rejected. ([[pk]] is the literal short form
 #       DuckDB lowers to main.list_value(main.list_value(pk)).)
 #
-# Storage strategy: term_dict-rejected columns (UBIGINT / UHUGEINT /
-# BIT / ENUM / STRUCT / MAP / VARIANT / UUID[] / INTERVAL[] / GEOMETRY[])
-# never receive INSERTs -- CREATE INDEX rejection runs before any row store
-# path. Rocksdb-incompatible accept-paths (TIMESTAMPTZ / TIME / TIMESTAMP_MS
+# Storage strategy: the bucket (1) and (2) columns never receive INSERTs --
+# CREATE INDEX either rejects them before any row store path or indexes an
+# empty column. Rocksdb-incompatible accept-paths (TIMESTAMPTZ / TIME / TIMESTAMP_MS
 # / TIMESTAMP_NS LIST, TIMETZ / TIME_NS scalar expression) are routed
 # through a parquet-backed view so the rocksdb row store is bypassed --
 # same recipe as m_unsup, g6_v_unsup, g11_a_v / g11_d_v / g11_e_v.
@@ -66,22 +66,16 @@ CREATE TABLE g19_t(pk           INTEGER PRIMARY KEY,
 
 
 # ----------------------------------------------------------------------------
-# (a) LIST<unsupported-leaf> implicit rejections. The container branch of
-# term_dict::Validate (inverted_index.cpp:257-268) inspects the child kind;
-# every leaf here classifies as Unsupported.
+# (a) LIST<leaf> implicit indexes. The container branch of
+# term_dict::Validate inspects the child kind: UBIGINT and UHUGEINT are
+# numbers, every other leaf here classifies as Unsupported.
 # ----------------------------------------------------------------------------
 
-statement error
+statement ok
 CREATE INDEX g19_imp_list_ubig ON g19_t USING inverted(pk, list_ubig);
-----
-db error: ERROR: Column 'list_ubig' has unsupported type UBIGINT[] and can not be indexed
 
-
-statement error
+statement ok
 CREATE INDEX g19_imp_list_uhuge ON g19_t USING inverted(pk, list_uhuge);
-----
-db error: ERROR: Column 'list_uhuge' has unsupported type UHUGEINT[] and can not be indexed
-
 
 statement error
 CREATE INDEX g19_imp_list_bit ON g19_t USING inverted(pk, list_bit);
@@ -114,28 +108,19 @@ db error: ERROR: Column 'list_variant' has unsupported type VARIANT[] and can no
 
 
 # ----------------------------------------------------------------------------
-# (b) ARRAY<unsupported-leaf> implicit rejections. Fixed-size arrays render
-# as "<child>[N]" (types.cpp:474); the container branch path is the same as
-# LIST.
+# (b) ARRAY<leaf> implicit indexes. Fixed-size arrays take the same
+# container branch path as LIST: UBIGINT, UHUGEINT and UUID are numbers,
+# INTERVAL is Unsupported.
 # ----------------------------------------------------------------------------
 
-statement error
+statement ok
 CREATE INDEX g19_imp_arr_ubig ON g19_t USING inverted(pk, arr_ubig);
-----
-db error: ERROR: Column 'arr_ubig' has unsupported type UBIGINT[3] and can not be indexed
 
-
-statement error
+statement ok
 CREATE INDEX g19_imp_arr_uhuge ON g19_t USING inverted(pk, arr_uhuge);
-----
-db error: ERROR: Column 'arr_uhuge' has unsupported type UHUGEINT[3] and can not be indexed
 
-
-statement error
+statement ok
 CREATE INDEX g19_imp_arr_uuid ON g19_t USING inverted(pk, arr_uuid);
-----
-db error: ERROR: Column 'arr_uuid' has unsupported type UUID[3] and can not be indexed
-
 
 statement error
 CREATE INDEX g19_imp_arr_intv ON g19_t USING inverted(pk, arr_intv);

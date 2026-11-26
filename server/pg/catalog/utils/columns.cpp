@@ -245,15 +245,6 @@ std::string ExpressionText(const duckdb::ParsedExpression& expression) {
   return copy->ToString();
 }
 
-const duckdb::TableCatalogEntry& SiblingTable(
-  duckdb::CatalogTransaction transaction, const duckdb::CatalogEntry& member,
-  const duckdb::Identifier& name) {
-  auto entry = FindMember(transaction, member.ParentSchema(transaction),
-                          duckdb::CatalogType::TABLE_ENTRY, name);
-  SDB_ASSERT(entry && entry->type == duckdb::CatalogType::TABLE_ENTRY);
-  return entry->Cast<duckdb::TableCatalogEntry>();
-}
-
 const duckdb::TableCatalogEntry& TriggerTable(
   duckdb::CatalogTransaction transaction,
   const duckdb::TriggerCatalogEntry& trigger) {

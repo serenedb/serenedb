@@ -21,12 +21,13 @@
 /// @author Vasiliy Nabatchikov
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <util/utf.h>
+
 #include <iresearch/analysis/normalizing_tokenizer.hpp>
 #include <iresearch/analysis/token_attributes.hpp>
 #include <iresearch/analysis/token_batch.hpp>
 #include <iresearch/analysis/token_sinks.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
-#include <iresearch/utils/utf8_utils.hpp>
 #include <random>
 #include <text_casing.hpp>
 #include <text_normalizer.hpp>
@@ -567,10 +568,9 @@ namespace {
 
 std::string EncodeCps(const std::vector<uint32_t>& cps) {
   std::string out;
-  irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
-  for (const auto cp : cps) {
-    out.append(reinterpret_cast<const char*>(buf),
-               irs::utf8_utils::FromChar32(cp, buf));
+  char buf[re2::UTFmax];
+  for (const re2::Rune cp : cps) {
+    out.append(buf, re2::runetochar(buf, &cp));
   }
   return out;
 }

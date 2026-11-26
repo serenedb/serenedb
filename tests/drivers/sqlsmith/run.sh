@@ -74,15 +74,22 @@ SEED_LOG="$WORK/seed.log"
 # seed (SEED + i) so reproducing a specific instance only needs that seed.
 declare -a INSTANCE_SEEDS=()
 declare -a INSTANCE_LOGS=()
+declare -a INSTANCE_QUERIES=()
 for ((i = 0; i < PARALLEL; i++)); do
 	INSTANCE_SEEDS+=("$((SEED + i))")
 	INSTANCE_LOGS+=("$WORK/sqlsmith-${i}.log")
+	INSTANCE_QUERIES+=("$WORK/sqlsmith-${i}.sql")
 done
 TOTAL_BUDGET=$((PARALLEL * MAX_QUERIES))
+QUERY_TAIL_BYTES=1048576
 
 DSN="host=$HOST port=$PORT dbname=$DB user=$DB_USER"
 
-echo "[sqlsmith] max-queries=$MAX_QUERIES parallel=$PARALLEL base-seed=$SEED dsn='$DSN'"
+VERSION=$(sqlsmith --version 2>&1 | head -n 1)
+PACKAGE=$(dpkg-query -W -f='${Version}' sqlsmith 2>/dev/null)
+VERSION="${VERSION:-sqlsmith}${PACKAGE:+ (package $PACKAGE)}"
+
+echo "[sqlsmith] $VERSION max-queries=$MAX_QUERIES parallel=$PARALLEL base-seed=$SEED dsn='$DSN'"
 
 # Best-effort schema bootstrap. Don't abort the fuzz run on a partial schema:
 # missing types/features in serened mean fewer relations to fuzz against, not
@@ -123,14 +130,19 @@ fi
 
 start=$(date +%s)
 declare -a PIDS=()
+declare -a TAILS=()
 for ((i = 0; i < PARALLEL; i++)); do
+	mkfifo "$WORK/queries-${i}"
+	tail -c "$QUERY_TAIL_BYTES" <"$WORK/queries-${i}" >"${INSTANCE_QUERIES[$i]}" &
+	TAILS+=($!)
 	"${budget[@]}" sqlsmith \
 		--target="$DSN" \
 		--max-queries="$MAX_QUERIES" \
 		--seed="${INSTANCE_SEEDS[$i]}" \
 		--verbose \
+		--dump-all-queries \
 		"${log_to_args[@]}" \
-		>/dev/null 2>"${INSTANCE_LOGS[$i]}" &
+		>"$WORK/queries-${i}" 2>"${INSTANCE_LOGS[$i]}" &
 	PIDS+=($!)
 done
 
@@ -179,6 +191,8 @@ for pid in "${PIDS[@]}"; do
 		fi
 	fi
 done
+wait "${TAILS[@]}"
+rm -f "$WORK"/queries-*
 
 elapsed=$(($(date +%s) - start))
 
@@ -297,29 +311,24 @@ fi
 # Under 10% means instances bailed out early (catalog gap, fuzzer crash, etc.)
 # and the run is unlikely to have probed serened deeply.
 budget_floor=$((TOTAL_BUDGET / 10))
-if [[ "$total_queries" -lt "$budget_floor" ]]; then
+if [[ ${#budget[@]} -eq 0 && "$total_queries" -lt "$budget_floor" ]]; then
 	preserve_logs=1
 	echo "[sqlsmith] WARN: only $total_queries/$TOTAL_BUDGET queries reached the server (<10%). Fuzzing depth was shallow this run." >&2
 fi
 
 if [[ "$fail" -ne 0 ]] || [[ "$preserve_logs" -ne 0 ]]; then
-	echo "[sqlsmith] reproduce locally with:" >&2
-	if [[ "$PARALLEL" -eq 1 ]]; then
-		echo "[sqlsmith]   sqlsmith --target=\"$DSN\" --max-queries=$MAX_QUERIES --seed=${INSTANCE_SEEDS[0]} --verbose" >&2
-	else
-		echo "[sqlsmith]   any one of (run them all to repro the full session):" >&2
-		for s in "${INSTANCE_SEEDS[@]}"; do
-			echo "[sqlsmith]     sqlsmith --target=\"$DSN\" --max-queries=$MAX_QUERIES --seed=$s --verbose" >&2
-		done
-	fi
+	echo "[sqlsmith] replay on a fresh serened of the same build, with $VERSION (another version draws other queries from the same seed):" >&2
+	echo "[sqlsmith]   SDB_FUZZ_SEED=$SEED SDB_FUZZ_PARALLEL=$PARALLEL SDB_FUZZ_QUERIES=$MAX_QUERIES${SDB_FUZZ_SECONDS:+ SDB_FUZZ_SECONDS=$SDB_FUZZ_SECONDS} bash tests/drivers/sqlsmith/run.sh" >&2
 	if [[ -n "$JUNIT" ]]; then
 		for i in "${!INSTANCE_LOGS[@]}"; do
 			cp "${INSTANCE_LOGS[$i]}" "$JUNIT/tests-drivers-sqlsmith-${i}.log" 2>/dev/null || true
+			cp "${INSTANCE_QUERIES[$i]}" "$JUNIT/tests-drivers-sqlsmith-${i}.sql" 2>/dev/null || true
 		done
 		cp "$SEED_LOG" "$JUNIT/tests-drivers-sqlsmith-seed.log" 2>/dev/null || true
 		echo "[sqlsmith] full sqlsmith logs: $JUNIT/tests-drivers-sqlsmith-*.log" >&2
+		echo "[sqlsmith] last queries of each instance, the final one running when it stopped: $JUNIT/tests-drivers-sqlsmith-*.sql" >&2
 	else
-		echo "[sqlsmith] full sqlsmith logs preserved under: $WORK" >&2
+		echo "[sqlsmith] full sqlsmith logs and the last queries of each instance (sqlsmith-*.sql, the final one running when it stopped) preserved under: $WORK" >&2
 		# Inhibit the final cleanup so the developer can inspect.
 		WORK=""
 	fi
@@ -345,7 +354,7 @@ EOF
 <testsuites>
   <testsuite name="sqlsmith" tests="1" failures="1" errors="0" time="$elapsed">
     <testcase name="$case_name" classname="sqlsmith" time="$elapsed">
-      <failure message="${msg}">Reproduce any instance: sqlsmith --target=&quot;${DSN}&quot; --max-queries=${MAX_QUERIES} --seed=&lt;SEED+i for i in [0,${PARALLEL})&gt; --verbose; base SEED=${SEED}</failure>
+      <failure message="${msg}">Replay with ${VERSION}: SDB_FUZZ_SEED=${SEED} SDB_FUZZ_PARALLEL=${PARALLEL} SDB_FUZZ_QUERIES=${MAX_QUERIES} bash tests/drivers/sqlsmith/run.sh</failure>
     </testcase>
   </testsuite>
 </testsuites>

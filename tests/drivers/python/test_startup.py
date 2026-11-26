@@ -317,6 +317,14 @@ def _wait_listening(server: _Server, port: int) -> None:
         time.sleep(0.2)
 
 
+def _wait_logged(server: _Server, text: str) -> None:
+    deadline = time.monotonic() + 60
+    while text not in server.output():
+        assert server.proc.poll() is None, server.output()
+        assert time.monotonic() < deadline, server.output()
+        time.sleep(0.2)
+
+
 def test_verify_full_listener_with_its_own_ca(tmp_path: Path) -> None:
     pem = Path(__file__).resolve().parents[3] / "resources" / "ca.pem"
     reserved = reserve_port()
@@ -327,7 +335,7 @@ def test_verify_full_listener_with_its_own_ca(tmp_path: Path) -> None:
                      args=("--tls_min_version=1.3",))
     try:
         _wait_listening(server, port)
-        assert f"listening on postgres://127.0.0.1:{port}" in server.output()
+        _wait_logged(server, f"listening on postgres://127.0.0.1:{port}")
         assert ", tls)" in server.output(), server.output()
     finally:
         server.stop()
@@ -351,7 +359,7 @@ def test_abstract_unix_socket(tmp_path: Path) -> None:
                     pass
             assert time.monotonic() < deadline, server.output()
             time.sleep(0.2)
-        assert f"(unix:@{name})" in server.output(), server.output()
+        _wait_logged(server, f"(unix:@{name})")
     finally:
         server.stop()
 

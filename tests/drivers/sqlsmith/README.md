@@ -41,11 +41,11 @@ ninja serened
 In another terminal:
 
 ```
-bash tests/drivers/sqlsmith/run.sh
+SDB_DRV_PORT=5432 bash tests/drivers/sqlsmith/run.sh
 ```
 
-The script loads `seed.sql` via `psql`, then runs sqlsmith for ~60 seconds
-(2000 queries) and reports the symbol-stream tally.
+The script loads `seed.sql` via `psql`, then runs sqlsmith (two instances
+of 5000 queries each by default) and reports the symbol-stream tally.
 
 For sanitizer signal, build serened with ASan/UBSan and point the harness
 at the server log so it can scan for sanitizer reports after the run:
@@ -58,13 +58,15 @@ SDB_SERVER_LOG=/tmp/serened.log bash tests/drivers/sqlsmith/run.sh
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `SDB_FUZZ_QUERIES` | `2000` | Queries per sqlsmith instance (`--max-queries`). 2000 ≈ 60s on a quiet box. |
-| `SDB_FUZZ_PARALLEL` | `1` | Number of concurrent sqlsmith instances. Each gets a distinct seed (base SEED + i). Total queries = `QUERIES * PARALLEL`. |
-| `SDB_FUZZ_SEED` | random | Fix the RNG base seed to repro. Instance i uses `SEED + i`. |
+| `SDB_FUZZ_QUERIES` | `5000` | Queries per sqlsmith instance (`--max-queries`). |
+| `SDB_FUZZ_PARALLEL` | `2` | Number of concurrent sqlsmith instances. Each gets a distinct seed (base SEED + i). Total queries = `QUERIES * PARALLEL`. |
+| `SDB_FUZZ_SECONDS` | unset | Time budget: every instance is stopped after this many seconds. |
+| `SDB_FUZZ_STATEMENT_TIMEOUT` | `10s` | `statement_timeout` the script sets on the server before the run. |
+| `SDB_FUZZ_SEED` | random | Fix the RNG base seed to replay a run. Instance i uses `SEED + i`. See "Reproducing a finding" below. |
 | `SDB_FUZZ_LOG_TO` | unset | libpq DSN of a separate PG instance for sqlsmith's structured query+error log (`--log-to`). When set, the harness prints a top-20 error histogram after the run. See "Bucketing errors" below. |
 | `SDB_SERVER_LOG` | unset | Path to serened's stderr log; if set, scanned for sanitizer/assert hits |
 | `SDB_DRV_HOST` | `localhost` | PG host |
-| `SDB_DRV_PORT` | `5432` | PG port |
+| `SDB_DRV_PORT` | `7890` | PG port |
 | `SDB_DRV_DATABASE` | `postgres` | Database name |
 | `SDB_DRV_USER` | `postgres` | PG user |
 | `SDB_DRV_JUNIT` | unset | If set, emit `tests-drivers-sqlsmith-junit.xml` here |
@@ -122,17 +124,33 @@ which features/functions are eating the most fuzz budget.
 
 ## Reproducing a finding
 
-When the script fails, it prints a one-line repro command that pins the
-seed. Re-run it against the same serened build to reproduce:
+A failed run keeps, beside each instance's log, the last queries that
+instance generated (`tests-drivers-sqlsmith-<i>.sql`, its last 1 MiB).
+sqlsmith prints a query before it runs it, so the final query of each file
+was running when the instance stopped: run those against the same serened
+build first.
+
+To replay the whole run, the script prints a command that pins the base
+seed:
 
 ```
-sqlsmith --target="host=localhost port=5432 dbname=postgres user=postgres" \
-    --max-queries=2000 --seed=<seed> --verbose
+SDB_FUZZ_SEED=<seed> SDB_FUZZ_PARALLEL=4 SDB_FUZZ_QUERIES=100000000 \
+    SDB_FUZZ_SECONDS=300 bash tests/drivers/sqlsmith/run.sh
 ```
 
-The full sqlsmith log is preserved under either `$SDB_DRV_JUNIT` (if
-running under `tests/drivers/run.sh`) or a `mktemp -d` path printed at
-failure time.
+A seed gives the same queries only over the same schema (the same serened
+build and `seed.sql`) and with the same sqlsmith version, which the first
+line of a run names. CI's sqlsmith is the one in its build image, so a CI
+run is replayed in that image:
+
+```
+SDB_FUZZ_SEED=<seed> scripts/ci/run_shard.sh <config> <bundle digest or build dir> 1/1 - \
+    --suite sqlsmith
+```
+
+The logs and the queries are kept under `$SDB_DRV_JUNIT` when it is set (as
+under `scripts/ci/test.py`, where they join the failed unit's logs),
+otherwise under a `mktemp -d` path printed at failure time.
 
 ## What's not covered
 

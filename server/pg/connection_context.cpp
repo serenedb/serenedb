@@ -55,7 +55,9 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "connector/iresearch_replacement_scan.h"
+#include "network/send_gate.h"
 #include "pg/catalog/oids.h"
 
 namespace sdb::pg {
@@ -136,6 +138,7 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
     _backend_pid{identity.backend_pid},
     _cancel_registry{identity.cancel_registry},
     _send_buffer{identity.send_buffer},
+    _send_gate{identity.send_gate},
     _login_role_id{identity.role},
     _session_role_id{identity.role},
     _effective_role_id{identity.role},
@@ -612,6 +615,14 @@ void ConnectionContext::OnBoundPlan(duckdb::Binder& binder,
                                     duckdb::LogicalOperator& plan) {
   connector::FilterPartialIndexScans(*this, plan);
   auth::EnforcePlan(*this, *this, binder, plan);
+}
+
+duckdb::optional_ptr<duckdb::CopyOutputGate>
+ConnectionContext::GetCopyOutputGate(const std::string& file_path) {
+  if (file_path != connector::kDevStdout) {
+    return nullptr;
+  }
+  return _send_gate;
 }
 
 duckdb::shared_ptr<duckdb::ClientContext> CreateClientContext(

@@ -13,6 +13,7 @@ target_sources(
         http/routes.cpp
         http/h1_codec.cpp
         http/response_writer.cpp
+        http/copy_response.cpp
         http/es/common.cpp
         http/es/dsl.cpp
         http/es/handlers.cpp
@@ -33,11 +34,13 @@ target_sources(
         pg/wire_frames.cpp
         pg/wire_collector.cpp
         pg/pg_wire_session.cpp
+        pg/simple_query.cpp
         pg/startup_request.cpp
         pg/bind_decoder.cpp
         pg/scram_messages.cpp
         pg/scram_client.cpp
         pg/hba.cpp
+        pg/login.cpp
         credentials.cpp
         server.cpp
 )

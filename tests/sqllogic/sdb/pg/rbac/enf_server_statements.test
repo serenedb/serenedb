@@ -122,21 +122,21 @@ connection c_ved user=ess_vedernikoff password=ess_pw
 statement error
 PRAGMA force_checkpoint;
 ----
-db error: ERROR: permission denied: superuser required
+db error: ERROR: permission denied for function force_checkpoint
 
 
 connection c_ved user=ess_vedernikoff password=ess_pw
 statement error
 PRAGMA disable_checkpoint_on_shutdown;
 ----
-db error: ERROR: permission denied: superuser required
+db error: ERROR: permission denied for function disable_checkpoint_on_shutdown
 
 
 connection c_ved user=ess_vedernikoff password=ess_pw
 statement error
 PRAGMA enable_checkpoint_on_shutdown;
 ----
-db error: ERROR: permission denied: superuser required
+db error: ERROR: permission denied for function enable_checkpoint_on_shutdown
 
 
 connection c_ved user=ess_vedernikoff password=ess_pw

@@ -20,7 +20,7 @@ ALLOWED = {
     f"{PLANNER}/binder/statement/bind_create.cpp": 4,
     f"{PLANNER}/binder/statement/bind_create_table.cpp": 2,
     f"{PLANNER}/binder/statement/bind_detach.cpp": 1,
-    f"{PLANNER}/binder/statement/bind_grant.cpp": 2,
+    f"{PLANNER}/binder/statement/bind_grant.cpp": 1,
     f"{PLANNER}/binder/statement/bind_delete.cpp": 1,
     f"{PLANNER}/binder/statement/bind_merge_into.cpp": 1,
     f"{PLANNER}/binder/statement/bind_update.cpp": 1,

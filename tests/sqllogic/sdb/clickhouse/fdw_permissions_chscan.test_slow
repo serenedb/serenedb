@@ -236,6 +236,13 @@ ALTER SERVER fp_own OWNER TO fp_other;
 db error: ERROR: permission denied for foreign-data wrapper clickhouse_fdw<slt:ignore>
 
 
+connection c_owner user=fp_owner password=owner_pw
+statement error
+REASSIGN OWNED BY fp_owner TO fp_other;
+----
+db error: ERROR: permission denied for foreign-data wrapper clickhouse_fdw
+
+
 connection default
 statement ok
 GRANT USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw TO fp_other;

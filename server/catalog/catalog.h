@@ -98,10 +98,10 @@ class SereneDBCatalog final : public BaseCatalog {
   void RequireSubscription(duckdb::ClientContext& context,
                            const duckdb::RoleAccess& role,
                            const duckdb::CreateSubscriptionInfo& info) final;
-  void RequireSubscription(duckdb::ClientContext& context,
-                           const duckdb::RoleAccess& role,
-                           duckdb::CatalogEntry& subscription,
-                           const duckdb::AlterSubscriptionInfo& info) final;
+  void RequireSubscription(
+    duckdb::ClientContext& context, const duckdb::RoleAccess& role,
+    duckdb::CatalogEntry& subscription,
+    duckdb::optional_ptr<const duckdb::AlterSubscriptionInfo> alter) final;
   duckdb::optional_ptr<duckdb::CatalogEntry> CreateSubscription(
     duckdb::CatalogTransaction transaction,
     duckdb::CreateSubscriptionInfo& info) final;

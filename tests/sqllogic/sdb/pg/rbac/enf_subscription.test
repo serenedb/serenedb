@@ -142,6 +142,20 @@ ALTER SUBSCRIPTION subenf_sub1 OWNER TO subenf_clickclack;
 db error: ERROR: permission denied for database subenf_vault
 
 
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+REASSIGN OWNED BY subenf_vedernikoff TO subenf_clickclack;
+----
+db error: ERROR: permission denied for database subenf_vault
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+ALTER SUBSCRIPTION subenf_sub1 RENAME TO subenf_sub1_renamed;
+----
+db error: ERROR: permission denied for database subenf_vault
+
+
 connection c_vault_admin database=subenf_vault
 statement ok
 CREATE SUBSCRIPTION subenf_nopw CONNECTION 'host=localhost dbname=mydb' PUBLICATION subenf_pub WITH (connect = false, slot_name = NONE, password_required = false);
@@ -160,9 +174,61 @@ db error: ERROR: password_required=false is superuser-only
 HINT: Subscriptions with the password_required option set to false may only be created or modified by the superuser.
 
 
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+ALTER SUBSCRIPTION subenf_nopw OWNER TO subenf_clickclack;
+----
+db error: ERROR: password_required=false is superuser-only
+HINT: Subscriptions with the password_required option set to false may only be created or modified by the superuser.
+
+
+connection default
+statement ok
+GRANT CREATE ON DATABASE subenf_vault TO subenf_vedernikoff;
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+ALTER SUBSCRIPTION subenf_nopw RENAME TO subenf_nopw_renamed;
+----
+db error: ERROR: password_required=false is superuser-only
+HINT: Subscriptions with the password_required option set to false may only be created or modified by the superuser.
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement error
+REASSIGN OWNED BY subenf_vedernikoff TO subenf_clickclack;
+----
+db error: ERROR: password_required=false is superuser-only
+HINT: Subscriptions with the password_required option set to false may only be created or modified by the superuser.
+
+
 connection c_vault_admin database=subenf_vault
 statement ok
 DROP SUBSCRIPTION subenf_nopw;
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement ok
+REASSIGN OWNED BY subenf_vedernikoff TO subenf_clickclack;
+
+
+connection c_vault_admin database=subenf_vault
+query
+SELECT r.rolname FROM pg_subscription s JOIN pg_roles r ON r.oid = s.subowner WHERE s.subname = 'subenf_sub1';
+----
+rolname
+subenf_clickclack
+
+
+connection c_sub user=subenf_vedernikoff password=subenf_pw database=subenf_vault
+statement ok
+REASSIGN OWNED BY subenf_clickclack TO subenf_vedernikoff;
+
+
+connection default
+statement ok
+REVOKE CREATE ON DATABASE subenf_vault FROM subenf_vedernikoff;
 
 
 connection default

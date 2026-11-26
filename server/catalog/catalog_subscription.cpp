@@ -654,22 +654,29 @@ void SereneDBCatalog::RequireSubscription(
 void SereneDBCatalog::RequireSubscription(
   duckdb::ClientContext& context, const duckdb::RoleAccess& role,
   duckdb::CatalogEntry& subscription,
-  const duckdb::AlterSubscriptionInfo& alter) {
+  duckdb::optional_ptr<const duckdb::AlterSubscriptionInfo> alter) {
+  const bool password_required =
+    subscription.Cast<SubscriptionCatalogEntry>().Config().password_required;
+  if (!password_required && !role.is_superuser) {
+    ThrowPasswordNotRequired();
+  }
+  if (!alter) {
+    return;
+  }
   using enum duckdb::AlterSubscriptionType;
-  switch (alter.alter_subscription_type) {
+  switch (alter->alter_subscription_type) {
     case SET_CONNECTION:
       RequireConnInfo(
-        role, alter.connection,
-        subscription.Cast<SubscriptionCatalogEntry>()
-            .Config()
-            .password_required &&
+        role, alter->connection,
+        password_required &&
           !context.AccessOf(subscription.permissions.owner).is_superuser);
       return;
     case SET_OPTIONS:
-      RequirePasswordOption(role, ParseOptions(alter.options, kSetOptions));
+      RequirePasswordOption(role, ParseOptions(alter->options, kSetOptions));
       return;
     case SKIP:
-      if (ParseOptions(alter.options, Allowed::Lsn).lsn && !role.is_superuser) {
+      if (ParseOptions(alter->options, Allowed::Lsn).lsn &&
+          !role.is_superuser) {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                         ERR_MSG("must be superuser to skip transaction"));
       }

@@ -8,6 +8,7 @@ import base64
 import http.client
 import os
 import socket
+import struct
 import time
 
 import psycopg
@@ -97,9 +98,14 @@ def _running(conn: psycopg.Connection, marker: str) -> int:
         (f"%{marker}%",)).fetchone()[0]
 
 
-def test_a_client_that_goes_away_cancels_its_query():
-    marker = "drv_http_copy_cancel"
-    sql = f"COPY (SELECT pg_sleep(600) AS {marker}) TO STDOUT".encode()
+@pytest.mark.parametrize("leave", ["close", "half-close", "reset"])
+@pytest.mark.parametrize("query", [
+    "SELECT pg_sleep(600) AS {marker}",
+    "SELECT sum(i) AS {marker} FROM range(9000000000000000000) t(i)",
+])
+def test_a_client_that_goes_away_cancels_its_query(leave, query):
+    marker = f"drv_http_copy_cancel_{leave.replace('-', '_')}"
+    sql = f"COPY ({query.format(marker=marker)}) TO STDOUT".encode()
     request = (f"POST /_test/copy HTTP/1.1\r\nHost: {HOST}\r\n"
                f"Authorization: {AUTH}\r\n"
                f"Content-Length: {len(sql)}\r\n\r\n").encode() + sql
@@ -111,9 +117,18 @@ def test_a_client_that_goes_away_cancels_its_query():
             while _running(conn, marker) == 0:
                 assert time.monotonic() < deadline, "the query never started"
                 time.sleep(0.05)
+            left = time.monotonic()
+            if leave == "half-close":
+                client.shutdown(socket.SHUT_WR)
+            elif leave == "reset":
+                client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                  struct.pack("ii", 1, 0))
+                client.close()
+            else:
+                client.close()
+            while _running(conn, marker) != 0:
+                assert time.monotonic() - left < 10, \
+                    "the query outlived its client"
+                time.sleep(0.01)
         finally:
             client.close()
-        deadline = time.monotonic() + 30
-        while _running(conn, marker) != 0:
-            assert time.monotonic() < deadline, "the query outlived its client"
-            time.sleep(0.05)

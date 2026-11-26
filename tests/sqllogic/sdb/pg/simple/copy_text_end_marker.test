@@ -361,3 +361,38 @@ db error: ERROR: end-of-copy marker is followed by data
 
 statement ok
 RESET threads;
+
+
+statement ok
+COPY (SELECT ('abc' || chr(9) || 'x' || chr(10) || '\\.' || chr(10) || '2' || chr(9) || 'y' || chr(10))::BLOB)
+TO '${__TEST_DIR__}/marker_after_bad_row.dat' (FORMAT BLOB);
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_after_bad_row.dat';
+----
+db error: ERROR: invalid input syntax for type integer: "abc"
+
+
+statement ok
+COPY (
+  SELECT string_agg(
+    CASE WHEN i = 65540 THEN '\\.'
+         ELSE CASE WHEN i = 65530 THEN 'xxxxxxx' ELSE lpad(i::text, 7, '0') END || chr(9) || 'abcdefg' END || chr(10),
+    '' ORDER BY i)::BLOB
+  FROM generate_series(0, 262143) AS s(i)
+) TO '${__TEST_DIR__}/marker_after_bad_range.dat' (FORMAT BLOB);
+
+
+statement ok
+SET threads = 4;
+
+
+statement error
+COPY marker FROM '${__TEST_DIR__}/marker_after_bad_range.dat';
+----
+db error: ERROR: invalid input syntax for type integer: "xxxxxxx"
+
+
+statement ok
+RESET threads;

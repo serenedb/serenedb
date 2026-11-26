@@ -1,0 +1,103 @@
+control substitution on
+
+statement ok
+CREATE TABLE cbp_src AS
+SELECT x::INTEGER AS id, decode(repeat('00020000000400000007000000024142', 5), 'hex') AS payload
+FROM range(200000) t(x);
+
+
+statement count 200000
+COPY cbp_src TO '${__TEST_DIR__}/cbp.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbp_dst (id INTEGER, payload BYTEA);
+
+
+statement count 200000
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM cbp_dst
+JOIN cbp_src USING (id, payload);
+----
+n	total
+200000	19999900000
+
+
+statement count 1
+COPY (SELECT content || '\x0001'::BYTEA FROM read_blob('${__TEST_DIR__}/cbp.bin'))
+TO '${__TEST_DIR__}/cbp_junk.bin' (FORMAT blob);
+
+
+statement error
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp_junk.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: received copy data after EOF marker
+
+
+statement count 1
+COPY (SELECT substr(content, 1, octet_length(content) - 7) FROM read_blob('${__TEST_DIR__}/cbp.bin'))
+TO '${__TEST_DIR__}/cbp_cut.bin' (FORMAT blob);
+
+
+statement error
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp_cut.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: truncated row
+
+
+statement count 1
+COPY (
+  SELECT '\x5047434f50590aff0d0a00'::BYTEA || '\x0000000000000004deadbeef'::BYTEA || substr(content, 20)
+  FROM read_blob('${__TEST_DIR__}/cbp.bin')
+) TO '${__TEST_DIR__}/cbp_extension.bin' (FORMAT blob);
+
+
+statement ok
+TRUNCATE cbp_dst;
+
+
+statement count 200000
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp_extension.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM cbp_dst
+JOIN cbp_src USING (id, payload);
+----
+n	total
+200000	19999900000
+
+
+statement count 1
+COPY (
+  SELECT '\x5047434f50590aff0d0a00'::BYTEA || '\x00000000ffffffff'::BYTEA || substr(content, 20)
+  FROM read_blob('${__TEST_DIR__}/cbp.bin')
+) TO '${__TEST_DIR__}/cbp_negative.bin' (FORMAT blob);
+
+
+statement error
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp_negative.bin' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: invalid COPY file header (missing length)
+
+
+statement ok
+CREATE TABLE cbp_three (id INTEGER, payload BYTEA, extra INTEGER);
+
+
+statement error
+COPY cbp_three FROM '${__TEST_DIR__}/cbp.bin' (FORMAT binary);
+----
+db error: ERROR: row field count is 2, expected 3
+
+
+query
+SELECT count(*) AS n FROM cbp_dst;
+----
+n
+200000

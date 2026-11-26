@@ -68,8 +68,6 @@ RouteTarget HttpRouter::Match(HttpRequest& request) {
   const size_t cut = target.find_first_of("?#");
   const std::string_view raw_path =
     cut == std::string_view::npos ? target : target.substr(0, cut);
-  // Parse the query string (request-scoped) into request.query, percent-decoded
-  // by ada; path matching below uses `path` only, so it is unaffected.
   request.query.clear();
   if (cut != std::string_view::npos && target[cut] == '?') {
     const size_t frag = target.find('#', cut);
@@ -93,13 +91,13 @@ RouteTarget HttpRouter::Match(HttpRequest& request) {
   const std::string_view path = *canonical;
   const auto method = static_cast<size_t>(request.method);
   if (const auto it = _literal.find(path); it != _literal.end()) {
-    if (const auto& target = _methods[it->second][method]; target.handler) {
-      return target;
+    if (const auto& found = _methods[it->second][method]; found.handler) {
+      return found;
     }
   }
   for (auto& route : _parameterized) {
-    const auto& target = _methods[route.handlers][method];
-    if (!target.handler || !route.path.fast_test(path)) {
+    const auto& found = _methods[route.handlers][method];
+    if (!found.handler || !route.path.fast_test(path)) {
       continue;
     }
     auto groups = route.path.fast_match(path);
@@ -112,7 +110,7 @@ RouteTarget HttpRouter::Match(HttpRequest& request) {
         request.params.emplace_back(names[i], std::move(*value));
       }
     }
-    return target;
+    return found;
   }
   return {};
 }

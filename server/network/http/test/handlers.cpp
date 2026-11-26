@@ -22,11 +22,9 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
-#include <absl/synchronization/mutex.h>
 #include <fast_float/fast_float.h>
 
 #include <algorithm>
-#include <atomic>
 #include <charconv>
 #include <cstddef>
 #include <duckdb/main/connection.hpp>
@@ -44,6 +42,7 @@
 
 #include "connector/duckdb_copy_filesystem.h"
 #include "network/http/common.h"
+#include "network/http/copy_response.h"
 #include "network/http/handler.h"
 #include "pg/connection_context.h"
 
@@ -145,38 +144,11 @@ class SessionUserHandler final : public HttpHandler {
   }
 };
 
-class CopyStream final : public connector::CopyOutput {
- public:
-  explicit CopyStream(http::HttpResponseWriter& writer) : _writer{writer} {}
-
-  void Write(std::string_view bytes) final {
-    absl::MutexLock lock{&_mutex};
-    if (!_writer.HeadWritten()) {
-      _writer.WriteHeadChunked(HttpStatus::Ok, "application/octet-stream");
-    }
-    if (!bytes.empty() && !_writer.Broken()) {
-      _writer.Write(bytes);
-    }
-    if (bytes.size() > _largest.load(std::memory_order_relaxed)) {
-      _largest.store(bytes.size(), std::memory_order_relaxed);
-    }
-  }
-
-  bool Full(duckdb::optional_ptr<const duckdb::InterruptState> wake) final {
-    return _writer.Full(_largest.load(std::memory_order_relaxed), wake);
-  }
-
- private:
-  absl::Mutex _mutex;
-  http::HttpResponseWriter& _writer;
-  std::atomic<size_t> _largest{0};
-};
-
 class CopyHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext& context, const HttpRequest& request,
                         http::HttpResponseWriter& writer) override {
-    CopyStream output{writer};
+    http::CopyResponse output{writer, "application/octet-stream", {}, 0};
     auto& sql = context.Connection();
     auto& connection = ConnectionContext::Get(*sql.context);
     connection.SetSideChannel<connector::CopyOutput>(&output);
@@ -198,14 +170,10 @@ class CopyHandler final : public HttpHandler {
       result = duckdb::make_uniq<duckdb::QueryResult>(
         duckdb::ErrorData{"the request holds no SQL statement"});
     }
-    if (writer.HeadWritten()) {
-      if (!result->HasError()) {
-        writer.Finish();
-      }
-    } else if (result->HasError()) {
+    if (!result->HasError()) {
+      output.Finish();
+    } else if (!writer.HeadWritten()) {
       writer.Text(HttpStatus::BadRequest, result->GetError());
-    } else {
-      writer.Fixed(HttpStatus::Ok, "application/octet-stream", "");
     }
     co_return {};
   }

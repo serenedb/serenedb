@@ -1,8 +1,3 @@
-"""A client that stops reading a large COPY ... TO STDOUT holds the COPY back,
-over HTTP as over the pg wire: the server keeps about its send high-water mark
-of the answer unsent instead of the rest of it, and the COPY finishes once the
-client reads again."""
-
 from __future__ import annotations
 
 import base64

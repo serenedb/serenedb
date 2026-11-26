@@ -46,7 +46,6 @@ class SimpleQuery {
   struct Step {
     duckdb::unique_ptr<duckdb::SQLStatement> statement;
     duckdb::StatementType type = duckdb::StatementType::INVALID_STATEMENT;
-    size_t number = 0;
     bool ends_raw = false;
     bool last = false;
   };
@@ -64,8 +63,6 @@ class SimpleQuery {
   bool Next(Step& step);
 
   bool Commits(const Step& step) const;
-
-  bool Closes(const Step& step);
 
  private:
   duckdb::ClientContext& _context;

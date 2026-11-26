@@ -46,7 +46,7 @@ bool TakeScheme(std::string_view& header, std::string_view scheme) {
 }
 
 AuthResult LocalOnly(const pg::LoginPeer& peer) {
-  return peer.is_local || peer.address.is_loopback()
+  return peer.address.is_loopback()
            ? AuthResult{}
            : AuthResult{.status = HttpStatus::Unauthorized};
 }
@@ -70,25 +70,17 @@ AuthResult HttpAuthenticator::Authenticate(
   if (!Enabled()) {
     return LocalOnly(peer);
   }
-  if (auto result = AuthenticateScheme(authorization_header, peer, database)) {
-    return *std::move(result);
+  std::string_view header = authorization_header;
+  if (TakeScheme(header, "Basic")) {
+    return Basic(header, peer, database);
+  }
+  if (TakeScheme(header, "ApiKey")) {
+    return ApiKey(header);
+  }
+  if (TakeScheme(header, "Bearer")) {
+    return Bearer(header);
   }
   return {.status = HttpStatus::Unauthorized};
-}
-
-std::optional<AuthResult> HttpAuthenticator::AuthenticateScheme(
-  std::string_view value, const pg::LoginPeer& peer,
-  std::string_view database) const {
-  if (TakeScheme(value, "Basic")) {
-    return Basic(value, peer, database);
-  }
-  if (TakeScheme(value, "ApiKey")) {
-    return ApiKey(value);
-  }
-  if (TakeScheme(value, "Bearer")) {
-    return Bearer(value);
-  }
-  return std::nullopt;
 }
 
 AuthResult HttpAuthenticator::Basic(std::string_view payload,
@@ -114,21 +106,21 @@ AuthResult HttpAuthenticator::Password(std::string_view user,
   if (user.empty()) {
     return {.status = HttpStatus::Unauthorized};
   }
+  using Kind = pg::hba::Decision::Kind;
   const auto decision = pg::DecideLogin(
     peer, user,
     database.empty() ? irs::StaticStrings::kDefaultDatabase : database);
+  if (decision.kind != Kind::Trust && decision.kind != Kind::Method) {
+    return {.status = HttpStatus::Unauthorized};
+  }
   const auto role = pg::ReadRoleLogin(user);
   if (!role.can_login) {
     return {.status = HttpStatus::Unauthorized};
   }
-  if (decision.kind != pg::hba::Decision::Kind::Trust) {
-    if (decision.kind != pg::hba::Decision::Kind::Method) {
-      return {.status = HttpStatus::Unauthorized};
-    }
+  if (decision.kind == Kind::Method) {
     const auto credential = _credentials->LookupCredential(user);
-    if (!credential ||
-        !PasswordMatches(*credential, decision.method, user, password) ||
-        role.password_expired) {
+    if (!credential || role.password_expired ||
+        !PasswordMatches(*credential, decision.method, user, password)) {
       return {.status = HttpStatus::Unauthorized};
     }
   }

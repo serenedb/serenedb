@@ -1,7 +1,3 @@
-"""COPY ... TO STDOUT writes into the output an HTTP handler attaches to its
-connection; a request-scoped route runs every request in a SQL session of its
-own; a client that goes away cancels its query."""
-
 from __future__ import annotations
 
 import base64

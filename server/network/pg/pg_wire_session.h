@@ -74,6 +74,7 @@
 #include <yaclib/util/helper.hpp>
 
 #include "catalog/catalog.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
@@ -241,6 +242,21 @@ class PgWireSession
   }
 
  protected:
+  class CopyDataOutput final : public connector::CopyOutput {
+   public:
+    explicit CopyDataOutput(PgWireSession& session) : _session{session} {}
+
+    size_t Write(std::string_view bytes) final {
+      if (!_session.SendBroken()) {
+        WriteCopyData(_session._send, bytes);
+      }
+      return _session._send.TotalCommitted();
+    }
+
+   private:
+    PgWireSession& _session;
+  };
+
   struct ClientTag {};
   PgWireSession(IoExecutor& exec, asio_ns::ssl::context& ssl, ClientTag)
     requires(Kind == SocketKind::Client)

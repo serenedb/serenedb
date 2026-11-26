@@ -31,6 +31,7 @@
 #include <optional>
 #include <span>
 
+#include "network/send_gate.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_batches.h"
 #include "server/utils/message_buffer.h"
@@ -39,7 +40,6 @@ namespace sdb::connector {
 namespace {
 
 constexpr std::string_view kDevStdin = "/dev/stdin";
-constexpr std::string_view kDevStdout = "/dev/stdout";
 
 struct ConnectionPlumbing {
   pg::CopyInBatches* batches;
@@ -133,29 +133,28 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
   size_t _offset = 0;
 };
 
-// A dumb byte sink: each Write becomes one Write of the connection's
-// CopyOutput, nothing more. The pg-wire session owns the stream boundaries --
-// it emits CopyOutResponse (with the real column count) before the COPY runs
-// and CopyDone only after it succeeds -- so a mid-COPY error can no longer leak
-// a spurious CopyDone from a destructor, and the response is no longer stuck
-// with column count 0. This is format-agnostic: csv/json/parquet/... all just
-// stream bytes through here.
 struct CopyOutFileHandle final : public duckdb::FileHandle {
-  CopyOutFileHandle(duckdb::FileSystem& fs, CopyOutput& output)
+  CopyOutFileHandle(duckdb::FileSystem& fs, CopyOutput& output,
+                    network::SendGate& gate)
     : duckdb::FileHandle(
         fs, std::string{kDevStdout},
         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_WRITE)),
-      _output{output} {}
+      _output{output},
+      _gate{gate} {}
 
   void Close() final {}
 
   void DoWrite(const void* buf, int64_t nr_bytes) {
-    _output.Write(
-      {static_cast<const char*>(buf), static_cast<size_t>(nr_bytes)});
+    const auto size = static_cast<size_t>(nr_bytes);
+    _largest_write = std::max(_largest_write, size);
+    _gate.Wrote(_output.Write({static_cast<const char*>(buf), size}),
+                _largest_write);
   }
 
  private:
   CopyOutput& _output;
+  network::SendGate& _gate;
+  size_t _largest_write = 0;
 };
 
 bool SereneDBCopyFileSystem::CanHandleFile(const std::string& fpath) {
@@ -184,8 +183,10 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
   }
   if (path == kDevStdout) {
     auto plumbing = GetPlumbing(opener.get(), path);
-    if (auto* output = plumbing.state.GetSideChannel<CopyOutput>()) {
-      return duckdb::make_uniq<CopyOutFileHandle>(*this, *output);
+    auto* output = plumbing.state.GetSideChannel<CopyOutput>();
+    auto* gate = plumbing.state.GetSendGate();
+    if (output && gate) {
+      return duckdb::make_uniq<CopyOutFileHandle>(*this, *output, *gate);
     }
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

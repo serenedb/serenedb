@@ -54,7 +54,7 @@ hba::Decision DecideLogin(const LoginPeer& peer, std::string_view user,
   hba::ClientInfo client;
   client.is_local = peer.is_local;
   client.is_ssl = peer.is_ssl;
-  if (!peer.is_local && !peer.address.is_unspecified()) {
+  if (!peer.address.is_unspecified()) {
     if (peer.address.is_v4()) {
       client.family = AF_INET;
       absl::c_copy(peer.address.to_v4().to_bytes(), client.addr.begin());

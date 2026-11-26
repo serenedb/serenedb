@@ -312,32 +312,4 @@ duckdb::unique_ptr<duckdb::PhysicalOperator> MakeWireCollector(
   return duckdb::make_uniq<PhysicalPgWireCollector>(physical_plan, data, ctx);
 }
 
-void CopyDataOutput::Write(std::string_view bytes) {
-  if (_broken.load(std::memory_order_acquire)) {
-    return;
-  }
-  WriteCopyData(*_wire.send, bytes);
-  if (2 * bytes.size() >
-      _wire.direct_high_water.load(std::memory_order_relaxed)) {
-    _wire.direct_high_water.store(2 * bytes.size(), std::memory_order_relaxed);
-  }
-  _wire.direct_committed.store(_wire.send->TotalCommitted(),
-                               std::memory_order_release);
-}
-
-bool CopyDataOutput::Full(
-  duckdb::optional_ptr<const duckdb::InterruptState> wake) {
-  const auto committed = _wire.direct_committed.load(std::memory_order_acquire);
-  const auto written = _wire.send_written->load(std::memory_order_acquire);
-  if (committed <=
-        written + _wire.direct_high_water.load(std::memory_order_relaxed) ||
-      _broken.load(std::memory_order_acquire)) {
-    return false;
-  }
-  if (wake) {
-    _wire.BlockSink(*wake);
-  }
-  return true;
-}
-
 }  // namespace sdb::network::pg

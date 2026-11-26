@@ -13,6 +13,7 @@ target_sources(
         http/routes.cpp
         http/h1_codec.cpp
         http/response_writer.cpp
+        http/copy_response.cpp
         http/es/common.cpp
         http/es/dsl.cpp
         http/es/handlers.cpp

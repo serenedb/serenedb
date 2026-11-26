@@ -1,12 +1,3 @@
-"""Raw HTTP/1.1 tests for the SereneDB HTTP endpoints (tier-0 + test API).
-
-Covers the session/protocol surface: head framing, fixed and chunked bodies
-in both directions, keep-alive reuse, Expect: 100-continue, error statuses.
-The tier-0 tests use the Elasticsearch endpoint (SDB_DRV_ES_PORT), the test
-API its own (SDB_DRV_HTTP_PORT); each group is skipped when its endpoint is
-not configured.
-"""
-
 from __future__ import annotations
 
 import base64
@@ -113,7 +104,6 @@ def test_connection_close_honored(conn):
 
 
 class TestTestApi:
-    """Requires a listener with ?api=test; skipped when /_test/ping is absent."""
 
     @pytest.fixture()
     def conn(self):

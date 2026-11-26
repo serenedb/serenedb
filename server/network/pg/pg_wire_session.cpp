@@ -461,6 +461,7 @@ bool PgWireSession<Kind>::SetupConnection() {
                     .database = DatabaseName(),
                     .database_id = database_id,
                     .send_buffer = &this->_send,
+                    .send_gate = &this->_send_gate,
                     .backend_pid = static_cast<int32_t>(_cancel_key >> 32),
                     .cancel_registry = _cancel,
                     .client_backend = true});
@@ -757,8 +758,7 @@ bool PgWireSession<Kind>::DrainWire(WireSinkContext& wire) {
   const bool budget_ok =
     !wire.paged || wire.rows.load(std::memory_order_relaxed) <
                      wire.row_budget.load(std::memory_order_relaxed);
-  if (unsent <= wire.direct_high_water.load(std::memory_order_relaxed) &&
-      budget_ok) {
+  if (unsent <= kSendHighWater && budget_ok) {
     wire.UnblockSinks(true, true);
   }
   return true;
@@ -787,12 +787,8 @@ auto PgWireSession<Kind>::FunnelError(const std::exception& exception,
   // orders them (the post-dispatch drain would otherwise emit them after).
   DrainNotices();
   WriteErrorResponse(this->_send, irs::pg::ToSqlError(exception));
-  // Roll back the implicit block inline (postgres aborts at the error, not at
-  // the Sync): the Sync then finds nothing open -> status 'I'. If we don't own
-  // a block but the user does, the explicit transaction is aborted instead so
-  // it reads 'E' and subsequent statements surface 25P02.
   if (_txn_state->RollbackOrAbort()) {
-    _proto.DropTxnPortals();  // PG AtCleanup_Portals: abort discards them
+    _proto.DropTxnPortals();
   }
   return IsExtended(type) ? PostError::DiscardUntilSync : PostError::Resync;
 }
@@ -932,8 +928,6 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
   }
   CapturePeerAddress();
 
-  // Consult the HBA ruleset first: it decides trust / reject / which method,
-  // for every connection, regardless of whether a stored credential exists.
   const hba::Decision decision =
     DecideLogin({.address = _peer_addr,
                  .is_local = Kind == SocketKind::Unix,
@@ -1307,14 +1301,9 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
   SimpleQuery simple{*_conn->context, *_connection_ctx, *_txn_state};
   simple.Parse(query);
   if (simple.Empty()) {
-    // An empty or statement-less query (";", a bare comment): postgres replies
-    // EmptyQueryResponse, not just a bare ReadyForQuery.
     WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
     co_return {};
   }
-  // The self-sync at the command loop commits the implicit block on success; a
-  // statement error throws to the dispatch catch, which rolls the block back
-  // inline.
   for (SimpleQuery::Step step; simple.Next(step);) {
     if (!step.statement) {
       WriteEmptyFrame(this->_send, PQ_MSG_EMPTY_QUERY_RESPONSE);
@@ -1322,18 +1311,9 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     }
     auto& statement = step.statement;
     if (const auto copy = ClassifyCopy(*statement); copy.dir != CopyDir::None) {
-      // A COPY FROM STDIN returns pinned to _ioexec; remaining statements
-      // just continue inline-first from there.
       co_await RunCopy(std::move(statement), copy);
       continue;
     }
-    // Bind and execution share one duckdb query lifecycle (one transaction):
-    // the plan's catalog references stay valid end-to-end. The command tag
-    // needs the parse tree, so it is built before the statement moves; rows
-    // go to the wire straight from the executor (wire_collector.h), with the
-    // hook writing RowDescription post-bind, before any task can emit a
-    // DataRow (a plan error then lands after T, which is postgres's
-    // mid-stream error behavior).
     const bool deallocates = DeallocatesPreparedStatements(*statement);
     const auto tag = _txn_state->StatusByte() == 'E' && IsCommit(*statement)
                        ? sdb::pg::CommandTag{"ROLLBACK", step.type}
@@ -1362,8 +1342,8 @@ yaclib::Task<> PgWireSession<Kind>::RunSimpleQuery(std::string_view query) {
     if (step.ends_raw) {
       WriteCommandTag(tag, *result, return_type);
     }
-    if (simple.Closes(step)) {
-      _proto.DropTxnPortals();
+    if (step.type == duckdb::StatementType::TRANSACTION_STATEMENT) {
+      AfterTxnStatement();
     }
   }
   co_return {};
@@ -1390,6 +1370,7 @@ yaclib::Task<duckdb::QueryResultState> PgWireSession<Kind>::DriveQuery(
     if (wire && !DrainWire(*wire)) {
       _conn->context->Interrupt();
     }
+    this->ReleaseWriters();
     const auto status =
       pending.ExecuteTask([this] { this->_task->RequestRun(); });
     if (duckdb::IsObservable(status)) {
@@ -1603,18 +1584,6 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
   co_return {};
 }
 
-// COPY ... TO STDOUT for the DuckDB-native formats (csv / json / parquet /
-// ...): DuckDB's CopyFunction produces the format bytes into the dumb wire sink
-// (CopyOutFileHandle -> CopyDataOutput -> CopyData), and the session owns the
-// wire framing -- one path for every format, so we never reimplement a format
-// writer. A client slower than the COPY holds it back at the send high-water
-// mark, as it holds back a SELECT. natts for
-// CopyOutResponse is the COPY source's column count, taken from a prepared
-// clone of the source (preparing the real COPY consumes the statement). The
-// COPY (incl. its copy-function bind) is validated BEFORE CopyOutResponse, so a
-// bind error stays a plain ErrorResponse with no half-open COPY stream; and
-// CopyDone is emitted only after a successful drive (an error throws to the
-// funnel).
 template<SocketKind Kind>
 yaclib::Task<> PgWireSession<Kind>::RunCopyToStdoutViaFormat(
   duckdb::unique_ptr<duckdb::SQLStatement> statement, CopyFormat format) {
@@ -1627,15 +1596,14 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdoutViaFormat(
 
   WriteCopyOutResponse(this->_send, IsBinaryWireFormat(format),
                        static_cast<int16_t>(inner_prepared->ColumnCount()));
-  auto wire = MakeWireContext({});
-  CopyDataOutput output{*wire, this->_stopping};
+  CopyDataOutput output{*this};
   _connection_ctx->SetSideChannel<sdb::connector::CopyOutput>(&output);
   absl::Cleanup detach = [this] {
     _connection_ctx->SetSideChannel<sdb::connector::CopyOutput>(nullptr);
   };
   duckdb::vector<duckdb::Value> params;
   ClosingPending pending;
-  auto result = co_await DriveToResult(*prepared, params, pending, wire);
+  auto result = co_await DriveToResult(*prepared, params, pending, nullptr);
   WriteCopyDone(this->_send);
   WriteCommandTag(*prepared, *result,
                   prepared->GetStatementProperties().return_type);

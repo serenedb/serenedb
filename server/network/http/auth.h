@@ -85,11 +85,6 @@ struct AuthResult {
   AuthContext context;
 };
 
-// Authentication of an Authorization header over the SAME credential store
-// and client authentication rules (pg_hba) as the pg wire: a Basic login is
-// decided by the rules for the peer, the role and the database, verified
-// against the stored credential, and refused once the role's VALID UNTIL
-// passed. An unconfigured server trusts only a local (loopback/unix) client.
 class HttpAuthenticator {
  public:
   HttpAuthenticator(const network::CredentialProvider* credentials,
@@ -104,9 +99,6 @@ class HttpAuthenticator {
                           std::string_view database) const;
 
  private:
-  std::optional<AuthResult> AuthenticateScheme(std::string_view value,
-                                               const pg::LoginPeer& peer,
-                                               std::string_view database) const;
   AuthResult Basic(std::string_view payload, const pg::LoginPeer& peer,
                    std::string_view database) const;
   AuthResult Password(std::string_view user, std::string_view password,

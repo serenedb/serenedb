@@ -111,8 +111,6 @@ TEST(NetworkRouter, LiteralWildcardAndGroups) {
 
 TEST(NetworkRouter, LiteralRoutesWinOverParams) {
   HttpRouter router;
-  // Registered AFTER the param route on purpose: `/:index` must not swallow a
-  // literal path just by being registered first.
   router.Add(HttpMethod::Put, "/:index", std::make_unique<NamedHandler>("put"));
   router.Add(HttpMethod::Put, "/_bulk",
              std::make_unique<NamedHandler>("put bulk"));

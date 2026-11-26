@@ -42,14 +42,10 @@ struct RouteTarget {
 
 class HttpRouter {
  public:
-  // `pattern` is a WHATWG URLPattern pathname (`/:index/_search`).
   void Add(HttpMethod method, std::string_view pattern,
            std::unique_ptr<HttpHandler> handler,
            SessionScope session = SessionScope::Connection);
 
-  // Parses the query string into request.query, matches method + path,
-  // fills request.params from the pattern's named groups. A null handler =
-  // no route.
   RouteTarget Match(HttpRequest& request);
 
  private:
@@ -59,8 +55,6 @@ class HttpRouter {
 
   using Handlers = std::array<RouteTarget, kMethods>;
 
-  // Fully literal routes are matched first, so `/:index` cannot swallow a
-  // literal path such as `/_bulk` whichever order they were registered in.
   struct Entry {
     PathPattern path;
     size_t handlers;

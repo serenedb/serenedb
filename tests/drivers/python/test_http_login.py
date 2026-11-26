@@ -1,7 +1,3 @@
-"""A Basic login to the HTTP APIs is decided like a psql login: by the client
-authentication rules for the peer, the role and the database, against the
-role's stored password, its LOGIN and its VALID UNTIL."""
-
 from __future__ import annotations
 
 import base64

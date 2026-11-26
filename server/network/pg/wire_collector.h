@@ -29,8 +29,6 @@
 #include <vector>
 
 #include "absl/container/inlined_vector.h"
-#include "connector/duckdb_copy_filesystem.h"
-#include "network/connection.h"
 #include "network/cpu_resumer.h"
 #include "network/pg/wire_frames.h"
 #include "pg/serialize.h"
@@ -118,7 +116,6 @@ class WireSinkContext {
   // the session can evaluate backpressure (_send.TotalCommitted is plain and
   // owned by the producing sink during the drive).
   std::atomic<size_t> direct_committed{0};
-  std::atomic<size_t> direct_high_water{kSendHighWater};
   // Parallel mode: aggregate size of the sealed-but-unspliced chains in the
   // queue; the worker backpressure bound.
   std::atomic<size_t> queued_bytes{0};
@@ -141,7 +138,6 @@ class WireSinkContext {
     page_offset = 0;
     rows.store(0, std::memory_order_relaxed);
     direct_committed.store(0, std::memory_order_relaxed);
-    direct_high_water.store(kSendHighWater, std::memory_order_relaxed);
     std::lock_guard lock{_lock};
     _pending = {};
     _blocked.clear();
@@ -209,19 +205,6 @@ class WireSinkContext {
   // O(1), the session pops the whole thing.
   message::Chain _pending;
   std::vector<duckdb::InterruptState> _blocked;
-};
-
-class CopyDataOutput final : public connector::CopyOutput {
- public:
-  CopyDataOutput(WireSinkContext& wire, const std::atomic<bool>& broken)
-    : _wire{wire}, _broken{broken} {}
-
-  void Write(std::string_view bytes) final;
-  bool Full(duckdb::optional_ptr<const duckdb::InterruptState> wake) final;
-
- private:
-  WireSinkContext& _wire;
-  const std::atomic<bool>& _broken;
 };
 
 // get_result_collector hook: returns the wire collector when a WireSinkContext

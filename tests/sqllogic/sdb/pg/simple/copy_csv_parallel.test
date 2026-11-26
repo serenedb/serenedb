@@ -173,6 +173,26 @@ rotated
 t
 
 
+statement count 1500000
+COPY cpar_src TO '${__TEST_DIR__}/cpar_rotated_gz' (FORMAT csv, COMPRESSION gzip, FILE_SIZE_BYTES '4MB');
+
+
+query
+SELECT count(*) > 1 AS rotated FROM glob('${__TEST_DIR__}/cpar_rotated_gz/*.csv.gz');
+----
+rotated
+t
+
+
+query
+SELECT count(*) AS rows, sum(id) AS ids, sum(n) AS n
+FROM read_csv('${__TEST_DIR__}/cpar_rotated_gz/*.csv.gz', header = false,
+              columns = {'id': 'BIGINT', 't': 'VARCHAR', 'n': 'BIGINT'});
+----
+rows	ids	n
+1500000	1125000750000	7875005250000
+
+
 statement ok
 TRUNCATE cpar_dst;
 

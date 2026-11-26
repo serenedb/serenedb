@@ -183,6 +183,53 @@ db error: ERROR: must be owner of schema <slt:ignore>
 
 
 statement ok
+CREATE SERVER eifn_default_${__DATABASE__} FOREIGN DATA WRAPPER iceberg_fdw OPTIONS (${ICEBERG_SERVER_OPTIONS}, default_schema '${__DATABASE__}');
+
+
+statement ok
+GRANT USAGE ON FOREIGN SERVER eifn_default_${__DATABASE__} TO eifn_vedernikoff;
+
+
+statement ok
+GRANT pg_read_server_files TO eifn_vedernikoff;
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement ok
+USE eifn_default_${__DATABASE__};
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT * FROM set_iceberg_table_properties('eifn_t', {'eifn.owner': 'vedernikoff'});
+----
+db error: ERROR: must be owner of table eifn_t
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT * FROM set_iceberg_table_properties('${__DATABASE__}.eifn_t', {'eifn.owner': 'vedernikoff'});
+----
+db error: ERROR: must be owner of table eifn_t
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT * FROM set_iceberg_schema_properties('${__DATABASE__}', {'eifn.owner': 'vedernikoff'});
+----
+db error: ERROR: must be owner of schema <slt:ignore>
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement ok
+USE ${__DATABASE__};
+
+
+statement ok
+REVOKE pg_read_server_files FROM eifn_vedernikoff;
+
+
+statement ok
 SELECT * FROM set_iceberg_table_properties('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t', {'eifn.owner': 'postgres'});
 
 
@@ -196,6 +243,10 @@ eifn.owner	postgres
 
 statement ok
 DROP VIEW eifn_rewrite;
+
+
+statement ok
+DROP SERVER eifn_default_${__DATABASE__};
 
 
 statement ok

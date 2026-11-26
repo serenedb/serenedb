@@ -507,7 +507,8 @@ std::optional<ObjectTarget> FunctionTarget(
     found = {.entry = &macro, .macro = macro.FindOverload(oid).get()};
   }
   if (found.macro) {
-    return ObjectTarget{&duckdb::PermissionsOf(*found.entry, found.macro)};
+    return ObjectTarget{&duckdb::PermissionsOf(
+      {*found.entry, found.entry->OverloadPermissions(*found.macro)})};
   }
   if (found.entry) {
     return std::nullopt;

@@ -444,3 +444,93 @@ SELECT id FROM bq WHERE p @@ ('quick' ## ts_regexp('caf.')) ORDER BY id
 ----
 id
 2
+
+# ts_any and ts_all take BYTEA lists and lists that mix BYTEA with strings or
+# TSQUERY values.
+query
+SELECT id FROM bt WHERE v @@ ts_any(['\xff61'::bytea, '\xc3'::bytea]) ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM bt WHERE v @@ ts_any(['\x6262'::bytea, '\xc3a9'::bytea]) ORDER BY id
+----
+id
+2
+3
+
+query
+SELECT id FROM bt WHERE v @@ ts_any(['\xff61'::bytea, 'bb']) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bt WHERE v @@ ts_any([ts_phrase('bb'), '\xff61'::bytea]) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bt WHERE v @@ ts_any(['\xff61'::bytea, ts_starts_with('\xe4'::bytea)]) ORDER BY id
+----
+id
+1
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_all(['\xff61'::bytea]) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ ts_all([ts_starts_with('\xff'::bytea), '\xff61'::bytea]) ORDER BY id
+----
+id
+1
+
+statement error
+SELECT id FROM bp WHERE p @@ ts_any(p::TSQUERY[])
+----
+db error: ERROR: list arg must be a literal list or array (got: __cast)
+HINT: Example: ts_any(['a', 'b'], 1) (OR), ts_all(['a', 'b']) (AND).
+
+
+statement error
+SELECT id FROM bx WHERE t @@ ts_any([t, 'x'])
+----
+db error: ERROR: list arg must be a literal list or array (got: __cast)
+HINT: Example: ts_any(['a', 'b'], 1) (OR), ts_all(['a', 'b']) (AND).
+
+
+query
+SELECT id FROM bp WHERE p @@ ts_any(['quick'::bytea, 'fox'::bytea, 'dog'::bytea], 2) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bp WHERE p @@ ('quick' ## ts_any(['fox'::bytea, 'dog'::bytea])) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bx WHERE t @@ ts_any(['quick'::bytea, 'dog']) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE t @@ ts_all(['quick'::bytea, ts_phrase('fox')]) ORDER BY id
+----
+id
+1

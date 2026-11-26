@@ -31,6 +31,21 @@
 namespace sdb::connector {
 namespace {
 
+const duckdb::Expression& UnwrapBlobListCast(const duckdb::Expression& expr) {
+  if (!duckdb::BoundCastExpression::IsCast(expr)) {
+    return expr;
+  }
+  const auto& child = duckdb::BoundCastExpression::Child(
+    expr.Cast<duckdb::BoundFunctionExpression>());
+  const auto& type = child.GetReturnType();
+  if (type.id() != duckdb::LogicalTypeId::LIST ||
+      duckdb::ListType::GetChildType(type).id() !=
+        duckdb::LogicalTypeId::BLOB) {
+    return expr;
+  }
+  return child;
+}
+
 uint32_t GetMinMatchArg(const duckdb::Expression& arg,
                         std::string_view syntax_hint) {
   int64_t m;
@@ -183,8 +198,8 @@ void ExtractAnyAllOfArgs(
   SDB_ASSERT(func.GetChildren().size() >= 1 && func.GetChildren().size() <= 2);
   SDB_ASSERT(is_any || func.GetChildren().size() == 1);
 
-  const auto& list_expr = *func.GetChildren()[0];
-  const auto list_type_id = list_expr.GetReturnType().id();
+  const auto& list_arg = *func.GetChildren()[0];
+  const auto list_type_id = list_arg.GetReturnType().id();
   if (list_type_id != duckdb::LogicalTypeId::LIST &&
       list_type_id != duckdb::LogicalTypeId::ARRAY) {
     THROW_SQL_ERROR(
@@ -192,6 +207,7 @@ void ExtractAnyAllOfArgs(
       ERR_MSG("ts_any/ts_all first argument must be a list or array"),
       ERR_HINT(kSyntaxHint));
   }
+  const auto& list_expr = UnwrapBlobListCast(list_arg);
   if (list_expr.GetExpressionClass() ==
       duckdb::ExpressionClass::BOUND_CONSTANT) {
     const auto& val =

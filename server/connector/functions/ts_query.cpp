@@ -846,17 +846,19 @@ void RegisterTSQueryCombineRule(duckdb::ExtensionLoader& loader) {
 }
 
 void RegisterTSQueryListCast(duckdb::ExtensionLoader& loader) {
-  loader.RegisterCastFunction(
-    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
-    duckdb::LogicalType::LIST(MakeTSQueryType()),
-    +[](duckdb::BindCastInput& input, const duckdb::LogicalType& source,
-        const duckdb::LogicalType& target) -> duckdb::BoundCastInfo {
-      return duckdb::BoundCastInfo(
-        duckdb::ListCast::ListToListCast,
-        duckdb::ListBoundCastData::BindListToListCast(input, source, target),
-        duckdb::ListBoundCastData::InitListLocalState);
-    },
-    /*implicit_cast_cost=*/0);
+  for (auto text : {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+    loader.RegisterCastFunction(
+      duckdb::LogicalType::LIST(text),
+      duckdb::LogicalType::LIST(MakeTSQueryType()),
+      +[](duckdb::BindCastInput& input, const duckdb::LogicalType& source,
+          const duckdb::LogicalType& target) -> duckdb::BoundCastInfo {
+        return duckdb::BoundCastInfo(
+          duckdb::ListCast::ListToListCast,
+          duckdb::ListBoundCastData::BindListToListCast(input, source, target),
+          duckdb::ListBoundCastData::InitListLocalState);
+      },
+      /*implicit_cast_cost=*/0);
+  }
 }
 
 void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {

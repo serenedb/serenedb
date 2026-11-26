@@ -374,7 +374,7 @@ OR over a list of sub-queries, with an optional "match at least N" threshold.
 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
-| `list` | `LIST(TSQUERY)` (bare strings allowed) | — | The alternatives. Each element is a `TSQUERY`; a plain string is tokenized by the column dictionary. |
+| `list` | `LIST(TSQUERY)` (bare strings and `BYTEA` values allowed) | — | The alternatives. Each element is a `TSQUERY`; a plain string or a `BYTEA` value is tokenized by the column dictionary. |
 | `min_match` | `INTEGER` | `1` | How many alternatives a row must satisfy. Must be between `1` and the list length. `1` is a plain `OR`; raising it demands more of the alternatives. |
 
 **How it works.** `ts_any` is a disjunction with a tunable floor. At `min_match = 1` it is a straight `OR` — match any alternative. Raising `min_match` turns it into an "N of M" query: with three alternatives and `min_match = 2`, a row must contain at least two of them. This is the equivalent of Elasticsearch's `minimum_should_match` (integer form) and the `terms_set` query. SereneDB takes an integer count only — it does not accept percentage or negative `minimum_should_match` formats, nor a per-document min-match field. Over [`ts_tokenize`](#ts_tokenize) a position counts once: the synonyms of one word are one alternative, so `min_match` counts words, not synonyms. For "N of M" over predicates on different columns, use [`::min_match(K)`](#min-match) on an `OR`.
@@ -397,7 +397,7 @@ AND over a list of sub-queries — every element must match.
 
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
-| `list` | `LIST(TSQUERY)` (bare strings allowed) | — | The conjuncts. A row matches only when it satisfies *all* of them. |
+| `list` | `LIST(TSQUERY)` (bare strings and `BYTEA` values allowed) | — | The conjuncts. A row matches only when it satisfies *all* of them. |
 
 **How it works.** `ts_all` is the conjunction (`AND`) of every element — equivalent to chaining the elements with [`&&`](#a--b-and), or to `ts_any(list, len(list))`. Use it to require that several tokens or sub-queries all appear in the same row. Over [`ts_tokenize`](#ts_tokenize) the synonyms of one word are alternatives: any one of them satisfies that word.
 

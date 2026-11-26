@@ -22,6 +22,7 @@
 
 #include <absl/base/internal/endian.h>
 #include <absl/container/btree_map.h>
+#include <absl/synchronization/mutex.h>
 
 #include <algorithm>
 #include <atomic>
@@ -55,10 +56,9 @@ namespace {
 
 constexpr std::string_view kCopyStdinPath = "/dev/stdin";
 
-constexpr size_t kPlanProbeRows = 4;
-constexpr size_t kPlanGroupsPerThread = 4;
-constexpr size_t kPlanGroupMinBytes = size_t{1} << 20;
-constexpr size_t kPlanPrefetchBytes = size_t{1} << 22;
+constexpr size_t kProbeRows = 4;
+constexpr size_t kPieceBytes = size_t{1} << 22;
+constexpr size_t kAheadBytesPerThread = size_t{1} << 22;
 
 int32_t BinaryWidth(const duckdb::LogicalType& type) {
   if (type.HasAlias()) {
@@ -88,7 +88,7 @@ int32_t BinaryWidth(const duckdb::LogicalType& type) {
 
 bool PlausibleRows(std::string_view bytes, size_t pos,
                    std::span<const int32_t> widths) {
-  for (size_t row = 0; row < kPlanProbeRows; ++row) {
+  for (size_t row = 0; row < kProbeRows; ++row) {
     if (bytes.size() - pos < sizeof(int16_t)) {
       return false;
     }
@@ -134,26 +134,40 @@ size_t FindBinaryRow(std::string_view bytes, size_t from, size_t limit,
   return std::string_view::npos;
 }
 
-struct BinaryWalk {
+size_t RowsAfterHeader(std::string_view bytes) {
+  if (bytes.size() < pg::kPgCopyHeader.size()) {
+    return std::string_view::npos;
+  }
+  const auto extension = static_cast<int32_t>(
+    absl::big_endian::Load32(bytes.data() + pg::kPgCopyHeader.size() - 4));
+  if (extension < 0 || bytes.size() - pg::kPgCopyHeader.size() <
+                         static_cast<size_t>(extension)) {
+    return std::string_view::npos;
+  }
+  return pg::kPgCopyHeader.size() + static_cast<size_t>(extension);
+}
+
+struct BinaryPiece {
+  std::string_view bytes;
+  std::shared_ptr<void> owner;
   size_t start = std::string_view::npos;
-  size_t end = std::string_view::npos;
   std::vector<size_t> cuts;
+  std::exception_ptr error;
+  bool ready = false;
 };
 
-void WalkCuts(std::string_view bytes, size_t pos, size_t limit,
-              BinaryWalk& walk) {
-  walk.start = pos;
-  walk.cuts.clear();
-  while (pos < limit) {
+void WalkCuts(BinaryPiece& piece) {
+  const auto bytes = piece.bytes;
+  auto pos = piece.start;
+  while (pos < bytes.size()) {
     const auto next = pg::WalkBinaryRows(
-      bytes, pos, std::min(limit, pos + pg::kCopyBatchBytes));
+      bytes, pos, std::min(bytes.size(), pos + pg::kCopyBatchBytes));
     if (next == pos) {
       break;
     }
-    walk.cuts.push_back(next);
+    piece.cuts.push_back(next);
     pos = next;
   }
-  walk.end = pos;
 }
 
 class CopyFileReader {
@@ -170,7 +184,7 @@ class CopyFileReader {
       _executor{context, duckdb::TaskSchedulerType::ASYNC},
       _chunk(pg::kCopyBatchBytes, '\0') {
     UpdateBudget();
-    Plan(context, types);
+    Split(context, types);
   }
 
   CopyFileReader(duckdb::ClientContext& context, pg::CopyInBatches& source)
@@ -189,7 +203,13 @@ class CopyFileReader {
     if (_source) {
       _source->Nudge();
     }
+    {
+      absl::MutexLock lock{&_piece_lock};
+    }
     _executor.CancelAndDrain();
+    if (_loader) {
+      _loader->CancelAndDrain();
+    }
   }
 
   pg::CopyInBatches& Batches() noexcept { return _batches; }
@@ -250,97 +270,137 @@ class CopyFileReader {
     }
   }
 
-  void Plan(duckdb::ClientContext& context,
-            std::span<const duckdb::LogicalType> types) {
-    if (_file->GetFileCompressionType() !=
-        duckdb::FileCompressionType::UNCOMPRESSED) {
-      return;
-    }
+  void Split(duckdb::ClientContext& context,
+             std::span<const duckdb::LogicalType> types) {
     const auto size = static_cast<size_t>(_file->GetFileSize());
-    auto mapping = duckdb::MapForReading(context, _file->GetPath(),
-                                         _file->OnDiskFile(), size, 0);
-    if (!mapping || size < pg::kPgCopyHeader.size()) {
-      return;
+    const auto& path = _file->GetPath();
+    const auto compression = _file->GetFileCompressionType();
+    if (compression.IsCompressed()) {
+      _frames = duckdb::PiecedRowSource::Open(context, path, compression,
+                                              _file->OnDiskFile(), size);
+      if (!_frames) {
+        return;
+      }
+      for (const auto& span : _frames->Pieces()) {
+        _bounds.push_back(static_cast<size_t>(span.output_offset));
+      }
+      _bounds.push_back(static_cast<size_t>(_frames->Size()));
+    } else {
+      auto mapping =
+        duckdb::MapForReading(context, path, _file->OnDiskFile(), size, 0);
+      if (!mapping) {
+        return;
+      }
+      _mapping =
+        duckdb::shared_ptr<duckdb::MemoryMappedFile>(std::move(mapping));
+      _mapped = {reinterpret_cast<const char*>(_mapping->GetData(0, size)),
+                 size};
+      for (size_t at = 0; at < size; at += kPieceBytes) {
+        _bounds.push_back(at);
+      }
+      _bounds.push_back(size);
     }
-    const std::string_view bytes{
-      reinterpret_cast<const char*>(mapping->GetData(0, size)), size};
-    const auto extension = static_cast<int32_t>(
-      absl::big_endian::Load32(bytes.data() + pg::kPgCopyHeader.size() - 4));
-    if (extension < 0 ||
-        size - pg::kPgCopyHeader.size() < static_cast<size_t>(extension)) {
-      return;
-    }
-    const auto begin =
-      pg::kPgCopyHeader.size() + static_cast<size_t>(extension);
-    mapping->PrefetchMissing(0, std::min(size, kPlanPrefetchBytes));
-    _builder.Feed(bytes.substr(0, begin), true);
-    _mapping = duckdb::shared_ptr<duckdb::MemoryMappedFile>(std::move(mapping));
-    _mapped = bytes;
-    _file->ReadInPlace(context, size, 0);
-
-    std::vector<int32_t> widths;
-    widths.reserve(types.size());
+    _pieces = std::vector<BinaryPiece>(_bounds.size() - 1);
+    _ahead_limit =
+      duckdb::TaskScheduler::QueryThreads(context) * kAheadBytesPerThread;
+    _widths.reserve(types.size());
     for (const auto& type : types) {
-      widths.push_back(BinaryWidth(type));
+      _widths.push_back(BinaryWidth(type));
     }
-    const auto data_size = size - begin;
-    const auto groups = std::clamp<size_t>(
-      data_size / kPlanGroupMinBytes, 1,
-      duckdb::TaskScheduler::QueryThreads(context) * kPlanGroupsPerThread);
-    const auto group_bytes = (data_size + groups - 1) / groups;
-    const auto group_end = [&](size_t group) {
-      return std::min(size, begin + (group + 1) * group_bytes);
-    };
-    std::vector<BinaryWalk> walks(groups);
-    duckdb::TaskExecutor executor{context};
-    for (size_t group = 0; group < groups; ++group) {
-      executor.ScheduleTask(
-        [&, group] {
-          const auto from = begin + group * group_bytes;
-          const auto to = group_end(group);
-          _mapping->PrefetchMissing(from, to - from);
-          const auto start =
-            group == 0 ? begin : FindBinaryRow(bytes, from, to, widths);
-          if (start != std::string_view::npos) {
-            WalkCuts(bytes, start, to, walks[group]);
-          }
-        },
-        "binary copy plan");
-    }
-    executor.WorkOnTasks();
-
-    auto at = begin;
-    for (size_t group = 0; group < groups; ++group) {
-      const auto to = group_end(group);
-      if (at >= to) {
-        continue;
-      }
-      auto& walk = walks[group];
-      if (walk.start != at) {
-        WalkCuts(bytes, at, to, walk);
-      }
-      for (const auto cut : walk.cuts) {
-        _planned.emplace_back(at, cut);
-        at = cut;
-      }
-      if (at < to) {
-        break;
-      }
-    }
-    _tail = at;
+    _loader.emplace(context);
+    _file->ReadInPlace(context, size, 0);
   }
 
-  void ReadMapped() {
-    if (_next < _planned.size()) {
-      const auto [from, to] = _planned[_next++];
-      auto batch = std::make_unique<pg::CopyBatch>();
-      batch->AddView(_mapped.substr(from, to - from));
-      batch->owner = std::make_shared<duckdb::MappedRange>(_mapping, from, to);
-      Push(std::move(batch));
-      return;
+  void ScheduleLoads() {
+    while (_scheduled < _pieces.size() &&
+           (_scheduled == _next || _ahead < _ahead_limit)) {
+      const auto index = _scheduled++;
+      _ahead += _bounds[index + 1] - _bounds[index];
+      _loader->ScheduleTask([this, index] { Load(index); },
+                            "binary copy piece");
     }
-    _builder.Feed(_mapped.substr(_tail), true);
-    FinishFile();
+  }
+
+  void Load(size_t index) {
+    auto& piece = _pieces[index];
+    try {
+      const auto from = _bounds[index];
+      const auto size = _bounds[index + 1] - from;
+      if (_mapping) {
+        _mapping->PrefetchMissing(from, size);
+        piece.bytes = _mapped.substr(from, size);
+        piece.owner =
+          std::make_shared<duckdb::MappedRange>(_mapping, from, from + size);
+      } else {
+        auto bytes = std::make_shared_for_overwrite<char[]>(size);
+        const auto read = _frames->Read(bytes.get(), size, from);
+        piece.bytes = {bytes.get(), static_cast<size_t>(read)};
+        piece.owner = std::move(bytes);
+      }
+      piece.start =
+        index == 0 ? RowsAfterHeader(piece.bytes)
+                   : FindBinaryRow(piece.bytes, 0, piece.bytes.size(), _widths);
+      if (piece.start != std::string_view::npos) {
+        WalkCuts(piece);
+      }
+    } catch (...) {
+      piece.error = std::current_exception();
+    }
+    absl::MutexLock lock{&_piece_lock};
+    piece.ready = true;
+  }
+
+  void ReadPiece() {
+    ScheduleLoads();
+    auto& piece = _pieces[_next];
+    const auto loaded = [&] {
+      return piece.ready || _ended.load(std::memory_order_acquire);
+    };
+    {
+      duckdb::TaskScheduler::BlockingScope blocking;
+      absl::MutexLock lock{&_piece_lock};
+      _piece_lock.Await(absl::Condition(&loaded));
+      if (!piece.ready) {
+        return;
+      }
+    }
+    if (piece.error) {
+      std::rethrow_exception(piece.error);
+    }
+    FeedPiece(piece);
+    _ahead -= _bounds[_next + 1] - _bounds[_next];
+    piece = {};
+    if (++_next == _pieces.size()) {
+      FinishFile();
+    }
+  }
+
+  void FeedPiece(const BinaryPiece& piece) {
+    const auto bytes = piece.bytes;
+    size_t at = 0;
+    if (piece.start != std::string_view::npos) {
+      at = piece.start;
+      Keep(piece.owner, _builder.Feed(bytes.substr(0, at), true));
+      if (_builder.BetweenRows()) {
+        for (const auto cut : piece.cuts) {
+          Keep(piece.owner, _builder.AddRows(bytes.substr(at, cut - at), true));
+          at = cut;
+          if (_builder.Ready()) {
+            PushBuilt();
+          }
+        }
+      }
+    }
+    Keep(piece.owner, _builder.Feed(bytes.substr(at), true));
+    if (_builder.Ready()) {
+      PushBuilt();
+    }
+  }
+
+  void Keep(const std::shared_ptr<void>& owner, bool viewed) {
+    if (viewed && (_fed.empty() || _fed.back() != owner)) {
+      _fed.push_back(owner);
+    }
   }
 
   void ReadStream() {
@@ -360,7 +420,7 @@ class CopyFileReader {
       viewed |= _builder.Feed(segment, true);
     }
     if (viewed) {
-      _fed.push_back(std::move(lease));
+      _fed.push_back(std::make_shared<pg::CopyBatchLease>(std::move(lease)));
     }
     if (_builder.Ready()) {
       PushBuilt();
@@ -368,8 +428,8 @@ class CopyFileReader {
   }
 
   void ReadBatch() {
-    if (_mapping) {
-      ReadMapped();
+    if (!_pieces.empty()) {
+      ReadPiece();
       return;
     }
     if (_source) {
@@ -390,9 +450,12 @@ class CopyFileReader {
 
   void PushBuilt() {
     auto batch = _builder.Take();
-    if (!_fed.empty()) {
-      batch->owner = std::make_shared<Leases>(std::exchange(_fed, {}));
+    if (_fed.size() == 1) {
+      batch->owner = std::move(_fed.front());
+    } else if (!_fed.empty()) {
+      batch->owner = std::make_shared<Owners>(std::move(_fed));
     }
+    _fed.clear();
     Push(std::move(batch));
   }
 
@@ -411,16 +474,22 @@ class CopyFileReader {
     UpdateBudget();
   }
 
-  using Leases = std::vector<pg::CopyBatchLease>;
+  using Owners = std::vector<std::shared_ptr<void>>;
 
   std::unique_ptr<duckdb::FileHandle> _file;
   pg::CopyInBatches* _source = nullptr;
-  Leases _fed;
+  Owners _fed;
   duckdb::shared_ptr<duckdb::MemoryMappedFile> _mapping;
+  duckdb::shared_ptr<duckdb::PiecedRowSource> _frames;
   std::string_view _mapped;
-  std::vector<std::pair<size_t, size_t>> _planned;
+  std::vector<size_t> _bounds;
+  std::vector<BinaryPiece> _pieces;
+  std::vector<int32_t> _widths;
   size_t _next = 0;
-  size_t _tail = 0;
+  size_t _scheduled = 0;
+  size_t _ahead = 0;
+  size_t _ahead_limit = 0;
+  absl::Mutex _piece_lock;
   pg::CopyBatchBuilder _builder{pg::CopyBatchFormat::Binary,
                                 pg::kCopyBatchBytes};
   pg::CopyInBatches _batches;
@@ -430,6 +499,7 @@ class CopyFileReader {
   std::atomic_bool _reading{false};
   std::atomic_bool _ended{false};
   duckdb::TaskExecutor _executor;
+  std::optional<duckdb::TaskExecutor> _loader;
   std::string _chunk;
 };
 

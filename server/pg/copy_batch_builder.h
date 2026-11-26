@@ -46,10 +46,14 @@ class CopyBatchBuilder {
     : _format{format}, _target{target_bytes} {}
 
   bool Feed(std::string_view bytes, bool stable);
+  bool AddRows(std::string_view rows, bool stable);
   void Finish();
   bool Ready() const noexcept { return Full(); }
   bool HasRows() const noexcept { return _batch && !_batch->Empty(); }
   bool Ended() const noexcept { return _ended; }
+  bool BetweenRows() const noexcept {
+    return _header_done && !_open && !_ended;
+  }
   std::unique_ptr<CopyBatch> Take();
 
  private:
@@ -61,7 +65,6 @@ class CopyBatchBuilder {
 
   bool Full() const noexcept { return _batch && _batch->bytes >= _target; }
   CopyBatch& Current();
-  bool AddRows(std::string_view rows, bool stable);
   bool FeedBinary(std::string_view bytes, bool stable);
   size_t FeedHeader(std::string_view bytes);
   bool Gather(std::string_view bytes, size_t& pos, size_t need);

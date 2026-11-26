@@ -101,3 +101,64 @@ SELECT count(*) AS n FROM cbp_dst;
 ----
 n
 200000
+
+
+statement ok
+CREATE TABLE cbp_mixed AS
+SELECT x::INTEGER AS id,
+       decode(repeat('00020000000400000007000000024142', 5) || md5(x::VARCHAR) || md5((x + 1)::VARCHAR), 'hex') AS payload
+FROM range(200000) t(x);
+
+
+statement count 200000
+COPY cbp_mixed TO '${__TEST_DIR__}/cbp_mixed.bin.zst' (FORMAT binary);
+
+
+statement count 200000
+COPY cbp_mixed TO '${__TEST_DIR__}/cbp_mixed.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbp_mixed_dst (id INTEGER, payload BYTEA);
+
+
+statement count 200000
+COPY cbp_mixed_dst FROM '${__TEST_DIR__}/cbp_mixed.bin.zst' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM cbp_mixed_dst
+JOIN cbp_mixed USING (id, payload);
+----
+n	total
+200000	19999900000
+
+
+statement count 1
+COPY (SELECT content || '\x0001'::BYTEA FROM read_blob('${__TEST_DIR__}/cbp_mixed.bin'))
+TO '${__TEST_DIR__}/cbp_mixed_junk.bin.zst' (FORMAT blob);
+
+
+statement error
+COPY cbp_mixed_dst FROM '${__TEST_DIR__}/cbp_mixed_junk.bin.zst' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: received copy data after EOF marker
+
+
+statement count 1
+COPY (SELECT substr(content, 1, octet_length(content) - 7) FROM read_blob('${__TEST_DIR__}/cbp_mixed.bin'))
+TO '${__TEST_DIR__}/cbp_mixed_cut.bin.zst' (FORMAT blob);
+
+
+statement error
+COPY cbp_mixed_dst FROM '${__TEST_DIR__}/cbp_mixed_cut.bin.zst' (FORMAT binary);
+----
+db error: ERROR: COPY FROM: truncated row
+
+
+query
+SELECT count(*) AS n FROM cbp_mixed_dst;
+----
+n
+200000

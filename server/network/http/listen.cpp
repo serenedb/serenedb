@@ -108,6 +108,7 @@ std::shared_ptr<const ListenOptions> Parse(const ListenSpec& spec,
   const std::string_view url = spec.url;
   auto options = std::make_shared<HttpListenOptions>();
   options->https = https;
+  std::string_view alone;
   for (const auto& [key, value] : params) {
     if (key == "api") {
       const auto* api = Registry<http::Api>::Find(value);
@@ -115,6 +116,9 @@ std::shared_ptr<const ListenOptions> Parse(const ListenSpec& spec,
         SDB_FATAL(
           GENERAL, "unknown api '", value, "' in endpoint '", url,
           "' (known: ", absl::StrJoin(Registry<http::Api>::Names(), ", "), ")");
+      }
+      if (api->own_listener) {
+        alone = value;
       }
       if (!absl::c_linear_search(options->apis, api)) {
         options->apis.push_back(api);
@@ -151,6 +155,11 @@ std::shared_ptr<const ListenOptions> Parse(const ListenSpec& spec,
   if (options->apis.empty()) {
     SDB_FATAL(GENERAL, "http endpoint '", url,
               "' requires ?api= (e.g. ?api=es); there is no default api");
+  }
+  if (!alone.empty() && options->apis.size() > 1) {
+    SDB_FATAL(GENERAL, "api '", alone, "' in endpoint '", url,
+              "' needs a listener of its own, since its routes take every "
+              "path at the root: serve the other apis on another endpoint");
   }
   return options;
 }

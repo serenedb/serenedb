@@ -1,8 +1,10 @@
-"""Raw HTTP/1.1 tests for the SereneDB HTTP endpoint (tier-0 + test API).
+"""Raw HTTP/1.1 tests for the SereneDB HTTP endpoints (tier-0 + test API).
 
 Covers the session/protocol surface: head framing, fixed and chunked bodies
 in both directions, keep-alive reuse, Expect: 100-continue, error statuses.
-Skipped wholesale when no HTTP endpoint is configured (SDB_DRV_HTTP_PORT).
+The tier-0 tests use the Elasticsearch endpoint (SDB_DRV_ES_PORT), the test
+API its own (SDB_DRV_HTTP_PORT); each group is skipped when its endpoint is
+not configured.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import pytest
 
 HOST = os.environ.get("SDB_DRV_HOST", "localhost")
 PORT = int(os.environ.get("SDB_DRV_HTTP_PORT", "9200"))
+ES_PORT = int(os.environ.get("SDB_DRV_ES_PORT", "9200"))
 USER = os.environ.get("SDB_DRV_USER", "postgres")
 PASSWORD = os.environ.get("SDB_DRV_PASSWORD", "")
 
@@ -40,24 +43,25 @@ def _authorize(conn):
     return conn
 
 
-def _reachable() -> bool:
+def _reachable(port) -> bool:
     try:
-        with socket.create_connection((HOST, PORT), timeout=2):
+        with socket.create_connection((HOST, port), timeout=2):
             return True
     except OSError:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _reachable(), reason=f"no HTTP endpoint at {HOST}:{PORT}"
-)
+def _connect(port):
+    if not _reachable(port):
+        pytest.skip(f"no HTTP endpoint at {HOST}:{port}")
+    c = http.client.HTTPConnection(HOST, port, timeout=10)
+    yield _authorize(c)
+    c.close()
 
 
 @pytest.fixture()
 def conn():
-    c = http.client.HTTPConnection(HOST, PORT, timeout=10)
-    yield _authorize(c)
-    c.close()
+    yield from _connect(ES_PORT)
 
 
 def test_root_banner(conn):
@@ -109,7 +113,11 @@ def test_connection_close_honored(conn):
 
 
 class TestTestApi:
-    """Requires --network_http_test_api; skipped when /_test/ping is absent."""
+    """Requires a listener with ?api=test; skipped when /_test/ping is absent."""
+
+    @pytest.fixture()
+    def conn(self):
+        yield from _connect(PORT)
 
     @pytest.fixture(autouse=True)
     def _require_test_api(self, conn):

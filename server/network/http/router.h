@@ -59,9 +59,8 @@ class HttpRouter {
 
   using Handlers = std::array<RouteTarget, kMethods>;
 
-  // Fully literal routes are matched first, so one api's `/:index` cannot
-  // swallow another's reserved `/_mcp` whichever order the apis were
-  // registered in.
+  // Fully literal routes are matched first, so `/:index` cannot swallow a
+  // literal path such as `/_bulk` whichever order they were registered in.
   struct Entry {
     PathPattern path;
     size_t handlers;

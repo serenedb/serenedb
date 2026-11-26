@@ -44,6 +44,7 @@ struct Api {
   std::span<const Route> routes;
   uint64_t max_body_bytes = 0;
   void (*start)(const ListenSpec& spec) = nullptr;
+  bool own_listener = false;
 };
 
 }  // namespace sdb::network::http

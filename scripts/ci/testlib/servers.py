@@ -15,21 +15,21 @@ START_TIMEOUT = 300
 
 
 class Server:
-    def __init__(self, ctx, home, *, threads=0, listen_ssl=False, http_apis=(), hba=None,
+    def __init__(self, ctx, home, *, threads=0, listen_ssl=False, http_listeners=(), hba=None,
                  extra_args=(), extra_env=None, profile_dir=None):
         self.ctx = ctx
         self.home = Path(home)
         self.profile_dir = profile_dir or ctx.out_dir / "profiles"
         self.threads = threads
         self.listen_ssl = listen_ssl
-        self.http_apis = tuple(http_apis)
+        self.http_listeners = tuple(tuple(apis) for apis in http_listeners)
         self.hba = hba
         self.extra_args = list(extra_args)
         self.extra_env = dict(extra_env or {})
         self.host = "127.0.0.1"
         self.port = None
         self.ssl_port = None
-        self.http_port = None
+        self.http_ports = []
         self.reserved = []
         self.proc = None
         self.generation = 0
@@ -50,8 +50,8 @@ class Server:
         if self.listen_ssl:
             ca = self.ctx.root / "resources" / "ca.pem"
             listen += f",postgres://127.0.0.1:{self.ssl_port}?sslmode=require&cert={ca}&key={ca}"
-        if self.http_apis:
-            listen += f",http://127.0.0.1:{self.http_port}?" + "&".join(f"api={a}" for a in self.http_apis)
+        for apis, port in zip(self.http_listeners, self.http_ports):
+            listen += f",http://127.0.0.1:{port}?" + "&".join(f"api={a}" for a in apis)
         args = [str(self.ctx.build.bin("serened")), str(self.datadir), f"--listen={listen}",
                 "--auth_timeout=600s"]
         if self.threads:
@@ -72,13 +72,19 @@ class Server:
         self._release_ports()
         self.port = self._reserve_port()
         self.ssl_port = self._reserve_port() if self.listen_ssl else None
-        self.http_port = self._reserve_port() if self.http_apis else None
+        self.http_ports = [self._reserve_port() for _ in self.http_listeners]
         self.log = self.home / f"log.{self.generation}.txt"
         self.proc = proc.spawn(self.argv(), env=self.env(), cwd=self.ctx.root, log_path=self.log)
         if self._wait_ready():
             return self
         raise RuntimeError(f"serened did not start (exit {self.proc.poll()}); log tail:\n"
                            + reports.tail(self.log, 3000))
+
+    def http_port(self, api):
+        for apis, port in zip(self.http_listeners, self.http_ports):
+            if api in apis:
+                return port
+        return None
 
     def _reserve_port(self):
         sock = reserve_port()
@@ -95,7 +101,7 @@ class Server:
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 return False
-            ports = [p for p in (self.port, self.ssl_port, self.http_port) if p]
+            ports = [p for p in (self.port, self.ssl_port, *self.http_ports) if p]
             if (pg_startup_reachable("127.0.0.1", self.port, timeout=2.0)
                     and listens_on(self.proc.pid, ports)):
                 return True

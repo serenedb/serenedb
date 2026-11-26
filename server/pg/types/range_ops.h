@@ -478,24 +478,39 @@ Range<typename Traits::Element> Minus(
 }
 
 template<typename Traits>
-Multirange<typename Traits::Element> Normalize(
-  Multirange<typename Traits::Element> ranges) {
-  absl::c_sort(ranges, [](const auto& left, const auto& right) {
+void NormalizeTail(Multirange<typename Traits::Element>& ranges,
+                   size_t normalized) {
+  const auto less = [](const auto& left, const auto& right) {
     return CompareRanges(left, right) < 0;
-  });
-  Multirange<typename Traits::Element> result;
-  for (const auto& range : ranges) {
+  };
+  const auto added = ranges.begin() + normalized;
+  if (added == ranges.end()) {
+    return;
+  }
+  std::sort(added, ranges.end(), less);
+  const auto first = std::lower_bound(ranges.begin(), added, *added, less);
+  std::inplace_merge(first, added, ranges.end(), less);
+  auto size = static_cast<size_t>(first - ranges.begin());
+  for (auto next = size; next != ranges.size(); ++next) {
+    const auto range = ranges[next];
     if (range.empty) {
       continue;
     }
-    if (result.empty() ||
-        (Before(result.back(), range) && !Adjacent(result.back(), range))) {
-      result.push_back(range);
+    if (size == 0 || (Before(ranges[size - 1], range) &&
+                      !Adjacent(ranges[size - 1], range))) {
+      ranges[size++] = range;
     } else {
-      result.back() = Union<Traits, false>(result.back(), range);
+      ranges[size - 1] = Union<Traits, false>(ranges[size - 1], range);
     }
   }
-  return result;
+  ranges.resize(size);
+}
+
+template<typename Traits>
+Multirange<typename Traits::Element> Normalize(
+  Multirange<typename Traits::Element> ranges) {
+  NormalizeTail<Traits>(ranges, 0);
+  return ranges;
 }
 
 template<typename T>

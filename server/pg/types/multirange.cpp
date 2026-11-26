@@ -238,6 +238,7 @@ void ConstructMultirange(duckdb::DataChunk& args, duckdb::ExpressionState&,
 template<typename T>
 struct RangeAggState {
   Multirange<T>* ranges;
+  size_t normalized;
 };
 
 template<typename Traits, typename Input>
@@ -245,7 +246,15 @@ struct RangeAgg {
   using T = typename Traits::Element;
   using State = RangeAggState<T>;
 
-  static void Initialize(State& state) { state.ranges = nullptr; }
+  static void Initialize(State& state) {
+    state.ranges = nullptr;
+    state.normalized = 0;
+  }
+
+  static void Normalize(State& state) {
+    NormalizeTail<Traits>(*state.ranges, state.normalized);
+    state.normalized = state.ranges->size();
+  }
 
   static void Update(duckdb::Vector inputs[], duckdb::AggregateInputData&,
                      duckdb::idx_t, duckdb::Vector& states,
@@ -265,8 +274,6 @@ struct RangeAgg {
       }
       if constexpr (std::is_same_v<Input, RangeArg<T>>) {
         state.ranges->push_back(*value);
-      } else if (value->empty()) {
-        state.ranges->push_back(EmptyRange<T>());
       } else {
         state.ranges->insert(state.ranges->end(), value->begin(), value->end());
       }
@@ -275,7 +282,7 @@ struct RangeAgg {
 
   template<typename, typename>
   static void Combine(const State& source, State& target,
-                      duckdb::AggregateInputData&) {
+                      duckdb::AggregateInputData& input) {
     if (!source.ranges) {
       return;
     }
@@ -284,6 +291,10 @@ struct RangeAgg {
     }
     target.ranges->insert(target.ranges->end(), source.ranges->begin(),
                           source.ranges->end());
+    if (input.combine_type == duckdb::AggregateCombineType::PRESERVE_INPUT &&
+        target.ranges->size() > 2 * target.normalized) {
+      Normalize(target);
+    }
   }
 
   template<typename>
@@ -292,7 +303,8 @@ struct RangeAgg {
       data.ReturnNull();
       return;
     }
-    StoreValue(data.result, data.result_idx, Normalize<Traits>(*state.ranges));
+    Normalize(state);
+    StoreValue(data.result, data.result_idx, *state.ranges);
   }
 
   template<typename>
@@ -352,10 +364,15 @@ struct RangeIntersectAgg {
   }
 };
 
+template<typename T>
+struct MultirangeIntersectState {
+  Multirange<T>* ranges;
+};
+
 template<typename Traits>
 struct MultirangeIntersectAgg {
   using T = typename Traits::Element;
-  using State = RangeAggState<T>;
+  using State = MultirangeIntersectState<T>;
 
   static void Initialize(State& state) { state.ranges = nullptr; }
 

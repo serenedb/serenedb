@@ -679,6 +679,46 @@ def test_copy_arrows_round_trip(conn: psycopg.Connection,
         _drop(conn, dest)
 
 
+def _arrows_load(cur, table: str, blob: bytes) -> None:
+    with cur.copy(f'COPY public."{table}" FROM STDIN (FORMAT arrows)') as cp:
+        for i in range(0, len(blob), 64 * 1024):
+            cp.write(blob[i:i + 64 * 1024])
+
+
+@pytest.mark.usefixtures("own_server")
+@pytest.mark.parametrize("compression", ["none", "lz4", "zstd"])
+def test_copy_arrows_from_stdin_decodes_batches_on_every_thread(
+        conn: psycopg.Connection, table_name: str, compression: str) -> None:
+    conn.execute("SET threads = 8")
+    dest = f"{table_name}_dst"
+    _create_int_varchar(conn, table_name)
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{dest}"(x INT, label VARCHAR)')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'INSERT INTO public."{table_name}" SELECT i, CASE WHEN i % 7 = 0 '
+                f"THEN NULL ELSE repeat('v', i % 50) || i END "
+                f"FROM generate_series(1, 400000) i")
+            with cur.copy(f'COPY public."{table_name}" TO STDOUT (FORMAT arrows, '
+                          f"COMPRESSION '{compression}', ROW_GROUP_SIZE 20000)") as cp:
+                blob = b"".join(bytes(chunk) for chunk in cp)
+            _arrows_load(cur, dest, blob)
+            for left, right in ((table_name, dest), (dest, table_name)):
+                cur.execute(f'SELECT count(*) FROM (SELECT * FROM public."{left}" '
+                            f'EXCEPT ALL SELECT * FROM public."{right}")')
+                assert cur.fetchone() == (0,)
+            cur.execute(f'TRUNCATE public."{dest}"')
+            at = blob.index(b"\xff\xff\xff\xff", len(blob) // 2)
+            with pytest.raises(psycopg.Error, match="truncated"):
+                _arrows_load(cur, dest, blob[:at + 100])
+            cur.execute(f'SELECT count(*) FROM public."{dest}"')
+            assert cur.fetchone() == (0,)
+    finally:
+        _drop(conn, table_name)
+        _drop(conn, dest)
+
+
 @pytest.mark.parametrize("codec", ["null", "deflate", "zstandard"])
 def test_copy_avro_round_trip(conn: psycopg.Connection, table_name: str,
                               codec: str) -> None:

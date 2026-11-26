@@ -71,9 +71,9 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
 
 // Reads the COPY FROM STDIN wire stream in order: through the session's
 // registered row stream when the format's reader scans it directly (csv,
-// json), else SINGLE-PASS from the batches, where the ctor rejects a re-open --
-// a non-seekable stream has nothing to replay. The session has already sent
-// CopyInResponse by the time the handle exists.
+// json), else SINGLE-PASS from the batches, where a re-opened handle refuses
+// to read -- a non-seekable stream has nothing to replay. The session has
+// already sent CopyInResponse by the time the handle exists.
 struct CopyInFileHandle final : public duckdb::FileHandle {
   CopyInFileHandle(duckdb::FileSystem& fs, ConnectionContext& state,
                    pg::CopyInBatches& batches,
@@ -83,19 +83,8 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_READ)),
       _state{state},
       _batches{batches},
-      _stream{std::move(stream)} {
-    const auto open_idx = _state.copy_stdin_open_count++;
-    if (open_idx != 0 && !_stream) {
-      // A re-open would need to replay from offset 0, but the wire stream is
-      // non-seekable and already drained past that point. No COPY format does
-      // this (csv/json sniff+scan share a single buffer-manager pass), so fail
-      // loudly rather than feed the reader bytes from the wrong offset.
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG(
-          "COPY FROM STDIN: unexpected re-open of a non-seekable stream"));
-    }
-  }
+      _stream{std::move(stream)},
+      _reopened{_state.copy_stdin_open_count++ != 0} {}
 
   ~CopyInFileHandle() final = default;
   void Close() final {}
@@ -107,6 +96,15 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
                       static_cast<duckdb::idx_t>(nr_bytes), _position);
       _position += read;
       return static_cast<int64_t>(read);
+    }
+    if (_reopened) {
+      // A re-open would need to replay from offset 0, but the wire stream is
+      // non-seekable and already drained past that point, so fail loudly
+      // rather than feed the reader bytes from the wrong offset.
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG(
+          "COPY FROM STDIN: unexpected re-open of a non-seekable stream"));
     }
     // Short-circuit once CopyDone/EOF has been seen instead of re-blocking.
     if (_state.copy_stdin_done) {
@@ -146,6 +144,7 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
   ConnectionContext& _state;
   pg::CopyInBatches& _batches;
   duckdb::shared_ptr<duckdb::RowSource> _stream;
+  bool _reopened;
   duckdb::idx_t _position = 0;
   pg::CopyBatchLease _batch;
   size_t _segment = 0;

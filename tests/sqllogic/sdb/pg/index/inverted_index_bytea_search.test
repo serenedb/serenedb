@@ -986,3 +986,27 @@ ORDER BY id
 ----
 id	explained	scored
 1	t	t
+
+# A byte that is not part of a valid UTF-8 character is a segment of its own
+# for split_text, like a punctuation mark: alpha drops it, graphic keeps it.
+# Indexing and querying split the same way.
+statement ok
+CREATE TEXT SEARCH DICTIONARY bt_graphic AS split_text(break := 'graphic')
+
+query
+SELECT list_transform(ts_lexize('bt_words', '\x6162ff6364'::bytea), lambda x: hex(x)) AS alpha,
+       list_transform(ts_lexize('bt_graphic', '\x6162ff6364'::bytea), lambda x: hex(x)) AS graphic
+----
+alpha	graphic
+{6162,6364}	{6162,FF,6364}
+
+statement ok
+INSERT INTO bp VALUES (3, '\x717569636b20ff'::bytea)
+
+query
+SELECT id FROM bp WHERE p @@ ts_phrase('\x717569636b20ff'::bytea) ORDER BY id
+----
+id
+1
+2
+3

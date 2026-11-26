@@ -121,11 +121,9 @@ bool PlausibleRows(std::string_view bytes, size_t pos,
   return true;
 }
 
-size_t FindBinaryRow(std::string_view bytes, size_t from, size_t limit,
-                     std::span<const int32_t> widths) {
+size_t FindBinaryRow(std::string_view bytes, std::span<const int32_t> widths) {
   const auto columns = static_cast<uint16_t>(widths.size());
-  for (auto pos = from; pos < limit && bytes.size() - pos >= sizeof(int16_t);
-       ++pos) {
+  for (size_t pos = 0; bytes.size() - pos >= sizeof(int16_t); ++pos) {
     if (absl::big_endian::Load16(bytes.data() + pos) == columns &&
         PlausibleRows(bytes, pos, widths)) {
       return pos;
@@ -337,9 +335,8 @@ class CopyFileReader {
         piece.bytes = {bytes.get(), static_cast<size_t>(read)};
         piece.owner = std::move(bytes);
       }
-      piece.start =
-        index == 0 ? RowsAfterHeader(piece.bytes)
-                   : FindBinaryRow(piece.bytes, 0, piece.bytes.size(), _widths);
+      piece.start = index == 0 ? RowsAfterHeader(piece.bytes)
+                               : FindBinaryRow(piece.bytes, _widths);
       if (piece.start != std::string_view::npos) {
         WalkCuts(piece);
       }

@@ -158,22 +158,21 @@ std::optional<std::string> ConstraintKeyText(
   duckdb::ClientContext& context, const duckdb::RoleAccess& role,
   const duckdb::TableCatalogEntry& table, const search::KeySpec& spec,
   std::string_view key) {
-  std::vector<duckdb::idx_t> columns;
-  if (spec.key.expressions.empty()) {
-    for (const auto id : spec.key.columns) {
-      for (const auto& column : table.GetColumns().Logical()) {
-        if (TableColumnId(column) == id) {
-          columns.push_back(column.Logical().index);
+  if (!duckdb::Allowed(role, table, duckdb::AclMode::Select)) {
+    std::vector<duckdb::LogicalIndex> columns;
+    if (spec.key.expressions.empty()) {
+      for (const auto id : spec.key.columns) {
+        for (const auto& column : table.GetColumns().Logical()) {
+          if (TableColumnId(column) == id) {
+            columns.push_back(column.Logical());
+          }
         }
       }
     }
-  }
-  const bool readable =
-    duckdb::Allowed(role, table, duckdb::AclMode::Select) ||
-    (!columns.empty() &&
-     role.CanColumns(table, duckdb::AclMode::Select, columns));
-  if (!readable) {
-    return std::nullopt;
+    if (columns.empty() ||
+        !role.CanColumns(table, duckdb::AclMode::Select, columns)) {
+      return std::nullopt;
+    }
   }
   const auto values = DecodeKey(key, spec.types);
   std::string out = absl::StrCat("(", absl::StrJoin(spec.names, ", "), ")=(");

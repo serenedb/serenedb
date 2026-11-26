@@ -21,7 +21,6 @@
 #include <absl/synchronization/mutex.h>
 
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
-#include <duckdb/catalog/column_acls.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -31,6 +30,7 @@
 
 #include "pg/catalog/builtin/builtin.h"
 #include "pg/catalog/functions/functions.h"
+#include "pg/catalog/utils/acl.h"
 #include "pg/catalog/utils/lookup.h"
 #include "pg/connection_context.h"
 #include "pg/types/logical.h"
@@ -156,9 +156,9 @@ void PgSequenceParametersFunction(duckdb::DataChunk& args,
     }
     const auto type =
       relation->entry ? relation->entry->type : CatalogType::TABLE_ENTRY;
-    if (!duckdb::AllowedAny(role, type, *relation->permissions,
-                            AclMode::Select | AclMode::Update | AclMode::Usage,
-                            AclMode::NoRights)) {
+    if (!HasPrivilege(role, type, *relation->permissions,
+                      AclMode::Select | AclMode::Update | AclMode::Usage,
+                      AclMode::NoRights)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied for sequence ",
                               NameOf(*session.transaction, *relation).name));

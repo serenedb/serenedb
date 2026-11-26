@@ -34,7 +34,6 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/type_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/view_catalog_entry.hpp>
-#include <duckdb/catalog/column_acls.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <duckdb/common/vector_operations/variadic_executor.hpp>
@@ -316,9 +315,9 @@ bool Holds(const duckdb::RoleAccess& role, CatalogType type,
       role.Has(target.capability)) {
     return true;
   }
-  return duckdb::AllowedAny(role, type, permissions, privileges,
-                            requested.grant_options & target.rights,
-                            target.columns, target.any_column);
+  return HasPrivilege(role, type, permissions, privileges,
+                      requested.grant_options & target.rights, target.columns,
+                      target.any_column);
 }
 
 const duckdb::Permissions kBuiltinPermissions{.owner = kRootUser};

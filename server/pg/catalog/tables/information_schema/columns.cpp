@@ -306,10 +306,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
 
  private:
   bool Visible(const duckdb::CatalogEntry& relation) const {
-    const auto& permissions = duckdb::PermissionsOf(relation);
-    return _role.MemberOf(permissions.owner) ||
-           _role.CanAny(duckdb::CatalogType::TABLE_ENTRY, permissions,
-                        kAnyColumnPrivilege);
+    return _role.MemberOf(duckdb::PermissionsOf(relation).owner) ||
+           duckdb::AllowedAny(_role, relation, kAnyColumnPrivilege);
   }
 
   std::string_view _database = Database().GetName().GetIdentifierName();

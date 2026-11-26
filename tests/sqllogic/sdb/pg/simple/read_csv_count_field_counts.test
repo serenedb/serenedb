@@ -1,0 +1,39 @@
+control substitution on
+
+statement ok
+COPY (SELECT (string_agg(CASE WHEN i = 1000 THEN 'x,y' ELSE i::TEXT || ',' || i::TEXT || ',' || i::TEXT END, chr(10) ORDER BY i) || chr(10))::BLOB FROM range(2000) t(i))
+TO '${__TEST_DIR__}/count_short_row.csv' (FORMAT BLOB);
+
+
+statement ok
+COPY (SELECT (string_agg(CASE WHEN i = 1000 THEN 'x,y,z,w' ELSE i::TEXT || ',' || i::TEXT || ',' || i::TEXT END, chr(10) ORDER BY i) || chr(10))::BLOB FROM range(2000) t(i))
+TO '${__TEST_DIR__}/count_long_row.csv' (FORMAT BLOB);
+
+
+statement error Expected Number of Columns: 3 Found: 2
+SELECT count(*) FROM read_csv('${__TEST_DIR__}/count_short_row.csv', columns = {'a': 'INTEGER', 'b': 'INTEGER', 'c': 'INTEGER'}, header = false, auto_detect = false, delim = ',', quote = '"', new_line = '\n');
+
+
+statement error Expected Number of Columns: 3 Found: 4
+SELECT count(*) FROM read_csv('${__TEST_DIR__}/count_long_row.csv', columns = {'a': 'INTEGER', 'b': 'INTEGER', 'c': 'INTEGER'}, header = false, auto_detect = false, delim = ',', quote = '"', new_line = '\n');
+
+
+query
+SELECT count(*) AS n FROM read_csv('${__TEST_DIR__}/count_short_row.csv', columns = {'a': 'INTEGER', 'b': 'INTEGER', 'c': 'INTEGER'}, header = false, auto_detect = false, delim = ',', quote = '"', new_line = '\n', ignore_errors = true);
+----
+n
+1999
+
+
+query
+SELECT count(*) AS n FROM read_csv('${__TEST_DIR__}/count_short_row.csv', columns = {'a': 'INTEGER', 'b': 'INTEGER', 'c': 'INTEGER'}, header = false, auto_detect = false, delim = ',', quote = '"', new_line = '\n', null_padding = true);
+----
+n
+2000
+
+
+query
+SELECT count(*) AS n FROM read_csv('${__TEST_DIR__}/count_long_row.csv', columns = {'a': 'INTEGER', 'b': 'INTEGER', 'c': 'INTEGER'}, header = false, auto_detect = false, delim = ',', quote = '"', new_line = '\n', ignore_errors = true);
+----
+n
+1999

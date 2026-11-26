@@ -574,6 +574,20 @@ db error: ERROR: ## part must not carry boost or tokenize modifiers
 HINT: Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional INTEGER / INTEGER[].
 
 
+statement error
+SELECT id FROM bx WHERE t @@ (ts_phrase('quick')::tokenize('bt_words') ## ts_starts_with('\x66'::bytea))
+----
+db error: ERROR: ## part must not carry boost or tokenize modifiers
+HINT: Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional INTEGER / INTEGER[].
+
+
+statement error
+SELECT id FROM bx WHERE t @@ (ts_phrase('quick')::score('constant(1)') ## ts_starts_with('\x66'::bytea))
+----
+db error: ERROR: ## part type not supported yet: __cast
+HINT: Supported phrase parts: bare 'word', ts_starts_with, ts_like, ts_regexp, ts_levenshtein, ts_phrase, ts_any, ts_between.
+
+
 query
 SELECT id FROM bx WHERE t @@ tsquery_phrase(ts_phrase('quick'), 'fox'::bytea) ORDER BY id
 ----

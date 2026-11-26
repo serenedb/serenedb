@@ -46,6 +46,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
+#include <optional>
 
 #include "connector/functions/search.h"
 #include "connector/functions/ts_common.hpp"
@@ -466,31 +467,50 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
     : _context{context} {}
 
   void VisitExpression(duckdb::unique_ptr<duckdb::Expression>* slot) final {
+    const duckdb::BoundFunctionExpression* call = nullptr;
+    if ((*slot)->GetExpressionClass() ==
+        duckdb::ExpressionClass::BOUND_FUNCTION) {
+      const auto& func = (*slot)->Cast<duckdb::BoundFunctionExpression>();
+      const auto op =
+        ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName());
+      if (IsTSQueryStructType(func.GetReturnType()) &&
+          op != TSQueryOp::Unknown && op != TSQueryOp::Boost) {
+        call = &func;
+      }
+    }
+    const auto outer = _mode;
+    if (call && outer == Mode::Check) {
+      _mode = Folded(*call) ? Mode::Fold : Mode::Keep;
+    }
+    const auto mode = _mode;
     VisitExpressionChildren(**slot);
+    _mode = outer;
     RecordWrittenMinMatchBranches(**slot);
-    const auto& expr = **slot;
-    if (expr.GetExpressionClass() != duckdb::ExpressionClass::BOUND_FUNCTION) {
+    if (!call || mode != Mode::Fold) {
       return;
     }
-    const auto& func = expr.Cast<duckdb::BoundFunctionExpression>();
-    if (!IsTSQueryStructType(func.GetReturnType())) {
-      return;
-    }
-    const auto name = func.Function().GetName().GetIdentifierName();
-    const auto op = ClassifyTSQueryFunction(name);
-    if (op == TSQueryOp::Unknown || op == TSQueryOp::Boost) {
-      return;
-    }
-    auto folded = TryFoldTSQueryCall(_context, name, func.GetChildren());
-    if (!folded) {
-      return;
-    }
+    auto folded = Folded(*call);
+    SDB_ASSERT(folded);
     *slot =
       duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*folded));
   }
 
  private:
+  enum class Mode : uint8_t {
+    Check,
+    Fold,
+    Keep,
+  };
+
+  std::optional<duckdb::Value> Folded(
+    const duckdb::BoundFunctionExpression& call) const {
+    return TryFoldTSQueryCall(_context,
+                              call.Function().GetName().GetIdentifierName(),
+                              call.GetChildren());
+  }
+
   duckdb::ClientContext& _context;
+  Mode _mode = Mode::Check;
 };
 
 void FoldTSQueryConstants(duckdb::OptimizerExtensionInput& input,

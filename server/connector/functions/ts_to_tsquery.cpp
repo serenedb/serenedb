@@ -232,7 +232,7 @@ void FromTsqueryPhrase(BoolTarget parent, const FilterContext& ctx,
                        const SearchColumnInfo& column_info,
                        const duckdb::BoundFunctionExpression& func) {
   PhraseSeq seq;
-  FlattenPhraseSeq(ctx.client_context, func, seq);
+  FlattenPhraseSeq(func, seq);
   EmitPhraseSeq(parent, ctx, column_info, seq);
 }
 

@@ -568,37 +568,12 @@ bool IsPhraseSeqNode(const duckdb::Expression& expr) {
   return f_name == kTSQueryPhraseSeq || f_name == kTsqueryPhrase;
 }
 
-const duckdb::Expression& Unfolded(duckdb::ClientContext& context,
-                                   const duckdb::Expression& expr,
-                                   PhraseSeq& seq) {
-  const auto& unwrapped = UnwrapTSQueryCast(expr);
-  if (unwrapped.GetExpressionClass() !=
-      duckdb::ExpressionClass::BOUND_CONSTANT) {
-    return unwrapped;
-  }
-  const auto parts = TryGetTSQueryParts(
-    unwrapped.Cast<duckdb::BoundConstantExpression>().GetValue());
-  if (!parts || HasModifiers(*parts)) {
-    return unwrapped;
-  }
-  auto structured = TryParseStructuredTSQueryText(parts->text, context);
-  if (!structured) {
-    return unwrapped;
-  }
-  return *seq.parsed.emplace_back(std::move(structured));
-}
-
 }  // namespace
 
-void AttachPart(duckdb::ClientContext& context, PhraseSeq& seq,
-                const duckdb::Expression& part) {
-  const auto& next = Unfolded(context, part, seq);
+void AttachPart(PhraseSeq& seq, const duckdb::Expression& next) {
   if (IsPhraseSeqNode(next)) {
     PhraseSeq sub;
-    FlattenPhraseSeq(context, next, sub);
-    for (auto& parsed : sub.parsed) {
-      seq.parsed.push_back(std::move(parsed));
-    }
+    FlattenPhraseSeq(next, sub);
     if (sub.parts.empty()) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -625,9 +600,8 @@ void AttachPart(duckdb::ClientContext& context, PhraseSeq& seq,
   seq.parts.push_back(&next);
 }
 
-void FlattenPhraseSeq(duckdb::ClientContext& context,
-                      const duckdb::Expression& expr, PhraseSeq& seq) {
-  const auto& unwrapped = Unfolded(context, expr, seq);
+void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq) {
+  const auto& unwrapped = UnwrapTSQueryCast(expr);
   if (!IsPhraseSeqNode(unwrapped)) {
     if (IsPhraseSeqGapType(unwrapped)) {
       THROW_SQL_ERROR(
@@ -643,7 +617,7 @@ void FlattenPhraseSeq(duckdb::ClientContext& context,
   if (func.Function().GetName().GetIdentifierName() == kTsqueryPhrase) {
     SDB_ASSERT(func.GetChildren().size() == 2 ||
                func.GetChildren().size() == 3);
-    FlattenPhraseSeq(context, *func.GetChildren()[0], seq);
+    FlattenPhraseSeq(*func.GetChildren()[0], seq);
     if (func.GetChildren().size() == 3) {
       if (seq.pending) {
         THROW_SQL_ERROR(
@@ -654,13 +628,13 @@ void FlattenPhraseSeq(duckdb::ClientContext& context,
       }
       seq.pending = ParseTsqueryPhraseDistance(*func.GetChildren()[2]);
     }
-    AttachPart(context, seq, *func.GetChildren()[1]);
+    AttachPart(seq, *func.GetChildren()[1]);
     return;
   }
   SDB_ASSERT(func.Function().GetName().GetIdentifierName() ==
              kTSQueryPhraseSeq);
   SDB_ASSERT(func.GetChildren().size() == 2);
-  FlattenPhraseSeq(context, *func.GetChildren()[0], seq);
+  FlattenPhraseSeq(*func.GetChildren()[0], seq);
   const auto& right = *func.GetChildren()[1];
   if (IsPhraseSeqGapType(right)) {
     if (seq.pending) {
@@ -673,7 +647,7 @@ void FlattenPhraseSeq(duckdb::ClientContext& context,
     seq.pending = ParsePhraseSeqGap(right);
     return;
   }
-  AttachPart(context, seq, right);
+  AttachPart(seq, right);
 }
 
 // Emits the flattened phrase sequence as an irs::ByPhrase under `parent`.
@@ -708,6 +682,14 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                       ERR_HINT("Use ts_phrase(..., slop := N) or "
                                "ts_phrase(...)::slop(N) for a sloppy "
                                "phrase."));
+    }
+    if (duckdb::BoundCastExpression::IsCast(part_expr_ref) &&
+        (TryGetBoostModifier(part_expr_ref.GetReturnType()) ||
+         !TryGetTokenizerModifier(part_expr_ref.GetReturnType()).empty())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("## part must not carry boost or tokenize modifiers"),
+        ERR_HINT(kSyntaxHint));
     }
     const PhraseGap gap = i > 0 ? seq.gaps[i - 1] : PhraseGap{};
 
@@ -894,7 +876,7 @@ void FromTSQueryPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                           const SearchColumnInfo& column_info,
                           const duckdb::BoundFunctionExpression& func) {
   PhraseSeq seq;
-  FlattenPhraseSeq(ctx.client_context, func, seq);
+  FlattenPhraseSeq(func, seq);
   EmitPhraseSeq(parent, ctx, column_info, seq);
 }
 

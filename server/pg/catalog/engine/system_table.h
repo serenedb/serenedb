@@ -74,7 +74,6 @@
 #include "catalog/base_catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/entry/database.h"
-#include "catalog/entry/db_role_setting.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/parameter.h"
 #include "catalog/entry/role.h"
@@ -1128,8 +1127,6 @@ void Dispatch(T& table, duckdb::CatalogEntry& entry) {
       return Visit<catalog::TablespaceCatalogEntry>(table, entry);
     case duckdb::CatalogType::PARAMETER_ENTRY:
       return Visit<catalog::ParameterCatalogEntry>(table, entry);
-    case duckdb::CatalogType::DB_ROLE_SETTING_ENTRY:
-      return Visit<catalog::DbRoleSettingCatalogEntry>(table, entry);
     case duckdb::CatalogType::INVALID:
     case duckdb::CatalogType::PREPARED_STATEMENT:
     case duckdb::CatalogType::COLLATION_ENTRY:

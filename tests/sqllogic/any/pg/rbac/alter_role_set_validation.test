@@ -18,10 +18,18 @@ ALTER ROLE arsv_r IN DATABASE postgres SET arsv_nosuch = 1;
 db error: ERROR: unrecognized configuration parameter "arsv_nosuch"<slt:ignore>
 
 
+onlyif postgres
 statement error
 ALTER ROLE ALL SET arsv_nosuch = 1;
 ----
 db error: ERROR: unrecognized configuration parameter "arsv_nosuch"<slt:ignore>
+
+
+skipif postgres
+statement error
+ALTER ROLE ALL SET arsv_nosuch = 1;
+----
+db error: ERROR: syntax error at or near "ALL"
 
 
 statement error

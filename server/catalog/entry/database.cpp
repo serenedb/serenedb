@@ -20,6 +20,8 @@
 
 #include "catalog/entry/database.h"
 
+#include <absl/algorithm/container.h>
+
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/parser/parsed_data/alter_table_info.hpp>
@@ -28,6 +30,7 @@
 #include <utility>
 
 #include "catalog/boot.h"
+#include "catalog/entry/role.h"
 #include "pg/catalog/oids.h"
 #include "pg/connection_context.h"
 #include "pg/progress_registry.h"
@@ -59,6 +62,7 @@ duckdb::unique_ptr<duckdb::CreateInfo> DatabaseCatalogEntry::GetInfo() const {
   info->comment = comment;
   info->tags = tags;
   info->options = _options;
+  info->settings = settings;
   info->tablespace_oid = _tablespace;
   SDB_IF_FAILURE("database_without_tablespace") { info->tablespace_oid = 0; }
   info->dependencies = dependencies;
@@ -94,6 +98,21 @@ duckdb::unique_ptr<duckdb::CatalogEntry> DatabaseCatalogEntry::AlterEntry(
   }
   if (alter.set_allow_connections) {
     next.allow_connections = alter.allow_connections;
+  }
+  auto row =
+    absl::c_find_if(next.settings, [&](const duckdb::DatabaseSetting& setting) {
+      return setting.role == alter.role_id;
+    });
+  if (row == next.settings.end() && !alter.set_config.empty()) {
+    row = next.settings.insert(
+      row, duckdb::DatabaseSetting{.role = alter.role_id, .config = {}});
+  }
+  if (row != next.settings.end()) {
+    ApplyConfigChange(row->config, alter.set_config, alter.reset_config,
+                      alter.reset_all_config);
+    if (row->config.empty()) {
+      next.settings.erase(row);
+    }
   }
   return duckdb::make_uniq<DatabaseCatalogEntry>(catalog, next, _directory);
 }

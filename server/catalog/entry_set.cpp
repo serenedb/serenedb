@@ -43,7 +43,6 @@
 #include "catalog/base_catalog.h"
 #include "catalog/catalog.h"
 #include "catalog/cluster.h"
-#include "catalog/entry/db_role_setting.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/transaction.h"
@@ -121,9 +120,14 @@ bool AnyRoleReference(const duckdb::CatalogEntry& entry,
     return true;
   }
   if (entry.type == duckdb::CatalogType::DATABASE_ENTRY) {
-    return absl::c_any_of(entry.Cast<duckdb::DatabaseEntry>().DefaultAcls(),
+    const auto& database = entry.Cast<duckdb::DatabaseEntry>();
+    return absl::c_any_of(database.DefaultAcls(),
                           [&](const duckdb::DefaultAcl& row) {
                             return named(row.role) || any_acl(row.acl);
+                          }) ||
+           absl::c_any_of(database.Settings(),
+                          [&](const duckdb::DatabaseSetting& row) {
+                            return named(row.role);
                           });
   }
   if (entry.type == duckdb::CatalogType::ROLE_ENTRY) {
@@ -539,13 +543,6 @@ void OidIndex::CheckCreated(const duckdb::SnapshotView& view,
     }
   };
   ForEachRoleReference(version, check_role);
-  if (version.type == duckdb::CatalogType::DB_ROLE_SETTING_ENTRY) {
-    const auto& setting = version.Cast<DbRoleSettingCatalogEntry>();
-    check_role(setting.Role());
-    if (setting.Database()) {
-      roles.CheckLive(view, setting.Database(), false);
-    }
-  }
 }
 
 void OidIndex::CheckLive(const duckdb::SnapshotView& view, duckdb::idx_t oid,

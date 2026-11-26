@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
-
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/constants.hpp>
@@ -52,7 +50,6 @@ class ClusterCatalog final : public BaseCatalog {
       _origins{true, _oids},
       _tablespaces{true, _oids},
       _parameters{false, _oids},
-      _db_role_settings{false, _oids},
       _temporary_secrets{true, _oids},
       _persistent_secrets{true, _oids} {}
 
@@ -138,12 +135,6 @@ class ClusterCatalog final : public BaseCatalog {
                        duckdb::AlterInfo& info);
   void AlterParameter(duckdb::CatalogTransaction transaction,
                       duckdb::AlterPermissionsInfo& info);
-  void AlterDbRoleSetting(duckdb::CatalogTransaction transaction,
-                          duckdb::AlterDatabaseSettingsInfo& info);
-  void DropDbRoleSettings(
-    duckdb::CatalogTransaction transaction,
-    absl::FunctionRef<bool(duckdb::idx_t database, duckdb::idx_t role)>
-      matches);
   void RevokeMembership(duckdb::CatalogTransaction transaction,
                         duckdb::AlterRoleInfo& alter);
 
@@ -153,7 +144,6 @@ class ClusterCatalog final : public BaseCatalog {
   EntrySet _origins;
   EntrySet _tablespaces;
   EntrySet _parameters;
-  EntrySet _db_role_settings;
   EntrySet _temporary_secrets;
   EntrySet _persistent_secrets;
   CatalogSnapshots _snapshots{*this};

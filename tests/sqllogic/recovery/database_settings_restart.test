@@ -1,0 +1,99 @@
+control substitution on
+
+
+statement ok
+CREATE ROLE dsrs_plain LOGIN PASSWORD 'dsrs_pw';
+
+
+statement ok
+CREATE ROLE dsrs_own LOGIN PASSWORD 'dsrs_pw';
+
+
+statement ok
+CREATE ROLE dsrs_gone LOGIN PASSWORD 'dsrs_pw';
+
+
+statement ok
+CREATE DATABASE dsrs_db;
+
+
+statement ok
+ALTER DATABASE dsrs_db SET dsrs.scope = 'database';
+
+
+statement ok
+ALTER ROLE dsrs_own SET dsrs.scope = 'role';
+
+
+statement ok
+ALTER ROLE dsrs_gone IN DATABASE dsrs_db SET dsrs.scope = 'gone';
+
+
+statement ok
+SET sdb_faults = 'compact_inside_ddl';
+
+
+statement ok
+CREATE ROLE dsrs_compaction;
+
+
+statement ok
+SET sdb_faults = '-compact_inside_ddl';
+
+
+statement ok
+ALTER ROLE dsrs_own IN DATABASE dsrs_db SET dsrs.scope = 'own in database';
+
+
+statement ok
+DROP ROLE dsrs_gone;
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+
+
+connection after_crash
+query
+SELECT s.setdatabase = 0 AS everywhere, coalesce(r.rolname, s.setrole::text) AS role,
+       array_to_string(s.setconfig, ',') AS config
+FROM pg_db_role_setting s LEFT JOIN pg_roles r ON r.oid = s.setrole
+ORDER BY everywhere, role;
+----
+everywhere	role	config
+f	0	dsrs.scope=database
+f	dsrs_own	dsrs.scope=own in database
+t	dsrs_own	dsrs.scope=role
+
+
+connection plain_db user=dsrs_plain password=dsrs_pw database=dsrs_db
+query
+SELECT current_setting('dsrs.scope') AS scope;
+----
+scope
+database
+
+
+connection own_db user=dsrs_own password=dsrs_pw database=dsrs_db
+query
+SELECT current_setting('dsrs.scope') AS scope;
+----
+scope
+own in database
+
+
+connection own_elsewhere user=dsrs_own password=dsrs_pw
+query
+SELECT current_setting('dsrs.scope') AS scope;
+----
+scope
+role

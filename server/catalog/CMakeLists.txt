@@ -16,7 +16,6 @@ target_sources(
         secret_store.cpp
         transaction.cpp
         entry/database.cpp
-        entry/db_role_setting.cpp
         entry/foreign_data_wrapper.cpp
         entry/foreign_server.cpp
         entry/inverted_index.cpp

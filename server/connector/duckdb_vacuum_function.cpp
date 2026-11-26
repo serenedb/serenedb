@@ -416,8 +416,6 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
         ERR_CODE(ERRCODE_UNDEFINED_OBJECT),
         ERR_MSG("relation \"", target.object, "\" does not exist"));
     }
-    // An index has no owner of its own; maintenance rides on its
-    // relation (a table, or a view for view-backed indexes).
     auto relation =
       index->GetRelation(index->catalog.GetCatalogTransaction(context));
     if (relation && !MayMaintain(conn_ctx, relation->permissions,

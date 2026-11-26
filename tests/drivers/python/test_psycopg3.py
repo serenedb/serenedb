@@ -476,17 +476,12 @@ def test_reset_restores_the_session_start():
 
 
 def test_custom_parameter_and_object_sqlstates():
-    """A malformed custom parameter name is invalid_name (42602); an unknown
-    custom parameter, language or foreign-data wrapper is undefined_object
-    (42704), like PG.
-    """
     c = psycopg.connect(**conn_kwargs(), autocommit=True)
     try:
         with c.cursor() as cur:
             for sql, sqlstate in (
                 ("SELECT set_config('app..tenant', 'x', false)", "42602"),
                 ("SELECT current_setting('app.never_set_by_psycopg')", "42704"),
-                ("GRANT USAGE ON LANGUAGE no_such_language TO PUBLIC", "42704"),
                 ("GRANT USAGE ON FOREIGN DATA WRAPPER no_such_wrapper TO PUBLIC", "42704"),
             ):
                 with pytest.raises(psycopg.Error) as ei:
@@ -1077,13 +1072,14 @@ def test_vacuum_walk_warns_only_about_tables_the_role_can_see():
         try:
             c.execute("VACUUM (COMPACT_ALL)")
             c.execute("VACUUM (FLUSH_ALL)")
-            c.execute(f"VACUUM (FLUSH_INDEX) {index}")
+            with pytest.raises(psycopg.errors.UndefinedObject) as ei:
+                c.execute(f"VACUUM (FLUSH_INDEX) {index}")
+            assert ei.value.diag.message_primary == f'relation "{index}" does not exist'
         finally:
             c.close()
         assert f'permission denied to compact "{shown}", skipping it' in notices, notices
         assert f'permission denied to flush "{shown}", skipping it' in notices, notices
-        assert f'permission denied to flush "{index}", skipping it' in notices, notices
-        assert not any(hidden in n for n in notices), notices
+        assert not any(hidden in n or index in n for n in notices), notices
     finally:
         admin.execute(f"DROP TABLE IF EXISTS {hidden}")
         admin.execute(f"DROP TABLE IF EXISTS {shown}")

@@ -1,0 +1,72 @@
+control substitution on
+
+
+statement ok
+DROP ROLE IF EXISTS dsdr_first;
+
+
+statement ok
+DROP ROLE IF EXISTS dsdr_second;
+
+
+statement ok
+CREATE ROLE dsdr_first;
+
+
+statement ok
+CREATE ROLE dsdr_second;
+
+
+connection c_drop
+statement ok
+BEGIN;
+
+
+connection c_drop
+statement ok
+DROP ROLE dsdr_first;
+
+
+statement ok
+ALTER ROLE dsdr_first IN DATABASE ${__DATABASE__} SET extra_float_digits = 2;
+
+
+connection c_drop
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit DROP of "dsdr_first" because a dependency was created after the transaction started
+
+
+connection c_alter
+statement ok
+BEGIN;
+
+
+connection c_alter
+statement ok
+ALTER ROLE dsdr_second IN DATABASE ${__DATABASE__} SET extra_float_digits = 3;
+
+
+statement ok
+DROP ROLE dsdr_second;
+
+
+connection c_alter
+statement error
+COMMIT;
+----
+db error: ERROR: Failed to commit: Could not commit creation of dependency, subject "dsdr_second" has been deleted
+
+
+statement ok
+DROP ROLE dsdr_first;
+
+
+query
+SELECT count(*) AS settings
+FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase
+WHERE d.datname = current_database();
+----
+settings
+0

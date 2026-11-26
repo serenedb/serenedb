@@ -297,8 +297,10 @@ size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
     }
     const auto* cp_start = it;
     uint32_t cp = utf8_utils::ToChar32(it, end);
-    if (cp == utf8_utils::kInvalidChar32) [[unlikely]] {
-      *out++ = *cp_start;
+    if (cp > re2::Runemax) [[unlikely]] {
+      const auto size = static_cast<size_t>(it - cp_start);
+      std::memcpy(out, cp_start, size);
+      out += size;
       continue;
     }
     if constexpr (ToLower) {

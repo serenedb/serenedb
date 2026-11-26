@@ -41,8 +41,9 @@ std::string Reference(std::string_view in) {
   while (it != end) {
     const auto* start = it;
     uint32_t cp = irs::utf8_utils::ToChar32(it, end);
-    if (cp == irs::utf8_utils::kInvalidChar32) {
-      out.push_back(static_cast<char>(*start));
+    if (cp > re2::Runemax) {
+      out.append(reinterpret_cast<const char*>(start),
+                 static_cast<size_t>(it - start));
       continue;
     }
     const re2::Rune rune = ToLower ? irs::utf8_utils::CharToLowerSimple(cp)

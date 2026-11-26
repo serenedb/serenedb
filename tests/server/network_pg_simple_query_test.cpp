@@ -32,11 +32,11 @@ using namespace sdb::network::pg;
 namespace {
 
 struct Script {
-  decltype(irs::DuckDBEngine::Instance().CreateConnection()) handle =
-    irs::DuckDBEngine::Instance().CreateConnection();
-  ImplicitTxnState txn{handle->context->transaction};
-  SimpleQuery query{*handle->context,
-                    sdb::ConnectionContext::Get(*handle->context), txn};
+  duckdb::Connection connection{
+    sdb::CreateClientContext(irs::DuckDBEngine::Instance().instance())};
+  ImplicitTxnState txn{connection.context->transaction};
+  SimpleQuery query{*connection.context,
+                    sdb::ConnectionContext::Get(*connection.context), txn};
 };
 
 }  // namespace

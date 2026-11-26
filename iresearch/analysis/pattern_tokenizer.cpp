@@ -23,6 +23,7 @@
 #include <absl/strings/ascii.h>
 #include <re2/re2.h>
 #include <re2/regexp.h>
+#include <util/utf.h>
 
 #include <algorithm>
 #include <memory>
@@ -132,9 +133,9 @@ bool AppendLiteral(std::span<const re2::Rune> runes, bool fold_case,
                       absl::ascii_isalpha(static_cast<unsigned char>(rune)))) {
       return false;
     }
-    byte_type buf[utf8_utils::kMaxCharSize];
-    literal.append(buf,
-                   utf8_utils::FromChar32(static_cast<uint32_t>(rune), buf));
+    char buf[re2::UTFmax];
+    literal.append(reinterpret_cast<const byte_type*>(buf),
+                   re2::runetochar(buf, &rune));
   }
   return true;
 }
@@ -188,9 +189,9 @@ delim::Finder SplitOnRunes(re2::CharClass& cc) {
       return {};
     }
     for (auto r = range.lo; r <= range.hi; ++r) {
-      byte_type buf[utf8_utils::kMaxCharSize];
-      delimiters.emplace_back(
-        buf, utf8_utils::FromChar32(static_cast<uint32_t>(r), buf));
+      char buf[re2::UTFmax];
+      delimiters.emplace_back(reinterpret_cast<const byte_type*>(buf),
+                              re2::runetochar(buf, &r));
     }
   }
   if (delimiters.empty()) {
@@ -233,7 +234,7 @@ delim::Finder DetectSplit(const re2::RE2& pattern, int group) {
   if (last.hi >= 128 && (last.lo > 128 || last.hi != re2::Runemax)) {
     return group < 0 ? SplitOnRunes(*cc) : delim::Finder{};
   }
-  classify::ByteSet set;
+  ByteSet set;
   for (const auto& range : *cc) {
     for (auto r = range.lo; r <= std::min(range.hi, re2::Rune{0xFF}); ++r) {
       set.Add(static_cast<byte_type>(r));

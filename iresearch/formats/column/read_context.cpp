@@ -86,7 +86,7 @@ void ReadContext::Reset(const ColReader& reader) {
 void ReadContext::ResetFile(const duckdb::InputFile* file) {
   _in = file ? duckdb::InputFileReader{*file} : duckdb::InputFileReader{};
   _mapping = file ? file->Mapping().get() : nullptr;
-  _ranges.clear();
+  _sizes.clear();
 }
 
 duckdb::string_t ReadContext::ReadString(duckdb::Vector& result,
@@ -134,11 +134,10 @@ void ReadContext::Read(duckdb::idx_t position, duckdb::data_ptr_t target,
 
 duckdb::shared_ptr<duckdb::BlockHandle> ReadContext::RegisterColBlock(
   uint64_t offset, uint64_t size) {
-  const auto id = static_cast<duckdb::block_id_t>(_ranges.size());
-  _ranges.emplace_back(offset, size);
-  auto handle = RegisterBlock(id);
-  handle->GetMemory().SetMemoryUsage(0);
-  return handle;
+  const auto range = _sizes.try_emplace(offset, size).first;
+  SDB_ASSERT(range->second == size);
+  return RegisterBlock(static_cast<duckdb::block_id_t>(offset),
+                       /*block_alloc_size=*/0);
 }
 
 bool ReadContext::Maps(uint64_t offset, uint64_t size) const noexcept {
@@ -157,11 +156,11 @@ bool ReadContext::Wraps(uint64_t offset, uint64_t size) const noexcept {
 
 duckdb::unique_ptr<duckdb::Block> ReadContext::CreateBlock(
   duckdb::block_id_t block_id, duckdb::FileBuffer* source_buffer) {
-  const auto id = static_cast<size_t>(block_id);
-  if (id >= _ranges.size()) {
+  const auto range = _sizes.find(static_cast<uint64_t>(block_id));
+  if (range == _sizes.end()) {
     return BlockManager::CreateBlock(block_id, source_buffer);
   }
-  const auto [offset, size] = _ranges[id];
+  const auto [offset, size] = *range;
   if (Maps(offset, size)) {
     return duckdb::make_uniq<duckdb::Block>(*_allocator, block_id, *_mapping,
                                             offset, size,

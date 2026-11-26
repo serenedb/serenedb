@@ -1,0 +1,47 @@
+statement ok
+PREPARE pnp_decl(numeric) AS SELECT $1 = 1.23456789 AS same
+
+statement ok
+PREPARE pnp_decl_typmod(numeric(20,10)) AS SELECT $1 = 1.0123456789 AS same
+
+statement ok
+PREPARE pnp_decl_big(numeric) AS SELECT $1 = 12345678901234567.5 AS same
+
+statement ok
+PREPARE pnp_decl_list(numeric[]) AS SELECT ($1)[1] = 1.23456789 AS same
+
+statement ok
+PREPARE pnp_decl_array(numeric[2]) AS SELECT ($1)[1] = 1.23456789 AS same
+
+query
+EXECUTE pnp_decl(1.23456789)
+----
+same
+t
+
+query
+EXECUTE pnp_decl_typmod(1.0123456789)
+----
+same
+t
+
+query
+EXECUTE pnp_decl_big(12345678901234567.5)
+----
+same
+t
+
+query
+EXECUTE pnp_decl_list('{1.23456789}')
+----
+same
+t
+
+query
+EXECUTE pnp_decl_array('{1.23456789,2}')
+----
+same
+t
+
+statement ok
+DEALLOCATE ALL

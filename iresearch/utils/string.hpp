@@ -47,14 +47,8 @@ using bytes_view = basic_string_view<byte_type>;
 // NOLINTEND
 
 template<typename Char>
-inline constexpr Char kEmptyChar{};
-
-template<typename Char>
-constexpr basic_string_view<Char> kEmptyStringView{&kEmptyChar<Char>, 0};
-
-template<typename Char>
 constexpr bool IsNull(basic_string_view<Char> str) noexcept {
-  return str.data() == nullptr;
+  return !str.data();
 }
 
 template<typename ElemDst, typename ElemSrc>

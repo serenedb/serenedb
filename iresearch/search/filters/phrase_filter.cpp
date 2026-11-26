@@ -23,7 +23,6 @@
 #include "phrase_filter.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/str_format.h>
 
 #include <algorithm>
@@ -53,6 +52,7 @@
 #include "iresearch/search/queries/prepared_state_visitor.hpp"
 #include "iresearch/search/queries/term_query.hpp"
 #include "iresearch/search/queries/token_phrase_query.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/containers/flat_hash_set.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
@@ -403,7 +403,7 @@ void ApplyTermGroups(const ByPhraseOptions& options,
       [&](uint32_t i) -> uint32_t& { return positions[i].term_group; }, x);
   };
 
-  absl::flat_hash_map<bytes_view, uint32_t> first_owner;
+  containers::FlatHashMap<bytes_view, uint32_t> first_owner;
   const auto add_term = [&](bytes_view term, uint32_t slot) {
     const auto [it, inserted] = first_owner.emplace(term, slot);
     if (!inserted) {

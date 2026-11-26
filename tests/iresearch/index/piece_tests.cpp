@@ -572,15 +572,26 @@ TEST(PieceTest, SeeksAndRangesFollowTheSortedTerms) {
             it->seek_ge(ViewCast<byte_type>(std::string_view{"zzz"})));
   EXPECT_FALSE(it->seek(ViewCast<byte_type>(std::string_view{between})));
 
+  const auto from = ViewCast<byte_type>(std::string_view{terms[2]});
+  const auto to = ViewCast<byte_type>(std::string_view{terms[6]});
   std::vector<std::string> visited;
-  field.VisitRange(ViewCast<byte_type>(std::string_view{terms[2]}),
-                   ViewCast<byte_type>(std::string_view{terms[6]}),
-                   [&](bytes_view term, const PostingMeta& meta) {
-                     EXPECT_NE(0, meta.docs_count);
-                     visited.emplace_back(ViewCast<char>(term));
-                   });
+  EXPECT_FALSE(
+    field.CoverRange(from, to, [&](bytes_view term, const PostingMeta& meta) {
+      EXPECT_NE(0, meta.docs_count);
+      visited.emplace_back(ViewCast<char>(term));
+      return true;
+    }));
   EXPECT_EQ(std::vector<std::string>(terms.begin() + 2, terms.begin() + 6),
             visited);
+
+  std::vector<std::string> stopped;
+  EXPECT_FALSE(
+    field.CoverRange(from, to, [&](bytes_view term, const PostingMeta&) {
+      stopped.emplace_back(ViewCast<char>(term));
+      return stopped.size() < 2;
+    }));
+  EXPECT_EQ(std::vector<std::string>(terms.begin() + 2, terms.begin() + 4),
+            stopped);
 
   std::vector<size_t> found;
   const std::vector<std::string> probes{terms[1], "cat-none", terms[3]};

@@ -20,8 +20,10 @@
 
 #pragma once
 
+#include <util/utf.h>
+
+#include <cstdint>
 #include <fstream>
-#include <iresearch/utils/utf8_utils.hpp>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -54,10 +56,9 @@ inline std::vector<BreakTestCase> LoadBreakTestCases(const char* path) {
       } else if (tok == "\xC3\x97") {
         continue;
       } else {
-        const auto cp = static_cast<uint32_t>(std::stoul(tok, nullptr, 16));
-        irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
-        const auto len = irs::utf8_utils::FromChar32(cp, buf);
-        c.bytes.append(reinterpret_cast<const char*>(buf), len);
+        const auto cp = static_cast<re2::Rune>(std::stoul(tok, nullptr, 16));
+        char buf[re2::UTFmax];
+        c.bytes.append(buf, re2::runetochar(buf, &cp));
       }
     }
     if (c.boundaries.size() < 2) {

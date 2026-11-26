@@ -29,6 +29,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <span>
 #include <string>
@@ -73,13 +74,9 @@ struct Mapping {
 };
 
 std::string ExecutablePath() {
-  std::string path(4096, '\0');
-  const auto n = readlink("/proc/self/exe", path.data(), path.size());
-  if (n <= 0 || static_cast<size_t>(n) >= path.size()) {
-    return {};
-  }
-  path.resize(static_cast<size_t>(n));
-  return path;
+  std::error_code ec;
+  auto path = std::filesystem::read_symlink("/proc/self/exe", ec);
+  return ec ? std::string{} : path.string();
 }
 
 std::vector<Mapping> ExecutableMappings(std::string_view exe) {
@@ -168,7 +165,7 @@ void ReadInParallel(std::span<const Mapping> mappings, size_t threads) {
 #if defined(IRS_REMAP_EXECUTABLE)
 
 bool SetAllocatorBackgroundThreads(bool enabled) {
-  if (JemallocControl == nullptr) {
+  if (!JemallocControl) {
     return false;
   }
   bool previous = false;
@@ -180,7 +177,7 @@ bool SetAllocatorBackgroundThreads(bool enabled) {
 
 size_t ThreadCount() {
   size_t count = 0;
-  if (auto* dir = opendir("/proc/self/task"); dir != nullptr) {
+  if (auto* dir = opendir("/proc/self/task")) {
     while (const auto* entry = readdir(dir)) {
       count += entry->d_name[0] != '.';
     }

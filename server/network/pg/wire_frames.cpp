@@ -34,12 +34,15 @@
 #include "pg/protocol.h"
 #include "pg/sql_utils.h"
 #include "pg/types/mapping.h"
-#include "query/utils.h"
 
 namespace sdb::network::pg {
 namespace {
 
 constexpr std::string_view kNull{"\0", 1};
+
+std::string_view ToAlias(std::string_view name) {
+  return name.substr(0, name.find_last_of(':'));
+}
 
 // Backend frame layout: [type:1][length:int32][body]. The int32 length counts
 // itself plus the body but never the type tag, so a length backpatch is
@@ -336,7 +339,7 @@ void WriteRowDescription(message::Buffer& out, duckdb::ClientContext& context,
   for (uint16_t i = 0; i < num_fields; ++i) {
     // ToAlias is a pure view (substr of the name); write it straight out,
     // no per-query vector<string> of owned copies.
-    w.Write(query::ToAlias(names[i].GetIdentifierName()));
+    w.Write(ToAlias(names[i].GetIdentifierName()));
     w.Write(kNull);
     absl::big_endian::Store32(w.Alloc(kInt32), 0);
     absl::big_endian::Store16(w.Alloc(kInt16), 0);

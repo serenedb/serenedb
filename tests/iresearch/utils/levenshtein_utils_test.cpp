@@ -26,6 +26,7 @@
 #include <optional>
 
 #include "tests_shared.hpp"
+#include "utils/edit_distance.hpp"
 
 using namespace std::literals;
 

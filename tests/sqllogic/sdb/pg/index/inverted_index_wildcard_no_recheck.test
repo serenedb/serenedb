@@ -208,6 +208,131 @@ QUERY PLAN
 ╰─────────────────────────────╯
 
 statement ok
+CREATE TABLE wc_nr_g (id BIGINT PRIMARY KEY, b VARCHAR)
+
+statement ok
+INSERT INTO wc_nr_g VALUES
+    (1, 'ab'),
+    (2, 'abc'),
+    (3, 'xab'),
+    (4, 'abx'),
+    (5, 'a'),
+    (6, 'abxbc'),
+    (7, 'xabcx'),
+    (8, 'a b')
+
+statement ok
+CREATE INDEX wc_nr_g_idx ON wc_nr_g USING inverted(id, b wc_nr_dict)
+
+query
+SELECT id FROM wc_nr_g_idx WHERE b @@ ts_like('ab%') ORDER BY id
+----
+id
+1
+2
+4
+6
+
+query
+SELECT id FROM wc_nr_g_idx WHERE b @@ ts_like('%ab') ORDER BY id
+----
+id
+1
+3
+
+query
+SELECT id FROM wc_nr_g_idx WHERE b @@ ts_like('%abc%') ORDER BY id
+----
+id
+2
+7
+
+query
+SELECT id FROM wc_nr_g_idx WHERE b @@ ts_like('a') ORDER BY id
+----
+id
+5
+8
+
+query
+EXPLAIN SELECT id FROM wc_nr_g_idx WHERE b @@ ts_like('%ab')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────╮
+│ Index: wc_nr_g_idx        │
+│ Lookup: search            │
+│ Index Filter:             │
+│ ╭─ Wildcard NGram ──────╮ │
+│ │ Field: b(string)      │ │
+│ │ Pattern: (?s)\\A.*ab\\z │ │
+│ │ Syntax: perl          │ │
+│ │ Has Pos: false        │ │
+│ │ Query: "ab\\xff"       │ │
+│ │ Verify: false         │ │
+│ ╰───────────────────────╯ │
+│ Projections: id           │
+│ ~1 row                    │
+╰───────────────────────────╯
+
+query
+EXPLAIN SELECT id FROM wc_nr_g_idx WHERE b @@ ts_like('a')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────╮
+│ Index: wc_nr_g_idx     │
+│ Lookup: search         │
+│ Index Filter:          │
+│ ╭─ Wildcard NGram ───╮ │
+│ │ Field: b(string)   │ │
+│ │ Pattern: (?s)\\Aa\\z │ │
+│ │ Syntax: perl       │ │
+│ │ Has Pos: false     │ │
+│ │ Query: "\\xffa\\xff" │ │
+│ │ Verify: false      │ │
+│ ╰────────────────────╯ │
+│ Projections: id        │
+│ ~1 row                 │
+╰────────────────────────╯
+
+query
+SELECT id FROM wc_nr_g_idx WHERE b @@ ts_like('abc%') ORDER BY id
+----
+id
+2
+
+query
+EXPLAIN SELECT id FROM wc_nr_g_idx WHERE b @@ ts_like('abc%')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────╮
+│ Index: wc_nr_g_idx         │
+│ Lookup: search             │
+│ Index Filter:              │
+│ ╭─ Wildcard NGram ───────╮ │
+│ │ Field: b(string)       │ │
+│ │ Pattern: (?s)\\Aabc.*\\z │ │
+│ │ Syntax: perl           │ │
+│ │ Has Pos: false         │ │
+│ │ Query: "\\xffabc"       │ │
+│ │ Verify: false          │ │
+│ ╰────────────────────────╯ │
+│ Table Filter:              │
+│ ╭─ Wildcard NGram ───────╮ │
+│ │ Field: b(string)       │ │
+│ │ Pattern: (?s)\\Aabc.*\\z │ │
+│ │ Syntax: perl           │ │
+│ │ Has Pos: false         │ │
+│ │ Query: "\\xffabc"       │ │
+│ │ Verify: table filter   │ │
+│ ╰────────────────────────╯ │
+│ Projections: id            │
+│ ~1 row                     │
+╰────────────────────────────╯
+
+statement ok
+DROP TABLE wc_nr_g
+
+statement ok
 DROP TABLE wc_nr_t
 
 statement ok

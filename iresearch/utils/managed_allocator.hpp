@@ -22,10 +22,12 @@
 
 #pragma once
 
+#include <absl/cleanup/cleanup.h>
+
 #include <memory>
 #include <type_traits>
 
-#include "iresearch/utils/misc.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 
@@ -83,11 +85,11 @@ class ManagedAllocator {
 
   value_type* allocate(size_type n) {
     _manager->Increase(sizeof(value_type) * n);
-    Finally cleanup = [&]() noexcept {
-      _manager->DecreaseChecked(sizeof(value_type) * n);
+    absl::Cleanup decrease = [&]() noexcept {
+      _manager->Decrease(sizeof(value_type) * n);
     };
     auto* p = _allocator.allocate(n);
-    n = 0;
+    std::move(decrease).Cancel();
     return p;
   }
 

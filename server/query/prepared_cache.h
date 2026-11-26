@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
-#include <absl/container/node_hash_map.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -33,8 +32,10 @@
 namespace sdb::query {
 
 template<typename Key,
-         typename Hash = typename absl::node_hash_map<Key, int>::hasher,
-         typename Eq = typename absl::node_hash_map<Key, int, Hash>::key_equal>
+         typename Hash =
+           typename irs::containers::NodeHashMap<Key, int>::hasher,
+         typename Eq =
+           typename irs::containers::NodeHashMap<Key, int, Hash>::key_equal>
 class PreparedCache {
  public:
   template<typename Lookup>

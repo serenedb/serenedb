@@ -75,7 +75,7 @@ class TermDictionary : util::Noncopyable {
     for (size_t i = 0; i < n; ++i) {
       hashes[i] = TermHash(terms[i]);
     }
-    for (size_t i = 0; SDB_LIKELY(i < n); ++i) {
+    for (size_t i = 0; i < n; ++i) [[likely]] {
       if (i + kPrefetchAhead < n) {
         _map.prefetch(
           HashedTerm{terms[i + kPrefetchAhead], hashes[i + kPrefetchAhead]});

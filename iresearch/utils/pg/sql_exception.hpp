@@ -45,7 +45,5 @@ class SqlException final : public std::exception {
 
 }  // namespace irs
 
-#define SQL_DATA_UNWRAP(...) {__VA_ARGS__}
-
 #define THROW_SQL_ERROR_FROM_DATA(sqlData) \
   throw ::irs::SqlException { (sqlData), std::source_location::current() }

@@ -62,18 +62,12 @@ class PostingsStream : public TermPostings {
       _left_in_leaf = 1;
       _max_in_leaf = doc;
     } else {
-      if (meta.inline_size != 0) {
-        _inline_in = InputType{InlineInput(meta)};
-        _doc_in = &_inline_in;
-      } else {
-        if (!_file_in) {
-          _file_in = InputType{doc_in};
-          _file_in.ReadAheadUntil(doc_in.GetSize(),
-                                  duckdb::ReadAheadSteps::SCANNING);
-        }
-        _file_in.Seek(meta.doc_start);
-        _doc_in = &_file_in;
+      if (!_file_in) {
+        _file_in = InputType{doc_in};
+        _file_in.ReadAheadUntil(doc_in.GetSize(),
+                                duckdb::ReadAheadSteps::SCANNING);
       }
+      _file_in.Seek(meta.doc_start);
 
       auto& in = In();
       PrefetchDocs(doc_in, meta);
@@ -131,7 +125,7 @@ class PostingsStream : public TermPostings {
  private:
   using Position = PositionImpl<IteratorTraits, InputType>;
 
-  IRS_FORCE_INLINE InputType& In() const noexcept { return *_doc_in; }
+  IRS_FORCE_INLINE InputType& In() noexcept { return _file_in; }
 
   void ReadLeaf(doc_id_t prev) {
     auto& in = In();
@@ -168,8 +162,6 @@ class PostingsStream : public TermPostings {
     SlackBuf<uint32_t, doc_limits::kBlockSize, block_codec::kOutSlack>> _freqs;
   DocsBuf _docs;
   InputType _file_in;
-  InputType _inline_in;
-  InputType* _doc_in = nullptr;
   [[no_unique_address]] utils::Need<IteratorTraits::Position(), Position> _pos;
   doc_id_t _max_in_leaf = doc_limits::invalid();
   uint32_t _left_in_leaf = 0;

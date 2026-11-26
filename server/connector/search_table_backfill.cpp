@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/str_cat.h>
 
 #include <algorithm>
@@ -46,6 +45,7 @@
 #include <iresearch/index/segment_reader.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/utils/assert.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/error_mapping.hpp>
@@ -90,8 +90,8 @@ struct RowSource {
 };
 
 struct ColumnPlan {
-  absl::flat_hash_set<ColumnId> scanned;
-  absl::flat_hash_set<ColumnId> copied;
+  irs::containers::FlatHashSet<ColumnId> scanned;
+  irs::containers::FlatHashSet<ColumnId> copied;
   std::vector<ColumnId> carried;
 };
 

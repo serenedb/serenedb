@@ -108,6 +108,7 @@ struct Ordinary {
 struct KeyIndex {
   const duckdb::TableCatalogEntry& table;
   const duckdb::UniqueConstraint& key;
+  const catalog::SearchTableEntry* search;
 };
 
 struct Index {
@@ -233,6 +234,9 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
     Col<"relam">([](const auto&) { return kPgAmInverted; }),
     Col<"relnatts">([](const auto& row) {
       return KeyAttnums(row.table.GetColumns(), row.key).size();
+    }),
+    Col<"reltablespace">([](const auto& row) {
+      return row.search ? row.search->Tablespace() : duckdb::idx_t{0};
     }));
 
   static constexpr auto kIndex = Shape<kSql, const Index>(
@@ -323,7 +327,8 @@ class PgClass final : public SystemTableScan<kPgClassSql> {
         _tables.emplace(table.oid, &table);
       }
       for (const auto& key : KeyIndexes(table)) {
-        Emit<kKeyIndex>({table, key}, Shown(*this, table, key.constraint_name));
+        Emit<kKeyIndex>({table, key, search},
+                        Shown(*this, table, key.constraint_name));
       }
     }
   }

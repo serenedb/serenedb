@@ -32,7 +32,6 @@
 #include <duckdb/common/path.hpp>
 #include <filesystem>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/operating_system.hpp>
 #include <string>
 #include <utility>
 
@@ -130,7 +129,8 @@ std::string ResolveDataDir(std::string flag_value) {
   if (auto p = DataDirArg(); !p.empty()) {
     dir.assign(p);
   }
-  dir.erase(dir.find_last_not_of(SERENEDB_DIR_SEPARATOR_STR) + 1);
+  dir.erase(dir.find_last_not_of(std::filesystem::path::preferred_separator) +
+            1);
   std::error_code ec;
   if (auto abs = std::filesystem::absolute(dir, ec); !ec) {
     dir = duckdb::Path::Normalize(abs.string());

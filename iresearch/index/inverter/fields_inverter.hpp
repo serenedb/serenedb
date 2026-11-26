@@ -38,6 +38,7 @@
 #include "iresearch/index/inverter/posting_log.hpp"
 #include "iresearch/index/inverter/term_dictionary.hpp"
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -604,11 +605,19 @@ class FieldInverter : util::Noncopyable {
     SDB_ASSERT(Layout() == TokenLayout::Terms);
     auto& log = *std::get_if<PostingLog<TokenLayout::Terms>>(&_log);
     duckdb::string_t terms[kMaxValues];
+    [[maybe_unused]] utils::Need<
+      !kInlineNumericTerm<P>,
+      std::array<byte_type, kMaxValues * numeric_utils::kNumericTermSize<P>>>
+      keys;
     for (size_t base = 0; base < n;) {
       const auto m =
         static_cast<uint32_t>(std::min<size_t>(kMaxValues, n - base));
-      AppendNumericTermsBlock<P>(terms, m,
-                                 [&](size_t j) { return value_at(base + j); });
+      const auto at = [&](size_t j) { return value_at(base + j); };
+      if constexpr (kInlineNumericTerm<P>) {
+        AppendNumericTermsBlock<P>(terms, m, at);
+      } else {
+        AppendNumericTermsBlock<P>(terms, m, at, keys.data());
+      }
       auto* const ids = ResolveTerms(terms, m);
       for (uint32_t k = 0; k < m; ++k) {
         if (!PushDocTerms(log, doc_at(base + k), ids + k, 1)) [[unlikely]] {

@@ -22,15 +22,36 @@
 
 #include <span>
 
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/count/disjoint.hpp"
 #include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/subtract.hpp"
 #include "iresearch/search/detail/fold_reach.hpp"
 #include "iresearch/search/detail/make_term.hpp"
 #include "iresearch/search/filters/query_profile.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs::count {
+namespace {
+
+Root::ptr PlanTerms(const MultiTermQuery& query, const Context& ctx) {
+  const auto& state = query.State();
+  const auto* const field = state.Reader();
+  const std::span<const MultiTermState::Entry> terms{state.Terms()};
+  if (!ctx.table && SubtractsPair(terms, static_cast<doc_id_t>(
+                                           query.Segment().docs_count()))) {
+    if (auto subtracted = MakeSubtractDisjunction(
+          detail::ClauseOf(terms.front(), field),
+          detail::ClauseOf(terms.back(), field), query.Segment(), ctx)) {
+      return subtracted;
+    }
+  }
+  return detail::MakeQuery<Family>(query, ctx);
+}
+
+}  // namespace
 
 Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
   if (query.Kind() == QueryKind::Empty) {
@@ -43,19 +64,16 @@ Root::ptr MakeRoot(const QueryBuilder& query, const Context& ctx) {
 }
 
 Root::ptr Family::Make(const MultiTermQuery& query, const Context& ctx) {
-  const auto& state = query.State();
-  const auto* const field = state.Reader();
-  const std::span<const MultiTermState::Entry> terms{state.Terms()};
-  if (ctx.table == nullptr &&
-      SubtractsPair(terms,
-                    static_cast<doc_id_t>(query.Segment().docs_count()))) {
-    if (auto subtracted = MakeSubtractDisjunction(
-          detail::ClauseOf(terms.front(), field),
-          detail::ClauseOf(terms.back(), field), query.Segment(), ctx)) {
-      return subtracted;
-    }
+  const auto* const field = query.State().Reader();
+  SDB_ASSERT(field);
+  const auto& segment = query.Segment();
+  if (!ctx.table && field->single_valued &&
+      segment.live_docs_count() == segment.docs_count()) {
+    return MakeWholeCount(query.Postings(), ctx, [&query, field, ctx] {
+      return MakeTermsSum(std::span{query.State().Terms()}, field, ctx);
+    });
   }
-  return detail::MakeQuery<Family>(query, ctx);
+  return PlanTerms(query, ctx);
 }
 
 }  // namespace irs::count

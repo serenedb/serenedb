@@ -22,23 +22,22 @@ EXPLAIN SELECT pk FROM hd WHERE cat = 4 AND num < 2000 AND tag @@ 'even'
   ORDER BY emb <-> [1500.4, 0, 0, 0, 0, 0, 0, 0]::FLOAT[8] LIMIT 4;
 ----
 QUERY PLAN
-╭─ IRESEARCH_SCAN ────────────────────────────────╮
-│ Table: hd                                       │
-│ Index Filter:                                   │
-│ ╭─ And ───────────────╮                         │
-│ ╰──────────┬──────────╯                         │
-│            ├────────────────────────╮           │
-│ ╭─ Terms ──┴──────────╮  ╭─ Terms ──┴─────────╮ │
-│ │ Field: cat(numeric) │  │ Field: tag(string) │ │
-│ │ Values: 4           │  │ Values: 'even'     │ │
-│ ╰─────────────────────╯  ╰────────────────────╯ │
-│ Column Filter: num < 2000                       │
-│ Index or Column Filter: cat = 4                 │
-│ Score: l2_distance(emb, FLOAT[8])               │
-│ Top: 4                                          │
-│ Projections: pk                                 │
-│ ~120 rows                                       │
-╰─────────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ─────────────────────────────────────────────────────────╮
+│ Table: hd                                                                │
+│ Index Filter:                                                            │
+│ ╭─ And ───────────────╮                                                  │
+│ ╰──────────┬──────────╯                                                  │
+│            ├────────────────────────┬───────────────────────╮            │
+│ ╭─ Terms ──┴──────────╮  ╭─ Terms ──┴─────────╮  ╭─ Granular Range ────╮ │
+│ │ Field: cat(numeric) │  │ Field: tag(string) │  │ Field: num(numeric) │ │
+│ │ Values: 4           │  │ Values: 'even'     │  │ Range: <2000        │ │
+│ ╰─────────────────────╯  ╰────────────────────╯  ╰─────────────────────╯ │
+│ Index or Column Filter: num < 2000, cat = 4                              │
+│ Score: l2_distance(emb, FLOAT[8])                                        │
+│ Top: 4                                                                   │
+│ Projections: pk                                                          │
+│ ~600 rows                                                                │
+╰──────────────────────────────────────────────────────────────────────────╯
 
 query
 EXPLAIN SELECT pk FROM hd WHERE cat = 3 AND extra = 5

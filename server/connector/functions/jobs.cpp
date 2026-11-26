@@ -20,8 +20,6 @@
 
 #include "connector/functions/jobs.h"
 
-#include <absl/container/flat_hash_set.h>
-
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
@@ -36,6 +34,7 @@
 #include <duckdb/main/settings.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <string_view>
@@ -203,7 +202,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
   if (!scheduler) {
     return result;
   }
-  absl::flat_hash_set<duckdb::idx_t> databases;
+  irs::containers::FlatHashSet<duckdb::idx_t> databases;
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     databases.insert(database->oid);

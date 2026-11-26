@@ -111,7 +111,7 @@ Creates the table `default_db.my_schema.tbl`:
 
 <SqlLogicTest id="sql/statements/attach/index/example_031" />
 
-If we create a conflict (i.e., we have both a schema and a catalog with the same name) the system requests that a fully qualified path is used instead:
+If both a schema of the current database and a database have the name, the name is the schema, and the database is reached with a fully qualified path. Creates the table `default_db.db22.tbl2`:
 
 <SqlLogicTest id="sql/statements/attach/index/example_032" />
 

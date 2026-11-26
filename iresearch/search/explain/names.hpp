@@ -43,8 +43,7 @@ template<typename H>
 H AbslHashValue(H state, const PostingKey& key) {
   const auto& meta = key.meta;
   return H::combine(std::move(state), key.reader, meta.doc_start,
-                    meta.doc_delta, meta.pos_start, meta.pos_offset,
-                    meta.inline_data);
+                    meta.doc_delta, meta.pos_start, meta.pos_offset);
 }
 
 class TermNames {

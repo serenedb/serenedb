@@ -281,6 +281,10 @@ struct CoveringBlocks {
 
   bool OneBlock() const noexcept { return first.block == last.block; }
 
+  bool HoldOnly(uint64_t begin, uint64_t end) const noexcept {
+    return first.begin == begin && last.end == end;
+  }
+
   void MergeOthers(duckdb::BaseStatistics& stats) const {
     for (auto block = first.block + 1; block <= last.block; ++block) {
       stats.Merge(column->DataBlocks()[block].statistics);
@@ -323,7 +327,8 @@ class RowGroupPartition final : public duckdb::PartitionRowGroup {
     }
     const auto& blocks = Blocks(index.GetPrimaryIndex());
     return blocks.column && !blocks.column->Patched() &&
-           DeletedRows(_segment, blocks.first.begin, blocks.last.end) == 0;
+           (blocks.HoldOnly(_begin, _end) ||
+            DeletedRows(_segment, blocks.first.begin, blocks.last.end) == 0);
   }
 
   bool HasPendingWrites() final { return false; }
@@ -454,7 +459,8 @@ void SelectScannedRowGroups(const ScanBindData& bind,
   const auto row_groups = RowGroupCount(bind, reader);
   std::vector<Partition> partitions;
   std::vector<duckdb::BaseStatistics> merged;
-  duckdb::vector<duckdb::optional_ptr<const duckdb::BaseStatistics>> statistics;
+  duckdb::vector<duckdb::RowGroupReorderer::PartitionOrderStatistics>
+    statistics;
   partitions.reserve(row_groups);
   merged.reserve(row_groups);
   statistics.reserve(row_groups);
@@ -466,14 +472,17 @@ void SelectScannedRowGroups(const ScanBindData& bind,
         StatsColumn(bind, reader[position.seg].GetColReader(), column_index,
                     end),
         begin, end};
+      const bool holds_min_max = blocks.column && live == end - begin &&
+                                 !blocks.column->Patched() &&
+                                 blocks.HoldOnly(begin, end);
       if (!blocks.column) {
         statistics.emplace_back();
       } else if (blocks.OneBlock()) {
-        statistics.emplace_back(&blocks.FirstStatistics());
+        statistics.emplace_back(&blocks.FirstStatistics(), holds_min_max);
       } else {
         auto& stats = merged.emplace_back(blocks.FirstStatistics().Copy());
         blocks.MergeOthers(stats);
-        statistics.emplace_back(&stats);
+        statistics.emplace_back(&stats, holds_min_max);
       }
     });
   auto kept = duckdb::RowGroupReorderer::OrderPartitions(

@@ -21,10 +21,15 @@
 #pragma once
 
 #include <s2/s2cell_id.h>
+#include <s2/s2latlng.h>
+#include <s2/s2point.h>
 #include <simdjson.h>
 
 #include <algorithm>
 #include <iresearch/search/detail/geo_terms.hpp>
+#include <iresearch/utils/geo/geo_json.hpp>
+#include <iresearch/utils/geo/geo_params.hpp>
+#include <iresearch/utils/geo/shape_container.hpp>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -89,6 +94,17 @@ class JsonDoc {
 };
 
 inline JsonDoc FromJson(std::string_view json) { return JsonDoc{json}; }
+
+inline void ParseRegion(simdjson::ondemand::value json,
+                        geo::ShapeContainer& region) {
+  std::vector<S2LatLng> cache;
+  geo::json::ParseRegion(json, region, cache);
+}
+
+inline double DistanceFromCentroid(const geo::ShapeContainer& shape,
+                                   const S2Point& point) {
+  return shape.centroid().Angle(point) * geo::kEarthRadiusInMeters;
+}
 
 inline std::vector<std::string> BinaryTerms(
   const std::vector<std::string>& s2_terms, char marker = '$',

@@ -5692,7 +5692,8 @@ TEST_P(BooleanFilterTestCase, mixed_ordered) {
       }
 
       ASSERT_EQ(expected_docs.end(), expected_doc);
-      ASSERT_TRUE(irs::irstd::AllEqual(scores.begin(), scores.end()));
+      ASSERT_EQ(scores.end(),
+                absl::c_adjacent_find(scores, std::not_equal_to{}));
     }
   }
 }

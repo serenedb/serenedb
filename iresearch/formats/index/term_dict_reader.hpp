@@ -31,10 +31,9 @@
 
 #include "iresearch/analysis/token_attributes.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
-#include "iresearch/formats/index/term_dict_inline.hpp"
+#include "iresearch/formats/index/term_dict_index.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
-#include "iresearch/formats/index/term_dict_prefixes.hpp"
-#include "iresearch/formats/index/term_dict_root.hpp"
+#include "iresearch/formats/index/term_dict_store.hpp"
 #include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -48,40 +47,11 @@ struct PinnedRange {
   uint64_t start = std::numeric_limits<uint64_t>::max();
 };
 
-struct RangeLevel {
-  const byte_type* starts;
-  const byte_type* firsts;
-  const byte_type* offsets;
-  const byte_type* records;
-  uint32_t count;
-};
-
-template<typename Field>
-void ReadPostingDocs(const Field& field, const PostingMeta& meta,
-                     TermReader::Acceptor acceptor) {
-  if (meta.docs_count == 0) {
-    return;
-  }
-  if (meta.docs_count == 1) {
-    acceptor(doc_limits::min() + meta.doc_delta);
-    return;
-  }
-  auto docs_it = field.PostingsOf(IndexFeatures::None, meta, {});
-  doc_id_t docs[doc_limits::kBlockSize];
-  while (const auto n = docs_it->NextDocs(docs, nullptr)) {
-    for (uint32_t i = 0; i != n; ++i) {
-      SDB_ASSERT(doc_limits::valid(docs[i]));
-      if (!acceptor(docs[i])) {
-        return;
-      }
-    }
-  }
-}
-
 class TermReaderImpl final : public TermReader {
  public:
   TermReaderImpl(FieldReader& owner, const FieldHead& head, bytes_view prefix,
-                 const Separators& separators);
+                 const Separators& separators, duckdb::ReadStream& in,
+                 std::span<const TermReaderImpl> levels = {});
 
   SeekTermIterator::ptr iterator() const final;
   SeekTermIterator::ptr IteratorUntil(bytes_view upper) const final;
@@ -100,8 +70,8 @@ class TermReaderImpl final : public TermReader {
   void ReadDocs(const PostingMeta& meta, Acceptor acceptor) const final {
     ReadPostingDocs(*this, meta, acceptor);
   }
-  void VisitRange(bytes_view from, bytes_view to,
-                  RangeVisitor visit) const final;
+  bool CoverRange(bytes_view from, bytes_view to,
+                  TermVisitor visit) const final;
 
   bool Prefetch(bytes_view term) const final;
   PostingsHandles Handles() const noexcept final;
@@ -109,98 +79,50 @@ class TermReaderImpl final : public TermReader {
   const FieldMeta& meta() const noexcept final { return _meta; }
   size_t size() const noexcept final { return _terms; }
   uint64_t docs_count() const noexcept final { return _docs; }
-  bytes_view min() const noexcept final {
-    return bytes_view{_min_key}.substr(_prefix_size);
-  }
-  bytes_view max() const noexcept final {
-    return bytes_view{_max_key}.substr(_prefix_size);
-  }
+  bytes_view min() const noexcept final { return _index.MinTerm(); }
+  bytes_view max() const noexcept final { return _index.MaxTerm(); }
   void SampleTerms(
     uint64_t bytes,
     absl::FunctionRef<void(std::span<const bytes_view>)> visit) const final;
   bool HasScoreBounds() const noexcept final { return _has_score_bounds; }
   Attribute* GetMutable(TypeInfo::type_id type) noexcept final;
 
-  const FieldReader& Owner() const noexcept { return *_owner; }
+  const BlockStore& Store() const noexcept;
   TermPostings::ptr PostingsOf(IndexFeatures features, const PostingMeta& meta,
                                TermPostings::ptr reuse) const;
-  uint32_t Blocks() const noexcept { return _blocks; }
-  bool Small() const noexcept { return _blocks == 1; }
-  const duckdb_fsst_decoder_t* Fsst() const noexcept;
-  const Root& GetRoot() const noexcept { return _root; }
-  uint32_t BlockOf(Probe key) const noexcept {
-    return Small() ? 0 : static_cast<uint32_t>(_root.Find(key));
-  }
-  uint32_t BlockFrom(uint32_t block, Probe key) const noexcept {
-    return block + 1 < _blocks && _root.NotAfter(block + 1, key)
-             ? static_cast<uint32_t>(_root.FindFrom(block + 1, key))
-             : block;
-  }
-  uint32_t BlockEnd(bytes_view upper) const;
-  bytes_view KeyPrefix() const noexcept {
-    return bytes_view{_min_key}.substr(0, _prefix_size);
-  }
-  bytes_view MinKey() const noexcept { return _min_key; }
-  bytes_view MaxKey() const noexcept { return _max_key; }
+  const DictIndex& Index() const noexcept { return _index; }
+  uint32_t Blocks() const noexcept { return _index.Blocks(); }
+  bool Small() const noexcept { return _index.Small(); }
+  bytes_view KeyPrefix() const noexcept { return _index.KeyPrefix(); }
+  const duckdb_fsst_decoder_t* Fsst() const noexcept { return _fsst.get(); }
   uint32_t FirstEntry() const noexcept { return _first_entry; }
   uint32_t FirstRecord() const noexcept { return _first_record; }
   uint32_t LastEntry() const noexcept { return _last_entry; }
-  bytes_view BlockPrefix(size_t block) const noexcept {
-    const bytes_view lower = block == 0 ? MinKey() : _root.Separator(block);
-    const bytes_view upper =
-      block + 1 == _blocks ? MaxKey() : _root.Separator(block + 1);
-    return lower.substr(0, CommonPrefixLength(lower, upper));
-  }
-  const byte_type* Block(size_t block, PinnedRange& pinned) const;
+  bytes_view Block(size_t block, PinnedRange& pinned) const;
+  void HintBlock(uint32_t block) const noexcept;
   uint64_t BlockOffset(size_t block) const noexcept;
-  InlinePages::Span InlineSpan(uint32_t block) const noexcept;
-  void PrefetchLookup(uint32_t block) const;
-  bool HintBlock(uint32_t block, InlinePages::Span span) const;
-  bool Gates(bytes_view head) const noexcept {
-    return _prefixes && head.size() < kTermPrefix;
+  std::span<const TermReaderImpl> RangeLevels() const noexcept {
+    return _range_levels;
   }
-  uint32_t NextLabel(bytes_view head, uint32_t from,
-                     const uint32_t*& at) const noexcept {
-    if (!Gates(head) || from >= kNoLabel) {
-      return from;
-    }
-    return _prefixes->NextLabel(head, from, at);
-  }
-  std::span<const RangeLevel> RangeLevels() const noexcept { return _levels; }
-  uint32_t RangePrefix() const noexcept { return _range_prefix; }
-  size_t MemoryBytes() const noexcept {
-    return _root.MemoryBytes() + (_prefixes ? _prefixes->MemoryBytes() : 0) +
-           _levels.capacity() * sizeof(RangeLevel);
-  }
-  uint64_t InlineBegin() const noexcept;
-  uint64_t InlineEnd() const noexcept;
-  const byte_type* ResolveInline(uint64_t end, uint8_t size) const;
 
  private:
   bool Excludes(bytes_view term) const noexcept;
-  void ReadRanges(FieldReader& owner, const RangesHead& ranges);
+  const byte_type* PinBlock(size_t block, PinnedRange& pinned) const;
 
   const FieldReader* _owner;
   FieldMeta _meta;
   uint64_t _terms;
   uint64_t _docs;
-  bstring _min_key;
-  bstring _max_key;
-  bytes_view _small_inline;
-  uint64_t _inline_base = 0;
-  uint32_t _prefix_size = 0;
+  DictIndex _index;
   const byte_type* _small = nullptr;
-  uint32_t _blocks = 0;
   uint32_t _first_block = 0;
   uint32_t _first_entry = 0;
   uint32_t _first_record = 0;
   uint32_t _last_entry = 0;
   bool _has_score_bounds;
   FreqAttr _freq;
-  Root _root;
-  std::vector<RangeLevel> _levels;
-  std::unique_ptr<PrefixIndex> _prefixes;
-  uint32_t _range_prefix = 0;
+  std::span<const TermReaderImpl> _range_levels;
+  std::unique_ptr<duckdb_fsst_decoder_t> _fsst;
 };
 
 }  // namespace irs::term_dict

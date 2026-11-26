@@ -24,7 +24,6 @@
 
 #include <cstdint>
 #include <duckdb/common/radix.hpp>
-#include <type_traits>
 
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
@@ -33,36 +32,21 @@
 namespace irs::numeric_utils {
 
 template<typename T>
-inline constexpr byte_type kNumericTermMagic = [] {
-  if constexpr (std::is_same_v<T, int32_t>) {
-    return byte_type{0x00};
-  } else if constexpr (std::is_same_v<T, float>) {
-    return byte_type{0x20};
-  } else if constexpr (std::is_same_v<T, int64_t>) {
-    return byte_type{0x60};
-  } else {
-    static_assert(std::is_same_v<T, double>);
-    return byte_type{0xA0};
-  }
-}();
+inline constexpr size_t kNumericTermSize = sizeof(T);
 
-template<typename T>
-inline constexpr size_t kNumericTermSize = 1 + sizeof(T);
-
-inline constexpr size_t kNumericTermMaxSize = kNumericTermSize<int64_t>;
+inline constexpr size_t kNumericTermMaxSize =
+  kNumericTermSize<duckdb::uhugeint_t>;
 
 template<typename T>
 bytes_view EncodeNumericTerm(byte_type* buf, T value) {
-  buf[0] = kNumericTermMagic<T>;
-  duckdb::Radix::EncodeData(buf + 1, value);
+  duckdb::Radix::EncodeData(buf, value);
   return {buf, kNumericTermSize<T>};
 }
 
 template<typename T>
 T DecodeNumericTerm(bytes_view term) {
   SDB_ASSERT(term.size() == kNumericTermSize<T>);
-  SDB_ASSERT(term[0] == kNumericTermMagic<T>);
-  return duckdb::Radix::DecodeData<T>(term.data() + 1);
+  return duckdb::Radix::DecodeData<T>(term.data());
 }
 
 }  // namespace irs::numeric_utils

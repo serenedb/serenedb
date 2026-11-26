@@ -31,11 +31,22 @@
 #include <filesystem>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/resource_manager.hpp>
+#include <iresearch/utils/string.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
 
 #define SOURCE_LOCATION (__FILE__ ":" IRS_TO_STRING(__LINE__))
+
+namespace irs {
+
+template<typename Char>
+inline constexpr Char kEmptyChar{};
+
+template<typename Char>
+constexpr basic_string_view<Char> kEmptyStringView{&kEmptyChar<Char>, 0};
+
+}  // namespace irs
 
 #define ASSERT_SQL_ERROR(statement, code)                                  \
   do {                                                                     \

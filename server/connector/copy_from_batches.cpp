@@ -460,10 +460,10 @@ class CopyFileReader {
   }
 
   void FinishFile() {
-    _builder.Finish();
     while (_builder.HasRows()) {
       PushBuilt();
     }
+    _builder.Finish();
     _ended.store(true, std::memory_order_release);
     _batches.Finish();
   }
@@ -636,6 +636,20 @@ void LocateError(CopyFromGlobalState& g, duckdb::TableFunctionInput& input,
   }
 }
 
+bool TakeBatch(CopyFromGlobalState& g, duckdb::TableFunctionInput& input,
+               CopyFromLocalState& l) {
+  try {
+    return g.queue.Take(input, 1, l.run) == pg::CopyTake::Batches;
+  } catch (...) {
+    const auto error = std::current_exception();
+    if (const auto line = g.lines.Locate(input, g.queue.FailedAt(), 1);
+        line && *line != 0) {
+      std::rethrow_exception(error);
+    }
+    return false;
+  }
+}
+
 }  // namespace
 
 bool BindCopyFrom(duckdb::ClientContext& context,
@@ -696,7 +710,7 @@ void ScanCopyFrom(duckdb::ClientContext& context,
           if (g.ordered || !g.queue.TryTake(1, l.run)) {
             break;
           }
-        } else if (g.queue.Take(input, 1, l.run) != pg::CopyTake::Batches) {
+        } else if (!TakeBatch(g, input, l)) {
           break;
         }
         l.batch_index = l.run.front()->seq;

@@ -1370,6 +1370,26 @@ def test_large_binary_copy_damaged_stream_inserts_nothing(
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 
 
+@pytest.mark.parametrize("source", _SOURCES)
+def test_binary_copy_reports_its_first_bad_row_before_a_truncated_end(
+        conn: psycopg.Connection, table_name: str, source: str,
+        shared_path: Path) -> None:
+    with conn.cursor() as cur:
+        payload = _binary_rows(cur, 1000)
+        bad_row = (struct.pack("!hii", 3, 4, 1) + struct.pack("!i", 1) + b"A" +
+                   struct.pack("!i", 1) + b"B")
+        payload = payload[:19] + bad_row + payload[19:len(payload) - 9]
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        try:
+            with pytest.raises(psycopg.Error,
+                               match="row field count is 3, expected 2"):
+                _copy_from(cur, table_name, payload, "FORMAT BINARY", source,
+                           shared_path)
+            assert _count(cur, table_name, "") == 0
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
 _PGCOPY_HEADER = b"PGCOPY\n\xff\r\n\x00" + struct.pack("!ii", 0, 0)
 _PGCOPY_ROW = struct.pack("!hii", 1, 4, 7)
 _PGCOPY_EXTENDED = (b"PGCOPY\n\xff\r\n\x00" + struct.pack("!ii", 0, 8) +

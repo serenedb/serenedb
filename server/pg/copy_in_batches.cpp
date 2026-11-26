@@ -134,10 +134,16 @@ void CopyInBatches::Fail(std::exception_ptr error) {
     Guard guard{_waiters.lock};
     if (!_error) {
       _error = std::move(error);
+      _failed_at = _pushed;
     }
     waiters = TakeAllWaiters();
   }
   Wake(waiters);
+}
+
+uint64_t CopyInBatches::FailedAt() const {
+  Guard guard{_waiters.lock};
+  return _failed_at;
 }
 
 void CopyInBatches::Abort() {
@@ -193,10 +199,10 @@ CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
                              std::vector<CopyBatchLease>& out) {
   Lock lock{_waiters.lock};
   for (;;) {
-    ThrowIfFailed(lock);
     if (TakeReady(max, out)) {
       return CopyTake::Batches;
     }
+    ThrowIfFailed(lock);
     if (_finished || _aborted) {
       return CopyTake::End;
     }
@@ -213,18 +219,17 @@ CopyTake CopyInBatches::Take(duckdb::TableFunctionInput& input, size_t max,
 }
 
 bool CopyInBatches::TryTake(size_t max, std::vector<CopyBatchLease>& out) {
-  Lock lock{_waiters.lock};
-  ThrowIfFailed(lock);
+  Guard guard{_waiters.lock};
   return TakeReady(max, out);
 }
 
 CopyBatchLease CopyInBatches::Next() {
   Lock lock{_waiters.lock};
   for (;;) {
-    ThrowIfFailed(lock);
     if (_taken != _pushed) {
       return CopyBatchLease{*this, *_window[_taken++ - _watermark]};
     }
+    ThrowIfFailed(lock);
     if (_finished || _aborted || std::exchange(_nudged, false)) {
       return {};
     }

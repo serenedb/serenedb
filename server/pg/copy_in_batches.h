@@ -99,6 +99,7 @@ class CopyInBatches {
   void Flush();
   void Finish();
   void Fail(std::exception_ptr error);
+  uint64_t FailedAt() const;
   void Abort();
   bool Aborted() const;
   void Nudge();
@@ -138,6 +139,7 @@ class CopyInBatches {
   uint64_t _pushed = 0;
   uint64_t _taken = 0;
   uint64_t _watermark = 0;
+  uint64_t _failed_at = 0;
   uint64_t _outstanding = 0;
   uint64_t _parked = 0;
   size_t _retained_bytes = 0;

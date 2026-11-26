@@ -165,4 +165,7 @@ Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
 Filter::ptr LowerExactLevenshtein(const FieldTarget& target,
                                   const ByEditDistanceOptions& opts);
 
+Filter::ptr LowerScoredExactLevenshtein(const FieldTarget& target,
+                                        const ByEditDistanceOptions& opts);
+
 }  // namespace irs

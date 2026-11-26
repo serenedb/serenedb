@@ -348,6 +348,24 @@ QueryBuilder::ptr PrepareLevenshteinSegment(
   return MultiTermQuery::Finish(std::move(query), ctx);
 }
 
+Filter::ptr MakeLevenshteinFilter(const FieldTarget& target,
+                                  const ByEditDistanceOptions& opts,
+                                  const ParametricDescription& d,
+                                  size_t max_terms) {
+  auto filter = target.Make<LevenshteinAutomatonFilter>();
+  *filter->mutable_options() =
+    LevenshteinAutomatonOptions{d,
+                                opts.provider,
+                                opts.with_transpositions,
+                                opts.starts_with,
+                                opts.bytes,
+                                opts.prefix,
+                                opts.term,
+                                max_terms};
+  filter->mutable_options()->merge = target.merge;
+  return filter;
+}
+
 }  // namespace
 
 QueryBuilder::ptr ByEditDistance::PrepareSegment(const SubReader&,
@@ -414,15 +432,16 @@ Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
     opts.max_distance, opts.provider, opts.with_transpositions, opts.prefix,
     opts.term, [] -> Filter::ptr { return std::make_unique<Empty>(); },
     [&] { return LowerExactLevenshtein(target, opts); },
-    [&](const ParametricDescription& d, const bytes_view prefix,
-        const bytes_view term) -> Filter::ptr {
-      auto filter = target.Make<LevenshteinAutomatonFilter>();
-      *filter->mutable_options() = LevenshteinAutomatonOptions{
-        d,          opts.provider, opts.with_transpositions, opts.starts_with,
-        opts.bytes, prefix,        term,                     opts.max_terms};
-      filter->mutable_options()->merge = target.merge;
-      return filter;
+    [&](const ParametricDescription& d, bytes_view, bytes_view) {
+      return MakeLevenshteinFilter(target, opts, d, opts.max_terms);
     });
+}
+
+Filter::ptr LowerScoredExactLevenshtein(const FieldTarget& target,
+                                        const ByEditDistanceOptions& opts) {
+  SDB_ASSERT(opts.max_distance == 0 && opts.starts_with);
+  return MakeLevenshteinFilter(target, opts,
+                               DefaultPDP(0, opts.with_transpositions), 0);
 }
 
 Filter::ptr LowerExactLevenshtein(const FieldTarget& target,

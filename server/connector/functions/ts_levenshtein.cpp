@@ -51,7 +51,7 @@ constexpr std::string_view kSyntaxHint =
 }  // namespace
 
 LevenshteinArgs ParseLevenshteinArgs(
-  const duckdb::BoundFunctionExpression& func) {
+  const duckdb::BoundFunctionExpression& func, const SearchColumnInfo& column) {
   const auto& children = func.GetChildren();
   size_t positional = 0;
   while (positional != children.size() &&
@@ -60,6 +60,7 @@ LevenshteinArgs ParseLevenshteinArgs(
   }
   SDB_ASSERT(positional >= 1 && positional <= 4);
   LevenshteinArgs out;
+  out.bytes = column.logical_type.id() == duckdb::LogicalTypeId::BLOB;
   GetVarcharArg(*children[0], out.text, {"ts_levenshtein text", kSyntaxHint});
   if (positional >= 2) {
     GetIntArg(*children[1], out.distance,
@@ -128,6 +129,7 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
   out.max_distance = static_cast<uint8_t>(args.distance);
   out.with_transpositions = args.with_transpositions;
   out.starts_with = args.starts_with;
+  out.bytes = args.bytes;
   out.max_terms = max_terms;
 }
 
@@ -140,7 +142,7 @@ void FromLevenshtein(BoolTarget filter, const FilterContext& ctx,
                     ERR_MSG("ts_levenshtein field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
-  auto args = ParseLevenshteinArgs(func);
+  auto args = ParseLevenshteinArgs(func, column_info);
 
   auto& edit_filter =
     AddMaybeNegated<irs::ByEditDistance>(filter, ctx, column_info);

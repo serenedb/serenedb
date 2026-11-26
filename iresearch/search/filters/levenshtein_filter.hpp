@@ -54,6 +54,8 @@ struct ByEditDistanceAllOptions {
   bool with_transpositions{false};
 
   bool starts_with{false};
+
+  bool bytes{false};
 };
 
 struct ByEditDistanceOptions : ByEditDistanceAllOptions {
@@ -66,8 +68,8 @@ struct ByEditDistanceOptions : ByEditDistanceAllOptions {
     return term == rhs.term && prefix == rhs.prefix &&
            max_distance == rhs.max_distance &&
            with_transpositions == rhs.with_transpositions &&
-           starts_with == rhs.starts_with && max_terms == rhs.max_terms &&
-           merge == rhs.merge;
+           starts_with == rhs.starts_with && bytes == rhs.bytes &&
+           max_terms == rhs.max_terms && merge == rhs.merge;
   }
 };
 
@@ -114,6 +116,7 @@ struct LevenshteinAutomatonOptions {
   byte_type no_distance{1};
   bool with_transpositions{false};
   bool starts_with{false};
+  bool bytes{false};
   bool with_ties{false};
   size_t max_terms{};
   ScoreMergeType merge{ScoreMergeType::Max};
@@ -122,15 +125,16 @@ struct LevenshteinAutomatonOptions {
   LevenshteinAutomatonOptions(const ParametricDescription& d,
                               ByEditDistanceAllOptions::pdp_f provider,
                               bool with_transpositions, bool starts_with,
-                              bytes_view prefix, bytes_view term,
+                              bool bytes, bytes_view prefix, bytes_view term,
                               size_t max_terms);
 
   bool operator==(const LevenshteinAutomatonOptions& rhs) const noexcept {
     return target == rhs.target && utf8_target_size == rhs.utf8_target_size &&
            no_distance == rhs.no_distance &&
            with_transpositions == rhs.with_transpositions &&
-           starts_with == rhs.starts_with && with_ties == rhs.with_ties &&
-           max_terms == rhs.max_terms && merge == rhs.merge;
+           starts_with == rhs.starts_with && bytes == rhs.bytes &&
+           with_ties == rhs.with_ties && max_terms == rhs.max_terms &&
+           merge == rhs.merge;
   }
 };
 

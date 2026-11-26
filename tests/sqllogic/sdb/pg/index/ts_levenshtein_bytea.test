@@ -1,0 +1,101 @@
+# On a BYTEA column ts_levenshtein counts bytes, as ts_like and ts_regexp do
+# there; a value that is not UTF-8 is within any distance of itself. On a text
+# column, a text byte that is not UTF-8 is a character no term has.
+
+statement ok
+CREATE TABLE lev_bin(id INTEGER PRIMARY KEY, v BYTEA)
+
+statement ok
+CREATE INDEX lev_bin_idx ON lev_bin USING inverted(id, v)
+
+statement ok
+INSERT INTO lev_bin VALUES (1, '\xff61'::bytea), (2, '\x7a7a7a7a'::bytea), (3, '\x6262'::bytea), (4, '\xc3a9'::bytea), (5, '\x65'::bytea), (6, '\xc3'::bytea), (7, '\xe4b8'::bytea)
+
+query
+SELECT id FROM lev_bin WHERE v @@ ts_levenshtein('\xff61'::bytea, 1) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM lev_bin WHERE v @@ ts_levenshtein('\x6262'::bytea, 1) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM lev_bin WHERE v @@ ts_levenshtein('e', 1) ORDER BY id
+----
+id
+5
+6
+
+query
+SELECT id FROM lev_bin WHERE v @@ ts_levenshtein('\xc3a8'::bytea, 1) ORDER BY id
+----
+id
+4
+6
+
+query
+SELECT id FROM lev_bin WHERE v @@ ts_levenshtein('\xff6162'::bytea, 1, starts_with := true) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM lev_bin WHERE v @@ ts_levenshtein('\x62'::bytea, 1, prefix := '\xff'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM lev_bin WHERE levenshtein_matches(v, 'e', 1) ORDER BY id
+----
+id
+5
+6
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lev_bin_words AS split_text(case := 'lower') WITH (frequency, position)
+
+statement ok
+CREATE TABLE lev_txt(id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX lev_txt_idx ON lev_txt USING inverted(id, body lev_bin_words)
+
+statement ok
+INSERT INTO lev_txt VALUES (1, 'the quick fox'), (2, 'a b'), (3, 'quick x')
+
+query
+SELECT id FROM lev_txt WHERE body @@ ts_levenshtein('\xff'::bytea, 1) ORDER BY id
+----
+id
+2
+3
+
+query
+SELECT id FROM lev_txt WHERE body @@ ts_levenshtein('\xff61'::bytea, 1) ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM lev_txt WHERE body @@ ('quick' ## ts_levenshtein('\xff'::bytea, 1)) ORDER BY id
+----
+id
+3
+
+# Each byte of a sequence cut short is a character, so `qu` is two edits away.
+query
+SELECT id FROM lev_txt WHERE body @@ ts_levenshtein('\x7175e4b8'::bytea, 1, starts_with := true) ORDER BY id
+----
+id
+
+query
+SELECT id FROM lev_txt WHERE body @@ ts_levenshtein('\x7175e4b8'::bytea, 2, starts_with := true) ORDER BY id
+----
+id
+1
+3

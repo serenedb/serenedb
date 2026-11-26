@@ -774,7 +774,7 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
             args.syntax};
       } break;
       case TSQueryOp::Fuzzy: {
-        auto args = ParseLevenshteinArgs(*f);
+        auto args = ParseLevenshteinArgs(*f, column_info);
         FillByEditDistanceOptions(
           args, options.push_back<irs::ByEditDistanceOptions>(gap.min, gap.max),
           column_info.levenshtein_max_terms.value_or(

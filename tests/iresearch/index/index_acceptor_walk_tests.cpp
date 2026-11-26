@@ -33,6 +33,8 @@
 #include <iresearch/utils/levenshtein_utils.hpp>
 #include <iresearch/utils/regexp_acceptor.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
+#include <iterator>
+#include <limits>
 #include <memory>
 #include <span>
 #include <string>
@@ -433,6 +435,81 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
       ASSERT_NE(nullptr, source);
       AssertSourceMatchesWalk(reader, *acceptor, *source);
     }
+  }
+
+  template<typename Oracle>
+  void AssertFuzzyOracle(const irs::IndexReader& reader,
+                         const irs::ParametricDescription& description,
+                         std::string_view target, bool bytes, bool starts_with,
+                         Oracle&& oracle) {
+    const auto fuzzy = std::make_shared<const irs::LevenshteinAcceptor>(
+      description, irs::kEmptyStringView<irs::byte_type>,
+      irs::ViewCast<irs::byte_type>(target), bytes);
+    for (auto& segment : reader) {
+      for (auto field_id : segment.field_ids()) {
+        const auto* field = StringsOf(segment, field_id);
+        if (!field) {
+          continue;
+        }
+        std::vector<std::pair<irs::bstring, irs::byte_type>> expected;
+        for (auto terms = field->iterator(); terms->next();) {
+          const auto distance = oracle(terms->value());
+          if (distance <= description.max_distance()) {
+            expected.emplace_back(terms->value(),
+                                  static_cast<irs::byte_type>(distance));
+          }
+        }
+        const auto check = [&](const auto& a) {
+          for (const auto& [term, distance] : expected) {
+            irs::byte_type payload{};
+            EXPECT_TRUE(a.Matches(term, payload));
+            EXPECT_EQ(distance, payload);
+          }
+          auto walk = field->iterator(a);
+          ASSERT_NE(nullptr, walk);
+          AssertSameWalk(expected, *walk, true);
+        };
+        if (starts_with) {
+          const auto acceptor =
+            std::make_shared<const irs::LevenshteinPrefixAcceptor>(fuzzy);
+          check(*acceptor);
+          const auto dfa = PrefixConjunction::Make(acceptor);
+          ASSERT_NE(nullptr, dfa);
+          check(*dfa);
+          const PrefixConjunction small{{}, acceptor, 16384};
+          check(small);
+          const PrefixConjunction none{{}, acceptor, 0};
+          check(none);
+        } else {
+          check(*fuzzy);
+          const auto dfa = WholeConjunction::Make(fuzzy);
+          ASSERT_NE(nullptr, dfa);
+          check(*dfa);
+          const WholeConjunction small{{}, fuzzy, 16384};
+          check(small);
+          const WholeConjunction none{{}, fuzzy, 0};
+          check(none);
+        }
+      }
+    }
+  }
+
+  static size_t SymbolDistance(std::span<const uint32_t> term,
+                               std::span<const uint32_t> target,
+                               bool transpositions, bool starts_with) {
+    const auto whole = [&](std::span<const uint32_t> lhs) {
+      return transpositions ? RestrictedDamerau(lhs, target)
+                            : irs::EditDistance(lhs.data(), lhs.size(),
+                                                target.data(), target.size());
+    };
+    if (!starts_with) {
+      return whole(term);
+    }
+    size_t best = whole({});
+    for (size_t size = 1; size <= term.size(); ++size) {
+      best = std::min(best, whole(term.first(size)));
+    }
+    return best;
   }
 
   static std::string LikeRegex(std::string_view pattern) {
@@ -1202,6 +1279,120 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_prefix_multibyte_terms) {
                      << ", transpositions: " << transpositions);
         AssertPrefixDistanceOracle(reader, description, transpositions, prefix,
                                    target, true);
+      }
+    }
+  }
+}
+
+TEST_P(AcceptorWalkIndexTestCase, levenshtein_bytes) {
+  constexpr std::string_view kBytes{"a\xC3\xA9\xE4\xFF"};
+  std::vector<std::string> terms;
+  for (const auto a : kBytes) {
+    terms.emplace_back(1, a);
+    for (const auto b : kBytes) {
+      terms.emplace_back(std::string{a}.append(1, b));
+      for (const auto c : kBytes) {
+        terms.emplace_back(std::string{a}.append(1, b).append(1, c));
+      }
+    }
+  }
+  const std::vector<std::string_view> views{terms.begin(), terms.end()};
+  AddTerms(views);
+
+  auto reader = open_reader();
+
+  constexpr std::string_view kTargets[]{
+    "\xFF"
+    "a",
+    "\xC3\xA9",
+    "a\xE4\xC3",
+    "\xA9",
+    "aaa",
+  };
+  for (const auto distance : {uint8_t{1}, uint8_t{2}}) {
+    for (const bool transpositions : {false, true}) {
+      const auto description =
+        irs::MakeParametricDescription(distance, transpositions);
+      for (const bool starts_with : {false, true}) {
+        for (const auto target : kTargets) {
+          SCOPED_TRACE(testing::Message("Target: '")
+                       << target << "', distance: " << size_t{distance}
+                       << ", transpositions: " << transpositions
+                       << ", starts with: " << starts_with);
+          const auto target_view = irs::ViewCast<irs::byte_type>(target);
+          const std::vector<uint32_t> target_bytes{target_view.begin(),
+                                                   target_view.end()};
+          AssertFuzzyOracle(
+            reader, description, target, true, starts_with,
+            [&](irs::bytes_view term) {
+              const std::vector<uint32_t> term_bytes{term.begin(), term.end()};
+              return SymbolDistance(term_bytes, target_bytes, transpositions,
+                                    starts_with);
+            });
+        }
+      }
+    }
+  }
+}
+
+TEST_P(AcceptorWalkIndexTestCase, levenshtein_invalid_utf8_targets) {
+  constexpr std::string_view kChars[]{
+    "a", "\xC3\xA9", "\xD0\xB2", "\xE4\xB8\xAD", "\xF0\x9F\x98\x80",
+  };
+  std::vector<std::string> terms;
+  for (const auto a : kChars) {
+    terms.emplace_back(a);
+    for (const auto b : kChars) {
+      terms.emplace_back(std::string{a}.append(b));
+      for (const auto c : kChars) {
+        terms.emplace_back(std::string{a}.append(b).append(c));
+      }
+    }
+  }
+  const std::vector<std::string_view> views{terms.begin(), terms.end()};
+  AddTerms(views);
+
+  auto reader = open_reader();
+
+  constexpr uint32_t kNone = std::numeric_limits<uint32_t>::max();
+  struct Case {
+    std::string_view target;
+    std::vector<uint32_t> symbols;
+  };
+  const Case cases[]{
+    {"\xFF"
+     "a",
+     {kNone, 'a'}},
+    {"\xC3"
+     "a",
+     {kNone, 'a'}},
+    {"a\xE4\xB8", {'a', kNone, kNone}},
+    {"\xE4\xB8\xAD\xA9", {0x4E2D, kNone}},
+    {"\xE0\x80\x80"
+     "a",
+     {kNone, kNone, kNone, 'a'}},
+    {"\xC0\xA9\xC3\xA9", {kNone, kNone, 0xE9}},
+    {"\xC3", {kNone}},
+  };
+  for (const auto distance : {uint8_t{1}, uint8_t{2}}) {
+    for (const bool transpositions : {false, true}) {
+      const auto description =
+        irs::MakeParametricDescription(distance, transpositions);
+      for (const bool starts_with : {false, true}) {
+        for (const auto& [target, symbols] : cases) {
+          SCOPED_TRACE(testing::Message("Target: '")
+                       << target << "', distance: " << size_t{distance}
+                       << ", transpositions: " << transpositions
+                       << ", starts with: " << starts_with);
+          AssertFuzzyOracle(reader, description, target, false, starts_with,
+                            [&](irs::bytes_view term) {
+                              std::vector<uint32_t> chars;
+                              EXPECT_TRUE(irs::utf8_utils::ToUTF32<true>(
+                                term, std::back_inserter(chars)));
+                              return SymbolDistance(
+                                chars, symbols, transpositions, starts_with);
+                            });
+        }
       }
     }
   }

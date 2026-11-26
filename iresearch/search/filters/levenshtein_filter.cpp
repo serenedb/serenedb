@@ -101,6 +101,7 @@ class LevenshteinIterator : public WrappedTermIterator {
     : WrappedTermIterator{std::move(impl)},
       _payload{irs::get<PayAttr>(*_impl)},
       _no_distance{options.no_distance},
+      _bytes{options.bytes},
       _target_size{options.utf8_target_size} {
     if (_payload && _payload->value.empty()) {
       _payload = nullptr;
@@ -140,6 +141,9 @@ class LevenshteinIterator : public WrappedTermIterator {
   }
 
   uint32_t Utf8SizeUpTo(bytes_view term) const noexcept {
+    if (_bytes) {
+      return static_cast<uint32_t>(std::min<size_t>(term.size(), _target_size));
+    }
     const auto* it = term.data();
     const auto* end = it + term.size();
     uint32_t size = 0;
@@ -151,6 +155,7 @@ class LevenshteinIterator : public WrappedTermIterator {
 
   const PayAttr* _payload;
   byte_type _no_distance;
+  bool _bytes;
   uint32_t _target_size;
   TermBoost _boost;
 };
@@ -207,8 +212,8 @@ void WalkTopTerms(const TermReader& reader,
         distance = narrowed;
         AssignAfterKey(past, it->value());
         auto acceptor = std::make_unique<const LevenshteinPrefixAcceptor>(
-          std::make_shared<const LevenshteinAcceptor>(description, prefix,
-                                                      term));
+          std::make_shared<const LevenshteinAcceptor>(description, prefix, term,
+                                                      options.bytes));
         it.emplace(options.starts_with ? reader.iterator(*acceptor)
                                        : reader.iterator(*acceptor->Inner()),
                    options);
@@ -299,9 +304,10 @@ class SelectedTermsIterator : public TermIterator {
   TermBoost _boost;
 };
 
-uint32_t Utf8TargetSize(bytes_view prefix, bytes_view term) {
-  return std::max(1U, static_cast<uint32_t>(utf8_utils::Length(prefix) +
-                                            utf8_utils::Length(term)));
+uint32_t Utf8TargetSize(bytes_view prefix, bytes_view term, bool bytes) {
+  return std::max(
+    1U, static_cast<uint32_t>(LevenshteinAcceptor::Length(prefix, bytes) +
+                              LevenshteinAcceptor::Length(term, bytes)));
 }
 
 QueryBuilder::ptr PrepareLevenshteinSegment(
@@ -383,15 +389,17 @@ PrepareCollector::ptr LevenshteinAutomatonFilter::MakeCollectorImpl(
 
 LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
   const ParametricDescription& d, ByEditDistanceAllOptions::pdp_f provider,
-  bool with_transpositions, bool starts_with, bytes_view prefix,
+  bool with_transpositions, bool starts_with, bool bytes, bytes_view prefix,
   bytes_view term, size_t max_terms)
-  : parametric{std::make_shared<const LevenshteinAcceptor>(d, prefix, term)},
+  : parametric{std::make_shared<const LevenshteinAcceptor>(d, prefix, term,
+                                                           bytes)},
     source{MakeFuzzySource(parametric, starts_with)},
     provider{provider ? provider : &DefaultPDP},
-    utf8_target_size{Utf8TargetSize(prefix, term)},
+    utf8_target_size{Utf8TargetSize(prefix, term, bytes)},
     no_distance{static_cast<byte_type>(d.max_distance() + 1)},
     with_transpositions{with_transpositions},
     starts_with{starts_with},
+    bytes{bytes},
     max_terms{max_terms} {
   target.reserve(prefix.size() + term.size());
   target += prefix;
@@ -410,8 +418,8 @@ Filter::ptr LowerLevenshtein(irs::field_id id, DictRef dict,
         const bytes_view term) -> Filter::ptr {
       auto filter = target.Make<LevenshteinAutomatonFilter>();
       *filter->mutable_options() = LevenshteinAutomatonOptions{
-        d,    opts.provider, opts.with_transpositions, opts.starts_with, prefix,
-        term, opts.max_terms};
+        d,          opts.provider, opts.with_transpositions, opts.starts_with,
+        opts.bytes, prefix,        term,                     opts.max_terms};
       filter->mutable_options()->merge = target.merge;
       return filter;
     });

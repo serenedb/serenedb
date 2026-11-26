@@ -251,6 +251,31 @@ def test_test_durations_below_the_clock_resolution_are_not_zero():
     assert out["duckdb:avro:test/sql/a.test"][1] > 0
 
 
+def test_a_failing_catch_test_whose_name_wraps_is_the_one_that_failed():
+    name = "A whole file is mapped from its minimum size up and read below it, with the file's bytes either way"
+    other = "A short test"
+    rule = "-" * 79
+    log = "\n".join([
+        rule,
+        "A whole file is mapped from its minimum size up and read below it, with the",
+        "file's bytes either way",
+        rule,
+        "test/common/test_row_ranges.cpp:1643",
+        "." * 79,
+        "",
+        "test/common/test_row_ranges.cpp:1643: FAILED:",
+        "due to unexpected exception with message:",
+        "  Assertion triggered: size > 0",
+        "",
+        f"[1/2] (50%): {name} took 0.073s",
+        f"[2/2] (100%): {other} took 0.001s",
+    ])
+    out, _ = duckdb._parse_catch(log, [(name, "a"), (other, "b")], "duckdb:cpp")
+    assert out["duckdb:cpp:a"][0] == FAILED
+    assert out["duckdb:cpp:a"][2].startswith("test/common/test_row_ranges.cpp:1643: FAILED:")
+    assert out["duckdb:cpp:b"][0] == PASSED
+
+
 def test_an_untimed_gtest_runs_alone_and_timed_ones_batch(monkeypatch):
     timing = Timing({"gtest:b:A.timed": 1.0, "gtest:b:B.timed": 1.0})
     ctx = SimpleNamespace(timing=timing, skips=[], timeout_floor=180.0,

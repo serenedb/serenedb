@@ -350,6 +350,7 @@ def _batch_run(ctx, suite, members, cpp, jobs, may_fail=frozenset()):
 
 def _parse_catch(text, members, label, may_fail=frozenset()):
     wanted = {name for name, _ in members}
+    squeezed = {re.sub(r"\s+", "", name): name for name in wanted}
     rule = "-" * 79
     lines = text.splitlines()
     took = {}
@@ -368,9 +369,16 @@ def _parse_catch(text, members, label, may_fail=frozenset()):
             ended_with[name] = (status, detail)
             pids[pid] = name
             continue
-        if line == rule and i + 1 < len(lines) and lines[i + 1].strip() in wanted:
-            current = lines[i + 1].strip()
-            continue
+        if line == rule:
+            header = []
+            for following in lines[i + 1:i + 6]:
+                if following == rule:
+                    break
+                header.append(following)
+            name = squeezed.get(re.sub(r"\s+", "", "".join(header)))
+            if name:
+                current = name
+                continue
         if current and ": FAILED:" in line and current not in failed and current not in may_fail:
             detail = next((ln.strip() for ln in lines[i + 1:i + 6] if ln.strip()), "")
             failed[current] = f"{line.strip()} {detail}"[:300]

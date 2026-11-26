@@ -1,0 +1,223 @@
+statement ok
+SET TimeZone = 'Etc/UTC';
+
+statement ok
+CREATE TABLE tzc AS SELECT ts::TIMESTAMPTZ_NS AS tz_ns, ts AS tz, i AS v FROM (SELECT TIMESTAMPTZ '2025-09-23 00:00:00+00' + INTERVAL (i * 7) SECOND + INTERVAL (i % 1000) MICROSECOND AS ts, i FROM range(0, 3000) t(i));
+
+statement ok
+INSERT INTO tzc VALUES (NULL, NULL, -1);
+
+statement ok
+CREATE TABLE tzb (tz_ns TIMESTAMPTZ_NS, v INTEGER);
+
+statement ok
+INSERT INTO tzb VALUES ('1969-12-31 23:59:59.9999996+00', 1), ('1969-12-31 23:59:59.9999994+00', 2), ('2025-09-23 00:00:59.9999995+00', 3), ('2025-09-23 00:00:59.9999994+00', 4), ('2025-09-23 00:01:00+00', 5), (NULL, 6);
+
+statement ok
+CREATE TABLE tzinf (tz_ns TIMESTAMPTZ_NS, v INTEGER);
+
+statement ok
+INSERT INTO tzinf VALUES ('2025-09-23 00:00:01+00', 1), ('infinity', 2), ('-infinity', 3), ('2025-09-23 00:02:01+00', 4);
+
+query
+EXPLAIN SELECT date_trunc('minute', tz_ns::TIMESTAMP_NS) AS m, count(*) AS c FROM tzc GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                              │
+│ __internal_date_trunc_unbucket(#0, 60000000, 0), #1                                       │
+│ ~1,500 rows                                                                               │
+╰─────────────────────────────────────────────┬─────────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────────────────┴─────────────────────────────────────────────╮
+│ Groups: #0                                                                                │
+│ Aggregates: count_star()                                                                  │
+│ ~1,500 rows                                                                               │
+╰─────────────────────────────────────────────┬─────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────┴─────────────────────────────────────────────╮
+│ Projections:                                                                              │
+│ __internal_date_trunc_bucket(CAST(CAST(tz_ns AS TIMESTAMP_NS) AS TIMESTAMP), 60000000, 0) │
+│ ~3,001 rows                                                                               │
+╰─────────────────────────────────────────────┬─────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────────┴─────────────────────────────────────────────╮
+│ Table: tzc                                                                                │
+│ Projections: tz_ns                                                                        │
+│ ~3,001 rows                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT date_trunc('minute', tz::TIMESTAMP) AS m, count(*) AS c FROM tzc GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ─────────────────────────────────────────────────────╮
+│ Projections:                                                     │
+│ __internal_date_trunc_unbucket(#0, 60000000, 0), #1              │
+│ ~1,500 rows                                                      │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────┴────────────────────────────────╮
+│ Groups: #0                                                       │
+│ Aggregates: count_star()                                         │
+│ ~1,500 rows                                                      │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ PROJECTION ────────────────────┴────────────────────────────────╮
+│ Projections:                                                     │
+│ __internal_date_trunc_bucket(CAST(tz AS TIMESTAMP), 60000000, 0) │
+│ ~3,001 rows                                                      │
+╰─────────────────────────────────┬────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────┴────────────────────────────────╮
+│ Table: tzc                                                       │
+│ Projections: tz                                                  │
+│ ~3,001 rows                                                      │
+╰──────────────────────────────────────────────────────────────────╯
+
+query
+SELECT coalesce(date_trunc('minute', tz_ns::TIMESTAMP_NS)::VARCHAR, 'null') AS m, count(*) AS c, sum(v) AS s FROM tzc GROUP BY 1 ORDER BY 1 LIMIT 4;
+----
+m	c	s
+2025-09-23 00:00:00	9	36
+2025-09-23 00:01:00	9	117
+2025-09-23 00:02:00	8	172
+2025-09-23 00:03:00	9	270
+
+query
+SELECT coalesce(date_trunc('minute', tz_ns::TIMESTAMP_NS)::VARCHAR, 'null') AS m, count(*) AS c FROM tzc GROUP BY 1 EXCEPT SELECT coalesce(date_trunc('minute', tz::TIMESTAMP)::VARCHAR, 'null') AS m, count(*) AS c FROM tzc GROUP BY 1;
+----
+m	c
+
+query
+SELECT tz_ns::TIMESTAMP_NS::VARCHAR AS n, tz_ns::TIMESTAMP AS u, tz_ns::TIMESTAMP_MS AS ms, tz_ns::TIMESTAMP_S AS s, v FROM tzb ORDER BY v;
+----
+n	u	ms	s	v
+1969-12-31 23:59:59.9999996	1970-01-01 00:00:00	1970-01-01 00:00:00	1970-01-01 00:00:00	1
+1969-12-31 23:59:59.9999994	1969-12-31 23:59:59.999999	1970-01-01 00:00:00	1970-01-01 00:00:00	2
+2025-09-23 00:00:59.9999995	2025-09-23 00:01:00	2025-09-23 00:01:00	2025-09-23 00:01:00	3
+2025-09-23 00:00:59.9999994	2025-09-23 00:00:59.999999	2025-09-23 00:01:00	2025-09-23 00:01:00	4
+2025-09-23 00:01:00	2025-09-23 00:01:00	2025-09-23 00:01:00	2025-09-23 00:01:00	5
+NULL	NULL	NULL	NULL	6
+
+query
+SELECT date_trunc('minute', tz_ns::TIMESTAMP_NS) AS m, count(*) AS c, sum(v) AS s FROM tzb GROUP BY 1 ORDER BY 1 NULLS LAST;
+----
+m	c	s
+1969-12-31 23:59:00	1	2
+1970-01-01 00:00:00	1	1
+2025-09-23 00:00:00	1	4
+2025-09-23 00:01:00	2	8
+NULL	1	6
+
+query
+EXPLAIN SELECT date_trunc('minute', tz_ns::TIMESTAMP_NS) AS m, count(*) AS c FROM tzinf GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~2 rows                  │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: m           │
+│ ~4 rows                  │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Table: tzinf             │
+│ Projections: tz_ns       │
+│ ~4 rows                  │
+╰──────────────────────────╯
+
+query
+SELECT tz_ns::TIMESTAMP_NS AS n, date_trunc('minute', tz_ns::TIMESTAMP_NS) AS m, v FROM tzinf ORDER BY v;
+----
+n	m	v
+2025-09-23 00:00:01	2025-09-23 00:00:00	1
+infinity	infinity	2
+-infinity	-infinity	3
+2025-09-23 00:02:01	2025-09-23 00:02:00	4
+
+statement ok
+SET TimeZone = 'Etc/GMT-3';
+
+query
+EXPLAIN SELECT date_trunc('minute', tz_ns::TIMESTAMP_NS) AS m, count(*) AS c FROM tzc GROUP BY 1;
+----
+QUERY PLAN
+╭─ PROJECTION ──────────────────────────────────────────────────────────────────────────────╮
+│ Projections:                                                                              │
+│ __internal_date_trunc_unbucket(#0, 60000000, 0), #1                                       │
+│ ~1,500 rows                                                                               │
+╰─────────────────────────────────────────────┬─────────────────────────────────────────────╯
+╭─ PERFECT_HASH_GROUP_BY ─────────────────────┴─────────────────────────────────────────────╮
+│ Groups: #0                                                                                │
+│ Aggregates: count_star()                                                                  │
+│ ~1,500 rows                                                                               │
+╰─────────────────────────────────────────────┬─────────────────────────────────────────────╯
+╭─ PROJECTION ────────────────────────────────┴─────────────────────────────────────────────╮
+│ Projections:                                                                              │
+│ __internal_date_trunc_bucket(CAST(CAST(tz_ns AS TIMESTAMP_NS) AS TIMESTAMP), 60000000, 0) │
+│ ~3,001 rows                                                                               │
+╰─────────────────────────────────────────────┬─────────────────────────────────────────────╯
+╭─ IRESEARCH_SCAN ────────────────────────────┴─────────────────────────────────────────────╮
+│ Table: tzc                                                                                │
+│ Projections: tz_ns                                                                        │
+│ ~3,001 rows                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────╯
+
+query
+SELECT coalesce(date_trunc('minute', tz_ns::TIMESTAMP_NS)::VARCHAR, 'null') AS m, count(*) AS c, sum(v) AS s FROM tzc GROUP BY 1 ORDER BY 1 LIMIT 4;
+----
+m	c	s
+2025-09-23 03:00:00	9	36
+2025-09-23 03:01:00	9	117
+2025-09-23 03:02:00	8	172
+2025-09-23 03:03:00	9	270
+
+query
+SELECT tz_ns::TIMESTAMP_NS::VARCHAR AS n, tz_ns::TIMESTAMP AS u, v FROM tzb ORDER BY v;
+----
+n	u	v
+1970-01-01 02:59:59.9999996	1970-01-01 03:00:00	1
+1970-01-01 02:59:59.9999994	1970-01-01 02:59:59.999999	2
+2025-09-23 03:00:59.9999995	2025-09-23 03:01:00	3
+2025-09-23 03:00:59.9999994	2025-09-23 03:00:59.999999	4
+2025-09-23 03:01:00	2025-09-23 03:01:00	5
+NULL	NULL	6
+
+statement ok
+SET TimeZone = 'Europe/Berlin';
+
+query
+EXPLAIN SELECT date_trunc('minute', tz_ns::TIMESTAMP_NS) AS m, count(*) AS c FROM tzc GROUP BY 1;
+----
+QUERY PLAN
+╭─ HASH_GROUP_BY ──────────╮
+│ Groups: #0               │
+│ Aggregates: count_star() │
+│ ~1,500 rows              │
+╰─────────────┬────────────╯
+╭─ PROJECTION ┴────────────╮
+│ Projections: m           │
+│ ~3,001 rows              │
+╰─────────────┬────────────╯
+╭─ IRESEARCH_SCAN ─────────╮
+│ Table: tzc               │
+│ Projections: tz_ns       │
+│ ~3,001 rows              │
+╰──────────────────────────╯
+
+query
+SELECT coalesce(date_trunc('minute', tz_ns::TIMESTAMP_NS)::VARCHAR, 'null') AS m, count(*) AS c, sum(v) AS s FROM tzc GROUP BY 1 ORDER BY 1 LIMIT 4;
+----
+m	c	s
+2025-09-23 02:00:00	9	36
+2025-09-23 02:01:00	9	117
+2025-09-23 02:02:00	8	172
+2025-09-23 02:03:00	9	270
+
+query
+SELECT tz_ns::TIMESTAMP_NS::VARCHAR AS n, tz_ns::TIMESTAMP AS u, v FROM tzb ORDER BY v;
+----
+n	u	v
+1970-01-01 00:59:59.9999996	1970-01-01 01:00:00	1
+1970-01-01 00:59:59.9999994	1970-01-01 00:59:59.999999	2
+2025-09-23 02:00:59.9999995	2025-09-23 02:01:00	3
+2025-09-23 02:00:59.9999994	2025-09-23 02:00:59.999999	4
+2025-09-23 02:01:00	2025-09-23 02:01:00	5
+NULL	NULL	6

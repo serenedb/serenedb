@@ -33,6 +33,7 @@
 
 #include "iresearch/formats/column/internal/block_manager.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs {
 
@@ -100,7 +101,7 @@ class ReadContext final : public BlockManager {
 
   duckdb::InputFileReader _in;
   duckdb::MemoryMappedFile* _mapping = nullptr;
-  std::vector<std::pair<uint64_t, uint64_t>> _ranges;
+  containers::FlatHashMap<uint64_t, uint64_t> _sizes;
   bool _random_access = false;
   duckdb::ObjectCache* _cache;
 };

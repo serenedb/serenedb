@@ -245,7 +245,83 @@ def test_ai_functions_call_the_provider() -> None:
     assert rows[-2:] == [["answer"], ["done"]]
 
 
+@pytest.mark.parametrize(
+    ("file", "database"), [("main", "main"), ("system", "system"), ("temp", "temp_db")])
+def test_a_file_named_main_or_system_keeps_its_name(tmp_path: Path, file: str, database: str) -> None:
+    path = tmp_path / f"{file}.db"
+    opened = _shell(
+        f".open {path}\n"
+        "CREATE TABLE t (a INT); INSERT INTO t VALUES (1);\n"
+        f"USE postgres; USE {database};\n"
+        "SELECT current_database() AS db, count(*) AS n FROM t;\n")
+    assert opened.returncode == 0, opened.stderr
+    assert list(csv.reader(io.StringIO(opened.stdout))) == [["db", "n"], [database, "1"]]
+    assert _rows(f"ATTACH '{path}';\nSELECT count(*) AS n FROM {database}.main.t;\n") == [["n"], ["1"]]
+
+
+def test_a_database_named_like_a_schema_leaves_the_schema_reachable() -> None:
+    assert _rows(
+        "CREATE DATABASE pg_catalog; CREATE DATABASE information_schema; CREATE DATABASE public;\n"
+        "CREATE TABLE public.t (a INT);\n"
+        "SELECT (SELECT count(*) FROM pg_catalog.pg_class WHERE relname = 't') AS cat,"
+        " (SELECT count(*) FROM information_schema.tables WHERE table_name = 't') AS inf,"
+        " (SELECT count(*) FROM public.t) AS own;\n") == [["cat", "inf", "own"], ["1", "1", "0"]]
+
+
 def test_a_database_opened_after_a_failed_open_is_serenedb_too(tmp_path: Path) -> None:
     result = _shell(f".open {tmp_path / 'missing' / 'x.db'}\nSELECT 7 / 2 AS q;\n")
     assert "Cannot open file" in result.stderr, result.stderr
     assert list(csv.reader(io.StringIO(result.stdout)))[-2:] == [["q"], ["3"]]
+
+
+def _file_shell(args: list[str], script: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [SERENEDB_BIN, "shell", "-no-agent", "--csv", *args],
+        input=script,
+        capture_output=True,
+        text=True,
+        timeout=30.0,
+        env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
+    )
+
+
+def _count(path: Path) -> list[list[str]]:
+    result = _file_shell([str(path)], "SELECT count(*) AS n FROM t;\n")
+    assert result.returncode == 0, result.stderr
+    return list(csv.reader(io.StringIO(result.stdout)))
+
+
+def test_a_read_only_open_refuses_writes(tmp_path: Path) -> None:
+    path = tmp_path / "ro.db"
+    created = _file_shell([str(path)], "CREATE TABLE t (a INT); INSERT INTO t VALUES (1);\n")
+    assert created.returncode == 0, created.stderr
+    flag = _file_shell(["--readonly", str(path)], "INSERT INTO t VALUES (2);\n")
+    assert "read-only" in flag.stderr, flag.stderr
+    dot = _file_shell([], f".open --readonly {path}\nINSERT INTO t VALUES (3);\n")
+    assert "read-only" in dot.stderr, dot.stderr
+    assert _count(path) == [["n"], ["1"]]
+
+
+def test_open_closes_the_open_file(tmp_path: Path) -> None:
+    a = tmp_path / "a.db"
+    created = _file_shell([str(a)], "CREATE TABLE t (a INT); INSERT INTO t VALUES (1);\n")
+    assert created.returncode == 0, created.stderr
+    reopened = _file_shell([], f".open {a}\n.open {a}\nSELECT count(*) AS n FROM t;\n")
+    assert reopened.returncode == 0, reopened.stderr
+    assert list(csv.reader(io.StringIO(reopened.stdout))) == [["n"], ["1"]]
+    switched = _file_shell(
+        [], f".open {a}\n.open {tmp_path / 'b.db'}\n"
+        "SELECT count(*) AS n FROM sdb_databases() WHERE database_name = 'a';\n")
+    assert switched.returncode == 0, switched.stderr
+    assert list(csv.reader(io.StringIO(switched.stdout))) == [["n"], ["0"]]
+
+
+def test_a_file_named_like_the_default_database_opens(tmp_path: Path) -> None:
+    path = tmp_path / "postgres.db"
+    result = _file_shell(
+        [str(path)],
+        "CREATE TABLE t (a INT); INSERT INTO t VALUES (1);\n"
+        "SELECT current_database() AS db, count(*) AS n FROM t;\n")
+    assert result.returncode == 0, result.stderr
+    assert list(csv.reader(io.StringIO(result.stdout))) == [["db", "n"], ["postgres_db", "1"]]
+    assert _count(path) == [["n"], ["1"]]

@@ -523,11 +523,17 @@ bool PgWireSession<Kind>::SetupConnection() {
   keep_as_default("session_authorization");
   _connection_ctx->SetSetting("is_superuser", superuser ? "on" : "off", false);
 
-  const auto apply = [&](const std::string& name, const std::string& value) {
+  const auto set = [&](std::string_view name, std::string_view value) {
     try {
-      _connection_ctx->SetSettingChecked(name, value, false);
+      _connection_ctx->SetSettingChecked(name, std::string{value}, false);
     } catch (const duckdb::InternalException&) {
-      _connection_ctx->SetSetting(name, value, false);
+      _connection_ctx->SetSetting(name, std::string{value}, false);
+    }
+    keep_as_default(name);
+  };
+  const auto apply = [&](std::string_view name, std::string_view value) {
+    try {
+      set(name, value);
     } catch (const std::exception& exception) {
       if (name == "client_encoding") {
         _connection_ctx->AddNotice(
@@ -539,7 +545,6 @@ bool PgWireSession<Kind>::SetupConnection() {
       WriteFatalResponse(this->_send, irs::pg::ToSqlError(exception));
       return false;
     }
-    keep_as_default(name);
     return true;
   };
   std::vector<StartupSetting> settings;
@@ -551,6 +556,16 @@ bool PgWireSession<Kind>::SetupConnection() {
   }
   bool applied = true;
   _conn->context->RunFunctionInTransaction([&] {
+    for (const std::string_view setting : login.settings) {
+      const auto eq = setting.find('=');
+      try {
+        set(setting.substr(0, eq), setting.substr(eq + 1));
+      } catch (const std::exception& exception) {
+        auto notice = irs::pg::ToSqlError(exception);
+        notice.errcode = ERRCODE_WARNING;
+        _connection_ctx->AddNotice(std::move(notice));
+      }
+    }
     for (const auto& [name, value] : settings) {
       if (!apply(name, value)) {
         applied = false;
@@ -1984,17 +1999,11 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
                     ERR_MSG("malformed Parse message"));
   }
 
-  duckdb::case_insensitive_map_t<duckdb::LogicalType> type_hints;
   std::vector<uint64_t> param_oids;
   param_oids.reserve(num_params);
   for (uint16_t i = 0; i < num_params; ++i) {
-    const uint64_t oid = absl::big_endian::Load32(payload.data());
+    param_oids.push_back(absl::big_endian::Load32(payload.data()));
     payload.remove_prefix(sizeof(uint32_t));
-    param_oids.push_back(oid);
-    if (oid != 0 && oid != sdb::pg::kUnknown && !IsNumericOid(oid)) {
-      type_hints.emplace(absl::StrCat(i + 1),
-                         sdb::pg::Oid2Type(oid, *_connection_ctx));
-    }
   }
 
   StatementPtr* slot = &_proto.statements.Anon();
@@ -2077,16 +2086,28 @@ void PgWireSession<Kind>::HandleParse(std::string_view payload) {
     _connection_ctx->RefreshCatalogEpoch();
     const auto bind_epoch = _connection_ctx->CatalogEpoch();
     const duckdb::Identifier alias{statement_name};
+    absl::Cleanup undefine = [&] {
+      _proto.statements.Undefine(statement_name);
+    };
+    duckdb::case_insensitive_map_t<duckdb::LogicalType> type_hints;
+    for (size_t i = 0; i < param_oids.size(); ++i) {
+      const auto oid = param_oids[i];
+      if (oid == 0 || oid == sdb::pg::kUnknown) {
+        continue;
+      }
+      const auto number = absl::StrCat(i + 1);
+      extracted[0]->named_param_map.try_emplace(number, i + 1);
+      if (!IsNumericOid(oid)) {
+        type_hints.emplace(number, sdb::pg::Oid2Type(oid, *_connection_ctx));
+      }
+    }
     auto prepared = _conn->Prepare(std::move(extracted[0]),
                                    type_hints.empty() ? nullptr : &type_hints,
                                    statement_name.empty() ? nullptr : &alias);
     if (prepared->HasError()) {
-      // A failed prepare must not define the name (the slot is dropped below;
-      // the unnamed slot stays Unbound).
-      const auto error = prepared->GetErrorObject();
-      _proto.statements.Undefine(statement_name);
-      error.Throw();
+      prepared->GetErrorObject().Throw();
     }
+    std::move(undefine).Cancel();
     statement.SetPrepared(std::move(prepared), bind_epoch);
     statement.SetTypeHints(std::move(type_hints));
     statement.SetParamOids(std::move(param_oids));

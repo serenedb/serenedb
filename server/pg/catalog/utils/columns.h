@@ -170,7 +170,7 @@ template<typename R>
 const duckdb::UniqueConstraint* ReferencedKey(
   const duckdb::TableCatalogEntry& target, const R& attnums) {
   for (const auto& key : KeyIndexes(target)) {
-    if (absl::c_equal(KeyAttnums(target.GetColumns(), key), attnums)) {
+    if (absl::c_is_permutation(KeyAttnums(target.GetColumns(), key), attnums)) {
       return &key;
     }
   }

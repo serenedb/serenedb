@@ -70,7 +70,9 @@ bool OffsetsBindData::Equals(const duckdb::FunctionData& other) const {
 namespace {
 
 constexpr irs::field_id kStandaloneFieldId = kMaxRealColumnIdValue + 4;
-constexpr ColumnId kStandaloneSyntheticColumnId{kStandaloneFieldId};
+constexpr irs::field_id kStandaloneSyntheticColumnId =
+  kMaxRealColumnIdValue + 5;
+constexpr ColumnId kStandaloneColumnId{kStandaloneFieldId};
 
 class SortingOffsetTokenizer final
   : public irs::analysis::TypedTokenizer<SortingOffsetTokenizer> {
@@ -163,7 +165,7 @@ auto& EnsureField(duckdb::ClientContext& context,
     return local_state.field;
   }
 
-  auto column_id = kStandaloneSyntheticColumnId;
+  auto column_id = kStandaloneColumnId;
   catalog::Tokenizer::TokenizerWrapper wrapper;
   if (bind.IsStandalone()) {
     wrapper = bind.dict_tokenizer->Acquire(context);
@@ -337,6 +339,7 @@ std::shared_ptr<irs::Filter> BuildFilterFromTSQuery(
     info.tokenizer.features = irs::IndexFeatures::Freq |
                               irs::IndexFeatures::Pos |
                               irs::IndexFeatures::Offs;
+    info.tokenizer.tokenizer_column = kStandaloneSyntheticColumnId;
     return info;
   };
 
@@ -378,7 +381,7 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
   auto bind = duckdb::make_uniq<OffsetsBindData>();
   bind->dict_tokenizer = dict->GetTokenizer();
   bind->filter = BuildFilterFromTSQuery(
-    context, *arguments[2], kStandaloneSyntheticColumnId, bind->dict_tokenizer);
+    context, *arguments[2], kStandaloneColumnId, bind->dict_tokenizer);
   constexpr size_t kDefaultOffsetsLimit = 1 << 12;
   bind->limit = kDefaultOffsetsLimit;
   if (arguments.size() == 4) {

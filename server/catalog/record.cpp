@@ -48,6 +48,7 @@
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <limits>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -460,7 +461,7 @@ struct CreatedConstraint {
 struct ChangeContent {
   duckdb::unique_ptr<duckdb::CreateInfo> info;
   duckdb::unique_ptr<duckdb::AlterInfo> alter;
-  duckdb::LogicalDependencyList dependencies;
+  std::optional<duckdb::LogicalDependencyList> dependencies;
   std::vector<CreatedConstraint> constraints;
 };
 
@@ -783,9 +784,11 @@ ChangeContent ReadChangeBody(duckdb::ClientContext& context,
           alter.ReadProperty<duckdb::unique_ptr<duckdb::ParseInfo>>(100,
                                                                     "info"));
     });
-  content.dependencies =
-    deserializer.ReadPropertyWithExplicitDefault<duckdb::LogicalDependencyList>(
-      102, "dependencies", duckdb::LogicalDependencyList{});
+  deserializer.ReadOptionalObject(
+    102, "dependencies", [&](duckdb::BinaryDeserializer& dependencies) {
+      content.dependencies =
+        duckdb::LogicalDependencyList::Deserialize(dependencies);
+    });
   deserializer.ReadOptionalList(
     103, "constraints", [&](duckdb::Deserializer::List& list, duckdb::idx_t) {
       list.ReadObject([&](duckdb::Deserializer& object) {
@@ -834,12 +837,12 @@ void ReplayChange(duckdb::ClientContext& context, ReplayTarget target,
         return;
       }
       catalog.Alter(context, info);
-      if (!content.dependencies.Set().empty()) {
+      if (content.dependencies) {
         auto entry = catalog.LookupOid(transaction, oid);
         SDB_ENSURE(entry, "the log changes a missing entry ", oid);
         auto& standard = entry->Cast<duckdb::StandardEntry>();
         catalog.Oids().RemoveDependents(standard, standard.oid);
-        standard.dependencies = std::move(content.dependencies);
+        standard.dependencies = std::move(*content.dependencies);
         catalog.Oids().AddDependents(standard, standard.oid);
       }
       if (!content.constraints.empty()) {

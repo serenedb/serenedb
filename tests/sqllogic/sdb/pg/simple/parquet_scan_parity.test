@@ -189,3 +189,25 @@ a
 1
 1
 2
+
+
+statement ok
+COPY (SELECT {'a': i} AS s FROM range(6144) t(i)) TO '${__TEST_DIR__}/psp_struct.parquet' (FORMAT parquet, ROW_GROUP_SIZE 2048);
+
+
+query
+SELECT s.a AS a FROM read_parquet('${__TEST_DIR__}/psp_struct.parquet') ORDER BY s.a LIMIT 3 OFFSET 3000;
+----
+a
+3000
+3001
+3002
+
+
+query
+SELECT s.a AS a FROM read_parquet('${__TEST_DIR__}/psp_struct.parquet') ORDER BY s.a DESC LIMIT 3 OFFSET 3000;
+----
+a
+3143
+3142
+3141

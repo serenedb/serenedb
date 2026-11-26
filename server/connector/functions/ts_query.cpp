@@ -846,19 +846,17 @@ void RegisterTSQueryCombineRule(duckdb::ExtensionLoader& loader) {
 }
 
 void RegisterTSQueryListCast(duckdb::ExtensionLoader& loader) {
-  for (auto text : {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
-    loader.RegisterCastFunction(
-      duckdb::LogicalType::LIST(text),
-      duckdb::LogicalType::LIST(MakeTSQueryType()),
-      +[](duckdb::BindCastInput& input, const duckdb::LogicalType& source,
-          const duckdb::LogicalType& target) -> duckdb::BoundCastInfo {
-        return duckdb::BoundCastInfo(
-          duckdb::ListCast::ListToListCast,
-          duckdb::ListBoundCastData::BindListToListCast(input, source, target),
-          duckdb::ListBoundCastData::InitListLocalState);
-      },
-      /*implicit_cast_cost=*/0);
-  }
+  loader.RegisterCastFunction(
+    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
+    duckdb::LogicalType::LIST(MakeTSQueryType()),
+    +[](duckdb::BindCastInput& input, const duckdb::LogicalType& source,
+        const duckdb::LogicalType& target) -> duckdb::BoundCastInfo {
+      return duckdb::BoundCastInfo(
+        duckdb::ListCast::ListToListCast,
+        duckdb::ListBoundCastData::BindListToListCast(input, source, target),
+        duckdb::ListBoundCastData::InitListLocalState);
+    },
+    /*implicit_cast_cost=*/0);
 }
 
 void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
@@ -985,6 +983,11 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
     set.AddFunction(
       TSQConstructor({duckdb::LogicalType::LIST(MakeTSQueryType()),
                       duckdb::LogicalType::INTEGER}));
+    set.AddFunction(
+      TSQConstructor({duckdb::LogicalType::LIST(duckdb::LogicalType::BLOB)}));
+    set.AddFunction(
+      TSQConstructor({duckdb::LogicalType::LIST(duckdb::LogicalType::BLOB),
+                      duckdb::LogicalType::INTEGER}));
     set.AddFunction(TSQConstructor(
       {duckdb::LogicalType::ARRAY(MakeTSQueryType(), duckdb::optional_idx{})}));
     set.AddFunction(TSQConstructor(
@@ -996,6 +999,8 @@ void RegisterTSQueryConstructors(duckdb::ExtensionLoader& loader) {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{kTSQAllOf}};
     set.AddFunction(
       TSQConstructor({duckdb::LogicalType::LIST(MakeTSQueryType())}));
+    set.AddFunction(
+      TSQConstructor({duckdb::LogicalType::LIST(duckdb::LogicalType::BLOB)}));
     set.AddFunction(TSQConstructor(
       {duckdb::LogicalType::ARRAY(MakeTSQueryType(), duckdb::optional_idx{})}));
     loader.RegisterFunction(std::move(set));

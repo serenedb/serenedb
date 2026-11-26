@@ -1101,7 +1101,7 @@ int64_t DatumSize(const duckdb::Value& value) {
       type.id() == duckdb::LogicalTypeId::TUPLE) {
     return TupleDatumSize(value);
   }
-  if (Type2Oid(type) == kNumeric) {
+  if (Type2Oid(type.WithoutDomain()) == kNumeric) {
     return NumericDatumSize(value.ToString());
   }
   return kVarHdrSz + static_cast<int64_t>(value.ToString().size());

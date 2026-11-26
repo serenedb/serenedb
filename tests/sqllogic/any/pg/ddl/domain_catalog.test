@@ -223,3 +223,32 @@ SELECT count(*) FROM pg_constraint WHERE contypid = 't_idx'::regclass::oid;
 ----
 count
 0
+
+# A prepared statement lists a parameter of a domain type, declared or inferred from the column it fills,
+# as that domain.
+
+statement ok
+CREATE DOMAIN d_pps AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE TABLE t_pps (v d_pps);
+
+statement ok
+PREPARE p_pps(d_pps) AS SELECT $1;
+
+statement ok
+PREPARE p_pps_ins AS INSERT INTO t_pps VALUES ($1);
+
+query
+SELECT name, parameter_types[1] = 'd_pps'::regtype AS t FROM pg_prepared_statements
+WHERE name LIKE 'p_pps%' ORDER BY name;
+----
+name	t
+p_pps	t
+p_pps_ins	t
+
+statement ok
+DEALLOCATE p_pps;
+
+statement ok
+DEALLOCATE p_pps_ins;

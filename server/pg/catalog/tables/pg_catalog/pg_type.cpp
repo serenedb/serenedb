@@ -129,9 +129,8 @@ class UserType {
       } else if (_entry.domain_info && duckdb::StructType::IsStruct(id)) {
         _builtin = &kComposite;
       } else {
-        const auto oid =
-          _entry.domain_info ? Logical2Pg(_entry.user_type).oid : Base().oid;
-        const auto* builtin = FindBuiltinType(oid);
+        const auto* builtin =
+          FindBuiltinType(CatalogTypeOid(_entry.user_type.WithoutDomain()));
         _builtin = builtin ? builtin : &kNoBuiltin;
       }
     }

@@ -4129,3 +4129,110 @@ def test_string_over_the_size_limit(conn):
         ("54000", "Cannot create a string of size: '5368709120', the maximum "
                   "supported string size is: '4294967295'")
     ]
+
+
+def parameter_oids(msgs):
+    """ParameterDescription ('t') parameter type OIDs."""
+    for t, p in msgs:
+        if t == "t":
+            (n,) = struct.unpack("!H", p[:2])
+            return list(struct.unpack(f"!{n}I", p[2 : 2 + 4 * n]))
+    return None
+
+
+def run_params(conn, query, params, formats=()):
+    conn.parse("", query)
+    conn.describe("S", "")
+    conn.bind("", "", params=params, formats=formats)
+    conn.execute("")
+    conn.sync()
+    return conn.drain_to_ready()
+
+
+@pytest.fixture()
+def domain_table(conn):
+    conn.run_ok("drop table if exists pw_dom_t")
+    conn.run_ok("drop domain if exists pw_dom_nn")
+    conn.run_ok("drop domain if exists pw_dom_pos")
+    conn.run_ok("create domain pw_dom_pos as int4 check (value > 0)")
+    conn.run_ok("create domain pw_dom_nn as int4 not null")
+    conn.run_ok(
+        "create table pw_dom_t (id int4, v pw_dom_pos, n pw_dom_nn, a pw_dom_pos[])"
+    )
+    yield
+    conn.run("drop table if exists pw_dom_t")
+    conn.run("drop domain if exists pw_dom_nn")
+    conn.run("drop domain if exists pw_dom_pos")
+
+
+@pytest.mark.parametrize(
+    "query, params, formats, sqlstate",
+    [
+        ("insert into pw_dom_t (id, v, n) values ($1, $2, $3)",
+         (b"1", b"-1", b"5"), (), "23514"),
+        ("insert into pw_dom_t (id, v, n) values ($1, $2, $3)",
+         (b"1", b"3", None), (), "23502"),
+        ("insert into pw_dom_t (id, a, n) values ($1, $2, 1)",
+         (b"1", b"{1,-1}"), (), "23514"),
+        ("insert into pw_dom_t (id, v, n) values (1, $1, 1)",
+         (struct.pack("!i", -1),), (1,), "23514"),
+        ("update pw_dom_t set v = $1", (b"-7",), (), "23514"),
+        ("select $1::pw_dom_pos", (b"-1",), (), "23514"),
+    ],
+)
+def test_domain_parameter_is_checked(conn, domain_table, query, params, formats,
+                                     sqlstate):
+    # A parameter of a domain type is checked against the domain, whatever the
+    # format: PG rejects it at Bind, serenedb when the plan takes the value.
+    conn.run_ok("insert into pw_dom_t (id, v, n) values (0, 1, 1)")
+    m = run_params(conn, query, params, formats)
+    assert sqlstates(m) == [sqlstate], errors(m)
+    count = first_field(conn.run_ok("select count(*) from pw_dom_t where v > 0"))
+    assert count == b"1"
+
+
+def test_domain_parameter_accepts_valid_values(conn, domain_table):
+    m = run_params(
+        conn,
+        "insert into pw_dom_t (id, v, n, a) values ($1, $2, $3, $4)",
+        (b"1", b"4", b"5", b"{1,2}"),
+    )
+    assert not errors(m), errors(m)
+    fields = all_fields(conn.run_ok("select v, n, a from pw_dom_t"))
+    assert fields == [b"4", b"5", b"{1,2}"]
+
+
+def test_domain_parameter_and_column_oids(conn, domain_table):
+    # ParameterDescription names the domain, RowDescription the base type of a
+    # domain column but the domain's own array type for an array of it.
+    domain, domain_array, not_null = (
+        int(v)
+        for v in all_fields(
+            conn.run_ok(
+                "select 'pw_dom_pos'::regtype::oid::text, "
+                "'pw_dom_pos[]'::regtype::oid::text, "
+                "'pw_dom_nn'::regtype::oid::text"
+            )
+        )
+    )
+    m = run_params(
+        conn,
+        "insert into pw_dom_t (id, v, n, a) values ($1, $2, $3, $4)",
+        (b"1", b"4", b"5", b"{1}"),
+    )
+    assert parameter_oids(m) == [23, domain, not_null, domain_array]
+    m = run_params(conn, "select v, a from pw_dom_t", ())
+    assert [(name, oid) for name, oid, _ in row_description(m)] == [
+        ("v", 23),
+        ("a", domain_array),
+    ]
+
+
+def test_domain_parameter_error_aborts_the_transaction(conn, domain_table):
+    conn.run_ok("begin")
+    m = run_params(conn, "insert into pw_dom_t (id, v, n) values (1, $1, 1)", (b"-1",))
+    assert sqlstates(m) == ["23514"]
+    assert statuses(m)[-1] == "E"
+    m = conn.run("select 1")
+    assert sqlstates(m) == ["25P02"]
+    conn.run_ok("rollback")

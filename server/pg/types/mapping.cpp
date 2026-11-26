@@ -215,18 +215,11 @@ IRS_FORCE_INLINE PgTypeInfo MapType(const duckdb::LogicalType& type,
     return {builtin.array, -1, typmod};
   };
   if (duckdb::ExtensionTypeInfo::IsDomain(type.GetExtensionInfo())) {
-    const auto base = type.WithoutDomain();
-    // PG sends a domain column as its base type, but an array of a domain is
-    // its own array type, not a domain, so it goes out as that type
-    // (printtup.c, getBaseTypeAndTypmod)
-    if (wire && !in_array) {
-      return Logical2Pg(base);
-    }
     const auto oid = static_cast<uint32_t>(*UserTypeOid(type));
     if (in_array) {
       return {static_cast<uint32_t>(TypeArrayOid(oid)), -1, -1};
     }
-    const auto base_info = CatalogLogical2Pg(base);
+    const auto base_info = MapType(type.WithoutDomain(), false, wire);
     return {oid, base_info.typlen, base_info.typmod};
   }
   switch (type.id()) {

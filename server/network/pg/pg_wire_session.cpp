@@ -2153,7 +2153,8 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
                       ERR_MSG("invalid parameter length: ", length));
     }
     const auto format = FormatFor(input_formats, i);
-    auto type = ResolveExpectedType(prepared, stmt.TypeHints(), i);
+    auto type =
+      ResolveExpectedType(prepared, stmt.TypeHints(), i).StripDomains();
     const auto field = cursor.substr(0, length);
     duckdb::Value out;
     bool decoded =

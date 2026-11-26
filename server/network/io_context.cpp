@@ -20,6 +20,8 @@
 
 #include "network/io_context.h"
 
+#include <pthread.h>
+
 namespace sdb::network {
 
 IoThreadPool::IoThreadPool(std::uint32_t threads) {
@@ -42,7 +44,14 @@ IoExecutor& IoThreadPool::Next() noexcept {
 
 void IoThreadPool::Start() {
   for (auto& worker : _workers) {
-    worker->thread = std::jthread{[w = worker.get()] { w->Context().run(); }};
+    worker->thread = std::jthread{[w = worker.get()] {
+#if defined(__linux__)
+      pthread_setname_np(pthread_self(), "sdb_io");
+#elif defined(__APPLE__)
+      pthread_setname_np("sdb_io");
+#endif
+      w->Context().run();
+    }};
   }
 }
 

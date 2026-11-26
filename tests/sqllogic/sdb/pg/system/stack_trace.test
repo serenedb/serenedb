@@ -1,0 +1,65 @@
+query
+SELECT count(*) > 0 AS threads,
+       count(*) = count(DISTINCT tid) AS unique_tids,
+       bool_and(tid > 0) AS tids,
+       bool_and(thread_name <> '') AS names,
+       bool_and(symbols IS NULL) AS no_symbols
+FROM sdb_stack_trace();
+----
+threads	unique_tids	tids	names	no_symbols
+t	t	t	t	t
+
+
+statement ok
+SET sdb_stack_trace_timeout = 1000;
+
+
+query
+SHOW sdb_stack_trace_timeout;
+----
+sdb_stack_trace_timeout
+1000
+
+
+query
+SELECT bool_or(thread_name = 'sdb_io' AND len(frames) > 0) AS io_stacks,
+       bool_or(thread_name IN ('sdb_worker', 'sdb_blocking')) AS workers
+FROM sdb_stack_trace();
+----
+io_stacks	workers
+t	t
+
+
+statement error
+SET sdb_stack_trace_timeout = 0;
+----
+db error: ERROR: invalid value for parameter "sdb_stack_trace_timeout": "0"
+
+
+statement error
+SET sdb_stack_trace_timeout = 10001;
+----
+db error: ERROR: invalid value for parameter "sdb_stack_trace_timeout": "10001": it must be at most 10000
+
+
+statement ok
+RESET sdb_stack_trace_timeout;
+
+
+statement ok
+DROP ROLE IF EXISTS stack_trace_plain;
+
+
+statement ok
+CREATE ROLE stack_trace_plain LOGIN PASSWORD 'stack_trace_pw';
+
+
+connection plain user=stack_trace_plain password=stack_trace_pw
+statement error
+SELECT * FROM sdb_stack_trace();
+----
+db error: ERROR: permission denied for function sdb_stack_trace
+
+
+statement ok
+DROP ROLE stack_trace_plain;

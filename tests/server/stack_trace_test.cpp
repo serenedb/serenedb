@@ -116,6 +116,8 @@ SdbBadCfiSpin:
 namespace sdb {
 namespace {
 
+constexpr std::chrono::milliseconds kTimeout{100};
+
 [[clang::noinline, clang::disable_tail_calls]] void WaitInNotification(
   const absl::Notification& stop) {
   stop.WaitForNotification();
@@ -243,7 +245,7 @@ bool SignalPending(pid_t tid, int signal) {
 
 std::vector<ThreadStack> CollectAnswered(pid_t tid) {
   for (int attempt = 0; attempt < 200; ++attempt) {
-    auto stacks = CollectStacks();
+    auto stacks = CollectStacks(kTimeout);
     if (const auto* frames = Frames(stacks, tid); frames && !frames->empty()) {
       return stacks;
     }
@@ -258,7 +260,7 @@ struct Expectation {
 
 bool Capture(std::span<const Expectation> expected) {
   for (int attempt = 0; attempt < 200; ++attempt) {
-    const auto stacks = CollectStacks();
+    const auto stacks = CollectStacks(kTimeout);
     if (absl::c_all_of(expected, [&](const Expectation& e) {
           return HasFrameIn(stacks, e.thread.Tid(), e.function);
         })) {
@@ -276,7 +278,10 @@ TEST(StackTrace, EveryThreadWhereItRuns) {
   ASSERT_EQ(pipe(fds), 0);
 
   Thread notification{[&] { WaitInNotification(stop_waiting); }};
-  Thread polling{[&] { WaitInPoll(fds[0]); }};
+  Thread polling{[&] {
+    pthread_setname_np(pthread_self(), "sdb_test_poll");
+    WaitInPoll(fds[0]);
+  }};
   Thread sleeping{[&] { SleepInNanosleep(stop); }};
   Thread spinning{[&] { SpinInLoop(stop); }};
 
@@ -290,8 +295,11 @@ TEST(StackTrace, EveryThreadWhereItRuns) {
 #endif
   EXPECT_TRUE(Capture(expected));
 
-  const auto stacks = CollectStacks();
+  const auto stacks = CollectStacks(kTimeout);
   EXPECT_TRUE(HasFrameIn(stacks, gettid(), "EveryThreadWhereItRuns"));
+  const auto named = absl::c_find_if(
+    stacks, [&](const ThreadStack& s) { return s.tid == polling.Tid(); });
+  EXPECT_TRUE(named != stacks.end() && named->name == "sdb_test_poll");
 
   stop_waiting.Notify();
   stop = true;
@@ -350,7 +358,7 @@ TEST(StackTrace, ThreadBlockingTheSignalHasNoFrames) {
   }};
   blocked.WaitForNotification();
 
-  const auto stacks = CollectStacks();
+  const auto stacks = CollectStacks(kTimeout);
   const auto* frames = Frames(stacks, thread.Tid());
   EXPECT_TRUE(frames && frames->empty());
   EXPECT_FALSE(SignalPending(thread.Tid(), SIGRTMIN));
@@ -359,9 +367,9 @@ TEST(StackTrace, ThreadBlockingTheSignalHasNoFrames) {
 }
 
 TEST(StackTrace, IgnoresTheSignalFromElsewhere) {
-  ASSERT_FALSE(CollectStacks().empty());
+  ASSERT_FALSE(CollectStacks(kTimeout).empty());
   ASSERT_EQ(syscall(SYS_tgkill, getpid(), gettid(), SIGRTMIN), 0);
-  const auto stacks = CollectStacks();
+  const auto stacks = CollectStacks(kTimeout);
   EXPECT_TRUE(HasFrameIn(stacks, gettid(), "IgnoresTheSignalFromElsewhere"));
 }
 
@@ -393,7 +401,7 @@ TEST(StackTrace, AThreadThatCannotTakeTheSignalTimesOut) {
   }
   WaitUntilInRead(absl::StrCat("/proc/", child.load()));
 
-  const auto stacks = CollectStacks();
+  const auto stacks = CollectStacks(kTimeout);
   const auto* frames = Frames(stacks, forking.Tid());
   EXPECT_TRUE(frames && frames->empty());
   EXPECT_TRUE(SignalPending(forking.Tid(), SIGRTMIN));
@@ -442,7 +450,7 @@ TEST(StackTrace, SurvivesCorruptUnwindInfo) {
   const auto* frames = Frames(stacks, corrupt.Tid());
   EXPECT_TRUE(frames && frames->size() == 1);
 #else
-  EXPECT_FALSE(CollectStacks().empty());
+  EXPECT_FALSE(CollectStacks(kTimeout).empty());
 #endif
 
   stop = true;

@@ -20,18 +20,24 @@
 
 #pragma once
 
+#include <absl/functional/function_ref.h>
 #include <sys/types.h>
 
+#include <chrono>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace sdb {
 
 struct ThreadStack {
   pid_t tid = 0;
+  std::string name;
   std::vector<uintptr_t> frames;
 };
 
-[[nodiscard]] std::vector<ThreadStack> CollectStacks();
+[[nodiscard]] std::vector<ThreadStack> CollectStacks(
+  std::chrono::milliseconds timeout,
+  absl::FunctionRef<bool()> stop = [] { return false; });
 
 }  // namespace sdb

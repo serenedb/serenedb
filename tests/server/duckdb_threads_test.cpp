@@ -24,10 +24,12 @@
 
 #ifdef __linux__
 #include <dirent.h>
+#include <pthread.h>
 #include <sched.h>
 #endif
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <duckdb.hpp>
@@ -236,8 +238,6 @@ TEST(DuckDBThreads, RelaunchFromPinnedWorkerKeepsWorkersApart) {
     GTEST_SKIP();
   }
   const auto before = Threads();
-  std::string process_name;
-  std::getline(std::ifstream{"/proc/self/comm"}, process_name);
   duckdb::DBConfig config;
   config.SetOptionByName("threads", duckdb::Value::UBIGINT(4));
   config.SetOptionByName("external_threads", duckdb::Value::UBIGINT(0));
@@ -263,7 +263,7 @@ TEST(DuckDBThreads, RelaunchFromPinnedWorkerKeepsWorkersApart) {
     per_cpu.clear();
     pinned = 0;
     for (const auto& [tid, info] : Threads()) {
-      if (before.contains(tid) || info.name != process_name ||
+      if (before.contains(tid) || info.name != "sdb_worker" ||
           info.cpus.find_first_of(",-") != std::string::npos) {
         continue;
       }
@@ -402,6 +402,58 @@ bool WaitFor(const std::function<bool()>& condition) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   return true;
+}
+
+TEST(DuckDBScheduler, WorkerThreadsAreNamedForWhetherTheyWait) {
+#ifdef __linux__
+  const auto name = [] {
+    char text[16] = {};
+    pthread_getname_np(pthread_self(), text, sizeof(text));
+    return std::string{text};
+  };
+  auto db = SchedulerDB(2);
+  auto& scheduler = duckdb::TaskScheduler::GetScheduler(*db->instance);
+  std::array<std::string, 5> names;
+  std::atomic<pid_t> background_tid{0};
+  std::atomic<int> done{0};
+  auto foreground = scheduler.CreateProducer(
+    scheduler.CreateAccount(duckdb::SchedulerClass::FOREGROUND));
+  scheduler.ScheduleTask(*foreground,
+                         duckdb::make_shared_ptr<FunctionTask>([&] {
+                           names[0] = name();
+                           {
+                             duckdb::TaskScheduler::BlockingScope blocking;
+                             names[1] = name();
+                           }
+                           names[2] = name();
+                           ++done;
+                         }));
+  auto background = scheduler.CreateProducer(
+    scheduler.CreateAccount(duckdb::SchedulerClass::BACKGROUND));
+  scheduler.ScheduleTask(*background,
+                         duckdb::make_shared_ptr<FunctionTask>([&] {
+                           names[3] = name();
+                           {
+                             duckdb::TaskScheduler::BlockingScope nested;
+                           }
+                           names[4] = name();
+                           background_tid = gettid();
+                           ++done;
+                         }));
+  ASSERT_TRUE(WaitFor([&] { return done == 2; }));
+  EXPECT_EQ(names[0], "sdb_worker");
+  EXPECT_EQ(names[1], "sdb_blocking");
+  EXPECT_EQ(names[2], "sdb_worker");
+  EXPECT_EQ(names[3], "sdb_blocking");
+  EXPECT_EQ(names[4], "sdb_blocking");
+  EXPECT_TRUE(WaitFor([&] {
+    const auto threads = Threads();
+    const auto thread = threads.find(std::to_string(background_tid.load()));
+    return thread != threads.end() && thread->second.name == "sdb_worker";
+  }));
+#else
+  GTEST_SKIP() << "Requires Linux thread names";
+#endif
 }
 
 TEST(DuckDBScheduler, QueryAloneIsNotInterrupted) {

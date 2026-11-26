@@ -210,6 +210,17 @@ void SegmentMemoryMax(duckdb::ClientContext& context, duckdb::SetScope scope,
   }
 }
 
+void StackTraceTimeout(duckdb::ClientContext& context, duckdb::SetScope scope,
+                       duckdb::Value& value) {
+  RejectZero<"sdb_stack_trace_timeout">(context, scope, value);
+  if (value.GetValue<uint64_t>() > 10000) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("invalid value for parameter \"sdb_stack_trace_timeout\": \"",
+              value.ToString(), "\": it must be at most 10000"));
+  }
+}
+
 template<irs::utils::detail::FixedString Name>
 void PositiveOrMinusOne(duckdb::ClientContext&, duckdb::SetScope,
                         duckdb::Value& value) {
@@ -1151,6 +1162,17 @@ constexpr std::pair<std::string_view, VariableDescription>
         nullptr,
         nullptr,
         duckdb::SetScope::GLOBAL,
+      },
+    },
+    {
+      "sdb_stack_trace_timeout",
+      {
+        LogicalTypeId::UINTEGER,
+        "How long sdb_stack_trace() waits for each thread to report its "
+        "stack, in milliseconds, from 1 to 10000; a thread that does not "
+        "report in time is returned with no frames. Default: 100.",
+        [] { return duckdb::Value::UINTEGER(100); },
+        StackTraceTimeout,
       },
     },
     {

@@ -25,6 +25,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/const_init.h>
 #include <absl/base/thread_annotations.h>
+#include <absl/functional/function_ref.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/mutex.h>
@@ -39,12 +40,15 @@
 #include <ucontext.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <system_error>
 
@@ -52,7 +56,6 @@ namespace sdb {
 namespace {
 
 constexpr size_t kMaxFrames = 128;
-constexpr auto kThreadTimeout = std::chrono::milliseconds{100};
 constexpr uint32_t kSeqMask = (uint32_t{1} << 30) - 1;
 
 enum class Phase : uint32_t {
@@ -177,7 +180,25 @@ void InstallHandlers() {
   chain(SIGBUS, gPreviousBus);
 }
 
-bool SignalBlocked(pid_t tid, int signal) {
+std::string_view StatusField(std::string_view status, std::string_view key) {
+  size_t line = 0;
+  while (line < status.size()) {
+    const auto end = std::min(status.find('\n', line), status.size());
+    const auto text = status.substr(line, end - line);
+    if (text.starts_with(key)) {
+      return absl::StripAsciiWhitespace(text.substr(key.size()));
+    }
+    line = end + 1;
+  }
+  return {};
+}
+
+struct ThreadStatus {
+  std::string name;
+  bool blocked = true;
+};
+
+std::optional<ThreadStatus> ReadStatus(pid_t tid, int signal) {
   const auto path = absl::StrCat("/proc/self/task/", tid, "/status");
   std::array<char, 4096> buffer{};
   ssize_t size = -1;
@@ -185,19 +206,22 @@ bool SignalBlocked(pid_t tid, int signal) {
     size = ::read(fd, buffer.data(), buffer.size());
     close(fd);
   }
-  constexpr std::string_view kKey = "\nSigBlk:";
-  const std::string_view status{buffer.data(),
-                                size > 0 ? static_cast<size_t>(size) : 0};
-  uint64_t mask = ~uint64_t{0};
-  if (const auto key = status.find(kKey); key != std::string_view::npos) {
-    const auto value =
-      absl::StripLeadingAsciiWhitespace(status.substr(key + kKey.size()));
-    fast_float::from_chars(value.data(), value.data() + value.size(), mask, 16);
+  if (size <= 0) {
+    return std::nullopt;
   }
-  return (mask >> (signal - 1) & 1) != 0;
+  const std::string_view status{buffer.data(), static_cast<size_t>(size)};
+  const auto blocked = StatusField(status, "SigBlk:");
+  uint64_t mask = ~uint64_t{0};
+  fast_float::from_chars(blocked.data(), blocked.data() + blocked.size(), mask,
+                         16);
+  return ThreadStatus{
+    .name = std::string{StatusField(status, "Name:")},
+    .blocked = (mask >> (signal - 1) & 1) != 0,
+  };
 }
 
-std::vector<uintptr_t> SignalAndWait(pid_t tid, int signal)
+std::vector<uintptr_t> SignalAndWait(pid_t tid, int signal,
+                                     std::chrono::milliseconds timeout)
   ABSL_EXCLUSIVE_LOCKS_REQUIRED(gMutex) {
   const uint32_t seq = ++gSeq & kSeqMask;
   gRequest.word.store(Word(seq, Phase::Armed), std::memory_order_release);
@@ -210,7 +234,7 @@ std::vector<uintptr_t> SignalAndWait(pid_t tid, int signal)
   if (syscall(SYS_rt_tgsigqueueinfo, getpid(), tid, signal, &info) != 0) {
     return {};
   }
-  const auto deadline = std::chrono::steady_clock::now() + kThreadTimeout;
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (true) {
     auto word = gRequest.word.load(std::memory_order_acquire);
     if (word == Word(seq, Phase::Done)) {
@@ -228,15 +252,16 @@ std::vector<uintptr_t> SignalAndWait(pid_t tid, int signal)
       }
       continue;
     }
-    const auto timeout = absl::ToTimespec(absl::FromChrono(left));
-    FutexWait(gRequest.word, word, &timeout);
+    const auto wait = absl::ToTimespec(absl::FromChrono(left));
+    FutexWait(gRequest.word, word, &wait);
   }
 }
 
 }  // namespace
 
-std::vector<ThreadStack> CollectStacks() {
-  std::vector<ThreadStack> stacks;
+std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds timeout,
+                                       absl::FunctionRef<bool()> stop) {
+  std::vector<pid_t> tids;
   std::error_code error;
   for (const auto& entry :
        std::filesystem::directory_iterator{"/proc/self/task", error}) {
@@ -244,7 +269,7 @@ std::vector<ThreadStack> CollectStacks() {
     pid_t tid = 0;
     if (fast_float::from_chars(name.data(), name.data() + name.size(), tid)
           .ec == std::errc{}) {
-      stacks.push_back({.tid = tid});
+      tids.push_back(tid);
     }
   }
 
@@ -255,14 +280,24 @@ std::vector<ThreadStack> CollectStacks() {
   }
   const int signal = SIGRTMIN;
   const pid_t self = gettid();
-  for (auto& stack : stacks) {
-    if (stack.tid == self) {
+  std::vector<ThreadStack> stacks;
+  stacks.reserve(tids.size());
+  for (const auto tid : tids) {
+    if (stop()) {
+      break;
+    }
+    auto status = ReadStatus(tid, signal);
+    if (!status) {
+      continue;
+    }
+    auto& stack = stacks.emplace_back(tid, std::move(status->name));
+    if (tid == self) {
       std::array<uintptr_t, kMaxFrames> frames{};
       const auto own = Unwind(
         frames, reinterpret_cast<uintptr_t>(__builtin_return_address(0)));
       stack.frames.assign(own.begin(), own.end());
-    } else if (!SignalBlocked(stack.tid, signal)) {
-      stack.frames = SignalAndWait(stack.tid, signal);
+    } else if (!status->blocked) {
+      stack.frames = SignalAndWait(tid, signal, timeout);
     }
   }
   return stacks;
@@ -274,7 +309,10 @@ std::vector<ThreadStack> CollectStacks() {
 
 namespace sdb {
 
-std::vector<ThreadStack> CollectStacks() { return {}; }
+std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds /*timeout*/,
+                                       absl::FunctionRef<bool()> /*stop*/) {
+  return {};
+}
 
 }  // namespace sdb
 

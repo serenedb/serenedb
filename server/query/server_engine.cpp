@@ -56,6 +56,7 @@
 #include "connector/functions/metrics.h"
 #include "connector/functions/otel.h"
 #include "connector/functions/search.h"
+#include "connector/functions/stack_trace.h"
 #include "connector/functions/string.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "connector/scan/scan_function.h"
@@ -201,6 +202,8 @@ void RegisterServerExtensions(duckdb::DatabaseInstance& db) {
   connector::RegisterCatalogIntrospectFunctions(db);
 
   connector::RegisterJobFunctions(db);
+
+  connector::RegisterStackTraceFunction(db);
 
   connector::RegisterVacuumFunction(db);
 

@@ -18,6 +18,7 @@ target_sources(
         string.cpp
         minhash.cpp
         search.cpp
+        stack_trace.cpp
         tokenizer_functions.cpp
         ts_anyall.cpp
         ts_between.cpp

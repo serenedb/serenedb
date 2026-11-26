@@ -1,4 +1,12 @@
 statement ok
+DROP VIEW IF EXISTS pco_v;
+
+
+statement ok
+DROP TABLE IF EXISTS pco_denied;
+
+
+statement ok
 DROP TABLE IF EXISTS pco_t;
 
 
@@ -59,6 +67,44 @@ query
 SELECT a FROM pco_t;
 ----
 a
+
+
+statement ok
+CREATE TABLE pco_denied (a INTEGER);
+
+
+statement ok
+CREATE VIEW pco_v AS SELECT 1 AS a;
+
+
+statement ok
+GRANT INSERT ON pco_denied TO pco_user;
+
+
+statement ok
+GRANT INSERT ON pco_v TO pco_user;
+
+
+connection c_pco user=pco_user password=pco_pw
+statement error
+SELECT * FROM pco_denied, pco_v;
+----
+db error: ERROR: permission denied for view pco_v
+
+
+connection c_pco user=pco_user password=pco_pw
+statement error
+SELECT * FROM pco_v, pco_denied;
+----
+db error: ERROR: permission denied for view pco_v
+
+
+statement ok
+DROP VIEW pco_v;
+
+
+statement ok
+DROP TABLE pco_denied;
 
 
 statement ok

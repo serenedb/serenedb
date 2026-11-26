@@ -25,6 +25,7 @@
 
 #include <duckdb/common/types/date.hpp>
 #include <duckdb/common/types/timestamp.hpp>
+#include <duckdb/formats/value_parsers.hpp>
 #include <random>
 #include <string>
 #include <string_view>
@@ -47,17 +48,7 @@ TEST(PgDatetimeText, DaysToCivilMatchesAbsl) {
   EXPECT_EQ(sdb::pg::DaysToCivil(sdb::pg::kMaxFastDays + 1).year, 10000);
 }
 
-TEST(PgDatetimeText, CivilToDaysInvertsDaysToCivil) {
-  for (int32_t days = sdb::pg::kMinFastDays; days <= sdb::pg::kMaxFastDays;
-       ++days) {
-    const auto date = sdb::pg::DaysToCivil(days);
-    ASSERT_EQ(sdb::pg::CivilToDays(static_cast<uint32_t>(date.year), date.month,
-                                   date.day),
-              days);
-  }
-}
-
-TEST(PgDatetimeText, ParseIsoDateMatchesDuckDB) {
+TEST(PgDatetimeText, FastDateMatchesDuckDB) {
   std::mt19937_64 rng{13};
   const char digits[] = "0123456789";
   for (int i = 0; i < 2'000'000; ++i) {
@@ -72,8 +63,8 @@ TEST(PgDatetimeText, ParseIsoDateMatchesDuckDB) {
     if (i % 101 == 0) {
       text[rng() % text.size()] = "x- /"[rng() % 4];
     }
-    int32_t days = 0;
-    const bool fast = sdb::pg::ParseIsoDate(text, days);
+    duckdb::date_t parsed;
+    const bool fast = duckdb::FastDate(text.data(), text.size(), parsed);
     duckdb::date_t expected;
     duckdb::idx_t pos = 0;
     bool special = false;
@@ -89,7 +80,7 @@ TEST(PgDatetimeText, ParseIsoDateMatchesDuckDB) {
     if (fast) {
       ASSERT_TRUE(canonical) << text;
       ASSERT_TRUE(slow) << text;
-      ASSERT_EQ(days, expected.days) << text;
+      ASSERT_EQ(parsed.days, expected.days) << text;
     } else if (canonical && !text.starts_with("0000")) {
       ASSERT_FALSE(slow) << text;
     }

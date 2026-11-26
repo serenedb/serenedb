@@ -50,6 +50,7 @@
 #include <duckdb/common/vector/map_vector.hpp>
 #include <duckdb/common/vector/string_vector.hpp>
 #include <duckdb/common/vector/struct_vector.hpp>
+#include <duckdb/formats/value_parsers.hpp>
 #include <duckdb/function/cast/default_casts.hpp>
 #include <duckdb/inet/inet_ipaddress.hpp>
 #include <duckdb/main/client_context.hpp>
@@ -1113,55 +1114,19 @@ struct UhugeintText {
 
 template<typename Phys>
 struct DecimalText {
-  static bool ParsePlain(std::string_view data, uint8_t width, uint8_t scale,
-                         Phys& out) {
-    if constexpr (sizeof(Phys) > sizeof(int64_t)) {
-      return false;
-    } else {
-      const char* p = data.data();
-      const char* const end = p + data.size();
-      const bool negative = p != end && *p == '-';
-      p += negative;
-      const char* const digits = p;
-      uint64_t value = 0;
-      while (p != end && static_cast<unsigned char>(*p - '0') <= 9) {
-        value = value * 10 + static_cast<uint64_t>(*p++ - '0');
-      }
-      const auto integral = static_cast<size_t>(p - digits);
-      if (integral == 0 || integral + scale > 18) {
-        return false;
-      }
-      uint8_t fraction = 0;
-      if (p != end && *p == '.') {
-        for (++p; p != end && static_cast<unsigned char>(*p - '0') <= 9; ++p) {
-          if (++fraction > scale) {
-            return false;
-          }
-          value = value * 10 + static_cast<uint64_t>(*p - '0');
-        }
-      }
-      if (p != end) {
-        return false;
-      }
-      value *= static_cast<uint64_t>(
-        duckdb::NumericHelper::POWERS_OF_TEN[scale - fraction]);
-      if (value >=
-          static_cast<uint64_t>(duckdb::NumericHelper::POWERS_OF_TEN[width])) {
-        return false;
-      }
-      const auto signed_value = static_cast<int64_t>(value);
-      out = static_cast<Phys>(negative ? -signed_value : signed_value);
-      return true;
-    }
-  }
-
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
     const auto& type = sink.Type();
     const auto width = duckdb::DecimalType::GetWidth(type);
     const auto scale = duckdb::DecimalType::GetScale(type);
     Phys result;
-    if (!ParsePlain(data, width, scale, result)) {
+    bool parsed = false;
+    if constexpr (sizeof(Phys) <= sizeof(int64_t)) {
+      parsed =
+        duckdb::FastDecimal(data.data(), data.size(), data.data() + data.size(),
+                            result, '.', width, scale);
+    }
+    if (!parsed) {
       duckdb::CastParameters params(/*strict=*/true, nullptr);
       if (!duckdb::TryCastToDecimal::Operation<duckdb::string_t, Phys>(
             duckdb::string_t::Unsafe(data), result, params, width, scale)) {
@@ -1209,8 +1174,8 @@ struct DateText {
   template<typename Sink>
   static bool Decode(DeserializeContext& ctx, std::string_view data,
                      Sink& sink) {
-    if (int32_t days = 0; ParseIsoDate(data, days)) {
-      sink.Fixed(duckdb::date_t{days});
+    if (duckdb::date_t date; duckdb::FastDate(data.data(), data.size(), date)) {
+      sink.Fixed(date);
       return true;
     }
     return CastText<duckdb::date_t, false>::Decode(ctx, data, sink);

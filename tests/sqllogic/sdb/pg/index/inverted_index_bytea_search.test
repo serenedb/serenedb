@@ -619,6 +619,35 @@ QUERY PLAN
 │ ~1 row                                     │
 ╰────────────────────────────────────────────╯
 
+# Also when both score with one scorer.
+query
+SELECT id, BM25(bk_idx.tableoid) AS score FROM bk_idx WHERE k @@ (ts_starts_with('\xc3'::bytea)::score('constant(1)') && ts_levenshtein('é', 1)::score('constant(1)')) ORDER BY id
+----
+id	score
+3	2
+
+query
+EXPLAIN SELECT id, BM25(bk_idx.tableoid) AS score FROM bk_idx WHERE k @@ (ts_starts_with('\xc3'::bytea)::score('constant(1)') && ts_levenshtein('é', 1)::score('constant(1)'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────╮
+│ Index: bk_idx                                              │
+│ Lookup: search                                             │
+│ Index Filter:                                              │
+│ ╭─ And ────────────────────╮                               │
+│ ╰─────────────┬────────────╯                               │
+│               ├─────────────────────────────╮              │
+│ ╭─ Starts With ────────────╮  ╭─ Levenshtein ────────────╮ │
+│ │ Field: k(string)         │  │ Field: k(string)         │ │
+│ │ Prefix: \\xc3             │  │ Target: \\xc3\\xa9         │ │
+│ │ Score: constant(value=1) │  │ Max Terms: 50            │ │
+│ ╰──────────────────────────╯  │ Score: constant(value=1) │ │
+│                               ╰──────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                                │
+│ Projections: id, sdb_inverted_index_score                  │
+│ ~1 row                                                     │
+╰────────────────────────────────────────────────────────────╯
+
 # A fuzzy match that compares bytes may start inside a character, so the
 # prefix joins it.
 query

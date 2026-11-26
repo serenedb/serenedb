@@ -284,7 +284,7 @@ duckdb::BoundCastInfo BindDomainCast(duckdb::BindCastInput& input,
 
   duckdb::BoundCastInfo result(DomainCast, std::move(data),
                                InitDomainCastLocalState);
-  result.checks_domain = true;
+  result.has_value_checks = true;
   return result;
 }
 

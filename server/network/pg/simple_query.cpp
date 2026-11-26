@@ -31,10 +31,12 @@ namespace sdb::network::pg {
 
 void SimpleQuery::Parse(std::string_view query) {
   if (!query.empty()) {
-    for (duckdb::ParseIterator parser{_context, query}; parser.Peek();) {
+    duckdb::ParseIterator parser{_context, query};
+    for (_statement = 1; parser.Peek(); ++_statement) {
       _parsed.push_back(parser.GetStatement());
     }
   }
+  _statement = 0;
   _implicit = _parsed.size() > 1;
 }
 
@@ -44,6 +46,7 @@ bool SimpleQuery::Next(Step& step) {
       return false;
     }
     auto& raw = _parsed[_raw++];
+    _statement = _raw;
     if (!_txn.GuardNotAborted(*raw)) {
       ThrowAbortedTransaction();
     }

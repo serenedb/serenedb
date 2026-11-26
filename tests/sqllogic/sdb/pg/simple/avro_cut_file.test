@@ -30,6 +30,33 @@ statement error is corrupt at the block at offset [0-9]+: a block is truncated o
 SELECT count(*) FROM read_avro('${__TEST_DIR__}/acf_cut.avro');
 
 
+statement count 1
+COPY (
+  SELECT substr(c, 1, p2 - 1) || substr(c, p2 + 1, 15) || substr(c, p2, 1) || substr(c, p2 + 16)
+  FROM (SELECT c, p1 + 15 + position(sync IN substr(c, p1 + 16)) AS p2
+        FROM (SELECT c, sync, b - 1 + position(sync IN substr(c, b)) AS p1
+              FROM (SELECT c, sync, position(sync IN c) + 16 + 3 * 1048576 AS b
+                    FROM (SELECT content AS c, substr(content, octet_length(content) - 15, 16) AS sync
+                          FROM read_blob('${__TEST_DIR__}/acf.avro')) f) g) h) i
+) TO '${__TEST_DIR__}/acf_gap.avro' (FORMAT blob);
+
+
+statement ok
+SET threads = 8;
+
+
+statement error is corrupt at the block at offset [0-9]+: a block is truncated or does not end with the file's sync marker
+SELECT count(*) FROM read_avro('${__TEST_DIR__}/acf_gap.avro');
+
+
+statement ok
+SET threads = 1;
+
+
+statement error is corrupt at the block at offset [0-9]+: a block is truncated or does not end with the file's sync marker
+SELECT count(*) FROM read_avro('${__TEST_DIR__}/acf_gap.avro');
+
+
 statement ok
 RESET threads;
 

@@ -201,6 +201,36 @@ TEST(PgCopyBatchBuilder, BinaryBatchesHoldWholeRows) {
   EXPECT_GT(batches, 1);
 }
 
+TEST(PgCopyBatchBuilder, BinaryFeedSaysWhetherTheBatchViewsItsBytes) {
+  const auto header = BinaryHeader();
+  const auto row = BinaryRow({std::string(100, 'x')});
+  const auto input = header + row + row + BinaryTrailer();
+  const std::string_view bytes{input};
+  const auto split = header.size() + 10;
+  const auto second = header.size() + row.size();
+  CopyBatchBuilder builder{CopyBatchFormat::Binary};
+  EXPECT_FALSE(builder.Feed(bytes.substr(0, split), true));
+  EXPECT_FALSE(builder.Feed(bytes.substr(split, second - split), true));
+  EXPECT_TRUE(builder.Feed(bytes.substr(second, row.size()), true));
+  EXPECT_FALSE(builder.Feed(bytes.substr(second + row.size()), true));
+  EXPECT_TRUE(builder.Ended());
+  const auto batch = builder.Take();
+  ASSERT_EQ(batch->segments.size(), 2);
+  EXPECT_EQ(batch->owned.size(), 1);
+  EXPECT_EQ(batch->segments[1].data(), input.data() + second);
+
+  CopyBatchBuilder copied{CopyBatchFormat::Binary};
+  EXPECT_FALSE(copied.Feed(input, false));
+  EXPECT_TRUE(copied.HasRows());
+}
+
+TEST(PgCopyBatchBuilder, RawFeedSaysWhetherTheBatchViewsItsBytes) {
+  CopyBatchBuilder builder{CopyBatchFormat::Raw};
+  EXPECT_TRUE(builder.Feed("a\n", true));
+  EXPECT_FALSE(builder.Feed("b\n", false));
+  EXPECT_FALSE(builder.Feed({}, true));
+}
+
 TEST(PgCopyBatchBuilder, BinaryRejectsBadSignature) {
   auto header = BinaryHeader();
   header[0] = 'X';

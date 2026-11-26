@@ -173,8 +173,22 @@ class CopyFileReader {
     Plan(context, types);
   }
 
+  CopyFileReader(duckdb::ClientContext& context, pg::CopyInBatches& source)
+    : _source{&source},
+      _batches{duckdb::TaskScheduler::QueryThreads(context) *
+               pg::kCopyBatchesPerThread},
+      _memory{context},
+      _fixed_budget{duckdb::TaskScheduler::QueryThreads(context) *
+                    pg::kCopyBatchesPerThread * pg::kCopyBatchBytes},
+      _executor{context, duckdb::TaskSchedulerType::ASYNC} {
+    UpdateBudget();
+  }
+
   ~CopyFileReader() {
     _ended.store(true, std::memory_order_release);
+    if (_source) {
+      _source->Nudge();
+    }
     _executor.CancelAndDrain();
   }
 
@@ -329,9 +343,37 @@ class CopyFileReader {
     FinishFile();
   }
 
+  void ReadStream() {
+    if (_builder.HasRows() && !_source->Pending()) {
+      PushBuilt();
+      return;
+    }
+    auto lease = _source->Next();
+    if (!lease) {
+      if (_source->Ended()) {
+        FinishFile();
+      }
+      return;
+    }
+    bool viewed = false;
+    for (const auto segment : lease->segments) {
+      viewed |= _builder.Feed(segment, true);
+    }
+    if (viewed) {
+      _fed.push_back(std::move(lease));
+    }
+    if (_builder.Ready()) {
+      PushBuilt();
+    }
+  }
+
   void ReadBatch() {
     if (_mapping) {
       ReadMapped();
+      return;
+    }
+    if (_source) {
+      ReadStream();
       return;
     }
     while (!_builder.Ready()) {
@@ -343,13 +385,21 @@ class CopyFileReader {
       }
       _builder.Feed({_chunk.data(), got}, false);
     }
-    Push(_builder.Take());
+    PushBuilt();
+  }
+
+  void PushBuilt() {
+    auto batch = _builder.Take();
+    if (!_fed.empty()) {
+      batch->owner = std::make_shared<Leases>(std::exchange(_fed, {}));
+    }
+    Push(std::move(batch));
   }
 
   void FinishFile() {
     _builder.Finish();
     while (_builder.HasRows()) {
-      Push(_builder.Take());
+      PushBuilt();
     }
     _ended.store(true, std::memory_order_release);
     _batches.Finish();
@@ -361,7 +411,11 @@ class CopyFileReader {
     UpdateBudget();
   }
 
+  using Leases = std::vector<pg::CopyBatchLease>;
+
   std::unique_ptr<duckdb::FileHandle> _file;
+  pg::CopyInBatches* _source = nullptr;
+  Leases _fed;
   duckdb::shared_ptr<duckdb::MemoryMappedFile> _mapping;
   std::string_view _mapped;
   std::vector<std::pair<size_t, size_t>> _planned;
@@ -455,12 +509,15 @@ class CopyLines {
 };
 
 struct CopyFromGlobalState final : public duckdb::GlobalTableFunctionState {
-  CopyFromGlobalState(duckdb::ClientContext& context, pg::CopyInBatches& queue,
+  CopyFromGlobalState(duckdb::ClientContext& context, pg::CopyInBatches& source,
                       pg::CopyInTarget target, bool ordered)
     : target{std::move(target)},
       ordered{ordered},
       max_threads{duckdb::TaskScheduler::QueryThreads(context)},
-      queue{queue} {}
+      reader{std::in_place, context, source},
+      queue{reader->Batches()} {
+    reader->Resume();
+  }
 
   CopyFromGlobalState(duckdb::ClientContext& context,
                       std::unique_ptr<duckdb::FileHandle> file,

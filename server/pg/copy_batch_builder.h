@@ -45,7 +45,7 @@ class CopyBatchBuilder {
                             size_t target_bytes = kCopyBatchBytes)
     : _format{format}, _target{target_bytes} {}
 
-  void Feed(std::string_view bytes, bool stable);
+  bool Feed(std::string_view bytes, bool stable);
   void Finish();
   bool Ready() const noexcept { return Full(); }
   bool HasRows() const noexcept { return _batch && !_batch->Empty(); }
@@ -61,8 +61,8 @@ class CopyBatchBuilder {
 
   bool Full() const noexcept { return _batch && _batch->bytes >= _target; }
   CopyBatch& Current();
-  void AddRows(std::string_view rows, bool stable);
-  void FeedBinary(std::string_view bytes, bool stable);
+  bool AddRows(std::string_view rows, bool stable);
+  bool FeedBinary(std::string_view bytes, bool stable);
   size_t FeedHeader(std::string_view bytes);
   bool Gather(std::string_view bytes, size_t& pos, size_t need);
 

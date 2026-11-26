@@ -32,7 +32,6 @@
 #include <duckdb/catalog/catalog_entry/table_catalog_entry.hpp>
 #include <duckdb/common/error_data.hpp>
 #include <duckdb/common/fault_points.hpp>
-#include <duckdb/common/types/timestamp.hpp>
 #include <duckdb/main/client_data.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/parse_iterator.hpp>
@@ -46,13 +45,12 @@
 #include <iresearch/utils/pg/error_mapping.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 
-#include "auth/role_closure.h"
 #include "catalog/cluster.h"
-#include "catalog/entry/role.h"
 #include "connector/duckdb_pg_binary_copy.h"
 #include "network/pg/bind_decoder.h"
 #include "network/pg/copy_eod_scanner.h"
 #include "network/pg/hba.h"
+#include "network/pg/login.h"
 #include "network/pg/scram_messages.h"
 #include "network/pg/startup_request.h"
 #include "pg/copy_batch_builder.h"
@@ -951,48 +949,11 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
 
   // Consult the HBA ruleset first: it decides trust / reject / which method,
   // for every connection, regardless of whether a stored credential exists.
-  const hba::MembershipFn is_member = [](std::string_view user,
-                                         std::string_view group) {
-    duckdb::idx_t user_oid = 0;
-    duckdb::idx_t group_oid = 0;
-    if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
-          user,
-          [&](const catalog::RoleCatalogEntry& role) {
-            user_oid = role.oid;
-          }) ||
-        !catalog::ReadEntry<catalog::RoleCatalogEntry>(
-          group, [&](const catalog::RoleCatalogEntry& role) {
-            group_oid = role.oid;
-          })) {
-      return false;  // missing_ok: unknown login role or target group
-    }
-    // NOSUPER: explicit (direct/indirect) membership only -- the closure is the
-    // membership set and does not implicitly include a superuser's non-members.
-    const auto closure = auth::ClosureFor(nullptr, user_oid);
-    return closure->IsMember(group_oid);
-  };
-
-  hba::ClientInfo client;
-  client.is_local = Kind == SocketKind::Unix;
-  client.is_ssl = this->_socket.IsTls();
-  client.is_gss = false;
-  if (!_peer_addr.is_unspecified()) {
-    if (_peer_addr.is_v4()) {
-      client.family = AF_INET;
-      const auto bytes = _peer_addr.to_v4().to_bytes();
-      std::copy(bytes.begin(), bytes.end(), client.addr.begin());
-    } else {
-      client.family = AF_INET6;
-      const auto bytes = _peer_addr.to_v6().to_bytes();
-      std::copy(bytes.begin(), bytes.end(), client.addr.begin());
-    }
-  }  // else: unix / no-IP -> family 0, addr zeroed (ClientInfo defaults)
-  client.is_replication = false;
-  client.user = UserName();
-  client.database = DatabaseName();
-
-  const auto ruleset = hba::GetHbaRuleset();
-  const hba::Decision decision = hba::Decide(*ruleset, client, is_member);
+  const hba::Decision decision =
+    DecideLogin({.address = _peer_addr,
+                 .is_local = Kind == SocketKind::Unix,
+                 .is_ssl = this->_socket.IsTls()},
+                UserName(), DatabaseName());
 
   using DKind = hba::Decision::Kind;
   hba::Method hba_method = hba::Method::ImplicitReject;
@@ -1060,15 +1021,7 @@ yaclib::Task<bool> PgWireSession<Kind>::Authenticate() {
     co_return false;
   }
 
-  int64_t valid_until = 0;
-  catalog::ReadEntry<catalog::RoleCatalogEntry>(
-    UserName(), [&](const catalog::RoleCatalogEntry& role) {
-      if (role.HasValidUntil()) {
-        valid_until = role.ValidUntil();
-      }
-    });
-  if (valid_until != 0 &&
-      duckdb::Timestamp::GetCurrentTimestamp().value >= valid_until) {
+  if (ReadRoleLogin(UserName()).password_expired) {
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),
@@ -1113,20 +1066,7 @@ yaclib::Task<bool> PgWireSession<Kind>::AuthenticateCleartext(
   }
   const std::string given{payload};
   _frames.Consume(frame);
-  bool ok = false;
-  if (credential.cleartext) {
-    const std::string given_prepared = SaslPrep(given);
-    const std::string want = SaslPrep(*credential.cleartext);
-    ok = ConstantTimeEqual(
-      {reinterpret_cast<const uint8_t*>(given_prepared.data()),
-       given_prepared.size()},
-      {reinterpret_cast<const uint8_t*>(want.data()), want.size()});
-  } else if (credential.scram) {
-    ok = VerifyCleartextAgainstScram(*credential.scram, given);
-  } else if (credential.md5) {
-    ok = VerifyCleartextAgainstMd5(*credential.md5, UserName(), given);
-  }
-  if (!ok) {
+  if (!VerifyCleartext(credential, UserName(), given)) {
     WriteFatalResponse(
       this->_send,
       SQL_ERROR_DATA(ERR_CODE(ERRCODE_INVALID_PASSWORD),

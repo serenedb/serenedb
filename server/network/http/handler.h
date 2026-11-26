@@ -69,6 +69,11 @@ constexpr size_t PreparedSlotCapacity(PreparedSlotId slot) noexcept {
 
 using PreparedCache = query::PreparedCache<std::string>;
 
+enum class SessionScope : uint8_t {
+  Connection,
+  Request,
+};
+
 // Session-scoped services a handler may need; implemented by the session and
 // valid for the duration of one Handle call (on the session's duckdb task).
 class RequestContext {

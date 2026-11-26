@@ -38,6 +38,7 @@ target_sources(
         pg/scram_messages.cpp
         pg/scram_client.cpp
         pg/hba.cpp
+        pg/login.cpp
         credentials.cpp
         server.cpp
 )

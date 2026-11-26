@@ -35,6 +35,7 @@ struct Route {
   HttpMethod method;
   std::string_view pattern;
   std::unique_ptr<HttpHandler> (*make)();
+  SessionScope session = SessionScope::Connection;
 };
 
 struct Api {

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/file_system.hpp>
+#include <string_view>
 
 namespace sdb::message {
 
@@ -31,11 +32,18 @@ namespace sdb::pg {}
 
 namespace sdb::connector {
 
+class CopyOutput {
+ public:
+  virtual ~CopyOutput() = default;
+  virtual void Write(std::string_view bytes) = 0;
+};
+
 // Bridges the PostgreSQL COPY wire protocol into DuckDB's FileSystem.
 // Intercepts "/dev/stdin" (read) and "/dev/stdout" (write); the SQL
 // identifiers STDIN and STDOUT are mapped to these paths by the PEG
-// transformer. Registered only on the server-side DuckDB instance, so
-// shell/psql mode falls through to the OS filesystem.
+// transformer. "/dev/stdout" reaches the pg-wire client, or else the
+// connection's CopyOutput. Registered only on the server-side DuckDB instance,
+// so shell/psql mode falls through to the OS filesystem.
 class SereneDBCopyFileSystem final : public duckdb::FileSystem {
  public:
   std::string GetName() const final { return "SereneDBCopyFileSystem"; }

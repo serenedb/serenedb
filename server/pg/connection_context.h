@@ -55,6 +55,7 @@ struct ExportRequest;
 namespace sdb::connector {
 
 struct EsBulkInput;
+class CopyOutput;
 
 }  // namespace sdb::connector
 namespace sdb::replication {
@@ -93,7 +94,7 @@ using SideChannel =
   PointerUnion<pg::CopyInBatches, otel::ExportRequest<otel::LogRecord>,
                otel::ExportRequest<otel::Span>,
                otel::ExportRequest<otel::Metric>, connector::EsBulkInput,
-               replication::ReplBatch>;
+               replication::ReplBatch, connector::CopyOutput>;
 
 struct SessionIdentity {
   std::string_view user;

@@ -26,6 +26,8 @@ To serve another HTTP API on the same port, repeat the `api` key: `?api=es&api=m
 
 Browser-based tools need CORS. `--http_cors_origins` takes a comma-separated list of allowed origins or `*`. The server echoes an allowed `Origin` and answers preflight `OPTIONS` requests.
 
+A client that closes its connection before the answer arrives cancels the statement its request runs.
+
 Check that the listener answers:
 
 ```bash
@@ -48,7 +50,7 @@ Every request needs an `Authorization` header, from the local machine too. A req
 | `Bearer` | a static token | `--auth_bearer_token=<token>` |
 | `ApiKey` | base64 of a static `<id>:<key>` pair | `--auth_api_key=<id>:<key>` |
 
-A role without a password, such as `postgres` on a fresh server, is accepted only from a loopback address. That is why the examples on this page use `-u postgres:`. From any other address such a role gets `401`.
+A Basic login follows the server's [client authentication rules](../security/client_authentication.md), as a `psql` login does: with the default rules `postgres` is trusted from a loopback address, which is why the examples on this page use `-u postgres:`, and every other role needs its password. A role that does not exist or has no `LOGIN`, a role whose `VALID UNTIL` has passed, a wrong password and a login a rule rejects get `401`.
 
 Bearer and ApiKey answer `401` until their flag is set. They have no role of their own: requests that use them act as the `postgres` superuser.
 

@@ -35,23 +35,29 @@
 
 namespace sdb::network {
 
+struct RouteTarget {
+  HttpHandler* handler = nullptr;
+  SessionScope session = SessionScope::Connection;
+};
+
 class HttpRouter {
  public:
   // `pattern` is a WHATWG URLPattern pathname (`/:index/_search`).
   void Add(HttpMethod method, std::string_view pattern,
-           std::unique_ptr<HttpHandler> handler);
+           std::unique_ptr<HttpHandler> handler,
+           SessionScope session = SessionScope::Connection);
 
   // Parses the query string into request.query, matches method + path,
-  // fills request.params from the pattern's named groups. nullptr = no
-  // route.
-  HttpHandler* Match(HttpRequest& request);
+  // fills request.params from the pattern's named groups. A null handler =
+  // no route.
+  RouteTarget Match(HttpRequest& request);
 
  private:
   using PathPattern = ada::url_pattern_component<AdaRe2Provider>;
 
   static constexpr size_t kMethods = magic_enum::enum_count<HttpMethod>();
 
-  using Handlers = std::array<HttpHandler*, kMethods>;
+  using Handlers = std::array<RouteTarget, kMethods>;
 
   // Fully literal routes are matched first, so one api's `/:index` cannot
   // swallow another's reserved `/_mcp` whichever order the apis were

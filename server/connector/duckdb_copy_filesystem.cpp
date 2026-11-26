@@ -137,26 +137,38 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
   size_t _offset = 0;
 };
 
-// A dumb byte sink: each Write becomes one CopyData frame, nothing more. The
-// pg-wire session owns the stream boundaries -- it emits CopyOutResponse (with
-// the real column count) before the COPY runs and CopyDone only after it
-// succeeds -- so a mid-COPY error can no longer leak a spurious CopyDone from a
-// destructor, and the response is no longer stuck with column count 0. This is
-// format-agnostic: csv/json/parquet/... all just stream bytes through here.
+// A dumb byte sink: each Write becomes one CopyData frame, or one Write of the
+// connection's CopyOutput, nothing more. The pg-wire session owns the stream
+// boundaries -- it emits CopyOutResponse (with the real column count) before
+// the COPY runs and CopyDone only after it succeeds -- so a mid-COPY error can
+// no longer leak a spurious CopyDone from a destructor, and the response is no
+// longer stuck with column count 0. This is format-agnostic:
+// csv/json/parquet/... all just stream bytes through here.
 struct CopyOutFileHandle final : public duckdb::FileHandle {
   CopyOutFileHandle(duckdb::FileSystem& fs, message::Buffer& send_buffer)
     : duckdb::FileHandle(
         fs, std::string{kDevStdout},
         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_WRITE)),
-      _send_buffer{send_buffer} {}
+      _send_buffer{&send_buffer} {}
+
+  CopyOutFileHandle(duckdb::FileSystem& fs, CopyOutput& output)
+    : duckdb::FileHandle(
+        fs, std::string{kDevStdout},
+        duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_WRITE)),
+      _output{&output} {}
 
   void Close() final {}
 
   void DoWrite(const void* buf, int64_t nr_bytes) {
-    message::Writer writer{_send_buffer};
+    const std::string_view bytes{static_cast<const char*>(buf),
+                                 static_cast<size_t>(nr_bytes)};
+    if (_output) {
+      _output->Write(bytes);
+      return;
+    }
+    message::Writer writer{*_send_buffer};
     auto* prefix = writer.Alloc(5);
-    writer.Write(
-      {static_cast<const char*>(buf), static_cast<size_t>(nr_bytes)});
+    writer.Write(bytes);
     prefix[0] = PQ_MSG_COPY_DATA;
     absl::big_endian::Store32(prefix + 1,
                               static_cast<int32_t>(writer.Written() - 1));
@@ -164,7 +176,8 @@ struct CopyOutFileHandle final : public duckdb::FileHandle {
   }
 
  private:
-  message::Buffer& _send_buffer;
+  message::Buffer* _send_buffer = nullptr;
+  CopyOutput* _output = nullptr;
 };
 
 bool SereneDBCopyFileSystem::CanHandleFile(const std::string& fpath) {
@@ -193,13 +206,16 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
   }
   if (path == kDevStdout) {
     auto plumbing = GetPlumbing(opener.get(), path);
-    if (!plumbing.send_buffer) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("COPY ", path,
-                " requires a PG wire connection (transport not attached)"));
+    if (plumbing.send_buffer) {
+      return duckdb::make_uniq<CopyOutFileHandle>(*this, *plumbing.send_buffer);
     }
-    return duckdb::make_uniq<CopyOutFileHandle>(*this, *plumbing.send_buffer);
+    if (auto* output = plumbing.state.GetSideChannel<CopyOutput>()) {
+      return duckdb::make_uniq<CopyOutFileHandle>(*this, *output);
+    }
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("COPY ", path,
+              " requires a PG wire connection (transport not attached)"));
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INTERNAL_ERROR),

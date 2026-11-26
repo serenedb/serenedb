@@ -61,7 +61,7 @@ class DictIndex {
  public:
   DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
             const Separators& separators, DictSections sections,
-            MemoryBudget* budget);
+            LocalBudget& budget);
   DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
             const Separators& separators, duckdb::ReadStream& in);
 
@@ -145,7 +145,7 @@ class DictIndex {
 
  private:
   DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-            MemoryBudget* budget);
+            LocalBudget& budget);
 
   TrackedBstring _min_key;
   TrackedBstring _max_key;
@@ -165,7 +165,7 @@ class DictIndex {
 
 class DictIndexBuilder {
  public:
-  explicit DictIndexBuilder(MemoryBudget* budget)
+  explicit DictIndexBuilder(LocalBudget& budget)
     : _trie{budget}, _seen{TrackedAllocator<ByteSet>{budget}} {}
 
   void Reset(bool gated) noexcept {

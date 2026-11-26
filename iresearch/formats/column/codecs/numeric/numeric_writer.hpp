@@ -115,7 +115,7 @@ inline double ScoreOf(uint64_t bytes, size_t rows) noexcept {
 }
 
 struct LeafSamples {
-  explicit LeafSamples(MemoryBudget* budget)
+  explicit LeafSamples(LocalBudget& budget)
     : frames{TrackedAllocator<uint32_t>{budget}},
       bytes{TrackedAllocator<TrackedString>{budget}} {}
 
@@ -124,7 +124,7 @@ struct LeafSamples {
 };
 
 struct Analysis {
-  explicit Analysis(MemoryBudget* budget)
+  explicit Analysis(LocalBudget& budget)
     : samples{budget},
       copies{
         ScratchVector<uint8_t>{TrackedAllocator<std::byte>{budget}},
@@ -211,7 +211,7 @@ class SegmentWriter {
  public:
   using U = Bits<sizeof(T)>;
 
-  SegmentWriter(MemoryBudget* budget, Shape shape, const Geometry& geometry,
+  SegmentWriter(LocalBudget& budget, Shape shape, const Geometry& geometry,
                 uint64_t direct_bytes, std::span<const uint8_t> dictionary,
                 TrackedString& out)
     : _shape{shape},

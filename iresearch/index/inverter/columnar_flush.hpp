@@ -42,7 +42,7 @@ struct ScatterScratch {
     uint32_t id;
   };
 
-  explicit ScatterScratch(MemoryBudget* budget = nullptr)
+  explicit ScatterScratch(LocalBudget& budget = kEmpty)
     : blocks{TrackedAllocator<duckdb::AllocatedData>{budget}},
       cursors{TrackedAllocator<uint32_t>{budget}},
       bounds{TrackedAllocator<uint32_t>{budget}},
@@ -55,8 +55,6 @@ struct ScatterScratch {
       offs_end{TrackedAllocator<uint32_t*>{budget}} {}
 
   static size_t Bytes(size_t terms, size_t blocks) noexcept;
-
-  void Reserve(size_t terms, size_t blocks, duckdb::Allocator& allocator);
 
   TrackedVector<duckdb::AllocatedData> blocks;
   TrackedVector<uint32_t> cursors;

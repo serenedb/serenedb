@@ -49,7 +49,7 @@ inline constexpr uint32_t kNoBase = std::numeric_limits<uint32_t>::max();
 using Misfits = std::array<uint32_t, kLenSplits>;
 
 struct VarColumns {
-  explicit VarColumns(MemoryBudget* budget)
+  explicit VarColumns(LocalBudget& budget)
     : lcps{TrackedAllocator<uint32_t>{budget}},
       lens{TrackedAllocator<uint32_t>{budget}},
       suffixes{TrackedAllocator<byte_type>{budget}},
@@ -74,7 +74,7 @@ struct VarEntry {
 };
 
 struct BlockBuilder {
-  explicit BlockBuilder(MemoryBudget* budget)
+  explicit BlockBuilder(LocalBudget& budget)
     : keys{TrackedAllocator<byte_type>{budget}},
       ends{TrackedAllocator<uint32_t>{budget}},
       columns{budget} {}
@@ -93,7 +93,7 @@ struct BlockBuilder {
 
 class BlockEncoder {
  public:
-  explicit BlockEncoder(MemoryBudget* budget)
+  explicit BlockEncoder(LocalBudget& budget)
     : _block{budget}, _scratch{budget} {}
 
   static uint64_t Bound() noexcept;
@@ -125,7 +125,7 @@ class BlockEncoder {
   };
 
   struct Scratch {
-    explicit Scratch(MemoryBudget* budget)
+    explicit Scratch(LocalBudget& budget)
       : coded{TrackedAllocator<byte_type>{budget}},
         encoded{budget},
         entries{TrackedAllocator<VarEntry>{budget}},

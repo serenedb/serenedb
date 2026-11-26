@@ -41,9 +41,8 @@ struct AnnBuildEnv {
 void FanOut(const AnnBuildEnv* env, size_t tasks,
             absl::FunctionRef<void(size_t)> task);
 
-void FanOut(const AnnBuildEnv* env, MemoryBudget* parent, size_t tasks,
-            size_t task_bytes,
-            absl::FunctionRef<void(size_t, FixedBudget*)> task);
+void FanOut(const AnnBuildEnv* env, MemoryBudget& parent, size_t tasks,
+            absl::FunctionRef<void(size_t, LocalBudget&)> task);
 
 inline auto AnnParallelFor(const AnnBuildEnv* env) {
   return [env](size_t count, absl::FunctionRef<void(size_t)> body) {

@@ -289,7 +289,7 @@ TrackedVector<unsigned char*> SampleStarts(TrackedBstring& arena,
                                            std::span<const size_t> lengths) {
   TrackedVector<unsigned char*> starts(
     lengths.size(),
-    TrackedAllocator<unsigned char*>{arena.get_allocator().budget});
+    TrackedAllocator<unsigned char*>{*arena.get_allocator().budget});
   auto* start = arena.data();
   for (size_t i = 0; i != lengths.size(); ++i) {
     starts[i] = start;
@@ -300,7 +300,7 @@ TrackedVector<unsigned char*> SampleStarts(TrackedBstring& arena,
 
 bool Compresses(duckdb_fsst_encoder_t* encoder, TrackedBstring& arena,
                 TrackedVector<size_t>& lengths, uint64_t table_size) {
-  auto* budget = arena.get_allocator().budget;
+  auto& budget = *arena.get_allocator().budget;
   auto starts = SampleStarts(arena, lengths);
   const uint64_t raw = arena.size();
   TrackedBstring out(7 + 2 * raw, 0, TrackedAllocator<byte_type>{budget});
@@ -544,7 +544,7 @@ duckdb_fsst_encoder_t* BlockEncoder::Encoder() {
 }
 
 void BlockEncoder::TrainFsst() {
-  auto* budget = _block.keys.get_allocator().budget;
+  auto& budget = *_block.keys.get_allocator().budget;
   TrackedBstring arena{TrackedAllocator<byte_type>{budget}};
   TrackedVector<size_t> lengths{TrackedAllocator<size_t>{budget}};
   _fsst.reader->SampleTerms(

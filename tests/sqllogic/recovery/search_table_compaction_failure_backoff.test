@@ -2,7 +2,7 @@
 # it runs again. A merge that threw used to count as productive, so the loop
 # re-ran it at once, failing in a tight loop for as long as the failure lasted.
 #
-# MergeWriter::Reserve fails every merge's memory reservation for three
+# MergeWriter::Flush fails every merge with an out-of-memory error for three
 # seconds. With the backoff doubling from the 100 ms interval, about five
 # compaction ticks run in that time, each failing one merge per compaction
 # slot; without it, merges fail thousands of times.
@@ -35,7 +35,7 @@ statement ok
 VACUUM (FLUSH_TABLE) cb;
 
 statement ok
-SET sdb_faults = 'MergeWriter::Reserve';
+SET sdb_faults = 'MergeWriter::Flush';
 
 statement ok
 ALTER TABLE cb SET (compaction_interval = 100);
@@ -47,7 +47,7 @@ statement ok
 ALTER TABLE cb SET (compaction_interval = 0);
 
 statement ok
-SET sdb_faults = '-MergeWriter::Reserve';
+SET sdb_faults = '-MergeWriter::Flush';
 
 query
 SELECT value BETWEEN 1 AND 1000 AS backed_off FROM sdb_metrics

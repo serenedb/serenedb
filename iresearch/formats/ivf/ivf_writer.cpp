@@ -68,7 +68,7 @@ struct DocRowView {
 }  // namespace
 
 CentroidsBuildParams IvfBuilder::CentroidParams(
-  MemoryBudget* budget) const noexcept {
+  LocalBudget& budget) const noexcept {
   return {
     .posting_size = _info.posting_size,
     .sample_factor = _info.sample_factor,
@@ -83,9 +83,8 @@ AnnFlushBound IvfBuilder::Bound(uint64_t rows) const {
   if (rows == 0 || d == 0) {
     return {};
   }
-  const auto centroids =
-    CentroidsBuilder::Bound(rows, static_cast<uint32_t>(_info.d), _info.metric,
-                            CentroidParams(nullptr));
+  const auto centroids = CentroidsBuilder::Bound(
+    rows, static_cast<uint32_t>(_info.d), _info.metric, CentroidParams(kEmpty));
   const size_t train_cap = QuantizerTrainSamples(
     _info.quant, static_cast<uint32_t>(d), EffectiveQuantMetric(_info.metric),
     rows, /*row_major=*/false);
@@ -110,7 +109,7 @@ AnnFlushBound IvfBuilder::Bound(uint64_t rows) const {
 
 BuiltIvf IvfBuilder::Compute(const ColumnReader& vector_column,
                              ReadContext& ctx, QuantizerWriter* qw,
-                             MemoryBudget* budget) const {
+                             LocalBudget& budget) const {
   SDB_ASSERT(qw);
   const auto d = static_cast<uint32_t>(vector_column.ArraySize());
   const auto rows = vector_column.RowCount();
@@ -408,10 +407,10 @@ yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   const auto d = static_cast<uint32_t>(col.ArraySize());
   auto qw =
     MakeQuantizerWriter(_info.quant, d, EffectiveQuantMetric(_info.metric),
-                        kDefaultClusterIters, /*row_major=*/false, _budget);
+                        kDefaultClusterIters, /*row_major=*/false, *_budget);
 
   IvfBuilder builder{_info};
-  auto built = builder.Compute(col, ctx, qw.get(), _budget);
+  auto built = builder.Compute(col, ctx, qw.get(), *_budget);
   if (built.empty) {
     co_return {};
   }

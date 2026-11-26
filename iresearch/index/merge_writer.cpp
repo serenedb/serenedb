@@ -683,7 +683,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
              id);
   auto& writer = col_writer.StreamNormColumn(out_id);
   TrackedVector<uint32_t> values{
-    TrackedAllocator<uint32_t>{&col_writer.Budget()}};
+    TrackedAllocator<uint32_t>{col_writer.Budget()}};
   values.reserve(kNormMergeChunk);
   for (size_t i = 0; i != pieces.size();) {
     auto planned = pieces[i].planned;
@@ -833,7 +833,7 @@ bool ComputeDocMappingsAndFieldMeta(std::span<MergeWriter::ReaderCtx> readers,
                                     CompoundFieldIterator& fields_itr,
                                     IndexFeatures& index_features,
                                     const IndexFieldOptions* field_options,
-                                    MemoryBudget& budget) {
+                                    LocalBudget& budget) {
   doc_id_t base_id = doc_limits::min();
   for (auto& reader_ctx : readers) {
     SDB_ASSERT(reader_ctx.reader);
@@ -848,7 +848,7 @@ bool ComputeDocMappingsAndFieldMeta(std::span<MergeWriter::ReaderCtx> readers,
       base_id += static_cast<doc_id_t>(docs_count);
     } else {
       reader_ctx.remap.id_map =
-        TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{&budget}};
+        TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{budget}};
       base_id = ComputeDocIds(reader_ctx.remap.id_map, reader, base_id);
     }
     if (!doc_limits::valid(base_id)) {
@@ -866,8 +866,8 @@ bool ComputeDocMappingsAndFieldMeta(std::span<MergeWriter::ReaderCtx> readers,
 }
 
 TrackedVector<MergeSource> MakeSources(
-  std::span<const MergeWriter::ReaderCtx> readers, MemoryBudget& budget) {
-  TrackedVector<MergeSource> sources{TrackedAllocator<MergeSource>{&budget}};
+  std::span<const MergeWriter::ReaderCtx> readers, LocalBudget& budget) {
+  TrackedVector<MergeSource> sources{TrackedAllocator<MergeSource>{budget}};
   sources.reserve(readers.size());
   for (const auto& ctx : readers) {
     sources.push_back(MergeSource{
@@ -907,7 +907,7 @@ TextNeeds MergedTextNeeds(std::span<const MergeWriter::ReaderCtx> readers,
 void OpenColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
                    std::unique_ptr<ColWriter>& col_writer,
                    const IndexFieldOptions* field_options,
-                   HnswBases* hnsw_bases, MemoryBudget& budget) {
+                   HnswBases* hnsw_bases, LocalBudget& budget) {
   col_writer = std::make_unique<ColWriter>(db, tracker, WriteTier::Merge);
   col_writer->SetBudget(budget);
   col_writer->SetFieldOptions(field_options);
@@ -921,40 +921,14 @@ MergeWriter::ReaderCtx::ReaderCtx(const SubReader* reader) noexcept
   SDB_ASSERT(this->reader);
 }
 
-size_t MergeWriter::Bound() const {
-  uint64_t docs = 0;
-  uint64_t remaps = 0;
-  for (const auto& ctx : _readers) {
-    const auto& reader = *ctx.reader;
-    docs += reader.live_docs_count();
-    if (reader.live_docs_count() != reader.docs_count()) {
-      remaps += sizeof(doc_id_t) * (reader.docs_count() + doc_limits::min());
-    }
-  }
-  const auto sources = MakeSources(_readers, _budget);
-  const auto ann = MergeAnnBound(sources, _field_options, docs);
-  const auto text = MergedTextNeeds(_readers, _field_options);
-  return remaps + sizeof(MergeSource) * sources.size() +
-         format_utils::kFlushOutputBytes +
-         std::max({sizeof(uint32_t) * kNormMergeChunk,
-                   MergeIntoBound(sources, _field_options), ann.compute,
-                   ann.kept + term_dict::FieldWriter::Bound(
-                                text.terms + ann.terms, docs, text.ranges,
-                                ann.terms != 0)});
-}
-
-void MergeWriter::Reserve() {
-  SDB_IF_FAILURE("MergeWriter::Reserve") {
-    throw duckdb::OutOfMemoryException(
-      "failed to reserve memory for a merge (fault point)");
-  }
-  _budget.Reserve(Bound());
-}
-
 auto MergeWriter::Flush(SegmentMeta& segment,
                         const FlushProgress& progress /*= {}*/,
                         const AnnBuildEnv* env /*= nullptr*/)
   -> yaclib::Future<std::shared_ptr<const FileTracker>> {
+  SDB_IF_FAILURE("MergeWriter::Flush") {
+    throw duckdb::OutOfMemoryException(
+      "failed to allocate memory for a merge (fault point)");
+  }
   bool result = false;
   auto tracker =
     std::make_shared<FileTracker>(_fs, _root, segment.name, 0, _released);
@@ -1005,7 +979,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
 
   MergedNormProvider norm_provider;
-  IdxWriter idx{*tracker, &_budget};
+  IdxWriter idx{*tracker, _budget};
 
   col_writer->SetIdxWriter(idx);
   if (!col_writer->Commit(segment.docs_count, progress_callback)) {
@@ -1042,7 +1016,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   PostingsInputs postings;
   if (segment.docs_count != 0) {
     auto field_writer =
-      std::make_unique<term_dict::FieldWriter>(/*compaction=*/true, &_budget);
+      std::make_unique<term_dict::FieldWriter>(/*compaction=*/true, _budget);
     field_writer->SetIdxWriter(idx);
     if (!WriteFields(
           *field_writer, state, fields_itr, merged_norm_ids, cluster_readers,

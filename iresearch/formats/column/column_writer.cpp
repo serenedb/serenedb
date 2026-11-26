@@ -228,7 +228,8 @@ uint64_t StringBytesOf(std::span<const ColumnReader* const> columns,
   uint64_t longest = 0;
   for (const auto* column : columns) {
     const auto& stats = column->MergedStatistics();
-    if (!duckdb::StringStats::HasMaxStringLength(stats)) {
+    if (stats.GetStatsType() != duckdb::StatisticsType::STRING_STATS ||
+        !duckdb::StringStats::HasMaxStringLength(stats)) {
       return StoredBytes(columns);
     }
     longest =
@@ -248,7 +249,7 @@ void CollectSourceLeaves(const duckdb::LogicalType& type,
     return;
   }
   TrackedVector<const ColumnReader*> children{
-    TrackedAllocator<const ColumnReader*>{leaves.get_allocator().budget}};
+    TrackedAllocator<const ColumnReader*>{*leaves.get_allocator().budget}};
   switch (type.InternalType()) {
     case duckdb::PhysicalType::STRUCT: {
       const auto& fields = duckdb::StructType::GetChildTypes(type);
@@ -458,8 +459,8 @@ WriteContext& ColumnWriter::WriteCtx() const noexcept {
   return _owner->WriteCtx();
 }
 
-MemoryBudget* ColumnWriter::SealBudget() const noexcept {
-  return _seal ? _seal : &_owner->Budget();
+LocalBudget& ColumnWriter::SealBudget() const noexcept {
+  return _owner->Budget();
 }
 
 codecs::CodecType ColumnWriter::SealMethod() const {
@@ -469,7 +470,7 @@ codecs::CodecType ColumnWriter::SealMethod() const {
 }
 
 uint64_t ColumnWriter::SealBound(const WriteRows& rows) const {
-  SealLeaves leaves{TrackedAllocator<codecs::SealLeaf>{&_owner->Budget()}};
+  SealLeaves leaves{TrackedAllocator<codecs::SealLeaf>{_owner->Budget()}};
   if (IngestsList()) {
     leaves.push_back(
       {.physical = duckdb::PhysicalType::BIT, .rows = rows.count});
@@ -525,7 +526,7 @@ uint64_t ColumnWriter::PendingSealBound() const {
 uint64_t SealBoundOf(const duckdb::LogicalType& type,
                      std::span<const ColumnReader* const> columns,
                      uint64_t rows, codecs::CodecType forced,
-                     const ColCodecParams& params, MemoryBudget* budget) {
+                     const ColCodecParams& params, LocalBudget& budget) {
   SealLeaves leaves{TrackedAllocator<codecs::SealLeaf>{budget}};
   size_t at = 0;
   CollectSourceLeaves(type, columns, rows, leaves, at);
@@ -747,7 +748,7 @@ void ColumnWriter::SealVariant(const duckdb::LogicalType& type,
     return;
   }
 
-  auto* budget = SealBudget();
+  auto& budget = SealBudget();
   MemoryCharge shredded_charge{budget, 0};
   TrackedVector<duckdb::Vector> shredded_hold{
     TrackedAllocator<duckdb::Vector>{budget}};
@@ -830,9 +831,9 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
     _id{id},
     _type{std::move(type)},
     _options{options},
-    _null_pad_charge{&owner.Budget(), 0},
+    _null_pad_charge{owner.Budget(), 0},
     _deferred{deferred},
-    _distinct_charge{&owner.Budget(), 0} {
+    _distinct_charge{owner.Budget(), 0} {
   if (_type.id() == duckdb::LogicalTypeId::VARIANT) {
     const auto& config = duckdb::DBConfig::GetConfig(_owner->Database());
     _variant_min_shred_size =
@@ -850,7 +851,7 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
     return;
   }
   if (_type.InternalType() == duckdb::PhysicalType::LIST) {
-    _ingest.emplace_back(std::make_unique<ListIngest>(&_owner->Budget(), _type,
+    _ingest.emplace_back(std::make_unique<ListIngest>(_owner->Budget(), _type,
                                                       /*borrow=*/false));
     return;
   }
@@ -864,7 +865,7 @@ ColumnWriter::ColumnWriter(ColWriter& owner, field_id id,
     }
     _ingest.resize(fields.size());
     _ingest[i] =
-      std::make_unique<ListIngest>(&_owner->Budget(), fields[i].second,
+      std::make_unique<ListIngest>(_owner->Budget(), fields[i].second,
                                    /*borrow=*/false);
   }
 }
@@ -1225,14 +1226,7 @@ void ColumnWriter::CopyRows(uint64_t start_row, const ColumnReader& column,
 }
 
 void ColumnWriter::SealStaged(const WriteRows& rows) {
-  const auto bound = SealBound(rows);
-  MemoryBudget seal{&_owner->Budget(), bound};
-  _seal = &seal;
-  {
-    const absl::Cleanup done = [&] { _seal = nullptr; };
-    SealColumn(_type, rows, _options.skip_validity, _meta, _state, _ingest);
-  }
-  SDB_ASSERT(seal.Held() == bound);
+  SealColumn(_type, rows, _options.skip_validity, _meta, _state, _ingest);
   _row_start += rows.count;
 }
 

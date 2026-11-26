@@ -23,13 +23,11 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
-#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/index/merge_writer.hpp>
-#include <iresearch/utils/async.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <random>
 #include <span>
 #include <string>
@@ -132,13 +130,6 @@ irs::IndexWriterOptions WithAnn(irs::AnnInfo ann) {
   return opts;
 }
 
-std::span<const irs::IndexWriter::FlushedSegment> FlushAtTheLimit(
-  tests::IndexWriter::Transaction& trx) {
-  trx.Native().ReserveFlush();
-  NoMemoryHeadroom limit;
-  return trx.FlushAndFsync();
-}
-
 tests::IndexWriter::ptr MakeWriter(
   const tests::IndexDir& dir,
   irs::IndexWriterOptions options = tests::CsDefaultWriterOptions()) {
@@ -146,61 +137,7 @@ tests::IndexWriter::ptr MakeWriter(
     dir, tests::kOmCreate, tests::EnsureNormColumnId(std::move(options)));
 }
 
-TEST(FlushBudgetTest, TextFlushRunsInsideItsReservation) {
-  const tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  auto writer = MakeWriter(dir);
-  auto trx = writer->GetBatch(/*exclusive=*/true);
-  InsertDistinctTerms(trx);
-  const auto flushed = FlushAtTheLimit(trx);
-  ASSERT_EQ(1, flushed.size());
-  EXPECT_EQ(kTermDocs, flushed.front().meta.docs_count);
-}
-
-struct WriteSteps {
-  bool commit;
-  bool refresh;
-};
-
-size_t HeldAfter(WriteSteps steps, bool reserve) {
-  const tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  auto writer = MakeWriter(dir);
-  writer->RefreshCommit();
-  const auto before = Manager().GetUsedMemory();
-  {
-    auto trx = writer->GetBatch(/*exclusive=*/true);
-    InsertDistinctTerms(trx);
-    if (reserve) {
-      trx.Native().ReserveFlush();
-    }
-    if (steps.commit) {
-      EXPECT_TRUE(trx.Commit());
-    } else {
-      trx.Abort();
-    }
-  }
-  if (steps.refresh) {
-    writer->RefreshCommit();
-  }
-  return Manager().GetUsedMemory() - before;
-}
-
-class ReservationReleaseTest : public ::testing::TestWithParam<WriteSteps> {};
-
-TEST_P(ReservationReleaseTest, NothingStaysReservedOnceTheWorkIsDone) {
-  EXPECT_EQ(HeldAfter(GetParam(), false), HeldAfter(GetParam(), true));
-}
-
-std::string WriteStepsName(const ::testing::TestParamInfo<WriteSteps>& info) {
-  return absl::StrCat(info.param.commit ? "Commit" : "Abort",
-                      info.param.refresh ? "Refresh" : "");
-}
-
-INSTANTIATE_TEST_SUITE_P(FlushBudget, ReservationReleaseTest,
-                         ::testing::Values(WriteSteps{true, true},
-                                           WriteSteps{false, false}),
-                         WriteStepsName);
-
-TEST(FlushBudgetTest, FlushWithoutItsReservationFailsBeforeItStarts) {
+TEST(FlushBudgetTest, FlushWithoutHeadroomFailsBeforeItStarts) {
   const tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   auto writer = MakeWriter(dir);
   auto trx = writer->GetBatch(/*exclusive=*/true);
@@ -209,6 +146,41 @@ TEST(FlushBudgetTest, FlushWithoutItsReservationFailsBeforeItStarts) {
     NoMemoryHeadroom limit;
     EXPECT_THROW(trx.FlushAndFsync(), duckdb::OutOfMemoryException);
   }
+  const auto flushed = trx.FlushAndFsync();
+  ASSERT_EQ(1, flushed.size());
+  EXPECT_EQ(kTermDocs, flushed.front().meta.docs_count);
+}
+
+TEST(FlushBudgetTest, TransactionGivesItsMemoryBackToTheSession) {
+  const tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  auto writer = MakeWriter(dir);
+  irs::MemoryBudget session{irs::MemoryBudget::kUnlimited - 1};
+  for (const bool commit : {true, false}) {
+    {
+      auto trx = writer->GetBatch(/*exclusive=*/true);
+      trx.Native().SetMemory(session);
+      InsertDistinctTerms(trx);
+      ASSERT_EQ(1, trx.FlushAndFsync().size());
+      if (commit) {
+        EXPECT_TRUE(trx.Commit());
+      } else {
+        trx.Abort();
+      }
+    }
+    EXPECT_EQ(0, session.Used());
+  }
+}
+
+TEST(FlushBudgetTest, FlushPastTheSessionLimitFailsAndKeepsItsBatch) {
+  const tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  auto writer = MakeWriter(dir);
+  irs::MemoryBudget session{irs::MemoryBudget::kUnlimited - 1};
+  auto trx = writer->GetBatch(/*exclusive=*/true);
+  trx.Native().SetMemory(session);
+  InsertDistinctTerms(trx);
+  session.SetLimit(session.Used() + 1);
+  EXPECT_THROW(trx.FlushAndFsync(), duckdb::OutOfMemoryException);
+  session.SetLimit(irs::MemoryBudget::kUnlimited);
   const auto flushed = trx.FlushAndFsync();
   ASSERT_EQ(1, flushed.size());
   EXPECT_EQ(kTermDocs, flushed.front().meta.docs_count);
@@ -245,15 +217,21 @@ irs::AnnInfo AnnInfoOf(const VectorCase& c) {
   };
 }
 
-TEST_P(VectorFlushBudgetTest, FlushRunsInsideItsReservation) {
+TEST_P(VectorFlushBudgetTest, BuildWorkersGiveTheirMemoryBackToTheSession) {
   const auto [kind, quant, d, rows] = GetParam();
   const auto dir = tests::LocalDirectory(this);
   auto writer = MakeWriter(*dir, WithAnn(AnnInfoOf(GetParam())));
-  auto trx = writer->GetBatch(/*exclusive=*/true);
-  InsertVectors(trx, rows, d);
-  const auto flushed = FlushAtTheLimit(trx);
-  ASSERT_EQ(1, flushed.size());
-  EXPECT_EQ(rows, flushed.front().meta.docs_count);
+  irs::MemoryBudget session{irs::MemoryBudget::kUnlimited - 1};
+  {
+    auto trx = writer->GetBatch(/*exclusive=*/true);
+    trx.Native().SetMemory(session);
+    InsertVectors(trx, rows, d);
+    const auto flushed = trx.FlushAndFsync();
+    ASSERT_EQ(1, flushed.size());
+    EXPECT_EQ(rows, flushed.front().meta.docs_count);
+    EXPECT_TRUE(trx.Commit());
+  }
+  EXPECT_EQ(0, session.Used());
 }
 
 std::string VectorCaseName(const ::testing::TestParamInfo<VectorCase>& info) {
@@ -284,59 +262,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 constexpr size_t kMergeSegments = 3;
 
-irs::FunctionFieldOptions FieldOptionsOf(const irs::IndexWriterOptions& opts) {
-  return {opts.column_options, opts.norm_column_id, opts.row_group_size,
-          opts.anns};
-}
-
-size_t MergeBudgetLeft(const irs::CompositeReader& reader,
-                       const irs::IndexFieldOptions& field_options,
-                       bool flush) {
-  const tests::IndexDir out{Db(), TestEnv::MemoryRoot()};
-  irs::MemoryBudget budget{nullptr};
-  {
-    irs::MergeWriter merger{out.Db(),
-                            out.Fs(),
-                            out.Root(),
-                            {.field_options = &field_options},
-                            budget};
-    merger.Reset(reader.begin(), reader.end());
-    merger.Reserve();
-    if (flush) {
-      irs::SegmentMeta meta;
-      EXPECT_TRUE(irs::GetReady(merger.Flush(meta)));
-    }
-  }
-  return budget.Available() +
-         out.Files().size() * irs::format_utils::kOutputBlockBytes;
-}
-
-void ExpectMergeInsideItsReservation(
-  tests::IndexWriter& writer, const irs::IndexFieldOptions& field_options) {
-  tests::Remove(writer, tests::Terms{kMarkId, {"drop"}});
-  ASSERT_TRUE(writer.RefreshCommit());
-  const auto reader = writer.GetSnapshot();
-  ASSERT_EQ(kMergeSegments, reader.size());
-  ASSERT_LT(reader.live_docs_count(), reader.docs_count());
-  EXPECT_EQ(MergeBudgetLeft(reader, field_options, false),
-            MergeBudgetLeft(reader, field_options, true));
-}
-
-TEST(MergeBudgetTest, TextMergeRunsInsideItsReservation) {
-  const tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
-  auto opts = tests::EnsureNormColumnId(tests::CsDefaultWriterOptions());
-  const auto field_options = FieldOptionsOf(opts);
-  auto writer = MakeWriter(dir, std::move(opts));
-  for (size_t s = 0; s < kMergeSegments; ++s) {
-    auto trx = writer->GetBatch();
-    InsertMarkedTerms(trx, s * kTermDocs, kTermDocs);
-    ASSERT_TRUE(trx.Commit());
-    ASSERT_TRUE(writer->RefreshCommit());
-  }
-  ExpectMergeInsideItsReservation(*writer, field_options);
-}
-
-TEST(MergeBudgetTest, CompactionWithoutItsReservationFailsBeforeItStarts) {
+TEST(MergeBudgetTest, CompactionWithoutHeadroomFailsAndKeepsItsSegments) {
   const tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
   auto writer = MakeWriter(dir);
   for (size_t s = 0; s < kMergeSegments; ++s) {
@@ -368,34 +294,5 @@ TEST(MergeBudgetTest, CompactionWithoutItsReservationFailsBeforeItStarts) {
   EXPECT_EQ(1, merged.size());
   EXPECT_EQ(kMergeSegments * kTermDocs, merged.live_docs_count());
 }
-
-class VectorMergeBudgetTest : public TestBase,
-                              public ::testing::WithParamInterface<VectorCase> {
-};
-
-TEST_P(VectorMergeBudgetTest, MergeRunsInsideItsReservation) {
-  const auto& param = GetParam();
-  const auto dir = tests::LocalDirectory(this);
-  auto opts = WithAnn(AnnInfoOf(param));
-  const auto field_options = FieldOptionsOf(opts);
-  auto writer = MakeWriter(*dir, std::move(opts));
-  for (size_t s = 0; s < kMergeSegments; ++s) {
-    auto trx = writer->GetBatch();
-    InsertVectors(trx, param.rows / kMergeSegments, param.d, /*marked=*/true);
-    ASSERT_TRUE(trx.Commit());
-    ASSERT_TRUE(writer->RefreshCommit());
-  }
-  ExpectMergeInsideItsReservation(*writer, field_options);
-}
-
-INSTANTIATE_TEST_SUITE_P(
-  MergeBudget, VectorMergeBudgetTest,
-  ::testing::Values(
-    VectorCase{irs::AnnKind::Ivf, irs::VectorQuantization::None, 64, 20000},
-    VectorCase{irs::AnnKind::Ivf, irs::VectorQuantization::SQ8, 64, 20000},
-    VectorCase{irs::AnnKind::Ivf, irs::VectorQuantization::PQ, 64, 20000},
-    VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::None, 64, 3000},
-    VectorCase{irs::AnnKind::Hnsw, irs::VectorQuantization::SQ8, 64, 3000}),
-  VectorCaseName);
 
 }  // namespace

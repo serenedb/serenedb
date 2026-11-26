@@ -69,6 +69,6 @@ using HugePageAllocator = std::allocator<T>;
 
 template<typename T>
 using HugePageVector =
-  std::vector<T, TrackedAllocator<T, kMemoryTag, HugePageAllocator<T>>>;
+  std::vector<T, TrackedAllocator<T, HugePageAllocator<T>>>;
 
 }  // namespace irs

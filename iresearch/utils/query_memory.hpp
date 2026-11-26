@@ -51,6 +51,7 @@ class MemoryArena {
   static constexpr size_t kAlignment = 8;
 
   MemoryArena() : _arena{TrackedDuckAllocator()} {}
+  explicit MemoryArena(duckdb::Allocator& allocator) : _arena{allocator} {}
 
   MemoryArena(const MemoryArena&) = delete;
   MemoryArena& operator=(const MemoryArena&) = delete;
@@ -130,7 +131,11 @@ using ArenaVector = std::vector<T, ArenaStlAllocator<T>>;
 
 class QueryMemory {
  public:
-  QueryMemory() = default;
+  explicit QueryMemory(MemoryBudget& parent = gRootBudget)
+    : _budget{parent},
+      _allocator{BudgetAllocator(_budget)},
+      _queries{_allocator},
+      _scratch{_allocator} {}
 
   QueryMemory(const QueryMemory&) = delete;
   QueryMemory& operator=(const QueryMemory&) = delete;
@@ -150,13 +155,19 @@ class QueryMemory {
   }
 
  private:
+  LocalBudget _budget;
+  duckdb::Allocator _allocator;
   MemoryArena _queries;
   MemoryArena _scratch;
 };
 
 class PlanMemory {
  public:
-  PlanMemory() = default;
+  explicit PlanMemory(MemoryBudget& parent = gRootBudget)
+    : _budget{parent},
+      _allocator{BudgetAllocator(_budget)},
+      _nodes{_allocator},
+      _scratch{_allocator} {}
 
   PlanMemory(const PlanMemory&) = delete;
   PlanMemory& operator=(const PlanMemory&) = delete;
@@ -170,12 +181,16 @@ class PlanMemory {
 
   MemoryArena& Scratch() noexcept { return _scratch; }
 
+  void Bind(MemoryBudget& parent) { _budget.Rebind(parent); }
+
   void Rewind() noexcept {
     _nodes.Rewind();
     _scratch.Rewind();
   }
 
  private:
+  LocalBudget _budget;
+  duckdb::Allocator _allocator;
   MemoryArena _nodes;
   MemoryArena _scratch;
 };

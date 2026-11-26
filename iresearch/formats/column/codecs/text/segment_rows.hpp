@@ -70,7 +70,7 @@ struct SortScratch {
     uint32_t entry;
   };
 
-  explicit SortScratch(MemoryBudget* budget)
+  explicit SortScratch(LocalBudget& budget)
     : order{TrackedAllocator<Key>{budget}},
       remap{TrackedAllocator<uint32_t>{budget}},
       sorted{TrackedAllocator<duckdb::string_t>{budget}} {}
@@ -119,7 +119,7 @@ inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
 }
 
 void CompressCodes(
-  MemoryBudget* budget, std::span<uint32_t> codes, double& ratio,
+  LocalBudget& budget, std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write);
 
 void SortEntries(std::span<const duckdb::string_t> entries,
@@ -162,7 +162,7 @@ class SegmentRows {
   }
 
  protected:
-  SegmentRows(MemoryBudget* budget, const duckdb::LogicalType& type,
+  SegmentRows(LocalBudget& budget, const duckdb::LogicalType& type,
               uint32_t first_entry)
     : _stats{type},
       _type{type},
@@ -217,7 +217,7 @@ class PlainRows final : public SegmentRows {
  public:
   static constexpr Shape kShape = Shape::Plain;
 
-  PlainRows(MemoryBudget* budget, const duckdb::LogicalType& type)
+  PlainRows(LocalBudget& budget, const duckdb::LogicalType& type)
     : SegmentRows{budget, type, 0} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t) {
@@ -256,7 +256,7 @@ class DictionaryRows final : public SegmentRows {
  public:
   static constexpr Shape kShape = Shape::Dictionary;
 
-  DictionaryRows(MemoryBudget* budget, const duckdb::LogicalType& type,
+  DictionaryRows(LocalBudget& budget, const duckdb::LogicalType& type,
                  DedupScratch& dedup, double& codes_ratio)
     : SegmentRows{budget, type, 1},
       _dedup{dedup},
@@ -308,7 +308,7 @@ class DictionaryRows final : public SegmentRows {
 };
 
 template<typename Rows>
-Rows MakeRows(MemoryBudget* budget, const duckdb::LogicalType& type,
+Rows MakeRows(LocalBudget& budget, const duckdb::LogicalType& type,
               DedupScratch& dedup, double& codes_ratio) {
   if constexpr (Rows::kShape == Shape::Dictionary) {
     return Rows{budget, type, dedup, codes_ratio};
@@ -322,7 +322,7 @@ class SortedCompressionState {
  public:
   static constexpr Shape kShape = Rows::kShape;
 
-  SortedCompressionState(MemoryBudget* budget, ByteCodec codec,
+  SortedCompressionState(LocalBudget& budget, ByteCodec codec,
                          const duckdb::LogicalType& type, DedupScratch& dedup,
                          StringTuning& tuning, uint32_t target)
     : _rows{MakeRows<Rows>(budget, type, dedup, tuning.codes_ratio)},

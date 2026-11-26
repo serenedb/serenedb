@@ -33,7 +33,7 @@
 namespace irs::term_dict {
 
 DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
-                     MemoryBudget* budget)
+                     LocalBudget& budget)
   : _min_key{TrackedAllocator<byte_type>{budget}},
     _max_key{TrackedAllocator<byte_type>{budget}},
     _link_nodes{TrackedAllocator<uint32_t>{budget}},
@@ -53,7 +53,7 @@ DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
 
 DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
                      const Separators& separators, duckdb::ReadStream& in)
-  : DictIndex{head, prefix, blocks, nullptr} {
+  : DictIndex{head, prefix, blocks, kEmpty} {
   if (blocks == 1) {
     return;
   }
@@ -92,7 +92,7 @@ void DictIndex::Write(duckdb::WriteStream& out) const {
 
 DictIndex::DictIndex(const FieldHead& head, bytes_view prefix, uint32_t blocks,
                      const Separators& separators, DictSections sections,
-                     MemoryBudget* budget)
+                     LocalBudget& budget)
   : DictIndex{head, prefix, blocks, budget} {
   if (blocks == 1) {
     return;
@@ -218,7 +218,7 @@ void DictIndexBuilder::FinishMasks(DictSections& sections) const {
 
 DictSections DictIndexBuilder::Finish() {
   SDB_ASSERT(_gated);
-  auto* budget = _seen.get_allocator().budget;
+  auto& budget = *_seen.get_allocator().budget;
   DictSections sections{
     .trie = _trie.Finish(),
     .selected = TrackedVector<byte_type>{TrackedAllocator<byte_type>{budget}},

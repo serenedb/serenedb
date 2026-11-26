@@ -86,7 +86,7 @@ class FrameSpans {
     uint64_t raw = 0;
   };
 
-  explicit FrameSpans(MemoryBudget* budget)
+  explicit FrameSpans(LocalBudget& budget)
     : _spans{TrackedAllocator<Span>{budget}} {}
 
   void Reset(FrameShape shape) noexcept {
@@ -183,7 +183,7 @@ inline uint64_t Scale(uint64_t sampled, uint64_t sampled_raw,
 }
 
 template<typename Compressor>
-void ResetCompressor(MemoryBudget* budget, std::optional<Compressor>& codec,
+void ResetCompressor(LocalBudget& budget, std::optional<Compressor>& codec,
                      uint8_t& held, uint8_t level) {
   if (!codec || held != level) {
     codec.emplace(budget, level);
@@ -481,7 +481,7 @@ class CompressionState {
     return n;
   }
 
-  MemoryBudget* _budget;
+  LocalBudget& _budget;
   Rows _rows;
   SortScratch _sort;
   RatioHistory* _history;
@@ -523,7 +523,7 @@ class SizeEstimator {
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
 
-  explicit SizeEstimator(MemoryBudget* budget)
+  explicit SizeEstimator(LocalBudget& budget)
     : _budget{budget},
       _frame{TrackedAllocator<char>{budget}},
       _scratch{TrackedAllocator<char>{budget}},
@@ -594,7 +594,7 @@ class SizeEstimator {
     return _frame;
   }
 
-  MemoryBudget* _budget;
+  LocalBudget& _budget;
   std::optional<typename Codec::Compressor> _codec;
   uint8_t _level = 0;
   TrackedString _frame;
@@ -690,7 +690,7 @@ class TrialSizes final : public State {
   };
 
   struct ShapeRows {
-    explicit ShapeRows(MemoryBudget* budget)
+    explicit ShapeRows(LocalBudget& budget)
       : codes{TrackedAllocator<uint32_t>{budget}},
         locals{TrackedAllocator<std::byte>{budget}},
         bytes{TrackedAllocator<char>{budget}},
@@ -763,7 +763,7 @@ class TrialSizes final : public State {
     }
     rows.done = true;
     const auto& arrival = TrialRows(Shape::Dictionary);
-    auto* budget = rows.codes.get_allocator().budget;
+    auto& budget = *rows.codes.get_allocator().budget;
     TrackedVector<duckdb::string_t> entries{
       TrackedAllocator<duckdb::string_t>{budget}};
     entries.reserve(arrival.codes.size());
@@ -794,7 +794,7 @@ class TrialSizes final : public State {
     if (!rows.coded) {
       rows.coded = true;
       double ratio = 0;
-      CompressCodes(rows.codes.get_allocator().budget, rows.locals, ratio,
+      CompressCodes(*rows.codes.get_allocator().budget, rows.locals, ratio,
                     [&](CodecType, std::string_view bytes) {
                       rows.codes_bytes = bytes.size();
                     });
@@ -824,7 +824,7 @@ class TrialSizes final : public State {
     }
     auto& split =
       rows.spans
-        .emplace_back(frame, FrameSpans{rows.spans.get_allocator().budget})
+        .emplace_back(frame, FrameSpans{*rows.spans.get_allocator().budget})
         .spans;
     split.Reset(frame);
     for (size_t i = 0; i < rows.profile.codes.size(); ++i) {

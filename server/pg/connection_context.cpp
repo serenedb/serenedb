@@ -167,6 +167,24 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
   search_path.Set(std::move(paths), duckdb::CatalogSetPathType::SET_DIRECTLY);
 }
 
+irs::MemoryBudget& ConnectionContext::Memory() {
+  const auto limit = static_cast<uint64_t>(
+    GetSignedIntSetting(*this, kSessionMemoryLimitSetting));
+  if (limit == 0) {
+    return irs::gRootBudget;
+  }
+  _memory->SetLimit(limit);
+  return *_memory;
+}
+
+duckdb::shared_ptr<duckdb::MemoryAccount>
+ConnectionContext::GetMemoryAccount() {
+  if (&Memory() == &irs::gRootBudget) {
+    return nullptr;
+  }
+  return _memory;
+}
+
 ConnectionContext::~ConnectionContext() {
   _commit_pass.reset();
   if (!duckdb::Exception::UncaughtException()) {

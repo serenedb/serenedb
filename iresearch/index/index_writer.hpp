@@ -175,6 +175,7 @@ class IndexWriter : private util::Noncopyable {
     Transaction(Transaction&& other) noexcept
       : _writer{std::exchange(other._writer, nullptr)},
         _segment{std::move(other._segment)},
+        _memory{other._memory},
         _hot_segment{other._hot_segment},
         _field_options{std::move(other._field_options)},
         _hot{other._hot} {}
@@ -183,12 +184,15 @@ class IndexWriter : private util::Noncopyable {
         Abort();
         _writer = std::exchange(other._writer, nullptr);
         _segment = std::move(other._segment);
+        _memory = other._memory;
         _hot_segment = other._hot_segment;
         _field_options = std::move(other._field_options);
         _hot = other._hot;
       }
       return *this;
     }
+
+    void SetMemory(MemoryBudget& memory) noexcept { _memory = &memory; }
 
     ~Transaction() { Abort(); }
 
@@ -215,12 +219,6 @@ class IndexWriter : private util::Noncopyable {
 
     void Flush();
 
-    void ReserveFlush() {
-      if (_segment) {
-        _segment->writer->ReserveFlush();
-      }
-    }
-
     bool Valid() const noexcept { return _writer != nullptr; }
 
     void SetFieldOptions(
@@ -239,6 +237,7 @@ class IndexWriter : private util::Noncopyable {
 
     IndexWriter* _writer{nullptr};
     std::shared_ptr<SegmentContext> _segment;
+    MemoryBudget* _memory{&gRootBudget};
     uint64_t _hot_segment{0};
     std::shared_ptr<const IndexFieldOptions> _field_options;
     bool _hot{false};

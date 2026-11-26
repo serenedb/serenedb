@@ -37,7 +37,7 @@ constexpr size_t kWindow = kTrieMaxSpan + 1;
 
 }  // namespace
 
-PrefixTrie::PrefixTrie(const TrieShape& shape, MemoryBudget* budget)
+PrefixTrie::PrefixTrie(const TrieShape& shape, LocalBudget& budget)
   : _dense_words{TrackedAllocator<uint64_t>{budget}},
     _dense_first{TrackedAllocator<uint32_t>{budget}},
     _chain{TrackedAllocator<byte_type>{budget}},
@@ -293,7 +293,7 @@ PrefixTrie PrefixTrieBuilder::Finish() {
            (depth < kTrieFull ||
             (node.count > kTrieSpan && depth < kTrieDepth));
   };
-  auto* budget = _nodes.get_allocator().budget;
+  auto& budget = *_nodes.get_allocator().budget;
   TrackedVector<uint32_t> queue{TrackedAllocator<uint32_t>{budget}};
   queue.reserve(_nodes.size());
   queue.push_back(root);

@@ -51,10 +51,9 @@ struct PayloadBlockSetting {
   }
 };
 
-using TrainTask = absl::FunctionRef<void(size_t task, FixedBudget* budget)>;
+using TrainTask = absl::FunctionRef<void(size_t task, LocalBudget& budget)>;
 
-using TrainFanout =
-  absl::FunctionRef<void(size_t tasks, size_t task_bytes, TrainTask task)>;
+using TrainFanout = absl::FunctionRef<void(size_t tasks, TrainTask task)>;
 
 class QuantizerWriter {
  public:
@@ -219,8 +218,7 @@ bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept;
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   const AnnInfo::Quantizer& quant, uint32_t d, VectorMetric metric,
-  uint32_t pq_niter = 0, bool row_major = false,
-  MemoryBudget* budget = nullptr);
+  uint32_t pq_niter = 0, bool row_major = false, LocalBudget& budget = kEmpty);
 
 uint32_t QuantizerRecordSize(const AnnInfo::Quantizer& quant, uint32_t d,
                              VectorMetric metric, bool row_major);
@@ -231,7 +229,7 @@ size_t QuantizerTrainSamples(const AnnInfo::Quantizer& quant, uint32_t d,
 
 std::shared_ptr<const QuantizerStats> MakeQuantizerStats(
   VectorQuantization quant, uint32_t d, std::span<const byte_type> stats,
-  VectorMetric metric, bool row_major = false, MemoryBudget* budget = nullptr);
+  VectorMetric metric, bool row_major = false, LocalBudget& budget = kEmpty);
 
 std::shared_ptr<const QuantizerStats> ReadQuantizerStats(
   duckdb::InputFileReader& in, VectorQuantization quant, uint32_t d,

@@ -119,24 +119,6 @@ size_t ScatterScratch::Bytes(size_t terms, size_t blocks) noexcept {
             kBlockColumns * sizeof(uint32_t*));
 }
 
-void ScatterScratch::Reserve(size_t terms, size_t blocks,
-                             duckdb::Allocator& allocator) {
-  cursors.reserve(terms);
-  ranked.reserve(terms);
-  if (terms >= kRadixThreshold) {
-    ranked_alt.reserve(terms);
-    radix_counts.reserve(kRadixPasses * kRadixBuckets);
-  }
-  bounds.reserve(terms + 1);
-  for (auto* column : {&docs, &pos, &offs_start, &offs_end}) {
-    column->reserve(blocks);
-  }
-  this->blocks.reserve(blocks);
-  while (this->blocks.size() < blocks) {
-    this->blocks.push_back(allocator.Allocate(kBlockValues * sizeof(uint32_t)));
-  }
-}
-
 size_t ScatteredField::Blocks(const FieldInverter& field,
                               uint64_t nocc) noexcept {
   return ScatterColumns(field) *

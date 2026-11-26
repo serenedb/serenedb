@@ -26,7 +26,9 @@
 #include <iresearch/search/filters/all_filter.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/granular_range_filter.hpp>
+#include <iresearch/search/queries/boolean_query.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
+#include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/numeric_utils.hpp>
 #include <iterator>
 #include <memory>
@@ -214,6 +216,29 @@ TEST_P(CountSingleValuedTest, ranges_count_from_term_statistics) {
     CheckCount(*Range(kMulti, lo, hi), MultiIn(lo, hi));
   }
   CheckDocs(*Range(kUnique, 100, 110), 11);
+}
+
+TEST_P(CountSingleValuedTest, prepared_queries_keep_disjoint_clauses) {
+  auto writer = open_writer(tests::kOmCreate);
+  Build(*writer);
+  irs::BooleanFilter filter;
+  for (const auto value : {1, 2, 3}) {
+    filter.Add(Term(kSingle, value), irs::Occur::Should);
+  }
+  for (const auto value : {4, 5}) {
+    filter.Add(Term(kSingle, value), irs::Occur::MustNot);
+  }
+  filter.SetMinShouldMatch(1);
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  irs::QueryMemory query_memory;
+  const auto query =
+    irs::PrepareMasked(filter, reader[0], {.memory = query_memory});
+  ASSERT_NE(nullptr, query);
+  ASSERT_EQ(irs::QueryKind::Boolean, query->Kind());
+  const auto& boolean = irs::utils::downCast<irs::BooleanQuery>(*query);
+  EXPECT_TRUE(boolean.Bucket(irs::Occur::Should).disjoint);
+  EXPECT_TRUE(boolean.Bucket(irs::Occur::MustNot).disjoint);
 }
 
 TEST_P(CountSingleValuedTest, disjunctions_sum_only_disjoint_clauses) {

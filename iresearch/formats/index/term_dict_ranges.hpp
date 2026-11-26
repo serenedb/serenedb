@@ -46,13 +46,14 @@ class RangeWriter final {
 
   bool Active() const noexcept { return _pw != nullptr; }
   DocTee Tee() noexcept;
-  void Begin(PostingsWriter& pw, uint64_t docs, MemoryBudget& budget);
+  void Begin(PostingsWriter& pw, uint64_t docs, LocalBudget& budget);
   void Add(bytes_view term, const PostingMeta& meta);
   void Finish(uint64_t terms);
   size_t Height() const noexcept { return _height; }
   uint32_t Count(size_t level) const noexcept { return _levels[level].count; }
   Entry At(size_t level, uint32_t i) const noexcept;
   void Clear() noexcept;
+  void Shrink() noexcept;
 
  private:
   struct RangePosting {

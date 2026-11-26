@@ -50,6 +50,7 @@
 #include "connector/column_id.h"
 #include "connector/optimizer/iresearch_plan.h"
 #include "connector/scan/scan_state.h"
+#include "pg/connection_context.h"
 #include "query/config.h"
 #include "search/scorer_options.h"
 
@@ -503,7 +504,9 @@ duckdb::unique_ptr<duckdb::LocalTableFunctionState> IResearchScanInitLocal(
       break;
     }
   }
-  result->Cast<ScanLocalState>().worker = worker;
+  auto& local = result->Cast<ScanLocalState>();
+  local.worker = worker;
+  local.plan_memory.Bind(ConnectionContext::Get(*g.client_context).Memory());
   return result;
 }
 

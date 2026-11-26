@@ -118,7 +118,7 @@ struct LayerLayout {
 TrackedVector<float> GatherTrainingSample(const ColumnReader& vector_column,
                                           uint64_t rows, uint32_t d,
                                           ReadContext& ctx, uint64_t n_train,
-                                          uint32_t seed, MemoryBudget* budget) {
+                                          uint32_t seed, LocalBudget& budget) {
   TrackedVector<float> sample(static_cast<size_t>(n_train) * d,
                               TrackedAllocator<float>{budget});
   pcg32 rng{seed};
@@ -191,10 +191,9 @@ TrackedVector<float> GatherTrainingSample(const ColumnReader& vector_column,
 struct BuildSettings {
   size_t posting_size;
   size_t max_fanout;
-  size_t max_rows;
   VectorMetric metric;
   size_t niter;
-  MemoryBudget* budget;
+  LocalBudget& budget;
 
   bool IsLeaf(size_t sample_size) const noexcept {
     return sample_size <= posting_size;
@@ -232,7 +231,7 @@ size_t RemoveEmptyCentroids(std::vector<float>& centroids,
 
 auto BuildAndSplit(std::span<float> data, size_t d, std::span<size_t> ids,
                    size_t n_clusters, VectorMetric metric, size_t niter,
-                   const float* rotation, MemoryBudget* budget) {
+                   const float* rotation, LocalBudget& budget) {
   auto centroids = TrainCentroids(
     metric, data.data(), data.size() / d, static_cast<uint32_t>(n_clusters),
     static_cast<uint32_t>(d), kTrainSeed, static_cast<uint32_t>(niter),
@@ -287,13 +286,11 @@ void Build(TrackedVector<CentroidsBuilder::Node>& nodes, std::span<float> data,
     children.reserve(rows);
     return children;
   };
-  size_t rows = 0;
   while (!centroids_build.empty()) {
     const auto entry = centroids_build.front();
     size_t sample_size = entry.sample.size() / d;
     centroids_build.pop_front();
-    if (settings.IsLeaf(sample_size) ||
-        rows + settings.Fanout(sample_size) > settings.max_rows) {
+    if (settings.IsLeaf(sample_size)) {
       if (entry.parent < nodes.size()) {
         nodes[entry.parent].leafs++;
         nodes[entry.parent].children.emplace_back(0);
@@ -310,7 +307,6 @@ void Build(TrackedVector<CentroidsBuilder::Node>& nodes, std::span<float> data,
           .leafs = 1,
         });
         node.children.push_back(0);
-        rows += 1;
       }
       // centroid from parent will route to this posting
       continue;
@@ -347,7 +343,6 @@ void Build(TrackedVector<CentroidsBuilder::Node>& nodes, std::span<float> data,
       .centroids = node_centroids(centroids),
       .children = node_children(n_built),
     });
-    rows += n_built;
     ForEachGroup(entry.ids, n_built, [&](size_t, size_t start, size_t count) {
       centroids_build.emplace_back(CentroidsEntry{
         .parent = nodes.size() - 1,
@@ -548,13 +543,12 @@ void CentroidsTree::Search(std::span<const float> query,
 }
 
 void CentroidsBuilder::BuildTree(TrackedVector<float> sample, size_t leaf_size,
-                                 size_t max_fanout, MemoryBudget* budget) {
+                                 size_t max_fanout, LocalBudget& budget) {
   const size_t n = sample.size() / _d;
   const auto posting_size = std::max<size_t>(1, leaf_size);
   BuildSettings settings{
     .posting_size = posting_size,
     .max_fanout = max_fanout,
-    .max_rows = MaxClusterRows(n, posting_size),
     .metric = _metric,
     .niter = kClusterIters,
     .budget = budget,
@@ -564,7 +558,6 @@ void CentroidsBuilder::BuildTree(TrackedVector<float> sample, size_t leaf_size,
     NormalizeRows(sample.data(), n, _d);
   }
   _nodes = TrackedVector<Node>{TrackedAllocator<Node>{budget}};
-  _nodes.reserve(settings.max_rows);
   Build(_nodes, sample, _d, ids, settings);
   _row_bases =
     TrackedVector<size_t>(_nodes.size(), TrackedAllocator<size_t>{budget});
@@ -576,7 +569,7 @@ void CentroidsBuilder::BuildTree(TrackedVector<float> sample, size_t leaf_size,
 
 CentroidsBuilder CentroidsBuilder::BuildFromSample(
   TrackedVector<float> sample, uint32_t d, VectorMetric metric,
-  size_t leaf_size, size_t max_fanout, MemoryBudget* budget) {
+  size_t leaf_size, size_t max_fanout, LocalBudget& budget) {
   CentroidsBuilder builder;
   builder._metric = metric;
   builder._d = d;

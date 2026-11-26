@@ -49,10 +49,10 @@ struct EmptySubReader final : SubReader {
   std::span<const field_id> field_ids() const final { return {}; }
 };
 
-const EmptySubReader kEmpty;
+const EmptySubReader kEmptyReader;
 
 }  // namespace
 
-const SubReader& SubReader::empty() noexcept { return kEmpty; }
+const SubReader& SubReader::empty() noexcept { return kEmptyReader; }
 
 }  // namespace irs

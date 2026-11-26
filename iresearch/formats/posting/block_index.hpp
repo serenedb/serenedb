@@ -484,7 +484,7 @@ class BlockCursor {
 
 class BlockIndexWriter {
  public:
-  explicit BlockIndexWriter(MemoryBudget* budget)
+  explicit BlockIndexWriter(LocalBudget& budget)
     : _last{TrackedAllocator<doc_id_t>{budget}},
       _end{TrackedAllocator<uint64_t>{budget}},
       _pos_group{TrackedAllocator<uint64_t>{budget}},

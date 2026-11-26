@@ -34,7 +34,7 @@ class DedupScratch {
     bool fresh;
   };
 
-  explicit DedupScratch(MemoryBudget* budget)
+  explicit DedupScratch(LocalBudget& budget)
     : _slots{TrackedAllocator<Slot>{budget}} {}
 
   void Begin(size_t entries) {

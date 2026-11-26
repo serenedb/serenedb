@@ -352,11 +352,11 @@ Format15TestCase::ReadMeta Format15TestCase::WriteReadMeta(
   const tests::IndexDir& dir, DocsView docs, irs::ScorerPtr scorer,
   irs::IndexFeatures features) {
   EXPECT_TRUE(scorer);
-  irs::PostingsWriter writer{nullptr};
+  irs::PostingsWriter writer{irs::kEmpty};
   irs::PostingMeta posting_meta;
 
   {
-    irs::MemoryBudget budget{nullptr};
+    irs::LocalBudget budget{irs::gRootBudget};
     const irs::FlushState state{
       .tracker = dir.Tracker("segment_name"),
       .norms = &irs::SubReader::empty(),

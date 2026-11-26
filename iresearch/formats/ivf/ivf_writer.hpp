@@ -73,10 +73,10 @@ class IvfBuilder {
   AnnFlushBound Bound(uint64_t rows) const;
 
   BuiltIvf Compute(const ColumnReader& vector_column, ReadContext& ctx,
-                   QuantizerWriter* qw, MemoryBudget* budget) const;
+                   QuantizerWriter* qw, LocalBudget& budget) const;
 
  private:
-  CentroidsBuildParams CentroidParams(MemoryBudget* budget) const noexcept;
+  CentroidsBuildParams CentroidParams(LocalBudget& budget) const noexcept;
 
   AnnInfo _info;
 };

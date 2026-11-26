@@ -140,7 +140,7 @@ RunView ParseRun(const byte_type* p, IndexFeatures features) {
   return view;
 }
 
-RecordRun::RecordRun(MemoryBudget* budget)
+RecordRun::RecordRun(LocalBudget& budget)
   : _multi_bits{TrackedAllocator<uint8_t>{budget}},
     _singles{TrackedAllocator<uint64_t>{budget}},
     _docs{TrackedAllocator<uint64_t>{budget}},

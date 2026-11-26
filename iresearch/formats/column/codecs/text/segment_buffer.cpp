@@ -34,10 +34,8 @@ constexpr size_t kMinCapacity = 64 * 1024;
 
 void SegmentBuffer::Grow(size_t need) {
   const size_t capacity = std::max({need, 2 * _capacity, kMinCapacity});
-  ChargeMemory(_budget, kMemoryTag, capacity - _capacity);
-  absl::Cleanup release = [&] {
-    FreeCharge(_budget, kMemoryTag, capacity - _capacity);
-  };
+  _budget.Charge(capacity - _capacity);
+  absl::Cleanup release = [&] { _budget.Free(capacity - _capacity); };
   auto data = std::make_unique_for_overwrite<char[]>(capacity);
   std::move(release).Cancel();
   if (_size != 0) {

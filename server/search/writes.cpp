@@ -49,6 +49,7 @@
 #include "connector/constraint_keys.h"
 #include "connector/full_scanner.h"
 #include "connector/search_sink_writer.hpp"
+#include "pg/connection_context.h"
 #include "search/log_entry.h"
 #include "search/parallel.h"
 #include "search/task.h"
@@ -84,6 +85,17 @@ namespace {
       "Key ",
       connector::ConstraintKeyText(context, key, spec.names, spec.types),
       " is duplicated."));
+}
+
+uint64_t ApplyBytes(const Table& table, const TableCommit& commit) {
+  uint64_t bytes = (table.State()->units.size() + commit.segments.size() + 1) *
+                   (sizeof(TableUnit) + sizeof(std::shared_ptr<TableUnit>));
+  for (const auto& removal : commit.removals) {
+    for (const auto& group : removal->groups) {
+      bytes += 2 * (sizeof(TableUnit) + group.docs.ByteSize());
+    }
+  }
+  return bytes;
 }
 
 void AddChanged(StoreWrites& w, Tick snapshot,
@@ -2012,6 +2024,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
       const auto rows_id = OwnRowsId(w.rows_generation);
       auto removed = TakeRowRemovals(changes.removals, rows_id);
       auto piece = w.store->StartPiece();
+      piece.trx.SetMemory(ConnectionContext::Get(context).Memory());
       size_t chunks = 0;
       {
         const auto made = connector::MakeSearchTableInsertSink(
@@ -2126,6 +2139,7 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
     }
   }
   std::vector<LogSection> sections;
+  uint64_t apply_bytes = 0;
   for (auto& [store_id, w] : _writes) {
     if (!w.prepared) {
       continue;
@@ -2135,11 +2149,15 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
                            .removals = std::move(w.changes.removals),
                            .patches = std::move(w.changes.patches),
                            .manifest = std::move(w.manifest)};
+    apply_bytes += ApplyBytes(w.store->GetTable(), w.commit);
     if (Logged(w)) {
       sections.push_back({.owner = w.owner,
                           .delta = w.store->GetTable().CommitDelta(
                             w.commit, std::move(w.rows))});
     }
+  }
+  if (apply_bytes != 0) {
+    ConnectionContext::Get(context).Memory().Admit(apply_bytes);
   }
   return sections;
 }

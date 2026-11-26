@@ -273,7 +273,7 @@ class TermsReader final : public irs::BasicTermReader {
 
 void Write(std::string_view root, const Terms& terms, Ladder ladder,
            bool ranges, uint64_t rows) {
-  irs::MemoryBudget budget{nullptr};
+  irs::LocalBudget budget{irs::gRootBudget};
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   irs::FileTracker tracker{fs, root, "segment"};
@@ -282,8 +282,8 @@ void Write(std::string_view root, const Terms& terms, Ladder ladder,
     .doc_count = rows,
     .budget = budget,
   };
-  irs::IdxWriter idx{tracker, nullptr};
-  irs::term_dict::FieldWriter writer{false, nullptr};
+  irs::IdxWriter idx{tracker, budget};
+  irs::term_dict::FieldWriter writer{false, budget};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1, 0);
   writer.write(irs::NumericLayout::kNumbers,

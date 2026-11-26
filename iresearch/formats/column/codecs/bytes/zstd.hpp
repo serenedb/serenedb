@@ -56,7 +56,7 @@ struct Zstd {
 
   class Compressor final : public DictionaryCompressor {
    public:
-    Compressor(MemoryBudget* budget, uint8_t level);
+    Compressor(LocalBudget& budget, uint8_t level);
 
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 

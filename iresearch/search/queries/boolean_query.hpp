@@ -79,6 +79,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
       out.filters.emplace_back(std::move(filter));
     }
     out.uniformity = from.uniformity;
+    out.disjoint = from.disjoint;
     return out;
   }
 

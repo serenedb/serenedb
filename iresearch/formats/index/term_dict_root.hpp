@@ -42,7 +42,7 @@ namespace irs::term_dict {
 
 struct Separators {
   Separators() = default;
-  explicit Separators(MemoryBudget* budget)
+  explicit Separators(LocalBudget& budget)
     : arena{TrackedAllocator<byte_type>{budget}},
       offsets(1, 0, TrackedAllocator<uint32_t>{budget}) {}
 
@@ -106,7 +106,7 @@ class EytzingerRoot : public SeparatorRoot {
   };
 
   EytzingerRoot() = default;
-  EytzingerRoot(SeparatorsView separators, MemoryBudget* budget);
+  EytzingerRoot(SeparatorsView separators, LocalBudget& budget);
   EytzingerRoot(SeparatorsView separators, duckdb::ReadStream& in);
   EytzingerRoot(EytzingerRoot&&) noexcept = default;
   EytzingerRoot& operator=(EytzingerRoot&&) noexcept = default;
@@ -135,12 +135,12 @@ class EytzingerRoot : public SeparatorRoot {
 class TreeRoot : public SeparatorRoot {
  public:
   TreeRoot() = default;
-  TreeRoot(SeparatorsView separators, MemoryBudget* budget);
+  TreeRoot(SeparatorsView separators, LocalBudget& budget);
   TreeRoot(SeparatorsView separators, duckdb::ReadStream& in);
 
   void Write(duckdb::WriteStream& out) const;
 
-  static size_t Height(size_t count, MemoryBudget* budget) {
+  static size_t Height(size_t count, LocalBudget& budget) {
     return LevelSizes(count, budget).size();
   }
 
@@ -164,7 +164,7 @@ class TreeRoot : public SeparatorRoot {
     size_t outside;
   };
 
-  static TrackedVector<size_t> LevelSizes(size_t count, MemoryBudget* budget);
+  static TrackedVector<size_t> LevelSizes(size_t count, LocalBudget& budget);
   Located Locate(bytes_view key) const noexcept;
   size_t Descend(uint64_t head) const noexcept;
   size_t Resolve(size_t from, size_t upper, uint64_t head,
@@ -183,7 +183,7 @@ class TreeRoot : public SeparatorRoot {
 class ArtRoot : public SeparatorRoot {
  public:
   ArtRoot() = default;
-  ArtRoot(SeparatorsView separators, MemoryBudget* budget);
+  ArtRoot(SeparatorsView separators, LocalBudget& budget);
   ArtRoot(SeparatorsView separators, duckdb::ReadStream& in);
 
   void Write(duckdb::WriteStream& out) const;
@@ -218,7 +218,7 @@ class Root {
 
  public:
   Root() = default;
-  Root(SeparatorsView separators, bool fixed, MemoryBudget* budget);
+  Root(SeparatorsView separators, bool fixed, LocalBudget& budget);
   Root(SeparatorsView separators, duckdb::ReadStream& in);
 
   void Write(duckdb::WriteStream& out) const;

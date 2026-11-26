@@ -132,7 +132,7 @@ class Table {
 
 class Codec {
  public:
-  explicit Codec(MemoryBudget* budget);
+  explicit Codec(LocalBudget& budget);
 
   void Train(std::span<const duckdb::string_t> entries, uint64_t raw);
 

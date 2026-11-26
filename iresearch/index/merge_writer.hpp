@@ -76,11 +76,11 @@ class MergeWriter : public util::Noncopyable {
 
   MergeWriter(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
               std::string_view root, const SegmentWriterOptions& options,
-              MemoryBudget& budget)
+              LocalBudget& budget)
     : _fs{fs},
       _root{root},
       _budget{budget},
-      _readers{TrackedAllocator<ReaderCtx>{&budget}},
+      _readers{TrackedAllocator<ReaderCtx>{budget}},
       _scorer{options.scorer},
       _db{db},
       _field_options{options.field_options},
@@ -96,10 +96,6 @@ class MergeWriter : public util::Noncopyable {
       _readers.emplace_back(*begin++);
     }
   }
-
-  size_t Bound() const;
-
-  void Reserve();
 
   // Flush all added readers into a single segment.
   auto Flush(SegmentMeta& segment, const FlushProgress& progress = {},
@@ -119,7 +115,7 @@ class MergeWriter : public util::Noncopyable {
  private:
   duckdb::FileSystem& _fs;
   std::string _root;
-  MemoryBudget& _budget;
+  LocalBudget& _budget;
   TrackedVector<ReaderCtx> _readers;
   ScorerPtr _scorer;
   duckdb::DatabaseInstance& _db;

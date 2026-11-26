@@ -105,7 +105,7 @@ class PrefixTrie {
   };
 
   PrefixTrie() = default;
-  explicit PrefixTrie(const TrieShape& shape, MemoryBudget* budget);
+  explicit PrefixTrie(const TrieShape& shape, LocalBudget& budget);
   explicit PrefixTrie(duckdb::ReadStream& in);
 
   void Write(duckdb::WriteStream& out) const;
@@ -226,7 +226,7 @@ class PrefixTrie {
 
 class PrefixTrieBuilder {
  public:
-  explicit PrefixTrieBuilder(MemoryBudget* budget)
+  explicit PrefixTrieBuilder(LocalBudget& budget)
     : _nodes{TrackedAllocator<Node>{budget}},
       _open{TrackedAllocator<uint32_t>{budget}},
       _window{TrackedAllocator<Recent>{budget}},

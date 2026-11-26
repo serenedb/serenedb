@@ -30,6 +30,7 @@
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
+#include "pg/connection_context.h"
 #include "search/parallel.h"
 
 namespace sdb::connector {
@@ -41,7 +42,8 @@ const irs::QueryBuilder& EnsureSegmentQuery(ScanGlobalState& g,
     SDB_ASSERT(l);
     if (!l->query_memory) {
       absl::MutexLock lock{&g.query_memories_mutex};
-      l->query_memory = &g.query_memories.emplace_back();
+      l->query_memory = &g.query_memories.emplace_back(
+        ConnectionContext::Get(*g.client_context).Memory());
     }
     l->query_memory->Scratch().Rewind();
     irs::PrepareCollector* collector = nullptr;

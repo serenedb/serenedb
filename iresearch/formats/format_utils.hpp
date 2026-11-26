@@ -66,7 +66,7 @@ Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
 std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
                                                        std::string_view root,
                                                        std::string_view name,
-                                                       MemoryBudget* budget);
+                                                       LocalBudget& budget);
 
 std::unique_ptr<duckdb::BufferedFileWriter> PrepareOutput(
   const FlushState& state, std::string_view ext, uint8_t kind);

@@ -104,7 +104,7 @@ void ColWriter::EnsureOut() {
     return;
   }
   _out = format_utils::OpenOutput(_tracker.Fs(), _tracker.Root(), _filename,
-                                  _budget);
+                                  *_budget);
   _tracker.Add(kColFile);
   _write_ctx = std::make_unique<WriteContext>(_db->GetBufferManager(), *_out);
 }
@@ -382,8 +382,6 @@ bool ColWriter::Commit(uint64_t target_row,
   for (auto& entry : _columns) {
     footer.columns.push_back(std::move(entry.meta));
   }
-  static constexpr byte_type kMappingSlack[duckdb::Storage::SECTOR_SIZE]{};
-  _out->WriteData(kMappingSlack, sizeof(kMappingSlack));
   format_utils::WriteFooter(*_out, [&](duckdb::BinarySerializer& out) {
     out.WriteOptionalList(
       kColFieldColumns, "columns", footer.columns.size(),

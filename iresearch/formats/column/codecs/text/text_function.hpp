@@ -110,7 +110,7 @@ struct CodecState final : State {
       segment{budget, type},
       trials{data.Allocator()} {}
 
-  MemoryBudget* budget;
+  LocalBudget& budget;
   const duckdb::LogicalType& type;
   DedupScratch dedup;
   Compression builder;

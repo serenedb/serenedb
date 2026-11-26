@@ -192,12 +192,12 @@ Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
 std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
                                                        std::string_view root,
                                                        std::string_view name,
-                                                       MemoryBudget* budget) {
+                                                       LocalBudget& budget) {
   auto path = fs.JoinPath(root, name);
   auto writer = fs.OpenFileWriter(path);
-  if (budget) {
+  if (&budget != &kEmpty) {
     writer->FundFrom(
-      budget->Lend(duckdb::MemoryTag::EXTERNAL_FILE_CACHE, kOutputBlockBytes));
+      budget.Lend(duckdb::MemoryTag::EXTERNAL_FILE_CACHE, kOutputBlockBytes));
   }
   return std::make_unique<duckdb::BufferedFileWriter>(fs, std::move(path),
                                                       std::move(writer));
@@ -207,7 +207,7 @@ std::unique_ptr<duckdb::BufferedFileWriter> PrepareOutput(
   const FlushState& state, std::string_view ext, uint8_t kind) {
   auto& tracker = state.tracker;
   auto out = OpenOutput(tracker.Fs(), tracker.Root(),
-                        FileName(tracker.Name(), ext), &state.budget);
+                        FileName(tracker.Name(), ext), state.budget);
   tracker.Add(kind);
   return out;
 }

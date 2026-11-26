@@ -218,7 +218,7 @@ idx_t DataSizeInBytes(const ContainerMetadata& metadata, idx_t container_size) {
 struct ContainerMetadataCollection {
   ContainerMetadataCollection() = default;
 
-  explicit ContainerMetadataCollection(MemoryBudget* budget)
+  explicit ContainerMetadataCollection(LocalBudget& budget)
     : container_type{TrackedAllocator<uint8_t>{budget}},
       number_of_runs{TrackedAllocator<uint8_t>{budget}},
       cardinality{TrackedAllocator<uint8_t>{budget}} {}
@@ -469,7 +469,7 @@ void PackBooleans(ValidityMask& packed,
 }
 
 struct RoaringAnalyzeState {
-  explicit RoaringAnalyzeState(MemoryBudget* budget)
+  explicit RoaringAnalyzeState(LocalBudget& budget)
     : metadata_collection{budget},
       container_metadata{TrackedAllocator<ContainerMetadata>{budget}} {}
 

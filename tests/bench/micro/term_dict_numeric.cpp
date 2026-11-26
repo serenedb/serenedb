@@ -220,7 +220,7 @@ void Write(Data& data) {
   std::filesystem::remove_all(path);
   std::filesystem::create_directories(path);
   data.root = path.string();
-  irs::MemoryBudget budget{nullptr};
+  irs::LocalBudget budget{irs::gRootBudget};
   auto& db = irs::DuckDBEngine::Instance().instance();
   auto& fs = duckdb::FileSystem::GetFileSystem(db);
   irs::FileTracker tracker{fs, data.root, "segment"};
@@ -229,8 +229,8 @@ void Write(Data& data) {
     .doc_count = data.doc_count,
     .budget = budget,
   };
-  irs::IdxWriter idx{tracker, nullptr};
-  irs::term_dict::FieldWriter writer{false, nullptr};
+  irs::IdxWriter idx{tracker, budget};
+  irs::term_dict::FieldWriter writer{false, budget};
   writer.SetIdxWriter(idx);
   writer.prepare(state, 1, 0);
   writer.write(

@@ -972,7 +972,7 @@ TEST(ObjectStoreIndexTest, a_merge_reads_its_segments_ahead) {
   store.ResetRequests();
   const tests::IndexDir merged{Db(), TestEnv::MemoryRoot()};
   irs::SegmentMeta meta;
-  irs::MemoryBudget budget{nullptr};
+  irs::LocalBudget budget{irs::gRootBudget};
   irs::MergeWriter merger{merged.Db(), merged.Fs(), merged.Root(),
                           irs::SegmentWriterOptions{}, budget};
   merger.Reset(reader.begin(), reader.end());

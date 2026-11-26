@@ -52,7 +52,7 @@ void WriteGraphFrames(duckdb::BinarySerializer& graph,
 
 }  // namespace
 
-IdxWriter::IdxWriter(FileTracker& tracker, MemoryBudget* budget)
+IdxWriter::IdxWriter(FileTracker& tracker, LocalBudget& budget)
   : _tracker{tracker},
     _filename{FileName(tracker.Name(), kIdxFormatExt)},
     _budget{budget} {}

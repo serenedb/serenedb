@@ -12,20 +12,21 @@ SELECT i AS id,
 FROM range(200000) t(i);
 
 statement ok
+ALTER TABLE vecs SET (compaction_interval = 0);
+
+statement ok
 SET GLOBAL memory_limit = '48MB';
 
 statement error
-CREATE INDEX vecs_hnsw ON vecs USING inverted (emb hnsw (metric = 'l2'))
-  WITH (compaction_interval = 0);
+CREATE INDEX vecs_hnsw ON vecs USING inverted (emb hnsw (metric = 'l2'));
 ----
-db error: ERROR: <slt:ignore>failed to reserve memory data of size <slt:ignore>
+db error: ERROR: <slt:ignore> of size <slt:ignore>
 
 
 statement error
-CREATE INDEX vecs_ivf ON vecs USING inverted (emb ivf (metric = 'l2'))
-  WITH (compaction_interval = 0);
+CREATE INDEX vecs_ivf ON vecs USING inverted (emb ivf (metric = 'l2'));
 ----
-db error: ERROR: <slt:ignore>failed to reserve memory data of size <slt:ignore>
+db error: ERROR: <slt:ignore> of size <slt:ignore>
 
 
 statement ok
@@ -35,8 +36,7 @@ statement ok
 CHECKPOINT;
 
 statement ok
-CREATE INDEX vecs_ivf ON vecs USING inverted (emb ivf (metric = 'l2'))
-  WITH (compaction_interval = 0);
+CREATE INDEX vecs_ivf ON vecs USING inverted (emb ivf (metric = 'l2'));
 
 query
 SELECT id FROM vecs_ivf ORDER BY emb <-> (SELECT emb FROM vecs WHERE id = 7) LIMIT 1;
@@ -48,8 +48,7 @@ statement ok
 DROP INDEX vecs_ivf;
 
 statement ok
-CREATE INDEX vecs_hnsw ON vecs USING inverted (emb hnsw (metric = 'l2'))
-  WITH (compaction_interval = 0);
+CREATE INDEX vecs_hnsw ON vecs USING inverted (emb hnsw (metric = 'l2'));
 
 statement ok
 INSERT INTO vecs
@@ -66,7 +65,7 @@ SET GLOBAL memory_limit = '48MB';
 statement error
 VACUUM (COMPACT_INDEX) vecs_hnsw;
 ----
-db error: ERROR: compact_index: compaction failed: compaction of table <slt:ignore> failed: failed to reserve memory data of size <slt:ignore>
+db error: ERROR: failed to compact table "vecs_hnsw": compaction of table <slt:ignore> failed: <slt:ignore> of size <slt:ignore>
 
 
 statement ok

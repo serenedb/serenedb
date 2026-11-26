@@ -63,7 +63,7 @@ class ListKeys {
   static constexpr size_t kSource = 0;
   static constexpr size_t kStore = 1;
 
-  explicit ListKeys(MemoryBudget* budget)
+  explicit ListKeys(LocalBudget& budget)
     : _chunks{Node::Empty(TrackedAllocator<Node>{budget}),
               Node::Empty(TrackedAllocator<Node>{budget})} {}
 
@@ -164,7 +164,7 @@ struct ListParts {
 
 class ListIngest {
  public:
-  ListIngest(MemoryBudget* budget, const duckdb::LogicalType& type, bool borrow,
+  ListIngest(LocalBudget& budget, const duckdb::LogicalType& type, bool borrow,
              uint64_t code_base = 0, uint64_t running = 0);
 
   void AddNulls(duckdb::idx_t count);

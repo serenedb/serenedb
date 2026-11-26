@@ -382,7 +382,7 @@ bool Table::Open(std::string_view table) {
 
 void Table::Corrupted() { ThrowCorrupted("text", "entry is inconsistent"); }
 
-Codec::Codec(MemoryBudget* budget)
+Codec::Codec(LocalBudget& budget)
   : _ids{TrackedAllocator<std::pair<const std::string, uint32_t>>{budget}},
     _lengths(kPairLengths, TrackedAllocator<uint16_t>{budget}),
     _tokens{TrackedAllocator<std::string>{budget}},

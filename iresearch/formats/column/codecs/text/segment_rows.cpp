@@ -105,7 +105,7 @@ uint64_t CodesBytes(uint64_t rows, uint64_t entries, double ratio) noexcept {
 }  // namespace
 
 void CompressCodes(
-  MemoryBudget* budget, std::span<uint32_t> codes, double& ratio,
+  LocalBudget& budget, std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write) {
   SDB_ASSERT(!codes.empty());
   const WriteChunk chunk{
@@ -290,7 +290,7 @@ void PlainRows::Write(const EncodedFrames& frames, Segment& out) {
 }
 
 void DictionaryRows::Write(const EncodedFrames& frames, Segment& out) {
-  CompressCodes(_codes.get_allocator().budget, _codes, _codes_ratio,
+  CompressCodes(*_codes.get_allocator().budget, _codes, _codes_ratio,
                 [&](CodecType codec, std::string_view codes) {
                   Assemble(frames, codec, codes, _sorted, out);
                 });

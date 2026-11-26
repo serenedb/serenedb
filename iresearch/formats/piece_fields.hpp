@@ -139,7 +139,7 @@ class PieceFields final {
 class PieceFieldWriter final : public FieldSink {
  public:
   PieceFieldWriter(PieceFields& fields, bool compaction) noexcept
-    : _pw{nullptr}, _fields{&fields}, _compaction{compaction} {}
+    : _pw{kEmpty}, _fields{&fields}, _compaction{compaction} {}
 
   void prepare(const FlushState& state, uint64_t keyed_dicts,
                uint64_t terms) final;

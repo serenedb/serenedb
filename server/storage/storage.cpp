@@ -21,18 +21,18 @@
 
 #include "storage/storage.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/flags/flag.h>
 
 #include <cstdint>
 #include <duckdb/common/error_data.hpp>
+#include <duckdb/common/exception.hpp>
 #include <duckdb/common/file_system.hpp>
-#include <duckdb/common/string_util.hpp>
 #include <duckdb/main/database.hpp>
-#include <duckdb/storage/buffer/buffer_pool.hpp>
-#include <duckdb/storage/buffer_manager.hpp>
 #include <exception>
 #include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <utility>
 
@@ -58,18 +58,6 @@ duckdb::FileSystem& DataFileSystem() {
   return irs::DuckDBEngine::Instance().instance().GetInternalFileSystem();
 }
 
-void RestoreMemoryLimit(duckdb::BufferManager& buffers, uint64_t limit) {
-  buffers.GetBufferPool().ForceLimit(limit);
-  if (const auto used = buffers.GetUsedMemory(); used > limit) {
-    SDB_WARN(STARTUP, "replaying the logs at startup took ",
-             duckdb::StringUtil::BytesToHumanReadableString(used),
-             " of memory, above memory_limit ",
-             duckdb::StringUtil::BytesToHumanReadableString(limit),
-             "; statements that need memory fail until the tables write the "
-             "replayed rows to segments");
-  }
-}
-
 }  // namespace
 
 StorageConfig ReadStorageConfig() {
@@ -93,18 +81,18 @@ Storage::Storage(Runtime& runtime, const StorageConfig& config)
     initialized = Lock(config.directory);
     network::pg::hba::SetHbaConfig(config.hba_config);
   }
+  absl::Cleanup close = [&] { Close(); };
   try {
-    auto& buffers = duckdb::BufferManager::GetBufferManager(
-      irs::DuckDBEngine::Instance().instance());
-    const auto memory_limit = buffers.GetMaxMemory();
-    buffers.SetMemoryLimit();
     catalog::InitCatalog(config.default_database, initialized);
     _search.Start();
-    RestoreMemoryLimit(buffers, memory_limit);
-  } catch (...) {
-    Close();
-    throw;
+  } catch (const duckdb::OutOfMemoryException& e) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_OUT_OF_MEMORY),
+      ERR_MSG("replaying the logs at startup does not fit in memory_limit: ",
+              duckdb::ErrorData{e}.RawMessage()),
+      ERR_HINT("Raise memory_limit in the server configuration."));
   }
+  std::move(close).Cancel();
 }
 
 Storage::~Storage() { Close(); }

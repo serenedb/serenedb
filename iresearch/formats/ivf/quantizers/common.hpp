@@ -512,10 +512,10 @@ uint32_t ScalarRecordSize(uint32_t d, VectorQuantization quant);
 std::unique_ptr<QuantizerWriter> MakePqWriter(VectorMetric metric, uint32_t d,
                                               uint32_t pq_m, uint32_t pq_niter,
                                               bool row_major,
-                                              MemoryBudget* budget);
+                                              LocalBudget& budget);
 std::shared_ptr<const QuantizerStats> MakePqStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
-  bool row_major, MemoryBudget* budget);
+  bool row_major, LocalBudget& budget);
 size_t PqTrainSamples(size_t rows, bool row_major) noexcept;
 uint32_t PqRecordSize(VectorMetric metric, uint32_t pq_m,
                       bool row_major) noexcept;

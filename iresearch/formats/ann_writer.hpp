@@ -61,7 +61,7 @@ class AnnWriter {
   virtual ~AnnWriter() = default;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
-  void SetBudget(MemoryBudget& budget) noexcept { _budget = &budget; }
+  void SetBudget(LocalBudget& budget) noexcept { _budget = &budget; }
 
   virtual AnnKind Kind() const noexcept = 0;
 
@@ -80,7 +80,7 @@ class AnnWriter {
 
  protected:
   IdxWriter* _idx = nullptr;
-  MemoryBudget* _budget = nullptr;
+  LocalBudget* _budget = &kEmpty;
 };
 
 inline std::vector<const BasicTermReader*> PrepareIvfClusterReaders(

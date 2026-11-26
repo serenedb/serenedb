@@ -40,7 +40,7 @@ size_t Lz4::Bound(size_t raw_size) noexcept {
   return static_cast<size_t>(LZ4_compressBound(static_cast<int>(raw_size)));
 }
 
-Lz4::Compressor::Compressor(MemoryBudget* budget, uint8_t level)
+Lz4::Compressor::Compressor(LocalBudget& budget, uint8_t level)
   : DictionaryCompressor{budget, kDictionaryCap},
     _level{EffectiveLevel<Lz4>(level)} {
   if (HighCompression<Lz4>(level)) {

@@ -1,6 +1,6 @@
-# An INSERT reserves the memory its index segment needs to flush. When that
-# does not fit memory_limit, the INSERT fails before the WAL: the table and its
-# index stay in sync, and checkpoints and restarts keep working.
+# An INSERT checks that the memory its index segment needs to flush is free.
+# When it is not, the INSERT fails before the WAL: the table and its index stay
+# in sync, and checkpoints and restarts keep working.
 
 control substitution on
 
@@ -9,11 +9,10 @@ CREATE TEXT SEARCH DICTIONARY fr_words AS
   split_text_csv(' ') WITH (frequency, position);
 
 statement ok
-CREATE TABLE fr (id BIGINT, body TEXT);
+CREATE TABLE fr (id BIGINT, body TEXT) WITH (compaction_interval = 0);
 
 statement ok
-CREATE INDEX fr_idx ON fr USING inverted (body fr_words)
-  WITH (compaction_interval = 0);
+CREATE INDEX fr_idx ON fr USING inverted (body fr_words);
 
 statement ok
 INSERT INTO fr SELECT i, 'seed' FROM range(1000) t(i);
@@ -28,7 +27,7 @@ statement error
 INSERT INTO fr
   SELECT i, repeat('alpha beta gamma delta ', 5) FROM range(1000, 2001000) t(i);
 ----
-db error: ERROR: Failed to commit: failed to reserve memory data of size <slt:ignore>
+db error: ERROR: <slt:ignore>failed to reserve memory data of size <slt:ignore>
 
 
 statement ok

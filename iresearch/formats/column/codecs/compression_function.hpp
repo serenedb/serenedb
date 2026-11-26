@@ -216,7 +216,7 @@ struct ColumnDataCheckpointData {
 
   const duckdb::LogicalType& type;
   WriteContext* ctx = nullptr;
-  MemoryBudget* budget = nullptr;
+  LocalBudget& budget = kEmpty;
   FlushSegmentFn flush;
   ColCodecParams params;
   ColumnTuning& tuning;

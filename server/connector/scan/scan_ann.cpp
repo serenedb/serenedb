@@ -33,6 +33,7 @@
 
 #include "connector/scan/scan_plan.h"
 #include "connector/scan/scan_state.h"
+#include "pg/connection_context.h"
 
 namespace sdb::connector {
 namespace {
@@ -274,8 +275,9 @@ irs::TrackedVector<irs::ScoreDoc> RankExactly(ScanGlobalState& g,
   const auto filter =
     MakeVectorFilter(vs, g.ClaimedWhere(), vs.EffectiveRadius());
   irs::TrackedVector<irs::ScoreDoc> ranked;
-  irs::QueryMemory query_memory;
-  irs::PlanMemory plan_memory;
+  auto& memory = ConnectionContext::Get(*g.client_context).Memory();
+  irs::QueryMemory query_memory{memory};
+  irs::PlanMemory plan_memory{memory};
   l.score_fetcher.Clear();
   absl::Cleanup clear_fetcher = [&] { l.score_fetcher.Clear(); };
   irs::ann::SharedFloor floor{1};

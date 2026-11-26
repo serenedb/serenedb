@@ -80,13 +80,13 @@ class DictionaryCompressor {
   std::string_view Stored() const noexcept { return _stored; }
 
  protected:
-  DictionaryCompressor(MemoryBudget* budget, size_t cap) noexcept
+  DictionaryCompressor(LocalBudget& budget, size_t cap) noexcept
     : _cap{cap},
       _dictionary{TrackedAllocator<char>{budget}},
       _stored{TrackedAllocator<char>{budget}} {}
 
-  MemoryBudget* Budget() const noexcept {
-    return _dictionary.get_allocator().budget;
+  LocalBudget& Budget() const noexcept {
+    return *_dictionary.get_allocator().budget;
   }
 
  private:

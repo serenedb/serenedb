@@ -33,6 +33,7 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/table_filter.hpp"
 #include "iresearch/search/queries/query_builder_impl.hpp"
+#include "iresearch/utils/blocking_once.hpp"
 #include "iresearch/utils/containers/fixed.hpp"
 #include "iresearch/utils/query_memory.hpp"
 #include "iresearch/utils/tracked.hpp"
@@ -72,14 +73,17 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
 
   bool ScansByColumn() const;
 
+  void PrepareDistance() const;
+
   void ScanColumn(PlanMemory& memory, HnswSearchScratch& scratch) const;
 
   void Widen(QuantizerReader& reader, HnswSearchScratch& scratch,
              memory::ArenaVector<score_t>& spreads) const;
 
   std::shared_ptr<const HnswData> _data;
-  std::shared_ptr<const QuantizerCodebook> _codebook;
-  std::shared_ptr<const PanoramaQuery> _panorama;
+  mutable BlockingOnce _prepared;
+  mutable std::shared_ptr<const QuantizerCodebook> _codebook;
+  mutable std::shared_ptr<const PanoramaQuery> _panorama;
   AnnQueryCache* _cache;
   QueryBuilder::ptr _inner;
   QueryBuilder::ptr _index_part;

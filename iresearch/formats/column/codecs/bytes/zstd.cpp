@@ -37,17 +37,17 @@
 namespace irs::codecs {
 namespace {
 
-ZSTD_customMem TrackedMem(MemoryBudget* budget) noexcept {
+ZSTD_customMem TrackedMem(LocalBudget& budget) noexcept {
   return {
     .customAlloc =
       [](void* opaque, size_t size) {
-        return TrackedMalloc(static_cast<MemoryBudget*>(opaque), size);
+        return TrackedMalloc(*static_cast<LocalBudget*>(opaque), size);
       },
     .customFree =
       [](void* opaque, void* p) {
-        TrackedFree(static_cast<MemoryBudget*>(opaque), p);
+        TrackedFree(*static_cast<LocalBudget*>(opaque), p);
       },
-    .opaque = budget,
+    .opaque = &budget,
   };
 }
 
@@ -80,7 +80,7 @@ size_t Zstd::ContextBytes(uint8_t level) noexcept {
                                          ZSTD_dlm_byRef);
 }
 
-Zstd::Compressor::Compressor(MemoryBudget* budget, uint8_t level)
+Zstd::Compressor::Compressor(LocalBudget& budget, uint8_t level)
   : DictionaryCompressor{budget, kDictionaryCap},
     _level{EffectiveLevel<Zstd>(level)},
     _ctx{Created(ZSTD_createCCtx_advanced(TrackedMem(budget)),
@@ -129,7 +129,7 @@ size_t Zstd::Compressor::Plain(const char* src, size_t size, char* dst,
 }
 
 Zstd::Decompressor::Decompressor()
-  : _ctx{Created(ZSTD_createDCtx_advanced(TrackedMem(nullptr)),
+  : _ctx{Created(ZSTD_createDCtx_advanced(TrackedMem(kEmpty)),
                  "a decompression context")} {}
 
 bool Zstd::Decompressor::Decompress(const char* src, size_t size, char* dst,
@@ -164,7 +164,7 @@ const ZSTD_DDict* Zstd::Decompressor::Attached() {
     _attached.reset(
       Created(ZSTD_createDDict_advanced(dictionary.data(), dictionary.size(),
                                         ZSTD_dlm_byRef, ZSTD_dct_rawContent,
-                                        TrackedMem(nullptr)),
+                                        TrackedMem(kEmpty)),
               "a decompression dictionary"));
     _attached_bytes = dictionary;
   }

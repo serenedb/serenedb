@@ -633,17 +633,22 @@ HnswQuery::HnswQuery(QueryMemory& memory, const SubReader& segment,
   if (_metric == VectorMetric::Cosine) {
     duckdb::L2NormalizeOp::Operation(_query.data(), _query.data(), _d);
   }
-  std::span<const float> query = _query;
-  if (_data->rotation) {
-    _panorama =
-      RotateQuery(_cache, _data->rotation, _data->byte_rotation, _query);
-    query = _panorama->rotated;
-  }
-  if (_data->stats) {
-    _codebook = _ef == 0 ? _data->stats->MakeRangeCodebook(query)
-                         : QueryCodebook(_cache, *_data->stats, query);
-    SDB_ASSERT(_codebook);
-  }
+}
+
+void HnswQuery::PrepareDistance() const {
+  _prepared.Call([&] {
+    std::span<const float> query = _query;
+    if (_data->rotation) {
+      _panorama =
+        RotateQuery(_cache, _data->rotation, _data->byte_rotation, _query);
+      query = _panorama->rotated;
+    }
+    if (_data->stats) {
+      _codebook = _ef == 0 ? _data->stats->MakeRangeCodebook(query)
+                           : QueryCodebook(_cache, *_data->stats, query);
+      SDB_ASSERT(_codebook);
+    }
+  });
 }
 
 template<typename Dist>
@@ -882,6 +887,7 @@ memory::ArenaVector<ScoreDoc> HnswQuery::RunSearch(
     ScanColumn(memory, scratch);
     return CollectHits(scratch_arena, scratch.nearest, _segment);
   }
+  PrepareDistance();
   WithHnswDist(memory, *_data, _query, _codebook, _panorama.get(), _metric, _d,
                _record_size, [&](auto& dist) {
                  if (_ef == 0) {

@@ -102,7 +102,7 @@ BlockBounds<V> BoundsOf(const V* values, size_t count) noexcept {
 template<typename V>
 class BitpackingBlocks {
  public:
-  explicit BitpackingBlocks(MemoryBudget* budget)
+  explicit BitpackingBlocks(LocalBudget& budget)
     : _base{TrackedAllocator<V>{budget}},
       _top{TrackedAllocator<V>{budget}},
       _first{TrackedAllocator<V>{budget}},

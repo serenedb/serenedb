@@ -108,7 +108,7 @@ void ListKeys::Node::Resize(size_t size) {
   }
 }
 
-ListIngest::ListIngest(MemoryBudget* budget, const duckdb::LogicalType& type,
+ListIngest::ListIngest(LocalBudget& budget, const duckdb::LogicalType& type,
                        bool borrow, uint64_t code_base, uint64_t running)
   : _child_type{duckdb::ListType::GetChildType(type)},
     _borrow{borrow},

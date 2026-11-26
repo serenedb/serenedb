@@ -71,7 +71,7 @@ struct Fsst12 {
   using Table = duckdb_fsst12_decoder_t;
   using Exported = TrackedVector<unsigned char>;
 
-  static Exported MakeExported(MemoryBudget* budget) noexcept {
+  static Exported MakeExported(LocalBudget& budget) noexcept {
     return Exported{TrackedAllocator<unsigned char>{budget}};
   }
 

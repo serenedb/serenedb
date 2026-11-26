@@ -308,15 +308,14 @@ uint64_t RangeWriter::Bound(uint64_t docs) noexcept {
 }
 
 void RangeWriter::Begin(PostingsWriter& pw, uint64_t docs,
-                        MemoryBudget& budget) {
+                        LocalBudget& budget) {
   _heavy = HeavyDocs(docs);
   for (auto& range : _levels) {
     for (auto* piece : {&range.group, &range.held}) {
       if (piece->docs.get_allocator().budget != &budget) {
         piece->docs =
-          TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{&budget}};
+          TrackedVector<doc_id_t>{TrackedAllocator<doc_id_t>{budget}};
       }
-      piece->docs.reserve(2 * _heavy);
     }
   }
   _pw = &pw;
@@ -449,15 +448,24 @@ void RangeWriter::Clear() noexcept {
   for (auto& range : _levels) {
     range.starts.clear();
     range.metas.clear();
-    range.group.docs = {};
+    range.group.docs.clear();
     range.group.docs_count = 0;
-    range.held.docs = {};
+    range.held.docs.clear();
     range.count = 0;
     range.children = 0;
     range.holding = false;
   }
   _pw = nullptr;
   _height = 0;
+}
+
+void RangeWriter::Shrink() noexcept {
+  Clear();
+  for (auto& range : _levels) {
+    range.group.docs =
+      TrackedVector<doc_id_t>{range.group.docs.get_allocator()};
+    range.held.docs = TrackedVector<doc_id_t>{range.held.docs.get_allocator()};
+  }
 }
 
 bool TermReaderImpl::CoverRange(bytes_view from, bytes_view to,

@@ -138,7 +138,7 @@ size_t SegmentWriter::FlushBound() {
 uint64_t SegmentWriter::CopiedSealBound() {
   uint64_t bound = 0;
   TrackedVector<const ColumnReader*> sources{
-    TrackedAllocator<const ColumnReader*>{&_budget}};
+    TrackedAllocator<const ColumnReader*>{_budget}};
   const ColumnWriterOptions options;
   for (const auto id : _copied_columns) {
     sources.clear();
@@ -155,12 +155,16 @@ uint64_t SegmentWriter::CopiedSealBound() {
     bound = std::max(
       bound, SealBoundOf(sources.front()->Type(), sources,
                          std::min<uint64_t>(rows, options.row_group_size),
-                         options.compression, options.codec_params, &_budget));
+                         options.compression, options.codec_params, _budget));
   }
   return bound;
 }
 
-void SegmentWriter::ReserveFlush() { _budget.Reserve(FlushBound()); }
+void SegmentWriter::AdmitFlush() {
+  if (const auto bound = FlushBound(); bound > _budget.Available()) {
+    _budget.Parent().Admit(bound - _budget.Available());
+  }
+}
 
 WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
                                     DocumentMaskBuilder& docs_mask) {
@@ -173,7 +177,7 @@ WrittenSegment SegmentWriter::flush(SegmentMeta& meta,
     .budget = _budget,
   };
 
-  IdxWriter idx{*_tracker, &_budget};
+  IdxWriter idx{*_tracker, _budget};
 
   std::vector<std::unique_ptr<AnnWriter>> ann_writers;
   uint64_t cluster_terms = 0;
@@ -381,7 +385,7 @@ void SegmentWriter::reset(const SegmentMeta& meta) {
 
   if (!_field_writer) {
     _field_writer =
-      std::make_unique<term_dict::FieldWriter>(/*compaction=*/false, &_budget);
+      std::make_unique<term_dict::FieldWriter>(/*compaction=*/false, _budget);
   }
 
   const auto* active = ActiveFieldOptions();

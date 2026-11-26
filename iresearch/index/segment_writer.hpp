@@ -133,7 +133,9 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
                 uint64_t first, uint64_t count);
 
   size_t FlushBound();
-  void ReserveFlush();
+  void AdmitFlush();
+  void BindMemory(MemoryBudget& parent) { _budget.Rebind(parent); }
+  void ReturnMemory() noexcept { _budget.Return(); }
 
   const std::string& name() const noexcept { return _seg_name; }
   size_t buffered_docs() const noexcept { return _docs; }
@@ -298,7 +300,7 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   // keeps.
   void ResetState() noexcept;
 
-  MemoryBudget _budget{nullptr};
+  LocalBudget _budget{gRootBudget};
   std::shared_ptr<FileTracker> _tracker;
   duckdb::FileSystem& _fs;
   std::string _root;

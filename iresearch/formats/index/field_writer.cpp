@@ -42,17 +42,17 @@ uint64_t DictBound(uint64_t terms, uint64_t docs, bool vec) noexcept {
 
 }  // namespace
 
-FieldWriter::FieldWriter(bool compaction, MemoryBudget* budget)
+FieldWriter::FieldWriter(bool compaction, LocalBudget& budget)
   : _memory{budget},
-    _pw{&_memory},
-    _encoder{&_memory},
-    _records{&_memory},
-    _index{&_memory},
-    _key_prefix{TrackedAllocator<byte_type>{&_memory}},
-    _min{TrackedAllocator<byte_type>{&_memory}},
-    _last{TrackedAllocator<byte_type>{&_memory}},
-    _separators{&_memory},
-    _sections{TrackedAllocator<DictSections>{&_memory}},
+    _pw{budget},
+    _encoder{budget},
+    _records{budget},
+    _index{budget},
+    _key_prefix{TrackedAllocator<byte_type>{budget}},
+    _min{TrackedAllocator<byte_type>{budget}},
+    _last{TrackedAllocator<byte_type>{budget}},
+    _separators{budget},
+    _sections{TrackedAllocator<DictSections>{budget}},
     _compaction{compaction} {}
 
 bool FieldWriter::OwnsBlock() const noexcept {
@@ -75,10 +75,6 @@ void FieldWriter::prepare(const FlushState& state, uint64_t keyed_dicts,
                             OrdinalLimit(kMaxOrdinalBytes)));
   }
   Reset();
-  _memory.Reserve(
-    DictBound(terms, state.doc_count,
-              IsSubsetOf(IndexFeatures::Vec, state.index_features)));
-  _reserved = _memory.Held();
   _budget = &state.budget;
   _docs = state.doc_count;
   _ordinal_bytes = OrdinalBytes(keyed_dicts);
@@ -390,12 +386,13 @@ void FieldWriter::ResetField() noexcept {
 
 void FieldWriter::Reset() noexcept {
   ResetField();
+  _ranges.Shrink();
   _encoder.Reset();
   _records.Clear();
   _spans.clear();
   _heads.clear();
   _last.clear();
-  _separators = Separators{&_memory};
+  _separators = Separators{_memory};
   _sections.clear();
   _first_page = 0;
   _blocks = 0;
@@ -416,7 +413,7 @@ void FieldWriter::end() {
     const auto separators_size = out.Position() - blocks_end;
     uint32_t ordinal = 0;
     size_t gated = 0;
-    TrackedBstring prefix{TrackedAllocator<byte_type>{&_memory}};
+    TrackedBstring prefix{TrackedAllocator<byte_type>{_memory}};
     const auto write_index = [&](FieldHead& head) {
       prefix.clear();
       AppendOrdinal(prefix, ordinal++, _ordinal_bytes);
@@ -429,8 +426,7 @@ void FieldWriter::end() {
         sections = std::move(_sections[gated++]);
       }
       const auto at = out.Position();
-      DictIndex{head,    prefix, blocks, _separators, std::move(sections),
-                &_memory}
+      DictIndex{head, prefix, blocks, _separators, std::move(sections), _memory}
         .Write(out);
       head.index.size = out.Position() - at;
     };
@@ -457,7 +453,6 @@ void FieldWriter::end() {
     SDB_ASSERT(placed);
     _idx->SetTerms(std::move(terms));
   }
-  SDB_ASSERT(_memory.Held() == _reserved);
   Reset();
   _memory.Trim();
   _budget = nullptr;

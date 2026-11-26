@@ -76,7 +76,7 @@ const std::vector<irs::bstring>& Hexes() {
 }
 
 void Build(benchmark::State& state, const std::vector<irs::bstring>& terms) {
-  irs::term_dict::PrefixTrieBuilder builder{nullptr};
+  irs::term_dict::PrefixTrieBuilder builder{irs::kEmpty};
   for (auto _ : state) {
     for (const auto& term : terms) {
       builder.Add(term);

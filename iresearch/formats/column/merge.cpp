@@ -80,14 +80,6 @@ using KeptWindow = std::optional<TrackedVector<duckdb::sel_t>>;
 constexpr size_t kKeptWindowRows =
   STANDARD_VECTOR_SIZE + doc_limits::kDocsSlack;
 
-uint64_t KeptWindows(const MergeSource& source) {
-  if (!source.col_reader || !HasRemovals(source.reader->Meta())) {
-    return 0;
-  }
-  return (source.reader->docs_count() + STANDARD_VECTOR_SIZE - 1) /
-         STANDARD_VECTOR_SIZE;
-}
-
 std::vector<uint64_t> SourceRowGroupStarts(const MergeSource& source,
                                            uint64_t row_group_size) {
   if (const auto recorded = source.col_reader->RowGroupStarts();
@@ -197,55 +189,6 @@ std::vector<std::pair<field_id, const ColumnReader*>> OrderedColumns(
 
 }  // namespace
 
-uint64_t MergeIntoBound(std::span<const MergeSource> sources,
-                        const IndexFieldOptions* field_options) {
-  uint64_t bytes =
-    (sizeof(std::optional<ReadContext>) + sizeof(TrackedVector<KeptWindow>)) *
-    sources.size();
-  for (const auto& s : sources) {
-    bytes += KeptWindows(s) *
-             (sizeof(KeptWindow) + sizeof(duckdb::sel_t) * kKeptWindowRows);
-  }
-  const uint32_t row_group_size =
-    field_options ? field_options->row_group_size : DEFAULT_ROW_GROUP_SIZE;
-  uint64_t seal = ColWriter::kSealBound;
-  TrackedVector<const ColumnReader*> columns;
-  for (const auto& [id, first_col] : OrderedColumns(sources, field_options)) {
-    columns.clear();
-    uint64_t rows = 0;
-    for (const auto& s : sources) {
-      if (const auto* col = s.col_reader ? s.col_reader->Column(id) : nullptr) {
-        columns.push_back(col);
-        rows += col->RowCount();
-      }
-    }
-    const auto opts =
-      field_options ? field_options->GetColumnOptions(id) : ColumnOptions{};
-    const ColCodecParams params{.compression_level = opts.compression_level,
-                                .tier = WriteTier::Merge};
-    seal = std::max(seal, SealBoundOf(first_col->Type(), columns,
-                                      std::min<uint64_t>(rows, row_group_size),
-                                      opts.compression, params, nullptr));
-  }
-  return bytes + seal;
-}
-
-AnnFlushBound MergeAnnBound(std::span<const MergeSource> sources,
-                            const IndexFieldOptions* field_options,
-                            uint64_t rows) {
-  AnnFlushBound total;
-  if (!field_options) {
-    return total;
-  }
-  for (const auto& [id, col] : OrderedColumns(sources, field_options)) {
-    for (const auto ann : field_options->AnnFields(id)) {
-      Accumulate(
-        total, AnnBound(*field_options->GetColumnOptions(ann).ann_info, rows));
-    }
-  }
-  return total;
-}
-
 std::vector<std::unique_ptr<ColumnReader>> ConcatInMemory(
   duckdb::DatabaseInstance& db, std::span<const MergeSource> sources,
   const IndexFieldOptions* field_options) {
@@ -279,7 +222,7 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
 
   auto& budget = output.Budget();
   TrackedVector<std::optional<ReadContext>> source_ctxs(
-    sources.size(), TrackedAllocator<std::optional<ReadContext>>{&budget});
+    sources.size(), TrackedAllocator<std::optional<ReadContext>>{budget});
   for (size_t i = 0; i < sources.size(); ++i) {
     if (sources[i].col_reader) {
       source_ctxs[i].emplace(*sources[i].col_reader);
@@ -289,20 +232,21 @@ bool MergeInto(std::span<const MergeSource> sources, ColWriter& output,
   DistinctMerger distinct_merger;
   duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
   TrackedVector<TrackedVector<KeptWindow>> kept_cache{
-    TrackedAllocator<TrackedVector<KeptWindow>>{&budget}};
+    TrackedAllocator<TrackedVector<KeptWindow>>{budget}};
   kept_cache.reserve(sources.size());
-  for (const auto& s : sources) {
-    kept_cache.emplace_back(KeptWindows(s),
-                            TrackedAllocator<KeptWindow>{&budget});
+  for (size_t i = 0; i < sources.size(); ++i) {
+    kept_cache.emplace_back(TrackedAllocator<KeptWindow>{budget});
   }
   auto kept_for = [&](size_t si, const SubReader& reader,
                       uint64_t pos) -> const TrackedVector<duckdb::sel_t>& {
     auto& windows = kept_cache[si];
     const size_t w = pos / STANDARD_VECTOR_SIZE;
-    SDB_ASSERT(w < windows.size());
+    if (windows.size() <= w) {
+      windows.resize(w + 1);
+    }
     auto& slot = windows[w];
     if (!slot) {
-      slot.emplace(kKeptWindowRows, TrackedAllocator<duckdb::sel_t>{&budget});
+      slot.emplace(kKeptWindowRows, TrackedAllocator<duckdb::sel_t>{budget});
       const auto first_doc = static_cast<doc_id_t>(pos + doc_limits::min());
       slot->resize(MakeGenericDocsMask(reader.docs_mask())
                      .FillLive(first_doc, STANDARD_VECTOR_SIZE, slot->data()));

@@ -65,7 +65,7 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   uint32_t nredo = 1,
                                   ClusteringAlgo algo = ClusteringAlgo::Auto,
                                   const float* rotation = nullptr,
-                                  MemoryBudget* budget = nullptr);
+                                  LocalBudget& budget = kEmpty);
 
 size_t TrainCentroidsBound(VectorMetric metric, size_t n, uint32_t k,
                            uint32_t d) noexcept;

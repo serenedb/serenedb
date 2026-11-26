@@ -56,7 +56,7 @@ struct Fsst8 {
   using Table = duckdb_fsst_decoder_t;
   using Exported = std::array<unsigned char, sizeof(Table)>;
 
-  static Exported MakeExported(MemoryBudget*) noexcept { return {}; }
+  static Exported MakeExported(LocalBudget&) noexcept { return {}; }
 
   static EncoderFootprint Footprint(size_t strings) noexcept {
     return Fsst8Footprint(strings);
@@ -117,7 +117,7 @@ struct Encoded {
 template<typename Impl>
 class Encoder {
  public:
-  explicit Encoder(MemoryBudget* budget = nullptr)
+  explicit Encoder(LocalBudget& budget = kEmpty)
     : _charge{budget, 0},
       _table{Impl::MakeExported(budget)},
       _in_lengths{TrackedAllocator<size_t>{budget}},

@@ -349,15 +349,15 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
       }
     }
     _docs = docs;
-    irs::MemoryBudget budget{nullptr};
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker(kSegment),
       .doc_count = docs,
       .index_features = irs::IndexFeatures::None,
       .budget = budget,
     };
-    irs::IdxWriter idx{dir().Tracker(kSegment), nullptr};
-    irs::term_dict::FieldWriter writer{compaction, nullptr};
+    irs::IdxWriter idx{dir().Tracker(kSegment), budget};
+    irs::term_dict::FieldWriter writer{compaction, budget};
     writer.SetIdxWriter(idx);
     const uint64_t keyed = absl::c_count_if(
       fields, [](const Field& field) { return field.entries.size() > 1; });
@@ -2098,7 +2098,7 @@ TEST(TermDictRecordsTest, runs_decode_every_record_in_any_order) {
     SCOPED_TRACE(absl::StrCat("features ", static_cast<int>(shape.features),
                               " count ", shape.count));
     const auto records = MakeRecords(shape, rng);
-    irs::term_dict::RecordRun run{nullptr};
+    irs::term_dict::RecordRun run{irs::kEmpty};
     run.Start(shape.features);
     for (const auto& record : records) {
       run.Commit(record.meta, run.Stage(record.meta));
@@ -2140,7 +2140,7 @@ TEST(TermDictRecordsTest, runs_decode_every_record_in_any_order) {
 
 TEST(TermDictRecordsTest, runs_refuse_corruption) {
   constexpr auto features = irs::IndexFeatures::Freq;
-  irs::term_dict::RecordRun run{nullptr};
+  irs::term_dict::RecordRun run{irs::kEmpty};
   run.Start(irs::IndexFeatures::Freq);
   for (uint32_t i = 0; i != 3; ++i) {
     irs::PostingMeta meta;
@@ -2173,7 +2173,7 @@ TEST(TermDictRecordsTest, runs_refuse_corruption) {
 TEST(TermDictRecordsTest, runs_refuse_records_their_columns_lack) {
   const auto encode = [](irs::IndexFeatures index,
                          std::span<irs::PostingMeta> metas) {
-    irs::term_dict::RecordRun run{nullptr};
+    irs::term_dict::RecordRun run{irs::kEmpty};
     run.Start(index);
     for (auto& meta : metas) {
       run.Commit(meta, run.Stage(meta));
@@ -2663,15 +2663,15 @@ TEST_P(TermDictTest, ordinal_limit_refuses_more_keyed_dictionaries) {
     irs::term_dict::OrdinalLimit(irs::term_dict::kMaxOrdinalBytes);
   ASSERT_EQ(irs::term_dict::kMaxOrdinalBytes,
             irs::term_dict::OrdinalBytes(kLimit));
-  irs::MemoryBudget budget{nullptr};
+  irs::LocalBudget budget{irs::gRootBudget};
   const irs::FlushState state{
     .tracker = dir().Tracker(kSegment),
     .doc_count = 10,
     .index_features = irs::IndexFeatures::None,
     .budget = budget,
   };
-  irs::IdxWriter idx{dir().Tracker(kSegment), nullptr};
-  irs::term_dict::FieldWriter writer{false, nullptr};
+  irs::IdxWriter idx{dir().Tracker(kSegment), budget};
+  irs::term_dict::FieldWriter writer{false, budget};
   writer.SetIdxWriter(idx);
   ASSERT_SQL_ERROR(writer.prepare(state, kLimit + 1, 0),
                    ERRCODE_PROGRAM_LIMIT_EXCEEDED);
@@ -3894,7 +3894,7 @@ std::unique_ptr<Prefixed> MakePrefixed(std::vector<irs::bstring> terms,
   terms.erase(std::unique(terms.begin(), terms.end()), terms.end());
   auto out = std::make_unique<Prefixed>();
   out->terms = std::move(terms);
-  irs::term_dict::PrefixTrieBuilder builder{nullptr};
+  irs::term_dict::PrefixTrieBuilder builder{irs::kEmpty};
   for (size_t i = 0; i != out->terms.size(); ++i) {
     const auto block = static_cast<uint32_t>(i / block_size);
     out->blocks.push_back(block);
@@ -3921,7 +3921,7 @@ std::unique_ptr<Prefixed> MakePrefixed(std::vector<irs::bstring> terms,
       .trie = builder.Finish(),
       .held = {.words = {kAll, kAll, kAll, kAll}},
     },
-    nullptr);
+    irs::kEmpty);
   return out;
 }
 
@@ -4206,7 +4206,7 @@ void AssertRoot(std::vector<irs::bstring> separators) {
     owned.arena.append(separator);
     owned.offsets.push_back(static_cast<uint32_t>(owned.arena.size()));
   }
-  const Root root{irs::term_dict::Slice(owned), nullptr};
+  const Root root{irs::term_dict::Slice(owned), irs::kEmpty};
   ASSERT_EQ(views.size() + 1, root.Blocks());
   std::vector<irs::bstring> probes{
     irs::bstring{},
@@ -4301,7 +4301,7 @@ TEST(TermDictRootTest, art_matches_upper_bound) {
 template<bool Fixed>
 struct ChosenRoot : irs::term_dict::Root {
   ChosenRoot(irs::term_dict::SeparatorsView separators,
-             irs::MemoryBudget* budget)
+             irs::LocalBudget& budget)
     : Root{separators, Fixed, budget} {}
 };
 
@@ -4312,11 +4312,11 @@ TEST(TermDictRootTest, root_matches_upper_bound) {
 
 template<bool Fixed>
 struct ReadRoot : irs::term_dict::Root {
-  ReadRoot(irs::term_dict::SeparatorsView separators, irs::MemoryBudget* budget)
+  ReadRoot(irs::term_dict::SeparatorsView separators, irs::LocalBudget& budget)
     : Root{Reread(separators, budget)} {}
 
   static Root Reread(irs::term_dict::SeparatorsView separators,
-                     irs::MemoryBudget* budget) {
+                     irs::LocalBudget& budget) {
     duckdb::MemoryStream stream;
     Root{separators, Fixed, budget}.Write(stream);
     stream.Rewind();
@@ -4345,7 +4345,7 @@ irs::term_dict::PrefixTrie ShapedTrie(std::string_view chain) {
       .depths = kDepths,
       .first = kFirst,
     },
-    nullptr,
+    irs::kEmpty,
   };
 }
 
@@ -4417,7 +4417,7 @@ void AssertSpans(std::vector<irs::bstring> terms, std::span<const size_t> runs,
                  std::span<const uint32_t> spans) {
   absl::c_sort(terms);
   terms.erase(std::unique(terms.begin(), terms.end()), terms.end());
-  irs::term_dict::PrefixTrieBuilder builder{nullptr};
+  irs::term_dict::PrefixTrieBuilder builder{irs::kEmpty};
   size_t at = 0;
   for (size_t run = 0; at != terms.size(); ++run) {
     builder.SetSpan(spans[run % spans.size()]);
@@ -4465,7 +4465,7 @@ struct MaskedIndex {
 std::unique_ptr<MaskedIndex> IndexBlocks(
   const std::vector<std::vector<irs::bstring>>& blocks) {
   auto out = std::make_unique<MaskedIndex>();
-  irs::term_dict::DictIndexBuilder builder{nullptr};
+  irs::term_dict::DictIndexBuilder builder{irs::kEmpty};
   builder.Reset(true);
   size_t terms = 0;
   for (size_t block = 0; block != blocks.size(); ++block) {
@@ -4486,7 +4486,7 @@ std::unique_ptr<MaskedIndex> IndexBlocks(
   head.max = irs::ViewCast<char>(irs::bytes_view{blocks.back().back()});
   out->index = std::make_unique<irs::term_dict::DictIndex>(
     head, irs::bytes_view{}, static_cast<uint32_t>(blocks.size()),
-    out->separators, builder.Finish(), nullptr);
+    out->separators, builder.Finish(), irs::kEmpty);
   return out;
 }
 

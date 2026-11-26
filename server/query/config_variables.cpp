@@ -1261,6 +1261,22 @@ constexpr std::pair<std::string_view, VariableDescription>
       },
     },
     {
+      kSessionMemoryLimitSetting,
+      {
+        LogicalTypeId::UBIGINT,
+        "Bytes the session's statements may hold at once, on top of "
+        "memory_limit: search index queries and writes, joins, aggregations "
+        "and sorts. A statement that needs more fails with an out-of-memory "
+        "error; joins, aggregations and sorts write to the temporary "
+        "directory first when one is set. 0 = only memory_limit applies. "
+        "Default 0.",
+        [] { return duckdb::Value::UBIGINT(0); },
+        [](duckdb::ClientContext&, duckdb::SetScope, duckdb::Value&) {},
+        nullptr,
+        duckdb::SetScope::SESSION,
+      },
+    },
+    {
       kSearchBackfillGroupBytesSetting,
       {
         LogicalTypeId::UBIGINT,

@@ -32,7 +32,7 @@
 namespace irs::codecs::text {
 
 struct Segment {
-  Segment(MemoryBudget* budget, const duckdb::LogicalType& type)
+  Segment(LocalBudget& budget, const duckdb::LogicalType& type)
     : bytes{budget}, stats{duckdb::BaseStatistics::CreateEmpty(type)} {}
 
   Config config;

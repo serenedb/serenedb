@@ -187,7 +187,7 @@ EytzingerRoot::Node* EytzingerRoot::Place() {
   return nodes;
 }
 
-EytzingerRoot::EytzingerRoot(SeparatorsView separators, MemoryBudget* budget)
+EytzingerRoot::EytzingerRoot(SeparatorsView separators, LocalBudget& budget)
   : SeparatorRoot{separators},
     _storage{TrackedAllocator<Node>{budget}},
     _prefix{SharedPrefix(_separators)},
@@ -276,7 +276,7 @@ size_t EytzingerRoot::FindFrom(size_t from, Probe key) const noexcept {
   });
 }
 
-TrackedVector<size_t> TreeRoot::LevelSizes(size_t count, MemoryBudget* budget) {
+TrackedVector<size_t> TreeRoot::LevelSizes(size_t count, LocalBudget& budget) {
   TrackedVector<size_t> sizes{TrackedAllocator<size_t>{budget}};
   sizes.push_back(std::max<size_t>(1, (count + kFanout - 1) / kFanout));
   while (sizes.back() != 1) {
@@ -285,7 +285,7 @@ TrackedVector<size_t> TreeRoot::LevelSizes(size_t count, MemoryBudget* budget) {
   return sizes;
 }
 
-TreeRoot::TreeRoot(SeparatorsView separators, MemoryBudget* budget)
+TreeRoot::TreeRoot(SeparatorsView separators, LocalBudget& budget)
   : SeparatorRoot{separators},
     _prefix{SharedPrefix(_separators)},
     _nodes{TrackedAllocator<Node>{budget}},
@@ -424,7 +424,7 @@ bool TreeRoot::NotAfter(size_t block, Probe probe) const noexcept {
   return SeparatorAt(_separators, block - 1) <= key;
 }
 
-ArtRoot::ArtRoot(SeparatorsView separators, MemoryBudget* budget)
+ArtRoot::ArtRoot(SeparatorsView separators, LocalBudget& budget)
   : SeparatorRoot{separators}, _words{TrackedAllocator<uint64_t>{budget}} {
   const size_t count = SeparatorCount(_separators);
   if (count < 2) {
@@ -602,7 +602,7 @@ size_t ArtRoot::Find(Probe probe) const noexcept {
   }
 }
 
-Root::Root(SeparatorsView separators, bool fixed, MemoryBudget* budget) {
+Root::Root(SeparatorsView separators, bool fixed, LocalBudget& budget) {
   const size_t count = SeparatorCount(separators);
   if (fixed) {
     if (ArtRoot art{separators, budget};

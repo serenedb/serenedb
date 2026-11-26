@@ -113,7 +113,7 @@ struct PayBuffer {
 
 class BlockGroup {
  public:
-  explicit BlockGroup(MemoryBudget* budget)
+  explicit BlockGroup(LocalBudget& budget)
     : _data{TrackedAllocator<byte_type>{budget}} {}
 
   bool Empty() const noexcept { return _blocks == 0; }
@@ -184,7 +184,7 @@ class PostingsWriter final {
     doc_id_t docs_count;
   };
 
-  explicit PostingsWriter(MemoryBudget* budget)
+  explicit PostingsWriter(LocalBudget& budget)
     : _index{budget},
       _docs{TrackedAllocator<size_t>{budget}},
       _pos_group{budget},

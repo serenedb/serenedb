@@ -56,7 +56,7 @@ size_t Zxc::ContextBytes(uint8_t level) noexcept {
                                 EffectiveLevel<Zxc>(level));
 }
 
-Zxc::Compressor::Compressor(MemoryBudget* budget, uint8_t level)
+Zxc::Compressor::Compressor(LocalBudget& budget, uint8_t level)
   : DictionaryCompressor{budget, kDictionaryCap},
     _level{level},
     _ctx_charge{budget, ContextBytes(level)},

@@ -243,7 +243,7 @@ struct AlpCombination {
 
 template<typename T>
 struct AlpCompressionData {
-  explicit AlpCompressionData(MemoryBudget* budget)
+  explicit AlpCompressionData(LocalBudget& budget)
     : best_k_combinations{TrackedAllocator<AlpCombination>{budget}} {}
 
   AlpEncodingIndices vector_encoding_indices;
@@ -597,7 +597,7 @@ void Decompress(duckdb::const_data_ptr_t for_encoded, T* output, idx_t count,
 
 template<typename T>
 struct AlpAnalyzeState {
-  explicit AlpAnalyzeState(MemoryBudget* budget)
+  explicit AlpAnalyzeState(LocalBudget& budget)
     : rowgroup_sample{TrackedAllocator<TrackedVector<T>>{budget}},
       complete_vectors_sampled{TrackedAllocator<TrackedVector<T>>{budget}},
       compression_data{budget} {}
@@ -664,7 +664,7 @@ void AlpSample(AlpAnalyzeState<T>& analyze_state, const duckdb::Vector& input) {
 
 template<typename T>
 TrackedPtr<AlpAnalyzeState<T>> AlpSampleRowGroup(
-  MemoryBudget* budget, std::span<const WriteChunk> chunks) {
+  LocalBudget& budget, std::span<const WriteChunk> chunks) {
   auto analyze_state = MakeTracked<AlpAnalyzeState<T>>(budget, budget);
   for (const auto& chunk : chunks) {
     AlpSample(*analyze_state, chunk.data);

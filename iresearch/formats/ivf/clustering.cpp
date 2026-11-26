@@ -267,7 +267,7 @@ std::vector<float> TrainCentroids(VectorMetric metric, const float* data,
                                   size_t n, uint32_t k, uint32_t d,
                                   uint32_t seed, uint32_t niter, uint32_t nredo,
                                   ClusteringAlgo algo, const float* rotation,
-                                  MemoryBudget* budget) {
+                                  LocalBudget& budget) {
   if (n == 0 || k == 0) {
     return {};
   }

@@ -22,7 +22,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <duckdb/common/exception.hpp>
 
 #include "iresearch/formats/ann_crew.hpp"
 
@@ -46,34 +45,21 @@ void FanOut(const AnnBuildEnv* env, size_t tasks,
   crew.Join();
 }
 
-void FanOut(const AnnBuildEnv* env, MemoryBudget* parent, size_t tasks,
-            size_t task_bytes,
-            absl::FunctionRef<void(size_t, FixedBudget*)> task) {
-  const auto want = std::clamp<size_t>(tasks, 1, kHnswMaxWorkers);
-  TrackedVector<TrackedPtr<FixedBudget>> shares{
-    TrackedAllocator<TrackedPtr<FixedBudget>>{parent}};
-  shares.reserve(want);
-  for (size_t w = 0; w < want; ++w) {
-    try {
-      shares.push_back(MakeTracked<FixedBudget>(parent, parent, task_bytes));
-    } catch (const duckdb::OutOfMemoryException&) {
-      if (shares.empty()) {
-        throw;
-      }
-      break;
-    }
-  }
+void FanOut(const AnnBuildEnv* env, MemoryBudget& parent, size_t tasks,
+            absl::FunctionRef<void(size_t, LocalBudget&)> task) {
   std::atomic<size_t> next{0};
-  const auto work = [&](size_t w) {
-    auto* budget = shares[w].get();
+  const auto work = [&](size_t) {
+    LocalBudget budget{parent};
     for (auto t = next.fetch_add(1); t < tasks; t = next.fetch_add(1)) {
       task(t, budget);
     }
   };
-  AnnCrew crew{env, static_cast<uint32_t>(shares.size())};
+  AnnCrew crew{
+    env, static_cast<uint32_t>(std::clamp<size_t>(tasks, 1, kHnswMaxWorkers))};
   crew.Spawn(work);
+  LocalBudget budget{parent};
   for (auto t = next.fetch_add(1); t < tasks; t = next.fetch_add(1)) {
-    task(t, shares.front().get());
+    task(t, budget);
     crew.Grow(work);
   }
   crew.Join();

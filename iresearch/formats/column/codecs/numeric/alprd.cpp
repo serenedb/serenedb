@@ -125,7 +125,7 @@ struct AlpRdLeftPartInfo {
 };
 
 struct AlpRdDictionary {
-  explicit AlpRdDictionary(MemoryBudget* budget)
+  explicit AlpRdDictionary(LocalBudget& budget)
     : left_parts_dict_map{
         TrackedAllocator<std::pair<const uint16_t, uint16_t>>{budget}} {}
 
@@ -150,8 +150,7 @@ double EstimateCompressionSize(uint8_t right_bit_width, uint8_t left_bit_width,
 }
 
 TrackedVector<AlpRdLeftPartInfo> CountLeftParts(
-  MemoryBudget* budget, std::span<const uint16_t> sorted_tops,
-  idx_t left_bits) {
+  LocalBudget& budget, std::span<const uint16_t> sorted_tops, idx_t left_bits) {
   TrackedVector<AlpRdLeftPartInfo> left_parts{
     TrackedAllocator<AlpRdLeftPartInfo>{budget}};
   for (const auto top : sorted_tops) {
@@ -204,7 +203,7 @@ double EstimateLeftParts(std::span<const AlpRdLeftPartInfo> left_parts,
 }
 
 template<typename T>
-double FindBestDictionary(MemoryBudget* budget,
+double FindBestDictionary(LocalBudget& budget,
                           std::span<const alp::ExactType<T>> values,
                           AlpRdDictionary& dictionary) {
   constexpr idx_t kExactTypeBitSize = sizeof(alp::ExactType<T>) * 8;
@@ -293,7 +292,7 @@ void AlpRdDecompress(duckdb::const_data_ptr_t left_encoded,
 
 template<typename T>
 struct AlpRdAnalyzeState {
-  explicit AlpRdAnalyzeState(MemoryBudget* budget)
+  explicit AlpRdAnalyzeState(LocalBudget& budget)
     : rowgroup_sample{TrackedAllocator<alp::ExactType<T>>{budget}},
       dictionary{budget} {}
 

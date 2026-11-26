@@ -75,7 +75,7 @@ struct ColumnWriterOptions {
 uint64_t SealBoundOf(const duckdb::LogicalType& type,
                      std::span<const ColumnReader* const> columns,
                      uint64_t rows, codecs::CodecType forced,
-                     const ColCodecParams& params, MemoryBudget* budget);
+                     const ColCodecParams& params, LocalBudget& budget);
 
 struct ColumnWriteState {
   codecs::ColumnTuning tuning;
@@ -202,12 +202,11 @@ class ColumnWriter final {
                   std::span<const std::unique_ptr<ListIngest>> ingest = {});
 
   WriteContext& WriteCtx() const noexcept;
-  MemoryBudget* SealBudget() const noexcept;
+  LocalBudget& SealBudget() const noexcept;
   codecs::CodecType SealMethod() const;
   uint64_t SealBound(const WriteRows& rows) const;
 
   ColWriter* _owner;
-  MemoryBudget* _seal = nullptr;
   field_id _id;
   duckdb::LogicalType _type;
   ColumnWriterOptions _options;

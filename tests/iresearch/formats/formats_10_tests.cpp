@@ -59,12 +59,12 @@ class Format10TestCase : public tests::FormatTestCase {
     auto dir = get_directory(*this);
 
     // attributes for term
-    irs::PostingsWriter writer{nullptr};
+    irs::PostingsWriter writer{irs::kEmpty};
     irs::PostingMeta posting_meta;
 
     // write postings for field
     {
-      irs::MemoryBudget budget{nullptr};
+      irs::LocalBudget budget{irs::gRootBudget};
       irs::FlushState state{
         .tracker = dir->Tracker("segment_name"),
         .doc_count = docs.back().first + 1,
@@ -260,12 +260,12 @@ TEST_P(Format10TestCase, postings_read_write_single_doc) {
 
   // docs & attributes for term0
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{{6, 10}};
-  irs::PostingsWriter writer{nullptr};
+  irs::PostingsWriter writer{irs::kEmpty};
   irs::PostingMeta meta0, meta1;
 
   // write postings
   {
-    irs::MemoryBudget budget{nullptr};
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("segment_name"),
       .doc_count = 100,
@@ -418,12 +418,12 @@ TEST_P(Format10TestCase, postings_read_write) {
   // docs & attributes for term1
   const std::vector<std::pair<irs::doc_id_t, uint32_t>> docs1{
     {2, 10}, {7, 10}, {9, 10}, {19, 10}};
-  irs::PostingsWriter writer{nullptr};
+  irs::PostingsWriter writer{irs::kEmpty};
   irs::PostingMeta meta0, meta1;  // must be destroyed before writer
 
   // write postings
   {
-    irs::MemoryBudget budget{nullptr};
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("segment_name"),
       .doc_count = 150,
@@ -540,7 +540,7 @@ TEST_P(Format10TestCase, postings_read_write) {
 }
 
 TEST_P(Format10TestCase, postings_writer_reuse) {
-  irs::PostingsWriter writer{nullptr};
+  irs::PostingsWriter writer{irs::kEmpty};
 
   std::vector<std::pair<irs::doc_id_t, uint32_t>> docs0;
   irs::doc_id_t i = (irs::doc_limits::min)();
@@ -564,7 +564,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
-    irs::MemoryBudget budget{nullptr};
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("0"),
       .doc_count = 10000,
@@ -596,7 +596,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
-    irs::MemoryBudget budget{nullptr};
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("1"),
       .doc_count = 10000,
@@ -627,7 +627,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
-    irs::MemoryBudget budget{nullptr};
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("2"),
       .doc_count = 10000,
@@ -658,7 +658,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
-    irs::MemoryBudget budget{nullptr};
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("3"),
       .doc_count = 10000,
@@ -688,7 +688,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
-    irs::MemoryBudget budget{nullptr};
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("4"),
       .doc_count = 10000,
@@ -718,7 +718,7 @@ TEST_P(Format10TestCase, postings_writer_reuse) {
     field.id = 1;
     field.index_features = kFeatures;
 
-    irs::MemoryBudget budget{nullptr};
+    irs::LocalBudget budget{irs::gRootBudget};
     irs::FlushState state{
       .tracker = dir().Tracker("5"),
       .doc_count = 10000,
@@ -760,7 +760,7 @@ TEST_P(Format10TestCase, ires336) {
   tests::FormatTestCase::Terms<decltype(terms.begin())> trms(
     terms.begin(), terms.end(), docs.begin(), docs.end());
 
-  irs::MemoryBudget budget{nullptr};
+  irs::LocalBudget budget{irs::gRootBudget};
   irs::FlushState flush_state{
     .tracker = dir->Tracker(segment_name),
     .doc_count = 10000,
@@ -771,8 +771,8 @@ TEST_P(Format10TestCase, ires336) {
   field_meta.id = kFieldId;
   {
     tests::MockTermReader term_reader{trms, field_meta};
-    irs::IdxWriter idx{dir->Tracker(segment_name), nullptr};
-    irs::term_dict::FieldWriter fw{/*compaction=*/true, nullptr};
+    irs::IdxWriter idx{dir->Tracker(segment_name), irs::kEmpty};
+    irs::term_dict::FieldWriter fw{/*compaction=*/true, irs::kEmpty};
     fw.SetIdxWriter(idx);
     fw.prepare(flush_state, 1, 0);
     fw.write(irs::StringLayout::kStrings, term_reader);
@@ -958,12 +958,12 @@ TEST_P(Format10TestCase, position_reset_with_offsets) {
       field.index_features = features;
       auto dir = get_directory(*this);
 
-      irs::PostingsWriter writer{nullptr};
+      irs::PostingsWriter writer{irs::kEmpty};
       irs::PostingMeta posting_meta;
 
       // write postings
       {
-        irs::MemoryBudget budget{nullptr};
+        irs::LocalBudget budget{irs::gRootBudget};
         irs::FlushState state{
           .tracker = dir->Tracker("segment_name"),
           .doc_count = docs.back().first + 1,

@@ -704,7 +704,7 @@ TEST(ZstdTest, ShortPeriodRepeatsRoundTrip) {
     }
   }
   for (const uint8_t level : kLevels) {
-    irs::codecs::Zstd::Compressor compressor{nullptr, level};
+    irs::codecs::Zstd::Compressor compressor{irs::kEmpty, level};
     std::string compressed(irs::codecs::Zstd::Bound(raw.size()), '\0');
     compressed.resize(compressor.Compress(
       raw.data(), raw.size(), compressed.data(), compressed.size()));
@@ -4289,7 +4289,7 @@ TEST_F(ColCodecsTest, OnPairTrainingStopsOnceItsTokenTableIsFull) {
     entries.emplace_back(motif.data(), static_cast<uint32_t>(motif.size()));
     raw += motif.size();
   }
-  onpair::Codec codec{nullptr};
+  onpair::Codec codec{irs::kEmpty};
   codec.Train(entries, raw);
   irs::TrackedString exported;
   codec.Export(exported);
@@ -5686,7 +5686,7 @@ TEST_F(ColCodecsTest, ASegmentBufferThatCannotAllocateGivesBackItsReservation) {
   buffers.SetMemoryLimit(uint64_t{8192} << 40);
   const absl::Cleanup restore = [&] { buffers.SetMemoryLimit(limit); };
   const auto used = buffers.GetUsedMemory();
-  irs::codecs::text::SegmentBuffer segment{nullptr};
+  irs::codecs::text::SegmentBuffer segment{irs::kEmpty};
   EXPECT_THROW(segment.Extend(uint64_t{1} << 52), std::bad_alloc);
   EXPECT_EQ(segment.Size(), 0);
   EXPECT_EQ(buffers.GetUsedMemory(), used);

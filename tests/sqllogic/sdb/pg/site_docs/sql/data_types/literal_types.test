@@ -171,3 +171,22 @@ and $$dollar quotes$$ $tag$ AS msg;
 ----
 msg
  this string can contain newlines,\n'single quotes',\n"double quotes",\nand $$dollar quotes$$
+
+# DOCS_TEST: example_013
+
+# DOCS_TEST_BODY
+
+statement ok
+CREATE TABLE prices (price NUMERIC(5, 2));
+
+statement ok
+INSERT INTO prices VALUES (100.00);
+
+query
+SELECT
+    price = '100.001' AS column_type,
+    price = '100.001'::NUMERIC AS exact
+FROM prices;
+----
+column_type	exact
+t	f

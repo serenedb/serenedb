@@ -1,0 +1,40 @@
+control substitution on
+
+statement ok
+CREATE TABLE adw AS
+SELECT x::INTEGER AS id,
+       CASE WHEN x % 7 = 0 THEN NULL ELSE (((x % 1999) - 999) / 10.0)::DECIMAL(4,1) END AS d4,
+       (((x % 199999) - 99999) / 100.0)::DECIMAL(9,2) AS d9,
+       (x * 12345.67)::DECIMAL(18,2) AS d18,
+       (x * 98765.4321)::DECIMAL(38,4) AS d38
+FROM range(100000) t(x);
+
+
+statement count 100000
+COPY adw TO '${__TEST_DIR__}/adw.arrow' (FORMAT arrow);
+
+
+query
+SELECT count(*) AS n FROM (SELECT * FROM adw EXCEPT ALL SELECT * FROM read_arrow('${__TEST_DIR__}/adw.arrow'));
+----
+n
+0
+
+
+query
+SELECT count(*) AS n FROM (
+  SELECT * FROM adw WHERE id >= 25000 AND id < 75000
+  EXCEPT ALL
+  SELECT * FROM read_arrow('${__TEST_DIR__}/adw.arrow') WHERE id >= 25000 AND id < 75000);
+----
+n
+0
+
+
+query
+SELECT count(*) AS n, count(d4) AS d4s
+FROM read_arrow('${__TEST_DIR__}/adw.arrow')
+WHERE id >= 25000 AND id < 75000;
+----
+n	d4s
+50000	42857

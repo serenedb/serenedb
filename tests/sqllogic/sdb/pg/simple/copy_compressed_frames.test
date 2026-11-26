@@ -1,0 +1,76 @@
+control substitution on
+
+statement ok
+CREATE TABLE ccf AS
+SELECT x::INTEGER AS id, md5(x::VARCHAR) || md5((x + 7)::VARCHAR) AS s
+FROM range(200000) t(x);
+
+
+statement count 200000
+COPY ccf TO '${__TEST_DIR__}/ccf.csv.zst' (FORMAT csv);
+
+
+statement ok
+CREATE TABLE ccf_csv (id INTEGER, s VARCHAR);
+
+
+statement count 200000
+COPY ccf_csv FROM '${__TEST_DIR__}/ccf.csv.zst' (FORMAT csv);
+
+
+query
+SELECT count(*) AS n FROM (SELECT * FROM ccf EXCEPT ALL SELECT * FROM ccf_csv);
+----
+n
+0
+
+
+query
+SELECT count(*) AS n, sum(id) AS total, sum(length(s)) AS bytes
+FROM read_csv('${__TEST_DIR__}/ccf.csv.zst', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+----
+n	total	bytes
+200000	19999900000	12800000
+
+
+statement count 200000
+COPY ccf TO '${__TEST_DIR__}/ccf.ndjson.zst' (FORMAT json);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total, sum(length(s)) AS bytes
+FROM read_ndjson('${__TEST_DIR__}/ccf.ndjson.zst', columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+----
+n	total	bytes
+200000	19999900000	12800000
+
+
+statement count 200000
+COPY ccf TO '${__TEST_DIR__}/ccf.ndjson.gz' (FORMAT json);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total, sum(length(s)) AS bytes
+FROM read_ndjson('${__TEST_DIR__}/ccf.ndjson.gz', columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+----
+n	total	bytes
+200000	19999900000	12800000
+
+
+statement count 200000
+COPY (SELECT id, s || 'é' AS s FROM ccf) TO '${__TEST_DIR__}/ccf_latin1.csv.gz' (FORMAT csv, ENCODING 'latin1');
+
+
+statement ok
+CREATE TABLE ccf_latin1 (id INTEGER, s VARCHAR);
+
+
+statement count 200000
+COPY ccf_latin1 FROM '${__TEST_DIR__}/ccf_latin1.csv.gz' (FORMAT csv, ENCODING 'latin1');
+
+
+query
+SELECT count(*) AS n FROM ccf_latin1 JOIN ccf USING (id) WHERE ccf_latin1.s = ccf.s || 'é';
+----
+n
+200000

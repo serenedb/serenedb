@@ -777,11 +777,11 @@ def test_copy_avro_from_stdin_takes_blocks_on_every_thread(
                 f'INSERT INTO public."{table_name}" SELECT i, '
                 f"repeat('v', i % 50) || i FROM generate_series(1, 300000) i")
             cur.execute(f'INSERT INTO public."{table_name}" VALUES '
-                        f"(0, repeat('w', 3 << 20))")
+                        f"(0, repeat('w', 9 << 20))")
             with cur.copy(f'COPY public."{table_name}" TO STDOUT '
                           f"(FORMAT avro)") as cp:
                 blob = b"".join(bytes(chunk) for chunk in cp)
-            assert len(blob) > 4 << 20
+            assert len(blob) > 16 << 20
             _avro_load(cur, dest, blob)
             for left, right in ((table_name, dest), (dest, table_name)):
                 cur.execute(f'SELECT count(*) FROM (SELECT * FROM public."{left}" '
@@ -795,6 +795,9 @@ def test_copy_avro_from_stdin_takes_blocks_on_every_thread(
             damaged = blob[:at] + bytes([blob[at] ^ 0xFF]) + blob[at + 1:]
             with pytest.raises(psycopg.Error, match="sync marker"):
                 _avro_load(cur, dest, damaged)
+            negative = blob[:at + 16] + b"\x01" + blob[at + 17:]
+            with pytest.raises(psycopg.Error, match="corrupt"):
+                _avro_load(cur, dest, negative)
             cur.execute(f'SELECT count(*) FROM public."{dest}"')
             assert cur.fetchone() == (0,)
     finally:
@@ -1245,6 +1248,24 @@ def test_large_binary_copy_keeps_every_row(conn: psycopg.Connection,
             assert cur.fetchone() == (_ROWS * (_ROWS - 1) // 2, _ROWS)
             assert _count(cur, table_name, storage,
                           "WHERE label = 'name' || x::VARCHAR") == _ROWS
+        finally:
+            cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
+
+
+@pytest.mark.usefixtures("own_server")
+def test_binary_copy_from_file_on_one_thread_reads_ahead_within_its_limit(
+        conn: psycopg.Connection, table_name: str, shared_path: Path) -> None:
+    conn.execute("SET threads = 1")
+    with conn.cursor() as cur:
+        payload = _binary_rows(cur, 400_000)
+        assert len(payload) > 8 << 20
+        cur.execute(f'CREATE TABLE public."{table_name}"(x INT, label VARCHAR)')
+        try:
+            _copy_from(cur, table_name, payload, "FORMAT BINARY", "file",
+                       shared_path)
+            cur.execute(f'SELECT count(*), sum(x), count(DISTINCT label) FROM '
+                        f'public."{table_name}"')
+            assert cur.fetchone() == (400_000, 400_000 * 399_999 // 2, 400_000)
         finally:
             cur.execute(f'DROP TABLE IF EXISTS public."{table_name}"')
 

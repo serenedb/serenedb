@@ -584,9 +584,9 @@ struct CopyFromGlobalState final : public duckdb::GlobalTableFunctionState {
     : target{std::move(target)},
       ordered{ordered},
       max_threads{duckdb::TaskScheduler::QueryThreads(context)},
-      reader{std::in_place, context, source},
-      queue{reader->Batches()} {
-    reader->Resume();
+      reader{context, source},
+      queue{reader.Batches()} {
+    reader.Resume();
   }
 
   CopyFromGlobalState(duckdb::ClientContext& context,
@@ -595,9 +595,9 @@ struct CopyFromGlobalState final : public duckdb::GlobalTableFunctionState {
     : target{std::move(target)},
       ordered{ordered},
       max_threads{duckdb::TaskScheduler::QueryThreads(context)},
-      reader{std::in_place, context, std::move(file), this->target.types},
-      queue{reader->Batches()} {
-    reader->Resume();
+      reader{context, std::move(file), this->target.types},
+      queue{reader.Batches()} {
+    reader.Resume();
   }
 
   duckdb::idx_t MaxThreads() const final { return max_threads; }
@@ -606,7 +606,7 @@ struct CopyFromGlobalState final : public duckdb::GlobalTableFunctionState {
   bool ordered;
   duckdb::idx_t max_threads;
   CopyLines lines;
-  std::optional<CopyFileReader> reader;
+  CopyFileReader reader;
   pg::CopyInBatches& queue;
 };
 
@@ -713,9 +713,7 @@ void ScanCopyFrom(duckdb::ClientContext& context,
       g.lines.Finish(parser.Seq(), parser.Lines());
       parser.Stop();
       l.run[l.next - 1].Reset();
-      if (g.reader) {
-        g.reader->Resume();
-      }
+      g.reader.Resume();
     }
   }
   output.SetChildCardinality(row);

@@ -84,7 +84,7 @@ Run it.
 
 <SqlLogicTest id="data_import_and_export/markdown/overview/example_003" />
 
-A section's `content` and `end_line` stop at the next heading by default (`content_mode = 'minimal'`). With `content_mode = 'full'` they reach the next heading of the same or a higher level, so a section includes its subsections. `content_mode = 'smart'` is `full`, except that content longer than `max_content_length` bytes keeps only the text before the first subsection, or its first `max_content_length` bytes when there is no such text, followed by a `... (see #id)` line per direct subsection.
+A section's `content` is its Markdown as written in the file, from its first block to its last. `content` and `end_line` stop at the next heading by default (`content_mode = 'minimal'`). With `content_mode = 'full'` they reach the next heading of the same or a higher level, so a section includes its subsections. `content_mode = 'smart'` is `full`, except that content longer than `max_content_length` bytes keeps only the text before the first subsection, or its first `max_content_length` bytes when there is no such text, followed by a `... (see #id)` line per direct subsection.
 
 `min_level` and `max_level` limit the heading levels returned, and `max_depth` limits their number, counted from `min_level`: `max_depth = 2` returns levels 1 and 2. A section's `parent_id` is then the nearest returned section above it with a lower level. A file with frontmatter adds a section with `section_id` `frontmatter`, `level` 0 and the frontmatter text as `content`, unless `extract_metadata = false`.
 

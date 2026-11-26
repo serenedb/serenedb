@@ -33,6 +33,17 @@ n	total	bytes
 200000	19999900000	12800000
 
 
+statement count 1
+COPY (SELECT content || '\x28b52ffd2006190000616263'::BYTEA FROM read_blob('${__TEST_DIR__}/ccf.csv.zst'))
+TO '${__TEST_DIR__}/ccf_short_frame.csv.zst' (FORMAT blob, COMPRESSION 'none');
+
+
+statement error
+SELECT count(*) FROM read_csv('${__TEST_DIR__}/ccf_short_frame.csv.zst', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'});
+----
+db error: ERROR: Data corruption detected
+
+
 statement count 200000
 COPY ccf TO '${__TEST_DIR__}/ccf.ndjson.zst' (FORMAT json);
 

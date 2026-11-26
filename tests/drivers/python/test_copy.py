@@ -805,6 +805,107 @@ def test_copy_avro_from_stdin_takes_blocks_on_every_thread(
         _drop(conn, dest)
 
 
+_AVRO_TURN = 2 << 20
+_AVRO_SYNC = bytes(range(16))
+
+
+def _avro_long(value: int) -> bytes:
+    zigzag = ((value << 1) ^ (value >> 63)) & ((1 << 64) - 1)
+    out = bytearray()
+    while zigzag >= 0x80:
+        out.append((zigzag & 0x7F) | 0x80)
+        zigzag >>= 7
+    out.append(zigzag)
+    return bytes(out)
+
+
+def _avro_header() -> bytes:
+    schema = json.dumps({"type": "record", "name": "r", "fields": [
+        {"name": "x", "type": "int"}, {"name": "label", "type": "string"}]}).encode()
+    meta = (_avro_long(2) + _avro_long(11) + b"avro.schema" +
+            _avro_long(len(schema)) + schema + _avro_long(10) + b"avro.codec" +
+            _avro_long(4) + b"null" + _avro_long(0))
+    return b"Obj\x01" + meta + _AVRO_SYNC
+
+
+def _avro_block(xs: list[int], size: int | None = None) -> bytes:
+    data = b"".join(_avro_long(x) + _avro_long(len(b"v%d" % x)) + b"v%d" % x
+                    for x in xs)
+    return (_avro_long(len(xs)) + _avro_long(len(data) if size is None else size) +
+            data + _AVRO_SYNC)
+
+
+def _avro_filler(total: int) -> bytes:
+    for length in range(total, 0, -1):
+        data = _avro_long(0) + _avro_long(length) + b"f" * length
+        block = _avro_long(1) + _avro_long(len(data)) + data + _AVRO_SYNC
+        if len(block) == total:
+            return block
+    raise ValueError(total)
+
+
+def _avro_before_turn_end(before: int, tail: bytes) -> bytes:
+    return _avro_header() + _avro_filler(_AVRO_TURN - before) + tail
+
+
+_AVRO_FIVE = _avro_block(list(range(1, 6)))
+_AVRO_LAST = _avro_block([1000, 1001, 1002])
+
+
+@pytest.mark.usefixtures("own_server")
+def test_copy_avro_from_stdin_cuts_turns_inside_block_headers_and_syncs(
+        conn: psycopg.Connection, table_name: str) -> None:
+    streams = [
+        (_avro_before_turn_end(1, _avro_block(list(range(1, 101))) + _AVRO_LAST),
+         (104, 8053)),
+        (_avro_before_turn_end(1, _AVRO_FIVE + _AVRO_LAST), (9, 3018)),
+        (_avro_before_turn_end(len(_AVRO_FIVE) - 8, _AVRO_FIVE + _AVRO_LAST),
+         (9, 3018)),
+    ]
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            for threads in (8, 1):
+                cur.execute(f"SET threads = {threads}")
+                for blob, loaded in streams:
+                    cur.execute(f'TRUNCATE public."{table_name}"')
+                    _avro_load(cur, table_name, blob)
+                    cur.execute(f'SELECT count(*), sum(x) FROM public."{table_name}"')
+                    assert cur.fetchone() == loaded
+    finally:
+        _drop(conn, table_name)
+
+
+class _ClientStop(Exception):
+    pass
+
+
+@pytest.mark.usefixtures("own_server")
+def test_copy_avro_from_stdin_refuses_damaged_block_headers_and_stops_with_its_client(
+        conn: psycopg.Connection, table_name: str) -> None:
+    conn.execute("SET threads = 8")
+    damaged = [
+        _avro_before_turn_end(1, _avro_block([1], size=-5)),
+        _avro_before_turn_end(1, b"\xff" * 11 + _AVRO_FIVE),
+        _avro_before_turn_end(1, b"\x02" + b"\xff" * 11 + _AVRO_FIVE),
+    ]
+    _create_int_varchar(conn, table_name)
+    try:
+        with conn.cursor() as cur:
+            for blob in damaged:
+                with pytest.raises(psycopg.Error, match="corrupt"):
+                    _avro_load(cur, table_name, blob)
+            whole = _avro_header() + b"".join(_avro_filler(1 << 20) for _ in range(4))
+            with pytest.raises(_ClientStop):
+                with cur.copy(f'COPY public."{table_name}" FROM STDIN (FORMAT avro)') as cp:
+                    cp.write(whole[:3 << 20])
+                    raise _ClientStop()
+            cur.execute(f'SELECT count(*) FROM public."{table_name}"')
+            assert cur.fetchone() == (0,)
+    finally:
+        _drop(conn, table_name)
+
+
 def test_copy_to_stdout_arrow_file_is_binary_blob(conn: psycopg.Connection,
                                                    shared_path: Path) -> None:
     with conn.cursor() as cur:

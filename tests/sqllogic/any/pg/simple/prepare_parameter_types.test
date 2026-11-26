@@ -114,3 +114,24 @@ DEALLOCATE ALL;
 
 statement ok
 DROP TABLE ppt;
+
+
+statement error
+PREPARE ppt_gap AS SELECT $2::int AS second;
+----
+db error: ERROR: could not determine data type of parameter $1
+
+
+statement ok
+PREPARE ppt_gap_declared (text, int) AS SELECT $2::int AS second;
+
+
+query
+EXECUTE ppt_gap_declared('unused', 7);
+----
+second
+7
+
+
+statement ok
+DEALLOCATE ppt_gap_declared;

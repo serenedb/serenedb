@@ -35,6 +35,7 @@ struct Route {
   HttpMethod method;
   std::string_view pattern;
   std::unique_ptr<HttpHandler> (*make)();
+  SessionScope session = SessionScope::Connection;
 };
 
 struct Api {
@@ -43,6 +44,8 @@ struct Api {
   std::span<const Route> routes;
   uint64_t max_body_bytes = 0;
   void (*start)(const ListenSpec& spec) = nullptr;
+  bool own_listener = false;
+  bool login = true;
 };
 
 }  // namespace sdb::network::http

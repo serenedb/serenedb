@@ -20,8 +20,6 @@
 
 #include "connector/duckdb_copy_filesystem.h"
 
-#include <absl/base/internal/endian.h>
-
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -33,25 +31,18 @@
 #include <optional>
 #include <span>
 
+#include "network/send_gate.h"
 #include "pg/connection_context.h"
 #include "pg/copy_in_batches.h"
-#include "pg/protocol.h"
 #include "server/utils/message_buffer.h"
 
 namespace sdb::connector {
 namespace {
 
 constexpr std::string_view kDevStdin = "/dev/stdin";
-constexpr std::string_view kDevStdout = "/dev/stdout";
 
-struct ConnectionPlumbing {
-  pg::CopyInBatches* batches;
-  message::Buffer* send_buffer;
-  ConnectionContext& state;
-};
-
-ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
-                               std::string_view path) {
+ConnectionContext& GetConnection(duckdb::FileOpener* opener,
+                                 std::string_view path) {
   auto client_context = duckdb::FileOpener::TryGetClientContext(opener);
   if (!client_context) {
     THROW_SQL_ERROR(
@@ -59,8 +50,7 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
       ERR_MSG("COPY ", path,
               " is only valid on a server-side PostgreSQL wire connection"));
   }
-  auto& conn = ConnectionContext::Get(*client_context);
-  return {conn.GetSideChannel<pg::CopyInBatches>(), conn.GetSendBuffer(), conn};
+  return ConnectionContext::Get(*client_context);
 }
 
 }  // namespace
@@ -137,34 +127,28 @@ struct CopyInFileHandle final : public duckdb::FileHandle {
   size_t _offset = 0;
 };
 
-// A dumb byte sink: each Write becomes one CopyData frame, nothing more. The
-// pg-wire session owns the stream boundaries -- it emits CopyOutResponse (with
-// the real column count) before the COPY runs and CopyDone only after it
-// succeeds -- so a mid-COPY error can no longer leak a spurious CopyDone from a
-// destructor, and the response is no longer stuck with column count 0. This is
-// format-agnostic: csv/json/parquet/... all just stream bytes through here.
 struct CopyOutFileHandle final : public duckdb::FileHandle {
-  CopyOutFileHandle(duckdb::FileSystem& fs, message::Buffer& send_buffer)
+  CopyOutFileHandle(duckdb::FileSystem& fs, CopyOutput& output,
+                    network::SendGate& gate)
     : duckdb::FileHandle(
         fs, std::string{kDevStdout},
         duckdb::FileOpenFlags(duckdb::FileOpenFlags::FILE_FLAGS_WRITE)),
-      _send_buffer{send_buffer} {}
+      _output{output},
+      _gate{gate} {}
 
   void Close() final {}
 
   void DoWrite(const void* buf, int64_t nr_bytes) {
-    message::Writer writer{_send_buffer};
-    auto* prefix = writer.Alloc(5);
-    writer.Write(
-      {static_cast<const char*>(buf), static_cast<size_t>(nr_bytes)});
-    prefix[0] = PQ_MSG_COPY_DATA;
-    absl::big_endian::Store32(prefix + 1,
-                              static_cast<int32_t>(writer.Written() - 1));
-    writer.Commit(false);
+    const auto size = static_cast<size_t>(nr_bytes);
+    _largest_write = std::max(_largest_write, size);
+    _gate.Wrote(_output.Write({static_cast<const char*>(buf), size}),
+                _largest_write);
   }
 
  private:
-  message::Buffer& _send_buffer;
+  CopyOutput& _output;
+  network::SendGate& _gate;
+  size_t _largest_write = 0;
 };
 
 bool SereneDBCopyFileSystem::CanHandleFile(const std::string& fpath) {
@@ -181,25 +165,27 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
   const std::string& path, duckdb::FileOpenFlags flags,
   duckdb::optional_ptr<duckdb::FileOpener> opener) {
   if (path == kDevStdin) {
-    auto plumbing = GetPlumbing(opener.get(), path);
-    if (!plumbing.batches) {
+    auto& connection = GetConnection(opener.get(), path);
+    auto* batches = connection.GetSideChannel<pg::CopyInBatches>();
+    if (!batches) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("COPY ", path,
                 " requires a PG wire connection (transport not attached)"));
     }
-    return duckdb::make_uniq<CopyInFileHandle>(*this, plumbing.state,
-                                               *plumbing.batches);
+    return duckdb::make_uniq<CopyInFileHandle>(*this, connection, *batches);
   }
   if (path == kDevStdout) {
-    auto plumbing = GetPlumbing(opener.get(), path);
-    if (!plumbing.send_buffer) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("COPY ", path,
-                " requires a PG wire connection (transport not attached)"));
+    auto& connection = GetConnection(opener.get(), path);
+    auto* output = connection.GetSideChannel<CopyOutput>();
+    auto* gate = connection.GetSendGate();
+    if (output && gate) {
+      return duckdb::make_uniq<CopyOutFileHandle>(*this, *output, *gate);
     }
-    return duckdb::make_uniq<CopyOutFileHandle>(*this, *plumbing.send_buffer);
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+      ERR_MSG("COPY ", path,
+              " requires a PG wire connection (transport not attached)"));
   }
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_INTERNAL_ERROR),

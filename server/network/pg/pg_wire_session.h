@@ -74,6 +74,7 @@
 #include <yaclib/util/helper.hpp>
 
 #include "catalog/catalog.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "connector/duckdb_pg_text_copy.h"
 #include "network/cancel_registry.h"
 #include "network/connection.h"
@@ -241,6 +242,21 @@ class PgWireSession
   }
 
  protected:
+  class CopyDataOutput final : public connector::CopyOutput {
+   public:
+    explicit CopyDataOutput(PgWireSession& session) : _session{session} {}
+
+    size_t Write(std::string_view bytes) final {
+      if (!_session.SendBroken()) {
+        WriteCopyData(_session._send, bytes);
+      }
+      return _session._send.TotalCommitted();
+    }
+
+   private:
+    PgWireSession& _session;
+  };
+
   struct ClientTag {};
   PgWireSession(IoExecutor& exec, asio_ns::ssl::context& ssl, ClientTag)
     requires(Kind == SocketKind::Client)
@@ -287,15 +303,9 @@ class PgWireSession
   // writer. Shared so the two sync points cannot drift apart.
   void CommitAndReportReady();
 
-  // The transaction-boundary owners -- the only places the implicit block is
-  // resolved and txn-scoped portals are dropped, so the logic cannot smear.
   // Commit the implicit block if we own it (drops its portals); returns the
   // commit error, if any, for the caller to order against the CommandComplete.
   std::optional<irs::pg::SqlErrorData> CommitImplicitBlock();
-  // Roll the implicit block back if we own it (drops its portals); returns
-  // whether it rolled back (so the caller can fall through to the explicit
-  // case).
-  bool RollbackImplicitBlock();
   // After an explicit BEGIN/COMMIT/ROLLBACK ran: track ownership, and if it
   // closed the transaction drop the portals it owned.
   void AfterTxnStatement();

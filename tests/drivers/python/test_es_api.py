@@ -2,7 +2,7 @@
 
 Exercises the es_*() table functions through the thin HTTP handlers:
 create/exists/mapping/_cat/delete plus every error envelope. Skipped
-wholesale when no HTTP endpoint is configured (SDB_DRV_HTTP_PORT).
+wholesale when no Elasticsearch endpoint is configured (SDB_DRV_ES_PORT).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import pytest
 from spec_loader import conn_kwargs
 
 HOST = os.environ.get("SDB_DRV_HOST", "localhost")
-PORT = int(os.environ.get("SDB_DRV_HTTP_PORT", "9200"))
+PORT = int(os.environ.get("SDB_DRV_ES_PORT", "9200"))
 USER = os.environ.get("SDB_DRV_USER", "postgres")
 PASSWORD = os.environ.get("SDB_DRV_PASSWORD", "")
 

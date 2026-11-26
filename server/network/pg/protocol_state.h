@@ -377,6 +377,12 @@ inline bool IsTransactionExit(const duckdb::SQLStatement& statement) {
          type == duckdb::TransactionType::ROLLBACK;
 }
 
+[[noreturn]] inline void ThrowAbortedTransaction() {
+  THROW_SQL_ERROR(ERR_CODE(ERRCODE_IN_FAILED_SQL_TRANSACTION),
+                  ERR_MSG("current transaction is aborted, commands ignored "
+                          "until end of transaction block"));
+}
+
 // The implicit-transaction block layered over the connection's autocommit
 // state. Borrows the TransactionContext& -- the real state lives there
 // (IsAutoCommit / commit / rollback); the only thing we track is the bit it
@@ -495,6 +501,17 @@ class ImplicitTxnState {
     if (_txn.HasActiveTransaction()) {
       _txn.Rollback(nullptr);
     }
+  }
+
+  bool RollbackOrAbort() {
+    if (ShouldRollback()) {
+      Rollback();
+      return true;
+    }
+    if (_explicit) {
+      AbortBlock();
+    }
+    return false;
   }
 
  private:

@@ -2276,6 +2276,48 @@ void CheckPointFetch(duckdb::DatabaseInstance& db, const PointCodecCase& c) {
   }
 }
 
+TEST_F(ColumnReaderTest, ReopenedBlockKeepsItsId) {
+  constexpr irs::field_id kField = 1;
+  constexpr uint32_t kRgSize = 2048;
+  constexpr uint64_t kRows = 4 * kRgSize;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  WriteColumn(Db(), dir, kField, duckdb::LogicalType::BIGINT, kRows, kRgSize,
+              [](uint64_t g) {
+                return duckdb::Value::BIGINT(static_cast<int64_t>(g * g));
+              });
+  irs::ColReader r = irs::tests::OpenColReader(dir, "seg");
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  const auto blocks = col->DataBlocks().size();
+  ASSERT_GT(blocks, 1);
+  const auto last = [](const irs::codecs::ColumnSegment& segment) {
+    irs::codecs::ColumnFetchState state;
+    duckdb::Vector out{duckdb::LogicalType::BIGINT, 1};
+    const duckdb::idx_t row = segment.count - 1;
+    segment.function.fetch_rows(
+      segment, state, &row, 1, out,
+      *duckdb::FlatVector::IncrementalSelectionVector(), 0);
+    return duckdb::FlatVector::GetData<int64_t>(out)[0];
+  };
+  irs::ReadContext ctx{r, /*random_access=*/true};
+  std::set<duckdb::block_id_t> ids;
+  for (int round = 0; round < 3; ++round) {
+    for (size_t block = 0; block != blocks; ++block) {
+      SCOPED_TRACE(absl::StrCat("round ", round, " block ", block));
+      const auto segment = col->OpenSegment(block, ctx);
+      ASSERT_TRUE(segment->block);
+      ids.insert(segment->block->BlockId());
+      const auto again = col->OpenSegment(block, ctx);
+      EXPECT_EQ(again->block, segment->block);
+      const auto g = col->DataBlockFirstRow(block) + segment->count - 1;
+      const auto want = static_cast<int64_t>(g * g);
+      EXPECT_EQ(last(*segment), want);
+      EXPECT_EQ(last(*again), want);
+    }
+  }
+  EXPECT_EQ(ids.size(), blocks);
+}
+
 TEST_F(ColumnReaderTest, PointFetchEveryCodec) {
   using duckdb::LogicalType;
   using duckdb::Value;

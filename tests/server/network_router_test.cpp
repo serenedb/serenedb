@@ -58,7 +58,7 @@ const NamedHandler* MatchRoute(HttpRouter& router, HttpMethod method,
   request = HttpRequest{};
   request.method = method;
   request.target = std::move(target);
-  return static_cast<const NamedHandler*>(router.Match(request));
+  return static_cast<const NamedHandler*>(router.Match(request).handler);
 }
 
 const http::Api* Api(std::string_view name) {
@@ -71,6 +71,8 @@ std::unique_ptr<HttpHandler> MakeRegisteredHandler() {
 
 constexpr std::array kRegisteredRoutes{
   http::Route{HttpMethod::Get, "/_registered/:item", MakeRegisteredHandler},
+  http::Route{HttpMethod::Post, "/_registered/:item", MakeRegisteredHandler,
+              SessionScope::Request},
 };
 
 SDB_HTTP_API kRouterTestApi{"router-test", kRegisteredRoutes, uint64_t{7}};
@@ -109,19 +111,18 @@ TEST(NetworkRouter, LiteralWildcardAndGroups) {
 
 TEST(NetworkRouter, LiteralRoutesWinOverParams) {
   HttpRouter router;
-  // Registered AFTER the param route on purpose: one api's `/:index` must not
-  // swallow another's reserved path just by being registered first.
   router.Add(HttpMethod::Put, "/:index", std::make_unique<NamedHandler>("put"));
-  router.Add(HttpMethod::Put, "/_mcp", std::make_unique<NamedHandler>("mcp"));
+  router.Add(HttpMethod::Put, "/_bulk",
+             std::make_unique<NamedHandler>("put bulk"));
   router.Add(HttpMethod::Post, "/_bulk",
              std::make_unique<NamedHandler>("bulk"));
   router.Add(HttpMethod::Post, "/:index/_doc",
              std::make_unique<NamedHandler>("doc"));
 
   HttpRequest request;
-  const auto* mcp = MatchRoute(router, HttpMethod::Put, "/_mcp", request);
-  ASSERT_NE(mcp, nullptr);
-  EXPECT_EQ(mcp->name, "mcp");
+  const auto* put_bulk = MatchRoute(router, HttpMethod::Put, "/_bulk", request);
+  ASSERT_NE(put_bulk, nullptr);
+  EXPECT_EQ(put_bulk->name, "put bulk");
 
   const auto* bulk = MatchRoute(router, HttpMethod::Post, "/_bulk", request);
   ASSERT_NE(bulk, nullptr);
@@ -191,21 +192,39 @@ TEST(NetworkRouter, RouteTableIsFilteredByApi) {
   HttpRequest request;
   request.method = HttpMethod::Post;
   request.target = "/v1/logs";
-  EXPECT_NE(otel.Match(request), nullptr);
-  request.target = "/_mcp";
-  EXPECT_EQ(otel.Match(request), nullptr);
+  EXPECT_NE(otel.Match(request).handler, nullptr);
+  request.target = "/mcp";
+  EXPECT_EQ(otel.Match(request).handler, nullptr);
   request.target = "/_bulk";
-  EXPECT_EQ(otel.Match(request), nullptr);
+  EXPECT_EQ(otel.Match(request).handler, nullptr);
 
   HttpRouter both;
-  const std::array es_and_mcp{Api("es"), Api("mcp")};
-  http::AddRoutes(both, es_and_mcp);
+  const std::array otel_and_mcp{Api("otel"), Api("mcp")};
+  http::AddRoutes(both, otel_and_mcp);
+  request.target = "/mcp";
+  EXPECT_NE(both.Match(request).handler, nullptr);
+  request.target = "/v1/traces";
+  EXPECT_NE(both.Match(request).handler, nullptr);
   request.method = HttpMethod::Put;
-  request.target = "/_mcp";
-  EXPECT_NE(both.Match(request), nullptr);
   request.target = "/my-index";
-  EXPECT_NE(both.Match(request), nullptr);
-  EXPECT_EQ(request.Param("index"), "my-index");
+  EXPECT_EQ(both.Match(request).handler, nullptr);
+}
+
+TEST(NetworkRouter, RoutesKeepTheirSessionScope) {
+  HttpRouter router;
+  http::AddRoutes(router, std::array{Api("router-test")});
+  HttpRequest request;
+  request.method = HttpMethod::Get;
+  request.target = "/_registered/apples";
+  const auto get = router.Match(request);
+  ASSERT_NE(get.handler, nullptr);
+  EXPECT_EQ(get.session, SessionScope::Connection);
+  request.method = HttpMethod::Post;
+  const auto post = router.Match(request);
+  ASSERT_NE(post.handler, nullptr);
+  EXPECT_EQ(post.session, SessionScope::Request);
+  request.method = HttpMethod::Put;
+  EXPECT_EQ(router.Match(request).handler, nullptr);
 }
 
 TEST(NetworkRouter, RegisteredApiServesItsRoutes) {
@@ -225,7 +244,7 @@ TEST(NetworkRouter, RegisteredApiServesItsRoutes) {
   ASSERT_NE(handler, nullptr);
   EXPECT_EQ(handler->name, "registered");
   EXPECT_EQ(request.Param("item"), "apples");
-  EXPECT_EQ(MatchRoute(router, HttpMethod::Get, "/_mcp", request), nullptr);
+  EXPECT_EQ(MatchRoute(router, HttpMethod::Get, "/mcp", request), nullptr);
 }
 
 TEST(NetworkRouter, BodyLimitIsTheLargestOfTheApis) {
@@ -234,6 +253,6 @@ TEST(NetworkRouter, BodyLimitIsTheLargestOfTheApis) {
   EXPECT_EQ(http::MaxBodyBytes(std::array{Api("mcp")}), uint64_t{4} << 20);
   EXPECT_EQ(http::MaxBodyBytes(std::array{Api("otel"), Api("mcp")}),
             uint64_t{100} << 20);
-  EXPECT_EQ(http::MaxBodyBytes(std::array{Api("otel"), Api("es")}),
+  EXPECT_EQ(http::MaxBodyBytes(std::array{Api("mcp"), Api("test")}),
             uint64_t{100} << 20);
 }

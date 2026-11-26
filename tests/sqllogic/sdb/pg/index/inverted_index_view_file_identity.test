@@ -1,0 +1,193 @@
+control substitution on
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY vfi_dict AS split_text(case := 'lower')
+    WITH (frequency, position, norm);
+
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'alpha one', 'a'), (3, 'beta three', 'b')) AS t(id, body, part))
+TO '${__TEST_DIR__}/vfi_parts' (FORMAT parquet, PARTITION_BY (part));
+
+
+statement ok
+CREATE VIEW vfi_part_b AS
+    SELECT id, body
+    FROM read_parquet('${__TEST_DIR__}/vfi_parts/*/*.parquet', hive_partitioning := true)
+    WHERE part = 'b';
+
+
+query
+SELECT id, body FROM vfi_part_b ORDER BY id;
+----
+id	body
+3	beta three
+
+
+statement ok
+CREATE INDEX vfi_part_b_idx ON vfi_part_b USING inverted (id, body vfi_dict);
+
+
+query
+SELECT id, body FROM vfi_part_b_idx WHERE body @@ 'beta';
+----
+id	body
+3	beta three
+
+
+query
+SELECT count(*) AS n FROM vfi_part_b_idx WHERE body @@ 'alpha';
+----
+n
+0
+
+
+statement ok
+COPY (SELECT 5 AS id, 'beta five' AS body) TO '${__TEST_DIR__}/vfi_parts/part=b/extra.parquet' (FORMAT parquet);
+
+
+statement ok
+REINDEX INDEX vfi_part_b_idx;
+
+
+query
+SELECT id, body FROM vfi_part_b_idx WHERE body @@ 'beta' ORDER BY id;
+----
+id	body
+3	beta three
+5	beta five
+
+
+statement ok
+CREATE VIEW vfi_parts_all AS
+    SELECT id, body, part
+    FROM read_parquet('${__TEST_DIR__}/vfi_parts/*/*.parquet', hive_partitioning := true);
+
+
+statement ok
+CREATE INDEX vfi_partial_b_idx ON vfi_parts_all USING inverted (id, body vfi_dict)
+    WHERE part = 'b';
+
+
+query
+SELECT id, body FROM vfi_partial_b_idx WHERE body @@ 'beta' ORDER BY id;
+----
+id	body
+3	beta three
+5	beta five
+
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'one east', 'a', 0), (2, 'two east', 'a', 1), (3, 'three west', 'b', 0), (4, 'four west', 'b', 1)) AS t(id, body, part, half))
+TO '${__TEST_DIR__}/vfi_two' (FORMAT parquet, PARTITION_BY (part, half));
+
+
+statement ok
+CREATE VIEW vfi_two_keys AS
+    SELECT id, body
+    FROM read_parquet('${__TEST_DIR__}/vfi_two/*/*/*.parquet', hive_partitioning := true)
+    WHERE part = 'b' OR half = 1;
+
+
+statement ok
+CREATE INDEX vfi_two_keys_idx ON vfi_two_keys USING inverted (id, body vfi_dict);
+
+
+query
+SELECT id, body FROM vfi_two_keys_idx WHERE body @@ 'east' ORDER BY id;
+----
+id	body
+2	two east
+
+
+query
+SELECT id, body FROM vfi_two_keys_idx WHERE body @@ 'west' ORDER BY id;
+----
+id	body
+3	three west
+4	four west
+
+
+statement ok
+COPY (SELECT 1 AS id, 'red apple' AS body) TO '${__TEST_DIR__}/vfi_file_1.parquet' (FORMAT parquet);
+
+
+statement ok
+COPY (SELECT 2 AS id, 'green pear' AS body) TO '${__TEST_DIR__}/vfi_file_2.parquet' (FORMAT parquet);
+
+
+statement ok
+CREATE VIEW vfi_file_2_only AS
+    SELECT id, body
+    FROM read_parquet('${__TEST_DIR__}/vfi_file_*.parquet', filename := true)
+    WHERE filename LIKE '%vfi_file_2%';
+
+
+statement ok
+CREATE INDEX vfi_file_2_idx ON vfi_file_2_only USING inverted (id, body vfi_dict);
+
+
+query
+SELECT id, body FROM vfi_file_2_idx WHERE body @@ 'green';
+----
+id	body
+2	green pear
+
+
+statement ok
+COPY (SELECT 1 AS id, 'question mark file' AS body) TO '${__TEST_DIR__}/vfi_q_a?.parquet' (FORMAT parquet);
+
+
+statement ok
+COPY (SELECT 2 AS id, 'plain ab file' AS body) TO '${__TEST_DIR__}/vfi_q_ab.parquet' (FORMAT parquet);
+
+
+statement ok
+COPY (SELECT 3 AS id, 'zulu file' AS body) TO '${__TEST_DIR__}/vfi_q_z.parquet' (FORMAT parquet);
+
+
+statement ok
+CREATE VIEW vfi_q AS SELECT id, body FROM read_parquet('${__TEST_DIR__}/vfi_q_*.parquet');
+
+
+statement ok
+CREATE INDEX vfi_q_idx ON vfi_q USING inverted (id, body vfi_dict);
+
+
+query
+SELECT id, body FROM vfi_q_idx WHERE body @@ 'zulu';
+----
+id	body
+3	zulu file
+
+
+query
+SELECT id, body FROM vfi_q_idx WHERE body @@ 'file' ORDER BY id;
+----
+id	body
+1	question mark file
+2	plain ab file
+3	zulu file
+
+
+statement ok
+COPY (SELECT 4 AS id, 'bracket file' AS body) TO '${__TEST_DIR__}/vfi_b_f[1].parquet' (FORMAT parquet);
+
+
+statement ok
+COPY (SELECT 5 AS id, 'plain file' AS body) TO '${__TEST_DIR__}/vfi_b_f1.parquet' (FORMAT parquet);
+
+
+statement ok
+CREATE VIEW vfi_b AS SELECT id, body FROM read_parquet('${__TEST_DIR__}/vfi_b_*.parquet');
+
+
+statement ok
+CREATE INDEX vfi_b_idx ON vfi_b USING inverted (id, body vfi_dict);
+
+
+query
+SELECT id, body FROM vfi_b_idx WHERE body @@ 'bracket';
+----
+id	body
+4	bracket file

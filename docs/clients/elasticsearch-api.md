@@ -22,9 +22,17 @@ serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:9200?api=es'
 
 Indices live in the listener's database, which is `postgres` unless `db=` names another one, as in `?api=es&db=shop`. That database must exist, or the server does not start and logs `database 'shop' does not exist`.
 
-To serve another HTTP API on the same port, repeat the `api` key: `?api=es&api=mcp` also serves the [MCP endpoint](../sql/functions/docs.md#documentation-for-ai-agents-over-mcp). Do not join the values with a comma. The comma separates endpoints in `--listen`, so `?api=es,mcp` stops the server at startup with `invalid network endpoint 'mcp'`.
+The Elasticsearch API needs a listener of its own: its index routes (`PUT /<index>`, `GET /<index>` and the rest) take every path at the root, so another API on the same port would hide some index names. A listener that names `es` with another API stops the server at startup with `needs a listener of its own`. Serve the other HTTP APIs on another endpoint, for example the [MCP endpoint](../sql/functions/docs.md#documentation-for-ai-agents-over-mcp):
+
+```bash
+serened ./data --listen 'postgres://127.0.0.1:7890,http://127.0.0.1:9200?api=es,http://127.0.0.1:8080?api=mcp&api=otel'
+```
+
+A listener serves several APIs when the `api` key repeats, as in `?api=mcp&api=otel`. Do not join the values with a comma. The comma separates endpoints in `--listen`, so `?api=mcp,otel` stops the server at startup with `invalid network endpoint 'otel'`.
 
 Browser-based tools need CORS. `--http_cors_origins` takes a comma-separated list of allowed origins or `*`. The server echoes an allowed `Origin` and answers preflight `OPTIONS` requests.
+
+A client that closes its connection before the answer arrives cancels the statement its request runs.
 
 Check that the listener answers:
 
@@ -48,7 +56,7 @@ Every request needs an `Authorization` header, from the local machine too. A req
 | `Bearer` | a static token | `--auth_bearer_token=<token>` |
 | `ApiKey` | base64 of a static `<id>:<key>` pair | `--auth_api_key=<id>:<key>` |
 
-A role without a password, such as `postgres` on a fresh server, is accepted only from a loopback address. That is why the examples on this page use `-u postgres:`. From any other address such a role gets `401`.
+A Basic login follows the server's [client authentication rules](../security/client_authentication.md), as a `psql` login does: with the default rules `postgres` is trusted from a loopback address, which is why the examples on this page use `-u postgres:`, and every other role needs its password. A role that does not exist or has no `LOGIN`, a role whose `VALID UNTIL` has passed, a wrong password and a login a rule rejects get `401`.
 
 Bearer and ApiKey answer `401` until their flag is set. They have no role of their own: requests that use them act as the `postgres` superuser.
 
@@ -180,7 +188,7 @@ EOF
 ### Refresh and request bodies
 
 - `?refresh=true`, `?refresh=wait_for` or a bare `?refresh` on a write, `POST /<index>/_refresh` and `POST /_refresh` are accepted and change nothing: a document is searchable as soon as its write returns. See [Visibility](#visibility).
-- A request body is at most 100 MiB, Elasticsearch's default `http.max_content_length`. A larger one gets `413`. A listener that also serves other APIs (`?api=es&api=otel`) applies the largest of their limits to every request.
+- A request body is at most 100 MiB, Elasticsearch's default `http.max_content_length`. A larger one gets `413`.
 - A request body can be compressed. A body sent with `Content-Encoding` is decompressed before the request reaches the API; see [HTTP Compression](../configuration/http_compression.md#compressed-request-bodies) for the codings and limits.
 
 ## Reading documents

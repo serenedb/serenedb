@@ -284,3 +284,163 @@ SELECT id FROM bx WHERE t @@ ('quick'::bytea ## 'fox') ORDER BY id
 ----
 id
 1
+
+# A BYTEA pattern matches bytes on any column: `_` and `.` are one byte, also
+# right after a byte that starts a UTF-8 sequence. A text pattern matches
+# characters on a text column.
+query
+SELECT id FROM bt WHERE v @@ ts_like('\xc35f'::bytea) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM bt WHERE v @@ ts_like('\xe45f5f'::bytea) ORDER BY id
+----
+id
+6
+
+query
+SELECT id FROM bt WHERE v @@ ts_like('\xe425'::bytea) ORDER BY id
+----
+id
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_like('__') ORDER BY id
+----
+id
+1
+2
+3
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_regexp('\xc32e'::bytea) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM bt WHERE v @@ ts_regexp('\xe42e2a'::bytea) ORDER BY id
+----
+id
+6
+7
+
+statement ok
+CREATE TABLE bk(id INTEGER PRIMARY KEY, k VARCHAR)
+
+statement ok
+CREATE INDEX bk_idx ON bk USING inverted(id, k)
+
+statement ok
+INSERT INTO bk VALUES (1, 'a'), (2, 'ab'), (3, 'é'), (4, '中'), (5, 'x')
+
+query
+SELECT id FROM bk WHERE k @@ ts_like('\xc35f'::bytea) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM bk WHERE k @@ ts_like('_'::bytea) ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM bk WHERE k @@ ts_like('__'::bytea) ORDER BY id
+----
+id
+2
+3
+
+query
+SELECT id FROM bk WHERE k @@ ts_like('_') ORDER BY id
+----
+id
+1
+3
+4
+5
+
+query
+SELECT id FROM bk WHERE k @@ ts_regexp('\xc32e'::bytea) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM bk WHERE k @@ ts_regexp('.'::bytea) ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM bk WHERE k @@ ts_regexp('.') ORDER BY id
+----
+id
+1
+3
+4
+5
+
+statement ok
+CREATE TABLE bc(id INTEGER PRIMARY KEY, t VARCHAR)
+
+statement ok
+CREATE INDEX bc_idx ON bc USING inverted(id, t bt_words)
+
+statement ok
+INSERT INTO bc VALUES (1, 'quick café'), (2, 'quick cafe')
+
+query
+SELECT id FROM bc WHERE t @@ ('quick' ## ts_like('caf_'::bytea)) ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bc WHERE t @@ ('quick' ## ts_like('caf_')) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bc WHERE t @@ ('quick' ## ts_regexp('caf.'::bytea)) ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bc WHERE t @@ ('quick' ## ts_regexp('caf.')) ORDER BY id
+----
+id
+1
+2
+
+statement ok
+CREATE TABLE bq(id INTEGER PRIMARY KEY, p BYTEA)
+
+statement ok
+CREATE INDEX bq_idx ON bq USING inverted(id, p bt_words)
+
+statement ok
+INSERT INTO bq VALUES (1, 'quick café'::bytea), (2, 'quick cafe'::bytea)
+
+query
+SELECT id FROM bq WHERE p @@ ('quick' ## ts_like('caf_')) ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bq WHERE p @@ ('quick' ## ts_regexp('caf.')) ORDER BY id
+----
+id
+2

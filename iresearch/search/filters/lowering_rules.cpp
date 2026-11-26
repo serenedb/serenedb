@@ -96,7 +96,7 @@ bool WildcardSimplifyRule::Apply(Filter::ptr& slot, const OptimizeContext&) {
   const auto target = TargetOf(node);
   bstring buf;
   auto lowered = ExecuteWildcard(
-    buf, node.options().term,
+    buf, node.options().term, node.options().bytes,
     [&](bytes_view term) { return target.Term(term); },
     [&](bytes_view prefix) { return target.Prefix(prefix); },
     [](bytes_view) -> Filter::ptr { return nullptr; });

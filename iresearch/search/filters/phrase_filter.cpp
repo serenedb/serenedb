@@ -779,20 +779,20 @@ bool ByPhraseOptions::LowerParts() {
     } else if (const auto* w = std::get_if<ByWildcardOptions>(&info.part); w) {
       bstring buf;
       info.part = ExecuteWildcard(
-        buf, bytes_view{w->term},
+        buf, bytes_view{w->term}, w->bytes,
         [](bytes_view term) -> PhrasePart {
           return ByTermOptions{bstring{term}};
         },
         [](bytes_view prefix) -> PhrasePart {
           return ByPrefixOptions{{bstring{prefix}}};
         },
-        [](bytes_view term) -> PhrasePart {
-          return AutomatonOptions{term, PatternKind::Wildcard};
+        [kind = WildcardPattern(w->bytes)](bytes_view term) -> PhrasePart {
+          return AutomatonOptions{term, kind};
         });
       changed = true;
     } else if (const auto* r = std::get_if<ByRegexpOptions>(&info.part); r) {
       bstring buf;
-      const auto kind = RegexpPattern(r->syntax);
+      const auto kind = RegexpPattern(r->syntax, r->bytes);
       info.part = ExecuteRegexp(
         buf, bytes_view{r->pattern}, r->syntax,
         [](bytes_view term) -> PhrasePart {

@@ -443,7 +443,8 @@ class PtrIterator
   using iterator_facade = typename base::iterator_facade_;
 
   template<typename T>
-  struct AdjustConst : irs::irstd::AdjustConst<base_element_type, T> {};
+  using Adjusted =
+    std::conditional_t<std::is_const_v<base_element_type>, const T, T>;
 
  public:
   using reference = typename iterator_facade::reference;
@@ -455,7 +456,7 @@ class PtrIterator
   /// @brief returns downcasted reference to the iterator's value
   //////////////////////////////////////////////////////////////////////////////
   template<typename T>
-  typename AdjustConst<T>::reference as() const {
+  Adjusted<T>& as() const {
     static_assert(std::is_base_of_v<base_element_type, T>);
     return irs::utils::downCast<T>(dereference());
   }
@@ -465,10 +466,10 @@ class PtrIterator
   ///        or nullptr if there is no available conversion
   //////////////////////////////////////////////////////////////////////////////
   template<typename T>
-  typename AdjustConst<T>::pointer safe_as() const {
+  Adjusted<T>* safe_as() const {
     static_assert(std::is_base_of_v<base_element_type, T>);
     reference it = dereference();
-    return dynamic_cast<typename AdjustConst<T>::pointer>(&it);
+    return dynamic_cast<Adjusted<T>*>(&it);
   }
 
   bool is_null() const noexcept { return *_it == nullptr; }

@@ -775,6 +775,63 @@ DROP TABLE ri_generated;
 
 
 statement ok
+CREATE SCHEMA nest_o;
+
+statement ok
+CREATE SCHEMA nest_o.nest_i;
+
+statement ok
+CREATE SCHEMA nest_i;
+
+statement ok
+CREATE TABLE nest_o.nest_i.t (id INT, v TEXT);
+
+statement ok
+CREATE TABLE nest_o.nest_i.s (id SERIAL, v TEXT);
+
+statement ok
+CREATE TABLE nest_i.s (id SERIAL, v TEXT);
+
+statement ok
+INSERT INTO nest_o.nest_i.t VALUES (1, 'a'), (2, 'b');
+
+statement ok
+TRUNCATE nest_o.nest_i.t;
+
+query
+SELECT count(*) AS n FROM nest_o.nest_i.t;
+----
+n
+0
+
+query
+SELECT nextval('nest_o.nest_i.s_id_seq') AS nested_1, nextval('nest_o.nest_i.s_id_seq') AS nested_2,
+       nextval('nest_i.s_id_seq') AS top_1;
+----
+nested_1	nested_2	top_1
+1	2	1
+
+statement ok
+INSERT INTO nest_o.nest_i.t VALUES (3, 'c');
+
+statement ok
+TRUNCATE nest_o.nest_i.s, nest_o.nest_i.t RESTART IDENTITY CASCADE;
+
+query
+SELECT nextval('nest_o.nest_i.s_id_seq') AS nested, nextval('nest_i.s_id_seq') AS top,
+       (SELECT count(*) FROM nest_o.nest_i.t) AS t_rows;
+----
+nested	top	t_rows
+1	2	0
+
+statement ok
+DROP SCHEMA nest_o CASCADE;
+
+statement ok
+DROP SCHEMA nest_i CASCADE;
+
+
+statement ok
 CREATE TABLE explain_t (id INT PRIMARY KEY, v TEXT);
 
 statement count 3

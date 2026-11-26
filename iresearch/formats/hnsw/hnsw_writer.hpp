@@ -66,6 +66,7 @@ class HnswWriter final : public AnnWriter {
 
   AnnInfo _info;
   HnswBases* _bases;
+  const AnnBuildEnv* _env = nullptr;
   std::span<const MergeSource> _merge_sources;
   HnswGraphWriter _graph;
   std::vector<float> _vectors;

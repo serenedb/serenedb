@@ -1,0 +1,32 @@
+statement ok
+SET TimeZone = 'Europe/Berlin'
+
+statement ok
+CREATE TABLE tdcdp (ts TIMESTAMPTZ) WITH (compaction_interval = 0)
+
+statement ok
+INSERT INTO tdcdp VALUES ('2025-10-26 22:30:00+00')
+
+statement ok
+INSERT INTO tdcdp VALUES ('2025-10-20 12:00:00+00')
+
+statement ok
+SET disabled_optimizers = 'expression_rewriter'
+
+query
+SELECT count(*) AS n FROM tdcdp WHERE ts::date = '2025-10-26'
+----
+n
+1
+
+query
+SELECT count(*) AS n FROM tdcdp WHERE ts::date <= '2025-10-26' AND ts::date >= '2025-10-26'
+----
+n
+1
+
+statement ok
+RESET disabled_optimizers
+
+statement ok
+RESET TimeZone

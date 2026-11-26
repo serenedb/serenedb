@@ -30,13 +30,14 @@
 namespace sdb::network {
 
 void HttpRouter::Add(HttpMethod method, std::string_view pattern,
-                     std::unique_ptr<HttpHandler> handler) {
+                     std::unique_ptr<HttpHandler> handler,
+                     SessionScope session) {
   SDB_VERIFY(!pattern.empty() && pattern.front() == '/',
              "HTTP route pattern must start with '/': '", pattern, "'");
   auto* raw = _handlers.emplace_back(std::move(handler)).get();
   auto& slot = _methods[HandlersOf(pattern)][static_cast<size_t>(method)];
-  if (!slot) {
-    slot = raw;
+  if (!slot.handler) {
+    slot = {.handler = raw, .session = session};
   }
 }
 
@@ -62,13 +63,11 @@ size_t HttpRouter::HandlersOf(std::string_view pattern) {
   return index;
 }
 
-HttpHandler* HttpRouter::Match(HttpRequest& request) {
+RouteTarget HttpRouter::Match(HttpRequest& request) {
   std::string_view target = request.target;
   const size_t cut = target.find_first_of("?#");
   const std::string_view raw_path =
     cut == std::string_view::npos ? target : target.substr(0, cut);
-  // Parse the query string (request-scoped) into request.query, percent-decoded
-  // by ada; path matching below uses `path` only, so it is unaffected.
   request.query.clear();
   if (cut != std::string_view::npos && target[cut] == '?') {
     const size_t frag = target.find('#', cut);
@@ -82,23 +81,23 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
   }
   request.params.clear();
   if (raw_path.empty() || raw_path.front() != '/') {
-    return nullptr;
+    return {};
   }
   const auto canonical =
     ada::url_pattern_helpers::canonicalize_pathname(raw_path);
   if (!canonical) {
-    return nullptr;
+    return {};
   }
   const std::string_view path = *canonical;
   const auto method = static_cast<size_t>(request.method);
   if (const auto it = _literal.find(path); it != _literal.end()) {
-    if (auto* handler = _methods[it->second][method]) {
-      return handler;
+    if (const auto& found = _methods[it->second][method]; found.handler) {
+      return found;
     }
   }
   for (auto& route : _parameterized) {
-    auto* handler = _methods[route.handlers][method];
-    if (!handler || !route.path.fast_test(path)) {
+    const auto& found = _methods[route.handlers][method];
+    if (!found.handler || !route.path.fast_test(path)) {
       continue;
     }
     auto groups = route.path.fast_match(path);
@@ -111,9 +110,9 @@ HttpHandler* HttpRouter::Match(HttpRequest& request) {
         request.params.emplace_back(names[i], std::move(*value));
       }
     }
-    return handler;
+    return found;
   }
-  return nullptr;
+  return {};
 }
 
 }  // namespace sdb::network

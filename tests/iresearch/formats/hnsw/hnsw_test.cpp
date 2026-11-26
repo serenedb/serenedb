@@ -19,11 +19,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
+#include <absl/functional/function_ref.h>
 #include <absl/random/distributions.h>
+#include <absl/strings/str_cat.h>
 
 #include <algorithm>
 #include <cmath>
 #include <duckdb.hpp>
+#include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <iresearch/formats/ann_build_env.hpp>
 #include <iresearch/formats/format_utils.hpp>
@@ -41,6 +45,8 @@
 #include <iresearch/utils/index_utils.hpp>
 #include <numeric>
 #include <random>
+#include <string_view>
+#include <thread>
 #include <tuple>
 #include <vector>
 #include <yaclib/runtime/fair_thread_pool.hpp>
@@ -625,6 +631,195 @@ TEST_P(HnswIndexTest, OpenReadsTheHeaderFromTheFooter) {
   EXPECT_EQ(built.rotated, header.rotated);
 }
 
+constexpr std::string_view kRawGraph = "irs::HnswRawGraph";
+constexpr std::string_view kFrameByFrame = "irs::HnswGraphReadsFrameByFrame";
+
+void ThreadsFor(size_t count, absl::FunctionRef<void(size_t)> body) {
+  std::vector<std::thread> threads;
+  threads.reserve(count);
+  for (size_t i = 0; i != count; ++i) {
+    threads.emplace_back([body, i] { body(i); });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
+}
+
+struct WideGraph {
+  irs::CompositeReader reader;
+  uint64_t idx_bytes = 0;
+};
+
+WideGraph BuildWideGraph(const tests::IndexDir& dir,
+                         const std::vector<std::vector<float>>& vecs,
+                         const irs::AnnBuildEnv& env) {
+  auto opts = irs::tests::DefaultWriterOptions();
+  SetAnn(opts, irs::AnnInfo{
+                 .kind = irs::AnnKind::Hnsw,
+                 .index_id = kVec,
+                 .column_id = kVec,
+                 .d = static_cast<int>(kDim),
+                 .metric = irs::VectorMetric::L2Sqr,
+                 .quant = {.kind = irs::VectorQuantization::None},
+                 .m = 2048,
+                 .ef_construction = 2048,
+               });
+  opts.ann_env = &env;
+  auto writer = tests::IndexWriter::Make(dir, tests::kOmCreate, opts);
+  EXPECT_NE(nullptr, writer);
+  {
+    auto trx = writer->GetBatch();
+    for (const auto& vec : vecs) {
+      auto doc = trx.Insert();
+      WriteVectorAt(*doc.GetColWriter(), doc.DocId(), vec);
+    }
+    trx.Commit();
+  }
+  writer->RefreshCommit();
+  WideGraph built{.reader = writer->GetSnapshot()};
+  built.idx_bytes =
+    dir
+      .Open(irs::FileName(built.reader[0].Meta().name, irs::kIdxFormatExt),
+            duckdb::MappedFileAccess::NORMAL)
+      ->GetSize();
+  return built;
+}
+
+TEST(HnswGraphFormatTest, PackedGraphLoadsAsTheRawGraph) {
+  if (!duckdb::FaultPoints::Arm(kRawGraph)) {
+    GTEST_SKIP() << "this build has no fault injection";
+  }
+  absl::Cleanup clear = [] { duckdb::FaultPoints::Clear(); };
+  auto pool = yaclib::MakeFairThreadPool(4);
+  absl::Cleanup stop = [&] {
+    pool->SoftStop();
+    pool->Wait();
+  };
+  std::atomic<uint32_t> held{0};
+  const auto acquire = [&](uint32_t want, uint32_t) {
+    held.fetch_add(want);
+    return want;
+  };
+  const auto release = [&](uint32_t n) { held.fetch_sub(n); };
+  const irs::AnnBuildEnv env{
+    .executor = *pool, .acquire = acquire, .release = release};
+  const auto vecs = MakeVectors(2000, 29);
+  const tests::IndexDir raw_dir{irs::DuckDBEngine::Instance().instance(),
+                                TestEnv::MemoryRoot()};
+  const auto raw = BuildWideGraph(raw_dir, vecs, env);
+  duckdb::FaultPoints::Disarm(kRawGraph);
+  const tests::IndexDir packed_dir{irs::DuckDBEngine::Instance().instance(),
+                                   TestEnv::MemoryRoot()};
+  const auto packed = BuildWideGraph(packed_dir, vecs, env);
+  EXPECT_LT(packed.idx_bytes * 4, raw.idx_bytes);
+  EXPECT_EQ(held.load(), 0U);
+
+  const auto load = [](const irs::CompositeReader& reader) {
+    return static_cast<const irs::HnswIndex&>(*reader[0].Ann(kVec))
+      .Load(ThreadsFor);
+  };
+  const auto from_raw = load(raw.reader);
+  ASSERT_GT(raw.idx_bytes, 2 * irs::compression::kFrameBytes);
+  ASSERT_TRUE(duckdb::FaultPoints::Arm(kFrameByFrame));
+  const auto from_packed = load(packed.reader);
+  duckdb::FaultPoints::Disarm(kFrameByFrame);
+  ASSERT_TRUE(from_raw && from_packed);
+  const auto& expected = from_raw->graph;
+  const auto& actual = from_packed->graph;
+  ASSERT_EQ(expected.Size(), vecs.size());
+  ASSERT_EQ(actual.Size(), expected.Size());
+  EXPECT_EQ(actual.M(), expected.M());
+  EXPECT_EQ(actual.EntryPoint(), expected.EntryPoint());
+  ASSERT_TRUE(absl::c_equal(actual.Levels(), expected.Levels()));
+  for (uint32_t node = 0; node != expected.Size(); ++node) {
+    for (uint32_t level = 0; level != expected.LevelOf(node); ++level) {
+      ASSERT_TRUE(absl::c_equal(actual.Neighbors(node, level),
+                                expected.Neighbors(node, level)))
+        << "node " << node << " level " << level;
+    }
+  }
+}
+
+TEST(HnswGraphFormatTest, PackedLinkArraysMustMatchTheLevels) {
+  constexpr uint32_t kM = 2;
+  constexpr std::array<irs::byte_type, 4> kLevels{1, 1, 1, 1};
+  constexpr uint64_t kBaseBytes = kLevels.size() * 2 * kM * sizeof(uint32_t);
+  irs::bstring bytes;
+  for (const uint32_t value : {kM, uint32_t{0}, uint32_t{1}}) {
+    bytes.append(reinterpret_cast<const irs::byte_type*>(&value),
+                 sizeof(value));
+  }
+  bytes.append(kLevels.data(), kLevels.size());
+  const auto frames_of = [](uint64_t raw_bytes) {
+    irs::compression::Frames frames{.codec = irs::compression::Codec::Lz4,
+                                    .raw_bytes = raw_bytes};
+    if (raw_bytes != 0) {
+      frames.sizes.push_back(static_cast<uint32_t>(raw_bytes));
+    }
+    return frames;
+  };
+  for (const auto& [base, upper] :
+       {std::pair{kBaseBytes + sizeof(uint32_t), uint64_t{0}},
+        std::pair{kBaseBytes, uint64_t{sizeof(uint32_t)}}}) {
+    const irs::HnswGraphFrames frames{
+      .levels = frames_of(kLevels.size()),
+      .base = frames_of(base),
+      .upper = frames_of(upper),
+    };
+    duckdb::InputFileReader in{
+      std::span<const duckdb::data_t>{bytes.data(), bytes.size()}};
+    ASSERT_SQL_ERROR(
+      irs::HnswGraph::DeserializePacked(in, frames, irs::SerialFor),
+      ERRCODE_DATA_CORRUPTED);
+  }
+}
+
+TEST(HnswGraphFormatTest, AGraphWithoutLevelsIsCorrupted) {
+  constexpr std::string_view kSegment = "corrupted";
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  {
+    auto out = dir.Create(irs::FileName(kSegment, irs::kIdxFormatExt));
+    irs::format_utils::WriteFooter(*out, [](duckdb::BinarySerializer& footer) {
+      footer.WriteList(
+        irs::kIdxFieldHnsw, "hnsw", 1,
+        [](duckdb::BinarySerializer::List& list, duckdb::idx_t) {
+          list.WriteObject([](duckdb::BinarySerializer& obj) {
+            obj.WriteProperty<uint64_t>(0, "id", kVec);
+            obj.WriteProperty<uint64_t>(1, "offset", 0);
+            obj.WriteProperty<uint32_t>(3, "d", kDim);
+            obj.WriteProperty<uint8_t>(
+              4, "metric", static_cast<uint8_t>(irs::VectorMetric::L2Sqr));
+            obj.WriteProperty<uint8_t>(
+              5, "quant", static_cast<uint8_t>(irs::VectorQuantization::None));
+            obj.WriteProperty<uint32_t>(6, "ef_construction", 64);
+            obj.WriteProperty<uint32_t>(7, "record_size", 0);
+            obj.WriteProperty<uint64_t>(8, "rows", 1);
+            obj.WriteProperty<bool>(9, "rotated", false);
+            obj.WriteObject(irs::kHnswMetaGraphCompression, "graph_compression",
+                            [](duckdb::BinarySerializer& graph) {
+                              for (const auto& [field, tag] :
+                                   {std::pair{irs::kHnswGraphLevels, "levels"},
+                                    std::pair{irs::kHnswGraphBase, "base"},
+                                    std::pair{irs::kHnswGraphUpper, "upper"}}) {
+                                graph.WriteObject(
+                                  field, tag,
+                                  [](duckdb::BinarySerializer& frames) {
+                                    irs::compression::WriteFrames(
+                                      frames, irs::compression::Frames{});
+                                  });
+                              }
+                            });
+          });
+        });
+    });
+    out->Close();
+  }
+  ASSERT_SQL_ERROR(
+    (irs::IdxReader{dir.Fs(), dir.Root(), kSegment, true, nullptr}),
+    ERRCODE_DATA_CORRUPTED);
+}
+
 INSTANTIATE_TEST_SUITE_P(
   metrics, HnswIndexTest,
   ::testing::Combine(
@@ -790,7 +985,7 @@ std::vector<std::shared_ptr<const std::vector<float>>> SegmentBases(
   std::vector<std::shared_ptr<const std::vector<float>>> out;
   for (const auto& segment : reader) {
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    out.push_back(ann->Load()->rotation);
+    out.push_back(ann->Load(irs::SerialFor)->rotation);
   }
   return out;
 }
@@ -1007,6 +1202,34 @@ TEST(HnswPanoramaBasisTest, SegmentsOfAnIndexShareOneBasis) {
   }
 }
 
+TEST(HnswPanoramaBasisTest, AMergeOfUnrotatedSegmentsTrainsABasis) {
+  constexpr uint32_t kD = irs::kHnswPanoramaMinDim;
+  constexpr size_t kBatch = 4 * kD + 1;
+  const auto vecs = MakeDecayingVectors(2 * kBatch, 59, kD);
+  const std::span all{vecs};
+  tests::IndexDir dir{irs::DuckDBEngine::Instance().instance(),
+                      TestEnv::MemoryRoot()};
+  auto writer = tests::IndexWriter::Make(
+    dir, tests::kOmCreate,
+    MakeWriterOptions(irs::VectorMetric::L2Sqr, irs::VectorQuantization::None,
+                      0, kD));
+  ASSERT_NE(nullptr, writer);
+  AppendBatch(*writer, all.subspan(0, kBatch));
+  AppendBatch(*writer, all.subspan(kBatch, kBatch));
+  const auto flushed = SegmentBases(writer->GetSnapshot());
+  ASSERT_EQ(2U, flushed.size());
+  EXPECT_EQ(nullptr, flushed[0]);
+  EXPECT_EQ(nullptr, flushed[1]);
+
+  ASSERT_TRUE(writer->Compact(
+    irs::index_utils::MakePolicy(irs::index_utils::CompactionCount())));
+  writer->RefreshCommit();
+  const auto merged = SegmentBases(writer->GetSnapshot());
+  ASSERT_EQ(1U, merged.size());
+  ASSERT_NE(nullptr, merged[0]);
+  EXPECT_EQ(size_t{kD} * kD, merged[0]->size());
+}
+
 TEST(HnswPanoramaBasisTest, Sq8CodesRotateIntoTheSharedBasis) {
   constexpr uint32_t kD = irs::kHnswPanoramaMinDim + 40;
   constexpr size_t kBatch = 8 * kD;
@@ -1028,7 +1251,7 @@ TEST(HnswPanoramaBasisTest, Sq8CodesRotateIntoTheSharedBasis) {
   EXPECT_EQ(flushed[0], flushed[1]);
   for (const auto& segment : writer->GetSnapshot()) {
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    EXPECT_EQ(ann->Load()->tails.size(),
+    EXPECT_EQ(ann->Load(irs::SerialFor)->tails.size(),
               size_t{kBatch} * irs::HnswCodeTails(kD));
   }
 
@@ -1547,7 +1770,7 @@ TEST_P(HnswBuildWorkersTest, BuildTakesWorkersAsTheyFreeUp) {
   };
   const auto release = [&](uint32_t n) { held.fetch_sub(n); };
   const irs::AnnBuildEnv env{
-    .executor = pool.Get(), .acquire = acquire, .release = release};
+    .executor = *pool, .acquire = acquire, .release = release};
 
   auto opts = irs::tests::DefaultWriterOptions();
   SetAnn(opts, irs::AnnInfo{
@@ -1630,7 +1853,7 @@ TEST(HnswPqGraphTest, CoarseCodesLinkNodesAsTheVectorsDo) {
     EXPECT_EQ(1U, reader.size());
     const auto& segment = (reader)[0];
     const auto* ann = static_cast<const irs::HnswIndex*>(segment.Ann(kVec));
-    const auto data = ann->Load();
+    const auto data = ann->Load(irs::SerialFor);
     const auto& graph = data->graph;
     size_t links = 0;
     size_t near = 0;

@@ -57,14 +57,12 @@ n	rows_match	max_len
 
 
 query
-SELECT (SELECT count(*) = 0 FROM pragma_storage_info('dfsb.big', include_segment_info=true)
-         WHERE column_name='s' AND segment_type='VARCHAR' AND compression='DICT_FSST'
-           AND split_part(segment_info, ':', 1) <> 'DICTIONARY') AS big_not_fsst,
-       (SELECT count(*) > 0 FROM pragma_storage_info('dfsb.ctrl', include_segment_info=true)
-         WHERE column_name='s' AND segment_type='VARCHAR' AND compression='DICT_FSST'
-           AND split_part(segment_info, ':', 1) <> 'DICTIONARY') AS ctrl_fsst;
+SELECT (SELECT bool_and(compression = 'FSST') FROM pragma_storage_info('dfsb.big', include_segment_info=true)
+         WHERE column_name='s' AND segment_type='VARCHAR') AS big_fsst,
+       (SELECT bool_and(compression = 'FSST') FROM pragma_storage_info('dfsb.ctrl', include_segment_info=true)
+         WHERE column_name='s' AND segment_type='VARCHAR') AS ctrl_fsst;
 ----
-big_not_fsst	ctrl_fsst
+big_fsst	ctrl_fsst
 t	t
 
 

@@ -569,8 +569,9 @@ inline constexpr block_codec::EncodeOptions kFreqOptions{
 
 template<typename Output>
 void WriteSlack(Output& out) {
-  static constexpr byte_type kZeros[block_codec::kInSlack]{};
-  out.WriteData(kZeros, sizeof(kZeros));
+  for (uint32_t i = 0; i != block_codec::kInSlack; ++i) {
+    out.template Write<byte_type>(0);
+  }
 }
 
 template<typename Output>

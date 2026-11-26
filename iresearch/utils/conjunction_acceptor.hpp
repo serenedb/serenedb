@@ -20,19 +20,20 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
+#include <absl/synchronization/mutex.h>
 
 #include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/string.hpp"
@@ -67,7 +68,7 @@ class RegexpConjunction {
   using Parts = std::array<RegexpAcceptor::State, kMaxPatterns>;
 
   struct Row {
-    RegexpAcceptor::Mask loop{};
+    RegexpAcceptor::Mask loop;
     Parts parts{};
     std::atomic_bool built{false};
     bool accept{false};
@@ -106,14 +107,16 @@ class RegexpConjunction {
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
 
+  const KeyBytes& Bytes() const noexcept { return _bytes; }
+
   static bool Alive(State state) noexcept { return !state->dead; }
 
   static bool Unknown(State state) noexcept { return state->unknown; }
 
   State Step(State from, byte_type label) const {
     const auto c = _bytemap[label];
-    if (const auto* next = from->Next()[c].load(std::memory_order_acquire);
-        next != nullptr) [[likely]] {
+    if (const auto* next = from->Next()[c].load(std::memory_order_acquire))
+      [[likely]] {
       return next;
     }
     return StepSlow(from, c);
@@ -160,9 +163,10 @@ class RegexpConjunction {
   bytes_view _lower;
   std::span<const bstring> _suffixes;
   bytes_view _infix;
+  KeyBytes _bytes;
   size_t _max_mem;
-  mutable std::mutex _mutex;
-  mutable absl::flat_hash_map<Parts, Row*> _rows;
+  mutable absl::Mutex _mutex;
+  mutable containers::FlatHashMap<Parts, Row*> _rows;
   mutable RowArena _arena;
   Row* _dead{nullptr};
   Row* _unknown{nullptr};
@@ -214,14 +218,16 @@ class FuzzyConjunction {
 
   bytes_view RequiredInfix() const noexcept { return _infix; }
 
+  const KeyBytes& Bytes() const noexcept { return _bytes; }
+
   static bool Alive(State state) noexcept { return !state->dead; }
 
   static bool Unknown(State state) noexcept { return state->unknown; }
 
   State Step(State from, byte_type label) const {
     const auto c = _bytemap[label];
-    if (const auto* next = from->Next()[c].load(std::memory_order_acquire);
-        next != nullptr) [[likely]] {
+    if (const auto* next = from->Next()[c].load(std::memory_order_acquire))
+      [[likely]] {
       return next;
     }
     return StepSlow(from, c);
@@ -249,8 +255,9 @@ class FuzzyConjunction {
  protected:
   FuzzyConjunction(
     std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
-    bytes_view lower, const std::array<uint8_t, 256>& fuzzy_bytemap,
-    size_t max_mem, bool starts_with);
+    bytes_view lower, const KeyBytes& bytes,
+    const std::array<uint8_t, 256>& fuzzy_bytemap, size_t max_mem,
+    bool starts_with);
   ~FuzzyConjunction() = default;
 
   void InternStart();
@@ -270,7 +277,7 @@ class FuzzyConjunction {
     _patterns;
   size_t _size;
   std::array<uint8_t, RegexpAcceptor::kMaxLabel + 1> _representative{};
-  mutable std::mutex _mutex;
+  mutable absl::Mutex _mutex;
   Row* _dead{nullptr};
   Row* _unknown{nullptr};
   State _start{nullptr};
@@ -287,6 +294,7 @@ class FuzzyConjunction {
   bytes_view _lower;
   std::span<const bstring> _suffixes;
   bytes_view _infix;
+  KeyBytes _bytes;
   size_t _max_mem;
   mutable RowArena _arena;
 };
@@ -298,7 +306,11 @@ class FuzzyConjunctionOf final : public FuzzyConjunction {
     std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
     std::shared_ptr<const A> fuzzy,
     size_t max_mem = RegexpAcceptor::kDefaultMaxDfaMem)
-    : FuzzyConjunction{patterns, fuzzy->LowerBound(), fuzzy->Bytemap(), max_mem,
+    : FuzzyConjunction{patterns,
+                       fuzzy->LowerBound(),
+                       fuzzy->Bytes(),
+                       fuzzy->Bytemap(),
+                       max_mem,
                        std::is_same_v<A, LevenshteinPrefixAcceptor>},
       _fuzzy{std::move(fuzzy)} {
     InternStart();
@@ -339,7 +351,7 @@ class FuzzyConjunctionOf final : public FuzzyConjunction {
   State InternLocked(const Parts& parts, const AcceptorState& state) const;
 
   std::shared_ptr<const A> _fuzzy;
-  mutable absl::flat_hash_map<Key, Row*> _rows;
+  mutable containers::NodeHashMap<Key, Row*> _rows;
 };
 
 }  // namespace irs

@@ -593,5 +593,11 @@ r
 30
 
 
+query
+SELECT id FROM es_idx WHERE body @@ 'fox3' ORDER BY ts DESC LIMIT 3 OFFSET 73728;
+----
+id
+
+
 statement ok
 RESET threads

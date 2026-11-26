@@ -1,0 +1,56 @@
+control substitution on
+
+
+statement ok
+ATTACH ':memory:' AS uad_${__DATABASE__};
+
+
+statement ok
+CREATE TABLE uad_${__DATABASE__}.main.t (a INTEGER);
+
+
+statement ok
+USE uad_${__DATABASE__};
+
+
+query
+SELECT current_database() = 'uad_${__DATABASE__}' AS moved, count(*) AS own_rows FROM t;
+----
+moved	own_rows
+t	0
+
+
+query
+SELECT count(*) > 0 AS found FROM pg_catalog.pg_class;
+----
+found
+t
+
+
+query
+SELECT count(*) > 0 AS found FROM pg_class;
+----
+found
+t
+
+
+query
+SELECT count(*) > 0 AS found FROM information_schema.tables;
+----
+found
+t
+
+
+statement ok
+USE ${__DATABASE__};
+
+
+query
+SELECT count(*) > 0 AS found FROM pg_catalog.pg_class;
+----
+found
+t
+
+
+statement ok
+DETACH uad_${__DATABASE__};

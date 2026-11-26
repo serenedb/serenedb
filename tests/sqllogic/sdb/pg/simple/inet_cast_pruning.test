@@ -1,0 +1,26 @@
+statement ok
+CREATE TABLE icpr (ip INET) WITH (compaction_interval = 0)
+
+statement ok
+INSERT INTO icpr VALUES ('10.1.2.3/24')
+
+statement ok
+INSERT INTO icpr VALUES ('192.168.0.1/32')
+
+query
+SELECT count(*) AS n FROM icpr WHERE ip::CIDR = '10.1.2.0/24'
+----
+n
+1
+
+statement ok
+SET disabled_optimizers = 'expression_rewriter'
+
+query
+SELECT count(*) AS n FROM icpr WHERE ip::CIDR = '10.1.2.0/24'
+----
+n
+1
+
+statement ok
+RESET disabled_optimizers

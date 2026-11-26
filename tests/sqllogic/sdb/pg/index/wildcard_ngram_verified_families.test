@@ -1,0 +1,80 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY wvf_kw3 AS generate_wildcard_ngrams(keyword(), 3)
+
+statement ok
+CREATE TABLE wvf (id INTEGER PRIMARY KEY, msg VARCHAR)
+
+statement ok
+INSERT INTO wvf SELECT i, ['foobar', 'foox', 'foo', 'xfoo', 'barfoo1', 'hello', 'zoo', 'oxo'][i % 8 + 1] FROM range(64) t(i)
+
+statement ok
+CREATE INDEX wvf_idx ON wvf USING inverted (id, msg wvf_kw3)
+
+statement ok
+VACUUM (FLUSH_TABLE) wvf
+
+query
+SELECT id FROM wvf_idx WHERE msg @@ ts_like('%o_') OR id < 0 ORDER BY id LIMIT 7
+----
+id
+1
+2
+3
+4
+6
+9
+10
+
+query
+SELECT count(*) AS n FROM wvf_idx WHERE msg @@ ts_like('%o_') OR id < 0
+----
+n
+40
+
+query
+SELECT count(*) AS n FROM wvf_idx WHERE msg @@ ts_like('%foo_') OR id < 0
+----
+n
+16
+
+query
+SELECT id, bm25(wvf_idx.tableoid) > 0 AS scored FROM wvf_idx WHERE msg @@ ts_like('%foo_') OR id < 0 ORDER BY id LIMIT 4
+----
+id	scored
+1	t
+4	t
+9	t
+12	t
+
+query
+SELECT count(*) AS n FROM (SELECT id FROM wvf_idx WHERE msg @@ ts_like('%o_') OR id < 0 ORDER BY bm25(wvf_idx.tableoid) DESC LIMIT 3) t
+----
+n
+3
+
+query
+SELECT count(*) AS n FROM (SELECT id FROM wvf_idx WHERE msg @@ ts_like('%o_') OR msg @@ ts_like('%ell%') ORDER BY bm25(wvf_idx.tableoid) DESC LIMIT 100) t
+----
+n
+48
+
+query
+SELECT id FROM wvf_idx WHERE (msg @@ ts_like('%o_') OR id < 0) AND id IN (0, 1, 5, 7, 14) ORDER BY id
+----
+id
+1
+14
+
+query
+SELECT id FROM wvf_idx WHERE (msg @@ ts_like('%o_') OR id < 0) AND id IN (0, 1, 5, 7, 14) ORDER BY bm25(wvf_idx.tableoid) DESC, id LIMIT 3
+----
+id
+1
+14
+
+query
+SELECT id FROM wvf_idx WHERE (msg @@ ts_like('%foo_') OR id < 0) AND id IN (0, 1, 2, 4) ORDER BY id
+----
+id
+1
+4

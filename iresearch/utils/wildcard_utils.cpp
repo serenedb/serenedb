@@ -24,6 +24,7 @@
 
 #include <utility>
 
+#include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {
@@ -87,7 +88,6 @@ bytes_view ExtractWildcardPrefix(bytes_view pattern) noexcept {
 }
 
 std::string LikeRegexp(std::string_view pattern, bool ignore_case) {
-  static constexpr std::string_view kMeta = "\\[](){}.*+?|^$";
   std::string regex;
   regex.reserve(pattern.size() * 2 + 9);
   regex += ignore_case ? "(?si)\\A" : "(?s)\\A";
@@ -105,7 +105,7 @@ std::string LikeRegexp(std::string_view pattern, bool ignore_case) {
       regex += '.';
       continue;
     }
-    if (kMeta.find(c) != std::string_view::npos) {
+    if (IsRegexpMeta(c)) {
       regex += '\\';
     }
     regex += c;

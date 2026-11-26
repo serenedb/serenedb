@@ -3,6 +3,7 @@ target_sources(
     PRIVATE
         application_exit.cpp
         attributes.cpp
+        compression.cpp
         conjunction_acceptor.cpp
         cpu_features.cpp
         crash_handler.cpp
@@ -18,8 +19,6 @@ target_sources(
         regexp_ngram.cpp
         regexp_utils.cpp
         remap_executable.cpp
-        string_utils.cpp
-        timer_utils.cpp
         wildcard_utils.cpp
 )
 

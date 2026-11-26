@@ -256,6 +256,12 @@ std::optional<std::string> RenderPlainValue(const duckdb::Value& value) {
     return std::nullopt;
   }
   const auto type_id = value.type().id();
+  if (type_id == duckdb::LogicalTypeId::FLOAT) {
+    return absl::StrCat("'", value.ToString(), "'::REAL");
+  }
+  if (type_id == duckdb::LogicalTypeId::DOUBLE) {
+    return absl::StrCat("'", value.ToString(), "'::DOUBLE");
+  }
   if (type_id != duckdb::LogicalTypeId::LIST &&
       type_id != duckdb::LogicalTypeId::ARRAY) {
     return value.ToSQLString();
@@ -696,7 +702,7 @@ std::optional<duckdb::Value> TryFoldTSQueryCall(
   duckdb::ClientContext& context, std::string_view name,
   std::span<const duckdb::unique_ptr<duckdb::Expression>> children) {
   auto rendered = RenderTSQueryCall(context, name, children);
-  if (!rendered || rendered->size() > kMaxTSQueryStructuredTextSize) {
+  if (!rendered || !IsStructuredText(*rendered)) {
     return std::nullopt;
   }
   return MakeTSQueryValue(MakeTSQueryType(), *rendered);

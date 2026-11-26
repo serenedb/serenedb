@@ -23,6 +23,7 @@
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 #include <absl/container/inlined_vector.h>
+#include <absl/functional/function_ref.h>
 #include <absl/hash/hash.h>
 
 #include <bitset>
@@ -171,8 +172,8 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
     projections.push_back({.output_slot = i, .column_id = column_ids[i]});
   }
   irs::ColFilterStateCache filter_states;
-  connector::FullScanner scanner{*columns, projections, {},
-                                 {},       &context,    filter_states};
+  connector::FullScanner scanner{*columns, projections,   {},   {},
+                                 &context, filter_states, false};
   duckdb::DataChunk chunk;
   chunk.Initialize(duckdb::Allocator::Get(context), types);
   duckdb::SelectionVector rows{STANDARD_VECTOR_SIZE};
@@ -187,7 +188,7 @@ void ForEachRowKey(duckdb::ClientContext& context, duckdb::idx_t table_id,
     const auto scanned = scanner.Scan(
       window, std::min<uint64_t>(STANDARD_VECTOR_SIZE, docs_count - window),
       chunk, &rows, count);
-    chunk.SetCardinality(scanned);
+    chunk.SetChildCardinality(scanned);
     auto values = encoder.Encode(chunk, column_ids).Values<duckdb::string_t>();
     for (duckdb::idx_t row = 0; row != scanned; ++row) {
       if (const auto entry = values[row]; entry.IsValid()) {
@@ -819,10 +820,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
                         const std::shared_ptr<Store>& store,
                         irs::DocRemovalBuilder&& positions) {
   const auto& reader = PinnedReader(context, *store);
-  auto removal = std::move(positions).Finish(
-    reader, [&](size_t count, absl::FunctionRef<void(size_t)> body) {
-      ParallelFor(context, count, body);
-    });
+  auto removal = std::move(positions).Finish(reader, ParallelOn(context));
   auto& w = EnsureStoreWrites(store);
   std::vector<StoreWrites::RemovedKeys> removed;
   duckdb::StringHeap heap;
@@ -839,7 +837,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
         }
       }
     }
-    absl::flat_hash_map<uint64_t, const irs::SubReader*> segments;
+    irs::containers::FlatHashMap<uint64_t, const irs::SubReader*> segments;
     for (const auto& segment : reader) {
       segments.emplace(
         irs::utils::downCast<irs::SegmentReader>(segment).GetImpl()->Id(),
@@ -882,7 +880,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
   if (absl::c_any_of(removal->groups, [&](const auto& group) {
         return flushed_rows(group.segment);
       })) {
-    absl::flat_hash_map<uint64_t, irs::DocumentMaskBuilder> mapped;
+    irs::containers::FlatHashMap<uint64_t, irs::DocumentMaskBuilder> mapped;
     for (const auto& group : removal->groups) {
       if (!flushed_rows(group.segment)) {
         mapped[group.segment].Merge(group.docs);
@@ -1170,13 +1168,14 @@ std::vector<duckdb::string_t> OwnKeys(const StoreWrites& w, irs::field_id field,
   return keys;
 }
 
-void CheckVerifiedKeys(duckdb::ClientContext& context, const StoreWrites& w) {
+void CheckVerifiedKeys(duckdb::ClientContext& context, const StoreWrites& w,
+                       absl::FunctionRef<bool(const KeySpec&)> enforced) {
   if (w.verified_keys.empty()) {
     return;
   }
   const LiveUnits now{w.store->GetTable().State(), w.changes.removals};
   for (const auto& verified : w.verified_keys) {
-    if (verified.state == now.State()) {
+    if (verified.state == now.State() || !enforced(verified.spec)) {
       continue;
     }
     const LiveUnits seen{verified.state, {}};
@@ -1863,7 +1862,7 @@ void Writes::CatchUpKeys(duckdb::ClientContext& context, StoreWrites& w) {
       fresh.AddLive(now(), w.checked && !spec.deferred && i < known
                              ? &*w.checked
                              : nullptr);
-      if (fresh.Empty() && !spec.deferred) {
+      if (fresh.Empty() && !spec.deferred && i < known) {
         continue;
       }
       if (auto duplicate = FindDuplicate(context, spec, segments, {}, fresh)) {
@@ -1988,6 +1987,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
   for (const auto& [store_id, w] : _writes) {
     CheckChanged(w, w.changed);
   }
+  const auto parallel = ParallelOn(context);
   for (auto& [store_id, w] : _writes) {
     auto& changes = w.changes;
     if (!w.owner ||
@@ -2033,6 +2033,7 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
                        removed](ChunkVisit visit) {
           ForEachLiveChunk(*collection, removed.get(), visit);
         };
+        PackRows(w.rows, kLogFrameBytes, parallel);
       }
       const auto docs = PieceDocs(piece.trx);
       if (docs != 0) {
@@ -2046,8 +2047,11 @@ void Writes::PrepareCommit(duckdb::ClientContext& context) {
       CarryUnitPatches(changes.patches, rows_id, sealed);
       changes.ClearBufferedRows();
     }
-    ParallelFor(context, changes.patches.size(),
-                [&](size_t p) { UniteRows(changes.patches[p]); });
+    parallel(changes.patches.size(),
+             [&](size_t p) { UniteRows(changes.patches[p]); });
+    if (Logged(w)) {
+      PackPatches(changes.patches, kLogFrameBytes, parallel);
+    }
     if (!w.own_segments.empty()) {
       w.store->SyncSegments();
     }
@@ -2097,13 +2101,19 @@ std::vector<LogSection> Writes::TakeLog(duckdb::ClientContext& context) {
     }
     if (!w.changes.patches.empty()) {
       w.changes.patches = table.Resolve(std::move(w.changes.patches));
+      if (Logged(w)) {
+        PackPatches(w.changes.patches, kLogFrameBytes, ParallelOn(context));
+      }
     }
   }
   for (auto& [store_id, w] : _writes) {
     if (w.prepared) {
       CatchUpKeys(context, w);
     }
-    CheckVerifiedKeys(context, w);
+    CheckVerifiedKeys(context, w, [&](const KeySpec& spec) {
+      return !w.dropping &&
+             (!w.table || IndexKeySpec(*w.table, spec.key, Latest(*w.table)));
+    });
   }
   const auto latest = [&](const ReferenceCheck& check) {
     const auto* parent =

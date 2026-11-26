@@ -31,7 +31,6 @@
 #include "iresearch/index/iterators.hpp"
 #include "iresearch/search/detail/top_k_heap.hpp"
 #include "iresearch/search/scorers/scorer.hpp"
-#include "iresearch/utils/attribute_helper.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
 

@@ -39,7 +39,7 @@ To match a literal `%` or `_`, put the escape character before it. Without an `E
 
 <SqlLogicTest id="sql/functions/pattern_matching/index/example_014" />
 
-An `ESCAPE` clause names a different escape character, and `ESCAPE ''` turns escaping off, so a backslash matches itself:
+An `ESCAPE` clause names a different escape character, which can be any single character, `§` as well as `#`, and `ESCAPE ''` turns escaping off, so a backslash matches itself:
 
 <SqlLogicTest id="sql/functions/pattern_matching/index/example_015" />
 
@@ -77,6 +77,8 @@ There are also alternative characters that can be used as keywords in place of `
 The `SIMILAR TO` operator returns true or false depending on whether its pattern matches the given string. It is similar to `LIKE`, except that it interprets the pattern using a [regular expression](../../../sql/functions/regular_expressions.md). Like `LIKE`, the `SIMILAR TO` operator succeeds only if its pattern matches the entire string; this is unlike common regular expression behavior where the pattern can match any part of the string.
 
 A regular expression is a character sequence that is an abbreviated definition of a set of strings (a regular set). A string is said to match a regular expression if it is a member of the regular set described by the regular expression. As with `LIKE`, pattern characters match string characters exactly unless they are special characters in the regular expression language — but regular expressions use different special characters than `LIKE` does.
+
+The escape character (a backslash, unless an `ESCAPE` clause names another one) before a special character matches that character. Before a letter or a digit it gives PostgreSQL's regular-expression escape of that letter: `\d` a digit, `\s` a space, `\w` a word character, `\y` a word boundary, `\b` a backspace, `\B` a backslash, `\xhh`, `\uhhhh` and `\0oo` the character with that code, `\cX` the control character of `X`. The back references `\1` to `\9` and the word boundaries `\m` and `\M` are not supported.
 
 Some examples:
 

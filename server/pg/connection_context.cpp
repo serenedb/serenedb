@@ -55,7 +55,9 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "connector/iresearch_replacement_scan.h"
+#include "network/send_gate.h"
 #include "pg/catalog/oids.h"
 
 namespace sdb::pg {
@@ -68,12 +70,14 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
     duckdb::idx_t oid = 0;
     bool can_login = false;
     bool superuser = false;
+    duckdb::vector<std::string> settings;
   } role;
   if (!catalog::ReadEntry<catalog::RoleCatalogEntry>(
         user, [&](const catalog::RoleCatalogEntry& entry) {
           role.oid = entry.oid;
           role.can_login = entry.CanLogin();
           role.superuser = entry.IsSuperuser();
+          role.settings = entry.Config();
         })) {
     return {.error = SQL_ERROR_DATA(
               ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
@@ -92,7 +96,9 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname,
               ERR_MSG("permission denied for database \"", dbname, "\""),
               ERR_DETAIL("User does not have CONNECT privilege."))};
   }
-  return {.role = role.oid, .superuser = role.superuser};
+  return {.role = role.oid,
+          .superuser = role.superuser,
+          .settings = std::move(role.settings)};
 }
 
 }  // namespace sdb::pg
@@ -132,9 +138,11 @@ ConnectionContext::ConnectionContext(duckdb::DatabaseInstance& db,
     _backend_pid{identity.backend_pid},
     _cancel_registry{identity.cancel_registry},
     _send_buffer{identity.send_buffer},
+    _send_gate{identity.send_gate},
     _login_role_id{identity.role},
     _session_role_id{identity.role},
     _effective_role_id{identity.role},
+    _owns_temporary_objects{!identity.temporary},
     _progress{std::make_shared<pg::ProgressSource>()},
     _slot{catalog::Transactions::Get().Join()} {
   session_user = _user;
@@ -174,7 +182,7 @@ ConnectionContext::~ConnectionContext() {
       Destroy();
     } catch (...) {
     }
-    if (_progress->client_backend) {
+    if (_owns_temporary_objects) {
       client_data->temporary_objects->OnDetach(*this);
     }
   }
@@ -493,8 +501,13 @@ void ConnectionContext::OnQueryBegin() {
   if (_internal_statements != 0) {
     return;
   }
-  _query_in_transaction = true;
-  _progress->BeginQuery(GetCurrentQuery());
+  const bool continues = std::exchange(_query_in_transaction, true);
+  _progress->BeginQuery(
+    GetCurrentQuery(),
+    continues || !transaction.HasActiveTransaction()
+      ? duckdb::Timestamp::GetCurrentTimestamp().value
+      : transaction.ActiveTransaction().start_timestamp.value,
+    continues);
   if (pending_copy_command != pg::ProgressCommand::None) {
     auto& metrics = _progress->metrics;
     metrics.SetCommand(pending_copy_command);
@@ -602,6 +615,14 @@ void ConnectionContext::OnBoundPlan(duckdb::Binder& binder,
                                     duckdb::LogicalOperator& plan) {
   connector::FilterPartialIndexScans(*this, plan);
   auth::EnforcePlan(*this, *this, binder, plan);
+}
+
+duckdb::optional_ptr<duckdb::CopyOutputGate>
+ConnectionContext::GetCopyOutputGate(const std::string& file_path) {
+  if (file_path != connector::kDevStdout) {
+    return nullptr;
+  }
+  return _send_gate;
 }
 
 duckdb::shared_ptr<duckdb::ClientContext> CreateClientContext(

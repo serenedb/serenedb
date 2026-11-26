@@ -1,0 +1,302 @@
+control substitution on
+
+# Objects in a tablespace through their life: writes, refreshes, compaction,
+# renames, truncation, and a drop followed by a new object elsewhere.
+
+statement ok
+CREATE TABLESPACE obj_a_${__DATABASE__} LOCATION '${__TEST_DIR__}/obj/a';
+
+statement ok
+CREATE TABLESPACE obj_b_${__DATABASE__} LOCATION '${__TEST_DIR__}/obj/b';
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY obj_words AS split_text(case := 'lower') WITH (frequency, position, norm);
+
+statement ok
+CREATE TABLE docs (id INT PRIMARY KEY, body TEXT)
+  WITH (compaction_interval = 0)
+  TABLESPACE obj_a_${__DATABASE__};
+
+statement ok
+CREATE INDEX docs_body ON docs USING inverted(body obj_words);
+
+statement ok
+INSERT INTO docs
+SELECT i, CASE WHEN i % 2 = 0 THEN 'even fox ' || i ELSE 'odd dog ' || i END FROM range(1, 101) t(i);
+
+statement ok
+VACUUM (FLUSH_TABLE) docs;
+
+statement ok
+UPDATE docs SET body = 'changed fox' WHERE id = 1;
+
+statement ok
+DELETE FROM docs WHERE id BETWEEN 90 AND 100;
+
+statement ok
+VACUUM (FLUSH_TABLE) docs;
+
+query
+SELECT count(*) AS rows, count(*) FILTER (WHERE body LIKE '%fox%') AS foxes FROM docs;
+----
+rows	foxes
+89	45
+
+query
+SELECT count(*) AS foxes FROM docs_body WHERE body @@ ts_phrase('fox');
+----
+foxes
+45
+
+query
+SELECT id FROM docs_body WHERE body @@ ts_phrase('changed fox') ORDER BY id;
+----
+id
+1
+
+statement ok
+INSERT INTO docs VALUES (200, 'late fox');
+
+statement ok
+VACUUM (FLUSH_TABLE) docs;
+
+statement ok
+VACUUM (COMPACT_TABLE) docs;
+
+query
+SELECT count(*) AS foxes FROM docs_body WHERE body @@ ts_phrase('fox');
+----
+foxes
+46
+
+statement ok
+ALTER TABLE docs RENAME TO docs_renamed;
+
+statement ok
+ALTER INDEX docs_body RENAME TO docs_body_renamed;
+
+statement ok
+ALTER TABLE docs_renamed ALTER COLUMN body SET DEFAULT 'none';
+
+statement ok
+ALTER TABLE docs_renamed ADD COLUMN extra INT;
+
+statement ok
+ALTER TABLE docs_renamed DROP COLUMN extra;
+
+statement error
+DROP TABLESPACE obj_a_${__DATABASE__};
+----
+db error: ERROR: tablespace "<slt:ignore>" is not empty
+
+
+query
+SELECT c.relname, coalesce(replace(t.spcname, '_${__DATABASE__}', ''), '(database)') AS tablespace
+FROM pg_class c LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relname IN ('docs_renamed', 'docs_body_renamed') ORDER BY c.relname;
+----
+relname	tablespace
+docs_body_renamed	obj_a
+docs_renamed	obj_a
+
+query
+SELECT tablename, replace(tablespace, '_${__DATABASE__}', '') AS tablespace FROM pg_tables
+WHERE tablename = 'docs_renamed';
+----
+tablename	tablespace
+docs_renamed	obj_a
+
+query
+SELECT indexname, replace(tablespace, '_${__DATABASE__}', '') AS tablespace FROM pg_indexes
+WHERE indexname = 'docs_body_renamed';
+----
+indexname	tablespace
+docs_body_renamed	obj_a
+
+query
+SELECT count(*) AS foxes FROM docs_body_renamed WHERE body @@ ts_phrase('late fox');
+----
+foxes
+1
+
+statement ok
+TRUNCATE docs_renamed;
+
+statement ok
+VACUUM (FLUSH_TABLE) docs_renamed;
+
+query
+SELECT count(*) AS rows FROM docs_renamed;
+----
+rows
+0
+
+statement ok
+INSERT INTO docs_renamed VALUES (1, 'after truncate fox');
+
+statement ok
+VACUUM (FLUSH_TABLE) docs_renamed;
+
+query
+SELECT id FROM docs_body_renamed WHERE body @@ ts_phrase('fox') ORDER BY id;
+----
+id
+1
+
+statement count 3
+COPY (SELECT * FROM (VALUES (1, 'error', 'disk full'), (2, 'info', 'disk ok'),
+                            (3, 'error', 'net down')) AS t(id, kind, msg)
+      ORDER BY id)
+TO '${__TEST_DIR__}/obj_events.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW events AS SELECT * FROM read_parquet('${__TEST_DIR__}/obj_events.parquet');
+
+statement ok
+CREATE INDEX events_msg ON events USING inverted(id, kind, msg obj_words) TABLESPACE obj_b_${__DATABASE__};
+
+statement ok
+CREATE INDEX events_kind ON events USING inverted(id, kind obj_words) TABLESPACE obj_a_${__DATABASE__};
+
+query
+SELECT id, kind FROM events_msg WHERE msg @@ ts_phrase('disk') ORDER BY id;
+----
+id	kind
+1	error
+2	info
+
+query
+SELECT id FROM events_msg WHERE msg @@ ts_phrase('disk') ORDER BY BM25(events_msg.tableoid) DESC, id LIMIT 1;
+----
+id
+1
+
+query
+SELECT id FROM events_kind WHERE kind @@ ts_phrase('error') ORDER BY id;
+----
+id
+1
+3
+
+statement ok
+ALTER INDEX events_msg RENAME TO events_text;
+
+query
+SELECT c.relname, replace(t.spcname, '_${__DATABASE__}', '') AS tablespace
+FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relname IN ('events_text', 'events_kind') ORDER BY c.relname;
+----
+relname	tablespace
+events_kind	obj_a
+events_text	obj_b
+
+statement error
+DROP TABLESPACE obj_b_${__DATABASE__};
+----
+db error: ERROR: tablespace "<slt:ignore>" is not empty
+
+
+query
+SELECT id FROM events_text WHERE msg @@ ts_phrase('net') ORDER BY id;
+----
+id
+3
+
+query
+SELECT pg_tablespace_size('obj_b_${__DATABASE__}') > 0 AS b_holds_files;
+----
+b_holds_files
+t
+
+statement ok
+DROP INDEX events_text;
+
+query ok retry 240 backoff 250ms
+SELECT count(*) AS left_in_b FROM glob('${__TEST_DIR__}/obj/b/*/engine_v1/store/*');
+----
+left_in_b
+0
+
+query ok retry 240 backoff 250ms
+SELECT pg_tablespace_size('obj_b_${__DATABASE__}') AS b_bytes;
+----
+b_bytes
+0
+
+statement ok
+CREATE INDEX events_msg ON events USING inverted(id, msg obj_words) TABLESPACE obj_a_${__DATABASE__};
+
+query
+SELECT id FROM events_msg WHERE msg @@ ts_phrase('net') ORDER BY id;
+----
+id
+3
+
+query
+SELECT replace(t.spcname, '_${__DATABASE__}', '') AS tablespace
+FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace WHERE c.relname = 'events_msg';
+----
+tablespace
+obj_a
+
+statement ok
+DROP TABLESPACE obj_b_${__DATABASE__};
+
+statement error
+ALTER TABLE docs_renamed SET TABLESPACE obj_a_${__DATABASE__};
+----
+db error: ERROR: SET TABLESPACE is not supported
+
+
+statement error
+ALTER INDEX events_msg SET TABLESPACE obj_a_${__DATABASE__};
+----
+db error: ERROR: SET TABLESPACE is not supported
+
+
+statement ok
+CREATE TABLE keyed (id INT PRIMARY KEY, code INT UNIQUE, body TEXT) TABLESPACE obj_a_${__DATABASE__};
+
+statement ok
+CREATE INDEX keyed_body ON keyed USING inverted (body);
+
+query
+SELECT c.relname, replace(t.spcname, '_${__DATABASE__}', '') AS tablespace
+FROM pg_class c JOIN pg_tablespace t ON t.oid = c.reltablespace
+WHERE c.relname IN ('keyed', 'keyed_body', 'keyed_pkey', 'keyed_code_key') ORDER BY c.relname;
+----
+relname	tablespace
+keyed	obj_a
+keyed_body	obj_a
+keyed_code_key	obj_a
+keyed_pkey	obj_a
+
+query
+SELECT indexname, replace(tablespace, '_${__DATABASE__}', '') AS tablespace FROM pg_indexes
+WHERE tablename = 'keyed' ORDER BY indexname;
+----
+indexname	tablespace
+keyed_body	obj_a
+keyed_code_key	obj_a
+keyed_pkey	obj_a
+
+statement ok
+DROP TABLE keyed;
+
+statement ok
+DROP INDEX events_kind;
+
+statement ok
+DROP INDEX events_msg;
+
+statement ok
+DROP VIEW events;
+
+statement ok
+DROP TABLE docs_renamed;
+
+statement ok
+DROP TEXT SEARCH DICTIONARY obj_words;
+
+statement ok
+DROP TABLESPACE obj_a_${__DATABASE__};

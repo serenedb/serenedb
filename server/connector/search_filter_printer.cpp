@@ -24,6 +24,8 @@
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
+#include <duckdb/common/types/decimal.hpp>
+#include <duckdb/common/types/uuid.hpp>
 #include <iresearch/search/detail/pattern_cache.hpp>
 #include <iresearch/search/detail/search_range.hpp>
 #include <iresearch/search/filters/all_filter.hpp>
@@ -99,24 +101,37 @@ std::string TermToString(Term term) {
   return s;
 }
 
-template<typename T>
-bool NumberToString(bytes_view term, std::string& out) {
+std::string NumericTermValue(bytes_view term, const LogicalType& type) {
   namespace nu = irs::numeric_utils;
-  if (term.size() != nu::kNumericTermSize<T> ||
-      term[0] != nu::kNumericTermMagic<T>) {
-    return false;
+  namespace td = sdb::connector::term_dict;
+  const bool decimal = type.id() == LogicalTypeId::DECIMAL;
+  uint8_t width = 0;
+  uint8_t scale = 0;
+  if (decimal) {
+    type.GetDecimalProperties(width, scale);
   }
-  out = absl::StrCat(nu::DecodeNumericTerm<T>(term));
-  return true;
-}
-
-std::string NumericTermToString(bytes_view term) {
   std::string out;
-  if (NumberToString<int32_t>(term, out) || NumberToString<float>(term, out) ||
-      NumberToString<int64_t>(term, out) || NumberToString<double>(term, out)) {
-    return out;
-  }
-  return TermToString(term);
+  td::DispatchNumericKind(td::IndexedKind(type), [&]<LogicalTypeId K>() {
+    using T = td::PromotedNumeric<K>;
+    if (term.size() != nu::kNumericTermSize<T>) {
+      return;
+    }
+    const auto value = nu::DecodeNumericTerm<T>(term);
+    if constexpr (std::is_same_v<T, duckdb::hugeint_t>) {
+      out = K == LogicalTypeId::UUID ? duckdb::UUID::ToString(value)
+            : decimal ? duckdb::Decimal::ToString(value, width, scale)
+                      : value.ToString();
+    } else if constexpr (std::is_same_v<T, duckdb::uhugeint_t>) {
+      out = value.ToString();
+    } else if constexpr (std::is_same_v<T, int32_t> ||
+                         std::is_same_v<T, int64_t>) {
+      out = decimal ? duckdb::Decimal::ToString(value, width, scale)
+                    : absl::StrCat(value);
+    } else {
+      out = absl::StrCat(value);
+    }
+  });
+  return out.empty() ? TermToString(term) : out;
 }
 
 bool IsString(const LogicalType& type) {
@@ -135,7 +150,7 @@ std::string TermValue(bytes_view term, const LogicalType& type) {
     return !term.empty() && term[0] ? "true" : "false";
   }
   if (sdb::connector::term_dict::IsNumeric(type.id())) {
-    return NumericTermToString(term);
+    return NumericTermValue(term, type);
   }
   if (sdb::pg::IsInetOrCidr(type)) {
     return sdb::connector::inet_terms::Describe(term);

@@ -1,0 +1,27 @@
+statement ok
+CREATE TABLE rcn (n int, role text);
+
+
+query
+INSERT INTO rcn VALUES (1, 'a') RETURNING n::bigint, upper(role), n + 0, n AS renamed, *;
+----
+n	upper	?column?	renamed	n	role
+1	A	1	1	1	a
+
+
+query
+UPDATE rcn SET n = 2 RETURNING n * 2, lower(role) AS l, role;
+----
+?column?	l	role
+4	a	a
+
+
+query
+DELETE FROM rcn RETURNING coalesce(n, 0), CASE WHEN n > 0 THEN 'p' END;
+----
+coalesce	case
+2	p
+
+
+statement ok
+DROP TABLE rcn;

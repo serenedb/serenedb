@@ -48,6 +48,7 @@ Altering a role that does not exist is an error:
 
 - Changing role attributes requires the `CREATEROLE` attribute (or superuser); only a superuser can grant or remove `SUPERUSER`.
 - `PASSWORD NULL` removes the stored password, disabling password authentication for the role.
+- `ALTER ROLE name SET parameter = value` stores a value a session of the role starts with: it applies when the role logs in, a parameter the client sends when it connects overrides it, and `RESET parameter` in the session returns to it. A stored value the server refuses at login is skipped with a warning.
 - `CONNECTION LIMIT` is accepted and stored but is not currently enforced at connect time.
 
 ## See also

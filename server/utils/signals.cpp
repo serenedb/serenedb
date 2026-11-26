@@ -20,25 +20,19 @@
 
 #include "server/utils/signals.h"
 
-#include <iresearch/utils/operating_system.hpp>
+#include <signal.h>
 
 #include "server/utils/lifecycle.h"
-
-#ifdef SERENEDB_HAVE_SIGNAL_H
-#include <signal.h>
-#endif
 
 namespace sdb::signals {
 
 void InstallShutdownHandlers() {
-#ifdef SERENEDB_HAVE_SIGNAL_H
   struct sigaction action = {};
   action.sa_handler = +[](int) { lifecycle::BeginShutdown(); };
   sigemptyset(&action.sa_mask);
   ::sigaction(SIGTERM, &action, nullptr);
   ::sigaction(SIGINT, &action, nullptr);
   ::sigaction(SIGQUIT, &action, nullptr);
-#endif
 }
 
 }  // namespace sdb::signals

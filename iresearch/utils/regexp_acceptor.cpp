@@ -20,6 +20,9 @@
 
 #include "iresearch/utils/regexp_acceptor.hpp"
 
+#include <absl/algorithm/container.h>
+#include <simdutf.h>
+
 #include <algorithm>
 #include <atomic>
 #include <memory>
@@ -36,6 +39,7 @@
 #include "re2/prog.h"
 #include "re2/regexp.h"
 #include "re2/walker-inl.h"
+#include "util/utf.h"
 
 namespace irs {
 namespace {
@@ -205,14 +209,61 @@ bool EmptyWidth(re2::RegexpOp op) noexcept {
   }
 }
 
-void AppendRune(bstring& out, re2::Rune rune, bool latin1) {
-  if (latin1) {
-    out.push_back(static_cast<byte_type>(rune));
+void AddRune(ByteSet& out, re2::Rune rune, int flags) {
+  if ((flags & re2::Regexp::FoldCase) != 0 &&
+      re2::CycleFoldRune(rune) != rune) {
+    return;
+  }
+  if ((flags & re2::Regexp::Latin1) != 0) {
+    out.Add(static_cast<byte_type>(rune));
     return;
   }
   char utf8[re2::UTFmax];
-  const int n = re2::runetochar(utf8, &rune);
-  out.append(reinterpret_cast<const byte_type*>(utf8), static_cast<size_t>(n));
+  const auto size = static_cast<size_t>(re2::runetochar(utf8, &rune));
+  AddBytes(out, {reinterpret_cast<const byte_type*>(utf8), size});
+}
+
+constexpr size_t kMaxRequiredDepth = 64;
+
+ByteSet RequiredBytesOf(re2::Regexp* re, size_t depth) {
+  ByteSet out;
+  if (depth == kMaxRequiredDepth) {
+    return out;
+  }
+  const int flags = re->parse_flags();
+  switch (re->op()) {
+    case re2::kRegexpLiteral:
+      AddRune(out, re->rune(), flags);
+      break;
+    case re2::kRegexpLiteralString:
+      for (int i = 0; i != re->nrunes(); ++i) {
+        AddRune(out, re->runes()[i], flags);
+      }
+      break;
+    case re2::kRegexpCharClass:
+      if (re->cc()->size() == 1) {
+        AddRune(out, re->cc()->begin()->lo, flags & ~re2::Regexp::FoldCase);
+      }
+      break;
+    case re2::kRegexpConcat:
+      for (int i = 0; i != re->nsub(); ++i) {
+        AddAll(out, RequiredBytesOf(re->sub()[i], depth + 1));
+      }
+      break;
+    case re2::kRegexpAlternate:
+      out = RequiredBytesOf(re->sub()[0], depth + 1);
+      for (int i = 1; i != re->nsub(); ++i) {
+        KeepCommon(out, RequiredBytesOf(re->sub()[i], depth + 1));
+      }
+      break;
+    case re2::kRegexpPlus:
+    case re2::kRegexpCapture:
+      out = RequiredBytesOf(re->sub()[0], depth + 1);
+      break;
+    default:
+      break;
+  }
+  return out;
 }
 
 bool AppendExact(std::span<re2::Regexp* const> pieces, bstring& out) {
@@ -234,7 +285,7 @@ bool AppendExact(std::span<re2::Regexp* const> pieces, bstring& out) {
 }
 
 bool Unbounded(std::span<re2::Regexp* const> pieces) {
-  return std::any_of(pieces.begin(), pieces.end(), [](re2::Regexp* piece) {
+  return absl::c_any_of(pieces, [](re2::Regexp* piece) {
     return piece->op() == re2::kRegexpStar || piece->op() == re2::kRegexpPlus;
   });
 }
@@ -306,13 +357,12 @@ std::vector<bstring> SuffixesOf(re2::Regexp* re) {
 }
 
 void NormalizeSuffixes(std::vector<bstring>& suffixes) {
-  std::sort(suffixes.begin(), suffixes.end(),
-            [](const bstring& a, const bstring& b) {
-              return a.size() != b.size() ? a.size() < b.size() : a < b;
-            });
+  absl::c_sort(suffixes, [](const bstring& a, const bstring& b) {
+    return a.size() != b.size() ? a.size() < b.size() : a < b;
+  });
   std::vector<bstring> kept;
   for (auto& suffix : suffixes) {
-    if (std::none_of(kept.begin(), kept.end(), [&](const bstring& shorter) {
+    if (absl::c_none_of(kept, [&](const bstring& shorter) {
           return bytes_view{suffix}.ends_with(shorter);
         })) {
       kept.push_back(std::move(suffix));
@@ -321,14 +371,14 @@ void NormalizeSuffixes(std::vector<bstring>& suffixes) {
   if (kept.size() > kMaxSuffixes) {
     kept.clear();
   }
-  std::stable_sort(
-    kept.begin(), kept.end(),
-    [](const bstring& a, const bstring& b) { return a.back() < b.back(); });
+  absl::c_stable_sort(kept, [](const bstring& a, const bstring& b) {
+    return a.back() < b.back();
+  });
   suffixes = std::move(kept);
 }
 
 void NormalizeExempt(std::vector<RegexpAcceptor::ExemptKey>& keys) {
-  std::sort(keys.begin(), keys.end(), [](const auto& a, const auto& b) {
+  absl::c_sort(keys, [](const auto& a, const auto& b) {
     return a.key != b.key ? a.key < b.key : a.prefix > b.prefix;
   });
   std::vector<RegexpAcceptor::ExemptKey> kept;
@@ -603,7 +653,7 @@ class Factoring {
       }
     }
 
-    std::stable_sort(alts.begin(), alts.end(), [](const Alt& a, const Alt& b) {
+    absl::c_stable_sort(alts, [](const Alt& a, const Alt& b) {
       if (LiteralLed(a) != LiteralLed(b)) {
         return LiteralLed(a);
       }
@@ -726,7 +776,7 @@ class RegexpRewriter : public re2::Regexp::Walker<re2::Regexp*> {
 
   re2::Regexp* PostVisit(re2::Regexp* re, re2::Regexp* /*parent_arg*/,
                          re2::Regexp* /*pre_arg*/, re2::Regexp** child_args,
-                         int nchild_args) override {
+                         int nchild_args) final {
     const auto flags = static_cast<ParseFlags>(re->parse_flags());
     switch (re->op()) {
       case re2::kRegexpHaveMatch:
@@ -776,15 +826,14 @@ class RegexpRewriter : public re2::Regexp::Walker<re2::Regexp*> {
     }
   }
 
-  re2::Regexp* ShortVisit(re2::Regexp* re,
-                          re2::Regexp* /*parent_arg*/) override {
+  re2::Regexp* ShortVisit(re2::Regexp* re, re2::Regexp* /*parent_arg*/) final {
     _error = true;
     return Empty(static_cast<ParseFlags>(re->parse_flags()));
   }
 
   // The walk hands the same result to two positions when a node repeats, and
   // these results are owning references.
-  re2::Regexp* Copy(re2::Regexp* arg) override { return arg->Incref(); }
+  re2::Regexp* Copy(re2::Regexp* arg) final { return arg->Incref(); }
 
  private:
   static re2::Regexp* Empty(ParseFlags flags) {
@@ -829,6 +878,54 @@ re2::Regexp* AnyCodePoint() {
   re2::Regexp* alts[]{ByteClass(0x00, 0x7F), sequence(0xC2, 0xDF, 1),
                       sequence(0xE0, 0xEF, 2), sequence(0xF0, 0xF4, 3)};
   return re2::Regexp::AlternateNoFactor(alts, 4, kWildcardFlags);
+}
+
+enum class Utf8At : uint8_t {
+  Boundary,
+  Tail1,
+  Tail2,
+  Tail2E0,
+  Tail2ED,
+  Tail3,
+  Tail3F0,
+  Tail3F4,
+  Broken,
+};
+
+constexpr Utf8At Utf8After(Utf8At at, byte_type b) noexcept {
+  const auto tail = [b](uint32_t lo, uint32_t hi, Utf8At next) {
+    return b >= lo && b <= hi ? next : Utf8At::Broken;
+  };
+  switch (at) {
+    case Utf8At::Boundary:
+      return b < 0x80    ? Utf8At::Boundary
+             : b < 0xC2  ? Utf8At::Broken
+             : b < 0xE0  ? Utf8At::Tail1
+             : b == 0xE0 ? Utf8At::Tail2E0
+             : b == 0xED ? Utf8At::Tail2ED
+             : b < 0xF0  ? Utf8At::Tail2
+             : b == 0xF0 ? Utf8At::Tail3F0
+             : b < 0xF4  ? Utf8At::Tail3
+             : b == 0xF4 ? Utf8At::Tail3F4
+                         : Utf8At::Broken;
+    case Utf8At::Tail1:
+      return tail(0x80, 0xBF, Utf8At::Boundary);
+    case Utf8At::Tail2:
+      return tail(0x80, 0xBF, Utf8At::Tail1);
+    case Utf8At::Tail2E0:
+      return tail(0xA0, 0xBF, Utf8At::Tail1);
+    case Utf8At::Tail2ED:
+      return tail(0x80, 0x9F, Utf8At::Tail1);
+    case Utf8At::Tail3:
+      return tail(0x80, 0xBF, Utf8At::Tail2);
+    case Utf8At::Tail3F0:
+      return tail(0x90, 0xBF, Utf8At::Tail2);
+    case Utf8At::Tail3F4:
+      return tail(0x80, 0x8F, Utf8At::Tail2);
+    case Utf8At::Broken:
+      SDB_UNREACHABLE();
+  }
+  SDB_UNREACHABLE();
 }
 
 re2::Regexp* WildcardTree(bytes_view pattern, bool bytes) {
@@ -878,6 +975,22 @@ re2::Regexp* BytesTree(bytes_view bytes, bool any_tail) {
   return re2::Regexp::Concat(parts, count, kWildcardFlags);
 }
 
+bool IsContainedLiteral(bytes_view pattern) {
+  if (pattern.size() < 3 || pattern.front() != WildcardMatch::kAnyStr ||
+      pattern.back() != WildcardMatch::kAnyStr) {
+    return false;
+  }
+  const auto literal = pattern.substr(1, pattern.size() - 2);
+  return !absl::c_any_of(literal,
+                         [](byte_type c) {
+                           return c == WildcardMatch::kAnyStr ||
+                                  c == WildcardMatch::kAnyChr ||
+                                  c == WildcardMatch::kEscape;
+                         }) &&
+         simdutf::validate_utf8(reinterpret_cast<const char*>(literal.data()),
+                                literal.size());
+}
+
 constexpr std::string_view kTooComplex = "regular expression is too complex";
 
 re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax, bool bytes,
@@ -916,24 +1029,7 @@ re2::Regexp* RegexpTree(bytes_view pattern, RegexpSyntax syntax, bool bytes,
   return re;
 }
 
-#ifdef SDB_DEV
-// Determinizations since process start, so a dev-build test can pin how often
-// one happens. Debug-only: nothing in the system reads it.
-std::atomic_size_t kBuilds{0};
-#endif
-
 }  // namespace
-
-#ifdef SDB_DEV
-size_t RegexpAcceptor::Builds() noexcept {
-  return kBuilds.load(std::memory_order_relaxed);
-}
-
-size_t RegexpAcceptor::Rows() const {
-  std::lock_guard lock{_mutex};
-  return _rows.size();
-}
-#endif
 
 RegexpAcceptor::RegexpAcceptor(bytes_view pattern, RegexpSyntax syntax,
                                int64_t max_mem, size_t max_dfa_mem)
@@ -957,9 +1053,6 @@ RegexpAcceptor::~RegexpAcceptor() = default;
 
 void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
                              bool wildcard, int64_t max_mem) {
-#ifdef SDB_DEV
-  kBuilds.fetch_add(1, std::memory_order_relaxed);
-#endif
   re2::Regexp* re = wildcard ? WildcardTree(pattern, false)
                              : RegexpTree(pattern, syntax, false, _error);
   if (re) {
@@ -969,17 +1062,19 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
       _infix = InfixOf(re);
     }
     if (!wildcard && FiniteLanguage(re, 0, _literals)) {
-      std::sort(_literals.begin(), _literals.end());
-      _literals.erase(std::unique(_literals.begin(), _literals.end()),
-                      _literals.end());
+      absl::c_sort(_literals);
+      _literals.erase(std::ranges::unique(_literals).begin(), _literals.end());
       _finite = true;
     } else {
       _literals.clear();
     }
+    _bytes.required = RequiredBytesOf(re, 0);
     _prog.reset(re->CompileToProg(max_mem));
     re->Decref();
     if (!_prog) {
       _error = kTooComplex;
+    } else if (wildcard) {
+      _contained = IsContainedLiteral(pattern);
     }
   }
   Setup();
@@ -987,9 +1082,6 @@ void RegexpAcceptor::Compile(bytes_view pattern, RegexpSyntax syntax,
 
 void RegexpAcceptor::CompileParts(std::span<const Part> parts,
                                   int64_t max_mem) {
-#ifdef SDB_DEV
-  kBuilds.fetch_add(1, std::memory_order_relaxed);
-#endif
   std::vector<re2::Regexp*> text;
   std::vector<re2::Regexp*> bytes;
   bool ok = true;
@@ -1014,12 +1106,15 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
         break;
       case PartKind::WildcardBytes:
         re = WildcardTree(part.pattern, true);
+        _text = false;
         break;
       case PartKind::PerlBytes:
         re = RegexpTree(part.pattern, RegexpSyntax::Perl, true, _error);
+        _text = false;
         break;
       case PartKind::PosixEreBytes:
         re = RegexpTree(part.pattern, RegexpSyntax::PosixEre, true, _error);
+        _text = false;
         break;
     }
     if (!re) {
@@ -1064,13 +1159,11 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
     return FactorAlternation(subs.data(), static_cast<int>(subs.size()), flags);
   };
   re2::Regexp* trees[]{group(text), group(bytes)};
-  auto* only = trees[0] == nullptr   ? trees[1]
-               : trees[1] == nullptr ? trees[0]
-                                     : nullptr;
+  auto* only = !trees[0] ? trees[1] : !trees[1] ? trees[0] : nullptr;
   if (only && _suffixes.empty()) {
     _infix = InfixOf(only);
   }
-  bool finite = trees[0] != nullptr || trees[1] != nullptr;
+  bool finite = trees[0] || trees[1];
   for (auto* tree : trees) {
     std::vector<bstring> words;
     if (tree && finite) {
@@ -1080,12 +1173,18 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
     }
   }
   if (finite && _literals.size() <= kMaxLiterals) {
-    std::sort(_literals.begin(), _literals.end());
-    _literals.erase(std::unique(_literals.begin(), _literals.end()),
-                    _literals.end());
+    absl::c_sort(_literals);
+    _literals.erase(std::ranges::unique(_literals).begin(), _literals.end());
     _finite = true;
   } else {
     _literals.clear();
+  }
+
+  if (trees[0] || trees[1]) {
+    _bytes.required = RequiredBytesOf(trees[0] ? trees[0] : trees[1], 0);
+    if (trees[0] && trees[1]) {
+      KeepCommon(_bytes.required, RequiredBytesOf(trees[1], 0));
+    }
   }
 
   std::unique_ptr<re2::Prog> progs[2];
@@ -1094,7 +1193,7 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
     if (trees[i]) {
       progs[i].reset(trees[i]->CompileToProg(max_mem));
       trees[i]->Decref();
-      compiled = compiled && progs[i] != nullptr;
+      compiled = compiled && progs[i];
     }
   }
   if (!compiled) {
@@ -1111,7 +1210,7 @@ void RegexpAcceptor::CompileParts(std::span<const Part> parts,
 void RegexpAcceptor::Setup() {
   _split = _prog ? _prog->size() : 0;
   {
-    std::lock_guard lock{_mutex};
+    absl::MutexLock lock{&_mutex};
     if (_prog && _bytes_prog) {
       _prog->set_anchor_end(true);
       _bytes_prog->set_anchor_end(true);
@@ -1150,7 +1249,7 @@ void RegexpAcceptor::Setup() {
     _unknown->unknown = true;
     _unknown->lo = 0;
     _unknown->hi = kMaxLabel;
-    _unknown->loop.fill(~bitset::word_t{0});
+    _unknown->loop.words.fill(~uint64_t{0});
     for (uint32_t c = 0; c != _classes; ++c) {
       _dead->Next()[c].store(_dead, std::memory_order_relaxed);
       _unknown->Next()[c].store(_unknown, std::memory_order_relaxed);
@@ -1189,6 +1288,11 @@ void RegexpAcceptor::Setup() {
         }
       }
     }
+    if (absl::c_all_of(pending, [](const Row* row) {
+          return row->built.load(std::memory_order_relaxed);
+        })) {
+      _bytes.dead = DeadBytesLocked();
+    }
   }
 
   for (State state = _start; _lower.size() != kMaxBoundLength;) {
@@ -1205,13 +1309,53 @@ void RegexpAcceptor::Setup() {
   }
 }
 
+ByteSet RegexpAcceptor::DeadBytesLocked() const {
+  struct At {
+    const Row* row;
+    Utf8At utf8;
+  };
+  ByteSet dead;
+  std::vector<At> pending;
+  containers::FlatHashMap<const Row*, uint32_t> seen;
+  const auto visit = [&](const Row* row, Utf8At utf8) {
+    if (row->dead || row->unknown) {
+      return;
+    }
+    const auto bit = uint32_t{1} << static_cast<uint32_t>(utf8);
+    if (auto& at = seen[row]; (at & bit) == 0) {
+      at |= bit;
+      pending.push_back({.row = row, .utf8 = utf8});
+    }
+  };
+  visit(_start, Utf8At::Boundary);
+  while (!pending.empty()) {
+    const auto [row, utf8] = pending.back();
+    pending.pop_back();
+    for (uint32_t label = 0; label <= kMaxLabel; ++label) {
+      const auto b = static_cast<byte_type>(label);
+      const auto next_utf8 = _text ? Utf8After(utf8, b) : Utf8At::Boundary;
+      if (next_utf8 == Utf8At::Broken) {
+        continue;
+      }
+      const auto* next =
+        row->Next()[_bytemap[label]].load(std::memory_order_relaxed);
+      if (next->dead) {
+        dead.Add(b);
+      } else {
+        visit(next, next_utf8);
+      }
+    }
+  }
+  return dead;
+}
+
 RegexpAcceptor::State RegexpAcceptor::StepSlow(State from, uint8_t c) const {
   Build(const_cast<Row*>(from));
   return from->Next()[c].load(std::memory_order_acquire);
 }
 
 void RegexpAcceptor::Build(Row* row) const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   BuildLocked(row);
 }
 
@@ -1253,7 +1397,7 @@ void RegexpAcceptor::BuildLocked(Row* row) const {
     }
     hi = static_cast<uint8_t>(label);
     if (target == row) {
-      row->loop[bitset::word(label)] |= bitset::word_t{1} << bitset::bit(label);
+      row->loop.Add(static_cast<byte_type>(label));
     }
   }
   row->lo = lo;
@@ -1287,7 +1431,7 @@ RegexpAcceptor::State RegexpAcceptor::InternLocked(
   if (_canon.empty()) {
     return _dead;
   }
-  std::sort(_canon.begin(), _canon.end());
+  absl::c_sort(_canon);
   const size_t size = _canon.size();
   if (pending == 0) {
     context = 0;
@@ -1305,13 +1449,12 @@ RegexpAcceptor::State RegexpAcceptor::InternLocked(
   if (pending != 0) {
     Resolve(_canon.data(), static_cast<uint32_t>(size), AtEnd(context), _queue,
             _index, _stack);
-    accept = std::any_of(_queue.begin(), _queue.end(), [&](int id) {
-      return Inst(id)->opcode() == re2::kInstMatch;
-    });
+    accept = absl::c_any_of(
+      _queue, [&](int id) { return Inst(id)->opcode() == re2::kInstMatch; });
   }
   Row* row = AllocateLocked(size);
   auto* set = const_cast<int*>(row->set);
-  std::copy(_canon.begin(), _canon.end(), set);
+  absl::c_copy(_canon, set);
   row->set_size = static_cast<uint32_t>(size);
   row->context = context;
   row->assertions = pending != 0;
@@ -1402,7 +1545,7 @@ void RegexpAcceptor::AddToQueue(std::vector<int>& queue,
 }
 
 size_t RegexpAcceptor::MemoryUsage() const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   size_t bytes =
     sizeof(*this) + _lower.capacity() + _arena_bytes +
     _rows.capacity() * (sizeof(std::string_view) + sizeof(Row*)) +
@@ -1463,7 +1606,7 @@ bool RegexpAcceptor::Simulate(State from, bytes_view rest) const {
   auto& next_index = scratch.next_index;
   current.clear();
   uint32_t context = kStartContext;
-  if (from == nullptr) {
+  if (!from) {
     AddStarts(current, current_index, scratch.stack);
   } else {
     current.assign(from->set, from->set + from->set_size);
@@ -1489,9 +1632,8 @@ bool RegexpAcceptor::Simulate(State from, bytes_view rest) const {
   }
   Resolve(current.data(), static_cast<uint32_t>(current.size()), AtEnd(context),
           resolved, scratch.resolved_index, scratch.stack);
-  return std::any_of(resolved.begin(), resolved.end(), [&](int id) {
-    return Inst(id)->opcode() == re2::kInstMatch;
-  });
+  return absl::c_any_of(
+    resolved, [&](int id) { return Inst(id)->opcode() == re2::kInstMatch; });
 }
 
 }  // namespace irs

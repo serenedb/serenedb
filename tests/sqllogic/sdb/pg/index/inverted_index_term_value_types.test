@@ -1,0 +1,89 @@
+statement ok
+CREATE TEXT SEARCH DICTIONARY tvt_shape AS encode_geojson()
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY tvt_en AS split_text_csv(' ') WITH (frequency, position)
+
+
+statement ok
+CREATE TABLE tvt (id INTEGER PRIMARY KEY, b BOOLEAN, g GEOMETRY('OGC:CRS84'), body TEXT)
+
+
+statement ok
+CREATE INDEX tvt_idx ON tvt USING inverted (id, b, g tvt_shape, body tvt_en, (lower(body)))
+
+
+statement ok
+INSERT INTO tvt VALUES
+  (1, true, 'POINT(1 1)'::GEOMETRY('OGC:CRS84'), 'quick brown fox'),
+  (2, false, 'POINT(2 2)'::GEOMETRY('OGC:CRS84'), 'lazy dog')
+
+
+query
+SELECT id FROM tvt_idx WHERE b @@ 'true' ORDER BY id;
+----
+id
+1
+
+
+query error
+SELECT id FROM tvt_idx WHERE b @@ 'maybe' ORDER BY id;
+----
+db error: ERROR: Could not convert string 'maybe' to BOOL
+
+
+query
+SELECT id FROM tvt_idx WHERE b < true ORDER BY id;
+----
+id
+2
+
+
+query
+SELECT id FROM tvt_idx WHERE CAST(lower(body) AS BLOB) = 'lazy dog'::BLOB ORDER BY id;
+----
+id
+2
+
+
+query
+SELECT id FROM tvt_idx WHERE g = 'POINT(1 1)'::GEOMETRY('OGC:CRS84') ORDER BY id;
+----
+id
+1
+
+
+query
+SELECT id FROM tvt_idx WHERE g <> 'POINT(1 1)'::GEOMETRY('OGC:CRS84') ORDER BY id;
+----
+id
+2
+
+
+query
+SELECT id FROM tvt_idx WHERE g IN ('POINT(1 1)'::GEOMETRY('OGC:CRS84'), 'POINT(3 3)'::GEOMETRY('OGC:CRS84')) ORDER BY id;
+----
+id
+1
+
+
+statement error
+SELECT id FROM tvt_idx WHERE g @@ 'POINT(1 1)';
+----
+db error: ERROR: Unsupported type for term filter: 60
+HINT: The value's type must match the column's indexed type.
+
+
+statement error
+SELECT id FROM tvt_idx WHERE g @@ ts_between(1, 2, true, true);
+----
+db error: ERROR: ts_between: unsupported column type GEOMETRY('OGC:CRS84')
+HINT: Range comparisons are supported on VARCHAR, BLOB, BOOLEAN and numeric columns.
+
+
+statement error
+SELECT id FROM tvt_idx WHERE body @@ ('quick' ## body);
+----
+db error: ERROR: ## part expression class: 28
+HINT: Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional INTEGER / INTEGER[].

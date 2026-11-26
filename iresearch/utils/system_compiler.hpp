@@ -23,7 +23,6 @@
 
 #include "iresearch/utils/application_exit.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/operating_system.hpp"
 
 #ifdef SDB_DEV
 #define SDB_UNREACHABLE()                          \
@@ -32,25 +31,7 @@
     std::unreachable();                            \
   } while (false)
 #else
-#define SDB_UNREACHABLE() std::unreachable();
-#endif
-
-// likely/unlikely branch indicator
-// macro definitions similar to the ones at
-// https://kernelnewbies.org/FAQ/LikelyUnlikely
-#if defined(__GNUC__) || defined(__GNUG__)
-#define SDB_LIKELY(v) __builtin_expect(!!(v), 1)
-#define SDB_UNLIKELY(v) __builtin_expect(!!(v), 0)
-#else
-#define SDB_LIKELY(v) v
-#define SDB_UNLIKELY(v) v
-#endif
-
-// pretty function name macro
-#if defined(__clang__) || defined(__GNUC__)
-#define SDB_PRETTY_FUNCTION __PRETTY_FUNCTION__
-#else
-#define SDB_PRETTY_FUNCTION __func__
+#define SDB_UNREACHABLE() std::unreachable()
 #endif
 
 // TODO(mkornaukhov) Should use `__builtin_trap()` for clang and gcc,

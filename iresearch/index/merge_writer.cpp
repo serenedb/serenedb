@@ -25,7 +25,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/strings/internal/resize_uninitialized.h>
 
 #include <bit>
@@ -58,8 +57,11 @@
 #include "iresearch/index/index_meta.hpp"
 #include "iresearch/store/storage.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/type_limits.hpp"
@@ -81,7 +83,7 @@ struct MergedField {
   std::array<MergedMember, kDictMembers> members;
 };
 
-using FieldMetaMapT = absl::flat_hash_map<field_id, MergedField>;
+using FieldMetaMapT = containers::NodeHashMap<field_id, MergedField>;
 
 struct DictKey {
   field_id id;
@@ -564,8 +566,9 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
 uint64_t KeyedDicts(const FieldMetaMapT& field_meta_map) noexcept {
   uint64_t count = 0;
   for (const auto& [id, field] : field_meta_map) {
-    count += static_cast<uint64_t>(absl::c_count_if(
-      field.members, [](const MergedMember& member) { return member.keyed; }));
+    for (const auto& member : field.members) {
+      count += member.keyed ? term_dict::KeyedDictsOf(member.features) : 0;
+    }
   }
   return count;
 }
@@ -698,7 +701,7 @@ field_id MergeNormColumnFromSources(ColWriter& col_writer, field_id id,
   return out_id;
 }
 
-using MergedNormIdMap = absl::flat_hash_map<field_id, field_id>;
+using MergedNormIdMap = containers::FlatHashMap<field_id, field_id>;
 
 MergedNormIdMap MergeNorms(ColWriter& col_writer,
                            std::span<const MergeSource> sources,
@@ -856,7 +859,7 @@ void OpenColWriter(duckdb::DatabaseInstance& db, FileTracker& tracker,
       .alive_count = static_cast<uint64_t>(ctx.reader->live_docs_count()),
     });
   }
-  col_writer = std::make_unique<ColWriter>(db, tracker);
+  col_writer = std::make_unique<ColWriter>(db, tracker, WriteTier::Merge);
   col_writer->SetFieldOptions(field_options);
   col_writer->SetHnswBases(hnsw_bases);
 }

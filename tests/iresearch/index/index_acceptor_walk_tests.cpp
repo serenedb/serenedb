@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "index/index_tests.hpp"
+#include "utils/edit_distance.hpp"
 
 using namespace std::literals;
 

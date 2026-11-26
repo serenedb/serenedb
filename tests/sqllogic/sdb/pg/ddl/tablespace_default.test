@@ -64,6 +64,18 @@ CREATE INDEX explicit_y_table_index ON implicit_table (body) TABLESPACE def_y_${
 db error: ERROR: an index on a table is stored with the table and cannot be placed in a tablespace
 
 
+statement error
+CREATE INDEX explicit_default_table_index ON implicit_table (body) TABLESPACE pg_default;
+----
+db error: ERROR: an index on a table is stored with the table and cannot be placed in a tablespace
+
+
+statement error
+CREATE TEMP TABLE explicit_default_temp (id INT) TABLESPACE pg_default;
+----
+db error: ERROR: temporary objects cannot be placed in a tablespace
+
+
 statement ok
 CREATE TABLE explicit_default (id INT) TABLESPACE pg_default;
 
@@ -205,7 +217,34 @@ db error: ERROR: only shared relations can be placed in pg_global tablespace
 
 
 statement ok
+CREATE TEMP TABLE temp_with_global_default (id INT);
+
+statement ok
+CREATE INDEX plain_src_with_global_default ON plain_src USING inverted (id, body def_words);
+
+statement ok
 RESET default_tablespace;
+
+statement ok
+INSERT INTO temp_with_global_default VALUES (1);
+
+query
+SELECT count(*) AS n FROM temp_with_global_default;
+----
+n
+1
+
+query
+SELECT relname, reltablespace FROM pg_class WHERE relname = 'plain_src_with_global_default';
+----
+relname	reltablespace
+plain_src_with_global_default	0
+
+statement ok
+DROP INDEX plain_src_with_global_default;
+
+statement ok
+DROP TABLE temp_with_global_default;
 
 statement ok
 CREATE TABLESPACE def_gone_${__DATABASE__} LOCATION '${__TEST_DIR__}/def/gone';

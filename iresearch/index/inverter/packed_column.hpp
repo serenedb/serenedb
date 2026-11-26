@@ -21,6 +21,7 @@
 #pragma once
 
 #include <array>
+#include <bit>
 #include <cstring>
 #include <duckdb/storage/arena_allocator.hpp>
 #include <span>
@@ -201,7 +202,7 @@ class PackedU32Column : util::Noncopyable {
       mn = std::min(mn, _staging[i]);
       mx = std::max(mx, _staging[i]);
     }
-    const auto bits = math::MathTraits<uint32_t>::bits_required(mx - mn);
+    const uint32_t bits = std::bit_width(mx - mn);
     const uint32_t* out = nullptr;
     if (bits == kRawBits) {
       auto* buf = Alloc16(kBlockValues * sizeof(uint32_t));

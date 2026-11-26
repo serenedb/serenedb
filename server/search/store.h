@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/thread_annotations.h>
 #include <absl/container/btree_map.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
@@ -45,6 +44,7 @@
 #include <iresearch/store/storage.hpp>
 #include <iresearch/utils/async.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
+#include <iresearch/utils/parallel_for.hpp>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -314,7 +314,7 @@ class Store final : public std::enable_shared_from_this<Store>,
     std::vector<irs::IndexWriter::Replacement> replacements);
 
   TableReplay* Replay();
-  void CollectFiles(absl::flat_hash_set<std::string>& files) const;
+  void CollectFiles(irs::containers::FlatHashSet<std::string>& files) const;
   void ScheduleRecovery(duckdb::ClientContext& context,
                         duckdb::TaskExecutor& replays,
                         duckdb::TaskExecutor& opens);
@@ -322,7 +322,8 @@ class Store final : public std::enable_shared_from_this<Store>,
 
   std::shared_ptr<const TableState> SnapshotState(Tick snapshot,
                                                   catalog::WalkCounters& walks);
-  catalog::RecordBuffer SnapshotRecord(const TableState& state) const;
+  catalog::RecordBuffer SnapshotRecord(const TableState& state,
+                                       irs::ParallelFor parallel) const;
 
   // One REINDEX at a time per index, across all connections: claim the
   // store for the whole refresh (observe -> delta/rebuild -> publish).

@@ -177,3 +177,57 @@ count
 
 statement ok
 RESET sdb_ann_force_exact;
+
+statement ok
+CREATE TABLE er_straddle (id INTEGER PRIMARY KEY, parity INTEGER, emb FLOAT[3])
+  WITH (compaction_interval = 0);
+
+statement ok
+CREATE INDEX er_straddle_idx ON er_straddle
+  USING inverted(id, parity, emb hnsw (metric = 'l2', compression = false));
+
+statement ok
+SET threads = 1;
+
+statement ok
+INSERT INTO er_straddle SELECT i, i % 2, [i % 97, i % 89, i % 83]::FLOAT[3] FROM range(50000) t(i);
+
+statement ok
+RESET threads;
+
+statement ok
+VACUUM (FLUSH_TABLE) er_straddle;
+
+query
+SELECT count(*) AS hits, sum(id) AS ids FROM er_straddle
+  WHERE parity = 0 AND array_distance(emb::DOUBLE[3], [5, 5, 5]::DOUBLE[3]) < 20;
+----
+hits	ids
+372	8944614
+
+query
+SELECT count(*) AS hits, sum(id) AS ids FROM er_straddle
+  WHERE parity = 1 AND array_distance(emb::DOUBLE[3], [5, 5, 5]::DOUBLE[3]) < 20;
+----
+hits	ids
+386	9334440
+
+statement ok
+SET sdb_ann_force_exact = true;
+
+query
+SELECT count(*) AS hits, sum(id) AS ids FROM er_straddle_idx
+  WHERE parity = 0 AND emb <-> [5, 5, 5]::FLOAT[3] < 20;
+----
+hits	ids
+372	8944614
+
+query
+SELECT count(*) AS hits, sum(id) AS ids FROM er_straddle_idx
+  WHERE parity = 1 AND emb <-> [5, 5, 5]::FLOAT[3] < 20;
+----
+hits	ids
+386	9334440
+
+statement ok
+RESET sdb_ann_force_exact;

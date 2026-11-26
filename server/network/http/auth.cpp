@@ -45,22 +45,34 @@ bool TakeScheme(std::string_view& header, std::string_view scheme) {
   return true;
 }
 
+AuthResult LocalOnly(const pg::LoginPeer& peer) {
+  return peer.address.is_loopback()
+           ? AuthResult{}
+           : AuthResult{.status = HttpStatus::Unauthorized};
+}
+
+bool PasswordMatches(const Credential& stored, pg::hba::Method method,
+                     std::string_view user, std::string_view password) {
+  if (method == pg::hba::Method::Scram) {
+    return stored.scram &&
+           network::VerifyCleartextAgainstScram(*stored.scram, password);
+  }
+  return (method == pg::hba::Method::Md5 ||
+          method == pg::hba::Method::Password) &&
+         network::VerifyCleartext(stored, user, password);
+}
+
 }  // namespace
 
 AuthResult HttpAuthenticator::Authenticate(
-  std::string_view authorization_header, bool is_loopback) const {
+  std::string_view authorization_header, const pg::LoginPeer& peer,
+  std::string_view database) const {
   if (!Enabled()) {
-    // Unconfigured server: trust a local (loopback/unix) client, but never
-    // blanket-trust a remote HTTP peer.
-    return is_loopback ? AuthResult{}
-                       : AuthResult{.status = HttpStatus::Unauthorized};
+    return LocalOnly(peer);
   }
   std::string_view header = authorization_header;
-  if (header.empty()) {
-    return {.status = HttpStatus::Unauthorized};
-  }
   if (TakeScheme(header, "Basic")) {
-    return Basic(header, is_loopback);
+    return Basic(header, peer, database);
   }
   if (TakeScheme(header, "ApiKey")) {
     return ApiKey(header);
@@ -72,7 +84,8 @@ AuthResult HttpAuthenticator::Authenticate(
 }
 
 AuthResult HttpAuthenticator::Basic(std::string_view payload,
-                                    bool is_loopback) const {
+                                    const pg::LoginPeer& peer,
+                                    std::string_view database) const {
   const auto decoded = network::Base64Decode(payload);
   if (!decoded) {
     return {.status = HttpStatus::Unauthorized};
@@ -82,36 +95,36 @@ AuthResult HttpAuthenticator::Basic(std::string_view payload,
   if (colon == std::string_view::npos) {
     return {.status = HttpStatus::Unauthorized};
   }
-  const std::string_view user = pair.substr(0, colon);
-  const std::string_view password = pair.substr(colon + 1);
+  return Password(pair.substr(0, colon), pair.substr(colon + 1), peer,
+                  database);
+}
 
-  const auto credential = _credentials->LookupCredential(user);
-  if (!credential) {
-    // Same trust semantics as the pg session: a user without a configured
-    // credential is not challenged -- but ONLY over a local (loopback/unix)
-    // connection. A remote peer to a passwordless role is refused, so the
-    // loopback convenience never extends to the network.
-    if (is_loopback) {
-      return {.context = {.user = std::string{user}}};
-    }
+AuthResult HttpAuthenticator::Password(std::string_view user,
+                                       std::string_view password,
+                                       const pg::LoginPeer& peer,
+                                       std::string_view database) const {
+  if (user.empty()) {
     return {.status = HttpStatus::Unauthorized};
   }
-  if (credential->cleartext) {
-    const auto& expected = *credential->cleartext;
-    if (password.size() == expected.size() &&
-        network::ConstantTimeEqual(
-          {reinterpret_cast<const uint8_t*>(password.data()), password.size()},
-          {reinterpret_cast<const uint8_t*>(expected.data()),
-           expected.size()})) {
-      return {.context = {.user = std::string{user}}};
-    }
+  using Kind = pg::hba::Decision::Kind;
+  const auto decision = pg::DecideLogin(
+    peer, user,
+    database.empty() ? irs::StaticStrings::kDefaultDatabase : database);
+  if (decision.kind != Kind::Trust && decision.kind != Kind::Method) {
     return {.status = HttpStatus::Unauthorized};
   }
-  if (credential->scram &&
-      network::VerifyCleartextAgainstScram(*credential->scram, password)) {
-    return {.context = {.user = std::string{user}}};
+  const auto role = pg::ReadRoleLogin(user);
+  if (!role.can_login) {
+    return {.status = HttpStatus::Unauthorized};
   }
-  return {.status = HttpStatus::Unauthorized};
+  if (decision.kind == Kind::Method) {
+    const auto credential = _credentials->LookupCredential(user);
+    if (!credential || role.password_expired ||
+        !PasswordMatches(*credential, decision.method, user, password)) {
+      return {.status = HttpStatus::Unauthorized};
+    }
+  }
+  return {.context = {.user = std::string{user}}};
 }
 
 AuthResult HttpAuthenticator::ApiKey(std::string_view payload) const {

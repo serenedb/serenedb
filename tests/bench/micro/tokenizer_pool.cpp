@@ -30,6 +30,7 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/utils/object_pool.hpp>
 #include <memory>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -39,13 +40,6 @@ using irs::analysis::Tokenizer;
 
 constexpr size_t kBytesPerInstance = 8 << 10;
 constexpr size_t kMaxIdle = 256;
-
-duckdb::BufferPool& Pool() {
-  static duckdb::DuckDB gDb{nullptr};
-  static duckdb::BufferPool& gPool =
-    duckdb::BufferManager::GetBufferManager(*gDb.instance).GetBufferPool();
-  return gPool;
-}
 
 Tokenizer::ptr MakeTokenizer() {
   return std::make_unique<irs::KeywordTokenizer>();
@@ -159,10 +153,30 @@ class LockFreePool {
   std::atomic<size_t> _bytes{0};
 };
 
+struct Pools {
+  duckdb::DuckDB db{nullptr};
+  duckdb::BufferPool& buffer_pool =
+    duckdb::BufferManager::GetBufferManager(*db.instance).GetBufferPool();
+  MutexPool<true> mutex{buffer_pool};
+  LockFreePool<true> lockfree{buffer_pool};
+  MutexPool<false> mutex_noacct{buffer_pool};
+  LockFreePool<false> lockfree_noacct{buffer_pool};
+};
+
+constinit std::unique_ptr<Pools> gPools;
+
 template<typename PoolT>
 PoolT& SharedPool() {
-  static PoolT gPool{Pool()};
-  return gPool;
+  if constexpr (std::is_same_v<PoolT, MutexPool<true>>) {
+    return gPools->mutex;
+  } else if constexpr (std::is_same_v<PoolT, LockFreePool<true>>) {
+    return gPools->lockfree;
+  } else if constexpr (std::is_same_v<PoolT, MutexPool<false>>) {
+    return gPools->mutex_noacct;
+  } else {
+    static_assert(std::is_same_v<PoolT, LockFreePool<false>>);
+    return gPools->lockfree_noacct;
+  }
 }
 
 IRS_FORCE_INLINE void Spin(size_t rounds) {
@@ -214,3 +228,13 @@ BENCHMARK(BM_LeaseRelease<LockFreePool<true>, 128>)
   ->Name("lockfree_work")
   ->ThreadRange(1, 32)
   ->UseRealTime();
+
+static int Main(int argc, char** argv) {
+  gPools = std::make_unique<Pools>();
+  const int rc = sdb::bench::RunBenchmarks(argc, argv);
+  gPools.reset();
+  return rc;
+}
+
+[[maybe_unused]] static const bool kMain =
+  sdb::bench::AddMain(SDB_BENCH_MODULE, &Main);

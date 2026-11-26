@@ -29,6 +29,7 @@
 #include <duckdb/planner/filter/expression_filter.hpp>
 #include <duckdb/storage/table/column_segment.hpp>
 
+#include "iresearch/formats/column/codecs/registry.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/lazy_bitset.hpp"
@@ -209,6 +210,7 @@ void ColFilterChain::Bind(const irs::ColReader& col_reader,
       .extract_type = spec.extract_type,
       .extract = std::move(extract),
     });
+    _cols.back().scan.st.dynamic_filter = spec.is_dynamic;
   }
 }
 
@@ -314,7 +316,7 @@ duckdb::idx_t ColFilterChain::DenseMask(
     const auto chunk_words = (n + 63) / 64;
     if (row >= f.checked.end || row < f.checked.begin) {
       f.checked = f.reader->Locate(row, f.checked);
-      const auto& stats = f.reader->RowGroupStatistics(f.checked.block);
+      const auto& stats = f.reader->DataBlocks()[f.checked.block].statistics;
       f.verdict = f.expr->CheckStatistics(stats, *f.state);
     }
     const auto z = row + n <= f.checked.end
@@ -374,7 +376,7 @@ duckdb::idx_t ColFilterChain::FilterWindow(uint64_t anchor, duckdb::idx_t span,
     // one-window-stale verdict merely under-prunes, never drops a live row.
     if (!f.nested && (anchor >= f.checked.end || anchor < f.checked.begin)) {
       f.checked = f.reader->Locate(anchor, f.checked);
-      const auto& stats = f.reader->RowGroupStatistics(f.checked.block);
+      const auto& stats = f.reader->DataBlocks()[f.checked.block].statistics;
       f.verdict = f.expr->CheckStatistics(stats, *f.state);
     }
     // A window crossing the block boundary cannot use the block's verdict.
@@ -462,7 +464,7 @@ IRS_FORCE_INLINE duckdb::idx_t ColFilterChain::EvaluateRow(Row& row,
       writer.WriteValue(row.leaves[l].Contains(doc_of(k)));
     }
   }
-  chunk.SetCardinality(count);
+  chunk.SetChildCardinality(count);
   auto& executor = *row.state->Cast<duckdb::ExpressionFilterState>().executor;
   return executor.SelectExpression(chunk, _row_sel);
 }
@@ -509,7 +511,7 @@ bool ColFilterChain::AdmitRows(uint64_t row) {
       }
       if (!r.points[j]) {
         r.points[j] = std::make_unique<irs::ColumnReader::PointReader>(
-          *_col_reader, *reader);
+          *_col_reader, *reader, true);
       }
       r.points[j]->FetchRow(row, vector, 0);
     }
@@ -561,17 +563,21 @@ duckdb::idx_t ColFilterChain::FilterDocs(irs::doc_id_t* docs,
 }
 
 detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
-  const auto zstd = [](const irs::ColumnReader& reader) {
-    return absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
-      return block.codec->type == duckdb::CompressionType::COMPRESSION_ZSTD;
-    });
+  const auto frames = [](const irs::ColumnReader& reader) {
+    return reader.Type().InternalType() == duckdb::PhysicalType::VARCHAR &&
+           absl::c_any_of(reader.DataBlocks(), [](const auto& block) {
+             const auto type = block.codec->type;
+             return codecs::IsText(type) &&
+                    codecs::ShapeOf(type) == codecs::Shape::Plain &&
+                    !codecs::Sorted(codecs::LeafOf(type));
+           });
   };
   auto read = detail::PointRead::Row;
   for (const auto& c : _cols) {
     if (c.nested) {
       return detail::PointRead::None;
     }
-    if (zstd(*c.reader)) {
+    if (frames(*c.reader)) {
       read = detail::PointRead::Vector;
     }
   }
@@ -583,7 +589,7 @@ detail::PointRead ColFilterChain::ClassifyPointReads() const noexcept {
       if (reader->Type().IsNested()) {
         return detail::PointRead::None;
       }
-      if (zstd(*reader)) {
+      if (frames(*reader)) {
         read = detail::PointRead::Vector;
       }
     }
@@ -595,8 +601,8 @@ bool ColFilterChain::AdmitRow(uint64_t row) {
   SDB_ASSERT(_col_reader);
   for (auto& f : _cols) {
     if (!f.point) {
-      f.point = std::make_unique<irs::ColumnReader::PointReader>(*_col_reader,
-                                                                 *f.reader);
+      f.point = std::make_unique<irs::ColumnReader::PointReader>(
+        *_col_reader, *f.reader, true);
       f.point_scratch =
         std::make_unique<irs::ColumnReader::VectorScratch>(f.reader->Type());
       f.point_heap =
@@ -773,6 +779,7 @@ duckdb::idx_t ColFilterChain::FilterMask(irs::doc_id_t base, const uint64_t* in,
 void ColFilterChain::Rewind(irs::ReadContext& ctx) {
   for (auto& f : _cols) {
     f.scan = f.reader->InitScan(ctx);
+    f.scan.st.dynamic_filter = f.is_dynamic;
     if (f.extract) {
       f.extract->Bind(*f.reader, ctx, f.extract_path, *f.extract_type,
                       _context);
@@ -798,7 +805,7 @@ uint64_t ColFilterChain::DeadUntil(uint64_t row) {
       if (stale) {
         f.checked = f.reader->Locate(row, f.checked);
       }
-      const auto& stats = f.reader->RowGroupStatistics(f.checked.block);
+      const auto& stats = f.reader->DataBlocks()[f.checked.block].statistics;
       f.verdict = f.expr->CheckStatistics(stats, *f.state);
     }
     if (ZoneDead(f.verdict)) {

@@ -52,42 +52,4 @@ class [[nodiscard]] Finally {
   [[no_unique_address]] Func _func;
 };
 
-// Convenient helper for caching function results
-template<typename Input, Input Size, typename Func,
-         typename = typename std::enable_if_t<std::is_integral_v<Input>>>
-class CachedFunc {
- public:
-  using input_type = Input;
-  using output_type = std::invoke_result_t<Func, Input>;
-
-  constexpr explicit CachedFunc(input_type offset, Func&& func)
-    : _func{std::forward<Func>(func)} {
-    for (; offset < Size; ++offset) {
-      _cache[offset] = _func(offset);
-    }
-  }
-
-  template<bool Checked>
-  constexpr IRS_FORCE_INLINE output_type get(input_type value) const
-    noexcept(std::is_nothrow_invocable_v<Func, Input>) {
-    if constexpr (Checked) {
-      return value < size() ? _cache[value] : _func(value);
-    } else {
-      SDB_ASSERT(value < _cache.size());
-      return _cache[value];
-    }
-  }
-
-  constexpr size_t size() const noexcept { return _cache.size(); }
-
- private:
-  [[no_unique_address]] Func _func;
-  std::array<output_type, Size> _cache{};
-};
-
-template<typename Input, size_t Size, typename Func>
-constexpr CachedFunc<Input, Size, Func> CacheFunc(Input offset, Func&& func) {
-  return CachedFunc<Input, Size, Func>{offset, std::forward<Func>(func)};
-}
-
 }  // namespace irs

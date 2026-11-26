@@ -290,7 +290,7 @@ void ExternalLookupIndexSource::BorrowKeyColumns(duckdb::Vector& pk,
   for (const auto& source : sources) {
     _key_chunk.data.emplace_back(duckdb::Vector::Ref(source));
   }
-  _key_chunk.SetCardinality(count);
+  _key_chunk.SetChildCardinality(count);
 }
 
 duckdb::idx_t ExternalLookupIndexSource::Materialize(

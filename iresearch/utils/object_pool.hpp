@@ -24,13 +24,14 @@
 
 #include <algorithm>
 #include <atomic>
+#include <memory>
 #include <utility>
 #include <vector>
 
 #include "iresearch/utils/empty.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/type_utils.hpp"
+#include "iresearch/utils/std.hpp"
 
 namespace irs {
 
@@ -63,7 +64,7 @@ class ConcurrentStack : private util::Noncopyable {
   }
 
   bool empty() const noexcept {
-    return nullptr == _head.load(std::memory_order_acquire).node;
+    return !_head.load(std::memory_order_acquire).node;
   }
 
   NodeType* pop() noexcept {
@@ -127,11 +128,11 @@ class PoolControlPtr final : public std::unique_ptr<T, D> {
 };
 
 // Base class for all unbounded object pool implementations
-template<typename T,
-         typename =
-           std::enable_if_t<kIsUniquePtr<typename T::ptr> &&
-                            std::is_empty_v<typename T::ptr::deleter_type>>>
+template<typename T>
 class UnboundedObjectPoolBase : private util::Noncopyable {
+  static_assert(utils::kIsSpecialization<typename T::ptr, std::unique_ptr> &&
+                std::is_empty_v<typename T::ptr::deleter_type>);
+
  public:
   using deleter_type = typename T::ptr::deleter_type;
   using element_type = typename T::ptr::element_type;
@@ -253,7 +254,7 @@ class UnboundedObjectPool : public UnboundedObjectPoolBase<T> {
 
   ~UnboundedObjectPool() {
     for (auto& slot : this->_pool) {
-      if (auto p = slot.value.value; p != nullptr) {
+      if (auto p = slot.value.value) {
         typename base_t::deleter_type{}(p);
       }
     }

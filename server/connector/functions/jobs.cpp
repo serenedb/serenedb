@@ -20,8 +20,6 @@
 
 #include "connector/functions/jobs.h"
 
-#include <absl/container/flat_hash_set.h>
-
 #include <duckdb/catalog/catalog.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry_retriever.hpp>
@@ -33,8 +31,10 @@
 #include <duckdb/main/client_context.hpp>
 #include <duckdb/main/database_manager.hpp>
 #include <duckdb/main/extension/extension_loader.hpp>
+#include <duckdb/main/settings.hpp>
 #include <duckdb/parser/qualified_name.hpp>
 #include <duckdb/planner/binder.hpp>
+#include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <string>
 #include <string_view>
@@ -202,7 +202,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
   if (!scheduler) {
     return result;
   }
-  absl::flat_hash_set<duckdb::idx_t> databases;
+  irs::containers::FlatHashSet<duckdb::idx_t> databases;
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     databases.insert(database->oid);
@@ -252,8 +252,9 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_NULL_VALUE_NOT_ALLOWED),
                     ERR_MSG("Job name cannot be NULL"));
   }
-  const auto name = input.binder->BindTableName(
-    duckdb::QualifiedName::Parse(duckdb::StringValue::Get(input.inputs[0])));
+  const auto name = input.binder->BindTableName(duckdb::QualifiedName::Parse(
+    duckdb::StringValue::Get(input.inputs[0]),
+    duckdb::Settings::Get<duckdb::PreserveIdentifierCaseSetting>(context)));
   auto entry = input.binder->EntryRetriever().GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name},
     duckdb::OnEntryNotFound::THROW_EXCEPTION);

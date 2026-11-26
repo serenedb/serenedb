@@ -16,7 +16,9 @@ To connect to a running SereneDB server instead, use [`serenedb psql`](./serened
 serenedb shell [OPTION]... [FILENAME [SQL]]
 ```
 
-`FILENAME` is the path to a DuckDB database file; a new file is created if it does not exist. Omit it (or pass `:memory:`) for an in-memory database. The optional `SQL` argument is run before the interactive prompt starts.
+`FILENAME` is the path to a DuckDB database file; a new file is created if it does not exist. Without it, or with `:memory:` in its place, the shell works in its own in-memory database `postgres`. The optional `SQL` argument is run before the interactive prompt starts.
+
+The file becomes the default database, named after the file without its extension (`my_data.db` is `my_data`). A file named `postgres` or `temp`, like the shell's own databases, gets `_db` appended: `postgres.db` is `postgres_db`. `.open` closes the file opened before it.
 
 Open an in-memory shell:
 
@@ -35,7 +37,7 @@ serenedb shell my_data.db
 Use `-c` to run one statement and exit:
 
 ```sh
-serenedb shell :memory: -c "SELECT 1 + 1 AS sum;"
+serenedb shell -c "SELECT 1 + 1 AS sum;"
 ```
 
 ```text
@@ -52,7 +54,7 @@ serenedb shell :memory: -c "SELECT 1 + 1 AS sum;"
 The shell reads files directly through table functions such as `read_csv` and `read_parquet`:
 
 ```sh
-serenedb shell :memory: -c "SELECT * FROM read_csv('data.csv');"
+serenedb shell -c "SELECT * FROM read_csv('data.csv');"
 ```
 
 ```text
@@ -93,10 +95,10 @@ Files under the listed directories and URL prefixes can be read and written; eve
 
 ## Creating objects
 
-Unlike a server connection, the shell does not pre-select a default database. To create objects, first select a database with `USE` (or fully-qualify the name), otherwise SereneDB reports `Catalog Error: no schema has been selected to create in`:
+Objects are created in the default database: the opened file, or the in-memory database `postgres` when there is no file. What `postgres` holds is gone when the shell exits.
 
 ```sh
-serenedb shell :memory: -c "USE memory; CREATE TABLE t (i INTEGER); INSERT INTO t VALUES (1), (2); SELECT count(*) AS rows FROM t;"
+serenedb shell -c "CREATE TABLE t (i INTEGER); INSERT INTO t VALUES (1), (2); SELECT count(*) AS rows FROM t;"
 ```
 
 ```text
@@ -113,7 +115,7 @@ serenedb shell :memory: -c "USE memory; CREATE TABLE t (i INTEGER); INSERT INTO 
 The default output is the aligned `duckbox` table. Switch modes with a `--MODE` flag (`box`, `csv`, `json`, `markdown`, `line`, …) or with `-P format=…`:
 
 ```sh
-serenedb shell :memory: --markdown -c "SELECT 1 AS a, 2 AS b;"
+serenedb shell --markdown -c "SELECT 1 AS a, 2 AS b;"
 ```
 
 ```text

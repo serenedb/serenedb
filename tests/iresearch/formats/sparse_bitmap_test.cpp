@@ -176,9 +176,8 @@ void WriteRanges(duckdb::DatabaseInstance& db, const tests::IndexDir& dir,
   // skip_validity=false (we *want* the validity bits) and
   // COMPRESSION_AUTO so the codec picks an appropriate validity
   // encoder for each pattern (all-zero / all-one / mixed).
-  auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
-                          /*skip_validity=*/false, kRowGroupSize,
-                          duckdb::CompressionType::COMPRESSION_AUTO);
+  auto& cw = w.OpenColumn(1, duckdb::LogicalType::BLOB,
+                          {.row_group_size = kRowGroupSize});
   for (const auto& range : ranges) {
     for (irs::doc_id_t doc = range.first; doc < range.second; ++doc) {
       const auto s = PayloadFor(doc);
@@ -213,8 +212,7 @@ void ExpectPayloadEq(irs::bytes_view payload, irs::doc_id_t doc) {
 //           a warm BlobPointReader for the cached-segment fast path.
 // Both passes must accept exactly the docs in `ranges` as valid and
 // every other in-range row as null. We also assert `col->RowCount()`
-// equals the last-row-exclusive of the ranges (legacy `cost()`) and
-// that `HasValidity()` is true.
+// equals the last-row-exclusive of the ranges (legacy `cost()`).
 template<size_t N>
 void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   tests::IndexDir dir{db, TestEnv::MemoryRoot()};
@@ -233,17 +231,13 @@ void TestRwNext(duckdb::DatabaseInstance& db, const RangeType (&ranges)[N]) {
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
   EXPECT_EQ(col->RowCount(), LastRowExclusive(ranges));
-  // Stored rows are all-valid (nulls are implicit in the sparse doc-id
-  // structure), so no separate validity sub-reader is materialised; the
-  // reads below verify null handling directly.
-  EXPECT_FALSE(col->HasValidity());
   // Multi-row-group invariant. Each kRowGroupSize=4096-row chunk
   // becomes its own data rg, so any data shape that reaches doc 32K
   // or higher must produce at least 8 data row groups. (Legacy tests
   // reached docs in the hundreds of thousands; the cs equivalent
   // must still fragment across many rgs to exercise cross-rg
   // bookkeeping.)
-  EXPECT_GE(col->DataRgCount(), 8u);
+  EXPECT_GE(col->DataBlocks().size(), 8u);
 
   // ---------- Pass 1: full per-row walk, fresh reader. -----------
   // Legacy iterator walks every "row" (= every doc index in
@@ -544,11 +538,6 @@ void TestRwSeekRandom(duckdb::DatabaseInstance& db,
   EXPECT_TRUE(r.HasColumn(1));
   const auto* col = r.Column(1);
   ASSERT_NE(col, nullptr);
-  // For this sparse pattern the null rows pack across row groups such that
-  // no separate validity sub-reader is materialized -- nulls are recovered
-  // from the row-group / doc-id structure instead. Correct null handling is
-  // verified directly by the IsNullDoc/FetchDoc seeks below.
-  EXPECT_FALSE(col->HasValidity());
 
   // --- Pass A: stateful (warm reader, one walk over all seeks). ---
   {
@@ -797,9 +786,8 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   constexpr std::string_view kName = "sparse_blocks";
   {
     irs::ColWriter w{Db(), dir.Tracker(kName)};
-    auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
-                            /*skip_validity=*/false, kRowGroupSize,
-                            duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw = w.OpenColumn(1, duckdb::LogicalType::BLOB,
+                            {.row_group_size = kRowGroupSize});
     for (auto doc : valid_docs) {
       const auto s = PayloadFor(doc);
       irs::tests::AppendBlob(
@@ -823,7 +811,7 @@ TEST_P(SparseBitmapTestCase, rw_sparse_blocks) {
   // Sanity check the scale-down: row count divided by row-group size
   // must produce many row groups, otherwise this test isn't testing
   // cross-row-group seeks at all.
-  EXPECT_GE(col->DataRgCount(),
+  EXPECT_GE(col->DataBlocks().size(),
             static_cast<size_t>(kStepCount));  // (4194304 / 4096 >= 64)
 
   // Pass 1: point-fetch each valid doc with one warm reader.
@@ -1076,9 +1064,8 @@ TEST_P(SparseBitmapTestCase, insert_erase) {
 
   {
     irs::ColWriter w{Db(), dir.Tracker(kName)};
-    auto& cw = w.OpenColumn(/*id=*/1, duckdb::LogicalType::BLOB,
-                            /*skip_validity=*/false, kRowGroupSize,
-                            duckdb::CompressionType::COMPRESSION_AUTO);
+    auto& cw = w.OpenColumn(1, duckdb::LogicalType::BLOB,
+                            {.row_group_size = kRowGroupSize});
     // Skip kErasedDoc -- ColumnWriter auto-pads the gap with nulls.
     for (auto doc : {kSurvivorEarlyA, kSurvivorEarlyB, kSurvivingDoc}) {
       const auto payload = PayloadFor(doc);

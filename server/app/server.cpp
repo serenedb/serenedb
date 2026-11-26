@@ -60,6 +60,14 @@ ABSL_FLAG(bool, remap_executable, SDB_REMAP_EXECUTABLE,
 namespace sdb::app {
 namespace {
 
+int RunServer(int argc, char* argv[]) {
+  return RunWithEngine(argc, argv, Serve);
+}
+
+SDB_COMMAND kServer{"server", &RunServer};
+
+}  // namespace
+
 int Serve() {
   auto server_config = ReadServerConfig();
   Runtime runtime{ReadIoThreads()};
@@ -73,14 +81,6 @@ int Serve() {
   irs::CrashHandler::SetState("stopping");
   return EXIT_SUCCESS;
 }
-
-int RunServer(int argc, char* argv[]) {
-  return RunWithEngine(argc, argv, Serve);
-}
-
-SDB_COMMAND kServer{"server", &RunServer};
-
-}  // namespace
 
 int RunWithEngine(int argc, char* argv[], absl::FunctionRef<int()> body) {
   ParseOptions(argc, argv);

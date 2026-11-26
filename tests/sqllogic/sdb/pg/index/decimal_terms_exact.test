@@ -1,0 +1,211 @@
+# Decimal columns are indexed exactly, at every storage width: values a
+# double cannot tell apart stay distinct terms, and a constant with more
+# fractional digits than the column matches only what it equals.
+
+statement ok
+CREATE TABLE dex (id INTEGER, d4 DECIMAL(4,1), d9 DECIMAL(9,3), d18 DECIMAL(18,3), d38 DECIMAL(38,5))
+
+
+statement ok
+CREATE INDEX dex_idx ON dex USING inverted (id, d4, d9, d18, d38)
+
+
+statement ok
+INSERT INTO dex VALUES
+  (1, -999.9, -999999.999, 123456789012345.678, 1234567890123456789012345.12345),
+  (2, 999.9, 999999.999, 123456789012345.679, 1234567890123456789012345.12346),
+  (3, 0.1, 123456.789, -123456789012345.678, -1234567890123456789012345.12345),
+  (4, 0.2, 123456.790, 999999999999999.999, 999999999999999999999999999999999.99999),
+  (5, -0.1, 0, -999999999999999.999, -999999999999999999999999999999999.99999)
+
+
+query
+SELECT count(DISTINCT d18::DOUBLE) AS d18_doubles, count(DISTINCT d38::DOUBLE) AS d38_doubles FROM dex WHERE id IN (1, 2)
+----
+d18_doubles	d38_doubles
+1	1
+
+
+query
+EXPLAIN SELECT id FROM dex_idx WHERE d18 = 123456789012345.678
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────╮
+│ Index: dex_idx                 │
+│ Lookup: search                 │
+│ Index Filter:                  │
+│ ╭─ Term ─────────────────────╮ │
+│ │ Field: d18(numeric)        │ │
+│ │ Value: 123456789012345.678 │ │
+│ ╰────────────────────────────╯ │
+│ Projections: id                │
+│ ~1 row                         │
+╰────────────────────────────────╯
+
+
+query
+SELECT id FROM dex_idx WHERE d18 = 123456789012345.678 ORDER BY id
+----
+id
+1
+
+
+query
+SELECT id FROM dex_idx WHERE d18 = 123456789012345.679 ORDER BY id
+----
+id
+2
+
+
+query
+SELECT id FROM dex_idx WHERE d18 > 123456789012345.678 ORDER BY id
+----
+id
+2
+4
+
+
+query
+EXPLAIN SELECT id FROM dex_idx WHERE d18 = 123456789012345.6785
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────────────────────────────────╮
+│ Index: dex_idx                                    │
+│ Lookup: search                                    │
+│ Projections: id                                   │
+│ Column Filter:                                    │
+│ CAST(d18 AS DECIMAL(19,4)) = 123456789012345.6785 │
+│ ~1 row                                            │
+╰───────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM dex_idx WHERE d18 >= 123456789012345.6785
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: dex_idx                                     │
+│ Lookup: search                                     │
+│ Projections: id                                    │
+│ Column Filter:                                     │
+│ CAST(d18 AS DECIMAL(19,4)) >= 123456789012345.6785 │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
+
+
+query
+EXPLAIN SELECT id FROM dex_idx WHERE d18 >= 123456789012345.6785 AND d18 <= 999999999999999.999
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: dex_idx                                     │
+│ Lookup: search                                     │
+│ Index Filter:                                      │
+│ ╭─ Granular Range ─────────────╮                   │
+│ │ Field: d18(numeric)          │                   │
+│ │ Range: <=999999999999999.999 │                   │
+│ ╰──────────────────────────────╯                   │
+│ Column Filter:                                     │
+│ CAST(d18 AS DECIMAL(19,4)) >= 123456789012345.6785 │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM dex_idx WHERE d18 = 123456789012345.6785 ORDER BY id
+----
+id
+
+
+query
+SELECT id FROM dex_idx WHERE d18 BETWEEN 123456789012345.6785 AND 999999999999999.999 ORDER BY id
+----
+id
+2
+4
+
+
+query
+EXPLAIN SELECT id FROM dex_idx WHERE d38 = 1234567890123456789012345.12345
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Index: dex_idx                             │
+│ Lookup: search                             │
+│ Index Filter:                              │
+│ ╭─ Term ─────────────────────────────────╮ │
+│ │ Field: d38(numeric)                    │ │
+│ │ Value: 1234567890123456789012345.12345 │ │
+│ ╰────────────────────────────────────────╯ │
+│ Projections: id                            │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM dex_idx WHERE d38 = 1234567890123456789012345.12345 ORDER BY id
+----
+id
+1
+
+
+query
+SELECT id FROM dex_idx WHERE d38 IN (1234567890123456789012345.12346, -999999999999999999999999999999999.99999) ORDER BY id
+----
+id
+2
+5
+
+
+query
+SELECT id FROM dex_idx WHERE d38 < -1234567890123456789012345.12345 ORDER BY id
+----
+id
+5
+
+
+query
+SELECT id FROM dex_idx WHERE d38 <= -1234567890123456789012345.12345 ORDER BY id
+----
+id
+3
+5
+
+
+query error db error: ERROR: Casting value "999999999999999999999999999999999\.99999" to type DECIMAL\(38,6\) failed: value is out of range! when casting from source column d38
+SELECT id FROM dex WHERE d38 > 1234567890123456789012345.123455 ORDER BY id
+
+
+query
+EXPLAIN SELECT id FROM dex_idx WHERE d18 BETWEEN 123456789012345.6785 AND 999999999999999.999
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────╮
+│ Index: dex_idx                                     │
+│ Lookup: search                                     │
+│ Index Filter:                                      │
+│ ╭─ Granular Range ─────────────╮                   │
+│ │ Field: d18(numeric)          │                   │
+│ │ Range: <=999999999999999.999 │                   │
+│ ╰──────────────────────────────╯                   │
+│ Column Filter:                                     │
+│ CAST(d18 AS DECIMAL(19,4)) >= 123456789012345.6785 │
+│ Projections: id                                    │
+│ ~1 row                                             │
+╰────────────────────────────────────────────────────╯
+
+
+query
+SELECT id FROM dex_idx WHERE d4 >= -0.1 AND d4 < 0.2 ORDER BY id
+----
+id
+3
+5
+
+
+query
+SELECT id FROM dex_idx WHERE d9 = 123456.79 ORDER BY id
+----
+id
+4

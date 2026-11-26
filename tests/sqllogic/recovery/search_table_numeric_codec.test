@@ -1,0 +1,236 @@
+control substitution on
+
+statement ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SET threads = 1;
+
+
+statement ok
+CREATE TABLE stnc_named (a INTEGER PRIMARY KEY,
+                         codes BIGINT USING COMPRESSION dict,
+                         steps BIGINT USING COMPRESSION delta,
+                         runs BIGINT USING COMPRESSION rle_lz4,
+                         ratio DOUBLE USING COMPRESSION zstd,
+                         tags BIGINT[] USING COMPRESSION bitpacking)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stnc_named SELECT a, (hash(a % 100) >> 2)::BIGINT, 1000000 + a * 3, a / 100, a / 7.0, [a, a % 7] FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stnc_named;
+
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+FROM pragma_storage_info('stnc_named')
+WHERE column_name IN ('codes', 'steps', 'runs', 'ratio') AND segment_type <> 'VALIDITY'
+GROUP BY ALL ORDER BY column_name;
+----
+column_name	compression
+codes	DICT
+ratio	ZSTD
+runs	RLE_LZ4
+steps	DELTA
+
+
+query
+SELECT count(*) AS mismatches FROM stnc_named
+WHERE codes IS DISTINCT FROM (hash(a % 100) >> 2)::BIGINT OR steps IS DISTINCT FROM 1000000 + a * 3 OR runs IS DISTINCT FROM a / 100
+   OR ratio IS DISTINCT FROM a / 7.0 OR tags IS DISTINCT FROM [a, a % 7];
+----
+mismatches
+0
+
+
+statement error
+CREATE TABLE stnc_text (a INTEGER PRIMARY KEY, v TEXT USING COMPRESSION delta);
+----
+db error: ERROR: Can't compress column "v" with type 'VARCHAR' (physical: VARCHAR) using compression type 'DELTA'
+
+
+statement ok
+CREATE TABLE stnc_shared (a INTEGER PRIMARY KEY, n BIGINT USING COMPRESSION zstd, v TEXT USING COMPRESSION zstd)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stnc_shared SELECT a, (a * 7919) % 100003, 'https://example.org/page/' || a FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stnc_shared;
+
+
+query
+SELECT column_name, segment_type, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+FROM pragma_storage_info('stnc_shared')
+WHERE column_name IN ('n', 'v') AND segment_type <> 'VALIDITY'
+GROUP BY ALL ORDER BY column_name;
+----
+column_name	segment_type	compression
+n	BIGINT	ZSTD
+v	VARCHAR	ZSTD
+
+
+query
+SELECT count(*) AS mismatches FROM stnc_shared
+WHERE n IS DISTINCT FROM (a * 7919) % 100003 OR v IS DISTINCT FROM 'https://example.org/page/' || a;
+----
+mismatches
+0
+
+
+statement ok
+CREATE TABLE stnc_mixed (a INTEGER PRIMARY KEY, m MAP(TEXT, INTEGER) USING COMPRESSION dict_zstd, n INTEGER USING COMPRESSION dict_lz4)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stnc_mixed SELECT a, MAP {'key-' || (a % 13): a % 7}, a % 1009 FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stnc_mixed;
+
+
+query
+SELECT column_name, segment_type, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+FROM pragma_storage_info('stnc_mixed')
+WHERE column_name IN ('m', 'n') AND segment_type IN ('VARCHAR', 'INTEGER')
+GROUP BY ALL ORDER BY column_name, segment_type;
+----
+column_name	segment_type	compression
+m	INTEGER	DICT_ZSTD
+m	VARCHAR	DICT_ZSTD
+n	INTEGER	DICT_LZ4
+
+
+query
+SELECT count(*) AS mismatches FROM stnc_mixed
+WHERE m IS DISTINCT FROM MAP {'key-' || (a % 13): a % 7} OR n IS DISTINCT FROM a % 1009;
+----
+mismatches
+0
+
+
+statement ok
+SET force_compression = 'rle';
+
+
+statement ok
+CREATE TABLE stnc_forced (a INTEGER PRIMARY KEY, runs BIGINT, apart BIGINT, v TEXT)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stnc_forced SELECT a, a / 100, (a * 7919) % 100003, 'https://example.org/page/' || a FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stnc_forced;
+
+
+query
+SELECT column_name, string_agg(DISTINCT compression, ',' ORDER BY compression) AS compression
+FROM pragma_storage_info('stnc_forced')
+WHERE column_name IN ('runs', 'apart', 'v') AND segment_type <> 'VALIDITY'
+GROUP BY ALL ORDER BY column_name;
+----
+column_name	compression
+apart	Uncompressed
+runs	RLE
+v	FSST
+
+
+query
+SELECT count(*) AS mismatches FROM stnc_forced
+WHERE runs IS DISTINCT FROM a / 100 OR apart IS DISTINCT FROM (a * 7919) % 100003 OR v IS DISTINCT FROM 'https://example.org/page/' || a;
+----
+mismatches
+0
+
+
+statement ok
+RESET force_compression;
+
+
+statement ok
+SET disabled_compression_methods = 'dict,dict_lz4,dict_zstd';
+
+
+statement ok
+CREATE TABLE stnc_disabled (a INTEGER PRIMARY KEY, auto_n BIGINT, named_n BIGINT USING COMPRESSION dict)
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stnc_disabled SELECT a, (hash(a % 100) >> 2)::BIGINT, (hash(a % 100) >> 2)::BIGINT FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stnc_disabled;
+
+
+query
+SELECT count(*) AS dictionary_segments,
+       (SELECT count(*) FROM stnc_disabled
+        WHERE auto_n IS DISTINCT FROM (hash(a % 100) >> 2)::BIGINT OR named_n IS DISTINCT FROM (hash(a % 100) >> 2)::BIGINT) AS mismatches
+FROM pragma_storage_info('stnc_disabled')
+WHERE compression IN ('DICT', 'DICT_LZ4', 'DICT_ZSTD');
+----
+dictionary_segments	mismatches
+0	0
+
+
+statement ok
+RESET disabled_compression_methods;
+
+
+statement ok
+CREATE TABLE stnc_level (a INTEGER PRIMARY KEY,
+                         plain BIGINT USING COMPRESSION zstd,
+                         high BIGINT USING COMPRESSION zstd(compression_level = 19),
+                         runs BIGINT USING COMPRESSION rle_lz4(compression_level = 9))
+WITH (compaction_interval = 0);
+
+
+statement ok
+INSERT INTO stnc_level SELECT a, (a * 7919) % 100003, (a * 7919) % 100003, a / 100 FROM range(20000) t(a);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) stnc_level;
+
+
+query
+SELECT column_name, string_agg(DISTINCT compression || ' ' || regexp_extract(segment_info, 'level: (\d+)', 1), ',') AS codec_and_level
+FROM pragma_storage_info('stnc_level', include_segment_info = true)
+WHERE column_name IN ('plain', 'high', 'runs') AND segment_type <> 'VALIDITY'
+GROUP BY ALL ORDER BY column_name;
+----
+column_name	codec_and_level
+high	ZSTD 19
+plain	ZSTD 1
+runs	RLE_LZ4 9
+
+
+query
+SELECT count(*) AS mismatches FROM stnc_level
+WHERE plain IS DISTINCT FROM (a * 7919) % 100003 OR high IS DISTINCT FROM (a * 7919) % 100003 OR runs IS DISTINCT FROM a / 100;
+----
+mismatches
+0
+
+
+statement error
+CREATE TABLE stnc_bad_level (a INTEGER PRIMARY KEY, n BIGINT USING COMPRESSION delta(compression_level = 3));
+----
+db error: ERROR: Column "n": compression 'delta' takes no compression_level
+
+
+statement error
+CREATE TABLE stnc_bad_level (a INTEGER PRIMARY KEY, n BIGINT USING COMPRESSION delta_zstd(compression_level = 23));
+----
+db error: ERROR: Column "n": compression_level 23 is out of range for 'delta_zstd' (1 to 22)

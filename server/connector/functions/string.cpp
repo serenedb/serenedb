@@ -30,6 +30,7 @@
 #include <openssl/evp.h>
 #include <re2/re2.h>
 #include <simdutf.h>
+#include <util/utf.h>
 #include <zlib.h>
 
 #include <algorithm>
@@ -606,6 +607,11 @@ std::vector<FormatPiece> ParseFormat(std::string_view fmt,
           THROW_SQL_ERROR(ERR_CODE(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                           ERR_MSG("number is out of range"));
         }
+        if (position == 0) {
+          THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                          ERR_MSG("format specifies argument 0, but arguments "
+                                  "are numbered from 1"));
+        }
         has_position = true;
         ++i;
       } else {
@@ -624,7 +630,10 @@ std::vector<FormatPiece> ParseFormat(std::string_view fmt,
                         ERR_MSG("unterminated format() conversion specifier"));
       }
       piece.type = fmt[i++];
-      piece.argument = has_position ? position : next_arg++;
+      if (has_position) {
+        next_arg = position;
+      }
+      piece.argument = next_arg++;
       if (piece.type != 's' && piece.type != 'I' && piece.type != 'L') {
         THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                         ERR_MSG("unrecognized format() type specifier \"",
@@ -751,23 +760,7 @@ void PgFormatFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
       if (!s) {
         return "NULL";
       }
-      bool has_backslash = s->find('\\') != std::string::npos;
-      std::string out;
-      if (has_backslash) {
-        out += "E";
-      }
-      out += '\'';
-      for (auto c : *s) {
-        if (c == '\'') {
-          out += "''";
-        } else if (c == '\\') {
-          out += "\\\\";
-        } else {
-          out += c;
-        }
-      }
-      out += '\'';
-      return out;
+      return pg::QuoteLiteral(*s);
     };
 
     out.clear();
@@ -821,26 +814,9 @@ void QuoteLiteralFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
                           duckdb::Vector& result) {
   duckdb::UnaryExecutor::Execute<duckdb::string_t, duckdb::string_t>(
     args.data[0], result, args.size(), [&](duckdb::string_t input) {
-      auto str = input.GetString();
-      bool has_backslash = str.find('\\') != std::string::npos;
-      std::string quoted;
-      quoted.reserve(str.size() + 3);
-      if (has_backslash) {
-        quoted += "E'";
-      } else {
-        quoted += '\'';
-      }
-      for (char c : str) {
-        if (c == '\'') {
-          quoted += "''";
-        } else if (c == '\\') {
-          quoted += "\\\\";
-        } else {
-          quoted += c;
-        }
-      }
-      quoted += '\'';
-      return duckdb::StringVector::AddString(result, quoted);
+      return duckdb::StringVector::AddString(
+        result,
+        pg::QuoteLiteral(std::string_view{input.GetData(), input.GetSize()}));
     });
 }
 
@@ -857,25 +833,9 @@ void QuoteNullableFunction(duckdb::DataChunk& args, duckdb::ExpressionState&,
       out.WriteValue(duckdb::string_t{"NULL", 4});
       continue;
     }
-    const auto str = input.GetValue().GetString();
-    const bool has_backslash = str.find('\\') != std::string::npos;
-    std::string quoted;
-    quoted.reserve(str.size() + 3);
-    if (has_backslash) {
-      quoted += "E'";
-    } else {
-      quoted += '\'';
-    }
-    for (char c : str) {
-      if (c == '\'') {
-        quoted += "''";
-      } else if (c == '\\') {
-        quoted += "\\\\";
-      } else {
-        quoted += c;
-      }
-    }
-    quoted += '\'';
+    const auto& value = input.GetValue();
+    const auto quoted =
+      pg::QuoteLiteral(std::string_view{value.GetData(), value.GetSize()});
     out.WriteValue(duckdb::string_t::Safe(quoted));
   }
 }
@@ -1562,9 +1522,9 @@ void Unistr(std::string_view text, std::string& out) {
       pair_first = code;
       return;
     }
-    std::array<irs::byte_type, irs::utf8_utils::kMaxCharSize> bytes{};
-    const auto size = irs::utf8_utils::FromChar32(code, bytes.data());
-    out.append(reinterpret_cast<const char*>(bytes.data()), size);
+    const re2::Rune rune = code;
+    char bytes[re2::UTFmax];
+    out.append(bytes, re2::runetochar(bytes, &rune));
   };
   for (size_t pos = 0; pos < text.size();) {
     if (text[pos] != '\\') {

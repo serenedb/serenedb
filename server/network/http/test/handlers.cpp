@@ -20,25 +20,31 @@
 
 #include "network/http/test/handlers.h"
 
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/str_cat.h>
 #include <fast_float/fast_float.h>
 
 #include <algorithm>
 #include <charconv>
 #include <cstddef>
+#include <duckdb/main/connection.hpp>
 #include <duckdb/main/query_result.hpp>
 #include <iresearch/utils/system_compiler.hpp>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <yaclib/async/make.hpp>
 #include <yaclib/coro/coro.hpp>
 #include <yaclib/coro/future.hpp>
 #include <yaclib/coro/task.hpp>
 #include <yaclib/lazy/make.hpp>
 
+#include "connector/duckdb_copy_filesystem.h"
 #include "network/http/common.h"
+#include "network/http/copy_response.h"
 #include "network/http/handler.h"
+#include "pg/connection_context.h"
 
 namespace sdb::network::http::test {
 namespace {
@@ -138,6 +144,41 @@ class SessionUserHandler final : public HttpHandler {
   }
 };
 
+class CopyHandler final : public HttpHandler {
+ public:
+  yaclib::Task<> Handle(RequestContext& context, const HttpRequest& request,
+                        http::HttpResponseWriter& writer) override {
+    http::CopyResponse output{writer, "application/octet-stream", {}, 0};
+    auto& sql = context.Connection();
+    auto& connection = ConnectionContext::Get(*sql.context);
+    connection.SetSideChannel<connector::CopyOutput>(&output);
+    absl::Cleanup detach = [&] {
+      connection.SetSideChannel<connector::CopyOutput>(nullptr);
+    };
+    duckdb::unique_ptr<duckdb::QueryResult> result;
+    try {
+      for (auto& statement : sql.ExtractStatements(FlattenBody(request.body))) {
+        result = co_await context.RunStatement(std::move(statement));
+        if (result->HasError()) {
+          break;
+        }
+      }
+    } catch (const std::exception& e) {
+      result = duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{e});
+    }
+    if (!result) {
+      result = duckdb::make_uniq<duckdb::QueryResult>(
+        duckdb::ErrorData{"the request holds no SQL statement"});
+    }
+    if (!result->HasError()) {
+      output.Finish();
+    } else if (!writer.HeadWritten()) {
+      writer.Text(HttpStatus::BadRequest, result->GetError());
+    }
+    co_return {};
+  }
+};
+
 // GET /_test/status?code=NNN -> respond with that status (clamped 100..599).
 class StatusHandler final : public HttpHandler {
  public:
@@ -170,6 +211,8 @@ std::unique_ptr<HttpHandler> Make(Endpoint endpoint) {
       return std::make_unique<StatusHandler>();
     case Endpoint::SessionUser:
       return std::make_unique<SessionUserHandler>();
+    case Endpoint::Copy:
+      return std::make_unique<CopyHandler>();
   }
   SDB_UNREACHABLE();
 }

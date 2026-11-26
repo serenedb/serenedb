@@ -18,6 +18,7 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/cleanup/cleanup.h>
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
@@ -89,11 +90,14 @@ struct Index {
   irs::CompositeReader reader;
 };
 
+constinit std::unique_ptr<Index> gIndex;
+
 const Index& IndexOf() {
-  static Index index;
-  if (!index.path.empty()) {
-    return index;
+  if (gIndex) {
+    return *gIndex;
   }
+  gIndex = std::make_unique<Index>();
+  auto& index = *gIndex;
   index.path =
     std::filesystem::temp_directory_path() / "serenedb-bench-exclude-costs";
   std::filesystem::remove_all(index.path);
@@ -327,6 +331,10 @@ BENCHMARK(BmExclude)->Apply(Args)->Unit(benchmark::kMicrosecond);
 
 static int Main(int argc, char** argv) {
   irs::DuckDBEngine::Instance().Initialize();
+  absl::Cleanup shutdown = [] {
+    gIndex.reset();
+    irs::DuckDBEngine::Instance().Shutdown();
+  };
 
   benchmark::Initialize(&argc, argv);
   if (benchmark::ReportUnrecognizedArguments(argc, argv)) {
@@ -334,8 +342,6 @@ static int Main(int argc, char** argv) {
   }
   benchmark::RunSpecifiedBenchmarks();
   benchmark::Shutdown();
-
-  irs::DuckDBEngine::Instance().Shutdown();
   return 0;
 }
 

@@ -23,6 +23,7 @@
 
 #include <gtest/gtest.h>
 #include <stringzilla/utf8_wordbreaks/serial.h>
+#include <util/utf.h>
 
 #include <algorithm>
 #include <fstream>
@@ -252,10 +253,9 @@ TEST(words_unicode_test, segments_tile_input) {
   }
 }
 
-std::string Cp(uint32_t cp) {
-  irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
-  const auto len = irs::utf8_utils::FromChar32(cp, buf);
-  return {reinterpret_cast<const char*>(buf), len};
+std::string Cp(re2::Rune cp) {
+  char buf[re2::UTFmax];
+  return std::string(buf, re2::runetochar(buf, &cp));
 }
 
 void ExpectLengths(const std::string& text,

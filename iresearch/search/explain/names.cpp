@@ -24,11 +24,7 @@ namespace irs::explain {
 
 PostingKey::PostingKey(const TermReader& reader,
                        const PostingMeta& meta) noexcept
-  : reader{&reader}, meta{meta} {
-  if (meta.inline_size == 0) {
-    this->meta.inline_data = nullptr;
-  }
-}
+  : reader{&reader}, meta{meta} {}
 
 void TermNames::Add(const TermReader& reader, const PostingMeta& meta,
                     bytes_view term) {

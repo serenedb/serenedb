@@ -1,0 +1,27 @@
+control substitution on
+
+statement ok
+CREATE TABLE pmc AS
+SELECT x::INTEGER AS id, md5(x::VARCHAR) || md5((x + 7)::VARCHAR) AS s
+FROM range(300000) t(x);
+
+
+statement count 300000
+COPY pmc TO '${__TEST_DIR__}/pmc.parquet' (FORMAT parquet, COMPRESSION uncompressed, ROW_GROUP_SIZE 300000);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total, sum(length(s)) AS bytes
+FROM read_parquet('${__TEST_DIR__}/pmc.parquet');
+----
+n	total	bytes
+300000	44999850000	19200000
+
+
+query
+SELECT count(*) = (SELECT count(*) FROM pmc WHERE s LIKE 'ab%') AS same
+FROM read_parquet('${__TEST_DIR__}/pmc.parquet')
+WHERE s LIKE 'ab%';
+----
+same
+t

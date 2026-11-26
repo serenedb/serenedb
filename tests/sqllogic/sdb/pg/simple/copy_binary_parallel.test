@@ -162,3 +162,63 @@ SELECT count(*) AS n FROM cbp_mixed_dst;
 ----
 n
 200000
+
+
+statement ok
+CREATE TABLE cbp_types AS
+SELECT x::INTEGER AS id,
+       CASE WHEN x % 5 = 0 THEN NULL ELSE x % 3 = 0 END AS flag,
+       (x % 30000)::SMALLINT AS small,
+       CASE WHEN x % 11 = 0 THEN NULL ELSE md5(x::VARCHAR)::UUID END AS u,
+       ('{"k": ' || x || '}')::JSON AS doc
+FROM range(300000) t(x);
+
+
+statement count 300000
+COPY cbp_types TO '${__TEST_DIR__}/cbp_types.bin' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE cbp_types_dst (id INTEGER, flag BOOLEAN, small SMALLINT, u UUID, doc JSON);
+
+
+statement count 300000
+COPY cbp_types_dst FROM '${__TEST_DIR__}/cbp_types.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total, count(cbp_types_dst.flag) AS flags, count(cbp_types_dst.u) AS uuids
+FROM cbp_types_dst
+JOIN cbp_types USING (id)
+WHERE cbp_types_dst.flag IS NOT DISTINCT FROM cbp_types.flag
+  AND cbp_types_dst.small = cbp_types.small
+  AND cbp_types_dst.u IS NOT DISTINCT FROM cbp_types.u
+  AND cbp_types_dst.doc::VARCHAR = cbp_types.doc::VARCHAR;
+----
+n	total	flags	uuids
+300000	44999850000	240000	272727
+
+
+statement count 1
+COPY (
+  SELECT '\x5047434f50590aff0d0a00'::BYTEA || '\x0000000000555560'::BYTEA
+         || decode(repeat('00020000000400000007000000024142', 349526), 'hex') || substr(content, 20)
+  FROM read_blob('${__TEST_DIR__}/cbp.bin')
+) TO '${__TEST_DIR__}/cbp_long_extension.bin' (FORMAT blob);
+
+
+statement ok
+TRUNCATE cbp_dst;
+
+
+statement count 200000
+COPY cbp_dst FROM '${__TEST_DIR__}/cbp_long_extension.bin' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM cbp_dst
+JOIN cbp_src USING (id, payload);
+----
+n	total
+200000	19999900000

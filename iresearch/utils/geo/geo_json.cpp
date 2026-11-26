@@ -21,6 +21,7 @@
 
 #include "iresearch/utils/geo/geo_json.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/match.h>
 #include <s2/s2loop.h>
 #include <s2/s2point_region.h>
@@ -53,7 +54,7 @@ template<bool Validation>
 S2Point EncodePointImpl(S2LatLng lat_lng, coding::Options options,
                         Encoder* encoder) noexcept {
   if constexpr (Validation) {
-    if (encoder != nullptr) {
+    if (encoder) {
       SDB_ASSERT(options != coding::Options::Invalid);
       SDB_ASSERT(encoder->avail() >= sizeof(uint8_t));
       encoder->put8(coding::ToTag(coding::Type::Point, options));
@@ -67,7 +68,7 @@ S2Point EncodePointImpl(S2LatLng lat_lng, coding::Options options,
       ToLatLngU32(lat_lng);
     }
   } else {
-    SDB_ASSERT(encoder == nullptr);
+    SDB_ASSERT(!encoder);
     SDB_ASSERT(options == coding::Options::Invalid);
   }
   return lat_lng.ToPoint();
@@ -75,7 +76,7 @@ S2Point EncodePointImpl(S2LatLng lat_lng, coding::Options options,
 
 void EncodeImpl(std::span<S2LatLng> cache, coding::Type type,
                 coding::Options options, Encoder* encoder) {
-  if (encoder != nullptr) {
+  if (encoder) {
     SDB_ASSERT(options != coding::Options::Invalid);
     SDB_ASSERT(!coding::IsOptionsS2(options));
     SDB_ASSERT(encoder->avail() >= sizeof(uint8_t) + Varint::kMax64);
@@ -99,7 +100,7 @@ template<bool Validation>
 size_t EncodeCount(size_t count, coding::Type type, coding::Options options,
                    Encoder* encoder) {
   SDB_ASSERT(count != 0);
-  if (Validation && encoder != nullptr) {
+  if (Validation && encoder) {
     SDB_ASSERT(options != coding::Options::Invalid);
     SDB_ASSERT(!coding::IsOptionsS2(options));
     encoder->Ensure(sizeof(uint8_t) + (1 + count) * Varint::kMax64 +
@@ -180,8 +181,7 @@ consteval ShapeContainer::Type ToShapeType(Type t) noexcept {
 template<typename Vertices>
 void RemoveAdjacentDuplicates(Vertices& vertices) noexcept {
   // TODO We don't remove antipodal vertices
-  auto it = std::unique(vertices.begin(), vertices.end());
-  vertices.erase(it, vertices.end());
+  vertices.erase(std::ranges::unique(vertices).begin(), vertices.end());
 }
 
 bool ReadDouble(ondemand::value value, double& out) noexcept {
@@ -199,7 +199,7 @@ bool ParseImpl(ondemand::value vertex_value, S2LatLng& vertex) {
   double values[2];
   size_t i = 0;
   for (auto element : pair) {
-    if (Validation && SDB_UNLIKELY(i == 2)) {
+    if (Validation && i == 2) [[unlikely]] {
       return false;
     }
     ondemand::value element_value;
@@ -208,14 +208,14 @@ bool ParseImpl(ondemand::value vertex_value, S2LatLng& vertex) {
         return false;
       }
     }
-    if (Validation && SDB_UNLIKELY(!ReadDouble(element_value, values[i]))) {
+    if (Validation && !ReadDouble(element_value, values[i])) [[unlikely]] {
       return false;
     } else if constexpr (!Validation) {
       std::ignore = ReadDouble(element_value, values[i]);
     }
     ++i;
   }
-  if (Validation && SDB_UNLIKELY(i != 2)) {
+  if (Validation && i != 2) [[unlikely]] {
     return false;
   }
   double lat, lon;
@@ -245,7 +245,7 @@ void ParseImpl(ondemand::array array, std::vector<S2LatLng>& vertices) {
       }
     }
     auto ok = ParseImpl<Validation, GeoJson>(element_value, vertex);
-    if (Validation && SDB_UNLIKELY(!ok)) {
+    if (Validation && !ok) [[unlikely]] {
       THROW_SQL_ERROR(ERR_MSG("Bad coordinates values"));
     }
     vertices.emplace_back(vertex);
@@ -271,7 +271,7 @@ void Validate(ondemand::object& object, ondemand::value& coordinates) {
 template<bool Validation, bool GeoJson>
 void ParsePointImpl(ondemand::value json, S2LatLng& region) {
   auto ok = ParseImpl<Validation, GeoJson>(json, region);
-  if (Validation && SDB_UNLIKELY(!ok)) {
+  if (Validation && !ok) [[unlikely]] {
     THROW_SQL_ERROR(ERR_MSG("Bad coordinates"));
   }
 }
@@ -279,7 +279,7 @@ void ParsePointImpl(ondemand::value json, S2LatLng& region) {
 template<bool Validation>
 void ParsePointsImpl(ondemand::array array, std::vector<S2LatLng>& vertices) {
   ParseImpl<Validation, true>(array, vertices);
-  if (Validation && SDB_UNLIKELY(vertices.empty())) {
+  if (Validation && vertices.empty()) [[unlikely]] {
     THROW_SQL_ERROR(
       ERR_MSG("Invalid MultiPoint, it must contains at least one point."));
   }
@@ -289,7 +289,7 @@ template<bool Validation>
 void ParseLineImpl(ondemand::array array, std::vector<S2LatLng>& vertices) {
   ParseImpl<Validation, true>(array, vertices);
   RemoveAdjacentDuplicates(vertices);
-  if (Validation && SDB_UNLIKELY(vertices.size() < 2)) {
+  if (Validation && vertices.size() < 2) [[unlikely]] {
     THROW_SQL_ERROR(
       ERR_MSG("Invalid LineString,"
               " adjacent vertices must not be identical or antipodal."));
@@ -306,7 +306,7 @@ void ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
       THROW_SQL_ERROR(ERR_MSG("Invalid MultiLinestring."));
     }
   }
-  if (Validation && SDB_UNLIKELY(n == 0)) {
+  if (Validation && n == 0) [[unlikely]] {
     THROW_SQL_ERROR(ERR_MSG(
       "Invalid MultiLinestring, it must contains at least one Linestring."));
   }
@@ -323,7 +323,7 @@ void ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
     }
     ParseLineImpl<Validation>(line, vertices);
     if constexpr (Validation) {
-      if (encoder != nullptr) {
+      if (encoder) {
         encoder->Ensure(Varint::kMax64);
         encoder->put_varint64(vertices.size() * multiplier);
         multiplier = 1;
@@ -332,7 +332,7 @@ void ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
         ToLatLngU32(vertices);
       }
       auto& back = lines.emplace_back(vertices, S2Debug::DISABLE);
-      if (S2Error error; SDB_UNLIKELY(back.FindValidationError(&error))) {
+      if (S2Error error; back.FindValidationError(&error)) [[unlikely]] {
         THROW_SQL_ERROR(ERR_MSG("Invalid Polyline: ", error.message()));
       }
     } else {
@@ -343,13 +343,13 @@ void ParseLinesImpl(ondemand::array array, std::vector<S2Polyline>& lines,
 
 template<bool Validation>
 void MakeLoopValid(std::vector<S2LatLng>& vertices) noexcept(!Validation) {
-  if (Validation && SDB_UNLIKELY(vertices.size() < 4)) {
+  if (Validation && vertices.size() < 4) [[unlikely]] {
     THROW_SQL_ERROR(
       ERR_MSG("Invalid GeoJson Loop, must have at least 4 vertices"));
   }
   // S2Loop doesn't like duplicates
   RemoveAdjacentDuplicates(vertices);
-  if (Validation && SDB_UNLIKELY(vertices.front() != vertices.back())) {
+  if (Validation && vertices.front() != vertices.back()) [[unlikely]] {
     THROW_SQL_ERROR(ERR_MSG("Loop not closed"));
   }
   // S2Loop automatically add last edge
@@ -393,7 +393,7 @@ void ParseLoopImpl(ondemand::array loop,
   auto& last = *loops.emplace_back(std::make_unique<S2Loop>(
     static_cast<int>(vertices.size()), std::move(points), S2Debug::DISABLE));
   if constexpr (Validation) {
-    if (S2Error error; SDB_UNLIKELY(last.FindValidationError(&error))) {
+    if (S2Error error; last.FindValidationError(&error)) [[unlikely]] {
       THROW_SQL_ERROR(ERR_MSG("Invalid Loop in Polygon: ", error.message()));
     }
   }
@@ -412,21 +412,21 @@ void ParseLoopImpl(ondemand::array loop,
   // then we can invert it silently and if it is then contained
   // in the first, we have proper nesting and leave the rest to
   // InitNested. This is, why we proceed like this:
-  if (first == nullptr) {
+  if (!first) {
     first = &last;
   } else if (!first->Contains(last)) [[unlikely]] {
     // TODO(mbkkt) Maybe we want more strict rules about CCW?
     // We don't need to make Contains check in parsing stage in such case
     last.Invert();
-    if (Validation && encoder != nullptr) {
-      std::reverse(vertices.begin(), vertices.end());
+    if (Validation && encoder) {
+      absl::c_reverse(vertices);
     }
     if (Validation && !first->Contains(last)) [[unlikely]] {
       THROW_SQL_ERROR(ERR_MSG("Subsequent loop is not a hole in a polygon."));
     }
   }
   if constexpr (Validation) {
-    if (encoder != nullptr) {
+    if (encoder) {
       encoder->Ensure(Varint::kMax64);
       encoder->put_varint64(vertices.size() * multiplier);
       EncodeVertices(*encoder, vertices, options);
@@ -442,7 +442,7 @@ S2Polygon CreatePolygon(std::vector<std::unique_ptr<S2Loop>>&& loops,
   // Handle creation of empty polygon otherwise will be error in validation
   S2Polygon polygon;
   polygon.set_s2debug_override(S2Debug::DISABLE);
-  if (encoder != nullptr) {
+  if (encoder) {
     encoder->clear();
     encoder->put8(coding::ToTag(coding::Type::Polygon, options));
     encoder->put_varint64(0);
@@ -502,7 +502,7 @@ void ParsePolygonImpl(ondemand::value json, ShapeContainer& region,
       THROW_SQL_ERROR(ERR_MSG("Invalid GeoJSON Geometry Object."));
     }
   }
-  if (Validation && SDB_UNLIKELY(n == 0)) {
+  if (Validation && n == 0) [[unlikely]] {
     THROW_SQL_ERROR(ERR_MSG("Invalid GeoJSON Geometry Object."));
   }
   std::unique_ptr<S2Polygon> d;
@@ -529,12 +529,12 @@ void ParseMultiPolygonImpl(ondemand::value json, S2Polygon& region,
         ERR_MSG("MultiPolygon should contains at least one Polygon."));
     }
   }
-  if (Validation && SDB_UNLIKELY(n == 0)) {
+  if (Validation && n == 0) [[unlikely]] {
     THROW_SQL_ERROR(
       ERR_MSG("MultiPolygon should contains at least one Polygon."));
   }
   size_t loop_count = n;
-  if (Validation && encoder != nullptr) {
+  if (Validation && encoder) {
     loop_count = 0;
     for (auto polygon_element : array) {
       ondemand::array polygon;
@@ -572,10 +572,10 @@ void ParseMultiPolygonImpl(ondemand::value json, S2Polygon& region,
         THROW_SQL_ERROR(ERR_MSG("Polygon should contains at least one Loop."));
       }
     }
-    if (Validation && SDB_UNLIKELY(m == 0)) {
+    if (Validation && m == 0) [[unlikely]] {
       THROW_SQL_ERROR(ERR_MSG("Polygon should contains at least one Loop."));
     }
-    if (encoder != nullptr) {
+    if (encoder) {
       encoder->Ensure(m * Varint::kMax64);
     }
     for (auto loop_element : polygon) {
@@ -698,7 +698,7 @@ void ParseRegionImpl(ondemand::value json, ShapeContainer& region,
       THROW_SQL_ERROR(ERR_MSG("Degenerate geometry has no centroid."));
     }
   }
-  if (Validation && encoder != nullptr && is_s2) {
+  if (Validation && encoder && is_s2) {
     SDB_ASSERT(encoder->length() == 0);
     encoder->clear();
     region.Encode(*encoder, options);
@@ -753,11 +753,6 @@ void ParsePoint(ondemand::value json, S2LatLng& region) {
   ondemand::value coordinates;
   Validate<Type::Point>(object, coordinates);
   ParsePointImpl<true, true>(coordinates, region);
-}
-
-void ParseRegion(ondemand::value json, ShapeContainer& region) {
-  std::vector<S2LatLng> cache;
-  ParseRegionImpl<true>(json, region, cache, coding::Options::Invalid, nullptr);
 }
 
 template<bool Valid>

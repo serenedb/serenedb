@@ -21,8 +21,6 @@
 #pragma once
 
 #include <absl/base/thread_annotations.h>
-#include <absl/container/flat_hash_map.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/functional/any_invocable.h>
 #include <absl/functional/function_ref.h>
 #include <absl/synchronization/mutex.h>
@@ -42,6 +40,7 @@
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/segment_reader_impl.hpp>
 #include <iresearch/utils/compression.hpp>
+#include <iresearch/utils/containers/flat_hash_map.hpp>
 #include <iresearch/utils/containers/node_hash_map.hpp>
 #include <iresearch/utils/parallel_for.hpp>
 #include <limits>
@@ -194,7 +193,7 @@ struct MovedUnit {
 };
 
 using MovedUnits =
-  absl::flat_hash_map<uint64_t, std::shared_ptr<const MovedUnit>>;
+  irs::containers::FlatHashMap<uint64_t, std::shared_ptr<const MovedUnit>>;
 
 struct TableState {
   TableState() = default;

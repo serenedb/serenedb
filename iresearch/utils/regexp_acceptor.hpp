@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
+#include <absl/synchronization/mutex.h>
 
 #include <array>
 #include <atomic>
@@ -28,13 +28,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "iresearch/utils/byte_set.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "re2/prog.h"
@@ -114,7 +114,7 @@ class RegexpAcceptor {
   RegexpAcceptor& operator=(const RegexpAcceptor&) = delete;
   ~RegexpAcceptor();
 
-  bool ok() const noexcept { return _start != nullptr && !_start->dead; }
+  bool ok() const noexcept { return _start && !_start->dead; }
 
   std::string_view Error() const noexcept { return _error; }
 
@@ -148,8 +148,8 @@ class RegexpAcceptor {
 
   State Step(State from, byte_type label) const {
     const auto c = _bytemap[label];
-    if (const auto* next = from->Next()[c].load(std::memory_order_acquire);
-        next != nullptr) [[likely]] {
+    if (const auto* next = from->Next()[c].load(std::memory_order_acquire))
+      [[likely]] {
       return next;
     }
     return StepSlow(from, c);
@@ -197,11 +197,6 @@ class RegexpAcceptor {
   bool Matches(bytes_view term) const;
 
   size_t MemoryUsage() const;
-
-#ifdef SDB_DEV
-  static size_t Builds() noexcept;
-  size_t Rows() const;
-#endif
 
  private:
   static constexpr size_t kMaxBoundLength = 32;
@@ -264,8 +259,8 @@ class RegexpAcceptor {
   bool _contained{false};
   size_t _max_dfa_mem{kDefaultMaxDfaMem};
 
-  mutable std::mutex _mutex;
-  mutable absl::flat_hash_map<std::string_view, Row*> _rows;
+  mutable absl::Mutex _mutex;
+  mutable containers::FlatHashMap<std::string_view, Row*> _rows;
   mutable std::vector<std::unique_ptr<std::byte[]>> _chunks;
   mutable size_t _chunk_used{kChunkBytes};
   mutable size_t _chunk_size{kChunkBytes};

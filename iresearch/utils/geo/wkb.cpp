@@ -294,7 +294,7 @@ void ReadPolygonLoops(R& r, std::vector<std::unique_ptr<S2Loop>>& out) {
     }
     auto* current = loop.get();
     out.push_back(std::move(loop));
-    if (first == nullptr) {
+    if (!first) {
       first = current;
       continue;
     }

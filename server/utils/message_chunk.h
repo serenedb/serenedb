@@ -107,7 +107,7 @@ struct BufferOffset {
 
   bool operator==(const BufferOffset& other) const = default;
 
-  explicit operator bool() const { return chunk != nullptr; }
+  explicit operator bool() const { return chunk; }
 };
 
 }  // namespace sdb::message

@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/strings/ascii.h>
+#include <util/utf.h>
 
 #include <array>
 #include <bit>
@@ -296,8 +297,10 @@ size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
     }
     const auto* cp_start = it;
     uint32_t cp = utf8_utils::ToChar32(it, end);
-    if (cp == utf8_utils::kInvalidChar32) [[unlikely]] {
-      *out++ = *cp_start;
+    if (cp > re2::Runemax) [[unlikely]] {
+      const auto size = static_cast<size_t>(it - cp_start);
+      std::memcpy(out, cp_start, size);
+      out += size;
       continue;
     }
     if constexpr (ToLower) {
@@ -305,7 +308,8 @@ size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
     } else {
       cp = utf8_utils::CharToUpperSimple(cp);
     }
-    out += utf8_utils::FromChar32(cp, out);
+    const re2::Rune rune = cp;
+    out += re2::runetochar(reinterpret_cast<char*>(out), &rune);
   }
   return out - dst;
 }

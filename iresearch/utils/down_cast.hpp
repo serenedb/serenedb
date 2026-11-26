@@ -35,7 +35,7 @@ constexpr auto* downCast(From* from) noexcept {
   using CastTo =
     std::conditional_t<std::is_const_v<From>, std::add_const_t<To>, To>;
 #ifdef SDB_DEV
-  SDB_ASSERT(from == nullptr || dynamic_cast<CastTo*>(from) != nullptr);
+  SDB_ASSERT(!from || dynamic_cast<CastTo*>(from));
 #endif
   return static_cast<CastTo*>(from);
 }
@@ -52,8 +52,7 @@ auto downCast(std::shared_ptr<From> from) noexcept {
   using CastTo =
     std::conditional_t<std::is_const_v<From>, std::add_const_t<To>, To>;
 #ifdef SDB_DEV
-  SDB_ASSERT(from == nullptr ||
-             std::dynamic_pointer_cast<CastTo>(from) != nullptr);
+  SDB_ASSERT(!from || std::dynamic_pointer_cast<CastTo>(from));
 #endif
   return std::static_pointer_cast<CastTo>(std::move(from));
 }

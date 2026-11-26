@@ -49,7 +49,6 @@
 #include <iresearch/index/norm.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/duckdb_engine.hpp>
-#include <iresearch/utils/serialization.hpp>
 #include <iresearch/utils/type_limits.hpp>
 #include <roaring/roaring.hh>
 #include <unordered_map>

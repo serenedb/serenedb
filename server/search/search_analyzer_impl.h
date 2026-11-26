@@ -24,7 +24,6 @@
 #include <duckdb/common/serializer/serializer.hpp>
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/index_features.hpp>
-#include <iresearch/utils/object_pool.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <iresearch/utils/serializer.hpp>
 #include <iresearch/utils/string.hpp>

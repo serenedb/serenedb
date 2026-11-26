@@ -22,33 +22,21 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_set.h>
+#include <absl/algorithm/container.h>
 
-#include <span>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
 #include <vector>
 
-#include "iresearch/utils/math_utils.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 
 namespace irs {
 
 // Implementation of MinHash variant with a single hash function.
 class MinHash {
  public:
-  // Returns number of hashes required to preserve probabilistic error
-  // threshold.
-  static constexpr size_t MaxSize(double err) noexcept {
-    return err > 0. && err < 1.
-             ? math::Ceil64(1. / (err * err))
-             : (err < 1. ? std::numeric_limits<size_t>::max() : 0);
-  }
-
-  // Returns expected probabilistic error according
-  // the size of MinHash signature.
-  static constexpr double Error(size_t size) noexcept {
-    return size ? 1. / std::sqrt(size)
-                : std::numeric_limits<double>::infinity();
-  }
-
   explicit MinHash(size_t size)
     : _max_size{std::max(size, size_t{1})}, _left{_max_size} {
     _min_hashes.reserve(_left);
@@ -82,48 +70,17 @@ class MinHash {
   auto begin() const noexcept { return std::begin(_min_hashes); }
   auto end() const noexcept { return std::end(_min_hashes); }
 
-  // Return `true` if MinHash signature is empty, false - otherwise.
-  size_t Empty() const noexcept { return _min_hashes.empty(); }
-
-  // Return actual size of accumulated MinHash signature.
-  size_t Size() const noexcept { return _dedup.size(); }
-
-  // Return the expected size of MinHash signature.
-  size_t MaxSize() const noexcept { return _max_size; }
-
-  // Return Jaccard coefficient of 2 MinHash signatures.
-  // `rhs` members are meant to be unique.
-  double Jaccard(std::span<const uint64_t> rhs) const noexcept {
-    const auto intersect = absl::c_accumulate(
-      rhs, uint64_t{0}, [&](uint64_t acc, uint64_t hash_value) noexcept {
-        return acc + uint64_t{_dedup.contains(hash_value)};
-      });
-    const auto cardinality = Size() + rhs.size() - intersect;
-
-    return cardinality
-             ? static_cast<double>(intersect) / static_cast<double>(cardinality)
-             : 1.0;
-  }
-
-  // Return Jaccard coefficient of 2 MinHash signatures.
-  double Jaccard(const MinHash& rhs) const noexcept {
-    if (Size() > rhs.Size()) {
-      return Jaccard(rhs._min_hashes);
-    } else {
-      return rhs.Jaccard(_min_hashes);
-    }
-  }
-
   // Reset MinHash to the initial state.
   void Clear() noexcept {
     _min_hashes.clear();
     _dedup.clear();
-    _left = MaxSize();
+    _left = _max_size;
   }
 
  private:
   std::vector<uint64_t> _min_hashes;
-  absl::flat_hash_set<uint64_t> _dedup;  // guard against duplicated hash values
+  containers::FlatHashSet<uint64_t>
+    _dedup;  // guard against duplicated hash values
   size_t _max_size;
   size_t _left;
 };

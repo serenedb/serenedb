@@ -22,7 +22,6 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
@@ -223,7 +222,7 @@ std::vector<Edge> DirectDependents(duckdb::CatalogTransaction transaction,
     auto& context = transaction.GetContext();
     if (auto database = duckdb::DatabaseManager::Get(context).GetDatabase(
           context, subject.name)) {
-      absl::flat_hash_set<duckdb::idx_t> seen;
+      irs::containers::FlatHashSet<duckdb::idx_t> seen;
       database->GetCatalog().Cast<BaseCatalog>().Oids().ForEachForeignDependent(
         transaction, [&](duckdb::CatalogEntry& member) {
           if (!seen.insert(member.oid).second) {
@@ -339,7 +338,7 @@ class Closure {
   }
 
   duckdb::CatalogTransaction _transaction;
-  absl::flat_hash_set<duckdb::idx_t> _seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> _seen;
 };
 
 enum class Kind : uint8_t {
@@ -1120,7 +1119,7 @@ void RefuseUnfollowable(const duckdb::CatalogEntry& subject,
                         std::span<const Edge> edges,
                         std::span<const duckdb::idx_t> moving, bool rewrites) {
   std::vector<std::string> lines;
-  absl::flat_hash_set<duckdb::idx_t> seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   for (const auto& edge : edges) {
     if (Unfollowable(edge, rewrites) &&
         !absl::c_linear_search(moving, edge.dependent->oid) &&
@@ -1281,7 +1280,7 @@ void ScanSubjects(duckdb::CatalogTransaction transaction,
 
 void ScanDependents(duckdb::CatalogTransaction transaction,
                     duckdb::CatalogEntry& subject, EdgeVisitor visit) {
-  absl::flat_hash_set<duckdb::idx_t> seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   for (const auto& edge : DirectDependents(transaction, subject)) {
     if (!seen.insert(edge.dependent->oid).second) {
       continue;
@@ -1495,7 +1494,7 @@ void FollowReferences(duckdb::CatalogTransaction transaction,
       parent.Alter(transaction, replace);
     }
   };
-  absl::flat_hash_set<duckdb::idx_t> seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   for (const auto& edge : DirectDependents(transaction, table)) {
     if (edge.part == Part::Constraint &&
         edge.dependent->type == duckdb::CatalogType::TABLE_ENTRY &&
@@ -1590,7 +1589,7 @@ void FollowColumnRename(duckdb::CatalogTransaction transaction,
                         duckdb::CatalogEntry& table,
                         const duckdb::Identifier& old_column,
                         const duckdb::Identifier& new_column) {
-  absl::flat_hash_set<duckdb::idx_t> seen;
+  irs::containers::FlatHashSet<duckdb::idx_t> seen;
   for (const auto& edge : DirectDependents(transaction, table)) {
     auto& dependent = *edge.dependent;
     if (!seen.insert(dependent.oid).second) {
@@ -1707,7 +1706,7 @@ void DropColumnReaders(duckdb::CatalogTransaction transaction,
   auto& context = transaction.GetContext();
   for (const auto column : columns) {
     const auto& name = table.GetColumns().GetColumn(column).Name();
-    absl::flat_hash_set<duckdb::idx_t> seen;
+    irs::containers::FlatHashSet<duckdb::idx_t> seen;
     for (const auto& edge : DirectDependents(transaction, table)) {
       auto& dependent = *edge.dependent;
       if (!seen.insert(dependent.oid).second) {

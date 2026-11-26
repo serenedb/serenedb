@@ -21,7 +21,6 @@
 #include "iresearch/formats/column/merge.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_set.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -40,6 +39,7 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/utils/containers/flat_hash_set.hpp"
 
 namespace irs {
 namespace {
@@ -163,7 +163,7 @@ std::vector<std::pair<field_id, const ColumnReader*>> OrderedColumns(
   std::span<const MergeSource> sources,
   const IndexFieldOptions* field_options) {
   std::vector<std::pair<field_id, const ColumnReader*>> ordered_cols;
-  absl::flat_hash_set<field_id> seen_ids;
+  containers::FlatHashSet<field_id> seen_ids;
   for (const auto& s : sources) {
     if (!s.col_reader) {
       continue;

@@ -24,12 +24,12 @@
 
 #include <absl/base/internal/endian.h>
 
+#include <bit>
 #include <optional>
 #include <type_traits>
 
 #include "iresearch/types.hpp"
 #include "iresearch/utils/bit_utils.hpp"
-#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
@@ -92,8 +92,7 @@ struct bytes_io<T, sizeof(uint32_t)> {
   static uint32_t vsize(uint32_t value) {
     // compute 0 == value ? 1 : 1 + floor(log2(value)) / 7
 
-    // OR 0x1 since Log2Floor32 does not accept 0
-    const uint32_t log2 = math::Log2Floor32(value | 0x1);
+    const uint32_t log2 = std::bit_width(value | 0x1) - 1;
 
     // division within range [1;31]
     return (73 + 9 * log2) >> 6;
@@ -195,8 +194,7 @@ struct bytes_io<T, sizeof(uint64_t)> {
   static uint64_t vsize(uint64_t value) {
     // compute 0 == value ? 1 : 1 + floor(log2(value)) / 7
 
-    // OR 0x1 since Log2Floor64 does not accept 0
-    const uint64_t log2 = math::Log2Floor64(value | 0x1);
+    const uint64_t log2 = std::bit_width(value | 0x1) - 1;
 
     // division within range [1;63]
     return (73 + 9 * log2) >> 6;
@@ -247,14 +245,6 @@ IRS_FORCE_INLINE void WriteVarint(N n, Assign&& assign) {
 template<typename N, std::output_iterator<byte_type> Out>
 IRS_FORCE_INLINE void WriteVarint(N n, Out& out) {
   WriteVarint(n, [&](byte_type b) { *out++ = b; });
-}
-
-template<typename N, std::output_iterator<byte_type> Out>
-IRS_FORCE_INLINE void WriteBE(N n, Out& out) {
-  static_assert(std::is_unsigned_v<N>);
-  for (size_t i = 0; i < sizeof(N); ++i) {
-    *out++ = static_cast<byte_type>(n >> ((sizeof(N) - 1 - i) * 8));
-  }
 }
 
 }  // namespace irs

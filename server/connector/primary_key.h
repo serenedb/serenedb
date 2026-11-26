@@ -31,7 +31,6 @@
 
 #include "catalog/entry/inverted_index.h"
 #include "connector/column_id.h"
-#include "server/utils/primary_key.h"
 
 namespace sdb::connector::primary_key {
 

@@ -63,7 +63,7 @@ void Loop(Row* row, uint32_t classes) noexcept {
 template<typename KeyOf>
 uint32_t Refine(KeyOf&& key_of, std::array<uint8_t, kLabels>& bytemap,
                 std::array<uint8_t, kLabels>& representative) {
-  absl::flat_hash_map<uint64_t, uint8_t> ids;
+  containers::FlatHashMap<uint64_t, uint8_t> ids;
   uint32_t classes = 0;
   for (uint32_t label = 0; label != kLabels; ++label) {
     const auto [it, inserted] =
@@ -163,7 +163,7 @@ RegexpConjunction::RegexpConjunction(
     Refine([&](uint32_t label) { return PatternsKey(patterns, label); },
            _bytemap, _representative);
 
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _dead = NewRow<Row>(_arena, _classes);
   _dead->dead = true;
   Loop(_dead, _classes);
@@ -194,7 +194,7 @@ RegexpConjunction::State RegexpConjunction::StepSlow(State from,
 }
 
 void RegexpConjunction::Build(Row* row) const {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   BuildLocked(row);
 }
 
@@ -288,7 +288,7 @@ FuzzyConjunction::FuzzyConjunction(
       _bytemap, _representative);
   }
 
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _dead = NewRow<Row>(_arena, _classes);
   _dead->dead = true;
   Loop(_dead, _classes);
@@ -326,9 +326,8 @@ IRS_FORCE_INLINE FuzzyConjunction::State FuzzyConjunction::Link(
     slot.store(_dead, std::memory_order_release);
     return _dead;
   }
-  std::lock_guard lock{_mutex};
-  if (const auto* next = slot.load(std::memory_order_relaxed);
-      next != nullptr) {
+  absl::MutexLock lock{&_mutex};
+  if (const auto* next = slot.load(std::memory_order_relaxed)) {
     return next;
   }
   const State next = intern();
@@ -417,7 +416,7 @@ FuzzyConjunction::State FuzzyConjunctionOf<A>::InternLocked(
 }
 
 void FuzzyConjunction::InternStart() {
-  std::lock_guard lock{_mutex};
+  absl::MutexLock lock{&_mutex};
   _start = Resolve(_starts_with, [&]<bool kPrefix> {
     return static_cast<const FuzzyConjunctionFor<kPrefix>&>(*this)
       .StartLocked();

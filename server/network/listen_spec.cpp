@@ -29,9 +29,9 @@
 
 #include <algorithm>
 #include <charconv>
+#include <duckdb/common/operator/cast_operators.hpp>
 #include <iresearch/utils/containers/flat_hash_set.hpp>
 #include <iresearch/utils/log.hpp>
-#include <iresearch/utils/string_utils.hpp>
 
 #include "network/listen_protocol.h"
 
@@ -232,8 +232,9 @@ std::string PercentDecode(std::string_view value) {
 
 bool ParseBoolParam(std::string_view value, std::string_view key,
                     std::string_view url) {
-  if (const auto parsed = irs::utils::ParseBool(value)) {
-    return *parsed;
+  if (bool parsed = false;
+      duckdb::TryCastStringBool(value.data(), value.size(), parsed, false)) {
+    return parsed;
   }
   SDB_FATAL(GENERAL, "invalid boolean for '", key, "' in endpoint '", url,
             "': '", value, "'");

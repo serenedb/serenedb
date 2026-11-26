@@ -34,6 +34,10 @@
 
 namespace irs {
 
+template<typename T>
+inline constexpr bool kInlineNumericTerm =
+  numeric_utils::kNumericTermSize<T> <= duckdb::string_t::INLINE_LENGTH;
+
 template<typename T, typename ValueAt>
 void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
                              ValueAt&& value_at) {
@@ -42,11 +46,8 @@ void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
   static_assert(sizeof(Key) == sizeof(T));
   static_assert(std::endian::native == std::endian::little);
   static_assert(sizeof(duckdb::string_t) == 2 * sizeof(uint64_t));
-  static_assert(numeric_utils::kNumericTermSize<T> <=
-                duckdb::string_t::INLINE_LENGTH);
-  constexpr uint64_t kHead = numeric_utils::kNumericTermSize<T> |
-                             uint64_t{numeric_utils::kNumericTermMagic<T>}
-                               << 32;
+  static_assert(kInlineNumericTerm<T>);
+  constexpr uint64_t kHead = numeric_utils::kNumericTermSize<T>;
   Key keys[TokenBatch::kCapacity];
   for (size_t base = 0; base < count; base += TokenBatch::kCapacity) {
     const auto n = std::min(count - base, TokenBatch::kCapacity);
@@ -56,9 +57,22 @@ void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
     }
     for (size_t i = 0; i < n; ++i) {
       const uint64_t key = keys[i];
-      const uint64_t words[] = {kHead | key << 40, key >> 24};
+      const uint64_t words[] = {kHead | key << 32, key >> 32};
       std::memcpy(static_cast<void*>(out + base + i), words, sizeof(words));
     }
+  }
+}
+
+template<typename T, typename ValueAt>
+void AppendNumericTermsBlock(duckdb::string_t* out, size_t count,
+                             ValueAt&& value_at, byte_type* keys) {
+  static_assert(!kInlineNumericTerm<T>);
+  constexpr auto kSize =
+    static_cast<uint32_t>(numeric_utils::kNumericTermSize<T>);
+  for (size_t i = 0; i < count; ++i) {
+    auto* key = keys + i * kSize;
+    numeric_utils::EncodeNumericTerm<T>(key, value_at(i));
+    out[i] = duckdb::string_t{reinterpret_cast<const char*>(key), kSize};
   }
 }
 

@@ -44,6 +44,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -215,9 +216,16 @@ idx_t DataSizeInBytes(const ContainerMetadata& metadata, idx_t container_size) {
 }
 
 struct ContainerMetadataCollection {
-  std::vector<uint8_t> container_type;
-  std::vector<uint8_t> number_of_runs;
-  std::vector<uint8_t> cardinality;
+  ContainerMetadataCollection() = default;
+
+  explicit ContainerMetadataCollection(MemoryBudget* budget)
+    : container_type{TrackedAllocator<uint8_t>{budget}},
+      number_of_runs{TrackedAllocator<uint8_t>{budget}},
+      cardinality{TrackedAllocator<uint8_t>{budget}} {}
+
+  TrackedVector<uint8_t> container_type;
+  TrackedVector<uint8_t> number_of_runs;
+  TrackedVector<uint8_t> cardinality;
   idx_t count_in_segment = 0;
   idx_t runs_in_segment = 0;
   idx_t arrays_in_segment = 0;
@@ -461,6 +469,10 @@ void PackBooleans(ValidityMask& packed,
 }
 
 struct RoaringAnalyzeState {
+  explicit RoaringAnalyzeState(MemoryBudget* budget)
+    : metadata_collection{budget},
+      container_metadata{TrackedAllocator<ContainerMetadata>{budget}} {}
+
   uint16_t one_count = 0;
   uint16_t zero_count = 0;
   uint16_t run_count = 0;
@@ -472,7 +484,7 @@ struct RoaringAnalyzeState {
   idx_t total_count = 0;
   idx_t total_size = 0;
   ContainerMetadataCollection metadata_collection;
-  std::vector<ContainerMetadata> container_metadata;
+  TrackedVector<ContainerMetadata> container_metadata;
 };
 
 bool HasEnoughSpaceInSegment(const RoaringAnalyzeState& state,
@@ -961,7 +973,8 @@ RoaringCompressState::RoaringCompressState(
   const RoaringAnalyzeState& analyze_state)
   : checkpoint_data{checkpoint_data},
     analyze_state{analyze_state},
-    segment{codec, checkpoint_data.type} {
+    metadata_collection{checkpoint_data.budget},
+    segment{codec, checkpoint_data} {
   CreateEmptySegment(*this);
   InitializeContainer(*this);
 }
@@ -1469,8 +1482,8 @@ struct RoaringScanState final : SegmentScanState {
   uint64_t count;
   const_data_ptr_t data_ptr = nullptr;
   std::optional<ContainerScan> current_container;
-  std::vector<ContainerMetadata> container_metadata;
-  std::vector<idx_t> data_start_position;
+  TrackedVector<ContainerMetadata> container_metadata;
+  TrackedVector<idx_t> data_start_position;
   idx_t lookup_container = duckdb::DConstants::INVALID_INDEX;
   std::array<idx_t, kCompressedSegmentCount + 1> lookup_starts = {};
   validity_t boolean_words[STANDARD_VECTOR_SIZE / ValidityMask::BITS_PER_VALUE];
@@ -1704,7 +1717,7 @@ template<duckdb::PhysicalType kPhysical>
 struct Containers final : State {
   static constexpr StateId kId = StateId::RoaringContainers;
 
-  explicit Containers(ColumnDataCheckpointData& data) {
+  explicit Containers(ColumnDataCheckpointData& data) : state{data.budget} {
     CountContainers<kPhysical>(state, data.rows.chunks);
   }
 

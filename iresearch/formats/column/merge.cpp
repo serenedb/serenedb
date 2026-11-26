@@ -197,7 +197,8 @@ std::vector<std::pair<field_id, const ColumnReader*>> OrderedColumns(
 
 }  // namespace
 
-uint64_t MergeIntoBound(std::span<const MergeSource> sources) {
+uint64_t MergeIntoBound(std::span<const MergeSource> sources,
+                        const IndexFieldOptions* field_options) {
   uint64_t bytes =
     (sizeof(std::optional<ReadContext>) + sizeof(TrackedVector<KeptWindow>)) *
     sources.size();
@@ -205,7 +206,28 @@ uint64_t MergeIntoBound(std::span<const MergeSource> sources) {
     bytes += KeptWindows(s) *
              (sizeof(KeptWindow) + sizeof(duckdb::sel_t) * kKeptWindowRows);
   }
-  return bytes + ColWriter::kSealBound;
+  const uint32_t row_group_size =
+    field_options ? field_options->row_group_size : DEFAULT_ROW_GROUP_SIZE;
+  uint64_t seal = ColWriter::kSealBound;
+  TrackedVector<const ColumnReader*> columns;
+  for (const auto& [id, first_col] : OrderedColumns(sources, field_options)) {
+    columns.clear();
+    uint64_t rows = 0;
+    for (const auto& s : sources) {
+      if (const auto* col = s.col_reader ? s.col_reader->Column(id) : nullptr) {
+        columns.push_back(col);
+        rows += col->RowCount();
+      }
+    }
+    const auto opts =
+      field_options ? field_options->GetColumnOptions(id) : ColumnOptions{};
+    const ColCodecParams params{.compression_level = opts.compression_level,
+                                .tier = WriteTier::Merge};
+    seal = std::max(seal, SealBoundOf(first_col->Type(), columns,
+                                      std::min<uint64_t>(rows, row_group_size),
+                                      opts.compression, params, nullptr));
+  }
+  return bytes + seal;
 }
 
 AnnFlushBound MergeAnnBound(std::span<const MergeSource> sources,

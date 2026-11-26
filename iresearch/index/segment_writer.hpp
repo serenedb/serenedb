@@ -289,14 +289,16 @@ class SegmentWriter final : public NormProvider, util::Noncopyable {
   };
 
   void FlushFields(FlushState& state,
-                   std::span<const BasicTermReader* const> extra);
+                   std::span<const BasicTermReader* const> extra,
+                   uint64_t extra_terms);
   void CopyColumns();
+  uint64_t CopiedSealBound();
 
   // Reset body that keeps _field_options; reset() drops them, reset(meta)
   // keeps.
   void ResetState() noexcept;
 
-  duckdb::TempBufferPoolReservation _budget{EmptyBudget()};
+  MemoryBudget _budget{nullptr};
   std::shared_ptr<FileTracker> _tracker;
   duckdb::FileSystem& _fs;
   std::string _root;

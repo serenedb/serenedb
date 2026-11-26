@@ -47,6 +47,7 @@
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/group_commit.hpp"
 #include "iresearch/utils/log.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
@@ -433,7 +434,7 @@ IndexWriter::Merged IndexWriter::MergePieces(
   }
   SegmentMeta meta;
   meta.name = FileName(id);
-  auto budget = EmptyBudget();
+  MemoryBudget budget{nullptr};
   MergeWriter merger{_db, _fs, _root,
                      GetSegmentWriterOptions(true, field_options), budget};
   merger.Reset(candidates.begin(), candidates.end());
@@ -452,7 +453,7 @@ auto IndexWriter::FlushMerge(Merged merged, uint64_t id,
   const auto& candidates = merged.claim.candidates;
   SegmentMeta meta;
   meta.name = FileName(id);
-  auto budget = EmptyBudget();
+  MemoryBudget budget{nullptr};
   MergeWriter merger{_db, _fs, _root,
                      GetSegmentWriterOptions(true, field_options), budget};
   merger.Reset(candidates.begin(), candidates.end());

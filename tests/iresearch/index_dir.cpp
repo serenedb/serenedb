@@ -62,7 +62,7 @@ IndexDir::IndexDir(duckdb::DatabaseInstance& db, duckdb::FileSystem& fs,
 
 std::unique_ptr<duckdb::BufferedFileWriter> IndexDir::Create(
   std::string_view name) const {
-  return irs::format_utils::OpenOutput(Fs(), Root(), name);
+  return irs::format_utils::OpenOutput(Fs(), Root(), name, nullptr);
 }
 
 duckdb::shared_ptr<duckdb::InputFile> IndexDir::Open(

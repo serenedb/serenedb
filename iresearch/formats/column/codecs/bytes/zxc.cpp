@@ -36,6 +36,10 @@ std::string_view ZxcDictionary(std::string_view dictionary) noexcept {
            : dictionary;
 }
 
+size_t DecoderBytes() noexcept {
+  return zxc_static_dctx_workspace_size(ZXC_BLOCK_SIZE_DEFAULT);
+}
+
 std::unique_ptr<zxc_cctx, ZxcFree> NewContext(uint8_t level) {
   level = EffectiveLevel<Zxc>(level);
   std::unique_ptr<zxc_cctx, ZxcFree> ctx{zxc_create_cctx()};
@@ -47,13 +51,21 @@ std::unique_ptr<zxc_cctx, ZxcFree> NewContext(uint8_t level) {
 
 }  // namespace
 
-Zxc::Compressor::Compressor(uint8_t level)
-  : DictionaryCompressor{kDictionaryCap},
+size_t Zxc::ContextBytes(uint8_t level) noexcept {
+  return zxc_estimate_cctx_size(ZXC_BLOCK_SIZE_DEFAULT,
+                                EffectiveLevel<Zxc>(level));
+}
+
+Zxc::Compressor::Compressor(MemoryBudget* budget, uint8_t level)
+  : DictionaryCompressor{budget, kDictionaryCap},
     _level{level},
-    _ctx{NewContext(level)} {}
+    _ctx_charge{budget, ContextBytes(level)},
+    _ctx{NewContext(level)},
+    _attached_charge{budget, 0} {}
 
 void Zxc::Compressor::Attach() {
   const auto bytes = ZxcDictionary(Dictionary());
+  _attached_charge.Resize(ContextBytes(_level));
   _attached = NewContext(_level);
   const auto rc =
     zxc_cctx_set_dict(_attached.get(), bytes.data(), bytes.size(), nullptr);
@@ -77,7 +89,8 @@ size_t Zxc::Compressor::Plain(const char* src, size_t size, char* dst,
   return static_cast<size_t>(n);
 }
 
-Zxc::Decompressor::Decompressor() : _ctx{zxc_create_dctx()} {
+Zxc::Decompressor::Decompressor()
+  : _ctx_charge{DecoderBytes()}, _ctx{zxc_create_dctx()} {
   SDB_ENSURE(_ctx, "zxc: cannot create a decompression context");
 }
 
@@ -96,6 +109,7 @@ std::string_view Zxc::Decompressor::Inflate(const char* src, size_t size,
              : std::string_view{};
   }
   if (!_blocks) {
+    _blocks_charge.Resize(DecoderBytes());
     _blocks.reset(zxc_create_dctx());
     SDB_ENSURE(_blocks, "zxc: cannot create a decompression context");
   }

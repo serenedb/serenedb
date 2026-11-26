@@ -56,6 +56,7 @@
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -242,6 +243,9 @@ struct AlpCombination {
 
 template<typename T>
 struct AlpCompressionData {
+  explicit AlpCompressionData(MemoryBudget* budget)
+    : best_k_combinations{TrackedAllocator<AlpCombination>{budget}} {}
+
   AlpEncodingIndices vector_encoding_indices;
   uint16_t exceptions_count = 0;
   uint16_t bit_width = 0;
@@ -250,7 +254,7 @@ struct AlpCompressionData {
   int64_t encoded_integers[kVectorSize] = {};
   T exceptions[kVectorSize] = {};
   uint16_t exceptions_positions[kVectorSize] = {};
-  std::vector<AlpCombination> best_k_combinations;
+  TrackedVector<AlpCombination> best_k_combinations;
   uint32_t values_encoded[kVectorSize * 2] = {};
 };
 
@@ -364,8 +368,9 @@ uint64_t DryCompressToEstimateSize(std::span<const T> input_vector,
 }
 
 template<typename T>
-void FindTopKCombinations(const std::vector<std::vector<T>>& vectors_sampled,
-                          AlpCompressionData<T>& compression_data) {
+void FindTopKCombinations(
+  const TrackedVector<TrackedVector<T>>& vectors_sampled,
+  AlpCompressionData<T>& compression_data) {
   constexpr uint8_t kMaxExponent = AlpTypedConstants<T>::kMaxExponent;
   constexpr idx_t kExactTypeBitSize = sizeof(T) * 8;
   compression_data.best_k_combinations.clear();
@@ -408,7 +413,8 @@ void FindTopKCombinations(const std::vector<std::vector<T>>& vectors_sampled,
                  [best_combination.encoding_indices.factor];
   }
 
-  std::vector<AlpCombination> best_k_combinations;
+  TrackedVector<AlpCombination> best_k_combinations{
+    compression_data.best_k_combinations.get_allocator()};
   for (uint8_t exponent = 0; exponent <= kMaxExponent; ++exponent) {
     for (uint8_t factor = 0; factor <= exponent; ++factor) {
       if (const auto n_appearances = appearances[exponent][factor]) {
@@ -591,11 +597,16 @@ void Decompress(duckdb::const_data_ptr_t for_encoded, T* output, idx_t count,
 
 template<typename T>
 struct AlpAnalyzeState {
+  explicit AlpAnalyzeState(MemoryBudget* budget)
+    : rowgroup_sample{TrackedAllocator<TrackedVector<T>>{budget}},
+      complete_vectors_sampled{TrackedAllocator<TrackedVector<T>>{budget}},
+      compression_data{budget} {}
+
   idx_t vectors_sampled_count = 0;
   idx_t total_values_count = 0;
   idx_t vectors_count = 0;
-  std::vector<std::vector<T>> rowgroup_sample;
-  std::vector<std::vector<T>> complete_vectors_sampled;
+  TrackedVector<TrackedVector<T>> rowgroup_sample;
+  TrackedVector<TrackedVector<T>> complete_vectors_sampled;
   AlpCompressionData<T> compression_data;
 };
 
@@ -614,8 +625,12 @@ void AlpSample(AlpAnalyzeState<T>& analyze_state, const duckdb::Vector& input) {
   const auto sampling_params = alp::GetSamplingParameters(count);
 
   uint16_t current_vector_null_positions[kVectorSize] = {};
-  std::vector<T> current_vector_values(sampling_params.n_lookup_values);
-  std::vector<T> current_vector_sample(sampling_params.n_sampled_values);
+  TrackedVector<T> current_vector_values(
+    sampling_params.n_lookup_values,
+    analyze_state.complete_vectors_sampled.get_allocator());
+  TrackedVector<T> current_vector_sample(
+    sampling_params.n_sampled_values,
+    analyze_state.rowgroup_sample.get_allocator());
 
   idx_t nulls_idx = 0;
   if (!values.CanHaveNull()) {
@@ -648,9 +663,9 @@ void AlpSample(AlpAnalyzeState<T>& analyze_state, const duckdb::Vector& input) {
 }
 
 template<typename T>
-std::unique_ptr<AlpAnalyzeState<T>> AlpSampleRowGroup(
-  std::span<const WriteChunk> chunks) {
-  auto analyze_state = std::make_unique<AlpAnalyzeState<T>>();
+TrackedPtr<AlpAnalyzeState<T>> AlpSampleRowGroup(
+  MemoryBudget* budget, std::span<const WriteChunk> chunks) {
+  auto analyze_state = MakeTracked<AlpAnalyzeState<T>>(budget, budget);
   for (const auto& chunk : chunks) {
     AlpSample(*analyze_state, chunk.data);
   }
@@ -664,9 +679,9 @@ struct RowGroupSample final : State {
   static constexpr StateId kId = StateId::AlpSample;
 
   explicit RowGroupSample(ColumnDataCheckpointData& data)
-    : state{AlpSampleRowGroup<T>(data.rows.chunks)} {}
+    : state{AlpSampleRowGroup<T>(data.budget, data.rows.chunks)} {}
 
-  std::unique_ptr<AlpAnalyzeState<T>> state;
+  TrackedPtr<AlpAnalyzeState<T>> state;
 };
 
 template<typename T>
@@ -707,7 +722,9 @@ class AlpCompressionState {
   AlpCompressionState(const Codec& codec,
                       ColumnDataCheckpointData& checkpoint_data,
                       AlpAnalyzeState<T>& analyze_state)
-    : _checkpoint_data{checkpoint_data}, _segment{codec, checkpoint_data.type} {
+    : _checkpoint_data{checkpoint_data},
+      _segment{codec, checkpoint_data},
+      _compression_data{checkpoint_data.budget} {
     _compression_data.best_k_combinations =
       std::move(analyze_state.compression_data.best_k_combinations);
   }
@@ -907,7 +924,7 @@ uint64_t AlpCompressChunks(const Codec& codec,
 }
 
 template<typename T>
-struct AlpVectorState {
+struct AlpVectorState : Tracked {
   idx_t index = 0;
   T decoded_values[kVectorSize];
   T exceptions[kVectorSize];

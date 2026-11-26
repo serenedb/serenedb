@@ -5042,7 +5042,7 @@ TEST_F(ColumnReaderTest, ListRowGroupsOfRunsRunLengthEncodeTheirCodes) {
 
 TEST_F(ColumnReaderTest, ListCodesStayConsecutiveOnceDedupTurnsOff) {
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR);
-  irs::ListIngest ingest{type, /*borrow=*/false};
+  irs::ListIngest ingest{nullptr, type, /*borrow=*/false};
   duckdb::Connection con{Db()};
   auto result = con.Query(
     "SELECT CASE WHEN i % 7 = 0 THEN NULL WHEN i % 13 = 0 THEN "
@@ -5073,7 +5073,7 @@ TEST_F(ColumnReaderTest, EqualListsShareACodeInEveryElementVectorForm) {
     Nullable,
   };
   const auto type = duckdb::LogicalType::LIST(duckdb::LogicalType::BIGINT);
-  irs::ListIngest ingest{type, /*borrow=*/false};
+  irs::ListIngest ingest{nullptr, type, /*borrow=*/false};
   const auto add = [&](Form form) {
     const bool reversed = form == Form::Selected;
     const duckdb::idx_t rows = kRows + (form == Form::Nullable);
@@ -5718,7 +5718,7 @@ TEST_F(ColumnReaderTest,
       Db(), dir, "vtune", kId,
       absl::StrCat("SELECT (CASE WHEN i < ", kRowGroup, " THEN ", first,
                    " ELSE ", then, " END)::VARIANT FROM range(",
-                   groups * kRowGroup, ") t(i)"),
+                   groups * kRowGroup, ") t(i) ORDER BY i"),
       kRowGroup, expected);
     EXPECT_EQ(expected.size(), groups * kRowGroup);
     irs::ColReader r = irs::tests::OpenColReader(dir, "vtune");

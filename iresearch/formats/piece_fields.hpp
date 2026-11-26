@@ -60,8 +60,8 @@ class PieceTermReader final : public TermReader {
   void LookupBatch(size_t count, TermAt term, FoundTerm found) const final;
   void ReadDocs(bytes_view term, Acceptor acceptor) const final;
   void ReadDocs(const PostingMeta& meta, Acceptor acceptor) const final;
-  void VisitRange(bytes_view from, bytes_view to,
-                  RangeVisitor visit) const final;
+  bool CoverRange(bytes_view from, bytes_view to,
+                  TermVisitor visit) const final;
 
   PostingsHandles Handles() const noexcept final;
 
@@ -90,22 +90,19 @@ class PieceTermReader final : public TermReader {
                                TermPostings::ptr reuse) const;
 
   size_t Bytes() const noexcept {
-    return _terms.capacity() + _inline.capacity() +
-           _entries.capacity() * sizeof(Entry);
+    return _terms.capacity() + _entries.capacity() * sizeof(Entry);
   }
 
  private:
   struct Entry {
     uint32_t begin = 0;
     uint32_t size = 0;
-    uint32_t inline_at = 0;
     PostingMeta meta;
   };
 
   const PieceFields* _owner;
   FieldMeta _meta;
   bstring _terms;
-  bstring _inline;
   std::vector<Entry> _entries;
   uint64_t _docs = 0;
   FreqAttr _freq;
@@ -142,7 +139,7 @@ class PieceFields final {
 class PieceFieldWriter final : public FieldSink {
  public:
   PieceFieldWriter(PieceFields& fields, bool compaction) noexcept
-    : _fields{&fields}, _compaction{compaction} {}
+    : _pw{nullptr}, _fields{&fields}, _compaction{compaction} {}
 
   void prepare(const FlushState& state, uint64_t keyed_dicts,
                uint64_t terms) final;

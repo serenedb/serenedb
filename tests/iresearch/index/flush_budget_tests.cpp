@@ -23,6 +23,7 @@
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/vector/array_vector.hpp>
 #include <duckdb/storage/buffer_manager.hpp>
+#include <iresearch/formats/format_utils.hpp>
 #include <iresearch/index/column_info.hpp>
 #include <iresearch/index/index_writer.hpp>
 #include <iresearch/index/merge_writer.hpp>
@@ -292,7 +293,7 @@ size_t MergeBudgetLeft(const irs::CompositeReader& reader,
                        const irs::IndexFieldOptions& field_options,
                        bool flush) {
   const tests::IndexDir out{Db(), TestEnv::MemoryRoot()};
-  auto budget = irs::EmptyBudget();
+  irs::MemoryBudget budget{nullptr};
   {
     irs::MergeWriter merger{out.Db(),
                             out.Fs(),
@@ -306,7 +307,8 @@ size_t MergeBudgetLeft(const irs::CompositeReader& reader,
       EXPECT_TRUE(irs::GetReady(merger.Flush(meta)));
     }
   }
-  return budget.size;
+  return budget.Available() +
+         out.Files().size() * irs::format_utils::kOutputBlockBytes;
 }
 
 void ExpectMergeInsideItsReservation(

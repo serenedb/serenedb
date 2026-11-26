@@ -85,7 +85,7 @@ class HnswScratchAllocator {
   using is_always_equal = std::false_type;
 
   HnswScratchAllocator() = default;
-  explicit HnswScratchAllocator(MemoryBudget* budget) noexcept
+  explicit HnswScratchAllocator(FixedBudget* budget) noexcept
     : _budget{budget} {}
   explicit HnswScratchAllocator(MemoryArena& arena) noexcept : _arena{&arena} {}
 
@@ -101,16 +101,16 @@ class HnswScratchAllocator {
     if (_arena) {
       return _arena->Allocate<T>(n);
     }
-    return TrackedAllocator<T>{_budget}.allocate(n);
+    return FixedAllocator<T>{_budget}.allocate(n);
   }
 
   void deallocate(T* p, size_t n) noexcept {
     if (!_arena) {
-      TrackedAllocator<T>{_budget}.deallocate(p, n);
+      FixedAllocator<T>{_budget}.deallocate(p, n);
     }
   }
 
-  MemoryBudget* Budget() const noexcept { return _budget; }
+  FixedBudget* Budget() const noexcept { return _budget; }
   MemoryArena* Arena() const noexcept { return _arena; }
 
   friend bool operator==(const HnswScratchAllocator& lhs,
@@ -119,7 +119,7 @@ class HnswScratchAllocator {
   }
 
  private:
-  MemoryBudget* _budget = nullptr;
+  FixedBudget* _budget = nullptr;
   MemoryArena* _arena = nullptr;
 };
 // NOLINTEND
@@ -129,7 +129,7 @@ using HnswScratchVector = std::vector<T, HnswScratchAllocator<T>>;
 
 class HnswVisited {
  public:
-  explicit HnswVisited(MemoryBudget* budget = nullptr) noexcept
+  explicit HnswVisited(FixedBudget* budget = nullptr) noexcept
     : _words{HnswScratchAllocator<uint64_t>{budget}},
       _dirty{HnswScratchAllocator<uint32_t>{budget}},
       _slots{HnswScratchAllocator<uint32_t>{budget}},
@@ -297,7 +297,7 @@ struct HnswFrontierOrder {
 };
 
 struct HnswSearchScratch {
-  explicit HnswSearchScratch(MemoryBudget* budget = nullptr) noexcept
+  explicit HnswSearchScratch(FixedBudget* budget = nullptr) noexcept
     : visited{budget},
       visited_hop2{budget},
       nearest{HnswScratchAllocator<HnswCandidate>{budget}},
@@ -948,36 +948,36 @@ struct HnswReverseItem {
 };
 
 struct HnswBuildScratch {
-  explicit HnswBuildScratch(MemoryBudget* budget = nullptr) noexcept
+  explicit HnswBuildScratch(FixedBudget* budget = nullptr) noexcept
     : search{budget},
-      selected{TrackedAllocator<uint32_t>{budget}},
-      peer_candidates{TrackedAllocator<HnswCandidate>{budget}},
-      link_ids{TrackedAllocator<uint32_t>{budget}},
-      peer_scores{TrackedAllocator<score_t>{budget}},
-      node_scores{TrackedAllocator<score_t>{budget}},
-      pending{TrackedAllocator<HnswPendingLink>{budget}},
-      select_blocked{TrackedAllocator<uint8_t>{budget}},
-      select_ids{TrackedAllocator<uint32_t>{budget}},
-      select_scores{TrackedAllocator<score_t>{budget}},
-      rev_items{TrackedAllocator<HnswReverseItem>{budget}},
-      rev_kept{TrackedAllocator<uint32_t>{budget}},
-      rev_kept_scores{TrackedAllocator<score_t>{budget}},
-      rev_kept_processed{TrackedAllocator<uint8_t>{budget}} {}
+      selected{FixedAllocator<uint32_t>{budget}},
+      peer_candidates{FixedAllocator<HnswCandidate>{budget}},
+      link_ids{FixedAllocator<uint32_t>{budget}},
+      peer_scores{FixedAllocator<score_t>{budget}},
+      node_scores{FixedAllocator<score_t>{budget}},
+      pending{FixedAllocator<HnswPendingLink>{budget}},
+      select_blocked{FixedAllocator<uint8_t>{budget}},
+      select_ids{FixedAllocator<uint32_t>{budget}},
+      select_scores{FixedAllocator<score_t>{budget}},
+      rev_items{FixedAllocator<HnswReverseItem>{budget}},
+      rev_kept{FixedAllocator<uint32_t>{budget}},
+      rev_kept_scores{FixedAllocator<score_t>{budget}},
+      rev_kept_processed{FixedAllocator<uint8_t>{budget}} {}
 
   HnswSearchScratch search;
-  TrackedVector<uint32_t> selected;
-  TrackedVector<HnswCandidate> peer_candidates;
-  TrackedVector<uint32_t> link_ids;
-  TrackedVector<score_t> peer_scores;
-  TrackedVector<score_t> node_scores;
-  TrackedVector<HnswPendingLink> pending;
-  TrackedVector<uint8_t> select_blocked;
-  TrackedVector<uint32_t> select_ids;
-  TrackedVector<score_t> select_scores;
-  TrackedVector<HnswReverseItem> rev_items;
-  TrackedVector<uint32_t> rev_kept;
-  TrackedVector<score_t> rev_kept_scores;
-  TrackedVector<uint8_t> rev_kept_processed;
+  FixedVector<uint32_t> selected;
+  FixedVector<HnswCandidate> peer_candidates;
+  FixedVector<uint32_t> link_ids;
+  FixedVector<score_t> peer_scores;
+  FixedVector<score_t> node_scores;
+  FixedVector<HnswPendingLink> pending;
+  FixedVector<uint8_t> select_blocked;
+  FixedVector<uint32_t> select_ids;
+  FixedVector<score_t> select_scores;
+  FixedVector<HnswReverseItem> rev_items;
+  FixedVector<uint32_t> rev_kept;
+  FixedVector<score_t> rev_kept_scores;
+  FixedVector<uint8_t> rev_kept_processed;
 };
 
 inline bool HnswRedundant(score_t to_selected, score_t candidate,

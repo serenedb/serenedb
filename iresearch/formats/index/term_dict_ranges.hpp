@@ -33,6 +33,11 @@ namespace irs::term_dict {
 
 class RangeWriter final {
  public:
+  struct Entry {
+    bytes_view key;
+    PostingMeta meta;
+  };
+
   RangeWriter() = default;
   RangeWriter(const RangeWriter&) = delete;
   RangeWriter& operator=(const RangeWriter&) = delete;
@@ -44,28 +49,25 @@ class RangeWriter final {
   void Begin(PostingsWriter& pw, uint64_t docs, MemoryBudget& budget);
   void Add(bytes_view term, const PostingMeta& meta);
   void Finish(uint64_t terms);
-  void Write(bstring& region, size_t prefix,
-             std::vector<uint64_t>& counts) const;
+  size_t Height() const noexcept { return _height; }
+  uint32_t Count(size_t level) const noexcept { return _levels[level].count; }
+  Entry At(size_t level, uint32_t i) const noexcept;
   void Clear() noexcept;
 
  private:
-  struct Piece {
+  struct RangePosting {
     bstring key;
     TrackedVector<doc_id_t> docs;
     PostingMeta meta;
-    std::array<byte_type, PostingMeta::kInlineBytes> inline_bytes{};
     uint64_t docs_count = 0;
-    uint32_t first = 0;
     bool join = false;
   };
 
   struct Level {
     bstring starts;
-    std::vector<uint32_t> firsts;
-    std::vector<uint32_t> ends;
-    bstring records;
-    Piece group;
-    Piece held;
+    std::vector<PostingMeta> metas;
+    RangePosting group;
+    RangePosting held;
     uint32_t count = 0;
     uint32_t children = 0;
     bool holding = false;
@@ -76,17 +78,14 @@ class RangeWriter final {
     const PostingMeta& meta;
     std::span<const doc_id_t> docs;
     uint64_t docs_count;
-    uint32_t index;
   };
 
-  static void Keep(Piece& piece, const PostingMeta& meta) noexcept;
   void Push(size_t level, const Child& child);
   void Close(size_t level);
   void Release(size_t level);
 
   std::array<Level, kMaxRangeLevels> _levels;
   PostingsWriter* _pw = nullptr;
-  RecordOutput _record;
   uint64_t _heavy = 0;
   size_t _height = 0;
 };

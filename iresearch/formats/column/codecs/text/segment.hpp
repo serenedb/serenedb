@@ -27,12 +27,13 @@
 
 #include "iresearch/formats/column/codecs/text/segment_buffer.hpp"
 #include "iresearch/formats/column/codecs/text/string_tuning.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text {
 
 struct Segment {
-  Segment(duckdb::BufferManager& buffers, const duckdb::LogicalType& type)
-    : bytes{buffers}, stats{duckdb::BaseStatistics::CreateEmpty(type)} {}
+  Segment(MemoryBudget* budget, const duckdb::LogicalType& type)
+    : bytes{budget}, stats{duckdb::BaseStatistics::CreateEmpty(type)} {}
 
   Config config;
   uint64_t begin = 0;

@@ -27,12 +27,13 @@
 #include <array>
 #include <bit>
 #include <cstring>
+#include <iterator>
 #include <limits>
 
+#include "iresearch/formats/index/term_dict_format.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/lower_bound.hpp"
-#include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string_utils.hpp"
 
 namespace irs::term_dict {
@@ -168,81 +169,31 @@ bytes_view SharedPrefix(SeparatorsView separators) noexcept {
     0, CommonPrefixLength(first, SeparatorAt(separators, count - 1)));
 }
 
+bytes_view PrefixOf(SeparatorsView separators, uint32_t size) noexcept {
+  return SeparatorCount(separators) == 0
+           ? bytes_view{}
+           : SeparatorAt(separators, 0).substr(0, size);
+}
+
 }  // namespace
 
-uint64_t HeadAt(bytes_view key, size_t skip) noexcept {
-  return skip >= key.size() ? 0
-                            : LoadHead(key.data() + skip, key.size() - skip);
-}
-
-Separators DecodeSeparators(bytes_view encoded, size_t count) {
-  const auto corrupted = [] {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INDEX_CORRUPTED),
-                    ERR_MSG("term dictionary: bad separators"));
-  };
-  struct Step {
-    uint32_t shared;
-    uint32_t suffix;
-  };
-  const auto* const end = encoded.data() + encoded.size();
-  const auto next = [&](const byte_type*& p) {
-    const auto shared = ReadVarint<uint32_t>(p, end);
-    const auto suffix = ReadVarint<uint32_t>(p, end);
-    if (!shared || !suffix || *suffix == 0 ||
-        *suffix > static_cast<size_t>(end - p)) {
-      corrupted();
-    }
-    return Step{.shared = *shared, .suffix = *suffix};
-  };
-  uint64_t total = 0;
-  size_t last = 0;
-  const auto* p = encoded.data();
-  for (size_t i = 0; i != count; ++i) {
-    const auto [shared, suffix] = next(p);
-    if (shared > last) {
-      corrupted();
-    }
-    p += suffix;
-    last = shared + suffix;
-    total += last;
-  }
-  if (p != end || total > std::numeric_limits<uint32_t>::max()) {
-    corrupted();
-  }
-  Separators separators;
-  auto& arena = separators.arena;
-  utils::StrResize(arena, total);
-  separators.offsets.resize(count + 1);
-  p = encoded.data();
-  last = 0;
-  for (size_t i = 0, at = 0; i != count; ++i) {
-    const auto [shared, suffix] = next(p);
-    auto* out = arena.data() + at;
-    const auto* previous = out - last;
-    if (shared != last && *p <= previous[shared]) {
-      corrupted();
-    }
-    std::memcpy(out, previous, shared);
-    std::memcpy(out + shared, p, suffix);
-    p += suffix;
-    last = shared + suffix;
-    at += last;
-    separators.offsets[i + 1] = static_cast<uint32_t>(at);
-  }
-  return separators;
-}
-
-EytzingerRoot::EytzingerRoot(SeparatorsView separators)
-  : SeparatorRoot{separators},
-    _prefix{SharedPrefix(_separators)},
-    _count{SeparatorCount(_separators)} {
-  const size_t count = _count;
+EytzingerRoot::Node* EytzingerRoot::Place() {
   constexpr size_t kLine = 64 / sizeof(Node);
-  _storage.resize(count + 1 + kLine);
+  _storage.resize(_count + 1 + kLine);
   const auto misaligned =
     reinterpret_cast<uintptr_t>(_storage.data()) % 64 / sizeof(Node);
   auto* nodes = _storage.data() + (kLine - misaligned) % kLine;
   _nodes = nodes;
+  return nodes;
+}
+
+EytzingerRoot::EytzingerRoot(SeparatorsView separators, MemoryBudget* budget)
+  : SeparatorRoot{separators},
+    _storage{TrackedAllocator<Node>{budget}},
+    _prefix{SharedPrefix(_separators)},
+    _count{SeparatorCount(_separators)} {
+  const size_t count = _count;
+  auto* nodes = Place();
   size_t next = 0;
   const auto fill = [&](this auto& self,
                         size_t k) -> std::pair<size_t, size_t> {
@@ -269,6 +220,20 @@ EytzingerRoot::EytzingerRoot(SeparatorsView separators)
   };
   fill(1);
   SDB_ASSERT(next == count);
+}
+
+EytzingerRoot::EytzingerRoot(SeparatorsView separators, duckdb::ReadStream& in)
+  : SeparatorRoot{separators},
+    _prefix{PrefixOf(separators, in.Read<uint32_t>())},
+    _count{SeparatorCount(separators)} {
+  in.ReadData(reinterpret_cast<duckdb::data_ptr_t>(Place()),
+              (_count + 1) * sizeof(Node));
+}
+
+void EytzingerRoot::Write(duckdb::WriteStream& out) const {
+  out.Write<uint32_t>(static_cast<uint32_t>(_prefix.size()));
+  out.WriteData(reinterpret_cast<duckdb::const_data_ptr_t>(_nodes),
+                (_count + 1) * sizeof(Node));
 }
 
 IRS_FORCE_INLINE bool EytzingerRoot::NotAfter(const Node& node,
@@ -311,20 +276,22 @@ size_t EytzingerRoot::FindFrom(size_t from, Probe key) const noexcept {
   });
 }
 
-std::vector<size_t> TreeRoot::LevelSizes(size_t count) {
-  std::vector<size_t> sizes{
-    std::max<size_t>(1, (count + kFanout - 1) / kFanout)};
+TrackedVector<size_t> TreeRoot::LevelSizes(size_t count, MemoryBudget* budget) {
+  TrackedVector<size_t> sizes{TrackedAllocator<size_t>{budget}};
+  sizes.push_back(std::max<size_t>(1, (count + kFanout - 1) / kFanout));
   while (sizes.back() != 1) {
     sizes.push_back((sizes.back() + kFanout - 1) / kFanout);
   }
   return sizes;
 }
 
-TreeRoot::TreeRoot(SeparatorsView separators)
+TreeRoot::TreeRoot(SeparatorsView separators, MemoryBudget* budget)
   : SeparatorRoot{separators},
     _prefix{SharedPrefix(_separators)},
+    _nodes{TrackedAllocator<Node>{budget}},
+    _levels{TrackedAllocator<size_t>{budget}},
     _count{SeparatorCount(_separators)} {
-  const auto sizes = LevelSizes(_count);
+  const auto sizes = LevelSizes(_count, budget);
   const size_t height = sizes.size();
   _levels.resize(height);
   size_t total = 0;
@@ -348,6 +315,22 @@ TreeRoot::TreeRoot(SeparatorsView separators)
         _nodes[_levels[level] + child].heads[0];
     }
   }
+}
+
+TreeRoot::TreeRoot(SeparatorsView separators, duckdb::ReadStream& in)
+  : SeparatorRoot{separators},
+    _prefix{PrefixOf(separators, in.Read<uint32_t>())},
+    _count{SeparatorCount(separators)} {
+  static_assert(sizeof(size_t) == sizeof(uint64_t));
+  ReadArray(in, _nodes);
+  ReadArray(in, _levels);
+  _leaves = _levels.back();
+}
+
+void TreeRoot::Write(duckdb::WriteStream& out) const {
+  out.Write<uint32_t>(static_cast<uint32_t>(_prefix.size()));
+  WriteArray(out, _nodes);
+  WriteArray(out, _levels);
 }
 
 TreeRoot::Located TreeRoot::Locate(bytes_view key) const noexcept {
@@ -441,7 +424,8 @@ bool TreeRoot::NotAfter(size_t block, Probe probe) const noexcept {
   return SeparatorAt(_separators, block - 1) <= key;
 }
 
-ArtRoot::ArtRoot(SeparatorsView separators) : SeparatorRoot{separators} {
+ArtRoot::ArtRoot(SeparatorsView separators, MemoryBudget* budget)
+  : SeparatorRoot{separators}, _words{TrackedAllocator<uint64_t>{budget}} {
   const size_t count = SeparatorCount(_separators);
   if (count < 2) {
     return;
@@ -525,6 +509,13 @@ ArtRoot::ArtRoot(SeparatorsView separators) : SeparatorRoot{separators} {
   build(0, count, 0, 0);
   _words.shrink_to_fit();
 }
+
+ArtRoot::ArtRoot(SeparatorsView separators, duckdb::ReadStream& in)
+  : SeparatorRoot{separators} {
+  ReadArray(in, _words);
+}
+
+void ArtRoot::Write(duckdb::WriteStream& out) const { WriteArray(out, _words); }
 
 IRS_FORCE_INLINE size_t ArtRoot::Leaf(const uint64_t* child, size_t depth,
                                       bytes_view key) const noexcept {
@@ -611,11 +602,11 @@ size_t ArtRoot::Find(Probe probe) const noexcept {
   }
 }
 
-Root::Root(SeparatorsView separators, bool fixed) {
+Root::Root(SeparatorsView separators, bool fixed, MemoryBudget* budget) {
   const size_t count = SeparatorCount(separators);
   if (fixed) {
-    if (ArtRoot art{separators};
-        2 * art.Visits() <= TreeRoot::Height(count) * count) {
+    if (ArtRoot art{separators, budget};
+        2 * art.Visits() <= TreeRoot::Height(count, budget) * count) {
       _root.emplace<ArtRoot>(std::move(art));
       return;
     }
@@ -631,10 +622,29 @@ Root::Root(SeparatorsView separators, bool fixed) {
     }
   }
   if (2 * ties > count) {
-    _root.emplace<EytzingerRoot>(separators);
+    _root.emplace<EytzingerRoot>(separators, budget);
   } else {
-    _root.emplace<TreeRoot>(separators);
+    _root.emplace<TreeRoot>(separators, budget);
   }
+}
+
+Root::Root(SeparatorsView separators, duckdb::ReadStream& in) {
+  switch (in.Read<uint8_t>()) {
+    case 0:
+      _root.emplace<TreeRoot>(separators, in);
+      break;
+    case 1:
+      _root.emplace<EytzingerRoot>(separators, in);
+      break;
+    default:
+      _root.emplace<ArtRoot>(separators, in);
+      break;
+  }
+}
+
+void Root::Write(duckdb::WriteStream& out) const {
+  out.Write<uint8_t>(static_cast<uint8_t>(_root.index()));
+  std::visit([&](const auto& root) { root.Write(out); }, _root);
 }
 
 }  // namespace irs::term_dict

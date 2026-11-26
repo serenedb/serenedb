@@ -1,0 +1,92 @@
+# Phrase words are found wherever they sit in a term dictionary large enough
+# to need block separators, also past a separator stored shorter than the
+# block's first term.
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY ptb_dict AS
+    split_text() | normalize_tokens('en_US.UTF-8', accent := false)
+    WITH (frequency, position);
+
+
+statement ok
+CREATE TABLE ptb (id INTEGER, body TEXT);
+
+
+statement ok
+CREATE INDEX ptb_idx ON ptb USING inverted(body ptb_dict) INCLUDE (id);
+
+
+statement ok
+INSERT INTO ptb
+SELECT i, 'w' || translate(lpad(i::TEXT, 5, '0'), '0123456789', 'abcdefghij') || ' tail'
+FROM generate_series(0, 29999) AS g(i);
+
+
+statement ok
+VACUUM (FLUSH_TABLE) ptb;
+
+
+query
+SELECT id FROM ptb_idx
+WHERE body @@ ts_phrase('waacjj', 'tail')
+   OR body @@ ts_phrase('wabfab', 'tail')
+   OR body @@ ts_phrase('wadaad', 'tail')
+   OR body @@ ts_phrase('wagaah', 'tail')
+   OR body @@ ts_phrase('wajabb', 'tail')
+   OR body @@ ts_phrase('wbcabd', 'tail')
+   OR body @@ ts_phrase('wbfabh', 'tail')
+   OR body @@ ts_phrase('wbiabj', 'tail')
+   OR body @@ ts_phrase('wcbacd', 'tail')
+   OR body @@ ts_phrase('wchadb', 'tail')
+ORDER BY id;
+----
+id
+299
+1501
+3003
+6007
+9011
+12013
+15017
+18019
+21023
+27031
+
+
+query
+SELECT count(*) FROM ptb_idx
+WHERE body @@ (ts_any(list_transform(range(0, 10000), lambda i: 'w' || translate(lpad(i::TEXT, 5, '0'), '0123456789', 'abcdefghij'))) ## 'tail');
+----
+count
+10000
+
+
+query
+SELECT count(*) FROM ptb_idx
+WHERE body @@ (ts_any(list_transform(range(10000, 20000), lambda i: 'w' || translate(lpad(i::TEXT, 5, '0'), '0123456789', 'abcdefghij'))) ## 'tail');
+----
+count
+10000
+
+
+query
+SELECT count(*) FROM ptb_idx
+WHERE body @@ (ts_any(list_transform(range(20000, 30000), lambda i: 'w' || translate(lpad(i::TEXT, 5, '0'), '0123456789', 'abcdefghij'))) ## 'tail');
+----
+count
+10000
+
+
+query
+SELECT count(*) FROM ptb_idx WHERE body @@ ts_phrase('tail');
+----
+count
+30000
+
+
+statement ok
+DROP TABLE ptb;
+
+
+statement ok
+DROP TEXT SEARCH DICTIONARY ptb_dict;

@@ -43,7 +43,7 @@ WriteChunk RefChunk(const duckdb::Vector& vec, duckdb::idx_t count) {
   return {std::move(ref), count};
 }
 
-void SliceChunks(std::vector<WriteChunk>& out, const duckdb::Vector& vec,
+void SliceChunks(TrackedVector<WriteChunk>& out, const duckdb::Vector& vec,
                  duckdb::idx_t base, duckdb::idx_t count) {
   duckdb::idx_t off = 0;
   while (off < count) {
@@ -68,20 +68,20 @@ void ListKeys::Node::Assign(const duckdb::Vector& vec) {
     case duckdb::PhysicalType::STRUCT: {
       kind = Kind::Struct;
       const auto& fields = duckdb::StructVector::GetEntries(vec);
-      children.resize(fields.size());
+      Resize(fields.size());
       for (size_t c = 0; c < fields.size(); ++c) {
         children[c].Assign(fields[c]);
       }
     } break;
     case duckdb::PhysicalType::LIST:
       kind = Kind::List;
-      children.resize(1);
+      Resize(1);
       children[0].Assign(duckdb::ListVector::GetChild(vec));
       break;
     case duckdb::PhysicalType::ARRAY:
       kind = Kind::Array;
       width = duckdb::ArrayType::GetSize(type);
-      children.resize(1);
+      Resize(1);
       children[0].Assign(duckdb::ArrayVector::GetChild(vec));
       break;
     case duckdb::PhysicalType::VARCHAR:
@@ -96,9 +96,33 @@ void ListKeys::Node::Assign(const duckdb::Vector& vec) {
   }
 }
 
-ListIngest::ListIngest(const duckdb::LogicalType& type, bool borrow,
-                       uint64_t code_base, uint64_t running)
-  : _child_type{duckdb::ListType::GetChildType(type)}, _borrow{borrow} {
+void ListKeys::Node::Resize(size_t size) {
+  if (size <= children.size()) {
+    children.erase(children.begin() + static_cast<ptrdiff_t>(size),
+                   children.end());
+    return;
+  }
+  children.reserve(size);
+  while (children.size() < size) {
+    children.push_back(Empty(children.get_allocator()));
+  }
+}
+
+ListIngest::ListIngest(MemoryBudget* budget, const duckdb::LogicalType& type,
+                       bool borrow, uint64_t code_base, uint64_t running)
+  : _child_type{duckdb::ListType::GetChildType(type)},
+    _borrow{borrow},
+    _codes{TrackedAllocator<uint64_t>{budget}},
+    _ends{TrackedAllocator<uint64_t>{budget}},
+    _copied{budget, 0},
+    _elems{TrackedAllocator<WriteChunk>{budget}},
+    _keys{budget},
+    _heads{TrackedAllocator<std::pair<const uint64_t, uint32_t>>{budget}},
+    _reps{TrackedAllocator<ListRep>{budget}},
+    _fresh{TrackedAllocator<Fresh>{budget}},
+    _picked{TrackedAllocator<duckdb::sel_t>{budget}},
+    _source{TrackedAllocator<char>{budget}},
+    _source_codes{TrackedAllocator<uint64_t>{budget}} {
   Reset(code_base, running);
 }
 
@@ -146,9 +170,13 @@ void ListIngest::CheckDistinct() {
 
 ListParts ListIngest::Take() {
   ListParts out;
-  out.codes = std::exchange(_codes, {});
-  out.ends = std::exchange(_ends, {});
+  out.codes =
+    std::exchange(_codes, TrackedVector<uint64_t>{_codes.get_allocator()});
+  out.ends =
+    std::exchange(_ends, TrackedVector<uint64_t>{_ends.get_allocator()});
   FlushTail();
+  out.copied = std::move(_copied);
+  _flushed = 0;
   out.elems = std::move(_elems);
   out.elem_count = _running - _elem_base;
   out.distinct = _next_code - _code_base;
@@ -186,7 +214,12 @@ void ListIngest::FlushTail() {
   }
   SliceChunks(_elems, duckdb::ListVector::GetChildMutable(*_tail), 0,
               duckdb::ListVector::GetListSize(*_tail));
+  _flushed += _tail->GetAllocationSize();
   _tail.reset();
+}
+
+void ListIngest::ChargeTail() {
+  _copied.Resize(_flushed + _tail->GetAllocationSize());
 }
 
 void ListIngest::AddRows(const duckdb::UnifiedVectorFormat& parent,
@@ -297,6 +330,7 @@ void ListIngest::AppendRange(const duckdb::Vector& child, uint64_t begin,
                              static_cast<duckdb::idx_t>(begin + length)};
   duckdb::ImmutableStrings::Append(Tail(), range,
                                    static_cast<duckdb::idx_t>(length));
+  ChargeTail();
 }
 
 bool ListIngest::TrackSource(const duckdb::Vector& vec) {
@@ -304,7 +338,7 @@ bool ListIngest::TrackSource(const duckdb::Vector& vec) {
     return false;
   }
   const auto& id = duckdb::DictionaryVector::DictionaryId(vec);
-  if (id.empty() || id != _source) {
+  if (id.empty() || std::string_view{id} != _source) {
     _source = id;
     _source_codes.clear();
   }
@@ -330,6 +364,7 @@ void ListIngest::Store(const duckdb::Vector& child) {
   const duckdb::Vector picked{
     child, duckdb::SelectionVector{_picked.data(), count}, count};
   duckdb::ImmutableStrings::Append(tail, picked, count);
+  ChargeTail();
   for (const auto& fresh : _fresh) {
     if (fresh.rep == kNoRep) {
       continue;

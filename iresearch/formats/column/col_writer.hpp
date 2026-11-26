@@ -106,6 +106,7 @@ class ColWriter final {
   std::vector<std::unique_ptr<AnnWriter>> TakeAnnWriters() noexcept;
 
   AnnFlushBound AnnBound(uint64_t rows) const;
+  uint64_t SealBound() const;
 
   std::unique_ptr<ColReader> TakeReader() noexcept {
     return std::move(_reader);
@@ -148,7 +149,7 @@ class ColWriter final {
   WriteTier _tier;
   const IndexFieldOptions* _field_options = nullptr;
   HnswBases* _hnsw_bases = nullptr;
-  duckdb::TempBufferPoolReservation _own_budget{EmptyBudget()};
+  MemoryBudget _own_budget{nullptr};
   MemoryBudget* _budget = &_own_budget;
   std::unique_ptr<duckdb::BufferedFileWriter> _out;
   std::unique_ptr<ColReader> _reader;

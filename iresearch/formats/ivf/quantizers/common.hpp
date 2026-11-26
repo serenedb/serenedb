@@ -44,8 +44,7 @@
 
 namespace irs::quantizers {
 
-inline std::span<const byte_type> FloatSpan(
-  const std::vector<float>& v) noexcept {
+inline std::span<const byte_type> FloatSpan(std::span<const float> v) noexcept {
   return {reinterpret_cast<const byte_type*>(v.data()),
           v.size() * sizeof(float)};
 }
@@ -512,7 +511,8 @@ uint32_t ScalarRecordSize(uint32_t d, VectorQuantization quant);
 
 std::unique_ptr<QuantizerWriter> MakePqWriter(VectorMetric metric, uint32_t d,
                                               uint32_t pq_m, uint32_t pq_niter,
-                                              bool row_major);
+                                              bool row_major,
+                                              MemoryBudget* budget);
 std::shared_ptr<const QuantizerStats> MakePqStats(
   VectorMetric metric, uint32_t d, std::span<const byte_type> stats,
   bool row_major, MemoryBudget* budget);

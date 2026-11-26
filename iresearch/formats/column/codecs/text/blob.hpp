@@ -56,6 +56,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text::blob {
 
@@ -84,6 +85,9 @@ class FrameSpans {
     uint64_t offset = 0;
     uint64_t raw = 0;
   };
+
+  explicit FrameSpans(MemoryBudget* budget)
+    : _spans{TrackedAllocator<Span>{budget}} {}
 
   void Reset(FrameShape shape) noexcept {
     _shape = shape;
@@ -131,7 +135,7 @@ class FrameSpans {
 
   const Span& operator[](size_t i) const noexcept { return _spans[i]; }
 
-  void Sizes(std::vector<size_t>& sizes) const {
+  void Sizes(TrackedVector<size_t>& sizes) const {
     sizes.clear();
     for (const auto& span : _spans) {
       sizes.push_back(span.raw);
@@ -163,7 +167,7 @@ class FrameSpans {
  private:
   FrameShape _shape{kFrameRawBytes, 0};
   Span _open;
-  std::vector<Span> _spans;
+  TrackedVector<Span> _spans;
 };
 
 inline constexpr size_t kLocalMinFrames = 8;
@@ -179,10 +183,10 @@ inline uint64_t Scale(uint64_t sampled, uint64_t sampled_raw,
 }
 
 template<typename Compressor>
-void ResetCompressor(std::optional<Compressor>& codec, uint8_t& held,
-                     uint8_t level) {
+void ResetCompressor(MemoryBudget* budget, std::optional<Compressor>& codec,
+                     uint8_t& held, uint8_t level) {
   if (!codec || held != level) {
-    codec.emplace(level);
+    codec.emplace(budget, level);
     held = level;
   } else {
     codec->Clear();
@@ -190,7 +194,7 @@ void ResetCompressor(std::optional<Compressor>& codec, uint8_t& held,
 }
 
 template<typename Codec>
-size_t CompressedSize(std::string_view raw, std::string& scratch,
+size_t CompressedSize(std::string_view raw, TrackedString& scratch,
                       typename Codec::Compressor& codec) {
   const auto bound = Codec::Bound(raw.size());
   size_t n = 0;
@@ -211,8 +215,16 @@ class CompressionState {
   static_assert(!Sorted(kCodec));
 
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : _rows{MakeRows<Rows>(data.type, dedup, data.tuning.strings.codes_ratio)},
-      _history{data.tuning.strings.history[static_cast<size_t>(kCodec)]} {}
+    : _budget{data.budget},
+      _rows{MakeRows<Rows>(_budget, data.type, dedup,
+                           data.tuning.strings.codes_ratio)},
+      _sort{_budget},
+      _history{data.tuning.strings.history[static_cast<size_t>(kCodec)]},
+      _frame{TrackedAllocator<char>{_budget}},
+      _scratch{TrackedAllocator<char>{_budget}},
+      _spans{_budget},
+      _sizes{TrackedAllocator<size_t>{_budget}},
+      _frames{TrackedAllocator<FrameMeta>{_budget}} {}
 
   void InitCompression(const Config& config, uint64_t first_row,
                        size_t distinct, Segment& out) {
@@ -379,7 +391,7 @@ class CompressionState {
     }
     _counted = 0;
     _packed = 0;
-    ResetCompressor(_codec, _level, level);
+    ResetCompressor(_budget, _codec, _level, level);
   }
 
   FrameDictionary Flags() const noexcept {
@@ -439,7 +451,7 @@ class CompressionState {
   }
 
   bool Pays() {
-    ResetCompressor(_probe, _probe_level, _level);
+    ResetCompressor(_budget, _probe, _probe_level, _level);
     const auto first = Slice(0);
     const auto first_plain =
       blob::CompressedSize<Codec>(first, _scratch, *_probe);
@@ -469,6 +481,7 @@ class CompressionState {
     return n;
   }
 
+  MemoryBudget* _budget;
   Rows _rows;
   SortScratch _sort;
   RatioHistory* _history;
@@ -483,12 +496,12 @@ class CompressionState {
   uint64_t _first_row = 0;
   size_t _counted = 0;
   uint64_t _packed = 0;
-  std::string _frame;
+  TrackedString _frame;
   Segment* _out = nullptr;
-  std::string _scratch;
+  TrackedString _scratch;
   FrameSpans _spans;
-  std::vector<size_t> _sizes;
-  std::vector<FrameMeta> _frames;
+  TrackedVector<size_t> _sizes;
+  TrackedVector<FrameMeta> _frames;
 };
 
 inline constexpr size_t kSampleFrames = 8;
@@ -497,7 +510,7 @@ inline constexpr double kEstimateSlack = 0.02;
 inline constexpr double kSortedGain = 0.06;
 
 inline void ConcatEntries(const Profile& p, size_t first, size_t end,
-                          std::string& out) {
+                          TrackedString& out) {
   for (auto k = first; k < end; ++k) {
     const auto entry = EntryOf(p, k);
     out.append(entry.GetData(), entry.GetSize());
@@ -510,10 +523,16 @@ class SizeEstimator {
   static constexpr ByteCodec kCodec = Codec::kCodec;
   static_assert(!Sorted(kCodec));
 
+  explicit SizeEstimator(MemoryBudget* budget)
+    : _budget{budget},
+      _frame{TrackedAllocator<char>{budget}},
+      _scratch{TrackedAllocator<char>{budget}},
+      _sizes{TrackedAllocator<size_t>{budget}} {}
+
   uint64_t FramesSize(const Profile& p, std::string_view bytes,
                       const FrameSpans& spans, uint8_t level,
                       FrameDictionary layout) {
-    ResetCompressor(_codec, _level, level);
+    ResetCompressor(_budget, _codec, _level, level);
     uint64_t data = 0;
     if (!spans.empty()) {
       const bool whole =
@@ -575,11 +594,12 @@ class SizeEstimator {
     return _frame;
   }
 
+  MemoryBudget* _budget;
   std::optional<typename Codec::Compressor> _codec;
   uint8_t _level = 0;
-  std::string _frame;
-  std::string _scratch;
-  std::vector<size_t> _sizes;
+  TrackedString _frame;
+  TrackedString _scratch;
+  TrackedVector<size_t> _sizes;
 };
 
 consteval StateId SizesState(ByteCodec codec) noexcept {
@@ -604,7 +624,14 @@ class TrialSizes final : public State {
   explicit TrialSizes(ColumnDataCheckpointData& data)
     : _values{data.Get<Values>()},
       _window{data.Get<Window>()},
-      _params{data.params} {}
+      _params{data.params},
+      _dedup{data.budget},
+      _rows{ShapeRows{data.budget}, ShapeRows{data.budget}},
+      _sorted{data.budget},
+      _estimator{SizeEstimator<Codec>{data.budget},
+                 SizeEstimator<Codec>{data.budget}} {
+    static_assert(kTextShapeCount == 2);
+  }
 
   template<typename Rows>
   uint64_t Size(Candidate<Rows>& state, const Config& config) {
@@ -663,16 +690,23 @@ class TrialSizes final : public State {
   };
 
   struct ShapeRows {
+    explicit ShapeRows(MemoryBudget* budget)
+      : codes{TrackedAllocator<uint32_t>{budget}},
+        locals{TrackedAllocator<std::byte>{budget}},
+        bytes{TrackedAllocator<char>{budget}},
+        spans{TrackedAllocator<Spans>{budget}},
+        frames{TrackedAllocator<FramesBytes>{budget}} {}
+
     bool done = false;
     bool assembled = false;
     bool coded = false;
     Profile profile;
-    std::vector<uint32_t> codes;
+    TrackedVector<uint32_t> codes;
     ScratchVector<uint32_t> locals;
     uint64_t codes_bytes = 0;
-    std::string bytes;
-    std::vector<Spans> spans;
-    std::vector<FramesBytes> frames;
+    TrackedString bytes;
+    TrackedVector<Spans> spans;
+    TrackedVector<FramesBytes> frames;
   };
 
   ShapeRows& TrialRows(Shape shape) {
@@ -729,12 +763,14 @@ class TrialSizes final : public State {
     }
     rows.done = true;
     const auto& arrival = TrialRows(Shape::Dictionary);
-    std::vector<duckdb::string_t> entries;
+    auto* budget = rows.codes.get_allocator().budget;
+    TrackedVector<duckdb::string_t> entries{
+      TrackedAllocator<duckdb::string_t>{budget}};
     entries.reserve(arrival.codes.size());
     for (const auto code : arrival.codes) {
       entries.emplace_back(*_values.distinct[code - 1]);
     }
-    SortScratch scratch;
+    SortScratch scratch{budget};
     SortEntries(entries, scratch);
     rows.codes.resize(arrival.codes.size());
     for (size_t at = 0; at < rows.codes.size(); ++at) {
@@ -758,9 +794,10 @@ class TrialSizes final : public State {
     if (!rows.coded) {
       rows.coded = true;
       double ratio = 0;
-      CompressCodes(rows.locals, ratio, [&](CodecType, std::string_view bytes) {
-        rows.codes_bytes = bytes.size();
-      });
+      CompressCodes(rows.codes.get_allocator().budget, rows.locals, ratio,
+                    [&](CodecType, std::string_view bytes) {
+                      rows.codes_bytes = bytes.size();
+                    });
     }
     return rows.codes_bytes;
   }
@@ -785,7 +822,10 @@ class TrialSizes final : public State {
     if (it != rows.spans.end()) {
       return it->spans;
     }
-    auto& split = rows.spans.emplace_back(frame).spans;
+    auto& split =
+      rows.spans
+        .emplace_back(frame, FrameSpans{rows.spans.get_allocator().budget})
+        .spans;
     split.Reset(frame);
     for (size_t i = 0; i < rows.profile.codes.size(); ++i) {
       split.Add(i, EntryOf(rows.profile, i).GetSize());
@@ -1055,8 +1095,8 @@ struct Fetch {
   uint32_t hits = 0;
   bool dense = false;
   size_t decoded = 0;
-  std::string raw;
-  std::vector<uint32_t> offsets;
+  TrackedString raw;
+  TrackedVector<uint32_t> offsets;
   const char* frame_data = nullptr;
   uint64_t decoded_total = 0;
   FrameInflater<Codec> inflater;
@@ -1273,8 +1313,8 @@ struct Scan {
   uint64_t HeapBytes() const noexcept { return 0; }
 
   FrameInflater<Codec> inflater;
-  std::string raw;
-  std::vector<uint32_t> ends;
+  TrackedString raw;
+  TrackedVector<uint32_t> ends;
 };
 
 }  // namespace irs::codecs::text::blob

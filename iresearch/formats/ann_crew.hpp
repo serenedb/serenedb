@@ -29,6 +29,7 @@
 #include <yaclib/async/wait.hpp>
 
 #include "iresearch/formats/ann_build_env.hpp"
+#include "iresearch/utils/assert.hpp"
 
 namespace irs {
 
@@ -53,6 +54,18 @@ class AnnCrew {
 
   bool CanGrow() const noexcept { return _env; }
   uint32_t Want() const noexcept { return _want; }
+
+  void Limit(uint32_t workers) noexcept {
+    SDB_ASSERT(workers != 0 && _spawned == 1);
+    if (workers >= _want) {
+      return;
+    }
+    _want = workers;
+    if (_env && _held > _want) {
+      _env->release(_held - _want);
+      _held = _want;
+    }
+  }
 
   uint32_t Take() {
     if (_env && _held < _want) {

@@ -54,6 +54,9 @@ class MultiTermState {
   bool Empty() const noexcept { return _terms.empty() && _walked.empty(); }
   const auto* Reader() const noexcept { return _reader; }
 
+  void MarkRangePostings() noexcept { _range_postings = true; }
+  bool HasRangePostings() const noexcept { return _range_postings; }
+
   void Push(const PostingMeta& cookie, score_t boost,
             const byte_type* stats = nullptr) {
     _walked.emplace_back(cookie, boost, stats);
@@ -75,6 +78,7 @@ class MultiTermState {
 
   memory::ArenaVector<Entry> _terms;
   memory::ArenaVector<Entry> _walked;
+  bool _range_postings = false;
 };
 
 }  // namespace irs

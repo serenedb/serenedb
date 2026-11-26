@@ -25,6 +25,7 @@
 
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/utils/index_utils.hpp>
+#include <iresearch/utils/misc.hpp>
 #include <latch>
 #include <thread>
 

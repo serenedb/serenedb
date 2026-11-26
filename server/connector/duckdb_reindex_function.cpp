@@ -264,7 +264,7 @@ class PassConnection {
 
   void Commit(const ReindexTarget& target, std::vector<uint64_t> files,
               std::vector<IcebergObserve::DeleteMask> masks,
-              std::vector<std::pair<uint64_t, int64_t>> rows,
+              irs::TrackedVector<std::pair<uint64_t, int64_t>> rows,
               std::shared_ptr<const search::FileManifest> manifest) {
     auto& context = *_system.conn->context;
     context.RunFunctionInTransaction([&] {

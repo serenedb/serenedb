@@ -51,6 +51,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text::fsst_plus {
 namespace {
@@ -63,9 +64,25 @@ class CompressionState final : public SortedCompressionState<Rows> {
   static constexpr ByteCodec kCodec = ByteCodec::FsstPlus;
 
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : Base{kCodec, data.type, dedup, data.tuning.strings,
-           data.params.segment_target},
-      _codec{data.Get<fsst::SharedEncoder<fsst::Fsst8, kCodec>>().encoder} {}
+    : Base{data.budget,         kCodec,
+           data.type,           dedup,
+           data.tuning.strings, data.params.segment_target},
+      _codec{data.Get<fsst::SharedEncoder<fsst::Fsst8, kCodec>>().encoder},
+      _encoded{TrackedAllocator<char>{data.budget}},
+      _prefixes{TrackedAllocator<char>{data.budget}},
+      _side{TrackedAllocator<char>{data.budget}},
+      _encoded_lengths{TrackedAllocator<uint32_t>{data.budget}},
+      _codes{TrackedAllocator<std::string_view>{data.budget}},
+      _shared{TrackedAllocator<uint32_t>{data.budget}},
+      _ids{TrackedAllocator<uint32_t>{data.budget}},
+      _ends{TrackedAllocator<uint32_t>{data.budget}},
+      _lcp{TrackedAllocator<uint32_t>{data.budget}},
+      _tree{TrackedAllocator<Node>{data.budget}},
+      _order{TrackedAllocator<uint32_t>{data.budget}},
+      _size{TrackedAllocator<uint32_t>{data.budget}},
+      _saved{TrackedAllocator<uint64_t>{data.budget}},
+      _whole{TrackedAllocator<uint8_t>{data.budget}},
+      _ranges{TrackedAllocator<Range>{data.budget}} {}
 
   void FinalizeCompress();
 
@@ -90,21 +107,21 @@ class CompressionState final : public SortedCompressionState<Rows> {
   void Cleave(uint32_t first_entry);
 
   fsst::Encoder<fsst::Fsst8>& _codec;
-  std::string _encoded;
-  std::string _prefixes;
-  std::string _side;
-  std::vector<uint32_t> _encoded_lengths;
-  std::vector<std::string_view> _codes;
-  std::vector<uint32_t> _shared;
-  std::vector<uint32_t> _ids;
-  std::vector<uint32_t> _ends;
-  std::vector<uint32_t> _lcp;
-  std::vector<Node> _tree;
-  std::vector<uint32_t> _order;
-  std::vector<uint32_t> _size;
-  std::vector<uint64_t> _saved;
-  std::vector<uint8_t> _whole;
-  std::vector<Range> _ranges;
+  TrackedString _encoded;
+  TrackedString _prefixes;
+  TrackedString _side;
+  TrackedVector<uint32_t> _encoded_lengths;
+  TrackedVector<std::string_view> _codes;
+  TrackedVector<uint32_t> _shared;
+  TrackedVector<uint32_t> _ids;
+  TrackedVector<uint32_t> _ends;
+  TrackedVector<uint32_t> _lcp;
+  TrackedVector<Node> _tree;
+  TrackedVector<uint32_t> _order;
+  TrackedVector<uint32_t> _size;
+  TrackedVector<uint64_t> _saved;
+  TrackedVector<uint8_t> _whole;
+  TrackedVector<Range> _ranges;
 };
 
 class Prefixes {
@@ -323,11 +340,11 @@ struct Scan {
   Prefixes prefixes;
   PackedReader ids{nullptr, 0};
   ChainGroups groups;
-  std::string heap;
-  std::vector<uint64_t> prefix_ends;
-  std::vector<uint8_t> entry_decoded;
+  TrackedString heap;
+  TrackedVector<uint64_t> prefix_ends;
+  TrackedVector<uint8_t> entry_decoded;
   uint64_t entry_heap_bytes = 0;
-  std::string probe;
+  TrackedString probe;
 };
 
 struct Fetch {
@@ -400,7 +417,7 @@ struct Fetch {
   Prefixes prefixes;
   PackedReader ids{nullptr, 0};
   ChainGroups groups;
-  std::string buf;
+  TrackedString buf;
   uint64_t walked = 0;
 };
 
@@ -415,7 +432,7 @@ size_t SharedCodes(std::string_view a, std::string_view b) noexcept {
   return n;
 }
 
-void AppendU32(std::string& out, uint32_t value) {
+void AppendU32(TrackedString& out, uint32_t value) {
   char bytes[sizeof(uint32_t)];
   duckdb::Store<uint32_t>(value, duckdb::data_ptr_cast(bytes));
   out.append(bytes, sizeof(bytes));

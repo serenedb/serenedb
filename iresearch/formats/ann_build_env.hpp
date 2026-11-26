@@ -26,6 +26,8 @@
 #include <cstdint>
 #include <yaclib/exe/executor.hpp>
 
+#include "iresearch/utils/tracked.hpp"
+
 namespace irs {
 
 inline constexpr uint32_t kHnswMaxWorkers = 64;
@@ -38,6 +40,10 @@ struct AnnBuildEnv {
 
 void FanOut(const AnnBuildEnv* env, size_t tasks,
             absl::FunctionRef<void(size_t)> task);
+
+void FanOut(const AnnBuildEnv* env, MemoryBudget* parent, size_t tasks,
+            size_t task_bytes,
+            absl::FunctionRef<void(size_t, FixedBudget*)> task);
 
 inline auto AnnParallelFor(const AnnBuildEnv* env) {
   return [env](size_t count, absl::FunctionRef<void(size_t)> body) {

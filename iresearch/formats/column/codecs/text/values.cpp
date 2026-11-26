@@ -36,7 +36,11 @@ using duckdb::string_t;
 
 }  // namespace
 
-Values::Values(ColumnDataCheckpointData& data) {
+Values::Values(ColumnDataCheckpointData& data)
+  : distinct{data.Allocator()},
+    codes{data.Allocator()},
+    _codes{0, Hash{&distinct}, Eq{&distinct},
+           TrackedAllocator<uint32_t>{data.budget}} {
   auto& last_distinct = data.tuning.strings.last_distinct;
   const uint64_t rows = data.rows.count;
   codes.reserve(rows);

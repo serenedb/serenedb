@@ -22,10 +22,16 @@
 
 #include <duckdb/common/types/vector_buffer.hpp>
 
+#include "iresearch/utils/tracked.hpp"
+
 namespace irs {
 
 struct ImmutablePayloads final : duckdb::AuxiliaryDataHolder {
   bool CertifiesImmutablePayloads() const final { return true; }
+};
+
+struct HeapCharge final : duckdb::AuxiliaryDataHolder {
+  MemoryCharge charge;
 };
 
 }  // namespace irs

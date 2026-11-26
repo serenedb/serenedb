@@ -31,7 +31,6 @@
 #include <iresearch/search/count/live_count.hpp>
 #include <iresearch/search/detail/exclude_block.hpp>
 #include <iresearch/search/detail/with_mask.hpp>
-#include <iresearch/store/store_utils.hpp>
 #include <iresearch/utils/bit_utils.hpp>
 #include <iresearch/utils/string.hpp>
 #include <iresearch/utils/tracked.hpp>
@@ -870,7 +869,9 @@ TEST(document_mask_test, builder_counts_the_docs_ranges_add) {
 
 TEST(document_mask_test, read_frozen_charges_its_copy) {
   const auto blob = FrozenBlob(Build(Every(1, 1 << 20, 2)));
-  irs::BytesViewInput in{irs::ViewCast<irs::byte_type>(std::string_view{blob})};
+  duckdb::MemoryStream in{
+    reinterpret_cast<duckdb::data_ptr_t>(const_cast<char*>(blob.data())),
+    blob.size()};
   const auto base = TrackedMemory();
   {
     const auto mask = irs::DocumentMask::ReadFrozen(in, blob.size());

@@ -37,6 +37,7 @@
 #include "iresearch/index/file_names.hpp"
 #include "iresearch/utils/compression.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::format_utils {
 namespace {
@@ -46,7 +47,7 @@ constexpr duckdb::field_id_t kFieldMeta = 1;
 
 void WritePackedMeta(duckdb::BinarySerializer& meta, duckdb::WriteStream& out,
                      FooterWriter write) {
-  duckdb::MemoryStream raw;
+  duckdb::MemoryStream raw{TrackedDuckAllocator()};
   duckdb::BinarySerializer serializer{raw};
   serializer.Begin();
   write(serializer);
@@ -190,9 +191,14 @@ Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
 
 std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
                                                        std::string_view root,
-                                                       std::string_view name) {
+                                                       std::string_view name,
+                                                       MemoryBudget* budget) {
   auto path = fs.JoinPath(root, name);
   auto writer = fs.OpenFileWriter(path);
+  if (budget) {
+    writer->FundFrom(
+      budget->Lend(duckdb::MemoryTag::EXTERNAL_FILE_CACHE, kOutputBlockBytes));
+  }
   return std::make_unique<duckdb::BufferedFileWriter>(fs, std::move(path),
                                                       std::move(writer));
 }
@@ -200,8 +206,8 @@ std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
 std::unique_ptr<duckdb::BufferedFileWriter> PrepareOutput(
   const FlushState& state, std::string_view ext, uint8_t kind) {
   auto& tracker = state.tracker;
-  auto out =
-    OpenOutput(tracker.Fs(), tracker.Root(), FileName(tracker.Name(), ext));
+  auto out = OpenOutput(tracker.Fs(), tracker.Root(),
+                        FileName(tracker.Name(), ext), &state.budget);
   tracker.Add(kind);
   return out;
 }

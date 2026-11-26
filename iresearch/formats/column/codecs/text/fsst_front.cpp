@@ -58,6 +58,7 @@
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text::fsst {
 namespace {
@@ -68,7 +69,15 @@ struct Fsst12 {
 
   using Encoding = duckdb_fsst12_encoder_t;
   using Table = duckdb_fsst12_decoder_t;
-  using Exported = std::vector<unsigned char>;
+  using Exported = TrackedVector<unsigned char>;
+
+  static Exported MakeExported(MemoryBudget* budget) noexcept {
+    return Exported{TrackedAllocator<unsigned char>{budget}};
+  }
+
+  static EncoderFootprint Footprint(size_t strings) noexcept {
+    return Fsst12Footprint(strings);
+  }
 
   static Encoding* Create(size_t n, size_t* lengths,
                           const unsigned char** strings) {
@@ -167,7 +176,7 @@ uint64_t ChainCapacity(PackedReader& lengths, PackedReader& lcps,
 
 template<typename Impl>
 uint64_t DecodeSuffix(const fsst::Decoder<Impl>& fsst, const char* in,
-                      uint64_t enc, uint64_t lcp, std::string& buf) {
+                      uint64_t enc, uint64_t lcp, TrackedString& buf) {
   const auto room = enc * fsst::kMaxExpansion;
   auto* at = Reserve(buf, lcp + room) + lcp;
   const auto dec = enc == 0 ? 0 : fsst.Decode(in, enc, at, room);
@@ -236,7 +245,7 @@ template<typename Impl, typename Visit>
 uint32_t WalkInPlace(const fsst::Decoder<Impl>& fsst, const char* in,
                      PackedReader& lengths, PackedReader& lcps, uint32_t first,
                      uint32_t end, uint64_t enc_off, uint64_t enc_end,
-                     std::string& buf, Visit&& visit) {
+                     TrackedString& buf, Visit&& visit) {
   uint64_t len = 0;
   for (auto e = first; e < end; ++e) {
     const uint64_t lcp = e == first ? 0 : lcps.At(e);
@@ -258,7 +267,7 @@ std::string_view DecodeChained(const fsst::Decoder<Impl>& fsst, const char* in,
                                PackedReader& lengths, PackedReader& lcps,
                                uint32_t restart, uint32_t entry,
                                uint64_t enc_off, uint64_t enc_end,
-                               std::string& buf, uint64_t& walked) {
+                               TrackedString& buf, uint64_t& walked) {
   const uint32_t n = entry - restart + 1;
   SDB_ASSERT(n <= kChainRestart);
   std::array<uint64_t, kChainRestart + 1> off;
@@ -695,13 +704,13 @@ struct Scan {
   fsst::Decoder<Impl> decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
-  std::vector<uint8_t> group_decoded;
-  std::vector<uint16_t> group_rows;
+  TrackedVector<uint8_t> group_decoded;
+  TrackedVector<uint16_t> group_rows;
   static_assert(kChainRestart <= 8 * sizeof(uint16_t));
   uint64_t group_heap_bytes = 0;
   uint32_t group_frame = kNoFrame;
-  std::string probe;
-  std::string chain;
+  TrackedString probe;
+  TrackedString chain;
 };
 
 template<typename Impl>
@@ -754,7 +763,7 @@ struct Fetch {
   std::optional<fsst::Decoder<Impl>> decoder;
   PackedReader lcps{nullptr, 0};
   ChainGroups groups;
-  std::string chain;
+  TrackedString chain;
   uint64_t walked = 0;
 };
 
@@ -766,9 +775,11 @@ class CompressionState final : public SortedCompressionState<Rows> {
   static constexpr ByteCodec kCodec = Impl::kCodec;
 
   CompressionState(ColumnDataCheckpointData& data, DedupScratch& dedup)
-    : Base{kCodec, data.type, dedup, data.tuning.strings,
-           data.params.segment_target},
-      _codec{data.Get<fsst::SharedEncoder<Impl>>().encoder} {}
+    : Base{data.budget,         kCodec,
+           data.type,           dedup,
+           data.tuning.strings, data.params.segment_target},
+      _codec{data.Get<fsst::SharedEncoder<Impl>>().encoder},
+      _lcp_stream{TrackedAllocator<uint32_t>{data.budget}} {}
 
   void FinalizeCompress();
 
@@ -779,7 +790,7 @@ class CompressionState final : public SortedCompressionState<Rows> {
   using Base::_target;
 
   fsst::Encoder<Impl>& _codec;
-  std::vector<uint32_t> _lcp_stream;
+  TrackedVector<uint32_t> _lcp_stream;
 };
 
 template<typename Impl, typename Rows>

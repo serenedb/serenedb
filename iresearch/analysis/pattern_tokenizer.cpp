@@ -233,7 +233,7 @@ delim::Finder DetectSplit(const re2::RE2& pattern, int group) {
   if (last.hi >= 128 && (last.lo > 128 || last.hi != re2::Runemax)) {
     return group < 0 ? SplitOnRunes(*cc) : delim::Finder{};
   }
-  classify::ByteSet set;
+  ByteSet set;
   for (const auto& range : *cc) {
     for (auto r = range.lo; r <= std::min(range.hi, re2::Rune{0xFF}); ++r) {
       set.Add(static_cast<byte_type>(r));

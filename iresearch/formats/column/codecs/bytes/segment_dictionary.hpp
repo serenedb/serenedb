@@ -25,8 +25,9 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
-#include <string>
 #include <string_view>
+
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs {
 
@@ -40,11 +41,11 @@ constexpr size_t SegmentDictionaryBytes(uint64_t raw, uint64_t cap) noexcept {
 }
 
 void TrainDictionary(std::string_view frames, std::span<const size_t> sizes,
-                     size_t cap, std::string& dictionary);
+                     size_t cap, TrackedString& dictionary);
 
 template<typename Compress>
 void PackDictionary(std::string_view dictionary, size_t bound,
-                    std::string& stored, Compress&& compress) {
+                    TrackedString& stored, Compress&& compress) {
   stored.resize_and_overwrite(bound, [&](char* buf, size_t capacity) {
     const auto n =
       compress(dictionary.data(), dictionary.size(), buf, capacity);
@@ -56,7 +57,7 @@ void PackDictionary(std::string_view dictionary, size_t bound,
 }
 
 template<typename Decode>
-bool FillDictionary(std::string& window, size_t& dictionary, size_t size,
+bool FillDictionary(TrackedString& window, size_t& dictionary, size_t size,
                     Decode&& decode) {
   bool ok = false;
   window.resize_and_overwrite(size, [&](char* buf, size_t n) {
@@ -77,7 +78,7 @@ bool UnpackDictionary(std::string_view stored, char* dst, size_t size,
   return decompress(stored.data(), stored.size(), dst, size);
 }
 
-inline char* FrameAfterDictionary(std::string& window, size_t dictionary,
+inline char* FrameAfterDictionary(TrackedString& window, size_t dictionary,
                                   size_t size) {
   window.resize_and_overwrite(dictionary + size,
                               [](char*, size_t n) { return n; });

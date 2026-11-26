@@ -1,0 +1,399 @@
+////////////////////////////////////////////////////////////////////////////////
+/// DISCLAIMER
+///
+/// Copyright 2026 SereneDB GmbH, Berlin, Germany
+///
+/// Licensed under the Apache License, Version 2.0 (the "License");
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions and
+/// limitations under the License.
+///
+/// Copyright holder is SereneDB GmbH, Berlin, Germany
+////////////////////////////////////////////////////////////////////////////////
+
+#include "iresearch/formats/index/term_dict_records.hpp"
+
+#include <bit>
+
+#include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
+
+namespace irs::term_dict {
+namespace {
+
+uint32_t Bits(uint64_t max) noexcept {
+  const auto bits = static_cast<uint32_t>(std::bit_width(max));
+  SDB_ASSERT(bits <= kMaxRecordBits);
+  return bits;
+}
+
+uint64_t Anchors(uint64_t count) noexcept {
+  return count == 0 ? 0 : (count - 1) / kRecordAnchor;
+}
+
+}  // namespace
+
+RunView ParseRun(const byte_type* p, IndexFeatures features) {
+  RunView view;
+  view.count = vread<uint32_t>(p);
+  const byte_type shape = *p++;
+  const bool singles = (shape & kRunSingles) != 0;
+  const bool multis = (shape & kRunMultis) != 0;
+  if (view.count == 0 || (shape & ~kRunKinds) != 0 || (!singles && !multis))
+    [[unlikely]] {
+    Corrupted("posting run");
+  }
+  const auto bits = [&] {
+    const uint32_t value = *p++;
+    if (value > kMaxRecordBits) [[unlikely]] {
+      Corrupted("posting run width");
+    }
+    return value;
+  };
+  const auto sparse = [&](Sparse& column, uint32_t values) {
+    column.count = vread<uint32_t>(p);
+    if (column.count != 0) {
+      column.keys.bits = bits();
+      for (uint32_t v = 0; v != values; ++v) {
+        column.values[v].bits = bits();
+      }
+    }
+  };
+  if (singles) {
+    view.single_base = vread<uint64_t>(p);
+    view.singles.bits = bits();
+  }
+  if (multis) {
+    view.docs.bits = bits();
+  }
+  if (IsSubsetOf(IndexFeatures::Freq, features)) {
+    view.excess.bits = bits();
+  }
+  if (multis) {
+    view.start_base = vread<uint64_t>(p);
+    view.starts.bits = bits();
+    sparse(view.big, 1);
+  }
+  if (IsSubsetOf(IndexFeatures::Pos, features)) {
+    view.pos_start = vread<uint64_t>(p);
+    view.pos_offset = vread<uint32_t>(p);
+    if (view.pos_offset >= PosGroup::kPositions) [[unlikely]] {
+      Corrupted("posting run position");
+    }
+    if (IsSubsetOf(IndexFeatures::Offs, features)) {
+      view.pay_start = vread<uint64_t>(p);
+    }
+    view.freq_anchors.bits = bits();
+    sparse(view.crossings, PositionValues(features));
+    sparse(view.extents, PositionValues(features));
+  } else if (IsSubsetOf(IndexFeatures::Vec, features)) {
+    view.vec_base = vread<uint64_t>(p);
+    view.vec_starts.bits = bits();
+    view.lanes.bits = bits();
+  }
+
+  const uint32_t count = view.count;
+  if (singles && multis) {
+    view.multi_bits = p;
+    p += PackedBytes(count, 1);
+    view.multis = RankAt(view.multi_bits, count);
+    if (view.multis == 0 || view.multis == count) [[unlikely]] {
+      Corrupted("posting run kinds");
+    }
+  } else {
+    view.multis = multis ? count : 0;
+  }
+  const auto column = [&](Packed& packed, uint64_t size) {
+    packed.data = p;
+    p += PackedBytes(size, packed.bits);
+  };
+  const auto sparse_data = [&](Sparse& sparse, uint32_t domain,
+                               uint32_t values) {
+    if (sparse.count > domain) [[unlikely]] {
+      Corrupted("posting run sparse column");
+    }
+    column(sparse.keys, sparse.count);
+    for (uint32_t v = 0; v != values; ++v) {
+      column(sparse.values[v], sparse.count);
+    }
+  };
+  column(view.singles, count - view.multis);
+  column(view.docs, view.multis);
+  column(view.excess, IsSubsetOf(IndexFeatures::Freq, features) ? count : 0);
+  column(view.starts, view.multis);
+  sparse_data(view.big, view.multis, 1);
+  if (IsSubsetOf(IndexFeatures::Pos, features)) {
+    column(view.freq_anchors, Anchors(count));
+    sparse_data(view.crossings, count, PositionValues(features));
+    sparse_data(view.extents, count, PositionValues(features));
+  } else if (IsSubsetOf(IndexFeatures::Vec, features)) {
+    column(view.vec_starts, count);
+    column(view.lanes, count);
+  }
+  return view;
+}
+
+RecordRun::RecordRun(MemoryBudget* budget)
+  : _multi_bits{TrackedAllocator<uint8_t>{budget}},
+    _singles{TrackedAllocator<uint64_t>{budget}},
+    _docs{TrackedAllocator<uint64_t>{budget}},
+    _excess{TrackedAllocator<uint64_t>{budget}},
+    _starts{TrackedAllocator<uint64_t>{budget}},
+    _freq_anchors{TrackedAllocator<uint64_t>{budget}},
+    _vec_starts{TrackedAllocator<uint64_t>{budget}},
+    _lanes{TrackedAllocator<uint64_t>{budget}},
+    _big{budget},
+    _crossings{budget},
+    _extents{budget} {}
+
+void RecordRun::Clear() noexcept {
+  _stats = {};
+  _multi_bits.clear();
+  _singles.clear();
+  _docs.clear();
+  _excess.clear();
+  _starts.clear();
+  _freq_anchors.clear();
+  _vec_starts.clear();
+  _lanes.clear();
+  _big.Clear();
+  _crossings.Clear();
+  _extents.Clear();
+}
+
+RecordRun::Stats RecordRun::Stage(const PostingMeta& meta) const {
+  SDB_ASSERT(meta.docs_count != 0);
+  Stats s = _stats;
+  const uint32_t i = s.count++;
+  if (meta.docs_count == 1) {
+    s.singles.Add(meta.doc_delta);
+  } else {
+    const uint32_t multi = s.multis++;
+    s.docs = std::max<uint64_t>(s.docs, meta.docs_count - 2);
+    s.starts.Add(meta.doc_start);
+    if (meta.docs_count > doc_limits::kBlockSize) {
+      s.big.Add(multi, meta.doc_delta, 0);
+    }
+  }
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
+    SDB_ASSERT(meta.freq >= meta.docs_count);
+    s.excess = std::max<uint64_t>(s.excess, meta.freq - meta.docs_count);
+  }
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
+    if (i == 0) {
+      s.pos_start = meta.pos_start;
+      s.pay_start = meta.pay_start;
+      s.pos_offset = meta.pos_offset;
+    } else {
+      const uint64_t at = s.pos_offset + s.freq;
+      const uint64_t group = at / PosGroup::kPositions;
+      const bool crossed = group != s.last_group;
+      SDB_ENSURE(
+        meta.pos_offset == at % PosGroup::kPositions &&
+          crossed == (meta.pos_start != s.pos_start + s.crossings.max[0]) &&
+          (crossed || meta.pay_start == s.pay_start + s.crossings.max[1]),
+        "term dictionary: positions of a term do not follow the previous "
+        "term's");
+      if (crossed) {
+        s.crossings.Add(i, meta.pos_start - s.pos_start,
+                        IsSubsetOf(IndexFeatures::Offs, _features)
+                          ? meta.pay_start - s.pay_start
+                          : 0);
+      }
+      s.last_group = group;
+    }
+    if (i != 0 && i % kRecordAnchor == 0) {
+      s.freq_anchor = s.freq;
+    }
+    s.freq += meta.freq;
+    if (meta.freq > pos_limits::kBlockSize) {
+      s.extents.Add(
+        i, meta.pos_extent,
+        IsSubsetOf(IndexFeatures::Offs, _features) ? meta.pay_extent : 0);
+    }
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
+    s.vec_starts.Add(meta.pay_start);
+    s.lanes = std::max<uint64_t>(s.lanes, meta.pos_offset);
+  }
+  return s;
+}
+
+void RecordRun::Commit(const PostingMeta& meta, const Stats& staged) {
+  const auto& old = _stats;
+  const auto& s = staged;
+  SDB_ASSERT(s.count == old.count + 1);
+  const uint32_t i = old.count;
+  const bool multi = meta.docs_count != 1;
+  _multi_bits.push_back(uint8_t{multi});
+  if (!multi) {
+    _singles.push_back(meta.doc_delta);
+  } else {
+    _docs.push_back(meta.docs_count - 2);
+    _starts.push_back(meta.doc_start);
+    if (s.big.count != old.big.count) {
+      _big.Add(s.big.last_key, meta.doc_delta, 0);
+    }
+  }
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
+    _excess.push_back(meta.freq - meta.docs_count);
+  }
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
+    if (i != 0 && i % kRecordAnchor == 0) {
+      _freq_anchors.push_back(old.freq);
+    }
+    if (s.crossings.count != old.crossings.count) {
+      _crossings.Add(i, meta.pos_start - s.pos_start,
+                     IsSubsetOf(IndexFeatures::Offs, _features)
+                       ? meta.pay_start - s.pay_start
+                       : 0);
+    }
+    if (s.extents.count != old.extents.count) {
+      _extents.Add(
+        i, meta.pos_extent,
+        IsSubsetOf(IndexFeatures::Offs, _features) ? meta.pay_extent : 0);
+    }
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
+    _vec_starts.push_back(meta.pay_start);
+    _lanes.push_back(meta.pos_offset);
+  }
+  _stats = s;
+}
+
+uint64_t RecordRun::SparseBytes(const SparseStats& stats,
+                                uint32_t values) const noexcept {
+  uint64_t size = VSize(stats.count);
+  if (stats.count != 0) {
+    size += 1 + values + PackedBytes(stats.count, stats.KeyBits());
+    for (uint32_t v = 0; v != values; ++v) {
+      size += PackedBytes(stats.count, Bits(stats.max[v]));
+    }
+  }
+  return size;
+}
+
+uint64_t RecordRun::SizeOf(const Stats& s) const noexcept {
+  SDB_ASSERT(s.count != 0);
+  const uint32_t singles = s.count - s.multis;
+  uint64_t size = VSize(s.count) + 1;
+  if (singles != 0) {
+    size += VSize(s.singles.min) + 1 + PackedBytes(singles, s.singles.Bits());
+  }
+  if (s.multis != 0) {
+    size += 1 + PackedBytes(s.multis, Bits(s.docs)) + VSize(s.starts.min) + 1 +
+            PackedBytes(s.multis, s.starts.Bits()) + SparseBytes(s.big, 1);
+  }
+  if (singles != 0 && s.multis != 0) {
+    size += PackedBytes(s.count, 1);
+  }
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
+    size += 1 + PackedBytes(s.count, Bits(s.excess));
+  }
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
+    size +=
+      VSize(s.pos_start) + VSize(s.pos_offset) +
+      (IsSubsetOf(IndexFeatures::Offs, _features) ? VSize(s.pay_start) : 0) +
+      1 + PackedBytes(Anchors(s.count), Bits(s.freq_anchor)) +
+      SparseBytes(s.crossings, PositionValues(_features)) +
+      SparseBytes(s.extents, PositionValues(_features));
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
+    size += VSize(s.vec_starts.min) + 2 +
+            PackedBytes(s.count, s.vec_starts.Bits()) +
+            PackedBytes(s.count, Bits(s.lanes));
+  }
+  return size;
+}
+
+void RecordRun::WriteSparse(duckdb::WriteStream& out, const SparseStats& stats,
+                            const SparseColumn& column, uint32_t values) const {
+  SDB_ASSERT(column.keys.size() == stats.count);
+  WritePacked(out, stats.count, stats.KeyBits(),
+              [&](uint64_t j) { return column.keys[j]; });
+  for (uint32_t v = 0; v != values; ++v) {
+    WritePacked(out, stats.count, Bits(stats.max[v]),
+                [&](uint64_t j) { return column.values[v][j]; });
+  }
+}
+
+void RecordRun::Write(duckdb::WriteStream& out) const {
+  const auto& s = _stats;
+  SDB_ASSERT(s.count != 0);
+  const uint32_t singles = s.count - s.multis;
+  const uint32_t extras = PositionValues(_features);
+  const auto sparse_header = [&](const SparseStats& stats, uint32_t values) {
+    out.WriteVarint<uint32_t>(stats.count);
+    if (stats.count != 0) {
+      out.Write<byte_type>(static_cast<byte_type>(stats.KeyBits()));
+      for (uint32_t v = 0; v != values; ++v) {
+        out.Write<byte_type>(static_cast<byte_type>(Bits(stats.max[v])));
+      }
+    }
+  };
+
+  out.WriteVarint<uint32_t>(s.count);
+  out.Write<byte_type>(static_cast<byte_type>(
+    (singles != 0 ? kRunSingles : 0) | (s.multis != 0 ? kRunMultis : 0)));
+  if (singles != 0) {
+    out.WriteVarint<uint64_t>(s.singles.min);
+    out.Write<byte_type>(static_cast<byte_type>(s.singles.Bits()));
+  }
+  if (s.multis != 0) {
+    out.Write<byte_type>(static_cast<byte_type>(Bits(s.docs)));
+  }
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
+    out.Write<byte_type>(static_cast<byte_type>(Bits(s.excess)));
+  }
+  if (s.multis != 0) {
+    out.WriteVarint<uint64_t>(s.starts.min);
+    out.Write<byte_type>(static_cast<byte_type>(s.starts.Bits()));
+    sparse_header(s.big, 1);
+  }
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
+    out.WriteVarint<uint64_t>(s.pos_start);
+    out.WriteVarint<uint32_t>(s.pos_offset);
+    if (IsSubsetOf(IndexFeatures::Offs, _features)) {
+      out.WriteVarint<uint64_t>(s.pay_start);
+    }
+    out.Write<byte_type>(static_cast<byte_type>(Bits(s.freq_anchor)));
+    sparse_header(s.crossings, extras);
+    sparse_header(s.extents, extras);
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
+    out.WriteVarint<uint64_t>(s.vec_starts.min);
+    out.Write<byte_type>(static_cast<byte_type>(s.vec_starts.Bits()));
+    out.Write<byte_type>(static_cast<byte_type>(Bits(s.lanes)));
+  }
+
+  if (singles != 0 && s.multis != 0) {
+    WritePacked(out, s.count, 1, [&](uint64_t j) { return _multi_bits[j]; });
+  }
+  WritePacked(out, singles, s.singles.Bits(),
+              [&](uint64_t j) { return _singles[j] - s.singles.min; });
+  WritePacked(out, s.multis, Bits(s.docs),
+              [&](uint64_t j) { return _docs[j]; });
+  if (IsSubsetOf(IndexFeatures::Freq, _features)) {
+    WritePacked(out, s.count, Bits(s.excess),
+                [&](uint64_t j) { return _excess[j]; });
+  }
+  WritePacked(out, s.multis, s.starts.Bits(),
+              [&](uint64_t j) { return _starts[j] - s.starts.min; });
+  WriteSparse(out, s.big, _big, 1);
+  if (IsSubsetOf(IndexFeatures::Pos, _features)) {
+    WritePacked(out, _freq_anchors.size(), Bits(s.freq_anchor),
+                [&](uint64_t j) { return _freq_anchors[j]; });
+    WriteSparse(out, s.crossings, _crossings, extras);
+    WriteSparse(out, s.extents, _extents, extras);
+  } else if (IsSubsetOf(IndexFeatures::Vec, _features)) {
+    WritePacked(out, s.count, s.vec_starts.Bits(),
+                [&](uint64_t j) { return _vec_starts[j] - s.vec_starts.min; });
+    WritePacked(out, s.count, Bits(s.lanes),
+                [&](uint64_t j) { return _lanes[j]; });
+  }
+}
+
+}  // namespace irs::term_dict

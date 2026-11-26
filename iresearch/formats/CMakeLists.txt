@@ -13,6 +13,9 @@ target_sources(
         column/codecs/numeric/alprd.cpp
         column/codecs/numeric/numeric.cpp
         column/codecs/registry.cpp
+        column/codecs/seal_bound.cpp
+        column/codecs/text/fsst12_footprint.cpp
+        column/codecs/text/fsst8_footprint.cpp
         column/codecs/text/fsst_front.cpp
         column/codecs/text/fsst_plus.cpp
         column/codecs/text/lz4.cpp
@@ -45,13 +48,16 @@ target_sources(
         index/field_writer.cpp
         index/idx_reader.cpp
         index/idx_writer.cpp
-        index/term_dict_inline.cpp
+        index/term_dict_block_writer.cpp
+        index/term_dict_index.cpp
         index/term_dict_meta.cpp
         index/term_dict_prefixes.cpp
         index/term_dict_ranges.cpp
         index/term_dict_reader.cpp
+        index/term_dict_records.cpp
         index/term_dict_root.cpp
         index/term_dict_single.cpp
+        index/term_dict_store.cpp
         index/term_dict_walk.cpp
         piece_fields.cpp
         posting/block_codec.cpp

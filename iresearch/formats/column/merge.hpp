@@ -46,7 +46,8 @@ struct MergeSource {
   uint64_t alive_count;
 };
 
-uint64_t MergeIntoBound(std::span<const MergeSource> sources);
+uint64_t MergeIntoBound(std::span<const MergeSource> sources,
+                        const IndexFieldOptions* field_options);
 
 AnnFlushBound MergeAnnBound(std::span<const MergeSource> sources,
                             const IndexFieldOptions* field_options,

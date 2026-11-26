@@ -28,6 +28,7 @@
 #include <duckdb/execution/index/index_type.hpp>
 #include <duckdb/execution/physical_operator.hpp>
 #include <duckdb/parser/parsed_data/create_index_info.hpp>
+#include <iresearch/utils/tracked.hpp>
 #include <optional>
 
 #include "catalog/catalog.h"
@@ -57,7 +58,7 @@ struct SereneDBCreateIndexInfo final : duckdb::CreateIndexInfo {
 
   std::vector<uint64_t> removed_files;
   std::vector<IcebergObserve::DeleteMask> removed_masks;
-  std::vector<std::pair<uint64_t, int64_t>> removed_rows;
+  irs::TrackedVector<std::pair<uint64_t, int64_t>> removed_rows;
 
   std::shared_ptr<const search::FileManifest> manifest;
 

@@ -22,7 +22,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <vector>
+
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text {
 
@@ -32,6 +33,9 @@ class DedupScratch {
     uint32_t local;
     bool fresh;
   };
+
+  explicit DedupScratch(MemoryBudget* budget)
+    : _slots{TrackedAllocator<Slot>{budget}} {}
 
   void Begin(size_t entries) {
     if (_slots.size() != entries) {
@@ -55,7 +59,7 @@ class DedupScratch {
     uint32_t local = 0;
   };
 
-  std::vector<Slot> _slots;
+  TrackedVector<Slot> _slots;
   uint32_t _epoch = 0;
 };
 

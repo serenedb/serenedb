@@ -24,6 +24,7 @@
 
 #include "iresearch/index/docs_mask/docs_mask.hpp"
 #include "iresearch/index/index_reader.hpp"
+#include "iresearch/search/count/disjoint.hpp"
 #include "iresearch/search/count/family.hpp"
 #include "iresearch/search/count/live_count.hpp"
 #include "iresearch/search/count/make.hpp"
@@ -64,10 +65,11 @@ Root::ptr MakeLiveTerm(PlanMemory& memory, const detail::PostingClause& term,
     });
 }
 
-Root::ptr Family::MakeNegation(
-  std::span<const detail::PostingClause> exclude_terms,
-  std::span<const QueryBuilder::ptr> exclude_filters, const SubReader& segment,
-  uint64_t candidates, const Context& ctx) {
+Root::ptr Family::MakeNegation(const BooleanQuery& query,
+                               const SubReader& segment, uint64_t candidates,
+                               const Context& ctx) {
+  const auto exclude_terms = query.Terms(Occur::MustNot);
+  const auto exclude_filters = query.Queries(Occur::MustNot);
   if (ctx.table != nullptr) {
     return detail::builder::MakeSparseNegation<Family>(
       exclude_terms, exclude_filters, segment, candidates, ctx);
@@ -86,25 +88,31 @@ Root::ptr Family::MakeNegation(
     return detail::builder::MakeWindowNegation<Family>(
       exclude_terms, exclude_filters, segment, ctx);
   }
-  Root::ptr excluded;
-  if (exclude_terms.size() + exclude_filters.size() == 1) {
-    excluded = exclude_terms.empty()
-                 ? exclude_filters.front()->PlanCount(ctx)
-                 : MakePosting(exclude_terms.front(), segment, ctx,
-                               ScoreMergeType::Noop);
-  } else {
+  const auto plan_excluded = [=, &segment]() -> Root::ptr {
+    if (exclude_terms.size() + exclude_filters.size() == 1) {
+      return exclude_terms.empty() ? exclude_filters.front()->PlanCount(ctx)
+                                   : MakePosting(exclude_terms.front(), segment,
+                                                 ctx, ScoreMergeType::Noop);
+    }
     if (exclude_filters.empty() &&
         SubtractsPair(exclude_terms,
                       static_cast<doc_id_t>(segment.docs_count()))) {
-      excluded = MakeSubtractDisjunction(exclude_terms.front(),
-                                         exclude_terms.back(), segment, ctx);
+      if (auto subtracted = MakeSubtractDisjunction(
+            exclude_terms.front(), exclude_terms.back(), segment, ctx)) {
+        return subtracted;
+      }
     }
-    if (!excluded) {
-      excluded = detail::builder::MakeDisjunction<Family>(
-        exclude_terms, exclude_filters, nullptr, segment, detail::NoScoring{},
-        ctx, 0);
-    }
-  }
+    return detail::builder::MakeDisjunction<Family>(
+      exclude_terms, exclude_filters, nullptr, segment, detail::NoScoring{},
+      ctx, 0);
+  };
+  auto excluded =
+    exclude_filters.empty() && query.Bucket(Occur::MustNot).disjoint
+      ? MakeWholeCount(detail::SumDocs(exclude_terms), ctx,
+                       [exclude_terms, ctx] {
+                         return MakeTermsSum(exclude_terms, nullptr, ctx);
+                       })
+      : plan_excluded();
   if (!excluded) {
     return {};
   }

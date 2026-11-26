@@ -52,9 +52,11 @@ struct Zstd {
     return ZSTD_compressBound(raw_size);
   }
 
+  static size_t ContextBytes(uint8_t level) noexcept;
+
   class Compressor final : public DictionaryCompressor {
    public:
-    explicit Compressor(uint8_t level);
+    Compressor(MemoryBudget* budget, uint8_t level);
 
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
@@ -85,7 +87,7 @@ struct Zstd {
 
    private:
     bool Run(const char* src, size_t size, char* dst, size_t raw_size,
-             const ZSTD_DDict* dictionary) noexcept;
+             const ZSTD_DDict* dictionary);
     const ZSTD_DDict* Attached();
 
     std::unique_ptr<ZSTD_DCtx, ZstdFree> _ctx;

@@ -47,12 +47,6 @@ namespace {
 [[maybe_unused]] inline constexpr irs::field_id kPrefixFieldId =
   tests::FieldIdFor("prefix");
 
-template<typename T>
-irs::bstring NumericTerm(T value) {
-  irs::byte_type buf[irs::numeric_utils::kNumericTermMaxSize];
-  return irs::bstring{irs::numeric_utils::EncodeNumericTerm(buf, value)};
-}
-
 irs::ByRange MakeFilter(irs::field_id field, const irs::bytes_view& min,
                         irs::BoundType min_type, const irs::bytes_view& max,
                         irs::BoundType max_type) {
@@ -117,7 +111,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::FloatField>());
               auto& field = (doc.indexed.end() - 1).as<tests::FloatField>();
               field.Name(name);
-              field.id = fid;
+              field.id = tests::TypedFieldId<float>(fid);
               field.value(f_value);
             }
 
@@ -126,14 +120,14 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::LongField>());
               auto& field = (doc.indexed.end() - 1).as<tests::LongField>();
               field.Name(name);
-              field.id = fid;
+              field.id = tests::TypedFieldId<int64_t>(fid);
               field.value(static_cast<int64_t>(value));
             }
             {
               doc.insert(std::make_shared<tests::IntField>());
               auto& field = (doc.indexed.end() - 1).as<tests::IntField>();
               field.Name(name);
-              field.id = fid;
+              field.id = tests::TypedFieldId<int32_t>(fid);
               field.value(static_cast<int32_t>(value));
             }
           }
@@ -153,9 +147,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       const auto max_term =
         irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT64_C(7));
 
-      irs::ByRange query =
-        MakeFilter(kSeqFieldId, min_term, irs::BoundType::Inclusive, max_term,
-                   irs::BoundType::Inclusive);
+      irs::ByRange query = MakeFilter(tests::TypedFieldId<int64_t>(kSeqFieldId),
+                                      min_term, irs::BoundType::Inclusive,
+                                      max_term, irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr, nullptr};
 
@@ -182,9 +176,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       const auto max_term =
         irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT64_C(7));
 
-      irs::ByRange query =
-        MakeFilter(kSeqFieldId, min_term, irs::BoundType::Inclusive, max_term,
-                   irs::BoundType::Inclusive);
+      irs::ByRange query = MakeFilter(tests::TypedFieldId<int64_t>(kSeqFieldId),
+                                      min_term, irs::BoundType::Inclusive,
+                                      max_term, irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr};
 
@@ -208,8 +202,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
         irs::numeric_utils::EncodeNumericTerm(min_stream_buf, INT64_C(28));
 
       irs::ByRange query =
-        MakeFilter(kSeqFieldId, min_term, irs::BoundType::Exclusive,
-                   NumericTerm(std::numeric_limits<int64_t>::max()),
+        MakeFilter(tests::TypedFieldId<int64_t>(kSeqFieldId), min_term,
+                   irs::BoundType::Exclusive,
+                   tests::NumericTerm(std::numeric_limits<int64_t>::max()),
                    irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr};
@@ -234,7 +229,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
         irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT64_C(5));
 
       irs::ByRange query = MakeFilter(
-        kSeqFieldId, NumericTerm(std::numeric_limits<int64_t>::min()),
+        tests::TypedFieldId<int64_t>(kSeqFieldId),
+        tests::NumericTerm(std::numeric_limits<int64_t>::min()),
         irs::BoundType::Inclusive, max_term, irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr};
@@ -262,9 +258,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       const auto max_term =
         irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT32_C(7));
 
-      irs::ByRange query =
-        MakeFilter(kSeqFieldId, min_term, irs::BoundType::Inclusive, max_term,
-                   irs::BoundType::Inclusive);
+      irs::ByRange query = MakeFilter(tests::TypedFieldId<int32_t>(kSeqFieldId),
+                                      min_term, irs::BoundType::Inclusive,
+                                      max_term, irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr};
 
@@ -291,9 +287,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       const auto max_term =
         irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT32_C(7));
 
-      irs::ByRange query =
-        MakeFilter(kSeqFieldId, min_term, irs::BoundType::Inclusive, max_term,
-                   irs::BoundType::Inclusive);
+      irs::ByRange query = MakeFilter(tests::TypedFieldId<int32_t>(kSeqFieldId),
+                                      min_term, irs::BoundType::Inclusive,
+                                      max_term, irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr};
 
@@ -317,8 +313,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
         irs::numeric_utils::EncodeNumericTerm(min_stream_buf, INT32_C(28));
 
       irs::ByRange query =
-        MakeFilter(kSeqFieldId, min_term, irs::BoundType::Exclusive,
-                   NumericTerm(std::numeric_limits<int32_t>::max()),
+        MakeFilter(tests::TypedFieldId<int32_t>(kSeqFieldId), min_term,
+                   irs::BoundType::Exclusive,
+                   tests::NumericTerm(std::numeric_limits<int32_t>::max()),
                    irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr};
@@ -343,7 +340,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
         irs::numeric_utils::EncodeNumericTerm(max_stream_buf, INT32_C(5));
 
       irs::ByRange query = MakeFilter(
-        kSeqFieldId, NumericTerm(std::numeric_limits<int32_t>::min()),
+        tests::TypedFieldId<int32_t>(kSeqFieldId),
+        tests::NumericTerm(std::numeric_limits<int32_t>::min()),
         irs::BoundType::Inclusive, max_term, irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr};
@@ -371,9 +369,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       const auto max_term =
         irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (float)123.f);
 
-      irs::ByRange query =
-        MakeFilter(kValueFieldId, min_term, irs::BoundType::Inclusive, max_term,
-                   irs::BoundType::Inclusive);
+      irs::ByRange query = MakeFilter(tests::TypedFieldId<float>(kValueFieldId),
+                                      min_term, irs::BoundType::Inclusive,
+                                      max_term, irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr};
 
@@ -400,9 +398,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       const auto max_term =
         irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (float)123.f);
 
-      irs::ByRange query =
-        MakeFilter(kValueFieldId, min_term, irs::BoundType::Inclusive, max_term,
-                   irs::BoundType::Exclusive);
+      irs::ByRange query = MakeFilter(tests::TypedFieldId<float>(kValueFieldId),
+                                      min_term, irs::BoundType::Inclusive,
+                                      max_term, irs::BoundType::Exclusive);
 
       tests::PreparedFilter prepared{query, rdr};
 
@@ -426,7 +424,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
         irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (float)90.565f);
 
       irs::ByRange query = MakeFilter(
-        kValueFieldId, NumericTerm(-std::numeric_limits<float>::infinity()),
+        tests::TypedFieldId<float>(kValueFieldId),
+        tests::NumericTerm(-std::numeric_limits<float>::infinity()),
         irs::BoundType::Inclusive, max_term, irs::BoundType::Exclusive);
 
       tests::PreparedFilter prepared{query, rdr};
@@ -451,8 +450,9 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
         irs::numeric_utils::EncodeNumericTerm(min_stream_buf, (float)90.565f);
 
       irs::ByRange query =
-        MakeFilter(kValueFieldId, min_term, irs::BoundType::Exclusive,
-                   NumericTerm(std::numeric_limits<float>::infinity()),
+        MakeFilter(tests::TypedFieldId<float>(kValueFieldId), min_term,
+                   irs::BoundType::Exclusive,
+                   tests::NumericTerm(std::numeric_limits<float>::infinity()),
                    irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr};
@@ -533,7 +533,8 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
         irs::numeric_utils::EncodeNumericTerm(max_stream_buf, (double)5.);
 
       irs::ByRange query = MakeFilter(
-        kValueFieldId, NumericTerm(-std::numeric_limits<double>::infinity()),
+        kValueFieldId,
+        tests::NumericTerm(-std::numeric_limits<double>::infinity()),
         irs::BoundType::Exclusive, max_term, irs::BoundType::Exclusive);
 
       tests::PreparedFilter prepared{query, rdr};
@@ -559,7 +560,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
 
       irs::ByRange query =
         MakeFilter(kValueFieldId, min_term, irs::BoundType::Exclusive,
-                   NumericTerm(std::numeric_limits<double>::infinity()),
+                   tests::NumericTerm(std::numeric_limits<double>::infinity()),
                    irs::BoundType::Inclusive);
 
       tests::PreparedFilter prepared{query, rdr};
@@ -1003,10 +1004,10 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       *filter.mutable_field_id() = kValueFieldId;
       *filter.mutable_dict() = irs::NumericLayout::kNumbers;
       filter.mutable_options()->range.min =
-        NumericTerm(-std::numeric_limits<double>::infinity());
+        tests::NumericTerm(-std::numeric_limits<double>::infinity());
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
       filter.mutable_options()->range.max =
-        NumericTerm(std::numeric_limits<double>::infinity());
+        tests::NumericTerm(std::numeric_limits<double>::infinity());
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
 
       filter.SetScorer(sort.get());
@@ -1044,7 +1045,7 @@ class RangeFilterTestCase : public tests::FilterTestCaseBase {
       *filter.mutable_field_id() = kValueFieldId;
       *filter.mutable_dict() = irs::NumericLayout::kNumbers;
       filter.mutable_options()->range.min =
-        NumericTerm(-std::numeric_limits<double>::infinity());
+        tests::NumericTerm(-std::numeric_limits<double>::infinity());
       filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
       filter.mutable_options()->range.max = max_term;
       filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
@@ -1241,10 +1242,10 @@ TEST_P(RangeFilterTestCase, by_range_order_multi_segment_field_stats) {
   *filter.mutable_field_id() = kValueFieldId;
   *filter.mutable_dict() = irs::NumericLayout::kNumbers;
   filter.mutable_options()->range.min =
-    NumericTerm(-std::numeric_limits<double>::infinity());
+    tests::NumericTerm(-std::numeric_limits<double>::infinity());
   filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
   filter.mutable_options()->range.max =
-    NumericTerm(std::numeric_limits<double>::infinity());
+    tests::NumericTerm(std::numeric_limits<double>::infinity());
   filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
   filter.SetScorer(sort.get());
 
@@ -1285,7 +1286,7 @@ TEST_P(RangeFilterTestCase, by_range_order_no_match_field_stats) {
   filter.mutable_options()->range.min = min_term;
   filter.mutable_options()->range.min_type = irs::BoundType::Exclusive;
   filter.mutable_options()->range.max =
-    NumericTerm(std::numeric_limits<double>::infinity());
+    tests::NumericTerm(std::numeric_limits<double>::infinity());
   filter.mutable_options()->range.max_type = irs::BoundType::Exclusive;
   filter.SetScorer(sort.get());
 

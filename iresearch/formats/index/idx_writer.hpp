@@ -39,7 +39,7 @@ namespace irs {
 
 class IdxWriter final {
  public:
-  explicit IdxWriter(FileTracker& tracker);
+  IdxWriter(FileTracker& tracker, MemoryBudget* budget);
 
   IdxWriter(const IdxWriter&) = delete;
   IdxWriter& operator=(const IdxWriter&) = delete;
@@ -60,6 +60,7 @@ class IdxWriter final {
 
   FileTracker& _tracker;
   std::string _filename;
+  MemoryBudget* _budget;
   std::unique_ptr<duckdb::BufferedFileWriter> _out;
   IdxFooter _footer;
 };

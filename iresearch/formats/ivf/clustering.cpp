@@ -221,7 +221,7 @@ auto TrainablePredicate(size_t d) {
 }  // namespace
 
 std::span<const float> TrainableRows(std::span<const float> rows, size_t d,
-                                     std::vector<float>& kept) {
+                                     TrackedVector<float>& kept) {
   const auto trainable = TrainablePredicate(d);
   const size_t n = rows.size() / d;
   size_t i = 0;

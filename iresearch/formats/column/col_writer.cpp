@@ -103,7 +103,8 @@ void ColWriter::EnsureOut() {
   if (_out) {
     return;
   }
-  _out = format_utils::OpenOutput(_tracker.Fs(), _tracker.Root(), _filename);
+  _out = format_utils::OpenOutput(_tracker.Fs(), _tracker.Root(), _filename,
+                                  _budget);
   _tracker.Add(kColFile);
   _write_ctx = std::make_unique<WriteContext>(_db->GetBufferManager(), *_out);
 }
@@ -264,6 +265,16 @@ AnnFlushBound ColWriter::AnnBound(uint64_t rows) const {
     Accumulate(total, irs::AnnBound(entry.info, rows));
   }
   return total;
+}
+
+uint64_t ColWriter::SealBound() const {
+  uint64_t bound = kSealBound;
+  for (const auto& entry : _columns) {
+    if (entry.writer) {
+      bound = std::max(bound, entry.writer->PendingSealBound());
+    }
+  }
+  return bound;
 }
 
 void ColWriter::Rollback() noexcept {

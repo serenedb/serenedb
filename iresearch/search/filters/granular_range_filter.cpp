@@ -23,12 +23,77 @@
 
 #include "granular_range_filter.hpp"
 
+#include "iresearch/formats/term_reader.hpp"
 #include "iresearch/index/index_reader.hpp"
 #include "iresearch/search/detail/multiterm_collector.hpp"
 #include "iresearch/search/detail/term_iterator.hpp"
+#include "iresearch/search/filters/all_filter.hpp"
+#include "iresearch/search/queries/boolean_query.hpp"
 #include "iresearch/search/queries/multiterm_query.hpp"
 
 namespace irs {
+namespace {
+
+uint64_t VisitInto(MultiTermQuery& query, const PrepareContext& ctx,
+                   const TermReader& reader, bytes_view from, bytes_view to) {
+  MultiTermVisitor mtv{ctx, query.State(), reader};
+  uint64_t docs = 0;
+  const bool covered =
+    reader.CoverRange(from, to, [&](bytes_view term, const PostingMeta& meta) {
+      docs += meta.docs_count;
+      mtv.Visit(term, meta, kNoBoost);
+      return true;
+    });
+  if (covered) {
+    query.State().MarkRangePostings();
+  }
+  return docs;
+}
+
+QueryBuilder::ptr Complement(const SubReader& segment,
+                             const PrepareContext& ctx,
+                             const TermReader& reader, bytes_view from,
+                             bytes_view to, uint64_t inside) {
+  const auto& meta = reader.meta();
+  if (ctx.KeepsTerms() || !reader.single_valued ||
+      meta.dict.layout != DictLayout::Numeric) {
+    return nullptr;
+  }
+  const auto* nulls = segment.field(
+    meta.id, {.layout = meta.dict.layout, .member = DictMember::Nulls});
+  const uint64_t null_docs = nulls ? nulls->docs_count() : 0;
+  const uint64_t values = reader.docs_count();
+  if (values + null_docs != segment.docs_count()) {
+    return nullptr;
+  }
+  const uint64_t outside = values - inside + null_docs;
+  if (2 * inside <= 3 * outside) {
+    return nullptr;
+  }
+  if (inside == segment.docs_count()) {
+    return ctx.memory.Make<AllQuery>(segment, ctx.boost);
+  }
+  auto tails = ctx.memory.Make<MultiTermQuery>(ctx.memory, segment, kNoBoost,
+                                               ScoreMergeType::Sum);
+  if (!from.empty()) {
+    VisitInto(*tails, ctx, reader, {}, from);
+  }
+  if (!to.empty()) {
+    VisitInto(*tails, ctx, reader, to, {});
+  }
+  BooleanBuilder builder{ctx.memory, segment, 0, ctx.boost,
+                         ScoreMergeType::Sum};
+  builder.Add(ctx.memory.Make<AllQuery>(segment, kNoBoost), Occur::Must);
+  builder.Add(MultiTermQuery::Finish(std::move(tails), ctx), Occur::MustNot);
+  if (null_docs != 0) {
+    const auto null_meta = nulls->Lookup(kSlotTerm);
+    SDB_ASSERT(null_meta.docs_count == null_docs);
+    builder.AddTerm(nulls, null_meta, kNoBoost, Occur::MustNot, {});
+  }
+  return builder.Finish();
+}
+
+}  // namespace
 
 QueryBuilder::ptr ByGranularRange::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx) const {
@@ -51,19 +116,14 @@ QueryBuilder::ptr ByGranularRange::PrepareSegment(const SubReader& segment,
   }
   const bool has_min = rng.min_type != BoundType::Unbounded && !rng.min.empty();
   const bool has_max = rng.max_type != BoundType::Unbounded && !rng.max.empty();
-  const bytes_view type_tag = has_min   ? bytes_view{rng.min}.substr(0, 1)
-                              : has_max ? bytes_view{rng.max}.substr(0, 1)
-                                        : bytes_view{};
-  const bstring from =
-    has_min ? RangeLower(rng.min, rng.min_type) : bstring{type_tag};
-  const bstring to =
-    has_max ? RangeUpper(rng.max, rng.max_type) : UpperBoundOf(type_tag);
+  const bstring from = has_min ? RangeLower(rng.min, rng.min_type) : bstring{};
+  const bstring to = has_max ? RangeUpper(rng.max, rng.max_type) : bstring{};
   auto query = ctx.memory.Make<MultiTermQuery>(ctx.memory, segment, ctx.boost,
                                                ScoreMergeType::Max);
-  MultiTermVisitor mtv{ctx, query->State(), *reader};
-  reader->VisitRange(from, to, [&](bytes_view term, const PostingMeta& meta) {
-    mtv.Visit(term, meta, kNoBoost);
-  });
+  const auto inside = VisitInto(*query, ctx, *reader, from, to);
+  if (auto complement = Complement(segment, ctx, *reader, from, to, inside)) {
+    return complement;
+  }
   return MultiTermQuery::Finish(std::move(query), ctx);
 }
 

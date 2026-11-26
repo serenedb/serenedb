@@ -58,7 +58,7 @@ class Raw {
             size_t{count} * sizeof(T)};
   }
 
-  void Append(uint32_t begin, uint32_t count, std::string& out) {
+  void Append(uint32_t begin, uint32_t count, TrackedString& out) {
     const auto rows = _values.Rows();
     for (size_t row = begin, end = size_t{begin} + count; row < end;) {
       const size_t block = row / kBlockValues;
@@ -89,7 +89,8 @@ class For {
 
   static_assert(sizeof(T) > 1);
 
-  For(ColumnDataCheckpointData& data, double) : _values{data.Get<Values<T>>()} {
+  For(ColumnDataCheckpointData& data, double)
+    : _values{data.Get<Values<T>>()}, _narrowed{data.Allocator()} {
     if (_values.Usable()) {
       const auto reference = _values.GetReference();
       _lo = reference.lo;
@@ -139,7 +140,7 @@ class Bitpacking {
   using U = Bits<sizeof(T)>;
 
   Bitpacking(ColumnDataCheckpointData& data, double)
-    : _values{data.Get<Values<T>>()} {
+    : _values{data.Get<Values<T>>()}, _blocks{data.budget} {
     if (!_values.Usable()) {
       return;
     }
@@ -163,7 +164,7 @@ class Bitpacking {
   uint64_t Bytes() { return SteppedBytes<T>(_blocks, _values); }
 
   void Append(NumericFrameMeta& m, uint32_t begin, uint32_t count,
-              std::string& out) {
+              TrackedString& out) {
     AppendStepped<T>(_blocks, _values, m, begin, count, out);
   }
 

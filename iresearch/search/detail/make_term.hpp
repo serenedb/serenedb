@@ -46,8 +46,9 @@ inline constexpr bool kProbePlan =
 template<typename Family, typename Ctx>
 typename Family::Result MakeQuery(const TermQuery& query, const Ctx& ctx) {
   if constexpr (kScoredPlan<Family, Ctx>) {
-    const PostingClause posting{query.State(), query.Boost(),
-                                query.Stats(Family::Scoring(ctx))};
+    const PostingClause posting{.state = query.State(),
+                                .boost = query.Boost(),
+                                .stats = query.Stats(Family::Scoring(ctx))};
     return Family::MakePosting(posting, query.Segment(), ctx,
                                MergeOf(query, ctx));
   } else {

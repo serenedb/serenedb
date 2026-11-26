@@ -414,11 +414,14 @@ HotColumnReader::HotColumnReader(
   _in_memory = true;
   _starts.reserve(_chunks.size() + 1);
   uint64_t rows = 0;
+  uint64_t bytes = _starts.capacity() * sizeof(uint64_t);
   _starts.push_back(rows);
   for (const auto& chunk : _chunks) {
     rows += chunk.count;
+    bytes += chunk.data.GetAllocationSize();
     _starts.push_back(rows);
   }
+  _charge.Resize(bytes);
   _row_count = rows;
   if (DataBlocks().empty()) {
     _stats = duckdb::BaseStatistics::CreateUnknown(_type).ToUnique();

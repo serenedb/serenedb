@@ -112,6 +112,7 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
   IRS_NO_INLINE uint32_t Refill(doc_id_t* IRS_RESTRICT out, uint32_t emitted,
                                 doc_id_t min, doc_id_t max) {
     if (!this->Start(min)) {
+      _next = doc_limits::eof();
       return emitted;
     }
     const auto capacity = static_cast<uint32_t>(max - min);
@@ -126,7 +127,7 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
         _next = _block[0];
         emitted += Drain(out + emitted, min, max);
         if (_at != _len) {
-          break;
+          return emitted;
         }
         continue;
       }
@@ -153,6 +154,7 @@ class Posting : public Root, public detail::PostingBatch<InputType, false> {
       _next = _block[0];
       return emitted + stop;
     }
+    _next = doc_limits::eof();
     return emitted;
   }
 

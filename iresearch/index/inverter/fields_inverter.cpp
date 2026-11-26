@@ -54,15 +54,17 @@ FieldsInverter::FlushNeeds FieldsInverter::Needs(size_t docs) const {
   return needs;
 }
 
-size_t FieldsInverter::FlushBound(size_t docs) const {
+size_t FieldsInverter::FlushBound(size_t docs, uint64_t extra_terms) const {
   const auto needs = Needs(docs);
   return sizeof(const FieldsMap::value_type*) * _fields_map.size() +
          ScatterScratch::Bytes(needs.max_terms, needs.blocks) +
-         term_dict::FieldWriter::Bound(needs.terms, docs, needs.ranges);
+         term_dict::FieldWriter::Bound(needs.terms + extra_terms, docs,
+                                       needs.ranges, extra_terms != 0);
 }
 
 void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
-                           std::span<const BasicTermReader* const> extra) {
+                           std::span<const BasicTermReader* const> extra,
+                           uint64_t extra_terms) {
   IndexFeatures index_features{IndexFeatures::None};
   uint64_t keyed_dicts = extra.size();
 
@@ -78,7 +80,9 @@ void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
       } else if (const auto* field =
                    _terms[entry.terms + TermIndex(member)].field;
                  HasTerms(field)) {
-        keyed_dicts += field->Dictionary().Size() != 1;
+        if (field->Dictionary().Size() != 1) {
+          keyed_dicts += term_dict::KeyedDictsOf(field->Meta().index_features);
+        }
         index_features |= field->Meta().index_features;
         used = true;
       }
@@ -110,7 +114,7 @@ void FieldsInverter::Flush(FieldSink& fw, FlushState& state,
   ScatteredField scattered{mem, scratch};
   ColumnarTermReader terms;
 
-  fw.prepare(state, keyed_dicts, needs.terms);
+  fw.prepare(state, keyed_dicts, needs.terms + extra_terms);
   size_t ei = 0;
   for (const auto* item : sorted) {
     const auto id = item->first;

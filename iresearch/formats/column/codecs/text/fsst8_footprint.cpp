@@ -18,39 +18,16 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include <libfsst.hpp>
 
-#include <cstdint>
-#include <vector>
+#include "iresearch/formats/column/codecs/text/fsst_footprint.hpp"
 
-#include "iresearch/utils/string.hpp"
-#include "iresearch/utils/tracked.hpp"
+namespace irs::codecs::text::fsst {
 
-namespace irs::term_dict {
+EncoderFootprint Fsst8Footprint(size_t) noexcept {
+  constexpr size_t kTable = sizeof(libfsst::SymbolTable);
+  constexpr size_t kKept = sizeof(libfsst::Encoder) + kTable;
+  return {.build = kKept + kTable + FSST_SAMPLEMAXSZ, .kept = kKept};
+}
 
-class InlinePages {
- public:
-  struct Span {
-    uint64_t from = 0;
-    uint64_t to = 0;
-  };
-
-  InlinePages() = default;
-  InlinePages(bytes_view starts, uint32_t blocks, uint64_t offset,
-              uint64_t size);
-
-  Span Of(uint32_t block) const noexcept;
-
- private:
-  uint64_t Select(uint64_t rank) const noexcept;
-  uint64_t Next(uint64_t at) const noexcept;
-
-  TrackedVector<uint64_t> _ones;
-  TrackedVector<uint64_t> _empty;
-  TrackedVector<uint64_t> _samples;
-  uint64_t _begin = 0;
-  uint64_t _end = 0;
-  uint32_t _blocks = 0;
-};
-
-}  // namespace irs::term_dict
+}  // namespace irs::codecs::text::fsst

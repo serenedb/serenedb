@@ -41,6 +41,10 @@ class ExactScanner {
 
   ExactScanner(PlanMemory& memory, const ExactVectorQuery& query,
                bool admits_missing)
+    : ExactScanner{memory, query, query.Inner(), admits_missing} {}
+
+  ExactScanner(PlanMemory& memory, const ExactVectorQuery& query,
+               const QueryBuilder* prefilter, bool admits_missing)
     : _reader{query.Column(), query.Columns(),
               static_cast<uint32_t>(query.Column().ArraySize())},
       _threshold{query.Threshold()},
@@ -51,8 +55,8 @@ class ExactScanner {
     _last = doc_limits::min() + rows;
     _doc = _last;
     _end = _last;
-    if (const auto* inner = query.Inner()) {
-      _matches = docs::MakeRoot(*inner, {.memory = memory});
+    if (prefilter) {
+      _matches = docs::MakeRoot(*prefilter, {.memory = memory});
     }
     if (const auto& column = query.Column(); MayHaveNullRows(column)) {
       _validity.emplace(query.Columns(), column);

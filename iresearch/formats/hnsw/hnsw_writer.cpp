@@ -161,11 +161,11 @@ MergeDonor PickMergeDonor(std::span<const MergeSource> sources, field_id column,
 }
 
 struct HealScratch {
-  explicit HealScratch(MemoryBudget* budget) noexcept
+  HealScratch(MemoryBudget* budget, FixedBudget* visited) noexcept
     : pool{TrackedAllocator<HnswCandidate>{budget}},
       stack{TrackedAllocator<uint32_t>{budget}},
-      seen{budget},
-      walked{budget} {}
+      seen{visited},
+      walked{visited} {}
 
   TrackedVector<HnswCandidate> pool;
   TrackedVector<uint32_t> stack;
@@ -605,21 +605,28 @@ struct HnswInsertJob {
       _rows{rows},
       _nodes{nodes},
       _sync{workers * graph.M()},
-      _slots(workers) {
+      _shares{TrackedAllocator<TrackedPtr<FixedBudget>>{graph.Budget()}},
+      _slots{
+        TrackedAllocator<TrackedPtr<WorkerSlot, FixedBudget>>{graph.Budget()}} {
     SDB_ASSERT(graph.Budget());
-    auto& budget = *graph.Budget();
+    auto* budget = graph.Budget();
     const auto share = HnswScratchBound(rows, ef, graph.M0());
     _shares.reserve(workers);
     for (size_t i = 0; i < workers; ++i) {
-      _shares.push_back(budget.Split(std::min<uint64_t>(share, budget.size)));
+      try {
+        _shares.push_back(MakeTracked<FixedBudget>(budget, budget, share));
+      } catch (const duckdb::OutOfMemoryException&) {
+        if (_shares.empty()) {
+          throw;
+        }
+        break;
+      }
     }
+    _slots.resize(_shares.size());
   }
 
-  ~HnswInsertJob() {
-    _slots.clear();
-    for (auto& share : _shares) {
-      _graph.Budget()->Merge(std::move(share));
-    }
+  uint32_t Workers() const noexcept {
+    return static_cast<uint32_t>(_shares.size());
   }
 
   void SetWindow(const float* base, uint32_t first, uint32_t count) noexcept {
@@ -668,7 +675,7 @@ struct HnswInsertJob {
   };
 
   struct WorkerSlot {
-    WorkerSlot(typename Factory::Dist d, MemoryBudget* budget)
+    WorkerSlot(typename Factory::Dist d, FixedBudget* budget)
       : dist{std::move(d)}, scratch{budget} {}
 
     typename Factory::Dist dist;
@@ -678,7 +685,8 @@ struct HnswInsertJob {
   WorkerSlot& Slot(size_t worker) {
     auto& slot = _slots[worker];
     if (!slot) {
-      slot = std::make_unique<WorkerSlot>(_factory.Make(), &_shares[worker]);
+      auto* share = _shares[worker].get();
+      slot = MakeTracked<WorkerSlot>(share, _factory.Make(), share);
       slot->scratch.search.visited.Reset(
         _rows, HnswWalkVisits(_ef, _graph.M0()), HnswWalks::Many);
       if (_window.base) {
@@ -696,8 +704,8 @@ struct HnswInsertJob {
   Window _window;
   HnswStripeSync _sync;
   std::atomic<size_t> _cursor{0};
-  std::vector<duckdb::TempBufferPoolReservation> _shares;
-  std::vector<std::unique_ptr<WorkerSlot>> _slots;
+  TrackedVector<TrackedPtr<FixedBudget>> _shares;
+  TrackedVector<TrackedPtr<WorkerSlot, FixedBudget>> _slots;
 };
 
 TrackedVector<uint32_t> SeedGraph(HnswGraphWriter& graph,
@@ -754,7 +762,8 @@ auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
     crew.CanGrow() ? std::min<size_t>(nodes.size(), warmup) : nodes.size();
   {
     auto dist = factory.Make();
-    HnswBuildScratch scratch{graph.Budget()};
+    FixedBudget share{graph.Budget(), HnswScratchBound(rows, ef, graph.M0())};
+    HnswBuildScratch scratch{&share};
     scratch.search.visited.Reset(rows, HnswWalkVisits(ef, graph.M0()),
                                  HnswWalks::Many);
     for (size_t i = 0; i < serial; ++i) {
@@ -768,6 +777,7 @@ auto InsertNodes(HnswGraphWriter& graph, const Factory& factory, uint32_t ef,
 
   HnswInsertJob<Factory> job{graph,       factory, ef, nodes.subspan(serial),
                              crew.Want(), rows};
+  crew.Limit(job.Workers());
   const auto work = [&job](size_t w) { job.RunWorker(w); };
   crew.Spawn(work);
   job.RunWorker(0, [&] { crew.Grow(work); });
@@ -892,10 +902,15 @@ auto BuildGraphFromMerge(HnswGraphWriter& graph, const Factory& factory,
   }
 
   auto dist = factory.Make();
-  HnswBuildScratch scratch{graph.Budget()};
+  FixedBudget share{graph.Budget(),
+                    HnswScratchBound(rows, ef_construction, graph.M0())};
+  HnswBuildScratch scratch{&share};
   scratch.search.visited.Reset(
     rows, HnswWalkVisits(ef_construction, graph.M0()), HnswWalks::Many);
-  HealScratch heal{graph.Budget()};
+  FixedBudget visited{graph.Budget(),
+                      HnswScratchBound(rows, graph.M0(), graph.M0()) +
+                        HnswScratchBound(src_rows, graph.M0(), graph.M0())};
+  HealScratch heal{graph.Budget(), &visited};
   heal.seen.Reset(rows, HnswWalkVisits(graph.M0(), graph.M0()),
                   HnswWalks::Many);
   heal.walked.Reset(src_rows, HnswWalkVisits(graph.M0(), graph.M0()),
@@ -966,6 +981,7 @@ void BuildGraphStreamed(HnswGraphWriter& graph, const Factory& factory,
                  nodes.size() / kHnswMinRowsPerWorker, 1, kHnswMaxWorkers))};
   HnswInsertJob<Factory> job{graph, factory,     ef_construction,
                              {},    crew.Want(), rows};
+  crew.Limit(job.Workers());
   const auto work = [&job](size_t w) { job.RunWorker(w); };
 
   auto run_span = [&](std::span<const uint32_t> span, bool parallel) {
@@ -1303,11 +1319,10 @@ bool HnswWriter::TrainQuantizer(const ColumnReader& col, ReadContext& ctx,
       return false;
     }
     if (train_rows != 0) {
-      _qw->TrainParallel(
-        train_buf.data(), train_buf.size() / _d,
-        [env](size_t tasks, absl::FunctionRef<void(size_t)> task) {
-          FanOut(env, tasks, task);
-        });
+      _qw->TrainParallel(train_buf.data(), train_buf.size() / _d,
+                         [&](size_t tasks, size_t task_bytes, TrainTask task) {
+                           FanOut(env, _budget, tasks, task_bytes, task);
+                         });
     }
     if (needs_centroid) {
       const float inv = 1.f / static_cast<float>(trained_rows);
@@ -1349,7 +1364,7 @@ yaclib::Task<> HnswWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   if (_info.quant.kind != VectorQuantization::None) {
     _qw = MakeQuantizerWriter(_info.quant, _d,
                               EffectiveQuantMetric(_info.metric), 0,
-                              /*row_major=*/true);
+                              /*row_major=*/true, _budget);
   }
 
   const auto m = _info.m;

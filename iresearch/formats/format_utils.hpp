@@ -35,6 +35,13 @@ namespace irs::format_utils {
 
 inline constexpr uint64_t kTrailerLen = 2 * sizeof(uint32_t);
 
+inline constexpr uint64_t kOutputBlockBytes =
+  duckdb::ExternalFileCache::DEFAULT_BLOCK_SIZE;
+
+inline constexpr uint64_t kFlushOutputs = 5;
+
+inline constexpr uint64_t kFlushOutputBytes = kFlushOutputs * kOutputBlockBytes;
+
 inline constexpr duckdb::field_id_t kMetaFieldPacked =
   duckdb::MESSAGE_TERMINATOR_FIELD_ID - 1;
 
@@ -58,7 +65,8 @@ Footer ReadFooter(const duckdb::InputFile& file, std::string_view name,
 
 std::unique_ptr<duckdb::BufferedFileWriter> OpenOutput(duckdb::FileSystem& fs,
                                                        std::string_view root,
-                                                       std::string_view name);
+                                                       std::string_view name,
+                                                       MemoryBudget* budget);
 
 std::unique_ptr<duckdb::BufferedFileWriter> PrepareOutput(
   const FlushState& state, std::string_view ext, uint8_t kind);

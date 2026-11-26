@@ -18,19 +18,24 @@
 /// Copyright holder is SereneDB GmbH, Berlin, Germany
 ////////////////////////////////////////////////////////////////////////////////
 
+#include <absl/algorithm/container.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_join.h>
 
 #include <algorithm>
 #include <bit>
 #include <iresearch/search/count/root.hpp>
+#include <iresearch/search/detail/resolve.hpp>
 #include <iresearch/search/detail/table_filter.hpp>
 #include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/docs/root.hpp>
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/phrase_filter.hpp>
 #include <iresearch/search/filters/prefix_filter.hpp>
+#include <iresearch/search/lead/disjoint_disjunction.hpp>
+#include <iresearch/search/lead/posting_docs.hpp>
 #include <iresearch/search/queries/docs_mask_query.hpp>
+#include <iresearch/utils/dispatch.hpp>
 #include <iterator>
 #include <memory>
 #include <span>
@@ -75,6 +80,7 @@ inline constexpr Spec kSpecs[]{
   {"rare", [](doc_id_t i) { return Chance(5, i, 1); }},
   {"single", [](doc_id_t i) { return i == 77777; }},
   {"holes", [](doc_id_t i) { return i >= 50000 && i < 60000 && i % 37 != 0; }},
+  {"gap", [](doc_id_t i) { return i == 1000 || (i >= 50000 && i < 60000); }},
   {"cluster",
    [](doc_id_t i) {
      return i >= 100000 && i < 110000 ? Chance(6, i, 500) : Chance(6, i, 5);
@@ -82,6 +88,8 @@ inline constexpr Spec kSpecs[]{
 };
 
 bool HasExpansion(doc_id_t i) { return Chance(7, i, 300); }
+
+bool HasTag(doc_id_t i) { return i % 9973 == 0; }
 
 std::string ExpansionTerm(doc_id_t i) {
   return absl::StrCat("pfx", Mix(uint64_t{i} * 31 + 7) % 200);
@@ -214,6 +222,9 @@ class BooleanWindowTest : public tests::IndexTestBase {
       if (HasExpansion(i)) {
         absl::StrAppend(&text, " ", ExpansionTerm(i));
       }
+      if (HasTag(i)) {
+        absl::StrAppend(&text, " tag", i % 7);
+      }
       body->value(text);
       ASSERT_TRUE(Insert(*writer, doc));
     }
@@ -284,9 +295,16 @@ class BooleanWindowTest : public tests::IndexTestBase {
     {
       auto split = query->PlanCount({.memory = plan_memory, .partial = true});
       ASSERT_NE(nullptr, split);
-      constexpr doc_id_t kBounds[]{
-        irs::doc_limits::min(), 777, 10001, 30001, 54321, 65536, 100003, 109999,
-        irs::doc_limits::eof()};
+      constexpr doc_id_t kBounds[]{irs::doc_limits::min(),
+                                   777,
+                                   10001,
+                                   11281,
+                                   30001,
+                                   54321,
+                                   65536,
+                                   100003,
+                                   109999,
+                                   irs::doc_limits::eof()};
       uint64_t parts = 0;
       for (size_t i = 1; i != std::size(kBounds); ++i) {
         parts += split->Run(kBounds[i - 1], kBounds[i]);
@@ -360,6 +378,13 @@ TEST_P(BooleanWindowTest, conjunctions_across_block_kinds) {
          {{"holes", "sparse"}, {}},
          {{"holes", "dense"}, {}},
          {{"holes", "run"}, {}},
+         {{"half", "run"}, {}},
+         {{"half", "holes"}, {}},
+         {{"half", "holes", "run"}, {}},
+         {{"gap", "run"}, {}},
+         {{"gap", "half", "run"}, {}},
+         {{"run"}, {}},
+         {{"holes"}, {}},
          {{"single", "half"}, {}},
          {{"single", "rare"}, {}},
          {{"rare", "sparse"}, {}},
@@ -426,6 +451,29 @@ TEST_P(BooleanWindowTest, phrase_exclusions) {
        }) {
     Check(shape);
   }
+}
+
+TEST_P(BooleanWindowTest, sparse_prefixes_walk_their_documents) {
+  Build();
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  irs::QueryMemory query_memory;
+  auto query =
+    irs::PrepareMasked(*PrefixOf("tag"), reader[0], {.memory = query_memory});
+  ASSERT_NE(nullptr, query);
+  std::vector<doc_id_t> expected;
+  for (doc_id_t i = 0; i != kDocs; ++i) {
+    if (HasTag(i)) {
+      expected.push_back(irs::doc_limits::min() + i);
+    }
+  }
+  const auto end = irs::doc_limits::min() + kDocs;
+  irs::PlanMemory plan_memory;
+  auto docs = query->PlanDocs({.memory = plan_memory});
+  ASSERT_NE(nullptr, docs);
+  std::vector<doc_id_t> buf(end + irs::doc_limits::kDocsSlack);
+  const auto n = docs->Run(irs::doc_limits::min(), end, buf.data());
+  ASSERT_EQ(expected, std::vector<doc_id_t>(buf.begin(), buf.begin() + n));
 }
 
 TEST_P(BooleanWindowTest, conjunctions_of_unions) {
@@ -496,6 +544,72 @@ TEST_P(BooleanWindowTest, sifting_leaves_the_next_window_intact) {
       }
       from = max;
     }
+  }
+}
+
+TEST_P(BooleanWindowTest, union_merges_every_block_kind) {
+  Build();
+  auto reader = open_reader();
+  ASSERT_EQ(1, reader.size());
+  const auto* field = reader[0].field(kBodyId);
+  ASSERT_NE(nullptr, field);
+  const auto* doc = irs::detail::DocOf(*field);
+  ASSERT_NE(nullptr, doc);
+  std::vector<std::string_view> all;
+  for (const auto& spec : kSpecs) {
+    all.push_back(spec.term);
+  }
+  for (const auto& terms : std::vector<std::vector<std::string_view>>{
+         {"run", "holes", "gap"},
+         {"dense", "half"},
+         {"rare", "single", "gap"},
+         {"sparse", "cluster", "mid"},
+         all,
+       }) {
+    SCOPED_TRACE(absl::StrJoin(terms, " "));
+    std::vector<irs::PostingMeta> metas;
+    std::vector<doc_id_t> expected;
+    for (const auto term : terms) {
+      auto it = field->iterator();
+      ASSERT_TRUE(it && it->seek(irs::ViewCast<irs::byte_type>(term)));
+      metas.push_back(it->cookie());
+    }
+    for (doc_id_t i = 0; i != kDocs; ++i) {
+      if (absl::c_any_of(terms, [&](auto term) { return Has(term, i); })) {
+        expected.push_back(irs::doc_limits::min() + i);
+      }
+    }
+    irs::PlanMemory memory;
+    irs::Resolve(*doc, [&]<typename Input> {
+      using Leaf = irs::detail::PostingLead<Input>;
+      const auto make = [&] {
+        return std::make_unique<irs::lead::DisjointDisjunction<Leaf>>(
+          memory, metas.size(), [&](Leaf& leaf, size_t i) {
+            leaf.Prepare(
+              metas[i], *doc, irs::detail::LayoutOf(*field),
+              metas[i].docs_count != 1 && irs::detail::BoundsOf(*field));
+          });
+      };
+      for (const doc_id_t window : {1, 7, 4096}) {
+        auto docs = make();
+        std::vector<doc_id_t> buf(window);
+        std::vector<doc_id_t> actual;
+        const auto end = irs::doc_limits::min() + kDocs;
+        for (auto min = irs::doc_limits::min(); min < end; min += window) {
+          const auto n =
+            irs::lead::GatherAll(*docs, min, min + window, buf.data());
+          actual.insert(actual.end(), buf.begin(), buf.begin() + n);
+        }
+        ASSERT_EQ(expected, actual) << window;
+      }
+      auto docs = make();
+      for (doc_id_t target = 1; target < kDocs; target += 1 + target % 5003) {
+        const auto it = absl::c_lower_bound(expected, target);
+        ASSERT_EQ(it == expected.end() ? irs::doc_limits::eof() : *it,
+                  docs->Seek(target))
+          << target;
+      }
+    });
   }
 }
 

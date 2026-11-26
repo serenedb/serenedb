@@ -52,6 +52,7 @@ class BooleanQuery : public QueryBuilderImpl<BooleanQuery> {
     memory::ArenaVector<detail::AllDocsClause> all_docs;
     Filters filters;
     detail::Terms uniformity = detail::Terms::Mixed;
+    bool disjoint = false;
 
     size_t size() const noexcept {
       return postings.size() + all_docs.size() + filters.size();
@@ -181,7 +182,6 @@ class BooleanBuilder {
       _msm{min_should_match},
       _boost{boost},
       _merge_type{merge_type},
-      _collects{collector != nullptr},
       _needs_terms{needs_terms} {}
 
   void Add(QueryBuilder::ptr query, Occur occur);
@@ -195,18 +195,19 @@ class BooleanBuilder {
 
  private:
   void Push(BooleanQuery::PreparedBucket& bucket, const TermReader* reader,
-            const PostingMeta& meta, score_t boost, detail::StatsRecord stats);
+            const PostingMeta& meta, score_t boost, detail::StatsRecord stats,
+            uint32_t group);
 
   bool Absorb(QueryKind kind, Occur occur);
 
-  bool KeepsTerms() const noexcept { return _collects || _needs_terms; }
+  bool KeepsTerms() const noexcept { return _collector || _needs_terms; }
 
   bool SplicesTerms(Occur occur) const noexcept {
     return occur == Occur::MustNot || (occur == Occur::Should && _msm == 1);
   }
 
   bool Scores(const QueryBuilder& child, Occur occur) const noexcept {
-    return _collects && occur != Occur::MustNot && child.Scores();
+    return _collector && occur != Occur::MustNot && child.Scores();
   }
 
   const BooleanQuery* Dissolves(const QueryBuilder& child,
@@ -236,7 +237,7 @@ class BooleanBuilder {
   uint32_t _msm;
   score_t _boost;
   ScoreMergeType _merge_type;
-  bool _collects = false;
+  uint32_t _groups = 0;
   bool _needs_terms = false;
   bool _empty = false;
 };

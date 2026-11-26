@@ -54,6 +54,7 @@ struct PostingClause {
 
   TermState state;
   score_t boost = kNoBoost;
+  uint32_t group = 0;
   StatsRecord stats{};
 };
 

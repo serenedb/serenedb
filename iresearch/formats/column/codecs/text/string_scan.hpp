@@ -47,6 +47,7 @@
 #include "iresearch/formats/column/codecs/text/string_layout.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text {
 
@@ -171,8 +172,8 @@ class ChainGroups {
   }
 
  private:
-  std::vector<uint32_t> _base;
-  std::vector<uint32_t> _known;
+  TrackedVector<uint32_t> _base;
+  TrackedVector<uint32_t> _known;
   ScratchVector<uint64_t> _offsets;
 };
 
@@ -186,7 +187,8 @@ Header SegmentHeader(duckdb::const_data_ptr_t base,
                      ByteCodec codec);
 
 std::string_view SymbolTable(const ColumnSegment& segment, const Header& h,
-                             duckdb::const_data_ptr_t base, std::string& copy);
+                             duckdb::const_data_ptr_t base,
+                             TrackedString& copy);
 
 struct EntryRange {
   uint32_t lo;
@@ -195,7 +197,7 @@ struct EntryRange {
   auto operator<=>(const EntryRange&) const noexcept = default;
 };
 
-using EntryRanges = std::vector<EntryRange>;
+using EntryRanges = TrackedVector<EntryRange>;
 
 EntryRanges Normalize(EntryRanges ranges);
 
@@ -212,7 +214,7 @@ inline std::string_view View(const duckdb::string_t& s) noexcept {
   return {s.GetData(), s.GetSize()};
 }
 
-inline char* Reserve(std::string& scratch, uint64_t bytes) {
+inline char* Reserve(TrackedString& scratch, uint64_t bytes) {
   if (scratch.size() < bytes) {
     scratch.resize(std::max<uint64_t>(bytes, scratch.size() * 2));
   }

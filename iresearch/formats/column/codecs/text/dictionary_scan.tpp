@@ -277,8 +277,8 @@ class FilterVerdicts {
   static constexpr uint8_t kAccepted = 2;
   static constexpr uint8_t kPending = 3;
 
-  std::vector<uint8_t> _verdicts;
-  std::vector<uint32_t> _pending;
+  TrackedVector<uint8_t> _verdicts;
+  TrackedVector<uint32_t> _pending;
   idx_t _matches = 0;
   uint64_t _filtered = 0;
   bool _lazy = false;

@@ -39,6 +39,7 @@
 #include "iresearch/formats/column/codecs/text/values.hpp"
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text {
 
@@ -102,17 +103,19 @@ struct CodecState final : State {
     TextState(Compression::kShape, Compression::kCodec);
 
   explicit CodecState(ColumnDataCheckpointData& data)
-    : buffers{data.ctx->BufferManager()},
+    : budget{data.budget},
       type{data.type},
+      dedup{budget},
       builder{data, dedup},
-      segment{buffers, type} {}
+      segment{budget, type},
+      trials{data.Allocator()} {}
 
-  duckdb::BufferManager& buffers;
+  MemoryBudget* budget;
   const duckdb::LogicalType& type;
   DedupScratch dedup;
   Compression builder;
   Segment segment;
-  std::vector<std::unique_ptr<Segment>> trials;
+  TrackedVector<TrackedPtr<Segment>> trials;
 };
 
 template<typename Compression>
@@ -207,7 +210,7 @@ Segment& Trial(CodecState<Compression>& state, const Config& config,
     return *found;
   }
   auto& seg = *state.trials.emplace_back(
-    std::make_unique<Segment>(state.buffers, state.type));
+    MakeTracked<Segment>(state.budget, state.budget, state.type));
   if (window.rows != 0) {
     CutRows(state.builder, config, values, 0, window.rows, kNoCut, seg);
   } else {

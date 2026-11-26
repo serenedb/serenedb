@@ -32,6 +32,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace duckdb {
 
@@ -127,6 +128,7 @@ class HotColumnReader final : public ColumnReader {
   void CopyRows(uint64_t row, duckdb::idx_t count, duckdb::Vector& out,
                 duckdb::idx_t out_offset, bool share_strings) const;
 
+  MemoryCharge _charge;
   std::vector<WriteChunk> _chunks;
   std::vector<uint64_t> _starts;
 };

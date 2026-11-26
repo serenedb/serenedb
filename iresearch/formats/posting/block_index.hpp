@@ -28,12 +28,12 @@
 #include <cstdint>
 #include <duckdb/common/serializer/write_stream.hpp>
 #include <memory>
-#include <vector>
 
 #include "iresearch/formats/posting/common.hpp"
 #include "iresearch/formats/posting_meta.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/empty.hpp"
+#include "iresearch/utils/tracked.hpp"
 #include "iresearch/utils/type_limits.hpp"
 
 namespace irs {
@@ -484,6 +484,15 @@ class BlockCursor {
 
 class BlockIndexWriter {
  public:
+  explicit BlockIndexWriter(MemoryBudget* budget)
+    : _last{TrackedAllocator<doc_id_t>{budget}},
+      _end{TrackedAllocator<uint64_t>{budget}},
+      _pos_group{TrackedAllocator<uint64_t>{budget}},
+      _pos_index{TrackedAllocator<uint16_t>{budget}},
+      _pay_group{TrackedAllocator<uint64_t>{budget}},
+      _bound{TrackedAllocator<uint32_t>{budget}},
+      _run_bound{TrackedAllocator<uint32_t>{budget}} {}
+
   void Reset() noexcept {
     _last.clear();
     _end.clear();
@@ -646,13 +655,13 @@ class BlockIndexWriter {
     return true;
   }
 
-  std::vector<doc_id_t> _last;
-  std::vector<uint64_t> _end;
-  std::vector<uint64_t> _pos_group;
-  std::vector<uint16_t> _pos_index;
-  std::vector<uint64_t> _pay_group;
-  std::vector<uint32_t> _bound;
-  std::vector<uint32_t> _run_bound;
+  TrackedVector<doc_id_t> _last;
+  TrackedVector<uint64_t> _end;
+  TrackedVector<uint64_t> _pos_group;
+  TrackedVector<uint16_t> _pos_index;
+  TrackedVector<uint64_t> _pay_group;
+  TrackedVector<uint32_t> _bound;
+  TrackedVector<uint32_t> _run_bound;
   uint32_t _root[2] = {};
 };
 

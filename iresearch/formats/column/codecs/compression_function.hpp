@@ -49,8 +49,10 @@
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/index/column_info.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs {
 
@@ -79,7 +81,7 @@ struct ColumnSegment {
   uint64_t shared_size = 0;
 };
 
-struct SegmentScanState {
+struct SegmentScanState : Tracked {
   virtual ~SegmentScanState() = default;
 
   template<typename T>
@@ -195,9 +197,16 @@ struct ColumnDataCheckpointData {
   S& Get(Args&&... args) {
     auto& state = states[std::to_underlying(S::kId)];
     if (!state) {
-      state = std::make_unique<S>(*this, std::forward<Args>(args)...);
+      auto created = MakeTracked<S>(budget, *this, std::forward<Args>(args)...);
+      SDB_ASSERT(static_cast<void*>(static_cast<State*>(created.get())) ==
+                 static_cast<void*>(created.get()));
+      state = std::move(created);
     }
     return static_cast<S&>(*state);
+  }
+
+  TrackedAllocator<std::byte> Allocator() const noexcept {
+    return TrackedAllocator<std::byte>{budget};
   }
 
   template<typename S>
@@ -207,6 +216,7 @@ struct ColumnDataCheckpointData {
 
   const duckdb::LogicalType& type;
   WriteContext* ctx = nullptr;
+  MemoryBudget* budget = nullptr;
   FlushSegmentFn flush;
   ColCodecParams params;
   ColumnTuning& tuning;
@@ -214,7 +224,7 @@ struct ColumnDataCheckpointData {
   bool contested = false;
   uint8_t option = 0;
   WriteRows rows;
-  std::array<std::unique_ptr<State>, magic_enum::enum_count<StateId>()> states;
+  std::array<TrackedPtr<State>, magic_enum::enum_count<StateId>()> states;
 };
 
 inline double ScoreOfBytes(uint64_t bytes,
@@ -237,11 +247,11 @@ inline constexpr duckdb::idx_t kSparseRows = 64;
 
 class CompressedSegment {
  public:
-  CompressedSegment(const Codec& codec, const duckdb::LogicalType& type);
+  CompressedSegment(const Codec& codec, const ColumnDataCheckpointData& data);
 
   void Reset();
 
-  duckdb::data_ptr_t Data() noexcept { return _buffer.get(); }
+  duckdb::data_ptr_t Data() noexcept { return _buffer.data(); }
 
   void Flush(ColumnDataCheckpointData& checkpoint_data, uint64_t size);
 
@@ -252,7 +262,7 @@ class CompressedSegment {
  private:
   const Codec& _codec;
   duckdb::LogicalType _type;
-  std::unique_ptr<duckdb::data_t[]> _buffer;
+  ScratchVector<duckdb::data_t> _buffer;
 };
 
 struct DecompressionFunction {

@@ -30,19 +30,13 @@
 namespace irs {
 
 struct PostingMeta {
-  static constexpr uint32_t kInlineBytes = 32;
-
   void clear() noexcept {
     docs_count = freq = 0;
     doc_start = pos_start = pay_start = 0;
-    inline_data = nullptr;
     doc_delta = 0;
     pos_extent = pay_extent = 0;
     pos_offset = 0;
-    inline_size = 0;
   }
-
-  bytes_view Inline() const noexcept { return {inline_data, inline_size}; }
 
   bool operator==(const PostingMeta&) const noexcept = default;
 
@@ -51,12 +45,10 @@ struct PostingMeta {
   uint64_t doc_start = 0;  // where this term's postings start in the .doc file
   uint64_t pos_start = 0;  // where this term's postings start in the .pos file
   uint64_t pay_start = 0;  // where this term's postings start in the .pay file
-  const byte_type* inline_data = nullptr;
   uint32_t doc_delta = 0;
   uint32_t pos_extent = 0;
   uint32_t pay_extent = 0;
   uint16_t pos_offset = 0;
-  uint8_t inline_size = 0;
 };
 
 // What a query over a term this segment does not have stands on.

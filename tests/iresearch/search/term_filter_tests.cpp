@@ -221,7 +221,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::FloatField>());
               auto& field = (doc.indexed.end() - 1).as<tests::FloatField>();
               field.Name(name);
-              field.id = fid;
+              field.id = tests::TypedFieldId<float>(fid);
               field.value(f_value);
             }
 
@@ -230,7 +230,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::LongField>());
               auto& field = (doc.indexed.end() - 1).as<tests::LongField>();
               field.Name(name);
-              field.id = fid;
+              field.id = tests::TypedFieldId<int64_t>(fid);
               field.value(static_cast<int64_t>(value));
             }
 
@@ -238,7 +238,7 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
               doc.insert(std::make_shared<tests::IntField>());
               auto& field = (doc.indexed.end() - 1).as<tests::IntField>();
               field.Name(name);
-              field.id = fid;
+              field.id = tests::TypedFieldId<int32_t>(fid);
               field.value(static_cast<int32_t>(value));
             }
           }
@@ -254,8 +254,9 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, INT64_C(20));
 
-      irs::ByTerm query = MakeFilter(kSeqId, irs::ViewCast<char>(term),
-                                     irs::NumericLayout::kNumbers);
+      irs::ByTerm query =
+        MakeFilter(tests::TypedFieldId<int64_t>(kSeqId),
+                   irs::ViewCast<char>(term), irs::NumericLayout::kNumbers);
 
       tests::PreparedFilter prepared{query, rdr, nullptr};
 
@@ -277,8 +278,9 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, INT32_C(21));
 
-      irs::ByTerm query = MakeFilter(kSeqId, irs::ViewCast<char>(term),
-                                     irs::NumericLayout::kNumbers);
+      irs::ByTerm query =
+        MakeFilter(tests::TypedFieldId<int32_t>(kSeqId),
+                   irs::ViewCast<char>(term), irs::NumericLayout::kNumbers);
 
       tests::PreparedFilter prepared{query, rdr, nullptr};
 
@@ -323,8 +325,9 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, (float)90.564f);
 
-      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
-                                     irs::NumericLayout::kNumbers);
+      irs::ByTerm query =
+        MakeFilter(tests::TypedFieldId<float>(kValueId),
+                   irs::ViewCast<char>(term), irs::NumericLayout::kNumbers);
 
       tests::PreparedFilter prepared{query, rdr, nullptr};
 
@@ -369,8 +372,9 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, (float)100.f);
 
-      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
-                                     irs::NumericLayout::kNumbers);
+      irs::ByTerm query =
+        MakeFilter(tests::TypedFieldId<float>(kValueId),
+                   irs::ViewCast<char>(term), irs::NumericLayout::kNumbers);
 
       tests::PreparedFilter prepared{query, rdr, nullptr};
 
@@ -391,8 +395,9 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       irs::byte_type stream_buf[irs::numeric_utils::kNumericTermMaxSize];
       const auto term = irs::numeric_utils::EncodeNumericTerm(stream_buf, 100);
 
-      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
-                                     irs::NumericLayout::kNumbers);
+      irs::ByTerm query =
+        MakeFilter(tests::TypedFieldId<int32_t>(kValueId),
+                   irs::ViewCast<char>(term), irs::NumericLayout::kNumbers);
 
       tests::PreparedFilter prepared{query, rdr, nullptr};
 
@@ -414,8 +419,9 @@ class TermFilterTestCase : public tests::FilterTestCaseBase {
       const auto term =
         irs::numeric_utils::EncodeNumericTerm(stream_buf, INT64_C(100));
 
-      irs::ByTerm query = MakeFilter(kValueId, irs::ViewCast<char>(term),
-                                     irs::NumericLayout::kNumbers);
+      irs::ByTerm query =
+        MakeFilter(tests::TypedFieldId<int64_t>(kValueId),
+                   irs::ViewCast<char>(term), irs::NumericLayout::kNumbers);
 
       tests::PreparedFilter prepared{query, rdr, nullptr};
 

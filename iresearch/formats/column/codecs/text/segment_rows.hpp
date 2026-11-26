@@ -46,6 +46,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text {
 
@@ -69,9 +70,14 @@ struct SortScratch {
     uint32_t entry;
   };
 
-  std::vector<Key> order;
-  std::vector<uint32_t> remap;
-  std::vector<duckdb::string_t> sorted;
+  explicit SortScratch(MemoryBudget* budget)
+    : order{TrackedAllocator<Key>{budget}},
+      remap{TrackedAllocator<uint32_t>{budget}},
+      sorted{TrackedAllocator<duckdb::string_t>{budget}} {}
+
+  TrackedVector<Key> order;
+  TrackedVector<uint32_t> remap;
+  TrackedVector<duckdb::string_t> sorted;
 };
 
 inline size_t EntryCount(const SegmentEntries& rows) noexcept {
@@ -113,7 +119,7 @@ inline duckdb::string_t EntryOf(const Profile& p, size_t i) noexcept {
 }
 
 void CompressCodes(
-  std::span<uint32_t> codes, double& ratio,
+  MemoryBudget* budget, std::span<uint32_t> codes, double& ratio,
   absl::FunctionRef<void(CodecType codec, std::string_view bytes)> write);
 
 void SortEntries(std::span<const duckdb::string_t> entries,
@@ -156,8 +162,13 @@ class SegmentRows {
   }
 
  protected:
-  SegmentRows(const duckdb::LogicalType& type, uint32_t first_entry)
-    : _stats{type}, _type{type}, _first_entry{first_entry} {}
+  SegmentRows(MemoryBudget* budget, const duckdb::LogicalType& type,
+              uint32_t first_entry)
+    : _stats{type},
+      _type{type},
+      _first_entry{first_entry},
+      _entries{TrackedAllocator<duckdb::string_t>{budget}},
+      _lengths{TrackedAllocator<uint32_t>{budget}} {}
 
   void Begin(const Config& config, uint64_t first_row) {
     _level = config.level;
@@ -192,21 +203,22 @@ class SegmentRows {
   bool _ordered = false;
   uint64_t _next = 0;
 
-  std::vector<duckdb::string_t> _entries;
+  TrackedVector<duckdb::string_t> _entries;
   uint64_t _rows = 0;
   uint64_t _raw = 0;
   uint64_t _estimated_raw = 0;
   uint32_t _max_len = 0;
   uint64_t _nulls = 0;
   uint64_t _input = 0;
-  std::vector<uint32_t> _lengths;
+  TrackedVector<uint32_t> _lengths;
 };
 
 class PlainRows final : public SegmentRows {
  public:
   static constexpr Shape kShape = Shape::Plain;
 
-  explicit PlainRows(const duckdb::LogicalType& type) : SegmentRows{type, 0} {}
+  PlainRows(MemoryBudget* budget, const duckdb::LogicalType& type)
+    : SegmentRows{budget, type, 0} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t) {
     SegmentRows::Begin(config, first_row);
@@ -244,9 +256,12 @@ class DictionaryRows final : public SegmentRows {
  public:
   static constexpr Shape kShape = Shape::Dictionary;
 
-  DictionaryRows(const duckdb::LogicalType& type, DedupScratch& dedup,
-                 double& codes_ratio)
-    : SegmentRows{type, 1}, _dedup{dedup}, _codes_ratio{codes_ratio} {}
+  DictionaryRows(MemoryBudget* budget, const duckdb::LogicalType& type,
+                 DedupScratch& dedup, double& codes_ratio)
+    : SegmentRows{budget, type, 1},
+      _dedup{dedup},
+      _codes_ratio{codes_ratio},
+      _codes{TrackedAllocator<std::byte>{budget}} {}
 
   void Begin(const Config& config, uint64_t first_row, size_t distinct) {
     SegmentRows::Begin(config, first_row);
@@ -293,12 +308,12 @@ class DictionaryRows final : public SegmentRows {
 };
 
 template<typename Rows>
-Rows MakeRows(const duckdb::LogicalType& type, DedupScratch& dedup,
-              double& codes_ratio) {
+Rows MakeRows(MemoryBudget* budget, const duckdb::LogicalType& type,
+              DedupScratch& dedup, double& codes_ratio) {
   if constexpr (Rows::kShape == Shape::Dictionary) {
-    return Rows{type, dedup, codes_ratio};
+    return Rows{budget, type, dedup, codes_ratio};
   } else {
-    return Rows{type};
+    return Rows{budget, type};
   }
 }
 
@@ -307,12 +322,14 @@ class SortedCompressionState {
  public:
   static constexpr Shape kShape = Rows::kShape;
 
-  SortedCompressionState(ByteCodec codec, const duckdb::LogicalType& type,
-                         DedupScratch& dedup, StringTuning& tuning,
-                         uint32_t target)
-    : _rows{MakeRows<Rows>(type, dedup, tuning.codes_ratio)},
+  SortedCompressionState(MemoryBudget* budget, ByteCodec codec,
+                         const duckdb::LogicalType& type, DedupScratch& dedup,
+                         StringTuning& tuning, uint32_t target)
+    : _rows{MakeRows<Rows>(budget, type, dedup, tuning.codes_ratio)},
+      _sort{budget},
       _history{tuning.history[static_cast<size_t>(codec)]},
-      _target{target} {}
+      _target{target},
+      _frames{TrackedAllocator<FrameMeta>{budget}} {}
 
   void InitCompression(const Config& config, uint64_t first_row,
                        size_t distinct, Segment& out) {
@@ -354,7 +371,7 @@ class SortedCompressionState {
   RatioHistory* _history;
   uint32_t _target;
   Segment* _out = nullptr;
-  std::vector<FrameMeta> _frames;
+  TrackedVector<FrameMeta> _frames;
 };
 
 }  // namespace irs::codecs::text

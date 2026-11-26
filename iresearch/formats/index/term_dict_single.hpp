@@ -53,8 +53,8 @@ class SingleTermReader final : public TermReader {
   void ReadDocs(const PostingMeta& meta, Acceptor acceptor) const final {
     ReadPostingDocs(*this, meta, acceptor);
   }
-  void VisitRange(bytes_view from, bytes_view to,
-                  RangeVisitor visit) const final;
+  bool CoverRange(bytes_view from, bytes_view to,
+                  TermVisitor visit) const final;
 
   PostingsHandles Handles() const noexcept final;
 

@@ -1,0 +1,33 @@
+query
+SELECT hex(sdb_encode_key(-1::TINYINT)) AS neg, hex(sdb_encode_key(1::TINYINT)) AS pos, hex(sdb_encode_key(-2::SMALLINT)) AS small;
+----
+neg	pos	small
+017F	0181	017FFE
+
+
+query
+SELECT hex(sdb_encode_key(1::INTEGER)) AS i32, hex(sdb_encode_key(-1::BIGINT)) AS i64, hex(sdb_encode_key(1::UBIGINT)) AS u64;
+----
+i32	i64	u64
+0180000001	017FFFFFFFFFFFFFFF	010000000000000001
+
+
+query
+SELECT hex(sdb_encode_key('1970-01-02'::DATE)) AS d, hex(sdb_encode_key('1970-01-01 00:00:00.000001'::TIMESTAMP)) AS ts;
+----
+d	ts
+0180000001	018000000000000001
+
+
+query
+SELECT hex(sdb_encode_key(1::REAL)) AS one, hex(sdb_encode_key(-1::REAL)) AS minus_one;
+----
+one	minus_one
+01BF800000	01407FFFFF
+
+
+query
+SELECT hex(sdb_encode_key('-0'::DOUBLE)) AS zero, hex(sdb_encode_key('NaN'::DOUBLE)) AS nan;
+----
+zero	nan
+018000000000000000	01FFFFFFFFFFFFFFFF

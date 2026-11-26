@@ -48,6 +48,7 @@
 #include "iresearch/formats/column/norm_writer.hpp"
 #include "iresearch/formats/column/read_context.hpp"
 #include "iresearch/formats/flush_state.hpp"
+#include "iresearch/formats/format_utils.hpp"
 #include "iresearch/formats/index/field_writer.hpp"
 #include "iresearch/formats/index/idx_reader.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
@@ -62,6 +63,7 @@
 #include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/memory.hpp"
+#include "iresearch/utils/misc.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/tracked.hpp"
@@ -567,8 +569,9 @@ bool ComputeFieldMeta(FieldMetaMapT& field_meta_map,
 uint64_t KeyedDicts(const FieldMetaMapT& field_meta_map) noexcept {
   uint64_t count = 0;
   for (const auto& [id, field] : field_meta_map) {
-    count += static_cast<uint64_t>(absl::c_count_if(
-      field.members, [](const MergedMember& member) { return member.keyed; }));
+    for (const auto& member : field.members) {
+      count += member.keyed ? term_dict::KeyedDictsOf(member.features) : 0;
+    }
   }
   return count;
 }
@@ -932,10 +935,12 @@ size_t MergeWriter::Bound() const {
   const auto ann = MergeAnnBound(sources, _field_options, docs);
   const auto text = MergedTextNeeds(_readers, _field_options);
   return remaps + sizeof(MergeSource) * sources.size() +
-         std::max({sizeof(uint32_t) * kNormMergeChunk, MergeIntoBound(sources),
-                   ann.compute,
+         format_utils::kFlushOutputBytes +
+         std::max({sizeof(uint32_t) * kNormMergeChunk,
+                   MergeIntoBound(sources, _field_options), ann.compute,
                    ann.kept + term_dict::FieldWriter::Bound(
-                                text.terms + ann.terms, docs, text.ranges)});
+                                text.terms + ann.terms, docs, text.ranges,
+                                ann.terms != 0)});
 }
 
 void MergeWriter::Reserve() {
@@ -943,10 +948,7 @@ void MergeWriter::Reserve() {
     throw duckdb::OutOfMemoryException(
       "failed to reserve memory for a merge (fault point)");
   }
-  const auto bound = Bound();
-  if (bound > _budget.size) {
-    _budget.Merge(ReserveMemory(kMemoryTag, bound - _budget.size));
-  }
+  _budget.Reserve(Bound());
 }
 
 auto MergeWriter::Flush(SegmentMeta& segment,
@@ -1003,7 +1005,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   }
 
   MergedNormProvider norm_provider;
-  IdxWriter idx{*tracker};
+  IdxWriter idx{*tracker, &_budget};
 
   col_writer->SetIdxWriter(idx);
   if (!col_writer->Commit(segment.docs_count, progress_callback)) {
@@ -1040,7 +1042,7 @@ auto MergeWriter::Flush(SegmentMeta& segment,
   PostingsInputs postings;
   if (segment.docs_count != 0) {
     auto field_writer =
-      std::make_unique<term_dict::FieldWriter>(/*compaction=*/true);
+      std::make_unique<term_dict::FieldWriter>(/*compaction=*/true, &_budget);
     field_writer->SetIdxWriter(idx);
     if (!WriteFields(
           *field_writer, state, fields_itr, merged_norm_ids, cluster_readers,

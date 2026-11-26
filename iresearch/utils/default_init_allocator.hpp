@@ -25,6 +25,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "iresearch/utils/tracked.hpp"
+
 namespace irs {
 
 template<typename T>
@@ -39,6 +41,7 @@ struct DefaultInitAllocator : std::allocator<T> {
 };
 
 template<typename T>
-using ScratchVector = std::vector<T, DefaultInitAllocator<T>>;
+using ScratchVector =
+  std::vector<T, TrackedAllocator<T, kMemoryTag, DefaultInitAllocator<T>>>;
 
 }  // namespace irs

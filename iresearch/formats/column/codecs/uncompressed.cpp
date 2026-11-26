@@ -62,7 +62,7 @@ duckdb::block_id_t WriteOverflowString(duckdb::WriteStream& out,
 template<typename Appender>
 bool CompressChunks(const Codec& codec,
                     ColumnDataCheckpointData& checkpoint_data) {
-  CompressedSegment segment{codec, checkpoint_data.type};
+  CompressedSegment segment{codec, checkpoint_data};
   Appender::Begin(segment);
   for (const auto& chunk : checkpoint_data.rows.chunks) {
     duckdb::UnifiedVectorFormat data;

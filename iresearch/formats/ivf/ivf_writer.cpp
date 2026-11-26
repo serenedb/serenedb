@@ -406,8 +406,9 @@ yaclib::Task<> IvfWriter::Compute(const ColumnReader& col, ReadContext& ctx,
   SDB_ASSERT(_idx != nullptr,
              "IvfWriter::Compute: SetIdxWriter must be called first");
   const auto d = static_cast<uint32_t>(col.ArraySize());
-  auto qw = MakeQuantizerWriter(
-    _info.quant, d, EffectiveQuantMetric(_info.metric), kDefaultClusterIters);
+  auto qw =
+    MakeQuantizerWriter(_info.quant, d, EffectiveQuantMetric(_info.metric),
+                        kDefaultClusterIters, /*row_major=*/false, _budget);
 
   IvfBuilder builder{_info};
   auto built = builder.Compute(col, ctx, qw.get(), _budget);

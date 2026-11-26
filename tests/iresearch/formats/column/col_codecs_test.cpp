@@ -75,6 +75,7 @@
 #include <iresearch/formats/column/list_ingest.hpp>
 #include <iresearch/formats/column/read_context.hpp>
 #include <iresearch/index/column_info.hpp>
+#include <iresearch/utils/duckdb_engine.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <limits>
@@ -703,7 +704,7 @@ TEST(ZstdTest, ShortPeriodRepeatsRoundTrip) {
     }
   }
   for (const uint8_t level : kLevels) {
-    irs::codecs::Zstd::Compressor compressor{level};
+    irs::codecs::Zstd::Compressor compressor{nullptr, level};
     std::string compressed(irs::codecs::Zstd::Bound(raw.size()), '\0');
     compressed.resize(compressor.Compress(
       raw.data(), raw.size(), compressed.data(), compressed.size()));
@@ -4288,9 +4289,9 @@ TEST_F(ColCodecsTest, OnPairTrainingStopsOnceItsTokenTableIsFull) {
     entries.emplace_back(motif.data(), static_cast<uint32_t>(motif.size()));
     raw += motif.size();
   }
-  onpair::Codec codec;
+  onpair::Codec codec{nullptr};
   codec.Train(entries, raw);
-  std::string exported;
+  irs::TrackedString exported;
   codec.Export(exported);
   ASSERT_GE(exported.size(), onpair::kSymbolTableHeader);
   EXPECT_EQ(duckdb::Load<uint32_t>(
@@ -5680,12 +5681,12 @@ TEST_F(ColCodecsTest, ARoaringScanStateMovedBackReloadsItsContainer) {
 }
 
 TEST_F(ColCodecsTest, ASegmentBufferThatCannotAllocateGivesBackItsReservation) {
-  duckdb::Connection con{Db()};
-  auto set = con.Query("SET memory_limit = '8192TB'");
-  ASSERT_FALSE(set->HasError()) << set->GetError();
-  auto& buffers = Db().GetBufferManager();
+  auto& buffers = *irs::DuckDBEngine::TrackingBufferManager();
+  const auto limit = buffers.GetMaxMemory();
+  buffers.SetMemoryLimit(uint64_t{8192} << 40);
+  const absl::Cleanup restore = [&] { buffers.SetMemoryLimit(limit); };
   const auto used = buffers.GetUsedMemory();
-  irs::codecs::text::SegmentBuffer segment{buffers};
+  irs::codecs::text::SegmentBuffer segment{nullptr};
   EXPECT_THROW(segment.Extend(uint64_t{1} << 52), std::bad_alloc);
   EXPECT_EQ(segment.Size(), 0);
   EXPECT_EQ(buffers.GetUsedMemory(), used);

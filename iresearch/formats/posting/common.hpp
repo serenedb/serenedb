@@ -49,6 +49,18 @@
 
 namespace irs {
 
+struct RecordLayout {
+  uint32_t follows;
+  uint32_t payload;
+};
+
+constexpr RecordLayout RecordLayoutOf(bool freq, bool pos) noexcept {
+  return {
+    .follows = 1 + uint32_t{freq},
+    .payload = 1 + uint32_t{freq} + uint32_t{pos},
+  };
+}
+
 struct BlockLanding {
   // pointer to the beginning of document block
   uint64_t doc_ptr = 0;
@@ -121,12 +133,8 @@ void SkipScoreBounds(bool has_score_bounds, Input& in) {
   }
 }
 
-inline bytes_view InlineInput(const PostingMeta& meta) noexcept {
-  return {meta.inline_data, meta.inline_size + block_codec::kInSlack};
-}
-
 inline uint64_t DocExtent(const PostingMeta& meta) noexcept {
-  if (meta.inline_size != 0 || meta.docs_count <= 1) {
+  if (meta.docs_count <= 1) {
     return 0;
   }
   return meta.docs_count > doc_limits::kBlockSize

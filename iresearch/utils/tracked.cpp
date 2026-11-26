@@ -21,7 +21,10 @@
 #include "iresearch/utils/tracked.hpp"
 
 #include <absl/base/no_destructor.h>
+#include <malloc.h>
 
+#include <cstddef>
+#include <cstdlib>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/fault_points.hpp>
 #include <duckdb/common/string_util.hpp>
@@ -88,29 +91,73 @@ duckdb::data_ptr_t ChargedReallocate(duckdb::PrivateAllocatorData* data,
 
 }  // namespace
 
-void ChargeMemory(MemoryBudget* budget, duckdb::MemoryTag tag, size_t size) {
-  if (!budget) {
-    auto charge = ReserveMemory(tag, size);
-    charge.size = 0;
-    return;
-  }
-  SDB_ASSERT(budget->tag == tag);
-  SDB_ASSERT(&budget->pool ==
-             &DuckDBEngine::TrackingBufferManager()->GetBufferPool());
-  if (budget->size < size) {
-    budget->Merge(ReserveMemory(tag, size - budget->size));
-  }
-  budget->size -= size;
+void ChargeRoot(duckdb::MemoryTag tag, size_t size) {
+  auto charge = ReserveMemory(tag, size);
+  charge.size = 0;
 }
 
-void FreeCharge(MemoryBudget* budget, duckdb::MemoryTag tag,
-                size_t size) noexcept {
-  if (!budget) {
-    FreeReservedMemory(tag, size);
-    return;
+BudgetNode::BudgetNode(MemoryBudget* parent, size_t reserve) : _parent{parent} {
+  Reserve(reserve);
+}
+
+BudgetNode::~BudgetNode() {
+  SDB_ASSERT(_used == 0);
+  if (_held != 0) {
+    Give(_held);
   }
-  SDB_ASSERT(budget->tag == tag);
-  budget->size += size;
+}
+
+void BudgetNode::Reserve(size_t bytes) {
+  if (bytes > Available()) {
+    Take(bytes - Available());
+  }
+}
+
+void BudgetNode::Trim() noexcept {
+  if (const auto unused = Available(); unused != 0) {
+    Give(unused);
+  }
+}
+
+void BudgetNode::Take(size_t bytes) {
+  ChargeMemory(_parent, kMemoryTag, bytes);
+  _held += bytes;
+}
+
+void BudgetNode::Give(size_t bytes) noexcept {
+  SDB_ASSERT(bytes <= Available());
+  _held -= bytes;
+  FreeCharge(_parent, kMemoryTag, bytes);
+}
+
+void BudgetNode::Detach(size_t bytes) noexcept {
+  SDB_ASSERT(bytes <= Available());
+  _held -= bytes;
+  for (BudgetNode* node = _parent; node; node = node->_parent) {
+    SDB_ASSERT(bytes <= node->_used && bytes <= node->_held);
+    node->_used -= bytes;
+    node->_held -= bytes;
+  }
+}
+
+duckdb::TempBufferPoolReservation MemoryBudget::Lend(duckdb::MemoryTag tag,
+                                                     size_t bytes) {
+  Reserve(bytes);
+  auto* manager = DuckDBEngine::TrackingBufferManager();
+  SDB_ASSERT(manager);
+  duckdb::TempBufferPoolReservation lent{kMemoryTag, manager->GetBufferPool(),
+                                         0};
+  Detach(bytes);
+  lent.size = bytes;
+  lent.Retag(tag);
+  return lent;
+}
+
+void FixedBudget::Exhausted(size_t bytes) const {
+  throw duckdb::OutOfMemoryException(
+    "a fixed memory reservation of %s is exhausted: %s more requested",
+    duckdb::StringUtil::BytesToHumanReadableString(Held()),
+    duckdb::StringUtil::BytesToHumanReadableString(bytes - Available()));
 }
 
 duckdb::Allocator& TrackedDuckAllocator() {
@@ -139,16 +186,32 @@ duckdb::TempBufferPoolReservation ReserveMemory(duckdb::MemoryTag tag,
   return manager->ReserveMemory(tag, size);
 }
 
-duckdb::TempBufferPoolReservation EmptyBudget() noexcept {
-  auto* manager = DuckDBEngine::TrackingBufferManager();
-  SDB_ASSERT(manager);
-  return {kMemoryTag, manager->GetBufferPool(), 0};
-}
-
 void FreeReservedMemory(duckdb::MemoryTag tag, size_t size) noexcept {
   auto* manager = DuckDBEngine::TrackingBufferManager();
   SDB_ASSERT(manager);
   manager->FreeReservedMemory(tag, size);
+}
+
+void* TrackedMalloc(MemoryBudget* budget, size_t size) noexcept {
+  auto* p = std::malloc(size);
+  if (!p) {
+    return nullptr;
+  }
+  try {
+    ChargeMemory(budget, kMemoryTag, malloc_usable_size(p));
+  } catch (const duckdb::OutOfMemoryException&) {
+    std::free(p);
+    return nullptr;
+  }
+  return p;
+}
+
+void TrackedFree(MemoryBudget* budget, void* p) noexcept {
+  if (!p) {
+    return;
+  }
+  FreeCharge(budget, kMemoryTag, malloc_usable_size(p));
+  std::free(p);
 }
 
 }  // namespace irs

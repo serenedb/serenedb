@@ -561,10 +561,14 @@ inline memory::managed_ptr<NormReader> MakePersistedNormReader(
 inline memory::managed_ptr<NormReader> MakePersistedNormReader(
   PlanMemory& memory, const NormColumnReader& column) {
   SDB_ASSERT(column.RegionCount() > 0);
-  if (column.RegionCount() == 1) {
-    return memory.Make<NormReader, PersistedNormReader<false>>(column);
-  }
-  return memory.Make<NormReader, PersistedNormReader<true>>(column);
+  const auto make = [&]<bool Paged> -> memory::managed_ptr<NormReader> {
+    if (column.RegionCount() == 1) {
+      return memory.Make<NormReader, PersistedNormReader<false, Paged>>(column);
+    }
+    return memory.Make<NormReader, PersistedNormReader<true, Paged>>(column);
+  };
+  return column.Paged() ? make.template operator()<true>()
+                        : make.template operator()<false>();
 }
 
 }  // namespace irs

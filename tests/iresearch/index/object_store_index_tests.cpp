@@ -511,7 +511,7 @@ TEST(ObjectStoreIndexTest, a_centroid_layer_is_fetched_in_one_request) {
   store.ResetRequests();
   duckdb::InputFileReader in{*file};
   const std::vector<float> query(kDim, 0.F);
-  std::vector<uint32_t> ids;
+  irs::TrackedVector<uint32_t> ids;
   tree.Search(query, in, kNodes, ids, nullptr);
   EXPECT_EQ(kNodes, ids.size());
   EXPECT_EQ(2, store.Requests().get);
@@ -972,7 +972,7 @@ TEST(ObjectStoreIndexTest, a_merge_reads_its_segments_ahead) {
   store.ResetRequests();
   const tests::IndexDir merged{Db(), TestEnv::MemoryRoot()};
   irs::SegmentMeta meta;
-  auto budget = irs::EmptyBudget();
+  irs::MemoryBudget budget{nullptr};
   irs::MergeWriter merger{merged.Db(), merged.Fs(), merged.Root(),
                           irs::SegmentWriterOptions{}, budget};
   merger.Reset(reader.begin(), reader.end());

@@ -47,7 +47,7 @@ bool PanoramaApplies(VectorMetric metric, uint32_t d) noexcept {
 
 std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
   const AnnInfo::Quantizer& quant, uint32_t d, VectorMetric metric,
-  uint32_t pq_niter, bool row_major) {
+  uint32_t pq_niter, bool row_major, MemoryBudget* budget) {
   switch (quant.kind) {
     case VectorQuantization::None:
       return quantizers::MakePanoramaWriter(d, metric);
@@ -60,7 +60,7 @@ std::unique_ptr<QuantizerWriter> MakeQuantizerWriter(
       return quantizers::MakeScalarWriter(d, quant.kind);
     case VectorQuantization::PQ:
       return quantizers::MakePqWriter(metric, d, quant.pq_m, pq_niter,
-                                      row_major);
+                                      row_major, budget);
     case VectorQuantization::TQ:
       return quantizers::MakeTurboQuantWriter(metric, d, quant.nb_bits,
                                               quant.half_bit, row_major);

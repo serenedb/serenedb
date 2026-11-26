@@ -212,18 +212,27 @@ class AllCount : public Root {
 
 class Sum : public Root {
  public:
-  Sum(Root::ptr lhs, Root::ptr rhs) noexcept
-    : _lhs{std::move(lhs)}, _rhs{std::move(rhs)} {}
+  explicit Sum(memory::ArenaVector<Root::ptr>&& parts) noexcept
+    : _parts{std::move(parts)} {}
 
   uint64_t Run(doc_id_t min, doc_id_t max) final {
-    return _lhs->Run(min, max) + _rhs->Run(min, max);
+    uint64_t count = 0;
+    for (auto& part : _parts) {
+      count += part->Run(min, max);
+    }
+    return count;
   }
 
-  uint64_t Finish() final { return _lhs->Finish() + _rhs->Finish(); }
+  uint64_t Finish() final {
+    uint64_t count = 0;
+    for (auto& part : _parts) {
+      count += part->Finish();
+    }
+    return count;
+  }
 
  private:
-  Root::ptr _lhs;
-  Root::ptr _rhs;
+  memory::ArenaVector<Root::ptr> _parts;
 };
 
 }  // namespace
@@ -237,8 +246,16 @@ Root::ptr MakeTermCount(PlanMemory& memory,
   return memory.Make<TermCount>(memory, posting, partial);
 }
 
+Root::ptr MakeSum(PlanMemory& memory, memory::ArenaVector<Root::ptr>&& parts) {
+  return memory.Make<Sum>(std::move(parts));
+}
+
 Root::ptr MakeSum(PlanMemory& memory, Root::ptr lhs, Root::ptr rhs) {
-  return memory.Make<Sum>(std::move(lhs), std::move(rhs));
+  memory::ArenaVector<Root::ptr> parts{memory.Arena()};
+  parts.reserve(2);
+  parts.push_back(std::move(lhs));
+  parts.push_back(std::move(rhs));
+  return MakeSum(memory, std::move(parts));
 }
 
 Root::ptr Family::MakePosting(const detail::PostingClause& posting,

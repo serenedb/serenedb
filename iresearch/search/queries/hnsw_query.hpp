@@ -45,7 +45,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
             std::shared_ptr<const HnswData> data,
             const VectorFilterOptions& opts, uint32_t record_size,
             HnswSearchLimits limits, score_t boost, QueryBuilder::ptr&& inner,
-            QueryBuilder::ptr&& index_only, AnnQueryCache* cache);
+            QueryBuilder::ptr&& index_part, AnnQueryCache* cache);
 
   memory::ArenaVector<ScoreDoc> RunSearch(
     PlanMemory& memory, detail::TableFilter* table = nullptr,
@@ -82,8 +82,8 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   std::shared_ptr<const PanoramaQuery> _panorama;
   AnnQueryCache* _cache;
   QueryBuilder::ptr _inner;
-  QueryBuilder::ptr _index_only;
-  uint64_t _index_only_postings;
+  QueryBuilder::ptr _index_part;
+  uint64_t _index_part_postings;
   const ColumnReader* _exact;
   containers::Fixed<float> _query;
   VectorMetric _metric;
@@ -97,7 +97,7 @@ class HnswQuery : public QueryBuilderImpl<HnswQuery> {
   score_t _boost;
   HnswFilterMode _filter_mode;
   HnswColumnFilter _column_filter;
-  bool _dual;
+  bool _has_column_part;
   bool _inclusive;
 };
 

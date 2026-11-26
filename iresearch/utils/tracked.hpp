@@ -32,28 +32,116 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/utils/assert.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs {
 
 inline constexpr duckdb::MemoryTag kMemoryTag = duckdb::MemoryTag::ALLOCATOR;
 
-using MemoryBudget = duckdb::BufferPoolReservation;
-
 [[nodiscard]] duckdb::TempBufferPoolReservation ReserveMemory(
   duckdb::MemoryTag tag, size_t size);
-[[nodiscard]] duckdb::TempBufferPoolReservation EmptyBudget() noexcept;
 void FreeReservedMemory(duckdb::MemoryTag tag, size_t size) noexcept;
+
+void ChargeRoot(duckdb::MemoryTag tag, size_t size);
+
+class MemoryBudget;
+
+class BudgetNode {
+ public:
+  BudgetNode(const BudgetNode&) = delete;
+  BudgetNode& operator=(const BudgetNode&) = delete;
+
+  void Reserve(size_t bytes);
+
+  void Free(size_t bytes) noexcept {
+    SDB_ASSERT(bytes <= _used);
+    _used -= bytes;
+  }
+
+  void Trim() noexcept;
+
+  size_t Held() const noexcept { return _held; }
+  size_t Used() const noexcept { return _used; }
+  size_t Available() const noexcept { return _held - _used; }
+
+ protected:
+  BudgetNode(MemoryBudget* parent, size_t reserve);
+  ~BudgetNode();
+
+  void Take(size_t bytes);
+  void Use(size_t bytes) noexcept { _used += bytes; }
+  void Detach(size_t bytes) noexcept;
+
+ private:
+  void Give(size_t bytes) noexcept;
+
+  MemoryBudget* _parent;
+  size_t _held = 0;
+  size_t _used = 0;
+};
+
+class MemoryBudget final : public BudgetNode {
+ public:
+  explicit MemoryBudget(MemoryBudget* parent, size_t reserve = 0)
+    : BudgetNode{parent, reserve} {}
+
+  void Charge(size_t bytes) {
+    if (bytes > Available()) [[unlikely]] {
+      Take(bytes - Available());
+    }
+    Use(bytes);
+  }
+
+  [[nodiscard]] duckdb::TempBufferPoolReservation Lend(duckdb::MemoryTag tag,
+                                                       size_t bytes);
+};
+
+class FixedBudget final : public BudgetNode {
+ public:
+  FixedBudget(MemoryBudget* parent, size_t reserve)
+    : BudgetNode{parent, reserve} {}
+
+  void Charge(size_t bytes) {
+    if (bytes > Available()) [[unlikely]] {
+      Exhausted(bytes);
+    }
+    Use(bytes);
+  }
+
+ private:
+  [[noreturn]] void Exhausted(size_t bytes) const;
+};
+
+template<typename Budget>
+void ChargeMemory(Budget* budget, duckdb::MemoryTag tag, size_t size) {
+  if (!budget) {
+    ChargeRoot(tag, size);
+    return;
+  }
+  SDB_ASSERT(tag == kMemoryTag);
+  budget->Charge(size);
+}
+
+template<typename Budget>
+void FreeCharge(Budget* budget, duckdb::MemoryTag tag, size_t size) noexcept {
+  if (!budget) {
+    FreeReservedMemory(tag, size);
+    return;
+  }
+  SDB_ASSERT(tag == kMemoryTag);
+  budget->Free(size);
+}
+
 duckdb::Allocator& TrackedDuckAllocator();
 duckdb::Allocator BudgetAllocator(MemoryBudget* budget);
 
-void ChargeMemory(MemoryBudget* budget, duckdb::MemoryTag tag, size_t size);
-void FreeCharge(MemoryBudget* budget, duckdb::MemoryTag tag,
-                size_t size) noexcept;
+void* TrackedMalloc(MemoryBudget* budget, size_t size) noexcept;
+void TrackedFree(MemoryBudget* budget, void* p) noexcept;
 
 // NOLINTBEGIN
 template<typename T, duckdb::MemoryTag Tag = kMemoryTag,
-         typename Base = std::allocator<T>>
+         typename Base = std::allocator<T>, typename Budget = MemoryBudget>
 struct TrackedAllocator {
   static_assert(std::is_empty_v<Base>);
 
@@ -66,14 +154,15 @@ struct TrackedAllocator {
   template<typename U>
   struct rebind {
     using other = TrackedAllocator<
-      U, Tag, typename std::allocator_traits<Base>::template rebind_alloc<U>>;
+      U, Tag, typename std::allocator_traits<Base>::template rebind_alloc<U>,
+      Budget>;
   };
 
   TrackedAllocator() = default;
-  explicit TrackedAllocator(MemoryBudget* budget) noexcept : budget{budget} {}
+  explicit TrackedAllocator(Budget* budget) noexcept : budget{budget} {}
 
   template<typename U, typename B>
-  TrackedAllocator(const TrackedAllocator<U, Tag, B>& other) noexcept
+  TrackedAllocator(const TrackedAllocator<U, Tag, B, Budget>& other) noexcept
     : budget{other.budget} {}
 
   TrackedAllocator select_on_container_copy_construction() const noexcept {
@@ -107,9 +196,13 @@ struct TrackedAllocator {
     return lhs.budget == rhs.budget;
   }
 
-  MemoryBudget* budget = nullptr;
+  Budget* budget = nullptr;
 };
 // NOLINTEND
+
+template<typename T>
+using FixedAllocator =
+  TrackedAllocator<T, kMemoryTag, std::allocator<T>, FixedBudget>;
 
 struct Tracked {
   static void* operator new(size_t size) {
@@ -184,6 +277,9 @@ class MemoryCharge {
 template<typename T>
 using TrackedVector = std::vector<T, TrackedAllocator<T>>;
 
+template<typename T>
+using FixedVector = std::vector<T, FixedAllocator<T>>;
+
 using TrackedString =
   std::basic_string<char, std::char_traits<char>, TrackedAllocator<char>>;
 
@@ -211,6 +307,37 @@ TrackedArray<T> MakeTrackedArray(size_t size, MemoryBudget* budget = nullptr) {
   std::uninitialized_value_construct_n(p, size);
   std::move(release).Cancel();
   return TrackedArray<T>{p, TrackedArrayDelete<T>{size, budget}};
+}
+
+template<typename Budget>
+struct TrackedDelete {
+  Budget* budget = nullptr;
+  size_t size = 0;
+
+  template<typename T>
+  void operator()(T* p) const noexcept {
+    std::destroy_at(p);
+    TrackedAllocator<std::byte, kMemoryTag, std::allocator<std::byte>, Budget>{
+      budget}
+      .deallocate(reinterpret_cast<std::byte*>(p), size);
+  }
+};
+
+template<typename T, typename Budget = MemoryBudget>
+using TrackedPtr = std::unique_ptr<T, TrackedDelete<Budget>>;
+
+template<typename T, typename Budget, typename... Args>
+TrackedPtr<T, Budget> MakeTracked(Budget* budget, Args&&... args) {
+  static_assert(alignof(T) <= __STDCPP_DEFAULT_NEW_ALIGNMENT__);
+  TrackedAllocator<std::byte, kMemoryTag, std::allocator<std::byte>, Budget>
+    allocator{budget};
+  auto* p = allocator.allocate(sizeof(T));
+  absl::Cleanup release = [&] { allocator.deallocate(p, sizeof(T)); };
+  auto* object =
+    std::construct_at(reinterpret_cast<T*>(p), std::forward<Args>(args)...);
+  std::move(release).Cancel();
+  return TrackedPtr<T, Budget>{object,
+                               TrackedDelete<Budget>{budget, sizeof(T)}};
 }
 
 }  // namespace irs

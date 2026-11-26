@@ -48,10 +48,11 @@
 #include "iresearch/formats/column/codecs/numeric/alp_scan.tpp"
 #include "iresearch/formats/column/codecs/numeric_axis.hpp"
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/tracked_hash.hpp"
 #include "iresearch/utils/lower_bound.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/shared.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs {
 namespace {
@@ -124,11 +125,15 @@ struct AlpRdLeftPartInfo {
 };
 
 struct AlpRdDictionary {
+  explicit AlpRdDictionary(MemoryBudget* budget)
+    : left_parts_dict_map{
+        TrackedAllocator<std::pair<const uint16_t, uint16_t>>{budget}} {}
+
   uint8_t right_bit_width = 0;
   uint8_t left_bit_width = 0;
   uint8_t actual_dictionary_size = 0;
   uint16_t left_parts_dict[kMaxDictionarySize] = {};
-  containers::FlatHashMap<uint16_t, uint16_t> left_parts_dict_map;
+  containers::TrackedFlatHashMap<uint16_t, uint16_t> left_parts_dict_map;
 };
 
 double EstimateCompressionSize(uint8_t right_bit_width, uint8_t left_bit_width,
@@ -144,9 +149,11 @@ double EstimateCompressionSize(uint8_t right_bit_width, uint8_t left_bit_width,
   return estimated_size;
 }
 
-std::vector<AlpRdLeftPartInfo> CountLeftParts(
-  std::span<const uint16_t> sorted_tops, idx_t left_bits) {
-  std::vector<AlpRdLeftPartInfo> left_parts;
+TrackedVector<AlpRdLeftPartInfo> CountLeftParts(
+  MemoryBudget* budget, std::span<const uint16_t> sorted_tops,
+  idx_t left_bits) {
+  TrackedVector<AlpRdLeftPartInfo> left_parts{
+    TrackedAllocator<AlpRdLeftPartInfo>{budget}};
   for (const auto top : sorted_tops) {
     const uint64_t left_part = top >> (kCuttingLimit - left_bits);
     if (left_parts.empty() || left_parts.back().hash != left_part) {
@@ -157,7 +164,7 @@ std::vector<AlpRdLeftPartInfo> CountLeftParts(
   return left_parts;
 }
 
-void DropLowestBit(std::vector<AlpRdLeftPartInfo>& left_parts) {
+void DropLowestBit(TrackedVector<AlpRdLeftPartInfo>& left_parts) {
   size_t merged = 0;
   for (const auto part : left_parts) {
     const auto left_part = part.hash >> 1;
@@ -176,7 +183,7 @@ uint8_t LeftBitWidth(uint64_t dictionary_size) {
 }
 
 double EstimateLeftParts(std::span<const AlpRdLeftPartInfo> left_parts,
-                         std::vector<uint32_t>& counts, idx_t right_bit_width,
+                         TrackedVector<uint32_t>& counts, idx_t right_bit_width,
                          uint64_t sample_count) {
   uint32_t exceptions_count = 0;
   if (left_parts.size() > kMaxDictionarySize) {
@@ -197,17 +204,19 @@ double EstimateLeftParts(std::span<const AlpRdLeftPartInfo> left_parts,
 }
 
 template<typename T>
-double FindBestDictionary(std::span<const alp::ExactType<T>> values,
+double FindBestDictionary(MemoryBudget* budget,
+                          std::span<const alp::ExactType<T>> values,
                           AlpRdDictionary& dictionary) {
   constexpr idx_t kExactTypeBitSize = sizeof(alp::ExactType<T>) * 8;
-  std::vector<uint16_t> sorted_tops(values.size());
+  TrackedVector<uint16_t> sorted_tops(values.size(),
+                                      TrackedAllocator<uint16_t>{budget});
   absl::c_transform(values, sorted_tops.begin(), [](auto value) {
     return static_cast<uint16_t>(value >> (kExactTypeBitSize - kCuttingLimit));
   });
   absl::c_sort(sorted_tops);
 
-  auto left_parts = CountLeftParts(sorted_tops, kCuttingLimit);
-  std::vector<uint32_t> counts;
+  auto left_parts = CountLeftParts(budget, sorted_tops, kCuttingLimit);
+  TrackedVector<uint32_t> counts{TrackedAllocator<uint32_t>{budget}};
   idx_t left_bits = kCuttingLimit;
   double best_dict_size = EstimateLeftParts(
     left_parts, counts, kExactTypeBitSize - kCuttingLimit, values.size());
@@ -221,7 +230,7 @@ double FindBestDictionary(std::span<const alp::ExactType<T>> values,
     }
   }
 
-  left_parts = CountLeftParts(sorted_tops, left_bits);
+  left_parts = CountLeftParts(budget, sorted_tops, left_bits);
   absl::c_sort(
     left_parts, [](const AlpRdLeftPartInfo& a, const AlpRdLeftPartInfo& b) {
       return a.count > b.count || (a.count == b.count && a.hash < b.hash);
@@ -284,10 +293,14 @@ void AlpRdDecompress(duckdb::const_data_ptr_t left_encoded,
 
 template<typename T>
 struct AlpRdAnalyzeState {
+  explicit AlpRdAnalyzeState(MemoryBudget* budget)
+    : rowgroup_sample{TrackedAllocator<alp::ExactType<T>>{budget}},
+      dictionary{budget} {}
+
   idx_t vectors_count = 0;
   idx_t total_values_count = 0;
   idx_t vectors_sampled_count = 0;
-  std::vector<alp::ExactType<T>> rowgroup_sample;
+  TrackedVector<alp::ExactType<T>> rowgroup_sample;
   AlpRdDictionary dictionary;
 };
 
@@ -346,12 +359,12 @@ template<typename T>
 struct RowGroupSample final : State {
   static constexpr StateId kId = StateId::AlprdSample;
 
-  explicit RowGroupSample(ColumnDataCheckpointData& data) {
+  explicit RowGroupSample(ColumnDataCheckpointData& data) : state{data.budget} {
     for (const auto& chunk : data.rows.chunks) {
       AlpRdSample(state, chunk.data);
     }
-    bits_per_value =
-      FindBestDictionary<T>(state.rowgroup_sample, state.dictionary);
+    bits_per_value = FindBestDictionary<T>(data.budget, state.rowgroup_sample,
+                                           state.dictionary);
   }
 
   AlpRdAnalyzeState<T> state;
@@ -400,7 +413,7 @@ class AlpRdCompressionState {
                         ColumnDataCheckpointData& checkpoint_data,
                         AlpRdAnalyzeState<T>& analyze_state)
     : _checkpoint_data{checkpoint_data},
-      _segment{codec, checkpoint_data.type},
+      _segment{codec, checkpoint_data},
       _dictionary{std::move(analyze_state.dictionary)},
       _actual_dictionary_size_bytes{_dictionary.actual_dictionary_size *
                                     kDictionaryElementSize},
@@ -651,7 +664,7 @@ uint64_t AlpRdCompressChunks(const Codec& codec,
 }
 
 template<typename T>
-struct AlpRdVectorState {
+struct AlpRdVectorState : Tracked {
   using Exact = alp::ExactType<T>;
 
   idx_t index = 0;

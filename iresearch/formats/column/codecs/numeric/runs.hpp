@@ -35,6 +35,7 @@
 #include "iresearch/formats/column/codecs/numeric/numeric_writer.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/lower_bound.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::numeric {
 
@@ -155,7 +156,10 @@ struct Runs final : State {
 
   using U = Bits<sizeof(T)>;
 
-  explicit Runs(ColumnDataCheckpointData& data) {
+  explicit Runs(ColumnDataCheckpointData& data)
+    : values{data.Allocator()},
+      lengths{data.Allocator()},
+      rows{data.Allocator()} {
     if constexpr (!std::is_integral_v<T>) {
       if (!data.Find<Values<T>>() && EveryRowDiffers<T>(data.rows.chunks)) {
         return;
@@ -171,7 +175,9 @@ struct Runs final : State {
 
   Runs(ColumnDataCheckpointData& data, ScratchVector<U>&& located,
        ScratchVector<uint32_t>&& located_rows)
-    : values{std::move(located)}, rows{std::move(located_rows)} {
+    : values{std::move(located)},
+      lengths{data.Allocator()},
+      rows{std::move(located_rows)} {
     MeasureRuns(data.Get<Values<T>>(), *this);
   }
 
@@ -250,7 +256,9 @@ class RleBitpacking {
   using U = Bits<sizeof(T)>;
 
   RleBitpacking(ColumnDataCheckpointData& data, double)
-    : _runs{data.Get<Runs<T>>()} {
+    : _runs{data.Get<Runs<T>>()},
+      _value_blocks{data.budget},
+      _length_blocks{data.budget} {
     if (_runs.lengths.empty()) {
       return;
     }
@@ -280,7 +288,7 @@ class RleBitpacking {
   }
 
   void Append(NumericFrameMeta& m, uint32_t begin, uint32_t count,
-              std::string& out) {
+              TrackedString& out) {
     const size_t first = begin / kBlockValues;
     const size_t blocks = (size_t{count} + kBlockValues - 1) / kBlockValues;
     m.frame.first_entry = _runs.rows[begin];

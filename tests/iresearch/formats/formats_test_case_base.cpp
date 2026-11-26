@@ -350,7 +350,7 @@ TEST_P(FormatTestCase, fields_read_write) {
 
   // write fields
   {
-    auto budget = irs::EmptyBudget();
+    irs::MemoryBudget budget{nullptr};
     irs::FlushState state{
       .tracker = dir().Tracker("segment_name"),
       .doc_count = 100,
@@ -364,8 +364,8 @@ TEST_P(FormatTestCase, fields_read_write) {
     tests::MockTermReader term_reader{
       terms, irs::FieldMeta{field.id, field.index_features}};
 
-    irs::IdxWriter idx{dir().Tracker("segment_name")};
-    irs::term_dict::FieldWriter writer{/*compaction=*/false};
+    irs::IdxWriter idx{dir().Tracker("segment_name"), nullptr};
+    irs::term_dict::FieldWriter writer{/*compaction=*/false, nullptr};
     writer.SetIdxWriter(idx);
     writer.prepare(state, 1, 0);
     writer.write(irs::StringLayout::kStrings, term_reader);

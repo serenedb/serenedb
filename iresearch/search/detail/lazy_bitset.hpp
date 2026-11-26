@@ -327,8 +327,6 @@ class CountAgainst {
       CheckBit(_set->Words()[offset / kBits], offset % kBits));
   }
 
-  IRS_FORCE_INLINE void Finish(uint32_t) noexcept {}
-
  private:
   LazyBitset* _set;
   uint64_t _min;

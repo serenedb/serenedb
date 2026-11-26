@@ -26,37 +26,81 @@
 #include <array>
 #include <bit>
 #include <cstdint>
+#include <duckdb/common/serializer/read_stream.hpp>
 #include <duckdb/common/serializer/write_stream.hpp>
+#include <iterator>
 #include <limits>
 #include <string_view>
+#include <type_traits>
 
 #include "iresearch/formats/posting/block_codec.hpp"
+#include "iresearch/index/index_features.hpp"
 #include "iresearch/types.hpp"
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/bytes_utils.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 
 namespace irs::term_dict {
 
 inline constexpr uint32_t kPage = 4096;
-inline constexpr uint32_t kRestartInterval = 16;
-inline constexpr uint32_t kRecordInterval = 8;
-inline constexpr uint32_t kHeadBytes = sizeof(uint32_t);
-inline constexpr uint32_t kRecordOffset = sizeof(uint16_t);
+
+void WriteArray(duckdb::WriteStream& out, const auto& values) {
+  using T = std::remove_cvref_t<decltype(*std::data(values))>;
+  static_assert(std::is_trivially_copyable_v<T>);
+  out.Write<uint64_t>(std::size(values));
+  if (std::size(values) != 0) {
+    out.WriteData(reinterpret_cast<duckdb::const_data_ptr_t>(std::data(values)),
+                  std::size(values) * sizeof(T));
+  }
+}
+
+void ReadArray(duckdb::ReadStream& in, auto& values) {
+  using T = std::remove_cvref_t<decltype(*std::data(values))>;
+  static_assert(std::is_trivially_copyable_v<T>);
+  values.resize(in.Read<uint64_t>());
+  if (std::size(values) != 0) {
+    in.ReadData(reinterpret_cast<duckdb::data_ptr_t>(std::data(values)),
+                std::size(values) * sizeof(T));
+  }
+}
+
+constexpr uint64_t PackedBytes(uint64_t count, uint32_t bits) noexcept {
+  return (count * bits + 7) / 8;
+}
+inline uint64_t VSize(uint64_t value) noexcept {
+  return bytes_io<uint64_t>::vsize(value);
+}
+
+template<typename Value>
+void WritePacked(duckdb::WriteStream& out, uint64_t count, uint32_t bits,
+                 Value&& value) {
+  SDB_ASSERT(bits <= 64);
+  if (bits == 0) {
+    return;
+  }
+  std::array<byte_type, sizeof(uint64_t)> word;
+  uint64_t pending = 0;
+  uint32_t filled = 0;
+  for (uint64_t i = 0; i != count; ++i) {
+    const uint64_t v = value(i);
+    SDB_ASSERT(static_cast<uint32_t>(std::bit_width(v)) <= bits);
+    pending |= v << filled;
+    filled += bits;
+    if (filled >= 64) {
+      absl::little_endian::Store64(word.data(), pending);
+      out.WriteData(word.data(), word.size());
+      filled -= 64;
+      pending = filled == 0 ? 0 : v >> (bits - filled);
+    }
+  }
+  absl::little_endian::Store64(word.data(), pending);
+  out.WriteData(word.data(), (filled + 7) / 8);
+}
+
 inline constexpr uint32_t kMaxStride = 32;
 inline constexpr uint32_t kSlack = block_codec::kInSlack;
-inline constexpr uint32_t kVarRestart = sizeof(uint16_t);
 inline constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
-
-enum class BlockKind : uint8_t {
-  Var = 0,
-  FixedStride = 1,
-  VarFsst = 2,
-};
-
-constexpr uint32_t ColumnWidth(uint32_t max) noexcept {
-  return max <= 0xFF ? 1 : max <= 0xFFFF ? 2 : 4;
-}
 
 inline constexpr size_t kMaxRecordBytes = 128;
 
@@ -79,21 +123,10 @@ class RecordOutput final : public duckdb::WriteStream {
   std::array<byte_type, kMaxRecordBytes> _bytes;
 };
 
-constexpr uint64_t RecordGroups(uint64_t count) noexcept {
-  return (count + kRecordInterval - 1) / kRecordInterval;
-}
-
 inline constexpr size_t kMaxRangeLevels = 8;
 
-inline constexpr size_t kTermPrefix = sizeof(uint32_t);
-inline constexpr uint32_t kNoLabel = 256;
-
-constexpr uint32_t TermPrefix(bytes_view term) noexcept {
-  uint32_t value = 0;
-  for (size_t i = 0; i != kTermPrefix; ++i) {
-    value = value << 8 | (i < term.size() ? term[i] : 0);
-  }
-  return value;
+constexpr uint64_t KeyedDictsOf(IndexFeatures features) noexcept {
+  return IsSubsetOf(IndexFeatures::Ranges, features) ? 1 + kMaxRangeLevels : 1;
 }
 
 [[noreturn]] inline void Corrupted(std::string_view what) {
@@ -118,8 +151,7 @@ constexpr uint64_t OrdinalLimit(uint32_t ordinal_bytes) noexcept {
   return uint64_t{1} << (8 * ordinal_bytes);
 }
 
-inline void AppendOrdinal(bstring& out, uint32_t ordinal,
-                          uint32_t ordinal_bytes) {
+void AppendOrdinal(auto& out, uint32_t ordinal, uint32_t ordinal_bytes) {
   SDB_ASSERT(ordinal_bytes != 0 && ordinal_bytes <= kMaxOrdinalBytes);
   SDB_ASSERT(ordinal < OrdinalLimit(ordinal_bytes));
   byte_type bytes[kMaxOrdinalBytes];

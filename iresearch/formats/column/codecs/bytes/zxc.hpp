@@ -31,6 +31,7 @@
 
 #include "iresearch/formats/column/codecs/bytes/byte_codec.hpp"
 #include "iresearch/formats/column/codecs/bytes/segment_dictionary.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs {
 
@@ -50,9 +51,11 @@ struct Zxc {
     return zxc_compress_bound(raw_size);
   }
 
+  static size_t ContextBytes(uint8_t level) noexcept;
+
   class Compressor final : public DictionaryCompressor {
    public:
-    explicit Compressor(uint8_t level);
+    Compressor(MemoryBudget* budget, uint8_t level);
 
     size_t Compress(const char* src, size_t size, char* dst, size_t capacity);
 
@@ -67,7 +70,9 @@ struct Zxc {
     size_t Plain(const char* src, size_t size, char* dst, size_t capacity);
 
     uint8_t _level;
+    MemoryCharge _ctx_charge;
     std::unique_ptr<zxc_cctx, ZxcFree> _ctx;
+    MemoryCharge _attached_charge;
     std::unique_ptr<zxc_cctx, ZxcFree> _attached;
   };
 
@@ -86,7 +91,9 @@ struct Zxc {
                              size_t raw_size);
 
    private:
+    MemoryCharge _ctx_charge;
     std::unique_ptr<zxc_dctx, ZxcFree> _ctx;
+    MemoryCharge _blocks_charge;
     std::unique_ptr<zxc_dctx, ZxcFree> _blocks;
   };
 };

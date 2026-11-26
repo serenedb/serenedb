@@ -428,6 +428,7 @@ inline bool TakeConjunctionFold(const BitsetBuckets& buckets,
                   doc, docs_count);
 }
 
+template<typename Result>
 struct BitsetNode;
 
 template<>
@@ -505,7 +506,7 @@ struct ConstantBitsetNode<ProbeNode::ptr> {
                              const duckdb::InputFile& doc, doc_id_t docs_count,
                              score_t value) {
     return memory.Make<probe::ConstantScoredImpl<probe::BitsetDocs>>(
-      value, BuildBitset<P>(memory, buckets, doc, docs_count));
+      memory, value, BuildBitset<P>(memory, buckets, doc, docs_count));
   }
 };
 
@@ -516,7 +517,7 @@ struct ConstantBitsetNode<LeadNode::ptr> {
                             const duckdb::InputFile& doc, doc_id_t docs_count,
                             score_t value) {
     return memory.Make<lead::ConstantScoredImpl<lead::BitsetDocs>>(
-      value, BuildBitset<P>(memory, buckets, doc, docs_count));
+      memory, value, BuildBitset<P>(memory, buckets, doc, docs_count));
   }
 };
 

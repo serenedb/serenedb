@@ -52,14 +52,17 @@ void WriteGraphFrames(duckdb::BinarySerializer& graph,
 
 }  // namespace
 
-IdxWriter::IdxWriter(FileTracker& tracker)
-  : _tracker{tracker}, _filename{FileName(tracker.Name(), kIdxFormatExt)} {}
+IdxWriter::IdxWriter(FileTracker& tracker, MemoryBudget* budget)
+  : _tracker{tracker},
+    _filename{FileName(tracker.Name(), kIdxFormatExt)},
+    _budget{budget} {}
 
 void IdxWriter::EnsureOut() {
   if (_out) {
     return;
   }
-  _out = format_utils::OpenOutput(_tracker.Fs(), _tracker.Root(), _filename);
+  _out = format_utils::OpenOutput(_tracker.Fs(), _tracker.Root(), _filename,
+                                  _budget);
   _tracker.Add(kIdxFile);
 }
 

@@ -169,6 +169,8 @@ TEST(TopTermsSelector_test, test_top_k) {
 
   // segment 0
   irs::EmptyTermReader term_reader0(42);
+  EXPECT_FALSE(term_reader0.CoverRange(
+    {}, {}, [](irs::bytes_view, const irs::PostingMeta&) { return true; }));
   SubReader segment0(100);
   const std::pair<std::string_view, TestPostingMeta> term_s0[]{
     {"A", {3, 3}}, {"C", {15, 15}}, {"E", {2, 2}}, {"G", {5, 5}}, {"I", {1, 1}},

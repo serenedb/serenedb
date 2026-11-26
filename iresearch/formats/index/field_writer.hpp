@@ -20,9 +20,6 @@
 
 #pragma once
 
-#include <fsst.h>
-
-#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -34,53 +31,27 @@
 #include "iresearch/formats/field_sink.hpp"
 #include "iresearch/formats/flush_state.hpp"
 #include "iresearch/formats/index/idx_writer.hpp"
+#include "iresearch/formats/index/term_dict_block_writer.hpp"
 #include "iresearch/formats/index/term_dict_format.hpp"
+#include "iresearch/formats/index/term_dict_index.hpp"
 #include "iresearch/formats/index/term_dict_meta.hpp"
 #include "iresearch/formats/index/term_dict_ranges.hpp"
+#include "iresearch/formats/index/term_dict_records.hpp"
 #include "iresearch/formats/posting/writer.hpp"
 #include "iresearch/index/field_meta.hpp"
 #include "iresearch/utils/tracked.hpp"
 
 namespace irs::term_dict {
 
-struct FsstEncoderDelete {
-  void operator()(duckdb_fsst_encoder_t* encoder) const noexcept;
-};
-
-using FsstEncoder = std::unique_ptr<duckdb_fsst_encoder_t, FsstEncoderDelete>;
-
-struct VarColumns {
-  std::vector<uint32_t> lcps;
-  std::vector<uint32_t> lens;
-  bstring suffixes;
-  std::vector<uint16_t> restarts;
-  uint32_t max = 0;
-};
-
-struct BlockBuilder {
-  bstring keys;
-  std::vector<uint32_t> ends;
-  bstring records;
-  std::vector<uint16_t> record_starts;
-  VarColumns raw;
-  VarColumns coded;
-  uint64_t size = 0;
-  uint64_t coded_size = std::numeric_limits<uint64_t>::max();
-  uint32_t width = 0;
-  uint32_t prefix = 0;
-  uint32_t head_skip = 0;
-  BlockKind kind = BlockKind::Var;
-  bool all_coded = true;
-};
-
 class FieldWriter final : public FieldSink {
  public:
-  explicit FieldWriter(bool compaction) noexcept : _compaction{compaction} {}
+  explicit FieldWriter(bool compaction, MemoryBudget* budget);
 
   FieldWriter(const FieldWriter&) = delete;
   FieldWriter& operator=(const FieldWriter&) = delete;
 
-  static uint64_t Bound(uint64_t terms, uint64_t docs, bool ranges) noexcept;
+  static uint64_t Bound(uint64_t terms, uint64_t docs, bool ranges,
+                        bool vec) noexcept;
 
   void SetIdxWriter(IdxWriter& idx) noexcept { _idx = &idx; }
   void prepare(const FlushState& state, uint64_t keyed_dicts,
@@ -97,56 +68,41 @@ class FieldWriter final : public FieldSink {
   void Begin(field_id id, DictRef dict) noexcept;
   void BeginSlot(field_id id, DictRef dict);
   void EndSlot(field_id id, const PostingMeta& meta);
-  void SampleFsst(const BasicTermReader& reader);
-  void TrainFsst();
-  bytes_view EncodeSuffix(bytes_view suffix);
+  bool OwnsBlock() const noexcept;
   void Add(bytes_view term, const PostingMeta& meta);
   void Commit(bytes_view term, const PostingMeta& meta);
+  void FeedIndex();
   bool Append(bytes_view term, const PostingMeta& meta);
-  bool AppendFixedKey(bytes_view key, uint64_t records);
-  bool AppendVarKey(bytes_view key, uint64_t records);
-  void AppendVarColumns(uint32_t index, bytes_view key);
-  void Seal();
   void Cut();
-  void WriteBlock();
+  void WriteBlock(uint64_t size);
   void EndField(field_id id, const FieldProperties& props, uint64_t total_freq,
-                uint64_t first_inline);
+                uint64_t docs_sum);
+  void EndKeyed(FieldHead& head);
+  void WriteLevels(FieldHead& head);
   void ResetField() noexcept;
   void Reset() noexcept;
 
-  static uint64_t InlineCapacity(uint64_t terms) noexcept {
-    return terms * PostingMeta::kInlineBytes;
-  }
-
+  MemoryBudget _memory;
   PostingsWriter _pw;
-  RecordOutput _record;
-  BlockBuilder _block;
+  BlockEncoder _encoder;
+  BlockRecords _records;
   RangeWriter _ranges;
-  TrackedVector<byte_type> _inline;
-  FsstEncoder _fsst;
-  std::string _fsst_table;
-  bstring _samples;
-  std::vector<size_t> _sample_lengths;
-  bstring _coded;
   std::vector<SpanningBlock> _spans;
-  std::string _separators;
-  bstring _separator;
-  bstring _last;
-  std::string _inline_starts;
-  bstring _range_regions;
   std::vector<FieldHead> _heads;
-  std::vector<uint32_t> _prefixes;
-  bstring _key_prefix;
-  bstring _min;
+  DictIndexBuilder _index;
+  TrackedBstring _key_prefix;
+  TrackedBstring _min;
+  TrackedBstring _last;
+  Separators _separators;
+  TrackedVector<DictSections> _sections;
   PostingMeta _single;
-  std::array<byte_type, PostingMeta::kInlineBytes> _single_inline{};
   IdxWriter* _idx = nullptr;
   duckdb::WriteStream* _out = nullptr;
+  MemoryBudget* _budget = nullptr;
+  uint64_t _reserved = 0;
   uint64_t _docs = 0;
   uint64_t _terms = 0;
   uint64_t _first_page = 0;
-  uint64_t _inline_start = 0;
-  uint64_t _inline_last = 0;
   uint32_t _blocks = 0;
   uint32_t _width = 0;
   uint32_t _ordinal = 0;
@@ -156,8 +112,6 @@ class FieldWriter final : public FieldSink {
   uint32_t _first_block = 0;
   uint32_t _first_entry = 0;
   uint32_t _first_record = 0;
-  bool _encode = true;
-  bool _group_inline = false;
   const bool _compaction;
 };
 

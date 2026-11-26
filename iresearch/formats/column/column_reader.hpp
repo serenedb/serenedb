@@ -119,8 +119,7 @@ class ColumnReader {
   struct VectorScratch {
     explicit VectorScratch(const duckdb::LogicalType& type,
                            duckdb::idx_t capacity = STANDARD_VECTOR_SIZE)
-      : cache{duckdb::Allocator::DefaultAllocator(), type, capacity},
-        vector{cache} {}
+      : cache{TrackedDuckAllocator(), type, capacity}, vector{cache} {}
     VectorScratch(const VectorScratch&) = delete;
     VectorScratch(VectorScratch&&) = delete;
 

@@ -333,7 +333,9 @@ class Builder {
         return MakeTerms(utils::downCast<MultiTermQuery>(query));
       case QueryKind::Term: {
         const auto& term = utils::downCast<TermQuery>(query);
-        return MakeClause({term.State(), term.Boost(), term.Stats(Scoring())});
+        return MakeClause({.state = term.State(),
+                           .boost = term.Boost(),
+                           .stats = term.Stats(Scoring())});
       }
       default:
         return MakeLeaf(query);

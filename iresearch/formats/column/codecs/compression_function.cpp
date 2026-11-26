@@ -82,11 +82,11 @@ void ThrowCorrupted(std::string_view codec, std::string_view what) {
 }
 
 CompressedSegment::CompressedSegment(const Codec& codec,
-                                     const duckdb::LogicalType& type)
-  : stats{duckdb::BaseStatistics::CreateEmpty(type)},
+                                     const ColumnDataCheckpointData& data)
+  : stats{duckdb::BaseStatistics::CreateEmpty(data.type)},
     _codec{codec},
-    _type{type},
-    _buffer{std::make_unique_for_overwrite<duckdb::data_t[]>(kBlockSize)} {}
+    _type{data.type},
+    _buffer(kBlockSize, data.Allocator()) {}
 
 void CompressedSegment::Reset() {
   count = 0;
@@ -107,7 +107,7 @@ void CompressedSegment::Flush(ColumnDataCheckpointData& checkpoint_data,
   } else {
     stored += size;
     checkpoint_data.flush(_codec, std::move(stats), count,
-                          {reinterpret_cast<const char*>(_buffer.get()), size},
+                          {reinterpret_cast<const char*>(_buffer.data()), size},
                           {});
   }
   Reset();

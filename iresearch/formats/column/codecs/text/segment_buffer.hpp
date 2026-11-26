@@ -27,18 +27,18 @@
 #include <type_traits>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/tracked.hpp"
 
 namespace irs::codecs::text {
 
 class SegmentBuffer {
  public:
-  explicit SegmentBuffer(duckdb::BufferManager& buffers) noexcept
-    : _buffers{&buffers} {}
+  explicit SegmentBuffer(MemoryBudget* budget) noexcept : _budget{budget} {}
 
   SegmentBuffer(const SegmentBuffer&) = delete;
   SegmentBuffer& operator=(const SegmentBuffer&) = delete;
 
-  ~SegmentBuffer() { _buffers->FreeReservedMemory(_capacity); }
+  ~SegmentBuffer() { FreeCharge(_budget, kMemoryTag, _capacity); }
 
   template<typename Self>
   auto* Data(this Self& self) noexcept {
@@ -75,7 +75,7 @@ class SegmentBuffer {
  private:
   void Grow(size_t need);
 
-  duckdb::BufferManager* _buffers;
+  MemoryBudget* _budget;
   std::unique_ptr<char[]> _data;
   size_t _capacity = 0;
   size_t _size = 0;

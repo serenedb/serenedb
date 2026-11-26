@@ -74,6 +74,9 @@ struct EntryFrames {
       return;
     }
     LoadFrames();
+    auto held = duckdb::make_uniq<HeapCharge>();
+    held->charge.Resize(DictionaryBytes(header));
+    heap_charge = held.get();
     if constexpr (kDedup) {
       dictionary = duckdb::DictionaryVector::CreateReusableDictionary(
         type, header.entry_count);
@@ -89,7 +92,14 @@ struct EntryFrames {
         header.raw_bytes));
     duckdb::StringVector::AddAuxiliaryData(
       dict_data, duckdb::make_uniq<ImmutablePayloads>());
+    duckdb::StringVector::AddAuxiliaryData(dict_data, std::move(held));
     leaf.emplace(segment, *this);
+  }
+
+  void ReleaseCharge() noexcept {
+    if (heap_charge) {
+      heap_charge->charge.Resize(0);
+    }
   }
 
   void LoadFrames() {
@@ -284,9 +294,14 @@ struct EntryFrames {
   }
 
   void ReferenceHeap(duckdb::Vector& result) {
+    if (heap_charge) {
+      auto& charge = heap_charge->charge;
+      charge.Resize(std::max<uint64_t>(charge.Bytes(), CacheBytes()));
+    }
     ReferenceOnce(heap_reference, dictionary->data, result);
   }
 
+  HeapCharge* heap_charge = nullptr;
   HeapReference heap_reference;
   duckdb::BufferHandle handle;
   data_ptr_t base;
@@ -296,9 +311,9 @@ struct EntryFrames {
   duckdb::buffer_ptr<duckdb::DictionaryEntry> dictionary;
   string_t* values = nullptr;
   char* heap = nullptr;
-  std::vector<FrameMeta> frames;
-  std::vector<uint64_t> frame_off;
-  std::vector<uint8_t> decoded;
+  TrackedVector<FrameMeta> frames;
+  TrackedVector<uint64_t> frame_off;
+  TrackedVector<uint8_t> decoded;
   size_t decoded_count = 0;
   uint32_t sparse_frame = kNoFrame;
   std::optional<Leaf> leaf;
@@ -397,6 +412,7 @@ duckdb::shared_ptr<DecodedDictionary> DecodeWhole(
   Scan scan{segment, segment.Pin()};
   scan.EnsureDictionary();
   const auto bytes = scan.entries.CacheBytes();
+  scan.entries.ReleaseCharge();
   return duckdb::make_shared_ptr<DecodedDictionary>(
     std::move(scan.entries.dictionary), bytes);
 }

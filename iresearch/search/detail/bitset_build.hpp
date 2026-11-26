@@ -286,12 +286,6 @@ class PostingReader {
   template<typename Sink>
   void Read(const PostingMeta& meta, bool has_score_bounds, bool has_freq,
             Sink& sink) {
-    if (meta.inline_size != 0) {
-      duckdb::MemoryReader in{meta.Inline()};
-      ReadPosting(meta, in, Enc(), Holes(), Docs(), has_score_bounds, has_freq,
-                  sink);
-      return;
-    }
     auto& in = _in;
     PrefetchDocs(File(), meta);
     in.Seek(meta.doc_start);

@@ -507,6 +507,49 @@ id
 3
 5
 
+# A phrase part reads `~N` as a term does: at most two edits, and below one a
+# similarity, here one edit for four characters.
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('"quick brwn*~4"')
+ORDER BY id
+----
+id
+1
+2
+3
+5
+
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('"quick brwn*~0.75"')
+ORDER BY id
+----
+id
+1
+2
+3
+5
+
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('"quick brwn~4"')
+ORDER BY id
+----
+id
+1
+2
+5
+
+statement error
+SELECT id FROM swp_idx WHERE body @@ to_tsquery('fn:fuzzyTerm(brwn 4)')
+----
+db error: ERROR: `fn:fuzzyTerm` allows at most 3 edits, got 4
+
+
 query
 SELECT id
 FROM swp_idx

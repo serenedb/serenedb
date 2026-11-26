@@ -1320,8 +1320,7 @@ class SystemCursor<SystemEntries> final {
   template<typename T>
   std::span<const uint64_t> Visibility(
     const T& table, const duckdb::SchemaCatalogEntry& schema) const {
-    if (table.Viewer() == duckdb::VISIBLE_TO_ALL ||
-        schema.ParentCatalog().GetAttached().IsReadOnly()) {
+    if (table.Viewer() == duckdb::VISIBLE_TO_ALL) {
       return {};
     }
     const auto& snapshot = *_set.snapshot;

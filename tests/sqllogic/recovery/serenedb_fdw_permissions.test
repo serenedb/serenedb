@@ -84,6 +84,15 @@ t
 
 connection sfp_reader user=sfp_reader password=sfp_pw
 query
+SELECT relname, relkind FROM sfp_snap.pg_catalog.pg_class
+WHERE relname LIKE 'sfp%' AND relkind IN ('r', 'v') ORDER BY relname;
+----
+relname	relkind
+sfp_docs	r
+sfp_secret_v	v
+
+connection sfp_reader user=sfp_reader password=sfp_pw
+query
 SELECT has_table_privilege('sfp_snap.public.sfp_docs', 'SELECT') AS docs,
        has_any_column_privilege('sfp_snap.public.sfp_docs', 'SELECT') AS any_column,
        has_column_privilege('sfp_snap.public.sfp_docs', 'body', 'SELECT') AS body,

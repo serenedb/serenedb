@@ -142,7 +142,7 @@ class ColumnReader {
     std::shared_ptr<ReadContext> ctx;
     codecs::ColumnScanState st;
     BlockWindow window{};
-    std::unique_ptr<codecs::SharedSymbols> symbols;
+    std::unique_ptr<codecs::SharedScanState> shared_state;
     std::vector<std::unique_ptr<codecs::ColumnSegment>> segments;
     std::vector<ScanState> child_states;
     std::unique_ptr<VariantScanState> variant;

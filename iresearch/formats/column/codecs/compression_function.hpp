@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/functional/function_ref.h>
-#include <fsst12.h>
 
 #include <array>
 #include <cstdint>
@@ -64,11 +63,20 @@ enum class CompressionValidity : uint8_t {
   NoValidityRequired,
 };
 
-struct SharedSymbols {
+struct SegmentScanState {
+  virtual ~SegmentScanState() = default;
+
+  template<typename T>
+  T& Cast() noexcept {
+    return utils::downCast<T>(*this);
+  }
+};
+
+struct SharedScanState {
   uint64_t file_id = 0;
   uint64_t offset = 0;
   uint64_t size = 0;
-  std::shared_ptr<const duckdb_fsst12_decoder_t> fsst12;
+  std::shared_ptr<const SegmentScanState> decoded;
 };
 
 struct ColumnSegment {
@@ -85,16 +93,7 @@ struct ColumnSegment {
   CodecType codec = CodecType::Uncompressed;
   uint64_t shared_offset = 0;
   uint64_t shared_size = 0;
-  SharedSymbols* symbols = nullptr;
-};
-
-struct SegmentScanState {
-  virtual ~SegmentScanState() = default;
-
-  template<typename T>
-  T& Cast() noexcept {
-    return utils::downCast<T>(*this);
-  }
+  SharedScanState* shared_state = nullptr;
 };
 
 struct ColumnScanState {

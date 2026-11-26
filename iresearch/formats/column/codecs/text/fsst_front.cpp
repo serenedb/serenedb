@@ -92,39 +92,56 @@ struct Fsst12 {
                                   out_lengths, out_strings);
   }
 
+  struct ImportedTable final : SegmentScanState {
+    duckdb_fsst12_decoder_t decoder;
+  };
+
   using Imported = std::shared_ptr<const duckdb_fsst12_decoder_t>;
 
-  static bool Import(Imported& imported, std::string_view table) {
-    auto fresh = std::make_shared<duckdb_fsst12_decoder_t>();
+  static std::shared_ptr<const ImportedTable> ImportTable(
+    std::string_view table) {
+    auto fresh = std::make_shared<ImportedTable>();
     if (duckdb_fsst12_import(
-          fresh.get(), reinterpret_cast<const unsigned char*>(table.data()),
+          &fresh->decoder, reinterpret_cast<const unsigned char*>(table.data()),
           table.size()) != table.size()) {
+      return nullptr;
+    }
+    return fresh;
+  }
+
+  static bool Import(Imported& imported, std::string_view table) {
+    auto fresh = ImportTable(table);
+    if (!fresh) {
       return false;
     }
-    imported = std::move(fresh);
+    const auto& decoder = fresh->decoder;
+    imported = Imported{std::move(fresh), &decoder};
     return true;
   }
 
   static bool Import(Imported& imported, std::string_view table,
                      const ColumnSegment& segment, bool shared) {
-    auto* slot = shared ? segment.symbols : nullptr;
+    auto* slot = shared ? segment.shared_state : nullptr;
     if (!slot) {
       return Import(imported, table);
     }
-    if (slot->fsst12 && slot->file_id == segment.cache_slot.file_id &&
+    if (slot->decoded && slot->file_id == segment.cache_slot.file_id &&
         slot->offset == segment.shared_offset &&
         slot->size == segment.shared_size) {
-      imported = slot->fsst12;
+      const auto& held = utils::downCast<const ImportedTable>(*slot->decoded);
+      imported = Imported{slot->decoded, &held.decoder};
       return true;
     }
-    if (!Import(imported, table)) {
+    auto fresh = ImportTable(table);
+    if (!fresh) {
       return false;
     }
+    imported = Imported{fresh, &fresh->decoder};
     *slot = {
       .file_id = segment.cache_slot.file_id,
       .offset = segment.shared_offset,
       .size = segment.shared_size,
-      .fsst12 = imported,
+      .decoded = std::move(fresh),
     };
     return true;
   }

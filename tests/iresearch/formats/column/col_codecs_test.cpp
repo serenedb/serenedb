@@ -536,18 +536,18 @@ TEST_F(ColCodecsTest, AnFsst12TableImportedForAnotherFileIsNotReused) {
   ASSERT_EQ(first_segment->shared_size, second_segment->shared_size);
   ASSERT_NE(first_segment->cache_slot.file_id,
             second_segment->cache_slot.file_id);
-  irs::codecs::SharedSymbols slot;
-  first_segment->symbols = &slot;
-  second_segment->symbols = &slot;
+  irs::codecs::SharedScanState slot;
+  first_segment->shared_state = &slot;
+  second_segment->shared_state = &slot;
   irs::codecs::ColumnScanState first_state;
   first_state.scan_state = first_segment->function.init_scan(*first_segment);
   ASSERT_EQ(slot.file_id, first_segment->cache_slot.file_id);
-  const auto first_table = slot.fsst12;
+  const auto first_table = slot.decoded;
   ASSERT_TRUE(first_table);
   irs::codecs::ColumnScanState second_state;
   second_state.scan_state = second_segment->function.init_scan(*second_segment);
   EXPECT_EQ(slot.file_id, second_segment->cache_slot.file_id);
-  EXPECT_NE(slot.fsst12, first_table);
+  EXPECT_NE(slot.decoded, first_table);
   const auto rows =
     std::min<duckdb::idx_t>(second_segment->count, STANDARD_VECTOR_SIZE);
   duckdb::Vector out{duckdb::LogicalType::VARCHAR, STANDARD_VECTOR_SIZE};

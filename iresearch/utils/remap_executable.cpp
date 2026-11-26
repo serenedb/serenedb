@@ -22,7 +22,6 @@
 
 #include <absl/base/config.h>
 #include <absl/debugging/internal/symbolize.h>
-#include <absl/strings/str_split.h>
 #include <fast_float/fast_float.h>
 
 #include <algorithm>
@@ -30,15 +29,13 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
-#include <duckdb/common/local_file_system.hpp>
 #include <filesystem>
+#include <fstream>
 #include <span>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
-
-#include "iresearch/store/storage.hpp"
 
 #if defined(__linux__)
 #include <dirent.h>
@@ -87,13 +84,12 @@ std::vector<Mapping> ExecutableMappings(std::string_view exe) {
   if (exe.empty()) {
     return mappings;
   }
-  duckdb::LocalFileSystem fs;
-  const auto maps =
-    ReadWhole<std::string>(duckdb::QueryContext{}, fs, "/proc/self/maps");
-  for (const std::string_view line : absl::StrSplit(maps, '\n')) {
+  std::ifstream maps{"/proc/self/maps"};
+  std::string line;
+  while (std::getline(maps, line)) {
     const auto path_at = line.find('/');
-    if (path_at == std::string_view::npos ||
-        line.compare(path_at, std::string_view::npos, exe) != 0) {
+    if (path_at == std::string::npos ||
+        line.compare(path_at, std::string::npos, exe) != 0) {
       continue;
     }
     const auto* const line_end = line.data() + line.size();

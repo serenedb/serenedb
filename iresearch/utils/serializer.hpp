@@ -137,8 +137,8 @@ concept IsSet = std::same_as<typename T::key_type, typename T::value_type>;
 
 template<typename T>
 inline constexpr bool kIsStringType =
-  irstd::kIsSpecialization<T, std::basic_string> ||
-  irstd::kIsSpecialization<T, std::basic_string_view>;
+  kIsSpecialization<T, std::basic_string> ||
+  kIsSpecialization<T, std::basic_string_view>;
 
 template<typename T>
 struct IsArray : std::false_type {};
@@ -240,19 +240,17 @@ inline constexpr bool kIsArray = detail::IsArray<std::decay_t<T>>::value;
 
 template<typename T>
 inline constexpr bool kIsTuple =
-  irstd::kIsSpecialization<std::decay_t<T>, std::tuple> ||
-  irstd::kIsSpecialization<std::decay_t<T>, std::pair>;
+  kIsSpecialization<std::decay_t<T>, std::tuple> ||
+  kIsSpecialization<std::decay_t<T>, std::pair>;
 
 template<typename T>
-inline constexpr bool kIsOptional = irstd::kIsSpecialization<T, std::optional>;
+inline constexpr bool kIsOptional = kIsSpecialization<T, std::optional>;
 
 template<typename T>
-inline constexpr bool kIsUniquePtr =
-  irstd::kIsSpecialization<T, std::unique_ptr>;
+inline constexpr bool kIsUniquePtr = kIsSpecialization<T, std::unique_ptr>;
 
 template<typename T>
-inline constexpr bool kIsSharedPtr =
-  irstd::kIsSpecialization<T, std::shared_ptr>;
+inline constexpr bool kIsSharedPtr = kIsSpecialization<T, std::shared_ptr>;
 
 template<typename T>
 inline constexpr bool kIsPointer =
@@ -267,10 +265,10 @@ inline constexpr bool kIsPrimitive =
   std::is_arithmetic_v<T> || kIsString<T> || std::is_enum_v<T>;
 
 template<typename T>
-inline constexpr bool kIsVariant = irstd::kIsSpecialization<T, std::variant>;
+inline constexpr bool kIsVariant = kIsSpecialization<T, std::variant>;
 
 template<typename T>
-inline constexpr bool kIsDeleted = irstd::kIsSpecialization<T, Deleted>;
+inline constexpr bool kIsDeleted = kIsSpecialization<T, Deleted>;
 
 template<typename T>
 inline constexpr bool kIsFieldObject =

@@ -82,7 +82,7 @@ class ParametricState {
            begin != end;) {
         if (Subsumes(new_pos, *begin)) {
           // removed positions subsumed by new_pos
-          irstd::SwapRemove(_positions, begin);
+          utils::SwapRemove(_positions, begin);
           --end;
         } else {
           ++begin;

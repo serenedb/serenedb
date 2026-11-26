@@ -29,7 +29,7 @@
 #include "iresearch/utils/shared.hpp"
 
 namespace irs {
-namespace irstd {
+namespace utils {
 
 template<typename T, template<typename...> typename Template>
 inline constexpr bool kIsSpecialization = false;
@@ -107,5 +107,5 @@ class StaticLazyArray {
   detail::Initializer<Builder, Size> _init;
 };
 
-}  // namespace irstd
+}  // namespace utils
 }  // namespace irs

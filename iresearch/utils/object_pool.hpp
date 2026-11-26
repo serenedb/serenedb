@@ -130,7 +130,7 @@ class PoolControlPtr final : public std::unique_ptr<T, D> {
 // Base class for all unbounded object pool implementations
 template<typename T>
 class UnboundedObjectPoolBase : private util::Noncopyable {
-  static_assert(irstd::kIsSpecialization<typename T::ptr, std::unique_ptr> &&
+  static_assert(utils::kIsSpecialization<typename T::ptr, std::unique_ptr> &&
                 std::is_empty_v<typename T::ptr::deleter_type>);
 
  public:

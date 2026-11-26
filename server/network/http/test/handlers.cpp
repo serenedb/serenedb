@@ -177,12 +177,27 @@ class CopyHandler final : public HttpHandler {
   yaclib::Task<> Handle(RequestContext& context, const HttpRequest& request,
                         http::HttpResponseWriter& writer) override {
     CopyStream output{writer};
-    auto& connection = ConnectionContext::Get(*context.Connection().context);
+    auto& sql = context.Connection();
+    auto& connection = ConnectionContext::Get(*sql.context);
     connection.SetSideChannel<connector::CopyOutput>(&output);
     absl::Cleanup detach = [&] {
       connection.SetSideChannel<connector::CopyOutput>(nullptr);
     };
-    auto result = co_await context.RunQuery(FlattenBody(request.body), true);
+    duckdb::unique_ptr<duckdb::QueryResult> result;
+    try {
+      for (auto& statement : sql.ExtractStatements(FlattenBody(request.body))) {
+        result = co_await context.RunStatement(std::move(statement));
+        if (result->HasError()) {
+          break;
+        }
+      }
+    } catch (const std::exception& e) {
+      result = duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{e});
+    }
+    if (!result) {
+      result = duckdb::make_uniq<duckdb::QueryResult>(
+        duckdb::ErrorData{"the request holds no SQL statement"});
+    }
     if (writer.HeadWritten()) {
       if (!result->HasError()) {
         writer.Finish();

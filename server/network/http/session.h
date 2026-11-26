@@ -278,6 +278,16 @@ class HttpSession final
       co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
     }
   }
+  yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> RunStatement(
+    duckdb::unique_ptr<duckdb::SQLStatement> statement) final {
+    try {
+      auto& conn = Connection();
+      co_return co_await Drive(
+        conn.Submit(std::move(statement), MaterializedQuery()));
+    } catch (const std::exception& ex) {
+      co_return duckdb::make_uniq<duckdb::QueryResult>(duckdb::ErrorData{ex});
+    }
+  }
   PreparedCache& PreparedSlot(PreparedSlotId slot) final {
     const auto index = static_cast<size_t>(slot);
     SDB_ASSERT(index < _prepared.size());

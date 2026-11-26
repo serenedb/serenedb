@@ -60,17 +60,12 @@ LevenshteinArgs ParseLevenshteinArgs(
   }
   SDB_ASSERT(positional >= 1 && positional <= 4);
   LevenshteinArgs out;
-  out.bytes = column.logical_type.id() == duckdb::LogicalTypeId::BLOB;
+  out.bytes = column.logical_type.id() == duckdb::LogicalTypeId::BLOB ||
+              IsBlob(*children[0]);
   GetVarcharArg(*children[0], out.text, {"ts_levenshtein text", kSyntaxHint});
   if (positional >= 2) {
     GetIntArg(*children[1], out.distance,
               {"ts_levenshtein distance", kSyntaxHint});
-  } else {
-    // No explicit distance: pick by term length. Keeps short queries from
-    // matching unrelated tokens that happen to be within 2 edits.
-    const auto n = irs::LevenshteinAcceptor::Length(
-      irs::ViewCast<irs::byte_type>(std::string_view{out.text}), out.bytes);
-    out.distance = (n <= 2) ? 0 : (n <= 5) ? 1 : 2;
   }
   if (positional >= 3) {
     GetBoolArg(*children[2], out.with_transpositions,
@@ -93,6 +88,7 @@ LevenshteinArgs ParseLevenshteinArgs(
         ThrowGivenTwice("prefix");
       }
       GetVarcharArg(*named, out.prefix, {"ts_levenshtein prefix", kSyntaxHint});
+      out.bytes = out.bytes || IsBlob(*named);
     } else if (alias == "starts_with") {
       GetBoolArg(*named, out.starts_with,
                  {"ts_levenshtein starts_with", kSyntaxHint});
@@ -102,6 +98,13 @@ LevenshteinArgs ParseLevenshteinArgs(
                               alias.GetIdentifierName()),
                       ERR_HINT(kSyntaxHint));
     }
+  }
+  if (positional < 2) {
+    // No explicit distance: pick by term length. Keeps short queries from
+    // matching unrelated tokens that happen to be within 2 edits.
+    const auto n = irs::LevenshteinAcceptor::Length(
+      irs::ViewCast<irs::byte_type>(std::string_view{out.text}), out.bytes);
+    out.distance = (n <= 2) ? 0 : (n <= 5) ? 1 : 2;
   }
   if (out.distance < 0 || out.distance > 4) {
     THROW_SQL_ERROR(

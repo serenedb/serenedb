@@ -1,6 +1,5 @@
-# On a BYTEA column ts_levenshtein counts bytes, as ts_like and ts_regexp do
-# there; a value that is not UTF-8 is within any distance of itself. On a text
-# column, a text byte that is not UTF-8 is a character no term has.
+# On a BYTEA column, or with a BYTEA text or prefix, ts_levenshtein counts
+# bytes; a value that is not UTF-8 is within any distance of itself.
 
 statement ok
 CREATE TABLE lev_bin(id INTEGER PRIMARY KEY, v BYTEA)
@@ -112,3 +111,60 @@ SELECT id FROM lev_txt WHERE body @@ ts_levenshtein('\x7175e4b8'::bytea, 2, star
 id
 1
 3
+
+statement ok
+CREATE TABLE lev_kw(id INTEGER PRIMARY KEY, k VARCHAR)
+
+statement ok
+CREATE INDEX lev_kw_idx ON lev_kw USING inverted(id, k)
+
+statement ok
+INSERT INTO lev_kw VALUES (1, 'qu中文'), (2, 'quick'), (3, 'é'), (4, 'e')
+
+query
+SELECT id FROM lev_kw WHERE k @@ ts_levenshtein('\xc3a9'::bytea, 1) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM lev_kw WHERE k @@ ts_levenshtein('é', 1) ORDER BY id
+----
+id
+3
+4
+
+query
+SELECT id FROM lev_kw WHERE k @@ ts_levenshtein('x', 1, prefix := '\xc3'::bytea) ORDER BY id
+----
+id
+3
+
+# `qé` is three bytes, so the automatic distance is 1.
+query
+SELECT id FROM lev_kw WHERE k @@ ts_levenshtein('\x71c3a9'::bytea) ORDER BY id
+----
+id
+3
+
+# Cut short, `中` is still two bytes `qu中文` starts with.
+query
+SELECT id FROM lev_kw WHERE k @@ ts_levenshtein('\x7175e4b8'::bytea, 0, starts_with := true) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM lev_kw WHERE k @@ ts_levenshtein('\x7175e4b8'::bytea, 1, starts_with := true) ORDER BY id
+----
+id
+1
+
+query
+SELECT id
+FROM lev_kw_idx
+WHERE k @@ ts_levenshtein('\x7175e4b8'::bytea, 0, starts_with := true)
+ORDER BY BM25(lev_kw_idx.tableoid) DESC, id
+----
+id
+1

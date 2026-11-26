@@ -187,6 +187,9 @@ struct ArgError {
 
 void GetVarcharArg(const duckdb::Expression& expr, std::string& out,
                    ArgError err);
+inline bool IsBlob(const duckdb::Expression& expr) {
+  return expr.GetReturnType().id() == duckdb::LogicalTypeId::BLOB;
+}
 void GetIntArg(const duckdb::Expression& expr, int64_t& out, ArgError err);
 void GetBoolArg(const duckdb::Expression& expr, bool& out, ArgError err);
 void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);

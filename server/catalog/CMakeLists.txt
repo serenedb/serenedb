@@ -7,6 +7,7 @@ target_sources(
         cluster.cpp
         database_directory.cpp
         dependency.cpp
+        domain.cpp
         entry_set.cpp
         foreign_database.cpp
         log.cpp

@@ -32,6 +32,7 @@
 #include <duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp>
 #include <duckdb/catalog/dependency_list.hpp>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/enum_util.hpp>
 #include <duckdb/common/enums/compression_type.hpp>
 #include <duckdb/common/exception/binder_exception.hpp>
 #include <duckdb/common/fault_points.hpp>
@@ -1169,6 +1170,47 @@ SearchTableEntry::AddVerifiedConstraint(duckdb::ClientContext& context,
     altered->AdoptAsWritten(context);
   }
   return altered;
+}
+
+duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::VerifyDomainConstraint(
+  duckdb::ClientContext& context, std::span<const duckdb::LogicalIndex> columns,
+  const duckdb::Constraint& constraint) const {
+  auto successor =
+    duckdb::unique_ptr_cast<duckdb::CatalogEntry, SearchTableEntry>(
+      Copy(context));
+  successor->BeginSchemaChange(context);
+  for (const auto& column : columns) {
+    if (successor->_columns.GetColumn(column).Generated()) {
+      continue;
+    }
+    auto physical_column = successor->_columns.LogicalToPhysical(column);
+    if (constraint.type == duckdb::ConstraintType::NOT_NULL) {
+      successor->VerifyExistingRows(
+        context, duckdb::BoundNotNullConstraint(physical_column));
+    } else if (constraint.type == duckdb::ConstraintType::CHECK) {
+      auto constraint_copy = constraint.Copy();
+      const auto& column_name = successor->_columns.GetColumn(column).Name();
+      duckdb::ParsedExpressionIterator::VisitExpressionMutable<
+        duckdb::ColumnRefExpression>(
+        *constraint_copy->Cast<duckdb::CheckConstraint>().expression,
+        [&](duckdb::ColumnRefExpression& ref) {
+          if (!ref.IsQualified() &&
+              ref.GetColumnName() == duckdb::Identifier("value")) {
+            ref.ColumnNamesMutable() = {column_name};
+          }
+        });
+      auto bound_check_constraint =
+        duckdb::Binder::CreateTableBinder(context, ParentSchema(context))
+          ->BindConstraint(*constraint_copy, name, successor->_columns);
+      successor->VerifyExistingRows(context, *bound_check_constraint);
+    } else {
+      throw duckdb::InternalException(
+        "unexpected domain constraint type %s",
+        duckdb::EnumUtil::ToString(constraint.type));
+    }
+  }
+
+  return successor;
 }
 
 duckdb::unique_ptr<duckdb::CatalogEntry> SearchTableEntry::AlterEntry(

@@ -40,12 +40,11 @@ CREATE DOMAIN d_snn AS INT4;
 statement ok
 CREATE TABLE t_snn (id int, v d_snn);
 
-# TODO: ALTER DOMAIN ... SET NOT NULL is not supported yet
-# statement ok
-# ALTER DOMAIN d_snn SET NOT NULL;
+statement ok
+ALTER DOMAIN d_snn SET NOT NULL;
 
-# statement error db error: ERROR: domain d_snn does not allow null values
-# INSERT INTO t_snn (id) VALUES (0);
+statement error db error: ERROR: domain d_snn does not allow null values
+INSERT INTO t_snn (id) VALUES (0);
 
 statement ok
 ALTER DOMAIN d_snn DROP NOT NULL;
@@ -155,15 +154,14 @@ INSERT INTO t_money VALUES (-3);
 statement ok
 ALTER DOMAIN positive_money_2 ADD CONSTRAINT c CHECK (VALUE > 0) NOT VALID;
 
-# TODO: ALTER DOMAIN ... VALIDATE CONSTRAINT is not supported yet
-# statement error
-# ALTER DOMAIN positive_money_2 VALIDATE CONSTRAINT c
+statement error
+ALTER DOMAIN positive_money_2 VALIDATE CONSTRAINT c;
 
-# statement ok
-# UPDATE t_money SET amount = 10;
+statement ok
+UPDATE t_money SET amount = 10;
 
-# statement ok
-# ALTER DOMAIN positive_money_2 VALIDATE CONSTRAINT c
+statement ok
+ALTER DOMAIN positive_money_2 VALIDATE CONSTRAINT c;
 
 # RENAME TO: the old name is gone, columns follow the new one.
 
@@ -397,30 +395,15 @@ DEALLOCATE dom_alt_p2;
 statement ok
 CREATE DOMAIN dom_alt_ns AS int4;
 
-onlyif serenedb
-statement error
-ALTER DOMAIN dom_alt_ns ADD CONSTRAINT dom_alt_ns_pos CHECK (VALUE > 0);
-
-skipif serenedb
 statement ok
 ALTER DOMAIN dom_alt_ns ADD CONSTRAINT dom_alt_ns_pos CHECK (VALUE > 0);
 
-onlyif serenedb
-statement error
-ALTER DOMAIN dom_alt_ns SET NOT NULL;
-
-skipif serenedb
 statement ok
 ALTER DOMAIN dom_alt_ns SET NOT NULL;
 
 statement ok
 ALTER DOMAIN dom_alt_ns ADD CONSTRAINT dom_alt_ns_lt CHECK (VALUE < 100) NOT VALID;
 
-onlyif serenedb
-statement error
-ALTER DOMAIN dom_alt_ns VALIDATE CONSTRAINT dom_alt_ns_lt;
-
-skipif serenedb
 statement ok
 ALTER DOMAIN dom_alt_ns VALIDATE CONSTRAINT dom_alt_ns_lt;
 
@@ -500,3 +483,180 @@ DROP TYPE e_dfd;
 
 statement error
 DROP DOMAIN d_dfd;
+
+# Existing rows are checked against the constraint being added or validated, and only against it, in the
+# columns of the domain and of the domains over it. NULL passes a CHECK. A failed ALTER changes nothing.
+
+statement ok
+CREATE DOMAIN d_val AS int4;
+
+statement ok
+CREATE DOMAIN d_val_over AS d_val;
+
+statement ok
+CREATE TABLE t_val (id int, a d_val, b d_val_over, c d_val);
+
+statement ok
+INSERT INTO t_val VALUES (1, 5, 5, 5), (2, NULL, NULL, NULL);
+
+statement ok
+ALTER DOMAIN d_val ADD CONSTRAINT d_val_pos CHECK (VALUE > 0);
+
+statement error
+ALTER DOMAIN d_val SET NOT NULL;
+
+statement ok
+UPDATE t_val SET a = 1, c = 1 WHERE id = 2;
+
+statement error
+ALTER DOMAIN d_val SET NOT NULL;
+
+statement ok
+UPDATE t_val SET b = 1 WHERE id = 2;
+
+statement ok
+ALTER DOMAIN d_val SET NOT NULL;
+
+statement error
+ALTER DOMAIN d_val ADD CONSTRAINT d_val_small CHECK (VALUE < 3);
+
+statement ok
+DELETE FROM t_val WHERE id = 1;
+
+statement ok
+ALTER DOMAIN d_val ADD CONSTRAINT d_val_small CHECK (VALUE < 3);
+
+statement ok
+CREATE DOMAIN d_val2 AS int4;
+
+statement ok
+CREATE DOMAIN d_val2_over AS d_val2;
+
+statement ok
+CREATE TABLE t_val2 (v d_val2_over);
+
+statement ok
+INSERT INTO t_val2 VALUES (-1);
+
+statement error
+ALTER DOMAIN d_val2 ADD CONSTRAINT d_val2_pos CHECK (VALUE > 0);
+
+query
+SELECT count(*) AS n FROM pg_constraint WHERE conname = 'd_val2_pos';
+----
+n
+0
+
+statement ok
+INSERT INTO t_val2 VALUES (-2);
+
+statement ok
+CREATE DOMAIN d_val3 AS int4;
+
+statement ok
+CREATE TABLE t_val3 (v d_val3);
+
+statement ok
+INSERT INTO t_val3 VALUES (-5);
+
+statement ok
+ALTER DOMAIN d_val3 ADD CONSTRAINT d_val3_pos CHECK (VALUE > 0) NOT VALID;
+
+statement ok
+ALTER DOMAIN d_val3 ADD CONSTRAINT d_val3_small CHECK (VALUE < 100);
+
+statement error
+ALTER DOMAIN d_val3 VALIDATE CONSTRAINT d_val3_pos;
+
+query
+SELECT conname, convalidated FROM pg_constraint WHERE contypid = 'd_val3'::regtype ORDER BY conname;
+----
+conname	convalidated
+d_val3_pos	f
+d_val3_small	t
+
+# A domain used inside an array or a composite type cannot get a validated constraint.
+
+statement ok
+CREATE DOMAIN d_val_nest AS int4;
+
+statement ok
+CREATE TABLE t_val_nest (a d_val_nest[]);
+
+statement error db error: ERROR: cannot alter type "d_val_nest" because column "t_val_nest.a" uses it
+ALTER DOMAIN d_val_nest ADD CONSTRAINT d_val_nest_pos CHECK (VALUE > 0);
+
+statement ok
+ALTER DOMAIN d_val_nest ADD CONSTRAINT d_val_nest_pos CHECK (VALUE > 0) NOT VALID;
+
+statement ok
+CREATE DOMAIN d_val_comp AS int4;
+
+statement ok
+CREATE TYPE comp_val AS (f d_val_comp, g text);
+
+statement ok
+CREATE TABLE t_val_comp (c comp_val);
+
+statement error db error: ERROR: cannot alter type "d_val_comp" because column "t_val_comp.c" uses it
+ALTER DOMAIN d_val_comp SET NOT NULL;
+
+# Rows written earlier in the same transaction are checked, and the table stays writable after ALTER.
+
+statement ok
+CREATE DOMAIN d_val_tx AS int4;
+
+statement ok
+CREATE TABLE t_val_tx (v d_val_tx);
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO t_val_tx VALUES (-1);
+
+statement error
+ALTER DOMAIN d_val_tx ADD CONSTRAINT d_val_tx_pos CHECK (VALUE > 0);
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO t_val_tx VALUES (1);
+
+statement ok
+ALTER DOMAIN d_val_tx ADD CONSTRAINT d_val_tx_pos CHECK (VALUE > 0);
+
+statement ok
+INSERT INTO t_val_tx VALUES (2);
+
+statement error
+INSERT INTO t_val_tx VALUES (-2);
+
+statement ok
+ROLLBACK;
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO t_val_tx VALUES (1);
+
+statement ok
+ALTER DOMAIN d_val_tx ADD CONSTRAINT d_val_tx_pos CHECK (VALUE > 0);
+
+statement ok
+INSERT INTO t_val_tx VALUES (2);
+
+statement ok
+COMMIT;
+
+query
+SELECT v FROM t_val_tx ORDER BY v;
+----
+v
+1
+2

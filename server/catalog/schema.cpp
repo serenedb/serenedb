@@ -66,6 +66,7 @@
 
 #include "catalog/base_catalog.h"
 #include "catalog/dependency.h"
+#include "catalog/domain.h"
 #include "catalog/entry/job.h"
 #include "catalog/entry/search_table.h"
 #include "catalog/entry/tokenizer.h"
@@ -979,6 +980,13 @@ void Schema::Alter(duckdb::CatalogTransaction transaction,
       !info.Cast<duckdb::AlterPermissionsInfo>().new_owner.empty()) {
     ReownSequences(transaction, *result,
                    info.Cast<duckdb::AlterPermissionsInfo>());
+  }
+  if (!replay && result && result->type == duckdb::CatalogType::TYPE_ENTRY &&
+      info.type == duckdb::AlterType::ALTER_DOMAIN) {
+    ValidateDomainConstraint(transaction,
+                             entry->Cast<duckdb::TypeCatalogEntry>(),
+                             result->Cast<duckdb::TypeCatalogEntry>(),
+                             info.Cast<duckdb::AlterDomainInfo>());
   }
   if (result && info.type == duckdb::AlterType::CHANGE_OWNERSHIP) {
     auto& owned = result->Cast<duckdb::StandardEntry>();

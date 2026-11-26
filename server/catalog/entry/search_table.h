@@ -148,6 +148,11 @@ class SearchTableEntry final : public duckdb::TableCatalogEntry {
 
   duckdb::unique_ptr<duckdb::CreateInfo> GetInfo() const final;
 
+  duckdb::unique_ptr<SearchTableEntry> VerifyDomainConstraint(
+    duckdb::ClientContext& context,
+    std::span<const duckdb::LogicalIndex> columns,
+    const duckdb::Constraint& constraint) const;
+
   duckdb::Value Option(std::string_view name) const;
   std::vector<TableOption> ExplicitOptions() const;
 

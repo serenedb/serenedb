@@ -55,7 +55,6 @@ size_t ParseUInt(std::string_view text) {
   return value;
 }
 
-// POST /_test/echo -> request body verbatim, reflecting the content-type.
 class EchoHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest& request,
@@ -77,7 +76,6 @@ class EchoHandler final : public HttpHandler {
   }
 };
 
-// GET /_test/ping -> tiny fixed body (transport-latency baseline).
 class PingHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest&,
@@ -87,8 +85,6 @@ class PingHandler final : public HttpHandler {
   }
 };
 
-// GET /_test/bytes?n=N -> N deterministic bytes, streamed in bounded pieces
-// with real backpressure so arbitrarily large N never materializes.
 class BytesHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest& request,
@@ -114,8 +110,6 @@ class BytesHandler final : public HttpHandler {
   }
 };
 
-// POST /_test/fuzz -> tolerates arbitrary/malformed input (never throws);
-// returns the received byte count. Oversized bodies are 413'd by the codec.
 class FuzzHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest& request,
@@ -179,7 +173,6 @@ class CopyHandler final : public HttpHandler {
   }
 };
 
-// GET /_test/status?code=NNN -> respond with that status (clamped 100..599).
 class StatusHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext&, const HttpRequest& request,

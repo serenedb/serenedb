@@ -143,3 +143,40 @@ SELECT id, n FROM dom_nn_def_t;
 ----
 id	n
 4	3
+
+# The functions a domain DEFAULT calls belong to the domain, not to the tables whose columns use it: once
+# the domain drops its DEFAULT, the function can be dropped.
+
+statement ok
+CREATE FUNCTION f_ddt() RETURNS int4 LANGUAGE sql AS 'SELECT 7';
+
+statement ok
+CREATE DOMAIN d_ddt AS int4 DEFAULT f_ddt();
+
+statement ok
+CREATE TABLE t_ddt (id int4, v d_ddt);
+
+statement error
+DROP FUNCTION f_ddt();
+
+query
+SELECT count(*) AS n FROM pg_depend
+WHERE classid = 'pg_class'::regclass AND objid = 't_ddt'::regclass AND refclassid = 'pg_proc'::regclass;
+----
+n
+0
+
+statement ok
+ALTER DOMAIN d_ddt DROP DEFAULT;
+
+statement ok
+DROP FUNCTION f_ddt();
+
+statement ok
+INSERT INTO t_ddt (id) VALUES (1);
+
+query
+SELECT id, v FROM t_ddt;
+----
+id	v
+1	NULL

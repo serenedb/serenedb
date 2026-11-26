@@ -22,8 +22,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
 #include <duckdb/common/file_system.hpp>
 #include <memory>
 #include <span>

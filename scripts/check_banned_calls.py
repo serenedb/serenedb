@@ -40,6 +40,12 @@ BANNED = [
         "irs::containers::FlatHashMap, FlatHashSet, NodeHashMap or NodeHashSet",
     ),
     (
+        re.compile(
+            r"#\s*include\s*<(absl/container/(?:flat|node)_hash_(?:map|set)\.h)>"
+        ),
+        "the iresearch/utils/containers header",
+    ),
+    (
         re.compile(r"(?<![\w:])(?:std::)?(v?(?:f|s|sn)?printf)\s*\("),
         "absl::StrFormat, absl::StrAppendFormat, absl::FPrintF or absl::SNPrintF",
     ),
@@ -57,14 +63,25 @@ BANNED = [
     ),
 ]
 
+FLAT_MAP = {"flat_hash_map", "absl/container/flat_hash_map.h"}
+
 EXCEPTIONS: dict[str, set[str]] = {
-    "iresearch/formats/column/hot_column_reader.hpp": {"flat_hash_map"},
-    "iresearch/index/merge_writer.cpp": {"flat_hash_map"},
-    "iresearch/utils/conjunction_acceptor.hpp": {"flat_hash_map"},
-    "iresearch/utils/containers/flat_hash_map.hpp": {"flat_hash_map"},
-    "iresearch/utils/containers/flat_hash_set.hpp": {"flat_hash_set"},
-    "iresearch/utils/containers/node_hash_map.hpp": {"node_hash_map"},
-    "iresearch/utils/containers/node_hash_set.hpp": {"node_hash_set"},
+    "iresearch/formats/column/hot_column_reader.hpp": FLAT_MAP,
+    "iresearch/index/merge_writer.cpp": FLAT_MAP,
+    "iresearch/utils/conjunction_acceptor.hpp": FLAT_MAP,
+    "iresearch/utils/containers/flat_hash_map.hpp": FLAT_MAP,
+    "iresearch/utils/containers/flat_hash_set.hpp": {
+        "flat_hash_set",
+        "absl/container/flat_hash_set.h",
+    },
+    "iresearch/utils/containers/node_hash_map.hpp": {
+        "node_hash_map",
+        "absl/container/node_hash_map.h",
+    },
+    "iresearch/utils/containers/node_hash_set.hpp": {
+        "node_hash_set",
+        "absl/container/node_hash_set.h",
+    },
 }
 
 

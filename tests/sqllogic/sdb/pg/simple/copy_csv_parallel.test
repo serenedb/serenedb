@@ -133,6 +133,26 @@ statement ok
 TRUNCATE cpar_lines;
 
 
+statement count 0
+COPY (SELECT x FROM range(0) t(x))
+TO '${__TEST_DIR__}/cpar_empty_array.txt.gz' (FORMAT csv, QUOTE '', ESCAPE '', PREFIX '[', SUFFIX ']', NEW_LINE '|');
+
+
+statement count 1
+COPY cpar_lines FROM '${__TEST_DIR__}/cpar_empty_array.txt.gz' (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02');
+
+
+query
+SELECT l FROM cpar_lines;
+----
+l
+[]
+
+
+statement ok
+TRUNCATE cpar_lines;
+
+
 statement count 2
 COPY (SELECT DATE '2024-03-05' AS d, TIMESTAMP '2024-03-05 06:07:08' AS ts UNION ALL SELECT NULL, NULL)
 TO '${__TEST_DIR__}/cpar_dates.csv' (FORMAT csv, DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%H:%M %d.%m');

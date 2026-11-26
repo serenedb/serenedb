@@ -458,13 +458,23 @@ TEST(PgCopyInBatches, RetainedBytesCountUntilBatchesAreFreedInOrder) {
   EXPECT_EQ(queue.RetainedBytes(), 0);
 }
 
-TEST(PgCopyInBatches, FailRethrowsToConsumers) {
+TEST(PgCopyInBatches, FailRethrowsAfterTheBatchesPushedBeforeIt) {
   CopyInBatches queue;
   queue.Push(MakeBatch("0"), {});
+  queue.Push(MakeBatch("1"), {});
   queue.Fail(std::make_exception_ptr(std::runtime_error{"boom"}));
-  EXPECT_THROW(queue.Next(), std::runtime_error);
+  EXPECT_EQ(queue.FailedAt(), 2);
+  auto first = queue.Next();
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->seq, 0);
+  auto input = NoInput();
   std::vector<CopyBatchLease> taken;
-  EXPECT_THROW(queue.TryTake(1, taken), std::runtime_error);
+  ASSERT_EQ(queue.Take(input, 3, taken), CopyTake::Batches);
+  ASSERT_EQ(taken.size(), 1);
+  EXPECT_EQ(taken[0]->seq, 1);
+  EXPECT_FALSE(queue.TryTake(1, taken));
+  EXPECT_THROW(queue.Take(input, 1, taken), std::runtime_error);
+  EXPECT_THROW(queue.Next(), std::runtime_error);
 }
 
 TEST(PgCopyInBatches, AbortEndsConsumersAndDropsPushes) {

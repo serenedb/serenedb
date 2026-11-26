@@ -646,27 +646,22 @@ struct WideEntries final : State {
   bool Collect(const ColumnDataCheckpointData& data,
                ScratchVector<uint32_t>& codes) {
     const auto cap = Cap(data);
-    const uint64_t rows = data.rows.count;
     containers::FlatHashMap<absl::uint128, uint32_t> index;
     std::vector<absl::uint128> keys;
-    codes.resize(rows);
+    codes.resize(data.rows.count);
     uint64_t at = 0;
-    uint64_t first = rows;
     absl::uint128 last = 0;
     uint32_t code = 0;
     for (const auto& chunk : data.rows.chunks) {
       const size_t count = chunk.data.size();
-      const W* values = duckdb::FlatVector::GetData<W>(chunk.data);
+      const W* rows = duckdb::FlatVector::GetData<W>(chunk.data);
       const auto& validity = duckdb::FlatVector::Validity(chunk.data);
       const bool all_valid = validity.CannotHaveNull();
       for (size_t i = 0; i < count; ++i, ++at) {
         if (!all_valid && !validity.RowIsValidUnsafe(i)) {
           has_null = true;
-          codes[at] = code;
-          continue;
-        }
-        const auto key = WideKey<W>(values[i]);
-        if (key != last || first == rows) {
+        } else if (const auto key = WideKey<W>(rows[i]);
+                   keys.empty() || key != last) {
           const auto [it, added] =
             index.try_emplace(key, static_cast<uint32_t>(keys.size()));
           if (added) {
@@ -677,27 +672,22 @@ struct WideEntries final : State {
           }
           code = it->second;
           last = key;
-          first = std::min(first, at);
         }
         codes[at] = code;
       }
     }
-    if (first == rows) {
+    if (keys.empty()) {
       return false;
     }
-    std::fill_n(codes.data(), first, codes[first]);
-    ScratchVector<uint32_t> order(keys.size());
-    absl::c_iota(order, uint32_t{0});
-    absl::c_sort(order,
-                 [&](uint32_t l, uint32_t r) { return keys[l] < keys[r]; });
-    if (absl::Uint128High64(keys[order.back()] - keys[order.front()]) == 0) {
+    absl::c_sort(keys);
+    if (absl::Uint128High64(keys.back() - keys.front()) == 0) {
       return false;
     }
     ScratchVector<uint32_t> ranks(keys.size());
     values.resize(keys.size());
-    for (uint32_t k = 0; k < order.size(); ++k) {
-      ranks[order[k]] = k;
-      values[k] = WideValue<W>(keys[order[k]]);
+    for (uint32_t k = 0; k < keys.size(); ++k) {
+      ranks[index.find(keys[k])->second] = k;
+      values[k] = WideValue<W>(keys[k]);
     }
     for (auto& c : codes) {
       c = ranks[c];

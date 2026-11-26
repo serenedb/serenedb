@@ -489,7 +489,9 @@ void ColumnReader::OpenScanSegment(ScanState& s) const {
     s.st.previous_states.emplace_back(std::move(s.st.scan_state));
   }
   auto& segment = *s.segments.emplace_back(Open(s.window.block, *s.ctx, &s));
-  segment.shared_state = EnsureState(s);
+  if (segment.shared_size != 0) {
+    segment.shared_state = EnsureState(s);
+  }
   s.opened_block = s.window.block;
   s.st.scan_state = segment.function.init_scan(segment);
   s.st.internal_index = 0;
@@ -654,7 +656,9 @@ void ColumnReader::FetchInto(ScanState& s, std::span<const uint64_t> rows,
       }
       s.fetch_window = Locate(rows[i], s.window);
       s.fetch.segment = Open(s.fetch_window.block, *s.ctx);
-      s.fetch.segment->shared_state = EnsureState(s);
+      if (s.fetch.segment->shared_size != 0) {
+        s.fetch.segment->shared_state = EnsureState(s);
+      }
     }
     auto end = i;
     for (; end < rows.size() && rows[end] < s.fetch_window.end; ++end) {

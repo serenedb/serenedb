@@ -33,6 +33,7 @@ target_sources(
         pg/wire_frames.cpp
         pg/wire_collector.cpp
         pg/pg_wire_session.cpp
+        pg/simple_query.cpp
         pg/startup_request.cpp
         pg/bind_decoder.cpp
         pg/scram_messages.cpp

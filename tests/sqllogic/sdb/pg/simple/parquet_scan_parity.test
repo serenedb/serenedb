@@ -211,3 +211,24 @@ a
 3143
 3142
 3141
+
+
+statement ok
+COPY (SELECT {'a': 1, 'b': repeat('z', 300)} AS s, i AS x FROM range(6144) t(i))
+TO '${__TEST_DIR__}/psp_after_nested.parquet' (FORMAT parquet, ROW_GROUP_SIZE 2048);
+
+
+query
+EXPLAIN SELECT max(x), min(x) FROM read_parquet('${__TEST_DIR__}/psp_after_nested.parquet');
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯
+
+
+query
+SELECT max(x) AS hi, min(x) AS lo FROM read_parquet('${__TEST_DIR__}/psp_after_nested.parquet');
+----
+hi	lo
+6143	0

@@ -11,6 +11,7 @@ add_executable(
     database_directory_test.cpp
     drain_gate_test.cpp
     docs_search_test.cpp
+    fd_table_test.cpp
     duckdb_detach_test.cpp
     duckdb_roundtrip_test.cpp
     duckdb_threads_test.cpp

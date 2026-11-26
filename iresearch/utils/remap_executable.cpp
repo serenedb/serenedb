@@ -164,6 +164,7 @@ void ReadInParallel(std::span<const Mapping> mappings, size_t threads) {
 
 #if defined(IRS_REMAP_EXECUTABLE)
 
+<<<<<<< HEAD
 bool SetAllocatorBackgroundThreads(bool enabled) {
   if (!JemallocControl) {
     return false;
@@ -175,6 +176,8 @@ bool SetAllocatorBackgroundThreads(bool enabled) {
          previous;
 }
 
+=======
+>>>>>>> 229d388bf (The descriptor table is grown once at startup, with the allocator's background threads paused: a query that opened more than 64 files grew it while threads shared it, and each growth waited for an RCU grace period (12 ms); the first Arrow count of a process 0.032 -> 0.008 s, the first count of 2049 CSV files 0.047 -> 0.040 s on average)
 size_t ThreadCount() {
   size_t count = 0;
   if (auto* dir = opendir("/proc/self/task")) {
@@ -283,6 +286,17 @@ bool RemapText(const Mapping& text) {
 #endif
 
 }  // namespace
+
+bool SetAllocatorBackgroundThreads(bool enabled) {
+  if (JemallocControl == nullptr) {
+    return false;
+  }
+  bool previous = false;
+  size_t previous_size = sizeof(previous);
+  return JemallocControl("background_thread", &previous, &previous_size,
+                         &enabled, sizeof(enabled)) == 0 &&
+         previous;
+}
 
 ExecutableRemap RemapExecutable(bool remap_text, size_t threads) {
   ExecutableRemap remap;

@@ -72,6 +72,8 @@ CSV files are often distributed in compressed format such as GZIP archives (`.cs
 | Load from GZIP-compressed CSV files (`.csv.gz`) | 107.1 s |
 | Decompressing (using parallel `gunzip`) and loading from decompressed CSV files | 121.3 s |
 
+`COPY ... TO` a compressed CSV, text, binary or JSON file (`COMPRESSION gzip` or `zstd`, or a file name ending in `.gz` or `.zst`) compresses the file on all threads. Reading such a file decompresses it on all threads when it is a zstd file made of several frames that each record their uncompressed size, as the zstd files SereneDB writes are. A gzip file, or a zstd file of a single frame, is decompressed by one thread, so zstd is the faster choice for compressed files that SereneDB reads again.
+
 ### Loading Many Small CSV Files
 
 The [CSV reader](../../data_import_and_export/csv/overview.md) runs the CSV sniffer on all files. For many small files, this may cause an unnecessarily high overhead.

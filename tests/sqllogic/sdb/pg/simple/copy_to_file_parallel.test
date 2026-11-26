@@ -211,6 +211,64 @@ n	total
 
 
 statement count 300000
+COPY (SELECT * FROM ctfp_src ORDER BY id DESC) TO '${__TEST_DIR__}/ctfp_ordered.txt.gz' (FORMAT text);
+
+
+query
+SELECT count(*) AS n, count(*) FILTER (WHERE previous <> id + 1) AS misordered
+FROM (
+  SELECT id, lag(id) OVER (ORDER BY file_row_number) AS previous
+  FROM read_csv('${__TEST_DIR__}/ctfp_ordered.txt.gz', delim = e'\t', quote = '', escape = '', header = false,
+                file_row_number = true, columns = {'id': 'INTEGER', 'label': 'VARCHAR'})
+);
+----
+n	misordered
+300000	0
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp.bin.gz' (FORMAT binary);
+
+
+statement ok
+CREATE TABLE ctfp_bin_gz (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_bin_gz FROM '${__TEST_DIR__}/ctfp.bin.gz' (FORMAT binary);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_bin_gz
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement count 300000
+COPY ctfp_src TO '${__TEST_DIR__}/ctfp_header.csv.zst' (FORMAT csv, HEADER);
+
+
+statement ok
+CREATE TABLE ctfp_csv_zst (id INTEGER, label TEXT);
+
+
+statement count 300000
+COPY ctfp_csv_zst FROM '${__TEST_DIR__}/ctfp_header.csv.zst' (FORMAT csv, HEADER);
+
+
+query
+SELECT count(*) AS n, sum(id) AS total
+FROM ctfp_csv_zst
+JOIN ctfp_src USING (id, label);
+----
+n	total
+300000	44999850000
+
+
+statement count 300000
 COPY ctfp_src TO '${__TEST_DIR__}/ctfp_per_thread' (FORMAT text, PER_THREAD_OUTPUT true);
 
 

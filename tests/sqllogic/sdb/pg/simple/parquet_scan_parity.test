@@ -211,3 +211,38 @@ a
 3143
 3142
 3141
+
+
+statement ok
+COPY (SELECT 5 AS a, 0 AS b) TO '${__TEST_DIR__}/psp_hive' (FORMAT parquet, PARTITION_BY (a));
+
+
+statement ok
+COPY (SELECT 6143 - i AS a, i AS b FROM range(6144) t(i))
+TO '${__TEST_DIR__}/psp_hive/a=5/data.parquet' (FORMAT parquet, ROW_GROUP_SIZE 2048);
+
+
+query
+SELECT max(a) AS hi, min(a) AS lo FROM read_parquet('${__TEST_DIR__}/psp_hive/a=5/data.parquet', hive_partitioning = true);
+----
+hi	lo
+5	5
+
+
+query
+SELECT a, b FROM read_parquet('${__TEST_DIR__}/psp_hive/a=5/data.parquet', hive_partitioning = true)
+ORDER BY a, b LIMIT 3 OFFSET 3000;
+----
+a	b
+5	3000
+5	3001
+5	3002
+
+
+query
+EXPLAIN SELECT max(b), min(b) FROM read_parquet('${__TEST_DIR__}/psp_hive/a=5/data.parquet', hive_partitioning = true);
+----
+QUERY PLAN
+╭─ COLUMN_DATA_SCAN ─╮
+│ ~1 row             │
+╰────────────────────╯

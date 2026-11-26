@@ -65,20 +65,14 @@ class SendGate final : public duckdb::CopyOutputGate,
   bool Blocked() const { return _blocked.load(std::memory_order_acquire); }
 
   bool Release(bool closed) {
-    duckdb::vector<duckdb::InterruptState> ready;
-    {
-      duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{lock};
-      if (closed) {
-        PreventBlocking();
-      } else if (_written.load(std::memory_order_acquire) < _release) {
-        return false;
-      }
-      ready = TakeBlockedTasks();
-      _blocked.store(false, std::memory_order_relaxed);
+    duckdb::annotated_lock_guard<duckdb::annotated_mutex> guard{lock};
+    if (closed) {
+      PreventBlocking();
+    } else if (_written.load(std::memory_order_acquire) < _release) {
+      return false;
     }
-    for (const auto& state : ready) {
-      state.Callback();
-    }
+    UnblockTasks();
+    _blocked.store(false, std::memory_order_relaxed);
     return true;
   }
 

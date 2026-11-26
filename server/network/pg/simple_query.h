@@ -58,7 +58,7 @@ class SimpleQuery {
 
   bool Empty() const noexcept { return _parsed.empty(); }
 
-  size_t Statement() const noexcept { return _number; }
+  size_t Statement() const noexcept { return _raw; }
 
   bool Next(Step& step);
 
@@ -72,7 +72,6 @@ class SimpleQuery {
   duckdb::vector<duckdb::unique_ptr<duckdb::SQLStatement>> _peel;
   size_t _raw = 0;
   size_t _peeled = 0;
-  size_t _number = 0;
   bool _implicit = false;
 };
 

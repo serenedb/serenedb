@@ -41,13 +41,8 @@ namespace {
 
 constexpr std::string_view kDevStdin = "/dev/stdin";
 
-struct ConnectionPlumbing {
-  pg::CopyInBatches* batches;
-  ConnectionContext& state;
-};
-
-ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
-                               std::string_view path) {
+ConnectionContext& GetConnection(duckdb::FileOpener* opener,
+                                 std::string_view path) {
   auto client_context = duckdb::FileOpener::TryGetClientContext(opener);
   if (!client_context) {
     THROW_SQL_ERROR(
@@ -55,8 +50,7 @@ ConnectionPlumbing GetPlumbing(duckdb::FileOpener* opener,
       ERR_MSG("COPY ", path,
               " is only valid on a server-side PostgreSQL wire connection"));
   }
-  auto& conn = ConnectionContext::Get(*client_context);
-  return {conn.GetSideChannel<pg::CopyInBatches>(), conn};
+  return ConnectionContext::Get(*client_context);
 }
 
 }  // namespace
@@ -171,20 +165,20 @@ duckdb::unique_ptr<duckdb::FileHandle> SereneDBCopyFileSystem::OpenFile(
   const std::string& path, duckdb::FileOpenFlags flags,
   duckdb::optional_ptr<duckdb::FileOpener> opener) {
   if (path == kDevStdin) {
-    auto plumbing = GetPlumbing(opener.get(), path);
-    if (!plumbing.batches) {
+    auto& connection = GetConnection(opener.get(), path);
+    auto* batches = connection.GetSideChannel<pg::CopyInBatches>();
+    if (!batches) {
       THROW_SQL_ERROR(
         ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
         ERR_MSG("COPY ", path,
                 " requires a PG wire connection (transport not attached)"));
     }
-    return duckdb::make_uniq<CopyInFileHandle>(*this, plumbing.state,
-                                               *plumbing.batches);
+    return duckdb::make_uniq<CopyInFileHandle>(*this, connection, *batches);
   }
   if (path == kDevStdout) {
-    auto plumbing = GetPlumbing(opener.get(), path);
-    auto* output = plumbing.state.GetSideChannel<CopyOutput>();
-    auto* gate = plumbing.state.GetSendGate();
+    auto& connection = GetConnection(opener.get(), path);
+    auto* output = connection.GetSideChannel<CopyOutput>();
+    auto* gate = connection.GetSendGate();
     if (output && gate) {
       return duckdb::make_uniq<CopyOutFileHandle>(*this, *output, *gate);
     }

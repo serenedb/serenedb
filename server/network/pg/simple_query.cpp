@@ -44,7 +44,6 @@ bool SimpleQuery::Next(Step& step) {
       return false;
     }
     auto& raw = _parsed[_raw++];
-    _number = _raw;
     if (!_txn.GuardNotAborted(*raw)) {
       ThrowAbortedTransaction();
     }
@@ -73,8 +72,7 @@ bool SimpleQuery::Next(Step& step) {
 
 bool SimpleQuery::Commits(const Step& step) const {
   return step.last && _implicit &&
-         step.type != duckdb::StatementType::TRANSACTION_STATEMENT &&
-         _txn.ShouldCommitAtSync();
+         step.type != duckdb::StatementType::TRANSACTION_STATEMENT;
 }
 
 }  // namespace sdb::network::pg

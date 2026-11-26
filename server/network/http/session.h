@@ -179,12 +179,12 @@ class HttpSession final
 
   // --- RequestContext -------------------------------------------------------
   duckdb::Connection& Connection() final {
-    if (!_login) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
-        ERR_MSG("a request to an endpoint without logins runs no SQL"));
-    }
     if (!_conn) {
+      if (!_login) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+          ERR_MSG("a request to an endpoint without logins runs no SQL"));
+      }
       const std::string_view dbname =
         _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
       duckdb::idx_t database_id = 0;

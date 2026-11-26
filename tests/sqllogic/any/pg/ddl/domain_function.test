@@ -1,0 +1,94 @@
+# A function does not pass the domain of an argument on to its result unless its signature declares one: a value
+# it computes goes through the domain cast, and its checks, wherever it becomes the domain again.
+
+statement ok
+CREATE DOMAIN fn_pos AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN fn_dnum AS numeric(10,2) CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN fn_parr AS int4[] CHECK (array_length(VALUE, 1) = 2);
+
+statement ok
+CREATE TABLE fn_t (n fn_pos, d fn_dnum, p fn_parr, a fn_pos[]);
+
+statement ok
+INSERT INTO fn_t VALUES (3, 50, ARRAY[1, 2], ARRAY[1, 2]);
+
+# Values a function computes from a domain are checked when they are stored in a column of the domain.
+
+statement error db error: ERROR: value for domain fn_dnum violates check constraint "fn_dnum_check"
+INSERT INTO fn_t (d) SELECT -d FROM fn_t;
+
+statement error db error: ERROR: value for domain fn_parr violates check constraint "fn_parr_check"
+INSERT INTO fn_t (p) SELECT p[1:1] FROM fn_t;
+
+statement error db error: ERROR: value for domain fn_parr violates check constraint "fn_parr_check"
+INSERT INTO fn_t (p) SELECT array_remove(p, 1) FROM fn_t;
+
+statement error db error: ERROR: value for domain fn_pos violates check constraint "fn_pos_check"
+INSERT INTO fn_t (n) SELECT -n FROM fn_t;
+
+statement ok
+INSERT INTO fn_t (d, p) SELECT abs(d), array_reverse(p) FROM fn_t;
+
+query
+SELECT count(*) AS c FROM fn_t;
+----
+c
+2
+
+# The result of such a function has the base type; a value itself, an array built of it and an aggregate of it
+# keep the domain.
+
+query
+SELECT pg_typeof(-d) AS neg, pg_typeof(abs(d)) AS abs, pg_typeof(p[1:1]) AS slice, pg_typeof(n) AS n,
+       pg_typeof(ARRAY[n, n]) AS arr
+FROM fn_t LIMIT 1;
+----
+neg	abs	slice	n	arr
+numeric	numeric	integer[]	fn_pos	fn_pos[]
+
+query
+SELECT pg_typeof(max(n)) AS mx, pg_typeof(array_agg(n)) AS agg FROM fn_t;
+----
+mx	agg
+integer	fn_pos[]
+
+# An element of an array of a domain keeps the domain in PostgreSQL; serenedb gives it the base type, as for any
+# other function result.
+
+skipif serenedb
+query
+SELECT pg_typeof(a[1]) AS elem FROM fn_t LIMIT 1;
+----
+elem
+fn_pos
+
+onlyif serenedb
+query
+SELECT pg_typeof(a[1]) AS elem FROM fn_t LIMIT 1;
+----
+elem
+integer
+
+# A function that declares a domain as its result returns the domain and checks the value it returns.
+
+statement ok
+CREATE FUNCTION fn_ret(x int4) RETURNS fn_pos LANGUAGE sql AS 'SELECT x';
+
+statement ok
+CREATE FUNCTION fn_neg(x fn_pos) RETURNS fn_pos LANGUAGE sql AS 'SELECT -x';
+
+query
+SELECT pg_typeof(fn_ret(1)) AS t;
+----
+t
+fn_pos
+
+statement error db error: ERROR: value for domain fn_pos violates check constraint "fn_pos_check"
+SELECT fn_ret(-1);
+
+statement error db error: ERROR: value for domain fn_pos violates check constraint "fn_pos_check"
+SELECT fn_neg(3);

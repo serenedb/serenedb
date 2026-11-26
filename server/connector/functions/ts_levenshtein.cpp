@@ -68,7 +68,8 @@ LevenshteinArgs ParseLevenshteinArgs(
   } else {
     // No explicit distance: pick by term length. Keeps short queries from
     // matching unrelated tokens that happen to be within 2 edits.
-    const auto n = out.text.size();
+    const auto n = irs::LevenshteinAcceptor::Length(
+      irs::ViewCast<irs::byte_type>(std::string_view{out.text}), out.bytes);
     out.distance = (n <= 2) ? 0 : (n <= 5) ? 1 : 2;
   }
   if (positional >= 3) {

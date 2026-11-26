@@ -202,6 +202,46 @@ a
 statement ok
 DROP TABLE test_levenshtein;
 
+# Auto distance counts characters, not bytes: `日本` is two characters in six
+# bytes, so it gets no edits.
+statement ok
+CREATE TABLE test_levenshtein_auto (a INTEGER PRIMARY KEY, b VARCHAR);
+
+statement ok
+CREATE INDEX test_levenshtein_auto_idx ON test_levenshtein_auto USING inverted(a, b);
+
+statement ok
+INSERT INTO test_levenshtein_auto VALUES (1, '日本'), (2, '日本語'), (3, '東京'), (4, 'banana'), (5, 'ab'), (6, 'xy'), (7, 'éa'), (8, 'éb'), (9, 'a');
+
+query
+SELECT a FROM test_levenshtein_auto WHERE b @@ ts_levenshtein('日本') ORDER BY a;
+----
+a
+1
+
+query
+SELECT a FROM test_levenshtein_auto WHERE b @@ ts_levenshtein('日本', starts_with := true) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM test_levenshtein_auto WHERE b @@ ts_levenshtein('日', starts_with := true) ORDER BY a;
+----
+a
+1
+2
+
+query
+SELECT a FROM test_levenshtein_auto WHERE b @@ ts_levenshtein('éa') ORDER BY a;
+----
+a
+7
+
+statement ok
+DROP TABLE test_levenshtein_auto;
+
 
 # Optional `prefix` 4th argument: a literal leading substring that must
 # match exactly. Only the suffix beyond `prefix` participates in

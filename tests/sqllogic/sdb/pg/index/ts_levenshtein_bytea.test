@@ -56,6 +56,19 @@ id
 5
 6
 
+# The automatic distance counts bytes too: `中` is three bytes, one edit.
+query
+SELECT id FROM lev_bin WHERE v @@ ts_levenshtein('\xe4b8ad'::bytea) ORDER BY id
+----
+id
+7
+
+query
+SELECT id FROM lev_bin WHERE v @@ ts_levenshtein('\xc3a9'::bytea) ORDER BY id
+----
+id
+4
+
 statement ok
 CREATE TEXT SEARCH DICTIONARY lev_bin_words AS split_text(case := 'lower') WITH (frequency, position)
 

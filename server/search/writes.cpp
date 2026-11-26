@@ -837,7 +837,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
         }
       }
     }
-    absl::flat_hash_map<uint64_t, const irs::SubReader*> segments;
+    irs::containers::FlatHashMap<uint64_t, const irs::SubReader*> segments;
     for (const auto& segment : reader) {
       segments.emplace(
         irs::utils::downCast<irs::SegmentReader>(segment).GetImpl()->Id(),
@@ -880,7 +880,7 @@ void Writes::AddRemoval(duckdb::ClientContext& context,
   if (absl::c_any_of(removal->groups, [&](const auto& group) {
         return flushed_rows(group.segment);
       })) {
-    absl::flat_hash_map<uint64_t, irs::DocumentMaskBuilder> mapped;
+    irs::containers::FlatHashMap<uint64_t, irs::DocumentMaskBuilder> mapped;
     for (const auto& group : removal->groups) {
       if (!flushed_rows(group.segment)) {
         mapped[group.segment].Merge(group.docs);

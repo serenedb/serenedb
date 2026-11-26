@@ -23,11 +23,11 @@
 #include "levenshtein_utils.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 #include <absl/hash/hash.h>
 
 #include "iresearch/utils/bit_utils.hpp"
 #include "iresearch/utils/containers/bitset.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/shared.hpp"
 #include "iresearch/utils/std.hpp"
 
@@ -156,7 +156,7 @@ class ParametricStates {
   size_t Size() const noexcept { return _states.size(); }
 
  private:
-  absl::flat_hash_map<ParametricState, uint32_t> _states;
+  containers::FlatHashMap<ParametricState, uint32_t> _states;
   std::vector<const ParametricState*> _states_by_id;
 };
 

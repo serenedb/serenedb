@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 
 #include <array>
@@ -35,6 +34,7 @@
 #include <vector>
 
 #include "iresearch/utils/byte_set.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/regexp_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "re2/prog.h"
@@ -260,7 +260,7 @@ class RegexpAcceptor {
   size_t _max_dfa_mem{kDefaultMaxDfaMem};
 
   mutable absl::Mutex _mutex;
-  mutable absl::flat_hash_map<std::string_view, Row*> _rows;
+  mutable containers::FlatHashMap<std::string_view, Row*> _rows;
   mutable std::vector<std::unique_ptr<std::byte[]>> _chunks;
   mutable size_t _chunk_used{kChunkBytes};
   mutable size_t _chunk_size{kChunkBytes};

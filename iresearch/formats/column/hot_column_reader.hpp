@@ -32,6 +32,7 @@
 #include "iresearch/formats/column/column_reader.hpp"
 #include "iresearch/formats/column/column_writer.hpp"
 #include "iresearch/formats/column/internal/gather_arms.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace duckdb {
 
@@ -54,7 +55,8 @@ class HotChunkStats final {
 
  private:
   absl::flat_hash_map<const void*, duckdb::BaseStatistics> _full;
-  absl::flat_hash_map<const void*, std::unique_ptr<duckdb::DistinctStatistics>>
+  containers::FlatHashMap<const void*,
+                          std::unique_ptr<duckdb::DistinctStatistics>>
     _full_distinct;
   duckdb::Vector _hashes{duckdb::LogicalType::HASH, nullptr};
 };

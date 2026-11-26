@@ -36,6 +36,10 @@ BANNED = [
         "irs::containers::FlatHashMap, FlatHashSet, NodeHashMap or NodeHashSet",
     ),
     (
+        re.compile(r"\babsl::((?:flat|node)_hash_(?:map|set))\b"),
+        "irs::containers::FlatHashMap, FlatHashSet, NodeHashMap or NodeHashSet",
+    ),
+    (
         re.compile(r"(?<![\w:])(?:std::)?(v?(?:f|s|sn)?printf)\s*\("),
         "absl::StrFormat, absl::StrAppendFormat, absl::FPrintF or absl::SNPrintF",
     ),
@@ -53,7 +57,15 @@ BANNED = [
     ),
 ]
 
-EXCEPTIONS: dict[str, set[str]] = {}
+EXCEPTIONS: dict[str, set[str]] = {
+    "iresearch/formats/column/hot_column_reader.hpp": {"flat_hash_map"},
+    "iresearch/index/merge_writer.cpp": {"flat_hash_map"},
+    "iresearch/utils/conjunction_acceptor.hpp": {"flat_hash_map"},
+    "iresearch/utils/containers/flat_hash_map.hpp": {"flat_hash_map"},
+    "iresearch/utils/containers/flat_hash_set.hpp": {"flat_hash_set"},
+    "iresearch/utils/containers/node_hash_map.hpp": {"node_hash_map"},
+    "iresearch/utils/containers/node_hash_set.hpp": {"node_hash_set"},
+}
 
 
 def check_file(path: str) -> list[str]:

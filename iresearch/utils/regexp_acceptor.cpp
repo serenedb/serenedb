@@ -1314,7 +1314,7 @@ ByteSet RegexpAcceptor::DeadBytesLocked() const {
   };
   ByteSet dead;
   std::vector<At> pending;
-  absl::flat_hash_map<const Row*, uint32_t> seen;
+  containers::FlatHashMap<const Row*, uint32_t> seen;
   const auto visit = [&](const Row* row, Utf8At utf8) {
     if (row->dead || row->unknown) {
       return;

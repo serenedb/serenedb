@@ -63,7 +63,7 @@ void Loop(Row* row, uint32_t classes) noexcept {
 template<typename KeyOf>
 uint32_t Refine(KeyOf&& key_of, std::array<uint8_t, kLabels>& bytemap,
                 std::array<uint8_t, kLabels>& representative) {
-  absl::flat_hash_map<uint64_t, uint8_t> ids;
+  containers::FlatHashMap<uint64_t, uint8_t> ids;
   uint32_t classes = 0;
   for (uint32_t label = 0; label != kLabels; ++label) {
     const auto [it, inserted] =

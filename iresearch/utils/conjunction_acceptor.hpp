@@ -33,6 +33,7 @@
 #include <utility>
 #include <vector>
 
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/string.hpp"
@@ -165,7 +166,7 @@ class RegexpConjunction {
   KeyBytes _bytes;
   size_t _max_mem;
   mutable absl::Mutex _mutex;
-  mutable absl::flat_hash_map<Parts, Row*> _rows;
+  mutable containers::FlatHashMap<Parts, Row*> _rows;
   mutable RowArena _arena;
   Row* _dead{nullptr};
   Row* _unknown{nullptr};

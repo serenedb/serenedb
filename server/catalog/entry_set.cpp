@@ -21,7 +21,6 @@
 #include "catalog/entry_set.h"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 
 #include <duckdb/catalog/catalog_entry/index_catalog_entry.hpp>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>

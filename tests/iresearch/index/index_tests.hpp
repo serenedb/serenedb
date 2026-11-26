@@ -27,7 +27,6 @@
 #include <iresearch/analysis/tokenizer.hpp>
 #include <iresearch/index/composite_reader.hpp>
 #include <iresearch/index/index_writer.hpp>
-#include <iresearch/utils/timer_utils.hpp>
 
 #include "assert_format.hpp"
 #include "doc_generator.hpp"
@@ -163,7 +162,6 @@ class IndexTestBase : public virtual TestParamBase<index_test_context> {
   void TearDown() final {
     _dir = nullptr;
     TestBase::TearDown();
-    irs::timer_utils::InitStats();  // disable profile state tracking
   }
 
   // Called inside the per-doc insert transaction. Tests use it to copy

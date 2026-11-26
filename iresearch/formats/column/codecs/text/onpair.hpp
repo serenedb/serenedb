@@ -20,8 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
-
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -33,6 +31,7 @@
 #include <vector>
 
 #include "iresearch/utils/assert.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 #include "iresearch/utils/default_init_allocator.hpp"
 #include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/shared.hpp"
@@ -161,11 +160,11 @@ class Codec {
   Match Longest(const char* rest, size_t left) const;
   void Finalize();
 
-  absl::flat_hash_map<std::string, uint32_t> _ids;
+  containers::FlatHashMap<std::string, uint32_t> _ids;
   std::unique_ptr<std::array<uint16_t, 65536>> _lengths;
   std::vector<std::string> _tokens;
   std::vector<uint32_t> _order;
-  absl::flat_hash_map<uint32_t, uint8_t> _pairs;
+  containers::FlatHashMap<uint32_t, uint8_t> _pairs;
   std::vector<Key> _keys;
   std::vector<uint32_t> _firsts;
   std::vector<Chain> _chains;

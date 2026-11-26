@@ -23,7 +23,6 @@
 #include <absl/algorithm/container.h>
 #include <absl/base/thread_annotations.h>
 #include <absl/container/btree_map.h>
-#include <absl/container/flat_hash_set.h>
 #include <absl/functional/function_ref.h>
 #include <absl/status/status.h>
 #include <absl/synchronization/mutex.h>
@@ -315,7 +314,7 @@ class Store final : public std::enable_shared_from_this<Store>,
     std::vector<irs::IndexWriter::Replacement> replacements);
 
   TableReplay* Replay();
-  void CollectFiles(absl::flat_hash_set<std::string>& files) const;
+  void CollectFiles(irs::containers::FlatHashSet<std::string>& files) const;
   void ScheduleRecovery(duckdb::ClientContext& context,
                         duckdb::TaskExecutor& replays,
                         duckdb::TaskExecutor& opens);

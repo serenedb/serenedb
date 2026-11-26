@@ -1477,7 +1477,8 @@ TableReplay* Store::Replay() {
   return _table ? &_replay : nullptr;
 }
 
-void Store::CollectFiles(absl::flat_hash_set<std::string>& files) const {
+void Store::CollectFiles(
+  irs::containers::FlatHashSet<std::string>& files) const {
   if (OwnsFiles() && _table) {
     VisitSegmentFiles(*_table->HeadState(),
                       [&](std::string file) { files.insert(std::move(file)); });

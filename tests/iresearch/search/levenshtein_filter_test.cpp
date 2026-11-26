@@ -36,7 +36,6 @@
 #include <iresearch/search/scorers/bm25.hpp>
 #include <iresearch/utils/down_cast.hpp>
 #include <iresearch/utils/levenshtein_default_pdp.hpp>
-#include <iresearch/utils/misc.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
 #include <map>
 #include <span>
@@ -49,6 +48,7 @@
 #include "test_resources.hpp"
 #include "tests_shared.hpp"
 #include "text_chain.hpp"
+#include "utils/edit_distance.hpp"
 
 namespace {
 

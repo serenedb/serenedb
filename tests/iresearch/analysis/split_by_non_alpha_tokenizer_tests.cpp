@@ -20,6 +20,7 @@
 
 #include <absl/strings/ascii.h>
 #include <re2/byte_set_finder.h>
+#include <util/utf.h>
 
 #include <algorithm>
 #include <array>
@@ -582,9 +583,9 @@ TEST(split_by_non_alpha_tokenizer_test, fast_word_ranges_are_words) {
     auto a = SplitByNonAlphaTokenizer::Make({.chars = chars});
     for (const auto [lo, hi] : kRanges) {
       for (uint32_t cp = lo; cp <= hi; ++cp) {
-        std::string v(2 + irs::utf8_utils::kMaxCharSize, 'a');
-        v.resize(1 + irs::utf8_utils::FromChar32(
-                       cp, reinterpret_cast<irs::byte_type*>(v.data() + 1)));
+        const re2::Rune rune = cp;
+        std::string v(2 + re2::UTFmax, 'a');
+        v.resize(1 + re2::runetochar(v.data() + 1, &rune));
         v += 'b';
         const auto tokens = Pull(*a, v);
         ASSERT_EQ(1u, tokens.size()) << std::hex << cp;

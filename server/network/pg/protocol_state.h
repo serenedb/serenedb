@@ -21,7 +21,6 @@
 #pragma once
 
 #include <absl/algorithm/container.h>
-#include <absl/container/node_hash_map.h>
 
 #include <cstdint>
 #include <duckdb/common/case_insensitive_map.hpp>

@@ -26,18 +26,11 @@
 #include <memory>
 
 #include "iresearch/utils/assert.hpp"
-#include "iresearch/utils/math_utils.hpp"
 #include "iresearch/utils/noncopyable.hpp"
 #include "iresearch/utils/resource_manager.hpp"
 #include "iresearch/utils/shared.hpp"
-#include "iresearch/utils/type_utils.hpp"
 
 namespace irs::memory {
-
-constexpr size_t AlignUp(size_t size, size_t alignment) noexcept {
-  SDB_ASSERT(math::IsPower2(alignment));
-  return (size + alignment - 1) & (0 - alignment);
-}
 
 template<typename Alloc>
 class AllocatorArrayDeallocator {
@@ -123,7 +116,7 @@ struct Tracked final : Base {
 
 struct ManagedDeleter {
   void operator()(const Managed* p) noexcept {
-    SDB_ASSERT(p != nullptr);  // std::unique_ptr doesn't call dtor on nullptr
+    SDB_ASSERT(p);  // std::unique_ptr doesn't call dtor on nullptr
     p->Destroy();
   }
 };
@@ -166,8 +159,8 @@ class [[clang::trivial_abi]] managed_ptr final
     Ptr::operator=(nullptr);
     return *this;
   }
-  template<typename U,
-           typename = std::enable_if_t<std::is_convertible_v<U*, T*>>>
+  template<typename U>
+    requires std::is_convertible_v<U*, T*>
   constexpr managed_ptr& operator=(managed_ptr<U>&& u) noexcept {
     Ptr::operator=(std::move(u));
     return *this;
@@ -213,10 +206,9 @@ managed_ptr<Base> make_tracked(IResourceManager& rm, Args&&... args) {
 struct AllocateOnlyTag final {};
 inline constexpr AllocateOnlyTag kAllocateOnly{};
 
-template<
-  typename T, typename Alloc,
-  typename = std::enable_if_t<std::is_array_v<T> && std::extent_v<T> == 0>>
+template<typename T, typename Alloc>
 auto AllocateUnique(Alloc&& alloc, size_t size, AllocateOnlyTag /*tag*/) {
+  static_assert(std::is_array_v<T> && std::extent_v<T> == 0);
   using traits_t = std::allocator_traits<std::remove_cvref_t<Alloc>>;
   using pointer = typename traits_t::pointer;
   using allocator_type = typename traits_t::allocator_type;
@@ -233,10 +225,5 @@ auto AllocateUnique(Alloc&& alloc, size_t size, AllocateOnlyTag /*tag*/) {
 
   return unique_ptr_t{p, deleter_t{std::forward<Alloc>(alloc), size}};
 }
-
-// Decline wrong syntax
-template<typename T, typename Alloc, typename... Types>
-std::enable_if_t<std::extent_v<T> != 0, void> AllocateUnique(
-  Alloc&, Types&&...) = delete;
 
 }  // namespace irs::memory

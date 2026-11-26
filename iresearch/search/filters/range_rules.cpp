@@ -21,7 +21,6 @@
 #include "iresearch/search/filters/range_rules.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/container/flat_hash_map.h>
 
 #include <algorithm>
 #include <iterator>
@@ -40,6 +39,7 @@
 #include "iresearch/search/filters/prefix_filter.hpp"
 #include "iresearch/search/filters/range_filter.hpp"
 #include "iresearch/search/filters/term_filter.hpp"
+#include "iresearch/utils/containers/flat_hash_map.hpp"
 
 namespace irs::optimizer {
 namespace {
@@ -413,7 +413,7 @@ class PrefixIndex {
   };
   using Key = std::tuple<field_id, DictRef, bytes_view>;
 
-  absl::flat_hash_map<Key, Entry> _map;
+  containers::FlatHashMap<Key, Entry> _map;
 };
 
 bool DropSubsumed(BooleanFilter& node, const OptimizeContext& ctx,

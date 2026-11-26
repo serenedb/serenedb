@@ -87,7 +87,10 @@ bool S2MultiPointRegion::Contains(const S2Point& p) const {
   return false;
 }
 
-using namespace coding;
+using coding::IsOptionsS2;
+using coding::Options;
+using coding::ToTag;
+using coding::Type;
 
 void S2MultiPointRegion::Encode(Encoder& encoder, Options options) const {
   SDB_ASSERT(IsOptionsS2(options));

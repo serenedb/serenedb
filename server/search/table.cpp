@@ -192,7 +192,7 @@ std::shared_ptr<const irs::SegmentReaderImpl> OwnRowsReader(
     meta, id, std::make_unique<irs::ColReader>(db, std::move(readers)));
 }
 
-using Mapped = absl::flat_hash_map<uint64_t, irs::DocumentMaskBuilder>;
+using Mapped = irs::containers::FlatHashMap<uint64_t, irs::DocumentMaskBuilder>;
 
 void Follow(const TableState& state, uint64_t id, const irs::DocumentMask& docs,
             Mapped& out) {
@@ -1258,9 +1258,10 @@ Table::Replacement Table::PrepareReplace(
       irs::MapDocs(map, *source->deleted, carried[map.target]);
     }
   }
-  absl::flat_hash_map<uint64_t, std::vector<irs::FieldPatch>> carried_patches;
-  absl::flat_hash_map<uint64_t,
-                      absl::flat_hash_map<Tick, irs::DocumentMaskBuilder>>
+  irs::containers::FlatHashMap<uint64_t, std::vector<irs::FieldPatch>>
+    carried_patches;
+  irs::containers::FlatHashMap<
+    uint64_t, irs::containers::FlatHashMap<Tick, irs::DocumentMaskBuilder>>
     carried_rows;
   const auto oldest = catalog::Transactions::Get().RefreshOldest();
   for (size_t r = 0; r < replaced.size(); ++r) {

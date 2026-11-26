@@ -25,6 +25,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <duckdb/common/compressed_file_system.hpp>
 #include <duckdb/common/file_system.hpp>
 #include <duckdb/common/types/column/column_data_collection.hpp>
 #include <duckdb/formats/copy_encoding.hpp>
@@ -47,7 +48,9 @@ constexpr duckdb::idx_t kBatchRows = 64 * STANDARD_VECTOR_SIZE;
 
 struct CopyToFileGlobal final : public duckdb::GlobalFunctionData {
   duckdb::unique_ptr<duckdb::FileHandle> handle;
+  duckdb::unique_ptr<duckdb::PiecedFile> pieced;
   std::optional<duckdb::TextEncoding> encoding;
+  std::string separator;
   size_t strip = 0;
   bool started = false;
   std::atomic<uint64_t> offset{0};
@@ -55,6 +58,8 @@ struct CopyToFileGlobal final : public duckdb::GlobalFunctionData {
   message::Chain queued;
   bool writing = false;
   bool failed = false;
+  duckdb::unique_ptr<duckdb::PieceCompressor> compressor;
+  duckdb::CompressedPiece separator_piece;
 };
 
 duckdb::idx_t FileSize(duckdb::GlobalFunctionData& gstate) {
@@ -65,11 +70,79 @@ struct CopyToFileLocal final : public duckdb::LocalFunctionData {
   std::unique_ptr<CopyChunkEncoder> encoder;
   message::Buffer buffer{kBufferChunkMin, kBufferChunkMax};
   size_t released = 0;
+  duckdb::unique_ptr<duckdb::PieceCompressor> compressor;
+  duckdb::CompressedPiece piece;
 };
 
 struct CopyToFileBatch final : public duckdb::PreparedBatchData {
   message::Chain chain;
+  duckdb::CompressedPiece piece;
 };
+
+void CompressPiece(CopyToFileGlobal& g,
+                   duckdb::unique_ptr<duckdb::PieceCompressor>& compressor,
+                   message::Chain& chain, bool rows,
+                   duckdb::CompressedPiece& piece) {
+  if (!compressor) {
+    compressor = g.pieced->CreateCompressor();
+  }
+  std::vector<std::span<const uint8_t>> inputs;
+  auto skip = rows ? g.strip : 0;
+  for (auto* chunk = chain.head; chunk; chunk = chunk->Next()) {
+    const auto data = chunk->Data(chunk->GetEnd());
+    const auto dropped = std::min(skip, data.size());
+    skip -= dropped;
+    if (data.size() > dropped) {
+      inputs.push_back(data.subspan(dropped));
+    }
+  }
+  if (!g.encoding) {
+    compressor->Compress(inputs, false, piece);
+    return;
+  }
+  duckdb::CopyEncoder encoder{*g.encoding};
+  std::string converted;
+  for (const auto& input : inputs) {
+    encoder.Encode({reinterpret_cast<const char*>(input.data()), input.size()},
+                   converted);
+  }
+  compressor->Compress(reinterpret_cast<const uint8_t*>(converted.data()),
+                       converted.size(), piece);
+}
+
+void WritePiece(duckdb::ClientContext& context, CopyToFileGlobal& g,
+                duckdb::CompressedPiece& piece) {
+  g.handle->Write(context, piece.data.get(), piece.size);
+  g.pieced->Append(piece);
+  g.offset.fetch_add(piece.size, std::memory_order_relaxed);
+}
+
+void AppendPiece(duckdb::ClientContext& context, CopyToFileGlobal& g,
+                 duckdb::CompressedPiece& piece) {
+  if (piece.input_size == 0) {
+    return;
+  }
+  absl::MutexLock lock{&g.lock};
+  if (std::exchange(g.started, true) && g.strip != 0) {
+    if (g.separator_piece.input_size == 0) {
+      g.compressor->Compress(
+        reinterpret_cast<const uint8_t*>(g.separator.data()),
+        g.separator.size(), g.separator_piece);
+    }
+    WritePiece(context, g, g.separator_piece);
+  }
+  WritePiece(context, g, piece);
+}
+
+void WriteFramePiece(duckdb::ClientContext& context, CopyToFileGlobal& g,
+                     message::Buffer& buffer) {
+  auto chain = buffer.ReleaseChain();
+  duckdb::CompressedPiece piece;
+  CompressPiece(g, g.compressor, chain, false, piece);
+  if (piece.input_size != 0) {
+    WritePiece(context, g, piece);
+  }
+}
 
 void WriteOut(duckdb::ClientContext& context, CopyToFileGlobal& g,
               message::Chain& chain, bool rows) {
@@ -157,23 +230,41 @@ void Write(duckdb::ClientContext& context, CopyToFileGlobal& g,
 void Flush(duckdb::ClientContext& context, CopyToFileGlobal& g,
            CopyToFileLocal& l) {
   l.released = l.buffer.TotalCommitted();
-  Write(context, g, l.buffer.ReleaseChain());
+  if (!g.pieced) {
+    Write(context, g, l.buffer.ReleaseChain());
+    return;
+  }
+  auto chain = l.buffer.ReleaseChain();
+  CompressPiece(g, l.compressor, chain, true, l.piece);
+  AppendPiece(context, g, l.piece);
 }
 
 duckdb::unique_ptr<duckdb::GlobalFunctionData> InitGlobal(
   duckdb::ClientContext& context, duckdb::FunctionData& bind_data,
   const std::string& file_path) {
   auto& bind = bind_data.Cast<CopyToFileBindData>();
+  auto& fs = duckdb::FileSystem::GetFileSystem(context);
   auto g = duckdb::make_uniq<CopyToFileGlobal>();
-  g->handle = duckdb::FileSystem::GetFileSystem(context).OpenFile(
+  g->pieced = duckdb::CreatePiecedFile(fs, bind.Compression(), file_path);
+  g->handle = fs.OpenFile(
     file_path, duckdb::FileFlags::FILE_FLAGS_WRITE |
                  duckdb::FileFlags::FILE_FLAGS_FILE_CREATE_NEW |
-                 bind.Compression());
-  g->strip = bind.RowSeparator().size();
+                 (g->pieced ? duckdb::FileCompressionType::UNCOMPRESSED
+                            : bind.Compression()));
+  g->separator = bind.RowSeparator();
+  g->strip = g->separator.size();
   g->encoding = bind.Encoding();
   message::Buffer header{kBufferChunkMin, kBufferChunkMax};
   bind.WriteHeader(context, header);
-  WriteOut(context, *g, header);
+  if (!g->pieced) {
+    WriteOut(context, *g, header);
+    return g;
+  }
+  g->compressor = g->pieced->CreateCompressor();
+  auto head = g->pieced->Head();
+  g->handle->Write(context, head.data(), head.size());
+  g->offset.fetch_add(head.size(), std::memory_order_relaxed);
+  WriteFramePiece(context, *g, header);
   return g;
 }
 
@@ -206,7 +297,14 @@ void Finalize(duckdb::ClientContext& context, duckdb::FunctionData& bind_data,
   auto& g = gstate.Cast<CopyToFileGlobal>();
   message::Buffer trailer{kBufferChunkMin, kBufferChunkMax};
   bind_data.Cast<CopyToFileBindData>().WriteTrailer(trailer);
-  WriteOut(context, g, trailer);
+  if (g.pieced) {
+    WriteFramePiece(context, g, trailer);
+    auto tail = g.pieced->Tail();
+    g.handle->Write(context, tail.data(), tail.size());
+    g.offset.fetch_add(tail.size(), std::memory_order_relaxed);
+  } else {
+    WriteOut(context, g, trailer);
+  }
   g.handle->Close();
 }
 
@@ -223,7 +321,7 @@ duckdb::CopyFunctionExecutionMode ExecutionMode(bool preserve_insertion_order,
 
 duckdb::unique_ptr<duckdb::PreparedBatchData> PrepareBatch(
   duckdb::ClientContext& context, duckdb::FunctionData& bind_data,
-  duckdb::GlobalFunctionData&,
+  duckdb::GlobalFunctionData& gstate,
   duckdb::unique_ptr<duckdb::ColumnDataCollection> collection) {
   auto encoder = bind_data.Cast<CopyToFileBindData>().MakeEncoder(context);
   message::Buffer buffer{kBufferChunkMin, kBufferChunkMax};
@@ -232,6 +330,11 @@ duckdb::unique_ptr<duckdb::PreparedBatchData> PrepareBatch(
   }
   auto batch = duckdb::make_uniq<CopyToFileBatch>();
   batch->chain = buffer.ReleaseChain();
+  auto& g = gstate.Cast<CopyToFileGlobal>();
+  if (g.pieced) {
+    duckdb::unique_ptr<duckdb::PieceCompressor> compressor;
+    CompressPiece(g, compressor, batch->chain, true, batch->piece);
+  }
   return batch;
 }
 
@@ -239,7 +342,12 @@ void FlushBatch(duckdb::ClientContext& context, duckdb::FunctionData&,
                 duckdb::GlobalFunctionData& gstate,
                 duckdb::PreparedBatchData& batch) {
   auto& prepared = batch.Cast<CopyToFileBatch>();
-  Write(context, gstate.Cast<CopyToFileGlobal>(), std::move(prepared.chain));
+  auto& g = gstate.Cast<CopyToFileGlobal>();
+  if (g.pieced) {
+    AppendPiece(context, g, prepared.piece);
+    return;
+  }
+  Write(context, g, std::move(prepared.chain));
 }
 
 duckdb::optional_idx DesiredBatchSize(duckdb::ClientContext&,

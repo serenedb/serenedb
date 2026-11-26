@@ -291,10 +291,13 @@ struct PhraseSeq {
   std::vector<const duckdb::Expression*> parts;
   std::vector<PhraseGap> gaps;
   std::optional<PhraseGap> pending;
+  std::vector<duckdb::unique_ptr<duckdb::Expression>> parsed;
 };
 PhraseGap ParsePhraseSeqGap(const duckdb::Expression& expr);
-void FlattenPhraseSeq(const duckdb::Expression& expr, PhraseSeq& seq);
-void AttachPart(PhraseSeq& seq, const duckdb::Expression& next);
+void FlattenPhraseSeq(duckdb::ClientContext& context,
+                      const duckdb::Expression& expr, PhraseSeq& seq);
+void AttachPart(duckdb::ClientContext& context, PhraseSeq& seq,
+                const duckdb::Expression& next);
 void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                    const SearchColumnInfo& column_info, const PhraseSeq& seq);
 

@@ -190,6 +190,11 @@ void GetVarcharArg(const duckdb::Expression& expr, std::string& out,
 inline bool IsBlob(const duckdb::Expression& expr) {
   return expr.GetReturnType().id() == duckdb::LogicalTypeId::BLOB;
 }
+inline bool ComparesBytes(const SearchColumnInfo& column_info,
+                          const duckdb::BoundFunctionExpression& func) {
+  return column_info.logical_type.id() == duckdb::LogicalTypeId::BLOB ||
+         IsBlob(*func.GetChildren()[0]);
+}
 void GetIntArg(const duckdb::Expression& expr, int64_t& out, ArgError err);
 void GetBoolArg(const duckdb::Expression& expr, bool& out, ArgError err);
 void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);

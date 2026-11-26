@@ -63,12 +63,6 @@ irs::analysis::ShingleTokenizer* QueryShingle(
 
 namespace {
 
-bool PartBytes(const SearchColumnInfo& column_info,
-               const duckdb::BoundFunctionExpression& part) {
-  return column_info.logical_type.id() == duckdb::LogicalTypeId::BLOB ||
-         IsBlob(*part.GetChildren()[0]);
-}
-
 PhraseGap ParsePhraseGap(const duckdb::Value& val, std::string_view label,
                          std::string_view hint,
                          std::optional<size_t> arg_index = std::nullopt) {
@@ -797,14 +791,14 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
         options.push_back<irs::ByWildcardOptions>(gap.min, gap.max) =
           irs::ByWildcardOptions{
             irs::ViewCast<irs::byte_type>(std::string_view{text}),
-            PartBytes(column_info, *f)};
+            ComparesBytes(column_info, *f)};
       } break;
       case TSQueryOp::Regexp: {
         auto args = ParseRegexpArgs(*f);
         options.push_back<irs::ByRegexpOptions>(gap.min, gap.max) =
           irs::ByRegexpOptions{
             irs::ViewCast<irs::byte_type>(std::string_view{args.pattern}),
-            args.syntax, PartBytes(column_info, *f)};
+            args.syntax, ComparesBytes(column_info, *f)};
       } break;
       case TSQueryOp::Fuzzy: {
         auto args = ParseLevenshteinArgs(*f, column_info);

@@ -60,8 +60,7 @@ LevenshteinArgs ParseLevenshteinArgs(
   }
   SDB_ASSERT(positional >= 1 && positional <= 4);
   LevenshteinArgs out;
-  out.bytes = column.logical_type.id() == duckdb::LogicalTypeId::BLOB ||
-              IsBlob(*children[0]);
+  out.bytes = ComparesBytes(column, func);
   GetVarcharArg(*children[0], out.text, {"ts_levenshtein text", kSyntaxHint});
   if (positional >= 2) {
     GetIntArg(*children[1], out.distance,

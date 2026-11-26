@@ -90,9 +90,7 @@ void FromRegexp(BoolTarget parent, const FilterContext& ctx,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_DATATYPE_MISMATCH),
                     ERR_MSG("ts_regexp field is not VARCHAR"));
   }
-  const bool bytes =
-    column_info.logical_type.id() == duckdb::LogicalTypeId::BLOB ||
-    IsBlob(*func.GetChildren()[0]);
+  const bool bytes = ComparesBytes(column_info, func);
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardTokenizer>::id()) {
     auto& rf = AddMaybeNegated<irs::ByWildcardNGram>(parent, ctx, column_info);

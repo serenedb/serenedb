@@ -57,9 +57,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
                "analyzer."));
   }
   CheckLikePattern(pattern);
-  const bool bytes =
-    column_info.logical_type.id() == duckdb::LogicalTypeId::BLOB ||
-    IsBlob(*func.GetChildren()[0]);
+  const bool bytes = ComparesBytes(column_info, func);
 
   if (column_info.tokenizer.analyzer->type() ==
       irs::Type<irs::analysis::WildcardTokenizer>::id()) {

@@ -337,10 +337,11 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
   }
 }
 
-bool MayMaintain(ConnectionContext& conn_ctx, const duckdb::Permissions& perm,
-                 std::string_view name, std::string_view verb) {
-  if (conn_ctx.CurrentRole().Can(duckdb::CatalogType::TABLE_ENTRY, perm,
-                                 duckdb::AclMode::Maintain)) {
+bool MayMaintain(ConnectionContext& conn_ctx,
+                 const duckdb::CatalogEntry& relation, std::string_view name,
+                 std::string_view verb) {
+  if (duckdb::Allowed(conn_ctx.CurrentRole(), relation,
+                      duckdb::AclMode::Maintain)) {
     return true;
   }
   conn_ctx.AddNotice(SQL_ERROR_DATA(
@@ -418,7 +419,7 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
     }
     auto relation =
       index->GetRelation(index->catalog.GetCatalogTransaction(context));
-    if (relation && !MayMaintain(conn_ctx, relation->permissions,
+    if (relation && !MayMaintain(conn_ctx, *relation,
                                  index->name.GetIdentifierName(), verb)) {
       return;
     }
@@ -438,8 +439,7 @@ void DispatchStores(duckdb::ClientContext& context, ConnectionContext& conn_ctx,
                   "\" is not an in-memory table"),
           ERR_DETAIL("VACUUM (PACK_TABLE) applies to temporary tables."));
       }
-      if (MayMaintain(conn_ctx, table.permissions,
-                      table.name.GetIdentifierName(), verb)) {
+      if (MayMaintain(conn_ctx, table, table.name.GetIdentifierName(), verb)) {
         CollectInvertedSteps(context, table, steps);
       }
     });

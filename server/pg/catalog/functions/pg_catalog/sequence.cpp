@@ -21,6 +21,7 @@
 #include <absl/synchronization/mutex.h>
 
 #include <duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp>
+#include <duckdb/catalog/column_acls.hpp>
 #include <duckdb/common/vector/vector_writer.hpp>
 #include <iresearch/utils/pg/errcodes.hpp>
 #include <iresearch/utils/pg/sql_exception_macro.hpp>
@@ -57,7 +58,7 @@ const duckdb::SequenceCatalogEntry* ReadableSequence(
   AclMode modes) {
   const auto entry = EntryByOid(session, static_cast<uint64_t>(oid));
   if (!entry || entry->type != CatalogType::SEQUENCE_ENTRY ||
-      !role.CanAny(CatalogType::SEQUENCE_ENTRY, entry->permissions, modes)) {
+      !duckdb::AllowedAny(role, *entry, modes)) {
     return nullptr;
   }
   return &entry->Cast<duckdb::SequenceCatalogEntry>();
@@ -87,8 +88,7 @@ void PgSequenceLastValueFunction(duckdb::DataChunk& args,
         ERR_CODE(ERRCODE_WRONG_OBJECT_TYPE),
         ERR_MSG("\"", entry->name.GetIdentifierName(), "\" is not a sequence"));
     }
-    if (!role.CanAny(CatalogType::SEQUENCE_ENTRY, entry->permissions,
-                     AclMode::Select | AclMode::Usage)) {
+    if (!duckdb::AllowedAny(role, *entry, AclMode::Select | AclMode::Usage)) {
       writer.WriteNull();
       continue;
     }
@@ -156,8 +156,9 @@ void PgSequenceParametersFunction(duckdb::DataChunk& args,
     }
     const auto type =
       relation->entry ? relation->entry->type : CatalogType::TABLE_ENTRY;
-    if (!role.CanAny(type, *relation->permissions,
-                     AclMode::Select | AclMode::Update | AclMode::Usage)) {
+    if (!duckdb::AllowedAny(role, type, *relation->permissions,
+                            AclMode::Select | AclMode::Update | AclMode::Usage,
+                            AclMode::NoRights)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied for sequence ",
                               NameOf(*session.transaction, *relation).name));
@@ -210,9 +211,8 @@ void LastvalFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
                     ERR_MSG("lastval is not yet defined in this session"));
   }
-  if (!CallerAccess(state).CanAny(duckdb::CatalogType::SEQUENCE_ENTRY,
-                                  entry->permissions,
-                                  AclMode::Select | AclMode::Usage)) {
+  if (!duckdb::AllowedAny(CallerAccess(state), *entry,
+                          AclMode::Select | AclMode::Usage)) {
     duckdb::ThrowPermissionDenied(*entry);
   }
   result.Reference(duckdb::Value::BIGINT(last->value),

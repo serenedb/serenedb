@@ -107,8 +107,7 @@ LoginCheck RequireLoginRole(std::string_view user, std::string_view dbname) {
         [&](const catalog::DatabaseCatalogEntry& entry) {
           database.oid = entry.oid;
           database.connect =
-            principal.Can(duckdb::CatalogType::DATABASE_ENTRY,
-                          entry.permissions, duckdb::AclMode::Connect);
+            duckdb::Allowed(principal, entry, duckdb::AclMode::Connect);
           database.allow_connections = entry.AllowConnections();
           database.conn_limit = entry.ConnLimit();
         }) ||

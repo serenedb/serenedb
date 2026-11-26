@@ -55,6 +55,30 @@ a
 20
 
 
+connection c_bob user=suw_bob password=suw_pw
+query
+SELECT has_table_privilege('suw_s.main.t', 'SELECT') AS can_select,
+       has_table_privilege('suw_s.main.t', 'INSERT, UPDATE, DELETE') AS can_write,
+       has_table_privilege('suw_s.main.t', 'SELECT WITH GRANT OPTION') AS can_grant;
+----
+can_select	can_write	can_grant
+t	t	f
+
+
+connection c_bob user=suw_bob password=suw_pw
+statement error
+GRANT SELECT ON suw_s.main.t TO PUBLIC;
+----
+db error: ERROR: permission denied for table t
+
+
+connection c_bob user=suw_bob password=suw_pw
+statement error
+CREATE TABLE suw_s.main.t2 (a int);
+----
+db error: ERROR: permission denied for schema main
+
+
 statement ok
 REVOKE USAGE ON FOREIGN SERVER suw_s FROM suw_bob;
 

@@ -115,7 +115,8 @@ duckdb::optional_ptr<duckdb::SchemaCatalogEntry> LookupSchema(
 duckdb::optional_ptr<duckdb::SchemaCatalogEntry> FindSchema(
   const Session& session, std::string_view name) {
   auto schema = LookupSchema(session, name);
-  if (schema && !duckdb::CanUseSchema(session.role, *schema)) {
+  if (schema &&
+      !duckdb::Allowed(session.role, *schema, duckdb::AclMode::Usage)) {
     duckdb::ThrowPermissionDenied(*schema);
   }
   return schema;

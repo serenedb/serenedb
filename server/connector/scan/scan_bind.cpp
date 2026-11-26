@@ -687,8 +687,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
     input.binder ? input.binder->CheckAs() : context.CurrentRole();
   if (auto host =
         index.GetRelation(index.catalog.GetCatalogTransaction(context));
-      host && host->type == duckdb::CatalogType::VIEW_ENTRY &&
-      !duckdb::IsUnowned(*host)) {
+      host && host->type == duckdb::CatalogType::VIEW_ENTRY) {
     if (!duckdb::Allowed(role, *host, duckdb::AclMode::Select)) {
       duckdb::ThrowPermissionDenied(*host);
     }

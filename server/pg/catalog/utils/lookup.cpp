@@ -247,15 +247,9 @@ std::optional<RelationAccess> RelationByOid(
       return std::nullopt;
     }
     relation->entry = entry;
-    return RelationAccess{{*relation}, &PrivilegePermissions(*entry)};
+    return RelationAccess{{*relation}, &duckdb::PermissionsOf(*entry)};
   }
-  return RelationAccess{{*relation}, &PrivilegePermissions(*relation->entry)};
-}
-
-const duckdb::Permissions& PrivilegePermissions(
-  const duckdb::CatalogEntry& entry) {
-  static const duckdb::Permissions kUnowned{.owner = kInvalidOid};
-  return duckdb::IsUnowned(entry) ? kUnowned : entry.permissions;
+  return RelationAccess{{*relation}, &duckdb::PermissionsOf(*relation->entry)};
 }
 
 std::string ArrayTypeName(duckdb::CatalogTransaction transaction,

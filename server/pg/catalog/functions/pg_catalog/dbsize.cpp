@@ -304,8 +304,7 @@ int64_t TablespaceBytes(const Session& session,
   if (tablespace.oid != SessionTablespace(session)) {
     if (const auto& role = session.role;
         !role.Has(duckdb::RoleCapability::ReadAllStats) &&
-        !role.Can(duckdb::CatalogType::TABLESPACE_ENTRY,
-                  PrivilegePermissions(tablespace), duckdb::AclMode::Create)) {
+        !duckdb::Allowed(role, tablespace, duckdb::AclMode::Create)) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
                       ERR_MSG("permission denied for tablespace ",
                               tablespace.name.GetIdentifierName()));

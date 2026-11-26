@@ -169,9 +169,9 @@ std::optional<std::string> ConstraintKeyText(
     }
   }
   const bool readable =
-    columns.empty() ? role.Can(duckdb::CatalogType::TABLE_ENTRY,
-                               table.permissions, duckdb::AclMode::Select)
-                    : role.CanColumns(table, duckdb::AclMode::Select, columns);
+    duckdb::Allowed(role, table, duckdb::AclMode::Select) ||
+    (!columns.empty() &&
+     role.CanColumns(table, duckdb::AclMode::Select, columns));
   if (!readable) {
     return std::nullopt;
   }

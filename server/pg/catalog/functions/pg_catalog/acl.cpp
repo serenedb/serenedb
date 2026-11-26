@@ -307,9 +307,6 @@ struct ObjectTarget {
 bool Holds(const duckdb::RoleAccess& role, CatalogType type,
            const ObjectTarget& target, const PrivilegeModes& requested) {
   const auto& permissions = *target.permissions;
-  if (permissions.owner == kInvalidOid) {
-    return true;
-  }
   if (target.owner_only) {
     return role.MemberOf(permissions.owner);
   }
@@ -486,10 +483,10 @@ std::optional<ObjectTarget> SchemaTarget(
     if (entry->type != CatalogType::SCHEMA_ENTRY) {
       return std::nullopt;
     }
-    return ObjectTarget{&PrivilegePermissions(*entry)};
+    return ObjectTarget{&duckdb::PermissionsOf(*entry)};
   }
   if (const auto schema = SchemaByOid(session, oid)) {
-    return ObjectTarget{&PrivilegePermissions(*schema)};
+    return ObjectTarget{&duckdb::PermissionsOf(*schema)};
   }
   return std::nullopt;
 }
@@ -511,9 +508,7 @@ std::optional<ObjectTarget> FunctionTarget(
     found = {.entry = &macro, .macro = macro.FindOverload(oid).get()};
   }
   if (found.macro) {
-    return ObjectTarget{duckdb::IsUnowned(*found.entry)
-                          ? &PrivilegePermissions(*found.entry)
-                          : &found.entry->OverloadPermissions(*found.macro)};
+    return ObjectTarget{&duckdb::PermissionsOf(*found.entry, found.macro)};
   }
   if (found.entry) {
     return std::nullopt;
@@ -538,7 +533,7 @@ std::optional<ObjectTarget> TypeTarget(
     if (entry->type != CatalogType::TYPE_ENTRY) {
       return std::nullopt;
     }
-    return ObjectTarget{&PrivilegePermissions(*entry)};
+    return ObjectTarget{&duckdb::PermissionsOf(*entry)};
   }
   if (oid & kRowTypeOidBit) {
     const auto relation = EntryByOid(session, RowTypeRelation(oid));
@@ -586,7 +581,7 @@ std::optional<ObjectTarget> DatabaseTarget(
   if (!database || !Shown(session, *database)) {
     return std::nullopt;
   }
-  return ObjectTarget{&PrivilegePermissions(*database)};
+  return ObjectTarget{&duckdb::PermissionsOf(*database)};
 }
 
 uint64_t ResolveServer(const Session& session, std::string_view name) {
@@ -604,7 +599,7 @@ std::optional<ObjectTarget> ServerTarget(
   if (!entry || entry->type != CatalogType::FOREIGN_SERVER_ENTRY) {
     return std::nullopt;
   }
-  return ObjectTarget{&PrivilegePermissions(*entry)};
+  return ObjectTarget{&duckdb::PermissionsOf(*entry)};
 }
 
 uint64_t ResolveWrapper(const Session&, std::string_view name) {
@@ -652,7 +647,7 @@ std::optional<ObjectTarget> TablespaceTarget(
   if (!tablespace) {
     return std::nullopt;
   }
-  return ObjectTarget{&PrivilegePermissions(*tablespace)};
+  return ObjectTarget{&duckdb::PermissionsOf(*tablespace)};
 }
 
 uint64_t ResolveLanguage(const Session&, std::string_view name) {
@@ -1146,7 +1141,7 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
       if (const auto entry = AttachedRelation(_session, name)) {
         return _kind.relation(_session,
                               RelationAccess{{entry, nullptr, nullptr, nullptr},
-                                             &PrivilegePermissions(*entry)},
+                                             &duckdb::PermissionsOf(*entry)},
                               column);
       }
       const auto oid = *RegIn(_session, RegKind::Class, name, nullptr);

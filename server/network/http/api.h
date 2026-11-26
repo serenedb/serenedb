@@ -45,6 +45,7 @@ struct Api {
   uint64_t max_body_bytes = 0;
   void (*start)(const ListenSpec& spec) = nullptr;
   bool own_listener = false;
+  bool login = true;
 };
 
 }  // namespace sdb::network::http

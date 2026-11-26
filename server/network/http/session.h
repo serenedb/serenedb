@@ -83,6 +83,7 @@ struct HttpServerContext {
   const CredentialProvider* credentials = nullptr;
   const http::ApiKeyValidator* api_keys = nullptr;
   const http::BearerValidator* bearer = nullptr;
+  bool login = true;
   // Shared live-connection counter + the cap this listener enforces (0 =
   // unlimited). Over-cap connections get a 503 then close.
   std::atomic<uint32_t>* active = nullptr;
@@ -127,6 +128,7 @@ class HttpSession final
       _deadline{exec.Context()},
       _router{ctx.router},
       _auth{ctx.credentials, ctx.api_keys, ctx.bearer},
+      _login{ctx.login},
       _active{ctx.active},
       _cancel{ctx.cancel},
       _sessions{ctx.sessions},
@@ -144,6 +146,7 @@ class HttpSession final
       _deadline{exec.Context()},
       _router{ctx.router},
       _auth{ctx.credentials, ctx.api_keys, ctx.bearer},
+      _login{ctx.login},
       _active{ctx.active},
       _cancel{ctx.cancel},
       _sessions{ctx.sessions},
@@ -195,6 +198,11 @@ class HttpSession final
 
   // --- RequestContext -------------------------------------------------------
   duckdb::Connection& Connection() final {
+    if (!_login) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_AUTHORIZATION_SPECIFICATION),
+        ERR_MSG("a request to an endpoint without logins runs no SQL"));
+    }
     if (!_conn) {
       const std::string_view dbname =
         _database.empty() ? irs::StaticStrings::kDefaultDatabase : _database;
@@ -427,6 +435,7 @@ class HttpSession final
   asio_ns::steady_timer _deadline;
   HttpRouter& _router;
   http::HttpAuthenticator _auth;
+  bool _login = true;
   std::atomic<uint32_t>* _active = nullptr;
   CancelRegistry* _cancel = nullptr;
   std::shared_ptr<CancelToken> _cancel_token;
@@ -792,8 +801,10 @@ yaclib::Future<> HttpSession<Kind>::SessionMain() {
           }
         }
 
-        auto auth = _auth.Authenticate(
-          request.Header(HttpHeader::Authorization), _peer, _database);
+        auto auth =
+          _login ? _auth.Authenticate(request.Header(HttpHeader::Authorization),
+                                      _peer, _database)
+                 : http::AuthResult{};
         if (auth.status != http::HttpStatus::None) {
           writer.Fixed(auth.status, http::kJsonContentType,
                        R"({"error":"unauthorized"})",

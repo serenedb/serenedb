@@ -148,3 +148,28 @@ def test_a_password_rule_checks_the_password(server):
 def test_a_malformed_authorization_is_refused(server, authorization):
     assert _session_user_as(server, authorization) == (
         401, '{"error":"unauthorized"}')
+
+
+def test_an_api_without_logins_answers_anyone_and_runs_no_sql(tmp_path):
+    serened = Serened(SERENED_BIN, datadir_root=str(tmp_path),
+                      log_path=str(tmp_path / "serened.log"),
+                      http=("api=test-open", "api=test"))
+    serened.start()
+    try:
+        open_port, test_port = serened.http_ports
+
+        def get(port: int, path: str) -> tuple[int, str]:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+            try:
+                conn.request("GET", path)
+                response = conn.getresponse()
+                return response.status, response.read().decode()
+            finally:
+                conn.close()
+
+        assert get(open_port, "/_test/ping")[0] == 200
+        assert get(test_port, "/_test/ping")[0] == 401
+        status, body = get(open_port, "/_test/session_user")
+        assert status == 500 and "postgres" not in body, body
+    finally:
+        serened.stop()

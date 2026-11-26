@@ -117,7 +117,7 @@ std::shared_ptr<const ListenOptions> Parse(const ListenSpec& spec,
           GENERAL, "unknown api '", value, "' in endpoint '", url,
           "' (known: ", absl::StrJoin(Registry<http::Api>::Names(), ", "), ")");
       }
-      if (api->own_listener) {
+      if (api->own_listener || !api->login) {
         alone = value;
       }
       if (!absl::c_linear_search(options->apis, api)) {
@@ -158,8 +158,8 @@ std::shared_ptr<const ListenOptions> Parse(const ListenSpec& spec,
   }
   if (!alone.empty() && options->apis.size() > 1) {
     SDB_FATAL(GENERAL, "api '", alone, "' in endpoint '", url,
-              "' needs a listener of its own, since its routes take every "
-              "path at the root: serve the other apis on another endpoint");
+              "' needs a listener of its own: serve the other apis on "
+              "another endpoint");
   }
   return options;
 }
@@ -193,6 +193,8 @@ class HttpListener final : public AcceptorBase {
     _deps.max_connections =
       spec.max_connections.value_or(context.max_connections);
     _deps.max_body_bytes = http::MaxBodyBytes(options.apis);
+    _deps.login = absl::c_all_of(
+      options.apis, [](const http::Api* api) { return api->login; });
     _deps.cancel = &context.cancel;
     _deps.sessions = &context.sessions;
     _deps.cors_origins = _cors_origins;

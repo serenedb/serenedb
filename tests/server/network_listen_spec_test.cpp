@@ -259,6 +259,8 @@ constexpr Refused kRefused[] = {
    "api 'es' in endpoint '[^']*' needs a listener of its own"},
   {"https://127.0.0.1:1?api=otel&api=es&api=otel",
    "api 'es' in endpoint '[^']*' needs a listener of its own"},
+  {"http://127.0.0.1:1?api=test&api=test-open",
+   "api 'test-open' in endpoint '[^']*' needs a listener of its own"},
 };
 
 TEST(ListenSpec, ProtocolParamsAreChecked) {

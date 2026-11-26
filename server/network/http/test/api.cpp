@@ -47,5 +47,12 @@ constexpr auto kRoutes = std::to_array<Route>({
 
 SDB_HTTP_API kTest{"test", kRoutes, kEsMaxBodyBytes};
 
+constexpr auto kOpenRoutes = std::to_array<Route>({
+  {HttpMethod::Get, "/_test/ping", Handler<Endpoint::Ping>},
+  {HttpMethod::Get, "/_test/session_user", Handler<Endpoint::SessionUser>},
+});
+
+SDB_HTTP_API kOpen{"test-open", Api{.routes = kOpenRoutes, .login = false}};
+
 }  // namespace
 }  // namespace sdb::network::http::test

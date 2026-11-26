@@ -75,7 +75,6 @@
 #include "catalog/dependency.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/foreign_server.h"
-#include "catalog/entry/parameter.h"
 #include "catalog/entry/role.h"
 #include "catalog/entry/subscription.h"
 #include "catalog/entry/tablespace.h"
@@ -1125,8 +1124,6 @@ void Dispatch(T& table, duckdb::CatalogEntry& entry) {
       return Visit<catalog::SubscriptionCatalogEntry>(table, entry);
     case duckdb::CatalogType::TABLESPACE_ENTRY:
       return Visit<catalog::TablespaceCatalogEntry>(table, entry);
-    case duckdb::CatalogType::PARAMETER_ENTRY:
-      return Visit<catalog::ParameterCatalogEntry>(table, entry);
     case duckdb::CatalogType::INVALID:
     case duckdb::CatalogType::PREPARED_STATEMENT:
     case duckdb::CatalogType::COLLATION_ENTRY:

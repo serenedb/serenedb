@@ -670,14 +670,8 @@ std::optional<ObjectTarget> LanguageTarget(
   return ObjectTarget{&kBuiltinPermissions};
 }
 
-std::optional<ObjectTarget> ParameterTarget(const Session& session,
-                                            std::string_view name) {
-  auto& cluster = catalog::ClusterOf(*session.context);
-  const auto parameter = cluster.Set(CatalogType::PARAMETER_ENTRY)
-                           .Get(cluster.GetCatalogTransaction(*session.context),
-                                duckdb::Identifier{name});
-  return ObjectTarget{parameter ? &PrivilegePermissions(*parameter)
-                                : &kBuiltinPermissions};
+std::optional<ObjectTarget> ParameterTarget(const Session&, std::string_view) {
+  return ObjectTarget{&kBuiltinPermissions};
 }
 
 std::optional<ObjectTarget> LargeObjectTarget(
@@ -806,8 +800,8 @@ constexpr PrivilegeKind kLanguagePrivileges{
 
 constexpr PrivilegeKind kParameterPrivileges{
   .name = "has_parameter_privilege",
-  .type = CatalogType::PARAMETER_ENTRY,
-  .modes = PrivilegesOf(CatalogType::PARAMETER_ENTRY),
+  .type = CatalogType::INVALID,
+  .modes = AclMode::Set | AclMode::AlterSystem,
   .find_named = ParameterTarget,
 };
 

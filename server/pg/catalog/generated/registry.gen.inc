@@ -27,7 +27,6 @@ constexpr SystemTable* kSystemTables[] = {
   &gPgLanguage,
   &gPgNamespace,
   &gPgOpclass,
-  &gPgParameterAcl,
   &gPgProc,
   &gPgRange,
   &gPgReplicationOrigin,

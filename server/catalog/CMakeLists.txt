@@ -20,7 +20,6 @@ target_sources(
         entry/foreign_server.cpp
         entry/inverted_index.cpp
         entry/job.cpp
-        entry/parameter.cpp
         entry/replication_lsn.cpp
         entry/role.cpp
         entry/search_table.cpp

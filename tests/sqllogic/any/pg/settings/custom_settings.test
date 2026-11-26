@@ -330,15 +330,6 @@ db error: ERROR: permission denied to set parameter "cst.self"
 DETAIL: Only roles with the SUPERUSER attribute may change this parameter.
 
 
-statement ok
-GRANT SET ON PARAMETER cst.granted TO cst_role;
-
-
-connection c_role user=cst_role password=cst_pw
-statement ok
-ALTER ROLE cst_role SET cst.granted = 'g';
-
-
 statement error
 ALTER ROLE cst_role SET "cst..bad" = 'x';
 ----
@@ -353,15 +344,7 @@ JOIN pg_roles r ON r.oid = s.setrole
 WHERE r.rolname = 'cst_role';
 ----
 setconfig
-{"cst.role_setting=from role",cst.granted=g}
-
-
-statement ok
-REVOKE SET ON PARAMETER cst.granted FROM cst_role;
-
-
-statement ok
-ALTER ROLE cst_role RESET cst.granted;
+{"cst.role_setting=from role"}
 
 
 connection c_role user=cst_role password=cst_pw

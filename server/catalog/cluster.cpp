@@ -66,7 +66,6 @@
 #include "catalog/dependency.h"
 #include "catalog/entry/foreign_server.h"
 #include "catalog/entry/job.h"
-#include "catalog/entry/parameter.h"
 #include "catalog/entry/replication_lsn.h"
 #include "catalog/schema.h"
 #include "pg/catalog/oids.h"
@@ -350,8 +349,6 @@ EntrySet* ClusterCatalog::FindSet(duckdb::CatalogType type) {
       return &_origins;
     case duckdb::CatalogType::TABLESPACE_ENTRY:
       return &_tablespaces;
-    case duckdb::CatalogType::PARAMETER_ENTRY:
-      return &_parameters;
     default:
       return BaseCatalog::FindSet(type);
   }
@@ -504,8 +501,7 @@ void ClusterCatalog::DropOwned(duckdb::CatalogTransaction transaction,
     duckdb::DBConfig::GetConfig(transaction.GetContext()).bootstrap_role;
   std::vector<duckdb::unique_ptr<duckdb::AlterInfo>> alters;
   for (const auto type : {duckdb::CatalogType::DATABASE_ENTRY,
-                          duckdb::CatalogType::TABLESPACE_ENTRY,
-                          duckdb::CatalogType::PARAMETER_ENTRY}) {
+                          duckdb::CatalogType::TABLESPACE_ENTRY}) {
     Set(type).Scan(transaction, [&](duckdb::CatalogEntry& entry) {
       if (entry.internal) {
         return;
@@ -636,9 +632,6 @@ void ClusterCatalog::RevokeMembership(duckdb::CatalogTransaction transaction,
 void ClusterCatalog::ApplyAlter(duckdb::CatalogTransaction transaction,
                                 duckdb::AlterInfo& info) {
   switch (const auto type = info.GetCatalogType()) {
-    case duckdb::CatalogType::PARAMETER_ENTRY:
-      AlterParameter(transaction, info.Cast<duckdb::AlterPermissionsInfo>());
-      return;
     case duckdb::CatalogType::ROLE_ENTRY:
     case duckdb::CatalogType::DATABASE_ENTRY:
     case duckdb::CatalogType::TABLESPACE_ENTRY:
@@ -662,43 +655,6 @@ void ClusterCatalog::AlterTablespace(duckdb::CatalogTransaction transaction,
                  "owner or granted on."));
   }
   AlterIn(_tablespaces, transaction, info);
-}
-
-void ClusterCatalog::AlterParameter(duckdb::CatalogTransaction transaction,
-                                    duckdb::AlterPermissionsInfo& info) {
-  const auto& name = info.GetQualifiedName().Name();
-  const auto existing = _parameters.Get(transaction, name);
-  if (!existing && info.revoke) {
-    return;
-  }
-  auto permissions =
-    existing
-      ? existing->permissions
-      : duckdb::Permissions{
-          .owner = duckdb::DBConfig::GetConfig(GetDatabase()).bootstrap_role};
-  info.ApplyTo(permissions, duckdb::CatalogType::PARAMETER_ENTRY, nullptr);
-  if (permissions.UsesDefaultAcl() ||
-      permissions.acl ==
-        duckdb::Permissions::AclDefault(duckdb::CatalogType::PARAMETER_ENTRY,
-                                        permissions.owner)) {
-    if (existing) {
-      DeclareModified(transaction, *this,
-                      duckdb::DatabaseModificationType::DROP_CATALOG_ENTRY);
-      _parameters.Drop(transaction, name);
-    }
-    return;
-  }
-  if (existing) {
-    AlterIn(_parameters, transaction, info);
-    return;
-  }
-  duckdb::CreateParameterInfo create;
-  create.SetName(name);
-  create.permissions = std::move(permissions);
-  AssignObjectOid(*this, create);
-  AddTo(_parameters, transaction,
-        duckdb::make_uniq<ParameterCatalogEntry>(*this, create),
-        duckdb::OnCreateConflict::ERROR_ON_CONFLICT);
 }
 
 duckdb::optional_ptr<duckdb::CatalogEntry> ClusterCatalog::CreateRole(
@@ -1101,11 +1057,6 @@ void ClusterCatalog::ReplayCreate(duckdb::ClientContext& context,
       CreateReplicationOrigin(
         transaction, info->Cast<duckdb::CreateReplicationOriginInfo>());
       return;
-    case duckdb::CatalogType::PARAMETER_ENTRY:
-      _parameters.Create(transaction,
-                         duckdb::make_uniq<ParameterCatalogEntry>(
-                           *this, info->Cast<duckdb::CreateParameterInfo>()));
-      return;
     default:
       BaseCatalog::ReplayCreate(context, std::move(info));
   }
@@ -1117,8 +1068,7 @@ void ClusterCatalog::ReplayDrop(duckdb::ClientContext& context,
   if (type != duckdb::CatalogType::ROLE_ENTRY &&
       type != duckdb::CatalogType::DATABASE_ENTRY &&
       type != duckdb::CatalogType::REPLICATION_ORIGIN_ENTRY &&
-      type != duckdb::CatalogType::TABLESPACE_ENTRY &&
-      type != duckdb::CatalogType::PARAMETER_ENTRY) {
+      type != duckdb::CatalogType::TABLESPACE_ENTRY) {
     BaseCatalog::ReplayDrop(context, entry);
     return;
   }

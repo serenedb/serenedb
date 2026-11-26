@@ -26,7 +26,6 @@ extern SystemTable gPgInitPrivs;
 extern SystemTable gPgLanguage;
 extern SystemTable gPgNamespace;
 extern SystemTable gPgOpclass;
-extern SystemTable gPgParameterAcl;
 extern SystemTable gPgProc;
 extern SystemTable gPgRange;
 extern SystemTable gPgReplicationOrigin;

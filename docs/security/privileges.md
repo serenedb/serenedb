@@ -35,7 +35,6 @@ Privileges are enforced on every query. Acting as the role, reading works and wr
 | `TYPE` | `USAGE` |
 | `FOREIGN SERVER` | `USAGE` |
 | `FOREIGN DATA WRAPPER` | `USAGE` |
-| `PARAMETER` | `SET`, `ALTER SYSTEM` |
 
 `ALL PRIVILEGES` grants everything applicable to the object type.
 
@@ -50,8 +49,6 @@ A statement's table and column privileges are checked once it is fully analyzed,
 `USAGE` on a type lets a role declare it: as the type of a column of a table, a view or `CREATE TABLE AS`, of a column added or changed with `ALTER TABLE`, of an attribute of a composite type, and of a parameter or result of a function or procedure it creates. An array of a type takes the element type's `USAGE`. Without it, the statement reports `permission denied for type name`; casts in queries and in function bodies need no `USAGE`. `PUBLIC` holds `USAGE` on every built-in type, and on every other type until it is revoked.
 
 Every role may create functions, procedures and macros in `sql`, the language of a function or macro written without a `LANGUAGE` clause.
-
-`SET` on a parameter lets a role change a parameter that only superusers may change, for its session, and `ALTER SYSTEM` lets it change the parameter's server-wide value with `SET GLOBAL`. A grant names a parameter that exists, such as `GRANT SET ON PARAMETER session_replication_role TO etl`; `pg_parameter_acl` lists the parameters that have grants and `has_parameter_privilege` checks them. `DROP OWNED` revokes them, and a role that holds one cannot be dropped.
 
 Built-in objects have fixed privileges: the catalogs in `pg_catalog` and `information_schema`, these two schemas, and the built-in functions, types and languages refuse `GRANT` and `REVOKE` with `Cannot alter entry "lower" because it is an internal system entry`, and `GRANT ... ON ALL ... IN SCHEMA` leaves them out. Every role may use them, except the catalogs only superusers may read, such as `pg_authid`, and the functions listed under [superuser-only operations](#superuser-only-operations).
 

@@ -90,28 +90,6 @@ session_replication_role=replica
 
 
 statement ok
-GRANT SET ON PARAMETER session_replication_role TO ers_vedernikoff;
-
-
-connection c_ved_reset user=ers_vedernikoff password=ers_pw
-statement ok
-ALTER ROLE ers_vedernikoff RESET ALL;
-
-
-query
-SELECT unnest(s.setconfig) AS setting
-FROM pg_db_role_setting s JOIN pg_roles r ON r.oid = s.setrole
-WHERE r.rolname = 'ers_vedernikoff'
-ORDER BY setting;
-----
-setting
-
-
-statement ok
-REVOKE SET ON PARAMETER session_replication_role FROM ers_vedernikoff;
-
-
-statement ok
 ALTER ROLE ers_vedernikoff SET session_replication_role = replica;
 
 

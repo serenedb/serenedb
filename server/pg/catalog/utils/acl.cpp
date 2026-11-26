@@ -382,16 +382,6 @@ void VisitRoleReferences(
                 });
       }
     });
-  cluster.Set(PARAMETER_ENTRY)
-    .Scan(cluster_transaction, [&](duckdb::CatalogEntry& parameter) {
-      if (names(parameter.permissions.acl)) {
-        visitor({kInvalidOid, kPgParameterAclTable, parameter.oid, 0, 'a'},
-                [&] {
-                  return absl::StrCat("parameter ",
-                                      parameter.name.GetIdentifierName());
-                });
-      }
-    });
 }
 
 }  // namespace sdb::pg

@@ -49,7 +49,6 @@ class ClusterCatalog final : public BaseCatalog {
       _databases{true, _oids, 0, true},
       _origins{true, _oids},
       _tablespaces{true, _oids},
-      _parameters{false, _oids},
       _temporary_secrets{true, _oids},
       _persistent_secrets{true, _oids} {}
 
@@ -133,8 +132,6 @@ class ClusterCatalog final : public BaseCatalog {
                  duckdb::AlterRoleInfo& info);
   void AlterTablespace(duckdb::CatalogTransaction transaction,
                        duckdb::AlterInfo& info);
-  void AlterParameter(duckdb::CatalogTransaction transaction,
-                      duckdb::AlterPermissionsInfo& info);
   void RevokeMembership(duckdb::CatalogTransaction transaction,
                         duckdb::AlterRoleInfo& alter);
 
@@ -143,7 +140,6 @@ class ClusterCatalog final : public BaseCatalog {
   EntrySet _databases;
   EntrySet _origins;
   EntrySet _tablespaces;
-  EntrySet _parameters;
   EntrySet _temporary_secrets;
   EntrySet _persistent_secrets;
   CatalogSnapshots _snapshots{*this};

@@ -41,7 +41,6 @@
 namespace irs::codecs::alp {
 
 inline constexpr duckdb::idx_t kDecodeDistance = kVectorSize / 64;
-inline constexpr uint32_t kDecodeRun = 8;
 
 struct SegmentLayout {
   duckdb::const_data_ptr_t base = nullptr;
@@ -254,7 +253,7 @@ struct FetchState final : SegmentScanState {
   duckdb::idx_t decoded_vector = duckdb::DConstants::INVALID_INDEX;
   duckdb::idx_t previous_row = duckdb::DConstants::INVALID_INDEX;
   uint32_t opened_rows = 0;
-  uint32_t near_rows = 0;
+  bool dense = false;
 };
 
 template<typename State>
@@ -265,8 +264,8 @@ IRS_NO_INLINE auto OpenAndFetchValue(FetchState<State>& fetch_state,
   fetch_state.opened = vector;
   fetch_state.opened_vector = vector_index;
   fetch_state.previous_row = row;
+  fetch_state.dense = fetch_state.opened_rows >= kSparseRows;
   fetch_state.opened_rows = 1;
-  fetch_state.near_rows = 0;
   return ValueAt(fetch_state.scan_state, vector, row % kVectorSize);
 }
 
@@ -292,12 +291,10 @@ IRS_FORCE_INLINE bool Dense(FetchState<State>& fetch_state,
   if (vector_index != fetch_state.opened_vector) {
     return false;
   }
-  fetch_state.near_rows = row - fetch_state.previous_row <= kDecodeDistance
-                            ? fetch_state.near_rows + 1
-                            : 0;
+  const bool near = row - fetch_state.previous_row <= kDecodeDistance;
   fetch_state.previous_row = row;
   return ++fetch_state.opened_rows >= kSparseRows ||
-         (fetch_state.near_rows >= kDecodeRun && vector_index == last_vector);
+         (near && fetch_state.dense && vector_index == last_vector);
 }
 
 template<typename State>
@@ -311,10 +308,14 @@ IRS_NO_INLINE void DecodeVector(FetchState<State>& fetch_state,
   state.total_value_count = vector_index * kVectorSize;
   LoadVector(state, state.vector_state->decoded_values);
   fetch_state.decoded_vector = vector_index;
+  if (vector_index != fetch_state.opened_vector) {
+    fetch_state.dense = fetch_state.opened_rows >= kSparseRows;
+    fetch_state.opened_rows = 0;
+  }
 }
 
 template<typename State>
-IRS_FORCE_INLINE bool CopyOneDecoded(const FetchState<State>& fetch_state,
+IRS_FORCE_INLINE bool CopyOneDecoded(FetchState<State>& fetch_state,
                                      const duckdb::idx_t* rows,
                                      duckdb::idx_t count,
                                      typename State::Value* result,
@@ -322,6 +323,7 @@ IRS_FORCE_INLINE bool CopyOneDecoded(const FetchState<State>& fetch_state,
   if (count != 1 || rows[0] / kVectorSize != fetch_state.decoded_vector) {
     return false;
   }
+  ++fetch_state.opened_rows;
   result[sel.get_index(0)] =
     fetch_state.scan_state.vector_state->decoded_values[rows[0] % kVectorSize];
   return true;
@@ -338,10 +340,12 @@ IRS_NO_INLINE duckdb::idx_t CopyDecoded(FetchState<State>& fetch_state,
     DecodeVector(fetch_state, vector_index);
   }
   const auto* decoded = fetch_state.scan_state.vector_state->decoded_values;
+  const auto first = i;
   do {
     result[sel.get_index(i)] = decoded[rows[i] % kVectorSize];
     ++i;
   } while (i < count && rows[i] / kVectorSize == vector_index);
+  fetch_state.opened_rows += static_cast<uint32_t>(i - first);
   return i;
 }
 

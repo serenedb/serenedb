@@ -24,6 +24,7 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/base/config.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/debugging/symbolize.h>
 #include <absl/strings/str_cat.h>
 #include <absl/synchronization/notification.h>
@@ -53,6 +54,8 @@
 #include "server/utils/stack_trace.h"
 
 extern "C" void SdbBadCfiSpin(const std::atomic<bool>* stop);
+extern "C" void SdbHeldCfiSpin(const std::atomic<uint64_t>* hold,
+                               const std::atomic<bool>* stop);
 extern "C" void SdbReadAtRowStart(int fd, char* byte);
 
 #if defined(__x86_64__)
@@ -91,6 +94,23 @@ SdbBadCfiSpin:
   .size SdbBadCfiSpin, .-SdbBadCfiSpin
   .popsection
 )");
+asm(R"(
+  .pushsection .text
+  .p2align 4
+  .type SdbHeldCfiSpin,@function
+SdbHeldCfiSpin:
+  .cfi_startproc
+  .cfi_escape 0x0f, 0x08, 0x75, 0x00, 0x06, 0x28, 0xfa, 0xff, 0x77, 0x08
+1:
+  pause
+  cmpb $0, (%rsi)
+  je 1b
+  .cfi_def_cfa %rsp, 8
+  ret
+  .cfi_endproc
+  .size SdbHeldCfiSpin, .-SdbHeldCfiSpin
+  .popsection
+)");
 #elif defined(__aarch64__)
 asm(R"(
   .pushsection .text
@@ -109,6 +129,22 @@ SdbBadCfiSpin:
   ret
   .cfi_endproc
   .size SdbBadCfiSpin, .-SdbBadCfiSpin
+  .popsection
+)");
+asm(R"(
+  .pushsection .text
+  .p2align 4
+  .type SdbHeldCfiSpin,%function
+SdbHeldCfiSpin:
+  .cfi_startproc
+  .cfi_escape 0x0f, 0x08, 0x70, 0x00, 0x06, 0x28, 0xfa, 0xff, 0x8f, 0x00
+1:
+  ldrb w10, [x1]
+  cbz w10, 1b
+  .cfi_def_cfa sp, 0
+  ret
+  .cfi_endproc
+  .size SdbHeldCfiSpin, .-SdbHeldCfiSpin
   .popsection
 )");
 #endif
@@ -455,6 +491,34 @@ TEST(StackTrace, SurvivesCorruptUnwindInfo) {
 
   stop = true;
   other_stop = true;
+}
+#endif
+
+#if (defined(__x86_64__) || defined(__aarch64__)) && \
+  !defined(ABSL_HAVE_THREAD_SANITIZER)
+TEST(StackTrace, AHandlerStuckUnwindingStopsUnwindingUntilItReturns) {
+  std::atomic<uint64_t> hold = 1;
+  std::atomic<bool> stop = false;
+  Thread held{[&] { SdbHeldCfiSpin(&hold, &stop); }};
+  absl::Cleanup release = [&] {
+    hold = 0;
+    stop = true;
+  };
+
+  std::vector<ThreadStack> stacks;
+  for (int attempt = 0; attempt < 200; ++attempt) {
+    stacks = CollectStacks(kTimeout);
+    if (const auto* own = Frames(stacks, gettid()); own && own->empty()) {
+      break;
+    }
+  }
+  EXPECT_TRUE(Frames(stacks, held.Tid()));
+  EXPECT_TRUE(absl::c_all_of(
+    stacks, [](const ThreadStack& s) { return s.frames.empty(); }));
+
+  hold = 0;
+  const std::vector<Expectation> expected{{held, "SdbHeldCfiSpin"}};
+  EXPECT_TRUE(Capture(expected));
 }
 #endif
 

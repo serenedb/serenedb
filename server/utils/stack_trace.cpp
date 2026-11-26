@@ -68,6 +68,8 @@ constexpr uint32_t Word(uint32_t seq, Phase phase) {
   return seq << 2 | static_cast<uint32_t>(phase);
 }
 
+constexpr uint32_t kPhaseMask = 3;
+
 struct Request {
   std::atomic<uint32_t> word = 0;
   std::span<const uintptr_t> stack;
@@ -116,6 +118,11 @@ std::span<const uintptr_t> Unwind(std::span<uintptr_t> frames, uintptr_t pc) {
     return captured;
   }
   return {interrupted, captured.end()};
+}
+
+bool HandlerBusy() {
+  return (gRequest.word.load(std::memory_order_acquire) & kPhaseMask) ==
+         static_cast<uint32_t>(Phase::Busy);
 }
 
 void FutexWake(std::atomic<uint32_t>& word) {
@@ -240,13 +247,10 @@ std::vector<uintptr_t> SignalAndWait(pid_t tid, int signal,
     if (word == Word(seq, Phase::Done)) {
       return {gRequest.stack.begin(), gRequest.stack.end()};
     }
-    if (word == Word(seq, Phase::Busy)) {
-      FutexWait(gRequest.word, word, nullptr);
-      continue;
-    }
     const auto left = deadline - std::chrono::steady_clock::now();
     if (left <= std::chrono::steady_clock::duration::zero()) {
-      if (gRequest.word.compare_exchange_strong(word, 0,
+      if (word == Word(seq, Phase::Busy) ||
+          gRequest.word.compare_exchange_strong(word, 0,
                                                 std::memory_order_acquire)) {
         return {};
       }
@@ -291,6 +295,9 @@ std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds timeout,
       continue;
     }
     auto& stack = stacks.emplace_back(tid, std::move(status->name));
+    if (HandlerBusy()) {
+      continue;
+    }
     if (tid == self) {
       std::array<uintptr_t, kMaxFrames> frames{};
       const auto own = Unwind(

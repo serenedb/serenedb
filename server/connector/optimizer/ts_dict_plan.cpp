@@ -324,21 +324,19 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   const auto& index = scan.Bind().relation.inverted_config;
   const auto* info = index->FindColumnInfo(col_id);
   const auto& col_type = col_ref->GetReturnType();
-  const auto text_type = [&] {
+  const auto element = [&] {
     switch (col_type.id()) {
-      case duckdb::LogicalTypeId::VARCHAR:
-        return true;
       case duckdb::LogicalTypeId::LIST:
-        return duckdb::ListType::GetChildType(col_type).id() ==
-               duckdb::LogicalTypeId::VARCHAR;
+        return duckdb::ListType::GetChildType(col_type).id();
       case duckdb::LogicalTypeId::ARRAY:
-        return duckdb::ArrayType::GetChildType(col_type).id() ==
-               duckdb::LogicalTypeId::VARCHAR;
+        return duckdb::ArrayType::GetChildType(col_type).id();
       default:
-        return false;
+        return col_type.id();
     }
   }();
-  if (!info || !info->IsTermDict() || !text_type) {
+  if (!info || !info->IsTermDict() ||
+      (element != duckdb::LogicalTypeId::VARCHAR &&
+       element != duckdb::LogicalTypeId::BLOB)) {
     THROW_SQL_ERROR(
       ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
       ERR_MSG(fn, "(): column has no text term dictionary"),
@@ -347,6 +345,12 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
   }
 
   const auto [kind, agg_name] = *fn_info;
+  if (kind == TsDictColumn::Term && element == duckdb::LogicalTypeId::BLOB) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG(fn, "(): column has no text term dictionary"),
+                    ERR_HINT("its terms are BYTEA, which ts_dict_raw_agg "
+                             "returns"));
+  }
   if (kind == TsDictColumn::Term) {
     const auto tokenizer =
       scan.Bind().relation.ResolveTokenizers(context).Acquire(

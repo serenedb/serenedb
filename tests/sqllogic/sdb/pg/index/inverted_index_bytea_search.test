@@ -770,3 +770,80 @@ SELECT list_transform(ts_lexize('bt_kw', '\xff61'::bytea), lambda x: hex(x)) AS 
 ----
 tokens
 {FF61}
+
+# The term dictionary of a BYTEA column returns its terms as bytes.
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(v), lambda x: hex(x))) AS terms FROM bt_idx
+----
+terms
+{6262,65,C3,C3A9,E4B8,E4B8AD,FF61}
+
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(v), lambda x: hex(x))) AS terms
+FROM bt_idx
+WHERE v @@ ts_levenshtein('\xe4b8'::bytea, 1)
+----
+terms
+{E4B8,E4B8AD}
+
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(v), lambda x: hex(x))) AS terms
+FROM bt_idx
+WHERE v @@ ts_starts_with('\xc3'::bytea)
+----
+terms
+{C3,C3A9}
+
+query
+SELECT hex(unnest(ts_dict_raw_agg(v))) AS term,
+       unnest(ts_dict_score(v)) AS similarity,
+       unnest(ts_dict_count(v)) AS rows
+FROM bt_idx
+WHERE v @@ ts_levenshtein('\xc3a8'::bytea, 1)
+ORDER BY term
+----
+term	similarity	rows
+C3	0	1
+C3A9	0.5	1
+
+query
+SELECT hex(unnest(ts_dict_raw_agg(p))) AS term, unnest(ts_dict_freq(p)) AS freq
+FROM bp_idx
+ORDER BY term
+----
+term	freq
+666F78	2
+717569636B	2
+
+statement ok
+CREATE TABLE bd(id INTEGER PRIMARY KEY, a VARCHAR, b BYTEA, e FLOAT[3])
+
+statement ok
+CREATE INDEX bd_idx ON bd USING inverted(id, a, e hnsw (metric = 'l2', quant = 'none'))
+
+statement error
+SELECT ts_dict_raw_agg(b) FROM bd
+----
+db error: ERROR: ts_dict_raw_agg(): column has no text term dictionary
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column, or an array of such
+
+
+statement error
+SELECT ts_dict_count(e) FROM bd
+----
+db error: ERROR: ts_dict_count(): column has no text term dictionary
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column, or an array of such
+
+
+statement error
+SELECT ts_dict_agg(v) FROM bt_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its terms are BYTEA, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_max(v) FROM bt_idx
+----
+db error: ERROR: ts_dict_max(): column has no text term dictionary
+HINT: its terms are BYTEA, which ts_dict_raw_agg returns

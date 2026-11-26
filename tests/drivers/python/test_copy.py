@@ -717,6 +717,51 @@ def test_copy_avro_round_trip(conn: psycopg.Connection, table_name: str,
         _drop(conn, dest)
 
 
+def _avro_load(cur, table: str, blob: bytes) -> None:
+    with cur.copy(f'COPY public."{table}" FROM STDIN (FORMAT avro)') as cp:
+        for i in range(0, len(blob), 64 * 1024):
+            cp.write(blob[i:i + 64 * 1024])
+
+
+@pytest.mark.usefixtures("own_server")
+def test_copy_avro_from_stdin_takes_blocks_on_every_thread(
+        conn: psycopg.Connection, table_name: str) -> None:
+    conn.execute("SET threads = 8")
+    dest = f"{table_name}_dst"
+    _create_int_varchar(conn, table_name)
+    with conn.cursor() as cur:
+        cur.execute(f'CREATE TABLE public."{dest}"(x INT, label VARCHAR)')
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f'INSERT INTO public."{table_name}" SELECT i, '
+                f"repeat('v', i % 50) || i FROM generate_series(1, 300000) i")
+            cur.execute(f'INSERT INTO public."{table_name}" VALUES '
+                        f"(0, repeat('w', 3 << 20))")
+            with cur.copy(f'COPY public."{table_name}" TO STDOUT '
+                          f"(FORMAT avro)") as cp:
+                blob = b"".join(bytes(chunk) for chunk in cp)
+            assert len(blob) > 4 << 20
+            _avro_load(cur, dest, blob)
+            for left, right in ((table_name, dest), (dest, table_name)):
+                cur.execute(f'SELECT count(*) FROM (SELECT * FROM public."{left}" '
+                            f'EXCEPT ALL SELECT * FROM public."{right}")')
+                assert cur.fetchone() == (0,)
+            cur.execute(f'TRUNCATE public."{dest}"')
+            sync = blob[-16:]
+            at = blob.index(sync, len(blob) // 2)
+            with pytest.raises(psycopg.Error, match="truncated"):
+                _avro_load(cur, dest, blob[:at - 100])
+            damaged = blob[:at] + bytes([blob[at] ^ 0xFF]) + blob[at + 1:]
+            with pytest.raises(psycopg.Error, match="sync marker"):
+                _avro_load(cur, dest, damaged)
+            cur.execute(f'SELECT count(*) FROM public."{dest}"')
+            assert cur.fetchone() == (0,)
+    finally:
+        _drop(conn, table_name)
+        _drop(conn, dest)
+
+
 def test_copy_to_stdout_arrow_file_is_binary_blob(conn: psycopg.Connection,
                                                    shared_path: Path) -> None:
     with conn.cursor() as cur:

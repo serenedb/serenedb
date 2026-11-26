@@ -167,17 +167,6 @@ void ReadInParallel(std::span<const Mapping> mappings, size_t threads) {
 
 #if defined(IRS_REMAP_EXECUTABLE)
 
-bool SetAllocatorBackgroundThreads(bool enabled) {
-  if (JemallocControl == nullptr) {
-    return false;
-  }
-  bool previous = false;
-  size_t previous_size = sizeof(previous);
-  return JemallocControl("background_thread", &previous, &previous_size,
-                         &enabled, sizeof(enabled)) == 0 &&
-         previous;
-}
-
 size_t ThreadCount() {
   size_t count = 0;
   if (auto* dir = opendir("/proc/self/task"); dir != nullptr) {
@@ -286,6 +275,17 @@ bool RemapText(const Mapping& text) {
 #endif
 
 }  // namespace
+
+bool SetAllocatorBackgroundThreads(bool enabled) {
+  if (JemallocControl == nullptr) {
+    return false;
+  }
+  bool previous = false;
+  size_t previous_size = sizeof(previous);
+  return JemallocControl("background_thread", &previous, &previous_size,
+                         &enabled, sizeof(enabled)) == 0 &&
+         previous;
+}
 
 ExecutableRemap RemapExecutable(bool remap_text, size_t threads) {
   ExecutableRemap remap;

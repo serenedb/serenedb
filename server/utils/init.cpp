@@ -23,7 +23,9 @@
 #include <absl/debugging/symbolize.h>
 #include <absl/strings/ascii.h>
 #include <fast_float/fast_float.h>
+#include <fcntl.h>
 #include <sys/resource.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -36,6 +38,7 @@
 #include <iresearch/utils/assert.hpp>
 #include <iresearch/utils/crash_handler.hpp>
 #include <iresearch/utils/log.hpp>
+#include <iresearch/utils/remap_executable.hpp>
 #include <iresearch/utils/string_utils.hpp>
 #include <string>
 #include <string_view>
@@ -47,17 +50,18 @@
 namespace sdb::app {
 namespace {
 
-// Raise the soft NOFILE limit up to min(kTarget, hard). Hard-limit bumps
+constexpr rlim_t kFdTarget = 65535;
+
+// Raise the soft NOFILE limit up to min(kFdTarget, hard). Hard-limit bumps
 // require CAP_SYS_RESOURCE on Linux, so we don't try; if the operator wants
 // more, they raise the hard limit in systemd / ulimit before invoking us.
 void RaiseFdLimit() {
-  constexpr rlim_t kTarget = 65535;
   rlimit lim{};
   if (getrlimit(RLIMIT_NOFILE, &lim) != 0) {
     SDB_DEBUG(GENERAL, "getrlimit(RLIMIT_NOFILE) failed: ", strerror(errno));
     return;
   }
-  const rlim_t target = std::min(kTarget, lim.rlim_max);
+  const rlim_t target = std::min(kFdTarget, lim.rlim_max);
   if (lim.rlim_cur >= target) {
     return;
   }
@@ -67,6 +71,23 @@ void RaiseFdLimit() {
     SDB_DEBUG(GENERAL, "setrlimit(RLIMIT_NOFILE, ", target,
               ") failed: ", strerror(errno));
   }
+}
+
+void GrowFdTable() {
+  rlimit lim{};
+  if (getrlimit(RLIMIT_NOFILE, &lim) != 0 || lim.rlim_cur < 2) {
+    return;
+  }
+  const auto last = static_cast<int>(std::min(lim.rlim_cur, kFdTarget) - 1);
+  const int source = open("/dev/null", O_RDONLY | O_CLOEXEC);
+  if (source < 0) {
+    return;
+  }
+  const int reserved = fcntl(source, F_DUPFD_CLOEXEC, last);
+  if (reserved >= 0) {
+    close(reserved);
+  }
+  close(source);
 }
 
 void CheckMaxMapCount() {
@@ -96,13 +117,20 @@ void CheckMaxMapCount() {
 
 }  // namespace
 
+void ReserveFileDescriptors() {
+  RaiseFdLimit();
+  const bool background = irs::SetAllocatorBackgroundThreads(false);
+  GrowFdTable();
+  if (background) {
+    irs::SetAllocatorBackgroundThreads(true);
+  }
+}
+
 void InitProcess(const char* argv0) {
   // Order matters:
-  //   * RaiseFdLimit              soft NOFILE -> 65535 (or hard, if lower)
   //   * FUNCTABLE_INIT            picks the zlib-ng dispatch (SIMD)
   //   * InitializeSymbolizer      lets the absl crash handler symbolize
   //   * YACLIB_INIT_DEBUG         routes yaclib's debug-asserts through us
-  RaiseFdLimit();
   CheckMaxMapCount();
   auto status = [] {
     FUNCTABLE_INIT;

@@ -39,6 +39,7 @@
 #include "re2/prog.h"
 #include "re2/regexp.h"
 #include "re2/walker-inl.h"
+#include "util/utf.h"
 
 namespace irs {
 namespace {
@@ -217,8 +218,9 @@ void AddRune(ByteSet& out, re2::Rune rune, int flags) {
     out.Add(static_cast<byte_type>(rune));
     return;
   }
-  byte_type utf8[utf8_utils::kMaxCharSize];
-  AddBytes(out, {utf8, utf8_utils::FromChar32(rune, utf8)});
+  char utf8[re2::UTFmax];
+  const auto size = static_cast<size_t>(re2::runetochar(utf8, &rune));
+  AddBytes(out, {reinterpret_cast<const byte_type*>(utf8), size});
 }
 
 constexpr size_t kMaxRequiredDepth = 64;

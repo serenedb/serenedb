@@ -20,7 +20,8 @@
 
 #pragma once
 
-#include "iresearch/utils/utf8_utils.hpp"
+#include <util/utf.h>
+
 #include "string.hpp"
 
 namespace irs {
@@ -99,13 +100,14 @@ constexpr bool IsRegexpMeta(byte_type c) noexcept {
 // is an RE2 feature that must go through the full automaton path.
 constexpr bool IsSimpleEscape(byte_type c) noexcept { return IsRegexpMeta(c); }
 
-inline void AppendRune(bstring& out, uint32_t rune, bool latin1) {
+inline void AppendRune(bstring& out, re2::Rune rune, bool latin1) {
   if (latin1) {
     out += static_cast<byte_type>(rune);
     return;
   }
-  byte_type utf8[utf8_utils::kMaxCharSize];
-  out.append(utf8, utf8_utils::FromChar32(rune, utf8));
+  char utf8[re2::UTFmax];
+  out.append(reinterpret_cast<const byte_type*>(utf8),
+             re2::runetochar(utf8, &rune));
 }
 
 RegexpType ComputeRegexpType(bytes_view pattern, RegexpSyntax syntax) noexcept;

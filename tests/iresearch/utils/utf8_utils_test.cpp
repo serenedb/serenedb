@@ -378,44 +378,6 @@ TEST(utf8_utils_test, LengthFromChar32) {
             irs::utf8_utils::LengthFromChar32(irs::utf8_utils::kInvalidChar32));
 }
 
-TEST(utf8_utils_test, FromChar32) {
-  irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
-
-  // 1 byte
-  {
-    const uint32_t cp = 0x46;
-    ASSERT_EQ(1, irs::utf8_utils::FromChar32(cp, buf));
-    ASSERT_EQ(buf[0], cp);
-  }
-
-  // 2 bytes
-  {
-    const uint32_t cp = 0xA9;
-    ASSERT_EQ(2, irs::utf8_utils::FromChar32(cp, buf));
-    ASSERT_EQ(buf[0], 0xC2);
-    ASSERT_EQ(buf[1], 0xA9);
-  }
-
-  // 3 bytes
-  {
-    const uint32_t cp = 0x08F1;
-    ASSERT_EQ(3, irs::utf8_utils::FromChar32(cp, buf));
-    ASSERT_EQ(buf[0], 0xE0);
-    ASSERT_EQ(buf[1], 0xA3);
-    ASSERT_EQ(buf[2], 0xB1);
-  }
-
-  // 4 bytes
-  {
-    const uint32_t cp = 0x1F996;
-    ASSERT_EQ(4, irs::utf8_utils::FromChar32(cp, buf));
-    ASSERT_EQ(buf[0], 0xF0);
-    ASSERT_EQ(buf[1], 0x9F);
-    ASSERT_EQ(buf[2], 0xA6);
-    ASSERT_EQ(buf[3], 0x96);
-  }
-}
-
 TEST(utf8_utils_test, SimpleCaseStagesMatchTables) {
   const auto lookup = [](const auto& table, uint32_t c) {
     const auto it = absl::c_lower_bound(table, irs::utf8_utils::CaseMap{c, 0});

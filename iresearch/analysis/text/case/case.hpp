@@ -21,6 +21,7 @@
 #pragma once
 
 #include <absl/strings/ascii.h>
+#include <util/utf.h>
 
 #include <array>
 #include <bit>
@@ -305,7 +306,8 @@ size_t CaseConvertUtf8(std::string_view in, byte_type* dst) {
     } else {
       cp = utf8_utils::CharToUpperSimple(cp);
     }
-    out += utf8_utils::FromChar32(cp, out);
+    const re2::Rune rune = cp;
+    out += re2::runetochar(reinterpret_cast<char*>(out), &rune);
   }
   return out - dst;
 }

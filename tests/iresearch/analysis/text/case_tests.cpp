@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <gtest/gtest.h>
+#include <util/utf.h>
 
 #include <iresearch/analysis/text/case/case.hpp>
 #include <iresearch/utils/utf8_utils.hpp>
@@ -44,11 +45,10 @@ std::string Reference(std::string_view in) {
       out.push_back(static_cast<char>(*start));
       continue;
     }
-    cp = ToLower ? irs::utf8_utils::CharToLowerSimple(cp)
-                 : irs::utf8_utils::CharToUpperSimple(cp);
-    irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
-    const auto n = irs::utf8_utils::FromChar32(cp, buf);
-    out.append(reinterpret_cast<const char*>(buf), n);
+    const re2::Rune rune = ToLower ? irs::utf8_utils::CharToLowerSimple(cp)
+                                   : irs::utf8_utils::CharToUpperSimple(cp);
+    char buf[re2::UTFmax];
+    out.append(buf, re2::runetochar(buf, &rune));
   }
   return out;
 }
@@ -160,10 +160,9 @@ TEST(case_convert_utf8_test, past_the_code_points_keeps_all_its_bytes) {
 }
 
 TEST(case_convert_utf8_test, every_two_byte_codepoint_at_block_offsets) {
-  for (uint32_t cp = 0; cp < 0x800; ++cp) {
-    irs::byte_type buf[irs::utf8_utils::kMaxCharSize];
-    const auto len = irs::utf8_utils::FromChar32(cp, buf);
-    const std::string c{reinterpret_cast<const char*>(buf), len};
+  for (re2::Rune cp = 0; cp < 0x800; ++cp) {
+    char buf[re2::UTFmax];
+    const std::string c(buf, re2::runetochar(buf, &cp));
     for (const size_t pad : {0, 1, 29, 30, 31, 32, 61, 62, 63}) {
       Check(std::string(pad, 'a') + c + "Zz" + c + std::string(pad % 7, 'Q'));
     }

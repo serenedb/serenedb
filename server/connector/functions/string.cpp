@@ -30,6 +30,7 @@
 #include <openssl/evp.h>
 #include <re2/re2.h>
 #include <simdutf.h>
+#include <util/utf.h>
 #include <zlib.h>
 
 #include <algorithm>
@@ -1521,9 +1522,9 @@ void Unistr(std::string_view text, std::string& out) {
       pair_first = code;
       return;
     }
-    std::array<irs::byte_type, irs::utf8_utils::kMaxCharSize> bytes{};
-    const auto size = irs::utf8_utils::FromChar32(code, bytes.data());
-    out.append(reinterpret_cast<const char*>(bytes.data()), size);
+    const re2::Rune rune = code;
+    char bytes[re2::UTFmax];
+    out.append(bytes, re2::runetochar(bytes, &rune));
   };
   for (size_t pos = 0; pos < text.size();) {
     if (text[pos] != '\\') {

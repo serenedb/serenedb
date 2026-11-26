@@ -22,6 +22,7 @@
 #include <absl/strings/ascii.h>
 #include <benchmark/benchmark.h>
 #include <simdutf.h>
+#include <util/utf.h>
 
 #include <algorithm>
 #include <bit>
@@ -119,10 +120,9 @@ std::vector<std::string> LatinLetters() {
 
 std::vector<std::string> CyrillicLetters() {
   std::vector<std::string> letters;
-  for (uint32_t cp = 0x430; cp <= 0x44F; ++cp) {
+  for (re2::Rune cp = 0x430; cp <= 0x44F; ++cp) {
     std::string letter(2, '\0');
-    irs::utf8_utils::FromChar32(
-      cp, reinterpret_cast<irs::byte_type*>(letter.data()));
+    re2::runetochar(letter.data(), &cp);
     letters.push_back(std::move(letter));
   }
   return letters;

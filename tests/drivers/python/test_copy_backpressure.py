@@ -135,24 +135,32 @@ def chunked(stream: Stream, payload: Payload, limit: int | None = None) -> bool:
     return False
 
 
+def post_copy(stream: Stream, sql: bytes) -> None:
+    auth = base64.b64encode(b"postgres:").decode()
+    stream.sock.sendall(
+        (f"POST /_test/copy HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+         f"Authorization: Basic {auth}\r\nContent-Type: text/plain\r\n"
+         f"Content-Length: {len(sql)}\r\n\r\n").encode() + sql)
+    assert stream.line() == b"HTTP/1.1 200 OK"
+    headers = []
+    while header := stream.line():
+        headers.append(header.lower())
+    assert b"transfer-encoding: chunked" in headers
+
+
 @pytest.mark.parametrize("fmt", ["csv", "text"])
 def test_an_http_client_that_stops_reading_holds_its_copy_back(server,
                                                                observer, fmt):
     marker = f"drv_copy_backpressure_http_{fmt}"
     sql = copy(marker, fmt).encode()
-    auth = base64.b64encode(b"postgres:").decode()
     stream = Stream(connect(server.http_port))
     try:
+        post_copy(stream, sql)
+        warm = Payload()
+        assert chunked(stream, warm)
+        assert warm.size == ANSWER
         before = resident(server.pid())
-        stream.sock.sendall(
-            (f"POST /_test/copy HTTP/1.1\r\nHost: 127.0.0.1\r\n"
-             f"Authorization: Basic {auth}\r\nContent-Type: text/plain\r\n"
-             f"Content-Length: {len(sql)}\r\n\r\n").encode() + sql)
-        assert stream.line() == b"HTTP/1.1 200 OK"
-        headers = []
-        while header := stream.line():
-            headers.append(header.lower())
-        assert b"transfer-encoding: chunked" in headers
+        post_copy(stream, sql)
         payload = Payload()
         assert not chunked(stream, payload, READ_FIRST)
         deadline = time.monotonic() + STALL

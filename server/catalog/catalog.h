@@ -220,13 +220,15 @@ class SereneDBCatalog final : public BaseCatalog {
   duckdb::ErrorData SupportsCreateTable(
     duckdb::BoundCreateTableInfo& info) final;
 
+  void ScanOwned(
+    duckdb::CatalogTransaction transaction,
+    const std::function<void(duckdb::CatalogEntry&)>& callback) final;
+
  private:
   void AlterSubscription(duckdb::CatalogTransaction transaction,
                          duckdb::AlterInfo& info);
   void AlterForeignServer(duckdb::CatalogTransaction transaction,
                           duckdb::AlterInfo& info);
-  void ScanOwned(duckdb::CatalogTransaction transaction,
-                 absl::FunctionRef<void(duckdb::CatalogEntry&)> callback);
   void ReassignOwned(duckdb::CatalogTransaction transaction,
                      const duckdb::AlterOwnedInfo& info);
   void DropOwned(duckdb::CatalogTransaction transaction,

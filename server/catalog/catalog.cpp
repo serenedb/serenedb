@@ -547,7 +547,7 @@ void SereneDBCatalog::AlterForeignServer(duckdb::CatalogTransaction transaction,
 
 void SereneDBCatalog::ScanOwned(
   duckdb::CatalogTransaction transaction,
-  absl::FunctionRef<void(duckdb::CatalogEntry&)> callback) {
+  const std::function<void(duckdb::CatalogEntry&)>& callback) {
   ScanEntries(transaction, [&](duckdb::CatalogEntry& entry) {
     const auto container = duckdb::ObjectKindOf(entry.type).container;
     if (entry.internal ||
@@ -563,64 +563,24 @@ void SereneDBCatalog::ScanOwned(
 
 void SereneDBCatalog::ReassignOwned(duckdb::CatalogTransaction transaction,
                                     const duckdb::AlterOwnedInfo& info) {
-  auto& context = transaction.GetContext();
-  auto& cluster = ClusterOf(context);
-  const auto cluster_transaction = cluster.GetCatalogTransaction(context);
-  const auto& role = context.CurrentRole();
-  const auto new_owner = context.AccessOf(info.new_owner_id);
-  irs::containers::FlatHashSet<duckdb::idx_t> given;
-  std::vector<duckdb::unique_ptr<duckdb::AlterPermissionsInfo>> alters;
-  const auto reassign = [&](duckdb::CatalogEntry& entry, duckdb::idx_t owner,
-                            duckdb::idx_t overload) {
-    if (owner == info.new_owner_id ||
-        !absl::c_linear_search(info.role_ids, owner)) {
-      return;
+  for (const auto& object : info.objects) {
+    if (duckdb::ObjectKindOf(object.type).container ==
+        duckdb::ObjectContainer::CLUSTER) {
+      continue;
     }
-    if (entry.type == duckdb::CatalogType::SCHEMA_ENTRY) {
-      if (auto database =
-            cluster.LookupOid(cluster_transaction, GetAttached().oid)) {
-        duckdb::Require(context, role, *database, duckdb::AclMode::Create);
-      }
-      given.insert(entry.oid);
-    } else if (!role.is_superuser &&
-               (overload ||
-                entry.type == duckdb::CatalogType::TOKENIZER_ENTRY ||
-                entry.type == duckdb::CatalogType::JOB_ENTRY)) {
-      auto& schema = entry.ParentSchema(transaction);
-      if (!given.contains(schema.oid) &&
-          !duckdb::Allowed(new_owner, schema, duckdb::AclMode::Create)) {
-        duckdb::ThrowPermissionDenied(schema);
-      }
-    }
-    auto& alter =
-      *alters.emplace_back(duckdb::make_uniq<duckdb::AlterPermissionsInfo>(
-        entry.type == duckdb::CatalogType::VIEW_ENTRY
-          ? duckdb::CatalogType::TABLE_ENTRY
-          : entry.type,
-        duckdb::QualifiedName::FromCatalogSchema(
-          GetName(),
-          duckdb::DependencyManager::GetSchemaPath(transaction, entry),
-          entry.name)));
+    duckdb::AlterPermissionsInfo alter{
+      object.type == duckdb::CatalogType::VIEW_ENTRY
+        ? duckdb::CatalogType::TABLE_ENTRY
+        : object.type,
+      object.name};
     alter.new_owner = info.new_owner;
     alter.new_owner_id = info.new_owner_id;
-    alter.overload_oid = overload;
-  };
-  ScanOwned(transaction, [&](duckdb::CatalogEntry& entry) {
-    if (entry.type != duckdb::CatalogType::MACRO_ENTRY &&
-        entry.type != duckdb::CatalogType::TABLE_MACRO_ENTRY) {
-      reassign(entry, entry.permissions.owner, 0);
-      return;
-    }
-    const auto& macro = entry.Cast<duckdb::MacroCatalogEntry>();
-    for (const auto& overload : macro.macros) {
-      reassign(entry, macro.OverloadPermissions(*overload).owner,
-               macro.OverloadOid(*overload));
-    }
-  });
-  for (auto& alter : alters) {
-    Alter(transaction, *alter);
+    alter.overload_oid = object.overload_oid;
+    Alter(transaction, alter);
   }
-  cluster.ReassignOwned(cluster_transaction, info);
+  auto& cluster = ClusterOf(transaction.GetContext());
+  cluster.ReassignOwned(cluster.GetCatalogTransaction(transaction.GetContext()),
+                        info);
 }
 
 void SereneDBCatalog::DropOwned(duckdb::CatalogTransaction transaction,

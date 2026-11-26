@@ -464,34 +464,30 @@ void ClusterCatalog::AlterRole(duckdb::CatalogTransaction transaction,
   }
 }
 
-void ClusterCatalog::ReassignOwned(duckdb::CatalogTransaction transaction,
-                                   const duckdb::AlterOwnedInfo& info) {
-  const auto& role = transaction.GetContext().CurrentRole();
-  std::vector<duckdb::unique_ptr<duckdb::AlterPermissionsInfo>> alters;
+void ClusterCatalog::ScanOwned(
+  duckdb::CatalogTransaction transaction,
+  const std::function<void(duckdb::CatalogEntry&)>& callback) {
   for (const auto type : {duckdb::CatalogType::DATABASE_ENTRY,
                           duckdb::CatalogType::TABLESPACE_ENTRY}) {
     Set(type).Scan(transaction, [&](duckdb::CatalogEntry& entry) {
-      const auto owner = entry.permissions.owner;
-      if (entry.internal || owner == info.new_owner_id ||
-          !absl::c_linear_search(info.role_ids, owner)) {
-        return;
+      if (!entry.internal) {
+        callback(entry);
       }
-      if (type == duckdb::CatalogType::DATABASE_ENTRY && !role.is_superuser &&
-          !role.Has(RoleOption::CreateDb)) {
-        THROW_SQL_ERROR(
-          ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-          ERR_MSG("permission denied to change owner of database"));
-      }
-      auto& alter =
-        *alters.emplace_back(duckdb::make_uniq<duckdb::AlterPermissionsInfo>(
-          type,
-          duckdb::QualifiedName{GetName(), duckdb::Identifier{}, entry.name}));
-      alter.new_owner = info.new_owner;
-      alter.new_owner_id = info.new_owner_id;
     });
   }
-  for (auto& alter : alters) {
-    Alter(transaction, *alter);
+}
+
+void ClusterCatalog::ReassignOwned(duckdb::CatalogTransaction transaction,
+                                   const duckdb::AlterOwnedInfo& info) {
+  for (const auto& object : info.objects) {
+    if (duckdb::ObjectKindOf(object.type).container !=
+        duckdb::ObjectContainer::CLUSTER) {
+      continue;
+    }
+    duckdb::AlterPermissionsInfo alter{object.type, object.name};
+    alter.new_owner = info.new_owner;
+    alter.new_owner_id = info.new_owner_id;
+    Alter(transaction, alter);
   }
 }
 
@@ -645,15 +641,6 @@ void ClusterCatalog::ApplyAlter(duckdb::CatalogTransaction transaction,
 void ClusterCatalog::AlterTablespace(duckdb::CatalogTransaction transaction,
                                      duckdb::AlterInfo& info) {
   RequireUnreservedTablespaceName(info.GetNewName()->GetIdentifierName());
-  const auto& name = info.GetQualifiedName().Name();
-  if (Tablespace(transaction, name).internal) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-      ERR_MSG("tablespace \"", name.GetIdentifierName(),
-              "\" is a system tablespace"),
-      ERR_DETAIL("A system tablespace cannot be renamed, given to another "
-                 "owner or granted on."));
-  }
   AlterIn(_tablespaces, transaction, info);
 }
 
@@ -957,11 +944,6 @@ void ClusterCatalog::DropTablespace(duckdb::CatalogTransaction transaction,
     return;
   }
   auto& tablespace = Tablespace(transaction, name);
-  if (tablespace.internal) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),
-      ERR_MSG("permission denied for tablespace ", name.GetIdentifierName()));
-  }
   SDB_PARK_ONCE_ON_FAILURE("pause_tablespace_drop");
   bool placed = false;
   ScanDependents(

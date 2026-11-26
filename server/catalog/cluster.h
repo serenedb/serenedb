@@ -74,6 +74,9 @@ class ClusterCatalog final : public BaseCatalog {
 
   void Alter(duckdb::CatalogTransaction transaction,
              duckdb::AlterInfo& info) final;
+  void ScanOwned(
+    duckdb::CatalogTransaction transaction,
+    const std::function<void(duckdb::CatalogEntry&)>& callback) final;
   void ReassignOwned(duckdb::CatalogTransaction transaction,
                      const duckdb::AlterOwnedInfo& info);
   void DropOwned(duckdb::CatalogTransaction transaction,

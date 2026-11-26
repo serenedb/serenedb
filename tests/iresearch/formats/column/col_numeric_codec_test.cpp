@@ -46,6 +46,7 @@
 #include <fstream>
 #include <functional>
 #include <iresearch/formats/column/codecs/dictionary_cache.hpp>
+#include <iresearch/formats/column/codecs/numeric/alp_primitives.hpp>
 #include <iresearch/formats/column/codecs/numeric/numeric_kernels.hpp>
 #include <iresearch/formats/column/codecs/numeric/numeric_layout.hpp>
 #include <iresearch/formats/column/codecs/numeric/numeric_reader.hpp>
@@ -705,6 +706,48 @@ TEST_F(ColNumericCodecTest, AlpGathersSelectRowsInsideTheirVectors) {
           }
         }
       }
+    }
+  }
+}
+
+TEST_F(ColNumericCodecTest,
+       AlpBatchesReadNearRowsOneByOneBeforeTheirLastVector) {
+  constexpr uint64_t kVector = irs::codecs::alp::kVectorSize;
+  constexpr uint64_t kRows = 3 * kVector;
+  const Gen decimals = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(g) % 100000);
+  };
+  using irs::codecs::CodecType;
+  for (const auto codec : {CodecType::Alp, CodecType::Alprd}) {
+    for (const auto& type :
+         {duckdb::LogicalType::DOUBLE, duckdb::LogicalType::FLOAT}) {
+      SCOPED_TRACE(std::string{magic_enum::enum_name(codec)} + " " +
+                   duckdb::LogicalType{type}.ToString());
+      tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+      Write(dir, type, {}, kRows, kRows, decimals, codec);
+      irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+      const auto* col = r.Column(kField);
+      ASSERT_NE(col, nullptr);
+      ASSERT_EQ(col->DataBlocks().front().codec->type, codec);
+      irs::ReadContext ctx{r};
+      const auto segment = col->OpenSegment(0, ctx);
+      ASSERT_EQ(segment->count, kRows);
+      irs::codecs::ColumnFetchState state;
+      duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+      const auto fetch = [&](std::span<const duckdb::idx_t> rows) {
+        segment->function.fetch_rows(
+          *segment, state, rows.data(), rows.size(), out,
+          *duckdb::FlatVector::IncrementalSelectionVector(), 0);
+        for (size_t k = 0; k < rows.size(); ++k) {
+          ExpectRow(out, k, rows[k], decimals, type);
+        }
+      };
+      for (duckdb::idx_t row = 0; row < irs::codecs::kSparseRows; ++row) {
+        fetch(std::span{&row, 1});
+      }
+      const std::array<duckdb::idx_t, 4> batch{kVector, kVector + 1,
+                                               kVector + 2, 2 * kVector + 5};
+      fetch(batch);
     }
   }
 }

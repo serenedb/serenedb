@@ -649,3 +649,124 @@ SELECT id FROM bk WHERE k @@ (ts_starts_with('a') && ts_levenshtein('ab', 1)) OR
 id
 1
 2
+
+# The predicate forms and ts_lexize take BYTEA text too.
+query
+SELECT id FROM bx WHERE phrase_matches(t, 'quick fox'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE phrase_matches(v, '\xff61'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE levenshtein_matches(v, '\xff60'::bytea, 1) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bk WHERE levenshtein_matches(k, '\xc3'::bytea, 1) ORDER BY id
+----
+id
+1
+3
+5
+
+query
+SELECT id FROM bx WHERE has_any_tokens(t, ['quick'::bytea, 'dog'::bytea]) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE has_any_tokens(t, 'quick dog'::bytea) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE has_any_tokens(t, 'quick lazy fox'::bytea, 2) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bx WHERE has_all_tokens(t, ['quick'::bytea, 'fox'::bytea]) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE has_any_tokens(v, ['\xff61'::bytea, '\xc3'::bytea]) ORDER BY id
+----
+id
+1
+5
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bt_bigram AS generate_ngrams(min_gram := 2, max_gram := 2, preserve_original := false) WITH (frequency, position)
+
+statement ok
+CREATE TABLE bg(id INTEGER PRIMARY KEY, g VARCHAR)
+
+statement ok
+CREATE INDEX bg_idx ON bg USING inverted(id, g bt_bigram)
+
+statement ok
+INSERT INTO bg VALUES (1, 'hello'), (2, 'help')
+
+query
+SELECT id FROM bg WHERE ngram_matches(g, 'hello'::bytea, 1.0) ORDER BY id
+----
+id
+1
+
+statement ok
+CREATE TABLE bgb(id INTEGER PRIMARY KEY, g BYTEA)
+
+statement ok
+CREATE INDEX bgb_idx ON bgb USING inverted(id, g bt_bigram)
+
+statement ok
+INSERT INTO bgb VALUES (1, '\xff6162'::bytea), (2, 'hello'::bytea)
+
+query
+SELECT id FROM bgb WHERE ngram_matches(g, '\xff6162'::bytea, 1.0) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bgb WHERE g @@ ts_ngram('\xff6162'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT list_transform(ts_lexize('bt_words', 'Quick Fox'::bytea), lambda x: hex(x)) AS tokens,
+       typeof(ts_lexize('bt_words', 'Quick Fox'::bytea)) AS type
+----
+tokens	type
+{717569636B,666F78}	BLOB[]
+
+query
+SELECT list_transform(ts_lexize('bt_words', ['Quick'::bytea, 'FOX'::bytea]), lambda x: hex(x)) AS tokens
+----
+tokens
+{717569636B,666F78}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bt_kw AS keyword()
+
+query
+SELECT list_transform(ts_lexize('bt_kw', '\xff61'::bytea), lambda x: hex(x)) AS tokens
+----
+tokens
+{FF61}

@@ -1215,25 +1215,30 @@ void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
 // at bind time, so these never execute as scalar functions.
 void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
   {
-    duckdb::ScalarFunction fn(
-      duckdb::Identifier{kPhraseMatches},
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn);
-    fn.GetSignature()
-      .AddArgs("args", duckdb::LogicalType::ANY)
-      .AddKwargs("kwargs", duckdb::LogicalType::ANY);
-    loader.RegisterFunction(std::move(fn));
+    duckdb::ScalarFunctionSet set{duckdb::Identifier{kPhraseMatches}};
+    for (auto text :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      duckdb::ScalarFunction fn({duckdb::LogicalType::ANY, text},
+                                duckdb::LogicalType::BOOLEAN, SearchStubFn);
+      fn.GetSignature()
+        .AddArgs("args", duckdb::LogicalType::ANY)
+        .AddKwargs("kwargs", duckdb::LogicalType::ANY);
+      set.AddFunction(std::move(fn));
+    }
+    loader.RegisterFunction(std::move(set));
   }
 
   {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{kNGramMatches}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::DOUBLE},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
+    for (auto text :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::ANY, text},
+                                             duckdb::LogicalType::BOOLEAN,
+                                             SearchStubFn));
+      set.AddFunction(duckdb::ScalarFunction(
+        {duckdb::LogicalType::ANY, text, duckdb::LogicalType::DOUBLE},
+        duckdb::LogicalType::BOOLEAN, SearchStubFn));
+    }
     loader.RegisterFunction(std::move(set));
   }
 
@@ -1245,40 +1250,46 @@ void RegisterPredicateFunctions(duckdb::ExtensionLoader& loader) {
       fn.GetSignature().AddKwargs("kwargs", duckdb::LogicalType::ANY);
       set.AddFunction(std::move(fn));
     };
-    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-         duckdb::LogicalType::INTEGER});
-    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-         duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN});
-    add({duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-         duckdb::LogicalType::INTEGER, duckdb::LogicalType::BOOLEAN,
-         duckdb::LogicalType::VARCHAR});
+    for (auto text :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      add({duckdb::LogicalType::ANY, text, duckdb::LogicalType::INTEGER});
+      add({duckdb::LogicalType::ANY, text, duckdb::LogicalType::INTEGER,
+           duckdb::LogicalType::BOOLEAN});
+      add({duckdb::LogicalType::ANY, text, duckdb::LogicalType::INTEGER,
+           duckdb::LogicalType::BOOLEAN, duckdb::LogicalType::VARCHAR});
+    }
     loader.RegisterFunction(std::move(set));
   }
 
-  loader.RegisterFunction(duckdb::ScalarFunction(
-    duckdb::Identifier{kHasAllTokens},
-    {duckdb::LogicalType::ANY,
-     duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
-    duckdb::LogicalType::BOOLEAN, SearchStubFn));
+  {
+    duckdb::ScalarFunctionSet set{duckdb::Identifier{kHasAllTokens}};
+    for (auto text :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      set.AddFunction(duckdb::ScalarFunction(
+        {duckdb::LogicalType::ANY, duckdb::LogicalType::LIST(text)},
+        duckdb::LogicalType::BOOLEAN, SearchStubFn));
+    }
+    loader.RegisterFunction(std::move(set));
+  }
 
   {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{kHasAnyTokens}};
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY,
-       duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY,
-       duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
-       duckdb::LogicalType::INTEGER},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
-    set.AddFunction(duckdb::ScalarFunction(
-      {duckdb::LogicalType::ANY, duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::INTEGER},
-      duckdb::LogicalType::BOOLEAN, SearchStubFn));
+    for (auto text :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      set.AddFunction(duckdb::ScalarFunction(
+        {duckdb::LogicalType::ANY, duckdb::LogicalType::LIST(text)},
+        duckdb::LogicalType::BOOLEAN, SearchStubFn));
+      set.AddFunction(duckdb::ScalarFunction(
+        {duckdb::LogicalType::ANY, duckdb::LogicalType::LIST(text),
+         duckdb::LogicalType::INTEGER},
+        duckdb::LogicalType::BOOLEAN, SearchStubFn));
+      set.AddFunction(duckdb::ScalarFunction({duckdb::LogicalType::ANY, text},
+                                             duckdb::LogicalType::BOOLEAN,
+                                             SearchStubFn));
+      set.AddFunction(duckdb::ScalarFunction(
+        {duckdb::LogicalType::ANY, text, duckdb::LogicalType::INTEGER},
+        duckdb::LogicalType::BOOLEAN, SearchStubFn));
+    }
     loader.RegisterFunction(std::move(set));
   }
 }

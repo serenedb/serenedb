@@ -1317,13 +1317,14 @@ duckdb::unique_ptr<duckdb::Expression> WrapTextAsConstantList(
   duckdb::vector<duckdb::Value> elems;
   elems.emplace_back(*val);
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(
-    duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(elems)));
+    duckdb::Value::LIST(val->type(), std::move(elems)));
 }
 
 duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
-  const bool is_text =
-    args.at(0)->GetReturnType().id() == duckdb::LogicalTypeId::VARCHAR;
+  const auto type = args.at(0)->GetReturnType().id();
+  const bool is_text = type == duckdb::LogicalTypeId::VARCHAR ||
+                       type == duckdb::LogicalTypeId::BLOB;
   const bool has_min_match = args.size() >= 2;
 
   if (!is_text) {

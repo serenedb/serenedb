@@ -782,7 +782,7 @@ Phrase-match sugar for `column @@ ts_phrase(text, ...)`.
 | :--- | :--- | :--- | :--- |
 | `column` | any indexed column | — | The inverted-indexed column to match. |
 | `text` | `VARCHAR`/`BLOB` | — | A phrase segment, as in [`ts_phrase`](#ts_phrase). |
-| `text, ...` | `INTEGER`/`INTEGER[]` + `VARCHAR` | — | Optional `gap, text` pairs, identical to `ts_phrase`'s gap grammar. |
+| `text, ...` | `INTEGER`/`INTEGER[]` + `VARCHAR`/`BLOB` | — | Optional `gap, text` pairs, identical to `ts_phrase`'s gap grammar. |
 
 **How it works.** `phrase_matches(column, ...)` rewrites at bind time to `column @@ ts_phrase(...)`, inheriting the full gap grammar. It reads as a predicate, which is convenient when the `@@` form feels verbose.
 
@@ -842,7 +842,7 @@ True when every token in `list` is present.
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `column` | any indexed column | — | The column to match. |
-| `list` | `LIST(VARCHAR)` | — | Tokens that must *all* appear. Each element is tokenized by the column dictionary. |
+| `list` | `LIST(VARCHAR)`/`LIST(BLOB)` | — | Tokens that must *all* appear. Each element is tokenized by the column dictionary. |
 
 **How it works.** Tokenizes each element and requires all of them — sugar for `column @@ ts_all(ts_tokenize(list))`. Use it for "contains every one of these words" filters.
 
@@ -861,7 +861,7 @@ True when at least `min_match` tokens in `list` are present.
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `column` | any indexed column | — | The column to match. |
-| `list` | `LIST(VARCHAR)` (or a single `VARCHAR`) | — | Candidate tokens. |
+| `list` | `LIST(VARCHAR)`/`LIST(BLOB)` (or a single `VARCHAR`/`BLOB`) | — | Candidate tokens. |
 | `min_match` | `INTEGER` | `1` | Minimum number of tokens that must appear. `1` is a plain `OR`. |
 
 **How it works.** Tokenizes the candidates and requires at least `min_match` of them — sugar for `column @@ ts_any(ts_tokenize(list)[, min_match])`. Raise `min_match` for an "N of M" filter, exactly as in [`ts_any`](#ts_any).
@@ -907,9 +907,9 @@ Return the tokens a dictionary produces for `text` — the tool for inspecting a
 | Parameter | Type | Default | Meaning |
 | :--- | :--- | :--- | :--- |
 | `dictionary` | `VARCHAR` | — | Name of an existing [text-search dictionary](../../statements/create_text_search_dictionary/index.md). It must exist in the catalog (`'keyword'` is not a real dictionary here). |
-| `text` | `VARCHAR` or `LIST(VARCHAR)` | — | The text to analyze. A list analyzes each element and concatenates the results; an element the dictionary rejects is dropped like a `NULL` element. |
+| `text` | `VARCHAR`, `BLOB`, `LIST(VARCHAR)` or `LIST(BLOB)` | — | The text to analyze. A list analyzes each element and concatenates the results; an element the dictionary rejects is dropped like a `NULL` element. |
 
-**How it works.** `ts_lexize` is the only function on this page that runs on its own (not inside `@@`): it applies a named dictionary's analysis pipeline — lower-casing, stemming, stop-word removal, n-gram splitting — and returns the resulting lexemes as a `LIST(VARCHAR)`. A dictionary has no call form of its own, so `ts_lexize` is how a query runs one; it takes the name as a value, which is what a query that picks a dictionary per row needs. Use it to see exactly how a query string or a document will be tokenized when [tuning an index](../../indexes/inverted/text-analysis.md): if your search misses, lexize both the query and the source text and compare. As in PostgreSQL, the result tells a rejected value from an empty one: a value the dictionary rejects — such as a `NULL` result of a [`sql`](../../statements/create_text_search_dictionary/sql.md) dictionary, or input a geo dictionary cannot parse — returns `NULL`, while a value it accepts without producing tokens, such as a stop word, returns an empty list.
+**How it works.** `ts_lexize` is the only function on this page that runs on its own (not inside `@@`): it applies a named dictionary's analysis pipeline — lower-casing, stemming, stop-word removal, n-gram splitting — and returns the resulting lexemes as a `LIST(VARCHAR)`, or a `LIST(BLOB)` for `BLOB` input. A dictionary has no call form of its own, so `ts_lexize` is how a query runs one; it takes the name as a value, which is what a query that picks a dictionary per row needs. Use it to see exactly how a query string or a document will be tokenized when [tuning an index](../../indexes/inverted/text-analysis.md): if your search misses, lexize both the query and the source text and compare. As in PostgreSQL, the result tells a rejected value from an empty one: a value the dictionary rejects — such as a `NULL` result of a [`sql`](../../statements/create_text_search_dictionary/sql.md) dictionary, or input a geo dictionary cannot parse — returns `NULL`, while a value it accepts without producing tokens, such as a stop word, returns an empty list.
 
 | Input | Tokens | Why |
 | :--- | :--- | :--- |

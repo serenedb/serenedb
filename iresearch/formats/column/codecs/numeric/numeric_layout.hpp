@@ -120,13 +120,10 @@ Data layout per segment, one block of one column holding a whole row group:
 |   when the difference is negative                    |
 |   delta_bitpacking: bitpacking that stores           |
 |   differences in every block they fit                |
-|   rle_bitpacking: 1024 runs per frame: 8 bytes of    |
-|   the run values' and the run lengths' width bytes,  |
-|   two zero bytes and the lengths' base in 4 bytes;   |
-|   the values' base in 8 bytes only when their width  |
-|   byte stores differences (else it is the frame's    |
-|   min); then the packed values and the packed        |
-|   lengths, each minus its base; a block of fewer     |
+|   rle_bitpacking: 1024 runs per frame, run values    |
+|   and run lengths each as bases in their full        |
+|   width, width bytes, padding to 8 bytes and the     |
+|   packed values minus the base; a block of fewer     |
 |   than 1024 runs packs its values 32 at a time,      |
 |   each group in 4 * width bytes; values that need    |
 |   63 bits are stored in 64; a width byte with its    |
@@ -148,7 +145,6 @@ smallest value in the header, or two, of the low halves and, at the next
 namespace irs::codecs {
 
 inline constexpr uint8_t kNumericVersion = 1;
-inline constexpr size_t kRunsFrameMetaSize = 8;
 inline constexpr size_t kNumericFrameMetaSize = 40;
 inline constexpr uint8_t kNumericFrameLog2 = 14;
 inline constexpr uint8_t kNumericLeafFrameLog2 = 16;

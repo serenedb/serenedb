@@ -773,56 +773,70 @@ class FrameReader {
   }
 
   template<typename V>
-  size_t UnpackStreamBlock(const uint8_t* src, size_t len, size_t off,
-                           uint8_t kind, V base, size_t count, V* block) {
-    const bool stepped = (kind & kBlockDelta) != 0;
-    unsigned bits = kind;
-    V from = base;
-    if (stepped) {
-      if (!(count > 1 && off + sizeof(uint64_t) <= len)) [[unlikely]] {
-        ThrowCorrupted("numeric", "blocks are inconsistent");
-      }
-      from = static_cast<V>(duckdb::Load<uint64_t>(src + off));
-      off += sizeof(uint64_t);
-      if (kind & kBlockOwnStep) {
-        if (kind != kStreamAlternates) [[unlikely]] {
-          ThrowCorrupted("numeric", "blocks are inconsistent");
-        }
-        for (size_t i = 0; i < count; ++i) {
-          block[i] = static_cast<V>(base + (i % 2 == 0 ? V{0} : from));
-        }
-        return off;
-      }
-      bits = kind & kBlockDeltaBits;
-    }
-    const auto stored =
-      count == kBlockValues
-        ? PackedBytes(bits)
-        : duckdb::BitpackingPrimitives::GetRequiredSize(count, bits);
-    if (!(bits <= kMaxBits<V> && off + stored <= len)) [[unlikely]] {
+  size_t UnpackStream(const uint8_t* src, size_t len, size_t off, size_t values,
+                      V* out) {
+    const size_t blocks = (values + kBlockValues - 1) / kBlockValues;
+    const auto* bases = src + off;
+    const auto* widths = bases + blocks * sizeof(V);
+    off += BlockMetaBytes(blocks, sizeof(V));
+    if (off > len) [[unlikely]] {
       ThrowCorrupted("numeric", "blocks are inconsistent");
     }
-    if (count == kBlockValues) {
-      Unpack<V>(bits, Words<LaneWord<V>>(src + off), block, from);
-    } else if (bits == 0) {
-      std::fill_n(block, count, from);
-    } else {
-      duckdb::BitpackingPrimitives::UnPackBuffer<V>(
-        reinterpret_cast<duckdb::data_ptr_t>(block), src + off, count, bits,
-        true);
-      for (size_t i = 0; i < count; ++i) {
-        block[i] = static_cast<V>(block[i] + from);
+    for (size_t b = 0; b < blocks; ++b) {
+      const uint8_t kind = widths[b];
+      const size_t count = std::min(kBlockValues, values - b * kBlockValues);
+      auto* block = out + b * kBlockValues;
+      const auto base = duckdb::Load<V>(bases + b * sizeof(V));
+      const bool stepped = (kind & kBlockDelta) != 0;
+      unsigned bits = kind;
+      V from = base;
+      if (stepped) {
+        if (!(count > 1 && off + sizeof(uint64_t) <= len)) [[unlikely]] {
+          ThrowCorrupted("numeric", "blocks are inconsistent");
+        }
+        from = static_cast<V>(duckdb::Load<uint64_t>(src + off));
+        off += sizeof(uint64_t);
+        if (kind & kBlockOwnStep) {
+          if (kind != kStreamAlternates) [[unlikely]] {
+            ThrowCorrupted("numeric", "blocks are inconsistent");
+          }
+          for (size_t i = 0; i < count; ++i) {
+            block[i] = static_cast<V>(base + (i % 2 == 0 ? V{0} : from));
+          }
+          continue;
+        }
+        bits = kind & kBlockDeltaBits;
       }
-    }
-    if (stepped) {
-      V value = base;
-      block[0] = value;
-      for (size_t i = 1; i < count; ++i) {
-        value = static_cast<V>(value + block[i]);
-        block[i] = value;
+      const auto stored =
+        count == kBlockValues
+          ? PackedBytes(bits)
+          : duckdb::BitpackingPrimitives::GetRequiredSize(count, bits);
+      if (!(bits <= kMaxBits<V> && off + stored <= len)) [[unlikely]] {
+        ThrowCorrupted("numeric", "blocks are inconsistent");
       }
+      if (count == kBlockValues) {
+        Unpack<V>(bits, Words<LaneWord<V>>(src + off), block, from);
+      } else if (bits == 0) {
+        std::fill_n(block, count, from);
+      } else {
+        duckdb::BitpackingPrimitives::UnPackBuffer<V>(
+          reinterpret_cast<duckdb::data_ptr_t>(block), src + off, count, bits,
+          true);
+        for (size_t i = 0; i < count; ++i) {
+          block[i] = static_cast<V>(block[i] + from);
+        }
+      }
+      if (stepped) {
+        V value = base;
+        block[0] = value;
+        for (size_t i = 1; i < count; ++i) {
+          value = static_cast<V>(value + block[i]);
+          block[i] = value;
+        }
+      }
+      off += stored;
     }
-    return off + stored;
+    return off;
   }
 
   duckdb::const_data_ptr_t _base;

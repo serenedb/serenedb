@@ -291,32 +291,18 @@ class RleBitpacking {
   }
 
   uint64_t Bytes() const noexcept {
-    uint64_t bytes = 0;
-    for (size_t block = 0; block < RunValues().Blocks(); ++block) {
-      bytes += FrameBytes(block);
-    }
-    return bytes;
+    return _value_blocks.StreamBytes(kRleBitpackingFrameRuns) +
+           _length_blocks.StreamBytes(kRleBitpackingFrameRuns);
   }
 
   void Append(NumericFrameMeta& m, uint32_t begin, uint32_t count,
               std::string& out) {
     const size_t first = begin / kBlockValues;
+    const size_t blocks = (size_t{count} + kBlockValues - 1) / kBlockValues;
     m.frame.first_entry = _runs.rows[begin];
     m.base = count;
-    SDB_ASSERT(count != 0 && count <= kBlockValues);
-    const uint8_t value_kind = _value_blocks.StreamKind(first);
-    uint8_t meta[kRunsFrameMetaSize] = {};
-    meta[0] = value_kind;
-    meta[1] = _length_blocks.StreamKind(first);
-    duckdb::Store(_length_blocks.StreamFirst(first), meta + sizeof(uint32_t));
-    out.append(reinterpret_cast<const char*>(meta), sizeof(meta));
-    if (value_kind & kBlockDelta) {
-      uint8_t base[sizeof(uint64_t)] = {};
-      duckdb::Store(_value_blocks.StreamFirst(first), base);
-      out.append(reinterpret_cast<const char*>(base), sizeof(base));
-    }
-    _value_blocks.AppendStreamBlock(RunValues(), first, out);
-    _length_blocks.AppendStreamBlock(RunLengths(), first, out);
+    _value_blocks.AppendStream(RunValues(), first, blocks, out);
+    _length_blocks.AppendStream(RunLengths(), first, blocks, out);
   }
 
   RunsHeader Header(const Geometry&) const noexcept { return {}; }
@@ -333,13 +319,6 @@ class RleBitpacking {
 
   BlockRows<uint32_t> RunLengths() const noexcept {
     return BlockRows<uint32_t>{std::span<const uint32_t>{_runs.lengths}};
-  }
-
-  uint64_t FrameBytes(size_t block) const noexcept {
-    return kRunsFrameMetaSize +
-           (_value_blocks.StreamKind(block) & kBlockDelta ? sizeof(uint64_t)
-                                                          : 0) +
-           _value_blocks.StreamBytes(block) + _length_blocks.StreamBytes(block);
   }
 
   const Runs<T>& _runs;
@@ -546,43 +525,43 @@ class RunsReader final : public FrameReader<T> {
   }
 
   void LoadPacked(const NumericFrameMeta& m, uint32_t rows) {
-    const size_t len = m.frame.raw_len;
-    if (!(m.base != 0 && m.base <= rows && m.base <= kRleBitpackingFrameRuns &&
-          len >= kRunsFrameMetaSize)) [[unlikely]] {
+    if (!(m.base != 0 && m.base <= rows && m.base <= kRleBitpackingFrameRuns))
+      [[unlikely]] {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
     const auto runs = static_cast<uint32_t>(m.base);
-    _values.resize(kBlockValues + kRunPad);
-    _ends.resize(kBlockValues);
+    const size_t blocks = (runs + kBlockValues - 1) / kBlockValues;
+    _values.resize(blocks * kBlockValues + kRunPad);
+    _ends.resize(blocks * kBlockValues);
     const auto* src = this->Data(m);
-    const uint8_t value_kind = src[0];
-    const uint8_t length_kind = src[1];
-    const auto length_base = duckdb::Load<uint32_t>(src + sizeof(uint32_t));
-    size_t off = kRunsFrameMetaSize;
-    auto value_base = static_cast<U>(m.min);
-    if (value_kind & kBlockDelta) {
-      if (off + sizeof(uint64_t) > len) [[unlikely]] {
-        ThrowCorrupted("numeric", "blocks are inconsistent");
-      }
-      value_base = duckdb::Load<U>(src + off);
-      off += sizeof(uint64_t);
-    }
-    off = this->UnpackStreamBlock(src, len, off, value_kind, value_base, runs,
-                                  _values.data());
-    off = this->UnpackStreamBlock(src, len, off, length_kind, length_base, runs,
-                                  _ends.data());
-    if (off != len) [[unlikely]] {
+    const auto lengths =
+      this->UnpackStream(src, m.frame.raw_len, 0, runs, _values.data());
+    const auto off =
+      this->UnpackStream(src, m.frame.raw_len, lengths, runs, _ends.data());
+    if (off != m.frame.raw_len) [[unlikely]] {
       ThrowCorrupted("numeric", "runs are inconsistent");
     }
-    _length_bound =
-      length_kind & kBlockDelta
-        ? std::numeric_limits<uint64_t>::max()
-        : uint64_t{length_base} + ((uint64_t{1} << length_kind) - 1);
+    _length_bound = LengthBound(src + lengths, blocks);
     _values.resize(size_t{runs} + kRunPad);
     std::fill_n(_values.data() + runs, kRunPad, U{});
     _ends.resize(runs);
     EndRuns(reinterpret_cast<const uint8_t*>(_ends.data()), sizeof(uint32_t),
             rows);
+  }
+
+  static uint64_t LengthBound(const uint8_t* lengths, size_t blocks) noexcept {
+    const auto* widths = lengths + blocks * sizeof(uint32_t);
+    uint64_t bound = 0;
+    for (size_t b = 0; b < blocks; ++b) {
+      if (widths[b] & kBlockDelta) {
+        return std::numeric_limits<uint64_t>::max();
+      }
+      bound = std::max(
+        bound,
+        uint64_t{duckdb::Load<uint32_t>(lengths + b * sizeof(uint32_t))} +
+          ((uint64_t{1} << widths[b]) - 1));
+    }
+    return bound;
   }
 
   void EndRuns(const uint8_t* lengths, uint8_t width, uint32_t rows) {

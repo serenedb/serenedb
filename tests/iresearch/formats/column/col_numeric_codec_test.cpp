@@ -2066,6 +2066,74 @@ TEST_F(ColNumericCodecTest, WholeWideValueDictionariesScanAsDictionaryVectors) {
   }
 }
 
+TEST_F(ColNumericCodecTest, FiltersOnWholeWideValueDictionariesMatchTheValues) {
+  constexpr uint64_t kRows = 3 * STANDARD_VECTOR_SIZE + 100;
+  const Gen few = [](uint64_t g) -> std::optional<int64_t> {
+    return static_cast<int64_t>(Mix(Mix(g) % 300));
+  };
+  const auto type = duckdb::LogicalType::UUID;
+  tests::IndexDir dir{Db(), TestEnv::MemoryRoot()};
+  Write(dir, type, {}, kRows, kRows, few, irs::codecs::CodecType::Dict);
+  ASSERT_EQ(SegmentInfo(dir, "wide"), std::vector<std::string>{"entries"});
+  duckdb::Connection con{_db};
+  irs::ColReader r = irs::tests::OpenColReader(dir, kSeg);
+  const auto* col = r.Column(kField);
+  ASSERT_NE(col, nullptr);
+  using Cmp = duckdb::ExpressionType;
+  const auto holds = [](Cmp cmp, const duckdb::Value& v,
+                        const duckdb::Value& key) {
+    switch (cmp) {
+      case Cmp::COMPARE_EQUAL:
+        return v == key;
+      case Cmp::COMPARE_NOTEQUAL:
+        return v != key;
+      case Cmp::COMPARE_LESSTHAN:
+        return v < key;
+      default:
+        return v >= key;
+    }
+  };
+  for (const uint64_t g : {uint64_t{1}, kRows / 2}) {
+    const auto key = *At(few, type, g);
+    for (const auto cmp :
+         {Cmp::COMPARE_EQUAL, Cmp::COMPARE_NOTEQUAL, Cmp::COMPARE_LESSTHAN,
+          Cmp::COMPARE_GREATERTHANOREQUALTO}) {
+      const duckdb::ExpressionFilter filter{
+        duckdb::BoundComparisonExpression::Create(
+          cmp, duckdb::make_uniq<duckdb::BoundReferenceExpression>(type, 0),
+          duckdb::make_uniq<duckdb::BoundConstantExpression>(key))};
+      auto filter_state =
+        duckdb::TableFilterState::Initialize(*con.context, filter);
+      auto state = col->InitScan(r.Ctx());
+      for (uint64_t anchor = 0; anchor < kRows;
+           anchor += STANDARD_VECTOR_SIZE) {
+        const auto span =
+          std::min<uint64_t>(kRows - anchor, STANDARD_VECTOR_SIZE);
+        duckdb::SelectionVector sel{STANDARD_VECTOR_SIZE};
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          sel.set_index(i, i);
+        }
+        duckdb::Vector out{type, STANDARD_VECTOR_SIZE};
+        const auto kept =
+          col->GatherFilter(state, anchor, span, sel, span, filter,
+                            *filter_state, irs::NullCheckKind::None, out);
+        duckdb::idx_t next = 0;
+        for (duckdb::idx_t i = 0; i < span; ++i) {
+          const auto v = *At(few, type, anchor + i);
+          const bool got = next < kept && sel.get_index(next) == i;
+          next += got ? 1 : 0;
+          ASSERT_EQ(got, holds(cmp, v, key))
+            << "row " << anchor + i << " key " << key.ToString() << " cmp "
+            << duckdb::EnumUtil::ToString(cmp);
+          if (got) {
+            ASSERT_TRUE(duckdb::Value::NotDistinctFrom(out.GetValue(i), v));
+          }
+        }
+      }
+    }
+  }
+}
+
 TEST_F(ColNumericCodecTest, WideDictionariesOfHalvesStillReadBack) {
   constexpr std::string_view kHalves = "irs::WideDictionaryOfHalves";
   if (!duckdb::FaultPoints::Arm(kHalves)) {

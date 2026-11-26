@@ -1451,9 +1451,13 @@ class WideReader {
     }
   }
 
-  bool Halves() const noexcept { return _header.form == WideForm::Halves; }
-
-  FrameHeader LowFrames() const noexcept { return _low_frames; }
+  duckdb::InsertionOrderPreservingMap<std::string> Info(
+    const ColumnSegment& segment) const {
+    duckdb::InsertionOrderPreservingMap<std::string> info;
+    info["transform"] = TransformName(ShapeOf(segment.codec), _low_frames);
+    info["wide"] = _header.form == WideForm::Halves ? "halves" : "offsets";
+    return info;
+  }
 
   void Read(uint64_t row, uint64_t count, W* out) {
     if (_lows.size() < count) {
@@ -1649,7 +1653,7 @@ class WideDictionaryReader {
     }
     const uint64_t at =
       sizeof(WideHeader) + uint64_t{header.entries} * sizeof(W);
-    if (!(header.entries != 0 && header.entries <= kNumericDictMax &&
+    if (!(header.entries != 0 && header.entries <= kMostWideDictionaryEntries &&
           at < segment.size &&
           (header.codes == CodecType::Bitpacking ||
            header.codes == CodecType::Rle))) [[unlikely]] {
@@ -1657,26 +1661,29 @@ class WideDictionaryReader {
     }
     _entries = base + sizeof(WideHeader);
     _count = header.entries;
-    _codec = header.codes;
-    _frames = ParseFrames(base + at, segment.size - at, segment.count, _codec);
+    _frames =
+      ParseFrames(base + at, segment.size - at, segment.count, header.codes);
     auto slot = segment.cache_slot;
     slot.file_offset += at;
-    if (ShapeOf(_codec) == Shape::Plain) {
-      _plain.emplace(base + at, _frames, _codec, slot);
+    if (ShapeOf(header.codes) == Shape::Plain) {
+      _plain.emplace(base + at, _frames, header.codes, slot);
     } else {
-      _runs.emplace(base + at, _frames, _codec, slot);
+      _runs.emplace(base + at, _frames, header.codes, slot);
     }
   }
 
-  bool Halves() const noexcept { return _parts->Halves(); }
-
-  FrameHeader LowFrames() const noexcept { return _parts->LowFrames(); }
-
-  uint32_t EntryCount() const noexcept { return _count; }
-
-  CodecType CodesCodec() const noexcept { return _codec; }
-
-  FrameHeader CodesFrames() const noexcept { return _frames; }
+  duckdb::InsertionOrderPreservingMap<std::string> Info(
+    const ColumnSegment& segment) const {
+    if (_parts) {
+      return _parts->Info(segment);
+    }
+    duckdb::InsertionOrderPreservingMap<std::string> info;
+    info["transform"] =
+      TransformName(_plain ? Shape::Plain : Shape::Runs, _frames);
+    info["wide"] = "entries";
+    info["entries"] = absl::StrCat(_count);
+    return info;
+  }
 
   void Read(uint64_t row, uint64_t count, W* out) {
     if (_parts) {
@@ -1722,13 +1729,7 @@ class WideDictionaryReader {
       _sel = duckdb::make_buffer<duckdb::SelectionVector>(STANDARD_VECTOR_SIZE);
     }
     ReadCodes(row, count, _sel->data());
-    if (!_dictionary) {
-      _dictionary = duckdb::DictionaryVector::CreateReusableDictionary(
-        result.GetType(), _count);
-      std::memcpy(duckdb::FlatVector::GetDataMutable<W>(_dictionary->data),
-                  _entries, size_t{_count} * sizeof(W));
-    }
-    result.Dictionary(_dictionary, *_sel, count);
+    result.Dictionary(Dictionary(result.GetType()), *_sel, count);
     return true;
   }
 
@@ -1740,19 +1741,13 @@ class WideDictionaryReader {
     }
     if (_verdicts.empty()) {
       _verdicts.assign(_count, 0);
-      duckdb::Vector batch{result.GetType(), STANDARD_VECTOR_SIZE};
-      auto* values = duckdb::FlatVector::GetDataMutable<W>(batch);
-      for (uint32_t first = 0; first < _count; first += STANDARD_VECTOR_SIZE) {
-        const auto n = std::min<uint32_t>(_count - first, STANDARD_VECTOR_SIZE);
-        std::memcpy(values, _entries + size_t{first} * sizeof(W),
-                    size_t{n} * sizeof(W));
-        duckdb::SelectionVector accepted;
-        idx_t accepted_count = n;
-        duckdb::ColumnSegment::FilterSelection(accepted, batch, filter_state, n,
-                                               accepted_count);
-        for (idx_t i = 0; i < accepted_count; ++i) {
-          _verdicts[first + accepted.get_index(i)] = 1;
-        }
+      duckdb::SelectionVector accepted;
+      idx_t accepted_count = _count;
+      duckdb::ColumnSegment::FilterSelection(
+        accepted, Dictionary(result.GetType())->data, filter_state, _count,
+        accepted_count);
+      for (idx_t i = 0; i < accepted_count; ++i) {
+        _verdicts[accepted.get_index(i)] = 1;
       }
     }
     if (_codes.size() < count) {
@@ -1774,12 +1769,25 @@ class WideDictionaryReader {
   }
 
  private:
+  static_assert(kMostWideDictionaryEntries <= STANDARD_VECTOR_SIZE);
+
   template<typename F>
   IRS_FORCE_INLINE decltype(auto) Visit(F&& f) {
     if (_plain) {
       return f(*_plain);
     }
     return f(*_runs);
+  }
+
+  const duckdb::buffer_ptr<duckdb::DictionaryEntry>& Dictionary(
+    const duckdb::LogicalType& type) {
+    if (!_dictionary) {
+      _dictionary =
+        duckdb::DictionaryVector::CreateReusableDictionary(type, _count);
+      std::memcpy(duckdb::FlatVector::GetDataMutable<W>(_dictionary->data),
+                  _entries, size_t{_count} * sizeof(W));
+    }
+    return _dictionary;
   }
 
   void ReadCodes(uint64_t row, uint64_t count, uint32_t* out) {
@@ -1803,7 +1811,6 @@ class WideDictionaryReader {
   std::optional<WideReader<W, DictionaryReader<uint64_t>>> _parts;
   duckdb::const_data_ptr_t _entries = nullptr;
   uint32_t _count = 0;
-  CodecType _codec = CodecType::Bitpacking;
   FrameHeader _frames;
   std::optional<PlainReader<uint32_t>> _plain;
   std::optional<RunsReader<uint32_t>> _runs;
@@ -1817,20 +1824,7 @@ template<typename R>
 duckdb::InsertionOrderPreservingMap<std::string> WideSegmentInfo(
   const ColumnSegment& segment) {
   auto handle = segment.Pin();
-  R reader{handle.Ptr(), segment};
-  duckdb::InsertionOrderPreservingMap<std::string> info;
-  if constexpr (requires { reader.EntryCount(); }) {
-    if (const auto entries = reader.EntryCount(); entries != 0) {
-      info["transform"] =
-        TransformName(ShapeOf(reader.CodesCodec()), reader.CodesFrames());
-      info["wide"] = "entries";
-      info["entries"] = absl::StrCat(entries);
-      return info;
-    }
-  }
-  info["transform"] = TransformName(ShapeOf(segment.codec), reader.LowFrames());
-  info["wide"] = reader.Halves() ? "halves" : "offsets";
-  return info;
+  return R{handle.Ptr(), segment}.Info(segment);
 }
 
 template<typename R>

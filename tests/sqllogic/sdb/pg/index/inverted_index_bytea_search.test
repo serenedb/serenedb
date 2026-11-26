@@ -847,3 +847,142 @@ SELECT ts_dict_max(v) FROM bt_idx
 ----
 db error: ERROR: ts_dict_max(): column has no text term dictionary
 HINT: its terms are BYTEA, which ts_dict_raw_agg returns
+
+
+# Ranges, ts_tokenize, ts_compound, modifiers and the query parsers.
+query
+SELECT id FROM bt WHERE v @@ ts_tokenize('\xff61'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ ts_between('\xc3'::bytea, '\xe4b8ad'::bytea, true, true) ORDER BY id
+----
+id
+3
+5
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_between('\xc3'::bytea, '\xe4b8ad'::bytea, false, false) ORDER BY id
+----
+id
+3
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_lt('\xc3a9'::bytea) ORDER BY id
+----
+id
+2
+4
+5
+
+query
+SELECT id FROM bt WHERE v @@ ts_le('\xc3a9'::bytea) ORDER BY id
+----
+id
+2
+3
+4
+5
+
+query
+SELECT id FROM bt WHERE v @@ ts_gt('\xe4b8'::bytea) ORDER BY id
+----
+id
+1
+6
+
+query
+SELECT id FROM bt WHERE v @@ ts_ge('\xe4b8'::bytea) ORDER BY id
+----
+id
+1
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_compound(ts_starts_with('\xe4'::bytea), '\xe4b8'::bytea, NULL) ORDER BY id
+----
+id
+6
+
+query
+SELECT id FROM bt WHERE v @@ ('\xff61'::bytea)::boost(2) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ ('\xff61'::bytea)::tokenize('keyword') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ plainto_tsquery('bb') ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bt WHERE v @@ websearch_to_tsquery('bb') ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bx WHERE t @@ ts_tokenize('quick dog'::bytea) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE t @@ ts_between('a'::bytea, 'dog'::bytea, true, true) ORDER BY id
+----
+id
+2
+
+# Highlighting, offsets and score explanations of a BYTEA query.
+statement ok
+CREATE TEXT SEARCH DICTIONARY bt_words_hl AS split_text(case := 'lower') WITH (frequency, position, offset)
+
+statement ok
+CREATE TABLE bh(id INTEGER PRIMARY KEY, t VARCHAR)
+
+statement ok
+CREATE INDEX bh_idx ON bh USING inverted(id, t bt_words_hl)
+
+statement ok
+INSERT INTO bh VALUES (1, 'the quick fox'), (2, 'a lazy dog')
+
+query
+SELECT ts_highlight(t) AS h FROM bh_idx WHERE t @@ ts_starts_with('qu'::bytea) ORDER BY id
+----
+h
+the <b>quick</b> fox
+
+query
+SELECT ts_highlight('bt_words_hl', 'the quick fox', ts_starts_with('qu'::bytea)) AS h
+----
+h
+the <b>quick</b> fox
+
+query
+SELECT id, ts_offsets(t) AS offsets FROM bh_idx WHERE t @@ ts_levenshtein('quik'::bytea, 1) ORDER BY id
+----
+id	offsets
+1	{4,9}
+
+query
+SELECT id, ts_explain(bh_idx.tableoid) IS NOT NULL AS explained, BM25(bh_idx.tableoid) > 0 AS scored
+FROM bh_idx
+WHERE t @@ ts_levenshtein('quick'::bytea, 1)
+ORDER BY id
+----
+id	explained	scored
+1	t	t

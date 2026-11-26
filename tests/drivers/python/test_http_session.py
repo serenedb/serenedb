@@ -69,7 +69,7 @@ def http_conn():
 
 
 def session_user(conn: http.client.HTTPConnection, auth: str) -> tuple[int, str]:
-    conn.request("GET", "/_test/session_user", headers={"Authorization": auth})
+    conn.request("GET", "/test/session_user", headers={"Authorization": auth})
     response = conn.getresponse()
     body = response.read().decode()
     return response.status, body
@@ -104,7 +104,7 @@ def test_a_request_scoped_route_runs_every_request_as_its_user(role, http_conn):
     answers = []
     sockets = []
     for auth in (SUPERUSER_AUTH, ROLE_AUTH, SUPERUSER_AUTH, ROLE_AUTH):
-        http_conn.request("POST", "/_test/copy",
+        http_conn.request("POST", "/test/copy",
                           body=b"COPY (SELECT current_user) TO STDOUT",
                           headers={"Authorization": auth})
         response = http_conn.getresponse()

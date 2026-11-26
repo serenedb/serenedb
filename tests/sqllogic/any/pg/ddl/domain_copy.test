@@ -1,0 +1,142 @@
+control substitution on
+
+# COPY FROM checks the constraints of domain columns in every format, as INSERT does: CHECK, NOT NULL,
+# the elements of an array of a domain, the base domains of a domain over a domain, a domain over an enum
+# and the DEFAULT of a domain a column list leaves out. A failed COPY writes nothing.
+
+statement ok
+CREATE DOMAIN d_cp AS int4 CHECK (VALUE > 0);
+
+statement ok
+CREATE DOMAIN d_cp_nn AS int4 NOT NULL;
+
+statement ok
+CREATE DOMAIN d_cp_over AS d_cp CHECK (VALUE < 100);
+
+statement ok
+CREATE TYPE e_cp AS ENUM ('a', 'b');
+
+statement ok
+CREATE DOMAIN d_cp_enum AS e_cp CHECK (VALUE <> 'b');
+
+statement ok
+CREATE DOMAIN d_cp_def AS int4 DEFAULT -5 CHECK (VALUE > 0);
+
+statement ok
+CREATE TABLE t_cp (v d_cp);
+
+statement ok
+CREATE TABLE t_cp_nn (n d_cp_nn);
+
+statement ok
+CREATE TABLE t_cp_arr (a d_cp[]);
+
+statement ok
+CREATE TABLE t_cp_over (o d_cp_over);
+
+statement ok
+CREATE TABLE t_cp_enum (e d_cp_enum);
+
+statement ok
+CREATE TABLE t_cp_def (id int, x d_cp_def);
+
+# The files to read.
+
+statement ok
+COPY (SELECT -1 AS v) TO '${__TEST_DIR__}/neg.txt' (FORMAT text);
+
+statement ok
+COPY (SELECT -1 AS v) TO '${__TEST_DIR__}/neg.csv' (FORMAT csv);
+
+statement ok
+COPY (SELECT -1 AS v) TO '${__TEST_DIR__}/neg.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT NULL::int4 AS v) TO '${__TEST_DIR__}/null.txt' (FORMAT text);
+
+statement ok
+COPY (SELECT NULL::int4 AS v) TO '${__TEST_DIR__}/null.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT ARRAY[1, -1] AS a) TO '${__TEST_DIR__}/arr.txt' (FORMAT text);
+
+statement ok
+COPY (SELECT ARRAY[1, -1] AS a) TO '${__TEST_DIR__}/arr.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT 0 AS v UNION ALL SELECT 500) TO '${__TEST_DIR__}/over.txt' (FORMAT text);
+
+statement ok
+COPY (SELECT 'b' AS e) TO '${__TEST_DIR__}/enum.txt' (FORMAT text);
+
+statement ok
+COPY (SELECT 1 AS id) TO '${__TEST_DIR__}/id.txt' (FORMAT text);
+
+statement ok
+COPY (SELECT 1 AS v UNION ALL SELECT 2) TO '${__TEST_DIR__}/ok.txt' (FORMAT text);
+
+statement ok
+COPY (SELECT 1 AS v UNION ALL SELECT 2) TO '${__TEST_DIR__}/ok.bin' (FORMAT binary);
+
+statement ok
+COPY (SELECT 1 AS v UNION ALL SELECT 2) TO '${__TEST_DIR__}/ok.csv' (FORMAT csv);
+
+# Rows that violate a domain are rejected.
+
+statement error value for domain d_cp violates check constraint
+COPY t_cp FROM '${__TEST_DIR__}/neg.txt' (FORMAT text);
+
+statement error value for domain d_cp violates check constraint
+COPY t_cp FROM '${__TEST_DIR__}/neg.csv' (FORMAT csv);
+
+statement error value for domain d_cp violates check constraint
+COPY t_cp FROM '${__TEST_DIR__}/neg.bin' (FORMAT binary);
+
+statement error domain d_cp_nn does not allow null values
+COPY t_cp_nn FROM '${__TEST_DIR__}/null.txt' (FORMAT text);
+
+statement error domain d_cp_nn does not allow null values
+COPY t_cp_nn FROM '${__TEST_DIR__}/null.bin' (FORMAT binary);
+
+statement error value for domain d_cp violates check constraint
+COPY t_cp_arr FROM '${__TEST_DIR__}/arr.txt' (FORMAT text);
+
+statement error value for domain d_cp violates check constraint
+COPY t_cp_arr FROM '${__TEST_DIR__}/arr.bin' (FORMAT binary);
+
+statement error violates check constraint
+COPY t_cp_over FROM '${__TEST_DIR__}/over.txt' (FORMAT text);
+
+statement error value for domain d_cp_enum violates check constraint
+COPY t_cp_enum FROM '${__TEST_DIR__}/enum.txt' (FORMAT text);
+
+statement error value for domain d_cp_def violates check constraint
+COPY t_cp_def (id) FROM '${__TEST_DIR__}/id.txt' (FORMAT text);
+
+# Valid rows are loaded and keep the domain as their type.
+
+statement ok
+COPY t_cp FROM '${__TEST_DIR__}/ok.txt' (FORMAT text);
+
+statement ok
+COPY t_cp FROM '${__TEST_DIR__}/ok.bin' (FORMAT binary);
+
+statement ok
+COPY t_cp FROM '${__TEST_DIR__}/ok.csv' (FORMAT csv);
+
+query
+SELECT v, pg_typeof(v) AS t FROM t_cp ORDER BY v;
+----
+v	t
+1	d_cp
+1	d_cp
+1	d_cp
+2	d_cp
+2	d_cp
+2	d_cp
+
+query
+SELECT (SELECT count(*) FROM t_cp_nn) + (SELECT count(*) FROM t_cp_arr) + (SELECT count(*) FROM t_cp_over) + (SELECT count(*) FROM t_cp_enum) + (SELECT count(*) FROM t_cp_def) AS n;
+----
+n
+0

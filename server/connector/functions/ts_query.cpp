@@ -325,8 +325,26 @@ bool TSQueryFromStringCast(duckdb::Vector& source, duckdb::Vector& result,
   return true;
 }
 
+bool TSQueryFromBlobCast(duckdb::Vector& source, duckdb::Vector& result,
+                         duckdb::idx_t count, duckdb::CastParameters& params) {
+  auto src = source.Values<duckdb::string_t>();
+  for (duckdb::idx_t i = 0; i < count; ++i) {
+    const auto value = src[i];
+    if (value.IsValid() &&
+        !duckdb::Value::StringIsValid(value.GetValue().GetData(),
+                                      value.GetValue().GetSize())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_CHARACTER_NOT_IN_REPERTOIRE),
+        ERR_MSG("BYTEA that is not valid UTF-8 cannot be cast to TSQUERY"),
+        ERR_HINT("Match the BYTEA value in an @@ match instead, e.g. "
+                 "col @@ '\\xff61'::bytea."));
+    }
+  }
+  return TSQueryFromStringCast(source, result, count, params);
+}
+
 duckdb::BoundCastInfo BindTSQueryFromStringCast(
-  duckdb::BindCastInput&, const duckdb::LogicalType&,
+  duckdb::BindCastInput&, const duckdb::LogicalType& source,
   const duckdb::LogicalType& target) {
   if (HasTokenizerModifier(target)) {
     return duckdb::BoundCastInfo(ThrowingTokenizeCast);
@@ -337,7 +355,8 @@ duckdb::BoundCastInfo BindTSQueryFromStringCast(
   if (HasScoreModifier(target)) {
     return duckdb::BoundCastInfo(ThrowingScoreCast);
   }
-  return {TSQueryFromStringCast,
+  return {source.id() == duckdb::LogicalTypeId::BLOB ? TSQueryFromBlobCast
+                                                     : TSQueryFromStringCast,
           duckdb::make_uniq<TSQueryCastData>(TSQueryPartsForType(target, {}))};
 }
 
@@ -1115,10 +1134,11 @@ void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
   for (auto name : {kTSQueryOr, kTSQueryAnd}) {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{name}};
     set.AddFunction(TSQConstructor({MakeTSQueryType(), MakeTSQueryType()}));
-    set.AddFunction(
-      TSQConstructor({MakeTSQueryType(), duckdb::LogicalType::VARCHAR}));
-    set.AddFunction(
-      TSQConstructor({duckdb::LogicalType::VARCHAR, MakeTSQueryType()}));
+    for (auto text :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      set.AddFunction(TSQConstructor({MakeTSQueryType(), text}));
+      set.AddFunction(TSQConstructor({text, MakeTSQueryType()}));
+    }
     for (auto arguments :
          {duckdb::vector<duckdb::LogicalType>{MakeTSQueryType(),
                                               duckdb::LogicalType::BOOLEAN},
@@ -1163,19 +1183,22 @@ void RegisterTSQueryOperators(duckdb::ExtensionLoader& loader) {
   //                             tie. Composite TSQUERY-LHS gap calls
   //                             reach via T->V cast (cost 5).
   //   (VARCHAR, INTEGER[])      interval-gap counterpart.
+  //   (BLOB, VARCHAR), (BLOB, INTEGER), (BLOB, INTEGER[])
+  //                             the same for a BYTEA LHS, which has no
+  //                             implicit cast to VARCHAR.
   //
   // The walker treats VARCHAR-typed children identically to TSQUERY
   // ones (both unwrap via UnwrapTSQueryCast).
   {
     duckdb::ScalarFunctionSet set{duckdb::Identifier{kTSQueryPhraseSeq}};
     set.AddFunction(TSQConstructor({MakeTSQueryType(), MakeTSQueryType()}));
-    set.AddFunction(TSQConstructor(
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR}));
-    set.AddFunction(TSQConstructor(
-      {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::INTEGER}));
-    set.AddFunction(TSQConstructor(
-      {duckdb::LogicalType::VARCHAR,
-       duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER)}));
+    for (auto text :
+         {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+      set.AddFunction(TSQConstructor({text, duckdb::LogicalType::VARCHAR}));
+      set.AddFunction(TSQConstructor({text, duckdb::LogicalType::INTEGER}));
+      set.AddFunction(TSQConstructor(
+        {text, duckdb::LogicalType::LIST(duckdb::LogicalType::INTEGER)}));
+    }
     loader.RegisterFunction(std::move(set));
   }
 

@@ -1650,8 +1650,9 @@ const duckdb::BoundFunctionExpression* AsTSQueryOr(
     return nullptr;
   }
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  if (ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName()) !=
-      TSQueryOp::Or) {
+  if (!IsTSQueryStructType(func.GetReturnType()) ||
+      ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName()) !=
+        TSQueryOp::Or) {
     return nullptr;
   }
   return &func;
@@ -3324,7 +3325,9 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
 
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
   const auto op =
-    ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName());
+    IsTSQueryStructType(func.GetReturnType())
+      ? ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName())
+      : TSQueryOp::Unknown;
 
   constexpr TSQueryOp kMinMatchOps[] = {TSQueryOp::Or, TSQueryOp::Any,
                                         TSQueryOp::Tokenize, TSQueryOp::Boost};

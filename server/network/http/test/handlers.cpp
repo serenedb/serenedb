@@ -26,6 +26,7 @@
 #include <fast_float/fast_float.h>
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <cstddef>
 #include <duckdb/main/connection.hpp>
@@ -144,38 +145,52 @@ class SessionUserHandler final : public HttpHandler {
   }
 };
 
-class CopyOutputBuffer final : public connector::CopyOutput {
+class CopyStream final : public connector::CopyOutput {
  public:
+  explicit CopyStream(http::HttpResponseWriter& writer) : _writer{writer} {}
+
   void Write(std::string_view bytes) final {
     absl::MutexLock lock{&_mutex};
-    _bytes.append(bytes);
+    if (!_writer.HeadWritten()) {
+      _writer.WriteHeadChunked(HttpStatus::Ok, "application/octet-stream");
+    }
+    if (!bytes.empty() && !_writer.Broken()) {
+      _writer.Write(bytes);
+    }
+    if (bytes.size() > _largest.load(std::memory_order_relaxed)) {
+      _largest.store(bytes.size(), std::memory_order_relaxed);
+    }
   }
 
-  std::string Take() {
-    absl::MutexLock lock{&_mutex};
-    return std::move(_bytes);
+  bool Full(duckdb::optional_ptr<const duckdb::InterruptState> wake) final {
+    return _writer.Full(_largest.load(std::memory_order_relaxed), wake);
   }
 
  private:
   absl::Mutex _mutex;
-  std::string _bytes;
+  http::HttpResponseWriter& _writer;
+  std::atomic<size_t> _largest{0};
 };
 
 class CopyHandler final : public HttpHandler {
  public:
   yaclib::Task<> Handle(RequestContext& context, const HttpRequest& request,
                         http::HttpResponseWriter& writer) override {
-    CopyOutputBuffer output;
+    CopyStream output{writer};
     auto& connection = ConnectionContext::Get(*context.Connection().context);
     connection.SetSideChannel<connector::CopyOutput>(&output);
     absl::Cleanup detach = [&] {
       connection.SetSideChannel<connector::CopyOutput>(nullptr);
     };
     auto result = co_await context.RunQuery(FlattenBody(request.body), true);
-    if (result->HasError()) {
+    if (writer.HeadWritten()) {
+      if (!result->HasError()) {
+        writer.Finish();
+      }
+    } else if (result->HasError()) {
       writer.Text(HttpStatus::BadRequest, result->GetError());
     } else {
-      writer.Fixed(HttpStatus::Ok, "application/octet-stream", output.Take());
+      writer.Fixed(HttpStatus::Ok, "application/octet-stream", "");
     }
     co_return {};
   }

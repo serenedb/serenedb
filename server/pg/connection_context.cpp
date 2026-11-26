@@ -55,6 +55,7 @@
 #include "catalog/cluster.h"
 #include "catalog/entry/database.h"
 #include "catalog/entry/role.h"
+#include "connector/duckdb_copy_filesystem.h"
 #include "connector/iresearch_replacement_scan.h"
 #include "pg/catalog/oids.h"
 
@@ -612,6 +613,14 @@ void ConnectionContext::OnBoundPlan(duckdb::Binder& binder,
                                     duckdb::LogicalOperator& plan) {
   connector::FilterPartialIndexScans(*this, plan);
   auth::EnforcePlan(*this, *this, binder, plan);
+}
+
+duckdb::optional_ptr<duckdb::CopyOutputGate>
+ConnectionContext::GetCopyOutputGate(const std::string& file_path) {
+  if (file_path != "/dev/stdout") {
+    return nullptr;
+  }
+  return GetSideChannel<connector::CopyOutput>();
 }
 
 duckdb::shared_ptr<duckdb::ClientContext> CreateClientContext(

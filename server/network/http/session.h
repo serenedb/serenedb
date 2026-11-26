@@ -47,6 +47,7 @@
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 #include <yaclib/algo/wait_group.hpp>
 #include <yaclib/async/future.hpp>
 #include <yaclib/coro/await.hpp>
@@ -173,6 +174,24 @@ class HttpSession final
   // --- http::ResponseSink (handler-side backpressure) ----------------------
   yaclib::Task<> Drain() final { return AwaitSendBelowHighWater(); }
   bool Broken() const noexcept final { return SendBroken(); }
+  bool Full(size_t committed, size_t largest_write,
+            duckdb::optional_ptr<const duckdb::InterruptState> wake) final {
+    const auto high_water = std::max(kSendHighWater, 2 * largest_write);
+    if (committed <=
+          _send_written.load(std::memory_order_acquire) + high_water ||
+        SendBroken()) {
+      return false;
+    }
+    if (wake) {
+      {
+        absl::MutexLock lock{&_blocked_lock};
+        _blocked.push_back(*wake);
+        _release_at = std::max(_release_at, committed - high_water);
+      }
+      _task->RequestRun();
+    }
+    return true;
+  }
 
   // --- RequestContext -------------------------------------------------------
   duckdb::Connection& Connection() final {
@@ -271,11 +290,41 @@ class HttpSession final
     return parameters;
   }
 
+  void ReleaseBlocked() {
+    std::vector<duckdb::InterruptState> ready;
+    {
+      absl::MutexLock lock{&_blocked_lock};
+      if (_blocked.empty() ||
+          (_send_written.load(std::memory_order_acquire) < _release_at &&
+           !SendBroken())) {
+        return;
+      }
+      ready.swap(_blocked);
+      _release_at = 0;
+    }
+    for (const auto& state : ready) {
+      state.Callback();
+    }
+  }
+
+  void DropBlocked() {
+    absl::MutexLock lock{&_blocked_lock};
+    _blocked.clear();
+    _release_at = 0;
+  }
+
   yaclib::Task<duckdb::unique_ptr<duckdb::QueryResult>> Drive(
     duckdb::unique_ptr<duckdb::QueryResult> pending) {
+    DropBlocked();
+    ArmSendWaiter();
+    absl::Cleanup disarm = [this] {
+      DisarmSendWaiter();
+      DropBlocked();
+    };
     try {
       if (!pending->HasError()) {
         for (;;) {
+          ReleaseBlocked();
           const auto status =
             pending->ExecuteTask([this] { _task->RequestRun(); });
           if (duckdb::IsObservable(status)) {
@@ -408,6 +457,9 @@ class HttpSession final
   std::array<PreparedCache, kPreparedSlots> _prepared;
   std::string _user;
   std::string _conn_user;
+  absl::Mutex _blocked_lock;
+  std::vector<duckdb::InterruptState> _blocked;
+  size_t _release_at = 0;
 };
 
 template<SocketKind Kind>

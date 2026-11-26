@@ -763,7 +763,8 @@ bool PgWireSession<Kind>::DrainWire(WireSinkContext& wire) {
   const bool budget_ok =
     !wire.paged || wire.rows.load(std::memory_order_relaxed) <
                      wire.row_budget.load(std::memory_order_relaxed);
-  if (unsent <= kSendHighWater && budget_ok) {
+  if (unsent <= wire.direct_high_water.load(std::memory_order_relaxed) &&
+      budget_ok) {
     wire.UnblockSinks(true, true);
   }
   return true;
@@ -1669,8 +1670,10 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdout(
 
 // COPY ... TO STDOUT for the DuckDB-native formats (csv / json / parquet /
 // ...): DuckDB's CopyFunction produces the format bytes into the dumb wire sink
-// (CopyOutFileHandle -> CopyData), and the session owns the wire framing -- one
-// path for every format, so we never reimplement a format writer. natts for
+// (CopyOutFileHandle -> CopyDataOutput -> CopyData), and the session owns the
+// wire framing -- one path for every format, so we never reimplement a format
+// writer. A client slower than the COPY holds it back at the send high-water
+// mark, as it holds back a SELECT. natts for
 // CopyOutResponse is the COPY source's column count, taken from a prepared
 // clone of the source (preparing the real COPY consumes the statement). The
 // COPY (incl. its copy-function bind) is validated BEFORE CopyOutResponse, so a
@@ -1689,9 +1692,15 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyToStdoutViaFormat(
 
   WriteCopyOutResponse(this->_send, IsBinaryWireFormat(format),
                        static_cast<int16_t>(inner_prepared->ColumnCount()));
+  auto wire = MakeWireContext({});
+  CopyDataOutput output{*wire, this->_stopping};
+  _connection_ctx->SetSideChannel<sdb::connector::CopyOutput>(&output);
+  absl::Cleanup detach = [this] {
+    _connection_ctx->SetSideChannel<sdb::connector::CopyOutput>(nullptr);
+  };
   duckdb::vector<duckdb::Value> params;
   ClosingPending pending;
-  auto result = co_await DriveToResult(*prepared, params, pending, nullptr);
+  auto result = co_await DriveToResult(*prepared, params, pending, wire);
   WriteCopyDone(this->_send);
   WriteCommandTag(*prepared, *result,
                   prepared->GetStatementProperties().return_type);

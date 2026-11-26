@@ -51,6 +51,10 @@ class NullSink final : public sdb::network::http::ResponseSink {
  public:
   yaclib::Task<> Drain() override { co_return {}; }
   bool Broken() const noexcept override { return false; }
+  bool Full(size_t, size_t,
+            duckdb::optional_ptr<const duckdb::InterruptState>) override {
+    return false;
+  }
 };
 
 void BM_Negotiate(benchmark::State& state) {

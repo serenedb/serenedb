@@ -108,7 +108,7 @@ void HttpResponseWriter::Fixed(HttpStatus status, std::string_view content_type,
   if (!_head_only && !Bodiless(status)) {
     writer.Write(body);
   }
-  writer.Commit(true);
+  Commit(writer, true);
   _state = State::kFinished;
 }
 
@@ -128,7 +128,7 @@ bool HttpResponseWriter::FixedEncoded(HttpStatus status,
     return false;
   }
   PatchNumber(length, size);
-  writer.Commit(true);
+  Commit(writer, true);
   _state = State::kFinished;
   return true;
 }
@@ -144,7 +144,7 @@ void HttpResponseWriter::WriteHead(HttpStatus status,
   message::Writer writer{_send};
   EncodeHead(writer, status, content_type, &content_length, false,
              extra_headers);
-  writer.Commit(false);
+  Commit(writer, false);
   _state = State::kFixedBody;
   _remaining = (_head_only || Bodiless(status)) ? 0 : content_length;
   if (_remaining == 0) {
@@ -165,7 +165,7 @@ void HttpResponseWriter::Write(std::string_view data) {
       if (_remaining == 0) {
         _state = State::kFinished;
       }
-      writer.Commit(false);
+      Commit(writer, false);
       return;
     }
     case State::kChunkedBody:
@@ -189,7 +189,7 @@ void HttpResponseWriter::WriteHeadChunked(HttpStatus status,
   message::Writer writer{_send};
   EncodeHead(writer, status, content_type, nullptr, static_cast<bool>(_encoder),
              extra_headers);
-  writer.Commit(false);
+  Commit(writer, false);
   _state = State::kChunkedBody;
 }
 
@@ -212,21 +212,30 @@ void HttpResponseWriter::Finish() {
       if (!_head_only) {
         writer.Write("0\r\n\r\n");
       }
-      writer.Commit(true);
+      Commit(writer, true);
       _state = State::kFinished;
       return;
     }
-    case State::kFinished:
-      message::Writer{_send}.Commit(true);
+    case State::kFinished: {
+      message::Writer writer{_send};
+      Commit(writer, true);
       return;
-    case State::kFixedBody:
+    }
+    case State::kFixedBody: {
       SDB_ASSERT(_remaining == 0);
       _state = State::kFinished;
-      message::Writer{_send}.Commit(true);
+      message::Writer writer{_send};
+      Commit(writer, true);
       return;
+    }
     case State::kIdle:
       SDB_ASSERT(false);
   }
+}
+
+void HttpResponseWriter::Commit(message::Writer& writer, bool flush) {
+  writer.Commit(flush);
+  _committed.store(_send.TotalCommitted(), std::memory_order_release);
 }
 
 bool HttpResponseWriter::Bodiless(HttpStatus status) noexcept {
@@ -277,7 +286,7 @@ void HttpResponseWriter::EndRawChunk() {
   _chunk_header[9] = '\n';
   _chunk_header = nullptr;
   _chunk->Write("\r\n");
-  _chunk->Commit(false);
+  Commit(*_chunk, false);
   _chunk.reset();
 }
 

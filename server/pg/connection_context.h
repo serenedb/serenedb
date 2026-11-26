@@ -266,6 +266,8 @@ class ConnectionContext final : public duckdb::ClientContext {
       transaction->SearchTxn().CheckStatement(*this);
     }
   }
+  duckdb::optional_ptr<duckdb::CopyOutputGate> GetCopyOutputGate(
+    const std::string& file_path) final;
 
  private:
   struct NoticeNode {

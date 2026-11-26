@@ -21,6 +21,7 @@
 #pragma once
 
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/execution/operator/persistent/copy_output_gate.hpp>
 #include <string_view>
 
 namespace sdb::message {
@@ -32,18 +33,18 @@ namespace sdb::pg {}
 
 namespace sdb::connector {
 
-class CopyOutput {
+class CopyOutput : public duckdb::CopyOutputGate {
  public:
-  virtual ~CopyOutput() = default;
   virtual void Write(std::string_view bytes) = 0;
 };
 
 // Bridges the PostgreSQL COPY wire protocol into DuckDB's FileSystem.
 // Intercepts "/dev/stdin" (read) and "/dev/stdout" (write); the SQL
 // identifiers STDIN and STDOUT are mapped to these paths by the PEG
-// transformer. "/dev/stdout" reaches the pg-wire client, or else the
-// connection's CopyOutput. Registered only on the server-side DuckDB instance,
-// so shell/psql mode falls through to the OS filesystem.
+// transformer. "/dev/stdout" reaches the connection's CopyOutput: the pg-wire
+// session's CopyData stream, or the output an HTTP handler attaches.
+// Registered only on the server-side DuckDB instance, so shell/psql mode falls
+// through to the OS filesystem.
 class SereneDBCopyFileSystem final : public duckdb::FileSystem {
  public:
   std::string GetName() const final { return "SereneDBCopyFileSystem"; }
@@ -76,6 +77,7 @@ class SereneDBCopyFileSystem final : public duckdb::FileSystem {
   int64_t GetFileSize(duckdb::FileHandle& handle) final;
   bool CanSeek() final { return false; }
   bool OnDiskFile(duckdb::FileHandle& handle) final { return false; }
+  bool WritesWait(duckdb::FileHandle& handle) final { return false; }
   // Mirror PipeFileSystem: the base versions throw NotImplemented, so a reader
   // or writer that probes a stream handle would fail. A wire stream has no
   // durability barrier (FileSync no-op) and no meaningful mtime (epoch).

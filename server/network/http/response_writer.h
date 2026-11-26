@@ -20,7 +20,10 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
+#include <duckdb/common/optional_ptr.hpp>
+#include <duckdb/parallel/interrupt.hpp>
 #include <memory>
 #include <optional>
 #include <span>
@@ -43,6 +46,9 @@ class ResponseSink {
   // the client is gone). Handlers call this between large body pieces.
   virtual yaclib::Task<> Drain() = 0;
   virtual bool Broken() const noexcept = 0;
+  virtual bool Full(
+    size_t committed, size_t largest_write,
+    duckdb::optional_ptr<const duckdb::InterruptState> wake) = 0;
 };
 
 std::string_view ReasonPhrase(HttpStatus status) noexcept;
@@ -109,6 +115,11 @@ class HttpResponseWriter {
 
   yaclib::Task<> Drain() { return _sink.Drain(); }
   bool Broken() const noexcept { return _sink.Broken(); }
+  bool Full(size_t largest_write,
+            duckdb::optional_ptr<const duckdb::InterruptState> wake) {
+    return _sink.Full(_committed.load(std::memory_order_acquire), largest_write,
+                      wake);
+  }
 
   // Terminates the response. For chunked bodies writes the last-chunk; for
   // fixed bodies asserts the promised length was written.
@@ -129,6 +140,7 @@ class HttpResponseWriter {
                                         uint64_t value);
   static void PatchNumber(std::span<uint8_t> field, uint64_t value);
 
+  void Commit(message::Writer& writer, bool flush);
   bool ShouldEncode(HttpStatus status, uint64_t body_size) const noexcept;
   bool FixedEncoded(HttpStatus status, std::string_view content_type,
                     std::string_view body, std::string_view extra_headers);
@@ -143,6 +155,7 @@ class HttpResponseWriter {
 
   message::Buffer& _send;
   ResponseSink& _sink;
+  std::atomic<size_t> _committed{0};
   ContentCoding _coding = ContentCoding::Identity;
   int _level = kNoLevel;
   std::optional<ContentEncoder> _encoder;

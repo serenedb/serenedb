@@ -627,6 +627,34 @@ TEST_P(ScorePruneNormMergeCase, NormMergeConstantNorms) {
   RunBM25(reader, *bm25, kBody, 5);
 }
 
+TEST_P(ScorePruneNormMergeCase, ConstantNormsWithoutTheFileCache) {
+  if (!duckdb::DatabaseFileSystem::IsRemote(dir().Root())) {
+    GTEST_SKIP();
+  }
+  auto& cache = duckdb::ExternalFileCache::Get(dir().Db());
+  cache.SetEnabled(false);
+  absl::Cleanup enable = [&] { cache.SetEnabled(true); };
+  auto bm25 = std::make_unique<irs::BM25>();
+  auto writer = open_writer(tests::kOmCreate, MakeOpts(bm25.get()));
+  for (size_t i = 0; i < 3; ++i) {
+    ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("a_", i), 1));
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+  for (size_t i = 0; i < 2; ++i) {
+    ASSERT_TRUE(InsertNormDoc(*writer, absl::StrCat("b_", i), 1));
+  }
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  const irs::index_utils::CompactionCount all;
+  ASSERT_TRUE(writer->Compact(irs::index_utils::MakePolicy(all)));
+  ASSERT_TRUE(writer->RefreshCommit());
+
+  auto reader = open_reader(MakeReaderOpts(bm25.get()));
+  ASSERT_EQ(1, reader.size());
+  AssertNorms(reader[0], kBody, {{1, 1}, {2, 1}, {3, 1}, {4, 1}, {5, 1}});
+  RunBM25(reader, *bm25, kBody, 5);
+}
+
 TEST_P(ScorePruneNormMergeCase, NormsWithoutTheFileCache) {
   if (!duckdb::DatabaseFileSystem::IsRemote(dir().Root())) {
     GTEST_SKIP();

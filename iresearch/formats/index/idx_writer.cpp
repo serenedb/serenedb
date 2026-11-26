@@ -71,9 +71,7 @@ NormColumnsWriter& IdxWriter::Norms(duckdb::Allocator& allocator) {
 }
 
 SealedNorms IdxWriter::SealNorms(uint64_t rows) {
-  if (!_norms) {
-    return {};
-  }
+  SDB_ASSERT(_norms);
   SealedNorms sealed{.columns = std::move(*_norms).Seal(rows)};
   _norms.reset();
   if (!sealed.columns.empty()) {

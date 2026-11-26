@@ -29,10 +29,10 @@ For example, recursively unnesting a struct whose nested fields repeat a name yi
 
 Database names are subject to the rules for [identifiers](#identifiers).
 
-Additionally, it is best practice to avoid SereneDB's two internal [database schema names](../sql/functions/metadata.md#sdb_databases), `system` and `temp`.
-By default, persistent databases are named after their filename without the extension.
-Therefore, the filenames `system.db` and `temp.db` (as well as `system.duckdb` and `temp.duckdb`) result in the database names `system` and `temp`, respectively.
-If you need to attach to a database that has one of these names, use an alias, e.g.:
+Additionally, `temp` is the name of SereneDB's internal [database](../sql/functions/metadata.md#sdb_databases) of temporary objects, and no other database can have it.
+By default, a database attached from a file is named after its filename without the extension.
+The filename `temp.db` (as well as `temp.duckdb`) results in the database name `temp_db`.
+To give a database another name, use an alias, e.g.:
 
 <SqlLogicTest id="sql/dialect/keywords_and_identifiers/example_002" />
 

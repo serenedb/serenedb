@@ -245,6 +245,20 @@ def test_ai_functions_call_the_provider() -> None:
     assert rows[-2:] == [["answer"], ["done"]]
 
 
+@pytest.mark.parametrize(
+    ("file", "database"), [("main", "main"), ("system", "system"), ("temp", "temp_db")])
+def test_a_file_named_main_or_system_keeps_its_name(tmp_path: Path, file: str, database: str) -> None:
+    path = tmp_path / f"{file}.db"
+    opened = _shell(
+        f".open {path}\n"
+        "CREATE TABLE t (a INT); INSERT INTO t VALUES (1);\n"
+        f"USE postgres; USE {database};\n"
+        "SELECT current_database() AS db, count(*) AS n FROM t;\n")
+    assert opened.returncode == 0, opened.stderr
+    assert list(csv.reader(io.StringIO(opened.stdout))) == [["db", "n"], [database, "1"]]
+    assert _rows(f"ATTACH '{path}';\nSELECT count(*) AS n FROM {database}.main.t;\n") == [["n"], ["1"]]
+
+
 def test_a_database_opened_after_a_failed_open_is_serenedb_too(tmp_path: Path) -> None:
     result = _shell(f".open {tmp_path / 'missing' / 'x.db'}\nSELECT 7 / 2 AS q;\n")
     assert "Cannot open file" in result.stderr, result.stderr

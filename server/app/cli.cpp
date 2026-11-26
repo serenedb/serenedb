@@ -74,8 +74,7 @@ duckdb::shared_ptr<duckdb::DatabaseInstance> OpenShellEngine(
   auto& context = *conn->context;
   duckdb::AttachInfo info;
   info.path = path;
-  info.name = duckdb::AttachedDatabase::ExtractDatabaseName(
-    path, duckdb::FileSystem::GetFileSystem(db));
+  info.name = duckdb::AttachedDatabase::ExtractDatabaseName(db, path);
   context.RunFunctionInTransaction([&] {
     catalog::Attach(context, info, "duckdb", duckdb::AccessMode::READ_WRITE,
                     duckdb::AttachVisibility::SHOWN);

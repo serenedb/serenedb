@@ -1089,6 +1089,17 @@ TEST_F(ColCodecCorruptionTest,
   });
   EXPECT_EQ(absl::StrJoin(messages, "\n"),
             "Corrupted text segment: frame is inconsistent");
+  std::set<std::string> fetched;
+  Guarded(fetched, [&] {
+    irs::ColumnReader::PointReader reader{r, *col};
+    duckdb::Vector out{c.type, 1};
+    for (uint64_t g = 0; g < c.rows; ++g) {
+      duckdb::FlatVector::ValidityMutable(out).Reset();
+      reader.FetchRow(g, out, 0);
+    }
+  });
+  EXPECT_EQ(absl::StrJoin(fetched, "\n"),
+            "Corrupted text segment: frame is inconsistent");
 }
 
 TEST_F(ColCodecCorruptionTest, TextDictionariesRejectDamagedSegments) {

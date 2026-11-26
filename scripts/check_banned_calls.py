@@ -32,16 +32,16 @@ BANNED = [
         "absl::c_{name} (a projection becomes a lambda)",
     ),
     (
-        re.compile(r"\bstd::(unordered_(?:map|set|multimap|multiset))\b"),
-        "irs::containers::FlatHashMap, FlatHashSet, NodeHashMap or NodeHashSet",
-    ),
-    (
-        re.compile(r"\babsl::((?:flat|node)_hash_(?:map|set))\b"),
+        re.compile(
+            r"\b(std::unordered_(?:multi)?(?:map|set)"
+            r"|absl::(?:flat|node)_hash_(?:map|set))\b"
+        ),
         "irs::containers::FlatHashMap, FlatHashSet, NodeHashMap or NodeHashSet",
     ),
     (
         re.compile(
-            r"#\s*include\s*<(absl/container/(?:flat|node)_hash_(?:map|set)\.h)>"
+            r"#\s*include\s*<(unordered_(?:map|set)"
+            r"|absl/container/(?:flat|node)_hash_(?:map|set)\.h)>"
         ),
         "the iresearch/utils/containers header",
     ),
@@ -63,25 +63,12 @@ BANNED = [
     ),
 ]
 
-FLAT_MAP = {"flat_hash_map", "absl/container/flat_hash_map.h"}
-
 EXCEPTIONS: dict[str, set[str]] = {
-    "iresearch/formats/column/hot_column_reader.hpp": FLAT_MAP,
-    "iresearch/index/merge_writer.cpp": FLAT_MAP,
-    "iresearch/utils/conjunction_acceptor.hpp": FLAT_MAP,
-    "iresearch/utils/containers/flat_hash_map.hpp": FLAT_MAP,
-    "iresearch/utils/containers/flat_hash_set.hpp": {
-        "flat_hash_set",
-        "absl/container/flat_hash_set.h",
-    },
-    "iresearch/utils/containers/node_hash_map.hpp": {
-        "node_hash_map",
-        "absl/container/node_hash_map.h",
-    },
-    "iresearch/utils/containers/node_hash_set.hpp": {
-        "node_hash_set",
-        "absl/container/node_hash_set.h",
-    },
+    f"iresearch/utils/containers/{kind}.hpp": {
+        f"absl::{kind}",
+        f"absl/container/{kind}.h",
+    }
+    for kind in ("flat_hash_map", "flat_hash_set", "node_hash_map", "node_hash_set")
 }
 
 

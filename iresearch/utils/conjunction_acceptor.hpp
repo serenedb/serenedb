@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/container/flat_hash_map.h>
 #include <absl/synchronization/mutex.h>
 
 #include <array>
@@ -34,6 +33,7 @@
 #include <vector>
 
 #include "iresearch/utils/containers/flat_hash_map.hpp"
+#include "iresearch/utils/containers/node_hash_map.hpp"
 #include "iresearch/utils/levenshtein_acceptor.hpp"
 #include "iresearch/utils/regexp_acceptor.hpp"
 #include "iresearch/utils/string.hpp"
@@ -351,7 +351,7 @@ class FuzzyConjunctionOf final : public FuzzyConjunction {
   State InternLocked(const Parts& parts, const AcceptorState& state) const;
 
   std::shared_ptr<const A> _fuzzy;
-  mutable absl::flat_hash_map<Key, Row*> _rows;
+  mutable containers::NodeHashMap<Key, Row*> _rows;
 };
 
 }  // namespace irs

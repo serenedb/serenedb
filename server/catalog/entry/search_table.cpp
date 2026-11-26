@@ -1180,7 +1180,8 @@ duckdb::unique_ptr<SearchTableEntry> SearchTableEntry::VerifyDomainConstraint(
       Copy(context));
   successor->BeginSchemaChange(context);
   for (const auto& column : columns) {
-    if (successor->_columns.GetColumn(column).Generated()) {
+    if (successor->_columns.GetColumn(column).Category() ==
+        duckdb::TableColumnType::GENERATED_VIRTUAL) {
       continue;
     }
     auto physical_column = successor->_columns.LogicalToPhysical(column);

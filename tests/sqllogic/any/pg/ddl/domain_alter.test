@@ -660,3 +660,70 @@ SELECT v FROM t_val_tx ORDER BY v;
 v
 1
 2
+
+# A virtual generated column cannot have a domain type, nor an array of one. A stored one can: its
+# stored values are checked when ALTER DOMAIN adds or validates a constraint.
+
+statement ok
+CREATE DOMAIN d_val_gen AS int4 CHECK (VALUE <> 13);
+
+statement error db error: ERROR: virtual generated column "g" cannot have a domain type
+CREATE TABLE t_val_gen_v (x int4, g d_val_gen GENERATED ALWAYS AS (x + 1) VIRTUAL);
+
+statement error db error: ERROR: virtual generated column "g" cannot have a domain type
+CREATE TABLE t_val_gen_va (x int4, g d_val_gen[] GENERATED ALWAYS AS (ARRAY[x]) VIRTUAL);
+
+statement ok
+CREATE TABLE t_val_gen_add (x int4);
+
+statement error
+ALTER TABLE t_val_gen_add ADD COLUMN g d_val_gen GENERATED ALWAYS AS (x) VIRTUAL;
+
+statement ok
+CREATE TABLE t_val_gen_s (x int4, g d_val_gen GENERATED ALWAYS AS (x + 1) STORED);
+
+statement error db error: ERROR: value for domain d_val_gen violates check constraint "d_val_gen_check"
+INSERT INTO t_val_gen_s (x) VALUES (12);
+
+statement ok
+INSERT INTO t_val_gen_s (x) VALUES (1), (5);
+
+statement error
+ALTER DOMAIN d_val_gen ADD CONSTRAINT d_val_gen_small CHECK (VALUE < 5);
+
+statement ok
+ALTER DOMAIN d_val_gen ADD CONSTRAINT d_val_gen_small CHECK (VALUE < 5) NOT VALID;
+
+statement error
+ALTER DOMAIN d_val_gen VALIDATE CONSTRAINT d_val_gen_small;
+
+statement ok
+DELETE FROM t_val_gen_s WHERE x = 5;
+
+statement ok
+ALTER DOMAIN d_val_gen VALIDATE CONSTRAINT d_val_gen_small;
+
+query
+SELECT conname, convalidated FROM pg_constraint WHERE contypid = 'd_val_gen'::regtype ORDER BY conname;
+----
+conname	convalidated
+d_val_gen_check	t
+d_val_gen_small	t
+
+statement ok
+CREATE DOMAIN d_val_gen_nn AS int4;
+
+statement ok
+CREATE TABLE t_val_gen_nn (x int4, g d_val_gen_nn GENERATED ALWAYS AS (x) STORED);
+
+statement ok
+INSERT INTO t_val_gen_nn (x) VALUES (NULL);
+
+statement error
+ALTER DOMAIN d_val_gen_nn SET NOT NULL;
+
+statement ok
+DELETE FROM t_val_gen_nn;
+
+statement ok
+ALTER DOMAIN d_val_gen_nn SET NOT NULL;

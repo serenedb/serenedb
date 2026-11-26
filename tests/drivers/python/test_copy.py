@@ -126,15 +126,15 @@ def test_copy_from_stdin_reads_the_stream_in_ranges(conn: psycopg.Connection,
 
 
 @pytest.mark.usefixtures("own_server")
-@pytest.mark.parametrize("fmt", ["text", "csv", "json"])
+@pytest.mark.parametrize("fmt", ["text", "csv", "json", "binary"])
 def test_copy_from_stdin_takes_rows_longer_than_its_window_of_batches(
         conn: psycopg.Connection, table_name: str, fmt: str) -> None:
     conn.execute("SET threads = 1")
     _create_int_varchar(conn, table_name)
     size = 5 << 20
+    labels = [chr(ord("a") + i) * size for i in range(3)]
     rows = []
-    for i in range(3):
-        label = chr(ord("a") + i) * size
+    for i, label in enumerate(labels):
         if fmt == "json":
             rows.append(json.dumps({"x": i, "label": label}))
         elif fmt == "csv":
@@ -142,6 +142,9 @@ def test_copy_from_stdin_takes_rows_longer_than_its_window_of_batches(
         else:
             rows.append(f"{i}\t{label}")
     payload = ("\n".join(rows) + "\n").encode()
+    if fmt == "binary":
+        payload = _bytea_payload("BINARY",
+                                 [label.encode() for label in labels])
     try:
         with conn.cursor() as cur:
             with cur.copy(

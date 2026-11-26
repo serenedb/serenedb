@@ -87,23 +87,23 @@ std::unique_ptr<CopyBatch> CopyBatchBuilder::Take() {
   return std::move(_batch);
 }
 
-void CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
+bool CopyBatchBuilder::AddRows(std::string_view rows, bool stable) {
   if (rows.empty()) {
-    return;
+    return false;
   }
   if (stable) {
     Current().AddView(rows);
   } else {
     Current().AddOwned(std::string{rows});
   }
+  return stable;
 }
 
-void CopyBatchBuilder::Feed(std::string_view bytes, bool stable) {
+bool CopyBatchBuilder::Feed(std::string_view bytes, bool stable) {
   if (_format == CopyBatchFormat::Binary) {
-    FeedBinary(bytes, stable);
-  } else {
-    AddRows(bytes, stable);
+    return FeedBinary(bytes, stable);
   }
+  return AddRows(bytes, stable);
 }
 
 size_t CopyBatchBuilder::FeedHeader(std::string_view bytes) {
@@ -148,19 +148,19 @@ bool CopyBatchBuilder::Gather(std::string_view bytes, size_t& pos,
   return _have == need;
 }
 
-void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
+bool CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
   size_t pos = 0;
   if (!_header_done) {
     pos = FeedHeader(bytes);
     if (!_header_done) {
-      return;
+      return false;
     }
   }
   if (_ended) {
     if (pos != bytes.size()) {
       ThrowFormat("received copy data after EOF marker");
     }
-    return;
+    return false;
   }
   constexpr size_t kNone = std::string_view::npos;
   size_t row_begin = _open ? kNone : pos;
@@ -210,10 +210,8 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
           _partial.clear();
           _open = false;
           _ended = true;
-          if (run_begin != kNone) {
-            AddRows(bytes.substr(run_begin, run_end - run_begin), stable);
-          }
-          return;
+          return run_begin != kNone &&
+                 AddRows(bytes.substr(run_begin, run_end - run_begin), stable);
         }
         if (fields < 0) {
           ThrowFormat("negative field count");
@@ -262,17 +260,18 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
       }
     }
   }
-  if (run_begin != kNone) {
+  const bool viewed =
+    run_begin != kNone &&
     AddRows(bytes.substr(run_begin, run_end - run_begin), stable);
-  }
   if (!_open) {
-    return;
+    return viewed;
   }
   if (row_begin == kNone) {
     _partial.append(bytes);
   } else {
     _partial.assign(bytes.substr(row_begin));
   }
+  return viewed;
 }
 
 void CopyBatchBuilder::Finish() {

@@ -1675,8 +1675,9 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyFromStdin(
   const bool scans_stream =
     format != CopyFormat::Binary && ScansCopyStream(*bound_info);
   const auto window = duckdb::TaskScheduler::QueryThreads(*_conn->context) *
-                      (scans_stream ? sdb::pg::kCopyStreamBatchesPerThread
-                                    : sdb::pg::kCopyBatchesPerThread);
+                      (scans_stream || format == CopyFormat::Binary
+                         ? sdb::pg::kCopyStreamBatchesPerThread
+                         : sdb::pg::kCopyBatchesPerThread);
   sdb::pg::CopyInBatches batches{window};
   batches.OnStarve([this] { _copy_gate.Kick(); });
   _connection_ctx->SetSideChannel(&batches);
@@ -1878,9 +1879,7 @@ yaclib::Task<> PgWireSession<Kind>::RunCopyInFeeder(
   };
   constexpr size_t kHeader = 1 + sizeof(uint32_t);
   duckdb::CopyEndMarkerScanner scanner;
-  sdb::pg::CopyBatchBuilder builder{format == CopyFormat::Binary
-                                      ? sdb::pg::CopyBatchFormat::Binary
-                                      : sdb::pg::CopyBatchFormat::Raw,
+  sdb::pg::CopyBatchBuilder builder{sdb::pg::CopyBatchFormat::Raw,
                                     sdb::pg::kCopyBatchBytes};
   bool eod = false;
   bool failed = false;

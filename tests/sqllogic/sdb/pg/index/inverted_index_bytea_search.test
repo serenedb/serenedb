@@ -585,3 +585,67 @@ SELECT id FROM bc WHERE t @@ (ts_phrase('quick') ## ts_like('caf_'::bytea)) ORDE
 ----
 id
 2
+
+# A BYTEA prefix that ends inside a character still combines with a fuzzy
+# match on the same column.
+query
+SELECT id FROM bk WHERE k @@ (ts_starts_with('\xc3'::bytea) && ts_levenshtein('é', 1)) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM bk WHERE k @@ (ts_starts_with('\xe4b8'::bytea) && ts_levenshtein('中', 0)) ORDER BY id
+----
+id
+4
+
+query
+EXPLAIN SELECT id FROM bk WHERE k @@ (ts_starts_with('\xc3'::bytea) && ts_levenshtein('é', 1))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Table: bk                                  │
+│ Index Filter:                              │
+│ ╭─ And ────────────╮                       │
+│ ╰─────────┬────────╯                       │
+│           ├─────────────────────╮          │
+│ ╭─ Starts With ────╮  ╭─ Levenshtein ────╮ │
+│ │ Field: k(string) │  │ Field: k(string) │ │
+│ │ Prefix: \\xc3     │  │ Target: \\xc3\\xa9 │ │
+│ ╰──────────────────╯  │ Max Terms: 50    │ │
+│                       ╰──────────────────╯ │
+│ Projections: id                            │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
+
+# A fuzzy match that compares bytes may start inside a character, so the
+# prefix joins it.
+query
+SELECT id FROM bk WHERE k @@ (ts_starts_with('\xc3'::bytea) && ts_levenshtein('\xc3a8'::bytea, 1)) ORDER BY id
+----
+id
+3
+
+query
+EXPLAIN SELECT id FROM bk WHERE k @@ (ts_starts_with('\xc3'::bytea) && ts_levenshtein('\xc3a8'::bytea, 1))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────╮
+│ Table: bk            │
+│ Index Filter:        │
+│ ╭─ Levenshtein ────╮ │
+│ │ Field: k(string) │ │
+│ │ Target: \\xc3\\xa8 │ │
+│ │ Max Terms: 50    │ │
+│ ╰──────────────────╯ │
+│ Projections: id      │
+│ ~1 row               │
+╰──────────────────────╯
+
+query
+SELECT id FROM bk WHERE k @@ (ts_starts_with('a') && ts_levenshtein('ab', 1)) ORDER BY id
+----
+id
+1
+2

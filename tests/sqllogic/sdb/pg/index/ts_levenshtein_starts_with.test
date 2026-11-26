@@ -1097,6 +1097,136 @@ QUERY PLAN
 │ ~1 row                │
 ╰───────────────────────╯
 
+statement ok
+INSERT INTO swf VALUES (6, 'appels')
+
+# Ranked, the exact prefix joins the fuzzy match only when both score with one
+# scorer: by default the prefix scores a constant and the fuzzy match its
+# similarity, so both stay. Joined, the match scores what the two did.
+query
+EXPLAIN SELECT id, BM25(swf_idx.tableoid) AS score
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('app') && ts_levenshtein('appel', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: swf_idx                               │
+│ Lookup: search                               │
+│ Index Filter:                                │
+│ ╭─ And ─────────────╮                        │
+│ ╰─────────┬─────────╯                        │
+│           ├──────────────────────╮           │
+│ ╭─ Starts With ─────╮  ╭─ Levenshtein ─────╮ │
+│ │ Field: kw(string) │  │ Field: kw(string) │ │
+│ │ Prefix: app       │  │ Target: appel     │ │
+│ ╰───────────────────╯  │ Starts With: true │ │
+│                        │ Max Terms: 50     │ │
+│                        ╰───────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                  │
+│ Projections: id, sdb_inverted_index_score    │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
+
+query
+SELECT id, BM25(swf_idx.tableoid) AS score
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('app')::score('constant(1)') &&
+             ts_levenshtein('appel', 1, starts_with := true)::score('constant(1)'))
+ORDER BY id
+----
+id	score
+1	2
+2	2
+3	2
+6	2
+
+query
+EXPLAIN SELECT id, BM25(swf_idx.tableoid) AS score
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('app')::score('constant(1)') &&
+             ts_levenshtein('appel', 1, starts_with := true)::score('constant(1)'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: swf_idx                         │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Levenshtein ────────────╮           │
+│ │ Field: kw(string)        │           │
+│ │ Target: appel            │           │
+│ │ Starts With: true        │           │
+│ │ Max Terms: 50            │           │
+│ │ Boost: 2                 │           │
+│ │ Score: constant(value=1) │           │
+│ ╰──────────────────────────╯           │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+# A fuzzy match whose own prefix is at least as long as the exact prefix
+# already implies it, and an exact prefix as long as the whole text leaves the
+# fuzzy match only the edits after it.
+query
+SELECT id, BM25(swf_idx.tableoid) AS score
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('ap')::score('constant(1)') &&
+             ts_levenshtein('el', 1, prefix := 'app')::score('constant(1)'))
+ORDER BY id
+----
+id	score
+3	2
+6	2
+
+query
+EXPLAIN SELECT id, BM25(swf_idx.tableoid) AS score
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('ap')::score('constant(1)') &&
+             ts_levenshtein('el', 1, prefix := 'app')::score('constant(1)'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: swf_idx                         │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Levenshtein ────────────╮           │
+│ │ Field: kw(string)        │           │
+│ │ Target: appel            │           │
+│ │ Max Terms: 50            │           │
+│ │ Boost: 2                 │           │
+│ │ Score: constant(value=1) │           │
+│ ╰──────────────────────────╯           │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT id FROM swf_idx WHERE kw @@ (ts_starts_with('appel') && ts_levenshtein('appel', 1)) ORDER BY id
+----
+id
+3
+6
+
+query
+EXPLAIN SELECT id FROM swf_idx WHERE kw @@ (ts_starts_with('appel') && ts_levenshtein('appel', 1))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: swf_idx        │
+│ Lookup: search        │
+│ Index Filter:         │
+│ ╭─ Levenshtein ─────╮ │
+│ │ Field: kw(string) │ │
+│ │ Target: appel     │ │
+│ │ Max Terms: 50     │ │
+│ ╰───────────────────╯ │
+│ Projections: id       │
+│ ~1 row                │
+╰───────────────────────╯
+
 # Without the expansion cap, an OR with exact matches the fuzzy match already
 # accepts at distance 0 is the fuzzy match alone: one walk, and enumeration
 # keeps the similarities.

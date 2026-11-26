@@ -255,3 +255,51 @@ INSERT INTO t_msg VALUES (100);
 
 statement ok
 INSERT INTO t_msg VALUES (50);
+
+# NULL passes every CHECK of a domain with several of them, within one chunk and across chunks, and a
+# violation after a chunk of NULLs is still caught.
+
+statement ok
+CREATE DOMAIN d_multi AS int4 CHECK (VALUE > 0) CHECK (VALUE < 100);
+
+statement ok
+CREATE DOMAIN d_multi_over AS d_multi CHECK (VALUE <> 50);
+
+query
+SELECT x::d_multi AS a, x::d_multi_over AS b FROM (VALUES (1), (NULL), (2)) v(x) ORDER BY x NULLS LAST;
+----
+a	b
+1	1
+2	2
+NULL	NULL
+
+statement ok
+CREATE TABLE t_multi (v d_multi);
+
+statement ok
+INSERT INTO t_multi SELECT CASE WHEN i % 3 = 0 THEN NULL ELSE i % 99 + 1 END FROM generate_series(1, 5000) g(i);
+
+query
+SELECT count(*) AS n, count(v) AS v FROM t_multi;
+----
+n	v
+5000	3334
+
+statement error db error: ERROR: value for domain d_multi violates check constraint "d_multi_check1"
+INSERT INTO t_multi SELECT CASE WHEN i <= 2048 THEN NULL WHEN i = 4000 THEN 500 ELSE 1 END FROM generate_series(1, 5000) g(i);
+
+query
+SELECT count(*) AS n FROM t_multi;
+----
+n
+5000
+
+onlyif serenedb
+query
+SELECT TRY_CAST(x AS d_multi) AS v FROM (VALUES (1), (NULL), (500), (2)) v(x) ORDER BY x NULLS LAST;
+----
+v
+1
+2
+NULL
+NULL

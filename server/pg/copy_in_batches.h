@@ -49,6 +49,7 @@ struct CopyBatch {
   uint64_t seq = 0;
   std::vector<std::string_view> segments;
   std::deque<std::string> owned;
+  std::shared_ptr<void> owner;
   size_t bytes = 0;
 
   void AddView(std::string_view rows) {

@@ -38,10 +38,13 @@ namespace {
                   ERR_MSG("COPY FROM: ", message));
 }
 
-size_t WalkBinaryRows(std::string_view bytes, size_t pos) noexcept {
+}  // namespace
+
+size_t WalkBinaryRows(std::string_view bytes, size_t pos,
+                      size_t limit) noexcept {
   const char* const data = bytes.data();
   const size_t size = bytes.size();
-  for (;;) {
+  while (pos < limit) {
     size_t p = pos;
     if (size - p < sizeof(int16_t)) {
       return pos;
@@ -70,9 +73,8 @@ size_t WalkBinaryRows(std::string_view bytes, size_t pos) noexcept {
     }
     pos = p;
   }
+  return pos;
 }
-
-}  // namespace
 
 CopyBatch& CopyBatchBuilder::Current() {
   if (!_batch) {
@@ -179,7 +181,8 @@ void CopyBatchBuilder::FeedBinary(std::string_view bytes, bool stable) {
   };
   while (pos < bytes.size()) {
     if (!_open) {
-      if (const auto end = WalkBinaryRows(bytes, pos); end != pos) {
+      if (const auto end = WalkBinaryRows(bytes, pos, bytes.size());
+          end != pos) {
         if (run_begin == kNone) {
           run_begin = pos;
         }

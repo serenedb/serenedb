@@ -20,14 +20,17 @@
 
 #include "connector/copy_from_batches.h"
 
+#include <absl/base/internal/endian.h>
 #include <absl/container/btree_map.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <duckdb/common/file_system.hpp>
+#include <duckdb/common/memory_mapped_file.hpp>
 #include <duckdb/common/serializer/async_memory_governor.hpp>
 #include <duckdb/formats/copy_from.hpp>
+#include <duckdb/formats/row_input.hpp>
 #include <duckdb/parallel/async_result.hpp>
 #include <duckdb/parallel/task_executor.hpp>
 #include <duckdb/parallel/task_scheduler.hpp>
@@ -36,6 +39,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -44,16 +48,119 @@
 #include "formats/binary_copy_decoder.h"
 #include "pg/connection_context.h"
 #include "pg/copy_batch_builder.h"
+#include "pg/copy_binary.h"
 
 namespace sdb::connector {
 namespace {
 
 constexpr std::string_view kCopyStdinPath = "/dev/stdin";
 
+constexpr size_t kPlanProbeRows = 4;
+constexpr size_t kPlanGroupsPerThread = 4;
+constexpr size_t kPlanGroupMinBytes = size_t{1} << 20;
+constexpr size_t kPlanPrefetchBytes = size_t{1} << 22;
+
+int32_t BinaryWidth(const duckdb::LogicalType& type) {
+  if (type.HasAlias()) {
+    return -1;
+  }
+  switch (type.id()) {
+    using enum duckdb::LogicalTypeId;
+    case BOOLEAN:
+      return 1;
+    case SMALLINT:
+      return 2;
+    case INTEGER:
+    case DATE:
+    case FLOAT:
+      return 4;
+    case BIGINT:
+    case DOUBLE:
+    case TIMESTAMP:
+    case TIMESTAMP_TZ:
+      return 8;
+    case UUID:
+      return 16;
+    default:
+      return -1;
+  }
+}
+
+bool PlausibleRows(std::string_view bytes, size_t pos,
+                   std::span<const int32_t> widths) {
+  for (size_t row = 0; row < kPlanProbeRows; ++row) {
+    if (bytes.size() - pos < sizeof(int16_t)) {
+      return false;
+    }
+    const auto fields =
+      static_cast<int16_t>(absl::big_endian::Load16(bytes.data() + pos));
+    if (fields == pg::kPgCopyTrailer && bytes.size() - pos == sizeof(int16_t)) {
+      return row != 0;
+    }
+    if (fields < 0 || static_cast<size_t>(fields) != widths.size()) {
+      return false;
+    }
+    pos += sizeof(int16_t);
+    for (const auto width : widths) {
+      if (bytes.size() - pos < sizeof(int32_t)) {
+        return false;
+      }
+      const auto length =
+        static_cast<int32_t>(absl::big_endian::Load32(bytes.data() + pos));
+      pos += sizeof(int32_t);
+      if (length == pg::kPgCopyNull) {
+        continue;
+      }
+      if (length < 0 || (width >= 0 && length != width) ||
+          bytes.size() - pos < static_cast<size_t>(length)) {
+        return false;
+      }
+      pos += static_cast<size_t>(length);
+    }
+  }
+  return true;
+}
+
+size_t FindBinaryRow(std::string_view bytes, size_t from, size_t limit,
+                     std::span<const int32_t> widths) {
+  const auto columns = static_cast<uint16_t>(widths.size());
+  for (auto pos = from; pos < limit && bytes.size() - pos >= sizeof(int16_t);
+       ++pos) {
+    if (absl::big_endian::Load16(bytes.data() + pos) == columns &&
+        PlausibleRows(bytes, pos, widths)) {
+      return pos;
+    }
+  }
+  return std::string_view::npos;
+}
+
+struct BinaryWalk {
+  size_t start = std::string_view::npos;
+  size_t end = std::string_view::npos;
+  std::vector<size_t> cuts;
+};
+
+void WalkCuts(std::string_view bytes, size_t pos, size_t limit,
+              BinaryWalk& walk) {
+  walk.start = pos;
+  walk.cuts.clear();
+  while (pos < limit) {
+    const auto next = pg::WalkBinaryRows(
+      bytes, pos, std::min(limit, pos + pg::kCopyBatchBytes));
+    if (next == pos) {
+      break;
+    }
+    walk.cuts.push_back(next);
+    pos = next;
+  }
+  walk.end = pos;
+}
+
 class CopyFileReader {
  public:
   CopyFileReader(duckdb::ClientContext& context,
-                 std::unique_ptr<duckdb::FileHandle> file)
+                 std::unique_ptr<duckdb::FileHandle> file,
+                 std::span<const duckdb::LogicalType> types)
     : _file{std::move(file)},
       _batches{duckdb::TaskScheduler::QueryThreads(context) *
                pg::kCopyBatchesPerThread},
@@ -63,6 +170,7 @@ class CopyFileReader {
       _executor{context, duckdb::TaskSchedulerType::ASYNC},
       _chunk(pg::kCopyBatchBytes, '\0') {
     UpdateBudget();
+    Plan(context, types);
   }
 
   ~CopyFileReader() {
@@ -128,7 +236,104 @@ class CopyFileReader {
     }
   }
 
+  void Plan(duckdb::ClientContext& context,
+            std::span<const duckdb::LogicalType> types) {
+    if (_file->GetFileCompressionType() !=
+        duckdb::FileCompressionType::UNCOMPRESSED) {
+      return;
+    }
+    const auto size = static_cast<size_t>(_file->GetFileSize());
+    auto mapping = duckdb::MapForReading(context, _file->GetPath(),
+                                         _file->OnDiskFile(), size, 0);
+    if (!mapping || size < pg::kPgCopyHeader.size()) {
+      return;
+    }
+    const std::string_view bytes{
+      reinterpret_cast<const char*>(mapping->GetData(0, size)), size};
+    const auto extension = static_cast<int32_t>(
+      absl::big_endian::Load32(bytes.data() + pg::kPgCopyHeader.size() - 4));
+    if (extension < 0 ||
+        size - pg::kPgCopyHeader.size() < static_cast<size_t>(extension)) {
+      return;
+    }
+    const auto begin =
+      pg::kPgCopyHeader.size() + static_cast<size_t>(extension);
+    mapping->PrefetchMissing(0, std::min(size, kPlanPrefetchBytes));
+    _builder.Feed(bytes.substr(0, begin), true);
+    _mapping = duckdb::shared_ptr<duckdb::MemoryMappedFile>(std::move(mapping));
+    _mapped = bytes;
+    _file->ReadInPlace(context, size, 0);
+
+    std::vector<int32_t> widths;
+    widths.reserve(types.size());
+    for (const auto& type : types) {
+      widths.push_back(BinaryWidth(type));
+    }
+    const auto data_size = size - begin;
+    const auto groups = std::clamp<size_t>(
+      data_size / kPlanGroupMinBytes, 1,
+      duckdb::TaskScheduler::QueryThreads(context) * kPlanGroupsPerThread);
+    const auto group_bytes = (data_size + groups - 1) / groups;
+    const auto group_end = [&](size_t group) {
+      return std::min(size, begin + (group + 1) * group_bytes);
+    };
+    std::vector<BinaryWalk> walks(groups);
+    duckdb::TaskExecutor executor{context};
+    for (size_t group = 0; group < groups; ++group) {
+      executor.ScheduleTask(
+        [&, group] {
+          const auto from = begin + group * group_bytes;
+          const auto to = group_end(group);
+          _mapping->PrefetchMissing(from, to - from);
+          const auto start =
+            group == 0 ? begin : FindBinaryRow(bytes, from, to, widths);
+          if (start != std::string_view::npos) {
+            WalkCuts(bytes, start, to, walks[group]);
+          }
+        },
+        "binary copy plan");
+    }
+    executor.WorkOnTasks();
+
+    auto at = begin;
+    for (size_t group = 0; group < groups; ++group) {
+      const auto to = group_end(group);
+      if (at >= to) {
+        continue;
+      }
+      auto& walk = walks[group];
+      if (walk.start != at) {
+        WalkCuts(bytes, at, to, walk);
+      }
+      for (const auto cut : walk.cuts) {
+        _planned.emplace_back(at, cut);
+        at = cut;
+      }
+      if (at < to) {
+        break;
+      }
+    }
+    _tail = at;
+  }
+
+  void ReadMapped() {
+    if (_next < _planned.size()) {
+      const auto [from, to] = _planned[_next++];
+      auto batch = std::make_unique<pg::CopyBatch>();
+      batch->AddView(_mapped.substr(from, to - from));
+      batch->owner = std::make_shared<duckdb::MappedRange>(_mapping, from, to);
+      Push(std::move(batch));
+      return;
+    }
+    _builder.Feed(_mapped.substr(_tail), true);
+    FinishFile();
+  }
+
   void ReadBatch() {
+    if (_mapping) {
+      ReadMapped();
+      return;
+    }
     while (!_builder.Ready()) {
       const auto got =
         static_cast<size_t>(_file->Read(_chunk.data(), _chunk.size()));
@@ -157,6 +362,11 @@ class CopyFileReader {
   }
 
   std::unique_ptr<duckdb::FileHandle> _file;
+  duckdb::shared_ptr<duckdb::MemoryMappedFile> _mapping;
+  std::string_view _mapped;
+  std::vector<std::pair<size_t, size_t>> _planned;
+  size_t _next = 0;
+  size_t _tail = 0;
   pg::CopyBatchBuilder _builder{pg::CopyBatchFormat::Binary,
                                 pg::kCopyBatchBytes};
   pg::CopyInBatches _batches;
@@ -258,7 +468,7 @@ struct CopyFromGlobalState final : public duckdb::GlobalTableFunctionState {
     : target{std::move(target)},
       ordered{ordered},
       max_threads{duckdb::TaskScheduler::QueryThreads(context)},
-      reader{std::in_place, context, std::move(file)},
+      reader{std::in_place, context, std::move(file), this->target.types},
       queue{reader->Batches()} {
     reader->Resume();
   }

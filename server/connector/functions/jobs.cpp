@@ -277,10 +277,9 @@ duckdb::unique_ptr<duckdb::FunctionData> ExecuteJobBind(
   const auto name = input.binder->BindTableName(
     duckdb::QualifiedName::Parse(duckdb::StringValue::Get(input.inputs[0])));
   auto entry = input.binder->EntryRetriever().GetEntry(
-    duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name},
+    duckdb::EntryLookupInfo{duckdb::CatalogType::JOB_ENTRY, name,
+                            duckdb::AclMode::Own},
     duckdb::OnEntryNotFound::THROW_EXCEPTION);
-  duckdb::Require(context, input.binder->CheckAs(), *entry,
-                  duckdb::AclMode::Own);
   return duckdb::make_uniq<ExecuteJobData>(
     entry->Cast<catalog::JobCatalogEntry>());
 }

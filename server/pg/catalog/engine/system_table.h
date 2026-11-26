@@ -604,6 +604,12 @@ class SystemScan {
   bool Shows(duckdb::CatalogEntry& entry) const {
     return duckdb::EntryVisible(_context, _role, entry);
   }
+  bool ShowsColumn(const duckdb::CatalogEntry& relation,
+                   std::span<const duckdb::AclItem> acl);
+  bool ShowsActivityOf(duckdb::idx_t role) const {
+    return _role.Has(duckdb::RoleCapability::ReadAllStats) ||
+           _role.MemberOf(role);
+  }
   catalog::BaseCatalog& Database() const noexcept { return _database; }
   const duckdb::CatalogTransaction& Transaction() const noexcept {
     return _transaction;
@@ -1022,6 +1028,8 @@ class SystemScan {
   const SystemTable& _table;
   duckdb::RoleAccess _role;
   uint64_t _viewer = 0;
+  const duckdb::CatalogEntry* _columns_of = nullptr;
+  bool _all_columns = false;
   duckdb::shared_ptr<const duckdb::SecuritySnapshot> _roles;
   std::vector<SystemFilter> _filters;
   std::array<uint32_t, 64> _slots{};

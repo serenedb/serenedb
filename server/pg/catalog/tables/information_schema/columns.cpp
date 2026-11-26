@@ -44,8 +44,6 @@ constexpr SystemIndex kIndexes[] = {
   {kInfoColumnsSql["table_schema"], SystemLookup::Namespace},
 };
 
-constexpr auto kAnyColumnPrivilege = duckdb::ACL_COLUMN_PRIVILEGES;
-
 struct ColumnTypeInfo {
   ColumnType described;
   const BuiltinType* builtin;
@@ -252,14 +250,12 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     Col<"is_generated">([](const auto&) { return std::string_view{"NEVER"}; }));
 
   void Row(const duckdb::TableCatalogEntry& table) {
-    const bool visible = Visible(table);
     const auto [schema, relation] = NameOf(Transaction(), table);
     const auto not_null =
       Reads<"is_nullable">() ? NotNullColumns(table) : std::vector<bool>{};
     const auto system = SystemColumns(table);
     for (const auto& column : table.GetColumns().Logical()) {
-      if (!visible && (_role.HeldModes(column.Acl()) & kAnyColumnPrivilege) ==
-                        duckdb::AclMode::NoRights) {
+      if (!ShowsColumn(table, column.Acl())) {
         continue;
       }
       Emit<kTableColumn>(
@@ -279,8 +275,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
   }
 
   void Row(duckdb::ViewCatalogEntry& view) {
-    const bool visible = Visible(view);
-    if (!visible && view.column_acls.empty()) {
+    if (view.column_acls.empty() && !ShowsColumn(view, {})) {
       return;
     }
     const auto columns = ViewColumns(Context(), view);
@@ -289,8 +284,7 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
     }
     const auto [schema, relation] = NameOf(Transaction(), view);
     for (size_t i = 0; i < columns->types.size(); ++i) {
-      if (!visible && (_role.HeldModes(view.ColumnAcl(i)) &
-                       kAnyColumnPrivilege) == duckdb::AclMode::NoRights) {
+      if (!ShowsColumn(view, view.ColumnAcl(i))) {
         continue;
       }
       Emit<kViewColumn>({.scan = *this,
@@ -305,14 +299,8 @@ class InfoColumns final : public SystemTableScan<kInfoColumnsSql> {
   }
 
  private:
-  bool Visible(const duckdb::CatalogEntry& relation) const {
-    return _role.MemberOf(duckdb::PermissionsOf(relation).owner) ||
-           duckdb::AllowedAny(_role, relation, kAnyColumnPrivilege);
-  }
-
   std::string_view _database = Database().GetName().GetIdentifierName();
   ArrayTypeNames _arrays{*this};
-  const duckdb::RoleAccess& _role = Role();
 };
 
 }  // namespace

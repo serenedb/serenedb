@@ -411,15 +411,13 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   // duckdb's operations, and serenedb's are the same ones.
   auto& db_catalog = duckdb::Catalog::GetCatalog(
     context, duckdb::DatabaseManager::GetDefaultDatabase(context));
-  const auto& role = state.role;
-  const auto owner = role.role;
+  const auto owner = state.role.role;
   if (!EsSchema(context)) {
-    auto& system = duckdb::Catalog::GetSystemCatalog(context);
-    if (auto database = system.LookupEntry(
-          system.GetCatalogTransaction(context),
-          duckdb::CatalogType::DATABASE_ENTRY, db_catalog.GetName())) {
-      duckdb::Require(context, role, *database, duckdb::AclMode::Create);
-    }
+    duckdb::CatalogEntryRetriever{context, state.acting}.GetEntry(
+      duckdb::EntryLookupInfo{duckdb::CatalogType::DATABASE_ENTRY,
+                              duckdb::QualifiedName{db_catalog.GetName()},
+                              duckdb::AclMode::Create},
+      duckdb::OnEntryNotFound::RETURN_NULL);
     duckdb::CreateSchemaInfo info;
     info.SetSchema(duckdb::Identifier{kEsSchema});
     info.on_conflict = duckdb::OnCreateConflict::IGNORE_ON_CONFLICT;

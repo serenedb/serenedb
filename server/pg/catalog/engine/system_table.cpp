@@ -157,6 +157,19 @@ bool SystemScan::Declared(uint64_t provided) const {
 
 SystemScan::~SystemScan() = default;
 
+bool SystemScan::ShowsColumn(const duckdb::CatalogEntry& relation,
+                             std::span<const duckdb::AclItem> acl) {
+  if (&relation != _columns_of) {
+    _columns_of = &relation;
+    _all_columns =
+      _role.MemberOf(duckdb::PermissionsOf(relation).owner) ||
+      duckdb::AllowedAny(_role, relation, duckdb::ACL_COLUMN_PRIVILEGES);
+  }
+  return _all_columns ||
+         (_role.HeldModes(acl) & duckdb::ACL_COLUMN_PRIVILEGES) !=
+           duckdb::AclMode::NoRights;
+}
+
 void SystemScan::Begin(duckdb::DataChunk& output) {
   output.Reset();
   _row = 0;

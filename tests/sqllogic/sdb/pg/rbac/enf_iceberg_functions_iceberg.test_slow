@@ -153,6 +153,21 @@ SELECT * FROM iceberg_rewrite_data_files('eifn_${__DATABASE__}.${__DATABASE__}.e
 db error: ERROR: must be owner of table eifn_t
 
 
+statement ok
+CREATE VIEW eifn_rewrite WITH (security_invoker=true) AS SELECT * FROM iceberg_rewrite_data_files('eifn_${__DATABASE__}.${__DATABASE__}.eifn_t');
+
+
+statement ok
+GRANT SELECT ON eifn_rewrite TO eifn_vedernikoff;
+
+
+connection c_ved user=eifn_vedernikoff password=eifn_pw
+statement error
+SELECT * FROM eifn_rewrite;
+----
+db error: ERROR: must be owner of table eifn_t
+
+
 connection c_ved user=eifn_vedernikoff password=eifn_pw
 statement error
 SELECT * FROM set_iceberg_schema_properties('eifn_${__DATABASE__}.${__DATABASE__}', {'eifn.owner': 'vedernikoff'});
@@ -177,6 +192,10 @@ SELECT key, value FROM iceberg_table_properties('eifn_${__DATABASE__}.${__DATABA
 ----
 key	value
 eifn.owner	postgres
+
+
+statement ok
+DROP VIEW eifn_rewrite;
 
 
 statement ok

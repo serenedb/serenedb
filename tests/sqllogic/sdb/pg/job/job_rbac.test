@@ -1,4 +1,8 @@
 statement ok
+DROP VIEW IF EXISTS jr_kostya_run;
+
+
+statement ok
 DROP JOB IF EXISTS jr_kostya_job;
 
 
@@ -104,6 +108,14 @@ count
 
 
 statement ok
+CREATE VIEW jr_kostya_run WITH (security_invoker=true) AS SELECT * FROM execute_job('jr_kostya_job');
+
+
+statement ok
+GRANT SELECT ON jr_kostya_run TO jr_clickclack;
+
+
+statement ok
 RESET ROLE;
 
 
@@ -153,8 +165,18 @@ ALTER JOB jr_kostya_job OWNER TO jr_clickclack;
 db error: ERROR: Job with name jr_kostya_job does not exist!<slt:ignore>
 
 
+statement error
+SELECT * FROM jr_kostya_run;
+----
+db error: ERROR: must be owner of job jr_kostya_job<slt:ignore>
+
+
 statement ok
 RESET ROLE;
+
+
+statement ok
+DROP VIEW jr_kostya_run;
 
 
 query

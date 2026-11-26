@@ -159,8 +159,7 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
     kProgressBase, kProgressSession, kProgressActive, kProgressCommand);
 
   void Row(const ProgressSnapshot& s) {
-    if (!_role.Has(duckdb::RoleCapability::ReadAllStats) &&
-        !_role.MemberOf(s.role)) {
+    if (!ShowsActivityOf(s.role)) {
       Emit<kHidden>(s);
       return;
     }
@@ -173,9 +172,6 @@ class SdbProgress final : public SystemTableScan<kSdbProgressSql> {
       Emit<kCommand>(s);
     }
   }
-
- private:
-  const duckdb::RoleAccess& _role = Role();
 };
 
 }  // namespace

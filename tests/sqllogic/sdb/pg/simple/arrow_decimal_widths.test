@@ -123,3 +123,20 @@ id	d32_4	d64_4	d64_9
 6	-0.50	-3.1	-0.01
 8	-1.00	-2.0	-2.00
 10	-50.50	-4.5	-4.44
+
+
+query
+SELECT id, coalesce(d32_4::VARCHAR, '-') AS d32_4, coalesce(d32_9::VARCHAR, '-') AS d32_9,
+       coalesce(d64_4::VARCHAR, '-') AS d64_4, coalesce(d64_9::VARCHAR, '-') AS d64_9,
+       coalesce(d64_18::VARCHAR, '-') AS d64_18
+FROM read_arrow('${__TEST_DIR__}/adw_narrow.arrow')
+WHERE id BETWEEN 3 AND 8
+ORDER BY id;
+----
+id	d32_4	d32_9	d64_4	d64_9	d64_18
+3	-99.99	-	0.0	-1234567.89	0.0001
+4	0.01	0.001	-	0.05	7.0000
+5	99.99	42.000	12.5	100.00	-
+6	-0.50	-1.500	-3.1	-0.01	-42.4242
+7	1.00	1.000	1.0	1.00	1.0000
+8	-1.00	2.250	-2.0	-2.00	-2.0000

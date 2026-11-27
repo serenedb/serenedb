@@ -48,7 +48,10 @@ void ResolveSqlOutputs(TokenizerConfig& cfg, duckdb::ClientContext& ctx,
   std::visit(
     [&]<typename Options>(Options& opts) {
       if constexpr (std::is_same_v<Options, SqlTokenizer::Options>) {
-        opts.output = SqlTokenizer::ResolveOutput(opts.expression, ctx, cache);
+        if (opts.output == duckdb::LogicalTypeId::INVALID) {
+          opts.output =
+            SqlTokenizer::ResolveOutput(opts.expression, ctx, cache);
+        }
       } else if constexpr (std::is_same_v<Options,
                                           PipelineTokenizer::Options> ||
                            std::is_same_v<Options, UnionTokenizer::Options>) {

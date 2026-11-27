@@ -284,7 +284,6 @@ duckdb::unique_ptr<duckdb::FunctionData> Bind(
   auto config = pg::BuildStage(context, group.name, std::move(options),
                                std::move(children), operation);
   auto& db = duckdb::DatabaseInstance::GetDatabase(context);
-  irs::analysis::ResolveSqlOutputs(config, context, db.GetSharedObjectCache());
   auto key = catalog::PackTokenizerConfig(config);
 
   auto pool = irs::analysis::TokenizerPool::Get(db, key);

@@ -390,6 +390,9 @@ class CreateTSDictionaryOptions : public OptionsParser {
     irs::analysis::SqlTokenizer::Options opts;
     opts.expression =
       OptionsParser::EraseOptionOrDefault<tokenizer_options::kSqlExpression>();
+    opts.output = irs::analysis::SqlTokenizer::ResolveOutput(
+      opts.expression, _context,
+      duckdb::DatabaseInstance::GetDatabase(_context).GetSharedObjectCache());
     return opts;
   }
 
@@ -822,7 +825,6 @@ void CompileTokenizer(duckdb::ClientContext& context,
 
   auto& cache =
     duckdb::DatabaseInstance::GetDatabase(context).GetSharedObjectCache();
-  irs::analysis::ResolveSqlOutputs(cfg, context, cache);
   auto test_analyzer =
     irs::analysis::CreateTokenizer(irs::analysis::Clone(cfg), cache);
   SDB_ASSERT(test_analyzer);

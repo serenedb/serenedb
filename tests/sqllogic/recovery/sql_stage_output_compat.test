@@ -63,3 +63,23 @@ SELECT pg_typeof(ts_lexize('older_md5', 'fox')) AS lexemes;
 ----
 lexemes
 bytea[]
+
+
+connection after_crash
+statement error
+CREATE TEXT SEARCH DICTIONARY older_md5_lower AS older_md5 | normalize_tokens(case := 'lower');
+----
+db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
+
+
+connection after_crash
+statement ok
+CREATE TEXT SEARCH DICTIONARY older_md5_words AS split_text() | older_md5;
+
+
+connection after_crash
+query
+SELECT pg_typeof(ts_lexize('older_md5_words', 'quick fox')) AS lexemes;
+----
+lexemes
+bytea[]

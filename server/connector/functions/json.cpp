@@ -26,10 +26,10 @@
 
 #include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
-#include <absl/strings/match.h>
 #include <absl/strings/numbers.h>
 #include <simdjson.h>
 
+#include <duckdb/common/json_document.hpp>
 #include <duckdb/common/optional.hpp>
 #include <duckdb/common/types/data_chunk.hpp>
 #include <duckdb/common/vector/vector_iterator.hpp>
@@ -91,10 +91,8 @@ std::string_view BuilderView(simdjson::builder::string_builder& builder) {
 }
 
 bool IsNanOrInfinity(std::string_view token) {
-  token = absl::StripTrailingAsciiWhitespace(token);
-  return absl::EqualsIgnoreCase(token, "nan") ||
-         absl::EqualsIgnoreCase(token, "inf") ||
-         absl::EqualsIgnoreCase(token, "infinity");
+  double value;
+  return duckdb::ParseJSONInfOrNan(token, value);
 }
 
 std::string_view RawToken(simdjson::ondemand::value& value) {
@@ -116,32 +114,6 @@ simdjson::ondemand::json_type TypeOf(T& value) {
   return type;
 }
 
-void RelaxTrailingCommas(char* data, size_t size, std::vector<size_t>& commas) {
-  commas.clear();
-  bool in_string = false;
-  size_t comma = size;
-  for (size_t i = 0; i < size; ++i) {
-    const char c = data[i];
-    if (in_string) {
-      if (c == '\\') {
-        ++i;
-      } else if (c == '"') {
-        in_string = false;
-      }
-      continue;
-    }
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-      continue;
-    }
-    if ((c == ']' || c == '}') && comma != size) {
-      data[comma] = ' ';
-      commas.push_back(comma);
-    }
-    comma = c == ',' ? i : size;
-    in_string = c == '"';
-  }
-}
-
 class JsonParser {
  public:
   void PrepareJson(std::string_view json) {
@@ -153,7 +125,10 @@ class JsonParser {
 
   void Retry() {
     _retried = true;
-    RelaxTrailingCommas(_buffer.data(), _input.size(), _commas);
+    duckdb::FindJSONTrailingCommas(_input.data(), _input.size(), _commas);
+    for (const auto comma : _commas) {
+      _buffer[comma] = ' ';
+    }
     _relax_first = !_commas.empty();
   }
 
@@ -334,7 +309,7 @@ class JsonParser {
   std::string _buffer;
   std::string_view _input;
   simdjson::padded_string_view _padded_input;
-  std::vector<size_t> _commas;
+  duckdb::vector<duckdb::idx_t> _commas;
   bool _retried = false;
   bool _relax_first = false;
 };

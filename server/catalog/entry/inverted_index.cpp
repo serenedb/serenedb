@@ -367,35 +367,22 @@ IndexTokenizers::IndexTokenizers(duckdb::ClientContext& context,
 
 ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
                                          duckdb::LogicalTypeId input) const {
-  return Acquire(field_id, *_context, input);
-}
-
-ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
-                                         duckdb::ClientContext& context,
-                                         duckdb::LogicalTypeId input) const {
   const auto it = _fields.find(field_id);
   if (it == _fields.end()) {
     return {};
   }
   const auto& field = it->second;
   if (!field.tokenizer) {
-    return {.analyzer =
-              Tokenizer::TokenizerWrapper{
-                std::make_unique<irs::KeywordTokenizer>().release(),
-                Tokenizer::Deleter{}},
-            .input = input};
+    return {.analyzer = Tokenizer::TokenizerWrapper{
+              std::make_unique<irs::KeywordTokenizer>().release(),
+              Tokenizer::Deleter{}}};
   }
-  return {.analyzer = field.tokenizer->Acquire(context, input),
+  return {.analyzer = field.tokenizer->Acquire(*_context, input),
           .features = field.features,
-          .tokenizer_column = field.tokenizer_column,
-          .input = input};
+          .tokenizer_column = field.tokenizer_column};
 }
 
-duckdb::LogicalTypeId IndexTokenizers::Terms(
-  irs::field_id field_id, duckdb::LogicalTypeId input) const {
-  if (input == duckdb::LogicalTypeId::BLOB) {
-    return input;
-  }
+duckdb::LogicalTypeId IndexTokenizers::Output(irs::field_id field_id) const {
   const auto& field = _fields.at(field_id);
   return field.tokenizer ? field.tokenizer->Output(*_context)
                          : duckdb::LogicalTypeId::VARCHAR;

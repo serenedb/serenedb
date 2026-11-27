@@ -70,7 +70,6 @@ struct ColumnTokenizer {
   Tokenizer::TokenizerWrapper analyzer;
   irs::IndexFeatures features = irs::IndexFeatures::None;
   irs::field_id tokenizer_column = irs::field_limits::invalid();
-  duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR;
 };
 
 struct InvertedIndexField : persistence::FieldRecord {
@@ -257,11 +256,7 @@ class IndexTokenizers {
   ColumnTokenizer Acquire(
     irs::field_id field_id,
     duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR) const;
-  ColumnTokenizer Acquire(
-    irs::field_id field_id, duckdb::ClientContext& context,
-    duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR) const;
-  duckdb::LogicalTypeId Terms(irs::field_id field_id,
-                              duckdb::LogicalTypeId input) const;
+  duckdb::LogicalTypeId Output(irs::field_id field_id) const;
 
  private:
   struct Field {

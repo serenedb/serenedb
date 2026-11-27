@@ -80,7 +80,7 @@ def server(tmp_path_factory):
 def _session_user_as(server: Serened, authorization: str) -> tuple[int, str]:
     conn = http.client.HTTPConnection("127.0.0.1", server.http_port, timeout=30)
     try:
-        conn.request("GET", "/_test/session_user",
+        conn.request("GET", "/test/session_user",
                      headers={"Authorization": authorization})
         response = conn.getresponse()
         return response.status, response.read().decode()
@@ -163,9 +163,9 @@ def test_an_api_without_logins_answers_anyone_and_runs_no_sql(tmp_path):
             finally:
                 conn.close()
 
-        assert get(open_port, "/_test/ping")[0] == 200
-        assert get(test_port, "/_test/ping")[0] == 401
-        status, body = get(open_port, "/_test/session_user")
+        assert get(open_port, "/test/ping")[0] == 200
+        assert get(test_port, "/test/ping")[0] == 401
+        status, body = get(open_port, "/test/session_user")
         assert status == 500 and "postgres" not in body, body
     finally:
         serened.stop()

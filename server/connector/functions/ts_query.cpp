@@ -495,9 +495,7 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
  private:
   std::optional<duckdb::Value> Folded(
     const duckdb::BoundFunctionExpression& call) const {
-    return TryFoldTSQueryCall(_context,
-                              call.Function().GetName().GetIdentifierName(),
-                              call.GetChildren());
+    return TryFoldTSQueryCall(_context, call);
   }
 
   duckdb::ClientContext& _context;

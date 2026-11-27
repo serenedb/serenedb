@@ -1293,12 +1293,17 @@ duckdb::unique_ptr<duckdb::BoundFunctionExpression> MakeTSQueryTokenizeList(
 
 template<const std::string_view& Name>
 duckdb::unique_ptr<duckdb::Expression> BuildPassthrough(
-  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
-  return MakeTSQueryCall(Name, std::move(args));
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args,
+  const duckdb::vector<duckdb::Identifier>& names) {
+  auto call = MakeTSQueryCall(Name, std::move(args));
+  call->FunctionMutable().SetNamedArguments(
+    call->GetChildren().size() - names.size(), names);
+  return call;
 }
 
 duckdb::unique_ptr<duckdb::Expression> BuildAllTokens(
-  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args,
+  const duckdb::vector<duckdb::Identifier>&) {
   return MakeTSQueryCall(
     kTSQAllOf, MakeChildren(MakeTSQueryTokenizeList(std::move(args.at(0)))));
 }
@@ -1321,7 +1326,8 @@ duckdb::unique_ptr<duckdb::Expression> WrapTextAsConstantList(
 }
 
 duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
-  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args,
+  const duckdb::vector<duckdb::Identifier>&) {
   const auto type = args.at(0)->GetReturnType().id();
   const bool is_text = type == duckdb::LogicalTypeId::VARCHAR ||
                        type == duckdb::LogicalTypeId::BLOB;
@@ -1344,7 +1350,8 @@ duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
 }
 
 using PredicateInnerBuilder = duckdb::unique_ptr<duckdb::Expression> (*)(
-  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args);
+  std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args,
+  const duckdb::vector<duckdb::Identifier>& names);
 
 const irs::containers::FlatHashMap<std::string_view, PredicateInnerBuilder>
   kSugarBuilders = {
@@ -1363,7 +1370,8 @@ absl::Status FromPredicate(BoolTarget filter, const FilterContext& ctx,
   auto tail = func.GetChildren() | std::views::drop(1) |
               std::views::transform([](const auto& e) { return e->Copy(); }) |
               std::ranges::to<std::vector>();
-  auto inner = build_inner(std::move(tail));
+  auto inner =
+    build_inner(std::move(tail), func.Function().GetNamedArguments());
   FromTSQueryMatch(filter, ctx, *func.GetChildren()[0], *inner);
   return absl::OkStatus();
 }

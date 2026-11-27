@@ -341,19 +341,18 @@ void AppendPhraseArgs(irs::ByPhraseOptions& options, const FilterContext& ctx,
   auto& analyzer = PhraseAnalyzer(ctx, column_info);
   irs::ValueAnalyzer value_analyzer;
   PositionedTokens tokens{analyzer.Traits()};
+  for (const auto& name : func.Function().GetNamedArguments()) {
+    if (name != "slop") {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("ts_phrase has no argument named ", name.GetIdentifierName()),
+        ERR_HINT(hint));
+    }
+  }
   std::optional<PhraseGap> pending_gap;
   bool appended = false;
-  for (size_t i = 0; i < func.GetChildren().size(); ++i) {
+  for (size_t i = 0; i < PositionalArgumentCount(func); ++i) {
     const auto& child = *func.GetChildren()[i];
-    if (child.GetAlias() == "slop") {
-      continue;
-    }
-    if (!child.GetAlias().empty()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("ts_phrase has no argument named ",
-                              child.GetAlias().GetIdentifierName()),
-                      ERR_HINT(hint));
-    }
     const auto* const_val = TryGetConstant(child);
     if (!const_val) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -421,18 +420,14 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
   }
 
   std::optional<int64_t> arg_slop;
-  for (const auto& child : func.GetChildren()) {
-    if (child->GetAlias().empty()) {
+  const auto& names = func.Function().GetNamedArguments();
+  for (size_t i = 0; i < names.size(); ++i) {
+    if (names[i] != "slop") {
       continue;
     }
-    if (!(child->GetAlias() == "slop")) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("ts_phrase has no argument named ",
-                              child->GetAlias().GetIdentifierName()),
-                      ERR_HINT(kSyntaxHint));
-    }
     int64_t slop_raw = 0;
-    GetIntArg(*child, slop_raw, {"ts_phrase slop", kSyntaxHint});
+    GetIntArg(*func.GetChildren()[PositionalArgumentCount(func) + i], slop_raw,
+              {"ts_phrase slop", kSyntaxHint});
     if (slop_raw < 0) {
       THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                       ERR_MSG("ts_phrase slop must be >= 0, got ", slop_raw),
@@ -807,9 +802,8 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
             ctx.levenshtein_max_terms));
       } break;
       case TSQueryOp::Phrase: {
-        if (absl::c_any_of(f->GetChildren(), [](const auto& child) {
-              return child->GetAlias() == "slop";
-            })) {
+        if (absl::c_any_of(f->Function().GetNamedArguments(),
+                           [](const auto& name) { return name == "slop"; })) {
           reject_slop();
         }
         AppendPhraseArgs(options, ctx, column_info, *f, gap, kSyntaxHint);

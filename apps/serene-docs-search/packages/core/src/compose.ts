@@ -1,10 +1,11 @@
-import { BUNDLED_OLLAMA_URL, CONFIG_FILENAME, DEFAULT_BACKEND_PORT } from "./defaults";
+import { BUNDLED_OLLAMA_URL, CONFIG_FILENAME, DEFAULT_BACKEND_PORT, VERSION } from "./defaults";
 import type { AiProvider, SereneSearchConfig } from "./types";
 
 export interface ComposeOptions {
     config: SereneSearchConfig;
     /** SERENE_SEARCH_TOKEN baked into the backend env. */
     token: string;
+    dbPassword: string;
     serenedbImage?: string;
     backendImage?: string;
     mcpImage?: string;
@@ -18,11 +19,11 @@ const DEFAULT_MCP_PORT = 7710;
  * talks to the backend.
  */
 export function generateCompose(opts: ComposeOptions): string {
-    const { config, token } = opts;
+    const { config, token, dbPassword } = opts;
     const port = config.server?.port ?? DEFAULT_BACKEND_PORT;
     const serenedbImage = opts.serenedbImage ?? "serenedb/serenedb:latest";
-    const backendImage = opts.backendImage ?? "serenedb/docs-search-backend:latest";
-    const mcpImage = opts.mcpImage ?? "serenedb/docs-search-mcp:latest";
+    const backendImage = opts.backendImage ?? `serenedb/docs-search-backend:${VERSION}`;
+    const mcpImage = opts.mcpImage ?? `serenedb/docs-search-mcp:${VERSION}`;
     const providers = [config.ai?.answers, config.ai?.embeddings].filter(
         (p): p is AiProvider => Boolean(p),
     );
@@ -32,6 +33,8 @@ export function generateCompose(opts: ComposeOptions): string {
     lines.push("services:");
     lines.push("  serenedb:");
     lines.push(`    image: ${serenedbImage}`);
+    lines.push("    environment:");
+    lines.push(`      POSTGRES_PASSWORD: "${dbPassword}"  # applied when serene-data is first created`);
     lines.push("    volumes: [serene-data:/var/lib/serenedb]");
     lines.push("");
     if (bundleOllama) {
@@ -45,6 +48,7 @@ export function generateCompose(opts: ComposeOptions): string {
     lines.push(`    ports: ["${port}:${port}"]`);
     lines.push("    environment:");
     lines.push(`      SERENE_SEARCH_TOKEN: ${token}  # admin auth (setup & manual sync)`);
+    lines.push(`      SERENEDB_PASSWORD: "${dbPassword}"  # same as POSTGRES_PASSWORD`);
     for (const env of new Set(
         providers
             .map((p) => p.apiKey)

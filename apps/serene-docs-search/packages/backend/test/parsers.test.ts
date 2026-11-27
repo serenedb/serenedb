@@ -4,7 +4,7 @@ import { parseHtml } from "../src/services/parsing/html";
 import { parseMarkdown } from "../src/services/parsing/markdown";
 import { parseNotebook, parseRst } from "../src/services/parsing/misc";
 import { slugify } from "../src/services/parsing/section";
-import { generateCompose, defaultConfig } from "@serenedb/docs-search-core";
+import { VERSION, generateCompose, defaultConfig } from "@serenedb/docs-search-core";
 import { chatCompletionsUrl, resolveProvider } from "../src/utils/providers";
 import { parseQuery } from "../src/utils/query";
 import { makeSnippet } from "../src/utils/snippet";
@@ -521,24 +521,24 @@ describe("config normalization + compose", () => {
             answers: { kind: "openai", baseUrl: "https://api.openai.com/v1", apiKey: "${OPENAI_API_KEY}", model: "gpt-4o-mini" },
             embeddings: { kind: "ollama", baseUrl: "http://ollama:11434", model: "nomic-embed-text" },
         };
-        const yml = generateCompose({ config, token: "sk-t" });
+        const yml = generateCompose({ config, token: "sk-t", dbPassword: "pw" });
         expect(yml).toContain("ollama/ollama");
         expect(yml).toContain("ollama-data:/root/.ollama");
         expect(yml).toContain("depends_on: [serenedb, ollama]");
         expect(yml).toContain("OPENAI_API_KEY: ${OPENAI_API_KEY}");
 
         config.ai.embeddings = { kind: "ollama", baseUrl: "http://host.docker.internal:11434", model: "all-minilm" };
-        expect(generateCompose({ config, token: "sk-t" })).not.toContain("ollama/ollama");
+        expect(generateCompose({ config, token: "sk-t", dbPassword: "pw" })).not.toContain("ollama/ollama");
     });
 
     it("adds the MCP service only when mcp.enabled is set", () => {
         const config = defaultConfig({ type: "git", url: "https://x/y", branch: "main" });
-        expect(generateCompose({ config, token: "sk-t" })).not.toContain("docs-search-mcp");
+        expect(generateCompose({ config, token: "sk-t", dbPassword: "pw" })).not.toContain("docs-search-mcp");
 
         config.mcp = { enabled: true };
-        const yml = generateCompose({ config, token: "sk-t" });
+        const yml = generateCompose({ config, token: "sk-t", dbPassword: "pw" });
         expect(yml).toContain("docs-search-mcp:");
-        expect(yml).toContain("serenedb/docs-search-mcp:latest");
+        expect(yml).toContain(`serenedb/docs-search-mcp:${VERSION}`);
         expect(yml).toContain('"--backend", "http://search-backend:7700"');
         expect(yml).toContain('"--token", "sk-t"');
         expect(yml).toContain("depends_on: [search-backend]");

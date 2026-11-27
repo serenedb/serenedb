@@ -20,7 +20,22 @@
 
 #include "network/io_context.h"
 
+#include <pthread.h>
+
 namespace sdb::network {
+namespace {
+
+constexpr char kIoThreadName[] = "sdb_io";
+
+void NameIoThread() {
+#if defined(__linux__)
+  pthread_setname_np(pthread_self(), kIoThreadName);
+#elif defined(__APPLE__)
+  pthread_setname_np(kIoThreadName);
+#endif
+}
+
+}  // namespace
 
 IoThreadPool::IoThreadPool(std::uint32_t threads) {
   if (threads == 0) {
@@ -42,7 +57,10 @@ IoExecutor& IoThreadPool::Next() noexcept {
 
 void IoThreadPool::Start() {
   for (auto& worker : _workers) {
-    worker->thread = std::jthread{[w = worker.get()] { w->Context().run(); }};
+    worker->thread = std::jthread{[w = worker.get()] {
+      NameIoThread();
+      w->Context().run();
+    }};
   }
 }
 

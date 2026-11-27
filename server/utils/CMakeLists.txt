@@ -82,8 +82,10 @@ add_library(
     number_of_cores.cpp
     registry.cpp
     signals.cpp
+    stack_trace.cpp
     striped_counters.cpp
 )
 add_dependencies(serene serene_build_commit)
 
 target_link_libraries(serene PUBLIC iresearch boost_boost simdjson)
+target_link_libraries(serene PRIVATE unwind-headers)

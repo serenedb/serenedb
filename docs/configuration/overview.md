@@ -323,6 +323,7 @@ What the server records about itself.
 | `profiling_renderer_settings` | A map of settings passed to the renderer of the profiler output (e.g. {'max_extra_lines': 100}) - settings not recognized by the active renderer are ignored. | `MAP(VARCHAR, VARCHAR)` | `SESSION` | `{}` |
 | `progress_bar_time` | How long (in milliseconds) a query runs before its progress bar is printed. | `BIGINT` | `SESSION` | `2000` |
 | `sdb_job_history_size` | Number of recent job runs, across all jobs, that `sdb_job_runs()` returns; the oldest run is dropped first. 0 keeps none. Default 1024. Server-global. | `UBIGINT` | `GLOBAL` | `1024` |
+| `sdb_stack_trace_timeout` | How long `sdb_stack_trace()` waits for each thread to report its stack, in milliseconds, from 1 to 10000; a thread that does not report in time is returned with no frames. Default: 100. | `UINTEGER` | `SESSION` | `100` |
 | `tracked_metrics` | A list of metric glob patterns to enable for collection (e.g. ['query.*', 'optimizer.*']). | `VARCHAR[]` | `SESSION` | `[*]` |
 
 ### Files, object stores and caching

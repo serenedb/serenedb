@@ -357,3 +357,12 @@ WHERE database_name = current_database() AND job_name = 'demo_job';
 ----
 job_name	schedule	run_count	last_status
 demo_job	AFTER INTERVAL '01:00:00'	1	success
+
+# DOCS_TEST: example_032
+
+# DOCS_TEST_BODY
+
+statement ok
+SELECT tid, thread_name, len(frames) AS depth
+FROM sdb_stack_trace()
+ORDER BY depth DESC;

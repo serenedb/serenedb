@@ -71,6 +71,7 @@ The following metadata functions are available:
 | [`sdb_secrets()`](#sdb_secrets) | Defined secrets (sensitive fields redacted) |
 | [`sdb_sequences()`](#sdb_sequences) | Sequences |
 | [`sdb_settings()`](#sdb_settings) | Configuration settings |
+| [`sdb_stack_trace()`](#sdb_stack_trace) | Call stack of every server thread |
 | [`sdb_tables()`](#sdb_tables) | Base tables |
 | [`sdb_temporary_files()`](#sdb_temporary_files) | Temporary files written to disk |
 | [`sdb_types()`](#sdb_types) | Data types |
@@ -473,6 +474,21 @@ The `sdb_settings()` function provides metadata about the settings available in 
 | `scope`       | The scope of the setting (`LOCAL` or `GLOBAL`). | `VARCHAR` |
 
 The various settings are described in the [configuration page](../../configuration/overview.md).
+
+## `sdb_stack_trace`
+
+The `sdb_stack_trace()` function returns the call stack of every thread of the server process, one row per thread. Only a superuser may call it. On operating systems other than Linux it returns no rows.
+
+<SqlLogicTest id="sql/functions/metadata/example_032" hideResult />
+
+Each thread is briefly interrupted while its stack is read. A thread that does not report its stack within [`sdb_stack_trace_timeout`](../../configuration/overview.md#logging-metrics-and-profiling) milliseconds is returned with an empty `frames` list, and a thread that exits meanwhile is left out. A thread that is still reporting its stack when that time runs out leaves every thread with an empty `frames` list, in this call and later ones, until it finishes. The server log says at debug level why a thread has an empty `frames` list. When the limit on queued signals (`ulimit -i`) is reached, the call fails with an error. Only one `sdb_stack_trace()` call collects at a time; another call waits for it. Cancelling the query or reaching `statement_timeout` stops the call while it waits and between two threads.
+
+| Column        | Description                                                                                                                  | Type        |
+| :------------ | :--------------------------------------------------------------------------------------------------------------------------- | :---------- |
+| `tid`         | The thread's ID in the operating system, as `top -H` and `ps -L` show it.                                                    | `INTEGER`   |
+| `thread_name` | The thread's name in the operating system. SereneDB names the threads that run queries and background work `sdb_worker`, or `sdb_blocking` while one runs background work or waits for disk, network or another thread, and its network threads `sdb_io`. The main thread keeps the process name, `serened`. A thread started by another thread carries that thread's name. | `VARCHAR`   |
+| `frames`      | The call stack as code addresses, innermost first: the address where the thread was interrupted, then one return address per caller. | `BIGINT[]`  |
+| `symbols`     | Always `NULL`.                                                                                                               | `VARCHAR[]` |
 
 ## `sdb_tables`
 

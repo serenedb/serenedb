@@ -478,30 +478,21 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
         call = &func;
       }
     }
-    const auto outer = _mode;
-    if (call && outer == Mode::Check) {
-      _mode = Folded(*call) ? Mode::Fold : Mode::Keep;
+    const auto outer = _keep;
+    if (call && !outer) {
+      if (auto folded = Folded(*call)) {
+        *slot = duckdb::make_uniq<duckdb::BoundConstantExpression>(
+          std::move(*folded));
+        return;
+      }
+      _keep = true;
     }
-    const auto mode = _mode;
     VisitExpressionChildren(**slot);
-    _mode = outer;
+    _keep = outer;
     RecordWrittenMinMatchBranches(**slot);
-    if (!call || mode != Mode::Fold) {
-      return;
-    }
-    auto folded = Folded(*call);
-    SDB_ASSERT(folded);
-    *slot =
-      duckdb::make_uniq<duckdb::BoundConstantExpression>(std::move(*folded));
   }
 
  private:
-  enum class Mode : uint8_t {
-    Check,
-    Fold,
-    Keep,
-  };
-
   std::optional<duckdb::Value> Folded(
     const duckdb::BoundFunctionExpression& call) const {
     return TryFoldTSQueryCall(_context,
@@ -510,7 +501,7 @@ class TSQueryFoldVisitor final : public duckdb::LogicalOperatorVisitor {
   }
 
   duckdb::ClientContext& _context;
-  Mode _mode = Mode::Check;
+  bool _keep = false;
 };
 
 void FoldTSQueryConstants(duckdb::OptimizerExtensionInput& input,

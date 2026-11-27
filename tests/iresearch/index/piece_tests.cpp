@@ -515,7 +515,7 @@ TEST(PieceTest, FuzzyWalksPublishTheirDistanceFromTheStart) {
   ASSERT_NE(nullptr, piece);
 
   const auto description = MakeParametricDescription(1, false);
-  const LevenshteinAcceptor fuzzy{
+  const BasicLevenshteinAcceptor<false> fuzzy{
     description, kEmptyStringView<byte_type>,
     ViewCast<byte_type>(std::string_view{"cat1"})};
   const auto walk = [&](const TermReader& field) {

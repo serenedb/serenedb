@@ -312,7 +312,7 @@ class FuzzyConjunctionOf final : public FuzzyConjunction {
                        fuzzy->Bytes(),
                        fuzzy->Bytemap(),
                        max_mem,
-                       std::is_same_v<A, BasicLevenshteinPrefixAcceptor<A::kByteMode>>,
+                       std::is_base_of_v<LevenshteinPrefixAcceptor, A>,
                        A::kByteMode},
       _fuzzy{std::move(fuzzy)} {
     InternStart();

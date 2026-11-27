@@ -48,10 +48,6 @@ class TermAcceptorSource {
   virtual std::shared_ptr<const RegexpAcceptor> Automaton() const {
     return nullptr;
   }
-
-  virtual std::shared_ptr<const LevenshteinAcceptor> Fuzzy() const {
-    return nullptr;
-  }
 };
 
 struct TermBounds {
@@ -63,9 +59,6 @@ TermAcceptorSource::ptr MakePatternSource(bytes_view pattern, PatternKind kind);
 
 TermAcceptorSource::ptr MakeFuzzySource(
   std::shared_ptr<const LevenshteinAcceptor> fuzzy, bool starts_with);
-
-TermAcceptorSource::ptr MakeFuzzySource(
-  std::shared_ptr<const ByteLevenshteinAcceptor> fuzzy, bool starts_with);
 
 TermAcceptorSource::ptr MakeJointSource(
   std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,

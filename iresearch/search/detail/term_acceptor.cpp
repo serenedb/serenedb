@@ -172,55 +172,46 @@ class WalkSource final : public TermAcceptorSource {
   std::shared_ptr<const A> _acceptor;
 };
 
-template<bool kStartsWith, bool kBytes>
+template<bool kStartsWith>
 class FuzzySource final : public TermAcceptorSource {
-  using Levenshtein = BasicLevenshteinAcceptor<kBytes>;
-  using Acceptor =
-    std::conditional_t<kStartsWith, BasicLevenshteinPrefixAcceptor<kBytes>,
-                       Levenshtein>;
+  using Acceptor = std::conditional_t<kStartsWith, LevenshteinPrefixAcceptor,
+                                      LevenshteinAcceptor>;
 
  public:
-  explicit FuzzySource(std::shared_ptr<const Levenshtein> fuzzy)
+  explicit FuzzySource(std::shared_ptr<const LevenshteinAcceptor> fuzzy)
     : _acceptor{Wrap(std::move(fuzzy))} {}
 
   bool ok() const noexcept final { return true; }
 
   SeekTermIterator::ptr Iterator(const TermReader& reader) const final {
     _once.Call([this] {
-      if constexpr (kBytes) {
-        _dfa = std::make_shared<const FuzzyConjunctionOf<Acceptor>>(
-          std::span<const std::shared_ptr<const RegexpAcceptor>>{}, _acceptor);
-      } else if (_acceptor->LowerBound().empty()) {
-        _dfa = FuzzyConjunctionOf<Acceptor>::Make(_acceptor);
+      if (_acceptor->LowerBound().empty()) {
+        _dfa = _acceptor->Visit([&]<typename A>(const A& typed)
+                                  -> std::shared_ptr<const FuzzyConjunction> {
+          return FuzzyConjunctionOf<A>::Make(
+            std::shared_ptr<const A>{_acceptor, &typed});
+        });
       }
     });
-    if constexpr (!kBytes) {
-      if (!_dfa) {
-        return reader.iterator(*_acceptor);
-      }
+    if (_dfa) {
+      return reader.iterator(*_dfa);
     }
-    return reader.iterator(*_dfa);
+    return reader.iterator(*_acceptor);
   }
 
   TermPredicate::ptr Predicate() const final {
-    return MakeTermPredicate([acceptor = _acceptor](bytes_view term) {
-      return acceptor->Matches(term);
+    return _acceptor->Visit([&]<typename A>(const A& typed) {
+      return MakeTermPredicate(
+        [acceptor = std::shared_ptr<const A>{_acceptor, &typed}](
+          bytes_view term) { return acceptor->Matches(term); });
     });
-  }
-
-  std::shared_ptr<const LevenshteinAcceptor> Fuzzy() const final {
-    if constexpr (kBytes || kStartsWith) {
-      return nullptr;
-    } else {
-      return _acceptor;
-    }
   }
 
  private:
   static std::shared_ptr<const Acceptor> Wrap(
-    std::shared_ptr<const Levenshtein> fuzzy) {
+    std::shared_ptr<const LevenshteinAcceptor> fuzzy) {
     if constexpr (kStartsWith) {
-      return std::make_shared<const Acceptor>(std::move(fuzzy));
+      return MakeLevenshteinPrefixAcceptor(std::move(fuzzy));
     } else {
       return fuzzy;
     }
@@ -301,16 +292,6 @@ class ConjunctionSource final : public TermAcceptorSource {
   std::shared_ptr<const Residual> _residual;
 };
 
-template<bool kBytes>
-TermAcceptorSource::ptr FuzzySourceOf(
-  std::shared_ptr<const BasicLevenshteinAcceptor<kBytes>> fuzzy,
-  bool starts_with) {
-  return Resolve(starts_with, [&]<bool kStartsWith> -> TermAcceptorSource::ptr {
-    return std::make_shared<const FuzzySource<kStartsWith, kBytes>>(
-      std::move(fuzzy));
-  });
-}
-
 }  // namespace
 
 TermAcceptorSource::ptr MakePatternSource(bytes_view pattern,
@@ -333,12 +314,9 @@ TermAcceptorSource::ptr MakePatternSource(bytes_view pattern,
 
 TermAcceptorSource::ptr MakeFuzzySource(
   std::shared_ptr<const LevenshteinAcceptor> fuzzy, bool starts_with) {
-  return FuzzySourceOf(std::move(fuzzy), starts_with);
-}
-
-TermAcceptorSource::ptr MakeFuzzySource(
-  std::shared_ptr<const ByteLevenshteinAcceptor> fuzzy, bool starts_with) {
-  return FuzzySourceOf(std::move(fuzzy), starts_with);
+  return Resolve(starts_with, [&]<bool kStartsWith> -> TermAcceptorSource::ptr {
+    return std::make_shared<const FuzzySource<kStartsWith>>(std::move(fuzzy));
+  });
 }
 
 TermAcceptorSource::ptr MakeJointSource(
@@ -349,13 +327,15 @@ TermAcceptorSource::ptr MakeJointSource(
     return std::make_shared<const WalkSource<RegexpConjunction>>(
       std::make_shared<const RegexpConjunction>(patterns));
   }
-  if (patterns.empty()) {
-    return std::make_shared<const WalkSource<LevenshteinAcceptor>>(
-      std::move(fuzzy));
-  }
-  return std::make_shared<const WalkSource<FuzzyConjunction>>(
-    std::make_shared<const FuzzyConjunctionOf<LevenshteinAcceptor>>(
-      patterns, std::move(fuzzy)));
+  return fuzzy->Visit([&]<typename A>(const A& typed) -> TermAcceptorSource::ptr {
+    std::shared_ptr<const A> acceptor{fuzzy, &typed};
+    if (patterns.empty()) {
+      return std::make_shared<const WalkSource<A>>(std::move(acceptor));
+    }
+    return std::make_shared<const WalkSource<FuzzyConjunction>>(
+      std::make_shared<const FuzzyConjunctionOf<A>>(patterns,
+                                                    std::move(acceptor)));
+  });
 }
 
 TermAcceptorSource::ptr MakeConjunctionSource(TermAcceptorSource::ptr driver,

@@ -33,157 +33,54 @@
 #include <vector>
 
 #include "iresearch/utils/byte_set.hpp"
+#include "iresearch/utils/dispatch.hpp"
 #include "iresearch/utils/levenshtein_utils.hpp"
 #include "iresearch/utils/string.hpp"
 #include "iresearch/utils/utf8_utils.hpp"
 
 namespace irs {
 
-struct LevenshteinState {
-  uint32_t pstate;  // parametric state, `kDeadState` is the sink
-  uint32_t offset;  // symbols of the target already consumed
-  uint32_t acc;
-  // 0 -- ready for a lead byte, which is the whole hot path; 1..3 --
-  // continuation bytes still expected; `kPrefixPhase + n` -- n bytes of the
-  // literal prefix matched. One field so a step tests one register.
-  uint32_t phase;
-
-  bool operator==(const LevenshteinState& other) const noexcept {
-    return std::bit_cast<std::array<uint32_t, 4>>(*this) ==
-           std::bit_cast<std::array<uint32_t, 4>>(other);
-  }
-
-  template<typename H>
-  friend H AbslHashValue(H h, const LevenshteinState& state) {
-    return H::combine(std::move(h),
-                      std::bit_cast<std::array<uint32_t, 4>>(state));
-  }
-};
-
 // A state is a parametric state plus the offset into the target's code points,
 // plus whatever of a multi-byte code point has already been consumed, so the
 // language stays code-point-based exactly as the compiled automaton's is while
-// the term iterator driving it walks bytes. With `kBytes` every byte is a
-// symbol of its own.
+// the term iterator driving it walks bytes. In byte mode every byte is a symbol
+// of its own.
 //
 // The description is referenced, not copied: every producer takes it from a
 // `pdp_f` provider whose descriptions outlive the query (`DefaultPDP` returns
 // statics).
-template<bool kBytes>
-class BasicLevenshteinAcceptor {
+class LevenshteinAcceptor {
  public:
   // The edit distance of the accepted key, which similarity scoring ranks by,
   // so a walk publishes it.
   using PayloadType = byte_type;
-  using State = LevenshteinState;
   static constexpr bool kHasPayload = true;
-  static constexpr bool kByteMode = kBytes;
 
   static constexpr uint32_t kDeadState = 0;
 
-  BasicLevenshteinAcceptor(const ParametricDescription& description,
-                           bytes_view prefix, bytes_view target)
-    : _description{&description},
-      _transitions{description.transitions()},
-      _prefix{prefix},
-      _chi_size{static_cast<uint32_t>(description.chi_size())},
-      _mask{description.chi_max() - 1},
-      _no_distance{static_cast<byte_type>(description.max_distance() + 1)} {
-    // A code point takes at least one byte, so this is an upper bound and the
-    // decode never grows the vector.
-    _target.reserve(target.size());
-    if constexpr (kBytes) {
-      _target.assign(target.begin(), target.end());
-    } else {
-      for (auto rest = ViewCast<char>(target); !rest.empty();) {
-        const auto checked =
-          simdutf::validate_utf8_with_errors(rest.data(), rest.size());
-        const auto valid = checked.error == simdutf::error_code::SUCCESS
-                             ? rest.size()
-                             : checked.count;
-        const auto at = _target.size();
-        _target.resize(at +
-                       simdutf::utf32_length_from_utf8(rest.data(), valid));
-        const auto written = simdutf::convert_valid_utf8_to_utf32(
-          rest.data(), valid, _target.data() + at);
-        SDB_ASSERT(at + written == _target.size());
-        if (valid == rest.size()) {
-          break;
-        }
-        _target.push_back(kInvalidSymbol);
-        rest.remove_prefix(valid + 1);
-      }
+  struct State {
+    uint32_t pstate;  // parametric state, `kDeadState` is the sink
+    uint32_t offset;  // symbols of the target already consumed
+    uint32_t acc;
+    // 0 -- ready for a lead byte, which is the whole hot path; 1..3 --
+    // continuation bytes still expected; `kPrefixPhase + n` -- n bytes of the
+    // literal prefix matched. One field so a step tests one register.
+    uint32_t phase;
+
+    bool operator==(const State& other) const noexcept {
+      return std::bit_cast<std::array<uint32_t, 4>>(*this) ==
+             std::bit_cast<std::array<uint32_t, 4>>(other);
     }
-    // The trailing word is what lets an unaligned read take `word + 1`
-    // unconditionally.
-    _words = _target.size() / kWordBits + 2;
-    _narrow.fill(kZeroSlot);
-    _chi.reserve((_target.size() + 1) * _words);
-    _chars.reserve(_target.size());
-    const auto new_slot = [this] {
-      const auto slot = static_cast<int32_t>(_chi.size() / _words);
-      _chi.resize(_chi.size() + _words, 0);
-      return slot;
-    };
-    new_slot();
-    for (size_t i = 0; i != _target.size(); ++i) {
-      const auto c = _target[i];
-      if (c == kInvalidSymbol) {
-        _chars.push_back({0, kZeroSlot});
-        continue;
-      }
-      int32_t slot = kZeroSlot;
-      if (c < kNarrowMax) {
-        slot = _narrow[c];
-        if (slot == kZeroSlot) {
-          slot = new_slot();
-          _narrow[c] = slot;
-        }
-      } else {
-        slot = WideSlotOf(c);
-        if (slot == kZeroSlot) {
-          slot = new_slot();
-          _wide.push_back(WideSlot{c, slot});
-        }
-      }
-      _chars.push_back(
-        {kBytes ? static_cast<byte_type>(c) : LeadByte(c), slot});
-      _chi[static_cast<size_t>(slot) * _words + i / kWordBits] |=
-        uint64_t{1} << (i % kWordBits);
-      if (c >= 0x80 && !kBytes) {
-        _leads[LeadByte(c)] = true;
-        if (c >= 0x10000) {
-          _partials.push_back(PartialKey(c >> 12, 2));
-        }
-        if (c >= 0x800) {
-          _partials.push_back(PartialKey(c >> 6, 1));
-        }
-      }
+
+    template<typename H>
+    friend H AbslHashValue(H h, const State& state) {
+      return H::combine(std::move(h),
+                        std::bit_cast<std::array<uint32_t, 4>>(state));
     }
-    AddBytes(_bytes.required, _prefix);
-    std::array<uint32_t, 0x80> counts{};
-    for (const auto c : _target) {
-      if (c < counts.size()) {
-        ++counts[c];
-      }
-    }
-    for (uint32_t c = 0; c != counts.size(); ++c) {
-      if (counts[c] > description.max_distance()) {
-        _bytes.required.Add(static_cast<byte_type>(c));
-      }
-    }
-    absl::c_sort(_partials);
-    _partials.erase(std::ranges::unique(_partials).begin(), _partials.end());
-    _slots = _chi.size() / _words;
-    const size_t offsets = _target.size() + _chi_size + 1;
-    if (description.size() < kUnknownState &&
-        offsets + _chi_size <= kOffsetMask &&
-        description.size() * offsets * _slots <= kMaxSteps) {
-      _offsets = offsets;
-      _stride = offsets * _slots;
-      _steps.assign(description.size() * _stride, kUnknownStep);
-    }
-  }
+  };
+
+  template<typename F>
+  decltype(auto) Visit(F&& f) const;
 
   State Start() const noexcept {
     return {1, 0, 0, _prefix.empty() ? 0U : kPrefixPhase};
@@ -204,25 +101,6 @@ class BasicLevenshteinAcceptor {
 
   static bool Alive(const State& state) noexcept {
     return state.pstate != kDeadState;
-  }
-
-  State Step(const State& state, byte_type label) const noexcept {
-    if constexpr (kBytes) {
-      if (state.phase == 0) [[likely]] {
-        return StepChar(state, label);
-      }
-    } else if (state.phase == 0) {
-      if (label < 0x80) [[likely]] {
-        return StepChar(state, label);
-      }
-      if (label >= 0xC2 && label < 0xE0) {
-        return {state.pstate, state.offset, Lead(label, 0x1FU), 1};
-      }
-    } else if (state.phase == 1 && (label & 0xC0) == 0x80) {
-      return StepChar({state.pstate, state.offset, 0, 0},
-                      (state.acc << 6) | (label & 0x3FU));
-    }
-    return StepSlow(state, label);
   }
 
   // A fuzzy state carries how much of the target it has consumed, so there is
@@ -254,29 +132,11 @@ class BasicLevenshteinAcceptor {
     return true;
   }
 
-  // Whole-term acceptance, for callers that test one key at a time instead of
-  // walking a dictionary.
-  bool Matches(bytes_view term) const noexcept {
-    PayloadType payload{};
-    return Matches(term, payload);
-  }
-
-  bool Matches(bytes_view term, PayloadType& payload) const noexcept {
-    auto state = Start();
-    for (const auto label : term) {
-      state = Step(state, label);
-      if (!Alive(state)) {
-        return false;
-      }
-    }
-    return Accept(state, payload);
-  }
-
   size_t MaxStates() const noexcept {
     const size_t partials =
-      kBytes ? 0
-             : static_cast<size_t>(absl::c_count(_leads, true)) +
-                 _partials.size() + 3;
+      _byte_mode ? 0
+                 : static_cast<size_t>(absl::c_count(_leads, true)) +
+                     _partials.size() + 3;
     const size_t offsets =
       _target.size() + _chi_size * (_description->max_distance() + 1) + 1;
     return _description->size() * offsets * (partials + 1) + _prefix.size();
@@ -288,7 +148,7 @@ class BasicLevenshteinAcceptor {
       own[label] = true;
     }
     for (const auto c : _target) {
-      if (c < 0x80 || kBytes || c == kInvalidSymbol) {
+      if (c < 0x80 || _byte_mode || c == kInvalidSymbol) {
         continue;
       }
       own[LeadByte(c)] = true;
@@ -307,7 +167,7 @@ class BasicLevenshteinAcceptor {
         bytemap[label] = static_cast<uint8_t>(classes++);
         continue;
       }
-      auto& c = label < 0x80 || kBytes
+      auto& c = label < 0x80 || _byte_mode
                   ? classes_of[static_cast<size_t>(_narrow[label])]
                   : kinds[kHighKinds[label - 0x80]];
       if (c < 0) {
@@ -361,32 +221,110 @@ class BasicLevenshteinAcceptor {
     return best_lo <= best_hi;
   }
 
- private:
-  static constexpr uint32_t kNarrowMax = 0x800;
-  static constexpr uint32_t kPrefixPhase = 4;
-  static constexpr uint32_t kInvalidSymbol = utf8_utils::kInvalidChar32;
-  static constexpr int32_t kZeroSlot = 0;
-  static constexpr size_t kWordBits = 64;
-  static constexpr size_t kUnknownState = 0xFFFF;
-  static constexpr uint32_t kOffsetMask = 0xFFFF;
-  static constexpr uint32_t kUnknownStep = std::numeric_limits<uint32_t>::max();
-  static constexpr size_t kMaxSteps = size_t{1} << 16;
-  static constexpr uint32_t kForeign = std::numeric_limits<uint32_t>::max();
-  static constexpr size_t kKinds = 5;
-  static constexpr std::array<uint8_t, 128> kHighKinds = [] {
-    std::array<uint8_t, 128> kinds{};
-    for (uint32_t label = 0x80; label != 0x100; ++label) {
-      kinds[label - 0x80] = label < 0xC0   ? 0
-                            : label < 0xC2 ? 4
-                            : label < 0xE0 ? 1
-                            : label < 0xF0 ? 2
-                            : label < 0xF5 ? 3
-                                           : 4;
+ protected:
+  LevenshteinAcceptor(const ParametricDescription& description,
+                      bytes_view prefix, bytes_view target, bool bytes)
+    : _description{&description},
+      _transitions{description.transitions()},
+      _prefix{prefix},
+      _chi_size{static_cast<uint32_t>(description.chi_size())},
+      _mask{description.chi_max() - 1},
+      _no_distance{static_cast<byte_type>(description.max_distance() + 1)},
+      _byte_mode{bytes} {
+    // A code point takes at least one byte, so this is an upper bound and the
+    // decode never grows the vector.
+    _target.reserve(target.size());
+    if (bytes) {
+      _target.assign(target.begin(), target.end());
+    } else {
+      for (auto rest = ViewCast<char>(target); !rest.empty();) {
+        const auto checked =
+          simdutf::validate_utf8_with_errors(rest.data(), rest.size());
+        const auto valid = checked.error == simdutf::error_code::SUCCESS
+                             ? rest.size()
+                             : checked.count;
+        const auto at = _target.size();
+        _target.resize(at +
+                       simdutf::utf32_length_from_utf8(rest.data(), valid));
+        const auto written = simdutf::convert_valid_utf8_to_utf32(
+          rest.data(), valid, _target.data() + at);
+        SDB_ASSERT(at + written == _target.size());
+        if (valid == rest.size()) {
+          break;
+        }
+        _target.push_back(kInvalidSymbol);
+        rest.remove_prefix(valid + 1);
+      }
     }
-    return kinds;
-  }();
-
-  static constexpr State Dead() noexcept { return {kDeadState, 0, 0, 0}; }
+    // The trailing word is what lets an unaligned read take `word + 1`
+    // unconditionally.
+    _words = _target.size() / kWordBits + 2;
+    _narrow.fill(kZeroSlot);
+    _chi.reserve((_target.size() + 1) * _words);
+    _chars.reserve(_target.size());
+    const auto new_slot = [this] {
+      const auto slot = static_cast<int32_t>(_chi.size() / _words);
+      _chi.resize(_chi.size() + _words, 0);
+      return slot;
+    };
+    new_slot();
+    for (size_t i = 0; i != _target.size(); ++i) {
+      const auto c = _target[i];
+      if (c == kInvalidSymbol) {
+        _chars.push_back({0, kZeroSlot});
+        continue;
+      }
+      int32_t slot = kZeroSlot;
+      if (c < kNarrowMax) {
+        slot = _narrow[c];
+        if (slot == kZeroSlot) {
+          slot = new_slot();
+          _narrow[c] = slot;
+        }
+      } else {
+        slot = WideSlotOf(c);
+        if (slot == kZeroSlot) {
+          slot = new_slot();
+          _wide.push_back(WideSlot{c, slot});
+        }
+      }
+      _chars.push_back({bytes ? static_cast<byte_type>(c) : LeadByte(c), slot});
+      _chi[static_cast<size_t>(slot) * _words + i / kWordBits] |=
+        uint64_t{1} << (i % kWordBits);
+      if (c >= 0x80 && !bytes) {
+        _leads[LeadByte(c)] = true;
+        if (c >= 0x10000) {
+          _partials.push_back(PartialKey(c >> 12, 2));
+        }
+        if (c >= 0x800) {
+          _partials.push_back(PartialKey(c >> 6, 1));
+        }
+      }
+    }
+    AddBytes(_bytes.required, _prefix);
+    std::array<uint32_t, 0x80> counts{};
+    for (const auto c : _target) {
+      if (c < counts.size()) {
+        ++counts[c];
+      }
+    }
+    for (uint32_t c = 0; c != counts.size(); ++c) {
+      if (counts[c] > description.max_distance()) {
+        _bytes.required.Add(static_cast<byte_type>(c));
+      }
+    }
+    absl::c_sort(_partials);
+    _partials.erase(std::ranges::unique(_partials).begin(), _partials.end());
+    _slots = _chi.size() / _words;
+    const size_t offsets = _target.size() + _chi_size + 1;
+    if (description.size() < kUnknownState &&
+        offsets + _chi_size <= kOffsetMask &&
+        description.size() * offsets * _slots <= kMaxSteps) {
+      _offsets = offsets;
+      _stride = offsets * _slots;
+      _steps.assign(description.size() * _stride, kUnknownStep);
+    }
+  }
 
   State StepSlow(State state, byte_type label) const noexcept {
     if (state.phase >= kPrefixPhase) {
@@ -426,12 +364,65 @@ class BasicLevenshteinAcceptor {
     return state;
   }
 
-  static constexpr uint64_t PartialKey(uint32_t acc, uint32_t phase) noexcept {
-    return (uint64_t{phase} << 32) | acc;
-  }
-
   uint32_t Lead(byte_type label, uint32_t mask) const noexcept {
     return _leads[label] ? label & mask : kForeign;
+  }
+
+  State StepChar(State state, uint32_t c) const noexcept {
+    const auto slot = Slot(c);
+    if (state.offset < _offsets) [[likely]] {
+      std::atomic_ref<uint32_t> step{
+        _steps[size_t{state.pstate} * _stride + size_t{state.offset} * _slots +
+               static_cast<size_t>(slot)]};
+      auto packed = step.load(std::memory_order_relaxed);
+      if (packed == kUnknownStep) [[unlikely]] {
+        const auto& transition =
+          Transition(state.pstate, ChiAt(slot, state.offset));
+        packed = (transition.first << 16) | (state.offset + transition.second);
+        step.store(packed, std::memory_order_relaxed);
+      }
+      state.pstate = packed >> 16;
+      state.offset = packed & kOffsetMask;
+      state.acc = 0;
+      return state;
+    }
+    const auto& transition =
+      Transition(state.pstate, ChiAt(slot, state.offset));
+    state.pstate = transition.first;
+    state.offset += transition.second;
+    state.acc = 0;
+    return state;
+  }
+
+ private:
+  static constexpr uint32_t kNarrowMax = 0x800;
+  static constexpr uint32_t kPrefixPhase = 4;
+  static constexpr uint32_t kInvalidSymbol = utf8_utils::kInvalidChar32;
+  static constexpr int32_t kZeroSlot = 0;
+  static constexpr size_t kWordBits = 64;
+  static constexpr size_t kUnknownState = 0xFFFF;
+  static constexpr uint32_t kOffsetMask = 0xFFFF;
+  static constexpr uint32_t kUnknownStep = std::numeric_limits<uint32_t>::max();
+  static constexpr size_t kMaxSteps = size_t{1} << 16;
+  static constexpr uint32_t kForeign = std::numeric_limits<uint32_t>::max();
+  static constexpr size_t kKinds = 5;
+  static constexpr std::array<uint8_t, 128> kHighKinds = [] {
+    std::array<uint8_t, 128> kinds{};
+    for (uint32_t label = 0x80; label != 0x100; ++label) {
+      kinds[label - 0x80] = label < 0xC0   ? 0
+                            : label < 0xC2 ? 4
+                            : label < 0xE0 ? 1
+                            : label < 0xF0 ? 2
+                            : label < 0xF5 ? 3
+                                           : 4;
+    }
+    return kinds;
+  }();
+
+  static constexpr State Dead() noexcept { return {kDeadState, 0, 0, 0}; }
+
+  static constexpr uint64_t PartialKey(uint32_t acc, uint32_t phase) noexcept {
+    return (uint64_t{phase} << 32) | acc;
   }
 
   uint32_t Partial(uint32_t acc, uint32_t phase) const noexcept {
@@ -488,32 +479,6 @@ class BasicLevenshteinAcceptor {
            _mask;
   }
 
-  State StepChar(State state, uint32_t c) const noexcept {
-    const auto slot = Slot(c);
-    if (state.offset < _offsets) [[likely]] {
-      std::atomic_ref<uint32_t> step{
-        _steps[size_t{state.pstate} * _stride + size_t{state.offset} * _slots +
-               static_cast<size_t>(slot)]};
-      auto packed = step.load(std::memory_order_relaxed);
-      if (packed == kUnknownStep) [[unlikely]] {
-        const auto& transition =
-          Transition(state.pstate, ChiAt(slot, state.offset));
-        packed = (transition.first << 16) | (state.offset + transition.second);
-        step.store(packed, std::memory_order_relaxed);
-      }
-      state.pstate = packed >> 16;
-      state.offset = packed & kOffsetMask;
-      state.acc = 0;
-      return state;
-    }
-    const auto& transition =
-      Transition(state.pstate, ChiAt(slot, state.offset));
-    state.pstate = transition.first;
-    state.offset += transition.second;
-    state.acc = 0;
-    return state;
-  }
-
   using WideSlot = std::pair<uint32_t, int32_t>;
 
   // Per code point of the target: the first byte of its UTF-8 form, which is
@@ -543,36 +508,98 @@ class BasicLevenshteinAcceptor {
   uint32_t _chi_size;
   uint64_t _mask;
   byte_type _no_distance;
-};
-
-struct LevenshteinPrefixState {
-  LevenshteinState inner;
-  byte_type best;
-
-  bool operator==(const LevenshteinPrefixState&) const = default;
-
-  template<typename H>
-  friend H AbslHashValue(H h, const LevenshteinPrefixState& state) {
-    return H::combine(std::move(h), state.inner, state.best);
-  }
+  bool _byte_mode;
 };
 
 template<bool kBytes>
-class BasicLevenshteinPrefixAcceptor {
+class BasicLevenshteinAcceptor final : public LevenshteinAcceptor {
  public:
-  using Fuzzy = BasicLevenshteinAcceptor<kBytes>;
-  using PayloadType = typename Fuzzy::PayloadType;
-  using State = LevenshteinPrefixState;
+  static constexpr bool kByteMode = kBytes;
+
+  BasicLevenshteinAcceptor(const ParametricDescription& description,
+                           bytes_view prefix, bytes_view target)
+    : LevenshteinAcceptor{description, prefix, target, kBytes} {}
+
+  State Step(const State& state, byte_type label) const noexcept {
+    if constexpr (kBytes) {
+      if (state.phase == 0) [[likely]] {
+        return StepChar(state, label);
+      }
+    } else if (state.phase == 0) {
+      if (label < 0x80) [[likely]] {
+        return StepChar(state, label);
+      }
+      if (label >= 0xC2 && label < 0xE0) {
+        return {state.pstate, state.offset, Lead(label, 0x1FU), 1};
+      }
+    } else if (state.phase == 1 && (label & 0xC0) == 0x80) {
+      return StepChar({state.pstate, state.offset, 0, 0},
+                      (state.acc << 6) | (label & 0x3FU));
+    }
+    return StepSlow(state, label);
+  }
+
+  // Whole-term acceptance, for callers that test one key at a time instead of
+  // walking a dictionary.
+  bool Matches(bytes_view term) const noexcept {
+    PayloadType payload{};
+    return Matches(term, payload);
+  }
+
+  bool Matches(bytes_view term, PayloadType& payload) const noexcept {
+    auto state = Start();
+    for (const auto label : term) {
+      state = Step(state, label);
+      if (!Alive(state)) {
+        return false;
+      }
+    }
+    return Accept(state, payload);
+  }
+};
+
+template<typename F>
+decltype(auto) LevenshteinAcceptor::Visit(F&& f) const {
+  return Resolve(_byte_mode, [&]<bool kBytes> -> decltype(auto) {
+    return f(static_cast<const BasicLevenshteinAcceptor<kBytes>&>(*this));
+  });
+}
+
+inline std::shared_ptr<const LevenshteinAcceptor> MakeLevenshteinAcceptor(
+  const ParametricDescription& description, bytes_view prefix,
+  bytes_view target, bool bytes) {
+  return Resolve(
+    bytes, [&]<bool kBytes> -> std::shared_ptr<const LevenshteinAcceptor> {
+      return std::make_shared<const BasicLevenshteinAcceptor<kBytes>>(
+        description, prefix, target);
+    });
+}
+
+class LevenshteinPrefixAcceptor {
+ public:
+  using PayloadType = LevenshteinAcceptor::PayloadType;
   static constexpr bool kHasPayload = true;
   static constexpr bool kCheapRuns = false;
   static constexpr bool kMayBeUnknown = false;
-  static constexpr bool kByteMode = kBytes;
 
-  explicit BasicLevenshteinPrefixAcceptor(
-    std::shared_ptr<const Fuzzy> inner) noexcept
-    : _inner{std::move(inner)} {}
+  struct State {
+    LevenshteinAcceptor::State inner;
+    PayloadType best;
 
-  const std::shared_ptr<const Fuzzy>& Inner() const noexcept { return _inner; }
+    bool operator==(const State&) const = default;
+
+    template<typename H>
+    friend H AbslHashValue(H h, const State& state) {
+      return H::combine(std::move(h), state.inner, state.best);
+    }
+  };
+
+  const std::shared_ptr<const LevenshteinAcceptor>& Inner() const noexcept {
+    return _inner;
+  }
+
+  template<typename F>
+  decltype(auto) Visit(F&& f) const;
 
   State Start() const noexcept { return Settle({_inner->Start(), kNone}); }
 
@@ -587,19 +614,67 @@ class BasicLevenshteinPrefixAcceptor {
   }
 
   static bool Alive(const State& state) noexcept {
-    return state.best != kNone || Fuzzy::Alive(state.inner);
-  }
-
-  State Step(const State& state, byte_type label) const noexcept {
-    if (Settled(state)) {
-      return state;
-    }
-    return Settle({_inner->Step(state.inner, label), state.best});
+    return state.best != kNone || LevenshteinAcceptor::Alive(state.inner);
   }
 
   static bool Accept(const State& state, PayloadType& payload) noexcept {
     payload = state.best;
     return state.best != kNone;
+  }
+
+  bool LiveRange(const State& state, uint32_t& lo,
+                 uint32_t& hi) const noexcept {
+    if (state.best != kNone) {
+      lo = 0;
+      hi = std::numeric_limits<byte_type>::max();
+      return true;
+    }
+    return _inner->LiveRange(state.inner, lo, hi);
+  }
+
+ protected:
+  explicit LevenshteinPrefixAcceptor(
+    std::shared_ptr<const LevenshteinAcceptor> inner) noexcept
+    : _inner{std::move(inner)} {}
+
+  static bool Settled(const State& state) noexcept {
+    return state.best == 0 || !LevenshteinAcceptor::Alive(state.inner);
+  }
+
+  State Settle(State state) const noexcept {
+    PayloadType distance{};
+    if (_inner->Accept(state.inner, distance) && distance < state.best) {
+      state.best = distance;
+    }
+    if (Settled(state)) {
+      state.inner = {};
+    }
+    return state;
+  }
+
+ private:
+  static constexpr PayloadType kNone = std::numeric_limits<PayloadType>::max();
+
+  std::shared_ptr<const LevenshteinAcceptor> _inner;
+};
+
+template<bool kBytes>
+class BasicLevenshteinPrefixAcceptor final : public LevenshteinPrefixAcceptor {
+ public:
+  using Fuzzy = BasicLevenshteinAcceptor<kBytes>;
+  static constexpr bool kByteMode = kBytes;
+
+  explicit BasicLevenshteinPrefixAcceptor(
+    std::shared_ptr<const Fuzzy> inner) noexcept
+    : LevenshteinPrefixAcceptor{std::move(inner)} {}
+
+  State Step(const State& state, byte_type label) const noexcept {
+    if (Settled(state)) {
+      return state;
+    }
+    return Settle(
+      {static_cast<const Fuzzy&>(*Inner()).Step(state.inner, label),
+       state.best});
   }
 
   bool Matches(bytes_view term) const noexcept {
@@ -617,41 +692,24 @@ class BasicLevenshteinPrefixAcceptor {
     }
     return Accept(state, payload);
   }
-
-  bool LiveRange(const State& state, uint32_t& lo,
-                 uint32_t& hi) const noexcept {
-    if (state.best != kNone) {
-      lo = 0;
-      hi = std::numeric_limits<byte_type>::max();
-      return true;
-    }
-    return _inner->LiveRange(state.inner, lo, hi);
-  }
-
- private:
-  static constexpr PayloadType kNone = std::numeric_limits<PayloadType>::max();
-
-  static bool Settled(const State& state) noexcept {
-    return state.best == 0 || !Fuzzy::Alive(state.inner);
-  }
-
-  State Settle(State state) const noexcept {
-    PayloadType distance{};
-    if (_inner->Accept(state.inner, distance) && distance < state.best) {
-      state.best = distance;
-    }
-    if (Settled(state)) {
-      state.inner = {};
-    }
-    return state;
-  }
-
-  std::shared_ptr<const Fuzzy> _inner;
 };
 
-using LevenshteinAcceptor = BasicLevenshteinAcceptor<false>;
-using ByteLevenshteinAcceptor = BasicLevenshteinAcceptor<true>;
-using LevenshteinPrefixAcceptor = BasicLevenshteinPrefixAcceptor<false>;
-using ByteLevenshteinPrefixAcceptor = BasicLevenshteinPrefixAcceptor<true>;
+template<typename F>
+decltype(auto) LevenshteinPrefixAcceptor::Visit(F&& f) const {
+  return _inner->Visit(
+    [&]<bool kBytes>(const BasicLevenshteinAcceptor<kBytes>&) -> decltype(auto) {
+      return f(static_cast<const BasicLevenshteinPrefixAcceptor<kBytes>&>(*this));
+    });
+}
+
+inline std::shared_ptr<const LevenshteinPrefixAcceptor>
+MakeLevenshteinPrefixAcceptor(std::shared_ptr<const LevenshteinAcceptor> inner) {
+  return inner->Visit(
+    [&]<bool kBytes>(const BasicLevenshteinAcceptor<kBytes>& fuzzy)
+      -> std::shared_ptr<const LevenshteinPrefixAcceptor> {
+      return std::make_shared<const BasicLevenshteinPrefixAcceptor<kBytes>>(
+        std::shared_ptr<const BasicLevenshteinAcceptor<kBytes>>{inner, &fuzzy});
+    });
+}
 
 }  // namespace irs

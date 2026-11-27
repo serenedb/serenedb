@@ -163,7 +163,7 @@ class LevenshteinIterator : public WrappedTermIterator {
 template<typename Visitor>
 void VisitImpl(const SubReader& segment, const TermReader& reader,
                const LevenshteinAutomatonOptions& options, Visitor&& visitor) {
-  SDB_ASSERT(options.source);
+  SDB_ASSERT(options.parametric);
   LevenshteinIterator it(reader, options);
   if (!it.next()) {
     return;
@@ -176,15 +176,15 @@ template<typename OnTerms, typename OnTerm>
 void WalkTopTerms(const TermReader& reader,
                   const LevenshteinAutomatonOptions& options, size_t limit,
                   OnTerms&& on_terms, OnTerm&& on_term) {
-  SDB_ASSERT(options.source);
+  SDB_ASSERT(options.parametric);
   std::optional<LevenshteinIterator> it{std::in_place, reader, options};
   if (!it->next()) {
     return;
   }
   on_terms(it->GetImpl());
-  const auto prefix = bytes_view{options.target}.substr(0, options.prefix_size);
-  const auto term = bytes_view{options.target}.substr(options.prefix_size);
-  std::shared_ptr<const void> narrow;
+  const auto prefix = options.parametric->LowerBound();
+  const auto term = bytes_view{options.target}.substr(prefix.size());
+  std::shared_ptr<const LevenshteinPrefixAcceptor> narrow;
   bstring past;
   auto distance = static_cast<uint8_t>(options.no_distance - 1);
   std::array<size_t, ParametricDescription::kMaxDistance + 1> reached{};
@@ -211,24 +211,12 @@ void WalkTopTerms(const TermReader& reader,
       if (description) {
         distance = narrowed;
         AssignAfterKey(past, it->value());
-        Resolve(options.bytes, [&]<bool kBytes> {
-          auto fuzzy = std::make_shared<const BasicLevenshteinAcceptor<kBytes>>(
-            description, prefix, term);
-          if constexpr (kBytes) {
-            auto source =
-              MakeFuzzySource(std::move(fuzzy), options.starts_with);
-            it.emplace(source->Iterator(reader), options);
-            narrow = std::move(source);
-          } else {
-            auto acceptor = std::make_shared<const LevenshteinPrefixAcceptor>(
-              std::move(fuzzy));
-            it.emplace(options.starts_with
-                         ? reader.iterator(*acceptor)
-                         : reader.iterator(*acceptor->Inner()),
-                       options);
-            narrow = std::move(acceptor);
-          }
-        });
+        auto acceptor = MakeLevenshteinPrefixAcceptor(MakeLevenshteinAcceptor(
+          description, prefix, term, options.bytes));
+        it.emplace(options.starts_with ? reader.iterator(*acceptor)
+                                       : reader.iterator(*acceptor->Inner()),
+                   options);
+        narrow = std::move(acceptor);
         if (!it->SeekGe(past)) {
           return;
         }
@@ -388,14 +376,14 @@ QueryBuilder::ptr ByEditDistance::PrepareSegment(const SubReader&,
 QueryBuilder::ptr LevenshteinAutomatonFilter::PrepareSegment(
   const SubReader& segment, const PrepareContext& ctx, irs::field_id id,
   DictRef dict, const LevenshteinAutomatonOptions& options, score_t boost) {
-  SDB_ASSERT(options.source);
+  SDB_ASSERT(options.parametric);
   return PrepareLevenshteinSegment(segment, ctx, id, dict, options,
                                    options.max_terms, boost);
 }
 
 field_visitor LevenshteinAutomatonFilter::visitor(
   const LevenshteinAutomatonOptions& options) {
-  if (!options.source) {
+  if (!options.parametric) {
     return [](const SubReader&, const TermReader&, FilterVisitor&) {};
   }
 
@@ -420,14 +408,8 @@ LevenshteinAutomatonOptions::LevenshteinAutomatonOptions(
   const ParametricDescription& d, ByEditDistanceAllOptions::pdp_f provider,
   bool with_transpositions, bool starts_with, bool bytes, bytes_view prefix,
   bytes_view term, size_t max_terms)
-  : prefix_size{prefix.size()},
-    source{Resolve(bytes,
-                   [&]<bool kBytes> {
-                     return MakeFuzzySource(
-                       std::make_shared<const BasicLevenshteinAcceptor<kBytes>>(
-                         d, prefix, term),
-                       starts_with);
-                   })},
+  : parametric{MakeLevenshteinAcceptor(d, prefix, term, bytes)},
+    source{MakeFuzzySource(parametric, starts_with)},
     provider{provider ? provider : &DefaultPDP},
     utf8_target_size{Utf8TargetSize(prefix, term, bytes)},
     no_distance{static_cast<byte_type>(d.max_distance() + 1)},
@@ -500,7 +482,7 @@ TermPredicate::ptr ByEditDistance::CompileTermPredicate() const {
 
 TermIterator::ptr LevenshteinAutomatonFilter::CompileTermIterator(
   const TermReader& reader) const {
-  if (!options().source) {
+  if (!options().parametric) {
     return nullptr;
   }
   const auto limit = options().max_terms;

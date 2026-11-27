@@ -107,15 +107,13 @@ const LevenshteinAcceptor::State& AutomatonState(
   return state.inner;
 }
 
-template<bool kBytes>
-const LevenshteinState& StateOf(const BasicLevenshteinAcceptor<kBytes>&,
-                                const FuzzyConjunction::Row& row) noexcept {
+const LevenshteinAcceptor::State& StateOf(
+  const LevenshteinAcceptor&, const FuzzyConjunction::Row& row) noexcept {
   return row.fuzzy;
 }
 
-template<bool kBytes>
-LevenshteinPrefixState StateOf(const BasicLevenshteinPrefixAcceptor<kBytes>&,
-                               const FuzzyConjunction::Row& row) noexcept {
+LevenshteinPrefixAcceptor::State StateOf(
+  const LevenshteinPrefixAcceptor&, const FuzzyConjunction::Row& row) noexcept {
   return {row.fuzzy, row.distance};
 }
 

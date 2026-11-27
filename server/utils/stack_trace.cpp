@@ -205,9 +205,9 @@ struct ThreadStatus {
   bool blocked = true;
 };
 
-std::optional<ThreadStatus> ReadStatus(pid_t tid, int signal) {
+std::optional<ThreadStatus> ReadStatus(pid_t tid, int signal,
+                                       std::span<char> buffer) {
   const auto path = absl::StrCat("/proc/self/task/", tid, "/status");
-  std::array<char, 4096> buffer{};
   ssize_t size = -1;
   if (const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC); fd >= 0) {
     size = ::read(fd, buffer.data(), buffer.size());
@@ -286,11 +286,12 @@ std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds timeout,
   const pid_t self = gettid();
   std::vector<ThreadStack> stacks;
   stacks.reserve(tids.size());
+  std::array<char, 4096> buffer{};
   for (const auto tid : tids) {
     if (stop()) {
       break;
     }
-    auto status = ReadStatus(tid, signal);
+    auto status = ReadStatus(tid, signal, buffer);
     if (!status) {
       continue;
     }

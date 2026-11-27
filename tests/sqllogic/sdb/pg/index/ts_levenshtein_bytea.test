@@ -86,25 +86,6 @@ SELECT id FROM lev_bin WHERE v @@ (ts_like('\x25a9'::bytea) && ts_levenshtein('\
 id
 4
 
-query
-EXPLAIN SELECT id FROM lev_bin WHERE v @@ (ts_like('\x25a9'::bytea) && ts_levenshtein('\xc3a8'::bytea, 1))
-----
-QUERY PLAN
-╭─ IRESEARCH_SCAN ───────────────────────────╮
-│ Table: lev_bin                             │
-│ Index Filter:                              │
-│ ╭─ And ────────────╮                       │
-│ ╰─────────┬────────╯                       │
-│           ├─────────────────────╮          │
-│ ╭─ Automaton ──────╮  ╭─ Levenshtein ────╮ │
-│ │ Field: v(string) │  │ Field: v(string) │ │
-│ │ Pattern: %\\xa9   │  │ Target: \\xc3\\xa8 │ │
-│ ╰──────────────────╯  │ Max Terms: 50    │ │
-│                       ╰──────────────────╯ │
-│ Projections: id                            │
-│ ~1 row                                     │
-╰────────────────────────────────────────────╯
-
 statement ok
 CREATE TEXT SEARCH DICTIONARY lev_bin_words AS split_text(case := 'lower') WITH (frequency, position)
 

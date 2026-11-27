@@ -327,15 +327,16 @@ TermAcceptorSource::ptr MakeJointSource(
     return std::make_shared<const WalkSource<RegexpConjunction>>(
       std::make_shared<const RegexpConjunction>(patterns));
   }
-  return fuzzy->Visit([&]<typename A>(const A& typed) -> TermAcceptorSource::ptr {
-    std::shared_ptr<const A> acceptor{fuzzy, &typed};
-    if (patterns.empty()) {
-      return std::make_shared<const WalkSource<A>>(std::move(acceptor));
-    }
-    return std::make_shared<const WalkSource<FuzzyConjunction>>(
-      std::make_shared<const FuzzyConjunctionOf<A>>(patterns,
-                                                    std::move(acceptor)));
-  });
+  return fuzzy->Visit(
+    [&]<typename A>(const A& typed) -> TermAcceptorSource::ptr {
+      std::shared_ptr<const A> acceptor{fuzzy, &typed};
+      if (patterns.empty()) {
+        return std::make_shared<const WalkSource<A>>(std::move(acceptor));
+      }
+      return std::make_shared<const WalkSource<FuzzyConjunction>>(
+        std::make_shared<const FuzzyConjunctionOf<A>>(patterns,
+                                                      std::move(acceptor)));
+    });
 }
 
 TermAcceptorSource::ptr MakeConjunctionSource(TermAcceptorSource::ptr driver,

@@ -2602,25 +2602,29 @@ TEST_F(RegexpUtilsTest, required_bytes) {
   EXPECT_EQ("ab", bytes(irs::RegexpConjunction{patterns}.Bytes().required));
 
   const auto description = irs::MakeParametricDescription(1, false);
-  const irs::BasicLevenshteinAcceptor<false> fuzzy{description, ToBytesView("x"),
-                                       ToBytesView("aabc")};
+  const irs::BasicLevenshteinAcceptor<false> fuzzy{
+    description, ToBytesView("x"), ToBytesView("aabc")};
   EXPECT_EQ("ax", bytes(fuzzy.Bytes().required));
-  EXPECT_EQ("abx", bytes(irs::FuzzyConjunctionOf<irs::BasicLevenshteinAcceptor<false>>{
-                     std::span{patterns}.last(1),
-                     std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-                       description, ToBytesView("x"), ToBytesView("aabc"))}
-                           .Bytes()
-                           .required));
-  const auto inner = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-    description, ToBytesView("x"), ToBytesView("aabc"));
-  EXPECT_EQ("ax",
-            bytes(irs::BasicLevenshteinPrefixAcceptor<false>{inner}.Bytes().required));
   EXPECT_EQ("abx",
-            bytes(irs::FuzzyConjunctionOf<irs::BasicLevenshteinPrefixAcceptor<false>>{
+            bytes(irs::FuzzyConjunctionOf<irs::BasicLevenshteinAcceptor<false>>{
               std::span{patterns}.last(1),
-              std::make_shared<const irs::BasicLevenshteinPrefixAcceptor<false>>(inner)}
+              std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+                description, ToBytesView("x"), ToBytesView("aabc"))}
                     .Bytes()
                     .required));
+  const auto inner =
+    std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+      description, ToBytesView("x"), ToBytesView("aabc"));
+  EXPECT_EQ(
+    "ax",
+    bytes(irs::BasicLevenshteinPrefixAcceptor<false>{inner}.Bytes().required));
+  EXPECT_EQ(
+    "abx",
+    bytes(irs::FuzzyConjunctionOf<irs::BasicLevenshteinPrefixAcceptor<false>>{
+      std::span{patterns}.last(1),
+      std::make_shared<const irs::BasicLevenshteinPrefixAcceptor<false>>(inner)}
+            .Bytes()
+            .required));
 }
 
 TEST_F(RegexpUtilsTest, required_bytes_hold_in_every_match) {

@@ -211,8 +211,8 @@ void WalkTopTerms(const TermReader& reader,
       if (description) {
         distance = narrowed;
         AssignAfterKey(past, it->value());
-        auto acceptor = MakeLevenshteinPrefixAcceptor(MakeLevenshteinAcceptor(
-          description, prefix, term, options.bytes));
+        auto acceptor = MakeLevenshteinPrefixAcceptor(
+          MakeLevenshteinAcceptor(description, prefix, term, options.bytes));
         it.emplace(options.starts_with ? reader.iterator(*acceptor)
                                        : reader.iterator(*acceptor->Inner()),
                    options);

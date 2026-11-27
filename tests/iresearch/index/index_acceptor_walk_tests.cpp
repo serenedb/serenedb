@@ -47,7 +47,8 @@
 
 using namespace std::literals;
 
-using WholeConjunction = irs::FuzzyConjunctionOf<irs::BasicLevenshteinAcceptor<false>>;
+using WholeConjunction =
+  irs::FuzzyConjunctionOf<irs::BasicLevenshteinAcceptor<false>>;
 using PrefixConjunction =
   irs::FuzzyConjunctionOf<irs::BasicLevenshteinPrefixAcceptor<false>>;
 
@@ -251,9 +252,10 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
                                 const irs::ParametricDescription& description,
                                 bool transpositions, std::string_view prefix,
                                 std::string_view target) {
-    const auto fuzzy = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-      description, irs::ViewCast<irs::byte_type>(prefix),
-      irs::ViewCast<irs::byte_type>(target));
+    const auto fuzzy =
+      std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+        description, irs::ViewCast<irs::byte_type>(prefix),
+        irs::ViewCast<irs::byte_type>(target));
     AssertEditDistanceWalk(reader, *fuzzy, description, transpositions, prefix,
                            target);
     const auto dfa = WholeConjunction::Make(fuzzy);
@@ -379,9 +381,10 @@ class AcceptorWalkIndexTestCase : public tests::IndexTestBase {
                                   const irs::ParametricDescription& description,
                                   bool transpositions, std::string_view prefix,
                                   std::string_view target, bool check_source) {
-    const auto fuzzy = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-      description, irs::ViewCast<irs::byte_type>(prefix),
-      irs::ViewCast<irs::byte_type>(target));
+    const auto fuzzy =
+      std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+        description, irs::ViewCast<irs::byte_type>(prefix),
+        irs::ViewCast<irs::byte_type>(target));
     const auto acceptor =
       std::make_shared<const irs::BasicLevenshteinPrefixAcceptor<false>>(fuzzy);
     const auto dfa = PrefixConjunction::Make(acceptor);
@@ -592,9 +595,10 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_walk_matches_scan) {
       SCOPED_TRACE(testing::Message("Target: '")
                    << target << testing::Message("', Edit distance: ")
                    << size_t(description.max_distance()));
-      const auto fuzzy = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-        description, irs::kEmptyStringView<irs::byte_type>,
-        irs::ViewCast<irs::byte_type>(target));
+      const auto fuzzy =
+        std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+          description, irs::kEmptyStringView<irs::byte_type>,
+          irs::ViewCast<irs::byte_type>(target));
       AssertWalk(reader, *fuzzy, true);
       const auto dfa = WholeConjunction::Make(fuzzy);
       ASSERT_NE(nullptr, dfa);
@@ -615,9 +619,10 @@ TEST_P(AcceptorWalkIndexTestCase, levenshtein_payload_is_edit_distance) {
   irs::utf8_utils::ToUTF32<false>(irs::ViewCast<irs::byte_type>(kTarget),
                                   std::back_inserter(target_chars));
 
-  const auto fuzzy = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-    description, irs::kEmptyStringView<irs::byte_type>,
-    irs::ViewCast<irs::byte_type>(kTarget));
+  const auto fuzzy =
+    std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+      description, irs::kEmptyStringView<irs::byte_type>,
+      irs::ViewCast<irs::byte_type>(kTarget));
   const auto dfa = WholeConjunction::Make(fuzzy);
   ASSERT_NE(nullptr, dfa);
 
@@ -769,10 +774,11 @@ TEST_P(AcceptorWalkIndexTestCase, fuzzy_conjunction_past_a_pattern_row_budget) {
     pattern(".*r.*", 1),
     pattern("b.*", irs::RegexpAcceptor::kDefaultMaxDfaMem),
   };
-  const auto fuzzy = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-    irs::MakeParametricDescription(2, true),
-    irs::kEmptyStringView<irs::byte_type>,
-    irs::ViewCast<irs::byte_type>("burden"sv));
+  const auto fuzzy =
+    std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+      irs::MakeParametricDescription(2, true),
+      irs::kEmptyStringView<irs::byte_type>,
+      irs::ViewCast<irs::byte_type>("burden"sv));
   const WholeConjunction conjunction{patterns, fuzzy};
   ASSERT_TRUE(irs::FuzzyConjunction::Unknown(conjunction.Start()));
   AssertWalk(reader, conjunction, true);
@@ -1089,19 +1095,22 @@ TEST_P(AcceptorWalkIndexTestCase, fuzzy_source_walks_the_parametric_language) {
   auto reader = open_reader();
 
   const auto narrow = irs::MakeParametricDescription(1, false);
-  const auto small = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-    narrow, irs::kEmptyStringView<irs::byte_type>,
-    irs::ViewCast<irs::byte_type>("burden"sv));
+  const auto small =
+    std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+      narrow, irs::kEmptyStringView<irs::byte_type>,
+      irs::ViewCast<irs::byte_type>("burden"sv));
   EXPECT_NE(nullptr, WholeConjunction::Make(small));
   EXPECT_EQ(nullptr, WholeConjunction::Make(small, 4096));
-  const auto prefixed = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-    narrow, irs::ViewCast<irs::byte_type>("bu"sv),
-    irs::ViewCast<irs::byte_type>("rden"sv));
+  const auto prefixed =
+    std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+      narrow, irs::ViewCast<irs::byte_type>("bu"sv),
+      irs::ViewCast<irs::byte_type>("rden"sv));
 
   const auto wide = irs::MakeParametricDescription(4, false);
-  const auto large = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-    wide, irs::kEmptyStringView<irs::byte_type>,
-    irs::ViewCast<irs::byte_type>("parliamentarians"sv));
+  const auto large =
+    std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+      wide, irs::kEmptyStringView<irs::byte_type>,
+      irs::ViewCast<irs::byte_type>("parliamentarians"sv));
   EXPECT_EQ(nullptr, WholeConjunction::Make(large));
 
   for (const auto& fuzzy : {small, prefixed, large}) {
@@ -1148,19 +1157,22 @@ TEST_P(AcceptorWalkIndexTestCase,
         std::move(fuzzy));
     };
   const auto narrow = irs::MakeParametricDescription(1, false);
-  const auto small = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-    narrow, irs::kEmptyStringView<irs::byte_type>,
-    irs::ViewCast<irs::byte_type>("burden"sv));
+  const auto small =
+    std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+      narrow, irs::kEmptyStringView<irs::byte_type>,
+      irs::ViewCast<irs::byte_type>("burden"sv));
   EXPECT_NE(nullptr, PrefixConjunction::Make(prefix_of(small)));
   EXPECT_EQ(nullptr, PrefixConjunction::Make(prefix_of(small), 4096));
-  const auto prefixed = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-    narrow, irs::ViewCast<irs::byte_type>("bu"sv),
-    irs::ViewCast<irs::byte_type>("rden"sv));
+  const auto prefixed =
+    std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+      narrow, irs::ViewCast<irs::byte_type>("bu"sv),
+      irs::ViewCast<irs::byte_type>("rden"sv));
 
   const auto wide = irs::MakeParametricDescription(4, false);
-  const auto large = std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
-    wide, irs::kEmptyStringView<irs::byte_type>,
-    irs::ViewCast<irs::byte_type>("parliamentarians"sv));
+  const auto large =
+    std::make_shared<const irs::BasicLevenshteinAcceptor<false>>(
+      wide, irs::kEmptyStringView<irs::byte_type>,
+      irs::ViewCast<irs::byte_type>("parliamentarians"sv));
   EXPECT_EQ(nullptr, PrefixConjunction::Make(prefix_of(large)));
 
   for (const auto& fuzzy : {small, prefixed, large}) {

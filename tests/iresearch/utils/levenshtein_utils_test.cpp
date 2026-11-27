@@ -37,7 +37,8 @@ void AssertDescription(
   const irs::bytes_view& term,
   const std::vector<std::tuple<irs::bytes_view, size_t, size_t, size_t>>&
     candidates) {
-  const irs::BasicLevenshteinAcceptor<false> acceptor{description, prefix, term};
+  const irs::BasicLevenshteinAcceptor<false> acceptor{description, prefix,
+                                                      term};
 
   irs::bstring target(prefix.data(), prefix.size());
   target += term;

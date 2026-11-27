@@ -672,9 +672,8 @@ class BasicLevenshteinPrefixAcceptor final : public LevenshteinPrefixAcceptor {
     if (Settled(state)) {
       return state;
     }
-    return Settle(
-      {static_cast<const Fuzzy&>(*Inner()).Step(state.inner, label),
-       state.best});
+    return Settle({static_cast<const Fuzzy&>(*Inner()).Step(state.inner, label),
+                   state.best});
   }
 
   bool Matches(bytes_view term) const noexcept {
@@ -696,14 +695,15 @@ class BasicLevenshteinPrefixAcceptor final : public LevenshteinPrefixAcceptor {
 
 template<typename F>
 decltype(auto) LevenshteinPrefixAcceptor::Visit(F&& f) const {
-  return _inner->Visit(
-    [&]<bool kBytes>(const BasicLevenshteinAcceptor<kBytes>&) -> decltype(auto) {
-      return f(static_cast<const BasicLevenshteinPrefixAcceptor<kBytes>&>(*this));
-    });
+  return _inner->Visit([&]<bool kBytes>(const BasicLevenshteinAcceptor<kBytes>&)
+                         -> decltype(auto) {
+    return f(static_cast<const BasicLevenshteinPrefixAcceptor<kBytes>&>(*this));
+  });
 }
 
 inline std::shared_ptr<const LevenshteinPrefixAcceptor>
-MakeLevenshteinPrefixAcceptor(std::shared_ptr<const LevenshteinAcceptor> inner) {
+MakeLevenshteinPrefixAcceptor(
+  std::shared_ptr<const LevenshteinAcceptor> inner) {
   return inner->Visit(
     [&]<bool kBytes>(const BasicLevenshteinAcceptor<kBytes>& fuzzy)
       -> std::shared_ptr<const LevenshteinPrefixAcceptor> {

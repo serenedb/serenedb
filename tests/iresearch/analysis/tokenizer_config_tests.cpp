@@ -369,6 +369,12 @@ TEST(TokenizerConfig, AnSqlStageWithoutItsTypeLeavesTheOutputUnknown) {
   members.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
   members.children.push_back(Child(untyped()));
   EXPECT_EQ(duckdb::LogicalTypeId::INVALID, OutputOf(Cfg{std::move(members)}));
+  UnionTokenizer::Options unknown_first;
+  unknown_first.children.push_back(Child(untyped()));
+  unknown_first.children.push_back(
+    Child(Cfg{irs::KeywordTokenizer::Options{}}));
+  EXPECT_EQ(duckdb::LogicalTypeId::INVALID,
+            OutputOf(Cfg{std::move(unknown_first)}));
   UnionTokenizer::Options mixed;
   mixed.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
   mixed.children.push_back(Child(Cfg{SqlTokenizer::Options{

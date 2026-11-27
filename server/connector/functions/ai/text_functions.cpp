@@ -348,7 +348,7 @@ duckdb::unique_ptr<duckdb::FunctionData> TextBind(
   auto bind = duckdb::make_uniq<TextBindData>();
   bind->spec = &spec;
   bind->chat =
-    BindChat(context, BoundAsSuperuser(input), spec.name,
+    BindChat(context, input.Role().is_superuser, spec.name,
              std::span{args}.subspan(index), spec.temperature, bind->endpoint);
 
   auto& system = bind->system;

@@ -322,7 +322,7 @@ replication::PublisherResult CallPublisher(
     conninfo.user = RolesOf(&context)->NameOf(owner);
   }
   const bool require_password =
-    info.password_required && !context.AccessOf(owner).is_superuser;
+    info.password_required && !duckdb::Role(context, owner).is_superuser;
   return replication::CallPublisher(
     conninfo, info.GetQualifiedName().Name().GetIdentifierName(),
     require_password, std::move(body));
@@ -669,7 +669,7 @@ void SereneDBCatalog::RequireSubscription(
       RequireConnInfo(
         role, alter->connection,
         password_required &&
-          !context.AccessOf(subscription.permissions.owner).is_superuser);
+          !duckdb::Role(context, subscription.permissions.owner).is_superuser);
       return;
     case SET_OPTIONS:
       RequirePasswordOption(role, ParseOptions(alter->options, kSetOptions));

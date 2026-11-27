@@ -220,7 +220,7 @@ duckdb::Catalog& LookupDatabase(duckdb::ClientContext& context,
                                 std::string_view name) {
   auto found =
     duckdb::Catalog::GetCatalogEntry(context, duckdb::Identifier{name});
-  if (!found || !duckdb::DatabaseVisible(context, context.CurrentRole(),
+  if (!found || !duckdb::DatabaseVisible(context, duckdb::Role(context),
                                          found->GetAttached())) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_DATABASE),
                     ERR_MSG("database \"", name, "\" does not exist"));
@@ -302,7 +302,7 @@ CollectMaintainTargets(duckdb::ClientContext& context,
         // Tables and views share one set, so the scan hands
         // back both.
         if (entry.type != duckdb::CatalogType::TABLE_ENTRY || entry.internal ||
-            !duckdb::EntryVisible(context, context.CurrentRole(), entry)) {
+            !duckdb::EntryVisible(context, duckdb::Role(context), entry)) {
           return;
         }
         auto& table = entry.Cast<duckdb::TableCatalogEntry>();
@@ -340,7 +340,7 @@ void CollectInvertedSteps(duckdb::ClientContext& context,
 bool MayMaintain(ConnectionContext& conn_ctx,
                  const duckdb::CatalogEntry& relation, std::string_view name,
                  std::string_view verb) {
-  if (duckdb::Check(conn_ctx, conn_ctx.CurrentRole(), relation,
+  if (duckdb::Check(conn_ctx, duckdb::Role(conn_ctx), relation,
                     duckdb::AclMode::Maintain)) {
     return true;
   }

@@ -412,7 +412,7 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemOneBind(
     .api = &kSystemOneApi,
     .secret_name = FoldString(context, *args[8], kFn, "secret_name"),
     .model = FoldString(context, *args[7], kFn, "model"),
-    .superuser = BoundAsSuperuser(input),
+    .superuser = input.Role().is_superuser,
   };
   const auto kinds =
     int{noul.has_value()} + int{choice.has_value()} + int{score.has_value()};

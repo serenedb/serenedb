@@ -182,7 +182,7 @@ void TsLexizeFunctionDynamic(duckdb::DataChunk& args,
                              duckdb::Vector& result) {
   const auto count = static_cast<uint32_t>(args.size());
   SDB_ASSERT(std::holds_alternative<DynamicCtx>(GetBindData(state).state));
-  const auto role = duckdb::CallerAccess(state);
+  const auto& role = duckdb::Role(state);
   duckdb::UnifiedVectorFormat dicts;
   args.data[0].ToUnifiedFormat(dicts);
   duckdb::UnifiedVectorFormat texts;
@@ -217,7 +217,7 @@ void TsLexizeArrayFunctionDynamic(duckdb::DataChunk& args,
                                   duckdb::Vector& result) {
   const auto count = static_cast<uint32_t>(args.size());
   SDB_ASSERT(std::holds_alternative<DynamicCtx>(GetBindData(state).state));
-  const auto role = duckdb::CallerAccess(state);
+  const auto& role = duckdb::Role(state);
   duckdb::UnifiedVectorFormat dicts;
   args.data[0].ToUnifiedFormat(dicts);
   auto& input = args.data[1];

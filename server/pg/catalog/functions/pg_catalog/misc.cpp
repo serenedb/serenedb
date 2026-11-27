@@ -189,7 +189,7 @@ void ShobjDescriptionFunction(duckdb::DataChunk& args,
   auto& context = state.GetContext();
   auto& cluster = catalog::ClusterOf(context);
   const auto transaction = cluster.GetCatalogTransaction(context);
-  const auto role = duckdb::CallerAccess(state);
+  const auto& role = duckdb::Role(state);
   duckdb::VariadicExecutor::Execute<duckdb::string_t, int64_t,
                                     duckdb::string_t>(
     args, result,
@@ -457,7 +457,7 @@ void CurrentSetting2Function(duckdb::DataChunk& args,
                              duckdb::ExpressionState& state,
                              duckdb::Vector& result) {
   auto& context = state.GetContext();
-  const auto caller = duckdb::CallerAccess(state);
+  const auto& caller = duckdb::Role(state);
   const auto names = args.data[0].Values<duckdb::string_t>();
   const auto oks = args.data[1].Values<bool>();
   auto writer =
@@ -564,7 +564,7 @@ void SignalBackendFunction(duckdb::DataChunk& args,
   auto& conn_ctx = ConnectionContext::Get(context);
   auto* registry = conn_ctx.GetCancelRegistry();
   const auto roles = catalog::RolesOf(&context);
-  const auto caller = duckdb::CallerAccess(state);
+  const auto& caller = duckdb::Role(state);
   const auto pids = args.data[0].Values<int32_t>();
   auto out = duckdb::FlatVector::Writer<bool>(result, args.size());
   for (duckdb::idx_t row = 0; row < args.size(); ++row) {
@@ -618,7 +618,7 @@ template<bool kSecurityDefinerBody>
 void SetConfigFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
                        duckdb::Vector& result) {
   auto& context = state.GetContext();
-  const auto caller = duckdb::CallerAccess(state);
+  const auto& caller = duckdb::Role(state);
   duckdb::TernaryExecutor::Execute<duckdb::string_t, duckdb::string_t, bool,
                                    duckdb::string_t>(
     args.data[0], args.data[1], args.data[2], result, args.size(),
@@ -1410,7 +1410,7 @@ bool DatabaseExists(duckdb::ExpressionState& state, int64_t oid) {
   auto& context = state.GetContext();
   auto database = FindDatabaseById(context, static_cast<duckdb::idx_t>(oid));
   return database &&
-         duckdb::EntryVisible(context, duckdb::CallerAccess(state), *database);
+         duckdb::EntryVisible(context, duckdb::Role(state), *database);
 }
 
 constexpr std::string_view kCollationKind = "collation";

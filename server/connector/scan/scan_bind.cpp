@@ -684,7 +684,7 @@ duckdb::unique_ptr<duckdb::FunctionData> ScanBind(
     properties.RegisterDataRead(index, context, input.table_index);
   }
   const auto& role =
-    input.binder ? input.binder->CheckAs() : context.CurrentRole();
+    input.binder ? input.binder->CheckAs() : duckdb::Role(context);
   if (auto host =
         index.GetRelation(index.catalog.GetCatalogTransaction(context));
       host && host->type == duckdb::CatalogType::VIEW_ENTRY) {

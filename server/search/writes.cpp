@@ -80,7 +80,7 @@ namespace {
 [[noreturn]] void ThrowNotUnique(duckdb::ClientContext& context,
                                  const catalog::SearchTableEntry& table,
                                  const KeySpec& spec, std::string_view key) {
-  const auto text = connector::ConstraintKeyText(context, context.CurrentRole(),
+  const auto text = connector::ConstraintKeyText(context, duckdb::Role(context),
                                                  table, spec, key);
   THROW_SQL_ERROR(
     ERR_CODE(ERRCODE_UNIQUE_VIOLATION),
@@ -134,9 +134,9 @@ void AddChanged(StoreWrites& w, Tick snapshot,
 duckdb::RoleAccess WriterAccess(duckdb::ClientContext& context,
                                 std::optional<duckdb::idx_t> writer) {
   if (!writer || *writer == context.current_role_id) {
-    return context.CurrentRole();
+    return duckdb::Role(context);
   }
-  return context.AccessOf(*writer);
+  return duckdb::Role(context, *writer);
 }
 
 bool HasUniqueKeys(const StoreWrites& w) noexcept {
@@ -1314,7 +1314,7 @@ void Writes::CheckKeys(duckdb::ClientContext& context, const Store& store,
     }
   }
   const LockedWrites locked{_writes, w};
-  const auto& role = context.CurrentRole();
+  const auto& role = duckdb::Role(context);
   w.writer = !w.writer || *w.writer == context.current_role_id
                ? context.current_role_id
                : duckdb::ACL_ID_PUBLIC;
@@ -1472,7 +1472,7 @@ void Writes::CheckStatement(duckdb::ClientContext& context) {
       continue;
     }
     const LockedWrites locked{_writes, w};
-    const auto& role = context.CurrentRole();
+    const auto& role = duckdb::Role(context);
     for (size_t spec = 0; spec != w.statement_references.size(); ++spec) {
       auto& keys = w.statement_references[spec];
       if (keys.empty()) {
@@ -1828,7 +1828,7 @@ void Writes::VerifyReferences(duckdb::ClientContext& context,
                               const KeySpec& spec) {
   absl::MutexLock all{&_mutex};
   auto referenced =
-    VerifyAllReferences(context, context.CurrentRole(), table, spec);
+    VerifyAllReferences(context, duckdb::Role(context), table, spec);
   _reference_checks.push_back({.table = &table,
                                .spec = spec,
                                .referenced = std::move(referenced),

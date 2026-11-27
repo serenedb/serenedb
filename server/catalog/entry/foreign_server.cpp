@@ -57,7 +57,7 @@ std::string ConnectionString(const ServerOptions& options) {
 }
 
 bool OwnedBySuperuser(duckdb::ClientContext& context, duckdb::idx_t owner) {
-  return owner == 0 || context.AccessOf(owner).is_superuser;
+  return owner == 0 || duckdb::Role(context, owner).is_superuser;
 }
 
 }  // namespace
@@ -142,7 +142,7 @@ void ForeignServerCatalogEntry::Attach(
                     duckdb::AttachVisibility::SHOWN, oid);
     return;
   }
-  const auto owner = context.AccessOf(permissions.owner);
+  const auto& owner = duckdb::Role(context, permissions.owner);
   const duckdb::ClientContext::AccessScope scope{.role = &owner};
   const duckdb::ClientContext::AccessScopeGuard guard{&context, scope};
   catalog::Attach(context, info, type, access_mode,

@@ -198,9 +198,8 @@ duckdb::unique_ptr<duckdb::FunctionData> SystemFunctionBind(
   if (input.binder) {
     input.binder->GetStatementProperties().RegisterDBRead(catalog, context);
   }
-  return duckdb::make_uniq<SystemTableBindData>(
-    table, catalog, nullptr,
-    input.binder ? input.binder->CallerRole() : duckdb::optional_idx{});
+  return duckdb::make_uniq<SystemTableBindData>(table, catalog, nullptr,
+                                                input.BoundRole());
 }
 
 }  // namespace

@@ -39,7 +39,7 @@ Session MakeSession(duckdb::ClientContext* context,
                     duckdb::optional_idx caller) {
   Session session{
     .context = context,
-    .role = context ? context->CallerAccess(caller) : duckdb::RoleAccess{},
+    .role = context ? duckdb::Role(*context, caller) : duckdb::RoleAccess{},
     .database =
       context ? catalog::DefaultSereneDBCatalog(*context).get() : nullptr,
     .transaction = std::nullopt,

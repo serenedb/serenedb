@@ -255,7 +255,7 @@ class CreateTSDictionaryOptions : public OptionsParser {
     if (OptionsParser::HasOption(Info.name)) {
       if constexpr (&Info == &tokenizer_options::kStopwordsPath ||
                     &Info == &tokenizer_options::kModelLocation) {
-        if (!_context.CurrentRole().Has(
+        if (!duckdb::Role(_context).Has(
               duckdb::RoleCapability::ReadServerFiles)) {
           THROW_SQL_ERROR(
             ERR_CODE(ERRCODE_INSUFFICIENT_PRIVILEGE),

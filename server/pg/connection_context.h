@@ -284,7 +284,7 @@ class ConnectionContext final : public duckdb::ClientContext {
   };
 
   void PublishSuperuser() {
-    SetSetting("is_superuser", CurrentRole().is_superuser ? "on" : "off",
+    SetSetting("is_superuser", duckdb::Role(*this).is_superuser ? "on" : "off",
                false);
   }
 

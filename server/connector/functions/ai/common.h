@@ -113,12 +113,6 @@ struct EndpointRef {
   bool operator==(const EndpointRef&) const = default;
 };
 
-bool BoundAsSuperuser(auto& input) {
-  return (input.HasBinder() ? input.GetBinder().CurrentRole()
-                            : input.GetClientContext().CurrentRole())
-    .is_superuser;
-}
-
 std::optional<duckdb::Value> FoldArgument(duckdb::ClientContext& context,
                                           duckdb::Expression& expr,
                                           std::string_view fn,

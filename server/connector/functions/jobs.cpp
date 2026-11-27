@@ -66,8 +66,7 @@ struct ExecuteJobData final : duckdb::TableFunctionData {
 
 struct ListingData final : duckdb::TableFunctionData {
   explicit ListingData(const duckdb::TableFunctionBindInput& input)
-    : caller_role{input.binder ? input.binder->CallerRole()
-                               : duckdb::optional_idx{}} {}
+    : caller_role{input.BoundRole()} {}
 
   duckdb::optional_idx caller_role;
 };
@@ -121,7 +120,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
     return catalog::IsSereneDB(database.GetCatalog()) && !database.IsReadOnly();
   };
   const auto role =
-    context.CallerAccess(input.bind_data->Cast<ListingData>().caller_role);
+    duckdb::Role(context, input.bind_data->Cast<ListingData>().caller_role);
   for (auto& schema :
        duckdb::Catalog::GetAllSchemas(context, role, false, holds_jobs)) {
     duckdb::Catalog::ScanListedEntries(
@@ -214,7 +213,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
   }
   absl::flat_hash_map<duckdb::idx_t, catalog::SereneDBCatalog*> databases;
   const auto role =
-    context.CallerAccess(input.bind_data->Cast<ListingData>().caller_role);
+    duckdb::Role(context, input.bind_data->Cast<ListingData>().caller_role);
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     if (catalog::IsSereneDB(database->GetCatalog()) &&

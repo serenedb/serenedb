@@ -267,12 +267,12 @@ struct EsBindData : duckdb::TableFunctionData {
 };
 
 duckdb::optional_idx CallerRoleOf(duckdb::optional_ptr<duckdb::Binder> binder) {
-  return binder ? binder->CallerRole() : duckdb::optional_idx{};
+  return binder ? binder->BoundRole() : duckdb::optional_idx{};
 }
 
 duckdb::RoleAccess CallerAccessOf(duckdb::ClientContext& context,
                                   duckdb::TableFunctionInitInput& input) {
-  return context.CallerAccess(input.bind_data->Cast<EsBindData>().caller_role);
+  return duckdb::Role(context, input.bind_data->Cast<EsBindData>().caller_role);
 }
 
 struct EsIndexBindData final : EsBindData {

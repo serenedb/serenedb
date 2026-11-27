@@ -240,7 +240,7 @@ void DatabaseSizeFunction(duckdb::DataChunk& args,
                           duckdb::ExpressionState& state,
                           duckdb::Vector& result) {
   auto& context = state.GetContext();
-  const auto role = duckdb::CallerAccess(state);
+  const auto& role = duckdb::Role(state);
   duckdb::UnaryExecutor::Execute<Key, int64_t>(
     args.data[0], result, args.size(), [&](Key key) -> int64_t {
       const auto entry = DatabaseEntry(context, key);

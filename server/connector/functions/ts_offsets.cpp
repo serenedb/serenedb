@@ -380,10 +380,9 @@ duckdb::unique_ptr<duckdb::FunctionData> OffsetsStandaloneBind(
 
   auto bind = duckdb::make_uniq<OffsetsBindData>();
   bind->dict_tokenizer = dict->GetTokenizer();
-  bind->filter = BuildFilterFromTSQuery(
-    context, *arguments[2], kStandaloneSyntheticColumnId, bind->dict_tokenizer,
-    input.HasBinder() ? input.GetBinder().CallerRole()
-                      : duckdb::optional_idx{});
+  bind->filter =
+    BuildFilterFromTSQuery(context, *arguments[2], kStandaloneSyntheticColumnId,
+                           bind->dict_tokenizer, input.BoundRole());
   constexpr size_t kDefaultOffsetsLimit = 1 << 12;
   bind->limit = kDefaultOffsetsLimit;
   if (arguments.size() == 4) {

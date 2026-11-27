@@ -87,7 +87,7 @@ std::string StoredPassword(duckdb::ClientContext& context,
 }
 
 duckdb::idx_t GrantorOfMembership(duckdb::ClientContext& context) {
-  if (context.CurrentRole().is_superuser) {
+  if (duckdb::Role(context).is_superuser) {
     return pg::kRootUser;
   }
   return ConnectionContext::Get(context).GetRoleId();

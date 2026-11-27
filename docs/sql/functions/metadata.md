@@ -481,7 +481,7 @@ The `sdb_stack_trace()` function returns the call stack of every thread of the s
 
 <SqlLogicTest id="sql/functions/metadata/example_032" hideResult />
 
-Each thread is briefly interrupted while its stack is read. A thread that does not report its stack within [`sdb_stack_trace_timeout`](../../configuration/overview.md#logging-metrics-and-profiling) milliseconds is returned with an empty `frames` list, and a thread that exits meanwhile is left out. A thread that is still reporting its stack when that time runs out leaves every thread with an empty `frames` list, in this call and later ones, until it finishes. Cancelling the query stops it between two threads.
+Each thread is briefly interrupted while its stack is read. A thread that does not report its stack within [`sdb_stack_trace_timeout`](../../configuration/overview.md#logging-metrics-and-profiling) milliseconds is returned with an empty `frames` list, and a thread that exits meanwhile is left out. A thread that is still reporting its stack when that time runs out leaves every thread with an empty `frames` list, in this call and later ones, until it finishes. The server log says at debug level why a thread has an empty `frames` list. When the limit on queued signals (`ulimit -i`) is reached, the call fails with an error. Cancelling the query stops it between two threads.
 
 | Column        | Description                                                                                                                  | Type        |
 | :------------ | :--------------------------------------------------------------------------------------------------------------------------- | :---------- |

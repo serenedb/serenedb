@@ -45,7 +45,10 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
+#include <iresearch/utils/log.hpp>
+#include <iresearch/utils/pg/sql_exception_macro.hpp>
 #include <optional>
 #include <span>
 #include <string>
@@ -227,9 +230,9 @@ std::optional<ThreadStatus> ReadStatus(pid_t tid, int signal,
   };
 }
 
-std::vector<uintptr_t> SignalAndWait(pid_t tid, int signal,
-                                     std::chrono::milliseconds timeout)
-  ABSL_EXCLUSIVE_LOCKS_REQUIRED(gMutex) {
+std::optional<std::vector<uintptr_t>> SignalAndWait(
+  pid_t tid, std::string_view name, int signal,
+  std::chrono::milliseconds timeout) ABSL_EXCLUSIVE_LOCKS_REQUIRED(gMutex) {
   const uint32_t seq = ++gSeq & kSeqMask;
   gRequest.word.store(Word(seq, Phase::Armed), std::memory_order_release);
   siginfo_t info = {};
@@ -239,20 +242,35 @@ std::vector<uintptr_t> SignalAndWait(pid_t tid, int signal,
   info.si_uid = getuid();
   info.si_value.sival_int = static_cast<int>(seq);
   if (syscall(SYS_rt_tgsigqueueinfo, getpid(), tid, signal, &info) != 0) {
-    return {};
+    const int error = errno;
+    if (error == ESRCH) {
+      return std::nullopt;
+    }
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_SYSTEM_ERROR),
+                    ERR_MSG("could not signal thread ", tid, " (", name,
+                            ") for its stack: ", std::strerror(error)));
   }
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (true) {
     auto word = gRequest.word.load(std::memory_order_acquire);
     if (word == Word(seq, Phase::Done)) {
-      return {gRequest.stack.begin(), gRequest.stack.end()};
+      return std::vector<uintptr_t>{gRequest.stack.begin(),
+                                    gRequest.stack.end()};
     }
     const auto left = deadline - std::chrono::steady_clock::now();
     if (left <= std::chrono::steady_clock::duration::zero()) {
-      if (word == Word(seq, Phase::Busy) ||
-          gRequest.word.compare_exchange_strong(word, 0,
+      if (word == Word(seq, Phase::Busy)) {
+        SDB_DEBUG(GENERAL, "Thread ", tid, " (", name,
+                  ") did not finish reporting its stack within ",
+                  timeout.count(), " ms");
+        return std::vector<uintptr_t>{};
+      }
+      if (gRequest.word.compare_exchange_strong(word, 0,
                                                 std::memory_order_acquire)) {
-        return {};
+        SDB_DEBUG(GENERAL, "Thread ", tid, " (", name,
+                  ") did not answer the stack trace signal within ",
+                  timeout.count(), " ms");
+        return std::vector<uintptr_t>{};
       }
       continue;
     }
@@ -295,18 +313,26 @@ std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds timeout,
     if (!status) {
       continue;
     }
-    auto& stack = stacks.emplace_back(tid, std::move(status->name));
+    std::vector<uintptr_t> frames;
     if (HandlerBusy()) {
-      continue;
+      SDB_DEBUG(GENERAL, "Thread ", tid, " (", status->name,
+                ") is skipped: another thread is still reporting its stack");
+    } else if (tid == self) {
+      std::array<uintptr_t, kMaxFrames> own{};
+      const auto captured =
+        Unwind(own, reinterpret_cast<uintptr_t>(__builtin_return_address(0)));
+      frames.assign(captured.begin(), captured.end());
+    } else if (status->blocked) {
+      SDB_DEBUG(GENERAL, "Thread ", tid, " (", status->name,
+                ") blocks the stack trace signal");
+    } else {
+      auto answer = SignalAndWait(tid, status->name, signal, timeout);
+      if (!answer) {
+        continue;
+      }
+      frames = std::move(*answer);
     }
-    if (tid == self) {
-      std::array<uintptr_t, kMaxFrames> frames{};
-      const auto own = Unwind(
-        frames, reinterpret_cast<uintptr_t>(__builtin_return_address(0)));
-      stack.frames.assign(own.begin(), own.end());
-    } else if (!status->blocked) {
-      stack.frames = SignalAndWait(tid, signal, timeout);
-    }
+    stacks.emplace_back(tid, std::move(status->name), std::move(frames));
   }
   return stacks;
 }

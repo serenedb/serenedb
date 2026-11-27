@@ -34,6 +34,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -44,6 +45,7 @@
 #include <cerrno>
 #include <chrono>
 #include <functional>
+#include <iresearch/utils/pg/sql_exception.hpp>
 #include <span>
 #include <string>
 #include <string_view>
@@ -401,6 +403,22 @@ TEST(StackTrace, ThreadBlockingTheSignalHasNoFrames) {
   EXPECT_FALSE(SignalPending(thread.Tid(), SIGRTMIN));
 
   stop_waiting.Notify();
+}
+
+TEST(StackTrace, FailsWhenTheSignalCannotBeQueued) {
+  absl::Notification stop_waiting;
+  Thread waiting{[&] { WaitInNotification(stop_waiting); }};
+  rlimit saved{};
+  ASSERT_EQ(getrlimit(RLIMIT_SIGPENDING, &saved), 0);
+  absl::Cleanup restore = [&] {
+    setrlimit(RLIMIT_SIGPENDING, &saved);
+    stop_waiting.Notify();
+  };
+  rlimit none = saved;
+  none.rlim_cur = 0;
+  ASSERT_EQ(setrlimit(RLIMIT_SIGPENDING, &none), 0);
+
+  EXPECT_THROW(std::ignore = CollectStacks(kTimeout), irs::SqlException);
 }
 
 TEST(StackTrace, IgnoresTheSignalFromElsewhere) {

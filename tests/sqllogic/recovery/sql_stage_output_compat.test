@@ -1,0 +1,65 @@
+control substitution on
+
+
+statement ok
+SET sdb_faults = 'tokenizer_config_without_last_option';
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY older_md5 AS (lambda x: unhex(md5(x)));
+
+
+statement ok
+RESET sdb_faults;
+
+
+statement ok
+CREATE TABLE hashed (id INTEGER PRIMARY KEY, s VARCHAR);
+
+
+statement ok
+CREATE INDEX hashed_idx ON hashed USING inverted (id, s older_md5);
+
+
+statement ok
+INSERT INTO hashed VALUES (1, 'quick'), (2, 'lazy');
+
+
+statement ok
+SET sdb_faults = 'crash_on_packet';
+
+
+statement error connection closed
+SELECT 1;
+
+
+connection after_crash
+query ok retry $RETRY_ATTEMPTS backoff $BACKOFF_DURATION
+SELECT 1;
+----
+?column?
+1
+
+
+connection after_crash
+statement error
+SELECT ts_dict_agg(s) FROM hashed_idx;
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+
+
+connection after_crash
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(s), lambda x: octet_length(x))) AS sizes FROM hashed_idx;
+----
+sizes
+{16,16}
+
+
+connection after_crash
+query
+SELECT pg_typeof(ts_lexize('older_md5', 'fox')) AS lexemes;
+----
+lexemes
+bytea[]

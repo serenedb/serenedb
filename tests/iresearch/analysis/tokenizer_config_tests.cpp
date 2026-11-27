@@ -356,6 +356,26 @@ TEST(TokenizerConfig, EverySpecDeclaresTheOutputItsTokenizerReports) {
   EXPECT_GT(checked, tests::fuzz::AllSpecs().size() / 2);
 }
 
+TEST(TokenizerConfig, AnSqlStageWithoutItsTypeLeavesTheOutputUnknown) {
+  const auto untyped = [] {
+    return Cfg{SqlTokenizer::Options{.expression = "x"}};
+  };
+  EXPECT_EQ(duckdb::LogicalTypeId::INVALID, OutputOf(untyped()));
+  PipelineTokenizer::Options pipeline;
+  pipeline.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
+  pipeline.children.push_back(Child(untyped()));
+  EXPECT_EQ(duckdb::LogicalTypeId::INVALID, OutputOf(Cfg{std::move(pipeline)}));
+  UnionTokenizer::Options members;
+  members.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
+  members.children.push_back(Child(untyped()));
+  EXPECT_EQ(duckdb::LogicalTypeId::INVALID, OutputOf(Cfg{std::move(members)}));
+  UnionTokenizer::Options mixed;
+  mixed.children.push_back(Child(Cfg{irs::KeywordTokenizer::Options{}}));
+  mixed.children.push_back(Child(Cfg{SqlTokenizer::Options{
+    .expression = "x", .output = duckdb::LogicalTypeId::BLOB}}));
+  EXPECT_EQ(duckdb::LogicalTypeId::BLOB, OutputOf(Cfg{std::move(mixed)}));
+}
+
 TEST(TokenizerConfig, OptionsAtTheirDefaultAreNotStored) {
   const auto plain =
     Pack(Cfg{NGramTokenizer::Options{.min_gram = 2, .max_gram = 3}});

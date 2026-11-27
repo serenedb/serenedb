@@ -44,6 +44,8 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <duckdb.hpp>
+#include <duckdb/common/exception.hpp>
 #include <functional>
 #include <iresearch/utils/pg/sql_exception.hpp>
 #include <span>
@@ -265,21 +267,24 @@ std::string ReadFile(const std::string& path) {
   return {buffer.data(), size > 0 ? static_cast<size_t>(size) : 0};
 }
 
-bool SignalPending(pid_t tid, int signal) {
-  constexpr std::string_view kKey = "\nSigPnd:";
+bool SignalInMask(pid_t tid, std::string_view field, int signal) {
   const auto status =
     ReadFile(absl::StrCat("/proc/self/task/", tid, "/status"));
-  const auto key = status.find(kKey);
+  const auto key = status.find(absl::StrCat("\n", field, ":"));
   if (key == std::string::npos) {
     return false;
   }
-  const auto* first = status.data() + key + kKey.size();
+  const auto* first = status.data() + key + field.size() + 2;
   while (*first == ' ' || *first == '\t') {
     ++first;
   }
   uint64_t mask = 0;
   fast_float::from_chars(first, status.data() + status.size(), mask, 16);
   return (mask >> (signal - 1) & 1) != 0;
+}
+
+bool SignalPending(pid_t tid, int signal) {
+  return SignalInMask(tid, "SigPnd", signal);
 }
 
 std::vector<ThreadStack> CollectAnswered(pid_t tid) {
@@ -538,6 +543,38 @@ TEST(StackTrace, AHandlerStuckUnwindingStopsUnwindingUntilItReturns) {
   hold = 0;
   const std::vector<Expectation> expected{{held, "SdbHeldCfiSpin"}};
   EXPECT_TRUE(Capture(expected));
+}
+
+bool InStackHandler(pid_t tid) { return SignalInMask(tid, "SigBlk", SIGRTMIN); }
+
+TEST(StackTrace, AQueryWaitingForAnotherCollectionStopsWhenInterrupted) {
+  duckdb::DuckDB db{nullptr};
+  duckdb::Connection first{db};
+  duckdb::Connection second{db};
+  std::atomic<uint64_t> hold = 1;
+  std::atomic<bool> stop = false;
+  Thread held{[&] { SdbHeldCfiSpin(&hold, &stop); }};
+  absl::Cleanup release = [&] {
+    hold = 0;
+    stop = true;
+  };
+
+  std::thread collecting{[&] {
+    EXPECT_FALSE(
+      CollectStacks(*first.context, std::chrono::seconds{5}).empty());
+  }};
+  while (!InStackHandler(held.Tid())) {
+    std::this_thread::sleep_for(std::chrono::milliseconds{1});
+  }
+  std::thread waiting{[&] {
+    EXPECT_THROW(std::ignore = CollectStacks(*second.context, kTimeout),
+                 duckdb::InterruptException);
+  }};
+  second.context->Interrupt();
+  waiting.join();
+
+  hold = 0;
+  collecting.join();
 }
 #endif
 

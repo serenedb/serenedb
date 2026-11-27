@@ -68,9 +68,9 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> StackTraceInit(
   auto result = duckdb::make_uniq<StackTraceState>();
   {
     duckdb::TaskScheduler::BlockingScope blocking;
-    result->stacks = CollectStacks(std::chrono::milliseconds{GetIntSetting(
-                                     context, "sdb_stack_trace_timeout")},
-                                   [&] { return context.IsInterrupted(); });
+    result->stacks =
+      CollectStacks(context, std::chrono::milliseconds{GetIntSetting(
+                               context, "sdb_stack_trace_timeout")});
   }
   context.InterruptCheck();
   return result;

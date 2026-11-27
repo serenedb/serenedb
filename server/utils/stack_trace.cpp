@@ -20,6 +20,11 @@
 
 #include "server/utils/stack_trace.h"
 
+#include <absl/cleanup/cleanup.h>
+#include <absl/synchronization/mutex.h>
+
+#include <atomic>
+
 #ifdef __linux__
 
 #include <absl/algorithm/container.h>
@@ -28,7 +33,6 @@
 #include <absl/functional/function_ref.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
-#include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 #include <fast_float/fast_float.h>
 #include <fcntl.h>
@@ -42,7 +46,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -351,3 +354,26 @@ std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds /*timeout*/,
 }  // namespace sdb
 
 #endif
+
+namespace sdb {
+namespace {
+
+constinit std::atomic<bool> gCollecting = false;
+
+}  // namespace
+
+std::vector<ThreadStack> CollectStacks(duckdb::ClientContext& context,
+                                       std::chrono::milliseconds timeout) {
+  {
+    absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
+    context.Await([] { return !gCollecting.load(); });
+    gCollecting.store(true);
+  }
+  absl::Cleanup release = [] {
+    gCollecting.store(false);
+    duckdb::ClientContext::Notify();
+  };
+  return CollectStacks(timeout, [&] { return context.InterruptPending(); });
+}
+
+}  // namespace sdb

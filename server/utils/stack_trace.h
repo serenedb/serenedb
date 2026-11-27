@@ -25,6 +25,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <duckdb/main/client_context.hpp>
 #include <string>
 #include <vector>
 
@@ -39,5 +40,8 @@ struct ThreadStack {
 [[nodiscard]] std::vector<ThreadStack> CollectStacks(
   std::chrono::milliseconds timeout,
   absl::FunctionRef<bool()> stop = [] { return false; });
+
+[[nodiscard]] std::vector<ThreadStack> CollectStacks(
+  duckdb::ClientContext& context, std::chrono::milliseconds timeout);
 
 }  // namespace sdb

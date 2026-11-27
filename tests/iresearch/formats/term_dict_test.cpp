@@ -569,10 +569,12 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
     }
   }
 
+  template<typename A>
   static void AssertWalk(const irs::TermReader& reader,
-                         const std::vector<Entry>& entries,
-                         const irs::RegexpAcceptor& acceptor) {
-    ASSERT_TRUE(acceptor.ok());
+                         const std::vector<Entry>& entries, const A& acceptor) {
+    if constexpr (std::is_same_v<A, irs::RegexpAcceptor>) {
+      ASSERT_TRUE(acceptor.ok());
+    }
     std::vector<irs::bytes_view> expected;
     for (const auto& entry : entries) {
       if (acceptor.Matches(entry.key)) {
@@ -1348,6 +1350,16 @@ TEST_P(TermDictTest, single_term_fields) {
       SCOPED_TRACE(testing::Message("pattern ") << pattern);
       AssertWalk(*reader, field.entries,
                  irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(pattern)});
+    }
+    const auto description = irs::MakeParametricDescription(1, false);
+    for (const bool bytes : {false, true}) {
+      SCOPED_TRACE(testing::Message("bytes ") << bytes);
+      const auto fuzzy = irs::MakeLevenshteinAcceptor(
+        description, {}, Bytes("h\xC3\xA9llo"), bytes);
+      fuzzy->Visit(
+        [&](const auto& typed) { AssertWalk(*reader, field.entries, typed); });
+      irs::MakeLevenshteinPrefixAcceptor(fuzzy)->Visit(
+        [&](const auto& typed) { AssertWalk(*reader, field.entries, typed); });
     }
     AssertVisits(*reader, field.entries, 20);
     if (single) {

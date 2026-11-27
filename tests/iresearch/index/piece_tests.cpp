@@ -515,12 +515,9 @@ TEST(PieceTest, FuzzyWalksPublishTheirDistanceFromTheStart) {
   ASSERT_NE(nullptr, piece);
 
   const auto description = MakeParametricDescription(1, false);
-  const BasicLevenshteinAcceptor<false> fuzzy{
-    description, kEmptyStringView<byte_type>,
-    ViewCast<byte_type>(std::string_view{"cat1"})};
-  const auto walk = [&](const TermReader& field) {
+  const auto walk = [&](const TermReader& field, const auto& acceptor) {
     std::vector<std::pair<std::string, byte_type>> terms;
-    auto it = field.iterator(fuzzy);
+    auto it = field.iterator(acceptor);
     const auto* payload = irs::get<PayAttr>(*it);
     EXPECT_NE(nullptr, payload);
     if (!payload) {
@@ -532,9 +529,19 @@ TEST(PieceTest, FuzzyWalksPublishTheirDistanceFromTheStart) {
     }
     return terms;
   };
-  const auto expected = walk(*flushed[0].fields(kKeyword).front());
-  EXPECT_FALSE(expected.empty());
-  EXPECT_EQ(expected, walk(*piece->fields(kKeyword).front()));
+  for (const bool bytes : {false, true}) {
+    SCOPED_TRACE(testing::Message("bytes ") << bytes);
+    const auto fuzzy = MakeLevenshteinAcceptor(
+      description, kEmptyStringView<byte_type>,
+      ViewCast<byte_type>(std::string_view{"cat1"}), bytes);
+    const auto prefix = MakeLevenshteinPrefixAcceptor(fuzzy);
+    const auto expected = walk(*flushed[0].fields(kKeyword).front(), *fuzzy);
+    EXPECT_FALSE(expected.empty());
+    EXPECT_EQ(expected, walk(*piece->fields(kKeyword).front(), *fuzzy));
+    const auto starting = walk(*flushed[0].fields(kKeyword).front(), *prefix);
+    EXPECT_FALSE(starting.empty());
+    EXPECT_EQ(starting, walk(*piece->fields(kKeyword).front(), *prefix));
+  }
 }
 
 TEST(PieceTest, SeeksAndRangesFollowTheSortedTerms) {

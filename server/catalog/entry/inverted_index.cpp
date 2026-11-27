@@ -382,10 +382,10 @@ ColumnTokenizer IndexTokenizers::Acquire(irs::field_id field_id,
           .tokenizer_column = field.tokenizer_column};
 }
 
-duckdb::LogicalTypeId IndexTokenizers::Output(irs::field_id field_id) const {
+duckdb::LogicalTypeId IndexTokenizers::Output(
+  irs::field_id field_id, duckdb::LogicalTypeId input) const {
   const auto& field = _fields.at(field_id);
-  return field.tokenizer ? field.tokenizer->Output(*_context)
-                         : duckdb::LogicalTypeId::VARCHAR;
+  return field.tokenizer ? field.tokenizer->Output(*_context, input) : input;
 }
 
 InvertedIndexConfig::InvertedIndexConfig(

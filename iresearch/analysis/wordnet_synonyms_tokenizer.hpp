@@ -67,6 +67,10 @@ class WordnetSynonymsTokenizer final
     std::string synonyms_text;
   };
   static Tokenizer::ptr Make(Options opts, duckdb::SharedObjectCache& cache);
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId input) noexcept {
+    return input;
+  }
 
   static constexpr std::string_view type_name() noexcept {
     return "expand_wordnet_synonyms";

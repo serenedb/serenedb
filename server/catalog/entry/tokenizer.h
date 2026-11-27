@@ -65,7 +65,8 @@ class Tokenizer final : public std::enable_shared_from_this<Tokenizer> {
     duckdb::ClientContext& context,
     duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR) const;
 
-  duckdb::LogicalTypeId Output(duckdb::ClientContext& context) const;
+  duckdb::LogicalTypeId Output(duckdb::ClientContext& context,
+                               duckdb::LogicalTypeId input) const;
 
   const irs::analysis::TokenizerConfig& Config() const noexcept {
     return _config;

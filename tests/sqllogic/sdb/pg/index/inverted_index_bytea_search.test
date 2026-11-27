@@ -939,14 +939,14 @@ statement error
 SELECT ts_dict_agg(v) FROM bt_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its terms are BYTEA, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 statement error
 SELECT ts_dict_max(v) FROM bt_idx
 ----
 db error: ERROR: ts_dict_max(): column has no text term dictionary
-HINT: its terms are BYTEA, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 # Ranges, ts_tokenize, ts_compound, modifiers and the query parsers.
@@ -1145,3 +1145,37 @@ SELECT list(id ORDER BY id) AS ids FROM bfz_idx WHERE v @@ to_tsquery('é~0.5')
 ----
 ids
 {1,4}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY btext_words AS split_text(case := 'lower')
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY btext_hex AS (lambda x: hex(x::BLOB))
+
+statement ok
+CREATE TABLE btext(id INTEGER PRIMARY KEY, w BYTEA, h BYTEA)
+
+statement ok
+CREATE INDEX btext_idx ON btext USING inverted(id, w btext_words, h btext_hex)
+
+statement ok
+INSERT INTO btext VALUES (1, 'Quick Fox'::bytea, 'ab'::bytea)
+
+statement error
+SELECT ts_dict_agg(w) FROM btext_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
+
+
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(w), lambda x: hex(x))) AS words FROM btext_idx
+----
+words
+{666F78,717569636B}
+
+query
+SELECT ts_dict_agg(h) AS hexes FROM btext_idx
+----
+hexes
+{6162}

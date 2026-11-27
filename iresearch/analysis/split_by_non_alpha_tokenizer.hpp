@@ -47,6 +47,10 @@ class SplitByNonAlphaTokenizer final
     Chars chars{Chars::Ascii};
   };
   static ptr Make(Options opts);
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId input) noexcept {
+    return input;
+  }
 
   explicit SplitByNonAlphaTokenizer(Options opts) noexcept : _options{opts} {}
 

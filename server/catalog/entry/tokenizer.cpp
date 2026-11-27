@@ -95,11 +95,17 @@ Tokenizer::TokenizerWrapper Tokenizer::Acquire(
   return wrapper;
 }
 
-duckdb::LogicalTypeId Tokenizer::Output(duckdb::ClientContext& context) const {
-  const auto output = irs::analysis::OutputOf(_config);
-  return output != duckdb::LogicalTypeId::INVALID
-           ? output
-           : Acquire(context)->Traits().output;
+duckdb::LogicalTypeId Tokenizer::Output(duckdb::ClientContext& context,
+                                        duckdb::LogicalTypeId input) const {
+  const auto output = irs::analysis::OutputOf(_config, input);
+  if (output != duckdb::LogicalTypeId::INVALID) {
+    return output;
+  }
+  auto typed = irs::analysis::Clone(_config);
+  irs::analysis::ResolveSqlOutputs(
+    typed, context,
+    irs::DuckDBEngine::Instance().instance().GetSharedObjectCache());
+  return irs::analysis::OutputOf(typed, input);
 }
 
 void Tokenizer::Release(duckdb::LogicalTypeId input,

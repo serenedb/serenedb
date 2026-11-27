@@ -338,21 +338,15 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
 
   const auto [kind, agg_name] = *fn_info;
   const bool bytes = element == duckdb::LogicalTypeId::BLOB;
-  if (kind == TsDictColumn::Term && bytes) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG(fn, "(): column has no text term dictionary"),
-                    ERR_HINT("its terms are BYTEA, which ts_dict_raw_agg "
-                             "returns"));
-  }
   if (kind == TsDictColumn::Term) {
     const auto output = scan.Bind().relation.ResolveTokenizers(context).Output(
-      index->TermField(col_id));
+      index->TermField(col_id), element);
     if (output != duckdb::LogicalTypeId::VARCHAR) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                      ERR_MSG(fn, "(): column has no text term dictionary"),
-                      ERR_HINT("its dictionary produces ",
-                               duckdb::LogicalTypeIdToString(output),
-                               " tokens, which ts_dict_raw_agg returns"));
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+        ERR_MSG(fn, "(): column has no text term dictionary"),
+        ERR_HINT("its terms are ", duckdb::LogicalTypeIdToString(output),
+                 ", which ts_dict_raw_agg returns"));
     }
   }
   return MakeTsDictAggregate(
@@ -2186,7 +2180,8 @@ class TsDictFilterClaim {
     }
     auto& req = _bind_data.ts_dict.requests.front();
     if (!req.bytes) {
-      const auto output = _getters.tokenizers.Output(req.field_id);
+      const auto output = _getters.tokenizers.Output(
+        req.field_id, duckdb::LogicalTypeId::VARCHAR);
       if (output != duckdb::LogicalTypeId::VARCHAR) {
         THROW_SQL_ERROR(
           ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),

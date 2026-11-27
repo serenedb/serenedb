@@ -37,6 +37,10 @@ class MultiDelimitedTokenizer : private util::Noncopyable {
   }
 
   static Tokenizer::ptr Make(Options opts);
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId input) noexcept {
+    return input;
+  }
 };
 
 }  // namespace analysis

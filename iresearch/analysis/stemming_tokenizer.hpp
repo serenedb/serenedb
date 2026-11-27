@@ -43,6 +43,10 @@ class StemmingTokenizer final : public TypedTokenizer<StemmingTokenizer>,
     duckdb::text::Locale locale;
   };
   static ptr Make(Options opts);
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId input) noexcept {
+    return input;
+  }
 
   static constexpr std::string_view type_name() noexcept {
     return "stem_words";

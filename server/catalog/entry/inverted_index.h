@@ -256,7 +256,8 @@ class IndexTokenizers {
   ColumnTokenizer Acquire(
     irs::field_id field_id,
     duckdb::LogicalTypeId input = duckdb::LogicalTypeId::VARCHAR) const;
-  duckdb::LogicalTypeId Output(irs::field_id field_id) const;
+  duckdb::LogicalTypeId Output(irs::field_id field_id,
+                               duckdb::LogicalTypeId input) const;
 
  private:
   struct Field {

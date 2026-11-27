@@ -35,6 +35,10 @@ class HtmlStripTokenizer final : public TypedTokenizer<HtmlStripTokenizer>,
     bool join_inline_tags{false};
   };
   static ptr Make(Options opts);
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId input) noexcept {
+    return input;
+  }
 
   static constexpr std::string_view type_name() noexcept {
     return "strip_html";

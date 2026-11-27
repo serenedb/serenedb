@@ -46,7 +46,7 @@ statement error
 SELECT ts_dict_agg(s) FROM hashed_idx;
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 connection after_crash

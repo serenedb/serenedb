@@ -57,6 +57,10 @@ class NormalizingTokenizer final : public TypedTokenizer<NormalizingTokenizer>,
     std::vector<uint32_t> keep_marks;
   };
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId input) noexcept {
+    return input;
+  }
 
   static constexpr std::string_view type_name() noexcept {
     return "normalize_tokens";

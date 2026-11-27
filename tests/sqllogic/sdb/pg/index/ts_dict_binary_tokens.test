@@ -17,21 +17,21 @@ statement error
 SELECT ts_dict_agg(w) FROM beast_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 statement error
 SELECT ts_dict_max(w) FROM beast_idx
 ----
 db error: ERROR: ts_dict_max(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 statement error
 SELECT ts_dict_agg(c) FROM beast_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 query
@@ -103,35 +103,35 @@ statement error
 SELECT ts_dict_agg(g) FROM beast_b_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 statement error
 SELECT ts_dict_agg(b) FROM beast_b_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 statement error
 SELECT ts_dict_agg(m) FROM beast_b_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 statement error
 SELECT ts_dict_agg(h) FROM beast_b_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 statement error
 SELECT ts_dict_agg(u) FROM beast_b_idx
 ----
 db error: ERROR: ts_dict_agg(): column has no text term dictionary
-HINT: its dictionary produces BLOB tokens, which ts_dict_raw_agg returns
+HINT: its terms are BLOB, which ts_dict_raw_agg returns
 
 
 statement error

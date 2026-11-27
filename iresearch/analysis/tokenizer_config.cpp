@@ -29,11 +29,7 @@ duckdb::LogicalTypeId OutputOf(const TokenizerConfig& cfg,
                                duckdb::LogicalTypeId input) noexcept {
   return std::visit(
     [&]<typename Options>(const Options& opts) {
-      if constexpr (requires { Options::Owner::Output(opts, input); }) {
-        return Options::Owner::Output(opts, input);
-      } else {
-        return duckdb::LogicalTypeId::VARCHAR;
-      }
+      return Options::Owner::Output(opts, input);
     },
     cfg.config);
 }

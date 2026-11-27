@@ -42,6 +42,10 @@ class PathHierarchyTokenizer {
   }
 
   static Tokenizer::ptr Make(Options opts);
+  static constexpr duckdb::LogicalTypeId Output(
+    const Options&, duckdb::LogicalTypeId input) noexcept {
+    return input;
+  }
 
  protected:
   explicit PathHierarchyTokenizer(Options&& options) noexcept;

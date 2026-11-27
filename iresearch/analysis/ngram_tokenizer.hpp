@@ -74,10 +74,10 @@ class NGramTokenizer final : public TypedTokenizer<NGramTokenizer>,
   bool preserve_original() const noexcept { return _options.preserve_original; }
 
   static duckdb::LogicalTypeId Output(const Options& opts,
-                                      duckdb::LogicalTypeId) noexcept {
+                                      duckdb::LogicalTypeId input) noexcept {
     return opts.stream_bytes_type == InputType::Binary
              ? duckdb::LogicalTypeId::BLOB
-             : duckdb::LogicalTypeId::VARCHAR;
+             : input;
   }
 
   TokenTraits Traits() const noexcept final {

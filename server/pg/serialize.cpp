@@ -39,6 +39,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <duckdb/common/allocator.hpp>
+#include <duckdb/common/logical_type_info.hpp>
 #include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/operator/string_cast.hpp>
 #include <duckdb/common/types/bit.hpp>
@@ -604,9 +605,10 @@ struct DecimalTextCore {
   IRS_FORCE_INLINE static size_t Render(
     uint8_t* dst, SerializationContext&,
     const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto& type = vdata.logical_type;
-    const auto precision = duckdb::DecimalType::GetWidth(type);
-    const auto scale = duckdb::DecimalType::GetScale(type);
+    const auto& decimal =
+      vdata.logical_type.GetTypeInfo().Cast<duckdb::DecimalTypeInfo>();
+    const auto precision = decimal.width;
+    const auto scale = decimal.scale;
     const auto value = duckdb::UnifiedVectorFormat::GetDataUnsafe<PhysicalType>(
       vdata.unified)[idx];
     // In-place, PG-compatible (leading zero, always an integer part): no
@@ -632,7 +634,8 @@ struct DecimalBinCore {
   IRS_FORCE_INLINE static size_t Render(
     uint8_t* dst, SerializationContext&,
     const duckdb::RecursiveUnifiedVectorFormat& vdata, duckdb::idx_t idx) {
-    const auto scale = duckdb::DecimalType::GetScale(vdata.logical_type);
+    const auto scale =
+      vdata.logical_type.GetTypeInfo().Cast<duckdb::DecimalTypeInfo>().scale;
     const auto value = duckdb::UnifiedVectorFormat::GetDataUnsafe<PhysicalType>(
       vdata.unified)[idx];
     if constexpr (std::is_same_v<PhysicalType, duckdb::hugeint_t>) {

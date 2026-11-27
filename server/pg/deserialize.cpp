@@ -33,6 +33,7 @@
 #include <cstring>
 #include <duckdb/common/exception.hpp>
 #include <duckdb/common/exception/conversion_exception.hpp>
+#include <duckdb/common/logical_type_info.hpp>
 #include <duckdb/common/operator/add.hpp>
 #include <duckdb/common/operator/cast_operators.hpp>
 #include <duckdb/common/operator/decimal_cast_operators.hpp>
@@ -682,11 +683,10 @@ bool PgDecimalMagnitude(std::string_view data, const duckdb::LogicalType& type,
   if (!ReadPgNumeric(data, value)) {
     return false;
   }
-  const auto& limit =
-    duckdb::Hugeint::POWERS_OF_TEN[duckdb::DecimalType::GetWidth(type)];
+  const auto& decimal = type.GetTypeInfo().Cast<duckdb::DecimalTypeInfo>();
+  const auto& limit = duckdb::Hugeint::POWERS_OF_TEN[decimal.width];
   if (!IsFinite(value) ||
-      !PgNumericMagnitude(value, duckdb::DecimalType::GetScale(type),
-                          magnitude) ||
+      !PgNumericMagnitude(value, decimal.scale, magnitude) ||
       magnitude >=
         absl::MakeUint128(static_cast<uint64_t>(limit.upper), limit.lower)) {
     THROW_SQL_ERROR(
@@ -729,9 +729,10 @@ struct DecimalIntBin {
       return false;
     }
     const auto value = static_cast<int64_t>(absl::Uint128Low64(magnitude));
+    const auto& decimal =
+      type.GetTypeInfo().template Cast<duckdb::DecimalTypeInfo>();
     sink.template Decimal<Phys>(static_cast<Phys>(negative ? -value : value),
-                                duckdb::DecimalType::GetWidth(type),
-                                duckdb::DecimalType::GetScale(type));
+                                decimal.width, decimal.scale);
     return true;
   }
 };
@@ -747,9 +748,10 @@ struct DecimalHugeintBin {
         !MagnitudeToHugeint(negative, magnitude, value)) {
       return false;
     }
-    sink.template Decimal<duckdb::hugeint_t>(
-      value, duckdb::DecimalType::GetWidth(type),
-      duckdb::DecimalType::GetScale(type));
+    const auto& decimal =
+      type.GetTypeInfo().template Cast<duckdb::DecimalTypeInfo>();
+    sink.template Decimal<duckdb::hugeint_t>(value, decimal.width,
+                                             decimal.scale);
     return true;
   }
 };
@@ -1116,9 +1118,10 @@ template<typename Phys>
 struct DecimalText {
   template<typename Sink>
   static bool Decode(DeserializeContext&, std::string_view data, Sink& sink) {
-    const auto& type = sink.Type();
-    const auto width = duckdb::DecimalType::GetWidth(type);
-    const auto scale = duckdb::DecimalType::GetScale(type);
+    const auto& decimal =
+      sink.Type().GetTypeInfo().template Cast<duckdb::DecimalTypeInfo>();
+    const auto width = decimal.width;
+    const auto scale = decimal.scale;
     Phys result;
     bool parsed = false;
     if constexpr (sizeof(Phys) <= sizeof(int64_t)) {

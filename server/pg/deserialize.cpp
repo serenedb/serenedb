@@ -2840,6 +2840,13 @@ duckdb::LogicalType ShapeType(const NumericShape& shape,
 
 }  // namespace
 
+bool ReceivesText(const duckdb::LogicalType& type) {
+  const auto id = type.id();
+  return (id == duckdb::LogicalTypeId::VARCHAR ||
+          id == duckdb::LogicalTypeId::CHAR) &&
+         !IsChar(type);
+}
+
 bool DeclaredNumericType(std::string_view data, VarFormat format, bool array,
                          duckdb::LogicalType& type) {
   const bool binary = format == VarFormat::Binary;

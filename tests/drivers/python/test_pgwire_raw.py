@@ -885,6 +885,34 @@ def test_malformed_typed_parameter_names_the_value(conn, sql, param, sqlstate,
     ]
 
 
+@pytest.mark.parametrize(
+    "sql, oid, fmt, param, message",
+    [
+        ("select $1::text", 25, 0, b"a\x00b",
+         'invalid byte sequence for encoding "UTF8": 0x00'),
+        ("select $1::text", 25, 1, b"a\x00b",
+         'invalid byte sequence for encoding "UTF8": 0x00'),
+        ("select $1::text", 25, 0, b"a\xffb",
+         'invalid byte sequence for encoding "UTF8": 0xff'),
+        ("select $1::text", 25, 1, b"a\xffb",
+         'invalid byte sequence for encoding "UTF8": 0xff'),
+        ("select $1::int4", 23, 0, b"1\x00",
+         'invalid byte sequence for encoding "UTF8": 0x00'),
+    ],
+)
+def test_parameter_text_must_be_utf8_without_zero_bytes(conn, sql, oid, fmt,
+                                                        param, message):
+    conn.parse("", sql, oids=(oid,))
+    conn.bind("", "", params=(param,), formats=(fmt,))
+    conn.execute("")
+    conn.sync()
+    m = conn.drain_to_ready()
+    assert sqlstates(m) == ["22021"]
+    assert [(e.get("M"), e.get("W")) for e in errors(m)] == [
+        (message, "unnamed portal parameter $1 = '...'")
+    ]
+
+
 def test_malformed_parameter_of_a_named_portal_names_the_portal(conn):
     conn.parse("", "select $1::int4", oids=(0,))
     conn.bind("p1", "", params=(b"abc",))

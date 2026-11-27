@@ -245,6 +245,8 @@ DeserializationFunction<Sink> GetDeserialization(
 bool DeclaredNumericType(std::string_view data, VarFormat format, bool array,
                          duckdb::LogicalType& type);
 
+bool ReceivesText(const duckdb::LogicalType& type);
+
 // Field deserializers of record-like types (STRUCT/MAP), cached by
 // (type identity | format bit) -- a bind decodes mixed-format params, so the
 // same type can need both a text and a binary decoder set. The deserialize twin

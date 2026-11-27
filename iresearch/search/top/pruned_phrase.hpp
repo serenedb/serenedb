@@ -124,7 +124,7 @@ class PrunedPhrase : public Root {
     if (b == index->Size()) {
       return doc_limits::eof();
     }
-    if (b >= _foresee_at) {
+    if (b >= _foresee_at && (_foresee_at != 0 || !_slots.InMemory(b))) {
       Foresee(*index, b, threshold);
     }
     return _slots.Seek(index->Last(b - 1) + 1);
@@ -144,8 +144,14 @@ class PrunedPhrase : public Root {
       blocks[count] = k;
       spans[count++] = {.first = index.Last(k - 1) + 1, .last = index.Last(k)};
     }
+    if (!_slots.ForeseeSpans({spans, count})) {
+      _foresee_at = 0;
+      return;
+    }
+    for (uint32_t i = 0; i != count; ++i) {
+      _fetcher.Foresee(spans[i].first, spans[i].last);
+    }
     _foresee_at = count == detail::kMostSpans ? blocks[count / 2] : n;
-    _slots.ForeseeSpans({spans, count});
   }
 
   doc_id_t MatchFirst(doc_id_t doc, doc_id_t end,

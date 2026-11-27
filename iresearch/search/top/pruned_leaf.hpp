@@ -138,6 +138,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
     _cached_runs.fill(kNoBlock);
     _root_score = std::numeric_limits<score_t>::max();
     _threshold = std::numeric_limits<score_t>::lowest();
+    _foresee_at = 0;
 
     if (meta.docs_count == 1) {
       *(std::end(_docs) - 1) = doc_limits::min() + meta.doc_delta;
@@ -308,7 +309,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
     const auto& index = _walk.Index();
     const auto n = index.Size();
     const auto b = _walk.Block();
-    if (b == n || !this->HintBlock(b)) {
+    if (b == n || b < _foresee_at || (_foresee_at == 0 && this->InMemory(b))) {
       return 0;
     }
     blocks[0] = b;
@@ -322,10 +323,22 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
       }
       blocks[count++] = k;
     }
-    if (count != 1) {
-      this->HintBlocks({blocks + 1, count - 1});
+    if (this->InMemory(blocks[count - 1])) {
+      _foresee_at = 0;
+      return 0;
     }
+    _foresee_at = count == kForeseenBlocks ? blocks[count / 2] : n;
+    this->HintBlocks({blocks, count});
+    ForeseeNorms(index, {blocks, count});
     return count;
+  }
+
+  IRS_NO_INLINE void ForeseeNorms(const BlockIndex& index,
+                                  std::span<const uint32_t> blocks) noexcept {
+    for (const auto b : blocks) {
+      _score.fetcher->Foresee(
+        b == 0 ? doc_limits::min() : index.Last(b - 1) + 1, index.Last(b));
+    }
   }
 
   IRS_FORCE_INLINE void Reposition() {
@@ -463,6 +476,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   std::array<score_t, kCachedRuns> _run_scores;
   score_t _root_score = std::numeric_limits<score_t>::max();
   score_t _threshold = std::numeric_limits<score_t>::lowest();
+  uint32_t _foresee_at = 0;
   uint32_t _len = 0;
   doc_id_t _base = 0;
   uint32_t _cost = 0;
@@ -587,8 +601,8 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
           }
         }
       });
-    if (landings != 0 && this->HintBlock(blocks[landings - 1])) {
-      this->HintBlocks({blocks, landings - 1});
+    if (landings != 0 && !this->InMemory(blocks[landings - 1])) {
+      this->HintBlocks({blocks, landings});
     }
     return landings;
   }

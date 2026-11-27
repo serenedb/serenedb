@@ -135,6 +135,8 @@ class PositionImpl final : public PosAttr {
     }
   }
 
+  const duckdb::InputFile& File() const noexcept { return *_pos.in.File(); }
+
   // prepares iterator to work
   void Prepare(const DocState& state) {
     if (!_pos.in) {

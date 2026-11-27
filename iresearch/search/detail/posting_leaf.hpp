@@ -119,6 +119,11 @@ struct DocSpan {
   doc_id_t last;
 };
 
+struct BlockRun {
+  uint32_t first;
+  uint32_t last;
+};
+
 inline constexpr size_t kMostSpans = 2 * BlockIndex::kRun;
 
 struct LeafScore {
@@ -247,6 +252,7 @@ class PostingLeaf {
   static constexpr bool kEnc = Shape.enc || !InputType::CONTIGUOUS;
   static constexpr uint32_t kBlock = doc_limits::kBlockSize;
   static constexpr auto kBits = BitsRequired<uint64_t>();
+  static constexpr doc_id_t kForeseenDocs = doc_id_t{1} << 16;
 
   IRS_FORCE_INLINE InputType& In() noexcept { return _in; }
 
@@ -291,12 +297,14 @@ class PostingLeaf {
   void OpenInput(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                  bool bounds, bool scans = false) {
     _in = OpenDocInput<InputType>(meta, doc_in,
-                                  scans || Shape.reads == LeafReads::Whole
-                                    ? duckdb::ReadAheadSteps::SCANNING
-                                    : duckdb::ReadAheadSteps::SKIPPING);
+                                  scans ? duckdb::ReadAheadSteps::SCANNING
+                                  : Shape.reads == LeafReads::Grows
+                                    ? duckdb::ReadAheadSteps::SKIPPING
+                                    : duckdb::ReadAheadSteps::NONE);
     auto& in = In();
     if constexpr (Shape.reads == LeafReads::Whole) {
       PrefetchDocs(doc_in, meta);
+      _foreseen = 0;
     }
     if (meta.docs_count <= kBlock) {
       SkipScoreBounds(bounds, in);
@@ -345,9 +353,24 @@ class PostingLeaf {
     }
     if (min > _last + doc_limits::kBlockSize && Armed()) [[unlikely]] {
       Land(min);
-      return !doc_limits::eof(_doc);
+      if (doc_limits::eof(_doc)) {
+        return false;
+      }
+    }
+    if constexpr (Shape.reads == LeafReads::Whole) {
+      if (uint64_t{max} + kForeseenDocs / 2 > _foreseen && Armed() &&
+          !_walk.Pending()) [[unlikely]] {
+        ForeseeFrom(std::max(min, _foreseen), max);
+      }
     }
     return true;
+  }
+
+  IRS_NO_INLINE void ForeseeFrom(doc_id_t from, doc_id_t max) {
+    _foreseen = static_cast<doc_id_t>(
+      std::min<uint64_t>(uint64_t{max} + kForeseenDocs, doc_limits::eof()));
+    const DocSpan span{.first = from, .last = _foreseen - 1};
+    ForeseeSpans({&span, 1});
   }
 
   IRS_FORCE_INLINE void SetFreqLen(bool has_freq) noexcept {
@@ -412,7 +435,9 @@ class PostingLeaf {
       _cursor.base = prev;
     }
     auto& in = In();
-    in.Advance();
+    if constexpr (Shape.reads == LeafReads::Grows) {
+      in.Advance();
+    }
     if (_left_in_list >= kBlock) [[likely]] {
       block_io::ReadBlockDelta(in, Enc(), _docs, prev);
       _left_in_leaf = kBlock;
@@ -435,7 +460,6 @@ class PostingLeaf {
   bool ReadLeafBelow(uint32_t len, doc_id_t min) {
     static_assert(Shape.scored && Shape.freqs && Shape.enc);
     auto& in = In();
-    in.Advance();
     block_io::ReadTailDelta(len, in, _enc.data, _docs, _last);
     _last = *(std::cend(_docs) - 1);
     if (_last < min) {
@@ -587,30 +611,40 @@ class PostingLeaf {
           __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
         }
       });
-    if (landings != 0 && HintBlock(blocks[landings - 1])) {
-      HintBlocks({blocks, landings - 1});
+    if (landings != 0 && !InMemory(blocks[landings - 1])) {
+      HintBlocks({blocks, landings});
     }
     return landings;
   }
 
   bool ForeseeSpans(std::span<const DocSpan> spans) {
+    BlockRun runs[kMostSpans];
+    const auto count = ForeseeRuns(spans, runs);
+    if (count == 0) {
+      return false;
+    }
+    HintRuns({runs, count});
+    return true;
+  }
+
+  uint32_t ForeseeRuns(std::span<const DocSpan> spans, BlockRun* runs) {
     SDB_ASSERT(spans.size() <= kMostSpans);
     if (spans.empty() || spans.back().last <= _last || _left_in_list == 0 ||
         !_walk.Armed()) {
-      return false;
+      return 0;
     }
-    return ForeseeArmed(spans);
+    return ForeseeArmed(spans, runs);
   }
 
-  IRS_NO_INLINE bool ForeseeArmed(std::span<const DocSpan> spans) {
+  IRS_NO_INLINE uint32_t ForeseeArmed(std::span<const DocSpan> spans,
+                                      BlockRun* runs) {
     const auto& index = _walk.Loaded(In());
     const auto n = index.Size();
     auto block = _walk.NextBlock(_left_in_list);
-    if (!HintBlock(std::min(index.Find(block, spans.back().last), n - 1))) {
-      return false;
+    if (InMemory(std::min(index.Find(block, spans.back().last), n - 1))) {
+      return 0;
     }
-    duckdb::FileRange ranges[kMostSpans];
-    size_t count = 0;
+    uint32_t count = 0;
     for (const auto& span : spans) {
       if (span.last <= _last) {
         continue;
@@ -620,17 +654,24 @@ class PostingLeaf {
         break;
       }
       block = std::min(index.Find(first, span.last), n - 1);
-      const auto start = _walk.BlockStart(first);
-      ranges[count++] = {.offset = start,
-                         .size = _walk.BlockEnd(block) - start};
+      runs[count++] = {.first = first, .last = block};
     }
-    In().File()->Hint(std::span{ranges, count});
-    return true;
+    return count;
   }
 
-  bool HintBlock(uint32_t block) {
+  IRS_NO_INLINE void HintRuns(std::span<const BlockRun> runs) {
+    duckdb::FileRange ranges[kMostSpans];
+    for (size_t i = 0; i != runs.size(); ++i) {
+      const auto start = _walk.BlockStart(runs[i].first);
+      ranges[i] = {.offset = start,
+                   .size = _walk.BlockEnd(runs[i].last) - start};
+    }
+    In().File()->Hint(std::span{ranges, runs.size()});
+  }
+
+  bool InMemory(uint32_t block) {
     const auto start = _walk.BlockStart(block);
-    return In().File()->Hint(start, _walk.BlockEnd(block) - start);
+    return In().File()->IsResident(start, _walk.BlockEnd(block) - start);
   }
 
   IRS_NO_INLINE void HintBlocks(std::span<const uint32_t> blocks) {
@@ -693,6 +734,8 @@ class PostingLeaf {
     std::conditional_t<Shape.defer, FreqProvider<ScoreInputs>, LeafProvider>>
     _provider;
   [[no_unique_address]] utils::Need<Shape.cursor, LeafCursor> _cursor;
+  [[no_unique_address]] utils::Need<Shape.reads == LeafReads::Whole, doc_id_t>
+    _foreseen{};
   BlockCursor<InputType> _walk;
 };
 

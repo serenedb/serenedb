@@ -29,6 +29,8 @@
 #include <iresearch/index/field_meta.hpp>
 #include <iresearch/index/index_reader.hpp>
 #include <iresearch/index/index_reader_options.hpp>
+#include <iresearch/search/detail/posting_count.hpp>
+#include <iresearch/search/detail/window.hpp>
 #include <iresearch/search/scorers/score_function.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/top/make.hpp>
@@ -810,9 +812,10 @@ TEST_P(Format15TestCase, AReaderReadsTheBlocksItForesawWithoutTheirPages) {
   const auto to = (meta.doc_start + meta.doc_delta) / page * page;
   ASSERT_LT(from + 16 * page, to);
   ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
-  doc_pages.prefetched.clear();
   ASSERT_TRUE(absl::c_all_of(std::span{doc_in->Data() + from, to - from},
                              [](irs::byte_type b) { return b == 0; }));
+  ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
+  doc_pages.prefetched.clear();
 
   const irs::doc_id_t targets[]{
     docs[100 * block + 5].first,
@@ -829,6 +832,62 @@ TEST_P(Format15TestCase, AReaderReadsTheBlocksItForesawWithoutTheirPages) {
   for (const auto target : targets) {
     ASSERT_EQ(target, follower.Seek(target));
   }
+}
+
+TEST_P(Format15TestCase, AWholeListReaderForeseesPastWhereItLandedOnly) {
+  static constexpr size_t kBlocks = 2048;
+  static constexpr auto kWindow = irs::detail::kWindowDocs;
+  const size_t block = GetPostingsBlockSize();
+  const auto docs = GenerateDocs(kBlocks * block, 8.f, 1.f, 2);
+  FreqScorer scorer;
+  auto dir = get_directory(*this);
+  ASSERT_NE(nullptr, dir);
+  auto [meta, reader, records] = WriteReadMeta(*dir, docs, &scorer, kFreq);
+  ASSERT_NE(nullptr, reader);
+
+  tests::ScriptedFileSystem fs{dir->Fs()};
+  const auto doc_in = fs.OpenInputFile(
+    fs.JoinPath(dir->Root(),
+                irs::FileName("segment_name", irs::PostingsWriter::kDocExt)),
+    duckdb::MappedFileAccess::RANDOM);
+  ASSERT_NE(nullptr, fs.mapped);
+  auto& doc_pages = *fs.mapped;
+  const auto page = static_cast<uint64_t>(::sysconf(_SC_PAGESIZE));
+  const auto from = (meta.doc_start / page + 2) * page;
+  const auto to = (meta.doc_start + meta.doc_delta) / page * page;
+  ASSERT_LT(from + 16 * page, to);
+  const auto drop = [&] {
+    ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
+    ASSERT_TRUE(absl::c_all_of(std::span{doc_in->Data() + from, to - from},
+                               [](irs::byte_type b) { return b == 0; }));
+    ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
+    duckdb::PageResidency::Invalidate();
+    doc_pages.prefetched.clear();
+  };
+  const auto expected = [&](irs::doc_id_t min) {
+    return static_cast<size_t>(absl::c_count_if(docs, [&](const Doc& doc) {
+      return doc.first >= min && doc.first < min + kWindow;
+    }));
+  };
+  const auto counted = [&](auto& leaf, irs::doc_id_t min) {
+    std::vector<uint32_t> counts(kWindow);
+    leaf.Count(min, min + kWindow, counts.data());
+    return static_cast<size_t>(absl::c_count(counts, 1U));
+  };
+
+  irs::detail::PostingCount<duckdb::MemoryReader> lander{meta, *doc_in, kFreq,
+                                                         true, true};
+  ASSERT_NO_FATAL_FAILURE(drop());
+  const auto far = docs[600 * block + 3].first;
+  EXPECT_EQ(expected(far), counted(lander, far));
+  EXPECT_FALSE(doc_pages.prefetched.empty());
+
+  irs::detail::PostingCount<duckdb::MemoryReader> walker{meta, *doc_in, kFreq,
+                                                         true, true};
+  ASSERT_NO_FATAL_FAILURE(drop());
+  const auto first = docs.front().first;
+  EXPECT_EQ(expected(first), counted(walker, first));
+  EXPECT_TRUE(doc_pages.prefetched.empty());
 }
 
 TEST_P(Format15TestCase, LongPostingsStressNone) {

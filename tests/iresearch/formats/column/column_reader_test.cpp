@@ -5993,6 +5993,52 @@ TEST_F(ColumnReaderTest, NormColumnRoundTrip) {
   }
 }
 
+TEST_F(ColumnReaderTest, NormReaderForeseesTheNormsOfADenseSpanOnce) {
+  constexpr uint64_t kDocs = 60000;
+  constexpr uint32_t kRgSize = 65536;
+  constexpr irs::field_id kN = 50;
+  const auto norm_val = [](uint64_t d) {
+    return static_cast<uint32_t>(d + 300);
+  };
+  const auto doc = [](uint64_t d) {
+    return static_cast<irs::doc_id_t>(d + irs::doc_limits::min());
+  };
+
+  tests::IndexDir mem{Db(), TestEnv::MemoryRoot()};
+  {
+    irs::ColWriter w{Db(), mem.Tracker("seg")};
+    auto& nw = w.OpenNormColumn(kN, kRgSize);
+    for (uint64_t d = 0; d < kDocs; ++d) {
+      nw.Append(d, norm_val(d));
+    }
+    w.Commit(kDocs);
+  }
+
+  ScriptedFileSystem fs{mem.Fs()};
+  irs::ColReader r{Db(),  fs,   mem.Root(),
+                   "seg", true, duckdb::MappedFileAccess::RANDOM};
+  ASSERT_NE(fs.mapped, nullptr);
+  const auto* nr = r.NormColumn(kN);
+  ASSERT_NE(nr, nullptr);
+  ASSERT_TRUE(nr->Paged());
+  ASSERT_NO_FATAL_FAILURE(fs.mapped->KeepUntil(0));
+  duckdb::PageResidency::Invalidate();
+  auto& prefetched = fs.mapped->prefetched;
+  prefetched.clear();
+  const auto reader = irs::MakePersistedNormReader(*nr);
+
+  reader->Foresee(doc(30000), doc(30127));
+  EXPECT_EQ(prefetched.size(), 1);
+  prefetched.clear();
+  reader->Foresee(doc(30000), doc(30127));
+  EXPECT_TRUE(prefetched.empty());
+  reader->Foresee(doc(1000), doc(41000));
+  EXPECT_TRUE(prefetched.empty());
+  for (uint64_t d = 30000; d != 30128; ++d) {
+    EXPECT_EQ(reader->Get(doc(d)), norm_val(d)) << "doc " << d;
+  }
+}
+
 // BlobPointReader: point-read raw bytes of a BLOB column (incl null rows),
 // across row-group boundaries -- the geo/wildcard exact-match access path.
 TEST_F(ColumnReaderTest, BlobPointReaderFetch) {

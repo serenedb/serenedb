@@ -172,18 +172,21 @@ class PhraseSlots {
     return _leaves.Probe(target);
   }
 
-  void ForeseeSpans(std::span<const DocSpan> spans) {
-    auto* const bound = BoundLeaf();
-    if (!bound || !bound->ForeseeSpans(spans)) {
-      return;
-    }
+  bool ForeseeSpans(std::span<const DocSpan> spans) {
+    const auto* const bound = BoundLeaf();
+    bool hinted = false;
     for (auto& slot : _leaves) {
       for (auto& leaf : LeavesOf(slot)) {
-        if (&leaf != bound) {
-          leaf.ForeseeSpans(spans);
-        }
+        const bool hints = leaf.ForeseeSpans(spans);
+        hinted = hinted || (&leaf == bound && hints);
       }
     }
+    return hinted;
+  }
+
+  bool InMemory(uint32_t block) {
+    auto* const bound = BoundLeaf();
+    return !bound || bound->InMemory(block);
   }
 
   bool Match(doc_id_t) { return Collect() && _matcher.Match(); }

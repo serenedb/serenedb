@@ -30,14 +30,11 @@ namespace sdb::pg {
 
 struct SystemTableBindData final : duckdb::FunctionData {
   SystemTableBindData(const SystemTable& table, catalog::BaseCatalog& catalog,
-                      catalog::SystemTableEntry* entry,
-                      duckdb::optional_idx caller_role)
-    : table{table}, catalog{catalog}, entry{entry}, caller_role{caller_role} {}
-  SystemTableBindData(catalog::SystemTableEntry& entry,
-                      duckdb::optional_idx caller_role)
+                      catalog::SystemTableEntry* entry)
+    : table{table}, catalog{catalog}, entry{entry} {}
+  explicit SystemTableBindData(catalog::SystemTableEntry& entry)
     : SystemTableBindData{entry.Table(),
-                          entry.catalog.Cast<catalog::BaseCatalog>(), &entry,
-                          caller_role} {}
+                          entry.catalog.Cast<catalog::BaseCatalog>(), &entry} {}
 
   duckdb::unique_ptr<duckdb::FunctionData> Copy() const final {
     return duckdb::make_uniq<SystemTableBindData>(*this);
@@ -46,7 +43,7 @@ struct SystemTableBindData final : duckdb::FunctionData {
   bool Equals(const duckdb::FunctionData& other) const final {
     const auto& data = other.Cast<SystemTableBindData>();
     return &table == &data.table && &catalog == &data.catalog &&
-           entry == data.entry && caller_role == data.caller_role;
+           entry == data.entry;
   }
 
   bool RegistersDataVersions() const final { return true; }
@@ -54,13 +51,11 @@ struct SystemTableBindData final : duckdb::FunctionData {
   const SystemTable& table;
   catalog::BaseCatalog& catalog;
   catalog::SystemTableEntry* entry;
-  duckdb::optional_idx caller_role;
 };
 
 duckdb::TableFunction BindSystemTableScan(
   catalog::SystemTableEntry& entry,
-  duckdb::unique_ptr<duckdb::FunctionData>& bind_data,
-  duckdb::optional_idx caller_role);
+  duckdb::unique_ptr<duckdb::FunctionData>& bind_data);
 
 void RegisterSystemTableScanFunction(duckdb::DatabaseInstance& db);
 

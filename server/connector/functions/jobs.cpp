@@ -64,13 +64,6 @@ struct ExecuteJobData final : duckdb::TableFunctionData {
   catalog::JobCatalogEntry& job;
 };
 
-struct ListingData final : duckdb::TableFunctionData {
-  explicit ListingData(const duckdb::TableFunctionBindInput& input)
-    : caller_role{input.BoundRole()} {}
-
-  duckdb::optional_idx caller_role;
-};
-
 duckdb::Value OptionalTimestamp(bool valid, duckdb::timestamp_t value) {
   return valid ? duckdb::Value::TIMESTAMPTZ(duckdb::timestamp_tz_t{value})
                : duckdb::Value{duckdb::LogicalType::TIMESTAMP_TZ};
@@ -110,7 +103,7 @@ duckdb::unique_ptr<duckdb::FunctionData> JobsBind(
   add("comment", duckdb::LogicalType::VARCHAR);
   add("body", duckdb::LogicalType::VARCHAR);
   add("sql", duckdb::LogicalType::VARCHAR);
-  return duckdb::make_uniq<ListingData>(input);
+  return nullptr;
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
@@ -120,8 +113,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
     return catalog::IsSereneDB(database.GetCatalog()) && !database.IsReadOnly();
   };
   const duckdb::CatalogEntryRetriever retriever{
-    context,
-    duckdb::Role(context, input.bind_data->Cast<ListingData>().caller_role)};
+    context, duckdb::Role(context, input.bound_role)};
   for (auto& schema :
        duckdb::Catalog::GetAllSchemas(retriever, false, holds_jobs)) {
     duckdb::Catalog::ScanListedEntries(
@@ -202,7 +194,7 @@ duckdb::unique_ptr<duckdb::FunctionData> JobRunsBind(
   add("finish_time", duckdb::LogicalType::TIMESTAMP_TZ);
   add("success", duckdb::LogicalType::BOOLEAN);
   add("error", duckdb::LogicalType::VARCHAR);
-  return duckdb::make_uniq<ListingData>(input);
+  return nullptr;
 }
 
 duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
@@ -213,12 +205,12 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
     return result;
   }
   absl::flat_hash_map<duckdb::idx_t, catalog::SereneDBCatalog*> databases;
-  const auto& role =
-    duckdb::Role(context, input.bind_data->Cast<ListingData>().caller_role);
+  const auto& role = duckdb::Role(context, input.bound_role);
+  const duckdb::CatalogEntryRetriever retriever{context, role};
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {
     if (catalog::IsSereneDB(database->GetCatalog()) &&
-        duckdb::CatalogEntryRetriever(context, role).Shows(*database)) {
+        retriever.Shows(*database)) {
       databases.emplace(
         database->oid,
         &database->GetCatalog().Cast<catalog::SereneDBCatalog>());
@@ -233,7 +225,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
       auto& catalog = *database->second;
       auto job = catalog.FindIn<catalog::JobCatalogEntry>(
         catalog.GetCatalogTransaction(context), run.job_oid);
-      if (!job || !duckdb::CatalogEntryRetriever(context, role).Shows(*job)) {
+      if (!job || !retriever.Shows(*job)) {
         continue;
       }
     }

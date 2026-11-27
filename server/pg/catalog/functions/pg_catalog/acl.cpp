@@ -816,8 +816,10 @@ constexpr PrivilegeKind kRolePrivileges{
 
 class ObjectAcls final : public duckdb::FunctionLocalState {
  public:
-  ObjectAcls(duckdb::ClientContext& context, duckdb::optional_idx caller)
-    : _session{MakeSession(&context, caller)},
+  ObjectAcls(duckdb::ClientContext& context,
+             const duckdb::BoundFunctionExpression& expr)
+    : _session{MakeSession(&context, expr.BoundRole(),
+                           expr.BoundSearchPath().get())},
       _roles{catalog::RolesOf(&context)} {}
 
   std::optional<std::span<const duckdb::AclItem>> Of(uint64_t classid,
@@ -889,7 +891,7 @@ class ObjectAcls final : public duckdb::FunctionLocalState {
 duckdb::unique_ptr<duckdb::FunctionLocalState> InitObjectAcls(
   duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData*) {
-  return duckdb::make_uniq<ObjectAcls>(state.GetContext(), expr.BoundRole());
+  return duckdb::make_uniq<ObjectAcls>(state.GetContext(), expr);
 }
 
 void PgGetAclFunction(duckdb::DataChunk& args, duckdb::ExpressionState& state,
@@ -996,7 +998,8 @@ class PrivilegeCheck final : public duckdb::FunctionLocalState {
  public:
   PrivilegeCheck(duckdb::ClientContext& context,
                  const duckdb::BoundFunctionExpression& expr)
-    : _session{MakeSession(&context, expr.BoundRole())},
+    : _session{MakeSession(&context, expr.BoundRole(),
+                           expr.BoundSearchPath().get())},
       _roles{catalog::RolesOf(&context)},
       _kind{
         expr.Function().GetExtraFunctionInfo().Cast<PrivilegeKindInfo>().kind} {

@@ -1,0 +1,96 @@
+statement ok
+DROP FUNCTION IF EXISTS dcic_names();
+
+
+statement ok
+DROP TABLE IF EXISTS dcic_s.names;
+
+
+statement ok
+DROP TABLE IF EXISTS dcic_s.t;
+
+
+statement ok
+DROP SCHEMA IF EXISTS dcic_s;
+
+
+statement ok
+DROP ROLE IF EXISTS dcic_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS dcic_caller;
+
+
+statement ok
+CREATE ROLE dcic_owner;
+
+
+statement ok
+CREATE ROLE dcic_caller LOGIN PASSWORD 'dcic_pw';
+
+
+statement ok
+CREATE SCHEMA dcic_s;
+
+
+statement ok
+CREATE TABLE dcic_s.t (a integer);
+
+
+statement ok
+CREATE TABLE dcic_s.names (n text);
+
+
+statement ok
+INSERT INTO dcic_s.names VALUES ('dcic_s.t');
+
+
+statement ok
+GRANT USAGE ON SCHEMA dcic_s TO dcic_owner;
+
+
+statement ok
+GRANT SELECT ON dcic_s.t, dcic_s.names TO dcic_owner;
+
+
+statement ok
+CREATE FUNCTION dcic_names() RETURNS text LANGUAGE sql SECURITY DEFINER
+AS $$ WITH c AS NOT MATERIALIZED (SELECT n::regclass AS r FROM dcic_s.names)
+  SELECT (SELECT r::text FROM c) || ' ' || (SELECT r::text FROM c) $$;
+
+
+statement ok
+ALTER FUNCTION dcic_names() OWNER TO dcic_owner;
+
+
+connection c_dcic user=dcic_caller password=dcic_pw
+query
+SELECT dcic_names() AS names;
+----
+names
+dcic_s.t dcic_s.t
+
+
+statement ok
+DROP FUNCTION dcic_names();
+
+
+statement ok
+DROP TABLE dcic_s.names;
+
+
+statement ok
+DROP TABLE dcic_s.t;
+
+
+statement ok
+DROP SCHEMA dcic_s;
+
+
+statement ok
+DROP ROLE dcic_owner;
+
+
+statement ok
+DROP ROLE dcic_caller;

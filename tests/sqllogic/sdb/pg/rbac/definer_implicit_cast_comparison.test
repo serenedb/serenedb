@@ -1,0 +1,81 @@
+statement ok
+DROP FUNCTION IF EXISTS dicc_compared();
+
+
+statement ok
+DROP TABLE IF EXISTS dicc_s.t;
+
+
+statement ok
+DROP SCHEMA IF EXISTS dicc_s;
+
+
+statement ok
+DROP ROLE IF EXISTS dicc_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS dicc_caller;
+
+
+statement ok
+CREATE ROLE dicc_owner;
+
+
+statement ok
+CREATE ROLE dicc_caller LOGIN PASSWORD 'dicc_pw';
+
+
+statement ok
+CREATE SCHEMA dicc_s;
+
+
+statement ok
+CREATE TABLE dicc_s.t (a integer);
+
+
+statement ok
+GRANT USAGE ON SCHEMA dicc_s TO dicc_owner;
+
+
+statement ok
+GRANT SELECT ON dicc_s.t TO dicc_owner;
+
+
+statement ok
+CREATE FUNCTION dicc_compared() RETURNS boolean LANGUAGE sql SECURITY DEFINER
+AS $$ SELECT 'dicc_s.t'::regclass = 'dicc_s.t' AND 'dicc_s.t' = 'dicc_s.t'::regclass
+  AND 'dicc_s.t'::regclass IN ('dicc_s.t') AND 'dicc_s.t'::regclass BETWEEN 'dicc_s.t' AND 'dicc_s.t'
+  AND 'dicc_s.t'::regclass IS NOT DISTINCT FROM 'dicc_s.t' $$;
+
+
+statement ok
+ALTER FUNCTION dicc_compared() OWNER TO dicc_owner;
+
+
+connection c_dicc user=dicc_caller password=dicc_pw
+query
+SELECT dicc_compared() AS compared;
+----
+compared
+t
+
+
+statement ok
+DROP FUNCTION dicc_compared();
+
+
+statement ok
+DROP TABLE dicc_s.t;
+
+
+statement ok
+DROP SCHEMA dicc_s;
+
+
+statement ok
+DROP ROLE dicc_owner;
+
+
+statement ok
+DROP ROLE dicc_caller;

@@ -1010,8 +1010,7 @@ duckdb::optional_ptr<duckdb::CatalogEntry> AttachedRelation(
   const duckdb::QualifiedName name{duckdb::Identifier{(*names)[0]},
                                    duckdb::Identifier{(*names)[1]},
                                    duckdb::Identifier{(*names)[2]}};
-  const duckdb::ActingRoles acting{&session.role, &session.role, &session.role};
-  duckdb::CatalogEntryRetriever retriever{*session.context, acting};
+  duckdb::CatalogEntryRetriever retriever{*session.context, session.role};
   for (const auto type : kRelationSets) {
     if (auto entry = retriever.GetEntry(duckdb::EntryLookupInfo{type, name},
                                         duckdb::OnEntryNotFound::RETURN_NULL)) {

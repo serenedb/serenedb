@@ -262,34 +262,19 @@ CreateIndexRequest ParseCreateIndexBody(std::string_view index,
   return request;
 }
 
-struct EsBindData : duckdb::TableFunctionData {
-  duckdb::optional_idx caller_role;
-};
-
-duckdb::optional_idx CallerRoleOf(duckdb::optional_ptr<duckdb::Binder> binder) {
-  return binder ? binder->BoundRole() : duckdb::optional_idx{};
-}
-
-duckdb::RoleAccess CallerAccessOf(duckdb::ClientContext& context,
-                                  duckdb::TableFunctionInitInput& input) {
-  return duckdb::Role(context, input.bind_data->Cast<EsBindData>().caller_role);
-}
-
-struct EsIndexBindData final : EsBindData {
+struct EsIndexBindData final : duckdb::TableFunctionData {
   std::string index;
   std::string body;
 };
 
 struct EsOnceState final : duckdb::GlobalTableFunctionState {
   duckdb::RoleAccess role;
-  duckdb::ActingRoles acting;
   bool done = false;
 
   static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
     duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
     auto state = duckdb::make_uniq<EsOnceState>();
-    state->role = CallerAccessOf(context, input);
-    state->acting = {&state->role, &state->role, &state->role};
+    state->role = duckdb::Role(context, input.bound_role);
     return state;
   }
 };
@@ -297,7 +282,6 @@ struct EsOnceState final : duckdb::GlobalTableFunctionState {
 duckdb::unique_ptr<duckdb::FunctionData> BindIndexArgs(
   duckdb::TableFunctionBindInput& input) {
   auto data = duckdb::make_uniq<EsIndexBindData>();
-  data->caller_role = CallerRoleOf(input.binder);
   if (input.inputs[0].IsNull()) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
                     ERR_MSG("index name cannot be NULL"));
@@ -413,7 +397,7 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
     context, duckdb::DatabaseManager::GetDefaultDatabase(context));
   const auto owner = state.role.role;
   if (!EsSchema(context)) {
-    duckdb::CatalogEntryRetriever{context, state.acting}.GetEntry(
+    duckdb::CatalogEntryRetriever{context, state.role}.GetEntry(
       duckdb::EntryLookupInfo{duckdb::CatalogType::DATABASE_ENTRY,
                               duckdb::QualifiedName{db_catalog.GetName()},
                               duckdb::AclMode::Create},
@@ -450,7 +434,7 @@ void EsCreateIndexExecute(duckdb::ClientContext& context,
   add_column(kSourceColumn, duckdb::LogicalType::VARCHAR);
 
   auto binder = duckdb::Binder::CreateBinder(context);
-  binder->acting = state.acting;
+  binder->BindAsFunctionBody(state.role);
   auto bound = binder->BindCreateTableInfo(std::move(options));
   binder->RequirePlacement(db_catalog, bound->Base(), nullptr);
   auto table = db_catalog.CreateTable(context, *bound);
@@ -488,7 +472,7 @@ void EsDropIndexExecute(duckdb::ClientContext& context,
                                     duckdb::Identifier{data.index}};
   // ES "no such index" covers both a missing name and a name that resolves
   // to a non-table relation, so gate the drop on an actual table existing.
-  duckdb::CatalogEntryRetriever retriever{context, state.acting};
+  duckdb::CatalogEntryRetriever retriever{context, state.role};
   auto table = retriever.GetEntry(
     duckdb::EntryLookupInfo{duckdb::CatalogType::TABLE_ENTRY, qname},
     duckdb::OnEntryNotFound::RETURN_NULL);
@@ -529,7 +513,7 @@ void EsMappingExecute(duckdb::ClientContext& context,
   state.done = true;
   auto& data = input.bind_data->Cast<EsIndexBindData>();
 
-  duckdb::CatalogEntryRetriever retriever{context, state.acting};
+  duckdb::CatalogEntryRetriever retriever{context, state.role};
   auto table = FindEsTable(context, retriever, data.index);
   if (!table) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
@@ -581,9 +565,7 @@ duckdb::unique_ptr<duckdb::FunctionData> EsCatIndicesBind(
   names.push_back("index");
   return_types.push_back(duckdb::LogicalType::BIGINT);
   names.push_back("docs_count");
-  auto data = duckdb::make_uniq<EsBindData>();
-  data->caller_role = CallerRoleOf(input.binder);
-  return data;
+  return duckdb::make_uniq<duckdb::TableFunctionData>();
 }
 
 struct EsCatIndicesState final : duckdb::GlobalTableFunctionState {
@@ -595,7 +577,7 @@ struct EsCatIndicesState final : duckdb::GlobalTableFunctionState {
   static duckdb::unique_ptr<duckdb::GlobalTableFunctionState> Init(
     duckdb::ClientContext& context, duckdb::TableFunctionInitInput& input) {
     auto state = duckdb::make_uniq<EsCatIndicesState>();
-    state->role = CallerAccessOf(context, input);
+    state->role = duckdb::Role(context, input.bound_role);
     return state;
   }
 };
@@ -665,7 +647,7 @@ void ValidateDocId(std::string_view id) {
 
 inline constexpr size_t kJsonPadding = simdjson::SIMDJSON_PADDING;
 
-struct EsWriteBindData final : EsBindData {
+struct EsWriteBindData final : duckdb::TableFunctionData {
   std::string index;
   std::string id;
   std::string body;
@@ -683,7 +665,6 @@ duckdb::unique_ptr<EsWriteBindData> BindWriteTarget(
   std::string index, duckdb::vector<duckdb::LogicalType>& return_types,
   duckdb::vector<duckdb::Identifier>& names) {
   auto data = duckdb::make_uniq<EsWriteBindData>();
-  data->caller_role = CallerRoleOf(binder);
   data->index = std::move(index);
 
   duckdb::CatalogEntryRetriever own{context};
@@ -1457,7 +1438,7 @@ void EsRefreshExecute(duckdb::ClientContext& context,
   }
   state.done = true;
   auto& data = input.bind_data->Cast<EsIndexBindData>();
-  duckdb::CatalogEntryRetriever retriever{context, state.acting};
+  duckdb::CatalogEntryRetriever retriever{context, state.role};
   if (!data.index.empty() && !FindEsTable(context, retriever, data.index)) {
     THROW_SQL_ERROR(ERR_CODE(ERRCODE_UNDEFINED_TABLE),
                     ERR_MSG("no such index [", data.index, "]"));
@@ -1475,7 +1456,6 @@ duckdb::unique_ptr<duckdb::FunctionData> EsRefreshBind(
       context, duckdb::DatabaseManager::GetDefaultDatabase(context)),
     "es_refresh");
   auto data = duckdb::make_uniq<EsIndexBindData>();
-  data->caller_role = CallerRoleOf(input.binder);
   if (!input.inputs[0].IsNull()) {
     data->index = input.inputs[0].GetValue<std::string>();
   }

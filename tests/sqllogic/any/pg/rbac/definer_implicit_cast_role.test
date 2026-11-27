@@ -1,0 +1,98 @@
+statement ok
+DROP FUNCTION IF EXISTS dicr_branches();
+
+
+statement ok
+DROP FUNCTION IF EXISTS dicr_rows();
+
+
+statement ok
+DROP TABLE IF EXISTS dicr_s.t;
+
+
+statement ok
+DROP SCHEMA IF EXISTS dicr_s;
+
+
+statement ok
+DROP ROLE IF EXISTS dicr_owner;
+
+
+statement ok
+DROP ROLE IF EXISTS dicr_caller;
+
+
+statement ok
+CREATE ROLE dicr_owner;
+
+
+statement ok
+CREATE ROLE dicr_caller LOGIN PASSWORD 'dicr_pw';
+
+
+statement ok
+CREATE SCHEMA dicr_s;
+
+
+statement ok
+CREATE TABLE dicr_s.t (a integer);
+
+
+statement ok
+GRANT USAGE ON SCHEMA dicr_s TO dicr_owner;
+
+
+statement ok
+GRANT SELECT ON dicr_s.t TO dicr_owner;
+
+
+statement ok
+CREATE FUNCTION dicr_branches() RETURNS text LANGUAGE sql SECURITY DEFINER
+AS $$ SELECT (CASE WHEN false THEN 'dicr_s.t'::regclass ELSE 'dicr_s.t' END)::text || ' '
+  || COALESCE(NULL::regclass, 'dicr_s.t')::text $$;
+
+
+statement ok
+CREATE FUNCTION dicr_rows() RETURNS text LANGUAGE sql SECURITY DEFINER
+AS $$ SELECT string_agg(r::text, ' ' ORDER BY r::text) FROM (SELECT NULL::regclass AS r UNION ALL SELECT 'dicr_s.t'
+  UNION ALL SELECT v.r FROM (VALUES (NULL::regclass), ('dicr_s.t')) v(r)) u $$;
+
+
+statement ok
+ALTER FUNCTION dicr_branches() OWNER TO dicr_owner;
+
+
+statement ok
+ALTER FUNCTION dicr_rows() OWNER TO dicr_owner;
+
+
+connection c_dicr user=dicr_caller password=dicr_pw
+query
+SELECT dicr_branches() AS branches, dicr_rows() AS row_names;
+----
+branches	row_names
+dicr_s.t dicr_s.t	dicr_s.t dicr_s.t
+
+
+statement ok
+DROP FUNCTION dicr_branches();
+
+
+statement ok
+DROP FUNCTION dicr_rows();
+
+
+statement ok
+DROP TABLE dicr_s.t;
+
+
+statement ok
+DROP SCHEMA dicr_s;
+
+
+statement ok
+DROP ROLE dicr_owner;
+
+
+statement ok
+DROP ROLE dicr_caller;

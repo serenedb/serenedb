@@ -210,15 +210,13 @@ SystemScan::SystemScan(duckdb::ClientContext& context,
     _database{input.bind_data->Cast<SystemTableBindData>().catalog},
     _transaction{_database.GetCatalogTransaction(context)},
     _table{input.bind_data->Cast<SystemTableBindData>().table},
-    _role{duckdb::Role(
-      context, input.bind_data->Cast<SystemTableBindData>().caller_role)},
+    _role{duckdb::Role(context, input.bound_role)},
     _retriever{context, _role},
     _viewer{ViewerBits(_role)} {
   const auto& ids = input.column_ids;
   if (input.filters) {
     for (const auto& entry : *input.filters) {
-      Compile(ids[entry.GetIndex()], entry.Filter(),
-              input.bind_data->Cast<SystemTableBindData>().caller_role);
+      Compile(ids[entry.GetIndex()], entry.Filter(), input.bound_role);
     }
   }
   const auto& projection = input.projection_ids;

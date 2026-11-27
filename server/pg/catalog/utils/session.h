@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <deque>
 #include <duckdb/catalog/catalog_entry/schema_catalog_entry.hpp>
+#include <duckdb/catalog/catalog_search_path.hpp>
 #include <duckdb/catalog/catalog_transaction.hpp>
 #include <duckdb/catalog/permissions.hpp>
 #include <duckdb/common/optional_idx.hpp>
@@ -72,13 +73,17 @@ struct Session {
   mutable std::array<RegOutRecent, 64> reg_out_recent;
 };
 
-Session MakeSession(duckdb::ClientContext* context,
-                    duckdb::optional_idx caller = {});
+Session MakeSession(
+  duckdb::ClientContext* context, duckdb::optional_idx caller = {},
+  duckdb::optional_ptr<const duckdb::vector<duckdb::CatalogSearchEntry>>
+    search_path = nullptr);
 
 struct SessionState final : duckdb::FunctionLocalState {
-  explicit SessionState(duckdb::ClientContext* context,
-                        duckdb::optional_idx caller = {})
-    : session{MakeSession(context, caller)} {}
+  explicit SessionState(
+    duckdb::ClientContext* context, duckdb::optional_idx caller = {},
+    duckdb::optional_ptr<const duckdb::vector<duckdb::CatalogSearchEntry>>
+      search_path = nullptr)
+    : session{MakeSession(context, caller, search_path)} {}
 
   Session session;
 };

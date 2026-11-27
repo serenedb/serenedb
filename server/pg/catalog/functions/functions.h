@@ -75,7 +75,8 @@ duckdb::unique_ptr<duckdb::Expression> BindNull(
 inline duckdb::unique_ptr<duckdb::FunctionLocalState> InitSession(
   duckdb::ExpressionState& state, const duckdb::BoundFunctionExpression& expr,
   duckdb::FunctionData*) {
-  return duckdb::make_uniq<SessionState>(&state.GetContext(), expr.BoundRole());
+  return duckdb::make_uniq<SessionState>(&state.GetContext(), expr.BoundRole(),
+                                         expr.BoundSearchPath().get());
 }
 
 inline const Session& SessionOf(duckdb::ExpressionState& state) {

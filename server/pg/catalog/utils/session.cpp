@@ -35,8 +35,10 @@
 
 namespace sdb::pg {
 
-Session MakeSession(duckdb::ClientContext* context,
-                    duckdb::optional_idx caller) {
+Session MakeSession(
+  duckdb::ClientContext* context, duckdb::optional_idx caller,
+  duckdb::optional_ptr<const duckdb::vector<duckdb::CatalogSearchEntry>>
+    body_search_path) {
   Session session{
     .context = context,
     .role = context ? duckdb::Role(*context, caller) : duckdb::RoleAccess{},
@@ -74,8 +76,13 @@ Session MakeSession(duckdb::ClientContext* context,
       std::string{name}, entry,
       static_cast<bool>(FindSystemObject(kSystemNamespaces, name)));
   };
+  std::optional<duckdb::CatalogSearchPath> body_path;
+  if (body_search_path) {
+    body_path.emplace(*context, *body_search_path);
+  }
   const auto& search_path =
-    *duckdb::ClientData::Get(*context).catalog_search_path;
+    body_path ? *body_path
+              : *duckdb::ClientData::Get(*context).catalog_search_path;
   const auto database =
     duckdb::DatabaseManager::TryGetDefaultDatabase(*context);
   if (absl::c_none_of(search_path.GetResolvedSetPaths(),

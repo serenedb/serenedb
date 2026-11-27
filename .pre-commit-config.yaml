@@ -122,6 +122,12 @@ repos:
         entry: python3 scripts/check_catalog_lookups.py
         pass_filenames: false
         always_run: true
+      - id: check-server-file-checks
+        name: Check server files are checked where they are opened
+        language: python
+        entry: python3 scripts/check_server_file_checks.py
+        pass_filenames: false
+        always_run: true
       - id: check-substitution-directive
         name: Check sqllogic substitution directive
         language: python

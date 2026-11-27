@@ -15,7 +15,7 @@ statement ok
 CREATE SCHEMA ljs_${__DATABASE__}.ljs;
 
 statement ok
-CALL postgres_execute('ljs_${__DATABASE__}', 'CREATE TABLE ljs.t (id BIGINT PRIMARY KEY, k INTEGER, title TEXT, body TEXT, price NUMERIC(10, 2), tags TEXT[])');
+CALL postgres_execute('ljs_${__DATABASE__}', 'CREATE TABLE ljs.t (id BIGINT PRIMARY KEY, k INTEGER, title TEXT, body TEXT, price NUMERIC(10, 2), tags TEXT[]) WITH (autovacuum_enabled = false)');
 
 statement ok
 CALL postgres_execute('ljs_${__DATABASE__}', 'INSERT INTO ljs.t SELECT i, i % 7, ''title-'' || i || ''-long-enough-to-not-inline'', CASE WHEN i % 11 = 0 THEN NULL ELSE repeat(md5(i::text), 8) END, i * 1.5, ARRAY[''a'' || i, ''b''] FROM generate_series(1, 3000) i');

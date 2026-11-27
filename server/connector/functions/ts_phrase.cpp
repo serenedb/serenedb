@@ -332,6 +332,77 @@ void PlanPhrases(irs::Filter& root, duckdb::ClientContext& context,
   });
 }
 
+namespace {
+
+void AppendPhraseArgs(irs::ByPhraseOptions& options, const FilterContext& ctx,
+                      const SearchColumnInfo& column_info,
+                      const duckdb::BoundFunctionExpression& func,
+                      PhraseGap first, std::string_view hint) {
+  auto& analyzer = PhraseAnalyzer(ctx, column_info);
+  irs::ValueAnalyzer value_analyzer;
+  PositionedTokens tokens{analyzer.Traits()};
+  std::optional<PhraseGap> pending_gap;
+  bool appended = false;
+  for (size_t i = 0; i < func.GetChildren().size(); ++i) {
+    const auto& child = *func.GetChildren()[i];
+    if (child.GetAlias() == "slop") {
+      continue;
+    }
+    if (!child.GetAlias().empty()) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_phrase has no argument named ",
+                              child.GetAlias().GetIdentifierName()),
+                      ERR_HINT(hint));
+    }
+    const auto* const_val = TryGetConstant(child);
+    if (!const_val) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_phrase argument ", i, " must be a constant"),
+                      ERR_HINT(hint));
+    }
+    if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR ||
+        const_val->type().id() == duckdb::LogicalTypeId::BLOB) {
+      value_analyzer.Analyze(
+        analyzer, const_val->GetValueUnsafe<duckdb::string_t>(), tokens);
+      if (!tokens.terms().empty()) {
+        AppendTokenSlots(
+          options, tokens,
+          pending_gap.value_or(appended ? PhraseGap{1, 1} : first));
+        pending_gap.reset();
+        appended = true;
+      }
+      continue;
+    }
+    if (!appended) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_phrase gap at argument ", i,
+                              " must be preceded by a text pattern"),
+                      ERR_HINT(hint));
+    }
+    if (pending_gap) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                      ERR_MSG("ts_phrase has consecutive gaps at argument ", i),
+                      ERR_HINT(hint));
+    }
+    pending_gap = ParsePhraseGap(*const_val, "ts_phrase", hint, i);
+  }
+  if (pending_gap) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_phrase ends with a gap; a text pattern must follow each gap"),
+      ERR_HINT(hint));
+  }
+  if (!appended) {
+    THROW_SQL_ERROR(
+      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+      ERR_MSG("ts_phrase text arguments produced no searchable terms"),
+      ERR_HINT("All ts_phrase text arguments tokenised to nothing (e.g. "
+               "all-stopword input). Provide at least one searchable term."));
+  }
+}
+
+}  // namespace
+
 void FromPhrase(BoolTarget filter, const FilterContext& ctx,
                 const SearchColumnInfo& column_info,
                 const duckdb::BoundFunctionExpression& func) {
@@ -383,60 +454,8 @@ void FromPhrase(BoolTarget filter, const FilterContext& ctx,
   }
 
   irs::ByPhraseOptions options;
-  auto& analyzer = PhraseAnalyzer(ctx, column_info);
-  irs::ValueAnalyzer value_analyzer;
-  PositionedTokens tokens{analyzer.Traits()};
-
-  std::optional<PhraseGap> pending_gap;
-
-  for (size_t i = 0; i < func.GetChildren().size(); ++i) {
-    if (func.GetChildren()[i]->GetAlias() == "slop") {
-      continue;
-    }
-    const auto* const_val = TryGetConstant(*func.GetChildren()[i]);
-    if (!const_val) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("ts_phrase argument ", i, " must be a constant"),
-                      ERR_HINT(kSyntaxHint));
-    }
-    if (const_val->type().id() == duckdb::LogicalTypeId::VARCHAR ||
-        const_val->type().id() == duckdb::LogicalTypeId::BLOB) {
-      value_analyzer.Analyze(
-        analyzer, const_val->GetValueUnsafe<duckdb::string_t>(), tokens);
-      if (!tokens.terms().empty()) {
-        AppendTokenSlots(options, tokens,
-                         pending_gap.value_or(PhraseGap{1, 1}));
-        pending_gap.reset();
-      }
-      continue;
-    }
-    if (options.empty()) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("ts_phrase gap at argument ", i,
-                              " must be preceded by a text pattern"),
-                      ERR_HINT(kSyntaxHint));
-    }
-    if (pending_gap) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("ts_phrase has consecutive gaps at argument ", i),
-                      ERR_HINT(kSyntaxHint));
-    }
-    pending_gap = ParsePhraseGap(*const_val, "ts_phrase", kSyntaxHint, i);
-  }
-
-  if (pending_gap) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_phrase ends with a gap; a text pattern must follow each gap"),
-      ERR_HINT(kSyntaxHint));
-  }
-  if (options.empty()) {
-    THROW_SQL_ERROR(
-      ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-      ERR_MSG("ts_phrase text arguments produced no searchable terms"),
-      ERR_HINT("All ts_phrase text arguments tokenised to nothing (e.g. "
-               "all-stopword input). Provide at least one searchable term."));
-  }
+  AppendPhraseArgs(options, ctx, column_info, func, PhraseGap{1, 1},
+                   kSyntaxHint);
 
   const auto slop =
     arg_slop ? static_cast<irs::PosAttr::value_t>(*arg_slop) : ctx.slop;
@@ -672,16 +691,18 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                     ERR_MSG("## field is not VARCHAR"), ERR_HINT(kSyntaxHint));
   }
   irs::ByPhraseOptions options;
+  const auto reject_slop = [] {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+                    ERR_MSG("## part must not carry a slop modifier"),
+                    ERR_HINT("Use ts_phrase(..., slop := N) or "
+                             "ts_phrase(...)::slop(N) for a sloppy phrase."));
+  };
 
   for (size_t i = 0; i < seq.parts.size(); ++i) {
     const auto& part_expr_ref = UnwrapTSQueryCast(*seq.parts[i]);
     if (duckdb::BoundCastExpression::IsCast(part_expr_ref) &&
         TryGetSlopModifier(part_expr_ref.GetReturnType())) {
-      THROW_SQL_ERROR(ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-                      ERR_MSG("## part must not carry a slop modifier"),
-                      ERR_HINT("Use ts_phrase(..., slop := N) or "
-                               "ts_phrase(...)::slop(N) for a sloppy "
-                               "phrase."));
+      reject_slop();
     }
     if (duckdb::BoundCastExpression::IsCast(part_expr_ref) &&
         (TryGetBoostModifier(part_expr_ref.GetReturnType()) ||
@@ -758,6 +779,10 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
 
     switch (leaf_op) {
       case TSQueryOp::Term: {
+        if (!f) {
+          EmitPhraseTokens(options, ctx, column_info, bare_text, gap);
+          break;
+        }
         auto text = get_text_arg();
         options.push_back<irs::ByTermOptions>(gap.min, gap.max)
           .term.assign(irs::ViewCast<irs::byte_type>(std::string_view{text}));
@@ -790,18 +815,12 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
             ctx.levenshtein_max_terms));
       } break;
       case TSQueryOp::Phrase: {
-        if (f->GetChildren().empty() || f->GetChildren().size() > 2) {
-          THROW_SQL_ERROR(
-            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
-            ERR_MSG("## ts_phrase phrase part expects 1 or 2 arguments "
-                    "(text[, slop]), got ",
-                    f->GetChildren().size()),
-            ERR_HINT(kSyntaxHint));
+        if (absl::c_any_of(f->GetChildren(), [](const auto& child) {
+              return child->GetAlias() == "slop";
+            })) {
+          reject_slop();
         }
-        std::string phrase_text;
-        GetVarcharArg(*f->GetChildren()[0], phrase_text,
-                      {"## ts_phrase text", kSyntaxHint});
-        EmitPhraseTokens(options, ctx, column_info, phrase_text, gap);
+        AppendPhraseArgs(options, ctx, column_info, *f, gap, kSyntaxHint);
       } break;
       case TSQueryOp::Any: {
         // ts_any as a phrase part -> TermSetOptions slot with the
@@ -825,12 +844,34 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
         }
         auto& terms_opts =
           options.push_back<irs::TermSetOptions>(gap.min, gap.max);
+        auto& analyzer = PhraseAnalyzer(ctx, column_info);
+        irs::ValueAnalyzer value_analyzer;
+        PositionedTokens tokens{analyzer.Traits()};
         for (const auto* arg : sub_args) {
           std::string term_text;
           GetVarcharArg(UnwrapTSQueryCast(*arg), term_text,
                         {"## ts_any phrase part term", kSyntaxHint});
-          terms_opts.terms.emplace(
-            irs::ViewCast<irs::byte_type>(std::string_view{term_text}));
+          value_analyzer.Analyze(analyzer, duckdb::string_t::Unsafe(term_text),
+                                 tokens);
+          const auto pos = tokens.pos();
+          if (!absl::c_all_of(pos, [&](auto p) { return p == pos.front(); })) {
+            THROW_SQL_ERROR(
+              ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+              ERR_MSG("## ts_any phrase part term '", term_text,
+                      "' spans several positions"),
+              ERR_HINT("A phrase position holds one token; use ts_phrase "
+                       "for a run of words."));
+          }
+          for (const auto& term : tokens.terms()) {
+            terms_opts.terms.emplace(irs::AsBytesView(term));
+          }
+        }
+        if (terms_opts.terms.empty()) {
+          THROW_SQL_ERROR(
+            ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+            ERR_MSG("## ts_any phrase part produced no tokens after analysis"),
+            ERR_HINT("All its terms were stripped (e.g. stopwords). Provide at "
+                     "least one searchable term."));
         }
       } break;
       case TSQueryOp::All:

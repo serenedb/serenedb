@@ -834,6 +834,19 @@ TEST_P(Format15TestCase, AReaderReadsTheBlocksItForesawWithoutTheirPages) {
   for (const auto target : targets) {
     ASSERT_EQ(target, follower.Seek(target));
   }
+  EXPECT_FALSE(follower.ForeseeSpans(spans));
+
+  ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
+  duckdb::PageResidency::Invalidate();
+  doc_pages.prefetched.clear();
+  const auto ahead = docs[950 * block + 9].first;
+  const irs::detail::DocSpan behind_and_ahead[]{
+    {.first = targets[2], .last = targets[2]},
+    {.first = ahead, .last = ahead},
+  };
+  ASSERT_TRUE(follower.ForeseeSpans(behind_and_ahead));
+  EXPECT_FALSE(doc_pages.prefetched.empty());
+  ASSERT_EQ(ahead, follower.Seek(ahead));
 }
 
 TEST_P(Format15TestCase, AWholeListReaderForeseesPastWhereItLandedOnly) {

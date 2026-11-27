@@ -1140,10 +1140,11 @@ TEST_P(PrunedTopTest, required_term_with_sparser_optional_ones) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(pruned_top_test, PrunedTopTest,
-                         ::testing::Combine(::testing::Values(
-                           tests::kMemoryDirParam,
-                           tests::DirParam{"local", &tests::LocalDirectory})),
-                         PrunedTopTest::to_string);
+INSTANTIATE_TEST_SUITE_P(
+  pruned_top_test, PrunedTopTest,
+  ::testing::Combine(::testing::Values(
+    tests::kMemoryDirParam, tests::DirParam{"local", &tests::LocalDirectory},
+    tests::DirParam{"sim", &tests::ObjectStoreDirectory})),
+  PrunedTopTest::to_string);
 
 }  // namespace

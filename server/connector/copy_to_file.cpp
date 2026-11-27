@@ -308,17 +308,6 @@ void Finalize(duckdb::ClientContext& context, duckdb::FunctionData& bind_data,
   g.handle->Close();
 }
 
-duckdb::CopyFunctionExecutionMode ExecutionMode(bool preserve_insertion_order,
-                                                bool supports_batch_index) {
-  if (!preserve_insertion_order) {
-    return duckdb::CopyFunctionExecutionMode::PARALLEL_COPY_TO_FILE;
-  }
-  if (supports_batch_index) {
-    return duckdb::CopyFunctionExecutionMode::BATCH_COPY_TO_FILE;
-  }
-  return duckdb::CopyFunctionExecutionMode::REGULAR_COPY_TO_FILE;
-}
-
 duckdb::unique_ptr<duckdb::PreparedBatchData> PrepareBatch(
   duckdb::ClientContext& context, duckdb::FunctionData& bind_data,
   duckdb::GlobalFunctionData& gstate,
@@ -363,7 +352,7 @@ void SetCopyToFileCallbacks(duckdb::CopyFunction& function) {
   function.copy_to_sink = Sink;
   function.copy_to_combine = Combine;
   function.copy_to_finalize = Finalize;
-  function.execution_mode = ExecutionMode;
+  function.execution_mode = duckdb::CopyFunction::ParallelUnlessOrdered;
   function.prepare_batch = PrepareBatch;
   function.flush_batch = FlushBatch;
   function.desired_batch_size = DesiredBatchSize;

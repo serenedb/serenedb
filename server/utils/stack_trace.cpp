@@ -176,6 +176,7 @@ void InstallHandlers() {
   struct sigaction action = {};
   action.sa_sigaction = &StackHandler;
   action.sa_flags = SA_SIGINFO | SA_RESTART;
+  // Hold all signals while unwinding, except faults, which kill if blocked.
   sigfillset(&action.sa_mask);
   for (const int fault : {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP}) {
     sigdelset(&action.sa_mask, fault);

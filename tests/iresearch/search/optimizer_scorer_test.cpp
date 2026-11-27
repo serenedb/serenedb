@@ -21,8 +21,10 @@
 #include <iresearch/search/filters/boolean_filter.hpp>
 #include <iresearch/search/filters/filter_optimizer.hpp>
 #include <iresearch/search/filters/levenshtein_filter.hpp>
+#include <iresearch/search/filters/prefix_filter.hpp>
 #include <iresearch/search/filters/term_filter.hpp>
 #include <iresearch/search/filters/wildcard_filter.hpp>
+#include <iresearch/search/scorers/constant_score.hpp>
 #include <iresearch/search/scorers/raw_tf.hpp>
 #include <iresearch/search/scorers/scorer.hpp>
 #include <iresearch/search/scorers/unscored.hpp>
@@ -251,6 +253,45 @@ TEST(optimizer_scorer_test, lowering_an_edit_distance_keeps_the_scorer) {
 
   ASSERT_NE(irs::Type<irs::ByEditDistance>::id(), f->type());
   ASSERT_EQ(&unscored, f->GetScorer());
+}
+
+irs::Filter::ptr ExactFuzzyPrefix() {
+  auto filter = std::make_unique<irs::ByEditDistance>();
+  *filter->mutable_field_id() = kBodyId;
+  auto* opts = filter->mutable_options();
+  opts->term = irs::ViewCast<irs::byte_type>(std::string_view{"fo"});
+  opts->starts_with = true;
+  opts->max_terms = 1;
+  return filter;
+}
+
+// A fuzzy prefix with no edit allowed scores as a fuzzy match when the query
+// ranks by its score, over every term that starts with the text.
+TEST(optimizer_scorer_test, a_ranked_exact_fuzzy_prefix_stays_fuzzy) {
+  auto ranked = Optimized(ExactFuzzyPrefix());
+  ASSERT_EQ(irs::Type<irs::LevenshteinAutomatonFilter>::id(), ranked->type());
+  const auto& opts =
+    irs::utils::downCast<irs::LevenshteinAutomatonFilter>(*ranked).options();
+  ASSERT_TRUE(opts.starts_with);
+  ASSERT_EQ(0u, opts.max_terms);
+
+  auto unranked = ExactFuzzyPrefix();
+  irs::Optimize(unranked, {.scored = false});
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), unranked->type());
+
+  irs::ConstantScore constant{2.F};
+  auto constant_scored = ExactFuzzyPrefix();
+  constant_scored->SetScorer(&constant);
+  constant_scored = Optimized(std::move(constant_scored));
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), constant_scored->type());
+  ASSERT_EQ(&constant, constant_scored->GetScorer());
+
+  auto group = std::make_unique<irs::BooleanFilter>();
+  group->Add(ExactFuzzyPrefix(), irs::Occur::Must);
+  group->SetScorer(&constant);
+  auto grouped = Optimized(std::move(group));
+  ASSERT_EQ(irs::Type<irs::ByPrefix>::id(), grouped->type());
+  ASSERT_EQ(&constant, grouped->GetScorer());
 }
 
 // The replacement wins if it brought a scorer of its own -- inheriting would

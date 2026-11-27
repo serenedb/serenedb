@@ -80,6 +80,7 @@ target_link_libraries(
         zstd::zstd
         boost_boost
         simdjson
+        simdutf
         sse2neon
         pcg
         re2
@@ -91,7 +92,6 @@ target_link_libraries(
         absl::symbolize
         duckdb_fsst
         lz4_static
-        simdutf
         zxc::zxc_lib
 )
 

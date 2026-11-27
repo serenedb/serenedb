@@ -135,6 +135,11 @@ class Tokenizer {
  public:
   using ptr = std::unique_ptr<Tokenizer>;
 
+  static constexpr duckdb::LogicalTypeId Output(
+    const auto&, duckdb::LogicalTypeId input) noexcept {
+    return input;
+  }
+
   virtual ~Tokenizer() = default;
 
   virtual TypeInfo::type_id type() const noexcept = 0;

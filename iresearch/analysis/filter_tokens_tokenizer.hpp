@@ -45,10 +45,6 @@ class FilterTokensTokenizer final
     std::string predicate;
   };
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
-  static constexpr duckdb::LogicalTypeId Output(
-    const Options&, duckdb::LogicalTypeId input) noexcept {
-    return input;
-  }
 
   static constexpr std::string_view type_name() noexcept {
     return "filter_tokens";

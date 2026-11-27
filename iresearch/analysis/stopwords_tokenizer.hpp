@@ -46,10 +46,6 @@ class StopwordsTokenizer final : public TypedTokenizer<StopwordsTokenizer>,
     std::string stopwords_path;
   };
   static ptr Make(Options opts, duckdb::SharedObjectCache& cache);
-  static constexpr duckdb::LogicalTypeId Output(
-    const Options&, duckdb::LogicalTypeId input) noexcept {
-    return input;
-  }
 
   static constexpr std::string_view type_name() noexcept {
     return "remove_stopwords";

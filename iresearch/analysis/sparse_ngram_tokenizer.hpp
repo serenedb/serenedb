@@ -42,10 +42,6 @@ class SparseNGramTokenizer final : public TypedTokenizer<SparseNGramTokenizer>,
     size_t min_cutoff_length{0};
   };
   static ptr Make(Options opts);
-  static constexpr duckdb::LogicalTypeId Output(
-    const Options&, duckdb::LogicalTypeId input) noexcept {
-    return input;
-  }
 
   explicit SparseNGramTokenizer(Options options);
 

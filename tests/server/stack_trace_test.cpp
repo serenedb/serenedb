@@ -159,6 +159,20 @@ namespace {
 constexpr std::chrono::milliseconds kTimeout{100};
 constexpr char kPollThreadName[] = "sdb_test_poll";
 
+duckdb::DuckDB& Database() {
+  static const auto kDatabase = [] {
+    duckdb::DBConfig config;
+    config.SetOptionByName("threads", duckdb::Value::UBIGINT(1));
+    return std::make_unique<duckdb::DuckDB>(nullptr, &config);
+  }();
+  return *kDatabase;
+}
+
+duckdb::ClientContext& Context() {
+  static duckdb::Connection gConnection{Database()};
+  return *gConnection.context;
+}
+
 [[clang::noinline, clang::disable_tail_calls]] void WaitInNotification(
   const absl::Notification& stop) {
   stop.WaitForNotification();
@@ -289,7 +303,7 @@ bool SignalPending(pid_t tid, int signal) {
 
 std::vector<ThreadStack> CollectAnswered(pid_t tid) {
   for (int attempt = 0; attempt < 200; ++attempt) {
-    auto stacks = CollectStacks(kTimeout);
+    auto stacks = CollectStacks(Context(), kTimeout);
     if (const auto* frames = Frames(stacks, tid); frames && !frames->empty()) {
       return stacks;
     }
@@ -304,7 +318,7 @@ struct Expectation {
 
 bool Capture(std::span<const Expectation> expected) {
   for (int attempt = 0; attempt < 200; ++attempt) {
-    const auto stacks = CollectStacks(kTimeout);
+    const auto stacks = CollectStacks(Context(), kTimeout);
     if (absl::c_all_of(expected, [&](const Expectation& e) {
           return HasFrameIn(stacks, e.thread.Tid(), e.function);
         })) {
@@ -339,7 +353,7 @@ TEST(StackTrace, EveryThreadWhereItRuns) {
 #endif
   EXPECT_TRUE(Capture(expected));
 
-  const auto stacks = CollectStacks(kTimeout);
+  const auto stacks = CollectStacks(Context(), kTimeout);
   EXPECT_TRUE(HasFrameIn(stacks, gettid(), "EveryThreadWhereItRuns"));
   const auto named = absl::c_find_if(
     stacks, [&](const ThreadStack& s) { return s.tid == polling.Tid(); });
@@ -402,7 +416,7 @@ TEST(StackTrace, ThreadBlockingTheSignalHasNoFrames) {
   }};
   blocked.WaitForNotification();
 
-  const auto stacks = CollectStacks(kTimeout);
+  const auto stacks = CollectStacks(Context(), kTimeout);
   const auto* frames = Frames(stacks, thread.Tid());
   EXPECT_TRUE(frames && frames->empty());
   EXPECT_FALSE(SignalPending(thread.Tid(), SIGRTMIN));
@@ -423,13 +437,14 @@ TEST(StackTrace, FailsWhenTheSignalCannotBeQueued) {
   none.rlim_cur = 0;
   ASSERT_EQ(setrlimit(RLIMIT_SIGPENDING, &none), 0);
 
-  EXPECT_THROW(std::ignore = CollectStacks(kTimeout), irs::SqlException);
+  EXPECT_THROW(std::ignore = CollectStacks(Context(), kTimeout),
+               irs::SqlException);
 }
 
 TEST(StackTrace, IgnoresTheSignalFromElsewhere) {
-  ASSERT_FALSE(CollectStacks(kTimeout).empty());
+  ASSERT_FALSE(CollectStacks(Context(), kTimeout).empty());
   ASSERT_EQ(syscall(SYS_tgkill, getpid(), gettid(), SIGRTMIN), 0);
-  const auto stacks = CollectStacks(kTimeout);
+  const auto stacks = CollectStacks(Context(), kTimeout);
   EXPECT_TRUE(HasFrameIn(stacks, gettid(), "IgnoresTheSignalFromElsewhere"));
 }
 
@@ -461,7 +476,7 @@ TEST(StackTrace, AThreadThatCannotTakeTheSignalTimesOut) {
   }
   WaitUntilInRead(absl::StrCat("/proc/", child.load()));
 
-  const auto stacks = CollectStacks(kTimeout);
+  const auto stacks = CollectStacks(Context(), kTimeout);
   const auto* frames = Frames(stacks, forking.Tid());
   EXPECT_TRUE(frames && frames->empty());
   EXPECT_TRUE(SignalPending(forking.Tid(), SIGRTMIN));
@@ -510,7 +525,7 @@ TEST(StackTrace, SurvivesCorruptUnwindInfo) {
   const auto* frames = Frames(stacks, corrupt.Tid());
   EXPECT_TRUE(frames && frames->size() == 1);
 #else
-  EXPECT_FALSE(CollectStacks(kTimeout).empty());
+  EXPECT_FALSE(CollectStacks(Context(), kTimeout).empty());
 #endif
 
   stop = true;
@@ -531,7 +546,7 @@ TEST(StackTrace, AHandlerStuckUnwindingStopsUnwindingUntilItReturns) {
 
   std::vector<ThreadStack> stacks;
   for (int attempt = 0; attempt < 200; ++attempt) {
-    stacks = CollectStacks(kTimeout);
+    stacks = CollectStacks(Context(), kTimeout);
     if (const auto* own = Frames(stacks, gettid()); own && own->empty()) {
       break;
     }
@@ -548,9 +563,7 @@ TEST(StackTrace, AHandlerStuckUnwindingStopsUnwindingUntilItReturns) {
 bool InStackHandler(pid_t tid) { return SignalInMask(tid, "SigBlk", SIGRTMIN); }
 
 TEST(StackTrace, AQueryWaitingForAnotherCollectionStopsWhenInterrupted) {
-  duckdb::DuckDB db{nullptr};
-  duckdb::Connection first{db};
-  duckdb::Connection second{db};
+  duckdb::Connection waiter{Database()};
   std::atomic<uint64_t> hold = 1;
   std::atomic<bool> stop = false;
   Thread held{[&] { SdbHeldCfiSpin(&hold, &stop); }};
@@ -560,17 +573,16 @@ TEST(StackTrace, AQueryWaitingForAnotherCollectionStopsWhenInterrupted) {
   };
 
   std::thread collecting{[&] {
-    EXPECT_FALSE(
-      CollectStacks(*first.context, std::chrono::seconds{5}).empty());
+    EXPECT_FALSE(CollectStacks(Context(), std::chrono::seconds{5}).empty());
   }};
   while (!InStackHandler(held.Tid())) {
     std::this_thread::sleep_for(std::chrono::milliseconds{1});
   }
   std::thread waiting{[&] {
-    EXPECT_THROW(std::ignore = CollectStacks(*second.context, kTimeout),
+    EXPECT_THROW(std::ignore = CollectStacks(*waiter.context, kTimeout),
                  duckdb::InterruptException);
   }};
-  second.context->Interrupt();
+  waiter.context->Interrupt();
   waiting.join();
 
   hold = 0;

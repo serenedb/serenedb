@@ -20,19 +20,13 @@
 
 #include "server/utils/stack_trace.h"
 
-#include <absl/cleanup/cleanup.h>
-#include <absl/synchronization/mutex.h>
-
-#include <atomic>
-
 #ifdef __linux__
 
 #include <absl/algorithm/container.h>
-#include <absl/base/const_init.h>
-#include <absl/base/thread_annotations.h>
-#include <absl/functional/function_ref.h>
+#include <absl/cleanup/cleanup.h>
 #include <absl/strings/ascii.h>
 #include <absl/strings/str_cat.h>
+#include <absl/synchronization/mutex.h>
 #include <absl/time/time.h>
 #include <fast_float/fast_float.h>
 #include <fcntl.h>
@@ -46,6 +40,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -82,9 +77,9 @@ struct Request {
   std::array<uintptr_t, kMaxFrames> frames{};
 };
 
-constinit absl::Mutex gMutex{absl::kConstInit};
-constinit bool gInstalled ABSL_GUARDED_BY(gMutex) = false;
-constinit uint32_t gSeq ABSL_GUARDED_BY(gMutex) = 0;
+constinit std::atomic<bool> gCollecting = false;
+constinit bool gInstalled = false;
+constinit uint32_t gSeq = 0;
 constinit Request gRequest;
 constinit std::atomic<pid_t> gUnwindingTid = 0;
 constinit sigjmp_buf gUnwindJump{};
@@ -237,7 +232,7 @@ std::optional<ThreadStatus> ReadStatus(pid_t tid, int signal,
 
 std::optional<std::vector<uintptr_t>> SignalAndWait(
   pid_t tid, std::string_view name, int signal,
-  std::chrono::milliseconds timeout) ABSL_EXCLUSIVE_LOCKS_REQUIRED(gMutex) {
+  std::chrono::milliseconds timeout) {
   const uint32_t seq = ++gSeq & kSeqMask;
   gRequest.word.store(Word(seq, Phase::Armed), std::memory_order_release);
   siginfo_t info = {};
@@ -286,8 +281,8 @@ std::optional<std::vector<uintptr_t>> SignalAndWait(
 
 }  // namespace
 
-std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds timeout,
-                                       absl::FunctionRef<bool()> stop) {
+std::vector<ThreadStack> CollectStacks(duckdb::ClientContext& context,
+                                       std::chrono::milliseconds timeout) {
   std::vector<pid_t> tids;
   std::error_code error;
   for (const auto& entry :
@@ -300,7 +295,15 @@ std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds timeout,
     }
   }
 
-  absl::MutexLock lock{&gMutex};
+  {
+    absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
+    context.Await([] { return !gCollecting.load(); });
+    gCollecting.store(true);
+  }
+  absl::Cleanup release = [] {
+    gCollecting.store(false);
+    duckdb::ClientContext::Notify();
+  };
   if (!gInstalled) {
     InstallHandlers();
     gInstalled = true;
@@ -311,7 +314,7 @@ std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds timeout,
   stacks.reserve(tids.size());
   std::array<char, 4096> buffer{};
   for (const auto tid : tids) {
-    if (stop()) {
+    if (context.InterruptPending()) {
       break;
     }
     auto status = ReadStatus(tid, signal, buffer);
@@ -348,34 +351,11 @@ std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds timeout,
 
 namespace sdb {
 
-std::vector<ThreadStack> CollectStacks(std::chrono::milliseconds /*timeout*/,
-                                       absl::FunctionRef<bool()> /*stop*/) {
+std::vector<ThreadStack> CollectStacks(duckdb::ClientContext& /*context*/,
+                                       std::chrono::milliseconds /*timeout*/) {
   return {};
 }
 
 }  // namespace sdb
 
 #endif
-
-namespace sdb {
-namespace {
-
-constinit std::atomic<bool> gCollecting = false;
-
-}  // namespace
-
-std::vector<ThreadStack> CollectStacks(duckdb::ClientContext& context,
-                                       std::chrono::milliseconds timeout) {
-  {
-    absl::MutexLock lock{&duckdb::ClientContext::AwaitMutex()};
-    context.Await([] { return !gCollecting.load(); });
-    gCollecting.store(true);
-  }
-  absl::Cleanup release = [] {
-    gCollecting.store(false);
-    duckdb::ClientContext::Notify();
-  };
-  return CollectStacks(timeout, [&] { return context.InterruptPending(); });
-}
-
-}  // namespace sdb

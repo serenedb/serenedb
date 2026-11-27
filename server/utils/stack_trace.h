@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include <absl/functional/function_ref.h>
 #include <sys/types.h>
 
 #include <chrono>
@@ -36,10 +35,6 @@ struct ThreadStack {
   std::string name;
   std::vector<uintptr_t> frames;
 };
-
-[[nodiscard]] std::vector<ThreadStack> CollectStacks(
-  std::chrono::milliseconds timeout,
-  absl::FunctionRef<bool()> stop = [] { return false; });
 
 [[nodiscard]] std::vector<ThreadStack> CollectStacks(
   duckdb::ClientContext& context, std::chrono::milliseconds timeout);

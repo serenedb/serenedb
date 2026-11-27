@@ -2385,7 +2385,7 @@ def test_copy_feeder_wake_outlives_the_session(conn):
 @pytest.mark.parametrize("options,row,rows,taken", [
     ("format csv, sample_size 1000", b"%d,%s\n", 3072, 3072),
     ("format csv, auto_detect false", b"%d,%s\n", 3072, 3072),
-    ("format json", b'{"a": %d, "b": "%s"}\n', 3072, 1),
+    ("format json", b'{"a": %d, "b": "%s"}\n', 3072, 3072),
 ])
 def test_copy_from_stdin_takes_rows_before_its_stream_ends(conn, options, row, rows, taken):
     c = WireConn()
@@ -2402,6 +2402,29 @@ def test_copy_from_stdin_takes_rows_before_its_stream_ends(conn, options, row, r
     finally:
         c.close()
         conn.run("drop table if exists t_copy_open")
+
+
+def test_copy_from_stdin_takes_avro_blocks_before_its_stream_ends(conn):
+    rows = 3072
+    written = conn.run(
+        f"copy (select i::int as a, repeat('x', 1000) as b from range({rows}) t(i)) "
+        "to stdout (format avro)")
+    payload = b"".join(p for t, p in written if t == "d")
+    assert len(payload) > 2 << 20, len(payload)
+    c = WireConn()
+    try:
+        conn.run_ok("drop table if exists t_copy_open_avro")
+        conn.run_ok("create table t_copy_open_avro(a int, b text)")
+        c.send("Q", _cstr("copy t_copy_open_avro from stdin (format avro)"))
+        assert c.read_msg()[0] == "G"
+        c.send("d", payload)
+        await_copied(conn, "t_copy_open_avro", rows)
+        c.send("c")
+        m = c.drain_to_ready()
+        assert tags(m) == [b"COPY %d\x00" % rows], errors(m)
+    finally:
+        c.close()
+        conn.run("drop table if exists t_copy_open_avro")
 
 
 def test_copy_to_stdout_extended(conn):

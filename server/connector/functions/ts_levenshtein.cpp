@@ -51,7 +51,7 @@ constexpr std::string_view kSyntaxHint =
 }  // namespace
 
 LevenshteinArgs ParseLevenshteinArgs(
-  const duckdb::BoundFunctionExpression& func) {
+  const duckdb::BoundFunctionExpression& func, const SearchColumnInfo& column) {
   const auto& children = func.GetChildren();
   size_t positional = 0;
   while (positional != children.size() &&
@@ -60,15 +60,11 @@ LevenshteinArgs ParseLevenshteinArgs(
   }
   SDB_ASSERT(positional >= 1 && positional <= 4);
   LevenshteinArgs out;
+  out.bytes = ComparesBytes(column, func);
   GetVarcharArg(*children[0], out.text, {"ts_levenshtein text", kSyntaxHint});
   if (positional >= 2) {
     GetIntArg(*children[1], out.distance,
               {"ts_levenshtein distance", kSyntaxHint});
-  } else {
-    // No explicit distance: pick by term length. Keeps short queries from
-    // matching unrelated tokens that happen to be within 2 edits.
-    const auto n = out.text.size();
-    out.distance = (n <= 2) ? 0 : (n <= 5) ? 1 : 2;
   }
   if (positional >= 3) {
     GetBoolArg(*children[2], out.with_transpositions,
@@ -91,6 +87,7 @@ LevenshteinArgs ParseLevenshteinArgs(
         ThrowGivenTwice("prefix");
       }
       GetVarcharArg(*named, out.prefix, {"ts_levenshtein prefix", kSyntaxHint});
+      out.bytes = out.bytes || IsBlob(*named);
     } else if (alias == "starts_with") {
       GetBoolArg(*named, out.starts_with,
                  {"ts_levenshtein starts_with", kSyntaxHint});
@@ -100,6 +97,13 @@ LevenshteinArgs ParseLevenshteinArgs(
                               alias.GetIdentifierName()),
                       ERR_HINT(kSyntaxHint));
     }
+  }
+  if (positional < 2) {
+    // No explicit distance: pick by term length. Keeps short queries from
+    // matching unrelated tokens that happen to be within 2 edits.
+    const auto n = irs::LevenshteinAcceptor::Length(
+      irs::ViewCast<irs::byte_type>(std::string_view{out.text}), out.bytes);
+    out.distance = (n <= 2) ? 0 : (n <= 5) ? 1 : 2;
   }
   if (out.distance < 0 || out.distance > 4) {
     THROW_SQL_ERROR(
@@ -128,6 +132,7 @@ void FillByEditDistanceOptions(const LevenshteinArgs& args,
   out.max_distance = static_cast<uint8_t>(args.distance);
   out.with_transpositions = args.with_transpositions;
   out.starts_with = args.starts_with;
+  out.bytes = args.bytes;
   out.max_terms = max_terms;
 }
 
@@ -140,7 +145,7 @@ void FromLevenshtein(BoolTarget filter, const FilterContext& ctx,
                     ERR_MSG("ts_levenshtein field is not VARCHAR"),
                     ERR_HINT(kSyntaxHint));
   }
-  auto args = ParseLevenshteinArgs(func);
+  auto args = ParseLevenshteinArgs(func, column_info);
 
   auto& edit_filter =
     AddMaybeNegated<irs::ByEditDistance>(filter, ctx, column_info);

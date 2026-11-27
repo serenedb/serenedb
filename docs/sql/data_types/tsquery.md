@@ -72,7 +72,7 @@ A string operand is normally analyzed by the column's dictionary. The `::tokeniz
 
 ## Relationship to `VARCHAR`
 
-`TSQUERY` is reinterpret-compatible with `VARCHAR`, so a string flows into a `TSQUERY` position automatically (it is then analyzed as described above, unless its text is a [query expression](#query-text)). A `TSQUERY` only has meaning inside an `@@` predicate against an indexed column; it is not a general-purpose stored type.
+`TSQUERY` is reinterpret-compatible with `VARCHAR`, so a string flows into a `TSQUERY` position automatically (it is then analyzed as described above, unless its text is a [query expression](#query-text)). A `BYTEA` value flows in the same way, whether or not its bytes are valid UTF-8; only casting one that is not valid UTF-8 to `TSQUERY` outside an `@@` match is an error. A `TSQUERY` only has meaning inside an `@@` predicate against an indexed column; it is not a general-purpose stored type.
 
 ## Query text in a string {#query-text}
 

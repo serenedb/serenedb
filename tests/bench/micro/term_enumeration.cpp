@@ -517,10 +517,10 @@ void FuzzyWalk(benchmark::State& state) {
     }
   }
   const auto description = irs::MakeParametricDescription(1, true);
-  std::vector<std::unique_ptr<irs::LevenshteinAcceptor>> compiled;
+  std::vector<std::unique_ptr<irs::BasicLevenshteinAcceptor<false>>> compiled;
   compiled.reserve(targets.size());
   for (const auto& target : targets) {
-    compiled.push_back(std::make_unique<irs::LevenshteinAcceptor>(
+    compiled.push_back(std::make_unique<irs::BasicLevenshteinAcceptor<false>>(
       description, irs::bytes_view{}, AsBytes(target)));
   }
   size_t i = 0;

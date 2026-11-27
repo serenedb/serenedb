@@ -32,9 +32,20 @@ namespace {
 
 constexpr uint32_t kLabels = RegexpAcceptor::kMaxLabel + 1;
 
-template<bool kPrefix>
+template<bool kPrefix, bool kBytes>
 using FuzzyConjunctionFor = FuzzyConjunctionOf<
-  std::conditional_t<kPrefix, LevenshteinPrefixAcceptor, LevenshteinAcceptor>>;
+  std::conditional_t<kPrefix, BasicLevenshteinPrefixAcceptor<kBytes>,
+                     BasicLevenshteinAcceptor<kBytes>>>;
+
+template<typename F>
+IRS_FORCE_INLINE decltype(auto) Typed(const FuzzyConjunction& dfa,
+                                      bool starts_with, bool byte_mode, F&& f) {
+  return Resolve(starts_with, [&]<bool kPrefix> IRS_FORCE_INLINE {
+    return Resolve(byte_mode, [&]<bool kBytes> IRS_FORCE_INLINE {
+      return f(static_cast<const FuzzyConjunctionFor<kPrefix, kBytes>&>(dfa));
+    });
+  });
+}
 
 template<typename Row>
 size_t RowBytes(uint32_t classes) noexcept {
@@ -265,9 +276,10 @@ FuzzyConjunction::FuzzyConjunction(
   std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
   bytes_view lower, const KeyBytes& bytes,
   const std::array<uint8_t, 256>& fuzzy_bytemap, size_t max_mem,
-  bool starts_with)
+  bool starts_with, bool byte_mode)
   : _size{patterns.size()},
     _starts_with{starts_with},
+    _byte_mode{byte_mode},
     _lower{lower},
     _bytes{bytes},
     _max_mem{max_mem} {
@@ -417,10 +429,8 @@ FuzzyConjunction::State FuzzyConjunctionOf<A>::InternLocked(
 
 void FuzzyConjunction::InternStart() {
   absl::MutexLock lock{&_mutex};
-  _start = Resolve(_starts_with, [&]<bool kPrefix> {
-    return static_cast<const FuzzyConjunctionFor<kPrefix>&>(*this)
-      .StartLocked();
-  });
+  _start = Typed(*this, _starts_with, _byte_mode,
+                 [](const auto& typed) { return typed.StartLocked(); });
 }
 
 bool FuzzyConjunction::Matches(bytes_view term) const {
@@ -429,24 +439,22 @@ bool FuzzyConjunction::Matches(bytes_view term) const {
 }
 
 bool FuzzyConjunction::Matches(bytes_view term, PayloadType& payload) const {
-  return Resolve(_starts_with, [&]<bool kPrefix> IRS_FORCE_INLINE {
-    return static_cast<const FuzzyConjunctionFor<kPrefix>&>(*this).MatchesOf(
-      term, payload);
-  });
+  return Typed(*this, _starts_with, _byte_mode,
+               [&](const auto& typed)
+                 IRS_FORCE_INLINE { return typed.MatchesOf(term, payload); });
 }
 
 FuzzyConjunction::State FuzzyConjunction::StepSlow(State from,
                                                    uint8_t c) const {
-  return Resolve(_starts_with, [&]<bool kPrefix> IRS_FORCE_INLINE {
-    return static_cast<const FuzzyConjunctionFor<kPrefix>&>(*this).StepMissed(
-      from, c);
-  });
+  return Typed(*this, _starts_with, _byte_mode,
+               [&](const auto& typed)
+                 IRS_FORCE_INLINE { return typed.StepMissed(from, c); });
 }
 
 uint32_t FuzzyConjunction::Range(Row& row) const {
-  return Resolve(_starts_with, [&]<bool kPrefix> IRS_FORCE_INLINE {
-    return static_cast<const FuzzyConjunctionFor<kPrefix>&>(*this).RangeOf(row);
-  });
+  return Typed(*this, _starts_with, _byte_mode,
+               [&](const auto& typed)
+                 IRS_FORCE_INLINE { return typed.RangeOf(row); });
 }
 
 }  // namespace irs

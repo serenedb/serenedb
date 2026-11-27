@@ -40,6 +40,25 @@ namespace {
 
 }  // namespace
 
+size_t BinaryCopyHeaderExtension(std::string_view header) {
+  if (header.substr(0, kPgCopySignature.size()) != kPgCopySignature) {
+    ThrowFormat("invalid PGCOPY signature");
+  }
+  const auto flags = absl::big_endian::Load32(header.data() + 11);
+  if ((flags & (1U << 16)) != 0) {
+    ThrowFormat("invalid COPY file header (WITH OIDS)");
+  }
+  if (((flags & ~(1U << 16)) >> 16) != 0) {
+    ThrowFormat("unrecognized critical flags in COPY file header");
+  }
+  const auto ext =
+    static_cast<int32_t>(absl::big_endian::Load32(header.data() + 15));
+  if (ext < 0) {
+    ThrowFormat("invalid COPY file header (missing length)");
+  }
+  return static_cast<size_t>(ext);
+}
+
 size_t WalkBinaryRows(std::string_view bytes, size_t pos,
                       size_t limit) noexcept {
   const char* const data = bytes.data();
@@ -114,23 +133,7 @@ size_t CopyBatchBuilder::FeedHeader(std::string_view bytes) {
     if (_header.size() < kPgCopyHeader.size()) {
       return pos;
     }
-    if (std::string_view{_header}.substr(0, kPgCopySignature.size()) !=
-        kPgCopySignature) {
-      ThrowFormat("invalid PGCOPY signature");
-    }
-    const auto flags = absl::big_endian::Load32(_header.data() + 11);
-    if ((flags & (1U << 16)) != 0) {
-      ThrowFormat("invalid COPY file header (WITH OIDS)");
-    }
-    if (((flags & ~(1U << 16)) >> 16) != 0) {
-      ThrowFormat("unrecognized critical flags in COPY file header");
-    }
-    const auto ext =
-      static_cast<int32_t>(absl::big_endian::Load32(_header.data() + 15));
-    if (ext < 0) {
-      ThrowFormat("invalid COPY file header (missing length)");
-    }
-    _skip = static_cast<size_t>(ext);
+    _skip = BinaryCopyHeaderExtension(_header);
   }
   const auto take = std::min(_skip, bytes.size() - pos);
   _skip -= take;

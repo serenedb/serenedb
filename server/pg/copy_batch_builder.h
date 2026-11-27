@@ -34,6 +34,8 @@ namespace sdb::pg {
 size_t WalkBinaryRows(std::string_view bytes, size_t pos,
                       size_t limit) noexcept;
 
+size_t BinaryCopyHeaderExtension(std::string_view header);
+
 enum class CopyBatchFormat : uint8_t {
   Binary,
   Raw,

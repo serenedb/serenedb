@@ -136,13 +136,11 @@ size_t RowsAfterHeader(std::string_view bytes) {
   if (bytes.size() < pg::kPgCopyHeader.size()) {
     return std::string_view::npos;
   }
-  const auto extension = static_cast<int32_t>(
-    absl::big_endian::Load32(bytes.data() + pg::kPgCopyHeader.size() - 4));
-  if (extension < 0 || bytes.size() - pg::kPgCopyHeader.size() <
-                         static_cast<size_t>(extension)) {
+  const auto extension = pg::BinaryCopyHeaderExtension(bytes);
+  if (bytes.size() - pg::kPgCopyHeader.size() < extension) {
     return std::string_view::npos;
   }
-  return pg::kPgCopyHeader.size() + static_cast<size_t>(extension);
+  return pg::kPgCopyHeader.size() + extension;
 }
 
 struct BinaryPiece {

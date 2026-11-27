@@ -157,10 +157,12 @@ struct ByWildcardNGramOptions {
 
   ByWildcardNGramOptions(std::string_view like,
                          analysis::WildcardTokenizer& analyzer,
-                         bool has_positions, bool bytes = false);
+                         bool has_positions, bool bytes = false,
+                         bool byte_grams = false);
   ByWildcardNGramOptions(bytes_view regexp, RegexpSyntax regexp_syntax,
                          analysis::WildcardTokenizer& analyzer,
-                         bool has_positions, bool bytes = false);
+                         bool has_positions, bool bytes = false,
+                         bool byte_grams = false);
 };
 
 class ByWildcardNGram final : public FilterWithField<ByWildcardNGramOptions> {

@@ -73,6 +73,7 @@ void FromLike(BoolTarget parent, const FilterContext& ctx,
       (column_info.tokenizer.features & irs::IndexFeatures::Pos) ==
         irs::IndexFeatures::Pos,
       bytes,
+      column_info.logical_type.id() == duckdb::LogicalTypeId::BLOB,
     };
     SDB_ASSERT(
       irs::field_limits::valid(column_info.tokenizer.tokenizer_column));

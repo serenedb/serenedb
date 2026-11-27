@@ -24,6 +24,7 @@
 #include "iresearch/search/filters/wildcard_ngram_filter.hpp"
 
 #include <absl/base/internal/endian.h>
+#include <simdutf.h>
 
 #include <duckdb/common/types/vector.hpp>
 #include <duckdb/common/vector/flat_vector.hpp>
@@ -121,19 +122,53 @@ ByPhraseOptions LiteralGrams(analysis::NGramTokenizer& ngram,
   return part;
 }
 
+bstring WholeCharacters(bytes_view literal) {
+  const bool head = !literal.empty() && literal.front() == kBoundary;
+  literal.remove_prefix(head);
+  const bool tail = !literal.empty() && literal.back() == kBoundary;
+  literal.remove_suffix(tail);
+  size_t cut = 0;
+  while (cut != literal.size() && (literal[cut] & 0xC0) == 0x80) {
+    ++cut;
+  }
+  literal.remove_prefix(cut);
+  const auto* chars = reinterpret_cast<const char*>(literal.data());
+  const auto whole = simdutf::trim_partial_utf8(chars, literal.size());
+  if (!simdutf::validate_utf8(chars, whole)) {
+    return {};
+  }
+  bstring out;
+  if (head && cut == 0) {
+    out += kBoundary;
+  }
+  out += literal.substr(0, whole);
+  if (tail && whole == literal.size()) {
+    out += kBoundary;
+  }
+  return out;
+}
+
 bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
                    ValueAnalyzer& value_analyzer, ValueTokens<>& tokens,
-                   bool has_pos, bool bytes,
+                   bool has_pos, bool byte_grams, bool whole_characters,
                    std::vector<ByPhraseOptions>& grams) {
   if (query.kind == GramQuery::Kind::Literal) {
+    bytes_view literal = query.literal;
+    bstring whole;
+    if (whole_characters) {
+      whole = WholeCharacters(literal);
+      literal = whole;
+    }
     const auto& part = grams.emplace_back(
-      LiteralGrams(ngram, value_analyzer, tokens, query.literal, bytes));
+      literal.empty()
+        ? ByPhraseOptions{}
+        : LiteralGrams(ngram, value_analyzer, tokens, literal, byte_grams));
     return part.size() == 1 || has_pos;
   }
   bool exact = true;
   for (const auto& child : query.children) {
-    exact &= SplitLiterals(child, ngram, value_analyzer, tokens, has_pos, bytes,
-                           grams);
+    exact &= SplitLiterals(child, ngram, value_analyzer, tokens, has_pos,
+                           byte_grams, whole_characters, grams);
   }
   return exact;
 }
@@ -268,14 +303,19 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(
   std::string_view like, analysis::WildcardTokenizer& analyzer,
-  bool has_positions, bool bytes)
+  bool has_positions, bool bytes, bool byte_grams)
   : ByWildcardNGramOptions{
       ViewCast<byte_type>(std::string_view{LikeRegexp(like, false)}),
-      RegexpSyntax::Perl, analyzer, has_positions, bytes} {}
+      RegexpSyntax::Perl,
+      analyzer,
+      has_positions,
+      bytes,
+      byte_grams} {}
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(
   bytes_view regexp, RegexpSyntax regexp_syntax,
-  analysis::WildcardTokenizer& analyzer, bool has_positions, bool bytes)
+  analysis::WildcardTokenizer& analyzer, bool has_positions, bool bytes,
+  bool byte_grams)
   : pattern{regexp},
     syntax{regexp_syntax},
     has_pos{has_positions},
@@ -288,7 +328,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
     return;
   }
   std::optional<analysis::NGramTokenizer> byte_ngram;
-  if (bytes) {
+  if (byte_grams) {
     byte_ngram.emplace(analysis::NGramTokenizer::Options{
       ngram.min_gram(),
       ngram.max_gram(),
@@ -302,7 +342,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   ValueTokens tokens;
   const bool decided =
     SplitLiterals(query, byte_ngram ? *byte_ngram : ngram, value_analyzer,
-                  tokens, has_pos, bytes, grams) &&
+                  tokens, has_pos, byte_grams, bytes && !byte_grams, grams) &&
     plan.exact;
   if (decided && !bytes && !analyzer.BinaryTerms()) {
     return;

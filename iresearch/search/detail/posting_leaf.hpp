@@ -590,8 +590,14 @@ class PostingLeaf {
   }
 
   IRS_FORCE_INLINE bool ReadToDelta(doc_id_t target) {
-    return SeekToLeaf(
-      target, [this](doc_id_t prev) IRS_FORCE_INLINE { ReadLeafDelta(prev); });
+    return SeekToLeaf(target, [this](doc_id_t prev) IRS_FORCE_INLINE {
+      if constexpr (InputType::CONTIGUOUS) {
+        if (prev != _last) [[unlikely]] {
+          In().Landed();
+        }
+      }
+      ReadLeafDelta(prev);
+    });
   }
 
   uint32_t Landings(const doc_id_t* in, uint32_t n, uint32_t* blocks) {

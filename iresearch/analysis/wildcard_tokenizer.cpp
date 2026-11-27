@@ -27,6 +27,7 @@
 #include "iresearch/analysis/token_sinks.hpp"
 #include "iresearch/analysis/tokenizer_config.hpp"
 #include "iresearch/utils/bytes_utils.hpp"
+#include "iresearch/utils/down_cast.hpp"
 #include "iresearch/utils/pg/sql_exception_macro.hpp"
 #include "iresearch/utils/string.hpp"
 
@@ -246,6 +247,12 @@ WildcardTokenizer::WildcardTokenizer(Tokenizer::ptr base_analyzer,
 
 bool WildcardTokenizer::KeepsWholeValues() const noexcept {
   return _analyzer->type() == irs::Type<KeywordTokenizer>::id();
+}
+
+void SetByteInput(Tokenizer& tokenizer) {
+  if (tokenizer.type() == irs::Type<WildcardTokenizer>::id()) {
+    utils::downCast<WildcardTokenizer>(tokenizer).SetByteInput(true);
+  }
 }
 
 template class TypedTokenizer<WildcardTokenizer>;

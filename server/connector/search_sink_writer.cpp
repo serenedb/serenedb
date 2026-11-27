@@ -151,13 +151,6 @@ class InetTermWriter {
             "object or array"));
 }
 
-void SetByteInput(irs::analysis::Tokenizer& tokenizer) {
-  if (tokenizer.type() == irs::Type<irs::analysis::WildcardTokenizer>::id()) {
-    irs::utils::downCast<irs::analysis::WildcardTokenizer>(tokenizer)
-      .SetByteInput(true);
-  }
-}
-
 }  // namespace
 
 std::optional<SearchSinkInsertBaseImpl::DictionaryValues>

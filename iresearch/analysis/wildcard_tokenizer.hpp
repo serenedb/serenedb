@@ -86,6 +86,7 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   }
 
   void SetByteInput(bool bytes) noexcept { _bytes = bytes; }
+  bool ByteInput() const noexcept { return _bytes; }
 
   bool BinaryTerms() const noexcept {
     return _analyzer->Traits().output != duckdb::LogicalTypeId::VARCHAR;
@@ -123,6 +124,8 @@ class WildcardTokenizer final : public TypedTokenizer<WildcardTokenizer>,
   bool _base_stable = false;
   bool _bytes = false;
 };
+
+void SetByteInput(Tokenizer& tokenizer);
 
 extern template class TypedTokenizer<WildcardTokenizer>;
 

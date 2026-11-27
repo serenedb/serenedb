@@ -294,19 +294,14 @@ QueryBuilder::ptr ByWildcardNGram::PrepareSegment(
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(
   std::string_view like, analysis::WildcardTokenizer& analyzer,
-  bool has_positions, bool bytes, bool byte_grams)
+  bool has_positions, bool bytes)
   : ByWildcardNGramOptions{
       ViewCast<byte_type>(std::string_view{LikeRegexp(like, false)}),
-      RegexpSyntax::Perl,
-      analyzer,
-      has_positions,
-      bytes,
-      byte_grams} {}
+      RegexpSyntax::Perl, analyzer, has_positions, bytes} {}
 
 ByWildcardNGramOptions::ByWildcardNGramOptions(
   bytes_view regexp, RegexpSyntax regexp_syntax,
-  analysis::WildcardTokenizer& analyzer, bool has_positions, bool bytes,
-  bool byte_grams)
+  analysis::WildcardTokenizer& analyzer, bool has_positions, bool bytes)
   : pattern{regexp},
     syntax{regexp_syntax},
     has_pos{has_positions},
@@ -319,7 +314,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
     return;
   }
   std::optional<analysis::NGramTokenizer> byte_ngram;
-  if (byte_grams) {
+  if (analyzer.ByteInput()) {
     byte_ngram.emplace(analysis::NGramTokenizer::Options{
       ngram.min_gram(),
       ngram.max_gram(),
@@ -333,7 +328,7 @@ ByWildcardNGramOptions::ByWildcardNGramOptions(
   ValueTokens tokens;
   const bool decided =
     SplitLiterals(query, byte_ngram ? *byte_ngram : ngram, value_analyzer,
-                  tokens, has_pos, byte_grams, grams) &&
+                  tokens, has_pos, analyzer.ByteInput(), grams) &&
     plan.exact;
   if (decided && !bytes && !analyzer.BinaryTerms()) {
     return;

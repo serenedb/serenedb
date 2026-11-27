@@ -53,6 +53,8 @@
 namespace {
 
 constexpr int64_t kRows = 10'000'000;
+constexpr char kWorkerThreadName[] = "sdb_worker";
+constexpr char kBlockingThreadName[] = "sdb_blocking";
 
 std::atomic<size_t> gRunning{0};
 std::atomic<size_t> gPeak{0};
@@ -263,7 +265,7 @@ TEST(DuckDBThreads, RelaunchFromPinnedWorkerKeepsWorkersApart) {
     per_cpu.clear();
     pinned = 0;
     for (const auto& [tid, info] : Threads()) {
-      if (before.contains(tid) || info.name != "sdb_worker" ||
+      if (before.contains(tid) || info.name != kWorkerThreadName ||
           info.cpus.find_first_of(",-") != std::string::npos) {
         continue;
       }
@@ -441,15 +443,15 @@ TEST(DuckDBScheduler, WorkerThreadsAreNamedForWhetherTheyWait) {
                            ++done;
                          }));
   ASSERT_TRUE(WaitFor([&] { return done == 2; }));
-  EXPECT_EQ(names[0], "sdb_worker");
-  EXPECT_EQ(names[1], "sdb_blocking");
-  EXPECT_EQ(names[2], "sdb_worker");
-  EXPECT_EQ(names[3], "sdb_blocking");
-  EXPECT_EQ(names[4], "sdb_blocking");
+  EXPECT_EQ(names[0], kWorkerThreadName);
+  EXPECT_EQ(names[1], kBlockingThreadName);
+  EXPECT_EQ(names[2], kWorkerThreadName);
+  EXPECT_EQ(names[3], kBlockingThreadName);
+  EXPECT_EQ(names[4], kBlockingThreadName);
   EXPECT_TRUE(WaitFor([&] {
     const auto threads = Threads();
     const auto thread = threads.find(std::to_string(background_tid.load()));
-    return thread != threads.end() && thread->second.name == "sdb_worker";
+    return thread != threads.end() && thread->second.name == kWorkerThreadName;
   }));
 #else
   GTEST_SKIP() << "Requires Linux thread names";

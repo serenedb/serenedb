@@ -153,6 +153,7 @@ namespace sdb {
 namespace {
 
 constexpr std::chrono::milliseconds kTimeout{100};
+constexpr char kPollThreadName[] = "sdb_test_poll";
 
 [[clang::noinline, clang::disable_tail_calls]] void WaitInNotification(
   const absl::Notification& stop) {
@@ -315,7 +316,7 @@ TEST(StackTrace, EveryThreadWhereItRuns) {
 
   Thread notification{[&] { WaitInNotification(stop_waiting); }};
   Thread polling{[&] {
-    pthread_setname_np(pthread_self(), "sdb_test_poll");
+    pthread_setname_np(pthread_self(), kPollThreadName);
     WaitInPoll(fds[0]);
   }};
   Thread sleeping{[&] { SleepInNanosleep(stop); }};
@@ -335,7 +336,7 @@ TEST(StackTrace, EveryThreadWhereItRuns) {
   EXPECT_TRUE(HasFrameIn(stacks, gettid(), "EveryThreadWhereItRuns"));
   const auto named = absl::c_find_if(
     stacks, [&](const ThreadStack& s) { return s.tid == polling.Tid(); });
-  EXPECT_TRUE(named != stacks.end() && named->name == "sdb_test_poll");
+  EXPECT_TRUE(named != stacks.end() && named->name == kPollThreadName);
 
   stop_waiting.Notify();
   stop = true;

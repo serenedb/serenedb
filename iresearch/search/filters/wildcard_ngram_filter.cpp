@@ -145,21 +145,21 @@ bytes_view WholeCharacters(bytes_view literal) {
 
 bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
                    ValueAnalyzer& value_analyzer, ValueTokens<>& tokens,
-                   bool has_pos, bool byte_grams,
+                   bool has_pos, bool bytes,
                    std::vector<ByPhraseOptions>& grams) {
   if (query.kind == GramQuery::Kind::Literal) {
     const auto literal =
-      byte_grams ? bytes_view{query.literal} : WholeCharacters(query.literal);
+      bytes ? bytes_view{query.literal} : WholeCharacters(query.literal);
     const auto& part = grams.emplace_back(
       literal.empty()
         ? ByPhraseOptions{}
-        : LiteralGrams(ngram, value_analyzer, tokens, literal, byte_grams));
+        : LiteralGrams(ngram, value_analyzer, tokens, literal, bytes));
     return part.size() == 1 || has_pos;
   }
   bool exact = true;
   for (const auto& child : query.children) {
-    exact &= SplitLiterals(child, ngram, value_analyzer, tokens, has_pos,
-                           byte_grams, grams);
+    exact &= SplitLiterals(child, ngram, value_analyzer, tokens, has_pos, bytes,
+                           grams);
   }
   return exact;
 }

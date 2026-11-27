@@ -47,6 +47,9 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   using Base::_docs;
   using Base::_last;
   using Base::_left_in_list;
+  using Base::_walk;
+  using Base::HintRuns;
+  using Base::InMemory;
   using Base::kBits;
   using Base::kBlock;
   using Base::ReadLeafFill;
@@ -127,7 +130,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   }
 
   IRS_FORCE_INLINE doc_id_t Seek(doc_id_t target) {
-    if (!Reach(target)) [[unlikely]] {
+    if (!Reach(target, target)) [[unlikely]] {
       return doc_limits::eof();
     }
     if (block_io::IsDocs(_kind)) [[likely]] {
@@ -142,7 +145,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
 
   IRS_FORCE_INLINE bool FillCostAbove(uint64_t cost, doc_id_t min,
                                       doc_id_t max) {
-    if (!Reach(min)) {
+    if (!Reach(min, min)) {
       return false;
     }
     if (block_io::IsDocs(_kind)) {
@@ -166,12 +169,31 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   }
 
  private:
-  IRS_FORCE_INLINE bool Reach(doc_id_t target) {
+  IRS_FORCE_INLINE bool Reach(doc_id_t target, doc_id_t end) {
     if (target <= _last) [[likely]] {
       return true;
     }
-    return SeekToLeaf(target,
-                      [this](doc_id_t prev) IRS_FORCE_INLINE { Load(prev); });
+    return SeekToLeaf(target, [this, end](doc_id_t prev) IRS_FORCE_INLINE {
+      if (prev != _last) [[unlikely]] {
+        ForeseeUntil(end);
+      }
+      Load(prev);
+    });
+  }
+
+  IRS_NO_INLINE void ForeseeUntil(doc_id_t end) {
+    if (_left_in_list == 0 || !_walk.Armed() || _walk.Pending()) {
+      return;
+    }
+    const auto& index = _walk.Index();
+    const auto n = index.Size();
+    const auto first = _walk.NextBlock(_left_in_list);
+    if (first == n || InMemory(first)) {
+      return;
+    }
+    const BlockRun run{.first = first,
+                       .last = std::min(index.Find(first, end), n - 1)};
+    HintRuns({&run, 1});
   }
 
   IRS_FORCE_INLINE void Load(doc_id_t prev) {
@@ -248,7 +270,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
   template<typename Mark, typename OnRun, typename OnBits>
   IRS_FORCE_INLINE doc_id_t WalkLeaves(doc_id_t min, doc_id_t max, Mark& mark,
                                        OnRun& on_run, OnBits& on_bits) {
-    if (!Reach(min)) {
+    if (!Reach(min, max)) {
       return doc_limits::eof();
     }
     for (;;) {
@@ -388,7 +410,7 @@ class PostingFill : public PostingLeaf<InputType, kFillShape> {
       if (in[i] > _last && landed != landings) {
         this->LandOn(blocks[landed++],
                      [this](doc_id_t prev) IRS_FORCE_INLINE { Load(prev); });
-      } else if (!Reach(in[i])) [[unlikely]] {
+      } else if (!Reach(in[i], in[i])) [[unlikely]] {
         if constexpr (!Keep) {
           for (; i != n; ++i) {
             out[kept++] = in[i];

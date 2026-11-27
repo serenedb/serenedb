@@ -429,6 +429,63 @@ wild	{1,2,3,4,5}
 wild_pos	{1,2,3,4,5}
 
 statement ok
+CREATE TEXT SEARCH DICTIONARY bf_wild AS generate_wildcard_ngrams(keyword(), 3)
+
+statement ok
+CREATE TABLE bf (id INTEGER PRIMARY KEY, v BYTEA)
+
+statement ok
+CREATE INDEX bf_wild_idx ON bf USING inverted (id, v bf_wild)
+
+statement ok
+CREATE INDEX bf_kw_idx ON bf USING inverted (id, v)
+
+statement ok
+INSERT INTO bf VALUES (1, '\xff6265617374'), (2, '\x6d61ff62'), (3, '\x61ff'), (4, '\xffff')
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bf_wild_idx WHERE v @@ ts_like('\xff25'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bf_kw_idx WHERE v @@ ts_like('\xff25'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{1,4}
+wild	{1,4}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bf_wild_idx WHERE v @@ ts_like('\x2561ff25'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bf_kw_idx WHERE v @@ ts_like('\x2561ff25'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{2,3}
+wild	{2,3}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bf_wild_idx WHERE v @@ ts_like('\xffff25'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bf_kw_idx WHERE v @@ ts_like('\xffff25'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{4}
+wild	{4}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bf_wild_idx WHERE v @@ ts_regexp('\xff.*')
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bf_kw_idx WHERE v @@ ts_regexp('\xff.*')
+ORDER BY src
+----
+src	ids
+keyword	{1,4}
+wild	{1,4}
+
+statement ok
+DROP TABLE bf
+
+statement ok
+DROP TEXT SEARCH DICTIONARY bf_wild
+
+statement ok
 DROP TABLE bw
 
 statement ok

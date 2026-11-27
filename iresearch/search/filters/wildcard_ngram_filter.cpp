@@ -105,28 +105,28 @@ size_t SymbolCount(bytes_view literal, bool bytes) {
 ByPhraseOptions LiteralGrams(analysis::NGramTokenizer& ngram,
                              ValueAnalyzer& value_analyzer,
                              ValueTokens<>& tokens, bytes_view literal,
-                             bool bytes) {
+                             bool begin, bool end, bool bytes) {
   SDB_ASSERT(!literal.empty());
   if (SymbolCount(literal, bytes) >= ngram.min_gram()) {
     return SplitGrams(ngram, value_analyzer, tokens, ViewCast<char>(literal));
   }
   ByPhraseOptions part;
-  if (literal.size() != 1 && literal.back() == kBoundary) {
+  const bool data = literal.size() > size_t{begin} + size_t{end};
+  if (end && (data || begin)) {
     part.push_back<ByTermOptions>(ByTermOptions{bstring{literal}});
   } else {
     auto& prefix = part.push_back<ByPrefixOptions>();
-    if (literal.size() != 1 || literal.back() != kBoundary) {
+    if (data) {
       prefix.term = literal;
     }
   }
   return part;
 }
 
-bytes_view WholeCharacters(bytes_view literal) {
-  SDB_ASSERT(!literal.empty());
-  const size_t head = literal.front() == kBoundary ? 1 : 0;
-  const size_t tail =
-    literal.size() > head && literal.back() == kBoundary ? 1 : 0;
+bytes_view WholeCharacters(bytes_view literal, bool begin, bool end) {
+  const size_t head = begin ? 1 : 0;
+  const size_t tail = end ? 1 : 0;
+  SDB_ASSERT(literal.size() >= head + tail);
   auto body = literal.substr(head, literal.size() - head - tail);
   size_t cut = 0;
   while (cut != body.size() && (body[cut] & 0xC0) == 0x80) {
@@ -138,9 +138,9 @@ bytes_view WholeCharacters(bytes_view literal) {
   if (!simdutf::validate_utf8(chars, whole)) {
     return {};
   }
-  const size_t begin = cut == 0 ? 0 : head + cut;
-  const size_t end = whole == body.size() ? literal.size() : head + cut + whole;
-  return literal.substr(begin, end - begin);
+  const size_t from = cut == 0 ? 0 : head + cut;
+  const size_t to = whole == body.size() ? literal.size() : head + cut + whole;
+  return literal.substr(from, to - from);
 }
 
 bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
@@ -148,12 +148,16 @@ bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
                    bool has_pos, bool bytes,
                    std::vector<ByPhraseOptions>& grams) {
   if (query.kind == GramQuery::Kind::Literal) {
+    const bytes_view whole{query.literal};
     const auto literal =
-      bytes ? bytes_view{query.literal} : WholeCharacters(query.literal);
+      bytes ? whole : WholeCharacters(whole, query.begin, query.end);
+    const bool begin = query.begin && literal.data() == whole.data();
+    const bool end = query.end && literal.data() + literal.size() ==
+                                    whole.data() + whole.size();
     const auto& part = grams.emplace_back(
-      literal.empty()
-        ? ByPhraseOptions{}
-        : LiteralGrams(ngram, value_analyzer, tokens, literal, bytes));
+      literal.empty() ? ByPhraseOptions{}
+                      : LiteralGrams(ngram, value_analyzer, tokens, literal,
+                                     begin, end, bytes));
     return part.size() == 1 || has_pos;
   }
   bool exact = true;

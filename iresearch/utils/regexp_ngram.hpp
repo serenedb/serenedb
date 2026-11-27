@@ -46,6 +46,8 @@ struct GramQuery {
   Kind kind{Kind::All};
   bstring literal;
   std::vector<GramQuery> children;
+  bool begin{false};
+  bool end{false};
 
   bool operator==(const GramQuery&) const = default;
 };

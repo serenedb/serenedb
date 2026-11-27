@@ -205,6 +205,8 @@ TEST(RegexpNGramTest, code_points) {
   const irs::GramQuery lower{
     .kind = irs::GramQuery::Kind::Literal,
     .literal = irs::bstring{Bytes("\xFF\xD0\xB6\xD1\x83\xD0\xBA\xFF")},
+    .begin = true,
+    .end = true,
   };
   EXPECT_NE(zhuk.children.end(), absl::c_find(zhuk.children, lower));
 }

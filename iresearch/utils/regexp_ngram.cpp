@@ -597,7 +597,9 @@ class Extractor {
     for (const auto& s : set) {
       any = Combine(Kind::Or, std::move(any),
                     GramQuery{.kind = Kind::Literal,
-                              .literal = Encode(s, _boundary, _bytes)});
+                              .literal = Encode(s, _boundary, _bytes),
+                              .begin = s.front() == kEdge,
+                              .end = s.back() == kEdge});
     }
     match = Combine(Kind::And, std::move(match), std::move(any));
   }
@@ -633,33 +635,34 @@ class LikeShape {
     if (!Collect(root, 0)) {
       return std::nullopt;
     }
-    std::vector<Spellings> parts;
-    Spellings best{bstring{}};
-    const auto flush = [&](Spellings& piece) {
-      const auto& first = piece.front();
+    std::vector<Piece> parts;
+    Piece best;
+    const auto flush = [&](Piece& piece) {
+      const auto& first = piece.spellings.front();
       if ((_bytes ? first.size() : RuneLength(first)) >= _n) {
         parts.push_back(std::move(piece));
-      } else if (best.front().size() <= first.size()) {
+      } else if (best.spellings.front().size() <= first.size()) {
         best = std::move(piece);
       }
     };
     bool exact = true;
-    Spellings piece{bstring(1, _boundary)};
+    Piece piece{.spellings = {bstring(1, _boundary)}, .begin = true};
     for (size_t i = 0; i != _tokens.size(); ++i) {
       const auto& token = _tokens[i];
       if (token.unit == Unit::Literal) {
-        piece = Cross(piece, token.spellings);
+        piece.spellings = Cross(piece.spellings, token.spellings);
         continue;
       }
       exact = exact && token.unit == Unit::Any && token.dot_nl &&
               (i == 0 || i + 1 == _tokens.size());
       flush(piece);
-      piece = {bstring{}};
+      piece = {};
     }
-    if (!piece.front().empty()) {
-      for (auto& spelling : piece) {
+    if (!piece.spellings.front().empty()) {
+      for (auto& spelling : piece.spellings) {
         spelling += _boundary;
       }
+      piece.end = true;
       flush(piece);
     }
     GramPlan plan{.exact = exact};
@@ -669,8 +672,8 @@ class LikeShape {
           Combine(Kind::And, std::move(plan.query), AnyOf(std::move(part)));
       }
       plan.query = Prune(std::move(plan.query), limits.max_leaves);
-    } else if (exact || best.front() != bytes_view{&_boundary, 1}) {
-      SDB_ASSERT(!best.front().empty());
+    } else if (exact || !best.begin || best.spellings.front().size() != 1) {
+      SDB_ASSERT(!best.spellings.front().empty());
       plan.query = AnyOf(std::move(best));
     }
     return plan;
@@ -678,6 +681,12 @@ class LikeShape {
 
  private:
   using Spellings = std::vector<bstring>;
+
+  struct Piece {
+    Spellings spellings{bstring{}};
+    bool begin{false};
+    bool end{false};
+  };
 
   enum class Unit : uint8_t {
     Literal,
@@ -702,13 +711,15 @@ class LikeShape {
     return out;
   }
 
-  static GramQuery AnyOf(Spellings spellings) {
-    absl::c_sort(spellings);
+  static GramQuery AnyOf(Piece piece) {
+    absl::c_sort(piece.spellings);
     GramQuery any{.kind = Kind::None};
-    for (auto& spelling : spellings) {
-      any = Combine(
-        Kind::Or, std::move(any),
-        GramQuery{.kind = Kind::Literal, .literal = std::move(spelling)});
+    for (auto& spelling : piece.spellings) {
+      any = Combine(Kind::Or, std::move(any),
+                    GramQuery{.kind = Kind::Literal,
+                              .literal = std::move(spelling),
+                              .begin = piece.begin,
+                              .end = piece.end});
     }
     return any;
   }

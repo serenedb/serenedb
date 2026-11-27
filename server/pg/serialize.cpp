@@ -1316,13 +1316,12 @@ struct TimestampTzNsBinCore {
   }
 };
 
-template<bool kCopyDelim = false>
 struct TimeTextCore {
   using Value = duckdb::dtime_t;
-  using CopyDelimEscaped = TimeTextCore<true>;
+  static constexpr uint32_t kMaxBytes = duckdb::TimeToStringCast::MAX_LENGTH;
   static constexpr absl::CharSet kCopyDelims{":"};
-  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value time) {
-    WriteText<kCopyDelim>(ctx, duckdb::Time::ToString(time));
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value time) {
+    return duckdb::TimeToStringCast::Write(time, reinterpret_cast<char*>(dst));
   }
 };
 
@@ -1335,15 +1334,12 @@ struct TimeBinCore {
   }
 };
 
-template<bool kCopyDelim = false>
 struct TimeNsTextCore {
   using Value = duckdb::dtime_ns_t;
-  using CopyDelimEscaped = TimeNsTextCore<true>;
+  static constexpr uint32_t kMaxBytes = duckdb::TimeToStringCast::MAX_LENGTH;
   static constexpr absl::CharSet kCopyDelims{":"};
-  IRS_FORCE_INLINE static void Render(SerializationContext& ctx, Value time) {
-    duckdb::StringHeap heap{duckdb::Allocator::DefaultAllocator()};
-    const auto str = duckdb::StringCast::Operation(time, heap);
-    WriteText<kCopyDelim>(ctx, std::string_view{str.GetData(), str.GetSize()});
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value time) {
+    return duckdb::TimeToStringCast::Write(time, reinterpret_cast<char*>(dst));
   }
 };
 
@@ -1492,6 +1488,17 @@ struct IntervalTextCore {
                                       Value interval) {
     auto str = duckdb::Interval::ToString(interval);
     EmitTextItem<InContainer>(ctx, std::string_view{str});
+  }
+};
+
+struct IntervalTextSized {
+  using Value = duckdb::interval_t;
+  static constexpr uint32_t kMaxBytes =
+    duckdb::IntervalToStringCast::MAX_LENGTH;
+  static constexpr absl::CharSet kCopyDelims{" :-+"};
+  IRS_FORCE_INLINE static size_t Render(uint8_t* dst, Value interval) {
+    return duckdb::IntervalToStringCast::Format(interval,
+                                                reinterpret_cast<char*>(dst));
   }
 };
 
@@ -3167,6 +3174,14 @@ ColumnSerializer GetColumnSerialization(const duckdb::LogicalType& type,
         break;
       case DATE:
         return SelectSizedColumn<DateTextCore, DateBinCore>(format, context);
+      case TIME:
+        return SelectSizedColumn<TimeTextCore, TimeBinCore>(format, context);
+      case TIME_NS:
+        return SelectSizedColumn<TimeNsTextCore, TimeNsBinCore>(format,
+                                                                context);
+      case INTERVAL:
+        return SelectSizedColumn<IntervalTextSized, IntervalBinCore>(format,
+                                                                     context);
       case TIMESTAMP:
         return SelectSizedColumn<TimestampTextSized, TimestampBinCore>(format,
                                                                        context);
@@ -3486,10 +3501,10 @@ SerializationFunction GetArraySerialization(const duckdb::LogicalType& type,
       return MakeArraySerializer<DateTextCore, DateBinCore, kDate>(
         format, context, kind);
     case TIME:
-      return MakeArraySerializer<TimeTextCore<>, TimeBinCore, kTime>(
+      return MakeArraySerializer<TimeTextCore, TimeBinCore, kTime>(
         format, context, kind);
     case TIME_NS:
-      return MakeArraySerializer<TimeNsTextCore<>, TimeNsBinCore, kTime>(
+      return MakeArraySerializer<TimeNsTextCore, TimeNsBinCore, kTime>(
         format, context, kind);
     case TIME_TZ:
       return MakeArraySerializer<TimeTzTextCore<>, TimeTzBinCore, kTimetz>(
@@ -3936,10 +3951,10 @@ SerializationFunction GetSerialization(const duckdb::LogicalType& type,
       return SelectFieldSerializer<DateTextCore, DateTextCore, DateBinCore>(
         format, context);
     case TIME:
-      return SelectFieldSerializer<TimeTextCore<>, TimeTextCore<>, TimeBinCore>(
+      return SelectFieldSerializer<TimeTextCore, TimeTextCore, TimeBinCore>(
         format, context);
     case TIME_NS:
-      return SelectFieldSerializer<TimeNsTextCore<>, TimeNsTextCore<>,
+      return SelectFieldSerializer<TimeNsTextCore, TimeNsTextCore,
                                    TimeNsBinCore>(format, context);
     case TIME_TZ:
       return SelectFieldSerializer<TimeTzTextCore<>, TimeTzTextCore<>,

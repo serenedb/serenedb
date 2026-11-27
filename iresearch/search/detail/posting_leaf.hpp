@@ -114,6 +114,13 @@ struct FreqLen {
   uint32_t value = 0;
 };
 
+struct DocSpan {
+  doc_id_t first;
+  doc_id_t last;
+};
+
+inline constexpr size_t kMostSpans = 2 * BlockIndex::kRun;
+
 struct LeafScore {
   ColumnArgsFetcher* fetcher = nullptr;
   ScoreFunction score;
@@ -284,10 +291,9 @@ class PostingLeaf {
   void OpenInput(const PostingMeta& meta, const duckdb::InputFile& doc_in,
                  bool bounds, bool scans = false) {
     _in = OpenDocInput<InputType>(meta, doc_in,
-                                  scans ? duckdb::ReadAheadSteps::SCANNING
-                                  : Shape.reads == LeafReads::Grows
-                                    ? duckdb::ReadAheadSteps::SKIPPING
-                                    : duckdb::ReadAheadSteps::NONE);
+                                  scans || Shape.reads == LeafReads::Whole
+                                    ? duckdb::ReadAheadSteps::SCANNING
+                                    : duckdb::ReadAheadSteps::SKIPPING);
     auto& in = In();
     if constexpr (Shape.reads == LeafReads::Whole) {
       PrefetchDocs(doc_in, meta);
@@ -406,9 +412,7 @@ class PostingLeaf {
       _cursor.base = prev;
     }
     auto& in = In();
-    if constexpr (Shape.reads == LeafReads::Grows) {
-      in.Advance();
-    }
+    in.Advance();
     if (_left_in_list >= kBlock) [[likely]] {
       block_io::ReadBlockDelta(in, Enc(), _docs, prev);
       _left_in_leaf = kBlock;
@@ -431,6 +435,7 @@ class PostingLeaf {
   bool ReadLeafBelow(uint32_t len, doc_id_t min) {
     static_assert(Shape.scored && Shape.freqs && Shape.enc);
     auto& in = In();
+    in.Advance();
     block_io::ReadTailDelta(len, in, _enc.data, _docs, _last);
     _last = *(std::cend(_docs) - 1);
     if (_last < min) {
@@ -572,7 +577,7 @@ class PostingLeaf {
       return 0;
     }
     const auto block = _walk.NextBlock(_left_in_list);
-    return PlanLandings(
+    const auto landings = PlanLandings(
       _walk.Index(),
       {.block = block, .next = block, .upper = _last, .cap = kBlock}, in, n,
       blocks, [&](uint32_t landed) IRS_FORCE_INLINE {
@@ -582,6 +587,59 @@ class PostingLeaf {
           __builtin_prefetch(at + ABSL_CACHELINE_SIZE, 0, 2);
         }
       });
+    if (landings != 0 && HintBlock(blocks[landings - 1])) {
+      HintBlocks({blocks, landings - 1});
+    }
+    return landings;
+  }
+
+  bool ForeseeSpans(std::span<const DocSpan> spans) {
+    SDB_ASSERT(spans.size() <= kMostSpans);
+    if (spans.empty() || spans.back().last <= _last || _left_in_list == 0 ||
+        !_walk.Armed()) {
+      return false;
+    }
+    return ForeseeArmed(spans);
+  }
+
+  IRS_NO_INLINE bool ForeseeArmed(std::span<const DocSpan> spans) {
+    const auto& index = _walk.Loaded(In());
+    const auto n = index.Size();
+    auto block = _walk.NextBlock(_left_in_list);
+    if (!HintBlock(std::min(index.Find(block, spans.back().last), n - 1))) {
+      return false;
+    }
+    duckdb::FileRange ranges[kMostSpans];
+    size_t count = 0;
+    for (const auto& span : spans) {
+      if (span.last <= _last) {
+        continue;
+      }
+      const auto first = index.Find(block, std::max(span.first, _last + 1));
+      if (first == n) {
+        break;
+      }
+      block = std::min(index.Find(first, span.last), n - 1);
+      const auto start = _walk.BlockStart(first);
+      ranges[count++] = {.offset = start,
+                         .size = _walk.BlockEnd(block) - start};
+    }
+    In().File()->Hint(std::span{ranges, count});
+    return true;
+  }
+
+  bool HintBlock(uint32_t block) {
+    const auto start = _walk.BlockStart(block);
+    return In().File()->Hint(start, _walk.BlockEnd(block) - start);
+  }
+
+  IRS_NO_INLINE void HintBlocks(std::span<const uint32_t> blocks) {
+    duckdb::FileRange ranges[kBlock];
+    for (size_t i = 0; i != blocks.size(); ++i) {
+      const auto start = _walk.BlockStart(blocks[i]);
+      ranges[i] = {.offset = start, .size = _walk.BlockEnd(blocks[i]) - start};
+    }
+    In().File()->Hint(std::span{ranges, blocks.size()});
   }
 
   template<typename Read>

@@ -52,6 +52,7 @@ class PostingPos : public PostingLeaf<InputType, kPosShape> {
   using Base::ReadLeafDelta;
 
  public:
+  using Base::ForeseeSpans;
   using PosTraits = IteratorTraitsImpl<true, true, Offs>;
   using Position = PositionImpl<PosTraits, InputType>;
 

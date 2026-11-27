@@ -266,6 +266,7 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
   static constexpr uint32_t kNoBlock = std::numeric_limits<uint32_t>::max();
   static constexpr uint32_t kCachedBlocks = BlockIndex::kRun;
   static constexpr uint32_t kCachedRuns = 8;
+  static constexpr uint32_t kForeseenBlocks = detail::kMostSpans;
 
   score_t BoundScore(BoundPair bound) {
     _bound_source->Set(bound.freq, bound.norm);
@@ -300,6 +301,31 @@ class PrunedLeafBase : protected detail::PostingLeaf<InputType, kPrunedShape> {
     } else {
       return _walk.Seek(target, In());
     }
+  }
+
+  uint32_t ForeseeCompetitive(uint32_t* blocks) {
+    static_assert(Standalone);
+    const auto& index = _walk.Index();
+    const auto n = index.Size();
+    const auto b = _walk.Block();
+    if (b == n || !this->HintBlock(b)) {
+      return 0;
+    }
+    blocks[0] = b;
+    uint32_t count = 1;
+    for (auto k = b + 1; count != kForeseenBlocks; ++k) {
+      k = FirstCompetitive(
+        index, k, _threshold, [&](uint32_t r) { return RunScore(r); },
+        [&](uint32_t c) { return BlockScore(c); });
+      if (k == n) {
+        break;
+      }
+      blocks[count++] = k;
+    }
+    if (count != 1) {
+      this->HintBlocks({blocks + 1, count - 1});
+    }
+    return count;
   }
 
   IRS_FORCE_INLINE void Reposition() {
@@ -541,7 +567,7 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
     const auto& index = _walk.Index();
     const auto size = index.Size();
     const auto block = _walk.NextBlock(_left_in_list);
-    return irs::detail::PlanLandings(
+    const auto landings = irs::detail::PlanLandings(
       index,
       {.block = block,
        .next = _needs_reposition ? size : block,
@@ -561,6 +587,10 @@ class PrunedProbeBase : public PrunedLeafBase<InputType, false> {
           }
         }
       });
+    if (landings != 0 && this->HintBlock(blocks[landings - 1])) {
+      this->HintBlocks({blocks, landings - 1});
+    }
+    return landings;
   }
 
   void LandOn(uint32_t block) {

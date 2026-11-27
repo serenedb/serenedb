@@ -414,6 +414,11 @@ class BlockCursor {
     return _doc_start + (block == 0 ? 0 : _index.End(block - 1));
   }
 
+  uint64_t BlockEnd(uint32_t block) const noexcept {
+    SDB_ASSERT(!_pending && block < _index.Size());
+    return block + 1 == _index.Size() ? _offs : _doc_start + _index.End(block);
+  }
+
   const BlockIndex& Index() const noexcept { return _index; }
 
   const BlockIndex& Loaded(const InputType& in) {
@@ -453,8 +458,8 @@ class BlockCursor {
       const auto& file = *in.File().get();
       if (const auto extent =
             data + BlockIndex::Bytes(blocks, _shape, flags) - _offs;
-          extent > kPrefetchBytes && !file.IsResident(_offs + extent - 1, 1)) {
-        file.Prefetch(_offs, extent);
+          extent > kPrefetchBytes) {
+        file.Hint(_offs, extent);
       }
       index = in.Data() + data;
     } else {

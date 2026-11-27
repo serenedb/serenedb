@@ -38,7 +38,7 @@ inline duckdb::shared_ptr<duckdb::InputFile> PrepareInput(
   const ReaderState& state, std::string_view ext) {
   const auto name = irs::FileName(state.meta.name, ext);
   auto file = state.fs.OpenInputFile(state.fs.JoinPath(state.root, name),
-                                     duckdb::MappedFileAccess::NORMAL);
+                                     duckdb::MappedFileAccess::RANDOM);
   format_utils::ReadFooter(*file, name);
   return file;
 }

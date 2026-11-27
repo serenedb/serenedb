@@ -114,6 +114,32 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
   }
 
  private:
+  static constexpr bool kForeseesExcluded =
+    requires(Excludes& excludes, std::span<const detail::DocSpan> spans) {
+      excludes.ForeseeSpans(spans);
+    };
+
+  IRS_FORCE_INLINE void Foresee() {
+    uint32_t blocks[Base::kForeseenBlocks];
+    const auto count = this->ForeseeCompetitive(blocks);
+    if constexpr (kForeseesExcluded) {
+      if (count != 0) {
+        ForeseeExcluded({blocks, count});
+      }
+    }
+  }
+
+  IRS_NO_INLINE void ForeseeExcluded(std::span<const uint32_t> blocks) {
+    const auto& index = _walk.Index();
+    detail::DocSpan spans[Base::kForeseenBlocks];
+    for (size_t i = 0; i != blocks.size(); ++i) {
+      const auto b = blocks[i];
+      spans[i] = {.first = b == 0 ? doc_limits::min() : index.Last(b - 1) + 1,
+                  .last = index.Last(b)};
+    }
+    _excludes.ForeseeSpans({spans, blocks.size()});
+  }
+
   IRS_NO_INLINE uint32_t FilterBlock(doc_id_t* IRS_RESTRICT docs,
                                      score_t* IRS_RESTRICT scores, uint32_t len,
                                      score_t threshold) {
@@ -150,6 +176,7 @@ class PrunedPosting : public Root, public PrunedLeafBase<InputType, true> {
           if (_left_in_list == 0) {
             break;
           }
+          Foresee();
           const auto state = _walk.Landing();
           In().Seek(state.doc_ptr);
           last = state.doc;

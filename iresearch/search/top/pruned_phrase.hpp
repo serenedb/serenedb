@@ -124,7 +124,28 @@ class PrunedPhrase : public Root {
     if (b == index->Size()) {
       return doc_limits::eof();
     }
+    if (b >= _foresee_at) {
+      Foresee(*index, b, threshold);
+    }
     return _slots.Seek(index->Last(b - 1) + 1);
+  }
+
+  IRS_NO_INLINE void Foresee(const BlockIndex& index, uint32_t b,
+                             score_t threshold) {
+    const auto n = index.Size();
+    uint32_t blocks[detail::kMostSpans];
+    detail::DocSpan spans[detail::kMostSpans];
+    uint32_t count = 0;
+    for (auto k = b; k != n && count != detail::kMostSpans;
+         k = FirstCompetitive(
+           index, k + 1, threshold,
+           [&](uint32_t r) { return RunScore(index, r); },
+           [&](uint32_t c) { return _bound.Score(_slots, index.Bound(c)); })) {
+      blocks[count] = k;
+      spans[count++] = {.first = index.Last(k - 1) + 1, .last = index.Last(k)};
+    }
+    _foresee_at = count == detail::kMostSpans ? blocks[count / 2] : n;
+    _slots.ForeseeSpans({spans, count});
   }
 
   doc_id_t MatchFirst(doc_id_t doc, doc_id_t end,
@@ -262,6 +283,7 @@ class PrunedPhrase : public Root {
   ColumnArgsFetcher& _fetcher;
   doc_id_t _block_last = doc_limits::invalid();
   uint32_t _run = std::numeric_limits<uint32_t>::max();
+  uint32_t _foresee_at = 0;
   score_t _run_score = 0;
   uint32_t _seen = 0;
   uint32_t _passed = 0;

@@ -37,6 +37,7 @@
 
 #include "formats_test_case_base.hpp"
 #include "index_dir.hpp"
+#include "scripted_file_system.hpp"
 #include "tests_shared.hpp"
 #include "utils/write_helpers.hpp"
 
@@ -778,6 +779,56 @@ TEST_P(Format15TestCase, LongPostingsPruneThreshold100) {
   const auto docs = GenerateDocs(kCount, 50.f, 13.f, 1);
 
   AssertPrunedPostings(docs, kThreshold);
+}
+
+TEST_P(Format15TestCase, AReaderReadsTheBlocksItForesawWithoutTheirPages) {
+  static constexpr size_t kBlocks = 1024;
+  const size_t block = GetPostingsBlockSize();
+  const auto docs = GenerateDocs(kBlocks * block, 8.f, 1.f, 100);
+  FreqScorer scorer;
+  auto dir = get_directory(*this);
+  ASSERT_NE(nullptr, dir);
+  auto [meta, reader, records] = WriteReadMeta(*dir, docs, &scorer, kPos);
+  ASSERT_NE(nullptr, reader);
+
+  tests::ScriptedFileSystem fs{dir->Fs()};
+  const auto open = [&](std::string_view ext) {
+    return fs.OpenInputFile(
+      fs.JoinPath(dir->Root(), irs::FileName("segment_name", ext)),
+      duckdb::MappedFileAccess::RANDOM);
+  };
+  const auto pos_in = open(irs::PostingsWriter::kPosExt);
+  const auto doc_in = open(irs::PostingsWriter::kDocExt);
+  ASSERT_NE(nullptr, fs.mapped);
+  auto& doc_pages = *fs.mapped;
+  irs::detail::PostingPos<duckdb::MemoryReader, true> follower{
+    meta, *doc_in, kPos, *pos_in, nullptr};
+  ASSERT_EQ(docs.front().first, follower.Next());
+
+  const auto page = static_cast<uint64_t>(::sysconf(_SC_PAGESIZE));
+  const auto from = (meta.doc_start / page + 1) * page;
+  const auto to = (meta.doc_start + meta.doc_delta) / page * page;
+  ASSERT_LT(from + 16 * page, to);
+  ASSERT_NO_FATAL_FAILURE(doc_pages.Drop(from, to - from));
+  doc_pages.prefetched.clear();
+  ASSERT_TRUE(absl::c_all_of(std::span{doc_in->Data() + from, to - from},
+                             [](irs::byte_type b) { return b == 0; }));
+
+  const irs::doc_id_t targets[]{
+    docs[100 * block + 5].first,
+    docs[300 * block + 70].first,
+    docs[600 * block].first,
+    docs[900 * block + 127].first,
+  };
+  irs::detail::DocSpan spans[std::size(targets)];
+  for (size_t i = 0; i != std::size(targets); ++i) {
+    spans[i] = {.first = targets[i], .last = targets[i]};
+  }
+  ASSERT_TRUE(follower.ForeseeSpans(spans));
+  EXPECT_FALSE(doc_pages.prefetched.empty());
+  for (const auto target : targets) {
+    ASSERT_EQ(target, follower.Seek(target));
+  }
 }
 
 TEST_P(Format15TestCase, LongPostingsStressNone) {

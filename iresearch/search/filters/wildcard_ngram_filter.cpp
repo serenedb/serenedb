@@ -122,30 +122,24 @@ ByPhraseOptions LiteralGrams(analysis::NGramTokenizer& ngram,
   return part;
 }
 
-bstring WholeCharacters(bytes_view literal) {
-  const bool head = !literal.empty() && literal.front() == kBoundary;
-  literal.remove_prefix(head);
-  const bool tail = !literal.empty() && literal.back() == kBoundary;
-  literal.remove_suffix(tail);
+bytes_view WholeCharacters(bytes_view literal) {
+  const size_t head = !literal.empty() && literal.front() == kBoundary ? 1 : 0;
+  const size_t tail =
+    literal.size() > head && literal.back() == kBoundary ? 1 : 0;
+  auto body = literal.substr(head, literal.size() - head - tail);
   size_t cut = 0;
-  while (cut != literal.size() && (literal[cut] & 0xC0) == 0x80) {
+  while (cut != body.size() && (body[cut] & 0xC0) == 0x80) {
     ++cut;
   }
-  literal.remove_prefix(cut);
-  const auto* chars = reinterpret_cast<const char*>(literal.data());
-  const auto whole = simdutf::trim_partial_utf8(chars, literal.size());
+  body.remove_prefix(cut);
+  const auto* chars = reinterpret_cast<const char*>(body.data());
+  const auto whole = simdutf::trim_partial_utf8(chars, body.size());
   if (!simdutf::validate_utf8(chars, whole)) {
     return {};
   }
-  bstring out;
-  if (head && cut == 0) {
-    out += kBoundary;
-  }
-  out += literal.substr(0, whole);
-  if (tail && whole == literal.size()) {
-    out += kBoundary;
-  }
-  return out;
+  const size_t begin = cut == 0 ? 0 : head + cut;
+  const size_t end = whole == body.size() ? literal.size() : head + cut + whole;
+  return literal.substr(begin, end - begin);
 }
 
 bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
@@ -153,12 +147,8 @@ bool SplitLiterals(const GramQuery& query, analysis::NGramTokenizer& ngram,
                    bool has_pos, bool byte_grams, bool whole_characters,
                    std::vector<ByPhraseOptions>& grams) {
   if (query.kind == GramQuery::Kind::Literal) {
-    bytes_view literal = query.literal;
-    bstring whole;
-    if (whole_characters) {
-      whole = WholeCharacters(literal);
-      literal = whole;
-    }
+    const auto literal = whole_characters ? WholeCharacters(query.literal)
+                                          : bytes_view{query.literal};
     const auto& part = grams.emplace_back(
       literal.empty()
         ? ByPhraseOptions{}

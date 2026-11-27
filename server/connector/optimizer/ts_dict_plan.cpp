@@ -178,34 +178,13 @@ duckdb::idx_t EnsureTsDictColumn(PlannedScan& scan, TsDictReq& req,
   return appended.get_column;
 }
 
-duckdb::LogicalTypeId TermTypeOf(PlannedScan& scan, irs::field_id field_id,
-                                 bool bytes, duckdb::ClientContext& context) {
-  if (bytes) {
-    return duckdb::LogicalTypeId::BLOB;
-  }
+duckdb::LogicalTypeId TokenTypeOf(PlannedScan& scan, irs::field_id field_id,
+                                  duckdb::ClientContext& context) {
   return scan.Bind()
     .relation.ResolveTokenizers(context)
     .Acquire(field_id)
     .analyzer->Traits()
     .output;
-}
-
-void ThrowUnlessTextTerms(std::string_view fn, bool bytes,
-                          duckdb::LogicalTypeId terms) {
-  if (terms == duckdb::LogicalTypeId::VARCHAR) {
-    return;
-  }
-  if (bytes) {
-    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-                    ERR_MSG(fn, "(): column has no text term dictionary"),
-                    ERR_HINT("its terms are BYTEA, which ts_dict_raw_agg "
-                             "returns"));
-  }
-  THROW_SQL_ERROR(
-    ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-    ERR_MSG(fn, "(): column has no text term dictionary"),
-    ERR_HINT("its dictionary produces ", duckdb::LogicalTypeIdToString(terms),
-             " tokens, which ts_dict_raw_agg returns"));
 }
 
 struct TsDictColumnRef {
@@ -377,9 +356,21 @@ duckdb::unique_ptr<duckdb::Expression> PushdownTsDictCall(
 
   const auto [kind, agg_name] = *fn_info;
   const bool bytes = element == duckdb::LogicalTypeId::BLOB;
+  if (kind == TsDictColumn::Term && bytes) {
+    THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                    ERR_MSG(fn, "(): column has no text term dictionary"),
+                    ERR_HINT("its terms are BYTEA, which ts_dict_raw_agg "
+                             "returns"));
+  }
   if (kind == TsDictColumn::Term) {
-    ThrowUnlessTextTerms(
-      fn, bytes, TermTypeOf(scan, index->TermField(col_id), bytes, context));
+    const auto output = TokenTypeOf(scan, index->TermField(col_id), context);
+    if (output != duckdb::LogicalTypeId::VARCHAR) {
+      THROW_SQL_ERROR(ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+                      ERR_MSG(fn, "(): column has no text term dictionary"),
+                      ERR_HINT("its dictionary produces ",
+                               duckdb::LogicalTypeIdToString(output),
+                               " tokens, which ts_dict_raw_agg returns"));
+    }
   }
   return MakeTsDictAggregate(
     plan, context, scan, index->TermField(col_id),
@@ -472,23 +463,21 @@ duckdb::unique_ptr<duckdb::LogicalOperator> InjectTsDictGroupBy(
       continue;
     }
     auto& req = ss.ts_dict.requests[r];
-    const auto kind = TermTypeOf(scan, req.field_id, req.bytes, context) ==
-                          duckdb::LogicalTypeId::VARCHAR
-                        ? TsDictColumn::Term
-                        : TsDictColumn::TermRaw;
-    const duckdb::LogicalType type{SpecOf(kind).type};
-    const auto get_column = EnsureTsDictColumn(scan, req, kind);
+    const auto get_column =
+      EnsureTsDictColumn(scan, req, TsDictColumn::TermRaw);
     req.term_uses |= connector::TsDictTermUses::Full;
     const auto anchor =
       child->type == duckdb::LogicalOperatorType::LOGICAL_PROJECTION
         ? child->Cast<duckdb::LogicalProjection>().table_index
         : get_ti;
-    const auto source = index.Expose(
-      anchor, scan, get_column, TsDictColName(ss, req.display_id, kind), type);
+    const auto source =
+      index.Expose(anchor, scan, get_column,
+                   TsDictColName(ss, req.display_id, TsDictColumn::TermRaw),
+                   duckdb::LogicalType::BLOB);
     add_entry({
       .source = source,
-      .source_type = type,
-      .kind = kind,
+      .source_type = duckdb::LogicalType::BLOB,
+      .kind = TsDictColumn::TermRaw,
       .req_index = r,
     });
   }
@@ -2213,14 +2202,16 @@ class TsDictFilterClaim {
       return;
     }
     auto& req = _bind_data.ts_dict.requests.front();
-    const auto terms = TermTypeOf(_scan, req.field_id, req.bytes, _context);
-    if (!req.bytes && terms != duckdb::LogicalTypeId::VARCHAR) {
-      THROW_SQL_ERROR(
-        ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
-        ERR_MSG("ts_dict_agg() WHERE evaluates scalar "
-                "post-filters over text terms only"),
-        ERR_HINT("the column's dictionary produces ",
-                 duckdb::LogicalTypeIdToString(terms), " tokens"));
+    if (!req.bytes) {
+      const auto output = TokenTypeOf(_scan, req.field_id, _context);
+      if (output != duckdb::LogicalTypeId::VARCHAR) {
+        THROW_SQL_ERROR(
+          ERR_CODE(ERRCODE_FEATURE_NOT_SUPPORTED),
+          ERR_MSG("ts_dict_agg() WHERE evaluates scalar "
+                  "post-filters over text terms only"),
+          ERR_HINT("the column's dictionary produces ",
+                   duckdb::LogicalTypeIdToString(output), " tokens"));
+      }
     }
     const auto kind = req.bytes ? TsDictColumn::TermRaw : TsDictColumn::Term;
     const auto term_column = EnsureTsDictColumn(_scan, req, kind);

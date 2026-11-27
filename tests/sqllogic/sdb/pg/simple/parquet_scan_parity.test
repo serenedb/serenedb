@@ -211,3 +211,45 @@ a
 3143
 3142
 3141
+
+
+statement ok
+COPY (SELECT i AS v, i // 100 AS f FROM range(10000) t(i))
+  TO '${__TEST_DIR__}/psp_sample_files' (FORMAT parquet, PARTITION_BY (f));
+
+
+query
+SELECT count(*) AS n FROM read_parquet('${__TEST_DIR__}/psp_sample_files/*/*.parquet') USING SAMPLE 10 ROWS (system, 1);
+----
+n
+10
+
+
+statement ok
+SET threads = 1
+
+
+statement ok
+CREATE TEMP TABLE psp_sample_one_thread AS
+SELECT v FROM read_parquet('${__TEST_DIR__}/psp_sample_files/*/*.parquet') USING SAMPLE 10 ROWS (system, 1);
+
+
+statement ok
+SET threads = 4
+
+
+statement ok
+CREATE TEMP TABLE psp_sample_four_threads AS
+SELECT v FROM read_parquet('${__TEST_DIR__}/psp_sample_files/*/*.parquet') USING SAMPLE 10 ROWS (system, 1);
+
+
+statement ok
+RESET threads
+
+
+query
+SELECT (SELECT count(*) FROM psp_sample_one_thread) AS n,
+       (SELECT count(*) FROM (SELECT v FROM psp_sample_one_thread EXCEPT SELECT v FROM psp_sample_four_threads) d) AS differ;
+----
+n	differ
+10	0

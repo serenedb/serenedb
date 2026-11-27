@@ -2133,30 +2133,26 @@ BindInfo PgWireSession<Kind>::ParseBindVars(std::string_view cursor,
          (sdb::pg::ReceivesText(type) && !IsDeclaredNumeric(stmt, i))) &&
         (!simdutf::validate_utf8(field.data(), field.size()) ||
          std::memchr(field.data(), '\0', field.size()))) {
-      sdb::pg::ThrowInContext(
-        std::make_exception_ptr(irs::SqlException{
-          SQL_ERROR_DATA(ERR_CODE(ERRCODE_CHARACTER_NOT_IN_REPERTOIRE),
-                         ERR_MSG(duckdb::CopyInvalidUtf8(field))),
-          std::source_location::current()}),
-        portal_name.empty()
-          ? absl::StrCat("unnamed portal parameter $", i + 1, " = '...'")
-          : absl::StrCat("portal \"", portal_name, "\" parameter $", i + 1,
-                         " = '...'"));
-    }
-    try {
-      if (!IsDeclaredNumeric(stmt, i) ||
-          sdb::pg::DeclaredNumericType(
-            field, format, stmt.ParamOids()[i] == sdb::pg::kNumericArray,
-            type)) {
-        sdb::pg::ValueSink sink{type, out};
-        decoded = sdb::pg::GetDeserialization<sdb::pg::ValueSink>(type, format)(
-          dctx, field, sink);
+      error = std::make_exception_ptr(irs::SqlException{
+        SQL_ERROR_DATA(ERR_CODE(ERRCODE_CHARACTER_NOT_IN_REPERTOIRE),
+                       ERR_MSG(duckdb::CopyInvalidUtf8(field))),
+        std::source_location::current()});
+    } else {
+      try {
+        if (!IsDeclaredNumeric(stmt, i) ||
+            sdb::pg::DeclaredNumericType(
+              field, format, stmt.ParamOids()[i] == sdb::pg::kNumericArray,
+              type)) {
+          sdb::pg::ValueSink sink{type, out};
+          decoded = sdb::pg::GetDeserialization<sdb::pg::ValueSink>(
+            type, format)(dctx, field, sink);
+        }
+      } catch (const duckdb::ConversionException&) {
+      } catch (const duckdb::InvalidInputException&) {
+      } catch (const duckdb::OutOfRangeException&) {
+      } catch (const irs::SqlException&) {
+        error = std::current_exception();
       }
-    } catch (const duckdb::ConversionException&) {
-    } catch (const duckdb::InvalidInputException&) {
-    } catch (const duckdb::OutOfRangeException&) {
-    } catch (const irs::SqlException&) {
-      error = std::current_exception();
     }
     if (!decoded && !error) {
       error = format == sdb::pg::VarFormat::Binary

@@ -102,7 +102,7 @@ When a `gap` is declared, the budget counts deviation from *that* gap rather tha
 
 `(...)::slop(N)` applies the same budget, with the same `0` to `65535` range, as a modifier to an already-built phrase, including one from [`phraseto_tsquery`](#phraseto_tsquery). Lucene's `"..."~N` reaches it through [`to_tsquery`](#to_tsquery). The forms are mutually exclusive: specifying slop twice on one phrase is an error, and `::slop` on a non-phrase query (or on a `##` part) is rejected.
 
-See [Phrase and Proximity Search](../../../cookbook/search/phrase-and-proximity-search.md#proximity-search-with-slop) for worked examples.
+See [Phrase and Proximity Search](../../../cookbook/search/phrase-and-proximity-search.md#proximity-search-with-slop) for worked examples, and [Phrases with gaps, intervals and slop](https://serenedb.com/blog/phrases-gaps-intervals-slop) for how the positional index answers gaps, intervals and slop and what each costs.
 
 #### `ts_tokenize(text[, dictionary])` {#ts_tokenize}
 

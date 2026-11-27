@@ -119,12 +119,13 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobsInit(
   const auto holds_jobs = [](duckdb::AttachedDatabase& database) {
     return catalog::IsSereneDB(database.GetCatalog()) && !database.IsReadOnly();
   };
-  const auto role =
-    duckdb::Role(context, input.bind_data->Cast<ListingData>().caller_role);
+  const duckdb::CatalogEntryRetriever retriever{
+    context,
+    duckdb::Role(context, input.bind_data->Cast<ListingData>().caller_role)};
   for (auto& schema :
-       duckdb::Catalog::GetAllSchemas(context, role, false, holds_jobs)) {
+       duckdb::Catalog::GetAllSchemas(retriever, false, holds_jobs)) {
     duckdb::Catalog::ScanListedEntries(
-      context, role, schema.get(), duckdb::CatalogType::JOB_ENTRY,
+      retriever, schema.get(), duckdb::CatalogType::JOB_ENTRY,
       [&](duckdb::CatalogEntry& entry) {
         result->entries.emplace_back(entry.Cast<catalog::JobCatalogEntry>());
       });
@@ -212,7 +213,7 @@ duckdb::unique_ptr<duckdb::GlobalTableFunctionState> JobRunsInit(
     return result;
   }
   absl::flat_hash_map<duckdb::idx_t, catalog::SereneDBCatalog*> databases;
-  const auto role =
+  const auto& role =
     duckdb::Role(context, input.bind_data->Cast<ListingData>().caller_role);
   for (auto& database :
        duckdb::DatabaseManager::Get(context).GetDatabases(context)) {

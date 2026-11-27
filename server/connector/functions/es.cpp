@@ -611,8 +611,8 @@ void EsCatIndicesExecute(duckdb::ClientContext& context,
     std::vector<duckdb::reference<duckdb::TableCatalogEntry>> tables;
     if (auto schema = EsSchema(context)) {
       duckdb::Catalog::ScanListedEntries(
-        context, state.role, *schema, duckdb::CatalogType::TABLE_ENTRY,
-        [&](duckdb::CatalogEntry& entry) {
+        duckdb::CatalogEntryRetriever{context, state.role}, *schema,
+        duckdb::CatalogType::TABLE_ENTRY, [&](duckdb::CatalogEntry& entry) {
           if (entry.type == duckdb::CatalogType::TABLE_ENTRY) {
             tables.emplace_back(entry.Cast<duckdb::TableCatalogEntry>());
           }

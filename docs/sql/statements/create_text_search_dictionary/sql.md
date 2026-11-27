@@ -60,7 +60,9 @@ The expressions above are written as they read; inside the statement each single
 
 A `NULL` result rejects the value, which then contributes no tokens at all; `ts_lexize` and the tokenizer functions return `NULL` for a rejected value, while a value that is accepted but produces no tokens returns an empty array. A `NULL` element inside a list is dropped on its own and the surrounding elements are still emitted. An empty list accepts the value and produces no tokens. `NULL` rows never reach the expression. Watch for `NULL` constants in null-propagating functions: `replace(input, NULL, 'x')` is `NULL` for every value, so every value is rejected.
 
-A `BLOB`-returning expression types the tokens as `BLOB`, and their bytes are indexed as raw byte terms — the template performs no UTF-8 validation or conversion of its own. `ts_lexize` then returns `BLOB[]`, and the dictionary name has to be a constant: `ts_lexize` refuses a non-constant name for a dictionary that produces `BLOB` tokens.
+A `BLOB`-returning expression types the tokens as `BLOB`, and their bytes are indexed as raw byte terms — the template performs no UTF-8 validation or conversion of its own. `ts_lexize` then returns `BLOB[]`, and the dictionary name has to be a constant: `ts_lexize` refuses a non-constant name for a dictionary that produces `BLOB` tokens. Such a step can only be the last one of a [`pipeline`](./pipeline/index.md).
+
+The token type is the one the expression returns when the dictionary is created. Should the expression return another type later, as after an upgrade that changes a built-in function's return type, every use of the dictionary fails with `sql: expression returns <type>, but the dictionary was created when it returned <type>` until the dictionary is recreated.
 
 An error raised while the expression runs — a failed cast, an invalid regular expression argument — is not caught by the template. It propagates out of the statement that was analyzing the value, whether that is `INSERT`, `CREATE INDEX` or `ts_lexize`.
 

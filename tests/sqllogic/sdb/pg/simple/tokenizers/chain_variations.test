@@ -294,6 +294,33 @@ CREATE TEXT SEARCH DICTIONARY union_collate_then_lower AS [collate_tokens('en_US
 db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
 
 
+statement error
+CREATE TEXT SEARCH DICTIONARY binary_grams_then_lower AS generate_ngrams(2, 2, input_type := 'binary') | normalize_tokens(case := 'lower');
+----
+db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY bytes_then_lower AS split_text_csv('') | normalize_tokens(case := 'lower');
+----
+db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
+
+
+statement error
+CREATE TEXT SEARCH DICTIONARY md5_then_upper AS (lambda x: unhex(md5(x))) | (lambda x: upper(x));
+----
+db error: ERROR: pipeline: stage 1 expects VARCHAR input, but the preceding stage produces BLOB
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY lower_then_binary_grams AS normalize_tokens(case := 'lower') | generate_ngrams(2, 2, input_type := 'binary');
+
+query
+SELECT list_transform(ts_lexize('lower_then_binary_grams', 'HÉ'), lambda t: hex(t)) AS grams;
+----
+grams
+{68C3,C3A9}
+
 # --- stored dictionaries at every position ---
 
 statement ok

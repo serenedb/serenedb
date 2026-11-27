@@ -55,8 +55,10 @@ The `##` operator builds a **proximity phrase** by chaining parts left to right:
 
 Each side of a `##` is a single **phrase part**. A part may be:
 
-- a **bare word** — but only a *single* token (a multi-word string is not a phrase part; use `ts_phrase` for that), or
+- a **bare string**, the same part as [`ts_phrase`](../../functions/search/full-text.md#ts_phrase) of it: the column's dictionary analyzes it, so with a dictionary that splits and lowercases words `'Quick Brown' ## 'fox'` matches `quick brown fox`, or
 - one of [`ts_phrase`](../../functions/search/full-text.md#ts_phrase), [`ts_starts_with`](../../functions/search/full-text.md#ts_starts_with), [`ts_like`](../../functions/search/full-text.md#ts_like), [`ts_regexp`](../../functions/search/full-text.md#ts_regexp), [`ts_levenshtein`](../../functions/search/full-text.md#ts_levenshtein), [`ts_any`](../../functions/search/full-text.md#ts_any) or [`ts_between`](../../functions/search/full-text.md#ts_between).
+
+A `ts_phrase` part keeps all its segments and gaps, so `ts_phrase('quick', 1, 'fox') ## 'dog'` matches `quick brown fox dog`. A part is never sloppy: `slop := N` or `::slop(N)` on a part fails with `## part must not carry a slop modifier`. The strings of a `ts_any` part go through the column's dictionary too, and each one stands for a single position: a string the dictionary splits into several, such as `'quick fox'`, fails with `## ts_any phrase part term 'quick fox' spans several positions`.
 
 These part types **mix freely**: any of them can occupy any position in a single chain, in any combination, with an independent gap between any pair — for example `ts_starts_with('qu') ## 1 ## ts_any(['fox', 'dog'])` chains a prefix part, a gap and an alternatives part.
 

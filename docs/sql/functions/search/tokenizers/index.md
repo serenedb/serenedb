@@ -45,7 +45,7 @@ An option whose value is a list of strings takes either spelling of the dictiona
 
 <SqlLogicTest id="sql/functions/search/tokenizers/index/constant_option" />
 
-The result type follows the tokenizer: `VARCHAR[]` for every text template, `BLOB[]` for [`collate_tokens`](./collate_tokens.md), [`encode_geopoint`](./encode_geopoint.md), [`encode_geojson`](./encode_geojson.md) and [`generate_wildcard_ngrams`](./generate_wildcard_ngrams.md), whose terms are binary. A template that stores a per-document payload alongside its terms, such as `encode_geojson` with a non-source coding, returns only the terms.
+The result type follows the tokenizer: `VARCHAR[]` for every text template, `BLOB[]` for [`collate_tokens`](./collate_tokens.md), [`encode_geopoint`](./encode_geopoint.md), [`encode_geojson`](./encode_geojson.md), [`generate_wildcard_ngrams`](./generate_wildcard_ngrams.md), [`generate_ngrams`](./generate_ngrams.md) with `input_type := 'binary'` and [`split_text_csv`](./split_text_csv.md) with an empty delimiter, whose terms are binary. Such a call can only be the outermost tokenizer call of a chain, as its template can only be the last step of a pipeline. A template that stores a per-document payload alongside its terms, such as `encode_geojson` with a non-source coding, returns only the terms.
 
 Four templates have no function form, because SQL already expresses them: [`keyword`](../../../statements/create_text_search_dictionary/keyword.md) is the list literal `[value]`, [`pipeline`](../../../statements/create_text_search_dictionary/pipeline/index.md) is nesting, [`union`](../../../statements/create_text_search_dictionary/union.md) is `list_concat` of two calls, and a [`sql`](../../../statements/create_text_search_dictionary/sql.md) stage is the expression itself.
 
@@ -61,7 +61,7 @@ messages are on the page each row links to.
 | :--- | :--- |
 | [`split_text(value, case := 'none', break := 'alpha')`](./split_text.md) | Split text into words, sentences, lines, paragraphs or grapheme clusters on Unicode boundaries, optionally case-folded |
 | [`split_text_icu(value, locale, break := 'alpha')`](./split_text_icu.md) | Segment text into words or sentences with the ICU break iterator for `locale` |
-| [`split_text_csv(value, delimiter)`](./split_text_csv.md) | Cut the value at every occurrence of `delimiter`, honouring `"` quoting |
+| [`split_text_csv(value, delimiter)`](./split_text_csv.md) | Cut the value at every occurrence of `delimiter`, honouring `"` quoting; an empty `delimiter` cuts it into bytes, as `BLOB[]` |
 | [`split_by_delimiters(value, delimiters)`](./split_by_delimiters.md) | Cut the value at every occurrence of any of the `delimiters` |
 | [`split_by_non_alpha(value, case := 'none', break := 'ascii')`](./split_by_non_alpha.md) | Runs of word characters, everything else a separator; `break` picks them: ASCII letters and digits, those plus every byte from `0x80` up, letters and digits or letters alone in any script, or everything but whitespace |
 | [`split_by_pattern(value, pattern, group := -1)`](./split_by_pattern.md) | Match or split with an RE2 regular expression |
@@ -71,7 +71,7 @@ messages are on the page each row links to.
 | [`remove_stopwords(value, stopwords := [], stopwords_path := '', hex := false)`](./remove_stopwords.md) | Drop the listed tokens |
 | [`filter_tokens(value, min_length := 0, max_length := 0)`, `filter_tokens(tokens, lambda x: <predicate>)`](./filter_tokens.md) | Drop the tokens outside a range of character lengths, or those a lambda rejects |
 | [`strip_html(value, join_inline_tags := false)`](./strip_html.md) | The text runs between HTML markup with character references decoded and `script` and `style` content dropped; `join_inline_tags` keeps words whole across inline tags |
-| [`generate_ngrams(value, min_gram := 2, max_gram := 3, preserve_original := false, input_type := 'utf8', start_marker := '', end_marker := '', mode := 'all')`](./generate_ngrams.md) | Character n-grams of each token, including the prefix-anchored edge n-grams of `mode := 'only_prefix'` |
+| [`generate_ngrams(value, min_gram := 2, max_gram := 3, preserve_original := false, input_type := 'utf8', start_marker := '', end_marker := '', mode := 'all')`](./generate_ngrams.md) | Character n-grams of each token, including the prefix-anchored edge n-grams of `mode := 'only_prefix'`; byte n-grams as `BLOB[]` with `input_type := 'binary'` |
 | [`generate_sparse_ngrams(value, max_ngram_length := 16, covering := false, min_ngram_length := 3, min_cutoff_length := 0)`](./generate_sparse_ngrams.md) | Sparse variable-length n-grams for substring search |
 | [`generate_wildcard_ngrams(value, ngram_size := 3)`](./generate_wildcard_ngrams.md) | Boundary-marked n-grams for wildcard and prefix matching, as `BLOB[]`; a list is the token stream, a `VARCHAR` one token |
 | [`generate_shingles(value, min_gram := 2, max_gram := 2, output_unigrams := true, fallback_unigrams := false, frequent_words := [], token_separator := ' ')`](./generate_shingles.md) | Word n-grams over the token stream; a list is the token stream, a `VARCHAR` one token |

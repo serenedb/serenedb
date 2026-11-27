@@ -311,6 +311,20 @@ TEST(SqlTokenizerTest, blobResultsDeclareBlobOutput) {
   ASSERT_EQ(duckdb::LogicalTypeId::VARCHAR, text->Traits().output);
 }
 
+TEST(SqlTokenizerTest, bindRefusesATypeOtherThanTheRecordedOne) {
+  SqlTokenizer recorded{
+    {.expression = "upper(input)", .output = duckdb::LogicalTypeId::BLOB},
+    tests::Cache()};
+  ASSERT_EQ(duckdb::LogicalTypeId::BLOB, recorded.Traits().output);
+  ASSERT_THROW(recorded.Bind(tests::EngineContext()), irs::SqlException);
+
+  SqlTokenizer same{
+    {.expression = "upper(input)", .output = duckdb::LogicalTypeId::VARCHAR},
+    tests::Cache()};
+  same.Bind(tests::EngineContext());
+  ASSERT_EQ(tests::AnalyzeTerms(same, "x"), (std::vector<std::string>{"X"}));
+}
+
 TEST(SqlTokenizerTest, inputReferencedTwiceWithConstants) {
   auto a = MakeBound("concat(input, '-', input)");
   ASSERT_EQ(tests::AnalyzeTerms(*a, "ab"), (std::vector<std::string>{"ab-ab"}));

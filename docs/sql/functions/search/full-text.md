@@ -100,7 +100,7 @@ Precisely, a match costs the spread of its shifts: shift each query token by its
 
 When a `gap` is declared, the budget counts deviation from *that* gap rather than from adjacency: `ts_phrase('quick', 1, 'fox', slop := 1)` accepts `quick fox` and `quick a b fox` — one step either side of the declared single-token gap. Interval gaps already express a range, so `ts_phrase('a', [1, 3], 'b', slop := 2)` is an error.
 
-`(...)::slop(N)` applies the same budget, with the same `0` to `65535` range, as a modifier to an already-built phrase, including one from [`phraseto_tsquery`](#phraseto_tsquery). Lucene's `"..."~N` reaches it through [`to_tsquery`](#to_tsquery). The forms are mutually exclusive: specifying slop twice on one phrase is an error, and `::slop` on a non-phrase query (or on a `##` part) is rejected.
+`(...)::slop(N)` applies the same budget, with the same `0` to `65535` range, as a modifier to an already-built phrase, including one from [`phraseto_tsquery`](#phraseto_tsquery). Lucene's `"..."~N` reaches it through [`to_tsquery`](#to_tsquery). The forms are mutually exclusive: specifying slop twice on one phrase is an error, `::slop` on a non-phrase query is rejected, and so is either form on a [`##` part](../../indexes/inverted/full-text-search.md#phrase-parts).
 
 See [Phrase and Proximity Search](../../../cookbook/search/phrase-and-proximity-search.md#proximity-search-with-slop) for worked examples, and [Phrases with gaps, intervals and slop](https://serenedb.com/blog/phrases-gaps-intervals-slop) for how the positional index answers gaps, intervals and slop and what each costs.
 
@@ -501,7 +501,7 @@ Ordered proximity: require the sub-queries to appear close together, in order.
 
 | Operand | Type | Meaning |
 | :--- | :--- | :--- |
-| `a`, `b` | `TSQUERY` or `VARCHAR` | The two ends of the phrase. |
+| `a`, `b` | `TSQUERY` or `VARCHAR` | The two ends of the phrase. A string is analyzed by the column's dictionary as [`ts_phrase`](#ts_phrase) analyzes it; [phrase parts](../../indexes/inverted/full-text-search.md#phrase-parts) lists the queries an end can be. |
 | gap (between) | `INTEGER` or `INTEGER[]` | Optional. `a ## b` is strict adjacency; `a ## N ## b` requires exactly `N` tokens between; `a ## [min, max] ## b` allows a gap range. |
 
 **How it works.** `##` is an **ordered** proximity operator: `a` must precede `b`. The integer counts the tokens *between* the two ends — `a ## b` (no integer) and `a ## 0 ## b` both mean immediate adjacency, `a ## 2 ## b` means exactly two intervening tokens. Order matters: `'quick' ## 'brown'` matches `quick brown` but `'brown' ## 'quick'` does not.
@@ -644,6 +644,7 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `a*` | Prefix (wildcard) match. |
 | `a?c` · `a*c` | Wildcard match: `?` is exactly one character, `*` any run of characters. Every other character matches itself, `%` and `_` included, and `\` makes the next character literal. |
 | `a~N` | Fuzzy match within edit distance `N`. |
+| `/re/` | Regular expression that must match a whole token, as [`ts_regexp`](#ts_regexp). |
 | `a*~N` | Fuzzy prefix: tokens that start within edit distance `N` of `a`, as [`ts_levenshtein`](#ts_levenshtein) with `starts_with := true`. A bare `~` allows two edits. Also a phrase part, `"a b*~N"`; write `"a b\*\~N"` to search those characters instead, as the column's dictionary analyzes them. |
 | `"a b"` | Phrase match. |
 | `"a b"~N` | Proximity phrase: `a` and `b` within `N` positions. |
@@ -651,6 +652,8 @@ Parse a single Lucene-style query string into a `TSQUERY`.
 | `a^N` | Boost `a`'s relevance contribution by factor `N`. |
 
 A quoted single word or pattern needs neither positions nor the column's text: `"car"` matches and scores like [`ts_phrase('car')`](#ts_phrase), and `"b*"` like `b*`.
+
+On a `BYTEA` column every byte is a character: `?` matches exactly one byte, `~N` counts edits in bytes, and `/re/` matches bytes, as [`ts_like`](#ts_like), [`ts_levenshtein`](#ts_levenshtein) and [`ts_regexp`](#ts_regexp) do there.
 
 These combine freely. Despite the PostgreSQL-compatible name, this builds a SereneDB inverted-index query, not a PostgreSQL `tsquery`.
 

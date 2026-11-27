@@ -123,7 +123,8 @@ ByPhraseOptions LiteralGrams(analysis::NGramTokenizer& ngram,
 }
 
 bytes_view WholeCharacters(bytes_view literal) {
-  const size_t head = !literal.empty() && literal.front() == kBoundary ? 1 : 0;
+  SDB_ASSERT(!literal.empty());
+  const size_t head = literal.front() == kBoundary ? 1 : 0;
   const size_t tail =
     literal.size() > head && literal.back() == kBoundary ? 1 : 0;
   auto body = literal.substr(head, literal.size() - head - tail);

@@ -384,6 +384,50 @@ keyword	NULL
 wild	NULL
 wild_pos	NULL
 
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x2561ff62636425'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x2561ff62636425'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x2561ff62636425'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	NULL
+wild	NULL
+wild_pos	NULL
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x25bc62657225'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x25bc62657225'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x25bc62657225'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{1}
+wild	{1}
+wild_pos	{1}
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x25a9a9a925'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x25a9a9a925'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x25a9a9a925'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	NULL
+wild	NULL
+wild_pos	NULL
+
+query
+SELECT 'wild' AS src, list(id ORDER BY id) AS ids FROM bw_wild_idx WHERE w @@ ts_like('\x25'::bytea)
+UNION ALL SELECT 'wild_pos', list(id ORDER BY id) FROM bw_wild_pos_idx WHERE w @@ ts_like('\x25'::bytea)
+UNION ALL SELECT 'keyword', list(id ORDER BY id) FROM bw_kw_idx WHERE w @@ ts_like('\x25'::bytea)
+ORDER BY src
+----
+src	ids
+keyword	{1,2,3,4,5}
+wild	{1,2,3,4,5}
+wild_pos	{1,2,3,4,5}
+
 statement ok
 DROP TABLE bw
 

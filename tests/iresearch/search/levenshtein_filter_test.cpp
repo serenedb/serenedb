@@ -124,6 +124,7 @@ TEST(by_edit_distance_test, options) {
   ASSERT_EQ(0, opts.max_terms);
   ASSERT_FALSE(opts.with_transpositions);
   ASSERT_FALSE(opts.starts_with);
+  ASSERT_FALSE(opts.bytes);
   ASSERT_TRUE(opts.term.empty());
 }
 
@@ -152,6 +153,11 @@ TEST(by_edit_distance_test, equal) {
   }
   {
     auto rhs = MakeFilter("field", "bar", 1, 0, true);
+    rhs.mutable_options()->bytes = true;
+    ASSERT_NE(q, rhs);
+  }
+  {
+    auto rhs = MakeFilter("field", "bar", 1, 0, true);
     rhs.mutable_options()->merge = irs::ScoreMergeType::Sum;
     ASSERT_NE(q, rhs);
   }
@@ -170,6 +176,7 @@ TEST(levenshtein_automaton_filter_test, equal) {
     nullptr,
     true,
     false,
+    false,
     irs::ViewCast<irs::byte_type>(std::string_view{"b"}),
     irs::ViewCast<irs::byte_type>(std::string_view{"ar"}),
     0};
@@ -184,6 +191,7 @@ TEST(levenshtein_automaton_filter_test, equal) {
   EXPECT_TRUE(differs([](auto& o) { ++o.no_distance; }));
   EXPECT_TRUE(differs([](auto& o) { o.with_transpositions = false; }));
   EXPECT_TRUE(differs([](auto& o) { o.starts_with = true; }));
+  EXPECT_TRUE(differs([](auto& o) { o.bytes = true; }));
   EXPECT_TRUE(differs([](auto& o) { o.with_ties = true; }));
   EXPECT_TRUE(differs([](auto& o) { o.max_terms = 7; }));
   EXPECT_TRUE(differs([](auto& o) { o.merge = irs::ScoreMergeType::Sum; }));

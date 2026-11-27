@@ -482,6 +482,41 @@ TEST_F(LuceneParserTest, FuzzyPrefixInPhraseBareTilde) {
   EXPECT_TRUE(part->starts_with);
 }
 
+TEST_F(LuceneParserTest, FuzzyInPhraseReadsDistanceAsTerm) {
+  struct Case {
+    std::string_view query;
+    std::string_view term;
+    uint8_t distance;
+    bool starts_with;
+  };
+  constexpr Case kCases[]{
+    {"\"hello wor*~4\"", "wor", 2, true},
+    {"\"hello wor*~3\"", "wor", 2, true},
+    {"\"hello wor*~0.5\"", "wor", 1, true},
+    {"\"hello worl~4\"", "worl", 2, false},
+    {"\"hello world~0.5\"", "world", 2, false},
+    {"\"hello worl~256\"", "worl", 2, false},
+    {"\"hello worl~0\"", "worl", 0, false},
+  };
+  for (const auto& [query, term, distance, starts_with] : kCases) {
+    SCOPED_TRACE(query);
+    irs::BooleanFilter parsed;
+    irs::ParserContext parser{parsed, kFieldId, irs::StringLayout::kStrings,
+                              *tokenizer};
+    ASSERT_TRUE(irs::ParseQuery(parser, query));
+    const auto& filters = parsed.Bucket(irs::Occur::Should).filters;
+    ASSERT_EQ(1, filters.size());
+    const auto& phrase = irs::utils::downCast<irs::ByPhrase>(*filters[0]);
+    ASSERT_EQ(2, phrase.options().size());
+    const auto* part = std::get_if<irs::ByEditDistanceOptions>(
+      &std::next(phrase.options().begin())->part);
+    ASSERT_NE(nullptr, part);
+    EXPECT_EQ(term, irs::ViewCast<char>(irs::bytes_view{part->term}));
+    EXPECT_EQ(distance, part->max_distance);
+    EXPECT_EQ(starts_with, part->starts_with);
+  }
+}
+
 TEST_F(LuceneParserTest, RangeInclusive) {
   ASSERT_TRUE(irs::ParseQuery(ctx, "[alpha TO omega]"));
   ASSERT_EQ(1, Optional().size());
@@ -2426,6 +2461,24 @@ TEST_F(LuceneParserTest, FnFuzzyTermWithDistance) {
   ASSERT_EQ(1, Optional().size());
   ASSERT_EQ(1, Optional().filters.size());
   AssertFuzzy(*Optional().filters[0], kFieldId, "alpha", 1);
+}
+
+TEST_F(LuceneParserTest, FnFuzzyTermAtMostThreeEdits) {
+  ASSERT_TRUE(irs::ParseQuery(ctx, "fn:fuzzyTerm(alpha 3)"));
+  ASSERT_EQ(1, Optional().filters.size());
+  AssertFuzzy(*Optional().filters[0], kFieldId, "alpha", 3);
+  for (const auto query :
+       {"fn:fuzzyTerm(alpha 4)", "fn:fuzzyTerm(alpha 256)"}) {
+    SCOPED_TRACE(query);
+    try {
+      irs::ParseQuery(ctx, query);
+      ADD_FAILURE() << "parsed";
+    } catch (const irs::SqlException& e) {
+      EXPECT_TRUE(
+        e.message().starts_with("`fn:fuzzyTerm` allows at most 3 "
+                                "edits, got "));
+    }
+  }
 }
 
 TEST_F(LuceneParserTest, FnMaxGapsOverAPair) {

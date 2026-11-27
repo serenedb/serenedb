@@ -285,7 +285,10 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
     const auto output = AcquireTokenizer(context, *dict)->Traits().output;
     bind->state = std::move(dict);
     auto& fn = input.GetBoundFunction();
-    fn.SetReturnType(duckdb::LogicalType::LIST(output));
+    auto token = duckdb::ListType::GetChildType(fn.GetReturnType());
+    fn.SetReturnType(duckdb::LogicalType::LIST(
+      output == duckdb::LogicalTypeId::VARCHAR ? std::move(token)
+                                               : duckdb::LogicalType{output}));
     fn.SetFunctionCallback(ConstantFn);
     fn.SetInitStateCallback(InitTsLexizeLocalState);
     return bind;
@@ -298,11 +301,12 @@ duckdb::unique_ptr<duckdb::FunctionData> TsLexizeBind(
 }
 
 duckdb::ScalarFunction MakeFn(duckdb::vector<duckdb::LogicalType> args,
+                              const duckdb::LogicalType& token,
                               ScalarFnPtr dynamic_fn,
                               duckdb::bind_scalar_function_t bind) {
   duckdb::ScalarFunction f{
     std::move(args),
-    duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR),
+    duckdb::LogicalType::LIST(token),
     dynamic_fn,
     bind,
   };
@@ -314,14 +318,15 @@ duckdb::ScalarFunction MakeFn(duckdb::vector<duckdb::LogicalType> args,
 
 void RegisterTsLexize(duckdb::ExtensionLoader& loader) {
   duckdb::ScalarFunctionSet set{"ts_lexize"};
-  set.AddFunction(
-    MakeFn({duckdb::LogicalType::VARCHAR, duckdb::LogicalType::VARCHAR},
-           TsLexizeFunctionDynamic, TsLexizeBind<TsLexizeFunctionConstant<1>>));
-  set.AddFunction(
-    MakeFn({duckdb::LogicalType::VARCHAR,
-            duckdb::LogicalType::LIST(duckdb::LogicalType::VARCHAR)},
-           TsLexizeArrayFunctionDynamic,
-           TsLexizeBind<TsLexizeArrayFunctionConstant<1>>));
+  for (auto text : {duckdb::LogicalType::VARCHAR, duckdb::LogicalType::BLOB}) {
+    set.AddFunction(MakeFn({duckdb::LogicalType::VARCHAR, text}, text,
+                           TsLexizeFunctionDynamic,
+                           TsLexizeBind<TsLexizeFunctionConstant<1>>));
+    set.AddFunction(
+      MakeFn({duckdb::LogicalType::VARCHAR, duckdb::LogicalType::LIST(text)},
+             text, TsLexizeArrayFunctionDynamic,
+             TsLexizeBind<TsLexizeArrayFunctionConstant<1>>));
+  }
   loader.RegisterFunction(std::move(set));
 }
 

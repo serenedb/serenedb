@@ -111,7 +111,7 @@ class TestTestApi:
 
     @pytest.fixture(autouse=True)
     def _require_test_api(self, conn):
-        conn.request("GET", "/_test/ping")
+        conn.request("GET", "/test/ping")
         response = conn.getresponse()
         response.read()
         if response.status == 404:
@@ -119,7 +119,7 @@ class TestTestApi:
 
     def test_echo_fixed_body(self, conn):
         payload = b"x" * 100_000
-        conn.request("POST", "/_test/echo", body=payload,
+        conn.request("POST", "/test/echo", body=payload,
                      headers={"Content-Type": "application/octet-stream"})
         response = conn.getresponse()
         assert response.status == 200
@@ -131,7 +131,7 @@ class TestTestApi:
             for piece in (b"alpha-", b"beta-", b"gamma"):
                 yield piece
 
-        conn.request("POST", "/_test/echo", body=chunks(),
+        conn.request("POST", "/test/echo", body=chunks(),
                      headers={"Content-Type": "text/plain"})
         response = conn.getresponse()
         assert response.status == 200
@@ -139,7 +139,7 @@ class TestTestApi:
 
     def test_chunked_response_streaming(self, conn):
         n = 1_000_000
-        conn.request("GET", f"/_test/bytes?n={n}")
+        conn.request("GET", f"/test/bytes?n={n}")
         response = conn.getresponse()
         assert response.status == 200
         assert response.getheader("Transfer-Encoding") == "chunked"
@@ -149,7 +149,7 @@ class TestTestApi:
 
     def test_expect_100_continue(self, conn):
         payload = b"continue-me"
-        conn.request("POST", "/_test/echo", body=payload,
+        conn.request("POST", "/test/echo", body=payload,
                      headers={"Expect": "100-continue",
                               "Content-Type": "text/plain"})
         response = conn.getresponse()
@@ -158,14 +158,14 @@ class TestTestApi:
 
     def test_status_passthrough(self, conn):
         for code in (200, 201, 404, 418, 503):
-            conn.request("GET", f"/_test/status?code={code}")
+            conn.request("GET", f"/test/status?code={code}")
             response = conn.getresponse()
             assert response.status == code
             response.read()
 
     def test_fuzz_binary_garbage(self, conn):
         payload = bytes(range(256)) * 64
-        conn.request("POST", "/_test/fuzz", body=payload)
+        conn.request("POST", "/test/fuzz", body=payload)
         response = conn.getresponse()
         assert response.status == 200
         assert json.loads(response.read())["received"] == len(payload)

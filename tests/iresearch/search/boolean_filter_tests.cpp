@@ -4089,6 +4089,28 @@ TEST(AndAcceptorFusion_test, joins_every_pattern_and_a_fuzzy_one) {
   EXPECT_FALSE(FusedAccepts(*fused, "senctiones"));
 }
 
+TEST(AndAcceptorFusion_test, joins_a_fuzzy_one_that_compares_bytes) {
+  auto root = std::make_unique<irs::BooleanFilter>();
+  Append<irs::ByWildcard>(*root, irs::Occur::Must, kFieldTestField, "%a%")
+    .mutable_options()
+    ->bytes = true;
+  auto& fuzzy = Append<irs::ByEditDistance>(*root, irs::Occur::Must,
+                                            kFieldTestField, "a\xC3\xA9");
+  fuzzy.mutable_options()->max_distance = 1;
+  fuzzy.mutable_options()->bytes = true;
+
+  irs::Filter::ptr filter = std::move(root);
+  irs::Optimize(filter, {.fuse_acceptor_intersections = true});
+
+  const auto* fused = FusedOf(filter);
+  ASSERT_NE(nullptr, fused);
+  EXPECT_EQ(irs::bstring{B("%a%&a\xC3\xA9~")}, fused->options().pattern);
+  EXPECT_TRUE(FusedAccepts(*fused, "a\xC3"));
+  EXPECT_TRUE(FusedAccepts(*fused, "a\xC3\xA8"));
+  EXPECT_FALSE(FusedAccepts(*fused, "ae"));
+  EXPECT_FALSE(FusedAccepts(*fused, "\xC3\xA9"));
+}
+
 TEST(AndAcceptorFusion_test, literal_set_drives) {
   auto root = std::make_unique<irs::BooleanFilter>();
   Append<irs::ByWildcard>(*root, irs::Occur::Must, kFieldTestField, "%le");

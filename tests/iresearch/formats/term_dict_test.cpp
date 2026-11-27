@@ -569,10 +569,12 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
     }
   }
 
+  template<typename A>
   static void AssertWalk(const irs::TermReader& reader,
-                         const std::vector<Entry>& entries,
-                         const irs::RegexpAcceptor& acceptor) {
-    ASSERT_TRUE(acceptor.ok());
+                         const std::vector<Entry>& entries, const A& acceptor) {
+    if constexpr (std::is_same_v<A, irs::RegexpAcceptor>) {
+      ASSERT_TRUE(acceptor.ok());
+    }
     std::vector<irs::bytes_view> expected;
     for (const auto& entry : entries) {
       if (acceptor.Matches(entry.key)) {
@@ -927,7 +929,8 @@ class TermDictTest : public tests::DirectoryTestCaseBase {
     const auto description = irs::MakeParametricDescription(1, false);
     for (const auto target : targets) {
       SCOPED_TRACE(testing::Message("target ") << irs::ViewCast<char>(target));
-      const irs::LevenshteinAcceptor acceptor{description, {}, target};
+      const irs::BasicLevenshteinAcceptor<false> acceptor{
+        description, {}, target};
       std::vector<irs::bytes_view> expected;
       for (const auto& entry : field.entries) {
         if (acceptor.Matches(entry.key)) {
@@ -1347,6 +1350,16 @@ TEST_P(TermDictTest, single_term_fields) {
       SCOPED_TRACE(testing::Message("pattern ") << pattern);
       AssertWalk(*reader, field.entries,
                  irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(pattern)});
+    }
+    const auto description = irs::MakeParametricDescription(1, false);
+    for (const bool bytes : {false, true}) {
+      SCOPED_TRACE(testing::Message("bytes ") << bytes);
+      const auto fuzzy = irs::MakeLevenshteinAcceptor(
+        description, {}, Bytes("h\xC3\xA9llo"), bytes);
+      fuzzy->Visit(
+        [&](const auto& typed) { AssertWalk(*reader, field.entries, typed); });
+      irs::MakeLevenshteinPrefixAcceptor(fuzzy)->Visit(
+        [&](const auto& typed) { AssertWalk(*reader, field.entries, typed); });
     }
     AssertVisits(*reader, field.entries, 20);
     if (single) {
@@ -2835,7 +2848,8 @@ TEST_P(TermDictTest, walks_stay_inside_their_field) {
                  irs::RegexpAcceptor{irs::ViewCast<irs::byte_type>(pattern)});
     }
     const auto description = irs::MakeParametricDescription(1, false);
-    const irs::LevenshteinAcceptor acceptor{description, {}, next.min()};
+    const irs::BasicLevenshteinAcceptor<false> acceptor{
+      description, {}, next.min()};
     auto it = walked.iterator(acceptor);
     ASSERT_FALSE(it->next());
   }
@@ -3200,7 +3214,8 @@ TEST_P(TermDictTest, fuzzy_walks_match_coded_and_raw_blocks) {
                        << irs::ViewCast<char>(irs::bytes_view{target})
                        << " distance " << int{distance} << " transpositions "
                        << transpositions);
-          const irs::LevenshteinAcceptor acceptor{description, {}, target};
+          const irs::BasicLevenshteinAcceptor<false> acceptor{
+            description, {}, target};
           std::vector<irs::bytes_view> expected;
           for (const auto& entry : entries) {
             if (acceptor.Matches(entry.key)) {
@@ -3262,7 +3277,8 @@ TEST_P(TermDictTest, walks_skip_blocks_missing_required_bytes) {
   ASSERT_EQ(80, found);
 
   const auto description = irs::MakeParametricDescription(1, false);
-  const irs::LevenshteinAcceptor fuzzy{description, {}, Bytes("zq0017")};
+  const irs::BasicLevenshteinAcceptor<false> fuzzy{
+    description, {}, Bytes("zq0017")};
   std::vector<irs::bytes_view> expected;
   for (const auto& entry : entries) {
     if (fuzzy.Matches(entry.key)) {
@@ -3321,7 +3337,8 @@ TEST_P(TermDictTest,
   ASSERT_FALSE(reads_prefixes(*Get(fields[1]), like));
   AssertWalk(*Get(fields[1]), fields[1].entries, like);
   const auto description = irs::MakeParametricDescription(1, false);
-  const irs::LevenshteinAcceptor fuzzy{description, {}, Bytes("station")};
+  const irs::BasicLevenshteinAcceptor<false> fuzzy{
+    description, {}, Bytes("station")};
   ASSERT_TRUE(reads_prefixes(*Get(fields[0]), fuzzy));
 }
 
@@ -3346,7 +3363,8 @@ TEST_P(TermDictTest, fuzzy_walks_over_random_keys_read_near_their_matches) {
     auto target = entries[i].key;
     target[target.size() / 2] = 'X';
     for (const auto& probe : {entries[i].key, target}) {
-      const irs::LevenshteinAcceptor acceptor{description, {}, probe};
+      const irs::BasicLevenshteinAcceptor<false> acceptor{
+        description, {}, probe};
       const auto expected = absl::c_count_if(entries, [&](const Entry& entry) {
         return acceptor.Matches(entry.key);
       });
@@ -3411,7 +3429,8 @@ TEST_P(TermDictTest, walks_cross_long_shared_prefixes) {
   const auto description = irs::MakeParametricDescription(1, true);
   for (size_t i = 0; i < entries.size(); i += entries.size() / 16) {
     SCOPED_TRACE(testing::Message("target ") << i);
-    const irs::LevenshteinAcceptor acceptor{description, {}, entries[i].key};
+    const irs::BasicLevenshteinAcceptor<false> acceptor{
+      description, {}, entries[i].key};
     std::vector<irs::bytes_view> expected;
     for (const auto& entry : entries) {
       if (acceptor.Matches(entry.key)) {
@@ -3451,7 +3470,8 @@ TEST_P(TermDictTest, walks_match_short_and_edge_byte_terms) {
     for (size_t i = 0; i < entries.size(); i += entries.size() / 16) {
       SCOPED_TRACE(testing::Message("target ")
                    << i << " distance " << int{distance});
-      const irs::LevenshteinAcceptor acceptor{description, {}, entries[i].key};
+      const irs::BasicLevenshteinAcceptor<false> acceptor{
+        description, {}, entries[i].key};
       std::vector<irs::bytes_view> expected;
       for (const auto& entry : entries) {
         if (acceptor.Matches(entry.key)) {
@@ -4140,9 +4160,10 @@ TEST(TermDictPrefixTrieTest, trie_matches_terms_and_filter_keeps_matches) {
   const auto host = pattern("https://www\\.a[bx]z.*");
   const auto one = irs::MakeParametricDescription(1, false);
   const auto two = irs::MakeParametricDescription(2, false);
-  const irs::LevenshteinAcceptor near{one, {}, Bytes("abcdefgh")};
-  const irs::LevenshteinAcceptor url{one, {}, Bytes("https://www.abxy")};
-  const irs::LevenshteinAcceptor far{two, {}, Bytes("abab")};
+  const irs::BasicLevenshteinAcceptor<false> near{one, {}, Bytes("abcdefgh")};
+  const irs::BasicLevenshteinAcceptor<false> url{
+    one, {}, Bytes("https://www.abxy")};
+  const irs::BasicLevenshteinAcceptor<false> far{two, {}, Bytes("abab")};
   const auto assert_all = [&](std::vector<irs::bstring> terms, size_t block) {
     AssertTrie(std::move(terms), block, any, starts, ends, inner, dotted, host,
                near, url, far);

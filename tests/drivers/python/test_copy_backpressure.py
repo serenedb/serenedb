@@ -138,7 +138,7 @@ def chunked(stream: Stream, payload: Payload, limit: int | None = None) -> bool:
 def post_copy(stream: Stream, sql: bytes) -> None:
     auth = base64.b64encode(b"postgres:").decode()
     stream.sock.sendall(
-        (f"POST /_test/copy HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        (f"POST /test/copy HTTP/1.1\r\nHost: 127.0.0.1\r\n"
          f"Authorization: Basic {auth}\r\nContent-Type: text/plain\r\n"
          f"Content-Length: {len(sql)}\r\n\r\n").encode() + sql)
     assert stream.line() == b"HTTP/1.1 200 OK"

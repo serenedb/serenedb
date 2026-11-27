@@ -68,7 +68,8 @@ def _run_lang(ctx, r, lang, server, only):
                    "--host", "127.0.0.1", "--port", str(server.port),
                    "--database", "postgres", "--user", "postgres",
                    "--junit", str(r.dir / "junit")],
-                  env={"SDB_DRV_HTTP_PORT": str(server.http_port),
+                  env={"SDB_DRV_HTTP_PORT": str(server.http_port("mcp")),
+                       "SDB_DRV_ES_PORT": str(server.http_port("es")),
                        "SDB_DRV_HTTP_TOKEN": HTTP_TOKEN,
                        "SDB_DRV_SHARED_DIR": str(shared),
                        "SDB_DRV_PY_ONLY": only})
@@ -117,7 +118,8 @@ def _network_run(ctx):
     return run
 
 
-SERVER = {"threads": 0, "listen_ssl": False, "http_apis": ("es", "mcp", "test", "otel"),
+SERVER = {"threads": 0, "listen_ssl": False,
+          "http_listeners": (("es",), ("mcp", "test", "otel")),
           "hba": TRUST_HBA, "extra_args": (f"--auth_bearer_token={HTTP_TOKEN}",)}
 
 

@@ -266,6 +266,37 @@ def test_query_of_a_vanished_client_ends(conn):
         time.sleep(0.2)
 
 
+@pytest.mark.parametrize("leave", ["close", "half-close", "reset"])
+def test_a_query_that_writes_nothing_ends_with_its_client(conn, leave):
+    marker = f"-- quiet {leave}"
+    victim = WireConn()
+    victim.send("Q", _cstr(
+        f"SELECT sum(i) FROM range(9000000000000000000) t(i) {marker}"))
+    probe = (
+        "SELECT count(*) FROM pg_stat_activity WHERE state = 'active' "
+        f"AND query LIKE '%{marker}' AND pid <> pg_backend_pid()"
+    )
+    try:
+        deadline = time.monotonic() + 30
+        while first_field(conn.run_ok(probe)) == b"0":
+            assert time.monotonic() < deadline, "the query never started"
+            time.sleep(0.05)
+        left = time.monotonic()
+        if leave == "half-close":
+            victim.sock.shutdown(socket.SHUT_WR)
+        elif leave == "reset":
+            victim.sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
+                                   struct.pack("ii", 1, 0))
+            victim.sock.close()
+        else:
+            victim.sock.close()
+        while first_field(conn.run_ok(probe)) != b"0":
+            assert time.monotonic() - left < 10, "the query outlived its client"
+            time.sleep(0.01)
+    finally:
+        victim.sock.close()
+
+
 def test_startup_rejects_missing_user():
     # PG requires a user name in the startup packet (SQLSTATE 28000); without it
     # the server must not silently fall back to a default user.

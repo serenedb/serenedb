@@ -39,6 +39,7 @@ add_executable(
     network_pg_implicit_txn_test.cpp
     network_pg_protocol_state_test.cpp
     network_pg_scram_test.cpp
+    network_pg_simple_query_test.cpp
     network_pg_startup_test.cpp
     network_proxy_protocol_test.cpp
     network_router_test.cpp

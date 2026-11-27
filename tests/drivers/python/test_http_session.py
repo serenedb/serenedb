@@ -69,7 +69,7 @@ def http_conn():
 
 
 def session_user(conn: http.client.HTTPConnection, auth: str) -> tuple[int, str]:
-    conn.request("GET", "/_test/session_user", headers={"Authorization": auth})
+    conn.request("GET", "/test/session_user", headers={"Authorization": auth})
     response = conn.getresponse()
     body = response.read().decode()
     return response.status, body
@@ -100,8 +100,27 @@ def test_the_bearer_token_is_masked_in_settings():
     assert setting == "***"
 
 
+def test_a_request_scoped_route_runs_every_request_as_its_user(role, http_conn):
+    answers = []
+    sockets = []
+    for auth in (SUPERUSER_AUTH, ROLE_AUTH, SUPERUSER_AUTH, ROLE_AUTH):
+        http_conn.request("POST", "/test/copy",
+                          body=b"COPY (SELECT current_user) TO STDOUT",
+                          headers={"Authorization": auth})
+        response = http_conn.getresponse()
+        answers.append((response.status, response.read().decode()))
+        sockets.append(http_conn.sock)
+    assert answers == [
+        (200, f"{SUPERUSER_NAME}\n"),
+        (200, f"{role}\n"),
+        (200, f"{SUPERUSER_NAME}\n"),
+        (200, f"{role}\n"),
+    ]
+    assert all(s is sockets[0] for s in sockets)
+
+
 def test_a_rejected_request_does_not_change_the_session_role(role, http_conn):
-    wrong = "Basic " + base64.b64encode(f"{ROLE}:wrong".encode()).decode()
+    wrong = "Basic " + base64.b64encode(b"drv_http_no_such_role:pw").decode()
     answers = []
     for auth in (ROLE_AUTH, wrong, SUPERUSER_AUTH, ROLE_AUTH):
         status, body = session_user(http_conn, auth)

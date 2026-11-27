@@ -507,6 +507,49 @@ id
 3
 5
 
+# A phrase part reads `~N` as a term does: at most two edits, and below one a
+# similarity, here one edit for four characters.
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('"quick brwn*~4"')
+ORDER BY id
+----
+id
+1
+2
+3
+5
+
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('"quick brwn*~0.75"')
+ORDER BY id
+----
+id
+1
+2
+3
+5
+
+query
+SELECT id
+FROM swp_idx
+WHERE body @@ to_tsquery('"quick brwn~4"')
+ORDER BY id
+----
+id
+1
+2
+5
+
+statement error
+SELECT id FROM swp_idx WHERE body @@ to_tsquery('fn:fuzzyTerm(brwn 4)')
+----
+db error: ERROR: `fn:fuzzyTerm` allows at most 3 edits, got 4
+
+
 query
 SELECT id
 FROM swp_idx
@@ -1054,6 +1097,136 @@ QUERY PLAN
 │ ~1 row                │
 ╰───────────────────────╯
 
+statement ok
+INSERT INTO swf VALUES (6, 'appels')
+
+# Ranked, the exact prefix joins the fuzzy match only when both score with one
+# scorer: by default the prefix scores a constant and the fuzzy match its
+# similarity, so both stay. Joined, the match scores what the two did.
+query
+EXPLAIN SELECT id, BM25(swf_idx.tableoid) AS score
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('app') && ts_levenshtein('appel', 1, starts_with := true))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────────────────────────────╮
+│ Index: swf_idx                               │
+│ Lookup: search                               │
+│ Index Filter:                                │
+│ ╭─ And ─────────────╮                        │
+│ ╰─────────┬─────────╯                        │
+│           ├──────────────────────╮           │
+│ ╭─ Starts With ─────╮  ╭─ Levenshtein ─────╮ │
+│ │ Field: kw(string) │  │ Field: kw(string) │ │
+│ │ Prefix: app       │  │ Target: appel     │ │
+│ ╰───────────────────╯  │ Starts With: true │ │
+│                        │ Max Terms: 50     │ │
+│                        ╰───────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                  │
+│ Projections: id, sdb_inverted_index_score    │
+│ ~1 row                                       │
+╰──────────────────────────────────────────────╯
+
+query
+SELECT id, BM25(swf_idx.tableoid) AS score
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('app')::score('constant(1)') &&
+             ts_levenshtein('appel', 1, starts_with := true)::score('constant(1)'))
+ORDER BY id
+----
+id	score
+1	2
+2	2
+3	2
+6	2
+
+query
+EXPLAIN SELECT id, BM25(swf_idx.tableoid) AS score
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('app')::score('constant(1)') &&
+             ts_levenshtein('appel', 1, starts_with := true)::score('constant(1)'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: swf_idx                         │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Levenshtein ────────────╮           │
+│ │ Field: kw(string)        │           │
+│ │ Target: appel            │           │
+│ │ Starts With: true        │           │
+│ │ Max Terms: 50            │           │
+│ │ Boost: 2                 │           │
+│ │ Score: constant(value=1) │           │
+│ ╰──────────────────────────╯           │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+# A fuzzy match whose own prefix is at least as long as the exact prefix
+# already implies it, and an exact prefix as long as the whole text leaves the
+# fuzzy match only the edits after it.
+query
+SELECT id, BM25(swf_idx.tableoid) AS score
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('ap')::score('constant(1)') &&
+             ts_levenshtein('el', 1, prefix := 'app')::score('constant(1)'))
+ORDER BY id
+----
+id	score
+3	2
+6	2
+
+query
+EXPLAIN SELECT id, BM25(swf_idx.tableoid) AS score
+FROM swf_idx
+WHERE kw @@ (ts_starts_with('ap')::score('constant(1)') &&
+             ts_levenshtein('el', 1, prefix := 'app')::score('constant(1)'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: swf_idx                         │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Levenshtein ────────────╮           │
+│ │ Field: kw(string)        │           │
+│ │ Target: appel            │           │
+│ │ Max Terms: 50            │           │
+│ │ Boost: 2                 │           │
+│ │ Score: constant(value=1) │           │
+│ ╰──────────────────────────╯           │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT id FROM swf_idx WHERE kw @@ (ts_starts_with('appel') && ts_levenshtein('appel', 1)) ORDER BY id
+----
+id
+3
+6
+
+query
+EXPLAIN SELECT id FROM swf_idx WHERE kw @@ (ts_starts_with('appel') && ts_levenshtein('appel', 1))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ──────╮
+│ Index: swf_idx        │
+│ Lookup: search        │
+│ Index Filter:         │
+│ ╭─ Levenshtein ─────╮ │
+│ │ Field: kw(string) │ │
+│ │ Target: appel     │ │
+│ │ Max Terms: 50     │ │
+│ ╰───────────────────╯ │
+│ Projections: id       │
+│ ~1 row                │
+╰───────────────────────╯
+
 # Without the expansion cap, an OR with exact matches the fuzzy match already
 # accepts at distance 0 is the fuzzy match alone: one walk, and enumeration
 # keeps the similarities.
@@ -1446,3 +1619,111 @@ SELECT id FROM sw_idx WHERE body @@ ts_levenshtein('quik', 1, startswith := true
 ----
 db error: ERROR: ts_levenshtein has no argument named startswith
 HINT: Example: ts_levenshtein('test', 1, prefix := 'pre'). Distance must be 0-4 (0-3 with transpositions). `transpositions := false` counts swapping two adjacent characters as two edits, `prefix` must match exactly, and `starts_with := true` matches the terms that start within the distance of the text; `transpositions` and `prefix` may also follow the distance by position. If distance is omitted (ts_levenshtein('test')), it is picked automatically from the term length (0 for <=2 chars, 1 for 3-5, 2 for >=6).
+
+
+# With no edit allowed, a fuzzy prefix ranks rows as with one edit allowed.
+statement ok
+CREATE TABLE sw_rank(id INTEGER PRIMARY KEY, body VARCHAR)
+
+statement ok
+CREATE INDEX sw_rank_idx ON sw_rank USING inverted(id, body sw_words)
+
+statement ok
+INSERT INTO sw_rank VALUES
+  (1, 'quick quick quick'),
+  (2, 'quick brown fox jumps over the lazy dog'),
+  (3, 'quiet evening')
+
+query
+SELECT id, round(BM25(sw_rank_idx.tableoid), 4) AS score
+FROM sw_rank_idx
+WHERE body @@ ts_levenshtein('qu', starts_with := true)
+ORDER BY score DESC, id
+----
+id	score
+1	0.402
+2	0.3117
+3	0.3117
+
+query
+SELECT id, round(BM25(sw_rank_idx.tableoid), 4) AS score
+FROM sw_rank_idx
+WHERE body @@ ts_levenshtein('qu', 1, starts_with := true)
+ORDER BY score DESC, id
+----
+id	score
+1	0.402
+2	0.3117
+3	0.3117
+
+# Ranking keeps every term that starts with the text, as without it.
+statement ok
+SET sdb_levenshtein_max_terms = 1
+
+query
+SELECT id, round(BM25(sw_rank_idx.tableoid), 4) AS score
+FROM sw_rank_idx
+WHERE body @@ ts_levenshtein('qu', 0, starts_with := true)
+ORDER BY score DESC, id
+----
+id	score
+1	0.402
+2	0.3117
+3	0.3117
+
+statement ok
+RESET sdb_levenshtein_max_terms
+
+query
+EXPLAIN SELECT id, BM25(sw_rank_idx.tableoid) AS score
+FROM sw_rank_idx
+WHERE body @@ ts_levenshtein('qu', 0, starts_with := true)
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: sw_rank_idx                     │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Levenshtein ───────╮                │
+│ │ Field: body(string) │                │
+│ │ Target: qu          │                │
+│ │ Starts With: true   │                │
+│ │ Max Terms: 0        │                │
+│ ╰─────────────────────╯                │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+EXPLAIN SELECT id, BM25(sw_rank_idx.tableoid) AS score
+FROM sw_rank_idx
+WHERE body @@ ts_levenshtein('qu', 0, starts_with := true)::score('constant(2)')
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────╮
+│ Index: sw_rank_idx                     │
+│ Lookup: search                         │
+│ Index Filter:                          │
+│ ╭─ Starts With ────────────╮           │
+│ │ Field: body(string)      │           │
+│ │ Prefix: qu               │           │
+│ │ Score: constant(value=2) │           │
+│ ╰──────────────────────────╯           │
+│ Score: bm25(k1=1.2, b=0.75)            │
+│ Projections: id,                       │
+│              sdb_inverted_index_score  │
+│ ~1 row                                 │
+╰────────────────────────────────────────╯
+
+query
+SELECT id, BM25(sw_rank_idx.tableoid) AS score
+FROM sw_rank_idx
+WHERE body @@ ts_levenshtein('qu', 0, starts_with := true)::score('constant(2)')
+ORDER BY score DESC, id
+----
+id	score
+1	2
+2	2
+3	2

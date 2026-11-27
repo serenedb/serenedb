@@ -187,6 +187,14 @@ struct ArgError {
 
 void GetVarcharArg(const duckdb::Expression& expr, std::string& out,
                    ArgError err);
+inline bool IsBlob(const duckdb::Expression& expr) {
+  return expr.GetReturnType().id() == duckdb::LogicalTypeId::BLOB;
+}
+inline bool ComparesBytes(const SearchColumnInfo& column_info,
+                          const duckdb::BoundFunctionExpression& func) {
+  return column_info.logical_type.id() == duckdb::LogicalTypeId::BLOB ||
+         IsBlob(*func.GetChildren()[0]);
+}
 void GetIntArg(const duckdb::Expression& expr, int64_t& out, ArgError err);
 void GetBoolArg(const duckdb::Expression& expr, bool& out, ArgError err);
 void GetDoubleArg(const duckdb::Expression& expr, double& out, ArgError err);
@@ -248,12 +256,13 @@ struct LevenshteinArgs {
   int64_t distance = 1;
   bool with_transpositions = true;
   bool starts_with = false;
+  bool bytes = false;
   // Literal prefix that must match exactly; only the suffix beyond it
   // participates in edit-distance computation. Empty by default.
   std::string prefix;
 };
 LevenshteinArgs ParseLevenshteinArgs(
-  const duckdb::BoundFunctionExpression& func);
+  const duckdb::BoundFunctionExpression& func, const SearchColumnInfo& column);
 void FillByEditDistanceOptions(const LevenshteinArgs& args,
                                irs::ByEditDistanceOptions& out,
                                size_t max_terms);

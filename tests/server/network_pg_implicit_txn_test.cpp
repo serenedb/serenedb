@@ -100,6 +100,26 @@ TEST(NetworkPgImplicitTxn, CommitResolvesTheBlock) {
   EXPECT_TRUE(c.txn().IsAutoCommit());       // autocommit restored
 }
 
+TEST(NetworkPgImplicitTxn, AnErrorRollsOurBlockBackOrAbortsTheUsers) {
+  Conn ours;
+  ImplicitTxnState implicit{ours.txn()};
+  EXPECT_FALSE(implicit.RollbackOrAbort());
+  implicit.Arm();
+  ours.handle->Query("SELECT 1");
+  EXPECT_TRUE(implicit.RollbackOrAbort());
+  EXPECT_FALSE(implicit.OpenedByUs());
+  EXPECT_TRUE(ours.txn().IsAutoCommit());
+
+  Conn users;
+  users.handle->Query("BEGIN");
+  ImplicitTxnState user_block{users.txn()};
+  user_block.Arm();
+  EXPECT_FALSE(user_block.RollbackOrAbort());
+  ASSERT_TRUE(users.txn().HasActiveTransaction());
+  EXPECT_TRUE(
+    duckdb::ValidChecker::IsInvalidated(users.txn().ActiveTransaction()));
+}
+
 TEST(NetworkPgImplicitTxn, RollbackResolvesTheBlock) {
   Conn c;
   ImplicitTxnState state{c.txn()};

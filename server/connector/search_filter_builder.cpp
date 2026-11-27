@@ -1317,13 +1317,14 @@ duckdb::unique_ptr<duckdb::Expression> WrapTextAsConstantList(
   duckdb::vector<duckdb::Value> elems;
   elems.emplace_back(*val);
   return duckdb::make_uniq<duckdb::BoundConstantExpression>(
-    duckdb::Value::LIST(duckdb::LogicalType::VARCHAR, std::move(elems)));
+    duckdb::Value::LIST(val->type(), std::move(elems)));
 }
 
 duckdb::unique_ptr<duckdb::Expression> BuildAnyToken(
   std::vector<duckdb::unique_ptr<duckdb::Expression>>&& args) {
-  const bool is_text =
-    args.at(0)->GetReturnType().id() == duckdb::LogicalTypeId::VARCHAR;
+  const auto type = args.at(0)->GetReturnType().id();
+  const bool is_text = type == duckdb::LogicalTypeId::VARCHAR ||
+                       type == duckdb::LogicalTypeId::BLOB;
   const bool has_min_match = args.size() >= 2;
 
   if (!is_text) {
@@ -1650,8 +1651,9 @@ const duckdb::BoundFunctionExpression* AsTSQueryOr(
     return nullptr;
   }
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
-  if (ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName()) !=
-      TSQueryOp::Or) {
+  if (!IsTSQueryStructType(func.GetReturnType()) ||
+      ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName()) !=
+        TSQueryOp::Or) {
     return nullptr;
   }
   return &func;
@@ -3324,7 +3326,9 @@ void BuildTSQuery(BoolTarget parent, const FilterContext& ctx,
 
   const auto& func = unwrapped.Cast<duckdb::BoundFunctionExpression>();
   const auto op =
-    ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName());
+    IsTSQueryStructType(func.GetReturnType())
+      ? ClassifyTSQueryFunction(func.Function().GetName().GetIdentifierName())
+      : TSQueryOp::Unknown;
 
   constexpr TSQueryOp kMinMatchOps[] = {TSQueryOp::Or, TSQueryOp::Any,
                                         TSQueryOp::Tokenize, TSQueryOp::Boost};

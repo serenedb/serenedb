@@ -683,6 +683,14 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
                                "ts_phrase(...)::slop(N) for a sloppy "
                                "phrase."));
     }
+    if (duckdb::BoundCastExpression::IsCast(part_expr_ref) &&
+        (TryGetBoostModifier(part_expr_ref.GetReturnType()) ||
+         !TryGetTokenizerModifier(part_expr_ref.GetReturnType()).empty())) {
+      THROW_SQL_ERROR(
+        ERR_CODE(ERRCODE_INVALID_PARAMETER_VALUE),
+        ERR_MSG("## part must not carry boost or tokenize modifiers"),
+        ERR_HINT(kSyntaxHint));
+    }
     const PhraseGap gap = i > 0 ? seq.gaps[i - 1] : PhraseGap{};
 
     TSQueryOp leaf_op = TSQueryOp::Term;
@@ -764,17 +772,18 @@ void EmitPhraseSeq(BoolTarget parent, const FilterContext& ctx,
         CheckLikePattern(text);
         options.push_back<irs::ByWildcardOptions>(gap.min, gap.max) =
           irs::ByWildcardOptions{
-            irs::ViewCast<irs::byte_type>(std::string_view{text})};
+            irs::ViewCast<irs::byte_type>(std::string_view{text}),
+            ComparesBytes(column_info, *f)};
       } break;
       case TSQueryOp::Regexp: {
         auto args = ParseRegexpArgs(*f);
         options.push_back<irs::ByRegexpOptions>(gap.min, gap.max) =
           irs::ByRegexpOptions{
             irs::ViewCast<irs::byte_type>(std::string_view{args.pattern}),
-            args.syntax};
+            args.syntax, ComparesBytes(column_info, *f)};
       } break;
       case TSQueryOp::Fuzzy: {
-        auto args = ParseLevenshteinArgs(*f);
+        auto args = ParseLevenshteinArgs(*f, column_info);
         FillByEditDistanceOptions(
           args, options.push_back<irs::ByEditDistanceOptions>(gap.min, gap.max),
           column_info.levenshtein_max_terms.value_or(

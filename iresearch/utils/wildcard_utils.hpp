@@ -34,7 +34,8 @@ enum class WildcardType {
   Wildcard,         // f_o%
 };
 
-WildcardType ComputeWildcardType(bytes_view pattern) noexcept;
+WildcardType ComputeWildcardType(bytes_view pattern,
+                                 bool bytes = false) noexcept;
 
 bytes_view ExtractWildcardPrefix(bytes_view pattern) noexcept;
 

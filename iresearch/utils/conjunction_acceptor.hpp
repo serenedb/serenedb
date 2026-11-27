@@ -257,7 +257,7 @@ class FuzzyConjunction {
     std::span<const std::shared_ptr<const RegexpAcceptor>> patterns,
     bytes_view lower, const KeyBytes& bytes,
     const std::array<uint8_t, 256>& fuzzy_bytemap, size_t max_mem,
-    bool starts_with);
+    bool starts_with, bool byte_mode);
   ~FuzzyConjunction() = default;
 
   void InternStart();
@@ -289,6 +289,7 @@ class FuzzyConjunction {
   uint32_t Range(Row& row) const;
 
   bool _starts_with;
+  bool _byte_mode;
   std::array<uint8_t, RegexpAcceptor::kMaxLabel + 1> _bytemap{};
   uint32_t _classes{0};
   bytes_view _lower;
@@ -311,7 +312,8 @@ class FuzzyConjunctionOf final : public FuzzyConjunction {
                        fuzzy->Bytes(),
                        fuzzy->Bytemap(),
                        max_mem,
-                       std::is_same_v<A, LevenshteinPrefixAcceptor>},
+                       std::is_base_of_v<LevenshteinPrefixAcceptor, A>,
+                       A::kByteMode},
       _fuzzy{std::move(fuzzy)} {
     InternStart();
   }

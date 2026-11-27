@@ -495,12 +495,12 @@ SeekTermIterator::ptr TermReaderImpl::iterator(const RegexpAcceptor& a) const {
 
 SeekTermIterator::ptr TermReaderImpl::iterator(
   const LevenshteinAcceptor& a) const {
-  return Walk(*this, a);
+  return a.Visit([&](const auto& typed) { return Walk(*this, typed); });
 }
 
 SeekTermIterator::ptr TermReaderImpl::iterator(
   const LevenshteinPrefixAcceptor& a) const {
-  return Walk(*this, a);
+  return a.Visit([&](const auto& typed) { return Walk(*this, typed); });
 }
 
 SeekTermIterator::ptr TermReaderImpl::iterator(

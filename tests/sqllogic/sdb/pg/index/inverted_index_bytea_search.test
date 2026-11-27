@@ -1,0 +1,1055 @@
+# Search with BYTEA input: on a BYTEA column a BYTEA value matches its bytes,
+# whether or not they are valid UTF-8.
+
+statement ok
+CREATE TABLE bt(id INTEGER PRIMARY KEY, v BYTEA)
+
+statement ok
+CREATE INDEX bt_idx ON bt USING inverted(id, v)
+
+statement ok
+INSERT INTO bt VALUES
+  (1, '\xff61'::bytea),
+  (2, '\x6262'::bytea),
+  (3, '\xc3a9'::bytea),
+  (4, '\x65'::bytea),
+  (5, '\xc3'::bytea),
+  (6, '\xe4b8ad'::bytea),
+  (7, '\xe4b8'::bytea)
+
+query
+SELECT id FROM bt WHERE v @@ '\x6262'::bytea ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bt WHERE v @@ '\xff61'::bytea ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ '\xff61'::bytea::TSQUERY ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ ('\x6262'::bytea || ts_starts_with('\xe4'::bytea)) ORDER BY id
+----
+id
+2
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ (ts_starts_with('\xe4'::bytea) || '\xff61'::bytea) ORDER BY id
+----
+id
+1
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ ('\xff61'::bytea && !!ts_starts_with('\xe4'::bytea)) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ (ts_starts_with('\xff'::bytea) && '\xff61'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ (!!('\xff61'::bytea)) ORDER BY id
+----
+id
+2
+3
+4
+5
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ ('\xff61'::bytea ^ 2) ORDER BY id
+----
+id
+1
+
+# A BYTEA value concatenates with another value or a string, as two strings
+# do; with a TSQUERY operand || is an OR.
+query
+SELECT id FROM bt WHERE v @@ ('\xe4'::bytea || '\xb8ad'::bytea) ORDER BY id
+----
+id
+6
+
+query
+SELECT id FROM bt WHERE v @@ ('\xff'::bytea || 'a') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ ('\xff61'::bytea || 'bb'::TSQUERY) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bt WHERE v @@ ('bb'::TSQUERY || '\xff61'::bytea) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bt WHERE v @@ (ts_phrase('bb') || '\xff61'::bytea || ts_phrase('e')) ORDER BY id
+----
+id
+1
+2
+4
+
+query
+SELECT id FROM bt WHERE v @@ ('\x6262'::bytea && 'bb') ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bt WHERE v @@ ('bb' && '\x6262'::bytea) ORDER BY id
+----
+id
+2
+
+statement ok
+PREPARE bt_match AS SELECT id FROM bt WHERE v @@ $1 ORDER BY id;
+
+query
+EXECUTE bt_match('\xff61'::bytea);
+----
+id
+1
+
+statement ok
+PREPARE bt_match_or AS SELECT id FROM bt WHERE v @@ ($1::bytea || ts_starts_with('\x62'::bytea)) ORDER BY id;
+
+query
+EXECUTE bt_match_or('\xff61'::bytea);
+----
+id
+1
+2
+
+statement error
+SELECT '\xff61'::bytea::TSQUERY
+----
+db error: ERROR: BYTEA that is not valid UTF-8 cannot be cast to TSQUERY
+HINT: Match the BYTEA value in an @@ match instead, e.g. col @@ '\xff61'::bytea.
+
+
+query
+SELECT i, b::TSQUERY IS NULL AS missing FROM (VALUES (1, NULL::bytea), (2, '\x61'::bytea)) v(i, b) ORDER BY i
+----
+i	missing
+1	t
+2	f
+
+# A || of strings known only per row is a concatenation, with no TSQUERY to
+# match.
+statement error
+SELECT id FROM bt WHERE v @@ (random()::VARCHAR || 'x')
+----
+db error: ERROR: Not a TSQUERY-producing function: ||
+HINT: Use a TSQUERY constructor (ts_phrase, ts_like, ts_between, ts_ngram, ts_levenshtein, ts_regexp, ts_any, ts_all, ts_compound, ...) or 'literal'::TSQUERY.
+
+
+statement error
+SELECT id FROM bt WHERE v @@ ((random()::VARCHAR || 'x')::TSQUERY || 'bb'::TSQUERY)::min_match(1)
+----
+db error: ERROR: Not a TSQUERY-producing function: ||
+HINT: Use a TSQUERY constructor (ts_phrase, ts_like, ts_between, ts_ngram, ts_levenshtein, ts_regexp, ts_any, ts_all, ts_compound, ...) or 'literal'::TSQUERY.
+
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bt_words AS split_text(case := 'lower') WITH (frequency, position)
+
+statement ok
+CREATE TABLE bp(id INTEGER PRIMARY KEY, p BYTEA)
+
+statement ok
+CREATE INDEX bp_idx ON bp USING inverted(id, p bt_words)
+
+statement ok
+INSERT INTO bp VALUES (1, 'quick fox'::bytea), (2, 'fox quick'::bytea)
+
+query
+SELECT id FROM bp WHERE p @@ ('quick'::bytea ## 'fox'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bp WHERE p @@ ('quick'::bytea ## ts_phrase('fox')) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bp WHERE p @@ tsquery_phrase('quick'::bytea, 'fox'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bp WHERE p @@ ('quick'::bytea ## 'fox') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bp WHERE p @@ ('quick' ## 'fox'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bp WHERE p @@ ('fox'::bytea ## 0 ## 'quick') ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bp WHERE p @@ ('fox'::bytea ## [0, 1] ## 'quick'::bytea) ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bp WHERE p @@ tsquery_phrase('quick'::bytea, 'fox') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bp WHERE p @@ tsquery_phrase('quick', 'fox'::bytea) ORDER BY id
+----
+id
+1
+
+statement ok
+CREATE TABLE bx(id INTEGER PRIMARY KEY, t VARCHAR)
+
+statement ok
+CREATE INDEX bx_idx ON bx USING inverted(id, t bt_words)
+
+statement ok
+INSERT INTO bx VALUES (1, 'the quick fox'), (2, 'a lazy dog'), (3, 'foxdog')
+
+query
+SELECT id FROM bx WHERE t @@ ('quick'::bytea || ts_phrase('dog')) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE t @@ (ts_phrase('dog') || 'quick'::bytea) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE t @@ ('quick'::bytea || 'dog'::TSQUERY) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE t @@ ('quick'::bytea && 'fox') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bx WHERE t @@ ('quick'::bytea ## 'fox') ORDER BY id
+----
+id
+1
+
+# A BYTEA pattern matches bytes on any column: `_` and `.` are one byte, also
+# right after a byte that starts a UTF-8 sequence. A text pattern matches
+# characters on a text column.
+query
+SELECT id FROM bt WHERE v @@ ts_like('\xc35f'::bytea) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM bt WHERE v @@ ts_like('\xe45f5f'::bytea) ORDER BY id
+----
+id
+6
+
+query
+SELECT id FROM bt WHERE v @@ ts_like('\xe425'::bytea) ORDER BY id
+----
+id
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_like('__') ORDER BY id
+----
+id
+1
+2
+3
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_regexp('\xc32e'::bytea) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM bt WHERE v @@ ts_regexp('\xe42e2a'::bytea) ORDER BY id
+----
+id
+6
+7
+
+statement ok
+CREATE TABLE bk(id INTEGER PRIMARY KEY, k VARCHAR)
+
+statement ok
+CREATE INDEX bk_idx ON bk USING inverted(id, k)
+
+statement ok
+INSERT INTO bk VALUES (1, 'a'), (2, 'ab'), (3, 'é'), (4, '中'), (5, 'x')
+
+query
+SELECT id FROM bk WHERE k @@ ts_like('\xc35f'::bytea) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM bk WHERE k @@ ts_like('_'::bytea) ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM bk WHERE k @@ ts_like('__'::bytea) ORDER BY id
+----
+id
+2
+3
+
+query
+SELECT id FROM bk WHERE k @@ ts_like('_') ORDER BY id
+----
+id
+1
+3
+4
+5
+
+query
+SELECT id FROM bk WHERE k @@ ts_regexp('\xc32e'::bytea) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM bk WHERE k @@ ts_regexp('.'::bytea) ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM bk WHERE k @@ ts_regexp('.') ORDER BY id
+----
+id
+1
+3
+4
+5
+
+statement ok
+CREATE TABLE bc(id INTEGER PRIMARY KEY, t VARCHAR)
+
+statement ok
+CREATE INDEX bc_idx ON bc USING inverted(id, t bt_words)
+
+statement ok
+INSERT INTO bc VALUES (1, 'quick café'), (2, 'quick cafe')
+
+query
+SELECT id FROM bc WHERE t @@ ('quick' ## ts_like('caf_'::bytea)) ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bc WHERE t @@ ('quick' ## ts_like('caf_')) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bc WHERE t @@ ('quick' ## ts_regexp('caf.'::bytea)) ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bc WHERE t @@ ('quick' ## ts_regexp('caf.')) ORDER BY id
+----
+id
+1
+2
+
+statement ok
+CREATE TABLE bq(id INTEGER PRIMARY KEY, p BYTEA)
+
+statement ok
+CREATE INDEX bq_idx ON bq USING inverted(id, p bt_words)
+
+statement ok
+INSERT INTO bq VALUES (1, 'quick café'::bytea), (2, 'quick cafe'::bytea)
+
+query
+SELECT id FROM bq WHERE p @@ ('quick' ## ts_like('caf_')) ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bq WHERE p @@ ('quick' ## ts_regexp('caf.')) ORDER BY id
+----
+id
+2
+
+# ts_any and ts_all take BYTEA lists and lists that mix BYTEA with strings or
+# TSQUERY values.
+query
+SELECT id FROM bt WHERE v @@ ts_any(['\xff61'::bytea, '\xc3'::bytea]) ORDER BY id
+----
+id
+1
+5
+
+query
+SELECT id FROM bt WHERE v @@ ts_any(['\x6262'::bytea, '\xc3a9'::bytea]) ORDER BY id
+----
+id
+2
+3
+
+query
+SELECT id FROM bt WHERE v @@ ts_any(['\xff61'::bytea, 'bb']) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bt WHERE v @@ ts_any([ts_phrase('bb'), '\xff61'::bytea]) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bt WHERE v @@ ts_any(['\xff61'::bytea, ts_starts_with('\xe4'::bytea)]) ORDER BY id
+----
+id
+1
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_all(['\xff61'::bytea]) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ ts_all([ts_starts_with('\xff'::bytea), '\xff61'::bytea]) ORDER BY id
+----
+id
+1
+
+statement error
+SELECT id FROM bp WHERE p @@ ts_any(p::TSQUERY[])
+----
+db error: ERROR: list arg must be a literal list or array (got: __cast)
+HINT: Example: ts_any(['a', 'b'], 1) (OR), ts_all(['a', 'b']) (AND).
+
+
+statement error
+SELECT id FROM bx WHERE t @@ ts_any([t, 'x'])
+----
+db error: ERROR: list arg must be a literal list or array (got: __cast)
+HINT: Example: ts_any(['a', 'b'], 1) (OR), ts_all(['a', 'b']) (AND).
+
+
+query
+SELECT id FROM bp WHERE p @@ ts_any(['quick'::bytea, 'fox'::bytea, 'dog'::bytea], 2) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bp WHERE p @@ ('quick' ## ts_any(['fox'::bytea, 'dog'::bytea])) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bx WHERE t @@ ts_any(['quick'::bytea, 'dog']) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE t @@ ts_all(['quick'::bytea, ts_phrase('fox')]) ORDER BY id
+----
+id
+1
+
+# A phrase part next to a BYTEA part is matched as written, also when the
+# other part is a constructor or a nested phrase.
+query
+SELECT id FROM bx WHERE t @@ (ts_phrase('quick') ## ts_starts_with('\x66'::bytea)) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bx WHERE t @@ (ts_phrase('the quick') ## '\x666f78'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bx WHERE t @@ (ts_like('qu%') ## ts_phrase('fox'::bytea)) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bx WHERE t @@ ((ts_phrase('the') ## 'quick') ## 'fox'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bx WHERE t @@ (ts_phrase('the') ## (ts_phrase('quick') ## ts_starts_with('\x66'::bytea))) ORDER BY id
+----
+id
+1
+
+statement error
+SELECT id FROM bx WHERE t @@ (ts_phrase('quick')::boost(2) ## ts_starts_with('\x66'::bytea))
+----
+db error: ERROR: ## part must not carry boost or tokenize modifiers
+HINT: Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional INTEGER / INTEGER[].
+
+
+statement error
+SELECT id FROM bx WHERE t @@ (ts_phrase('quick')::tokenize('bt_words') ## ts_starts_with('\x66'::bytea))
+----
+db error: ERROR: ## part must not carry boost or tokenize modifiers
+HINT: Example: ts_phrase('hello') ## 1 ## 'world'. Gap is optional INTEGER / INTEGER[].
+
+
+statement error
+SELECT id FROM bx WHERE t @@ (ts_phrase('quick')::score('constant(1)') ## ts_starts_with('\x66'::bytea))
+----
+db error: ERROR: ## part type not supported yet: __cast
+HINT: Supported phrase parts: bare 'word', ts_starts_with, ts_like, ts_regexp, ts_levenshtein, ts_phrase, ts_any, ts_between.
+
+
+query
+SELECT id FROM bx WHERE t @@ tsquery_phrase(ts_phrase('quick'), 'fox'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bc WHERE t @@ (ts_phrase('quick') ## ts_like('caf_'::bytea)) ORDER BY id
+----
+id
+2
+
+# A BYTEA prefix that ends inside a character still combines with a fuzzy
+# match on the same column.
+query
+SELECT id FROM bk WHERE k @@ (ts_starts_with('\xc3'::bytea) && ts_levenshtein('é', 1)) ORDER BY id
+----
+id
+3
+
+query
+SELECT id FROM bk WHERE k @@ (ts_starts_with('\xe4b8'::bytea) && ts_levenshtein('中', 0)) ORDER BY id
+----
+id
+4
+
+query
+EXPLAIN SELECT id FROM bk WHERE k @@ (ts_starts_with('\xc3'::bytea) && ts_levenshtein('é', 1))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────╮
+│ Table: bk                                  │
+│ Index Filter:                              │
+│ ╭─ And ────────────╮                       │
+│ ╰─────────┬────────╯                       │
+│           ├─────────────────────╮          │
+│ ╭─ Starts With ────╮  ╭─ Levenshtein ────╮ │
+│ │ Field: k(string) │  │ Field: k(string) │ │
+│ │ Prefix: \\xc3     │  │ Target: \\xc3\\xa9 │ │
+│ ╰──────────────────╯  │ Max Terms: 50    │ │
+│                       ╰──────────────────╯ │
+│ Projections: id                            │
+│ ~1 row                                     │
+╰────────────────────────────────────────────╯
+
+# Also when both score with one scorer.
+query
+SELECT id, BM25(bk_idx.tableoid) AS score FROM bk_idx WHERE k @@ (ts_starts_with('\xc3'::bytea)::score('constant(1)') && ts_levenshtein('é', 1)::score('constant(1)')) ORDER BY id
+----
+id	score
+3	2
+
+query
+EXPLAIN SELECT id, BM25(bk_idx.tableoid) AS score FROM bk_idx WHERE k @@ (ts_starts_with('\xc3'::bytea)::score('constant(1)') && ts_levenshtein('é', 1)::score('constant(1)'))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ───────────────────────────────────────────╮
+│ Index: bk_idx                                              │
+│ Lookup: search                                             │
+│ Index Filter:                                              │
+│ ╭─ And ────────────────────╮                               │
+│ ╰─────────────┬────────────╯                               │
+│               ├─────────────────────────────╮              │
+│ ╭─ Starts With ────────────╮  ╭─ Levenshtein ────────────╮ │
+│ │ Field: k(string)         │  │ Field: k(string)         │ │
+│ │ Prefix: \\xc3             │  │ Target: \\xc3\\xa9         │ │
+│ │ Score: constant(value=1) │  │ Max Terms: 50            │ │
+│ ╰──────────────────────────╯  │ Score: constant(value=1) │ │
+│                               ╰──────────────────────────╯ │
+│ Score: bm25(k1=1.2, b=0.75)                                │
+│ Projections: id, sdb_inverted_index_score                  │
+│ ~1 row                                                     │
+╰────────────────────────────────────────────────────────────╯
+
+# A fuzzy match that compares bytes may start inside a character, so the
+# prefix joins it.
+query
+SELECT id FROM bk WHERE k @@ (ts_starts_with('\xc3'::bytea) && ts_levenshtein('\xc3a8'::bytea, 1)) ORDER BY id
+----
+id
+3
+
+query
+EXPLAIN SELECT id FROM bk WHERE k @@ (ts_starts_with('\xc3'::bytea) && ts_levenshtein('\xc3a8'::bytea, 1))
+----
+QUERY PLAN
+╭─ IRESEARCH_SCAN ─────╮
+│ Table: bk            │
+│ Index Filter:        │
+│ ╭─ Levenshtein ────╮ │
+│ │ Field: k(string) │ │
+│ │ Target: \\xc3\\xa8 │ │
+│ │ Max Terms: 50    │ │
+│ ╰──────────────────╯ │
+│ Projections: id      │
+│ ~1 row               │
+╰──────────────────────╯
+
+query
+SELECT id FROM bk WHERE k @@ (ts_starts_with('a') && ts_levenshtein('ab', 1)) ORDER BY id
+----
+id
+1
+2
+
+# The predicate forms and ts_lexize take BYTEA text too.
+query
+SELECT id FROM bx WHERE phrase_matches(t, 'quick fox'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE phrase_matches(v, '\xff61'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE levenshtein_matches(v, '\xff60'::bytea, 1) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bk WHERE levenshtein_matches(k, '\xc3'::bytea, 1) ORDER BY id
+----
+id
+1
+3
+5
+
+query
+SELECT id FROM bx WHERE has_any_tokens(t, ['quick'::bytea, 'dog'::bytea]) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE has_any_tokens(t, 'quick dog'::bytea) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE has_any_tokens(t, 'quick lazy fox'::bytea, 2) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bx WHERE has_all_tokens(t, ['quick'::bytea, 'fox'::bytea]) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE has_any_tokens(v, ['\xff61'::bytea, '\xc3'::bytea]) ORDER BY id
+----
+id
+1
+5
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bt_bigram AS generate_ngrams(min_gram := 2, max_gram := 2, preserve_original := false) WITH (frequency, position)
+
+statement ok
+CREATE TABLE bg(id INTEGER PRIMARY KEY, g VARCHAR)
+
+statement ok
+CREATE INDEX bg_idx ON bg USING inverted(id, g bt_bigram)
+
+statement ok
+INSERT INTO bg VALUES (1, 'hello'), (2, 'help')
+
+query
+SELECT id FROM bg WHERE ngram_matches(g, 'hello'::bytea, 1.0) ORDER BY id
+----
+id
+1
+
+statement ok
+CREATE TABLE bgb(id INTEGER PRIMARY KEY, g BYTEA)
+
+statement ok
+CREATE INDEX bgb_idx ON bgb USING inverted(id, g bt_bigram)
+
+statement ok
+INSERT INTO bgb VALUES (1, '\xff6162'::bytea), (2, 'hello'::bytea)
+
+query
+SELECT id FROM bgb WHERE ngram_matches(g, '\xff6162'::bytea, 1.0) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bgb WHERE g @@ ts_ngram('\xff6162'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT list_transform(ts_lexize('bt_words', 'Quick Fox'::bytea), lambda x: hex(x)) AS tokens,
+       typeof(ts_lexize('bt_words', 'Quick Fox'::bytea)) AS type
+----
+tokens	type
+{717569636B,666F78}	BLOB[]
+
+query
+SELECT list_transform(ts_lexize('bt_words', ['Quick'::bytea, 'FOX'::bytea]), lambda x: hex(x)) AS tokens
+----
+tokens
+{717569636B,666F78}
+
+statement ok
+CREATE TEXT SEARCH DICTIONARY bt_kw AS keyword()
+
+query
+SELECT list_transform(ts_lexize('bt_kw', '\xff61'::bytea), lambda x: hex(x)) AS tokens
+----
+tokens
+{FF61}
+
+# The term dictionary of a BYTEA column returns its terms as bytes.
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(v), lambda x: hex(x))) AS terms FROM bt_idx
+----
+terms
+{6262,65,C3,C3A9,E4B8,E4B8AD,FF61}
+
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(v), lambda x: hex(x))) AS terms
+FROM bt_idx
+WHERE v @@ ts_levenshtein('\xe4b8'::bytea, 1)
+----
+terms
+{E4B8,E4B8AD}
+
+query
+SELECT list_sort(list_transform(ts_dict_raw_agg(v), lambda x: hex(x))) AS terms
+FROM bt_idx
+WHERE v @@ ts_starts_with('\xc3'::bytea)
+----
+terms
+{C3,C3A9}
+
+query
+SELECT hex(unnest(ts_dict_raw_agg(v))) AS term,
+       unnest(ts_dict_score(v)) AS similarity,
+       unnest(ts_dict_count(v)) AS rows
+FROM bt_idx
+WHERE v @@ ts_levenshtein('\xc3a8'::bytea, 1)
+ORDER BY term
+----
+term	similarity	rows
+C3	0	1
+C3A9	0.5	1
+
+query
+SELECT hex(unnest(ts_dict_raw_agg(p))) AS term, unnest(ts_dict_freq(p)) AS freq
+FROM bp_idx
+ORDER BY term
+----
+term	freq
+666F78	2
+717569636B	2
+
+statement ok
+CREATE TABLE bd(id INTEGER PRIMARY KEY, a VARCHAR, b BYTEA, e FLOAT[3])
+
+statement ok
+CREATE INDEX bd_idx ON bd USING inverted(id, a, e hnsw (metric = 'l2', quant = 'none'))
+
+statement error
+SELECT ts_dict_raw_agg(b) FROM bd
+----
+db error: ERROR: ts_dict_raw_agg(): column has no text term dictionary
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column, or an array of such
+
+
+statement error
+SELECT ts_dict_count(e) FROM bd
+----
+db error: ERROR: ts_dict_count(): column has no text term dictionary
+HINT: ts_dict_agg requires a text-tokenized or keyword VARCHAR column, or an array of such
+
+
+statement error
+SELECT ts_dict_agg(v) FROM bt_idx
+----
+db error: ERROR: ts_dict_agg(): column has no text term dictionary
+HINT: its terms are BYTEA, which ts_dict_raw_agg returns
+
+
+statement error
+SELECT ts_dict_max(v) FROM bt_idx
+----
+db error: ERROR: ts_dict_max(): column has no text term dictionary
+HINT: its terms are BYTEA, which ts_dict_raw_agg returns
+
+
+# Ranges, ts_tokenize, ts_compound, modifiers and the query parsers.
+query
+SELECT id FROM bt WHERE v @@ ts_tokenize('\xff61'::bytea) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ ts_between('\xc3'::bytea, '\xe4b8ad'::bytea, true, true) ORDER BY id
+----
+id
+3
+5
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_between('\xc3'::bytea, '\xe4b8ad'::bytea, false, false) ORDER BY id
+----
+id
+3
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_lt('\xc3a9'::bytea) ORDER BY id
+----
+id
+2
+4
+5
+
+query
+SELECT id FROM bt WHERE v @@ ts_le('\xc3a9'::bytea) ORDER BY id
+----
+id
+2
+3
+4
+5
+
+query
+SELECT id FROM bt WHERE v @@ ts_gt('\xe4b8'::bytea) ORDER BY id
+----
+id
+1
+6
+
+query
+SELECT id FROM bt WHERE v @@ ts_ge('\xe4b8'::bytea) ORDER BY id
+----
+id
+1
+6
+7
+
+query
+SELECT id FROM bt WHERE v @@ ts_compound(ts_starts_with('\xe4'::bytea), '\xe4b8'::bytea, NULL) ORDER BY id
+----
+id
+6
+
+query
+SELECT id FROM bt WHERE v @@ ('\xff61'::bytea)::boost(2) ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ ('\xff61'::bytea)::tokenize('keyword') ORDER BY id
+----
+id
+1
+
+query
+SELECT id FROM bt WHERE v @@ plainto_tsquery('bb') ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bt WHERE v @@ websearch_to_tsquery('bb') ORDER BY id
+----
+id
+2
+
+query
+SELECT id FROM bx WHERE t @@ ts_tokenize('quick dog'::bytea) ORDER BY id
+----
+id
+1
+2
+
+query
+SELECT id FROM bx WHERE t @@ ts_between('a'::bytea, 'dog'::bytea, true, true) ORDER BY id
+----
+id
+2
+
+# Highlighting, offsets and score explanations of a BYTEA query.
+statement ok
+CREATE TEXT SEARCH DICTIONARY bt_words_hl AS split_text(case := 'lower') WITH (frequency, position, offset)
+
+statement ok
+CREATE TABLE bh(id INTEGER PRIMARY KEY, t VARCHAR)
+
+statement ok
+CREATE INDEX bh_idx ON bh USING inverted(id, t bt_words_hl)
+
+statement ok
+INSERT INTO bh VALUES (1, 'the quick fox'), (2, 'a lazy dog')
+
+query
+SELECT ts_highlight(t) AS h FROM bh_idx WHERE t @@ ts_starts_with('qu'::bytea) ORDER BY id
+----
+h
+the <b>quick</b> fox
+
+query
+SELECT ts_highlight('bt_words_hl', 'the quick fox', ts_starts_with('qu'::bytea)) AS h
+----
+h
+the <b>quick</b> fox
+
+query
+SELECT id, ts_offsets(t) AS offsets FROM bh_idx WHERE t @@ ts_levenshtein('quik'::bytea, 1) ORDER BY id
+----
+id	offsets
+1	{4,9}
+
+query
+SELECT id, ts_explain(bh_idx.tableoid) IS NOT NULL AS explained, BM25(bh_idx.tableoid) > 0 AS scored
+FROM bh_idx
+WHERE t @@ ts_levenshtein('quick'::bytea, 1)
+ORDER BY id
+----
+id	explained	scored
+1	t	t
+
+# A byte that is not part of a valid UTF-8 character is a segment of its own
+# for split_text, like a punctuation mark: alpha drops it, graphic keeps it.
+# Indexing and querying split the same way.
+statement ok
+CREATE TEXT SEARCH DICTIONARY bt_graphic AS split_text(break := 'graphic')
+
+query
+SELECT list_transform(ts_lexize('bt_words', '\x6162ff6364'::bytea), lambda x: hex(x)) AS alpha,
+       list_transform(ts_lexize('bt_graphic', '\x6162ff6364'::bytea), lambda x: hex(x)) AS graphic
+----
+alpha	graphic
+{6162,6364}	{6162,FF,6364}
+
+statement ok
+INSERT INTO bp VALUES (3, '\x717569636b20ff'::bytea)
+
+query
+SELECT id FROM bp WHERE p @@ ts_phrase('\x717569636b20ff'::bytea) ORDER BY id
+----
+id
+1
+2
+3

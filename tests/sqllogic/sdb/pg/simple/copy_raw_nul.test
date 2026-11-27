@@ -1,0 +1,61 @@
+control substitution on
+
+statement ok
+CREATE TABLE crn (v TEXT);
+
+
+statement ok
+CREATE TABLE crn_int (v INTEGER);
+
+
+statement count 1
+COPY (SELECT '\x6100620a'::BYTEA) TO '${__TEST_DIR__}/crn_small.txt' (FORMAT blob, COMPRESSION 'none');
+
+
+statement error
+COPY crn FROM '${__TEST_DIR__}/crn_small.txt';
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x00
+
+
+statement error
+COPY crn FROM '${__TEST_DIR__}/crn_small.txt' (FORMAT csv);
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x00
+
+
+statement count 1
+COPY (SELECT '\x3132003334c3a90a'::BYTEA) TO '${__TEST_DIR__}/crn_int.txt' (FORMAT blob, COMPRESSION 'none');
+
+
+statement error
+COPY crn_int FROM '${__TEST_DIR__}/crn_int.txt';
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x00
+
+
+statement count 1
+COPY (
+  SELECT (SELECT string_agg(i::TEXT, E'\n' ORDER BY i) || E'\n' FROM generate_series(1, 100000) g(i))::BYTEA
+         || '\x3132330062340a'::BYTEA
+         || (SELECT string_agg(i::TEXT, E'\n' ORDER BY i) || E'\n' FROM generate_series(1, 100000) g(i))::BYTEA
+) TO '${__TEST_DIR__}/crn_big.txt' (FORMAT blob, COMPRESSION 'none');
+
+
+statement error
+COPY crn FROM '${__TEST_DIR__}/crn_big.txt';
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x00
+
+
+statement error
+COPY crn_int FROM '${__TEST_DIR__}/crn_big.txt';
+----
+db error: ERROR: invalid byte sequence for encoding "UTF8": 0x00
+
+
+query
+SELECT count(*) AS n FROM crn;
+----
+n
+0
